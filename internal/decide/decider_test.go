@@ -158,8 +158,8 @@ func TestNewValidatesAgainstRegistry(t *testing.T) {
 	if _, err := New(closed); err == nil || !strings.Contains(err.Error(), "restrictive answer") {
 		t.Errorf("fail closed without a restrictive answer: err = %v", err)
 	}
-	if d, err := New(cfg("ext:github/intent", "decide", nil)); err == nil || !strings.Contains(err.Error(), "no such point") {
-		t.Errorf("undeclared extension point: %v %v", d, err)
+	if d, err := New(cfg("ext:github/intent", "decide", nil)); err == nil || !strings.Contains(err.Error(), `extension "github" is not enabled (enabled: none)`) {
+		t.Errorf("point of an extension that isn't enabled: %v %v", d, err)
 	}
 	typo := cfg("test.acceprt", "observe", nil)
 	typo.Points["test.acceprt"] = config.DecisionPoint{}
@@ -169,7 +169,7 @@ func TestNewValidatesAgainstRegistry(t *testing.T) {
 	off := cfg("ext:github/intent", "observe", nil)
 	off.Points["ext:github/intent"] = config.DecisionPoint{}
 	if d, err := New(off); d != nil || err != nil {
-		t.Errorf("disabled point of an extension that declares nothing: %v %v, want nil decider", d, err)
+		t.Errorf("disabled point of an extension that isn't enabled: %v %v, want nil decider", d, err)
 	}
 }
 
@@ -179,7 +179,8 @@ func TestNewValidatesDeclaredExtensionPoints(t *testing.T) {
 		p.Handler = "p"
 		return config.DecisionsConfig{Handlers: map[string]config.DecisionHandler{"p": {URL: "http://x"}}, Points: map[string]config.DecisionPoint{id: p}}
 	}
-	if d, err := New(cfg(intent.ID, config.DecisionPoint{Enabled: true, Mode: "observe"}), intent); err != nil || !d.Enabled(intent.ID) {
+	github := Extension{Name: "github", Points: []Point{intent}}
+	if d, err := New(cfg(intent.ID, config.DecisionPoint{Enabled: true, Mode: "observe"}), github, Extension{Name: "sleeper"}); err != nil || !d.Enabled(intent.ID) {
 		t.Errorf("declared point: %v %v", d, err)
 	}
 	for _, c := range []struct {
@@ -187,13 +188,14 @@ func TestNewValidatesDeclaredExtensionPoints(t *testing.T) {
 		p        config.DecisionPoint
 		want     string
 	}{
-		{"typo'd name, disabled", "ext:github/intnet", config.DecisionPoint{}, "no such point"},
-		{"typo'd plugin, enabled", "ext:gihtub/intent", config.DecisionPoint{Enabled: true, Mode: "observe"}, "no such point"},
+		{"typo'd name, disabled", "ext:github/intnet", config.DecisionPoint{}, `extension "github" declares no such point (declared: ext:github/intent)`},
+		{"typo'd plugin, enabled", "ext:gihtub/intent", config.DecisionPoint{Enabled: true, Mode: "observe"}, `extension "gihtub" is not enabled (enabled: github, sleeper)`},
+		{"extension declaring nothing", "ext:sleeper/start_sit", config.DecisionPoint{}, `extension "sleeper" declares no decision points`},
 		{"unimplemented mode", intent.ID, config.DecisionPoint{Enabled: true, Mode: "decide"}, `mode "decide" is not supported`},
 		{"fail closed, nothing restrictive", intent.ID, config.DecisionPoint{Enabled: true, Mode: "observe", Fail: config.DecisionFailClosed}, "restrictive answer"},
 		{"unknown question", intent.ID, config.DecisionPoint{Enabled: true, Mode: "observe", Questions: map[string]config.DecisionQuestion{"zzz": {}}}, "no such question"},
 	} {
-		if _, err := New(cfg(c.id, c.p), intent); err == nil || !strings.Contains(err.Error(), c.want) {
+		if _, err := New(cfg(c.id, c.p), github, Extension{Name: "sleeper"}); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: err = %v, want %q", c.name, err, c.want)
 		}
 	}

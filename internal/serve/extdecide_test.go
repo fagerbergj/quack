@@ -114,8 +114,8 @@ func TestBootRejectsExtPointsTheExtensionDoesNotDeclare(t *testing.T) {
 	for _, c := range []struct {
 		name, id, mode, want string
 	}{
-		{"typo'd name", "ext:github/intnet", "observe", "no such point"},
-		{"typo'd plugin", "ext:gihtub/intent", "observe", "no such point"},
+		{"typo'd name", "ext:github/intnet", "observe", `extension "github" declares no such point (declared: ext:github/intent)`},
+		{"typo'd plugin", "ext:gihtub/intent", "observe", `extension "gihtub" is not enabled (enabled: github)`},
 		{"unimplemented mode", "ext:github/intent", "decide", `mode "decide" is not supported`},
 	} {
 		x := declared(t, "github", observeOnly)

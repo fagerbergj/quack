@@ -166,6 +166,7 @@ type ExtensionCheck struct {
 
 // ValidateExtensions runs each configured, enabled extension's Factory as boot does, but with a
 // throwaway data dir: some Factories open their stores eagerly, and validate must not touch the real one.
+// It then checks decisions.points against the core and declared points, as boot does.
 func ValidateExtensions(cfg *config.Config) (ExtensionCheck, error) {
 	var res ExtensionCheck
 	tmp, err := os.MkdirTemp("", "quack-validate-ext-")
@@ -175,41 +176,51 @@ func ValidateExtensions(cfg *config.Config) (ExtensionCheck, error) {
 	defer func() { _ = os.RemoveAll(tmp) }()
 	factories := extsdk.Registered()
 	var errs []error
+	var decisions extDecisions
 	for _, name := range sortedExtensionNames(cfg.Extensions.Modules) {
-		enabled, err := validateOneExtension(cfg, name, factories, filepath.Join(tmp, name))
+		ext, err := validateOneExtension(cfg, name, factories, filepath.Join(tmp, name))
+		if err == nil && ext != nil {
+			err = decisions.declare(name, ext)
+		}
 		switch {
 		case err != nil:
 			errs = append(errs, err)
-		case enabled:
+		case ext != nil:
 			res.Accepted = append(res.Accepted, name)
 		default:
 			res.Disabled = append(res.Disabled, name)
 		}
 	}
+	// A failed extension declares nothing, so its points would only add noise.
+	if len(errs) == 0 {
+		_, err := decisions.build(cfg.Decisions)
+		errs = append(errs, err)
+	}
 	return res, errors.Join(errs...)
 }
 
-// validateOneExtension: one extension's share of ValidateExtensions; enabled=false means dormant, not checked.
-func validateOneExtension(cfg *config.Config, name string, factories map[string]extsdk.Factory, scratch string) (bool, error) {
+// validateOneExtension: one extension's share of ValidateExtensions; a nil extension means dormant, not checked.
+func validateOneExtension(cfg *config.Config, name string, factories map[string]extsdk.Factory, scratch string) (extsdk.Extension, error) {
 	factory, ok := factories[name]
 	if !ok {
-		return false, fmt.Errorf("config: extensions.%s is not a compiled extension (compiled: %s)", name, strings.Join(sortedExtensionNames(factories), ", "))
+		return nil, fmt.Errorf("config: extensions.%s is not a compiled extension (compiled: %s)", name, strings.Join(sortedExtensionNames(factories), ", "))
 	}
 	ec, err := loadExtensionConfig(cfg, name)
 	if err != nil || !ec.enabled {
-		return false, err
+		return nil, err
 	}
 	if err := dirCreatable(ec.dataDir); err != nil {
-		return false, fmt.Errorf("extensions.%s: data dir: %w", name, err)
+		return nil, fmt.Errorf("extensions.%s: data dir: %w", name, err)
 	}
 	if err := os.MkdirAll(scratch, 0o755); err != nil {
-		return false, err
+		return nil, err
 	}
 	host := extsdk.Host{Log: slog.Default().With("component", "ext."+name), DataDir: scratch, Version: Version, PublicURL: cfg.Server.PublicURL}
-	if _, err := factory(host, ec.raw); err != nil {
-		return false, fmt.Errorf("extensions.%s: factory: %w", name, err)
+	ext, err := factory(host, ec.raw)
+	if err != nil {
+		return nil, fmt.Errorf("extensions.%s: factory: %w", name, err)
 	}
-	return true, nil
+	return ext, nil
 }
 
 // dirCreatable reports whether boot's MkdirAll(dir) could succeed, without creating anything:

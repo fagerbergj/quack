@@ -1,6 +1,7 @@
 package decide
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -75,23 +76,35 @@ type Decider struct {
 	handlers map[string]Handler
 }
 
-// New checks every point id against the registry and ext, the enabled extensions'
+// Extension is one enabled extension and the points it declared, ids already ext:<Name>/<name>.
+type Extension struct {
+	Name   string
+	Points []Point
+}
+
+// New checks every point id against the registry and the enabled extensions'
 // declared points (so a typo is caught while disabled), and enabled points' policy;
 // nil when none is enabled. It never calls a handler.
-func New(cfg config.DecisionsConfig, ext ...Point) (*Decider, error) {
+func New(cfg config.DecisionsConfig, exts ...Extension) (*Decider, error) {
 	d := &Decider{points: map[string]config.DecisionPoint{}, handlers: map[string]Handler{}}
-	declared := map[string]Point{}
-	for _, p := range ext {
-		declared[p.ID] = p
+	declared, names := map[string]Point{}, map[string][]string{}
+	for _, e := range exts {
+		names[e.Name] = []string{}
+		for _, p := range e.Points {
+			declared[p.ID] = p
+			names[e.Name] = append(names[e.Name], p.ID)
+		}
 	}
 	for id, p := range cfg.Points {
 		def, ok := lookup(id)
 		if !ok {
 			def, ok = declared[id]
 		}
-		// A disabled extension declares nothing, so its disabled entries can't be told from a typo.
-		if !ok && (p.Enabled || !strings.HasPrefix(id, config.DecisionExtPrefix) || pluginDeclares(declared, id)) {
-			return nil, fmt.Errorf("decisions.points.%s: no such point (registered: %s)", id, strings.Join(append(registeredIDs(), slices.Sorted(maps.Keys(declared))...), ", "))
+		if !ok {
+			if err := unknownPoint(id, p.Enabled, names); err != nil {
+				return nil, err
+			}
+			continue
 		}
 		if !p.Enabled {
 			continue
@@ -110,15 +123,23 @@ func New(cfg config.DecisionsConfig, ext ...Point) (*Decider, error) {
 	return d, nil
 }
 
-// pluginDeclares reports whether id's extension declared any point.
-func pluginDeclares(declared map[string]Point, id string) bool {
-	plugin, _, _ := strings.Cut(strings.TrimPrefix(id, config.DecisionExtPrefix), "/")
-	for d := range declared {
-		if strings.HasPrefix(d, config.DecisionExtPrefix+plugin+"/") {
-			return true
-		}
+// unknownPoint says why id resolves to no point; nil for a disabled entry of an
+// extension that isn't enabled, which is inert and can't be told from a typo.
+func unknownPoint(id string, enabled bool, exts map[string][]string) error {
+	if !strings.HasPrefix(id, config.DecisionExtPrefix) {
+		return fmt.Errorf("decisions.points.%s: no such point (registered: %s)", id, strings.Join(registeredIDs(), ", "))
 	}
-	return false
+	plugin, _, _ := strings.Cut(strings.TrimPrefix(id, config.DecisionExtPrefix), "/")
+	ids, on := exts[plugin]
+	switch {
+	case !on && !enabled:
+		return nil
+	case !on:
+		return fmt.Errorf("decisions.points.%s: extension %q is not enabled (enabled: %s)", id, plugin, cmp.Or(strings.Join(slices.Sorted(maps.Keys(exts)), ", "), "none"))
+	case len(ids) == 0:
+		return fmt.Errorf("decisions.points.%s: extension %q declares no decision points", id, plugin)
+	}
+	return fmt.Errorf("decisions.points.%s: extension %q declares no such point (declared: %s)", id, plugin, strings.Join(slices.Sorted(slices.Values(ids)), ", "))
 }
 
 func checkPoint(id string, p config.DecisionPoint, def Point) error {

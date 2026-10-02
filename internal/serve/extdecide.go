@@ -3,7 +3,6 @@ package serve
 import (
 	"context"
 	"fmt"
-	"maps"
 	"reflect"
 	"slices"
 
@@ -17,16 +16,15 @@ import (
 // the extensions and starting them, since the declarations feed decide.New.
 type extDecisions struct {
 	decider *decide.Decider
+	exts    []decide.Extension
 	points  map[string]decide.Point // by ext:<plugin>/<name>
 }
 
-// declare records ext's DecisionPoints in plugin's namespace; empty Modes is observe only.
+// declare records an enabled extension and its DecisionPoints in plugin's namespace; empty Modes is observe only.
 func (x *extDecisions) declare(plugin string, ext extsdk.Extension) error {
-	dp, ok := ext.(extsdk.DecisionPoints)
-	if !ok {
-		return nil
-	}
-	for _, sp := range dp.DecisionPoints() {
+	e := decide.Extension{Name: plugin}
+	dp, _ := ext.(extsdk.DecisionPoints)
+	for _, sp := range declarations(dp) {
 		id, err := decide.ExtPointID(plugin, sp.Name)
 		if err != nil {
 			return fmt.Errorf("extensions.%s: decision point: %w", plugin, err)
@@ -45,13 +43,22 @@ func (x *extDecisions) declare(plugin string, ext extsdk.Extension) error {
 			x.points = map[string]decide.Point{}
 		}
 		x.points[id] = p
+		e.Points = append(e.Points, p)
 	}
+	x.exts = append(x.exts, e)
 	return nil
+}
+
+func declarations(dp extsdk.DecisionPoints) []extsdk.DecisionPoint {
+	if dp == nil {
+		return nil
+	}
+	return dp.DecisionPoints()
 }
 
 // build validates cfg against the core and declared points, as boot does, and serves Decide from the result.
 func (x *extDecisions) build(cfg config.DecisionsConfig) (*decide.Decider, error) {
-	d, err := decide.New(cfg, slices.Collect(maps.Values(x.points))...)
+	d, err := decide.New(cfg, x.exts...)
 	x.decider = d
 	return d, err
 }
