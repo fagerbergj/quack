@@ -452,6 +452,57 @@ export type MemoryStats = {
     scopes: Array<MemoryScopeStats>;
 };
 
+export type DecisionRecord = {
+    chat_id: string;
+    node_id?: string;
+    round?: string;
+    at: string;
+    point: string;
+    mode: string;
+    handler: string;
+    outcome: string;
+    confident: boolean;
+    top?: string;
+    top_p?: number;
+    /**
+     * What quack's own logic decided; empty when the step was skipped.
+     */
+    baseline?: string;
+    probabilities?: {
+        [key: string]: {
+            [key: string]: number;
+        };
+    };
+    skipped_step?: string | null;
+    input_tokens?: number;
+    latency_ms: number;
+    error?: string;
+    /**
+     * Model input state; only with with_state=true.
+     */
+    state?: unknown;
+    /**
+     * Model input questions; only with with_state=true.
+     */
+    questions?: unknown;
+};
+
+export type DecisionList = {
+    /**
+     * The serving build, not necessarily the one that recorded each entry.
+     */
+    quack_version: string;
+    /**
+     * Matching-kind entries dropped because their payload did not decode.
+     */
+    skipped?: number;
+    /**
+     * More entries matched than `limit`; the oldest were dropped.
+     */
+    truncated?: boolean;
+    data: Array<DecisionRecord>;
+};
+
 export type RecordingSummary = {
     chat_id: string;
     size_bytes: number;
@@ -1221,6 +1272,53 @@ export type ListRecordingsResponses = {
 };
 
 export type ListRecordingsResponse = ListRecordingsResponses[keyof ListRecordingsResponses];
+
+export type ListDecisionsData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Only entries at or after this RFC 3339 time.
+         */
+        since?: string;
+        /**
+         * Only this decision point id.
+         */
+        point?: string;
+        /**
+         * Only these chats (repeat for several).
+         */
+        chat?: Array<string>;
+        with_state?: boolean;
+        /**
+         * Keep only the newest N matching entries.
+         */
+        limit?: number;
+    };
+    url: '/api/v1/decisions';
+};
+
+export type ListDecisionsErrors = {
+    /**
+     * An invalid since, chat, with_state or limit value
+     */
+    400: ErrorResponse;
+    /**
+     * Recording is not enabled
+     */
+    404: ErrorResponse;
+};
+
+export type ListDecisionsError = ListDecisionsErrors[keyof ListDecisionsErrors];
+
+export type ListDecisionsResponses = {
+    /**
+     * The decisions
+     */
+    200: DecisionList;
+};
+
+export type ListDecisionsResponse = ListDecisionsResponses[keyof ListDecisionsResponses];
 
 export type GetChatRecordingData = {
     body?: never;

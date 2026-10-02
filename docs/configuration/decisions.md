@@ -82,3 +82,16 @@ Every call an enabled point makes is recorded, including ones that returned no d
 - **Trace.** A `quack.decision` span under the span that ran the point (for `plan.accept`, `quack.plan.judge`). It carries the same fields as `quack.decision.*` attributes, minus the state and questions.
 
 Outcomes are `observe`, `pass`, `restrict`, `act`, `fallback`, and `unavailable`.
+
+## Reading the data
+
+`quack decisions report [--since 7d] [--point <id>] [--chat <id>...] [--json]` reads the ledger's `decision` entries through the server and prints, per point:
+
+- **n, unavailable.** All recorded calls, and those that returned no answer.
+- **coverage.** The share of answered calls whose top answer was `confident`.
+- **agreement.** The share of answered calls with a baseline where the top answer equals `baseline`. Calls without a baseline (a skipped step) are left out.
+- **confident disagreements.** Confident answers that differ from the baseline, listed with chat, node, both answers, and the top probability. A model that is wrong while confident is what `guard` and `decide` would act on.
+- **latency, input tokens.** Mean and p50 client latency and p50 input tokens over answered calls.
+- **confusion.** A table of the model's top answer against the baseline. A score question's options are its level indexes.
+
+`quack decisions export --langfuse` writes the same entries to Langfuse for comparing strategies later. Each point becomes the dataset `decisions/<point id>`. An item's id is a hash of chat, node, round, point and the state sent, so re-exporting updates items in place. Its input is the state and questions, its expected output is `{baseline}`, and its metadata names the chat, node, round, handler, and mode. Each handler's answers go in a dataset run named `<handler>@<quack version>`: a trace holding the top answer, probability, all answers, outcome and `confident`, scored `agrees_with_baseline` (0 or 1) and `top_p`. Unavailable calls get a trace but no scores, and entries without a baseline are not exported. The version is the one the server is running now, not the one that recorded each entry, so export after upgrading only the window you want in the new run (`--since`). Credentials come from the local `quack.yaml`'s `prompts.store`; the command errors if it is not a langfuse store.
