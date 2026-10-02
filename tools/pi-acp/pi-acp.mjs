@@ -210,6 +210,9 @@ function textOf(content) {
 }
 
 let lastUsage = null;
+// pi's last assistant stop this prompt, echoed in the prompt response's _meta: quack's ledger
+// keeps the raw response, and a settle alone cannot tell a clean stop from an error or no model call.
+let lastStop = null;
 
 function onPiEvent(ev) {
   switch (ev.type) {
@@ -217,7 +220,10 @@ function onPiEvent(ev) {
       if (ev.message?.role === "assistant") otel.genStart();
       break;
     case "message_end":
-      if (ev.message?.role === "assistant") otel.genEnd(ev.message, lastUsage);
+      if (ev.message?.role === "assistant") {
+        otel.genEnd(ev.message, lastUsage);
+        lastStop = { pi_stop_reason: ev.message.stopReason, ...(ev.message.errorMessage ? { pi_error: ev.message.errorMessage } : {}) };
+      }
       break;
     case "message_update": {
       const e = ev.assistantMessageEvent || {};
@@ -271,7 +277,7 @@ function onPiEvent(ev) {
         if (resumeFailed) {
           out({ jsonrpc: "2.0", id: promptReq, error: { code: -32000, message: "session/load did not actually resume - pi started a blank session" } });
         } else {
-          out({ jsonrpc: "2.0", id: promptReq, result: { stopReason: cancelled ? "cancelled" : "end_turn" } });
+          out({ jsonrpc: "2.0", id: promptReq, result: { stopReason: cancelled ? "cancelled" : "end_turn", _meta: lastStop ?? { pi_stop_reason: "none" } } });
         }
         promptReq = null;
         cancelled = false;
@@ -356,6 +362,7 @@ async function handle(msg) {
       break;
     case "session/prompt": {
       promptReq = msg.id;
+      lastStop = null;
       const text = (msg.params.prompt || []).map((b) => b.text || "").join("");
       pi.stdin.write(JSON.stringify({ type: "prompt", message: text }) + "\n");
       break;

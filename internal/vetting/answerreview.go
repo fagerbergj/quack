@@ -160,7 +160,7 @@ func augmentFromPRStage(act *workerActivity, advisorToken string) {
 }
 
 // augmentFromAnswer stages an external reviewer's answer as its review. Fills gaps, never replaces.
-// A verdict-less answer stages a plain comment-review.
+// A verdict-less answer stages nothing, so review_posted fails and the reviewer is sent back to stage_review.
 func augmentFromAnswer(act *workerActivity, cfg Config, answer string) {
 	if !cfg.ExternalWorker || strings.TrimSpace(answer) == "" {
 		return
@@ -183,6 +183,10 @@ func augmentFromAnswer(act *workerActivity, cfg Config, answer string) {
 	r := ParseAnswerReviewSections(answer)
 	event, comments, ok := r.Event, r.Findings, r.OK
 	if !ok {
+		// Only a synthesized-fanout slice has no stage_review tool; its own verdict is never delivered.
+		if !isNonDeliveringSlice(cfg) {
+			return
+		}
 		event = "comment"
 	}
 	if act.stagedDelivery == nil {

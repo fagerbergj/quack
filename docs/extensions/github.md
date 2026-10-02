@@ -70,7 +70,7 @@ FINDINGS:
 - other/file.ts:7: another finding
 ```
 
-Quack's trust gate parses that tail (`internal/vetting/answerreview.go`) into a native GitHub review - inline comments anchored to file and line, plus a summary and verdict - and posts it exactly once, after the gate passes. If the gate doesn't pass, nothing is posted from that round. A reviewer answer with no verdict at all still posts as a plain comment-review rather than looping forever waiting for a tail that will never come.
+Quack's trust gate parses that tail (`internal/vetting/answerreview.go`) into a native GitHub review - inline comments anchored to file and line, plus a summary and verdict - and posts it exactly once, after the gate passes. If the gate doesn't pass, nothing is posted from that round. A reviewer answer with no staged review and no `VERDICT:` tail is not a review: the deterministic `review_posted` criterion scores 0, the gate sends the reviewer back to stage one, and if it never does, nothing is delivered.
 
 One wrinkle: GitHub won't let quack formally approve or request changes on a PR it authored itself (self-review, 422). When that happens, quack's review posts as a `COMMENT`-event review instead - still with real inline comments - and carries the actual verdict in a hidden marker in the review body. `quack:merge` reads that marker (falling back to a formal review state when quack didn't author the PR) to decide whether it's allowed to merge.
 

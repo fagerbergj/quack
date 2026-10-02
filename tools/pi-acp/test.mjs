@@ -147,6 +147,9 @@ if (!process.env.ACP_CMD && !process.env.PI_ACP_REAL) {
 const resp = await promptPromise;
 assert.equal(resp.stopReason, "end_turn");
 if (!process.env.ACP_CMD && !process.env.PI_ACP_REAL) {
+  assert.equal(resp._meta?.pi_stop_reason, "stop", "the last assistant stopReason must ride the prompt response");
+  const silent = await call("session/prompt", { sessionId: sess.sessionId, prompt: [{ type: "text", text: "settle-silently" }] });
+  assert.equal(silent._meta?.pi_stop_reason, "none", "a settle with no model call must say so, not look like a clean stop");
   const steered = updates.find((u) => u.sessionUpdate === "agent_message_chunk" && u.content?.text?.includes("[steered: focus on X]"));
   assert.ok(steered, "mid-round steer never reached the live session");
 }

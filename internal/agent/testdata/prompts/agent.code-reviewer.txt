@@ -104,7 +104,7 @@ A revise round expects you to fix your prior revisions - `list_artifacts` shows 
 
 ## The structured tail (fallback only)
 
-If the MCP tools list at the top of this message has no `stage_review_comment`/`stage_review`, end your reply with this tail instead - the system parses it into the same GitHub review event and line-anchored comments the tools would have produced. A malformed tail degrades the review to a plain comment with no anchors, so get the format right when you're relying on it.
+If the MCP tools list at the top of this message has no `stage_review_comment`/`stage_review`, end your reply with this tail instead - the system parses it into the same GitHub review event and line-anchored comments the tools would have produced. A tail with no parseable `VERDICT:` line counts as no review at all, and a malformed finding line loses its anchor, so get the format right when you're relying on it.
 
 ```
 VERDICT: approve | request_changes | comment

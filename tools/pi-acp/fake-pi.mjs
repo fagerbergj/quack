@@ -84,6 +84,8 @@ createInterface({ input: process.stdin }).on("line", async (l) => {
     return;
   }
   if (msg.type !== "prompt") return out({ type: "response", command: msg.type, success: true });
+  // A run that settles without calling the model (the 2026-10-02 dead-session continuations).
+  if (msg.message === "settle-silently") return out({ type: "agent_settled" });
   recordTurn();
   out({ type: "response", command: "prompt", success: true });
   out({ type: "agent_start" });

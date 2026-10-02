@@ -120,7 +120,7 @@ func (a *Agent) handlePromptDone(d promptDone, h *procHandle, tr *translator, en
 		return false, refusalErr
 	}
 	final := finalSpec(tr)
-	a.log.Info("acp round done", "stop", string(d.resp.StopReason), "answer_len", len(final.parts[0].Text))
+	a.log.Info("acp round done", "stop", string(d.resp.StopReason), "meta", d.resp.Meta, "answer_len", len(final.parts[0].Text))
 	promptSpan.SetAttributes(attribute.StringSlice(otelobs.GenAIResponseFinishReasons, []string{string(d.resp.StopReason)}))
 	endPrompt(nil)
 	emit(final)
