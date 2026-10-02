@@ -32,7 +32,7 @@ function piDirFor(sessionId) {
   return join(stateRoot, "pi-acp-" + sessionId);
 }
 
-// hasExistingSession: pi 0.85.1 writes "<timestamp>_<sessionId>.jsonl" flat
+// hasExistingSession: pi 1.0.0 writes "<timestamp>_<sessionId>.jsonl" flat
 // into --session-dir - checked before spawning so a stale id fails the load.
 function hasExistingSession(sessionId) {
   try {
@@ -284,7 +284,7 @@ function onPiEvent(ev) {
 function startPi(cwd, sid) {
   otel = new Otel(prov?.model);
   const cmd = process.env.PI_ACP_PI_CMD || "pi";
-  // --session-dir must differ from PI_CODING_AGENT_DIR: equal, pi 0.85.1's
+  // --session-dir must differ from PI_CODING_AGENT_DIR: equal, pi 1.0.0's
   // session lookup silently misses on the second launch (verified empirically).
   const args = ["--mode", "rpc", "--session-id", sid, "--session-dir", join(piDir, "pi-sessions")];
   if (prov) args.push("--provider", "quack", "--model", prov.model);
