@@ -52,11 +52,48 @@ func TestAugmentFromAnswer_StagesReview(t *testing.T) {
 		t.Error("a review staged by augmentFromAnswer must be marked Recovered (#688)")
 	}
 
-	// A verdict-less answer still stages a comment-review (never a deadlock).
-	act = workerActivity{}
-	augmentFromAnswer(&act, cfg, "findings in prose only")
+}
+
+// Prod 2026-10-02 (quack#1607/#1609, games#29): an ACP reviewer ended on prose
+// with nothing staged; the old comment fallback scored review_posted=1 and the gate passed.
+func TestAugmentFromAnswer_ProseIsNotAReview(t *testing.T) {
+	cfg := Config{ExternalWorker: true, ReadOnly: true, IsReviewer: true,
+		Setup: &SetupBranch{Repo: "https://github.com/fagerbergj/quack", WorkBranch: "quack/work"},
+		Task:  "Review this pull request and post your findings as inline review comments and a verdict."}
+	prose := "Analysis complete. My findings:\n- all call sites thread the correct root\n\nLet me stage the review and the durable record."
+	act := workerActivity{}
+	augmentFromAnswer(&act, cfg, prose)
+	if st, ok := act.stagedDelivery["review"]; ok {
+		t.Fatalf("prose with no VERDICT tail must not stage a review, got %+v", st)
+	}
+	if !workIncomplete(prose, cfg.Task, act, cfg.ReadOnly, false, cfg.IsReviewer, false) {
+		t.Fatal("a reviewer with nothing staged must get a continuation round")
+	}
+	det := incompleteCriteria(cfg.Task, act, cfg.ReadOnly, false, cfg.IsReviewer, false)
+	if det["review_posted"].Score != 0 {
+		t.Fatalf("review_posted = %+v, want 0", det["review_posted"])
+	}
+	// The judge passing every rubric criterion (as it did on #1609) must not pass the round.
+	v := mergeDeterministic(verdict{Criteria: map[string]criterionScore{"structured_verdict": {Score: 1}, "catches_real_issues": {Score: 1}}}, det, cfg)
+	if v.Score != 0 {
+		t.Fatalf("round score = %v with no staged verdict, want 0", v.Score)
+	}
+}
+
+// A synthesized-fanout slice has no stage_review tool: its prose still stages a comment review.
+func TestAugmentFromAnswer_SliceKeepsCommentFallback(t *testing.T) {
+	planID := "plan-slice-prose"
+	ResetReviewFanout(planID)
+	defer ResetReviewFanout(planID)
+	fo := GetReviewFanout(planID, 2)
+	fo.ExpectSynthesis()
+	cfg := Config{ExternalWorker: true, ReadOnly: true, IsReviewer: true, ReviewFanout: fo,
+		Setup: &SetupBranch{Repo: "https://github.com/fagerbergj/quack", WorkBranch: "quack/work"},
+		Task:  "YOUR SLICE - review ONLY these files"}
+	act := workerActivity{}
+	augmentFromAnswer(&act, cfg, "Slice is clean; nothing to stage.")
 	if st := act.stagedDelivery["review"]; st.Event != "comment" {
-		t.Fatalf("verdict-less answer should stage a comment review, got %+v", st)
+		t.Fatalf("slice prose should stage a comment review, got %+v", st)
 	}
 }
 

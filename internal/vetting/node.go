@@ -2408,7 +2408,7 @@ var deterministicCriterionSpec = map[string]struct {
 	"no_tool_call_syntax":          {"The deliverable must not contain a leaked or malformed tool-call fragment.", "Remove the leaked tool-call fragment from the answer."},
 	"no_dangling_deliverable_path": {"A deliverable must not point to a file that exists only in this run's discarded working directory.", "State the result in the answer text itself, or commit the file so it survives the run."},
 	"delivery_complete":            {"The task's delivery step (commit/push/PR) must actually show in the session ledger.", "Complete the delivery step the task asked for - commit, push, or open the PR."},
-	"review_posted":                {"A review task must actually submit its verdict via github_submit_review.", "Post the review with github_add_review_comment/github_submit_review, not just in the answer text."},
+	"review_posted":                {"A review task must actually stage its verdict via stage_review (or a VERDICT: tail when it has no staging tools).", "Call stage_review(event, takeaway, verified, notes) with your verdict; analysis written only in the answer text is not a review."},
 	"behaviour_verified":           {"A code-review task must execute the change (tests, a throwaway harness) before judging it.", "Run the change - its tests or a small harness - before asserting it works."},
 	"artifact_valid":               {"A node whose artifact kind has a registered schema must write content that satisfies it.", "Fix the violations named in the failure and write/edit the artifact again."},
 }
