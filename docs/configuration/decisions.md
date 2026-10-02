@@ -12,7 +12,7 @@ decisions:
       url: http://llm-swap-media:11436/upstream/clef-27b   # quack appends /v1/systemone
       model: clef              # the request's model field; default: the handler's key
       timeout: 5s              # whole call, retry included; default 5s
-      max_input_tokens: 8192   # skip inputs certainly over the server's cap; default 8192
+      max_input_tokens: 8192   # skip inputs well over the server's cap; default 8192
   points:
     plan.accept:
       enabled: true
@@ -33,11 +33,11 @@ decisions:
 
 `timeout` bounds the whole call, and a point's own `timeout` can only shorten it. Keep both short: a llama-swap upstream that is still loading (Clef's cold start is about six minutes) blocks until the timeout, and the point then records `unavailable`.
 
-`max_input_tokens` is a pre-call guard. It estimates tokens at four bytes each, so it skips only inputs that are certainly too long. The server's own 413 is authoritative.
+`max_input_tokens` is a pre-call guard. It estimates tokens at six bytes each, above English's average of about four, so it skips only inputs well over the cap. A borderline input goes to the server, whose 413 is authoritative.
 
 ## Points, namespaces and modes
 
-`points` is keyed by point id. Core points have unprefixed ids (`plan.accept`) and are registered in code, each with its questions, a primary question, the modes its caller implements, and the step a `decide` outcome would replace. The `ext:` prefix is reserved for extensions: an extension's point is `ext:<plugin>/<name>`, and an extension can only evaluate points in its own namespace. At boot, an enabled core point that is not registered, sets a mode its caller doesn't implement, overrides a question it doesn't ask, or fails closed without a restrictive answer fails startup. Extension points are defined at call time, so only their id's shape is checked at load.
+`points` is keyed by point id. Core points have unprefixed ids (`plan.accept`) and are registered in code, each with its questions, a primary question, the modes its caller implements, and the step a `decide` outcome would replace. The `ext:` prefix is reserved for extensions: an extension's point is `ext:<plugin>/<name>`, and an extension can only evaluate points in its own namespace. At boot, an enabled core point that is not registered, sets a mode its caller doesn't implement, overrides a question it doesn't ask, or fails closed without a restrictive answer fails startup. Extension points are defined at call time, so only their id's shape is checked at load; an extension point configured in a mode it doesn't implement is treated as disabled when called.
 
 | Mode | What the caller does with the primary question's top answer |
 | --- | --- |
@@ -57,7 +57,7 @@ Points are built once at boot, so changing `decisions:` needs a restart.
 
 Every call an enabled point makes is recorded, including ones that returned no decision:
 
-- **Ledger.** A `decision` observation entry on the run's chat, with the node and round when the point ran inside one. It carries the point, mode, handler, outcome, top answer and its probability, and every question's probabilities. `confident` says whether the top answer reached `act_at`; it is recorded in every mode, so an observe run shows what guard or decide would have done. `baseline` is quack's own outcome for the same point, in the primary question's option space. `skipped_step` names the step a `decide` outcome replaced and is null otherwise, so savings can be summed from the replaced step's recorded cost. The entry also carries request bytes, input tokens, server and client latency, any error, and the exact state and questions sent. It is exported with the rest of a chat's observations by `quack ledger export`.
+- **Ledger.** A `decision` observation entry on the run's chat, with the node and round when the point ran inside one. It carries the point, mode, handler, outcome, top answer and its probability, and every question's probabilities. `confident` says whether the top answer reached `act_at`; it is recorded in every mode, so an observe run shows what guard or decide would have done. `baseline` is quack's own outcome for the same point, in the primary question's option space; it is absent when a `decide` outcome skipped the step that would have produced it. `skipped_step` names the step a `decide` outcome replaced and is null otherwise, so savings can be summed from the replaced step's recorded cost. The entry also carries request bytes, input tokens, server and client latency, any error, and the exact state and questions sent. It is exported with the rest of a chat's observations by `quack ledger export`.
 - **Trace.** A `quack.decision` span under the span that ran the point (for `plan.accept`, `quack.plan.judge`). It carries the same fields as `quack.decision.*` attributes, minus the state and questions.
 
 Outcomes are `observe`, `pass`, `restrict`, `act`, `fallback`, and `unavailable`.

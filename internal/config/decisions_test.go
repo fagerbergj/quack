@@ -48,11 +48,13 @@ func TestDecisionsAbsentIsOff(t *testing.T) {
 
 func TestDecisionsValidation(t *testing.T) {
 	for _, c := range []struct{ name, yaml, want string }{
-		{"no url", "handlers: { h: { timeout: 1s } }", "decisions.handlers.h.url is required"},
-		{"unknown kind", "handlers: { h: { kind: grpc, url: u } }", "kind must be systemone"},
-		{"negative timeout", "handlers: { h: { url: u, timeout: -1s } }", "must be >= 0"},
+		{"no url", "handlers: { h: { timeout: 1s } }", "decisions.handlers.h.url must be an http(s) URL"},
+		{"url without scheme", "handlers: { h: { url: llm-swap-media:11436/upstream/clef } }", "must be an http(s) URL"},
+		{"unknown kind", "handlers: { h: { kind: grpc, url: http://x } }", "kind must be systemone"},
+		{"negative timeout", "handlers: { h: { url: http://x, timeout: -1s } }", "must be >= 0"},
 		{"bad mode", "points: { p: { mode: shadow } }", "mode must be observe, guard or decide"},
 		{"act_at above 1", "points: { p: { act_at: 1.5 } }", "act_at must be in (0,1]"},
+		{"act_at NaN", "points: { p: { act_at: .nan } }", "act_at must be in (0,1]"},
 		{"act_at negative", "points: { p: { act_at: -0.1 } }", "act_at must be in (0,1]"},
 		{"negative point timeout", "points: { p: { timeout: -1s } }", "timeout >= 0"},
 		{"fail closed outside guard", "points: { p: { mode: decide, fail: closed } }", "closed in guard mode"},

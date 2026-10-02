@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -99,8 +100,8 @@ func validateDecisionHandler(name string, h *DecisionHandler) error {
 	if h.Kind != DecisionHandlerSystemOne {
 		return fmt.Errorf("config: decisions.handlers.%s.kind must be %s (got %q)", name, DecisionHandlerSystemOne, h.Kind)
 	}
-	if h.URL == "" {
-		return fmt.Errorf("config: decisions.handlers.%s.url is required", name)
+	if u, err := url.Parse(h.URL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("config: decisions.handlers.%s.url must be an http(s) URL (got %q)", name, h.URL)
 	}
 	if h.Timeout < 0 || h.MaxInputTokens < 0 {
 		return fmt.Errorf("config: decisions.handlers.%s: timeout and max_input_tokens must be >= 0", name)
@@ -127,7 +128,7 @@ func (d *DecisionsConfig) validatePoint(id string, p *DecisionPoint) error {
 	if p.ActAt == 0 {
 		p.ActAt = defaultDecisionActAt
 	}
-	if p.ActAt <= 0 || p.ActAt > 1 || p.Timeout < 0 {
+	if !(p.ActAt > 0 && p.ActAt <= 1) || p.Timeout < 0 {
 		return fmt.Errorf("config: decisions.points.%s: act_at must be in (0,1] and timeout >= 0", id)
 	}
 	if !p.Enabled {
