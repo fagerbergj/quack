@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -234,6 +235,27 @@ func TestExportDecisions(t *testing.T) {
 	}
 	if len(scores) != 8 { // 4 answered decisions x 2; the unavailable one is unscored
 		t.Errorf("scores = %d, want 8: %+v", len(scores), scores)
+	}
+}
+
+func TestExportDecisionsRunsDeduped(t *testing.T) {
+	var calls []lfCall
+	srv := fakeDecisionLangfuse(t, &calls)
+	defer srv.Close()
+	ing := langfuse.New(srv.URL, "pk", "sk", langfuse.WithHTTPClient(srv.Client()))
+	recs := fixture()
+	recs[2].Handler = "old" // a handler change inside the window: plan.accept has 4 items, 2 runs
+	sums, err := ExportDecisions(context.Background(), newTestGenClient(t, srv), ing, "v", recs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range sums {
+		if s.Point != "plan.accept" {
+			continue
+		}
+		if runs := slices.Sorted(slices.Values(s.Runs)); !slices.Equal(runs, []string{"clef@v", "old@v"}) {
+			t.Errorf("runs = %v, want [clef@v old@v]", s.Runs)
+		}
 	}
 }
 

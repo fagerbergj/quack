@@ -2,6 +2,7 @@ package rest
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"slices"
@@ -11,13 +12,24 @@ import (
 	"github.com/fagerbergj/quack/internal/schema"
 )
 
-const defaultDecisionLimit = 5000
+const (
+	defaultDecisionLimit = 5000
+	maxDecisionLimit     = 50000 // matches openapi.yaml
+)
 
 // ListDecisions serves every decision ledger entry across chats (backs `quack decisions`).
 // The cross-chat read is one query; chat and point filters apply after it.
 func (h *Handler) ListDecisions(w http.ResponseWriter, r *http.Request, params schema.ListDecisionsParams) {
 	if h.ledgerStore == nil {
 		errMsg(w, http.StatusNotFound, "recording is not enabled")
+		return
+	}
+	limit := defaultDecisionLimit
+	if params.Limit != nil {
+		limit = *params.Limit
+	}
+	if limit < 1 || limit > maxDecisionLimit {
+		errMsg(w, http.StatusBadRequest, fmt.Sprintf("limit must be between 1 and %d", maxDecisionLimit))
 		return
 	}
 	var since time.Time
@@ -29,9 +41,24 @@ func (h *Handler) ListDecisions(w http.ResponseWriter, r *http.Request, params s
 		httpError(w, http.StatusInternalServerError, err)
 		return
 	}
+	out := schema.DecisionList{QuackVersion: h.quackVersion}
+	data, skipped := decodeDecisions(entries, params)
+	out.Data = data
+	slices.SortStableFunc(out.Data, func(a, b schema.DecisionRecord) int { return a.At.Compare(b.At) })
+	if skipped > 0 {
+		out.Skipped = &skipped
+	}
+	if len(out.Data) > limit {
+		trunc := true
+		out.Data, out.Truncated = out.Data[len(out.Data)-limit:], &trunc
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// decodeDecisions applies the chat and point filters and counts undecodable payloads.
+func decodeDecisions(entries []ledger.Entry, params schema.ListDecisionsParams) ([]schema.DecisionRecord, int) {
 	withState := params.WithState != nil && *params.WithState
-	out := schema.DecisionList{QuackVersion: h.quackVersion, Data: []schema.DecisionRecord{}}
-	skipped := 0
+	data, skipped := []schema.DecisionRecord{}, 0
 	for _, e := range entries {
 		if params.Chat != nil && !slices.Contains(*params.Chat, e.ChatID) {
 			continue
@@ -45,21 +72,9 @@ func (h *Handler) ListDecisions(w http.ResponseWriter, r *http.Request, params s
 		if params.Point != nil && p.Point != *params.Point {
 			continue
 		}
-		out.Data = append(out.Data, decisionRecord(e, p, withState))
+		data = append(data, decisionRecord(e, p, withState))
 	}
-	slices.SortStableFunc(out.Data, func(a, b schema.DecisionRecord) int { return a.At.Compare(b.At) })
-	if skipped > 0 {
-		out.Skipped = &skipped
-	}
-	limit := defaultDecisionLimit
-	if params.Limit != nil {
-		limit = *params.Limit
-	}
-	if len(out.Data) > limit {
-		trunc := true
-		out.Data, out.Truncated = out.Data[len(out.Data)-limit:], &trunc
-	}
-	writeJSON(w, http.StatusOK, out)
+	return data, skipped
 }
 
 func decisionRecord(e ledger.Entry, p ledger.DecisionPayload, withState bool) schema.DecisionRecord {
