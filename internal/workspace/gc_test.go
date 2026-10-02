@@ -438,7 +438,7 @@ func TestSweepBaselineWorktreeReapingKeepsParentConsistent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	prune := func(ctx context.Context, dir string) error {
+	prune := func(ctx context.Context, _, dir string) error {
 		common := WorktreeCommonGitDir(dir)
 		if common == "" {
 			return nil

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fagerbergj/quack/internal/workspace"
 )
@@ -581,5 +582,44 @@ func unpackObjects(t *testing.T, dir string) {
 		if err != nil {
 			t.Fatalf("unpack-objects: %v %s", err, out)
 		}
+	}
+}
+
+// TestGCPruneStaysInsideChatScope: a stale chat's worktree registered to a sibling chat's clone must not
+// have that clone's bookkeeping pruned by GC.
+func TestGCPruneStaysInsideChatScope(t *testing.T) {
+	requireGit(t)
+	j := newTestGitBinding(t).jail
+	userRoot := filepath.Join(j.Root(), "u1")
+	sibling, stale := filepath.Join(userRoot, "chatB"), filepath.Join(userRoot, "chatA")
+	clone, wt := filepath.Join(sibling, "clone"), filepath.Join(stale, "wt")
+	for _, d := range []string{sibling, stale} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rawGit(t, sibling, "init", "--quiet", "--initial-branch=main", clone)
+	rawGit(t, clone, "-c", "user.name=t", "-c", "user.email=t@x.local", "commit", "--quiet", "--allow-empty", "-m", "init")
+	rawGit(t, clone, "worktree", "add", "--quiet", "--detach", wt)
+	old := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(stale, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	workspace.Sweep(context.Background(), j, workspace.GCConfig{ChatTTL: time.Hour},
+		func(chatDir string) bool { return chatDir == "chatB" },
+		func(ctx context.Context, root, dir string) error {
+			return PruneWorktree(ctx, root, dir, workspace.DefaultCaps())
+		})
+
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Errorf("stale chat scope should be gone, stat err = %v", err)
+	}
+	out, err := exec.Command("git", "-C", clone, "worktree", "list", "--porcelain").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "worktree "+wt+"\n") {
+		t.Errorf("sibling chat's clone lost its worktree bookkeeping to the stale chat's GC:\n%s", out)
 	}
 }
