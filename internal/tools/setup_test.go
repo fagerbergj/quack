@@ -681,3 +681,33 @@ func TestSetupThenPushPreservesExistingPRHeadCommit(t *testing.T) {
 		}
 	})
 }
+
+// A reused clone's origin/<branch> ref holds the pre-rebase commit; the next review setup must still fetch the rewritten head.
+func TestSetupCloneAndBranchReviewFollowsForcePushedBranch(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	addBranchFixture(t, bare, "pr/head")
+	b := newTestGitBinding(t)
+	url := "file://" + bare
+	if _, err := setupCloneAndBranch(context.Background(), b, "n1/repo", url, "main", "pr/head", true); err != nil {
+		t.Fatalf("first setup: %v", err)
+	}
+
+	seed := t.TempDir()
+	rawGit(t, filepath.Dir(seed), "clone", "--quiet", bare, seed)
+	runGitT(t, seed, "checkout", "--quiet", "-b", "pr/head")
+	if err := os.WriteFile(filepath.Join(seed, "rebased.txt"), []byte("rebased\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitT(t, seed, "add", "-A")
+	runGitT(t, seed, "-c", "user.name=pr", "-c", "user.email=pr@x.local", "commit", "--quiet", "-m", "rewritten")
+	runGitT(t, seed, "push", "--quiet", "--force", "origin", "pr/head")
+
+	target, err := setupCloneAndBranch(context.Background(), b, "n1/repo", url, "main", "pr/head", true)
+	if err != nil {
+		t.Fatalf("second setup after force-push: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(target, "rebased.txt")); err != nil {
+		t.Errorf("checkout is not at the rewritten head: %v", err)
+	}
+}

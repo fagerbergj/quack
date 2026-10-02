@@ -107,7 +107,7 @@ func unpushedCommitCount(ctx context.Context, b gitBinding, target, repoURL, bas
 	upstream := baseRef
 	auth, err := b.authFor(repoURL)
 	if err == nil {
-		refspec := "refs/heads/" + workBranch + ":refs/remotes/origin/" + workBranch
+		refspec := trackingRefspec(workBranch)
 		if _, _, err := runGit(ctx, target, []string{"fetch", "--quiet", repoURL, refspec}, b.caps, auth); err == nil {
 			upstream = "origin/" + workBranch
 		}
@@ -194,6 +194,7 @@ func isShallowRepo(ctx context.Context, dir string, caps workspace.Caps) bool {
 }
 
 // trackingRefspec: an explicit-URL fetch updates no remote-tracking ref on its own, unlike a fetch of "origin".
+// The "+" lets a rebased, force-pushed branch replace the stale tracking ref a reused clone holds.
 func trackingRefspec(ref string) string {
 	return "+refs/heads/" + ref + ":refs/remotes/origin/" + ref
 }
@@ -216,7 +217,7 @@ func runSetupCheckout(ctx context.Context, b gitBinding, target, repoURL, baseRe
 				return fmt.Errorf("setup: unshallow base history for review: %w", err)
 			}
 		}
-		if _, _, err := runGit(ctx, target, []string{"fetch", "--quiet", repoURL, workBranch + ":refs/remotes/origin/" + workBranch}, b.caps, auth); err != nil {
+		if _, _, err := runGit(ctx, target, []string{"fetch", "--quiet", repoURL, trackingRefspec(workBranch)}, b.caps, auth); err != nil {
 			return fmt.Errorf("setup: fetch review head %q: %w", workBranch, err)
 		}
 		if _, _, err := runGit(ctx, target, []string{"checkout", "--quiet", "-B", workBranch, "origin/" + workBranch}, b.caps, nil); err != nil {
