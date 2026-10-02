@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -159,8 +158,8 @@ func TestNewValidatesAgainstRegistry(t *testing.T) {
 	if _, err := New(closed); err == nil || !strings.Contains(err.Error(), "restrictive answer") {
 		t.Errorf("fail closed without a restrictive answer: err = %v", err)
 	}
-	if d, err := New(cfg("ext:github/intent", "decide", nil)); err != nil || !d.Enabled("ext:github/intent") {
-		t.Errorf("extension point: %v %v", d, err)
+	if d, err := New(cfg("ext:github/intent", "decide", nil)); err == nil || !strings.Contains(err.Error(), "no such point") {
+		t.Errorf("undeclared extension point: %v %v", d, err)
 	}
 	typo := cfg("test.acceprt", "observe", nil)
 	typo.Points["test.acceprt"] = config.DecisionPoint{}
@@ -170,7 +169,33 @@ func TestNewValidatesAgainstRegistry(t *testing.T) {
 	off := cfg("ext:github/intent", "observe", nil)
 	off.Points["ext:github/intent"] = config.DecisionPoint{}
 	if d, err := New(off); d != nil || err != nil {
-		t.Errorf("all points disabled: %v %v, want nil decider", d, err)
+		t.Errorf("disabled point of an extension that declares nothing: %v %v, want nil decider", d, err)
+	}
+}
+
+func TestNewValidatesDeclaredExtensionPoints(t *testing.T) {
+	intent := Point{ID: "ext:github/intent", Primary: "q", Questions: map[string]Question{"q": {Type: "noul"}}, Modes: []string{config.DecisionModeObserve}}
+	cfg := func(id string, p config.DecisionPoint) config.DecisionsConfig {
+		p.Handler = "p"
+		return config.DecisionsConfig{Handlers: map[string]config.DecisionHandler{"p": {URL: "http://x"}}, Points: map[string]config.DecisionPoint{id: p}}
+	}
+	if d, err := New(cfg(intent.ID, config.DecisionPoint{Enabled: true, Mode: "observe"}), intent); err != nil || !d.Enabled(intent.ID) {
+		t.Errorf("declared point: %v %v", d, err)
+	}
+	for _, c := range []struct {
+		name, id string
+		p        config.DecisionPoint
+		want     string
+	}{
+		{"typo'd name, disabled", "ext:github/intnet", config.DecisionPoint{}, "no such point"},
+		{"typo'd plugin, enabled", "ext:gihtub/intent", config.DecisionPoint{Enabled: true, Mode: "observe"}, "no such point"},
+		{"unimplemented mode", intent.ID, config.DecisionPoint{Enabled: true, Mode: "decide"}, `mode "decide" is not supported`},
+		{"fail closed, nothing restrictive", intent.ID, config.DecisionPoint{Enabled: true, Mode: "observe", Fail: config.DecisionFailClosed}, "restrictive answer"},
+		{"unknown question", intent.ID, config.DecisionPoint{Enabled: true, Mode: "observe", Questions: map[string]config.DecisionQuestion{"zzz": {}}}, "no such question"},
+	} {
+		if _, err := New(cfg(c.id, c.p), intent); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: err = %v, want %q", c.name, err, c.want)
+		}
 	}
 }
 
@@ -320,25 +345,6 @@ func TestGuardFailClosedRestrictsWithoutADecision(t *testing.T) {
 	open := newDecider(t, "http://127.0.0.1:1", testAccept.ID, config.DecisionModeGuard, 0.9)
 	if x := testAccept.Decide(context.Background(), open, "s", true); x.Outcome != OutcomeUnavailable || x.Guard(true) != true {
 		t.Errorf("%+v, want fail open to keep the caller's value", x)
-	}
-}
-
-func TestExtGuardFailClosedWithoutRestrictiveWarns(t *testing.T) {
-	var buf strings.Builder
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
-	t.Cleanup(func() { slog.SetDefault(prev) })
-	id := "ext:github/intent"
-	d, err := New(config.DecisionsConfig{
-		Handlers: map[string]config.DecisionHandler{"p": {URL: "http://127.0.0.1:1", Timeout: time.Second}},
-		Points:   map[string]config.DecisionPoint{id: {Enabled: true, Handler: "p", Mode: config.DecisionModeGuard, ActAt: 0.9, Fail: config.DecisionFailClosed}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	r := d.DecideWith(context.Background(), Point{ID: id, Primary: "q", Questions: map[string]Question{"q": {Type: "noul"}}}, "s", "x")
-	if r.Outcome != OutcomeUnavailable || !strings.Contains(buf.String(), "no restrictive answer") {
-		t.Errorf("outcome %v, log %q, want unavailable and a warning", r.Outcome, buf.String())
 	}
 }
 

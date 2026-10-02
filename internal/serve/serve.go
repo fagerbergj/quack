@@ -508,7 +508,7 @@ type boot struct {
 	admission *dag.Admission
 	hooks     *shutdownHooks
 	cleanups  []func()
-	// decisions is built before the extensions so Host.Decide can close over it.
+	// decisions is built after the extensions, whose declared points it validates.
 	decisions *decide.Decider
 	// pristine is cfg before plugin seeding; a reload seeds a fresh copy of it.
 	pristine   *config.Config
@@ -737,12 +737,12 @@ func (b *boot) initExtensions(ctx context.Context, st *store.Store, runHub *stre
 	// Built after taskStore/userStore so UpdateChatOrigin's memory-outcome
 	// mapping (design doc §4(b)/§5) can close over the concrete stores
 	// instead of a lazily-resolved ref.
-	var err error
-	if b.decisions, err = decide.New(b.cfg.Decisions); err != nil {
+	decisions := &extDecisions{}
+	sdkExts, err := buildSDKExtensions(b.cfg, st, runHub, bootEventLog, orchRef, artifacts, jail, judgeModelRef, taskStore, userStore, ledgerStore, shapesRef, decisions)
+	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, err
 	}
-	sdkExts, err := buildSDKExtensions(b.cfg, st, runHub, bootEventLog, orchRef, artifacts, jail, judgeModelRef, taskStore, userStore, ledgerStore, shapesRef, b.decisions)
-	if err != nil {
+	if b.decisions, err = decisions.build(b.cfg.Decisions); err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, err
 	}
 	artifactSchemas, err := buildArtifactSchemas(sdkExts)

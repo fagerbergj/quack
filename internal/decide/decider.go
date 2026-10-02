@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"maps"
 	"slices"
 	"strings"
@@ -76,17 +75,28 @@ type Decider struct {
 	handlers map[string]Handler
 }
 
-// New checks every core point id against the registry (so a typo is caught while disabled) and enabled points' policy; nil when none is enabled. It never calls a handler.
-func New(cfg config.DecisionsConfig) (*Decider, error) {
+// New checks every point id against the registry and ext, the enabled extensions'
+// declared points (so a typo is caught while disabled), and enabled points' policy;
+// nil when none is enabled. It never calls a handler.
+func New(cfg config.DecisionsConfig, ext ...Point) (*Decider, error) {
 	d := &Decider{points: map[string]config.DecisionPoint{}, handlers: map[string]Handler{}}
+	declared := map[string]Point{}
+	for _, p := range ext {
+		declared[p.ID] = p
+	}
 	for id, p := range cfg.Points {
-		if _, ok := lookup(id); !ok && !strings.HasPrefix(id, config.DecisionExtPrefix) {
-			return nil, fmt.Errorf("decisions.points.%s: no such point (registered: %s)", id, strings.Join(registeredIDs(), ", "))
+		def, ok := lookup(id)
+		if !ok {
+			def, ok = declared[id]
+		}
+		// A disabled extension declares nothing, so its disabled entries can't be told from a typo.
+		if !ok && (p.Enabled || !strings.HasPrefix(id, config.DecisionExtPrefix) || pluginDeclares(declared, id)) {
+			return nil, fmt.Errorf("decisions.points.%s: no such point (registered: %s)", id, strings.Join(append(registeredIDs(), slices.Sorted(maps.Keys(declared))...), ", "))
 		}
 		if !p.Enabled {
 			continue
 		}
-		if err := checkPoint(id, p); err != nil {
+		if err := checkPoint(id, p, def); err != nil {
 			return nil, err
 		}
 		d.points[id] = p
@@ -100,14 +110,18 @@ func New(cfg config.DecisionsConfig) (*Decider, error) {
 	return d, nil
 }
 
-func checkPoint(id string, p config.DecisionPoint) error {
-	if strings.HasPrefix(id, config.DecisionExtPrefix) {
-		return nil
+// pluginDeclares reports whether id's extension declared any point.
+func pluginDeclares(declared map[string]Point, id string) bool {
+	plugin, _, _ := strings.Cut(strings.TrimPrefix(id, config.DecisionExtPrefix), "/")
+	for d := range declared {
+		if strings.HasPrefix(d, config.DecisionExtPrefix+plugin+"/") {
+			return true
+		}
 	}
-	def, ok := lookup(id)
-	if !ok {
-		return fmt.Errorf("decisions.points.%s: no such point (registered: %s)", id, strings.Join(registeredIDs(), ", "))
-	}
+	return false
+}
+
+func checkPoint(id string, p config.DecisionPoint, def Point) error {
 	if def.Modes != nil && !slices.Contains(def.Modes, p.Mode) {
 		return fmt.Errorf("decisions.points.%s: mode %q is not supported here (supported: %s)", id, p.Mode, strings.Join(def.Modes, ", "))
 	}
@@ -140,14 +154,10 @@ func (d *Decider) Decide(ctx context.Context, pointID string, state any, baselin
 	return d.DecideWith(ctx, p, state, baseline)
 }
 
-// DecideWith is Decide for a point defined at the call site (an extension's).
+// DecideWith is Decide for a point New validated, core or an extension's declared one.
 func (d *Decider) DecideWith(ctx context.Context, p Point, state any, baseline string) Result {
 	if !d.Enabled(p.ID) {
 		return Result{Point: p.ID, Outcome: OutcomeDisabled, Err: ErrDisabled}
-	}
-	// Boot checks core points' modes; an extension's point is only known here.
-	if mode := d.points[p.ID].Mode; p.Modes != nil && !slices.Contains(p.Modes, mode) {
-		return Result{Point: p.ID, Outcome: OutcomeDisabled, Err: fmt.Errorf("%w: %s does not implement mode %q", ErrDisabled, p.ID, mode)}
 	}
 	r := d.run(ctx, p, state)
 	record(ctx, r, baseline)
@@ -198,13 +208,8 @@ func (d *Decider) run(ctx context.Context, p Point, state any) Result {
 	}
 	if err != nil {
 		r.Err, r.Outcome = err, OutcomeUnavailable
-		if cfg.Mode == config.DecisionModeGuard && cfg.Fail == config.DecisionFailClosed {
-			if len(p.Restrictive) > 0 {
-				r.Outcome, r.Top = OutcomeRestrict, p.Restrictive[0]
-			} else {
-				// Boot rejects this for core points; an extension's point is only known here.
-				slog.Warn("decide: fail: closed has no restrictive answer; failing open", "point", p.ID, "err", err)
-			}
+		if cfg.Mode == config.DecisionModeGuard && cfg.Fail == config.DecisionFailClosed && len(p.Restrictive) > 0 {
+			r.Outcome, r.Top = OutcomeRestrict, p.Restrictive[0]
 		}
 		return r
 	}

@@ -29,7 +29,6 @@ import (
 	"github.com/fagerbergj/quack/internal/cli"
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/dag"
-	"github.com/fagerbergj/quack/internal/decide"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/ledger/fold"
 	"github.com/fagerbergj/quack/internal/memory"
@@ -77,7 +76,7 @@ type sdkBuildDeps struct {
 	eventLog      *runlog.EventLog
 	artifacts     *store.TurnAwareService
 	judgeModelRef *atomic.Pointer[model.LLM]
-	decisions     *decide.Decider // nil-safe: a nil Decider answers ErrDisabled
+	decisions     *extDecisions
 	taskMem       *memory.Store
 	userMem       *memory.Store
 	ledgerStore   ledger.LedgerStore
@@ -86,7 +85,10 @@ type sdkBuildDeps struct {
 // buildSDKExtensions validates and mounts every configured extension module in stable
 // name order (enabled:false modules stay dormant; nil is not an error). The
 // orchRef/judgeModelRef pointers are read lazily inside the Dispatch/Classify closures.
-func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, orchRef *atomic.Pointer[orchestrator.Orchestrator], artifacts *store.TurnAwareService, jail *workspace.Jail, judgeModelRef *atomic.Pointer[model.LLM], taskMem, userMem *memory.Store, ledgerStore ledger.LedgerStore, shapesRef *atomic.Pointer[[]workflowcatalog.Shape], decisions *decide.Decider) ([]builtSDKExtension, error) {
+func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, orchRef *atomic.Pointer[orchestrator.Orchestrator], artifacts *store.TurnAwareService, jail *workspace.Jail, judgeModelRef *atomic.Pointer[model.LLM], taskMem, userMem *memory.Store, ledgerStore ledger.LedgerStore, shapesRef *atomic.Pointer[[]workflowcatalog.Shape], decisions *extDecisions) ([]builtSDKExtension, error) {
+	if decisions == nil {
+		decisions = &extDecisions{}
+	}
 	d := sdkBuildDeps{cfg: cfg, factories: extsdk.Registered(), shapesRef: shapesRef,
 		orchRef: orchRef, st: st, hub: hub, eventLog: eventLog, artifacts: artifacts, judgeModelRef: judgeModelRef,
 		decisions: decisions, taskMem: taskMem, userMem: userMem, ledgerStore: ledgerStore}
@@ -272,11 +274,14 @@ func buildOneSDKExtension(name string, factory extsdk.Factory, d sdkBuildDeps) (
 			}
 			return classifyWithModel(ctx, *m, prompt)
 		},
-		Decide: extDecide(d.decisions, name),
+		Decide: d.decisions.host(name),
 	}
 	ext, err := factory(host, ec.raw)
 	if err != nil {
 		return builtSDKExtension{}, false, fmt.Errorf("extensions.%s: factory: %w", name, err)
+	}
+	if err := d.decisions.declare(name, ext); err != nil {
+		return builtSDKExtension{}, false, err
 	}
 	extHolder.Store(&ext)
 	b := builtSDKExtension{name: name, ext: ext}
