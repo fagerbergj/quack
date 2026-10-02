@@ -68,6 +68,23 @@ func TestValidateExtensions_JoinsErrors(t *testing.T) {
 // dir and leave both a configured data_dir and the workspace default untouched.
 func TestValidateExtensions_LeavesRealDataDirsUntouched(t *testing.T) {
 	dir := t.TempDir()
+	root := filepath.Join(dir, "workspace")
+	noopDir := filepath.Join(dir, "noop-data")
+	cfg := extensionsConfig(t, root, githubModule(t, dir)+"\nnoop: {data_dir: "+noopDir+"}")
+	got, err := ValidateExtensions(cfg)
+	if err != nil || strings.Join(got.Accepted, ",") != "github,noop" {
+		t.Fatalf("ValidateExtensions = %+v, %v; want github,noop accepted", got, err)
+	}
+	for _, p := range []string{root, noopDir} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("%s exists after validate (stat err %v); validate must not create or touch real data dirs", p, err)
+		}
+	}
+}
+
+// githubModule is an extensions.github block whose Factory accepts it offline.
+func githubModule(t *testing.T, dir string) string {
+	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
@@ -76,16 +93,26 @@ func TestValidateExtensions_LeavesRealDataDirsUntouched(t *testing.T) {
 	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	root := filepath.Join(dir, "workspace")
-	noopDir := filepath.Join(dir, "noop-data")
-	cfg := extensionsConfig(t, root, "github: {client_id: Iv1.x, private_key_path: "+keyPath+", webhook_secret: s}\nnoop: {data_dir: "+noopDir+"}")
-	got, err := ValidateExtensions(cfg)
-	if err != nil || strings.Join(got.Accepted, ",") != "github,noop" {
-		t.Fatalf("ValidateExtensions = %+v, %v; want github,noop accepted", got, err)
-	}
-	for _, p := range []string{root, noopDir} {
-		if _, err := os.Stat(p); !os.IsNotExist(err) {
-			t.Errorf("%s exists after validate (stat err %v); validate must not create or touch real data dirs", p, err)
+	return "github: {client_id: Iv1.x, private_key_path: " + keyPath + ", webhook_secret: s}"
+}
+
+// validate checks decisions.points against the enabled extensions' declarations, as boot does.
+func TestValidateExtensions_ChecksDecisionPoints(t *testing.T) {
+	dir := t.TempDir()
+	github := githubModule(t, dir)
+	for _, c := range []struct{ name, modules, point, want string }{
+		{"extension not enabled", "noop: {}", "ext:github/finding.severity", `extension "github" is not enabled (enabled: noop)`},
+		{"extension declares nothing", "noop: {}", "ext:noop/start_sit", `extension "noop" declares no decision points`},
+		{"undeclared name", github, "ext:github/finding.severty",
+			`extension "github" declares no such point (declared: ext:github/finding.blocking, ext:github/finding.severity, ext:github/review.verdict)`},
+		{"declared", github, "ext:github/finding.severity", ""},
+	} {
+		cfg := extensionsConfig(t, filepath.Join(dir, "workspace"), c.modules)
+		cfg.Decisions = config.DecisionsConfig{Handlers: map[string]config.DecisionHandler{"clef": {URL: "http://x"}},
+			Points: map[string]config.DecisionPoint{c.point: {Enabled: true, Handler: "clef", Mode: "observe"}}}
+		_, err := ValidateExtensions(cfg)
+		if (c.want == "" && err != nil) || (c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want))) {
+			t.Errorf("%s: err = %v, want %q", c.name, err, c.want)
 		}
 	}
 }

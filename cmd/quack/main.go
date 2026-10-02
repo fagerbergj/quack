@@ -721,7 +721,7 @@ func newServerValidateCmd() *cobra.Command {
 		},
 	}
 	asJSONFlag(c, &asJSON)
-	c.Flags().BoolVar(&skipExtensions, "skip-extensions", false, "structure-only: don't build extensions (no extension secrets, key files or data dirs needed)")
+	c.Flags().BoolVar(&skipExtensions, "skip-extensions", false, "structure-only: don't build extensions or check decisions.points against them (no extension secrets, key files or data dirs needed)")
 	return c
 }
 

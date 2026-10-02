@@ -25,6 +25,10 @@ decisions:
         accept:
           instructions: Should an independent reviewer accept this plan step?
           # criteria: {true: ..., false: ...}   # noul; choice takes {option: description}, score a list
+    "ext:github/review.verdict":   # an extension's declared point
+      enabled: true
+      handler: clef
+      mode: observe
 ```
 
 ## Handlers
@@ -37,7 +41,7 @@ decisions:
 
 ## Points, namespaces and modes
 
-`points` is keyed by point id. Core points have unprefixed ids (`plan.accept`) and are registered in code, each with its questions, a primary question, the modes its caller implements, and the step a `decide` outcome would replace. The `ext:` prefix is reserved for extensions: an extension's point is `ext:<plugin>/<name>`, and an extension can only evaluate points in its own namespace. At boot, an enabled core point that is not registered, sets a mode its caller doesn't implement, overrides a question it doesn't ask, or fails closed without a restrictive answer fails startup. Extension points are defined at call time, so only their id's shape is checked at load; an extension point configured in a mode it doesn't implement is treated as disabled when called.
+`points` is keyed by point id. Core points have unprefixed ids (`plan.accept`) and are registered in code, each with its questions, a primary question, the modes its caller implements, and the step a `decide` outcome would replace. The `ext:` prefix is reserved for extensions: an extension declares its points in its plugin (the SDK's `DecisionPoints`: questions, primary question, restrictive answers, modes; no modes means `observe` only), each becomes `ext:<plugin>/<name>`, and an extension can only evaluate its own declared points. At boot, after the enabled extensions are built, a point that is neither registered nor declared fails startup, as does an enabled point that sets a mode its caller doesn't implement, overrides a question it doesn't ask, or fails closed without a restrictive answer. For an `ext:` id the error says whether the extension is not enabled, declares no points, or declares other names, and lists the ones it does declare. The one exception is a disabled `ext:` entry for an extension that is not enabled: it is accepted, since it cannot be told apart from a typo there. `quack server validate` runs the same check after building the enabled extensions; `--skip-extensions` skips it.
 
 | Mode | What the caller does with the primary question's top answer |
 | --- | --- |
@@ -50,6 +54,14 @@ A noul question's options are `true` and `false`; a score question's options are
 | Point | Modes | Questions | State |
 | --- | --- | --- | --- |
 | `plan.accept` | `observe` | `accept` (noul, primary): should a reviewer accept this plan step? | The user's request and the plan summary the plan judge sees. It runs beside the plan judge and never changes the judge's verdict. |
+
+The [GitHub extension](../extensions/github.md) declares three points, all asked after a review is posted and never changing what it posts. Each finding's state is its path, line, text without its label, and the diff hunk it is anchored to; the verdict's state is the pull request's title and body, every finding, and the reviewer's notes.
+
+| Point | Modes | Questions | Restrictive | Baseline |
+| --- | --- | --- | --- | --- |
+| `ext:github/finding.severity` | `observe` | `severity` (choice, primary): `blocking`, `suggestion`, `nit`, `question` | `blocking` | The finding's severity from quack's review, else its body label; not asked for an unlabeled finding. |
+| `ext:github/finding.blocking` | `observe` | `blocking` (noul, primary): would merging with this finding unaddressed be a mistake? | `true` | Whether the label is `blocking`. |
+| `ext:github/review.verdict` | `observe` | `verdict` (choice, primary): `approve`, `comment`, `request_changes` | `comment`, `request_changes` | The review's own verdict. |
 
 Points are built once at boot, so changing `decisions:` needs a restart.
 
