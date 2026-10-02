@@ -878,7 +878,8 @@ func (h *Handler) loadPlanNode(w http.ResponseWriter, r *http.Request, chatID, n
 		}
 	}
 	if !nodeFound {
-		errMsg(w, http.StatusNotFound, "no such node in the plan")
+		// Node ids recur across plans, so only the latest plan's nodes are addressable.
+		errMsg(w, http.StatusNotFound, "no such node in the latest plan; nodes of earlier plans cannot be retried, stopped or started")
 		return nil, nil, "", false
 	}
 	dn, err = h.store.GetDagNode(r.Context(), dp.ID, nodeID)
