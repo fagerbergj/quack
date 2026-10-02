@@ -125,6 +125,7 @@ func Init(ctx context.Context, cfg config.ObservabilityConfig, ledgerStore ledge
 		sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.TraceIDRatioBased(cfg.Otel.Sample))),
 	}
 	mpOpts := []metric.Option{metric.WithResource(res)}
+	// tp and mp own their processors/readers, so only the log provider needs its own shutdown.
 	var shutdowns []func(context.Context) error
 	// One exporter per destination per signal: a trace backend and a metrics
 	// collector are usually different systems (#1045).
@@ -135,7 +136,6 @@ func Init(ctx context.Context, cfg config.ObservabilityConfig, ledgerStore ledge
 				return nil, nil, err
 			}
 			tpOpts = append(tpOpts, sdktrace.WithSpanProcessor(bsp))
-			shutdowns = append(shutdowns, bsp.Shutdown)
 		}
 		if e.Wants(config.SignalMetrics) {
 			periodic, err := newMetricReader(ctx, e.Endpoint)
@@ -143,7 +143,6 @@ func Init(ctx context.Context, cfg config.ObservabilityConfig, ledgerStore ledge
 				return nil, nil, err
 			}
 			mpOpts = append(mpOpts, metric.WithReader(periodic))
-			shutdowns = append(shutdowns, periodic.Shutdown)
 		}
 	}
 	tp := sdktrace.NewTracerProvider(tpOpts...)
