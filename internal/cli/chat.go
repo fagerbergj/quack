@@ -9,6 +9,7 @@ import (
 	"io"
 	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -333,7 +334,7 @@ func RunNodeStop(ctx context.Context, out io.Writer, server, chatID, nodeID stri
 		return err
 	}
 	if err := c.CancelNode(ctx, chatID, nodeID); err != nil {
-		return nodeErrAs(err, chatID)
+		return nodeErrAs(err, chatID, nodeID)
 	}
 	return reportAction(out, asJSON, nodeActionResult{ChatID: chatID, NodeID: nodeID, Action: "stop",
 		Message: fmt.Sprintf("Stopping node %s (chat %s); an in-flight round is being aborted, the rest of the run continues.", nodeID, chatID)})
@@ -347,7 +348,7 @@ func RunNodePause(ctx context.Context, out io.Writer, server, chatID, nodeID str
 		return err
 	}
 	if err := c.PauseNode(ctx, chatID, nodeID); err != nil {
-		return nodeErrAs(err, chatID)
+		return nodeErrAs(err, chatID, nodeID)
 	}
 	return reportAction(out, asJSON, nodeActionResult{ChatID: chatID, NodeID: nodeID, Action: "pause",
 		Message: fmt.Sprintf("Pausing node %s (chat %s) at its next turn boundary - resume it with `quack chat node resume %s %s`.", nodeID, chatID, chatID, nodeID)})
@@ -362,7 +363,7 @@ func RunNodeResume(ctx context.Context, out io.Writer, server, chatID, nodeID st
 		return err
 	}
 	if err := c.ResumeNode(ctx, chatID, nodeID); err != nil {
-		return nodeErrAs(err, chatID)
+		return nodeErrAs(err, chatID, nodeID)
 	}
 	return reportAction(out, asJSON, nodeActionResult{ChatID: chatID, NodeID: nodeID, Action: "resume",
 		Message: fmt.Sprintf("Resuming node %s (chat %s) - watch it with `quack chat show %s -f`.", nodeID, chatID, chatID)})
@@ -378,7 +379,7 @@ func RunNodeQueue(ctx context.Context, out io.Writer, server, chatID, nodeID, me
 	}
 	m, err := c.QueueNodeMessage(ctx, chatID, nodeID, message)
 	if err != nil {
-		return nodeErrAs(err, chatID)
+		return nodeErrAs(err, chatID, nodeID)
 	}
 	return reportAction(out, asJSON, nodeActionResult{ChatID: chatID, NodeID: nodeID, MessageID: m.Id, Action: "queue",
 		Message: fmt.Sprintf("Queued message %s for node %s (chat %s) - delivered at its next turn boundary.", m.Id, nodeID, chatID)})
@@ -392,7 +393,7 @@ func RunNodeQueueEdit(ctx context.Context, out io.Writer, server, chatID, nodeID
 		return err
 	}
 	if err := c.EditQueuedMessage(ctx, chatID, nodeID, messageID, text); err != nil {
-		return nodeErrAs(err, chatID)
+		return nodeErrAs(err, chatID, nodeID)
 	}
 	return reportAction(out, asJSON, nodeActionResult{ChatID: chatID, NodeID: nodeID, MessageID: messageID, Action: "queue-edit",
 		Message: fmt.Sprintf("Edited queued message %s for node %s (chat %s).", messageID, nodeID, chatID)})
@@ -406,7 +407,7 @@ func RunNodeQueueRemove(ctx context.Context, out io.Writer, server, chatID, node
 		return err
 	}
 	if err := c.RemoveQueuedMessage(ctx, chatID, nodeID, messageID); err != nil {
-		return nodeErrAs(err, chatID)
+		return nodeErrAs(err, chatID, nodeID)
 	}
 	return reportAction(out, asJSON, nodeActionResult{ChatID: chatID, NodeID: nodeID, MessageID: messageID, Action: "queue-remove",
 		Message: fmt.Sprintf("Removed queued message %s for node %s (chat %s).", messageID, nodeID, chatID)})
@@ -421,7 +422,7 @@ func RunNodeEditTask(ctx context.Context, out io.Writer, server, chatID, nodeID,
 		return err
 	}
 	if err := c.EditNodeTask(ctx, chatID, nodeID, task); err != nil {
-		return nodeErrAs(err, chatID)
+		return nodeErrAs(err, chatID, nodeID)
 	}
 	return reportAction(out, asJSON, nodeActionResult{ChatID: chatID, NodeID: nodeID, Action: "edit",
 		Message: fmt.Sprintf("Edited node %s's prompt (chat %s).", nodeID, chatID)})
@@ -436,7 +437,7 @@ func RunNodeRetry(ctx context.Context, out io.Writer, server, chatID, nodeID, gu
 		return err
 	}
 	if err := c.RetryNode(ctx, chatID, nodeID, guidance); err != nil {
-		return nodeErrAs(err, chatID)
+		return nodeErrAs(err, chatID, nodeID)
 	}
 	return reportAction(out, asJSON, nodeActionResult{ChatID: chatID, NodeID: nodeID, Action: "retry",
 		Message: fmt.Sprintf("Retrying node %s (chat %s) - watch it with `quack chat show %s -f`.", nodeID, chatID, chatID)})
@@ -525,7 +526,11 @@ func notFoundAs(err error, id string) error {
 
 // nodeErrAs surfaces the server's real 404 message (via wrapNotFound); a
 // node's 404 rarely means the chat itself is missing, unlike notFoundAs.
-func nodeErrAs(err error, chatID string) error {
+func nodeErrAs(err error, chatID, nodeID string) error {
+	var ce *ConflictError
+	if errors.As(err, &ce) && ce.Current != "" && slices.Contains([]string{"done", "failed", "cancelled"}, ce.Current) {
+		return fmt.Errorf("node %s already finished (%s)", nodeID, ce.Current)
+	}
 	if err == ErrNotFound { //nolint:errorlint // identity is deliberate: a notFoundErr carrying the server message must pass through uncollapsed
 		return fmt.Errorf("chat %s or node not found", chatID)
 	}

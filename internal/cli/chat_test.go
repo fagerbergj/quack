@@ -748,7 +748,7 @@ func TestPutStatusSurfaces409Reason(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusConflict)
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"error": "node is done", "current": "done", "allowed": []string{"queued"},
+			"error": "node is done", "current": "paused", "allowed": []string{"queued"},
 		})
 	}))
 	defer srv.Close()
@@ -759,6 +759,31 @@ func TestPutStatusSurfaces409Reason(t *testing.T) {
 	for _, want := range []string{"node is done", "allowed: queued"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("409 error %q should contain %q", err.Error(), want)
+		}
+	}
+}
+
+// A 409 on a finished node reads as one sentence naming the node, for every node verb.
+func TestNodeVerbs409AlreadyFinished(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": "illegal transition: done -> cancelled", "current": "done", "allowed": []string{"queued"}})
+	}))
+	defer srv.Close()
+	ctx := context.Background()
+	for name, err := range map[string]error{
+		"stop":   RunNodeStop(ctx, io.Discard, srv.URL, "c1", "n2", false),
+		"retry":  RunNodeRetry(ctx, io.Discard, srv.URL, "c1", "n2", "", false),
+		"pause":  RunNodePause(ctx, io.Discard, srv.URL, "c1", "n2", false),
+		"resume": RunNodeResume(ctx, io.Discard, srv.URL, "c1", "n2", false),
+		"queue":  RunNodeQueue(ctx, io.Discard, srv.URL, "c1", "n2", "hi", false),
+		"edit":   RunNodeQueueEdit(ctx, io.Discard, srv.URL, "c1", "n2", "m1", "hi", false),
+		"remove": RunNodeQueueRemove(ctx, io.Discard, srv.URL, "c1", "n2", "m1", false),
+		"task":   RunNodeEditTask(ctx, io.Discard, srv.URL, "c1", "n2", "t", false),
+	} {
+		if err == nil || err.Error() != "node n2 already finished (done)" {
+			t.Errorf("%s: got %v, want %q", name, err, "node n2 already finished (done)")
 		}
 	}
 }
