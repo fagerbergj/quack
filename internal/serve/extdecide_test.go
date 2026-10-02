@@ -13,9 +13,13 @@ import (
 
 	ghext "github.com/fagerbergj/quack-extensions/github"
 	extsdk "github.com/fagerbergj/quack-extensions/sdk"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/decide"
+	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/ledgertest"
+	"github.com/fagerbergj/quack/internal/otelobs"
 )
 
 type declaringExt struct {
@@ -154,5 +158,67 @@ func TestGitHubDeclaresTheDocumentedPoints(t *testing.T) {
 	}
 	if d, err := x.build(decisionsCfg("http://x", points)); err != nil || !d.Enabled("ext:github/review.verdict") {
 		t.Errorf("documented github points: %v %v", d, err)
+	}
+}
+
+func TestExtDecideAttributesTheRequestChat(t *testing.T) {
+	mem := ledgertest.NewMemStore()
+	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(ledger.NewExporter(mem))))
+	t.Cleanup(otelobs.SetLoggerProviderForTesting(lp))
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]any{"answers": map[string]any{"write": map[string]any{"noul": 0.8}}})
+	}))
+	defer srv.Close()
+	x := declared(t, "sleeper", intentPoint)
+	if _, err := x.build(decisionsCfg(srv.URL, map[string]config.DecisionPoint{"ext:sleeper/intent": {Enabled: true, Mode: "observe"}})); err != nil {
+		t.Fatal(err)
+	}
+	sleeper := x.host("sleeper")
+	entries := func(chat string) []ledger.Entry {
+		t.Helper()
+		var out []ledger.Entry
+		got, err := mem.ReadEntries(context.Background(), chat, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range got {
+			if e.Kind == ledger.KindDecision {
+				out = append(out, e)
+			}
+		}
+		return out
+	}
+
+	chat := "ext:sleeper:1356:3:lineup"
+	if _, err := sleeper(context.Background(), extsdk.DecideRequest{Point: "intent", Baseline: "true", ChatID: chat}); err != nil {
+		t.Fatal(err)
+	}
+	if got := entries(chat); len(got) != 1 || got[0].NodeID != "" {
+		t.Errorf("run-less request naming its chat: %d ledger entries %+v, want 1 with no node", len(got), got)
+	}
+
+	inRun := ledger.WithCoords(context.Background(), ledger.Coords{ChatID: chat, Node: "n1"})
+	if _, err := sleeper(inRun, extsdk.DecideRequest{Point: "intent", Baseline: "true", ChatID: chat}); err != nil {
+		t.Fatal(err)
+	}
+	if got := entries(chat); len(got) != 2 || got[1].NodeID != "n1" {
+		t.Errorf("same chat as the ctx: entries %+v, want the ctx's node kept", got)
+	}
+
+	if _, err := sleeper(context.Background(), extsdk.DecideRequest{Point: "intent", Baseline: "true", ChatID: "ext:github:o-r-1"}); !errors.Is(err, decide.ErrNamespace) {
+		t.Errorf("another plugin's chat: err = %v, want ErrNamespace", err)
+	}
+	if calls.Load() != 2 {
+		t.Errorf("calls = %d, want the rejected chat never to call out", calls.Load())
+	}
+
+	ctxChat := ledger.WithCoords(context.Background(), ledger.Coords{ChatID: "chat-9"})
+	if _, err := sleeper(ctxChat, extsdk.DecideRequest{Point: "intent", Baseline: "true"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := entries("chat-9"); len(got) != 1 {
+		t.Errorf("no ChatID: %d entries under the ctx's chat, want 1", len(got))
 	}
 }

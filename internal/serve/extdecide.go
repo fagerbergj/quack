@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strings"
 
 	extsdk "github.com/fagerbergj/quack-extensions/sdk"
 
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/decide"
+	"github.com/fagerbergj/quack/internal/ledger"
 )
 
 // extDecisions backs every extension's Host.Decide. Boot fills it between building
@@ -85,6 +87,15 @@ func (x *extDecisions) host(plugin string) func(context.Context, extsdk.DecideRe
 		}
 		if !inlineMatches(p, req) {
 			return extsdk.Decision{}, fmt.Errorf("decide: %s: the request's questions, primary or restrictive answers differ from the declared point", id)
+		}
+		if req.ChatID != "" {
+			if !strings.HasPrefix(req.ChatID, "ext:"+plugin+":") {
+				return extsdk.Decision{}, fmt.Errorf("%w: %s may only attribute decisions to its own ext:%s: chats, got %q", decide.ErrNamespace, plugin, plugin, req.ChatID)
+			}
+			// Same chat keeps the caller's node and round; a run-less caller gets the chat alone.
+			if ledger.CoordsFromContext(ctx).ChatID != req.ChatID {
+				ctx = ledger.WithCoords(ctx, ledger.Coords{ChatID: req.ChatID})
+			}
 		}
 		r := x.decider.DecideWith(ctx, p, req.State, req.Baseline)
 		if r.Err != nil {
