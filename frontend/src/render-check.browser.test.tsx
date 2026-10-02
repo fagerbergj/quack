@@ -98,7 +98,7 @@ describe.each(Object.entries(storyModules))('%s', (path, mod) => {
       // Viewport opt-in: the story's own `parameters.renderCheck.viewports`
       // (or Storybook's `parameters.viewport.defaultViewport`) wins when
       // present. Name-matching ("...Mobile...") is only the FALLBACK for stories not yet opted in - most existing stories render at a fixed desktop width, so checking them at 390px would flag the story's own width choice, not a component defect.
-      const renderCheckParams = StoryComp.parameters?.renderCheck as { viewports?: readonly string[]; play?: boolean } | undefined
+      const renderCheckParams = StoryComp.parameters?.renderCheck as { viewports?: readonly string[]; play?: boolean; strictPlay?: boolean } | undefined
       const storybookViewport = StoryComp.parameters?.viewport as { defaultViewport?: string } | undefined
       const wantsMobile = renderCheckParams?.viewports
         ? renderCheckParams.viewports.includes('mobile')
@@ -126,11 +126,12 @@ describe.each(Object.entries(storyModules))('%s', (path, mod) => {
           await waitForRenderSettled(container)
           // Menus and sheets only exist once a story's play() opens them;
           // opt-in per story, since most play() functions assume the
-          // Storybook canvas and fail here. ponytail: a failing play() only warns - four story files stomp window.fetch at module scope, so under this eager glob the last loader wins and fetch-driven plays can't be made reliable here.
+          // Storybook canvas and fail here. ponytail: a failing play() only warns unless the story sets strictPlay - four story files stomp window.fetch at module scope, so under this eager glob the last loader wins and fetch-driven plays can't be made reliable here.
           if (renderCheckParams?.play && StoryComp.play) {
             try {
               await StoryComp.play({ canvasElement: container })
             } catch (e) {
+              if (renderCheckParams.strictPlay) throw e
               console.warn(`play() failed for ${path} ${storyName}: ${String(e).split('\n')[0]}`)
             }
             await waitForRenderSettled(container)

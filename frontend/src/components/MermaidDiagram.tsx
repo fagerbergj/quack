@@ -42,8 +42,6 @@ export function useMermaidSvg(code: string): { svg: string | null; error: string
     setError(null)
     loadMermaid()
       .then(async ({ default: mermaid }) => {
-        // A directive that fails (e.g. a bad themeVariables colour) stays in mermaid's global list and breaks every later render.
-        mermaid.mermaidAPI.reset()
         mermaid.initialize({ ...BASE_CONFIG, theme: dark ? 'dark' : 'default' })
         const { svg } = await mermaid.render(`mermaid-${reactId}`, code)
         if (!cancelled) setSvg(svg)

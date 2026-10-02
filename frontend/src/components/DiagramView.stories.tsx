@@ -20,7 +20,7 @@ export const Dark: Story = { globals: { theme: 'dark' } }
 // Real mermaid, real SVG: the click lands on the rendered node and the panel follows.
 export const ClickNode: Story = {
   args: { onExplain: fn() },
-  parameters: { renderCheck: { viewports: ['mobile', 'desktop'], play: true } },
+  parameters: { renderCheck: { viewports: ['mobile', 'desktop'], play: true, strictPlay: true } },
   play: async ({ canvasElement, args }) => {
     const c = within(canvasElement)
     await userEvent.click(await c.findByRole('button', { name: 'Node: Retry worker' }))
@@ -31,7 +31,7 @@ export const ClickNode: Story = {
 }
 
 export const ClickEdge: Story = {
-  parameters: { renderCheck: { viewports: ['mobile', 'desktop'], play: true } },
+  parameters: { renderCheck: { viewports: ['mobile', 'desktop'], play: true, strictPlay: true } },
   play: async ({ canvasElement }) => {
     const c = within(canvasElement)
     await userEvent.click(await c.findByRole('button', { name: 'Connection: deliver() to retry_queue' }))
@@ -40,6 +40,7 @@ export const ClickEdge: Story = {
 }
 
 export const ClickLayer: Story = {
+  parameters: { renderCheck: { play: true, strictPlay: true } },
   play: async ({ canvasElement }) => {
     const c = within(canvasElement)
     await userEvent.click(await c.findByRole('button', { name: 'Layer: Storage' }))

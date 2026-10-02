@@ -17,6 +17,10 @@ func TestPRTutorPromptExample(t *testing.T) {
 	if m == nil {
 		t.Fatal("worked example not found in prompt.md")
 	}
+	sid := regexp.MustCompile("`surface_id`: \"([^\"]+)\"").FindSubmatch(b)
+	if sid == nil {
+		t.Fatal("worked example surface_id not found in prompt.md")
+	}
 	var comps []Component
 	var model map[string]any
 	var key map[string]QuizAnswer
@@ -25,7 +29,7 @@ func TestPRTutorPromptExample(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	s := Surface{SurfaceID: "acme-widgets-pr-412-tutor", CatalogID: CatalogID}
+	s := Surface{SurfaceID: string(sid[1]), CatalogID: CatalogID}
 	if _, err := Apply(&s, nil, comps, model, key); err != nil {
 		t.Fatalf("prompt example does not validate: %v", err)
 	}

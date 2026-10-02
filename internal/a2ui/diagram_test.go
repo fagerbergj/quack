@@ -1,6 +1,7 @@
 package a2ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -40,6 +41,19 @@ func TestValidateDiagram(t *testing.T) {
 		{"long node label", func(s *Surface) {
 			s.Components[0]["nodes"].([]any)[0].(map[string]any)["label"] = strings.Repeat("x", 61)
 		}, `node "form" label is 61 characters`},
+		{"long layer title", func(s *Surface) {
+			s.Components[0]["layers"].([]any)[0].(map[string]any)["title"] = strings.Repeat("t", maxLayerTitle+1)
+		}, `layer "ui" title is 41 characters`},
+		{"long edge label", func(s *Surface) {
+			s.Components[0]["edges"].([]any)[0].(map[string]any)["label"] = strings.Repeat("e", maxEdgeLabel+1)
+		}, `edge "submit" label is 41 characters`},
+		{"too many edges", func(s *Surface) {
+			var es []any
+			for i := range maxEdges + 1 {
+				es = append(es, map[string]any{"id": fmt.Sprintf("e%d", i), "from": "form", "to": "handler", "detail": "d"})
+			}
+			s.Components[0]["edges"] = es
+		}, "exceed the limits"},
 		{"empty layer", func(s *Surface) {
 			s.Components[0]["layers"] = append(s.Components[0]["layers"].([]any), map[string]any{"id": "db", "title": "DB", "description": "d"})
 		}, `layer "db" has no nodes`},
