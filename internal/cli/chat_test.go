@@ -935,3 +935,21 @@ func statusHandler(t *testing.T, path string, status schema.NodeStatus) http.Han
 		t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 	}
 }
+
+// A running chat whose run this server cannot find (a co-hosted CLI against the serving process's
+// database) must be an error, not a "No active run" success.
+func TestRunChatStopRunningButNoLiveRun(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_ = json.NewEncoder(w).Encode(schema.ChatDetail{Status: schema.ChatStatusRunning, Turns: []schema.Turn{{Id: "t1"}}})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	err := RunChatStop(context.Background(), io.Discard, srv.URL, "c1", false)
+	if err == nil || !strings.Contains(err.Error(), "--server") {
+		t.Fatalf("err = %v, want one pointing at --server", err)
+	}
+}

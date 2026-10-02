@@ -284,6 +284,10 @@ func RunChatStop(ctx context.Context, out io.Writer, server, id string, asJSON b
 	responseID := detail.Turns[len(detail.Turns)-1].Id
 	if err := c.CancelRun(ctx, id, responseID); err != nil {
 		if errors.Is(err, ErrNotFound) {
+			// A co-hosted CLI boots its own server, whose hub never sees a run owned by the serving process.
+			if detail.Status == schema.ChatStatusRunning {
+				return fmt.Errorf("chat %s is running but this server holds no live run for it; point the CLI at the serving instance with --server", id)
+			}
 			return reportAction(out, asJSON, noneActive)
 		}
 		return err
