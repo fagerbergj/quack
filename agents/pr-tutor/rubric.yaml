@@ -26,8 +26,11 @@ criteria:
       artifact (or an omission naming exactly what is missing); one you cannot quote or name does not
       count. Pick the band from the number of findings; none is the top band.
     - Check the root is a Card whose content holds a title Text and a Tabs component.
-    - Check the tabs are exactly Overview, Flow, Key changes, Quiz, in that order.
-    - Check the Flow tab holds a Mermaid component and Key changes holds 2-4 Text + Code pairs.
+    - Check the tabs are exactly Overview, Flow, Risk, Key changes, Quiz, in that order.
+    - >-
+      Check the Flow tab holds a Diagram (a Mermaid only when the task asked for a redraw) whose layers each
+      hold at least one node, and the Risk tab holds a RiskTable with
+      `basis` "diff-only". Key changes holds 2-4 Text + Code pairs.
     - >-
       Check the Quiz tab holds 3-5 ChoicePicker components, each bound to /answers/qN, followed by a
       Button whose action event is submit_quiz with context {"answers": {"path": "/answers"}}.
@@ -57,6 +60,41 @@ criteria:
       meaning: >-
         four or more findings, or no a2ui_surface or no quiz_key artifact exists, or the surface was
         written into the reply as text instead of rendered.
+    anchors:
+    - quote
+    - omission
+  flow_risk_grounded:
+    definition: >
+      The Flow diagram and the Risk table describe what the diff changes, and nothing the diff does not show.
+    guidance: >
+      Open only the hunks a Diagram `detail` or a RiskTable row names. A layer is an area of responsibility
+      that fits the PR, not one node per file. Unchanged context nodes may be thin but never invented.
+    steps:
+    - >-
+      Enumerate first: list every node, edge and RiskTable row, then apply the steps below to each. A
+      finding is a node or edge whose `change` the diff contradicts (marked added but the code existed,
+      marked unchanged but a hunk edits it), a `type` that mislabels the change it describes (a behaviour change called feature or refactor), a
+      `detail` or `reason` that states behaviour no hunk shows, a RiskTable row that names a caller or test the diff does not contain while `basis` says "diff-only",
+      a changed file with no row and no node, or a risk level that ignores what the cited code does (a
+      migration or shared-path behaviour change rated low). Record each finding with a verbatim quote (or
+      an omission naming exactly what is missing); one you cannot quote or name does not count. Pick the
+      band from the number of findings; none is the top band.
+    - When the task changed only the quiz or one other tab, this criterion has no items and scores 3.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: 'no finding: every node, edge and row follows from the diff.'
+    - min: 2.0
+      max: 2.0
+      meaning: exactly one finding, and it is a thin `detail` or an arguable risk level.
+    - min: 1.0
+      max: 1.0
+      meaning: two or three findings, or one invented caller, test or behaviour.
+    - min: 0.0
+      max: 0.0
+      meaning: >-
+        four or more findings, or the diagram is one node per file with no layers, or most rows
+        and details restate their label.
     anchors:
     - quote
     - omission

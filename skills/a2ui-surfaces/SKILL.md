@@ -2,8 +2,8 @@
 name: a2ui-surfaces
 description: >
   How to answer a turn that starts with `[a2ui_action] ` (the user pressed a
-  button on an interactive surface in this chat, such as submit_quiz on a PR
-  tutor) and how to change a surface already rendered here ("make the flow a
+  button on an interactive surface in this chat, such as submit_quiz or
+  explain_focus on a PR tutor) and how to change a surface already rendered here ("make the flow a
   sequence diagram", "harder questions"): grade with one small render_ui
   upsert on the same surface_id, hand edits to the pr-tutor node that
   rendered it, and never send the whole surface again. Load before answering
@@ -43,6 +43,10 @@ For a three-question quiz whose Column is `quiz` and label is `submit_label`, wi
  {"id": "quiz", "component": "Column", "children": ["q1", "q1_result", "q2", "q2_result", "q3", "q3_result", "submit"]},
  {"id": "submit_label", "component": "Text", "text": "Score: 1/3"}]
 ```
+
+### `explain_focus`
+
+Pressed by "Explain more" on a Diagram's detail panel; `context` is `{"element_id": "<node, edge or layer id>", "kind": "node" | "edge" | "layer"}` and `source_component_id` is the Diagram. Load the surface, find that element in the Diagram's `layers`, `nodes` or `edges`, and answer in a short paragraph that goes beyond its `detail`, grounded in the surface's Code excerpts and what the pr-tutor node read. For a longer answer, hand the pr-tutor node a change request that rewrites that one element's `detail` and resends the whole `flow` component (a Diagram replaces by id as a unit); the panel then shows the new text. If no element has that id, the diagram was redrawn after the click: say so and ask which part of the current diagram they mean.
 
 ### Any other action name
 

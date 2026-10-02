@@ -29,10 +29,8 @@ function useIsDarkMode(): boolean {
   return dark
 }
 
-// Memoized so an unrelated token arriving elsewhere in a streaming message
-// doesn't re-render or re-parse every diagram already on screen - the render
-// effect only re-runs when `code` or the theme actually changes. A parse/render failure never throws past this component: it falls back to the plain source (CopyablePre) plus a small inline notice.
-export const MermaidDiagram = memo(function MermaidDiagram({ code }: { code: string }) {
+// Renders on `code` or theme change only. A parse/render failure never throws: callers get `error` and show the source.
+export function useMermaidSvg(code: string): { svg: string | null; error: string | null } {
   const reactId = useId().replace(/[^a-zA-Z0-9]/g, '')
   const dark = useIsDarkMode()
   const [svg, setSvg] = useState<string | null>(null)
@@ -54,25 +52,33 @@ export const MermaidDiagram = memo(function MermaidDiagram({ code }: { code: str
     return () => { cancelled = true }
   }, [code, dark, reactId])
 
-  if (error) {
-    return (
-      <div className="not-prose">
-        <div className="mb-1 flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400" title={error}>
-          <Icon name="warning" className="w-3.5 h-3.5" /> Diagram failed to render - showing source
-        </div>
-        <CopyablePre><code className="language-mermaid">{code}</code></CopyablePre>
-      </div>
-    )
-  }
+  return { svg, error }
+}
 
-  if (!svg) {
-    return (
-      <div className="not-prose py-2 text-[11px] text-gray-500 dark:text-gray-400" role="status">
-        Rendering diagram…
+export function MermaidError({ code, error }: { code: string; error: string }) {
+  return (
+    <div className="not-prose">
+      <div className="mb-1 flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400" title={error}>
+        <Icon name="warning" className="w-3.5 h-3.5" /> Diagram failed to render - showing source
       </div>
-    )
-  }
+      <CopyablePre><code className="language-mermaid">{code}</code></CopyablePre>
+    </div>
+  )
+}
 
+export function MermaidPending() {
+  return (
+    <div className="not-prose py-2 text-[11px] text-gray-500 dark:text-gray-400" role="status">
+      Rendering diagram…
+    </div>
+  )
+}
+
+// Memoized so an unrelated token arriving elsewhere in a streaming message doesn't re-render or re-parse every diagram already on screen.
+export const MermaidDiagram = memo(function MermaidDiagram({ code }: { code: string }) {
+  const { svg, error } = useMermaidSvg(code)
+  if (error) return <MermaidError code={code} error={error} />
+  if (!svg) return <MermaidPending />
   // mermaid's own 'strict' securityLevel already sanitized this SVG string
   // (see BASE_CONFIG above) - safe to inject directly.
   return <div className="not-prose my-2 overflow-x-auto" data-testid="mermaid-diagram" dangerouslySetInnerHTML={{ __html: svg }} />

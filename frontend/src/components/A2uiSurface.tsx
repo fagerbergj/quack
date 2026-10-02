@@ -1,8 +1,11 @@
-import { createContext, createElement, useContext, useId, useLayoutEffect, useState, type KeyboardEvent } from 'react'
+import { createContext, createElement, useContext, useId, useLayoutEffect, useMemo, useState, type KeyboardEvent } from 'react'
 import { z } from 'zod'
 import { A2uiSurface, basicCatalog, createComponentImplementation, type ReactComponentImplementation } from '@a2ui/react/v0_9'
 import { AccessibilityAttributesSchema, ButtonApi, Catalog, ChoicePickerApi, DynamicStringSchema, IconApi, MessageProcessor, TabsApi, TextApi } from '@a2ui/web_core/v0_9'
 import { MermaidDiagram } from './MermaidDiagram'
+import { DiagramView } from './DiagramView'
+import { RiskTable as RiskTableView } from './RiskTable'
+import type { DiagramSpec } from './diagramSource'
 import { DiffView } from './ArtifactPanel'
 import { AssistantText } from './AgentParts'
 import { Icon as QuackIcon, ICON_NAMES, type IconName } from './Icon'
@@ -14,6 +17,45 @@ const common = { accessibility: AccessibilityAttributesSchema.optional(), weight
 const Mermaid = createComponentImplementation(
   { name: 'Mermaid', schema: z.object({ ...common, code: DynamicStringSchema }).strict() },
   ({ props }) => <MermaidDiagram code={props.code ?? ''} />,
+)
+
+const change = z.enum(['added', 'modified', 'removed', 'unchanged'])
+const changeType = z.enum(['feature', 'refactor', 'behavior', 'bugfix', 'test', 'config', 'docs'])
+
+// The pressed element's id and kind go to the agent as an explain_focus action; Busy holds it like any button.
+const Diagram = createComponentImplementation(
+  {
+    name: 'Diagram',
+    schema: z.object({
+      ...common,
+      direction: z.enum(['TB', 'LR', 'BT', 'RL']).optional(),
+      layers: z.array(z.object({ id: z.string(), title: z.string(), description: z.string() }).strict()),
+      nodes: z.array(z.object({ id: z.string(), label: z.string(), layer: z.string(), change: change.optional(), type: changeType.optional(), detail: z.string() }).strict()),
+      edges: z.array(z.object({ id: z.string(), from: z.string(), to: z.string(), label: z.string().optional(), change: change.optional(), detail: z.string() }).strict()),
+    }).strict(),
+  },
+  ({ props, context }) => {
+    const busy = useContext(Busy)
+    const { direction, layers, nodes, edges } = props
+    const json = JSON.stringify({ direction, layers, nodes, edges })
+    // Props arrive as fresh objects on any model update; keying on content keeps the selection.
+    const spec = useMemo(() => JSON.parse(json) as DiagramSpec, [json])
+    const explain = ({ id, kind }: { id: string; kind: string }) =>
+      void context.dispatchAction({ event: { name: 'explain_focus', context: { element_id: id, kind } } })
+    return <DiagramView spec={spec} onExplain={busy ? undefined : explain} />
+  },
+)
+
+const RiskTable = createComponentImplementation(
+  {
+    name: 'RiskTable',
+    schema: z.object({
+      ...common,
+      basis: z.enum(['diff-only', 'repo']).optional(),
+      rows: z.array(z.object({ change: z.string(), type: changeType, risk: z.enum(['low', 'medium', 'high']), reason: z.string(), blast: z.string(), tests: z.string().optional() }).strict()),
+    }).strict(),
+  },
+  ({ props }) => <RiskTableView rows={props.rows} basis={props.basis} />,
 )
 
 const Code = createComponentImplementation(
@@ -163,7 +205,7 @@ const Tabs = createComponentImplementation(TabsApi, ({ props, buildChild, contex
   )
 })
 
-const overrides: ReactComponentImplementation[] = [Text, Button, Icon, ChoicePicker, Tabs, Mermaid, Code]
+const overrides: ReactComponentImplementation[] = [Text, Button, Icon, ChoicePicker, Tabs, Mermaid, Diagram, RiskTable, Code]
 const quackCatalog = new Catalog<ReactComponentImplementation>(
   QUACK_CATALOG_ID,
   [...basicCatalog.components.values()].filter(c => !overrides.some(o => o.name === c.name)).concat(overrides),
