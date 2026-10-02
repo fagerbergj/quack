@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"slices"
 	"strings"
@@ -75,10 +76,13 @@ type Decider struct {
 	handlers map[string]Handler
 }
 
-// New checks enabled points against the registry; nil when none is enabled. It never calls a handler.
+// New checks every core point id against the registry (so a typo is caught while disabled) and enabled points' policy; nil when none is enabled. It never calls a handler.
 func New(cfg config.DecisionsConfig) (*Decider, error) {
 	d := &Decider{points: map[string]config.DecisionPoint{}, handlers: map[string]Handler{}}
 	for id, p := range cfg.Points {
+		if _, ok := lookup(id); !ok && !strings.HasPrefix(id, config.DecisionExtPrefix) {
+			return nil, fmt.Errorf("decisions.points.%s: no such point (registered: %s)", id, strings.Join(registeredIDs(), ", "))
+		}
 		if !p.Enabled {
 			continue
 		}
@@ -194,8 +198,13 @@ func (d *Decider) run(ctx context.Context, p Point, state any) Result {
 	}
 	if err != nil {
 		r.Err, r.Outcome = err, OutcomeUnavailable
-		if cfg.Mode == config.DecisionModeGuard && cfg.Fail == config.DecisionFailClosed && len(p.Restrictive) > 0 {
-			r.Outcome, r.Top = OutcomeRestrict, p.Restrictive[0]
+		if cfg.Mode == config.DecisionModeGuard && cfg.Fail == config.DecisionFailClosed {
+			if len(p.Restrictive) > 0 {
+				r.Outcome, r.Top = OutcomeRestrict, p.Restrictive[0]
+			} else {
+				// Boot rejects this for core points; an extension's point is only known here.
+				slog.Warn("decide: fail: closed has no restrictive answer; failing open", "point", p.ID, "err", err)
+			}
 		}
 		return r
 	}

@@ -92,6 +92,8 @@ type Decision[T any] struct {
 }
 
 // Decide is Decider.Decide with the answer parsed; baseline is quack's own value.
+// Decide mode has no settle step: when the point Replaces a step that would produce the baseline,
+// a fallback records the caller's placeholder, not that step's real output, so the shadow A/B is not comparable there.
 func (t Typed[T]) Decide(ctx context.Context, d *Decider, state any, baseline T) Decision[T] {
 	r := d.DecideWith(ctx, t.Point, state, fmt.Sprint(baseline))
 	x := Decision[T]{Result: r}

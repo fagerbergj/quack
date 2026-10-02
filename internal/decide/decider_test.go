@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -161,8 +162,13 @@ func TestNewValidatesAgainstRegistry(t *testing.T) {
 	if d, err := New(cfg("ext:github/intent", "decide", nil)); err != nil || !d.Enabled("ext:github/intent") {
 		t.Errorf("extension point: %v %v", d, err)
 	}
-	off := cfg("nope", "observe", nil)
-	off.Points["nope"] = config.DecisionPoint{}
+	typo := cfg("test.acceprt", "observe", nil)
+	typo.Points["test.acceprt"] = config.DecisionPoint{}
+	if _, err := New(typo); err == nil || !strings.Contains(err.Error(), "no such point") {
+		t.Errorf("disabled point with a typo'd id: err = %v", err)
+	}
+	off := cfg("ext:github/intent", "observe", nil)
+	off.Points["ext:github/intent"] = config.DecisionPoint{}
 	if d, err := New(off); d != nil || err != nil {
 		t.Errorf("all points disabled: %v %v, want nil decider", d, err)
 	}
@@ -314,6 +320,25 @@ func TestGuardFailClosedRestrictsWithoutADecision(t *testing.T) {
 	open := newDecider(t, "http://127.0.0.1:1", testAccept.ID, config.DecisionModeGuard, 0.9)
 	if x := testAccept.Decide(context.Background(), open, "s", true); x.Outcome != OutcomeUnavailable || x.Guard(true) != true {
 		t.Errorf("%+v, want fail open to keep the caller's value", x)
+	}
+}
+
+func TestExtGuardFailClosedWithoutRestrictiveWarns(t *testing.T) {
+	var buf strings.Builder
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	id := "ext:github/intent"
+	d, err := New(config.DecisionsConfig{
+		Handlers: map[string]config.DecisionHandler{"p": {URL: "http://127.0.0.1:1", Timeout: time.Second}},
+		Points:   map[string]config.DecisionPoint{id: {Enabled: true, Handler: "p", Mode: config.DecisionModeGuard, ActAt: 0.9, Fail: config.DecisionFailClosed}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := d.DecideWith(context.Background(), Point{ID: id, Primary: "q", Questions: map[string]Question{"q": {Type: "noul"}}}, "s", "x")
+	if r.Outcome != OutcomeUnavailable || !strings.Contains(buf.String(), "no restrictive answer") {
+		t.Errorf("outcome %v, log %q, want unavailable and a warning", r.Outcome, buf.String())
 	}
 }
 
