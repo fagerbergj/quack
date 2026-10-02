@@ -53,6 +53,8 @@ type Config struct {
 	// Prompts binds the named prompt artifacts to a store; absent (the
 	// default) resolves every one from the shipped file.
 	Prompts PromptsConfig `yaml:"prompts"`
+	// Decisions configures intercept points and their decision handlers (decisions.md); absent = all off.
+	Decisions DecisionsConfig `yaml:"decisions"`
 	// Timezone is the user's IANA zone for agent-facing dates and times;
 	// empty falls back to time.Local (TZ, then /etc/localtime, then UTC).
 	Timezone string `yaml:"timezone"`
@@ -1097,6 +1099,7 @@ func (c *Config) validate() error {
 		c.validateDag,
 		c.validateServer,
 		c.validateTimezone,
+		c.validateDecisions,
 	} {
 		if err := step(); err != nil {
 			return err

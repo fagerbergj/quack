@@ -267,7 +267,7 @@ paths:
         Streams a self-contained ZIP export of the chat's recorded
         observations: `manifest.json` (quack version, ledger_version, session
         id) + `entries.jsonl` (one typed ledger entry per line: llm.call,
-        tool.call, agent.invoke, eval.score, including gate-probe outputs).
+        tool.call, agent.invoke, eval.score, decision, including gate-probe outputs).
         404 when the chat has no observation entries (never recorded, already
         GC'd by retention, or recording.observations off).
       parameters:

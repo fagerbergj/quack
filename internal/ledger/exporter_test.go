@@ -248,3 +248,31 @@ func TestExporterDisabledStoreIsNoop(t *testing.T) {
 		t.Fatalf("Export with nil store returned an error: %v", err)
 	}
 }
+
+// TestExporterMapsDecision: a decision record becomes one decision observation, its payload
+// decoded from quack.decision with credential keys in the recorded state redacted.
+func TestExporterMapsDecision(t *testing.T) {
+	store := ledgertest.NewMemStore()
+	emitVia(t, store,
+		attribute.String("gen_ai.conversation.id", "chat-d"),
+		attribute.String("quack.node", "n1"),
+		attribute.String("gen_ai.operation.name", "decision"),
+		attribute.String("quack.decision", `{"point":"plan.accept","mode":"observe","handler":"clef","outcome":"observe",`+
+			`"top":"false","top_p":0.97,"baseline":"true","latency_ms":512,"state":{"plan":"p","token":"hunter2"}}`),
+	)
+	entries, err := store.ReadEntries(context.Background(), "chat-d", 0)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("entries = %v, %v; want 1", entries, err)
+	}
+	e := entries[0]
+	if e.Kind != ledger.KindDecision || e.NodeID != "n1" || !ledger.IsObservation(e.Kind) {
+		t.Errorf("entry = %+v, want a decision observation on n1", e)
+	}
+	var p ledger.DecisionPayload
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		t.Fatal(err)
+	}
+	if p.Point != "plan.accept" || p.SkippedStep != nil || p.Top != "false" || p.TopP != 0.97 || p.Baseline != "true" || string(p.State) != `{"plan":"p","token":"[REDACTED]"}` {
+		t.Errorf("payload = %+v state = %s", p, p.State)
+	}
+}

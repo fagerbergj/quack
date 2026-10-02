@@ -13,6 +13,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/config"
+	"github.com/fagerbergj/quack/internal/decide"
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/vetting"
@@ -93,7 +95,21 @@ type Planner struct {
 	agents        []AgentInfo
 	checkCommands []string
 	judge         vetting.PlanJudge
+	decisions     *decide.Decider
 }
+
+// planAccept observes the plan judge with one holistic question: the decision-model
+// POC found per-criterion questions badly calibrated for plans.
+var planAccept = decide.Register(decide.Point{
+	ID:      "plan.accept",
+	Primary: "accept",
+	Questions: map[string]decide.Question{"accept": {Type: "noul", Instructions: "Should an independent reviewer ACCEPT this " +
+		"plan step as the right next move for the user's request (it is not clearly the wrong shape)? Unfinished plans " +
+		"with no delivery declared are acceptable."}},
+	Restrictive: []string{"false"},
+	Replaces:    "plan_judge",
+	Modes:       []string{config.DecisionModeObserve},
+}, func(top string) bool { return top == "true" })
 
 // NewPlanner: returns a Planner over the agent roster, check prefixes, and plan judge.
 func NewPlanner(agents []AgentInfo, checkCommands []string, judge vetting.PlanJudge) *Planner {
@@ -101,6 +117,9 @@ func NewPlanner(agents []AgentInfo, checkCommands []string, judge vetting.PlanJu
 	SetCheckCommands(checkCommands)
 	return &Planner{agents: agents, checkCommands: checkCommands, judge: judge}
 }
+
+// SetDecisions attaches the decision intercept points; nil (the default) disables them.
+func (p *Planner) SetDecisions(d *decide.Decider) { p.decisions = d }
 
 // CheckCommands: configured check-command prefixes.
 func (p *Planner) CheckCommands() []string { return p.checkCommands }
@@ -243,7 +262,14 @@ func (p *Planner) judgeRouting(ctx context.Context, plan *Plan, message string) 
 	if plan.Setup != nil {
 		repoKey = workspace.NormalizeRepoURL(plan.Setup.Repo)
 	}
-	accept, reason, err := p.judge(ctx, message, planSummary(plan), repoKey)
+	summary := planSummary(plan)
+	settle := p.decisions.Observe(ctx, planAccept.Point, "User's request:\n"+message+"\n\nProposed plan:\n"+summary)
+	accept, reason, err := p.judge(ctx, message, summary, repoKey)
+	verdict := ""
+	if err == nil {
+		verdict = strconv.FormatBool(accept)
+	}
+	settle(verdict)
 	if err != nil {
 		span.RecordError(err)
 		slog.Warn("plan judge unavailable, allowing plan", "component", "planner", "error", err)

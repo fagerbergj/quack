@@ -64,6 +64,9 @@ const (
 	// GenAIOperationPlanRejected - the plan judge declined a proposed plan (#693);
 	// the ledger record of a rejection reason that must never reach the user reply.
 	GenAIOperationPlanRejected = "plan_rejected"
+	// GenAIOperationDecision - one decision-model call (internal/decide); QuackDecision carries its ledger payload as JSON.
+	GenAIOperationDecision = "decision"
+	QuackDecision          = "quack.decision"
 
 	// QuackNode identifies the DAG node a span or record belongs to. Exported
 	// so the generation span carries the same key the log records do - it is
