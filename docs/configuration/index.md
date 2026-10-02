@@ -31,6 +31,7 @@ extensions:     # optional bundled integrations (e.g. GitHub App)
 observability:  # otel tracing/metrics/logs emission + the ledger (WAL) store and observation toggle
 auth:           # inbound OIDC bearer / trusted gateway headers (optional)
 artifacts:      # the artifact store binding
+decisions:      # intercept points and the decision handlers that answer them (off by default)
 ```
 
 Each section gets its own page below:
@@ -45,6 +46,7 @@ Each section gets its own page below:
 - **[Workspace](workspace/index.md)** — the filesystem jail, the OS sandbox, and the guard ladder.
   - **[Toolchains](workspace/toolchains.md)** — supplying Java/Android, Go, or any toolchain the image does not ship.
 - **[Deployment shapes](deployment.md)** — three full worked examples ([`examples/`](examples/)): fully local, Docker stack, remote full-featured.
+- **[Decision points](decisions.md)** — intercept points answered by System One decision models: handlers, modes, recording.
 - **[Observability](observability.md)** — the OTel traces and metrics quack emits, and what each one is for.
 
 The GitHub App extension (`extensions.github`) has its own page: [`../extensions/github.md`](../extensions/github.md); the [reMarkable](../extensions/remarkable.md) and [usage dashboard](../extensions/usage.md) extensions get short pages of their own.

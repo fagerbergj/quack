@@ -118,6 +118,11 @@ func EntryFromRecord(r sdklog.Record) (Entry, bool) {
 		entry.Kind = KindToolCall
 		payload = ToolCallPayload{Name: str("gen_ai.tool.name"), Type: str("gen_ai.tool.type"),
 			Args: str("gen_ai.tool.call.arguments"), Result: str("gen_ai.tool.call.result"), Error: str("error.type")}
+	case op == "decision":
+		entry.Kind = KindDecision
+		var p DecisionPayload
+		unmarshalIfPresent(attrs, "quack.decision", &p)
+		payload = p
 	case op == "invoke_agent":
 		entry.Kind = KindAgentInvoke
 		p := AgentInvokePayload{Sent: str("gen_ai.input.messages"), Received: str("gen_ai.output.messages"), Error: str("error.type")}

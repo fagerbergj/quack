@@ -38,6 +38,7 @@ Quack's own spans are named `quack.<name>` (ADK's, above, are not). The vocabula
 | `quack.worker.round` | One worker round within a node's trust gate — draft, continuation, revise, HITL, or confirm. |
 | `quack.gate.checks` | The deterministic-checks stage. |
 | `quack.plan` / `quack.plan.judge` | DAG planning and the plan judge's pass over it. |
+| `quack.decision` | One decision point's handler call ([decision points](decisions.md)). |
 | `quack.setup.clone` | Repo provisioning for a plan's `Setup` (the pre-provisioned clone). |
 | `quack.delivery` | The gate-owned delivery step (commit/push/PR/review). |
 | `quack.acp.spawn` / `.handshake` / `.prompt` / `.round` | The external ACP subprocess lifecycle (the `pi-acp` shim driving pi) for code-implementer/reviewer/explorer nodes. |
@@ -86,7 +87,7 @@ The in-flight gauges (`quack.runs.active`, `quack.nodes.active`) don't survive a
 
 ## Ledger and recording
 
-The ledger is quack's write-ahead log: one append-only stream of typed entries per chat in Postgres (`ledger_entries`). Intents (artifact revisions, delivery, node lifecycle, judge rounds) are appended before the state change they describe; observations (`llm.call`, `tool.call`, `agent.invoke`, `eval.score`) are appended after the fact from the `gen_ai.*` OTel log records that `inference.NewModel`, `tools.Build`, the ACP subprocess connection and the judge emit. Every entry carries the chat id plus `node_id`/`agent`/`round`, the stream identity a bundle reader groups rounds by, stamped by the vetting gate on the emitting object.
+The ledger is quack's write-ahead log: one append-only stream of typed entries per chat in Postgres (`ledger_entries`). Intents (artifact revisions, delivery, node lifecycle, judge rounds) are appended before the state change they describe; observations (`llm.call`, `tool.call`, `agent.invoke`, `eval.score`, `decision`) are appended after the fact from the `gen_ai.*` OTel log records that `inference.NewModel`, `tools.Build`, the ACP subprocess connection, the judge and the [decision points](decisions.md) emit. Every entry carries the chat id plus `node_id`/`agent`/`round`, the stream identity a bundle reader groups rounds by, stamped by the vetting gate on the emitting object.
 
 An `llm.call` entry's payload also carries provenance beyond the prompt/response themselves (#1096): `quack_version` (the build stamp the server logged at startup), `bundle_hash` (a sha256 digest over the acting agent's `agent-card.json` + `prompt.md` + `rubric.yaml`, computed once at bundle load and stamped onto `ledger.Coords` the same way `agent` is), and `cost_usd` (tokens × `config/quack.yaml`'s per-model price table; the field is omitted, not zero, when that model has no price entry - $0 and "unpriced" must stay distinguishable). `prompt_version` on the same entry is a separate, narrower hash of just the resolved system-instruction bytes for that one call. `reasoning_tokens` (omitted when zero) is the call's thinking-token spend, split out from `output_tokens` - reported wherever the model reports it; an ACP round's `agent.invoke` has no equivalent field, since the ACP protocol carries no token usage at all.
 

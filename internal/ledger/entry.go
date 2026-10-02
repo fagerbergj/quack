@@ -39,6 +39,7 @@ const (
 	KindToolCall    = "tool.call"
 	KindAgentInvoke = "agent.invoke"
 	KindEvalScore   = "eval.score"
+	KindDecision    = "decision"
 )
 
 // EntrySchemaVersion is the current Entry payload shape's version. Rows
@@ -60,7 +61,7 @@ func MigrateEntry(e Entry) Entry {
 // of the log the recording bundle reader reads.
 func IsObservation(kind string) bool {
 	switch kind {
-	case KindLLMCall, KindToolCall, KindAgentInvoke, KindEvalScore:
+	case KindLLMCall, KindToolCall, KindAgentInvoke, KindEvalScore, KindDecision:
 		return true
 	}
 	return false
@@ -180,6 +181,31 @@ type EvalScorePayload struct {
 	Criterion   string  `json:"criterion"`
 	Score       float64 `json:"score"`
 	Explanation string  `json:"explanation,omitempty"`
+}
+
+// DecisionPayload is a KindDecision entry's payload: one intercept-point
+// evaluation (internal/decide). State/Questions are what was sent, so it can be replayed.
+type DecisionPayload struct {
+	Point     string  `json:"point"`
+	Mode      string  `json:"mode"`
+	Handler   string  `json:"handler"`
+	Outcome   string  `json:"outcome"`
+	Confident bool    `json:"confident"`
+	Top       string  `json:"top,omitempty"`
+	TopP      float64 `json:"top_p,omitempty"`
+	// Probabilities: question id -> option -> probability; a noul's options are "true"/"false".
+	Probabilities map[string]map[string]float64 `json:"probabilities,omitempty"`
+	// Baseline is what quack's own logic decided, in the primary question's option space.
+	Baseline string `json:"baseline,omitempty"`
+	// SkippedStep names the step an acting decide outcome replaced; null otherwise, so savings can be summed later.
+	SkippedStep  *string         `json:"skipped_step"`
+	RequestBytes int             `json:"request_bytes,omitempty"`
+	InputTokens  int             `json:"input_tokens,omitempty"`
+	ServerMS     float64         `json:"server_ms,omitempty"`
+	LatencyMS    float64         `json:"latency_ms"`
+	Error        string          `json:"error,omitempty"`
+	State        json.RawMessage `json:"state,omitempty"`
+	Questions    json.RawMessage `json:"questions,omitempty"`
 }
 
 // MemoryRecallEntry is one memory delivered to a worker (KindMemoryRecall).

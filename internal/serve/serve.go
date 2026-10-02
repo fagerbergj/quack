@@ -42,6 +42,7 @@ import (
 	"github.com/fagerbergj/quack/internal/cli"
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/decide"
 	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/inference/openaimodel"
 	"github.com/fagerbergj/quack/internal/langfuse"
@@ -849,7 +850,11 @@ func (b *boot) initAgents(st *store.Store, skillTS *skilltoolset.SkillToolset, b
 
 // assembles the orchestrator, re-enters resumed nodes, and starts the extensions and sweeps
 func (b *boot) initOrchestrator(ctx context.Context, st *store.Store, llm model.LLM, roster *dag.Roster, judgeFactory vetting.JudgeFactory, planJudge vetting.PlanJudge, taskStore, userStore *memory.Store, artifacts artifact.Service, ledgerStore ledger.LedgerStore, assignmentFreshness tools.AssignmentFreshnessFunc, assignmentMeta tools.AssignmentMetaFunc, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), skillSrc skill.Source, orchRef *atomic.Pointer[orchestrator.Orchestrator], resumeNodes []store.ResumableNode, runHub *stream.Hub, bootEventLog *runlog.EventLog, sdkExts []builtSDKExtension, startSweeps []func(), hooks *shutdownHooks, executorRef *atomic.Pointer[dag.Executor], setupFn dag.SetupFunc, artifactSchemas *artifactschema.Registry) (*orchestrator.Orchestrator, error) {
-	orch, err := assembleOrchestrator(ctx, b.cfg, b.res, st, llm, roster, judgeFactory, planJudge, taskStore, userStore, artifacts, ledgerStore, assignmentFreshness, assignmentMeta, newScopedSkillTS, skillSrc, orchRef, executorRef, hooks, setupFn, b.admission, artifactSchemas)
+	decisions, err := decide.New(b.cfg.Decisions)
+	if err != nil {
+		return nil, err
+	}
+	orch, err := assembleOrchestrator(ctx, b.cfg, b.res, st, llm, roster, judgeFactory, planJudge, decisions, taskStore, userStore, artifacts, ledgerStore, assignmentFreshness, assignmentMeta, newScopedSkillTS, skillSrc, orchRef, executorRef, hooks, setupFn, b.admission, artifactSchemas)
 	if err != nil {
 		return nil, err
 	}
@@ -2015,7 +2020,7 @@ func buildAgentInfos(ctx context.Context, cfg *config.Config, res *artifactsrc.R
 	return agentInfos, mediaAgents, rosterSB.String(), bundleHashes
 }
 
-func assembleOrchestrator(ctx context.Context, cfg *config.Config, res *artifactsrc.Resolver, st *store.Store, llm model.LLM, roster *dag.Roster, judgeFactory vetting.JudgeFactory, planJudge vetting.PlanJudge, taskStore, userStore *memory.Store, artifacts artifact.Service, ledgerStore ledger.LedgerStore, assignmentFreshness tools.AssignmentFreshnessFunc, assignmentMeta tools.AssignmentMetaFunc, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), skillSrc skill.Source, orchRef *atomic.Pointer[orchestrator.Orchestrator], executorRef *atomic.Pointer[dag.Executor], hooks *shutdownHooks, setupFn dag.SetupFunc, admission *dag.Admission, artifactSchemas *artifactschema.Registry) (*orchestrator.Orchestrator, error) {
+func assembleOrchestrator(ctx context.Context, cfg *config.Config, res *artifactsrc.Resolver, st *store.Store, llm model.LLM, roster *dag.Roster, judgeFactory vetting.JudgeFactory, planJudge vetting.PlanJudge, decisions *decide.Decider, taskStore, userStore *memory.Store, artifacts artifact.Service, ledgerStore ledger.LedgerStore, assignmentFreshness tools.AssignmentFreshnessFunc, assignmentMeta tools.AssignmentMetaFunc, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), skillSrc skill.Source, orchRef *atomic.Pointer[orchestrator.Orchestrator], executorRef *atomic.Pointer[dag.Executor], hooks *shutdownHooks, setupFn dag.SetupFunc, admission *dag.Admission, artifactSchemas *artifactschema.Registry) (*orchestrator.Orchestrator, error) {
 	orchBundle, err := agent.LoadBundle(ctx, res, "agents/orchestrator")
 	if err != nil {
 		return nil, fmt.Errorf("orchestrator bundle load failed: %w", err)
@@ -2046,6 +2051,7 @@ func assembleOrchestrator(ctx context.Context, cfg *config.Config, res *artifact
 	}
 
 	planner := dag.NewPlanner(roster.Infos, cfg.Workspace.CheckCommands, planJudge)
+	planner.SetDecisions(decisions)
 	executor := dag.NewExecutor(st.Sessions, nil, nil, judgeFactory, nil, nil)
 	executor.SetRoster(roster)
 	orchSysPrompt := promptbuilder.CacheByDay(func(ctx context.Context) string {
