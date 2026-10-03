@@ -33,7 +33,9 @@ decisions:
 
 ## Handlers
 
-`kind: systemone` sends `url` + `/v1/systemone`. The call is retried once on a connection error, a 429 or a 5xx (Clef answers 503 when one batch runs out of GPU memory). A 413 (input over the server's token cap) and a 422 (a request the server rejects) are never retried. A 422 is also logged at warn, since it means quack sent a malformed question.
+`kind: systemone` sends `url` + `/v1/systemone`. The call is retried once on a connection error, a 429 or a 5xx (Clef answers 503 when one batch runs out of GPU memory). A 413 (input over the server's token cap) and a 422 or 400 (a request the server rejects) are never retried. A 422 or 400 is also logged at warn, since it means quack sent a malformed question.
+
+llama.cpp (`llama-server` with a decision-model GGUF) is a supported backend. It reports an over-cap input as HTTP 500 "input (N tokens) is too large to process" and quack treats that like a 413 (not retried), rejects schema errors with 400, and returns no `latency_ms`, so the record omits `server_ms`. Set `max_input_tokens` to the server's `-ub`. llama.cpp serves these requests one at a time, so set `timeout: 20s`.
 
 `timeout` bounds the whole call, and a point's own `timeout` can only shorten it. Keep both short: a llama-swap upstream that is still loading (Clef's cold start is about six minutes) blocks until the timeout, and the point then records `unavailable`.
 
