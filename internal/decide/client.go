@@ -52,15 +52,35 @@ type Client struct {
 }
 
 // NewClient retries once on dial errors, 429 and 5xx (503 is the server's
-// per-batch OOM); 413/422 are never retried.
+// per-batch OOM); 413, 400 and 422 are never retried.
 func NewClient(p config.DecisionHandler) *Client {
 	return &Client{
 		url:            strings.TrimRight(p.URL, "/") + "/v1/systemone",
 		model:          p.Model,
 		timeout:        p.Timeout,
 		maxInputTokens: p.MaxInputTokens,
-		http:           &http.Client{Transport: httpx.NewTransport(nil, httpx.WithMaxAttempts(2), httpx.WithBaseDelay(100*time.Millisecond))},
+		http:           &http.Client{Transport: httpx.NewTransport(tooLargeTransport{http.DefaultTransport}, httpx.WithMaxAttempts(2), httpx.WithBaseDelay(100*time.Millisecond))},
 	}
+}
+
+// tooLargeTransport turns llama.cpp's over-cap answer (HTTP 500 "input (N tokens) is too large")
+// into a 413 before the retry layer above it can resend a request that will never fit.
+type tooLargeTransport struct{ next http.RoundTripper }
+
+func (t tooLargeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.next.RoundTrip(req)
+	if err != nil || resp.StatusCode != http.StatusInternalServerError {
+		return resp, err
+	}
+	head, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+	resp.Body = struct {
+		io.Reader
+		io.Closer
+	}{io.MultiReader(bytes.NewReader(head), resp.Body), resp.Body}
+	if bytes.Contains(head, []byte("is too large to process")) {
+		resp.StatusCode, resp.Status = http.StatusRequestEntityTooLarge, "413 Request Entity Too Large"
+	}
+	return resp, nil
 }
 
 // Reply is one call's per-question option probabilities (a noul's are "true"/"false").
@@ -117,8 +137,8 @@ func (c *Client) Ask(ctx context.Context, state any, questions map[string]Questi
 		if resp.StatusCode == http.StatusRequestEntityTooLarge {
 			return reply, fmt.Errorf("%w: %s", ErrTooLarge, detail)
 		}
-		if resp.StatusCode == http.StatusUnprocessableEntity {
-			// quack sent a schema the server rejects: a bug here, not an outage.
+		if resp.StatusCode == http.StatusUnprocessableEntity || resp.StatusCode == http.StatusBadRequest {
+			// quack sent a schema the server rejects (422 Clef, 400 llama.cpp): a bug here, not an outage.
 			slog.Warn("decision request rejected", "component", "decide", "url", c.url, "detail", string(detail))
 		}
 		return reply, fmt.Errorf("decide: %s: status %d: %s", c.url, resp.StatusCode, detail)

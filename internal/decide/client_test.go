@@ -1,9 +1,11 @@
 package decide
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -157,5 +159,69 @@ func TestAskGuardReadsUnescapedBytes(t *testing.T) {
 	srv := fakeServer(t, &calls, func(_ int32, w http.ResponseWriter, _ map[string]any) { _, _ = w.Write([]byte(okBody)) })
 	if _, err := newTestClient(srv.URL, time.Second, 200).Ask(context.Background(), strings.Repeat("<", 600), nil); err != nil || calls.Load() != 1 {
 		t.Errorf("err = %v calls = %d, want the call made", err, calls.Load())
+	}
+}
+
+func TestAskLlamaCpp500TooLargeIsTooLargeAndNotRetried(t *testing.T) {
+	var calls atomic.Int32
+	srv := fakeServer(t, &calls, func(_ int32, w http.ResponseWriter, _ map[string]any) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":{"code":500,"message":"input (9000 tokens) is too large to process. increase the physical batch size"}}`))
+	})
+	_, err := newTestClient(srv.URL, time.Second, 0).Ask(context.Background(), "s", nil)
+	if !errors.Is(err, ErrTooLarge) || !strings.Contains(err.Error(), "9000 tokens") {
+		t.Errorf("err = %v, want ErrTooLarge with the server's detail", err)
+	}
+	if calls.Load() != 1 {
+		t.Errorf("calls = %d, want 1", calls.Load())
+	}
+}
+
+func TestAskOther500IsStillRetried(t *testing.T) {
+	var calls atomic.Int32
+	srv := fakeServer(t, &calls, func(n int32, w http.ResponseWriter, _ map[string]any) {
+		if n == 1 {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte("boom"))
+			return
+		}
+		_, _ = w.Write([]byte(okBody))
+	})
+	if _, err := newTestClient(srv.URL, time.Second, 0).Ask(context.Background(), "s", nil); err != nil || calls.Load() != 2 {
+		t.Errorf("err = %v, calls = %d, want success on the second call", err, calls.Load())
+	}
+}
+
+func TestAskLlamaCpp400IsLoggedAndNotRetried(t *testing.T) {
+	var logs bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(old) })
+	var calls atomic.Int32
+	srv := fakeServer(t, &calls, func(_ int32, w http.ResponseWriter, _ map[string]any) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"code":400,"message":"bad question type","type":"invalid_request_error"}}`))
+	})
+	_, err := newTestClient(srv.URL, time.Second, 0).Ask(context.Background(), "s", nil)
+	if err == nil || errors.Is(err, ErrTooLarge) || calls.Load() != 1 {
+		t.Errorf("err = %v, calls = %d, want a plain error after one call", err, calls.Load())
+	}
+	if !strings.Contains(logs.String(), "level=WARN") || !strings.Contains(logs.String(), "bad question type") {
+		t.Errorf("log = %q, want a warn with the body", logs.String())
+	}
+}
+
+func TestAskLlamaCppWithoutLatencyMS(t *testing.T) {
+	var calls atomic.Int32
+	srv := fakeServer(t, &calls, func(_ int32, w http.ResponseWriter, _ map[string]any) {
+		_, _ = w.Write([]byte(`{"answers":{"accept":{"type":"noul","noul":0.9,"confidence":0.1}},"usage":{"input_tokens":77}}`))
+	})
+	r, err := newTestClient(srv.URL, time.Second, 0).Ask(context.Background(), "s", nil)
+	if err != nil || r.ServerMS != 0 || r.InputTokens != 77 || r.Answers["accept"]["true"] != 0.9 {
+		t.Errorf("reply = %+v, err = %v", r, err)
+	}
+	b, _ := json.Marshal(payload(Result{ServerMS: r.ServerMS, InputTokens: r.InputTokens}, ""))
+	if strings.Contains(string(b), "server_ms") || !strings.Contains(string(b), `"input_tokens":77`) {
+		t.Errorf("payload = %s, want server_ms omitted and input_tokens kept", b)
 	}
 }
