@@ -65,13 +65,15 @@ A noul question's options are `true` and `false`; a score question's options are
 
 Every core state is clipped by bytes with a `…[truncated]` marker so the request stays under a 4096-token handler cap. All four core points run on their own goroutine and never delay the caller.
 
-The [GitHub extension](../extensions/github.md) declares three points, all asked after a review is posted and never changing what it posts. Each finding's state is its path, line, text without its label, and the diff hunk it is anchored to; the verdict's state is the pull request's title and body, every finding, and the reviewer's notes.
+The [GitHub extension](../extensions/github.md) declares five points, none of which changes what it posts or runs. The three review points are asked after a review is posted: each finding's state is its path, line, text without its label, and the diff hunk it is anchored to; the verdict's state is the pull request's title and body, every finding, and the reviewer's notes. `intent` is asked for a free-text mention on an issue or pull request, with the comment, the title, the sender and their author association, and the delivery kinds the labels and authorship grant. `ci.flaky` is asked per failing check (up to five) on the auto-heal and `quack:fix` paths, with the repo, pull request, head SHA, check name, the check's summary and annotations, and the first 50 changed files.
 
 | Point | Modes | Questions | Restrictive | Baseline |
 | --- | --- | --- | --- | --- |
 | `ext:github/finding.severity` | `observe` | `severity` (choice, primary): `blocking`, `suggestion`, `nit`, `question` | `blocking` | The finding's severity from quack's review, else its body label; not asked for an unlabeled finding. |
 | `ext:github/finding.blocking` | `observe` | `blocking` (noul, primary): would merging with this finding unaddressed be a mistake? | `true` | Whether the label is `blocking`. |
 | `ext:github/review.verdict` | `observe` | `verdict` (choice, primary): `approve`, `comment`, `request_changes` | `comment`, `request_changes` | The review's own verdict. |
+| `ext:github/intent` | `observe` | `write` (noul, primary): does the message ask quack to write to the repository? `deliverable` (choice): `reply`, `review`, `commit`, `pull_request`, `plan` | `false` | `true` when the extension's classifiers picked a commit or a new pull request; it covers `write` only. |
+| `ext:github/ci.flaky` | `observe` | `flaky` (noul, primary): is this CI failure unrelated to the pull request's changes? | none | None at failure time; label it later by joining `(repo, head_sha, check)` to that check's re-run conclusion. |
 
 The [Sleeper extension](https://github.com/fagerbergj/quack-extensions/tree/main/sleeper#decision-points) declares four points, asked one at a time after a `lineup`, `waivers` or `trade` job run ends `done`, from that job's artifact. They never change an artifact or a dispatch. Each state carries the player rows (id, name, position, team, opponent, injury and practice status, projection, floor and ceiling, recent points) and the analyst's reasoning for that row, without its verdict, `replaces`, confidence or rank, plus `chat_id`, `league_id`, `season` and `week` for joining against actual points.
 
