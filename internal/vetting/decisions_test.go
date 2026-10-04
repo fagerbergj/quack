@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -133,6 +134,26 @@ func TestResearchSourceAsksPerPageInTurn(t *testing.T) {
 		if r.Baseline != fmt.Sprint(want) || meta.Skipped != 6 || meta.Pages != 20 || st.Title != "Page "+st.URL || st.Question != "Which page?" {
 			t.Errorf("record for %s: baseline %s meta %s title %q", st.URL, r.Baseline, r.Meta, st.Title)
 		}
+	}
+}
+
+// TestResearchSourceSharesOneLane: concurrent researcher nodes still put one research.source request in flight.
+func TestResearchSourceSharesOneLane(t *testing.T) {
+	decidetest.Capture(t)
+	srv := decidetest.Server(t, "relevant", 0.8, 5*time.Millisecond, nil)
+	d := decidetest.Decider(t, srv.URL, researchSource.ID)
+	var wg sync.WaitGroup
+	for n := range 4 {
+		pages, urls := fakeLoader{}, []string{}
+		for i := range 3 {
+			u := fmt.Sprintf("https://example.test/n%d/p%d", n, i)
+			urls, pages[pageID(t, u)] = append(urls, u), "body"
+		}
+		wg.Go(func() { observePages(context.Background(), d, pages, "q", "", urls) })
+	}
+	wg.Wait()
+	if c, m := srv.Calls.Load(), srv.MaxInFlight.Load(); c != 12 || m != 1 {
+		t.Errorf("calls = %d, max in flight = %d; want 12 calls, one at a time", c, m)
 	}
 }
 

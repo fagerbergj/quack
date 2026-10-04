@@ -67,8 +67,12 @@ func clipList(items []string, n int) []string {
 	return items
 }
 
+// researchLane admits one research.source call across all nodes: each queued request at a one-slot
+// server eats every other point's timeout. ponytail: one global lane; a per-handler queue if more bulk points appear.
+var researchLane = make(chan struct{}, 1)
+
 // observeSources asks research.source about each page a web-researcher fetched, once its answer is final.
-// It only spawns a goroutine, which asks one page at a time: llama.cpp serves requests serially.
+// It only spawns a goroutine, which asks one page at a time through researchLane.
 func (g *gateRun) observeSources(answer string, act workerActivity) {
 	if g.cfg.Agent != researchSourceAgentName || len(act.fetched) == 0 || !g.cfg.Decisions.Enabled(researchSource.ID) {
 		return
@@ -106,7 +110,9 @@ func observePages(ctx context.Context, d *decide.Decider, load PageLoader, quest
 				URL: decide.Clip(u, researchURLMax), Text: decide.Clip(string(data), researchTextMax)},
 			Meta: map[string]any{"artifact": id, "page": i + 1, "pages": len(urls), "skipped": skipped},
 		}
+		researchLane <- struct{}{}
 		<-d.Observe(ctx, researchSource.Point, state)(strconv.FormatBool(citesPage))
+		<-researchLane
 	}
 }
 
