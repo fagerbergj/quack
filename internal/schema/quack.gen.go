@@ -954,13 +954,16 @@ type DecisionRecord struct {
 	At time.Time `json:"at"`
 
 	// Baseline What quack's own logic decided; empty when the step was skipped.
-	Baseline      *string                        `json:"baseline,omitempty"`
-	ChatId        string                         `json:"chat_id"`
-	Confident     bool                           `json:"confident"`
-	Error         *string                        `json:"error,omitempty"`
-	Handler       string                         `json:"handler"`
-	InputTokens   *int                           `json:"input_tokens,omitempty"`
-	LatencyMs     float64                        `json:"latency_ms"`
+	Baseline    *string `json:"baseline,omitempty"`
+	ChatId      string  `json:"chat_id"`
+	Confident   bool    `json:"confident"`
+	Error       *string `json:"error,omitempty"`
+	Handler     string  `json:"handler"`
+	InputTokens *int    `json:"input_tokens,omitempty"`
+	LatencyMs   float64 `json:"latency_ms"`
+
+	// Meta Recorded beside the state and never sent to the handler; only with with_state=true.
+	Meta          interface{}                    `json:"meta,omitempty"`
 	Mode          string                         `json:"mode"`
 	NodeId        *string                        `json:"node_id,omitempty"`
 	Outcome       string                         `json:"outcome"`

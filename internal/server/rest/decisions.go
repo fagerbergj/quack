@@ -89,6 +89,9 @@ func decisionRecord(e ledger.Entry, p ledger.DecisionPayload, withState bool) sc
 	}
 	if withState {
 		rec.State, rec.Questions = p.State, p.Questions
+		if len(p.Meta) > 0 {
+			rec.Meta = p.Meta
+		}
 	}
 	return rec
 }

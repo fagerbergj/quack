@@ -20,6 +20,7 @@ import (
 
 	quackagent "github.com/fagerbergj/quack/internal/agent"
 	"github.com/fagerbergj/quack/internal/artifactschema"
+	"github.com/fagerbergj/quack/internal/decide"
 	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
@@ -43,6 +44,7 @@ type Executor struct {
 	// schemas: registered-schema enforcement for every gate node this executor
 	// builds (SetSchemas) - stamped regardless of that node's own gated setting.
 	schemas   *artifactschema.Registry
+	decisions *decide.Decider
 	admission *Admission
 	// judgeSpec: one judge model serves every agent, so it's a single spec, not per-agent.
 	judgeSpec AdmissionSpec
@@ -76,6 +78,9 @@ func (e *Executor) SetWALLedger(store ledger.LedgerStore) { e.walLedger = store 
 // SetSchemas wires registered-schema enforcement into every gate node this
 // executor builds - unconditional, like SetArtifacts, not gate policy.
 func (e *Executor) SetSchemas(reg *artifactschema.Registry) { e.schemas = reg }
+
+// SetDecisions attaches the decision intercept points to every gate node; nil disables them.
+func (e *Executor) SetDecisions(d *decide.Decider) { e.decisions = d }
 
 // ResetNodeCancels: clears user-cancelled node flags for the next turn.
 func (e *Executor) ResetNodeCancels(chatID string) { e.controls.resetCancelled(chatID) }
@@ -265,7 +270,7 @@ func (e *Executor) runSubset(ctx adkagent.Context, plan Plan, chatID string, see
 	gateNodes, _, err := buildGateNodes(ctx, plan, e.RosterFor(ctx), e.judge, e.controls, chatID, userID, source,
 		func(nodeID string, score float64, passed bool, rounds int, contextID string) {
 			e.recordGateResult(chatID, nodeID, score, passed, rounds, contextID)
-		}, e.admission, e.judgeSpec, artifacts, e.walLedger, e.schemas, nil, sink) // a subset run never re-runs setup, so nothing to refresh
+		}, e.admission, e.judgeSpec, artifacts, e.walLedger, e.schemas, e.decisions, nil, sink) // a subset run never re-runs setup, so nothing to refresh
 	if err != nil {
 		return nil, err
 	}

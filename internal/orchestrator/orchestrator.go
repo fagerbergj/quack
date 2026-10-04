@@ -33,6 +33,7 @@ import (
 	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/artifactschema"
 	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/decide"
 	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/memory"
@@ -65,6 +66,7 @@ type Orchestrator struct {
 	userMem     *memory.Store
 	taskMem     *memory.Store
 	memAgent    adkagent.Agent
+	decisions   *decide.Decider
 	artifacts   artifact.Service
 	ledgerStore ledger.LedgerStore
 	schemas     *artifactschema.Registry
@@ -178,6 +180,9 @@ func unavailableArtifactResponse(name string, err error) *artifact.LoadResponse 
 func (o *Orchestrator) SetUserMemoryHook(memAgent adkagent.Agent) {
 	o.memAgent = memAgent
 }
+
+// SetDecisions attaches the decision intercept points; nil (the default) disables them.
+func (o *Orchestrator) SetDecisions(d *decide.Decider) { o.decisions = d }
 
 // newSafeYield serializes concurrent node goroutines onto one yield and stops
 // after a panicking call: a second goroutine re-entering the panicked yield
@@ -544,7 +549,8 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			inference.RecordPlanRejection(sessionID, msg)
 			return true
 		}
-		o.maybeMineUserMemory(ctx, userID, sessionID, source, message)
+		memTurnEnded := o.maybeMineUserMemory(ctx, userID, sessionID, source, message)
+		defer memTurnEnded()
 		prior := o.PriorEvents(ctx, userID, sessionID)
 		pending, hasPending := LatestPendingQuestion(prior)
 		if hasPending {
@@ -1275,20 +1281,39 @@ func (o *Orchestrator) PendingQuestion(ctx context.Context, userID, sessionID st
 func (o *Orchestrator) LatestAnswer(ctx context.Context, userID, sessionID string) string {
 	var latest string
 	for _, ev := range o.PriorEvents(ctx, userID, sessionID) {
-		if ev == nil || ev.Content == nil || ev.Author != orchestratorName {
-			continue
-		}
-		var sb strings.Builder
-		for _, p := range ev.Content.Parts {
-			if p != nil && !p.Thought && p.FunctionCall == nil && p.FunctionResponse == nil {
-				sb.WriteString(p.Text)
-			}
-		}
-		if t := strings.TrimSpace(sb.String()); t != "" {
+		if t := answerText(ev); t != "" {
 			latest = t
 		}
 	}
 	return latest
+}
+
+// turnAnswer is LatestAnswer within the current turn: "" when no answer followed the last user event.
+func (o *Orchestrator) turnAnswer(ctx context.Context, userID, sessionID string) string {
+	events := o.PriorEvents(ctx, userID, sessionID)
+	for i := len(events) - 1; i >= 0; i-- {
+		if t := answerText(events[i]); t != "" {
+			return t
+		}
+		if events[i] != nil && events[i].Author == "user" {
+			return ""
+		}
+	}
+	return ""
+}
+
+// answerText is an orchestrator event's visible text, "" for any other event.
+func answerText(ev *session.Event) string {
+	if ev == nil || ev.Content == nil || ev.Author != orchestratorName {
+		return ""
+	}
+	var sb strings.Builder
+	for _, p := range ev.Content.Parts {
+		if p != nil && !p.Thought && p.FunctionCall == nil && p.FunctionResponse == nil {
+			sb.WriteString(p.Text)
+		}
+	}
+	return strings.TrimSpace(sb.String())
 }
 
 type AgentClients = map[string]adkagent.Agent

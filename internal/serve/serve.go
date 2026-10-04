@@ -2069,6 +2069,7 @@ func assembleOrchestrator(ctx context.Context, cfg *config.Config, res *artifact
 		executor.SetWALLedger(ledgerStore)
 	}
 	executor.SetSchemas(artifactSchemas)
+	executor.SetDecisions(decisions)
 	executor.SetNodeStateStore(st) // write-through node state machine (#962)
 	executorRef.Store(executor)
 	// Orchestrator turns take a session from the worker nodes' pool, held only while
@@ -2080,6 +2081,7 @@ func assembleOrchestrator(ctx context.Context, cfg *config.Config, res *artifact
 	// Unconditional, like executor.SetArtifacts: dag_plan persistence (#1095/#1118) must not
 	// depend on load_artifacts in orchestrator.tools (a prod config dropped plans, #1122).
 	orch.SetArtifacts(artifacts)
+	orch.SetDecisions(decisions)
 	orch.SetNodeSessionReaper(st.ReapNodeSessions)
 	orch.SetPlanLoader(st.LoadExecPlan)
 	orch.SetAssignmentFreshnessCheck(assignmentFreshness)

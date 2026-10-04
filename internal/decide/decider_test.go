@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 
@@ -392,4 +393,46 @@ func TestRegisterRejectsTheExtNamespace(t *testing.T) {
 		}
 	}()
 	Register(Point{ID: "ext:core/x", Primary: "q", Questions: map[string]Question{"q": {Type: "noul"}}}, func(s string) string { return s })
+}
+
+func TestClipBoundsBytesOnARuneBoundary(t *testing.T) {
+	if got := Clip("short", 10); got != "short" {
+		t.Errorf("Clip under the cap = %q", got)
+	}
+	long := strings.Repeat("é", 100) // 2 bytes each
+	for _, n := range []int{0, 5, 20, 21, 199} {
+		got := Clip(long, n)
+		if len(got) > max(n, len(clipMarker)) || !strings.HasSuffix(got, clipMarker) || !utf8.ValidString(got) {
+			t.Errorf("Clip(_, %d) = %q (%d bytes)", n, got, len(got))
+		}
+	}
+}
+
+func TestAnnotatedMetaIsRecordedButNeverSent(t *testing.T) {
+	mem := ledgerCapture(t)
+	var calls atomic.Int32
+	bodies := make(chan map[string]any, 1)
+	d := newDecider(t, noulServer(t, &calls, 0.2, bodies), testObserveOnly.ID, config.DecisionModeObserve, 0.9)
+	ctx := ledger.WithCoords(context.Background(), ledger.Coords{ChatID: "chat-meta"})
+	<-d.Observe(ctx, testObserveOnly.Point, Annotated{State: map[string]string{"m": "x"}, Meta: map[string]bool{"prefiltered": true}})("false")
+
+	if sent, _ := json.Marshal((<-bodies)["state"]); string(sent) != `{"m":"x"}` {
+		t.Errorf("handler got state %s, want only the inner state", sent)
+	}
+	got := decisionEntries(t, mem, "chat-meta")
+	if len(got) != 1 || string(got[0].State) != `{"m":"x"}` || string(got[0].Meta) != `{"prefiltered":true}` {
+		t.Errorf("entries = %+v, want inner state and meta recorded apart", got)
+	}
+}
+
+var testNoul = RegisterObserveNoul("test.noul", "q", "q?", "test_step")
+
+func TestRegisterObserveNoulIsObserveOnly(t *testing.T) {
+	_, err := New(config.DecisionsConfig{
+		Handlers: map[string]config.DecisionHandler{"p": {URL: "http://x"}},
+		Points:   map[string]config.DecisionPoint{testNoul.ID: {Enabled: true, Handler: "p", Mode: config.DecisionModeGuard}},
+	})
+	if err == nil || !testNoul.Parse("true") || testNoul.Parse("false") || testNoul.Replaces != "test_step" || testNoul.Questions["q"].Type != "noul" {
+		t.Errorf("point = %+v, guard err = %v; want an observe-only noul point parsed as bool", testNoul.Point, err)
+	}
 }

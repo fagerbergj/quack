@@ -206,6 +206,8 @@ type DecisionPayload struct {
 	Error        string          `json:"error,omitempty"`
 	State        json.RawMessage `json:"state,omitempty"`
 	Questions    json.RawMessage `json:"questions,omitempty"`
+	// Meta is recorded beside State but was never sent to the handler.
+	Meta json.RawMessage `json:"meta,omitempty"`
 }
 
 // MemoryRecallEntry is one memory delivered to a worker (KindMemoryRecall).

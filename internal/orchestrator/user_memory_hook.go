@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/decide"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/stream"
 )
@@ -31,23 +33,65 @@ const (
 	memoryAgentSessionID = "extract"
 )
 
+// memoryExtract observes the memory-agent extraction against one question over the whole turn,
+// including turns the keyword pre-filter skips.
+var memoryExtract = decide.RegisterObserveNoul("memory.extract", "durable_fact", "Does this turn state a durable fact about the user "+
+	"(a preference, identity, standing instruction, or ongoing project) worth remembering beyond this conversation?", "memory_extract_call")
+
+// Byte caps for memory.extract's state, ~9 KB in all: well under Clef's 4096-token cap.
+const (
+	memoryExtractMessageMax = 3000
+	memoryExtractAnswerMax  = 6000
+)
+
+type memoryExtractState struct {
+	Message string `json:"message"`
+	Answer  string `json:"answer"`
+}
+
 // maybeMineUserMemory: fire-and-forget end-of-turn user-memory hook; never blocks the response.
-func (o *Orchestrator) maybeMineUserMemory(ctx context.Context, userID, chatID, source, message string) {
+// Call turnEnded once the turn's answer is persisted; it only spawns a goroutine.
+func (o *Orchestrator) maybeMineUserMemory(ctx context.Context, userID, chatID, source, message string) (turnEnded func()) {
 	if o.userMem == nil || o.memAgent == nil {
-		return
+		return func() {}
 	}
-	if !userMemoryPreFilter.MatchString(message) {
-		return
+	prefiltered := !userMemoryPreFilter.MatchString(message)
+	baseline := make(chan string, 1)
+	turnEnded = o.observeMemoryExtract(ctx, userID, chatID, message, prefiltered, baseline)
+	if prefiltered {
+		baseline <- "false"
+		return turnEnded
 	}
 	bgCtx := context.WithoutCancel(ctx)
 	go func() {
 		cands, err := mineUserMemory(bgCtx, o.memAgent, message, chatID)
 		if err != nil {
+			baseline <- ""
 			slog.Warn("user memory hook: extraction failed", "component", "orchestrator", "user", userID, "err", err)
 			return
 		}
+		baseline <- strconv.FormatBool(len(cands) > 0)
 		commitUserMemory(bgCtx, o.userMem, userID, memory.Provenance{ChatID: chatID, Source: source}, cands)
 	}()
+	return turnEnded
+}
+
+// observeMemoryExtract returns the turn-end step that asks memory.extract about message and the
+// turn's answer, settling with baseline whenever extraction finishes.
+func (o *Orchestrator) observeMemoryExtract(ctx context.Context, userID, chatID, message string, prefiltered bool, baseline <-chan string) func() {
+	if !o.decisions.Enabled(memoryExtract.ID) {
+		return func() {}
+	}
+	ctx = context.WithoutCancel(ctx)
+	return func() {
+		go func() {
+			state := decide.Annotated{
+				State: memoryExtractState{Message: decide.Clip(message, memoryExtractMessageMax), Answer: decide.Clip(o.turnAnswer(ctx, userID, chatID), memoryExtractAnswerMax)},
+				Meta:  map[string]bool{"prefiltered": prefiltered},
+			}
+			o.decisions.Observe(ctx, memoryExtract.Point, state)(<-baseline)
+		}()
+	}
 }
 
 // memoryCandidate is the memory agent's per-fact output shape (agents/memory-agent/prompt.md).
