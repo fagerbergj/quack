@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/fagerbergj/quack/internal/config"
 )
@@ -51,6 +52,12 @@ func Register[T any](p Point, parse func(top string) T) Typed[T] {
 	}
 	registry[p.ID] = p
 	return Typed[T]{Point: p, Parse: parse}
+}
+
+// RegisterObserveNoul registers an observe-only core point asking one noul question, parsed as a bool.
+func RegisterObserveNoul(id, question, instructions, replaces string) Typed[bool] {
+	return Register(Point{ID: id, Primary: question, Replaces: replaces, Modes: []string{config.DecisionModeObserve},
+		Questions: map[string]Question{question: {Type: "noul", Instructions: instructions}}}, func(top string) bool { return top == "true" })
 }
 
 // ExtPointID places an extension's point name in its own namespace: a bare
@@ -117,4 +124,26 @@ func (x Decision[T]) Guard(current T) T {
 		return x.Value
 	}
 	return current
+}
+
+// Annotated is a state whose Meta is recorded beside it but never sent to the handler,
+// so a flag correlated with the baseline cannot sway the answer.
+type Annotated struct {
+	State any
+	Meta  any
+}
+
+const clipMarker = " …[truncated]"
+
+// Clip cuts s to at most n bytes on a rune boundary and marks the cut. States are
+// sized in bytes: code and JSON escaping run near 3 bytes per token, not English's 4.
+func Clip(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	cut := max(n-len(clipMarker), 0)
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + clipMarker
 }

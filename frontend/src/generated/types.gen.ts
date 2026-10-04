@@ -485,6 +485,10 @@ export type DecisionRecord = {
      * Model input questions; only with with_state=true.
      */
     questions?: unknown;
+    /**
+     * Recorded beside the state and never sent to the handler; only with with_state=true.
+     */
+    meta?: unknown;
 };
 
 export type DecisionList = {

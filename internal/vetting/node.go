@@ -807,6 +807,7 @@ func (g *gateRun) commitFinal(answer string, res GateResult, episodicRoundsWritt
 	}
 	act.answer = answer
 	commitDelivery(g.nodeCtx, g.sink, g.cfg, g.nodeID, act, res)
+	g.observeSources(answer, act)
 	// commitDelivery already ran on the full answer (memory, episodic record,
 	// delivery render); only the chat-visible return value collapses on a restate.
 	return dedupeAnswerAgainstStaged(answer, act.stagedDelivery)
@@ -986,15 +987,20 @@ func runJudgeRounds(g *gateRun, question *genai.Content, answer, sfx string) (ou
 			break
 		}
 		runID, judgeCtx, jspan, ledgerCtx, act := j.prepareJudge(round)
+		settle := j.observeAnswer(ledgerCtx, act)
 		v, det, jerr := j.runJudge(round, runID, judgeCtx, ledgerCtx, act)
 		if j.outcome != nil { // admission swap aborted the round; the ctx error rides the outcome
+			settle("")
 			break
 		}
 		if jerr != nil {
+			settle("")
 			j.applyJudgeFailure(round, runID, jspan, jerr)
 			break
 		}
 		stop, env, jr := j.recordRoundVerdict(round, runID, jspan, ledgerCtx, v, det, act)
+		// env, not j.res: a failed WAL save flips j.res.Passed after the verdict.
+		settle(strconv.FormatBool(env.Passed))
 		if stop {
 			break
 		}

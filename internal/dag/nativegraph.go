@@ -176,7 +176,7 @@ func (e *Executor) RunPlanAsGraph(ctx context.Context, plan Plan, appName, userI
 	gateNodes, _, err := buildGateNodes(ctx, plan, e.RosterFor(ctx), e.judge, e.controls, chatID, userID, source,
 		func(nodeID string, score float64, passed bool, rounds int, contextID string) {
 			e.recordGateResult(chatID, nodeID, score, passed, rounds, contextID)
-		}, e.admission, e.judgeSpec, e.artifacts, e.walLedger, e.schemas, func(nctx context.Context, node Node, cfg vetting.Config) bool {
+		}, e.admission, e.judgeSpec, e.artifacts, e.walLedger, e.schemas, e.decisions, func(nctx context.Context, node Node, cfg vetting.Config) bool {
 			return e.refreshStaleSetup(nctx, userID, chatID, &plan, node, cfg)
 		}, sink)
 	if err != nil {

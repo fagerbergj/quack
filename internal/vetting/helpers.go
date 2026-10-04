@@ -18,6 +18,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/artifactschema"
 	"github.com/fagerbergj/quack/internal/artifactsrc"
+	"github.com/fagerbergj/quack/internal/decide"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/recordstore"
@@ -91,6 +92,8 @@ type Config struct {
 	// Schemas: boot-collected extsdk.ArtifactSchemas registry; nil = no
 	// extension declared a schema, so no recordstore write here is checked.
 	Schemas *artifactschema.Registry
+	// Decisions: the enabled decision points (answer.accept, research.source); nil disables them.
+	Decisions *decide.Decider
 	// Artifact: episodic record name this node writes on gate pass ("body" or
 	// "" for none). "review" is written for IsReviewer nodes regardless of
 	// this field - it names only the reMarkable-style extra record (#1006).

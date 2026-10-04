@@ -18,6 +18,7 @@ import (
 	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/artifactschema"
 	"github.com/fagerbergj/quack/internal/artifactsrc"
+	"github.com/fagerbergj/quack/internal/decide"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/stream"
@@ -42,7 +43,7 @@ type nodeScopedWorker interface {
 // buildGateNodes: one gated node per plan node. source is the run's origin (extension name or a fixed
 // app value) - observability only, see vetting.Config.Source. userID scopes the recordstore.Client behind
 // a native node's artifact tools (#1123) and must match the userID the rest of the chat's artifacts (e.g. the orchestrator's own writes) were saved under, or a node's list/read/edit silently sees nothing.
-func buildGateNodes(ctx context.Context, plan Plan, roster *Roster, judge vetting.JudgeFactory, controls *runControls, chatID, userID, source string, recordGate func(nodeID string, score float64, passed bool, rounds int, contextID string), admission *Admission, judgeSpec AdmissionSpec, artifacts artifact.Service, walLedger ledger.LedgerStore, schemas *artifactschema.Registry,
+func buildGateNodes(ctx context.Context, plan Plan, roster *Roster, judge vetting.JudgeFactory, controls *runControls, chatID, userID, source string, recordGate func(nodeID string, score float64, passed bool, rounds int, contextID string), admission *Admission, judgeSpec AdmissionSpec, artifacts artifact.Service, walLedger ledger.LedgerStore, schemas *artifactschema.Registry, decisions *decide.Decider,
 	refreshSetup func(context.Context, Node, vetting.Config) bool, sink func(stream.SSEEvent)) (map[string]workflow.Node, []adkagent.Agent, error) {
 	nodesByID := make(map[string]workflow.Node, len(plan.Nodes))
 	var subAgents []adkagent.Agent
@@ -107,6 +108,7 @@ func buildGateNodes(ctx context.Context, plan Plan, roster *Roster, judge vettin
 		// Store invariant, not grading opinion: armed regardless of cfgFor's own
 		// gated:false or gates-disabled result, same as Artifacts/User/Ledger above.
 		cfg.Schemas = schemas
+		cfg.Decisions = decisions
 		cfg.RoundCoordsSink = setRoundCoords
 		cfg.RefreshPrompt = refreshPrompt
 		cfg.JudgeArtifactTools = judgeArtifactTools

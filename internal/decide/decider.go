@@ -51,6 +51,7 @@ type Result struct {
 
 	replaces  string
 	state     any
+	meta      any
 	questions map[string]Question
 	span      oteltrace.Span
 }
@@ -215,6 +216,9 @@ func (d *Decider) run(ctx context.Context, p Point, state any) Result {
 	cfg := d.points[p.ID]
 	r := Result{Point: p.ID, Mode: cfg.Mode, Handler: cfg.Handler, replaces: p.Replaces, state: state,
 		questions: withOverrides(p.Questions, cfg.Questions)}
+	if a, ok := state.(Annotated); ok {
+		r.state, r.meta = a.State, a.Meta
+	}
 	ctx, r.span = otelobs.Start(ctx, "decision")
 	if cfg.Timeout > 0 {
 		var cancel context.CancelFunc
@@ -222,7 +226,7 @@ func (d *Decider) run(ctx context.Context, p Point, state any) Result {
 		defer cancel()
 	}
 	start := time.Now()
-	reply, err := d.handlers[cfg.Handler].Ask(ctx, state, r.questions)
+	reply, err := d.handlers[cfg.Handler].Ask(ctx, r.state, r.questions)
 	r.Latency, r.RequestBytes = time.Since(start), reply.RequestBytes
 	if err == nil && reply.Answers[p.Primary] == nil {
 		err = fmt.Errorf("decide: %s: no answer for question %q", p.ID, p.Primary)

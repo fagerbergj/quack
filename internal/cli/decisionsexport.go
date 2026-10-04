@@ -106,6 +106,9 @@ func ExportDecisions(ctx context.Context, lf *langfusegen.ClientWithResponses, i
 
 func exportDecision(ctx context.Context, lf *langfusegen.ClientWithResponses, ing *langfuse.Client, version, id, dataset string, r schema.DecisionRecord) error {
 	meta := map[string]any{"chat": r.ChatId, "node": deref(r.NodeId), "round": deref(r.Round), "quack_version": version, "handler": r.Handler, "mode": r.Mode}
+	if r.Meta != nil {
+		meta["state_meta"] = r.Meta
+	}
 	req := langfusegen.CreateDatasetItemRequest{
 		DatasetName: dataset, Id: &id, Metadata: meta,
 		Input:          decisionItemInput{State: r.State, Questions: r.Questions},

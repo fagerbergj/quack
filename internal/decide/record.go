@@ -59,6 +59,9 @@ func payload(r Result, baseline string) ledger.DecisionPayload {
 		p.Error = r.Err.Error()
 	}
 	p.State, _ = json.Marshal(r.state)
+	if r.meta != nil {
+		p.Meta, _ = json.Marshal(r.meta)
+	}
 	p.Questions, _ = json.Marshal(r.questions)
 	return p
 }

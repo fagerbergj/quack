@@ -2133,6 +2133,7 @@ components:
         error: {type: string}
         state: {description: "Model input state; only with with_state=true."}
         questions: {description: "Model input questions; only with with_state=true."}
+        meta: {description: "Recorded beside the state and never sent to the handler; only with with_state=true."}
 
     DecisionList:
       type: object
