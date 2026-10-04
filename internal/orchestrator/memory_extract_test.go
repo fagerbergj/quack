@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -71,8 +72,8 @@ func TestMemoryExtractRecordsTheExtractionBaseline(t *testing.T) {
 				t.Errorf("meta = %s, want %s", got[0].Meta, want)
 			}
 			state := string(<-states)
-			if !strings.Contains(state, "Noted, Ada.") || !strings.Contains(state, c.message) || strings.Contains(state, "prefiltered") {
-				t.Errorf("state sent = %s, want the message and answer and no prefiltered flag", state)
+			if strings.Contains(state, "Noted, Ada.") || !strings.Contains(state, c.message) || strings.Contains(state, "prefiltered") {
+				t.Errorf("state sent = %s, want the message, no assistant reply and no prefiltered flag", state)
 			}
 			if wasCalled := len(called) > 0; wasCalled == c.prefiltered {
 				t.Errorf("memory agent called = %v on a prefiltered=%v turn", wasCalled, c.prefiltered)
@@ -133,23 +134,10 @@ func TestMemoryExtractStateIsBounded(t *testing.T) {
 		sessions: chatWithTurns(t, [2]string{"user", huge}, [2]string{orchestratorName, huge}), decisions: decidetest.Decider(t, srv.URL, memoryExtract.ID)}
 	extractTurn(o, huge)
 	state := <-states
-	if len(state) > memoryExtractMessageMax+memoryExtractAnswerMax+100 || !strings.Contains(string(state), "[truncated]") {
-		t.Errorf("state is %d bytes, want both fields clipped with a marker", len(state))
+	if len(state) > 2*memoryExtractMessageMax+100 || strings.Count(string(state), "[truncated]") != 2 {
+		t.Errorf("state is %d bytes, want both messages clipped with a marker", len(state))
 	}
 	decidetest.Records(t, mem, "chat1", 1)
-}
-
-// TestTurnAnswerStopsAtTheTurnsUserEvent: a turn that persisted no answer of its own has none,
-// rather than the previous turn's.
-func TestTurnAnswerStopsAtTheTurnsUserEvent(t *testing.T) {
-	o := &Orchestrator{sessions: chatWithTurns(t, [2]string{"user", "q1"}, [2]string{orchestratorName, "a1"}, [2]string{"user", "q2"})}
-	if got := o.turnAnswer(context.Background(), "alice", "chat1"); got != "" {
-		t.Errorf("turnAnswer = %q, want none: this turn persisted no answer", got)
-	}
-	o.sessions = chatWithTurns(t, [2]string{"user", "q1"}, [2]string{orchestratorName, "a1"}, [2]string{"user", "q2"}, [2]string{orchestratorName, "a2"})
-	if got := o.turnAnswer(context.Background(), "alice", "chat1"); got != "a2" {
-		t.Errorf("turnAnswer = %q, want a2", got)
-	}
 }
 
 // TestMemoryExtractRunsAtTheEndOfARunTurn: Run observes once per turn, after the answer is persisted.
@@ -167,7 +155,35 @@ func TestMemoryExtractRunsAtTheEndOfARunTurn(t *testing.T) {
 	if got := decidetest.Records(t, mem, "chat-run", 1); len(got) != 1 || got[0].Baseline != "false" {
 		t.Fatalf("records = %+v, want one with baseline false", got)
 	}
-	if state := string(<-states); !strings.Contains(state, "Tabs it is.") || !strings.Contains(state, "I prefer tabs.") {
-		t.Errorf("state = %s, want the turn's message and answer", state)
+	if state := string(<-states); strings.Contains(state, "Tabs it is.") || !strings.Contains(state, "I prefer tabs.") || strings.Contains(state, "previous_message") {
+		t.Errorf("state = %s, want the turn's message alone: no previous turn, no answer", state)
+	}
+}
+
+// TestMemoryExtractCarriesThePreviousUserTurn: a second turn's state pairs its message with the
+// first turn's, never with itself or either answer.
+func TestMemoryExtractCarriesThePreviousUserTurn(t *testing.T) {
+	mem := decidetest.Capture(t)
+	states := make(chan json.RawMessage, 2)
+	srv := decidetest.Server(t, "durable_fact", 0.9, 0, states)
+	o := newTestOrch(t, &orchStub{replies: []*model.LLMResponse{stubText("Tabs it is."), stubText("Width 4, noted.")}})
+	o.userMem, o.memAgent, o.decisions = newTestStore(t), buildScriptedAgent(t, `[]`), decidetest.Decider(t, srv.URL, memoryExtract.ID)
+	var got []memoryExtractState
+	for _, msg := range []string{"I prefer tabs.", "Make them width 4."} {
+		for _, err := range o.Run(context.Background(), "u", "chat-run", SourceApp, msg, nil) {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		var st memoryExtractState
+		if err := json.Unmarshal(<-states, &st); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, st)
+	}
+	decidetest.Records(t, mem, "chat-run", 2)
+	want := []memoryExtractState{{Message: "I prefer tabs."}, {Message: "Make them width 4.", Previous: "I prefer tabs."}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("states = %+v, want %+v", got, want)
 	}
 }

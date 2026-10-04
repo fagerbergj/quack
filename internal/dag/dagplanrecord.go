@@ -47,6 +47,19 @@ type Assignment struct {
 	Stopped bool `json:"stopped,omitempty"`
 }
 
+// Status is the assignment's outcome in ApplyAssignmentOutcome's terms, "" when it has not run.
+func (a Assignment) Status() string {
+	switch {
+	case a.TaskID == "":
+		return ""
+	case a.Stopped:
+		return "cancelled"
+	case strings.TrimSpace(a.Result) == "":
+		return "failed"
+	}
+	return "done"
+}
+
 // DagPlanRecord is the "dag_plan" kind's structured body. Assignment.NodeID
 // references a "dag_node" record minted by create_plan/edit_plan -
 // validateDagPlanRecord only checks depends_on within this record's own

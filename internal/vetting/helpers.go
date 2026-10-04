@@ -134,6 +134,7 @@ type Config struct {
 	User        string // observability only; resolved from the ADK session, not caller-set
 	Source      string // observability only; run origin (extension name or a fixed app value)
 	Task        string // delivery check; empty = no check
+	Request     string // the turn's user message, for decision states only
 	// UpstreamAnswers: this node's dependency output, same as buildTask gives
 	// the worker - the judge needs it too to verify upstream-sourced claims.
 	UpstreamAnswers string

@@ -64,8 +64,14 @@ func Server(t testing.TB, q string, p float64, delay time.Duration, states chan<
 // Decider enables pointID in observe mode against url.
 func Decider(t testing.TB, url, pointID string) *decide.Decider {
 	t.Helper()
+	return DeciderWithCap(t, url, pointID, 0)
+}
+
+// DeciderWithCap is Decider with the handler's max_input_tokens set.
+func DeciderWithCap(t testing.TB, url, pointID string, maxInputTokens int) *decide.Decider {
+	t.Helper()
 	d, err := decide.New(config.DecisionsConfig{
-		Handlers: map[string]config.DecisionHandler{"clef": {URL: url, Model: "clef", Timeout: 2 * time.Second}},
+		Handlers: map[string]config.DecisionHandler{"clef": {URL: url, Model: "clef", Timeout: 2 * time.Second, MaxInputTokens: maxInputTokens}},
 		Points:   map[string]config.DecisionPoint{pointID: {Enabled: true, Handler: "clef", Mode: config.DecisionModeObserve, ActAt: 0.9, Fail: config.DecisionFailOpen}},
 	})
 	if err != nil {

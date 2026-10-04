@@ -147,3 +147,21 @@ func Clip(s string, n int) string {
 	}
 	return s[:cut] + clipMarker
 }
+
+const midMarker = " …[truncated]… "
+
+// ClipEnds is Clip keeping the head and the tail, where an answer's sources and conclusions sit.
+func ClipEnds(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	keep := max(n-len(midMarker), 0)
+	head, tail := keep*2/3, len(s)-(keep-keep*2/3)
+	for head > 0 && !utf8.RuneStart(s[head]) {
+		head--
+	}
+	for tail < len(s) && !utf8.RuneStart(s[tail]) {
+		tail++
+	}
+	return s[:head] + midMarker + s[tail:]
+}

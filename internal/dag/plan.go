@@ -80,6 +80,8 @@ type Node struct {
 	// Assignment.Result - "" for a node not yet run. Lets the plan judge see
 	// what already happened when judging a growing plan (planSummary).
 	Result string
+	// Status: the earlier step's outcome (Assignment.Status), "" for a node not yet run.
+	Status string
 }
 
 // TerminalIDs are the plan's sinks - nodes nothing depends on - in plan order; each one's output is delivered.

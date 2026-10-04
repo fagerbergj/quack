@@ -20,28 +20,32 @@ var answerAccept = decide.RegisterObserveNoul("answer.accept", "pass",
 var researchSource = decide.RegisterObserveNoul("research.source", "relevant",
 	"Is this page relevant to answering the research question?", "page_read")
 
-// Byte caps keep each state near 10 KB: under Clef's 4096-token cap even for code at ~3 bytes/token.
+// Byte caps for the fixed fields; the answer and page text fill what the handler's cap leaves, never under 6 KB.
 const (
+	requestMax              = 1500
 	answerAcceptTaskMax     = 2000
-	answerAcceptAnswerMax   = 6000
+	answerAcceptAnswerMin   = 6000
 	answerAcceptSourcesMax  = 750 // per list: cited, fetched
-	researchQuestionMax     = 1500
+	researchTaskMax         = 1500
 	researchTitleMax        = 200
 	researchURLMax          = 400
-	researchTextMax         = 6000 // ~1,500 tokens of page text
+	researchTextMin         = 6000
 	researchSourceMaxPages  = 20
 	researchSourceAgentName = "web-researcher"
 )
 
+// answerAcceptState's request is the user's own words; node_task is the planner's assignment, which defines the job.
 type answerAcceptState struct {
-	Task    string   `json:"task"`
-	Answer  string   `json:"answer"`
-	Cited   []string `json:"cited,omitempty"`
-	Fetched []string `json:"fetched,omitempty"`
+	Request  string   `json:"request,omitempty"`
+	NodeTask string   `json:"node_task"`
+	Answer   string   `json:"answer"`
+	Cited    []string `json:"cited,omitempty"`
+	Fetched  []string `json:"fetched,omitempty"`
 }
 
 type researchSourceState struct {
-	Question string `json:"question"`
+	Request  string `json:"request,omitempty"`
+	NodeTask string `json:"node_task"`
 	Title    string `json:"title"`
 	URL      string `json:"url"`
 	Text     string `json:"text"`
@@ -49,12 +53,15 @@ type researchSourceState struct {
 
 // observeAnswer starts answer.accept for this round's answer; settle it with the round's verdict, "" for none.
 func (j *judgeRounds) observeAnswer(ctx context.Context, act workerActivity) func(baseline string) <-chan struct{} {
-	return j.cfg.Decisions.Observe(ctx, answerAccept.Point, answerAcceptState{
-		Task:    decide.Clip(j.cfg.Task, answerAcceptTaskMax),
-		Answer:  decide.Clip(j.answer, answerAcceptAnswerMax),
-		Cited:   clipList(citationsIn(j.answer, referenceList(j.answer)), answerAcceptSourcesMax),
-		Fetched: clipList(slices.Sorted(maps.Keys(act.fetched)), answerAcceptSourcesMax),
-	})
+	st := answerAcceptState{
+		Request:  decide.Clip(j.cfg.Request, requestMax),
+		NodeTask: decide.Clip(j.cfg.Task, answerAcceptTaskMax),
+		Cited:    clipList(citationsIn(j.answer, referenceList(j.answer)), answerAcceptSourcesMax),
+		Fetched:  clipList(slices.Sorted(maps.Keys(act.fetched)), answerAcceptSourcesMax),
+	}
+	used := slices.Concat([]string{st.Request, st.NodeTask}, st.Cited, st.Fetched)
+	st.Answer = decide.ClipEnds(j.answer, j.cfg.Decisions.FillBytes(answerAccept.ID, answerAcceptAnswerMin, used...))
+	return j.cfg.Decisions.Observe(ctx, answerAccept.Point, st)
 }
 
 // clipList keeps the leading items whose total length stays within n bytes.
@@ -83,10 +90,10 @@ func (g *gateRun) observeSources(answer string, act workerActivity) {
 	}
 	cfg := g.cfg
 	ctx := ledger.WithCoords(context.WithoutCancel(g.nodeCtx), ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent, User: cfg.User, Source: cfg.Source})
-	go observePages(ctx, cfg.Decisions, load, cfg.Task, answer, slices.Sorted(maps.Keys(act.fetched)))
+	go observePages(ctx, cfg.Decisions, load, cfg.Request, cfg.Task, answer, slices.Sorted(maps.Keys(act.fetched)))
 }
 
-func observePages(ctx context.Context, d *decide.Decider, load PageLoader, question, answer string, urls []string) {
+func observePages(ctx context.Context, d *decide.Decider, load PageLoader, request, task, answer string, urls []string) {
 	skipped := max(len(urls)-researchSourceMaxPages, 0)
 	urls = urls[:len(urls)-skipped]
 	cited := map[string]bool{}
@@ -105,11 +112,10 @@ func observePages(ctx context.Context, d *decide.Decider, load PageLoader, quest
 			continue
 		}
 		citesPage := strings.Contains(answer, id) || slices.ContainsFunc(urlVariants(u), func(v string) bool { return cited[v] })
-		state := decide.Annotated{
-			State: researchSourceState{Question: decide.Clip(question, researchQuestionMax), Title: decide.Clip(firstLine(string(data)), researchTitleMax),
-				URL: decide.Clip(u, researchURLMax), Text: decide.Clip(string(data), researchTextMax)},
-			Meta: map[string]any{"artifact": id, "page": i + 1, "pages": len(urls), "skipped": skipped},
-		}
+		st := researchSourceState{Request: decide.Clip(request, requestMax), NodeTask: decide.Clip(task, researchTaskMax),
+			Title: decide.Clip(firstLine(string(data)), researchTitleMax), URL: decide.Clip(u, researchURLMax)}
+		st.Text = decide.ClipEnds(string(data), d.FillBytes(researchSource.ID, researchTextMin, st.Request, st.NodeTask, st.Title, st.URL))
+		state := decide.Annotated{State: st, Meta: map[string]any{"artifact": id, "page": i + 1, "pages": len(urls), "skipped": skipped}}
 		researchLane <- struct{}{}
 		<-d.Observe(ctx, researchSource.Point, state)(strconv.FormatBool(citesPage))
 		<-researchLane

@@ -1,6 +1,7 @@
 package dag
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
@@ -143,6 +144,8 @@ type RawNode struct {
 	ResumedFrom string `json:"resumed_from,omitempty"`
 	// Result: see Node.Result - carried through unchanged by assemble.
 	Result string `json:"result,omitempty"`
+	// Status: see Node.Status - carried through unchanged by assemble.
+	Status string `json:"status,omitempty"`
 }
 
 // ValidateArtifactKind rejects an artifact selector outside the registered
@@ -170,7 +173,7 @@ func AssignmentsToRawNodes(assignments []Assignment, nodeAgent, resumedFrom map[
 		out = append(out, RawNode{
 			ID: a.NodeID, Agent: agent, Task: a.Task, Rubric: a.Rubric,
 			DependsOn: a.DependsOn, Checks: a.Checks, Workdir: a.Workdir,
-			ResumedFrom: resumedFrom[a.NodeID], Result: a.Result,
+			ResumedFrom: resumedFrom[a.NodeID], Result: a.Result, Status: a.Status(),
 		})
 	}
 	return out, nil
@@ -262,9 +265,8 @@ func (p *Planner) judgeRouting(ctx context.Context, plan *Plan, message string) 
 	if plan.Setup != nil {
 		repoKey = workspace.NormalizeRepoURL(plan.Setup.Repo)
 	}
-	summary := planSummary(plan)
-	settle := p.decisions.Observe(ctx, planAccept.Point, "User's request:\n"+message+"\n\nProposed plan:\n"+summary)
-	accept, reason, err := p.judge(ctx, message, summary, repoKey)
+	settle := p.decisions.Observe(ctx, planAccept.Point, "User's request:\n"+message+"\n\nProposed plan:\n"+renderPlan(plan, true))
+	accept, reason, err := p.judge(ctx, message, planSummary(plan), repoKey)
 	verdict := ""
 	if err == nil {
 		verdict = strconv.FormatBool(accept)
@@ -301,7 +303,11 @@ func emitPlanRejectedEvent(ctx context.Context, plan *Plan, reason string) {
 // sees - enough to judge progress, not a full re-read of the output.
 const resultPreviewLen = 600
 
-func planSummary(p *Plan) string {
+func planSummary(p *Plan) string { return renderPlan(p, false) }
+
+// renderPlan is the judge's summary, or with facts plan.accept's state: earlier nodes'
+// outputs reduced to status, artifact kind and size, and no quack-authored hints.
+func renderPlan(p *Plan, facts bool) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "%d node(s):", len(p.Nodes))
 	for _, n := range p.Nodes {
@@ -310,7 +316,9 @@ func planSummary(p *Plan) string {
 			fmt.Fprintf(&sb, " depends on %s", strings.Join(n.DependsOn, ", "))
 		}
 		fmt.Fprintf(&sb, "\n    task: %s", strings.TrimSpace(n.Task))
-		if r := strings.TrimSpace(n.Result); r != "" {
+		if facts {
+			writeNodeFacts(&sb, n)
+		} else if r := strings.TrimSpace(n.Result); r != "" {
 			if len(r) > resultPreviewLen {
 				r = r[:resultPreviewLen] + "…"
 			}
@@ -322,12 +330,25 @@ func planSummary(p *Plan) string {
 	} else {
 		sb.WriteString("\nsetup: (none declared)")
 	}
-	if p.Delivery != nil {
+	switch {
+	case p.Delivery != nil:
 		fmt.Fprintf(&sb, "\ndelivery: kind=%q", p.Delivery.Kind)
-	} else {
+	case facts:
+		sb.WriteString("\ndelivery: none")
+	default:
 		sb.WriteString("\ndelivery: (none declared - this step may be a partial plan, more nodes to follow)")
 	}
 	return sb.String()
+}
+
+func writeNodeFacts(sb *strings.Builder, n Node) {
+	fmt.Fprintf(sb, "\n    status: %s", cmp.Or(n.Status, "pending"))
+	if n.Artifact != "" {
+		fmt.Fprintf(sb, ", artifact kind: %s", n.Artifact)
+	}
+	if n.Status != "" {
+		fmt.Fprintf(sb, ", output: %d bytes", len(n.Result))
+	}
 }
 
 // checkReviewDeliverable: deterministic guard - runs unconditionally, unlike
@@ -634,6 +655,7 @@ func buildNode(n RawNode, known map[string]AgentInfo, checkCommands []string, id
 		Artifact:      artifactKind,
 		ResumedFrom:   n.ResumedFrom,
 		Result:        n.Result,
+		Status:        n.Status,
 	}, nil
 }
 

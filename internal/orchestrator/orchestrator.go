@@ -1288,20 +1288,6 @@ func (o *Orchestrator) LatestAnswer(ctx context.Context, userID, sessionID strin
 	return latest
 }
 
-// turnAnswer is LatestAnswer within the current turn: "" when no answer followed the last user event.
-func (o *Orchestrator) turnAnswer(ctx context.Context, userID, sessionID string) string {
-	events := o.PriorEvents(ctx, userID, sessionID)
-	for i := len(events) - 1; i >= 0; i-- {
-		if t := answerText(events[i]); t != "" {
-			return t
-		}
-		if events[i] != nil && events[i].Author == "user" {
-			return ""
-		}
-	}
-	return ""
-}
-
 // answerText is an orchestrator event's visible text, "" for any other event.
 func answerText(ev *session.Event) string {
 	if ev == nil || ev.Content == nil || ev.Author != orchestratorName {
