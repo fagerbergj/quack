@@ -103,8 +103,8 @@ func TestValidateExtensions_ChecksDecisionPoints(t *testing.T) {
 	for _, c := range []struct{ name, modules, point, want string }{
 		{"extension not enabled", "noop: {}", "ext:github/finding.severity", `extension "github" is not enabled (enabled: noop)`},
 		{"extension declares nothing", "noop: {}", "ext:noop/start_sit", `extension "noop" declares no decision points`},
-		{"undeclared name", github, "ext:github/finding.severty",
-			`extension "github" declares no such point (declared: ext:github/finding.blocking, ext:github/finding.severity, ext:github/review.verdict)`},
+		// The prefix only: the real module's point list grows with each release.
+		{"undeclared name", github, "ext:github/finding.severty", `extension "github" declares no such point (declared: ext:github/`},
 		{"declared", github, "ext:github/finding.severity", ""},
 	} {
 		cfg := extensionsConfig(t, filepath.Join(dir, "workspace"), c.modules)
