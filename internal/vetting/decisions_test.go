@@ -119,7 +119,7 @@ func TestAnswerAcceptStateSeparatesRequestFromTask(t *testing.T) {
 		if st.Request != "Is the GIL off?" || !strings.HasPrefix(st.NodeTask, "Check python3.13t") || strings.Contains(string(raw), `"task"`) {
 			t.Errorf("cap %d: state = %.200s, want request and node_task as separate fields", c.maxTokens, raw)
 		}
-		if (st.Answer == answer) != c.whole || !strings.HasSuffix(st.Answer, "Sources: [1]") || len(raw) > max(c.maxTokens*3, 9000) {
+		if (st.Answer == answer) != c.whole || !strings.HasSuffix(st.Answer, "Sources: [1]") || len(raw) > max(c.maxTokens*2, 9000) {
 			t.Errorf("cap %d: answer %d bytes (whole %v), state %d bytes; want whole=%v with its tail kept", c.maxTokens, len(st.Answer), st.Answer == answer, len(raw), c.whole)
 		}
 	}
@@ -252,8 +252,8 @@ func TestResearchSourceStateIsBounded(t *testing.T) {
 		if err := json.Unmarshal(raw, &st); err != nil {
 			t.Fatal(err)
 		}
-		budget := max(researchTextMin, maxTokens*3-1024-len(st.Request)-len(st.NodeTask)-len(st.Title)-len(st.URL))
-		if len(raw) > max(10500, maxTokens*3) || len(st.Text) > budget || len(st.Text) < budget-10 || !strings.HasSuffix(st.Text, "References: end.") ||
+		budget := max(researchTextMin, maxTokens*2-1024-len(st.Request)-len(st.NodeTask)-len(st.Title)-len(st.URL))
+		if len(raw) > max(10500, maxTokens*2) || len(st.Text) > budget || len(st.Text) < budget-10 || !strings.HasSuffix(st.Text, "References: end.") ||
 			len(st.Title) > researchTitleMax || len(st.URL) > researchURLMax || len(st.NodeTask) > researchTaskMax || len(st.Request) > requestMax {
 			t.Errorf("cap %d: state is %d bytes (request %d, task %d, title %d, url %d, text %d of %d); want every field clipped, the text at both ends",
 				maxTokens, len(raw), len(st.Request), len(st.NodeTask), len(st.Title), len(st.URL), len(st.Text), budget)
