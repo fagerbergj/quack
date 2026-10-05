@@ -80,16 +80,48 @@ func TestAnswerAcceptStateIsBounded(t *testing.T) {
 		fetched[u] = struct{}{}
 		fmt.Fprintf(&answer, "Claim %d ([src](%s)). ", i, u)
 	}
-	j := &judgeRounds{answer: answer.String(), cfg: Config{Task: strings.Repeat("task ", 2000), Decisions: decidetest.Decider(t, srv.URL, answerAccept.ID)}}
+	answer.WriteString("Sources: the end.")
+	j := &judgeRounds{answer: answer.String(), cfg: Config{Request: strings.Repeat("ask ", 2000), Task: strings.Repeat("task ", 2000),
+		Decisions: decidetest.Decider(t, srv.URL, answerAccept.ID)}}
 	<-j.observeAnswer(context.Background(), workerActivity{fetched: fetched})("true")
 	var st answerAcceptState
 	raw := <-states
 	if err := json.Unmarshal(raw, &st); err != nil {
 		t.Fatal(err)
 	}
-	if len(raw) > 11000 || !strings.HasSuffix(st.Task, "[truncated]") || !strings.HasSuffix(st.Answer, "[truncated]") ||
+	if len(raw) > 12500 || !strings.HasSuffix(st.Request, "[truncated]") || !strings.HasSuffix(st.NodeTask, "[truncated]") ||
+		len(st.Answer) > answerAcceptAnswerMin || !strings.Contains(st.Answer, "[truncated]") || !strings.HasPrefix(st.Answer, "Claim 0 ") ||
+		!strings.HasSuffix(st.Answer, "Sources: the end.") ||
 		len(st.Cited) == 0 || len(strings.Join(st.Cited, "")) > answerAcceptSourcesMax || len(strings.Join(st.Fetched, "")) > answerAcceptSourcesMax {
-		t.Errorf("state is %d bytes (task %d, answer %d, cited %d, fetched %d); want every field clipped", len(raw), len(st.Task), len(st.Answer), len(st.Cited), len(st.Fetched))
+		t.Errorf("state is %d bytes (request %d, task %d, answer %d, cited %d, fetched %d); want every field clipped, the answer at both ends",
+			len(raw), len(st.Request), len(st.NodeTask), len(st.Answer), len(st.Cited), len(st.Fetched))
+	}
+}
+
+// TestAnswerAcceptStateSeparatesRequestFromTask: the user's words and the planner's assignment
+// travel as separate fields, and the answer's budget grows with the handler's input cap.
+func TestAnswerAcceptStateSeparatesRequestFromTask(t *testing.T) {
+	answer := strings.Repeat("a", 15000) + " Sources: [1]"
+	for _, c := range []struct {
+		maxTokens int
+		whole     bool
+	}{{8192, true}, {4096, false}, {0, false}} {
+		states := make(chan json.RawMessage, 1)
+		srv := decidetest.Server(t, "pass", 0.5, 0, states)
+		j := &judgeRounds{answer: answer, cfg: Config{Request: "Is the GIL off?", Task: "Check python3.13t; do NOT conflate the binary with the GIL being off.",
+			Decisions: decidetest.DeciderWithCap(t, srv.URL, answerAccept.ID, c.maxTokens)}}
+		<-j.observeAnswer(context.Background(), workerActivity{})("true")
+		raw := <-states
+		var st answerAcceptState
+		if err := json.Unmarshal(raw, &st); err != nil {
+			t.Fatal(err)
+		}
+		if st.Request != "Is the GIL off?" || !strings.HasPrefix(st.NodeTask, "Check python3.13t") || strings.Contains(string(raw), `"task"`) {
+			t.Errorf("cap %d: state = %.200s, want request and node_task as separate fields", c.maxTokens, raw)
+		}
+		if (st.Answer == answer) != c.whole || !strings.HasSuffix(st.Answer, "Sources: [1]") || len(raw) > max(c.maxTokens*2, 9000) {
+			t.Errorf("cap %d: answer %d bytes (whole %v), state %d bytes; want whole=%v with its tail kept", c.maxTokens, len(st.Answer), st.Answer == answer, len(raw), c.whole)
+		}
 	}
 }
 
@@ -119,7 +151,7 @@ func TestResearchSourceAsksPerPageInTurn(t *testing.T) {
 	}
 	answer := "See [one](" + urls[1] + "/#frag) and " + pageID(t, urls[2]) + "."
 	ctx := ledger.WithCoords(context.Background(), ledger.Coords{ChatID: "chat-rs"})
-	observePages(ctx, decidetest.Decider(t, srv.URL, researchSource.ID), pages, "Which page?", answer, urls)
+	observePages(ctx, decidetest.Decider(t, srv.URL, researchSource.ID), pages, "Which page is it?", "Which page?", answer, urls)
 
 	got := decidetest.Records(t, mem, "chat-rs", 19)
 	if len(got) != 19 || srv.MaxInFlight.Load() != 1 {
@@ -131,7 +163,7 @@ func TestResearchSourceAsksPerPageInTurn(t *testing.T) {
 		_ = json.Unmarshal(r.State, &st)
 		_ = json.Unmarshal(r.Meta, &meta)
 		want := st.URL == urls[1] || st.URL == urls[2]
-		if r.Baseline != fmt.Sprint(want) || meta.Skipped != 6 || meta.Pages != 20 || st.Title != "Page "+st.URL || st.Question != "Which page?" {
+		if r.Baseline != fmt.Sprint(want) || meta.Skipped != 6 || meta.Pages != 20 || st.Title != "Page "+st.URL || st.NodeTask != "Which page?" || st.Request != "Which page is it?" {
 			t.Errorf("record for %s: baseline %s meta %s title %q", st.URL, r.Baseline, r.Meta, st.Title)
 		}
 	}
@@ -149,7 +181,7 @@ func TestResearchSourceSharesOneLane(t *testing.T) {
 			u := fmt.Sprintf("https://example.test/n%d/p%d", n, i)
 			urls, pages[pageID(t, u)] = append(urls, u), "body"
 		}
-		wg.Go(func() { observePages(context.Background(), d, pages, "q", "", urls) })
+		wg.Go(func() { observePages(context.Background(), d, pages, "r", "q", "", urls) })
 	}
 	wg.Wait()
 	if c, m := srv.Calls.Load(), srv.MaxInFlight.Load(); c != 12 || m != 1 {
@@ -208,18 +240,24 @@ func TestResearchSourceGating(t *testing.T) {
 }
 
 func TestResearchSourceStateIsBounded(t *testing.T) {
-	states := make(chan json.RawMessage, 1)
-	srv := decidetest.Server(t, "relevant", 0.5, 0, states)
 	u := "https://example.test/" + strings.Repeat("x", 1000)
-	page := strings.Repeat("T", 500) + "\n" + strings.Repeat("body text ", 5000)
-	observePages(context.Background(), decidetest.Decider(t, srv.URL, researchSource.ID), fakeLoader{pageID(t, u): page}, strings.Repeat("q ", 2000), "", []string{u})
-	raw := <-states
-	var st researchSourceState
-	if err := json.Unmarshal(raw, &st); err != nil {
-		t.Fatal(err)
-	}
-	if len(raw) > 8500 || len(st.Text) > researchTextMax || len(st.Title) > researchTitleMax || len(st.URL) > researchURLMax || len(st.Question) > researchQuestionMax {
-		t.Errorf("state is %d bytes (question %d, title %d, url %d, text %d); want every field clipped", len(raw), len(st.Question), len(st.Title), len(st.URL), len(st.Text))
+	page := strings.Repeat("T", 500) + "\n" + strings.Repeat("body text ", 5000) + "References: end."
+	for _, maxTokens := range []int{0, 8192} {
+		states := make(chan json.RawMessage, 1)
+		srv := decidetest.Server(t, "relevant", 0.5, 0, states)
+		observePages(context.Background(), decidetest.DeciderWithCap(t, srv.URL, researchSource.ID, maxTokens), fakeLoader{pageID(t, u): page},
+			strings.Repeat("r ", 2000), strings.Repeat("q ", 2000), "", []string{u})
+		raw := <-states
+		var st researchSourceState
+		if err := json.Unmarshal(raw, &st); err != nil {
+			t.Fatal(err)
+		}
+		budget := max(researchTextMin, maxTokens*2-1024-len(st.Request)-len(st.NodeTask)-len(st.Title)-len(st.URL))
+		if len(raw) > max(10500, maxTokens*2) || len(st.Text) > budget || len(st.Text) < budget-10 || !strings.HasSuffix(st.Text, "References: end.") ||
+			len(st.Title) > researchTitleMax || len(st.URL) > researchURLMax || len(st.NodeTask) > researchTaskMax || len(st.Request) > requestMax {
+			t.Errorf("cap %d: state is %d bytes (request %d, task %d, title %d, url %d, text %d of %d); want every field clipped, the text at both ends",
+				maxTokens, len(raw), len(st.Request), len(st.NodeTask), len(st.Title), len(st.URL), len(st.Text), budget)
+		}
 	}
 }
 

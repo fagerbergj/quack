@@ -130,11 +130,50 @@ func TestPlanAcceptObserveNeverChangesThePlanJudgeFlow(t *testing.T) {
 			}
 			if !c.down {
 				state := <-states
-				if !strings.Contains(state, "Write a plan.") || !strings.Contains(state, *lastSummary) {
-					t.Errorf("state = %q, want the request and the judge's plan summary", state)
+				if !strings.Contains(state, "Write a plan.") || !strings.Contains(state, "task: Analyze the repo.") || *lastSummary == "" {
+					t.Errorf("state = %q, want the request and the plan's tasks", state)
 				}
 			}
 		})
+	}
+}
+
+// TestPlanAcceptStateCarriesFactsNotEarlierOutputs: earlier nodes' outputs and quack's partial-plan
+// hint reach the plan judge but never plan.accept's state, which gets each node's status and output size.
+func TestPlanAcceptStateCarriesFactsNotEarlierOutputs(t *testing.T) {
+	const sentinel = "CONCLUSION: the GIL is off, ship it"
+	states := make(chan string, 1)
+	judge, _, _, lastSummary := fakePlanJudge(true, "", nil)
+	p := NewPlanner([]AgentInfo{{Name: "web-researcher", DefaultArtifact: "body"}, {Name: "synthesizer"}}, nil, judge)
+	p.SetDecisions(planAcceptDecider(t, opposingClef(t, true, states)))
+	raw, err := AssignmentsToRawNodes([]Assignment{
+		{NodeID: "r", Task: "Check the build.", TaskID: "t1", Result: sentinel},
+		{NodeID: "s", Task: "Stopped draft.", TaskID: "t2", Result: "draft " + sentinel, Stopped: true},
+		{NodeID: "f", Task: "Failed lookup.", TaskID: "t3"},
+		{NodeID: "next", Task: "Summarize.", DependsOn: []string{"r", "s", "f"}},
+	}, map[string]string{"r": "web-researcher", "s": "web-researcher", "f": "web-researcher", "next": "synthesizer"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Build(context.Background(), raw, nil, nil, nil, "Is free-threading on?", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	state := <-states
+	for _, banned := range []string{sentinel, "ALREADY RAN", "partial plan"} {
+		if strings.Contains(state, banned) {
+			t.Errorf("state carries %q:\n%s", banned, state)
+		}
+	}
+	for _, want := range []string{"Is free-threading on?", "task: Check the build.",
+		"status: done, artifact kind: body, output: 35 bytes", "status: cancelled, artifact kind: body, output: 41 bytes",
+		"status: failed, artifact kind: body, output: 0 bytes", "- next (synthesizer) depends on r, s, f\n    task: Summarize.\n    status: pending",
+		"delivery: none"} {
+		if !strings.Contains(state, want) {
+			t.Errorf("state lacks %q:\n%s", want, state)
+		}
+	}
+	if !strings.Contains(*lastSummary, sentinel) || !strings.Contains(*lastSummary, "partial plan") {
+		t.Errorf("judge summary = %q, want it unchanged: earlier outputs and the partial-plan note", *lastSummary)
 	}
 }
 

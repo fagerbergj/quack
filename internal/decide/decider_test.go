@@ -395,6 +395,38 @@ func TestRegisterRejectsTheExtNamespace(t *testing.T) {
 	Register(Point{ID: "ext:core/x", Primary: "q", Questions: map[string]Question{"q": {Type: "noul"}}}, func(s string) string { return s })
 }
 
+func TestClipEndsKeepsHeadAndTail(t *testing.T) {
+	if got := ClipEnds("short", 10); got != "short" {
+		t.Errorf("ClipEnds under the cap = %q", got)
+	}
+	long := "HEAD " + strings.Repeat("é", 500) + " TAIL"
+	for _, n := range []int{40, 41, 42, 300} {
+		got := ClipEnds(long, n)
+		if len(got) > n || !utf8.ValidString(got) || !strings.HasPrefix(got, "HEAD") || !strings.HasSuffix(got, " TAIL") || !strings.Contains(got, "[truncated]") {
+			t.Errorf("ClipEnds(_, %d) = %q (%d bytes)", n, got, len(got))
+		}
+	}
+}
+
+func TestFillBytesFollowsTheHandlerCap(t *testing.T) {
+	d, err := New(config.DecisionsConfig{
+		Handlers: map[string]config.DecisionHandler{"clef": {URL: "http://x", MaxInputTokens: 4096}},
+		Points:   map[string]config.DecisionPoint{"test.observe_only": {Enabled: true, Handler: "clef", Mode: "observe"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := d.FillBytes("test.observe_only", 100, "abc", "de"); got != 4096*2-stateReserve-5 {
+		t.Errorf("FillBytes = %d, want the cap's bytes less the reserve and used fields", got)
+	}
+	if got := d.FillBytes("test.observe_only", 20000); got != 20000 {
+		t.Errorf("FillBytes = %d, want the floor", got)
+	}
+	if got := (*Decider)(nil).FillBytes("test.observe_only", 6000); got != 6000 {
+		t.Errorf("disabled FillBytes = %d, want the floor", got)
+	}
+}
+
 func TestClipBoundsBytesOnARuneBoundary(t *testing.T) {
 	if got := Clip("short", 10); got != "short" {
 		t.Errorf("Clip under the cap = %q", got)

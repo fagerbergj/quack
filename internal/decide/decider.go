@@ -75,6 +75,7 @@ func (r Result) SkippedStep() string {
 type Decider struct {
 	points   map[string]config.DecisionPoint
 	handlers map[string]Handler
+	tokens   map[string]int // handler name -> max_input_tokens
 }
 
 // Extension is one enabled extension and the points it declared, ids already ext:<Name>/<name>.
@@ -87,7 +88,7 @@ type Extension struct {
 // declared points (so a typo is caught while disabled), and enabled points' policy;
 // nil when none is enabled. It never calls a handler.
 func New(cfg config.DecisionsConfig, exts ...Extension) (*Decider, error) {
-	d := &Decider{points: map[string]config.DecisionPoint{}, handlers: map[string]Handler{}}
+	d := &Decider{points: map[string]config.DecisionPoint{}, handlers: map[string]Handler{}, tokens: map[string]int{}}
 	declared, names := map[string]Point{}, map[string][]string{}
 	for _, e := range exts {
 		names[e.Name] = []string{}
@@ -116,6 +117,7 @@ func New(cfg config.DecisionsConfig, exts ...Extension) (*Decider, error) {
 		d.points[id] = p
 		if d.handlers[p.Handler] == nil {
 			d.handlers[p.Handler] = newHandler(cfg.Handlers[p.Handler])
+			d.tokens[p.Handler] = cfg.Handlers[p.Handler].MaxInputTokens
 		}
 	}
 	if len(d.points) == 0 {
@@ -165,6 +167,22 @@ func (d *Decider) Enabled(pointID string) bool {
 	}
 	_, ok := d.points[pointID]
 	return ok
+}
+
+// stateReserve is the request's bytes outside a state's fields: the questions and the JSON envelope.
+const stateReserve = 1024
+
+// FillBytes is what pointID's handler cap leaves for one state field after the used fields, at 2 bytes
+// per token (web text ran to 2.8 under JSON escaping, so 3 overflowed an 8192 cap), never under floor.
+func (d *Decider) FillBytes(pointID string, floor int, used ...string) int {
+	if !d.Enabled(pointID) {
+		return floor
+	}
+	n := d.tokens[d.points[pointID].Handler]*2 - stateReserve
+	for _, u := range used {
+		n -= len(u)
+	}
+	return max(floor, n)
 }
 
 // Decide evaluates a registered point and records it; baseline is what quack's own logic decided.

@@ -212,6 +212,7 @@ func nodeGateConfig(ctx context.Context, plan Plan, node Node, worker adkagent.A
 		}
 	}
 	cfg.Task = node.Task
+	cfg.Request = plan.UserMessage
 	cfg.Artifact = node.Artifact
 	cfg.DeriveChecks = node.AgentName == implementerAgent
 	cfg.ChatID = chatID

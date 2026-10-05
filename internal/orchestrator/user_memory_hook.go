@@ -33,20 +33,17 @@ const (
 	memoryAgentSessionID = "extract"
 )
 
-// memoryExtract observes the memory-agent extraction against one question over the whole turn,
-// including turns the keyword pre-filter skips.
+// memoryExtract observes the memory-agent extraction against the user's own words (never the
+// assistant's reply), including turns the keyword pre-filter skips.
 var memoryExtract = decide.RegisterObserveNoul("memory.extract", "durable_fact", "Does this turn state a durable fact about the user "+
 	"(a preference, identity, standing instruction, or ongoing project) worth remembering beyond this conversation?", "memory_extract_call")
 
-// Byte caps for memory.extract's state, ~9 KB in all: well under Clef's 4096-token cap.
-const (
-	memoryExtractMessageMax = 3000
-	memoryExtractAnswerMax  = 6000
-)
+// memoryExtractMessageMax caps each message in memory.extract's state: ~6 KB in all, under Clef's 4096-token cap.
+const memoryExtractMessageMax = 3000
 
 type memoryExtractState struct {
-	Message string `json:"message"`
-	Answer  string `json:"answer"`
+	Message  string `json:"message"`
+	Previous string `json:"previous_message,omitempty"`
 }
 
 // maybeMineUserMemory: fire-and-forget end-of-turn user-memory hook; never blocks the response.
@@ -77,21 +74,34 @@ func (o *Orchestrator) maybeMineUserMemory(ctx context.Context, userID, chatID, 
 }
 
 // observeMemoryExtract returns the turn-end step that asks memory.extract about message and the
-// turn's answer, settling with baseline whenever extraction finishes.
+// user's previous message, settling with baseline whenever extraction finishes.
 func (o *Orchestrator) observeMemoryExtract(ctx context.Context, userID, chatID, message string, prefiltered bool, baseline <-chan string) func() {
 	if !o.decisions.Enabled(memoryExtract.ID) {
 		return func() {}
 	}
 	ctx = context.WithoutCancel(ctx)
+	// Read before this turn's own message is persisted, so the last user turn is the previous one.
+	previous := lastUserTurn(o.PriorEvents(ctx, userID, chatID))
 	return func() {
 		go func() {
 			state := decide.Annotated{
-				State: memoryExtractState{Message: decide.Clip(message, memoryExtractMessageMax), Answer: decide.Clip(o.turnAnswer(ctx, userID, chatID), memoryExtractAnswerMax)},
+				State: memoryExtractState{Message: decide.Clip(message, memoryExtractMessageMax), Previous: decide.Clip(previous, memoryExtractMessageMax)},
 				Meta:  map[string]bool{"prefiltered": prefiltered},
 			}
 			o.decisions.Observe(ctx, memoryExtract.Point, state)(<-baseline)
 		}()
 	}
+}
+
+// lastUserTurn is the text of the last user turn in events, "" for none.
+func lastUserTurn(events []*session.Event) string {
+	turns := buildHistory(events)
+	for i := len(turns) - 1; i >= 0; i-- {
+		if turns[i].Role == "user" {
+			return turns[i].Text
+		}
+	}
+	return ""
 }
 
 // memoryCandidate is the memory agent's per-fact output shape (agents/memory-agent/prompt.md).
