@@ -172,13 +172,13 @@ func (d *Decider) Enabled(pointID string) bool {
 // stateReserve is the request's bytes outside a state's fields: the questions and the JSON envelope.
 const stateReserve = 1024
 
-// FillBytes is what pointID's handler cap leaves for one state field after the used fields, at code's
-// ~3 bytes per token, and never under floor (the result when the point is disabled or has no cap).
+// FillBytes is what pointID's handler cap leaves for one state field after the used fields, at 2 bytes
+// per token (web text ran to 2.8 under JSON escaping, so 3 overflowed an 8192 cap), never under floor.
 func (d *Decider) FillBytes(pointID string, floor int, used ...string) int {
 	if !d.Enabled(pointID) {
 		return floor
 	}
-	n := d.tokens[d.points[pointID].Handler]*3 - stateReserve
+	n := d.tokens[d.points[pointID].Handler]*2 - stateReserve
 	for _, u := range used {
 		n -= len(u)
 	}

@@ -416,7 +416,7 @@ func TestFillBytesFollowsTheHandlerCap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := d.FillBytes("test.observe_only", 100, "abc", "de"); got != 4096*3-stateReserve-5 {
+	if got := d.FillBytes("test.observe_only", 100, "abc", "de"); got != 4096*2-stateReserve-5 {
 		t.Errorf("FillBytes = %d, want the cap's bytes less the reserve and used fields", got)
 	}
 	if got := d.FillBytes("test.observe_only", 20000); got != 20000 {
