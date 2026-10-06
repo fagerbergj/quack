@@ -22,6 +22,8 @@ type Point struct {
 	Primary string
 	// Restrictive lists Primary's answers a guard may apply; any other answer passes.
 	Restrictive []string
+	// Acts lists Primary's answers decide mode may act on; nil acts on any. Another confident answer falls back.
+	Acts []string
 	// Replaces names the step an acting decide outcome skips, recorded as skipped_step.
 	Replaces string
 	// Modes the point's caller implements; nil allows every mode.
@@ -98,9 +100,8 @@ type Decision[T any] struct {
 	Value T
 }
 
-// Decide is Decider.Decide with the answer parsed; baseline is quack's own value.
-// Decide mode has no settle step: when the point Replaces a step that would produce the baseline,
-// a fallback records the caller's placeholder, not that step's real output, so the shadow A/B is not comparable there.
+// Decide is Decider.Decide with the answer parsed; baseline is quack's own value. A fallback records it as
+// given, so a caller whose replaced step produces the baseline uses Decider.Await and settles after that step.
 func (t Typed[T]) Decide(ctx context.Context, d *Decider, state any, baseline T) Decision[T] {
 	r := d.DecideWith(ctx, t.Point, state, fmt.Sprint(baseline))
 	x := Decision[T]{Result: r}

@@ -16,6 +16,8 @@ decisions:
     plan.accept: { enabled: true, handler: clef, questions: { accept: { instructions: "ok?", criteria: { "true": yes } } } }
     ext:github/intent: { mode: guard, fail: closed, timeout: 1s }
     later: { handler: not-yet-defined }
+    d.default: { mode: decide }
+    d.set: { mode: decide, timeout: 2s, audit_rate: 0 }
 `))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -30,6 +32,15 @@ decisions:
 	}
 	if g := c.Decisions.Points["ext:github/intent"]; g.Fail != DecisionFailClosed || g.Timeout != time.Second {
 		t.Errorf("ext point = %+v", g)
+	}
+	if d := c.Decisions.Points["d.default"]; d.Timeout != 8*time.Second || d.AuditRate == nil || *d.AuditRate != 0.1 {
+		t.Errorf("decide defaults = %+v, want 8s and audit_rate 0.1", d)
+	}
+	if d := c.Decisions.Points["d.set"]; d.Timeout != 2*time.Second || d.AuditRate == nil || *d.AuditRate != 0 {
+		t.Errorf("decide point = %+v, want its own 2s and audit_rate 0 kept", d)
+	}
+	if p.Timeout != 0 || p.AuditRate != nil {
+		t.Errorf("observe point = %+v, want no decide defaults", p)
 	}
 	if c.Decisions.Points["later"].Enabled {
 		t.Error("a point with no enabled key must default to off")
@@ -58,6 +69,9 @@ func TestDecisionsValidation(t *testing.T) {
 		{"act_at negative", "points: { p: { act_at: -0.1 } }", "act_at must be in (0,1]"},
 		{"negative point timeout", "points: { p: { timeout: -1s } }", "timeout >= 0"},
 		{"fail closed outside guard", "points: { p: { mode: decide, fail: closed } }", "closed in guard mode"},
+		{"audit_rate above 1", "points: { p: { mode: decide, audit_rate: 1.5 } }", "audit_rate must be in [0,1]"},
+		{"audit_rate NaN", "points: { p: { mode: decide, audit_rate: .nan } }", "audit_rate must be in [0,1]"},
+		{"audit_rate outside decide", "points: { p: { audit_rate: 0.5 } }", "audit_rate applies to decide mode only"},
 		{"bad fail", "points: { p: { mode: guard, fail: maybe } }", "fail must be open"},
 		{"malformed ext id", `points: { "ext:github": { } }`, "ext:<plugin>/<name>"},
 		{"enabled without handler", "points: { p: { enabled: true, handler: nope } }", `handler "nope" is not defined`},

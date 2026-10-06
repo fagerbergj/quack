@@ -24,6 +24,11 @@ var testAccept = Register(Point{
 	Questions: map[string]Question{"accept": {Type: "noul", Instructions: "accept?"}, "extra": {Type: "noul"}},
 }, func(top string) bool { return top == "true" })
 
+var testActsTrue = Register(Point{
+	ID: "test.acts_true", Primary: "accept", Acts: []string{"true"}, Replaces: "test_judge",
+	Questions: map[string]Question{"accept": {Type: "noul"}},
+}, func(top string) bool { return top == "true" })
+
 var testObserveOnly = Register(Point{
 	ID: "test.observe_only", Primary: "q", Modes: []string{config.DecisionModeObserve},
 	Questions: map[string]Question{"q": {Type: "noul"}},
@@ -466,5 +471,62 @@ func TestRegisterObserveNoulIsObserveOnly(t *testing.T) {
 	})
 	if err == nil || !testNoul.Parse("true") || testNoul.Parse("false") || testNoul.Replaces != "test_step" || testNoul.Questions["q"].Type != "noul" {
 		t.Errorf("point = %+v, guard err = %v; want an observe-only noul point parsed as bool", testNoul.Point, err)
+	}
+}
+
+// TestAwaitSettlesWithTheCallersBaseline: Await answers before the caller's step runs and records once
+// settled. Acts gates which confident answers act; an act's baseline is recorded only as an audit.
+func TestAwaitSettlesWithTheCallersBaseline(t *testing.T) {
+	for _, c := range []struct {
+		name, settle, outcome, baseline string
+		p                               float64
+		skipped, reason                 bool
+	}{
+		{"confident true acts, no audit", "", "act", "", 0.97, true, false},
+		{"confident true acts, audited", "false", "act", "false", 0.97, true, false},
+		{"confident false falls back", "true", "fallback", "true", 0.02, false, true},
+		{"unsure falls back", "false", "fallback", "false", 0.6, false, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			mem := ledgerCapture(t)
+			var calls atomic.Int32
+			d := newDecider(t, noulServer(t, &calls, c.p, nil), testActsTrue.ID, config.DecisionModeDecide, 0.9)
+			ctx, cancel := context.WithCancel(ledger.WithCoords(context.Background(), ledger.Coords{ChatID: "chat-aw"}))
+			r, settle := d.Await(ctx, testActsTrue.Point, "s")
+			if string(r.Outcome) != c.outcome || calls.Load() != 1 || len(decisionEntries(t, mem, "chat-aw")) != 0 {
+				t.Fatalf("Await = %s after %d calls, want %s and nothing recorded before settle", r.Outcome, calls.Load(), c.outcome)
+			}
+			cancel() // an audit settles after the caller's ctx has ended
+			<-settle(c.settle)
+			got := decisionEntries(t, mem, "chat-aw")
+			if len(got) != 1 || got[0].Outcome != c.outcome || got[0].Baseline != c.baseline ||
+				(got[0].SkippedStep != nil) != c.skipped || (got[0].Reason != "") != c.reason {
+				t.Errorf("records = %+v", got)
+			}
+		})
+	}
+}
+
+func TestAuditDrawsAtTheConfiguredRate(t *testing.T) {
+	var calls atomic.Int32
+	url := noulServer(t, &calls, 0.9, nil)
+	for _, c := range []struct {
+		rate *float64
+		want bool
+	}{{nil, false}, {new(0.0), false}, {new(1.0), true}} {
+		d, err := New(config.DecisionsConfig{
+			Handlers: map[string]config.DecisionHandler{"p": {URL: url}},
+			Points:   map[string]config.DecisionPoint{testActsTrue.ID: {Enabled: true, Handler: "p", Mode: config.DecisionModeDecide, AuditRate: c.rate}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := d.Audit(testActsTrue.ID); got != c.want || d.Mode(testActsTrue.ID) != config.DecisionModeDecide {
+			t.Errorf("Audit at %v = %v, want %v", c.rate, got, c.want)
+		}
+	}
+	var none *Decider
+	if none.Audit(testActsTrue.ID) || none.Mode(testActsTrue.ID) != "" {
+		t.Error("a nil Decider audits nothing and has no mode")
 	}
 }

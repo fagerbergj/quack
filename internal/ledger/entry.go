@@ -195,17 +195,20 @@ type DecisionPayload struct {
 	TopP      float64 `json:"top_p,omitempty"`
 	// Probabilities: question id -> option -> probability; a noul's options are "true"/"false".
 	Probabilities map[string]map[string]float64 `json:"probabilities,omitempty"`
-	// Baseline is what quack's own logic decided, in the primary question's option space.
+	// Baseline is what quack's own logic decided, in the primary question's option space; beside a
+	// skipped_step it is a shadow audit's verdict.
 	Baseline string `json:"baseline,omitempty"`
 	// SkippedStep names the step an acting decide outcome replaced; null otherwise, so savings can be summed later.
-	SkippedStep  *string         `json:"skipped_step"`
-	RequestBytes int             `json:"request_bytes,omitempty"`
-	InputTokens  int             `json:"input_tokens,omitempty"`
-	ServerMS     float64         `json:"server_ms,omitempty"`
-	LatencyMS    float64         `json:"latency_ms"`
-	Error        string          `json:"error,omitempty"`
-	State        json.RawMessage `json:"state,omitempty"`
-	Questions    json.RawMessage `json:"questions,omitempty"`
+	SkippedStep  *string `json:"skipped_step"`
+	RequestBytes int     `json:"request_bytes,omitempty"`
+	InputTokens  int     `json:"input_tokens,omitempty"`
+	ServerMS     float64 `json:"server_ms,omitempty"`
+	LatencyMS    float64 `json:"latency_ms"`
+	Error        string  `json:"error,omitempty"`
+	// Reason says why a confident decide answer fell back.
+	Reason    string          `json:"reason,omitempty"`
+	State     json.RawMessage `json:"state,omitempty"`
+	Questions json.RawMessage `json:"questions,omitempty"`
 	// Meta is recorded beside State but was never sent to the handler.
 	Meta json.RawMessage `json:"meta,omitempty"`
 }

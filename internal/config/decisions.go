@@ -38,6 +38,9 @@ const (
 	defaultDecisionTimeout        = 5 * time.Second
 	defaultDecisionMaxInputTokens = 8192
 	defaultDecisionActAt          = 0.9
+	// A decide caller blocks on the answer, so it gets a tighter default than the handler's.
+	defaultDecideTimeout   = 8 * time.Second
+	defaultDecideAuditRate = 0.1
 )
 
 // DecisionsConfig is the decisions: block: the handlers that answer at
@@ -65,7 +68,10 @@ type DecisionPoint struct {
 	// ActAt is the top answer's minimum probability for guard/decide to act.
 	ActAt float64 `yaml:"act_at"`
 	// Timeout caps this point's call below the handler's; 0 keeps the handler's.
-	Timeout   time.Duration               `yaml:"timeout"`
+	Timeout time.Duration `yaml:"timeout"`
+	// AuditRate (decide only) is the share of act outcomes whose replaced step still runs in the background
+	// to record a baseline; nil until validated, so an explicit 0 turns audits off.
+	AuditRate *float64                    `yaml:"audit_rate"`
 	Fail      string                      `yaml:"fail"`
 	Questions map[string]DecisionQuestion `yaml:"questions"`
 }
@@ -131,6 +137,9 @@ func (d *DecisionsConfig) validatePoint(id string, p *DecisionPoint) error {
 	if !(p.ActAt > 0 && p.ActAt <= 1) || p.Timeout < 0 {
 		return fmt.Errorf("config: decisions.points.%s: act_at must be in (0,1] and timeout >= 0", id)
 	}
+	if err := decideDefaults(id, p); err != nil {
+		return err
+	}
 	if !p.Enabled {
 		return nil
 	}
@@ -154,6 +163,26 @@ func validatePointPolicy(id string, p *DecisionPoint) error {
 	}
 	if p.Fail != DecisionFailOpen && (p.Fail != DecisionFailClosed || p.Mode != DecisionModeGuard) {
 		return fmt.Errorf("config: decisions.points.%s.fail must be open, or closed in guard mode (got %q)", id, p.Fail)
+	}
+	return nil
+}
+
+func decideDefaults(id string, p *DecisionPoint) error {
+	if p.Mode != DecisionModeDecide {
+		if p.AuditRate != nil {
+			return fmt.Errorf("config: decisions.points.%s.audit_rate applies to decide mode only", id)
+		}
+		return nil
+	}
+	if p.AuditRate == nil {
+		r := defaultDecideAuditRate
+		p.AuditRate = &r
+	}
+	if r := *p.AuditRate; !(r >= 0 && r <= 1) {
+		return fmt.Errorf("config: decisions.points.%s.audit_rate must be in [0,1] (got %v)", id, *p.AuditRate)
+	}
+	if p.Timeout == 0 {
+		p.Timeout = defaultDecideTimeout
 	}
 	return nil
 }
