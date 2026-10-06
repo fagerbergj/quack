@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math/rand/v2"
 	"slices"
 	"strings"
 	"time"
@@ -48,7 +49,10 @@ type Result struct {
 	ServerMS     float64
 	Latency      time.Duration
 	Err          error
+	// Reason says why a confident decide answer fell back.
+	Reason string
 
+	audited   bool // an act whose replaced step still ran, so its baseline is real
 	replaces  string
 	state     any
 	meta      any
@@ -160,6 +164,23 @@ func checkPoint(id string, p config.DecisionPoint, def Point) error {
 	return nil
 }
 
+// Mode is pointID's configured mode, "" when it is disabled.
+func (d *Decider) Mode(pointID string) string {
+	if !d.Enabled(pointID) {
+		return ""
+	}
+	return d.points[pointID].Mode
+}
+
+// Audit draws whether this act outcome of pointID still runs its replaced step, at the point's audit_rate.
+func (d *Decider) Audit(pointID string) bool {
+	if !d.Enabled(pointID) {
+		return false
+	}
+	r := d.points[pointID].AuditRate
+	return r != nil && rand.Float64() < *r
+}
+
 // Enabled reports whether pointID would make a call.
 func (d *Decider) Enabled(pointID string) bool {
 	if d == nil {
@@ -208,7 +229,7 @@ func (d *Decider) DecideWith(ctx context.Context, p Point, state any, baseline s
 // baseline once both are known. Neither blocks; call settle exactly once (it ends the span).
 func (d *Decider) Observe(ctx context.Context, p Point, state any) (settle func(baseline string) <-chan struct{}) {
 	if !d.Enabled(p.ID) {
-		return func(string) <-chan struct{} { c := make(chan struct{}); close(c); return c }
+		return observeNothing
 	}
 	ctx = context.WithoutCancel(ctx)
 	pending := make(chan Result, 1)
@@ -229,6 +250,23 @@ func (d *Decider) Observe(ctx context.Context, p Point, state any) (settle func(
 		return done
 	}
 }
+
+// Await is DecideWith that records later: it blocks for p's answer and returns settle, which records it
+// once the caller's baseline is known. On an act, a non-empty baseline is an audit of the skipped step.
+func (d *Decider) Await(ctx context.Context, p Point, state any) (Result, func(baseline string) <-chan struct{}) {
+	if !d.Enabled(p.ID) {
+		return Result{Point: p.ID, Outcome: OutcomeDisabled, Err: ErrDisabled}, observeNothing
+	}
+	ctx = context.WithoutCancel(ctx)
+	r := d.run(ctx, p, state)
+	return r, func(baseline string) <-chan struct{} {
+		r.audited = r.Act() && baseline != ""
+		record(ctx, r, baseline)
+		return observeNothing(baseline)
+	}
+}
+
+func observeNothing(string) <-chan struct{} { c := make(chan struct{}); close(c); return c }
 
 func (d *Decider) run(ctx context.Context, p Point, state any) Result {
 	cfg := d.points[p.ID]
@@ -260,6 +298,9 @@ func (d *Decider) run(ctx context.Context, p Point, state any) Result {
 	r.Top, r.TopP = top(reply.Answers[p.Primary])
 	r.Confident = r.TopP >= cfg.ActAt
 	r.Outcome = policy(cfg.Mode, r.Confident, slices.Contains(p.Restrictive, r.Top))
+	if r.Act() && p.Acts != nil && !slices.Contains(p.Acts, r.Top) {
+		r.Outcome, r.Reason = OutcomeFallback, fmt.Sprintf("confident %q: %s acts only on %s", r.Top, p.ID, strings.Join(p.Acts, ", "))
+	}
 	return r
 }
 

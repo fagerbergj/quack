@@ -22,7 +22,7 @@ func record(ctx context.Context, r Result, baseline string) {
 		r.span.SetAttributes(
 			attribute.String("quack.decision.point", p.Point), attribute.String("quack.decision.mode", p.Mode),
 			attribute.String("quack.decision.handler", p.Handler), attribute.String("quack.decision.outcome", p.Outcome),
-			attribute.String("quack.decision.skipped_step", r.SkippedStep()),
+			attribute.String("quack.decision.skipped_step", r.SkippedStep()), attribute.String("quack.decision.reason", r.Reason),
 			attribute.Bool("quack.decision.confident", p.Confident), attribute.String("quack.decision.top", p.Top),
 			attribute.Float64("quack.decision.top_p", p.TopP), attribute.String("quack.decision.baseline", p.Baseline),
 			attribute.String("quack.decision.probabilities", string(probs)), attribute.Int("quack.decision.input_tokens", p.InputTokens),
@@ -47,12 +47,13 @@ func payload(r Result, baseline string) ledger.DecisionPayload {
 		Point: r.Point, Mode: r.Mode, Handler: r.Handler, Outcome: string(r.Outcome), Confident: r.Confident,
 		Top: r.Top, TopP: r.TopP, Probabilities: r.Answers,
 		RequestBytes: r.RequestBytes, InputTokens: r.InputTokens, ServerMS: r.ServerMS,
-		LatencyMS: float64(r.Latency) / float64(time.Millisecond),
+		LatencyMS: float64(r.Latency) / float64(time.Millisecond), Reason: r.Reason,
 	}
-	// A skipped step produced no baseline; whatever the caller passed is a placeholder.
+	// A skipped step produced no baseline unless an audit ran it; otherwise the caller passed a placeholder.
 	if s := r.SkippedStep(); s != "" {
 		p.SkippedStep = &s
-	} else {
+	}
+	if r.SkippedStep() == "" || r.audited {
 		p.Baseline = baseline
 	}
 	if r.Err != nil {

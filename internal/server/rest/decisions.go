@@ -82,7 +82,7 @@ func decisionRecord(e ledger.Entry, p ledger.DecisionPayload, withState bool) sc
 		ChatId: e.ChatID, NodeId: strPtr(e.NodeID), Round: strPtr(e.Round), At: e.At,
 		Point: p.Point, Mode: p.Mode, Handler: p.Handler, Outcome: p.Outcome, Confident: p.Confident,
 		Top: strPtr(p.Top), TopP: &p.TopP, Baseline: strPtr(p.Baseline), SkippedStep: p.SkippedStep,
-		InputTokens: &p.InputTokens, LatencyMs: p.LatencyMS, Error: strPtr(p.Error),
+		InputTokens: &p.InputTokens, LatencyMs: p.LatencyMS, Error: strPtr(p.Error), Reason: strPtr(p.Reason),
 	}
 	if len(p.Probabilities) > 0 {
 		rec.Probabilities = &p.Probabilities

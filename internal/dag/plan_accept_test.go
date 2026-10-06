@@ -18,14 +18,21 @@ import (
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/ledgertest"
 	"github.com/fagerbergj/quack/internal/otelobs"
+	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// planAcceptDecider enables plan.accept against url, in observe as its only mode.
+// planAcceptDecider enables plan.accept against url in observe mode.
 func planAcceptDecider(t *testing.T, url string) *decide.Decider {
+	return planAcceptPoint(t, url, config.DecisionPoint{Mode: "observe"})
+}
+
+// planAcceptPoint enables plan.accept against url with pt's mode, timeout and audit rate.
+func planAcceptPoint(t *testing.T, url string, pt config.DecisionPoint) *decide.Decider {
 	t.Helper()
+	pt.Enabled, pt.Handler, pt.ActAt, pt.Fail = true, "clef", 0.9, "open"
 	d, err := decide.New(config.DecisionsConfig{
 		Handlers: map[string]config.DecisionHandler{"clef": {URL: url, Model: "clef", Timeout: 2 * time.Second}},
-		Points:   map[string]config.DecisionPoint{"plan.accept": {Enabled: true, Handler: "clef", Mode: "observe", ActAt: 0.9, Fail: "open"}},
+		Points:   map[string]config.DecisionPoint{"plan.accept": pt},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -231,15 +238,142 @@ func TestPlanAcceptSkippedWithoutAJudge(t *testing.T) {
 	}
 }
 
-func TestPlanAcceptIsObserveOnly(t *testing.T) {
-	_, err := decide.New(config.DecisionsConfig{
-		Handlers: map[string]config.DecisionHandler{"clef": {URL: "http://x"}},
-		Points:   map[string]config.DecisionPoint{"plan.accept": {Enabled: true, Handler: "clef", Mode: "guard"}},
-	})
-	if err == nil {
-		t.Error("plan.accept accepted guard mode; its caller only implements observe")
+func TestPlanAcceptModes(t *testing.T) {
+	for mode, ok := range map[string]bool{"observe": true, "decide": true, "guard": false} {
+		_, err := decide.New(config.DecisionsConfig{
+			Handlers: map[string]config.DecisionHandler{"clef": {URL: "http://x"}},
+			Points:   map[string]config.DecisionPoint{"plan.accept": {Enabled: true, Handler: "clef", Mode: mode}},
+		})
+		if (err == nil) != ok {
+			t.Errorf("mode %s: err = %v, want accepted = %v", mode, err, ok)
+		}
 	}
 	if !planAccept.Parse("true") || planAccept.Parse("false") {
 		t.Error("plan.accept parses true/false into accept")
+	}
+}
+
+// clefAccepting answers accept = pTrue; a negative pTrue hangs until the test ends.
+func clefAccepting(t *testing.T, pTrue float64) string {
+	t.Helper()
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if pTrue < 0 {
+			<-release
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"answers": map[string]any{"accept": map[string]any{"noul": pTrue}}})
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(release) })
+	return srv.URL
+}
+
+// gatedJudge is a race-safe plan judge that answers accept once gate is closed.
+func gatedJudge(accept bool, gate <-chan struct{}) (vetting.PlanJudge, *atomic.Int32) {
+	calls := new(atomic.Int32)
+	return func(context.Context, string, string, string) (bool, string, error) {
+		calls.Add(1)
+		<-gate
+		return accept, "add a terminal node", nil
+	}, calls
+}
+
+// TestPlanAcceptDecide: only a confident accept skips the judge; a confident reject, an unsure or
+// missing answer runs it as observe does and records its verdict as the baseline.
+func TestPlanAcceptDecide(t *testing.T) {
+	for _, c := range []struct {
+		name                    string
+		pTrue                   float64
+		url                     string
+		judgeAccepts, wantJudge bool
+		outcome, baseline       string
+		reason                  bool
+	}{
+		{"confident accept skips the judge", 0.97, "", false, false, "act", "", false},
+		{"confident reject falls back to the judge", 0.02, "", true, true, "fallback", "true", true},
+		{"confident reject, judge rejects too", 0.02, "", false, true, "fallback", "false", true},
+		{"unsure runs the judge", 0.6, "", false, true, "fallback", "false", false},
+		{"service down runs the judge", 0, "http://127.0.0.1:1", true, true, "unavailable", "true", false},
+		{"timeout runs the judge", -1, "", true, true, "unavailable", "true", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			mem := ledgertest.NewMemStore()
+			lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(ledger.NewExporter(mem))))
+			t.Cleanup(otelobs.SetLoggerProviderForTesting(lp))
+			url := c.url
+			if url == "" {
+				url = clefAccepting(t, c.pTrue)
+			}
+			open := make(chan struct{})
+			close(open)
+			judge, calls := gatedJudge(c.judgeAccepts, open)
+			p := NewPlanner([]AgentInfo{{Name: "web-researcher"}}, nil, judge)
+			p.SetDecisions(planAcceptPoint(t, url, config.DecisionPoint{Mode: "decide", Timeout: 50 * time.Millisecond, AuditRate: new(0.0)}))
+			ctx := ledger.WithCoords(context.Background(), ledger.Coords{ChatID: "chat-pd"})
+			start := time.Now()
+			plan, err := p.Build(ctx, []RawNode{{ID: "explore", Agent: "web-researcher", Task: "Analyze the repo."}},
+				nil, nil, nil, "Write a plan.", nil, nil)
+
+			if took := time.Since(start); took > time.Second {
+				t.Errorf("Build took %v, want the point's timeout to bound the wait", took)
+			}
+			if got := calls.Load() == 1; got != c.wantJudge {
+				t.Errorf("judge calls = %d, want judge run = %v", calls.Load(), c.wantJudge)
+			}
+			var rejected *PlanRejectedError
+			if wantPlan := !c.wantJudge || c.judgeAccepts; wantPlan != (err == nil && plan != nil) || (!wantPlan && !errors.As(err, &rejected)) {
+				t.Fatalf("Build = %v, %v; want plan = %v", plan, err, wantPlan)
+			}
+			got := waitDecisions(t, mem, "chat-pd")
+			if len(got) != 1 {
+				t.Fatalf("decision records = %d, want 1", len(got))
+			}
+			d := got[0]
+			if d.Mode != "decide" || d.Outcome != c.outcome || d.Baseline != c.baseline || (d.SkippedStep != nil) != !c.wantJudge || (d.Reason != "") != c.reason {
+				t.Errorf("record = %+v, want outcome %s baseline %q", d, c.outcome, c.baseline)
+			}
+		})
+	}
+}
+
+// TestPlanAcceptDecideAuditsInTheBackground: an audited act returns the plan without waiting for the
+// judge, ignores its reject, and records that verdict beside skipped_step.
+func TestPlanAcceptDecideAuditsInTheBackground(t *testing.T) {
+	mem := ledgertest.NewMemStore()
+	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(ledger.NewExporter(mem))))
+	t.Cleanup(otelobs.SetLoggerProviderForTesting(lp))
+	gate := make(chan struct{})
+	judge, calls := gatedJudge(false, gate)
+	p := NewPlanner([]AgentInfo{{Name: "web-researcher"}}, nil, judge)
+	p.SetDecisions(planAcceptPoint(t, clefAccepting(t, 0.97), config.DecisionPoint{Mode: "decide", AuditRate: new(1.0)}))
+	ctx, cancel := context.WithCancel(ledger.WithCoords(context.Background(), ledger.Coords{ChatID: "chat-au"}))
+	built := make(chan error, 1)
+	go func() {
+		plan, err := p.Build(ctx, []RawNode{{ID: "explore", Agent: "web-researcher", Task: "Analyze."}}, nil, nil, nil, "m", nil, nil)
+		if err == nil && plan == nil {
+			err = errors.New("no plan")
+		}
+		built <- err
+	}()
+	select {
+	case err := <-built:
+		if err != nil {
+			t.Fatalf("Build: %v; the act should accept the plan", err)
+		}
+	case <-time.After(time.Second):
+		close(gate)
+		t.Fatal("Build waited on the audit's judge")
+	}
+	cancel() // the turn moving on must not cancel the audit
+	time.Sleep(50 * time.Millisecond)
+	if entries, _ := mem.ReadEntries(context.Background(), "chat-au", 0); len(entries) != 0 {
+		t.Fatalf("recorded %+v before the audit's verdict", entries)
+	}
+	close(gate)
+	got := waitDecisions(t, mem, "chat-au")
+	if calls.Load() != 1 || len(got) != 1 || got[0].Outcome != "act" || got[0].SkippedStep == nil ||
+		*got[0].SkippedStep != "plan_judge" || got[0].Baseline != "false" {
+		t.Errorf("judge calls = %d, records = %+v; want one act with skipped_step plan_judge and the audit's baseline false", calls.Load(), got)
 	}
 }

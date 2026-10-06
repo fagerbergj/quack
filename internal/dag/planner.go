@@ -99,8 +99,8 @@ type Planner struct {
 	decisions     *decide.Decider
 }
 
-// planAccept observes the plan judge with one holistic question: the decision-model
-// POC found per-criterion questions badly calibrated for plans.
+// planAccept asks one holistic question (per-criterion questions calibrated badly for plans). In decide mode
+// only a confident accept skips the judge: a reject was never validated on bad plans, so the judge rules.
 var planAccept = decide.Register(decide.Point{
 	ID:      "plan.accept",
 	Primary: "accept",
@@ -108,8 +108,9 @@ var planAccept = decide.Register(decide.Point{
 		"plan step as the right next move for the user's request (it is not clearly the wrong shape)? Unfinished plans " +
 		"with no delivery declared are acceptable."}},
 	Restrictive: []string{"false"},
+	Acts:        []string{"true"},
 	Replaces:    "plan_judge",
-	Modes:       []string{config.DecisionModeObserve},
+	Modes:       []string{config.DecisionModeObserve, config.DecisionModeDecide},
 }, func(top string) bool { return top == "true" })
 
 // NewPlanner: returns a Planner over the agent roster, check prefixes, and plan judge.
@@ -265,13 +266,13 @@ func (p *Planner) judgeRouting(ctx context.Context, plan *Plan, message string) 
 	if plan.Setup != nil {
 		repoKey = workspace.NormalizeRepoURL(plan.Setup.Repo)
 	}
-	settle := p.decisions.Observe(ctx, planAccept.Point, "User's request:\n"+message+"\n\nProposed plan:\n"+renderPlan(plan, true))
-	accept, reason, err := p.judge(ctx, message, planSummary(plan), repoKey)
-	verdict := ""
-	if err == nil {
-		verdict = strconv.FormatBool(accept)
+	settle, accepted := p.planAccept(ctx, plan, message, repoKey)
+	if accepted {
+		span.SetAttributes(attribute.Bool("accept", true), attribute.String("skipped_by", planAccept.ID))
+		return nil
 	}
-	settle(verdict)
+	accept, reason, err := p.judge(ctx, message, planSummary(plan), repoKey)
+	settle(judgeVerdict(accept, reason, err))
 	if err != nil {
 		span.RecordError(err)
 		slog.Warn("plan judge unavailable, allowing plan", "component", "planner", "error", err)
@@ -284,6 +285,37 @@ func (p *Planner) judgeRouting(ctx context.Context, plan *Plan, message string) 
 	slog.Warn("plan rejected by plan judge", "component", "planner", "reason", reason, "message", message)
 	emitPlanRejectedEvent(ctx, plan, reason)
 	return &PlanRejectedError{Reason: reason}
+}
+
+// planAccept starts plan.accept; in decide mode it waits for the answer and reports a confident accept, which
+// skips the judge (a sampled audit still runs it in the background). settle records the judge's verdict otherwise.
+func (p *Planner) planAccept(ctx context.Context, plan *Plan, message, repoKey string) (func(string) <-chan struct{}, bool) {
+	state := "User's request:\n" + message + "\n\nProposed plan:\n" + renderPlan(plan, true)
+	if p.decisions.Mode(planAccept.ID) != config.DecisionModeDecide {
+		return p.decisions.Observe(ctx, planAccept.Point, state), false
+	}
+	r, settle := p.decisions.Await(ctx, planAccept.Point, state)
+	if !r.Act() {
+		return settle, false
+	}
+	slog.Info("plan judge skipped: plan.accept accepted the plan", "component", "planner", "plan", plan.ID,
+		"top_p", r.TopP, "latency_ms", r.Latency.Milliseconds())
+	if !p.decisions.Audit(planAccept.ID) {
+		settle("")
+		return nil, true
+	}
+	ctx = context.WithoutCancel(ctx)
+	summary := planSummary(plan)
+	go func() { settle(judgeVerdict(p.judge(ctx, message, summary, repoKey))) }()
+	return nil, true
+}
+
+// judgeVerdict is the judge's answer in plan.accept's option space, "" when it failed.
+func judgeVerdict(accept bool, _ string, err error) string {
+	if err != nil {
+		return ""
+	}
+	return strconv.FormatBool(accept)
 }
 
 // emitPlanRejectedEvent: records the judge's rejection reason to the ledger, verbatim -

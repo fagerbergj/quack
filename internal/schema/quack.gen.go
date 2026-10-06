@@ -953,7 +953,7 @@ type DecisionList struct {
 type DecisionRecord struct {
 	At time.Time `json:"at"`
 
-	// Baseline What quack's own logic decided; empty when the step was skipped.
+	// Baseline What quack's own logic decided; empty when the step was skipped, unless a shadow audit ran it.
 	Baseline    *string `json:"baseline,omitempty"`
 	ChatId      string  `json:"chat_id"`
 	Confident   bool    `json:"confident"`
@@ -971,9 +971,12 @@ type DecisionRecord struct {
 	Probabilities *map[string]map[string]float64 `json:"probabilities,omitempty"`
 
 	// Questions Model input questions; only with with_state=true.
-	Questions   interface{} `json:"questions,omitempty"`
-	Round       *string     `json:"round,omitempty"`
-	SkippedStep *string     `json:"skipped_step,omitempty"`
+	Questions interface{} `json:"questions,omitempty"`
+
+	// Reason Why a confident decide answer fell back.
+	Reason      *string `json:"reason,omitempty"`
+	Round       *string `json:"round,omitempty"`
+	SkippedStep *string `json:"skipped_step,omitempty"`
 
 	// State Model input state; only with with_state=true.
 	State interface{} `json:"state,omitempty"`

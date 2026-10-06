@@ -465,7 +465,7 @@ export type DecisionRecord = {
     top?: string;
     top_p?: number;
     /**
-     * What quack's own logic decided; empty when the step was skipped.
+     * What quack's own logic decided; empty when the step was skipped, unless a shadow audit ran it.
      */
     baseline?: string;
     probabilities?: {
@@ -477,6 +477,10 @@ export type DecisionRecord = {
     input_tokens?: number;
     latency_ms: number;
     error?: string;
+    /**
+     * Why a confident decide answer fell back.
+     */
+    reason?: string;
     /**
      * Model input state; only with with_state=true.
      */

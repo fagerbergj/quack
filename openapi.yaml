@@ -2121,7 +2121,7 @@ components:
         confident: {type: boolean}
         top: {type: string}
         top_p: {type: number, format: double}
-        baseline: {type: string, description: "What quack's own logic decided; empty when the step was skipped."}
+        baseline: {type: string, description: "What quack's own logic decided; empty when the step was skipped, unless a shadow audit ran it."}
         probabilities:
           type: object
           additionalProperties:
@@ -2131,6 +2131,7 @@ components:
         input_tokens: {type: integer}
         latency_ms: {type: number, format: double}
         error: {type: string}
+        reason: {type: string, description: "Why a confident decide answer fell back."}
         state: {description: "Model input state; only with with_state=true."}
         questions: {description: "Model input questions; only with with_state=true."}
         meta: {description: "Recorded beside the state and never sent to the handler; only with with_state=true."}
