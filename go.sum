@@ -112,8 +112,8 @@ github.com/fagerbergj/quack-extensions/remarkable v0.3.3 h1:6TGRd0k7JZpO6VU1Evz6
 github.com/fagerbergj/quack-extensions/remarkable v0.3.3/go.mod h1:OTdGFjy/VoaV0Xo4RjW4ZIdcASgz5ts7Rkym2r/nrks=
 github.com/fagerbergj/quack-extensions/sdk v0.21.0 h1:nqhM9bdUOHdqnTuj2Nbo4O+we7Kv9cgl+QkkoRv5qko=
 github.com/fagerbergj/quack-extensions/sdk v0.21.0/go.mod h1:i2aSobKkN6OrUkXrPFFczWwLOwpXtKaXKArDnnT8rKI=
-github.com/fagerbergj/quack-extensions/sleeper v0.11.0 h1:SCSZmwV3vRXPIeVTd6soOVRjJfEujNTGpSgei7I34xw=
-github.com/fagerbergj/quack-extensions/sleeper v0.11.0/go.mod h1:JM+hm7qlgcVpTy6gy94MntBNA4USt8CsPVST11bSehw=
+github.com/fagerbergj/quack-extensions/sleeper v0.11.1 h1:WQsUDbddGtMgcCosocdkFJ0Rv4Gc64m8yfQ3BvE7Nzo=
+github.com/fagerbergj/quack-extensions/sleeper v0.11.1/go.mod h1:JM+hm7qlgcVpTy6gy94MntBNA4USt8CsPVST11bSehw=
 github.com/fagerbergj/quack-extensions/usage v0.3.5 h1:1cuHf1phQRDCufbrcLRAYXFud/v7gONHQH5vXHj+SE0=
 github.com/fagerbergj/quack-extensions/usage v0.3.5/go.mod h1:+AZESEDMw/rUxSJnrJ1sbedY6OvWQFmZrD/LMjNfqYc=
 github.com/felixge/httpsnoop v1.1.0 h1:3YtUj32ZZkqZtt3sZZsClsymw/QDuVfpNhoA31zeORc=
