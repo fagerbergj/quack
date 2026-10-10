@@ -152,8 +152,9 @@ type verdict struct {
 // or a repeated call; forced reports that close; receivedIDs are the memory ids the judge must vote on.
 type JudgeFactory func(prompt judgePrompt, sink *verdict, forced *forceClose, maxIters, maxOutputTokens int, thinkingLevel string, receivedIDs []string, artifactTools []tool.Tool) (adkagent.Agent, judgeReadCounters, error)
 
-// NewJudgeFactory: builds agentic judge with judgeModel, read-only tools, skillsets, and submit_verdict.
-func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool, skillsets []tool.Toolset) JudgeFactory {
+// NewJudgeFactory: builds agentic judge with judgeModel, read-only tools, skillsets, and submit_verdict;
+// wire adds callbacks after the read counters, e.g. the read tools' tools.Hooks.Wire.
+func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool, skillsets []tool.Toolset, wire ...func(*llmagent.Config)) JudgeFactory {
 	hasReadTools, hasSkills := len(readTools) > 0, len(skillsets) > 0
 	return func(prompt judgePrompt, sink *verdict, forced *forceClose, maxIters, maxOutputTokens int, thinkingLevel string, receivedIDs []string, artifactTools []tool.Tool) (adkagent.Agent, judgeReadCounters, error) {
 		behaviour, version := prompt.behaviour(hasReadTools, hasSkills), prompt.art.VersionID
@@ -171,7 +172,7 @@ func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool, skillsets []to
 		assembled := promptbuilder.CacheByDay(
 			func(context.Context) string { return version },
 			func(context.Context) string { return promptbuilder.Judge(behaviour) })
-		a, err := llmagent.New(llmagent.Config{
+		cfg := llmagent.Config{
 			Name:        "judge",
 			Description: "independent adversarial verifier",
 			Model:       judgeModel,
@@ -183,7 +184,11 @@ func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool, skillsets []to
 			GenerateContentConfig: judgeGenConfig(maxOutputTokens, thinkingLevel),
 			BeforeModelCallbacks:  []llmagent.BeforeModelCallback{forcedVerdictCallback(maxIters, forced, receivedIDs)},
 			BeforeToolCallbacks:   []llmagent.BeforeToolCallback{countRepo, countArtifacts},
-		})
+		}
+		for _, w := range wire {
+			w(&cfg)
+		}
+		a, err := llmagent.New(cfg)
 		return a, judgeReadCounters{repo: repoReads, artifact: artifactReads}, err
 	}
 }

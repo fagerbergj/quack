@@ -15,9 +15,9 @@ import (
 	"github.com/fagerbergj/quack/internal/promptbuilder"
 )
 
-// Build turns a loaded bundle into a runnable ADK llmagent; compaction is wired at the runner (a2a.go's Serve).
-// grading is the pre-rendered trust-gate contract (promptbuilder.GradingFacts), "" when ungated or judge-less.
-func Build(b *Bundle, prompts *artifactsrc.Pinned, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, memoryGuidance string, grading string, drain func() string, meter *PromptMeter) (adkagent.Agent, error) {
+// Build turns a loaded bundle into a runnable ADK llmagent (compaction is wired at a2a.go's Serve). grading is the
+// pre-rendered trust-gate contract, "" when ungated or judge-less; wire adds callbacks such as tools.Hooks.Wire.
+func Build(b *Bundle, prompts *artifactsrc.Pinned, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, memoryGuidance string, grading string, drain func() string, meter *PromptMeter, wire ...func(*llmagent.Config)) (adkagent.Agent, error) {
 	name, desc := b.Card.Name, b.Card.Description
 	if prompts == nil {
 		prompts = b.PinPrompt(nil)
@@ -42,6 +42,9 @@ func Build(b *Bundle, prompts *artifactsrc.Pinned, m model.LLM, tools []tool.Too
 		Toolsets: toolsets,
 	}
 	cfg.BeforeModelCallbacks = []llmagent.BeforeModelCallback{steerCallback(drain)}
+	for _, w := range wire {
+		w(&cfg)
+	}
 	if meter != nil {
 		meter.wire(&cfg)
 	}

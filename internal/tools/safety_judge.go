@@ -19,7 +19,7 @@ import (
 	"github.com/fagerbergj/quack/internal/ledger"
 )
 
-// SafetyJudge: decides if a guarded tool call serves the user's task.
+// SafetyJudge: decides if a tool call (an ACP agent's permission request) serves the user's task.
 type SafetyJudge func(ctx context.Context, request, task, toolName string, args map[string]any, activity string) (allow bool, reason string, err error)
 
 // submitSafetyVerdictTool: structured-termination tool for the safety judge verdict.

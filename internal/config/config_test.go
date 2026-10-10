@@ -1167,8 +1167,6 @@ workspace:
     - host: gitlab.example.com
       username: custom-user
       token: ${QUACK_GITHUB_TOKEN}
-  guards:
-    web_fetch: judge
 `))
 	if err != nil {
 		t.Fatal(err)
@@ -1187,9 +1185,6 @@ workspace:
 	if second.Username != "custom-user" {
 		t.Errorf("Username = %q, want custom-user (explicit, not defaulted)", second.Username)
 	}
-	if c.Workspace.Guards["web_fetch"] != "judge" {
-		t.Errorf("Guards[web_fetch] = %q, want judge", c.Workspace.Guards["web_fetch"])
-	}
 }
 
 func TestGitCredentialsRejectsEmptyHost(t *testing.T) {
@@ -1201,17 +1196,6 @@ workspace:
 `))
 	if err == nil {
 		t.Fatal("expected error for a git_credentials entry with no host")
-	}
-}
-
-func TestGuardsRejectsUnknownTier(t *testing.T) {
-	_, err := Load(writeTemp(t, baseConfig+`
-workspace:
-  guards:
-    delete_path: yolo
-`))
-	if err == nil {
-		t.Fatal("expected error for an unknown guard tier")
 	}
 }
 

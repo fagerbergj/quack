@@ -133,7 +133,7 @@ func TestConfigListingBothMemoryToolsBuildsOne(t *testing.T) {
 }
 
 // fakeToolCtx supplies a real Ctx (StrictContextMock panics without one) plus the
-// identity fields the repeatGuard/emit wrapper chain reads to Run a built tool.
+// identity fields a built tool reads in Run.
 type fakeToolCtx struct {
 	adkagent.StrictContextMock
 }

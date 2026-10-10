@@ -3,39 +3,7 @@ package tools
 import (
 	"path/filepath"
 	"strings"
-
-	"google.golang.org/adk/v2/agent"
-	"google.golang.org/adk/v2/model"
-	"google.golang.org/adk/v2/tool"
 )
-
-// pathScrub: respells host paths in errors to the model's namespace.
-type pathScrub struct {
-	runnableTool
-	b fsBinding
-}
-
-// newPathScrub wraps inner; non-runnable tools pass through.
-func newPathScrub(inner tool.Tool, b fsBinding) tool.Tool {
-	rt, ok := inner.(runnableTool)
-	if !ok {
-		return inner
-	}
-	return &pathScrub{runnableTool: rt, b: b}
-}
-
-func (p *pathScrub) ProcessRequest(ctx agent.Context, req *model.LLMRequest) error {
-	return rebindToolMap(p.runnableTool, p, ctx, req)
-}
-
-// Run is a pass-through except on error, where host paths are respelled.
-func (p *pathScrub) Run(ctx agent.Context, args any) (map[string]any, error) {
-	res, err := p.runnableTool.Run(ctx, args)
-	if err == nil {
-		return res, nil
-	}
-	return res, scrubHostPaths(err, p.b.jail.Root(), p.b.withCwd(ctx).workRoot())
-}
 
 // scrubbedError: wraps error with host-path-free message, keeps original in chain.
 type scrubbedError struct {

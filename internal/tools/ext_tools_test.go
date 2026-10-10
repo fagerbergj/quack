@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"strings"
 	"testing"
 
 	adkagent "google.golang.org/adk/v2/agent"
@@ -58,5 +59,18 @@ func TestBuildExtToolsOptIn(t *testing.T) {
 	// A name in neither the registry nor ExtTools is still an error.
 	if _, err := Build([]string{"github_comment"}, Deps{ExtTools: ext}); err == nil {
 		t.Error("Build(unregistered ext name) should error like any unknown builtin")
+	}
+}
+
+type declOnlyTool struct{}
+
+func (declOnlyTool) Name() string        { return "decl_only" }
+func (declOnlyTool) Description() string { return "" }
+func (declOnlyTool) IsLongRunning() bool { return false }
+
+func TestBuildRejectsNonRunnableExtensionTool(t *testing.T) {
+	_, err := Build([]string{"decl_only"}, Deps{ExtTools: map[string]tool.Tool{"decl_only": declOnlyTool{}}})
+	if err == nil || !strings.Contains(err.Error(), "not a runnable function tool") {
+		t.Fatalf("err = %v, want a boot-time runnable error", err)
 	}
 }

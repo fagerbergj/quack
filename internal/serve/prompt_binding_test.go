@@ -80,7 +80,7 @@ func TestPromptBindingOverridesWorkerModel(t *testing.T) {
 	if !ok {
 		t.Fatalf("clientMap[%q] = %T, want nativeAgent", "tester", clientMap["tester"])
 	}
-	_, wm, _, _, refreshPrompt, release, err := na.ForNode(context.Background(), "test-plan:test-node", "test-plan/test-node", nil, artifacts, "quack-test", "u1", "chat-1", "test-node", nil)
+	_, wm, _, _, _, refreshPrompt, release, err := na.ForNode(context.Background(), "test-plan:test-node", "test-plan/test-node", nil, artifacts, "quack-test", "u1", "chat-1", "test-node", nil)
 	if err != nil {
 		t.Fatalf("ForNode: %v", err)
 	}

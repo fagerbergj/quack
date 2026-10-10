@@ -593,47 +593,21 @@ func fillLastReply[T any](turns []T, answer func(*T) *string, reply any) {
 	}
 }
 
-// confirmResume: the guard-confirm twin of the HITL block above.
-func (g *gateRun) confirmResume(sfx string) (string, *gateExit, bool) {
-	cscan := scanNodeConfirms(g.ctx.Session(), g.ctx.InvocationID(), g.nodeID)
-	if cscan.pauses == 0 {
-		return "", nil, false
-	}
-	if reply, ok := g.ctx.ResumedInput(confirmInterruptID(g.nodeID, cscan.pauses)); ok {
-		turns := cscan.turns
-		fillLastReply(turns, func(t *confirmTurn) *string { return &t.answer }, reply)
-		a, exit := g.resumeRun("confirm", fmt.Sprintf("worker-confirm-r%d%s", cscan.pauses, sfx), "node resumed with confirm decision", "post-decision worker run terminated: repeat guard", "post-decision worker run failed", cscan.pauses, workerInput(withConfirmDecision(g.prompt, turns), g.attachments))
-		if exit != nil {
-			return "", exit, false
-		}
-		return a, nil, true
-	}
-	return "", nil, false
-}
-
-// draftOrResume: HITL answer / guard-confirm resume re-runs the worker with
-// the recorded Q&A, else a fresh draft; the shared park check always runs.
+// draftOrResume: a HITL answer re-runs the worker with the recorded Q&A, else a fresh draft;
+// both converge on the shared park check, since a resumed run can ask again.
 func (g *gateRun) draftOrResume(sfx string) (string, *gateExit) {
-	// All three paths converge on the shared post-worker park check below:
-	// a resume can itself raise a new guard confirm (DIFFERS) that must park.
 	answer := ""
 	ran := false
 	if scan := scanNodeAsks(g.ctx.Session(), g.ctx.InvocationID(), g.nodeID); scan.pauses > 0 {
 		if reply, ok := g.ctx.ResumedInput(hitlInterruptID(g.nodeID, scan.pauses)); ok {
 			turns := scan.turns
 			fillLastReply(turns, func(t *hitlTurn) *string { return &t.answer }, reply)
-			a, exit := g.resumeRun("hitl", fmt.Sprintf("worker-hitl-r%d%s", scan.pauses, sfx), "node resumed with user answer", "post-answer worker run terminated: repeat guard", "post-answer worker run failed", scan.pauses, workerInput(withUserAnswer(g.prompt, turns), g.attachments))
+			g.log.Info("node resumed with user answer", "round", scan.pauses)
+			a, exit := g.runWorkerOnce(workerInput(withUserAnswer(g.prompt, turns), g.attachments), fmt.Sprintf("worker-hitl-r%d%s", scan.pauses, sfx), "hitl", "post-answer worker run terminated: repeat guard", "post-answer worker run failed", nil)
 			if exit != nil {
 				return "", exit
 			}
 			answer, ran = a, true
-		}
-	}
-	if !ran {
-		if a, exit, did := g.confirmResume(sfx); did {
-			answer, ran = a, true
-		} else if exit != nil {
-			return "", exit
 		}
 	}
 	if !ran {
@@ -643,22 +617,15 @@ func (g *gateRun) draftOrResume(sfx string) (string, *gateExit) {
 		}
 		answer = a
 	}
-	// HITL/guard pause: park when ask_user or guard confirmation raised. Draft discarded; resume re-runs with Q&A.
+	// HITL pause: park when ask_user was raised. Draft discarded; resume re-runs with Q&A.
 	if paused, ierr := pauseIfWorkerRaisedHITL(g.ctx, g.nodeID, g.ctrl, g.emit, g.log); paused {
 		return "", &gateExit{"", GateResult{}, ierr} // ErrNodePaused (wrapping ADK's park sentinel)
 	}
 	return answer, nil
 }
 
-// resumeRun: one HITL/confirm resume run - log the resumed round, then the
-// shared worker run (a resume can still raise a new guard confirm).
-func (g *gateRun) resumeRun(mode, runID, logMsg, termMsg, failMsg string, rounds int, content any) (string, *gateExit) {
-	g.log.Info(logMsg, "round", rounds)
-	return g.runWorkerOnce(content, runID, mode, termMsg, failMsg, nil)
-}
-
 // continueWorker: tool-bearing continuation rounds while workIncomplete says
-// the task isn't done; parks when a continuation proposes a guarded delivery.
+// the task isn't done; parks when a continuation asks the user.
 func (g *gateRun) continueWorker(sfx, answer string) (string, *gateExit) {
 	hasDeliverTarget := g.cfg.Deliver != nil
 	if !workIncomplete(answer, g.cfg.Task, g.actFor(answer), g.cfg.ReadOnly, hasDeliverTarget, g.cfg.IsReviewer, g.cfg.ExistingPR) {
@@ -696,8 +663,7 @@ func (g *gateRun) continueWorker(sfx, answer string) (string, *gateExit) {
 			contSpan.End()
 			return "", &gateExit{"", GateResult{}, err}
 		}
-		// A continuation is where the worker finally proposes its guarded
-		// delivery step (git_commit/git_push) - park for the human as elsewhere.
+		// A continuation can ask the user too - park for the human as elsewhere.
 		if paused, ierr := pauseIfWorkerRaisedHITL(g.ctx, g.nodeID, g.ctrl, g.emit, g.log); paused {
 			contSpan.End()
 			return "", &gateExit{"", GateResult{}, ierr} // ErrNodePaused (wrapping ADK's park sentinel)
@@ -1392,7 +1358,7 @@ func (j *judgeRounds) reviseRound(round int, act workerActivity, v verdict, env 
 		j.outcome = &judgeRoundOutcome{exit: true} // revision failed; keep the prior answer
 		return false, nil
 	}
-	// A revision can itself raise ask_user/guard confirmation - park exactly as draft-time check does.
+	// A revision can itself raise ask_user - park exactly as draft-time check does.
 	if paused, ierr := pauseIfWorkerRaisedHITL(j.ctx, j.nodeID, j.ctrl, j.emit, j.log); paused {
 		return false, ierr // ErrNodePaused (wrapping ADK's park sentinel)
 	}
@@ -1430,7 +1396,7 @@ type judgeRoundOutcome struct {
 	receivedMemories []memory.Delivered
 }
 
-// pauseIfWorkerRaisedHITL: parks node on new ask_user/guard confirmation. Runs after every worker run.
+// pauseIfWorkerRaisedHITL: parks node on a new ask_user. Runs after every worker run.
 func pauseIfWorkerRaisedHITL(ctx adkagent.Context, nodeID string, ctrl NodeControl, emit func(*session.Event) error, log *slog.Logger) (bool, error) {
 	if emit == nil {
 		return false, nil
@@ -1443,21 +1409,6 @@ func pauseIfWorkerRaisedHITL(ctx adkagent.Context, nodeID string, ctrl NodeContr
 			Message:     q,
 		})
 		return true, parkForInput(ctrl, q, ierr)
-	}
-	if cscan := scanNodeConfirms(ctx.Session(), ctx.InvocationID(), nodeID); len(cscan.turns) > cscan.pauses {
-		t := cscan.turns[len(cscan.turns)-1]
-		// Prefer the guard's own hint (carries call-specific warnings).
-		question := t.hint
-		if question == "" {
-			question = fmt.Sprintf("Approve running %s? Reply \"approve\" or \"deny\".", t.tool)
-		}
-		msg := fmt.Sprintf("%s\n\nArguments: %v", question, t.args)
-		log.Info("worker proposed a guarded operation; pausing node", "tool", t.tool, "round", cscan.pauses+1)
-		_, ierr := workflow.ResumeOrRequestInput(ctx, emit, session.RequestInput{
-			InterruptID: confirmInterruptID(nodeID, cscan.pauses+1),
-			Message:     msg,
-		})
-		return true, parkForInput(ctrl, msg, ierr)
 	}
 	return false, nil
 }

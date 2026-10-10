@@ -484,7 +484,6 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 		o.executor.ResetNodeCancels(sessionID)
 		s := &orchRun{o: o, ctx: ctx, userID: userID, sessionID: sessionID, source: source, message: message, attachments: attachments}
 		s.planCache = tools.NewPlanCache()
-		repeats := tools.NewRepeatStates()
 		// Set by the repeat guard's hard stop - marks this as an unbreakable
 		// loop, not a retryable blank turn.
 		var guardStopped atomic.Bool
@@ -526,25 +525,12 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			yield(stream.Errorf(e), nil)
 			return
 		}
-		var toolsets []tool.Toolset
 		if o.skillTS != nil {
-			// Same repeats/guardTripped as s.toolList below - load_skill is as loop-prone as any hand-built tool.
-			toolsets = []tool.Toolset{tools.RepeatWrapToolset(o.skillTS, repeats, guardTripped, tools.CallScope{})}
+			s.toolsets = []tool.Toolset{o.skillTS}
 		}
-		s.toolsets = toolsets
-		// Hand-built tools skip tools.Build, so wrap every one in the repeat guard here.
-		for i, t := range s.toolList {
-			// Request-mutating-only tools (memory.NewPreload) have no Run to repeat.
-			if !tools.SupportsRepeatGuard(t) {
-				continue
-			}
-			wrapped, err := tools.RepeatWrap(t, repeats, guardTripped)
-			if err != nil {
-				yield(stream.Errorf("orchestrator: repeat guard: "+err.Error()), nil)
-				return
-			}
-			s.toolList[i] = wrapped
-		}
+		// The fallback covers the skill toolset, as loop-prone as any hand-built tool; hand-built tools emit no ledger row.
+		s.hooks = tools.NewHooks(tools.Deps{RepeatGuardTripped: guardTripped}, tools.HookRepeat|tools.HookEmit)
+		s.hooks.Set(tools.HookRepeat, s.toolList...)
 		if e := s.buildRunner(); e != "" {
 			yield(stream.Errorf(e), nil)
 			return

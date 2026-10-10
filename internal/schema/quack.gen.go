@@ -761,7 +761,7 @@ type ChatDetail struct {
 	// PendingQuestion The unanswered question blocking the chat, present only when status is `needs_input`.
 	PendingQuestion *string `json:"pending_question,omitempty"`
 
-	// Status A chat's derived state: `running` while a turn is actively streaming or its latest plan has a node in flight, `needs_input` when the last turn paused on an unanswered question (a mid-node ask, a guarded operation awaiting approve/deny - the workspace.guards confirm tier - or a top-level clarification), `failed` when the last turn's DAG has a failed node and no answer text followed, else `idle`.
+	// Status A chat's derived state: `running` while a turn is actively streaming or its latest plan has a node in flight, `needs_input` when the last turn paused on an unanswered question (a mid-node ask or a top-level clarification), `failed` when the last turn's DAG has a failed node and no answer text followed, else `idle`.
 	Status       ChatStatus `json:"status"`
 	SystemPrompt string     `json:"system_prompt"`
 	Title        *string    `json:"title,omitempty"`
@@ -816,7 +816,7 @@ type ChatOrigin struct {
 	} `json:"labels,omitempty"`
 }
 
-// ChatStatus A chat's derived state: `running` while a turn is actively streaming or its latest plan has a node in flight, `needs_input` when the last turn paused on an unanswered question (a mid-node ask, a guarded operation awaiting approve/deny - the workspace.guards confirm tier - or a top-level clarification), `failed` when the last turn's DAG has a failed node and no answer text followed, else `idle`.
+// ChatStatus A chat's derived state: `running` while a turn is actively streaming or its latest plan has a node in flight, `needs_input` when the last turn paused on an unanswered question (a mid-node ask or a top-level clarification), `failed` when the last turn's DAG has a failed node and no answer text followed, else `idle`.
 type ChatStatus string
 
 // ChatSummary defines model for ChatSummary.
@@ -841,7 +841,7 @@ type ChatSummary struct {
 	// PendingQuestion The unanswered question blocking the chat, present only when status is `needs_input`.
 	PendingQuestion *string `json:"pending_question,omitempty"`
 
-	// Status A chat's derived state: `running` while a turn is actively streaming or its latest plan has a node in flight, `needs_input` when the last turn paused on an unanswered question (a mid-node ask, a guarded operation awaiting approve/deny - the workspace.guards confirm tier - or a top-level clarification), `failed` when the last turn's DAG has a failed node and no answer text followed, else `idle`.
+	// Status A chat's derived state: `running` while a turn is actively streaming or its latest plan has a node in flight, `needs_input` when the last turn paused on an unanswered question (a mid-node ask or a top-level clarification), `failed` when the last turn's DAG has a failed node and no answer text followed, else `idle`.
 	Status       ChatStatus `json:"status"`
 	SystemPrompt string     `json:"system_prompt"`
 	Title        *string    `json:"title,omitempty"`

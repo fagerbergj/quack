@@ -25,6 +25,7 @@ import (
 	"time"
 
 	adkagent "google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/agent/llmagent"
 	"google.golang.org/adk/v2/artifact"
 	adkmemory "google.golang.org/adk/v2/memory"
 	"google.golang.org/adk/v2/model"
@@ -1144,7 +1145,7 @@ func buildAgents(cfg *config.Config, res *artifactsrc.Resolver, sessions session
 		if err == nil && ac.Acp != nil {
 			ag, err = buildACPNode(name, ac, prov, cfg, res, workspaceCaps, jail, taskStore, builtinSkillSrc, gateCfg, gateCfgs, safetyJudge, cfg.ModelCost(ac.Model), registerLiveSteer, unregisterLiveSteer, registerRoundAbort, unregisterRoundAbort, reg)
 		} else if err == nil {
-			ag, err = buildNativeNode(name, ac, prov, taskStore, newScopedSkillTS, builtinSkillSrc, cfg, res, workspaceCaps, jail, safetyJudge, nodeCancelled, repeatGuardTripped, extToolsByName, urlCache, sessions, artifacts, ledgerStore, compactionFor, gateCfg, gateCfgs, nodeServers, reg, admission)
+			ag, err = buildNativeNode(name, ac, prov, taskStore, newScopedSkillTS, builtinSkillSrc, cfg, res, workspaceCaps, jail, nodeCancelled, repeatGuardTripped, extToolsByName, urlCache, sessions, artifacts, ledgerStore, compactionFor, gateCfg, gateCfgs, nodeServers, reg, admission)
 		}
 		if err != nil {
 			if !dropOptionalAgent(name, ac, err, dropped) {
@@ -1212,26 +1213,26 @@ func buildGateJudge(cfg *config.Config, res *artifactsrc.Resolver, jail *workspa
 			judgeModel = judge
 			gateCfg.JudgeModel = judge
 			var judgeReadTools []tool.Tool
+			readDeps := tools.Deps{Workspace: jail, WorkspaceUserID: localUserID, WorkspaceCaps: workspaceCaps}
+			// One instance for every judge round, so the read tools' repeat state spans rounds.
+			judgeHooks := tools.NewHooks(readDeps, 0)
 			if jail != nil {
-				judgeReadTools, err = tools.Build([]string{"read_file", "list_dir", "glob", "grep"}, tools.Deps{
-					Workspace:       jail,
-					WorkspaceUserID: localUserID,
-					WorkspaceCaps:   workspaceCaps,
-				})
+				judgeReadTools, err = tools.Build([]string{"read_file", "list_dir", "glob", "grep"}, readDeps)
 				if err != nil {
 					return vetting.Config{}, nil, nil, nil, nil, fmt.Errorf("gates.judge: read tools: %w", err)
 				}
+				judgeHooks.Set(tools.HookBuilt, judgeReadTools...)
 			}
-			// Unwrapped: judgeSessionID is per chat, so shared repeatStates would refuse a chat's 3rd
+			// Skills unhooked: judgeSessionID is per chat, so shared repeat state would refuse a chat's 3rd
 			// load_skill(rubric) round; the judge breaks in-round loops itself.
 			var judgeSkillsets []tool.Toolset
 			if skillTS != nil {
 				judgeSkillsets = []tool.Toolset{skillTS}
 			}
-			judgeFactory = vetting.NewJudgeFactory(judge, judgeReadTools, judgeSkillsets)
+			judgeFactory = vetting.NewJudgeFactory(judge, judgeReadTools, judgeSkillsets, judgeHooks.Wire)
 			judgeFactoryNoTools := vetting.NewJudgeFactory(judge, nil, judgeSkillsets)
 			// Each round gets its own bound factory+model; one shared instance swapped in place let rounds race.
-			gateCfg.RefreshJudgeBinding = bindJudgeRefresher(cfg, jprov, artifacts, judge, judgeFactory, judgeFactoryNoTools, judgeReadTools, judgeSkillsets)
+			gateCfg.RefreshJudgeBinding = bindJudgeRefresher(cfg, jprov, artifacts, judge, judgeFactory, judgeFactoryNoTools, judgeReadTools, judgeSkillsets, judgeHooks.Wire)
 			// Own instances: gated nodes stamp per-round coords on `judge`, and these non-node callers would
 			// inherit the last node's stamp.
 			unstamped := func() (model.LLM, error) {
@@ -1245,8 +1246,8 @@ func buildGateJudge(cfg *config.Config, res *artifactsrc.Resolver, jail *workspa
 			if err != nil {
 				return vetting.Config{}, nil, nil, nil, nil, fmt.Errorf("gates.judge: plan judge model: %w", err)
 			}
-			// Unwrapped: guardedTool.Run and acpPermJudge call this from inside a
-			// node's own held reservation - nesting an Admit there deadlocks it.
+			// Unwrapped: acpPermJudge calls this from inside a node's own held
+			// reservation - nesting an Admit there deadlocks it.
 			safetyJudge = tools.NewSafetyJudge(safetyModel)
 			// Wrapped: a plan judge round fires between turns, never inside a held
 			// node reservation, so it must reserve its own capacity.
@@ -1293,7 +1294,7 @@ func (b *judgeBinding) warnOnce(last *string, msg string, artifactName string, e
 
 // bindJudgeRefresher: system/judge's Config picks each round's own JudgeFactory+model+thinking_level; an
 // invalid value falls back to gates.judge's static binding and logs once per distinct bad value.
-func bindJudgeRefresher(cfg *config.Config, jprov config.ProviderConfig, artifacts artifact.Service, staticModel model.LLM, staticFactory, staticFactoryNoTools vetting.JudgeFactory, readTools []tool.Tool, skillsets []tool.Toolset) func(art artifactsrc.Artifact, hasReadTools bool) (vetting.JudgeFactory, model.LLM, string) {
+func bindJudgeRefresher(cfg *config.Config, jprov config.ProviderConfig, artifacts artifact.Service, staticModel model.LLM, staticFactory, staticFactoryNoTools vetting.JudgeFactory, readTools []tool.Tool, skillsets []tool.Toolset, wire ...func(*llmagent.Config)) func(art artifactsrc.Artifact, hasReadTools bool) (vetting.JudgeFactory, model.LLM, string) {
 	staticEffort := cfg.Gates.Judge.ThinkingLevel
 	b := &judgeBinding{cache: map[string]judgeBoundModel{}}
 	return func(art artifactsrc.Artifact, hasReadTools bool) (vetting.JudgeFactory, model.LLM, string) {
@@ -1337,7 +1338,7 @@ func bindJudgeRefresher(cfg *config.Config, jprov config.ProviderConfig, artifac
 		if !hasReadTools {
 			nodeReadTools = nil
 		}
-		f := vetting.NewJudgeFactory(m, nodeReadTools, skillsets)
+		f := vetting.NewJudgeFactory(m, nodeReadTools, skillsets, wire...)
 		b.mu.Lock()
 		b.cache[key] = judgeBoundModel{factory: f, model: m}
 		b.mu.Unlock()
@@ -1446,7 +1447,6 @@ type nativeNodeBuilder struct {
 	urlCache           *tools.URLCache
 	sessions           session.Service
 	jail               *workspace.Jail
-	safetyJudge        tools.SafetyJudge
 	nodeCancelled      func(chatID, nodeID string) bool
 	repeatGuardTripped func(chatID, nodeID, msg string) bool
 	extToolsByName     map[string]tool.Tool
@@ -1464,10 +1464,10 @@ type nativeNodeBuilder struct {
 	schemas            *artifactschema.Registry
 }
 
-func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func() string, rc *recordstore.Client, nodeID string, coords *tools.RoundCoords, sink func(stream.SSEEvent), turnID string, scope tools.CallScope, meter *agent.PromptMeter, extraTools ...tool.Tool) (adkagent.Agent, model.LLM, *inference.OverridableModel, []tool.Tool, error) {
+func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func() string, rc *recordstore.Client, nodeID string, coords *tools.RoundCoords, sink func(stream.SSEEvent), turnID string, scope tools.CallScope, meter *agent.PromptMeter, extraTools ...tool.Tool) (adkagent.Agent, model.LLM, *inference.OverridableModel, []tool.Tool, *tools.Hooks, error) {
 	base, err := inference.NewModel(b.prov, b.ac.Model, b.artifacts, b.cfg.ModelCost(b.ac.Model), b.cfg.ModelEffort(b.ac.Model))
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("model: %w", err)
+		return nil, nil, nil, nil, nil, fmt.Errorf("model: %w", err)
 	}
 	// Overridable lets a round rebind model/provider/effort without rebuilding the ADK agent, which holds
 	// this LLM for its lifetime.
@@ -1481,55 +1481,55 @@ func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func(
 		wrapped = dag.NewAdmittingLLM(wm, b.admission, admissionSpecFor(b.cfg)(b.name),
 			func() { sink(stream.NodeQueued(nodeID)) }, func() { sink(stream.NodeAdmitted(nodeID)) })
 	}
-	// Shared with the skill toolset below so load_skill counts against this node's registry-tool budget.
-	repeats := tools.NewRepeatStates()
+	deps := tools.Deps{
+		WebSearch:          tools.Backend{Kind: b.cfg.Tools["web_search"].Kind, URL: b.cfg.Tools["web_search"].URL, Key: b.cfg.Tools["web_search"].APIKey()},
+		Fetch:              tools.Backend{Kind: b.cfg.Tools["web_fetch"].Kind, URL: b.cfg.Tools["web_fetch"].URL},
+		Summarizer:         wrapped,
+		Cache:              b.urlCache,
+		Workspace:          b.jail,
+		WorkspaceUserID:    localUserID,
+		WorkspaceCaps:      b.workspaceCaps,
+		NodeCancelled:      b.nodeCancelled,
+		RepeatGuardTripped: b.repeatGuardTripped,
+		ExtTools:           b.extToolsByName,
+		Memory:             b.taskStore,
+		MemoryRole:         b.ac.Memory.Bucket,
+		Ledger:             b.ledgerStore,
+		RecordStore:        rc,
+		NodeID:             nodeID,
+		Coords:             coords,
+		Sink:               sink,
+		TurnID:             turnID,
+		CallScope:          scope,
+	}
+	// The fallback covers the skill toolset, so load_skill counts against this node's registry-tool budget.
+	hooks := tools.NewHooks(deps, tools.HookRepeat|tools.HookEmit)
 	var builtins []tool.Tool
 	if len(b.toolNames) > 0 {
-		if builtins, err = tools.Build(b.toolNames, tools.Deps{
-			WebSearch:          tools.Backend{Kind: b.cfg.Tools["web_search"].Kind, URL: b.cfg.Tools["web_search"].URL, Key: b.cfg.Tools["web_search"].APIKey()},
-			Fetch:              tools.Backend{Kind: b.cfg.Tools["web_fetch"].Kind, URL: b.cfg.Tools["web_fetch"].URL},
-			Summarizer:         wrapped,
-			Cache:              b.urlCache,
-			Sessions:           b.sessions,
-			Workspace:          b.jail,
-			WorkspaceUserID:    localUserID,
-			WorkspaceCaps:      b.workspaceCaps,
-			Guards:             b.cfg.Workspace.Guards,
-			SafetyJudge:        b.safetyJudge,
-			NodeCancelled:      b.nodeCancelled,
-			RepeatGuardTripped: b.repeatGuardTripped,
-			ExtTools:           b.extToolsByName,
-			Memory:             b.taskStore,
-			MemoryRole:         b.ac.Memory.Bucket,
-			Ledger:             b.ledgerStore,
-			Repeats:            repeats,
-			RecordStore:        rc,
-			NodeID:             nodeID,
-			Coords:             coords,
-			Sink:               sink,
-			TurnID:             turnID,
-			CallScope:          scope,
-		}); err != nil {
-			return nil, nil, nil, nil, fmt.Errorf("tools: %w", err)
+		if builtins, err = tools.Build(b.toolNames, deps); err != nil {
+			return nil, nil, nil, nil, nil, fmt.Errorf("tools: %w", err)
 		}
+		hooks.Set(tools.HookBuilt, builtins...)
 	}
 	if b.memSvc != nil {
 		builtins = append(builtins, memory.NewPreload())
 	}
 	// extraTools: this node's artifact tools, built per dispatch; buildWorker(nil) at startup gets none.
-	builtins = append(builtins, tools.SelectArtifactTools(extraTools, b.ac.Tools, b.bundle.Card.Artifact != "")...)
+	artifactTools := tools.SelectArtifactTools(extraTools, b.ac.Tools, b.bundle.Card.Artifact != "")
+	hooks.Set(0, artifactTools...)
+	builtins = append(builtins, artifactTools...)
 	var toolsets []tool.Toolset
 	if len(b.ac.Skills) > 0 {
-		toolsets = []tool.Toolset{tools.RepeatWrapToolset(b.agentSkillTS, repeats, b.repeatGuardTripped, scope)}
+		toolsets = []tool.Toolset{b.agentSkillTS}
 	}
-	wag, err := agent.Build(b.bundle, prompts, wrapped, builtins, toolsets, b.memGuidance, b.grading, drain, meter)
+	wag, err := agent.Build(b.bundle, prompts, wrapped, builtins, toolsets, b.memGuidance, b.grading, drain, meter, hooks.Wire)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("build: %w", err)
+		return nil, nil, nil, nil, nil, fmt.Errorf("build: %w", err)
 	}
-	return wag, wrapped, wm, builtins, nil
+	return wag, wrapped, wm, builtins, hooks, nil
 }
 
-func (b *nativeNodeBuilder) build(ctx context.Context, nodeKey, advisorToken string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, roundCoordsSetter, promptRefresher, nodeRelease, error) {
+func (b *nativeNodeBuilder) build(ctx context.Context, nodeKey, advisorToken string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, ledger.CoordSetter, roundCoordsSetter, promptRefresher, nodeRelease, error) {
 	// One holder per dispatch: two nodes of this agent run concurrently, and a
 	// shared one would let either move the other's prompt mid-round.
 	prompts := b.bundle.PinPrompt(b.res)
@@ -1550,7 +1550,7 @@ func (b *nativeNodeBuilder) build(ctx context.Context, nodeKey, advisorToken str
 		coords = &tools.RoundCoords{}
 		var terr error
 		if extraTools, terr = tools.BuildNativeArtifactTools(rc, nodeID, coords, vetting.DocumentHint(chatID), vetting.SubjectHint(chatID)); terr != nil {
-			return nil, nil, nil, nil, nil, nil, fmt.Errorf("artifact tools: %w", terr)
+			return nil, nil, nil, nil, nil, nil, nil, fmt.Errorf("artifact tools: %w", terr)
 		}
 		setRoundCoords = func(round int, turnID, headSHA, triggerAnnotation string) {
 			*coords = tools.RoundCoords{Round: round, TurnID: turnID, HeadSHA: headSHA, TriggerAnnotation: triggerAnnotation}
@@ -1558,9 +1558,9 @@ func (b *nativeNodeBuilder) build(ctx context.Context, nodeKey, advisorToken str
 	}
 	scope := tools.CallScope{AdvisorToken: advisorToken, ChatID: chatID, UserID: userID}
 	meter := agent.NewPromptMeter()
-	wag, wm, overridable, builtins, err := b.buildWorker(prompts, drain, rc, nodeID, coords, sink, stream.TurnIDFromContext(ctx), scope, meter, extraTools...)
+	wag, wm, overridable, builtins, hooks, err := b.buildWorker(prompts, drain, rc, nodeID, coords, sink, stream.TurnIDFromContext(ctx), scope, meter, extraTools...)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, err
 	}
 	var mem adkmemory.Service
 	if b.memSvc != nil {
@@ -1570,19 +1570,19 @@ func (b *nativeNodeBuilder) build(ctx context.Context, nodeKey, advisorToken str
 	comp.Meter = meter
 	srv, err := agent.Serve(wag, b.sessions, mem, artifacts, comp, nodeID, sink)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, fmt.Errorf("a2a serve: %w", err)
+		return nil, nil, nil, nil, nil, nil, nil, fmt.Errorf("a2a serve: %w", err)
 	}
 	workerContextID := agent.WorkerSessionID(chatID, nodeID)
 	client, err := srv.ClientForNode(nodeKey, workerContextID)
 	if err != nil {
 		_ = srv.Close()
-		return nil, nil, nil, nil, nil, nil, fmt.Errorf("a2a client: %w", err)
+		return nil, nil, nil, nil, nil, nil, nil, fmt.Errorf("a2a client: %w", err)
 	}
 	// The deterministic worker session created by this node's first dispatch outlives it
 	// - reaped only at chat archive/delete (ReapNodeSessions), so a later reuse finds it.
 	release := b.nodeServers.track(srv)
 	refresh := b.bindPromptRefresher(prompts, overridable)
-	return client, wm, builtins, setRoundCoords, refresh, release, nil
+	return client, wm, builtins, hooks, setRoundCoords, refresh, release, nil
 }
 
 // bindPromptRefresher: a resolved artifact's Config can rebind the round's model/provider/effort; an
@@ -1689,7 +1689,7 @@ func refreshGateCfg(ctx context.Context, res *artifactsrc.Resolver, cfg *config.
 
 // buildNativeNode builds one native (co-located) configured agent: bundle, memory view, scoped
 // skills, gate grading, and the per-dispatch worker builder.
-func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderConfig, taskStore *memory.Store, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), builtinSkillSrc skill.Source, cfg *config.Config, res *artifactsrc.Resolver, workspaceCaps workspace.Caps, jail *workspace.Jail, safetyJudge tools.SafetyJudge, nodeCancelled func(chatID, nodeID string) bool, repeatGuardTripped func(chatID, nodeID, msg string) bool, extToolsByName map[string]tool.Tool, urlCache *tools.URLCache, sessions session.Service, artifacts artifact.Service, ledgerStore ledger.LedgerStore, compactionFor func(ac config.AgentConfig, workerModel model.LLM) agent.Compaction, gateCfg vetting.Config, gateCfgs *gateConfigs, nodeServers *perNodeServers, reg pluginreg.FetchRegistry, admission *dag.Admission) (adkagent.Agent, error) {
+func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderConfig, taskStore *memory.Store, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), builtinSkillSrc skill.Source, cfg *config.Config, res *artifactsrc.Resolver, workspaceCaps workspace.Caps, jail *workspace.Jail, nodeCancelled func(chatID, nodeID string) bool, repeatGuardTripped func(chatID, nodeID, msg string) bool, extToolsByName map[string]tool.Tool, urlCache *tools.URLCache, sessions session.Service, artifacts artifact.Service, ledgerStore ledger.LedgerStore, compactionFor func(ac config.AgentConfig, workerModel model.LLM) agent.Compaction, gateCfg vetting.Config, gateCfgs *gateConfigs, nodeServers *perNodeServers, reg pluginreg.FetchRegistry, admission *dag.Admission) (adkagent.Agent, error) {
 	toolNames := resolveToolNames(ac.Tools, taskStore != nil)
 
 	bundle, err := agent.LoadBundle(context.Background(), res, ac.Bundle)
@@ -1734,7 +1734,6 @@ func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderCon
 		urlCache:           urlCache,
 		sessions:           sessions,
 		jail:               jail,
-		safetyJudge:        safetyJudge,
 		nodeCancelled:      nodeCancelled,
 		repeatGuardTripped: repeatGuardTripped,
 		extToolsByName:     extToolsByName,
@@ -1751,13 +1750,13 @@ func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderCon
 		res:                res,
 		schemas:            gateCfg.Schemas,
 	}
-	protoAgent, _, _, _, err := b.buildWorker(bundle.PinPrompt(res), nil, nil, "", nil, nil, "", tools.CallScope{}, nil)
+	protoAgent, _, _, _, _, err := b.buildWorker(bundle.PinPrompt(res), nil, nil, "", nil, nil, "", tools.CallScope{}, nil)
 	if err != nil {
 		return nil, fmtErr(name, "%w", err)
 	}
 	na := nativeAgent{
-		Agent: protoAgent,
-		build: b.build,
+		Agent:   protoAgent,
+		builder: b,
 	}
 	agentTools := ac.Tools
 	if artifacts != nil {

@@ -591,15 +591,6 @@ workspace:
   #     username: x-access-token       # default; GitHub PATs use this
   #     token: ${QUACK_GITHUB_TOKEN}
 
-  # Guard ladder (§4b): tool name -> none (default, unlisted) | judge |
-  # confirm | judge+confirm. No entries by default since 0.6.0: the code agents
-  # run as external ACP subprocesses (internal/acp), so the write-side
-  # tools the ladder guarded are gone - the walls that remain are the jail on
-  # the surviving read tools, the OS sandbox around gate-check children, and
-  # gate-owned delivery (git push denied inside the subprocess).
-  # guards:
-  #   web_fetch: judge
-
   # gc: the periodic disk reaper - the workspace volume is deliberately
   # persistent across rebuilds, and nothing else reclaims a chat's clones or
   # the gate's scratch worktrees once a run finishes. TTL-based (idle time)

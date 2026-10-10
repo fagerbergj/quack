@@ -414,7 +414,6 @@ type WorkspaceConfig struct {
 	ExecPath            []string              `yaml:"exec_path"`
 	Env                 map[string]string     `yaml:"env"`
 	GitCredentials      []GitCredentialConfig `yaml:"git_credentials"`
-	Guards              map[string]string     `yaml:"guards"`
 	Sandbox             string                `yaml:"sandbox"`
 	// BuildDirs (see defaultBuildDirs) stay RW even on a ReadOnly node when .gitignore ignores them.
 	BuildDirs []string          `yaml:"build_dirs"`
@@ -447,8 +446,6 @@ type GitCredentialConfig struct {
 }
 
 const defaultGitCredentialUsername = "x-access-token"
-
-var validGuardTiers = map[string]bool{"none": true, "judge": true, "confirm": true, "judge+confirm": true}
 
 type SessionConfig struct {
 	Store      string           `yaml:"store"`
@@ -1440,7 +1437,6 @@ func (w *WorkspaceConfig) applyDefaults() error {
 		w.applyLimitsDefaults,
 		w.applyGCDefaults,
 		w.applyGitCredentialDefaults,
-		w.applyGuardDefaults,
 		w.applyEnvDefaults,
 	} {
 		if err := step(); err != nil {
@@ -1539,15 +1535,6 @@ func (w *WorkspaceConfig) applyGitCredentialDefaults() error {
 		}
 		if gc.Username == "" {
 			w.GitCredentials[i].Username = defaultGitCredentialUsername
-		}
-	}
-	return nil
-}
-
-func (w *WorkspaceConfig) applyGuardDefaults() error {
-	for tool, tier := range w.Guards {
-		if !validGuardTiers[tier] {
-			return fmt.Errorf("config: workspace.guards[%q] has unknown tier %q (want none, judge, confirm, or judge+confirm)", tool, tier)
 		}
 	}
 	return nil
