@@ -25,10 +25,7 @@ async function openArtifacts(user: ReturnType<typeof userEvent.setup>) {
 }
 
 beforeEach(() => {
-  // See ArtifactPanel.rtl.test.tsx: jsdom lacks <dialog> and matchMedia, and the generated client
-  // needs an absolute base URL.
-  HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) { this.setAttribute('open', '') }
-  HTMLDialogElement.prototype.close = function (this: HTMLDialogElement) { this.removeAttribute('open') }
+  // jsdom lacks matchMedia, and the generated client needs an absolute base URL.
   vi.stubGlobal('matchMedia', vi.fn((query: string) => ({
     matches: false, media: query, addEventListener: () => {}, removeEventListener: () => {},
   })))

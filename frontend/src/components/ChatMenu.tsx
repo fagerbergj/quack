@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { UsageSummary, type UsageSummaryProps } from './UsageSummary'
 import { useTheme, type Theme } from '../hooks/useTheme'
 import { Icon } from './Icon'
@@ -13,12 +13,15 @@ const THEME_OPTIONS: { value: Theme; label: string }[] = [
 // Per-chat actions only; Memory is a NavRail peer of Chats, not a per-chat action, so it does not belong here.
 export function ChatMenu({ chatId, usage }: { chatId: string; usage?: UsageSummaryProps }) {
   const [open, setOpen] = useState(false)
+  const sheetId = useId()
   const [theme, setTheme] = useTheme()
 
   return (
     <div className="relative flex-shrink-0">
       <button
         onClick={() => setOpen(o => !o)}
+        popoverTarget={sheetId}
+        popoverTargetAction="show"
         aria-label="Chat actions"
         aria-haspopup="menu"
         aria-expanded={open}
@@ -28,7 +31,7 @@ export function ChatMenu({ chatId, usage }: { chatId: string; usage?: UsageSumma
         <Icon name="more_horiz" className="w-5 h-5" />
       </button>
       {open && (
-        <Sheet anchored="right" role="menu" aria-label="Chat actions" onClose={() => setOpen(false)} className="medium:w-44 medium:rounded-lg medium:border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 pt-1 medium:pb-1 text-sm medium:text-xs">
+        <Sheet id={sheetId} anchored="right" role="menu" aria-label="Chat actions" onClose={() => setOpen(false)} className="medium:w-44 medium:rounded-lg medium:border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 pt-1 medium:pb-1 text-sm medium:text-xs">
           {/* Shown only where the header's `hidden medium:flex` UsageSummary (Chat.tsx) is hidden. */}
           {usage && (usage.models.length > 0 || (usage.usage?.total_tokens ?? 0) > 0) && (
             <div className="px-3 py-1.5 border-b border-gray-100 dark:border-gray-700 medium:hidden">

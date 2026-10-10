@@ -41,6 +41,18 @@ describe('ChatMenu usage row', () => {
     expect(screen.queryByText(/tokens$/)).toBeNull()
   })
 
+  // Light dismiss skips the popover's invoker, so a second trigger click closes rather than reopens.
+  it('the trigger invokes the popover and a second click closes it', async () => {
+    const user = userEvent.setup()
+    render(<ChatMenu chatId="c1" />)
+    const btn = screen.getByRole('button', { name: 'Chat actions' })
+    await user.click(btn)
+    expect(btn.getAttribute('popovertarget')).toBe(screen.getByRole('dialog', { name: 'Chat actions' }).id)
+    expect(btn.getAttribute('popovertargetaction')).toBe('show')
+    await user.click(btn)
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
   it('the trigger button meets the 44px touch-target floor', () => {
     render(<ChatMenu chatId="c1" />)
     const btn = screen.getByRole('button', { name: 'Chat actions' })

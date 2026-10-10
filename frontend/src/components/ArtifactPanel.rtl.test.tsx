@@ -168,9 +168,6 @@ function textResponse(body: string): Response {
 }
 
 beforeEach(() => {
-  // jsdom lacks <dialog> showModal/close; stub both and set `open`, since getByRole hides a closed dialog's content.
-  HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) { this.setAttribute('open', '') }
-  HTMLDialogElement.prototype.close = function (this: HTMLDialogElement) { this.removeAttribute('open') }
   // The generated client builds `new Request(url)` before fetch, and Node can't resolve the relative '/' baseUrl.
   client.setConfig({ baseUrl: 'http://localhost' })
 })

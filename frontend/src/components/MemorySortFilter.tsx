@@ -1,5 +1,5 @@
 import { Icon } from './Icon'
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import type { MemoryListSort, MemoryScopeStats } from '../api'
 import { Sheet } from './Sheet'
 
@@ -34,12 +34,15 @@ export interface MemorySortFilterProps {
 // or Escape, so the filters take no toolbar width until opened.
 export function MemorySortFilter({ sort, onSortChange, bucket, buckets, onBucketChange, tier, onTierChange, scopes }: MemorySortFilterProps) {
   const [open, setOpen] = useState(false)
+  const sheetId = useId()
   const active = sort !== 'newest' || bucket !== '' || tier !== ''
 
   return (
     <div className="relative flex-shrink-0">
       <button
         onClick={() => setOpen(o => !o)}
+        popoverTarget={sheetId}
+        popoverTargetAction="show"
         aria-label="Sort and filter memories"
         aria-haspopup="dialog"
         aria-expanded={open}
@@ -54,7 +57,7 @@ export function MemorySortFilter({ sort, onSortChange, bucket, buckets, onBucket
       </button>
 
       {open && (
-        <Sheet anchored="right" aria-label="Sort and filter memories" onClose={() => setOpen(false)} className="medium:w-56 medium:rounded-lg medium:border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-2 medium:pb-2 text-sm medium:text-xs">
+        <Sheet id={sheetId} anchored="right" aria-label="Sort and filter memories" onClose={() => setOpen(false)} className="medium:w-56 medium:rounded-lg medium:border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-2 medium:pb-2 text-sm medium:text-xs">
           <div className="px-1 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Sort</div>
           {SORT_OPTIONS.map(({ value, label }) => (
             <label key={value} className="flex items-center gap-2 min-h-[44px] medium:min-h-0 px-1 py-1 rounded cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700">

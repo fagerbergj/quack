@@ -4,6 +4,9 @@ import { useMediaQuery } from '../hooks/useMediaQuery'
 
 interface Props {
   onClose: () => void
+  // Required when anchored: the trigger sets `popoverTarget={id}` so light dismiss skips it, and
+  // `popoverTargetAction="show"` so the native action can't undo the trigger's own onClick toggle.
+  id?: string
   // At medium+ a non-modal popover anchored below its parent element (the trigger wrapper), lining up the
   // named edge; below medium the same modal bottom sheet as the unanchored mode.
   anchored?: 'left' | 'right'
@@ -21,7 +24,7 @@ const SHELL = {
 
 // The one shell for popups and menus: a modal bottom sheet below `medium`, a modal dialog or anchored popover
 // above. Native <dialog>/popover supply Esc and dismissal; useDrawer restores focus on unmount.
-export function Sheet({ onClose, anchored, role = 'dialog', className = '', children, 'aria-label': label }: Props) {
+export function Sheet({ onClose, id, anchored, role = 'dialog', className = '', children, 'aria-label': label }: Props) {
   // Must match the `medium` (600px) breakpoint the SHELL classes switch on.
   const compact = useMediaQuery('(max-width: 599px)')
   const popover = !!anchored && !compact
@@ -41,9 +44,10 @@ export function Sheet({ onClose, anchored, role = 'dialog', className = '', chil
       // Remount on a breakpoint change: an open element can't switch between modal and popover.
       key={popover ? 'popover' : 'modal'}
       ref={dialogRef}
+      id={id}
       popover={popover ? 'auto' : undefined}
       aria-label={label}
-      onClose={onClose}
+      // Every close path (Esc, close(), light dismiss) fires toggle; `close` would double-call onClose.
       onToggle={e => { if (e.newState === 'closed') onClose() }}
       onClick={closeOnBackdrop}
       style={anchored ? { positionAnchor: anchor } : undefined}

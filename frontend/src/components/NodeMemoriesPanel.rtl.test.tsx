@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { NodeMemoriesPanel } from './NodeMemoriesPanel'
@@ -8,12 +8,6 @@ import { client } from '../generated/client.gen'
 client.setConfig({ baseUrl: 'http://localhost' })
 
 afterEach(cleanup)
-
-// jsdom lacks <dialog> showModal/close; stub both and set `open` so the dialog's content isn't hidden.
-beforeEach(() => {
-  HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) { this.setAttribute('open', '') }
-  HTMLDialogElement.prototype.close = function (this: HTMLDialogElement) { this.removeAttribute('open') }
-})
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })

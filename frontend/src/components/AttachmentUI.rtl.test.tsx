@@ -1,22 +1,14 @@
 // @vitest-environment jsdom
-import { describe, it, expect, afterEach, vi } from 'vitest'
+import { describe, it, expect, afterEach } from 'vitest'
 import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { AttachmentPreviews } from './AttachmentUI'
 
 afterEach(cleanup)
 
-// jsdom lacks <dialog>.showModal; stub it so the click handler doesn't throw. The modal mechanics aren't
-// under test.
-function stubDialog() {
-  HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) { this.setAttribute('open', '') })
-  HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) { this.removeAttribute('open') })
-}
-
 // An image attachment renders as a real <img> thumbnail, never a collapsed text-only chip.
 describe('AttachmentPreviews', () => {
   it('renders an <img> with alt text for an image attachment', () => {
-    stubDialog()
     render(<AttachmentPreviews previews={[{ url: 'blob:1', mime: 'image/png', name: 'cat.png' }]} />)
     const img = screen.getByRole('img', { name: 'cat.png' })
     expect(img).toBeTruthy()
@@ -24,11 +16,9 @@ describe('AttachmentPreviews', () => {
   })
 
   it('opens the full-size view on click, and the Close button closes it', async () => {
-    stubDialog()
     const user = userEvent.setup()
     render(<AttachmentPreviews previews={[{ url: 'blob:1', mime: 'image/png', name: 'cat.png' }]} />)
     await user.click(screen.getByRole('button', { name: 'View cat.png full size' }))
-    expect(HTMLDialogElement.prototype.showModal).toHaveBeenCalled()
 
     const dialog = document.querySelector('dialog')!
     expect(dialog.hasAttribute('open')).toBe(true)
@@ -37,12 +27,10 @@ describe('AttachmentPreviews', () => {
   })
 
   it('a backdrop click closes the dialog; clicking the image itself does not', async () => {
-    stubDialog()
     const user = userEvent.setup()
     render(<AttachmentPreviews previews={[{ url: 'blob:1', mime: 'image/png', name: 'cat.png' }]} />)
     await user.click(screen.getByRole('button', { name: 'View cat.png full size' }))
     const dialog = document.querySelector('dialog')!
-    dialog.setAttribute('open', '') // stubbed showModal already does this; explicit for clarity
 
     // Clicking the full-size image (a child of the dialog) must not close it.
     await user.click(within(dialog).getByRole('img', { name: 'cat.png' }))
@@ -54,7 +42,6 @@ describe('AttachmentPreviews', () => {
   })
 
   it('renders a text chip (no <img>) for a non-image attachment', () => {
-    stubDialog()
     render(<AttachmentPreviews previews={[{ url: 'blob:2', mime: 'audio/wav', name: 'clip.wav' }]} />)
     expect(screen.queryByRole('img')).toBeNull()
     expect(screen.getByText('clip.wav')).toBeTruthy()

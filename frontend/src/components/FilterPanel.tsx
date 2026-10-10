@@ -1,5 +1,5 @@
 import { Icon } from './Icon'
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { Sheet } from './Sheet'
 
 interface FacetOption {
@@ -29,12 +29,15 @@ function activeFilterCount(selected: Record<string, string[]>): number {
 // Owns only its open/closed state; the selection lives in the parent so it can be mirrored to the URL.
 export function FilterPanel({ facets, selected, onToggle, onClear }: FilterPanelProps) {
   const [open, setOpen] = useState(false)
+  const sheetId = useId()
   const count = activeFilterCount(selected)
 
   return (
     <div className="relative">
       <button
         onClick={() => setOpen(o => !o)}
+        popoverTarget={sheetId}
+        popoverTargetAction="show"
         aria-label="Filter chats"
         aria-expanded={open}
         className={`relative flex items-center justify-center rounded-lg border min-w-[44px] min-h-[44px] transition-colors ${
@@ -52,7 +55,7 @@ export function FilterPanel({ facets, selected, onToggle, onClear }: FilterPanel
       </button>
 
       {open && (
-        <Sheet anchored="left" aria-label="Filter chats" onClose={() => setOpen(false)} className="medium:w-56 medium:rounded-lg medium:border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-2 medium:pb-2 text-sm medium:text-xs">
+        <Sheet id={sheetId} anchored="left" aria-label="Filter chats" onClose={() => setOpen(false)} className="medium:w-56 medium:rounded-lg medium:border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-2 medium:pb-2 text-sm medium:text-xs">
           <div className="flex items-center justify-between px-1 pb-1.5 mb-1 border-b border-gray-100 dark:border-gray-700">
             <span className="font-semibold text-gray-700 dark:text-gray-200">Filters</span>
             {count > 0 && (

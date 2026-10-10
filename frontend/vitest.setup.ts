@@ -6,6 +6,7 @@ if (typeof HTMLDialogElement !== 'undefined' && !HTMLDialogElement.prototype.sho
     if (!this.open) return
     this.removeAttribute('open')
     this.dispatchEvent(new Event('close'))
+    this.dispatchEvent(Object.assign(new Event('toggle'), { newState: 'closed', oldState: 'open' }))
   }
   HTMLElement.prototype.showPopover = function (this: HTMLElement) { this.setAttribute('open', '') }
   HTMLElement.prototype.hidePopover = function (this: HTMLElement) {
