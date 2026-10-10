@@ -127,8 +127,7 @@ Add an `extensions.github` block to `quack.yaml`. Secrets are `${ENV}` reference
 ```yaml
 extensions:
   github:
-    client_id: Iv23liExample     # recommended issuer, OR:
-    # app_id: 123456             # legacy alternative - set exactly one
+    client_id: Iv23liExample     # the App's client id
     private_key: ${QUACK_GITHUB_PRIVATE_KEY}          # PEM contents via env, OR:
     # private_key_path: /run/secrets/quack-github.pem # path to the .pem
     webhook_secret: ${QUACK_GITHUB_WEBHOOK_SECRET}
@@ -137,7 +136,6 @@ extensions:
     triggers: [mention, pr_opened, label, issue_plan, issue_implement, merge, ci_fix, explain]
     # run_timeout_minutes: 120           # default; bounds one dispatched run
     # auto_archive_on_merge: false       # default; archive the chat session when quack:merge lands
-    # auto_review_label: "quack-auto-review"  # legacy alias for labels.review; set labels.review instead
     # labels:                            # defaults shown; override any of them
     #   plan: "quack:plan"
     #   implement: "quack:implement"
