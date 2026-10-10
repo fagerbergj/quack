@@ -15,7 +15,9 @@ func TestSubmitVerdictDeclarationRoundInvariant(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		d, ok := st.(interface{ Declaration() *genai.FunctionDeclaration })
+		d, ok := st.(interface {
+			Declaration() *genai.FunctionDeclaration
+		})
 		if !ok {
 			t.Fatalf("submit_verdict has no Declaration")
 		}
