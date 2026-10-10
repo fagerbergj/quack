@@ -5,14 +5,11 @@ import (
 	"testing"
 )
 
-func newCancelGuarded(t *testing.T, cancelled map[string]bool) (*fakeRunnable, *cancelGuard) {
+func newCancelGuarded(t *testing.T, cancelled map[string]bool) (*fakeRunnable, hooked) {
 	t.Helper()
 	inner := &fakeRunnable{}
-	g, err := newCancelGuard(inner, func(chatID, nodeID string) bool { return cancelled[chatID+"/"+nodeID] }, CallScope{})
-	if err != nil {
-		t.Fatalf("newCancelGuard: %v", err)
-	}
-	return inner, g.(*cancelGuard)
+	h := NewHooks(Deps{NodeCancelled: func(chatID, nodeID string) bool { return cancelled[chatID+"/"+nodeID] }}, 0)
+	return inner, hook(h, HookNode, inner)
 }
 
 // A worker deep in a tool loop never reaches a gate-stage boundary, so the tool layer makes a cancelled node
@@ -56,11 +53,8 @@ func TestCancelledNodeToolCallFailsFast(t *testing.T) {
 // A call with no node token (ungated, MCP) has no node to attribute, so the guard never blocks it.
 func TestCancelGuardIgnoresUngatedCalls(t *testing.T) {
 	inner := &fakeRunnable{}
-	g, err := newCancelGuard(inner, func(string, string) bool { return true }, CallScope{})
-	if err != nil {
-		t.Fatalf("newCancelGuard: %v", err)
-	}
-	if _, err := g.(*cancelGuard).Run(newFakeCtx(), map[string]any{}); err != nil {
+	g := hook(NewHooks(Deps{NodeCancelled: func(string, string) bool { return true }}, 0), HookNode, inner)
+	if _, err := g.Run(newFakeCtx(), map[string]any{}); err != nil {
 		t.Fatalf("un-gated call was blocked: %v", err)
 	}
 	if inner.runCount() != 1 {
@@ -68,41 +62,29 @@ func TestCancelGuardIgnoresUngatedCalls(t *testing.T) {
 	}
 }
 
-// The guard is applied once at registration to every tool, so a new tool cannot miss it. Without
-// Deps.NodeCancelled (ungated build) nothing is wrapped.
+// The guard rides every Build tool's hooks, so a new tool cannot miss it. Without
+// Deps.NodeCancelled (ungated build) nothing is refused.
 func TestBuildWrapsEveryToolInTheCancelGuard(t *testing.T) {
 	names := []string{"current_date", "ask_user"}
+	ctx := newGatedCtx(t, "plan-1", "paperclip", "chat-1")
 
-	guarded, err := Build(names, Deps{NodeCancelled: func(string, string) bool { return false }})
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	for i, tl := range guarded {
-		// emitWrap is the outermost layer; unwrap it to find the cancel guard.
-		et, ok := tl.(*emitTool)
-		if !ok {
-			t.Fatalf("tool %q is not emit-wrapped", names[i])
+	for _, c := range []struct {
+		d       Deps
+		refused bool
+	}{{Deps{NodeCancelled: func(string, string) bool { return true }}, true}, {Deps{}, false}} {
+		built, err := Build(names, c.d)
+		if err != nil {
+			t.Fatalf("Build: %v", err)
 		}
-		cg, ok := et.runnableTool.(*cancelGuard)
-		if !ok {
-			t.Fatalf("tool %q is not cancel-guarded", names[i])
-		}
-		if cg.Name() != names[i] || cg.Declaration() == nil {
-			t.Errorf("wrapper changed tool %q's identity: name=%q decl=%v", names[i], cg.Name(), cg.Declaration())
-		}
-	}
-
-	plain, err := Build(names, Deps{})
-	if err != nil {
-		t.Fatalf("Build (no predicate): %v", err)
-	}
-	for i, tl := range plain {
-		et, ok := tl.(*emitTool)
-		if !ok {
-			t.Fatalf("tool %q is not emit-wrapped", names[i])
-		}
-		if _, ok := et.runnableTool.(*cancelGuard); ok {
-			t.Errorf("tool %q was wrapped without a NodeCancelled predicate", names[i])
+		h := NewHooks(c.d, 0)
+		for i, tl := range built {
+			if tl.Name() != names[i] {
+				t.Errorf("Build changed tool %q's identity: name=%q", names[i], tl.Name())
+			}
+			_, err := hook(h, HookBuilt, tl).Run(ctx, map[string]any{})
+			if got := err != nil && strings.Contains(err.Error(), "CANCELLED"); got != c.refused {
+				t.Errorf("tool %q: cancelled refusal = %v (err %v), want %v", names[i], got, err, c.refused)
+			}
 		}
 	}
 }

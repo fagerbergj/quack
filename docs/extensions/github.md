@@ -145,11 +145,6 @@ extensions:
     #   merge: "quack:merge"
     #   partial_fix: "quack:partial-fix"  # suppresses the unconditional Closes #N when applied to an issue
     #   fix: "quack:fix"
-
-# For code tasks the agent must be allowed to push:
-workspace:
-  guards:
-    git_push: judge   # see "Non-interactive guard policy" below
 ```
 
 `allowed_users` gates every human-invoked trigger (mention, labels, `/review`, `/explain`) by GitHub login, case-insensitively - seed it or quack won't respond. The automatic `pr_opened` auto-review is exempt (nobody applied it). Bot comments are always ignored, so quack never re-triggers on its own posts.
@@ -194,18 +189,6 @@ npx smee-client --url https://smee.io/<channel> \
 4. The App replies on the issue with the run's answer.
 
 A `401` in GitHub's *Recent Deliveries* (App → *Advanced*) means the `webhook_secret` doesn't match.
-
-## Non-interactive guard policy
-
-A webhook-driven run has no human at a terminal, so it can never clear a `confirm`-tier guard - it pauses (`node_needs_input`) and ends without performing that operation, rather than hanging forever. Quack's shipped default puts `git_push` on `judge+confirm`. For the App to push branches and open PRs autonomously, drop it to `judge`:
-
-```yaml
-workspace:
-  guards:
-    git_push: judge   # was judge+confirm - the human tier can't run in a webhook
-```
-
-With `judge`, the independent judge model is the only safety check on a push. Surfacing a paused confirmation as a GitHub comment and resuming when a maintainer replies is a possible future improvement, not built today.
 
 ## Security
 

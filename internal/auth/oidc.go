@@ -115,44 +115,19 @@ func probeJWKS(ctx context.Context, httpClient *http.Client, jwksURL string) err
 	return nil
 }
 
-// verifyRequest extracts and verifies r's bearer token, returning the caller
-// identity from its claims.
-func (v *oidcVerifier) verifyRequest(r *http.Request) (Identity, error) {
+// verifyRequest extracts and verifies r's bearer token.
+func (v *oidcVerifier) verifyRequest(r *http.Request) error {
 	tok := bearerToken(r)
 	if tok == "" {
-		return Identity{}, fmt.Errorf("missing bearer token")
+		return fmt.Errorf("missing bearer token")
 	}
 	return v.verify(r.Context(), tok)
 }
 
-// verify checks the token via rp.VerifyIDToken, then reads the identity: preferred_username
-// (else sub) and an optional groups claim.
-func (v *oidcVerifier) verify(ctx context.Context, tokenString string) (Identity, error) {
-	claims, err := rp.VerifyIDToken[*oidc.IDTokenClaims](ctx, tokenString, v.verifier)
-	if err != nil {
-		return Identity{}, fmt.Errorf("invalid token: %w", err)
+// verify checks the token's signature, issuer, audience and expiry via rp.VerifyIDToken.
+func (v *oidcVerifier) verify(ctx context.Context, tokenString string) error {
+	if _, err := rp.VerifyIDToken[*oidc.IDTokenClaims](ctx, tokenString, v.verifier); err != nil {
+		return fmt.Errorf("invalid token: %w", err)
 	}
-	id := Identity{User: claims.Subject}
-	if claims.PreferredUsername != "" {
-		id.User = claims.PreferredUsername
-	}
-	if raw, ok := claims.Claims["groups"]; ok {
-		id.Groups = toStringSlice(raw)
-	}
-	return id, nil
-}
-
-// toStringSlice converts a JSON-decoded []any claim to []string, skipping non-string entries.
-func toStringSlice(raw any) []string {
-	arr, ok := raw.([]any)
-	if !ok {
-		return nil
-	}
-	out := make([]string, 0, len(arr))
-	for _, v := range arr {
-		if s, ok := v.(string); ok {
-			out = append(out, s)
-		}
-	}
-	return out
+	return nil
 }

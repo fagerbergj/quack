@@ -32,7 +32,7 @@ func ungatedNameRequiredSchema(t *testing.T, kind string) *artifactschema.Regist
 	return reg
 }
 
-// A zero vetting.Config (gated:false or gates disabled) still enforces the node's
+// A zero vetting.Config (gates disabled) still enforces the node's
 // "document" schema: prose falls back to text:<node>, never lands under the document id.
 func TestBuildGateNodes_SchemasArmedForUngatedAgent(t *testing.T) {
 	svc := artifact.InMemoryService()

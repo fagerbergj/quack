@@ -451,7 +451,7 @@ func (s *Store) applyInvalidations(ctx context.Context, invalidations []op) (int
 			reason = "invalidated by consolidator"
 		}
 		if survivorID := parseSurvivorID(reason); survivorID != "" && survivorID != o.ID {
-			ok, err := s.idx.absorb(ctx, survivorID, o.ID, absorbedByReason(survivorID))
+			ok, err := s.absorb(ctx, survivorID, o.ID, absorbedByReason(survivorID))
 			if err != nil {
 				return count, err
 			}
@@ -461,7 +461,7 @@ func (s *Store) applyInvalidations(ctx context.Context, invalidations []op) (int
 				continue
 			}
 		}
-		if _, err := s.idx.invalidateByID(ctx, []string{o.ID}, reason); err != nil {
+		if _, err := s.invalidateByID(ctx, []string{o.ID}, reason); err != nil {
 			return count, err
 		}
 		s.logOp(ctx, o.ID, OpInvalidate, ActorConsolidator, reason)

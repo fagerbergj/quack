@@ -78,7 +78,7 @@ func TestUpdateNodeStatus_RetryResetsBeforeResponding(t *testing.T) {
 	}
 	seedStaleTerminalRun(t, h, chatID)
 
-	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusRunning})
+	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusUpdateBodyStatusRunning})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -96,7 +96,7 @@ func TestSubscribeDuringNodeStartWindow(t *testing.T) {
 	}
 	seedStaleTerminalRun(t, h, chatID)
 
-	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusRunning})
+	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusUpdateBodyStatusRunning})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}

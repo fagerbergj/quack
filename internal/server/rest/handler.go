@@ -909,6 +909,10 @@ func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatI
 		errMsg(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	if !body.Status.Valid() {
+		errMsg(w, http.StatusBadRequest, "status must be paused, running or queued; cancel with POST .../stop")
+		return
+	}
 	guidance := ""
 	if body.Guidance != nil {
 		guidance = strings.TrimSpace(*body.Guidance)
@@ -930,18 +934,6 @@ func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatI
 	}
 
 	switch target {
-	case dag.StatusCancelled:
-		// Not optimistic: CancelNode returns false when no live control is registered.
-		// A delivered cancel is cooperative - the node stops at its next stage boundary.
-		if !h.orch.CancelNode(chatID, nodeID) {
-			writeJSON(w, http.StatusConflict, schema.TransitionError{
-				Error:   "node is not cancellable right now (no live run - it may be queued but not yet dispatched, or already finished); nothing was cancelled",
-				Current: wireStatus(current),
-				Allowed: allowedStatuses(current),
-			})
-			return
-		}
-		writeJSON(w, http.StatusOK, optimisticNodeState(dn, dag.StatusCancelled))
 	case dag.StatusPaused:
 		h.pauseTransition(w, dn, chatID, nodeID, current, body)
 	case dag.StatusRunning:
@@ -1068,7 +1060,7 @@ func (h *Handler) StopNode(w http.ResponseWriter, r *http.Request, chatID schema
 		})
 		return
 	}
-	if !h.orch.StopNode(chatID, nodeID) {
+	if !h.orch.CancelNode(chatID, nodeID) {
 		// A parked node has no live control, so cancel it on the row directly;
 		// otherwise paused -> cancelled is unreachable.
 		if dag.IsPaused(current) {

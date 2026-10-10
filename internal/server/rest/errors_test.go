@@ -68,8 +68,8 @@ func TestErrorResponseShape(t *testing.T) {
 				if err := h.store.UpsertDagNode(context.Background(), store.DagNode{NodeID: nodeID, PlanID: planID, Status: "done"}); err != nil {
 					t.Fatalf("seed done node: %v", err)
 				}
-				// done -> needs_input is illegal (done only legally re-queues via retry).
-				return putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusNeedsInput})
+				// done -> paused is illegal (done only legally re-queues via retry).
+				return putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusUpdateBodyStatusPaused})
 			},
 		},
 		{

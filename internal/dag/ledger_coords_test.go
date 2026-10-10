@@ -55,10 +55,11 @@ type lcScopedAgent struct {
 	adkagent.Agent
 	model model.LLM
 	tools []tool.Tool
+	hooks *tools.Hooks
 }
 
-func (a lcScopedAgent) ForNode(context.Context, string, string, func() string, artifact.Service, string, string, string, string, func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, func(int, string, string, string), func(context.Context) artifactsrc.Artifact, func(bool), error) {
-	return a.Agent, a.model, a.tools, nil, nil, func(bool) {}, nil
+func (a lcScopedAgent) ForNode(context.Context, string, string, func() string, artifact.Service, string, string, string, string, func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, ledger.CoordSetter, func(int, string, string, string), func(context.Context) artifactsrc.Artifact, func(bool), error) {
+	return a.Agent, a.model, a.tools, a.hooks, nil, nil, func(bool) {}, nil
 }
 
 // Through the production entry point, both "chat" and "execute_tool" ledger events carry
@@ -70,7 +71,7 @@ func TestRunPlanAsGraph_LedgerCoordsReachModelAndTool(t *testing.T) {
 	defer restore()
 
 	// The SAME wrapping seams production uses: inference.NewModel always
-	// wraps in tracedModel; tools.Build always wraps a builtin in emitTool.
+	// wraps in tracedModel; a builtin's ledger row comes from its tools.Hooks.
 	stub := dateToolLLM("today's date, as reported by the tool, is noted")
 	workerModel := inference.TracedModelForTesting(stub, "ledger-coords-model")
 	builtins, err := tools.Build([]string{"current_date"}, tools.Deps{})
@@ -78,16 +79,20 @@ func TestRunPlanAsGraph_LedgerCoordsReachModelAndTool(t *testing.T) {
 		t.Fatalf("tools.Build: %v", err)
 	}
 
-	worker, err := llmagent.New(llmagent.Config{
+	hooks := tools.NewHooks(tools.Deps{}, 0)
+	hooks.Set(tools.HookBuilt, builtins...)
+	cfg := llmagent.Config{
 		Name: "w", Model: workerModel, Description: "w",
 		Instruction: "ROLE:w Answer, calling current_date first.", Tools: builtins,
-	})
+	}
+	hooks.Wire(&cfg)
+	worker, err := llmagent.New(cfg)
 	if err != nil {
 		t.Fatalf("llmagent.New: %v", err)
 	}
 
 	// Production dispatches through a nodeScopedWorker, so StampCoords reaches the invoked tools.
-	scoped := lcScopedAgent{Agent: worker, model: workerModel, tools: builtins}
+	scoped := lcScopedAgent{Agent: worker, model: workerModel, tools: builtins, hooks: hooks}
 
 	ex := dag.NewExecutor(session.InMemoryService(),
 		map[string]adkagent.Agent{"w": scoped},

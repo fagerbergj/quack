@@ -37,7 +37,7 @@ func TestDedupeSweep_CrossChatClusterMerges(t *testing.T) {
 			t.Fatal("expected ops applied (update survivor + invalidate absorbed)")
 		}
 
-		b, ok, err := s.idx.getByID(ctx, bID)
+		b, ok, err := s.getByID(ctx, bID)
 		if err != nil || !ok {
 			t.Fatalf("getByID b: %v %v", ok, err)
 		}
@@ -45,7 +45,7 @@ func TestDedupeSweep_CrossChatClusterMerges(t *testing.T) {
 			t.Fatalf("b status = %q, want invalidated (absorbed)", b.Status)
 		}
 
-		a, ok, err := s.idx.getByID(ctx, aID)
+		a, ok, err := s.getByID(ctx, aID)
 		if err != nil || !ok {
 			t.Fatalf("getByID a: %v %v", ok, err)
 		}
@@ -173,7 +173,7 @@ func TestDedupeSweep_VerifiedPairMergesWithSummedVotes(t *testing.T) {
 			t.Fatalf("clusters = %d, want 1 (verified points must not be excluded from clustering)", report.NumClusters)
 		}
 
-		sv, ok, err := s.idx.getByID(ctx, survivorID)
+		sv, ok, err := s.getByID(ctx, survivorID)
 		if err != nil || !ok {
 			t.Fatalf("getByID survivor: %v %v", ok, err)
 		}
@@ -184,7 +184,7 @@ func TestDedupeSweep_VerifiedPairMergesWithSummedVotes(t *testing.T) {
 			t.Fatal("survivor should stay live")
 		}
 
-		dup, ok, err := s.idx.getByID(ctx, dupID)
+		dup, ok, err := s.getByID(ctx, dupID)
 		if err != nil || !ok {
 			t.Fatalf("getByID dup: %v %v", ok, err)
 		}

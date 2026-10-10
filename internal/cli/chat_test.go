@@ -461,11 +461,9 @@ func TestRunChatDeleteNonInteractiveErrors(t *testing.T) {
 func TestRunNodeStop(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	var hit string
-	var gotBody schema.NodeStatusUpdateBody
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPut && r.URL.Path == "/api/v1/chats/c1/nodes/n2/status" {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/chats/c1/nodes/n2/stop" {
 			hit = r.URL.Path
-			_ = json.NewDecoder(r.Body).Decode(&gotBody)
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(schema.DagNodeState{Status: schema.NodeStatusCancelled})
 			return
@@ -477,11 +475,8 @@ func TestRunNodeStop(t *testing.T) {
 	if err := RunNodeStop(context.Background(), &out, srv.URL, "c1", "n2", false); err != nil {
 		t.Fatal(err)
 	}
-	if hit != "/api/v1/chats/c1/nodes/n2/status" {
-		t.Errorf("node stop hit %q, want /api/v1/chats/c1/nodes/n2/status", hit)
-	}
-	if gotBody.Status != schema.NodeStatusCancelled {
-		t.Errorf("node stop sent status %q, want %q", gotBody.Status, schema.NodeStatusCancelled)
+	if hit != "/api/v1/chats/c1/nodes/n2/stop" {
+		t.Errorf("node stop hit %q, want POST /api/v1/chats/c1/nodes/n2/stop", hit)
 	}
 }
 
@@ -674,7 +669,7 @@ func TestRunNodePause(t *testing.T) {
 	if err := RunNodePause(context.Background(), &out, srv.URL, "c1", "n2", false); err != nil {
 		t.Fatal(err)
 	}
-	if gotBody.Status != schema.NodeStatusPaused {
+	if gotBody.Status != schema.NodeStatusUpdateBodyStatusPaused {
 		t.Errorf("pause sent status %q, want %q", gotBody.Status, schema.NodeStatusPaused)
 	}
 	if !strings.Contains(out.String(), "Pausing node n2") {
@@ -727,7 +722,7 @@ func TestRunNodeRetry(t *testing.T) {
 			t.Fatal(err)
 		}
 		srv.Close()
-		if gotBody.Status != schema.NodeStatusQueued {
+		if gotBody.Status != schema.NodeStatusUpdateBodyStatusQueued {
 			t.Errorf("retry sent status %q, want %q", gotBody.Status, schema.NodeStatusQueued)
 		}
 		if guidance == "" && gotBody.Guidance != nil {
@@ -799,7 +794,7 @@ func TestActionCommandsJSON(t *testing.T) {
 	}{
 		{
 			name:    "node stop",
-			handler: statusHandler(t, "/api/v1/chats/c1/nodes/n2/status", schema.NodeStatusCancelled),
+			handler: statusHandler(t, "/api/v1/chats/c1/nodes/n2/stop", schema.NodeStatusCancelled),
 			call: func(ctx context.Context, out io.Writer, base string) error {
 				return RunNodeStop(ctx, out, base, "c1", "n2", true)
 			},
@@ -951,7 +946,7 @@ func TestActionCommandsJSON(t *testing.T) {
 func statusHandler(t *testing.T, path string, status schema.NodeStatus) http.HandlerFunc {
 	t.Helper()
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPut && r.URL.Path == path {
+		if r.URL.Path == path {
 			_ = json.NewEncoder(w).Encode(schema.DagNodeState{Status: status})
 			return
 		}

@@ -84,7 +84,7 @@ func TestBuildAgents_PlanJudgeReservesAndReleases(t *testing.T) {
 			"judge-model": {Provider: "judge-test"},
 		},
 		Gates: config.GatesConfig{
-			Rubric: "be good",
+			RubricPath: "config/rubric.md",
 			Judge: config.JudgeConfig{
 				Provider: "judge-test", Model: "judge-model", MaxRounds: 1,
 				Threshold: 0.7, MaxIterations: 2,
@@ -159,7 +159,7 @@ func TestBootInitAgents_WrapsClassifyModel(t *testing.T) {
 			"judge-model": {Provider: "judge-test"},
 		},
 		Gates: config.GatesConfig{
-			Rubric: "be good",
+			RubricPath: "config/rubric.md",
 			Judge: config.JudgeConfig{
 				Provider: "judge-test", Model: "judge-model", MaxRounds: 1,
 				Threshold: 0.7, MaxIterations: 2,

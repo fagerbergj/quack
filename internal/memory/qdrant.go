@@ -577,410 +577,53 @@ func idsToPointIDs(ids []string) []*qdrant.PointId {
 	return pids
 }
 
-// invalidateByID soft-invalidates ids via SetPayload, never a Delete, and reports how many existed.
-func (x *qdrantIndex) invalidateByID(ctx context.Context, ids []string, reason string) (int, error) {
-	if len(ids) == 0 {
-		return 0, nil
-	}
+func (x *qdrantIndex) getMany(ctx context.Context, ids []string) (map[string]scored, error) {
+	out := map[string]scored{}
 	pids := idsToPointIDs(ids)
 	if len(pids) == 0 { // every id was malformed - an empty Ids selector is ambiguous, not "none"
-		return 0, nil
-	}
-	existing, err := x.client.Get(ctx, &qdrant.GetPoints{CollectionName: x.coll, Ids: pids, WithPayload: qdrant.NewWithPayload(false)})
-	if err != nil {
-		return 0, fmt.Errorf("memory: get before invalidate: %w", err)
-	}
-	if len(existing) == 0 {
-		return 0, nil
-	}
-	err = x.setPayload(ctx, pids, map[string]any{
-		payloadStatus:             string(StatusInvalidated),
-		payloadInvalidatedAt:      nowRFC3339(),
-		payloadInvalidationReason: reason,
-	})
-	if err != nil {
-		return 0, fmt.Errorf("memory: invalidate: %w", err)
-	}
-	return len(existing), nil
-}
-
-// demoteTier sets tier=unverified for every id in ids currently at tier verified - a bulk
-// payload-only SetPayload, same shape as invalidateByID, skipping any id already unverified.
-func (x *qdrantIndex) demoteTier(ctx context.Context, ids []string) ([]string, error) {
-	if len(ids) == 0 {
-		return nil, nil
-	}
-	existing, err := x.getExisting(ctx, ids)
-	if err != nil {
-		return nil, fmt.Errorf("memory: get for demote: %w", err)
-	}
-	var touched []string
-	for id, payload := range existing {
-		if payloadString(payload, payloadTier) == TierVerified {
-			touched = append(touched, id)
-		}
-	}
-	if len(touched) == 0 {
-		return nil, nil
-	}
-	if err := x.setPayload(ctx, idsToPointIDs(touched), map[string]any{payloadTier: TierUnverified}); err != nil {
-		return nil, fmt.Errorf("memory: demote: %w", err)
-	}
-	return touched, nil
-}
-
-// getByID fetches one point by id regardless of status - the caller decides
-// what an invalidated point means for its purpose.
-func (x *qdrantIndex) getByID(ctx context.Context, id string) (scored, bool, error) {
-	existing, err := x.getExisting(ctx, []string{id})
-	if err != nil {
-		return scored{}, false, fmt.Errorf("memory: qdrant get by id: %w", err)
-	}
-	payload, ok := existing[id]
-	if !ok {
-		return scored{}, false, nil
-	}
-	return pointFromPayload(qdrant.NewID(id), payload, 0, nil), true, nil
-}
-
-// getExisting fetches ids' current payload, skipping any that don't exist.
-func (x *qdrantIndex) getExisting(ctx context.Context, ids []string) (map[string]map[string]*qdrant.Value, error) {
-	pids := idsToPointIDs(ids)
-	if len(pids) == 0 { // every id was malformed - an empty Ids selector is ambiguous, not "none"
-		return map[string]map[string]*qdrant.Value{}, nil
+		return out, nil
 	}
 	pts, err := x.client.Get(ctx, &qdrant.GetPoints{CollectionName: x.coll, Ids: pids, WithPayload: qdrant.NewWithPayload(true)})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("memory: get: %w", err)
 	}
-	out := make(map[string]map[string]*qdrant.Value, len(pts))
 	for _, p := range pts {
-		out[pointID(p.GetId())] = p.GetPayload()
+		out[pointID(p.GetId())] = pointFromPayload(p.GetId(), p.GetPayload(), 0, nil)
 	}
 	return out, nil
 }
 
-// updateStatus applies o to every non-invalidated id (and, for invalidate, non-verified id).
-// Reinforce counts differ per point, so it writes one SetPayload each; invalidate writes one for all.
-func (x *qdrantIndex) updateStatus(ctx context.Context, ids []string, o OutcomeSignal) ([]string, error) {
-	if len(ids) == 0 {
-		return nil, nil
-	}
-	existing, err := x.getExisting(ctx, ids)
-	if err != nil {
-		return nil, fmt.Errorf("memory: get for outcome: %w", err)
-	}
-	type candidate struct {
-		id        string
-		count     int
-		upvotes   int
-		downvotes int
-	}
-	var candidates []candidate
-	for id, payload := range existing {
-		if payloadString(payload, payloadStatus) == string(StatusInvalidated) {
-			continue
-		}
-		if o.Kind == OutcomeInvalidated && payloadString(payload, payloadTier) == TierVerified {
-			continue
-		}
-		candidates = append(candidates, candidate{
-			id: id, count: payloadInt(payload, payloadReinforcementCount),
-			upvotes: payloadInt(payload, payloadUpvotes), downvotes: payloadInt(payload, payloadDownvotes),
-		})
-	}
-	if len(candidates) == 0 {
-		return nil, nil
-	}
-	touched := make([]string, len(candidates))
-	for i, c := range candidates {
-		touched[i] = c.id
-	}
-
-	switch o.Kind {
-	case OutcomeInvalidated:
-		if err := x.setPayload(ctx, idsToPointIDs(touched), map[string]any{
-			payloadStatus:             string(StatusInvalidated),
-			payloadInvalidatedAt:      nowRFC3339(),
-			payloadInvalidationReason: o.Reason,
-		}); err != nil {
-			return nil, fmt.Errorf("memory: set payload invalidate: %w", err)
-		}
-	case OutcomeReinforced:
-		// Never writes payloadTier: tier tracks judge/human support only.
-		ts := nowRFC3339()
-		for _, c := range candidates {
-			if err := x.setPointPayload(ctx, c.id, map[string]any{
-				payloadStatus:             string(StatusReinforced),
-				payloadReinforcementCount: c.count + 1,
-				payloadUpvotes:            c.upvotes + 1,
-				payloadVoteScore:          reinforcedVoteScore(c.upvotes, c.downvotes),
-				payloadLastUpvotedAt:      ts,
-			}); err != nil {
-				return nil, fmt.Errorf("memory: set payload reinforce: %w", err)
-			}
-		}
-	}
-	return touched, nil
-}
-
-// applyVotes applies each vote to its point, skipping invalidated ones. ponytail: read-modify-write,
-// concurrent votes on one memory can lose one (same on sqlite); add a CAS retry loop if that gets real.
-func (x *qdrantIndex) applyVotes(ctx context.Context, votes []Vote, invalidateThreshold int) ([]string, error) {
-	if len(votes) == 0 {
-		return nil, nil
-	}
-	ids := make([]string, len(votes))
-	for i, v := range votes {
-		ids[i] = v.MemoryID
-	}
-	existing, err := x.getExisting(ctx, ids)
-	if err != nil {
-		return nil, fmt.Errorf("memory: get for votes: %w", err)
-	}
-	ts := nowRFC3339()
-	var touched []string
-	for _, v := range votes {
-		payload, ok := existing[v.MemoryID]
-		if !ok || payloadString(payload, payloadStatus) == string(StatusInvalidated) {
-			continue
-		}
-		d := computeVoteDelta(payloadInt(payload, payloadUpvotes), payloadInt(payload, payloadDownvotes),
-			payloadInt(payload, payloadSupported), payloadInt(payload, payloadNotRelevant), ts, v, invalidateThreshold)
-		set := map[string]any{
-			payloadUpvotes: d.Upvotes, payloadDownvotes: d.Downvotes, payloadSupported: d.Supported, payloadNotRelevant: d.NotRelevant,
-			payloadVoteScore: d.VoteScore, payloadTier: d.Tier,
-		}
-		if d.LastUpvotedAt != "" {
-			set[payloadLastUpvotedAt] = d.LastUpvotedAt
-		}
-		if d.Invalidate {
-			set[payloadStatus] = string(StatusInvalidated)
-			set[payloadInvalidatedAt] = ts
-			set[payloadInvalidationReason] = d.InvalidateReason
-		}
-		if err := x.setPointPayload(ctx, v.MemoryID, set); err != nil {
-			return nil, fmt.Errorf("memory: set payload vote: %w", err)
-		}
-		touched = append(touched, v.MemoryID)
-	}
-	return touched, nil
-}
-
-// setHumanVote applies the toggle-safe human vote delta in one SetPayload (same read-modify-write
-// caveat as applyVotes). Reports false if id doesn't exist or is invalidated.
-func (x *qdrantIndex) setHumanVote(ctx context.Context, id, vote string, invalidateThreshold int) (bool, error) {
-	existing, err := x.getExisting(ctx, []string{id})
-	if err != nil {
-		return false, fmt.Errorf("memory: get for human vote: %w", err)
-	}
-	payload, ok := existing[id]
-	if !ok || payloadString(payload, payloadStatus) == string(StatusInvalidated) {
-		return false, nil
-	}
-	ts := nowRFC3339()
-	d := computeHumanVoteDelta(payloadInt(payload, payloadUpvotes), payloadInt(payload, payloadDownvotes),
-		payloadInt(payload, payloadSupported), payloadString(payload, payloadHumanVote), vote, ts, invalidateThreshold)
-	set := map[string]any{
-		payloadUpvotes: d.Upvotes, payloadDownvotes: d.Downvotes, payloadSupported: d.Supported,
-		payloadVoteScore: d.VoteScore, payloadTier: d.Tier,
-	}
-	if vote == HumanVoteNone {
-		set[payloadHumanVote] = ""
-	} else {
-		set[payloadHumanVote] = vote
-	}
-	if d.LastUpvotedAt != "" {
-		set[payloadLastUpvotedAt] = d.LastUpvotedAt
-	}
-	if d.Invalidate {
-		set[payloadStatus] = string(StatusInvalidated)
-		set[payloadInvalidatedAt] = ts
-		set[payloadInvalidationReason] = OutcomeReasonNetScore
-	}
-	if err := x.setPointPayload(ctx, id, set); err != nil {
-		return false, fmt.Errorf("memory: set payload human vote: %w", err)
-	}
-	return true, nil
-}
-
-// setPointPayload writes set onto a single point with wait=true.
-func (x *qdrantIndex) setPointPayload(ctx context.Context, id string, set map[string]any) error {
-	return x.setPayload(ctx, idsToPointIDs([]string{id}), set)
-}
-
-// setPayload writes set onto every point in pids with wait=true.
-func (x *qdrantIndex) setPayload(ctx context.Context, pids []*qdrant.PointId, set map[string]any) error {
-	wait := true
-	_, err := x.client.SetPayload(ctx, &qdrant.SetPayloadPoints{
-		CollectionName: x.coll,
-		Wait:           &wait,
-		Payload:        qdrant.NewValueMap(set),
-		PointsSelector: &qdrant.PointsSelector{PointsSelectorOneOf: &qdrant.PointsSelector_Points{Points: &qdrant.PointsIdsList{Ids: pids}}},
-	})
-	return err
-}
-
-// recordRecall bumps recalls and stamps last_recalled_at per point (Qdrant has no atomic increment).
-func (x *qdrantIndex) recordRecall(ctx context.Context, ids []string) error {
-	if len(ids) == 0 {
-		return nil
-	}
-	existing, err := x.getExisting(ctx, ids)
-	if err != nil {
-		return fmt.Errorf("memory: get for record recall: %w", err)
-	}
-	ts := nowRFC3339()
-	for id, payload := range existing {
-		if err := x.setPointPayload(ctx, id, map[string]any{payloadRecalls: payloadInt(payload, payloadRecalls) + 1, payloadLastRecalledAt: ts}); err != nil {
-			return fmt.Errorf("memory: set payload record recall: %w", err)
-		}
-	}
-	return nil
-}
-
-// backfillTiers sets a tier on points that have none. Idempotent; the absence check runs in Go
-// because Qdrant has no server-side "field absent" bulk update.
-func (x *qdrantIndex) backfillTiers(ctx context.Context) (int, error) {
-	it := x.client.ScrollAll(ctx, &qdrant.ScrollPoints{CollectionName: x.coll, WithPayload: qdrant.NewWithPayload(true)})
-	touched := 0
-	for {
-		pts, err := it.Next()
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			return touched, fmt.Errorf("memory: scroll for backfill: %w", err)
-		}
-		for _, p := range pts {
-			payload := p.GetPayload()
-			if _, ok := payload[payloadTier]; ok {
-				continue
-			}
-			count := payloadInt(payload, payloadReinforcementCount)
-			tier := TierUnverified
-			if count >= 1 {
-				tier = TierVerified
-			}
-			if err := x.setPayload(ctx, []*qdrant.PointId{p.GetId()}, map[string]any{
-				payloadTier:      tier,
-				payloadUpvotes:   count,
-				payloadVoteScore: count,
-			}); err != nil {
-				return touched, fmt.Errorf("memory: backfill set payload: %w", err)
-			}
-			touched++
-		}
-	}
-	return touched, nil
-}
-
-// backfillJudgeSupport sets supported = upvotes - reinforcement_count on verified points still at 0,
-// demoting them to unverified when that is 0. Idempotent both ways.
-func (x *qdrantIndex) backfillJudgeSupport(ctx context.Context) (int, error) {
-	it := x.client.ScrollAll(ctx, &qdrant.ScrollPoints{
-		CollectionName: x.coll,
-		WithPayload:    qdrant.NewWithPayload(true),
-		Filter:         &qdrant.Filter{Must: []*qdrant.Condition{qdrant.NewMatchKeyword(payloadTier, TierVerified)}},
-	})
-	touched := 0
-	for {
-		pts, err := it.Next()
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			return touched, fmt.Errorf("memory: scroll for judge-support backfill: %w", err)
-		}
-		for _, p := range pts {
-			payload := p.GetPayload()
-			if payloadInt(payload, payloadSupported) > 0 {
-				continue
-			}
-			supported := payloadInt(payload, payloadUpvotes) - payloadInt(payload, payloadReinforcementCount)
-			set := map[string]any{payloadSupported: 0, payloadTier: TierUnverified}
-			if supported > 0 {
-				set[payloadSupported], set[payloadTier] = supported, TierVerified
-			}
-			if err := x.setPayload(ctx, []*qdrant.PointId{p.GetId()}, set); err != nil {
-				return touched, fmt.Errorf("memory: judge-support backfill set payload: %w", err)
-			}
-			touched++
-		}
-	}
-	return touched, nil
-}
-
-// updateBucket moves a point to a new bucket (payload user_id), unconditionally.
-func (x *qdrantIndex) updateBucket(ctx context.Context, id, bucket string) error {
-	if err := x.setPointPayload(ctx, id, map[string]any{payloadScope: bucket}); err != nil {
-		return fmt.Errorf("memory: set payload rescope: %w", err)
-	}
-	return nil
-}
-
-// stampConsolidateFP sets consolidate_fp on every id in one SetPayload call -
-// a bulk payload-only mutation, no re-embed, no per-id round trip.
-func (x *qdrantIndex) stampConsolidateFP(ctx context.Context, ids []string, fp string) error {
+// patch is one SetPayload with wait=true, so the write is visible before it returns.
+func (x *qdrantIndex) patch(ctx context.Context, ids []string, set map[string]any) error {
 	pids := idsToPointIDs(ids)
 	if len(pids) == 0 {
 		return nil
 	}
-	if err := x.setPayload(ctx, pids, map[string]any{payloadConsolidateFP: fp}); err != nil {
-		return fmt.Errorf("memory: set payload consolidate fingerprint: %w", err)
+	wait := true
+	if _, err := x.client.SetPayload(ctx, &qdrant.SetPayloadPoints{
+		CollectionName: x.coll,
+		Wait:           &wait,
+		Payload:        qdrant.NewValueMap(set),
+		PointsSelector: &qdrant.PointsSelector{PointsSelectorOneOf: &qdrant.PointsSelector_Points{Points: &qdrant.PointsIdsList{Ids: pids}}},
+	}); err != nil {
+		return fmt.Errorf("memory: set payload: %w", err)
 	}
 	return nil
 }
 
-// absorb folds absorbedID's votes/timestamps/lineage into survivorID and invalidates absorbedID.
-// False (no-op) if either point is missing or absorbedID is already invalidated.
-func (x *qdrantIndex) absorb(ctx context.Context, survivorID, absorbedID, reason string) (bool, error) {
-	existing, err := x.getExisting(ctx, []string{survivorID, absorbedID})
+// recordRecall bumps recalls and stamps last_recalled_at per point (Qdrant has no atomic increment).
+func (x *qdrantIndex) recordRecall(ctx context.Context, ids []string) error {
+	existing, err := x.getMany(ctx, ids)
 	if err != nil {
-		return false, fmt.Errorf("memory: get for absorb: %w", err)
-	}
-	svP, ok1 := existing[survivorID]
-	abP, ok2 := existing[absorbedID]
-	if !ok1 || !ok2 || payloadString(abP, payloadStatus) == string(StatusInvalidated) {
-		return false, nil
-	}
-	d := computeAbsorbDelta(
-		absorbFields{
-			Upvotes: payloadInt(svP, payloadUpvotes), Downvotes: payloadInt(svP, payloadDownvotes),
-			Supported: payloadInt(svP, payloadSupported), NotRelevant: payloadInt(svP, payloadNotRelevant),
-			LastUpvotedAt: payloadString(svP, payloadLastUpvotedAt), LastRecalledAt: payloadString(svP, payloadLastRecalledAt),
-			AbsorbedIDs: splitIDs(payloadString(svP, payloadAbsorbedIDs)),
-		},
-		absorbFields{
-			Upvotes: payloadInt(abP, payloadUpvotes), Downvotes: payloadInt(abP, payloadDownvotes),
-			Supported: payloadInt(abP, payloadSupported), NotRelevant: payloadInt(abP, payloadNotRelevant),
-			LastUpvotedAt: payloadString(abP, payloadLastUpvotedAt), LastRecalledAt: payloadString(abP, payloadLastRecalledAt),
-			AbsorbedIDs: splitIDs(payloadString(abP, payloadAbsorbedIDs)),
-		},
-		absorbedID,
-	)
-	set := map[string]any{
-		payloadUpvotes: d.Upvotes, payloadDownvotes: d.Downvotes, payloadSupported: d.Supported, payloadNotRelevant: d.NotRelevant,
-		payloadVoteScore: d.VoteScore, payloadTier: d.Tier, payloadAbsorbedIDs: joinIDs(d.AbsorbedIDs),
-	}
-	if d.LastUpvotedAt != "" {
-		set[payloadLastUpvotedAt] = d.LastUpvotedAt
-	}
-	if d.LastRecalledAt != "" {
-		set[payloadLastRecalledAt] = d.LastRecalledAt
-	}
-	if err := x.setPointPayload(ctx, survivorID, set); err != nil {
-		return false, fmt.Errorf("memory: set payload absorb survivor: %w", err)
+		return fmt.Errorf("memory: get for record recall: %w", err)
 	}
 	ts := nowRFC3339()
-	if err := x.setPointPayload(ctx, absorbedID, map[string]any{
-		payloadStatus:             string(StatusInvalidated),
-		payloadInvalidatedAt:      ts,
-		payloadInvalidationReason: reason,
-	}); err != nil {
-		return false, fmt.Errorf("memory: set payload absorb invalidate: %w", err)
+	for id, p := range existing {
+		if err := x.patch(ctx, []string{id}, map[string]any{payloadRecalls: p.Recalls + 1, payloadLastRecalledAt: ts}); err != nil {
+			return fmt.Errorf("memory: record recall: %w", err)
+		}
 	}
-	return true, nil
+	return nil
 }
 
 func payloadString(payload map[string]*qdrant.Value, key string) string {

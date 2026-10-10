@@ -178,26 +178,6 @@ orchestrator: { provider: default, model: m }
 	}
 }
 
-// TestLoadAcceptsDeprecatedMaxActiveRuns pins that dag.max_active_runs still
-// loads as a no-op instead of tripping strict unknown-field parsing.
-func TestLoadAcceptsDeprecatedMaxActiveRuns(t *testing.T) {
-	_, err := Load(writeTemp(t, baseConfig+`dag: { max_active_runs: 6 }
-`))
-	if err != nil {
-		t.Fatalf("deprecated dag.max_active_runs must still load: %v", err)
-	}
-}
-
-// TestLoadRejectsNegativeMaxActiveRuns pins that a negative value still fails
-// loudly - the deprecation ignores the field, it doesn't swallow a typo.
-func TestLoadRejectsNegativeMaxActiveRuns(t *testing.T) {
-	_, err := Load(writeTemp(t, baseConfig+`dag: { max_active_runs: -5 }
-`))
-	if err == nil || !strings.Contains(err.Error(), "max_active_runs must be >= 0") {
-		t.Fatalf("expected a negative max_active_runs validation error, got %v", err)
-	}
-}
-
 // session.compaction.engine is an unknown field like any other, so a stale quack.yaml fails loudly.
 func TestLoadRejectsDeprecatedCompactionEngine(t *testing.T) {
 	_, err := Load(writeTemp(t, `
@@ -542,41 +522,6 @@ tools:
 	}
 }
 
-// A bad memory.forgetting.rules[].when expression fails at Load, not just at server startup.
-func TestLoadRejectsBadForgettingRuleExpression(t *testing.T) {
-	const cfg = `
-providers:
-  default: { kind: openai, endpoint: http://x }
-models:
-  m: { provider: default, role: worker }
-  e: { provider: default, role: embed }
-  c: { provider: default, role: worker }
-stores:
-  main: { kind: postgres, url: u }
-  vec:
-    kind: qdrant
-    url: qdrant:6334
-    embedder: { provider: default, model: e }
-    consolidation:
-      provider: default
-      model: c
-      forgetting:
-        rules:
-          - { when: "score @ 1", then: invalidate }
-session: { store: main }
-orchestrator: { provider: default, model: m }
-tools:
-  stage_memory: { store: vec, collection: task_memory }
-`
-	_, err := Load(writeTemp(t, cfg))
-	if err == nil {
-		t.Fatal("expected error for malformed forgetting rule expression")
-	}
-	if !strings.Contains(err.Error(), "rule 0") || !strings.Contains(err.Error(), `'@'`) {
-		t.Errorf("error should name rule index and bad token, got: %v", err)
-	}
-}
-
 // TestStoreExtends checks a child store inherits the parent's connection and
 // overrides only the fields it sets.
 func TestStoreExtends(t *testing.T) {
@@ -650,16 +595,6 @@ tools:
 	}
 	if _, ok := c.MemoryStore("stage_memory"); ok {
 		t.Error("empty store URL should self-disable memory")
-	}
-}
-
-func TestAgentConfigIsGated(t *testing.T) {
-	if !(AgentConfig{}).IsGated() {
-		t.Error("agents are gated by default")
-	}
-	f := false
-	if (AgentConfig{Gated: &f}).IsGated() {
-		t.Error("gated: false should opt out of the trust gate")
 	}
 }
 
@@ -741,7 +676,6 @@ func TestLoadAuthTrustedHeaders(t *testing.T) {
 auth:
   trusted_headers:
     user: X-authentik-username
-    groups: X-authentik-groups
 `))
 	if err != nil {
 		t.Fatal(err)
@@ -749,7 +683,7 @@ auth:
 	if c.Auth == nil || c.Auth.TrustedHeaders == nil {
 		t.Fatal("expected Auth.TrustedHeaders to be set")
 	}
-	if c.Auth.TrustedHeaders.User != "X-authentik-username" || c.Auth.TrustedHeaders.Groups != "X-authentik-groups" {
+	if c.Auth.TrustedHeaders.User != "X-authentik-username" {
 		t.Errorf("TrustedHeaders = %+v", c.Auth.TrustedHeaders)
 	}
 }
@@ -788,11 +722,10 @@ auth:
 func TestLoadRejectsAuthTrustedHeadersMissingUser(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+`
 auth:
-  trusted_headers:
-    groups: X-authentik-groups
+  trusted_headers: {}
 `))
-	if err == nil {
-		t.Fatal("expected error for trusted_headers block missing user")
+	if err == nil || !strings.Contains(err.Error(), "trusted_headers.user is empty") {
+		t.Fatalf("expected error for trusted_headers block missing user, got %v", err)
 	}
 }
 
@@ -1234,8 +1167,6 @@ workspace:
     - host: gitlab.example.com
       username: custom-user
       token: ${QUACK_GITHUB_TOKEN}
-  guards:
-    web_fetch: judge
 `))
 	if err != nil {
 		t.Fatal(err)
@@ -1254,9 +1185,6 @@ workspace:
 	if second.Username != "custom-user" {
 		t.Errorf("Username = %q, want custom-user (explicit, not defaulted)", second.Username)
 	}
-	if c.Workspace.Guards["web_fetch"] != "judge" {
-		t.Errorf("Guards[web_fetch] = %q, want judge", c.Workspace.Guards["web_fetch"])
-	}
 }
 
 func TestGitCredentialsRejectsEmptyHost(t *testing.T) {
@@ -1268,17 +1196,6 @@ workspace:
 `))
 	if err == nil {
 		t.Fatal("expected error for a git_credentials entry with no host")
-	}
-}
-
-func TestGuardsRejectsUnknownTier(t *testing.T) {
-	_, err := Load(writeTemp(t, baseConfig+`
-workspace:
-  guards:
-    delete_path: yolo
-`))
-	if err == nil {
-		t.Fatal("expected error for an unknown guard tier")
 	}
 }
 
@@ -1375,7 +1292,7 @@ func TestLoadGatesDefaultsAndDisabled(t *testing.T) {
 	// Judge enabled with zero threshold/iterations ⇒ defaults applied.
 	c, err = Load(writeTemp(t, baseConfig+`
 gates:
-  rubric: "be good"
+  rubric_path: config/rubric.md
   deterministic_checks: { max_rounds: 4 }
   judge:
     provider: default
@@ -1415,7 +1332,7 @@ gates:
 func TestLoadGatesJudgeMaxOutputTokensRoundTrips(t *testing.T) {
 	c, err := Load(writeTemp(t, baseConfig+`
 gates:
-  rubric: "be good"
+  rubric_path: config/rubric.md
   judge: { provider: default, model: m, max_rounds: 1, max_output_tokens: 4096 }
 `))
 	if err != nil {
@@ -1576,7 +1493,7 @@ workspace:
 			"foobar"}, // workspace block
 		{`
 gates:
-  rubric: r
+  rubric_path: r
   judge:
     provider: default
     model: j
@@ -1592,27 +1509,6 @@ gates:
 		if !strings.Contains(err.Error(), desc.field) {
 			t.Errorf("%s: error should name the unknown field: %v", desc.field, err)
 		}
-	}
-}
-
-// TestKnownFieldsRejectsMemoryRoleRename proves the deprecated memory_role key
-// is rejected with a migration hint naming the replacement.
-func TestKnownFieldsRejectsMemoryRoleRename(t *testing.T) {
-	_, err := Load(writeTemp(t, baseConfig+`agents:
-  code-reviewer:
-    bundle: agents/code-reviewer
-    provider: default
-    model: c-model
-    memory_role: coding
-`))
-	if err == nil {
-		t.Fatal("expected error for deprecated memory_role key")
-	}
-	if !strings.Contains(err.Error(), "memory_role") {
-		t.Errorf("error should mention the old key 'memory_role': %v", err)
-	}
-	if !strings.Contains(err.Error(), "memory.bucket") {
-		t.Errorf("error should name the replacement 'memory.bucket': %v", err)
 	}
 }
 
@@ -1670,7 +1566,7 @@ agents:
 tools:
   stage_memory: { store: main }
 gates:
-  rubric: "be good"
+  rubric_path: config/rubric.md
   deterministic_checks: { max_rounds: 2 }
   judge:
     provider: default
@@ -1686,41 +1582,6 @@ gates:
 	}
 	if c.Server.Addr != ":9999" {
 		t.Errorf("addr = %q, want :9999", c.Server.Addr)
-	}
-}
-
-// TestKnownRenamesMapIsPopulated ensures the map has at least one entry so nobody
-// deletes it accidentally and the pre-scan path is nontrivial.
-func TestKnownRenamesMapHasEntries(t *testing.T) {
-	if len(knownRenames) == 0 {
-		t.Fatal("knownRenames map should not be empty")
-	}
-	if _, ok := knownRenames["memory_role"]; !ok {
-		t.Error("expected 'memory_role' in knownRenames")
-	}
-}
-
-// TestScanForKnownRenames tests the scan-for-renames helper directly.
-func TestScanForKnownRenames(t *testing.T) {
-	cases := []struct {
-		name    string
-		yaml    string
-		wantErr bool
-	}{
-		{"memory_role present", "  memory_role: coding", true},
-		{"memory_role with indent", "\nagents:\n  reviewer:\n    memory_role: x\n", true},
-		{"no renamed keys", "  bucket: coding\n  provider: default\n", false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			err := scanForKnownRenames(tc.yaml)
-			if tc.wantErr && err == nil {
-				t.Error("expected error")
-			}
-			if !tc.wantErr && err != nil {
-				t.Errorf("unexpected error: %v", err)
-			}
-		})
 	}
 }
 
@@ -2282,7 +2143,7 @@ agents:
 			wantErr: `agent "worker" provider "other" disagrees with model "w1"'s provider "default"`,
 		},
 		{
-			name: "old-shape provider-nested pricing is a migration error, not silently dropped",
+			name: "old-shape provider-nested pricing is rejected, not silently dropped",
 			yaml: `
 providers:
   default:
@@ -2294,7 +2155,7 @@ stores: { main: { kind: postgres, url: u } }
 session: { store: main }
 orchestrator: { provider: default, model: m }
 `,
-			wantErr: `providers.default.models is no longer supported`,
+			wantErr: `field models not found`,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2431,7 +2292,7 @@ stores: { main: { kind: postgres, url: u } }
 session: { store: main }
 orchestrator: { provider: default, model: m }
 gates:
-  rubric: "be good"
+  rubric_path: config/rubric.md
   judge: { provider: default, model: ghost, max_rounds: 1 }
 `,
 			wantErr: `gates.judge.model "ghost" is not defined under models`,

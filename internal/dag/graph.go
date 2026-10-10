@@ -32,9 +32,9 @@ const (
 )
 
 type nodeScopedWorker interface {
-	// ForNode builds a node's own worker, model and tools; see internal/serve's nativeAgent for the
-	// drain, setRoundCoords, sink, ctx and release semantics.
-	ForNode(ctx context.Context, nodeKey, advisorToken string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (worker adkagent.Agent, m model.LLM, tools []tool.Tool, setRoundCoords func(round int, turnID, headSHA, triggerAnnotation string), refreshPrompt func(context.Context) artifactsrc.Artifact, release func(paused bool), err error)
+	// ForNode builds a node's own worker, model and tools, plus the tool hooks stamp takes ledger coords for; see
+	// internal/serve's nativeAgent for the drain, setRoundCoords, sink, ctx and release semantics.
+	ForNode(ctx context.Context, nodeKey, advisorToken string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (worker adkagent.Agent, m model.LLM, tools []tool.Tool, stamp ledger.CoordSetter, setRoundCoords func(round int, turnID, headSHA, triggerAnnotation string), refreshPrompt func(context.Context) artifactsrc.Artifact, release func(paused bool), err error)
 }
 
 // buildGateNodes: one gated node per plan node. userID scopes the native node's artifact tools and must
@@ -69,17 +69,18 @@ func (e *Executor) buildGateNodes(ctx context.Context, plan Plan, chatID, userID
 		if roster.SpecFor != nil {
 			spec = roster.SpecFor(node.AgentName)
 		}
-		var workerTools []tool.Tool
+		var stamps []ledger.CoordSetter
 		var release func(paused bool)
 		var setRoundCoords func(round int, turnID, headSHA, triggerAnnotation string)
 		var refreshPrompt func(context.Context) artifactsrc.Artifact
 		perCall := false // native workers hold admission per model call; ACP nodes per subprocess round
 		if scoped, ok := ag.(nodeScopedWorker); ok {
-			w, m, wt, src, rp, rel, err := scoped.ForNode(ctx, plan.ID+":"+n.ID, vetting.AdvisorThreadToken(plan.ID, n.ID), liveSteerDrain(controls, chatID, n.ID), artifacts, artifactref.AppName, userID, chatID, n.ID, sink)
+			w, m, wt, st, src, rp, rel, err := scoped.ForNode(ctx, plan.ID+":"+n.ID, vetting.AdvisorThreadToken(plan.ID, n.ID), liveSteerDrain(controls, chatID, n.ID), artifacts, artifactref.AppName, userID, chatID, n.ID, sink)
 			if err != nil {
 				return nil, fmt.Errorf("dag: node %q: per-node agent construction: %w", n.ID, err)
 			}
-			worker, workerModel, workerTools, setRoundCoords, refreshPrompt, release = w, m, wt, src, rp, rel
+			worker, workerModel, setRoundCoords, refreshPrompt, release = w, m, src, rp, rel
+			stamps = coordSetters(wt, st)
 			// The per-call hold lives on the model buildWorker wraps, so the slot frees between this
 			// node's model calls (tool phases overlap).
 			perCall = true
@@ -97,13 +98,13 @@ func (e *Executor) buildGateNodes(ctx context.Context, plan Plan, chatID, userID
 		// buildTask's dependency-artifact lookup scopes recordstore reads by this.
 		cfg.User = userID
 		cfg.Ledger = e.walLedger
-		// Store invariant, not grading opinion: armed even when cfgFor returns gated:false.
+		// Store invariant, not grading opinion: armed even for an ungated node.
 		cfg.Schemas = e.schemas
 		cfg.Decisions = e.decisions
 		cfg.RoundCoordsSink = setRoundCoords
 		cfg.RefreshPrompt = refreshPrompt
 		cfg.JudgeArtifactTools = judgeArtifactTools
-		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, workerModel, worker, workerTools, e.judge, cfg, roster.Media, controls, chatID, recordGate, release, e.admission, spec, e.judgeSpec, refreshSetup, perCall)
+		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, workerModel, worker, stamps, e.judge, cfg, roster.Media, controls, chatID, recordGate, release, e.admission, spec, e.judgeSpec, refreshSetup, perCall)
 	}
 	return nodesByID, nil
 }
@@ -223,7 +224,7 @@ func nodeGateConfig(ctx context.Context, plan Plan, node Node, worker adkagent.A
 	return cfg
 }
 
-func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel model.LLM, worker adkagent.Agent, workerTools []tool.Tool, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, recordGate func(nodeID string, score float64, passed bool, rounds int, contextID string), release func(paused bool), admission *Admission, spec, judgeSpec AdmissionSpec,
+func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel model.LLM, worker adkagent.Agent, stamps []ledger.CoordSetter, judge vetting.JudgeFactory, cfg vetting.Config, mediaAgents map[string]bool, controls *runControls, chatID string, recordGate func(nodeID string, score float64, passed bool, rounds int, contextID string), release func(paused bool), admission *Admission, spec, judgeSpec AdmissionSpec,
 	refreshSetup func(context.Context, Node, vetting.Config) bool, perCall bool) workflow.Node {
 	return workflow.NewDynamicNode[any, string](node.ID,
 		func(ctx adkagent.Context, in any, emit func(*session.Event) error) (string, error) {
@@ -295,7 +296,7 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			if !mediaAgents[node.AgentName] {
 				atts = nil
 			}
-			ledger.StampCoords(workerTools, ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent})
+			ledger.StampCoords(stamps, ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent})
 			// ACP agents never invoke workerModel, so gen_ai metrics attribution rides on worker itself.
 			ledger.StampCoords([]adkagent.Agent{worker}, ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent, User: cfg.User, Source: cfg.Source})
 			answer, res, err := vetting.RunGatedRefine(ctx, node.ID, workerNode, workerModel, judge, cfg, prompt, atts, ctrl, emit)
@@ -541,4 +542,18 @@ func upstreamFromInput(in any, dependsOn []string) map[string]string {
 		}
 	}
 	return upstream
+}
+
+// coordSetters: the node's tools that take ledger coords (e.g. recall_memory) plus its tool hooks.
+func coordSetters(ts []tool.Tool, hooks ledger.CoordSetter) []ledger.CoordSetter {
+	var out []ledger.CoordSetter
+	for _, t := range ts {
+		if cs, ok := t.(ledger.CoordSetter); ok {
+			out = append(out, cs)
+		}
+	}
+	if hooks != nil {
+		out = append(out, hooks)
+	}
+	return out
 }

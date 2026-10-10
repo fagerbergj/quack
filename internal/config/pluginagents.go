@@ -79,9 +79,6 @@ func mergeAgentConfig(base, override AgentConfig) AgentConfig {
 	if len(override.Inputs) > 0 {
 		merged.Inputs = override.Inputs
 	}
-	if override.Gated != nil {
-		merged.Gated = override.Gated
-	}
 	if override.JudgeRounds != 0 {
 		merged.JudgeRounds = override.JudgeRounds
 	}

@@ -7,16 +7,9 @@ import (
 	"iter"
 	"strings"
 	"sync/atomic"
-	"testing"
 
-	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/model"
-	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
-
-	"github.com/fagerbergj/quack/internal/dag"
-	"github.com/fagerbergj/quack/internal/stream"
-	"github.com/fagerbergj/quack/internal/vetting"
 )
 
 // Stub-model helpers; dag's g* equivalents are unexported to this external package.
@@ -70,30 +63,6 @@ func atAllText(req *model.LLMRequest) string {
 		}
 	}
 	return b.String()
-}
-
-// runGraphChatID is both the run's chat/session id and the per-chat workspace scope its
-// tools resolve paths through, so jail fixtures must be seeded under it.
-const runGraphChatID = "s"
-
-// runGraphNodeID is the single node's id; node tools default their cwd to <chat>/<node>/,
-// so fixtures must be seeded there or a guarded delete never completes.
-const runGraphNodeID = "n1"
-
-// runGraph runs plan via the REAL dag.Executor (RunPlanAsGraph - the native
-// graph path production uses), collecting the SSE events and node outputs.
-func runGraph(t *testing.T, worker adkagent.Agent, judgeModel model.LLM, sessions session.Service, plan dag.Plan, content *genai.Content, resumeNodes []string) (paused bool, outputs map[string]string, events []stream.SSEEvent) {
-	t.Helper()
-	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"blk": worker}, nil,
-		vetting.NewJudgeFactory(judgeModel, nil, nil),
-		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
-	outputs = map[string]string{}
-	yield := func(ev stream.SSEEvent, _ error) bool { events = append(events, ev); return true }
-	p, err := ex.RunPlanAsGraph(context.Background(), plan, "quack-test", "u", runGraphChatID, content, yield, outputs, resumeNodes)
-	if err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	return p, outputs, events
 }
 
 // fnLLM is a func-backed model.LLM: each call yields the one response fn returns.

@@ -496,45 +496,6 @@ func (s *Store) SetArtifactService(svc artifact.Service) { s.artifacts = svc }
 // Artifacts returns the wired artifact service, nil if SetArtifactService was never called.
 func (s *Store) Artifacts() artifact.Service { return s.artifacts }
 
-// chatFKTables are the tables gaining the chats(id) ON DELETE CASCADE FK, in New()'s migration order.
-var chatFKTables = []string{"chat_turns", "dag_plans", "chat_events", "projection_watermarks", "ledger_checkpoints", "dag_exec_plans"}
-
-// chatFKModels maps each of chatFKTables to the struct sweepOrphanChatRows checks
-// HasConstraint against - every one carries a field named "Chat" for exactly this FK.
-var chatFKModels = map[string]any{
-	"chat_turns":            &ChatTurn{},
-	"dag_plans":             &DagPlan{},
-	"chat_events":           &ChatEvent{},
-	"projection_watermarks": &ProjectionWatermark{},
-	"ledger_checkpoints":    &Checkpoint{},
-	"dag_exec_plans":        &DagExecPlan{},
-}
-
-// sweepOrphanChatRows deletes rows with no owning chat before AutoMigrate adds the cascade FK, which an orphan
-// would fail (a boot crash loop). Skips a table once its constraint exists: the anti-join scan is costly.
-func sweepOrphanChatRows(db *gorm.DB) error {
-	if !db.Migrator().HasTable(&Chat{}) {
-		return nil
-	}
-	for _, table := range chatFKTables {
-		if !db.Migrator().HasTable(table) {
-			continue
-		}
-		if db.Migrator().HasConstraint(chatFKModels[table], "Chat") {
-			continue
-		}
-		res := db.Exec(fmt.Sprintf("DELETE FROM %s WHERE chat_id NOT IN (SELECT id FROM chats)", table))
-		if res.Error != nil {
-			return fmt.Errorf("store: sweep orphan %s rows: %w", table, res.Error)
-		}
-		if res.RowsAffected > 0 {
-			slog.Warn("store: swept orphan rows with no owning chat before migration",
-				"component", "store", "table", table, "count", res.RowsAffected)
-		}
-	}
-	return nil
-}
-
 // New opens the persistence store, runs migrations, and returns it.
 func New(kind, url string) (*Store, error) {
 	dialector, err := dialectorFor(kind, url)
@@ -547,9 +508,6 @@ func New(kind, url string) (*Store, error) {
 		return nil, err
 	}
 	s := &Store{db: db}
-	if err := sweepOrphanChatRows(db); err != nil {
-		return nil, err
-	}
 	if err := db.AutoMigrate(&Chat{}, &ChatTurn{}, &DagPlan{}, &DagNode{}, &ChatEvent{}, &MemoryOp{}, &ProjectionWatermark{}, &Checkpoint{}, &DagExecPlan{}); err != nil {
 		return nil, err
 	}

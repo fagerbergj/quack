@@ -15,7 +15,6 @@ import (
 	adkmemory "google.golang.org/adk/v2/memory"
 	"google.golang.org/adk/v2/model"
 
-	"github.com/fagerbergj/quack/internal/memoryrules"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
@@ -38,40 +37,14 @@ type index interface {
 	// same includeInvalidated/tier filter as list.
 	count(ctx context.Context, buckets []string, includeInvalidated bool, tier string) (int, error)
 	upsert(ctx context.Context, pts []point) error
-	// getByID fetches one point by id, invalidated or not; ok=false if it doesn't exist.
-	getByID(ctx context.Context, id string) (pt scored, ok bool, err error)
+	// getMany fetches the named ids, invalidated or not, without vectors; missing ids are absent from the map.
+	getMany(ctx context.Context, ids []string) (map[string]scored, error)
+	// patch sets fields (keyed by the payload* names) on every id, durable before it returns.
+	patch(ctx context.Context, ids []string, set map[string]any) error
 	// remove deletes the named ids and reports how many actually existed.
 	remove(ctx context.Context, ids []string) (int, error)
-	// invalidateByID soft-invalidates ids in place (never removes) and reports how many existed.
-	invalidateByID(ctx context.Context, ids []string, reason string) (int, error)
-	// updateStatus applies o to every non-invalidated id (sticky) and returns those touched; invalidation
-	// skips verified ones, since a verified memory recalled into a closed-unmerged chat gets no vote.
-	updateStatus(ctx context.Context, ids []string, o OutcomeSignal) ([]string, error)
-	// applyVotes applies each vote to a non-invalidated memory and returns the ids touched; a net
-	// score <= invalidateThreshold soft-invalidates it (OutcomeReasonNetScore).
-	applyVotes(ctx context.Context, votes []Vote, invalidateThreshold int) ([]string, error)
-	// recordRecall bumps recalls and stamps last_recalled_at for ids, one
-	// batched write - the usage-tracking half of a recall delivery.
+	// recordRecall bumps recalls and stamps last_recalled_at for ids in one batched write.
 	recordRecall(ctx context.Context, ids []string) error
-	// backfillTiers gives every tierless point a tier (verified iff reinforcement_count >= 1). Idempotent.
-	backfillTiers(ctx context.Context) (int, error)
-	// backfillJudgeSupport sets supported = upvotes - reinforcement_count on verified points still at 0,
-	// demoting them when that is not positive. Idempotent both ways.
-	backfillJudgeSupport(ctx context.Context) (int, error)
-	// updateBucket moves one point to a new bucket key; no re-embed.
-	updateBucket(ctx context.Context, id, bucket string) error
-	// absorb folds absorbedID's votes/timestamps/lineage into survivorID and invalidates absorbedID.
-	// False (no-op) if either is missing or absorbedID is already invalidated (first invalidation wins).
-	absorb(ctx context.Context, survivorID, absorbedID, reason string) (bool, error)
-	// setHumanVote sets the caller's vote on id, deriving counts from the transition away from the prior
-	// human_vote so a toggle never double counts. Reports whether id existed and wasn't invalidated.
-	setHumanVote(ctx context.Context, id, vote string, invalidateThreshold int) (bool, error)
-	// stampConsolidateFP records fp as ids' consolidate fingerprint (payload
-	// only) - the sweep's skip check reads it back next tick.
-	stampConsolidateFP(ctx context.Context, ids []string, fp string) error
-	// demoteTier sets tier=unverified on every verified id and returns only those it changed,
-	// so the caller logs no memory_ops row for an already-unverified id.
-	demoteTier(ctx context.Context, ids []string) ([]string, error)
 }
 
 // scored is one ranked memory.
@@ -199,9 +172,8 @@ type Store struct {
 	minScore       float32 // recall hits below this cosine are dropped (0 = none)
 	log            *slog.Logger
 	embCache       *embedCache
-	opsLog         OpsLog             // audit trail sink; nil unless the caller wires one (see SetOpsLog)
-	forgetRules    []memoryrules.Rule // nil means memoryrules.DefaultRules() (see SetForgettingRules)
-	listErrForTest error              // test-only fault injection, see SetListErrorForTest
+	opsLog         OpsLog // audit trail sink; nil unless the caller wires one (see SetOpsLog)
+	listErrForTest error  // test-only fault injection, see SetListErrorForTest
 }
 
 // SetListErrorForTest makes every forEachSweepPage on this store fail with err until reset,
@@ -236,17 +208,6 @@ func newStore(ctx context.Context, idx index, embedder inference.Embedder, conso
 		return len(vecs[0]), nil
 	}); err != nil {
 		return nil, err
-	}
-	n, err := idx.backfillTiers(ctx)
-	if err != nil {
-		s.log.Warn("memory tier backfill failed", "err", err)
-	} else if n > 0 {
-		s.log.Info("memory tier backfill", "touched", n)
-	}
-	if n, err := idx.backfillJudgeSupport(ctx); err != nil {
-		s.log.Warn("memory judge-support backfill failed", "err", err)
-	} else if n > 0 {
-		s.log.Info("memory judge-support backfill", "touched", n)
 	}
 	return s, nil
 }
@@ -451,7 +412,7 @@ func (s *Store) List(ctx context.Context, buckets []string, offset, limit int, i
 // GetByID fetches one memory by id, invalidated or not (callers check Status).
 // ErrMemoryNotFound if this store doesn't have it.
 func (s *Store) GetByID(ctx context.Context, id string) (Memory, error) {
-	pt, ok, err := s.idx.getByID(ctx, id)
+	pt, ok, err := s.getByID(ctx, id)
 	if err != nil {
 		return Memory{}, fmt.Errorf("memory: get %q: %w", id, err)
 	}
@@ -513,7 +474,7 @@ func (s *Store) InvalidateByID(ctx context.Context, id, reason string, actor Ops
 	if reason == "" {
 		reason = "manual delete"
 	}
-	n, err := s.idx.invalidateByID(ctx, []string{id}, reason)
+	n, err := s.invalidateByID(ctx, []string{id}, reason)
 	if err != nil {
 		return fmt.Errorf("memory: invalidate %q: %w", id, err)
 	}

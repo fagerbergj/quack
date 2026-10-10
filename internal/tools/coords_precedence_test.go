@@ -11,7 +11,7 @@ import (
 	"github.com/fagerbergj/quack/internal/otelobs"
 )
 
-// The caller's ctx coords must win over emitTool's shared stamp, or a concurrent sibling node's stamp
+// The caller's ctx coords must win over the hooks' shared stamp, or a concurrent sibling node's stamp
 // steals this call's attribution.
 func TestEmitTool_CtxCoordsWinOverTheSharedStamp(t *testing.T) {
 	capExp := &recordCapture{}
@@ -19,12 +19,11 @@ func TestEmitTool_CtxCoordsWinOverTheSharedStamp(t *testing.T) {
 	restore := otelobs.SetLoggerProviderForTesting(lp)
 	defer restore()
 
-	inner := &fakeRunnable{}
-	wrapped := emitWrap(inner, ledger.Coords{})
-	e := wrapped.(*emitTool)
+	h := NewHooks(Deps{}, 0)
+	e := hook(h, HookBuilt, &fakeRunnable{})
 
-	// A concurrent sibling node stamped last on this shared tool instance.
-	e.SetLedgerCoords(ledger.Coords{ChatID: "chat-1", Node: "sibling-node", Agent: "judge"})
+	// A concurrent sibling node stamped last on this shared hooks instance.
+	h.SetLedgerCoords(ledger.Coords{ChatID: "chat-1", Node: "sibling-node", Agent: "judge"})
 
 	fc := newFakeCtx()
 	fc.Ctx = ledger.WithCoords(context.Background(), ledger.Coords{Node: "my-node", Agent: "code-implementer"})

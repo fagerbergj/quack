@@ -21,6 +21,7 @@ import (
 	"github.com/fagerbergj/quack/internal/artifactsrc"
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/inference"
+	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/tools"
@@ -62,7 +63,7 @@ type nodeScopedStub struct {
 	cachedT []tool.Tool
 }
 
-func (s *nodeScopedStub) ForNode(_ context.Context, nodeKey, _ string, _ func() string, _ artifact.Service, _, _, _, _ string, _ func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, func(int, string, string, string), func(context.Context) artifactsrc.Artifact, func(bool), error) {
+func (s *nodeScopedStub) ForNode(_ context.Context, nodeKey, _ string, _ func() string, _ artifact.Service, _, _, _, _ string, _ func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, ledger.CoordSetter, func(int, string, string, string), func(context.Context) artifactsrc.Artifact, func(bool), error) {
 	s.mu.Lock()
 	s.calls++
 	m, builtins := s.cachedM, s.cachedT
@@ -73,7 +74,7 @@ func (s *nodeScopedStub) ForNode(_ context.Context, nodeKey, _ string, _ func() 
 		m = inference.TracedModelForTesting(stub, "nodeScopedStub")
 		var err error
 		if builtins, err = tools.Build([]string{"current_date"}, tools.Deps{}); err != nil {
-			return nil, nil, nil, nil, nil, nil, err
+			return nil, nil, nil, nil, nil, nil, nil, err
 		}
 		if s.share {
 			s.mu.Lock()
@@ -88,13 +89,13 @@ func (s *nodeScopedStub) ForNode(_ context.Context, nodeKey, _ string, _ func() 
 		Tools:       builtins,
 	})
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	s.mu.Lock()
 	s.built = append(s.built, fmt.Sprintf("%s:%p", nodeKey, m))
 	s.mu.Unlock()
-	return worker, m, builtins, nil, nil, func(bool) {}, nil
+	return worker, m, builtins, nil, nil, nil, func(bool) {}, nil
 }
 
 // runTwoConcurrentNodes runs two concurrent nodes of agent "w" and returns each draft-round

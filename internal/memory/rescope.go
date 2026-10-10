@@ -54,7 +54,7 @@ func (s *Store) Rescope(ctx context.Context, resolve ChatRepoResolver, apply boo
 		s.log.Info("rescope: points without chat provenance not moved", "count", result.SkippedNoProvenance)
 	}
 	for _, mv := range moves {
-		if err := s.idx.updateBucket(ctx, mv.id, mv.dstBucket); err != nil {
+		if err := s.idx.patch(ctx, []string{mv.id}, map[string]any{payloadScope: mv.dstBucket}); err != nil {
 			return RescopeResult{}, fmt.Errorf("memory: rescope update %q: %w", mv.id, err)
 		}
 		s.logOp(ctx, mv.id, OpUpdate, ActorRescope, "rescope: "+mv.srcBucket+" -> "+mv.dstBucket)

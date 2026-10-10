@@ -50,6 +50,7 @@ type orchRun struct {
 
 	toolList   []tool.Tool
 	toolsets   []tool.Toolset
+	hooks      *tools.Hooks
 	memSvc     adkmemory.Service
 	artifacts  artifact.Service
 	runner     *runner.Runner
@@ -174,7 +175,7 @@ func (s *orchRun) buildMemoryArtifactTools(githubSetup *dag.Setup) string {
 // buildRunner: agent, agent node, single-node workflow, and the runner.
 // Returns the message to yield on failure, "" on success.
 func (s *orchRun) buildRunner() string {
-	ag, err := llmagent.New(llmagent.Config{
+	cfg := llmagent.Config{
 		Name:        orchestratorName,
 		Description: "Routes requests to the right specialist agents - web research, code implementation, media reading - and answers conversational queries directly.",
 		Model:       s.o.model,
@@ -184,7 +185,9 @@ func (s *orchRun) buildRunner() string {
 		Tools:    s.toolList,
 		Toolsets: s.toolsets,
 		Mode:     llmagent.ModeChat,
-	})
+	}
+	s.hooks.Wire(&cfg)
+	ag, err := llmagent.New(cfg)
 	if err != nil {
 		return "orchestrator: build agent: " + err.Error()
 	}

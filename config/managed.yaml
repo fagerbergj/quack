@@ -160,9 +160,7 @@ server:
 # unset ⇒ the default allowlist applies (go/npm/make - see internal/config
 # defaultCheckCommands); each derived check is gated on its binary existing on
 # the host, so a machine without the toolchain derives nothing. git_credentials
-# empty ⇒ public repos only (keyless path). No guard-ladder entries by default:
-# the code agents run as external ACP subprocesses (no quack write tools left to
-# guard); workspace.guards still accepts entries for any remaining tool.
+# empty ⇒ public repos only (keyless path).
 #
 # sandbox: bwrap is the DEFAULT and it matters most in exactly this preset -
 # `quack server` here runs on the operator's own machine, as their own user, so

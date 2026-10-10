@@ -657,9 +657,6 @@ func (e *Executor) StartNode(chatID, nodeID string) (PauseReason, bool) {
 	return reason, true
 }
 
-// StopNode cancels a node into the terminal cancelled state.
-func (e *Executor) StopNode(chatID, nodeID string) bool { return e.CancelNode(chatID, nodeID) }
-
 // NodePauseReason reports why a node is paused ("" if it isn't), surviving unregister.
 func (e *Executor) NodePauseReason(chatID, nodeID string) PauseReason {
 	e.controls.mu.Lock()

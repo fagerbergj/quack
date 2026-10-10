@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"fmt"
 
 	extsdk "github.com/fagerbergj/quack-extensions/sdk"
 	"google.golang.org/adk/v2/agent"
@@ -22,12 +23,13 @@ type callInfoTool struct {
 	scope CallScope
 }
 
-func withCallInfo(t tool.Tool, d Deps) tool.Tool {
+// withCallInfo fails at boot on a non-runnable extension tool rather than at its first call.
+func withCallInfo(t tool.Tool, d Deps) (tool.Tool, error) {
 	rt, ok := t.(runnableTool)
 	if !ok {
-		return t
+		return nil, fmt.Errorf("tools: extension tool %q is not a runnable function tool", t.Name())
 	}
-	return &callInfoTool{runnableTool: rt, scope: d.CallScope}
+	return &callInfoTool{runnableTool: rt, scope: d.CallScope}, nil
 }
 
 func (c *callInfoTool) ProcessRequest(ctx agent.Context, req *model.LLMRequest) error {
@@ -83,4 +85,17 @@ func (c valueCtx) WithAgentCancel() (agent.Context, context.CancelFunc) {
 
 func (c valueCtx) WithDelta(d *agent.CommonContextDelta) agent.Context {
 	return valueCtx{Context: c.Context.WithDelta(d), overlay: c.overlay}
+}
+
+// rebindToolMap re-points the request's dispatch entry at the wrapper w.
+func rebindToolMap(inner runnableTool, w tool.Tool, ctx agent.Context, req *model.LLMRequest) error {
+	if err := inner.ProcessRequest(ctx, req); err != nil {
+		return err
+	}
+	if req.Tools != nil {
+		if _, ok := req.Tools[w.Name()]; ok {
+			req.Tools[w.Name()] = w
+		}
+	}
+	return nil
 }

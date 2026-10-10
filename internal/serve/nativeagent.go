@@ -11,6 +11,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/agent"
 	"github.com/fagerbergj/quack/internal/artifactsrc"
+	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
@@ -18,7 +19,7 @@ import (
 // ForNode builds a per-node worker so concurrent nodes never race the shared ledger coordinate field.
 type nativeAgent struct {
 	adkagent.Agent
-	build nodeBuilder
+	builder *nativeNodeBuilder
 }
 
 // roundCoordsSetter stamps a node's per-round ledger coordinates.
@@ -31,13 +32,10 @@ type nodeRelease func(paused bool)
 // agent never move each other's prompt.
 type promptRefresher func(ctx context.Context) artifactsrc.Artifact
 
-// nodeBuilder builds one native node's dispatch worker.
-type nodeBuilder func(ctx context.Context, nodeKey, advisorToken string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, roundCoordsSetter, promptRefresher, nodeRelease, error)
-
 // ForNode builds one node's worker and tools; sink and ctx's turn id go to the tools, whose A2A-served
 // ctx carries neither. release(paused) closes its A2A server.
-func (n nativeAgent) ForNode(ctx context.Context, nodeKey, advisorToken string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, func(round int, turnID, headSHA, triggerAnnotation string), func(context.Context) artifactsrc.Artifact, func(paused bool), error) {
-	return n.build(ctx, nodeKey, advisorToken, drain, artifacts, appName, userID, chatID, nodeID, sink)
+func (n nativeAgent) ForNode(ctx context.Context, nodeKey, advisorToken string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, ledger.CoordSetter, func(round int, turnID, headSHA, triggerAnnotation string), func(context.Context) artifactsrc.Artifact, func(paused bool), error) {
+	return n.builder.build(ctx, nodeKey, advisorToken, drain, artifacts, appName, userID, chatID, nodeID, sink)
 }
 
 // perNodeServers lets shutdown close per-node A2A servers whose release() never ran; entries prune

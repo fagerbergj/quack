@@ -60,7 +60,7 @@ func runOwnNode(t *testing.T, agent nativeAgent, jail *workspace.Jail) {
 	t.Helper()
 	own := registerNode(t, jail, "p", "n1", "chat-1")
 	foreign := registerNode(t, jail, "p-evil", "n-evil", "chat-evil")
-	worker, _, _, _, _, release, err := agent.ForNode(context.Background(), "p:n1", own, nil, nil, "quack", "u1", "chat-1", "n1", func(stream.SSEEvent) {})
+	worker, _, _, _, _, _, release, err := agent.ForNode(context.Background(), "p:n1", own, nil, nil, "quack", "u1", "chat-1", "n1", func(stream.SSEEvent) {})
 	if err != nil {
 		t.Fatalf("ForNode: %v", err)
 	}

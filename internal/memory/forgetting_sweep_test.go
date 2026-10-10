@@ -169,7 +169,7 @@ func TestDemoteTier_NoOpOnUnverified(t *testing.T) {
 		seedMemory(t, s, point{ID: id, Content: "c", Scope: "repo:r", Author: "a", Timestamp: "t",
 			MintedAt: daysAgo(5), ValidFrom: "t", Status: string(StatusUnverified), Tier: TierUnverified})
 
-		touched, err := s.idx.demoteTier(ctx, []string{id})
+		touched, err := s.demoteTier(ctx, []string{id})
 		if err != nil {
 			t.Fatalf("demoteTier: %v", err)
 		}
@@ -263,30 +263,6 @@ func TestForgetSweep_OpsLog(t *testing.T) {
 	}
 	if row.reason != "rule 2: score <= -2" {
 		t.Errorf("reason = %q, want the score rule's index+expression", row.reason)
-	}
-}
-
-// TestForgetSweep_CustomRules exercises SetForgettingRules end-to-end,
-// including rejecting a bad rule at wiring time.
-func TestForgetSweep_CustomRules(t *testing.T) {
-	s := newSQLiteStore(t, "task", nil)
-	if err := s.SetForgettingRules([]memoryrules.Rule{{When: "recalls == 0", Then: memoryrules.ThenInvalidate}}); err != nil {
-		t.Fatalf("SetForgettingRules: %v", err)
-	}
-	seedMemory(t, s, point{ID: "never-recalled", Content: "c", Scope: "repo:r", Author: "a",
-		Timestamp: "t", MintedAt: daysAgo(1), ValidFrom: "t", Status: string(StatusUnverified)})
-
-	report, err := s.ForgetSweep(context.Background(), false)
-	if err != nil {
-		t.Fatalf("sweep: %v", err)
-	}
-	if report.Rules[0].Matched != 1 {
-		t.Errorf("custom rule matched = %d, want 1", report.Rules[0].Matched)
-	}
-	assertStatus(t, s, "never-recalled", string(StatusInvalidated))
-
-	if err := s.SetForgettingRules([]memoryrules.Rule{{When: "bogus_field == 1", Then: memoryrules.ThenInvalidate}}); err == nil {
-		t.Error("expected SetForgettingRules to reject an unknown field")
 	}
 }
 

@@ -715,15 +715,11 @@ paths:
   /api/v1/chats/{chat_id}/nodes/{node_id}/status:
     put:
       operationId: updateNodeStatus
-      summary: Transition a DAG node's status (cancel, pause/resume, or retry)
+      summary: Transition a DAG node's status (pause/resume or retry)
       description: |
         A single resource-oriented endpoint - the request body names the
-        TARGET status:
+        TARGET status. To cancel a node, POST `.../nodes/{node_id}/stop`.
 
-        - `{"status":"cancelled"}` - cancel the node (legal from `queued`,
-          `running`, `paused`, or `needs_input`). Kills the in-flight
-          model/tool call via context; no resume. No-op (200, unchanged
-          state) if the node isn't currently live.
         - `{"status":"paused"}` - suspend a RUNNING node at its next safe
           point, keeping its accumulated work. Only legal from `running`.
         - `{"status":"running"}` - resume a `paused` node: a fresh re-run
@@ -1232,7 +1228,7 @@ paths:
       operationId: sweepMemories
       summary: Run the forgetting-rule sweep on demand
       description: |
-        Evaluates every configured memory store's `memory.forgetting.rules`
+        Evaluates the built-in forgetting rules on every configured memory store
         (epic #1255 P3) against every currently-valid memory, first rule
         match wins. `dry_run: true` reports what each rule would do without
         invalidating anything; otherwise it applies invalidations exactly as
@@ -1566,9 +1562,8 @@ components:
       description: >
         A chat's derived state: `running` while a turn is actively streaming
         or its latest plan has a node in flight, `needs_input` when the last
-        turn paused on an unanswered question (a mid-node ask, a guarded
-        operation awaiting approve/deny - the workspace.guards confirm tier -
-        or a top-level clarification), `failed` when the last turn's DAG has a
+        turn paused on an unanswered question (a mid-node ask or a top-level
+        clarification), `failed` when the last turn's DAG has a
         failed node and no answer text followed, else `idle`.
       enum: [running, needs_input, failed, idle]
 
@@ -1914,10 +1909,10 @@ components:
       properties:
         index:
           type: integer
-          description: The rule's position in memory.forgetting.rules (or the built-in defaults), first match wins.
+          description: The rule's position in the built-in forgetting rules, first match wins.
         "when":
           type: string
-          description: The rule's expression, verbatim.
+          description: The rule's condition, as a human-readable label.
         then:
           type: string
           enum: [invalidate, demote, keep]
@@ -2365,12 +2360,15 @@ components:
       required: [status]
       properties:
         status:
-          $ref: "#/components/schemas/NodeStatus"
+          type: string
+          description: Target status; any other value is a 400. Cancel via
+            POST .../nodes/{node_id}/stop.
+          enum: [paused, running, queued]
         guidance:
           type: string
           description: Optional and folded into the node's task when status is
             "queued" (retry, or resuming a paused node via a fresh re-run).
-            Unused for "cancelled" and "paused". To steer a RUNNING node,
+            Unused for "paused". To steer a RUNNING node,
             queue a message instead (POST .../nodes/{node_id}/queue) - it is
             delivered at the node's next turn boundary, not mid-turn.
         reason:

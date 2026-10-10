@@ -72,9 +72,6 @@ const (
 )
 
 func loadConstitution(ctx context.Context, res *artifactsrc.Resolver, c config.GatesConfig) (string, artifactsrc.Artifact, error) {
-	if r := strings.TrimSpace(c.Constitution); r != "" {
-		return r, artifactsrc.Artifact{}, nil // inline override - no store-backed provenance
-	}
 	if c.ConstitutionPath == "" {
 		return "", artifactsrc.Artifact{}, nil // constitution is optional
 	}
@@ -88,9 +85,6 @@ func loadConstitution(ctx context.Context, res *artifactsrc.Resolver, c config.G
 // loadRubric returns the rendered rubric markdown, plus per-criterion specs when the source was
 // a rubric.yaml; an unstructured planner/inline override has nil specs.
 func loadRubric(ctx context.Context, res *artifactsrc.Resolver, c config.GatesConfig) (string, map[string]criterionSpec, map[string]string, artifactsrc.Artifact, error) {
-	if r := strings.TrimSpace(c.Rubric); r != "" {
-		return r, nil, nil, artifactsrc.Artifact{}, nil // raw inline override - unstructured prose, no specs
-	}
 	path := c.RubricPath
 	if path == "" {
 		if !c.JudgeEnabled() {

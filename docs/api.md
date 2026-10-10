@@ -15,7 +15,7 @@ Mounted at the process root (`internal/server/router.go`), modeled after OpenRes
 | `GET /api/v1/chats/{chat_id}/responses/{response_id}` | Fetch one turn's output items. |
 | `GET /api/v1/chats/{chat_id}/stream` | Reattach to a chat's in-progress (or most recent) run - replays, then streams live. |
 | `PUT /api/v1/chats/{chat_id}/responses/{response_id}/status` | Cancel the active run. |
-| `PUT /api/v1/chats/{chat_id}/nodes/{node_id}/status` | Transition a DAG node: cancel, pause/resume, retry. |
+| `PUT /api/v1/chats/{chat_id}/nodes/{node_id}/status` | Transition a DAG node: pause/resume, retry. Cancel is `.../stop`. |
 | `POST /api/v1/chats/{chat_id}/nodes/{node_id}/start` | Explicit per-node start: queued or paused into running. |
 | `POST /api/v1/chats/{chat_id}/nodes/{node_id}/stop` | Explicit per-node stop: any non-terminal status into cancelled. |
 | `PATCH /api/v1/chats/{chat_id}/nodes/{node_id}` | Edit a not-yet-started node's prompt. |

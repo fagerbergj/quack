@@ -17,7 +17,7 @@ const (
 	leakNodeID = "explorer"
 )
 
-// buildToolsForLeakTest builds the production-wrapped tool set over a fresh jail and returns
+// buildToolsForLeakTest builds the production-hooked tool set over a fresh jail and returns
 // the jail root, so a test can grep a returned error for the host path.
 func buildToolsForLeakTest(t *testing.T, names ...string) (map[string]tool.Tool, string) {
 	t.Helper()
@@ -25,13 +25,15 @@ func buildToolsForLeakTest(t *testing.T, names ...string) (map[string]tool.Tool,
 	if err != nil {
 		t.Fatalf("NewJail: %v", err)
 	}
-	built, err := Build(names, Deps{Workspace: j, WorkspaceUserID: "local"})
+	d := Deps{Workspace: j, WorkspaceUserID: "local"}
+	built, err := Build(names, d)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
+	h := NewHooks(d, 0)
 	byName := map[string]tool.Tool{}
 	for _, b := range built {
-		byName[b.Name()] = b
+		byName[b.Name()] = hook(h, HookBuilt, b)
 	}
 	return byName, j.Root()
 }
@@ -79,8 +81,8 @@ func TestReadFileErrorNamesTheModelPathNotTheHostPath(t *testing.T) {
 	}
 }
 
-// os/git errors carry the resolved host path and tools wrap them with %w, so Build's single
-// wrap point applies the scrub; a tool that skips it fails here.
+// os/git errors carry the resolved host path and tools wrap them with %w, so the Build tools'
+// hooks apply the scrub; a tool that skips it fails here.
 func TestEveryBuiltToolIsPathScrubbed(t *testing.T) {
 	var names []string
 	for name, ctor := range registry {
@@ -102,25 +104,10 @@ func TestEveryBuiltToolIsPathScrubbed(t *testing.T) {
 	}
 }
 
-// scrubbed walks a built tool's wrapper chain (cancel guard → guard ladder →
-// scrub → the tool) looking for the scrub.
+// scrubbed: the tool runs under hooks that scrub its errors (a HookNode policy over a workspace).
 func scrubbed(t tool.Tool) bool {
-	for {
-		switch v := t.(type) {
-		case *pathScrub:
-			return true
-		case *emitTool:
-			t = v.runnableTool
-		case *cancelGuard:
-			t = v.runnableTool
-		case *repeatGuard:
-			t = v.runnableTool
-		case *guardedTool:
-			t = v.runnableTool
-		default:
-			return false
-		}
-	}
+	h, ok := t.(hooked)
+	return ok && h.h.scrub != nil && h.h.policyOf(t.Name())&HookNode != 0
 }
 
 func mustJail(t *testing.T) *workspace.Jail {

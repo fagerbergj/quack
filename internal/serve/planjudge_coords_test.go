@@ -54,7 +54,7 @@ func TestBuildAgents_PlanJudgeDoesNotInheritGatedNodeStamp(t *testing.T) {
 			"judge-test": newPlanJudgeStubProvider(t),
 		},
 		Gates: config.GatesConfig{
-			Rubric: "be good",
+			RubricPath: "config/rubric.md",
 			Judge: config.JudgeConfig{
 				Provider: "judge-test", Model: "judge-model", MaxRounds: 1,
 				Threshold: 0.7, MaxIterations: 2,

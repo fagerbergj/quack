@@ -359,6 +359,27 @@ func (e NodeStatus) Valid() bool {
 	}
 }
 
+// Defines values for NodeStatusUpdateBodyStatus.
+const (
+	NodeStatusUpdateBodyStatusPaused  NodeStatusUpdateBodyStatus = "paused"
+	NodeStatusUpdateBodyStatusQueued  NodeStatusUpdateBodyStatus = "queued"
+	NodeStatusUpdateBodyStatusRunning NodeStatusUpdateBodyStatus = "running"
+)
+
+// Valid indicates whether the value is a known member of the NodeStatusUpdateBodyStatus enum.
+func (e NodeStatusUpdateBodyStatus) Valid() bool {
+	switch e {
+	case NodeStatusUpdateBodyStatusPaused:
+		return true
+	case NodeStatusUpdateBodyStatusQueued:
+		return true
+	case NodeStatusUpdateBodyStatusRunning:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for OutputTextPartType.
 const (
 	OutputText OutputTextPartType = "output_text"
@@ -454,19 +475,19 @@ func (e PluginSource) Valid() bool {
 
 // Defines values for QueuedMessageStatus.
 const (
-	Drained   QueuedMessageStatus = "drained"
-	Forwarded QueuedMessageStatus = "forwarded"
-	Queued    QueuedMessageStatus = "queued"
+	QueuedMessageStatusDrained   QueuedMessageStatus = "drained"
+	QueuedMessageStatusForwarded QueuedMessageStatus = "forwarded"
+	QueuedMessageStatusQueued    QueuedMessageStatus = "queued"
 )
 
 // Valid indicates whether the value is a known member of the QueuedMessageStatus enum.
 func (e QueuedMessageStatus) Valid() bool {
 	switch e {
-	case Drained:
+	case QueuedMessageStatusDrained:
 		return true
-	case Forwarded:
+	case QueuedMessageStatusForwarded:
 		return true
-	case Queued:
+	case QueuedMessageStatusQueued:
 		return true
 	default:
 		return false
@@ -740,7 +761,7 @@ type ChatDetail struct {
 	// PendingQuestion The unanswered question blocking the chat, present only when status is `needs_input`.
 	PendingQuestion *string `json:"pending_question,omitempty"`
 
-	// Status A chat's derived state: `running` while a turn is actively streaming or its latest plan has a node in flight, `needs_input` when the last turn paused on an unanswered question (a mid-node ask, a guarded operation awaiting approve/deny - the workspace.guards confirm tier - or a top-level clarification), `failed` when the last turn's DAG has a failed node and no answer text followed, else `idle`.
+	// Status A chat's derived state: `running` while a turn is actively streaming or its latest plan has a node in flight, `needs_input` when the last turn paused on an unanswered question (a mid-node ask or a top-level clarification), `failed` when the last turn's DAG has a failed node and no answer text followed, else `idle`.
 	Status       ChatStatus `json:"status"`
 	SystemPrompt string     `json:"system_prompt"`
 	Title        *string    `json:"title,omitempty"`
@@ -795,7 +816,7 @@ type ChatOrigin struct {
 	} `json:"labels,omitempty"`
 }
 
-// ChatStatus A chat's derived state: `running` while a turn is actively streaming or its latest plan has a node in flight, `needs_input` when the last turn paused on an unanswered question (a mid-node ask, a guarded operation awaiting approve/deny - the workspace.guards confirm tier - or a top-level clarification), `failed` when the last turn's DAG has a failed node and no answer text followed, else `idle`.
+// ChatStatus A chat's derived state: `running` while a turn is actively streaming or its latest plan has a node in flight, `needs_input` when the last turn paused on an unanswered question (a mid-node ask or a top-level clarification), `failed` when the last turn's DAG has a failed node and no answer text followed, else `idle`.
 type ChatStatus string
 
 // ChatSummary defines model for ChatSummary.
@@ -820,7 +841,7 @@ type ChatSummary struct {
 	// PendingQuestion The unanswered question blocking the chat, present only when status is `needs_input`.
 	PendingQuestion *string `json:"pending_question,omitempty"`
 
-	// Status A chat's derived state: `running` while a turn is actively streaming or its latest plan has a node in flight, `needs_input` when the last turn paused on an unanswered question (a mid-node ask, a guarded operation awaiting approve/deny - the workspace.guards confirm tier - or a top-level clarification), `failed` when the last turn's DAG has a failed node and no answer text followed, else `idle`.
+	// Status A chat's derived state: `running` while a turn is actively streaming or its latest plan has a node in flight, `needs_input` when the last turn paused on an unanswered question (a mid-node ask or a top-level clarification), `failed` when the last turn's DAG has a failed node and no answer text followed, else `idle`.
 	Status       ChatStatus `json:"status"`
 	SystemPrompt string     `json:"system_prompt"`
 	Title        *string    `json:"title,omitempty"`
@@ -1220,23 +1241,18 @@ type NodeStatus string
 
 // NodeStatusUpdateBody defines model for NodeStatusUpdateBody.
 type NodeStatusUpdateBody struct {
-	// Guidance Optional and folded into the node's task when status is "queued" (retry, or resuming a paused node via a fresh re-run). Unused for "cancelled" and "paused". To steer a RUNNING node, queue a message instead (POST .../nodes/{node_id}/queue) - it is delivered at the node's next turn boundary, not mid-turn.
+	// Guidance Optional and folded into the node's task when status is "queued" (retry, or resuming a paused node via a fresh re-run). Unused for "paused". To steer a RUNNING node, queue a message instead (POST .../nodes/{node_id}/queue) - it is delivered at the node's next turn boundary, not mid-turn.
 	Guidance *string `json:"guidance,omitempty"`
 
 	// Reason Why a node sits in the `paused` status.
 	Reason *PauseReason `json:"reason,omitempty"`
 
-	// Status A DAG node's canonical lifecycle state. Legal transitions (enforced
-	// server-side by internal/dag.CanTransition):
-	//   queued      → running, cancelled, failed (stale-on-restart)
-	//   running     → paused, needs_input, done, failed, cancelled
-	//   paused      → running (resume), cancelled
-	//   needs_input → running (resumed), cancelled
-	//   done        → queued (retry)
-	//   failed      → queued (retry)
-	//   cancelled   → queued (retry)
-	Status NodeStatus `json:"status"`
+	// Status Target status; any other value is a 400. Cancel via POST .../nodes/{node_id}/stop.
+	Status NodeStatusUpdateBodyStatus `json:"status"`
 }
+
+// NodeStatusUpdateBodyStatus Target status; any other value is a 400. Cancel via POST .../nodes/{node_id}/stop.
+type NodeStatusUpdateBodyStatus string
 
 // OutputItem defines model for OutputItem.
 type OutputItem struct {
@@ -1569,14 +1585,14 @@ type SweepRuleResult struct {
 		Id      string `json:"id"`
 	} `json:"examples,omitempty"`
 
-	// Index The rule's position in memory.forgetting.rules (or the built-in defaults), first match wins.
+	// Index The rule's position in the built-in forgetting rules, first match wins.
 	Index int `json:"index"`
 
 	// Matched How many memories this rule matched (and, when not a dry run, acted on).
 	Matched int                 `json:"matched"`
 	Then    SweepRuleResultThen `json:"then"`
 
-	// When The rule's expression, verbatim.
+	// When The rule's condition, as a human-readable label.
 	When string `json:"when"`
 }
 
@@ -2092,7 +2108,7 @@ type ServerInterface interface {
 	// Start a node - queued or paused, either way, into running
 	// (POST /api/v1/chats/{chat_id}/nodes/{node_id}/start)
 	StartNode(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID)
-	// Transition a DAG node's status (cancel, pause/resume, or retry)
+	// Transition a DAG node's status (pause/resume or retry)
 	// (PUT /api/v1/chats/{chat_id}/nodes/{node_id}/status)
 	UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID)
 	// Stop a node - any non-terminal status, into cancelled
@@ -2266,7 +2282,7 @@ func (_ Unimplemented) StartNode(w http.ResponseWriter, r *http.Request, chatId 
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// Transition a DAG node's status (cancel, pause/resume, or retry)
+// Transition a DAG node's status (pause/resume or retry)
 // (PUT /api/v1/chats/{chat_id}/nodes/{node_id}/status)
 func (_ Unimplemented) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID) {
 	w.WriteHeader(http.StatusNotImplemented)

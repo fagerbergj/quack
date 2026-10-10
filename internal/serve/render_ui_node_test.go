@@ -140,7 +140,7 @@ func TestNativeNode_RenderUIEmitsAndStampsTurn(t *testing.T) {
 		}
 	}
 	ctx := stream.WithTurnID(context.Background(), "turn-7")
-	worker, _, _, _, _, release, err := agent.ForNode(ctx, "p:n1", "p/n1", nil, artifacts, "quack", "u1", "chat-1", "n1", sink)
+	worker, _, _, _, _, _, release, err := agent.ForNode(ctx, "p:n1", "p/n1", nil, artifacts, "quack", "u1", "chat-1", "n1", sink)
 	if err != nil {
 		t.Fatalf("ForNode: %v", err)
 	}
