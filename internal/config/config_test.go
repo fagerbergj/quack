@@ -1256,7 +1256,7 @@ func TestExtensionsGitHubPassesThroughOpaquely(t *testing.T) {
 	c, err := Load(writeTemp(t, baseConfig+`
 extensions:
   github:
-    app_id: 1
+    client_id: Iv1.test
     private_key: ${QUACK_GH_KEY}
     webhook_secret: ${QUACK_GH_SECRET}
     bogus_field: true
@@ -1269,13 +1269,13 @@ extensions:
 		t.Fatal("extensions.github not captured in Modules")
 	}
 	var got struct {
-		AppID int64 `yaml:"app_id"`
+		ClientID string `yaml:"client_id"`
 	}
 	if err := node.Decode(&got); err != nil {
 		t.Fatalf("decode captured node: %v", err)
 	}
-	if got.AppID != 1 {
-		t.Errorf("app_id = %d, want 1", got.AppID)
+	if got.ClientID != "Iv1.test" {
+		t.Errorf("client_id = %q, want Iv1.test", got.ClientID)
 	}
 }
 

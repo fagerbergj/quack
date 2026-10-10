@@ -408,7 +408,7 @@ plugins:
     - github:DietrichGebert/ponytail@v4.9.0 # YAGNI/lazy-senior-dev discipline
     - .agents/plugins/usage                 # manifest for the compiled-in usage extension
     # Pinned to the same tag as go.mod's quack-extensions/sleeper; its agents/workflows seed only once extensions.sleeper below is configured.
-    - github:fagerbergj/quack-extensions@sleeper/v0.10.0#sleeper/plugin
+    - github:fagerbergj/quack-extensions@sleeper/v0.11.0#sleeper/plugin
     - .agents/plugins/github                # its code-implementer/reviewer/explorer agents seed only once extensions.github below is configured
 
 # workflows: a top-level key (not nested under skills:) that either teaches
@@ -613,8 +613,7 @@ workspace:
 # extensions.github wires the GitHub App extension: a webhook receiver, App-authed
 # git credentials, and the App-mention trigger - and, once this block is present and
 # enabled, the .agents/plugins/github plugin's own code-implementer/code-reviewer/
-# code-explorer agents (docs/agent-plugins.md). It needs EXACTLY ONE issuer
-# (client_id - GitHub's recommendation - or the legacy numeric app_id) and EXACTLY
+# code-explorer agents (docs/agent-plugins.md). It needs client_id and EXACTLY
 # ONE private-key source (inline private_key PEM via ${VAR}, or private_key_path to
 # a mounted .pem). The App's CLIENT SECRET is NOT used (that's OAuth only). Secrets
 # (private_key, webhook_secret) MUST be ${VAR} env references - a literal is a
@@ -647,7 +646,6 @@ workspace:
 #     # triggers: [mention, pr_opened, label, issue_plan, issue_implement, merge, ci_fix, explain]
 #     # run_timeout_minutes: 120  # default; bounds one dispatched run
 #     # auto_archive_on_merge: false  # default; archive the chat session when quack:merge lands
-#     # auto_review_label: "quack-auto-review"  # legacy alias for labels.review; set labels.review instead
 #     # labels: the repo labels driving the label-based workflow (applying a label
 #     # needs repo write access, so labels double as the permission model).
 #     # labels:
@@ -691,7 +689,6 @@ workspace:
 #     enabled: false
 #     default_user: jffagerberg          # Sleeper username or user_id; tools fall back to it when a chat names none
 #     default_league: "1356407594683482112"
-#     season: 2026                       # optional; defaults to /v1/state/nfl's current season
 #     snapshots: daily                   # off | daily; feeds trend-scout's diffing, fetches only, never dispatches
 #     timezone: ${QUACK_TIMEZONE}        # IANA zone the tools' *_local kickoff/fetch times render in
 
