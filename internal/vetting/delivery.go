@@ -64,9 +64,8 @@ func hasStagedPR(act workerActivity) bool {
 	return ok
 }
 
-// stageToolName: the delivery tool THIS run actually has - stage_pr opens a
-// new PR, stage_push hands off a commit to one that's already open. A run
-// only ever gets one of the two (internal/acp/acp.go's mcpToolNames), so the guidance text must name whichever it was given, never the other (#724).
+// stageToolName: the one delivery tool this run has (stage_pr for a new PR, stage_push for an
+// open one); guidance must name that one, never the other.
 func stageToolName(existingPR bool) string {
 	if existingPR {
 		return "stage_push"
@@ -114,7 +113,7 @@ func reviewCriterion(task string, act workerActivity, isReviewer bool) (criterio
 	if act.reviewSubmitted {
 		return criterionScore{Score: 1, Reason: "deterministic: the review was submitted directly on the pull request (`github_submit_review`)"}, true
 	}
-	// Distinguish recovered reviews from tool-staged ones (#688).
+	// Distinguish recovered reviews from tool-staged ones.
 	if sd, staged := act.stagedDelivery["review"]; staged {
 		if sd.Recovered {
 			return criterionScore{Score: 1, Reason: "deterministic: the review was RECOVERED from the answer's VERDICT/FINDINGS tail - " +
@@ -177,7 +176,7 @@ func behaviourCriterion(task string, act workerActivity, isReviewer bool) (crite
 		"that drives the core loop and prints the state over time; then post what you find."}, true
 }
 
-// incompleteCriteria: deterministic completion criteria shared by workIncomplete, foldDeterministic, and continuation prompt.
+// incompleteCriteria: completion criteria shared by workIncomplete, foldDeterministic, and the continuation prompt.
 func incompleteCriteria(task string, act workerActivity, readOnly, hasDeliverTarget, isReviewer, existingPR bool) map[string]criterionScore {
 	out := map[string]criterionScore{}
 	// Read-only agents have no commit/push tools; a node with no delivery target

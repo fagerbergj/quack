@@ -118,9 +118,8 @@ func TestResolveTwoUsersAreIndependent(t *testing.T) {
 	}
 }
 
-// TestUserIDValidation guards the jail boundary against attacker-influenced
-// identities (an OIDC subject is external text): a userID containing a
-// separator or dot-traversal would relocate the jail root itself, making the containment check verify against the WRONG root. Both entry points (UserRoot and Resolve) must reject identically with ErrInvalidUserID - a distinct error from ErrEscape, since this is a caller/config bug, not a model-chosen path. Real OIDC-shaped ids (pipes, emails) must PASS: the rule is separator/dot-traversal based, not an alphanumeric allowlist.
+// TestUserIDValidation: a separator or dot-traversal in an external OIDC subject would relocate the jail
+// root; real OIDC-shaped ids (pipes, emails) must still pass.
 func TestUserIDValidation(t *testing.T) {
 	j := newTestJail(t)
 	for _, tc := range []struct {
@@ -161,9 +160,7 @@ func TestUserIDValidation(t *testing.T) {
 	}
 }
 
-// TestBadUserIDIsNotErrEscape pins the error-identity contract: a bad userID
-// must never read as a jail escape (the model can't cause or fix ErrEscape's
-// "path escapes your workspace"; an invalid identity is the operator's bug).
+// TestBadUserIDIsNotErrEscape: an invalid identity is the operator's bug, not a model-fixable escape.
 func TestBadUserIDIsNotErrEscape(t *testing.T) {
 	j := newTestJail(t)
 	_, err := j.Resolve("../bob", "", "f.txt")
@@ -194,9 +191,7 @@ func TestResolveRootItselfWorks(t *testing.T) {
 	}
 }
 
-// TestResolvePerChatScope pins the per-chat segment: a non-empty chatID scopes
-// paths under <root>/<user>/<chat>/, two different chat ids get isolated trees,
-// and an empty chatID falls back to the per-user root (backward compatible).
+// TestResolvePerChatScope: chats get isolated trees; an empty chatID falls back to the per-user root.
 func TestResolvePerChatScope(t *testing.T) {
 	j := newTestJail(t)
 	got, err := j.Resolve("alice", "chat1", "sub/file.txt")
@@ -234,9 +229,8 @@ func TestResolvePerChatScope(t *testing.T) {
 	}
 }
 
-// TestChatIDValidation guards the per-chat segment: a chat id is a
-// system-generated UUID but treated as untrusted here - a separator or
-// dot-traversal must never relocate the scope root and let a path escape the user jail. A malicious id is rejected with ErrInvalidChatID (distinct from ErrInvalidUserID and ErrEscape); an empty id is NOT an error (it is the per-user fallback).
+// TestChatIDValidation: chat ids are treated as untrusted; an empty id is the per-user fallback,
+// not an error.
 func TestChatIDValidation(t *testing.T) {
 	j := newTestJail(t)
 	// Make a sibling under alice to prove `../` can't reach it.
@@ -272,9 +266,7 @@ func TestChatIDValidation(t *testing.T) {
 	}
 }
 
-// TestRemoveChatScope covers the deletion-cleanup contract: it removes exactly
-// the chat's subtree, a non-existent dir is a clean no-op, an empty chatID is
-// rejected (never removes the whole user root), and a crafted id can't escape.
+// TestRemoveChatScope: removes exactly the chat's subtree; an empty or crafted chatID is rejected.
 func TestRemoveChatScope(t *testing.T) {
 	j := newTestJail(t)
 	// Populate two chats plus a per-user sibling that must survive.
@@ -327,10 +319,7 @@ func TestRemoveChatScope(t *testing.T) {
 	}
 }
 
-// TestRemoveACPState covers node reuse's chat-archive/delete cleanup: every
-// ACP state dir this chat's nodes ever created is removed (the nodeID varies
-// per dir, chatID stays fixed), a sibling chat's dir survives, and a chat
-// with none yet is a clean no-op.
+// TestRemoveACPState: every node's state dir for the chat goes; a sibling chat's survives.
 func TestRemoveACPState(t *testing.T) {
 	j := newTestJail(t)
 	n1, err := j.ACPStateDir("alice", "chat1", "node1")
@@ -440,9 +429,7 @@ func TestJailHomeDirPerUserIsolated(t *testing.T) {
 	}
 }
 
-// TestJailScratchDirCreatesDirectory: ScratchDir creates and returns a real,
-// existing directory - a worker's TMPDIR must resolve to something that's
-// already there at round start, not a path it has to create itself.
+// TestJailScratchDirCreatesDirectory: a worker's TMPDIR must already exist at round start.
 func TestJailScratchDirCreatesDirectory(t *testing.T) {
 	j := newTestJail(t)
 	scratch, err := j.ScratchDir("alice", "chat1", "node1")
@@ -458,9 +445,8 @@ func TestJailScratchDirCreatesDirectory(t *testing.T) {
 	}
 }
 
-// TestJailScratchDirPerNodeIsolated pins the actual fix: two different nodes
-// (even in the same chat) get DISTINCT scratch dirs - the pre-fix behavior
-// (TMPDIR = HomeDir/tmp, no node component) shared one scratch dir across every node for the whole user, so one node's mktemp-named files could collide with, or be visible to, a concurrent node's.
+// TestJailScratchDirPerNodeIsolated: nodes in one chat get distinct scratch dirs, so mktemp files
+// can't collide across concurrent nodes.
 func TestJailScratchDirPerNodeIsolated(t *testing.T) {
 	j := newTestJail(t)
 	a, err := j.ScratchDir("alice", "chat1", "node-a")
@@ -476,9 +462,8 @@ func TestJailScratchDirPerNodeIsolated(t *testing.T) {
 	}
 }
 
-// TestJailScratchDirIsSiblingNotNestedInARepo mirrors
-// TestJailHomeDirIsSiblingNotNestedInARepo: scratch lives under HomeDir,
-// never inside the node's own workspace - a read-only node's tree must stay wholly immutable, so its scratch cannot live anywhere under it.
+// TestJailScratchDirIsSiblingNotNestedInARepo: scratch lives under HomeDir, never in the node's
+// tree, which must stay immutable when read-only.
 func TestJailScratchDirIsSiblingNotNestedInARepo(t *testing.T) {
 	j := newTestJail(t)
 	nodeDir, err := j.Resolve("alice", "chat1", NodeDir("node1"))
@@ -541,9 +526,7 @@ func TestJailACPStateDirDistinctFromScratchDir(t *testing.T) {
 	}
 }
 
-// TestJailScratchDirRejectsInvalidIDs mirrors the chatID/userID escape guards
-// elsewhere in this file: a crafted chatID or nodeID can't walk the scratch
-// dir outside the jail.
+// TestJailScratchDirRejectsInvalidIDs: a crafted chatID or nodeID can't walk scratch outside the jail.
 func TestJailScratchDirRejectsInvalidIDs(t *testing.T) {
 	j := newTestJail(t)
 	if _, err := j.ScratchDir("alice", "../evil", "node1"); !errors.Is(err, ErrInvalidChatID) {

@@ -6,9 +6,7 @@ import (
 	"testing"
 )
 
-// TestInsertMemoryOp pins the memory_ops audit table (design doc §3, issue
-// #849 phase 2): AutoMigrate creates it on the same sqlite path every other
-// app table uses, and rows are append-only (two rows for the same memory_id both persist, not upserted).
+// AutoMigrate creates memory_ops on sqlite, and rows are append-only (two rows for one memory_id both persist).
 func TestInsertMemoryOp(t *testing.T) {
 	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {

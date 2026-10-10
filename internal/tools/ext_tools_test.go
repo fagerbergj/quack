@@ -8,9 +8,7 @@ import (
 	"google.golang.org/adk/v2/tool/functiontool"
 )
 
-// stubExtTool builds a minimal tool.Tool standing in for an extension tool
-// (e.g. internal/github.App.Tools()'s github_add_review_comment) - Build must
-// treat it exactly like a registry entry, resolved ONLY by name.
+// stubExtTool stands in for an extension tool; Build must resolve it only by name, like a registry entry.
 func stubExtTool(t *testing.T, name string) tool.Tool {
 	t.Helper()
 	tl, err := functiontool.New[struct{}, string](
@@ -32,9 +30,8 @@ func hasTool(tools []tool.Tool, name string) bool {
 	return false
 }
 
-// TestBuildExtToolsOptIn guards the fix for the force-injection design bug: an
-// extension tool (Deps.ExtTools) reaches an agent ONLY when that agent's own
-// config tools: list names it - same resolution path as any builtin, never because the extension happens to be configured.
+// An extension tool reaches an agent only when that agent's tools: list names it, never because the
+// extension is configured.
 func TestBuildExtToolsOptIn(t *testing.T) {
 	ext := map[string]tool.Tool{
 		"github_add_review_comment": stubExtTool(t, "github_add_review_comment"),
@@ -49,8 +46,7 @@ func TestBuildExtToolsOptIn(t *testing.T) {
 		t.Error("ext tool present even though tools: never named it - force-injection regressed")
 	}
 
-	// A tools: list that names the ext tool must receive it, through the same
-	// guard/scrub/cancel pipeline as a builtin.
+	// Named, it arrives through the same guard/scrub/cancel pipeline as a builtin.
 	got, err = Build([]string{"github_add_review_comment"}, Deps{ExtTools: ext})
 	if err != nil {
 		t.Fatalf("Build with the ext tool named: %v", err)

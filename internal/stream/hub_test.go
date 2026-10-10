@@ -64,7 +64,7 @@ func TestHubClose(t *testing.T) {
 		t.Error("expected the buffered Done before close")
 	}
 
-	// Close frees the replay buffer (perf-audit item 4); a finished chat's
+	// Close frees the replay buffer; a finished chat's
 	// replay comes from the durable chat_events table, not the hub.
 	replay, l, _, done := h.Subscribe("c")
 	if !done || l != nil {
@@ -96,9 +96,8 @@ func TestHubActive(t *testing.T) {
 	}
 }
 
-// A bare Subscribe (no run has ever published) auto-vivifies an empty topic
-// so a same-moment Publish never races past the registered subscriber - but
-// that placeholder must not itself read as Active, or a chat nobody ever ran would show "running" forever (and the REST /stream handler's cold/warm split would misfire on every later reconnect to the same never-run chat).
+// Subscribe auto-vivifies an empty topic; that placeholder must not read as Active, or a never-run chat
+// shows "running".
 func TestHubActiveNotFooledByBareSubscribe(t *testing.T) {
 	h := NewHub()
 	_, _, cancel, done := h.Subscribe("c")
@@ -132,10 +131,7 @@ func TestHubNewRunResets(t *testing.T) {
 	}
 }
 
-// This is the seam that makes DELETE/stop reach a run regardless of which
-// driver started it: the REST handler and the GitHub webhook extension both
-// register their run's cancel func here (RegisterRun) instead of keeping separate, mutually-unreachable maps, so CancelRun/CancelResponse cancel either kind of run identically.
-
+// REST and extension drivers both register cancel funcs here, so CancelRun reaches either kind of run.
 func TestHubCancelRun(t *testing.T) {
 	h := NewHub()
 	cancelled := false
@@ -186,9 +182,7 @@ func TestHubCancelResponse_WrongIDNoOp(t *testing.T) {
 	}
 }
 
-// UnregisterRun makes a run uncancellable again - the driver calls this once
-// its run ends, so a late DELETE/stop on a finished run is a no-op rather than
-// reaching into a stale (possibly reused) cancel func.
+// UnregisterRun makes a finished run uncancellable, so a late stop can't reach a stale cancel func.
 func TestHubUnregisterRun(t *testing.T) {
 	h := NewHub()
 	cancelled := false
@@ -203,12 +197,7 @@ func TestHubUnregisterRun(t *testing.T) {
 	}
 }
 
-// TestHubEndRun_StaleResponseIDDoesNotWipeNewerRun pins the #1342 review
-// finding: if a new turn registers its own run handle for a chat after an
-// old run's tail already called cancelRun() but before that old run's
-// EndRun executes, the stale EndRun must not delete the NEW run's handle or
-// close its topic - CancelResponse/DrainActiveRuns/the new stream all still
-// need it live.
+// A stale EndRun landing after a newer turn registered its handle must not delete that handle or close its topic.
 func TestHubEndRun_StaleResponseIDDoesNotWipeNewerRun(t *testing.T) {
 	h := NewHub()
 	h.RegisterRun("c1", "old-run", func() {})
@@ -228,9 +217,7 @@ func TestHubEndRun_StaleResponseIDDoesNotWipeNewerRun(t *testing.T) {
 	}
 }
 
-// A GitHub-dispatched run and a REST-started run are both just callers of
-// RegisterRun on the same Hub instance - this pins that the registry is
-// driver-agnostic: whichever goroutine registered a chat's cancel func, the same CancelRun call reaches it. (internal/github.dispatch and rest.Handler.startRun both call exactly this method on the shared hub.)
+// The run registry is driver-agnostic: whichever driver registered a chat's cancel func, CancelRun reaches it.
 func TestHubCancelRun_ReachesEitherDriver(t *testing.T) {
 	h := NewHub()
 	uiCancelled, githubCancelled := false, false
@@ -247,9 +234,8 @@ func TestHubCancelRun_ReachesEitherDriver(t *testing.T) {
 
 // --- slow subscriber (finding 6) --------------------------------------------
 
-// A subscriber whose channel backs up past its buffer must be dropped
-// (channel closed), not silently skipped mid-stream. Skipping loses a
-// contiguous range with no signal to the client, and the resume cursor (last id seen) can never recover it. Dropping ends the connection so the client sees the error and reconnects, replaying the gap off the buffer (or the durable log) from its last contiguous id.
+// A backed-up subscriber must be dropped (closed), not skipped: skipping loses a range the resume cursor
+// can never recover.
 func TestHubPublishDropsSlowSubscriberInsteadOfSkipping(t *testing.T) {
 	h := NewHub()
 	_, live, cancel, _ := h.Subscribe("c")
@@ -271,9 +257,7 @@ func TestHubPublishDropsSlowSubscriberInsteadOfSkipping(t *testing.T) {
 		t.Fatalf("drained %d buffered events before close, want exactly 1024 (event 1025 must not have been delivered)", drained)
 	}
 
-	// The dropped subscriber lost nothing durably - only its live channel
-	// died. A fresh Subscribe replays the whole run, gap included, from the
-	// hub's own buffer (MaxReplay is 10000, well past 1025).
+	// Only the live channel died: a fresh Subscribe replays the whole run from the buffer (MaxReplay 10000 > 1025).
 	replay, _, cancel2, _ := h.Subscribe("c")
 	defer cancel2()
 	if len(replay) != 1025 {
@@ -281,12 +265,8 @@ func TestHubPublishDropsSlowSubscriberInsteadOfSkipping(t *testing.T) {
 	}
 }
 
-// TestHubRegisterRunRacesEndRun is the harvest review finding: runs used to
-// be a sync.Map with no lock spanning EndRun's Load-check-Delete, so a
-// RegisterRun landing between EndRun's Load and Delete could be wiped by an
-// EndRun meant for the run it just superseded. Putting runs under h.mu closes
-// that window - run with -race and repeated, since a race depends on
-// scheduling, not a single call.
+// EndRun's load-check-delete and RegisterRun must not interleave, or EndRun wipes the run that superseded it.
+// Run with -race and -count: the race depends on scheduling.
 func TestHubRegisterRunRacesEndRun(t *testing.T) {
 	h := NewHub()
 	for i := range 200 {

@@ -19,9 +19,8 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// initSkills is production's old resolvePlugins+buildSkillsInit combined -
-// buildFromConfig now calls them separately (plugin agents/shapes seed in
-// between), so this stays only as a test convenience.
+// initSkills combines resolvePlugins and buildSkillsInit, which buildFromConfig calls separately
+// (plugin agents/shapes seed in between); a test convenience only.
 func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail, st *store.Store, shapesRef *atomic.Pointer[[]workflowcatalog.Shape]) (skillsInit, error) {
 	reg, _, plugins, err := b.resolvePlugins(ctx, st)
 	if err != nil {
@@ -30,9 +29,8 @@ func (b *boot) initSkills(ctx context.Context, jail *workspace.Jail, st *store.S
 	return b.buildSkillsInit(jail, reg, plugins, shapesRef)
 }
 
-// TestSkillsLoad guards against a skill in THIS repo whose SKILL.md frontmatter
-// fails the skilltoolset's validation (bad name, description over the 1024-char
-// ceiling, …). Both libraries are checked: the shipped skills/ (a bad one crashes startup) and .claude/skills/ (quack's own project skills - a bad one poisons every agent that clones quack, exactly as `huh-wizard`/`go-testing` did at 1045 and 1039 description chars).
+// TestSkillsLoad: every SKILL.md in skills/ and .claude/skills/ passes skilltoolset validation (name,
+// 1024-char description cap); a bad one crashes startup or poisons every agent that clones quack.
 func TestSkillsLoad(t *testing.T) {
 	for _, dir := range []string{"../../skills", "../../.claude/skills", "../../" + dotagentsEmbeddedSkills} {
 		entries, err := os.ReadDir(dir)
@@ -58,9 +56,7 @@ func resolvePlugins(roots []string) []plugin.Plugin {
 	return plugins
 }
 
-// writeVendorSkill lays down one SKILL.md under dir/<name>/ in the exact
-// layout the vendored ponytail skills/ dir ships (and the shipped skills/
-// library uses).
+// writeVendorSkill lays down dir/<name>/SKILL.md in the layout plugin skills/ dirs ship.
 func writeVendorSkill(t *testing.T, dir, name, description string) {
 	t.Helper()
 	d := filepath.Join(dir, name)
@@ -83,9 +79,8 @@ func writePluginManifest(t *testing.T, root, name string) {
 	}
 }
 
-// TestNewSkillSourceMergesVendoredSkills proves the plugin wiring: a root shaped
-// like a real plugin (root plugin.json + skills/, two SKILL.md skills modeled here)
-// resolves through newSkillSource alongside the shipped skills, merged into one Source. This is the contract the code-implementer's prompt depends on (load_skill("ponytail") / load_skill("ponytail-review")) once its plugin root is configured and initialised.
+// TestNewSkillSourceMergesVendoredSkills: a real-shaped plugin root (plugin.json + skills/) merges with the
+// shipped skills into one Source, which load_skill("ponytail") in agent prompts depends on.
 func TestNewSkillSourceMergesVendoredSkills(t *testing.T) {
 	vendor := t.TempDir()
 	writePluginManifest(t, vendor, "ponytail")
@@ -107,17 +102,15 @@ func TestNewSkillSourceMergesVendoredSkills(t *testing.T) {
 			t.Errorf("LoadInstructions(%q): %v", name, err)
 		}
 	}
-	// The primary (shipped) library still resolves through the same merged
-	// source, as the embedded quack plugin (#1427 S2). NOTE: bundledir falls
-	// back to the embedded copy here (cwd is this package dir).
+	// The shipped library still resolves through the merged source as the embedded quack plugin
+	// (bundledir falls back to the embedded copy since cwd is this package dir).
 	if _, err := src.LoadFrontmatter(ctx, "quack:plan-work"); err != nil {
 		t.Errorf("LoadFrontmatter(quack:plan-work) via merged source: %v", err)
 	}
 }
 
-// TestNewSkillSourceMissingPluginRoot proves the Forbidden-section contract:
-// a configured plugin root that doesn't exist on disk (an operator pointing
-// skills.plugins at a path they never created) never fails the run - it's just absent from the merged source, and quack's own shipped skills resolve.
+// TestNewSkillSourceMissingPluginRoot: a configured plugin root missing on disk never fails the run;
+// it's absent from the merged source and quack's own skills still resolve.
 func TestNewSkillSourceMissingPluginRoot(t *testing.T) {
 	src := newSkillSource(resolvePlugins([]string{filepath.Join(t.TempDir(), "does-not-exist")}))
 	if _, err := src.LoadFrontmatter(context.Background(), "quack:plan-work"); err != nil {
@@ -125,9 +118,8 @@ func TestNewSkillSourceMissingPluginRoot(t *testing.T) {
 	}
 }
 
-// TestNewSkillSourceNoPluginsConfigured proves the zero-plugins case: quack's
-// own shipped skills resolve, and so does format-markdown - dotagents' go:embed'd
-// copy (dotagentsEmbeddedSkills) fills in whenever plugin discovery didn't find it on disk, regardless of what's configured. ponytail has no such fallback and stays absent.
+// TestNewSkillSourceNoPluginsConfigured: quack's skills resolve and so does format-markdown via the embedded
+// dotagents copy; ponytail has no such fallback and stays absent.
 func TestNewSkillSourceNoPluginsConfigured(t *testing.T) {
 	src := newSkillSource(nil)
 	ctx := context.Background()
@@ -142,9 +134,8 @@ func TestNewSkillSourceNoPluginsConfigured(t *testing.T) {
 	}
 }
 
-// TestNewSkillSourceDotagentsMissingOnDisk pins the regression a reviewer caught:
-// dotagents configured as a plugin root but not checked out on disk (a standalone
-// install outside any repo checkout, where /.agents was not mounted) must still resolve format-markdown/plan-work - buildFromConfig hard-fails startup without them, and before dotagentsEmbeddedSkills existed, losing disk access to dotagents meant losing the server entirely, not just a skill.
+// TestNewSkillSourceDotagentsMissingOnDisk: dotagents configured but not on disk still resolves
+// format-markdown/plan-work from the embedded copy; buildFromConfig hard-fails startup without them.
 func TestNewSkillSourceDotagentsMissingOnDisk(t *testing.T) {
 	src := newSkillSource(resolvePlugins([]string{filepath.Join(t.TempDir(), "does-not-exist")}))
 	ctx := context.Background()
@@ -155,13 +146,8 @@ func TestNewSkillSourceDotagentsMissingOnDisk(t *testing.T) {
 	}
 }
 
-// TestNewSkillSourceDotagentsOnDiskNoDuplicate proves the embedded fallback
-// is suppressed once dotagents already resolved via plugin discovery - a
-// plugin registered as "dotagents" providing bare format-markdown suppresses
-// the embedded quack:format-markdown backfill (#1427 R1: the vendored-
-// dotagents half of the embedded bundle shadows by BARE name against any
-// resolved plugin, not only a row literally named "quack" - that rule
-// covers only quack's own skills/ half, e.g. plan-work).
+// TestNewSkillSourceDotagentsOnDiskNoDuplicate: a plugin providing bare format-markdown suppresses the
+// embedded quack:format-markdown backfill (the dotagents half shadows by bare name against any plugin).
 func TestNewSkillSourceDotagentsOnDiskNoDuplicate(t *testing.T) {
 	dotagents := t.TempDir()
 	writePluginManifest(t, dotagents, "dotagents")
@@ -180,9 +166,8 @@ func TestNewSkillSourceDotagentsOnDiskNoDuplicate(t *testing.T) {
 	}
 }
 
-// TestAcpSkillPathsResolvesDotagents proves dotagents' skills dir reaches an
-// ACP agent's skills.paths through ordinary plugin discovery - dotagents now
-// ships a root plugin.json (no backfill needed; see git history for the #864 workaround this replaced once the manifest landed upstream).
+// TestAcpSkillPathsResolvesDotagents: dotagents' skills dir reaches an ACP agent's skills.paths through
+// ordinary plugin discovery (it ships a root plugin.json).
 func TestAcpSkillPathsResolvesDotagents(t *testing.T) {
 	dotagents := t.TempDir()
 	writePluginManifest(t, dotagents, "dotagents")
@@ -208,9 +193,8 @@ func TestAcpSkillPathsResolvesDotagents(t *testing.T) {
 	}
 }
 
-// TestWorkflowCatalogNoShapesIsByteIdentical is issue #805 test case 2, at the
-// full wiring level (real shipped skills/plan-work/SKILL.md through
-// newSkillSource): a deployment with no custom shapes must get the exact same plan-work instructions as before the extension point existed.
+// TestWorkflowCatalogNoShapesIsByteIdentical: with no custom shapes, the real plan-work skill through
+// newSkillSource is byte-identical to the shipped instructions.
 func TestWorkflowCatalogNoShapesIsByteIdentical(t *testing.T) {
 	src := newSkillSource(nil)
 	want, err := src.LoadInstructions(context.Background(), "quack:plan-work")
@@ -227,8 +211,7 @@ func TestWorkflowCatalogNoShapesIsByteIdentical(t *testing.T) {
 	}
 }
 
-// TestWorkflowCatalogComposesIntoRealSkill is issue #805 test case 1 against
-// the real shipped skill: a configured shape lands in the same table
+// TestWorkflowCatalogComposesIntoRealSkill: a configured shape lands in the table
 // load_skill("quack:plan-work") returns to the orchestrator.
 func TestWorkflowCatalogComposesIntoRealSkill(t *testing.T) {
 	src := newSkillSource(nil)
@@ -246,11 +229,8 @@ func TestWorkflowCatalogComposesIntoRealSkill(t *testing.T) {
 	}
 }
 
-// TestInitSkillsShippedSeedResolvesHardRequiredSkills is #1427 S1: boots
-// initSkills with the real shipped default seed (dotagents on disk shadows
-// the embedded quack:format-markdown), and proves the two hard-required
-// bare-name lookups assembleOrchestrator does still resolve - they used to
-// hard-fail boot once dotagents' skills became "dotagents:format-markdown".
+// TestInitSkillsShippedSeedResolvesHardRequiredSkills: with the shipped seed (dotagents on disk shadowing
+// the embedded copy), assembleOrchestrator's two hard-required bare-name lookups still resolve.
 func TestInitSkillsShippedSeedResolvesHardRequiredSkills(t *testing.T) {
 	root := repoRoot(t)
 	t.Chdir(root)
@@ -284,15 +264,8 @@ func TestInitSkillsShippedSeedResolvesHardRequiredSkills(t *testing.T) {
 	}
 }
 
-// TestShippedSeedRosterAndAcpPathsMatchPrePluginRegistryCounts is the
-// reviewer-mandated regression for #1427 R1: the shipped default seed on a
-// dev checkout must serve one copy of each shipped skill (28) and 3 ACP skill
-// paths - not a doubled roster from
-// missing by-bare-name suppression of the embedded dotagents copy. Local
-// fixtures stand in for the real registry-fetched dotagents/ponytail (no
-// test may hit the network); the dotagents fixture's bare names are read
-// from the tracked embedded snapshot so suppression fires exactly as it
-// would against a real fetch.
+// TestShippedSeedRosterAndAcpPathsMatchPrePluginRegistryCounts: the shipped seed serves one copy of each skill
+// (28) and 3 ACP skill paths; local fixtures stand in for registry-fetched plugins (no network in tests).
 func TestShippedSeedRosterAndAcpPathsMatchPrePluginRegistryCounts(t *testing.T) {
 	root := repoRoot(t)
 	t.Chdir(root)
@@ -349,9 +322,8 @@ func TestShippedSeedRosterAndAcpPathsMatchPrePluginRegistryCounts(t *testing.T) 
 	}
 }
 
-// TestPluginSkillsLoadWithResources mirrors TestNewSkillSourceMergesVendoredSkills
-// against a plugin root with a module-gated manifest: its skills and their
-// resources load through the same merged source an ACP/native agent reads.
+// TestPluginSkillsLoadWithResources: a module-gated plugin's skills and resources load through
+// the same merged source agents read.
 func TestPluginSkillsLoadWithResources(t *testing.T) {
 	src := newSkillSource(resolvePlugins([]string{sleeperPluginRoot}))
 	ctx := context.Background()

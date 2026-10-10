@@ -8,14 +8,11 @@ import (
 	"testing"
 
 	"google.golang.org/adk/v2/model"
-	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/dag"
 )
 
-// TestNeedsFormatPass_LoneNonSynthesizerNoDelivery: a single-node plan with no
-// declared GitHub delivery is exactly the #430 case - its raw output would
-// otherwise ship verbatim, so it needs the fallback format pass.
+// A lone non-synthesizer node without delivery would ship raw output, so it needs the pass.
 func TestNeedsFormatPass_LoneNonSynthesizerNoDelivery(t *testing.T) {
 	plan := dag.Plan{Nodes: []dag.Node{{ID: "a", AgentName: "code-explorer"}}}
 	if !needsFormatPass(plan, "a short unstructured answer with no headings or lists") {
@@ -36,9 +33,7 @@ func TestNeedsFormatPass_TerminalSynthesizerSkipped(t *testing.T) {
 	}
 }
 
-// TestNeedsFormatPass_GitHubDeliverySkipped: a plan declaring a pull_request/
-// review delivery ships its deliverable via commitDelivery (per-node, gate-
-// owned) - this chat text is not the deliverable, so no format pass.
+// A pull_request/review delivery ships via commitDelivery; chat text isn't the deliverable.
 func TestNeedsFormatPass_GitHubDeliverySkipped(t *testing.T) {
 	plan := dag.Plan{
 		Nodes:    []dag.Node{{ID: "impl", AgentName: "code-implementer"}},
@@ -62,9 +57,7 @@ func eligiblePlan() dag.Plan {
 	return dag.Plan{Nodes: []dag.Node{{ID: "a", AgentName: "code-explorer"}}}
 }
 
-// TestNeedsFormatPass_StructuredShortAnswerSkipsPass: #1283 finding 14 - a
-// short answer that already has Markdown structure is a near-identity
-// transform for the format pass, so it's skipped.
+// A short, already-structured answer skips the near-identity format pass.
 func TestNeedsFormatPass_StructuredShortAnswerSkipsPass(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -84,9 +77,7 @@ func TestNeedsFormatPass_StructuredShortAnswerSkipsPass(t *testing.T) {
 	}
 }
 
-// TestNeedsFormatPass_UnstructuredLongAnswerNeedsPass: an answer with no
-// heading/list structure still needs the pass regardless of length, and a
-// long answer needs it even if it happens to contain some structure, since formatPassLengthCeiling gates the short-circuit.
+// An unstructured answer needs the pass at any length; a long one needs it even with structure.
 func TestNeedsFormatPass_UnstructuredLongAnswerNeedsPass(t *testing.T) {
 	longUnstructured := strings.Repeat("word ", formatPassLengthCeiling/4)
 	if !needsFormatPass(eligiblePlan(), longUnstructured) {
@@ -109,33 +100,10 @@ func TestNeedsFormatPass_SingleListItemNeedsPass(t *testing.T) {
 	}
 }
 
-// formatStub is a minimal model.LLM for formatAnswer: it always replies with a
-// fixed text, or errors if configured to.
-type formatStub struct {
-	reply string
-	err   error
-}
-
-func (*formatStub) Name() string { return "formatStub" }
-
-func (s *formatStub) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		if s.err != nil {
-			yield(nil, s.err)
-			return
-		}
-		yield(&model.LLMResponse{
-			Content:      &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: s.reply}}},
-			FinishReason: genai.FinishReasonStop,
-			TurnComplete: true,
-		}, nil)
-	}
-}
-
 // TestFormatAnswer_ReturnsModelOutput: the happy path - the formatted text
 // comes back from the tool-less writer.
 func TestFormatAnswer_ReturnsModelOutput(t *testing.T) {
-	stub := &formatStub{reply: "# Plan\n\n1. Do the thing."}
+	stub := replyModel("# Plan\n\n1. Do the thing.")
 	got := formatAnswer(context.Background(), stub, "plan the thing", "raw exploration notes", "chat-1")
 	if got != "# Plan\n\n1. Do the thing." {
 		t.Errorf("formatAnswer = %q, want the model's formatted text", got)
@@ -145,7 +113,9 @@ func TestFormatAnswer_ReturnsModelOutput(t *testing.T) {
 // TestFormatAnswer_FailsOpenOnModelError: a broken format pass must never
 // block delivery - it falls back to the raw answer unchanged.
 func TestFormatAnswer_FailsOpenOnModelError(t *testing.T) {
-	stub := &formatStub{err: fmt.Errorf("model unavailable")}
+	stub := funcModel(func(context.Context, *model.LLMRequest) iter.Seq2[*model.LLMResponse, error] {
+		return func(yield func(*model.LLMResponse, error) bool) { yield(nil, fmt.Errorf("model unavailable")) }
+	})
 	got := formatAnswer(context.Background(), stub, "plan the thing", "raw exploration notes", "chat-1")
 	if got != "raw exploration notes" {
 		t.Errorf("formatAnswer = %q, want the raw answer unchanged on model error", got)
@@ -162,7 +132,7 @@ func TestFormatAnswer_NilModelReturnsRaw(t *testing.T) {
 
 // TestFormatAnswer_EmptyAnswerShortCircuits: nothing to format.
 func TestFormatAnswer_EmptyAnswerShortCircuits(t *testing.T) {
-	stub := &formatStub{reply: "should never be seen"}
+	stub := replyModel("should never be seen")
 	if got := formatAnswer(context.Background(), stub, "plan the thing", "  ", "chat-1"); got != "" {
 		t.Errorf("formatAnswer = %q, want empty for an empty raw answer", got)
 	}

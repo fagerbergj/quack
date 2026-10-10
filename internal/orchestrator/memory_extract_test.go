@@ -107,7 +107,7 @@ func TestMemoryExtractNeverDelaysTheTurn(t *testing.T) {
 	}
 }
 
-// TestMemoryExtractMakesNoCallWithoutABaseline: a disabled point, or no extraction hook to compare against, calls nothing.
+// A disabled point, or no extraction hook to compare against, calls nothing.
 func TestMemoryExtractMakesNoCallWithoutABaseline(t *testing.T) {
 	srv := decidetest.Server(t, "durable_fact", 0.9, 0, nil)
 	enabled := decidetest.Decider(t, srv.URL, memoryExtract.ID)

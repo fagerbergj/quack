@@ -89,27 +89,6 @@ type restReadArtifactArgs struct {
 	Lines    int    `json:"lines,omitempty"`
 }
 
-// windowLines returns body's lines [offset, offset+lines), 1-based; offset<=0
-// or lines<=0 leaves that bound open.
-func windowLines(body string, offset, lines int) string {
-	if offset <= 0 && lines <= 0 {
-		return body
-	}
-	all := strings.Split(body, "\n")
-	start := offset - 1
-	if start < 0 {
-		start = 0
-	}
-	if start >= len(all) {
-		return ""
-	}
-	end := len(all)
-	if lines > 0 && start+lines < end {
-		end = start + lines
-	}
-	return strings.Join(all[start:end], "\n")
-}
-
 // formatArtifactSummaries renders items as one line each, filtered to kind
 // when set - the same table shape vetting's own judge tool prints.
 func formatArtifactSummaries(items []schema.ArtifactSummary, kind string) string {

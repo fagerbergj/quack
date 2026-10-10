@@ -259,9 +259,7 @@ func TestRegistryBackends(t *testing.T) {
 				}
 			})
 
-			// PutAllowsMovingPinOnSameRepo is the #1429 carry-over: moving a
-			// pin (github:o/r@v1 -> github:o/r@v2) on the SAME repo must not
-			// be treated as a name collision, on every backend.
+			// Moving a pin (github:o/r@v1 -> @v2) on the same repo is not a name collision, on every backend.
 			t.Run("PutAllowsMovingPinOnSameRepo", func(t *testing.T) {
 				reg, _ := b.open(t)
 				ctx := context.Background()
@@ -280,17 +278,15 @@ func TestRegistryBackends(t *testing.T) {
 				}
 			})
 
-			// PutSameIdentityWithEmptyOwnerRepoFallsBackToEntry: samePlugin
-			// derives owner/repo from Entry when Owner/Repo are blank (#1430) -
-			// a re-Put built that way (FromEntry's shape) must still match the
-			// SAME repo's existing row, on every backend, not collide.
+			// SameIdentity derives owner/repo from Entry when blank, so a FromEntry-shaped re-Put matches the same
+			// repo's row on every backend.
 			t.Run("PutSameIdentityWithEmptyOwnerRepoFallsBackToEntry", func(t *testing.T) {
 				reg, _ := b.open(t)
 				ctx := context.Background()
 				if err := reg.Put(ctx, Plugin{Name: "widgets", Source: SourceGitHub, Entry: "github:acme/widgets", Owner: "acme", Repo: "widgets", SHA: "aaa"}); err != nil {
 					t.Fatal(err)
 				}
-				// No Owner/Repo set - samePlugin must resolve identity via
+				// No Owner/Repo set - SameIdentity must resolve identity via
 				// ParseEntry(Entry) instead of comparing blank fields.
 				if err := reg.Put(ctx, Plugin{Name: "widgets", Source: SourceGitHub, Entry: "github:acme/widgets", SHA: "bbb"}); err != nil {
 					t.Fatalf("re-Put with empty owner/repo (entry-derived identity) was rejected: %v", err)

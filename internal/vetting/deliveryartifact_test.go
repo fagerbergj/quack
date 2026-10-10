@@ -32,8 +32,7 @@ func seedCodeReview(t *testing.T, cfg Config, verdict, summary string, findings 
 	}
 }
 
-// #1093: a reviewer node with a passed round's code_review/finding records
-// delivers from them, not from the worker's own staged text.
+// A reviewer with a passed round's code_review/finding records delivers from them, not staged text.
 func TestCommitDelivery_RendersReviewFromArtifact(t *testing.T) {
 	cfg := Config{IsReviewer: true, ChatID: "ext:github:owner-repo-42", User: "u1", Artifacts: artifact.InMemoryService()}
 	finding := FindingRecord{Path: "a.go", LineHint: 10, Title: "unchecked error", Rationale: "err is dropped", State: "new"}
@@ -69,9 +68,8 @@ func TestCommitDelivery_RendersReviewFromArtifact(t *testing.T) {
 	}
 }
 
-// TestRenderReviewFromArtifact_SeverityFallbackForHighlights is the
-// adversarial-review regression on #3: a write_finding-native finding
-// carries its label in Severity, with a plain Title (no embedded "blocking:" prefix) - without a fallback to Severity, such a finding shows no count on the verdict line and never makes the Highlights table.
+// A write_finding finding carries its label in Severity with a plain Title; it must still be
+// counted and make the Highlights table.
 func TestRenderReviewFromArtifact_SeverityFallbackForHighlights(t *testing.T) {
 	cfg := Config{IsReviewer: true, ChatID: "ext:github:owner-repo-46", User: "u1", Artifacts: artifact.InMemoryService()}
 	finding := FindingRecord{Path: "a.go", LineHint: 10, Title: "unchecked error return", Rationale: "err is dropped silently", Severity: "blocking", State: "new"}
@@ -96,9 +94,8 @@ func TestRenderReviewFromArtifact_SeverityFallbackForHighlights(t *testing.T) {
 	}
 }
 
-// TestCommitDelivery_SingleReviewerCarriesSummaryEndToEnd is #1198: the
-// actual regression, reproduced through the real write site
-// (saveCodeReviewRound) rather than a pre-seeded record - a single-reviewer node's passed round must deliver its own prose, not markers-only.
+// Through the real write site, a single-reviewer node's passed round delivers its own prose,
+// not markers only.
 func TestCommitDelivery_SingleReviewerCarriesSummaryEndToEnd(t *testing.T) {
 	cfg := Config{IsReviewer: true, ChatID: "ext:github:owner-repo-45", User: "u1", Artifacts: artifact.InMemoryService(), NodeID: "n1"}
 	answer := "VERDICT: approve\nTAKEAWAY: Looks good, one nit below.\nFINDINGS:\nCLEAN:\n"
@@ -137,9 +134,8 @@ func TestCommitDelivery_FallsBackToStagedTextWithoutArtifact(t *testing.T) {
 	}
 }
 
-// #1093 case 8: a second delivered revision renders unchanged findings as a
-// carried-over reference, not a duplicate full comment, and adds a second
-// delivery_record entry.
+// A second delivery renders unchanged findings as carried-over references, not duplicate
+// comments, and adds a second delivery_record entry.
 func TestCommitDelivery_SecondRevisionCarriesOverUnchangedFindings(t *testing.T) {
 	cfg := Config{IsReviewer: true, ChatID: "ext:github:owner-repo-44", User: "u1", Artifacts: artifact.InMemoryService()}
 	finding := FindingRecord{Path: "a.go", LineHint: 10, Title: "unchecked error", Rationale: "err is dropped", State: "new"}
@@ -182,9 +178,7 @@ func TestCommitDelivery_SecondRevisionCarriesOverUnchangedFindings(t *testing.T)
 	}
 }
 
-// #1093 finding 1: the DeliveryContext passed to Deliver must carry the
-// target artifact id + revision as IdempotencyKey, so the extension can
-// embed it for later recovery.
+// Deliver must get the target artifact id + revision as IdempotencyKey, for later recovery.
 func TestCommitDelivery_SetsIdempotencyKey(t *testing.T) {
 	cfg := Config{IsReviewer: true, ChatID: "ext:github:owner-repo-46", User: "u1", Artifacts: artifact.InMemoryService()}
 	finding := FindingRecord{Path: "a.go", Title: "x", State: "new"}
@@ -206,9 +200,8 @@ func TestCommitDelivery_SetsIdempotencyKey(t *testing.T) {
 	}
 }
 
-// #1093 finding 2: a judge-FAIL final round still renders and posts from the
-// artifact (design V4 §4.5 "draft PR on gate fail"), and the delivery_record
-// carries gate_passed=false against the SAME revision that got posted.
+// A judge-FAIL final round still posts from the artifact, and delivery_record carries
+// gate_passed=false against the same revision that got posted.
 func TestCommitDelivery_GateFailStillRendersAndRecordsGatePassedFalse(t *testing.T) {
 	cfg := Config{IsReviewer: true, ChatID: "ext:github:owner-repo-47", User: "u1", Artifacts: artifact.InMemoryService()}
 	finding := FindingRecord{Path: "a.go", Title: "unchecked error", Rationale: "err is dropped", State: "new"}

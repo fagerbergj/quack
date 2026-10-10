@@ -84,7 +84,7 @@ func runJudgeReplay(cmd *cobra.Command, target string, node string, round, repea
 	var hasRealArtifactAccess bool
 	if !deterministicOnly {
 		judge, err = cli.BuildReplayJudge(cfg, func(p config.ProviderConfig, m string) (model.LLM, error) {
-			return inference.NewModelWithEffort(p, m, nil, cfg.ModelCost(m), cfg.ModelEffort(m))
+			return inference.NewModel(p, m, nil, cfg.ModelCost(m), cfg.ModelEffort(m))
 		})
 		if err != nil {
 			return err
@@ -101,7 +101,7 @@ func runJudgeReplay(cmd *cobra.Command, target string, node string, round, repea
 			return fmt.Errorf("--verify needs stored pages: replay a chat id with --from-server, not a local bundle")
 		}
 		if opts.Verifier, err = cli.BuildReplayVerifier(cfg, func(p config.ProviderConfig, m string) (model.LLM, error) {
-			return inference.NewModelWithEffort(p, m, nil, cfg.ModelCost(m), cfg.ModelEffort(m))
+			return inference.NewModel(p, m, nil, cfg.ModelCost(m), cfg.ModelEffort(m))
 		}); err != nil {
 			return err
 		}

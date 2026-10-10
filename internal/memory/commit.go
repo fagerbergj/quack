@@ -14,17 +14,15 @@ import (
 	"google.golang.org/genai"
 )
 
-// Candidate is a memory the agent staged (or the orchestrator wants written directly).
-// Metadata is free-form (e.g. {"kind": "source"}); the schema carries no use-case vocabulary.
-// Metadata["bucket"] (repo|role|user - stage_memory's `bucket` argument) routes the write; anything else takes Scope's default.
+// Candidate is a memory staged for writing. Metadata is free-form; Metadata["bucket"] (repo|role|user)
+// routes the write, anything else takes Scope's default.
 type Candidate struct {
 	Content  string
 	Metadata map[string]string
 }
 
-// Provenance identifies the run that mints a memory: which chat, which DAG node (empty for an
-// orchestrator-level commit, e.g. commit_memory), and which delivery source (empty = native quack run).
-// Phase 1 of the memory lifecycle (issue #849): stamped on write, not yet acted on at recall.
+// Provenance identifies the minting run: chat, DAG node ("" for orchestrator-level commits) and
+// delivery source ("" = native quack run).
 type Provenance struct {
 	ChatID string
 	NodeID string
@@ -34,18 +32,16 @@ type Provenance struct {
 // nowRFC3339 lets tests stamp deterministically; defaults to time.Now.
 var nowRFC3339 = func() string { return time.Now().UTC().Format(time.RFC3339) }
 
-// SetClockForTest overrides the commit timestamp clock (package-global, so
-// exclusive with t.Parallel/other memory-committing tests while active) for
-// deterministic ordering without sleeping across real seconds. Returns restore.
+// SetClockForTest overrides the package-global commit clock (so not t.Parallel-safe) and returns
+// a restore func.
 func SetClockForTest(now func() string) (restore func()) {
 	orig := nowRFC3339
 	nowRFC3339 = now
 	return func() { nowRFC3339 = orig }
 }
 
-// Commit is the single gated writer (the gate on a judge pass; the orchestrator for user facts): it
-// vets, extracts, and consolidates memories, returning the points written or updated. Routing is
-// explicit and cheap, never an LLM judgment - a staged candidate names its bucket and sc.writeBucket resolves it (degrading repo -> role -> user with no repo context); the source answer's extraction goes to the caller's default bucket. Each bucket consolidates separately, since a memory only competes with others about the SAME subject. ponytail: parallel commits of the same fact can race into two ADDs; the next consolidation reconciles the dup - add a per-key lock only if duplicate churn proves real.
+// Commit is the single gated writer: it vets, extracts and consolidates memories per bucket, returning
+// the points written. ponytail: parallel commits of one fact can race into two ADDs; per-key lock if churn is real.
 func (s *Store) Commit(ctx context.Context, sc Scope, author string, prov Provenance, staged []Candidate, sourceText string) (int, error) {
 	if s.consolidator == nil {
 		return 0, fmt.Errorf("memory: Commit on a store with no consolidator")
@@ -112,9 +108,8 @@ func (s *Store) commitTo(ctx context.Context, bucket, author string, prov Proven
 		return 0, nil
 	}
 
-	// Only honour an UPDATE/DELETE id the consolidator was actually shown - a
-	// hallucinated id would otherwise upsert an orphan point. Keyed by neighbour (not
-	// just bool) so an UPDATE can carry forward its original mint, not the current commit's.
+	// Only honour UPDATE/DELETE ids the consolidator was shown, so a hallucinated id can't upsert an
+	// orphan; keyed by neighbour so an UPDATE carries forward the original mint.
 	valid := make(map[string]neighbour, len(neighbours))
 	for _, n := range neighbours {
 		valid[n.ID] = n
@@ -150,9 +145,8 @@ type neighbour struct {
 	ValidFrom          string
 	ReinforcementCount int
 
-	// Vote/lineage fields (epic #1255 P5): carried forward by apply()'s UPDATE path so a consolidation
-	// merge never wipes accumulated votes (a latent bug this phase fixed). Supported/NotRelevant (epic
-	// #1456 P1) must travel too - Tier is derived from Supported and would desync otherwise.
+	// Carried forward by apply()'s UPDATE so a merge never wipes votes; Supported must travel too,
+	// since Tier derives from it.
 	Upvotes, Downvotes, Supported, NotRelevant, VoteScore int
 	Tier                                                  string
 	LastUpvotedAt                                         string
@@ -181,19 +175,16 @@ type op struct {
 	Reason  string `json:"reason"`  // DELETE only: why (becomes invalidation_reason)
 }
 
-// maxProbeRunes caps the text embedded to find dedup neighbours: the probe only needs to be
-// representative of the work, not complete - a research answer can be 10k+ chars, and embedding all
-// of it on a CPU model costs seconds for no extra dedup value. The memories actually written are short atomic facts embedded in full.
+// maxProbeRunes caps the text embedded to find dedup neighbours: a representative probe suffices,
+// and embedding a 10k-char answer on a CPU model costs seconds.
 const maxProbeRunes = 2000
 
-// maxCandidatesPerCommit bounds how many staged candidates one node commit (one
-// judge-pass/gate call, issue #1269 item 3) can mint. Ranking isn't free (an extra
-// LLM call), so the caller's own priority order survives (stage_memory's earliest calls) rather than asking the consolidation model to pick.
+// maxCandidatesPerCommit bounds what one node commit can mint, keeping the caller's priority order
+// (stage_memory's earliest calls) rather than paying an LLM call to rank.
 const maxCandidatesPerCommit = 3
 
-// neighbourProbe builds the (capped) text whose nearest existing memories we
-// reconcile against. Staged candidates go first (they're closest to what we'll
-// write, so they survive truncation), followed by a prefix of the source answer.
+// neighbourProbe builds the capped text to find neighbours by: staged candidates first, so they
+// survive truncation, then a prefix of the source answer.
 func neighbourProbe(sourceText string, staged []Candidate) string {
 	var b strings.Builder
 	for _, c := range staged {
@@ -269,9 +260,8 @@ func (s *Store) decide(ctx context.Context, bucket string, staged []Candidate, s
 	return s.runConsolidation(ctx, sysPrompt, user.String())
 }
 
-// decideDedupe runs the consolidation model over one burst cluster of
-// currently-valid unverified memories (design doc §4(c)) - the periodic sweep's
-// ticker-triggered counterpart to decide's commit-triggered reconcile. Every item is both candidate and neighbour: there is no separate staged/source text, just the existing memories to dedupe against each other.
+// decideDedupe runs the consolidation model over one burst cluster of valid unverified memories,
+// each item both candidate and neighbour.
 func (s *Store) decideDedupe(ctx context.Context, cluster []neighbour) ([]op, error) {
 	sysPrompt, ok := consolidateDedupePrompts[s.domain]
 	if !ok {
@@ -291,9 +281,7 @@ func buildDedupePrompt(cluster []neighbour) string {
 	return user.String()
 }
 
-// runConsolidation is the LLM-calling core shared by decide and decideDedupe:
-// one JSON-mode completion, parsed into the op taxonomy both trigger paths
-// reuse.
+// runConsolidation is the JSON-mode completion shared by decide and decideDedupe.
 func (s *Store) runConsolidation(ctx context.Context, sysPrompt, userPrompt string) ([]op, error) {
 	// /no_think disables reasoning on qwen/gemma-class models (the configured
 	// consolidation model); harmless to others.
@@ -301,9 +289,8 @@ func (s *Store) runConsolidation(ctx context.Context, sysPrompt, userPrompt stri
 		Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "/no_think " + userPrompt}}}},
 		Config: &genai.GenerateContentConfig{
 			SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: sysPrompt}}},
-			// JSON mode grammar-constrains the model to valid JSON, so a stray escape (a bare `\s`
-			// from a regex/path in a memory) can't crash json.Unmarshal. The prompt's "Reply with ONLY
-			// JSON" satisfies json_object mode's require-json rule.
+			// JSON mode keeps a stray escape (a bare `\s` from a path) from breaking json.Unmarshal;
+			// the prompt's "Reply with ONLY JSON" satisfies json_object's require-json rule.
 			ResponseMIMEType: "application/json",
 		},
 	}
@@ -454,8 +441,8 @@ func (s *Store) applyWrites(ctx context.Context, bucket, author string, prov Pro
 	return len(points), nil
 }
 
-// applyInvalidations: the DELETE ops; a delete naming its survivor ("duplicate of <id>") is a
-// merge - the survivor inherits the absorbed memory's votes/lineage (Epic #1255 P5).
+// applyInvalidations applies DELETE ops; one naming its survivor ("duplicate of <id>") is a merge
+// and the survivor inherits the absorbed memory's votes/lineage.
 func (s *Store) applyInvalidations(ctx context.Context, invalidations []op) (int, error) {
 	count := 0
 	for _, o := range invalidations {
@@ -483,9 +470,8 @@ func (s *Store) applyInvalidations(ctx context.Context, invalidations []op) (int
 	return count, nil
 }
 
-// consolidatePrompts holds the domain-specific consolidation system prompt. The
-// reconcile mechanics (ADD/UPDATE/DELETE/NOOP + JSON shape) are identical; only
-// the "what's worth keeping" framing differs by scope.
+// consolidatePrompts holds the per-domain consolidation system prompt; only the "what's worth
+// keeping" framing differs.
 var consolidatePrompts = map[string]string{
 	"task": "You maintain a team of agents' SHARED long-term memory about one subject - either a " +
 		"repository (its conventions, build/test/lint commands, layout, where things are registered, " +
@@ -529,9 +515,8 @@ var consolidatePrompts = map[string]string{
 		"Empty ops list if nothing is worth keeping.",
 }
 
-// consolidateDedupePrompts is the periodic sweep's prompt variant (design doc §4(c)): unlike
-// consolidatePrompts, there is no STAGED-vs-EXISTING split - every memory shown is an existing
-// one, minted by the same run within minutes of the others, that may restate the same claim. The taxonomy stays ADD/UPDATE/DELETE/NOOP, but ADD is for a genuinely new synthesis only; the normal case is UPDATE (or NOOP) the id worth keeping and DELETE the rest against it, so "duplicate of <id>" always names a real, still-existing id.
+// consolidateDedupePrompts is the sweep's variant: every memory shown already exists, so the normal
+// case is UPDATE/NOOP one id and DELETE the rest against it; ADD only for a genuinely new synthesis.
 var consolidateDedupePrompts = map[string]string{
 	"task": "You maintain a team of agents' SHARED long-term memory about one subject. Below is a BURST of " +
 		"unverified memories minted by the same run within minutes of each other - they may restate the same " +

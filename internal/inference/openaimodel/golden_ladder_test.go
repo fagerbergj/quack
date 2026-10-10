@@ -22,9 +22,7 @@ func captureLogs(t *testing.T) *bytes.Buffer {
 	return &buf
 }
 
-// TestStreaming_EmptyTurnLogsFinishReason pins the empty-turn diagnostic log
-// (no answer, no thinking) that the streaming path emits - the only signal
-// available downstream when a model returns nothing at all.
+// The streaming empty-turn log is the only signal downstream when a model returns nothing.
 func TestStreaming_EmptyTurnLogsFinishReason(t *testing.T) {
 	buf := captureLogs(t)
 	srv := sseServer(t,
@@ -45,10 +43,7 @@ func TestStreaming_EmptyTurnLogsFinishReason(t *testing.T) {
 	}
 }
 
-// TestGenerate_EmptyTurnDoesNotLog pins the CURRENT asymmetry: unlike the
-// streaming path, the non-streaming path does not log anything for a turn
-// with neither answer nor thinking. This is called out in the PR as a
-// pre-existing divergence the refactor deliberately preserves.
+// Unlike streaming, the non-streaming path logs nothing for an empty turn.
 func TestGenerate_EmptyTurnDoesNotLog(t *testing.T) {
 	buf := captureLogs(t)
 	srv := jsonServer(t, `{"id":"1","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"length","message":{"role":"assistant","content":""}}]}`)
@@ -71,9 +66,7 @@ func TestGenerate_EmptyTurnDoesNotLog(t *testing.T) {
 	}
 }
 
-// TestStreaming_ToolCallsFinishReason pins the finish_reason mapping for a
-// turn that ends with tool_calls - both "tool_calls" and "function_call"
-// collapse to genai.FinishReasonStop (convertFinishReason).
+// "tool_calls" and "function_call" both map to FinishReasonStop.
 func TestStreaming_ToolCallsFinishReason(t *testing.T) {
 	srv := sseServer(t,
 		`{"id":"1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"web_search","arguments":"{}"}}]}}]}`,
@@ -110,10 +103,7 @@ func TestGenerate_ToolCallsFinishReason(t *testing.T) {
 	}
 }
 
-// TestStreaming_PromotedReasoningLogMessage and
-// TestGenerate_PromotedReasoningLogMessage pin the exact (currently
-// DIFFERENT) log message text each path emits when promoting reasoning to
-// the answer - called out in the PR as a divergence the refactor unifies.
+// These two pin each path's promotion log text, which differ.
 func TestStreaming_PromotedReasoningLogMessage(t *testing.T) {
 	buf := captureLogs(t)
 	srv := sseServer(t,
@@ -146,9 +136,8 @@ func TestGenerate_PromotedReasoningLogMessage(t *testing.T) {
 	}
 }
 
-// TestGenerate_ToolCallsSuppressPromotion is a regression test for PR #1243
-// review: the non-streaming path must never promote reasoning_content to the
-// answer on a turn that already has a real tool call, even when the answer text is empty. Before the fix, real tool-call parts were appended AFTER the fallback ladder ran, so the ladder saw no answer yet and promoted.
+// A turn with a real tool call never promotes reasoning, even with empty answer text: tool-call
+// parts must be in place before the ladder runs.
 func TestGenerate_ToolCallsSuppressPromotion(t *testing.T) {
 	buf := captureLogs(t)
 	srv := jsonServer(t, `{"id":"1","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"tool_calls","message":{"role":"assistant","content":"","reasoning_content":"deciding which tool to call","tool_calls":[{"id":"c1","type":"function","function":{"name":"web_search","arguments":"{}"}}]}}]}`)
@@ -187,11 +176,7 @@ func TestGenerate_ToolCallsSuppressPromotion(t *testing.T) {
 	}
 }
 
-// TestGenerate_PromotionTrimsReasoning pins that the non-streaming path now
-// trims the promoted answer (and the logged char count) the same way the
-// streaming path always has - a deliberate harmonization, not a regression:
-// the two paths previously disagreed (streaming trimmed, non-streaming did
-// not) and now both trim.
+// Both paths trim the promoted answer and the logged char count.
 func TestGenerate_PromotionTrimsReasoning(t *testing.T) {
 	buf := captureLogs(t)
 	srv := jsonServer(t, `{"id":"1","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"","reasoning_content":"  the answer  "}}]}`)
@@ -220,11 +205,7 @@ func TestGenerate_PromotionTrimsReasoning(t *testing.T) {
 	}
 }
 
-// TestGenerate_LeakedReasoningUsageMatchesPreRefactor pins the reasoning-token
-// estimate for a turn where a tool call leaked inside reasoning_content: the
-// estimate is based on the CLEANED (post-recovery) thinking text, same as
-// before the fallback-ladder extraction (confirmed unchanged, not a
-// divergence - see PR body).
+// With a tool call leaked into reasoning, the estimate uses the cleaned (post-recovery) thinking.
 func TestGenerate_LeakedReasoningUsageMatchesPreRefactor(t *testing.T) {
 	srv := jsonServer(t, `{"id":"1","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"the answer","reasoning_content":"Let me search.\n<tool_call>\n<function=web_search>\n<parameter=query>\nSMR 2026\n</parameter>\n</function>\n</tool_call>"}}],"usage":{"prompt_tokens":10,"completion_tokens":50,"total_tokens":60}}`)
 	defer srv.Close()

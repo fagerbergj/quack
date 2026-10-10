@@ -9,9 +9,8 @@ import (
 	"github.com/fagerbergj/quack/internal/pluginreg"
 )
 
-// TestAcpRegistryExtraROGrantsRootOnlyWhenItExists: the sandbox grant
-// (never fed into skill_paths, #1430) tracks whether plugins.root actually
-// exists on disk - nothing to grant before the first plugin is fetched.
+// TestAcpRegistryExtraROGrantsRootOnlyWhenItExists: the sandbox grant (never fed into skill_paths)
+// tracks whether plugins.root exists - nothing to grant before the first plugin is fetched.
 func TestAcpRegistryExtraROGrantsRootOnlyWhenItExists(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "plugins")
 	cfg := &config.Config{Plugins: &config.PluginsConfig{Root: root}}
@@ -28,9 +27,8 @@ func TestAcpRegistryExtraROGrantsRootOnlyWhenItExists(t *testing.T) {
 	}
 }
 
-// TestAcpRegistrySkillPathsResolvesAndCaches: a fresh registry read resolves
-// real skill dirs, and a second call with an unchanged registry hits the
-// registrySignature cache (same slice, not a fresh resolve every spawn).
+// TestAcpRegistrySkillPathsResolvesAndCaches: an unchanged registry hits the registrySignature
+// cache (same slice), not a fresh resolve every spawn.
 func TestAcpRegistrySkillPathsResolvesAndCaches(t *testing.T) {
 	root := t.TempDir()
 	pluginRoot := t.TempDir()

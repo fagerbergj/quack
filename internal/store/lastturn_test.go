@@ -14,9 +14,7 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// TestGetLastTurnWithContent_MatchesTailOfGetTurnsWithContent pins perf audit #3's
-// correctness bar: the tail-only loader must return exactly what the last element of the
-// full GetTurnsWithContent load would - same text, tokens, plan, and nodes.
+// The tail-only loader returns exactly the last element of the full GetTurnsWithContent load.
 func TestGetLastTurnWithContent_MatchesTailOfGetTurnsWithContent(t *testing.T) {
 	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {
@@ -76,9 +74,7 @@ func TestGetLastTurnWithContent_MatchesTailOfGetTurnsWithContent(t *testing.T) {
 	}
 }
 
-// TestGetLastTurnWithContent_TurnBiggerThanWindowStillComplete proves getLastTurnGroup's
-// window-growing loop: a turn with more events than the starting NumRecentEvents window
-// (lastTurnWindow=512) must still return its FULL text, not a truncated one.
+// A turn with more events than lastTurnWindow (512) still returns its full text: the window grows.
 func TestGetLastTurnWithContent_TurnBiggerThanWindowStillComplete(t *testing.T) {
 	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {
@@ -122,9 +118,8 @@ func TestGetLastTurnWithContent_TurnBiggerThanWindowStillComplete(t *testing.T) 
 	}
 }
 
-// TestGetLastTurnWithContent_PartialRunInProgress covers a run still
-// streaming: the ChatTurn row exists (SaveTurn runs before the model call
-// starts) but no assistant event has landed yet. GetLastTurnWithContent must agree with GetTurnsWithContent - empty AsstText, not an error or a stale previous turn - since DeriveTerminalStatus reads exactly this state on every run-end call that races a still-draining stream.
+// A run still streaming (turn row saved, no assistant event yet) must match GetTurnsWithContent: empty
+// AsstText, not an error or a stale previous turn. DeriveTerminalStatus reads exactly this state.
 func TestGetLastTurnWithContent_PartialRunInProgress(t *testing.T) {
 	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {
@@ -218,9 +213,8 @@ func spaced(evs ...*session.Event) []*session.Event {
 	return evs
 }
 
-// TestTurnContent_DeliveredAnswersAttachToTheirTurn: a retry or boot resume appends its answer
-// with no user event of its own; it attaches to its plan's turn, replacing (not joining) the
-// earlier answer, and never lands in a later chat-only turn.
+// A retry or resume answer with no user event attaches to its plan's turn, replacing the earlier answer,
+// and never lands in a later chat-only turn.
 func TestTurnContent_DeliveredAnswersAttachToTheirTurn(t *testing.T) {
 	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {

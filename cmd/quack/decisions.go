@@ -11,7 +11,6 @@ import (
 	"github.com/fagerbergj/quack/internal/cli"
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/langfuse"
-	"github.com/fagerbergj/quack/internal/langfuse/langfusegen"
 )
 
 // newDecisionsCmd: `quack decisions report|export` - compare the decision model against
@@ -107,12 +106,12 @@ func newDecisionsExportCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			lf, ing, err := langfuseClientsFromLocalConfig()
+			lf, err := langfuseClientFromLocalConfig()
 			if err != nil {
 				return fmt.Errorf("decisions export: %w", err)
 			}
 			return withTarget(cmd, func(t string) error {
-				return cli.RunDecisionsExport(cmd.Context(), cmd.OutOrStdout(), t, f, lf, ing)
+				return cli.RunDecisionsExport(cmd.Context(), cmd.OutOrStdout(), t, f, lf)
 			})
 		},
 	}
@@ -121,16 +120,11 @@ func newDecisionsExportCmd() *cobra.Command {
 	return c
 }
 
-// langfuseClientsFromLocalConfig reads credentials from the local quack.yaml, as `quack dataset export` does.
-func langfuseClientsFromLocalConfig() (*langfusegen.ClientWithResponses, *langfuse.Client, error) {
+// langfuseClientFromLocalConfig reads credentials from the local quack.yaml, as `quack dataset export` does.
+func langfuseClientFromLocalConfig() (*langfuse.Client, error) {
 	cfg, err := config.LoadDeferringAgentCompleteness(defaultConfigPath())
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	lf, err := langfuseGenClientFromConfig(cfg)
-	if err != nil {
-		return nil, nil, err
-	}
-	sc, _ := cfg.Store(cfg.Prompts.Store)
-	return lf, langfuse.New(sc.URL, sc.PublicKey, sc.SecretKey), nil
+	return langfuseClientFromConfig(cfg)
 }

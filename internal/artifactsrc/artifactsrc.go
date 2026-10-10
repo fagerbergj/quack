@@ -1,6 +1,5 @@
-// Package artifactsrc resolves quack's named prompt artifacts - agent system
-// prompts, rubrics, memory guidance and the fragments under config/prompts -
-// from a configured Source, falling back to the shipped file (internal/bundledir).
+// Package artifactsrc resolves quack's named prompt artifacts (system prompts, rubrics, memory guidance,
+// config/prompts fragments) from a Source, falling back to the shipped file.
 package artifactsrc
 
 import (
@@ -10,7 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"path"
+	"slices"
 	"strings"
 	"sync"
 	"text/template"
@@ -19,9 +20,8 @@ import (
 	"github.com/fagerbergj/quack/internal/bundledir"
 )
 
-// ErrHard (wrap with %w) marks a Source.Get error the Resolver propagates instead
-// of falling back to the shipped artifact: a pinned version gone missing must fail
-// the round rather than run a different prompt than the one requested.
+// ErrHard (wrap with %w) marks a Source.Get error the Resolver propagates instead of falling back: a pinned
+// version gone missing must fail the round, not run a different prompt.
 var ErrHard = errors.New("artifactsrc: hard error")
 
 // StaticSource is Artifact.Source for a shipped file (disk, then embedded).
@@ -31,9 +31,8 @@ const StaticSource = "static"
 // the store (or on disk) takes effect on the first round past it.
 const DefaultTTL = 60 * time.Second
 
-// Artifact is one resolved prompt artifact. Config carries the model/effort
-// binding a stored version may declare (unused until #1421); Source and
-// VersionID are the provenance stamped onto the round's llm.call entries.
+// Artifact is one resolved prompt artifact. Config carries the model/effort binding a stored
+// version may declare; Source and VersionID are the provenance stamped onto llm.call entries.
 type Artifact struct {
 	Name      string
 	Body      string
@@ -42,9 +41,8 @@ type Artifact struct {
 	VersionID string
 }
 
-// Source is a store artifacts can be resolved from ahead of the shipped file.
-// Get reports (_, false, nil) for a name the store does not have; Seed
-// publishes the shipped version of a name the store is missing.
+// Source is a store resolved ahead of the shipped file. Get reports (_, false, nil) for a name it lacks;
+// Seed publishes the shipped version of a missing name.
 type Source interface {
 	Get(ctx context.Context, name string) (Artifact, bool, error)
 	Seed(ctx context.Context, name string, static Artifact) error
@@ -86,9 +84,8 @@ func (c *ChainSource) Seed(ctx context.Context, name string, static Artifact) er
 	return last.Seed(ctx, name, static)
 }
 
-// Resolver resolves names through a Source with a TTL cache, falling back to
-// the shipped file. The nil *Resolver is the static-only configuration (no
-// prompts: block), so every consumer can take one unconditionally.
+// Resolver resolves names through a Source with a TTL cache, falling back to the shipped file. A nil
+// *Resolver is static-only, so consumers take one unconditionally.
 type Resolver struct {
 	src  Source
 	name string
@@ -162,9 +159,8 @@ func (r *Resolver) fetch(ctx context.Context, name string) (Artifact, error) {
 	return Static(name)
 }
 
-// ResolveUsable is Resolve with a content check: a blank body from a store is a
-// prompt someone emptied by accident, not an edit, so it falls back to the
-// shipped file rather than running the model with no instruction.
+// ResolveUsable is Resolve that treats a blank stored body as an accident and falls back to the shipped
+// file rather than run the model with no instruction.
 func (r *Resolver) ResolveUsable(ctx context.Context, name string) (Artifact, error) {
 	art, err := r.Resolve(ctx, name)
 	if err != nil {
@@ -181,9 +177,8 @@ func (r *Resolver) ResolveUsable(ctx context.Context, name string) (Artifact, er
 	return Static(name)
 }
 
-// Pinned is the artifact one node is running on. A round refreshes it at its
-// start and nothing re-resolves until the next one, so the prompt the model
-// sees and the version the ledger records can never disagree mid-round.
+// Pinned is the artifact one node runs on, refreshed only at a round's start, so the prompt the model
+// sees and the version the ledger records never disagree mid-round.
 type Pinned struct {
 	res  *Resolver
 	name string
@@ -207,9 +202,8 @@ func (p *Pinned) Get() Artifact {
 	return p.art
 }
 
-// Refresh re-resolves at a round's start and returns what the round will use.
-// An unresolvable or unusable version keeps the pinned one: a round already
-// under way is worth more than the edit that would have replaced its prompt.
+// Refresh re-resolves at a round's start. An unresolvable or unusable version keeps the pinned one rather
+// than disrupt a round already under way.
 func (p *Pinned) Refresh(ctx context.Context) Artifact {
 	if p == nil {
 		return Artifact{}
@@ -251,9 +245,8 @@ func (c *TemplateCache) parse(art Artifact) (*template.Template, error) {
 	return t, nil
 }
 
-// Render resolves name, parses it and hands the template to render. A stored version that will not
-// parse or render falls back to the shipped file with one warning - a bad prompt edit must degrade,
-// never disable the gate reading it. That fallback runs render a SECOND time, so render must reset whatever it appends to.
+// Render resolves, parses and renders name; a stored version that fails falls back to the shipped file
+// with one warning. render may then run twice, so it must reset whatever it appends to.
 func Render(ctx context.Context, res *Resolver, cache *TemplateCache, name string, render func(*template.Template) error) (Artifact, error) {
 	art, err := res.ResolveUsable(ctx, name)
 	if err != nil {
@@ -289,7 +282,7 @@ func renderWith(cache *TemplateCache, art Artifact, render func(*template.Templa
 // Static reads name's shipped file: disk in cwd first, then the embedded copy.
 // VersionID is the body's content hash, so an edited file is a new version.
 func Static(name string) (Artifact, error) {
-	p, ok := StaticPath(name)
+	p, ok := staticPath(name)
 	if !ok {
 		return Artifact{}, fmt.Errorf("artifacts: unknown artifact %q", name)
 	}
@@ -300,9 +293,8 @@ func Static(name string) (Artifact, error) {
 	return FileArtifact(name, raw), nil
 }
 
-// FileArtifact stamps raw as a static artifact under name. Exported for the
-// files that have no artifact name (a bundle outside agents/): they still need
-// a content-hash version id, or the ledger records none.
+// FileArtifact stamps raw as a static artifact under name, so a file with no artifact name still gets a
+// content-hash version id for the ledger.
 func FileArtifact(name string, raw []byte) Artifact {
 	sum := sha256.Sum256(raw)
 	return Artifact{Name: name, Body: string(raw), Source: StaticSource, VersionID: hex.EncodeToString(sum[:])[:12]}
@@ -314,16 +306,11 @@ var registry = sync.OnceValue(scan)
 
 // Names lists every artifact the shipped files define, for seeding a Source.
 func Names() []string {
-	reg := registry()
-	names := make([]string, 0, len(reg))
-	for n := range reg {
-		names = append(names, n)
-	}
-	return names
+	return slices.Sorted(maps.Keys(registry()))
 }
 
-// StaticPath returns the shipped file backing name.
-func StaticPath(name string) (string, bool) {
+// staticPath returns the shipped file backing name.
+func staticPath(name string) (string, bool) {
 	p, ok := registry()[name]
 	return p, ok
 }
@@ -336,15 +323,14 @@ func BundleName(kind, dir string) string {
 		return ""
 	}
 	name := kind + "/" + agent
-	if _, ok := StaticPath(name); !ok {
+	if _, ok := staticPath(name); !ok {
 		return ""
 	}
 	return name
 }
 
-// ReadBundleFile reads file from the agent bundle at dir through the resolver when the bundle is
-// a shipped agents/<x> (kind is "system", "rubric" or "memory"), and straight off disk-then-embedded
-// otherwise - a bundle outside agents/, or one missing that file, has no artifact name to resolve.
+// ReadBundleFile resolves file through res for a shipped agents/<x> bundle (kind system, rubric or memory),
+// else reads disk-then-embedded: other bundles have no artifact name.
 func ReadBundleFile(ctx context.Context, res *Resolver, kind, dir, file string) ([]byte, error) {
 	art, err := ResolveBundleFile(ctx, res, kind, dir, file)
 	if err != nil {
@@ -353,14 +339,13 @@ func ReadBundleFile(ctx context.Context, res *Resolver, kind, dir, file string) 
 	return []byte(art.Body), nil
 }
 
-// ResolveBundleFile is ReadBundleFile for a caller that also needs the resolved
-// artifact's provenance - a disk-only bundle still gets a content-hash
-// VersionID (FileArtifact), never a zero Artifact.
+// ResolveBundleFile is ReadBundleFile plus provenance; a disk-only bundle still gets a content-hash
+// VersionID, never a zero Artifact.
 func ResolveBundleFile(ctx context.Context, res *Resolver, kind, dir, file string) (Artifact, error) {
 	if name := BundleName(kind, dir); name != "" {
 		return res.Resolve(ctx, name)
 	}
-	p := bundledir.PathJoin(dir, file)
+	p := path.Join(dir, file)
 	raw, err := bundledir.ReadFile(p)
 	if err != nil {
 		return Artifact{}, err
@@ -368,9 +353,8 @@ func ResolveBundleFile(ctx context.Context, res *Resolver, kind, dir, file strin
 	return FileArtifact(p, raw), nil
 }
 
-// scan derives the name registry from the shipped tree: each agents/<x>/ gives system/<x> plus
-// rubric/<x> and memory/<x> when present, config/rubric.md and config/constitution.md give
-// rubric/global and rubric/constitution, and each config/prompts/<n>.md gives system/<n>.
+// scan derives names from the shipped tree: agents/<x>/ gives system/<x> (+ rubric/<x>, memory/<x>),
+// config/rubric.md and constitution.md give rubric/*, config/prompts/<n>.md gives system/<n>.
 func scan() map[string]string {
 	reg := map[string]string{}
 	add := func(name, p string) bool {

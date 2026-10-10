@@ -57,8 +57,7 @@ type argvState struct {
 	esc    bool
 }
 
-// step consumes one rune into the accumulator; it returns the flushed token
-// when whitespace closed one off ("", false otherwise).
+// step returns the token whitespace just closed, if any.
 func (st *argvState) step(r rune) (string, bool) {
 	switch {
 	case st.esc:
@@ -154,8 +153,7 @@ type ExecResult struct {
 	TimedOut bool
 }
 
-// execEnvPath is the hermetic PATH every RunArgv child sees - a var, not a const, so
-// tests can point it at a fixture dir instead of these real (host-dependent) system paths.
+// execEnvPath is the hermetic child PATH; a var so tests can point it at a fixture dir.
 var execEnvPath = "/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin"
 
 // childPath prepends Caps.ExtraPath to execEnvPath so configured toolchains win.
@@ -166,7 +164,7 @@ func childPath(caps Caps) string {
 	return strings.Join(caps.ExtraPath, ":") + ":" + execEnvPath
 }
 
-// childHome returns caps.HomeDir or dir. Repo-relative HOME was a live bug (npm cache swept into commit).
+// childHome: a HOME inside the repo gets tool caches (npm) swept into commits.
 func childHome(dir string, caps Caps) string {
 	if caps.HomeDir != "" {
 		return caps.HomeDir
@@ -174,7 +172,6 @@ func childHome(dir string, caps Caps) string {
 	return dir
 }
 
-// sortedEnvKeys orders caps.Env deterministically for reproducible child env.
 func sortedEnvKeys(env map[string]string) []string {
 	keys := make([]string, 0, len(env))
 	for k := range env {
@@ -184,13 +181,11 @@ func sortedEnvKeys(env map[string]string) []string {
 	return keys
 }
 
-// childEnv builds the child's environment: fixed PATH/HOME, workspace.env entries, landlock TMPDIR.
 func childEnv(dir string, caps Caps) []string {
 	env := []string{"PATH=" + childPath(caps), "HOME=" + childHome(dir, caps)}
 	if caps.Sandbox == SandboxLandlock {
 		tmp := landlockTmpDir(caps)
-		// GOTMPDIR must track TMPDIR: unset, Go's build work dir defaults to
-		// os.TempDir(), which the jail doesn't grant (#936).
+		// GOTMPDIR must track TMPDIR: unset, Go builds in os.TempDir(), which the jail doesn't grant.
 		env = append(env, "TMPDIR="+tmp, "GOTMPDIR="+tmp)
 	}
 	if opts := SandboxJavaToolOptions(caps); opts != "" {
@@ -199,9 +194,8 @@ func childEnv(dir string, caps Caps) []string {
 	for _, k := range sortedEnvKeys(caps.Env) {
 		env = append(env, k+"="+caps.Env[k])
 	}
-	// Appended LAST (exec.Cmd.Env: last value wins for a duplicate key) so
-	// these win over caps.Env's GOMODCACHE (the #940 preseed, read-only) -
-	// same reasoning and helper as acp.Agent.spawnEnv (#954): GOMODCACHE must be writable even for an offline `go test`.
+	// Appended last (last duplicate wins) to override caps.Env's read-only preseeded GOMODCACHE:
+	// it must be writable even for an offline `go test`.
 	env = append(env,
 		"GOMODCACHE="+EnsureWritableGoModCache(childHome(dir, caps)),
 		"GOCACHE="+filepath.Join(childHome(dir, caps), ".cache", "go-build"),
@@ -230,7 +224,7 @@ func ResolveExecutable(dir, name string) (string, error) {
 	return p, nil
 }
 
-// newChildCmd is the single construction point for child processes so sandboxing is never missed.
+// newChildCmd is the single construction point for child processes, so sandboxing is never missed.
 func newChildCmd(ctx context.Context, dir string, argv []string, caps Caps) (*exec.Cmd, error) {
 	if len(argv) == 0 {
 		return nil, fmt.Errorf("workspace: empty command")
@@ -249,9 +243,7 @@ func newChildCmd(ctx context.Context, dir string, argv []string, caps Caps) (*ex
 	real := childArgv(dir, bin, argv, caps)
 	cmd := exec.CommandContext(ctx, real[0], real[1:]...)
 	cmd.Dir = dir
-	// bwrap passes its own environment straight through to the sandboxed child,
-	// so the scrub (no inherited secrets, a fixed PATH, the isolated HOME) holds
-	// identically in both modes.
+	// bwrap passes its environment straight through, so the scrub holds identically in both modes.
 	cmd.Env = childEnv(dir, caps)
 	// Own process group + StopChild + WaitDelay to prevent grandchild hangs.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -298,7 +290,7 @@ func killGroup(p *os.Process) error {
 	return p.Kill()
 }
 
-// childWaitDelay bounds Wait() pipe I/O block after child exit. Package var for tests.
+// childWaitDelay bounds Wait()'s pipe I/O block after child exit; a var for tests.
 var childWaitDelay = 10 * time.Second
 
 // RunArgv executes argv via exec.Command (no shell). Non-zero exit returns via ExitCode, not error.
@@ -345,9 +337,8 @@ func RunArgv(ctx context.Context, dir string, argv []string, caps Caps) (ExecRes
 	return ExecResult{ExitCode: exitCode, Output: out + fileSizeLimitNote(cmd.ProcessState, caps.Limits)}, nil
 }
 
-// fileSizeLimitNote names workspace.limits when SIGXFSZ killed the child - a
-// bare "signal: file size limit exceeded" reads as the command's own fault
-// (#798, where a limit quack imposed cost four bisect cycles to attribute). Only FSIZE is detectable: exceeding RLIMIT_AS fails an allocation INSIDE the child with ENOMEM, so it surfaces as whatever that child makes of it.
+// fileSizeLimitNote: a bare SIGXFSZ reads as the command's own fault. Only FSIZE is detectable;
+// RLIMIT_AS surfaces as an ENOMEM inside the child.
 func fileSizeLimitNote(st *os.ProcessState, lim Limits) string {
 	if st == nil || lim.FileSizeMB <= 0 {
 		return ""
@@ -399,11 +390,10 @@ func RunPipeline(ctx context.Context, dir string, stages [][]string, caps Caps) 
 	return res, nil
 }
 
-// buildPipelineCmds: build every stage up front (a missing binary fails
-// before anything starts) and wire each stage's stdout into the next.
+// buildPipelineCmds builds every stage up front so a missing binary fails before anything starts.
 func buildPipelineCmds(cctx context.Context, dir string, stages [][]string, caps Caps) ([]*exec.Cmd, []*bytes.Buffer, *bytes.Buffer, error) {
 	cmds := make([]*exec.Cmd, len(stages))
-	stderrs := make([]*bytes.Buffer, len(stages)) // one buffer per stage: exec copies stderr on its own goroutine, so a shared buffer would race
+	stderrs := make([]*bytes.Buffer, len(stages)) // one per stage: a shared buffer would race
 	for i, argv := range stages {
 		cmd, err := newChildCmd(cctx, dir, argv, caps)
 		if err != nil {
@@ -425,12 +415,9 @@ func buildPipelineCmds(cctx context.Context, dir string, stages [][]string, caps
 	return cmds, stderrs, &stdout, nil
 }
 
-// startPipelineCmds: start each stage; a failed start reaps whatever already
-// started so nothing leaks.
 func startPipelineCmds(cmds []*exec.Cmd, stages [][]string) error {
 	for i, cmd := range cmds {
 		if err := cmd.Start(); err != nil {
-			// Reap anything already started so nothing leaks.
 			for _, prev := range cmds[:i] {
 				_ = StopChild(prev)
 				_ = prev.Wait()
@@ -441,8 +428,7 @@ func startPipelineCmds(cmds []*exec.Cmd, stages [][]string) error {
 	return nil
 }
 
-// waitPipelineCmds: wait in pipeline order; non-zero exit is a result, not
-// an error (pipefail: last non-zero wins).
+// waitPipelineCmds: a non-zero exit is a result, not an error (pipefail: last non-zero wins).
 func waitPipelineCmds(cctx context.Context, cmds []*exec.Cmd, stages [][]string, caps Caps) (int, []string, error) {
 	exitCode := 0
 	var failNotes []string

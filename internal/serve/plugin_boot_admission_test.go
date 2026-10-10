@@ -24,11 +24,8 @@ func writeGhostPluginManifest(t *testing.T, root, name string) {
 	}
 }
 
-// TestAdmitBootPluginsDropsRESTAddedRefusalKeepsBootAlive is the adversarial-
-// review regression: a plugin refused by rebuildSkills (422, row kept with
-// its error) must not brick the NEXT boot. A row added over REST (not in
-// plugins.seed) that fails checkPlugin is dropped with a warning and its
-// error persisted; boot proceeds and every other plugin still loads.
+// TestAdmitBootPluginsDropsRESTAddedRefusalKeepsBootAlive: a REST-added row (not in plugins.seed) that fails
+// checkPlugin is dropped with a warning and its error persisted; boot proceeds with every other plugin.
 func TestAdmitBootPluginsDropsRESTAddedRefusalKeepsBootAlive(t *testing.T) {
 	registryRoot := t.TempDir()
 	jail, err := workspace.NewJail(t.TempDir())
@@ -87,9 +84,8 @@ func TestAdmitBootPluginsDropsRESTAddedRefusalKeepsBootAlive(t *testing.T) {
 	}
 }
 
-// TestAdmitBootPluginsFailsBootForSeedListedRefusal: the SAME manifest,
-// listed in plugins.seed (config), still fails boot fatally and names it -
-// unchanged from before this fix.
+// TestAdmitBootPluginsFailsBootForSeedListedRefusal: the same manifest listed in plugins.seed
+// still fails boot and names it.
 func TestAdmitBootPluginsFailsBootForSeedListedRefusal(t *testing.T) {
 	jail, err := workspace.NewJail(t.TempDir())
 	if err != nil {

@@ -1,6 +1,5 @@
-// Package pluginregtest is the shared git-fixture harness: a local "remote"
-// repo standing in for github.com, no network. Does NOT import pluginreg -
-// an internal pluginreg *_test.go file importing this would cycle back.
+// Package pluginregtest is the shared git-fixture harness: a local repo standing in for github.com. It
+// must not import pluginreg, or pluginreg's own tests would cycle.
 package pluginregtest
 
 import (

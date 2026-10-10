@@ -8,16 +8,14 @@ import (
 
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool/toolconfirmation"
-	"google.golang.org/adk/v2/workflow"
 	"google.golang.org/genai"
 )
 
 // GuardStatusKey / GuardResolvedKey: wire markers for guard-ladder confirm tier (internal/tools/guard.go).
 const (
 	GuardStatusKey = "status"
-	// GuardResolvedKey marks a guarded tool's response as the consumption of a
-	// previously-resolved confirm decision (whether it executed for real on
-	// approval, or returned a refusal on denial) - see ConfirmDecision.
+	// GuardResolvedKey marks a guarded tool's response as consuming a resolved confirm
+	// decision, whether it ran on approval or refused on denial (see ConfirmDecision).
 	GuardResolvedKey = "__quack_guard_resolved"
 )
 
@@ -40,71 +38,24 @@ type confirmScanResult struct {
 	pauses int
 }
 
-// scanNodeConfirms: replays session events for guarded-tool confirm pauses. Mirrors scanNodeAsks.
+// scanNodeConfirms: replays session events for guarded-tool confirm pauses.
 func scanNodeConfirms(sess session.Session, invocationID, nodeID string) confirmScanResult {
 	var s confirmScanResult
-	if sess == nil {
-		return s
-	}
-	prefix := "confirm-" + nodeID + "-r"
-	answers := map[string]string{} // interruptID → the human's decision text
-
-	for ev := range sess.Events().All() {
-		if ev == nil || ev.Content == nil || ev.InvocationID != invocationID {
-			continue
+	pauses, answers := scanNodePauses(sess, invocationID, nodeID, "confirm", func(fc *genai.FunctionCall) {
+		if fc.Name != toolconfirmation.FunctionCallName {
+			return
 		}
-		if ev.Author == "user" {
-			collectConfirmAnswers(&answers, prefix, ev.Content.Parts)
-			continue
+		turn := confirmTurn{tool: "(unknown)", hint: confirmationHint(fc.Args)}
+		if oc, err := toolconfirmation.OriginalCallFrom(fc); err == nil {
+			turn.tool, turn.args = oc.Name, oc.Args
 		}
-		if !pathHasNode(ev, nodeID) {
-			continue
-		}
-		recordConfirmPauses(&s, prefix, ev.Content.Parts)
-	}
+		s.turns = append(s.turns, turn)
+	})
+	s.pauses = pauses
 	for i := range s.turns {
 		s.turns[i].answer = answers[confirmInterruptID(nodeID, i+1)]
 	}
 	return s
-}
-
-// collectConfirmAnswers: the human's decision text keyed by interrupt ID
-// (workflow_input FunctionResponses whose id carries this node's prefix).
-func collectConfirmAnswers(answers *map[string]string, prefix string, parts []*genai.Part) {
-	for _, p := range parts {
-		if p == nil || p.FunctionResponse == nil || p.FunctionResponse.Name != workflow.WorkflowInputFunctionCallName {
-			continue
-		}
-		if !strings.HasPrefix(p.FunctionResponse.ID, prefix) {
-			continue
-		}
-		if payload, ok := p.FunctionResponse.Response["payload"].(string); ok {
-			(*answers)[p.FunctionResponse.ID] = payload
-		}
-	}
-}
-
-// recordConfirmPauses: gate-authored confirmations - the workflow_input pauses
-// and the tool-confirmation turns this node requested.
-func recordConfirmPauses(s *confirmScanResult, prefix string, parts []*genai.Part) {
-	for _, p := range parts {
-		if p == nil || p.FunctionCall == nil {
-			continue
-		}
-		switch p.FunctionCall.Name {
-		case workflow.WorkflowInputFunctionCallName:
-			if strings.HasPrefix(p.FunctionCall.ID, prefix) {
-				s.pauses++
-			}
-		case toolconfirmation.FunctionCallName:
-			turn := confirmTurn{tool: "(unknown)"}
-			if oc, err := toolconfirmation.OriginalCallFrom(p.FunctionCall); err == nil {
-				turn.tool, turn.args = oc.Name, oc.Args
-			}
-			turn.hint = confirmationHint(p.FunctionCall.Args)
-			s.turns = append(s.turns, turn)
-		}
-	}
 }
 
 // confirmationHint extracts the guard's hint from adk_request_confirmation args (handles live and persisted events).
@@ -156,7 +107,8 @@ func countGuardResolutions(sess session.Session, invocationID, nodeID string) in
 	return n
 }
 
-// ConfirmDecision: is this guarded-tool call the resolution of a just-answered confirm pause? Pinned to exact tool+args.
+// ConfirmDecision: is this guarded-tool call the resolution of a just-answered confirm pause?
+// Pinned to exact tool+args.
 func ConfirmDecision(sess session.Session, invocationID, nodeID, toolName string, args map[string]any) (approved, matched, mismatched bool) {
 	scan := scanNodeConfirms(sess, invocationID, nodeID)
 	consumed := countGuardResolutions(sess, invocationID, nodeID)
@@ -184,7 +136,6 @@ func sameArgs(a, b map[string]any) bool {
 	return aok && bok && reflect.DeepEqual(na, nb)
 }
 
-// normalizeJSON canonicalizes via marshal/unmarshal round trip.
 func normalizeJSON(m map[string]any) (any, bool) {
 	if m == nil {
 		m = map[string]any{}
@@ -200,7 +151,7 @@ func normalizeJSON(m map[string]any) (any, bool) {
 	return v, true
 }
 
-// withConfirmDecision: builds the post-decision prompt, mirroring withUserAnswer's idiom.
+// withConfirmDecision: builds the post-decision prompt.
 func withConfirmDecision(prompt string, turns []confirmTurn) string {
 	var b strings.Builder
 	b.WriteString(prompt)

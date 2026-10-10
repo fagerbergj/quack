@@ -1,7 +1,5 @@
-// This file drives Orchestrator.Run through the REAL ledger.Exporter/MemStore and reads
-// the result back: UserTurns() must work against a production-shaped bundle (#617: before
-// the fix, root events had no ledger.Coords and fell into the shared "unscoped" bucket, so
-// no chat's bundle ever had a root stream).
+// Drives Orchestrator.Run through the real ledger.Exporter/MemStore so UserTurns() is checked against a
+// production-shaped bundle.
 package bundle_test
 
 import (
@@ -42,8 +40,7 @@ func (a answerStub) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bo
 	}
 }
 
-// newOrchForTest wraps its model in tracedModel - exactly how production's
-// inference.NewModel wraps every model - so "chat" ledger events flow through
+// newOrchForTest wraps its model in tracedModel, as inference.NewModel does, so "chat" events flow through
 // the real emitChatEvent seam.
 func newOrchForTest(t *testing.T, m model.LLM) *orchestrator.Orchestrator {
 	t.Helper()
@@ -64,9 +61,8 @@ func newOrchForTest(t *testing.T, m model.LLM) *orchestrator.Orchestrator {
 	return orchestrator.New(sessions, traced, func(context.Context) string { return "You are the orchestrator." }, planner, ex, nil, nil, nil)
 }
 
-// TestUserTurns_FromProductionShapedBundle (#617 regression): UserTurns()
-// recovers the user's turn from a bundle recorded the way a live run records
-// it - root events stamped with ChatID only, filed under the chat's own id.
+// TestUserTurns_FromProductionShapedBundle: UserTurns() recovers the user's turn when root events carry
+// ChatID only, as a live run records them.
 func TestUserTurns_FromProductionShapedBundle(t *testing.T) {
 	store := ledgertest.NewMemStore()
 

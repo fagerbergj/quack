@@ -7,14 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"sort"
 	"strings"
 	"time"
 
 	extsdk "github.com/fagerbergj/quack-extensions/sdk"
 
-	"github.com/fagerbergj/quack/internal/langfuse/langfusegen"
+	"github.com/fagerbergj/quack/internal/langfuse"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/ledger/bundle"
 	"github.com/fagerbergj/quack/internal/store"
@@ -64,10 +63,9 @@ type datasetItemMetadata struct {
 	Plugins   []ledger.PluginRef   `json:"plugins,omitempty"`
 }
 
-// RunDatasetExport reads gated code-reviewer/synthesizer node runs out of the ledger and upserts
-// one Langfuse dataset item per run, keyed on (chat, node) so a re-export updates in place (#1424);
+// RunDatasetExport upserts one Langfuse dataset item per gated node run, keyed on (chat, node).
 // excludedBySince is true only when --chat plus --since excluded the named chat entirely.
-func RunDatasetExport(ctx context.Context, ls ledger.LedgerStore, st *store.Store, lf *langfusegen.ClientWithResponses, opts ExportOpts) (items []ExportItem, excludedBySince bool, err error) {
+func RunDatasetExport(ctx context.Context, ls ledger.LedgerStore, st *store.Store, lf *langfuse.Client, opts ExportOpts) (items []ExportItem, excludedBySince bool, err error) {
 	chats, excludedBySince, err := exportChats(ctx, st, opts)
 	if err != nil {
 		return nil, false, err
@@ -153,9 +151,7 @@ func exportChats(ctx context.Context, st *store.Store, opts ExportOpts) (chats [
 	}
 }
 
-// exportSingleChat resolves --chat, excluding it entirely if --since is set
-// and it's older (same semantics as --repo's per-chat filter); excludedBySince
-// reports that exclusion so the caller can tell it apart from zero qualifying runs.
+// exportSingleChat resolves --chat; excludedBySince tells a --since exclusion apart from zero runs.
 func exportSingleChat(ctx context.Context, st *store.Store, opts ExportOpts) (chats []store.Chat, excludedBySince bool, err error) {
 	c, err := st.GetChat(ctx, opts.ChatID)
 	if err != nil {
@@ -170,9 +166,8 @@ func exportSingleChat(ctx context.Context, st *store.Store, opts ExportOpts) (ch
 	return []store.Chat{*c}, false, nil
 }
 
-// exportItemID derives a stable, ≤255-char Langfuse dataset item id from
-// (dataset, chat, node): item ids are project-scoped and cannot be reused
-// across datasets (openapi.yml:11249), so the dataset name must be in the hash.
+// exportItemID hashes the dataset name in too: Langfuse item ids are project-scoped and
+// can't be reused across datasets.
 func exportItemID(dataset, chatID, nodeID string) string {
 	sum := sha256.Sum256([]byte(dataset + "/" + chatID + "/" + nodeID))
 	return "quack-" + hex.EncodeToString(sum[:])[:32]
@@ -191,9 +186,8 @@ func chatOriginDecoded(c store.Chat) (extsdk.ChatOrigin, bool) {
 	return o, true
 }
 
-// chatRepo/chatMerged/chatHref read the extension-set Origin (the only field
-// production writes - SetChatOrigin), falling back to the github_repo/state/url
-// columns (no production writer today, kept for older or hand-seeded rows).
+// chatRepo/chatMerged/chatHref prefer the extension-set Origin; the github_* columns
+// only cover older rows, nothing writes them now.
 func chatRepo(c store.Chat) string {
 	if o, ok := chatOriginDecoded(c); ok {
 		if vals := o.Labels["repo"]; len(vals) > 0 && vals[0].Value != "" {
@@ -219,7 +213,7 @@ func chatHref(c store.Chat) string {
 	return c.GithubURL
 }
 
-func exportItem(ctx context.Context, lf *langfusegen.ClientWithResponses, dataset string, chat store.Chat, key bundle.StreamKey, run bundle.NodeRun) (ExportItem, error) {
+func exportItem(ctx context.Context, lf *langfuse.Client, dataset string, chat store.Chat, key bundle.StreamKey, run bundle.NodeRun) (ExportItem, error) {
 	input := datasetItemInput{Task: run.Task, DiffRef: chatHref(chat)}
 	var expected any
 	if chatMerged(chat) && run.Answer != "" {
@@ -232,40 +226,27 @@ func exportItem(ctx context.Context, lf *langfusegen.ClientWithResponses, datase
 		Artifacts: run.Artifacts, Plugins: run.Plugins,
 	}
 	id := exportItemID(dataset, chat.ID, key.Node)
-	req := langfusegen.CreateDatasetItemRequest{
-		DatasetName: dataset, Id: &id, Input: input, ExpectedOutput: expected, Metadata: meta,
+	req := langfuse.CreateDatasetItemRequest{
+		DatasetName: dataset, ID: id, Input: input, ExpectedOutput: expected, Metadata: meta,
 	}
-	resp, err := lf.DatasetItemsCreateWithResponse(ctx, req)
-	if err != nil {
+	if err := lf.CreateDatasetItem(ctx, req); err != nil {
 		return ExportItem{}, fmt.Errorf("dataset export: create item for chat %q node %q: %w", chat.ID, key.Node, err)
-	}
-	if resp.JSON200 == nil {
-		return ExportItem{}, fmt.Errorf("dataset export: create item for chat %q node %q: %s", chat.ID, key.Node, resp.Status())
 	}
 	return ExportItem{ItemID: id, ChatID: chat.ID, NodeID: key.Node, Agent: key.Agent, NoExpected: expected == nil}, nil
 }
 
 // ensureDataset creates the named Langfuse dataset if it doesn't already exist -
 // called only once at least one item is ready to export, never speculatively.
-func ensureDataset(ctx context.Context, lf *langfusegen.ClientWithResponses, name string) error {
-	get, err := lf.DatasetsGetWithResponse(ctx, name)
+func ensureDataset(ctx context.Context, lf *langfuse.Client, name string) error {
+	exists, err := lf.DatasetExists(ctx, name)
 	if err != nil {
 		return fmt.Errorf("dataset export: get dataset %q: %w", name, err)
 	}
-	switch get.HTTPResponse.StatusCode {
-	case http.StatusOK:
+	if exists {
 		return nil
-	case http.StatusNotFound:
-		// falls through to create
-	default:
-		return fmt.Errorf("dataset export: get dataset %q: %s", name, get.Status())
 	}
-	create, err := lf.DatasetsCreateWithResponse(ctx, langfusegen.CreateDatasetRequest{Name: name})
-	if err != nil {
+	if err := lf.CreateDataset(ctx, name); err != nil {
 		return fmt.Errorf("dataset export: create dataset %q: %w", name, err)
-	}
-	if create.JSON200 == nil {
-		return fmt.Errorf("dataset export: create dataset %q: %s", name, create.Status())
 	}
 	return nil
 }

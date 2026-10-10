@@ -17,11 +17,6 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// #693: when the plan judge rejects every plan the orchestrator proposes and
-// it gives up without ever calling execute, that is a FAILED run, not an
-// answer - the run must never post the judge's internal rejection text as if
-// it were a reply to the user.
-
 // rejectAlwaysJudge always rejects with reason - mimics a plan judge that
 // never finds an acceptable plan.
 func rejectAlwaysJudge(reason string) vetting.PlanJudge {
@@ -42,12 +37,8 @@ func planCallWidened() *model.LLMResponse {
 	})
 }
 
-// TestOrchestrator_PlanLoopAsksUser: the judge rejecting the same plan twice (only reworded) ends
-// the turn with a get_user_choice, not a third plan or a failure; answering "run it as is" - even
-// wrapped, as a GitHub reply is - runs that plan past the judge next turn.
-//
-// #693 keeps the judge's text out of replies. This in-app question is the one exception: it shows the
-// reason on one line, truncated to planLoopReasonMax, so the user can decide.
+// The judge rejecting the same plan twice ends the turn with a get_user_choice; answering
+// "run it as is" (even wrapped) runs that plan past the judge next turn.
 func TestOrchestrator_PlanLoopAsksUser(t *testing.T) {
 	reason := "the user asked for no synthesizer\n" + strings.Repeat("x", 400)
 	stub := &orchStub{replies: []*model.LLMResponse{planCall(), planCall(), planCall()}}
@@ -75,7 +66,7 @@ func TestOrchestrator_PlanLoopAsksUser(t *testing.T) {
 }
 
 // TestPlanLoopQuestion_NonAppSourceHidesReason: GitHub and extension runs get fixed text naming the
-// options - never the judge's reason (#693), which can quote recalled memory.
+// options - never the judge's reason, which can quote recalled memory.
 func TestPlanLoopQuestion_NonAppSourceHidesReason(t *testing.T) {
 	q := planLoopQuestion("github", "SECRET MEMORY")
 	if strings.Contains(q, "SECRET") || !strings.Contains(q, planLoopRunAsIs) || !strings.Contains(q, planLoopRephrase) {
@@ -111,9 +102,8 @@ func newTestOrchWithJudge(t *testing.T, stub *orchStub, judge vetting.PlanJudge)
 	return New(sessions, stub, func(context.Context) string { return "You are the orchestrator." }, planner, ex, nil, nil, nil)
 }
 
-// TestOrchestrator_PlanExhausted_PostsFixedNoticeNotJudgeReason: the model
-// retries the plan tool against an always-rejecting judge, then gives up and
-// narrates the rejection back in prose (the live NightsOut#97 symptom). The run must post the fixed failure notice instead, and the judge's internal reason text must not appear anywhere in the final answer.
+// A model that gives up against an always-rejecting judge and narrates the rejection must post
+// the fixed notice; the judge's reason must not appear in the answer.
 func TestOrchestrator_PlanExhausted_PostsFixedNoticeNotJudgeReason(t *testing.T) {
 	var logs bytes.Buffer
 	prev := slog.Default()
@@ -147,9 +137,7 @@ func TestOrchestrator_PlanExhausted_PostsFixedNoticeNotJudgeReason(t *testing.T)
 	}
 }
 
-// TestOrchestrator_PlanRejectedOnce_ThenAnswers_PivotDelivered pins #760/
-// home-server#3: a reply-only request where the orchestrator over-eagerly
-// tries to plan, the judge correctly rejects the plan for exceeding the deliverable, and the model then pivots to answering the question directly. One rejection is not exhaustion - the model's real answer must be delivered verbatim, not replaced by the fixed notice.
+// One rejection then a direct answer is a pivot, not exhaustion: the answer is delivered verbatim.
 func TestOrchestrator_PlanRejectedOnce_ThenAnswers_PivotDelivered(t *testing.T) {
 	const pivotAnswer = "The off-by-one is in the loop bound on line 42."
 	stub := &orchStub{replies: []*model.LLMResponse{
@@ -168,9 +156,7 @@ func TestOrchestrator_PlanRejectedOnce_ThenAnswers_PivotDelivered(t *testing.T) 
 	}
 }
 
-// TestOrchestrator_RejectionDoesNotLeakAcrossTurns proves PlanCache (built
-// fresh per Run() call, tools.NewPlanCache in orchestrator.go) does not carry
-// a rejection recorded in one turn into the next: turn one exhausts (2 rejections, fixed notice), turn two in the SAME session answers directly with no plan attempt at all and must deliver normally, not be treated as exhausted leftover from turn one.
+// PlanCache is per Run(): turn one's rejections must not mark turn two exhausted.
 func TestOrchestrator_RejectionDoesNotLeakAcrossTurns(t *testing.T) {
 	const turnTwoAnswer = "Turn two: a plain answer, no plan involved."
 	stub := &orchStub{replies: []*model.LLMResponse{
@@ -195,10 +181,7 @@ func TestOrchestrator_RejectionDoesNotLeakAcrossTurns(t *testing.T) {
 	}
 }
 
-// TestOrchestrator_PlanRejectedThenAccepted_NotTreatedAsExhausted: a plan
-// rejected once and then accepted on retry must deliver normally - a single
-// rejection along the way is not "exhausted", it's iteration working as
-// intended.
+// A plan rejected once then accepted delivers normally.
 func TestOrchestrator_PlanRejectedThenAccepted_NotTreatedAsExhausted(t *testing.T) {
 	calls := 0
 	judge := vetting.PlanJudge(func(context.Context, string, string, string) (bool, string, error) {

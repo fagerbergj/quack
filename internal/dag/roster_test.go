@@ -2,7 +2,6 @@ package dag
 
 import (
 	"context"
-	"iter"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,28 +17,7 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// fixedLLM answers every worker call with reply (after wait, if set) and passes every judge round.
-type fixedLLM struct {
-	reply string
-	wait  <-chan struct{}
-}
-
-func (f fixedLLM) Name() string { return f.reply }
-
-func (f fixedLLM) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		if gHasTool(req, "submit_verdict") {
-			yield(gCall("submit_verdict", map[string]any{"score": 0.9, "feedback": ""}), nil)
-			return
-		}
-		if f.wait != nil {
-			<-f.wait
-		}
-		yield(gText(f.reply), nil)
-	}
-}
-
-func rosterWith(t *testing.T, llm fixedLLM) *Roster {
+func rosterWith(t *testing.T, llm fnLLM) *Roster {
 	t.Helper()
 	a, err := llmagent.New(llmagent.Config{Name: "w", Model: llm, Description: "w", Instruction: "ROLE:w"})
 	if err != nil {
@@ -54,14 +32,14 @@ func rosterWith(t *testing.T, llm fixedLLM) *Roster {
 
 func TestRoster_PinnedRunSurvivesSetRoster(t *testing.T) {
 	swapped := make(chan struct{})
-	old := rosterWith(t, fixedLLM{reply: "FROM-OLD", wait: swapped})
+	old := rosterWith(t, fixedLLM("FROM-OLD", swapped))
 	old.Gen = 1
 	var deaths atomic.Int32
 	old.OnDead = func() { deaths.Add(1) }
-	ex := NewExecutor(session.InMemoryService(), nil, nil, vetting.NewJudgeFactory(fixedLLM{reply: "judge"}, nil, nil), nil, nil)
+	ex := NewExecutor(session.InMemoryService(), nil, nil, vetting.NewJudgeFactory(fixedLLM("judge", nil), nil, nil), nil, nil)
 	ex.SetRoster(old)
 	ctx, done := ex.Pin(context.Background())
-	fresh := rosterWith(t, fixedLLM{reply: "FROM-NEW"})
+	fresh := rosterWith(t, fixedLLM("FROM-NEW", nil))
 
 	stop := make(chan struct{})
 	var wg sync.WaitGroup

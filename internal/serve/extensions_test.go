@@ -10,7 +10,6 @@ import (
 	"google.golang.org/adk/v2/tool"
 	"gopkg.in/yaml.v3"
 
-	"github.com/fagerbergj/quack/internal/cli"
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/vetting"
 	"github.com/fagerbergj/quack/internal/workflowcatalog"
@@ -35,38 +34,7 @@ func TestLoadShapes(t *testing.T) {
 	}
 }
 
-// fakeSDKRecoverer stands in for an extension's sdk.DeliveryRecoverer.
-type fakeSDKRecoverer struct{ gotDC extsdk.DeliveryContext }
-
-func (f *fakeSDKRecoverer) RecoverDelivery(_ context.Context, key string, dc extsdk.DeliveryContext) (bool, extsdk.DeliveryItemOutcome, error) {
-	f.gotDC = dc
-	return true, extsdk.DeliveryItemOutcome{Kind: "review", URL: "https://example/pr/1#review-1"}, nil
-}
-
-func TestSdkRecoverAdapterForwardsAndMapsOutcome(t *testing.T) {
-	fake := &fakeSDKRecoverer{}
-	adapter := sdkRecoverAdapter{recoverer: fake}
-
-	found, outcome, err := adapter.RecoverDelivery(context.Background(), "key1", cli.DeliveryContext{
-		CloneURL: "https://github.com/x/y.git", IssueNumber: 7,
-	})
-	if err != nil {
-		t.Fatalf("RecoverDelivery: %v", err)
-	}
-	if !found {
-		t.Fatal("found = false, want true")
-	}
-	if fake.gotDC.CloneURL != "https://github.com/x/y.git" || fake.gotDC.IssueNumber != 7 {
-		t.Errorf("sdk saw DeliveryContext %+v, want CloneURL/IssueNumber forwarded", fake.gotDC)
-	}
-	if outcome.URL != "https://example/pr/1#review-1" || outcome.Kind != "review" {
-		t.Errorf("outcome = %+v, want it mapped from the sdk outcome", outcome)
-	}
-}
-
-// fakeDeliverer captures the sdk.DeliveryContext it receives so the test can
-// assert sdkDeliverAdapter forwarded the fields quack's own DeliveryContext
-// set (#1158 PushError, #1093 IdempotencyKey).
+// fakeDeliverer captures the sdk.DeliveryContext sdkDeliverAdapter forwards.
 type fakeDeliverer struct{ got extsdk.DeliveryContext }
 
 func (f *fakeDeliverer) Deliver(ctx context.Context, dc extsdk.DeliveryContext) ([]extsdk.DeliveryItemOutcome, error) {
@@ -105,9 +73,8 @@ func TestSdkDeliverAdapterForwardsCommentSeverity(t *testing.T) {
 }
 
 func init() {
-	// Registered once at package init (extsdk.Register panics on a repeat
-	// name) under names no real extension uses, so BuildDeliveryRecoverer's
-	// tests can drive them via ordinary config.
+	// Registered once (extsdk.Register panics on a repeat name) under names no real extension uses,
+	// so BuildDeliveryRecoverer's tests can drive them via ordinary config.
 	extsdk.Register("fake-recoverer-a", func(host extsdk.Host, _ []byte) (extsdk.Extension, error) {
 		return &recovererExt{}, nil
 	})
@@ -192,9 +159,8 @@ func TestBuildDeliveryRecoverer_FirstInSortedOrderWins(t *testing.T) {
 	}
 }
 
-// TestExtChatUserUnknownChatReturnsNotOK proves the sdk contract (ok=false
-// for an unknown chatID) instead of extChatUser's prior fallback to the
-// id-shape default with ok=true (#1225 footgun).
+// TestExtChatUserUnknownChatReturnsNotOK: the sdk contract is ok=false for an unknown chatID,
+// not the id-shape default user.
 func TestExtChatUserUnknownChatReturnsNotOK(t *testing.T) {
 	st, _, _, _, _ := newExtTestStack(t)
 	chatUser := extChatUser(st)
@@ -204,9 +170,7 @@ func TestExtChatUserUnknownChatReturnsNotOK(t *testing.T) {
 	}
 }
 
-// TestExtChatUserExistingChatReturnsStoredUser proves the happy path is
-// unchanged: once the chat row exists, its resolved SessionUser comes back
-// with ok=true.
+// TestExtChatUserExistingChatReturnsStoredUser: an existing chat returns its SessionUser with ok=true.
 func TestExtChatUserExistingChatReturnsStoredUser(t *testing.T) {
 	st, _, _, _, _ := newExtTestStack(t)
 	chat, err := st.CreateChat(context.Background(), "sys")

@@ -24,11 +24,8 @@ func rebuildSkills(s skillsInit) (map[string]string, error) {
 	return refused, err
 }
 
-// TestRebuildSkillsPicksUpNewlyRegisteredPlugin is #1430 P2's roster-rebuild
-// requirement: a plugin added to the registry AFTER boot (REST's job) must
-// become visible to native agents' already-built skill roster on the very
-// next call - no restart, no re-building the SkillToolset itself - once the
-// rebuild hook initSkills returns is invoked.
+// TestRebuildSkillsPicksUpNewlyRegisteredPlugin: a plugin added to the registry after boot shows up in
+// native agents' skill roster on the next call once the rebuild hook runs, with no restart.
 func TestRebuildSkillsPicksUpNewlyRegisteredPlugin(t *testing.T) {
 	registryRoot := t.TempDir()
 	jail, err := workspace.NewJail(t.TempDir())
@@ -42,10 +39,8 @@ func TestRebuildSkillsPicksUpNewlyRegisteredPlugin(t *testing.T) {
 		t.Fatalf("initSkills: %v", err)
 	}
 	builtinSkillSrc := skills.builtinSkillSrc
-	// A REST-style add: write a local plugin root (plugin.json + skills/) and
-	// Put it into the SAME registry initSkills resolved against - no git needed
-	// for a local entry. The registry row name is the entry's own base name
-	// (resolveRegistryPlugins stamps THAT, never plugin.json's, #1427 S3).
+	// A REST-style add of a local plugin into the same registry initSkills used (no git needed).
+	// The row name is the entry's base name, never plugin.json's.
 	pluginRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(pluginRoot, "plugin.json"), []byte(`{"name":"extra"}`), 0o644); err != nil {
 		t.Fatal(err)
@@ -79,10 +74,8 @@ func TestRebuildSkillsPicksUpNewlyRegisteredPlugin(t *testing.T) {
 	}
 }
 
-// TestRebuildSkillsDropsOnlyTheRefusedRow is #1430 review#2: rebuildSkills
-// now uses the SAME per-row admission as boot - a refused NON-seed row is
-// dropped (named in the returned refusals map, its error persisted on ITS
-// OWN row) and the roster of everything else still rebuilds and swaps.
+// TestRebuildSkillsDropsOnlyTheRefusedRow: rebuildSkills uses boot's per-row admission, so a refused non-seed
+// row is dropped (error persisted on its own row) while everything else still rebuilds and swaps.
 func TestRebuildSkillsDropsOnlyTheRefusedRow(t *testing.T) {
 	registryRoot := t.TempDir()
 	jail, err := workspace.NewJail(t.TempDir())
@@ -145,9 +138,8 @@ func TestRebuildSkillsDropsOnlyTheRefusedRow(t *testing.T) {
 	}
 }
 
-// TestRebuildSkillsPreExistingRefusalDoesNotBlockAnUnrelatedAdd: a row
-// already refused on a PREVIOUS rebuild must not fail a LATER rebuild
-// triggered by an unrelated, good plugin's own add.
+// TestRebuildSkillsPreExistingRefusalDoesNotBlockAnUnrelatedAdd: a row refused on an earlier rebuild
+// doesn't fail a later rebuild triggered by an unrelated good add.
 func TestRebuildSkillsPreExistingRefusalDoesNotBlockAnUnrelatedAdd(t *testing.T) {
 	registryRoot := t.TempDir()
 	jail, err := workspace.NewJail(t.TempDir())

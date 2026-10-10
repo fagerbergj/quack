@@ -327,23 +327,15 @@ func TestVerifyChecks_SnippetNeverContradicts(t *testing.T) {
 }
 
 // gateLLM announces each verifier call on started, then holds it until gate closes.
-type gateLLM struct {
-	now, peak *atomic.Int32
-	started   chan struct{}
-	gate      chan struct{}
-}
-
-func (gateLLM) Name() string { return "gate-llm" }
-
-func (m gateLLM) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		n := m.now.Add(1)
-		for p := m.peak.Load(); n > p && !m.peak.CompareAndSwap(p, n); p = m.peak.Load() {
+func gateLLM(now, peak *atomic.Int32, started, gate chan struct{}) fnLLM {
+	return func(*model.LLMRequest) (*model.LLMResponse, error) {
+		n := now.Add(1)
+		for p := peak.Load(); n > p && !peak.CompareAndSwap(p, n); p = peak.Load() {
 		}
-		m.started <- struct{}{}
-		<-m.gate
-		m.now.Add(-1)
-		yield(&model.LLMResponse{Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: `{"items":[]}`}}}}, nil)
+		started <- struct{}{}
+		<-gate
+		now.Add(-1)
+		return &model.LLMResponse{Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: `{"items":[]}`}}}}, nil
 	}
 }
 
@@ -373,8 +365,8 @@ func TestVerifyChecks_ParallelOnlyOnGrantedSessions(t *testing.T) {
 		want   int32
 	}{{"no ledger", 0, true, verifyConcurrency}, {"one free session", 1, false, 2}, {"none free", 0, false, 1}} {
 		var now, peak, outstanding atomic.Int32
-		llm := gateLLM{now: &now, peak: &peak, started: make(chan struct{}, len(checks)), gate: make(chan struct{})}
-		v := Verifier{LLM: llm, TryAdmit: grantN(tc.grants, &outstanding)}
+		started, gate := make(chan struct{}, len(checks)), make(chan struct{})
+		v := Verifier{LLM: gateLLM(&now, &peak, started, gate), TryAdmit: grantN(tc.grants, &outstanding)}
 		if tc.unmet {
 			v.TryAdmit = nil
 		}
@@ -382,12 +374,12 @@ func TestVerifyChecks_ParallelOnlyOnGrantedSessions(t *testing.T) {
 		go func() { v.VerifyChecks(context.Background(), slices.Clone(checks)); close(done) }()
 		for range tc.want { // wait for the expected parallel calls before letting any finish
 			select {
-			case <-llm.started:
+			case <-started:
 			case <-time.After(10 * time.Second):
 				t.Fatalf("%s: only some of %d parallel verifier calls started", tc.name, tc.want)
 			}
 		}
-		close(llm.gate)
+		close(gate)
 		<-done
 		if peak.Load() != tc.want || outstanding.Load() != 0 {
 			t.Errorf("%s: peak %d concurrent calls, %d sessions unreleased; want %d and 0", tc.name, peak.Load(), outstanding.Load(), tc.want)

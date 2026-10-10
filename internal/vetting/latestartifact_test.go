@@ -14,9 +14,8 @@ import (
 	"github.com/fagerbergj/quack/internal/recordstore"
 )
 
-// versionedMetaInMemory is metaAwareInMemory's sibling (reviewrecord_test.go),
-// keyed by (id, version) rather than just id - DependencyArtifact reads a
-// specific PAST revision's own lineage, which a latest-only map can't give it.
+// versionedMetaInMemory keys metadata by (id, version): DependencyArtifact reads a past revision's own
+// lineage, which a latest-only map can't give it.
 type versionedMetaInMemory struct {
 	artifact.Service
 	mu        sync.Mutex
@@ -70,9 +69,7 @@ func (m *versionedMetaInMemory) LoadCalls() int {
 	return m.loadCalls
 }
 
-// testSystemKind stands in for a real System kind (e.g. tools' web_page,
-// registered by a package vetting's tests don't import) to prove
-// DependencyArtifact excludes System kinds without needing that import.
+// testSystemKind stands in for a real System kind (e.g. tools' web_page) without importing its package.
 const testSystemKind = "vtest_system_kind"
 
 func init() {
@@ -83,8 +80,7 @@ func init() {
 	})
 }
 
-// TestDependencyArtifact_NoArtifactsService: recordClient's own nil guard -
-// a chat with no artifact.Service configured has nothing to inline, ever.
+// A chat with no artifact.Service configured has nothing to inline.
 func TestDependencyArtifact_NoArtifactsService(t *testing.T) {
 	_, _, content, ok := DependencyArtifact(context.Background(), Config{ChatID: "chat1"}, "dep")
 	if ok || content != "" {
@@ -92,10 +88,8 @@ func TestDependencyArtifact_NoArtifactsService(t *testing.T) {
 	}
 }
 
-// TestDependencyArtifact_TypedKindScopedByLineage pins the #1504 review's
-// blocker: the typed kind's id is chat-scoped (documentHint has no nodeID), so
-// a sibling's LATER write under the same id must never win over dep's own,
-// earlier one.
+// The typed kind's id is chat-scoped, so a sibling's later write under the same id must never win over
+// dep's own earlier one.
 func TestDependencyArtifact_TypedKindScopedByLineage(t *testing.T) {
 	svc := newVersionedMetaInMemory()
 	c := recordstore.New(svc, artifactref.AppName, "u1", "chat1")
@@ -115,10 +109,8 @@ func TestDependencyArtifact_TypedKindScopedByLineage(t *testing.T) {
 	}
 }
 
-// TestDependencyArtifact_NewerTurnBeatsAnOlderTurnsHigherRound pins the round
-// 2 review's B2: an id is chat-scoped across every TURN, not just this one -
-// an earlier turn's round 8 must never outrank this turn's round 1, the
-// newest revision by save order regardless of what round number it carries.
+// An id is chat-scoped across turns: an earlier turn's round 8 must never outrank this turn's round 1,
+// the newest revision by save order.
 func TestDependencyArtifact_NewerTurnBeatsAnOlderTurnsHigherRound(t *testing.T) {
 	svc := newVersionedMetaInMemory()
 	c := recordstore.New(svc, artifactref.AppName, "u1", "chat1")
@@ -138,9 +130,7 @@ func TestDependencyArtifact_NewerTurnBeatsAnOlderTurnsHigherRound(t *testing.T) 
 	}
 }
 
-// TestDependencyArtifact_StopsAtTheFirstMatchPerCandidate proves the newest-
-// first scan loads at most one revision per candidate when dep's own write is
-// already the newest - it never walks the id's whole history.
+// The newest-first scan loads at most one revision per candidate when dep's own write is newest.
 func TestDependencyArtifact_StopsAtTheFirstMatchPerCandidate(t *testing.T) {
 	svc := newVersionedMetaInMemory()
 	c := recordstore.New(svc, artifactref.AppName, "u1", "chat1")
@@ -161,8 +151,7 @@ func TestDependencyArtifact_StopsAtTheFirstMatchPerCandidate(t *testing.T) {
 	}
 }
 
-// TestDependencyArtifact_GenericTextFallback covers the "text:<dep>" identity
-// every gate writes for a node with no configured Artifact kind.
+// "text:<dep>" is the identity every gate writes for a node with no configured Artifact kind.
 func TestDependencyArtifact_GenericTextFallback(t *testing.T) {
 	svc := newVersionedMetaInMemory()
 	c := recordstore.New(svc, artifactref.AppName, "u1", "chat1")
@@ -178,8 +167,7 @@ func TestDependencyArtifact_GenericTextFallback(t *testing.T) {
 	}
 }
 
-// TestDependencyArtifact_SystemKindNeverACandidate: a System kind is excluded
-// even when its lineage matches and outranks the fallback.
+// A System kind is excluded even when its lineage matches and outranks the fallback.
 func TestDependencyArtifact_SystemKindNeverACandidate(t *testing.T) {
 	svc := newVersionedMetaInMemory()
 	c := recordstore.New(svc, artifactref.AppName, "u1", "chat1")
@@ -199,8 +187,7 @@ func TestDependencyArtifact_SystemKindNeverACandidate(t *testing.T) {
 	}
 }
 
-// TestDependencyArtifact_NothingMatchesLineage: an id exists, but every
-// revision belongs to a different node - nothing of dep's own to inline.
+// Every revision of the id belongs to a different node, so there is nothing of dep's own to inline.
 func TestDependencyArtifact_NothingMatchesLineage(t *testing.T) {
 	svc := newVersionedMetaInMemory()
 	c := recordstore.New(svc, artifactref.AppName, "u1", "chat1")
@@ -216,8 +203,7 @@ func TestDependencyArtifact_NothingMatchesLineage(t *testing.T) {
 	}
 }
 
-// TestDependencyArtifact_ReviewerKind covers the cfg.IsReviewer selector -
-// a reviewer dependency's own code_review record, not the text fallback.
+// A reviewer dependency inlines its own code_review record, not the text fallback.
 func TestDependencyArtifact_ReviewerKind(t *testing.T) {
 	svc := newVersionedMetaInMemory()
 	c := recordstore.New(svc, artifactref.AppName, "u1", "chat1")
@@ -234,16 +220,14 @@ func TestDependencyArtifact_ReviewerKind(t *testing.T) {
 	}
 }
 
-// failingVersionsService errors every Versions call, so DependencyArtifact's
-// own "skip a candidate whose revision listing failed" branch is exercised.
+// failingVersionsService errors every Versions call.
 type failingVersionsService struct{ artifact.Service }
 
 func (failingVersionsService) Versions(context.Context, *artifact.VersionsRequest) (*artifact.VersionsResponse, error) {
 	return nil, errors.New("simulated versions listing failure")
 }
 
-// TestDependencyArtifact_VersionsErrorSkipsCandidate: a candidate whose
-// revision listing errors is skipped, not treated as fatal for the whole call.
+// A candidate whose revision listing errors is skipped, not fatal to the whole call.
 func TestDependencyArtifact_VersionsErrorSkipsCandidate(t *testing.T) {
 	svc := failingVersionsService{Service: newVersionedMetaInMemory()}
 	cfg := Config{Artifacts: svc, User: "u1", ChatID: "chat1", Artifact: "document"}

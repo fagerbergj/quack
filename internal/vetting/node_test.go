@@ -31,9 +31,8 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// stubModel is a deterministic model.LLM for driving the gated-worker node offline. It routes by request shape (no live endpoint): a request carrying the
-// submit_verdict tool is the judge; anything else is the worker. The judge scores
-// low until the answer is a revision; the worker produces a revision once it sees reviewer feedback - so the refine loop converges in exactly one revise cycle.
+// stubModel routes by request shape: a request carrying submit_verdict is the judge, else the worker.
+// The judge scores low until the answer is a revision, so the refine loop converges in one revise cycle.
 type stubModel struct {
 	workerCalls   int
 	judgeCalls    int
@@ -63,9 +62,8 @@ func (m *stubModel) GenerateContent(_ context.Context, req *model.LLMRequest, _ 
 	}
 }
 
-// TestGatedWorkerNode_RefineLoopConverges runs the native gated-worker node end to
-// end on the real ADK v2 workflow engine (runner + workflowagent + Start→node) and
-// asserts the worker→judge refine loop revises once, then passes.
+// TestGatedWorkerNode_RefineLoopConverges runs the gated-worker node end to end on the real ADK v2
+// workflow engine and asserts the worker->judge refine loop revises once, then passes.
 func TestGatedWorkerNode_RefineLoopConverges(t *testing.T) {
 	exp := withTestTracer(t)
 	stub := &stubModel{}
@@ -128,9 +126,8 @@ func TestGatedWorkerNode_RefineLoopConverges(t *testing.T) {
 		t.Errorf("judge calls = %d, want 2 (fail then pass)", stub.judgeCalls)
 	}
 
-	// #4: the revise round gets its own "gate.revise" span, exactly one - not
-	// zero (startStageSpan never called) and not two (a duplicate alongside
-	// dagStream's own SSE-driving worker.round span for the same run).
+	// Exactly one "gate.revise" span: not zero (startStageSpan never called), not two
+	// (a duplicate alongside dagStream's worker.round span for the same run).
 	var reviseSpans int
 	for _, s := range exp.GetSpans() {
 		if s.Name != "quack.gate.revise" {
@@ -153,8 +150,8 @@ func TestGatedWorkerNode_RefineLoopConverges(t *testing.T) {
 	}
 }
 
-// TestGatedRefine_AdmissionFollowsPhase drives the same fail-then-pass refine
-// loop as above, with the admission swap hooks wired to a call recorder, to prove the judge call runs under its own spec alone, never both or neither.
+// TestGatedRefine_AdmissionFollowsPhase: across the fail-then-pass refine loop, the judge call
+// runs under its own admission spec alone, never both or neither.
 func TestGatedRefine_AdmissionFollowsPhase(t *testing.T) {
 	stub := &stubModel{}
 	worker, err := llmagent.New(llmagent.Config{
@@ -227,7 +224,7 @@ func TestGatedRefine_AdmissionFollowsPhase(t *testing.T) {
 	}
 
 	want := []string{
-		"release-worker", "admit-judge", "release-judge", "admit-worker", // round 1: fails, revise runs under the worker spec
+		"release-worker", "admit-judge", "release-judge", "admit-worker", // round 1 fails; revise runs as worker
 		"release-worker", "admit-judge", "release-judge", "admit-worker", // round 2: passes
 	}
 	if len(calls) != len(want) {
@@ -271,9 +268,8 @@ func (m *judgePromptCapturingModel) GenerateContent(_ context.Context, req *mode
 	}
 }
 
-// TestRunGatedRefine_DeterministicFailureReachesJudgeBeforeVerdict asserts a
-// deterministic failure is present in the FIRST judge round's own prompt, and
-// that the verdict still fails via weakest-link despite the judge's own criterion passing at 1.0.
+// A deterministic failure is in the FIRST judge round's prompt, and the verdict still fails by
+// weakest-link despite the judge's own criterion passing at 1.0.
 func TestRunGatedRefine_DeterministicFailureReachesJudgeBeforeVerdict(t *testing.T) {
 	judgeStub := &judgePromptCapturingModel{}
 	worker, err := llmagent.New(llmagent.Config{
@@ -345,9 +341,8 @@ type judgeModelCoordsSpy struct {
 
 func (s *judgeModelCoordsSpy) SetLedgerCoords(c ledger.Coords) { s.stamped = c }
 
-// TestRunGatedRefine_StampsJudgeModelWithRoundCoords pins the defensive
-// stamp: cfg.JudgeModel, when it implements CoordSetter, must be stamped
-// with the SAME coords the judge round's ctx carries - the same belt-and-suspenders runWorkerNodeTraced already gives workerModel.
+// cfg.JudgeModel, when it implements CoordSetter, must be stamped with the SAME coords the judge
+// round's ctx carries, as runWorkerNodeTraced does for workerModel.
 func TestRunGatedRefine_StampsJudgeModelWithRoundCoords(t *testing.T) {
 	spy := &judgeModelCoordsSpy{}
 	worker, err := llmagent.New(llmagent.Config{
@@ -392,17 +387,14 @@ func TestRunGatedRefine_StampsJudgeModelWithRoundCoords(t *testing.T) {
 	if spy.stamped.User != "u" || spy.stamped.Source != "github" {
 		t.Errorf("JudgeModel stamped User/Source = %q/%q, want u/github", spy.stamped.User, spy.stamped.Source)
 	}
-	// #1096: the judge round's llm.call entries must carry the worker's
-	// bundle hash too - a judge round with an empty bundle_hash is exactly
-	// the gap the adversarial review on #1278 flagged.
+	// The judge round's llm.call entries must carry the worker's bundle hash too.
 	if spy.stamped.BundleHash != "bundlehash123456" {
 		t.Errorf("JudgeModel stamped BundleHash = %q, want %q", spy.stamped.BundleHash, "bundlehash123456")
 	}
 }
 
-// TestMergeDeterministic_WeakestLinkUnchanged pins that folding a computed
-// deterministic map into a verdict still takes the lowest criterion overall,
-// and never touches the judge's own criteria scores.
+// Folding a computed deterministic map into a verdict still takes the lowest criterion
+// overall and never touches the judge's own criteria scores.
 func TestMergeDeterministic_WeakestLinkUnchanged(t *testing.T) {
 	v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.95}, "clarity": {Score: 0.9}}, Score: 0.9}
 	det := map[string]criterionScore{"mermaid_valid": {Score: 0, Reason: "deterministic: invalid mermaid diagram at line 12: parse error"}}
@@ -415,9 +407,8 @@ func TestMergeDeterministic_WeakestLinkUnchanged(t *testing.T) {
 	}
 }
 
-// TestMergeDeterministic_MermaidFixMentionsCheckTool: the agent-facing fix text
-// for a mermaid_valid failure must point at check_mermaid - models follow an
-// instruction embedded in the error they're reacting to far more reliably than an upfront prompt nudge (the main lever against a full-answer regeneration).
+// The fix text for a mermaid_valid failure must point at check_mermaid: models follow an
+// instruction in the error they're reacting to far more reliably than an upfront prompt nudge.
 func TestMergeDeterministic_MermaidFixMentionsCheckTool(t *testing.T) {
 	det := map[string]criterionScore{"mermaid_valid": {Score: 0, Reason: "deterministic: invalid mermaid diagram at line 12: parse error"}}
 	got := mergeDeterministic(verdict{}, det, Config{})
@@ -438,9 +429,8 @@ func (stubPassJudge) GenerateContent(_ context.Context, _ *model.LLMRequest, _ b
 	}
 }
 
-// runGatedRefineOnce drives one RunGatedRefine round through the real ADK
-// runner (stubPassJudge, a fixed-answer worker) and returns the captured
-// GateResult - shared harness for the #780 checks-skip-reason tests below.
+// runGatedRefineOnce drives one RunGatedRefine round through the real ADK runner (stubPassJudge,
+// a fixed-answer worker) and returns the captured GateResult.
 func runGatedRefineOnce(t *testing.T, cfg Config, answer string) GateResult {
 	t.Helper()
 	worker, err := llmagent.New(llmagent.Config{
@@ -474,9 +464,8 @@ func runGatedRefineOnce(t *testing.T, cfg Config, answer string) GateResult {
 	return res
 }
 
-// TestRunGatedRefine_ChecksSkipReasonSurfacesOnPassingUnsupportedBuild pins
-// #780 test case 1: a node on a repo quack can't derive checks for still
-// PASSES the gate (an unsupported build system is not a change failure), and GateResult carries why - the value that reaches the delivered artifact.
+// A node on a repo quack can't derive checks for still PASSES the gate (an unsupported build
+// system is not a change failure), and GateResult carries why.
 func TestRunGatedRefine_ChecksSkipReasonSurfacesOnPassingUnsupportedBuild(t *testing.T) {
 	cfg, root := scopeCfg(t, "", "cargo")
 	if err := os.WriteFile(filepath.Join(root, "Cargo.toml"), []byte("[package]\nname = \"x\"\n"), 0o644); err != nil {
@@ -499,14 +488,11 @@ func TestRunGatedRefine_ChecksSkipReasonSurfacesOnPassingUnsupportedBuild(t *tes
 	}
 }
 
-// TestRunGatedRefine_ChecksSkipReasonEmptyWhenChecksRan pins #780 test case
-// 2: a node whose derived checks actually ran and passed carries no skip
-// reason - a clean run says nothing extra.
+// A node whose derived checks actually ran and passed carries no skip reason.
 func TestRunGatedRefine_ChecksSkipReasonEmptyWhenChecksRan(t *testing.T) {
 	cfg, root := scopeCfg(t, "", "go", "gofmt")
-	// TMPDIR/GOTMPDIR pinned to t.TempDir() (honours the jail's own TMPDIR,
-	// unlike the real /tmp #936 warns childEnv falls back to for non-landlock
-	// caps): the default zero-value caps leave `go build`'s work dir on a path the jail doesn't grant.
+	// TMPDIR/GOTMPDIR pinned to t.TempDir(): the default zero-value caps leave
+	// `go build`'s work dir on a path the jail doesn't grant.
 	scratch := t.TempDir()
 	cfg.WorkspaceCaps.Env = map[string]string{"TMPDIR": scratch, "GOTMPDIR": scratch}
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/x\n\ngo 1.24\n"), 0o644); err != nil {
@@ -532,9 +518,8 @@ func TestRunGatedRefine_ChecksSkipReasonEmptyWhenChecksRan(t *testing.T) {
 	}
 }
 
-// TestComposeFeedbackDeterministicOnlyLeadsAndScopesJudgeNotes (#791 case 1): a
-// verdict where only a deterministic criterion failed puts that failure first,
-// then the judge's (otherwise unqualified) notes, labelled as covering only what the judge was actually asked to score.
+// Only a deterministic criterion failed: that failure leads, then the judge's notes, labelled
+// as covering only what the judge was asked to score.
 func TestComposeFeedbackDeterministicOnlyLeadsAndScopesJudgeNotes(t *testing.T) {
 	v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 1.0}}, Feedback: "The implementation is excellent."}
 	det := map[string]criterionScore{"delivery_complete": {Score: 0, Reason: "deterministic: no commit found in the ledger"}}
@@ -558,9 +543,8 @@ func TestComposeFeedbackDeterministicOnlyLeadsAndScopesJudgeNotes(t *testing.T) 
 	}
 }
 
-// TestComposeFeedbackJudgeOnlyDoesNotLabelDeterministic (#791 case 2): a judge-scored
-// criterion below threshold must never be printed under a "deterministic" heading -
-// it is an opinion, not a decided, code-owned fact.
+// A judge-scored criterion below threshold is never printed under a "deterministic" heading:
+// it is an opinion, not a code-owned fact.
 func TestComposeFeedbackJudgeOnlyDoesNotLabelDeterministic(t *testing.T) {
 	v := verdict{
 		Criteria: map[string]criterionScore{"accuracy": {Score: 0.3, Reason: "the analysis misses the caching layer"}},
@@ -578,8 +562,7 @@ func TestComposeFeedbackJudgeOnlyDoesNotLabelDeterministic(t *testing.T) {
 	}
 }
 
-// TestComposeFeedbackBothKindsEachOwnHeadingNoDuplicates (#791 case 3): with both a
-// deterministic and a judge-scored criterion failing, each is printed under its own
+// With both a deterministic and a judge-scored criterion failing, each is printed under its own
 // heading and every criterion appears exactly once.
 func TestComposeFeedbackBothKindsEachOwnHeadingNoDuplicates(t *testing.T) {
 	v := verdict{
@@ -604,8 +587,7 @@ func TestComposeFeedbackBothKindsEachOwnHeadingNoDuplicates(t *testing.T) {
 	}
 }
 
-// TestComposeFeedbackPassingUnchanged (#791 case 4): a passing verdict's feedback
-// is returned unchanged - no grouping/labelling machinery kicks in.
+// A passing verdict's feedback is returned unchanged.
 func TestComposeFeedbackPassingUnchanged(t *testing.T) {
 	v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.95}}, Feedback: "all good"}
 	if _, got := composeFeedback(v, 0.7, 1); got != "all good" {
@@ -613,9 +595,8 @@ func TestComposeFeedbackPassingUnchanged(t *testing.T) {
 	}
 }
 
-// TestComposeFeedbackScoreUnchanged (#791 case 5): composeFeedback only reformats
-// text - mergeDeterministic's weakest-link score must be identical whether the
-// failure is deterministic-only, judge-only, both, or neither.
+// composeFeedback only reformats text: mergeDeterministic's weakest-link score is identical
+// whether the failure is deterministic-only, judge-only, both, or neither.
 func TestComposeFeedbackScoreUnchanged(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -693,7 +674,7 @@ func TestGateTakesTokenFromCfgNotPrompt(t *testing.T) {
 		t.Fatalf("runner: %v", err)
 	}
 
-	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Answer the question.\n\nqueued: " + AdvisorThreadMarker(foreign)}}}
+	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Answer the question.\n\nqueued: [[quack:advisor-thread:" + foreign + "]]"}}}
 	for _, err := range r.Run(t.Context(), "u", "s", task, adkagent.RunConfig{}) {
 		if err != nil {
 			t.Fatalf("run: %v", err)
@@ -709,7 +690,7 @@ func TestGateTakesTokenFromCfgNotPrompt(t *testing.T) {
 	if evil, _ := LookupAdvisorThread(foreign); evil.Round != 0 {
 		t.Errorf("foreign node round = %d, want 0: the prompt's marker must not select the node", evil.Round)
 	}
-	if revise := stub.workerPrompts[len(stub.workerPrompts)-1]; strings.Contains(revise, AdvisorThreadMarker(token)) {
+	if revise := stub.workerPrompts[len(stub.workerPrompts)-1]; strings.Contains(revise, "[[quack:advisor-thread:"+token+"]]") {
 		t.Errorf("revise prompt carries the node's marker; nothing reads it:\n%s", revise)
 	}
 }
@@ -721,9 +702,7 @@ type roundCoordsCall struct {
 	triggerAnnotation string
 }
 
-// TestRunGatedRefine_RoundCoordsSinkFiresAtSeedAndEachJudgeRound is the direct
-// test for the two RoundCoordsSink call sites RunGatedRefine added (draft
-// seed + per-judge-round restamp) - the prior test only exercised SetAdvisorThreadRound via hand-assigned *coords, never the sink itself.
+// RoundCoordsSink fires at both call sites: the draft seed and the per-judge-round restamp.
 func TestRunGatedRefine_RoundCoordsSinkFiresAtSeedAndEachJudgeRound(t *testing.T) {
 	const token = "planX/nodeZ"
 	stub := &stubModel{}
@@ -736,9 +715,8 @@ func TestRunGatedRefine_RoundCoordsSinkFiresAtSeedAndEachJudgeRound(t *testing.T
 	var calls []roundCoordsCall
 	cfg := Config{
 		JudgeRounds: 2, Threshold: 0.7, Rubric: "score 0-10", AdvisorToken: token,
-		// Artifacts+ChatID: the round-2 trigger annotation only populates once
-		// round 1's judge_round record actually saves (saveJudgeRoundRecord
-		// needs a record client), so this must not be recordClient's nil case.
+		// Artifacts+ChatID: the round-2 trigger annotation only populates once round 1's
+		// judge_round record saves, which needs a record client.
 		Artifacts: artifact.InMemoryService(), ChatID: "chat-roundcoords", User: "u1",
 		RoundCoordsSink: func(round int, turnID, headSHA, triggerAnnotation string) {
 			calls = append(calls, roundCoordsCall{round, turnID, headSHA, triggerAnnotation})
@@ -759,15 +737,14 @@ func TestRunGatedRefine_RoundCoordsSinkFiresAtSeedAndEachJudgeRound(t *testing.T
 		t.Fatalf("runner: %v", err)
 	}
 
-	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Answer the question.\n\n" + AdvisorThreadMarker(token)}}}
+	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Answer the question.\n\n[[quack:advisor-thread:" + token + "]]"}}}
 	for _, err := range r.Run(t.Context(), "u", "s", task, adkagent.RunConfig{}) {
 		if err != nil {
 			t.Fatalf("run: %v", err)
 		}
 	}
 
-	// 3 calls: the draft seed, the round-1 judge-loop restamp (same round,
-	// still no trigger - the draft hasn't failed yet), and the round-2
+	// 3 calls: the draft seed, the round-1 restamp (no trigger yet), and the round-2
 	// restamp after round 1's fail sets a trigger annotation.
 	if len(calls) != 3 {
 		t.Fatalf("RoundCoordsSink calls = %d, want exactly 3 (seed + round-1 loop restamp + round-2 restamp); got %+v", len(calls), calls)
@@ -790,9 +767,8 @@ func TestRunGatedRefine_RoundCoordsSinkFiresAtSeedAndEachJudgeRound(t *testing.T
 	}
 }
 
-// TestGatedWorkerNode_SingleRoundRevisesOnce asserts the loop semantics at
-// JudgeRounds=1: JudgeRounds counts REVISIONS, so one round judges the draft,
-// revises on the fail, and re-judges - 1 revision / 2 judgments. (Previously 1 meant "judge once, never fix", which shipped failing drafts unvetted.)
+// At JudgeRounds=1 the loop judges the draft, revises on the fail, and re-judges:
+// JudgeRounds counts REVISIONS (1 revision / 2 judgments).
 func TestGatedWorkerNode_SingleRoundRevisesOnce(t *testing.T) {
 	stub := &stubModel{}
 	worker, err := llmagent.New(llmagent.Config{
@@ -857,13 +833,11 @@ func TestGatedWorkerNode_SingleRoundRevisesOnce(t *testing.T) {
 	}
 }
 
-// TestGatedWorkerNode_ZeroRoundsSkipsJudge pins the 0 = "no judge at all" TestRunGatedRefine_EntryClearDropsStaleFailureBeforeASilentGap is #1109
-// re-review's suggestion 2 (a direct test for the entry-clear introduced for finding 3): a failure record left over from an earlier, unrelated invocation of this same chat+node+agent must not survive into a NEW
-// invocation whose model succeeds on every call but returns an empty answer - that run must still resolve as the true #568 silent gap (ErrNodeEmpty), not report the stale gateway error.
+// A failure record left by an earlier invocation of the same chat+node+agent must not survive into a new
+// invocation whose model returns an empty answer: that must resolve as ErrNodeEmpty, not the stale error.
 func TestRunGatedRefine_EntryClearDropsStaleFailureBeforeASilentGap(t *testing.T) {
-	// planNodeID (the RunGatedRefine nodeID param, e.g. dag/graph.go's
-	// node.ID) deliberately differs from cfg.NodeID (workspaceNodeID) - the
-	// #1109 re-review finding: they diverge for setup-plan implementer nodes, and the entry-clear must key off cfg.NodeID, the recorder's own key.
+	// planNodeID (RunGatedRefine's nodeID) differs from cfg.NodeID for setup-plan implementer
+	// nodes, and the entry-clear must key off cfg.NodeID, the recorder's own key.
 	const chatID, planNodeID, workspaceScope, agentName = "chat-1109-entryclear", "impl-1", "quack-shared-repo", "code-implementer"
 	inference.RecordCallResult(chatID, workspaceScope, agentName, errors.New("stale: previous invocation's gateway error"))
 	t.Cleanup(func() { inference.ClearFailure(chatID, workspaceScope, agentName) })
@@ -897,9 +871,8 @@ func TestRunGatedRefine_EntryClearDropsStaleFailureBeforeASilentGap(t *testing.T
 		t.Fatalf("runner: %v", err)
 	}
 
-	// A true silent gap (ErrNodeEmpty, wrapped as "vetting: node produced no
-	// answer") is the EXPECTED outcome here - the model succeeds on every
-	// call but never has anything to say. Any other error is a real test failure.
+	// A true silent gap (ErrNodeEmpty) is the EXPECTED outcome: the model succeeds on
+	// every call but never has anything to say. Any other error is a real failure.
 	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "What is the capital of France?"}}}
 	for _, err := range r.Run(t.Context(), "u", "s", task, adkagent.RunConfig{}) {
 		if err != nil && !strings.Contains(err.Error(), "produced no answer") {
@@ -912,9 +885,8 @@ func TestRunGatedRefine_EntryClearDropsStaleFailureBeforeASilentGap(t *testing.T
 	}
 }
 
-// contract the media readers rely on (judge:false ⇒ JudgeRounds=0): even though
-// the judge factory is non-nil, JudgeRounds=0 must never invoke it, so the draft
-// is surfaced unjudged.
+// JudgeRounds=0 means "no judge at all" (judge:false media readers rely on it): even with a
+// non-nil judge factory, the draft is surfaced unjudged.
 func TestGatedWorkerNode_ZeroRoundsSkipsJudge(t *testing.T) {
 	stub := &stubModel{}
 	worker, err := llmagent.New(llmagent.Config{
@@ -960,13 +932,11 @@ func TestGatedWorkerNode_ZeroRoundsSkipsJudge(t *testing.T) {
 	}
 }
 
-// TestGatedWorkerNode_JudgeLessEmptyAnswerWritesNoTextArtifact covers #1095 adversarial review finding #2: the judge-less fallback (node.go, after the round loop that JudgeRounds=0 never enters) un-gated the old
-// IsReviewer||Artifact!="" check but lost its implicit non-empty guard, so an
-// empty/whitespace-only answer used to write an empty "text:<node>" revision. It must now mirror the round loop's own strings.TrimSpace guard and skip.
+// The judge-less fallback must mirror the round loop's TrimSpace guard: an empty or env-scaffold-only
+// answer writes no "text:<node>" revision.
 func TestGatedWorkerNode_JudgeLessEmptyAnswerWritesNoTextArtifact(t *testing.T) {
-	// Env-scaffold-only, not pure whitespace: strings.TrimSpace(answer) is
-	// non-empty so the earlier "worker still empty" recovery/ErrNodeEmpty path (node.go, before the judge-less fallback) never fires - only
-	// stripLeadingEnvScaffold sees this as empty, exactly like the round loop's own guard.
+	// Env-scaffold-only, not whitespace: TrimSpace(answer) is non-empty so the ErrNodeEmpty
+	// recovery path never fires; only stripLeadingEnvScaffold sees it as empty.
 	stub := stubFixedAnswerModel{text: "<env>preamble only, no real content</env>"}
 	worker, err := llmagent.New(llmagent.Config{
 		Name: "blank-worker", Model: stub, Description: "worker",
@@ -1018,9 +988,8 @@ func TestGatedWorkerNode_JudgeLessEmptyAnswerWritesNoTextArtifact(t *testing.T) 
 	}
 }
 
-// coordsCapturingModel is a worker stub that also implements
-// ledger.CoordSetter, so a test can inspect exactly what RunGatedRefine
-// stamped via SetLedgerCoords - the object-carried path token-metric attribution relies on, since ctx.Value doesn't survive RunNode scheduling.
+// coordsCapturingModel also implements ledger.CoordSetter, to inspect what RunGatedRefine stamped
+// via SetLedgerCoords (token-metric attribution relies on it; ctx.Value doesn't survive RunNode).
 type coordsCapturingModel struct {
 	stubFixedAnswerModel
 	coords ledger.Coords
@@ -1028,9 +997,8 @@ type coordsCapturingModel struct {
 
 func (m *coordsCapturingModel) SetLedgerCoords(c ledger.Coords) { m.coords = c }
 
-// TestRunGatedRefine_StampsUserAndSourceOntoWorkerModel guards the token-
-// metrics attribution plumbing: User must come from the ADK session (mirrors
-// MemoryScope, never caller-set) and Source must pass through unchanged from cfg - both stamped on the worker model exactly like Agent already is.
+// User comes from the ADK session (never caller-set) and Source passes through from cfg,
+// both stamped on the worker model like Agent.
 func TestRunGatedRefine_StampsUserAndSourceOntoWorkerModel(t *testing.T) {
 	stub := &coordsCapturingModel{stubFixedAnswerModel: stubFixedAnswerModel{text: "the answer"}}
 	worker, err := llmagent.New(llmagent.Config{
@@ -1152,6 +1120,15 @@ func stubAllText(req *model.LLMRequest) string {
 	return b.String()
 }
 
+// fnLLM is a model.LLM whose every call yields f's one response.
+type fnLLM func(*model.LLMRequest) (*model.LLMResponse, error)
+
+func (fnLLM) Name() string { return "fn-llm" }
+
+func (f fnLLM) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) { yield(f(req)) }
+}
+
 func stubText(s string) *model.LLMResponse {
 	return &model.LLMResponse{
 		Content:      &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: s}}},
@@ -1170,9 +1147,7 @@ func stubCall(name string, args map[string]any) *model.LLMResponse {
 	}
 }
 
-// newTestGatedNode wraps RunGatedRefine as a first-class dynamic node - the shape
-// dag.newGatedNode builds in production (test fixture; the old exported
-// NewGatedWorkerNode constructor was removed as dead code).
+// newTestGatedNode wraps RunGatedRefine as a dynamic node, the shape dag.newGatedNode builds.
 func newTestGatedNode(name string, worker adkagent.Agent, workerModel model.LLM, judge JudgeFactory, cfg Config) (workflow.Node, error) {
 	workerNode, err := NewWorkerNode(worker)
 	if err != nil {
@@ -1206,22 +1181,13 @@ func newTestGatedNodeCapture(name string, worker adkagent.Agent, workerModel mod
 	return workflow.NewDynamicNode[string, string](name, fn, workflow.NodeConfig{}), nil
 }
 
-// erroringJudge always fails the underlying model call (standing in for a judge
-// request that 400s against the model's context window) - never a scored
-// verdict, never a tool call.
-type erroringJudge struct{}
+// erroringJudge always fails the model call, like a judge request that 400s on context size.
+var erroringJudge = fnLLM(func(*model.LLMRequest) (*model.LLMResponse, error) {
+	return nil, errors.New("simulated 400: request exceeds the available context size")
+})
 
-func (erroringJudge) Name() string { return "erroring-judge" }
-
-func (erroringJudge) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		yield(nil, errors.New("simulated 400: request exceeds the available context size"))
-	}
-}
-
-// TestGatedWorkerNode_JudgeErrorFailsClosed proves issue #291's critical correctness fix: when every judge call errors (the model call itself fails,
-// not a low score), the gate must fail CLOSED - Passed=false - never surface
-// the answer as vetted. Before the fix, an errored judge round could leave the gate's verdict looking like an unscored pass instead of an explicit fail.
+// When every judge call errors (not a low score), the gate fails CLOSED with Passed=false,
+// never surfacing the answer as vetted.
 func TestGatedWorkerNode_JudgeErrorFailsClosed(t *testing.T) {
 	stub := &stubModel{}
 	worker, err := llmagent.New(llmagent.Config{
@@ -1233,7 +1199,7 @@ func TestGatedWorkerNode_JudgeErrorFailsClosed(t *testing.T) {
 	}
 	cfg := Config{JudgeRounds: 1, Threshold: 0.7, Rubric: "score the answer 0-10"}
 	var res GateResult
-	node, err := newTestGatedNodeCapture("researcher-gate", worker, stub, NewJudgeFactory(erroringJudge{}, nil, nil), cfg, &res)
+	node, err := newTestGatedNodeCapture("researcher-gate", worker, stub, NewJudgeFactory(erroringJudge, nil, nil), cfg, &res)
 	if err != nil {
 		t.Fatalf("node: %v", err)
 	}
@@ -1266,16 +1232,14 @@ func TestGatedWorkerNode_JudgeErrorFailsClosed(t *testing.T) {
 	if res.Score != 0 {
 		t.Errorf("GateResult.Score = %v, want 0 (no verdict was ever produced)", res.Score)
 	}
-	// #779 test case 1: a genuine transport/model failure keeps the existing
-	// "unavailable" wording unchanged.
+	// A genuine transport/model failure keeps the "unavailable" wording.
 	if !strings.Contains(res.Feedback, "unavailable") {
 		t.Errorf("GateResult.Feedback = %q, want it to still say the judge was unavailable - this is a real outage", res.Feedback)
 	}
 }
 
-// TestGatedWorkerNode_JudgeNoVerdictFailsClosed is issue #779's test case 2: a judge that RAN (read a file, spent its turns) but never called
-// submit_verdict must still fail closed like TestGatedWorkerNode_JudgeErrorFailsClosed,
-// but the feedback must say the judge ran and did not reach a verdict - never the "unavailable" wording, which is false here.
+// A judge that ran but never called submit_verdict still fails closed, and the feedback says it
+// did not reach a verdict - never the "unavailable" wording.
 func TestGatedWorkerNode_JudgeNoVerdictFailsClosed(t *testing.T) {
 	stub := &stubModel{}
 	worker, err := llmagent.New(llmagent.Config{
@@ -1328,9 +1292,8 @@ func TestGatedWorkerNode_JudgeNoVerdictFailsClosed(t *testing.T) {
 	}
 }
 
-// TestJudgeFailureFeedback pins the two agent_complete Status values #779 distinguishes: a transport/model error keeps status="unavailable" and its
-// wording unchanged (test case 1); ErrJudgeNoVerdict gets its own status and
-// never claims unavailability (test case 2). judge.go returns a typed sentinel specifically so this switches on errors.Is, never the error string.
+// A transport/model error keeps status="unavailable"; ErrJudgeNoVerdict gets its own status. judge.go
+// returns a typed sentinel so this switches on errors.Is, never the error string.
 func TestJudgeFailureFeedback(t *testing.T) {
 	status, feedback := judgeFailureFeedback(errors.New("dial tcp: connection refused"))
 	if status != judgeStatusUnavailable {
@@ -1355,9 +1318,8 @@ func TestJudgeFailureFeedback(t *testing.T) {
 	}
 }
 
-// TestWrapperSpans_ReportNoModel is #927: quack.node and quack.worker.round wrap a whole node or ACP round and make no model call of their own, so they
-// must carry no attribute a consumer reads as a model - that is what types an
-// observation as a GENERATION in Langfuse and drops wall-clock wrappers into every per-model latency and cost aggregate. Session identity (#922) stays.
+// quack.node and quack.worker.round make no model call, so they carry no model attribute: Langfuse
+// would type them GENERATION and skew per-model latency and cost. Session identity stays.
 func TestWrapperSpans_ReportNoModel(t *testing.T) {
 	exp := withTestTracer(t)
 	cfg := Config{ChatID: "chat-1", Agent: "code-implementer", JudgeRounds: 1, Threshold: 0.7, Rubric: "score the answer 0-10"}
@@ -1397,9 +1359,8 @@ func TestWrapperSpans_ReportNoModel(t *testing.T) {
 		}
 	}
 
-	// Control: the real model call in the same trace still reports its model.
-	// Only when ADK's span reaches this exporter - ADK caches its tracer at
-	// init, so it stays bound to whichever provider a package-mates' test installed first.
+	// Control: the real model call still reports its model - only checked when ADK's span reaches this
+	// exporter, since ADK caches its tracer at init and may be bound to another test's provider.
 	if attrs, ok := byName["generate_content stub-fixed"]; ok {
 		if got := attrs[otelobs.GenAIRequestModel]; got != "stub-fixed" {
 			t.Errorf("generation span %s = %q, want stub-fixed", otelobs.GenAIRequestModel, got)
@@ -1407,9 +1368,8 @@ func TestWrapperSpans_ReportNoModel(t *testing.T) {
 	}
 }
 
-// TestJudgePartEmitterDedupsToolCallByID: same fix as the orchestrator
-// Translator and dagStream - ACP's start+completion updates both carry the
-// FunctionCall part for one call_id (PR #1102 review finding).
+// ACP's start+completion updates both carry the FunctionCall part for one call_id;
+// the emitter forwards it once.
 func TestJudgePartEmitterDedupsToolCallByID(t *testing.T) {
 	var got []stream.SSEEvent
 	emit := judgePartEmitter(func(ev stream.SSEEvent) { got = append(got, ev) }, "n1", "judge-r0")
@@ -1429,9 +1389,8 @@ func TestJudgePartEmitterDedupsToolCallByID(t *testing.T) {
 	}
 }
 
-// TestMemoryScope_NoNodeIDLegacyBucket: a worker's recall buckets are exactly
-// [repo, role, user] - #1262's Legacy: nodeID leaked a per-node bucket that
-// never had memories in it (Legacy is only for pre-scope agent-name buckets).
+// A worker's recall buckets are exactly [repo, role, user]: no per-node Legacy bucket
+// (Legacy is only for pre-scope agent-name buckets).
 func TestMemoryScope_NoNodeIDLegacyBucket(t *testing.T) {
 	jail, err := workspace.NewJail(t.TempDir())
 	if err != nil {
@@ -1488,9 +1447,8 @@ func TestMemoryScope_NoNodeIDLegacyBucket(t *testing.T) {
 			t.Fatalf("run: %v", err)
 		}
 	}
-	// ctx.Session() isn't wired for a tool context in this harness, so User is
-	// unset here - the point of this test is repo+role resolve with no node-id
-	// Legacy bucket leaking in (issue used node id "review-new-commits" as session id).
+	// ctx.Session() isn't wired for a tool context here, so User is unset; the point
+	// is repo+role resolve with no node-id Legacy bucket.
 	want := []string{"repo:github.com/acme/games", "role:coding"}
 	buckets := got.Buckets()
 	if len(buckets) != len(want) || buckets[0] != want[0] || buckets[1] != want[1] {

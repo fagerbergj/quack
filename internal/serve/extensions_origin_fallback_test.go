@@ -14,9 +14,8 @@ import (
 	"github.com/fagerbergj/quack/internal/tools"
 )
 
-// TestMergeExtOrigin_NudgeFallsBackToStoredSetup is #1180's issue-47
-// companion: a nudge/retry re-dispatch on an already-dispatched PR chat
-// carries no Run.Setup - mergeExtOrigin must hand back the head ref a prior dispatch on the same chat stored, instead of silently blanking it.
+// TestMergeExtOrigin_NudgeFallsBackToStoredSetup: a nudge/retry re-dispatch carries no Run.Setup, so
+// mergeExtOrigin must return the head ref a prior dispatch stored instead of blanking it.
 func TestMergeExtOrigin_NudgeFallsBackToStoredSetup(t *testing.T) {
 	first := &extsdk.Setup{Repo: "https://github.com/o/r", BaseRef: "main", ExistingHeadRef: "quack/pr-1170"}
 	origin := &extsdk.ChatOrigin{Extension: "github", Label: "o/r#1170", Kind: "pr"}
@@ -50,9 +49,8 @@ func TestMergeExtOrigin_NudgeFallsBackToStoredSetup(t *testing.T) {
 	}
 }
 
-// TestMergeExtOrigin_NoPriorSetup_NoFallback: a chat that never had a Setup
-// stored (a plain, non-PR dispatch) gets no effective setup - plan.go's
-// existing "no setup anywhere" rejection is still what a bare nudge on such a chat sees.
+// TestMergeExtOrigin_NoPriorSetup_NoFallback: a chat with no stored Setup gets none, so plan.go's
+// "no setup anywhere" rejection still applies.
 func TestMergeExtOrigin_NoPriorSetup_NoFallback(t *testing.T) {
 	_, effective := mergeExtOrigin("", nil, nil)
 	if effective != nil {
@@ -60,9 +58,7 @@ func TestMergeExtOrigin_NoPriorSetup_NoFallback(t *testing.T) {
 	}
 }
 
-// TestMergeExtOrigin_FreshSetupOverridesStale: a dispatch that carries its
-// own Setup WITH a real head ref must use that, not a stale one from an
-// earlier, unrelated turn.
+// TestMergeExtOrigin_FreshSetupOverridesStale: a dispatch's own Setup with a real head ref beats a stored one.
 func TestMergeExtOrigin_FreshSetupOverridesStale(t *testing.T) {
 	stale := &extsdk.Setup{Repo: "https://github.com/o/r", BaseRef: "main", ExistingHeadRef: "quack/pr-old"}
 	storedJSON, _ := mergeExtOrigin("", nil, stale)
@@ -74,8 +70,8 @@ func TestMergeExtOrigin_FreshSetupOverridesStale(t *testing.T) {
 	}
 }
 
-// TestMergeExtOrigin_BlankHeadRefBorrowsStored is #1180's actual recurrence
-// (issue comment: "neither the v0.9.0 nudge re-send ... nor #1181's stored-origin fallback delivered a head ref"): github's own dispatch() ALWAYS builds a non-nil sdk.Setup, even when its snapshot fetch came back without a head ref - so "newSetup == nil" (the only case #1181 handled) never actually happens on a real github dispatch. A Setup that is present but blank must get the same fallback as a wholly-missing one.
+// TestMergeExtOrigin_BlankHeadRefBorrowsStored: github always sends a non-nil Setup, even without a head ref,
+// so a present-but-blank Setup must get the same fallback as a missing one.
 func TestMergeExtOrigin_BlankHeadRefBorrowsStored(t *testing.T) {
 	good := &extsdk.Setup{Repo: "https://github.com/o/r", BaseRef: "main", ExistingHeadRef: "quack/pr-1188"}
 	storedJSON, _ := mergeExtOrigin("", nil, good)
@@ -89,9 +85,8 @@ func TestMergeExtOrigin_BlankHeadRefBorrowsStored(t *testing.T) {
 	}
 }
 
-// TestUpdateChatOrigin_PreservesStoredSetup is the #1181 review's blocking
-// finding: newExtUpdateChatOrigin (the state-transition webhook path - PR
-// synchronize/close/merge) used to marshal the bare extsdk.ChatOrigin and overwrite the whole row, wiping the quackSetup field a dispatch had just stored - so any such webhook between a dispatch and a nudge reopened #1180. A dispatch with Origin+Setup, then an origin update, must still have the stored Setup afterward.
+// TestUpdateChatOrigin_PreservesStoredSetup: an origin update (PR synchronize/close/merge webhook) must not
+// overwrite the row and wipe the quackSetup a prior dispatch stored.
 func TestUpdateChatOrigin_PreservesStoredSetup(t *testing.T) {
 	st, orch, hub, artifacts, _ := newExtTestStack(t)
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]

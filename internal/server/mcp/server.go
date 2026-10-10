@@ -105,9 +105,8 @@ func newAskHandler(
 						RequestedSchema: mrtrAnswerSchema,
 					},
 				},
-				// ponytail: RequestState carries only the session ID, already
-				// client-visible via session_id - no signing needed (see
-				// CallToolResult.RequestState's doc on unauthenticated servers).
+				// ponytail: RequestState is just the session ID, already client-visible, so it isn't signed
+				// (see CallToolResult.RequestState's doc on unauthenticated servers).
 				RequestState: sessionID,
 			}, nil, nil
 		}

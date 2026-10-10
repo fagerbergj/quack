@@ -15,9 +15,8 @@ import (
 // package-level singleton; nil-safe until Init runs.
 var m *metrics
 
-// InitMetricsForTesting installs meter's instruments as the package
-// singleton (test-only) - lets another package's test exercise a Record*
-// call against a real metric.ManualReader, the same way SetLoggerProviderForTesting does for the ledger/log seam.
+// InitMetricsForTesting installs meter's instruments as the singleton, so another package's test can
+// record against a real metric.ManualReader.
 func InitMetricsForTesting(meter metric.Meter) error {
 	return initMetrics(meter)
 }
@@ -50,9 +49,7 @@ type metricDef struct {
 	buckets []float64
 }
 
-// assignInstrument builds def's instrument from meter into the *metric.*
-// target - one case per OTel instrument kind, options in the old positional
-// order (description, unit, buckets).
+// assignInstrument builds def's instrument from meter into the *metric.* target, one case per kind.
 func assignInstrument(meter metric.Meter, into any, d metricDef) error {
 	switch t := into.(type) {
 	case *metric.Int64UpDownCounter:
@@ -101,14 +98,11 @@ func assignInstrument(meter metric.Meter, into any, d metricDef) error {
 	return nil
 }
 
-// initMetrics builds every instrument from meter and installs it as the
-// package singleton. Returns an error if any instrument fails to build (an
-// OTel SDK bug, not an operator error) - callers should log and continue with metrics disabled rather than fail startup over an observability seam.
+// initMetrics builds every instrument and installs the singleton. An error is an OTel SDK bug: callers
+// log and continue with metrics disabled.
 func initMetrics(meter metric.Meter) error {
 	m2 := &metrics{}
-	// Registration order matches the original registration block (note: not the struct's
-	// field order - cost comes before ledgerUnresolved there); the first error
-	// short-circuits, exactly like the old sequential block.
+	// Registration order is not field order (cost before ledgerUnresolved); the first error short-circuits.
 	defs := []struct {
 		def  metricDef
 		into any
@@ -311,9 +305,8 @@ func RecordRunNoAnswer() {
 	m.runNoAnswer.Add(context.Background(), 1)
 }
 
-// RecordTokenUsage records gen_ai.client.token.usage, one data point per
-// non-zero token type. model/agent/user/source empty ⇒ that attribute is
-// omitted (an unattributed call), never stamped with a fabricated value. input MUST already exclude cached tokens (genai's PromptTokenCount includes them) so the four token_type series never double-count.
+// RecordTokenUsage records one point per non-zero token type; empty attribution is omitted, never faked.
+// input MUST exclude cached tokens (genai's PromptTokenCount includes them) or the series double-count.
 func RecordTokenUsage(model, agent, user, source string, input, output, reasoning, cached int64) {
 	if m == nil {
 		return
@@ -331,9 +324,8 @@ func RecordTokenUsage(model, agent, user, source string, input, output, reasonin
 	record(GenAITokenTypeCached, cached)
 }
 
-// RecordCost records gen_ai.client.cost (USD) for one completed call.
-// Callers only invoke this when a price is actually configured for the
-// model - there's no "0 means unpriced" here, since a real $0 call would be indistinguishable.
+// RecordCost records gen_ai.client.cost (USD); call it only when the model has a price, since a real $0
+// call is indistinguishable from unpriced.
 func RecordCost(model, agent, user, source string, usd float64) {
 	if m == nil {
 		return
@@ -341,9 +333,7 @@ func RecordCost(model, agent, user, source string, usd float64) {
 	m.cost.Add(context.Background(), usd, metric.WithAttributes(genAIUsageAttrs(model, agent, user, source, "")...))
 }
 
-// genAIUsageAttrs builds the shared attribute set for token.usage/cost,
-// omitting any empty field rather than stamping a zero-value placeholder.
-// agent stays the bare "agent" label here (not gen_ai.agent.name) - these two instruments already ship with that label and renaming it breaks dashboards.
+// genAIUsageAttrs omits empty fields. agent stays the bare "agent" label: renaming it breaks dashboards.
 func genAIUsageAttrs(model, agent, user, source, tokenType string) []attribute.KeyValue {
 	attrs := make([]attribute.KeyValue, 0, 5)
 	if model != "" {

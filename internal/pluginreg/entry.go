@@ -1,6 +1,5 @@
-// Package pluginreg is the dynamic plugin registry (epic #1427, P0 #1428):
-// entries parsed from quack.yaml's plugins.seed, a filesystem-backed store of
-// resolved rows, and git fetch/update-check against the entry's remote.
+// Package pluginreg is the dynamic plugin registry: plugins.seed entries, stored rows, and git
+// fetch/update-check against each entry's remote.
 package pluginreg
 
 import (
@@ -41,7 +40,8 @@ type Entry struct {
 	Root string
 }
 
-// Name: repo for a github entry, except with #path the last path segment names the row (a trailing "plugin" names its parent, #1512), so one repo can host several plugins.
+// Name is the repo for a github entry; with #path the last segment names the row (a trailing "plugin"
+// names its parent), so one repo can host several plugins.
 func (e Entry) Name() string {
 	if e.Source == SourceGitHub {
 		if e.Path != "" {
@@ -57,9 +57,8 @@ func (e Entry) Name() string {
 	return filepath.Base(e.Raw)
 }
 
-// ParseEntry parses one plugins.seed line. `github:owner/repo[@ref][#path]`
-// is a github entry; anything else is a local-root entry (today's bare
-// plugins: list form), with no clone and Root equal to the string itself.
+// ParseEntry parses one plugins.seed line: `github:owner/repo[@ref][#path]` is a github entry, anything
+// else a local root with no clone.
 func ParseEntry(s string) (Entry, error) {
 	if s == "" {
 		return Entry{}, fmt.Errorf("plugin entry is empty")
@@ -97,9 +96,8 @@ func ParseEntry(s string) (Entry, error) {
 	return Entry{Raw: s, Source: SourceGitHub, Owner: owner, Repo: repo, Ref: ref, Path: cleanPath}, nil
 }
 
-// cleanSubPath validates and normalizes #path: relative, and never escaping
-// the plugin root once joined - checked again at Plugin.Root() since a row
-// read back from disk is trusted without re-parsing.
+// cleanSubPath validates #path as relative and non-escaping; Plugin.Root rechecks, since rows read back
+// from disk are trusted.
 func cleanSubPath(raw string) (string, error) {
 	if raw == "" {
 		return "", nil

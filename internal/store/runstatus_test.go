@@ -100,9 +100,7 @@ func TestChatsWithRunningNode(t *testing.T) {
 	}
 }
 
-// TestDeriveTerminalStatus_FailedNodeCarriesItsErrorText is #1105's core
-// contract: a failed node's own error string rides along on the derived
-// status, so a run that died on a repeated gateway error can be reported as such instead of collapsing into the generic silent-gap message.
+// A failed node's own error rides along on the derived status, instead of the generic silent-gap message.
 func TestDeriveTerminalStatus_FailedNodeCarriesItsErrorText(t *testing.T) {
 	turns := []TurnContent{{
 		AsstText: "",
@@ -123,9 +121,7 @@ func TestDeriveTerminalStatus_FailedNodeCarriesItsErrorText(t *testing.T) {
 	}
 }
 
-// TestDeriveTerminalStatus_TrueSilentGapStaysUntouched is the negative case
-// (#568): an empty answer with no failed node must still report idle with no
-// error text - a run that legitimately had nothing to say.
+// An empty answer with no failed node still reports idle with no error text.
 func TestDeriveTerminalStatus_TrueSilentGapStaysUntouched(t *testing.T) {
 	turns := []TurnContent{{AsstText: "", Nodes: []DagNode{{NodeID: "n1", Status: "done"}}}}
 	status, _, nodeError := DeriveTerminalStatus("c1", turns, "", false)
@@ -134,9 +130,8 @@ func TestDeriveTerminalStatus_TrueSilentGapStaysUntouched(t *testing.T) {
 	}
 }
 
-// TestDeriveTerminalStatus_FailedNodeWithSilentGapSentinelReportsNoError is
-// #1109 review finding 2: a failed node whose Error is exactly
-// dag.SilentGapError (the true #568 silent gap, persisted on the DagNode row regardless) must still hand back nodeError == "" - that sentinel is not a real cause to surface downstream as if it were.
+// A failed node whose Error is exactly dag.SilentGapError hands back nodeError == "": the sentinel is not a
+// real cause.
 func TestDeriveTerminalStatus_FailedNodeWithSilentGapSentinelReportsNoError(t *testing.T) {
 	turns := []TurnContent{{AsstText: "", Nodes: []DagNode{{NodeID: "n1", Status: "failed", Error: dag.SilentGapError}}}}
 	status, _, nodeError := DeriveTerminalStatus("c1", turns, "", false)
@@ -148,9 +143,8 @@ func TestDeriveTerminalStatus_FailedNodeWithSilentGapSentinelReportsNoError(t *t
 	}
 }
 
-// TestDeriveTerminalStatus_OrchestratorPlanningFailureNoDagNode is #1156: a
-// gateway failure during the orchestrator's own planning turn - before any
-// DAG plan/node exists - has no DagNode.Error to read, but the same inference failure tracker DAG nodes use still holds it (keyed with an empty node/agent, matching the orchestrator's own ledger.Coords). The empty turn must end failed with that classified error, not fall through to the generic silent-gap idle status.
+// A gateway failure during orchestrator planning leaves no DagNode, but the inference tracker holds it under
+// an empty node/agent; the empty turn must end failed with that error, not idle.
 func TestDeriveTerminalStatus_OrchestratorPlanningFailureNoDagNode(t *testing.T) {
 	const chatID = "c-planning-1156"
 	t.Cleanup(func() { inference.ClearFailure(chatID, "", "") })
@@ -168,20 +162,15 @@ func TestDeriveTerminalStatus_OrchestratorPlanningFailureNoDagNode(t *testing.T)
 		t.Fatalf("nodeError = %q, want the classified gateway error with the attempt count", nodeError)
 	}
 
-	// A repeat read (e.g. GetChat well after the run ended) must see the same
-	// failed status, not fall back to idle once the first read has happened -
-	// the tracker must not be consumed as a side effect of deriving status.
+	// A repeat read must see the same failed status: deriving status must not consume the tracker.
 	status2, _, nodeError2 := DeriveTerminalStatus(chatID, turns, "", false)
 	if status2 != RunStatusFailed || nodeError2 != nodeError {
 		t.Fatalf("second read = %q/%q, want the same failed status/error as the first read", status2, nodeError2)
 	}
 }
 
-// TestDeriveTerminalStatus_GuardHardStopReusesPlanRejectionPath is #1391: the
-// repeat guard's hard stop records through inference.RecordPlanRejection (the
-// same tracker a rejected plan uses) rather than a new one, so an empty turn
-// after a hard stop fails with the loop's own reason, and a repeat read (e.g.
-// GetChat) sees the same failed status without consuming the record.
+// The repeat guard's hard stop records through inference.RecordPlanRejection, so the empty turn fails with
+// the loop's reason, and a repeat read sees it without consuming the record.
 func TestDeriveTerminalStatus_GuardHardStopReusesPlanRejectionPath(t *testing.T) {
 	const chatID = "c-guard-stop-1391"
 	t.Cleanup(func() { inference.ClearPlanRejection(chatID) })
@@ -202,9 +191,8 @@ func TestDeriveTerminalStatus_GuardHardStopReusesPlanRejectionPath(t *testing.T)
 	}
 }
 
-// TestDeriveTerminalStatus_StoreFailureNamesDatabaseNoCredentials is #1193: a
-// dial error surviving the pgdial retry (recorded via
-// inference.RecordStoreFailure, as failSoftListArtifacts.List does) must fail the run with a message naming "database", and any DSN credentials in the raw error must never reach the stored/derived text.
+// A dial error recorded via inference.RecordStoreFailure fails the run with a message naming "database",
+// and DSN credentials never reach the derived text.
 func TestDeriveTerminalStatus_StoreFailureNamesDatabaseNoCredentials(t *testing.T) {
 	const chatID = "c-store-1193"
 	t.Cleanup(func() { inference.ClearStoreFailure(chatID) })
@@ -248,9 +236,7 @@ func TestScanOrphanedRuns_LeavesHealthyChatsAlone(t *testing.T) {
 	}
 }
 
-// TestStampTerminalOutcome_RealSessionAnsweredTurnStaysIdle pins perf audit #3's
-// StampTerminalOutcome rewire: loading just the newest turn (GetLastTurnWithContent)
-// instead of the whole chat (GetTurnsWithContent) must still derive idle for a turn with a real, non-empty answer - the common case, not just the empty/failed ones the other DeriveTerminalStatus fixtures cover.
+// StampTerminalOutcome loading only the newest turn must still derive idle for a real, non-empty answer.
 func TestStampTerminalOutcome_RealSessionAnsweredTurnStaysIdle(t *testing.T) {
 	st := newRunStatusTestStore(t)
 	ctx := context.Background()

@@ -9,9 +9,8 @@ import (
 	"strings"
 )
 
-// mcpSchemaID is the only mcp.json $schema quack recognizes (spec §7.2.1
-// forbids fetching a schema while loading, so recognition is a literal
-// match against the versions this build implements).
+// mcpSchemaID is the only mcp.json $schema quack recognizes: §7.2.1 forbids fetching a schema at load,
+// so recognition is a literal match.
 const mcpSchemaID = "https://agent-plugins.org/schemas/1.1.0/mcp.schema.json"
 
 // Reserved subprocess variables (§9.1). The client supplies them; a server's
@@ -21,9 +20,8 @@ const (
 	envPluginData = "PLUGIN_DATA"
 )
 
-// MCPServer is one stdio entry from mcp.json, still carrying its
-// ${PLUGIN_ROOT}/${PLUGIN_DATA} placeholders. Only the stdio transport is
-// modelled: §7.2.3 requires supporting at least one of stdio/streamable-http, and §7.2.2 rule 4 makes skipping an unsupported transport the conformant response, not a failure.
+// MCPServer is one stdio entry from mcp.json, placeholders unexpanded. Only stdio is modelled; §7.2.2
+// makes skipping an unsupported transport conformant.
 type MCPServer struct {
 	Command string
 	Args    []string
@@ -37,9 +35,8 @@ type mcpFile struct {
 	MCPServers map[string]json.RawMessage `json:"mcpServers"`
 }
 
-// mcpEntry is one server config. The variants are closed (§7.2.1), so an
-// unknown field or a field from another variant invalidates the entry -
-// DisallowUnknownFields plus the per-type field checks below.
+// mcpEntry is one server config. The variants are closed (§7.2.1), so an unknown or cross-variant field
+// invalidates the entry.
 type mcpEntry struct {
 	Type    string            `json:"type"`
 	Command string            `json:"command"`
@@ -132,14 +129,8 @@ func parseMCPEntry(raw json.RawMessage) (*MCPServer, error) {
 	return &MCPServer{Command: e.Command, Args: e.Args, Env: e.Env, Cwd: e.Cwd}, nil
 }
 
-// Launch expands this server's placeholders against the plugin root and its
-// client-managed data directory (§9), resolving command and cwd to absolute,
-// contained paths; env comes back as KEY=VALUE overlay entries with the two
-// reserved variables appended last, as §9.1 requires.
-//
-// cwd is always inside PLUGIN_DATA, not the plugin root (§7.2.1's default): a
-// sandboxed child's own working directory is necessarily writable, and a
-// server that can rewrite its root can rewrite the skills/ that reach agent prompts. quack keeps the root read-only and diverges here on purpose - the root stays readable, so ./bin commands and ${PLUGIN_ROOT} references are unaffected.
+// Launch expands placeholders against the plugin root and data dir (§9) into contained absolute paths.
+// cwd is inside PLUGIN_DATA, not the root (diverging from §7.2.1) so the root stays read-only to the child.
 func (s MCPServer) Launch(root, data string) (argv []string, env []string, cwd string, err error) {
 	expand := strings.NewReplacer("${"+envPluginRoot+"}", root, "${"+envPluginData+"}", data).Replace
 

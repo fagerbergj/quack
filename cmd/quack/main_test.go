@@ -6,9 +6,8 @@ import (
 	"testing"
 )
 
-// TestCommandTree asserts the cobra wiring: the expected verbs are registered
-// (so a typo in AddCommand fails here, not at runtime) and `version` actually
-// prints the stamp rather than erroring like the not-yet-wired stubs.
+// TestCommandTree: the expected verbs are registered (an AddCommand typo fails here)
+// and `version` prints the stamp.
 func TestCommandTree(t *testing.T) {
 	root := newRootCmd()
 
@@ -34,9 +33,8 @@ func TestCommandTree(t *testing.T) {
 		}
 	}
 
-	// `chat node stop|pause|resume|queue|queue-edit|queue-remove|edit|retry`
-	// are the deepest leaves - prove 3-level nesting resolves and the full
-	// updateNodeStatus + queue + edit surface is wired (#265).
+	// The `chat node` leaves are the deepest: prove 3-level nesting resolves
+	// and the node status, queue and edit surface is wired.
 	for _, sub := range []string{"stop", "pause", "resume", "queue", "queue-edit", "queue-remove", "edit", "retry"} {
 		if c, _, err := root.Find([]string{"chat", "node", sub}); err != nil || c.Name() != sub {
 			t.Errorf("chat node %s not registered: %v", sub, err)
@@ -60,9 +58,8 @@ func TestCommandTree(t *testing.T) {
 	}
 }
 
-// TestBareCommandPrintsHelp: `quack` with no args and no -p prints the root
-// help text (pointing at -p / chat send / chat show) and does not error - no
-// TUI to launch.
+// TestBareCommandPrintsHelp: bare `quack` prints root help (pointing at -p / chat send / chat show)
+// without erroring.
 func TestBareCommandPrintsHelp(t *testing.T) {
 	root := newRootCmd()
 	var out bytes.Buffer

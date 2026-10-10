@@ -2,7 +2,6 @@ package memory
 
 import (
 	"context"
-	"iter"
 	"strings"
 	"testing"
 
@@ -12,9 +11,8 @@ import (
 	"google.golang.org/genai"
 )
 
-// The bucket model (shared, subject-keyed memory): a memory belongs to a bucket
-// describing WHAT IT IS ABOUT - the repo, the role family, or the user - never to
-// the agent that happened to write it. These tests are the contract.
+// A memory belongs to a bucket for what it is about (repo, role family, or user), never to the agent
+// that wrote it. These tests are the contract.
 
 const (
 	repoA = "github.com/acme/games"
@@ -46,9 +44,7 @@ func recall(t *testing.T, v *View, query string) []adkmemory.Entry {
 	return resp.Memories
 }
 
-// TestRepoBucketSharedByEveryCodingAgent is the whole point of the redesign: what
-// the EXPLORER learns about a repo must reach the IMPLEMENTER and the REVIEWER -
-// they work on the same subject, so they share the same bucket.
+// What the explorer learns about a repo must reach the implementer and reviewer: same subject, same bucket.
 func TestRepoBucketSharedByEveryCodingAgent(t *testing.T) {
 	ctx := context.Background()
 	const fact = "load-games.ts registers every game; a new game must be added there"
@@ -130,9 +126,7 @@ func TestUserBucketRecalledByEveryone(t *testing.T) {
 	}
 }
 
-// TestLegacyAgentScopedMemoriesStillLoad: memories written before the redesign are
-// keyed by the raw agent name (task) or raw user id (user). Reads stay tolerant of
-// them - no migration, nothing lost.
+// Pre-bucket memories keyed by raw agent name (task) or user id (user) still load; no migration.
 func TestLegacyAgentScopedMemoriesStillLoad(t *testing.T) {
 	s := newSQLiteStore(t, "task", nil)
 	upsertScoped(t, s, "1", "web-researcher", "transportforireland.ie is authoritative for Irish transit")
@@ -147,12 +141,11 @@ func TestLegacyAgentScopedMemoriesStillLoad(t *testing.T) {
 	}
 }
 
-// TestCommitRoutesCandidatesToTheirBuckets: one commit, three subjects - each
-// candidate lands in the bucket it declared, and the answer-extraction lands in the
-// default bucket (the repo, when the node has one).
+// One commit, three subjects: each candidate lands in its declared bucket, and the answer-extraction
+// lands in the default bucket.
 func TestCommitRoutesCandidatesToTheirBuckets(t *testing.T) {
 	ctx := context.Background()
-	s := newSQLiteStore(t, "task", echoModel{})
+	s := newSQLiteStore(t, "task", funcModel(echoOps))
 
 	sc := Scope{Repo: repoA, Role: RoleCoding, User: "u1", Legacy: "code-explorer"}
 	if _, err := s.Commit(ctx, sc, "code-explorer", Provenance{}, []Candidate{
@@ -178,12 +171,10 @@ func TestCommitRoutesCandidatesToTheirBuckets(t *testing.T) {
 	}
 }
 
-// TestCommitFallsBackToRoleWithoutARepo: a deployment (or a node) with no repo
-// context must still work - a repo-bucket write with no known repo falls back to the
-// role bucket rather than guessing a key.
+// A repo-bucket write with no known repo falls back to the role bucket rather than guessing a key.
 func TestCommitFallsBackToRoleWithoutARepo(t *testing.T) {
 	ctx := context.Background()
-	s := newSQLiteStore(t, "task", echoModel{})
+	s := newSQLiteStore(t, "task", funcModel(echoOps))
 
 	sc := Scope{Role: RoleCoding, User: "u1", Legacy: "code-implementer"} // no Repo
 	if _, err := s.Commit(ctx, sc, "code-implementer", Provenance{},
@@ -236,23 +227,15 @@ func TestScopeBuckets(t *testing.T) {
 	}
 }
 
-// echoModel is a consolidator that ADDs every staged candidate verbatim - so a test
-// can assert WHICH bucket each one landed in.
-type echoModel struct{}
-
-func (echoModel) Name() string { return "echo-consolidator" }
-
-func (echoModel) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+// echoOps ADDs every staged candidate verbatim, so a test can assert which bucket each landed in.
+func echoOps(req *model.LLMRequest) string {
 	var ops []string
 	for _, line := range strings.Split(promptText(req), "\n") {
 		if content, ok := strings.CutPrefix(line, "- "); ok {
 			ops = append(ops, `{"action":"ADD","content":"`+content+`","kind":"convention"}`)
 		}
 	}
-	reply := `{"ops":[` + strings.Join(ops, ",") + `]}`
-	return func(yield func(*model.LLMResponse, error) bool) {
-		yield(&model.LLMResponse{Content: &genai.Content{Parts: []*genai.Part{{Text: reply}}}}, nil)
-	}
+	return `{"ops":[` + strings.Join(ops, ",") + `]}`
 }
 
 // promptText is the consolidation request's user text (the STAGED CANDIDATES block).

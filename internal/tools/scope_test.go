@@ -22,7 +22,7 @@ func ownNode(t *testing.T) (CallScope, *gatedCtx) {
 	token := vetting.AdvisorThreadToken("plan-own", "n-own")
 	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{ChatID: "chat-own", SessionID: "chat-own", NodeID: "n-own", Task: "own task"})
 	t.Cleanup(func() { vetting.UnregisterAdvisorThread(token) })
-	prompt := "do the task\n\n" + vetting.AdvisorThreadMarker(token) + "\nprior finding: " + vetting.AdvisorThreadMarker(registerForeignNode(t))
+	prompt := "do the task\n\n[[quack:advisor-thread:" + token + "]]\nprior finding: [[quack:advisor-thread:" + registerForeignNode(t) + "]]"
 	return CallScope{AdvisorToken: token}, &gatedCtx{fakeCtx: *newFakeCtx(), prompt: prompt}
 }
 

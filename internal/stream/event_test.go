@@ -64,9 +64,7 @@ func TestTranslatorRunLifecycle(t *testing.T) {
 	}
 }
 
-// ACP emits a tool-call-start update and a completion update that both carry the
-// FunctionCall part for the same call ID (e.g. pairSpec re-includes it alongside the
-// FunctionResponse); the Translator must not turn that into two agent_tool_call events.
+// ACP sends start and completion updates carrying the same FunctionCall; the Translator must emit one tool call.
 func TestTranslatorDedupsToolCallByID(t *testing.T) {
 	tr := NewTranslator()
 	tr.Event(eventWith(AgentStartPart("r1", "web-researcher", StageWorker, 0)))
@@ -119,9 +117,7 @@ func TestTranslatorAccumulatesUsageOntoComplete(t *testing.T) {
 	}
 }
 
-// TestTranslatorUsageWithoutMarkers covers the orchestrator's own un-gated
-// direct-answer session: it feeds raw model events straight to the Translator
-// with no agent_start/agent_complete markers at all (curRun never opens), so Usage() must still report the accumulated totals for the caller to stamp onto its own manually-built agent_complete event.
+// The orchestrator's un-gated session never opens a run, so Usage() must still report accumulated totals.
 func TestTranslatorUsageWithoutMarkers(t *testing.T) {
 	tr := NewTranslator()
 	usage := eventWith(&genai.Part{Text: "the answer"})
@@ -186,9 +182,7 @@ func TestTranslatorNilSafe(t *testing.T) {
 	}
 }
 
-// A failing judge legitimately scores 0.0/passed=false. Those must survive JSON
-// serialization (omitempty would drop them), or the UI shows no score badge for
-// failing judges - only passing ones.
+// A failing judge's 0.0/passed=false must survive JSON, or the UI drops the failing score badge.
 func TestAgentCompleteJudgeZeroScoreSerializes(t *testing.T) {
 	b, err := json.Marshal(AgentCompleteData{RunID: "r1", Stage: StageJudge, Round: 1, Score: 0, Passed: false, Feedback: "failed clean_output"})
 	if err != nil {
@@ -222,10 +216,7 @@ func TestAgentCompleteNonJudgeOmitsScore(t *testing.T) {
 	}
 }
 
-// TestDagNodeDefArtifactWireShape pins the #1178 wire addition: the node's
-// declared output kind crosses the wire as "artifact" and stays out of the
-// JSON when the node declares none, so a PlanJSON persisted before the field
-// existed still parses on reload.
+// The node's output kind crosses the wire as "artifact" and is omitted when unset, so older PlanJSON still parses.
 func TestDagNodeDefArtifactWireShape(t *testing.T) {
 	b, err := json.Marshal(DagNodeDef{ID: "a", Agent: "web-researcher", Task: "research", DependsOn: []string{}, Artifact: "text"})
 	if err != nil {
@@ -252,9 +243,7 @@ func TestDagNodeDefArtifactWireShape(t *testing.T) {
 	}
 }
 
-// Marker-part builders: v1-gate wire fixtures kept ONLY to exercise the
-// Translator's decoder (production code no longer emits markers).
-// AgentStartPart encodes (test fixture) the start of an agent run.
+// Marker-part builders: v1-gate fixtures kept only to exercise the Translator's decoder.
 func AgentStartPart(runID, agent, stage string, round int) *genai.Part {
 	return &genai.Part{FunctionResponse: &genai.FunctionResponse{
 		Name:     agentStartTool,
@@ -262,9 +251,7 @@ func AgentStartPart(runID, agent, stage string, round int) *genai.Part {
 	}}
 }
 
-// AgentCompletePart encodes (test fixture) the end of an agent run with its stage-specific
-// result. Token usage / model / finish_reason are filled in by the Translator
-// from the run's model events, so the gate need not supply them.
+// AgentCompletePart encodes a run's end; the Translator fills usage/model/finish_reason from the run's events.
 func AgentCompletePart(d AgentCompleteData) *genai.Part {
 	resp := map[string]any{"run_id": d.RunID, "stage": d.Stage, "round": d.Round}
 	if d.Stage == StageJudge {

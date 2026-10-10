@@ -1,8 +1,5 @@
-// Package openaimodel is a vendored + modified copy of github.com/byebyebruce/adk-go-openai,
-// adapting an OpenAI-compatible endpoint to ADK's model.LLM. Modifications: reasoning_content
-// is surfaced as Thought parts (both streaming and non-streaming) so the UI can render thinking.
-// Now uses github.com/openai/openai-go/v3 (official SDK) for input_audio support in Phase 2+.
-// Upstream is MIT-licensed.
+// Package openaimodel adapts an OpenAI-compatible endpoint to ADK's model.LLM, surfacing reasoning as Thought parts.
+// Modified from github.com/byebyebruce/adk-go-openai (MIT).
 package openaimodel
 
 import (
@@ -14,10 +11,10 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
+	"maps"
 	"net/http"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 	"sync/atomic"
 
@@ -38,9 +35,7 @@ var ErrNoChoicesInResponse = errors.New("no choices in OpenAI response")
 type OpenAIModel struct {
 	client    openai.Client
 	ModelName string
-	// DefaultEffort is models.<name>.effort ("", "low", "medium", "high"); it
-	// sets reasoning_effort on every call unless the request already carries
-	// its own ThinkingConfig (e.g. the judge's gates.judge.thinking_level).
+	// DefaultEffort is models.<name>.effort; a request's own ThinkingConfig wins over it.
 	DefaultEffort string
 }
 
@@ -57,14 +52,12 @@ func NewOpenAIModel(modelName, endpoint, apiKey, defaultEffort string) *OpenAIMo
 	}
 }
 
-// Name implements model.LLM.
 func (o *OpenAIModel) Name() string {
 	return o.ModelName
 }
 
-// reasoningUsage subtracts reasoning tokens from completionTokens so output
-// means answer, not answer+reasoning. Estimates chars/4 when the provider
-// doesn't report reasoning_tokens (llama-server: #968).
+// reasoningUsage makes output mean answer only, not answer+reasoning. Estimates chars/4 when
+// the provider omits reasoning_tokens (llama-server).
 func reasoningUsage(ctx context.Context, model string, completionTokens, reasoningTokens int32, reasoningText string) (candidates, thoughts int32) {
 	if reasoningTokens == 0 && reasoningText != "" {
 		reasoningTokens = int32((len(reasoningText) + 3) / 4)
@@ -78,7 +71,6 @@ func reasoningUsage(ctx context.Context, model string, completionTokens, reasoni
 	return candidates, reasoningTokens
 }
 
-// bestEffortKey marks a context via WithBestEffort.
 type bestEffortKey struct{}
 
 // WithBestEffort: caller already logs its own degraded outcome, so apiErr
@@ -87,7 +79,6 @@ func WithBestEffort(ctx context.Context) context.Context {
 	return context.WithValue(ctx, bestEffortKey{}, true)
 }
 
-// IsBestEffort exposes the marker for test verification.
 func IsBestEffort(ctx context.Context) bool {
 	return ctx.Value(bestEffortKey{}) != nil
 }
@@ -119,32 +110,24 @@ func (o *OpenAIModel) apiErr(ctx context.Context, op string, err error) error {
 	return fmt.Errorf("openai %s (%s): %w", o.ModelName, op, err)
 }
 
-// EmbedUsage is the token accounting an OpenAI-compatible /embeddings response
-// reports. There is no output/reasoning/cached split - an embedding call has
-// no completion, so PromptTokens and TotalTokens are normally equal.
+// EmbedUsage is an /embeddings usage block; with no completion, PromptTokens normally equals TotalTokens.
 type EmbedUsage struct {
 	PromptTokens int64
 	TotalTokens  int64
 }
 
-// Embed returns one embedding vector per input text, in input order, from the
-// OpenAI-compatible /embeddings endpoint. It uses o.ModelName as the embedding
-// model, so an OpenAIModel constructed with an embedding model name doubles as an
-// embedder (the same client/endpoint serves both).
+// Embed returns one vector per text, in input order, using ModelName as the embedding model.
 func (o *OpenAIModel) Embed(ctx context.Context, texts []string) ([][]float32, error) {
 	out, _, err := o.EmbedWithUsage(ctx, texts)
 	return out, err
 }
 
-// EmbedWithUsage is Embed plus the response's usage block, for callers that
-// need token accounting (inference.tracedModel) without widening the public
-// Embedder interface every other caller sees.
+// EmbedWithUsage is Embed plus usage, kept off the public Embedder interface.
 func (o *OpenAIModel) EmbedWithUsage(ctx context.Context, texts []string) ([][]float32, EmbedUsage, error) {
 	if len(texts) == 0 {
 		return nil, EmbedUsage{}, nil
 	}
-	// Regenerating an embedding has no externally-visible side effect (unlike
-	// a GitHub comment/merge), so a retry-after-server-fault is safe here.
+	// Embedding has no external side effect, so retrying a server fault is safe.
 	resp, err := o.client.Embeddings.New(httpx.WithIdempotent(ctx), openai.EmbeddingNewParams{
 		Model: openai.EmbeddingModel(o.ModelName),
 		Input: openai.EmbeddingNewParamsInputUnion{OfArrayOfStrings: texts},
@@ -171,7 +154,6 @@ func (o *OpenAIModel) EmbedWithUsage(ctx context.Context, texts []string) ([][]f
 	return out, usage, nil
 }
 
-// GenerateContent implements model.LLM.
 func (o *OpenAIModel) GenerateContent(ctx context.Context, req *model.LLMRequest, stream bool) iter.Seq2[*model.LLMResponse, error] {
 	if stream {
 		return o.generateStream(ctx, req)
@@ -179,10 +161,8 @@ func (o *OpenAIModel) GenerateContent(ctx context.Context, req *model.LLMRequest
 	return o.generate(ctx, req)
 }
 
-// applyDefaultEffort fills req.Config.ThinkingConfig from DefaultEffort when
-// the caller sent none - mutates req in place so the ledger's emitChatEvent
-// (which reads the same req after this call returns) records the resolved
-// effort too, not just the outgoing HTTP request.
+// applyDefaultEffort mutates req in place so the ledger, which reads the same req later,
+// records the resolved effort too.
 func (o *OpenAIModel) applyDefaultEffort(req *model.LLMRequest) {
 	if o.DefaultEffort == "" {
 		return
@@ -196,9 +176,8 @@ func (o *OpenAIModel) applyDefaultEffort(req *model.LLMRequest) {
 	req.Config.ThinkingConfig = effortThinkingConfig(o.DefaultEffort)
 }
 
-// effortThinkingConfig maps models.<name>.effort to genai's enum - the same
-// low/medium/high vocabulary as gates.judge.thinking_level. Config.validate
-// is the gate for "low"/"medium"/"high"/""; an unrecognized value here (this path is unreachable for a validated config) sends no ThinkingConfig rather than silently guessing medium.
+// effortThinkingConfig maps models.<name>.effort to genai's enum. Config.validate rejects other
+// values; one reaching here sends no ThinkingConfig rather than guessing medium.
 func effortThinkingConfig(effort string) *genai.ThinkingConfig {
 	switch effort {
 	case "low":
@@ -221,8 +200,7 @@ func (o *OpenAIModel) generate(ctx context.Context, req *model.LLMRequest) iter.
 			return
 		}
 
-		// A completion has no externally-visible side effect until quack acts on
-		// it, so retrying a fault (e.g. a 502 mid model-swap, #572) is safe.
+		// A completion has no side effect until quack acts on it, so retrying a 502 is safe.
 		resp, err := o.client.Chat.Completions.New(httpx.WithIdempotent(ctx), openaiReq)
 		if err != nil {
 			yield(nil, o.apiErr(ctx, "generate", err))
@@ -266,8 +244,7 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 		}
 
 		if err := stream.Err(); err != nil {
-			// The streaming path is what the agents use, so this is where a model
-			// 400 (context/tool/format) actually surfaces - log status+body here.
+			// Agents stream, so this is where a model 400 actually surfaces.
 			yield(nil, o.apiErr(ctx, "generate_stream", err))
 			return
 		}
@@ -276,8 +253,7 @@ func (o *OpenAIModel) generateStream(ctx context.Context, req *model.LLMRequest)
 	}
 }
 
-// streamAgg accumulates one streaming generation across chunks so the
-// per-chunk and finalization steps each stay small.
+// streamAgg accumulates one streaming generation across chunks.
 type streamAgg struct {
 	content        *genai.Content
 	finishReason   genai.FinishReason
@@ -287,14 +263,13 @@ type streamAgg struct {
 	lastPartIsText bool
 }
 
-// processChunk folds one chunk into s and yields incremental parts; it
-// returns false once the consumer has stopped (yield answered no).
+// processChunk returns false once the consumer stops.
 func (o *OpenAIModel) processChunk(ctx context.Context, chunk openai.ChatCompletionChunk, s *streamAgg, yield func(*model.LLMResponse, error) bool) bool {
 	if chunk.Model != "" {
 		s.modelVersion = chunk.Model
 	}
 
-	// Capture usage - present on the final usage-only chunk when IncludeUsage is set.
+	// Usage arrives on the final usage-only chunk when IncludeUsage is set.
 	if chunk.Usage.TotalTokens > 0 {
 		s.usage = &genai.GenerateContentResponseUsageMetadata{
 			PromptTokenCount:        int32(chunk.Usage.PromptTokens),
@@ -303,12 +278,6 @@ func (o *OpenAIModel) processChunk(ctx context.Context, chunk openai.ChatComplet
 			CachedContentTokenCount: int32(chunk.Usage.PromptTokensDetails.CachedTokens),
 			ThoughtsTokenCount:      int32(chunk.Usage.CompletionTokensDetails.ReasoningTokens),
 		}
-		// Temporary raw usage trace - remove once prod confirms whether the endpoint sends
-		// prompt_tokens_details.cached_tokens at all (a 0 here with caching is server-side).
-		slog.Debug("provider token usage", "component", "inference", "model", o.ModelName,
-			"prompt_tokens", chunk.Usage.PromptTokens, "cached_tokens", chunk.Usage.PromptTokensDetails.CachedTokens,
-			"completion_tokens", chunk.Usage.CompletionTokens, "reasoning_tokens", chunk.Usage.CompletionTokensDetails.ReasoningTokens,
-			"total_tokens", chunk.Usage.TotalTokens)
 	}
 
 	if len(chunk.Choices) == 0 {
@@ -317,7 +286,6 @@ func (o *OpenAIModel) processChunk(ctx context.Context, chunk openai.ChatComplet
 
 	choice := chunk.Choices[0]
 
-	// Handle delta content.
 	if choice.Delta.Content != "" {
 		part := &genai.Part{Text: choice.Delta.Content}
 		if s.lastPartIsText {
@@ -341,7 +309,7 @@ func (o *OpenAIModel) processChunk(ctx context.Context, chunk openai.ChatComplet
 		return false
 	}
 
-	// Handle tool calls in delta - aggregate across chunks keyed by index.
+	// Tool calls arrive split across chunks, keyed by index.
 	for _, toolCall := range choice.Delta.ToolCalls {
 		idx := toolCall.Index
 		builder, exists := s.toolCalls[idx]
@@ -364,8 +332,7 @@ func (o *OpenAIModel) processChunk(ctx context.Context, chunk openai.ChatComplet
 	return true
 }
 
-// emitReasoningPart surfaces reasoning_content as a Thought part so the UI can
-// render thinking; it gates on the raw bytes - openai-go marks untyped ExtraFields as status "invalid" (no typed extras decoder), so Valid() is always false.
+// emitReasoningPart surfaces reasoning as a Thought part so the UI can render thinking.
 func emitReasoningPart(choice openai.ChatCompletionChunkChoice, s *streamAgg, yield func(*model.LLMResponse, error) bool) bool {
 	text := reasoningExtra(choice.Delta.JSON.ExtraFields)
 	if text == "" {
@@ -381,17 +348,10 @@ func emitReasoningPart(choice openai.ChatCompletionChunkChoice, s *streamAgg, yi
 	}, nil)
 }
 
-// emitFinal appends the aggregated tool calls, runs the fallback ladder, and
-// yields the single terminal (TurnComplete) response for the generation.
+// emitFinal yields the single TurnComplete response, after tool-call aggregation and the fallback ladder.
 func (o *OpenAIModel) emitFinal(ctx context.Context, openaiReq openai.ChatCompletionNewParams, s *streamAgg, yield func(*model.LLMResponse, error) bool) {
-	// Emit aggregated tool calls as FunctionCall parts, ordered by index.
 	if len(s.toolCalls) > 0 {
-		indices := make([]int64, 0, len(s.toolCalls))
-		for idx := range s.toolCalls {
-			indices = append(indices, idx)
-		}
-		sort.Slice(indices, func(i, j int) bool { return indices[i] < indices[j] })
-		for _, idx := range indices {
+		for _, idx := range slices.Sorted(maps.Keys(s.toolCalls)) {
 			b := s.toolCalls[idx]
 			s.content.Parts = append(s.content.Parts, &genai.Part{
 				FunctionCall: &genai.FunctionCall{
@@ -416,8 +376,7 @@ func (o *OpenAIModel) emitFinal(ctx context.Context, openaiReq openai.ChatComple
 		s.modelVersion = string(openaiReq.Model)
 	}
 	if !hasAnswer {
-		// Reasoning-model failure mode: no answer text and no tool call, often the model spending its
-		// whole budget thinking. The non-streaming path does not log this (see golden_ladder_test.go).
+		// Often a reasoning model spending its whole budget thinking. Only the streaming path logs this.
 		var compl int32
 		if s.usage != nil {
 			compl = s.usage.CandidatesTokenCount
@@ -447,9 +406,8 @@ func (o *OpenAIModel) emitFinal(ctx context.Context, openaiReq openai.ChatComple
 	}, nil)
 }
 
-// logRequestTail logs, at Debug, the shape of the request the model
-// actually receives: content count and the last 12 entries as role/kind
-// (CALL:name / RESP:name(bytes) / text). This is the ground truth for loop and compaction diagnosis - "is the tool result the model should act on actually IN the request?" - which the #252 investigation could otherwise only answer by shipping a temporary instrumented image. QUACK_LOG_LEVEL=debug turns it on.
+// logRequestTail logs the last 12 entries the model receives as role/kind at Debug: ground truth for
+// loop and compaction diagnosis (is the tool result actually in the request?).
 func logRequestTail(req *model.LLMRequest, modelName string) {
 	if !slog.Default().Enabled(context.Background(), slog.LevelDebug) {
 		return
@@ -476,7 +434,6 @@ func logRequestTail(req *model.LLMRequest, modelName string) {
 		"n_contents", len(req.Contents), "tail", strings.Join(tail, " | "))
 }
 
-// toolCallBuilder helps aggregate tool call information across streaming chunks.
 type toolCallBuilder struct {
 	id   string
 	name string
@@ -498,8 +455,8 @@ func concatTarget(parts []*genai.Part, isTarget func(*genai.Part) bool) string {
 	return rb.String()
 }
 
-// recoverLeakedCalls: re-emit the isTarget parts with the first replaced by the
-// cleaned reasoning (one part - a block can span several), then append the calls.
+// recoverLeakedCalls replaces the isTarget parts with one cleaned part (a block can span
+// several), then appends the recovered calls.
 func recoverLeakedCalls(ctx context.Context, modelName string, parts []*genai.Part, isTarget func(*genai.Part) bool, thought bool, logMsg string) ([]*genai.Part, bool) {
 	calls, cleaned := reasoningToolCalls(concatTarget(parts, isTarget))
 	if len(calls) == 0 {
@@ -526,15 +483,12 @@ func recoverLeakedCalls(ctx context.Context, modelName string, parts []*genai.Pa
 	return rebuilt, true
 }
 
-// applyFallbackLadder: the shared recovery ladder - recover tool calls leaked as
-// XML into thinking (llama.cpp#22684) or the answer (#427). Callers log the
-// promotion/empty-turn cases themselves; their log text differs (golden_ladder_test.go).
+// applyFallbackLadder recovers tool calls leaked as XML into thinking (llama.cpp#22684) or the
+// answer, and promotes thinking to the answer when content is empty. Callers log promotion.
 func applyFallbackLadder(ctx context.Context, modelName string, parts []*genai.Part, haveToolCalls bool) (result []*genai.Part, hasAnswer, hadThinking bool, promotedChars int) {
 	result = parts
 
 	if !haveToolCalls {
-		// A leaked tool call can land in reasoning_content (Qwen/llama.cpp#22684),
-		// or - when nothing recovers there - in the plain answer text (#427).
 		if recovered, ok := recoverLeakedCalls(ctx, modelName, result, thoughtText, true, "recovered tool calls from reasoning_content (Qwen/llama.cpp#22684)"); ok {
 			result = recovered
 		} else if recovered, ok := recoverLeakedCalls(ctx, modelName, result, answerText, false, "recovered tool calls leaked into answer content (bare <function=> form, #427)"); ok {
@@ -551,8 +505,7 @@ func applyFallbackLadder(ctx context.Context, modelName string, parts []*genai.P
 		}
 	}
 
-	// #22684 content side: the answer can land entirely in reasoning_content,
-	// leaving content empty - promote it rather than emit an empty turn.
+	// The answer can land entirely in reasoning_content; promote it rather than emit an empty turn.
 	if !hasAnswer && hadThinking {
 		txt := strings.TrimSpace(concatTarget(result, thoughtText))
 		if txt != "" {
@@ -567,7 +520,7 @@ func applyFallbackLadder(ctx context.Context, modelName string, parts []*genai.P
 
 func toOpenAIChatCompletionRequest(req *model.LLMRequest, modelName string) (openai.ChatCompletionNewParams, error) {
 	messages := make([]openai.ChatCompletionMessageParamUnion, 0, len(req.Contents))
-	for _, content := range DropThoughts(req.Contents) {
+	for _, content := range req.Contents {
 		msgs, err := toOpenAIChatCompletionMessage(content)
 		if err != nil {
 			return openai.ChatCompletionNewParams{}, err
@@ -596,11 +549,7 @@ func toOpenAIChatCompletionRequest(req *model.LLMRequest, modelName string) (ope
 	return openaiReq, nil
 }
 
-// applyConfigKnobs: the config fields mapped onto the OpenAI request - thinking
-// effort, response format, tools, and the sampling knobs.
 func applyConfigKnobs(openaiReq *openai.ChatCompletionNewParams, cfg *genai.GenerateContentConfig) error {
-	// cfg.ThinkingConfig: set explicitly by the caller (e.g. gates.judge.thinking_level)
-	// or filled from models.<name>.effort by applyDefaultEffort upstream - the resolved effort.
 	if cfg.ThinkingConfig != nil {
 		switch cfg.ThinkingConfig.ThinkingLevel {
 		case genai.ThinkingLevelLow:
@@ -641,17 +590,12 @@ func applyConfigKnobs(openaiReq *openai.ChatCompletionNewParams, cfg *genai.Gene
 	if cfg.TopP != nil {
 		openaiReq.TopP = openai.Float(float64(*cfg.TopP))
 	}
-	if len(cfg.StopSequences) > 0 {
-		openaiReq.Stop = openai.ChatCompletionNewParamsStopUnion{
-			OfStringArray: cfg.StopSequences,
-		}
-	}
 
 	return nil
 }
 
-// applyTools maps the tool declarations and, for a NONE calling mode, tool_choice "none" -
-// the tools stay declared so the prompt head (and the server's prefix cache) is unchanged.
+// applyTools keeps tools declared under NONE mode (tool_choice "none") so the prompt head and the
+// server's prefix cache are unchanged.
 func applyTools(openaiReq *openai.ChatCompletionNewParams, cfg *genai.GenerateContentConfig) error {
 	if len(cfg.Tools) == 0 {
 		return nil
@@ -667,8 +611,7 @@ func applyTools(openaiReq *openai.ChatCompletionNewParams, cfg *genai.GenerateCo
 	return nil
 }
 
-// leadingToolResponses: collect the leading FunctionResponse parts as individual tool
-// messages; returns the messages and the index of the first non-FR part.
+// leadingToolResponses returns FunctionResponse parts as tool messages and the index past the last one.
 func leadingToolResponses(content *genai.Content) ([]openai.ChatCompletionMessageParamUnion, int, error) {
 	toolRespMessages := make([]openai.ChatCompletionMessageParamUnion, 0)
 	skipIdx := 0
@@ -687,7 +630,6 @@ func leadingToolResponses(content *genai.Content) ([]openai.ChatCompletionMessag
 	return toolRespMessages, skipIdx, nil
 }
 
-// roleMessage: a plain text message for the given (already-converted) role.
 func roleMessage(role, text string) openai.ChatCompletionMessageParamUnion {
 	switch role {
 	case "assistant":
@@ -698,8 +640,7 @@ func roleMessage(role, text string) openai.ChatCompletionMessageParamUnion {
 	return openai.UserMessage(text)
 }
 
-// convertParts: content parts into (joined text, user content parts, tool calls); errors on
-// unsupported audio/video and on PDF page rendering.
+// convertParts returns joined text, user content parts and tool calls; audio and video are rejected.
 func convertParts(parts []*genai.Part) (string, []openai.ChatCompletionContentPartUnionParam, []openai.ChatCompletionMessageToolCallUnionParam, error) {
 	var texts []string
 	var userParts []openai.ChatCompletionContentPartUnionParam
@@ -741,8 +682,7 @@ func convertParts(parts []*genai.Part) (string, []openai.ChatCompletionContentPa
 			case "video/mp4", "video/webm", "video/ogg":
 				return "", nil, nil, fmt.Errorf("unsupported video MIME type: %s", part.InlineData.MIMEType)
 			case "application/pdf":
-				// Vision models take images, not documents - expand the PDF into one
-				// image part per rendered page (#829) rather than rejecting it.
+				// Vision models take images, not documents: one image part per rendered page.
 				imgParts, err := pdfToImageParts(part.InlineData.Data)
 				if err != nil {
 					return "", nil, nil, err
@@ -752,13 +692,12 @@ func convertParts(parts []*genai.Part) (string, []openai.ChatCompletionContentPa
 				userParts = append(userParts, openai.TextContentPart(string(part.InlineData.Data)))
 			}
 		}
-		// FileData: OpenAI doesn't support file references directly; skip for now.
+		// FileData has no OpenAI equivalent and is skipped.
 	}
 	return strings.Join(texts, "\n"), userParts, toolCalls, nil
 }
 
-// DropThoughts returns contents without thought parts, copying only the
-// contents it changes: past reasoning is never re-sent, and the ledger records what is.
+// DropThoughts strips thought parts, copying only the contents it changes; past reasoning is never re-sent.
 func DropThoughts(contents []*genai.Content) []*genai.Content {
 	var out []*genai.Content
 	for i, c := range contents {
@@ -792,11 +731,9 @@ func toOpenAIChatCompletionMessage(content *genai.Content) ([]openai.ChatComplet
 	if len(parts) == 0 {
 		return toolRespMessages, nil
 	}
-	// Simple case: single text part - use the string variant of the message constructor.
 	if len(parts) == 1 && parts[0].Text != "" {
 		return append(toolRespMessages, roleMessage(convertRoleToOpenAI(content.Role), parts[0].Text)), nil
 	}
-	// Complex case: multiple parts or special part types (tool calls, images, etc.).
 	textContent, userParts, toolCalls, err := convertParts(parts)
 	if err != nil {
 		return nil, err
@@ -812,10 +749,8 @@ func toOpenAIChatCompletionMessage(content *genai.Content) ([]openai.ChatComplet
 		return append(toolRespMessages, openai.ChatCompletionMessageParamUnion{OfAssistant: &assistant}), nil
 	}
 	if len(userParts) > 0 {
-		// Multi-part user message (e.g. text + image).
 		return append(toolRespMessages, openai.UserMessage(userParts)), nil
 	}
-	// Fallback: plain text message.
 	return append(toolRespMessages, roleMessage(role, textContent)), nil
 }
 
@@ -840,8 +775,7 @@ func convertChatCompletionResponse(ctx context.Context, resp *openai.ChatComplet
 	}
 
 	haveToolCalls := len(choice.Message.ToolCalls) > 0
-	// Real tool-call parts must be in content.Parts BEFORE the ladder runs (as in
-	// the streaming path) - otherwise promotion fires on a tool-call turn (PR #1243).
+	// Tool-call parts must precede the ladder, or promotion fires on a tool-call turn.
 	for _, toolCall := range choice.Message.ToolCalls {
 		if toolCall.Type == "function" {
 			content.Parts = append(content.Parts, &genai.Part{
@@ -861,8 +795,7 @@ func convertChatCompletionResponse(ctx context.Context, resp *openai.ChatComplet
 			"component", "inference", "model", resp.Model, "chars", promotedChars)
 	}
 
-	// reasoningUsage estimates from the FINAL (post-recovery) thinking text, same
-	// as the streaming path - a stripped leaked block shouldn't inflate the estimate.
+	// Estimate from post-recovery thinking, so a stripped leaked block doesn't inflate it.
 	var finalThought strings.Builder
 	for _, p := range content.Parts {
 		if p.Thought && p.Text != "" {
@@ -881,15 +814,12 @@ func convertChatCompletionResponse(ctx context.Context, resp *openai.ChatComplet
 	}, nil
 }
 
-// reasoningContentText: the choice's reasoning_content extra field as text -
-// openai-go marks untyped ExtraFields "invalid", so gate on the raw bytes.
 func reasoningContentText(msg openai.ChatCompletionMessage) string {
 	return reasoningExtra(msg.JSON.ExtraFields)
 }
 
-// reasoningExtra: the reasoning text from a message's or delta's untyped extra
-// fields. vLLM >= 0.11 sends `reasoning`; llama.cpp and older vLLM send
-// `reasoning_content` - missing the former hid the judge's whole think budget.
+// reasoningExtra reads raw bytes: openai-go marks untyped ExtraFields "invalid". vLLM >= 0.11 sends
+// `reasoning`; llama.cpp and older vLLM send `reasoning_content`.
 func reasoningExtra(fields map[string]respjson.Field) string {
 	for _, key := range []string{"reasoning_content", "reasoning"} {
 		raw := fields[key].Raw()
@@ -904,28 +834,20 @@ func reasoningExtra(fields map[string]respjson.Field) string {
 	return ""
 }
 
-// usageMetadataFromResp: the genai usage metadata for the response (nil when the
-// endpoint sent no totals), with the raw provider-usage Debug trace.
+// usageMetadataFromResp is nil when the endpoint sent no totals.
 func usageMetadataFromResp(ctx context.Context, resp *openai.ChatCompletion, finalThoughtText string) *genai.GenerateContentResponseUsageMetadata {
 	if resp.Usage.TotalTokens <= 0 {
 		return nil
 	}
 	candidates, thoughts := reasoningUsage(ctx, resp.Model, int32(resp.Usage.CompletionTokens),
 		int32(resp.Usage.CompletionTokensDetails.ReasoningTokens), finalThoughtText)
-	usageMetadata := &genai.GenerateContentResponseUsageMetadata{
+	return &genai.GenerateContentResponseUsageMetadata{
 		PromptTokenCount:        int32(resp.Usage.PromptTokens),
 		CandidatesTokenCount:    candidates,
 		TotalTokenCount:         int32(resp.Usage.TotalTokens),
 		CachedContentTokenCount: int32(resp.Usage.PromptTokensDetails.CachedTokens),
 		ThoughtsTokenCount:      thoughts,
 	}
-	// Temporary raw usage trace - remove once prod confirms whether the endpoint
-	// sends prompt_tokens_details.cached_tokens (a 0 with caching is server-side).
-	slog.Debug("provider token usage", "component", "inference", "model", resp.Model,
-		"prompt_tokens", resp.Usage.PromptTokens, "cached_tokens", resp.Usage.PromptTokensDetails.CachedTokens,
-		"completion_tokens", resp.Usage.CompletionTokens, "reasoning_tokens", resp.Usage.CompletionTokensDetails.ReasoningTokens,
-		"total_tokens", resp.Usage.TotalTokens)
-	return usageMetadata
 }
 
 func convertTools(genaiTools []*genai.Tool) ([]openai.ChatCompletionToolUnionParam, error) {
@@ -946,8 +868,7 @@ func convertTools(genaiTools []*genai.Tool) ([]openai.ChatCompletionToolUnionPar
 	return tools, nil
 }
 
-// convertOneTool: one genai.Tool to OpenAI tool params (the unsupported
-// built-in tools are hard errors, function declarations carry the schema).
+// convertOneTool rejects genai's built-in tools; only function declarations map.
 func convertOneTool(genaiTool *genai.Tool) ([]openai.ChatCompletionToolUnionParam, error) {
 	var tools []openai.ChatCompletionToolUnionParam
 
@@ -978,7 +899,6 @@ func convertOneTool(genaiTool *genai.Tool) ([]openai.ChatCompletionToolUnionPara
 			params = shared.FunctionParameters(m)
 		}
 		if params == nil {
-			// Tool has no declared parameters - use an empty object schema.
 			params = shared.FunctionParameters{
 				"type":       "object",
 				"properties": map[string]any{},
@@ -994,71 +914,34 @@ func convertOneTool(genaiTool *genai.Tool) ([]openai.ChatCompletionToolUnionPara
 
 	return tools, nil
 }
+
+// convertSchema marshals a genai.Schema to JSON Schema; genai's types are upper-case enums.
 func convertSchema(schema *genai.Schema) (map[string]any, error) {
-	if schema == nil {
-		return map[string]any{
-			"type":       "object",
-			"properties": map[string]any{},
-		}, nil
+	b, err := json.Marshal(schema)
+	if err != nil {
+		return nil, fmt.Errorf("marshal schema: %w", err)
 	}
-
-	result := make(map[string]any)
-
-	if schema.Type != genai.TypeUnspecified {
-		result["type"] = convertSchemaType(schema.Type)
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, fmt.Errorf("unmarshal schema: %w", err)
 	}
-
-	if schema.Description != "" {
-		result["description"] = schema.Description
-	}
-
-	if len(schema.Properties) > 0 {
-		properties := make(map[string]any)
-		for propName, propSchema := range schema.Properties {
-			convertedProp, err := convertSchema(propSchema)
-			if err != nil {
-				return nil, err
-			}
-			properties[propName] = convertedProp
-		}
-		result["properties"] = properties
-	}
-
-	if len(schema.Required) > 0 {
-		result["required"] = schema.Required
-	}
-
-	if schema.Items != nil {
-		items, err := convertSchema(schema.Items)
-		if err != nil {
-			return nil, err
-		}
-		result["items"] = items
-	}
-
-	if len(schema.Enum) > 0 {
-		result["enum"] = schema.Enum
-	}
-
-	return result, nil
+	lowercaseTypes(m)
+	return m, nil
 }
 
-func convertSchemaType(t genai.Type) string {
-	switch t {
-	case genai.TypeString:
-		return "string"
-	case genai.TypeNumber:
-		return "number"
-	case genai.TypeInteger:
-		return "integer"
-	case genai.TypeBoolean:
-		return "boolean"
-	case genai.TypeArray:
-		return "array"
-	case genai.TypeObject:
-		return "object"
-	default:
-		return "string"
+func lowercaseTypes(v any) {
+	switch v := v.(type) {
+	case map[string]any:
+		if t, ok := v["type"].(string); ok {
+			v["type"] = strings.ToLower(t)
+		}
+		for _, c := range v {
+			lowercaseTypes(c)
+		}
+	case []any:
+		for _, c := range v {
+			lowercaseTypes(c)
+		}
 	}
 }
 
@@ -1114,33 +997,24 @@ func parseJSONArgs(argsJSON string) map[string]any {
 	return args
 }
 
-// toolCallRe matches a Hermes-style <tool_call>{json}</tool_call> block.
 var toolCallRe = regexp.MustCompile(`(?s)<tool_call>\s*(\{.*?\})\s*</tool_call>`)
 
-// toolCallXMLRe matches qwen's other leak format inside <tool_call>:
-//
-//	<function=web_fetch>
-//	<parameter=url>
-//	https://…
+// toolCallXMLRe matches qwen's <tool_call><function=x><parameter=k>v</parameter></function> leak.
 var toolCallXMLRe = regexp.MustCompile(`(?s)<tool_call>\s*<function=([^>]+)>(.*?)</function>\s*</tool_call>`)
 
-// bareFunctionRe matches the same qwen <function=…> shape WITHOUT the
-// <tool_call> wrapper - seen when a call leaks straight into the assistant's
-// content instead of reasoning_content (#427: ask_advisor leaked as literal "<function=ask_advisor>…" text in the answer). Matched blocks are only treated as real calls once their body passes the parameter-block guard in reasoningToolCalls - this regex alone is not enough to avoid misfiring on prose that merely mentions "<function=" in passing.
+// bareFunctionRe is the unwrapped form, seen leaking into answer content. Alone it misfires on prose;
+// reasoningToolCalls guards the body.
 var bareFunctionRe = regexp.MustCompile(`(?s)<function=([^>]+)>(.*?)</function>`)
 
-// paramRe matches one <parameter=name>value</parameter> entry; values may span lines.
+// paramRe values may span lines.
 var paramRe = regexp.MustCompile(`(?s)<parameter=([^>]+)>\s*(.*?)\s*</parameter>`)
 
-// parseXMLParams extracts <parameter=name>value</parameter> entries from a
-// <function=…> body into call args, shared by the wrapped and bare recovery paths.
 func parseXMLParams(body string) map[string]any {
 	args := map[string]any{}
 	for _, pm := range paramRe.FindAllStringSubmatch(body, -1) {
 		raw := strings.TrimSpace(pm[2])
 		var v any
-		// JSON-typed values (numbers, bools, objects) keep their type, as
-		// in qwen-agent's own converter; anything unparseable stays a string.
+		// JSON values keep their type, as in qwen-agent's converter; the rest stay strings.
 		if json.Unmarshal([]byte(raw), &v) == nil {
 			args[strings.TrimSpace(pm[1])] = v
 		} else {
@@ -1150,9 +1024,8 @@ func parseXMLParams(body string) map[string]any {
 	return args
 }
 
-// reasoningToolCalls recovers tool calls a model leaked as literal XML
-// instead of proper delta.tool_calls - Qwen3.x's <tool_call> wrapper and the
-// order: Hermes JSON, qwen's wrapped <function>/<parameter> form, and the same form unwrapped. Without this the agent sees no tool call at all. Returns the parsed calls and the text with matched blocks removed.
+// reasoningToolCalls recovers calls leaked as text (Hermes JSON, qwen wrapped, qwen bare) and
+// returns them with the matched blocks removed.
 func reasoningToolCalls(reasoning string) ([]*genai.FunctionCall, string) {
 	var calls []*genai.FunctionCall
 
@@ -1183,17 +1056,14 @@ func reasoningToolCalls(reasoning string) ([]*genai.FunctionCall, string) {
 		})
 	}
 
-	// Strip the two wrapped forms before scanning for bare <function=…>
-	// blocks, so one already counted above isn't double-counted below.
+	// Strip the wrapped forms first so a block isn't counted twice.
 	withoutWrapped := toolCallXMLRe.ReplaceAllString(toolCallRe.ReplaceAllString(reasoning, ""), "")
 
 	cleaned := bareFunctionRe.ReplaceAllStringFunc(withoutWrapped, func(block string) string {
 		bm := bareFunctionRe.FindStringSubmatch(block)
 		name := strings.TrimSpace(bm[1])
 		body := bm[2]
-		// Guard against prose that merely mentions "<function=…>" in passing:
-		// the body must be fully accounted for by
-		// parameter blocks (or empty) - natural-language text between the tags fails this check and the block is left untouched as ordinary text.
+		// Prose mentioning "<function=" fails this: the body must be only parameter blocks (or empty).
 		if name == "" || strings.TrimSpace(paramRe.ReplaceAllString(body, "")) != "" {
 			return block
 		}
@@ -1211,8 +1081,7 @@ func reasoningToolCalls(reasoning string) ([]*genai.FunctionCall, string) {
 	return calls, cleaned
 }
 
-// recoveredCallID: unique per call - an id reused across turns makes a later result look
-// like an earlier one to anything keyed on it (history collapse, response pairing).
+// recoveredCallID is unique: an id reused across turns pairs a later result with an earlier call.
 func recoveredCallID(n int, name string) string {
 	return fmt.Sprintf("rtc_%d_%s_%s", n, name, rand.Text()[:10])
 }

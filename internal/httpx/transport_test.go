@@ -47,9 +47,8 @@ func TestGET502ThenSucceeds(t *testing.T) {
 	}
 }
 
-// TestPOSTMaybeProcessedIsNotRetried pins the Done-when requirement that
-// matters most: a POST that may have already been processed must not be
-// retried, even on a 502 - a naive retry here would double-post.
+// TestPOSTMaybeProcessedIsNotRetried: a POST that may already have been processed is not retried,
+// even on a 502, since a retry could double-post.
 func TestPOSTMaybeProcessedIsNotRetried(t *testing.T) {
 	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

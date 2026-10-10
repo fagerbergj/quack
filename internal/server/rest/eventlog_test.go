@@ -35,9 +35,8 @@ func TestEventCodecRoundTrip(t *testing.T) {
 	}
 }
 
-// TestSubscribeColdReplay drives the restart path: no hub topic, no active run, so
-// SubscribeChatStream replays the run from the durable log, emitting each event's
-// seq as the SSE id. A Last-Event-ID resumes from the next event.
+// TestSubscribeColdReplay: with no hub topic or active run, SubscribeChatStream replays the durable log
+// with each event's seq as the SSE id; Last-Event-ID resumes from the next event.
 func TestSubscribeColdReplay(t *testing.T) {
 	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {

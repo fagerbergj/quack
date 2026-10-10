@@ -17,9 +17,8 @@ import (
 	openai "github.com/openai/openai-go/v3"
 )
 
-// pdfMaxPages bounds how many leading pages of a PDF attachment get
-// rendered (document-ingest inputs can run long); var so tests can shrink
-// it without a giant fixture. pdfRenderDPI: ~150 is enough for OCR/handwriting - 300 balloons image size for no legibility gain on a scanned page. Not safe for concurrent modification - pdfToImageParts calls are sequential today.
+// pdfMaxPages is a var so tests can shrink it; not safe to modify concurrently.
+// pdfRenderDPI ~150 suffices for OCR/handwriting; 300 balloons size for no legibility gain.
 var pdfMaxPages = 20
 
 const pdfRenderDPI = 150
@@ -27,9 +26,8 @@ const pdfConvertTimeout = 60 * time.Second
 
 var pdfInfoPagesRe = regexp.MustCompile(`(?m)^Pages:\s*(\d+)`)
 
-// pdfToImageParts renders a PDF's pages to PNG (via poppler's pdftoppm)
-// and returns one image content part per page, so vision models can
-// consume a document directly instead of the "unsupported PDF MIME type" rejection (#829). Degrades LOUDLY: a missing pdftoppm or a failed render returns an error naming the cause - a document is never silently dropped.
+// pdfToImageParts renders pages to PNG via poppler's pdftoppm, one image part per page. A missing
+// pdftoppm or failed render is an error: a document is never silently dropped.
 func pdfToImageParts(data []byte) ([]openai.ChatCompletionContentPartUnionParam, error) {
 	if _, err := exec.LookPath("pdftoppm"); err != nil {
 		return nil, fmt.Errorf("openaimodel: pdftoppm (poppler-utils) is required to read PDF attachments and was not found on PATH: %w", err)
@@ -99,9 +97,7 @@ func pdfPageNum(path string) int {
 	return n
 }
 
-// warnIfPDFTruncated logs how many trailing pages the pdfMaxPages cap drops -
-// no silent caps. Best-effort: if pdfinfo can't report a page count, the
-// render below still proceeds capped, just without a dropped-page count.
+// warnIfPDFTruncated logs pages the cap drops; best-effort when pdfinfo can't count pages.
 func warnIfPDFTruncated(ctx context.Context, pdfPath string) {
 	out, err := exec.CommandContext(ctx, "pdfinfo", pdfPath).Output()
 	if err != nil {

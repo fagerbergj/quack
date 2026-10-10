@@ -4,19 +4,15 @@ import (
 	"context"
 	"testing"
 
-	"github.com/fagerbergj/quack/internal/acp"
 	"github.com/fagerbergj/quack/internal/agent"
 	"github.com/fagerbergj/quack/internal/artifactsrc"
 	"github.com/fagerbergj/quack/internal/config"
-	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/pluginreg"
 	"github.com/fagerbergj/quack/internal/vetting"
-	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// TestResolveGateCfg_SetsMemoryArtifactAndPlugins pins #1455 B1/B2 at the
-// point they broke: a gated agent's MemoryArtifact and Plugins must land on
-// the boot-resolved vetting.Config, not just its scalar grading facts.
+// TestResolveGateCfg_SetsMemoryArtifactAndPlugins: a gated agent's MemoryArtifact and Plugins must land
+// on the boot-resolved vetting.Config, not just its scalar grading facts.
 func TestResolveGateCfg_SetsMemoryArtifactAndPlugins(t *testing.T) {
 	ctx := context.Background()
 	bundle, err := agent.LoadBundle(ctx, nil, "../../.agents/plugins/github/agents/code-reviewer")
@@ -42,61 +38,5 @@ func TestResolveGateCfg_SetsMemoryArtifactAndPlugins(t *testing.T) {
 	}
 	if len(c.Plugins) != 1 || c.Plugins[0].Name != "quack" || c.Plugins[0].SHA != "" {
 		t.Errorf("Plugins = %+v, want exactly [{quack \"\"}] (an empty registry - only the embedded fallback)", c.Plugins)
-	}
-}
-
-// TestBuildACPNode_WiresPreambleAndMemoryArtifact pins #1455 B1 directly at
-// the regression site: buildACPNode resolves memArt for resolveGateCfg and
-// must hand the SAME artifact to acp.Options, and PreambleArtifact must read
-// back the exact artifact the preamble body was built from.
-func TestBuildACPNode_WiresPreambleAndMemoryArtifact(t *testing.T) {
-	ctx := context.Background()
-	jail, err := workspace.NewJail(t.TempDir())
-	if err != nil {
-		t.Fatalf("NewJail: %v", err)
-	}
-	builtinSkillSrc := newSkillSource(nil)
-	cfg := &config.Config{Gates: config.GatesConfig{DeterministicChecks: config.StageConfig{MaxRounds: 1}}}
-	ac := config.AgentConfig{Bundle: "../../.agents/plugins/github/agents/code-reviewer", Acp: &config.AcpAgentConfig{Command: []string{"/bin/true"}}}
-	reg := pluginreg.NewFSRegistry(t.TempDir())
-	gateCfgs := newGateConfigs(1)
-	taskStore := &memory.Store{} // never dereferenced by buildACPNode - only nil-checked
-
-	ag, err := buildACPNode("code-reviewer", ac, config.ProviderConfig{}, cfg, nil, workspace.Caps{}, jail, taskStore,
-		builtinSkillSrc, vetting.Config{}, gateCfgs, nil, nil, nil, nil, nil, nil, reg)
-	if err != nil {
-		t.Fatalf("buildACPNode: %v", err)
-	}
-	a, ok := ag.(*acp.Agent)
-	if !ok {
-		t.Fatalf("buildACPNode returned %T, want *acp.Agent", ag)
-	}
-	opts := acp.OptionsForTesting(a)
-
-	bundle, err := agent.LoadBundle(ctx, nil, "../../.agents/plugins/github/agents/code-reviewer")
-	if err != nil {
-		t.Fatalf("LoadBundle: %v", err)
-	}
-	wantMem, wantMemArt, err := agent.LoadBundleMemory(ctx, nil, "../../.agents/plugins/github/agents/code-reviewer")
-	if err != nil {
-		t.Fatalf("LoadBundleMemory: %v", err)
-	}
-	if wantMem == "" {
-		t.Fatal("fixture bundle agents/code-reviewer has no memory.md - test proves nothing")
-	}
-	if opts.MemoryArtifact.Name != wantMemArt.Name || opts.MemoryArtifact.VersionID == "" {
-		t.Errorf("Options.MemoryArtifact = %+v, want %+v", opts.MemoryArtifact, wantMemArt)
-	}
-
-	if opts.PreambleArtifact == nil {
-		t.Fatal("Options.PreambleArtifact is nil")
-	}
-	// Building the preamble once (as steerHooks does) must stash the exact
-	// artifact PreambleArtifact then reads back.
-	_ = opts.Preamble(ctx)
-	wantPrompt := bundle.ResolvePrompt(ctx, nil)
-	got := opts.PreambleArtifact(ctx)
-	if got.Name != wantPrompt.Name || got.VersionID != wantPrompt.VersionID {
-		t.Errorf("PreambleArtifact() = %+v, want %+v (the version the preamble body was built from)", got, wantPrompt)
 	}
 }

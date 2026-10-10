@@ -11,9 +11,8 @@ import (
 	"github.com/fagerbergj/quack/internal/otelobs"
 )
 
-// TestGenerateTitle_ChatEventCarriesChatID pins #617's titler entry point:
-// the titler calls GenerateContent directly (no ADK runner at all), so its
-// "chat" ledger event must carry the chat's ChatID instead of falling back to "unscoped".
+// TestGenerateTitle_ChatEventCarriesChatID: the titler calls GenerateContent with no ADK runner,
+// so its "chat" ledger event must carry the ChatID rather than fall back to "unscoped".
 func TestGenerateTitle_ChatEventCarriesChatID(t *testing.T) {
 	capExp := &recordCaptureExporter{}
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
@@ -53,9 +52,7 @@ func TestGenerateTitle_ChatEventCarriesChatID(t *testing.T) {
 	}
 }
 
-// recordCaptureExporter records every emitted log record for direct
-// inspection - a local duplicate of nodestatus_test.go-adjacent patterns
-// used elsewhere in this repo (dag_test's ledgerCaptureExporter).
+// recordCaptureExporter records every emitted log record for inspection.
 type recordCaptureExporter struct{ records []sdklog.Record }
 
 func (c *recordCaptureExporter) Export(_ context.Context, records []sdklog.Record) error {

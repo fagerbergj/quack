@@ -14,9 +14,8 @@ import (
 	"gorm.io/gorm"
 )
 
-// newTestPGDB returns a real Postgres container's raw connection, UNMIGRATED -
-// callers migrating onto a pre-existing table need the db before NewPGStore's
-// AutoMigrate runs. Skips (not fails) when Docker isn't reachable.
+// newTestPGDB returns a Postgres container's unmigrated connection, for tests migrating onto a pre-existing
+// table. Skips without Docker.
 func newTestPGDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -48,9 +47,8 @@ func newTestPGDB(t *testing.T) *gorm.DB {
 	return db
 }
 
-// newTestPGStore starts a real Postgres container - AppendIntent's seq
-// allocation relies on a real UPSERT's row locking, which sqlite/mocks
-// can't exercise. Skips (not fails) when Docker isn't reachable.
+// newTestPGStore uses a real Postgres: seq allocation relies on UPSERT row locking that sqlite/mocks can't
+// exercise. Skips without Docker.
 func newTestPGStore(t *testing.T) *PGStore {
 	t.Helper()
 	store, err := NewPGStore(newTestPGDB(t))
@@ -60,9 +58,8 @@ func newTestPGStore(t *testing.T) *PGStore {
 	return store
 }
 
-// TestPGStoreNewMigrate_AddsChatKeyIndexToExistingTable (#1111 review finding): every other
-// PG test starts from a fresh container, so the production path - adding idx_ledger_chat_key
-// to an EXISTING ledger_entries table - was otherwise unexercised; a tag-parsing miss would silently degrade ReadEntriesByKey to a scan with no test to catch it.
+// TestPGStoreNewMigrate_AddsChatKeyIndexToExistingTable covers the production path of adding
+// idx_ledger_chat_key to an existing table, which fresh-container tests never exercise.
 func TestPGStoreNewMigrate_AddsChatKeyIndexToExistingTable(t *testing.T) {
 	t.Parallel()
 	db := newTestPGDB(t)
@@ -84,9 +81,8 @@ func TestPGStoreNewMigrate_AddsChatKeyIndexToExistingTable(t *testing.T) {
 	}
 }
 
-// TestPGStoreAppendIntentConcurrentSeqIsGaplessAndUnique is verification
-// case 12 (V4 §7): N goroutines racing AppendIntent on one chat must land
-// on seq exactly 1..N, no gaps, no duplicates, no error. Run with -race.
+// TestPGStoreAppendIntentConcurrentSeqIsGaplessAndUnique: N goroutines racing AppendIntent on one chat land
+// on seq exactly 1..N. Run with -race.
 func TestPGStoreAppendIntentConcurrentSeqIsGaplessAndUnique(t *testing.T) {
 	t.Parallel()
 	store := newTestPGStore(t)
@@ -138,9 +134,7 @@ func TestPGStoreReadEntriesReturnsInOrder(t *testing.T) {
 
 	var lastSeq int64
 	for i := 0; i < 5; i++ {
-		// Distinct parent_revision per entry: they share a key, and the
-		// #1144 P4 unique (chat_id, key, parent_revision) index would reject
-		// a repeat.
+		// Distinct parent_revision per entry: they share a key, and the unique index would reject a repeat.
 		payload, err := json.Marshal(struct {
 			ParentRevision int `json:"parent_revision"`
 		}{ParentRevision: i})
@@ -176,9 +170,8 @@ func TestPGStoreReadEntriesReturnsInOrder(t *testing.T) {
 	}
 }
 
-// TestPGStoreReadEntriesFiltered is perf audit #1: a kinds filter must
-// return exactly the matching rows, in seq order, same as ReadEntries then
-// filtering in Go - and ReadByKinds must push it to SQL for a FilteredReader.
+// TestPGStoreReadEntriesFiltered: a kinds filter returns exactly the matching rows in seq order, and
+// ReadByKinds pushes it to SQL for a FilteredReader.
 func TestPGStoreReadEntriesFiltered(t *testing.T) {
 	t.Parallel()
 	store := newTestPGStore(t)
@@ -211,9 +204,8 @@ func TestPGStoreReadEntriesFiltered(t *testing.T) {
 	}
 }
 
-// TestPGStoreReadEntriesFilteredSince pins perf audit #12's fix: one cross-chat
-// `kind IN (?) AND at >= ?` query must return exactly what the old List() + per-chat
-// ReadByKinds + Go-side time filter did - kind-filtered, window-filtered, across every chat.
+// TestPGStoreReadEntriesFilteredSince: the cross-chat query returns exactly what List() + per-chat
+// ReadByKinds + a Go-side time filter would.
 func TestPGStoreReadEntriesFilteredSince(t *testing.T) {
 	t.Parallel()
 	store := newTestPGStore(t)
@@ -273,9 +265,7 @@ func TestPGStoreAppendIntentValidation(t *testing.T) {
 	}
 }
 
-// artifactRevPayload builds an artifact.revision entry's payload with just
-// the parent_revision field the unique index cares about - recordstore's
-// real payload carries more, but PGStore only ever reads this one field.
+// artifactRevPayload builds a payload with only parent_revision, the one field PGStore reads.
 func artifactRevPayload(t *testing.T, parent int) json.RawMessage {
 	t.Helper()
 	b, err := json.Marshal(struct {
@@ -287,9 +277,8 @@ func artifactRevPayload(t *testing.T, parent int) json.RawMessage {
 	return b
 }
 
-// TestPGStoreAppendIntent_ParentRevisionConflict (#1144 P4, real Postgres): two
-// goroutines saving the same artifact id, both claiming the same parent_revision -
-// exactly one wins, the other gets ErrStaleParent, neither overwrites the other's WAL entry. Run with -race.
+// TestPGStoreAppendIntent_ParentRevisionConflict: two writers claiming the same parent_revision; exactly one
+// wins and the other gets ErrStaleParent. Run with -race.
 func TestPGStoreAppendIntent_ParentRevisionConflict(t *testing.T) {
 	t.Parallel()
 	store := newTestPGStore(t)
@@ -335,9 +324,8 @@ func TestPGStoreAppendIntent_ParentRevisionConflict(t *testing.T) {
 	}
 }
 
-// TestPGStoreAppendIntent_IdempotencyKeyIsANoOp is #1144 P4's other store-level
-// guarantee: a repeated IdempotencyKey writes nothing and hands back the
-// entry that already claimed it, instead of erroring or duplicating.
+// TestPGStoreAppendIntent_IdempotencyKeyIsANoOp: a repeated IdempotencyKey writes nothing and returns the
+// entry that already claimed it.
 func TestPGStoreAppendIntent_IdempotencyKeyIsANoOp(t *testing.T) {
 	t.Parallel()
 	store := newTestPGStore(t)
@@ -365,9 +353,8 @@ func TestPGStoreAppendIntent_IdempotencyKeyIsANoOp(t *testing.T) {
 	}
 }
 
-// TestPGStoreNewMigrate_RefusesDuplicateParentRevisions: an existing ledger_entries table
-// already violating (chat_id, key, parent_revision) uniqueness (only reachable pre-#1144
-// P4, since idLocks made it essentially impossible) must not get the new index silently skipped or created broken - NewPGStore refuses to start instead.
+// TestPGStoreNewMigrate_RefusesDuplicateParentRevisions: a table already violating the uniqueness the new
+// index enforces makes NewPGStore refuse to start.
 func TestPGStoreNewMigrate_RefusesDuplicateParentRevisions(t *testing.T) {
 	t.Parallel()
 	db := newTestPGDB(t)
@@ -388,9 +375,8 @@ func TestPGStoreNewMigrate_RefusesDuplicateParentRevisions(t *testing.T) {
 	}
 }
 
-// TestPGStoreNewMigrate_BackfillsNullParentRevisionBeforeDedup: ADD COLUMN leaves
-// parent_revision NULL on pre-existing rows, and two different revisions both NULL
-// would look like a duplicate (GROUP BY folds NULLs) and wedge the deploy - backfill from the payload first, so boot succeeds.
+// TestPGStoreNewMigrate_BackfillsNullParentRevisionBeforeDedup: NULL parent_revision rows are backfilled
+// from the payload before the dedup check, so they don't look like duplicates.
 func TestPGStoreNewMigrate_BackfillsNullParentRevisionBeforeDedup(t *testing.T) {
 	t.Parallel()
 	db := newTestPGDB(t)
@@ -454,9 +440,8 @@ func TestRecoverInvalidConcurrentIndex_DropsAndAllowsRebuild(t *testing.T) {
 	}
 }
 
-// TestRecoverInvalidConcurrentIndex_NoOpWhenValidOrAbsent: the boot path
-// calls this on every start, so it must never disturb a healthy index or
-// error out when the index doesn't exist yet (first boot).
+// TestRecoverInvalidConcurrentIndex_NoOpWhenValidOrAbsent: boot runs this every start, so it must leave a
+// healthy index alone and not error before the index exists.
 func TestRecoverInvalidConcurrentIndex_NoOpWhenValidOrAbsent(t *testing.T) {
 	t.Parallel()
 	db := newTestPGDB(t)

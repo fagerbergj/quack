@@ -7,11 +7,8 @@ import (
 	"testing"
 )
 
-// TestAcpSkillPathsBackfillsEmbeddedDotagents proves #943: with no plugin
-// roots configured (the distroless image, where dotagents isn't on disk),
-// acpSkillPaths must still return a root under which review-code/SKILL.md
-// exists - the same backfill newSkillSource already gives the in-process
-// skill toolset.
+// TestAcpSkillPathsBackfillsEmbeddedDotagents: with no plugin roots (the distroless image), acpSkillPaths
+// must still return a root holding review-code/SKILL.md, the same backfill newSkillSource gives.
 func TestAcpSkillPathsBackfillsEmbeddedDotagents(t *testing.T) {
 	paths := acpSkillPaths(nil)
 
@@ -27,10 +24,8 @@ func TestAcpSkillPathsBackfillsEmbeddedDotagents(t *testing.T) {
 	}
 }
 
-// TestAcpSkillPathsNoDuplicateWhenOnDisk proves the by-BARE-name backfill
-// rule (#1427 R1): a plugin root - registered under ANY name - that resolves
-// review-code on disk must not also get the embedded copy extracted, since
-// pi's skill loader sees bare directory names and may error on a duplicate.
+// TestAcpSkillPathsNoDuplicateWhenOnDisk: a plugin root under ANY name that has review-code must not also
+// get the embedded copy - pi's skill loader sees bare directory names and may error on a duplicate.
 func TestAcpSkillPathsNoDuplicateWhenOnDisk(t *testing.T) {
 	vendor := t.TempDir()
 	writePluginManifest(t, vendor, "review-code-standin")

@@ -11,9 +11,8 @@ import (
 	"github.com/fagerbergj/quack/internal/dag"
 )
 
-// TestResumePausedDagNodes_SkipsChatRowGone pins #1296: a paused node whose
-// owning chat row is gone (raw SQL bypassing DeleteChat's cascade, or legacy
-// data from before the chats(id) FK existed) must never be resumed - resuming it would write chat_events for a chat with no row, exactly the prod orphan.
+// A paused node whose chat row is gone (raw SQL delete, or pre-FK data) is never resumed, or it would
+// write chat_events for a chat with no row.
 func TestResumePausedDagNodes_SkipsChatRowGone(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "quack.db")
 	st, err := New("sqlite", dbPath)
@@ -31,9 +30,8 @@ func TestResumePausedDagNodes_SkipsChatRowGone(t *testing.T) {
 		t.Fatalf("UpsertDagNode: %v", err)
 	}
 
-	// Reproduce the exact orphan shape prod hit: chat row gone, dag_plans/
-	// dag_nodes still there. With the chats(id) FK live this can no longer
-	// happen through this store's own connection - disable enforcement to simulate a pre-#1296 database or a raw SQL delete run with constraints off.
+	// The FK prevents this orphan through the store's own connection; disable enforcement to simulate a
+	// pre-FK database or a raw delete with constraints off.
 	if err := st.db.Exec("PRAGMA foreign_keys = OFF").Error; err != nil {
 		t.Fatalf("disable FK: %v", err)
 	}
@@ -61,9 +59,7 @@ func TestResumePausedDagNodes_SkipsChatRowGone(t *testing.T) {
 	}
 }
 
-// TestDeleteChatRow_CascadesPerChatTables pins #1296's DB-level guarantee: a
-// raw SQL DELETE against chats (bypassing DeleteChat's app-level cascade
-// entirely) still removes every per-chat row, via ON DELETE CASCADE, not application code.
+// A raw SQL DELETE on chats, bypassing DeleteChat, still removes every per-chat row via ON DELETE CASCADE.
 func TestDeleteChatRow_CascadesPerChatTables(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "quack.db")
 	st, err := New("sqlite", dbPath)
@@ -91,7 +87,7 @@ func TestDeleteChatRow_CascadesPerChatTables(t *testing.T) {
 		t.Fatalf("upsertCheckpoint: %v", err)
 	}
 
-	// Raw SQL, not DeleteChat - the exact bypass #1296 guards against.
+	// Raw SQL, not DeleteChat: the exact bypass the FK guards against.
 	if err := st.db.Exec("DELETE FROM chats WHERE id = ?", chatID).Error; err != nil {
 		t.Fatalf("raw delete chats row: %v", err)
 	}
@@ -108,16 +104,15 @@ func TestDeleteChatRow_CascadesPerChatTables(t *testing.T) {
 	}
 }
 
-// TestNew_SweepsPreExistingOrphansBeforeMigrating pins the boot-safety half
-// of #1296: prod already had 1,367 orphan chat_events rows (chats
-// hard-deleted before this FK existed) when this migration ships. Without a sweep, AutoMigrate's ALTER TABLE ADD CONSTRAINT (Postgres) / table-rebuild (SQLite) fails validating a pre-existing orphan, and the failure repeats every boot since the orphan survives a restart.
+// Pre-existing orphan rows must be swept before AutoMigrate adds the FK, which otherwise fails validating
+// them on every boot (they survive restarts).
 func TestNew_SweepsPreExistingOrphansBeforeMigrating(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "quack.db")
 	raw, err := sql.Open(sqlite.DriverName, dbPath)
 	if err != nil {
 		t.Fatalf("open raw db: %v", err)
 	}
-	// Minimal pre-#1296 schema: no FK yet, just enough for AutoMigrate to see
+	// Minimal pre-FK schema: no FK yet, just enough for AutoMigrate to see
 	// the table exists and try to add the constraint against it.
 	if _, err := raw.Exec(`CREATE TABLE chats (id TEXT PRIMARY KEY)`); err != nil {
 		t.Fatalf("create chats: %v", err)

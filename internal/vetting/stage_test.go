@@ -30,9 +30,7 @@ func withTestTracer(t *testing.T) *tracetest.InMemoryExporter {
 	return exp
 }
 
-// TestStageSpan_SingleRaiseProducesBothProjections is the #726 regression: one
-// startStageSpan/end call must produce both the OTel span and the matching SSE
-// pair, so a future stage can't update one projection and forget the other.
+// One startStageSpan/end call must produce both the OTel span and the matching SSE pair.
 func TestStageSpan_SingleRaiseProducesBothProjections(t *testing.T) {
 	exp := withTestTracer(t)
 	var got []stream.SSEEvent
@@ -82,9 +80,7 @@ func TestStageSpan_SingleRaiseProducesBothProjections(t *testing.T) {
 	}
 }
 
-// TestStageSpan_UnavailableJudgeOmitsScoreAttrsAndRecordsError proves the
-// error branch's single raise still projects both sides: SSE reports
-// status=unavailable, and the span records the error without a score/passed attribute pair (there was no verdict to attach one to).
+// On error, SSE reports status=unavailable and the span records the error with no score/passed attributes.
 func TestStageSpan_UnavailableJudgeOmitsScoreAttrsAndRecordsError(t *testing.T) {
 	exp := withTestTracer(t)
 	var got []stream.SSEEvent
@@ -118,9 +114,8 @@ func TestStageSpan_UnavailableJudgeOmitsScoreAttrsAndRecordsError(t *testing.T) 
 	}
 }
 
-// TestStageSpan_SSEWireFormatUnchanged pins the exact JSON the judge stage
-// puts on the wire, so the choke-point refactor can't silently change what
-// existing SSE consumers (frontend, MCP, A2A) receive for a representative node lifecycle (start -> scored complete).
+// TestStageSpan_SSEWireFormatUnchanged pins the exact JSON the judge stage puts on the wire for SSE consumers
+// (frontend, MCP, A2A).
 func TestStageSpan_SSEWireFormatUnchanged(t *testing.T) {
 	withTestTracer(t)
 	var got []stream.SSEEvent
@@ -141,7 +136,7 @@ func TestStageSpan_SSEWireFormatUnchanged(t *testing.T) {
 	if start.StartedAtMs < before || start.StartedAtMs > after {
 		t.Errorf("agent_start.StartedAtMs = %d, want within [%d, %d]", start.StartedAtMs, before, after)
 	}
-	// Wire shape sans the timestamp and trace id, which are asserted separately (real wall-clock / random hex, not pinnable).
+	// Timestamp and trace id are asserted separately: wall-clock and random hex aren't pinnable.
 	if start.TraceID == "" {
 		t.Errorf("agent_start trace_id empty, want a real span from the test tracer")
 	}

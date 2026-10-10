@@ -12,9 +12,8 @@ import (
 	"gorm.io/gorm"
 )
 
-// TestOpenDBHandlesStayIndependentAfterSequentialOpens: a shared
-// *gorm.Config across OpenDB calls (gorm.DB embeds *Config) let a LATER
-// open silently repoint an EARLIER handle's Dialector/ConnPool too.
+// A *gorm.Config shared across OpenDB calls (gorm.DB embeds *Config) let a later open repoint an earlier
+// handle's Dialector/ConnPool.
 func TestOpenDBHandlesStayIndependentAfterSequentialOpens(t *testing.T) {
 	ctx := context.Background()
 
@@ -84,9 +83,8 @@ func TestOpenDBHandlesStayIndependentAfterSequentialOpens(t *testing.T) {
 	}
 }
 
-// putConcurrentCollision runs Put(name, ownerA/repoA) and Put(name,
-// ownerB/repoB) concurrently through two SEPARATE handles (two quack
-// nodes on one DB) and reports how many succeeded.
+// putConcurrentCollision races Put of two identities under one name through separate handles (two nodes,
+// one DB) and counts outcomes.
 func putConcurrentCollision(t *testing.T, regA, regB Registry, name string) (successes int, collisions int) {
 	t.Helper()
 	var wg sync.WaitGroup
@@ -114,9 +112,8 @@ func putConcurrentCollision(t *testing.T, regA, regB Registry, name string) (suc
 	return successes, collisions
 }
 
-// TestDBRegistryPutRejectsConcurrentInsertCollision_Sqlite: two SEPARATE
-// handles (two sqlite connections to one file, serialised by WAL) racing
-// an insert of different identities under one new name must not both pass.
+// Two sqlite connections to one file racing an insert of different identities under one new name must
+// not both pass.
 func TestDBRegistryPutRejectsConcurrentInsertCollision_Sqlite(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "plugins.db")
 	root := t.TempDir()

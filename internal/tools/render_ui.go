@@ -36,8 +36,7 @@ func newRenderUI(d Deps) (tool.Tool, error) {
 	return renderUITool(d.RecordStore, d.NodeID, d.Coords, d.Sink, d.TurnID)
 }
 
-// NewRenderUITool builds render_ui: upserts an a2ui_surface artifact (plus its
-// quiz_key) and announces each save with artifact_revision. A nil c errors on a call.
+// NewRenderUITool: a nil c errors on a call.
 func NewRenderUITool(c *recordstore.Client, nodeID string, coords *RoundCoords) (tool.Tool, error) {
 	return renderUITool(c, nodeID, coords, nil, "")
 }
@@ -65,7 +64,7 @@ func renderUITool(c *recordstore.Client, nodeID string, coords *RoundCoords, sin
 			if c == nil {
 				return "", errors.New("render_ui: no chat artifacts service configured")
 			}
-			// The chat turn id, not coords.TurnID (a worker's ADK invocation id): the UI places a surface on its turn by it.
+			// The chat turn id, not coords.TurnID (an ADK invocation id): the UI places a surface by it.
 			turn := cmp.Or(stream.TurnIDFromContext(ctx), turnID)
 			lineage := recordstore.Lineage{NodeID: nodeID, Round: coords.Round, TurnID: turn, HeadSHA: coords.HeadSHA, TriggerAnnotation: coords.TriggerAnnotation, Author: "worker", SavedAt: time.Now().UTC()}
 			emit := sink

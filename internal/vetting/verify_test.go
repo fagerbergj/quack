@@ -2,7 +2,6 @@ package vetting
 
 import (
 	"context"
-	"iter"
 	"strings"
 	"testing"
 
@@ -10,30 +9,22 @@ import (
 	"google.golang.org/genai"
 )
 
-// textLLM answers every call with one fixed text; the verify tier has no tools to call.
-type textLLM struct {
-	text    string
-	calls   *int
-	prompts *[]string // what each call was shown
-}
-
-func (textLLM) Name() string { return "text-llm" }
-
-func (m textLLM) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	if m.calls != nil {
-		*m.calls++
-	}
-	if m.prompts != nil {
-		var b []byte
-		for _, c := range req.Contents {
-			for _, p := range c.Parts {
-				b = append(b, p.Text...)
-			}
+// textLLM answers every call with one fixed text; calls and prompts, when set, record each call.
+func textLLM(text string, calls *int, prompts *[]string) fnLLM {
+	return func(req *model.LLMRequest) (*model.LLMResponse, error) {
+		if calls != nil {
+			*calls++
 		}
-		*m.prompts = append(*m.prompts, string(b))
-	}
-	return func(yield func(*model.LLMResponse, error) bool) {
-		yield(&model.LLMResponse{Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: m.text}}}}, nil)
+		if prompts != nil {
+			var b []byte
+			for _, c := range req.Contents {
+				for _, p := range c.Parts {
+					b = append(b, p.Text...)
+				}
+			}
+			*prompts = append(*prompts, string(b))
+		}
+		return &model.LLMResponse{Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: text}}}}, nil
 	}
 }
 
@@ -56,7 +47,7 @@ func TestVerifyChecks_QuoteMustBeRealAndCarryTheFigure(t *testing.T) {
 	}
 	calls := 0
 	for cit, text := range answers {
-		v := Verifier{LLM: textLLM{text: text, calls: &calls}}
+		v := Verifier{LLM: textLLM(text, &calls, nil)}
 		var sub []UnitCheck
 		for _, c := range checks {
 			if c.Citation == cit {
@@ -82,14 +73,14 @@ func TestVerifyChecks_QuoteMustBeRealAndCarryTheFigure(t *testing.T) {
 	if calls != 3 {
 		t.Errorf("model calls = %d, want one per page", calls)
 	}
-	v := Verifier{LLM: textLLM{text: "{}"}}
+	v := Verifier{LLM: textLLM("{}", nil, nil)}
 	if got := v.VerifyChecks(context.Background(), checks[3:]); got[0].Verdict.State != "" {
 		t.Errorf("an uncited check must not reach the model: %+v", got[0].Verdict)
 	}
 }
 
 func TestVerifyChecks_UnparseableAnswerIsNotChecked(t *testing.T) {
-	v := Verifier{LLM: textLLM{text: "I cannot say."}}
+	v := Verifier{LLM: textLLM("I cannot say.", nil, nil)}
 	got := v.VerifyChecks(context.Background(), []UnitCheck{locatedCheck("a 3 b", "3", "number", "3", "a 3 b", "https://p")})
 	if got[0].Verdict.State != "not_checked" {
 		t.Fatalf("verdict = %+v, want not_checked, never a negative verdict from a failed verifier", got[0].Verdict)
@@ -99,7 +90,7 @@ func TestVerifyChecks_UnparseableAnswerIsNotChecked(t *testing.T) {
 func TestVerifyChecks_BatchesItemsOfOnePage(t *testing.T) {
 	calls := 0
 	var prompts []string
-	v := Verifier{LLM: textLLM{text: `{"items":[{"n":1,"state":"supported","quote":"a 3 b"},{"n":2,"state":"supported","quote":"c 4 d"}]}`, calls: &calls, prompts: &prompts}}
+	v := Verifier{LLM: textLLM(`{"items":[{"n":1,"state":"supported","quote":"a 3 b"},{"n":2,"state":"supported","quote":"c 4 d"}]}`, &calls, &prompts)}
 	got := v.VerifyChecks(context.Background(), []UnitCheck{
 		locatedCheck("a 3 b", "3", "number", "3", "a 3 b", "https://p"),
 		locatedCheck("c 4 d", "4", "number", "4", "c 4 d", "https://p"),

@@ -1,6 +1,5 @@
-// Package wizard is the interactive `quack init` / `quack server init` surface: thin Huh forms that
-// hand answers to internal/cli to emit config or update the client registry - all logic lives in cli,
-// testable without a terminal; per the quack-cli skill, tests check the emitted YAML, not keystrokes.
+// Package wizard is the interactive `quack init` / `quack server init` surface: thin Huh forms over
+// internal/cli, which holds the logic so tests check emitted YAML, not keystrokes.
 package wizard
 
 import (
@@ -22,9 +21,8 @@ import (
 // gate. Callers treat it as a clean stop (no error printed, nothing written).
 var ErrAborted = errors.New("init cancelled")
 
-// ServerInit runs the server-config wizard (`quack server init`, and `quack init`'s local
-// branch), writing quack.yaml at outPath; an existing outPath without --force is offered
-// keep/overwrite/elsewhere up front. local narrows stores to one confirm; wrote = written.
+// ServerInit runs the server-config wizard, writing quack.yaml at outPath; an existing file without --force
+// is offered keep/overwrite/elsewhere first. local narrows stores to one confirm.
 func ServerInit(ctx context.Context, outPath string, force, local bool) (wrote bool, err error) {
 	if !force && fileExists(outPath) {
 		switch askExisting(outPath) {
@@ -51,9 +49,8 @@ func ServerInit(ctx context.Context, outPath string, force, local bool) (wrote b
 	}
 	cli.PrefillFromEnv(&a) // don't re-ask what the environment already answers
 
-	// Form 1 stands alone because the model list is fetched from the endpoint
-	// before the rest of the wizard can offer it as choices - a natural break,
-	// not a back-nav wall.
+	// Form 1 stands alone because its endpoint's model list must be fetched before
+	// the rest of the wizard can offer it as choices.
 	if err := askProvider(ctx, &a); err != nil {
 		return false, err
 	}
@@ -131,9 +128,8 @@ func askPath(cur string) string {
 	return strings.TrimSpace(p)
 }
 
-// runForm: duck theme on a stable alt-screen (inline rendering scrolls a tall group's title off
-// the top of the terminal). WithProgramOptions replaces huh's defaults, so we re-supply stderr
-// output (keeps stdout pipeable) and focus reporting.
+// runForm: duck theme on a stable alt-screen (inline rendering scrolls a tall group's title away).
+// WithProgramOptions replaces huh's defaults, so stderr output (keeping stdout pipeable) and focus are re-supplied.
 func runForm(f *huh.Form) error {
 	return f.WithTheme(duckTheme()).
 		WithProgramOptions(
@@ -143,9 +139,8 @@ func runForm(f *huh.Form) error {
 		).Run()
 }
 
-// reviewGroup: live summary note + confirm in ONE group. The note recomputes
-// via DescriptionFunc so backing up to change an answer updates the summary;
-// ok stays false unless the user confirms, so the caller can abort.
+// reviewGroup: a live summary note plus confirm in one group; the note recomputes via DescriptionFunc
+// so backing up updates it, and ok stays false unless the user confirms.
 func reviewGroup(a *cli.InitAnswers, feats *[]string, outPath string, ok *bool) *huh.Group {
 	return huh.NewGroup(
 		huh.NewNote().DescriptionFunc(func() string { return summarize(a, feats) }, a),
@@ -197,9 +192,8 @@ func ClientInit(ctx context.Context, serverInitPath string, force bool) error {
 
 	switch mode {
 	case "local":
-		// Local registers nothing: with no active server, the CLI runs the duck
-		// in-process (no separate `quack server run`). Writing quack.yaml is the
-		// whole job.
+		// Local registers nothing: with no active server the CLI runs the duck in-process,
+		// so writing quack.yaml is the whole job.
 		wrote, err := ServerInit(ctx, serverInitPath, force, true)
 		if err != nil {
 			if errors.Is(err, ErrAborted) {
@@ -207,9 +201,8 @@ func ClientInit(ctx context.Context, serverInitPath string, force bool) error {
 			}
 			return err
 		}
-		// Migrate older setups: a registered `local → localhost:8080` entry used to
-		// be how local worked. Now local means in-process, so drop it (and clear it
-		// as active) - otherwise resolution would dial a server that isn't running.
+		// Drop a legacy `local → localhost:8080` entry (and its active flag): local runs in-process,
+		// so resolution would otherwise dial a server that isn't running.
 		if c, err := cli.LoadClient(); err == nil {
 			if _, ok := c.Servers["local"]; ok {
 				c.RemoveServer("local")
@@ -252,9 +245,8 @@ func registerRemote() error {
 	return nil
 }
 
-// askProvider: the LLM provider (single-option, OpenAI-compatible today),
-// endpoint, and API key - one group so the three are navigable together. The
-// API key is masked (EchoModePassword); endpoint has a placeholder hint.
+// askProvider: provider, endpoint and API key in one group so they navigate together;
+// the key is masked.
 func askProvider(ctx context.Context, a *cli.InitAnswers) error {
 	var kind string
 	return runForm(huh.NewForm(huh.NewGroup(
@@ -274,9 +266,8 @@ func askProvider(ctx context.Context, a *cli.InitAnswers) error {
 	).Title("LLM provider").Description("How quack reaches its model server")))
 }
 
-// discoverModels calls /models and applies heuristic pre-selections so the
-// common case is confirm-confirm-confirm. manual is true when /models is
-// unreachable (the worker falls back to text inputs for each role).
+// discoverModels calls /models and pre-selects by heuristic so the common case is confirm-confirm-confirm.
+// manual is true when /models is unreachable (text inputs per role instead).
 func discoverModels(ctx context.Context, a *cli.InitAnswers) (models []string, manual bool) {
 	models, err := cli.ListModels(ctx, a.Endpoint, a.APIKey)
 	if err != nil {
@@ -287,9 +278,8 @@ func discoverModels(ctx context.Context, a *cli.InitAnswers) (models []string, m
 	if a.MainModel == "" {
 		a.MainModel = suggestMain(models)
 	}
-	// Heuristic pre-selections for specialist roles (overridable; None disables).
-	// The OpenAI /models response gives IDs only - no capability field - so we
-	// guess from the name. Fast in the common case, easy to change when wrong.
+	// Pre-select specialist roles by model name (overridable; None disables):
+	// /models returns IDs only, with no capability field.
 	if a.JudgeModel == "" {
 		a.JudgeModel = suggestModel(models, "judge")
 	}
@@ -305,9 +295,8 @@ func discoverModels(ctx context.Context, a *cli.InitAnswers) (models []string, m
 	return models, false
 }
 
-// modelGroups: one model role per group (its own screen). A blurred huh select
-// still renders its full option list, so stacking several in one group overflows
-// the screen and the group viewport scrolls - options vanish with no indicator.
+// modelGroups: one model role per group. A blurred huh select still renders all its options, so stacking
+// several overflows and the viewport scrolls options out of sight.
 func modelGroups(a *cli.InitAnswers, models []string, manual bool) []*huh.Group {
 	none := huh.NewOption("None - disable", "")
 	return []*huh.Group{
@@ -337,9 +326,8 @@ func featureList(a *cli.InitAnswers) []string {
 	return feats
 }
 
-// featuresGroup: multi-select of optional tool features. Its value drives the
-// WithHideFunc on the search/fetch store groups, so toggling here reveals or
-// hides the matching store as you navigate.
+// featuresGroup: multi-select of optional tool features; its value drives the search/fetch store groups'
+// WithHideFunc, revealing or hiding them live.
 func featuresGroup(feats *[]string) *huh.Group {
 	return huh.NewGroup(
 		huh.NewMultiSelect[string]().
@@ -353,9 +341,8 @@ func featuresGroup(feats *[]string) *huh.Group {
 	).Title("Features").Description("Toggle the tool backends to configure")
 }
 
-// codingGroups: coder model (defaults to the main model) + workspace sandbox
-// mode, shown only when the coding feature is selected. Sandbox default is
-// detected: bwrap if bubblewrap is installed, else none (caveat in description).
+// codingGroups: coder model (default: the main model) plus sandbox mode, only with the coding feature.
+// The sandbox default is bwrap if bubblewrap is installed, else none.
 func codingGroups(a *cli.InitAnswers, feats *[]string, models []string) []*huh.Group {
 	if a.CoderModel == "" {
 		a.CoderModel = suggestModel(models, "coder", "code")
@@ -382,9 +369,8 @@ func codingGroups(a *cli.InitAnswers, feats *[]string, models []string) []*huh.G
 	return []*huh.Group{model, sandbox}
 }
 
-// storeGroups: session (always), memory (embedder set), search/fetch (feature
-// on) - WithHideFunc makes them appear/disappear live as earlier answers change.
-// Emit gates on the same flags, so a hidden group's default is never written.
+// storeGroups: session always, memory with an embedder, search/fetch with their feature, shown live via
+// WithHideFunc. Emit gates on the same flags, so a hidden group's default is never written.
 func storeGroups(a *cli.InitAnswers, feats *[]string, local bool) []*huh.Group {
 	session := storeGroup("Session storage", []string{"sqlite", "postgres"}, &a.SessionKind, &a.SessionURL, "sqlite").
 		Description("Where quack keeps its state + tool backends")
@@ -416,9 +402,8 @@ func storeGroups(a *cli.InitAnswers, feats *[]string, local bool) []*huh.Group {
 	return []*huh.Group{confirm, session, memory, search, fetch}
 }
 
-// storeGroup builds one group: title is the store name (section header), plus a
-// backend select + a url input left blank - its placeholder tracks the selected
-// kind's cli.DefaultBackendURL, which the emitter fills when the field is empty.
+// storeGroup: a backend select plus a url input left blank; its placeholder tracks the kind's
+// cli.DefaultBackendURL, which the emitter fills in when empty.
 func storeGroup(title string, kinds []string, kind, url *string, defKind string) *huh.Group {
 	*kind = defKind
 	opts := make([]huh.Option[string], 0, len(kinds))
@@ -451,9 +436,8 @@ func modelOptions(models []string) []huh.Option[string] {
 	return opts
 }
 
-// selectOrInput: a Select when models were discovered, else an Input for manual
-// entry. No field title (the group title is the header), and no .Height so the
-// whole option list stays static (cursor moves; no windowed scrolling).
+// selectOrInput: a Select when models were discovered, else an Input. No .Height,
+// so the whole option list stays static rather than scrolling.
 func selectOrInput(manual bool, opts []huh.Option[string], val *string) huh.Field {
 	if manual || len(opts) == 0 {
 		return huh.NewInput().Value(val)
@@ -461,26 +445,22 @@ func selectOrInput(manual bool, opts []huh.Option[string], val *string) huh.Fiel
 	return huh.NewSelect[string]().Options(opts...).Value(val)
 }
 
-// specialistSelect is a model role pick with a "None - disable" option (so the
-// user can skip judge/memory/vision/audio). Falls back to Input when no models
-// were discovered.
+// specialistSelect is a model role pick with a "None - disable" option;
+// an Input when no models were discovered.
 func specialistSelect(title string, models []string, val *string, none huh.Option[string]) huh.Field {
 	if len(models) == 0 {
 		return huh.NewInput().Title(title).Placeholder("blank for none").Value(val)
 	}
 	opts := append([]huh.Option[string]{none}, modelOptions(models)...)
-	// If the prefilled value (from env/heuristic) isn't in the discovered list
-	// (stale env, or /models returned different IDs), add it as an explicit
-	// option so the select still pre-selects it instead of silently mismatching.
+	// A prefilled value missing from the discovered list (stale env, different IDs) is added as an option
+	// so the select still pre-selects it.
 	if *val != "" && !slices.Contains(models, *val) {
 		opts = append(opts, huh.NewOption(*val, *val))
 	}
 	return huh.NewSelect[string]().Title(title).Height(8).Options(opts...).Value(val)
 }
 
-// suggestModel returns the first model whose name contains any of the keywords
-// (case-insensitive), or "" if none match. Used to pre-select specialist roles
-// so the common case is confirm-confirm-confirm.
+// suggestModel returns the first model whose name contains any keyword (case-insensitive), or "".
 func suggestModel(models []string, keywords ...string) string {
 	for _, m := range models {
 		low := strings.ToLower(m)

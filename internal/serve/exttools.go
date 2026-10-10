@@ -11,9 +11,7 @@ import (
 	"google.golang.org/genai"
 )
 
-// extTool pairs an extension/plugin tool with the provider name it came from,
-// so name collisions can be disambiguated as <provider>_<tool> (the same
-// underscore convention quackmcp_* uses).
+// extTool pairs an extension/plugin tool with its provider, so collisions resolve as <provider>_<tool>.
 type extTool struct {
 	provider string
 	tool     tool.Tool
@@ -48,9 +46,8 @@ func (r *renamedTool) ProcessRequest(_ agent.Context, req *model.LLMRequest) err
 	return toolutils.PackTool(req, r)
 }
 
-// indexExtTools builds the by-name lookup agents' tools: lists resolve against. Every tool is
-// addressable as <provider>_<name>; the bare name resolves when exactly one provider supplies it.
-// A collided bare name maps to nil (an "ambiguous" error in tools.Build) so no provider shadows another.
+// indexExtTools: every tool is addressable as <provider>_<name>; a bare name resolves only when one
+// provider supplies it, else maps to nil (an "ambiguous" error in tools.Build).
 func indexExtTools(exts []extTool) map[string]tool.Tool {
 	byName := make(map[string]tool.Tool, len(exts))
 	providers := make(map[string][]string) // bare name -> provider names

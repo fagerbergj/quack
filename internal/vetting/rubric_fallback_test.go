@@ -83,9 +83,8 @@ func TestLoadConstitutionFallsBackWhenPathMissing(t *testing.T) {
 	}
 }
 
-// TestReadWithFallbackReadsCustomPathFromDisk: a custom path that DOES resolve
-// on disk never goes through artifactsrc, but still gets a real, content-hashed
-// Artifact (FileArtifact) - never an unattributed one.
+// TestReadWithFallbackReadsCustomPathFromDisk: a custom path on disk skips artifactsrc but still
+// gets a content-hashed FileArtifact.
 func TestReadWithFallbackReadsCustomPathFromDisk(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "custom.md")
 	if err := os.WriteFile(p, []byte("custom content"), 0o644); err != nil {
@@ -142,9 +141,8 @@ func TestLoadRubricFileCustomYAMLPath(t *testing.T) {
 	}
 }
 
-// TestLoadBundleRubricSpecs_ErrorBranches: a generic (non-fs.ErrNotExist) resolver
-// failure surfaces; a store-provided rubric.yaml that fails to parse surfaces too;
-// one that parses but renders empty (no criteria) is treated as absent.
+// TestLoadBundleRubricSpecs_ErrorBranches: generic resolver and parse failures surface;
+// a rubric that renders empty is treated as absent.
 func TestLoadBundleRubricSpecs_ErrorBranches(t *testing.T) {
 	ctx := context.Background()
 	hardRes := artifactsrc.New("langfuse", hardErrSource{}, time.Minute)

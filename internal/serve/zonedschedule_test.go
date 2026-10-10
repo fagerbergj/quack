@@ -32,7 +32,8 @@ func TestZonedSchedule(t *testing.T) {
 		}
 	}
 	off := ""
-	startConsolidationSweep(t.Context(), nil, config.ResolvedMemory{Consolidation: config.ConsolidationConfig{Schedule: &off}}, chicago) // "" disables: no goroutine
+	// "" disables: no goroutine.
+	startConsolidationSweep(t.Context(), nil, config.ResolvedMemory{Consolidation: config.ConsolidationConfig{Schedule: &off}}, chicago)
 }
 
 // TestLogTimezone: a configured zone logs at info; an unknown TZ with no

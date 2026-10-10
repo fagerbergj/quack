@@ -12,9 +12,7 @@ import (
 // baselineTempPrefix mirrors vetting's os.MkdirTemp("", "quack-base-") prefix.
 const baselineTempPrefix = "quack-base-"
 
-// GCConfig is the periodic reaper's tunables. TTL-based for chats/scratch;
-// HomeMaxBytes is quota-based (the agent home has no per-entry idle time to
-// expire - it is one shared directory for the whole user).
+// GCConfig: TTLs for chats and scratch; the agent home is one shared dir per user, so it gets a quota.
 type GCConfig struct {
 	Enabled bool
 	// ChatTTL/ScratchTTL/HomeMaxBytes <= 0 skip that sweep class entirely.
@@ -22,22 +20,16 @@ type GCConfig struct {
 	ScratchTTL   time.Duration
 	HomeMaxBytes int64
 	Interval     time.Duration
-	// BaselineTempDir overrides where sweepBaselineTemp globs for quack-base-*
-	// dirs; empty means the real os.TempDir(). Tests set this so a concurrent
-	// package sharing the machine-wide temp dir can't add or remove entries
-	// this sweep counts.
+	// BaselineTempDir overrides os.TempDir() so tests aren't disturbed by other packages' temp entries.
 	BaselineTempDir string
 }
 
-// ActiveChatFunc reports whether the chat behind an on-disk directory name
-// (raw chat id or its ChatDirName rewrite) has a run in flight. nil skips every chat.
+// ActiveChatFunc takes a raw chat id or its ChatDirName rewrite. nil skips every chat.
 type ActiveChatFunc func(chatDir string) bool
 
-// WorktreePruner detaches linked worktree dir before GC removes it; root bounds where its owning clone may live.
-// nil = remove-only.
+// WorktreePruner detaches a linked worktree before GC removes it; root bounds its owning clone. nil = remove-only.
 type WorktreePruner func(ctx context.Context, root, dir string) error
 
-// GCResult summarizes one sweep.
 type GCResult struct {
 	ChatsRemoved   int
 	ScratchRemoved int
@@ -82,8 +74,7 @@ func sweepAndLog(ctx context.Context, jail *Jail, cfg GCConfig, isActive ActiveC
 		"home_reset", res.HomeReset, "bytes_reclaimed", res.BytesReclaimed)
 }
 
-// Sweep runs one GC pass: idle chat scopes, then scratch (baseline worktrees
-// + .quack-home/tmp), then the agent home quota.
+// Sweep: idle chat scopes, then scratch (baseline worktrees, .quack-home/tmp), then the agent home quota.
 func Sweep(ctx context.Context, jail *Jail, cfg GCConfig, isActive ActiveChatFunc, prune WorktreePruner) GCResult {
 	var res GCResult
 	if cfg.ChatTTL > 0 {
@@ -227,8 +218,7 @@ func sweepHomeTmp(ttl time.Duration, jail *Jail) (removed int, bytes int64) {
 	return removed, bytes
 }
 
-// sweepAgentHome resets a user's ACP agent home (its own caches/DBs/logs, never
-// quack's own state) whole once it exceeds maxBytes, but only once anyChatActiveForUser proves none of the user's chats have a round in flight.
+// sweepAgentHome resets a user's ACP agent home once it exceeds maxBytes, only when none of their chats is live.
 func sweepAgentHome(ctx context.Context, jail *Jail, maxBytes int64, isActive ActiveChatFunc) (reset int, bytes int64) {
 	userEntries, err := os.ReadDir(jail.Root())
 	if err != nil {
@@ -264,9 +254,7 @@ func sweepAgentHome(ctx context.Context, jail *Jail, maxBytes int64, isActive Ac
 	return reset, bytes
 }
 
-// anyChatActiveForUser reports whether any of userID's known chats has a run
-// in flight. A nil isActive fails closed (treated as active - can't prove
-// otherwise), matching sweepChatScopes.
+// anyChatActiveForUser fails closed: a nil isActive counts as active.
 func anyChatActiveForUser(jail *Jail, userID string, isActive ActiveChatFunc) bool {
 	if isActive == nil {
 		return true
@@ -290,8 +278,7 @@ func anyChatActiveForUser(jail *Jail, userID string, isActive ActiveChatFunc) bo
 	return false
 }
 
-// resetHomeDir empties home in one shot - the ACP agent's on-disk state is
-// not a schema we own, so we reclaim the whole opaque directory rather than edit inside it.
+// resetHomeDir: the ACP agent's on-disk state isn't a schema we own, so it is reclaimed whole.
 func resetHomeDir(home string) error {
 	if err := RemoveAllForce(home); err != nil {
 		return err
@@ -299,8 +286,7 @@ func resetHomeDir(home string) error {
 	return os.MkdirAll(home, 0o700)
 }
 
-// pruneWorktreesUnder detaches linked worktrees under dir before its removal, each owning clone bounded by cloneRoot.
-// No-op when prune is nil.
+// pruneWorktreesUnder detaches linked worktrees under dir; each owning clone is bounded by cloneRoot.
 func pruneWorktreesUnder(ctx context.Context, cloneRoot, dir string, prune WorktreePruner) {
 	if prune == nil {
 		return
@@ -317,9 +303,8 @@ func pruneWorktreesUnder(ctx context.Context, cloneRoot, dir string, prune Workt
 	})
 }
 
-// RemoveAllForce deletes path, restoring write permission on directories
-// that deny it before retrying once. Go's module cache marks cached deps
-// 0444 and their parent dirs 0555, so a plain RemoveAll fails with EACCES on unlink - the same reason `go clean -modcache` has to exist. Fast path first: the chmod walk only runs once a plain removal has actually failed. WalkDir never follows symlinks (a symlink's own DirEntry.IsDir() is false), so a symlink inside path is skipped rather than chmod'd through to whatever it points at outside the tree.
+// RemoveAllForce retries once after restoring dir write bits: Go's module cache is read-only, so RemoveAll
+// hits EACCES. WalkDir never follows symlinks, so nothing outside the tree is chmod'd.
 func RemoveAllForce(path string) error {
 	err := os.RemoveAll(path)
 	if err == nil {

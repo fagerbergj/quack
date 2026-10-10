@@ -6,9 +6,8 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// A queued revise round's run id carries node.go's "-s%d" suffix. Parsing the
-// whole remainder made strconv fail, silently reporting revise rounds as
-// worker round 0 - the UI then grouped them into the wrong card.
+// A queued revise round's run id carries a "-s%d" suffix that must not break parsing,
+// or revise rounds report as worker round 0.
 func TestStageRound_QueuedReviseKeepsItsStage(t *testing.T) {
 	for _, tc := range []struct {
 		runID string

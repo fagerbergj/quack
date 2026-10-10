@@ -9,13 +9,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/skilltoolset/skill"
 )
 
-// Agent: assembles layered system prompt for native or ACP agents. acp is
-// true only for the ACP shape, which has no load_skill tool. Tools are never
-// listed: their declarations already reach the model with every request.
+// Agent assembles the layered system prompt; acp marks the ACP shape, which has no load_skill tool.
+// Tools are never listed: their declarations already reach the model with every request.
 func Agent(name, description string, skills []*skill.Frontmatter, acp bool, behaviour, grading, workspace string) string {
 	var caps string
 	if sl := skillLines(skills, !acp); sl != "" {
@@ -24,9 +22,8 @@ func Agent(name, description string, skills []*skill.Frontmatter, acp bool, beha
 	return layered(fmt.Sprintf("You are Quack's %s. %s", name, description), "Capabilities", caps, behaviour, grading, workspace)
 }
 
-// Judge assembles the judge's layered prompt; no Grading layer (judge isn't graded). Its tools'
-// declarations already reach the model, so they are not listed (the parameter goes once judge.go is free to change).
-func Judge(_ []tool.Tool, behaviour string) string {
+// Judge assembles the judge's layered prompt, with no Grading layer; its tools are not listed.
+func Judge(behaviour string) string {
 	return layered("You are Quack's independent judge. You evaluate another agent's answer for trustworthiness, verifying its claims against a rubric before it reaches the user.", "", "", behaviour, "", "")
 }
 
@@ -155,9 +152,8 @@ func today() string {
 	return t.Format("Monday, 2006-01-02 in ") + whose + t.Format(" time zone (MST, UTC-07:00)")
 }
 
-// CacheByDay memoizes build's result, rebuilding when today() moves on or when version reports a
-// different set of resolved artifact versions. version runs on every call (once per model request),
-// so it must be cheap - the artifact resolver's TTL cache is what makes it so; nil = date only.
+// CacheByDay memoizes build, rebuilding when today() or version changes; nil version = date only.
+// version runs on every model request, so it must be cheap (the artifact resolver's TTL cache).
 func CacheByDay(version, build func(context.Context) string) func(context.Context) string {
 	var mu sync.Mutex
 	var key, cached string

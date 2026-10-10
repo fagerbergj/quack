@@ -24,9 +24,8 @@ import (
 	"github.com/fagerbergj/quack/internal/tools"
 )
 
-// TestSessionUser: the ADK session identity resolves from the chat's recorded
-// store.Chat.SessionUser (#512: the commenter's login for a GitHub-dispatched
-// chat) when present, falling back to the id-shape default (github-prefixed -> "github", legacy fallback constant; anything else -> the first-party local user) for chats that predate that column.
+// TestSessionUser: the ADK session user comes from store.Chat.SessionUser when set, else the id shape
+// (github-prefixed -> "github"; anything else -> the local user).
 func TestSessionUser(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()
@@ -51,9 +50,8 @@ func TestSessionUser(t *testing.T) {
 	}
 }
 
-// TestGetChat_GithubSessionUser pins the bug in #352 (and its #512
-// read/write-asymmetry follow-up): a GitHub-dispatched chat's turns are
-// written to its ADK session under the commenter's own login, not a hardcoded constant. GetChat must resolve turns under the SAME user the webhook wrote them under, or the chat renders with no content even though the run completed and the events exist.
+// TestGetChat_GithubSessionUser: a GitHub-dispatched chat's turns live under the commenter's login,
+// so GetChat must read them under that same user or the chat renders empty.
 func TestGetChat_GithubSessionUser(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()
@@ -201,10 +199,8 @@ func getChatStatus(t *testing.T, h *Handler, chatID string) (schema.ChatStatus, 
 	return detail.Status, detail.PendingQuestion
 }
 
-// TestChatStatusNeedsInput: a pending get_user_choice clarification in the
-// chat's session - the SAME scan Run's resume dispatch uses
-// (orchestrator.LatestPendingQuestion) - surfaces as needs_input with the question text once
-// the run that parked on it stamps its outcome; GetChat and ListChats read that one stamp.
+// TestChatStatusNeedsInput: a pending get_user_choice in the chat's session surfaces as needs_input
+// with the question once the parked run stamps its outcome; GetChat and ListChats read that stamp.
 func TestChatStatusNeedsInput(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()
@@ -247,9 +243,8 @@ func TestChatStatusNeedsInput(t *testing.T) {
 	}
 }
 
-// TestChatStatusNeedsInputFromPlanStepSession: a node dispatched by execute()'s
-// incremental step asks its question under dag.PlanStepSessionID(chatID), not the
-// chat's own session. The run's stamp must still report needs_input with that question.
+// TestChatStatusNeedsInputFromPlanStepSession: a step node asks under dag.PlanStepSessionID(chatID),
+// not the chat's session; the run's stamp must still report needs_input with that question.
 func TestChatStatusNeedsInputFromPlanStepSession(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()
@@ -332,9 +327,8 @@ func TestChatStatusFailed(t *testing.T) {
 	}
 }
 
-// TestBuildTurnUsage covers PR2 item 2: buildTurn must populate Turn.usage from
-// the orchestrator's own accumulated token counts (store.TurnContent, itself
-// summed from stored ADK session events - see store.groupSessionEvents). input_tokens = prompt; output_tokens folds candidates + reasoning together (schema.Usage has no separate reasoning field).
+// TestBuildTurnUsage: Turn.usage comes from the orchestrator's summed session tokens;
+// output_tokens folds candidates and reasoning (schema.Usage has no reasoning field).
 func TestBuildTurnUsage(t *testing.T) {
 	tc := store.TurnContent{
 		ID:               "t1",
@@ -363,9 +357,8 @@ func TestBuildTurnUsage(t *testing.T) {
 	}
 }
 
-// TestBuildTurnUsageNilWhenAbsent covers a DAG-only turn: the orchestrator itself
-// recorded no tokens (all the work happened in gated nodes, surfaced separately
-// via DagNodeState) - Turn.usage must stay nil, not a zero-valued struct, so the frontend can tell "no data" from "genuinely zero usage".
+// TestBuildTurnUsageNilWhenAbsent: a DAG-only turn with no orchestrator tokens leaves Turn.usage nil,
+// so the frontend can tell "no data" from zero usage.
 func TestBuildTurnUsageNilWhenAbsent(t *testing.T) {
 	tc := store.TurnContent{ID: "t2", CreatedAt: time.Now(), UserText: "research X", AsstText: "The vetted answer."}
 
@@ -379,9 +372,8 @@ func TestBuildTurnUsageNilWhenAbsent(t *testing.T) {
 	}
 }
 
-// TestBuildTurnDAGAnswerBubble: a DAG turn's answer bubble carries the
-// terminal node's OUTPUT (matching what the live stream rendered), not the
-// orchestrator's planning narration - the GitHub-review double-render fix.
+// TestBuildTurnDAGAnswerBubble: a DAG turn's answer bubble carries the terminal node's output,
+// as the live stream rendered it, not the orchestrator's planning narration.
 func TestBuildTurnDAGAnswerBubble(t *testing.T) {
 	planJSON := `{"nodes":[{"id":"explore","agent":"code-explorer","task":"read","depends_on":[]},{"id":"post","agent":"code-reviewer","task":"review","depends_on":["explore"]}],"edges":[{"from":"explore","to":"post"}]}`
 	tc := store.TurnContent{
@@ -418,9 +410,8 @@ func TestBuildTurnDAGAnswerBubble(t *testing.T) {
 	}
 }
 
-// TestBuildTurnDAGCarriesArtifact: a node's declared output artifact kind
-// persists in the DAG's PlanJSON and must surface on the reloaded turn's
-// quack:dag output item (#1178) - absent when the node declares none.
+// TestBuildTurnDAGCarriesArtifact: a node's declared output artifact kind surfaces on the reloaded
+// turn's quack:dag item, and is absent when the node declares none.
 func TestBuildTurnDAGCarriesArtifact(t *testing.T) {
 	planJSON := `{"nodes":[{"id":"explore","agent":"code-explorer","task":"read","depends_on":[],"artifact":"text"},{"id":"post","agent":"code-reviewer","task":"review","depends_on":["explore"]}],"edges":[{"from":"explore","to":"post"}]}`
 	tc := store.TurnContent{
@@ -556,9 +547,7 @@ func TestUpdateChat_NoSuchChat404(t *testing.T) {
 	}
 }
 
-// TestUpdateChat_ArchiveToggle: a PATCH with only archived=true archives the chat
-// and unarchiving (archived=false) reverses it. AtLeast one of title or archived must
-// be present so an empty body still 400s (already tested above).
+// TestUpdateChat_ArchiveToggle: PATCH archived=true archives the chat and archived=false reverses it.
 func TestUpdateChat_ArchiveToggle(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()
@@ -631,9 +620,7 @@ func TestUpdateChat_ArchiveDoesNotTouchUpdatedAt(t *testing.T) {
 	saved, _ := h.store.GetChat(ctx, c.ID)
 	before := saved.UpdatedAt
 
-	// Give the clock a moment to tick, so a real (bugged) auto-stamp would be
-	// caught even by a comparison too coarse to see it - it isn't needed for
-	// this test's own comparison, which is exact rather than second-truncated.
+	// Let the clock tick so a buggy auto-stamp would show even under a coarse comparison.
 	time.Sleep(50 * time.Millisecond)
 
 	trueVal := true
@@ -650,9 +637,8 @@ func TestUpdateChat_ArchiveDoesNotTouchUpdatedAt(t *testing.T) {
 		t.Errorf("stored Archived after archive call = false, want true")
 	}
 
-	// Exact comparison, not truncated to the Unix second - the guarantee is that
-	// archiving never writes updated_at at all, not merely that it lands in the
-	// same second (a truncated comparison would flake whenever the two DB writes straddle a second boundary, and would silently pass even if this DID rewrite updated_at to a value that rounds to the same second).
+	// Exact comparison: archiving must never write updated_at, and a second-truncated
+	// check would both flake at second boundaries and miss a same-second rewrite.
 	if !saved.UpdatedAt.Equal(before) {
 		t.Errorf("updated_at after archive changed from %v to %v; want unchanged", before, saved.UpdatedAt)
 	}
@@ -673,9 +659,8 @@ func TestUpdateChat_ArchiveDoesNotTouchUpdatedAt(t *testing.T) {
 	}
 }
 
-// TestUpdateChat_ArchiveAndTitleTogether: updating both title and archived in one
-// PATCH should set the new title, toggle archived, and still NOT touch updated_at
-// because there's no title that would otherwise trigger it. (Archived wins: updateAt is forced to false when hasArchived is true regardless of hasTitle.)
+// TestUpdateChat_ArchiveAndTitleTogether: one PATCH sets the title and toggles archived
+// without touching updated_at (archived forces updateAt off).
 func TestUpdateChat_ArchiveAndTitleTogether(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()

@@ -19,7 +19,7 @@ func redirectSlogForTest(buf *strings.Builder) func() {
 	return func() { slog.SetDefault(prev) }
 }
 
-// The stopped latch (#1016): a panicking yield must be recovered once and
+// The stopped latch: a panicking yield must be recovered once and
 // never invoke yield again on the same call sequence.
 func TestSafeYieldIsolatesPanicAndSurvives(t *testing.T) {
 	var calls int32
@@ -29,9 +29,8 @@ func TestSafeYieldIsolatesPanicAndSurvives(t *testing.T) {
 		panic(boom)
 	})
 
-	// The panicking caller must see its own panic resumed: swallowing it here
-	// makes the runtime panic at the range site instead, killing the process
-	// (#1033). Survival belongs to startRun's goroutine, which owns the run.
+	// The caller must see its own panic resumed; swallowing it panics at the range site instead.
+	// Survival belongs to startRun's goroutine, which owns the run.
 	var got any
 	func() {
 		defer func() { got = recover() }()
@@ -59,7 +58,7 @@ func TestSafeYieldLogsOriginalPanicValue(t *testing.T) {
 	const marker = "distinctive-panic-value-for-log-assertion"
 	sy := newSafeYield(func(stream.SSEEvent, error) bool { panic(marker) })
 	func() {
-		defer func() { _ = recover() }() // resumed now (#1033), still logged first
+		defer func() { _ = recover() }() // resumed, still logged first
 		sy(stream.SSEEvent{}, nil)
 	}()
 
@@ -68,7 +67,7 @@ func TestSafeYieldLogsOriginalPanicValue(t *testing.T) {
 	}
 }
 
-// A sequential two-call test cannot exercise the real bug (#1016): the second
+// A sequential two-call test cannot exercise the real bug: the second
 // caller must be blocked on the mutex while the first panics, not called after.
 func TestSafeYieldConcurrentPanicIsolatesAllCallers(t *testing.T) {
 	const n = 8
@@ -94,7 +93,7 @@ func TestSafeYieldConcurrentPanicIsolatesAllCallers(t *testing.T) {
 			ready.Done()
 			<-start // released together: forces real mutex contention, not a sequence
 			// Exactly one caller reaches the panicking yield and has it resumed
-			// (#1033); every other caller must be turned away with false.
+			// and every other caller must be turned away with false.
 			defer func() {
 				if r := recover(); r != nil {
 					atomic.AddInt32(&panicked, 1)

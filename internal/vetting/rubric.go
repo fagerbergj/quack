@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"strings"
 
 	"github.com/fagerbergj/quack/internal/artifactsrc"
@@ -20,9 +21,8 @@ var defaultArtifact = map[string]string{
 	defaultConstitutionPath: "rubric/constitution",
 }
 
-// readWithFallback: a path that resolves nowhere falls back to defaultPath's
-// artifact instead of hard-failing. A custom path read straight off disk still
-// gets a real Artifact (FileArtifact's content hash), like ResolveBundleFile.
+// readWithFallback: an unresolvable path falls back to defaultPath's artifact. A custom path read
+// off disk still gets a real Artifact (content hash), like ResolveBundleFile.
 func readWithFallback(ctx context.Context, res *artifactsrc.Resolver, path, defaultPath string) ([]byte, artifactsrc.Artifact, error) {
 	if path != defaultPath {
 		if raw, err := bundledir.ReadFile(path); err == nil {
@@ -36,9 +36,8 @@ func readWithFallback(ctx context.Context, res *artifactsrc.Resolver, path, defa
 	return []byte(art.Body), art, nil
 }
 
-// FromConfig resolves the gates config into a gate Config, loading the constitution (optional global
-// principles) and rubric (scoring guide) from their inline values or artifacts. Called at the start of
-// every run rather than once at boot, so an edited rubric reaches the next node without a restart.
+// FromConfig resolves the gates config into a gate Config. Called per run, not once at boot,
+// so an edited rubric reaches the next node without a restart.
 func FromConfig(ctx context.Context, res *artifactsrc.Resolver, c config.GatesConfig) (Config, error) {
 	constitution, constArt, err := loadConstitution(ctx, res, c)
 	if err != nil {
@@ -86,9 +85,8 @@ func loadConstitution(ctx context.Context, res *artifactsrc.Resolver, c config.G
 	return strings.TrimSpace(string(raw)), art, nil
 }
 
-// loadRubric returns the rendered rubric markdown for the judge prompt, and
-// (when the source was a rubric.yaml, not a raw override) the per-criterion
-// specs the envelope needs. A planner/inline-config rubric override is unstructured prose - specs is nil in that case (#941).
+// loadRubric returns the rendered rubric markdown, plus per-criterion specs when the source was
+// a rubric.yaml; an unstructured planner/inline override has nil specs.
 func loadRubric(ctx context.Context, res *artifactsrc.Resolver, c config.GatesConfig) (string, map[string]criterionSpec, map[string]string, artifactsrc.Artifact, error) {
 	if r := strings.TrimSpace(c.Rubric); r != "" {
 		return r, nil, nil, artifactsrc.Artifact{}, nil // raw inline override - unstructured prose, no specs
@@ -103,9 +101,8 @@ func loadRubric(ctx context.Context, res *artifactsrc.Resolver, c config.GatesCo
 	return loadRubricFile(ctx, res, path)
 }
 
-// loadRubricFile loads a rubric from disk: a .yaml path is the structured
-// format (rubricyaml.go); anything else is a raw prose override with no
-// structured specs. A path that doesn't resolve falls back to the embedded default.
+// loadRubricFile: a .yaml path is the structured format, anything else a raw prose override.
+// A path that doesn't resolve falls back to the embedded default.
 func loadRubricFile(ctx context.Context, res *artifactsrc.Resolver, path string) (string, map[string]criterionSpec, map[string]string, artifactsrc.Artifact, error) {
 	raw, art, err := readWithFallback(ctx, res, path, defaultRubricPath)
 	if err != nil {
@@ -125,9 +122,8 @@ func loadRubricFile(ctx context.Context, res *artifactsrc.Resolver, path string)
 	return r, nil, nil, art, nil
 }
 
-// LoadBundleRubric looks for a rubric.yaml file in the agent bundle directory
-// and returns its rendered markdown (for callers - guidance prose, judge prompt text - that only want text) plus its structured specs (nil if the
-// bundle has no rubric). "" rendered text ⇒ no per-agent rubric (not an error; caller falls back to the global constitution). Resolved from disk in cwd first, then the embedded copy (so an installed binary works).
+// LoadBundleRubric returns the bundle's rendered rubric.yaml; "" means no per-agent rubric.
+// Resolved from disk in cwd first, then the embedded copy.
 func LoadBundleRubric(ctx context.Context, res *artifactsrc.Resolver, bundleDir string) (string, error) {
 	rendered, _, _, _, err := LoadBundleRubricSpecs(ctx, res, bundleDir)
 	return rendered, err
@@ -144,7 +140,7 @@ func LoadBundleRubricSpecs(ctx context.Context, res *artifactsrc.Resolver, bundl
 		}
 		return "", nil, nil, artifactsrc.Artifact{}, fmt.Errorf("vetting: read bundle rubric %q: %w", bundleDir, err)
 	}
-	doc, err := loadRubricYAML([]byte(art.Body), bundledir.PathJoin(bundleDir, "rubric.yaml"))
+	doc, err := loadRubricYAML([]byte(art.Body), path.Join(bundleDir, "rubric.yaml"))
 	if err != nil {
 		return "", nil, nil, artifactsrc.Artifact{}, err
 	}
@@ -189,7 +185,7 @@ func LoadReplayRubric(ctx context.Context, res *artifactsrc.Resolver, bundleDir,
 		}
 		return ReplayRubric{}, fmt.Errorf("vetting: read bundle rubric %q: %w", bundleDir, err)
 	}
-	doc, err := loadRubricYAML([]byte(art.Body), bundledir.PathJoin(bundleDir, "rubric.yaml"))
+	doc, err := loadRubricYAML([]byte(art.Body), path.Join(bundleDir, "rubric.yaml"))
 	if err != nil {
 		return ReplayRubric{}, err
 	}

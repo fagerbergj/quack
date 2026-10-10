@@ -38,9 +38,7 @@ func (s *stubNativeModel) GenerateContent(ctx context.Context, req *model.LLMReq
 	}
 }
 
-// newUsageTestMeter installs a fresh manual-reader-backed meter as the
-// otelobs package singleton (mirrors inference/traced_test.go's helper of
-// the same shape).
+// newUsageTestMeter installs a fresh manual-reader meter as the otelobs singleton.
 func newUsageTestMeter(t *testing.T) *sdkmetric.ManualReader {
 	t.Helper()
 	reader := sdkmetric.NewManualReader()
@@ -104,8 +102,7 @@ func attrVal(set attribute.Set, key string) string {
 	return v.AsString()
 }
 
-// usageTestAgent builds an Agent with the metrics-relevant Options the
-// production construction site (serve.go) now threads through.
+// usageTestAgent builds an Agent with the metrics-relevant Options serve.go passes.
 func usageTestAgent(t *testing.T, mode string, pricing *config.ModelPricing) *Agent {
 	t.Helper()
 	jail, err := workspace.NewJail(t.TempDir())
@@ -127,9 +124,8 @@ func usageTestAgent(t *testing.T, mode string, pricing *config.ModelPricing) *Ag
 	return a
 }
 
-// TestRound_UsageEmitsOncePerRound pins the seam: the fake sends several
-// streamed updates before its terminal PromptResponse, but the metric must
-// land exactly once (from PromptResponse.Usage), not once per update.
+// TestRound_UsageEmitsOncePerRound: several streamed updates precede the PromptResponse,
+// but the metric lands exactly once, from PromptResponse.Usage.
 func TestRound_UsageEmitsOncePerRound(t *testing.T) {
 	reader := newUsageTestMeter(t)
 	a := usageTestAgent(t, "usage", nil)
@@ -170,9 +166,7 @@ func TestRound_UsageEmitsOncePerRound(t *testing.T) {
 	}
 }
 
-// TestRound_UsageAbsent_NoMetrics guards "never fabricate": an agent that
-// doesn't report the unstable usage capability must produce no data point at
-// all, not a zero-valued one.
+// TestRound_UsageAbsent_NoMetrics: an agent without the usage capability produces no data point, not a zero.
 func TestRound_UsageAbsent_NoMetrics(t *testing.T) {
 	reader := newUsageTestMeter(t)
 	a := usageTestAgent(t, "usage-none", nil)
@@ -189,9 +183,8 @@ func TestRound_UsageAbsent_NoMetrics(t *testing.T) {
 	}
 }
 
-// TestRound_Cost_ComputedFromConfiguredPricing pins the price math: cached
-// reads are billed at the input rate (no separate cached tier), matching
-// inference.recordUsageMetrics.
+// TestRound_Cost_ComputedFromConfiguredPricing: cached reads bill at the input rate,
+// matching inference.recordUsageMetrics.
 func TestRound_Cost_ComputedFromConfiguredPricing(t *testing.T) {
 	reader := newUsageTestMeter(t)
 	pricing := &config.ModelPricing{InputPerMTok: 2, OutputPerMTok: 4}
@@ -248,9 +241,8 @@ func TestRound_NoCoords_AttributionOmitted(t *testing.T) {
 	}
 }
 
-// TestNoDoubleCounting_NativeAndACPEmitIndependently guards #860's premise: a
-// native model call emits via tracedModel, an ACP round emits via this
-// package's seam, and the two never overlap - each path's own numbers show up exactly once, not doubled, when both run against the same reader.
+// TestNoDoubleCounting_NativeAndACPEmitIndependently: native calls emit via tracedModel and ACP rounds via
+// this package; each path's numbers show up exactly once against the same reader.
 func TestNoDoubleCounting_NativeAndACPEmitIndependently(t *testing.T) {
 	reader := newUsageTestMeter(t)
 
@@ -267,9 +259,8 @@ func TestNoDoubleCounting_NativeAndACPEmitIndependently(t *testing.T) {
 		t.Fatalf("round: %v", err)
 	}
 
-	// Both paths report token_type=input, but as separate series (distinct
-	// "agent" attribute) - collect by agent, not just token_type, to prove
-	// neither path's number absorbed the other's.
+	// Both report token_type=input as separate series (distinct "agent"), so collect by agent
+	// to prove neither absorbed the other's number.
 	met, ok := collectMetric(t, reader, "gen_ai.client.token.usage")
 	if !ok {
 		t.Fatal("gen_ai.client.token.usage never recorded")

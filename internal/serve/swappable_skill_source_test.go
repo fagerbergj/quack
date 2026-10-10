@@ -30,9 +30,8 @@ func (f fakeSkillSource) ListResources(context.Context, string, string) ([]strin
 	return []string{f.tag}, nil
 }
 
-// TestSwappableSkillSourceDelegatesAndSwaps proves every method reaches the
-// CURRENT backing source, and Swap changes it for all of them at once - the
-// seam rebuildSkills' roster update depends on.
+// TestSwappableSkillSourceDelegatesAndSwaps: every method reaches the current backing source and Swap
+// changes it for all at once (rebuildSkills depends on this).
 func TestSwappableSkillSourceDelegatesAndSwaps(t *testing.T) {
 	s := newSwappableSkillSource(fakeSkillSource{"v1"})
 	ctx := context.Background()
@@ -62,10 +61,8 @@ func TestSwappableSkillSourceDelegatesAndSwaps(t *testing.T) {
 	}
 }
 
-// TestSwappableSkillSourceConcurrentReadsDuringSwap proves the atomic
-// pointer under Swap is race-safe: a reader goroutine looping
-// ListFrontmatters/LoadFrontmatter must never see a torn value while Swap
-// runs concurrently on the main goroutine.
+// TestSwappableSkillSourceConcurrentReadsDuringSwap: readers looping List/LoadFrontmatter never
+// see a torn value while Swap runs concurrently.
 func TestSwappableSkillSourceConcurrentReadsDuringSwap(t *testing.T) {
 	s := newSwappableSkillSource(fakeSkillSource{"v1"})
 	ctx := context.Background()

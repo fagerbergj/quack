@@ -13,15 +13,13 @@ import (
 	"github.com/fagerbergj/quack/internal/memory"
 )
 
-// commitMemoryArgs: one durable fact to remember.
 type commitMemoryArgs struct {
 	Content string `json:"content"`
 	Kind    string `json:"kind"`
 }
 
-// NewCommitMemoryTool: orchestrator's commit_memory tool - writes directly (no judge
-// gate); chatID/source stamp provenance (see memory.Provenance). Built fresh per
-// Orchestrator.Run call, so a plain closure over them is safe - no SetLedgerCoords cross-node reuse like the DAG-node tools.
+// NewCommitMemoryTool writes directly (no judge). Built per Orchestrator.Run, so closing over
+// chatID/source is safe without SetLedgerCoords.
 func NewCommitMemoryTool(store *memory.Store, userID, chatID, source string) (tool.Tool, error) {
 	return functiontool.New[commitMemoryArgs, string](
 		functiontool.Config{
@@ -43,7 +41,7 @@ func NewCommitMemoryTool(store *memory.Store, userID, chatID, source string) (to
 			// Bound round-trip so a stalled model can't hang the orchestrator.
 			cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 			defer cancel()
-			// User bucket: records facts about the user. Legacy is the pre-bucket key for existing memories.
+			// Legacy is the pre-bucket key existing memories were stored under.
 			sc := memory.Scope{User: userID, Legacy: userID}
 			prov := memory.Provenance{ChatID: chatID, Source: source}
 			if _, err := store.Commit(cctx, sc, "orchestrator", prov, []memory.Candidate{cand}, ""); err != nil {

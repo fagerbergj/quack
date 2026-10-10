@@ -165,7 +165,7 @@ func TestResolveFallsBackToTheSearchSnippet(t *testing.T) {
 	}
 	fetched := pageID(t, u)
 	ev.Store = fakePages{fetched: []byte("Revenue reached $4.2M in 2025 according to the full filing text.")}
-	if text, _ := ev.Resolve(context.Background(), u); !strings.Contains(text, "full filing") {
+	if text := ev.resolve(context.Background(), u).text; !strings.Contains(text, "full filing") {
 		t.Errorf("a fetched page must win over the snippet, got %q", text)
 	}
 }

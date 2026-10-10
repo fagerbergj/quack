@@ -13,8 +13,7 @@ import (
 // The review MCP surface gives the external code-reviewer an agentic channel
 // for inline comments + verdict, riding the same loopback server as memory.
 
-// Bare tool names, shared between the mcp.AddTool registrations below and
-// mcpToolNames (acp.go, #688) - see memorymcp.go's matching const block.
+// Bare tool names shared by the mcp.AddTool registrations and mcpToolNames (see memorymcp.go's block).
 const (
 	toolStageReviewComment   = "stage_review_comment"
 	toolListReviewComments   = "list_review_comments"
@@ -31,9 +30,8 @@ type stageReviewCommentInput struct {
 	Body string `json:"body" jsonschema:"the inline finding at that line"`
 }
 
-// listReviewCommentsInput is list_review_comments' input: plain limit/offset
-// pagination - this repo's convention for bounding a response rather than
-// trusting it stays small (see judge.go's changedFilesBudget, workspace's max_read_kb). No cursor: a review node stages at most a few dozen findings.
+// listReviewCommentsInput: plain limit/offset pagination to bound the response.
+// No cursor: a review node stages at most a few dozen findings.
 type listReviewCommentsInput struct {
 	Limit  int `json:"limit,omitempty" jsonschema:"max comments to return (default 50)"`
 	Offset int `json:"offset,omitempty" jsonschema:"how many staged comments to skip, in stage order (default 0)"`
@@ -45,9 +43,8 @@ type unstageReviewCommentInput struct {
 	ID string `json:"id" jsonschema:"the id of the staged comment to remove, from stage_review_comment or list_review_comments"`
 }
 
-// stageReviewInput is stage_review's input: the overall verdict plus the
-// fixed review format's model-written fields (verdict/scope/highlights are
-// all generated elsewhere - see reviewrecord.go's CodeReviewRecord doc).
+// stageReviewInput: the overall verdict plus the review format's model-written fields
+// (the rest is generated; see reviewrecord.go's CodeReviewRecord).
 type stageReviewInput struct {
 	Event    string   `json:"event" jsonschema:"overall verdict: approve, request_changes, or comment"`
 	Takeaway string   `json:"takeaway" jsonschema:"one sentence, max 240 characters - the fifteen-second takeaway, never a restatement of findings already staged inline"`
@@ -55,9 +52,8 @@ type stageReviewInput struct {
 	Notes    []string `json:"notes,omitempty" jsonschema:"free prose with no line to anchor to (architecture, praise, follow-ups, unresolved questions), max 8 items, each max 200 characters"`
 }
 
-// defaultListLimit and listExcerptLen bound list_review_comments' response:
-// a page of results, and a short excerpt per body rather than the full text -
-// just enough for the reviewer to recognize a finding it already staged and grab the id to retract it with, not to reproduce the finding verbatim (unstage_review_comment takes the id, not the body, so it never needs to).
+// defaultListLimit and listExcerptLen bound list_review_comments: an excerpt is enough to recognize a staged
+// finding and grab its id (unstage_review_comment takes the id, not the body).
 const (
 	defaultListLimit = 50
 	listExcerptLen   = 120
@@ -77,8 +73,8 @@ func registerReviewTools(srv *mcp.Server, review *vetting.ReviewStage) {
 	addStageReviewComment(srv, review)
 	addListReviewComments(srv, review)
 	addUnstageReviewComment(srv, review)
-	// A slice feeding a synthesizer never owns the delivered verdict (#1148): the
-	// tool is withheld rather than registered-and-refused ("the tool list is a fact").
+	// A slice feeding a synthesizer never owns the delivered verdict: withhold the tool rather than
+	// register-and-refuse it, since "the tool list is a fact".
 	if review.IsNonDeliveringSlice() {
 		return
 	}
@@ -184,9 +180,7 @@ func addStageReview(srv *mcp.Server, review *vetting.ReviewStage) {
 	})
 }
 
-// stagePRInput is stage_pr's input: the title + body the implementer authored
-// with the pr-authoring skill (that skill owns the template - the repo's or its
-// default - so nothing here is deterministic beyond requiring both fields).
+// stagePRInput: the title + body the implementer authored with the pr-authoring skill, which owns the template.
 type stagePRInput struct {
 	Title string `json:"title" jsonschema:"the PR title: type(scope): subject, imperative, <=50 chars, references the issue"`
 	Body  string `json:"body" jsonschema:"the PR description authored per the pr-authoring skill (what/why/how/verify, repo template or the skill's default)"`
@@ -206,17 +200,15 @@ func registerPRTool(srv *mcp.Server, pr *vetting.PRStage) {
 	})
 }
 
-// stagePushInput is stage_push's input: title/body are OPTIONAL - this run is
-// pushing onto a PR that already exists, so it may have nothing to say about
-// either (issue #724: stage_pr's required fields forced the agent to invent them, and the invented text then overwrote someone else's PR).
+// stagePushInput: title/body are optional because the PR already exists; required fields made agents
+// invent text that overwrote someone else's PR.
 type stagePushInput struct {
 	Title string `json:"title,omitempty" jsonschema:"optional: only pass this if you are deliberately changing the PR's title"`
 	Body  string `json:"body,omitempty" jsonschema:"optional: only pass this if you are deliberately changing the PR's description"`
 }
 
-// registerPushTool adds stage_push to a per-node server, landing the call in
-// PRStage. Registered INSTEAD of stage_pr (internal/acp/acp.go's mcpToolNames)
-// when the run targets a PR that already exists.
+// registerPushTool adds stage_push, landing the call in PRStage; registered instead of stage_pr
+// when the run targets an existing PR.
 func registerPushTool(srv *mcp.Server, pr *vetting.PRStage) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: toolStagePush,

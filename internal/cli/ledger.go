@@ -1,6 +1,5 @@
-// TUI-free logic behind `quack ledger`. show/rebuild/recover run against the
-// SAME stores a local `quack.yaml` would boot `quack serve` against (see
-// cmd/quack/ledger.go); list/export talk to a running server's REST API.
+// TUI-free logic behind `quack ledger`: show/rebuild/recover open the stores a local quack.yaml
+// would boot against; list/export talk to a running server's REST API.
 package cli
 
 import (
@@ -10,11 +9,14 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
+	"slices"
 	"sort"
 	"text/tabwriter"
 	"time"
 
+	extsdk "github.com/fagerbergj/quack-extensions/sdk"
 	"gorm.io/gorm"
 
 	"github.com/fagerbergj/quack/internal/artifactref"
@@ -26,9 +28,7 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// RunLedgerShow prints chatID's raw ledger entries (seq >= fromSeq) to out,
-// one JSON object per line - pipeable per the quack-cli skill's "content to
-// stdout" rule.
+// RunLedgerShow prints chatID's raw ledger entries (seq >= fromSeq) to out, one JSON object per line.
 func RunLedgerShow(ctx context.Context, out io.Writer, ls ledger.LedgerStore, chatID string, fromSeq int64) error {
 	entries, err := ls.ReadEntries(ctx, chatID, fromSeq)
 	if err != nil {
@@ -43,9 +43,7 @@ func RunLedgerShow(ctx context.Context, out io.Writer, ls ledger.LedgerStore, ch
 	return nil
 }
 
-// LedgerRebuildReport is `quack ledger rebuild`'s result (#1144 P3: rebuild
-// is now "reset the watermark to 0 and fold" - no more diff heuristics, the
-// watermark itself says how much was already reconciled).
+// LedgerRebuildReport is `quack ledger rebuild`'s result: rebuild resets the watermark to 0 and refolds.
 type LedgerRebuildReport struct {
 	ChatID                   string   `json:"chat_id"`
 	DryRun                   bool     `json:"dry_run"`
@@ -53,21 +51,15 @@ type LedgerRebuildReport struct {
 	ArtifactUpdateErrors     []string `json:"artifact_update_errors,omitempty"`
 	SSERowsInserted          int      `json:"sse_rows_inserted"`
 	NodeStatesChanged        int      `json:"node_states_changed"`
-	// NodeStateSkippedMultiPlan is true when node_state was left untouched
-	// because chatID has more than one plan: res.Nodes folds the whole chat
-	// lifetime by bare node ID, and a node ID legitimately recurs across plans/turns (e.g. the "synthesize" node a review fan-out gets) with no persisted plan<->invocation mapping to attribute a terminal event back to the plan it belongs to - attributing it to "the latest plan" would silently fabricate or stomp state for a plan that never ran that node.
+	// NodeStateSkippedMultiPlan: node_state is left alone when the chat has several plans, since node ids
+	// recur across plans and nothing maps a terminal event back to the plan that ran it.
 	NodeStateSkippedMultiPlan bool `json:"node_state_skipped_multi_plan,omitempty"`
 }
 
 // rebuildArtifacts: every artifact revision's kind/class/lineage rewritten from the fold
 // (unconditionally - no drift diff, the watermark reset already says "start over").
 func rebuildArtifacts(ctx context.Context, st *store.Store, artifacts *store.TurnAwareService, chatID, userID string, report *LedgerRebuildReport, res *fold.Result, dryRun bool) error {
-	ids := make([]string, 0, len(res.Artifacts))
-	for id := range res.Artifacts {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids) // deterministic report order
-	for _, id := range ids {
+	for _, id := range slices.Sorted(maps.Keys(res.Artifacts)) {
 		for _, rev := range res.Artifacts[id].Revisions {
 			report.ArtifactRevisionsChanged++
 			if dryRun {
@@ -252,37 +244,12 @@ func verbPast(dryRun bool) string {
 	return "written"
 }
 
-// DeliveryItemOutcome is a LOCAL copy of sdk.DeliveryItemOutcome's shape -
-// see DeliveryRecoverer below for why this stays a shim, not an import.
-type DeliveryItemOutcome struct {
-	Kind  string
-	URL   string
-	Error string
-}
-
-// DeliveryContext is a LOCAL copy of the sdk.DeliveryContext fields a
-// recoverer needs to look an idempotency key up (clone/PR coordinates) -
-// rebuilt by RunLedgerRecover from the delivery.intent payload, since offline recovery has no live worker activity to derive them from.
-type DeliveryContext struct {
-	CloneURL    string
-	IssueNumber int
-}
-
-// DeliveryRecoverer looks an idempotency key up at the delivery target (a
-// hidden marker in a GitHub review body, a reMarkable document id) and
-// reports whether it was already posted. This is a LOCAL copy of sdk.DeliveryRecoverer's shape - cli doesn't import quack-extensions/sdk directly (that dependency stays in internal/serve, which already adapts the SDK boundary elsewhere); internal/serve.sdkRecoverAdapter bridges the real extension's sdk.DeliveryRecoverer to this interface for `quack ledger recover`.
-type DeliveryRecoverer interface {
-	RecoverDelivery(ctx context.Context, key string, dc DeliveryContext) (found bool, outcome DeliveryItemOutcome, err error)
-}
-
-// DeliveryRecordChecker reports whether targetID's delivery_record already
-// carries a successful revision for revision - the single "is this delivery
-// done" read (#1144 P2), shared by boot recovery and `quack ledger recover`.
+// DeliveryRecordChecker reports whether targetID's delivery_record already has a successful revision;
+// the one "is this delivery done" read, shared by boot recovery and `quack ledger recover`.
 type DeliveryRecordChecker func(ctx context.Context, chatID, targetID string, revision int) (bool, error)
 
-// DeliveryRecorder persists the delivery_record revision that completes a
-// delivery.intent when the extension confirms it already landed but the
-// record write itself was lost (crash between Deliver and saveDeliveryRecord).
+// DeliveryRecorder writes the delivery_record revision completing a delivery.intent when the extension
+// confirms delivery landed but the record write was lost (crash between Deliver and saveDeliveryRecord).
 type DeliveryRecorder func(ctx context.Context, chatID, nodeID, targetID string, revision int, remoteURL string) error
 
 // OrphanedDelivery is one delivery.intent with no matching delivery_record.
@@ -292,9 +259,8 @@ type OrphanedDelivery struct {
 	Revision int    `json:"revision"`
 	NodeID   string `json:"node_id"`
 	Seq      int64  `json:"seq"`
-	// CloneURL/IssueNumber: minimal DeliveryContext fields persisted in the
-	// delivery.intent payload (#1093 finding 4) - enough to rebuild a
-	// DeliveryContext for a recoverer offline, without live worker activity.
+	// CloneURL/IssueNumber come from the delivery.intent payload: enough to rebuild a DeliveryContext
+	// for a recoverer offline.
 	CloneURL    string `json:"clone_url,omitempty"`
 	IssueNumber int    `json:"issue_number,omitempty"`
 }
@@ -307,9 +273,8 @@ type deliveryIntentPayload struct {
 	IssueNumber int    `json:"issue_number,omitempty"`
 }
 
-// deliveryIntentsFromEntries extracts every delivery.intent entry from
-// entries (already read by the caller - see RunLedgerRecover, which folds
-// this over the SAME read used for the artifact pass instead of reading the chat's ledger twice). Whether one is already settled is a DeliveryRecordChecker read against the delivery_record artifact (#1144 P2), not a second ledger entry kind.
+// deliveryIntentsFromEntries extracts every delivery.intent from entries the caller already read.
+// Whether one is settled is a DeliveryRecordChecker read, not a second ledger entry kind.
 func deliveryIntentsFromEntries(entries []ledger.Entry) []OrphanedDelivery {
 	var intents []OrphanedDelivery
 	for _, e := range entries {
@@ -341,13 +306,12 @@ type OrphanedRevision struct {
 type Projections struct {
 	// ArtifactRowExists reports whether id@revision has a store row.
 	ArtifactRowExists func(ctx context.Context, chatID, id string, revision int) (bool, error)
-	Delivery          DeliveryRecoverer
+	Delivery          extsdk.DeliveryRecoverer
 	DeliveryRecorded  DeliveryRecordChecker
 	RecordDelivery    DeliveryRecorder
 	Redo              func(ctx context.Context, o OrphanedDelivery) error
-	// ChatExists guards the recovery pass itself (#1296): a chat hard-deleted
-	// by raw SQL can still have ledger entries (a separate store), so without
-	// this RunLedgerRecover would resurrect delivery/artifact work for a chat that no longer exists. Nil skips the check (existing callers/tests).
+	// ChatExists guards recovery: a chat hard-deleted by raw SQL can keep ledger entries (a separate store),
+	// and recovery must not resurrect its work. Nil skips the check.
 	ChatExists func(ctx context.Context, chatID string) (bool, error)
 }
 
@@ -365,9 +329,8 @@ type LedgerRecoverReport struct {
 	Confirmed  []OrphanedDelivery `json:"confirmed"`            // delivery_record recorded; extension already had it
 	Redone     []OrphanedDelivery `json:"redone"`               // Redo called; nothing was there
 	Unresolved []OrphanedDelivery `json:"unresolved,omitempty"` // no recoverer/Redo available to check, or dry-run
-	// OrphanedRevisions: artifact.revision intents with no store row. #1144
-	// P4 deleted the artifact.revision.aborted compensating marker - a
-	// PLAIN SAVE on the same id now self-heals this by adopting the orphan (recordstore.saveAtOrAdopt), so recovery only reports it (unresolved count), it never writes.
+	// OrphanedRevisions: artifact.revision intents with no store row. A plain save on the same id
+	// self-heals by adopting the orphan (recordstore.saveAtOrAdopt), so recovery only reports them.
 	OrphanedRevisions []OrphanedRevision `json:"orphaned_revisions,omitempty"`
 	Errors            []string           `json:"errors,omitempty"`
 }
@@ -378,9 +341,8 @@ func (r *LedgerRecoverReport) unresolved() int {
 	return len(r.Unresolved) + len(r.Errors) + len(r.OrphanedRevisions)
 }
 
-// RunLedgerRecover reconciles one chat's intents whose projection write is
-// missing. Delivery (#1093 case 13, #1144 P2): a delivery.intent is settled
-// once its delivery_record artifact revision exists (p.DeliveryRecorded) - no separate ledger entry to check. For an unsettled one, ask p.Delivery whether the target already saw the key; if so, p.RecordDelivery writes the completion, else run p.Redo. Artifacts: each live artifact.revision with no store row is reported (OrphanedRevisions) - recordstore's own retry path self-heals it on the next save to that id (see saveAtOrAdopt), so recovery only surfaces it, never writes. Idempotent: a settled intent no longer shows up as an orphan. dryRun changes only the delivery half.
+// RunLedgerRecover reconciles one chat's intents whose projection write is missing: an unsettled delivery
+// is recorded if p.Delivery finds the key at the target, else redone; orphaned artifacts are only reported.
 func RunLedgerRecover(ctx context.Context, ls ledger.LedgerStore, chatID string, p Projections, dryRun bool) (*LedgerRecoverReport, error) {
 	if p.ChatExists != nil {
 		exists, err := p.ChatExists(ctx, chatID)
@@ -392,8 +354,7 @@ func RunLedgerRecover(ctx context.Context, ls ledger.LedgerStore, chatID string,
 			return &LedgerRecoverReport{ChatID: chatID, DryRun: dryRun}, nil
 		}
 	}
-	// One projected read serves both passes below (delivery intents, then
-	// fold.ApplyEntries for the artifact pass) instead of reading the chat twice (perf audit #1).
+	// One projected read serves both the delivery and artifact passes.
 	kinds := append([]string{ledger.KindDeliveryIntent}, fold.RequiredKinds...)
 	entries, err := ledger.ReadByKinds(ctx, ls, chatID, 0, kinds)
 	if err != nil {
@@ -424,7 +385,7 @@ func recoverIntent(ctx context.Context, chatID string, p Projections, o Orphaned
 		}
 	}
 	if !report.DryRun && p.Delivery != nil {
-		dc := DeliveryContext{CloneURL: o.CloneURL, IssueNumber: o.IssueNumber}
+		dc := extsdk.DeliveryContext{CloneURL: o.CloneURL, IssueNumber: o.IssueNumber}
 		found, outcome, rerr := p.Delivery.RecoverDelivery(ctx, o.Key, dc)
 		if rerr != nil {
 			return false, nil
@@ -481,9 +442,8 @@ type RecoverSummary struct {
 	Reports    []*LedgerRecoverReport `json:"reports"`
 }
 
-// Recover runs RunLedgerRecover over every chat in ls (or only chatIDs when
-// given), publishes quack_ledger_unresolved_intents and logs a summary. It
-// runs at server boot; `quack ledger recover` is the same call with dryRun. ponytail: folds every chat from seq 0 on each boot - P3's watermarks gate SSE/artifact/node_state writes, not this recover path; make it incremental if boot-time recover cost ever matters.
+// Recover runs RunLedgerRecover over every chat in ls (or only chatIDs) at boot and publishes
+// quack_ledger_unresolved_intents. ponytail: refolds every chat from seq 0; make it incremental if boot cost matters.
 func Recover(ctx context.Context, ls ledger.LedgerStore, chatIDs []string, p Projections, dryRun bool) (*RecoverSummary, error) {
 	if len(chatIDs) == 0 {
 		refs, err := ls.List(ctx)
@@ -511,8 +471,8 @@ func Recover(ctx context.Context, ls ledger.LedgerStore, chatIDs []string, p Pro
 	return sum, nil
 }
 
-// FormatLedgerRecoverReport renders report as the human-readable summary `recover` prints.
-func FormatLedgerRecoverReport(r *LedgerRecoverReport) string {
+// formatLedgerRecoverReport renders report as the human-readable summary `recover` prints.
+func formatLedgerRecoverReport(r *LedgerRecoverReport) string {
 	s := fmt.Sprintf("chat %s: %d confirmed already-delivered, %d redelivered, %d unresolved, %d row-less revision(s) (self-heals on next save)\n",
 		r.ChatID, len(r.Confirmed), len(r.Redone), len(r.Unresolved), len(r.OrphanedRevisions))
 	for _, o := range r.Unresolved {
@@ -531,7 +491,7 @@ func FormatLedgerRecoverReport(r *LedgerRecoverReport) string {
 func FormatRecoverSummary(sum *RecoverSummary) string {
 	s := fmt.Sprintf("%d chat(s) scanned, %d with orphaned intents, %d unresolved\n", sum.Chats, len(sum.Reports), sum.Unresolved)
 	for _, r := range sum.Reports {
-		s += FormatLedgerRecoverReport(r)
+		s += formatLedgerRecoverReport(r)
 	}
 	return s
 }

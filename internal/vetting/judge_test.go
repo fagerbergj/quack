@@ -34,9 +34,7 @@ type spyReadResult struct {
 	Content string `json:"content"`
 }
 
-// newSpyReadTool returns a stand-in read_file tool that returns body and bumps
-// calls each time the judge invokes it - proving the judge actually opened the
-// file before scoring, without needing a real jail.
+// newSpyReadTool is a read_file stand-in returning body and counting calls in calls.
 func newSpyReadTool(t *testing.T, body string, calls *int32) tool.Tool {
 	t.Helper()
 	rt, err := functiontool.New[spyReadArgs, spyReadResult](
@@ -52,9 +50,7 @@ func newSpyReadTool(t *testing.T, body string, calls *int32) tool.Tool {
 	return rt
 }
 
-// readFileResponseContent extracts the content a prior read_file tool call
-// returned into the judge's request, so the scripted judge model can react to
-// the file body it "read".
+// readFileResponseContent returns what a prior read_file call put in the request.
 func readFileResponseContent(req *model.LLMRequest) (string, bool) {
 	for _, c := range req.Contents {
 		if c == nil {
@@ -72,30 +68,19 @@ func readFileResponseContent(req *model.LLMRequest) (string, bool) {
 	return "", false
 }
 
-// scriptedJudge is a deterministic judge model: it first calls read_file for
-// the changed file, then - once it has the body back - submits a verdict whose
-// score is DERIVED from the file's contents (pass iff it contains a test). This proves the agentic read loop grounds the score in the real source.
-type scriptedJudge struct{}
-
-func (scriptedJudge) Name() string { return "scripted-judge" }
-
-func (scriptedJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		if content, seen := readFileResponseContent(req); seen {
-			score := 0.2
-			if strings.Contains(content, "func Test") {
-				score = 0.9
-			}
-			yield(stubCall(submitVerdictTool, map[string]any{"score": score, "feedback": "graded from the file"}), nil)
-			return
+// scriptedJudge reads game.go, then scores from its body (pass iff it contains a test), proving the
+// read loop grounds the score in the real source.
+var scriptedJudge = fnLLM(func(req *model.LLMRequest) (*model.LLMResponse, error) {
+	if content, seen := readFileResponseContent(req); seen {
+		score := 0.2
+		if strings.Contains(content, "func Test") {
+			score = 0.9
 		}
-		yield(stubCall("read_file", map[string]any{"path": "game.go"}), nil)
+		return stubCall(submitVerdictTool, map[string]any{"score": score, "feedback": "graded from the file"}), nil
 	}
-}
+	return stubCall("read_file", map[string]any{"path": "game.go"}), nil
+})
 
-// TestJudgeReadsFileBeforeVerdict drives the agentic judge with a read tool and
-// asserts it OPENS the file before scoring and that the verdict reflects the
-// file's contents: a file missing its test fails; the same file with a test passes.
 func TestJudgeReadsFileBeforeVerdict(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -109,7 +94,7 @@ func TestJudgeReadsFileBeforeVerdict(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var calls int32
 			readTool := newSpyReadTool(t, tc.body, &calls)
-			factory := NewJudgeFactory(scriptedJudge{}, []tool.Tool{readTool}, nil)
+			factory := NewJudgeFactory(scriptedJudge, []tool.Tool{readTool}, nil)
 			q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the game in game.go"}}}
 			v, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10"}, q,
 				"I implemented game.go", workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
@@ -126,9 +111,7 @@ func TestJudgeReadsFileBeforeVerdict(t *testing.T) {
 	}
 }
 
-// recordingJudge captures the full text of every judge prompt it receives
-// (into *prompt) and always submits a fixed-score verdict - a stand-in for
-// asserting what the ASSEMBLED judge prompt looked like, not what the judge decided.
+// recordingJudge captures the assembled judge prompt into *prompt and submits a fixed verdict.
 type recordingJudge struct{ prompt *string }
 
 func (recordingJudge) Name() string { return "recording-judge" }
@@ -140,9 +123,8 @@ func (r recordingJudge) GenerateContent(_ context.Context, req *model.LLMRequest
 	}
 }
 
-// TestJudgeCharBudgetReservesConfiguredMaxOutputTokens is #1215: judgeCharBudget
-// must reserve the configured max_output_tokens, not a hardcoded 2000 - the
-// mismatch packed the prompt to window-2000 while the model was asked for up to 8192 reply tokens (~6K over the slot), truncating the judge mid-thought. See judgeOutputReserveTokens' doc for the measurement.
+// TestJudgeCharBudgetReservesConfiguredMaxOutputTokens: reserving a hardcoded 2000 instead of the configured
+// max_output_tokens overflowed the slot and truncated the judge mid-thought.
 func TestJudgeCharBudgetReservesConfiguredMaxOutputTokens(t *testing.T) {
 	cfg := Config{JudgeContextWindow: 65_536, JudgeMaxOutputTokens: 8_192}
 	got := judgeCharBudget(cfg)
@@ -159,15 +141,13 @@ func TestJudgeCharBudgetReservesConfiguredMaxOutputTokens(t *testing.T) {
 	}
 }
 
-// TestRunJudgeAgent_OverBudgetAnswerFitsBudget proves issue #291's budgeting
-// fix: an answer big enough that the assembled judge prompt would blow past
-// the judge model's configured context window gets clamped BEFORE the call (fitJudgeAnswer), so the judge still sees a within-budget prompt and produces a verdict instead of the call 400ing against the model's slot.
+// TestRunJudgeAgent_OverBudgetAnswerFitsBudget: an answer that would blow the judge's context window is
+// clamped before the call, so the judge still returns a verdict instead of a 400.
 func TestRunJudgeAgent_OverBudgetAnswerFitsBudget(t *testing.T) {
 	var seenPrompt string
 	factory := NewJudgeFactory(recordingJudge{prompt: &seenPrompt}, nil, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
-	// Far larger than any real judge slot (~125k tokens raw) - the same shape as
-	// the #291 incident's 34K-token judge call against a 32K/64K model slot.
+	// Far larger than any real judge slot (~125k tokens raw).
 	hugeAnswer := strings.Repeat("the worker wrote a very long answer. ", 15_000)
 	cfg := Config{Rubric: "score 0-10", JudgeContextWindow: 8_000} // small window forces a real clamp
 
@@ -191,9 +171,7 @@ func TestRunJudgeAgent_OverBudgetAnswerFitsBudget(t *testing.T) {
 	}
 }
 
-// TestRunJudgeAgent_BuildsPromptOnceForARound is perf audit #13:
-// fitJudgeAnswer used to build the full judge prompt purely to measure its
-// length, discard it, then runJudgeRound built the identical string again. A round with no clamp needed and no retries must build it exactly once.
+// TestRunJudgeAgent_BuildsPromptOnceForARound: a round needing no clamp or retry builds the prompt once.
 func TestRunJudgeAgent_BuildsPromptOnceForARound(t *testing.T) {
 	factory := NewJudgeFactory(recordingJudge{prompt: new(string)}, nil, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
@@ -212,9 +190,8 @@ func TestRunJudgeAgent_BuildsPromptOnceForARound(t *testing.T) {
 	}
 }
 
-// TestRunJudgeAgent_SessionIDIsChatIDNotConstant is the Langfuse-attribution
-// regression: ADK's runner.Run takes the session id as its third argument and stamps gen_ai.conversation.id from it, so a hardcoded "verdict" literal
-// collapsed every judge call ever made, across every chat, into one Langfuse session. A tool callback sees the real ADK session id via adkagent.Context.SessionID() - assert that runJudgeRound passed cfg.ChatID, not the old constant.
+// TestRunJudgeAgent_SessionIDIsChatIDNotConstant: runner.Run's session id becomes gen_ai.conversation.id,
+// so a constant would merge every judge call into one Langfuse session.
 func TestRunJudgeAgent_SessionIDIsChatIDNotConstant(t *testing.T) {
 	var gotSessionID string
 	spy, err := functiontool.New[spyReadArgs, spyReadResult](
@@ -227,7 +204,7 @@ func TestRunJudgeAgent_SessionIDIsChatIDNotConstant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("spy tool: %v", err)
 	}
-	factory := NewJudgeFactory(scriptedJudge{}, []tool.Tool{spy}, nil)
+	factory := NewJudgeFactory(scriptedJudge, []tool.Tool{spy}, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the game in game.go"}}}
 	cfg := Config{Rubric: "score 0-10", ChatID: "chat-42"}
 
@@ -239,9 +216,7 @@ func TestRunJudgeAgent_SessionIDIsChatIDNotConstant(t *testing.T) {
 	}
 }
 
-// flakyTransientJudge fails its first `failures` calls with a transient-
-// looking error (a 502, standing in for a model swap in flight), then submits
-// a normal verdict - the stand-in for #572's incident.
+// flakyTransientJudge fails its first `failures` calls with a 502 (a model swap in flight), then submits.
 type flakyTransientJudge struct {
 	failures int32
 	calls    int32
@@ -259,9 +234,8 @@ func (j *flakyTransientJudge) GenerateContent(_ context.Context, _ *model.LLMReq
 	}
 }
 
-// TestRunJudgeAgent_RetriesTransientErrorThenSucceeds proves #572's fix: a
-// judge call that fails with a transient-looking error (502) is retried with
-// backoff and, once the endpoint recovers, produces a NORMAL scored verdict - never a degrade.
+// TestRunJudgeAgent_RetriesTransientErrorThenSucceeds: a transient 502 is retried with backoff and yields a
+// normal scored verdict, never a degrade.
 func TestRunJudgeAgent_RetriesTransientErrorThenSucceeds(t *testing.T) {
 	judge := &flakyTransientJudge{failures: 2}
 	factory := NewJudgeFactory(judge, nil, nil)
@@ -278,9 +252,7 @@ func TestRunJudgeAgent_RetriesTransientErrorThenSucceeds(t *testing.T) {
 	}
 }
 
-// TestRunJudgeAgent_PermanentTransientErrorFailsClosed proves the other half:
-// a judge that never recovers within judgeRetryAttempts still returns an
-// error (fail closed), not a silent pass - node.go's caller is what turns this into a visible caveat rather than a stripped verdict.
+// TestRunJudgeAgent_PermanentTransientErrorFailsClosed: a judge that never recovers returns an error, not a pass.
 func TestRunJudgeAgent_PermanentTransientErrorFailsClosed(t *testing.T) {
 	judge := &flakyTransientJudge{failures: 100} // never recovers
 	factory := NewJudgeFactory(judge, nil, nil)
@@ -294,9 +266,7 @@ func TestRunJudgeAgent_PermanentTransientErrorFailsClosed(t *testing.T) {
 	}
 }
 
-// TestIsTransientJudgeErr pins the retry predicate: only endpoint-fault-
-// shaped errors are worth a backoff retry, never a genuine rejection that
-// retrying would just repeat.
+// TestIsTransientJudgeErr: only endpoint faults are retried, never a rejection retrying would repeat.
 func TestIsTransientJudgeErr(t *testing.T) {
 	tests := []struct {
 		name string
@@ -339,9 +309,7 @@ type skillLoadResult struct {
 	Instructions string `json:"instructions"`
 }
 
-// newSpyLoadSkillTool returns a stand-in load_skill tool that returns body and
-// bumps calls each time the judge invokes it - proving the skill toolset reaches
-// the judge and is callable before submit_verdict.
+// newSpyLoadSkillTool is a load_skill stand-in returning body and counting calls in calls.
 func newSpyLoadSkillTool(t *testing.T, body string, calls *int32) tool.Tool {
 	t.Helper()
 	lt, err := functiontool.New[skillLoadArgs, skillLoadResult](
@@ -376,30 +344,20 @@ func skillResponseContent(req *model.LLMRequest) (string, bool) {
 	return "", false
 }
 
-// skillJudge first loads a review skill, then - once it has the skill's
-// instructions back - submits a verdict whose score is DERIVED from them (pass
-// iff the skill mandates a test). This proves the judge grounds its score in a skill it loaded agentically, using the same skill library the worker had.
-type skillJudge struct{}
-
-func (skillJudge) Name() string { return "skill-judge" }
-
-func (skillJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		if instr, seen := skillResponseContent(req); seen {
-			score := 0.3
-			if strings.Contains(instr, "require a test") {
-				score = 0.9
-			}
-			yield(stubCall(submitVerdictTool, map[string]any{"score": score, "feedback": "graded against the loaded skill"}), nil)
-			return
+// skillJudge loads a review skill, then scores from its body (pass iff it mandates a test), proving the
+// judge grounds its score in a skill it loaded.
+var skillJudge = fnLLM(func(req *model.LLMRequest) (*model.LLMResponse, error) {
+	if instr, seen := skillResponseContent(req); seen {
+		score := 0.3
+		if strings.Contains(instr, "require a test") {
+			score = 0.9
 		}
-		yield(stubCall("load_skill", map[string]any{"name": "ponytail-review"}), nil)
+		return stubCall(submitVerdictTool, map[string]any{"score": score, "feedback": "graded against the loaded skill"}), nil
 	}
-}
+	return stubCall("load_skill", map[string]any{"name": "ponytail-review"}), nil
+})
 
-// TestJudgeLoadsSkillBeforeVerdict proves the skill toolset reaches the judge
-// and is callable: the judge loads a review skill, then scores against its
-// principles (a skill that mandates tests yields a higher score than one that does not) before calling submit_verdict.
+// TestJudgeLoadsSkillBeforeVerdict: the skill toolset reaches the judge and is callable before submit_verdict.
 func TestJudgeLoadsSkillBeforeVerdict(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -414,7 +372,7 @@ func TestJudgeLoadsSkillBeforeVerdict(t *testing.T) {
 			var calls int32
 			skillTool := newSpyLoadSkillTool(t, tc.skillBody, &calls)
 			ts := fakeToolset{tools: []tool.Tool{skillTool}}
-			factory := NewJudgeFactory(skillJudge{}, nil, []tool.Toolset{ts})
+			factory := NewJudgeFactory(skillJudge, nil, []tool.Toolset{ts})
 			q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the game in game.go"}}}
 			v, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10"}, q,
 				"I implemented game.go", workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
@@ -433,21 +391,13 @@ func TestJudgeLoadsSkillBeforeVerdict(t *testing.T) {
 
 // oneShotJudge submits a verdict on the first turn without calling any tool -
 // the pure-research, no-read-tools path.
-type oneShotJudge struct{}
+var oneShotJudge = fnLLM(func(*model.LLMRequest) (*model.LLMResponse, error) {
+	return stubCall(submitVerdictTool, map[string]any{"score": 0.8, "feedback": ""}), nil
+})
 
-func (oneShotJudge) Name() string { return "one-shot-judge" }
-
-func (oneShotJudge) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		yield(stubCall(submitVerdictTool, map[string]any{"score": 0.8, "feedback": ""}), nil)
-	}
-}
-
-// TestJudgeNoReadToolsOneShot verifies the factory still builds a working
-// one-shot judge when no read tools are supplied (backward compat / research
-// deployments with no workspace jail).
+// TestJudgeNoReadToolsOneShot: with no read tools (no workspace jail) the factory still builds a one-shot judge.
 func TestJudgeNoReadToolsOneShot(t *testing.T) {
-	factory := NewJudgeFactory(oneShotJudge{}, nil, nil)
+	factory := NewJudgeFactory(oneShotJudge, nil, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "What is the capital of France?"}}}
 	v, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10"}, q,
 		"Paris.", workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
@@ -461,20 +411,14 @@ func TestJudgeNoReadToolsOneShot(t *testing.T) {
 
 // toolCapturingJudge records the last request it saw (for inspecting its
 // tool declarations) and always passes.
-type toolCapturingJudge struct{ req **model.LLMRequest }
-
-func (toolCapturingJudge) Name() string { return "tool-capturing-judge" }
-
-func (j toolCapturingJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		*j.req = req
-		yield(stubCall(submitVerdictTool, map[string]any{"score": 0.9, "feedback": ""}), nil)
+func toolCapturingJudge(got **model.LLMRequest) fnLLM {
+	return func(req *model.LLMRequest) (*model.LLMResponse, error) {
+		*got = req
+		return stubCall(submitVerdictTool, map[string]any{"score": 0.9, "feedback": ""}), nil
 	}
 }
 
-// TestJudgeFactoryIncludesArtifactTools: cfg.JudgeArtifactTools (list_artifacts/
-// read_artifact, built the same way the dag builds them) must reach the actual
-// judge round's tool declarations, not just sit unused on Config (#1497).
+// TestJudgeFactoryIncludesArtifactTools: cfg.JudgeArtifactTools reach the round's tool declarations.
 func TestJudgeFactoryIncludesArtifactTools(t *testing.T) {
 	rc := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
 	artTools, err := NewJudgeArtifactTools(rc)
@@ -482,7 +426,7 @@ func TestJudgeFactoryIncludesArtifactTools(t *testing.T) {
 		t.Fatalf("NewJudgeArtifactTools: %v", err)
 	}
 	var req *model.LLMRequest
-	factory := NewJudgeFactory(toolCapturingJudge{req: &req}, nil, nil)
+	factory := NewJudgeFactory(toolCapturingJudge(&req), nil, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Research X"}}}
 	cfg := Config{Rubric: "score 0-10", JudgeArtifactTools: artTools}
 	if _, err := runJudgeAgent(t.Context(), factory, cfg, q, "answer", workerActivity{}, nil, nil, func(*genai.Part) bool { return true }); err != nil {
@@ -496,21 +440,14 @@ func TestJudgeFactoryIncludesArtifactTools(t *testing.T) {
 	}
 }
 
-// artifactDiscardJudge always passes without reading (via the text-JSON
-// fallback: submit_verdict's schema has no "passed" field); its 2nd call's request is captured to check what the re-judge named.
-type artifactDiscardJudge struct {
-	calls  *int32
-	second *string
-}
-
-func (artifactDiscardJudge) Name() string { return "artifact-discard-judge" }
-
-func (j artifactDiscardJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		if atomic.AddInt32(j.calls, 1) == 2 && j.second != nil {
-			*j.second = stubAllText(req)
+// artifactDiscardJudge always passes without reading, via the text-JSON fallback (submit_verdict's schema
+// has no "passed"); its 2nd request is captured to check what the re-judge named.
+func artifactDiscardJudge(calls *int32, second *string) fnLLM {
+	return func(req *model.LLMRequest) (*model.LLMResponse, error) {
+		if atomic.AddInt32(calls, 1) == 2 && second != nil {
+			*second = stubAllText(req)
 		}
-		yield(stubText(`{"score": 0.9, "passed": true, "feedback": ""}`), nil)
+		return stubText(`{"score": 0.9, "passed": true, "feedback": ""}`), nil
 	}
 }
 
@@ -554,30 +491,22 @@ func sawReadArtifactResponse(req *model.LLMRequest) bool {
 
 // artifactReadingJudge calls read_artifact once, then passes - proving a
 // round that DID read is never discarded.
-type artifactReadingJudge struct {
-	id string
-}
-
-func (artifactReadingJudge) Name() string { return "artifact-reading-judge" }
-
-func (j artifactReadingJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
+func artifactReadingJudge(id string) fnLLM {
+	return func(req *model.LLMRequest) (*model.LLMResponse, error) {
 		if sawReadArtifactResponse(req) {
-			yield(stubText(`{"score": 0.9, "passed": true, "feedback": ""}`), nil)
-			return
+			return stubText(`{"score": 0.9, "passed": true, "feedback": ""}`), nil
 		}
-		yield(stubCall("read_artifact", map[string]any{"id": j.id}), nil)
+		return stubCall("read_artifact", map[string]any{"id": id}), nil
 	}
 }
 
-// TestJudgeRepoUnreadPassDiscardRound: the pre-existing repo-tools zero-reads
-// rule (judgereads.go's unreadPass), driven through a real round via the
-// text-JSON fallback so v.Passed is actually true, not just the predicate test.
+// TestJudgeRepoUnreadPassDiscardRound drives unreadPass through a real round via the text-JSON fallback,
+// so v.Passed is actually true.
 func TestJudgeRepoUnreadPassDiscardRound(t *testing.T) {
 	var calls int32
 	var second string
 	readTool := newSpyReadTool(t, "package main", new(int32)) // present but never called
-	factory := NewJudgeFactory(artifactDiscardJudge{calls: &calls, second: &second}, []tool.Tool{readTool}, nil)
+	factory := NewJudgeFactory(artifactDiscardJudge(&calls, &second), []tool.Tool{readTool}, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the game in game.go"}}}
 	v, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10"}, q, "I implemented game.go",
 		workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
@@ -592,9 +521,8 @@ func TestJudgeRepoUnreadPassDiscardRound(t *testing.T) {
 	}
 }
 
-// TestJudgeArtifactReadDiscard covers #1497's second zero-reads rule: a PASS
-// that never read an artifact the worker wrote this round is discarded and
-// re-judged once, naming the ids; reading first, or writing nothing, leave the verdict alone.
+// TestJudgeArtifactReadDiscard: a PASS that never read an artifact the worker wrote is re-judged once,
+// naming the ids; reading first, or writing nothing, leaves the verdict alone.
 func TestJudgeArtifactReadDiscard(t *testing.T) {
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Research X"}}}
 	wroteArtifact := workerActivity{artifactsWritten: []string{"doc:abc123"}}
@@ -603,7 +531,7 @@ func TestJudgeArtifactReadDiscard(t *testing.T) {
 		var calls int32
 		var second string
 		readTool := newSpyReadArtifactTool(t, new(int32)) // present but never called
-		factory := NewJudgeFactory(artifactDiscardJudge{calls: &calls, second: &second}, nil, nil)
+		factory := NewJudgeFactory(artifactDiscardJudge(&calls, &second), nil, nil)
 		cfg := Config{Rubric: "score 0-10", JudgeArtifactTools: []tool.Tool{readTool}}
 		v, err := runJudgeAgent(t.Context(), factory, cfg, q, "read_artifact to see the research",
 			wroteArtifact, nil, nil, func(*genai.Part) bool { return true })
@@ -624,7 +552,7 @@ func TestJudgeArtifactReadDiscard(t *testing.T) {
 	t.Run("pass after reading is accepted, no re-judge", func(t *testing.T) {
 		var reads int32
 		readTool := newSpyReadArtifactTool(t, &reads)
-		factory := NewJudgeFactory(artifactReadingJudge{id: "doc:abc123"}, nil, nil)
+		factory := NewJudgeFactory(artifactReadingJudge("doc:abc123"), nil, nil)
 		cfg := Config{Rubric: "score 0-10", JudgeArtifactTools: []tool.Tool{readTool}}
 		v, err := runJudgeAgent(t.Context(), factory, cfg, q, "the research is in the artifact",
 			wroteArtifact, nil, nil, func(*genai.Part) bool { return true })
@@ -644,7 +572,7 @@ func TestJudgeArtifactReadDiscard(t *testing.T) {
 	t.Run("a rendered surface alone still requires a read", func(t *testing.T) {
 		var calls int32
 		var second string
-		factory := NewJudgeFactory(artifactDiscardJudge{calls: &calls, second: &second}, nil, nil)
+		factory := NewJudgeFactory(artifactDiscardJudge(&calls, &second), nil, nil)
 		cfg := Config{Rubric: "score 0-10", JudgeArtifactTools: []tool.Tool{newSpyReadArtifactTool(t, new(int32))}}
 		rendered := workerActivity{rendered: []string{"a2ui_surface:acme-widgets-pr-1-tutor", "quiz_key:acme-widgets-pr-1-tutor"}}
 		if _, err := runJudgeAgent(t.Context(), factory, cfg, q, "Rendered the walkthrough.", rendered, nil, nil, func(*genai.Part) bool { return true }); err != nil {
@@ -658,7 +586,7 @@ func TestJudgeArtifactReadDiscard(t *testing.T) {
 	t.Run("worker wrote nothing: no discard even with zero reads", func(t *testing.T) {
 		var calls int32
 		var second string
-		factory := NewJudgeFactory(artifactDiscardJudge{calls: &calls, second: &second}, nil, nil)
+		factory := NewJudgeFactory(artifactDiscardJudge(&calls, &second), nil, nil)
 		v, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10"}, q,
 			"a plain answer", workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
 		if err != nil {
@@ -673,17 +601,13 @@ func TestJudgeArtifactReadDiscard(t *testing.T) {
 	})
 }
 
-// TestJudgeBehaviourSelectsClause pins the prompt-clause selection: the read-
-// tools clause appears only when the judge holds read tools, and the no-tools
-// clause only when it does not.
+// TestJudgeBehaviourSelectsClause: the read-tools clause appears only with read tools, no-tools only without.
 func TestJudgeBehaviourSelectsClause(t *testing.T) {
 	with := mustJudgeBehaviour(t, true, false)
 	if !strings.Contains(with, "read-only workspace tools") || strings.Contains(with, "You have no workspace tools") {
 		t.Errorf("read-tools behaviour missing its clause: %q", with)
 	}
-	// #502/#498: the judge must be told the clone root is its working root and
-	// never to use a leading-slash/absolute path - the worker gets this same
-	// grounding, and its absence sent a judge into a dead-end "/frontend" retry loop until the repeat-guard gave up (a silent gate bypass).
+	// Without the clone-root grounding a judge retried "/frontend" until the repeat guard gave up.
 	if !strings.Contains(with, "plain repo-relative paths") || !strings.Contains(with, "NEVER use a leading slash") {
 		t.Errorf("read-tools behaviour missing repo-relative path grounding: %q", with)
 	}
@@ -691,7 +615,7 @@ func TestJudgeBehaviourSelectsClause(t *testing.T) {
 	if !strings.Contains(without, "You have no workspace tools") || strings.Contains(without, "read-only workspace tools") {
 		t.Errorf("no-tools behaviour missing its clause: %q", without)
 	}
-	// #1497: artifact_tools is unconditional, present with or without repo read tools.
+	// artifact_tools is unconditional, present with or without repo read tools.
 	if !strings.Contains(with, "list_artifacts") || !strings.Contains(without, "list_artifacts") {
 		t.Errorf("artifact_tools clause missing: with=%q without=%q", with, without)
 	}
@@ -705,9 +629,8 @@ func TestJudgeBehaviourSelectsClause(t *testing.T) {
 	}
 }
 
-// TestJudgePromptScopedToNodeNotOrchestratorFileCount pins #664's test case 3: the judge is handed exactly what the node it judges saw (nodeTask, which
-// after the consumer split carries the node's own scoped ask+task, never the orchestrator's <changed_files count=...> summary) plus changedFiles sourced
-// from the actual clone diff (buildImplementDiffSection/buildChangedFilesSection - neither reads plan.UserMessage or any orchestrator count). The judge prompt must reflect the real diff, and must not manufacture or otherwise surface an orchestrator-style file count it was never given.
+// TestJudgePromptScopedToNodeNotOrchestratorFileCount: the judge sees the node's own task and the real
+// clone diff, never an orchestrator-style <changed_files count=...> it was not given.
 func TestJudgePromptScopedToNodeNotOrchestratorFileCount(t *testing.T) {
 	nodeTask := "<permissions>push_commits_to_pr</permissions>\n<deliverable>a commit</deliverable>\n" +
 		"<issue number=\"7\"><title>t</title><description>d</description></issue>\n\n" +
@@ -728,9 +651,8 @@ func TestJudgePromptScopedToNodeNotOrchestratorFileCount(t *testing.T) {
 	}
 }
 
-// TestBuildJudgePromptSectionOrder pins the cache-friendly section order
-// (finding 4): every section that is byte-identical round to round -
-// constitution, rubric, task, question, ledger, changed files, known failures - leads, and the one section that changes every round (the answer being judged) trails last, so the prefix ahead of it stays a prompt-cache hit across rounds.
+// TestBuildJudgePromptSectionOrder: round-invariant sections lead and the judged answer trails, so the
+// prefix stays a prompt-cache hit across rounds.
 func TestBuildJudgePromptSectionOrder(t *testing.T) {
 	act := workerActivity{workspace: []wsOp{{tool: "read_file", detail: `read_file(path="README.md")`}}}
 	det := map[string]criterionScore{"checks_pass": {Score: 0, Reason: "deterministic: build failed"}}
@@ -754,9 +676,8 @@ func TestBuildJudgePromptSectionOrder(t *testing.T) {
 	}
 }
 
-// TestBuildJudgePromptStablePrefixIsByteIdentical pins what the section-order test above cannot: two rounds of the SAME node - same task, question, ledger, diff and known failures, only the answer being judged differs, the
-// realistic case this ordering optimises for - must produce prompts that are byte-identical up to and including the "Answer to judge:" header. Order
-// alone is not enough - a clock, a run id, or a re-derived path leaking into any round-invariant section would keep every section in place and still move the first differing byte earlier, which is what llama.cpp's per-slot prefix cache actually measures (two production rounds assembled this way reuse 2,899 tokens; a prompt that diverges earlier reuses less).
+// TestBuildJudgePromptStablePrefixIsByteIdentical: two rounds differing only in the answer must match
+// byte for byte through "Answer to judge:", since a leaked clock or run id moves the cache break earlier.
 func TestBuildJudgePromptStablePrefixIsByteIdentical(t *testing.T) {
 	const constitution, rubric, task = "the constitution", "the rubric", "the node task"
 	question := questionContent("the question")
@@ -833,9 +754,8 @@ func TestBuildJudgePrompt_NoKnownFailuresOmitsSection(t *testing.T) {
 	}
 }
 
-// stuckJudge always reads a file and never calls submit_verdict - the judge
-// RAN (it made tool calls, it spent turns) but never committed a verdict,
-// the stand-in for exhausting gates.judge.max_iterations (#779). Distinct from flakyTransientJudge, which never runs at all.
+// stuckJudge always reads a file and never submits: it ran but never committed a verdict, unlike
+// flakyTransientJudge, which never runs at all.
 type stuckJudge struct{ calls int32 }
 
 func (j *stuckJudge) Name() string { return "stuck-judge" }
@@ -847,9 +767,8 @@ func (j *stuckJudge) GenerateContent(_ context.Context, _ *model.LLMRequest, _ b
 	}
 }
 
-// TestRunJudgeAgent_ExhaustedIterationsReturnsErrJudgeNoVerdict is issue #779's
-// test case 2: a judge that spends its whole iteration budget without ever
-// calling submit_verdict must fail with the distinct ErrJudgeNoVerdict sentinel, not the same error shape a transport outage produces - node.go tells the two apart with errors.Is, never by matching this error's text.
+// TestRunJudgeAgent_ExhaustedIterationsReturnsErrJudgeNoVerdict: exhausting the iteration budget yields
+// ErrJudgeNoVerdict, which callers tell apart from a transport outage with errors.Is.
 func TestRunJudgeAgent_ExhaustedIterationsReturnsErrJudgeNoVerdict(t *testing.T) {
 	var reads int32
 	readTool := newSpyReadTool(t, "package x\n", &reads)
@@ -900,9 +819,8 @@ func changedFilesFixture(t *testing.T, n int) (Config, workerActivity) {
 	return cfg, workerActivity{written: written}
 }
 
-// TestRunJudgeAgent_ChangedFilesCoverage is issue #779's test cases 3 and 4:
-// a changed-file set that fits inside maxChangedFiles produces a verdict with
-// no truncation note, and one that exceeds it (18 files against the 12-file cap) carries the count the judge actually scored alongside the count that existed - not indistinguishable from a fully-scored verdict.
+// TestRunJudgeAgent_ChangedFilesCoverage: files within maxChangedFiles carry no truncation note; 18 files
+// against the 12-file cap report scored versus total.
 func TestRunJudgeAgent_ChangedFilesCoverage(t *testing.T) {
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 
@@ -939,8 +857,7 @@ func TestRunJudgeAgent_ChangedFilesCoverage(t *testing.T) {
 	})
 }
 
-// TestRepeatsLastToolCall pins repeatsLastToolCall's contract directly (review
-// on #857): only the two MOST RECENT calls matter, and both name and args must match.
+// TestRepeatsLastToolCall: only the two most recent calls matter, and both name and args must match.
 func TestRepeatsLastToolCall(t *testing.T) {
 	call := func(name string, args map[string]any) *genai.Content {
 		return &genai.Content{Role: "model", Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{Name: name, Args: args}}}}
@@ -983,9 +900,8 @@ func TestRepeatsLastToolCall(t *testing.T) {
 	}
 }
 
-// TestRepeatingTailSpan pins the pure detection function #889's runaway-loop
-// guard is built on: a uniformly repeated unit at the end of a string is
-// found and measured; a single occurrence, a too-short string, or ordinary non-repeating prose is not mistaken for one.
+// TestRepeatingTailSpan: a repeated unit at the end is found and measured; a single occurrence, a short
+// string, or ordinary prose is not.
 func TestRepeatingTailSpan(t *testing.T) {
 	t.Run("empty", func(t *testing.T) {
 		if got := repeatingTailSpan("", judgeRepeatMinUnitChars, judgeRepeatMaxUnitChars); got != 0 {
@@ -1021,9 +937,7 @@ func TestRepeatingTailSpan(t *testing.T) {
 	})
 }
 
-// TestRepeatLoopDetector pins the stateful wrapper: it stays untripped under
-// the trip threshold and trips once a genuine runaway repeat clears it,
-// scanning only in judgeRepeatCheckStride-sized increments.
+// TestRepeatLoopDetector: untripped under the threshold, tripped past it, scanning in stride increments.
 func TestRepeatLoopDetector(t *testing.T) {
 	t.Run("varied text across many small appends never trips", func(t *testing.T) {
 		var d repeatLoopDetector
@@ -1046,19 +960,13 @@ func TestRepeatLoopDetector(t *testing.T) {
 	})
 }
 
-// maxTokensRecordingJudge records the MaxOutputTokens the request actually
-// carried (0 if req.Config was nil or the field unset) before submitting a
-// normal verdict, proving the configured cap reaches the model call (#889).
-type maxTokensRecordingJudge struct{ got *int32 }
-
-func (maxTokensRecordingJudge) Name() string { return "max-tokens-recording-judge" }
-
-func (j maxTokensRecordingJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
+// maxTokensRecordingJudge records the request's MaxOutputTokens (0 if unset) before submitting.
+func maxTokensRecordingJudge(got *int32) fnLLM {
+	return func(req *model.LLMRequest) (*model.LLMResponse, error) {
 		if req.Config != nil {
-			atomic.StoreInt32(j.got, req.Config.MaxOutputTokens)
+			atomic.StoreInt32(got, req.Config.MaxOutputTokens)
 		}
-		yield(stubCall(submitVerdictTool, map[string]any{"score": 0.8, "feedback": ""}), nil)
+		return stubCall(submitVerdictTool, map[string]any{"score": 0.8, "feedback": ""}), nil
 	}
 }
 
@@ -1066,7 +974,7 @@ func (j maxTokensRecordingJudge) GenerateContent(_ context.Context, req *model.L
 // reaches the actual model request as genai.GenerateContentConfig.MaxOutputTokens.
 func TestJudgeRequestCarriesConfiguredMaxOutputTokens(t *testing.T) {
 	got := int32(-1)
-	factory := NewJudgeFactory(maxTokensRecordingJudge{got: &got}, nil, nil)
+	factory := NewJudgeFactory(maxTokensRecordingJudge(&got), nil, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	cfg := Config{Rubric: "score 0-10", JudgeMaxOutputTokens: 4096}
 
@@ -1078,12 +986,10 @@ func TestJudgeRequestCarriesConfiguredMaxOutputTokens(t *testing.T) {
 	}
 }
 
-// TestJudgeRequestZeroMaxOutputTokensLeavesUncapped proves the field's
-// documented "<= 0 = uncapped" contract: an unset cfg.JudgeMaxOutputTokens
-// must not set any MaxOutputTokens on the request at all.
+// TestJudgeRequestZeroMaxOutputTokensLeavesUncapped: an unset cap sets no MaxOutputTokens at all.
 func TestJudgeRequestZeroMaxOutputTokensLeavesUncapped(t *testing.T) {
 	got := int32(-1)
-	factory := NewJudgeFactory(maxTokensRecordingJudge{got: &got}, nil, nil)
+	factory := NewJudgeFactory(maxTokensRecordingJudge(&got), nil, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	cfg := Config{Rubric: "score 0-10"} // JudgeMaxOutputTokens left unset
 
@@ -1095,25 +1001,20 @@ func TestJudgeRequestZeroMaxOutputTokensLeavesUncapped(t *testing.T) {
 	}
 }
 
-// garbledVerdictJudge always calls submit_verdict with an empty args map - exactly what a truncated/broken tool-call payload parses to upstream
-// (openaimodel's parseJSONArgs swallows the JSON error and returns {}). The
-// call is attempted every turn but its required "score" field is missing, so schema validation rejects it before the handler that populates the verdict ever runs.
-type garbledVerdictJudge struct{ calls int32 }
-
-func (j *garbledVerdictJudge) Name() string { return "garbled-verdict-judge" }
-
-func (j *garbledVerdictJudge) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		atomic.AddInt32(&j.calls, 1)
-		yield(stubCall(submitVerdictTool, map[string]any{}), nil)
+// garbledVerdictJudge calls submit_verdict with {} every turn, which is what openaimodel's parseJSONArgs
+// makes of a truncated payload; schema validation rejects it before the handler runs.
+func garbledVerdictJudge(calls *int32) fnLLM {
+	return func(req *model.LLMRequest) (*model.LLMResponse, error) {
+		atomic.AddInt32(calls, 1)
+		return stubCall(submitVerdictTool, map[string]any{}), nil
 	}
 }
 
-// TestRunJudgeAgent_GarbledSubmitVerdictRoutesToNoVerdict proves #889's fix: a
-// submit_verdict call whose arguments fail schema validation (as a truncated tool-call payload would) must never be mistaken for a real submission - the
-// round must end in ErrJudgeNoVerdict, never a "valid" zero-value verdict silently accepted as a scored pass or fail.
+// TestRunJudgeAgent_GarbledSubmitVerdictRoutesToNoVerdict: a schema-invalid submit_verdict ends in
+// ErrJudgeNoVerdict, never a zero-value verdict accepted as scored.
 func TestRunJudgeAgent_GarbledSubmitVerdictRoutesToNoVerdict(t *testing.T) {
-	judge := &garbledVerdictJudge{}
+	var calls int32
+	judge := garbledVerdictJudge(&calls)
 	factory := NewJudgeFactory(judge, nil, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 2}
@@ -1124,16 +1025,11 @@ func TestRunJudgeAgent_GarbledSubmitVerdictRoutesToNoVerdict(t *testing.T) {
 	}
 }
 
-// loopingJudgeModel emits reasoning text alongside a read_file call every turn - a plain text-only reply would otherwise end the agent run, so the
-// tool call is what keeps the loop going - and that reasoning text is the
-// EXACT same repeated phrase every time: the #889 incident's shape, a runaway generation loop that never reaches submit_verdict. The read_file path varies per call so this exercises only the #889 repeat guard, not the pre-existing #853 identical-tool-call stutter breaker.
-type loopingJudgeModel struct{ calls int32 }
-
-func (j *loopingJudgeModel) Name() string { return "looping-judge" }
-
-func (j *loopingJudgeModel) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		n := atomic.AddInt32(&j.calls, 1)
+// loopingJudgeModel repeats the exact same reasoning text every turn beside a read_file call (varying path,
+// so only the repeat guard fires, not the identical-call stutter breaker).
+func loopingJudgeModel(calls *int32) fnLLM {
+	return func(req *model.LLMRequest) (*model.LLMResponse, error) {
+		n := atomic.AddInt32(calls, 1)
 		resp := &model.LLMResponse{
 			Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{
 				{Text: "This exact sentence repeats without variation. ", Thought: true},
@@ -1142,16 +1038,16 @@ func (j *loopingJudgeModel) GenerateContent(_ context.Context, _ *model.LLMReque
 			FinishReason: genai.FinishReasonStop,
 			TurnComplete: true,
 		}
-		yield(resp, nil)
+		return resp, nil
 	}
 }
 
-// TestRunJudgeAgent_RunawayRepeatAbortsEarly proves #889's repeat guard: a judge stuck decoding the same text is cancelled and routed to the same
-// no-verdict retry path a truncated reply takes - well before its iteration
-// budget would otherwise let it keep running. The call count assertion is load-bearing: the round ends in ErrJudgeNoVerdict either way (the repeated text never parses as JSON regardless), so only a bounded call count proves the guard fired instead of the loop simply running to the turn cap.
+// TestRunJudgeAgent_RunawayRepeatAbortsEarly: a judge decoding the same text is cancelled well before its
+// turn budget; the call-count bound is what proves the guard fired.
 func TestRunJudgeAgent_RunawayRepeatAbortsEarly(t *testing.T) {
 	readTool := newSpyReadTool(t, "package x\n", new(int32))
-	judge := &loopingJudgeModel{}
+	var calls int32
+	judge := loopingJudgeModel(&calls)
 	factory := NewJudgeFactory(judge, []tool.Tool{readTool}, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	// A generous turn budget that would let the loop run hundreds of turns per
@@ -1162,24 +1058,18 @@ func TestRunJudgeAgent_RunawayRepeatAbortsEarly(t *testing.T) {
 	if !errors.Is(err, ErrJudgeNoVerdict) {
 		t.Fatalf("err = %v, want errors.Is(err, ErrJudgeNoVerdict)", err)
 	}
-	// #779's no-verdict path retries once with a fresh session, so up to two
-	// rounds each trip the guard around its own ~160-180 call mark; 700 stays
-	// far below the ~2000 calls the 1000-turn budget would allow unguarded.
-	if got := atomic.LoadInt32(&judge.calls); got >= 700 {
+	// The no-verdict retry means two rounds each trip near call 160-180; 700 is far below the
+	// ~2000 calls the 1000-turn budget allows unguarded.
+	if got := atomic.LoadInt32(&calls); got >= 700 {
 		t.Errorf("judge model called %d times, want well under the 1000-turn budget - the repeat guard should have aborted early", got)
 	}
 }
 
-// variedJudgeModel produces a few turns of genuinely different reasoning text
-// - nowhere near the repeat guard's trip span - each paired with a read_file
-// call to keep the loop going, before submitting a normal verdict.
-type variedJudgeModel struct{ calls int32 }
-
-func (j *variedJudgeModel) Name() string { return "varied-judge" }
-
-func (j *variedJudgeModel) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		n := atomic.AddInt32(&j.calls, 1)
+// variedJudgeModel gives a few turns of distinct reasoning (well under the repeat guard) with read_file
+// calls, then submits.
+func variedJudgeModel(calls *int32) fnLLM {
+	return func(req *model.LLMRequest) (*model.LLMResponse, error) {
+		n := atomic.AddInt32(calls, 1)
 		if n <= 3 {
 			resp := &model.LLMResponse{
 				Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{
@@ -1189,10 +1079,9 @@ func (j *variedJudgeModel) GenerateContent(_ context.Context, _ *model.LLMReques
 				FinishReason: genai.FinishReasonStop,
 				TurnComplete: true,
 			}
-			yield(resp, nil)
-			return
+			return resp, nil
 		}
-		yield(stubCall(submitVerdictTool, map[string]any{"score": 0.9, "feedback": ""}), nil)
+		return stubCall(submitVerdictTool, map[string]any{"score": 0.9, "feedback": ""}), nil
 	}
 }
 
@@ -1200,7 +1089,8 @@ func (j *variedJudgeModel) GenerateContent(_ context.Context, _ *model.LLMReques
 // genuinely varied text spread across several turns must never trip it.
 func TestRunJudgeAgent_VariedReplyNotAborted(t *testing.T) {
 	readTool := newSpyReadTool(t, "package x\n", new(int32))
-	judge := &variedJudgeModel{}
+	var calls int32
+	judge := variedJudgeModel(&calls)
 	factory := NewJudgeFactory(judge, []tool.Tool{readTool}, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 6}
@@ -1214,12 +1104,19 @@ func TestRunJudgeAgent_VariedReplyNotAborted(t *testing.T) {
 	}
 }
 
-// stutterJudge repeats the exact same tool call twice (the model stutter
-// #853 exists for), then - once forcedVerdictCallback has disabled its tools
-// for repeating itself - closes with the verdict as plain-text JSON instead of a tool call.
-type stutterJudge struct{ calls int32 }
-
-func (j *stutterJudge) Name() string { return "stutter-judge" }
+// stutterJudge repeats one tool call twice, then answers the forced close with plain-text JSON.
+func stutterJudge(calls *int32) fnLLM {
+	return func(req *model.LLMRequest) (*model.LLMResponse, error) {
+		n := atomic.AddInt32(calls, 1)
+		if n <= 2 {
+			return stubCall("read_file", map[string]any{"path": "game.go"}), nil
+		}
+		if err := strippedCloseErr(req); err != nil {
+			return nil, err
+		}
+		return stubText(`{"score": 3, "criteria": {"accuracy": {"reason": "verified from prior reads", "score": 3}}, "feedback": ""}`), nil
+	}
+}
 
 // forcedCloseErr: a forced-close turn keeps every tool declared (the prompt head, and so the
 // server's prefix cache, is unchanged) and disables calling them with tool_choice none.
@@ -1242,28 +1139,13 @@ func strippedCloseErr(req *model.LLMRequest) error {
 	return nil
 }
 
-func (j *stutterJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		n := atomic.AddInt32(&j.calls, 1)
-		if n <= 2 {
-			yield(stubCall("read_file", map[string]any{"path": "game.go"}), nil)
-			return
-		}
-		if err := strippedCloseErr(req); err != nil {
-			yield(nil, err)
-			return
-		}
-		yield(stubText(`{"score": 3, "criteria": {"accuracy": {"reason": "verified from prior reads", "score": 3}}, "feedback": ""}`), nil)
-	}
-}
-
-// TestRunJudgeAgent_ForcedVerdictOnRepeatedToolCall is #853 test case (a): a
-// judge that repeats an identical tool call gets its NEXT turn sent with no
-// tools and the forced-close instruction, and the resulting plain-text verdict is parsed via the existing parseVerdict fallback.
+// TestRunJudgeAgent_ForcedVerdictOnRepeatedToolCall: a repeated identical call gets its next turn with no
+// tools and the force-close instruction; the text verdict is parsed by the fallback.
 func TestRunJudgeAgent_ForcedVerdictOnRepeatedToolCall(t *testing.T) {
 	var reads int32
 	readTool := newSpyReadTool(t, "package x\n", &reads)
-	judge := &stutterJudge{}
+	var calls int32
+	judge := stutterJudge(&calls)
 	factory := NewJudgeFactory(judge, []tool.Tool{readTool}, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 6} // plenty of budget left - only the repeat should force the close
@@ -1275,14 +1157,13 @@ func TestRunJudgeAgent_ForcedVerdictOnRepeatedToolCall(t *testing.T) {
 	if v.Score != 1.0 {
 		t.Errorf("verdict score = %v, want 1.0 (parsed from the forced-close text)", v.Score)
 	}
-	if got := atomic.LoadInt32(&judge.calls); got != 3 {
+	if got := atomic.LoadInt32(&calls); got != 3 {
 		t.Errorf("judge model called %d times, want 3 (two identical read_file calls + the forced no-tools close)", got)
 	}
 }
 
-// isFreshRound reports whether req is the first call of a brand-new round
-// (no prior function call in its history yet) - each runJudgeRound call
-// builds its own runner and session, so this is how a scripted fake model tells "still the same round" from "a fresh retry started".
+// isFreshRound: req has no prior function call, i.e. the first call of a new round (each runJudgeRound
+// builds its own session).
 func isFreshRound(req *model.LLMRequest) bool {
 	for _, c := range req.Contents {
 		if c == nil {
@@ -1297,36 +1178,26 @@ func isFreshRound(req *model.LLMRequest) bool {
 	return true
 }
 
-// roundStuckThenRecoversJudge never reaches a verdict in its first round
-// (repeats a tool call forever, like stuckJudge), then submits a normal
-// verdict on the very first call of any later round - the stand-in for #853's "one retry with a fresh session" recovering a stuck round.
-type roundStuckThenRecoversJudge struct {
-	rounds int32
-	calls  int32
-}
-
-func (j *roundStuckThenRecoversJudge) Name() string { return "round-stuck-then-recovers-judge" }
-
-func (j *roundStuckThenRecoversJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		atomic.AddInt32(&j.calls, 1)
+// roundStuckThenRecoversJudge repeats a tool call forever in its first round, then submits on the first
+// call of any later round.
+func roundStuckThenRecoversJudge(rounds, calls *int32) fnLLM {
+	return func(req *model.LLMRequest) (*model.LLMResponse, error) {
+		atomic.AddInt32(calls, 1)
 		if isFreshRound(req) {
-			atomic.AddInt32(&j.rounds, 1)
+			atomic.AddInt32(rounds, 1)
 		}
-		if atomic.LoadInt32(&j.rounds) == 1 {
-			yield(stubCall("read_file", map[string]any{"path": "game.go"}), nil)
-			return
+		if atomic.LoadInt32(rounds) == 1 {
+			return stubCall("read_file", map[string]any{"path": "game.go"}), nil
 		}
-		yield(stubCall(submitVerdictTool, map[string]any{"score": 0.85, "feedback": "recovered on retry"}), nil)
+		return stubCall(submitVerdictTool, map[string]any{"score": 0.85, "feedback": "recovered on retry"}), nil
 	}
 }
 
-// TestRunJudgeAgent_NoVerdictRetriesOnceThenSucceeds is #853 test case (b): a
-// round that exhausts its budget without a verdict gets exactly one retry
-// with a fresh session, and that retry's normal verdict is returned.
+// TestRunJudgeAgent_NoVerdictRetriesOnceThenSucceeds: a verdict-less round gets one fresh-session retry.
 func TestRunJudgeAgent_NoVerdictRetriesOnceThenSucceeds(t *testing.T) {
 	readTool := newSpyReadTool(t, "package x\n", new(int32))
-	judge := &roundStuckThenRecoversJudge{}
+	var rounds, calls int32
+	judge := roundStuckThenRecoversJudge(&rounds, &calls)
 	factory := NewJudgeFactory(judge, []tool.Tool{readTool}, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 2}
@@ -1338,33 +1209,26 @@ func TestRunJudgeAgent_NoVerdictRetriesOnceThenSucceeds(t *testing.T) {
 	if v.Score != 0.85 {
 		t.Errorf("verdict score = %v, want 0.85 (the retry round that recovered)", v.Score)
 	}
-	if got := atomic.LoadInt32(&judge.rounds); got != 2 {
+	if got := atomic.LoadInt32(&rounds); got != 2 {
 		t.Errorf("rounds started = %d, want 2 (the failed round + the one retry that recovered)", got)
 	}
 }
 
-// alwaysStuckJudge never reaches a verdict, in any round - the stand-in for
-// #853's "both attempts fail" case. roundsStarted counts independent rounds
-// (fresh sessions), so the test asserts on rounds attempted, not the call-count mechanics of any one round.
-type alwaysStuckJudge struct{ roundsStarted int32 }
-
-func (j *alwaysStuckJudge) Name() string { return "always-stuck-judge" }
-
-func (j *alwaysStuckJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
+// alwaysStuckJudge never reaches a verdict; roundsStarted counts fresh sessions.
+func alwaysStuckJudge(roundsStarted *int32) fnLLM {
+	return func(req *model.LLMRequest) (*model.LLMResponse, error) {
 		if isFreshRound(req) {
-			atomic.AddInt32(&j.roundsStarted, 1)
+			atomic.AddInt32(roundsStarted, 1)
 		}
-		yield(stubCall("read_file", map[string]any{"path": "game.go"}), nil)
+		return stubCall("read_file", map[string]any{"path": "game.go"}), nil
 	}
 }
 
-// TestRunJudgeAgent_NoVerdictRetryExhausted is #853 test case (c): when the
-// retry ALSO ends without a verdict, runJudgeAgent returns the same
-// ErrJudgeNoVerdict sentinel as before, having attempted exactly one retry.
+// TestRunJudgeAgent_NoVerdictRetryExhausted: a failed retry returns ErrJudgeNoVerdict after exactly one retry.
 func TestRunJudgeAgent_NoVerdictRetryExhausted(t *testing.T) {
 	readTool := newSpyReadTool(t, "package x\n", new(int32))
-	judge := &alwaysStuckJudge{}
+	var roundsStarted int32
+	judge := alwaysStuckJudge(&roundsStarted)
 	factory := NewJudgeFactory(judge, []tool.Tool{readTool}, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 2}
@@ -1376,33 +1240,25 @@ func TestRunJudgeAgent_NoVerdictRetryExhausted(t *testing.T) {
 	if !errors.Is(err, ErrJudgeNoVerdict) {
 		t.Errorf("err = %v, want errors.Is(err, ErrJudgeNoVerdict)", err)
 	}
-	if got := atomic.LoadInt32(&judge.roundsStarted); got != 2 {
+	if got := atomic.LoadInt32(&roundsStarted); got != 2 {
 		t.Errorf("rounds started = %d, want 2 (the original round + exactly one retry, no more)", got)
 	}
 }
 
-// recordingToolsJudge captures whether req.Tools was populated when the
-// judge model was called, so a test can prove forcedVerdictCallback left an
-// ordinary round alone.
-type recordingToolsJudge struct{ sawTools *bool }
-
-func (recordingToolsJudge) Name() string { return "recording-tools-judge" }
-
-func (j recordingToolsJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		*j.sawTools = len(req.Tools) > 0
-		yield(stubCall(submitVerdictTool, map[string]any{"score": 0.8, "feedback": ""}), nil)
+// recordingToolsJudge records whether req.Tools was populated.
+func recordingToolsJudge(sawTools *bool) fnLLM {
+	return func(req *model.LLMRequest) (*model.LLMResponse, error) {
+		*sawTools = len(req.Tools) > 0
+		return stubCall(submitVerdictTool, map[string]any{"score": 0.8, "feedback": ""}), nil
 	}
 }
 
-// TestRunJudgeAgent_NormalRoundKeepsTools is #853 test case (d): a judge that
-// submits its verdict on the very first turn, well under budget, is left
-// alone by forcedVerdictCallback - tools stay intact, one call, no retry.
+// TestRunJudgeAgent_NormalRoundKeepsTools: a first-turn verdict keeps its tools, one call, no retry.
 func TestRunJudgeAgent_NormalRoundKeepsTools(t *testing.T) {
 	var reads int32
 	readTool := newSpyReadTool(t, "package x\n", &reads)
 	var sawTools bool
-	factory := NewJudgeFactory(recordingToolsJudge{sawTools: &sawTools}, []tool.Tool{readTool}, nil)
+	factory := NewJudgeFactory(recordingToolsJudge(&sawTools), []tool.Tool{readTool}, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 6}
 
@@ -1439,9 +1295,7 @@ func runVerdictTool(t *testing.T, tl tool.Tool, args map[string]any) (map[string
 	return r.Run(&verdictToolCtx{}, args)
 }
 
-// TestSubmitVerdict_NearMissPayloads pins the two prod near-misses that made the
-// judge "end without a verdict" (Langfuse trace 9ea8cbee): an anchor missing
-// `kind`, and `shortfall`/`fix` sent as JSON null. Both must now validate and yield a usable verdict.
+// TestSubmitVerdict_NearMissPayloads: an anchor missing `kind` and null `shortfall`/`fix` both validate.
 func TestSubmitVerdict_NearMissPayloads(t *testing.T) {
 	t.Run("anchor missing kind", func(t *testing.T) {
 		var sink verdict
@@ -1503,9 +1357,7 @@ func TestSubmitVerdict_NearMissPayloads(t *testing.T) {
 		}
 	})
 
-	// A genuinely malformed payload must still fail - and Run's error text is
-	// what ADK hands back to the model as the tool result, so the in-round
-	// retry sees WHY it was rejected.
+	// Run's error text is the tool result ADK returns, so the in-round retry sees why it was rejected.
 	t.Run("still rejects wrong-typed criteria", func(t *testing.T) {
 		var sink verdict
 		submit, err := newSubmitVerdictTool(&sink, nil)
@@ -1540,9 +1392,7 @@ func TestInferAnchorKind(t *testing.T) {
 	}
 }
 
-// TestCommitHygieneEvidenceSection: a file the task text never mentions (by
-// path or basename) is flagged as evidence; a named one, and the no-files
-// case, produce no section.
+// TestCommitHygieneEvidenceSection: a file the task never names is flagged; named files and no files are not.
 func TestCommitHygieneEvidenceSection(t *testing.T) {
 	act := workerActivity{written: []string{"internal/foo/bar.go", "internal/foo/baz_test.go"}}
 	got := commitHygieneEvidenceSection("Fix the off-by-one bug in bar.go", act)
@@ -1561,29 +1411,22 @@ func TestCommitHygieneEvidenceSection(t *testing.T) {
 	}
 }
 
-// garbledThenSubmitsJudge answers with unparseable plain text on its first
-// turn (the #1235 attempt-2 shape: analysis complete, submission wrong), then
-// calls submit_verdict once nudged.
-type garbledThenSubmitsJudge struct{ calls int32 }
-
-func (j *garbledThenSubmitsJudge) Name() string { return "garbled-then-submits-judge" }
-
-func (j *garbledThenSubmitsJudge) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		n := atomic.AddInt32(&j.calls, 1)
+// garbledThenSubmitsJudge answers unparseable text first, then calls submit_verdict once nudged.
+func garbledThenSubmitsJudge(calls *int32) fnLLM {
+	return func(req *model.LLMRequest) (*model.LLMResponse, error) {
+		n := atomic.AddInt32(calls, 1)
 		if n == 1 {
-			yield(stubText(`{"score": 3, "criteria": {"constructive_actionable": "reason": "garbled"}}`), nil)
-			return
+			return stubText(`{"score": 3, "criteria": {"constructive_actionable": "reason": "garbled"}}`), nil
 		}
-		yield(stubCall(submitVerdictTool, map[string]any{"score": 0.9, "feedback": "submitted on the nudge"}), nil)
+		return stubCall(submitVerdictTool, map[string]any{"score": 0.9, "feedback": "submitted on the nudge"}), nil
 	}
 }
 
-// TestRunJudgeAgent_SubmitNudgeRecoversGarbledText is #1235's fix: a turn
-// that ends with unparseable text and no submit_verdict call gets one
-// in-session nudge before the fresh-session retry, and a judge that submits on the nudge must not pay for a fresh round at all.
+// TestRunJudgeAgent_SubmitNudgeRecoversGarbledText: an unparseable text turn gets one in-session nudge, and
+// submitting on it avoids a fresh round.
 func TestRunJudgeAgent_SubmitNudgeRecoversGarbledText(t *testing.T) {
-	judge := &garbledThenSubmitsJudge{}
+	var calls int32
+	judge := garbledThenSubmitsJudge(&calls)
 	factory := NewJudgeFactory(judge, nil, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 6}
@@ -1595,35 +1438,26 @@ func TestRunJudgeAgent_SubmitNudgeRecoversGarbledText(t *testing.T) {
 	if v.Score != 0.9 {
 		t.Errorf("verdict score = %v, want 0.9 (recovered via the in-session nudge)", v.Score)
 	}
-	if got := atomic.LoadInt32(&judge.calls); got != 2 {
+	if got := atomic.LoadInt32(&calls); got != 2 {
 		t.Errorf("judge model called %d times, want 2 (garbled text + the nudge) - no fresh-session retry should have run", got)
 	}
 }
 
-// neverSubmitsTextOnlyJudge always answers with the same unparseable plain
-// text and never calls submit_verdict, in any round - the nudge must not
-// manufacture a verdict out of a model that genuinely never submits.
-type neverSubmitsTextOnlyJudge struct{ roundsStarted int32 }
-
-func (j *neverSubmitsTextOnlyJudge) Name() string { return "never-submits-text-only-judge" }
-
-func (j *neverSubmitsTextOnlyJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		// A text-only judge never adds a FunctionCall to the session, so
-		// isFreshRound (which looks for one) can't tell "new session" from
-		// "the in-session nudge continuing this same session" - only a brand new session starts from just the one prompt message.
+// neverSubmitsTextOnlyJudge always answers the same unparseable text; the nudge must not invent a verdict.
+func neverSubmitsTextOnlyJudge(roundsStarted *int32) fnLLM {
+	return func(req *model.LLMRequest) (*model.LLMResponse, error) {
+		// No FunctionCall ever enters this session, so only a single-message request marks a new session.
 		if len(req.Contents) == 1 {
-			atomic.AddInt32(&j.roundsStarted, 1)
+			atomic.AddInt32(roundsStarted, 1)
 		}
-		yield(stubText(`{"score": "not-parseable-`), nil)
+		return stubText(`{"score": "not-parseable-`), nil
 	}
 }
 
-// TestRunJudgeAgent_SubmitNudgeExhaustedStillNoVerdict proves the nudge is
-// bounded: a judge that never submits still ends in ErrJudgeNoVerdict after
-// the nudge AND the existing fresh-session retry, no more.
+// TestRunJudgeAgent_SubmitNudgeExhaustedStillNoVerdict: the nudge and one fresh retry, then ErrJudgeNoVerdict.
 func TestRunJudgeAgent_SubmitNudgeExhaustedStillNoVerdict(t *testing.T) {
-	judge := &neverSubmitsTextOnlyJudge{}
+	var roundsStarted int32
+	judge := neverSubmitsTextOnlyJudge(&roundsStarted)
 	factory := NewJudgeFactory(judge, nil, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 6}
@@ -1632,34 +1466,27 @@ func TestRunJudgeAgent_SubmitNudgeExhaustedStillNoVerdict(t *testing.T) {
 	if !errors.Is(err, ErrJudgeNoVerdict) {
 		t.Fatalf("err = %v, want errors.Is(err, ErrJudgeNoVerdict)", err)
 	}
-	if got := atomic.LoadInt32(&judge.roundsStarted); got != 2 {
+	if got := atomic.LoadInt32(&roundsStarted); got != 2 {
 		t.Errorf("rounds started = %d, want 2 (the original round, nudged in-session, + exactly one fresh-session retry)", got)
 	}
 }
 
-// forceClosedGarbledJudge burns two distinct read_file calls (maxIters=3), so its third invocation is the round's own last allowed turn: forcedVerdictCallback
-// has already stripped tools and appended judgeForceCloseInstruction by the time
-// this call sees the request. That forced turn answers with unparseable text (a naturally-ending forced close, turns == maxIters, never trips the turns > maxIters loop-break).
-type forceClosedGarbledJudge struct{ calls int32 }
-
-func (j *forceClosedGarbledJudge) Name() string { return "force-closed-garbled-judge" }
-
-func (j *forceClosedGarbledJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		n := atomic.AddInt32(&j.calls, 1)
+// forceClosedGarbledJudge makes two read_file calls (maxIters=3), so its third call is the forced close,
+// which it answers with unparseable text.
+func forceClosedGarbledJudge(calls *int32) fnLLM {
+	return func(req *model.LLMRequest) (*model.LLMResponse, error) {
+		n := atomic.AddInt32(calls, 1)
 		if n < 3 {
-			yield(stubCall("read_file", map[string]any{"path": fmt.Sprintf("file%d.go", n)}), nil)
-			return
+			return stubCall("read_file", map[string]any{"path": fmt.Sprintf("file%d.go", n)}), nil
 		}
 		check := forcedCloseErr // the first close keeps tools; its unparseable result earns one stripped close
 		if n > 3 {
 			check = strippedCloseErr
 		}
 		if err := check(req); err != nil {
-			yield(nil, err)
-			return
+			return nil, err
 		}
-		yield(stubText(`{"score": "not-parseable-`), nil)
+		return stubText(`{"score": "not-parseable-`), nil
 	}
 }
 
@@ -1747,11 +1574,11 @@ func TestForcedClose_NoneThenStripped(t *testing.T) {
 	}
 }
 
-// TestRunJudgeAgent_ForcedCloseSkipsSubmitNudge is the fix for the #1236 review finding: a round that ends by force-closing (maxIters tool
-// invocations, then the callback strips tools and the model's forced turn is unparseable) must NOT get an in-session submit_verdict nudge - there are no
-// tools on that turn to call, so the nudge would ask for what was just declared unavailable. Calling runJudgeRound directly (not runJudgeAgent) isolates this from the separate fresh-session retry.
+// TestRunJudgeAgent_ForcedCloseSkipsSubmitNudge: a forced close has no tools, so no submit nudge follows.
+// Calls runJudgeRound directly to isolate it from the fresh-session retry.
 func TestRunJudgeAgent_ForcedCloseSkipsSubmitNudge(t *testing.T) {
-	judge := &forceClosedGarbledJudge{}
+	var calls int32
+	judge := forceClosedGarbledJudge(&calls)
 	factory := NewJudgeFactory(judge, nil, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	cfg := Config{Rubric: "score 0-10", JudgeMaxIterations: 3}
@@ -1760,48 +1587,43 @@ func TestRunJudgeAgent_ForcedCloseSkipsSubmitNudge(t *testing.T) {
 	if !errors.Is(err, ErrJudgeNoVerdict) {
 		t.Fatalf("err = %v, want errors.Is(err, ErrJudgeNoVerdict)", err)
 	}
-	if got := atomic.LoadInt32(&judge.calls); got != 4 {
+	if got := atomic.LoadInt32(&calls); got != 4 {
 		t.Errorf("judge model called %d times, want exactly 4 (2 reads + the tool_choice-none close + one stripped close) - no nudge call should follow a forced close", got)
 	}
 }
 
-// repeatTrippedJudgeModel emits the same plain (non-Thought) text every turn alongside a varying tool call - the #889 runaway-repeat shape, but as plain
-// text so it lands in runJudgeRound's accum instead of being suppressed as thinking. nudgeCalls counts any request carrying judgeSubmitNudge, proving
-// the nudge never runs after this abort (#1236 review: repeats.tripped cancels runCtx exactly like a forced close, so the nudge must skip too).
-type repeatTrippedJudgeModel struct{ calls, nudgeCalls int32 }
-
-func (j *repeatTrippedJudgeModel) Name() string { return "repeat-tripped-judge" }
-
-func (j *repeatTrippedJudgeModel) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		n := atomic.AddInt32(&j.calls, 1)
+// repeatTrippedJudgeModel repeats plain text beside a varying tool call, tripping the repeat guard;
+// nudgeCalls counts requests carrying judgeSubmitNudge.
+func repeatTrippedJudgeModel(calls, nudgeCalls *int32) fnLLM {
+	return func(req *model.LLMRequest) (*model.LLMResponse, error) {
+		n := atomic.AddInt32(calls, 1)
 		for _, c := range req.Contents {
 			if c == nil {
 				continue
 			}
 			for _, p := range c.Parts {
 				if p != nil && strings.Contains(p.Text, judgeSubmitNudge) {
-					atomic.AddInt32(&j.nudgeCalls, 1)
+					atomic.AddInt32(nudgeCalls, 1)
 				}
 			}
 		}
-		yield(&model.LLMResponse{
+		return &model.LLMResponse{
 			Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{
 				{Text: "This exact sentence repeats without variation. "},
 				{FunctionCall: &genai.FunctionCall{Name: "read_file", Args: map[string]any{"path": fmt.Sprintf("file%d.go", n)}}},
 			}},
 			FinishReason: genai.FinishReasonStop,
 			TurnComplete: true,
-		}, nil)
+		}, nil
 	}
 }
 
-// TestRunJudgeAgent_RepeatTripSkipsSubmitNudge is the fix for the #1236 review's second finding: the event loop's repeats.tripped break cancels
-// runCtx exactly like the turn-cap break, but forcedVerdictCallback never fires for it (there's no forced turn - the abort happens mid-generation),
-// so forcedClose alone doesn't catch this shape. Calling runJudgeRound directly isolates this from the separate fresh-session retry.
+// TestRunJudgeAgent_RepeatTripSkipsSubmitNudge: a repeat trip cancels runCtx like a forced close but without
+// forcedVerdictCallback, so the nudge must skip it too.
 func TestRunJudgeAgent_RepeatTripSkipsSubmitNudge(t *testing.T) {
 	readTool := newSpyReadTool(t, "package x\n", new(int32))
-	judge := &repeatTrippedJudgeModel{}
+	var calls, nudgeCalls int32
+	judge := repeatTrippedJudgeModel(&calls, &nudgeCalls)
 	factory := NewJudgeFactory(judge, []tool.Tool{readTool}, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the feature."}}}
 	// Generous turn budget so a run to the turn cap (rather than the repeat
@@ -1812,10 +1634,10 @@ func TestRunJudgeAgent_RepeatTripSkipsSubmitNudge(t *testing.T) {
 	if !errors.Is(err, ErrJudgeNoVerdict) {
 		t.Fatalf("err = %v, want errors.Is(err, ErrJudgeNoVerdict)", err)
 	}
-	if got := atomic.LoadInt32(&judge.calls); got >= 1000 {
+	if got := atomic.LoadInt32(&calls); got >= 1000 {
 		t.Errorf("judge model called %d times, want well under the 1000-turn cap - the repeat guard should trip first", got)
 	}
-	if got := atomic.LoadInt32(&judge.nudgeCalls); got != 0 {
+	if got := atomic.LoadInt32(&nudgeCalls); got != 0 {
 		t.Errorf("judge model saw the submit_verdict nudge in %d request(s), want 0 - a repeat-trip abort must not nudge on the cancelled context", got)
 	}
 }
@@ -1836,9 +1658,8 @@ func reqHasInlineData(req *model.LLMRequest) bool {
 	return false
 }
 
-// imagePersistsAfterStripJudge rejects the first call (images attached) with
-// a non-transient error, then answers unparseable text twice (round 2's own
-// turn + its in-session nudge) before finally submitting on the outer fresh-session retry - recording whether InlineData ever reappeared on any call after the strip fired (#1229 follow-up).
+// imagePersistsAfterStripJudge rejects the image call, answers unparseable text twice, then submits on the
+// fresh retry, recording whether InlineData reappeared after the strip.
 type imagePersistsAfterStripJudge struct {
 	calls              int32
 	mu                 sync.Mutex
@@ -1865,9 +1686,8 @@ func (j *imagePersistsAfterStripJudge) GenerateContent(_ context.Context, req *m
 	}
 }
 
-// TestRunJudgeAgent_ImageStripPersistsAcrossRetries is the fix for the #1229
-// review follow-up: once a non-transient image rejection strips InlineData
-// from the question, every later retry in the same runJudgeAgent call (the no-verdict fresh-session retry, the shrink fallback) must keep using the stripped content - re-attaching images would just repeat the rejection.
+// TestRunJudgeAgent_ImageStripPersistsAcrossRetries: once images are stripped, every later retry keeps
+// the stripped content.
 func TestRunJudgeAgent_ImageStripPersistsAcrossRetries(t *testing.T) {
 	judge := &imagePersistsAfterStripJudge{}
 	factory := NewJudgeFactory(judge, nil, nil)
@@ -1896,21 +1716,15 @@ func TestRunJudgeAgent_ImageStripPersistsAcrossRetries(t *testing.T) {
 	}
 }
 
-// inconsistentThenFixedJudge: round 1 scores a criterion below threshold with
-// no fix (a self-inconsistent fail); round 2 corrects the score to match its
-// own unchanged rationale. Proves finishJudgeRound's re-ask path.
-type inconsistentThenFixedJudge struct{ calls int32 }
-
-func (j *inconsistentThenFixedJudge) Name() string { return "inconsistent-then-fixed-judge" }
-
-func (j *inconsistentThenFixedJudge) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		n := atomic.AddInt32(&j.calls, 1)
+// inconsistentThenFixedJudge fails a criterion with no fix in round 1, then corrects the score in round 2.
+func inconsistentThenFixedJudge(calls *int32) fnLLM {
+	return func(req *model.LLMRequest) (*model.LLMResponse, error) {
+		n := atomic.AddInt32(calls, 1)
 		score := 0.0
 		if n > 1 {
 			score = 3.0
 		}
-		yield(stubCall(submitVerdictTool, map[string]any{
+		return stubCall(submitVerdictTool, map[string]any{
 			"score": score,
 			"criteria": map[string]any{
 				"verification_over_assertion": map[string]any{
@@ -1920,20 +1734,16 @@ func (j *inconsistentThenFixedJudge) GenerateContent(_ context.Context, _ *model
 				},
 			},
 			"feedback": "",
-		}), nil)
+		}), nil
 	}
 }
 
 // consistentFailJudge scores below threshold but gives a fix, exactly what
 // the prompt asks for on a genuine failure - must never be re-asked.
-type consistentFailJudge struct{ calls int32 }
-
-func (j *consistentFailJudge) Name() string { return "consistent-fail-judge" }
-
-func (j *consistentFailJudge) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		atomic.AddInt32(&j.calls, 1)
-		yield(stubCall(submitVerdictTool, map[string]any{
+func consistentFailJudge(calls *int32) fnLLM {
+	return func(req *model.LLMRequest) (*model.LLMResponse, error) {
+		atomic.AddInt32(calls, 1)
+		return stubCall(submitVerdictTool, map[string]any{
 			"score": 1.0,
 			"criteria": map[string]any{
 				"verification_over_assertion": map[string]any{
@@ -1943,7 +1753,7 @@ func (j *consistentFailJudge) GenerateContent(_ context.Context, _ *model.LLMReq
 				},
 			},
 			"feedback": "",
-		}), nil)
+		}), nil
 	}
 }
 
@@ -1956,7 +1766,8 @@ var requireFixOnFailSpecs = map[string]criterionSpec{
 // TestFinishJudgeRound_ReasksOnInconsistentFailure: a criterion scored below
 // threshold with no fix is re-judged once; the corrected score wins.
 func TestFinishJudgeRound_ReasksOnInconsistentFailure(t *testing.T) {
-	judge := &inconsistentThenFixedJudge{}
+	var calls int32
+	judge := inconsistentThenFixedJudge(&calls)
 	factory := NewJudgeFactory(judge, nil, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Review the change."}}}
 	cfg := Config{Rubric: "score 0-3", JudgeMaxIterations: 6, Threshold: 0.6, RubricSpecs: requireFixOnFailSpecs}
@@ -1965,7 +1776,7 @@ func TestFinishJudgeRound_ReasksOnInconsistentFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runJudgeAgent: %v", err)
 	}
-	if got := atomic.LoadInt32(&judge.calls); got != 2 {
+	if got := atomic.LoadInt32(&calls); got != 2 {
 		t.Fatalf("judge model called %d times, want 2 (original round + one re-ask)", got)
 	}
 	c, ok := v.Criteria["verification_over_assertion"]
@@ -1977,7 +1788,8 @@ func TestFinishJudgeRound_ReasksOnInconsistentFailure(t *testing.T) {
 // TestFinishJudgeRound_NoReaskWhenFixGiven: a genuine failure (fix given)
 // must never trigger the inconsistency re-ask.
 func TestFinishJudgeRound_NoReaskWhenFixGiven(t *testing.T) {
-	judge := &consistentFailJudge{}
+	var calls int32
+	judge := consistentFailJudge(&calls)
 	factory := NewJudgeFactory(judge, nil, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Review the change."}}}
 	cfg := Config{Rubric: "score 0-3", JudgeMaxIterations: 6, Threshold: 0.6, RubricSpecs: requireFixOnFailSpecs}
@@ -1986,7 +1798,7 @@ func TestFinishJudgeRound_NoReaskWhenFixGiven(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runJudgeAgent: %v", err)
 	}
-	if got := atomic.LoadInt32(&judge.calls); got != 1 {
+	if got := atomic.LoadInt32(&calls); got != 1 {
 		t.Fatalf("judge model called %d times, want 1 (a fix given makes the fail consistent, no re-ask)", got)
 	}
 	c, ok := v.Criteria["verification_over_assertion"]
@@ -1995,10 +1807,7 @@ func TestFinishJudgeRound_NoReaskWhenFixGiven(t *testing.T) {
 	}
 }
 
-// TestInconsistentJudgeFailures unit-tests the detection rule directly:
-// deterministic criteria, passing criteria, a fail with a fix, and a fail
-// NOT opted into RequireFixOnFail are all excluded - only an opted-in
-// judge-scored fail with no fix qualifies.
+// TestInconsistentJudgeFailures: only an opted-in judge-scored fail with no fix qualifies.
 func TestInconsistentJudgeFailures(t *testing.T) {
 	v := verdict{Criteria: map[string]criterionScore{
 		"deterministic_fail": {Score: 0, Deterministic: true},
@@ -2010,10 +1819,7 @@ func TestInconsistentJudgeFailures(t *testing.T) {
 	specs := map[string]criterionSpec{
 		"fail_with_fix": {RequireFixOnFail: true},
 		"fail_no_fix":   {RequireFixOnFail: true},
-		// fail_not_opted_in intentionally has no spec entry - most criteria
-		// (e.g. the codebase's existing commit_hygiene/task_completeness
-		// stubs) never require a named fix, so a below-threshold score with
-		// no fix must not be flagged for them.
+		// fail_not_opted_in has no spec entry: most criteria never require a named fix.
 	}
 	got := inconsistentJudgeFailures(v, 0.6, specs)
 	if len(got) != 1 || got[0] != "fail_no_fix" {
@@ -2021,9 +1827,8 @@ func TestInconsistentJudgeFailures(t *testing.T) {
 	}
 }
 
-// TestParseVerdict_MissingScoreIsNotAZero: prod chat ext:github:github-fagerbergj-quack-1545
-// round 2 - the judge omitted one criterion's score and added a non-rubric
-// "score_note"; both parsed as 0 and failed a verdict the judge meant to pass.
+// TestParseVerdict_MissingScoreIsNotAZero: an omitted criterion score and a non-rubric "score_note"
+// must not parse as zeros that fail the verdict.
 func TestParseVerdict_MissingScoreIsNotAZero(t *testing.T) {
 	raw := `{"criteria":{"claims_grounded":{"reason":"all confirmed","score":3},` +
 		`"verification_over_assertion":{"reason":"the top band"},` +
@@ -2061,16 +1866,12 @@ func TestSubmitVerdictArgs_MissingScoreIsNotAZero(t *testing.T) {
 }
 
 // unscoredThenScoredJudge first answers with a rubric criterion that has no score plus a
-// non-rubric aside (prod chat ext:github:github-fagerbergj-quack-1545), then scores it.
-type unscoredThenScoredJudge struct{ calls int32 }
-
-func (j *unscoredThenScoredJudge) Name() string { return "unscored-then-scored-judge" }
-
-func (j *unscoredThenScoredJudge) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
+// non-rubric aside, then scores it.
+func unscoredThenScoredJudge(calls *int32) fnLLM {
+	return func(req *model.LLMRequest) (*model.LLMResponse, error) {
 		crit := map[string]any{"shortfall": "Reading settled the claims."}
 		extra := map[string]any{}
-		if atomic.AddInt32(&j.calls, 1) > 1 {
+		if atomic.AddInt32(calls, 1) > 1 {
 			crit["score"] = 3.0
 		} else {
 			extra["score_note"] = map[string]any{"corrected": "verification_over_assertion corrected to 3"}
@@ -2082,12 +1883,13 @@ func (j *unscoredThenScoredJudge) GenerateContent(_ context.Context, _ *model.LL
 		// Plain JSON text, as prod's judge answered: the submit_verdict tool's schema
 		// would reject a missing score before the gate ever saw it.
 		raw, _ := json.Marshal(map[string]any{"score": 3.0, "criteria": criteria, "feedback": ""})
-		yield(stubText(string(raw)), nil)
+		return stubText(string(raw)), nil
 	}
 }
 
 func TestFinishJudgeRound_ReasksWhenACriterionIsUnscored(t *testing.T) {
-	judge := &unscoredThenScoredJudge{}
+	var calls int32
+	judge := unscoredThenScoredJudge(&calls)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Review the change."}}}
 	cfg := Config{Rubric: "score 0-3", JudgeMaxIterations: 6, Threshold: 0.6,
 		RubricSpecs: map[string]criterionSpec{"verification_over_assertion": {Name: "verification_over_assertion"}}}
@@ -2096,7 +1898,7 @@ func TestFinishJudgeRound_ReasksWhenACriterionIsUnscored(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runJudgeAgent: %v", err)
 	}
-	if got := atomic.LoadInt32(&judge.calls); got != 2 {
+	if got := atomic.LoadInt32(&calls); got != 2 {
 		t.Fatalf("judge model called %d times, want 2 (original round + one re-ask for the unscored criterion)", got)
 	}
 	if c := v.Criteria["verification_over_assertion"]; c.Unscored || c.Score != 1.0 {

@@ -5,9 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	adkagent "google.golang.org/adk/v2/agent"
-	"google.golang.org/adk/v2/tool"
-	"google.golang.org/adk/v2/tool/functiontool"
 	"google.golang.org/adk/v2/tool/skilltoolset/skill"
 
 	"github.com/fagerbergj/quack/internal/agent"
@@ -75,9 +72,7 @@ func TestAgentACPNoFabricatedTools(t *testing.T) {
 	}
 }
 
-// TestGradingFacts verifies the grading block states only what applies to a
-// given agent, sourced from its resolved gate config - never a fabricated
-// number - and is entirely absent for a judge-less agent.
+// The grading block states only what the agent's resolved gate config says, and is absent for a judge-less agent.
 func TestGradingFacts(t *testing.T) {
 	g := promptbuilder.GradingFacts(0.7, 2, false, true)
 	for _, want := range []string{"0.7", "weakest-link", "2 revision round"} {
@@ -160,9 +155,7 @@ func TestAgentMemoryRealBundle(t *testing.T) {
 	}
 }
 
-// TestAgentWorkspaceRendered: a non-empty workspace block reaches the
-// Environment layer; a non-coding agent (workspace == "") never fabricates
-// one - the callers decide (build.go "", ACP workspace.PromptBlock).
+// A non-empty workspace block reaches the Environment layer; an empty one is never fabricated.
 func TestAgentWorkspaceRendered(t *testing.T) {
 	out := promptbuilder.Agent("code-implementer", "implements code", nil, false, "", "", "Linux x86_64. Sandbox: landlock (…).")
 	if !strings.Contains(out, "## Environment") {
@@ -208,9 +201,7 @@ func TestOrchestratorLayers(t *testing.T) {
 	}
 }
 
-// TestCacheByDayBuildsOnce (perf audit #14): the InstructionProvider is
-// called once per model request, and every prompt input besides today() is
-// fixed - same-day repeat calls must reuse the first build.
+// The InstructionProvider runs every model request; same-day repeat calls must reuse the first build.
 func TestCacheByDayBuildsOnce(t *testing.T) {
 	var builds int
 	cached := promptbuilder.CacheByDay(nil, func(context.Context) string {
@@ -231,18 +222,5 @@ func TestOrchestratorNoSkills(t *testing.T) {
 	out := promptbuilder.Orchestrator("", nil, "do stuff")
 	if strings.Contains(out, "### Skills") {
 		t.Error("Orchestrator() should not emit a Skills section when no skills provided")
-	}
-}
-
-// TestJudgeNoToolListing: the judge's tools reach the model as declarations, so the
-// system prompt must not list them a second time.
-func TestJudgeNoToolListing(t *testing.T) {
-	tl, err := functiontool.New[map[string]any, map[string]any](functiontool.Config{Name: "submit_verdict", Description: "UNIQUE-TOOL-DESC"},
-		func(adkagent.Context, map[string]any) (map[string]any, error) { return nil, nil })
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out := promptbuilder.Judge([]tool.Tool{tl}, "## Steps"); strings.Contains(out, "UNIQUE-TOOL-DESC") || strings.Contains(out, "## Tools") {
-		t.Errorf("judge prompt lists its tools again:\n%s", out)
 	}
 }

@@ -29,9 +29,8 @@ func TestResolveBundle_LocalFile(t *testing.T) {
 	}
 }
 
-// TestResolveBundle_FetchesChatIDFromServer: an argument that ISN'T a local
-// file is treated as a chat id and fetched from sourceServer's recording
-// endpoint into a temp file, which cleanup then removes.
+// TestResolveBundle_FetchesChatIDFromServer: a non-file argument is fetched as a chat id's recording
+// into a temp file that cleanup removes.
 func TestResolveBundle_FetchesChatIDFromServer(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	var gotPath string

@@ -192,22 +192,17 @@ func TestJudgeArtifactTools_InputsStayReadable(t *testing.T) {
 }
 
 // listingJudge calls list_artifacts once, records what came back, then passes.
-type listingJudge struct{ listing *string }
-
-func (listingJudge) Name() string { return "listing-judge" }
-
-func (j listingJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
+func listingJudge(listing *string) fnLLM {
+	return func(req *model.LLMRequest) (*model.LLMResponse, error) {
 		for _, c := range req.Contents {
 			for _, p := range c.Parts {
 				if p.FunctionResponse != nil && p.FunctionResponse.Name == "list_artifacts" {
-					*j.listing, _ = p.FunctionResponse.Response["result"].(string)
-					yield(stubCall(submitVerdictTool, map[string]any{"score": 0.9, "feedback": ""}), nil)
-					return
+					*listing, _ = p.FunctionResponse.Response["result"].(string)
+					return stubCall(submitVerdictTool, map[string]any{"score": 0.9, "feedback": ""}), nil
 				}
 			}
 		}
-		yield(stubCall("list_artifacts", map[string]any{}), nil)
+		return stubCall("list_artifacts", map[string]any{}), nil
 	}
 }
 
@@ -222,7 +217,7 @@ func TestRunJudgeRound_ScopesArtifactToolsToNode(t *testing.T) {
 	var listing string
 	cfg := Config{Rubric: "score 0-10", JudgeArtifactTools: tools, ForeignNodes: []string{"web-researcher-2"}}
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Research X"}}}
-	if _, err := runJudgeAgent(t.Context(), NewJudgeFactory(listingJudge{listing: &listing}, nil, nil), cfg, q, "answer", workerActivity{}, nil, nil, func(*genai.Part) bool { return true }); err != nil {
+	if _, err := runJudgeAgent(t.Context(), NewJudgeFactory(listingJudge(&listing), nil, nil), cfg, q, "answer", workerActivity{}, nil, nil, func(*genai.Part) bool { return true }); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(listing, sibID) || !strings.Contains(listing, upID) {
@@ -314,51 +309,45 @@ func runGatedStub(t *testing.T, workerModel model.LLM, tools []tool.Tool, judge 
 }
 
 // rejudgeJudge reads a file, then answers with an unscored criterion; the gate's re-judge
-// (a fresh session) is captured and scored.
-type rejudgeJudge struct {
-	calls  int32
-	second string
-}
-
-func (*rejudgeJudge) Name() string { return "rejudge-judge" }
-
-func (j *rejudgeJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
+// (a fresh session) is captured into second and scored.
+func rejudgeJudge(second *string) fnLLM {
+	var calls int32
+	return func(req *model.LLMRequest) (*model.LLMResponse, error) {
 		crit := map[string]any{"shortfall": "fine"}
-		switch atomic.AddInt32(&j.calls, 1) {
+		switch atomic.AddInt32(&calls, 1) {
 		case 1:
-			yield(stubCall("read_file", map[string]any{"path": "game.go"}), nil)
-			return
+			return stubCall("read_file", map[string]any{"path": "game.go"}), nil
 		case 2:
 		default:
-			j.second = stubAllText(req)
+			*second = stubAllText(req)
 			crit["score"] = 3.0
 		}
 		raw, _ := json.Marshal(map[string]any{"score": 3.0, "criteria": map[string]any{"accuracy": crit}, "feedback": ""})
-		yield(stubText(string(raw)), nil)
+		return stubText(string(raw)), nil
 	}
 }
 
 // TestReJudge_NoteOutsideAnswerAndSeededReads: the gate's reason for a re-judge sits outside
 // "Answer to judge:", and the fresh session starts with the reads the first attempt made.
 func TestReJudge_NoteOutsideAnswerAndSeededReads(t *testing.T) {
-	judge := &rejudgeJudge{}
+	var second string
+	judge := rejudgeJudge(&second)
 	readTool := newSpyReadTool(t, "package game // the body", new(int32))
 	cfg := Config{Rubric: "score 0-3", JudgeMaxIterations: 6, Threshold: 0.6, RubricSpecs: map[string]criterionSpec{"accuracy": {Name: "accuracy"}}}
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement game.go"}}}
 	if _, err := runJudgeAgent(t.Context(), NewJudgeFactory(judge, []tool.Tool{readTool}, nil), cfg, q, "done.", workerActivity{}, nil, nil, func(*genai.Part) bool { return true }); err != nil {
 		t.Fatal(err)
 	}
-	_, after, ok := strings.Cut(judge.second, "Answer to judge:\n")
+	_, after, ok := strings.Cut(second, "Answer to judge:\n")
 	if !ok || strings.TrimSpace(after) != "done." {
 		t.Errorf("re-judge's answer section = %q, want exactly the answer", after)
 	}
-	head := strings.Split(judge.second, "Answer to judge:")[0]
+	head := strings.Split(second, "Answer to judge:")[0]
 	if !strings.Contains(head, "NOTE FROM THE GATE") || !strings.Contains(head, "no score") {
-		t.Errorf("re-judge prompt lacks the gate's note ahead of the answer:\n%s", judge.second)
+		t.Errorf("re-judge prompt lacks the gate's note ahead of the answer:\n%s", second)
 	}
 	if !strings.Contains(head, "READS FROM YOUR PREVIOUS ATTEMPT") || !strings.Contains(head, "package game // the body") {
-		t.Errorf("re-judge prompt lacks the first attempt's read:\n%s", judge.second)
+		t.Errorf("re-judge prompt lacks the first attempt's read:\n%s", second)
 	}
 }
 
@@ -439,24 +428,17 @@ func TestRecordRead_NewestDeliverableWindowFirst(t *testing.T) {
 }
 
 // noVerdictThenSeededJudge reads a file, then never reaches a verdict in that round; the
-// fresh-session retry is captured and passes without reading again.
-type noVerdictThenSeededJudge struct {
-	fresh int32
-	retry string
-}
-
-func (*noVerdictThenSeededJudge) Name() string { return "no-verdict-then-seeded-judge" }
-
-func (j *noVerdictThenSeededJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
+// fresh-session retry is captured into retry and passes without reading again.
+func noVerdictThenSeededJudge(fresh *int32, retry *string) fnLLM {
+	return func(req *model.LLMRequest) (*model.LLMResponse, error) {
 		switch {
 		case !isFreshRound(req):
-			yield(stubText("still thinking about it"), nil)
-		case atomic.AddInt32(&j.fresh, 1) == 1:
-			yield(stubCall("read_file", map[string]any{"path": "game.go"}), nil)
+			return stubText("still thinking about it"), nil
+		case atomic.AddInt32(fresh, 1) == 1:
+			return stubCall("read_file", map[string]any{"path": "game.go"}), nil
 		default:
-			j.retry = stubAllText(req)
-			yield(stubText(`{"score": 0.9, "passed": true, "feedback": ""}`), nil)
+			*retry = stubAllText(req)
+			return stubText(`{"score": 0.9, "passed": true, "feedback": ""}`), nil
 		}
 	}
 }
@@ -464,47 +446,41 @@ func (j *noVerdictThenSeededJudge) GenerateContent(_ context.Context, req *model
 // TestRetryNoVerdict_SeedsAndCreditsPriorReads: the retry starts with the first attempt's
 // reads and counts them, so a pass built on them is not discarded as unread.
 func TestRetryNoVerdict_SeedsAndCreditsPriorReads(t *testing.T) {
-	judge := &noVerdictThenSeededJudge{}
+	var fresh int32
+	var retry string
+	judge := noVerdictThenSeededJudge(&fresh, &retry)
 	readTool := newSpyReadTool(t, "package game // retry body", new(int32))
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement game.go"}}}
 	v, err := runJudgeAgent(t.Context(), NewJudgeFactory(judge, []tool.Tool{readTool}, nil), Config{Rubric: "score 0-10", JudgeMaxIterations: 6}, q, "done.", workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
 	if err != nil || !v.Passed {
 		t.Fatalf("runJudgeAgent = %+v, %v, want the retry's pass", v, err)
 	}
-	if !strings.Contains(judge.retry, "READS FROM YOUR PREVIOUS ATTEMPT") || !strings.Contains(judge.retry, "retry body") {
-		t.Errorf("retry prompt lacks the first attempt's read:\n%s", judge.retry)
+	if !strings.Contains(retry, "READS FROM YOUR PREVIOUS ATTEMPT") || !strings.Contains(retry, "retry body") {
+		t.Errorf("retry prompt lacks the first attempt's read:\n%s", retry)
 	}
-	if got := atomic.LoadInt32(&judge.fresh); got != 2 {
+	if got := atomic.LoadInt32(&fresh); got != 2 {
 		t.Errorf("fresh judge sessions = %d, want 2 (a seeded pass must not be re-judged as unread)", got)
 	}
 }
 
 // deliverableRereadJudge reads the deliverable and a page, leaves a criterion unscored, then
-// captures the re-judge's prompt.
-type deliverableRereadJudge struct {
-	calls  int32
-	second string
-}
-
-func (*deliverableRereadJudge) Name() string { return "deliverable-reread-judge" }
-
-func (j *deliverableRereadJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
+// captures the re-judge's prompt into second.
+func deliverableRereadJudge(second *string) fnLLM {
+	var calls int32
+	return func(req *model.LLMRequest) (*model.LLMResponse, error) {
 		crit := map[string]any{"shortfall": "fine"}
-		switch atomic.AddInt32(&j.calls, 1) {
+		switch atomic.AddInt32(&calls, 1) {
 		case 1:
-			yield(stubCall("read_artifact", map[string]any{"id": "web_page:p"}), nil)
-			return
+			return stubCall("read_artifact", map[string]any{"id": "web_page:p"}), nil
 		case 2:
-			yield(stubCall("read_artifact", map[string]any{"id": "text:report"}), nil)
-			return
+			return stubCall("read_artifact", map[string]any{"id": "text:report"}), nil
 		case 3:
 		default:
-			j.second = stubAllText(req)
+			*second = stubAllText(req)
 			crit["score"] = 3.0
 		}
 		raw, _ := json.Marshal(map[string]any{"score": 3.0, "criteria": map[string]any{"accuracy": crit}, "feedback": ""})
-		yield(stubText(string(raw)), nil)
+		return stubText(string(raw)), nil
 	}
 }
 
@@ -522,7 +498,8 @@ func TestReJudge_SeedsWholeDeliverableRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	judge := &deliverableRereadJudge{}
+	var second string
+	judge := deliverableRereadJudge(&second)
 	cfg := Config{Rubric: "score 0-3", JudgeMaxIterations: 6, Threshold: 0.6, JudgeArtifactTools: []tool.Tool{read},
 		RubricSpecs: map[string]criterionSpec{"accuracy": {Name: "accuracy"}}}
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Write the report"}}}
@@ -530,9 +507,9 @@ func TestReJudge_SeedsWholeDeliverableRead(t *testing.T) {
 	if _, err := runJudgeAgent(t.Context(), NewJudgeFactory(judge, nil, nil), cfg, q, "see text:report", act, nil, nil, func(*genai.Part) bool { return true }); err != nil {
 		t.Fatal(err)
 	}
-	r, p := strings.Index(judge.second, report), strings.Index(judge.second, strings.Repeat("p", 100))
-	if r < 0 || p < r || strings.Contains(judge.second, page) {
-		t.Errorf("re-judge prompt: deliverable at %d, page at %d, page whole %v - want the whole deliverable first and the page cut", r, p, strings.Contains(judge.second, page))
+	r, p := strings.Index(second, report), strings.Index(second, strings.Repeat("p", 100))
+	if r < 0 || p < r || strings.Contains(second, page) {
+		t.Errorf("re-judge prompt: deliverable at %d, page at %d, page whole %v - want the whole deliverable first and the page cut", r, p, strings.Contains(second, page))
 	}
 }
 
@@ -591,28 +568,22 @@ func TestJudgeView_FailedHistoryLookupNotCached(t *testing.T) {
 
 // cappedJudge spends every reply on reasoning (MAX_TOKENS, no verdict) unless the request asks for
 // low thinking; levels records each call's thinking level ("" when none was sent).
-type cappedJudge struct{ levels []string }
-
-func (*cappedJudge) Name() string { return "capped-judge" }
-
-func (j *cappedJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	level := ""
-	if req.Config != nil && req.Config.ThinkingConfig != nil {
-		level = string(req.Config.ThinkingConfig.ThinkingLevel)
-	}
-	j.levels = append(j.levels, level)
-	return func(yield func(*model.LLMResponse, error) bool) {
-		if level == string(genai.ThinkingLevelLow) {
-			yield(stubText(`{"score": 3, "criteria": {"accuracy": {"reason": "ok", "score": 3}}, "feedback": ""}`), nil)
-			return
+func cappedJudge(levels *[]string) fnLLM {
+	return func(req *model.LLMRequest) (*model.LLMResponse, error) {
+		level := ""
+		if req.Config != nil && req.Config.ThinkingConfig != nil {
+			level = string(req.Config.ThinkingConfig.ThinkingLevel)
 		}
-		yield(&model.LLMResponse{Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: "Let me weigh"}}}, FinishReason: genai.FinishReasonMaxTokens, TurnComplete: true}, nil)
+		*levels = append(*levels, level)
+		if level == string(genai.ThinkingLevelLow) {
+			return stubText(`{"score": 3, "criteria": {"accuracy": {"reason": "ok", "score": 3}}, "feedback": ""}`), nil
+		}
+		return &model.LLMResponse{Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: "Let me weigh"}}}, FinishReason: genai.FinishReasonMaxTokens, TurnComplete: true}, nil
 	}
 }
 
-// TestRetryNoVerdict_CappedRetriesWithLowThinking: a round whose reasoning ate the output cap is
-// not nudged on the same settings, and its retry drops a configured medium/high effort to low;
-// an unset level is never forced on (some endpoints reject reasoning_effort).
+// A round whose reasoning ate the output cap retries with medium/high effort dropped to low; an
+// unset level is never forced on (some endpoints reject reasoning_effort).
 func TestRetryNoVerdict_CappedRetriesWithLowThinking(t *testing.T) {
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Research X"}}}
 	for _, tc := range []struct {
@@ -620,10 +591,11 @@ func TestRetryNoVerdict_CappedRetriesWithLowThinking(t *testing.T) {
 		want   string
 		passes bool
 	}{{"medium", "MEDIUM,LOW", true}, {"", ",", false}} {
-		judge := &cappedJudge{}
+		var levels []string
+		judge := cappedJudge(&levels)
 		cfg := Config{Rubric: "score 0-3", JudgeMaxIterations: 6, JudgeThinkingLevel: tc.level}
 		v, err := runJudgeAgent(t.Context(), NewJudgeFactory(judge, nil, nil), cfg, q, "done.", workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
-		if got := strings.Join(judge.levels, ","); got != tc.want || (err == nil) != tc.passes || (tc.passes && v.Score != 1.0) {
+		if got := strings.Join(levels, ","); got != tc.want || (err == nil) != tc.passes || (tc.passes && v.Score != 1.0) {
 			t.Errorf("level %q: calls %q, err %v, score %v; want calls %q", tc.level, got, err, v.Score, tc.want)
 		}
 		if !tc.passes && !errors.Is(err, ErrJudgeOutputCapped) {
@@ -634,11 +606,12 @@ func TestRetryNoVerdict_CappedRetriesWithLowThinking(t *testing.T) {
 
 // TestVerifier_SendsJudgeThinkingLevel: the verifier runs on the judge's model with its effort.
 func TestVerifier_SendsJudgeThinkingLevel(t *testing.T) {
-	judge := &cappedJudge{}
+	var levels []string
+	judge := cappedJudge(&levels)
 	c := secondLookCheck()
 	Verifier{LLM: judge, ThinkingLevel: "low"}.VerifyChecks(context.Background(), []UnitCheck{c})
 	Verifier{LLM: judge}.VerifyChecks(context.Background(), []UnitCheck{c})
-	if got := strings.Join(judge.levels, ","); got != "LOW," {
+	if got := strings.Join(levels, ","); got != "LOW," {
 		t.Errorf("verifier thinking levels = %q, want LOW then none", got)
 	}
 }
@@ -668,7 +641,7 @@ func TestRunGatedRefine_JudgeNotShownCheckedPages(t *testing.T) {
 		RubricSpecs: map[string]criterionSpec{specificsSupportedCriterion: {Deterministic: true}},
 		JudgeModel:  seqLLM{answers: []string{`{"items":[{"n":1,"state":"supported","quote":"users rose 30% in 2024"},{"n":2,"state":"supported","quote":"users rose 30% in 2024"}]}`}, prompts: &prompts}}
 	listing := "(not called)"
-	runGatedStub(t, fetchingWorker{url: u, answer: "Users rose 30% in 2024 ([survey](" + u + "))."}, []tool.Tool{fetch}, NewJudgeFactory(listingJudge{listing: &listing}, nil, nil), cfg)
+	runGatedStub(t, fetchingWorker{url: u, answer: "Users rose 30% in 2024 ([survey](" + u + "))."}, []tool.Tool{fetch}, NewJudgeFactory(listingJudge(&listing), nil, nil), cfg)
 	if len(prompts) == 0 || listing == "(not called)" || strings.Contains(listing, pageID(t, u)) {
 		t.Errorf("verifier calls %d; judge list_artifacts = %q, want the checked page left out", len(prompts), listing)
 	}

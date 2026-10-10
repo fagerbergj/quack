@@ -10,9 +10,8 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// #1048: recordUsage was fed only the shared stamp (a.coords), with no
-// reference to the round's own ctx coords - unlike traced.go's field-by-field
-// merge (#1047), a concurrent sibling round's stamp could steal this round's attribution.
+// recordUsage must prefer the round's own ctx coords over the shared stamp,
+// or a concurrent sibling round's stamp steals this round's attribution.
 func TestRound_CtxCoordsWinOverTheSharedStampForUsage(t *testing.T) {
 	reader := newUsageTestMeter(t)
 	a := usageTestAgent(t, "usage", nil)

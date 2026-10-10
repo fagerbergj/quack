@@ -7,9 +7,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// MemoryOp is one append-only audit row for a memory lifecycle transition
-// (design doc docs/memory-lifecycle.md §3, issue #849 phase 2). Rows are
-// never updated or deleted by this package - a memory's own soft-delete leaves its history intact.
+// MemoryOp is one append-only audit row for a memory lifecycle transition (docs/memory-lifecycle.md).
+// Never updated or deleted here, so a memory's soft-delete keeps its history.
 type MemoryOp struct {
 	ID        string `gorm:"primaryKey"`
 	MemoryID  string `gorm:"index"`
@@ -21,9 +20,7 @@ type MemoryOp struct {
 
 func (MemoryOp) TableName() string { return "memory_ops" }
 
-// InsertMemoryOp appends one audit row. Implements memory.OpsLog's backing
-// call - internal/memory can't import internal/store, so internal/serve
-// wires an adapter around this method at bootstrap (see Store.SetOpsLog).
+// InsertMemoryOp appends one audit row; internal/serve adapts it into memory.OpsLog (memory can't import store).
 func (s *Store) InsertMemoryOp(ctx context.Context, memoryID, op, actor, reason string) error {
 	row := &MemoryOp{ID: uuid.NewString(), MemoryID: memoryID, Op: op, Actor: actor, Reason: reason, Timestamp: time.Now().UTC()}
 	return s.db.WithContext(ctx).Create(row).Error
@@ -39,9 +36,8 @@ func (s *Store) PruneMemoryOps(ctx context.Context, cutoff time.Time) (int, erro
 	return int(res.RowsAffected), nil
 }
 
-// ListMemoryOps returns every memory_ops row at or after since, oldest
-// first - `quack memory stats`' (epic #1255 P5) source for weekly
-// minted/invalidated counts. One shared audit table across every configured memory backend, so this is a single query regardless of how many stores.
+// ListMemoryOps returns every memory_ops row at or after since, oldest first, for `quack memory stats`.
+// One audit table spans every memory backend.
 func (s *Store) ListMemoryOps(ctx context.Context, since time.Time) ([]MemoryOp, error) {
 	var rows []MemoryOp
 	if err := s.db.WithContext(ctx).Where("timestamp >= ?", since).Order("timestamp ASC").Find(&rows).Error; err != nil {

@@ -1,4 +1,4 @@
-// Package workspace: the isolation boundary every filesystem/git tool resolves paths through. Stdlib only.
+// Package workspace is the isolation boundary every filesystem/git tool resolves paths through.
 package workspace
 
 import (
@@ -13,25 +13,24 @@ import (
 	"strings"
 )
 
-// Uniform rejection for any path outside the caller's jail. One error by design: one thing for the model to learn.
+// ErrEscape is deliberately one error for every outside path: one thing for the model to learn.
 var ErrEscape = errors.New("path escapes your workspace")
 
-// Rejects a userID that can't safely name one directory component. Distinct from ErrEscape: operator fix, not model learning.
+// ErrInvalidUserID is distinct from ErrEscape: it needs an operator fix, not model learning.
 var ErrInvalidUserID = errors.New("workspace: invalid user id")
 
-// Rejects a chatID that can't safely name one directory component. Empty chatID means "no per-chat scope" (backward compatible).
+// Empty chatID means no per-chat scope.
 var ErrInvalidChatID = errors.New("workspace: invalid chat id")
 
-// Rejects a nodeID that can't safely name one directory component (ScratchDir).
 var ErrInvalidNodeID = errors.New("workspace: invalid node id")
 
-// One configured workspace root; per-user boundaries derived at resolve time.
+// Jail derives per-user boundaries from one root at resolve time.
 type Jail struct {
-	// Absolute, symlink-resolved workspace root.
+	// Absolute and symlink-resolved.
 	root string
 }
 
-// Builds a Jail rooted at root (created if missing), canonicalized so containment checks compare real paths.
+// NewJail canonicalizes root so containment checks compare real paths.
 func NewJail(root string) (*Jail, error) {
 	if strings.TrimSpace(root) == "" {
 		return nil, fmt.Errorf("workspace: root is empty")
@@ -50,10 +49,9 @@ func NewJail(root string) (*Jail, error) {
 	return &Jail{root: real}, nil
 }
 
-// Canonical jail root for logging/diagnostics.
 func (j *Jail) Root() string { return j.root }
 
-// Jail directory for userID (unresolved). May not exist; callers create it themselves.
+// UserRoot is unresolved and may not exist; callers create it.
 func (j *Jail) UserRoot(userID string) (string, error) {
 	if err := validateUserID(userID); err != nil {
 		return "", err
@@ -64,7 +62,7 @@ func (j *Jail) UserRoot(userID string) (string, error) {
 // Dot-prefixed so it reads as infrastructure, not a cloned repo.
 const homeDirName = ".quack-home"
 
-// Dedicated $HOME for child processes. Created 0o700, outside cloned repos so caches aren't swept up by git_commit.
+// HomeDir is outside cloned repos so tool caches aren't swept up by git_commit.
 func (j *Jail) HomeDir(userID string) (string, error) {
 	userRoot, err := j.UserRoot(userID)
 	if err != nil {
@@ -77,7 +75,6 @@ func (j *Jail) HomeDir(userID string) (string, error) {
 	return home, nil
 }
 
-// nodeHomeDir: shared ScratchDir/ACPStateDir core - validates ids, creates a 0o700 per-node dir under home/subdir.
 func (j *Jail) nodeHomeDir(userID, chatID, nodeID, subdir, label string) (string, error) {
 	if !isSafePathComponent(chatID) {
 		return "", ErrInvalidChatID
@@ -96,20 +93,18 @@ func (j *Jail) nodeHomeDir(userID, chatID, nodeID, subdir, label string) (string
 	return dir, nil
 }
 
-// ScratchDir is a private, per-node writable tmp dir for a sandboxed
-// worker's own scratch use (mktemp, heredocs, a build's tmp files) - a home
-// for the TMPDIR grant that doesn't collide with, or get swept alongside, another node's. Nested under HomeDir (never inside the node's own workspace: a read-only node's tree must stay wholly immutable), one directory component per node so workspace gc's existing per-entry sweepHomeTmp TTL sweep (see gc.go) reaps it with no changes of its own.
+// ScratchDir is a per-node TMPDIR under HomeDir, never in the node's tree (read-only trees stay immutable);
+// one component per node so sweepHomeTmp's TTL reaps it.
 func (j *Jail) ScratchDir(userID, chatID, nodeID string) (string, error) {
 	return j.nodeHomeDir(userID, chatID, nodeID, "tmp", "scratch dir")
 }
 
-// ACPStateDir: per-node dir for the ACP shim's own session persistence (pi's
-// --session-dir) - unlike ScratchDir, never named in environment.go's prompt.
+// ACPStateDir holds the ACP shim's session persistence; unlike ScratchDir, never named in the prompt.
 func (j *Jail) ACPStateDir(userID, chatID, nodeID string) (string, error) {
 	return j.nodeHomeDir(userID, chatID, nodeID, "acp-state", "acp state dir")
 }
 
-// Working directory a DAG node's tools default to (one component under chat scope). "" falls back to chat root.
+// NodeDir: "" falls back to the chat root.
 func NodeDir(nodeID string) string {
 	if !isSafePathComponent(nodeID) {
 		return ""
@@ -117,20 +112,19 @@ func NodeDir(nodeID string) string {
 	return nodeID
 }
 
-// Workspace-relative directory a Setup pre-step clones into. The repo IS the node's workspace (no "repo/" prefix needed).
+// The cloned repo is the node's workspace itself, with no "repo/" prefix.
 func SetupCloneDir(nodeID string) string {
 	return NodeDir(nodeID)
 }
 
-// Reserved node ID for nodes sharing one clone across a depends_on chain. Fixed, never a planner-chosen ID.
+// Reserved node ID for nodes sharing one clone across a depends_on chain; never planner-chosen.
 const SharedRepoScope = "quack-shared-repo"
 
-// Unique branch name for a qualifying node's linked worktree. Derived from nodeID (no registry needed).
 func WorktreeBranch(nodeID string) string {
 	return "quack-worktree/" + nodeID
 }
 
-// Resolves rel under (userID, chatID) scope and creates it. So the worker's first list_dir sees an (empty) dir.
+// EnsureDir creates rel so the worker's first list_dir sees an empty dir rather than an error.
 func (j *Jail) EnsureDir(userID, chatID, rel string) (string, error) {
 	real, err := j.Resolve(userID, chatID, rel)
 	if err != nil {
@@ -142,7 +136,7 @@ func (j *Jail) EnsureDir(userID, chatID, rel string) (string, error) {
 	return real, nil
 }
 
-// Jail-boundary guard: userID must name exactly one directory component. Separator/dot based, not alphanumeric (OIDC subjects like "auth0|abc123" must pass).
+// Separator/dot based, not alphanumeric: OIDC subjects like "auth0|abc123" must pass.
 func validateUserID(userID string) error {
 	if !isSafePathComponent(userID) {
 		return ErrInvalidUserID
@@ -150,7 +144,6 @@ func validateUserID(userID string) error {
 	return nil
 }
 
-// Reports whether id names exactly one directory component (no separator, no `.`/`..` traversal).
 func isSafePathComponent(id string) bool {
 	if strings.TrimSpace(id) == "" {
 		return false
@@ -164,12 +157,11 @@ func isSafePathComponent(id string) bool {
 	return filepath.Clean(id) == id
 }
 
-// Path/shell-hostile runes for a directory name (':' breaks node module resolution and PATH-style parsing).
+// ':' breaks node module resolution and PATH-style parsing.
 var hostileRunes = regexp.MustCompile(`[^A-Za-z0-9._-]`)
 
-// ChatDirName maps a chat id to its on-disk directory component. Hostile
-// runes become '-', with a short hash of the raw id appended so rewritten ids
-// can't collide (ext:a:b vs ext-a-b). Clean ids map to themselves. The chat id itself (DB/API/UI) never changes - only the directory name.
+// ChatDirName replaces hostile runes with '-' and appends a hash of the raw id so rewrites
+// can't collide (ext:a:b vs ext-a-b). Clean ids map to themselves.
 func ChatDirName(chatID string) string {
 	clean := hostileRunes.ReplaceAllString(chatID, "-")
 	if clean == chatID {
@@ -179,7 +171,7 @@ func ChatDirName(chatID string) string {
 	return clean + "-" + hex.EncodeToString(sum[:4])
 }
 
-// Directory a (userID, chatID) pair resolves paths under. chatID="" falls back to per-user root.
+// chatID="" falls back to the per-user root.
 func (j *Jail) scopeRoot(userID, chatID string) (string, error) {
 	userRoot, err := j.UserRoot(userID)
 	if err != nil {
@@ -193,7 +185,7 @@ func (j *Jail) scopeRoot(userID, chatID string) (string, error) {
 	}
 	dir := ChatDirName(chatID)
 	if dir != chatID {
-		// Zero-migration: chats from before sanitization keep their raw-named dir.
+		// Existing raw-named dirs keep working without a migration.
 		if fi, err := os.Stat(filepath.Join(userRoot, chatID)); err == nil && fi.IsDir() {
 			dir = chatID
 		}
@@ -201,7 +193,7 @@ func (j *Jail) scopeRoot(userID, chatID string) (string, error) {
 	return filepath.Join(userRoot, dir), nil
 }
 
-// Path-resolution for every filesystem/git tool: joins relPath under scope root, resolves symlinks, verifies containment.
+// Resolve joins relPath under the scope root, resolves symlinks and verifies containment.
 func (j *Jail) Resolve(userID, chatID, relPath string) (string, error) {
 	scopeRoot, err := j.scopeRoot(userID, chatID)
 	if err != nil {
@@ -256,7 +248,7 @@ func (j *Jail) ResolveRepoDir(userID, chatID, relPath string) (string, error) {
 	return filepath.Join(scopeRoot, relPath), nil
 }
 
-// Deletes a chat's workspace subtree. Empty chatID rejected (ErrInvalidChatID) so it can never delete the user root.
+// RemoveChatScope rejects an empty chatID so it can never delete the user root.
 func (j *Jail) RemoveChatScope(userID, chatID string) error {
 	if strings.TrimSpace(chatID) == "" {
 		return ErrInvalidChatID
@@ -265,8 +257,7 @@ func (j *Jail) RemoveChatScope(userID, chatID string) error {
 	if err != nil {
 		return err
 	}
-	// Defense in depth: never remove the user root or the jail root, even if
-	// scopeRoot somehow produced one.
+	// Defense in depth: never remove the user or jail root.
 	userRoot, err := j.UserRoot(userID)
 	if err != nil {
 		return err
@@ -280,12 +271,8 @@ func (j *Jail) RemoveChatScope(userID, chatID string) error {
 	return nil
 }
 
-// RemoveACPState deletes every ACP state dir this chat's nodes ever created
-// (ACPStateDir globs by chatID+nodeID; the nodeID varies per node, so this
-// wildcards it). Lives under HomeDir, not the chat's own scope root - a
-// node's session must survive a mid-chat clone re-provision - so it needs
-// its own removal call at chat archive/delete rather than riding
-// RemoveChatScope. Empty chatID rejected, same reason as RemoveChatScope.
+// RemoveACPState: ACP state lives under HomeDir so a session survives a clone re-provision,
+// so RemoveChatScope doesn't cover it. Empty chatID rejected.
 func (j *Jail) RemoveACPState(userID, chatID string) error {
 	if strings.TrimSpace(chatID) == "" {
 		return ErrInvalidChatID
@@ -306,12 +293,12 @@ func (j *Jail) RemoveACPState(userID, chatID string) error {
 	return nil
 }
 
-// Reports whether path is root or a descendant. Both must be Clean'd absolute paths.
+// Both must be Clean'd absolute paths.
 func withinRoot(root, path string) bool {
 	return path == root || strings.HasPrefix(path, root+string(filepath.Separator))
 }
 
-// Resolves symlinks on the deepest existing ancestor of p, rejoining trailing nonexistent components.
+// resolveDeepestExisting resolves the deepest existing ancestor of p and rejoins the nonexistent rest.
 func resolveDeepestExisting(p string) (string, error) {
 	cur := p
 	var trailing []string
@@ -330,8 +317,7 @@ func resolveDeepestExisting(p string) (string, error) {
 		}
 		parent := filepath.Dir(cur)
 		if parent == cur {
-			// Reached the filesystem root and nothing exists on the path at all -
-			// there are no symlinks to resolve; the cleaned path is already real.
+			// Nothing on the path exists, so there are no symlinks to resolve.
 			return p, nil
 		}
 		trailing = append(trailing, filepath.Base(cur))

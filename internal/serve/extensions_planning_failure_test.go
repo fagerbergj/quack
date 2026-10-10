@@ -20,9 +20,7 @@ import (
 	"github.com/fagerbergj/quack/internal/runlog"
 )
 
-// planningFailureModel always fails GenerateContent with a gateway-shaped
-// error - #1156's repro: the model endpoint is unreachable during planning,
-// before any DAG node/plan exists to attach a DagNode.Error to.
+// planningFailureModel always fails with a gateway-shaped error, before any DAG node or plan exists.
 type planningFailureModel struct{}
 
 func (planningFailureModel) Name() string { return "planning-failure-stub" }
@@ -43,13 +41,8 @@ func (noopExtWithRunObserver) Tools() []tool.Tool                             { 
 func (noopExtWithRunObserver) RegisterRoutes(_, _ chi.Router)                 {}
 func (e noopExtWithRunObserver) RunEnded(_ string, outcome extsdk.RunOutcome) { e.outcomes <- outcome }
 
-// TestPlanningFailure_EndsRunFailedWithClassifiedError is #1156's regression
-// guard: a model-gateway failure during the orchestrator's own planning turn
-// (no DagNode ever created) must still end the run RunFailed with the
-// sanitized gateway error - not fall through to the generic silent-gap text
-// mapExtRunOutcome's default branch produces for status=idle/done. Extends
-// #1109's own gateway-classification coverage (dag/executor_test.go,
-// extensions_cancel_test.go) to the pre-DAG planning path #1109 missed.
+// TestPlanningFailure_EndsRunFailedWithClassifiedError: a gateway failure in the planning turn (no DagNode)
+// still ends RunFailed with the sanitized error, not mapExtRunOutcome's silent-gap default.
 func TestPlanningFailure_EndsRunFailedWithClassifiedError(t *testing.T) {
 	failing := inference.TracedModelForTesting(planningFailureModel{}, "test-model")
 	st, orch, hub, artifacts, _ := newExtTestStackWithModel(t, failing)

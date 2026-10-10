@@ -17,8 +17,7 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// TestWorkerModelHoldsPerCall proves #1482's wiring: the model the served
-// worker agent holds is the per-call admitting wrap, so a worker's slot
+// TestWorkerModelHoldsPerCall: the served worker's model is the per-call admitting wrap, so its slot
 // frees between model calls and tool phases overlap other nodes' runs.
 func TestWorkerModelHoldsPerCall(t *testing.T) {
 	jail, err := workspace.NewJail(t.TempDir())

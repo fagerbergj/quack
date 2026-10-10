@@ -15,30 +15,26 @@ import (
 	"github.com/fagerbergj/quack/internal/httpx"
 )
 
-// discoveryTimeout bounds the whole startup probe (discovery + JWKS fetch,
-// including the shared transport's own retries) - a hung IdP must not hang
-// server boot indefinitely.
+// discoveryTimeout bounds the whole startup probe (discovery + JWKS, including transport retries)
+// so a hung IdP can't hang boot.
 const discoveryTimeout = 10 * time.Second
 
-// oidcProbeAttempts + oidcProbeBackoff configure the shared resilient
-// transport's retry: a transient IdP blip (a rolling deploy landing
-// mid-startup-probe, say) gets a couple of retries instead of hard-failing on the first bad request. This only widens the window - once oidcProbeAttempts is exhausted, a genuinely unreachable or misconfigured issuer still fails startup; it never falls back to running open. oidcProbeBackoff is a var so tests don't have to wait out real backoff.
+// oidcProbeAttempts/oidcProbeBackoff let a transient IdP blip retry during the startup probe; once exhausted
+// startup still fails, never falling back to open. oidcProbeBackoff is a var so tests skip real backoff.
 const oidcProbeAttempts = 3
 
 var oidcProbeBackoff = time.Second
 
-// oidcVerifier verifies a bearer token's signature, issuer, audience, and
-// expiry via zitadel/oidc's rp.IDTokenVerifier. rp.NewIDTokenVerifier and
-// rp.NewRemoteKeySet are self-contained primitives - no RelyingParty, no browser/redirect flow, no auth code exchange - built from just issuer+audience+JWKS, which is all a resource server verifying bearer tokens needs.
+// oidcVerifier verifies a bearer token's signature, issuer, audience and expiry with zitadel/oidc's
+// standalone verifier primitives: a resource server needs only issuer, audience and JWKS.
 type oidcVerifier struct {
 	issuer   string
 	audience string
 	verifier *rp.IDTokenVerifier
 }
 
-// newOIDCVerifier resolves the signing-key source - jwks_url if the config
-// overrides discovery, else <issuer>/.well-known/openid-configuration's
-// jwks_uri (via client.Discover, which also rejects a discovery doc whose own "issuer" doesn't match cfg.Issuer) - and probes it. Both are GETs, so the shared transport (internal/httpx) retries a transient failure up to oidcProbeAttempts times on its own; this fold-in replaces what used to be a hand-rolled outer retry loop here. rp.NewRemoteKeySet itself fetches lazily on first use with its own background-refreshed cache; the synchronous probe here exists only to preserve the fail-fast startup contract: a bad/unreachable issuer or JWKS is a startup error, not a silent 401 factory discovered on the first request.
+// newOIDCVerifier resolves the JWKS (jwks_url, else discovery, which rejects an issuer mismatch) and probes it
+// synchronously so a bad issuer fails startup rather than 401ing every request; the key set itself fetches lazily.
 func newOIDCVerifier(cfg *config.OIDCConfig) (*oidcVerifier, error) {
 	httpClient := &http.Client{
 		Timeout: discoveryTimeout,
@@ -80,9 +76,8 @@ func discoverAndProbeJWKS(cfg *config.OIDCConfig, httpClient *http.Client) (stri
 	return jwksURL, nil
 }
 
-// probeJWKS performs one synchronous GET of jwksURL, confirming it's
-// reachable and that every published key carries the fields a verifier
-// actually needs: kty always (RFC 7517), plus kid or alg to pick the right key/algorithm for a token's header. A JWKS that decodes but is missing these would otherwise pass this probe and only fail later, on the first real request. The result is otherwise discarded - actual key resolution at verify time goes through rp.NewRemoteKeySet's own lazy, cached fetch.
+// probeJWKS GETs jwksURL once and checks every key has kty plus kid or alg, so a JWKS that decodes
+// but can't select keys fails at startup, not on the first request. The result is discarded.
 func probeJWKS(ctx context.Context, httpClient *http.Client, jwksURL string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, jwksURL, nil)
 	if err != nil {
@@ -130,9 +125,8 @@ func (v *oidcVerifier) verifyRequest(r *http.Request) (Identity, error) {
 	return v.verify(r.Context(), tok)
 }
 
-// verify checks signature, issuer, audience, and expiry via
-// rp.VerifyIDToken, then reads the caller identity off the claims:
-// preferred_username (falling back to sub) and an optional groups claim.
+// verify checks the token via rp.VerifyIDToken, then reads the identity: preferred_username
+// (else sub) and an optional groups claim.
 func (v *oidcVerifier) verify(ctx context.Context, tokenString string) (Identity, error) {
 	claims, err := rp.VerifyIDToken[*oidc.IDTokenClaims](ctx, tokenString, v.verifier)
 	if err != nil {
@@ -148,9 +142,7 @@ func (v *oidcVerifier) verify(ctx context.Context, tokenString string) (Identity
 	return id, nil
 }
 
-// toStringSlice converts a JSON-decoded claim value (a []interface{} of
-// strings, per encoding/json's default unmarshal into a map[string]any) into
-// []string, skipping non-string entries.
+// toStringSlice converts a JSON-decoded []any claim to []string, skipping non-string entries.
 func toStringSlice(raw any) []string {
 	arr, ok := raw.([]any)
 	if !ok {

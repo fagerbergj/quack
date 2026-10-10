@@ -17,11 +17,7 @@ func alwaysAcceptJudge(context.Context, string, string, string) (bool, string, e
 	return true, "", nil
 }
 
-// TestOrchestratorRun_AcceptedPlan_WritesDagPlanArtifact proves #1122: an
-// orchestrator wired with SetArtifacts writes "dag_plan:main" the moment a
-// plan is accepted, driven end to end through Run (not by calling
-// tools.NewPlanTool directly) - the real defect was in how the artifact
-// service reaches the orchestrator, not in the plan tool itself.
+// With SetArtifacts, Run writes "dag_plan:main" the moment a plan is accepted.
 func TestOrchestratorRun_AcceptedPlan_WritesDagPlanArtifact(t *testing.T) {
 	stub := &orchStub{replies: []*model.LLMResponse{
 		planCall(), // accepted first try; stub auto-executes once plan_id is in context
@@ -44,10 +40,7 @@ func TestOrchestratorRun_AcceptedPlan_WritesDagPlanArtifact(t *testing.T) {
 	}
 }
 
-// TestOrchestratorRun_NoArtifactService_PlanStillRunsNoArtifact companions the
-// above: an orchestrator that never had SetArtifacts called must still run a
-// plan to completion (fail-open, same as the pre-#1095 behavior) rather than
-// erroring or panicking for lack of an artifact service.
+// Without SetArtifacts, a plan still runs to completion (fail-open).
 func TestOrchestratorRun_NoArtifactService_PlanStillRunsNoArtifact(t *testing.T) {
 	stub := &orchStub{replies: []*model.LLMResponse{planCall()}}
 	o := newTestOrchWithJudge(t, stub, vetting.PlanJudge(alwaysAcceptJudge))

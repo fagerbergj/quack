@@ -28,10 +28,8 @@ func appendEvent(t *testing.T, svc session.Service, sess session.Session, author
 	}
 }
 
-// TestBuildHistory verifies prior turns are returned in order, assistant
-// thinking is dropped, and a half-finished turn (user with no assistant reply,
-// e.g. an unanswered clarifying question or a paused DAG) still contributes its
-// user line so the planner sees the open question.
+// Prior turns come back in order without thinking, and a half-finished turn still contributes
+// its user line.
 func TestBuildHistory(t *testing.T) {
 	svc := session.InMemoryService()
 	ctx := context.Background()
@@ -86,10 +84,7 @@ func appendPartsEvent(t *testing.T, svc session.Service, sess session.Session, l
 	}
 }
 
-// TestPendingChoice verifies a pending get_user_choice call (and its question
-// text) is detected while unanswered and clears once a real answer (carrying
-// the answer key) follows - so the orchestrator resumes the right turn exactly
-// once.
+// A pending get_user_choice is detected while unanswered and clears once an answer follows.
 func TestPendingChoice(t *testing.T) {
 	svc := session.InMemoryService()
 	ctx := context.Background()
@@ -128,10 +123,7 @@ func TestPendingChoice(t *testing.T) {
 	}
 }
 
-// TestLatestPendingQuestion verifies the shared helper (used by both Run's
-// resume dispatch and the REST status handler) reports a mid-node interrupt
-// with its node ID, a top-level clarification with just its message, and
-// nothing when neither is pending.
+// A mid-node interrupt reports its node ID, a clarification just its message, else nothing.
 func TestLatestPendingQuestion(t *testing.T) {
 	svc := session.InMemoryService()
 	ctx := context.Background()
@@ -175,10 +167,7 @@ func TestLatestPendingQuestion(t *testing.T) {
 	}
 }
 
-// TestPendingQuestionChecksPlanStepSession verifies a chat-level pending-question
-// lookup finds a node interrupt parked in the plan-step session (dag.PlanStepSessionID,
-// where execute()'s incremental dispatch runs nodes) even though the chat's own
-// session never saw it.
+// The chat-level lookup finds a node interrupt parked in the plan-step session.
 func TestPendingQuestionChecksPlanStepSession(t *testing.T) {
 	svc := session.InMemoryService()
 	ctx := context.Background()
@@ -231,9 +220,7 @@ func TestPendingQuestionChecksPlanStepSession(t *testing.T) {
 	}
 }
 
-// TestOrchestratorReturnType is a compile-time check that Run returns SSEEvent,
-// not *session.Event. A later integration test in internal/agent covers the full
-// A2A round trip; this package test only covers the orchestrator's own logic.
+// Compile-time check that Run yields SSEEvent, not *session.Event.
 func TestOrchestratorReturnType(t *testing.T) {
 	var orch *Orchestrator
 	if orch != nil {
@@ -253,9 +240,7 @@ func TestOrchestratorReturnType(t *testing.T) {
 	t.Log("return type is stream.SSEEvent")
 }
 
-// TestLatestPendingNodeInterrupt: an unanswered mid-node HITL request routes the
-// next message as its answer; an answered one does not; the most recent
-// unanswered request wins; non-hitl RequestedInput events are ignored.
+// The most recent unanswered hitl request wins; answered and non-hitl ones are ignored.
 func TestLatestPendingNodeInterrupt(t *testing.T) {
 	req := func(id, msg string) *session.Event {
 		ev := &session.Event{}

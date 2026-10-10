@@ -6,9 +6,8 @@ import (
 	"testing"
 )
 
-// TestCheckCodeReviewCaps pins the caps stage_review and write_code_review
-// both enforce, and that a violation's error names the cap plus where the
-// content belongs instead - never a bare "invalid" (one fixed review format).
+// TestCheckCodeReviewCaps: a violation's error names the cap and where the content
+// belongs instead, never a bare "invalid".
 func TestCheckCodeReviewCaps(t *testing.T) {
 	overLong := strings.Repeat("x", reviewTakeawayMaxLen+1)
 	items := func(n int) []string {
@@ -36,9 +35,7 @@ func TestCheckCodeReviewCaps(t *testing.T) {
 		}
 	})
 	t.Run("multi-sentence and abbreviations are not rejected", func(t *testing.T) {
-		// The period-counting "one sentence" heuristic is gone (it
-		// false-positived on e.g./i.e./vs.) - only length and newlines are
-		// enforced now.
+		// Only length and newlines are enforced: sentence counting false-positives on e.g./i.e./vs.
 		for _, tk := range []string{"First sentence. Second sentence.", "Uses e.g. an abbreviation.", "See cfg.Setup for details."} {
 			if err := CheckCodeReviewCaps(tk, nil, nil); err != nil {
 				t.Fatalf("CheckCodeReviewCaps(%q) = %v, want no error", tk, err)
@@ -71,9 +68,8 @@ func TestCheckCodeReviewCaps(t *testing.T) {
 	})
 }
 
-// TestValidateCodeReview proves the recordstore Validate hook enforces the
-// same caps for a native write_code_review call, so it can't bypass what
-// stage_review enforces at the tool boundary.
+// TestValidateCodeReview: the Validate hook enforces the same caps for a native
+// write_code_review call, so it can't bypass stage_review's.
 func TestValidateCodeReview(t *testing.T) {
 	ok := CodeReviewRecord{Verdict: "approve", Takeaway: "Fine.", Verified: []string{"checked build"}}
 	raw, err := json.Marshal(ok)

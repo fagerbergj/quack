@@ -37,9 +37,7 @@ func TestPinnedSource_SeedIsANoOp(t *testing.T) {
 	}
 }
 
-// TestPinnedSource_PinnedVersion404IsHardError pins suggestion 7: a pinned
-// name whose version 404s must return an error naming it, not the (false,
-// nil) miss shape ChainSource would silently fall through to the store on.
+// A pinned version 404 must be an error naming it, not a (false, nil) miss.
 func TestPinnedSource_PinnedVersion404IsHardError(t *testing.T) {
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
@@ -57,10 +55,7 @@ func TestPinnedSource_PinnedVersion404IsHardError(t *testing.T) {
 	}
 }
 
-// TestPinnedSource_PinnedVersion404PropagatesThroughResolver pins suggestion
-// 7 end to end: artifactsrc.New(Chain(PinnedSource, ...)).Resolve must return
-// the pin-miss error, not silently fall back to the shipped static artifact
-// (PR #1444 round-2 finding).
+// A pin miss must propagate through the Resolver, not fall back to the static artifact.
 func TestPinnedSource_PinnedVersion404PropagatesThroughResolver(t *testing.T) {
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)

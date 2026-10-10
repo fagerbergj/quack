@@ -9,7 +9,6 @@ import (
 	"github.com/fagerbergj/quack/internal/cli"
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/langfuse"
-	"github.com/fagerbergj/quack/internal/langfuse/langfusegen"
 )
 
 // newDatasetCmd: `quack dataset export` (P5 of #1418/#1424) - turns recorded
@@ -60,14 +59,12 @@ func runDatasetExport(cmd *cobra.Command, chatID, repo, since, dataset string, l
 	if err != nil {
 		return err
 	}
-	// Deferring: this path reads only the langfuse client, never agent bundles,
-	// so a plugin override-only entry (bundle seeded at boot, not in the file)
-	// must not hard-fail the export.
+	// Defer bundle checks: export reads only langfuse creds, and plugin-seeded bundles aren't in the file.
 	cfg, err := config.LoadDeferringAgentCompleteness(defaultConfigPath())
 	if err != nil {
 		return err
 	}
-	lf, err := langfuseGenClientFromConfig(cfg)
+	lf, err := langfuseClientFromConfig(cfg)
 	if err != nil {
 		return err
 	}
@@ -76,9 +73,7 @@ func runDatasetExport(cmd *cobra.Command, chatID, repo, since, dataset string, l
 		ChatID: chatID, Repo: repo, Since: sinceT, Dataset: dataset, Limit: limit,
 	})
 	if err != nil {
-		// Export is idempotent (item ids are deterministic), so a re-run after
-		// this partial failure converges rather than duplicating. Cobra prints
-		// err itself; don't double it here.
+		// Item ids are deterministic, so a re-run converges. Cobra prints err itself.
 		fmt.Fprintf(cmd.ErrOrStderr(), "%d item(s) exported before failure\n", len(items))
 		return err
 	}
@@ -98,12 +93,11 @@ func parseDateFlag(s string) (time.Time, error) {
 	return time.Parse("2006-01-02", s)
 }
 
-// langfuseGenClientFromConfig builds the generated dataset/score client from
-// cfg.Prompts.Store's langfuse credentials - the same store `prompts:` resolves against.
-func langfuseGenClientFromConfig(cfg *config.Config) (*langfusegen.ClientWithResponses, error) {
+// langfuseClientFromConfig uses cfg.Prompts.Store's langfuse credentials, the store `prompts:` resolves against.
+func langfuseClientFromConfig(cfg *config.Config) (*langfuse.Client, error) {
 	sc, ok := cfg.Store(cfg.Prompts.Store)
 	if !ok || sc.Kind != "langfuse" {
 		return nil, fmt.Errorf("langfuse is not configured: prompts.store %q is not a langfuse store (needs stores.<name> kind: langfuse with url, public_key, secret_key)", cfg.Prompts.Store)
 	}
-	return langfuse.NewGenClient(sc.URL, sc.PublicKey, sc.SecretKey)
+	return langfuse.New(sc.URL, sc.PublicKey, sc.SecretKey), nil
 }

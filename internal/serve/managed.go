@@ -14,13 +14,8 @@ import (
 	"github.com/fagerbergj/quack/internal/cli"
 )
 
-// Managed stores orchestration for `quack server` when server.topology: managed.
-// A stores-only compose (Postgres + Qdrant) is embedded, written to the state
-// dir, and driven via `docker compose -p quack-stores`. Tool backends
-// (SearXNG/crawl4ai) are NOT managed here - they're config-driven (kind: exa for
-// keyless search, kind: direct for fetch) and orthogonal to stateful stores.
-// ponytail: shells to docker compose rather than reimplementing container
-// orchestration; one stack per machine via the fixed project name.
+// Managed runs an embedded stores-only compose (Postgres + Qdrant) via `docker compose -p quack-stores`.
+// ponytail: shells to docker compose rather than reimplementing orchestration; one stack per machine.
 
 //go:embed stores.compose.yml
 var storesCompose []byte
@@ -33,9 +28,7 @@ const storesProject = "quack-stores"
 // file). Lives under the CLI home (~/.quack or $QUACK_HOME).
 func stateDir() string { return cli.Home() }
 
-// composePath is the stable on-disk path for the embedded stores compose, so up
-// and down reference the same file. Lives under the state dir alongside the
-// pidfile.
+// composePath is stable so up and down reference the same file.
 func composePath() string { return filepath.Join(stateDir(), "stores.compose.yml") }
 
 // writeStoresCompose extracts the embedded compose to disk (docker needs a file
@@ -47,11 +40,8 @@ func writeStoresCompose() error {
 	return os.WriteFile(composePath(), storesCompose, 0o644)
 }
 
-// upStores brings up the Postgres + Qdrant stores via docker compose, then
-// polls until qdrant accepts TCP connections. `up -d --wait` blocks until the
-// db's pg_isready healthcheck passes (TCP-open ≠ query-ready for Postgres);
-// qdrant ships no healthcheck, so its readiness is gated by the Go TCP poll.
-// Idempotent: re-running on an already-up stack reconciles to the desired state.
+// upStores: `up -d --wait` waits for Postgres's pg_isready healthcheck; qdrant has none, so it is
+// gated by a TCP poll. Idempotent.
 func upStores(ctx context.Context) error {
 	if err := writeStoresCompose(); err != nil {
 		return err
@@ -67,9 +57,7 @@ func upStores(ctx context.Context) error {
 	return nil
 }
 
-// runCompose shells to `docker compose` against the embedded stores file with
-// the isolated project name. The seam for the orchestration; combined output is
-// returned so callers can surface it on error.
+// runCompose returns combined output so callers can surface it on error.
 func runCompose(ctx context.Context, args ...string) ([]byte, error) {
 	full := append([]string{"compose", "-p", storesProject, "-f", composePath()}, args...)
 	cmd := exec.CommandContext(ctx, "docker", full...)

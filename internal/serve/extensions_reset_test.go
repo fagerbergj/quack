@@ -14,14 +14,12 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// staleDispatchMarker tags a finished dispatch's leftover durable event so a
-// test can tell "the re-dispatch already legitimately wrote its own events"
-// apart from "the previous dispatch's stale events leaked through".
+// staleDispatchMarker tags a finished dispatch's leftover event, to tell a re-dispatch's own events
+// apart from a stale leak.
 const staleDispatchMarker = "STALE-PREVIOUS-DISPATCH-MARKER"
 
-// TestExtDispatch_ResetsBeforeAck pins finding 5 for the extension dispatch
-// path: newExtDispatch used to reset the durable event log only from inside
-// driveExtensionRun's own spawned goroutine, so a subscriber racing a re-dispatch's ack (e.g. a nudge/retry, quack-extensions#47) could read the previous dispatch's stale terminal event straight off the durable table.
+// TestExtDispatch_ResetsBeforeAck: the durable event log is reset before the dispatch ack, so a subscriber
+// racing a re-dispatch can't read the previous dispatch's stale terminal event.
 func TestExtDispatch_ResetsBeforeAck(t *testing.T) {
 	st, orch, hub, artifacts, jail := newExtTestStack(t)
 	_ = jail

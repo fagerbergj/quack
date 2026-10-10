@@ -14,17 +14,15 @@ const (
 	OpDelete     OpsLogOp = "delete"
 	OpReinforce  OpsLogOp = "reinforce"
 	OpInvalidate OpsLogOp = "invalidate"
-	// OpVote: a judge or human's per-memory vote (epic #1255 P1). Recall delivery itself is
-	// NOT logged here - the ledger's memory.recall entry is the source of truth
-	// for what a chat retrieved (see internal/ledger and internal/ledger/fold).
+	// OpVote: a judge or human per-memory vote. Recall delivery isn't logged here; the ledger's
+	// memory.recall entry is the source of truth.
 	OpVote OpsLogOp = "vote"
-	// OpDemote: a forgetting-rule tier demotion, verified -> unverified (epic #1456 P2).
-	// Distinct from invalidate - the memory stays live and a later supported vote re-promotes it.
+	// OpDemote: a forgetting-rule demotion to unverified. The memory stays live and a later
+	// supported vote re-promotes it.
 	OpDemote OpsLogOp = "demote"
 )
 
-// ReasonSupportDecayed is the fixed memory_ops reason every demote writes,
-// regardless of which rule triggered it (epic #1456 P2).
+// ReasonSupportDecayed is the memory_ops reason every demote writes, whichever rule triggered it.
 const ReasonSupportDecayed = "support decayed"
 
 // OpsLogActor names who caused a memory_ops transition.
@@ -36,22 +34,18 @@ const (
 	ActorHuman           OpsLogActor = "human"
 	ActorRun             OpsLogActor = "run"
 	ActorJudge           OpsLogActor = "judge"
-	// ActorSweep: the forgetting-rule sweep (epic #1255 P3), distinct from
-	// ActorConsolidator (which merges duplicates, not ages memories out).
+	// ActorSweep: the forgetting-rule sweep (ages memories out, unlike ActorConsolidator's merges).
 	ActorSweep OpsLogActor = "sweep"
-	// ActorRescope: quack memory rescope (#1262), moving a pre-fix role:*
-	// point into its resolved repo:* bucket.
+	// ActorRescope: quack memory rescope, moving a role:* point into its repo:* bucket.
 	ActorRescope OpsLogActor = "rescope"
 )
 
-// OpsLog persists an append-only audit trail of memory lifecycle transitions (design
-// doc §3's memory_ops table). internal/memory can't import internal/store - the
-// server bootstrap (internal/serve) wires a concrete implementation backed by internal/store.Store at construction time (see Store.SetOpsLog).
+// OpsLog persists the append-only memory_ops audit trail. internal/serve wires an internal/store-backed
+// implementation via Store.SetOpsLog, since this package can't import internal/store.
 type OpsLog interface {
 	LogMemoryOp(ctx context.Context, memoryID string, op OpsLogOp, actor OpsLogActor, reason string) error
-	// PruneMemoryOps hard-deletes memory_ops rows older than cutoff (design doc §6's bound on
-	// unbounded audit-trail growth) and reports how many were removed - the
-	// retention sweep's counterpart to the point-level hard-delete it runs alongside.
+	// PruneMemoryOps hard-deletes memory_ops rows older than cutoff and reports how many, alongside
+	// the retention sweep's point deletes.
 	PruneMemoryOps(ctx context.Context, cutoff time.Time) (int, error)
 }
 

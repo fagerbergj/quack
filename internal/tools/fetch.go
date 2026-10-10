@@ -11,14 +11,15 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/JohannesKaufmann/html-to-markdown/v2/converter"
 	"github.com/JohannesKaufmann/html-to-markdown/v2/plugin/base"
 	"github.com/JohannesKaufmann/html-to-markdown/v2/plugin/commonmark"
 
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/functiontool"
@@ -105,48 +106,36 @@ type fetchResponse struct {
 	Results []FetchResult `json:"results"`
 }
 
-// fetcher: retrieves readable text for an already-validated URL (direct or crawl4ai).
-type fetcher interface {
-	fetch(tc agent.Context, d Deps, u *url.URL, target string) (string, error)
-}
+// fetchFunc retrieves readable text for an already-validated URL; tests swap in a fake.
+type fetchFunc func(tc agent.Context, d Deps, u *url.URL, target string) (string, error)
 
-// directFetcher: plain guarded GET, no render fallback.
-type directFetcher struct{}
-
-func (directFetcher) fetch(tc agent.Context, d Deps, u *url.URL, target string) (string, error) {
-	return fetchVia(tc, d, nil, u, target)
-}
-
-type crawl4aiFetcher struct{ renderer PageRenderer }
-
-func (f crawl4aiFetcher) fetch(tc agent.Context, d Deps, u *url.URL, target string) (string, error) {
-	return fetchVia(tc, d, f.renderer, u, target)
-}
-
-// newFetcher: selects web_fetch implementation (direct or crawl4ai).
-func newFetcher(kind, base string, client *http.Client) (fetcher, error) {
+// newRenderer: web_fetch's render fallback for kind; nil for a plain direct GET.
+func newRenderer(kind, base string, client *http.Client) (PageRenderer, error) {
 	switch kind {
 	case "", backendDirect:
-		return directFetcher{}, nil
+		return nil, nil
 	case backendCrawl4AI:
 		if base == "" {
 			return nil, fmt.Errorf("web_fetch: kind crawl4ai requires a URL (use kind: direct for a plain GET with no backend)")
 		}
-		return crawl4aiFetcher{renderer: &crawl4aiRenderer{client: client, base: strings.TrimRight(base, "/")}}, nil
+		return &crawl4aiRenderer{client: client, base: strings.TrimRight(base, "/")}, nil
 	default:
 		return nil, fmt.Errorf("web_fetch: unknown backend kind %q", kind)
 	}
 }
 
 func newFetch(d Deps) (tool.Tool, error) {
-	f, err := newFetcher(d.Fetch.Kind, d.Fetch.URL, d.Client)
+	renderer, err := newRenderer(d.Fetch.Kind, d.Fetch.URL, d.Client)
 	if err != nil {
 		return nil, err
+	}
+	f := func(tc agent.Context, d Deps, u *url.URL, target string) (string, error) {
+		return fetchVia(tc, d, renderer, u, target)
 	}
 	desc := fmt.Sprintf("Fetch a batch of web pages: `urls: [\"https://...\", ...]` (a single page is "+
 		"still a one-element list; up to %d per call), fetched concurrently, one result entry per URL - "+
 		"a failed URL is reported on its own and does not fail the rest of the batch. ", maxBatchURLs)
-	if _, ok := f.(crawl4aiFetcher); ok {
+	if renderer != nil {
 		desc += "Falls back to a headless browser for JavaScript-rendered pages. "
 	}
 	desc += fmt.Sprintf("Every page is stored as an artifact (its id is the entry's `artifact`). A short page's "+
@@ -157,7 +146,6 @@ func newFetch(d Deps) (tool.Tool, error) {
 		"every URL in this call) or `offset` (a line number) shapes the full page directly as a shortcut.",
 		fetchArtifactThreshold, maxBatchInlineBytes)
 
-	seen := newFetchSeen()
 	return functiontool.New[fetchArgs, fetchResponse](
 		functiontool.Config{
 			Name:        "web_fetch",
@@ -170,48 +158,37 @@ func newFetch(d Deps) (tool.Tool, error) {
 			if len(a.URLs) > maxBatchURLs {
 				return fetchResponse{}, fmt.Errorf("web_fetch: %d urls exceeds the %d-url batch limit; split into smaller batches", len(a.URLs), maxBatchURLs)
 			}
-			return fetchResponse{Results: fetchBatch(tc, d, f, seen, a.URLs, a.Pattern, a.Offset)}, nil
+			return fetchResponse{Results: fetchBatch(tc, d, f, a.URLs, a.Pattern, a.Offset)}, nil
 		},
 	)
 }
 
-// fetchSeen remembers, per session, which URLs already came back whole or as a header - a
-// repeat within cacheTTL returns the artifact id; after it the page is fetched fresh.
-type fetchSeen struct {
-	mu sync.Mutex
-	m  map[string]seenPage
-}
+// seenKey marks a URL this session already received whole or as a header; the prefix keeps it apart
+// from page bodies in the shared URLCache, so a repeat within cacheTTL returns only the artifact id.
+func seenKey(sessionID, url string) string { return "seen:" + sessionID + "\x00" + url }
 
-type seenPage struct {
-	r  FetchResult
-	at time.Time
-}
-
-func newFetchSeen() *fetchSeen { return &fetchSeen{m: map[string]seenPage{}} }
-
-func seenKey(sessionID, url string) string { return sessionID + "\x00" + url }
-
-// lookup: a stub for url when this session already received it unshaped.
-func (s *fetchSeen) lookup(sessionID, url string) (FetchResult, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	page, ok := s.m[seenKey(sessionID, url)]
-	if !ok || time.Since(page.at) > cacheTTL {
+// seenLookup: a stub for url when this session already received it unshaped.
+func seenLookup(d Deps, sessionID, url string) (FetchResult, bool) {
+	if d.Cache == nil {
 		return FetchResult{}, false
 	}
-	r := page.r
+	v, ok := d.Cache.Get(seenKey(sessionID, url))
+	if !ok {
+		return FetchResult{}, false
+	}
+	lines, id, _ := strings.Cut(v, " ")
+	r := FetchResult{URL: url, Artifact: id}
+	r.Lines, _ = strconv.Atoi(lines)
 	r.Text = fmt.Sprintf("[already fetched earlier in this session - not repeated. Its full text is artifact %s (%d lines): "+
 		"read_artifact(id, offset, lines) or grep_artifacts(pattern, ids) reads it; web_fetch with a pattern or offset returns just those lines.]", r.Artifact, r.Lines)
 	return r, true
 }
 
-func (s *fetchSeen) record(sessionID, url string, r FetchResult) {
-	if r.Artifact == "" || r.Error != "" {
+func seenRecord(d Deps, sessionID, url string, r FetchResult) {
+	if d.Cache == nil || r.Artifact == "" || r.Error != "" {
 		return
 	}
-	s.mu.Lock()
-	s.m[seenKey(sessionID, url)] = seenPage{r: FetchResult{URL: r.URL, Artifact: r.Artifact, Lines: r.Lines}, at: time.Now()}
-	s.mu.Unlock()
+	d.Cache.Add(seenKey(sessionID, url), strconv.Itoa(r.Lines)+" "+r.Artifact)
 }
 
 // fetchedPage: one URL's raw fetch outcome, before shaping.
@@ -223,7 +200,7 @@ type fetchedPage struct {
 
 // fetchBatch fetches each unique URL once, shapes them against a shared
 // budget, then replicates results to every position a dup URL requested.
-func fetchBatch(tc agent.Context, d Deps, f fetcher, seen *fetchSeen, urls []string, pattern string, offset int) []FetchResult {
+func fetchBatch(tc agent.Context, d Deps, f fetchFunc, urls []string, pattern string, offset int) []FetchResult {
 	order, idxsByKey, rawByKey := dedupURLs(urls)
 	unshaped := strings.TrimSpace(pattern) == "" && offset <= 0
 	sid := tc.SessionID()
@@ -231,7 +208,7 @@ func fetchBatch(tc agent.Context, d Deps, f fetcher, seen *fetchSeen, urls []str
 	var fresh []string
 	var freshIdx []int
 	for i, key := range order {
-		if r, ok := seen.lookup(sid, key); ok && unshaped {
+		if r, ok := seenLookup(d, sid, key); ok && unshaped {
 			shaped[i] = r
 			continue
 		}
@@ -241,7 +218,7 @@ func fetchBatch(tc agent.Context, d Deps, f fetcher, seen *fetchSeen, urls []str
 	for j, r := range results {
 		shaped[freshIdx[j]] = r
 		if unshaped {
-			seen.record(sid, fresh[j], r)
+			seenRecord(d, sid, fresh[j], r)
 		}
 	}
 
@@ -271,26 +248,23 @@ func dedupURLs(urls []string) (order []string, idxsByKey map[string][]int, rawBy
 }
 
 // fetchPages fetches each of order's URLs concurrently, bounded by maxConcurrentFetches.
-func fetchPages(tc agent.Context, d Deps, f fetcher, order []string, rawByKey map[string]string) []fetchedPage {
+func fetchPages(tc agent.Context, d Deps, f fetchFunc, order []string, rawByKey map[string]string) []fetchedPage {
 	out := make([]fetchedPage, len(order))
-	sem := make(chan struct{}, maxConcurrentFetches)
-	var wg sync.WaitGroup
+	var g errgroup.Group
+	g.SetLimit(maxConcurrentFetches)
 	for i, key := range order {
-		wg.Add(1)
-		go func(i int, raw string) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			out[i] = fetchOnePage(tc, d, f, raw)
-		}(i, rawByKey[key])
+		g.Go(func() error {
+			out[i] = fetchOnePage(tc, d, f, rawByKey[key])
+			return nil
+		})
 	}
-	wg.Wait()
+	_ = g.Wait()
 	return out
 }
 
 // fetchOnePage validates, then fetches (cache-first) and sanitizes one URL.
 // Shaping/storage happen later in shapePages.
-func fetchOnePage(tc agent.Context, d Deps, f fetcher, raw string) fetchedPage {
+func fetchOnePage(tc agent.Context, d Deps, f fetchFunc, raw string) fetchedPage {
 	u, err := ValidateURL(strings.TrimSpace(raw))
 	if err != nil {
 		return fetchedPage{url: raw, err: err}
@@ -301,7 +275,7 @@ func fetchOnePage(tc agent.Context, d Deps, f fetcher, raw string) fetchedPage {
 			return fetchedPage{url: target, full: cached}
 		}
 	}
-	fetched, ferr := f.fetch(tc, d, u, target)
+	fetched, ferr := f(tc, d, u, target)
 	if ferr != nil {
 		return fetchedPage{url: target, err: ferr}
 	}
@@ -309,10 +283,10 @@ func fetchOnePage(tc agent.Context, d Deps, f fetcher, raw string) fetchedPage {
 		return fetchedPage{url: target, err: ferr}
 	}
 	if len(fetched) > maxFetchBytes {
-		fetched = strings.ToValidUTF8(fetched[:maxFetchBytes], "") + fetchTruncatedMarker
+		fetched = clip(fetched, maxFetchBytes, fetchTruncatedMarker)
 	}
 	if d.Cache != nil {
-		d.Cache.Set(target, fetched)
+		d.Cache.Add(target, fetched)
 	}
 	return fetchedPage{url: target, full: fetched}
 }
@@ -399,7 +373,7 @@ func pageTitle(text string) string {
 		if len(title) > maxTitleLen {
 			// A page with no line breaks at all (e.g. minified) would otherwise
 			// make "title" as large as the whole page.
-			title = strings.ToValidUTF8(title[:maxTitleLen], "") + "…"
+			title = clip(title, maxTitleLen, "…")
 		}
 		return title
 	}
@@ -545,13 +519,18 @@ func grepPage(lines []string, pattern string) string {
 
 // capFetchReturn: hard-bounds return body to prevent context flooding.
 func capFetchReturn(s string) string {
-	if len(s) <= fetchReturnMaxBytes {
-		return s
-	}
-	return strings.ToValidUTF8(s[:fetchReturnMaxBytes], "") + "\n[…truncated; narrow your grep or use offset=N]"
+	return clip(s, fetchReturnMaxBytes, "\n[…truncated; narrow your grep or use offset=N]")
 }
 
-// fetchVia: shared fetch engine - tries direct GET, falls back to render backend.
+// clip cuts s to at most n bytes on a rune boundary and appends marker when it cut.
+func clip(s string, n int, marker string) string {
+	if len(s) <= n {
+		return s
+	}
+	return strings.ToValidUTF8(s[:n], "") + marker
+}
+
+// fetchVia tries a direct GET, then falls back to the render backend.
 func fetchVia(ctx context.Context, d Deps, renderer PageRenderer, u *url.URL, target string) (string, error) {
 	text, derr := fetchReadable(ctx, d.Guarded, target)
 	if derr == nil && len(text) >= minUsefulText && !looksLikeBotWall(text) {
@@ -586,7 +565,7 @@ func fetchFallback(target, text, rendered string, derr, rerr error, hadRenderer 
 		return text, nil
 	}
 
-	// Graceful degradation: render failure on a reachable target logs and returns a "render unavailable" placeholder.
+	// A render failure on a reachable target degrades to a "render unavailable" placeholder.
 	if hadRenderer && rerr != nil && derr == nil {
 		slog.Warn("web_fetch: render backend failed; degrading to render-unavailable result",
 			"component", "tools", "url", target, "error", rerr)
@@ -718,7 +697,6 @@ func newMarkdownConverter() *converter.Converter {
 	return conv
 }
 
-// htmlToMarkdown: HTML→Markdown conversion.
 func htmlToMarkdown(r io.Reader) (string, error) {
 	raw, err := io.ReadAll(r)
 	if err != nil {

@@ -1,4 +1,3 @@
-// Package tools registry.
 package tools
 
 import (
@@ -19,7 +18,6 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// Deps: shared dependencies for built-in tools.
 type Deps struct {
 	Client          *http.Client
 	Guarded         *http.Client
@@ -31,14 +29,10 @@ type Deps struct {
 	Workspace       *workspace.Jail
 	WorkspaceUserID string
 	WorkspaceCaps   workspace.Caps
-	GitCredentials  []GitCredential
-	GitTokenSource  GitTokenSource
 	Guards          map[string]string
 	SafetyJudge     SafetyJudge
 	NodeCancelled   func(chatID, nodeID string) bool
-	// RepeatGuardTripped ends a node's round when the repeat guard's hard
-	// stop fires (dag.Executor.RepeatGuardTripped) - nil leaves only the
-	// soft refusal (test builds, no live executor).
+	// RepeatGuardTripped ends a node's round on the repeat guard's hard stop; nil leaves only the soft refusal.
 	RepeatGuardTripped func(chatID, nodeID, msg string) bool
 	ExtTools           map[string]tool.Tool
 	LedgerCoords       ledger.Coords
@@ -53,8 +47,7 @@ type Deps struct {
 	RecordStore *recordstore.Client
 	NodeID      string
 	Coords      *RoundCoords
-	// Sink/TurnID: a DAG node's chat SSE sink and chat turn id, which its tools'
-	// ctx lacks behind the node's A2A boundary (render_ui's artifact_revision + turn_id).
+	// Sink/TurnID: a node's chat SSE sink and turn id, which its tools' ctx lacks behind the A2A boundary.
 	Sink   func(stream.SSEEvent)
 	TurnID string
 	// CallScope: the DAG node this build serves - fs, memory and guard scoping plus
@@ -86,7 +79,6 @@ var registry = map[string]constructor{
 // ErrUnknownTool: a tools: entry no builtin or enabled extension provides.
 var ErrUnknownTool = errors.New("unknown tool")
 
-// Build: resolves tool names to ADK tools.
 func Build(names []string, d Deps) ([]tool.Tool, error) {
 	if d.Client == nil {
 		d.Client = &http.Client{Timeout: 30 * time.Second, Transport: httpx.NewTransport(nil)}
@@ -110,8 +102,7 @@ func Build(names []string, d Deps) ([]tool.Tool, error) {
 	return out, nil
 }
 
-// buildOneTool: resolve one name (builtin registry, extension-provided, or error),
-// then apply the wrapper chain: scrub, guard, repeat, cancel, emit.
+// buildOneTool wraps innermost to outermost: scrub, guard, repeat, cancel, emit.
 func buildOneTool(name string, d Deps, repeats *repeatStates, scrub func(tool.Tool) tool.Tool) (tool.Tool, error) {
 	var (
 		t   tool.Tool
@@ -144,10 +135,7 @@ func buildOneTool(name string, d Deps, repeats *repeatStates, scrub func(tool.To
 	if direct, err = cancelWrap(direct, name, d); err != nil {
 		return nil, err
 	}
-	if direct, err = emitWrap(direct, d.LedgerCoords); err != nil {
-		return nil, fmt.Errorf("tools: emit wrap %q: %w", name, err)
-	}
-	return direct, nil
+	return emitWrap(direct, d.LedgerCoords), nil
 }
 
 // workspaceScrub: respells workspace paths in errors. Identity when no workspace.
@@ -159,7 +147,7 @@ func workspaceScrub(d Deps) func(tool.Tool) tool.Tool {
 	return func(t tool.Tool) tool.Tool { return newPathScrub(t, b) }
 }
 
-// cancelWrap: outermost wrapper - refused before guard ladder or script statement.
+// cancelWrap: a cancelled node is refused before the guard ladder runs.
 func cancelWrap(t tool.Tool, name string, d Deps) (tool.Tool, error) {
 	if d.NodeCancelled == nil {
 		return t, nil

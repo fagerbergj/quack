@@ -20,7 +20,6 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// runnableTool: tool.Tool extended with Declaration/Run/ProcessRequest.
 type runnableTool interface {
 	tool.Tool
 	Declaration() *genai.FunctionDeclaration
@@ -28,7 +27,6 @@ type runnableTool interface {
 	ProcessRequest(ctx agent.Context, req *model.LLMRequest) error
 }
 
-// guardTier: parsed workspace.guards value.
 type guardTier struct {
 	Judge   bool
 	Confirm bool
@@ -48,9 +46,9 @@ func parseGuardTier(s string) (guardTier, bool) {
 	}
 }
 
-// guardedTool: wraps a runnableTool with the guard ladder. Shared across invocations (bookkeeping derived fresh).
+// guardedTool is shared across invocations; per-call bookkeeping is derived fresh.
 type guardedTool struct {
-	inner    runnableTool
+	runnableTool
 	tier     guardTier
 	judge    SafetyJudge
 	sessions session.Service
@@ -60,39 +58,29 @@ type guardedTool struct {
 	coords ledger.Coords
 }
 
-// newGuardedTool wraps inner with tier; fails loudly if not runnable.
 func newGuardedTool(inner tool.Tool, tier guardTier, judge SafetyJudge, sessions session.Service, scope CallScope) (tool.Tool, error) {
 	rt, ok := inner.(runnableTool)
 	if !ok {
 		return nil, fmt.Errorf("tool %q does not support the guard ladder (not a runnable function tool)", inner.Name())
 	}
-	return &guardedTool{inner: rt, tier: tier, judge: judge, sessions: sessions, scope: scope}, nil
+	return &guardedTool{runnableTool: rt, tier: tier, judge: judge, sessions: sessions, scope: scope}, nil
 }
 
-// SetLedgerCoords: learned after Build, same as emitTool - #1052's fix so the
-// safety judge (which runs on ctx alone; RunNode drops WithAgentContext
-// stamps) gets this node's coords rather than blank attribution.
+// SetLedgerCoords: the safety judge runs on ctx alone (RunNode drops WithAgentContext), so it needs
+// these coords for attribution.
 func (g *guardedTool) SetLedgerCoords(c ledger.Coords) {
 	g.mu.Lock()
 	g.coords = c
 	g.mu.Unlock()
-	if cs, ok := g.inner.(ledger.CoordSetter); ok {
+	if cs, ok := g.runnableTool.(ledger.CoordSetter); ok {
 		cs.SetLedgerCoords(c)
 	}
 }
 
-func (g *guardedTool) Name() string        { return g.inner.Name() }
-func (g *guardedTool) Description() string { return g.inner.Description() }
-func (g *guardedTool) IsLongRunning() bool { return g.inner.IsLongRunning() }
-
-func (g *guardedTool) Declaration() *genai.FunctionDeclaration { return g.inner.Declaration() }
-
-// ProcessRequest: packs the wrapper, not the inner tool, into the request's tool map.
 func (g *guardedTool) ProcessRequest(_ agent.Context, req *model.LLMRequest) error {
 	return toolutils.PackTool(req, g)
 }
 
-// Run is the guard ladder itself. See the package doc for the tier order.
 func (g *guardedTool) Run(ctx agent.Context, args any) (map[string]any, error) {
 	m, _ := args.(map[string]any)
 
@@ -105,7 +93,7 @@ func (g *guardedTool) Run(ctx agent.Context, args any) (map[string]any, error) {
 			if !approved {
 				return markResolved(guardRefusal("denied by user confirmation")), nil
 			}
-			result, err := g.inner.Run(ctx, args)
+			result, err := g.runnableTool.Run(ctx, args)
 			if err != nil {
 				return nil, err
 			}
@@ -139,14 +127,14 @@ func (g *guardedTool) Run(ctx agent.Context, args any) (map[string]any, error) {
 		return nil, fmt.Errorf("tool %q %w", g.Name(), tool.ErrConfirmationRequired)
 	}
 
-	result, err := g.inner.Run(ctx, args)
+	result, err := g.runnableTool.Run(ctx, args)
 	if err != nil {
 		return nil, err
 	}
 	return result, nil
 }
 
-// confirmDecision: checks if the current call resolves a just-answered confirm pause. Uses guard-thread registry, not tool context.
+// confirmDecision: does this call resolve a just-answered confirm pause? Reads the guard-thread registry.
 func (g *guardedTool) confirmDecision(ctx agent.Context, args map[string]any) (approved, matched, mismatched bool) {
 	if g.sessions == nil {
 		return false, false, false
@@ -175,7 +163,7 @@ func (g *guardedTool) guardSession(ctx agent.Context) (sess session.Session, inv
 	return resp.Session, at.InvocationID, nodeID
 }
 
-// runSafetyJudge: invokes judge tier. nil judge fails closed.
+// runSafetyJudge: a nil judge fails closed.
 func (g *guardedTool) runSafetyJudge(ctx agent.Context, args map[string]any) (allow bool, reason string, err error) {
 	if g.judge == nil {
 		return false, "", fmt.Errorf("no safety judge configured")
@@ -236,7 +224,6 @@ func (s CallScope) guardThread(ctx agent.Context) (token, nodeID string) {
 	return tok, ""
 }
 
-// recentActivity: summarizes recent tool calls for the safety judge.
 func recentActivity(sess session.Session, invocationID string) string {
 	var calls []string
 	for ev := range sess.Events().All() {

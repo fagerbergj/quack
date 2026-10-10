@@ -64,9 +64,8 @@ type judgePrompt struct {
 // judgeTemplates caches the parsed system/judge per version across rounds.
 var judgeTemplates artifactsrc.TemplateCache
 
-// resolveJudgePrompt renders every clause block. A stored version that will not
-// parse, or is missing a block, falls back to the shipped file (artifactsrc.Render)
-// instead of erroring - a bad prompt edit must not disable the gate fleet-wide.
+// resolveJudgePrompt renders every clause block; an unparseable or incomplete stored version falls back
+// to the shipped file, since a bad prompt edit must not disable the gate fleet-wide.
 func resolveJudgePrompt(ctx context.Context, res *artifactsrc.Resolver) (judgePrompt, error) {
 	blocks := map[string]string{}
 	art, err := artifactsrc.Render(ctx, res, &judgeTemplates, "system/judge", func(t *template.Template) error {
@@ -88,9 +87,8 @@ func resolveJudgePrompt(ctx context.Context, res *artifactsrc.Resolver) (judgePr
 	return judgePrompt{art: art, blocks: blocks}, nil
 }
 
-// judgePromptFor is the round's system/judge: prepareJudge normally resolved it
-// already, so the round's ledger coords carry the same version; a caller that
-// builds no coords (the plan judge, tests) resolves its own here.
+// judgePromptFor resolves system/judge for callers that build no ledger coords (plan judge, tests);
+// prepareJudge normally resolved it already.
 func judgePromptFor(ctx context.Context, cfg Config) (judgePrompt, error) {
 	if cfg.judgePrompt.blocks != nil {
 		return cfg.judgePrompt, nil
@@ -98,8 +96,8 @@ func judgePromptFor(ctx context.Context, cfg Config) (judgePrompt, error) {
 	return resolveJudgePrompt(ctx, cfg.Prompts)
 }
 
-// behaviour picks the clauses this judge's actual tools earn it. artifact_tools
-// is unconditional: every round carries list_artifacts/read_artifact (#1497).
+// behaviour picks the clauses this judge's tools earn it; artifact_tools is unconditional since every
+// round carries list_artifacts/read_artifact.
 func (p judgePrompt) behaviour(hasReadTools, hasSkills bool) string {
 	parts := []string{p.blocks["head"]}
 	if hasReadTools {
@@ -116,17 +114,15 @@ func (p judgePrompt) behaviour(hasReadTools, hasSkills bool) string {
 
 // criterionScore: per-criterion assessment, normalised 0.0-1.0.
 type criterionScore struct {
-	// Reason: deprecated per #941 - kept accepted on the way in for one release
-	// so a judge that ignores the schema change still round-trips; aggregateVerdict
-	// copies it into Shortfall when Shortfall is empty.
+	// Reason: deterministic criteria write their diagnosis here, and a judge may too;
+	// aggregateVerdict copies it into Shortfall when Shortfall is empty.
 	Reason    string      `json:"reason,omitempty"`
 	Shortfall string      `json:"shortfall,omitempty"` // diagnosis - what fell short
 	Fix       string      `json:"fix,omitempty"`       // remedy
 	Anchor    *anchorSpec `json:"anchor,omitempty"`    // where in the answer, if locatable
 	Score     float64     `json:"score"`
-	// Deterministic marks a code-owned criterion (set by mergeDeterministic from
-	// computeDeterministicCriteria's provenance, never by the judge) - json:"-" so
-	// it never appears in the judge's tool schema or gets round-tripped from its output.
+	// Deterministic marks a code-owned criterion (set by mergeDeterministic); json:"-" keeps it out of
+	// the judge's tool schema and output.
 	Deterministic bool `json:"-"`
 	// Unscored: the judge's entry had no score key, so Score's 0 is not a verdict.
 	Unscored bool `json:"-"`
@@ -145,17 +141,15 @@ type verdict struct {
 	Passed   bool                      `json:"passed"`
 	Feedback string                    `json:"feedback"`
 	Findings []findingVerdict          `json:"findings,omitempty"` // per-finding verification; "contradicted" folds into findingsGroundingCriterion
-	Memories []memoryVerdict           `json:"memories,omitempty"` // per-recalled-memory vote (#1255 P1); applied only when the round passes
+	Memories []memoryVerdict           `json:"memories,omitempty"` // per-recalled-memory vote; applied only when the round passes
 
-	// ChangedFiles* are set from changedFilesCoverage after the round, not by
-	// the model - how much of the diff the judge actually saw (#779).
+	// ChangedFiles* come from changedFilesCoverage after the round: how much of the diff the judge saw.
 	ChangedFilesScored int `json:"changed_files_scored,omitempty"`
 	ChangedFilesTotal  int `json:"changed_files_total,omitempty"`
 }
 
-// JudgeFactory: builds a fresh agentic judge per round, per-factory read-only tools, per-round judgeReadCounters. maxIters wires forcedVerdictCallback so the round's last allowed turn (or a repeated identical tool
-// call) forces a text-only verdict instead of silently exhausting the budget (#853). maxOutputTokens caps the round's own reply tokens against a runaway generation loop; <= 0 leaves it uncapped (#889). forced is set true by forcedVerdictCallback the moment it strips tools for a forced close - the
-// caller's own signal that this round already spent its last allowed turn (#1235). receivedIDs (#1259): the round's recalled-memory ids, so the tool description and force-close instruction can require votes on the exact set delivered this round, not a generic reminder. artifactTools (#1497): this round's list_artifacts/read_artifact, from cfg.JudgeArtifactTools - per-round, never baked into the factory like readTools.
+// JudgeFactory builds a fresh agentic judge per round. maxIters forces a text-only verdict on the last turn
+// or a repeated call; forced reports that close; receivedIDs are the memory ids the judge must vote on.
 type JudgeFactory func(prompt judgePrompt, sink *verdict, forced *forceClose, maxIters, maxOutputTokens int, thinkingLevel string, receivedIDs []string, artifactTools []tool.Tool) (adkagent.Agent, judgeReadCounters, error)
 
 // NewJudgeFactory: builds agentic judge with judgeModel, read-only tools, skillsets, and submit_verdict.
@@ -167,18 +161,16 @@ func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool, skillsets []to
 		if err != nil {
 			return nil, judgeReadCounters{}, err
 		}
-		countedRepo, repoReads := countReads(readTools)
-		countedArtifacts, artifactReads := countReads(artifactTools)
+		repoReads, countRepo := countReads(readTools)
+		artifactReads, countArtifacts := countReads(artifactTools)
 		judgeTools := make([]tool.Tool, 0, len(readTools)+len(artifactTools)+1)
-		judgeTools = append(judgeTools, countedRepo...)
-		judgeTools = append(judgeTools, countedArtifacts...)
+		judgeTools = append(judgeTools, readTools...)
+		judgeTools = append(judgeTools, artifactTools...)
 		judgeTools = append(judgeTools, submit)
-		// judgeTools/behaviour are fixed for this round; only today() moves,
-		// so cache instead of rebuilding the prompt on every model call in
-		// the round's multi-turn agentic loop.
+		// Behaviour is fixed for the round; only today() moves, so cache across its model calls.
 		assembled := promptbuilder.CacheByDay(
 			func(context.Context) string { return version },
-			func(context.Context) string { return promptbuilder.Judge(judgeTools, behaviour) })
+			func(context.Context) string { return promptbuilder.Judge(behaviour) })
 		a, err := llmagent.New(llmagent.Config{
 			Name:        "judge",
 			Description: "independent adversarial verifier",
@@ -190,14 +182,14 @@ func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool, skillsets []to
 			Toolsets:              skillsets,
 			GenerateContentConfig: judgeGenConfig(maxOutputTokens, thinkingLevel),
 			BeforeModelCallbacks:  []llmagent.BeforeModelCallback{forcedVerdictCallback(maxIters, forced, receivedIDs)},
+			BeforeToolCallbacks:   []llmagent.BeforeToolCallback{countRepo, countArtifacts},
 		})
 		return a, judgeReadCounters{repo: repoReads, artifact: artifactReads}, err
 	}
 }
 
-// judgeGenConfig caps a judge/plan-judge round's own reply tokens - a
-// verdict is a few hundred tokens of JSON, but an ungoverned round can decode
-// tens of thousands looping (#889). <= 0 leaves the request uncapped. thinkingLevel is opt-in via gates.judge.thinking_level ("low"/"medium"/"high"); "" (unset, the default) sends no ThinkingConfig at all - some OpenAI-compatible endpoints 400 on reasoning_effort for a non-reasoning model, so this must never be forced on unconditionally (#1235).
+// judgeGenConfig caps reply tokens (<= 0 uncapped) against runaway loops. thinkingLevel "" sends no
+// ThinkingConfig: some OpenAI-compatible endpoints 400 on reasoning_effort for non-reasoning models.
 func judgeGenConfig(maxOutputTokens int, thinkingLevel string) *genai.GenerateContentConfig {
 	var cfg *genai.GenerateContentConfig
 	if tc := judgeThinkingConfig(thinkingLevel); tc != nil {
@@ -212,9 +204,8 @@ func judgeGenConfig(maxOutputTokens int, thinkingLevel string) *genai.GenerateCo
 	return cfg
 }
 
-// judgeThinkingConfig maps gates.judge.thinking_level to genai's enum; an
-// unrecognised or empty value (the default) means "send nothing" - config
-// validation is what actually rejects an unknown level.
+// judgeThinkingConfig maps gates.judge.thinking_level to genai's enum; unknown or empty sends nothing
+// (config validation rejects unknown levels).
 func judgeThinkingConfig(level string) *genai.ThinkingConfig {
 	switch level {
 	case "low":
@@ -228,20 +219,19 @@ func judgeThinkingConfig(level string) *genai.ThinkingConfig {
 	}
 }
 
-// judgeForceCloseInstruction: appended on the round's last allowed turn, or right after the judge
-// repeats an identical tool call - forcedVerdictCallback has already stripped every tool (including
-// submit_verdict) this turn, so the model must close with the verdict as plain JSON text; runJudgeRound's existing parseVerdict fallback picks it up exactly like a local model that skipped the tool call.
+// judgeForceCloseInstruction closes a round with tools stripped: the model must answer in plain JSON,
+// which runJudgeRound's parseVerdict fallback picks up.
 const judgeForceCloseInstruction = "\n\nSTOP - you are out of tool budget for this round; no tools, including submit_verdict, are available on this turn. " +
 	"Using ONLY what you have already read and verified above, output your verdict now as a single JSON object and nothing else (no code fence, no other text): " +
 	`{"score": <0-3 overall fallback>, "criteria": {"<criterion name>": {"reason": "<why>", "score": <0-3>}, ...}, "feedback": "<concise, actionable - empty if it passes>"}` +
 	" Score every criterion the rubric named, from what you have already verified."
 
-// forceClose is how a round's forced close went: forced once tools are disabled or stripped (callers
-// must not then demand a tool call, #1235), stripped once they were removed from the request.
+// forceClose: forced once tools are disabled or stripped (callers must not then demand a tool call),
+// stripped once they were removed from the request.
 type forceClose struct{ forced, stripped bool }
 
-// forcedVerdictCallback appends judgeForceCloseInstruction on the round's last allowed turn with tool_choice none, keeping the prefix
-// cache; a stutter (#853) or a second forced turn strips the tools instead, since a parser may drop the call none refused.
+// forcedVerdictCallback sets tool_choice none on the last allowed turn, keeping the prefix cache; a stutter
+// or a second forced turn strips the tools instead, since a parser may drop the call none refused.
 func forcedVerdictCallback(maxIters int, forced *forceClose, receivedIDs []string) llmagent.BeforeModelCallback {
 	if forced == nil {
 		forced = &forceClose{}
@@ -249,9 +239,7 @@ func forcedVerdictCallback(maxIters int, forced *forceClose, receivedIDs []strin
 	turn := 0
 	instruction := judgeForceCloseInstruction
 	if len(receivedIDs) > 0 {
-		// Appended to Contents (the user message), not the system prompt, so this
-		// doesn't break prefix caching - but stays worded the same as the
-		// round-invariant submit_verdict description for consistency.
+		// Appended to the user message, not the system prompt, so the prefix cache survives.
 		instruction += ` Also include a "memories" array voting on every RECALLED MEMORIES id listed above (each {"id": ..., "vote": "supported"|"contradicted"|"not_relevant", "reason": "..."}).`
 	}
 	return func(_ adkagent.Context, req *model.LLMRequest) (*model.LLMResponse, error) {
@@ -306,9 +294,8 @@ type verdictArgs struct {
 	Memories []memoryVerdict           `json:"memories,omitempty"`
 }
 
-// lenientVerdictSchema: verdictArgs schema with every optional string property
-// also accepting null. Judges intermittently send `"shortfall": null` for a
-// string field (trace 9ea8cbee); strict validation rejected the whole verdict and the round ended unvetted. null unmarshals to "" so semantics are identical.
+// lenientVerdictSchema lets every optional string property also accept null: judges send
+// `"shortfall": null`, strict validation rejected the whole verdict, and null unmarshals to "" anyway.
 func lenientVerdictSchema() (*jsonschema.Schema, error) {
 	s, err := jsonschema.For[verdictArgs](nil)
 	if err != nil {
@@ -345,9 +332,7 @@ func newSubmitVerdictTool(sink *verdict, receivedIDs []string) (tool.Tool, error
 	if err != nil {
 		return nil, err
 	}
-	// Description stays round-invariant (no ids) so it never breaks the
-	// system-prompt prefix cache across rounds - the ids live in the user
-	// prompt's trailing receivedMemoriesSection instead.
+	// Round-invariant (no ids) so the system-prompt prefix cache survives; ids live in the user prompt.
 	desc := "Record your final verdict and end the evaluation. Call this exactly once, after independently verifying the answer against every rubric criterion - and, when the prompt lists staged findings to verify, after recording a result for each one in `findings`." +
 		" When the prompt lists RECALLED MEMORIES, `memories` is REQUIRED: vote on every one of them before finishing."
 	return functiontool.New(functiontool.Config{
@@ -364,9 +349,8 @@ func newSubmitVerdictTool(sink *verdict, receivedIDs []string) (tool.Tool, error
 	})
 }
 
-// buildJudgePrompt: assembles judge's user message. Order is constitution →
-// rubric → task → upstream → question → ledger → tool results → changed files → known failures → commit-hygiene evidence → answer: every section that is byte-identical round to round leads, and the one section that changes every round (the
-// answer being judged) trails last, so the whole prefix ahead of it stays a prompt-cache hit across rounds instead of dying at the first volatile byte. judgePromptBuilds counts buildJudgePrompt calls - test-only seam proving fitJudgeAnswer's prompt isn't thrown away and rebuilt by runJudgeRound.
+// buildJudgePrompt orders byte-stable sections first and the answer last, so the prefix stays a
+// prompt-cache hit across rounds. judgePromptBuilds counts calls for tests.
 var judgePromptBuilds atomic.Int64
 
 func buildJudgePrompt(constitution, rubric, nodeTask, upstreamAnswers string, question *genai.Content, answer, changedFiles string, act workerActivity, knownFailures string) string {
@@ -419,9 +403,8 @@ func buildJudgePrompt(constitution, rubric, nodeTask, upstreamAnswers string, qu
 	return sb.String()
 }
 
-// commitHygieneEvidenceSection: files this session wrote whose path (or basename) never appears in the
-// task text - computed here, not left for the judge to re-derive, since "was this file in scope" is a
-// checkable fact, not a judgement call. The judge still rules on whether the scope is JUSTIFIED (a repo-wide rename legitimately touches many files); this only hands it the list.
+// commitHygieneEvidenceSection lists written files the task text never names: scope is a checkable fact,
+// so the judge only rules on whether it is justified.
 func commitHygieneEvidenceSection(nodeTask string, act workerActivity) string {
 	var unnamed []string
 	for _, p := range act.written {
@@ -472,21 +455,17 @@ const (
 	maxChangedFiles    = 12
 )
 
-// changedFilesCoverage: how many of the worker's changed files the judge
-// prompt actually carried, so a verdict over a capped subset doesn't read the
-// same as one over the whole change (#779). Zero value means "not applicable" (reviewer nodes diff the clone directly, not act.written).
+// changedFilesCoverage: how many changed files the judge prompt carried, so a verdict over a capped subset
+// reads differently. Zero value means not applicable (reviewers diff the clone directly).
 type changedFilesCoverage struct {
 	Scored int
 	Total  int
-	// Capped is true only when maxChangedFiles/changedFilesBudget cut the loop
-	// short - NOT when Scored<Total merely because an individual file failed to
-	// resolve/read (deleted-after-write etc.). Only the cap is "truncation"; an unrelated missing file isn't, and must not raise the note.
+	// Capped is set only when maxChangedFiles/changedFilesBudget cut the loop, not when a single file
+	// failed to read; only the cap is truncation.
 	Capped bool
 }
 
-// applyChangedFilesCoverage records the coverage on the verdict and, only
-// when it actually cut something, appends a note to the feedback - never a
-// note when everything fit (#779).
+// applyChangedFilesCoverage records coverage on the verdict and notes the feedback only when something was cut.
 func applyChangedFilesCoverage(v verdict, cov changedFilesCoverage) verdict {
 	v.ChangedFilesScored, v.ChangedFilesTotal = cov.Scored, cov.Total
 	if !cov.Capped {
@@ -518,9 +497,8 @@ func changedFilesSection(cfg Config, act workerActivity) (string, changedFilesCo
 	}
 }
 
-// reviewVerdictLine: surfaces the staged verdict + summary as facts for the
-// judge. "" when nothing staged. The summary is included so the judge grades
-// the staged record (what's actually delivered) rather than needing the worker to restate it in the chat answer just to be seen - the prompt's contract is a one-line reply after staging, and this is what backs it.
+// reviewVerdictLine surfaces the staged verdict and summary so the judge grades the delivered record,
+// not a restatement in the chat answer. "" when nothing is staged.
 func reviewVerdictLine(act workerActivity) string {
 	sd, ok := act.stagedDelivery["review"]
 	if !ok || sd.Event == "" {
@@ -574,9 +552,8 @@ func buildChangedFilesSection(act workerActivity, jail *workspace.Jail, userID, 
 
 const judgeCharsPerToken = 4 // bytes/4, same as compaction estimator
 
-// judgeOutputReserveTokens: fallback reply-token reserve when Config.JudgeMaxOutputTokens
-// is unset; when it IS set, judgeCharBudget reserves that instead. A mismatch let prod's config (window 65536, max_output_tokens 8192) pack the prompt to
-// window-2000, then ask for up to 8192 reply tokens, ~6K over the slot, truncating the judge mid-thought with no verdict (#1215 - measured a 104s stall).
+// judgeOutputReserveTokens: reply-token reserve when JudgeMaxOutputTokens is unset. Reserving less than the
+// configured max packs the prompt so full the reply overflows the window and the judge truncates.
 const judgeOutputReserveTokens = 2_000
 
 // defaultJudgeContextWindow: fallback when Config.JudgeContextWindow is unset (0).
@@ -602,9 +579,8 @@ func judgeCharBudget(cfg Config) int {
 	return tokens * judgeCharsPerToken
 }
 
-// fitJudgeAnswer clamps answer so judge prompt fits budget, and also returns
-// the full prompt it already built while measuring the fit - runJudgeRound's
-// first call reuses it instead of rebuilding the identical ~244KB string. shrinkFactor < 1.0 = harder clamp for retry.
+// fitJudgeAnswer clamps answer so the judge prompt fits, returning the prompt it built so runJudgeRound
+// need not rebuild it. shrinkFactor < 1.0 clamps harder for a retry.
 func fitJudgeAnswer(cfg Config, question *genai.Content, answer, changedFiles, knownFailures string, act workerActivity, shrinkFactor float64) (string, string) {
 	budget := judgeCharBudget(cfg)
 	full := buildJudgePrompt(cfg.Constitution, cfg.Rubric, cfg.Task, cfg.UpstreamAnswers, question, answer, changedFiles, act, knownFailures)
@@ -648,14 +624,11 @@ func isTransientJudgeErr(err error) bool {
 	return false
 }
 
-// runJudgeAgent: budgets judge prompt, retries transient faults, falls back to one harder-clamped retry.
-// Named returns so the deferred coverage stamp is a single choke point across every exit (#779) instead of
-// duplicated at each return.
+// runJudgeAgent budgets the prompt, retries transient faults, then one harder-clamped retry.
+// Named returns let the deferred coverage stamp cover every exit.
 func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, answer string, act workerActivity, det map[string]criterionScore, received []memory.Delivered, emit func(*genai.Part) bool) (v verdict, err error) {
 	changedFiles, coverage := changedFilesSection(cfg, act)
-	// Memories lead knownFailures inside this string, but buildJudgePrompt
-	// still places the whole `known` blob in its volatile trailing section,
-	// not the cacheable prefix - this ordering is readability only.
+	// Memories before known failures is readability only; the whole blob stays in the volatile tail.
 	known := joinSections(receivedMemoriesSection(received)+judgeKnownFailuresSection(det, cfg.Threshold), cfg.judgeEvidence)
 	fitted, fittedPrompt := fitJudgeAnswer(cfg, question, answer, changedFiles, known, act, 1.0)
 	defer func() {
@@ -667,9 +640,8 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	var counters judgeReadCounters
 	v, counters, err = judgeAttemptLoop(ctx, factory, cfg, question, fitted, changedFiles, known, fittedPrompt, act, received, emit)
 
-	// A non-transient failure with images attached (400 on a multimodal
-	// request a vision-blind/misbehaving judge model rejects) degrades to a
-	// text-only retry once, rather than blocking delivery outright (#1229). q tracks that strip: once it fires, every later retry below must keep using the text-only content instead of re-attaching the images and re-triggering the same rejection (#1229 follow-up).
+	// A non-transient failure with images attached degrades once to a text-only retry; q keeps every
+	// later retry text-only so the same rejection doesn't recur.
 	q := question
 	if err != nil && ctx.Err() == nil && !isTransientJudgeErr(err) && hasInlineData(question) {
 		slog.Warn("judge round failed with images attached; retrying once without them",
@@ -721,13 +693,13 @@ func judgeAttemptLoop(ctx context.Context, factory JudgeFactory, cfg Config, que
 	return
 }
 
-// retryNoVerdict: a round with no verdict (a stutter, #853) gets one fresh-session retry,
-// seeded with prior's reads; shrinking the answer wouldn't fix a stutter.
+// retryNoVerdict gives a verdict-less round (a stutter) one fresh-session retry seeded with prior's
+// reads; shrinking the answer wouldn't fix a stutter.
 func retryNoVerdict(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, fitted, changedFiles, known string, act workerActivity, received []memory.Delivered, emit func(*genai.Part) bool, prior judgeReadCounters, capped bool) (verdict, error) {
 	slog.Warn("judge ended without a verdict; retrying the round once with a fresh session",
 		"component", "vetting", "agent", cfg.Agent, "chat", cfg.ChatID, "output_capped", capped)
 	if capped && (cfg.JudgeThinkingLevel == "medium" || cfg.JudgeThinkingLevel == "high") {
-		cfg.JudgeThinkingLevel = "low" // reasoning ate the cap: the same effort would again; unset stays unset (opt-in, #1235)
+		cfg.JudgeThinkingLevel = "low" // reasoning ate the cap: the same effort would again; unset stays unset (opt-in)
 	}
 	known = seedPriorReads(cfg, question, fitted, changedFiles, known, act, prior)
 	v, counters, err := runJudgeRound(ctx, factory, cfg, question, fitted, changedFiles, known, "", act, received, emit)
@@ -738,10 +710,8 @@ func retryNoVerdict(ctx context.Context, factory JudgeFactory, cfg Config, quest
 	return v, err
 }
 
-// finishJudgeRound: discards and re-judges once before being trusted (second
-// offence accepted - one wasted round is the ceiling), for either of two
-// self-inconsistent verdicts: a PASS backed by zero judge reads, or a judge-scored criterion below threshold with no `fix` (the prompt requires one only
-// for a genuine failure - see inconsistentJudgeFailures). No-op otherwise.
+// finishJudgeRound re-judges once (one wasted round is the ceiling) a PASS with zero reads or a
+// below-threshold criterion missing its required fix. No-op otherwise.
 func finishJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, fitted, changedFiles, known string, act workerActivity, received []memory.Delivered, emit func(*genai.Part) bool, v verdict, counters judgeReadCounters) verdict {
 	v = dropUnscoredStrays(v, cfg.RubricSpecs)
 	feedback := reJudgeFeedback(cfg, act, v, counters)
@@ -799,9 +769,7 @@ func joinSections(sections ...string) string {
 	return strings.Join(kept, "\n\n")
 }
 
-// reJudgeOnce re-runs the round with the gate's note in known, keeping the
-// original verdict v if the retry itself errors - one wasted round is the
-// ceiling, never an unbounded loop.
+// reJudgeOnce re-runs the round with the gate's note in known, keeping v if the retry errors.
 func reJudgeOnce(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, fitted, changedFiles, known string, act workerActivity, received []memory.Delivered, emit func(*genai.Part) bool, v verdict) verdict {
 	v2, counters2, err2 := runJudgeRound(ctx, factory, cfg, question, fitted, changedFiles, known, "", act, received, emit)
 	if err2 != nil {
@@ -820,14 +788,8 @@ func reJudgeOnce(ctx context.Context, factory JudgeFactory, cfg Config, question
 	return v2
 }
 
-// inconsistentJudgeFailures: criteria opted into RequireFixOnFail (rubric.yaml)
-// that scored below threshold with an empty Fix - the rubric requires one only
-// for a genuine failure of that criterion, so its absence means the score and
-// the reasoning disagree, not that fix was optional. Opt-in, not a blanket
-// rule: most criteria never require a named fix, and applying this check
-// unconditionally to every below-threshold criterion (deterministic overrides
-// like findingsGroundingCriterion included) re-asks rounds that were never
-// inconsistent in the first place.
+// inconsistentJudgeFailures: RequireFixOnFail criteria below threshold with an empty Fix. Opt-in, since
+// most criteria (deterministic overrides included) never require a named fix.
 func inconsistentJudgeFailures(v verdict, threshold float64, specs map[string]criterionSpec) []string {
 	var names []string
 	for name, c := range v.Criteria {
@@ -849,9 +811,8 @@ func inconsistentFailureFeedback(names []string) string {
 		strings.Join(names, ", "), strings.Join(names, ", "))
 }
 
-// judgeRepeat* tune the runaway-generation guard shared by the judge
-// and plan judge: a degenerate loop stutters far faster than any legitimate
-// verdict grows, so watching a bounded trailing window is enough (#889: 18K+ tokens looped on one verdict before this existed).
+// judgeRepeat* tune the runaway-generation guard: a degenerate loop stutters far faster than any
+// legitimate verdict grows, so a bounded trailing window is enough.
 const (
 	judgeRepeatWindowChars  = 9000 // trailing text rescanned per check
 	judgeRepeatMinUnitChars = 8    // shortest repeat unit checked (a short stutter phrase)
@@ -889,9 +850,8 @@ func (d *repeatLoopDetector) observe(s string) {
 	}
 }
 
-// repeatingTailSpan returns the length of the longest contiguous span at the
-// end of s made of the same repeated unit (0 if none found), checking unit
-// sizes in [minUnit, maxUnit]. Phase-aligned to the end of s rather than to fixed byte offsets, since a loop's start position is never known in advance.
+// repeatingTailSpan returns the length of the longest span ending s made of one repeated unit of size
+// [minUnit, maxUnit] (0 if none). Aligned to the end since a loop's start is unknown.
 func repeatingTailSpan(s string, minUnit, maxUnit int) int {
 	n := len(s)
 	best := 0
@@ -908,9 +868,8 @@ func repeatingTailSpan(s string, minUnit, maxUnit int) int {
 	return best
 }
 
-// runJudgeRound: isolated agentic judge round (own runner + in-memory session). Falls back to text parsing.
-// prebuilt, when non-"", is the exact prompt fitJudgeAnswer already built for
-// this (question, answer, changedFiles, knownFailures, act) combination - callers pass "" whenever any of those differ from what produced it.
+// runJudgeRound runs one isolated agentic judge round, falling back to text parsing. prebuilt, when
+// non-"", is fitJudgeAnswer's prompt for these exact inputs; pass "" whenever any differ.
 func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, answer, changedFiles, knownFailures, prebuilt string, act workerActivity, received []memory.Delivered, emit func(*genai.Part) bool) (verdict, judgeReadCounters, error) {
 	maxIters := cfg.JudgeMaxIterations
 	if maxIters <= 0 {
@@ -925,8 +884,7 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	if err != nil {
 		return verdict{}, judgeReadCounters{}, err
 	}
-	// closed is set by forcedVerdictCallback the instant it disables or strips tools for
-	// a forced close (#1235) - the round's own signal, not the turn counter.
+	// closed is set by forcedVerdictCallback the instant it disables or strips tools.
 	judgeAgent, counters, err := factory(prompt, &st.sink, &st.closed, maxIters, cfg.JudgeMaxOutputTokens, cfg.JudgeThinkingLevel, receivedIDs, cfg.JudgeArtifactTools)
 	if err != nil {
 		return verdict{}, judgeReadCounters{}, fmt.Errorf("vetting: build judge agent: %w", err)
@@ -957,8 +915,7 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 		return v, counters, nil
 	}
 
-	// One in-session nudge before giving up: a text turn that didn't parse as a
-	// verdict is often analysis-complete/submission-wrong (#1235) - one direct ask.
+	// One in-session nudge: an unparseable text turn often has the analysis right and only the submission wrong.
 	capped := st.lastFinish == genai.FinishReasonMaxTokens // a nudge on the same settings is cut again
 	if st.nudgeAllowed() && !capped && strings.TrimSpace(st.accum.String()) != "" {
 		if v, ok, nerr := st.submitNudge(); nerr != nil {
@@ -976,8 +933,7 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	return verdict{}, counters, ErrJudgeNoVerdict
 }
 
-// firstVerdict runs the round's opening turn and returns its verdict, if any. #1259: a verdict that
-// skipped the required memory votes gets a one-shot nudge naming the owed ids.
+// firstVerdict runs the opening turn; a verdict missing required memory votes gets one nudge naming the owed ids.
 func (s *judgeRoundState) firstVerdict(content *genai.Content, receivedIDs []string) (verdict, bool, error) {
 	if err := s.runTurn(content); err != nil {
 		return verdict{}, false, err
@@ -1000,9 +956,8 @@ func (s *judgeRoundState) firstVerdict(content *genai.Content, receivedIDs []str
 	return v, true, nil
 }
 
-// verdictOrStrippedClose is the round's verdict or, when a tool_choice-none close gave none (vLLM's
-// parser drops the refused call), one more close with the tools stripped. A close cut at the token cap
-// is not retried: stripping tools does not shorten it.
+// verdictOrStrippedClose: when a tool_choice-none close gives no verdict (vLLM drops the refused call),
+// close once more with tools stripped. A close cut at the token cap is not retried.
 func (s *judgeRoundState) verdictOrStrippedClose() (verdict, bool, error) {
 	v, ok := s.verdictFrom()
 	if ok || !s.closed.forced || s.closed.stripped || s.aborted || s.lastFinish == genai.FinishReasonMaxTokens || s.ctx.Err() != nil {
@@ -1105,8 +1060,7 @@ func (s *judgeRoundState) runTurn(turnContent *genai.Content) error {
 		if err := s.observeEvent(ev); err != nil {
 			return err
 		}
-		// Safety cap: prevent infinite loop if judge never calls submit_verdict, or a
-		// runaway repeat loop is decoding the same text forever (#889).
+		// Safety cap: the judge never calls submit_verdict, or a repeat loop decodes the same text forever.
 		if s.turns > s.maxIters || s.repeats.tripped {
 			if s.repeats.tripped {
 				slog.Warn("judge round aborted: runaway repeat detected mid-generation",
@@ -1155,8 +1109,7 @@ func (s *judgeRoundState) observeEvent(ev *session.Event) error {
 func (s *judgeRoundState) scanPart(p *genai.Part) error {
 	switch {
 	case p.FunctionCall != nil && p.FunctionCall.Name == submitVerdictTool:
-		// Suppress from generic tool-call activity; success is confirmed on the matching
-		// FunctionResponse below (#889).
+		// Kept out of generic tool activity; success is confirmed on the matching FunctionResponse below.
 	case p.FunctionResponse != nil && p.FunctionResponse.Name == submitVerdictTool:
 		if _, failed := p.FunctionResponse.Response["error"]; !failed {
 			s.submitted = true // handler ran; sink is populated
@@ -1199,13 +1152,12 @@ func (s *judgeRoundState) verdictFrom() (verdict, bool) {
 	return verdict{}, false
 }
 
-// nudgeAllowed mirrors the #1235/#1236 guard shared by both nudges: a forced-close
-// turn already stripped tools, and an aborted turn already cancel()ed runCtx.
+// nudgeAllowed: no nudge after a forced close (tools stripped) or an aborted turn (runCtx cancelled).
 func (s *judgeRoundState) nudgeAllowed() bool {
 	return !s.closed.forced && !s.aborted && s.ctx.Err() == nil
 }
 
-// nudgeMemories sends the one-shot memory-vote nudge naming the owed ids (#1259).
+// nudgeMemories sends the one-shot memory-vote nudge naming the owed ids.
 func (s *judgeRoundState) nudgeMemories(owedIDs []string) (verdict, bool, error) {
 	if !s.nudgeAllowed() {
 		return verdict{}, false, nil
@@ -1217,7 +1169,7 @@ func (s *judgeRoundState) nudgeMemories(owedIDs []string) (verdict, bool, error)
 	return s.verdictOrStrippedClose()
 }
 
-// submitNudge asks once, directly, for the missing submit_verdict call (#1235).
+// submitNudge asks once, directly, for the missing submit_verdict call.
 func (s *judgeRoundState) submitNudge() (verdict, bool, error) {
 	nudge := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: judgeSubmitNudge}}}
 	if err := s.runTurn(nudge); err != nil {
@@ -1226,14 +1178,11 @@ func (s *judgeRoundState) submitNudge() (verdict, bool, error) {
 	return s.verdictOrStrippedClose()
 }
 
-// judgeSubmitNudge: one-shot in-session continuation when a turn ends with
-// unparseable text and no submit_verdict call (#1235) - the analysis is often
-// already correct and only the submission mechanism was wrong.
+// judgeSubmitNudge: one-shot continuation when a turn ends in unparseable text with no submit_verdict call.
 const judgeSubmitNudge = "You did not call submit_verdict. Call submit_verdict now with your verdict as a tool call - do not write it as text."
 
-// ErrJudgeNoVerdict: the judge model ran - read files, spent its iteration
-// budget - and never called submit_verdict. Distinct from a transport/model
-// failure (the judge was never reachable at all) so the caller can tell the reader which one happened instead of calling both "unavailable" (#779).
+// ErrJudgeNoVerdict: the judge ran but never called submit_verdict, as distinct from an unreachable
+// model, so the reader is told which one happened.
 var ErrJudgeNoVerdict = errors.New("vetting: judge ended without a verdict")
 
 // ErrJudgeOutputCapped: no verdict because the reply hit the output-token cap - usually its
@@ -1244,9 +1193,8 @@ var ErrJudgeOutputCapped = fmt.Errorf("%w: the reply hit the output-token cap", 
 // paths alike; only http(s) targets are scored (see citationScore).
 var markdownLinkRe = regexp.MustCompile(`\[[^\]]*\]\(([^)\s]+)\)`)
 
-// citationScore: deterministic grade per cited web link, against the session ledger. Local file/code citations (e.g. "<repo>@<path>") are NOT graded here - a
-// worker's own claim to have read a file quotes lines an LLM judge can check
-// against the ledger directly, so a second deterministic pass produced false failures without adding coverage. Layers: fetched=1.00, searched=0.75, same host fetched=0.50, same host searched=0.25, neither=0.00. Worker-facing meaning of these tiers lives in citeReasonLegend below - keep the two in sync.
+// citationScore grades each cited web link against the ledger: fetched 1.0, searched 0.75, host fetched 0.5,
+// host searched 0.25, else 0. File citations are left to the judge. Keep in sync with citeReasonLegend.
 func citationScore(answer string, act workerActivity) (score float64, details []citationDetail, ok bool) {
 	if len(act.fetched) == 0 && len(act.seen) == 0 {
 		return 0, nil, false
@@ -1287,9 +1235,8 @@ func readStoredPage(target string, reads []string) bool {
 	return false
 }
 
-// linkBackingScore: one cited link's deterministic backing tier -
-// fetched URL > seen URL > fetched host > seen host > unbacked. ok=false when
-// the target isn't web-gradeable or is a duplicate (dedup is mutated).
+// linkBackingScore: one link's backing tier; ok=false when the target isn't web-gradeable or is a
+// duplicate (dedup is mutated).
 func linkBackingScore(target string, dedup map[string]struct{}, fetchedURL, seenURL, fetchedHost, seenHost map[string]bool) (s float64, ok bool) {
 	u, err := url.Parse(target)
 	if err != nil || target == "" {
@@ -1334,8 +1281,7 @@ type citationDetail struct {
 	score float64
 }
 
-// maxCiteReasonLinks bounds unbacked links named in a cites_sources reason -
-// a forty-link answer must not produce forty lines of feedback (#789).
+// maxCiteReasonLinks bounds unbacked links named in a cites_sources reason.
 const maxCiteReasonLinks = 10
 
 // citeReason names the links that scored below full backing, worst first, so
@@ -1385,7 +1331,6 @@ func normalizeURL(raw string) (norm, host string) {
 	return u.String(), u.Host
 }
 
-// normalizedSets: returns normalized URL and host sets.
 func normalizedSets(urls []string) (urlSet, hostSet map[string]bool) {
 	urlSet = make(map[string]bool, len(urls))
 	hostSet = make(map[string]bool, len(urls))
@@ -1447,8 +1392,7 @@ const (
 	maxPreviousAnswerChars   = 16_000
 	maxActivitySectionChars  = 32_000
 	maxFeedbackChars         = 16_000
-	// maxUpstreamAnswersChars is fixed regardless of JudgeContextWindow; on a
-	// small window fitJudgeAnswer's minJudgeAnswerChars floor absorbs the pressure by clamping the answer, never this section.
+	// Fixed regardless of JudgeContextWindow: on a small window the answer clamp absorbs the pressure.
 	maxUpstreamAnswersChars = 24_000
 )
 
@@ -1467,24 +1411,21 @@ func boundExcerpt(s string, maxChars int) string {
 }
 
 // reviseReplyRule closes every revise request: the reply replaces the user-facing answer, but
-// re-typing an edited artifact in it cost prod chat cedfc299 26k output tokens (6 min) in one round.
+// re-typing an edited artifact in it can burn tens of thousands of output tokens in one round.
 const reviseReplyRule = "Your reply replaces your previous answer as the one the user sees: give the reply your task asks for, updated for these fixes - never a note about this revision, the verdict, or what you fixed. " +
 	"If the deliverable lives in an artifact you edited, keep the reply to the summary your task asks for and do not restate the artifact's content: the judge and every later step read the artifact itself. " +
 	"Otherwise output only the corrected answer with no preamble or commentary.\n\n"
 
-// buildRevisionContent: the bounded revise prompt - the structured verdict envelope (#941, rubric specs already folded in by
-// applyRubricSpecs), notes, activity, and pages: the stored web_page ids the worker can re-read instead of re-fetching.
+// buildRevisionContent: the bounded revise prompt - verdict envelope, notes, activity, and stored
+// web_page ids the worker can re-read instead of re-fetching.
 func buildRevisionContent(constitution string, question *genai.Content, answer string, env verdictEnvelope, act workerActivity, citationOnly bool, notes []JudgeNote, pages []string) *genai.Content {
 	var sb strings.Builder
-	// Stable-first (finding 3): the original question, byte-identical to what the draft
-	// round sent (same boundExcerpt, no header), leads every round so the prefix cache
-	// carries draft -> revise -> revise instead of dying at the volatile verdict.
+	// Stable-first: the question, byte-identical to the draft round's, leads so the prefix cache carries
+	// draft -> revise -> revise.
 	sb.WriteString(boundExcerpt(contentPlainText(question), maxOriginalQuestionChars))
 	sb.WriteString("\n\n")
 	if citationOnly {
-		// The answer's substance passed; only citation-form criteria failed. This is a
-		// formatting pass, not re-research: the worker already fetched the URLs
-		// (listed in the activity section below), so re-fetching them wastes tokens and time. Tell it to attach what it has.
+		// Substance passed and only citation form failed: tell the worker to attach the URLs it already fetched.
 		sb.WriteString("Your previous answer is substantively fine - the ONLY problem is missing inline citations. " +
 			"You already retrieved the sources listed below (URLs you fetched and searched); attach them inline as Markdown links to the claims they support, in the same sentence or bullet as each figure, and remove any figure none of them states - edit_artifact the artifact if the answer lives in one. " +
 			"Do NOT re-fetch or search again - this is purely a citation-formatting fix. " + reviseReplyRule)
@@ -1504,9 +1445,8 @@ func buildRevisionContent(constitution string, question *genai.Content, answer s
 	sb.WriteString("Verdict:\n```json\n")
 	sb.WriteString(boundExcerpt(marshalEnvelope(env), maxFeedbackChars))
 	sb.WriteString("\n```\n\n")
-	// Notes source from the persisted judge_round record (#1092), each
-	// anchored to the exact prior-round artifact revision it concerns - so
-	// the worker can read_artifact/edit_artifact that revision directly instead of re-deriving what changed from prose alone.
+	// Each note is anchored to the prior-round artifact revision it concerns, so the worker can read or
+	// edit it directly.
 	if len(notes) > 0 {
 		sb.WriteString("Notes (read/edit the exact artifact revision each one references):\n```json\n")
 		sb.WriteString(boundExcerpt(marshalNotes(notes), maxFeedbackChars))
@@ -1528,7 +1468,7 @@ func buildRevisionContent(constitution string, question *genai.Content, answer s
 // buildFinalizeContent: asks worker to write final answer when round 0 ended without one.
 func buildFinalizeContent(question *genai.Content, act workerActivity) *genai.Content {
 	var sb strings.Builder
-	// Stable-first (finding 3): same reasoning as buildRevisionContent.
+	// Stable-first: same reasoning as buildRevisionContent.
 	sb.WriteString(boundExcerpt(contentPlainText(question), maxOriginalQuestionChars))
 	sb.WriteString("\n\n")
 	sb.WriteString("A response of 0 length was received. If you have finished your research, " +
@@ -1549,7 +1489,7 @@ const continuationMarker = "CONTINUE THE TASK - it is not finished."
 // buildContinuationPrompt: tool-bearing continuation directive (do the remaining work, not a write-up).
 func buildContinuationPrompt(task string, act workerActivity, checks []string, readOnly, hasDeliverTarget, isReviewer, existingPR bool) string {
 	var sb strings.Builder
-	// Stable-first (finding 3): same reasoning as buildRevisionContent.
+	// Stable-first: same reasoning as buildRevisionContent.
 	sb.WriteString(boundExcerpt(task, maxOriginalQuestionChars))
 	sb.WriteString("\n\n")
 	sb.WriteString(continuationMarker + "\n\n" +
@@ -1580,9 +1520,7 @@ func buildContinuationPrompt(task string, act workerActivity, checks []string, r
 	return sb.String()
 }
 
-// judgeScaleMax: the rubric's raw integer scale (0/1/2/3 - see rubric.yaml
-// scale.max across every agent bundle). Shared here because normalizeScale
-// converts raw judge output to the internal 0-1 axis by this divisor.
+// judgeScaleMax: the rubric's raw integer scale max; normalizeScale divides by it.
 const judgeScaleMax = 3
 
 // normalizeScale: converts the judge's raw 0-judgeScaleMax rubric scale to
@@ -1598,9 +1536,8 @@ func normalizeScale(v *verdict) {
 	}
 }
 
-// verdictAlreadyNormalized reports whether every score in v is a fraction
-// strictly between 0 and 1 - the signature of a model that ignored the
-// integer-scale instruction and answered directly on 0-1. A whole-number score is always treated as raw scale, even when it equals 1, since 1 is itself a legal raw level (do not conflate it with a legacy "full marks").
+// verdictAlreadyNormalized: every score is strictly between 0 and 1, so the model answered on 0-1.
+// A whole number is always raw scale, even 1.
 func verdictAlreadyNormalized(v *verdict) bool {
 	found := false
 	check := func(s float64) bool {
@@ -1623,9 +1560,8 @@ func verdictAlreadyNormalized(v *verdict) bool {
 	return found
 }
 
-// inferAnchorKind fills a missing anchor kind from whichever payload field is
-// set (judges near-miss the schema by omitting it, trace 9ea8cbee). Ambiguous
-// or empty anchors are left as-is; sanitizeAnchors drops them later.
+// inferAnchorKind fills a missing anchor kind from whichever payload field is set; ambiguous or empty
+// anchors are left for sanitizeAnchors to drop.
 func inferAnchorKind(a *anchorSpec) {
 	if a == nil || a.Kind != "" {
 		return
@@ -1640,9 +1576,7 @@ func inferAnchorKind(a *anchorSpec) {
 	}
 }
 
-// dropCriteria removes the named criteria and recomputes the weakest-link
-// score over what's left (#1092: a fan-out slice reviewer isn't judged on
-// structured_verdict, since it never owns the delivered verdict).
+// dropCriteria removes the named criteria and recomputes the weakest-link score over the rest.
 func dropCriteria(v verdict, names ...string) verdict {
 	for _, name := range names {
 		delete(v.Criteria, name)
@@ -1662,8 +1596,7 @@ func dropCriteria(v verdict, names ...string) verdict {
 // aggregateVerdict: weakest-link gating - lowest criterion is the overall score. Clamped [0,1].
 func aggregateVerdict(v verdict) verdict {
 	applyFindingsVerdict(&v)
-	// #941: reason -> shortfall migration, single choke point for every path
-	// that produces a verdict (submit_verdict tool and the text-fallback parser alike).
+	// reason -> shortfall: one choke point for every verdict path (tool call and text fallback).
 	for name, c := range v.Criteria {
 		if strings.TrimSpace(c.Shortfall) == "" && strings.TrimSpace(c.Reason) != "" {
 			c.Shortfall = c.Reason
@@ -1771,7 +1704,7 @@ type rawVerdict struct {
 	Score    float64                    `json:"score"`
 	Passed   bool                       `json:"passed"`
 	Feedback string                     `json:"feedback"`
-	Memories []memoryVerdict            `json:"memories,omitempty"` // #1259: text-JSON fallback also carries votes
+	Memories []memoryVerdict            `json:"memories,omitempty"` // the text-JSON fallback also carries votes
 }
 
 // parseVerdict: text-fallback parser. It takes the last complete verdict object, since promoted
@@ -1897,7 +1830,8 @@ func isVerdict(keys map[string]json.RawMessage, specs map[string]criterionSpec) 
 	return criteria != nil || (score && (feedback || passed))
 }
 
-// runWriterFresh: recovers empty worker draft via tool-less writer in a fresh runner (re-invoking worker loses finalize prompt).
+// runWriterFresh recovers an empty draft via a tool-less writer in a fresh runner (re-invoking the
+// worker loses the finalize prompt).
 func runWriterFresh(ctx context.Context, m model.LLM, content *genai.Content, chatID string) (string, error) {
 	if m == nil {
 		return "", fmt.Errorf("vetting: no writer model for empty-answer recovery")

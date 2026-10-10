@@ -1,6 +1,5 @@
-// Judge votes on recalled memories: the worker's received set is rendered
-// for the judge (mirrors findings.go's per-finding verification), and a
-// gate-passed round's votes are applied to the memory store (epic #1255 P1).
+// Judge votes on recalled memories: the worker's received set is shown to the judge, and a
+// gate-passed round's votes are applied to the memory store.
 package vetting
 
 import (
@@ -40,26 +39,21 @@ func memorySection(header string, items []memory.Delivered) string {
 	return sb.String()
 }
 
-// receivedMemoriesSection renders the worker's recalled set for the judge -
-// the memories.go/findings.go twin, but sourced from what recall actually
-// delivered rather than staged findings.
+// receivedMemoriesSection renders what recall actually delivered to the worker, for the judge to vote on.
 func receivedMemoriesSection(received []memory.Delivered) string {
 	return memorySection(judgeMemoriesInstructions, received)
 }
 
-// planJudgeMemoryHeader: unlike judgeMemoriesInstructions, these are NOT
-// voted on - the plan judge scores plan shape, not delivered work, so there
-// is nothing yet to check a memory against (epic #1255 P2).
+// planJudgeMemoryHeader: these are NOT voted on; the plan judge scores plan shape, so there is no
+// delivered work to check a memory against.
 const planJudgeMemoryHeader = "PROJECT MEMORY - background notes about this repo/task family, for context only. Do not vote on these; there is no submit_plan_verdict field for them.\n\n"
 
-// planMemorySection renders top-k memories for the plan judge's prompt -
-// the receivedMemoriesSection twin for a round that never votes.
+// planMemorySection renders top-k memories for the plan judge's prompt, without a vote.
 func planMemorySection(hits []memory.Delivered) string {
 	return memorySection(planJudgeMemoryHeader, hits)
 }
 
-// memoryIDs extracts ids from a received set, for the round-scoped tool
-// description, force-close instruction, and nudge text (#1259).
+// memoryIDs: ids for the round-scoped tool description, force-close instruction and nudge text.
 func memoryIDs(received []memory.Delivered) []string {
 	ids := make([]string, len(received))
 	for i, m := range received {
@@ -68,10 +62,8 @@ func memoryIDs(received []memory.Delivered) []string {
 	return ids
 }
 
-// owedMemoryVoteIDs returns the received ids v's verdict left unvoted, in
-// receivedIDs order - the ones still owed, not the full received set (#1259
-// review finding: a partial vote must not be told to re-vote what it already
-// recorded).
+// owedMemoryVoteIDs returns the received ids v left unvoted, in receivedIDs order, so a partial vote
+// is never told to re-vote what it already recorded.
 func owedMemoryVoteIDs(receivedIDs []string, v verdict) []string {
 	if len(receivedIDs) == 0 {
 		return nil
@@ -89,25 +81,19 @@ func owedMemoryVoteIDs(receivedIDs []string, v verdict) []string {
 	return owed
 }
 
-// missingMemoryVotes reports a round that owed votes (non-empty received
-// set) but whose verdict left at least one of them unvoted (#1259). A
-// partial vote (e.g. 1 of 5) used to read as "not missing" since only
-// len(v.Memories)==0 was checked - the rest silently never got a vote
-// recorded (applyMemoryVotesOnPass only applies ids present in v.Memories).
+// missingMemoryVotes: the round owed votes but left at least one unvoted. A partial vote counts as
+// missing, since applyMemoryVotesOnPass only applies ids present in v.Memories.
 func missingMemoryVotes(receivedIDs []string, v verdict) bool {
 	return len(owedMemoryVoteIDs(receivedIDs, v)) > 0
 }
 
-// judgeMemoriesNudgeText: one-shot in-session nudge (#1236 pattern) for a
-// verdict that reached submit_verdict/text-JSON but left owedIDs unvoted -
-// the still-owed subset (see owedMemoryVoteIDs), not every id received, so a
-// partial vote isn't told to re-vote what it already recorded.
+// judgeMemoriesNudgeText: one-shot in-session nudge naming only the still-owed ids.
 func judgeMemoriesNudgeText(owedIDs []string) string {
 	return fmt.Sprintf("You did not vote on all the recalled memories. Vote on memories %s via submit_verdict's `memories` array before finishing.", strings.Join(owedIDs, ", "))
 }
 
-// mergeMemoryHits appends new into base, deduping by id so a memory is voted on once
-// (#1255 P2); added is the newly-added subset, the caller's cue to bump recalls once (#1470).
+// mergeMemoryHits appends new into base deduped by id, so a memory is voted on once; added is the
+// newly-added subset, the caller's cue to bump recalls once.
 func mergeMemoryHits(base, add []memory.Delivered) (merged, added []memory.Delivered) {
 	if len(add) == 0 {
 		return base, nil
@@ -127,8 +113,8 @@ func mergeMemoryHits(base, add []memory.Delivered) (merged, added []memory.Deliv
 	return base, added
 }
 
-// mergeAndCountRecalledMemories merges add plus a live ACP session's Recalled snapshot into
-// received, bumping recalls only for new ids - shared by prepareJudge and commitFinal so a judge-less dispatch still counts and neither double-counts.
+// mergeAndCountRecalledMemories merges add and a live ACP session's Recalled snapshot into received,
+// bumping recalls only for new ids, so a judge-less dispatch still counts and nothing double-counts.
 func mergeAndCountRecalledMemories(ctx context.Context, cfg Config, advisorToken string, received, add []memory.Delivered) []memory.Delivered {
 	var addedIDs []memory.Delivered
 	received, addedIDs = mergeMemoryHits(received, add)
@@ -149,9 +135,8 @@ func mergeAndCountRecalledMemories(ctx context.Context, cfg Config, advisorToken
 	return received
 }
 
-// recallLedgerEntry appends a best-effort memory.recall ledger entry for one
-// injection (design decision #1255 P1: the ledger is the source of truth for
-// what a chat retrieved). Best-effort, unlike memory.vote below: it records a delivery that already happened, and nothing is projected from it in the hot path (recalls/last_recalled_at are bumped directly by the caller, independent of this entry) - same observational pattern as appendNodeEvent.
+// recallLedgerEntry appends a best-effort memory.recall entry. Unlike memory.vote it may fail silently:
+// it records a delivery that already happened and nothing is projected from it.
 func recallLedgerEntry(ctx context.Context, cfg Config, nodeID string, round int, source string, received []memory.Delivered) {
 	if cfg.Ledger == nil || len(received) == 0 {
 		return
@@ -164,9 +149,8 @@ func recallLedgerEntry(ctx context.Context, cfg Config, nodeID string, round int
 	if err != nil {
 		return
 	}
-	// Agent/Round are stamped explicitly from cfg/the round argument, not read
-	// off ctx - a ctx value set inside a node body never crosses the RunNode
-	// scheduling boundary (same SetLedgerCoords discipline as the worker/judge model stamps; #1259).
+	// Agent/Round come from cfg and the round argument, not ctx: a ctx value set inside a node body never
+	// crosses the RunNode scheduling boundary.
 	if _, err := cfg.Ledger.AppendIntent(ctx, ledger.Entry{
 		ChatID: cfg.ChatID, NodeID: nodeID, Agent: cfg.Agent, Round: strconv.Itoa(round),
 		Kind: ledger.KindMemoryRecall, At: time.Now().UTC(), Payload: payload,
@@ -175,13 +159,8 @@ func recallLedgerEntry(ctx context.Context, cfg Config, nodeID string, round int
 	}
 }
 
-// applyMemoryVotesOnPass applies the round's votes to the memory store -
-// called only after the gate passes (failed rounds record nothing, per
-// #1255 P1). received scopes which ids are even eligible: a vote for an id
-// the worker was never given is dropped rather than trusted blindly.
-// memory.vote is fail-closed, same discipline as artifact.revision: the
-// point mutation (upvotes/score/tier) is a PROJECTION of the ledger entry,
-// so the entry is appended via AppendIntent BEFORE the point is touched - a failed append skips that vote's mutation entirely (logged, not applied), and unlike memory.recall (recallLedgerEntry), nothing else backs this write.
+// applyMemoryVotesOnPass applies votes only after the gate passes, and only for ids the worker received.
+// memory.vote is fail-closed: the point mutation projects the ledger entry, so a failed append skips it.
 func applyMemoryVotesOnPass(ctx context.Context, cfg Config, nodeID string, round int, received []memory.Delivered, votes []memoryVerdict) {
 	if cfg.Memory == nil || len(votes) == 0 || len(received) == 0 {
 		return

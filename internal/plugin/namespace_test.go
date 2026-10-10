@@ -17,9 +17,7 @@ func manifest(t *testing.T, body string) string {
 	return root
 }
 
-// A plugin with no skills/ is legal (spec §6.2: an absent fixed component
-// location MUST NOT be an error). It used to be dropped entirely, which made
-// a module-only or MCP-only plugin unloadable.
+// §6.2: a plugin with no skills/ is legal, so a module-only or MCP-only plugin must still load.
 func TestResolve_NoSkillsDirIsNotAnError(t *testing.T) {
 	root := manifest(t, `{"$schema":"x","name":"toolsonly"}`)
 	got, err := Resolve([]string{root})
@@ -37,9 +35,7 @@ func TestResolve_NoSkillsDirIsNotAnError(t *testing.T) {
 	}
 }
 
-// §8: a client MUST ignore namespaces it does not implement WITHOUT
-// validating their contents. Garbage under someone else's key is not our
-// problem and must never fail a load.
+// §8: a client must ignore namespaces it does not implement, without validating their contents.
 func TestResolve_ForeignNamespacesIgnoredUnvalidated(t *testing.T) {
 	root := manifest(t, `{"$schema":"x","name":"p","extensions":{
 		"com.example.client":{"anything":[1,2,3],"nested":{"totally":"unvalidated"}},
@@ -73,9 +69,8 @@ func TestResolve_OurNamespaceParsed(t *testing.T) {
 	}
 }
 
-// Inside our own namespace §8 makes validation ours to define, and a block
-// declaring compiled-in code is the one plugin failure quack refuses to
-// downgrade to a warning.
+// Inside our own namespace, a block declaring compiled-in code is the one failure quack never downgrades
+// to a warning.
 func TestResolve_OurNamespaceInvalidIsAnError(t *testing.T) {
 	cases := map[string]string{
 		"wrong schemaVersion": `{"schemaVersion":99}`,
@@ -125,10 +120,8 @@ func TestResolve_ManifestListsDecodeAndMatchPresentEntries(t *testing.T) {
 	}
 }
 
-// A listed agent whose agents/<name>/ directory is absent is a
-// NamespaceError-class failure naming the entry - CheckManifestLists runs
-// from internal/serve's admission path, not Resolve (#1430: a REST-added
-// row's refusal must drop only that row, not brick boot).
+// A listed agent with no agents/<name>/ dir fails, naming the entry. CheckManifestLists runs from serve's
+// admission path so a refusal drops only that row.
 func TestCheckManifestLists_ListedAgentMissingFails(t *testing.T) {
 	root := manifest(t, `{"$schema":"x","name":"p","extensions":{"`+Namespace+`":{
 		"schemaVersion":1,"agents":["ghost"]
@@ -147,9 +140,8 @@ func TestCheckManifestLists_ListedAgentMissingFails(t *testing.T) {
 	}
 }
 
-// A listed agent whose directory exists but has no agent-card.json is also
-// listed-but-missing: "present" means "is a bundle", the same predicate
-// config.SeedPluginAgents seeds by - not just "a directory with this name".
+// A listed agent dir without agent-card.json is also missing: "present" means "is a bundle", the predicate
+// config.SeedPluginAgents uses.
 func TestCheckManifestLists_ListedAgentDirWithoutCardFails(t *testing.T) {
 	root := manifest(t, `{"$schema":"x","name":"p","extensions":{"`+Namespace+`":{
 		"schemaVersion":1,"agents":["scout"]
@@ -189,10 +181,8 @@ func TestCheckManifestLists_ListedWorkflowMissingFails(t *testing.T) {
 	}
 }
 
-// A workflows/<stem>.yaml whose internal name: field does not match its
-// filename stem fails: listing, dedupe, seeding, and collision detection all
-// key on the same string, so a mismatch would let a manifest list one name
-// and silently seed a shape under another.
+// A workflow whose name: differs from its filename stem fails: everything keys on one string, so a mismatch
+// would seed a shape under an unlisted name.
 func TestCheckManifestLists_WorkflowNameMismatchFails(t *testing.T) {
 	root := manifest(t, `{"$schema":"x","name":"p","extensions":{"`+Namespace+`":{
 		"schemaVersion":1,"workflows":["alpha"]
@@ -213,9 +203,8 @@ func TestCheckManifestLists_WorkflowNameMismatchFails(t *testing.T) {
 	}
 }
 
-// An UNLISTED workflow yaml that mismatches its filename or fails to parse
-// must not refuse the plugin - only a LISTED entry's own contract is
-// enforced; a stray, half-written shape file is warned about, not fatal.
+// An unlisted workflow yaml that mismatches or fails to parse is warned about, not fatal: only listed
+// entries' contracts are enforced.
 func TestCheckManifestLists_UnlistedWorkflowMismatchOrMalformedDoesNotFail(t *testing.T) {
 	root := manifest(t, `{"$schema":"x","name":"p","extensions":{"`+Namespace+`":{
 		"schemaVersion":1,"workflows":["alpha"]
@@ -257,10 +246,8 @@ func TestResolve_PresentButUnlistedAgentDoesNotFail(t *testing.T) {
 	}
 }
 
-// A namespace block that omits the agents/workflows keys entirely leaves
-// Plugin.Agents/Workflows nil - nothing seeds from AgentsDir/WorkflowsDir,
-// same as an explicit empty list, and every present bundle still gets the
-// unlisted warning.
+// Omitted agents/workflows keys leave Plugin.Agents/Workflows nil (same as empty), and every present
+// bundle still gets the unlisted warning.
 func TestResolve_ManifestListsOmittedLeaveNil(t *testing.T) {
 	root := manifest(t, `{"$schema":"x","name":"p","extensions":{"`+Namespace+`":{"schemaVersion":1}}}`)
 	writeFile(t, filepath.Join(root, "agents", "scout", "agent-card.json"), `{"name":"scout"}`)
@@ -275,10 +262,8 @@ func TestResolve_ManifestListsOmittedLeaveNil(t *testing.T) {
 	assertUnlistedWarning(t, got[0], "scout")
 }
 
-// The unlisted-bundle warning fires even when the plugin has no quack
-// namespace block at all - an absent block means empty lists, not "seed
-// everything present", so this can never be a silent regression to the old
-// discover-by-presence behavior.
+// The unlisted-bundle warning fires with no namespace block at all: an absent block means empty lists,
+// not "seed everything present".
 func TestWarnUnlistedManifestEntries_NoNamespaceBlockStillWarns(t *testing.T) {
 	root := manifest(t, `{"$schema":"x","name":"p"}`)
 	writeFile(t, filepath.Join(root, "agents", "scout", "agent-card.json"), `{"name":"scout"}`)

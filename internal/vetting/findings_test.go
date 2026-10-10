@@ -21,42 +21,23 @@ import (
 	"google.golang.org/genai"
 )
 
-// scriptedFindingsJudge submits a fixed verdict on the first turn - criteria,
-// findings, or both, however the test wants to script the judge's own
-// per-finding call. Mirrors oneShotJudge/recordingJudge in judge_test.go.
-type scriptedFindingsJudge struct {
-	score    float64
-	criteria map[string]any
-	findings []map[string]any
+// scriptedFindingsJudge submits args as its verdict on the first turn.
+func scriptedFindingsJudge(args map[string]any) fnLLM {
+	return func(*model.LLMRequest) (*model.LLMResponse, error) { return stubCall(submitVerdictTool, args), nil }
 }
 
-func (scriptedFindingsJudge) Name() string { return "scripted-findings-judge" }
-
-func (j scriptedFindingsJudge) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		args := map[string]any{"score": j.score, "feedback": ""}
-		if j.criteria != nil {
-			args["criteria"] = j.criteria
-		}
-		if j.findings != nil {
-			args["findings"] = j.findings
-		}
-		yield(stubCall(submitVerdictTool, args), nil)
-	}
-}
-
-// TestJudgeFindings_ContradictedSinksGroundingCriterion pins the #494 regression this PR fixes: a judge that scores claims_grounded high on its
-// OWN holistic read (exactly what shipped a false "off-by-one at mermaid.go:112" finding with claims_grounded=1) must still have the
-// criterion forced to 0 once its OWN per-finding verification contradicts a staged finding - proving the code-owned fold, not the judge's guess, is what the gate trusts. Against the pre-#498 code (no applyFindingsVerdict fold) this fails: claims_grounded stays at the judge's self-reported 0.9 and the verdict passes.
+// A contradicted finding must sink claims_grounded to 0 even when the judge's own holistic score is high:
+// the code-owned fold, not the judge's guess, is what the gate trusts.
 func TestJudgeFindings_ContradictedSinksGroundingCriterion(t *testing.T) {
-	judge := scriptedFindingsJudge{
-		score:    0.9,
-		criteria: map[string]any{"claims_grounded": map[string]any{"score": 9, "reason": "looks precise and specific"}},
-		findings: []map[string]any{
+	judge := scriptedFindingsJudge(map[string]any{
+		"score":    0.9,
+		"feedback": "",
+		"criteria": map[string]any{"claims_grounded": map[string]any{"score": 9, "reason": "looks precise and specific"}},
+		"findings": []map[string]any{
 			{"index": 1, "path": "internal/vetting/mermaid.go", "line": 112, "status": "contradicted",
 				"why": "line 112 is a blank line inside a doc comment, not a loop bound - there is no off-by-one here"},
 		},
-	}
+	})
 	factory := NewJudgeFactory(judge, nil, nil)
 	act := workerActivity{stagedDelivery: map[string]StagedDelivery{
 		"review": {Kind: "review", Event: "approve", Comments: []ReviewComment{
@@ -79,18 +60,17 @@ func TestJudgeFindings_ContradictedSinksGroundingCriterion(t *testing.T) {
 	}
 }
 
-// TestJudgeFindings_VerifiedFindingNoPenalty proves the mirror case: a
-// finding the judge verifies against the code must NOT move
-// findingsGroundingCriterion away from whatever the judge itself scored - verification is informational, not an automatic bonus or malus.
+// A verified finding must leave claims_grounded at the judge's own score: verification is informational.
 func TestJudgeFindings_VerifiedFindingNoPenalty(t *testing.T) {
-	judge := scriptedFindingsJudge{
-		score:    3,
-		criteria: map[string]any{"claims_grounded": map[string]any{"score": 3, "reason": "matches the code exactly"}},
-		findings: []map[string]any{
+	judge := scriptedFindingsJudge(map[string]any{
+		"score":    3,
+		"feedback": "",
+		"criteria": map[string]any{"claims_grounded": map[string]any{"score": 3, "reason": "matches the code exactly"}},
+		"findings": []map[string]any{
 			{"index": 1, "path": "internal/vetting/mermaid.go", "line": 40, "status": "verified",
 				"why": "read the file: the validation call is exactly as the finding describes"},
 		},
-	}
+	})
 	factory := NewJudgeFactory(judge, nil, nil)
 	act := workerActivity{stagedDelivery: map[string]StagedDelivery{
 		"review": {Kind: "review", Event: "approve", Comments: []ReviewComment{
@@ -113,9 +93,7 @@ func TestJudgeFindings_VerifiedFindingNoPenalty(t *testing.T) {
 	}
 }
 
-// multiFileSpyResult mirrors spyReadResult (judge_test.go) for a stub
-// read_file tool that serves different canned content per path, recording
-// every path it was asked for.
+// multiFileSpyResult: a stub read_file that serves canned content per path and records each path asked for.
 type multiFileSpyResult struct {
 	Content string `json:"content"`
 }
@@ -135,36 +113,30 @@ func newMultiFileSpyReadTool(t *testing.T, files map[string]string, calls *[]str
 	return rt
 }
 
-// relatedFileJudge is a deterministic, turn-counted judge: it reads the finding's cited file, THEN a related file the finding never mentions (the
-// caller), and only after both reads does it submit a verdict contradicting
-// the finding on the strength of what the related file showed. Proves #498's "do not narrow the judge's view to path:line" requirement - the judge's read access reaches a file no finding cited at all.
-type relatedFileJudge struct{ turn int32 }
-
-func (j *relatedFileJudge) Name() string { return "related-file-judge" }
-
-func (j *relatedFileJudge) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		switch atomic.AddInt32(&j.turn, 1) {
+// relatedFileJudge reads the finding's cited file, then a caller the finding never cites, then contradicts
+// the finding from what the caller showed.
+func relatedFileJudge() fnLLM {
+	var turn int32
+	return func(*model.LLMRequest) (*model.LLMResponse, error) {
+		switch atomic.AddInt32(&turn, 1) {
 		case 1:
-			yield(stubCall("read_file", map[string]any{"path": "internal/foo.go"}), nil)
+			return stubCall("read_file", map[string]any{"path": "internal/foo.go"}), nil
 		case 2:
-			yield(stubCall("read_file", map[string]any{"path": "internal/bar.go"}), nil)
-		default:
-			yield(stubCall(submitVerdictTool, map[string]any{
-				"score":    0.9,
-				"criteria": map[string]any{"claims_grounded": map[string]any{"score": 9, "reason": "locally plausible in isolation"}},
-				"findings": []map[string]any{
-					{"index": 1, "path": "internal/foo.go", "line": 1, "status": "contradicted",
-						"why": "internal/bar.go's caller already guards `input != nil` before calling handleFoo - the deref this finding warns about is unreachable"},
-				},
-			}), nil)
+			return stubCall("read_file", map[string]any{"path": "internal/bar.go"}), nil
 		}
+		return stubCall(submitVerdictTool, map[string]any{
+			"score":    0.9,
+			"criteria": map[string]any{"claims_grounded": map[string]any{"score": 9, "reason": "locally plausible in isolation"}},
+			"findings": []map[string]any{
+				{"index": 1, "path": "internal/foo.go", "line": 1, "status": "contradicted",
+					"why": "internal/bar.go's caller already guards `input != nil` before calling handleFoo - the deref this finding warns about is unreachable"},
+			},
+		}), nil
 	}
 }
 
-// TestJudgeFindings_ContextDependentRefutationReachesRelatedFile pins test
-// case 3 of #498's design: a finding that is accurate AT ITS OWN LINE can
-// still be refuted only by a file it never cites (here, the caller that already guards the case) - the judge's repo access must not be narrowed to the cited path, or it can never reach that file to check.
+// A finding accurate at its own line can be refuted only by a file it never cites, so the judge's repo
+// access must not be narrowed to the cited path.
 func TestJudgeFindings_ContextDependentRefutationReachesRelatedFile(t *testing.T) {
 	files := map[string]string{
 		"internal/foo.go": "func handleFoo(input *Thing) { input.Do() }\n",
@@ -172,7 +144,7 @@ func TestJudgeFindings_ContextDependentRefutationReachesRelatedFile(t *testing.T
 	}
 	var calls []string
 	readTool := newMultiFileSpyReadTool(t, files, &calls)
-	judge := &relatedFileJudge{}
+	judge := relatedFileJudge()
 	factory := NewJudgeFactory(judge, []tool.Tool{readTool}, nil)
 	act := workerActivity{stagedDelivery: map[string]StagedDelivery{
 		"review": {Kind: "review", Event: "request_changes", Comments: []ReviewComment{
@@ -194,9 +166,8 @@ func TestJudgeFindings_ContextDependentRefutationReachesRelatedFile(t *testing.T
 	}
 }
 
-// reviewGateStub is the worker+judge stub model for
-// TestRunGatedRefine_JudgeNeverMutatesStagedReview: the judge ALWAYS
-// contradicts the one staged finding (so the gate fails and revises), the worker always returns a fixed answer - what matters is what happens to the ReviewStage, not the text either side produces.
+// reviewGateStub: the judge always contradicts the one staged finding (so the gate revises); the worker
+// returns a fixed answer.
 type reviewGateStub struct {
 	workerCalls int32
 	judgeCalls  int32
@@ -224,9 +195,8 @@ func (m *reviewGateStub) GenerateContent(_ context.Context, req *model.LLMReques
 	}
 }
 
-// TestRunGatedRefine_JudgeNeverMutatesStagedReview pins test case 4: even
-// after a full failing judge round (the contradicted finding above sinks the
-// gate, forcing a revise), the staged review's OWN comments - the reviewer's source of truth - are exactly what was staged going in. The judge reports; it never edits, strips, or reorders.
+// Even after a failing judge round forces a revise, the staged review's comments are exactly what was
+// staged: the judge reports, it never edits, strips, or reorders.
 func TestRunGatedRefine_JudgeNeverMutatesStagedReview(t *testing.T) {
 	review := &ReviewStage{}
 	review.AddComment("internal/foo.go", 5, "blocking: nil deref on the unchecked input")
@@ -271,7 +241,7 @@ func TestRunGatedRefine_JudgeNeverMutatesStagedReview(t *testing.T) {
 		t.Fatalf("runner: %v", err)
 	}
 
-	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Review PR #7.\n\n" + AdvisorThreadMarker(token)}}}
+	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Review PR #7.\n\n[[quack:advisor-thread:" + token + "]]"}}}
 	for _, err := range r.Run(t.Context(), "u", "s", task, adkagent.RunConfig{}) {
 		if err != nil {
 			t.Fatalf("run: %v", err)
@@ -281,9 +251,8 @@ func TestRunGatedRefine_JudgeNeverMutatesStagedReview(t *testing.T) {
 	if res.Passed {
 		t.Fatalf("gate result Passed = true, want false (the contradicted finding must sink it)")
 	}
-	// behaviour_verified (no run_command in this stub) fails deterministically
-	// every round, so round 2 - the terminal round, whose feedback no revise
-	// ever consumes - skips the judge model entirely and merges the deterministic verdict directly: 1 judge call, not 2, even though the round loop still runs both rounds (res.Rounds below).
+	// behaviour_verified fails deterministically every round, so terminal round 2 skips the judge model
+	// and merges the deterministic verdict: 1 judge call though both rounds run.
 	if got := atomic.LoadInt32(&stub.judgeCalls); got != 1 {
 		t.Fatalf("judge calls = %d, want exactly 1 (round 2's already-failing deterministic criterion should skip the judge)", got)
 	}
@@ -302,9 +271,8 @@ func TestRunGatedRefine_JudgeNeverMutatesStagedReview(t *testing.T) {
 	}
 }
 
-// TestChangedFilesSection_IncludesNumberedFindingsAndVerdict proves the
-// judge prompt carries the staged findings as an explicit NUMBERED list
-// (not buried in the review prose) ALONGSIDE the review's overall staged verdict, so it can reason about severity/verdict coherence as well as verify each claim - both facts land in the same section the judge reads.
+// The judge prompt carries the staged findings as a numbered list beside the review's staged verdict,
+// so it can check severity/verdict coherence as well as each claim.
 func TestChangedFilesSection_IncludesNumberedFindingsAndVerdict(t *testing.T) {
 	cfg := probeRepo(t, true)
 	cfg.IsReviewer = true

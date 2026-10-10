@@ -28,9 +28,8 @@ func (s *PinnedSource) Get(ctx context.Context, name string) (artifactsrc.Artifa
 		return artifactsrc.Artifact{}, false, err
 	}
 	if !ok {
-		// A pinned name's version 404s: wrap ErrHard so the Resolver propagates
-		// this instead of falling back to the shipped static artifact, which
-		// would silently break the "llm.call rows carry that exact version" guarantee.
+		// ErrHard stops the Resolver falling back to the static artifact, which would
+		// break the guarantee that llm.call rows carry the pinned version.
 		return artifactsrc.Artifact{}, false, fmt.Errorf("pinned prompt %s@%d not found: %w", name, version, artifactsrc.ErrHard)
 	}
 	return artifactsrc.Artifact{Name: name, Body: p.Body, Config: p.Config, VersionID: strconv.Itoa(p.Version)}, true, nil // Source blank: the resolver stamps the store name
@@ -39,9 +38,8 @@ func (s *PinnedSource) Get(ctx context.Context, name string) (artifactsrc.Artifa
 // Seed is a no-op: an experiment run never seeds a store.
 func (s *PinnedSource) Seed(context.Context, string, artifactsrc.Artifact) error { return nil }
 
-// ResolveNow resolves name's pin eagerly, before the server boots - a bad --prompt
-// (unknown name/version, a 404) must fail the command naming it, not silently fall
-// back to the shipped static prompt the first time the resolver hits it.
+// ResolveNow resolves name's pin before boot so a bad --prompt fails the command
+// instead of silently falling back to the static prompt.
 func (s *PinnedSource) ResolveNow(ctx context.Context, name string) error {
 	_, ok, err := s.Get(ctx, name)
 	if err != nil {

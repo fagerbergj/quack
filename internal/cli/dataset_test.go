@@ -15,17 +15,12 @@ import (
 	extsdk "github.com/fagerbergj/quack-extensions/sdk"
 
 	"github.com/fagerbergj/quack/internal/langfuse"
-	"github.com/fagerbergj/quack/internal/langfuse/langfusegen"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/ledgertest"
 	"github.com/fagerbergj/quack/internal/store"
 )
 
-// setChatOrigin stamps chatID's Origin the way the github extension's
-// chatOrigin/refreshChatOrigin do, so tests exercise the real production write path.
-// State is derived from badge the same way the extension sets both together
-// ("merged" -> SubjectMerged, else SubjectOpen) - dataset.go branches on
-// State only, never Badge (extsdk: "Badge remains display-only").
+// setChatOrigin stamps Origin the way the github extension does; dataset.go branches on State, never Badge.
 func setChatOrigin(t *testing.T, st *store.Store, chatID, repo, url, badge string) {
 	t.Helper()
 	state := extsdk.SubjectOpen
@@ -101,12 +96,9 @@ func writeJSON(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func newTestGenClient(t *testing.T, srv *httptest.Server) *langfusegen.ClientWithResponses {
-	c, err := langfuse.NewGenClient(srv.URL, "pk", "sk", langfuse.WithHTTPClient(srv.Client()))
-	if err != nil {
-		t.Fatalf("NewGenClient: %v", err)
-	}
-	return c
+func newTestClient(t *testing.T, srv *httptest.Server) *langfuse.Client {
+	t.Helper()
+	return langfuse.New(srv.URL, "pk", "sk", langfuse.WithHTTPClient(srv.Client()))
 }
 
 // llmCallEntry builds a chat entry for a node stream: task -> answer.
@@ -150,7 +142,7 @@ func TestRunDatasetExport_Idempotent(t *testing.T) {
 	fake := newFakeLangfuse(t)
 	srv := fake.server()
 	defer srv.Close()
-	lf := newTestGenClient(t, srv)
+	lf := newTestClient(t, srv)
 
 	opts := ExportOpts{ChatID: chat.ID, Dataset: "my-dataset"}
 	first, _, err := RunDatasetExport(ctx, ls2, st, lf, opts)
@@ -177,9 +169,7 @@ func TestRunDatasetExport_Idempotent(t *testing.T) {
 	}
 }
 
-// TestRunDatasetExport_MetadataBlock pins issue #1424 item 16: the exported item's
-// metadata carries prompt_artifact/prompt_source/prompt_version_id (from the recorded
-// llm.call), plus repo (from Origin) and agent.
+// Item metadata carries prompt_artifact/source/version_id from the llm.call, plus repo and agent.
 func TestRunDatasetExport_MetadataBlock(t *testing.T) {
 	ctx := context.Background()
 	ls := ledgertest.NewMemStore()
@@ -219,7 +209,7 @@ func TestRunDatasetExport_MetadataBlock(t *testing.T) {
 	fake := newFakeLangfuse(t)
 	srv := fake.server()
 	defer srv.Close()
-	lf := newTestGenClient(t, srv)
+	lf := newTestClient(t, srv)
 
 	items, _, err := RunDatasetExport(ctx, ls2, st, lf, ExportOpts{ChatID: chat.ID, Dataset: "my-dataset"})
 	if err != nil {
@@ -300,7 +290,7 @@ func TestRunDatasetExport_ByRepoAndSince(t *testing.T) {
 	var items map[string]map[string]any
 	srv := datasetExistsServer(t, &items)
 	defer srv.Close()
-	lf := newTestGenClient(t, srv)
+	lf := newTestClient(t, srv)
 
 	got, _, err := RunDatasetExport(ctx, ls, st, lf, ExportOpts{Repo: "acme/widget", Dataset: "my-dataset"})
 	if err != nil {
@@ -344,7 +334,7 @@ func TestRunDatasetExport_LimitStopsEarly(t *testing.T) {
 	var items map[string]map[string]any
 	srv := datasetExistsServer(t, &items)
 	defer srv.Close()
-	lf := newTestGenClient(t, srv)
+	lf := newTestClient(t, srv)
 
 	got, _, err := RunDatasetExport(ctx, ls2, st, lf, ExportOpts{ChatID: chat.ID, Dataset: "my-dataset", Limit: 1})
 	if err != nil {
@@ -364,7 +354,7 @@ func TestRunDatasetExport_UnknownChatID(t *testing.T) {
 	var items map[string]map[string]any
 	srv := datasetExistsServer(t, &items)
 	defer srv.Close()
-	lf := newTestGenClient(t, srv)
+	lf := newTestClient(t, srv)
 
 	if _, _, err := RunDatasetExport(ctx, ledgertest.NewMemStore(), st, lf, ExportOpts{ChatID: "does-not-exist", Dataset: "my-dataset"}); err == nil {
 		t.Fatal("want an error, not a panic, for an unknown --chat id")
@@ -386,7 +376,7 @@ func TestRunDatasetExport_SinceFiltersOutOlderChats(t *testing.T) {
 	var items map[string]map[string]any
 	srv := datasetExistsServer(t, &items)
 	defer srv.Close()
-	lf := newTestGenClient(t, srv)
+	lf := newTestClient(t, srv)
 
 	got, _, err := RunDatasetExport(ctx, ledgertest.NewMemStore(), st, lf,
 		ExportOpts{Repo: "acme/widget", Since: time.Now().Add(24 * time.Hour), Dataset: "my-dataset"})
@@ -415,7 +405,7 @@ func TestRunDatasetExport_SinceAppliesToSingleChat(t *testing.T) {
 	var items map[string]map[string]any
 	srv := datasetExistsServer(t, &items)
 	defer srv.Close()
-	lf := newTestGenClient(t, srv)
+	lf := newTestClient(t, srv)
 
 	got, excludedBySince, err := RunDatasetExport(ctx, ledgertest.NewMemStore(), st, lf,
 		ExportOpts{ChatID: chat.ID, Since: time.Now().Add(24 * time.Hour), Dataset: "my-dataset"})
@@ -445,7 +435,7 @@ func TestRunDatasetExport_SkipsChatsWithNoRecording(t *testing.T) {
 	var items map[string]map[string]any
 	srv := datasetExistsServer(t, &items)
 	defer srv.Close()
-	lf := newTestGenClient(t, srv)
+	lf := newTestClient(t, srv)
 
 	got, _, err := RunDatasetExport(ctx, ls, st, lf, ExportOpts{ChatID: chat.ID, Dataset: "my-dataset"})
 	if err != nil {
@@ -491,7 +481,7 @@ func TestRunDatasetExport_ItemCreateFailurePropagates(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	lf := newTestGenClient(t, srv)
+	lf := newTestClient(t, srv)
 
 	if _, _, err := RunDatasetExport(ctx, ls2, st, lf, ExportOpts{ChatID: chat.ID, Dataset: "my-dataset"}); err == nil {
 		t.Fatal("want an error when the dataset-item create call fails")
@@ -534,16 +524,14 @@ func TestRunDatasetExport_DatasetCreateFailurePropagates(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	lf := newTestGenClient(t, srv)
+	lf := newTestClient(t, srv)
 
 	if _, _, err := RunDatasetExport(ctx, ls2, st, lf, ExportOpts{ChatID: chat.ID, Dataset: "my-dataset"}); err == nil {
 		t.Fatal("want an error when the dataset create call fails")
 	}
 }
 
-// TestRunDatasetExport_ItemIDsAreDatasetScoped pins issue #1424 item 7: Langfuse
-// dataset item ids are project-scoped and cannot be reused across datasets, so the
-// same (chat, node) exported to two different datasets must get two different ids.
+// The same (chat, node) in two datasets gets two ids: Langfuse item ids are project-scoped.
 func TestRunDatasetExport_ItemIDsAreDatasetScoped(t *testing.T) {
 	ctx := context.Background()
 	ls := ledgertest.NewMemStore()
@@ -584,7 +572,7 @@ func TestRunDatasetExport_ItemIDsAreDatasetScoped(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	lf := newTestGenClient(t, srv)
+	lf := newTestClient(t, srv)
 
 	a, _, err := RunDatasetExport(ctx, ls2, st, lf, ExportOpts{ChatID: chat.ID, Dataset: "dataset-a"})
 	if err != nil {
@@ -602,10 +590,7 @@ func TestRunDatasetExport_ItemIDsAreDatasetScoped(t *testing.T) {
 	}
 }
 
-// TestRunDatasetExport_DraftPlusRevise pins PR #1444 blocking finding 2: a
-// node's draft and revise rounds are separate ledger streams, but must
-// export as ONE item - task from the draft, expectedOutput from the revise
-// (the node's actually-delivered answer), never the synthetic revise prompt.
+// Draft and revise rounds export as one item: task from the draft, expectedOutput from the revise.
 func TestRunDatasetExport_DraftPlusRevise(t *testing.T) {
 	ctx := context.Background()
 	ls := ledgertest.NewMemStore()
@@ -637,7 +622,7 @@ func TestRunDatasetExport_DraftPlusRevise(t *testing.T) {
 	var items map[string]map[string]any
 	srv := datasetExistsServer(t, &items)
 	defer srv.Close()
-	lf := newTestGenClient(t, srv)
+	lf := newTestClient(t, srv)
 
 	got, _, err := RunDatasetExport(ctx, ls2, st, lf, ExportOpts{ChatID: chat.ID, Dataset: "my-dataset"})
 	if err != nil {
@@ -656,9 +641,7 @@ func TestRunDatasetExport_DraftPlusRevise(t *testing.T) {
 	}
 }
 
-// TestRunDatasetExport_DraftPlusContinuation pins the same finding for a
-// continuation round: expectedOutput must be the continuation's answer, not
-// the incomplete draft's.
+// A continuation round's answer is the expectedOutput, not the incomplete draft's.
 func TestRunDatasetExport_DraftPlusContinuation(t *testing.T) {
 	ctx := context.Background()
 	ls := ledgertest.NewMemStore()
@@ -690,7 +673,7 @@ func TestRunDatasetExport_DraftPlusContinuation(t *testing.T) {
 	var items map[string]map[string]any
 	srv := datasetExistsServer(t, &items)
 	defer srv.Close()
-	lf := newTestGenClient(t, srv)
+	lf := newTestClient(t, srv)
 
 	got, _, err := RunDatasetExport(ctx, ls2, st, lf, ExportOpts{ChatID: chat.ID, Dataset: "my-dataset"})
 	if err != nil {
@@ -734,7 +717,7 @@ func TestRunDatasetExport_OpenOriginHasNoExpectedOutput(t *testing.T) {
 	var items map[string]map[string]any
 	srv := datasetExistsServer(t, &items)
 	defer srv.Close()
-	lf := newTestGenClient(t, srv)
+	lf := newTestClient(t, srv)
 
 	got, _, err := RunDatasetExport(ctx, ls2, st, lf, ExportOpts{ChatID: chat.ID, Dataset: "my-dataset"})
 	if err != nil {
@@ -753,10 +736,7 @@ func TestRunDatasetExport_OpenOriginHasNoExpectedOutput(t *testing.T) {
 	}
 }
 
-// TestRunDatasetExport_PreStateOriginFallsBackToGithubState: a chat stamped
-// by a pre-SubjectState extension build (Origin present, State empty) must
-// still fall back to the legacy GithubState column, not read as unmerged
-// (PR #1444 round-2 finding).
+// Origin with empty State (older extension builds) must fall back to the GithubState column.
 func TestRunDatasetExport_PreStateOriginFallsBackToGithubState(t *testing.T) {
 	ctx := context.Background()
 	ls := ledgertest.NewMemStore()
@@ -787,7 +767,7 @@ func TestRunDatasetExport_PreStateOriginFallsBackToGithubState(t *testing.T) {
 	var items map[string]map[string]any
 	srv := datasetExistsServer(t, &items)
 	defer srv.Close()
-	lf := newTestGenClient(t, srv)
+	lf := newTestClient(t, srv)
 
 	got, _, err := RunDatasetExport(ctx, ls2, st, lf, ExportOpts{ChatID: chat.ID, Dataset: "my-dataset"})
 	if err != nil {

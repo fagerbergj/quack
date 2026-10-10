@@ -11,7 +11,7 @@ import (
 )
 
 // TestOpenPluginRegistryFilesystemWhenStoreUnset: plugins.store == "" must
-// still resolve to *pluginreg.FSRegistry (unchanged, #1427 P0/P1 behavior).
+// still resolve to *pluginreg.FSRegistry.
 func TestOpenPluginRegistryFilesystemWhenStoreUnset(t *testing.T) {
 	b := &boot{cfg: &config.Config{Plugins: &config.PluginsConfig{Root: t.TempDir()}}}
 	reg, err := b.openPluginRegistry(nil)
@@ -23,9 +23,8 @@ func TestOpenPluginRegistryFilesystemWhenStoreUnset(t *testing.T) {
 	}
 }
 
-// TestOpenPluginRegistrySqliteDifferentStoreOpensOwnDB: plugins.store naming
-// a sqlite stores[] entry that ISN'T session.store opens its own connection
-// (via pluginreg.OpenDB) and round-trips Put/List through it.
+// TestOpenPluginRegistrySqliteDifferentStoreOpensOwnDB: plugins.store naming a sqlite entry other than
+// session.store opens its own connection and round-trips Put/List.
 func TestOpenPluginRegistrySqliteDifferentStoreOpensOwnDB(t *testing.T) {
 	root := t.TempDir()
 	dbPath := filepath.Join(t.TempDir(), "plugins.db")
@@ -54,9 +53,8 @@ func TestOpenPluginRegistrySqliteDifferentStoreOpensOwnDB(t *testing.T) {
 	}
 }
 
-// TestOpenPluginRegistryReusesSessionStoreConnection: plugins.store naming
-// session.store's own name reuses st.DB() - proved by reading a Put row
-// back through st.DB() directly, not just through the returned registry.
+// TestOpenPluginRegistryReusesSessionStoreConnection: plugins.store naming session.store reuses st.DB(),
+// proved by reading a Put row back through st.DB() directly.
 func TestOpenPluginRegistryReusesSessionStoreConnection(t *testing.T) {
 	root := t.TempDir()
 	dbPath := filepath.Join(t.TempDir(), "quack.db")

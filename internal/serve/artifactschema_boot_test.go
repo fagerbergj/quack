@@ -1,7 +1,5 @@
-// artifactschema_boot_test.go: buildArtifactSchemas collects every built SDK
-// extension's declared artifact schemas at boot - a duplicate kind across two
-// extensions, or a schema that fails to compile, must fail boot naming the
-// culprits, not silently pick one or skip the kind.
+// buildArtifactSchemas must fail boot naming the culprits on a duplicate kind across extensions
+// or a schema that fails to compile, never silently pick one or skip the kind.
 package serve
 
 import (
@@ -13,9 +11,7 @@ import (
 	"google.golang.org/adk/v2/tool"
 )
 
-// fakeSchemaExtension implements extsdk.Extension + extsdk.ArtifactSchemas -
-// a stand-in for a real SDK module (mirrors fakeUIExtension), without
-// depending on the Sleeper module in this unit test.
+// fakeSchemaExtension stands in for an SDK module declaring artifact schemas, without depending on Sleeper.
 type fakeSchemaExtension struct {
 	schemas map[string]json.RawMessage
 }
@@ -63,9 +59,7 @@ func TestBuildArtifactSchemas_UncompilableSchemaNamesExtensionAndKind(t *testing
 	}
 }
 
-// TestBuildArtifactSchemas_IgnoresExtensionsWithoutTheInterface: a module
-// implementing no sdk.ArtifactSchemas (e.g. fakeUIExtension) contributes
-// nothing and causes no error - the interface stays optional.
+// TestBuildArtifactSchemas_IgnoresExtensionsWithoutTheInterface: sdk.ArtifactSchemas stays optional.
 func TestBuildArtifactSchemas_IgnoresExtensionsWithoutTheInterface(t *testing.T) {
 	exts := []builtSDKExtension{{name: "fake-ui-test", ext: fakeUIExtension{}}}
 	reg, err := buildArtifactSchemas(exts)
@@ -77,9 +71,8 @@ func TestBuildArtifactSchemas_IgnoresExtensionsWithoutTheInterface(t *testing.T)
 	}
 }
 
-// panickingSchemaExtension implements extsdk.ArtifactSchemas by panicking -
-// an extension bug (e.g. sleeper's own ArtifactSchemas reading a missing
-// embedded file) must fail boot with a named error, not crash with a stack.
+// panickingSchemaExtension: an extension bug in ArtifactSchemas must fail boot with a named error,
+// not crash with a stack.
 type panickingSchemaExtension struct{}
 
 func (panickingSchemaExtension) Tools() []tool.Tool                       { return nil }

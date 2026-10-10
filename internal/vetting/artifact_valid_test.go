@@ -86,9 +86,8 @@ func TestArtifactValidCriterion_PassesWhenValid(t *testing.T) {
 func TestArtifactValidCriterion_FailsWithViolationsWhenInvalid(t *testing.T) {
 	cfg := artifactValidTestConfig(t, nameRequiredArtifactSchema(t, kindDocument))
 	c := recordClient(cfg)
-	// recordClient carries cfg.Schemas too, so a direct SaveBlob of invalid
-	// content is itself refused - bypass enforcement here to set up a
-	// pre-existing invalid revision (e.g. written before the schema existed).
+	// recordClient enforces cfg.Schemas on SaveBlob; bypass it to plant a pre-existing
+	// invalid revision (e.g. written before the schema existed).
 	c = c.WithSchemas(nil)
 	if _, _, err := c.SaveBlob(context.Background(), kindDocument, []byte(`{"other":1}`), "application/json", DocumentHint(cfg.ChatID),
 		recordstore.Lineage{NodeID: artifactValidTestNodeID}); err != nil {
@@ -106,10 +105,8 @@ func TestArtifactValidCriterion_FailsWithViolationsWhenInvalid(t *testing.T) {
 	}
 }
 
-// TestArtifactValidCriterion_ScopedToThisNode_IgnoresOtherNodesRevision is
-// B3's regression: a chat-scoped id can carry another node's (or an earlier
-// run's) valid revision - a node that wrote nothing itself this run must not
-// inherit that pass.
+// A chat-scoped id can carry another node's or an earlier run's valid revision; a node
+// that wrote nothing itself this run must not inherit that pass.
 func TestArtifactValidCriterion_ScopedToThisNode_IgnoresOtherNodesRevision(t *testing.T) {
 	cfg := artifactValidTestConfig(t, nameRequiredArtifactSchema(t, kindDocument))
 	c := recordClient(cfg)
@@ -161,7 +158,7 @@ func TestSaveEpisodicRound_FallbackNeverStoresInvalidDocument(t *testing.T) {
 	base.Schemas = nameRequiredArtifactSchema(t, kindDocument)
 
 	prose := "This is the node's plain-text answer, not JSON at all."
-	saveEpisodicRound(context.Background(), base, base.NodeID, "turn-1", 1, prose, StagedDelivery{}, nil)
+	saveEpisodicRound(context.Background(), base, base.NodeID, "turn-1", 1, prose, StagedDelivery{}, nil, nil)
 
 	docID, err := recordstore.IdentityFor(kindDocument, nil, DocumentHint(base.ChatID))
 	if err != nil {

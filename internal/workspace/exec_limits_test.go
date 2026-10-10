@@ -7,9 +7,8 @@ import (
 	"testing"
 )
 
-// TestRunArgvNamesFileSizeLimit (#798): a child killed by a limit QUACK set
-// must say so. Before this, SIGXFSZ surfaced as the command's own opaque
-// failure - the ACP regression cost four bisect cycles precisely because the child's error never mentioned the ceiling that killed it.
+// TestRunArgvNamesFileSizeLimit: a child killed by a limit quack set must say so,
+// not surface SIGXFSZ as the command's own opaque failure.
 func TestRunArgvNamesFileSizeLimit(t *testing.T) {
 	if _, err := os.Stat("/usr/bin/prlimit"); err != nil {
 		t.Skipf("SKIPPING: prlimit(1) not installed (%v)", err)

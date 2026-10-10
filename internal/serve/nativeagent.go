@@ -14,14 +14,8 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// nativeAgent is buildAgents' clientMap entry for a native (co-located,
-// non-ACP) configured agent (#609). It embeds a prototype instance - built
-// once, at startup, NEVER Run - purely so Name()/Description() work for the
-// planner roster; every actual dispatch goes through ForNode, which builds a
-// worker exclusive to one DAG node (fresh model, fresh tools, its own
-// loopback A2A server) so two nodes sharing this configured agent
-// concurrently never race SetLedgerCoords/ledger.StampCoords's shared
-// mutable coordinate field.
+// nativeAgent's prototype is never Run; it only serves Name()/Description() for the planner roster.
+// ForNode builds a per-node worker so concurrent nodes never race the shared ledger coordinate field.
 type nativeAgent struct {
 	adkagent.Agent
 	build nodeBuilder
@@ -33,23 +27,21 @@ type roundCoordsSetter func(round int, turnID, headSHA, triggerAnnotation string
 // nodeRelease releases the node's pinned session, recording whether it stays paused.
 type nodeRelease func(paused bool)
 
-// promptRefresher re-resolves this node's system prompt at a round's start and
-// reports what that round runs on - one holder per dispatch, so two nodes of
-// the same agent can never move each other's prompt.
+// promptRefresher re-resolves a node's system prompt per round; one per dispatch, so nodes of the same
+// agent never move each other's prompt.
 type promptRefresher func(ctx context.Context) artifactsrc.Artifact
 
 // nodeBuilder builds one native node's dispatch worker.
 type nodeBuilder func(ctx context.Context, nodeKey, advisorToken string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, roundCoordsSetter, promptRefresher, nodeRelease, error)
 
-// ForNode builds one node's worker and tools (#1123); sink and ctx's chat turn id are handed
-// to the tools, whose A2A-served ctx carries neither. release(paused) closes its A2A server.
+// ForNode builds one node's worker and tools; sink and ctx's turn id go to the tools, whose A2A-served
+// ctx carries neither. release(paused) closes its A2A server.
 func (n nativeAgent) ForNode(ctx context.Context, nodeKey, advisorToken string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, func(round int, turnID, headSHA, triggerAnnotation string), func(context.Context) artifactsrc.Artifact, func(paused bool), error) {
 	return n.build(ctx, nodeKey, advisorToken, drain, artifacts, appName, userID, chatID, nodeID, sink)
 }
 
-// perNodeServers tracks currently-open per-node A2A servers (nativeAgent.ForNode) so process
-// shutdown can close any whose owning node's release() never ran (an abandoned dynamic node, a
-// crash mid-run) - self-pruning as each node releases, so memory stays bounded by nodes in flight.
+// perNodeServers lets shutdown close per-node A2A servers whose release() never ran; entries prune
+// themselves on release, so memory stays bounded by nodes in flight.
 type perNodeServers struct {
 	mu   sync.Mutex
 	open map[*agent.A2AServer]struct{}
@@ -59,16 +51,8 @@ func newPerNodeServers() *perNodeServers {
 	return &perNodeServers{open: make(map[*agent.A2AServer]struct{})}
 }
 
-// track registers srv and returns its release func: idempotent (safe to
-// call more than once; only the first call's argument and effects apply),
-// untracks before closing so a concurrent closeAll sweep can never double-close.
-//
-// release only closes this dispatch's own per-node A2A server. The
-// deterministic worker session (agent.scopeMessage) it served now outlives
-// every dispatch, paused or not - a node's later reuse (a brand new ForNode
-// call to the SAME session id) must always find its prior history, so the
-// only place that session gets reaped is chat archive/delete
-// (store.Store.ReapNodeSessions), not a single node's completion.
+// track returns an idempotent release that untracks before closing, so closeAll never double-closes.
+// The worker session outlives the dispatch (later reuse needs its history); only archive/delete reaps it.
 func (p *perNodeServers) track(srv *agent.A2AServer) func(paused bool) {
 	p.mu.Lock()
 	p.open[srv] = struct{}{}

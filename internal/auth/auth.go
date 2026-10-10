@@ -1,6 +1,5 @@
-// Package auth enforces Quack's inbound request auth: a chi middleware that
-// trusts a forward-auth gateway's headers, or verifies an OIDC bearer token,
-// depending on config.AuthConfig. Unconfigured (nil), it is a no-op — every request passes through unauthenticated, matching pre-auth behavior.
+// Package auth is quack's inbound auth middleware: trusted forward-auth headers or an OIDC bearer token,
+// per config.AuthConfig. Unconfigured (nil), every request passes unauthenticated.
 package auth
 
 import (
@@ -34,9 +33,8 @@ type Auth struct {
 	verifier            *oidcVerifier // nil when oidc: is not configured
 }
 
-// New builds the enforcement from cfg. A nil cfg returns a nil *Auth
-// (disabled). When cfg.OIDC is set, this fetches discovery (and, unless
-// jwks_url overrides it, the JWKS) synchronously — a bad issuer is a startup error, not a silent 401 factory discovered on the first request.
+// New builds the enforcement from cfg; nil cfg means disabled. With OIDC it fetches discovery (and JWKS)
+// synchronously, so a bad issuer is a startup error rather than a 401 on every request.
 func New(cfg *config.InboundAuthConfig) (*Auth, error) {
 	if cfg == nil {
 		return nil, nil
@@ -56,8 +54,8 @@ func New(cfg *config.InboundAuthConfig) (*Auth, error) {
 	return a, nil
 }
 
-// Middleware enforces the configured policy on every request it wraps. A nil
-// *Auth is a no-op passthrough. Per request: a trusted header (if configured and present) wins outright — the gateway already authenticated it; else a configured oidc verifier requires and checks a bearer token; else (auth configured but neither path satisfied) the request is unauthorized.
+// Middleware enforces the policy (a nil *Auth passes through): a present trusted header wins, else a
+// configured OIDC verifier requires a valid bearer token, else the request is unauthorized.
 func (a *Auth) Middleware(next http.Handler) http.Handler {
 	if a == nil {
 		return next
@@ -70,9 +68,8 @@ func (a *Auth) Middleware(next http.Handler) http.Handler {
 		if a.verifier != nil {
 			id, err := a.verifier.verifyRequest(r)
 			if err != nil {
-				// Bearer verification failure is an expected client-side condition
-				// (expired/malformed/wrong-audience token) - detail goes to the log,
-				// never the response, so an unauthenticated caller doesn't learn anything about the verifier's internals.
+				// A rejected bearer token is an expected client condition: detail goes to the log,
+				// never the response, so callers learn nothing about the verifier.
 				slog.Warn("bearer token rejected", "component", "auth", "err", err)
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
@@ -84,9 +81,8 @@ func (a *Auth) Middleware(next http.Handler) http.Handler {
 	})
 }
 
-// trustedIdentity reads the configured trusted headers off r. ok is false
-// when trusted_headers isn't configured, or this particular request doesn't
-// carry the user header — falling through to bearer-token verification.
+// trustedIdentity reads the configured trusted headers; ok is false when none are configured or the
+// request lacks the user header, falling through to bearer verification.
 func (a *Auth) trustedIdentity(r *http.Request) (Identity, bool) {
 	if a.trustedUserHeader == "" {
 		return Identity{}, false

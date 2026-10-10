@@ -18,17 +18,15 @@ import (
 	"github.com/fagerbergj/quack/internal/tools"
 )
 
-// formatPassLengthCeiling: an answer at or above this size skips the
-// already-structured short-circuit below and always gets the format pass -
-// a big answer is exactly where a second model pass is most likely to actually reorganize something, not just echo the input back (#1283 finding 14).
+// formatPassLengthCeiling: answers this long always get the format pass; a big answer is where
+// a second pass most likely reorganizes rather than echoes.
 const formatPassLengthCeiling = 4000
 
 // listItemPattern: a Markdown bullet or ordered-list item at line start.
 var listItemPattern = regexp.MustCompile(`(?m)^\s*(?:[-*+]|\d+[.)])\s+\S`)
 
-// alreadyStructured reports whether answer already reads as organized output:
-// a Markdown heading, or two-plus list items - the two shapes the format
-// pass's own instruction says to add ("Organize with Markdown headings/lists").
+// alreadyStructured reports a Markdown heading or two-plus list items, the two shapes the
+// format pass's instruction would add.
 func alreadyStructured(answer string) bool {
 	if strings.Contains(answer, "\n#") || strings.HasPrefix(answer, "#") {
 		return true
@@ -36,9 +34,8 @@ func alreadyStructured(answer string) bool {
 	return len(listItemPattern.FindAllStringIndex(answer, 2)) >= 2
 }
 
-// needsFormatPass: true when raw specialist output needs a format pass (no
-// synthesizer, no GitHub delivery, and not already short + structured -
-// #1283 finding 14: the pass is a near-identity transform on that input).
+// needsFormatPass: no synthesizer, no GitHub delivery, and not already short and structured
+// (the pass is a near-identity transform on that input).
 func needsFormatPass(plan dag.Plan, answer string) bool {
 	if plan.Delivery != nil {
 		return false

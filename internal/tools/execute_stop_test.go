@@ -65,8 +65,8 @@ func TestExecuteTool_StoppedSiblingStillDelivers(t *testing.T) {
 	}
 }
 
-// TestExecuteTool_StoppedTerminalEndsTurnWithoutAnswer: stopping the terminal node leaves
-// only a draft - nothing is finalized or delivered, and the turn ends instead of re-planning.
+// Stopping the terminal node leaves only a draft: nothing is delivered, and the turn ends instead of
+// re-planning.
 func TestExecuteTool_StoppedTerminalEndsTurnWithoutAnswer(t *testing.T) {
 	out, ctx, cache, finalized := stoppedStepRun(t, "s-1")
 	if out["status"] != "stopped" || *finalized || cache.Delivered() != "" || !ctx.actions.SkipSummarization {
@@ -74,8 +74,8 @@ func TestExecuteTool_StoppedTerminalEndsTurnWithoutAnswer(t *testing.T) {
 	}
 }
 
-// TestExecuteTool_StoppedSinkInPartialStepContinues: with no delivery declared there is no
-// answer to lose, so stopping either of two independent sinks just reports it and the turn goes on.
+// With no delivery declared there is no answer to lose, so a stopped sink is just reported and the turn
+// goes on.
 func TestExecuteTool_StoppedSinkInPartialStepContinues(t *testing.T) {
 	for _, stopped := range []string{"a-1", "b-1"} {
 		t.Run(stopped, func(t *testing.T) {
@@ -272,13 +272,12 @@ func TestExecuteTool_ExtensionDeliversItsOwnSinks(t *testing.T) {
 	if got, want := cache.Delivered(), "## w-4\n\nW4\n\n## w-5\n\nW5"; got != want {
 		t.Errorf("delivered %q, want %q", got, want)
 	}
-	if saved, _, _, _ := loadDagPlan(context.Background(), c); !slices.Equal(saved.Sinks, []string{"w-4", "w-5"}) {
+	if saved, _, _ := loadDagPlan(context.Background(), c); !slices.Equal(saved.Sinks, []string{"w-4", "w-5"}) {
 		t.Errorf("recorded sinks = %v, want the step's own [w-4 w-5] for a later retry or resume", saved.Sinks)
 	}
 }
 
-// TestExecuteTool_NoSinkRanIsNotDelivered: a delivering step in which nothing reached running has no
-// answer, so it must not report the plan delivered.
+// A delivering step in which nothing reached running has no answer, so the plan is not delivered.
 func TestExecuteTool_NoSinkRanIsNotDelivered(t *testing.T) {
 	rec := dag.DagPlanRecord{PlanID: "p1", Assignments: []dag.Assignment{{NodeID: "a-1", Task: "a"}}, Delivery: &dag.Delivery{Kind: "comment"}}
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher"}}, nil, nil)

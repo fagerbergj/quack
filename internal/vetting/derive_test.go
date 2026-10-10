@@ -11,9 +11,8 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// Regression: the planner cannot know a repo's check commands - it authors the
-// DAG before anything has looked at the repo - so PR #180's "checks are
-// mandatory" backstop forced it to guess, and checks are a property of the REPO, derived from it here, at gate time.
+// The planner authors the DAG before anything has looked at the repo, so checks are derived from the repo
+// at gate time instead.
 
 func writeRepo(t *testing.T, files map[string]string) string {
 	t.Helper()
@@ -87,9 +86,8 @@ func TestDeriveChecksEmptyAllowlistYieldsNone(t *testing.T) {
 	}
 }
 
-// End-to-end through the criterion: a code-implementer node with NO planner-set
-// checks and NO workdir still gets checks - the gate finds the one repo in its
-// workspace scope and derives them from it.
+// A code-implementer node with no planner-set checks and no workdir still gets checks derived from the one
+// repo in its workspace scope.
 func TestChecksPassCriterionDerivesWhenPlannerSetNone(t *testing.T) {
 	j, err := workspace.NewJail(t.TempDir())
 	if err != nil {
@@ -103,8 +101,7 @@ func TestChecksPassCriterionDerivesWhenPlannerSetNone(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// A repo whose only check script exits non-zero: the derived check must run
-	// and fail the node (proving derivation happened and executed in the repo).
+	// The repo's only check exits non-zero, so the node fails only if derivation ran in the repo.
 	if err := os.WriteFile(filepath.Join(repo, "Makefile"), []byte("build:\n\t@exit 3\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -122,8 +119,8 @@ func TestChecksPassCriterionDerivesWhenPlannerSetNone(t *testing.T) {
 	}
 }
 
-// No repo in the workspace ⇒ the criterion simply doesn't apply. A node must
-// never FAIL because the planner omitted `workdir`/`checks`.
+// No repo in the workspace means the criterion doesn't apply; a node must never fail because the planner
+// omitted `workdir`/`checks`.
 func TestChecksPassCriterionNoRepoSkipsRatherThanFails(t *testing.T) {
 	j, err := workspace.NewJail(t.TempDir())
 	if err != nil {
@@ -176,9 +173,8 @@ func scopeCfg(t *testing.T, workdir string, allow ...string) (Config, string) {
 	}, root
 }
 
-// Regression (live e2e 2026-07-13): the planner set no usable workdir, so the
-// checks dir resolved to the workspace SCOPE ROOT - which holds no package.json -
-// "no checks derived from the repo; skipping checks" ⇒ checks never ran ⇒ code that does not typecheck passed the gate at 0.7. The repo was one level down (<scope>/games), where git_clone put it: SEARCH for it.
+// With no usable workdir, the checks dir must search below the scope root for the repo (where git_clone
+// put it), or checks never run and non-compiling code passes.
 func TestChecksDirFindsRepoBelowTheScopeRoot(t *testing.T) {
 	for _, workdir := range []string{"", ".", "games"} {
 		t.Run("workdir="+workdir, func(t *testing.T) {
@@ -247,9 +243,7 @@ func TestChecksDirIgnoresNodeModules(t *testing.T) {
 	}
 }
 
-// Bug 2 (same live run): a failing check's FULL output was folded into the
-// revise prompt, which grew past the context window until compaction truncated
-// the worker's own task prompt and the revision worker failed outright. Bound it.
+// A failing check's full output folded into the revise prompt can overflow the context window; bound it.
 func TestBoundCheckOutputTruncatesLargeOutput(t *testing.T) {
 	huge := strings.Repeat("src/app/page.tsx(12,5): error TS2322: Type 'x' is not assignable to type 'y'.\n", 200)
 	got := boundCheckOutput(huge)

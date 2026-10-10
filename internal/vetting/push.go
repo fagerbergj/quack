@@ -1,6 +1,5 @@
-// push.go: the gate-owned push (moved from internal/github's App.Deliver,
-// which had no business running quack's own sandboxed git exec). The git
-// plumbing is duplicated from internal/tools/git.go, not imported - tools already imports vetting, so the reverse import would cycle.
+// push.go: the gate-owned push. Git plumbing is duplicated from internal/tools/git.go because
+// tools imports vetting, so importing it back would cycle.
 package vetting
 
 import (
@@ -42,7 +41,7 @@ const (
 // Branches the gate never pushes to. --force is unexpressible.
 var protectedBranches = map[string]bool{"main": true, "master": true}
 
-// stagesPush reports whether any staged item needs the branch pushed (#452).
+// stagesPush reports whether any staged item needs the branch pushed.
 func stagesPush(items []StagedDelivery) bool {
 	for _, it := range items {
 		if it.Kind == "pull_request" {
@@ -105,7 +104,6 @@ func ensureAskpassLink(root string) (string, error) {
 	return link, nil
 }
 
-// gitBinaryPath: resolves git via PATH.
 func gitBinaryPath() (string, error) {
 	p, err := exec.LookPath("git")
 	if err != nil {
@@ -212,7 +210,7 @@ func PushBranch(ctx context.Context, jailRoot, dir, repoURL, branch string, cred
 	auth := &gitAuth{cred: cred, askpass: link, host: u.Host, url: repoURL}
 	// --force: each run starts fresh, so leftover remote is never a fast-forward.
 	if pushErr := pushForce(ctx, dir, branch, caps, auth); pushErr != nil {
-		// A branch surviving from a prior run on the same issue is normal (#714):
+		// A branch surviving from a prior run on the same issue is normal:
 		// rebase onto it and retry once before giving up.
 		if rerr := rebaseOntoRemote(ctx, dir, branch, caps, auth); rerr != nil {
 			return "", pushErr
@@ -233,7 +231,8 @@ func pushForce(ctx context.Context, dir, branch string, caps workspace.Caps, aut
 	return err
 }
 
-// rebaseOntoRemote replays local commits on top of the surviving remote branch; aborts cleanly on conflict so a failed retry leaves the branch untouched.
+// rebaseOntoRemote replays local commits on the surviving remote branch;
+// it aborts cleanly on conflict so a failed retry leaves the branch untouched.
 func rebaseOntoRemote(ctx context.Context, dir, branch string, caps workspace.Caps, auth *gitAuth) error {
 	if _, _, err := runPushGit(ctx, dir, []string{"fetch", "--quiet", auth.url, branch}, caps, auth); err != nil {
 		return err

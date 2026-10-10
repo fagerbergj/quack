@@ -20,11 +20,8 @@ func (stubLLM) GenerateContent(context.Context, *model.LLMRequest, bool) iter.Se
 	return func(func(*model.LLMResponse, error) bool) {}
 }
 
-// TestPerNodeServersTrackNeverReapsWorkerSession: node reuse needs a node's
-// A2A worker session (internal/agent.WorkerSessionID) to survive past a
-// single dispatch, paused or not - only chat archive/delete
-// (store.ReapNodeSessions) reaps it now. release must still close the A2A
-// server, and stay idempotent, without touching the session at all.
+// TestPerNodeServersTrackNeverReapsWorkerSession: release closes the A2A server idempotently but never
+// touches the worker session; node reuse needs it, and only chat archive/delete reaps it.
 func TestPerNodeServersTrackNeverReapsWorkerSession(t *testing.T) {
 	ctx := context.Background()
 	sessions := session.InMemoryService()

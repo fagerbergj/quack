@@ -95,9 +95,8 @@ func TestTranslate_ThoughtFlushesBeforeToolCall(t *testing.T) {
 	}
 }
 
-// Narration before a tool call ("I'll investigate...") must not survive into
-// the delivered answer - only the contiguous block after the last tool call
-// does (#358).
+// Narration before a tool call must not survive into the delivered answer;
+// only the contiguous block after the last tool call does.
 func TestTranslate_AnswerResetsOnToolCall(t *testing.T) {
 	tr := newTranslator("/work")
 
@@ -112,9 +111,8 @@ func TestTranslate_AnswerResetsOnToolCall(t *testing.T) {
 	}
 }
 
-// The durable call/response pair lands only at the TERMINAL update, in quack's
-// tool vocabulary, ordered call-then-response so the ledger's pairing scan
-// works within the single event.
+// The durable call/response pair lands only at the terminal update, in quack's tool vocabulary,
+// ordered call-then-response for the ledger's pairing scan.
 func TestTranslate_ExecuteToolCallPair(t *testing.T) {
 	tr := newTranslator("/work")
 
@@ -149,9 +147,8 @@ func TestTranslate_ExecuteToolCallPair(t *testing.T) {
 	}
 }
 
-// An edit's diff carries the interesting fields; #388 - this must map to
-// "edit_file" (not "write_file") so the frontend's ToolCallView keys it to
-// the before→after diff view native edit_file calls get, with the path resolved node-relative (the ledger/judge namespace) and old/new text carried in args (EditFileView's diff source), never absolute for a path inside the node dir.
+// An edit with a diff maps to edit_file (not write_file) so the frontend shows the before/after diff view,
+// with the path node-relative and old/new text in args.
 func TestTranslate_EditDiffToEditFile(t *testing.T) {
 	tr := newTranslator("/work")
 	old := "a"
@@ -188,9 +185,7 @@ func TestTranslate_EditDiffNewFile(t *testing.T) {
 	}
 }
 
-// An edit with no diff content (some agents omit it) has nothing to show a
-// before→after for - falls back to the plainer write_file view rather than
-// rendering edit_file with an empty diff.
+// An edit with no diff content falls back to write_file rather than edit_file with an empty diff.
 func TestTranslate_EditWithoutDiffFallsBackToWriteFile(t *testing.T) {
 	tr := newTranslator("/work")
 	specs := tr.translate(sdk.UpdateToolCall("t9",
@@ -347,9 +342,8 @@ func TestTranslate_UnmappedKindKeepsNameAndArgs(t *testing.T) {
 	}
 }
 
-// pi-acp sets _meta on the ToolCall to carry an MCP-bridged tool's real name
-// (#1278) - the relay must use it verbatim, in place of the useless kind
-// "other", with the raw args (not the title stuffed into them).
+// pi-acp sets _meta to an MCP-bridged tool's real name; the relay uses it verbatim instead of kind "other",
+// with the raw args (not the title stuffed into them).
 func TestTranslate_MCPMetaResolvesRealToolName(t *testing.T) {
 	tr := newTranslator("/work")
 	specs := tr.translate(sdk.SessionUpdate{ToolCall: &sdk.SessionUpdateToolCall{
@@ -370,9 +364,8 @@ func TestTranslate_MCPMetaResolvesRealToolName(t *testing.T) {
 	}
 }
 
-// A third-party ACP agent (e.g. gemini-cli) can't set _meta, but it registers
-// quack's MCP tools under "<mcpServerName>_<tool>" the same way pi-acp does -
-// stripping that prefix off the title works without any agent-side change.
+// An agent that can't set _meta (gemini-cli) still registers quack's MCP tools as "<mcpServerName>_<tool>",
+// so stripping the title prefix works with no agent-side change.
 func TestTranslate_MCPTitlePrefixResolvesRealToolName(t *testing.T) {
 	tr := newTranslator("/work")
 	specs := tr.translate(sdk.StartToolCall("t1", "quackmcp_stage_review",
@@ -385,9 +378,7 @@ func TestTranslate_MCPTitlePrefixResolvesRealToolName(t *testing.T) {
 	}
 }
 
-// A genuinely unknown tool call (kind "other", no MCP identity) must still
-// never render the literal "other" - it's named after its human title, the
-// real fix for what #959 used to paper over in the frontend.
+// An unknown tool call (kind "other", no MCP identity) is named after its title, never the literal "other".
 func TestTranslate_UnknownOtherKindNamedAfterTitle(t *testing.T) {
 	tr := newTranslator("/work")
 	specs := tr.translate(sdk.StartToolCall("t1", "Loaded skill: review-code",

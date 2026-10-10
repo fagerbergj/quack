@@ -15,9 +15,8 @@ import (
 	"github.com/fagerbergj/quack/internal/schema"
 )
 
-// fakeUIExtension implements extsdk.Extension + extsdk.UI - a stand-in for a real SDK
-// module, so buildSDKExtensions' sdk.UI type assertion is testable without a registered
-// module (noop predates sdk.UI).
+// fakeUIExtension stands in for an SDK module with sdk.UI, so buildSDKExtensions' type assertion is
+// testable without a registered module.
 type fakeUIExtension struct{}
 
 func (fakeUIExtension) Tools() []tool.Tool                       { return nil }
@@ -32,9 +31,8 @@ func init() {
 	})
 }
 
-// TestBuildSDKExtensions_UIDescriptorCaptured proves buildSDKExtensions type-asserts sdk.UI
-// at build time and extensionDescriptors surfaces it - the wiring GET /api/v1/extensions
-// depends on for a module WITH a UI descriptor.
+// TestBuildSDKExtensions_UIDescriptorCaptured: buildSDKExtensions type-asserts sdk.UI at build time and
+// extensionDescriptors surfaces it (what GET /api/v1/extensions relies on).
 func TestBuildSDKExtensions_UIDescriptorCaptured(t *testing.T) {
 	st, orch, hub, artifacts, jail := newExtTestStack(t)
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
@@ -88,9 +86,7 @@ func TestBuildSDKExtensions_NoUIDescriptor_NameOnly(t *testing.T) {
 
 func strPtrForTest(s string) *string { return &s }
 
-// fakeHostCaptureExtension captures the Host it's constructed with, so a
-// test can assert what buildSDKExtensions passes into extsdk.Host - here,
-// Version/PublicURL (the comment-footer wiring).
+// fakeHostCaptureExtension captures the Host buildSDKExtensions passes it.
 type fakeHostCaptureExtension struct{}
 
 func (fakeHostCaptureExtension) Tools() []tool.Tool                       { return nil }
@@ -105,10 +101,8 @@ func init() {
 	})
 }
 
-// TestBuildSDKExtensions_HostCarriesVersionAndPublicURL: the running quack
-// build stamp and server.public_url reach every SDK extension's Host, so an
-// extension (e.g. the GitHub comment footer) can name the run that produced
-// its output without probing quack's own config.
+// TestBuildSDKExtensions_HostCarriesVersionAndPublicURL: the build stamp and server.public_url reach every
+// extension's Host, so e.g. the GitHub comment footer can name the run.
 func TestBuildSDKExtensions_HostCarriesVersionAndPublicURL(t *testing.T) {
 	st, orch, hub, artifacts, jail := newExtTestStack(t)
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]

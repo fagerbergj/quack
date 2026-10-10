@@ -5,8 +5,8 @@ import (
 	"regexp"
 )
 
-// ReservedRouteNames are top-level path segments quack's own routes and the
-// SPA's client-side router already claim: "api" (REST/MCP), "debug" (adkdebug.MountPath), "health"/"healthz" (liveness), "assets" (Vite's default build-output dir), "ext" (reserved as a namespace word, not used as a path prefix itself), the SPA's own routes from frontend/src/router.ts ("chat", "memory"), and "static" (reserved defensively for the same reason as "assets"). An SDK extension mounted at one of these would shadow, or be shadowed by, a route quack already owns. Extend this list whenever a new top-level SPA route or server-owned path segment is added.
+// ReservedRouteNames are top-level segments quack's routes and the SPA router (frontend/src/router.ts) claim;
+// an extension mounted at one would shadow or be shadowed. Extend it with every new top-level route.
 var ReservedRouteNames = []string{
 	"api", "assets", "chat", "debug", "ext", "health", "healthz", "memory", "static",
 }
@@ -15,9 +15,8 @@ var ReservedRouteNames = []string{
 // them - what's safe to use as a literal chi mount path segment.
 var extensionNamePattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
-// ValidateExtensionName rejects a name that isn't URL-safe or collides with
-// a ReservedRouteNames entry. Callers should run this once at startup for
-// every extension that will actually be mounted (registered AND configured), not every compiled-in name.
+// ValidateExtensionName rejects a name that isn't URL-safe or is reserved. Run it at startup for every
+// extension actually mounted, not every compiled-in name.
 func ValidateExtensionName(name string) error {
 	if !extensionNamePattern.MatchString(name) {
 		return fmt.Errorf("extension name %q must be lowercase alphanumeric with single dashes between segments", name)

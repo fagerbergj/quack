@@ -70,9 +70,8 @@ func TestPromptsValidation(t *testing.T) {
 	}
 }
 
-// TestPromptsStoreNeedsCredentials: a half-populated langfuse store falls back
-// to static on every name and looks exactly like Langfuse holding no prompts,
-// so it must fail the config rather than boot into a silent no-op.
+// A half-populated langfuse store would silently serve static prompts for every name,
+// so it must fail the config rather than boot into a no-op.
 func TestPromptsStoreNeedsCredentials(t *testing.T) {
 	const head = `
 providers:

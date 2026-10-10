@@ -7,13 +7,12 @@ import (
 	"google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/tool"
-	"google.golang.org/genai"
 )
 
 // pathScrub: respells host paths in errors to the model's namespace.
 type pathScrub struct {
-	inner runnableTool
-	b     fsBinding
+	runnableTool
+	b fsBinding
 }
 
 // newPathScrub wraps inner; non-runnable tools pass through.
@@ -22,23 +21,16 @@ func newPathScrub(inner tool.Tool, b fsBinding) tool.Tool {
 	if !ok {
 		return inner
 	}
-	return &pathScrub{inner: rt, b: b}
+	return &pathScrub{runnableTool: rt, b: b}
 }
 
-func (p *pathScrub) Name() string        { return p.inner.Name() }
-func (p *pathScrub) Description() string { return p.inner.Description() }
-func (p *pathScrub) IsLongRunning() bool { return p.inner.IsLongRunning() }
-
-func (p *pathScrub) Declaration() *genai.FunctionDeclaration { return p.inner.Declaration() }
-
-// ProcessRequest packs the wrapper into the request's tool map.
 func (p *pathScrub) ProcessRequest(ctx agent.Context, req *model.LLMRequest) error {
-	return rebindToolMap(p.inner, p, ctx, req)
+	return rebindToolMap(p.runnableTool, p, ctx, req)
 }
 
 // Run is a pass-through except on error, where host paths are respelled.
 func (p *pathScrub) Run(ctx agent.Context, args any) (map[string]any, error) {
-	res, err := p.inner.Run(ctx, args)
+	res, err := p.runnableTool.Run(ctx, args)
 	if err == nil {
 		return res, nil
 	}

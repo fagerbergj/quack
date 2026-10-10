@@ -34,6 +34,20 @@ func (f fakeModel) GenerateContent(_ context.Context, _ *model.LLMRequest, _ boo
 	}
 }
 
+// funcModel computes its reply per request, eagerly, so side effects land before iteration.
+type funcModel func(req *model.LLMRequest) string
+
+func (funcModel) Name() string { return "func-consolidator" }
+
+func (f funcModel) GenerateContent(ctx context.Context, req *model.LLMRequest, stream bool) iter.Seq2[*model.LLMResponse, error] {
+	return fakeModel{reply: f(req)}.GenerateContent(ctx, req, stream)
+}
+
+// counting replies with reply and counts its calls.
+func counting(calls *int, reply string) funcModel {
+	return func(*model.LLMRequest) string { *calls++; return reply }
+}
+
 func TestCommit_AddThenRecall(t *testing.T) {
 	ctx := context.Background()
 	consolidator := fakeModel{reply: "```json\n{\"ops\":[{\"action\":\"ADD\",\"content\":\"transportforireland.ie is authoritative for Irish transit\",\"kind\":\"source\"}]}\n```"}
@@ -83,9 +97,8 @@ func TestCommit_NoConsolidator(t *testing.T) {
 	}
 }
 
-// TestCommit_ConsolidatorDefaultAgentFillsTokenUsage pins serve.go's openMemory wiring:
-// Commit runs from a background goroutine or tool call whose ctx never carries the node's
-// coords, so the consolidator's tracedModel needs the SetDefaultAgent("memory") fallback to attribute its token usage at all.
+// Commit's ctx never carries node coords, so the consolidator's tracedModel needs the
+// SetDefaultAgent("memory") fallback to attribute token usage at all.
 func TestCommit_ConsolidatorDefaultAgentFillsTokenUsage(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
@@ -161,9 +174,8 @@ func TestNeighbourProbe(t *testing.T) {
 	}
 }
 
-// TestCommit_AbsorptionMergesThreeDuplicates (epic #1255 P5) end to end: a
-// consolidation pass that UPDATEs one memory and DELETEs two others "duplicate of" it must leave the
-// survivor carrying all three original ids in absorbed_ids and the summed vote score, with the absorbed two invalidated with reason "absorbed by <survivor>".
+// UPDATE one + DELETE two "duplicate of" it: the survivor carries all three ids and the summed votes,
+// and the absorbed two are invalidated "absorbed by <survivor>".
 func TestCommit_AbsorptionMergesThreeDuplicates(t *testing.T) {
 	ctx := context.Background()
 	reply := `{"ops":[
@@ -217,8 +229,8 @@ func TestCommit_AbsorptionMergesThreeDuplicates(t *testing.T) {
 	}
 }
 
-// TestCommit_CandidateCap (issue #1269 item 3): a node that stages more than maxCandidatesPerCommit
-// candidates only gets the first three forwarded to consolidation - the rest never even reach the LLM. Run against both backends (#1268's forEachBackend); every op here is a fresh ADD, so there's no fixed id for qdrant's UUID-only point-id to reject.
+// Only the first maxCandidatesPerCommit candidates reach the LLM. Every op is a fresh ADD, so there is
+// no fixed id for qdrant's UUID-only point id to reject.
 func TestCommit_CandidateCap(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
 		ctx := context.Background()
@@ -241,9 +253,8 @@ func TestCommit_CandidateCap(t *testing.T) {
 	})
 }
 
-// TestConsolidatePrompt_RejectsChangeLog (issue #1269 item 2): given a change-log
-// candidate ("X was added in this PR") and a durable convention, a consolidator that follows the
-// prompt's instruction (NOOP the change-log one, ADD the convention) must result in exactly one memory written, not two. The fake model is scripted to the desired behavior - it only proves Commit correctly applies a NOOP+ADD response. Run against both backends; the ADD op needs no fixed id.
+// A scripted NOOP (change-log) + ADD (convention) reply writes exactly one memory; this proves Commit
+// applies the ops, not that the prompt works.
 func TestConsolidatePrompt_RejectsChangeLog(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
 		ctx := context.Background()
@@ -266,9 +277,7 @@ func TestConsolidatePrompt_RejectsChangeLog(t *testing.T) {
 	})
 }
 
-// TestConsolidatePromptTask_MentionsChangeLog pins the prompt text itself (issue
-// #1269 item 2) against a future edit silently dropping the change-log rejection
-// instruction - a fake-model test can't otherwise catch a regression in prompt wording.
+// Pins the prompt's change-log rejection wording, which no fake-model test can catch regressing.
 func TestConsolidatePromptTask_MentionsChangeLog(t *testing.T) {
 	if !strings.Contains(consolidatePrompts["task"], "CHANGE-LOG") {
 		t.Fatal(`consolidatePrompts["task"] no longer mentions rejecting CHANGE-LOG candidates`)
@@ -307,7 +316,7 @@ func TestDecide_ScopeLineNamesTheBucket(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
 		ctx := context.Background()
 		var got string
-		s := newStore("task", capturingModel{lastUser: &got})
+		s := newStore("task", funcModel(func(req *model.LLMRequest) string { got = promptText(req); return `{"ops":[]}` }))
 		if _, err := s.Commit(ctx, Scope{Role: RoleCoding}, "reviewer", Provenance{}, []Candidate{{Content: "x"}}, ""); err != nil {
 			t.Fatalf("Commit: %v", err)
 		}
@@ -315,17 +324,4 @@ func TestDecide_ScopeLineNamesTheBucket(t *testing.T) {
 			t.Fatalf("consolidation prompt missing bucket scope, got: %q", got)
 		}
 	})
-}
-
-// capturingModel records the last consolidation request's user text (via promptText,
-// scope_test.go) and NOOPs everything - a probe, not a scripted consolidator.
-type capturingModel struct{ lastUser *string }
-
-func (capturingModel) Name() string { return "capturing-consolidator" }
-
-func (m capturingModel) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	*m.lastUser = promptText(req)
-	return func(yield func(*model.LLMResponse, error) bool) {
-		yield(&model.LLMResponse{Content: &genai.Content{Parts: []*genai.Part{{Text: `{"ops":[]}`}}}}, nil)
-	}
 }

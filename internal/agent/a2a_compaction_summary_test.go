@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"iter"
 	"strings"
 	"testing"
 	"time"
@@ -12,23 +11,14 @@ import (
 	"google.golang.org/genai"
 )
 
-// capturingSummaryModel records the last LLMRequest a summarizer sent it.
-type capturingSummaryModel struct{ last *model.LLMRequest }
-
-func (m *capturingSummaryModel) Name() string { return "summarizer" }
-
-func (m *capturingSummaryModel) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	m.last = req
-	return func(yield func(*model.LLMResponse, error) bool) {
-		yield(&model.LLMResponse{Content: genai.NewContentFromText("ok", genai.RoleModel), FinishReason: genai.FinishReasonStop}, nil)
-	}
-}
-
-// TestNativeCompactionConfigDoesNotTruncatePreviousSummary is a regression test for the ADK audit's A1 finding: NativeCompactionConfig left MaxToolContentChars
-// at ADK's zero value, which the summarizer reads as its 2000-char default and applies to EVERY rendered part - including the rolling summary that tail
-// retention seeds the next compaction window with. quack's compaction prompt demands "ALL TECHNICAL CONTENT" and allows a summary far longer than usual, so a summary that grows past 2000 chars must reach the summarizer whole.
+// ADK's default MaxToolContentChars (2000) applies to every rendered part, including the rolling summary
+// that seeds the next window; a summary past 2000 chars must reach the summarizer whole.
 func TestNativeCompactionConfigDoesNotTruncatePreviousSummary(t *testing.T) {
-	m := &capturingSummaryModel{}
+	var last *model.LLMRequest
+	m := &fakeLLM{func(req *model.LLMRequest) *model.LLMResponse {
+		last = req
+		return &model.LLMResponse{Content: genai.NewContentFromText("ok", genai.RoleModel), FinishReason: genai.FinishReasonStop}
+	}}
 	cfg, err := NativeCompactionConfig(Compaction{
 		Summarizer:    m,
 		ContextWindow: 131072,
@@ -61,16 +51,14 @@ func TestNativeCompactionConfigDoesNotTruncatePreviousSummary(t *testing.T) {
 	if _, err := cfg.Summarizer.SummarizeEvents(context.Background(), []*session.Event{seed, user}); err != nil {
 		t.Fatalf("SummarizeEvents: %v", err)
 	}
-	if m.last == nil || len(m.last.Contents) == 0 || len(m.last.Contents[0].Parts) == 0 {
+	if last == nil || len(last.Contents) == 0 || len(last.Contents[0].Parts) == 0 {
 		t.Fatal("summarizer model was never called with a prompt")
 	}
-	got := m.last.Contents[0].Parts[0].Text
+	got := last.Contents[0].Parts[0].Text
 	if strings.Contains(got, "[truncated") {
 		t.Fatalf("previous summary was truncated despite MaxToolContentChars: -1: %.200s...", got)
 	}
-	// formatEvents escapes newlines to literal "\n" so a rendered value can't
-	// forge a line break (session/compaction/llm_summarizer.go escapeLines) -
-	// compare against the same escaping rather than the raw text.
+	// adk's formatEvents escapes newlines so a value can't forge a line break; compare against the same escaping.
 	wantEscaped := strings.ReplaceAll(long, "\n", "\\n")
 	if !strings.Contains(got, wantEscaped) {
 		t.Fatalf("summarizer prompt does not contain the full previous summary verbatim; got %d chars", len(got))

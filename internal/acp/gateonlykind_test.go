@@ -12,9 +12,8 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// TestGateOnlyKindsNeverOfferedAsWorkerTools proves judge_round and
-// delivery_record - written only by the gate itself (saveJudgeRoundRecord,
-// commitDelivery), never by a worker - never appear as a write_<kind> tool: not in the round preamble's mcpToolNames list, and not on the live MCP server a code-reviewer round actually talks to. A direct call for either is rejected as an unknown tool, since no tool was ever registered.
+// TestGateOnlyKindsNeverOfferedAsWorkerTools: judge_round and delivery_record (gate-written) never appear
+// as write_<kind> in mcpToolNames or on the live MCP server, and a direct call is an unknown tool.
 func TestGateOnlyKindsNeverOfferedAsWorkerTools(t *testing.T) {
 	secret := mustMemSecret(t)
 	sess := vetting.MemSession{

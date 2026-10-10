@@ -13,9 +13,7 @@ import (
 	"github.com/fagerbergj/quack/internal/recordstore"
 )
 
-// execToolCtx adds Actions() on top of planToolCtx - the execute tool's
-// happy path sets SkipSummarization, which StrictContextMock (and so
-// planToolCtx/fakeCtx) doesn't implement.
+// execToolCtx adds Actions(): execute's happy path sets SkipSummarization, which fakeCtx lacks.
 type execToolCtx struct {
 	planToolCtx
 	actions session.EventActions
@@ -23,8 +21,7 @@ type execToolCtx struct {
 
 func newExecToolCtx() *execToolCtx { return &execToolCtx{planToolCtx: planToolCtx{newFakeCtx()}} }
 
-// newFakeSetErrCtx: a ctx whose session State fails every Set - the execute
-// tool must surface that as a tool error instead of silently dropping the plan.
+// newFakeSetErrCtx: a ctx whose session State fails every Set.
 func newFakeSetErrCtx() *fakeCtx {
 	c := newFakeCtx()
 	c.state.setErr = errors.New("state backend down")
@@ -33,9 +30,15 @@ func newFakeSetErrCtx() *fakeCtx {
 
 func (c *execToolCtx) Actions() *session.EventActions { return &c.actions }
 
-// seedPlanRecord writes nodes then rec into a fresh in-memory recordstore.Client,
-// the shape execute reads - the test-side equivalent of a prior
-// create_plan/edit_plan call.
+// capturePlan records the plan execute dispatches and starts every node, as a nil runStep would.
+func capturePlan(got *dag.Plan) RunStepFunc {
+	return func(_ context.Context, p dag.Plan, _ map[string]string, run map[string]bool) (map[string]string, map[string]bool, map[string]bool, error) {
+		*got = p
+		return nil, nil, run, nil
+	}
+}
+
+// seedPlanRecord writes nodes then rec into a fresh store, as a prior create_plan/edit_plan would.
 func seedPlanRecord(t *testing.T, rec dag.DagPlanRecord, nodes []dag.DagNodeRecord) *recordstore.Client {
 	t.Helper()
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
@@ -65,9 +68,8 @@ func TestNewExecuteToolMetadata(t *testing.T) {
 	}
 }
 
-// TestExecuteTool_UnreachableRepoReturnsHumanErrorNotFatal pins #848: an
-// unreachable repo must fail the execute TOOL CALL - a normal error result the
-// model can revise from (drop setup, or name a reachable repo), never a run-phase fatal; exercises the real dag.Executor.Provision through the tool's actual Run (mirroring dag/setup_test.go's fake-setupFn pattern for the git failure).
+// An unreachable repo fails the execute tool call with an error the model can revise from, never a
+// run-phase fatal.
 func TestExecuteTool_UnreachableRepoReturnsHumanErrorNotFatal(t *testing.T) {
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
 	rec := dag.DagPlanRecord{
@@ -78,8 +80,7 @@ func TestExecuteTool_UnreachableRepoReturnsHumanErrorNotFatal(t *testing.T) {
 	c := seedPlanRecord(t, rec, []dag.DagNodeRecord{{NodeID: "impl", Agent: "code-implementer"}})
 	cache := NewPlanCache()
 
-	// Mirrors runGit's real error shape (internal/tools/git.go): "git
-	// <argv...>: <stderr>" - what SetupClone actually returns.
+	// Mirrors the error shape SetupClone returns from runGit: "git <argv...>: <stderr>".
 	gitFatal := errors.New("git clone --quiet --branch main --single-branch https://github.com/chrishay-quack/quack.git repo: " +
 		"fatal: could not read Username for 'https://github.com': terminal prompts disabled")
 	ex := dag.NewExecutor(nil, nil, nil, nil, nil, nil)
@@ -108,16 +109,14 @@ func TestExecuteTool_UnreachableRepoReturnsHumanErrorNotFatal(t *testing.T) {
 	if strings.Contains(msg, "git clone") {
 		t.Errorf("execute error = %q, want the git argv dump stripped, not surfaced verbatim", msg)
 	}
-	// The turn must not die: nothing got selected, so the model can call
-	// edit_plan and retry execute.
+	// Nothing was selected, so the model can edit_plan and retry execute.
 	if _, selected := cache.Selected(); selected {
 		t.Error("a failed provisioning must not select the plan - the model needs to be able to retry")
 	}
 }
 
-// TestExecuteTool_ProvisionsSetupBeforeSelecting pins the happy path: the execute
-// tool provisions plan.Setup itself (not just the run phase) before marking the
-// plan selected, and the cached plan read back carries Setup.Provisioned - so the run phase (runPlanSetup) skips it.
+// execute provisions plan.Setup before marking the plan selected, and the dispatched plan carries
+// Setup.Provisioned so the run phase skips it.
 func TestExecuteTool_ProvisionsSetupBeforeSelecting(t *testing.T) {
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
 	rec := dag.DagPlanRecord{
@@ -135,7 +134,8 @@ func TestExecuteTool_ProvisionsSetupBeforeSelecting(t *testing.T) {
 		return nil
 	})
 
-	tl, err := NewExecuteTool(planner, c, cache, ex.Provision, nil, nil, nil, "implement it", nil, nil, nil, "", nil, false, "orchestrator", nil)
+	var got dag.Plan
+	tl, err := NewExecuteTool(planner, c, cache, ex.Provision, capturePlan(&got), nil, nil, "implement it", nil, nil, nil, "", nil, false, "orchestrator", nil)
 	if err != nil {
 		t.Fatalf("NewExecuteTool: %v", err)
 	}
@@ -146,12 +146,8 @@ func TestExecuteTool_ProvisionsSetupBeforeSelecting(t *testing.T) {
 	if provisionCalls != 1 {
 		t.Fatalf("setupFn called %d times, want exactly 1", provisionCalls)
 	}
-	got, ok := cache.Get("p1")
-	if !ok {
-		t.Fatal("plan not found in cache")
-	}
-	if !got.Setup.Provisioned {
-		t.Error("cached plan's Setup.Provisioned = false after a successful execute, want true")
+	if got.Setup == nil || !got.Setup.Provisioned {
+		t.Error("dispatched plan's Setup.Provisioned = false after a successful execute, want true")
 	}
 	if id, selected := cache.Selected(); !selected || id != "p1" {
 		t.Errorf("Selected() = (%q, %v), want (\"p1\", true)", id, selected)
@@ -203,9 +199,8 @@ func TestDeliveredAnswer(t *testing.T) {
 	}
 }
 
-// TestExecuteTool_PlanPersistFailureSurfaces: the exec plan is the cross-restart
-// resume record (the orchestrator reads ExecPlanKey back) - a failed persist
-// must fail the tool call, not run on with the resume state silently missing.
+// ExecPlanKey is the cross-restart resume record, so a failed persist must fail the call rather than run
+// on without it.
 func TestExecuteTool_PlanPersistFailureSurfaces(t *testing.T) {
 	rec := dag.DagPlanRecord{
 		PlanID:      "p1",
@@ -232,7 +227,7 @@ func TestExecuteTool_PlanPersistFailureSurfaces(t *testing.T) {
 	if step.calls != 0 {
 		t.Errorf("runStep called %d times after a persist failure, want 0", step.calls)
 	}
-	if _, ok := cache.Get("p1"); ok {
-		t.Error("plan cached after a persist failure, want nothing persisted for a resume")
+	if _, selected := cache.Selected(); selected {
+		t.Error("plan selected after a persist failure, want nothing persisted for a resume")
 	}
 }

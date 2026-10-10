@@ -7,14 +7,13 @@ import (
 	"google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/tool"
-	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/ledger"
 )
 
 // cancelGuard: refuses calls when the calling node has been cancelled (latency: one tool call).
 type cancelGuard struct {
-	inner     runnableTool
+	runnableTool
 	cancelled func(chatID, nodeID string) bool
 	scope     CallScope
 }
@@ -27,24 +26,17 @@ func newCancelGuard(inner tool.Tool, cancelled func(chatID, nodeID string) bool,
 	if !ok {
 		return nil, fmt.Errorf("tool %q does not support node cancellation (not a runnable function tool)", inner.Name())
 	}
-	return &cancelGuard{inner: rt, cancelled: cancelled, scope: scope}, nil
+	return &cancelGuard{runnableTool: rt, cancelled: cancelled, scope: scope}, nil
 }
 
-func (c *cancelGuard) Name() string        { return c.inner.Name() }
-func (c *cancelGuard) Description() string { return c.inner.Description() }
-func (c *cancelGuard) IsLongRunning() bool { return c.inner.IsLongRunning() }
-
-func (c *cancelGuard) Declaration() *genai.FunctionDeclaration { return c.inner.Declaration() }
-
 func (c *cancelGuard) SetLedgerCoords(coords ledger.Coords) {
-	if cs, ok := c.inner.(ledger.CoordSetter); ok {
+	if cs, ok := c.runnableTool.(ledger.CoordSetter); ok {
 		cs.SetLedgerCoords(coords)
 	}
 }
 
-// ProcessRequest packs the wrapper into the request's tool map.
 func (c *cancelGuard) ProcessRequest(ctx agent.Context, req *model.LLMRequest) error {
-	return rebindToolMap(c.inner, c, ctx, req)
+	return rebindToolMap(c.runnableTool, c, ctx, req)
 }
 
 // Run: refuses if node cancelled; calls without node scope, or whose thread is gone, are never blocked.
@@ -54,7 +46,7 @@ func (c *cancelGuard) Run(ctx agent.Context, args any) (map[string]any, error) {
 			"tool", c.Name(), "chat", chatID, "node", nodeID)
 		return nil, fmt.Errorf("%s", cancelledMsg)
 	}
-	return c.inner.Run(ctx, args)
+	return c.runnableTool.Run(ctx, args)
 }
 
 // node is the calling node's (chat, node); ("", "") outside a node or when its thread is not registered.

@@ -9,36 +9,31 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// rubricScale: a scale's bounds and pass floor. Per #941 redirect: the
-// rubric IS data now (the envelope already carries definition/scale/bands),
-// so the scale that used to live only in prose ("7 is the lowest passing score") is declared here and validated at load time instead of eyeballed.
+// rubricScale: a scale's bounds and pass floor, declared as data and validated at load time.
 type rubricScale struct {
 	Min  float64 `yaml:"min"`
 	Max  float64 `yaml:"max"`
 	Pass float64 `yaml:"pass"`
 }
 
-// rubricCriterion: one criterion's full authoring content. Guidance/Steps are
-// judge-facing only (never shown to the worker in the envelope); Definition
-// and Bands are shown to both judge and worker.
+// rubricCriterion: one criterion's authoring content. Guidance/Steps are judge-only;
+// Definition and Bands are shown to both judge and worker.
 type rubricCriterion struct {
 	Definition    string       `yaml:"definition"`
 	Guidance      string       `yaml:"guidance,omitempty"`
 	Steps         []string     `yaml:"steps,omitempty"`
 	Bands         []bandSpec   `yaml:"bands"`
-	Anchors       []string     `yaml:"anchors,omitempty"` // legal anchorSpec.Kind values for this criterion; empty = unrestricted
+	Anchors       []string     `yaml:"anchors,omitempty"` // legal anchorSpec.Kind values; empty = any
 	Deterministic bool         `yaml:"deterministic,omitempty"`
 	Fix           string       `yaml:"fix,omitempty"` // required when Deterministic
 	Scale         *rubricScale `yaml:"scale,omitempty"`
-	// RequireFixOnFail opts this criterion into inconsistentJudgeFailures
-	// (judge.go): a submission below threshold with no `fix` is treated as
-	// self-inconsistent and re-asked once. Off by default.
+	// RequireFixOnFail: a below-threshold score with no `fix` is treated as self-inconsistent
+	// and re-asked once (inconsistentJudgeFailures).
 	RequireFixOnFail bool `yaml:"require_fix_on_fail,omitempty"`
 }
 
-// rubricDoc: a whole agents/<kind>/rubric.yaml. Notes is per-agent domain
-// guidance that cuts across criteria (e.g. web-researcher's date-awareness
-// and zero-retrieval handling) - NOT a restatement of how to grade in general, which lives in the judge prompt (judge.go) so it exists once.
+// rubricDoc: a whole agents/<kind>/rubric.yaml. Notes is per-agent guidance that cuts across
+// criteria; general grading rules live once, in the judge prompt.
 type rubricDoc struct {
 	Scale    rubricScale                `yaml:"scale"`
 	Notes    string                     `yaml:"notes,omitempty"`
@@ -47,9 +42,8 @@ type rubricDoc struct {
 
 var validAnchorKinds = map[string]bool{"quote": true, "path": true, "omission": true}
 
-// loadRubricYAML reads and validates one rubric.yaml. Validation failure is a
-// startup error naming the criterion - never a silent fallback (#941 redirect): unlike the worker-facing rubric-parsing fallback (still used for a raw,
-// unstructured planner-authored rubric override, see applyRubricSpecs), a rubric FILE that doesn't validate is an authoring bug, not a formatting quirk to tolerate.
+// loadRubricYAML reads and validates one rubric.yaml. An invalid rubric FILE is an authoring bug,
+// so it fails startup naming the criterion instead of falling back.
 func loadRubricYAML(raw []byte, source string) (rubricDoc, error) {
 	var doc rubricDoc
 	if err := yaml.Unmarshal(raw, &doc); err != nil {
@@ -61,9 +55,8 @@ func loadRubricYAML(raw []byte, source string) (rubricDoc, error) {
 	return doc, nil
 }
 
-// validateRubricDoc checks: every criterion's bands cover its scale with no
-// gaps or overlaps, its scale's pass floor falls inside some band, and a
-// deterministic criterion declares a fix.
+// validateRubricDoc: bands cover the scale with no gaps or overlaps, the pass floor falls in a band,
+// and a deterministic criterion declares a fix.
 func validateRubricDoc(doc rubricDoc) error {
 	if len(doc.Criteria) == 0 {
 		return nil // a criteria-less rubric (e.g. memory-agent's prose guidance) has nothing to validate
@@ -96,9 +89,8 @@ func validateCriterion(name string, c rubricCriterion, scale rubricScale) error 
 	if scale.Pass <= scale.Min || scale.Pass > scale.Max {
 		return fmt.Errorf("criterion %q: pass %v outside scale [%v, %v]", name, scale.Pass, scale.Min, scale.Max)
 	}
-	// bands:[] is legal but must be an explicit authoring choice, not a silently-tolerated omission - only for a criterion whose source
-	// prose genuinely didn't fit {min,max,meaning} (documented in the PR; see code-implementer's claims_match_activity and code-reviewer's
-	// claims_grounded, whose original 0-2/4-6/7-10 bands skip 3 with no stated reason - a real gap in the source, not a conversion bug).
+	// bands:[] is legal only as an explicit choice, for a criterion whose source prose
+	// didn't fit {min,max,meaning}.
 	if len(c.Bands) > 0 {
 		if err := validateBandCoverage(c.Bands, scale); err != nil {
 			return fmt.Errorf("criterion %q: %w", name, err)
@@ -118,9 +110,8 @@ func validateCriterion(name string, c rubricCriterion, scale rubricScale) error 
 	return nil
 }
 
-// validateBandCoverage: sorted by Min, bands must span exactly [scale.Min,
-// scale.Max] with no gap wider than 1 unit (an integer scale's adjacent
-// bands, e.g. 0-3/4-6/7-10, are contiguous in that sense though not touching) and no overlap.
+// validateBandCoverage: sorted by Min, bands span exactly [scale.Min, scale.Max] with no overlap
+// and no gap wider than 1 unit (0-3/4-6/7-10 counts as contiguous on an integer scale).
 func validateBandCoverage(bands []bandSpec, scale rubricScale) error {
 	sorted := append([]bandSpec(nil), bands...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Min < sorted[j].Min })
@@ -153,9 +144,8 @@ func bandsContain(bands []bandSpec, v float64) bool {
 	return false
 }
 
-// renderRubricMarkdown renders a rubricDoc's criteria (and notes) as the markdown the judge prompt carries - the "how to grade" preamble (0-3
-// scale walkthrough, weakest-link aggregation) is judge-prompt content now
-// (judge.go), not rendered here, so this covers only the per-criterion sections plus any cross-cutting Notes.
+// renderRubricMarkdown renders the per-criterion sections and Notes for the judge prompt;
+// the general grading preamble lives in judge.go.
 func renderRubricMarkdown(doc rubricDoc) string {
 	var sb strings.Builder
 	names := make([]string, 0, len(doc.Criteria))
@@ -189,7 +179,7 @@ func renderRubricMarkdown(doc rubricDoc) string {
 		if len(c.Bands) > 0 {
 			sb.WriteString("\n**Scoring bands.**\n")
 			bands := append([]bandSpec(nil), c.Bands...)
-			sort.Slice(bands, func(i, j int) bool { return bands[i].Min > bands[j].Min }) // highest first, matches rubric.md convention
+			sort.Slice(bands, func(i, j int) bool { return bands[i].Min > bands[j].Min }) // highest first
 			for _, b := range bands {
 				fmt.Fprintf(&sb, "- **%s** - %s\n", formatBandRange(b), b.Meaning)
 			}
@@ -217,9 +207,7 @@ func formatBandRange(b bandSpec) string {
 	return fmt.Sprintf("%.2f–%.2f", b.Min, b.Max)
 }
 
-// rubricDocSpecs turns a loaded rubricDoc directly into the envelope's
-// per-criterion specs - no parsing back out of rendered markdown (#941
-// redirect: the rubric IS data, so this is a lookup, not a parser).
+// rubricDocSpecs turns a loaded rubricDoc into the envelope's per-criterion specs.
 func rubricDocSpecs(doc rubricDoc) map[string]criterionSpec {
 	out := make(map[string]criterionSpec, len(doc.Criteria))
 	for name, c := range doc.Criteria {
@@ -256,9 +244,8 @@ func rubricDocPassMarks(doc rubricDoc) map[string]float64 {
 	return out
 }
 
-// rubricDocFixes returns the declared fix text for each deterministic
-// criterion in doc - mergeDeterministic (node.go) prefers this over its
-// static fallback table when the rubric names the criterion (#941 redirect: "deterministic checks now read definition/bands/fix from the rubric entry instead of declaring them in Go").
+// rubricDocFixes: each deterministic criterion's declared fix; mergeDeterministic prefers it
+// over its static fallback table.
 func rubricDocFixes(doc rubricDoc) map[string]string {
 	out := map[string]string{}
 	for name, c := range doc.Criteria {

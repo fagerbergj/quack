@@ -9,7 +9,6 @@ import (
 )
 
 type askUserArgs struct {
-	// Question is the specific question to put to the user.
 	Question string `json:"question"`
 }
 
@@ -19,9 +18,8 @@ type askUserResult struct {
 	Status string `json:"status"`
 }
 
-// NewAskUserTool: the mid-node HITL tool (vetting.AskToolName), for turns blocked
-// on user-only information. It records the question (in its call args) and ends
-// the worker's turn (SkipSummarization); the trust gate pauses the node via workflow.ResumeOrRequestInput under a round-stable interrupt ID, and the user's next message resumes it with the answer folded into the worker's prompt.
+// NewAskUserTool: the mid-node HITL tool. It ends the worker's turn; the gate pauses the node under a
+// round-stable interrupt ID and the user's next message resumes it with the answer in the prompt.
 func NewAskUserTool() (tool.Tool, error) {
 	return functiontool.New[askUserArgs, askUserResult](
 		functiontool.Config{

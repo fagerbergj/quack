@@ -137,9 +137,8 @@ func TestRunArgvMissingBinaryErrors(t *testing.T) {
 	}
 }
 
-// TestRunArgvMissingDirNamesTheDirectory pins the fork/exec-vs-chdir bug: with
-// Setpgid set, Go's os/exec skips its clear chdir precheck and a nonexistent
-// Dir surfaces as a PathError naming the binary instead of the missing dir.
+// TestRunArgvMissingDirNamesTheDirectory: with Setpgid, os/exec skips its chdir precheck,
+// so a missing Dir would otherwise surface as a PathError naming the binary.
 func TestRunArgvMissingDirNamesTheDirectory(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "does-not-exist")
 	_, err := RunArgv(context.Background(), missing, []string{"go", "build", "./..."}, DefaultCaps())
@@ -154,9 +153,8 @@ func TestRunArgvMissingDirNamesTheDirectory(t *testing.T) {
 	}
 }
 
-// TestRunArgvResolvesRepoRelativeExecutable pins #638: a plain exec.LookPath
-// on "./gradlew" resolves against THIS PROCESS's cwd (the package dir), not
-// dir - so without ResolveExecutable, a repo-relative wrapper is never found unless the test happens to run from the repo itself.
+// TestRunArgvResolvesRepoRelativeExecutable: exec.LookPath("./gradlew") resolves against
+// this process's cwd, not dir.
 func TestRunArgvResolvesRepoRelativeExecutable(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "gradlew")
@@ -206,9 +204,8 @@ func TestChildHomeUsesCapsHomeDirWhenSet(t *testing.T) {
 	}
 }
 
-// TestRunArgvHomeIsolatedFromCwd is the regression test for the live bug: a
-// coding task's cwd IS the target repo, so HOME must NEVER default to it once
-// Caps.HomeDir is wired up - otherwise a child tool (npm, pip, …) writing its own cache to $HOME writes it straight into the repo, where git_commit's add_all can sweep it up.
+// TestRunArgvHomeIsolatedFromCwd: cwd is the target repo, so a HOME there would let tool
+// caches (npm, pip) get swept into a commit.
 func TestRunArgvHomeIsolatedFromCwd(t *testing.T) {
 	repoDir := t.TempDir()
 	homeDir := t.TempDir()
@@ -228,8 +225,7 @@ func TestRunArgvHomeIsolatedFromCwd(t *testing.T) {
 	}
 }
 
-// TestRunArgvHomeDefaultsToDirWithoutCapsHomeDir preserves the pre-fix
-// behavior for any caller (or test) that hasn't wired Caps.HomeDir up.
+// TestRunArgvHomeDefaultsToDirWithoutCapsHomeDir: a caller without Caps.HomeDir gets HOME=dir.
 func TestRunArgvHomeDefaultsToDirWithoutCapsHomeDir(t *testing.T) {
 	dir := t.TempDir()
 	res, err := RunArgv(context.Background(), dir, []string{"sh", "-c", "echo $HOME"}, DefaultCaps())
@@ -414,8 +410,7 @@ func TestChildEnvIncludesWorkspaceEnv(t *testing.T) {
 		"ANDROID_HOME=/opt/android-sdk",
 		"JAVA_HOME=/opt/jdk-21",
 	}
-	// GOMODCACHE/GOCACHE/GOFLAGS/GOTOOLCHAIN (#954) are appended last and
-	// checked separately below - they're not workspace.env entries.
+	// GOMODCACHE/GOCACHE/GOFLAGS/GOTOOLCHAIN are appended last and checked separately below.
 	if len(got) != len(want)+4 {
 		t.Fatalf("childEnv = %v, want %v plus 4 go cache vars", got, want)
 	}
@@ -432,9 +427,8 @@ func TestChildEnvIncludesWorkspaceEnv(t *testing.T) {
 	}
 }
 
-// TestChildEnvTmpdirTracksScratchDirUnderLandlock pins the
-// RunArgv/RunPipeline seam (the gate's own check commands -
-// internal/vetting/checks.go's checksCaps - and every other RunArgv/RunPipeline caller) to the same ScratchDir-preferring TMPDIR internal/acp's spawnEnv already gets: a check command's own tmp use (a test binary's t.TempDir(), `git worktree add`'s mkdtemp) must land on the SAME device as the checked-out tree, or rename-based git ops fail EXDEV against the host's real /tmp.
+// TestChildEnvTmpdirTracksScratchDirUnderLandlock: check commands get the same ScratchDir TMPDIR
+// as ACP children, on the tree's device, or rename-based git ops fail EXDEV.
 func TestChildEnvTmpdirTracksScratchDirUnderLandlock(t *testing.T) {
 	scratch := t.TempDir()
 	caps := Caps{Sandbox: SandboxLandlock, HomeDir: t.TempDir(), ScratchDir: scratch}
@@ -451,9 +445,7 @@ func TestChildEnvTmpdirTracksScratchDirUnderLandlock(t *testing.T) {
 	}
 }
 
-// TestChildEnvGotmpdirMatchesTmpdir: Go's build work dir defaults to
-// os.TempDir() when GOTMPDIR is unset, which the jail doesn't grant (#936) -
-// GOTMPDIR must equal whatever TMPDIR resolved to.
+// TestChildEnvGotmpdirMatchesTmpdir: unset, Go builds in os.TempDir(), which the jail doesn't grant.
 func TestChildEnvGotmpdirMatchesTmpdir(t *testing.T) {
 	scratch := t.TempDir()
 	caps := Caps{Sandbox: SandboxLandlock, HomeDir: t.TempDir(), ScratchDir: scratch}
@@ -472,9 +464,7 @@ func TestChildEnvGotmpdirMatchesTmpdir(t *testing.T) {
 	}
 }
 
-// TestRunArgvEnvReachesChild is the executable-fixture proof: workspace.env
-// values actually arrive in a spawned child's real environment, not just in
-// the Caps struct.
+// TestRunArgvEnvReachesChild: workspace.env values reach a real child's environment.
 func TestRunArgvEnvReachesChild(t *testing.T) {
 	caps := DefaultCaps()
 	caps.Env = map[string]string{"QUACK_TEST_TOOLCHAIN_HOME": "/opt/fake-jdk"}
@@ -487,9 +477,8 @@ func TestRunArgvEnvReachesChild(t *testing.T) {
 	}
 }
 
-// TestRunArgvDoesNotHangOnBackgroundedChildHoldingStdout pins the v0.5.2
-// plan-run hang: a shell child can background a grandchild that inherits the
-// stdout pipe, so without a WaitDelay backstop cmd.Wait() blocks until that child exits (or forever). WaitDelay must let the call return promptly with the foreground output while the lingering child is left orphaned.
+// TestRunArgvDoesNotHangOnBackgroundedChildHoldingStdout: a backgrounded grandchild holding stdout
+// would block cmd.Wait() without the WaitDelay backstop.
 func TestRunArgvDoesNotHangOnBackgroundedChildHoldingStdout(t *testing.T) {
 	old := childWaitDelay
 	childWaitDelay = 300 * time.Millisecond
@@ -501,9 +490,7 @@ func TestRunArgvDoesNotHangOnBackgroundedChildHoldingStdout(t *testing.T) {
 	}
 	ch := make(chan out, 1)
 	go func() {
-		// `sleep 3 &` inherits stdout and holds the pipe ~3s; `echo hi` is the
-		// foreground output; sh exits immediately. Without the WaitDelay fix, the
-		// call blocks the full 3s (or forever for a truly persistent child).
+		// `sleep 3 &` holds the pipe ~3s while sh exits at once; without WaitDelay the call blocks.
 		res, err := RunArgv(context.Background(), t.TempDir(), []string{"sh", "-c", "sleep 3 & echo hi"}, DefaultCaps())
 		ch <- out{res, err}
 	}()

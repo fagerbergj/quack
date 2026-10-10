@@ -212,7 +212,7 @@ func optionOrder(c Component) string {
 func TestShuffleQuiz(t *testing.T) {
 	order := func(surfaceID string) map[string]string {
 		f := loadExample(t)
-		ShuffleQuiz(surfaceID, f.Components, []string{"q1", "q2", "q3"})
+		shuffleQuiz(surfaceID, f.Components, []string{"q1", "q2", "q3"})
 		out := map[string]string{}
 		for _, q := range []string{"q1", "q2", "q3"} {
 			c := comp(t, f.Components, q)
@@ -231,9 +231,9 @@ func TestShuffleQuiz(t *testing.T) {
 	}
 	// Re-sending in the displayed (shuffled) order must not re-permute.
 	f := loadExample(t)
-	ShuffleQuiz("pr-412-tutor", f.Components, []string{"q1"})
+	shuffleQuiz("pr-412-tutor", f.Components, []string{"q1"})
 	shown := optionOrder(comp(t, f.Components, "q1"))
-	ShuffleQuiz("pr-412-tutor", f.Components, []string{"q1"})
+	shuffleQuiz("pr-412-tutor", f.Components, []string{"q1"})
 	if again := optionOrder(comp(t, f.Components, "q1")); again != shown {
 		t.Fatalf("re-send in stored order moved options: %s -> %s", shown, again)
 	}

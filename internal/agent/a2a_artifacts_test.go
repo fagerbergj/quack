@@ -2,7 +2,7 @@ package agent
 
 import (
 	"context"
-	"iter"
+	"slices"
 	"testing"
 
 	adkagent "google.golang.org/adk/v2/agent"
@@ -18,17 +18,14 @@ import (
 
 type saveArtifactArgs struct{}
 
-// saveArtifactResult never surfaces a Go error to the tool framework; OK/Text is
-// read straight out of the FunctionResponse by artifactWorkerModel below, so a
-// nil ctx.Artifacts() is unambiguously distinguishable from success.
+// saveArtifactResult never surfaces a Go error; artifactWorkerModel reads OK from the FunctionResponse,
+// so a nil ctx.Artifacts() is distinguishable from success.
 type saveArtifactResult struct {
 	OK   bool
 	Text string
 }
 
-// newSaveArtifactTool round-trips a blob through tc.Artifacts(), reporting
-// whether it worked - proving the worker's RunnerConfig actually got a live
-// ArtifactService rather than a nil one.
+// newSaveArtifactTool round-trips a blob through tc.Artifacts(), proving the worker got a live ArtifactService.
 func newSaveArtifactTool(t *testing.T) tool.Tool {
 	t.Helper()
 	tl, err := functiontool.New[saveArtifactArgs, saveArtifactResult](
@@ -59,48 +56,22 @@ func newSaveArtifactTool(t *testing.T) tool.Tool {
 	return tl
 }
 
-type artifactWorkerModel struct{ calls int }
-
-func (m *artifactWorkerModel) Name() string { return "artifact-worker-model" }
-func (m *artifactWorkerModel) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	sawResult, ok := false, false
-	for _, c := range req.Contents {
-		for _, p := range c.Parts {
-			if p.FunctionResponse != nil {
-				sawResult = true
-				if v, _ := p.FunctionResponse.Response["OK"].(bool); v {
-					ok = true
-				}
-			}
-		}
+// artifactWorkerModel calls save_artifact, then answers "done" or "failed" by the tool's OK flag.
+var artifactWorkerModel = &fakeLLM{func(req *model.LLMRequest) *model.LLMResponse {
+	frs := funcResponses(req)
+	if len(frs) == 0 {
+		return turn(&genai.Part{FunctionCall: &genai.FunctionCall{ID: "c1", Name: "save_artifact"}})
 	}
-	return func(yield func(*model.LLMResponse, error) bool) {
-		if sawResult {
-			text := "failed"
-			if ok {
-				text = "done"
-			}
-			yield(&model.LLMResponse{
-				Content:      &genai.Content{Role: "model", Parts: []*genai.Part{{Text: text}}},
-				TurnComplete: true,
-			}, nil)
-			return
-		}
-		yield(&model.LLMResponse{
-			Content: &genai.Content{Role: "model", Parts: []*genai.Part{
-				{FunctionCall: &genai.FunctionCall{ID: "c1", Name: "save_artifact"}},
-			}},
-			TurnComplete: true,
-		}, nil)
+	if slices.ContainsFunc(frs, func(fr *genai.FunctionResponse) bool { v, _ := fr.Response["OK"].(bool); return v }) {
+		return turn(&genai.Part{Text: "done"})
 	}
-}
+	return turn(&genai.Part{Text: "failed"})
+}}
 
-// TestServeSetsWorkerArtifactService is a regression test for the ADK audit's A7 finding: Serve set SessionService/MemoryService/Compaction on
-// the worker's RunnerConfig but never ArtifactService, so ctx.Artifacts()
-// was nil in every worker tool/callback even though the caller had a live service to give it (DAG and orchestrator runners already got one).
+// Serve must set ArtifactService on the worker's RunnerConfig, or ctx.Artifacts() is nil in every worker tool.
 func TestServeSetsWorkerArtifactService(t *testing.T) {
 	worker, err := llmagent.New(llmagent.Config{
-		Name: "artifact-worker", Description: "w", Model: &artifactWorkerModel{},
+		Name: "artifact-worker", Description: "w", Model: artifactWorkerModel,
 		Tools: []tool.Tool{newSaveArtifactTool(t)},
 	})
 	if err != nil {

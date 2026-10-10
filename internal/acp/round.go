@@ -14,8 +14,8 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// registerRoundAbort: the round's direct cancel line (#1030). Returns the
-// matching unregister (a no-op when no hooks are wired or no steer target).
+// registerRoundAbort: the round's direct cancel line. Returns the matching unregister
+// (a no-op when no hooks are wired or no steer target).
 func (a *Agent) registerRoundAbort(steerChatID, steerNodeID string, abortCancel context.CancelFunc) func() {
 	if a.opts.RegisterRoundAbort != nil && steerChatID != "" && steerNodeID != "" {
 		a.opts.RegisterRoundAbort(steerChatID, steerNodeID, abortCancel)
@@ -30,8 +30,8 @@ func (a *Agent) registerRoundAbort(steerChatID, steerNodeID string, abortCancel 
 // process. sentPreamble is the exact condition roundArtifacts gates provenance on.
 func (a *Agent) steerHooks(ctx context.Context, h *procHandle, outbound, steerChatID, steerNodeID string, fromPinned bool) (out string, sentPreamble bool, unreg func()) {
 	unreg = func() {}
-	// Live only for this round's duration; CallExtension (an acked request), not NotifyExtension: between the shim settling and the deferred Unregister the connection is still open, so a fire-and-forget notify would report delivered while the shim silently drops it (promptReq already nil).
-	// A failed/errored call reports false, and enqueue's caller parks it instead (#998 review).
+	// CallExtension (acked), not NotifyExtension: until the deferred Unregister the connection stays open, so a notify
+	// would report delivered while the settled shim drops it. A failed call reports false and the caller parks it.
 	if a.opts.RegisterLiveSteer != nil && steerChatID != "" && steerNodeID != "" {
 		a.opts.RegisterLiveSteer(steerChatID, steerNodeID, steerForward(h.conn))
 		if a.opts.UnregisterLiveSteer != nil {
@@ -107,7 +107,7 @@ func (a *Agent) relayDrain(h *procHandle, relay func(sdk.SessionUpdate) bool) bo
 }
 
 // handlePromptDone: the round's terminal Prompt response - usage, refusal, final answer event.
-// ctx wins per field, the shared stamp only fills blanks (#1048); returns whether the round pinned cleanly.
+// ctx coords win per field, the shared stamp only fills blanks; returns whether the round pinned cleanly.
 func (a *Agent) handlePromptDone(d promptDone, h *procHandle, tr *translator, endPrompt func(error), promptSpan oteltrace.Span, ctx context.Context, coords ledger.Coords, emit func(eventSpec) bool) (bool, error) {
 	if d.err != nil {
 		endPrompt(d.err)
@@ -147,15 +147,7 @@ type roundLoopArgs struct {
 // roundLoop: relay wire updates and steer traffic until the Prompt RPC lands,
 // a cancel/interrupt stops the round, or the agent wedges (idle). Returns whether the round pinned cleanly.
 func (a *Agent) roundLoop(al *roundLoopArgs) (bool, error) {
-	resetIdle := func() {
-		if !al.idleTimer.Stop() {
-			select {
-			case <-al.idleTimer.C():
-			default:
-			}
-		}
-		al.idleTimer.Reset(a.opts.IdleTimeout)
-	}
+	resetIdle := func() { al.idleTimer.Reset(a.opts.IdleTimeout) }
 	relay := func(u sdk.SessionUpdate) bool {
 		al.turns.observe(u)
 		for _, spec := range al.tr.translate(u) {

@@ -1,6 +1,5 @@
-// Package adkdebug mounts ADK's own REST debug surface (server/adkrest) and
-// its Angular debug console (cmd/launcher/web/webui) onto quack's session
-// service and agent registry, for local inspection - not a product surface.
+// Package adkdebug mounts ADK's REST debug surface and Angular console onto quack's session service
+// and agents, for local inspection only.
 package adkdebug
 
 import (
@@ -19,16 +18,14 @@ import (
 	"google.golang.org/adk/v2/session"
 )
 
-// MountPath is where callers must mount Handler - webui's runtime-config.json
-// bakes this path into the API base URL it hands the browser, so mounting
-// Handler anywhere else breaks the console (the REST routes still work fine).
+// MountPath is where Handler must be mounted: webui bakes it into the API base URL it hands the browser,
+// so mounting elsewhere breaks the console.
 const MountPath = "/debug/adk"
 
 const apiPrefix = "/api"
 
-// Mount is ADK's own session/runtime/debug/artifact REST controllers plus
-// its Angular console, wired to quack's real session.Service and agents.
-// SECURITY: /run, /run_sse and /run_live execute a loaded agent directly - no trust gate, no auth of their own, and no way to drop just those routes (adkrest.NewServer wires them with the read-only ones as one unit).
+// Mount is ADK's REST controllers plus console, wired to quack's session.Service and agents. SECURITY:
+// /run, /run_sse and /run_live execute agents with no trust gate or auth, and can't be dropped separately.
 type Mount struct {
 	// Handler serves the combined surface, rooted as if mounted at "/" -
 	// callers strip MountPath before delegating (see router.go).
@@ -81,15 +78,13 @@ func New(sessions session.Service, agents map[string]adkagent.Agent, artifacts a
 	router.PathPrefix(apiPrefix).Handler(http.StripPrefix(apiPrefix, srv))
 
 	wl := webui.NewLauncher()
-	// backendAddress is browser-relative and must include MountPath - the
-	// browser fetches it directly, unaware this handler gets StripPrefix'd
-	// server-side before reaching the mux router built above.
+	// backendAddress is browser-relative and must include MountPath: the browser can't see the
+	// server-side StripPrefix.
 	if _, err := wl.Parse([]string{"-api_server_address", MountPath + apiPrefix}); err != nil {
 		return nil, fmt.Errorf("adkdebug: webui flags: %w", err)
 	}
-	// webUILauncher.SetupSubrouters ignores the *launcher.Config argument
-	// entirely (confirmed in cmd/launcher/web/webui/webui.go) - the zero
-	// value is fine.
+	// SetupSubrouters ignores its *launcher.Config (see cmd/launcher/web/webui/webui.go),
+	// so the zero value is fine.
 	if err := wl.SetupSubrouters(router, &adklauncher.Config{}); err != nil {
 		return nil, fmt.Errorf("adkdebug: webui mount: %w", err)
 	}

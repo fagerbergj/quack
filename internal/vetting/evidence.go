@@ -41,18 +41,13 @@ type WebPageEvidence struct {
 
 const webPageKind = "web_page"
 
-// Resolve tries the URL as cited, then without fragment and trailing slash:
-// the worker fetched one exact form and the citation is often a lighter one.
-func (w WebPageEvidence) Resolve(ctx context.Context, citation string) (string, bool) {
-	r := w.resolve(ctx, citation)
-	return r.text, r.ok
-}
-
 type resolved struct {
 	text, id    string // id: the stored web_page, "" for a snippet
 	snippet, ok bool
 }
 
+// resolve tries the URL as cited, then without fragment and trailing slash:
+// the worker fetched one exact form and the citation is often a lighter one.
 func (w WebPageEvidence) resolve(ctx context.Context, citation string) resolved {
 	if w.Store != nil {
 		for _, cand := range urlVariants(citation) {
@@ -144,9 +139,8 @@ func locateSpecificIn(text string, s Specific, width int) (string, bool) {
 
 var punctVariants = strings.NewReplacer("\u2019", "'", "\u2018", "'", "\u201c", "\"", "\u201d", "\"", "\u2013", "-", "\u2014", "-", "\u00a0", " ")
 
-// locateQuote matches a quoted string segment by segment: an elided quote
-// ("first part ... last part") holds when every segment appears in order, and
-// curly punctuation or emphasis marks on either side do not break it.
+// locateQuote matches a quote segment by segment: an elided quote ("first ... last") holds when every
+// segment appears in order; curly punctuation and emphasis marks don't break it.
 func locateQuote(hay, quote string, width int) (string, bool) {
 	hay = normalizeSpace(punctVariants.Replace(markupRe.ReplaceAllString(hay, "")))
 	quote = normalizeSpace(punctVariants.Replace(markupRe.ReplaceAllString(quote, "")))
@@ -174,9 +168,7 @@ func locateQuote(hay, quote string, width int) (string, bool) {
 	return strings.TrimSpace(hay[lo:hi]), true
 }
 
-var spaceRe = regexp.MustCompile(`\s+`)
-
-func normalizeSpace(s string) string { return spaceRe.ReplaceAllString(s, " ") }
+func normalizeSpace(s string) string { return strings.Join(strings.Fields(s), " ") }
 
 // needleForms: a date is looked for in every rendering a page might use
 // (2026-09-15, sep 15, 2026, september 15, 2026, 15 sep 2026); other kinds as-is.

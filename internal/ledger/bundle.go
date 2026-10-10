@@ -10,9 +10,8 @@ import (
 	"time"
 )
 
-// LedgerVersion is the bundle entry shape; bump it whenever Entry or a
-// payload struct changes incompatibly. Version 2 is the typed-Entry shape;
-// version 1 (raw OTel attribute lines) bundles are unsupported.
+// LedgerVersion is the bundle entry shape; bump it on any incompatible Entry or payload change. Version 1
+// (raw OTel attribute) bundles are unsupported.
 const LedgerVersion = 2
 
 // Manifest is the bundle's self-describing header - everything a reader with

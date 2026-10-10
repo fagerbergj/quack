@@ -166,9 +166,8 @@ func TestRunChatListFilteredToEmptyJSON(t *testing.T) {
 	}
 }
 
-// TestRunChatListOrigin covers issue #386: the ORIGIN column reads
-// github/direct off the same signal (github_url, falling back to the
-// "github-" id prefix) the web ChatList badge uses.
+// TestRunChatListOrigin: ORIGIN reads github/direct off github_url, falling back to the "github-" id
+// prefix, as the web ChatList badge does.
 func TestRunChatListOrigin(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -310,9 +309,8 @@ func TestRunChatListStatusFilter(t *testing.T) {
 	}
 }
 
-// TestRunChatListRepoAndTypeFilter covers the --repo and --type flags, and
-// that they combine with each other (AND across facets, matching the web
-// sidebar's matchesFacets semantics).
+// TestRunChatListRepoAndTypeFilter: --repo and --type combine as AND across facets,
+// like the web sidebar.
 func TestRunChatListRepoAndTypeFilter(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

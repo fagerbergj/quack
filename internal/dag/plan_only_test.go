@@ -7,9 +7,8 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// writableGateCfg mimics a real code-implementer's startup-time config
-// (serve.go's perAgentGateCfg): ACP-backed, writable, delivery target wired -
-// the shape a plan run's cfgFor hands back regardless of the run's ask.
+// writableGateCfg mimics serve's perAgentGateCfg for a code-implementer: ACP-backed,
+// writable, delivery target wired.
 func writableGateCfg() vetting.Config {
 	return vetting.Config{
 		ExternalWorker: true,
@@ -26,10 +25,8 @@ func prNode(cfg vetting.Config) bool {
 	return cfg.ExternalWorker && !cfg.ReadOnly && cfg.Deliver != nil
 }
 
-// TestPlanOnlyForcesReadOnlyNoDeliver pins #739 test case 1: every node of a
-// planOnly plan comes out read-only with a nil deliver target, whatever its
-// own agent's base config says - asserted on the constructed config, not
-// model output.
+// Every node of a planOnly plan is read-only with a nil deliver target, whatever its
+// agent's base config says.
 func TestPlanOnlyForcesReadOnlyNoDeliver(t *testing.T) {
 	plan := Plan{PlanOnly: true, Nodes: []Node{
 		{ID: "n1", AgentName: implementerAgent},
@@ -48,10 +45,8 @@ func TestPlanOnlyForcesReadOnlyNoDeliver(t *testing.T) {
 	}
 }
 
-// TestPlanOnlyOffersNoWritableNode pins #739 test case 2: prNode - the exact
-// gate newGatedNode uses to decide whether stage_pr/stage_push is registered
-// on the node's MCP server (internal/acp/memorymcp.go's `sess.PRStage !=
-// nil`) - is false for every node of a planOnly plan.
+// prNode, which decides whether stage_pr/stage_push is offered, is false for every
+// planOnly node.
 func TestPlanOnlyOffersNoWritableNode(t *testing.T) {
 	plan := Plan{PlanOnly: true, Nodes: []Node{
 		{ID: "n1", AgentName: implementerAgent},
@@ -67,9 +62,7 @@ func TestPlanOnlyOffersNoWritableNode(t *testing.T) {
 	}
 }
 
-// TestNonPlanRunKeepsWritableNode pins #739 test case 3: an ordinary
-// (non-planOnly) run is unchanged - writable node, deliver target present,
-// stage_pr offered.
+// A non-planOnly run keeps the writable node, deliver target, and stage_pr.
 func TestNonPlanRunKeepsWritableNode(t *testing.T) {
 	plan := Plan{Nodes: []Node{{ID: "n1", AgentName: implementerAgent}}}
 	cfgFor := func(context.Context, string) vetting.Config { return writableGateCfg() }
@@ -86,12 +79,8 @@ func TestNonPlanRunKeepsWritableNode(t *testing.T) {
 	}
 }
 
-// TestPlanOnlyImplementerNodeHasNoWritableCapability pins #739 test case 4 -
-// the document-pipeline#124 case verbatim: a planOnly plan whose planner
-// named code-implementer must still produce no writable node, even though
-// code-implementer's own base config (cfgFor) is fully writable. This is the
-// case that fails against pre-#739 main, where buildGateNodes read cfgFor's
-// result straight through with no plan.PlanOnly check at all.
+// A planOnly plan naming code-implementer still yields no writable node, though the
+// agent's own cfgFor is fully writable.
 func TestPlanOnlyImplementerNodeHasNoWritableCapability(t *testing.T) {
 	plan := Plan{PlanOnly: true, Nodes: []Node{{ID: "n1", AgentName: implementerAgent}}}
 	cfgFor := func(context.Context, string) vetting.Config { return writableGateCfg() }
@@ -105,9 +94,7 @@ func TestPlanOnlyImplementerNodeHasNoWritableCapability(t *testing.T) {
 	}
 }
 
-// TestNodeGateConfig_CarriesSource pins token-metrics attribution: nodeGateConfig's source
-// parameter (extracted from the run's ledger coords by RunPlanAsGraph/RetryPlanInNode,
-// before any RunNode scheduling) must land on cfg.Source, like chatID on cfg.ChatID.
+// nodeGateConfig's source param lands on cfg.Source, like chatID on cfg.ChatID.
 func TestNodeGateConfig_CarriesSource(t *testing.T) {
 	plan := Plan{Nodes: []Node{{ID: "n1", AgentName: implementerAgent}}}
 	cfgFor := func(context.Context, string) vetting.Config { return writableGateCfg() }
@@ -121,9 +108,8 @@ func TestNodeGateConfig_CarriesSource(t *testing.T) {
 	}
 }
 
-// TestReviewPlanWiresSynthesizerIntoFanout pins the #965 wiring: reviewers and synthesizer
-// share the run's ReviewFanout, so reviewers stage without delivering and the synthesizer's
-// answer becomes the one submitted review.
+// Reviewers and synthesizer share the run's ReviewFanout, so reviewers stage without
+// delivering and the synthesizer's answer is the one submitted review.
 func TestReviewPlanWiresSynthesizerIntoFanout(t *testing.T) {
 	plan := Plan{ID: t.Name(), Nodes: []Node{
 		{ID: "review-backend", AgentName: reviewerAgent},
@@ -144,8 +130,8 @@ func TestReviewPlanWiresSynthesizerIntoFanout(t *testing.T) {
 	}
 }
 
-// Without a synthesizer node, reviewer-only plans keep the #867 behavior and
-// non-reviewer nodes stay out of the fan-in.
+// Without a synthesizer, reviewer-only plans keep reviewer-only fan-in and non-reviewer
+// nodes stay out of it.
 func TestReviewPlanWithoutSynthesizerKeepsReviewerOnlyFanout(t *testing.T) {
 	plan := Plan{ID: t.Name(), Nodes: []Node{
 		{ID: "r1", AgentName: reviewerAgent},

@@ -14,14 +14,12 @@ type Coords struct {
 	// BundleHash: the acting agent's bundle content hash (agent.Bundle.Hash),
 	// stamped alongside Agent - provenance for which prompt version ran.
 	BundleHash string
-	// PromptSource/PromptVersionID: which store the round's system prompt came
-	// from ("static" or the prompts: store name) and its version there - provenance
-	// for which exact prompt version the run used (#1420).
+	// PromptSource/PromptVersionID: the store the round's system prompt came from ("static" or a prompts:
+	// store) and its version there.
 	PromptSource    string
 	PromptVersionID string
-	// PromptArtifact: the resolved artifact's name (e.g. "system/code-reviewer") -
-	// derived from the bundle directory, not the agent name, so an out-of-tree
-	// or renamed bundle still gets the right name recorded (#1422).
+	// PromptArtifact is derived from the bundle directory, not the agent name, so a renamed or out-of-tree
+	// bundle still records the right name.
 	PromptArtifact string
 	// Artifacts/Plugins: every artifact and plugin this round resolved through
 	// artifactsrc/the plugin registry - the llm.call/agent.invoke provenance list.
@@ -30,13 +28,11 @@ type Coords struct {
 	// User: the ADK session identity that owns this run (local user, GitHub
 	// commenter login, etc) - observability attribution only.
 	User string
-	// Source: the run's origin - an extension's registration name for an
-	// extension-dispatched run, or a fixed value for direct UI/REST/MCP
-	// chats. Bounded cardinality by construction; never chat_id or node_id.
+	// Source is the run's origin (extension name or a fixed value for direct chats). Bounded cardinality:
+	// never chat_id or node_id.
 	Source string
-	// SpanContext: the round's OTel span, captured before ADK rebuilds the
-	// ctx (SpanFromContext no-ops past that point). Zero value is a valid
-	// "no linkage available" state - consumers must degrade gracefully.
+	// SpanContext is captured before ADK rebuilds the ctx (SpanFromContext no-ops after). Zero means no
+	// linkage; consumers must degrade gracefully.
 	SpanContext oteltrace.SpanContext
 }
 
@@ -56,9 +52,8 @@ func CoordsFromContext(ctx context.Context) Coords {
 	return c
 }
 
-// FillBlankCoords: ctx wins per field, stamp fills what ctx left empty. A
-// stamp shared by every node on one model/tool/agent must never overwrite a
-// field the caller's own ctx already set (#1039, #1048).
+// FillBlankCoords: ctx wins per field and stamp fills only what ctx left empty, so a stamp shared by every
+// node never overwrites the caller's own coords.
 func FillBlankCoords(ctx, stamp Coords) Coords {
 	if ctx.ChatID == "" {
 		ctx.ChatID = stamp.ChatID

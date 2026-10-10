@@ -59,12 +59,12 @@ func TestLangfuseGenClientFromConfig_RequiresLangfuseStore(t *testing.T) {
 	cfg := &config.Config{Prompts: config.PromptsConfig{Store: "lf"}, Stores: map[string]config.StoreConfig{
 		"lf": {Kind: "postgres", URL: "postgres://x"},
 	}}
-	if _, err := langfuseGenClientFromConfig(cfg); err == nil {
+	if _, err := langfuseClientFromConfig(cfg); err == nil {
 		t.Fatal("want an error when prompts.store isn't a langfuse store")
 	}
 
 	cfg.Stores["lf"] = config.StoreConfig{Kind: "langfuse", URL: "http://example.invalid", PublicKey: "pk", SecretKey: "sk"}
-	if _, err := langfuseGenClientFromConfig(cfg); err != nil {
+	if _, err := langfuseClientFromConfig(cfg); err != nil {
 		t.Fatalf("want a client built from a valid langfuse store, got %v", err)
 	}
 }

@@ -8,9 +8,8 @@ import (
 	"testing"
 )
 
-// TestSandboxRun_ModeNone is the integration test the task calls for: a
-// real `quack sandbox run --mode none "echo ok"` against a minimal on-disk
-// quack.yaml, asserting exit 0 and the command's output - must pass on a dev box with no bwrap/landlock/container available.
+// TestSandboxRun_ModeNone runs a real `quack sandbox run --mode none "echo ok"` against an on-disk quack.yaml;
+// it must pass on a box with no bwrap/landlock/container.
 func TestSandboxRun_ModeNone(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "quack.yaml")

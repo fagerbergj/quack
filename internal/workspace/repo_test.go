@@ -22,9 +22,7 @@ func writeRepo(t *testing.T, dir, originURL string) {
 	}
 }
 
-// TestRepoKey: the memory repo bucket's key is DERIVED from the chat's clone - the
-// same repo cloned over ssh or https is one bucket, and an ambiguous or repo-less
-// scope yields "" (fall back to the role bucket, never guess).
+// TestRepoKey: ssh and https clones of one repo share a bucket; an ambiguous or repo-less scope yields "".
 func TestRepoKey(t *testing.T) {
 	root := t.TempDir()
 	j, err := NewJail(root)
@@ -76,9 +74,8 @@ func TestRepoKey(t *testing.T) {
 	}
 }
 
-// TestRepoKey_WorktreePerNode: worktree-per-node lays a shared clone plus one
-// linked worktree per node under the chat root - all share one origin, so
-// FindRepos returning 3 entries must still resolve to ONE bucket (#1262).
+// TestRepoKey_WorktreePerNode: a shared clone plus per-node linked worktrees share one origin,
+// so three found repos still resolve to one bucket.
 func TestRepoKey_WorktreePerNode(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")

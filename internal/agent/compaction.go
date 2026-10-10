@@ -12,9 +12,7 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// Compaction summarizes older turns of a session, folding them into a
-// durable event via adk/v2's native runner-level compaction (see a2a.go's
-// nativeCompactionConfig). Raw events are never deleted.
+// Compaction configures adk's native runner-level compaction (NativeCompactionConfig); raw events are never deleted.
 const (
 	charsPerToken = 4
 
@@ -28,17 +26,13 @@ type Compaction struct {
 	Enabled            bool
 	TokenThreshold     int
 	EventRetentionSize int
-	// CompactionInterval is adk's regular-cadence trigger (in invocations),
-	// on top of TokenThreshold's absolute limit. 0 disables the cadence trigger.
+	// CompactionInterval is adk's cadence trigger in invocations, on top of TokenThreshold; 0 disables it.
 	CompactionInterval int
-	// OverlapSize is how many already-windowed raw events carry into the next
-	// summarization pass, so a fact split across the cut isn't lost. 0 = default.
+	// OverlapSize carries already-windowed events into the next pass so a fact split across the cut survives; 0 = default.
 	OverlapSize int
-	// Prompts resolves the summarizer prompt when the config is built (once
-	// per node build, not per compaction pass); nil resolves the shipped files.
+	// Prompts resolves the summarizer prompt once per node build; nil resolves the shipped files.
 	Prompts *artifactsrc.Resolver
-	// Meter, when Build wired it on an agent with read_artifact, lets a compaction try
-	// collapsing stale fetch/read results before it pays for a summary (collapse.go).
+	// Meter lets a compaction collapse stale fetch/read results before paying for a summary (collapse.go).
 	Meter *PromptMeter
 }
 
@@ -50,8 +44,7 @@ func ResolveSummarizer(active, fallback model.LLM) model.LLM {
 	return fallback
 }
 
-// usable is the input budget: context window minus output reserve, capped
-// at contextWindow/4 to match internal/dag's budgetOutputReserve.
+// usable is the context window minus an output reserve capped at contextWindow/4, matching dag's budgetOutputReserve.
 func usable(contextWindow int) int {
 	reserve := compactionBuffer
 	if ceil := contextWindow / 4; ceil < reserve {
@@ -63,9 +56,8 @@ func usable(contextWindow int) int {
 	return 0
 }
 
-// emitCompaction publishes ev's compaction record to the chat's hub and opens a paired otel span; no-op for a non-compaction event or a nil sink
-// (compaction disabled, or a call site - e.g. tests - with no hub). ctx must be the worker's own per-request context (from compactionSessions'
-// AppendEvent): otelhttp's server handler already parented it from the caller's traceparent, so the span lands under the dispatching round's trace without the ledger.Coords.SpanContext workaround the old in-process callback needed.
+// emitCompaction publishes ev's compaction record and a paired otel span; no-op for other events or a nil sink.
+// ctx must be the worker's per-request context, which otelhttp parented under the dispatching round's trace.
 func emitCompaction(ctx context.Context, sink func(stream.SSEEvent), nodeID string, ev *session.Event) {
 	if sink == nil || ev == nil || ev.Actions.Compaction == nil {
 		return
@@ -75,9 +67,7 @@ func emitCompaction(ctx context.Context, sink func(stream.SSEEvent), nodeID stri
 	if u := ev.LLMResponse.UsageMetadata; u != nil {
 		in, out = u.PromptTokenCount, u.CandidatesTokenCount+u.ThoughtsTokenCount
 	}
-	// ev.Branch is "<name>@<runID>" (workflow.WithUseSubBranch); RunIDFromBranch
-	// is the same extraction dag.segRun uses, so this matches the round's
-	// agent_start run id exactly instead of adk's own (unrelated) invocation id.
+	// ev.Branch is "<name>@<runID>"; this matches the round's agent_start run id, not adk's invocation id.
 	sink(stream.Compaction(nodeID, stream.RunIDFromBranch(ev.Branch), c.StartTimestamp, c.EndTimestamp, in, out))
 
 	_, span := otelobs.Start(ctx, "compaction", attribute.String("node_id", nodeID))

@@ -1,12 +1,10 @@
-// planrecord.go: shared glue between the dag_node/dag_plan records and the
-// list_nodes/create_plan/edit_plan/execute tools built on top of them.
 package tools
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -20,20 +18,18 @@ import (
 
 const dagPlanRecordID = "dag_plan:main"
 
-// loadDagPlan reads the chat's current dag_plan record. ok is false when
-// this chat has never called create_plan.
-func loadDagPlan(ctx context.Context, c *recordstore.Client) (rec dag.DagPlanRecord, revision int, ok bool, err error) {
-	raw, rev, ok, err := c.Latest(ctx, dagPlanRecordID)
+// loadDagPlan: ok is false when this chat has never called create_plan.
+func loadDagPlan(ctx context.Context, c *recordstore.Client) (rec dag.DagPlanRecord, ok bool, err error) {
+	raw, _, ok, err := c.Latest(ctx, dagPlanRecordID)
 	if err != nil || !ok {
-		return dag.DagPlanRecord{}, 0, ok, err
+		return dag.DagPlanRecord{}, ok, err
 	}
 	if err := json.Unmarshal(raw, &rec); err != nil {
-		return dag.DagPlanRecord{}, 0, false, fmt.Errorf("dag_plan: stored content doesn't unmarshal: %w", err)
+		return dag.DagPlanRecord{}, false, fmt.Errorf("dag_plan: stored content doesn't unmarshal: %w", err)
 	}
-	return rec, rev, true, nil
+	return rec, true, nil
 }
 
-// listDagNodeRecords reads every dag_node record in this chat, sorted by id.
 func listDagNodeRecords(ctx context.Context, c *recordstore.Client) ([]dag.DagNodeRecord, error) {
 	summaries, err := c.List(ctx, "dag_node")
 	if err != nil {
@@ -41,9 +37,7 @@ func listDagNodeRecords(ctx context.Context, c *recordstore.Client) ([]dag.DagNo
 	}
 	out := make([]dag.DagNodeRecord, 0, len(summaries))
 	for _, s := range summaries {
-		// Fail closed on a real read error, unlike !ok (genuinely no record) -
-		// silently dropping a live node here strands a later reference to it
-		// behind an unrelated "unknown node id" error.
+		// Fail closed on a read error: dropping a live node strands later references behind "unknown node id".
 		raw, _, ok, err := c.Latest(ctx, s.ID)
 		if err != nil {
 			return nil, fmt.Errorf("list dag_node records: read %s: %w", s.ID, err)
@@ -57,13 +51,11 @@ func listDagNodeRecords(ctx context.Context, c *recordstore.Client) ([]dag.DagNo
 		}
 		out = append(out, rec)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].NodeID < out[j].NodeID })
+	slices.SortFunc(out, func(a, b dag.DagNodeRecord) int { return strings.Compare(a.NodeID, b.NodeID) })
 	return out, nil
 }
 
-// nodeArtifactIDs returns every artifact id (already "kind:instance") this
-// node has authored, from the store's own lineage - c.List's NodeID field is
-// exactly "which node wrote this revision", the join list_nodes needs.
+// nodeArtifactIDs: ids this node authored, from c.List's NodeID (the node that wrote each revision).
 func nodeArtifactIDs(ctx context.Context, c *recordstore.Client, nodeID string) ([]string, error) {
 	all, err := c.List(ctx, "")
 	if err != nil {
@@ -79,8 +71,6 @@ func nodeArtifactIDs(ctx context.Context, c *recordstore.Client, nodeID string) 
 	return out, nil
 }
 
-// firstLine returns s up to its first newline, trimmed - list_nodes' "last
-// task" is a glance, not the full assignment text.
 func firstLine(s string) string {
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
 		s = s[:i]
@@ -88,20 +78,11 @@ func firstLine(s string) string {
 	return strings.TrimSpace(s)
 }
 
-// AssignmentMetaFunc optionally stamps assignment.meta.<extension> at plan
-// creation/edit - never model-authored. Called once per upserted assignment
-// regardless of trigger; key is the supplying extension's own name (empty
-// key or empty meta is a no-op for that assignment) - the hook itself
-// decides whether it has anything to contribute this dispatch, the same way
-// AssignmentFreshnessFunc isn't gated on a trigger either. planID/agentName
-// aren't on dag.Assignment itself - passed through so the sdk.Assignment
-// conversion at the wiring site (internal/serve) can populate the sdk
-// struct fully.
+// AssignmentMetaFunc stamps assignment.meta.<key> (key = the extension's name) once per upserted assignment,
+// never model-authored; an empty key or meta is a no-op.
 type AssignmentMetaFunc func(ctx agent.Context, planID, agentName string, a dag.Assignment) (key string, meta map[string]any)
 
-// stampAssignmentMeta runs onAssignment over assignments in place - a nil
-// hook is a no-op. nodeAgent resolves each assignment's node id to its
-// hired agent name (already built by the caller for the response echo).
+// stampAssignmentMeta runs onAssignment over assignments in place; nil is a no-op.
 func stampAssignmentMeta(tc agent.Context, planID string, nodeAgent map[string]string, assignments []dag.Assignment, onAssignment AssignmentMetaFunc) {
 	if onAssignment == nil {
 		return
@@ -124,7 +105,6 @@ func errStoppedNode(nodeID string) error {
 	return fmt.Errorf("node %q was stopped by the user this turn - do not re-run, reassign or restate it; leave it stopped and carry on with other work, or ask the user", nodeID)
 }
 
-// refuseStopped rejects reusing a node the user stopped this turn.
 func refuseStopped(ctx context.Context, inputs []assignmentInput) error {
 	stopped := NodeStoppedFromContext(ctx)
 	for _, in := range inputs {
@@ -135,9 +115,7 @@ func refuseStopped(ctx context.Context, inputs []assignmentInput) error {
 	return nil
 }
 
-// assignmentInput is one entry of create_plan/edit_plan's `assignments`
-// array: either NodeID (reuse an existing node - the caller never invents
-// one) or Agent (hire a new one), plus the work itself.
+// assignmentInput: NodeID reuses an existing node, Agent hires a new one.
 type assignmentInput struct {
 	NodeID    string   `json:"node_id,omitempty"`
 	Agent     string   `json:"agent,omitempty"`
@@ -148,27 +126,8 @@ type assignmentInput struct {
 	Rubric    string   `json:"rubric,omitempty"`
 }
 
-// assignmentInputSchema derives T's (createPlanArgs/editPlanArgs) default
-// input schema - the same derivation functiontool.New would otherwise do
-// implicitly (jsonschema.For) - and constrains assignments[].agent to the
-// CURRENT agent roster. A contract the tool itself enforces, not a
-// model-specific prompt hint (#slice3 review: a small model omitted `agent`
-// in most of its create_plan calls even after the roster was named in the
-// rejection text). agent stays optional - node_id is the other valid way to
-// fill it in - only its value, when given, is constrained; node_id stays
-// free-form (minted ids aren't known ahead of a call).
-//
-// githubSetup, when non-nil (a trigger-backed dispatch), stops ADVERTISING
-// `setup` as useful - a one-line Description saying it's ignored on this
-// run - rather than dropping the property outright: jsonschema.For closes
-// the object (additionalProperties: false), and ADK's functiontool really
-// validates a call against this schema before unmarshalling it, so removing
-// `setup` from Properties would make a model that sends it anyway fail
-// schema validation - the one outcome this must NOT produce (a real,
-// accepted createPlanArgs/editPlanArgs field; setupIgnoredNote in the
-// handler is what actually handles it). Widening AdditionalProperties
-// instead would silently swallow a genuinely misspelled key (e.g.
-// "assignmnets") rather than rejecting it by name, which is worse.
+// assignmentInputSchema constrains assignments[].agent to the current roster. With githubSetup it only
+// re-describes `setup` as ignored: the schema is closed, so dropping the property would fail validation.
 func assignmentInputSchema[T any](githubSetup *dag.Setup, names []string) (*jsonschema.Schema, error) {
 	schema, err := jsonschema.For[T](nil)
 	if err != nil {
@@ -194,13 +153,7 @@ func assignmentInputSchema[T any](githubSetup *dag.Setup, names []string) (*json
 	return schema, nil
 }
 
-// setupIgnoredNote reports the line to append to create_plan/edit_plan's
-// result summary when the model submitted a `setup` the trigger's own
-// setup overrides outright (githubSetup != nil) - "" when there's nothing
-// to note (a plain chat, or the model omitted setup as the schema now
-// asks). The trigger's setup wins unconditionally regardless of repo,
-// base_ref, or any other field the model sent - there's nothing left to
-// validate, only to say so.
+// setupIgnoredNote: the summary line when the trigger's setup overrides a submitted one; "" otherwise.
 func setupIgnoredNote(submitted, githubSetup *dag.Setup) string {
 	if githubSetup == nil || submitted == nil {
 		return ""
@@ -224,18 +177,12 @@ func validateAllowedDeliveryKind(agent string, allowedKinds []string) error {
 		agent, kind, strings.Join(allowedKinds, ", "))
 }
 
-// describeAssignmentInput renders the fields this assignment actually parsed
-// to - a rejection naming node_id/agent as both empty tells the model those
-// exact keys are missing, so it isn't left guessing what it sent versus what
-// the schema silently dropped (an unrecognized key like `agent_name` never
-// reaches this struct at all).
+// describeAssignmentInput renders the parsed fields, so a rejection shows which keys never arrived.
 func describeAssignmentInput(in assignmentInput) string {
 	return fmt.Sprintf("node_id=%q agent=%q task=%q", in.NodeID, in.Agent, firstLine(in.Task))
 }
 
-// assignmentOutput is one assignment in create_plan/edit_plan's response -
-// same shape as assignmentInput but always carries the resolved node_id and
-// agent (minted ids the model must see to depend on or hire the node again).
+// assignmentOutput always carries the resolved node_id and agent: the model needs minted ids.
 type assignmentOutput struct {
 	NodeID    string   `json:"node_id"`
 	Agent     string   `json:"agent"`
@@ -243,7 +190,6 @@ type assignmentOutput struct {
 	DependsOn []string `json:"depends_on,omitempty"`
 }
 
-// planUpsertResult is create_plan/edit_plan's shared response shape.
 type planUpsertResult struct {
 	PlanID      string             `json:"plan_id"`
 	Assignments []assignmentOutput `json:"assignments"`
@@ -252,11 +198,7 @@ type planUpsertResult struct {
 	Summary     string             `json:"summary"`
 }
 
-// resolveNodeIndex reports whether ref is a decimal index into a
-// same-call assignments array (e.g. "0") - the convention that lets one
-// create_plan/edit_plan call build a multi-node DAG in one shot despite ids
-// being system-minted: a `depends_on` entry can't name a sibling's node_id
-// before it exists, so it names the sibling's position instead.
+// resolveNodeIndex: a depends_on entry may name a same-call sibling by index, since its id isn't minted yet.
 func resolveNodeIndex(ref string, n int) (int, bool) {
 	i, err := strconv.Atoi(ref)
 	if err != nil || i < 0 || i >= n {
@@ -265,16 +207,8 @@ func resolveNodeIndex(ref string, n int) (int, bool) {
 	return i, true
 }
 
-// upsertNodes applies create_plan/edit_plan's shared assignment-resolution
-// logic: mint a dag_node for every entry with no NodeID, resolve
-// depends_on's same-call positional references, and reject a reference to a
-// node currently live (executing) in this run. existingNodes is every
-// dag_node record already in this chat (for reuse and id-minting
-// uniqueness); nodeIsLive is nil-safe (no executor wired = never live, e.g.
-// a bound/test config). chatID seeds a minted node's A2A ContextID
-// (quackagent.WorkerSessionID) - the same deterministic id the native A2A
-// path (internal/serve buildAgents) independently recomputes when it
-// actually dispatches to this node, so the stored value is never a guess.
+// upsertNodes mints nodes, resolves positional depends_on and refuses live nodes; nodeIsLive may be nil.
+// A minted ContextID is WorkerSessionID(chatID, id), the same id dispatch recomputes.
 func upsertNodes(inputs []assignmentInput, existingNodes []dag.DagNodeRecord, nodeIsLive func(nodeID string) bool, chatID string, allowedKinds, agents []string) ([]dag.Assignment, []dag.DagNodeRecord, error) {
 	known := make(map[string]dag.DagNodeRecord, len(existingNodes))
 	var existingIDs []string
@@ -315,8 +249,6 @@ func upsertNodes(inputs []assignmentInput, existingNodes []dag.DagNodeRecord, no
 	return assignments, st.minted, nil
 }
 
-// upsertState: upsertNodes' mutable bookkeeping threaded through the per-item
-// resolvers - known nodes, the minting dedupe list, and the minted records.
 type upsertState struct {
 	known        map[string]dag.DagNodeRecord
 	existingIDs  []string
@@ -327,8 +259,7 @@ type upsertState struct {
 	agents       []string // the run's roster (dag.AgentNamesFor), not a newer reload's
 }
 
-// resolveOne: one input's node resolution - reuse node_id or mint an agent; the
-// workdir is validated before either so a bad dir fails regardless of branch.
+// resolveOne validates workdir first, so a bad dir fails on either branch.
 func (st *upsertState) resolveOne(i int, in assignmentInput) (string, error) {
 	if err := dag.ValidateWorkdir(in.Workdir); err != nil {
 		return "", fmt.Errorf("assignments[%d].%w", i, err)
@@ -369,9 +300,6 @@ func (st *upsertState) resolveOne(i int, in assignmentInput) (string, error) {
 	}
 }
 
-// resolveDependsOn: one assignment's depends_on entries to node ids - this
-// call's own assignment index resolves against nodeIDs, anything else against
-// the known node set.
 func (st *upsertState) resolveDependsOn(i int, deps []string, nodeIDs []string) ([]string, error) {
 	out := make([]string, len(deps))
 	for j, dep := range deps {
@@ -387,8 +315,7 @@ func (st *upsertState) resolveDependsOn(i int, deps []string, nodeIDs []string) 
 	return out, nil
 }
 
-// summarizePlanRecord renders rec for the model's own review before it calls
-// execute - never shown to the user.
+// summarizePlanRecord is for the model's review before execute, never shown to the user.
 func summarizePlanRecord(rec dag.DagPlanRecord, nodeAgent map[string]string) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Plan %s (%d assignment(s)) - review before executing:", rec.PlanID, len(rec.Assignments))

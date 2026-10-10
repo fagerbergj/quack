@@ -1,6 +1,5 @@
-// Package decide runs handlers at named intercept points and applies a per-point
-// policy to their calibrated probabilities. The one handler kind is a System One
-// model (POST /v1/systemone: Clef, Kev, Jev). A failure is "no decision", never a block.
+// Package decide runs System One handlers at named intercept points and applies per-point policy to their
+// probabilities. A failure is "no decision", never a block.
 package decide
 
 import (

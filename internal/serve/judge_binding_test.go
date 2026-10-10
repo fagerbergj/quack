@@ -30,12 +30,11 @@ func testJudgeBindCfg(t *testing.T) (*config.Config, config.ProviderConfig) {
 	return cfg, cfg.Providers["judge-prov"]
 }
 
-// TestBindJudgeRefresher proves system/judge's resolved Config picks this
-// round's own JudgeFactory+model and maps effort onto thinking_level, and
-// that an invalid override falls back to gates.judge's static pair (#1421 P2).
+// TestBindJudgeRefresher: system/judge picks this round's JudgeFactory+model and maps effort onto
+// thinking_level; an invalid override falls back to gates.judge.
 func TestBindJudgeRefresher(t *testing.T) {
 	cfg, jprov := testJudgeBindCfg(t)
-	static, err := inference.NewModelWithEffort(jprov, cfg.Gates.Judge.Model, artifact.InMemoryService(), nil, "")
+	static, err := inference.NewModel(jprov, cfg.Gates.Judge.Model, artifact.InMemoryService(), nil, "")
 	if err != nil {
 		t.Fatalf("static judge model: %v", err)
 	}
@@ -61,11 +60,8 @@ func TestBindJudgeRefresher(t *testing.T) {
 	}
 }
 
-// TestBindJudgeRefresherCacheKeyIncludesProviderName is M-suggestion's regression
-// test: two providers sharing an Endpoint but registered under different names
-// (two accounts on one host) must resolve to distinct cached models, keyed by
-// provider name too - not just Endpoint+Model, which would let account B
-// silently reuse account A's built model/credentials.
+// TestBindJudgeRefresherCacheKeyIncludesProviderName: two providers sharing an Endpoint under different
+// names get distinct cached models, so account B never reuses account A's credentials.
 func TestBindJudgeRefresherCacheKeyIncludesProviderName(t *testing.T) {
 	sharedEndpoint := "http://shared-host"
 	cfg := &config.Config{
@@ -84,7 +80,7 @@ func TestBindJudgeRefresherCacheKeyIncludesProviderName(t *testing.T) {
 		},
 	}
 	jprov := cfg.Providers["judge-prov"]
-	static, err := inference.NewModelWithEffort(jprov, cfg.Gates.Judge.Model, artifact.InMemoryService(), nil, "")
+	static, err := inference.NewModel(jprov, cfg.Gates.Judge.Model, artifact.InMemoryService(), nil, "")
 	if err != nil {
 		t.Fatalf("static judge model: %v", err)
 	}
@@ -103,15 +99,11 @@ func TestBindJudgeRefresherCacheKeyIncludesProviderName(t *testing.T) {
 	}
 }
 
-// TestBindJudgeRefresherCacheKeySeparatesReadToolsEligibility is #1485's
-// regression test: two nodes bound to the SAME override model - one a code
-// node (hasReadTools true), one a research node (hasReadTools false) - must
-// not share a cached factory, or the research node would inherit the code
-// node's repo read tools (or vice versa). Each hasReadTools value gets its
-// own cache entry and its own built model; repeating a value hits that entry.
+// TestBindJudgeRefresherCacheKeySeparatesReadToolsEligibility: a code node and a research node on the same
+// override model get separate cached factories, so repo read tools never leak across.
 func TestBindJudgeRefresherCacheKeySeparatesReadToolsEligibility(t *testing.T) {
 	cfg, jprov := testJudgeBindCfg(t)
-	static, err := inference.NewModelWithEffort(jprov, cfg.Gates.Judge.Model, artifact.InMemoryService(), nil, "")
+	static, err := inference.NewModel(jprov, cfg.Gates.Judge.Model, artifact.InMemoryService(), nil, "")
 	if err != nil {
 		t.Fatalf("static judge model: %v", err)
 	}
@@ -135,13 +127,11 @@ func TestBindJudgeRefresherCacheKeySeparatesReadToolsEligibility(t *testing.T) {
 	}
 }
 
-// TestBindJudgeRefresherConcurrentNoCrossTalk is H1's required regression test:
-// two goroutines resolving two DIFFERENT bindings, 500 rounds each, must each
-// only ever see their own model - never a shared mutable swapped mid-flight.
-// Run with -race.
+// TestBindJudgeRefresherConcurrentNoCrossTalk: two goroutines resolving different bindings only ever
+// see their own model. Run with -race.
 func TestBindJudgeRefresherConcurrentNoCrossTalk(t *testing.T) {
 	cfg, jprov := testJudgeBindCfg(t)
-	static, err := inference.NewModelWithEffort(jprov, cfg.Gates.Judge.Model, artifact.InMemoryService(), nil, "")
+	static, err := inference.NewModel(jprov, cfg.Gates.Judge.Model, artifact.InMemoryService(), nil, "")
 	if err != nil {
 		t.Fatalf("static judge model: %v", err)
 	}

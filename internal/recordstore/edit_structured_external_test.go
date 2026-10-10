@@ -1,6 +1,5 @@
-// edit_structured_external_test.go lives in package recordstore_test (not
-// recordstore) so it can import vetting/dag - real callers of Client.Edit -
-// and prove the fix against their actual registered Kinds, not just the package-internal test.structured stand-in.
+// External test package so it can import vetting/dag, real callers of Client.Edit, and test their actual
+// registered kinds.
 package recordstore_test
 
 import (
@@ -21,9 +20,8 @@ func newClient(t *testing.T) *recordstore.Client {
 	return recordstore.New(artifact.InMemoryService(), "quack", "user1", "chat1")
 }
 
-// TestEditArtifactStructuredFields is the regression test for the reported
-// bug: edit_artifact did a raw byte search/replace on the serialized JSON, so
-// a New containing a raw newline, quote, or backslash corrupted the record. Every Kind with a write_* tool shares this one Edit path (Client.Edit -> tryEdit -> applyStructuredEdits for Class == Structured), so one table covering a few real Kinds proves the fix generally, not per-agent.
+// TestEditArtifactStructuredFields: a New with a raw newline, quote or backslash must not corrupt the JSON.
+// Every write_* kind shares Client.Edit, so a few real kinds cover them all.
 func TestEditArtifactStructuredFields(t *testing.T) {
 	ctx := context.Background()
 
@@ -129,9 +127,7 @@ func TestEditArtifactStructuredFields(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		// This raw byte run exists in the serialized JSON (`"summary":"hello"`)
-		// but spans a key and a value, never one decoded leaf - must count as
-		// no match, not the raw-byte hit the old byte-level path would find.
+		// This byte run spans a key and a value, never one decoded leaf, so it must count as no match.
 		_, _, err = c.Edit(ctx, id, rev, []recordstore.EditOp{{Old: `"summary":"hello"`, New: `"summary":"world"`}}, recordstore.Lineage{})
 		var conflict *recordstore.EditConflict
 		if !errors.As(err, &conflict) {

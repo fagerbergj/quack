@@ -58,9 +58,8 @@ func TestSetNodeStatus_PersistsPauseAndRejectsIllegal(t *testing.T) {
 	}
 }
 
-// TestSetNodeStatus_LateWriteCannotOverwriteDone: a pause request that read
-// "running" before the node's own done-write committed must not clobber that
-// done status when its write finally lands - the compare-and-set has to check the row's CURRENT status, not just the legality of the read it took its decision from (#late-pause/cancel: PauseNode persists synchronously and can race PersistNodeEvent's node_done write).
+// A pause that read "running" before the node's done-write committed must not clobber done: the CAS checks
+// the row's current status, not just the legality of the stale read.
 func TestSetNodeStatus_LateWriteCannotOverwriteDone(t *testing.T) {
 	st := nodeStateStore(t) // n1 status=running
 	ctx := context.Background()
@@ -86,7 +85,7 @@ func TestSetNodeStatus_LateWriteCannotOverwriteDone(t *testing.T) {
 	}
 }
 
-// TestListPausedDagNodes is PR 2's boot sweep: every suspended node, both
+// TestListPausedDagNodes feeds the boot sweep: every suspended node, both
 // spellings, and nothing terminal.
 func TestListPausedDagNodes(t *testing.T) {
 	st := nodeStateStore(t)

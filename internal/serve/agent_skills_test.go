@@ -9,21 +9,13 @@ import (
 
 var loadSkillRe = regexp.MustCompile(`load_skill\("([a-zA-Z0-9_-]+)"\)`)
 
-// Every skill an agent's prompt tells it to load MUST exist in the skill
-// library we actually ship offline (embedded skills/ plus the tracked
-// dotagents snapshot). A prompt naming an unshipped skill is not a harmless
-// typo: the agent's FIRST action fails, and it flails.
-//
-// Regression: agents/code-explorer/prompt.md loaded a skill that only lived
-// in .agents/skills/ (project skills, loadable only after cd'ing into the
-// quack repo), never the shipped library - so every explorer run began by
-// failing its own mandatory discipline.
+// Every skill an agent's prompt tells it to load must ship offline (embedded skills/ plus dotagents):
+// a prompt naming an unshipped skill fails the agent's first action.
 func TestEveryAgentPromptSkillIsShipped(t *testing.T) {
 	root := repoRoot(t)
 
-	// Mirror what an agent gets offline (serve's embeddedQuackSkillSource):
-	// quack's skills/ plus the tracked dotagents snapshot. ponytail is
-	// registry-fetched only and never guaranteed on disk.
+	// Mirror what an agent gets offline: quack's skills/ plus the tracked dotagents snapshot.
+	// ponytail is registry-fetched only and never guaranteed on disk.
 	dotagents := filepath.Join(root, dotagentsEmbeddedSkills)
 	if st, err := os.Stat(dotagents); err != nil || !st.IsDir() {
 		t.Fatalf("tracked dotagents skills missing at %s: %v", dotagents, err)

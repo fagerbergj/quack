@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"iter"
 	"testing"
 
 	adkagent "google.golang.org/adk/v2/agent"
@@ -25,9 +24,8 @@ import (
 // probeArgs is the (empty) input for the trace-probe tool.
 type probeArgs struct{}
 
-// probeTraceTool records the trace id its invocation ctx carries - simulating
-// a worker-side otelobs span (e.g. a model call) that should be a child of
-// whatever span the caller had open when it dispatched over A2A.
+// probeTraceTool records its ctx's trace id, standing in for a worker-side span that should descend from the
+// caller's span open at A2A dispatch.
 func probeTraceTool(t *testing.T, got *string) tool.Tool {
 	t.Helper()
 	tl, err := functiontool.New[probeArgs, string](
@@ -45,36 +43,13 @@ func probeTraceTool(t *testing.T, got *string) tool.Tool {
 	return tl
 }
 
-// probeModel: turn 1 calls the probe tool; turn 2 (after the tool result) answers.
-type probeModel struct{}
-
-func (probeModel) Name() string { return "probe-model" }
-
-func (probeModel) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	sawToolResult := false
-	for _, c := range req.Contents {
-		for _, p := range c.Parts {
-			if p.FunctionResponse != nil {
-				sawToolResult = true
-			}
-		}
+// probeModel calls the probe tool, then answers once it sees the result.
+var probeModel = &fakeLLM{func(req *model.LLMRequest) *model.LLMResponse {
+	if len(funcResponses(req)) > 0 {
+		return turn(&genai.Part{Text: "done"})
 	}
-	return func(yield func(*model.LLMResponse, error) bool) {
-		if sawToolResult {
-			yield(&model.LLMResponse{
-				Content:      &genai.Content{Role: "model", Parts: []*genai.Part{{Text: "done"}}},
-				TurnComplete: true,
-			}, nil)
-			return
-		}
-		yield(&model.LLMResponse{
-			Content: &genai.Content{Role: "model", Parts: []*genai.Part{
-				{FunctionCall: &genai.FunctionCall{ID: "c1", Name: "probe", Args: map[string]any{}}},
-			}},
-			TurnComplete: true,
-		}, nil)
-	}
-}
+	return turn(&genai.Part{FunctionCall: &genai.FunctionCall{ID: "c1", Name: "probe", Args: map[string]any{}}})
+}}
 
 // newProbeWorker builds an llmagent whose only tool is the trace probe.
 func newProbeWorker(t *testing.T, got *string) adkagent.Agent {
@@ -82,7 +57,7 @@ func newProbeWorker(t *testing.T, got *string) adkagent.Agent {
 	ag, err := llmagent.New(llmagent.Config{
 		Name:        "probe-worker",
 		Description: "A worker that probes its trace context.",
-		Model:       probeModel{},
+		Model:       probeModel,
 		Instruction: "Call the probe tool then answer.",
 		Tools:       []tool.Tool{probeTraceTool(t, got)},
 	})
@@ -92,9 +67,7 @@ func newProbeWorker(t *testing.T, got *string) adkagent.Agent {
 	return ag
 }
 
-// TestA2APropagatesTraceContext is the reproduction for #1046: a "run" span opened before dispatching to a worker over the loopback A2A boundary must
-// still be the ancestor of the worker's handling spans. Today each per-node
-// A2A server starts handling its HTTP request with a bare context, so the worker's spans root a brand new trace.
+// A "run" span opened before an A2A dispatch must remain the ancestor of the worker's handling spans.
 func TestA2APropagatesTraceContext(t *testing.T) {
 	exp := tracetest.NewInMemoryExporter()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exp))

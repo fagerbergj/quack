@@ -20,9 +20,7 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// ledgerCaptureExporter records every emitted log record - a local duplicate
-// of dag_test's identically-named helper (unexported there; see that
-// package's ledger_coords_test.go comment on why these can't be shared).
+// ledgerCaptureExporter duplicates dag_test's unexported helper of the same name.
 type ledgerCaptureExporter struct{ records []sdklog.Record }
 
 func (c *ledgerCaptureExporter) Export(_ context.Context, records []sdklog.Record) error {
@@ -67,12 +65,8 @@ func newTracedTestOrch(t *testing.T, stub *orchStub) *Orchestrator {
 	return New(sessions, tracedModel, func(context.Context) string { return "You are the orchestrator." }, planner, ex, nil, nil, nil)
 }
 
-// TestOrchestratorRun_RootChatCarriesChatID pins #617: before the fix, the
-// orchestrator's own conversational "chat" ledger event carried NO
-// gen_ai.conversation.id at all, so ledger.Exporter filed it into the shared
-// "unscoped" bucket instead of this chat's stream - and with Node/Agent/Round
-// also empty, it stays part of the root stream (StreamKey{}) bundle.Session
-// and eval key off.
+// The orchestrator's own "chat" ledger event must carry gen_ai.conversation.id, or the exporter
+// files it under "unscoped" instead of this chat's root stream.
 func TestOrchestratorRun_RootChatCarriesChatID(t *testing.T) {
 	capExp := &ledgerCaptureExporter{}
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
@@ -111,10 +105,7 @@ func TestOrchestratorRun_RootChatCarriesChatID(t *testing.T) {
 	}
 }
 
-// TestOrchestratorRun_SourceAndUserReachTokenUsageMetric drives Run's
-// source/userID parameters end to end through the SAME production seam
-// #617 above pins for gen_ai.conversation.id: ledger.WithCoords at Run's top
-// -> tracedModel.GenerateContent -> recordUsageMetrics -> gen_ai.client.token.usage.
+// Run's source/userID reach gen_ai.client.token.usage through ledger.WithCoords and tracedModel.
 func TestOrchestratorRun_SourceAndUserReachTokenUsageMetric(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))

@@ -26,27 +26,26 @@ import (
 )
 
 // stopModel streams one partial chunk (so the node is running), then blocks until cancelled.
-type stopModel struct{ started chan struct{} }
-
-func (stopModel) Name() string { return "stop" }
-
-func (m stopModel) GenerateContent(ctx context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		if !yield(&model.LLMResponse{Content: genai.NewContentFromText("working", genai.RoleModel), Partial: true}, nil) {
-			return
+func stopModel(started chan struct{}) funcModel {
+	return func(ctx context.Context, _ *model.LLMRequest) iter.Seq2[*model.LLMResponse, error] {
+		return func(yield func(*model.LLMResponse, error) bool) {
+			if !yield(&model.LLMResponse{Content: genai.NewContentFromText("working", genai.RoleModel), Partial: true}, nil) {
+				return
+			}
+			select {
+			case started <- struct{}{}:
+			default:
+			}
+			<-ctx.Done()
+			yield(nil, ctx.Err())
 		}
-		select {
-		case m.started <- struct{}{}:
-		default:
-		}
-		<-ctx.Done()
-		yield(nil, ctx.Err())
 	}
 }
 
 // TestRetryNode_StopSettlesCancelled: stopping a retry mid-node settles the node cancelled.
 func TestRetryNode_StopSettlesCancelled(t *testing.T) {
-	m := stopModel{started: make(chan struct{}, 1)}
+	started := make(chan struct{}, 1)
+	m := stopModel(started)
 	w, err := llmagent.New(llmagent.Config{Name: "w", Model: m, Description: "w", Instruction: "ROLE:w"})
 	if err != nil {
 		t.Fatal(err)
@@ -65,7 +64,7 @@ func TestRetryNode_StopSettlesCancelled(t *testing.T) {
 	ctx, stop := context.WithCancel(context.Background())
 	go func() {
 		select {
-		case <-m.started:
+		case <-started:
 			stop()
 		case <-time.After(10 * time.Second):
 		}
@@ -103,7 +102,8 @@ func TestRetryNode_RefusesStaleStash(t *testing.T) {
 // TestFinalizeAnswer_StoppedTerminalIsNoAnswer: once the user stopped the terminal node,
 // every delivery path's finalize yields nothing, whatever draft its outputs hold.
 func TestFinalizeAnswer_StoppedTerminalIsNoAnswer(t *testing.T) {
-	m := stopModel{started: make(chan struct{}, 1)}
+	started := make(chan struct{}, 1)
+	m := stopModel(started)
 	w, err := llmagent.New(llmagent.Config{Name: "w", Model: m, Description: "w", Instruction: "ROLE:w"})
 	if err != nil {
 		t.Fatal(err)
@@ -114,7 +114,7 @@ func TestFinalizeAnswer_StoppedTerminalIsNoAnswer(t *testing.T) {
 	orch := New(sessions, nil, func(context.Context) string { return "" }, nil, ex, nil, nil, nil)
 	plan := dag.Plan{ID: "p", UserMessage: "go", Nodes: []dag.Node{{ID: "n1", AgentName: "w", Task: "t"}}}
 	go func() {
-		<-m.started
+		<-started
 		ex.CancelNode("chat", "n1")
 	}()
 	_, _, _, _ = ex.RunPlanStep(stream.WithYield(context.Background(), func(stream.SSEEvent) {}), plan, AppName, "u", "chat", nil, map[string]bool{"n1": true})
@@ -244,7 +244,7 @@ func TestWithRecordedSinks_ExtendedPlanKeepsItsStepSinks(t *testing.T) {
 	sessions := session.InMemoryService()
 	svc := artifact.InMemoryService()
 	// A model that would reword: retry and resume deliver the node's own output, never a format pass.
-	o := &Orchestrator{sessions: sessions, artifacts: svc, model: answerModel{text: "REFORMATTED"}, executor: dag.NewExecutor(sessions, nil, nil, nil, nil, nil)}
+	o := &Orchestrator{sessions: sessions, artifacts: svc, model: replyModel("REFORMATTED"), executor: dag.NewExecutor(sessions, nil, nil, nil, nil, nil)}
 	ctx := context.Background()
 	if _, _, err := dag.SaveDagPlanRecord(ctx, svc, artifactref.AppName, "u", "c", "", dag.DagPlanRecord{
 		PlanID: "p", Sinks: []string{"r3"},
@@ -271,7 +271,7 @@ func TestWithRecordedSinks_ExtendedPlanKeepsItsStepSinks(t *testing.T) {
 // the format pass could merge them into the synthesis the plan left out.
 func TestFinalizeAnswer_SectionsSkipFormatPass(t *testing.T) {
 	sessions := session.InMemoryService()
-	o := &Orchestrator{sessions: sessions, model: answerModel{text: "REFORMATTED"}, executor: dag.NewExecutor(sessions, nil, nil, nil, nil, nil)}
+	o := &Orchestrator{sessions: sessions, model: replyModel("REFORMATTED"), executor: dag.NewExecutor(sessions, nil, nil, nil, nil, nil)}
 	long := strings.Repeat("finding ", 400)
 	plan := dag.Plan{ID: "p", Nodes: []dag.Node{{ID: "a", AgentName: "w"}, {ID: "b", AgentName: "w"}}}
 	got := o.finalizeAnswer(context.Background(), plan, map[string]string{"a": long, "b": long}, "c", nil)
@@ -284,21 +284,10 @@ func TestFinalizeAnswer_SectionsSkipFormatPass(t *testing.T) {
 	}
 }
 
-// answerModel answers every call with its text.
-type answerModel struct{ text string }
-
-func (answerModel) Name() string { return "answer" }
-
-func (m answerModel) GenerateContent(context.Context, *model.LLMRequest, bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		yield(&model.LLMResponse{Content: genai.NewContentFromText(m.text, genai.RoleModel), TurnComplete: true}, nil)
-	}
-}
-
 // TestRetryNode_SettlesStoppedAssignment: an explicit retry of a stopped node that succeeds
 // clears the assignment's stop and records the fresh output, so later deliveries and seeds use it.
 func TestRetryNode_SettlesStoppedAssignment(t *testing.T) {
-	m := answerModel{text: "FRESH"}
+	m := replyModel("FRESH")
 	w, err := llmagent.New(llmagent.Config{Name: "w", Model: m, Description: "w", Instruction: "ROLE:w"})
 	if err != nil {
 		t.Fatal(err)
@@ -330,20 +319,12 @@ func TestRetryNode_SettlesStoppedAssignment(t *testing.T) {
 }
 
 // taskModel answers "FRESH A" for node a's task and "FRESH C" for any other.
-type taskModel struct{}
-
-func (taskModel) Name() string { return "task" }
-
-func (taskModel) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+var taskModel funcModel = func(ctx context.Context, req *model.LLMRequest) iter.Seq2[*model.LLMResponse, error] {
 	text := "FRESH C"
-	for _, c := range req.Contents {
-		for _, p := range c.Parts {
-			if p != nil && strings.Contains(p.Text, "TASK-A") {
-				text = "FRESH A"
-			}
-		}
+	if strings.Contains(stubUserText(req), "TASK-A") {
+		text = "FRESH A"
 	}
-	return answerModel{text: text}.GenerateContent(context.Background(), req, false)
+	return replyModel(text)(ctx, req)
 }
 
 // extension is plan a, b, c (c after b): turn 1 ran a and b, turn 2 added c, and the record says sinks.
@@ -355,15 +336,15 @@ type extension struct {
 
 func newExtension(t *testing.T, sinks []string) *extension {
 	t.Helper()
-	w, err := llmagent.New(llmagent.Config{Name: "w", Model: taskModel{}, Description: "w", Instruction: "ROLE:w"})
+	w, err := llmagent.New(llmagent.Config{Name: "w", Model: taskModel, Description: "w", Instruction: "ROLE:w"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	sessions := session.InMemoryService()
-	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"w": w}, map[string]model.LLM{"w": taskModel{}},
-		vetting.NewJudgeFactory(taskModel{}, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6} }, nil)
+	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"w": w}, map[string]model.LLM{"w": taskModel},
+		vetting.NewJudgeFactory(taskModel, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6} }, nil)
 	// The orchestrator's model would reword a formatted answer; a retry delivers the node's output verbatim.
-	e := &extension{orch: New(sessions, answerModel{text: "REFORMATTED"}, func(context.Context) string { return "" }, nil, ex, nil, nil, nil),
+	e := &extension{orch: New(sessions, replyModel("REFORMATTED"), func(context.Context) string { return "" }, nil, ex, nil, nil, nil),
 		svc: artifact.InMemoryService(), ctx: stream.WithTurnID(context.Background(), "turn-2")}
 	e.orch.SetArtifacts(e.svc)
 	plan := dag.Plan{ID: "p", UserMessage: "go", Nodes: []dag.Node{
@@ -407,9 +388,8 @@ func TestRetryNode_ExtensionDeliversOnlyItsStep(t *testing.T) {
 	}
 }
 
-// TestRetryNode_StaleRecordSinks: a restart while turn 2's c ran left the record with turn 1's sinks
-// [a b]; the boot resume (a retry of c) delivers c alone and settles the record on c's step, so a later
-// retry of a follows the normal rule and answers with that step's c.
+// A restart mid-turn-2 left turn 1's sinks [a b]; the boot resume (retry of c) delivers c alone
+// and settles the record on c's step, so a later retry of a answers with c.
 func TestRetryNode_StaleRecordSinks(t *testing.T) {
 	e := newExtension(t, []string{"a", "b"})
 	if got := e.retry("c", "", func(stream.SSEEvent) {}); got != "FRESH C" {

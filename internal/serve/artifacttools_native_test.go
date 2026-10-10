@@ -1,5 +1,4 @@
-// artifacttools_native_test.go: a native node always gets the artifact read tools (#1123),
-// and the write tools only when its config or card asks for them.
+// A native node always gets the artifact read tools, and the write tools only when its config or card asks.
 package serve
 
 import (

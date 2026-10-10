@@ -1,7 +1,5 @@
-// artifact_schema_test.go: the orchestrator's own write_artifact tool must be
-// checked against a registered extension schema exactly like a gated node's
-// write_artifact - the orchestrator runs in every chat, so a bypass here
-// reproduces the prod-shaped bad artifact this feature exists to stop (B1).
+// The orchestrator's own write_artifact must be checked against a registered schema like a
+// gated node's: it runs in every chat.
 package orchestrator
 
 import (
@@ -69,10 +67,7 @@ func (s *writeArtifactStub) GenerateContent(_ context.Context, req *model.LLMReq
 	}
 }
 
-// TestOrchestratorRun_WriteArtifact_SchemaViolationRefused: with SetSchemas
-// armed, a write_artifact call whose content fails the kind's registered
-// schema must be refused and nothing stored - reproduces the B1 probe
-// (orchestrator's own tools bypassing WithSchemas) as a full Run.
+// With SetSchemas armed, a write_artifact violating the kind's schema is refused and nothing stored.
 func TestOrchestratorRun_WriteArtifact_SchemaViolationRefused(t *testing.T) {
 	ctx := context.Background()
 	svc := artifact.InMemoryService()

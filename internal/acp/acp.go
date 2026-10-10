@@ -1,6 +1,5 @@
-// Package acp runs an external coding agent as an ACP subprocess adapted to
-// an ADK agent - one subprocess per NODE, pinned across that node's rounds
-// (draft -> judge -> revise -> ...) and torn down when the node finishes, fails a reuse, or is cancelled (see round's pinnedProc/pinned).
+// Package acp runs an external coding agent as an ACP subprocess behind an ADK agent: one subprocess
+// per node, pinned across that node's rounds and torn down when the node finishes, fails reuse, or is cancelled.
 package acp
 
 import (
@@ -35,28 +34,23 @@ type Options struct {
 	Command []string // argv to spawn, e.g. the pi-acp shim: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
 	Env     []string
 	Caps    workspace.Caps
-	// SkillPaths is consulted at every spawn (proc.go), for both the sandbox's
-	// ExtraRO grant and PI_ACP_CONFIG's skill_paths - #1427 P1's per-round
-	// registry pickup, since a pinned process only re-spawns between nodes.
+	// SkillPaths is read at every spawn, for both the sandbox's ExtraRO grant and PI_ACP_CONFIG's skill_paths,
+	// since a pinned process only re-spawns between nodes.
 	SkillPaths func() []string
-	// ExtraRO grants the sandbox RO access ONLY - never fed into skill_paths,
-	// so plugins.root stays readable without pi's recursive skill scan
-	// seeing every SKILL.md in the whole registry (#1430).
+	// ExtraRO grants sandbox RO access only, never skill_paths, so plugins.root stays readable
+	// without pi's recursive skill scan seeing every SKILL.md in the registry.
 	ExtraRO func() []string
-	// Plugins, if set, is consulted per round for the agent.invoke ledger
-	// entry's plugin provenance (#1427 P1).
+	// Plugins, if set, is read per round for the agent.invoke ledger entry's plugin provenance.
 	Plugins func() []ledger.PluginRef
 	Home    string
-	// Preamble is re-assembled at the start of each round that sends one -
-	// round.go prepends it only on a FRESH session, so on a pinned process an
-	// edited prompt lands on the next node dispatch, not the next round.
+	// Preamble is rebuilt each round that sends one; round.go prepends it only on a fresh session,
+	// so on a pinned process an edited prompt lands on the next node dispatch, not the next round.
 	Preamble func(ctx context.Context) string
 	// PreambleArtifact reads back the exact artifact the last Preamble build used -
 	// called under the same !fromPinned condition, never on a reused session.
 	PreambleArtifact func(ctx context.Context) artifactsrc.Artifact
-	// MemoryArtifact is the bundle's memory.md, whose body Preamble folds into the
-	// same behaviour text as the system prompt - static for this agent's lifetime,
-	// like memGuidance itself (was recorded for native rounds, not ACP - #1455 B1).
+	// MemoryArtifact is the bundle's memory.md, folded by Preamble into the system prompt text;
+	// static for this agent's lifetime.
 	MemoryArtifact artifactsrc.Artifact
 	// Prompts resolves system/acp.environment for the round's environment block.
 	Prompts         *artifactsrc.Resolver
@@ -71,13 +65,12 @@ type Options struct {
 	ModelName string
 	// Pricing: nil = no price table entry for ModelName, cost metric skipped.
 	Pricing *config.ModelPricing
-	// RegisterLiveSteer/UnregisterLiveSteer let a queued message land
-	// mid-round instead of at the next gate boundary (#998). nil = park always.
+	// RegisterLiveSteer/UnregisterLiveSteer let a queued message land mid-round instead of at the
+	// next gate boundary. nil = park always.
 	RegisterLiveSteer   func(chatID, nodeID string, forward func(text string) bool)
 	UnregisterLiveSteer func(chatID, nodeID string)
-	// RegisterRoundAbort/UnregisterRoundAbort let CancelNode reach a running
-	// round's abort RPC directly instead of waiting for the round to end
-	// (#1030). Cancel only - never wired for pause, which must preserve whatever the round has accumulated so it can resume.
+	// RegisterRoundAbort/UnregisterRoundAbort let CancelNode reach a running round's abort RPC directly.
+	// Cancel only, never pause: pause must keep what the round accumulated so it can resume.
 	RegisterRoundAbort   func(chatID, nodeID string, cancel context.CancelFunc)
 	UnregisterRoundAbort func(chatID, nodeID string)
 }
@@ -92,9 +85,7 @@ type Agent struct {
 	mu     sync.Mutex
 	coords ledger.Coords
 
-	// newIdleTimer: clock seam for the idle-wedge timer in round() below, so
-	// a test can drive it deterministically instead of racing a real timer.
-	// nil = real timer (set by New).
+	// newIdleTimer is a clock seam so tests drive the idle-wedge timer deterministically.
 	newIdleTimer func(time.Duration) idleTimer
 }
 
@@ -109,9 +100,8 @@ type realIdleTimer struct{ *time.Timer }
 
 func (t realIdleTimer) C() <-chan time.Time { return t.Timer.C }
 
-// SetLedgerCoords stamps coordinates for the next round - copied into a
-// local at round start (round() below), not read live, since this Agent is
-// shared across concurrent nodes and a round can run for many minutes.
+// SetLedgerCoords stamps coordinates for the next round. round() copies them at start rather than
+// reading live: this Agent is shared across concurrent nodes and a round can run for minutes.
 func (a *Agent) SetLedgerCoords(c ledger.Coords) {
 	a.mu.Lock()
 	a.coords = c
@@ -146,10 +136,6 @@ func New(name, description string, opts Options) (*Agent, error) {
 	return a, nil
 }
 
-// OptionsForTesting exposes a's constructed Options - a boot-wiring caller
-// (serve's buildACPNode) has no other way to assert what it actually passed in.
-func OptionsForTesting(a *Agent) Options { return a.opts }
-
 // run is the plain-agent path for Run outside a workflow node.
 func (a *Agent) run(ic adkagent.InvocationContext) iter.Seq2[*session.Event, error] {
 	return a.runPrompt(ic, contentText(ic.UserContent()))
@@ -174,9 +160,8 @@ func (a *Agent) resolveNode(ctx context.Context) (cwd, memSecret, scratchDir, ac
 	}
 	chatID, nodeID, priorSessionID = at.ChatID, at.NodeID, at.ACPSessionID
 	if a.opts.Jail != nil {
-		// A read-only reviewer needs this exactly as much as a writer does
-		// (TMPDIR/mktemp/heredocs don't care whether the round can touch its
-		// own tree) - scoped per node so concurrent rounds never collide.
+		// A read-only reviewer needs scratch as much as a writer (TMPDIR/mktemp/heredocs);
+		// scoped per node so concurrent rounds never collide.
 		scratchDir, err = a.opts.Jail.ScratchDir(a.opts.UserID, at.ChatID, at.WorkspaceNodeID)
 		if err != nil {
 			return "", "", "", "", false, chatID, nodeID, token, priorSessionID, fmt.Errorf("acp: scratch dir: %w", err)
@@ -209,22 +194,19 @@ func (a *Agent) runPrompt(ctx adkagent.InvocationContext, prompt string) iter.Se
 			yield(nil, err)
 			return
 		}
-		// Per-round scratch (the child's TMPDIR) is recreated on demand by
-		// homeTmpDir at the next spawn; removing it here keeps a run from
-		// leaving build tmp files around until the gc TTL sweep.
+		// homeTmpDir recreates scratch at the next spawn; removing it here keeps build tmp files
+		// from lingering until the gc TTL sweep.
 		if scratchDir != "" {
 			defer func() { _ = os.RemoveAll(scratchDir) }()
 		}
-		// caps.ReadOnly comes from THIS node's advisor task, not the agent's
-		// static config - a planOnly run forces it true per-node (#754/#739)
-		// regardless of what the agent is normally configured for.
+		// caps.ReadOnly comes from this node's advisor task, not the agent's static config:
+		// a planOnly run forces it true per node.
 		caps := a.opts.Caps
 		caps.ReadOnly = readOnly
 		caps.ScratchDir = scratchDir
 		caps.ACPStateDir = acpStateDir
-		// Environment block goes AFTER the task: it is regenerated every round
-		// (branch/HEAD/dir listing drift once a round commits anything), so
-		// leading with it broke the prompt-cache prefix from round 2 on.
+		// The environment block goes after the task: it changes every round (branch/HEAD/listing),
+		// so leading with it would break the prompt-cache prefix from round 2 on.
 		envBlock, envArt := environmentBlock(ctx, a.opts.Prompts, cwd, caps)
 		outbound := prompt + "\n\n" + envBlock
 		stopped := false
@@ -241,22 +223,20 @@ func (a *Agent) runPrompt(ctx adkagent.InvocationContext, prompt string) iter.Se
 	}
 }
 
-// steerExtMethod: ACP extension (#998) forwarding a mid-round steer to the shim.
+// steerExtMethod: ACP extension forwarding a mid-round steer to the shim.
 const steerExtMethod = "_quack/steer"
 
 type steerParams struct {
 	Text string `json:"text"`
 }
 
-// extensionCaller is the one method steerForward needs from *sdk.ClientSideConnection -
-// narrowed so the forwarding logic is unit-testable without a real ACP
-// subprocess or round() goroutine handoff (#1202).
+// extensionCaller is the one *sdk.ClientSideConnection method steerForward needs,
+// narrowed so forwarding is unit-testable without a real ACP subprocess.
 type extensionCaller interface {
 	CallExtension(ctx context.Context, method string, params any) (json.RawMessage, error)
 }
 
-// steerForward builds the RegisterLiveSteer callback: an acked CallExtension
-// RPC, not a fire-and-forget notify (see the call site's #998 review comment).
+// steerForward builds the RegisterLiveSteer callback: an acked CallExtension RPC, not a fire-and-forget notify.
 func steerForward(conn extensionCaller) func(text string) bool {
 	return func(text string) bool {
 		_, err := conn.CallExtension(context.Background(), steerExtMethod, steerParams{Text: text})
@@ -270,34 +250,28 @@ type promptDone struct {
 	err  error
 }
 
-// pinnedProc is one node's live ACP subprocess, kept across its rounds
-// (draft -> judge -> revise -> ...): the shim holds pi alive for its own
-// stdio session's life, so a second session/prompt on the SAME connection carries history forward with no re-init and no transcript replay (#1006).
+// pinnedProc is one node's live ACP subprocess, kept across its rounds: the shim keeps pi alive for its
+// stdio session, so a second session/prompt on the same connection carries history with no replay.
 type pinnedProc struct {
 	h         *procHandle
 	sessID    sdk.SessionId
 	toolNames []string
 }
 
-// pinned: advisorToken -> the node's pinned process - shared across every
-// Agent instance and concurrently running node (the token is already unique
-// per node instance, vetting.AdvisorThreadToken).
+// pinned: advisorToken -> the node's pinned process, shared across Agents and concurrent nodes
+// (the token is unique per node instance, vetting.AdvisorThreadToken).
 var pinned sync.Map
 
-// ClosePinnedSession kills token's pinned OS process - wired to
-// vetting.NodeSessionClosed since acp can't import vetting. Its ACP state
-// dir (the pi shim's own on-disk session) is left in place: a node's
-// session now survives past this single dispatch for later reuse, and is
-// only removed at chat archive/delete (workspace.Jail.RemoveACPState).
+// ClosePinnedSession kills token's pinned process (wired to vetting.NodeSessionClosed; acp can't import vetting).
+// The shim's on-disk session stays for later reuse until chat archive/delete (workspace.Jail.RemoveACPState).
 func ClosePinnedSession(token string) {
 	if v, ok := pinned.LoadAndDelete(token); ok {
 		closePinnedProc(v.(*pinnedProc))
 	}
 }
 
-// CloseAllPinnedSessions kills every pinned process - belt-and-suspenders
-// for server shutdown against a force-cancelled round whose node-finish
-// hook never got the chance to fire.
+// CloseAllPinnedSessions kills every pinned process at shutdown, covering a force-cancelled
+// round whose node-finish hook never fired.
 func CloseAllPinnedSessions() {
 	pinned.Range(func(k, v any) bool {
 		closePinnedProc(v.(*pinnedProc))
@@ -310,9 +284,8 @@ func closePinnedProc(pp *pinnedProc) {
 	pp.h.close(nil)
 }
 
-// roundArtifacts: this round's resolved-artifact provenance - the environment
-// block always, the preamble (and its folded-in memory.md) only when
-// sentPreamble - steerHooks' own report of whether one actually went out.
+// roundArtifacts: this round's resolved-artifact provenance - the environment block always,
+// the preamble (with memory.md) only when sentPreamble.
 func (a *Agent) roundArtifacts(ctx context.Context, envArt artifactsrc.Artifact, sentPreamble bool) []ledger.ArtifactRef {
 	var artifacts []ledger.ArtifactRef
 	if envArt.Name != "" {
@@ -331,8 +304,8 @@ func (a *Agent) roundArtifacts(ctx context.Context, envArt artifactsrc.Artifact,
 	return artifacts
 }
 
-// round drives one subprocess round. Separated from runPrompt for testability.
-// caps is the node's EFFECTIVE caps (ReadOnly already resolved by the caller) - the one thing that can legitimately differ per round for an otherwise-static agent (#754). steerChatID/steerNodeID key the live-steer hook: the advisor thread's SessionID/NodeID (round()'s callers resolve these), NOT ledger.Coords - cfg.NodeID collapses to the shared workspace scope for a setup-chain's writer node, which would silently no-op the hook (#998 review).
+// round drives one subprocess round. caps is the node's effective caps (ReadOnly resolved by the caller).
+// steerChatID/steerNodeID are the advisor thread's ids, not ledger.Coords, whose NodeID can collapse to a shared scope.
 func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace.Caps, outbound string, envArt artifactsrc.Artifact, steerChatID, steerNodeID, advisorToken, priorSessionID string, emit func(eventSpec) bool) (err error) {
 	ctx, roundSpan := otelobs.Start(ctx, "acp.round", attribute.String(otelobs.GenAIAgentName, a.name), attribute.String("cwd", cwd))
 	defer func() { otelobs.End(roundSpan, err) }()
@@ -345,17 +318,15 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 	coords := a.coords
 	a.mu.Unlock()
 
-	// abortCtx is CancelNode's direct line into this round (#1030), separate
-	// from ctx (which also carries parent shutdown) so both trigger the same
-	// graceful-cancel path below without one masking the other's cause.
+	// abortCtx is CancelNode's direct line into this round, separate from ctx (which also carries
+	// shutdown) so both reach the same graceful-cancel path without masking each other's cause.
 	abortCtx, abortCancel := context.WithCancel(context.Background())
 	defer abortCancel()
 	unregRoundAbort := a.registerRoundAbort(steerChatID, steerNodeID, abortCancel)
 	defer unregRoundAbort()
 
-	// Reuse this node's pinned process/session when one is already live -
-	// the common case from round 2 on. Skips spawn, Initialize AND
-	// session/new|load entirely: history already lives in the process.
+	// Reuse this node's live pinned process (the common case from round 2 on): skips spawn,
+	// Initialize and session/new|load, since history already lives in the process.
 	var h *procHandle
 	var sessID sdk.SessionId
 	var toolNames []string
@@ -379,9 +350,8 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 		}
 	}
 
-	// pinOK, not err==nil, gates reuse: a round the caller stopped consuming
-	// mid-stream also returns a nil err but never got a real PromptResponse,
-	// so its process must not go to the next round with a prompt in flight.
+	// pinOK, not err==nil, gates reuse: a round the caller stopped consuming returns nil err without a
+	// real PromptResponse, and its process must not carry a prompt in flight into the next round.
 	var pinOK bool
 	defer func() {
 		if pinOK && advisorToken != "" {
@@ -393,9 +363,8 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 		}
 		h.close(a.log)
 	}()
-	// Each round gets its own slice of the teed wire - otherwise a pinned
-	// process's buffers would carry every prior round's bytes into this
-	// round's invoke_agent event too, and toward maxTeeBytes per node.
+	// Each round gets its own slice of the teed wire, so a pinned process doesn't carry prior rounds'
+	// bytes into this round's invoke_agent event or toward maxTeeBytes.
 	h.sent.reset()
 	h.received.reset()
 	var plugins []ledger.PluginRef
@@ -440,21 +409,19 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 	return err
 }
 
-// prepPrompt: the pre-prompt cancel bail, the Prompt RPC goroutine, and the
-// span/timer plumbing. Returns the loop args plus the round-exit cleanup (original LIFO order), or the bail error when a cancel lands first.
+// prepPrompt: the pre-prompt cancel bail, the Prompt RPC goroutine, and span/timer plumbing.
+// Returns the loop args plus round-exit cleanup (LIFO), or the bail error when a cancel lands first.
 func (a *Agent) prepPrompt(ctx, abortCtx context.Context, h *procHandle, cwd string, sessID sdk.SessionId, finalPrompt string, coords ledger.Coords, emit func(eventSpec) bool) (*roundLoopArgs, func(), error) {
 	done := make(chan promptDone, 1)
 	promptCtx, promptSpan := otelobs.Start(ctx, "acp.prompt", attribute.String(otelobs.GenAIAgentName, a.name), attribute.String("session_id", string(sessID)))
-	// Per-tool-call child spans, ended as their updates arrive - the only
-	// telemetry that reaches a collector before the round finishes (#924).
+	// Per-tool-call child spans, ended as updates arrive: the only telemetry that reaches a collector mid-round.
 	turns := newTurnSpans(promptCtx, a.name)
 	endPrompt := func(err error) {
 		turns.closeAll()
 		otelobs.End(promptSpan, err)
 	}
-	// A cancel arriving during the spawn/handshake window (RegisterRoundAbort
-	// above, up to StartTimeout) has nothing to cancel yet - session/cancel
-	// for a prompt never sent is a no-op, and waiting on `done` blocks for the full cancelGrace. Bail before ever sending session/prompt (#1030 review).
+	// A cancel during spawn/handshake has nothing to cancel yet: session/cancel for an unsent prompt is a
+	// no-op and waiting on done blocks the full cancelGrace. Bail before sending session/prompt.
 	select {
 	case <-ctx.Done():
 		endPrompt(ctx.Err())
@@ -504,7 +471,7 @@ func mcpToolNames(sess vetting.MemSession, offered bool) []string {
 			if !spec.AgentWritable {
 				continue // mirrors registerArtifactWriteTools' own skip: gate-only kind
 			}
-			// Mirrors registerArtifactWriteTools' own skip (#1148).
+			// Mirrors registerArtifactWriteTools' own skip.
 			if spec.Name() == "code_review" && sess.Review != nil && sess.Review.IsNonDeliveringSlice() {
 				continue
 			}
@@ -537,9 +504,8 @@ func mcpToolsBlock(names []string) string {
 	return "MCP tools available to you this round:\n  " + strings.Join(names, ", ")
 }
 
-// gracefulCancel sends session/cancel and waits for the prompt goroutine to
-// acknowledge. h.conn.Cancel is a notification write that blocks on the
-// connection's writeMu/pipe with no ctx-awareness of its own (the SDK only checks ctx before attempting the write) - if the child has stopped draining stdin, that write can wedge forever alongside the prompt write already holding writeMu. Running it on its own goroutine and selecting on cctx.Done() here is what makes cancelGrace an actual bound: once this returns, the caller's deferred h.close SIGKILLs the process group, which unblocks the stuck writer(s) via EPIPE.
+// gracefulCancel sends session/cancel and waits for the prompt goroutine to ack. Cancel's write can wedge on
+// writeMu if the child stopped draining stdin, so it runs on its own goroutine to make cancelGrace a real bound.
 func (a *Agent) gracefulCancel(h *procHandle, sessID sdk.SessionId, done <-chan promptDone) {
 	cctx, cancel := context.WithTimeout(context.Background(), cancelGrace)
 	defer cancel()

@@ -14,8 +14,7 @@ import (
 	"github.com/fagerbergj/quack/internal/schema"
 )
 
-// commitRoleFact seeds a role:coding memory with a chat_id provenance stamp -
-// exactly the pre-#1262 shape (RepoKey="" made every worker write here).
+// commitRoleFact seeds a role:coding memory stamped with a chat_id provenance.
 func commitRoleFact(t *testing.T, s *memory.Store, chatID, content string) {
 	t.Helper()
 	if _, err := s.Commit(context.Background(), memory.Scope{Role: memory.RoleCoding}, "test",
@@ -24,9 +23,8 @@ func commitRoleFact(t *testing.T, s *memory.Store, chatID, content string) {
 	}
 }
 
-// TestRescopeMemories_DryRunThenApply seeds a role:coding memory whose chat
-// has a GitHub origin (owner/repo) alongside one with no origin, dry-runs the
-// rescope (tallies but writes nothing), then applies it and confirms the point actually moved to repo:github.com/acme/games and the untethered one stayed in role:coding.
+// TestRescopeMemories_DryRunThenApply: a dry run tallies without writing; apply moves the GitHub-origin
+// memory to repo:github.com/acme/games and leaves the origin-less one in role:coding.
 func TestRescopeMemories_DryRunThenApply(t *testing.T) {
 	ctx := context.Background()
 	h := newTestHandler(t)

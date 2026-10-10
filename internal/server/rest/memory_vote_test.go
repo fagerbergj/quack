@@ -15,9 +15,8 @@ import (
 	"github.com/fagerbergj/quack/internal/schema"
 )
 
-// fakeLedgerStore is an in-memory ledger.LedgerStore for tests that need
-// AppendIntent/ReadEntries without a real Postgres backend (unlike
-// failingLedgerStore in errors_test.go, this one actually stores entries).
+// fakeLedgerStore is an in-memory ledger.LedgerStore that actually stores entries,
+// for tests needing AppendIntent/ReadEntries without Postgres.
 type fakeLedgerStore struct {
 	mu      sync.Mutex
 	entries []ledger.Entry
@@ -60,9 +59,8 @@ func (f *fakeLedgerStore) MaxSeq(_ context.Context, chatID string) (int64, error
 func (f *fakeLedgerStore) List(context.Context) ([]ledger.SessionRef, error) { return nil, nil }
 func (f *fakeLedgerStore) Delete(context.Context, string) error              { return nil }
 
-// TestVoteMemory_UpThenNoneRoundTrip covers epic #1255 P4: an up vote raises
-// upvotes/tier/own_vote, appends one memory.vote ledger entry, and voting
-// "none" (the toggle-off) removes it again.
+// TestVoteMemory_UpThenNoneRoundTrip: an up vote raises upvotes/tier/own_vote and appends one
+// memory.vote entry; voting "none" removes it again.
 func TestVoteMemory_UpThenNoneRoundTrip(t *testing.T) {
 	h := newTestHandler(t)
 	h.taskMem = newTestMemStore(t)
@@ -126,9 +124,8 @@ func TestVoteMemory_UnknownID404(t *testing.T) {
 	}
 }
 
-// TestVoteMemory_Invalidated409 is #1265 review finding 3: voting on an
-// invalidated memory is a 409, checked BEFORE the ledger entry is appended -
-// no orphan memory.vote entry, no misleading 404.
+// TestVoteMemory_Invalidated409: voting on an invalidated memory is a 409, checked before the ledger
+// append, so there's no orphan memory.vote entry.
 func TestVoteMemory_Invalidated409(t *testing.T) {
 	h := newTestHandler(t)
 	h.taskMem = newTestMemStore(t)
@@ -155,9 +152,8 @@ func TestVoteMemory_Invalidated409(t *testing.T) {
 	}
 }
 
-// TestListNodeMemories_FoldsRecallAndVote covers the P4 node-memories read:
-// a memory.recall entry for a node surfaces with its source, and a
-// memory.vote entry for the same node/memory attaches the vote+reason.
+// TestListNodeMemories_FoldsRecallAndVote: a node's memory.recall surfaces with its source,
+// and a memory.vote for the same node/memory attaches the vote and reason.
 func TestListNodeMemories_FoldsRecallAndVote(t *testing.T) {
 	h := newTestHandler(t)
 	h.taskMem = newTestMemStore(t)
@@ -204,9 +200,8 @@ func TestListNodeMemories_FoldsRecallAndVote(t *testing.T) {
 	}
 }
 
-// TestListNodeMemories_NoLedger_Empty: a server with no ledger store returns
-// an empty list, not a 500 - the endpoint degrades gracefully like
-// GetChatRecording's ledgerStore-nil path elsewhere in this package.
+// TestListNodeMemories_NoLedger_Empty: with no ledger store the endpoint returns an empty list,
+// not a 500.
 func TestListNodeMemories_NoLedger_Empty(t *testing.T) {
 	h := newTestHandler(t)
 	chatID := mustCreateChat(t, h)
@@ -225,9 +220,8 @@ func TestListNodeMemories_NoLedger_Empty(t *testing.T) {
 	}
 }
 
-// TestListNodeMemories_UnknownChat404 is #1265 review finding 2: a bogus
-// chat_id must 404 (documented in openapi.yaml), not silently return an
-// empty list as if the chat existed with no memories.
+// TestListNodeMemories_UnknownChat404: a bogus chat_id is a 404 (per openapi.yaml),
+// not an empty list.
 func TestListNodeMemories_UnknownChat404(t *testing.T) {
 	h := newTestHandler(t)
 	rec := httptest.NewRecorder()
@@ -238,9 +232,8 @@ func TestListNodeMemories_UnknownChat404(t *testing.T) {
 	}
 }
 
-// TestVoteMemory_FindsMemoryPastFirstListPage is #1265 review finding 1: a
-// direct GetByID lookup, not a paged List scan, so voting on a memory older
-// than one List page still finds it. Seeds DefaultListLimit+1 memories and votes on the one that would land past page 0 in a newest-first list.
+// TestVoteMemory_FindsMemoryPastFirstListPage: voting uses a direct GetByID, so a memory past page 0
+// of a newest-first List (DefaultListLimit+1 seeded) is still found.
 func TestVoteMemory_FindsMemoryPastFirstListPage(t *testing.T) {
 	h := newTestHandler(t)
 	h.taskMem = newTestMemStore(t)

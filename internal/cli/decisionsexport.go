@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/fagerbergj/quack/internal/langfuse"
-	"github.com/fagerbergj/quack/internal/langfuse/langfusegen"
 	"github.com/fagerbergj/quack/internal/schema"
 )
 
@@ -61,10 +60,9 @@ type DecisionExportSummary struct {
 	Runs    []string `json:"runs"`
 }
 
-// ExportDecisions upserts one dataset per point with an item per decision that has a
-// baseline, then records each decision as a run item (trace + scores) under run
-// <handler>@<version>. Every id is deterministic, so a re-export converges.
-func ExportDecisions(ctx context.Context, lf *langfusegen.ClientWithResponses, ing *langfuse.Client, version string, recs []schema.DecisionRecord) ([]DecisionExportSummary, error) {
+// ExportDecisions upserts one dataset per point and a run item per decision under
+// <handler>@<version>; ids are deterministic, so a re-export converges.
+func ExportDecisions(ctx context.Context, lf *langfuse.Client, version string, recs []schema.DecisionRecord) ([]DecisionExportSummary, error) {
 	items := map[string]schema.DecisionRecord{}
 	for _, r := range recs {
 		if deref(r.Baseline) != "" {
@@ -84,7 +82,7 @@ func ExportDecisions(ctx context.Context, lf *langfusegen.ClientWithResponses, i
 			}
 			ensured[ds] = true
 		}
-		if err := exportDecision(ctx, lf, ing, version, id, ds, r); err != nil {
+		if err := exportDecision(ctx, lf, version, id, ds, r); err != nil {
 			return nil, err
 		}
 		s := sums[r.Point]
@@ -104,35 +102,27 @@ func ExportDecisions(ctx context.Context, lf *langfusegen.ClientWithResponses, i
 	return out, nil
 }
 
-func exportDecision(ctx context.Context, lf *langfusegen.ClientWithResponses, ing *langfuse.Client, version, id, dataset string, r schema.DecisionRecord) error {
+func exportDecision(ctx context.Context, lf *langfuse.Client, version, id, dataset string, r schema.DecisionRecord) error {
 	meta := map[string]any{"chat": r.ChatId, "node": deref(r.NodeId), "round": deref(r.Round), "quack_version": version, "handler": r.Handler, "mode": r.Mode}
 	if r.Meta != nil {
 		meta["state_meta"] = r.Meta
 	}
-	req := langfusegen.CreateDatasetItemRequest{
-		DatasetName: dataset, Id: &id, Metadata: meta,
+	req := langfuse.CreateDatasetItemRequest{
+		DatasetName: dataset, ID: id, Metadata: meta,
 		Input:          decisionItemInput{State: r.State, Questions: r.Questions},
 		ExpectedOutput: map[string]string{"baseline": deref(r.Baseline)},
 	}
-	resp, err := lf.DatasetItemsCreateWithResponse(ctx, req)
-	if err != nil {
+	if err := lf.CreateDatasetItem(ctx, req); err != nil {
 		return fmt.Errorf("decisions export: create item %s: %w", id, err)
-	}
-	if resp.JSON200 == nil {
-		return fmt.Errorf("decisions export: create item %s: %s", id, resp.Status())
 	}
 	runName := r.Handler + "@" + version
 	trace := shortHash(runName, id)
-	if err := ing.Ingest(ctx, decisionTraceEvents(trace, id, version, r)); err != nil {
+	if err := lf.Ingest(ctx, decisionTraceEvents(trace, id, version, r)); err != nil {
 		return fmt.Errorf("decisions export: trace for item %s: %w", id, err)
 	}
-	ri := langfusegen.CreateDatasetRunItemRequest{DatasetItemId: id, RunName: runName, TraceId: &trace}
-	rresp, err := lf.DatasetRunItemsCreateWithResponse(ctx, ri)
-	if err != nil {
+	ri := langfuse.CreateDatasetRunItemRequest{DatasetItemID: id, RunName: runName, TraceID: trace}
+	if err := lf.CreateDatasetRunItem(ctx, ri); err != nil {
 		return fmt.Errorf("decisions export: run item %s: %w", id, err)
-	}
-	if rresp.JSON200 == nil {
-		return fmt.Errorf("decisions export: run item %s: %s", id, rresp.Status())
 	}
 	return nil
 }
@@ -164,12 +154,12 @@ func decisionTraceEvents(trace, itemID, version string, r schema.DecisionRecord)
 
 // RunDecisionsExport is `quack decisions export --langfuse`: fetches decisions from the
 // server and writes them to Langfuse with the given clients.
-func RunDecisionsExport(ctx context.Context, w io.Writer, server string, f DecisionFilter, lf *langfusegen.ClientWithResponses, ing *langfuse.Client) error {
+func RunDecisionsExport(ctx context.Context, w io.Writer, server string, f DecisionFilter, lf *langfuse.Client) error {
 	list, err := fetchDecisions(ctx, server, f, true)
 	if err != nil {
 		return err
 	}
-	sums, err := ExportDecisions(ctx, lf, ing, list.QuackVersion, list.Data)
+	sums, err := ExportDecisions(ctx, lf, list.QuackVersion, list.Data)
 	if err != nil {
 		return err
 	}

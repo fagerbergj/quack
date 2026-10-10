@@ -13,7 +13,7 @@ auth:
     groups: X-authentik-groups
 ```
 
-Present, `auth:` needs at least one of the two sub-blocks below - `config.Load` rejects a present-but-empty `auth:` section at startup. Configuring only one is normal; both together is also valid (see precedence).
+Present, `auth:` needs at least one of the two sub-blocks below - config loading rejects a present-but-empty `auth:` section at startup. Configuring only one is normal; both together is also valid (see precedence).
 
 ## Direct clients: OIDC bearer tokens
 
@@ -53,7 +53,7 @@ The verified identity (`auth.Identity{User, Groups}`) is attached to the request
 
 ## Implementation
 
-- `internal/config/config.go` - `InboundAuthConfig`/`OIDCConfig`/`TrustedHeadersConfig` and their `config.Load`-time validation. Unchanged by the zitadel/oidc rebuild - same YAML fields, same validation, same precedence.
+- `internal/config/config.go` - `InboundAuthConfig`/`OIDCConfig`/`TrustedHeadersConfig` and their load-time validation. Unchanged by the zitadel/oidc rebuild - same YAML fields, same validation, same precedence.
 - `internal/auth/auth.go` - the `*Auth` type, its chi middleware, and the trusted-headers-priority logic. A `nil *Auth` (config absent) is a no-op passthrough.
 - `internal/auth/oidc.go` - discovery, JWKS, and token verification, built on `github.com/zitadel/oidc/v3`'s `pkg/client` (discovery), `pkg/client/rp` (`NewIDTokenVerifier` + `NewRemoteKeySet` - the JWKS-verifier primitives, not the browser-flow `RelyingParty`), and `pkg/oidc` (`IDTokenClaims`, the verification checks these two build on).
 - `internal/server/router.go` - mounts the middleware on a chi `Group` scoped to the MCP mount and the generated REST routes, explicitly excluding `/health`; extension webhook routes (e.g. the GitHub App's, verified by their own HMAC signature) and the SPA sit outside that group entirely.

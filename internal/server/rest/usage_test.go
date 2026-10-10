@@ -11,9 +11,8 @@ import (
 	"github.com/fagerbergj/quack/internal/store"
 )
 
-// TestGetChat_UsageAggregatesTurnsAndNodes proves GetChat's usage field sums
-// both the SQL-summable places a chat spends tokens - the plain-reply turn
-// row and its DAG nodes - not just one of them.
+// TestGetChat_UsageAggregatesTurnsAndNodes: GetChat's usage sums both the plain-reply turn row
+// and its DAG nodes.
 func TestGetChat_UsageAggregatesTurnsAndNodes(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()
@@ -63,9 +62,8 @@ func TestGetChat_UsageAggregatesTurnsAndNodes(t *testing.T) {
 	}
 }
 
-// TestListChats_TotalTokens proves the sidebar list carries the compact
-// total_tokens - a chat with spend shows it, a fresh chat doesn't (omitted,
-// not a spurious 0).
+// TestListChats_TotalTokens: a chat with spend shows total_tokens; a fresh chat omits it
+// rather than reporting 0.
 func TestListChats_TotalTokens(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()

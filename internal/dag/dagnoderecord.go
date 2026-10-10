@@ -1,9 +1,3 @@
-// dagnoderecord.go: the "dag_node" record kind - a node is someone doing an
-// agent's job: id, agent, live status, A2A context.
-// One record per minted node id, so the artifact panel can show who's on a
-// plan without decoding assignment history. The plan maps onto A2A directly:
-// a node's ContextID is the A2A contextId scoping every task it's dispatched
-// (an assignment's own A2A task_id lives on the Assignment, not here).
 package dag
 
 import (
@@ -22,25 +16,15 @@ import (
 
 const kindDagNode = "dag_node"
 
-// DagNodeRecord is the "dag_node" kind's structured body. ContextID is the
-// A2A contextId minted for this node when it's created for a native node
-// (stable for the node's life); an ACP/pi node overwrites it once its first
-// round establishes a real transport session id (UpdateDagNodeContext), so a
-// later reuse has something session/load can actually resume.
+// DagNodeRecord is the "dag_node" kind's body: one per minted node id. ContextID is the A2A contextId
+// for a native node; an ACP node overwrites it with its real transport session id (UpdateDagNodeContext).
 type DagNodeRecord struct {
 	NodeID    string     `json:"node_id"`
 	Agent     string     `json:"agent"`
 	Status    NodeStatus `json:"status,omitempty"`
 	ContextID string     `json:"context_id,omitempty"`
-	// Started: true once this node has reached StatusRunning at least once -
-	// the only reliable "a real session was ever created" signal shared by
-	// both transports. A native node's ContextID never changes from its
-	// mint-time placeholder (that's correct - the placeholder IS its real,
-	// live session identity), so ContextID alone can't distinguish "native,
-	// always resumable" from "ACP, failed/cancelled before ever
-	// establishing a session" - Resumable() needs this bit precisely
-	// because CanTransition allows queued -> failed/cancelled directly,
-	// with no run in between.
+	// Started: the node reached StatusRunning at least once. ContextID can't tell a native node from an ACP
+	// node that failed before establishing a session (CanTransition allows queued -> failed), so Resumable needs it.
 	Started bool `json:"started,omitempty"`
 }
 
@@ -61,12 +45,11 @@ func init() {
 		Class:      recordstore.Structured,
 		JSONSchema: dagNodeJSONSchema,
 		Validate:   validateDagNode,
-		// Identity = the minted node id verbatim, stable across every status
-		// update for this node.
+		// Identity = the minted node id verbatim, stable across every status update.
 		Identity:     func(_ []byte, hint string) (string, error) { return requireNodeHint(hint) },
 		RequiresHint: true,
-		// AgentWritable false: only create_plan/edit_plan mint a node (id
-		// minting, the "currently running" check) - a bare write_dag_node would bypass both.
+		// AgentWritable false: only create_plan/edit_plan mint a node (id minting, the "currently running"
+		// check); a bare write_dag_node would bypass both.
 		AgentWritable: false,
 	})
 }
@@ -86,21 +69,13 @@ func validateDagNode(raw json.RawMessage) error {
 	if rec.NodeID == "" {
 		return errors.New("node_id: must not be empty")
 	}
-	// Live, not just current: a node finishing on a pinned roster writes its
-	// status after a reload may have removed its agent.
+	// Live, not just current: a node finishing on a pinned roster writes its status after a reload may
+	// have removed its agent.
 	return ValidateAgentNameIn(rec.Agent, liveAgentNames())
 }
 
-// UpdateDagNodeStatus advances nodeID's persisted status to match the same
-// lifecycle transition runlog.PersistNodeEvent mirrors onto the DagNode
-// store row. ok=false when this chat has no dag_node record for nodeID (a
-// config-bound workflow node, which never went through create_plan/
-// edit_plan) - a silent no-op, fail-open like every other episodic write.
-// Refuses an illegal transition against the record's OWN last-read status
-// (CanTransition) rather than applying status unconditionally - this read
-// is independent of runlog's own store-row check, so an interleaved
-// cancel/done pair can't leave this record's mirror on a stale non-terminal
-// status forever (list_nodes/nodeIsRunning both read this record, not the store row).
+// UpdateDagNodeStatus mirrors a lifecycle transition onto nodeID's record; ok=false (fail-open) when none exists.
+// It checks CanTransition against the record's own status, so an interleaved cancel/done can't leave it stale.
 func UpdateDagNodeStatus(ctx context.Context, artifacts artifact.Service, appName, userID, chatID, nodeID string, status NodeStatus) error {
 	return updateDagNodeStatus(ctx, artifacts, appName, userID, chatID, nodeID, status, false)
 }
@@ -143,14 +118,14 @@ func updateDagNodeStatus(ctx context.Context, artifacts artifact.Service, appNam
 	return err
 }
 
-// FailOpenDagNodeRecords marks every chat's dag_node record not yet done/failed/cancelled
-// as failed - boot's settle for a run killed before it had any resumable state.
+// FailOpenDagNodeRecords marks every chat's dag_node record not yet done/failed/cancelled as failed:
+// boot's settle for a run killed before it had any resumable state.
 func FailOpenDagNodeRecords(ctx context.Context, artifacts artifact.Service, appName, userID, chatID string) error {
 	return settleOpenDagNodeRecords(ctx, artifacts, appName, userID, chatID, StatusFailed, true)
 }
 
-// CancelUnstartedDagNodeRecords marks the chat's queued (planned, never run) dag_node records
-// cancelled - a user stop before execute dispatched them; paused nodes are left to resume.
+// CancelUnstartedDagNodeRecords cancels the chat's queued (never run) dag_node records on a user stop
+// before execute dispatched them; paused nodes are left to resume.
 func CancelUnstartedDagNodeRecords(ctx context.Context, artifacts artifact.Service, appName, userID, chatID string) error {
 	return settleOpenDagNodeRecords(ctx, artifacts, appName, userID, chatID, StatusCancelled, false)
 }
@@ -186,11 +161,8 @@ func settleOpenDagNodeRecords(ctx context.Context, artifacts artifact.Service, a
 	return nil
 }
 
-// UpdateDagNodeContext overwrites nodeID's persisted ContextID - the ACP
-// transport's real session id, learned only after its first round
-// establishes one (dag/graph.go, at node completion). Same fail-open/no-op
-// shape as UpdateDagNodeStatus; unlike status this has no transition table,
-// a transport id is just replaced.
+// UpdateDagNodeContext replaces nodeID's ContextID with the ACP transport's real session id, learned
+// after its first round. Same fail-open shape as UpdateDagNodeStatus, with no transition table.
 func UpdateDagNodeContext(ctx context.Context, artifacts artifact.Service, appName, userID, chatID, nodeID, contextID string) error {
 	if artifacts == nil || chatID == "" || nodeID == "" || contextID == "" {
 		return nil
@@ -213,14 +185,8 @@ func UpdateDagNodeContext(ctx context.Context, artifacts artifact.Service, appNa
 	return err
 }
 
-// Resumable reports whether list_nodes/create_plan-edit_plan reuse should
-// offer this node for reassignment, and why: only a node that has actually
-// finished a run (terminal status) AND actually started at some point has a
-// session worth resuming - a node still queued has none yet, one
-// running/paused is already live (nodeIsRunning already blocks reassigning
-// those at plan-authoring time), and a node that went straight from queued
-// to failed/cancelled (CanTransition allows this - an admission/setup
-// failure, or a cancel before dispatch) never created one either.
+// Resumable reports whether reuse should offer this node, and why: only a terminal node that actually
+// started has a session worth resuming (queued has none, running/paused is live).
 func (r DagNodeRecord) Resumable() (bool, string) {
 	switch r.Status {
 	case StatusDone, StatusFailed, StatusCancelled:
@@ -238,11 +204,8 @@ func (r DagNodeRecord) Resumable() (bool, string) {
 	}
 }
 
-// MintNodeID names the next node id for agent given every node id already
-// minted this chat - "<agent>-<n>", one past the highest existing suffix
-// for that agent. Never reused, even across an edit that later drops a
-// node, so an old reference in history can never resolve to a fresh node's
-// unrelated status/output.
+// MintNodeID names the next "<agent>-<n>" id, one past the highest existing suffix for agent. Never
+// reused, so an old reference can't resolve to an unrelated fresh node.
 func MintNodeID(agent string, existing []string) string {
 	max := 0
 	prefix := agent + "-"

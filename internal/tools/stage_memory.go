@@ -9,17 +9,15 @@ import (
 	"google.golang.org/adk/v2/tool/functiontool"
 )
 
-// stageMemoryArgs is one durable thing the agent wants to remember, plus the bucket
-// it is ABOUT (memory is shared and subject-bucketed - see internal/memory/scope.go).
+// stageMemoryArgs: memory is shared and subject-bucketed (internal/memory/scope.go).
 type stageMemoryArgs struct {
 	Content string `json:"content"`
 	Kind    string `json:"kind"`
 	Bucket  string `json:"bucket"`
 }
 
-// newStageMemory builds the stage_memory tool. It is a SINK: it records nothing
-// itself - the call (with its args) lands in the worker's session, and the trust
-// gate harvests staged candidates from there, committing them only if the answer passes vetting: nothing is ever remembered from a failed answer.
+// newStageMemory is a sink: the gate harvests staged calls from the session and commits them only if the
+// answer passes, so nothing is remembered from a failed answer.
 func newStageMemory(_ Deps) (tool.Tool, error) {
 	return functiontool.New[stageMemoryArgs, string](
 		functiontool.Config{

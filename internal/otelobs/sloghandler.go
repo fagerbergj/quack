@@ -7,9 +7,8 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// WrapHandler returns a slog.Handler that appends trace_id/span_id attrs to
-// every record whose ctx carries a valid span - otherwise it is a pure
-// passthrough to next, so existing log output is byte-for-byte unchanged for any call site not using a *Context slog variant with a spanned ctx (e.g. slog.Info, or slog.InfoContext(context.Background(), ...)).
+// WrapHandler appends trace_id/span_id to records whose ctx carries a valid span; otherwise it is a pure
+// passthrough, so output without a spanned ctx is byte-for-byte unchanged.
 func WrapHandler(next slog.Handler) slog.Handler { return &spanHandler{next: next} }
 
 type spanHandler struct{ next slog.Handler }

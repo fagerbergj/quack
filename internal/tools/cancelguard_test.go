@@ -5,7 +5,6 @@ import (
 	"testing"
 )
 
-// newCancelGuarded wraps a recording fake tool in the cancel guard.
 func newCancelGuarded(t *testing.T, cancelled map[string]bool) (*fakeRunnable, *cancelGuard) {
 	t.Helper()
 	inner := &fakeRunnable{}
@@ -16,9 +15,8 @@ func newCancelGuarded(t *testing.T, cancelled map[string]bool) (*fakeRunnable, *
 	return inner, g.(*cancelGuard)
 }
 
-// TestCancelledNodeToolCallFailsFast: a worker deep in a tool loop never
-// reaches a gate-stage boundary, so a cancel looked like a no-op for minutes;
-// the gate check is the backstop - the TOOL layer makes a cancelled node stop within one tool call.
+// A worker deep in a tool loop never reaches a gate-stage boundary, so the tool layer makes a cancelled node
+// stop within one tool call.
 func TestCancelledNodeToolCallFailsFast(t *testing.T) {
 	cancelled := map[string]bool{}
 	inner, g := newCancelGuarded(t, cancelled)
@@ -45,8 +43,7 @@ func TestCancelledNodeToolCallFailsFast(t *testing.T) {
 		t.Errorf("cancelled node: the tool EXECUTED (%d runs) - the guard must refuse before running it", inner.runCount())
 	}
 
-	// A CONCURRENT sibling node of the same chat/plan keeps working: cancel is
-	// per node, not per chat (continue-but-warn).
+	// A concurrent sibling node of the same chat keeps working: cancel is per node.
 	stapler := newGatedCtx(t, "plan-1", "stapler", "chat-1")
 	if _, err := g.Run(stapler, map[string]any{}); err != nil {
 		t.Errorf("sibling node: tool call failed: %v", err)
@@ -56,8 +53,7 @@ func TestCancelledNodeToolCallFailsFast(t *testing.T) {
 	}
 }
 
-// TestCancelGuardIgnoresUngatedCalls: a call with no node token (un-gated invocation, MCP) can't be
-// attributed to a node, so the guard must never block it - even with a "cancelled" predicate.
+// A call with no node token (ungated, MCP) has no node to attribute, so the guard never blocks it.
 func TestCancelGuardIgnoresUngatedCalls(t *testing.T) {
 	inner := &fakeRunnable{}
 	g, err := newCancelGuard(inner, func(string, string) bool { return true }, CallScope{})
@@ -72,9 +68,8 @@ func TestCancelGuardIgnoresUngatedCalls(t *testing.T) {
 	}
 }
 
-// TestBuildWrapsEveryToolInTheCancelGuard: the guard is applied at REGISTRATION,
-// once, to every tool a worker holds - not sprinkled through the handlers, where the
-// next tool added would silently miss it. Without Deps.NodeCancelled (un-gated build, e.g. the judge's read tools) nothing is wrapped.
+// The guard is applied once at registration to every tool, so a new tool cannot miss it. Without
+// Deps.NodeCancelled (ungated build) nothing is wrapped.
 func TestBuildWrapsEveryToolInTheCancelGuard(t *testing.T) {
 	names := []string{"current_date", "ask_user"}
 
@@ -83,13 +78,12 @@ func TestBuildWrapsEveryToolInTheCancelGuard(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	for i, tl := range guarded {
-		// emitWrap is now the true outermost layer (registry.go's Build) - unwrap
-		// it before checking for the cancel guard underneath.
+		// emitWrap is the outermost layer; unwrap it to find the cancel guard.
 		et, ok := tl.(*emitTool)
 		if !ok {
 			t.Fatalf("tool %q is not emit-wrapped", names[i])
 		}
-		cg, ok := et.inner.(*cancelGuard)
+		cg, ok := et.runnableTool.(*cancelGuard)
 		if !ok {
 			t.Fatalf("tool %q is not cancel-guarded", names[i])
 		}
@@ -107,7 +101,7 @@ func TestBuildWrapsEveryToolInTheCancelGuard(t *testing.T) {
 		if !ok {
 			t.Fatalf("tool %q is not emit-wrapped", names[i])
 		}
-		if _, ok := et.inner.(*cancelGuard); ok {
+		if _, ok := et.runnableTool.(*cancelGuard); ok {
 			t.Errorf("tool %q was wrapped without a NodeCancelled predicate", names[i])
 		}
 	}

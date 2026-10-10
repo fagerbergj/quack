@@ -77,18 +77,14 @@ func OverrideExistingPRHead(p *Plan, headRef string) error {
 	return nil
 }
 
-// provisionSlots bounds concurrent run SETUP (clone+jail) - that host cost
-// lands before any node reaches dag.Admission's GPU ledger.
+// provisionSlots bounds concurrent run setup (clone+jail): that host cost lands before any node
+// reaches dag.Admission's GPU ledger.
 const provisionSlots = 8
 
 var provisionSem = make(chan struct{}, provisionSlots)
 
-// Provision clones+checks out plan.Setup, once. Called eagerly by the
-// execute tool (and RunBoundPlan) before the trust-gate run starts, so a
-// clone failure surfaces as that caller's own error - a tool-call error the
-// orchestrator model can see and revise from, never a run-time abort with a
-// raw git dump (#848). Idempotent via Setup.Provisioned, so runPlanSetup
-// below never re-clones behind it.
+// Provision clones and checks out plan.Setup once, eagerly from the execute tool, so a clone failure is a
+// tool-call error the orchestrator can revise from, not a run abort. Idempotent via Setup.Provisioned.
 func (e *Executor) Provision(ctx context.Context, userID, chatID string, plan *Plan) (err error) {
 	if plan == nil || plan.Setup == nil || plan.Setup.Provisioned {
 		return nil
@@ -122,26 +118,20 @@ func (e *Executor) Provision(ctx context.Context, userID, chatID string, plan *P
 	return nil
 }
 
-// runPlanSetup: plan's clone+checkout pre-step; failure aborts the run.
-// Delegates to Provision, a no-op if the execute tool (or a bound dispatch)
-// already provisioned this plan's Setup.
+// runPlanSetup: plan's clone+checkout pre-step; failure aborts the run. A no-op if already provisioned.
 func (e *Executor) runPlanSetup(ctx context.Context, userID, chatID string, plan Plan) error {
 	return e.Provision(ctx, userID, chatID, &plan)
 }
 
-// setupError: the human-readable form of a clone failure - what a stream
-// error shows (never the raw git argv dump) and what the execute tool
-// returns as its tool-call error so the orchestrator model can revise the
-// plan instead of dying mid-turn. Unwraps to cause so errors.Is still finds it.
+// setupError is the human-readable form of a clone failure (never the raw git argv dump), shown in the
+// stream and returned as the execute tool's error. Unwraps to cause.
 type setupError struct {
 	repo  string
 	cause error
 }
 
-// localCleanupErr structurally matches internal/tools' cleanupError (dag
-// never imports internal/tools, see graph.go) - a stale-clone removal
-// failure is local, not a fetch failure, so it must never be worded as the
-// repository being unreachable (#1213).
+// localCleanupErr structurally matches internal/tools' cleanupError (no import): a stale-clone removal
+// failure is local and must never be worded as the repository being unreachable.
 type localCleanupErr interface{ LocalCleanupFailure() }
 
 func (e *setupError) Error() string {
@@ -155,9 +145,8 @@ func (e *setupError) Error() string {
 
 func (e *setupError) Unwrap() error { return e.cause }
 
-// oneLine collapses a (possibly multi-line) cause to one line, and strips
-// runGit's leading "git <argv...>: " dump - the human message should read
-// as what git SAID (its stderr), never the invocation that said it.
+// oneLine collapses cause to one line and strips runGit's leading "git <argv...>: " prefix, so the
+// message reads as what git said, not the invocation.
 func oneLine(err error) string {
 	s := strings.Join(strings.Fields(err.Error()), " ")
 	if strings.HasPrefix(s, "git ") {
@@ -168,19 +157,16 @@ func oneLine(err error) string {
 	return s
 }
 
-// staleSetups: chats whose clone the branch has moved under, flagged from
-// outside the run (sdk.Host.InvalidateSetup). Package-level because the
-// signal arrives on a webhook goroutine that holds no Plan.
+// staleSetups: chats whose clone the branch has moved under (sdk.Host.InvalidateSetup). Package-level
+// because the signal arrives on a webhook goroutine that holds no Plan.
 var staleSetups sync.Map // chatID -> struct{}
 
-// setupMu serializes the refresh check across all chats: parallel nodes share
-// one Plan.Setup, and a slow re-clone holds it. Per-chat locks if that ever
-// costs more than the rare boundary check it delays.
+// setupMu serializes the refresh check across all chats: parallel nodes share one Plan.Setup, and a
+// slow re-clone holds it. Per-chat locks if that ever costs more than the rare check it delays.
 var setupMu sync.Mutex
 
-// liveNodes counts a chat's currently-executing gate nodes. Read-only nodes
-// work in linked worktrees off the shared clone, so re-cloning it pulls the
-// gitdir out from under any sibling still running (#1064).
+// liveNodes counts a chat's executing gate nodes. Read-only nodes work in linked worktrees off the
+// shared clone, so re-cloning it pulls the gitdir out from under a running sibling.
 var liveNodes = struct {
 	sync.Mutex
 	n map[string]int
@@ -207,21 +193,15 @@ func soleLiveNode(chatID string) bool {
 	return liveNodes.n[chatID] == 1
 }
 
-// MarkSetupStale records that chatID's clone no longer matches its branch.
-// Advisory: the next safe node boundary re-clones, or the run finishes on the
-// tree it started with.
+// MarkSetupStale records that chatID's clone no longer matches its branch. Advisory: the next safe
+// node boundary re-clones, or the run finishes on the tree it started with.
 func MarkSetupStale(chatID string) { staleSetups.Store(chatID, struct{}{}) }
 
-// clearSetupStale drops the flag. Called at fresh-run start, before setup, so
-// a push landing DURING the clone stays flagged.
+// clearSetupStale drops the flag at fresh-run start, before setup, so a push during the clone stays flagged.
 func clearSetupStale(chatID string) { staleSetups.Delete(chatID) }
 
-// refreshStaleSetup re-clones at a node boundary when the branch moved under
-// the run, and reports whether it did. Re-provisioning RemoveAll's the target,
-// so it is gated hard: read-only node, review-only plan (an implementer's
-// commits live in that tree, unpushed until delivery), no sibling node live in
-// a worktree off it, and a clean tree. A stale review beats a run that loses
-// its work.
+// refreshStaleSetup re-clones at a node boundary when the branch moved; RemoveAll makes it hard-gated:
+// read-only node, review-only plan, no live sibling worktree, clean tree. A stale review beats lost work.
 func (e *Executor) refreshStaleSetup(ctx context.Context, userID, chatID string, plan *Plan, node Node, cfg vetting.Config) bool {
 	if plan.Setup == nil || !readOnlyQualifyingAgent(node.AgentName) || !isReviewOnlySetup(*plan) {
 		return false

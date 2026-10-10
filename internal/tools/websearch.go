@@ -20,14 +20,12 @@ type searchArgs struct {
 	Queries []string `json:"queries"`
 }
 
-// SearchResult: one search hit.
 type SearchResult struct {
 	Title   string `json:"title"`
 	URL     string `json:"url"`
 	Snippet string `json:"snippet"`
 }
 
-// queryResult: one query's hits within a batched web_search call.
 type queryResult struct {
 	Query   string         `json:"query"`
 	Results []SearchResult `json:"results"`
@@ -65,9 +63,7 @@ func newWebSearch(d Deps) (tool.Tool, error) {
 	)
 }
 
-// runSearches: runs every query in order, deduplicating hits across queries
-// by URL so a page shared between two queries' results shows up once. It
-// errors when every query failed: empty result lists invite URL guessing.
+// runSearches dedupes hits by URL and errors when every query failed: empty lists invite URL guessing.
 func runSearches(tc agent.Context, searcher WebSearcher, queries []string) (searchResponse, error) {
 	seen := make(map[string]bool)
 	out := make([]queryResult, 0, len(queries))
@@ -93,8 +89,6 @@ func runSearches(tc agent.Context, searcher WebSearcher, queries []string) (sear
 	return searchResponse{Queries: out}, nil
 }
 
-// dedupByURL: drops results whose URL another query in this batch already
-// returned, mutating seen so a later query sees the union so far.
 func dedupByURL(results []SearchResult, seen map[string]bool) []SearchResult {
 	out := make([]SearchResult, 0, len(results))
 	for _, r := range results {

@@ -71,19 +71,15 @@ import (
 // localUserID is the single-user identity every filesystem/git tool resolves against.
 const localUserID = "local"
 
-// dotagentsEmbeddedSkills: the one plugin's skills/ subtree baked in via quack's go:embed
-// (embed.go), a tracked snapshot (SOURCE.md names its pin). buildFromConfig hard-requires
-// format-markdown and plan-work at startup, so a standalone install must find them even though plugin discovery is otherwise disk-only.
+// dotagentsEmbeddedSkills: the go:embed'd dotagents snapshot (SOURCE.md names its pin). Startup requires
+// format-markdown and plan-work, so a standalone install must find them without disk discovery.
 const dotagentsEmbeddedSkills = ".agents/embedded/dotagents/skills"
 
-// resolvedSkillSource: quack's shipped skills/ + each configured plugin root's skills/ (internal/plugin
-// discovery) - the disk-only view newSkillSource and acpSkillPaths compare the embedded fallback against.
-// activeKey mirrors dag.AdmissionSpec.residencyKey (provider+role) for Limits.Active (role alone per provider).
+// activeKey mirrors dag.AdmissionSpec.residencyKey (provider+role) for Limits.Active.
 func activeKey(provider, role string) string { return provider + "\x00" + role }
 
-// buildAdmission builds the #1007 capacity ledger from the models/providers
-// registries. Absent limits (nil ModelLimits/ProviderLimits, or a role/model
-// missing from them) are omitted from the maps, which Admission treats as unlimited.
+// buildAdmission builds the capacity ledger; limits absent from the registries are omitted, which
+// Admission treats as unlimited.
 func buildAdmission(cfg *config.Config) *dag.Admission {
 	sessions := map[string]int{}
 	kv := map[string]int{}
@@ -110,9 +106,8 @@ func buildAdmission(cfg *config.Config) *dag.Admission {
 	return dag.NewAdmission(sessions, kv, active, 0)
 }
 
-// admissionSpecFor resolves one agent's AdmissionSpec: its model's provider/role
-// for residency, and its effective context window (agent override, else the
-// model's default) as the kv_tokens reservation.
+// admissionSpecFor: an agent's model provider/role for residency, and its effective context window
+// (agent override, else model default) as the kv_tokens reservation.
 func admissionSpecFor(cfg *config.Config) func(agentName string) dag.AdmissionSpec {
 	return func(agentName string) dag.AdmissionSpec {
 		ac, ok := cfg.Agents[agentName]
@@ -140,9 +135,8 @@ func modelSpec(mc config.ModelConfig, name string, ctxWindow int) dag.AdmissionS
 	return spec
 }
 
-// orchestratorSpec: the orchestrator's own capacity spec. It shares the
-// models registry with worker agents, so when orchestrator.model reuses a
-// worker model both contend for that model's one sessions pool (#1007).
+// orchestratorSpec: when orchestrator.model reuses a worker model, both contend for that model's one
+// sessions pool.
 func orchestratorSpec(cfg *config.Config) dag.AdmissionSpec {
 	mc, ok := cfg.Models[cfg.Orchestrator.Model]
 	if !ok {
@@ -150,9 +144,8 @@ func orchestratorSpec(cfg *config.Config) dag.AdmissionSpec {
 	}
 	spec := modelSpec(mc, cfg.Orchestrator.Model, cfg.Orchestrator.ContextWindow)
 	if cfg.Orchestrator.ContextWindow == 0 {
-		// Unlike an agent, the orchestrator has no declared window to fall back
-		// on: modelSpec would hand it the model's whole kv budget, so one turn
-		// would reserve the pool and block every node it planned.
+		// The orchestrator has no declared window; modelSpec would reserve the model's whole kv budget and
+		// block every node it planned.
 		spec.KVTokens = 0
 	}
 	return spec
@@ -181,9 +174,8 @@ func lightweightSpec(cfg *config.Config, modelName string) dag.AdmissionSpec {
 	return dag.AdmissionSpec{Model: modelName, Provider: mc.Provider, Role: mc.Role}
 }
 
-// resolvedSkillSource wraps every registered plugin's skills/ in Tolerant
-// (#1080) and Prefixed on the plugin's REGISTRY ROW NAME (#1427 S3, not
-// plugin.json's). The embedded "quack" plugin is not included - see below.
+// resolvedSkillSource wraps each registered plugin's skills/ in Tolerant and Prefixed on the registry
+// row name (not plugin.json's). The embedded "quack" plugin is excluded.
 func resolvedSkillSource(plugins []plugin.Plugin) skill.Source {
 	var sources []skill.Source
 	for _, p := range plugins {
@@ -197,21 +189,8 @@ func resolvedSkillSource(plugins []plugin.Plugin) skill.Source {
 	return skill.NewMergedSource(sources...)
 }
 
-// embeddedQuackSkillSource is quack's shipped skills/ plus the embedded
-// dotagents snapshot, go:embedded - the plugin "quack", source embedded (#1427
-// S2), the offline baseline every install ships with regardless of disk access.
-func embeddedQuackSkillSource() skill.Source {
-	bundleFS := bundledir.SubFS("skills")
-	daFS := bundledir.SubFS(dotagentsEmbeddedSkills)
-	return skill.NewMergedSource(
-		skillsource.Tolerant(skillsource.NewFileSystemSource(bundleFS), bundleFS, "bundled skills"),
-		skillsource.Tolerant(skillsource.NewFileSystemSource(daFS), daFS, "dotagents embedded skills"),
-	)
-}
-
-// quackOwnSkillSource and dotagentsEmbeddedSkillSource are
-// embeddedQuackSkillSource's two halves, prefixed "quack:" - split because
-// missingQuackSkillNames shadows them by two DIFFERENT rules (#1427 R1).
+// quackOwnSkillSource and dotagentsEmbeddedSkillSource are the embedded "quack:" plugin's two halves,
+// split because registered plugins shadow them by different rules (exact vs bare name).
 func quackOwnSkillSource() skill.Source {
 	bundleFS := bundledir.SubFS("skills")
 	return skillsource.Prefixed("quack", skillsource.Tolerant(skillsource.NewFileSystemSource(bundleFS), bundleFS, "bundled skills"))
@@ -222,9 +201,7 @@ func dotagentsEmbeddedSkillSource() skill.Source {
 	return skillsource.Prefixed("quack", skillsource.Tolerant(skillsource.NewFileSystemSource(daFS), daFS, "dotagents embedded skills"))
 }
 
-// resolvedHaveSets: qualified and bare names already served by every
-// registered (non-embedded) plugin - the two "have" sets missingQuackOwn/
-// DotagentsSkillNames each check against.
+// resolvedHaveSets: qualified and bare skill names already served by registered plugins.
 func resolvedHaveSets(plugins []plugin.Plugin) (qualified, bare map[string]bool) {
 	fms, _ := resolvedSkillSource(plugins).ListFrontmatters(context.Background())
 	qualified = make(map[string]bool, len(fms))
@@ -236,10 +213,8 @@ func resolvedHaveSets(plugins []plugin.Plugin) (qualified, bare map[string]bool)
 	return qualified, bare
 }
 
-// missingQuackOwnSkillNames: quack's own skills/ names not shadowed by EXACT
-// qualified name - a registry row literally named "quack" (#1427 S2).
-func missingQuackOwnSkillNames(plugins []plugin.Plugin) []string {
-	haveQualified, _ := resolvedHaveSets(plugins)
+// missingQuackOwnSkillNames: quack's own skills not shadowed by exact qualified name.
+func missingQuackOwnSkillNames(haveQualified map[string]bool) []string {
 	var missing []string
 	if own, err := quackOwnSkillSource().ListFrontmatters(context.Background()); err == nil {
 		for _, fm := range own {
@@ -251,11 +226,9 @@ func missingQuackOwnSkillNames(plugins []plugin.Plugin) []string {
 	return missing
 }
 
-// missingDotagentsEmbeddedSkillNames: embedded dotagents names not provided by
-// BARE name by any resolved plugin (#943): an on-disk dotagents under any
-// registry name must suppress the embedded copy of itself.
-func missingDotagentsEmbeddedSkillNames(plugins []plugin.Plugin) []string {
-	_, haveBare := resolvedHaveSets(plugins)
+// missingDotagentsEmbeddedSkillNames: embedded dotagents skills no resolved plugin serves by bare name,
+// so an on-disk dotagents under any registry name suppresses the embedded copy.
+func missingDotagentsEmbeddedSkillNames(haveBare map[string]bool) []string {
 	var missing []string
 	if da, err := dotagentsEmbeddedSkillSource().ListFrontmatters(context.Background()); err == nil {
 		for _, fm := range da {
@@ -267,29 +240,26 @@ func missingDotagentsEmbeddedSkillNames(plugins []plugin.Plugin) []string {
 	return missing
 }
 
-// missingQuackSkillNames is the full embedded-quack backfill list (both
-// halves) - what newSkillSource needs; acpSkillPaths consults the two halves
-// separately since it can also satisfy the "own" half via a raw on-disk dir.
+// missingQuackSkillNames is the full embedded backfill list; acpSkillPaths checks the halves separately
+// because a raw on-disk skills/ dir can satisfy the own half.
 func missingQuackSkillNames(plugins []plugin.Plugin) []string {
-	return append(missingQuackOwnSkillNames(plugins), missingDotagentsEmbeddedSkillNames(plugins)...)
+	haveQualified, haveBare := resolvedHaveSets(plugins)
+	return append(missingQuackOwnSkillNames(haveQualified), missingDotagentsEmbeddedSkillNames(haveBare)...)
 }
 
-// newSkillSource builds the skill toolset Source: every registered plugin's
-// skills, then the embedded quack plugin backfills any "quack:" name a
-// registered plugin doesn't already shadow (missingQuackSkillNames).
+// newSkillSource: registered plugins' skills, backfilled with any embedded "quack:" skill none shadows.
 func newSkillSource(plugins []plugin.Plugin) skill.Source {
 	resolved := resolvedSkillSource(plugins)
 	backfill := missingQuackSkillNames(plugins)
 	if len(backfill) == 0 {
 		return resolved
 	}
-	embedded := skillsource.Prefixed("quack", embeddedQuackSkillSource())
+	embedded := skill.NewMergedSource(quackOwnSkillSource(), dotagentsEmbeddedSkillSource())
 	return skill.NewMergedSource(resolved, skillsource.Scoped(embedded, backfill))
 }
 
-// swappableSkillSource is a skill.Source whose backing source swaps
-// atomically - lets a REST plugin change reach an already-built native
-// SkillToolset's next round with no restart (#1430 P2).
+// swappableSkillSource swaps its backing source atomically, so a REST plugin change reaches a built
+// SkillToolset's next round without a restart.
 type swappableSkillSource struct {
 	cur atomic.Pointer[skill.Source]
 }
@@ -341,9 +311,8 @@ func LedgerStoreFromConfig(cfg *config.Config) ledger.LedgerStore {
 	return store
 }
 
-// setDefaultAgent stamps m's metrics-only agent fallback (tracedModel.SetDefaultAgent) -
-// for any model or embedder consumer that never runs inside a DAG node's coords-stamped
-// ctx. No-op for a value that doesn't implement it (e.g. under test).
+// setDefaultAgent stamps m's metrics-only agent fallback for consumers that run outside a node's
+// coords-stamped ctx. No-op when m doesn't implement it.
 func setDefaultAgent(m any, name string) {
 	if da, ok := m.(interface{ SetDefaultAgent(string) }); ok {
 		da.SetDefaultAgent(name)
@@ -363,9 +332,8 @@ func BuildArtifactService(cfg *config.Config) (artifact.Service, error) {
 	return store.NewArtifactService(as.URL)
 }
 
-// warnIfEpisodicRecordsWontSurvive: artifacts.store defaults to "" (in-memory, #1006), so `artifact:`
-// records die on every restart with no other signal - loud, not fatal: workflows that never set
-// Artifact see zero behavior change either way.
+// warnIfEpisodicRecordsWontSurvive: artifacts.store defaults to in-memory, so `artifact:` records die on
+// restart with no other signal. Loud, not fatal.
 func warnIfEpisodicRecordsWontSurvive(cfg *config.Config) {
 	if cfg.Artifacts.Store != "" {
 		return
@@ -476,13 +444,11 @@ func InProcessWithPromptSource(ctx context.Context, cfg *config.Config, promptSr
 	return "http://" + ln.Addr().String(), stop, nil
 }
 
-// shutdownHooks is an out-param for what Run needs post-build to drain
-// SIGTERM (DrainActiveRuns) - avoids growing buildFromConfig's return arity
-// across its ~25 early error returns. nil skips draining (InProcess's CLI use).
+// shutdownHooks is an out-param for what Run needs to drain SIGTERM, avoiding a wider buildFromConfig
+// return. nil skips draining (InProcess's CLI use).
 type shutdownHooks struct {
 	hub *stream.Hub
-	// pauser is the live executor: the drain pauses its running nodes rather
-	// than cancelling the runs (#962).
+	// pauser: the drain pauses running nodes rather than cancelling the runs.
 	pauser nodePauser
 	grace  time.Duration
 }
@@ -521,9 +487,7 @@ func (b *boot) runCleanups() {
 	}
 }
 
-// initAuthAndObservability builds auth, then the ledger store, then starts
-// otel - merged so buildFromConfig checks one error instead of two, same
-// order as before the merge (auth.New first).
+// initAuthAndObservability builds auth, then the ledger store, then starts otel.
 func (b *boot) initAuthAndObservability(ctx context.Context) (*auth.Auth, ledger.LedgerStore, *otelobs.Providers, error) {
 	authMW, err := auth.New(b.cfg.Auth)
 	if err != nil {
@@ -539,7 +503,7 @@ func (b *boot) initAuthAndObservability(ctx context.Context) (*auth.Auth, ledger
 
 // initializes otel, wiring its shutdown (with a bounded context) into the boot cleanups
 func (b *boot) initObservability(ctx context.Context, ledgerStore ledger.LedgerStore) (*otelobs.Providers, error) {
-	inference.Version = Version // llm.call ledger provenance (#1096)
+	inference.Version = Version // llm.call ledger provenance
 	otelProviders, otelShutdown, err := otelobs.Init(ctx, b.cfg.Observability, ledgerStore, Version)
 	if err != nil {
 		return nil, fmt.Errorf("otel init failed: %w", err)
@@ -594,7 +558,7 @@ func (b *boot) initStorage(ctx context.Context, reconcile bool, jail *workspace.
 	artifacts := store.NewTurnAwareService(artifactSvc)
 	st.SetArtifactService(artifacts)
 	if ledgerStore != nil {
-		// #1144 P5: chat/turn/plan writes go through AppendIntent; wired before the reconcile so its settles reach the ledger.
+		// Chat/turn/plan writes go through AppendIntent; wired before the reconcile so its settles reach the ledger.
 		st.SetWALLedger(ledgerStore)
 	}
 	// After SetArtifactService: the reconcile mirrors each node's row status onto its dag_node record.
@@ -609,7 +573,7 @@ func (b *boot) initStorage(ctx context.Context, reconcile bool, jail *workspace.
 // builds the orchestrator model
 func (b *boot) initOrchestratorModel(artifacts artifact.Service) (model.LLM, error) {
 	prov, _ := b.cfg.Provider(b.cfg.Orchestrator.Provider)
-	llm, err := inference.NewModelWithEffort(prov, b.cfg.Orchestrator.Model, artifacts, b.cfg.ModelCost(b.cfg.Orchestrator.Model), b.cfg.ModelEffort(b.cfg.Orchestrator.Model))
+	llm, err := inference.NewModel(prov, b.cfg.Orchestrator.Model, artifacts, b.cfg.ModelCost(b.cfg.Orchestrator.Model), b.cfg.ModelEffort(b.cfg.Orchestrator.Model))
 	if err != nil {
 		return nil, fmt.Errorf("inference model init failed: %w", err)
 	}
@@ -618,17 +582,15 @@ func (b *boot) initOrchestratorModel(artifacts artifact.Service) (model.LLM, err
 	return llm, nil
 }
 
-// skillsInit is initSkills' result: the resolved plugins, both skill
-// sources, the native toolset, a scoped-toolset builder, and the reloader a
-// REST plugin add/remove/fetch calls (#1430).
+// skillsInit is initSkills' result, including the reloader REST plugin changes call.
 type skillsInit struct {
 	plugins          []plugin.Plugin
 	builtinSkillSrc  skill.Source
 	skillSrc         skill.Source
 	skillTS          *skilltoolset.SkillToolset
 	newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error)
-	// reload re-admits the registry with the SAME per-row admission as boot
-	// (review#2); it rebuilds agents too once boot attaches them.
+	// reload re-admits the registry with the same per-row admission as boot; it rebuilds agents too once
+	// boot attaches them.
 	reload *reloader
 	// mcpDeclared reports, by row name, which plugins' mcp.json declares a server.
 	mcpDeclared func() map[string]bool
@@ -637,16 +599,14 @@ type skillsInit struct {
 	reg pluginreg.FetchRegistry
 }
 
-// resolvePlugins resolves and admits every registry row once, before
-// rawShapes/buildAgents so plugin agents/shapes seed into cfg first. st
-// (nilable) reuses the registry's DB connection per plugins.store (#1427 P3).
+// resolvePlugins resolves and admits every registry row before rawShapes/buildAgents, so plugin
+// agents/shapes seed into cfg first. st (nilable) reuses the registry's DB connection.
 func (b *boot) resolvePlugins(ctx context.Context, st *store.Store) (pluginreg.FetchRegistry, []pluginreg.Plugin, []plugin.Plugin, error) {
 	reg, rows, err := b.bootPluginRegistry(ctx, st)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	// admitPlugins fails boot only on a plugins.seed (config) refusal -
-	// a REST-added row's refusal just drops that plugin (#1430 severe).
+	// admitPlugins fails boot only on a plugins.seed refusal; a REST-added row's refusal drops that plugin.
 	plugins, err := resolveRegistryPlugins(b.cfg.Plugins.Root, rows)
 	if err != nil {
 		return nil, nil, nil, err
@@ -658,9 +618,8 @@ func (b *boot) resolvePlugins(ctx context.Context, st *store.Store) (pluginreg.F
 	return reg, rows, plugins, nil
 }
 
-// resolveAndSeedPlugins resolves plugins, seeds their agents/shapes into
-// b.cfg, and returns the raw catalog shapes - so both are in b.cfg before
-// rawShapes/buildAgents run, behind one error check for buildFromConfig.
+// resolveAndSeedPlugins seeds plugin agents/shapes into b.cfg and returns the raw catalog shapes, both
+// before rawShapes/buildAgents run.
 func (b *boot) resolveAndSeedPlugins(ctx context.Context, st *store.Store) (pluginreg.FetchRegistry, []plugin.Plugin, []workflowcatalog.Shape, error) {
 	reg, _, plugins, err := b.resolvePlugins(ctx, st)
 	if err != nil {
@@ -682,22 +641,17 @@ func (b *boot) resolveAndSeedPlugins(ctx context.Context, st *store.Store) (plug
 	b.cfg.Agents, b.cfg.Workflows = cand.Agents, cand.Workflows
 	b.seedOwners = seedOwners(seedResults)
 	logPluginSeeds(seedResults)
-	// The merge is done now: every agent must have a bundle/model, whether a
-	// plugin supplied it or the config itself did (deferred by
-	// LoadDeferringAgentCompleteness so a plugin override reaches this far).
+	// Every agent needs a bundle/model once plugins are merged; the check was deferred so a plugin
+	// override could supply them.
 	if err := b.cfg.RequireAgentBundlesAndModels(); err != nil {
 		return nil, nil, nil, err
 	}
 	return reg, plugins, workflowcatalog.FromConfig(b.cfg.Workflows, b.cfg.Revision), nil
 }
 
-// buildSkillsInit builds the skill sources and toolsets over an
-// already-resolved plugin set (see resolvePlugins) - buildFromConfig calls
-// this directly so plugin agents/shapes can be seeded into cfg first.
+// buildSkillsInit builds the skill sources and toolsets over an already-resolved plugin set.
 func (b *boot) buildSkillsInit(jail *workspace.Jail, reg pluginreg.FetchRegistry, plugins []plugin.Plugin, shapesRef *atomic.Pointer[[]workflowcatalog.Shape]) (skillsInit, error) {
-	// swappable is builtinSkillSrc's registry-derived half; every consumer
-	// below holds this SAME instance, so a reload's Swap reaches native
-	// agents' next round with no rebuild plumbing beyond this one pointer.
+	// Every consumer holds this same instance, so a reload's Swap reaches native agents' next round.
 	swappable := newSwappableSkillSource(newSkillSource(plugins))
 	reload := &reloader{cfg: b.cfg, reg: reg, skills: swappable}
 	reload.declared.Store(mcpDeclaredNames(plugins))
@@ -734,9 +688,8 @@ func (b *boot) initMemory(ctx context.Context, st *store.Store, artifacts artifa
 
 // builds the SDK extensions, their tools, and the ledger recovery path
 func (b *boot) initExtensions(ctx context.Context, st *store.Store, runHub *stream.Hub, bootEventLog *runlog.EventLog, orchRef *atomic.Pointer[orchestrator.Orchestrator], artifacts *store.TurnAwareService, jail *workspace.Jail, judgeModelRef *atomic.Pointer[model.LLM], taskStore, userStore *memory.Store, ledgerStore ledger.LedgerStore, shapesRef *atomic.Pointer[[]workflowcatalog.Shape]) ([]builtSDKExtension, []extTool, tools.GitTokenSource, vetting.DeliverFunc, tools.AssignmentFreshnessFunc, tools.AssignmentMetaFunc, *artifactschema.Registry, error) {
-	// Built after taskStore/userStore so UpdateChatOrigin's memory-outcome
-	// mapping (design doc §4(b)/§5) can close over the concrete stores
-	// instead of a lazily-resolved ref.
+	// Built after taskStore/userStore so UpdateChatOrigin's memory-outcome mapping closes over the
+	// concrete stores.
 	decisions := &extDecisions{}
 	sdkExts, err := buildSDKExtensions(b.cfg, st, runHub, bootEventLog, orchRef, artifacts, jail, judgeModelRef, taskStore, userStore, ledgerStore, shapesRef, decisions)
 	if err != nil {
@@ -754,9 +707,8 @@ func (b *boot) initExtensions(ctx context.Context, st *store.Store, runHub *stre
 	// (github, today) supplies quack's push credential and delivery target, not hardcoded to one extension.
 	gitTokenSource, deliver, assignmentFreshness, assignmentMeta := discoverSDKToolSources(sdkExts)
 	if ledgerStore != nil {
-		// #1144 P3: seed a caught-up watermark (sse, artifact, node_state) for any chat that already
-		// has that projection's data, before the first watermark-gated write - not a literal MAX(seq)
-		// copy (SeedProjectionWatermarks doc); cheap, idempotent, runs every boot.
+		// Seed a caught-up watermark for any chat that already has a projection's data, before the first
+		// watermark-gated write. Idempotent; runs every boot.
 		if err := st.SeedProjectionWatermarks(ctx, ledgerStore); err != nil {
 			slog.Warn("projection watermark seeding failed; a first-time fold may re-derive history for old chats", "component", "startup", "err", err)
 		}
@@ -764,9 +716,7 @@ func (b *boot) initExtensions(ctx context.Context, st *store.Store, runHub *stre
 		// happened (a crash between WAL append and row write) before any run starts.
 		proj := cli.Projections{ArtifactRowExists: cli.ArtifactRowChecker(st, artifacts), ChatExists: st.ChatExists}
 		proj.DeliveryRecorded, proj.RecordDelivery = vetting.DeliveryProjections(artifacts, ledgerStore, st.SessionUserForChat)
-		if rec, _ := findRecoverer(sdkExts); rec != nil {
-			proj.Delivery = sdkRecoverAdapter{recoverer: rec}
-		}
+		proj.Delivery, _ = findRecoverer(sdkExts)
 		// Fail-open on purpose: a recovery bug must not crash-loop the deploy; the gauge and this Warn are the signal.
 		if _, err := cli.Recover(ctx, ledgerStore, nil, proj, false); err != nil {
 			slog.Warn("ledger recovery failed; unresolved intents stay unresolved", "component", "startup", "err", err)
@@ -831,11 +781,10 @@ func (b *boot) initAgents(st *store.Store, skillTS *skilltoolset.SkillToolset, b
 		return builtAgents{}, nil, nil, nil, nil, nil, fmt.Errorf("agent build failed: %w", err)
 	}
 	if judgeModel != nil {
-		// An SDK extension's Classify is not a node, but judgeModel is the
-		// instance gated nodes stamp - hand it an unstamped one instead (#1049).
+		// Classify is not a node, but gated nodes stamp judgeModel; give it an unstamped instance.
 		classifyModel := judgeModel
 		if jprov, ok := b.cfg.Provider(b.cfg.Gates.Judge.Provider); ok {
-			if m, err := inference.NewModelWithEffort(jprov, b.cfg.Gates.Judge.Model, artifacts, b.cfg.ModelCost(b.cfg.Gates.Judge.Model), b.cfg.ModelEffort(b.cfg.Gates.Judge.Model)); err == nil {
+			if m, err := inference.NewModel(jprov, b.cfg.Gates.Judge.Model, artifacts, b.cfg.ModelCost(b.cfg.Gates.Judge.Model), b.cfg.ModelEffort(b.cfg.Gates.Judge.Model)); err == nil {
 				classifyModel = m
 			} else {
 				slog.Warn("classify: own judge model unavailable; sharing the gate's (attribution may follow another node)",
@@ -904,8 +853,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	}()
 	seedPromptArtifacts(ctx, promptSrc)
 
-	// Pinned ACP processes (#1006) close on node-finish and again on shutdown (vetting can
-	// not import acp, hence the hook), so they never outlive their node or the server.
+	// Pinned ACP processes close on node-finish and on shutdown (vetting can't import acp, hence the hook).
 	vetting.NodeSessionClosed = acp.ClosePinnedSession
 	b.cleanups = append(b.cleanups, acp.CloseAllPinnedSessions)
 	promptbuilder.SetLocation(cfg.Location())
@@ -921,8 +869,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		return nil, nil, "", err
 	}
 
-	// #1144 P5: the ledger retention sweep is deleted - chat hard-delete is the only GC;
-	// checkpoints bound fold cost instead of trimming the log.
+	// Chat hard-delete is the only ledger GC; checkpoints bound fold cost instead of trimming the log.
 	jail, err := b.initWorkspace(ctx)
 	if err != nil {
 		return nil, nil, "", err
@@ -992,8 +939,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	return handler, b.runCleanups, addr, nil
 }
 
-// promptSourceFor: the live store Source (P2, #1421), chained behind a
-// caller-supplied override (an experiment's pins) in its place.
+// promptSourceFor: the live store Source, chained behind a caller-supplied override (an experiment's pins).
 func promptSourceFor(cfg *config.Config, override artifactsrc.Source) (artifactsrc.Source, string) {
 	src, name := buildPromptSource(cfg)
 	if override != nil {
@@ -1016,9 +962,8 @@ func buildPromptSource(cfg *config.Config) (artifactsrc.Source, string) {
 	return &langfuse.Source{Client: client, StoreKey: cfg.Prompts.Store}, cfg.Prompts.Store
 }
 
-// seedPromptArtifacts pushes every shipped artifact's current version to src in the
-// background: seeding must never delay readiness, and a failed name just stays on
-// whatever version the store already has (the resolver falls back to static anyway).
+// seedPromptArtifacts pushes shipped artifacts to src in the background: seeding must never delay
+// readiness, and a failed name keeps the store's version (the resolver falls back to static anyway).
 func seedPromptArtifacts(ctx context.Context, src artifactsrc.Source) {
 	if src == nil {
 		return
@@ -1059,7 +1004,7 @@ func buildUserMemoryHookAgent(ctx context.Context, h config.UserMemoryHookConfig
 	if !ok {
 		return nil, fmt.Errorf("provider %q not found", h.Provider)
 	}
-	m, err := inference.NewModelWithEffort(prov, h.Model, artifacts, cfg.ModelCost(h.Model), cfg.ModelEffort(h.Model))
+	m, err := inference.NewModel(prov, h.Model, artifacts, cfg.ModelCost(h.Model), cfg.ModelEffort(h.Model))
 	if err != nil {
 		return nil, fmt.Errorf("model: %w", err)
 	}
@@ -1080,12 +1025,10 @@ func buildUserMemoryHookAgent(ctx context.Context, h config.UserMemoryHookConfig
 		return nil, fmt.Errorf("rubric.md: %w", err)
 	}
 	guidance := strings.TrimSpace(whatToRemember + "\n\n" + rubric)
-	return agent.BuildChat(b, b.PinPrompt(res), wm, nil, nil, guidance, nil, "")
+	return agent.BuildChat(b, b.PinPrompt(res), wm, nil, nil, guidance, "")
 }
 
-// fetchGitCredential: the shared body of gitCredentialAdapter.GitCredential and
-// sdkGitCredentialAdapter.GitCredential - resolve, nil-check, and copy the three
-// Host/Username/Token fields into D.
+// fetchGitCredential: shared body of the two GitCredential adapters - resolve, nil-check, copy fields.
 func fetchGitCredential[C, D any](ctx context.Context, rawURL string, fetch func(context.Context, string) (*C, error), fields func(*C) (string, string, string), mk func(string, string, string) D) (*D, error) {
 	c, err := fetch(ctx, rawURL)
 	if err != nil || c == nil {
@@ -1112,9 +1055,8 @@ func (a gitCredentialAdapter) GitCredential(ctx context.Context, rawURL string) 
 	return fetchGitCredential(ctx, rawURL, a.src.GitCredential, toolsCredFields, newVettingGitCredential)
 }
 
-// gateConfigs holds each gated agent's boot-resolved trust-gate config plus the
-// closure that re-resolves its artifacts (rubric, constitution, bundle hash) at
-// run start, so an edited rubric or prompt reaches the next node without a restart.
+// gateConfigs holds each gated agent's boot-resolved gate config plus the closure that re-resolves its
+// artifacts at run start, so an edited rubric or prompt applies without a restart.
 type gateConfigs struct {
 	boot    map[string]vetting.Config
 	refresh map[string]func(context.Context) (vetting.Config, error)
@@ -1142,11 +1084,7 @@ func (g *gateConfigs) For(ctx context.Context, name string) vetting.Config {
 // buildAgents loads each agent bundle, builds its model and tools, exposes over A2A, returns client map.
 func buildAgents(cfg *config.Config, res *artifactsrc.Resolver, sessions session.Service, skillTS *skilltoolset.SkillToolset, builtinSkillSrc skill.Source, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), taskStore *memory.Store, jail *workspace.Jail, gitTokenSource tools.GitTokenSource, extTools []extTool, deliver vetting.DeliverFunc, nodeCancelled func(chatID, nodeID string) bool, repeatGuardTripped func(chatID, nodeID, msg string) bool, registerLiveSteer func(chatID, nodeID string, f func(string) bool), unregisterLiveSteer func(chatID, nodeID string), registerRoundAbort func(chatID, nodeID string, cancel context.CancelFunc), unregisterRoundAbort func(chatID, nodeID string), setupOut *dag.SetupFunc, artifacts artifact.Service, ledgerStore ledger.LedgerStore, reg pluginreg.FetchRegistry, admission *dag.Admission, artifactSchemas *artifactschema.Registry, nodeServers *perNodeServers, dropped map[string]error) (map[string]adkagent.Agent, map[string]model.LLM, *perNodeServers, vetting.JudgeFactory, vetting.PlanJudge, *gateConfigs, model.LLM, error) {
 
-	names := make([]string, 0, len(cfg.Agents))
-	for name := range cfg.Agents {
-		names = append(names, name)
-	}
-	sort.Strings(names)
+	names := slices.Sorted(maps.Keys(cfg.Agents))
 
 	urlCache := tools.NewURLCache()
 
@@ -1208,7 +1146,7 @@ func buildAgents(cfg *config.Config, res *artifactsrc.Resolver, sessions session
 		if err == nil && ac.Acp != nil {
 			ag, err = buildACPNode(name, ac, prov, cfg, res, workspaceCaps, jail, taskStore, builtinSkillSrc, gateCfg, gateCfgs, safetyJudge, cfg.ModelCost(ac.Model), registerLiveSteer, unregisterLiveSteer, registerRoundAbort, unregisterRoundAbort, reg)
 		} else if err == nil {
-			ag, err = buildNativeNode(name, ac, prov, taskStore, newScopedSkillTS, builtinSkillSrc, cfg, res, workspaceCaps, jail, gitCredentials, gitTokenSource, safetyJudge, nodeCancelled, repeatGuardTripped, extToolsByName, urlCache, sessions, artifacts, ledgerStore, compactionFor, gateCfg, gateCfgs, nodeServers, reg, admission)
+			ag, err = buildNativeNode(name, ac, prov, taskStore, newScopedSkillTS, builtinSkillSrc, cfg, res, workspaceCaps, jail, safetyJudge, nodeCancelled, repeatGuardTripped, extToolsByName, urlCache, sessions, artifacts, ledgerStore, compactionFor, gateCfg, gateCfgs, nodeServers, reg, admission)
 		}
 		if err != nil {
 			if !dropOptionalAgent(name, ac, err, dropped) {
@@ -1232,7 +1170,7 @@ func agentModel(cfg *config.Config, name string, ac config.AgentConfig, artifact
 	if !ok {
 		return prov, nil, fmtErr(name, "provider %q not found", ac.Provider)
 	}
-	m, err := inference.NewModelWithEffort(prov, ac.Model, artifacts, cfg.ModelCost(ac.Model), cfg.ModelEffort(ac.Model))
+	m, err := inference.NewModel(prov, ac.Model, artifacts, cfg.ModelCost(ac.Model), cfg.ModelEffort(ac.Model))
 	if err != nil {
 		return prov, nil, fmtErr(name, "model: %v", err)
 	}
@@ -1269,7 +1207,7 @@ func buildGateJudge(cfg *config.Config, res *artifactsrc.Resolver, jail *workspa
 			if !ok {
 				return vetting.Config{}, nil, nil, nil, nil, fmt.Errorf("gates.judge: provider %q not found", cfg.Gates.Judge.Provider)
 			}
-			judge, err := inference.NewModelWithEffort(jprov, cfg.Gates.Judge.Model, artifacts, cfg.ModelCost(cfg.Gates.Judge.Model), cfg.ModelEffort(cfg.Gates.Judge.Model))
+			judge, err := inference.NewModel(jprov, cfg.Gates.Judge.Model, artifacts, cfg.ModelCost(cfg.Gates.Judge.Model), cfg.ModelEffort(cfg.Gates.Judge.Model))
 			if err != nil {
 				return vetting.Config{}, nil, nil, nil, nil, fmt.Errorf("gates.judge: model: %w", err)
 			}
@@ -1286,22 +1224,20 @@ func buildGateJudge(cfg *config.Config, res *artifactsrc.Resolver, jail *workspa
 					return vetting.Config{}, nil, nil, nil, nil, fmt.Errorf("gates.judge: read tools: %w", err)
 				}
 			}
-			// Unwrapped: judgeSessionID is per chat, not per round, so a shared repeatStates
-			// would falsely refuse a chat's 3rd load_skill(rubric) round - the judge already
-			// breaks in-round loops itself via repeatsLastToolCall/forcedVerdictCallback.
+			// Unwrapped: judgeSessionID is per chat, so shared repeatStates would refuse a chat's 3rd
+			// load_skill(rubric) round; the judge breaks in-round loops itself.
 			var judgeSkillsets []tool.Toolset
 			if skillTS != nil {
 				judgeSkillsets = []tool.Toolset{skillTS}
 			}
 			judgeFactory = vetting.NewJudgeFactory(judge, judgeReadTools, judgeSkillsets)
 			judgeFactoryNoTools := vetting.NewJudgeFactory(judge, nil, judgeSkillsets)
-			// #1421 P2: each round gets its own bound-in factory+model, never one shared
-			// instance swapped in place (H1 - that let concurrent rounds race each other).
+			// Each round gets its own bound factory+model; one shared instance swapped in place let rounds race.
 			gateCfg.RefreshJudgeBinding = bindJudgeRefresher(cfg, jprov, artifacts, judge, judgeFactory, judgeFactoryNoTools, judgeReadTools, judgeSkillsets)
-			// Own instances: gated nodes stamp per-round coords on `judge` (vetting/node.go);
-			// these callers are not nodes, so sharing would inherit the last node's stamp (#1049).
+			// Own instances: gated nodes stamp per-round coords on `judge`, and these non-node callers would
+			// inherit the last node's stamp.
 			unstamped := func() (model.LLM, error) {
-				return inference.NewModelWithEffort(jprov, cfg.Gates.Judge.Model, artifacts, cfg.ModelCost(cfg.Gates.Judge.Model), cfg.ModelEffort(cfg.Gates.Judge.Model))
+				return inference.NewModel(jprov, cfg.Gates.Judge.Model, artifacts, cfg.ModelCost(cfg.Gates.Judge.Model), cfg.ModelEffort(cfg.Gates.Judge.Model))
 			}
 			safetyModel, err := unstamped()
 			if err != nil {
@@ -1357,9 +1293,8 @@ func (b *judgeBinding) warnOnce(last *string, msg string, artifactName string, e
 	}
 }
 
-// bindJudgeRefresher returns prepareJudge's per-round binder: system/judge's Config
-// picks this round's OWN JudgeFactory+model+thinking_level; an invalid value falls
-// back to gates.judge's static factory/model and logs once per distinct bad value.
+// bindJudgeRefresher: system/judge's Config picks each round's own JudgeFactory+model+thinking_level; an
+// invalid value falls back to gates.judge's static binding and logs once per distinct bad value.
 func bindJudgeRefresher(cfg *config.Config, jprov config.ProviderConfig, artifacts artifact.Service, staticModel model.LLM, staticFactory, staticFactoryNoTools vetting.JudgeFactory, readTools []tool.Tool, skillsets []tool.Toolset) func(art artifactsrc.Artifact, hasReadTools bool) (vetting.JudgeFactory, model.LLM, string) {
 	staticEffort := cfg.Gates.Judge.ThinkingLevel
 	b := &judgeBinding{cache: map[string]judgeBoundModel{}}
@@ -1383,8 +1318,8 @@ func bindJudgeRefresher(cfg *config.Config, jprov config.ProviderConfig, artifac
 		if e, ok := art.Config["effort"].(string); ok && e != "" {
 			effort = e
 		}
-		// M3: (provider, model) identifies the swap; effort rides thinking_level, not the key.
-		// hasReadTools rides it too - two nodes sharing a bound model must not share a factory.
+		// (provider, model) identifies the swap; effort rides thinking_level. hasReadTools rides the key too:
+		// two nodes sharing a bound model must not share a factory.
 		key := bound.ProviderName + "|" + bound.Provider.Endpoint + "|" + bound.Model
 		if hasReadTools {
 			key += "|tools"
@@ -1395,7 +1330,7 @@ func bindJudgeRefresher(cfg *config.Config, jprov config.ProviderConfig, artifac
 		if ok {
 			return cached.factory, cached.model, effort
 		}
-		m, err := inference.NewModel(bound.Provider, bound.Model, artifacts, cfg.ModelCost(bound.Model))
+		m, err := inference.NewModel(bound.Provider, bound.Model, artifacts, cfg.ModelCost(bound.Model), "")
 		if err != nil {
 			b.warnOnce(&b.lastBadBuild, "judge prompt binding model build failed; using gates.judge's static binding", art.Name, err)
 			return staticForNode, staticModel, staticEffort
@@ -1436,9 +1371,8 @@ func buildACPNode(name string, ac config.AgentConfig, prov config.ProviderConfig
 		return nil, fmtErr(name, "skills: %v", err)
 	}
 	wsBlock := workspace.PromptBlock(workspaceCaps, cfg.Workspace.CheckCommands)
-	// Resolved once at the one point the preamble is composed and consumed (steerHooks),
-	// so nothing swaps it mid-round; promptArt stashes that artifact for PreambleArtifact
-	// below - a second independent resolve could fall back differently and disagree.
+	// Resolved once where the preamble is composed (steerHooks) so nothing swaps it mid-round; a second
+	// resolve for PreambleArtifact could fall back differently and disagree.
 	var promptArtMu sync.Mutex
 	var promptArt artifactsrc.Artifact
 	preamble := promptbuilder.CacheByDay(
@@ -1514,8 +1448,6 @@ type nativeNodeBuilder struct {
 	urlCache           *tools.URLCache
 	sessions           session.Service
 	jail               *workspace.Jail
-	gitCredentials     []tools.GitCredential
-	gitTokenSource     tools.GitTokenSource
 	safetyJudge        tools.SafetyJudge
 	nodeCancelled      func(chatID, nodeID string) bool
 	repeatGuardTripped func(chatID, nodeID, msg string) bool
@@ -1526,7 +1458,6 @@ type nativeNodeBuilder struct {
 	memGuidance        string
 	bundle             *agent.Bundle
 	agentSkillTS       *skilltoolset.SkillToolset
-	skillFms           []*skill.Frontmatter
 	grading            string
 	ledgerStore        ledger.LedgerStore
 	compactionFor      func(ac config.AgentConfig, workerModel model.LLM) agent.Compaction
@@ -1536,17 +1467,15 @@ type nativeNodeBuilder struct {
 }
 
 func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func() string, rc *recordstore.Client, nodeID string, coords *tools.RoundCoords, sink func(stream.SSEEvent), turnID string, scope tools.CallScope, meter *agent.PromptMeter, extraTools ...tool.Tool) (adkagent.Agent, model.LLM, *inference.OverridableModel, []tool.Tool, error) {
-	base, err := inference.NewModelWithEffort(b.prov, b.ac.Model, b.artifacts, b.cfg.ModelCost(b.ac.Model), b.cfg.ModelEffort(b.ac.Model))
+	base, err := inference.NewModel(b.prov, b.ac.Model, b.artifacts, b.cfg.ModelCost(b.ac.Model), b.cfg.ModelEffort(b.ac.Model))
 	if err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("model: %w", err)
 	}
-	// A prompt store can bind a different model/provider/effort per round (#1421 P2):
-	// wrapping in Overridable lets the round-start refresh swap targets without
-	// rebuilding the ADK agent, which holds this LLM for its whole lifetime.
+	// Overridable lets a round rebind model/provider/effort without rebuilding the ADK agent, which holds
+	// this LLM for its lifetime.
 	wm := inference.NewOverridable(base)
-	// #1482: per-call admission OUTSIDE the overridable, so a round-bound model
-	// swap (overridable.Set installs a raw target) still routes through the hold.
-	// The slot frees between this node's model calls; tool phases overlap others.
+	// Admission sits outside the overridable so a round-bound swap still routes through the hold. The slot
+	// frees between model calls; tool phases overlap others.
 	var wrapped model.LLM = wm
 	if b.admission != nil && nodeID != "" {
 		// sink may only be nil when nodeID == "" (the startup proto path, which
@@ -1567,8 +1496,6 @@ func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func(
 			Workspace:          b.jail,
 			WorkspaceUserID:    localUserID,
 			WorkspaceCaps:      b.workspaceCaps,
-			GitCredentials:     b.gitCredentials,
-			GitTokenSource:     b.gitTokenSource,
 			Guards:             b.cfg.Workspace.Guards,
 			SafetyJudge:        b.safetyJudge,
 			NodeCancelled:      b.nodeCancelled,
@@ -1591,14 +1518,13 @@ func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func(
 	if b.memSvc != nil {
 		builtins = append(builtins, memory.NewPreload())
 	}
-	// extraTools: this node's artifact tools, built per-dispatch by dag.buildGateNodes
-	// once chatID/artifacts are known; buildWorker(nil) at startup gets none (#1123).
+	// extraTools: this node's artifact tools, built per dispatch; buildWorker(nil) at startup gets none.
 	builtins = append(builtins, tools.SelectArtifactTools(extraTools, b.ac.Tools, b.bundle.Card.Artifact != "")...)
 	var toolsets []tool.Toolset
 	if len(b.ac.Skills) > 0 {
 		toolsets = []tool.Toolset{tools.RepeatWrapToolset(b.agentSkillTS, repeats, b.repeatGuardTripped, scope)}
 	}
-	wag, err := agent.Build(b.bundle, prompts, wrapped, builtins, toolsets, b.memGuidance, b.skillFms, b.grading, drain, meter)
+	wag, err := agent.Build(b.bundle, prompts, wrapped, builtins, toolsets, b.memGuidance, b.grading, drain, meter)
 	if err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("build: %w", err)
 	}
@@ -1615,8 +1541,8 @@ func (b *nativeNodeBuilder) build(ctx context.Context, nodeKey, advisorToken str
 	var coords *tools.RoundCoords
 	if artifacts != nil {
 		rc = recordstore.New(artifacts, appName, userID, chatID)
-		// Same PGStore-only restriction as executor.SetWALLedger (#1153): write_<kind>
-		// must record parent_revision, but only over a transactional ledger.
+		// PGStore only, like executor.SetWALLedger: write_<kind> records parent_revision only over a
+		// transactional ledger.
 		if pg, ok := b.ledgerStore.(*ledger.PGStore); ok {
 			rc = rc.WithLedger(pg)
 		}
@@ -1661,12 +1587,11 @@ func (b *nativeNodeBuilder) build(ctx context.Context, nodeKey, advisorToken str
 	return client, wm, builtins, setRoundCoords, refresh, release, nil
 }
 
-// bindPromptRefresher wraps prompts.Refresh: a resolved artifact's Config can
-// rebind the round's model/provider/effort; an invalid value falls back to
-// the static binding and logs once, until the bad value itself changes.
+// bindPromptRefresher: a resolved artifact's Config can rebind the round's model/provider/effort; an
+// invalid value falls back to the static binding and logs once per bad value.
 func (b *nativeNodeBuilder) bindPromptRefresher(prompts *artifactsrc.Pinned, overridable *inference.OverridableModel) promptRefresher {
 	// L1: overridable was built FROM this same base model - reuse it, never a second
-	// NewModelWithEffort call whose error a plain `_` would drop (a nil Set would panic).
+	// NewModel call whose error a plain `_` would drop (a nil Set would panic).
 	static := overridable.Get()
 	var lastBad string
 	var lastBadBuild string
@@ -1689,14 +1614,13 @@ func (b *nativeNodeBuilder) bindPromptRefresher(prompts *artifactsrc.Pinned, ove
 			overridable.Set(static)
 			return art
 		}
-		// M3: this node's rounds run sequentially (this closure is never shared across
-		// nodes), so a plain cache is enough - rebuild only when the tuple changes.
+		// This closure serves one node's sequential rounds, so a plain cache keyed on the tuple suffices.
 		key := bound.ProviderName + "|" + bound.Provider.Endpoint + "|" + bound.Model + "|" + bound.Effort
 		if key == cachedKey && cachedModel != nil {
 			overridable.Set(cachedModel)
 			return art
 		}
-		m, err := inference.NewModelWithEffort(bound.Provider, bound.Model, b.artifacts, b.cfg.ModelCost(bound.Model), bound.Effort)
+		m, err := inference.NewModel(bound.Provider, bound.Model, b.artifacts, b.cfg.ModelCost(bound.Model), bound.Effort)
 		if err != nil {
 			if err.Error() != lastBadBuild {
 				lastBadBuild = err.Error()
@@ -1713,9 +1637,8 @@ func (b *nativeNodeBuilder) bindPromptRefresher(prompts *artifactsrc.Pinned, ove
 	}
 }
 
-// resolveGateCfg resolves the per-agent trust-gate config (and prompt grading facts
-// for gated agents), recording gated configs in gateCfgs along with the closure
-// that re-resolves their artifacts at run start.
+// resolveGateCfg resolves an agent's trust-gate config, recording gated ones in gateCfgs with the
+// closure that re-resolves their artifacts at run start.
 func resolveGateCfg(cfg *config.Config, res *artifactsrc.Resolver, base vetting.Config, name string, ac config.AgentConfig, taskMemAvailable bool, memGuidance string, memArt artifactsrc.Artifact, bundle *agent.Bundle, gateCfgs *gateConfigs, reg pluginreg.FetchRegistry) (string, error) {
 	if cfg.Gates.Enabled() && !ac.IsGated() {
 		slog.Info("trust gate skipped for agent (gated: false)", "component", "startup", "agent", name)
@@ -1746,9 +1669,8 @@ func stampBundle(c vetting.Config, b *agent.Bundle) vetting.Config {
 	return c
 }
 
-// refreshGateCfg re-resolves only the artifact-backed parts of a gate config -
-// the global rubric and constitution, the agent's own rubric, and the bundle's
-// hash and prompt provenance. Every config-derived field stays as boot computed it.
+// refreshGateCfg re-resolves only the artifact-backed parts (global rubric, constitution, agent rubric,
+// bundle hash and provenance); config-derived fields stay as boot computed them.
 func refreshGateCfg(ctx context.Context, res *artifactsrc.Resolver, cfg *config.Config, ac config.AgentConfig, boot vetting.Config, reg pluginreg.FetchRegistry) (vetting.Config, error) {
 	base, err := vetting.FromConfig(ctx, res, cfg.Gates)
 	if err != nil {
@@ -1772,7 +1694,7 @@ func refreshGateCfg(ctx context.Context, res *artifactsrc.Resolver, cfg *config.
 
 // buildNativeNode builds one native (co-located) configured agent: bundle, memory view, scoped
 // skills, gate grading, and the per-dispatch worker builder.
-func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderConfig, taskStore *memory.Store, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), builtinSkillSrc skill.Source, cfg *config.Config, res *artifactsrc.Resolver, workspaceCaps workspace.Caps, jail *workspace.Jail, gitCredentials []tools.GitCredential, gitTokenSource tools.GitTokenSource, safetyJudge tools.SafetyJudge, nodeCancelled func(chatID, nodeID string) bool, repeatGuardTripped func(chatID, nodeID, msg string) bool, extToolsByName map[string]tool.Tool, urlCache *tools.URLCache, sessions session.Service, artifacts artifact.Service, ledgerStore ledger.LedgerStore, compactionFor func(ac config.AgentConfig, workerModel model.LLM) agent.Compaction, gateCfg vetting.Config, gateCfgs *gateConfigs, nodeServers *perNodeServers, reg pluginreg.FetchRegistry, admission *dag.Admission) (adkagent.Agent, error) {
+func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderConfig, taskStore *memory.Store, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), builtinSkillSrc skill.Source, cfg *config.Config, res *artifactsrc.Resolver, workspaceCaps workspace.Caps, jail *workspace.Jail, safetyJudge tools.SafetyJudge, nodeCancelled func(chatID, nodeID string) bool, repeatGuardTripped func(chatID, nodeID, msg string) bool, extToolsByName map[string]tool.Tool, urlCache *tools.URLCache, sessions session.Service, artifacts artifact.Service, ledgerStore ledger.LedgerStore, compactionFor func(ac config.AgentConfig, workerModel model.LLM) agent.Compaction, gateCfg vetting.Config, gateCfgs *gateConfigs, nodeServers *perNodeServers, reg pluginreg.FetchRegistry, admission *dag.Admission) (adkagent.Agent, error) {
 	toolNames := resolveToolNames(ac.Tools, taskStore != nil)
 
 	bundle, err := agent.LoadBundle(context.Background(), res, ac.Bundle)
@@ -1796,8 +1718,8 @@ func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderCon
 	if err != nil {
 		return nil, fmtErr(name, "skills toolset: %v", err)
 	}
-	skillFms, err := skillsource.Scoped(builtinSkillSrc, ac.Skills).ListFrontmatters(context.Background())
-	if err != nil {
+	// Fails boot on a malformed scoped skill source rather than at the node's first load_skill.
+	if _, err := skillsource.Scoped(builtinSkillSrc, ac.Skills).ListFrontmatters(context.Background()); err != nil {
 		return nil, fmtErr(name, "skills: %v", err)
 	}
 
@@ -1817,8 +1739,6 @@ func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderCon
 		urlCache:           urlCache,
 		sessions:           sessions,
 		jail:               jail,
-		gitCredentials:     gitCredentials,
-		gitTokenSource:     gitTokenSource,
 		safetyJudge:        safetyJudge,
 		nodeCancelled:      nodeCancelled,
 		repeatGuardTripped: repeatGuardTripped,
@@ -1829,7 +1749,6 @@ func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderCon
 		memGuidance:        memGuidance,
 		bundle:             bundle,
 		agentSkillTS:       agentSkillTS,
-		skillFms:           skillFms,
 		grading:            grading,
 		ledgerStore:        ledgerStore,
 		compactionFor:      compactionFor,
@@ -1847,8 +1766,7 @@ func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderCon
 	}
 	agentTools := ac.Tools
 	if artifacts != nil {
-		// Per-node artifact tools are built per dispatch (dag.buildGateNodes, #1123); named
-		// here too so "why didn't it revise" debugging sees what it was offered.
+		// Artifact tools are built per dispatch; listed here too so debugging sees what was offered.
 		agentTools = append(append([]string{}, ac.Tools...), "list_artifacts", "read_artifact")
 		if bundle.Card.Artifact != "" {
 			agentTools = append(agentTools, "write_artifact", "edit_artifact")
@@ -1866,11 +1784,10 @@ func bootReconcile(reconcile bool, cfg *config.Config, st *store.Store, jail *wo
 			return nil, fmt.Errorf("instance id init failed: %w", err)
 		}
 		st.SetInstanceID(id)
-		// Boot's half of #962: runs before anything can register a run with the Hub, so resume gets the
-		// DB to a settled state first - the memory consolidator's boot sweep starts after.
+		// Runs before anything can register a run with the Hub, so resume starts from a settled DB; the memory
+		// consolidator's boot sweep starts after.
 		resumeNodes = reconcileNodes(context.Background(), st, jail, func(chatID, pauseReason string) (bool, string) {
-			// #1176: an archived chat's paused nodes must not be resumed -
-			// they were still holding run slots the archive should free.
+			// Never resume an archived chat's paused nodes; the archive should free their run slots.
 			c, _ := st.GetChat(context.Background(), chatID)
 			p, _ := st.GetLatestDagPlan(context.Background(), chatID)
 			var planCreatedAt time.Time
@@ -1899,7 +1816,7 @@ func openMemoryStores(ctx context.Context, cfg *config.Config, st *store.Store, 
 		if !ok {
 			return nil, fmt.Errorf("embedder provider %q not found", rm.Embedder.Provider)
 		}
-		embedder, err := inference.NewEmbedder(eprov, rm.Embedder.Model, artifacts, cfg.ModelCost(rm.Embedder.Model))
+		embedder, err := inference.NewEmbedder(eprov, rm.Embedder.Model, cfg.ModelCost(rm.Embedder.Model))
 		if err != nil {
 			return nil, fmt.Errorf("embedder: %w", err)
 		}
@@ -1910,7 +1827,7 @@ func openMemoryStores(ctx context.Context, cfg *config.Config, st *store.Store, 
 		if !ok {
 			return nil, fmt.Errorf("consolidation provider %q not found", rm.Consolidation.Provider)
 		}
-		consolidator, err := inference.NewModelWithEffort(cprov, rm.Consolidation.Model, artifacts, cfg.ModelCost(rm.Consolidation.Model), cfg.ModelEffort(rm.Consolidation.Model))
+		consolidator, err := inference.NewModel(cprov, rm.Consolidation.Model, artifacts, cfg.ModelCost(rm.Consolidation.Model), cfg.ModelEffort(rm.Consolidation.Model))
 		if err != nil {
 			return nil, fmt.Errorf("consolidation model: %w", err)
 		}
@@ -1922,13 +1839,11 @@ func openMemoryStores(ctx context.Context, cfg *config.Config, st *store.Store, 
 		if err != nil {
 			return nil, err
 		}
-		// internal/memory can't import internal/store; st (already open above) is
-		// the memory_ops audit sink, wired in here.
+		// internal/memory can't import internal/store, so the memory_ops audit sink is wired here.
 		s.SetOpsLog(storeOpsLog{st})
 		return s, nil
 	}
-	// Consolidation sweeps sweep on their first tick; started after the resumed nodes are
-	// dispatched so a boot resume never contends with #961's sweep for the same chat.
+	// Started after resumed nodes are dispatched so a boot resume never contends with the sweep for a chat.
 	if rm, ok := cfg.MemoryStore("stage_memory"); ok {
 		s, err := openMemory(rm, "task")
 		if err != nil {
@@ -2027,8 +1942,7 @@ func assembleOrchestrator(ctx context.Context, cfg *config.Config, res *artifact
 	if err != nil {
 		return nil, fmt.Errorf("orchestrator bundle load failed: %w", err)
 	}
-	// Bare names: dotagents on disk shadows the embedded quack:format-markdown
-	// (missingQuackSkillNames), so this must resolve bare -> qualified (#1427 S1).
+	// Bare names: on-disk dotagents shadows the embedded quack:format-markdown, so resolve bare -> qualified.
 	fmFm, err := skillsource.Resolve(context.Background(), skillSrc, "format-markdown")
 	if err != nil {
 		return nil, fmt.Errorf("format-markdown skill load failed: %w", err)
@@ -2070,7 +1984,7 @@ func assembleOrchestrator(ctx context.Context, cfg *config.Config, res *artifact
 	}
 	executor.SetSchemas(artifactSchemas)
 	executor.SetDecisions(decisions)
-	executor.SetNodeStateStore(st) // write-through node state machine (#962)
+	executor.SetNodeStateStore(st) // write-through node state machine
 	executorRef.Store(executor)
 	// Orchestrator turns take a session from the worker nodes' pool, held only while
 	// generating (holding across the DAG would deadlock them); wraps AFTER setDefaultAgent.
@@ -2078,8 +1992,7 @@ func assembleOrchestrator(ctx context.Context, cfg *config.Config, res *artifact
 	// Hard backstop under ADK's own compaction - see BudgetedLLM's doc for why.
 	orchLLM = dag.NewBudgetedLLM(orchLLM, cfg.Orchestrator.ContextWindow)
 	orch := orchestrator.New(st.Sessions, orchLLM, orchSysPrompt, planner, executor, orchSkillTS, userStore, taskStore)
-	// Unconditional, like executor.SetArtifacts: dag_plan persistence (#1095/#1118) must not
-	// depend on load_artifacts in orchestrator.tools (a prod config dropped plans, #1122).
+	// Unconditional: dag_plan persistence must not depend on load_artifacts being in orchestrator.tools.
 	orch.SetArtifacts(artifacts)
 	orch.SetDecisions(decisions)
 	orch.SetNodeSessionReaper(st.ReapNodeSessions)
@@ -2228,7 +2141,7 @@ func buildCompaction(cfg *config.Config, res *artifactsrc.Resolver, artifacts ar
 			return nil, fmt.Errorf("compaction: provider %q not found", compCfg.Provider)
 		}
 		var err error
-		if fallbackSummarizer, err = inference.NewModelWithEffort(cprov, compCfg.Model, artifacts, cfg.ModelCost(compCfg.Model), cfg.ModelEffort(compCfg.Model)); err != nil {
+		if fallbackSummarizer, err = inference.NewModel(cprov, compCfg.Model, artifacts, cfg.ModelCost(compCfg.Model), cfg.ModelEffort(compCfg.Model)); err != nil {
 			return nil, fmt.Errorf("compaction: model: %w", err)
 		}
 		// Fallback only (ResolveSummarizer prefers the worker model); unwrapped -
@@ -2359,23 +2272,19 @@ func piACPEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths []st
 	return []string{"PI_ACP_CONFIG=" + string(content)}
 }
 
-// extractedDotagentsSkillsDir materialises the embedded quack plugin's
-// skills on disk for the sandboxed ACP child (pi-acp reads skill_paths by
-// directory name, no embedded-FS access) - os.TempDir(), not caps.HomeDir.
+// extractedDotagentsSkillsDir: embedded skills on disk for the sandboxed ACP child, which reads
+// skill_paths by directory and has no embedded-FS access.
 var extractedDotagentsSkillsDir = filepath.Join(os.TempDir(), "quack-acp-dotagents-skills")
 
 var extractDotagentsSkillsMu sync.Mutex
 
-// embeddedExtractSources: the two trees embeddedQuackSkillSource merges,
-// tried in the same order for extraction - quack's own skills/ first, the
-// embedded dotagents snapshot second.
+// embeddedExtractSources: the embedded quack plugin's two trees, in the same order newSkillSource merges them.
 func embeddedExtractSources() []fs.FS {
 	return []fs.FS{bundledir.SubFS("skills"), bundledir.SubFS(dotagentsEmbeddedSkills)}
 }
 
-// ensureExtractedDotagentsSkillNames materialises the named (bare) embedded
-// skills under extractedDotagentsSkillsDir, idempotently - already-extracted
-// names are left alone, a failed one is simply absent from the dir.
+// ensureExtractedDotagentsSkillNames extracts the named (bare) embedded skills idempotently; a failed
+// one is simply absent.
 func ensureExtractedDotagentsSkillNames(missing []string) {
 	extractDotagentsSkillsMu.Lock()
 	defer extractDotagentsSkillsMu.Unlock()
@@ -2389,8 +2298,7 @@ func ensureExtractedDotagentsSkillNames(missing []string) {
 			"component", "serve", "dir", extractedDotagentsSkillsDir, "err", err)
 		return
 	}
-	// Prune anything extracted that's no longer missing, so it can't sit
-	// alongside an on-disk copy of the same name.
+	// Prune extracted skills no longer missing so they can't sit beside an on-disk copy.
 	if entries, err := os.ReadDir(extractedDotagentsSkillsDir); err == nil {
 		for _, e := range entries {
 			if e.IsDir() && !want[e.Name()] {
@@ -2431,9 +2339,8 @@ func extractEmbeddedSkill(sources []fs.FS, name, dest string) bool {
 	return false
 }
 
-// acpSkillPaths: the local skills/ dir (skipped if a row is literally
-// "quack", #1427 R5), each plugin's skills/, then the extracted embedded
-// backfill for whatever neither already shadows (same rule as newSkillSource).
+// acpSkillPaths: the local skills/ dir (skipped if a row is named "quack"), each plugin's skills/, then
+// the extracted embedded backfill for whatever neither shadows.
 func acpSkillPaths(plugins []plugin.Plugin) []string {
 	var out []string
 	localSkillsDirAdded := false
@@ -2449,11 +2356,12 @@ func acpSkillPaths(plugins []plugin.Plugin) []string {
 
 	// The raw local skills/ dir just added already covers quack's own
 	// half on disk - only the embedded-dotagents half can still be missing.
+	haveQualified, haveBare := resolvedHaveSets(plugins)
 	var missing []string
 	if !localSkillsDirAdded {
-		missing = missingQuackOwnSkillNames(plugins)
+		missing = missingQuackOwnSkillNames(haveQualified)
 	}
-	missing = append(missing, missingDotagentsEmbeddedSkillNames(plugins)...)
+	missing = append(missing, missingDotagentsEmbeddedSkillNames(haveBare)...)
 	if len(missing) == 0 {
 		return out
 	}
@@ -2468,8 +2376,7 @@ func acpSkillPaths(plugins []plugin.Plugin) []string {
 	return out
 }
 
-// hasQuackRow reports whether a resolved plugin is registered under the
-// exact name "quack" - the #1427 S2 shadow condition, reused by R5.
+// hasQuackRow reports whether a plugin is registered under the exact name "quack".
 func hasQuackRow(plugins []plugin.Plugin) bool {
 	for _, p := range plugins {
 		if p.Name == "quack" {
@@ -2479,9 +2386,8 @@ func hasQuackRow(plugins []plugin.Plugin) bool {
 	return false
 }
 
-// registrySignature is acpRegistrySkillPaths' cache key: names+shas. A local
-// row's sha is always "" so it only invalidates on a row-set change - its
-// content is still read live off disk on every call regardless (#1430).
+// registrySignature caches on names+shas. A local row's sha is "", so it invalidates only on a row-set
+// change; its content is still read live from disk.
 func registrySignature(rows []pluginreg.Plugin) string {
 	parts := make([]string, len(rows))
 	for i, p := range rows {
@@ -2490,9 +2396,8 @@ func registrySignature(rows []pluginreg.Plugin) string {
 	return strings.Join(parts, ",")
 }
 
-// acpRegistrySkillPaths is acp.Options.SkillPaths: acpSkillPaths over a
-// fresh registry read, cached by registrySignature. plugins.root itself is
-// NOT here - see acpRegistryExtraRO - this also feeds skill_paths (#1430).
+// acpRegistrySkillPaths is acp.Options.SkillPaths over a fresh registry read, cached by
+// registrySignature. plugins.root itself goes through acpRegistryExtraRO.
 func acpRegistrySkillPaths(cfg *config.Config, reg pluginreg.FetchRegistry) func() []string {
 	var mu sync.Mutex
 	var cachedKey string
@@ -2522,9 +2427,8 @@ func acpRegistrySkillPaths(cfg *config.Config, reg pluginreg.FetchRegistry) func
 	}
 }
 
-// acpRegistryExtraRO is acp.Options.ExtraRO: grants plugins.root itself to
-// the sandbox (the pi shim's own file reads need it) WITHOUT feeding it
-// into skill_paths (#1430 carry-over).
+// acpRegistryExtraRO grants plugins.root to the sandbox (the pi shim reads it) without adding it to
+// skill_paths.
 func acpRegistryExtraRO(cfg *config.Config) func() []string {
 	return func() []string {
 		if st, err := os.Stat(cfg.Plugins.Root); err == nil && st.IsDir() {
@@ -2534,9 +2438,8 @@ func acpRegistryExtraRO(cfg *config.Config) func() []string {
 	}
 }
 
-// acpRegistryPluginRefs: the round's ledger provenance = every registered row that
-// actually admitted (a refusal keeps its Error-tagged row rather than disappearing,
-// per persistPluginRefusal) plus the always-in-scope embedded quack bundle (P1 scope).
+// acpRegistryPluginRefs: ledger provenance is every admitted row (refusals keep an Error-tagged row)
+// plus the always-in-scope embedded quack bundle.
 func acpRegistryPluginRefs(cfg *config.Config, reg pluginreg.FetchRegistry) func() []ledger.PluginRef {
 	return func() []ledger.PluginRef {
 		rows, err := reg.List(context.Background())
@@ -2585,9 +2488,8 @@ func fmtErr(agentName, format string, args ...any) error {
 	return fmt.Errorf("agent %q: "+format, append([]any{agentName}, args...)...)
 }
 
-// resolveToolNames drops runtime-conditional builtins whose dependency is off, and
-// collapses recall_memory/load_memory (the same tool under two names) to whichever is listed first.
-// Artifact tool names are per-dispatch (SelectArtifactTools), never registry builds.
+// resolveToolNames drops builtins whose dependency is off and collapses recall_memory/load_memory (one
+// tool, two names) to whichever is listed first. Artifact tools are per-dispatch.
 func resolveToolNames(configured []string, taskMemAvailable bool) (names []string) {
 	names = make([]string, 0, len(configured))
 	sawMemoryRecall := false

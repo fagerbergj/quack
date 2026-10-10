@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// git_clone puts repo at depth 1; one extra level for nesting.
+// Setup clones repos at depth 1; one extra level for nesting.
 const repoSearchDepth = 2
 
 // FindRepos returns git repos at root or beneath, to repoSearchDepth. Skips vendored/ignored dirs.
@@ -44,7 +44,7 @@ func FindRepos(root string) []string {
 
 func skipDir(name string) bool { return SkipDir(name) }
 
-// Reports whether a directory is vendored/generated (results can be harmful: minified bundles can be MB per match).
+// Vendored/generated dirs are skipped: a minified bundle can be MBs per match.
 func SkipDir(name string) bool {
 	switch name {
 	case "node_modules", "vendor", "target", "dist", "build", "__pycache__":
@@ -58,9 +58,7 @@ func isRepo(dir string) bool {
 	return err == nil
 }
 
-// RepoKey: the chat's shared memory bucket key, keyed by origin identity
-// not repo count - worktree-per-node means a clone plus N linked worktrees
-// of the SAME origin all resolve to one bucket. "" when no repo, no origin, or the found repos genuinely disagree (don't guess).
+// RepoKey keys by origin, so a clone and its linked worktrees share one bucket; "" when repos disagree.
 func (j *Jail) RepoKey(userID, chatID string) string {
 	root, err := j.Resolve(userID, chatID, "")
 	if err != nil {
@@ -84,11 +82,10 @@ func (j *Jail) RepoKey(userID, chatID string) string {
 	return key
 }
 
-// Stable, clone-URL-independent identity from .git/config origin remote. Parsed from file (no git subprocess, recall hot path).
+// RepoIdentity parses .git/config directly: no git subprocess on the recall hot path.
 func RepoIdentity(dir string) string {
 	configPath := filepath.Join(dir, ".git", "config")
-	// A linked worktree's .git is a pointer file; origin lives in the parent
-	// clone's config, reached via the commondir it names.
+	// A linked worktree's origin lives in the parent clone's config.
 	if _, common := worktreeGitDirs(dir); common != "" {
 		configPath = filepath.Join(common, "config")
 	}
@@ -118,9 +115,7 @@ func RepoIdentity(dir string) string {
 	return ""
 }
 
-// NormalizeRepoURL collapses git@/https:///ssh:// forms to one key:
-// "github.com/owner/repo". Exported so callers with a raw clone URL (e.g. a
-// dispatch's dag.Setup.Repo) but no cloned worktree can derive the same memory.Scope.Repo key RepoIdentity computes from an actual clone's origin.
+// NormalizeRepoURL collapses git@/https:///ssh:// forms to "github.com/owner/repo".
 func NormalizeRepoURL(raw string) string {
 	u := strings.TrimSpace(raw)
 	if u == "" {

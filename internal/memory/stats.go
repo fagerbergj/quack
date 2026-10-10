@@ -17,14 +17,13 @@ type ScopeStats struct {
 	// NoVotes: no upvote or downvote recorded. Includes a point recalled only
 	// into not_relevant votes until the per-point not_relevant counter lands.
 	NoVotes int
-	// UnsupportedVerified: verified only via outcome-reinforcement (Upvotes == ReinforcementCount), never an actual judge/human vote.
-	// Undercounts after a dedupe absorb: the merge sums Upvotes across survivor+absorbed but neither backend carries ReinforcementCount along.
+	// UnsupportedVerified: verified only via outcome reinforcement (Upvotes == ReinforcementCount). Undercounts
+	// after a dedupe absorb, which sums Upvotes but doesn't carry ReinforcementCount.
 	UnsupportedVerified int
 }
 
-// Snapshot walks every point once (paged, includeInvalidated=true) and returns per-scope
-// tallies (see ScopeStats) plus absorbedBy: every absorbed id currently listed in some
-// memory's AbsorbedIDs, mapped to that memory's id - the input FoldAbsorption and stats weekly folding need to attribute a since-merged memory's history to its survivor.
+// Snapshot walks every point once and returns per-scope tallies plus absorbedBy (absorbed id ->
+// survivor id), which FoldAbsorption needs to attribute merged history.
 func (s *Store) Snapshot(ctx context.Context) ([]ScopeStats, map[string]string, error) {
 	byScope := map[string]*ScopeStats{}
 	absorbedBy := map[string]string{}
@@ -70,9 +69,8 @@ func tallyScopePoint(st *ScopeStats, p scored) {
 	}
 }
 
-// VoteEvent/RecallEvent/OpEvent are the minimal ledger/memory_ops facts
-// ComputeStats buckets by week - kept free of ledger/store types so this
-// package's only ledger dependency stays the one already in preload.go.
+// VoteEvent/RecallEvent/OpEvent are the facts ComputeStats buckets by week, free of ledger/store types
+// so preload.go stays this package's only ledger dependency.
 type VoteEvent struct {
 	MemoryID string
 	Vote     string // supported | contradicted | not_relevant
@@ -83,15 +81,13 @@ type RecallEvent struct {
 	At time.Time
 }
 
-// OpEvent is one memory_ops row's op+timestamp - only "add"/"invalidate" feed
-// WeekStats.Minted/Invalidated; other ops (update, vote, reinforce) are
-// ignored here (voting is already covered by VoteEvent).
+// OpEvent is one memory_ops row; only "add"/"invalidate" feed WeekStats.Minted/Invalidated.
 type OpEvent struct {
 	Op string
 	At time.Time
 }
 
-// WeekStats is one ISO week's memory-usage numbers (epic #1255 P5).
+// WeekStats is one ISO week's memory-usage numbers.
 type WeekStats struct {
 	Week         string // ISO 8601 week, e.g. "2026-W23"
 	Recalls      int
@@ -110,9 +106,8 @@ func isoWeekKey(t time.Time) string {
 	return fmt.Sprintf("%04d-W%02d", y, w)
 }
 
-// ComputeStats buckets votes/recalls/ops into the `weeks` ISO weeks (UTC) ending on now's
-// week, oldest first - a week with no activity still appears, zeroed, so a caller can
-// chart a continuous series. A vote/recall counts once per week regardless of which memory id it names, so a same-week consolidation merge doesn't change the total; per-memory attribution across a merge is fold.Result.FoldAbsorption's job, not this aggregate view's.
+// ComputeStats buckets events into `weeks` UTC ISO weeks ending at now's, oldest first, zero weeks included
+// for a continuous chart. Counts ignore memory ids; cross-merge attribution is FoldAbsorption's job.
 func ComputeStats(now time.Time, weeks int, votes []VoteEvent, recalls []RecallEvent, ops []OpEvent) []WeekStats {
 	if weeks <= 0 {
 		weeks = 1
@@ -151,9 +146,7 @@ func ComputeStats(now time.Time, weeks int, votes []VoteEvent, recalls []RecallE
 	return out
 }
 
-// tallyOneVote credits one vote's weekly bucket - absorbedBy doesn't change a WEEKLY
-// total: a vote counts once regardless of which memory id it names. Per-memory
-// attribution across a merge is fold.Result.FoldAbsorption's job, not this one.
+// tallyOneVote credits one vote's week; weekly totals ignore which memory id it names.
 func tallyOneVote(out []WeekStats, inRange func(time.Time) (int, bool), v VoteEvent) {
 	i, ok := inRange(v.At)
 	if !ok {

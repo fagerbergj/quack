@@ -17,10 +17,8 @@ import (
 	"github.com/fagerbergj/quack/internal/runlog"
 )
 
-// guardLoopModel spams an identical malformed create_plan call forever,
-// ignoring the repeat guard's REFUSED error - the QA rig's live failure
-// (#1391): the guard hard-stops the turn, and that must end the run
-// RunFailed, not the generic silent-gap RunDone a produced-nothing turn gets.
+// guardLoopModel repeats an identical malformed create_plan call forever, ignoring the repeat guard's
+// REFUSED error.
 type guardLoopModel struct{}
 
 func (guardLoopModel) Name() string { return "guard-loop-stub" }
@@ -39,11 +37,8 @@ func (guardLoopModel) GenerateContent(_ context.Context, _ *model.LLMRequest, _ 
 	}
 }
 
-// TestGuardHardStop_EndsRunFailedWithLoopReason is the #1391 review's blocker
-// fix: a turn the repeat guard hard-stopped must stamp RunStatusFailed with a
-// reason naming the tool that kept repeating, via the same give-up path a
-// rejected plan already uses (store.DeriveTerminalStatus's LastPlanRejection
-// read) - not RunStatusIdle, which mapExtRunOutcome reports as RunDone.
+// TestGuardHardStop_EndsRunFailedWithLoopReason: a guard hard-stop stamps RunStatusFailed naming the
+// repeated tool (via the plan-rejection give-up path), not RunStatusIdle/RunDone.
 func TestGuardHardStop_EndsRunFailedWithLoopReason(t *testing.T) {
 	st, orch, hub, artifacts, _ := newExtTestStackWithModel(t, guardLoopModel{})
 

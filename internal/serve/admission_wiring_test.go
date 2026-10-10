@@ -308,7 +308,7 @@ func TestBuildUserMemoryHookAgent_ReservesAndReleases(t *testing.T) {
 	admission.Release(occupySpec)
 }
 
-// TestOrchestratorWrap_Unchanged: the same wrap assembleOrchestrator uses, now
+// TestOrchestratorWrap_Unchanged: the same wrap assembleOrchestrator uses,
 // fed a ledger built outside it - the block/release contract must still hold.
 func TestOrchestratorWrap_Unchanged(t *testing.T) {
 	cfg := &config.Config{

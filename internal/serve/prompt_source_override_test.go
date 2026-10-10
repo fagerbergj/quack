@@ -16,7 +16,7 @@ func (stubSource) Get(context.Context, string) (artifactsrc.Artifact, bool, erro
 func (stubSource) Seed(context.Context, string, artifactsrc.Artifact) error { return nil }
 
 // An experiment's pinned Source chains ahead of the configured store, not in place of
-// it (#1424 item 6): a name the override doesn't pin still resolves off the store.
+// it: a name the override doesn't pin still resolves off the store.
 func TestPromptSourceForChainsOverrideBeforeStore(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Prompts.Store = "lf"

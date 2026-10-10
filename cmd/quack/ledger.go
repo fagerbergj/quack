@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	extsdk "github.com/fagerbergj/quack-extensions/sdk"
 	"github.com/spf13/cobra"
 
 	"github.com/fagerbergj/quack/internal/cli"
@@ -14,9 +15,8 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// newLedgerCmd: `quack ledger list|export|show|rebuild|recover`. list and
-// export talk to a running server; show/rebuild/recover have no REST surface
-// and run server-side against the SAME stores a LOCAL quack.yaml would boot `quack serve` against (config.LoadDeferringAgentCompleteness(defaultConfigPath()), like `quack eval`) - there is no notion of "the active registered server" here, since the point is direct store access, not an HTTP round-trip.
+// newLedgerCmd: `quack ledger list|export|show|rebuild|recover`. list/export talk to a running server;
+// show/rebuild/recover open the stores a local quack.yaml would boot against, for direct store access.
 func newLedgerCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "ledger",
@@ -26,9 +26,8 @@ func newLedgerCmd() *cobra.Command {
 	return c
 }
 
-// newLedgerRecoverCmd: `quack ledger recover [chat-id] [--dry-run]` - the
-// same cli.Recover the server runs at boot: delivery.intent entries with no
-// completing delivery_record revision are checked against the configured extension's DeliveryRecoverer, artifact.revision intents with no store row are marked aborted. Redo stays nil: redoing a delivery needs the live node context this offline command doesn't have. --dry-run reports without calling the extension or writing. A recoverer-build failure degrades to a stderr warning rather than aborting, so a misconfigured extension cannot hide the orphans it might otherwise explain.
+// newLedgerRecoverCmd: `quack ledger recover [chat-id] [--dry-run]`, the cli.Recover the server runs at boot.
+// Redo stays nil (redo needs live node context); a recoverer-build failure only warns, so orphans still show.
 func newLedgerRecoverCmd() *cobra.Command {
 	var dryRun, asJSON bool
 	c := &cobra.Command{
@@ -60,10 +59,9 @@ func newLedgerRecoverCmd() *cobra.Command {
 	return c
 }
 
-// buildRecovererOrWarn builds the configured extension's DeliveryRecoverer,
-// or returns nil (every delivery orphan reported Unresolved) rather than an
-// error - see newLedgerRecoverCmd's doc.
-func buildRecovererOrWarn(cmd *cobra.Command, dryRun bool) cli.DeliveryRecoverer {
+// buildRecovererOrWarn builds the configured extension's DeliveryRecoverer, or warns and returns nil
+// (every delivery orphan reported Unresolved).
+func buildRecovererOrWarn(cmd *cobra.Command, dryRun bool) extsdk.DeliveryRecoverer {
 	if dryRun {
 		return nil
 	}
@@ -102,9 +100,8 @@ func newLedgerListCmd() *cobra.Command {
 	return c
 }
 
-// newLedgerExportCmd: `ledger export <chat-id> [-o file]` - the dogfooding
-// ritual: hit a bug -> export the chat -> attach the zip to the issue or
-// pin it in testdata/ as an eval/dataset fixture.
+// newLedgerExportCmd: `ledger export <chat-id> [-o file]`: export a buggy chat's zip to attach to an issue
+// or pin in testdata/ as an eval fixture.
 func newLedgerExportCmd() *cobra.Command {
 	var output string
 	c := &cobra.Command{
@@ -186,10 +183,8 @@ func newLedgerRebuildCmd() *cobra.Command {
 	return c
 }
 
-// openLedgerAndStores builds the ledger store, session store and artifact
-// service from the local quack.yaml - the same wiring internal/serve.Run
-// uses, minus the HTTP server and orchestrator (neither show nor rebuild
-// runs anything).
+// openLedgerAndStores builds the ledger store, session store and artifact service from the local quack.yaml
+// as serve.Run does, minus the HTTP server and orchestrator.
 func openLedgerAndStores() (ls ledger.LedgerStore, st *store.Store, artifacts *store.TurnAwareService, err error) {
 	cfgPath := defaultConfigPath()
 	if _, statErr := os.Stat(cfgPath); statErr != nil {

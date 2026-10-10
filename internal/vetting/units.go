@@ -217,7 +217,8 @@ func findSpecifics(text string) []Specific {
 	take("currency", currencyRe, 0)
 	take("quote", quoteRe, 1)
 	take("number", numberRe, 1)
-	// ponytail: no proper-name specifics - Title Case matched headings and phrases; add a real detector if names prove worth checking.
+	// ponytail: no proper-name specifics (Title Case matched headings);
+	// add a real detector if names prove worth checking.
 	return out
 }
 

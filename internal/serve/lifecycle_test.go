@@ -13,9 +13,8 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// storePauser stands in for the live dag.Executor: the same synchronous
-// store write nodeControl.markPaused performs, over the real store, without
-// booting an LLM-backed executor to get one node mid-round.
+// storePauser stands in for dag.Executor: the same store write nodeControl.markPaused performs,
+// without an LLM-backed executor.
 type storePauser struct {
 	st     *store.Store
 	active map[string][]string
@@ -30,8 +29,8 @@ func (p *storePauser) PauseNode(chatID, nodeID string, reason dag.PauseReason) b
 		string(dag.StatusPaused), string(reason), "") == nil
 }
 
-// threeNodeChat seeds the acceptance shape from #962: n1 done, n2 mid-round,
-// n3 queued, with the chat's run marked in flight.
+// threeNodeChat seeds n1 done, n2 mid-round, n3 queued,
+// with the chat's run marked in flight.
 func threeNodeChat(t *testing.T) (*store.Store, string) {
 	t.Helper()
 	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
@@ -68,9 +67,8 @@ func nodeStatus(t *testing.T, st *store.Store, nodeID string) store.DagNode {
 	return *n
 }
 
-// TestShutdownPersistsPausedNodes is the first half of #962's restart acceptance: a drain
-// leaves the done node alone, the running node paused/shutdown on disk, the queued node
-// queued, and the chat NOT interrupted.
+// TestShutdownPersistsPausedNodes: a drain leaves the done node alone, the running node paused/shutdown
+// on disk, the queued node queued, and the chat not interrupted.
 func TestShutdownPersistsPausedNodes(t *testing.T) {
 	st, chatID := threeNodeChat(t)
 	hub := stream.NewHub()
@@ -97,9 +95,8 @@ func TestShutdownPersistsPausedNodes(t *testing.T) {
 	}
 }
 
-// TestBootResumesPausedNodes is the second half: a fresh store handle over
-// the same database reconciles that persisted state into a node to start,
-// and stamps the chat paused so it reads as resuming, not failed.
+// TestBootResumesPausedNodes: a fresh store over the same database turns that state into a node to start
+// and stamps the chat paused, so it reads as resuming, not failed.
 func TestBootResumesPausedNodes(t *testing.T) {
 	st, chatID := threeNodeChat(t)
 	ctx := context.Background()
@@ -204,10 +201,8 @@ func TestBootLeavesAwaitingInputAlone(t *testing.T) {
 	}
 }
 
-// TestBootRefusesUserPausedNode is finding 13's end-to-end regression: a node
-// a human paused (dag.PauseUser) must not be silently auto-resumed on the
-// next restart the way a shutdown pause is - resumeGuardArchivedOrStale must
-// see the real pause reason store.go passes through and refuse it.
+// TestBootRefusesUserPausedNode: a node a human paused (dag.PauseUser) is not auto-resumed on restart;
+// resumeGuardArchivedOrStale sees the real pause reason and refuses it.
 func TestBootRefusesUserPausedNode(t *testing.T) {
 	st, chatID := threeNodeChat(t)
 	ctx := context.Background()

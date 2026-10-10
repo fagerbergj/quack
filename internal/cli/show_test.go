@@ -13,9 +13,8 @@ import (
 	"github.com/fagerbergj/quack/internal/schema"
 )
 
-// chatShowDetailJSON is a chat with a two-node DAG (model + token + duration +
-// score data on one node, a bare failed node on the other) so the test covers
-// the plan's "node table with model + token columns" case (test case 5).
+// chatShowDetailJSON is a two-node DAG: one node with model, token, duration and score data,
+// one bare failed node.
 const chatShowDetailJSON = `{
   "id":"c1","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z",
   "system_prompt":"","title":"Research run","status":"needs_input","pending_question":"which region?",
@@ -63,9 +62,8 @@ func TestRunChatShow(t *testing.T) {
 	}
 }
 
-// chatShowReasoningLeakJSON pins #419: a message item whose content mixes a
-// reasoning part ahead of the output_text part - ReasoningPart and
-// OutputTextPart share the same {text,type} JSON shape, so a naive "does it unmarshal" check on AsOutputTextPart() would let the raw thinking through.
+// chatShowReasoningLeakJSON mixes a reasoning part ahead of output_text; both share a {text,type}
+// shape, so a naive AsOutputTextPart() check would leak the thinking.
 const chatShowReasoningLeakJSON = `{
   "id":"c1","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z",
   "system_prompt":"","title":"Plan run","status":"completed",
@@ -79,7 +77,7 @@ const chatShowReasoningLeakJSON = `{
     ]}]
 }`
 
-// TestRunChatShowOmitsReasoning pins #419: the non-follow snapshot must not
+// TestRunChatShowOmitsReasoning: the non-follow snapshot must not
 // leak raw orchestrator thinking into the printed answer.
 func TestRunChatShowOmitsReasoning(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
@@ -102,7 +100,7 @@ func TestRunChatShowOmitsReasoning(t *testing.T) {
 	}
 }
 
-// TestRunChatShowGithubLink pins #382: `chat show` surfaces the originating
+// TestRunChatShowGithubLink: `chat show` surfaces the originating
 // GitHub PR/issue link when the chat carries one.
 func TestRunChatShowGithubLink(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
@@ -233,9 +231,8 @@ func TestRunChatShowFollowNotRunning(t *testing.T) {
 	}
 }
 
-// TestRunChatShowFollowLive: -f on a running chat prints the snapshot, then
-// line-oriented events from Subscribe until the run ends, applying the same
-// pause semantics as `chat send` (needs_input → exit 2).
+// TestRunChatShowFollowLive: -f prints the snapshot, then Subscribe events until the run ends,
+// with `chat send`'s pause semantics (needs_input exits 2).
 func TestRunChatShowFollowLive(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	mux := http.NewServeMux()
@@ -268,9 +265,8 @@ func TestRunChatShowFollowLive(t *testing.T) {
 	}
 }
 
-// TestRunChatShowFollowToolsAndThinking pins #385's CLI half: `chat show -f`
-// used to have no case at all for agent_thinking/agent_tool_call/
-// agent_tool_result - tool calls and reasoning were invisible in the terminal. It now renders a terse, one-line-per-event trace: "thinking…" once per reasoning block (not once per streamed delta), and a "tool: …" / "→ …" pair per call - never a raw JSON dump.
+// TestRunChatShowFollowToolsAndThinking: -f prints one "thinking…" per reasoning block and a
+// "tool: …" / "→ …" pair per call, never raw JSON.
 func TestRunChatShowFollowToolsAndThinking(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	mux := http.NewServeMux()
@@ -310,9 +306,8 @@ func TestRunChatShowFollowToolsAndThinking(t *testing.T) {
 	}
 }
 
-// TestRunChatShowFollowDiscardsPreamble pins #387 in the CLI: the old
-// per-token live print showed narration ahead of a tool call as if it were
-// already the answer, with no way to "un-print" it once a later tool call proved it wasn't. `-f` no longer streams top-level tokens live at all; the corrected (preamble-free) answer prints once, at the end, via the same Report() path `chat send` uses.
+// TestRunChatShowFollowDiscardsPreamble: -f doesn't stream top-level tokens; the preamble-free answer
+// prints once at the end via Report.
 func TestRunChatShowFollowDiscardsPreamble(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	mux := http.NewServeMux()

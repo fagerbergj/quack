@@ -7,9 +7,8 @@ import (
 	"testing"
 )
 
-// TestNoStaleMemoryPrefixedToolNames pins #558's "done when" requirement that
-// this cannot silently drift: nothing in the agent bundles, skill library,
-// Go source, or docs may hardcode the old "quack_memory_<tool>"-prefixed form of the review/PR tools the pi-acp shim derives client-side from the MCP server's advertised Name (memorymcp.go). Bundles reference the bare tool name (e.g. stage_review), never the prefixed one - a prefixed reference means either a stale doc or a server rename nobody updated the prompts for. Vendored and generated trees are skipped: they never hand-carry a tool name, and walking them (vendored plugins, the embedded SPA client) is pure waste.
+// TestNoStaleMemoryPrefixedToolNames: no bundle, skill, Go source or doc may hardcode the "quack_memory_<tool>"
+// prefixed names; bundles use bare names. Vendored and generated trees are skipped.
 func TestNoStaleMemoryPrefixedToolNames(t *testing.T) {
 	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {

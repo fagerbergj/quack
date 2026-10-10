@@ -26,9 +26,8 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// TestMain doubles as the fake ACP agent: the tests re-exec the test binary
-// with QUACK_ACP_FAKE set, and this intercept runs the agent side of the
-// protocol over stdio instead of the test suite - a real subprocess round with no external dependency.
+// TestMain doubles as the fake ACP agent: tests re-exec this binary with QUACK_ACP_FAKE set,
+// so each round runs against a real subprocess with no external dependency.
 func TestMain(m *testing.M) {
 	// Before the fake-agent intercept: the __reap wrapper inherits QUACK_ACP_FAKE too.
 	workspace.RunSandboxExecIfInvoked()
@@ -36,9 +35,8 @@ func TestMain(m *testing.M) {
 		runFakeAgent(mode)
 		os.Exit(0)
 	}
-	// Same wiring serve.go does in prod: without it, every test below that
-	// registers an advisor token and completes a round would pin a real
-	// subprocess forever - UnregisterAdvisorThread's deferred cleanup is a no-op until this hook is set.
+	// Same wiring serve.go does: without it every test that pins a round would leak its subprocess,
+	// since UnregisterAdvisorThread's cleanup is a no-op until this hook is set.
 	vetting.NodeSessionClosed = ClosePinnedSession
 	os.Exit(m.Run())
 }
@@ -57,9 +55,8 @@ func runFakeAgent(mode string) {
 	<-conn.Done()
 }
 
-// runDeafFakeAgent hand-rolls just the two handshake replies (initialize,
-// session/new) over raw JSON-RPC, then stops issuing Read calls on stdin
-// entirely - the SDK's own AgentSideConnection always keeps a receive goroutine draining regardless of handler behavior, so it cannot simulate a child that has genuinely stopped reading. This reproduces finding 8: the parent's subsequent session/prompt write blocks once the pipe fills.
+// runDeafFakeAgent answers initialize and session/new over raw JSON-RPC, then stops reading stdin;
+// the SDK's connection always drains, so it can't simulate a child whose stdin pipe fills.
 func runDeafFakeAgent() {
 	r := bufio.NewReader(os.Stdin)
 	reply := func(id json.RawMessage, result any) {
@@ -95,15 +92,13 @@ type fakeAgent struct {
 	conn *sdk.AgentSideConnection
 	// steerCh: mode "steer" blocks Prompt on this until steer text arrives.
 	steerCh chan string
-	// rounds: mode "pin" counts Prompt calls THIS process instance has
-	// served - only a pinned/reused process (not a fresh re-exec) can see
-	// this go above 1, so it doubles as the "prior tool-call history is visible" proof (a real ACP agent would count tool calls; the shape is the same: state carried in-process across session/prompt calls).
+	// rounds counts Prompt calls this process served; only a pinned, reused process sees it exceed 1,
+	// standing in for tool-call history carried across session/prompt calls.
 	rounds int
 }
 
-// HandleExtensionMethod is the agent side of the _quack/steer extension.
-// mode "steer-reject" mimics the shim once it has already settled the round
-// (promptReq nil) - it errors every call, same as pi-acp.mjs's fail() path.
+// HandleExtensionMethod is the agent side of _quack/steer. Mode "steer-reject" mimics a shim
+// that already settled the round: every call errors, like pi-acp.mjs's fail() path.
 func (f *fakeAgent) HandleExtensionMethod(ctx context.Context, method string, params json.RawMessage) (any, error) {
 	if method != steerExtMethod {
 		return map[string]any{}, nil
@@ -122,9 +117,8 @@ func (f *fakeAgent) HandleExtensionMethod(ctx context.Context, method string, pa
 func (f *fakeAgent) Initialize(ctx context.Context, _ sdk.InitializeRequest) (sdk.InitializeResponse, error) {
 	return sdk.InitializeResponse{
 		ProtocolVersion: sdk.ProtocolVersionNumber,
-		// http:true mirrors a real pi negotiation - lets a test with a
-		// registered MemSecret exercise the actual mcpServers/mcpToolNames
-		// path (acp.go's round) instead of it short-circuiting to "none". LoadSession:true only for the "resume*" modes - a real agent that never advertises it must never see session/load sent its way.
+		// http:true mirrors real pi so a registered MemSecret exercises the mcpServers path; LoadSession only
+		// for "resume*" modes, since an agent that never advertises it must never receive session/load.
 		AgentCapabilities: sdk.AgentCapabilities{
 			McpCapabilities: sdk.McpCapabilities{Http: true},
 			LoadSession:     strings.HasPrefix(f.mode, "resume"),
@@ -136,9 +130,8 @@ func (f *fakeAgent) NewSession(ctx context.Context, _ sdk.NewSessionRequest) (sd
 	return sdk.NewSessionResponse{SessionId: "s1"}, nil
 }
 
-// LoadSession: "resume" succeeds (records the id via the echoed prompt text
-// below, since fakeAgent runs in a re-exec'd subprocess with no shared
-// memory back to the test); "resume-fail"/"resume-then-fail" exercise the NewSession fallback and the post-resume error path respectively.
+// LoadSession: "resume" succeeds (the id comes back via the echoed prompt, there is no shared memory);
+// "resume-fail"/"resume-then-fail" exercise the NewSession fallback and the post-resume error path.
 func (f *fakeAgent) LoadSession(ctx context.Context, req sdk.LoadSessionRequest) (sdk.LoadSessionResponse, error) {
 	if f.mode == "resume-fail" {
 		return sdk.LoadSessionResponse{}, errors.New("no such session")
@@ -152,9 +145,7 @@ func (f *fakeAgent) Prompt(ctx context.Context, p sdk.PromptRequest) (sdk.Prompt
 	}
 	switch f.mode {
 	case "echo", "resume-echo":
-		// Sends back exactly what it received (over the wire, a real
-		// subprocess boundary) - tests assert on the emitted text to prove
-		// what the harness actually assembled and sent (#688's MCP tools block), not just what a helper function would produce in isolation.
+		// Echoes exactly what crossed the subprocess boundary, so tests assert on what the harness sent.
 		var text string
 		if len(p.Prompt) > 0 && p.Prompt[0].Text != nil {
 			text = p.Prompt[0].Text.Text
@@ -189,9 +180,8 @@ func (f *fakeAgent) Prompt(ctx context.Context, p sdk.PromptRequest) (sdk.Prompt
 		send(sdk.UpdateAgentMessageText("steered: " + text))
 		return sdk.PromptResponse{StopReason: sdk.StopReasonEndTurn}, nil
 	case "idle-probe":
-		// Sends an update ONLY when the test nudges it via the steer
-		// extension (a real host->agent RPC) - activity timing is under the
-		// test's control, not a real sleep. Blocks forever after, like "hang".
+		// Sends an update only when the test nudges via the steer extension, so activity timing is
+		// under test control; blocks forever after, like "hang".
 		for range 2 {
 			<-f.steerCh
 			send(sdk.UpdateAgentMessageText("ping"))
@@ -199,9 +189,7 @@ func (f *fakeAgent) Prompt(ctx context.Context, p sdk.PromptRequest) (sdk.Prompt
 		<-ctx.Done()
 		return sdk.PromptResponse{StopReason: sdk.StopReasonCancelled}, nil
 	case "resume", "resume-fail":
-		// Echoes the session id the round actually prompted against - the
-		// only way the parent test process can observe it across the
-		// subprocess boundary.
+		// Echoes the prompted session id: the only way the parent test sees it across the process boundary.
 		send(sdk.UpdateAgentMessageText("session:" + string(p.SessionId)))
 		return sdk.PromptResponse{StopReason: sdk.StopReasonEndTurn}, nil
 	case "resume-then-fail":
@@ -298,9 +286,8 @@ func TestRound_FullPromptRound(t *testing.T) {
 	}
 }
 
-// TestRound_ResumesPriorSessionViaLoadSession pins #1006: a round given a
-// prior session id and an agent that advertises LoadSession must resume that
-// session (session/load), not mint a new one, and must leave the advisor thread's stored id unchanged.
+// TestRound_ResumesPriorSessionViaLoadSession: given a prior session id and an agent advertising LoadSession,
+// the round resumes it via session/load and leaves the advisor thread's stored id unchanged.
 func TestRound_ResumesPriorSessionViaLoadSession(t *testing.T) {
 	a := testAgent(t, "resume")
 	token := "tok-resume"
@@ -324,9 +311,8 @@ func TestRound_ResumesPriorSessionViaLoadSession(t *testing.T) {
 	}
 }
 
-// TestRound_LoadSessionFailureFallsBackToNewSession pins #1006's fallback: an
-// agent that advertises LoadSession but errors on it (session gone/expired)
-// must not fail the round - it falls back to session/new and the advisor thread picks up the fresh id.
+// TestRound_LoadSessionFailureFallsBackToNewSession: a failing session/load must not fail the round;
+// it falls back to session/new and the advisor thread picks up the fresh id.
 func TestRound_LoadSessionFailureFallsBackToNewSession(t *testing.T) {
 	a := testAgent(t, "resume-fail")
 	token := "tok-resume-fail"
@@ -350,9 +336,8 @@ func TestRound_LoadSessionFailureFallsBackToNewSession(t *testing.T) {
 	}
 }
 
-// TestRound_PromptErrorAfterResumeClearsStoredSession pins #1006's poison-id
-// guard: if a resumed session then fails mid-round, the next round must not
-// retry the same dead session - the advisor thread's id is cleared.
+// TestRound_PromptErrorAfterResumeClearsStoredSession: a resumed session that fails mid-round
+// is cleared so the next round doesn't retry the same dead session.
 func TestRound_PromptErrorAfterResumeClearsStoredSession(t *testing.T) {
 	a := testAgent(t, "resume-then-fail")
 	token := "tok-resume-then-fail"
@@ -368,9 +353,8 @@ func TestRound_PromptErrorAfterResumeClearsStoredSession(t *testing.T) {
 	}
 }
 
-// TestRound_PinnedProcessReusedAcrossRounds pins #1006/perf-audit-8: a
-// second round for the SAME node must reuse the first round's live process
-// and ACP session - no session/new, no fresh subprocess - and the reused process must carry state forward (the fake's in-process round counter, standing in for a real agent's tool-call history).
+// TestRound_PinnedProcessReusedAcrossRounds: a second round for the same node reuses the live process
+// and session (no session/new, no respawn) and carries state forward.
 func TestRound_PinnedProcessReusedAcrossRounds(t *testing.T) {
 	a := testAgent(t, "pin")
 	token := "tok-pin"
@@ -487,9 +471,8 @@ func TestRound_PreambleResentOnResumedSession(t *testing.T) {
 	}
 }
 
-// TestClosePinnedSession_KillsProcessAndClearsRegistry pins the node-finish
-// path itself (vetting.UnregisterAdvisorThread -> NodeSessionClosed ->
-// ClosePinnedSession, wired in serve.go): a node that finishes normally after pinning a process must not leave that process running - this is the #1309 leak class (a per-node resource with no teardown on the happy path), not just the abort/failure exits the other tests already cover.
+// TestClosePinnedSession_KillsProcessAndClearsRegistry: a node that finishes normally after pinning
+// must not leave its process running (UnregisterAdvisorThread -> NodeSessionClosed -> ClosePinnedSession).
 func TestClosePinnedSession_KillsProcessAndClearsRegistry(t *testing.T) {
 	a := testAgent(t, "pin")
 	token := "tok-close-pinned"
@@ -514,17 +497,14 @@ func TestClosePinnedSession_KillsProcessAndClearsRegistry(t *testing.T) {
 	if _, ok := pinned.Load(token); ok {
 		t.Fatal("ClosePinnedSession left the process pinned")
 	}
-	// A killed process's Wait already happened inside close(); a second Wait
-	// (or a signal probe) reliably reports "already released"/ESRCH instead
-	// of leaving this test to guess from a timing window.
+	// close() already waited on the killed process, so a signal probe reliably reports ESRCH without a timing window.
 	if err := proc.Signal(syscall.Signal(0)); err == nil {
 		t.Fatal("ClosePinnedSession did not kill the subprocess - it still responds to signals")
 	}
 }
 
-// TestClosePinnedSession_KeepsACPStateDir: node-finish must NOT remove the
-// persisted session dir - a later reuse resumes it via session/load, so only
-// chat archive/delete (workspace.Jail.RemoveACPState) may remove it.
+// TestClosePinnedSession_KeepsACPStateDir: node finish keeps the session dir for a later session/load;
+// only chat archive/delete (workspace.Jail.RemoveACPState) removes it.
 func TestClosePinnedSession_KeepsACPStateDir(t *testing.T) {
 	a := testAgent(t, "pin")
 	token := "tok-close-pinned-state-dir"
@@ -549,9 +529,8 @@ func TestClosePinnedSession_KeepsACPStateDir(t *testing.T) {
 	}
 }
 
-// TestUnregisterAdvisorThread_KillsPinnedProcess drives the real end-to-end
-// wiring TestMain sets up (vetting.NodeSessionClosed = ClosePinnedSession, the
-// exact assignment serve.go makes at boot): the ONLY call graph.go's node teardown actually makes is vetting.UnregisterAdvisorThread - if that stops reaching the pinned process for any reason, every node leaks one subprocess on its happy path.
+// TestUnregisterAdvisorThread_KillsPinnedProcess drives the boot wiring TestMain mirrors: graph.go's
+// teardown only calls UnregisterAdvisorThread, so if it stops reaching the process every node leaks one.
 func TestUnregisterAdvisorThread_KillsPinnedProcess(t *testing.T) {
 	a := testAgent(t, "pin")
 	token := "tok-unregister-kills-pin"
@@ -571,9 +550,8 @@ func TestUnregisterAdvisorThread_KillsPinnedProcess(t *testing.T) {
 	}
 }
 
-// TestRound_AbortKillsPinnedProcess (#1030 x #1006): CancelNode's abort
-// during a round that would otherwise be pinned must still evict and kill
-// the process - a killed process is never handed to the node's next round.
+// TestRound_AbortKillsPinnedProcess: CancelNode's abort during a round must still evict and kill
+// the process; a killed process is never handed to the node's next round.
 func TestRound_AbortKillsPinnedProcess(t *testing.T) {
 	jail, err := workspace.NewJail(t.TempDir())
 	if err != nil {
@@ -625,9 +603,8 @@ func TestRound_AbortKillsPinnedProcess(t *testing.T) {
 	}
 }
 
-// TestRound_FailedReuseFallsBackToFreshProcess pins the fallback #1006
-// needs: once a pinned process dies out from under a node (crash, OOM, a
-// wedge the shim itself can't recover from), the NEXT round for that node must not retry the dead process forever - it must evict it and spawn a fresh one.
+// TestRound_FailedReuseFallsBackToFreshProcess: once a pinned process dies, the next round evicts it
+// and spawns a fresh one instead of retrying the dead one forever.
 func TestRound_FailedReuseFallsBackToFreshProcess(t *testing.T) {
 	a := testAgent(t, "pin")
 	token := "tok-pin-fallback"
@@ -681,9 +658,8 @@ func TestRound_FailedReuseFallsBackToFreshProcess(t *testing.T) {
 	}
 }
 
-// TestRound_MCPToolsBlockLeadsThePrompt pins #688 end to end: what the
-// subprocess actually receives (via the echo fake agent, over a real stdio
-// round-trip) opens with the exact, generated tool names for a registered review session - not a naming convention the agent has to go verify.
+// TestRound_MCPToolsBlockLeadsThePrompt: what the subprocess receives opens with the exact generated
+// tool names for a registered review session.
 func TestRound_MCPToolsBlockLeadsThePrompt(t *testing.T) {
 	a := testAgent(t, "echo")
 	secret, err := vetting.NewMemSecret()
@@ -712,9 +688,8 @@ func TestRound_MCPToolsBlockLeadsThePrompt(t *testing.T) {
 	}
 }
 
-// TestRunPrompt_EnvironmentBlockTrailsTheTask pins the cache-prefix fix: the
-// environment block (regenerated every round - branch/HEAD/dir listing drift
-// once a round commits anything) must sit AFTER the task text in the assembled round prompt, so a stable task prefix stays a cache hit across rounds. Drives the full runPrompt path (via a real ADK runner + the echo fake agent over stdio), not just the round()-level helper.
+// TestRunPrompt_EnvironmentBlockTrailsTheTask: the per-round environment block sits after the task,
+// so the stable task prefix stays a cache hit across rounds. Drives the full runPrompt path.
 func TestRunPrompt_EnvironmentBlockTrailsTheTask(t *testing.T) {
 	a := testAgent(t, "echo")
 	token := vetting.AdvisorThreadToken("plan-1", "impl1")
@@ -727,7 +702,7 @@ func TestRunPrompt_EnvironmentBlockTrailsTheTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "add the feature\n\n" + vetting.AdvisorThreadMarker(token)}}}
+	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "add the feature\n\n[[quack:advisor-thread:" + token + "]]"}}}
 	var lastText string
 	for ev, err := range r.Run(vetting.WithAdvisorToken(t.Context(), token), "u1", "s1", task, adkagent.RunConfig{}) {
 		if err != nil {
@@ -752,9 +727,8 @@ func TestRunPrompt_EnvironmentBlockTrailsTheTask(t *testing.T) {
 	}
 }
 
-// TestRunPrompt_EnvironmentBlockDisclosesReadOnly pins that the round's
-// EFFECTIVE caps (AdvisorTask.ReadOnly, resolved per node in resolveNode)
-// reach the environment block, not just a.opts.Caps's static default.
+// TestRunPrompt_EnvironmentBlockDisclosesReadOnly: the round's effective caps (AdvisorTask.ReadOnly,
+// resolved per node) reach the environment block, not a.opts.Caps's static default.
 func TestRunPrompt_EnvironmentBlockDisclosesReadOnly(t *testing.T) {
 	a := testAgent(t, "echo")
 	token := vetting.AdvisorThreadToken("plan-1", "review1")
@@ -767,7 +741,7 @@ func TestRunPrompt_EnvironmentBlockDisclosesReadOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "review the PR\n\n" + vetting.AdvisorThreadMarker(token)}}}
+	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "review the PR\n\n[[quack:advisor-thread:" + token + "]]"}}}
 	var lastText string
 	for ev, err := range r.Run(vetting.WithAdvisorToken(t.Context(), token), "u1", "s1", task, adkagent.RunConfig{}) {
 		if err != nil {
@@ -839,9 +813,8 @@ func TestRound_StubbornAgentIsKilled(t *testing.T) {
 	}
 }
 
-// A round that goes silent - no updates, and the prompt RPC never returns -
-// must be treated as wedged and unblocked by the idle timeout, not left to
-// the caller's outer context (which in production is the 2h run deadline).
+// A silent round (no updates, prompt RPC never returns) is wedged and must end on the idle timeout,
+// not the caller's outer context (the 2h run deadline in production).
 func TestRound_IdleTimeout(t *testing.T) {
 	oldGrace := cancelGrace
 	cancelGrace = 200 * time.Millisecond
@@ -865,9 +838,7 @@ func TestRound_IdleTimeout(t *testing.T) {
 	}
 }
 
-// fakeIdleTimer drives round()'s idle watchdog under full test control: no
-// real duration ever elapses, so "activity resets it" and "silence kills the
-// round" are asserted as exact transitions, not timing margins.
+// fakeIdleTimer puts round()'s idle watchdog under test control, so reset and fire are exact transitions.
 type fakeIdleTimer struct {
 	ch     chan time.Time
 	resets int32 // atomic
@@ -882,9 +853,8 @@ func (f *fakeIdleTimer) Reset(time.Duration) bool {
 	return true
 }
 
-// TestRound_IdleTimeoutResetsOnActivityThenFiresOnSilence replaces the
-// deleted TestRound_IdleTimeoutDoesNotFireOnSlowButAlive: that test raced a
-// real subprocess's own wall-clock sleep against the Go idle timer with no deterministic fix available. This one controls both sides directly - the fake agent only sends "activity" when the test nudges it via the real RegisterLiveSteer/steer-extension RPC (no sleep), and the idle timer is a fake the test fires by hand (no real duration) - so there is no margin at either end, only exact state transitions.
+// TestRound_IdleTimeoutResetsOnActivityThenFiresOnSilence: activity comes only from test nudges over
+// the steer RPC and the fake timer fires by hand, so there are no timing margins at either end.
 func TestRound_IdleTimeoutResetsOnActivityThenFiresOnSilence(t *testing.T) {
 	a := testAgent(t, "idle-probe")
 	timer := newFakeIdleTimer()
@@ -1001,9 +971,8 @@ func TestRequestPermission_JudgeRouting(t *testing.T) {
 	}
 }
 
-// TestRunPrompt_RemovesScratchDirAfterRound: the per-node scratch dir (the
-// child's TMPDIR, minted by resolveNode before spawn) must not outlive the
-// round - runPrompt removes it instead of leaving it for the gc TTL sweep.
+// TestRunPrompt_RemovesScratchDirAfterRound: the per-node scratch dir (the child's TMPDIR)
+// does not outlive the round.
 func TestRunPrompt_RemovesScratchDirAfterRound(t *testing.T) {
 	a := testAgent(t, "echo")
 	token := vetting.AdvisorThreadToken("plan-1", "impl-scratch")
@@ -1020,7 +989,7 @@ func TestRunPrompt_RemovesScratchDirAfterRound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "add the feature\n\n" + vetting.AdvisorThreadMarker(token)}}}
+	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "add the feature\n\n[[quack:advisor-thread:" + token + "]]"}}}
 	for _, err := range r.Run(vetting.WithAdvisorToken(t.Context(), token), "u1", "s1", task, adkagent.RunConfig{}) {
 		if err != nil {
 			t.Fatalf("run: %v", err)
@@ -1031,9 +1000,8 @@ func TestRunPrompt_RemovesScratchDirAfterRound(t *testing.T) {
 	}
 }
 
-// TestRound_ReapsChildThatStopsReadingStdin pins finding 8: a child that
-// answers the handshake and then never reads stdin again fills the pipe on a
-// large prompt, wedging the prompt goroutine inside sendMessage's writeMu. The idle watchdog must still end the round within its grace period, and the deferred close must reap the process - not hang forever on the same mutex gracefulCancel's session/cancel also needs.
+// TestRound_ReapsChildThatStopsReadingStdin: a child that stops reading stdin wedges the prompt write
+// on writeMu; the idle watchdog must still end the round and the deferred close must reap the process.
 func TestRound_ReapsChildThatStopsReadingStdin(t *testing.T) {
 	old := cancelGrace
 	cancelGrace = 300 * time.Millisecond

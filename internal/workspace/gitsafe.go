@@ -1,8 +1,7 @@
 package workspace
 
-// Ceiling of GitCmd's repo pinning: where the kernel has Landlock it denies symlinks and alternates leading outside
-// the clone; without it they stay open. GC prunes chat scopes within their scope; its baseline-scratch
-// prune keeps the jail-wide root, which stays open either way.
+// Ceiling: without Landlock, symlinks and alternates leading outside the clone stay open to GitCmd.
+// GC's baseline-scratch prune uses the jail-wide root, which stays open either way.
 
 import (
 	"context"
@@ -39,9 +38,8 @@ var (
 	gitConfigSeed  = maphash.MakeSeed()
 )
 
-// GitSafeArgs are -c overrides, which beat every config file; each protocol is named because
-// protocol.<name>.allow outranks protocol.allow. For a read-only query these neutralize the config-driven
-// exec vectors (hooks, fsmonitor, ssh, gpg, gc) without the file strip GitCmd does for in-repo ops.
+// GitSafeArgs: -c beats every config file, neutralizing hooks, fsmonitor, ssh, gpg and gc for a read-only
+// query. Each protocol is named because protocol.<name>.allow outranks protocol.allow.
 func GitSafeArgs() []string {
 	args := []string{"-c", "protocol.allow=never"}
 	for _, p := range []string{"file", "git", "ssh", "ext", "fd", "http", "ftp", "ftps"} {

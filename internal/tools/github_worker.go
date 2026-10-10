@@ -6,23 +6,17 @@ import (
 	"github.com/fagerbergj/quack/internal/dag"
 )
 
-// This file threads the two per-node evidence scopings a GitHub trigger
-// computes (#664, consumer split) from the webhook dispatch boundary to
-// create_plan/edit_plan/execute: values the model must never author itself,
-// read exactly once at the top of Orchestrator.Run.
+// Trigger-computed values threaded from the dispatch boundary to the plan tools; the model never authors them.
 
 type workerAskContextKey struct{}
 
-// WithWorkerAsk attaches the ask-only text (permissions, deliverable,
-// title/body/comments - never evidence) a GitHub-triggered plan's nodes get
-// as their BACKGROUND, in place of the orchestrator's full envelope. Call ONLY from the GitHub webhook dispatch boundary.
+// WithWorkerAsk: the ask-only text (never evidence) a triggered plan's nodes get as background instead of
+// the orchestrator's envelope. Call only from the webhook dispatch boundary.
 func WithWorkerAsk(ctx context.Context, ask string) context.Context {
 	return context.WithValue(ctx, workerAskContextKey{}, ask)
 }
 
-// WorkerAskFromContext reads back the ask WithWorkerAsk attached, if any. ""
-// means no GitHub trigger governs this run - dag.Plan.WorkerBackground stays
-// unset and buildTask falls back to UserMessage, unchanged from before #664.
+// WorkerAskFromContext: "" means no trigger, so buildTask falls back to UserMessage.
 func WorkerAskFromContext(ctx context.Context) string {
 	s, _ := ctx.Value(workerAskContextKey{}).(string)
 	return s
@@ -30,15 +24,12 @@ func WorkerAskFromContext(ctx context.Context) string {
 
 type contextItemsContextKey struct{}
 
-// WithContextItems attaches a CI-fix run's failing checks, each with its own
-// rendered annotation detail - computed once at dispatch (cifix.go's
-// failingChecks), never re-derived from model output; buildTask hands an item's detail only to the node whose own task names it (dag.ContextItem).
+// WithContextItems: a CI-fix run's failing checks, computed at dispatch; buildTask hands an item's detail
+// only to the node whose task names it.
 func WithContextItems(ctx context.Context, items []dag.ContextItem) context.Context {
 	return context.WithValue(ctx, contextItemsContextKey{}, items)
 }
 
-// ContextItemsFromContext reads back the items WithContextItems attached, if
-// any. nil for anything but a CI-triggered run.
 func ContextItemsFromContext(ctx context.Context) []dag.ContextItem {
 	c, _ := ctx.Value(contextItemsContextKey{}).([]dag.ContextItem)
 	return c
@@ -46,15 +37,12 @@ func ContextItemsFromContext(ctx context.Context) []dag.ContextItem {
 
 type planOnlyContextKey struct{}
 
-// WithPlanOnly attaches whether this run's deliverable is planning-only
-// (#739) - the quack:plan label, never a model's own claim. dag.Plan.PlanOnly
-// carries it into buildGateNodes, which forces every node read-only with no delivery target: the structural fix for a planner that picks a writable agent.
+// WithPlanOnly: the quack:plan label, never a model's claim; buildGateNodes then forces every node
+// read-only with no delivery target, whatever agent the planner picks.
 func WithPlanOnly(ctx context.Context, planOnly bool) context.Context {
 	return context.WithValue(ctx, planOnlyContextKey{}, planOnly)
 }
 
-// PlanOnlyFromContext reads back the flag WithPlanOnly attached. false (the
-// zero value) for anything but a quack:plan-labelled run.
 func PlanOnlyFromContext(ctx context.Context) bool {
 	v, _ := ctx.Value(planOnlyContextKey{}).(bool)
 	return v

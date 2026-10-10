@@ -15,7 +15,7 @@ import (
 // agent" row: the error names the field and lists every valid agent.
 func TestUpsertNodesUnknownAgentListsRoster(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher"}, {Name: "code-implementer"}}, nil, nil)
-	_, _, err := upsertNodes([]assignmentInput{{Agent: "not-a-real-agent", Task: "x"}}, nil, nil, "chat1", nil, dag.AgentNames())
+	_, _, err := upsertNodes([]assignmentInput{{Agent: "not-a-real-agent", Task: "x"}}, nil, nil, "chat1", nil, dag.AgentNamesFor(context.Background()))
 	if err == nil {
 		t.Fatal("want an error for an unknown agent")
 	}
@@ -28,7 +28,7 @@ func TestUpsertNodesUnknownAgentListsRoster(t *testing.T) {
 
 // TestUpsertNodesUnknownNodeID covers reassigning a node_id list_nodes never showed.
 func TestUpsertNodesUnknownNodeID(t *testing.T) {
-	_, _, err := upsertNodes([]assignmentInput{{NodeID: "ghost-1", Task: "x"}}, nil, nil, "chat1", nil, dag.AgentNames())
+	_, _, err := upsertNodes([]assignmentInput{{NodeID: "ghost-1", Task: "x"}}, nil, nil, "chat1", nil, dag.AgentNamesFor(context.Background()))
 	if err == nil || !strings.Contains(err.Error(), "unknown node id") {
 		t.Errorf("err = %v, want an unknown node id error", err)
 	}
@@ -38,7 +38,7 @@ func TestUpsertNodesUnknownNodeID(t *testing.T) {
 func TestUpsertNodesNodeCurrentlyRunning(t *testing.T) {
 	existing := []dag.DagNodeRecord{{NodeID: "impl-1", Agent: "code-implementer"}}
 	running := func(id string) bool { return id == "impl-1" }
-	_, _, err := upsertNodes([]assignmentInput{{NodeID: "impl-1", Task: "x"}}, existing, running, "chat1", nil, dag.AgentNames())
+	_, _, err := upsertNodes([]assignmentInput{{NodeID: "impl-1", Task: "x"}}, existing, running, "chat1", nil, dag.AgentNamesFor(context.Background()))
 	if err == nil || !strings.Contains(err.Error(), "currently running") {
 		t.Errorf("err = %v, want a currently-running error", err)
 	}
@@ -50,15 +50,14 @@ func TestUpsertNodesUnknownDependsOn(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher"}}, nil, nil)
 	_, _, err := upsertNodes([]assignmentInput{
 		{Agent: "web-researcher", Task: "x", DependsOn: []string{"ghost"}},
-	}, nil, nil, "chat1", nil, dag.AgentNames())
+	}, nil, nil, "chat1", nil, dag.AgentNamesFor(context.Background()))
 	if err == nil || !strings.Contains(err.Error(), "depends_on") {
 		t.Errorf("err = %v, want a depends_on error", err)
 	}
 }
 
-// TestUpsertNodesDuplicateNodeIDInOneCall covers the same node_id appearing
-// twice in one create_plan/edit_plan call - a real error, not a silent
-// last-write-wins collapse (mergeAssignments would otherwise swallow it).
+// TestUpsertNodesDuplicateNodeIDInOneCall: a node_id repeated in one call is an error, not a
+// silent last-write-wins collapse in mergeAssignments.
 func TestUpsertNodesDuplicateNodeIDInOneCall(t *testing.T) {
 	existing := []dag.DagNodeRecord{{NodeID: "impl-1", Agent: "code-implementer"}}
 	_, _, err := upsertNodes([]assignmentInput{
@@ -80,7 +79,7 @@ func TestUpsertNodesPositionalDependsOn(t *testing.T) {
 	assignments, minted, err := upsertNodes([]assignmentInput{
 		{Agent: "web-researcher", Task: "research"},
 		{Agent: "synthesizer", Task: "write it up", DependsOn: []string{"0"}},
-	}, nil, nil, "chat1", nil, dag.AgentNames())
+	}, nil, nil, "chat1", nil, dag.AgentNamesFor(context.Background()))
 	if err != nil {
 		t.Fatalf("upsertNodes: %v", err)
 	}
@@ -96,7 +95,7 @@ func TestUpsertNodesPositionalDependsOn(t *testing.T) {
 // assignment carries the freshly minted, agent-prefixed id back to the caller.
 func TestUpsertNodesMintedIDEcho(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher"}}, nil, nil)
-	assignments, minted, err := upsertNodes([]assignmentInput{{Agent: "web-researcher", Task: "x"}}, nil, nil, "chat1", nil, dag.AgentNames())
+	assignments, minted, err := upsertNodes([]assignmentInput{{Agent: "web-researcher", Task: "x"}}, nil, nil, "chat1", nil, dag.AgentNamesFor(context.Background()))
 	if err != nil {
 		t.Fatalf("upsertNodes: %v", err)
 	}
@@ -124,9 +123,8 @@ func TestRemoveAssignmentsUnknownIDErrors(t *testing.T) {
 	}
 }
 
-// TestMergeAssignmentsUpsertsExistingAndAppendsNew covers edit_plan's core
-// merge: an upsert matching a current node_id replaces it in place, and a
-// brand-new node_id is appended.
+// TestMergeAssignmentsUpsertsExistingAndAppendsNew: a matching node_id is replaced in place and
+// a new one is appended.
 func TestMergeAssignmentsUpsertsExistingAndAppendsNew(t *testing.T) {
 	current := []dag.Assignment{{NodeID: "impl-1", Task: "old task"}, {NodeID: "rev-1", Task: "review"}}
 	upserts := []dag.Assignment{{NodeID: "impl-1", Task: "new task"}, {NodeID: "web-researcher-1", Task: "research"}}
@@ -158,10 +156,8 @@ func TestBuildNodeSummariesEmptyChat(t *testing.T) {
 	}
 }
 
-// TestBuildNodeSummariesReportsTerminalStatusAndContextID is the BLOCKING
-// regression test: list_nodes must show a node's status as it actually is
-// after it finishes running, not stuck at "queued" forever once it's no
-// longer live - and must surface the node's A2A context_id.
+// TestBuildNodeSummariesReportsTerminalStatusAndContextID: list_nodes shows a finished node's
+// real status, not "queued", and surfaces its A2A context_id.
 func TestBuildNodeSummariesReportsTerminalStatusAndContextID(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
 	ctx := context.Background()
@@ -203,13 +199,11 @@ func TestBuildNodeSummariesReportsTerminalStatusAndContextID(t *testing.T) {
 	}
 }
 
-// TestUpsertNodesNeitherFieldSetEchoesReceivedShape is the QA rig regression
-// test: the 9B kept sending an assignment with neither node_id nor agent
-// set, and the old error gave it nothing to correct from. The new one must
-// name what actually parsed (both empty) and the roster to pick from.
+// TestUpsertNodesNeitherFieldSetEchoesReceivedShape: an assignment with neither node_id nor
+// agent gets an error naming what parsed and the roster, so a small model can self-correct.
 func TestUpsertNodesNeitherFieldSetEchoesReceivedShape(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}, {Name: "code-reviewer"}}, nil, nil)
-	_, _, err := upsertNodes([]assignmentInput{{Task: "do the thing"}}, nil, nil, "chat1", nil, dag.AgentNames())
+	_, _, err := upsertNodes([]assignmentInput{{Task: "do the thing"}}, nil, nil, "chat1", nil, dag.AgentNamesFor(context.Background()))
 	if err == nil {
 		t.Fatal("want an error when neither node_id nor agent is set")
 	}
@@ -220,14 +214,11 @@ func TestUpsertNodesNeitherFieldSetEchoesReceivedShape(t *testing.T) {
 	}
 }
 
-// TestUpsertNodesRejectsAgentWhoseDeliveryIsNotAllowed is the QA rig
-// regression test: an implement-only dispatch (allowedKinds=["pull_request"])
-// hired a code-reviewer node anyway, which ran ~90k tokens before delivery
-// itself refused it ("delivery kind review not in allowed set"). The
-// rejection must happen at plan-authoring time, before any node runs.
+// TestUpsertNodesRejectsAgentWhoseDeliveryIsNotAllowed: an agent whose delivery kind isn't
+// allowed is rejected at plan time, before it burns tokens only for delivery to refuse it.
 func TestUpsertNodesRejectsAgentWhoseDeliveryIsNotAllowed(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "code-reviewer"}}, nil, nil)
-	_, _, err := upsertNodes([]assignmentInput{{Agent: "code-reviewer", Task: "review it"}}, nil, nil, "chat1", []string{"pull_request"}, dag.AgentNames())
+	_, _, err := upsertNodes([]assignmentInput{{Agent: "code-reviewer", Task: "review it"}}, nil, nil, "chat1", []string{"pull_request"}, dag.AgentNamesFor(context.Background()))
 	if err == nil {
 		t.Fatal("want an error hiring code-reviewer when only pull_request delivery is allowed")
 	}
@@ -238,26 +229,23 @@ func TestUpsertNodesRejectsAgentWhoseDeliveryIsNotAllowed(t *testing.T) {
 	}
 }
 
-// TestUpsertNodesAllowsAgentWhenDeliveryUnrestricted covers the non-
-// restrictive cases: no allowedKinds (a plain chat dispatch) and an agent
-// with no delivery coupling (e.g. web-researcher) both pass unconditionally.
+// TestUpsertNodesAllowsAgentWhenDeliveryUnrestricted: no allowedKinds, or an agent with no
+// delivery coupling, passes unconditionally.
 func TestUpsertNodesAllowsAgentWhenDeliveryUnrestricted(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "code-reviewer"}, {Name: "web-researcher"}}, nil, nil)
-	if _, _, err := upsertNodes([]assignmentInput{{Agent: "code-reviewer", Task: "x"}}, nil, nil, "chat1", nil, dag.AgentNames()); err != nil {
+	if _, _, err := upsertNodes([]assignmentInput{{Agent: "code-reviewer", Task: "x"}}, nil, nil, "chat1", nil, dag.AgentNamesFor(context.Background())); err != nil {
 		t.Errorf("no allowedKinds restriction: %v", err)
 	}
-	if _, _, err := upsertNodes([]assignmentInput{{Agent: "web-researcher", Task: "x"}}, nil, nil, "chat1", []string{"pull_request"}, dag.AgentNames()); err != nil {
+	if _, _, err := upsertNodes([]assignmentInput{{Agent: "web-researcher", Task: "x"}}, nil, nil, "chat1", []string{"pull_request"}, dag.AgentNamesFor(context.Background())); err != nil {
 		t.Errorf("agent with no delivery coupling: %v", err)
 	}
-	if _, _, err := upsertNodes([]assignmentInput{{Agent: "code-reviewer", Task: "x"}}, nil, nil, "chat1", []string{"review"}, dag.AgentNames()); err != nil {
+	if _, _, err := upsertNodes([]assignmentInput{{Agent: "code-reviewer", Task: "x"}}, nil, nil, "chat1", []string{"review"}, dag.AgentNamesFor(context.Background())); err != nil {
 		t.Errorf("agent's delivery kind IS allowed: %v", err)
 	}
 }
 
-// TestBuildNodeSummariesResumable covers list_nodes' resumable/reason field:
-// a terminal (done) node is resumable, a live one is not regardless of what
-// its stored status says (nodeIsRunning outranks it), and a never-run node
-// isn't either.
+// TestBuildNodeSummariesResumable: a done node is resumable; a live one (nodeIsRunning outranks
+// stored status) and a never-run one are not.
 func TestBuildNodeSummariesResumable(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
 	ctx := context.Background()
@@ -295,9 +283,8 @@ func TestBuildNodeSummariesResumable(t *testing.T) {
 	}
 }
 
-// TestBuildNodeSummariesReportsLastTaskID closes out Assignment.TaskID's
-// write side (execute.go stamps it on dispatch): list_nodes must read it
-// back, or the field is dead weight nothing ever surfaces.
+// TestBuildNodeSummariesReportsLastTaskID: list_nodes reads back the TaskID execute stamps on
+// dispatch.
 func TestBuildNodeSummariesReportsLastTaskID(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
 	ctx := context.Background()

@@ -26,29 +26,24 @@ type contextT = context.Context
 type procHandle struct {
 	cmd  *exec.Cmd
 	conn *sdk.ClientSideConnection
-	// updatesMu guards pending/stalled - SessionUpdate must never block (it
-	// runs on the SDK's single notification-processing goroutine; blocking
-	// there backs up the SDK's own bounded notification queue and tears the connection down, masking a slow downstream consumer as "peer disconnected" - finding 10). notify is 1-cap: a full buffer just means the round loop hasn't drained the last signal yet, so this is a wakeup, not a value queue.
+	// updatesMu guards pending/stalled. SessionUpdate must never block the SDK's notification goroutine (a full
+	// queue tears the connection down); notify is a 1-cap wakeup, not a value queue.
 	updatesMu sync.Mutex
 	pending   []sdk.SessionUpdate
 	stalled   bool
 	notify    chan struct{}
 	stderr    *tailBuffer
 	once      sync.Once
-	// sent/received tee the raw JSON-RPC frames this handle's connection
-	// exchanges over stdin/stdout - the ledger's invoke_agent event
-	// (emit.go) is built from these at the end of the round.
+	// sent/received tee the raw JSON-RPC frames over stdin/stdout; emit.go builds invoke_agent from them.
 	sent, received *teeBuffer
 }
 
-// updatesStallThreshold: the old buffered-chan cap SessionUpdate used to
-// block on. Crossing it now means the round loop can't keep up - worth one
-// log line so a torn-down-looking round reads as "slow consumer", not a masked peer disconnect.
+// updatesStallThreshold: past this backlog the round loop can't keep up; logged once so the round
+// reads as "slow consumer", not a masked peer disconnect.
 const updatesStallThreshold = 64
 
-// pushUpdate appends u without ever blocking and wakes the round loop.
-// stalled logs once per backlog episode, not once per update, so a genuinely
-// slow consumer doesn't spam the log at the rate of streamed tokens.
+// pushUpdate appends u without blocking and wakes the round loop. stalled logs once per backlog
+// episode, not per streamed token.
 func (h *procHandle) pushUpdate(u sdk.SessionUpdate) {
 	h.updatesMu.Lock()
 	h.pending = append(h.pending, u)
@@ -77,9 +72,8 @@ func (h *procHandle) drainUpdates() []sdk.SessionUpdate {
 	return u
 }
 
-// traceparentEnv renders the active round span as a W3C TRACEPARENT env
-// entry so the subprocess (e.g. the pi-acp shim) can parent its own OTLP
-// spans under this round. Empty when ctx carries no valid span.
+// traceparentEnv renders the round span as a W3C TRACEPARENT env entry so the subprocess parents
+// its OTLP spans under this round. Empty when ctx has no valid span.
 func traceparentEnv(ctx context.Context) []string {
 	sc := oteltrace.SpanContextFromContext(ctx)
 	if !sc.IsValid() {
@@ -93,9 +87,8 @@ func traceparentEnv(ctx context.Context) []string {
 func (a *Agent) wrappedArgv(cwd string, caps workspace.Caps) []string {
 	var extraRO []string
 	if a.opts.SkillPaths != nil {
-		// Copy: SkillPaths() may return a cached slice (acpRegistrySkillPaths)
-		// whose backing array has spare capacity - appending in place would
-		// race a concurrent spawn reading that same cache.
+		// Copy: SkillPaths() may return a cached slice with spare capacity, and appending in place
+		// would race a concurrent spawn reading it.
 		extraRO = append([]string(nil), a.opts.SkillPaths()...)
 	}
 	if a.opts.ExtraRO != nil {
@@ -104,9 +97,8 @@ func (a *Agent) wrappedArgv(cwd string, caps workspace.Caps) []string {
 	return workspace.WrapArgv(cwd, a.opts.Command, caps, extraRO, nil)
 }
 
-// spawnEnv is the subprocess environment: PATH is HERMETIC in every sandbox
-// mode (workspace.ChildPath - the same fixed PATH the gate's own children
-// get), never the server's ambient PATH - the toolchain the agent needs to RUN is covered by Caps.ExtraPath + the system dirs already in ChildPath, so ambient added no reach a leak couldn't also use. caps is THIS round's effective caps (ReadOnly/ScratchDir already resolved by the caller, same as wrappedArgv takes) - TMPDIR must track caps.ScratchDir's per-node grant, not the agent's static opts.Caps, or every round would share one scratch dir. The GIT_* trio strips the child's authority to authenticate to any real remote (#936) - GIT_ASKPASS/GIT_SSH_COMMAND point at /bin/false so an HTTPS or SSH credential prompt fails closed instead of hanging or succeeding, and GIT_TERMINAL_PROMPT=0 kills git's own fallback prompt. `git push` itself stays fully allowed: it works against a local/file:// remote (the test suite's own target) and merely can't authenticate anywhere else. This is independent of internal/vetting's gate-owned push, which builds its own env from scratch (pushGitEnv) and is never touched here.
+// spawnEnv: PATH is hermetic (workspace.ChildPath) and TMPDIR tracks this round's caps.ScratchDir. GIT_ASKPASS/
+// GIT_SSH_COMMAND=/bin/false and GIT_TERMINAL_PROMPT=0 fail remote auth closed; local/file:// push still works.
 func (a *Agent) spawnEnv(caps workspace.Caps) []string {
 	env := SpawnEnv(a.opts.Home, a.opts.Env, caps)
 	if a.opts.SkillPaths != nil {
@@ -115,9 +107,8 @@ func (a *Agent) spawnEnv(caps workspace.Caps) []string {
 	return env
 }
 
-// mergeSkillPaths rewrites PI_ACP_CONFIG's skill_paths field in place with a
-// freshly-queried list - the env slice built once at agent construction
-// (piACPEnv) otherwise never sees a registry update (#1427 P1).
+// mergeSkillPaths rewrites PI_ACP_CONFIG's skill_paths in place with a fresh list; the env built once
+// at construction (piACPEnv) would otherwise never see a registry update.
 func mergeSkillPaths(env []string, skillPaths []string) []string {
 	if len(skillPaths) == 0 {
 		return env
@@ -153,9 +144,8 @@ func (a *Agent) startLive(ctx context.Context, cwd string, caps workspace.Caps) 
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = cwd
 	cmd.Env = append(a.spawnEnv(caps), traceparentEnv(ctx)...)
-	// Own process group + group kill + WaitDelay: the exact hang class from the
-	// v0.5.2 run_command incident - a grandchild holding our stdout pipe keeps
-	// Wait blocked forever unless the whole group dies and the pipe is force-closed (mirrors workspace.newChildCmd).
+	// Own process group + group kill + WaitDelay: a grandchild holding our stdout pipe otherwise keeps Wait
+	// blocked forever (mirrors workspace.newChildCmd).
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.WaitDelay = 10 * time.Second
 
@@ -172,9 +162,7 @@ func (a *Agent) startLive(ctx context.Context, cwd string, caps workspace.Caps) 
 		return nil, fmt.Errorf("acp: start %q: %w", strings.Join(a.opts.Command, " "), err)
 	}
 	h.cmd = cmd
-	// Tee the wire: everything quack writes to the subprocess's stdin and
-	// everything it reads back off stdout, for the ledger's invoke_agent
-	// event (emit.go) - the ACP conversation itself, not just a summary of it.
+	// Tee the wire both ways for the ledger's invoke_agent event: the ACP conversation itself, not a summary.
 	teedIn := io.MultiWriter(stdin, h.sent)
 	teedOut := io.TeeReader(stdout, h.received)
 	h.conn = sdk.NewClientSideConnection(&clientHandler{h: h, judge: a.opts.PermissionJudge}, teedIn, teedOut)
@@ -211,16 +199,15 @@ type clientHandler struct {
 
 var _ sdk.Client = (*clientHandler)(nil)
 
-// SessionUpdate must never block: it runs on the SDK's single
-// notification-processing goroutine, and blocking there stalls the SDK's own
-// bounded notification queue, which tears the whole connection down under a slow downstream consumer (finding 10). pushUpdate only ever appends and signals - ctx is unused because there is never anything to wait on.
+// SessionUpdate must never block: it runs on the SDK's single notification goroutine, and stalling its
+// bounded queue tears the connection down. pushUpdate only appends and signals, so ctx is unused.
 func (c *clientHandler) SessionUpdate(ctx contextT, n sdk.SessionNotification) error {
 	c.h.pushUpdate(n.Update)
 	return nil
 }
 
-// RequestPermission routes the ask to the safety judge (Options.PermissionJudge) -
-// the pi-acp shim's checkPolicy hard-blocks git push and clone (unless allow_clone) and escalates only a .env read here. No judge configured ⇒ allow (single-tenant container is the boundary).
+// RequestPermission routes the ask to Options.PermissionJudge (the shim hard-blocks push/clone and escalates
+// only a .env read). No judge means allow: the single-tenant container is the boundary.
 func (c *clientHandler) RequestPermission(ctx contextT, p sdk.RequestPermissionRequest) (sdk.RequestPermissionResponse, error) {
 	title := ""
 	if p.ToolCall.Title != nil {

@@ -22,16 +22,8 @@ const staleResumePlanCeiling = 24 * time.Hour
 // restart, so a boot with many resumable chats doesn't fire them all at once.
 const bootResumeConcurrency = 8
 
-// resumeGuardArchivedOrStale is boot resume's cheap admissibility check
-// (#1176): an archived chat's paused nodes must never be resumed. A human
-// pause (dag.PauseUser) is a deliberate decision boot must not override,
-// regardless of plan age - unlike a shutdown pause, which is the server's own
-// doing and always wants resuming. A plan older than staleResumePlanCeiling
-// is more likely abandoned than mid-run - unless the node is parked on
-// awaiting_input, which holds no run slot and whose only recovery (a full
-// retry) would re-run the node and lose the pending question, so the ceiling
-// only applies to actual work nodes.
-// Split out from the DB reads that feed it so it is unit-testable directly.
+// resumeGuardArchivedOrStale: never resume an archived chat or override a human pause. Plans older than
+// staleResumePlanCeiling are treated as abandoned, except awaiting_input nodes, whose retry would lose the question.
 func resumeGuardArchivedOrStale(archived, hasPlan bool, pauseReason dag.PauseReason, planCreatedAt time.Time) (bool, string) {
 	if archived {
 		return false, "chat archived; not resumed"
@@ -46,13 +38,8 @@ func resumeGuardArchivedOrStale(archived, hasPlan bool, pauseReason dag.PauseRea
 	return true, ""
 }
 
-// reconcileNodes is boot's half of #962: every node the last process left
-// suspended is handed back to the scheduler, and the reconcile is logged as
-// what actually happened rather than as advice to resend a message.
-//
-// Runs before the Hub can accept a run (ScanOrphanedRuns is table-wide with no
-// liveness check) and returns the nodes worth dispatching; the caller starts
-// them once the orchestrator exists.
+// reconcileNodes hands every node the last process left suspended back to the scheduler. It runs before the
+// Hub accepts runs (ScanOrphanedRuns has no liveness check); the caller starts the returned nodes later.
 func reconcileNodes(ctx context.Context, st *store.Store, jail *workspace.Jail, resumable func(chatID, pauseReason string) (bool, string)) []store.ResumableNode {
 	rep, err := st.ResumePausedDagNodes(ctx, resumable)
 	if err != nil {
@@ -95,9 +82,8 @@ func syncFinishedNodeRecords(ctx context.Context, st *store.Store) {
 	slog.Info("checked finished nodes' dag_node records against their rows", "component", "startup", "nodes", n)
 }
 
-// removeStaleCloneDir clears an interrupted chat's shared-repo clone (#1213) so the retry's setup
-// step never inherits a read-only Go module cache left by a killed `go mod download`. Best-effort:
-// a missing/never-provisioned dir is not an error.
+// removeStaleCloneDir clears an interrupted chat's clone so the retry never inherits a read-only Go module
+// cache from a killed `go mod download`. Best-effort.
 func removeStaleCloneDir(jail *workspace.Jail, chatID string) {
 	if jail == nil {
 		return
@@ -111,13 +97,8 @@ func removeStaleCloneDir(jail *workspace.Jail, chatID string) {
 	}
 }
 
-// startResumedNodes re-enters each resumable node's graph on a server-lifetime
-// context, the same shape rest.Handler.startRun uses. One run per chat (the
-// Hub registers one run per chat), driving every resumable node of that chat
-// in turn - each re-entry is the scoped "node + descendants" subset, so a
-// second paused sibling is not covered by the first node's walk.
-//
-// maxConcurrent bounds how many chats resume at once - see bootResumeConcurrency.
+// startResumedNodes runs one run per chat (the Hub allows one), re-entering each resumable node's
+// node+descendants subset in turn; maxConcurrent caps chats resuming at once.
 func startResumedNodes(ctx context.Context, nodes []store.ResumableNode, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, maxConcurrent int) {
 	byChat := map[string][]store.ResumableNode{}
 	var order []string
@@ -127,9 +108,7 @@ func startResumedNodes(ctx context.Context, nodes []store.ResumableNode, orch *o
 		}
 		byChat[n.ChatID] = append(byChat[n.ChatID], n)
 	}
-	// Reset synchronously, before any resume's goroutine is dispatched, so a subscriber that
-	// reaches the API before its own resume's first publish never reads the previous run's
-	// (possibly terminal) events off the hub or the durable log (#audit-5).
+	// Reset before any resume goroutine starts, so an early subscriber never reads the previous run's events.
 	for _, chatID := range order {
 		hub.Reset(chatID)
 		eventLog.Reset(ctx, chatID)
@@ -139,13 +118,8 @@ func startResumedNodes(ctx context.Context, nodes []store.ResumableNode, orch *o
 	})
 }
 
-// boundedGoRun starts run(id) in its own goroutine for every id, at most
-// maxConcurrent running at a time - split out from startResumedNodes so the
-// concurrency cap is testable without a real orchestrator/LLM. Returns as
-// soon as every id has a goroutine dispatched, not once every run has
-// started or finished: the semaphore acquire happens inside the goroutine, so
-// dispatch never blocks the caller (buildFromConfig, ahead of ListenAndServe)
-// on an in-flight run - excess ids just park their goroutine on the acquire.
+// boundedGoRun runs run(id) per id, at most maxConcurrent at once. It returns once every goroutine is
+// dispatched: the semaphore is acquired inside the goroutine, so boot never blocks on an in-flight run.
 func boundedGoRun(ids []string, maxConcurrent int, run func(id string)) {
 	if maxConcurrent < 1 {
 		maxConcurrent = 1
@@ -160,9 +134,8 @@ func boundedGoRun(ids []string, maxConcurrent int, run func(id string)) {
 	}
 }
 
-// driveResume re-enters one chat's resumable nodes. Each node goes through the same scoped subset
-// path as a REST retry (RetryNode → runDAGSubset: node + descendants, siblings seeded from their
-// stored outputs) - a fresh full-plan run would re-execute done nodes.
+// driveResume re-enters a chat's resumable nodes via the REST-retry subset path (node + descendants);
+// a full-plan run would re-execute done nodes.
 func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog) {
 	plan, err := st.GetLatestDagPlan(ctx, chatID)
 	if err != nil || plan == nil {
@@ -175,9 +148,7 @@ func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode
 	runCtx = stream.WithTurnID(runCtx, turnID)
 	hub.RegisterRun(chatID, turnID, cancelRun)
 	_ = st.MarkRunActive(runCtx, chatID, turnID)
-	// Reset already ran synchronously in startResumedNodes, before this
-	// goroutine was dispatched - not here, or a subscriber could race it.
-	// FinishRun flushes, cancels, then guarded-retires the run - see its doc.
+	// Reset already ran in startResumedNodes before dispatch; doing it here would race a subscriber.
 	defer eventLog.FinishRun(hub, chatID, turnID, cancelRun)
 
 	pub := runlog.NewPublisher(runCtx, hub, eventLog, chatID)
@@ -202,11 +173,8 @@ func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode
 		failIfNotResumed(runCtx, st, chatID, n.PlanID, n.NodeID, resumeErr)
 	}
 	pub.Publish(stream.Done())
-	// A shutdown force-cancel or a user cancel lands on runCtx too, and this
-	// tail always runs regardless of how the node loop ended - unlike
-	// rest.stampRunOutcome's own WithoutCancel wrap, a cancelled runCtx here
-	// would fail every write below and strand the chat run_status="" with
-	// active_turn_id still set, showing as running forever.
+	// A cancel lands on runCtx too, which would fail every write below and leave the chat
+	// showing as running forever, so the tail runs on a detached, bounded context.
 	tailCtx, cancel := context.WithTimeout(context.WithoutCancel(runCtx), 10*time.Second)
 	defer cancel()
 	runlog.StampTurn(tailCtx, st, chatID, turnID, res)

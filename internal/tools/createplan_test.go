@@ -12,13 +12,11 @@ import (
 	"github.com/fagerbergj/quack/internal/recordstore"
 )
 
-// newCreatePlanForTest builds a create_plan tool over a fresh in-memory
-// recordstore.Client, returning both for assertions against what it persisted.
 func newCreatePlanForTest(t *testing.T, roster []dag.AgentInfo, nodeIsRunning func(string) bool) (runnableTool, *recordstore.Client) {
 	t.Helper()
 	dag.NewPlanner(roster, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
-	tl, err := NewCreatePlanTool(c, "orchestrator", nil, nodeIsRunning, nil, nil, dag.AgentNames())
+	tl, err := NewCreatePlanTool(c, "orchestrator", nil, nodeIsRunning, nil, nil, dag.AgentNamesFor(context.Background()))
 	if err != nil {
 		t.Fatalf("NewCreatePlanTool: %v", err)
 	}
@@ -29,7 +27,6 @@ func newCreatePlanForTest(t *testing.T, roster []dag.AgentInfo, nodeIsRunning fu
 	return rt, c
 }
 
-// TestCreatePlanEmptyTaskRejected covers the contract table's "empty task" row.
 func TestCreatePlanEmptyTaskRejected(t *testing.T) {
 	rt, _ := newCreatePlanForTest(t, []dag.AgentInfo{{Name: "code-implementer"}}, nil)
 	assignments := []map[string]any{{"agent": "code-implementer", "task": ""}}
@@ -38,7 +35,6 @@ func TestCreatePlanEmptyTaskRejected(t *testing.T) {
 	}
 }
 
-// TestCreatePlanCycleRejected covers the contract table's "cycle" row.
 func TestCreatePlanCycleRejected(t *testing.T) {
 	rt, _ := newCreatePlanForTest(t, []dag.AgentInfo{{Name: "web-researcher"}}, nil)
 	assignments := []map[string]any{
@@ -50,10 +46,7 @@ func TestCreatePlanCycleRejected(t *testing.T) {
 	}
 }
 
-// TestCreatePlanRejectionMintsNoOrphanNodes is the BLOCKING regression test:
-// a create_plan call whose dag_plan record fails validation must leave no
-// dag_node records behind - list_nodes must not show a "hired" node from a
-// call that never actually took effect.
+// A create_plan call whose dag_plan record fails validation must leave no dag_node records behind.
 func TestCreatePlanRejectionMintsNoOrphanNodes(t *testing.T) {
 	rt, c := newCreatePlanForTest(t, []dag.AgentInfo{{Name: "web-researcher"}}, nil)
 	assignments := []map[string]any{
@@ -72,8 +65,6 @@ func TestCreatePlanRejectionMintsNoOrphanNodes(t *testing.T) {
 	}
 }
 
-// TestCreatePlanMintedIDEcho covers the response carrying back the minted
-// node_id the model must reference to depend on or reassign the node later.
 func TestCreatePlanMintedIDEcho(t *testing.T) {
 	rt, _ := newCreatePlanForTest(t, []dag.AgentInfo{{Name: "web-researcher"}}, nil)
 	assignments := []map[string]any{{"agent": "web-researcher", "task": "research the thing"}}
@@ -81,8 +72,7 @@ func TestCreatePlanMintedIDEcho(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create_plan Run: %v", err)
 	}
-	// functiontool round-trips TResults through JSON, so nested fields land
-	// as generic map[string]any/[]any, not the concrete Go struct.
+	// functiontool round-trips results through JSON, so nested fields land as map[string]any/[]any.
 	out, ok := res["assignments"].([]any)
 	if !ok || len(out) != 1 {
 		t.Fatalf("res[assignments] = %#v, want one assignment", res["assignments"])
@@ -93,8 +83,6 @@ func TestCreatePlanMintedIDEcho(t *testing.T) {
 	}
 }
 
-// TestCreatePlanNodeCurrentlyRunningRejected covers reassigning a live node
-// through create_plan (the same node_id path edit_plan also uses).
 func TestCreatePlanNodeCurrentlyRunningRejected(t *testing.T) {
 	rt, c := newCreatePlanForTest(t, []dag.AgentInfo{{Name: "code-implementer"}}, func(id string) bool { return id == "impl-1" })
 	if _, _, err := c.SaveStructured(newFakeCtx(), "dag_node",
@@ -108,18 +96,13 @@ func TestCreatePlanNodeCurrentlyRunningRejected(t *testing.T) {
 	}
 }
 
-// TestCreatePlanTriggerBackedIgnoresSubmittedSetupWithNote is the QA rig
-// regression test (#slice3 review): a model-submitted setup that disagrees
-// with the trigger's own repo used to be rejected outright, which cost the
-// model its own correct plan over a field it can't actually change (the
-// trigger's setup always overwrites rec.Setup regardless). Now it's
-// accepted, the submitted setup is silently ignored (rec.Setup is still the
-// trigger's), and the result summary says so.
+// A trigger-backed dispatch accepts a submitted setup that disagrees with the trigger's repo, ignores it
+// (the trigger's setup always wins), and says so in the summary.
 func TestCreatePlanTriggerBackedIgnoresSubmittedSetupWithNote(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "code-reviewer"}}, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
 	githubSetup := &dag.Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "qa-fixture-base"}
-	tl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, nil, dag.AgentNames())
+	tl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, nil, dag.AgentNamesFor(context.Background()))
 	if err != nil {
 		t.Fatalf("NewCreatePlanTool: %v", err)
 	}
@@ -135,7 +118,7 @@ func TestCreatePlanTriggerBackedIgnoresSubmittedSetupWithNote(t *testing.T) {
 	if !strings.Contains(summary, "setup ignored") || !strings.Contains(summary, githubSetup.Repo) || !strings.Contains(summary, githubSetup.BaseRef) {
 		t.Errorf("summary = %q, want a setup-ignored note naming the trigger's own repo/base_ref", summary)
 	}
-	rec, _, ok, err := loadDagPlan(context.Background(), c)
+	rec, ok, err := loadDagPlan(context.Background(), c)
 	if err != nil || !ok {
 		t.Fatalf("loadDagPlan: ok=%v err=%v", ok, err)
 	}
@@ -144,15 +127,11 @@ func TestCreatePlanTriggerBackedIgnoresSubmittedSetupWithNote(t *testing.T) {
 	}
 }
 
-// TestCreatePlanSetupBaseRefMatchingTriggerAccepted covers the (now
-// unremarkable) case where the submitted setup happens to match the
-// trigger exactly - still accepted, still ignored in favor of the
-// trigger's own copy.
 func TestCreatePlanSetupBaseRefMatchingTriggerAccepted(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "code-reviewer"}}, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
 	githubSetup := &dag.Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "qa-fixture-base"}
-	tl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, nil, dag.AgentNames())
+	tl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, nil, dag.AgentNamesFor(context.Background()))
 	if err != nil {
 		t.Fatalf("NewCreatePlanTool: %v", err)
 	}
@@ -166,8 +145,6 @@ func TestCreatePlanSetupBaseRefMatchingTriggerAccepted(t *testing.T) {
 	}
 }
 
-// TestCreatePlanWorkdirEscapeRejected covers an assignment's workdir walking
-// outside the workspace.
 func TestCreatePlanWorkdirEscapeRejected(t *testing.T) {
 	rt, _ := newCreatePlanForTest(t, []dag.AgentInfo{{Name: "code-implementer"}}, nil)
 	assignments := []map[string]any{{"agent": "code-implementer", "task": "x", "workdir": "../../etc"}}
@@ -177,8 +154,7 @@ func TestCreatePlanWorkdirEscapeRejected(t *testing.T) {
 	}
 }
 
-// TestCreatePlanStampsAssignmentMetaOnGitHubTrigger: onAssignment stamps its
-// return under assignment.meta.<key> - extension-owned, never model-authored.
+// onAssignment stamps its return under assignment.meta.<key>: extension-owned, never model-authored.
 func TestCreatePlanStampsAssignmentMetaOnGitHubTrigger(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
@@ -186,7 +162,7 @@ func TestCreatePlanStampsAssignmentMetaOnGitHubTrigger(t *testing.T) {
 	onAssignment := func(_ agent.Context, _, _ string, a dag.Assignment) (string, map[string]any) {
 		return "github", map[string]any{"base_sha": "deadbeef"}
 	}
-	tl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, onAssignment, dag.AgentNames())
+	tl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, onAssignment, dag.AgentNamesFor(context.Background()))
 	if err != nil {
 		t.Fatalf("NewCreatePlanTool: %v", err)
 	}
@@ -196,7 +172,7 @@ func TestCreatePlanStampsAssignmentMetaOnGitHubTrigger(t *testing.T) {
 		t.Fatalf("create_plan Run: %v", err)
 	}
 
-	rec, _, ok, err := loadDagPlan(context.Background(), c)
+	rec, ok, err := loadDagPlan(context.Background(), c)
 	if err != nil || !ok {
 		t.Fatalf("loadDagPlan: ok=%v err=%v", ok, err)
 	}
@@ -208,17 +184,15 @@ func TestCreatePlanStampsAssignmentMetaOnGitHubTrigger(t *testing.T) {
 	}
 }
 
-// TestCreatePlanMetaHookRunsRegardlessOfTrigger: onAssignment is generic
-// over whichever extension implements AssignmentMetaExtension (like
-// AssignmentFreshnessFunc, it isn't gated on a GitHub trigger) - it still
-// runs on a plain chat dispatch, keyed by whatever name the hook itself returns.
+// onAssignment is not gated on a GitHub trigger: it runs on a plain chat dispatch too, keyed by the name
+// the hook returns.
 func TestCreatePlanMetaHookRunsRegardlessOfTrigger(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
 	onAssignment := func(_ agent.Context, _, _ string, a dag.Assignment) (string, map[string]any) {
 		return "acme", map[string]any{"ticket": "ACME-42"}
 	}
-	tl, err := NewCreatePlanTool(c, "orchestrator", nil, nil, nil, onAssignment, dag.AgentNames())
+	tl, err := NewCreatePlanTool(c, "orchestrator", nil, nil, nil, onAssignment, dag.AgentNamesFor(context.Background()))
 	if err != nil {
 		t.Fatalf("NewCreatePlanTool: %v", err)
 	}
@@ -228,7 +202,7 @@ func TestCreatePlanMetaHookRunsRegardlessOfTrigger(t *testing.T) {
 		t.Fatalf("create_plan Run: %v", err)
 	}
 
-	rec, _, ok, err := loadDagPlan(context.Background(), c)
+	rec, ok, err := loadDagPlan(context.Background(), c)
 	if err != nil || !ok {
 		t.Fatalf("loadDagPlan: ok=%v err=%v", ok, err)
 	}

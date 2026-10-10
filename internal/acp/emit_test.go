@@ -90,9 +90,8 @@ func TestEmitInvokeAgent_ProducesWellFormedEvent(t *testing.T) {
 	}
 }
 
-// TestEmitInvokeAgent_RecordsPlugins: the quack.plugins attribute carries
-// the round's plugin provenance as a JSON array exporter.go maps into
-// AgentInvokePayload.Plugins (#1427 P1).
+// TestEmitInvokeAgent_RecordsPlugins: quack.plugins carries the round's plugin provenance as the JSON array
+// exporter.go maps into AgentInvokePayload.Plugins.
 func TestEmitInvokeAgent_RecordsPlugins(t *testing.T) {
 	capExp := &captureExporter{}
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
@@ -112,9 +111,8 @@ func TestEmitInvokeAgent_RecordsPlugins(t *testing.T) {
 	}
 }
 
-// TestEmitInvokeAgent_RecordsArtifacts: the quack.artifacts attribute carries
-// the round's resolved-artifact provenance as a JSON array exporter.go maps
-// into AgentInvokePayload.Artifacts.
+// TestEmitInvokeAgent_RecordsArtifacts: quack.artifacts carries the round's resolved-artifact provenance
+// as the JSON array exporter.go maps into AgentInvokePayload.Artifacts.
 func TestEmitInvokeAgent_RecordsArtifacts(t *testing.T) {
 	capExp := &captureExporter{}
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))

@@ -11,11 +11,12 @@ import (
 	"time"
 
 	"github.com/robfig/cron/v3"
+
+	"github.com/fagerbergj/quack/internal/memoryrules"
 )
 
-// clusterWindow is the temporal-proximity threshold the burst-dedupe cluster
-// (design doc §4(c)) chains on: consecutive unverified memories from the same
-// chat_id, minted no more than this apart, join one cluster.
+// clusterWindow chains the burst-dedupe cluster: consecutive unverified memories from one chat_id
+// minted no more than this apart join one cluster.
 const clusterWindow = 15 * time.Minute
 
 // consolidatorAuthor tags a point the sweep itself writes (an UPDATE merging
@@ -26,9 +27,8 @@ const consolidatorAuthor = "memory-consolidator"
 // growing collection can't force one unbounded scroll/select per tick.
 const sweepPageSize = 500
 
-// forEachSweepPage walks every point across all buckets in pages of
-// sweepPageSize, calling fn once per page until the backend is exhausted.
-// withVectors (DedupeSweep's cosine clustering, issue #1269) asks the backend to also populate each point's stored embedding - never a re-embed, just an extra field on the same read (both backends have the vector on hand at list time).
+// forEachSweepPage walks every point across all buckets in pages of sweepPageSize. withVectors
+// adds each point's stored embedding (for DedupeSweep), never a re-embed.
 func (s *Store) forEachSweepPage(ctx context.Context, includeInvalidated, withVectors bool, fn func([]scored)) error {
 	if s.listErrForTest != nil {
 		return s.listErrForTest
@@ -36,9 +36,8 @@ func (s *Store) forEachSweepPage(ctx context.Context, includeInvalidated, withVe
 	return s.idx.scrollAll(ctx, includeInvalidated, withVectors, sweepPageSize, fn)
 }
 
-// RunConsolidationSweep runs the sweep (design doc §4(c), §6) on schedule (a
-// standard 5-field cron expression), until ctx is done. schedule == ""
-// disables it. Never runs at boot (issue #961) - waits for the first Next.
+// RunConsolidationSweep runs the sweep on a 5-field cron schedule until ctx is done; "" disables it.
+// Never runs at boot: it waits for the first Next.
 func (s *Store) RunConsolidationSweep(ctx context.Context, schedule string, retentionDays int) {
 	if schedule == "" {
 		return
@@ -62,9 +61,8 @@ func (s *Store) RunConsolidationSweep(ctx context.Context, schedule string, rete
 
 func (s *Store) sweepOnce(ctx context.Context, retentionDays int) {
 	s.consolidateOnce(ctx)
-	// Per-bucket similarity dedupe (issue #1269): consolidateOnce's burst clustering only ever
-	// compares memories from the same chat within a 15-minute window, so a fact re-derived by a
-	// different run days later is never caught there - this pass catches it, bucket-wide.
+	// Burst clustering only compares one chat within 15 minutes; this bucket-wide pass catches a fact
+	// a different run re-derived days later.
 	if _, err := s.DedupeSweep(ctx, true); err != nil {
 		s.log.Warn("dedupe sweep failed", "err", err)
 	}
@@ -72,13 +70,11 @@ func (s *Store) sweepOnce(ctx context.Context, retentionDays int) {
 	s.retentionOnce(ctx, retentionDays)
 }
 
-// consolidateOnce clusters currently-valid unverified memories by bucket + provenance chat_id +
-// temporal proximity and asks the consolidation model to dedupe each cluster (design doc §4(c)).
-// Off the hot path: reached only from the ticker, never inlined in a commit.
+// consolidateOnce clusters valid unverified memories by bucket + chat_id + time proximity and asks the
+// consolidation model to dedupe each cluster. Ticker-only, never on the commit path.
 func (s *Store) consolidateOnce(ctx context.Context) {
-	// Clustering needs every currently-valid unverified memory grouped by bucket before it can
-	// chain bursts, so the accumulation isn't avoidable here - but paging the fetch still bounds
-	// each backend call (vs. one unbounded scroll/select) as the collection grows.
+	// Clustering needs every valid unverified memory per bucket, so accumulation is unavoidable;
+	// paging still bounds each backend call.
 	byBucket := map[string][]scored{}
 	err := s.forEachSweepPage(ctx, false, false, func(page []scored) { // currently-valid only
 		for _, p := range page {
@@ -118,11 +114,8 @@ func (s *Store) consolidateOnce(ctx context.Context) {
 	s.log.Info("consolidation sweep", "clusters", clusters, "skipped", skipped, "called", called, "ops_applied", applied)
 }
 
-// clusterFingerprint must hash exactly what buildDedupePrompt sends
-// (id+content) - a skip is only safe if the model would see the same text.
-// Also salted with the dedupe prompt and model name: unsalted, a prompt or
-// model change on deploy would leave every stamped cluster skipping on the
-// old verdict until membership or content shifts.
+// clusterFingerprint must hash exactly what buildDedupePrompt sends (id+content), salted with prompt
+// and model so a deploy that changes either doesn't keep skipping on the old verdict.
 func (s *Store) clusterFingerprint(cluster []scored) string {
 	keys := make([]string, len(cluster))
 	for i, p := range cluster {
@@ -171,9 +164,8 @@ func (s *Store) stampClusterNoChange(ctx context.Context, cluster []scored, fp s
 	}
 }
 
-// burstClusters groups pts (already one bucket, already unverified) into bursts: same ChatID,
-// chained by MintedAt gaps no larger than clusterWindow. Only clusters of >=2 are returned - a lone
-// memory has nothing to dedupe against. A point with no ChatID or an unparsable MintedAt can't be placed in time, so it's dropped from clustering rather than guessed into one.
+// burstClusters groups one bucket's unverified pts by ChatID, chained by MintedAt gaps <= clusterWindow,
+// returning clusters of >=2. Points with no ChatID or an unparsable MintedAt are dropped, not guessed.
 func burstClusters(pts []scored) [][]scored {
 	byChat := map[string][]scored{}
 	for _, p := range pts {
@@ -213,9 +205,8 @@ func burstClusters(pts []scored) [][]scored {
 	return out
 }
 
-// consolidateCluster runs the dedupe prompt variant over one burst and applies its ops - the
-// sweep's counterpart to commitTo, using the cluster itself as both the candidate set and the
-// neighbours the model may reference (so "duplicate of <id>" always names a real, shown id).
+// consolidateCluster runs the dedupe prompt over one burst and applies its ops; the cluster is both
+// candidates and neighbours, so "duplicate of <id>" always names a shown id.
 func (s *Store) consolidateCluster(ctx context.Context, bucket string, cluster []scored) (int, error) {
 	neighbours := make([]neighbour, len(cluster))
 	valid := make(map[string]neighbour, len(cluster))
@@ -228,9 +219,8 @@ func (s *Store) consolidateCluster(ctx context.Context, bucket string, cluster [
 	if err != nil {
 		return 0, err
 	}
-	// Provenance for a fallback fresh ADD (the dedupe prompt asks for UPDATE/DELETE/NOOP; ADD is the
-	// escape hatch apply() already handles). The cluster shares one chat_id by construction, so
-	// this keeps a merged memory addressable by the same outcome-feedback event as the originals.
+	// Provenance for a fallback ADD: the cluster shares one chat_id, so a merged memory stays
+	// addressable by the same outcome-feedback event as the originals.
 	prov := Provenance{ChatID: cluster[0].ChatID, NodeID: cluster[0].NodeID, Source: cluster[0].Source}
 	return s.apply(ctx, bucket, consolidatorAuthor, prov, ops, valid)
 }
@@ -239,11 +229,10 @@ func (s *Store) consolidateCluster(ctx context.Context, bucket string, cluster [
 // carries per rule - enough to sanity-check a rule, not a full dump.
 const forgetExampleCap = 5
 
-// SetForgettingRules validates and wires the operator's memory.forgetting.rules
-// (epic #1255 P3). Called once at server startup - a bad rule fails fast there rather than surfacing
-// later as a silently-skipped nightly sweep. Unset (nil rules, never called) means DefaultRules().
-func (s *Store) SetForgettingRules(rules []Rule) error {
-	if err := ValidateRules(rules); err != nil {
+// SetForgettingRules validates and wires memory.forgetting.rules at startup, so a bad rule fails fast
+// instead of silently skipping the nightly sweep. Never called means memoryrules.DefaultRules().
+func (s *Store) SetForgettingRules(rules []memoryrules.Rule) error {
+	if err := memoryrules.ValidateRules(rules); err != nil {
 		return err
 	}
 	s.forgetRules = rules
@@ -265,18 +254,15 @@ type ForgettingRuleResult struct {
 	Examples []ForgettingExample
 }
 
-// ForgettingReport summarizes one ForgetSweep call - the nightly sweep logs
-// it, `quack memory sweep --dry-run` prints it, `quack memory sweep` prints
-// it after applying.
+// ForgettingReport summarizes one ForgetSweep, as logged nightly or printed by `quack memory sweep`.
 type ForgettingReport struct {
 	Evaluated int
 	Kept      int // no rule matched
 	Rules     []ForgettingRuleResult
 }
 
-// forgetOnce is the sweep's forgetting step (epic #1255 P3), run before
-// retentionOnce so a memory a rule invalidates this tick is also eligible
-// for the same tick's retention cutoff check next run.
+// forgetOnce runs before retentionOnce, so a memory a rule invalidates this tick ages toward the
+// retention cutoff from now on.
 func (s *Store) forgetOnce(ctx context.Context, dryRun bool) {
 	report, err := s.ForgetSweep(ctx, dryRun)
 	if err != nil {
@@ -289,13 +275,12 @@ func (s *Store) forgetOnce(ctx context.Context, dryRun bool) {
 	s.log.Info("forgetting sweep", "evaluated", report.Evaluated, "kept", report.Kept, "dry_run", dryRun)
 }
 
-// ForgetSweep evaluates every currently-valid memory against the configured (or default) forgetting
-// rules - first match wins, no match keeps; dryRun reports without mutating. Matched "invalidate"
-// memories are soft-invalidated with reason "rule <index>: <expr>", the same sticky soft-delete every other invalidation path uses. The ONE code path both the nightly sweep and `quack memory sweep` call - no duplicated sweep logic. Concurrency: a point's votes can change between the read and the invalidate write; accepted as eventual consistency, last-write-wins, same as every other invalidateByID caller - no new locking is introduced.
+// ForgetSweep applies the forgetting rules (first match wins, none keeps) to every valid memory; dryRun
+// only reports. Shared by the nightly sweep and the CLI. Votes may change mid-sweep: last write wins.
 func (s *Store) ForgetSweep(ctx context.Context, dryRun bool) (ForgettingReport, error) {
 	rules := s.forgetRules
 	if len(rules) == 0 {
-		rules = DefaultRules()
+		rules = memoryrules.DefaultRules()
 	}
 	report := ForgettingReport{Rules: make([]ForgettingRuleResult, len(rules))}
 	for i, r := range rules {
@@ -314,9 +299,9 @@ func (s *Store) ForgetSweep(ctx context.Context, dryRun bool) (ForgettingReport,
 				continue
 			}
 			switch rules[matched].Then {
-			case ThenInvalidate:
+			case memoryrules.ThenInvalidate:
 				toInvalidate = append(toInvalidate, sweepHit{id: p.ID, rule: matched})
-			case ThenDemote:
+			case memoryrules.ThenDemote:
 				toDemote = append(toDemote, p.ID)
 			}
 		}
@@ -343,13 +328,11 @@ type sweepHit struct {
 	rule int
 }
 
-// matchForgetRule evaluates the rules in order for one point (first match
-// wins) and records that match - count plus capped examples; -1 when no rule
-// matched.
-func (s *Store) matchForgetRule(p scored, now time.Time, rules []Rule, report *ForgettingReport) int {
+// matchForgetRule records the first matching rule for p (count plus capped examples); -1 if none.
+func (s *Store) matchForgetRule(p scored, now time.Time, rules []memoryrules.Rule, report *ForgettingReport) int {
 	f := fieldsFor(p, now)
 	for i, r := range rules {
-		ok, err := Evaluate(r.When, f)
+		ok, err := memoryrules.Evaluate(r.When, f)
 		if err != nil {
 			s.log.Warn("forgetting sweep: rule evaluation failed, treating as no-match", "rule", i, "err", err)
 			continue
@@ -366,9 +349,8 @@ func (s *Store) matchForgetRule(p scored, now time.Time, rules []Rule, report *F
 	return -1
 }
 
-// invalidateByRule soft-invalidates the sweep's hit ids grouped by rule, one
-// memory_ops audit row per id.
-func (s *Store) invalidateByRule(ctx context.Context, toInvalidate []sweepHit, rules []Rule) {
+// invalidateByRule soft-invalidates the sweep's hits grouped by rule, one memory_ops row per id.
+func (s *Store) invalidateByRule(ctx context.Context, toInvalidate []sweepHit, rules []memoryrules.Rule) {
 	byRule := map[int][]string{}
 	for _, h := range toInvalidate {
 		byRule[h.rule] = append(byRule[h.rule], h.id)
@@ -388,9 +370,8 @@ func (s *Store) invalidateByRule(ctx context.Context, toInvalidate []sweepHit, r
 	}
 }
 
-// demoteByRule tier-demotes the sweep's demote-hit ids to unverified, one memory_ops row per
-// id actually touched (an already-unverified id is a no-op - see index.demoteTier). Reason is
-// always ReasonSupportDecayed regardless of which demote rule matched.
+// demoteByRule demotes the sweep's demote hits, one memory_ops row per id actually changed,
+// always with ReasonSupportDecayed.
 func (s *Store) demoteByRule(ctx context.Context, ids []string) {
 	touched, err := s.idx.demoteTier(ctx, ids)
 	if err != nil {
@@ -402,10 +383,9 @@ func (s *Store) demoteByRule(ctx context.Context, ids []string) {
 	}
 }
 
-// fieldsFor computes a point's Fields snapshot for forgetting-rule evaluation. Missing timestamps
-// (never upvoted/recalled) evaluate as "never": days_since_upvote/days_since_recall fall back to
-// age_days. All timestamps are RFC3339 UTC (nowRFC3339); age math uses float Hours()/24 rather than integer subtraction so a zero-value or malformed timestamp can't overflow into a bogus age.
-func fieldsFor(p scored, now time.Time) Fields {
+// fieldsFor snapshots p for rule evaluation; never-upvoted/recalled falls back to age_days. Ages use
+// float Hours()/24 so a zero or malformed timestamp can't overflow into a bogus age.
+func fieldsFor(p scored, now time.Time) memoryrules.Fields {
 	ageDays := ageInDays(p.MintedAt, now)
 	daysSinceUpvote := ageDays
 	if p.LastUpvotedAt != "" {
@@ -428,16 +408,15 @@ func fieldsFor(p scored, now time.Time) Fields {
 	if tier == "" {
 		tier = TierUnverified
 	}
-	return Fields{
+	return memoryrules.Fields{
 		Upvotes: p.Upvotes, Downvotes: p.Downvotes, Supported: p.Supported, NotRelevant: p.NotRelevant,
 		Score: p.VoteScore, AgeDays: ageDays, DaysSinceUpvote: daysSinceUpvote, DaysSinceRecall: daysSinceRecall,
 		DaysSinceMinted: ageInDays(mintedAt, now), Recalls: p.Recalls, Tier: tier, Scope: p.Scope,
 	}
 }
 
-// ageInDays is the age of an RFC3339 timestamp in whole days, floored at 0.
-// An unparsable or empty timestamp reads as 0 (brand new) rather than
-// erroring the sweep over one bad row.
+// ageInDays is an RFC3339 timestamp's age in whole days, floored at 0; unparsable reads as 0
+// rather than failing the sweep over one bad row.
 func ageInDays(ts string, now time.Time) int64 {
 	t, err := time.Parse(time.RFC3339, ts)
 	if err != nil {
@@ -450,17 +429,16 @@ func ageInDays(ts string, now time.Time) int64 {
 	return days
 }
 
-// retentionOnce hard-deletes invalidated points and memory_ops rows older than retentionDays
-// (design doc §6's bound on unbounded growth). <= 0 keeps everything forever - a true no-op, not just a skipped delete, so a misconfigured zero can never silently wipe history. No per-point log: the deleted rows are themselves the audit trail aging out; only a summary logs.
+// retentionOnce hard-deletes invalidated points and memory_ops rows older than retentionDays.
+// <= 0 is a true no-op, so a misconfigured zero can never wipe history.
 func (s *Store) retentionOnce(ctx context.Context, retentionDays int) {
 	if retentionDays <= 0 {
 		return
 	}
 	cutoff := time.Now().Add(-time.Duration(retentionDays) * 24 * time.Hour)
 
-	// Page the fetch, but only ever accumulate ids (not full points - the bulk of a point's size is
-	// Content), and remove after the walk completes rather than mid-page: deleting during an
-	// offset-paged walk would shift a later page's window and skip a still-expired row.
+	// Accumulate ids only and delete after the walk: deleting mid-walk would shift later
+	// pages and skip still-expired rows.
 	var expired []string
 	err := s.forEachSweepPage(ctx, true, false, func(page []scored) { // every bucket, including invalidated
 		for _, p := range page {

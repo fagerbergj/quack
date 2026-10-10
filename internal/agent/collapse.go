@@ -31,8 +31,8 @@ const (
 		"their artifact ids; read_artifact(id, offset, lines) or grep_artifacts(pattern, ids) re-reads any of them.]\n\n"
 )
 
-// PromptMeter tracks a worker's current prompt size between model calls, so
-// a compaction can tell whether collapsing stale tool results alone brings it back under the threshold.
+// PromptMeter tracks a worker's prompt size between model calls, so a compaction can tell whether
+// collapsing stale tool results alone brings it back under the threshold.
 type PromptMeter struct {
 	mu         sync.Mutex
 	tokens     int  // estimated prompt tokens now, including results since the last call
@@ -93,8 +93,8 @@ func (m *PromptMeter) fitsAfter(saved, threshold int) bool {
 	return (m.tokens-saved+m.offset)*100 <= threshold*collapseFitPercent
 }
 
-// collapsingSummarizer runs at compaction: it first replaces the window with a
-// verbatim transcript whose stored fetch/read results are artifact stubs, and calls the model summarizer only when that would not fit.
+// collapsingSummarizer first replaces the window with a verbatim transcript whose stored fetch/read results are
+// artifact stubs, calling the model summarizer only when that would not fit.
 type collapsingSummarizer struct {
 	inner     compaction.Summarizer
 	meter     *PromptMeter
@@ -109,8 +109,8 @@ func (s collapsingSummarizer) SummarizeEvents(ctx context.Context, events []*ses
 	return s.inner.SummarizeEvents(ctx, events)
 }
 
-// collapseTranscript renders events as prose (a summary may only hold text),
-// stubbing each stored web_fetch/read_artifact result; before is the window's estimated tokens as sent.
+// collapseTranscript renders events as prose (a summary may only hold text), stubbing stored web_fetch/read_artifact
+// results; before is the window's estimated tokens as sent.
 func collapseTranscript(events []*session.Event) (text string, before, stubbed int) {
 	var b strings.Builder
 	b.WriteString(collapseHeader)

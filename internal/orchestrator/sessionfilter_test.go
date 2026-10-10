@@ -9,9 +9,7 @@ import (
 	"google.golang.org/genai"
 )
 
-// TestConversationSessionsFiltersReadsNotWrites: the view's Events() yields
-// only user/orchestrator events, while AppendEvent (unwrapping the view)
-// persists EVERY author to the underlying service untouched.
+// Events() yields only user/orchestrator events, while AppendEvent persists every author.
 func TestConversationSessionsFiltersReadsNotWrites(t *testing.T) {
 	raw := session.InMemoryService()
 	view := conversationSessions{raw}

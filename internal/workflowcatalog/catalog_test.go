@@ -15,9 +15,8 @@ import (
 	"github.com/fagerbergj/quack/internal/config"
 )
 
-// writePlanWork lays down a minimal plan-work skill whose body carries a
-// "Common workflows" table shaped like the real skills/plan-work/SKILL.md -
-// header, separator, one shipped row, then trailing prose.
+// writePlanWork lays down a plan-work skill whose Common workflows table mirrors the real one: header,
+// separator, one row, trailing prose.
 func writePlanWork(t *testing.T, dir string) skill.Source {
 	t.Helper()
 	d := filepath.Join(dir, "plan-work")
@@ -44,10 +43,8 @@ func refOf(shapes []Shape) *atomic.Pointer[[]Shape] {
 	return &ref
 }
 
-// TestWrapRefNoShapesIsIdentity is issue #805 test case 2, and the round-3
-// regression: an empty shapesRef must produce a catalog byte-identical to
-// today's - no compose call at all, so a plan-work body with no Common
-// workflows table doesn't log a warning on every single load.
+// An empty shapesRef leaves the catalog byte-identical with no compose call, so a body without the table
+// doesn't warn on every load.
 func TestWrapRefNoShapesIsIdentity(t *testing.T) {
 	src := writePlanWork(t, t.TempDir())
 	want, err := src.LoadInstructions(context.Background(), "plan-work")
@@ -119,9 +116,7 @@ func TestWrapRefAddsShapeToTable(t *testing.T) {
 	}
 }
 
-// TestWrapRefCollisionSkipsShape proves the collision decision: a shape whose
-// trigger matches an existing row (shipped or already-added) is refused
-// deterministically, never left to "whichever the model reads first".
+// A shape whose trigger matches an existing row (shipped or added) is refused deterministically.
 func TestWrapRefCollisionSkipsShape(t *testing.T) {
 	src := writePlanWork(t, t.TempDir())
 	shapes := []Shape{{
@@ -163,10 +158,7 @@ func TestWrapRefOnlyAugmentsPlanWork(t *testing.T) {
 	}
 }
 
-// TestWrapRefReflectsLatestShapes is the round-2 regression: a Source built
-// with WrapRef must render whatever shapesRef holds AT CALL TIME, not a
-// snapshot frozen at construction - the bug that let a dropped shape's row
-// keep rendering in the planner table after boot filtered the slice.
+// WrapRef renders whatever shapesRef holds at call time, so a shape dropped after boot stops rendering.
 func TestWrapRefReflectsLatestShapes(t *testing.T) {
 	src := writePlanWork(t, t.TempDir())
 	shapes := []Shape{{Name: "sleeper-lineup", Trigger: "Run the Sleeper lineup job", DAGShape: "ONE `lineup-analyst` node", Agents: []string{"lineup-analyst"}}}
@@ -194,9 +186,7 @@ func TestWrapRefReflectsLatestShapes(t *testing.T) {
 	}
 }
 
-// TestBindUnshapedShapeReturnsNotOK pins the "hint, not binding" default
-// (workflow binding): a shape with no Nodes must never produce a
-// dag.Plan node list - it stays a planner hint only.
+// A shape with no Nodes never binds; it stays a planner hint.
 func TestBindUnshapedShapeReturnsNotOK(t *testing.T) {
 	shape := Shape{Name: "document-ingest", Trigger: "t", DAGShape: "s"}
 	if nodes, ok := Bind(shape, "the ask"); ok || nodes != nil {
@@ -204,9 +194,7 @@ func TestBindUnshapedShapeReturnsNotOK(t *testing.T) {
 	}
 }
 
-// TestBindShapedShapeSubstitutesAskAndPreservesStructure is test case 1:
-// a shaped catalog entry renders into the exact expected node list -
-// id/agent/rubric/depends_on preserved verbatim, {{ask}} substituted.
+// A bound shape renders the exact node list: id/agent/rubric/depends_on verbatim, {{ask}} substituted.
 func TestBindShapedShapeSubstitutesAskAndPreservesStructure(t *testing.T) {
 	shape := Shape{
 		Name: "document-ingest",
@@ -245,9 +233,8 @@ func TestLookupFindsByName(t *testing.T) {
 	}
 }
 
-// TestDropAgents is a table test of the shape-removal decision: a shape
-// naming a dropped agent (via Agents or a bound node) is removed, one warning
-// per drop; everything else, and an empty dropped set, passes through untouched.
+// A shape naming a dropped agent (via Agents or a bound node) is removed with one warning; the rest pass
+// through.
 func TestDropAgents(t *testing.T) {
 	tests := []struct {
 		name    string

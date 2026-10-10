@@ -19,9 +19,8 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// advisorSnoopStub is okStub plus a side channel: on the worker's own call
-// (not the judge's submit_verdict round) it looks up THIS round's
-// AdvisorTask via the same marker/registry seam internal/acp's resolveNode reads, and records whether it was ReadOnly. Proves the WIRING end to end - nodeGateConfig's cfg.ReadOnly reaching the registered AdvisorTask a real ACP round would consult - not just the config computation plan_only_test.go already pins.
+// advisorSnoopStub records, on the worker call, whether this round's AdvisorTask
+// (as internal/acp's resolveNode reads it) is ReadOnly.
 type advisorSnoopStub struct {
 	mu       sync.Mutex
 	sawTask  bool
@@ -90,9 +89,8 @@ func runSingleNode(t *testing.T, plan Plan, cfg vetting.Config, stub model.LLM, 
 	}
 }
 
-// TestPlanOnlyAdvisorTaskIsReadOnly is #754 test case 5: a planOnly run's
-// node must be read-only in the sandbox-facing AdvisorTask (what
-// internal/acp's resolveNode reads to set Caps.ReadOnly per round), not merely in vetting.Config - the forcing #739 does happens dynamically per run and must survive past nodeGateConfig into the registry a real ACP round consults.
+// A planOnly node must be read-only in the AdvisorTask a real ACP round consults,
+// not merely in vetting.Config.
 func TestPlanOnlyAdvisorTaskIsReadOnly(t *testing.T) {
 	plan := Plan{ID: "t-planonly", UserMessage: "x", PlanOnly: true, AllowedDeliveryKinds: []string{},
 		Nodes: []Node{{ID: "n1", AgentName: implementerAgent}}}
@@ -121,9 +119,7 @@ func TestPlanOnlyAdvisorTaskIsReadOnly(t *testing.T) {
 	}
 }
 
-// TestNonPlanRunAdvisorTaskIsWritable is the contrast case: an ordinary
-// writable node's AdvisorTask carries ReadOnly=false, so a non-read-only
-// agent doesn't get its own working directory mounted RO.
+// An ordinary writable node's AdvisorTask carries ReadOnly=false.
 func TestNonPlanRunAdvisorTaskIsWritable(t *testing.T) {
 	plan := Plan{ID: "t-writable", UserMessage: "x", Nodes: []Node{{ID: "n1", AgentName: implementerAgent}}}
 	cfgFor := func(context.Context, string) vetting.Config { return writableGateCfg() }

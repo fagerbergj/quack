@@ -11,18 +11,16 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// stageSpan is the single choke point for a gate stage's lifecycle (#726): one
-// startStageSpan/end pair raises both the OTel "gate.<stage>" span and the
-// matching agent_start/agent_complete SSE events, so the two can't drift apart the way two independently hand-maintained call sites can.
+// stageSpan is the single choke point for a gate stage's lifecycle: one start/end pair raises both the
+// OTel "gate.<stage>" span and the matching agent_start/agent_complete SSE events, so they can't drift.
 type stageSpan struct {
 	span   oteltrace.Span
 	sink   func(stream.SSEEvent)
 	nodeID string
 }
 
-// startStageSpan opens the stage's OTel span and raises agent_start. sseAgent
-// names the SSE run's agent (e.g. "judge"); cfg.Agent (the node's own agent)
-// is what the span is tagged with - the two are deliberately different fields. sink may be nil to raise only the span half (see end).
+// startStageSpan opens the span and raises agent_start. sseAgent names the SSE run's agent ("judge"); the span
+// is tagged with cfg.Agent, deliberately a different field. A nil sink raises only the span.
 func startStageSpan(spanCtx context.Context, sink func(stream.SSEEvent), cfg Config, nodeID, sseAgent, stage, runID string, round int) (context.Context, *stageSpan) {
 	ctx, span := otelobs.Start(spanCtx, "gate."+stage,
 		attribute.String(otelobs.ChatIDKey, cfg.ChatID), attribute.String("node_id", nodeID),
@@ -34,9 +32,8 @@ func startStageSpan(spanCtx context.Context, sink func(stream.SSEEvent), cfg Con
 	return ctx, &stageSpan{span: span, sink: sink, nodeID: nodeID}
 }
 
-// end closes the span and raises agent_complete from the same outcome data. sink may be nil (revise: SSE for this run already comes from dagStream off
-// the worker's own session events, so this call raises only the span half). Score/passed are judge-only (AgentCompleteData's own doc comment) - set on
-// the span for a scored (non-error) judge completion, matching the SSE payload's own omission of them on a judge round that ended without a verdict (Status non-empty - "unavailable" or "no_verdict").
+// end closes the span and raises agent_complete. A nil sink (revise: SSE comes from the worker's own session events)
+// raises only the span. Score/passed go on the span only for a scored judge completion, matching the SSE payload.
 func (s *stageSpan) end(d stream.AgentCompleteData, err error) {
 	d.FinishedAtMs = time.Now().UnixMilli()
 	emitJudge(s.sink, s.nodeID, stream.SSEEvent{Name: stream.EventAgentComplete, Data: d})

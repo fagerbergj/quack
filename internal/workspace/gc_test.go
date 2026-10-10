@@ -153,9 +153,8 @@ func TestSweepHomeTmpTTLBoundaryLeavesCachesAlone(t *testing.T) {
 	}
 }
 
-// TestSweepHomeTmpReapsScratchDirEntries proves the ACTUAL Jail.ScratchDir
-// output - not a hand-rolled path - is swept the same way as any other
-// .quack-home/tmp entry: no gc.go change was needed for the per-node scratch fix, because ScratchDir names one flat, single-component directory per (chatID, nodeID) under tmp/, exactly the granularity sweepHomeTmp already walks.
+// TestSweepHomeTmpReapsScratchDirEntries: real Jail.ScratchDir output is one flat component under tmp/,
+// the granularity sweepHomeTmp walks.
 func TestSweepHomeTmpReapsScratchDirEntries(t *testing.T) {
 	jail := newTestJail(t)
 	old := time.Now().Add(-12 * time.Hour)
@@ -200,9 +199,7 @@ func growHome(t *testing.T, jail *Jail, userID, name string, n int) {
 	}
 }
 
-// TestSweepAgentHomeResetsPastQuotaWhenIdle is issue #800 test case 1 (the
-// reclaimed half): a home over HomeMaxBytes with no chat in flight is reset
-// whole - never edited, the directory is gone and recreated empty.
+// TestSweepAgentHomeResetsPastQuotaWhenIdle: an idle home over HomeMaxBytes is reset whole, never edited.
 func TestSweepAgentHomeResetsPastQuotaWhenIdle(t *testing.T) {
 	jail := newTestJail(t)
 	growHome(t, jail, "alice", "agent-state.db", 100)
@@ -223,9 +220,8 @@ func TestSweepAgentHomeResetsPastQuotaWhenIdle(t *testing.T) {
 	}
 }
 
-// TestSweepAgentHomeSkipsLiveChat is issue #800 test case 1 (the live half):
-// the SAME isActive signal that protects a live chat's clone in
-// sweepChatScopes must also keep the shared home untouched while that chat has a round in flight, even though it's well past HomeMaxBytes.
+// TestSweepAgentHomeSkipsLiveChat: the isActive signal guarding a live chat's clone also guards
+// the shared home, even past HomeMaxBytes.
 func TestSweepAgentHomeSkipsLiveChat(t *testing.T) {
 	jail := newTestJail(t)
 	growHome(t, jail, "alice", "agent-state.db", 100)
@@ -245,9 +241,7 @@ func TestSweepAgentHomeSkipsLiveChat(t *testing.T) {
 	}
 }
 
-// TestSweepAgentHomeNilActiveFailsClosed mirrors
-// TestSweepChatScopesNilActiveSkipsAll: with no way to prove any chat
-// inactive, the reaper must not touch the shared home either.
+// TestSweepAgentHomeNilActiveFailsClosed: with no way to prove a chat inactive, the home is untouched.
 func TestSweepAgentHomeNilActiveFailsClosed(t *testing.T) {
 	jail := newTestJail(t)
 	growHome(t, jail, "alice", "agent-state.db", 100)
@@ -270,9 +264,7 @@ func TestSweepAgentHomeBelowQuotaLeavesItAlone(t *testing.T) {
 	}
 }
 
-// TestSweepAgentHomeResetStaysUsable is issue #800 test case 2: a run whose
-// agent home was reclaimed must still start and complete. HomeDir's own
-// MkdirAll makes this true by construction - prove it survives a reset.
+// TestSweepAgentHomeResetStaysUsable: a run whose agent home was reclaimed must still start.
 func TestSweepAgentHomeResetStaysUsable(t *testing.T) {
 	jail := newTestJail(t)
 	growHome(t, jail, "alice", "agent-state.db", 100)
@@ -291,10 +283,8 @@ func TestSweepAgentHomeResetStaysUsable(t *testing.T) {
 	}
 }
 
-// TestSweepAgentHomeBoundsGrowthAcrossManySweeps is issue #800 test case 3:
-// however many idle rounds accumulate state, the home is never left more than
-// one round's worth of growth (deltaBytes) over HomeMaxBytes, unattended,
-// across many sweep cycles - not just a single before/after snapshot.
+// TestSweepAgentHomeBoundsGrowthAcrossManySweeps: across many cycles the home never exceeds
+// HomeMaxBytes by more than one round's growth.
 func TestSweepAgentHomeBoundsGrowthAcrossManySweeps(t *testing.T) {
 	jail := newTestJail(t)
 	const maxBytes = 1000
@@ -316,9 +306,8 @@ func TestSweepAgentHomeBoundsGrowthAcrossManySweeps(t *testing.T) {
 	}
 }
 
-// TestSweepAgentHomeLogsWhatWasFreed is issue #800 test case 4: a reset must
-// be distinguishable in the logs from a run failure - Info level, naming the
-// user and the bytes freed, not just "something happened".
+// TestSweepAgentHomeLogsWhatWasFreed: a reset logs at Info with the user and bytes freed,
+// distinguishable from a run failure.
 func TestSweepAgentHomeLogsWhatWasFreed(t *testing.T) {
 	jail := newTestJail(t)
 	growHome(t, jail, "alice", "agent-state.db", 100)
@@ -408,17 +397,14 @@ func initGitRepo(t *testing.T, dir string) {
 	run("commit", "--quiet", "-m", "init")
 }
 
-// TestSweepBaselineWorktreeReapingKeepsParentConsistent proves the CRITICAL
-// worktree case: an orphaned baseline worktree (internal/vetting/baseline.go's
-// os.MkdirTemp("", "quack-base-") scratch, never cleaned up because the process crashed mid-check) is reaped WITHOUT leaving the parent clone's `git worktree` bookkeeping wedged - the parent can add a worktree at the same path again afterward, proving nothing stale survived.
+// TestSweepBaselineWorktreeReapingKeepsParentConsistent: reaping an orphaned baseline worktree must not
+// wedge the parent's worktree bookkeeping; re-adding at the same path proves it.
 func TestSweepBaselineWorktreeReapingKeepsParentConsistent(t *testing.T) {
 	jail := newTestJail(t)
 	parent := filepath.Join(jail.Root(), "alice", "chat1", "quack-shared-repo")
 	initGitRepo(t, parent)
 
-	// A private tempDir root, not the real os.TempDir(), so a concurrent
-	// package's own quack-base-* scratch dirs can't be seen or reaped by
-	// this test's Sweep call (or vice versa) - the actual cause of the flake.
+	// A private root, so concurrent packages' quack-base-* dirs can't interfere with this Sweep.
 	tempRoot := t.TempDir()
 	scratch, err := os.MkdirTemp(tempRoot, baselineTempPrefix)
 	if err != nil {
@@ -479,9 +465,8 @@ func TestSweepBaselineWorktreeReapingKeepsParentConsistent(t *testing.T) {
 	}
 }
 
-// TestRemoveAllReclaimsReadOnlyModuleCache is the production failure: GC's
-// quota reset died with `unlinkat .../go/pkg/mod/dario.cat/mergo@v1.0.2/
-// issue131_test.go: permission denied` because Go writes cached deps 0444 inside 0555 parents, and you cannot unlink out of a directory you cannot write. First half proves the tree really does defeat os.RemoveAll.
+// TestRemoveAllReclaimsReadOnlyModuleCache: Go's 0444 deps in 0555 parents defeat os.RemoveAll;
+// the first half proves that.
 func TestRemoveAllReclaimsReadOnlyModuleCache(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores the write bit; the failure this test reproduces cannot happen")
@@ -511,9 +496,7 @@ func TestRemoveAllReclaimsReadOnlyModuleCache(t *testing.T) {
 	}
 }
 
-// TestRemoveAllForceLeavesSymlinkTargetPermsAlone: WalkDir must not follow a
-// symlink into a sibling tree and chmod what it points at - only real
-// directories inside the removed tree get the u+w retry.
+// TestRemoveAllForceLeavesSymlinkTargetPermsAlone: only real dirs inside the tree get the u+w retry.
 func TestRemoveAllForceLeavesSymlinkTargetPermsAlone(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores the write bit; the failure this test reproduces cannot happen")

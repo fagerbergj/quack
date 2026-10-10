@@ -1,6 +1,5 @@
-// artifact_tools_test.go: end-to-end coverage for list_artifacts,
-// edit_artifact, write_artifact and write_<kind> through the REAL loopback
-// MCP call path (registered on an actual mcp.Server, invoked as a tool call - not the Go functions directly), mirroring read_artifact_test.go's pattern (#1091 adversarial review finding #2).
+// End-to-end coverage for list_artifacts, edit_artifact, write_artifact and write_<kind>
+// through a real loopback mcp.Server tool call, not the Go functions directly.
 package acp
 
 import (
@@ -49,9 +48,8 @@ func captureWarnings(t *testing.T) *warnCapture {
 	return w
 }
 
-// TestArtifactWriteToolsMCP_EveryKindRegistersWithoutWarning covers the
-// "invalid generated JSON schema silently skips the tool" landmine: every
-// AGENT-WRITABLE kind recordstore.Kinds() currently returns must register a write_<kind> tool with no Warn/skip. A gate-only kind (judge_round, delivery_record - AgentWritable false) must register NEITHER a tool NOR a skip-Warn: it was never offered in the first place.
+// Every agent-writable kind must register a write_<kind> tool with no Warn/skip (an invalid generated
+// schema silently skips it); a gate-only kind registers neither a tool nor a skip-Warn.
 func TestArtifactWriteToolsMCP_EveryKindRegistersWithoutWarning(t *testing.T) {
 	w := captureWarnings(t)
 
@@ -92,9 +90,7 @@ func TestArtifactWriteToolsMCP_EveryKindRegistersWithoutWarning(t *testing.T) {
 	}
 }
 
-// TestWriteFindingMCP_ValidInput calls write_finding through the real tool
-// path and checks the returned id against recordstore.IdentityFor computed
-// independently.
+// TestWriteFindingMCP_ValidInput checks write_finding's returned id against recordstore.IdentityFor.
 func TestWriteFindingMCP_ValidInput(t *testing.T) {
 	ctx := context.Background()
 	secret := mustMemSecret(t)
@@ -277,9 +273,8 @@ func TestEditArtifactMCP_RejectsSystemKind(t *testing.T) {
 	}
 }
 
-// TestEditArtifactMCP_OldTextNewTextAlias: an ACP worker primed on the MCP
-// filesystem-server's edit_file convention sends oldText/newText instead of
-// this tool's own old/new - both spellings must apply the edit, so a worker guessing the wrong one never burns a redundant round trip (#1278 enumeration).
+// TestEditArtifactMCP_OldTextNewTextAlias: workers primed on edit_file send oldText/newText;
+// both spellings must apply the edit.
 func TestEditArtifactMCP_OldTextNewTextAlias(t *testing.T) {
 	ctx := context.Background()
 	secret := mustMemSecret(t)
@@ -316,9 +311,8 @@ func TestEditArtifactMCP_OldTextNewTextAlias(t *testing.T) {
 	}
 }
 
-// TestEditArtifactMCP_BothSpellingsRejected: old+oldText (or new+newText)
-// both set is ambiguous, not a hint to silently prefer one - a caller that
-// sets both almost certainly means only one, and guessing wrong would apply an edit the caller never intended.
+// TestEditArtifactMCP_BothSpellingsRejected: old+oldText (or new+newText) is ambiguous;
+// guessing would apply an edit the caller never intended.
 func TestEditArtifactMCP_BothSpellingsRejected(t *testing.T) {
 	ctx := context.Background()
 	secret := mustMemSecret(t)
@@ -352,9 +346,7 @@ func TestEditArtifactMCP_BothSpellingsRejected(t *testing.T) {
 	}
 }
 
-// TestEditArtifactMCP_StaleBaseMerges: base_revision is stale but the Old
-// snippet still matches uniquely against the real latest - merges instead of
-// failing.
+// TestEditArtifactMCP_StaleBaseMerges: a stale base_revision whose Old still matches uniquely merges.
 func TestEditArtifactMCP_StaleBaseMerges(t *testing.T) {
 	ctx := context.Background()
 	secret := mustMemSecret(t)
@@ -395,8 +387,7 @@ func TestEditArtifactMCP_StaleBaseMerges(t *testing.T) {
 	}
 }
 
-// TestEditArtifactMCP_ConflictReturnsCurrent: an Old string that no longer
-// matches (real conflict, not just a stale base) fails with the current
+// TestEditArtifactMCP_ConflictReturnsCurrent: an Old that no longer matches fails with the current
 // content/revision, not a partial write.
 func TestEditArtifactMCP_ConflictReturnsCurrent(t *testing.T) {
 	ctx := context.Background()
@@ -422,8 +413,7 @@ func TestEditArtifactMCP_ConflictReturnsCurrent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CallTool edit_artifact: %v", err)
 	}
-	// A conflict is an expected, actionable outcome for the calling agent, not
-	// a tool failure - success carrying structured conflict data (#1108 finding 3).
+	// A conflict is an actionable outcome, not a tool failure: success carrying structured conflict data.
 	if res.IsError {
 		t.Fatalf("a non-matching Old is a conflict, not a tool error: %s", toolResultText(t, res))
 	}
@@ -522,9 +512,8 @@ func TestWriteArtifactMCP_RejectsSystemKind(t *testing.T) {
 	}
 }
 
-// TestWriteArtifactMCP_RecordsToolWritten: write_artifact must add its id to
-// the session's ToolWritten stage exactly like write_<kind> does, so
-// vetting's saveTextRound fallback can tell a tool-written round apart from one with no tool writes (#1095 adversarial review finding #1 - the blob path used to skip this, so a node that only called write_artifact still got a duplicate text:<node> revision).
+// TestWriteArtifactMCP_RecordsToolWritten: write_artifact adds its id to ToolWritten like write_<kind>,
+// so saveTextRound doesn't write a duplicate text:<node> revision for a tool-written round.
 func TestWriteArtifactMCP_RecordsToolWritten(t *testing.T) {
 	ctx := context.Background()
 	secret := mustMemSecret(t)
@@ -581,9 +570,7 @@ func TestEditArtifactMCP_RecordsToolWritten(t *testing.T) {
 	}
 }
 
-// TestWriteArtifactDescription_ListsBlobKinds: the write_artifact tool
-// description must name every registered blob kind (#1108 B1 - Kinds() used
-// to return structured kinds only, so this list silently rendered empty).
+// TestWriteArtifactDescription_ListsBlobKinds: write_artifact's description names every registered blob kind.
 func TestWriteArtifactDescription_ListsBlobKinds(t *testing.T) {
 	desc := writeArtifactDescription()
 	for _, spec := range recordstore.KindsForClass(recordstore.Blob) {
@@ -596,9 +583,8 @@ func TestWriteArtifactDescription_ListsBlobKinds(t *testing.T) {
 	}
 }
 
-// TestWriteCodeReviewMCP_UsesSessionSubjectHint: write_code_review (#1108
-// finding 1) must succeed for a github-derived chat id and mint exactly the
-// id vetting.SubjectHint + code_review's Identity func (requireHint) produce - never "" (which requireHint always rejects).
+// TestWriteCodeReviewMCP_UsesSessionSubjectHint: a github-derived chat id mints exactly the id
+// vetting.SubjectHint + code_review's Identity produce, never "" (which requireHint rejects).
 func TestWriteCodeReviewMCP_UsesSessionSubjectHint(t *testing.T) {
 	ctx := context.Background()
 	secret := mustMemSecret(t)
@@ -636,9 +622,8 @@ func TestWriteCodeReviewMCP_UsesSessionSubjectHint(t *testing.T) {
 	}
 }
 
-// TestWriteCodeReviewMCP_BakesInRenderedOverview is suggestion #7 of the
-// adversarial review: a native write_code_review call must save the fixed
-// format's rendered overview alongside the model's fields, in the SAME revision (no second write), so the artifact panel never has to reimplement the renderer - see vetting.RenderCodeReviewForWrite.
+// TestWriteCodeReviewMCP_BakesInRenderedOverview: write_code_review saves the rendered overview in the
+// same revision, so the artifact panel never reimplements the renderer (vetting.RenderCodeReviewForWrite).
 func TestWriteCodeReviewMCP_BakesInRenderedOverview(t *testing.T) {
 	ctx := context.Background()
 	secret := mustMemSecret(t)
@@ -682,9 +667,8 @@ func TestWriteCodeReviewMCP_BakesInRenderedOverview(t *testing.T) {
 	}
 }
 
-// TestWriteArtifactMCP_HintRequiringKind: write_artifact with a hint-requiring
-// blob kind ("document") must succeed by deriving DocumentHint from the
-// session, matching what document's own save-side lookups compute (#1108 finding 2, #1501 fix-up).
+// TestWriteArtifactMCP_HintRequiringKind: write_artifact with a hint-requiring blob kind ("document")
+// derives DocumentHint from the session, matching document's save-side lookups.
 func TestWriteArtifactMCP_HintRequiringKind(t *testing.T) {
 	ctx := context.Background()
 	secret := mustMemSecret(t)
@@ -715,9 +699,7 @@ func TestWriteArtifactMCP_HintRequiringKind(t *testing.T) {
 		t.Fatalf("write_artifact(document) result = %q, want id=%s", text, wantID)
 	}
 
-	// A hint-optional kind (text) must still derive its id from content, not
-	// collapse onto the session hint - the regression finding 2's naive fix
-	// would introduce.
+	// A hint-optional kind (text) still derives its id from content, not the session hint.
 	res2, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "write_artifact", Arguments: map[string]any{
 		"kind": "text", "mime": "text/plain", "bytes": "distinct content",
 	}})

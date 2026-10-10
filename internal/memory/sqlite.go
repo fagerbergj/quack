@@ -19,9 +19,8 @@ import (
 	"github.com/fagerbergj/quack/internal/inference"
 )
 
-// OpenSQLite returns a memory Store backed by an embedded SQLite file at url (a path) -
-// the no-docker path, no Qdrant container. Similarity is brute-force cosine in Go (no native
-// vector extension, which would force cgo); fine for the hundreds–thousands of memories a single user accumulates. Multiple scopes (task/user) can share one file: rows are partitioned by collection + scope.
+// OpenSQLite returns a Store backed by an embedded SQLite file at url. Cosine is brute force in Go
+// (a vector extension would need cgo), fine at single-user scale; scopes partition by collection + scope.
 func OpenSQLite(ctx context.Context, url string, embedder inference.Embedder, consolidator model.LLM, collection, domain string, topK int, minScore float32) (*Store, error) {
 	db, err := gorm.Open(sqlite.Open(sqliteMemDSN(url)), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
 	if err != nil {
@@ -30,9 +29,8 @@ func OpenSQLite(ctx context.Context, url string, embedder inference.Embedder, co
 	return newStore(ctx, &sqliteIndex{db: db, coll: collection}, embedder, consolidator, collection, domain, topK, minScore)
 }
 
-// sqliteMemDSN enables WAL + a busy timeout so a memory store and any other pool
-// on the same file (e.g. the session store sharing one quack.db) coordinate
-// instead of failing with SQLITE_BUSY. A caller-supplied query string is honoured.
+// sqliteMemDSN adds WAL + a busy timeout so pools sharing one file (e.g. quack.db) coordinate instead of
+// failing with SQLITE_BUSY. A caller-supplied query string is honoured.
 func sqliteMemDSN(url string) string {
 	if strings.Contains(url, "?") {
 		return url
@@ -72,7 +70,7 @@ type memoryRow struct {
 	LastRecalledAt string
 	HumanVote      string
 
-	// AbsorbedIDs: comma-joined (see joinIDs/splitIDs) - epic #1255 P5.
+	// AbsorbedIDs is comma-joined (see joinIDs/splitIDs).
 	AbsorbedIDs string
 
 	// ConsolidateFP: see scored.ConsolidateFP.
@@ -96,9 +94,8 @@ func (x *sqliteIndex) ensure(ctx context.Context, _ func() (int, error)) error {
 }
 
 func (x *sqliteIndex) query(ctx context.Context, buckets []string, vec []float32, k int) ([]scored, error) {
-	// Recall and the commit-path neighbour query share this: an invalidated memory must
-	// never surface as a candidate to recall OR to reconcile against (design
-	// doc §4(d)) - a missing/NULL status predates the lifecycle fields and reads as valid.
+	// Invalidated memories never reach recall or the commit-path neighbour query; a NULL status
+	// (pre-lifecycle row) reads as valid.
 	q := x.db.WithContext(ctx).Where("collection = ?", x.coll).
 		Where("status IS NULL OR status <> ?", string(StatusInvalidated))
 	if len(buckets) > 0 {
@@ -152,9 +149,8 @@ func (x *sqliteIndex) query(ctx context.Context, buckets []string, vec []float32
 	return out, nil
 }
 
-// scrollAll pages via plain SQL LIMIT/OFFSET - each page is its own indexed
-// query (no re-scan of prior pages), so unlike qdrant there's no native
-// cursor to thread; a loop over list() is already O(N) total, not O(N^2).
+// scrollAll pages via LIMIT/OFFSET; each page is its own indexed query, so this is O(N) total
+// without a native cursor.
 func (x *sqliteIndex) scrollAll(ctx context.Context, includeInvalidated, withVectors bool, pageSize int, fn func([]scored)) error {
 	for offset := 0; ; offset += pageSize {
 		page, err := x.list(ctx, nil, offset, pageSize, includeInvalidated, "", withVectors)
@@ -246,9 +242,8 @@ func (x *sqliteIndex) count(ctx context.Context, buckets []string, includeInvali
 	return int(n), nil
 }
 
-// sqliteOrderBy maps a ListSort constant to an ORDER BY clause, always with an `id DESC`
-// tie-break (#1266) so paging never duplicates/drops a row when two rows share the sort
-// column's value (e.g. two never-recalled memories both have last_recalled_at = ""). last_recalled sorts descending with "" (never recalled) last, via a CASE, not a plain string sort (empty string sorts before any timestamp lexically, which would put it first).
+// sqliteOrderBy maps a ListSort to ORDER BY with an `id DESC` tie-break so paging never duplicates or drops
+// tied rows. last_recalled puts "" (never recalled) last via a CASE, since "" sorts first lexically.
 func sqliteOrderBy(sortBy string) string {
 	switch sortBy {
 	case SortOldest:
@@ -268,9 +263,7 @@ func sqliteOrderBy(sortBy string) string {
 	}
 }
 
-// tierWhere applies tier's filter to q, if any. "" means no filter.
-// "unverified" also matches a row with no tier yet (empty/missing reads as
-// unverified everywhere else in this package, e.g. toMemories' wire mapping).
+// tierWhere applies tier's filter to q; "" means none. "unverified" also matches a row with no tier.
 func tierWhere(q *gorm.DB, tier string) *gorm.DB {
 	switch tier {
 	case "":
@@ -335,9 +328,7 @@ func (x *sqliteIndex) remove(ctx context.Context, ids []string) (int, error) {
 	return int(res.RowsAffected), nil
 }
 
-// invalidateByID soft-invalidates ids in place - a plain UPDATE, never a
-// DELETE (design doc §4(a): the consolidator's DELETE invalidates, it
-// doesn't remove). Reports how many of ids actually existed.
+// invalidateByID soft-invalidates ids via UPDATE, never DELETE, and reports how many existed.
 func (x *sqliteIndex) invalidateByID(ctx context.Context, ids []string, reason string) (int, error) {
 	if len(ids) == 0 {
 		return 0, nil
@@ -355,9 +346,8 @@ func (x *sqliteIndex) invalidateByID(ctx context.Context, ids []string, reason s
 	return int(res.RowsAffected), nil
 }
 
-// updateStatus applies o to every id in ids that isn't already invalidated (sticky) and,
-// for invalidate, isn't already tier verified (design decision #1255: a verified
-// memory recalled into a closed-unmerged chat gets no vote). One UPDATE per row since reinforcement_count/upvotes differ per row. Returns the ids touched.
+// updateStatus applies o to every non-invalidated id (and, for invalidate, non-verified id) and
+// returns those touched. One UPDATE per row since the counts differ per row.
 func (x *sqliteIndex) updateStatus(ctx context.Context, ids []string, o OutcomeSignal) ([]string, error) {
 	if len(ids) == 0 {
 		return nil, nil
@@ -382,8 +372,7 @@ func (x *sqliteIndex) updateStatus(ctx context.Context, ids []string, o OutcomeS
 		var upd map[string]any
 		switch o.Kind {
 		case OutcomeReinforced:
-			// Reinforcement bumps the audit trail only - epic #1456 P1: tier is judge/human-support
-			// only, so this never writes "tier" (an existing verified/unverified value is left untouched).
+			// Never writes "tier": tier tracks judge/human support only.
 			upd = map[string]any{
 				"status": string(StatusReinforced), "reinforcement_count": r.ReinforcementCount + 1,
 				"upvotes": r.Upvotes + 1, "vote_score": reinforcedVoteScore(r.Upvotes, r.Downvotes), "last_upvoted_at": ts,
@@ -427,9 +416,8 @@ func (x *sqliteIndex) demoteTier(ctx context.Context, ids []string) ([]string, e
 	return touched, nil
 }
 
-// applyVotes applies each vote to its memory row, skipping an
-// already-invalidated one (sticky). A net score at or below
-// invalidateThreshold also invalidates. Returns the ids touched.
+// applyVotes applies each vote to a non-invalidated row; a net score <= invalidateThreshold also
+// invalidates. Returns the ids touched.
 func (x *sqliteIndex) applyVotes(ctx context.Context, votes []Vote, invalidateThreshold int) ([]string, error) {
 	if len(votes) == 0 {
 		return nil, nil
@@ -485,9 +473,8 @@ func voteUpdate(r memoryRow, v Vote, ts string, invalidateThreshold int) map[str
 	return upd
 }
 
-// setHumanVote reads the row's current human_vote to compute the delta (computeHumanVoteDelta),
-// then writes both the new vote fields and human_vote in one UPDATE. Returns false
-// if id doesn't exist or is already invalidated (sticky, same as applyVotes).
+// setHumanVote writes the toggle-safe human vote delta in one UPDATE. Returns false if id
+// doesn't exist or is invalidated.
 func (x *sqliteIndex) setHumanVote(ctx context.Context, id, vote string, invalidateThreshold int) (bool, error) {
 	var r memoryRow
 	err := x.db.WithContext(ctx).
@@ -542,9 +529,8 @@ func (x *sqliteIndex) recordRecall(ctx context.Context, ids []string) error {
 	return nil
 }
 
-// backfillTiers is the one-time migration for a point with no tier yet (epic #1255 P1).
-// Idempotent: only "" tier rows match, so a second boot's UPDATE affects zero rows.
-// Two statements (verified/unverified) since the upvotes mirror value differs; both are unconditionally safe to re-run.
+// backfillTiers gives every tierless row a tier. Idempotent: only "" tier rows match. Two statements
+// because the upvotes mirror value differs between verified and unverified.
 func (x *sqliteIndex) backfillTiers(ctx context.Context) (int, error) {
 	db := x.db.WithContext(ctx).Model(&memoryRow{}).
 		Where("collection = ? AND (tier IS NULL OR tier = '')", x.coll)
@@ -563,9 +549,8 @@ func (x *sqliteIndex) backfillTiers(ctx context.Context) (int, error) {
 	return int(touched + res.RowsAffected), nil
 }
 
-// backfillJudgeSupport is the one-time migration (epic #1456 P1) for every currently-verified row
-// still at supported=0: upvotes-reinforcement_count is the historical non-reinforcement upvote count, so a
-// positive value backfills supported (keeping tier verified) while zero demotes to unverified. Idempotent both ways: a backfilled supported no longer matches, and a demoted tier no longer matches either branch.
+// backfillJudgeSupport sets supported = upvotes - reinforcement_count on verified rows still at 0,
+// demoting them when that is not positive. Idempotent both ways.
 func (x *sqliteIndex) backfillJudgeSupport(ctx context.Context) (int, error) {
 	verified := x.db.WithContext(ctx).Model(&memoryRow{}).
 		Where("collection = ? AND tier = ? AND upvotes > reinforcement_count AND (supported IS NULL OR supported = 0)", x.coll, TierVerified).
@@ -605,9 +590,8 @@ func (x *sqliteIndex) stampConsolidateFP(ctx context.Context, ids []string, fp s
 	return nil
 }
 
-// absorb folds absorbedID's votes/timestamps/lineage into survivorID and
-// invalidates absorbedID (epic #1255 P5). False (no-op) if either row is
-// missing, or absorbedID is already invalidated (sticky).
+// absorb folds absorbedID's votes/timestamps/lineage into survivorID and invalidates absorbedID.
+// False (no-op) if either row is missing or absorbedID is already invalidated.
 func (x *sqliteIndex) absorb(ctx context.Context, survivorID, absorbedID, reason string) (bool, error) {
 	var rows []memoryRow
 	if err := x.db.WithContext(ctx).

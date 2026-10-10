@@ -29,9 +29,8 @@ func TestListExtensions_Empty(t *testing.T) {
 	}
 }
 
-// TestListExtensions_NameOnlyAndWithUI covers both shapes the SDK's
-// optional UI descriptor produces: a module implementing it gets
-// title/href/icon, one that doesn't stays name-only.
+// TestListExtensions_NameOnlyAndWithUI: a module implementing the SDK's UI descriptor gets
+// title/href/icon; one that doesn't stays name-only.
 func TestListExtensions_NameOnlyAndWithUI(t *testing.T) {
 	h := newTestHandler(t)
 	h.extensions = []schema.ExtensionInfo{

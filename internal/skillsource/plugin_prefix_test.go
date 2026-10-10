@@ -35,9 +35,7 @@ func TestPrefixedQualifiesNames(t *testing.T) {
 	}
 }
 
-// TestMergedSourceAllowsSameSkillNameAcrossPlugins is the whole point of
-// prefixing (#1427): two plugins shipping a same-named skill must not
-// collide in skill.NewMergedSource, which errors on a literal duplicate name.
+// Two plugins shipping a same-named skill must not collide in skill.NewMergedSource.
 func TestMergedSourceAllowsSameSkillNameAcrossPlugins(t *testing.T) {
 	dirA, dirB := t.TempDir(), t.TempDir()
 	writeSkill(t, dirA, "review-code", "a", "body a")
@@ -92,10 +90,8 @@ func TestScopedBareNameFirstPluginWins(t *testing.T) {
 	}
 }
 
-// TestScopedRejectsExplicitlyQualifiedNameOutsideScope is #1427 R2: a scope
-// of bare "review-code" resolves to alpha's copy (first plugin wins) - a
-// caller that explicitly asks for beta's copy by its qualified name must get
-// ErrSkillNotFound, never silently redirected to alpha's content instead.
+// A scope of bare "review-code" resolves to alpha's copy; explicitly asking for beta's qualified name gets
+// ErrSkillNotFound, never alpha's content.
 func TestScopedRejectsExplicitlyQualifiedNameOutsideScope(t *testing.T) {
 	dirA, dirB := t.TempDir(), t.TempDir()
 	writeSkill(t, dirA, "review-code", "a", "alpha body")
@@ -119,10 +115,7 @@ func TestScopedRejectsExplicitlyQualifiedNameOutsideScope(t *testing.T) {
 	}
 }
 
-// TestScopedBareNameLoadInstructionsForwardsResolvedName is #1427 F3: the old
-// code forwarded the CALLER's bare name straight to the prefixed source,
-// which doesn't understand it (not-found); and a scope of [review-code]
-// must load alpha's copy for every method, never beta's.
+// A scope of [review-code] forwards the resolved qualified name, loading alpha's copy for every method.
 func TestScopedBareNameLoadInstructionsForwardsResolvedName(t *testing.T) {
 	dirA, dirB := t.TempDir(), t.TempDir()
 	writeSkill(t, dirA, "review-code", "a", "alpha body")

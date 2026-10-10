@@ -20,19 +20,11 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// The orchestrator's continuation contract: the
-// orchestrator loads its skills, spends the rest of its output budget on
-// reasoning, and ends the invocation with EMPTY content - no plan call, no
-// execute call, no text. ADK reports a clean finish, so the run just stops: no
-// DAG, no answer, no log line, chat back to idle. Same root cause as the
-// worker's empty draft (PR #186): "the model emitted text" is not a completion
-// signal. So: continue the orchestrator (bounded), and if it still produces
-// nothing, FAIL LOUDLY.
+// An orchestrator turn that ends with empty content is continued (bounded); if it still
+// produces nothing, the run fails loudly instead of stopping silently.
 
-// orchStub is a model.LLM that plays both the orchestrator (its request carries
-// the plan tool) and the plan's worker/judge. The orchestrator's scripted
-// replies come from replies, one per invocation; requests are recorded so a test
-// can assert what the model actually SAW.
+// orchStub plays the orchestrator (request carries create_plan) and the plan's worker/judge;
+// orchestrator replies come from replies in order, and requests are recorded.
 type orchStub struct {
 	mu       sync.Mutex
 	replies  []*model.LLMResponse // orchestrator turns, in order; last one repeats
@@ -142,12 +134,23 @@ func stubCall(name string, args map[string]any) *model.LLMResponse {
 	}
 }
 
-// planCall is the orchestrator authoring a one-assignment plan, the way it
-// does live. It declares delivery so the plan is COMPLETE (not a partial
-// step, #slice3) - execute ends the turn once it runs, matching what nearly
-// every test using this helper already assumes ("one execute call finishes
-// the run"). A test that specifically wants a partial (no-delivery) first
-// step builds its own create_plan call instead - see incremental_plan_test.go.
+// funcModel is a model.LLM whose replies come from the func, for one-off test doubles.
+type funcModel func(ctx context.Context, req *model.LLMRequest) iter.Seq2[*model.LLMResponse, error]
+
+func (funcModel) Name() string { return "funcModel" }
+
+func (f funcModel) GenerateContent(ctx context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return f(ctx, req)
+}
+
+// replyModel answers every call with text.
+func replyModel(text string) funcModel {
+	return func(context.Context, *model.LLMRequest) iter.Seq2[*model.LLMResponse, error] {
+		return func(yield func(*model.LLMResponse, error) bool) { yield(stubText(text), nil) }
+	}
+}
+
+// planCall authors a one-assignment plan that declares delivery, so one execute finishes the run.
 func planCall() *model.LLMResponse {
 	return stubCall("create_plan", map[string]any{
 		"assignments": []any{map[string]any{
@@ -191,11 +194,8 @@ func planIDFromRequest(req *model.LLMRequest) (string, bool) {
 	return candidate, true
 }
 
-// newTestOrch builds an Orchestrator over an in-memory session service, a real
-// planner + executor (one web-researcher agent backed by the same stub), and the
-// stub as the orchestrator's model. stub only needs to satisfy model.LLM - a
-// test that must intercept the base orchStub's routing (e.g. to script a
-// growth step) embeds orchStub in its own type and overrides GenerateContent.
+// newTestOrch builds an Orchestrator with a real planner and executor (one web-researcher
+// backed by stub) and stub as the orchestrator's model.
 func newTestOrch(t *testing.T, stub model.LLM) *Orchestrator {
 	t.Helper()
 	worker, err := llmagent.New(llmagent.Config{
@@ -236,9 +236,8 @@ func hasEvent(evs []stream.SSEEvent, name string) bool {
 	return false
 }
 
-// sessionHasContinuation reports whether the continuation directive was
-// delivered as a SESSION EVENT - the only delivery an llmagent actually reads
-// (it rebuilds its request from Session().Events(); see [[adk-ignores-usercontent]]).
+// sessionHasContinuation checks the directive landed as a session event, the only input an
+// llmagent reads.
 func sessionHasContinuation(t *testing.T, o *Orchestrator) bool {
 	t.Helper()
 	for _, ev := range o.PriorEvents(context.Background(), "u", "chat") {
@@ -254,9 +253,7 @@ func sessionHasContinuation(t *testing.T, o *Orchestrator) bool {
 	return false
 }
 
-// TestOrchestrator_EmptyTurn_ContinuedAndRuns: the first invocation returns
-// EMPTY (the live symptom) - the orchestrator is re-invoked with the
-// continuation directive, and the plan it then authors runs to an answer.
+// An empty first invocation is re-invoked with the continuation directive and its plan runs.
 func TestOrchestrator_EmptyTurn_ContinuedAndRuns(t *testing.T) {
 	stub := &orchStub{replies: []*model.LLMResponse{
 		stubText(""), // turn 1: EMPTY - no plan, no execute, no text (the live symptom)
@@ -285,9 +282,7 @@ func TestOrchestrator_EmptyTurn_ContinuedAndRuns(t *testing.T) {
 	}
 }
 
-// TestOrchestrator_AlwaysEmpty_FailsLoud: an orchestrator that produces nothing
-// on EVERY attempt must not die silently - the retry budget is spent, an error
-// reaches the user, and the failure is logged at ERROR.
+// An orchestrator empty on every attempt spends the retry budget, errors to the user, and logs ERROR.
 func TestOrchestrator_AlwaysEmpty_FailsLoud(t *testing.T) {
 	var logs bytes.Buffer
 	prev := slog.Default()

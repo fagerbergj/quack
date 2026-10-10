@@ -13,9 +13,8 @@ import (
 	"time"
 )
 
-// ErrInvalidName is validName's sentinel (empty, ".", "..", or a separator).
-// ErrNameCollision is Put's sentinel: name is already registered under a
-// different identity - REST maps it to 409, everything else to 500.
+// ErrInvalidName: empty, ".", "..", or a separator. ErrNameCollision: the name is registered under a
+// different identity (REST maps it to 409).
 var (
 	ErrInvalidName   = errors.New("invalid plugin name")
 	ErrNameCollision = errors.New("plugin name already registered under a different entry")
@@ -49,9 +48,8 @@ func FromEntry(e Entry) Plugin {
 	}
 }
 
-// Root: local entry = the path itself; github = <registryRoot>/<name>/repo/<path>.
-// Rows are trusted off disk without re-parsing, so a Path escaping the clone
-// falls back to the clone root instead of serving outside it.
+// Root: a local entry is the path itself; github is <registryRoot>/<name>/repo/<path>. Rows are trusted
+// without re-parsing, so a Path escaping the clone falls back to the clone root.
 func (p Plugin) Root(registryRoot string) string {
 	if p.Source == SourceLocal {
 		return p.Entry
@@ -92,9 +90,8 @@ func EmbeddedQuackPlugin() Plugin {
 	return Plugin{Name: EmbeddedQuackPluginName, Source: SourceEmbedded}
 }
 
-// OrderBySeed reorders rows to match seed's listed order (bare-name
-// resolution is "first in merge order wins", #1427 F2) - a row not in seed
-// (added via the UI/REST, P2) sorts after, in List's name order.
+// OrderBySeed reorders rows to seed's order, since bare-name resolution is first-in-merge-order wins; rows
+// not in seed sort after, in List's name order.
 func OrderBySeed(seed []string, rows []Plugin) []Plugin {
 	byName := make(map[string]Plugin, len(rows))
 	for _, p := range rows {
@@ -132,9 +129,8 @@ type Registry interface {
 	Delete(ctx context.Context, name string) error
 }
 
-// FetchRegistry is Registry plus the per-plugin git operations every
-// backend implements - what boot and the REST handlers operate against, so
-// they don't care which backend is wired.
+// FetchRegistry is Registry plus the per-plugin git operations every backend implements, so boot and REST
+// are backend-agnostic.
 type FetchRegistry interface {
 	Registry
 	Fetch(ctx context.Context, p Plugin) (Plugin, error)
@@ -196,10 +192,9 @@ func (r *FSRegistry) readRow(name string) (Plugin, error) {
 	return p, nil
 }
 
-// samePlugin is Put's collision identity: source+owner/repo for github (a
-// pin move like @v1 -> @v2 is a legal update, not a collision), the raw
-// entry for local. Empty Owner/Repo derives from Entry instead (#1430).
-func samePlugin(a, b Plugin) bool {
+// SameIdentity is Put's collision identity: source+owner/repo for github (a pin move like @v1 -> @v2
+// is a legal update, not a collision), the raw entry for local. Empty Owner/Repo derives from Entry.
+func SameIdentity(a, b Plugin) bool {
 	if a.Source != b.Source {
 		return false
 	}
@@ -226,13 +221,8 @@ func githubIdentity(p Plugin) (owner, repo string) {
 	return "", ""
 }
 
-// SameIdentity reports whether a and b identify the same plugin (samePlugin) -
-// exported for seedRegistry's seed/disk name-collision check (#1430 carry-over).
-func SameIdentity(a, b Plugin) bool { return samePlugin(a, b) }
-
-// Put writes p's row, replacing any row identifying the SAME plugin
-// (samePlugin). A different plugin under an already-registered name (e.g.
-// two repos both named "widgets") is a collision, rejected outright.
+// Put writes p's row, replacing a row with the same identity (SameIdentity). A different plugin under a
+// registered name is a collision.
 func (r *FSRegistry) Put(ctx context.Context, p Plugin) error {
 	if err := validName(p.Name); err != nil {
 		return err
@@ -240,12 +230,11 @@ func (r *FSRegistry) Put(ctx context.Context, p Plugin) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if existing, err := r.readRow(p.Name); err == nil {
-		if !samePlugin(existing, p) {
+		if !SameIdentity(existing, p) {
 			return fmt.Errorf("%w: plugin %q is already registered from %q, not %q", ErrNameCollision, p.Name, existing.Entry, p.Entry)
 		}
-		// A re-Put of the same identity with no sha yet (REST's create/
-		// re-create path, before its own Fetch runs) must not wipe the last
-		// good clone's sha/fetched_at - only Fetch may move those forward.
+		// A same-identity re-Put with no sha yet (REST create, before its Fetch) must not wipe the last good
+		// clone's sha/fetched_at; only Fetch moves those.
 		if p.SHA == "" && p.FetchedAt == nil {
 			p.SHA, p.FetchedAt = existing.SHA, existing.FetchedAt
 		}

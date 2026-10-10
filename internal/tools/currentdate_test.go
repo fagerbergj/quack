@@ -8,7 +8,6 @@ import (
 	"github.com/fagerbergj/quack/internal/promptbuilder"
 )
 
-// TestCurrentDateUsesUserZone: the tool reports the configured zone and the UTC instant.
 func TestCurrentDateUsesUserZone(t *testing.T) {
 	loc, err := time.LoadLocation("Asia/Kolkata")
 	if err != nil {

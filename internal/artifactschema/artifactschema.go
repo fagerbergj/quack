@@ -6,8 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -25,22 +26,11 @@ type Registry struct {
 // Build compiles every schema the given extensions declare, keyed by
 // extension name then kind. A duplicate kind or an uncompilable schema fails.
 func Build(bySource map[string]map[string]json.RawMessage) (*Registry, error) {
-	sourceNames := make([]string, 0, len(bySource))
-	for name := range bySource {
-		sourceNames = append(sourceNames, name)
-	}
-	sort.Strings(sourceNames)
-
 	owner := map[string]string{}
 	schemas := map[string]*jsonschema.Resolved{}
 	raw := map[string]json.RawMessage{}
-	for _, source := range sourceNames {
-		kinds := make([]string, 0, len(bySource[source]))
-		for kind := range bySource[source] {
-			kinds = append(kinds, kind)
-		}
-		sort.Strings(kinds)
-		for _, kind := range kinds {
+	for _, source := range slices.Sorted(maps.Keys(bySource)) {
+		for _, kind := range slices.Sorted(maps.Keys(bySource[source])) {
 			if other, dup := owner[kind]; dup {
 				return nil, fmt.Errorf("artifact schema: kind %q registered by both %s and %s", kind, other, source)
 			}

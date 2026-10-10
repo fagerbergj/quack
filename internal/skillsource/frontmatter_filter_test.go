@@ -134,9 +134,8 @@ func TestFilterFrontmatter_MalformedInputPassesThroughUnfiltered(t *testing.T) {
 	}
 }
 
-// TestFilterFrontmatter_MetadataScalarFidelity guards against the map
-// round-trip corruption a plain map[string]any decode+remarshal caused: YAML
-// implicit typing resolves ambiguous scalars ("007" -> int 7, "1.0" -> float 1) during a generic decode, and remarshaling writes back the resolved form. Ground truth is ADK's own single-hop decode of the same content with the unknown key already removed by hand.
+// A generic map decode+remarshal rewrote ambiguous scalars ("007" -> 7, "1.0" -> 1). Ground truth is ADK's
+// own decode of the content with the unknown key removed by hand.
 func TestFilterFrontmatter_MetadataScalarFidelity(t *testing.T) {
 	withUnknown := []byte("---\n" +
 		"name: x\n" +
@@ -180,9 +179,7 @@ func TestFilterFrontmatter_MetadataScalarFidelity(t *testing.T) {
 	}
 }
 
-// TestFilterFrontmatter_AllKeysKnownByteIdentical proves the gate: when
-// every frontmatter key is already known, filterFrontmatter must return the
-// original bytes untouched rather than parse-and-rewrite.
+// With every key known, filterFrontmatter returns the original bytes untouched.
 func TestFilterFrontmatter_AllKeysKnownByteIdentical(t *testing.T) {
 	content := []byte("---\nname: x\ndescription: d\nlicense: MIT\n---\nbody\n")
 	out, ok := filterFrontmatter(content)
@@ -194,9 +191,7 @@ func TestFilterFrontmatter_AllKeysKnownByteIdentical(t *testing.T) {
 	}
 }
 
-// TestFilterFrontmatter_CRLFWithUnknownKeyLoads proves the "\r\n" separator
-// form (ADK's frontmatterSeparatorWin) is handled, not just "\n" - a CRLF
-// skill with an unknown key must load instead of falling through unfiltered and getting skipped by Tolerant.
+// The "\r\n" separator form works too: a CRLF skill with an unknown key loads instead of being skipped.
 func TestFilterFrontmatter_CRLFWithUnknownKeyLoads(t *testing.T) {
 	content := []byte("---\r\nname: x\r\ndescription: d\r\nunknown: y\r\n---\r\nbody\r\n")
 	out, ok := filterFrontmatter(content)
@@ -212,9 +207,8 @@ func TestFilterFrontmatter_CRLFWithUnknownKeyLoads(t *testing.T) {
 	}
 }
 
-// TestFilterFrontmatter_ScalarEndingInSepIsNotAFalseBoundary proves the
-// closing-separator search is line-anchored, not a substring search: a known
-// key's plain-scalar value ending in "---" must not be mistaken for the closing "---\n" line. Before line-anchoring, this content's block was truncated at "bar---\n", corrupting description to "bar" and leaking the real "---\n" line into the markdown body.
+// The closing-separator search is line-anchored: a plain scalar ending in "---" must not truncate the
+// block or leak the real "---" line into the body.
 func TestFilterFrontmatter_ScalarEndingInSepIsNotAFalseBoundary(t *testing.T) {
 	content := []byte("---\nname: x\nunknown: y\ndescription: bar---\n---\nbody\n")
 	out, ok := filterFrontmatter(content)
@@ -233,9 +227,7 @@ func TestFilterFrontmatter_ScalarEndingInSepIsNotAFalseBoundary(t *testing.T) {
 	}
 }
 
-// TestFilterFrontmatter_BlockScalarIndentedSepIsNotAFalseBoundary covers the
-// same false-boundary bug for an indented "---" inside a folded/literal
-// block scalar, alongside an unknown key.
+// Same false-boundary case for an indented "---" inside a block scalar, alongside an unknown key.
 func TestFilterFrontmatter_BlockScalarIndentedSepIsNotAFalseBoundary(t *testing.T) {
 	content := []byte("---\nname: x\nunknown: y\ndescription: |\n  before\n  ---\n  after\n---\nbody\n")
 	out, ok := filterFrontmatter(content)
@@ -255,9 +247,7 @@ func TestFilterFrontmatter_BlockScalarIndentedSepIsNotAFalseBoundary(t *testing.
 	}
 }
 
-// TestFilterFrontmatter_UnknownKeyAfterFalseBoundaryStillDropped proves the
-// gate doesn't get fooled by a false boundary either: an unknown key sitting
-// after a scalar value that contains "---" must still be found and dropped (not silently missed because the truncated scan only saw known keys before the false cut), and the skill must load.
+// An unknown key after a scalar containing "---" is still found and dropped, and the skill loads.
 func TestFilterFrontmatter_UnknownKeyAfterFalseBoundaryStillDropped(t *testing.T) {
 	content := []byte("---\nname: x\ndescription: bar---\nunknown: y\n---\nbody\n")
 	out, ok := filterFrontmatter(content)

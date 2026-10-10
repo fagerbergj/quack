@@ -30,9 +30,7 @@ func newTestStore(t *testing.T) *store.Store {
 	return st
 }
 
-// Step must capture the top-level (NodeID == "") agent_complete's model and
-// usage - the same signal both rest.Handler.runChat and the SDK extension
-// dispatch path (runlog.Drive) rely on to stamp the turn row.
+// Step must capture the top-level agent_complete's model and usage, which both dispatch paths stamp onto the turn.
 func TestDriveResultStepCapturesTopLevelModelAndUsage(t *testing.T) {
 	var res DriveResult
 	res.Step(nil, "chat-1", "turn-1", false, stream.SSEEvent{
@@ -110,9 +108,7 @@ func TestStampTurn(t *testing.T) {
 	}
 }
 
-// Pins that PersistNodeEvent copies EVERY token field off NodeDoneData - CachedTokens
-// was silently dropped once when the struct grew (caught in review of the
-// usage-visibility PR); this fails the next time a field is added to one side only.
+// PersistNodeEvent must copy EVERY token field off NodeDoneData; fails when a field is added to one side only.
 func TestPersistNodeEventCopiesAllTokenFields(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
@@ -127,9 +123,7 @@ func TestPersistNodeEventCopiesAllTokenFields(t *testing.T) {
 		NodeID: "n1", Model: "m", PromptTokens: 100, CompletionTokens: 40,
 		ReasoningTokens: 8, TotalTokens: 148, CachedTokens: 60, FinishReason: "stop",
 	}})
-	// PersistNodeEvent writes on its own goroutine (#827) - poll for the "done" status
-	// rather than mere row-existence (mirrors rest.waitForDagNodeStatus):
-	// UpsertDagNode saves the whole row in one call, so status=="done" and the token fields land atomically together.
+	// Poll for "done", not row existence: UpsertDagNode writes status and token fields atomically.
 	var n *store.DagNode
 	deadline := time.Now().Add(2 * time.Second)
 	for {
@@ -149,11 +143,8 @@ func TestPersistNodeEventCopiesAllTokenFields(t *testing.T) {
 	}
 }
 
-// TestPersistNodeEvent_FailedAndCancelledCarryContextID is the blocking-
-// review regression: a node that ends failed or cancelled - not just done -
-// must still get its real transport context id (established before it
-// failed) written onto the dag_node record, or a later reuse threads the
-// stale mint-time placeholder into session/load instead.
+// A failed or cancelled node must still write its real transport context id onto the dag_node record,
+// or a later reuse threads the stale placeholder into session/load.
 func TestPersistNodeEvent_FailedAndCancelledCarryContextID(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -209,12 +200,8 @@ func TestPersistNodeEvent_FailedAndCancelledCarryContextID(t *testing.T) {
 	}
 }
 
-// A genuine iter.Seq2 range loop, not a fake counting yield: proves Drive's recover
-// holds against real rangefunc poisoning (#1016), which a plain closure test
-// cannot exercise (see orchestrator's TestSafeYieldConcurrent*). Mirrors
-// orchestrator.newSafeYield: recovers a real loop-body panic (Drive's own onErr call,
-// triggered by a non-nil err event - not a synthetic closure), then keeps calling yield
-// exactly like orchestrator.Run does after a recovered node panic during RunPlanAsGraph. That second call either re-panics with "range function continued iteration after loop body panic", or - if it never fires - Drive's own return triggers "range function recovered a loop body panic and did not resume panicking". Both are verified reproducible with a minimal Go 1.23+ program outside this repo; Drive's defer/recover must catch whichever one actually happens here.
+// A real iter.Seq2 loop, not a fake yield: Drive's recover must hold against genuine rangefunc poisoning,
+// whether Go re-panics on the next yield or on Drive's return.
 func TestDriveRecoversPoisonedRangeState(t *testing.T) {
 	const boom = "distinctive-drive-loop-body-panic"
 	safeYield := func(yield func(stream.SSEEvent, error) bool) func(stream.SSEEvent, error) bool {
@@ -272,17 +259,8 @@ func waitForNodeStoreStatus(t *testing.T, st *store.Store, planID, nodeID, want 
 	}
 }
 
-// TestPersistNodeEventReusedNodeTransitionsThroughQueued is the QA rig
-// regression (#slice3 review): "persistNodeEvent: dag_node status update
-// failed ... illegal status transition done -> running" for a node reused
-// in a later incremental step. dag.CanTransition refuses done -> running
-// directly (only done -> queued -> running is legal) - the incremental step
-// path was starting a reused node straight into node_start without a
-// node_queued first, unlike the fresh-hire path. With that fixed
-// (RunPlanStep now queues every node in its run set), the same sequence a
-// real reuse produces - node_queued, node_start, node_done - must carry the
-// STORE row and the dag_node RECORD through done -> queued -> running ->
-// done with no illegal-transition warning logged.
+// A reused node must go done -> queued -> running -> done (dag.CanTransition refuses done -> running) on both
+// the store row and the dag_node record, with no illegal-transition warning.
 func TestPersistNodeEventReusedNodeTransitionsThroughQueued(t *testing.T) {
 	dag.SetAgentRoster([]dag.AgentInfo{{Name: "code-implementer"}})
 	st := newTestStore(t)
@@ -303,9 +281,7 @@ func TestPersistNodeEventReusedNodeTransitionsThroughQueued(t *testing.T) {
 		t.Fatalf("seed dag_node record: %v", err)
 	}
 
-	// Step 1: n1's real first run - establishes the STORE row's own "done"
-	// too (independent of the record seeded above), through the normal
-	// queued -> running -> done sequence a fresh dispatch takes.
+	// Step 1: n1's first run sets the store row's own "done" via queued -> running -> done.
 	PersistNodeEvent(st, c.ID, "p1", stream.SSEEvent{Name: stream.EventNodeQueued, Data: stream.NodeQueuedData{NodeID: "n1"}})
 	PersistNodeEvent(st, c.ID, "p1", stream.SSEEvent{Name: stream.EventNodeStart, Data: stream.NodeStartData{NodeID: "n1", Agent: "code-implementer"}})
 	PersistNodeEvent(st, c.ID, "p1", stream.SSEEvent{Name: stream.EventNodeDone, Data: stream.NodeDoneData{NodeID: "n1"}})
@@ -345,11 +321,8 @@ func TestPersistNodeEventReusedNodeTransitionsThroughQueued(t *testing.T) {
 	}
 }
 
-// TestPersistNodeEventRunningNodeReQueuesOnMidRunAdmissionWait is #1480: a
-// worker/judge slot swap re-queues an already-running node, not just a
-// fresh node's first dispatch. The store row must carry running -> queued
-// -> running with no illegal-transition warning, and keep its original
-// started_at through the re-queue.
+// A slot swap re-queues a running node: the store row goes running -> queued -> running with no warning
+// and keeps its original started_at.
 func TestPersistNodeEventRunningNodeReQueuesOnMidRunAdmissionWait(t *testing.T) {
 	dag.SetAgentRoster([]dag.AgentInfo{{Name: "code-implementer"}})
 	st := newTestStore(t)

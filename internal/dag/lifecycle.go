@@ -2,9 +2,8 @@ package dag
 
 import "sort"
 
-// ActiveNodes returns the node ids with a live control registered for chatID
-// (the nodes actually mid-run). The shutdown drain (serve.DrainActiveRuns)
-// enumerates these to pause them; sorted so the log line and the tests are deterministic.
+// ActiveNodes returns chatID's mid-run node ids for the shutdown drain to pause, sorted so the log
+// line and tests are deterministic.
 func (e *Executor) ActiveNodes(chatID string) []string {
 	e.controls.mu.Lock()
 	defer e.controls.mu.Unlock()

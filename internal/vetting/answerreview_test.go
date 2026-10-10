@@ -35,7 +35,7 @@ func TestAugmentFromAnswer_StagesReview(t *testing.T) {
 	cfg := Config{
 		ExternalWorker: true,
 		ReadOnly:       true,                                                                                // a code-reviewer is read-only
-		IsReviewer:     true,                                                                                // structural signal (#482): the node's agent IS the code-reviewer
+		IsReviewer:     true,                                                                                // the node's agent is the code-reviewer
 		Setup:          &SetupBranch{Repo: "https://github.com/fagerbergj/quack", WorkBranch: "quack/work"}, // a reviewer is setup-provisioned
 		Task:           "Review PR #7 and post your findings as inline review comments",
 	}
@@ -54,8 +54,7 @@ func TestAugmentFromAnswer_StagesReview(t *testing.T) {
 
 }
 
-// Prod 2026-10-02 (quack#1607/#1609, games#29): an ACP reviewer ended on prose
-// with nothing staged; the old comment fallback scored review_posted=1 and the gate passed.
+// An ACP reviewer that ended on prose with nothing staged must not count as a posted review.
 func TestAugmentFromAnswer_ProseIsNotAReview(t *testing.T) {
 	cfg := Config{ExternalWorker: true, ReadOnly: true, IsReviewer: true,
 		Setup: &SetupBranch{Repo: "https://github.com/fagerbergj/quack", WorkBranch: "quack/work"},
@@ -73,7 +72,7 @@ func TestAugmentFromAnswer_ProseIsNotAReview(t *testing.T) {
 	if det["review_posted"].Score != 0 {
 		t.Fatalf("review_posted = %+v, want 0", det["review_posted"])
 	}
-	// The judge passing every rubric criterion (as it did on #1609) must not pass the round.
+	// The judge passing every rubric criterion must not pass the round.
 	v := mergeDeterministic(verdict{Criteria: map[string]criterionScore{"structured_verdict": {Score: 1}, "catches_real_issues": {Score: 1}}}, det, cfg)
 	if v.Score != 0 {
 		t.Fatalf("round score = %v with no staged verdict, want 0", v.Score)
@@ -97,9 +96,7 @@ func TestAugmentFromAnswer_SliceKeepsCommentFallback(t *testing.T) {
 	}
 }
 
-// TestAugmentFromAnswer_WarnsLoudly pins #688's third fix: taking over the
-// review means the staging mechanism didn't run this round, which must be
-// loud (Warn), not the silent Debug/nothing it was before.
+// Taking over the review means the staging tools didn't run this round, which must log at Warn.
 func TestAugmentFromAnswer_WarnsLoudly(t *testing.T) {
 	cfg := Config{
 		ExternalWorker: true, ReadOnly: true, IsReviewer: true, NodeID: "review-node-1",
@@ -123,9 +120,8 @@ func TestAugmentFromAnswer_WarnsLoudly(t *testing.T) {
 	}
 }
 
-// TestAugmentFromAnswer_StagesReview_BareTaskText pins #482: the label-review
-// default (dag.autoReviewTask, "Review this pull request.") has no posting
-// verb at all, so the old task-text gate (demandsPostedReview) left this path dead. The structural signal (IsReviewer) stages it regardless of wording.
+// The default label-review task has no posting verb; the structural IsReviewer signal stages the review
+// regardless of wording.
 func TestAugmentFromAnswer_StagesReview_BareTaskText(t *testing.T) {
 	cfg := Config{
 		ExternalWorker: true,
@@ -163,9 +159,8 @@ func TestAugmentFromAnswer_Guards(t *testing.T) {
 		t.Fatal("probe fired for a non-reviewer node")
 	}
 
-	// #471: a NON-read-only implementer whose task merely TALKS about reviews
-	// must NOT stage a review - that review would ride alongside its PR and 404
-	// against the trigger issue number. Now guaranteed structurally: an implementer node is never IsReviewer, whatever its task says.
+	// An implementer whose task merely talks about reviews must not stage one (it would 404 against the
+	// trigger issue): implementers are never IsReviewer.
 	act = workerActivity{}
 	augmentFromAnswer(&act, Config{ExternalWorker: true, ReadOnly: false,
 		Task: "Implement the HITL review flow: change how quack posts a review and open a pull request"}, reviewAnswer)
@@ -180,9 +175,8 @@ func TestAugmentFromAnswer_Guards(t *testing.T) {
 		t.Fatal("probe replaced a staged review")
 	}
 
-	// #482: a read-only reviewer node with NO Setup (a code-explorer investigating
-	// the review path on an ISSUE, not a PR) must NOT stage a review - delivery
-	// would then fail with "'' is not a github.com clone URL".
+	// A read-only reviewer with no Setup (an explorer on an issue, not a PR) must not stage a review:
+	// delivery would fail with "'' is not a github.com clone URL".
 	act = workerActivity{}
 	cfg = reviewerCfg
 	cfg.Setup = nil
@@ -219,8 +213,7 @@ func TestParseAnswerReviewSections(t *testing.T) {
 	}
 }
 
-// A DISMISSED: line must not bleed into FINDINGS when sections are present -
-// today's unscoped regex would absorb it as a live finding (#1006 ceiling).
+// A DISMISSED: line must not bleed into FINDINGS when sections are present.
 func TestParseAnswerReviewSections_DismissedNotAbsorbedIntoFindings(t *testing.T) {
 	r := ParseAnswerReviewSections(sectionedReviewAnswer)
 	for _, f := range r.Findings {
@@ -230,8 +223,7 @@ func TestParseAnswerReviewSections_DismissedNotAbsorbedIntoFindings(t *testing.T
 	}
 }
 
-// Unstructured answers (no section headers at all) keep the pre-#1006
-// unscoped fallback behavior - a regression guard for existing reviewers.
+// Unstructured answers (no section headers) keep the unscoped fallback.
 func TestParseAnswerReviewSections_FallbackWhenNoHeaders(t *testing.T) {
 	r := ParseAnswerReviewSections(reviewAnswer)
 	if !r.OK || len(r.Findings) != 2 {

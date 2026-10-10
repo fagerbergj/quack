@@ -5,6 +5,7 @@ import (
 	"flag"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -16,8 +17,7 @@ import (
 	"github.com/fagerbergj/quack/internal/promptbuilder"
 )
 
-// updateGolden regenerates testdata/prompts. The goldens were captured before
-// the artifact-resolver change (#1420) and must stay byte-identical after it.
+// updateGolden regenerates testdata/prompts.
 var updateGolden = flag.Bool("update-golden", false, "rewrite the prompt golden files")
 
 // todayLine: the Environment layer's only non-deterministic input.
@@ -45,9 +45,8 @@ func checkGolden(t *testing.T, name, got string) {
 	}
 }
 
-// pluginAgentBundleDirs lists every .agents/plugins/<name>/agents/<bundle>/
-// directory on disk (a plugin bundle is never embedded, only ever a live
-// checkout) - the golden walk's second root, alongside the shipped agents/.
+// pluginAgentBundleDirs lists every .agents/plugins/<name>/agents/<bundle>/ on disk (plugin bundles are never
+// embedded), the golden walk's second root.
 func pluginAgentBundleDirs(t *testing.T) []string {
 	t.Helper()
 	matches, err := filepath.Glob(filepath.Join("..", "..", ".agents", "plugins", "*", "agents", "*"))
@@ -64,9 +63,7 @@ func pluginAgentBundleDirs(t *testing.T) []string {
 	return dirs
 }
 
-// TestGoldenAgentPrompts pins every shipped agent's assembled system prompt,
-// plus every plugin's own agent bundles (.agents/plugins/*/agents/*) - a
-// plugin bundle's prompt.md is pinned exactly like a shipped one.
+// TestGoldenAgentPrompts pins the assembled system prompt of every shipped and plugin agent bundle.
 func TestGoldenAgentPrompts(t *testing.T) {
 	des, err := fs.ReadDir(bundledir.SubFS("agents"), ".")
 	if err != nil {
@@ -76,7 +73,7 @@ func TestGoldenAgentPrompts(t *testing.T) {
 	var bundles []bundle
 	for _, de := range des {
 		if de.IsDir() {
-			bundles = append(bundles, bundle{bundledir.PathJoin("agents", de.Name()), "agent." + de.Name() + ".txt"})
+			bundles = append(bundles, bundle{path.Join("agents", de.Name()), "agent." + de.Name() + ".txt"})
 		}
 	}
 	for _, dir := range pluginAgentBundleDirs(t) {
@@ -100,11 +97,8 @@ func TestGoldenAgentPrompts(t *testing.T) {
 	}
 }
 
-// TestGoldenACPPreamble pins the ACP preamble shape - promptbuilder.Agent with
-// acp=true, declared skills and a workspace block, as serve.buildACPNode
-// assembles it. The skills bullet without the load_skill hint, and the
-// workspace layer, are what differ from a native agent's prompt; only this
-// golden covers that branch.
+// TestGoldenACPPreamble pins the ACP preamble as serve.buildACPNode assembles it; only this golden covers
+// the skills bullet without the load_skill hint and the workspace layer.
 func TestGoldenACPPreamble(t *testing.T) {
 	const dir = "../../.agents/plugins/github/agents/code-reviewer"
 	b, err := LoadBundle(context.Background(), nil, dir)

@@ -63,7 +63,7 @@ func runExperimentRun(cmd *cobra.Command, dataset, agent, prompt, runName string
 	if err != nil {
 		return err
 	}
-	lf, err := langfuseGenClientFromConfig(cfg)
+	lf, err := langfuseClientFromConfig(cfg)
 	if err != nil {
 		return err
 	}
@@ -88,9 +88,7 @@ func runExperimentRun(cmd *cobra.Command, dataset, agent, prompt, runName string
 	results, runErr := cli.RunExperiment(ctx, cmd.ErrOrStderr(), runner, lf, cli.ExperimentOpts{
 		Dataset: dataset, Agent: agent, Prompt: prompt, RunName: runName, Limit: limit,
 	})
-	// Report whatever completed even on a hard mid-run error (runErr != nil):
-	// RunExperiment already printed the partial text summary to stderr, so
-	// --as-json's structured output isn't left as the only form that drops it.
+	// Emit partial results even when runErr != nil, matching the text summary RunExperiment already printed.
 	if asJSON {
 		if err := cli.WriteJSON(cmd.OutOrStdout(), results); err != nil {
 			return err
@@ -119,9 +117,8 @@ func errorCount(results []cli.ExperimentResult) int {
 	return n
 }
 
-// pinnedPromptSource turns --prompt into a Source resolved eagerly, so a bad
-// name/version fails the command instead of falling back to the static prompt.
-// nil when no pin was asked for.
+// pinnedPromptSource resolves --prompt eagerly so a bad pin fails the command instead of
+// falling back to the static prompt; nil when no pin was asked for.
 func pinnedPromptSource(ctx context.Context, cfg *config.Config, agent, prompt string) (artifactsrc.Source, error) {
 	if prompt == "" {
 		return nil, nil

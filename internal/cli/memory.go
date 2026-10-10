@@ -12,9 +12,8 @@ import (
 	"github.com/fagerbergj/quack/internal/schema"
 )
 
-// RunMemoryList is `quack memory list`: browse or (with q) search the
-// server's configured memory stores, or raw JSON with --json. limit<=0
-// (the default) auto-pages through the whole listing - see Client.ListMemories.
+// RunMemoryList is `quack memory list`: browse or (with q) search the server's memory stores.
+// limit<=0 auto-pages through the whole listing.
 func RunMemoryList(ctx context.Context, out io.Writer, server, bucket, q, tier, sort string, limit int, includeInvalidated, asJSON bool) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {
@@ -43,9 +42,8 @@ func RunMemoryList(ctx context.Context, out io.Writer, server, bucket, q, tier, 
 	return tw.Flush()
 }
 
-// RunMemoryShow is `quack memory show <memory-id>`: prints one memory's full
-// detail, including votes/tier/last-recalled (epic #1255 P1 observability).
-// A direct per-id GET, not a full-store page scan.
+// RunMemoryShow is `quack memory show <memory-id>`: one memory's full detail, including
+// votes, tier and last-recalled, via a direct per-id GET.
 func RunMemoryShow(ctx context.Context, out io.Writer, server, id string, asJSON bool) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {
@@ -123,9 +121,8 @@ func RunMemoryForget(ctx context.Context, out io.Writer, server, id, reason stri
 	return nil
 }
 
-// RunMemorySweep is `quack memory sweep [--dry-run] [--dedupe [--apply]]`:
-// runs the forgetting-rule sweep (default) or, with --dedupe, the per-bucket
-// similarity dedupe sweep (issue #1269) on demand against every store the server has configured. Without --apply, --dedupe only clusters and reports examples - no LLM call, nothing written.
+// RunMemorySweep is `quack memory sweep`: the forgetting-rule sweep, or with --dedupe the per-bucket
+// similarity dedupe. --dedupe without --apply only clusters and reports: no LLM call, nothing written.
 func RunMemorySweep(ctx context.Context, out io.Writer, server string, dryRun, dedupe, apply, asJSON bool) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {
@@ -247,9 +244,8 @@ func RunMemoryStats(ctx context.Context, out io.Writer, server string, weeks int
 	return nil
 }
 
-// truncateLine collapses newlines to spaces and clips to n runes (with a "…"
-// marker) - memory content is free text and can run to paragraphs, which
-// would wreck the table's row-per-memory layout.
+// truncateLine collapses newlines and clips to n runes with "…", so paragraph-long memories
+// keep the table one row per memory.
 func truncateLine(s string, n int) string {
 	s = strings.Join(strings.Fields(s), " ")
 	r := []rune(s)

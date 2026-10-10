@@ -10,9 +10,7 @@ import (
 	"google.golang.org/adk/v2/workflow"
 )
 
-// runDAGSubset runs retry-set nodes with seeded outputs for the rest. maxActive
-// is a host-resource ceiling (jail/clone CPU+RAM), not the GPU limiter - each
-// gated node's Admission.Admit call (#1007) is the real one.
+// runDAGSubset runs retry-set nodes with seeded outputs for the rest; maxActive is a host-resource ceiling.
 // ponytail: migrate to native graph if ADK grows per-node seeding.
 func runDAGSubset(ctx adkagent.Context, plan Plan, gateNodes map[string]workflow.Node, maxActive int, seeded map[string]string, run map[string]bool) (map[string]string, error) {
 	if maxActive < 1 {
@@ -49,8 +47,8 @@ func runDAGSubset(ctx adkagent.Context, plan Plan, gateNodes map[string]workflow
 			wg.Add(1)
 			go func(i int, nid string) {
 				defer wg.Done()
-				// ADK recovers node panics on its own scheduler goroutines; this one
-				// is ours, so an unrecovered panic here takes the process (#1033).
+				// ADK recovers node panics on its own scheduler goroutines; this one is ours, so an unrecovered
+				// panic here takes the process.
 				defer func() {
 					if r := recover(); r != nil {
 						errs[i] = fmt.Errorf("node %q panicked: %v", nid, r)
@@ -59,8 +57,8 @@ func runDAGSubset(ctx adkagent.Context, plan Plan, gateNodes map[string]workflow
 				sem <- struct{}{}
 				defer func() { <-sem }()
 
-				// Feed this node its dependencies' outputs (dep ID → text) - a mix of
-				// freshly-run and seeded - the shape upstreamFromInput/buildTask expect.
+				// Feed this node its dependencies' outputs (dep ID -> text), fresh or seeded, in the shape
+				// upstreamFromInput/buildTask expect.
 				in := map[string]any{}
 				mu.Lock()
 				for _, d := range nodeByID[nid].DependsOn {
@@ -91,24 +89,8 @@ func runDAGSubset(ctx adkagent.Context, plan Plan, gateNodes map[string]workflow
 
 // retrySet returns nodeID plus every node that transitively depends on it.
 func retrySet(plan Plan, nodeID string) map[string]bool {
-	dependents := map[string][]string{}
-	for _, n := range plan.Nodes {
-		for _, d := range n.DependsOn {
-			dependents[d] = append(dependents[d], n.ID)
-		}
-	}
-	set := map[string]bool{}
-	var walk func(string)
-	walk = func(id string) {
-		if set[id] {
-			return
-		}
-		set[id] = true
-		for _, dep := range dependents[id] {
-			walk(dep)
-		}
-	}
-	walk(nodeID)
+	set := descendants(plan.Nodes, nodeID)
+	set[nodeID] = true
 	return set
 }
 

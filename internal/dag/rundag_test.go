@@ -104,9 +104,7 @@ func TestRunPlanAsGraph_Chain(t *testing.T) {
 	}
 }
 
-// TestRunDAG_FanInDelivery: runDAG feeds a fan-in node BOTH upstream outputs
-// (dep ID → text) so the synthesizer's assembled prompt carries them - the
-// single-runner replacement for the old BuildWorkflow JoinNode fan-in test.
+// A fan-in node gets BOTH upstream outputs (dep ID → text) in its assembled prompt.
 func TestRunDAG_FanInDelivery(t *testing.T) {
 	stub := stubG{}
 	mk := func(name, role string) adkagent.Agent {
@@ -192,9 +190,8 @@ func TestRetryPlanInNode_ReusesUpstream(t *testing.T) {
 	}
 }
 
-// TestPlan_AttachmentsSurviveJSON guards the single-runner media path: the execute
-// tool stashes the plan as JSON in session state (ExecPlanKey) and the execute node
-// unmarshals it, so media attachments (image/audio bytes) must survive that round trip or media nodes silently lose their input.
+// The plan round-trips through JSON in session state (ExecPlanKey), so media
+// attachments must survive it or media nodes silently lose their input.
 func TestPlan_AttachmentsSurviveJSON(t *testing.T) {
 	plan := Plan{
 		ID: "p", UserMessage: "describe this",

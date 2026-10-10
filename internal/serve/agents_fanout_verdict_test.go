@@ -6,15 +6,8 @@ import (
 	"testing"
 )
 
-// TestCodeReviewerPromptScopesSliceVerdict guards a live bug (PR #1102): a
-// slice-fanned code-reviewer reasoned it couldn't approve a PR it hadn't
-// reviewed in full, staged `comment` over an otherwise clean slice, and the
-// structured_verdict rubric criterion failed it every round (a `comment`
-// verdict over non-blocking findings is a self-contradiction), burning three
-// revise rounds per node for nothing. #1092 fixes this class of bug at the
-// root instead: a slice never stages a verdict at all (a downstream
-// synthesizer owns it, and structured_verdict is dropped from a slice's own
-// scoring), so the prompt must say so explicitly.
+// TestCodeReviewerPromptScopesSliceVerdict: a slice never stages a verdict (the downstream synthesizer
+// owns it), so the prompt must say so - else a slice stages `comment` and fails structured_verdict.
 func TestCodeReviewerPromptScopesSliceVerdict(t *testing.T) {
 	b, err := os.ReadFile("../../.agents/plugins/github/agents/code-reviewer/prompt.md")
 	if err != nil {
@@ -29,9 +22,8 @@ func TestCodeReviewerPromptScopesSliceVerdict(t *testing.T) {
 	}
 }
 
-// TestPlanWorkSkillTellsSliceVerdictScope guards the same bug at the planning side: the
-// fanned-out reviewer task template must say a slice stages findings only and the terminal
-// synthesizer owns the PR's one verdict - or every authored node inherits the contradiction.
+// TestPlanWorkSkillTellsSliceVerdictScope: the fanned-out reviewer task template must say a slice
+// stages findings only and the terminal synthesizer owns the PR's one verdict.
 func TestPlanWorkSkillTellsSliceVerdictScope(t *testing.T) {
 	b, err := os.ReadFile("../../skills/plan-work/SKILL.md")
 	if err != nil {

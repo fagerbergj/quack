@@ -15,12 +15,8 @@ import (
 	"github.com/fagerbergj/quack/internal/ledger"
 )
 
-// TestRunGatedRefine_WorkerPromptArtifactFallsBackToCfgNotAgentKey guards the
-// H2 gap: with no live RefreshPrompt (or one that returns no VersionID), the
-// stamped langfuse.observation.prompt.name must be Config.PromptArtifact (the
-// bundle-resolved name, e.g. "system/web-researcher") - NOT "system/"+Agent,
-// which is wrong whenever the agent's config key differs from its bundle dir
-// (repro: agent key "tester", bundle agents/web-researcher).
+// With no live RefreshPrompt VersionID, the stamped prompt name must be Config.PromptArtifact (the bundle
+// name), not "system/"+Agent, which is wrong whenever the agent key differs from its bundle dir.
 func TestRunGatedRefine_WorkerPromptArtifactFallsBackToCfgNotAgentKey(t *testing.T) {
 	stub := &coordsCapturingModel{stubFixedAnswerModel: stubFixedAnswerModel{text: "the answer"}}
 	worker, err := llmagent.New(llmagent.Config{
@@ -59,9 +55,8 @@ func TestRunGatedRefine_WorkerPromptArtifactFallsBackToCfgNotAgentKey(t *testing
 	}
 }
 
-// TestRunGatedRefine_WorkerArtifactsAndPlugins: a native worker
-// round's llm.call carries every artifact it resolved (its own system prompt
-// plus the agent's memory.md) and the plugin registry rows in scope.
+// A native worker round's llm.call carries every artifact it resolved (system prompt plus memory.md) and
+// the plugin registry rows in scope.
 func TestRunGatedRefine_WorkerArtifactsAndPlugins(t *testing.T) {
 	stub := &coordsCapturingModel{stubFixedAnswerModel: stubFixedAnswerModel{text: "the answer"}}
 	worker, err := llmagent.New(llmagent.Config{

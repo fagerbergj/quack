@@ -8,9 +8,8 @@ import (
 	"google.golang.org/adk/v2/session"
 )
 
-// TestDeleteChat_ReapsPerNodeWorkerSessions is a regression test for the ADK
-// audit's A2 finding: DeleteChat used to reap only the chat's own session
-// under AppName="quack" (chatAppName), leaving every DAG node's own worker session - AppName is whichever agent bundle ran the node, id is "<chatID>:<nodeID>" (internal/agent.WorkerSessionID) - and its retry session ("<chatID>::retry") permanently orphaned. A node's own worker session now lives until this runs - node reuse needs it to survive past a single dispatch (release() no longer reaps it) - so DeleteChat/ReapNodeSessions is the only reaper left, addressing every node purely by chat id, without knowing which bundle ran which one.
+// DeleteChat reaps each DAG node's worker session (AppName = the node's bundle, id "<chatID>:<nodeID>")
+// and its retry session by chat id alone, without knowing which bundle ran which node.
 func TestDeleteChat_ReapsPerNodeWorkerSessions(t *testing.T) {
 	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {
@@ -68,12 +67,8 @@ func TestDeleteChat_ReapsPerNodeWorkerSessions(t *testing.T) {
 	}
 }
 
-// TestArchiveChat_ReapsPerNodeWorkerSessionsOnlyWhenArchiving: node reuse
-// keeps a node's own worker session alive past its dispatch (release no
-// longer reaps it) - archiving is the first point in a chat's life it's
-// safe to let go, the same sweep DeleteChat already runs. Un-archiving must
-// not trigger it (nothing to reap after the first archive; a re-run must
-// stay a no-op, not an error).
+// Archiving reaps per-node worker sessions like DeleteChat; un-archiving doesn't, and a re-run is a no-op,
+// not an error.
 func TestArchiveChat_ReapsPerNodeWorkerSessionsOnlyWhenArchiving(t *testing.T) {
 	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {
@@ -117,9 +112,8 @@ func TestArchiveChat_ReapsPerNodeWorkerSessionsOnlyWhenArchiving(t *testing.T) {
 	}
 }
 
-// TestReapNodeSessions_UnderscoreDoesNotWidenMatch is a regression test for
-// the ADK audit's A2 finding: ReapNodeSessions built its LIKE pattern from
-// the raw chat id, and SQL LIKE treats a bare "_" as "match any one character" - a chat id containing a literal underscore (plausible: GitHub repo names allow them, e.g. "ext:github:owner/my_repo#42") could sweep a different chat's still-live worker session that merely differs by one character at that position. likeEscape backslash-escapes the wildcard before it reaches the query.
+// A chat id with a literal "_" (e.g. "ext:github:owner/my_repo#42") must not LIKE-match a different chat's
+// live worker session; likeEscape escapes the wildcard.
 func TestReapNodeSessions_UnderscoreDoesNotWidenMatch(t *testing.T) {
 	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {

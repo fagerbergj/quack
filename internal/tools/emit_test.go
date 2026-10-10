@@ -8,15 +8,11 @@ import (
 	"github.com/fagerbergj/quack/internal/ledger"
 )
 
-// TestEmitTool_ProcessRequestIsIdempotentAndPreservesDeclaration: calling
-// ProcessRequest twice on the same request must leave exactly the WRAPPER in the
-// tools map (never duplicates, never the inner tool), with the LLM-visible Declaration byte-identical to the inner tool's - wrapping must never change what the model sees.
+// ProcessRequest twice leaves exactly the wrapper in the tools map, with a Declaration identical to the
+// inner tool's: wrapping never changes what the model sees.
 func TestEmitTool_ProcessRequestIsIdempotentAndPreservesDeclaration(t *testing.T) {
 	inner := &fakeRunnable{}
-	wrapped, err := emitWrap(inner, ledger.Coords{})
-	if err != nil {
-		t.Fatalf("emitWrap: %v", err)
-	}
+	wrapped := emitWrap(inner, ledger.Coords{})
 	e, ok := wrapped.(*emitTool)
 	if !ok {
 		t.Fatalf("emitWrap(%T) = %T, want *emitTool", inner, wrapped)
@@ -38,9 +34,7 @@ func TestEmitTool_ProcessRequestIsIdempotentAndPreservesDeclaration(t *testing.T
 		t.Errorf("req.Tools[%q] = %T, want the SAME *emitTool wrapper both times", "risky_op", req.Tools["risky_op"])
 	}
 
-	// fakeRunnable.Declaration allocates a fresh struct per call (not a cached
-	// pointer), so identity isn't the right check - content is: the wrapper
-	// must return exactly what the inner tool declares, untouched.
+	// fakeRunnable.Declaration allocates per call, so compare content, not identity.
 	gotDecl := e.Declaration()
 	wantDecl := inner.Declaration()
 	if gotDecl.Name != wantDecl.Name || gotDecl.Description != wantDecl.Description {

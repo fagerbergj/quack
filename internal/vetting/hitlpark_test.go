@@ -20,9 +20,8 @@ func (p *parkCtrl) RepeatFailure() (string, bool) { return "", false }
 func (p *parkCtrl) ShuttingDown() bool            { return false }
 func (p *parkCtrl) NoteDraft(string)              {}
 
-// TestParkForInput: a worker question folds into the one pause path -
-// markPaused(awaiting_input) with the question - and returns ErrNodePaused,
-// the single sentinel quack code checks. ADK's own ErrNodeInterrupted stays in the chain because the engine keys the park off it.
+// TestParkForInput: a worker question marks the node awaiting_input and returns ErrNodePaused; ADK's
+// ErrNodeInterrupted stays in the chain because the engine keys the park off it.
 func TestParkForInput(t *testing.T) {
 	ctrl := &parkCtrl{}
 	err := parkForInput(ctrl, "which region?", workflow.ErrNodeInterrupted)

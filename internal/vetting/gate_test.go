@@ -73,9 +73,7 @@ func TestCitationScoreLayers(t *testing.T) {
 	}
 }
 
-// TestCiteReasonNamesUnretrievedLinks is issue #789 test cases 1 and 2: an
-// answer citing one fetched and two never-retrieved URLs must name both
-// unretrieved ones in the reason, and must NOT name the fetched (passing) one.
+// The reason names both never-retrieved URLs and not the fetched one.
 func TestCiteReasonNamesUnretrievedLinks(t *testing.T) {
 	answer := strings.Join([]string{
 		"[a](https://ex.com/fetched)",
@@ -98,8 +96,7 @@ func TestCiteReasonNamesUnretrievedLinks(t *testing.T) {
 	}
 }
 
-// TestCiteReasonScoreUnchanged is issue #789 test case 3: adding detail to
-// the reason must never move citationScore's own score.
+// Reason detail must never move citationScore's own score.
 func TestCiteReasonScoreUnchanged(t *testing.T) {
 	answer := strings.Join([]string{
 		"[a](https://ex.com/fetched)",
@@ -121,8 +118,7 @@ func TestCiteReasonScoreUnchanged(t *testing.T) {
 	}
 }
 
-// TestCiteReasonBoundsLongList is issue #789 test case 4: many unbacked URLs
-// must not each get a line - the reason bounds the list and states the elided count.
+// Many unbacked URLs: the reason bounds the list and states the elided count.
 func TestCiteReasonBoundsLongList(t *testing.T) {
 	var links []string
 	for i := 0; i < 40; i++ {
@@ -149,9 +145,7 @@ func TestCiteReasonBoundsLongList(t *testing.T) {
 	}
 }
 
-// TestCiteReasonSortsWorstFirstBeforeTruncating: answer order lists the
-// least-bad link first and the worst-scored link last - the reported bug
-// truncated to the first 10 in answer order and elided the worst offenders. The fix must sort ascending by score before capping.
+// The list sorts worst-first before capping, so truncation never elides the worst offenders.
 func TestCiteReasonSortsWorstFirstBeforeTruncating(t *testing.T) {
 	var details []citationDetail
 	for i := 0; i < 15; i++ {
@@ -181,9 +175,7 @@ func TestCiteReasonSortsWorstFirstBeforeTruncating(t *testing.T) {
 	}
 }
 
-// TestCiteReasonNoLongerCarriesLegend is the #941 follow-up: the tier legend
-// moved out of the reason string and into cites_sources's structured bands
-// (citesSourcesBands, node.go) - the reason itself must never emit it again, on any round.
+// The tier legend lives in cites_sources's structured bands; the reason must never emit it.
 func TestCiteReasonNoLongerCarriesLegend(t *testing.T) {
 	const legendFragment = "backing tiers:"
 	unbacked := []citationDetail{
@@ -207,9 +199,7 @@ func TestCitationScoreNormalizesAnchorsAndSlashes(t *testing.T) {
 	}
 }
 
-// TestCitationScoreSkipsAnchorsAndNonWebSchemes: in-document anchors, mailto:
-// targets, and local file paths are not web-gradeable - they must not enter
-// the mean at all (local citations are no longer deterministically checked).
+// Anchors, mailto: targets, and local paths are not web-gradeable and stay out of the mean.
 func TestCitationScoreSkipsAnchorsAndNonWebSchemes(t *testing.T) {
 	act := workerActivity{fetched: map[string]struct{}{"https://ex.com/a": {}}}
 	answer := "[sec](#usage) [mail](mailto:a@b.com) [local](repo/file.go) [real](https://ex.com/a)"
@@ -227,9 +217,8 @@ func TestCitationScoreNoCitations(t *testing.T) {
 	}
 }
 
-// TestCitationScoreSkippedWithoutRetrieval is the regression that matters
-// most for this check (removal of local-citation scoring, see judge.go):
-// a code-only node that never fetched or searched the web must cleanly abstain (ok=false, "nothing to grade") rather than scoring 0 and forcing a revision round - even though it cited local files inline.
+// A code-only node that never touched the web must abstain (ok=false) rather than score 0 and
+// force a revision, even when it cites local files.
 func TestCitationScoreSkippedWithoutRetrieval(t *testing.T) {
 	answer := "Per quack@internal/foo.go:1-5, [see also](internal/bar.go)."
 	act := workerActivity{clonedRepos: []string{"https://github.com/org/repo"}}
@@ -254,9 +243,7 @@ func TestLengthScore(t *testing.T) {
 	}
 }
 
-// TestSufficientLengthReasonStatesActualAndRequired is issue #789 test case
-// 5: an empty answer's sufficient_length reason states both the actual
-// length and the length that would pass, not just a bare char count.
+// sufficient_length's reason states both the actual length and the length that would pass.
 func TestSufficientLengthReasonStatesActualAndRequired(t *testing.T) {
 	det, _ := computeDeterministicCriteria(t.Context(), "   ", workerActivity{}, Config{}, "", time.Time{})
 	c, ok := det["sufficient_length"]
@@ -345,8 +332,7 @@ func TestParseVerdictDuplicatedBlob(t *testing.T) {
 	}
 }
 
-// TestParseVerdictAcceptsMemories covers #1259: the text-JSON fallback (no
-// submit_verdict tool call) still carries the judge's per-memory votes.
+// The text-JSON fallback (no submit_verdict call) still carries per-memory votes.
 func TestParseVerdictAcceptsMemories(t *testing.T) {
 	input := `{"score":0.9,"passed":true,"feedback":"ok","memories":[{"id":"m1","vote":"supported","reason":"confirmed by the diff"}]}`
 	v, err := parseVerdict(input, nil)
@@ -399,9 +385,7 @@ func TestAggregateVerdictMinAndClamp(t *testing.T) {
 	}
 }
 
-// The rubric asks the judge for 0/1/2/3 integers; the pipeline works in 0–1. A
-// verdict on the raw scale (any whole-number score) must be divided by
-// judgeScaleMax, so a perfect criterion (3) becomes 1.0 and the weakest drives the overall.
+// A raw 0-3 verdict is divided by judgeScaleMax, so 3 becomes 1.0 and the weakest drives the overall.
 func TestParseVerdictNormalizesRawScale(t *testing.T) {
 	input := `{"criteria":{"grounded":{"score":1},"no_fabrication":{"score":3},"answers_question":{"score":3},"internally_consistent":{"score":1},"cites_sources":{"score":0}},"score":1,"passed":true,"feedback":""}`
 	v, err := parseVerdict(input, nil)
@@ -427,9 +411,7 @@ func TestNormalizeScaleLeaves0To1Untouched(t *testing.T) {
 	}
 }
 
-// A raw verdict where every criterion happens to land on level 1 (a "deny,
-// small issues" band on the 4-level scale) must still be divided by
-// judgeScaleMax, not mistaken for an already-normalized 0–1 verdict - level 1 is a legal raw score, not 1.0.
+// All-1 criteria are raw level 1, still divided by judgeScaleMax, not read as normalized 1.0.
 func TestNormalizeScaleAllOnesIsRawNotNormalized(t *testing.T) {
 	v := verdict{Score: 1, Criteria: map[string]criterionScore{"a": {Score: 1}, "b": {Score: 1}}}
 	normalizeScale(&v)
@@ -439,9 +421,8 @@ func TestNormalizeScaleAllOnesIsRawNotNormalized(t *testing.T) {
 	}
 }
 
-// TestFoldDeterministic_RequireRetrievalHardFail: a retrieval agent that did
-// ZERO web_search/web_fetch cannot pass the gate - regression for a live e2e
-// hole where a worker's question-as-answer text sailed through (citationScore abstained, the judge waved it through). Weakest-link must be 0, and the feedback must point at BOTH ways out (retrieve, or ask_user).
+// A retrieval agent with zero web_search/web_fetch cannot pass: weakest-link 0, and feedback
+// names both ways out (retrieve, or ask_user).
 func TestFoldDeterministic_RequireRetrievalHardFail(t *testing.T) {
 	v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.9}}}
 	det, _ := computeDeterministicCriteria(context.Background(), "Which city are you moving to?", workerActivity{}, Config{RequireRetrieval: true}, "", time.Time{})
@@ -458,9 +439,7 @@ func TestFoldDeterministic_RequireRetrievalHardFail(t *testing.T) {
 	}
 }
 
-// TestFoldDeterministic_NoRetrievalOKForSynthesizer: a tool-less agent
-// (RequireRetrieval=false) with no activity is NOT penalized - it legitimately
-// re-cites upstream URLs (the pre-existing citationScore abstention stands).
+// A tool-less agent (RequireRetrieval=false) is not penalized: it legitimately re-cites upstream URLs.
 func TestFoldDeterministic_NoRetrievalOKForSynthesizer(t *testing.T) {
 	v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.9}}}
 	det, _ := computeDeterministicCriteria(context.Background(), "Combined findings: [x](https://ex.com/a).", workerActivity{}, Config{}, "", time.Time{})
@@ -473,9 +452,7 @@ func TestFoldDeterministic_NoRetrievalOKForSynthesizer(t *testing.T) {
 	}
 }
 
-// TestFoldDeterministic_WorkspaceGroundingSatisfiesRetrieval: a coding node
-// that consulted the repo on disk (clone and/or reads) instead of the web is
-// grounded - grounded_in_retrieval must not fire on zero web activity alone.
+// A coding node that consulted the repo on disk is grounded despite zero web activity.
 func TestFoldDeterministic_WorkspaceGroundingSatisfiesRetrieval(t *testing.T) {
 	for name, act := range map[string]workerActivity{
 		"clone":               {clonedRepos: []string{"https://github.com/org/repo"}, clonedDirs: []string{"repo"}},
@@ -533,9 +510,7 @@ func TestRenderUIRecordsSurfaceAndKey(t *testing.T) {
 	}
 }
 
-// TestFoldDeterministic_RetrievalPresentNotPenalized: any recorded retrieval
-// (even just search results seen) satisfies the grounding check; citation
-// backing is then graded by citationScore as before.
+// Any recorded retrieval, even just search results seen, satisfies grounding.
 func TestFoldDeterministic_RetrievalPresentNotPenalized(t *testing.T) {
 	act := workerActivity{seen: map[string]string{"https://ex.com/a": "snippet"}}
 	v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.9}}}
@@ -546,9 +521,7 @@ func TestFoldDeterministic_RetrievalPresentNotPenalized(t *testing.T) {
 	}
 }
 
-// TestFormatCriteriaDetail: 0.9 and 1.0 must render distinguishably - the
-// bug this guards against was %.0f collapsing both to "1" and hiding score
-// compression in the debug log.
+// 0.9 and 1.0 must render distinguishably in the debug log.
 func TestFormatCriteriaDetail(t *testing.T) {
 	got := formatCriteriaDetail(map[string]criterionScore{
 		"grounded": {Score: 0.9, Reason: "minor gap"},
