@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -134,7 +133,7 @@ func exportChats(ctx context.Context, st *store.Store, opts ExportOpts) (chats [
 			return nil, false, fmt.Errorf("dataset export: list chats: %w", err)
 		}
 		for _, c := range page {
-			if opts.Repo != "" && chatRepo(c) != opts.Repo {
+			if repo, _, _ := c.GitHub(); opts.Repo != "" && repo != opts.Repo {
 				continue
 			}
 			if !opts.Since.IsZero() && c.UpdatedAt.Before(opts.Since) {
@@ -178,55 +177,15 @@ func exportItemID(dataset, chatID, nodeID string) string {
 	return "quack-" + hex.EncodeToString(sum[:])[:32]
 }
 
-// chatOriginDecoded unmarshals Chat.Origin (an extension-stamped sdk.ChatOrigin,
-// see the github extension's refreshChatOrigin), reporting ok=false when absent/unset.
-func chatOriginDecoded(c store.Chat) (extsdk.ChatOrigin, bool) {
-	if c.Origin == "" {
-		return extsdk.ChatOrigin{}, false
-	}
-	var o extsdk.ChatOrigin
-	if err := json.Unmarshal([]byte(c.Origin), &o); err != nil {
-		return extsdk.ChatOrigin{}, false
-	}
-	return o, true
-}
-
-// chatRepo/chatMerged/chatHref read the extension-set Origin (the only field
-// production writes - SetChatOrigin), falling back to the github_repo/state/url
-// columns (no production writer today, kept for older or hand-seeded rows).
-func chatRepo(c store.Chat) string {
-	if o, ok := chatOriginDecoded(c); ok {
-		if vals := o.Labels["repo"]; len(vals) > 0 && vals[0].Value != "" {
-			return vals[0].Value
-		}
-	}
-	return c.GithubRepo
-}
-
-func chatMerged(c store.Chat) bool {
-	if o, ok := chatOriginDecoded(c); ok && o.State != "" {
-		return o.State == extsdk.SubjectMerged
-	}
-	// Legacy fallback for pre-State rows (Origin absent, or stamped before
-	// State existed): no State is known, so GithubState is all that's known.
-	return c.GithubState == "merged"
-}
-
-func chatHref(c store.Chat) string {
-	if o, ok := chatOriginDecoded(c); ok && o.Href != "" {
-		return o.Href
-	}
-	return c.GithubURL
-}
-
 func exportItem(ctx context.Context, lf *langfusegen.ClientWithResponses, dataset string, chat store.Chat, key bundle.StreamKey, run bundle.NodeRun) (ExportItem, error) {
-	input := datasetItemInput{Task: run.Task, DiffRef: chatHref(chat)}
+	repo, href, state := chat.GitHub()
+	input := datasetItemInput{Task: run.Task, DiffRef: href}
 	var expected any
-	if chatMerged(chat) && run.Answer != "" {
+	if state == string(extsdk.SubjectMerged) && run.Answer != "" {
 		expected = run.Answer
 	}
 	meta := datasetItemMetadata{
-		Repo: chatRepo(chat), Agent: key.Agent, ChatID: chat.ID, NodeID: key.Node,
+		Repo: repo, Agent: key.Agent, ChatID: chat.ID, NodeID: key.Node,
 		PromptArtifact: "system/" + key.Agent, PromptSource: run.PromptSource,
 		PromptVersionID: run.PromptVersionID, QuackVersion: run.QuackVersion,
 		Artifacts: run.Artifacts, Plugins: run.Plugins,

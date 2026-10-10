@@ -10,8 +10,6 @@ import (
 	"strings"
 	"time"
 
-	extsdk "github.com/fagerbergj/quack-extensions/sdk"
-
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/schema"
@@ -423,18 +421,14 @@ func (h *Handler) RescopeMemories(w http.ResponseWriter, r *http.Request) {
 // format workspace.RepoIdentity produces, so a rescoped point lands in the SAME bucket a live worker's RepoKey would compute.
 func (h *Handler) chatRepo(ctx context.Context, chatID string) (string, bool) {
 	c, err := h.store.GetChat(ctx, chatID)
-	if err != nil || c == nil || c.Origin == "" {
+	if err != nil || c == nil {
 		return "", false
 	}
-	var origin extsdk.ChatOrigin
-	if err := json.Unmarshal([]byte(c.Origin), &origin); err != nil {
+	repo, _, _ := c.GitHub()
+	if repo == "" {
 		return "", false
 	}
-	vals, ok := origin.Labels["repo"]
-	if !ok || len(vals) == 0 || vals[0].Value == "" {
-		return "", false
-	}
-	repoKey := workspace.NormalizeRepoURL("github.com/" + vals[0].Value)
+	repoKey := workspace.NormalizeRepoURL("github.com/" + repo)
 	if repoKey == "" {
 		return "", false
 	}

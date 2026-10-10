@@ -3,6 +3,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -18,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	extsdk "github.com/fagerbergj/quack-extensions/sdk"
 	"github.com/glebarez/sqlite"
 	"github.com/google/uuid"
 	"google.golang.org/adk/v2/artifact"
@@ -43,7 +45,7 @@ type Chat struct {
 	SystemPrompt string    `json:"system_prompt"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
-	// Set only for GitHub-originated chats (id github-<owner>-<repo>-<number>).
+	// Legacy GitHub columns: nothing writes them now, so read them through GitHub().
 	GithubRepo  string `json:"github_repo,omitempty"`
 	GithubURL   string `json:"github_url,omitempty"`
 	GithubState string `json:"github_state,omitempty"`
@@ -65,6 +67,19 @@ type Chat struct {
 	// Origin is an extension-set sdk.ChatOrigin, marshaled opaquely (#275). Not yet
 	// API-exposed - ChatSummary.origin is a follow-up once the SPA renders it generically.
 	Origin string `json:"-"`
+}
+
+// GitHub returns the chat's originating repo, link and state from the github extension's Origin,
+// falling back per field to the legacy columns for rows stamped before Origin carried them.
+func (c Chat) GitHub() (repo, href, state string) {
+	var o extsdk.ChatOrigin
+	if c.Origin != "" && json.Unmarshal([]byte(c.Origin), &o) == nil && o.Extension == "github" {
+		if v := o.Labels["repo"]; len(v) > 0 {
+			repo = v[0].Value
+		}
+		href, state = o.Href, string(o.State)
+	}
+	return cmp.Or(repo, c.GithubRepo), cmp.Or(href, c.GithubURL), cmp.Or(state, c.GithubState)
 }
 
 // ChatTurn is one user→assistant exchange. Its ID is the response_id in the REST API.
