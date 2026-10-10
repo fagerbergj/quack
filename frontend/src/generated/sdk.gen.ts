@@ -606,7 +606,7 @@ export const listNodeMemories = <ThrowOnError extends boolean = false>(options: 
 /**
  * Run the forgetting-rule sweep on demand
  *
- * Evaluates every configured memory store's `memory.forgetting.rules`
+ * Evaluates the built-in forgetting rules on every configured memory store
  * (epic #1255 P3) against every currently-valid memory, first rule
  * match wins. `dry_run: true` reports what each rule would do without
  * invalidating anything; otherwise it applies invalidations exactly as

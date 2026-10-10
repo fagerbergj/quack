@@ -47,7 +47,7 @@ func (s *Store) ApplyOutcome(ctx context.Context, ids []string, o OutcomeSignal)
 	if o.Kind != OutcomeReinforced && o.Kind != OutcomeInvalidated {
 		return 0, fmt.Errorf("memory: ApplyOutcome: unknown outcome kind %q", o.Kind)
 	}
-	touched, err := s.idx.updateStatus(ctx, ids, o)
+	touched, err := s.updateStatus(ctx, ids, o)
 	if err != nil {
 		return 0, fmt.Errorf("memory: apply outcome: %w", err)
 	}
@@ -101,7 +101,7 @@ func (s *Store) ApplyVotes(ctx context.Context, votes []Vote, invalidateThreshol
 		return 0, nil
 	}
 	deduped := dedupeVotes(votes)
-	touched, err := s.idx.applyVotes(ctx, deduped, invalidateThreshold)
+	touched, err := s.applyVotes(ctx, deduped, invalidateThreshold)
 	if err != nil {
 		return 0, fmt.Errorf("memory: apply votes: %w", err)
 	}
@@ -132,7 +132,7 @@ func (s *Store) SetHumanVote(ctx context.Context, id, vote string) error {
 	default:
 		return fmt.Errorf("memory: SetHumanVote: unknown vote %q", vote)
 	}
-	touched, err := s.idx.setHumanVote(ctx, id, vote, DefaultInvalidateThreshold)
+	touched, err := s.setHumanVote(ctx, id, vote, DefaultInvalidateThreshold)
 	if err != nil {
 		return fmt.Errorf("memory: set human vote: %w", err)
 	}

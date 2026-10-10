@@ -147,35 +147,15 @@ applied ONLY when the round passes (`vetting.applyMemoryVotesOnPass`) - a failed
 **Reinforcement is recall-based, not birth-based.** `ApplyOutcome`'s
 signature changed from `(ctx, chatID, outcome)` to `(ctx, ids, outcome)`: the caller (`serve.applyMemoryOutcome`) folds the chat's ledger for its `memory.recall` entries and passes that id set - memories RECALLED into the chat, not memories MINTED there (minting still stamps provenance via `Commit`, it just no longer drives what gets reinforced). Reinforce is +1 upvote (mirrored into `reinforcement_count`/`status=reinforced`) with actor `outcome-feedback`, but never promotes tier - a merged chat is audit trail, not proof the content held up; tier promotion is judge- or human-supported-vote only (epic #1456 P1). Closed-unmerged invalidation now additionally skips any id already at tier `verified` - a verified memory recalled into a closed-unmerged chat gets no vote at all, not a demotion.
 
-**Migration.** New fields default zero-value; a one-time, idempotent boot
-backfill (`index.backfillTiers`, logged once per boot with a nonzero count) sets `tier=verified, upvotes=reinforcement_count` where `reinforcement_count >= 1`, else `tier=unverified` - skipping any point that already carries a tier, so a second boot (or a vote landing between boots) touches nothing. A second boot backfill (`index.backfillJudgeSupport`, epic #1456 P1) then resolves every point left `tier=verified` at `supported=0`: `upvotes - reinforcement_count` is the historical count of non-reinforcement (judge/human) upvotes, so a positive value backfills `supported` to that (keeping tier verified - this is what recovers a legacy point's real judge support instead of leaving it to look unsupported and get wrongly invalidated by its next `not_relevant` vote), while zero demotes to `unverified`. Idempotent both ways: a backfilled `supported` or a demoted `tier` no longer matches either branch's criteria.
+**Migration.** New fields default zero-value. The boot backfills that once gave legacy points a tier and a `supported` count (v0.53.0) were removed once every deployment had run them.
 
 **Observability.** `quack memory show <id>` prints votes/tier/supported/not_relevant/last
 recalled/last upvoted. `Memory`/`MemoryList` (openapi.yaml) expose the new fields; no frontend rendering change (P4).
 
 ## 8c. Epic #1255 P3: criteria builder, age-out, retention
 
-`stores.<name>.consolidation.forgetting.rules` is an ordered list of `{when: <expr>, then: invalidate | demote | keep}`, evaluated by `Store.forgetOnce`
-in the existing nightly sweep, right before `retentionOnce`. First match wins; no match keeps the memory. `when` is a tiny hand-written expression language (`internal/memoryrules`, `Evaluate`) - no external dependency, no reflection:
-
-- fields: `upvotes`, `downvotes`, `supported`, `not_relevant`, `score`
-  (`vote_score`), `recalls` (all int), `age_days`, `days_since_upvote`,
-  `days_since_recall`, `days_since_minted` (int, days since
-  `minted_at`/`last_upvoted_at`/`last_recalled_at`/`minted_at`; a memory
-  never upvoted/recalled reads `days_since_upvote`/`days_since_recall` as
-  `age_days` - "never" is not zero; `days_since_minted` falls back to
-  `valid_from`, then the legacy `timestamp` column, for a row minted
-  before `minted_at` existed - `timestamp` alone is unsafe because a
-  consolidator UPDATE re-stamps it to now on every reword),
-  `tier` / `scope` (string).
-- operators: `== != < <= > >=`, `&&`, `||`, `!`, `(...)`, integer and
-  double-quoted string literals. `<`/`<=`/`>`/`>=` require both sides
-  numeric; `==`/`!=` also compare strings. Precedence, low to high: `||`,
-  `&&`, unary `!`, comparison. `scope` is compared with plain string
-  equality (`scope == "repo:foo"` is how a caller expresses a prefix-shaped
-  match - there is no dedicated prefix operator).
-
-Default (unset `forgetting` key), in order (epic #1456 P2, usage-based - supersedes the epic #1255 P3 age-only set):
+The forgetting rules are built in (`memoryrules.DefaultRules`, plain Go predicates; there is no config knob). `Store.forgetOnce`
+evaluates them in the existing nightly sweep, right before `retentionOnce`. First match wins; no match keeps the memory. In order:
 
 ```text
 tier == "unverified" && supported == 0 && recalls == 0 && days_since_minted > 30 -> invalidate (never recalled)
@@ -185,13 +165,15 @@ tier == "verified" && days_since_upvote > 90                                    
 tier == "verified"                                                               -> keep
 ```
 
-**Validation.** `config.Validate()` fully parses and validates each rule's
-expression via `internal/memoryrules` (a leaf package with no quack imports, so `internal/config` can use it directly) - a bad rule fails `quack server validate`/config load with the rule index and the bad token's position, before the server ever starts.
+The left column is each rule's label, shown in sweep reports. `score` is `vote_score`; a missing `tier` reads as `unverified`.
+`days_since_upvote` reads a never-upvoted memory's age since `minted_at` ("never" is not zero). `days_since_minted` falls back to
+`valid_from`, then the legacy `timestamp` column, for a row minted before `minted_at` existed; `timestamp` alone is unsafe because a
+consolidator UPDATE re-stamps it to now on every reword.
 
 **Sweep.** `Store.ForgetSweep(ctx, dryRun)` is the one code path both the
-nightly job and `quack memory sweep [--dry-run]` (`POST /api/v1/memories/sweep`) call. It pages every currently-valid memory (`forEachSweepPage`, same pagination the consolidator already uses), evaluates the rules in order, and for a `then: invalidate` match calls the same sticky `idx.invalidateByID` every other invalidation path uses, with reason `"never recalled"`/`"recalled without support"` for the two default rules that name one, else `"rule <index>: <expr>"` (the reason isn't config-settable - `memoryrules.Rule.Reason` only carries the built-in defaults' names), and `memory_ops` actor `sweep` (a new actor, distinct from `consolidator` and `outcome-feedback`). `dryRun` skips the write and returns a report per rule (matched count + up to 5 example id/content pairs) plus a `kept` count for no-match - never lists more than that per rule.
+nightly job and `quack memory sweep [--dry-run]` (`POST /api/v1/memories/sweep`) call. It pages every currently-valid memory (`forEachSweepPage`, same pagination the consolidator already uses), evaluates the rules in order, and for an invalidate match calls the same sticky `invalidateByID` every other invalidation path uses, with reason `"never recalled"`/`"recalled without support"` for the two rules that name one, else `"rule <index>: <label>"`, and `memory_ops` actor `sweep` (a new actor, distinct from `consolidator` and `outcome-feedback`). `dryRun` skips the write and returns a report per rule (matched count + up to 5 example id/content pairs) plus a `kept` count for no-match - never lists more than that per rule.
 
-**Demote (epic #1456 P2).** A `then: demote` match sets `tier` back to
+**Demote (epic #1456 P2).** A demote match sets `tier` back to
 `unverified` and writes one `memory_ops` row, actor `consolidator`, reason always `"support decayed"` regardless of which rule matched. `supported` is left untouched, so the row re-promotes on its own next vote (of any kind - tier is recomputed from `supported` on every vote) or consolidator UPDATE, not only a fresh supported vote. A demote on a row already `unverified` is a no-op - no write, no `memory_ops` row.
 
 **Concurrency.** A memory's votes can change between `ForgetSweep`'s read

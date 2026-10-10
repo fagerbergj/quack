@@ -290,11 +290,11 @@ export type SweepMemoriesBody = {
 
 export type SweepRuleResult = {
     /**
-     * The rule's position in memory.forgetting.rules (or the built-in defaults), first match wins.
+     * The rule's position in the built-in forgetting rules, first match wins.
      */
     index: number;
     /**
-     * The rule's expression, verbatim.
+     * The rule's condition, as a human-readable label.
      */
     when: string;
     then: 'invalidate' | 'demote' | 'keep';

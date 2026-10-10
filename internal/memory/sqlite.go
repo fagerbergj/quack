@@ -3,7 +3,6 @@ package memory
 import (
 	"context"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -81,6 +80,23 @@ type memoryRow struct {
 
 func (memoryRow) TableName() string { return "memories" }
 
+// toScored converts a row; withVector decodes the already-loaded blob, no extra query.
+func (r memoryRow) toScored(withVector bool) scored {
+	p := scored{
+		ID: r.ID, Content: r.Content, Author: r.Author, Timestamp: r.Timestamp, Kind: r.Kind, Scope: r.Scope,
+		ChatID: r.ChatID, NodeID: r.NodeID, Source: r.Source, MintedAt: r.MintedAt,
+		Status: r.Status, ValidFrom: r.ValidFrom, InvalidatedAt: r.InvalidatedAt,
+		InvalidationReason: r.InvalidationReason, ReinforcementCount: r.ReinforcementCount,
+		Upvotes: r.Upvotes, Downvotes: r.Downvotes, Supported: r.Supported, NotRelevant: r.NotRelevant, VoteScore: r.VoteScore, Tier: r.Tier,
+		LastUpvotedAt: r.LastUpvotedAt, Recalls: r.Recalls, LastRecalledAt: r.LastRecalledAt,
+		AbsorbedIDs: splitIDs(r.AbsorbedIDs), HumanVote: r.HumanVote, ConsolidateFP: r.ConsolidateFP,
+	}
+	if withVector {
+		p.Vector = bytesToVec(r.Vector)
+	}
+	return p
+}
+
 // sqliteIndex is the SQLite-backed implementation of index (brute-force cosine).
 type sqliteIndex struct {
 	db   *gorm.DB
@@ -107,38 +123,9 @@ func (x *sqliteIndex) query(ctx context.Context, buckets []string, vec []float32
 	}
 	out := make([]scored, 0, len(rows))
 	for _, r := range rows {
-		rowVec := bytesToVec(r.Vector)
-		out = append(out, scored{
-			ID:                 r.ID,
-			Content:            r.Content,
-			Author:             r.Author,
-			Timestamp:          r.Timestamp,
-			Kind:               r.Kind,
-			Scope:              r.Scope,
-			ChatID:             r.ChatID,
-			NodeID:             r.NodeID,
-			Source:             r.Source,
-			MintedAt:           r.MintedAt,
-			Status:             r.Status,
-			ValidFrom:          r.ValidFrom,
-			InvalidatedAt:      r.InvalidatedAt,
-			InvalidationReason: r.InvalidationReason,
-			ReinforcementCount: r.ReinforcementCount,
-			Upvotes:            r.Upvotes,
-			Downvotes:          r.Downvotes,
-			Supported:          r.Supported,
-			NotRelevant:        r.NotRelevant,
-			VoteScore:          r.VoteScore,
-			Tier:               r.Tier,
-			LastUpvotedAt:      r.LastUpvotedAt,
-			Recalls:            r.Recalls,
-			LastRecalledAt:     r.LastRecalledAt,
-			AbsorbedIDs:        splitIDs(r.AbsorbedIDs),
-			HumanVote:          r.HumanVote,
-			ConsolidateFP:      r.ConsolidateFP,
-			Score:              cosine(vec, rowVec),
-			Vector:             rowVec,
-		})
+		p := r.toScored(true)
+		p.Score = cosine(vec, p.Vector)
+		out = append(out, p)
 	}
 	// Highest cosine first; cap to k. ponytail: O(n) scan + sort - fine at memory
 	// scale (hundreds–thousands); revisit a native index only if a corpus outgrows it.
@@ -188,42 +175,9 @@ func (x *sqliteIndex) list(ctx context.Context, buckets []string, offset, limit 
 	}
 	out := make([]scored, len(rows))
 	for i, r := range rows {
-		out[i] = scored{
-			ID: r.ID, Content: r.Content, Author: r.Author, Timestamp: r.Timestamp, Kind: r.Kind, Scope: r.Scope,
-			ChatID: r.ChatID, NodeID: r.NodeID, Source: r.Source, MintedAt: r.MintedAt,
-			Status: r.Status, ValidFrom: r.ValidFrom, InvalidatedAt: r.InvalidatedAt,
-			InvalidationReason: r.InvalidationReason, ReinforcementCount: r.ReinforcementCount,
-			Upvotes: r.Upvotes, Downvotes: r.Downvotes, Supported: r.Supported, NotRelevant: r.NotRelevant, VoteScore: r.VoteScore, Tier: r.Tier,
-			LastUpvotedAt: r.LastUpvotedAt, Recalls: r.Recalls, LastRecalledAt: r.LastRecalledAt,
-			AbsorbedIDs: splitIDs(r.AbsorbedIDs), HumanVote: r.HumanVote, ConsolidateFP: r.ConsolidateFP,
-		}
-		if withVectors {
-			out[i].Vector = bytesToVec(r.Vector) // already loaded on the row; no extra query
-		}
+		out[i] = r.toScored(withVectors)
 	}
 	return out, nil
-}
-
-// getByID fetches one row by id regardless of status - the caller decides
-// what an invalidated point means for its purpose.
-func (x *sqliteIndex) getByID(ctx context.Context, id string) (scored, bool, error) {
-	var r memoryRow
-	err := x.db.WithContext(ctx).Where("collection = ? AND id = ?", x.coll, id).First(&r).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return scored{}, false, nil
-	}
-	if err != nil {
-		return scored{}, false, fmt.Errorf("memory: sqlite get by id: %w", err)
-	}
-	return scored{
-		ID: r.ID, Content: r.Content, Author: r.Author, Timestamp: r.Timestamp, Kind: r.Kind, Scope: r.Scope,
-		ChatID: r.ChatID, NodeID: r.NodeID, Source: r.Source, MintedAt: r.MintedAt,
-		Status: r.Status, ValidFrom: r.ValidFrom, InvalidatedAt: r.InvalidatedAt,
-		InvalidationReason: r.InvalidationReason, ReinforcementCount: r.ReinforcementCount,
-		Upvotes: r.Upvotes, Downvotes: r.Downvotes, Supported: r.Supported, NotRelevant: r.NotRelevant, VoteScore: r.VoteScore, Tier: r.Tier,
-		LastUpvotedAt: r.LastUpvotedAt, Recalls: r.Recalls, LastRecalledAt: r.LastRecalledAt,
-		AbsorbedIDs: splitIDs(r.AbsorbedIDs), HumanVote: r.HumanVote, ConsolidateFP: r.ConsolidateFP,
-	}, true, nil
 }
 
 func (x *sqliteIndex) count(ctx context.Context, buckets []string, includeInvalidated bool, tier string) (int, error) {
@@ -315,6 +269,39 @@ func (x *sqliteIndex) upsert(ctx context.Context, pts []point) error {
 	return nil
 }
 
+func (x *sqliteIndex) getMany(ctx context.Context, ids []string) (map[string]scored, error) {
+	out := map[string]scored{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	var rows []memoryRow
+	if err := x.db.WithContext(ctx).Where("collection = ? AND id IN ?", x.coll, ids).Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("memory: sqlite get: %w", err)
+	}
+	for _, r := range rows {
+		out[r.ID] = r.toScored(false)
+	}
+	return out, nil
+}
+
+// patch is one autocommit UPDATE; payloadScope's wire name differs from the scope column.
+func (x *sqliteIndex) patch(ctx context.Context, ids []string, set map[string]any) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	cols := make(map[string]any, len(set))
+	for k, v := range set {
+		if k == payloadScope {
+			k = "scope"
+		}
+		cols[k] = v
+	}
+	if err := x.db.WithContext(ctx).Model(&memoryRow{}).Where("collection = ? AND id IN ?", x.coll, ids).Updates(cols).Error; err != nil {
+		return fmt.Errorf("memory: sqlite patch: %w", err)
+	}
+	return nil
+}
+
 func (x *sqliteIndex) remove(ctx context.Context, ids []string) (int, error) {
 	if len(ids) == 0 {
 		return 0, nil
@@ -326,192 +313,6 @@ func (x *sqliteIndex) remove(ctx context.Context, ids []string) (int, error) {
 		return 0, fmt.Errorf("memory: sqlite delete: %w", res.Error)
 	}
 	return int(res.RowsAffected), nil
-}
-
-// invalidateByID soft-invalidates ids via UPDATE, never DELETE, and reports how many existed.
-func (x *sqliteIndex) invalidateByID(ctx context.Context, ids []string, reason string) (int, error) {
-	if len(ids) == 0 {
-		return 0, nil
-	}
-	res := x.db.WithContext(ctx).Model(&memoryRow{}).
-		Where("collection = ? AND id IN ?", x.coll, ids).
-		Updates(map[string]any{
-			"status":              string(StatusInvalidated),
-			"invalidated_at":      nowRFC3339(),
-			"invalidation_reason": reason,
-		})
-	if res.Error != nil {
-		return 0, fmt.Errorf("memory: sqlite invalidate: %w", res.Error)
-	}
-	return int(res.RowsAffected), nil
-}
-
-// updateStatus applies o to every non-invalidated id (and, for invalidate, non-verified id) and
-// returns those touched. One UPDATE per row since the counts differ per row.
-func (x *sqliteIndex) updateStatus(ctx context.Context, ids []string, o OutcomeSignal) ([]string, error) {
-	if len(ids) == 0 {
-		return nil, nil
-	}
-	q := x.db.WithContext(ctx).
-		Where("collection = ? AND id IN ?", x.coll, ids).
-		Where("status IS NULL OR status <> ?", string(StatusInvalidated))
-	if o.Kind == OutcomeInvalidated {
-		q = q.Where("tier IS NULL OR tier <> ?", TierVerified)
-	}
-	var rows []memoryRow
-	if err := q.Find(&rows).Error; err != nil {
-		return nil, fmt.Errorf("memory: sqlite outcome query: %w", err)
-	}
-	if len(rows) == 0 {
-		return nil, nil
-	}
-	ts := nowRFC3339()
-	touched := make([]string, len(rows))
-	for i, r := range rows {
-		touched[i] = r.ID
-		var upd map[string]any
-		switch o.Kind {
-		case OutcomeReinforced:
-			// Never writes "tier": tier tracks judge/human support only.
-			upd = map[string]any{
-				"status": string(StatusReinforced), "reinforcement_count": r.ReinforcementCount + 1,
-				"upvotes": r.Upvotes + 1, "vote_score": reinforcedVoteScore(r.Upvotes, r.Downvotes), "last_upvoted_at": ts,
-			}
-		case OutcomeInvalidated:
-			upd = map[string]any{"status": string(StatusInvalidated), "invalidated_at": ts, "invalidation_reason": o.Reason}
-		}
-		if err := x.db.WithContext(ctx).Model(&memoryRow{}).
-			Where("collection = ? AND id = ?", x.coll, r.ID).
-			Updates(upd).Error; err != nil {
-			return nil, fmt.Errorf("memory: sqlite outcome update: %w", err)
-		}
-	}
-	return touched, nil
-}
-
-// demoteTier sets tier=unverified for ids currently at tier verified - an
-// already-unverified row matches no WHERE clause here, so it's a true no-op.
-func (x *sqliteIndex) demoteTier(ctx context.Context, ids []string) ([]string, error) {
-	if len(ids) == 0 {
-		return nil, nil
-	}
-	var rows []memoryRow
-	if err := x.db.WithContext(ctx).
-		Where("collection = ? AND id IN ? AND tier = ?", x.coll, ids, TierVerified).
-		Find(&rows).Error; err != nil {
-		return nil, fmt.Errorf("memory: sqlite demote query: %w", err)
-	}
-	if len(rows) == 0 {
-		return nil, nil
-	}
-	touched := make([]string, len(rows))
-	for i, r := range rows {
-		touched[i] = r.ID
-	}
-	if err := x.db.WithContext(ctx).Model(&memoryRow{}).
-		Where("collection = ? AND id IN ?", x.coll, touched).
-		Update("tier", TierUnverified).Error; err != nil {
-		return nil, fmt.Errorf("memory: sqlite demote: %w", err)
-	}
-	return touched, nil
-}
-
-// applyVotes applies each vote to a non-invalidated row; a net score <= invalidateThreshold also
-// invalidates. Returns the ids touched.
-func (x *sqliteIndex) applyVotes(ctx context.Context, votes []Vote, invalidateThreshold int) ([]string, error) {
-	if len(votes) == 0 {
-		return nil, nil
-	}
-	ids := make([]string, len(votes))
-	for i, v := range votes {
-		ids[i] = v.MemoryID
-	}
-	var rows []memoryRow
-	if err := x.db.WithContext(ctx).
-		Where("collection = ? AND id IN ?", x.coll, ids).
-		Where("status IS NULL OR status <> ?", string(StatusInvalidated)).
-		Find(&rows).Error; err != nil {
-		return nil, fmt.Errorf("memory: sqlite vote query: %w", err)
-	}
-	byID := make(map[string]memoryRow, len(rows))
-	for _, r := range rows {
-		byID[r.ID] = r
-	}
-	ts := nowRFC3339()
-	var touched []string
-	for _, v := range votes {
-		r, ok := byID[v.MemoryID]
-		if !ok {
-			continue
-		}
-		upd := voteUpdate(r, v, ts, invalidateThreshold)
-		if err := x.db.WithContext(ctx).Model(&memoryRow{}).
-			Where("collection = ? AND id = ?", x.coll, r.ID).
-			Updates(upd).Error; err != nil {
-			return nil, fmt.Errorf("memory: sqlite vote update: %w", err)
-		}
-		touched = append(touched, r.ID)
-	}
-	return touched, nil
-}
-
-// voteUpdate builds one row's column updates from computeVoteDelta.
-func voteUpdate(r memoryRow, v Vote, ts string, invalidateThreshold int) map[string]any {
-	d := computeVoteDelta(r.Upvotes, r.Downvotes, r.Supported, r.NotRelevant, ts, v, invalidateThreshold)
-	upd := map[string]any{
-		"upvotes": d.Upvotes, "downvotes": d.Downvotes, "supported": d.Supported, "not_relevant": d.NotRelevant,
-		"vote_score": d.VoteScore, "tier": d.Tier,
-	}
-	if d.LastUpvotedAt != "" {
-		upd["last_upvoted_at"] = d.LastUpvotedAt
-	}
-	if d.Invalidate {
-		upd["status"] = string(StatusInvalidated)
-		upd["invalidated_at"] = ts
-		upd["invalidation_reason"] = d.InvalidateReason
-	}
-	return upd
-}
-
-// setHumanVote writes the toggle-safe human vote delta in one UPDATE. Returns false if id
-// doesn't exist or is invalidated.
-func (x *sqliteIndex) setHumanVote(ctx context.Context, id, vote string, invalidateThreshold int) (bool, error) {
-	var r memoryRow
-	err := x.db.WithContext(ctx).
-		Where("collection = ? AND id = ?", x.coll, id).
-		Where("status IS NULL OR status <> ?", string(StatusInvalidated)).
-		First(&r).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("memory: sqlite human-vote query: %w", err)
-	}
-	ts := nowRFC3339()
-	d := computeHumanVoteDelta(r.Upvotes, r.Downvotes, r.Supported, r.HumanVote, vote, ts, invalidateThreshold)
-	upd := map[string]any{
-		"upvotes": d.Upvotes, "downvotes": d.Downvotes, "supported": d.Supported,
-		"vote_score": d.VoteScore, "tier": d.Tier,
-	}
-	if vote == HumanVoteNone {
-		upd["human_vote"] = ""
-	} else {
-		upd["human_vote"] = vote
-	}
-	if d.LastUpvotedAt != "" {
-		upd["last_upvoted_at"] = d.LastUpvotedAt
-	}
-	if d.Invalidate {
-		upd["status"] = string(StatusInvalidated)
-		upd["invalidated_at"] = ts
-		upd["invalidation_reason"] = OutcomeReasonNetScore
-	}
-	if err := x.db.WithContext(ctx).Model(&memoryRow{}).
-		Where("collection = ? AND id = ?", x.coll, id).
-		Updates(upd).Error; err != nil {
-		return false, fmt.Errorf("memory: sqlite human-vote update: %w", err)
-	}
-	return true, nil
 }
 
 // recordRecall bumps recalls and stamps last_recalled_at for ids in one
@@ -527,116 +328,6 @@ func (x *sqliteIndex) recordRecall(ctx context.Context, ids []string) error {
 		return fmt.Errorf("memory: sqlite record recall: %w", err)
 	}
 	return nil
-}
-
-// backfillTiers gives every tierless row a tier. Idempotent: only "" tier rows match. Two statements
-// because the upvotes mirror value differs between verified and unverified.
-func (x *sqliteIndex) backfillTiers(ctx context.Context) (int, error) {
-	db := x.db.WithContext(ctx).Model(&memoryRow{}).
-		Where("collection = ? AND (tier IS NULL OR tier = '')", x.coll)
-	res := db.Where("reinforcement_count >= 1").
-		Updates(map[string]any{"tier": TierVerified, "upvotes": gorm.Expr("reinforcement_count"), "vote_score": gorm.Expr("reinforcement_count")})
-	if res.Error != nil {
-		return 0, fmt.Errorf("memory: sqlite backfill verified: %w", res.Error)
-	}
-	touched := res.RowsAffected
-	res = x.db.WithContext(ctx).Model(&memoryRow{}).
-		Where("collection = ? AND (tier IS NULL OR tier = '') AND reinforcement_count < 1", x.coll).
-		Updates(map[string]any{"tier": TierUnverified})
-	if res.Error != nil {
-		return 0, fmt.Errorf("memory: sqlite backfill unverified: %w", res.Error)
-	}
-	return int(touched + res.RowsAffected), nil
-}
-
-// backfillJudgeSupport sets supported = upvotes - reinforcement_count on verified rows still at 0,
-// demoting them when that is not positive. Idempotent both ways.
-func (x *sqliteIndex) backfillJudgeSupport(ctx context.Context) (int, error) {
-	verified := x.db.WithContext(ctx).Model(&memoryRow{}).
-		Where("collection = ? AND tier = ? AND upvotes > reinforcement_count AND (supported IS NULL OR supported = 0)", x.coll, TierVerified).
-		Updates(map[string]any{"supported": gorm.Expr("upvotes - reinforcement_count")})
-	if verified.Error != nil {
-		return 0, fmt.Errorf("memory: sqlite backfill judge support (verified): %w", verified.Error)
-	}
-	unverified := x.db.WithContext(ctx).Model(&memoryRow{}).
-		Where("collection = ? AND tier = ? AND upvotes <= reinforcement_count AND (supported IS NULL OR supported = 0)", x.coll, TierVerified).
-		Updates(map[string]any{"tier": TierUnverified, "supported": 0})
-	if unverified.Error != nil {
-		return 0, fmt.Errorf("memory: sqlite backfill judge support (unverified): %w", unverified.Error)
-	}
-	return int(verified.RowsAffected + unverified.RowsAffected), nil
-}
-
-// updateBucket moves a row to a new bucket, unconditionally.
-func (x *sqliteIndex) updateBucket(ctx context.Context, id, bucket string) error {
-	if err := x.db.WithContext(ctx).Model(&memoryRow{}).
-		Where("collection = ? AND id = ?", x.coll, id).
-		Update("scope", bucket).Error; err != nil {
-		return fmt.Errorf("memory: sqlite rescope: %w", err)
-	}
-	return nil
-}
-
-// stampConsolidateFP sets consolidate_fp on every id in one UPDATE.
-func (x *sqliteIndex) stampConsolidateFP(ctx context.Context, ids []string, fp string) error {
-	if len(ids) == 0 {
-		return nil
-	}
-	if err := x.db.WithContext(ctx).Model(&memoryRow{}).
-		Where("collection = ? AND id IN ?", x.coll, ids).
-		Update("consolidate_fp", fp).Error; err != nil {
-		return fmt.Errorf("memory: sqlite stamp consolidate fingerprint: %w", err)
-	}
-	return nil
-}
-
-// absorb folds absorbedID's votes/timestamps/lineage into survivorID and invalidates absorbedID.
-// False (no-op) if either row is missing or absorbedID is already invalidated.
-func (x *sqliteIndex) absorb(ctx context.Context, survivorID, absorbedID, reason string) (bool, error) {
-	var rows []memoryRow
-	if err := x.db.WithContext(ctx).
-		Where("collection = ? AND id IN ?", x.coll, []string{survivorID, absorbedID}).
-		Find(&rows).Error; err != nil {
-		return false, fmt.Errorf("memory: sqlite absorb query: %w", err)
-	}
-	var sv, ab *memoryRow
-	for i := range rows {
-		switch rows[i].ID {
-		case survivorID:
-			sv = &rows[i]
-		case absorbedID:
-			ab = &rows[i]
-		}
-	}
-	if sv == nil || ab == nil || ab.Status == string(StatusInvalidated) {
-		return false, nil
-	}
-	d := computeAbsorbDelta(
-		absorbFields{Upvotes: sv.Upvotes, Downvotes: sv.Downvotes, Supported: sv.Supported, NotRelevant: sv.NotRelevant, LastUpvotedAt: sv.LastUpvotedAt, LastRecalledAt: sv.LastRecalledAt, AbsorbedIDs: splitIDs(sv.AbsorbedIDs)},
-		absorbFields{Upvotes: ab.Upvotes, Downvotes: ab.Downvotes, Supported: ab.Supported, NotRelevant: ab.NotRelevant, LastUpvotedAt: ab.LastUpvotedAt, LastRecalledAt: ab.LastRecalledAt, AbsorbedIDs: splitIDs(ab.AbsorbedIDs)},
-		absorbedID,
-	)
-	upd := map[string]any{
-		"upvotes": d.Upvotes, "downvotes": d.Downvotes, "supported": d.Supported, "not_relevant": d.NotRelevant,
-		"vote_score": d.VoteScore, "tier": d.Tier, "absorbed_ids": joinIDs(d.AbsorbedIDs),
-	}
-	if d.LastUpvotedAt != "" {
-		upd["last_upvoted_at"] = d.LastUpvotedAt
-	}
-	if d.LastRecalledAt != "" {
-		upd["last_recalled_at"] = d.LastRecalledAt
-	}
-	if err := x.db.WithContext(ctx).Model(&memoryRow{}).
-		Where("collection = ? AND id = ?", x.coll, survivorID).Updates(upd).Error; err != nil {
-		return false, fmt.Errorf("memory: sqlite absorb update survivor: %w", err)
-	}
-	ts := nowRFC3339()
-	if err := x.db.WithContext(ctx).Model(&memoryRow{}).
-		Where("collection = ? AND id = ?", x.coll, absorbedID).
-		Updates(map[string]any{"status": string(StatusInvalidated), "invalidated_at": ts, "invalidation_reason": reason}).Error; err != nil {
-		return false, fmt.Errorf("memory: sqlite absorb invalidate absorbed: %w", err)
-	}
-	return true, nil
 }
 
 // cosine is the cosine similarity of two equal-length vectors, in [-1, 1]; 0 for

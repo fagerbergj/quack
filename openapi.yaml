@@ -1232,7 +1232,7 @@ paths:
       operationId: sweepMemories
       summary: Run the forgetting-rule sweep on demand
       description: |
-        Evaluates every configured memory store's `memory.forgetting.rules`
+        Evaluates the built-in forgetting rules on every configured memory store
         (epic #1255 P3) against every currently-valid memory, first rule
         match wins. `dry_run: true` reports what each rule would do without
         invalidating anything; otherwise it applies invalidations exactly as
@@ -1914,10 +1914,10 @@ components:
       properties:
         index:
           type: integer
-          description: The rule's position in memory.forgetting.rules (or the built-in defaults), first match wins.
+          description: The rule's position in the built-in forgetting rules, first match wins.
         "when":
           type: string
-          description: The rule's expression, verbatim.
+          description: The rule's condition, as a human-readable label.
         then:
           type: string
           enum: [invalidate, demote, keep]

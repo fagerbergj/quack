@@ -84,7 +84,7 @@ func TestSQLiteAbsorb_VotesAndTimestampsMerge(t *testing.T) {
 	seedPoint(t, s, point{ID: "survivor", Scope: "role:coding", Content: "x", Upvotes: 1, Supported: 1, VoteScore: 1, LastUpvotedAt: "2026-01-01T00:00:00Z"})
 	seedPoint(t, s, point{ID: "dup", Scope: "role:coding", Content: "y", Upvotes: 2, Downvotes: 1, VoteScore: 1, LastRecalledAt: "2026-03-01T00:00:00Z"})
 
-	ok, err := s.idx.absorb(ctx, "survivor", "dup", absorbedByReason("survivor"))
+	ok, err := s.absorb(ctx, "survivor", "dup", absorbedByReason("survivor"))
 	if err != nil {
 		t.Fatalf("absorb: %v", err)
 	}
@@ -136,10 +136,10 @@ func TestAbsorb_ChainReproducesSummedVotes(t *testing.T) {
 		seedPoint(t, s, point{ID: bID, Scope: "role:coding", Content: "b", Upvotes: 1, VoteScore: 1})
 		seedPoint(t, s, point{ID: cID, Scope: "role:coding", Content: "c"})
 
-		if ok, err := s.idx.absorb(ctx, bID, aID, absorbedByReason(bID)); err != nil || !ok {
+		if ok, err := s.absorb(ctx, bID, aID, absorbedByReason(bID)); err != nil || !ok {
 			t.Fatalf("absorb(B,A) = %v, %v", ok, err)
 		}
-		if ok, err := s.idx.absorb(ctx, cID, bID, absorbedByReason(cID)); err != nil || !ok {
+		if ok, err := s.absorb(ctx, cID, bID, absorbedByReason(cID)); err != nil || !ok {
 			t.Fatalf("absorb(C,B) = %v, %v", ok, err)
 		}
 
@@ -178,7 +178,7 @@ func TestSQLiteAbsorb_AlreadyInvalidatedIsNoop(t *testing.T) {
 	seedPoint(t, s, point{ID: "survivor", Scope: "role:coding", Content: "x"})
 	seedPoint(t, s, point{ID: "dup", Scope: "role:coding", Content: "y", Status: string(StatusInvalidated), InvalidationReason: "net score"})
 
-	ok, err := s.idx.absorb(ctx, "survivor", "dup", absorbedByReason("survivor"))
+	ok, err := s.absorb(ctx, "survivor", "dup", absorbedByReason("survivor"))
 	if err != nil {
 		t.Fatalf("absorb: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestApplyVotes_DropsForAlreadyAbsorbedID(t *testing.T) {
 	s := newSQLiteStore(t, "task", nil)
 	seedPoint(t, s, point{ID: "survivor", Scope: "role:coding", Content: "x"})
 	seedPoint(t, s, point{ID: "dup", Scope: "role:coding", Content: "y"})
-	if ok, err := s.idx.absorb(ctx, "survivor", "dup", absorbedByReason("survivor")); err != nil || !ok {
+	if ok, err := s.absorb(ctx, "survivor", "dup", absorbedByReason("survivor")); err != nil || !ok {
 		t.Fatalf("absorb = %v, %v", ok, err)
 	}
 

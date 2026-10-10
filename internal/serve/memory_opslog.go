@@ -9,7 +9,6 @@ import (
 
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/memory"
-	"github.com/fagerbergj/quack/internal/memoryrules"
 	"github.com/fagerbergj/quack/internal/store"
 )
 
@@ -41,19 +40,6 @@ func zonedSchedule(schedule string, loc *time.Location) string {
 		return schedule
 	}
 	return "CRON_TZ=" + loc.String() + " " + schedule
-}
-
-// wireForgettingRules applies memory.forgetting.rules, or keeps DefaultRules() when none are configured.
-// config.Validate already checked the syntax; SetForgettingRules re-validates defensively.
-func wireForgettingRules(s *memory.Store, rm config.ResolvedMemory) error {
-	if rm.Consolidation.Forgetting == nil {
-		return nil
-	}
-	rules := make([]memoryrules.Rule, len(rm.Consolidation.Forgetting.Rules))
-	for i, r := range rm.Consolidation.Forgetting.Rules {
-		rules[i] = memoryrules.Rule{When: r.When, Then: r.Then}
-	}
-	return s.SetForgettingRules(rules)
 }
 
 // logTimezone reports the zone agents see; Go silently falls back to UTC on an unset or unknown TZ.

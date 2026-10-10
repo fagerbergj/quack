@@ -159,7 +159,7 @@ func (s *Store) stampClusterNoChange(ctx context.Context, cluster []scored, fp s
 	for i, p := range cluster {
 		ids[i] = p.ID
 	}
-	if err := s.idx.stampConsolidateFP(ctx, ids, fp); err != nil {
+	if err := s.idx.patch(ctx, ids, map[string]any{payloadConsolidateFP: fp}); err != nil {
 		s.log.Warn("consolidation sweep: fingerprint stamp failed", "err", err)
 	}
 }
@@ -229,16 +229,6 @@ func (s *Store) consolidateCluster(ctx context.Context, bucket string, cluster [
 // carries per rule - enough to sanity-check a rule, not a full dump.
 const forgetExampleCap = 5
 
-// SetForgettingRules validates and wires memory.forgetting.rules at startup, so a bad rule fails fast
-// instead of silently skipping the nightly sweep. Never called means memoryrules.DefaultRules().
-func (s *Store) SetForgettingRules(rules []memoryrules.Rule) error {
-	if err := memoryrules.ValidateRules(rules); err != nil {
-		return err
-	}
-	s.forgetRules = rules
-	return nil
-}
-
 // ForgettingExample is one matched memory shown in a dry-run report.
 type ForgettingExample struct {
 	ID      string
@@ -278,10 +268,7 @@ func (s *Store) forgetOnce(ctx context.Context, dryRun bool) {
 // ForgetSweep applies the forgetting rules (first match wins, none keeps) to every valid memory; dryRun
 // only reports. Shared by the nightly sweep and the CLI. Votes may change mid-sweep: last write wins.
 func (s *Store) ForgetSweep(ctx context.Context, dryRun bool) (ForgettingReport, error) {
-	rules := s.forgetRules
-	if len(rules) == 0 {
-		rules = memoryrules.DefaultRules()
-	}
+	rules := memoryrules.DefaultRules()
 	report := ForgettingReport{Rules: make([]ForgettingRuleResult, len(rules))}
 	for i, r := range rules {
 		report.Rules[i] = ForgettingRuleResult{Index: i, When: r.When, Then: r.Then}
@@ -293,7 +280,7 @@ func (s *Store) ForgetSweep(ctx context.Context, dryRun bool) (ForgettingReport,
 	err := s.forEachSweepPage(ctx, false, false, func(page []scored) { // currently-valid only
 		for _, p := range page {
 			report.Evaluated++
-			matched := s.matchForgetRule(p, now, rules, &report)
+			matched := matchForgetRule(p, now, rules, &report)
 			if matched < 0 {
 				report.Kept++
 				continue
@@ -329,15 +316,10 @@ type sweepHit struct {
 }
 
 // matchForgetRule records the first matching rule for p (count plus capped examples); -1 if none.
-func (s *Store) matchForgetRule(p scored, now time.Time, rules []memoryrules.Rule, report *ForgettingReport) int {
+func matchForgetRule(p scored, now time.Time, rules []memoryrules.Rule, report *ForgettingReport) int {
 	f := fieldsFor(p, now)
 	for i, r := range rules {
-		ok, err := memoryrules.Evaluate(r.When, f)
-		if err != nil {
-			s.log.Warn("forgetting sweep: rule evaluation failed, treating as no-match", "rule", i, "err", err)
-			continue
-		}
-		if ok {
+		if r.Match(f) {
 			rr := &report.Rules[i]
 			rr.Matched++
 			if len(rr.Examples) < forgetExampleCap {
@@ -360,7 +342,7 @@ func (s *Store) invalidateByRule(ctx context.Context, toInvalidate []sweepHit, r
 		if reason == "" {
 			reason = fmt.Sprintf("rule %d: %s", rule, rules[rule].When)
 		}
-		if _, err := s.idx.invalidateByID(ctx, ids, reason); err != nil {
+		if _, err := s.invalidateByID(ctx, ids, reason); err != nil {
 			s.log.Warn("forgetting sweep: invalidate failed", "rule", rule, "err", err)
 			continue
 		}
@@ -373,7 +355,7 @@ func (s *Store) invalidateByRule(ctx context.Context, toInvalidate []sweepHit, r
 // demoteByRule demotes the sweep's demote hits, one memory_ops row per id actually changed,
 // always with ReasonSupportDecayed.
 func (s *Store) demoteByRule(ctx context.Context, ids []string) {
-	touched, err := s.idx.demoteTier(ctx, ids)
+	touched, err := s.demoteTier(ctx, ids)
 	if err != nil {
 		s.log.Warn("forgetting sweep: demote failed", "err", err)
 		return
@@ -383,17 +365,12 @@ func (s *Store) demoteByRule(ctx context.Context, ids []string) {
 	}
 }
 
-// fieldsFor snapshots p for rule evaluation; never-upvoted/recalled falls back to age_days. Ages use
+// fieldsFor snapshots p for rule evaluation; never-upvoted falls back to MintedAt's age. Ages use
 // float Hours()/24 so a zero or malformed timestamp can't overflow into a bogus age.
 func fieldsFor(p scored, now time.Time) memoryrules.Fields {
-	ageDays := ageInDays(p.MintedAt, now)
-	daysSinceUpvote := ageDays
+	daysSinceUpvote := ageInDays(p.MintedAt, now)
 	if p.LastUpvotedAt != "" {
 		daysSinceUpvote = ageInDays(p.LastUpvotedAt, now)
-	}
-	daysSinceRecall := ageDays
-	if p.LastRecalledAt != "" {
-		daysSinceRecall = ageInDays(p.LastRecalledAt, now)
 	}
 	// Legacy row predating MintedAt: ValidFrom is preserved across an UPDATE (unlike Timestamp,
 	// which a consolidator reword re-stamps to now), so it's the safer fallback.
@@ -409,9 +386,8 @@ func fieldsFor(p scored, now time.Time) memoryrules.Fields {
 		tier = TierUnverified
 	}
 	return memoryrules.Fields{
-		Upvotes: p.Upvotes, Downvotes: p.Downvotes, Supported: p.Supported, NotRelevant: p.NotRelevant,
-		Score: p.VoteScore, AgeDays: ageDays, DaysSinceUpvote: daysSinceUpvote, DaysSinceRecall: daysSinceRecall,
-		DaysSinceMinted: ageInDays(mintedAt, now), Recalls: p.Recalls, Tier: tier, Scope: p.Scope,
+		Supported: p.Supported, Score: p.VoteScore, Recalls: p.Recalls,
+		DaysSinceUpvote: daysSinceUpvote, DaysSinceMinted: ageInDays(mintedAt, now), Tier: tier,
 	}
 }
 

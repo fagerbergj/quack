@@ -1569,14 +1569,14 @@ type SweepRuleResult struct {
 		Id      string `json:"id"`
 	} `json:"examples,omitempty"`
 
-	// Index The rule's position in memory.forgetting.rules (or the built-in defaults), first match wins.
+	// Index The rule's position in the built-in forgetting rules, first match wins.
 	Index int `json:"index"`
 
 	// Matched How many memories this rule matched (and, when not a dry run, acted on).
 	Matched int                 `json:"matched"`
 	Then    SweepRuleResultThen `json:"then"`
 
-	// When The rule's expression, verbatim.
+	// When The rule's condition, as a human-readable label.
 	When string `json:"when"`
 }
 

@@ -18,7 +18,6 @@ import (
 	"github.com/robfig/cron/v3"
 	"gopkg.in/yaml.v3"
 
-	"github.com/fagerbergj/quack/internal/memoryrules"
 	"github.com/fagerbergj/quack/internal/pluginreg"
 	"github.com/fagerbergj/quack/internal/recordstore"
 )
@@ -752,23 +751,10 @@ type StoreConfig struct {
 // ConsolidationConfig binds the model for the gated-commit reconcile and periodic sweep.
 // Schedule nil defaults to defaultConsolidationSchedule; "" disables the sweep.
 type ConsolidationConfig struct {
-	Provider      string            `yaml:"provider"`
-	Model         string            `yaml:"model"`
-	Schedule      *string           `yaml:"schedule"`
-	RetentionDays int               `yaml:"retention_days"`
-	Forgetting    *ForgettingConfig `yaml:"forgetting"`
-}
-
-// ForgettingConfig is memory.forgetting.rules: ordered {when, then} rules, first match wins.
-// Absent (nil) means memoryrules.DefaultRules.
-type ForgettingConfig struct {
-	Rules []ForgetRule `yaml:"rules"`
-}
-
-// ForgetRule mirrors memoryrules.Rule with yaml tags, keeping yaml out of the parser package.
-type ForgetRule struct {
-	When string `yaml:"when"`
-	Then string `yaml:"then"`
+	Provider      string  `yaml:"provider"`
+	Model         string  `yaml:"model"`
+	Schedule      *string `yaml:"schedule"`
+	RetentionDays int     `yaml:"retention_days"`
 }
 
 // defaultConsolidationSchedule: daily at 02:00, standard 5-field cron.
@@ -1256,15 +1242,6 @@ func (c *Config) validateStoreConsolidation() error {
 		}
 		if s.Consolidation.RetentionDays < 0 {
 			return fmt.Errorf("config: store %q consolidation.retention_days must be >= 0", name)
-		}
-		if s.Consolidation.Forgetting != nil {
-			rules := make([]memoryrules.Rule, len(s.Consolidation.Forgetting.Rules))
-			for i, r := range s.Consolidation.Forgetting.Rules {
-				rules[i] = memoryrules.Rule{When: r.When, Then: r.Then}
-			}
-			if err := memoryrules.ValidateRules(rules); err != nil {
-				return fmt.Errorf("config: store %q consolidation.forgetting.rules: %w", name, err)
-			}
 		}
 	}
 
