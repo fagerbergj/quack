@@ -358,9 +358,8 @@ func nodeEventRow(st *store.Store, planID string, ev stream.SSEEvent) (n store.D
 	return n, nodeID, to, contextID, true
 }
 
-// PersistNodeEvent upserts DagNode state for node-lifecycle events - illegal
-// transitions are logged, not blocked. Synchronous by design (a goroutine per
-// event could let a stale write clobber node_done); the store row and dag_node record below write independently and can transiently diverge.
+// PersistNodeEvent upserts DagNode state synchronously (a goroutine could let a stale write clobber
+// node_done). Illegal moves are logged; only one out of a terminal row is dropped, so a late pause can't undo a stop.
 func PersistNodeEvent(st *store.Store, chatID, planID string, ev stream.SSEEvent) {
 	n, nodeID, to, contextID, ok := nodeEventRow(st, planID, ev)
 	if !ok {
@@ -375,6 +374,9 @@ func PersistNodeEvent(st *store.Store, chatID, planID string, ev stream.SSEEvent
 	if from != to && !dag.CanPersist(from, to) {
 		slog.Warn("persistNodeEvent: illegal node-status transition", "component", "dag",
 			"plan_id", planID, "node_id", nodeID, "from", from, "to", to)
+		if dag.IsTerminal(from) {
+			return
+		}
 	}
 	if err := st.UpsertDagNode(ctx, n); err != nil {
 		slog.Warn("persistNodeEvent: upsert failed", "component", "dag",
