@@ -301,25 +301,23 @@ func (c *Client) CancelRun(ctx context.Context, chatID, responseID string) error
 		schema.ResponseStatusUpdateBody{Status: schema.Cancelled})
 }
 
-// CancelNode stops one running node of a chat's active run; the rest of the DAG
-// continues (continue-but-warn). No-op if no such node is active.
+// CancelNode stops one non-terminal node (running, queued or paused); the rest of the DAG continues.
 func (c *Client) CancelNode(ctx context.Context, chatID, nodeID string) error {
-	return c.sendBody(ctx, http.MethodPut, "/api/v1/chats/"+chatID+"/nodes/"+nodeID+"/status",
-		schema.NodeStatusUpdateBody{Status: schema.NodeStatusCancelled})
+	return c.send(ctx, http.MethodPost, "/api/v1/chats/"+chatID+"/nodes/"+nodeID+"/stop")
 }
 
 // PauseNode suspends a running node at its next turn boundary. Resume is a fresh re-run, not a frozen
 // checkpoint: ADK's static graph needs the node to return to unblock its dependents.
 func (c *Client) PauseNode(ctx context.Context, chatID, nodeID string) error {
 	return c.sendBody(ctx, http.MethodPut, "/api/v1/chats/"+chatID+"/nodes/"+nodeID+"/status",
-		schema.NodeStatusUpdateBody{Status: schema.NodeStatusPaused})
+		schema.NodeStatusUpdateBody{Status: schema.NodeStatusUpdateBodyStatusPaused})
 }
 
 // ResumeNode resumes a paused node: a fresh re-run (like retry), reusing the
 // rest of the plan's stored outputs. Only legal from `paused`.
 func (c *Client) ResumeNode(ctx context.Context, chatID, nodeID string) error {
 	return c.sendBody(ctx, http.MethodPut, "/api/v1/chats/"+chatID+"/nodes/"+nodeID+"/status",
-		schema.NodeStatusUpdateBody{Status: schema.NodeStatusRunning})
+		schema.NodeStatusUpdateBody{Status: schema.NodeStatusUpdateBodyStatusRunning})
 }
 
 // QueueNodeMessage queues a message for a running node, delivered at its next turn boundary.
@@ -378,7 +376,7 @@ func (c *Client) sendBody(ctx context.Context, method, path string, body any) er
 // RetryNode re-queues a finished node; it and everything downstream re-run, reusing all other nodes'
 // stored outputs. guidance is optional and folded into the node's task.
 func (c *Client) RetryNode(ctx context.Context, chatID, nodeID, guidance string) error {
-	body := schema.NodeStatusUpdateBody{Status: schema.NodeStatusQueued}
+	body := schema.NodeStatusUpdateBody{Status: schema.NodeStatusUpdateBodyStatusQueued}
 	if guidance != "" {
 		body.Guidance = &guidance
 	}

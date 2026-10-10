@@ -16,6 +16,7 @@ import (
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/cli"
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/orchestrator"
 	"github.com/fagerbergj/quack/internal/runlog"
@@ -110,32 +111,6 @@ func putNodeStatus(t *testing.T, h *Handler, chatID, nodeID string, body schema.
 	return rec
 }
 
-// TestUpdateNodeStatus_CancelUndeliverable409: cancel isn't optimistic. With the row "running" but no live
-// control registered, the cancel lands nowhere and must 409, not 200 "cancelled".
-func TestUpdateNodeStatus_CancelUndeliverable409(t *testing.T) {
-	h := newTestHandler(t)
-	chatID, planID, nodeID := "c1", "p1", "n1"
-	seedPlan(t, h, chatID, planID, nodeID)
-	if err := h.store.UpsertDagNode(context.Background(), store.DagNode{NodeID: nodeID, PlanID: planID, Status: "running"}); err != nil {
-		t.Fatalf("seed running node: %v", err)
-	}
-
-	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusCancelled})
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("status = %d, want 409 (nothing live to cancel); body=%s", rec.Code, rec.Body.String())
-	}
-	var got schema.TransitionError
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if !strings.Contains(got.Error, "not cancellable") {
-		t.Errorf("409 body should explain nothing was cancelled; got %q", got.Error)
-	}
-	if got.Current != schema.NodeStatusRunning {
-		t.Errorf("Current = %q, want %q (the node is still running - nothing changed)", got.Current, schema.NodeStatusRunning)
-	}
-}
-
 func TestUpdateNodeStatus_IllegalTransition409(t *testing.T) {
 	h := newTestHandler(t)
 	chatID, planID, nodeID := "c1", "p1", "n1"
@@ -144,9 +119,9 @@ func TestUpdateNodeStatus_IllegalTransition409(t *testing.T) {
 		t.Fatalf("seed done node: %v", err)
 	}
 
-	// done -> needs_input is illegal and needs no guidance, isolating the 409 transition
+	// done -> paused is illegal and needs no guidance, isolating the 409 transition
 	// check from the 400 guidance check.
-	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusNeedsInput})
+	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusUpdateBodyStatusPaused})
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409; body=%s", rec.Code, rec.Body.String())
 	}
@@ -168,7 +143,7 @@ func TestUpdateNodeStatus_IllegalTransition409(t *testing.T) {
 	}
 }
 
-func TestUpdateNodeStatus_CancelledToNeedsInput409(t *testing.T) {
+func TestUpdateNodeStatus_CancelledToPaused409(t *testing.T) {
 	h := newTestHandler(t)
 	chatID, planID, nodeID := "c1", "p1", "n1"
 	seedPlan(t, h, chatID, planID, nodeID)
@@ -176,7 +151,7 @@ func TestUpdateNodeStatus_CancelledToNeedsInput409(t *testing.T) {
 		t.Fatalf("seed cancelled node: %v", err)
 	}
 
-	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusNeedsInput})
+	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusUpdateBodyStatusPaused})
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409; body=%s", rec.Code, rec.Body.String())
 	}
@@ -192,7 +167,7 @@ func TestUpdateNodeStatus_PauseUndeliverable409(t *testing.T) {
 		t.Fatalf("seed running node: %v", err)
 	}
 
-	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusPaused})
+	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusUpdateBodyStatusPaused})
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409 (nothing live to pause); body=%s", rec.Code, rec.Body.String())
 	}
@@ -211,7 +186,7 @@ func TestUpdateNodeStatus_ResumePausedNode(t *testing.T) {
 		t.Fatalf("seed paused node: %v", err)
 	}
 
-	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusRunning})
+	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusUpdateBodyStatusRunning})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -237,7 +212,7 @@ func TestUpdateNodeStatus_ResumeAlreadyLiveConflict409(t *testing.T) {
 	// Simulate the first resume's dispatch already in flight.
 	h.hub.RegisterRun(chatID, "turn-"+planID, func() {})
 
-	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusRunning})
+	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusUpdateBodyStatusRunning})
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409 (a run is already dispatched for this chat); body=%s", rec.Code, rec.Body.String())
 	}
@@ -269,7 +244,7 @@ func TestUpdateNodeStatus_ResumeRegistersRunSynchronously(t *testing.T) {
 		t.Fatalf("seed paused node: %v", err)
 	}
 
-	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusRunning})
+	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusUpdateBodyStatusRunning})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -306,7 +281,7 @@ func TestUpdateNodeStatus_AwaitingInputRetryRejected(t *testing.T) {
 		t.Fatalf("seed parked node: %v", err)
 	}
 
-	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusRunning})
+	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusUpdateBodyStatusRunning})
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409 (awaiting_input must resume via start, not retry); body=%s", rec.Code, rec.Body.String())
 	}
@@ -319,7 +294,7 @@ func TestUpdateNodeStatus_AwaitingInputRetryRejected(t *testing.T) {
 	if err := h.store.SetNodeStatusForChat(context.Background(), chatID, nodeID, "", string(dag.PauseAwaitingInput), "which region?"); err != nil {
 		t.Fatalf("stamp awaiting_input pause reason: %v", err)
 	}
-	rec = putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusRunning})
+	rec = putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusUpdateBodyStatusRunning})
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409 (paused/awaiting_input must resume via start, not retry); body=%s", rec.Code, rec.Body.String())
 	}
@@ -335,7 +310,7 @@ func TestUpdateNodeStatus_RunningSelfLoopIllegal(t *testing.T) {
 		t.Fatalf("seed running node: %v", err)
 	}
 
-	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusRunning})
+	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusUpdateBodyStatusRunning})
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409 (running -> running is no longer legal); body=%s", rec.Code, rec.Body.String())
 	}
@@ -449,7 +424,7 @@ func TestUpdateNodeStatus_PauseReasonAwaitingInputRejected(t *testing.T) {
 	}
 
 	reason := schema.PauseReason("awaiting_input")
-	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusPaused, Reason: &reason})
+	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusUpdateBodyStatusPaused, Reason: &reason})
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
@@ -537,7 +512,7 @@ func TestUpdateNodeStatus_PauseReasonShutdown(t *testing.T) {
 		t.Fatalf("seed running node: %v", err)
 	}
 	reason := schema.PauseReason("shutdown")
-	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusPaused, Reason: &reason})
+	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusUpdateBodyStatusPaused, Reason: &reason})
 	// No live control is registered, so this is PauseUndeliverable409's 409;
 	// it checks the reason field decodes and flows through.
 	if rec.Code != http.StatusConflict {
@@ -604,7 +579,7 @@ func TestUpdateNodeStatus_RetryFailedNode(t *testing.T) {
 		t.Fatalf("seed failed node: %v", err)
 	}
 
-	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusQueued})
+	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusUpdateBodyStatusQueued})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -638,7 +613,7 @@ func TestUpdateNodeStatus_RetryNodeAddedByExtension(t *testing.T) {
 	if err := h.store.UpsertDagNode(ctx, store.DagNode{NodeID: "r3", PlanID: planID, Status: "done", Output: "R3"}); err != nil {
 		t.Fatal(err)
 	}
-	if rec := putNodeStatus(t, h, chatID, "r3", schema.NodeStatusUpdateBody{Status: schema.NodeStatusQueued}); rec.Code != http.StatusOK {
+	if rec := putNodeStatus(t, h, chatID, "r3", schema.NodeStatusUpdateBody{Status: schema.NodeStatusUpdateBodyStatusQueued}); rec.Code != http.StatusOK {
 		t.Fatalf("retry of the extension's node: status = %d, body=%s", rec.Code, rec.Body.String())
 	}
 	if dp, _ := h.store.GetLatestDagPlan(ctx, chatID); dp == nil || dp.RunTurnID() != "turn-2" {
@@ -652,7 +627,7 @@ func TestUpdateNodeStatus_NoSuchNode404(t *testing.T) {
 	chatID, planID, nodeID := "c1", "p1", "n1"
 	seedPlan(t, h, chatID, planID, nodeID)
 
-	rec := putNodeStatus(t, h, chatID, "does-not-exist", schema.NodeStatusUpdateBody{Status: schema.NodeStatusCancelled})
+	rec := putNodeStatus(t, h, chatID, "does-not-exist", schema.NodeStatusUpdateBody{Status: schema.NodeStatusUpdateBodyStatusQueued})
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404; body=%s", rec.Code, rec.Body.String())
 	}
@@ -660,7 +635,7 @@ func TestUpdateNodeStatus_NoSuchNode404(t *testing.T) {
 
 func TestUpdateNodeStatus_NoPlan404(t *testing.T) {
 	h := newTestHandler(t)
-	rec := putNodeStatus(t, h, "no-such-chat", "n1", schema.NodeStatusUpdateBody{Status: schema.NodeStatusCancelled})
+	rec := putNodeStatus(t, h, "no-such-chat", "n1", schema.NodeStatusUpdateBody{Status: schema.NodeStatusUpdateBodyStatusQueued})
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404; body=%s", rec.Code, rec.Body.String())
 	}
@@ -942,8 +917,8 @@ func waitForDagNodeStatus(t *testing.T, h *Handler, planID, nodeID, want string)
 	t.Fatalf("node %q in plan %q never reached status %q", nodeID, planID, want)
 }
 
-// TestStopNode_ParkedPausedCancelsRow: a parked node (paused, turn over, no
-// live control) must still be stoppable - the row is cancelled directly.
+// TestStopNode_ParkedPausedCancelsRow: a parked node (paused, turn over, no live control) must
+// still be stoppable through the CLI's client - the row is cancelled directly.
 func TestStopNode_ParkedPausedCancelsRow(t *testing.T) {
 	h := newTestHandler(t)
 	chatID, planID, nodeID := "c1", "p1", "n1"
@@ -952,9 +927,11 @@ func TestStopNode_ParkedPausedCancelsRow(t *testing.T) {
 		t.Fatalf("seed paused node: %v", err)
 	}
 
-	rec := postNodeStop(t, h, chatID, nodeID)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	srv := httptest.NewServer(schema.Handler(h))
+	defer srv.Close()
+	c := &cli.Client{BaseURL: srv.URL, HTTP: srv.Client()}
+	if err := c.CancelNode(context.Background(), chatID, nodeID); err != nil {
+		t.Fatalf("CLI CancelNode on a paused node: %v", err)
 	}
 	dn, err := h.store.GetDagNode(context.Background(), planID, nodeID)
 	if err != nil || dn == nil || dn.Status != "cancelled" {
@@ -969,8 +946,18 @@ func TestUpdateNodeStatus_EarlierPlanNodeRejected(t *testing.T) {
 	time.Sleep(5 * time.Millisecond)
 	seedPlan(t, h, "c1", "p2", "new")
 
-	rec := putNodeStatus(t, h, "c1", "old", schema.NodeStatusUpdateBody{Status: schema.NodeStatusQueued})
+	rec := putNodeStatus(t, h, "c1", "old", schema.NodeStatusUpdateBody{Status: schema.NodeStatusUpdateBodyStatusQueued})
 	if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "earlier plans") {
 		t.Fatalf("got %d %s, want 404 naming earlier plans", rec.Code, rec.Body.String())
+	}
+}
+
+// Cancel moved to POST .../stop; the status endpoint must refuse it instead of answering an empty 200.
+func TestUpdateNodeStatus_CancelledRejected400(t *testing.T) {
+	h := newTestHandler(t)
+	seedPlan(t, h, "c1", "p1", "n1")
+	rec := putNodeStatus(t, h, "c1", "n1", schema.NodeStatusUpdateBody{Status: schema.NodeStatusUpdateBodyStatus("cancelled")})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
 }

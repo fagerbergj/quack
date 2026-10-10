@@ -715,15 +715,11 @@ paths:
   /api/v1/chats/{chat_id}/nodes/{node_id}/status:
     put:
       operationId: updateNodeStatus
-      summary: Transition a DAG node's status (cancel, pause/resume, or retry)
+      summary: Transition a DAG node's status (pause/resume or retry)
       description: |
         A single resource-oriented endpoint - the request body names the
-        TARGET status:
+        TARGET status. To cancel a node, POST `.../nodes/{node_id}/stop`.
 
-        - `{"status":"cancelled"}` - cancel the node (legal from `queued`,
-          `running`, `paused`, or `needs_input`). Kills the in-flight
-          model/tool call via context; no resume. No-op (200, unchanged
-          state) if the node isn't currently live.
         - `{"status":"paused"}` - suspend a RUNNING node at its next safe
           point, keeping its accumulated work. Only legal from `running`.
         - `{"status":"running"}` - resume a `paused` node: a fresh re-run
@@ -2365,12 +2361,15 @@ components:
       required: [status]
       properties:
         status:
-          $ref: "#/components/schemas/NodeStatus"
+          type: string
+          description: Target status; any other value is a 400. Cancel via
+            POST .../nodes/{node_id}/stop.
+          enum: [paused, running, queued]
         guidance:
           type: string
           description: Optional and folded into the node's task when status is
             "queued" (retry, or resuming a paused node via a fresh re-run).
-            Unused for "cancelled" and "paused". To steer a RUNNING node,
+            Unused for "paused". To steer a RUNNING node,
             queue a message instead (POST .../nodes/{node_id}/queue) - it is
             delivered at the node's next turn boundary, not mid-turn.
         reason:

@@ -359,6 +359,27 @@ func (e NodeStatus) Valid() bool {
 	}
 }
 
+// Defines values for NodeStatusUpdateBodyStatus.
+const (
+	NodeStatusUpdateBodyStatusPaused  NodeStatusUpdateBodyStatus = "paused"
+	NodeStatusUpdateBodyStatusQueued  NodeStatusUpdateBodyStatus = "queued"
+	NodeStatusUpdateBodyStatusRunning NodeStatusUpdateBodyStatus = "running"
+)
+
+// Valid indicates whether the value is a known member of the NodeStatusUpdateBodyStatus enum.
+func (e NodeStatusUpdateBodyStatus) Valid() bool {
+	switch e {
+	case NodeStatusUpdateBodyStatusPaused:
+		return true
+	case NodeStatusUpdateBodyStatusQueued:
+		return true
+	case NodeStatusUpdateBodyStatusRunning:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for OutputTextPartType.
 const (
 	OutputText OutputTextPartType = "output_text"
@@ -454,19 +475,19 @@ func (e PluginSource) Valid() bool {
 
 // Defines values for QueuedMessageStatus.
 const (
-	Drained   QueuedMessageStatus = "drained"
-	Forwarded QueuedMessageStatus = "forwarded"
-	Queued    QueuedMessageStatus = "queued"
+	QueuedMessageStatusDrained   QueuedMessageStatus = "drained"
+	QueuedMessageStatusForwarded QueuedMessageStatus = "forwarded"
+	QueuedMessageStatusQueued    QueuedMessageStatus = "queued"
 )
 
 // Valid indicates whether the value is a known member of the QueuedMessageStatus enum.
 func (e QueuedMessageStatus) Valid() bool {
 	switch e {
-	case Drained:
+	case QueuedMessageStatusDrained:
 		return true
-	case Forwarded:
+	case QueuedMessageStatusForwarded:
 		return true
-	case Queued:
+	case QueuedMessageStatusQueued:
 		return true
 	default:
 		return false
@@ -1220,23 +1241,18 @@ type NodeStatus string
 
 // NodeStatusUpdateBody defines model for NodeStatusUpdateBody.
 type NodeStatusUpdateBody struct {
-	// Guidance Optional and folded into the node's task when status is "queued" (retry, or resuming a paused node via a fresh re-run). Unused for "cancelled" and "paused". To steer a RUNNING node, queue a message instead (POST .../nodes/{node_id}/queue) - it is delivered at the node's next turn boundary, not mid-turn.
+	// Guidance Optional and folded into the node's task when status is "queued" (retry, or resuming a paused node via a fresh re-run). Unused for "paused". To steer a RUNNING node, queue a message instead (POST .../nodes/{node_id}/queue) - it is delivered at the node's next turn boundary, not mid-turn.
 	Guidance *string `json:"guidance,omitempty"`
 
 	// Reason Why a node sits in the `paused` status.
 	Reason *PauseReason `json:"reason,omitempty"`
 
-	// Status A DAG node's canonical lifecycle state. Legal transitions (enforced
-	// server-side by internal/dag.CanTransition):
-	//   queued      → running, cancelled, failed (stale-on-restart)
-	//   running     → paused, needs_input, done, failed, cancelled
-	//   paused      → running (resume), cancelled
-	//   needs_input → running (resumed), cancelled
-	//   done        → queued (retry)
-	//   failed      → queued (retry)
-	//   cancelled   → queued (retry)
-	Status NodeStatus `json:"status"`
+	// Status Target status; any other value is a 400. Cancel via POST .../nodes/{node_id}/stop.
+	Status NodeStatusUpdateBodyStatus `json:"status"`
 }
+
+// NodeStatusUpdateBodyStatus Target status; any other value is a 400. Cancel via POST .../nodes/{node_id}/stop.
+type NodeStatusUpdateBodyStatus string
 
 // OutputItem defines model for OutputItem.
 type OutputItem struct {
@@ -2092,7 +2108,7 @@ type ServerInterface interface {
 	// Start a node - queued or paused, either way, into running
 	// (POST /api/v1/chats/{chat_id}/nodes/{node_id}/start)
 	StartNode(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID)
-	// Transition a DAG node's status (cancel, pause/resume, or retry)
+	// Transition a DAG node's status (pause/resume or retry)
 	// (PUT /api/v1/chats/{chat_id}/nodes/{node_id}/status)
 	UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID)
 	// Stop a node - any non-terminal status, into cancelled
@@ -2266,7 +2282,7 @@ func (_ Unimplemented) StartNode(w http.ResponseWriter, r *http.Request, chatId 
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// Transition a DAG node's status (cancel, pause/resume, or retry)
+// Transition a DAG node's status (pause/resume or retry)
 // (PUT /api/v1/chats/{chat_id}/nodes/{node_id}/status)
 func (_ Unimplemented) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID) {
 	w.WriteHeader(http.StatusNotImplemented)

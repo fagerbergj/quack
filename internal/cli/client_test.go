@@ -199,7 +199,7 @@ func TestPauseNode(t *testing.T) {
 	if err := c.PauseNode(context.Background(), "c1", "n2"); err != nil {
 		t.Fatalf("PauseNode: %v", err)
 	}
-	if gotBody.Status != schema.NodeStatusPaused {
+	if gotBody.Status != schema.NodeStatusUpdateBodyStatusPaused {
 		t.Errorf("server got status %q, want %q", gotBody.Status, schema.NodeStatusPaused)
 	}
 }
@@ -221,7 +221,7 @@ func TestResumeNode(t *testing.T) {
 	if err := c.ResumeNode(context.Background(), "c1", "n2"); err != nil {
 		t.Fatalf("ResumeNode: %v", err)
 	}
-	if gotBody.Status != schema.NodeStatusRunning {
+	if gotBody.Status != schema.NodeStatusUpdateBodyStatusRunning {
 		t.Errorf("server got status %q, want %q", gotBody.Status, schema.NodeStatusRunning)
 	}
 	if gotBody.Guidance != nil {

@@ -349,15 +349,11 @@ export const subscribeChatStream = <ThrowOnError extends boolean = false>(option
 });
 
 /**
- * Transition a DAG node's status (cancel, pause/resume, or retry)
+ * Transition a DAG node's status (pause/resume or retry)
  *
  * A single resource-oriented endpoint - the request body names the
- * TARGET status:
+ * TARGET status. To cancel a node, POST `.../nodes/{node_id}/stop`.
  *
- * - `{"status":"cancelled"}` - cancel the node (legal from `queued`,
- * `running`, `paused`, or `needs_input`). Kills the in-flight
- * model/tool call via context; no resume. No-op (200, unchanged
- * state) if the node isn't currently live.
  * - `{"status":"paused"}` - suspend a RUNNING node at its next safe
  * point, keeping its accumulated work. Only legal from `running`.
  * - `{"status":"running"}` - resume a `paused` node: a fresh re-run

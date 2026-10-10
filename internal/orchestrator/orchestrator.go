@@ -208,11 +208,6 @@ func (o *Orchestrator) PauseNode(chatID, nodeID string, reason dag.PauseReason) 
 	return o.executor.PauseNode(chatID, nodeID, reason)
 }
 
-// StopNode cancels a node into the terminal cancelled state.
-func (o *Orchestrator) StopNode(chatID, nodeID string) bool {
-	return o.executor.StopNode(chatID, nodeID)
-}
-
 // QueueNodeMessage appends a message to a running node's queue.
 func (o *Orchestrator) QueueNodeMessage(chatID, nodeID, text string) (dag.QueuedMessage, bool) {
 	return o.executor.QueueNodeMessage(chatID, nodeID, text)

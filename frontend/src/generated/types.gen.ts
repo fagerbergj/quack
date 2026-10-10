@@ -661,9 +661,12 @@ export type A2UiAction = {
 export type NodeStatus = 'queued' | 'running' | 'needs_input' | 'paused' | 'done' | 'failed' | 'cancelled';
 
 export type NodeStatusUpdateBody = {
-    status: NodeStatus;
     /**
-     * Optional and folded into the node's task when status is "queued" (retry, or resuming a paused node via a fresh re-run). Unused for "cancelled" and "paused". To steer a RUNNING node, queue a message instead (POST .../nodes/{node_id}/queue) - it is delivered at the node's next turn boundary, not mid-turn.
+     * Target status; any other value is a 400. Cancel via POST .../nodes/{node_id}/stop.
+     */
+    status: 'paused' | 'running' | 'queued';
+    /**
+     * Optional and folded into the node's task when status is "queued" (retry, or resuming a paused node via a fresh re-run). Unused for "paused". To steer a RUNNING node, queue a message instead (POST .../nodes/{node_id}/queue) - it is delivered at the node's next turn boundary, not mid-turn.
      */
     guidance?: string;
     reason?: PauseReason;
