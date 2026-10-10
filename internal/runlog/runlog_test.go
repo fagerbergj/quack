@@ -451,3 +451,32 @@ func TestPersistNodeEventRepeatIsNoIllegalTransition(t *testing.T) {
 		t.Errorf("a repeat cancelled logged an illegal transition: %s", buf.String())
 	}
 }
+
+// TestPersistNodeEventLatePauseKeepsCancelled: pause, then stop before the pause settles - the
+// node's late node_paused must not flip the cancelled row back to paused for boot to re-run.
+func TestPersistNodeEventLatePauseKeepsCancelled(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	c, err := st.CreateChat(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveDagPlan(ctx, c.ID, "p1", "turn-1", `{"plan_id":"p1"}`); err != nil {
+		t.Fatal(err)
+	}
+	PersistNodeEvent(st, c.ID, "p1", stream.SSEEvent{Name: stream.EventNodeStart, Data: stream.NodeStartData{NodeID: "n1"}})
+	if err := st.SetNodeStatus(ctx, "p1", "n1", dag.StatusPaused, dag.PauseUser, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetNodeStatus(ctx, "p1", "n1", dag.StatusCancelled, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	PersistNodeEvent(st, c.ID, "p1", stream.SSEEvent{Name: stream.EventNodeCancelled, Data: stream.NodeCancelledData{NodeID: "n1"}})
+	PersistNodeEvent(st, c.ID, "p1", stream.NodePaused("n1"))
+	if n, err := st.GetDagNode(ctx, "p1", "n1"); err != nil || n == nil || n.Status != string(dag.StatusCancelled) || n.FinishedAt == nil {
+		t.Fatalf("row = %+v err=%v, want cancelled with finished_at kept", n, err)
+	}
+	if paused, err := st.ListPausedDagNodes(ctx); err != nil || len(paused) != 0 {
+		t.Fatalf("boot resume sweep sees %d paused nodes (err=%v), want 0", len(paused), err)
+	}
+}

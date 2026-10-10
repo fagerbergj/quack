@@ -62,7 +62,7 @@ func CanTransition(from, to NodeStatus) bool {
 // CanPersist is CanTransition plus a retry's re-run: RetryNode starts a finished node straight
 // into running with no queued step, so the persisted row and dag_node record accept that too.
 func CanPersist(from, to NodeStatus) bool {
-	if to == StatusRunning && (from == StatusDone || from == StatusFailed || from == StatusCancelled) {
+	if to == StatusRunning && IsTerminal(from) {
 		return true
 	}
 	return CanTransition(from, to)
@@ -95,3 +95,8 @@ const (
 // IsPaused reports whether a persisted status means "suspended, resumable". StatusNeedsInput, the
 // legacy wire spelling of paused/awaiting_input, is still emitted by REST, so both answer here.
 func IsPaused(s NodeStatus) bool { return s == StatusPaused || s == StatusNeedsInput }
+
+// IsTerminal reports a finished node: done, failed or cancelled.
+func IsTerminal(s NodeStatus) bool {
+	return s == StatusDone || s == StatusFailed || s == StatusCancelled
+}

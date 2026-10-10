@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	extsdk "github.com/fagerbergj/quack-extensions/sdk"
+
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/workflow"
@@ -973,4 +975,18 @@ func mustPlanData(t *testing.T, planJSON string) stream.DagPlanData {
 		t.Fatal(err)
 	}
 	return d
+}
+
+// Chats dispatched by the github extension carry their GitHub fields only in Origin.
+func TestToSummary_GitHubFieldsFromOrigin(t *testing.T) {
+	h := newTestHandler(t)
+	origin, _ := json.Marshal(extsdk.ChatOrigin{
+		Extension: "github", Href: "https://github.com/acme/app/pull/7", State: extsdk.SubjectOpen,
+		Labels: map[string][]extsdk.LabelValue{"repo": {{Value: "acme/app"}}},
+	})
+	s := h.toSummary(store.Chat{ID: "ext:github:acme/app#7", Origin: string(origin)}, 0, false)
+	if s.GithubUrl == nil || *s.GithubUrl != "https://github.com/acme/app/pull/7" ||
+		s.GithubRepo == nil || *s.GithubRepo != "acme/app" || s.GithubState == nil || *s.GithubState != "open" {
+		t.Fatalf("summary github fields = %v %v %v", s.GithubUrl, s.GithubRepo, s.GithubState)
+	}
 }

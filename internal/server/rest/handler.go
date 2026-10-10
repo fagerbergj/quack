@@ -316,6 +316,7 @@ func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request, chatID schema.
 		httpError(w, http.StatusInternalServerError, err)
 		return
 	}
+	ghRepo, ghURL, ghState := c.GitHub()
 	detail := schema.ChatDetail{
 		Id:              c.ID,
 		Title:           strPtr(c.Title),
@@ -324,9 +325,9 @@ func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request, chatID schema.
 		UpdatedAt:       c.UpdatedAt,
 		Status:          status,
 		PendingQuestion: pendingQuestion,
-		GithubUrl:       strPtr(c.GithubURL),
-		GithubRepo:      strPtr(c.GithubRepo),
-		GithubState:     detailStateVal(c.GithubState),
+		GithubUrl:       strPtr(ghURL),
+		GithubRepo:      strPtr(ghRepo),
+		GithubState:     detailStateVal(ghState),
 		Archived:        boolPtr(c.Archived),
 		Origin:          chatOrigin(c.Origin),
 		Turns:           make([]schema.Turn, 0, len(turns)),
@@ -1618,6 +1619,7 @@ func (h *Handler) chatTotalTokens(ctx context.Context, chatID string) int64 {
 // totalTokens is the sidebar's compact count (0 for a chat with no run yet).
 func (h *Handler) toSummary(c store.Chat, totalTokens int64, runningNode bool) schema.ChatSummary {
 	status, pendingQuestion := h.chatStatus(c, runningNode)
+	ghRepo, ghURL, ghState := c.GitHub()
 	s := schema.ChatSummary{
 		Id:              c.ID,
 		Title:           strPtr(c.Title),
@@ -1626,9 +1628,9 @@ func (h *Handler) toSummary(c store.Chat, totalTokens int64, runningNode bool) s
 		UpdatedAt:       c.UpdatedAt,
 		Status:          status,
 		PendingQuestion: pendingQuestion,
-		GithubUrl:       strPtr(c.GithubURL),
-		GithubRepo:      strPtr(c.GithubRepo),
-		GithubState:     stateVal(c.GithubState),
+		GithubUrl:       strPtr(ghURL),
+		GithubRepo:      strPtr(ghRepo),
+		GithubState:     stateVal(ghState),
 		Archived:        boolPtr(c.Archived),
 		Origin:          chatOrigin(c.Origin),
 	}
