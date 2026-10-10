@@ -45,14 +45,11 @@ export const Disabled: Story = {
   args: { disabled: true, streaming: false },
 }
 
-// Regression check for the mobile "composer not visible" bug: a phone-sized
-// (390x844, #1174's acceptance viewport) frame, clipped with overflow-hidden
-// like the real app shell, composer pinned to the bottom - if its bottom edge leaves the frame, the fix has regressed. The frame is not the compact breakpoint: medium:/useCompact() track the real browser window, so #1174's compact single-pill composer only appears in a <600px window or under DevTools device emulation.
+// The composer's bottom edge must stay inside a clipped 390x844 frame. Compact layout tracks the real window,
+// so the single-pill composer only shows in a <600px window or device emulation.
 export const MobileViewport: Story = {
   args: { disabled: false, streaming: false },
-  // fullscreen: this frame IS the simulated device width - the preview's own
-  // docs-canvas padding (.storybook/preview.tsx) would otherwise push it
-  // past 390px (caught by render-check).
+  // The preview's docs-canvas padding would otherwise push the frame past 390px.
   parameters: { layout: 'fullscreen' },
   decorators: [Story => (
     <div className="w-[390px] h-[844px] mx-auto flex flex-col justify-end overflow-hidden border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900">
@@ -61,9 +58,7 @@ export const MobileViewport: Story = {
   )],
 }
 
-// Same regression check, streaming: Stop+Queue crowd the row and shrink the
-// textarea further than the idle case does - the tightest width the
-// placeholder has to fit in (#759 item 2). The two-item queue shows the compact "N queued" chip (desktop: the pending bubble rows).
+// Stop and Queue crowd the row, leaving the placeholder its tightest width.
 export const MobileViewportStreaming: Story = {
   args: {
     disabled: false,
@@ -81,9 +76,8 @@ export const MobileViewportStreaming: Story = {
   )],
 }
 
-// #1248: the on-screen keyboard shrinks visualViewport without shrinking dvh
-// on iOS Safari - App.tsx's useVisualViewportHeight override is what keeps the
-// frame short in the real app; this fakes that same short frame so render-check can catch the composer sliding off the bottom of it without a real keyboard.
+// iOS Safari's keyboard shrinks visualViewport but not dvh; this fakes the short frame App.tsx's
+// useVisualViewportHeight produces, so render-check catches the composer sliding off it.
 export const MobileViewportKeyboardOpen: Story = {
   args: { disabled: false, streaming: false },
   parameters: { layout: 'fullscreen' },
@@ -94,8 +88,7 @@ export const MobileViewportKeyboardOpen: Story = {
   )],
 }
 
-// #1174's narrowest acceptance viewport (360x740): the tightest idle check -
-// the pill's fixed 44+8+44 row cost leaves the least room for the textarea.
+// Narrowest target viewport: the pill's fixed 44+8+44 row cost leaves the least room for the textarea.
 export const MobileViewport360: Story = {
   args: { disabled: false, streaming: false },
   decorators: [Story => (

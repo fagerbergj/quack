@@ -11,12 +11,10 @@ export default meta
 
 type Story = StoryObj<typeof NavRail>
 
-// #1171: NavRail is a pure overlay drawer at every width - open mounts the
-// fixed panel, closed renders nothing. The trigger lives in each page's
-// header leading slot (NavToggle), not here, so these stories drive the drawer through its open prop. The fixed inset-0 overlay floats over the Storybook frame, which stands in for the app.
+// The trigger (NavToggle) lives in each page header, so these stories drive the open prop directly.
+// The fixed inset-0 overlay floats over the Storybook frame, which stands in for the app.
 
-// Chats highlighted as the active route (#746 item 1: Memory is a peer of
-// Chats, no overflow menu).
+// Chats highlighted as the active route; Memory is a peer, not in an overflow menu.
 export const OpenOnChats: Story = {
   args: { route: 'chat', open: true, initialExtensions: [] },
   render: args => (
@@ -42,9 +40,7 @@ export const OpenOnMemory: Story = {
   ),
 }
 
-// Closed renders nothing at all - no rail, no strip, no hamburger column
-// (this is what #1171 removes; the 360px frame is the narrowest target
-// device).
+// Closed renders nothing at all; the 360px frame is the narrowest target device.
 export const Closed: Story = {
   args: { route: 'chat', open: false, initialExtensions: [] },
   render: args => (
@@ -59,8 +55,7 @@ export const Closed: Story = {
   },
 }
 
-// The canonical drawer story at phone width (#1145's sub-600px shape, now
-// the only shape, at every width).
+// The canonical drawer story at phone width.
 export const Open: Story = {
   args: { route: 'chat', open: true, initialExtensions: [] },
   render: args => (
@@ -75,9 +70,8 @@ export const Open: Story = {
   },
 }
 
-// Extension nav entries: a module with a UI descriptor (href) gets a nav
-// entry navigating client-side to this app's /ext/:name host page (#870) -
-// one without an href renders nothing at all, not an inert placeholder (see the absent 'github' entry here).
+// A module with an href navigates client-side to /ext/:name; one without renders nothing at all
+// (see the absent 'github' entry).
 export const WithExtensions: Story = {
   args: {
     route: 'chat',
@@ -96,8 +90,7 @@ export const WithExtensions: Story = {
   ),
 }
 
-// The version footer (#1326): muted, bottom of the drawer, "v" prefixed
-// once regardless of what the server sends.
+// The version footer is "v" prefixed once regardless of what the server sends.
 export const WithVersion: Story = {
   args: { route: 'chat', open: true, initialExtensions: [], versionOverride: '0.51.26' },
   render: args => (

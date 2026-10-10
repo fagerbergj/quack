@@ -1,16 +1,15 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { act } from 'react'
-import { createRoot } from 'react-dom/client'
+import { act, cleanup, render } from '@testing-library/react'
 import Chat from './Chat'
 import { ChatStore } from '../state/chatStore'
 import { ChatStoreProvider } from '../state/ChatStoreProvider'
 import { client } from '../generated/client.gen'
 import type { Turn } from '../generated'
 
-// Spy on TurnView itself (not its DOM output) so mount COUNT is cheap and
-// exact to assert on, without paying for 500 real markdown parses (audit
-// finding 9's own concern is the mount, not what's inside it).
+afterEach(cleanup)
+
+// Spies on TurnView itself so the mount count is exact without paying for 500 markdown parses.
 const { mountedTurnIds } = vi.hoisted(() => ({ mountedTurnIds: [] as string[] }))
 vi.mock('../components/TurnView', async importOriginal => {
   const actual = await importOriginal<typeof import('../components/TurnView')>()
@@ -55,14 +54,9 @@ function stubFetch(turns: Turn[]) {
 }
 
 describe('Chat turn list cap (audit finding 9)', () => {
-  let root: ReturnType<typeof createRoot> | undefined
-  let host: HTMLDivElement | undefined
+  let host: HTMLElement | undefined
 
   afterEach(() => {
-    act(() => root?.unmount())
-    host?.remove()
-    root = undefined
-    host = undefined
     mountedTurnIds.length = 0
     vi.unstubAllGlobals()
   })
@@ -71,16 +65,7 @@ describe('Chat turn list cap (audit finding 9)', () => {
     stubFetch(turns)
     window.history.replaceState(null, '', '/chat/c1')
     const store = new ChatStore()
-    host = document.createElement('div')
-    document.body.appendChild(host)
-    root = createRoot(host)
-    // @ts-expect-error react act environment flag
-    globalThis.IS_REACT_ACT_ENVIRONMENT = true
-    await act(async () => {
-      root!.render(
-        <ChatStoreProvider store={store}><Chat navOpen={false} onToggleNav={() => {}} /></ChatStoreProvider>,
-      )
-    })
+    host = render(<ChatStoreProvider store={store}><Chat navOpen={false} onToggleNav={() => {}} /></ChatStoreProvider>).container
     // Let the async getChat().then(...) seed resolve.
     for (let i = 0; i < 50 && mountedTurnIds.length === 0; i++) {
       await act(async () => { await new Promise(r => setTimeout(r, 10)) })
@@ -90,9 +75,7 @@ describe('Chat turn list cap (audit finding 9)', () => {
   it('mounts only the most recent 100 TurnViews out of 500, with an older-messages control', async () => {
     await mountChatWith(makeTurns(500))
 
-    // Chat re-renders more than once while it settles (poll/getChat effects),
-    // so the same 100 ids get pushed more than once - the DISTINCT set is
-    // what actually matters (that's what's on screen at any commit).
+    // Chat re-renders while it settles, pushing the same ids repeatedly; the distinct set is what's on screen.
     let mounted = new Set(mountedTurnIds)
     expect(mounted.size).toBe(100)
     // The most recent 100 turns (t400..t499), not the first 100.

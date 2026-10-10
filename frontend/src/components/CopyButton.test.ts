@@ -1,32 +1,19 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { act, createElement } from 'react'
-import { createRoot } from 'react-dom/client'
+import { createElement } from 'react'
+import { act, cleanup, render } from '@testing-library/react'
 import { CopyButton } from './CopyButton'
 
-describe('CopyButton', () => {
-  let root: ReturnType<typeof createRoot> | undefined
-  let host: HTMLDivElement | undefined
+afterEach(cleanup)
 
-  afterEach(() => {
-    act(() => root?.unmount())
-    host?.remove()
-    root = undefined
-    host = undefined
-  })
+describe('CopyButton', () => {
+  let host: HTMLElement | undefined
 
   it('copies its text to the clipboard on click and flashes a confirmation', () => {
-    // @ts-expect-error react act environment flag
-    globalThis.IS_REACT_ACT_ENVIRONMENT = true
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.assign(navigator, { clipboard: { writeText } })
 
-    host = document.createElement('div')
-    document.body.appendChild(host)
-    root = createRoot(host)
-    act(() => {
-      root!.render(createElement(CopyButton, { text: '{"input":1}', label: 'Copy tool call JSON' }))
-    })
+    host = render(createElement(CopyButton, { text: '{"input":1}', label: 'Copy tool call JSON' })).container
 
     const button = host.querySelector('button')!
     expect(button.querySelector('svg')).not.toBeNull() // content-copy glyph, not yet confirmed
@@ -40,20 +27,13 @@ describe('CopyButton', () => {
   })
 
   it('does not toggle an enclosing <details> when clicked', () => {
-    // @ts-expect-error react act environment flag
-    globalThis.IS_REACT_ACT_ENVIRONMENT = true
     Object.assign(navigator, { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } })
 
-    host = document.createElement('div')
-    document.body.appendChild(host)
-    root = createRoot(host)
-    act(() => {
-      root!.render(
-        createElement('details', { open: false }, [
-          createElement('summary', { key: 's' }, createElement(CopyButton, { text: 'x' })),
-        ]),
-      )
-    })
+    host = render(
+      createElement('details', { open: false }, [
+        createElement('summary', { key: 's' }, createElement(CopyButton, { text: 'x' })),
+      ]),
+    ).container
 
     const details = host.querySelector('details')!
     const button = host.querySelector('button')!
@@ -64,10 +44,7 @@ describe('CopyButton', () => {
     expect(details.open).toBe(false)
   })
   it('is a 44px target at compact width', () => {
-    host = document.createElement('div')
-    document.body.appendChild(host)
-    root = createRoot(host)
-    act(() => { root!.render(createElement(CopyButton, { text: 'x' })) })
+    host = render(createElement(CopyButton, { text: 'x' })).container
     const cls = host.querySelector('button')!.className
     expect(cls).toContain('min-h-[44px]')
     expect(cls).toContain('medium:min-h-0')

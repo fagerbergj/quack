@@ -33,8 +33,7 @@ export const ToolRunning: Story = {
   },
 }
 
-// A failed tool call's collapsed summary shows a cross, not a check (#385) -
-// status conveyed by icon+colour together, never colour alone.
+// A failed tool call shows a cross, not a check: icon plus colour, never colour alone.
 export const ToolFailed: Story = {
   args: {
     activity: [
@@ -43,8 +42,7 @@ export const ToolFailed: Story = {
   },
 }
 
-// #388 - an ACP code-implementer's file edit now maps to edit_file (not
-// write_file) and renders the SAME before→after diff view a native edit gets.
+// An ACP file edit maps to edit_file and gets the same before/after diff as a native edit.
 // A new file (no prior content) shows every line as added.
 export const AcpEditFileDiff: Story = {
   args: {
@@ -62,9 +60,7 @@ export const AcpEditFileDiff: Story = {
   },
 }
 
-// The native code-implementer's own edit_file call - same tool name, same
-// diff view, rendered identically to the ACP one above (#388's acceptance:
-// ACP and native edits are visually indistinguishable).
+// The native edit_file call must look identical to the ACP one above.
 export const NativeEditFileDiff: Story = {
   args: {
     activity: [
@@ -80,9 +76,7 @@ export const NativeEditFileDiff: Story = {
   },
 }
 
-// The "Thought" icon is a crisp currentColor SVG (not an emoji, which used to
-// render pixelated/off-colour on a dark background) - toggle the Storybook
-// toolbar's dark-mode control to check it renders cleanly in both themes.
+// Toggle Storybook's dark-mode control to check the Thought SVG renders cleanly in both themes.
 export const ThinkBlockIcon: Story = {
   args: {
     activity: [
@@ -91,8 +85,7 @@ export const ThinkBlockIcon: Story = {
   },
 }
 
-// #746 item 6 - tool rows no longer carry a copy button (dropped as noise);
-// the row itself still expands to ToolCallView's full detail on click.
+// Tool rows carry no copy button; the row still expands to ToolCallView's full detail.
 export const ToolCallNoCopyButton: Story = {
   args: {
     activity: [
@@ -117,9 +110,7 @@ export const Windowed: Story = {
   },
 }
 
-// #379: a run with many tool-call events - the streaming perf fix's target.
-// ActivityList windows to the most recent RECENT items so this stays cheap;
-// it's here to make that windowing (and the store fix) verifiable.
+// Many tool-call events: ActivityList windows to the most recent RECENT items so this stays cheap.
 const manyActivity: Activity[] = Array.from({ length: 60 }, (_, i) => ({
   kind: 'tool' as const,
   tool: { callId: `c${i}`, name: 'web_search', args: { query: `dublin weather query ${i}` }, result: { results: [] }, done: true },
@@ -129,7 +120,7 @@ export const ManyToolCalls: Story = {
   args: { activity: manyActivity },
 }
 
-// Interleaved thinking/tool-call events (#959) folded into one Thought block.
+// Interleaved thinking/tool-call events fold into one Thought block.
 function buildInterleavedFixture(): Activity[] {
   let runs = startRun([], { runId: 'r1', agent: 'code-reviewer', stage: 'worker' })
   const fragments = [
@@ -141,9 +132,7 @@ function buildInterleavedFixture(): Activity[] {
   for (let i = 0; i < fragments.length; i++) {
     runs = appendRunThinking(runs, 'r1', fragments[i])
     const callId = `c${i}`
-    // i===3/7 stand in for calls the ACP relay used to collapse onto "other"
-    // (bridged MCP / no ACP kind match); it now resolves real names
-    // (internal/acp/translate.go mapToolCall, #1278), so the fixture never builds "other".
+    // i===3/7 are bridged MCP calls; the relay resolves their real names, so the fixture never builds "other".
     const isBridged = i === 3 || i === 7
     const name = isBridged ? (i === 3 ? 'stage_review' : 'load_skill') : 'read_file'
     runs = appendRunToolCall(runs, 'r1', callId, name, isBridged ? {} : { path: `src/file${i}.go` })
@@ -188,9 +177,7 @@ export const WithCodeBlock: Story = {
   render: () => <AssistantText text={CODE_ANSWER} />,
 }
 
-// #746 item 16: a single-backtick span renders as inline `code` styling,
-// distinct from the fenced block above. Pins the regression: mixes inline
-// code with prose, followed by a fenced block so the two compare directly.
+// A single-backtick span renders as inline code, distinct from the fenced block that follows.
 const INLINE_CODE_ANSWER = `Set \`QUACK_LOG_LEVEL\` to \`debug\` in the environment, then restart with \`make docker-up\`. The default is \`info\`.
 
 \`\`\`bash
@@ -201,9 +188,8 @@ export const WithInlineCode: Story = {
   render: () => <AssistantText text={INLINE_CODE_ANSWER} />,
 }
 
-// #746 item 16's root cause: not a CSS override but a CommonMark parsing
-// quirk - a bare punctuation backtick earlier in the paragraph defeats
-// greedy backtick-pairing, scrambling `QUACK_LOG_LEVEL` without backticks.ts's fix.
+// A bare punctuation backtick earlier in the paragraph would defeat CommonMark's backtick pairing
+// without backticks.ts's fix.
 export const InlineCodeAfterStrayBacktick: Story = {
   render: () => <AssistantText text={"Don't use a bare ` unless needed. Instead set `QUACK_LOG_LEVEL` to `debug`."} />,
   play: async ({ canvasElement }) => {
@@ -214,9 +200,7 @@ export const InlineCodeAfterStrayBacktick: Story = {
   },
 }
 
-// A complete ```mermaid block (closing fence has arrived) renders as an SVG
-// diagram - mermaid is lazy-loaded on first mount, so the diagram appears a
-// beat after the rest of the bubble.
+// A closed mermaid fence renders as a diagram; mermaid lazy-loads, so it appears a beat after the bubble.
 const MERMAID_VALID = `Here's the request flow:
 
 \`\`\`mermaid
@@ -236,9 +220,7 @@ export const MermaidValid: Story = {
   },
 }
 
-// Invalid mermaid never throws or blanks the bubble - it falls back to the
-// same plain code-block rendering as WithCodeBlock plus an inline notice
-// (agents do emit invalid mermaid; the backend validator catches it before delivery).
+// Invalid mermaid falls back to a plain code block plus an inline notice, never a throw or blank bubble.
 const MERMAID_INVALID = `\`\`\`mermaid
 this is not a valid diagram @@@ %%%
 \`\`\``
@@ -252,9 +234,7 @@ export const MermaidInvalid: Story = {
   },
 }
 
-// An unterminated ```mermaid fence - the state every diagram passes through
-// while streaming. Plain, unhighlighted code block (no mermaid attempt, no
-// error flash) until the closing fence arrives.
+// An unterminated mermaid fence, as while streaming: a plain code block, no error flash, until it closes.
 const MERMAID_STREAMING = `Here's the request flow:
 
 \`\`\`mermaid
@@ -270,17 +250,13 @@ export const MermaidStreaming: Story = {
   },
 }
 
-// #387: preamble/reasoning tokens are never the answer. Narration a worker
-// emitted before its tool call never reaches it - the store resets the
-// accumulator on each tool call (chatStore.ts), so only text after the last call renders as the answer.
+// The store resets the answer accumulator on each tool call, so only text after the last call renders.
 const preambleActivity: Activity[] = [
   { kind: 'thinking', text: 'The user wants the timeout value - I should read the config rather than guess.' },
   { kind: 'tool', tool: { callId: 'c1', name: 'read_file', args: { path: 'config.yaml' }, result: { content: 'timeout: 30s' }, done: true } },
 ]
 
-// #416 - the top-level orchestrator card's BubbleHeader carries a StatusDot to
-// the left of the name while the turn is live, matching DagNode's header
-// (dot-then-name); a completed turn passes no `status` and shows no dot.
+// Only a live orchestrator card shows a StatusDot before the name; a completed turn passes no `status`.
 export const OrchestratorCardRunning: Story = {
   render: () => (
     <div className="max-w-lg rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-3">
@@ -312,8 +288,7 @@ export const PreambleVsAnswer: Story = {
   ),
 }
 
-// LiveStatusLine is what a RUNNING run shows instead of ActivityList (#725).
-// These four cover its whole surface: both lines, each alone, and nothing.
+// What a running run shows instead of ActivityList: both lines, each alone, and nothing.
 export const LiveStatusThinkingAndTool: Story = {
   render: () => (
     <div className="max-w-lg rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-3">

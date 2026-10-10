@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
-// #1284/#1300: memo(TriggerMessage) must collapse a live turn's re-renders to
-// one body call while props (crucially `attachments`) stay referentially stable - pinned via triggerMessageRenderProbe, not duration (jsdom timings too noisy).
+// memo(TriggerMessage) must skip re-renders on stable props; asserted via a render probe, as jsdom timings are noisy.
 import { describe, it, expect, afterEach, beforeEach } from 'vitest'
 import { cleanup, render, act, screen } from '@testing-library/react'
 import { useState, useMemo } from 'react'
@@ -66,9 +65,8 @@ describe('TriggerMessage re-render cost (#1284)', () => {
   }, 60000)
 })
 
-// #1300 review: memo(TriggerMessage) does a shallow prop compare, so only
-// reference equality (via Chat.tsx's useMemo) may suppress a re-render, not
-// the new element's shape/length. Same-length, different-content swaps are what a naive comparator gets wrong.
+// memo's shallow compare means only reference equality (Chat.tsx's useMemo) may skip a re-render;
+// same-length, different-content swaps are what a naive comparator gets wrong.
 describe('TriggerMessage attachments prop (#1300 review)', () => {
   it('re-renders and shows new attachments when the prop changes, even at the same length', () => {
     const { rerender } = render(

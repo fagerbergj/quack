@@ -1,13 +1,11 @@
-// #746 item 16: a single backtick used as plain punctuation ("a bare ` here")
-// defeats CommonMark's greedy backtick-run pairing - it becomes an opener
-// with no closer, which then steals the OPENING half of the pairing for every later single-backtick code span in the same paragraph, so the model's actual `code` spans render scrambled or as plain text. A markdown-parsing quirk, not the CSS pipeline the issue first suspected - fenced blocks are unaffected (separate block-level rule). fixParagraph escapes only backtick runs that read as punctuation (whitespace on both sides) or that CommonMark's own algorithm would otherwise leave unmatched, so every already-well-formed span is untouched.
+// A lone punctuation backtick becomes a CommonMark opener with no closer and steals the pairing of later code spans.
+// fixParagraph escapes only punctuation-like or unmatched runs, leaving well-formed spans and fences untouched.
 export function escapeUnmatchedBackticks(text: string): string {
   return withNonFencedParagraphs(text, fixParagraph)
 }
 
-// fixParagraph walks backtick runs left to right, mirroring CommonMark's own
-// matching (spec 6.1 Code spans): each unconsumed run seeks the NEXT run of
-// the identical length as its closer; a found pair (and everything between the two runs) is already valid code-span content, so scanning resumes after the closer - a run inside an already-matched span is never visited as its own opener. A lone backtick with whitespace/boundary on both sides never hugs content the way a real delimiter does, so it's escaped outright rather than risk it pairing with (and stealing) a later, real span.
+// Mirrors CommonMark code-span matching (spec 6.1): each run seeks the next run of equal length as its closer, and
+// scanning resumes past a pair. A lone backtick with whitespace on both sides is escaped outright, never paired.
 function fixParagraph(text: string): string {
   const runs: { start: number; len: number }[] = []
   const re = /`+/g
@@ -51,9 +49,7 @@ function isIsolated(text: string, pos: number): boolean {
   return isBoundary(pos === 0 ? '' : text[pos - 1]) && isBoundary(pos + 1 >= text.length ? '' : text[pos + 1])
 }
 
-// withNonFencedParagraphs applies `fn` to every blank-line-delimited chunk of
-// `text` OUTSIDE a fenced code block (``` or ~~~), leaving fences - and
-// everything inside them - byte-for-byte untouched.
+// Applies `fn` to each blank-line-delimited chunk outside fenced code (``` or ~~~); fences stay byte-identical.
 function withNonFencedParagraphs(text: string, fn: (chunk: string) => string): string {
   const lines = text.split('\n')
   const fenceStart = /^ {0,3}(`{3,}|~{3,})/

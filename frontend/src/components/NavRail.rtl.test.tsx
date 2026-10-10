@@ -15,9 +15,8 @@ beforeEach(() => {
   window.history.replaceState(null, '', '/')
 })
 
-// #1171: NavRail is a pure drawer at every width - no persistent rail, no
-// hamburger column, no compact/media-query branch, so nothing to mock the
-// viewport for. This harness stands in for App.tsx: it owns the open state (closed on load, remembering nothing) and carries the toggle the drawer's useDrawer focus-return targets.
+// Stands in for App.tsx: owns the open state and carries the toggle that useDrawer's focus return targets.
+// The drawer has no viewport branch, so nothing mocks the viewport.
 function Harness({ route = 'chat', initialExtensions = [], versionOverride }: { route?: 'chat' | 'memory' | 'ext'; initialExtensions?: ExtensionInfo[]; versionOverride?: string }) {
   const [open, setOpen] = useState(false)
   return (
@@ -106,8 +105,7 @@ describe('NavRail drawer', () => {
     expect(window.location.pathname).toBe('/ext/remarkable')
   })
 
-  // #1326: the version footer at the bottom of the drawer - muted, titled
-  // with the full string, not one of the Chats/Memory/extension nav buttons.
+  // The version footer is titled with the full string and is not one of the nav buttons.
   it('shows the version footer, muted and titled with the full string', async () => {
     const user = userEvent.setup()
     render(<Harness versionOverride="0.51.26" />)

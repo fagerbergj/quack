@@ -151,8 +151,7 @@ export const JudgeUnavailable: Story = {
   },
 }
 
-// #779: the judge ran (spent its whole iteration budget) but never called
-// submit_verdict - distinct from JudgeUnavailable, which never ran at all.
+// The judge ran (spent its whole budget) but never called submit_verdict, unlike JudgeUnavailable, which never ran.
 export const JudgeNoVerdict: Story = {
   args: {
     node: wrNode,
@@ -176,9 +175,8 @@ export const Truncated: Story = {
   },
 }
 
-// #379: a node whose worker run streamed 80 tool-call events - the
-// performance case the streaming-update fix targets (see messageParts.ts /
-// AgentParts.test.ts). ActivityList windows to its most recent items, so this stays cheap however many events arrive.
+// A worker run that streamed 80 tool-call events; ActivityList windows to its most recent items,
+// so this stays cheap however many events arrive.
 const manyToolActivity: Activity[] = Array.from({ length: 80 }, (_, i) => ({
   kind: 'tool' as const,
   tool: { callId: `c${i}`, name: 'web_search', args: { query: `query ${i}` }, result: { results: [] }, done: true },
@@ -231,8 +229,7 @@ export const Paused: Story = {
   ),
 }
 
-// #962: Paused above already covers pause_reason "user" ("paused · by you");
-// the other two reasons get their own header labels below.
+// Paused above covers pause_reason "user"; the other two reasons get their own header labels below.
 export const PausedShutdown: Story = {
   render: () => (
     <DagNode
@@ -247,9 +244,8 @@ export const PausedShutdown: Story = {
   ),
 }
 
-// paused/awaiting_input: the wire-normalized spelling of the legacy
-// needs_input status - the node's own pending_question, answered via
-// onAnswerQuestion (start with the answer as NodeStartBody.content).
+// paused/awaiting_input is the wire spelling of the legacy needs_input status; the pending_question is
+// answered via onAnswerQuestion (start with the answer as NodeStartBody.content).
 export const PausedAwaitingInput: Story = {
   args: {
     node: wrNode,
@@ -267,8 +263,7 @@ export const PausedAwaitingInput: Story = {
   },
 }
 
-// A running node with a queued (not-yet-delivered) message showing the ✉
-// badge - the message itself is edited/removed in the popup (#384).
+// A queued, not-yet-delivered message shows the ✉ badge; the message is edited or removed in the popup.
 export const RunningWithQueuedMessage: Story = {
   render: () => (
     <DagNode
@@ -287,9 +282,8 @@ export const RunningWithQueuedMessage: Story = {
   ),
 }
 
-// Demonstrates Feature 1 (height-lock) in context: a long answer is capped with a
-// Show more toggle, and a many-round node stays scannable because each round is a
-// collapsed card. Open the Work card to see the edit_file diff render (Feature 2).
+// A long answer is height-locked behind Show more, and each round is a collapsed card.
+// Open the Work card to see the edit_file diff render.
 const codeNode: DagNodeDef = {
   id: 'code', agent: 'web-researcher',
   task: 'Refactor greet() to support a loud flag and add a test.', depends_on: [],
@@ -324,9 +318,8 @@ export const LongContentManyRounds: Story = {
 }
 
 
-// A mid-node HITL question (StatusDot amber, matching needs_input everywhere
-// else in the app) - the filled "Answer" button in the header opens the popup
-// where the answer is typed (audit #6: never hidden in the kebab).
+// A mid-node HITL question: the filled "Answer" button in the header, never hidden in the kebab,
+// opens the popup where the answer is typed.
 export const NeedsInput: Story = {
   args: {
     node: wrNode,
@@ -419,9 +412,7 @@ const markdownVerdict = [
   '- The [Met Éireann](https://www.met.ie) climate page has monthly averages',
 ].join('\n')
 
-// The judge verdict collapses to one line by default, matching ThinkBlock's
-// affordance - a truncated preview beside the round header, not a standing
-// paragraph.
+// The judge verdict collapses to a one-line truncated preview beside the round header, like ThinkBlock.
 export const JudgeVerdictCollapsed: Story = {
   args: {
     node: wrNode,
@@ -479,9 +470,8 @@ export const AnswerPopup: Story = {
   },
 }
 
-// A mechanical deterministic-check retry (the gate's continuation loop
-// handing the worker another tool-bearing round after e.g. a failed `go test`)
-// is a SEPARATE run under the hood but renders as ONE continuous activity feed - not a second "1 tool call" block - because it isn't a meaningful stage boundary the way a judge-triggered revise is. Regression guard for the render-level grouping in groupWorkerRuns (DagNode.tsx).
+// A deterministic-check retry is a separate run but renders as one activity feed, since it isn't a stage
+// boundary the way a judge-triggered revise is. Guards groupWorkerRuns.
 export const DeterministicRetryOneFeed: Story = {
   args: {
     node: wrNode,
@@ -560,9 +550,8 @@ export const CompactionInFeed: Story = {
   },
 }
 
-// A finished node with a delivered queued message and the retry controls
-// visible: the "steered" badge and both retry buttons carry Material icons
-// (no text glyphs) and the buttons are 44px rows at compact width.
+// The "steered" badge and both retry buttons carry Material icons (no text glyphs);
+// the buttons are 44px rows at compact width.
 export const DoneWithRetryAndSteered: Story = {
   args: {
     node: wrNode,

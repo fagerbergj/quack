@@ -3,7 +3,7 @@ import { AssistantText, ActivityList, LiveStatusLine, AcpBadge, isAcpAgent } fro
 import { ArtifactPanel, isBookkeeping, selectPrimaryOutput, artifactTitle } from './ArtifactPanel'
 import { NodeMemoriesPanel } from './NodeMemoriesPanel'
 import { CopyButton } from './CopyButton'
-import { NodePopup } from './NodePopup'
+import { NodePopup, liveState } from './NodePopup'
 import { StatusDot } from './StatusDot'
 import { api, listChatArtifactsShared } from '../api'
 import type { ArtifactSummary } from '../api'
@@ -15,6 +15,7 @@ import { fmtMs, LiveTimer } from '../utils/timer'
 import { traceUrl } from '../state/clientConfig'
 import { Icon } from './Icon'
 import { Sheet } from './Sheet'
+import { tryParseJSON } from '../lib/json'
 
 // Retry (→ queued) is legal from done, failed, or cancelled - see dag.CanTransition.
 const isTerminal = (s: NodeStatus) => s === 'done' || s === 'failed' || s === 'cancelled'
@@ -23,22 +24,8 @@ const isTerminal = (s: NodeStatus) => s === 'done' || s === 'failed' || s === 'c
 // are "paused" for transition purposes (dag.CanTransition treats them alike).
 const isPausedStatus = (s: NodeStatus) => s === 'paused' || s === 'needs_input'
 
-// dispatched/notStarted/running: 'queued' also fires mid-run, at a
-// worker/judge admission re-wait (#1480) - dispatched (has this node ever
-// produced a run) disambiguates that from the node's real first wait.
-function liveState(status: NodeStatus, runs: AgentRun[]) {
-  const dispatched = runs.length > 0
-  return {
-    dispatched,
-    notStarted: status === 'queued' && !dispatched,
-    running: status === 'running' || (status === 'queued' && dispatched),
-  }
-}
-
-// The per-status action flags for NodeMenu's items - startable/cancellable
-// mirror dag.CanTransition's legal transitions from each state. live/notStarted
-// come from the caller: raw 'queued' is ambiguous - it also fires mid-run at
-// a worker/judge admission wait (#1480), which must read as live, not startable.
+// startable/cancellable mirror dag.CanTransition. Raw 'queued' also fires mid-run at a worker/judge
+// admission wait, which must read as live, not startable, so the caller supplies live/notStarted.
 function menuFlags(status: NodeStatus, live: boolean, notStarted: boolean, canQueue: boolean, canEdit: boolean) {
   const terminal = isTerminal(status)
   const startable = !terminal && (isPausedStatus(status) || notStarted)
@@ -47,9 +34,7 @@ function menuFlags(status: NodeStatus, live: boolean, notStarted: boolean, canQu
   return { startable, cancellable, hasSecondary }
 }
 
-// The node's ⋮ overflow menu: one click for pause/start/stop (no popup
-// round-trip); "queue a message…" / "edit prompt" open the popup only when
-// they need its input/editor. Hidden entirely on a terminal node (done/failed/cancelled) - nothing left to do.
+// One click for pause/start/stop; "queue a message…" and "edit prompt" open the popup only for its input/editor.
 function NodeMenu({
   nodeId, status, live, notStarted, onCancel, onPause, onResume, canQueue, canEdit, onOpenPopup, onOpenArtifacts, onOpenMemories,
 }: {
@@ -65,12 +50,9 @@ function NodeMenu({
   canQueue: boolean
   canEdit: boolean
   onOpenPopup: () => void
-  // Present only for a real chat (gates the Artifacts item) - see DagNode's
-  // own chatId doc. A terminal node still needs this menu for its outputs,
-  // so unlike the rest of this menu's items, it isn't gated by node status.
+  // Present only for a real chat. Not gated by status: a terminal node still needs this menu for its outputs.
   onOpenArtifacts?: () => void
-  // Same gating as onOpenArtifacts (epic #1255 P4) - a terminal node's
-  // received memories are still worth reviewing after the fact.
+  // Same gating as onOpenArtifacts: a terminal node's received memories are still worth reviewing.
   onOpenMemories?: () => void
 }) {
   const [open, setOpen] = useState(false)
@@ -93,17 +75,14 @@ function NodeMenu({
   }, [open])
 
   const terminal = isTerminal(status)
-  // A terminal node has nothing left to control, but its output artifacts are
-  // still worth a menu - the whole point of viewing them is usually AFTER a
-  // node finishes. Only fully hide the menu when there's truly nothing in it.
+  // Viewing outputs usually happens after a node finishes, so hide the menu only when it would be empty.
   if (terminal && !onOpenArtifacts && !onOpenMemories) return null
   const { startable, cancellable, hasSecondary } = menuFlags(status, live, notStarted, canQueue, canEdit)
 
   return (
     <div ref={ref} className="relative shrink-0">
-      {/* Always visible (touch has no hover to reveal it) and a 44px target
-          that overlaps the header's padding via negative margins so the
-          row stays one line high. */}
+      {/* Always visible (touch has no hover) and a 44px target; negative margins
+          overlap the header padding so the row stays one line high. */}
       <button
         ref={btnRef}
         onClick={() => setOpen(o => !o)}
@@ -203,7 +182,7 @@ function NodeMenuItems({ nodeId, running, terminal, startable, cancellable, hasS
   )
 }
 
-// QueuedBadge counts only parked messages - live-delivered ones (#998) don't count.
+// Counts only parked messages; live-delivered ones don't count.
 function QueuedBadge({ count }: { count: number }) {
   if (count === 0) return null
   return (
@@ -216,9 +195,7 @@ function QueuedBadge({ count }: { count: number }) {
   )
 }
 
-// pausedStatusLabel names a paused-family node's state for the header. A node
-// waiting on the user says so directly; "by you" needs a real pause_reason
-// (a live-streamed pause may not carry one yet), so the fallback is plain.
+// "by you" needs a real pause_reason (a live-streamed pause may not carry one yet), so the fallback is plain.
 export function pausedStatusLabel(status: NodeStatus, reason: NodeState['pauseReason']): string {
   if (status === 'needs_input' || reason === 'awaiting_input') return 'needs your answer'
   switch (reason) {
@@ -256,9 +233,8 @@ function RunModel({ run }: { run: AgentRun }) {
 const CONTEXT_WARN_PCT = 80
 const CONTEXT_DANGER_PCT = 95
 
-// ContextMeter shows a node's context-window pressure: a thin fill bar plus
-// "156K/262K" text, from the node's own agent-configured limit and its most
-// recent worker/revise round's measured usage. Hidden until both are known.
+// Context-window pressure from the agent's configured limit and the latest worker/revise round's usage.
+// Hidden until both are known.
 function ContextMeter({ used, limit }: { used: number; limit: number }) {
   if (limit <= 0 || used <= 0) return null
   const pct = Math.min(100, Math.round((used / limit) * 100))
@@ -281,9 +257,8 @@ function ContextMeter({ used, limit }: { used: number; limit: number }) {
   )
 }
 
-// Shows one block of prose (a judge verdict, a node's vetted answer)
-// full-size as an extension of the main chat rather than a bespoke modal -
-// the same structure NodePopup uses (#384/#406): a light overlay, a close button on its own row (never overlapping the content), Escape/outside-click-to-close, and the content in a chat-style bubble via AssistantText.
+// Shows one block of prose (a judge verdict, a vetted answer) full-size with the same structure as NodePopup:
+// light overlay, a close button on its own row, Escape/outside-click to close, a chat-style bubble.
 function ContentPopup({ title, text, onClose }: { title: string; text: string; onClose: () => void }) {
   return (
     <Sheet onClose={onClose} className="relative max-w-2xl medium:max-h-[85dvh] medium:rounded-2xl bg-gray-50 dark:bg-gray-900 px-5 medium:pb-6 pt-2 space-y-2">
@@ -298,10 +273,8 @@ function ContentPopup({ title, text, onClose }: { title: string; text: string; o
       </div>
       <div className="group/verdict relative bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
         <span className="block mb-2 text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">{title}</span>
-        {/* #746 item 7 - hidden until THIS block (not some unrelated
-            ancestor - a NAMED group, since the popup nests inside
-            DagNode's own `.group` card) is hovered/focused, aligned to the
-            block's own px-5/py-4 padding rather than a separate header row. */}
+        {/* A named group because the popup nests inside DagNode's own `.group` card:
+            only this block's hover/focus reveals the copy button. */}
         <span className="absolute top-4 right-5 opacity-0 group-hover/verdict:opacity-100 group-focus-within/verdict:opacity-100 transition-opacity">
           <CopyButton text={text} label={`Copy ${title.toLowerCase()}`} />
         </span>
@@ -311,10 +284,11 @@ function ContentPopup({ title, text, onClose }: { title: string; text: string; o
   )
 }
 
-// The one-line "label + truncated preview" affordance - the same compact-
-// collapse ethos as ThinkBlock/ToolBlock (#385/#399) - but clicking opens the
-// full content in a ContentPopup instead of expanding inline: a judge verdict or vetted answer reads better full-size (often the thing the reader most wants to inspect) than height-locked inside the node card.
-function CollapsedPreview({ label, text, popupTitle }: { label: string; text: string; popupTitle: string }) {
+// A one-line "label + truncated preview" that opens the full content in a ContentPopup instead of
+// expanding inline: a verdict or vetted answer reads better full-size than height-locked in the card.
+function CollapsedPreview({ label, text, popupTitle, className = 'py-1 text-[11px]', labelClass = 'italic shrink-0', max }: {
+  label: string; text: string; popupTitle: string; className?: string; labelClass?: string; max?: number
+}) {
   const [open, setOpen] = useState(false)
   if (!text) return null
   return (
@@ -322,10 +296,10 @@ function CollapsedPreview({ label, text, popupTitle }: { label: string; text: st
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="w-full flex items-center gap-1.5 py-1 text-[11px] text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-left"
+        className={`w-full flex items-center gap-1.5 ${className} text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-left`}
       >
-        <span className="italic shrink-0">{label}</span>
-        <span className="truncate text-gray-500 dark:text-gray-400">{previewLine(text)}</span>
+        <span className={labelClass}>{label}</span>
+        <span className="truncate text-gray-500 dark:text-gray-400">{previewLine(text, max)}</span>
       </button>
       {open && <ContentPopup title={popupTitle} text={text} onClose={() => setOpen(false)} />}
     </>
@@ -333,8 +307,8 @@ function CollapsedPreview({ label, text, popupTitle }: { label: string; text: st
 }
 
 
-// Renders the worker stage's activity as ONE continuous feed. `runs` is one or more consecutive
-// same-stage worker runs (groupWorkerRuns): a mechanical continuation round (e.g. a deterministic-check retry, #399 follow-up) hands the worker another tool-bearing turn as a NEW run, but that's not a stage boundary the way a judge-triggered revise is - so the activity is concatenated, not a second boxed block. The vetted answer renders separately at the foot (NodeAnswer); each group keeps its own labeled header (without one, its rows attach to the labeled card above); memoized so an event re-renders only that run's group (#379).
+// One continuous feed for consecutive worker runs: a mechanical continuation round is a new run but not a stage
+// boundary. Memoized so an event re-renders only that run's group.
 const WorkerCard = memo(function WorkerCard({ runs, running }: { runs: AgentRun[]; running: boolean }) {
   const activity: Activity[] = runs.length === 1 ? runs[0].activity : runs.flatMap(r => r.activity)
   const empty = activity.length === 0
@@ -345,17 +319,13 @@ const WorkerCard = memo(function WorkerCard({ runs, running }: { runs: AgentRun[
   const startedAt = runs.find(r => r.startedAt != null)?.startedAt
   const durationMs = running ? undefined : runs.reduce((sum, r) => sum + (r.durationMs ?? 0), 0)
   const timerRun: AgentRun = { ...runs[runs.length - 1], startedAt, durationMs, model, done: !running }
-  // #746 item 4: count only tool calls - a thinking trace isn't a "step" a
-  // reader can point to. A node with pure reasoning and no tool calls shows
-  // no count at all rather than a misleading "0 tool calls".
+  // Count only tool calls: a thinking trace isn't a step, and pure reasoning shows no count, not "0 tool calls".
   const toolCount = activity.filter(a => a.kind === 'tool').length
   return (
     <div className="border-t border-gray-100 dark:border-gray-700">
       <details open={running} className="not-prose">
         <summary className="cursor-pointer select-none px-4 py-2 flex items-center gap-2">
-          {/* Tool-call count (grows live); "running" is already the node
-              header's pulsing status dot + the timer - no separate spinner
-              dot here. */}
+          {/* "Running" is already the header's pulsing dot and timer, so no spinner here. */}
           {toolCount > 0 && (
             <span className="text-xs text-gray-500 dark:text-gray-400">
               {`${toolCount} tool call${toolCount === 1 ? '' : 's'}`}
@@ -372,9 +342,8 @@ const WorkerCard = memo(function WorkerCard({ runs, running }: { runs: AgentRun[
   )
 })
 
-// Folds consecutive 'worker'-stage runs into one render group so a mechanical
-// continuation round (e.g. a deterministic-check retry) merges into its
-// predecessor's activity feed; judge and revise runs stay their own group (they mark a meaningful stage).
+// Folds consecutive worker runs into one group so a mechanical continuation merges into its predecessor's feed;
+// judge and revise runs mark a real stage and stay their own group.
 type RunGroup = { stage: AgentRun['stage']; runs: AgentRun[]; activeIdx: number }
 
 function groupWorkerRuns(runs: AgentRun[], activeIdx: number): RunGroup[] {
@@ -391,35 +360,13 @@ function groupWorkerRuns(runs: AgentRun[], activeIdx: number): RunGroup[] {
   return groups
 }
 
-// A node's vetted output as a one-line preview at the foot of the node - the
-// same collapse-to-one-line ethos as ThinkBlock/ToolBlock (#385/#399) - with
-// the full answer in a popup on click. Shown for every node so each specialist's answer is inspectable - except the final node, whose answer IS the turn's answer and renders in full in the bubble below the DAG (a card row here would be a second copy of the same text).
-function NodeAnswer({ answer }: { answer: string }) {
-  const [open, setOpen] = useState(false)
-  if (!answer) return null
-  return (
-    <>
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="w-full flex items-center gap-1.5 px-4 py-2 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 border-t border-gray-100 dark:border-gray-700 text-left"
-      >
-        <span className="shrink-0">answer</span>
-        <span className="truncate text-gray-500 dark:text-gray-400">{previewLine(answer, 100)}</span>
-      </button>
-      {open && <ContentPopup title="Answer" text={answer} onClose={() => setOpen(false)} />}
-    </>
-  )
-}
-
 // Parses a fetched revision the same way the panel does: JSON for a
 // structured kind, raw text for a blob.
 function bodyFor(text: string, klass: string | undefined): unknown {
-  if (klass !== 'structured') return text
-  try { return JSON.parse(text) } catch { return text }
+  return klass === 'structured' ? tryParseJSON(text) ?? text : text
 }
 
-// Additive only: the answer keeps rendering via NodeAnswer regardless -
+// Additive only: the answer keeps rendering at the foot regardless -
 // this row shows ONLY when there's an artifact, never substituting for it.
 function NodeArtifactSummary({ chatId, nodeId, nodeArtifactKind, finished, onOpen }: {
   chatId: string
@@ -464,9 +411,8 @@ function NodeArtifactSummary({ chatId, nodeId, nodeArtifactKind, finished, onOpe
   )
 }
 
-// Names the two ways a judge round ends without a verdict (#779):
-// "unavailable" - the judge model itself couldn't be reached; "no_verdict"
-// - it ran (read files, spent its turns) but never committed one, which "unavailable" would misreport as an outage.
+// "unavailable": the judge model couldn't be reached. "no_verdict": it ran but never committed one,
+// which "unavailable" would misreport as an outage.
 function judgeFailureHeading(status?: string): string | null {
   if (status === 'unavailable') return 'Judge unavailable'
   if (status === 'no_verdict') return 'Judge did not reach a verdict'
@@ -494,9 +440,8 @@ const JudgeCard = memo(function JudgeCard({ run, running }: { run: AgentRun; run
           <span className="text-[11px] font-semibold text-purple-600 dark:text-purple-400 uppercase tracking-wide">
             Judge · round {run.round}
           </span>
-          {/* The pass bar is rendered only when the server sent it (older
-              events carry no envelope), never assumed; the threshold (when
-              sent) lives in the title, not inline. */}
+          {/* The pass bar renders only when the server sent it (older events carry no envelope);
+              the threshold lives in the title. */}
           {run.score != null && (
             <span
               className={`inline-flex items-center gap-0.5 text-[11px] font-medium ${run.passed ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}
@@ -547,9 +492,8 @@ const RevisionCard = memo(function RevisionCard({ run, running }: { run: AgentRu
 })
 
 
-// RetryControl re-runs a FINISHED node (failed or done) and everything downstream
-// of it. Plain retry reuses the node's task; "retry with guidance" reveals an inline
-// input (guidance == steer, on a finished node). Shown only on a live turn.
+// Re-runs a finished node and everything downstream. "Retry with guidance" steers the finished node.
+// Shown only on a live turn.
 function RetryControl({ nodeId, onRetry }: {
   nodeId: string
   onRetry: (nodeId: string, guidance?: string) => void
@@ -595,8 +539,7 @@ function RetryControl({ nodeId, onRetry }: {
 }
 
 
-// NodeStateChips: the amber "steered" chip (delivered queue messages, #998)
-// and the gray "continues" chip (a node resumed on its prior session).
+// The amber "steered" chip (delivered queue messages) and the gray "continues" chip (resumed prior session).
 function NodeStateChips({ steers, resumedFrom }: { steers?: string[]; resumedFrom?: string }) {
   return (
     <>
@@ -620,10 +563,8 @@ function NodeStateChips({ steers, resumedFrom }: { steers?: string[]; resumedFro
   )
 }
 
-// The named state leads the metadata group so that below `medium`
-// it wraps onto the muted second line with the model/tokens instead
-// of squeezing the agent name off the first (a needs_input node
-// also carries the Answer button there).
+// The named state leads the metadata group so below `medium` it wraps onto the muted second line
+// instead of squeezing the agent name off the first.
 function NodeMetaRow({ state, node, pauseLabel }: { state: NodeState; node: DagNodeDef; pauseLabel?: string }) {
   return (
     <div className="empty:hidden flex flex-wrap medium:flex-nowrap items-center gap-x-2 gap-y-0.5 basis-full order-last medium:basis-auto medium:order-none">
@@ -670,9 +611,7 @@ function NodeMetaRow({ state, node, pauseLabel }: { state: NodeState; node: DagN
   )
 }
 
-// NodeElapsed: the header's right-hand timer.
-// A finished node shows the server-measured duration (reconnect-proof);
-// a running one ticks live from the server start time.
+// A finished node shows the server-measured duration (reconnect-proof); a running one ticks from the server start.
 function NodeElapsed({ state }: { state: NodeState }) {
   return (state.finishedAt != null && state.serverDurationMs != null) ? (
     <span className="shrink-0 text-[11px] text-gray-500 dark:text-gray-400 tabular-nums">{fmtMs(state.serverDurationMs)}</span>
@@ -683,12 +622,8 @@ function NodeElapsed({ state }: { state: NodeState }) {
   ) : null
 }
 
-// SidePanels: the node's Artifacts and Memories panels (a real chat only).
-// Four narrow fields, not the whole NodeState: DagNode is memoized
-// and the panel shouldn't re-render on every SSE event for the node
-// (#1178). nodeError is the same value the red banner below renders
-// (failed status), so a transient non-failure error never reads as
-// "the node failed" in an empty panel.
+// Four narrow fields, not the whole NodeState, so the panels skip re-rendering on every SSE event for the node.
+// nodeError matches the failed-status banner, so a transient error never reads as a failure in an empty panel.
 function SidePanels({ chatId, node, state, answer, artifactsOpen, memoriesOpen, onCloseArtifacts, onCloseMemories }: {
   chatId: string
   node: DagNodeDef
@@ -763,9 +698,7 @@ function StatusBanners({ state }: { state: NodeState }) {
 }
 
 
-// NodeAnswerButton: the filled primary action on a node parked on a question.
-// A node blocked on the user is the one state where the fix is the
-// primary action, so it is a filled button, not a kebab item.
+// A node blocked on the user is the one state where the fix is the primary action, so a filled button, not a menu item.
 function NodeAnswerButton({ canAnswer, onClick }: { canAnswer: boolean; onClick: () => void }) {
   if (!canAnswer) return null
   return (
@@ -810,7 +743,8 @@ function OutcomeRow({ chatId, node, answer, finished, onOpenArtifacts }: {
           onOpen={onOpenArtifacts}
         />
       )}
-      <NodeAnswer answer={answer} />
+      <CollapsedPreview label="answer" text={answer} popupTitle="Answer" max={100} labelClass="shrink-0"
+        className="px-4 py-2 text-xs border-t border-gray-100 dark:border-gray-700" />
     </>
   )
 }
@@ -821,9 +755,7 @@ interface Props {
   runs: AgentRun[]
   answer: string
   isFinal: boolean
-  // Present only when the DAG belongs to a real chat (not, say, a Storybook
-  // fixture) - gates the Artifacts button, since the panel needs it to hit
-  // the REST artifacts API.
+  // Present only for a real chat (not a Storybook fixture): the Artifacts panel needs it for the REST API.
   chatId?: string
   onCancel?: (nodeId: string) => void
   onPause?: (nodeId: string) => void
@@ -836,15 +768,15 @@ interface Props {
   onAnswerQuestion?: (nodeId: string, answer: string) => void
 }
 
-// Memoized (#421): DagView re-renders on every SSE event for the whole DAG
-// (any node's token/tool-call/state change), and an unmemoized DagNode re-ran
-// its full body - popup state, timers, activity grouping - for every OTHER node too. The callback props are stable (Chat.tsx wraps them in useCallback), so a shallow compare bails out for every node except the one that actually changed.
+// Memoized because DagView re-renders on every SSE event for the whole DAG; callback props are stable
+// (useCallback in Chat.tsx), so a shallow compare skips every node but the changed one.
 export const DagNode = memo(function DagNode({
   node, state, runs, answer, isFinal, chatId,
   onCancel, onPause, onResume, onQueueMessage, onEditQueuedMessage, onRemoveQueuedMessage, onEditTask,
   onRetry, onAnswerQuestion,
 }: Props) {
-  const { dispatched, notStarted, running } = liveState(state.status, runs)
+  const dispatched = runs.length > 0
+  const { notStarted, running } = liveState(state.status, dispatched)
   const finished = isTerminal(state.status)
   // The actively-streaming run is the last not-yet-done run while the node runs.
   const activeIdx = running ? runs.map(r => r.done).lastIndexOf(false) : -1
@@ -856,17 +788,15 @@ export const DagNode = memo(function DagNode({
   const pauseLabel = isPaused ? pausedStatusLabel(state.status, state.pauseReason) : undefined
   const canAnswer = (state.status === 'needs_input' || state.pauseReason === 'awaiting_input') && !!onAnswerQuestion
 
-  // overflow-hidden clips the rounded corners, but it also clipped the kebab's
-  // menu to the card height - a short card at the foot of a chat lost every
-  // item past the first - so it lifts while the menu is open.
+  // overflow-hidden clips the rounded corners but also clipped the kebab menu to a short card,
+  // so it lifts while the menu is open.
   return (
     <div className={`rounded-xl border shadow-sm overflow-hidden has-[[aria-expanded=true]]:overflow-visible ${
       isFinal
         ? 'border-indigo-200 dark:border-indigo-800 bg-white dark:bg-gray-800'
         : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800'
     }`}>
-      {/* Node header: one line at every width - dot, name, badges, elapsed,
-          kebab. Below `medium` the secondary metadata group wraps onto its own
+      {/* One line at every width; below `medium` the metadata group wraps onto its own
           muted line (basis-full + order-last) instead of stacking the row. */}
       <div className="flex flex-wrap medium:flex-nowrap items-center gap-x-2 gap-y-1 px-4 py-3 border-b border-gray-100 dark:border-gray-700">
         <span className="text-xs font-semibold text-gray-700 dark:text-gray-200 min-w-0 flex-1 truncate" title={agentLabel(node.agent)}>
@@ -894,12 +824,8 @@ export const DagNode = memo(function DagNode({
         />
       </div>
 
-      {/* Node summary - click to open the popup (#384): the full prompt
-          rendered as a chat-native turn, plus (on a live turn) the message
-          queue / prompt editor / pending-question answer - one-click
-          pause/resume/cancel live in the ⋮ menu above instead. Optimized for
-          clean presentation, not information density - the full prompt is
-          always recoverable from the trace. */}
+      {/* Opens the popup: the full prompt as a chat-native turn plus, on a live turn, the message
+          queue, prompt editor and pending-question answer. */}
       <button
         onClick={() => setPopupOpen(true)}
         className="w-full text-left px-4 py-2 text-xs text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/40 truncate"
@@ -936,9 +862,7 @@ export const DagNode = memo(function DagNode({
       {/* Retry a finished node (failed or done) + its downstream, on a live turn */}
       <RetryGate nodeId={node.id} finished={finished} onRetry={onRetry} />
 
-      {/* Per-run stage cards - consecutive worker runs (e.g. a deterministic-
-          check retry continuation) merge into one activity feed rather than a
-          new boxed block; a judge-triggered revise keeps its own labeled card. */}
+      {/* Consecutive worker runs merge into one feed; a judge-triggered revise keeps its own labeled card. */}
       <RunGroupList runs={runs} activeIdx={activeIdx} />
 
       {/* The outcome summary (below the stage cards, for every node). */}

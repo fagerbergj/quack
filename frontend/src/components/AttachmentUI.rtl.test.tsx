@@ -6,16 +6,14 @@ import { AttachmentPreviews } from './AttachmentUI'
 
 afterEach(cleanup)
 
-// jsdom doesn't implement <dialog>.showModal - stub it so the click handler
-// doesn't throw; behaviour under test is which element renders, not the
-// browser's own modal mechanics.
+// jsdom lacks <dialog>.showModal; stub it so the click handler doesn't throw. The modal mechanics aren't
+// under test.
 function stubDialog() {
   HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) { this.setAttribute('open', '') })
   HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) { this.removeAttribute('open') })
 }
 
-// #1138: an image attachment renders as a real <img> thumbnail (click to
-// view full size), never the old collapsed "N attachment(s)" text-only chip.
+// An image attachment renders as a real <img> thumbnail, never a collapsed text-only chip.
 describe('AttachmentPreviews', () => {
   it('renders an <img> with alt text for an image attachment', () => {
     stubDialog()

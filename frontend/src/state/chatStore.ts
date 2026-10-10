@@ -10,16 +10,24 @@ import {
   type AgentRun,
 } from '../components/AgentParts'
 import type { Turn, DagOutputItem, MessageOutputItem, NodeStatus, PauseReason, QueuedMessage, Usage, A2UiAction, SendMessageBody } from '../generated'
+import {
+  editNodeTask as sdkEditNodeTask,
+  editQueuedMessage as sdkEditQueuedMessage,
+  queueNodeMessage as sdkQueueNodeMessage,
+  removeQueuedMessage as sdkRemoveQueuedMessage,
+  startNode as sdkStartNode,
+  stopNode as sdkStopNode,
+  updateNodeStatus,
+  updateResponseStatus,
+} from '../generated'
+import { api } from '../api'
 import { a2uiActionText, A2UI_SURFACE_KIND } from '../lib/a2ui'
 import { agentLabel } from '../components/messageParts'
 
-// Re-exported so existing importers (e.g. components/DagNode.tsx) keep working
-// unchanged - the generated enum is now the one source of truth for node states.
 export type { NodeStatus, PauseReason, QueuedMessage }
 
-// Resolves a dag/node/run's start time from the server's epoch-ms timestamp
-// when one arrived, UNCLAMPED: a finished duration is server_finish -
-// server_start, same clock, so skew never enters (clamping to client now, as a prior version did to dodge a negative "still running" reading, corrupted frozen durations whenever the client trailed the server). LiveTimer's fmtMs floors the live-ticking case at 0; falls back to Date.now() for a live event with no server timestamp.
+// Unclamped server start: a finished duration is server_finish - server_start on one clock, so skew never enters.
+// LiveTimer floors the live case at 0; Date.now() covers a live event with no server timestamp.
 function anchorTime(serverMs?: number): number {
   return serverMs ?? Date.now()
 }
@@ -28,12 +36,9 @@ export interface NodeState {
   status: NodeStatus
   outputPreview?: string
   error?: string
-  // Set while status === 'needs_input' (server: paused/awaiting_input): the
-  // question the node asked the user, answered via startNode(chatId, nodeId, answer).
+  // Set while status === 'needs_input': the node's question, answered via startNode(chatId, nodeId, answer).
   question?: string
-  // Why the node is paused - unset for every other status. Best-effort for a
-  // live-streamed pause (the node_paused/node_needs_input SSE events don't
-  // carry it yet); authoritative once the chat is (re)loaded from the server.
+  // Best-effort for a live pause (node_paused/node_needs_input omit it); authoritative after a reload.
   pauseReason?: PauseReason
   startedAt?: number
   finishedAt?: number
@@ -44,9 +49,7 @@ export interface NodeState {
   reasoningTokens?: number
   totalTokens?: number
   cachedTokens?: number
-  // contextTokens is the LAST measured prompt-token count from the node's
-  // most recent worker/revise round - the context meter's "used" reading,
-  // updated on agent_complete and frozen by node_done.
+  // Last measured prompt tokens from the node's latest worker/revise round: the context meter's "used" reading.
   contextTokens?: number
   finishReason?: string
   serverDurationMs?: number
@@ -59,9 +62,8 @@ export interface NodeState {
   // resumed_from) - the prior context it continues on. Absent for a fresh node.
   resumedFrom?: string
   steers?: string[]   // guidance folded in when a queued message was delivered, in order
-  // Local, optimistic tracking of the node's message queue - add/edit/remove
-  // responses tell the caller what changed; there's no separate SSE sync event
-  // (see openapi.yaml's sendMessage description). Cleared on node_steered (the queue was drained and delivered).
+  // Optimistic local copy of the node's message queue; no SSE event syncs it.
+  // Cleared on node_steered, when the queue was drained and delivered.
   queue?: QueuedMessage[]
 }
 
@@ -93,9 +95,8 @@ interface LiveTurn {
   answer?: string
 }
 
-// QueuedTurn is a follow-up message typed while the chat's run is still
-// streaming - held client-side (no endpoint; this is a pure send deferral,
-// unlike the per-node queue) and auto-submitted in order once the run ends.
+// A follow-up typed while the run streams: held client-side (no endpoint, unlike the per-node queue)
+// and auto-submitted in order once the run ends.
 export interface QueuedTurn {
   id: string
   text: string
@@ -116,17 +117,17 @@ export interface ChatState {
   // Chat-wide token aggregate from ChatDetail.usage - a snapshot as of the
   // last seed(), not updated live while a run streams.
   usage?: Usage
-  // Latest artifact_revision/artifact_judge_round SSE events (#1114) - a late
-  // subscriber (ArtifactPanel) reads this off the existing subscribe() fan-out
-  // rather than a separate pub/sub. seq increments on every artifact event so a listener can detect a new one even when the payload repeats (e.g. same revision re-announced on reconnect replay).
+  // Latest artifact SSE events for late subscribers (ArtifactPanel) via subscribe().
+  // seq bumps on every event so a repeated payload (e.g. a reconnect replay) still registers.
   artifactEvents?: { revision?: ArtifactRevisionPayload; judgeRound?: ArtifactJudgeRoundPayload; seq: number }
-  // Bumped only by a2ui_surface revisions: artifactEvents is last-write-wins and render_ui's quiz_key event lands right after.
+  // Bumped only by a2ui_surface revisions; artifactEvents is last-write-wins and render_ui's quiz_key event follows.
   surfaceSeq?: number
-  // Surface artifact id -> the live turn its first revision streamed in; the fallback when turn_id is absent (MCP-driven runs).
+  // Surface artifact id -> live turn its first revision streamed in; fallback when turn_id is absent (MCP runs).
   surfacePins?: Record<string, string>
 }
 
 type Listener = () => void
+type SdkResult = { error?: unknown; response?: Response }
 
 export const EMPTY_STATE: ChatState = { turns: [], error: '', queue: [] }
 
@@ -149,9 +150,8 @@ function retrySet(edges: DagEdgeDef[], nodeId: string): Set<string> {
   return set
 }
 
-// Synthesizes a persisted-shaped Turn from a finished LiveTurn, for when a
-// refetch races the server's own persistence of that turn (submit() archiving
-// a previous `live` before sending a follow-up). DAG turns keep only the sinks' answer text - enough to render, not a full DagOutputItem.
+// Persisted-shaped Turn from a finished LiveTurn, for when submit()'s refetch races the server persisting it.
+// DAG turns keep only the sinks' answer text: enough to render, not a full DagOutputItem.
 function turnFromLiveTurn(live: LiveTurn): Turn {
   const answer = live.dag && sinkNodeIds(live.dag.nodes).length > 0 ? dagAnswer(live.dag) : undefined
   const text = answer ? liveAnswerText(live) : live.text
@@ -171,9 +171,7 @@ function surfaceEventState(s: ChatState, d: ArtifactRevisionPayload): Partial<Ch
   return { surfaceSeq: (s.surfaceSeq ?? 0) + 1, surfacePins: { ...s.surfacePins, ...pin } }
 }
 
-// Reconnect tuning for a dropped SSE stream: capped exponential backoff so a
-// dead server/proxy isn't hammered, bounded so a permanently-gone server
-// eventually surfaces as an error instead of retrying forever.
+// Capped exponential backoff so a dead server isn't hammered, bounded so a gone server surfaces as an error.
 const MAX_RECONNECT_ATTEMPTS = 6
 const RECONNECT_BASE_DELAY_MS = 1000
 const RECONNECT_MAX_DELAY_MS = 15000
@@ -188,7 +186,7 @@ export class ChatStore {
   private eventSources = new Map<string, () => void>()  // chatID → teardown for an attached subscribe stream
   private reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>()  // chatID → pending reconnect
   private generations = new Map<string, number>()
-  private onTitleCallbacks = new Map<string, (title: string) => void>()  // chatID → last submit()'s onTitle, reused by drainQueue
+  private onTitleCallbacks = new Map<string, (title: string) => void>()  // chatID → last submit()'s onTitle, for drainQueue
   private notifyScheduled = new Set<string>()  // chatID → a coalesced notify is already queued for the next frame
 
   get(chatId: string): ChatState {
@@ -251,19 +249,15 @@ export class ChatStore {
     // still report a title change, without the caller having to re-pass it.
     if (onTitle) this.onTitleCallbacks.set(chatId, onTitle)
 
-    // A finished previous turn still lives in `live` (finishStream only flips
-    // the streaming flag). Replacing `live` would drop it from the UI, so first
-    // archive it into `turns` by re-fetching from the server - fetch BEFORE posting so the new turn's row isn't included yet. Show the `submitting` indicator immediately (the spinner shouldn't wait on this round-trip), and the old `live` stays rendered until `turns` is repopulated, so the previous answer never blinks out.
+    // A finished turn still sits in `live`: archive it into `turns` via a refetch made BEFORE posting the new turn.
+    // `submitting` shows the spinner at once; the old `live` stays rendered until `turns` repopulates.
     if (cur.live) {
       this.write(chatId, { ...cur, submitting: true, pendingUserText: trimmed, error: '' })
       let turns = cur.turns
       try {
-        const res = await fetch(`/api/v1/chats/${chatId}`)
-        if (res.ok) turns = ((await res.json()) as { turns?: Turn[] }).turns ?? turns
+        turns = (await api.getChat(chatId)).turns ?? turns
       } catch { /* keep local state; worst case the previous turn drops until refresh */ }
-      // The refetch can race the server's own persistence of the turn that just
-      // finished streaming - if it's missing from `turns`, keep it by synthesizing
-      // a Turn from the in-memory `live` rather than dropping the answer.
+      // The refetch can race the server persisting the finished turn; synthesize it from `live` rather than drop it.
       if (cur.live && !turns.some(t => t.id === cur.live!.id)) {
         turns = [...turns, turnFromLiveTurn(cur.live)]
       }
@@ -294,9 +288,7 @@ export class ChatStore {
     )
   }
 
-  // Holds a follow-up message locally while the chat's run streams
-  // (drainQueue submits it once that run ends) - the top-level counterpart of
-  // queueNodeMessage, but purely client-side: no endpoint, since deferring store.submit needs no server involvement.
+  // Holds a follow-up client-side while the run streams; drainQueue submits it when the run ends.
   queueTurn(chatId: string, text: string): void {
     const trimmed = text.trim()
     if (!trimmed) return
@@ -310,9 +302,8 @@ export class ChatStore {
     this.write(chatId, { ...s, queue: s.queue.filter(m => m.id !== id) })
   }
 
-  // Submits the next queued follow-up once a run finishes - called from
-  // finishStream so it fires whether the run ended normally, was stopped, or
-  // dropped and reconnected. Submits one at a time: the auto submit() re-enters finishStream on ITS completion, draining the rest in order rather than firing all queued messages at once.
+  // Called from finishStream, so it fires however the run ended (normal, stopped, or reconnected).
+  // One at a time: the auto submit() re-enters finishStream when it completes, draining the rest in order.
   private drainQueue(chatId: string): void {
     const s = this.states.get(chatId)
     if (!s || s.queue.length === 0) return
@@ -321,107 +312,49 @@ export class ChatStore {
     void this.submit(chatId, next.text, undefined, this.onTitleCallbacks.get(chatId))
   }
 
-  // stop cancels the chat's active run by response id (the id captured from
-  // the run's opening response_created event) - a no-op if that id hasn't
-  // arrived yet (the client also aborts its own connection either way).
+  // Cancels by the response id from response_created; before it arrives only the local connection aborts.
   stop(chatId: string): void {
     const responseId = this.states.get(chatId)?.live?.id
     if (responseId) {
-      fetch(`/api/v1/chats/${chatId}/responses/${responseId}/status`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'cancelled' }),
-      }).catch(() => {})
+      void updateResponseStatus({ path: { chat_id: chatId, response_id: responseId }, body: { status: 'cancelled' } })
     }
     this.controllers.get(chatId)?.abort()
   }
 
-  // stopNode terminates one node (queued, running, or paused) into the
-  // terminal cancelled state; the rest of the DAG keeps going
-  // (continue-but-warn). The local stream stays open.
+  // Cancels one node (queued, running, or paused); the rest of the DAG keeps going and the local stream stays open.
   stopNode(chatId: string, nodeId: string): void {
-    fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}/stop`, { method: 'POST' }).then(async res => {
-      if (res.ok) return
-      const body = (await res.json().catch(() => ({}))) as { error?: string }
-      this.markNodeError(chatId, nodeId, body.error || `stop rejected (HTTP ${res.status})`)
-    }).catch(() => {})
+    void sdkStopNode({ path: { chat_id: chatId, node_id: nodeId } }).then(r => this.rejected(chatId, nodeId, 'stop', r))
   }
 
-  // pauseNode suspends one running node at its next turn boundary, keeping its
-  // accumulated work (resumable). Not optimistic, same reasoning as stopNode.
-  // reason defaults to "user" server-side when omitted.
+  // Suspends a running node at its next turn boundary, keeping its work. Not optimistic, like stopNode.
+  // reason defaults to "user" server-side.
   pauseNode(chatId: string, nodeId: string, reason?: PauseReason): void {
-    fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}/status`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'paused', reason }),
-    }).then(async res => {
-      if (res.ok) return
-      const body = (await res.json().catch(() => ({}))) as { error?: string }
-      this.markNodeError(chatId, nodeId, body.error || `pause rejected (HTTP ${res.status})`)
-    }).catch(() => {})
+    void updateNodeStatus({ path: { chat_id: chatId, node_id: nodeId }, body: { status: 'paused', reason } })
+      .then(r => this.rejected(chatId, nodeId, 'pause', r))
   }
 
-  // Starts a queued node (fresh dispatch) or resumes a paused one (re-entering
-  // the plan's graph at its last boundary), reusing the rest of the plan's stored
-  // outputs. answer carries the reply to a node paused awaiting_input - same field SendMessageBody uses for a chat-level answer. Mirrors retryNode's optimistic local reset + resubscribe.
+  // Starts a queued node or resumes a paused one, reusing the plan's other stored outputs.
+  // answer replies to a node paused awaiting_input; same optimistic reset + resubscribe as retryNode.
   startNode(chatId: string, nodeId: string, answer?: string): void {
     const s = this.states.get(chatId)
     if (!s?.live?.dag) return
     if (s.live.streaming) {
-      // Mid-run start would race the open stream's run; say so instead of
-      // silently eating the click (the menu hides Start while streaming, but
-      // popup/bubble paths can still land here).
+      // Mid-run start would race the open stream; the menu hides Start then, but popup/bubble paths still land here.
       this.markNodeError(chatId, nodeId, 'a run is still streaming; wait for it to finish before starting this node')
       return
     }
-    const dag = s.live.dag
-    const affected = retrySet(dag.edges, nodeId)
-    const nodeStates = { ...dag.nodeStates }
-    const nodeAnswer = { ...dag.nodeAnswer }
-    const nodeRuns = { ...dag.nodeRuns }
-    for (const id of affected) {
-      nodeStates[id] = { status: 'queued' }
-      nodeAnswer[id] = ''
-      nodeRuns[id] = []
-    }
-    this.write(chatId, { ...s, live: { ...s.live, streaming: true, error: '', answer: '', dag: { ...dag, nodeStates, nodeAnswer, nodeRuns, finishedAt: undefined } } })
-    const generation = this.bumpGeneration(chatId)
-    fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}/start`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: answer }),
-    })
-      .then(res => {
-        if (!res.ok) throw new Error(`start failed: HTTP ${res.status}`)
-        this.subscribeToStream(chatId, generation)
-      })
-      .catch((err: unknown) => {
-        const cur = this.states.get(chatId)
-        if (!cur?.live) return
-        const msg = (err as Error)?.message || 'start failed'
-        this.write(chatId, { ...cur, error: msg, live: { ...cur.live, streaming: false } })
-      })
+    this.rerunNode(chatId, nodeId, 'start', () =>
+      sdkStartNode({ path: { chat_id: chatId, node_id: nodeId }, body: { content: answer } }))
   }
 
-  // queueNodeMessage appends a message to a running node's queue - delivered
-  // at its next turn boundary, never mid-turn (replaces the old interrupt-based
-  // steer). 404s (surfaced as a node error note) if the node isn't running.
+  // Queues a message for a running node, delivered at its next turn boundary, never mid-turn.
+  // 404s (shown as a node error note) if the node isn't running.
   async queueNodeMessage(chatId: string, nodeId: string, text: string): Promise<void> {
     const message = text.trim()
     if (!message) return
-    const res = await fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}/queue`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message }),
-    }).catch(() => undefined)
-    if (!res) return
-    if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { error?: string }
-      this.markNodeError(chatId, nodeId, body.error || `queue rejected (HTTP ${res.status})`)
-      return
-    }
-    const created = (await res.json()) as QueuedMessage
+    const r = await sdkQueueNodeMessage({ path: { chat_id: chatId, node_id: nodeId }, body: { message } })
+    const created = r.data
+    if (this.rejected(chatId, nodeId, 'queue', r) || !created) return
     this.updateNodeQueue(chatId, nodeId, q => [...q, created])
   }
 
@@ -429,20 +362,16 @@ export class ChatStore {
   async editQueuedMessage(chatId: string, nodeId: string, messageId: string, text: string): Promise<void> {
     const message = text.trim()
     if (!message) return
-    const res = await fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}/queue/${messageId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message }),
-    }).catch(() => undefined)
-    if (res?.ok) {
+    const r = await sdkEditQueuedMessage({ path: { chat_id: chatId, node_id: nodeId, message_id: messageId }, body: { message } })
+    if (r.response?.ok) {
       this.updateNodeQueue(chatId, nodeId, q => q.map(m => m.id === messageId ? { ...m, text: message } : m))
     }
   }
 
   // removeQueuedMessage drops a not-yet-delivered queued message.
   async removeQueuedMessage(chatId: string, nodeId: string, messageId: string): Promise<void> {
-    const res = await fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}/queue/${messageId}`, { method: 'DELETE' }).catch(() => undefined)
-    if (res?.ok) {
+    const r = await sdkRemoveQueuedMessage({ path: { chat_id: chatId, node_id: nodeId, message_id: messageId } })
+    if (r.response?.ok) {
       this.updateNodeQueue(chatId, nodeId, q => q.filter(m => m.id !== messageId))
     }
   }
@@ -456,24 +385,13 @@ export class ChatStore {
     this.write(chatId, { ...s, live: { ...s.live, dag: { ...dag, nodeStates } } })
   }
 
-  // editNodeTask replaces a not-yet-started node's task text (only legal before
-  // the node has started - 409 once it has, e.g. a downstream node waiting on
-  // its dependencies). Updates the local plan def optimistically on success.
+  // Only legal before the node starts (409 after, e.g. a downstream node waiting on its deps).
+  // Updates the local plan def on success.
   async editNodeTask(chatId: string, nodeId: string, task: string): Promise<boolean> {
     const trimmed = task.trim()
     if (!trimmed) return false
-    const res = await fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ task: trimmed }),
-    }).catch(() => undefined)
-    if (!res?.ok) {
-      if (res) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string }
-        this.markNodeError(chatId, nodeId, body.error || `edit rejected (HTTP ${res.status})`)
-      }
-      return false
-    }
+    const r = await sdkEditNodeTask({ path: { chat_id: chatId, node_id: nodeId }, body: { task: trimmed } })
+    if (this.rejected(chatId, nodeId, 'edit', r)) return false
     const s = this.get(chatId)
     const dag = s.live?.dag
     if (s.live && dag) {
@@ -493,40 +411,49 @@ export class ChatStore {
     this.write(chatId, { ...cur, live: { ...cur.live, dag: { ...dag, nodeStates } } })
   }
 
-  // Re-runs a FINISHED (failed/done/cancelled) node and its descendants,
-  // reusing the stored outputs of the rest; optional guidance is folded into
-  // the node's task. The PUT returns immediately (optimistic "queued"); the re-run streams over the chat's GET .../stream relay, so the affected subgraph is reset to queued locally (answer + runs cleared) for the incoming node events to rebuild in place once that subscription is live.
+  // rejected reports a control request that failed, noting the server's message on the node;
+  // a network failure (no response) stays silent.
+  private rejected(chatId: string, nodeId: string, verb: string, r: SdkResult): boolean {
+    if (r.response?.ok) return false
+    if (r.response) {
+      const msg = (r.error as { error?: string } | undefined)?.error
+      this.markNodeError(chatId, nodeId, msg || `${verb} rejected (HTTP ${r.response.status})`)
+    }
+    return true
+  }
+
+  // Re-runs a finished node and its descendants, reusing the rest's stored outputs; guidance folds into its task.
+  // The PUT returns at once, so the subgraph resets to queued locally and the GET stream relay rebuilds it.
   retryNode(chatId: string, nodeId: string, guidance?: string): void {
     const s = this.states.get(chatId)
     if (!s?.live?.dag || s.live.streaming) return
-    const dag = s.live.dag
-    const affected = retrySet(dag.edges, nodeId)
+    const g = guidance?.trim() || undefined
+    this.rerunNode(chatId, nodeId, 'retry', () =>
+      updateNodeStatus({ path: { chat_id: chatId, node_id: nodeId }, body: { status: 'queued', guidance: g } }))
+  }
+
+  // Resets nodeId and its descendants to queued, then watches the re-run over the GET stream once
+  // request succeeds. Callers check the chat has an idle live DAG.
+  private rerunNode(chatId: string, nodeId: string, label: string, request: () => Promise<SdkResult>): void {
+    const s = this.get(chatId)
+    const dag = s.live!.dag!
     const nodeStates = { ...dag.nodeStates }
     const nodeAnswer = { ...dag.nodeAnswer }
     const nodeRuns = { ...dag.nodeRuns }
-    for (const id of affected) {
+    for (const id of retrySet(dag.edges, nodeId)) {
       nodeStates[id] = { status: 'queued' }
       nodeAnswer[id] = ''
       nodeRuns[id] = []
     }
-    this.write(chatId, { ...s, live: { ...s.live, streaming: true, error: '', answer: '', dag: { ...dag, nodeStates, nodeAnswer, nodeRuns, finishedAt: undefined } } })
-    const g = guidance?.trim()
+    this.write(chatId, { ...s, live: { ...s.live!, streaming: true, error: '', answer: '', dag: { ...dag, nodeStates, nodeAnswer, nodeRuns, finishedAt: undefined } } })
     const generation = this.bumpGeneration(chatId)
-    fetch(`/api/v1/chats/${chatId}/nodes/${nodeId}/status`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(g ? { status: 'queued', guidance: g } : { status: 'queued' }),
+    void request().then(r => {
+      if (r.response?.ok) return this.subscribeToStream(chatId, generation)
+      const cur = this.states.get(chatId)
+      if (!cur?.live) return
+      const msg = r.response ? `${label} failed: HTTP ${r.response.status}` : (r.error as Error | undefined)?.message || `${label} failed`
+      this.write(chatId, { ...cur, error: msg, live: { ...cur.live, streaming: false } })
     })
-      .then(res => {
-        if (!res.ok) throw new Error(`retry failed: HTTP ${res.status}`)
-        this.subscribeToStream(chatId, generation)
-      })
-      .catch((err: unknown) => {
-        const cur = this.states.get(chatId)
-        if (!cur?.live) return
-        const msg = (err as Error)?.message || 'retry failed'
-        this.write(chatId, { ...cur, error: msg, live: { ...cur.live, streaming: false } })
-      })
   }
 
   isStreaming(chatId: string): boolean {
@@ -554,9 +481,8 @@ export class ChatStore {
       const result = await readAgentStream(res.body, this.streamHandlers(chatId, msg => { streamError = msg }, onTitle))
       if (streamError) throw new Error(streamError)
       if (!result.done) {
-        // The body ended without a `done` event - the connection dropped
-        // mid-run, not a normal completion. Hand off to the resumable GET
-        // stream, resuming past the highest id already applied so it doesn't replay everything the POST body already delivered.
+        // The body ended without `done`: the connection dropped mid-run. Hand off to the resumable GET stream,
+        // resuming past the last applied id so it doesn't replay what the POST body delivered.
         handedOff = true
         this.openEventSource(chatId, generation, result.lastEventId, 0)
       }
@@ -574,15 +500,13 @@ export class ChatStore {
     }
   }
 
-  // Subscribes a client that did NOT post this run to its live stream
-  // (GET /chats/{id}/stream): the same browser after a refresh, or a second
-  // device. The hub replays the run so far, then tails live, through the same handlers the POST path uses. Callers gate on an in-progress run; it no-ops if this client is already streaming (a run we started is never double-fed).
+  // Subscribes a client that did NOT post this run (a refresh, another device); the hub replays it, then tails live.
+  // No-op if this client already streams, so a run it started is never double-fed.
   attach(chatId: string): void {
     if (this.isStreaming(chatId) || this.eventSources.has(chatId)) return
     const cur = this.get(chatId)
-    // The in-progress run is the latest seeded turn; lift it into `live`. Seed
-    // dag/text/runs from what GET /chats/{id} already persisted for it (#463) -
-    // the hub only publishes NEW events, so a client attaching after they've already fired would otherwise see nothing until the run's next event.
+    // Lift the in-progress run (the latest seeded turn) into `live`, seeded from what GET /chats/{id} persisted:
+    // the hub only publishes NEW events, so a late attach would otherwise show nothing until the next one.
     const last = cur.turns[cur.turns.length - 1]
     const dagItem = last ? dagFromTurn(last) : undefined
     const live: LiveTurn = {
@@ -611,16 +535,14 @@ export class ChatStore {
     this.attach(chatId)
   }
 
-  // Opens the GET .../stream EventSource through the same handlers the POST
-  // path uses - shared by attach() (reconnect to an in-progress run) and
-  // retryNode/startNode (watch a background re-run, whose PUT/POST no longer returns its own SSE body). Callers own seeding/resetting `live` beforehand. Always starts at event 0: attach() has no durable cursor to resume from yet (needs a backend field - #1090 perf audit item 4), and retryNode/startNode start a run whose seq the server resets to 1 (EventLog.Reset), so resuming past a stale id would wrongly skip its early events.
+  // Watches a run over the GET stream from event 0 (attach, retryNode/startNode); callers seed `live` first.
+  // No resume cursor: attach has no durable one yet, and a re-run's seq restarts at 1 (EventLog.Reset).
   private subscribeToStream(chatId: string, generation: number): void {
     this.openEventSource(chatId, generation, 0, 0)
   }
 
-  // Opens (or, after a mid-run drop, reopens) the GET .../stream EventSource.
-  // lastEventId resumes from the server's durable event log (Last-Event-ID resume, M8); attempt drives a capped-exponential reconnect backoff that resets on every event actually received.
-  // The server closes the connection once the run's `done` is delivered; EventSource sees that as an `error` too, so onerror must tell a genuine drop (worth retrying) apart from that expected close (tear down) - sawDone is the flag that distinguishes them.
+  // lastEventId resumes from the server's event log; attempt drives capped backoff, reset by every event received.
+  // The server closes after `done`, which EventSource reports as `error` too; sawDone tells that apart from a drop.
   private openEventSource(chatId: string, generation: number, lastEventId: number, attempt: number): void {
     const url = lastEventId > 0
       ? `/api/v1/chats/${chatId}/stream?last_event_id=${lastEventId}`
@@ -635,9 +557,8 @@ export class ChatStore {
       }),
       onDone: () => { sawDone = true; this.teardownStream(chatId, generation) },
     }
-    // reconnect tears this connection down and reopens from resumeFromId,
-    // bounded/backed-off the same way for a genuine connection error or a
-    // detected id gap. `close` is assigned below (shouldDispatch needs reconnect, which needs close) - fine, since reconnect only runs later, once an event or error has landed.
+    // reconnect reopens from resumeFromId with bounded backoff, on a connection error or an id gap.
+    // `close` is assigned below (shouldDispatch needs reconnect); reconnect only runs once an event or error lands.
     let close: () => void = () => {}
     const reconnect = (resumeFromId: number) => {
       close()
@@ -656,9 +577,8 @@ export class ChatStore {
       }, reconnectDelay(attempt))
       this.reconnectTimers.set(chatId, timer)
     }
-    // Gates every event BEFORE it reaches handlers - a gapped event must
-    // never be applied. Track the latest SSE id (MessageEvent.lastEventId)
-    // so a later reconnect resumes past it, and treat any contiguous event as proof the connection is healthy. Only a contiguous id advances the cursor and resets backoff - a forward jump means the hub dropped a slow subscriber mid-stream (#audit-6), so reconnect from the last contiguous id: the gap is otherwise unrecoverable (the resume cursor only replays events after the id it's given).
+    // Gates every event before handlers: only a contiguous id advances the cursor and resets backoff.
+    // A jump means the hub dropped us as a slow subscriber; reconnect from the last contiguous id to refill the gap.
     const shouldDispatch = (e: MessageEvent): boolean => {
       const id = Number(e.lastEventId)
       if (!Number.isFinite(id) || id <= latestId) { attempt = 0; return true }
@@ -678,17 +598,14 @@ export class ChatStore {
     this.eventSources.set(chatId, close)
   }
 
-  // teardownStream ends an attached run: closes its subscribe stream and flips the
-  // live turn out of streaming. Used on the stream's `done` / connection close.
-  // generation guards finishStream so a stale teardown can't clobber a newer run.
+  // Ends an attached run on `done`; generation keeps a stale teardown from clobbering a newer run.
   private teardownStream(chatId: string, generation: number): void {
     this.detachStream(chatId)
     this.finishStream(chatId, generation)
   }
 
-  // Closes an attached subscribe stream WITHOUT ending the turn - the run
-  // continues server-side. When an EventSource was closed, `streaming` is
-  // cleared too (not finishStream/drainQueue - the run hasn't ended) so a return trip re-enters through the normal seed/attach path, gated on the server's detail.status, instead of getting stuck: attach() and submit() no-op while streaming is true. With no EventSource the run is this client's own POST still in flight; streaming must stay true or attach() would feed the same events a second time on the return trip.
+  // Closes the subscribe stream without ending the run. Clearing `streaming` (only if an EventSource closed) lets
+  // a return trip re-attach; with none, this client's own POST is in flight and attach() must not feed it twice.
   detachStream(chatId: string): void {
     const close = this.eventSources.get(chatId)
     if (close) {
@@ -709,12 +626,8 @@ export class ChatStore {
     onError: (msg: string) => void,
     onTitle?: (title: string) => void,
   ): AgentStreamHandlers {
-      // Set once THIS stream's own top-level (no-node) run actually starts -
-      // distinguishes the orchestrator's own live activity from runs merely
-      // SEEDED from a lingering/lifted LiveTurn (attach(), #463 shape: the
-      // seed came from a PRIOR run's turn, which always carries a
-      // quack:activity item once it has tool calls). onDagPlan reads this to
-      // decide whether seeded runs are stale enough to purge.
+      // Set once THIS stream's own top-level run starts, so onDagPlan can tell it from runs merely seeded by attach()
+      // from a prior turn, which it purges.
       let sawTopLevelAgentStart = false
       const updateNodeRuns = (nodeId: string | undefined, fn: (runs: AgentRun[]) => AgentRun[]) => {
         if (!nodeId) return
@@ -759,9 +672,8 @@ export class ChatStore {
           const st = dag.nodeStates[n.id]?.status
           return st === 'done' || st === 'failed' || st === 'cancelled'
         })
-        // The plan total anchors to the LATEST node finishedAt (server-
-        // timestamped by the caller below) rather than Date.now(), so a
-        // replay doesn't recompute a bogus total from the replay moment; Date.now() only if no node carried a server timestamp.
+        // Anchor the plan total to the latest server-stamped node finishedAt so a replay can't recompute it from now;
+        // Date.now() only when no node carried one.
         if (allDone && !dag.finishedAt) {
           const nodeFinishTimes = Object.values(dag.nodeStates).map(n => n.finishedAt).filter((t): t is number => t != null)
           dag.finishedAt = nodeFinishTimes.length ? Math.max(...nodeFinishTimes) : Date.now()
@@ -772,9 +684,8 @@ export class ChatStore {
       const runArgs = (d: { runId: string; agent: string; stage: import('./agentStream').Stage; round?: number; startedAtMs?: number }) =>
         ({ runId: d.runId, agent: d.agent, stage: d.stage, round: d.round, startedAt: anchorTime(d.startedAtMs) })
 
-      // ANSWER_STAGES (worker + revise) are the stages whose streamed text IS
-      // the node's answer; judge is internal gate commentary shown as its own
-      // card. The accumulator resets per run (resetAnswer below) so HITL re-runs don't concatenate, and a revision replaces the judge-rejected draft it supersedes rather than gluing onto it.
+      // Worker and revise text IS the node's answer; judge commentary gets its own card. resetAnswer clears the
+      // accumulator per run so HITL re-runs don't concatenate and a revision replaces the rejected draft.
       const ANSWER_STAGES: ReadonlySet<Stage> = new Set(['worker', 'revise'])
       const resetAnswer = (nodeId: string | undefined, stage: Stage) => {
         if (!nodeId || !ANSWER_STAGES.has(stage)) return
@@ -795,14 +706,12 @@ export class ChatStore {
 
       return {
         onAgentStart: d => {
-          // A fresh top-level (no-node) run supersedes any text accumulated
-          // from a PRIOR top-level run - without this, two full top-level runs
-          // against the same live turn (the GitHub dispatch's no-plan-ran nudge, #422) render the answer doubled. Mirrors resetAnswer's per-node reset.
+          // A fresh top-level run supersedes text from a prior one; otherwise two top-level runs on one live turn
+          // (e.g. the GitHub dispatch's no-plan-ran nudge) render the answer doubled.
           if (d.nodeId) {
             resetAnswer(d.nodeId, d.stage)
-            // A run actually starting means the node is running, whatever its
-            // status said a moment ago - covers the steer resume path (and any
-            // future one) without hardcoding the prior status. Terminal statuses are left alone: a run can't legitimately restart on an already-finished node.
+            // A starting run means the node is running whatever its status said, except a terminal status:
+            // a run can't legitimately restart on a finished node.
             const s = this.states.get(chatId)
             const current = s?.live?.dag?.nodeStates[d.nodeId]?.status
             if (current === undefined || !TERMINAL_NODE_STATUSES.has(current)) {
@@ -820,9 +729,8 @@ export class ChatStore {
           ? updateNodeRuns(nid, r => appendRunThinking(r, runId, text))
           : updateTopLevelRuns(r => appendRunThinking(r, runId, text)),
         onAgentToolCall: (runId, callId, name, args, nid) => {
-          // A tool call means everything narrated so far in this run was
-          // pre-action throat-clearing, not the answer - mirrors the reset
-          // translate.go performs backend-side (#358), applied to the LIVE stream (#387).
+          // A tool call means the run's narration so far was pre-action filler, not the answer;
+          // mirrors the backend reset in translate.go.
           if (nid) {
             const st = this.states.get(chatId)
             const run = st?.live?.dag?.nodeRuns?.[nid]?.find(r => r.runId === runId)
@@ -838,9 +746,8 @@ export class ChatStore {
           : updateTopLevelRuns(r => fillRunToolResult(r, runId, callId, name, result)),
         onAgentToken: (runId, text, nid) => {
           if (!nid) { updateTopLevelText(text); return }
-          // Only an answer-stage run's text belongs in the node's answer box -
-          // without this, the judge (internal gate commentary, shown as its own
-          // run) leaked into the answer (a failed node displayed the critique as its "answer"). It still belongs in the judge's OWN card: judgePartEmitter only routes a part to agent_thinking when the model marks it Thought (local models mostly don't), so returning here discarded nearly all of it (#696).
+          // Only answer-stage text belongs in the node's answer; judge text goes to its own card as thinking,
+          // since judgePartEmitter only routes Thought-marked parts there and local models rarely mark them.
           const st = this.states.get(chatId)
           const run = st?.live?.dag?.nodeRuns?.[nid]?.find(r => r.runId === runId)
           if (run && !ANSWER_STAGES.has(run.stage)) {
@@ -854,9 +761,7 @@ export class ChatStore {
             score: d.score, passed: d.passed, threshold: d.threshold, feedback: d.feedback,
             status: d.status, reason: d.reason, finishReason: d.finishReason, model: d.model, totalTokens: d.totalTokens,
           }
-          // Freeze the run's duration off the server's own clock when it sent one
-          // (finishedAtMs) - only an older server with no such field falls back to
-          // Date.now(), which is wrong on any replay/reconnect.
+          // Server clock freezes the duration; Date.now() is a fallback for older servers and is wrong on replay.
           const nowMs = d.finishedAtMs ?? Date.now()
           if (d.nodeId) {
             updateNodeRuns(d.nodeId, r => completeRun(r, d.runId, completeArgs, nowMs))
@@ -905,14 +810,8 @@ export class ChatStore {
             nodeAnswer: grown ? prevDag.nodeAnswer : {},
             startedAt: grown ? prevDag.startedAt : anchorTime(plan.startedAtMs),
           }
-          // A FRESH plan whose runs were only ever SEEDED (attach(), never
-          // this stream's own agent_start) belong to whatever turn they were
-          // lifted from, not this plan - purge them (#463 shape for seeded
-          // runs: a re-attach lifts an unrelated completed turn, which
-          // always carries a quack:activity item once it has tool calls, so
-          // its stale narration/tool-calls would otherwise render under the
-          // new plan). The orchestrator's own live run (this stream's real
-          // agent_start already fired) is never purged - see above.
+          // A FRESH plan purges runs only seeded by attach() from a prior turn (no agent_start on this stream yet);
+          // their stale narration and tool calls would otherwise render under the new plan.
           const purgeSeededRuns = !grown && !sawTopLevelAgentStart
           this.write(chatId, {
             ...s,
@@ -954,17 +853,14 @@ export class ChatStore {
           updateNodeState(nodeId, { status: 'failed', finishedAt, error })
         },
         onNodeCancelled: (nodeId, finishedAtMs) => {
-          // The node was stopped by the user - rendered neutrally ("stopped"),
-          // not as a red failure (node_cancelled is a distinct event now, not
-          // inferred from a node_failed error string).
+          // Stopped by the user: rendered neutrally ("stopped"), not as a red failure.
           const finishedAt = finishedAtMs ?? Date.now()
           updateNodeRuns(nodeId, r => freezeOpenRuns(r, finishedAt))
           updateNodeState(nodeId, { status: 'cancelled', finishedAt, error: undefined })
         },
         onNodePaused: nodeId => {
-          // The node was suspended - keeps its accumulated work, resumable
-          // (unlike stop), not a terminal state for the allDone check. The event
-          // doesn't carry why yet, so this optimistic "by you" default holds until the next chat (re)load corrects it from the server's persisted pause_reason.
+          // Suspended, resumable, and not terminal for allDone. The event carries no reason, so "user" holds until
+          // the next reload reads the persisted pause_reason.
           updateNodeRuns(nodeId, r => freezeOpenRuns(r, Date.now()))
           updateNodeState(nodeId, { status: 'paused', error: undefined, pauseReason: 'user' })
         },
@@ -975,17 +871,14 @@ export class ChatStore {
           updateNodeState(nodeId, { status: 'needs_input', question: message, pauseReason: 'awaiting_input' })
         },
         onNodeSteered: (nodeId, guidance) => {
-          // The node was interrupted and is re-running with new guidance (same
-          // session) - it never actually stopped, so the status stays 'running'
-          // (running→queued is illegal in the backend's state machine and previously left the node stuck in idle chrome for the whole steered re-run). Freeze the interrupted run, record the steer; a fresh node_start → … → node_done follows on this stream.
+          // Re-running with new guidance in the same session: status stays 'running', since running->queued is illegal
+          // backend-side. A fresh node_start through node_done follows on this stream.
           updateNodeRuns(nodeId, r => freezeOpenRuns(r, Date.now()))
           const s = this.states.get(chatId)
           const prevSteers = s?.live?.dag?.nodeStates[nodeId]?.steers ?? []
           updateNodeState(nodeId, { status: 'running', error: undefined, steers: [...prevSteers, guidance], queue: [] })
         },
-        // Was parsed and dropped before (#1018 review): a delivery can carry a
-        // trace id even when node_start's didn't reach the client (e.g. a
-        // reconnect mid-run) - fill it in rather than leaving the link dark.
+        // A delivery can carry the trace id a missed node_start had (e.g. reconnect mid-run); fill the link in.
         onDeliveryResult: d => {
           if (!d.traceId) return
           const s = this.states.get(chatId)
@@ -1016,10 +909,9 @@ export class ChatStore {
 
   // refetchAnswer re-reads a re-run turn's persisted answer: its stream carried only the re-run nodes.
   private async refetchAnswer(chatId: string, turnId: string): Promise<void> {
-    let turn: Turn | undefined
+    let turn: Turn | null
     try {
-      const res = await fetch(`/api/v1/chats/${chatId}/responses/${turnId}`)
-      turn = res?.ok ? ((await res.json()) as Turn) : undefined
+      turn = await api.getResponse(chatId, turnId)
     } catch {
       return
     }
@@ -1039,9 +931,8 @@ export class ChatStore {
     this.notify(chatId)
   }
 
-  // Coalesced to at most once per animation frame: a busy node can emit
-  // thousands of SSE events/sec, and a React re-render per event - not per
-  // frame - is what locks the tab (#725; measured: ~7s of pure re-render overhead for one node's real event volume). state is already up to date (write() is synchronous); this only throttles how often listeners are told to re-read it.
+  // Coalesced to one notify per frame: a busy node emits thousands of SSE events/sec and a re-render per event
+  // locks the tab. State is already current (write() is synchronous); this only throttles listeners.
   private notify(chatId: string): void {
     if (this.notifyScheduled.has(chatId)) return
     this.notifyScheduled.add(chatId)
@@ -1056,15 +947,13 @@ export class ChatStore {
   }
 }
 
-// Whether a turn's DAG is still running - the gate for re-subscribing to a
-// live run on chat open/reload. After a server restart, FailStaleDagNodes
-// flips orphaned nodes to failed, so the DAG reads completed and we don't (wrongly) re-attach to a dead run.
+// Gates re-subscribing on chat open/reload. After a restart, FailStaleDagNodes fails orphaned nodes, so a dead run
+// reads completed and isn't re-attached.
 export function isTurnInProgress(turn: Turn | undefined): boolean {
   if (!turn) return false
   return dagFromTurn(turn)?.status === 'in_progress'
 }
 
-// dagFromOutputItem extracts DagOutputItem from a Turn's output array.
 export function dagFromTurn(turn: Turn): DagOutputItem | undefined {
   for (const item of turn.output) {
     if (item.type === 'quack:dag') return item as DagOutputItem
@@ -1072,9 +961,8 @@ export function dagFromTurn(turn: Turn): DagOutputItem | undefined {
   return undefined
 }
 
-// dagTurnStateFromItem converts a persisted DagOutputItem into a DagTurnState
-// suitable for DagView. Runs/answers are empty (streaming content isn't persisted).
-// Shared by TurnView (completed turns) and attach() (snapshotting an in-progress one).
+// Persisted DagOutputItem -> DagTurnState for DagView; runs/answers stay empty since streamed content isn't persisted.
+// Shared by TurnView and attach().
 export function dagTurnStateFromItem(item: DagOutputItem): DagTurnState {
   const nodeStates: DagTurnState['nodeStates'] = {}
   let startedAt: number | undefined
@@ -1115,9 +1003,8 @@ export function dagTurnStateFromItem(item: DagOutputItem): DagTurnState {
   }
 }
 
-// activityFromTurn reconstructs the orchestrator's persisted tool calls (the
-// 'quack:activity' output item) as a single synthetic AgentRun, so chat history
-// renders the same ActivityList the live stream uses. Empty array if none.
+// Rebuilds the orchestrator's persisted 'quack:activity' tool calls as one synthetic AgentRun, so history renders
+// the same ActivityList as the live stream.
 export function activityFromTurn(turn: Turn): AgentRun[] {
   for (const item of turn.output) {
     if (item.type !== 'quack:activity') continue
@@ -1136,7 +1023,6 @@ export function activityFromTurn(turn: Turn): AgentRun[] {
   return []
 }
 
-// textFromTurn extracts the final answer text from a completed Turn.
 // stoppedFromTurn reports the turn's answer came from a node the user stopped (server-marked).
 export function stoppedFromTurn(turn: Turn): boolean {
   return turn.output.some(item => item.type === 'message' && (item as MessageOutputItem).stopped === true)
@@ -1155,9 +1041,8 @@ export function textFromTurn(turn: Turn): string {
   return ''
 }
 
-// Every assistant bubble is authored by someone: a DAG turn's answer by the
-// terminal node's agent, a plain reply by the orchestrator. These helpers
-// compute that attribution (agent + model + tokens) for both a live DagTurnState and a persisted Turn, shared by TurnView and Chat.
+// Every assistant bubble is authored: a DAG turn's answer by its terminal node's agent, a plain reply by the
+// orchestrator. These helpers compute that attribution for live and persisted turns.
 
 export interface Attribution {
   agent: string
@@ -1244,9 +1129,7 @@ export function dagAnswerAttribution(dag: DagTurnState, text?: string): Attribut
   }
 }
 
-// turnUsageTotal sums a persisted Turn's usage (input + output tokens), or
-// undefined when usage wasn't recorded (e.g. a DAG-only turn - its tokens are
-// surfaced per-node instead) or is all-zero.
+// Total input + output tokens, or undefined when unrecorded (a DAG-only turn's tokens show per node) or zero.
 export function turnUsageTotal(turn: Turn): number | undefined {
   const u = turn.usage
   if (!u) return undefined
@@ -1254,16 +1137,14 @@ export function turnUsageTotal(turn: Turn): number | undefined {
   return total > 0 ? total : undefined
 }
 
-// The answer bubble's header for a reloaded plain-reply turn: the
-// orchestrator, with the model persisted on the turn row at run end (turn.model
-// - never the currently-configured model, which could silently rewrite history) and the turn's total tokens - matching the live stream.
+// Header for a reloaded plain reply: the orchestrator with turn.model, persisted at run end (never the current config,
+// which could rewrite history), and the turn's total tokens.
 export function plainReplyAttribution(turn: Turn): Attribution {
   return { agent: 'orchestrator', model: turn.model, tokens: turnUsageTotal(turn) }
 }
 
-// pendingNodeQuestion finds a paused mid-node HITL question awaiting an answer
-// in a live DAG - the node's own conversation-level "question bubble" (as
-// opposed to the orchestrator's get_user_choice, surfaced via pendingChoice).
+// A paused mid-node HITL question in a live DAG: the node's own question bubble, unlike the orchestrator's
+// get_user_choice (pendingChoice).
 export function pendingNodeQuestion(dag: DagTurnState): { nodeId: string; agent: string; question: string } | undefined {
   for (const n of dag.nodes) {
     const st = dag.nodeStates[n.id]
@@ -1275,9 +1156,7 @@ export function pendingNodeQuestion(dag: DagTurnState): { nodeId: string; agent:
 }
 
 
-// distinctModels collects the non-empty, deduplicated, sorted model names
-// used across a set of node states - a DAG turn credits models per-node,
-// never on the turn itself (see plainReplyAttribution for the plain-reply case).
+// Sorted distinct non-empty models across node states; a DAG turn credits models per node, never on the turn.
 function distinctModels(nodeStates: Record<string, { model?: string }>): string[] {
   const models = new Set<string>()
   for (const ns of Object.values(nodeStates)) {
@@ -1286,9 +1165,8 @@ function distinctModels(nodeStates: Record<string, { model?: string }>): string[
   return [...models].sort()
 }
 
-// sessionModels is the chat header's model chip set: the current (live, if
-// streaming) or most recent turn's orchestrator model when set, else the
-// distinct models its DAG nodes used. Empty while nothing has run yet.
+// The header's model chips: the latest turn's orchestrator model when set, else its DAG nodes' distinct models.
+// Empty while nothing has run yet.
 export function sessionModels(state: ChatState): string[] {
   if (state.live) {
     return state.live.dag ? distinctModels(state.live.dag.nodeStates) : []

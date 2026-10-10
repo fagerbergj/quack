@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
-import { act, createElement } from 'react'
-import { createRoot } from 'react-dom/client'
+import { describe, it, expect, vi, afterEach } from 'vitest'
+import { createElement } from 'react'
+import { act, cleanup, render } from '@testing-library/react'
 import ExtensionHost from './ExtensionHost'
 import { client } from '../generated/client.gen'
+
+afterEach(cleanup)
 
 // Node's fetch/Request (unlike a browser's) refuses to build a Request from a
 // relative URL - see MemoryTab.test.ts for the same setup.
@@ -13,37 +15,16 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 }
 
-// #870: ExtensionHost hosts an extension's own UI in a same-origin iframe
-// inside the SPA shell, routed at /ext/:name - see NavRail.test.ts for the
-// nav-entry side of the same change.
 
 describe('ExtensionHost', () => {
-  let root: ReturnType<typeof createRoot> | undefined
-  let host: HTMLDivElement | undefined
+  let host: HTMLElement | undefined
 
-  beforeEach(() => {
-    // @ts-expect-error react act environment flag
-    globalThis.IS_REACT_ACT_ENVIRONMENT = true
-  })
-
-  afterEach(() => {
-    act(() => root?.unmount())
-    host?.remove()
-    root = undefined
-    host = undefined
-  })
-
-  function render(props: Partial<Parameters<typeof ExtensionHost>[0]> = {}) {
-    host = document.createElement('div')
-    document.body.appendChild(host)
-    root = createRoot(host)
-    act(() => {
-      root!.render(createElement(ExtensionHost, props))
-    })
+  function mount(props: Partial<Parameters<typeof ExtensionHost>[0]> = {}) {
+    host = render(createElement(ExtensionHost, props)).container
   }
 
   it('renders an iframe with src and title from the matching extension', () => {
-    render({
+    mount({
       name: 'remarkable',
       initialExtensions: [{ name: 'remarkable', title: 'reMarkable', href: '/remarkable/review' }],
     })
@@ -54,7 +35,7 @@ describe('ExtensionHost', () => {
   })
 
   it('falls back to the extension name as the title when no title is set', () => {
-    render({
+    mount({
       name: 'usage',
       initialExtensions: [{ name: 'usage', href: '/usage' }],
     })
@@ -63,7 +44,7 @@ describe('ExtensionHost', () => {
   })
 
   it('sandboxes the iframe to same-origin/scripts/forms/user-activated top nav only', () => {
-    render({
+    mount({
       name: 'usage',
       initialExtensions: [{ name: 'usage', href: '/usage' }],
     })
@@ -74,13 +55,13 @@ describe('ExtensionHost', () => {
   })
 
   it('shows a not-found message for a name with no matching href-bearing extension', () => {
-    render({ name: 'missing', initialExtensions: [{ name: 'usage', href: '/usage' }] })
+    mount({ name: 'missing', initialExtensions: [{ name: 'usage', href: '/usage' }] })
     expect(host!.querySelector('iframe')).toBeNull()
     expect(host!.textContent).toContain('not found')
   })
 
   it('shows a not-found message for a UI-less extension (no href)', () => {
-    render({ name: 'github', initialExtensions: [{ name: 'github' }] })
+    mount({ name: 'github', initialExtensions: [{ name: 'github' }] })
     expect(host!.querySelector('iframe')).toBeNull()
     expect(host!.textContent).toContain('not found')
   })
@@ -90,7 +71,7 @@ describe('ExtensionHost', () => {
     vi.stubGlobal('fetch', fetchMock)
     try {
       await act(async () => {
-        render({ name: 'usage' })
+        mount({ name: 'usage' })
         await new Promise(resolve => setTimeout(resolve, 0))
       })
       expect(fetchMock).toHaveBeenCalledTimes(1)

@@ -1,8 +1,6 @@
 import type { ChatSummary } from '../api'
 
-// isGithubChat: github_url is the authoritative signal (set by the webhook at
-// dispatch time); the id prefix is a fallback for chats persisted before that
-// field existed.
+// github_url is the authoritative signal (set by the webhook); the id prefix covers chats persisted before it existed.
 export function isGithubChat(c: ChatSummary): boolean {
   return Boolean(c.github_url) || c.id.startsWith('github-')
 }
@@ -15,9 +13,8 @@ export interface GithubRef {
 
 const GITHUB_URL_RE = /\/(issues|pull)\/(\d+)/
 
-// parseGithubRef extracts the {repo, kind, number} the row's Issue/PR badge and
-// the Repo/Type facets need, straight off github_url - the same field
-// isGithubChat trusts. Undefined for a non-GitHub chat or an unrecognized URL shape.
+// The {repo, kind, number} for the Issue/PR badge and Repo/Type facets, read off github_url like isGithubChat.
+// Undefined for a non-GitHub chat or an unrecognized URL shape.
 export function parseGithubRef(c: ChatSummary): GithubRef | undefined {
   if (!c.github_url) return undefined
   const m = c.github_url.match(GITHUB_URL_RE)

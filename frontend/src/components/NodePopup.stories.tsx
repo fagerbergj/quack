@@ -29,8 +29,7 @@ export const ReadOnly: Story = {
   },
 }
 
-// A not-yet-started node: the prompt is editable. Pause/cancel now live in
-// DagNode's ⋮ menu, not here.
+// A not-yet-started node: the prompt is editable. Pause/cancel live in DagNode's ⋮ menu.
 export const PendingEditablePrompt: Story = {
   args: {
     node,
@@ -68,9 +67,7 @@ export const PausedResumable: Story = {
   },
 }
 
-// #401 HITL follow-up: a needs_input node surfaces its pending question as its
-// own chat-style bubble, with the SAME input widget the queue uses - now
-// wired to answer (resumes the node) instead of queue.
+// A needs_input node shows its pending question as a chat bubble; the queue's input widget answers it instead.
 export const NeedsInputAnswerable: Story = {
   args: {
     node,

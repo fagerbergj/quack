@@ -1,6 +1,4 @@
-import type { ChangeType } from './diagramSource'
-
-export interface RiskRow { change: string; type: ChangeType; risk: 'low' | 'medium' | 'high'; reason: string; blast: string; tests?: string }
+import type { RiskRow } from './A2uiSurface'
 
 const RISK_STYLE: Record<RiskRow['risk'], string> = {
   low: 'bg-green-100 text-green-900 border-green-600 dark:bg-green-900/40 dark:text-green-200',

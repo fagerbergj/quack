@@ -4,9 +4,8 @@ import Chat from './Chat'
 import { ChatStoreProvider, useChatStore } from '../state/ChatStoreProvider'
 import type { ChatSummary, ChatDetail, Turn } from '../generated'
 
-// Chat talks to the real REST client (api.ts) - same stub-global.fetch
-// pattern as ArtifactPanel/Memory (no MSW), routed on the chat id in the
-// URL. useChatId() reads window.location, so each story pushes its own /chat/:id path before mounting. attach() derives the "live" turn from the last persisted turn (no SSE events needed) but still opens a real EventSource - stubbed here to a no-op so a story never fires an actual network request.
+// useChatId() reads window.location, so each story pushes its own /chat/:id. attach() still opens a real
+// EventSource, stubbed to a no-op so no story hits the network.
 class FakeEventSource extends EventTarget {
   close() {}
 }
@@ -72,9 +71,7 @@ function finishedDagTurn(id: string, content: string): Turn {
   }
 }
 
-// stubChat routes global.fetch on the chat id in the URL, like ArtifactPanel's
-// story. Called from each story's decorator so a fresh ChatStoreProvider and
-// fetch stub pair with the pathname pushed for that story's chatId.
+// Called per story decorator so a fresh ChatStoreProvider and fetch stub pair with that story's pathname.
 function stubChat(chatId: string, chats: ChatSummary[], detail?: ChatDetail, artifacts: unknown[] = []) {
   window.fetch = async (input: RequestInfo | URL) => {
     const url = decodeURIComponent(input instanceof Request ? input.url : String(input))
@@ -102,18 +99,16 @@ export default meta
 type Story = StoryObj<typeof Chat>
 const baseArgs = { navOpen: false, onToggleNav: () => {} }
 
-// No chats at all - empty sidebar, composer enabled with the "Ask a question"
-// placeholder (audit finding 8: the first send creates the chat).
+// No chats: the composer stays enabled and the first send creates the chat.
 export const EmptyChat: Story = {
   args: baseArgs,
   decorators: withChat(undefined, []),
 }
 
-// A running DAG node, attached straight from the persisted turn (#463) - no
-// SSE traffic needed for the fixture to render mid-stream chrome.
+// Attached straight from the persisted turn, so no SSE traffic is needed for mid-stream chrome.
 export const StreamingTurn: Story = {
   args: baseArgs,
-  // The compact header's status dot + elapsed (audit #6) only shows here.
+  // The compact header's status dot + elapsed only shows here.
   parameters: { renderCheck: { viewports: ['mobile', 'desktop'] } },
   decorators: withChat(
     'chat-streaming',
@@ -133,8 +128,6 @@ export const FinishedTurnWithArtifacts: Story = {
   ),
 }
 
-// Archived chats are read-only: the header badge shows it, the title can't be
-// renamed, and the composer is disabled (see Chat.tsx's `isArchived` wiring).
 export const ArchivedChat: Story = {
   args: baseArgs,
   decorators: withChat(
@@ -144,9 +137,7 @@ export const ArchivedChat: Story = {
   ),
 }
 
-// A finished chat with follow-ups queued behind it (Composer's queue chips):
-// queueTurn is the store's own client-side API (no endpoint), so the
-// decorator calls it once after the store mounts rather than reaching past Chat's props into ChatStoreProvider internals.
+// queueTurn is client-side only (no endpoint), so the decorator calls it once after the store mounts.
 export const QueuedFollowUps: Story = {
   args: baseArgs,
   decorators: [

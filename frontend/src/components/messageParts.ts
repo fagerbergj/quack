@@ -1,12 +1,9 @@
-// The data model for an assistant message under the flat, agent-centric event
-// model. The DAG (nodes) is the static structure; within each node the gate
-// runs a SEQUENCE of agent invocations ("runs" - the worker draft, optional self-refine, each judge round, each revision), every one delimited by agent_start / agent_complete with a run_id + stage. Everything is keyed by run_id, tools paired by call_id - no open-container heuristics. No JSX here so this stays trivially testable; rendering lives in AgentParts.tsx / DagNode.tsx.
+// Each node runs a sequence of agent "runs" delimited by agent_start/agent_complete. Everything keys on
+// run_id and tools pair by call_id, never open-container heuristics. No JSX, so it stays trivially testable.
 
 export type Stage = 'worker' | 'judge' | 'revise'
 
-// agentLabel maps an agent bundle name to a human-readable display label. Shared
-// by DagNode's node header, per-run stage cards, and the bubble-attribution
-// header (BubbleHeader / QuestionBubble) so an agent reads the same everywhere.
+// Shared by every header that names an agent so it reads the same everywhere.
 export function agentLabel(name: string): string {
   if (name === 'web-researcher') return 'Web researcher'
   if (name === 'synthesizer') return 'Synthesizer'
@@ -14,7 +11,6 @@ export function agentLabel(name: string): string {
   return name
 }
 
-// ToolCall is one tool invocation within a run; result fills in when it returns.
 export interface ToolCall {
   callId: string
   name: string
@@ -23,9 +19,8 @@ export interface ToolCall {
   done: boolean
 }
 
-// One ordered item inside a run: reasoning, a tool call, or a
-// context-compaction event (the worker session was rewritten mid-round by adk's
-// runner-level compaction). Fields mirror stream.CompactionData - adk reports no before/after conversation-size total, so unlike the old tokensBefore/tokensAfter row this is a range + summarizer spend, both optional.
+// Compaction fields mirror stream.CompactionData: adk reports no before/after context size, only a time
+// range and the summarizer's spend, both optional.
 export type Activity =
   | { kind: 'thinking'; text: string }
   | { kind: 'tool'; tool: ToolCall }
@@ -37,17 +32,14 @@ export type Activity =
       summaryOutputTokens?: number
     }
 
-// AgentRun is one agent invocation within a node. Result fields are populated on
-// agent_complete and vary by stage.
+// Result fields are populated on agent_complete and vary by stage.
 export interface AgentRun {
   runId: string
   agent: string
   stage: Stage
   round?: number
   activity: Activity[]
-  // Index of the run's most recent thinking item, so appendRunThinking can
-  // fold a delta into it in O(1) even across intervening tool calls (#959),
-  // rather than rescanning activity for the last thinking item.
+  // Lets appendRunThinking fold a delta into the last thinking item in O(1), even across tool calls.
   lastThinkIdx?: number
   done: boolean
   startedAt?: number    // ms timestamp when the run opened
@@ -64,16 +56,14 @@ export interface AgentRun {
   totalTokens?: number
 }
 
-// PendingChoice is an unanswered get_user_choice clarification surfaced for the UI.
 export interface PendingChoice {
   callId: string
   question: string
   options: string[]
 }
 
-// Finds a get_user_choice clarification awaiting the user's answer in a run
-// list. The tool returns a `{status:"pending"}` placeholder, so the call is
-// `done` with that result; the real answer arrives as a separate later turn and never overwrites it - so a get_user_choice whose result is still the pending placeholder is awaiting input. Returns the first such call, or null.
+// get_user_choice completes with a `{status:"pending"}` placeholder; the answer arrives as a later turn and
+// never overwrites it, so a call still holding the placeholder is awaiting input.
 export function pendingChoice(runs: AgentRun[]): PendingChoice | null {
   for (const r of runs) {
     for (const a of r.activity) {
@@ -89,15 +79,14 @@ export function pendingChoice(runs: AgentRun[]): PendingChoice | null {
   return null
 }
 
-// startRun appends a new run. Idempotent on run_id (a duplicate start is ignored).
+// Idempotent on run_id: a duplicate start is ignored.
 export function startRun(runs: AgentRun[], r: { runId: string; agent: string; stage: Stage; round?: number; startedAt?: number }): AgentRun[] {
   if (runs.some(x => x.runId === r.runId)) return runs
   return [...runs, { runId: r.runId, agent: r.agent, stage: r.stage, round: r.round, activity: [], done: false, startedAt: r.startedAt }]
 }
 
-// Coalesces into the most recent thinking item even across intervening tool
-// calls (#959), using lastThinkIdx for O(1) lookup. Mutates run.activity in
-// place (push / index-assign) rather than spreading the whole array - an event's cost is O(1) amortized, so a run with N events stays O(N) total, not O(N²) (#379). The run itself still gets a new object identity (below) so callers keep seeing a fresh reference.
+// Mutates run.activity in place so a run of N events costs O(N), not O(N²); the run itself still gets a
+// new identity so callers see a fresh reference.
 export function appendRunThinking(runs: AgentRun[], runId: string, text: string): AgentRun[] {
   return mapRun(runs, runId, run => {
     const idx = run.lastThinkIdx
@@ -112,9 +101,8 @@ export function appendRunThinking(runs: AgentRun[], runId: string, text: string)
   })
 }
 
-// appendRunToolCall adds a pending tool call to a run (mutated in place,
-// see above). An ACP call re-announces itself under the SAME call_id once
-// its kind/args resolve (translate.go emits the pending call, then pairs the resolved one) - update that row in place rather than pushing a second, since the eventual result only ever fills the most recent match, orphaning the first (#746).
+// An ACP call re-announces under the same call_id once its args resolve; update that row rather than push
+// a second, since the result fills only the latest match and would orphan the first.
 export function appendRunToolCall(runs: AgentRun[], runId: string, callId: string, name: string, args: Record<string, unknown>): AgentRun[] {
   return mapRun(runs, runId, run => {
     const idx = callId === '' ? -1 : run.activity.findIndex(a => a.kind === 'tool' && !a.tool.done && a.tool.callId === callId)
@@ -127,9 +115,7 @@ export function appendRunToolCall(runs: AgentRun[], runId: string, callId: strin
   })
 }
 
-// fillRunToolResult attaches a result to the matching pending tool call (by
-// call_id, falling back to the most recent pending call of the same name).
-// Mutated in place (see appendRunThinking) - only the matched slot is replaced.
+// With no call_id, falls back to the most recent pending call of the same name.
 export function fillRunToolResult(runs: AgentRun[], runId: string, callId: string, name: string, result: unknown): AgentRun[] {
   return mapRun(runs, runId, run => {
     let idx = -1
@@ -147,8 +133,6 @@ export function fillRunToolResult(runs: AgentRun[], runId: string, callId: strin
   })
 }
 
-// completeRun marks a run done, records its stage-specific result, and freezes
-// its duration from startedAt to nowMs (when both are available).
 export function completeRun(runs: AgentRun[], runId: string, data: Partial<AgentRun>, nowMs?: number): AgentRun[] {
   return mapRun(runs, runId, run => {
     const durationMs = nowMs != null && run.startedAt != null ? nowMs - run.startedAt : run.durationMs
@@ -156,9 +140,7 @@ export function completeRun(runs: AgentRun[], runId: string, data: Partial<Agent
   })
 }
 
-// freezeOpenRuns marks any still-open run done, freezing its live timer.
-// Called when a node finishes: a node can't be "done" while one of its runs
-// is still counting, so this is the backstop if an agent_complete is ever dropped, reordered, or never sent (e.g. a stage that ends without a matching complete).
+// Backstop for a node that finishes while a run's agent_complete was dropped, reordered or never sent.
 export function freezeOpenRuns(runs: AgentRun[], nowMs?: number): AgentRun[] {
   if (!runs.some(r => !r.done)) return runs
   return runs.map(run => {
@@ -168,9 +150,7 @@ export function freezeOpenRuns(runs: AgentRun[], nowMs?: number): AgentRun[] {
   })
 }
 
-// appendRunCompaction records a compaction event on the run it belongs to,
-// matched exactly by run_id like appendRunThinking/appendRunToolCall - the
-// backend now sends quack's own run_id (stream.RunIDFromBranch), the same one the run's agent_start carries, not adk's own invocation id.
+// The backend sends quack's run_id (stream.RunIDFromBranch), the one agent_start carries, not adk's invocation id.
 export function appendRunCompaction(runs: AgentRun[], runId: string, data: Extract<Activity, { kind: 'compaction' }>): AgentRun[] {
   return mapRun(runs, runId, run => ({ ...run, activity: [...run.activity, data] }))
 }
@@ -185,18 +165,14 @@ function mapRun(runs: AgentRun[], runId: string, fn: (run: AgentRun) => AgentRun
   return found ? next : runs
 }
 
-// LiveStatus is a run's activity reduced to what's worth showing while it's
-// still RUNNING: whether the tail end is reasoning, and the most recent tool
-// call (independent of whether the tail is thinking again after it returned).
+// `tool` is the latest tool call even when the tail has gone back to thinking.
 export interface LiveStatus {
   thinking: boolean
   tool?: ToolCall
   compacted: boolean
 }
 
-// liveStatusLine computes LiveStatus from a run's activity - the substitute
-// for rendering the full list while running (#725: re-rendering an
-// ever-growing activity list on every streamed token is what locks the tab). compacted surfaces a mid-round compaction (#1185) even while the run is still shown via this substitute rather than the full ActivityList.
+// Rendering the full list per streamed token locks the tab, so a running run shows only this summary.
 export function liveStatusLine(activity: Activity[]): LiveStatus {
   let tool: ToolCall | undefined
   for (let i = activity.length - 1; i >= 0; i--) {
@@ -210,9 +186,8 @@ export function liveStatusLine(activity: Activity[]): LiveStatus {
   }
 }
 
-// showLiveSpinner decides whether the live (streaming) turn shows the
-// "thinking" dots: it's streaming and nothing visible has arrived yet.
-// Keyed on VISIBLE content (DAG, answer text, or visible activity) - NOT run count: the orchestrator's top-level run is created empty on the first stream event (to hold its plan/execute tool calls), so a run-count check hides the dots during the gap before the plan appears (regression fixed 2026-06).
+// Keyed on visible content, not run count: the orchestrator's run is created empty on the first event,
+// so a run-count check would hide the dots before the plan appears.
 export function showLiveSpinner(args: {
   streaming: boolean
   hasDag: boolean

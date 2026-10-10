@@ -1,8 +1,7 @@
 import { Icon } from './Icon'
 
-// NavToggle (#1171) is the single trigger for the navigation drawer,
-// sitting in each page's header leading slot (Chat, Memory, ExtensionHost).
-// 44x44 (w-11 h-11) tap target, and its own glyph - a grid icon that is never the chat-list toggle's menu icon (#1175: the app had two identical hamburgers; there is now exactly one). The drawer's open state is owned by App.tsx, which hands it down as props; aria-expanded mirrors it.
+// The single drawer trigger, in each page header. Its grid glyph must never match the chat-list toggle's
+// menu icon, so the app never shows two identical hamburgers.
 export interface NavToggleProps {
   open: boolean
   onToggle: () => void

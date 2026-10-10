@@ -11,9 +11,7 @@ export default meta
 
 type Story = StoryObj<typeof NodeMemoriesPanel>
 
-// The panel talks to the real REST client (frontend/src/api.ts) - a story
-// stubs window.fetch with canned GET .../memories responses per chat id,
-// same pattern ArtifactPanel.stories.tsx uses (no MSW in this repo).
+// Stubs window.fetch with canned GET .../memories responses per chat id, as ArtifactPanel.stories.tsx does.
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
 }
@@ -74,9 +72,8 @@ export const OwnVoteActive: Story = {
   },
 }
 
-// #1266: opened from a Chat/DagNode kebab at 390px - the vote control at
-// the row's end (mirrors MemoryEntry) so the text isn't squeezed narrow,
-// same fixed-size-box pattern as ArtifactPanel's WithResultMobile (no viewport addon in this repo).
+// At 390px the vote control sits at the row's end (like MemoryEntry) so the text isn't squeezed.
+// A fixed-size box stands in for a viewport addon, as in ArtifactPanel's WithResultMobile.
 export const MobileViewport: Story = {
   args: { chatId: 'chat-votes', nodeId: 'node-1', onClose: () => {} },
   decorators: [Story => (

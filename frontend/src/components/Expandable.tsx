@@ -1,9 +1,8 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 
-// Height-locks long content: children in a capped container; fade +
-// Show more / Show less toggle only on overflow (used across the DAG view so a
-// long answer or big tool body stays scannable). The decision is measured (scrollHeight vs the cap) on the CONTENT box, never the clamped box - clamping changes layout, so measuring the clamped box feeds the decision back into its own input, ping-ponging into React's max-update-depth guard on a streaming turn (#185). The content box is never clamped; one ResizeObserver on it covers both re-measure triggers (content growing, width rewrap).
+// Overflow is measured on the never-clamped content box: measuring the clamped box feeds the decision back
+// into itself and ping-pongs into React's max-update-depth guard. One ResizeObserver covers growth and rewrap.
 export function Expandable({
   children,
   maxHeight = 240,

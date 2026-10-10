@@ -74,9 +74,8 @@ describe('computeFacets', () => {
   })
 
 
-  // origin.labels dimensions are extension-supplied and data-driven - a
-  // "tags" dimension becomes its own facet, keyed label:tags so it can never
-  // collide with the fixed facet keys (origin/status/repo/type).
+  // origin.labels dimensions are data-driven: "tags" becomes its own facet, keyed label:tags so it can't collide
+  // with the fixed facet keys (origin/status/repo/type).
   it('derives a facet per origin.labels dimension, using display text and per-value counts', () => {
     const facets = computeFacets(EXT_CHATS)
     const byKey = Object.fromEntries(facets.map(f => [f.key, f]))

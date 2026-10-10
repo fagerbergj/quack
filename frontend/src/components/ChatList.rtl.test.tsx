@@ -30,8 +30,7 @@ function baseProps(onCloseMobile: () => void) {
   }
 }
 
-// #1131: the chat list's existing mobile drawer picks up the same a11y
-// wiring (Esc closes, focus returns) NavRail's new drawer uses.
+// The mobile drawer's a11y wiring: Esc closes and focus returns to the trigger.
 describe('ChatList mobile drawer a11y', () => {
   it('opening moves focus into the panel, Esc closes it, and closing returns focus to the trigger', async () => {
     mockCompact(true)
@@ -69,9 +68,7 @@ describe('ChatList mobile drawer a11y', () => {
   })
 })
 
-// #1201: "Load more" measured 249x36px on mobile - under the 44px comfortable
-// touch target. min-h-[44px] fixes the height without visual bloat (the text
-// stays the same size, only the button's padding grows).
+// "Load more" must meet the 44px touch target; min-h grows the padding, not the text.
 describe('ChatList "Load more" touch target (#1201)', () => {
   it('active-list Load more has a >=44px min-height', () => {
     render(<ChatList {...baseProps(() => {})} open={false} hasMoreChats onLoadMoreChats={() => {}} />)
@@ -80,8 +77,7 @@ describe('ChatList "Load more" touch target (#1201)', () => {
   })
 })
 
-// #1137/#1319: every row's kebab (the row's only action point) is a 44x44
-// tap area, on both active and archived rows.
+// Every row's kebab is a 44x44 tap area, on both active and archived rows.
 describe('ChatList kebab touch target (#1137)', () => {
   const chat = {
     id: 'c1', title: 'A chat', system_prompt: '', created_at: '', updated_at: '', status: 'idle',
@@ -104,8 +100,7 @@ describe('ChatList kebab touch target (#1137)', () => {
   })
 })
 
-// #1319: owner instruction - archive and delete both live behind the same
-// always-visible kebab (two clicks), never a bare one-tap control.
+// Archive and delete both live behind the always-visible kebab, never a bare one-tap control.
 describe('ChatList row kebab (#1319)', () => {
   const activeChat = {
     id: 'c1', title: 'Active chat', system_prompt: '', created_at: '', updated_at: '', status: 'idle',

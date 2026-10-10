@@ -1,16 +1,17 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { act, createElement } from 'react'
-import { createRoot } from 'react-dom/client'
+import { createElement } from 'react'
+import { act, cleanup, render } from '@testing-library/react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { DagNode, pausedStatusLabel } from './DagNode'
 import type { DagNodeDef } from '../state/agentStream'
 import type { NodeState } from '../state/chatStore'
 import type { AgentRun, Activity } from './messageParts'
 
-// Structural assertions on the static markup - no testing-library in this
-// repo (see ToolCallView.test.ts), so we render to HTML and check the
-// load-bearing shape: collapsed-by-default one-line previews (the popup itself only opens on click, which needs a DOM - a Storybook play-function concern, see DagNode.stories.tsx's *Popup stories) and the deterministic-retry merge.
+afterEach(cleanup)
+
+// Structural assertions on the static markup: collapsed-by-default one-line previews and the
+// deterministic-retry merge. Popups open only on click, so those tests mount a real DOM below.
 
 const node: DagNodeDef = { id: 'r1', agent: 'web-researcher', task: 'Research Dublin.', depends_on: [] }
 
@@ -96,8 +97,7 @@ describe('DagNode - deterministic-retry continuation merges into one feed', () =
   })
 })
 
-// #746 item 4: only tool calls count as "steps" - a node with pure reasoning
-// (no tool calls) shows no count at all, never a misleading "0 tool calls".
+// A thinking trace isn't a step: pure reasoning shows no count, never "0 tool calls".
 describe('DagNode - tool-call count excludes thinking traces (#746 item 4)', () => {
   it('counts only tool-kind activity, not thinking traces', () => {
     const mixed: Activity[] = [
@@ -122,42 +122,25 @@ describe('DagNode - tool-call count excludes thinking traces (#746 item 4)', () 
   })
 })
 
-// #426 - the judge verdict's popup CopyButton writes the full verdict text to
-// the clipboard. Needs a real DOM (click-through), unlike the static-markup
-// tests above.
+// Needs a real DOM to click through, unlike the static-markup tests above.
 describe('DagNode - judge verdict popup copy button (#426)', () => {
-  let root: ReturnType<typeof createRoot> | undefined
-  let host: HTMLDivElement | undefined
-
-  afterEach(() => {
-    act(() => root?.unmount())
-    host?.remove()
-    root = undefined
-    host = undefined
-  })
+  let host: HTMLElement | undefined
 
   it('copies the full verdict text, not something else', () => {
-    // @ts-expect-error react act environment flag
-    globalThis.IS_REACT_ACT_ENVIRONMENT = true
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.assign(navigator, { clipboard: { writeText } })
 
     const verdict = 'Mostly solid, but the rainfall claim needs a source.'
-    host = document.createElement('div')
-    document.body.appendChild(host)
-    root = createRoot(host)
-    act(() => {
-      root!.render(createElement(DagNode, {
-        node,
-        state: { status: 'done', startedAt: 0, finishedAt: 1000 },
-        runs: [
-          { runId: 'w', agent: 'web-researcher', stage: 'worker', done: true, activity },
-          { runId: 'j1', agent: 'judge', stage: 'judge', round: 1, done: true, score: 0.5, passed: false, feedback: verdict, activity: [] },
-        ],
-        answer: 'answer text',
-        isFinal: false,
-      }))
-    })
+    host = render(createElement(DagNode, {
+      node,
+      state: { status: 'done', startedAt: 0, finishedAt: 1000 },
+      runs: [
+        { runId: 'w', agent: 'web-researcher', stage: 'worker', done: true, activity },
+        { runId: 'j1', agent: 'judge', stage: 'judge', round: 1, done: true, score: 0.5, passed: false, feedback: verdict, activity: [] },
+      ],
+      answer: 'answer text',
+      isFinal: false,
+    })).container
 
     const previewButton = Array.from(host.querySelectorAll('button'))
       .find(b => b.textContent?.includes('Mostly solid'))!
@@ -171,9 +154,8 @@ describe('DagNode - judge verdict popup copy button (#426)', () => {
   })
 })
 
-// Regression (#725): a running node with a busy tool-calling agent used to
-// re-render its whole accumulated activity list on every streamed SSE event,
-// locking the tab. A running node must show only a compact status line.
+// Re-rendering a busy agent's whole activity list on every SSE event locked the tab,
+// so a running node shows only a compact status line.
 describe('DagNode - a running node collapses activity to a compact status line (#725)', () => {
   const manyToolCalls: Activity[] = Array.from({ length: 30 }, (_, i) => ({
     kind: 'tool' as const,
@@ -227,32 +209,15 @@ describe('DagNode - token badge shows cached tokens alongside the total', () => 
   })
 })
 
-// #962: the ⋮ menu's Start/Pause/Stop verb enablement per node status - the
-// wire's legal-transition table (dag.CanTransition), read off the opened
-// menu's actual button labels.
+// Verb enablement follows dag.CanTransition, read off the opened menu's actual button labels.
 describe('DagNode - verb enablement per status (#962)', () => {
-  let root: ReturnType<typeof createRoot> | undefined
-  let host: HTMLDivElement | undefined
-
-  afterEach(() => {
-    act(() => root?.unmount())
-    host?.remove()
-    root = undefined
-    host = undefined
-  })
+  let host: HTMLElement | undefined
 
   function openMenuLabels(status: NodeState['status']): string[] {
-    // @ts-expect-error react act environment flag
-    globalThis.IS_REACT_ACT_ENVIRONMENT = true
-    host = document.createElement('div')
-    document.body.appendChild(host)
-    root = createRoot(host)
-    act(() => {
-      root!.render(createElement(DagNode, {
-        node, state: { status }, runs: [], answer: '', isFinal: false,
-        onCancel: () => {}, onPause: () => {}, onResume: () => {}, onQueueMessage: () => {},
-      }))
-    })
+    host = render(createElement(DagNode, {
+      node, state: { status }, runs: [], answer: '', isFinal: false,
+      onCancel: () => {}, onPause: () => {}, onResume: () => {}, onQueueMessage: () => {},
+    })).container
     const toggle = Array.from(host.querySelectorAll('button')).find(b => b.getAttribute('aria-label') === 'Node actions')
     if (!toggle) return [] // no menu at all - terminal status
     act(() => { toggle.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
@@ -323,7 +288,6 @@ describe('DagNode - context meter', () => {
   })
 })
 
-// #998: badge counts only parked messages, not ones delivered live.
 describe('DagNode - queued-message badge counts only parked (undelivered) messages (#998)', () => {
   function withQueue(queue: NodeState['queue']): string {
     return renderToStaticMarkup(createElement(DagNode, {
@@ -368,8 +332,7 @@ describe('DagNode - state is named, not colour-only (audit #7)', () => {
   })
 })
 
-// #1334 renamed the judge row to "Quality check n: 52% (needs 70%)"; reverted
-// per owner decision - heading text stays "Judge", threshold moves to a title.
+// The heading text stays "Judge"; the threshold moves to a title.
 describe('DagNode - judge round heading and score tooltip', () => {
   it('heads the round "Judge · round n" and keeps the threshold out of the visible chip', () => {
     const out = html({ status: 'done', startedAt: 0, finishedAt: 1000 }, [

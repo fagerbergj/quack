@@ -5,7 +5,6 @@ import { AccessibilityAttributesSchema, ButtonApi, Catalog, ChoicePickerApi, Dyn
 import { MermaidDiagram } from './MermaidDiagram'
 import { DiagramView } from './DiagramView'
 import { RiskTable as RiskTableView } from './RiskTable'
-import type { DiagramSpec } from './diagramSource'
 import { DiffView } from './ArtifactPanel'
 import { AssistantText } from './AgentParts'
 import { Icon as QuackIcon, ICON_NAMES, type IconName } from './Icon'
@@ -22,17 +21,25 @@ const Mermaid = createComponentImplementation(
 const change = z.enum(['added', 'modified', 'removed', 'unchanged'])
 const changeType = z.enum(['feature', 'refactor', 'behavior', 'bugfix', 'test', 'config', 'docs'])
 
+const diagramSpec = z.object({
+  direction: z.enum(['TB', 'LR', 'BT', 'RL']).optional(),
+  layers: z.array(z.object({ id: z.string(), title: z.string(), description: z.string() }).strict()),
+  nodes: z.array(z.object({ id: z.string(), label: z.string(), layer: z.string(), change: change.optional(), type: changeType.optional(), detail: z.string() }).strict()),
+  edges: z.array(z.object({ id: z.string(), from: z.string(), to: z.string(), label: z.string().optional(), change: change.optional(), detail: z.string() }).strict()),
+})
+export type DiagramSpec = z.infer<typeof diagramSpec>
+
+const riskTable = z.object({
+  basis: z.enum(['diff-only', 'repo']).optional(),
+  rows: z.array(z.object({ change: z.string(), type: changeType, risk: z.enum(['low', 'medium', 'high']), reason: z.string(), blast: z.string(), tests: z.string().optional() }).strict()),
+})
+export type RiskRow = z.infer<typeof riskTable>['rows'][number]
+
 // The pressed element's id and kind go to the agent as an explain_focus action; Busy holds it like any button.
 const Diagram = createComponentImplementation(
   {
     name: 'Diagram',
-    schema: z.object({
-      ...common,
-      direction: z.enum(['TB', 'LR', 'BT', 'RL']).optional(),
-      layers: z.array(z.object({ id: z.string(), title: z.string(), description: z.string() }).strict()),
-      nodes: z.array(z.object({ id: z.string(), label: z.string(), layer: z.string(), change: change.optional(), type: changeType.optional(), detail: z.string() }).strict()),
-      edges: z.array(z.object({ id: z.string(), from: z.string(), to: z.string(), label: z.string().optional(), change: change.optional(), detail: z.string() }).strict()),
-    }).strict(),
+    schema: diagramSpec.extend(common).strict(),
   },
   ({ props, context }) => {
     const busy = useContext(Busy)
@@ -49,11 +56,7 @@ const Diagram = createComponentImplementation(
 const RiskTable = createComponentImplementation(
   {
     name: 'RiskTable',
-    schema: z.object({
-      ...common,
-      basis: z.enum(['diff-only', 'repo']).optional(),
-      rows: z.array(z.object({ change: z.string(), type: changeType, risk: z.enum(['low', 'medium', 'high']), reason: z.string(), blast: z.string(), tests: z.string().optional() }).strict()),
-    }).strict(),
+    schema: riskTable.extend(common).strict(),
   },
   ({ props }) => <RiskTableView rows={props.rows} basis={props.basis} />,
 )

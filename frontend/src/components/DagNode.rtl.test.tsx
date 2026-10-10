@@ -8,8 +8,7 @@ import type { DagNodeDef } from '../state/agentStream'
 import { client } from '../generated/client.gen'
 import { ChatStoreProvider } from '../state/ChatStoreProvider'
 
-// ArtifactPanel (opened from DagNode's ⋮ menu) reads chatStore for live
-// SSE follow (#1114) - every render needs the provider.
+// ArtifactPanel (opened from DagNode's ⋮ menu) reads chatStore, so every render needs the provider.
 function render(ui: ReactElement) {
   return rtlRender(<ChatStoreProvider>{ui}</ChatStoreProvider>)
 }
@@ -18,7 +17,7 @@ afterEach(cleanup)
 
 const node: DagNodeDef = { id: 'r1', agent: 'web-researcher', task: 'Research Dublin.', depends_on: [] }
 
-// Opens the panel from the ⋮ menu (the only way it opens - #1114).
+// The ⋮ menu is the panel's only entry point.
 async function openArtifacts(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button', { name: 'Node actions' }))
   await user.click(await screen.findByRole('menuitem', { name: /Artifacts/ }))
@@ -26,9 +25,8 @@ async function openArtifacts(user: ReturnType<typeof userEvent.setup>) {
 }
 
 beforeEach(() => {
-  // See ArtifactPanel.rtl.test.tsx for why: jsdom has no <dialog> support
-  // and no matchMedia at all, and the generated client's Request construction
-  // needs an absolute base to resolve against in a jsdom document.
+  // See ArtifactPanel.rtl.test.tsx: jsdom lacks <dialog> and matchMedia, and the generated client
+  // needs an absolute base URL.
   HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) { this.setAttribute('open', '') }
   HTMLDialogElement.prototype.close = function (this: HTMLDialogElement) { this.removeAttribute('open') }
   vi.stubGlobal('matchMedia', vi.fn((query: string) => ({
@@ -40,9 +38,7 @@ beforeEach(() => {
   ))
 })
 
-// #1114 owner feedback: "i dont like buttons with full text it should be
-// moved to ... menu" - the header-level "artifacts" text button is gone;
-// Artifacts is now an item in the node's existing ⋮ overflow menu.
+// Artifacts is an item in the node's ⋮ overflow menu, not a header text button.
 describe('DagNode artifacts menu item (#1114)', () => {
   it('opens the artifact panel dialog from the ⋮ menu on a running node', async () => {
     const user = userEvent.setup()
@@ -100,9 +96,8 @@ describe('DagNode outcome row (answer + artifact summary both render)', () => {
   })
 })
 
-// #1178/#1216: the panel reads four narrow fields from the node - its agent
-// label (nodeAgent, the panel heading), its raw task (nodeTask, Details
-// only), its error (nodeError, only on failed), and its declared output kind (nodeArtifactKind). These tests drive the panel through its only entry point to prove each field crosses the component boundary.
+// The panel reads four narrow fields from the node: nodeAgent (heading), nodeTask (Details only), nodeError
+// (failed only) and nodeArtifactKind. These prove each crosses the component boundary via its only entry point.
 describe('DagNode artifact panel props (#1178)', () => {
   it('shows the node\u2019s agent label as the panel heading, not the raw task or an artifact id', async () => {
     const user = userEvent.setup()
@@ -164,9 +159,8 @@ describe('DagNode artifact panel props (#1178)', () => {
   })
 })
 
-// Mobile QA (390px): the header is one row - dot, name, badges, elapsed,
-// kebab - with the kebab always visible (touch has no hover) and the menu's
-// verbs drawn as Material icons rather than emoji glyphs.
+// At 390px the header is one row with the kebab always visible (touch has no hover)
+// and the menu's verbs drawn as Material icons, not emoji glyphs.
 describe('DagNode compact header', () => {
   const running = { status: 'running' as const, startedAt: 0 }
 
@@ -265,8 +259,7 @@ describe('DagNode answer button', () => {
   })
 })
 
-// #1314 review: DoneWithRetryAndSteered mounted these controls but nothing
-// pinned the floor classes or banned the retry-arrow glyphs they replaced.
+// Pins the retry controls' floor classes and bans the retry-arrow glyphs they replaced.
 describe('DagNode retry controls (done + retry + steered)', () => {
   const doneWithSteer = {
     status: 'done' as const, startedAt: 0, finishedAt: 62_000, totalTokens: 3_421,
@@ -289,9 +282,8 @@ describe('DagNode retry controls (done + retry + steered)', () => {
   })
 })
 
-// #1480: a worker/judge admission-slot swap re-queues an already-dispatched
-// node (status 'queued' again, mid-run) - it must still read as live, not
-// as "never started", since a fresh node_start never re-fires for it.
+// An admission-slot swap re-queues a dispatched node mid-run; it must still read as live,
+// since node_start never re-fires for it.
 describe('DagNode stays live through a mid-run admission re-queue (#1480)', () => {
   const openRun = [{ runId: 'r1', agent: 'web-researcher', stage: 'worker' as const, done: false,
     activity: [{ kind: 'thinking' as const, text: 'Still working.' }] }]

@@ -10,15 +10,12 @@ export interface MemoryTabProps {
   // Storybook/test seam: pre-seeds state and skips the live fetch, so a story
   // can show empty/populated/error deterministically with no backend.
   initialState?: { memories: Memory[]; total: number; error?: string }
-  // Same seam for the stats header (#1267) - independent of initialState so
-  // a story can show the list and the header loading/empty/populated in any
-  // combination.
+  // Same seam for the stats header, independent of initialState so a story can mix list and header states.
   initialStats?: { weeks: MemoryWeekStats[]; scopes: MemoryScopeStats[]; error?: string }
 }
 
-// applyOptimisticVote mirrors the backend's SetHumanVote delta (up:+1/undo,
-// down:+1/undo, none:remove) so the UI moves instantly; the server response
-// that follows overwrites this with the authoritative numbers.
+// Mirrors the backend's SetHumanVote delta so the UI moves instantly; the server response then
+// overwrites it with the authoritative numbers.
 function applyOptimisticVote(m: Memory, vote: VoteDirection): Memory {
   const upvotes = m.upvotes ?? 0
   const downvotes = m.downvotes ?? 0
@@ -37,12 +34,7 @@ function applyOptimisticVote(m: Memory, vote: VoteDirection): Memory {
   }
 }
 
-// The Memory tab (#727): browse what quack believes (a list, never falling
-// back to search on error - a browse view that quietly shows a different
-// result set is worse than an error state), search "what would a run recall for this", and forget one entry at a time.
-// Stats fetch (#1267) is independent of the memory list fetch above - it
-// doesn't page or filter, so it has its own loading/error state and only
-// runs once per mount.
+// Stats don't page or filter, so they get their own loading/error state and fetch once per mount.
 function useMemoryStats(initialStats?: MemoryTabProps['initialStats']) {
   const [weeks, setWeeks] = useState<MemoryWeekStats[]>(initialStats?.weeks ?? [])
   const [scopes, setScopes] = useState<MemoryScopeStats[]>(initialStats?.scopes ?? [])
@@ -130,47 +122,40 @@ function MemoryTabFooter({ footerRef, rangeStart, rangeEnd, total, canGoPrev, ca
 export function MemoryTab({ initialState, initialStats }: MemoryTabProps = {}) {
   const [bucket, setBucket] = useState('')
   const [q, setQ] = useState('')
-  // Debounced 250ms behind `q` (the input's live value, used only for display)
-  // so a fast typist doesn't fire one search request per keystroke (#1285).
+  // Debounced 250ms behind `q` (the live input value) so typing doesn't fire a search per keystroke.
   const [debouncedQ, setDebouncedQ] = useState('')
   const requestSeq = useRef(0)
   const [sort, setSort] = useState<MemorySort>('newest')
   const [tier, setTier] = useState<MemoryTierFilter>('')
-  // Local to the tab (no persisted preference, per design doc §8 step 6) - a
-  // default listing shows only what quack currently trusts.
+  // Deliberately not persisted: a default listing shows only what quack currently trusts.
   const [includeInvalidated, setIncludeInvalidated] = useState(false)
-  // page_token is opaque (never parsed/constructed) - pageTokens[i] is the
-  // token that fetched page i (pageTokens[0] is undefined: first page). Going
-  // back replays a token already received, going forward stores the next one.
+  // page_token is opaque: pageTokens[i] fetched page i (undefined for the first), so going back replays
+  // a received token and going forward stores the next one.
   const [pageIndex, setPageIndex] = useState(0)
   const [pageTokens, setPageTokens] = useState<(string | undefined)[]>([undefined])
   const [nextPageToken, setNextPageToken] = useState<string | undefined>(undefined)
   const [memories, setMemories] = useState<Memory[]>(initialState?.memories ?? [])
-  // Mirrors `memories` for handleVote's rollback (finding 1, PR #1300 review) -
-  // a ref read there stays outside the setMemories updater, which React may
-  // invoke more than once and must stay pure.
+  // Mirrors `memories` for handleVote's rollback, so the read stays outside the setMemories updater,
+  // which React may invoke more than once and must stay pure.
   const memoriesRef = useRef(memories)
   useEffect(() => { memoriesRef.current = memories })
   const [total, setTotal] = useState(initialState?.total ?? 0)
   const [loading, setLoading] = useState(initialState === undefined)
   const [error, setError] = useState<string | null>(initialState?.error ?? null)
-  // Every bucket value seen across any load, accumulated (never shrunk) - the
-  // dropdown's option list (item 11). No "list distinct buckets" endpoint
-  // exists to call instead (Forbidden: don't add one), so this is best-effort against whatever pages this session has fetched.
+  // Every bucket seen across loads, never shrunk. No distinct-buckets endpoint exists, so the dropdown is
+  // best-effort over the pages this session has fetched.
   const [knownBuckets, setKnownBuckets] = useState<Set<string>>(
     () => new Set((initialState?.memories ?? []).map(m => m.bucket)),
   )
-  // The pagination footer is a normal flex sibling below the scroll area, not
-  // an overlay - but on short viewports (#759 item 3) the last row can land
-  // flush against it, reading as clipped. The scroll area is padded by the footer's own measured height (never a guessed pixel value, so it survives a font-size change) to give the last row room to clear it.
+  // On short viewports the last row lands flush against the footer and reads as clipped; pad the scroll
+  // area by the footer's measured height (not a guessed px value) so it survives font-size changes.
   const footerRef = useRef<HTMLDivElement>(null)
   const [footerHeight, setFooterHeight] = useState(0)
 
   const { weeks: statsWeeks, scopes: statsScopes, loading: statsLoading, error: statsError } = useMemoryStats(initialStats)
 
-  // Debounce: reset paging and adopt the typed query only after 250ms of no
-  // further keystrokes (prototype: 9 requests -> 2 for an 8-char query).
-  // Guarded on q !== debouncedQ so mount (both '') never schedules a no-op resetPaging - that would still create a new pageTokens array and fire a redundant initial fetch.
+  // Guarded on q !== debouncedQ so mount never schedules a no-op resetPaging, which would still create a
+  // new pageTokens array and fire a redundant initial fetch.
   useEffect(() => {
     if (q === debouncedQ) return
     const t = setTimeout(() => {
@@ -194,8 +179,7 @@ export function MemoryTab({ initialState, initialStats }: MemoryTabProps = {}) {
         tier: tier || undefined,
         sort,
       })
-      // A slower earlier request can resolve after a faster later one; only
-      // the most recently issued request may write to state (#1285 race).
+      // A slower earlier request can resolve after a faster later one; only the latest may write state.
       if (seq !== requestSeq.current) return
       setMemories(result.memories)
       setTotal(result.total)
@@ -207,6 +191,7 @@ export function MemoryTab({ initialState, initialStats }: MemoryTabProps = {}) {
       })
     } catch (e) {
       if (seq !== requestSeq.current) return
+      // Never fall back to search: a browse view quietly showing a different result set is worse than an error.
       setError(e instanceof Error ? e.message : 'Failed to load memories')
     } finally {
       if (seq === requestSeq.current) setLoading(false)
@@ -218,21 +203,18 @@ export function MemoryTab({ initialState, initialStats }: MemoryTabProps = {}) {
     void load()
   }, [load, initialState])
 
-  // Stable identity (empty deps, via functional setState) so memo(MemoryEntry)
-  // (#1286) can actually skip the other 19 rows when one row is voted/forgotten.
+  // Stable identity (empty deps, functional setState) so memo(MemoryEntry) can skip the other rows.
   const handleForget = useCallback(async (id: string) => {
     await api.forgetMemory(id)
     setMemories(prev => prev.filter(m => m.id !== id))
     setTotal(t => Math.max(0, t - 1))
   }, [])
 
-  // handleVote is optimistic-first (frontend-design convention): the store
-  // updates immediately so the arrow highlight never lags a click, and rolls
-  // back only the voted ROW on failure (#1265 review finding 8) - a page-wide snapshot would also discard any other unrelated change (e.g. another vote's response landing) that happened while this request was in flight.
+  // Optimistic-first; on failure roll back only the voted row, since a page-wide snapshot would also
+  // discard unrelated changes (e.g. another vote's response) that landed while this request was in flight.
   const handleVote = useCallback(async (id: string, vote: VoteDirection) => {
-    // Read the pre-vote row from the ref, not from inside the setMemories
-    // updater - an updater must be pure, and a synchronous throw from
-    // voteMemory (below) would otherwise reach the catch with prevRow unset, skipping the rollback.
+    // Read from the ref, not inside the updater: a synchronous throw from voteMemory would otherwise reach
+    // the catch with prevRow unset and skip the rollback.
     const prevRow = memoriesRef.current.find(m => m.id === id)
     setMemories(cur => cur.map(m => (m.id === id ? applyOptimisticVote(m, vote) : m)))
     try {
@@ -254,16 +236,13 @@ export function MemoryTab({ initialState, initialStats }: MemoryTabProps = {}) {
     resetPaging()
   }
 
-  // Server-side filter (#1265 review finding 10) - a page reload with the
-  // new tier, not a client-side re-slice of whatever page happened to be
-  // loaded, so the filter spans the whole corpus, not just the current page.
+  // Server-side filter (a page reload, not a client re-slice) so it spans the whole corpus.
   function handleTierChange(next: MemoryTierFilter) {
     setTier(next)
     resetPaging()
   }
 
-  // Server-side sort (#1266 owner follow-up), same reasoning as tier above -
-  // a page reload with the new sort, not a client-side re-slice.
+  // Server-side sort, for the same reason as the tier filter.
   function handleSortChange(next: MemorySort) {
     setSort(next)
     resetPaging()

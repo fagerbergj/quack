@@ -2,9 +2,8 @@ import { useState } from 'react'
 import { agentLabel } from './messageParts'
 import { Icon } from './Icon'
 
-// The single, attributed question-prompt UI shared by every place the app
-// needs a human answer mid-conversation: the orchestrator's get_user_choice
-// clarification (options + freeform) and a paused node's mid-node HITL question (freeform only). Both render identically at the conversation level, credited to whoever asked (agent); the answer is sent as the next chat message, which the backend resumes as the answer (get_user_choice's tool response, or the paused node's input).
+// Serves both get_user_choice clarifications and a paused node's HITL question. The answer goes out as
+// the next chat message, which the backend resumes as the tool response or the node's input.
 export function QuestionBubble({
   agent,
   question,

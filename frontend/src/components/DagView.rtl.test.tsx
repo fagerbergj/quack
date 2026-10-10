@@ -1,9 +1,5 @@
 // @vitest-environment jsdom
-// Incremental planning (#slice3): execute() re-sends dag_plan with the same
-// plan_id as the plan grows, and chatStore's onDagPlan merge (not reset)
-// keeps earlier steps' node states - this proves the DAG view itself renders
-// that growth correctly: node "a" stays visibly done while newly-added node
-// "b" appears alongside it.
+// chatStore merges a re-sent dag_plan, so a done node stays visibly done while a newly added one appears.
 import { describe, it, expect, afterEach } from 'vitest'
 import { cleanup, render as rtlRender, screen } from '@testing-library/react'
 import type { ReactElement } from 'react'

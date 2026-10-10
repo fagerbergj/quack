@@ -1,8 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useSyncExternalStore } from 'react'
 
-// Minimal History-API routing: the app has one view (Chat) and one URL param,
-// the chat id in /chat/:chatId, plus the sidebar's filter/search state as
-// query params. No router dependency needed.
+// Minimal History-API routing: the chat id in /chat/:chatId plus the sidebar's filter/search query params.
 
 function readChatId(): string | undefined {
   const m = window.location.pathname.match(/^\/chat\/([^/]+)/)
@@ -20,24 +18,23 @@ export function navigate(path: string, opts?: { replace?: boolean }) {
   window.dispatchEvent(new PopStateEvent('popstate'))
 }
 
-// Current chatId from the URL; re-renders on navigate() and browser back/forward.
-export function useChatId(): string | undefined {
-  const [chatId, setChatId] = useState(readChatId)
-  useEffect(() => {
-    const onPop = () => setChatId(readChatId())
-    window.addEventListener('popstate', onPop)
-    return () => window.removeEventListener('popstate', onPop)
-  }, [])
-  return chatId
+function subscribeLocation(onChange: () => void): () => void {
+  window.addEventListener('popstate', onChange)
+  return () => window.removeEventListener('popstate', onChange)
 }
 
-// The app's pages: a plain path match, same spirit as readChatId - no
-// route table, no dependency, just the paths this needs. 'ext' (#870) hosts
-// an extension's own UI inside the SPA shell at /ext/<name>, not a real <a href> that would navigate away from the app.
+// read must return a primitive: useSyncExternalStore compares snapshots by identity.
+function useLocation<T extends string | undefined>(read: () => T): T {
+  return useSyncExternalStore(subscribeLocation, read)
+}
+
+// Each hook re-renders on navigate() and browser back/forward.
+export const useChatId = () => useLocation(readChatId)
+
+// Plain path match, no route table. 'ext' hosts an extension's UI inside the SPA shell at /ext/<name>.
 export type Route = 'chat' | 'memory' | 'plugins' | 'ext'
 
-// Pure (no window access) so it's directly testable - see router.test.ts.
-// Anchored to the full segment (/memory or /memory/...), not a bare prefix:
+// Pure (no window access) so it's directly testable. Anchored to the full segment:
 // startsWith('/memory') would also match /memory-export.
 export function routeFor(pathname: string): Route {
   if (/^\/ext(\/|$)/.test(pathname)) return 'ext'
@@ -50,43 +47,15 @@ function readRoute(): Route {
   return routeFor(window.location.pathname)
 }
 
-// Current top-level route from the URL; re-renders on navigate() and browser back/forward.
-export function useRoute(): Route {
-  const [route, setRoute] = useState(readRoute)
-  useEffect(() => {
-    const onPop = () => setRoute(readRoute())
-    window.addEventListener('popstate', onPop)
-    return () => window.removeEventListener('popstate', onPop)
-  }, [])
-  return route
-}
+export const useRoute = () => useLocation(readRoute)
 
 function readExtName(): string | undefined {
   const m = window.location.pathname.match(/^\/ext\/([^/]+)/)
   return m ? decodeURIComponent(m[1]) : undefined
 }
 
-// Current extension name from a /ext/:name URL; re-renders on navigate() and
-// browser back/forward - the ExtensionHost page's counterpart to useChatId.
-export function useExtName(): string | undefined {
-  const [name, setName] = useState(readExtName)
-  useEffect(() => {
-    const onPop = () => setName(readExtName())
-    window.addEventListener('popstate', onPop)
-    return () => window.removeEventListener('popstate', onPop)
-  }, [])
-  return name
-}
+export const useExtName = () => useLocation(readExtName)
 
-// Current query string (e.g. "?q=foo&status=running"), the sidebar's filter
-// state; re-renders on navigate() and browser back/forward. Write with
+// The sidebar's filter state, e.g. "?q=foo&status=running". Write with
 // navigate(pathname + '?' + qs, { replace: true }).
-export function useSearch(): string {
-  const [search, setSearch] = useState(() => window.location.search)
-  useEffect(() => {
-    const onPop = () => setSearch(window.location.search)
-    window.addEventListener('popstate', onPop)
-    return () => window.removeEventListener('popstate', onPop)
-  }, [])
-  return search
-}
+export const useSearch = () => useLocation(() => window.location.search)

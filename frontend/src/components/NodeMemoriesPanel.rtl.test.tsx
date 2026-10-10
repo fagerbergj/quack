@@ -9,9 +9,7 @@ client.setConfig({ baseUrl: 'http://localhost' })
 
 afterEach(cleanup)
 
-// jsdom doesn't implement <dialog> (no showModal/close, no `open`
-// reflection) - stub both, same as ArtifactPanel.rtl.test.tsx, so
-// getByRole('dialog')/its contents aren't treated as hidden.
+// jsdom lacks <dialog> showModal/close; stub both and set `open` so the dialog's content isn't hidden.
 beforeEach(() => {
   HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) { this.setAttribute('open', '') }
   HTMLDialogElement.prototype.close = function (this: HTMLDialogElement) { this.removeAttribute('open') }

@@ -1,19 +1,17 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { act } from 'react'
-import { createRoot } from 'react-dom/client'
+import { act, cleanup, render } from '@testing-library/react'
 import Chat from './Chat'
 import { ChatStore } from '../state/chatStore'
 import { ChatStoreProvider } from '../state/ChatStoreProvider'
 import { client } from '../generated/client.gen'
 import { api, type ChatSummary } from '../api'
 
+afterEach(cleanup)
+
 const NOW = '2026-01-01T00:00:00Z'
 
-// Audit finding 8: the empty /chat route used to disable the composer and
-// show a "Select or start a chat" label with a redundant New Chat button.
-// api.createChat/listChats are mocked (not fetch) since submitMessage calls
-// api directly, same seam as Chat.turnCap.rtl.test.tsx's fetch stub.
+// api is mocked rather than fetch because submitMessage calls api directly.
 vi.mock('../api', async importOriginal => {
   const actual = await importOriginal<typeof import('../api')>()
   return {
@@ -42,19 +40,9 @@ function mockMatchMedia() {
   })))
 }
 
-// mountEmptyChat renders Chat at the bare /chat route with the given store
-// and returns the composer's textarea plus a helper to type text and press
-// Enter (two separate act() flushes, like userEvent, so React's state update
-// from the `input` event lands before the `keydown` handler reads it).
-async function mountEmptyChat(host: HTMLDivElement, store: ChatStore) {
-  const root = createRoot(host)
-  // @ts-expect-error react act environment flag
-  globalThis.IS_REACT_ACT_ENVIRONMENT = true
-  await act(async () => {
-    root.render(
-      <ChatStoreProvider store={store}><Chat navOpen={false} onToggleNav={() => {}} /></ChatStoreProvider>,
-    )
-  })
+// Two separate act() flushes, like userEvent, so the `input` state update lands before `keydown` reads it.
+async function mountEmptyChat(store: ChatStore) {
+  const host = render(<ChatStoreProvider store={store}><Chat navOpen={false} onToggleNav={() => {}} /></ChatStoreProvider>).container
   await act(async () => { await new Promise(r => setTimeout(r, 10)) }) // let loadChats() resolve
   const textarea = host.querySelector('textarea') as HTMLTextAreaElement
   const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
@@ -68,18 +56,11 @@ async function mountEmptyChat(host: HTMLDivElement, store: ChatStore) {
       await new Promise(r => setTimeout(r, 0))
     })
   }
-  return { root, textarea, sendMessage }
+  return { host, textarea, sendMessage }
 }
 
 describe('Chat empty /chat route (audit finding 8)', () => {
-  let root: ReturnType<typeof createRoot> | undefined
-  let host: HTMLDivElement | undefined
-
   afterEach(() => {
-    act(() => root?.unmount())
-    host?.remove()
-    root = undefined
-    host = undefined
     vi.unstubAllGlobals()
     vi.clearAllMocks()
   })
@@ -92,10 +73,8 @@ describe('Chat empty /chat route (audit finding 8)', () => {
     const store = new ChatStore()
     const submitSpy = vi.spyOn(store, 'submit').mockResolvedValue(undefined)
 
-    host = document.createElement('div')
-    document.body.appendChild(host)
-    const mounted = await mountEmptyChat(host, store)
-    root = mounted.root
+    const mounted = await mountEmptyChat(store)
+    const host = mounted.host
 
     expect(host.textContent).not.toContain('Select or start a chat')
     expect(mounted.textarea.disabled).toBe(false)
@@ -108,9 +87,6 @@ describe('Chat empty /chat route (audit finding 8)', () => {
     expect(submitSpy).toHaveBeenCalledWith('new-chat', 'hello there', undefined, expect.any(Function))
   })
 
-  // Review finding: createChat rejecting used to erase the typed draft,
-  // show nothing, and leave an unhandled rejection - it must restore the
-  // draft and surface a visible error instead.
   it('a failed create restores the draft and shows an error', async () => {
     mockMatchMedia()
     client.setConfig({ baseUrl: 'http://localhost:3000' })
@@ -118,10 +94,8 @@ describe('Chat empty /chat route (audit finding 8)', () => {
     vi.mocked(api.createChat).mockRejectedValueOnce(new Error('network down'))
 
     const store = new ChatStore()
-    host = document.createElement('div')
-    document.body.appendChild(host)
-    const mounted = await mountEmptyChat(host, store)
-    root = mounted.root
+    const mounted = await mountEmptyChat(store)
+    const host = mounted.host
 
     await mounted.sendMessage('hello there')
 
@@ -130,10 +104,7 @@ describe('Chat empty /chat route (audit finding 8)', () => {
     expect(host.textContent).toContain('network down') // surfaced, not silent
   })
 
-  // Review finding: two sends before createChat resolves both saw
-  // activeChatId null and would each create their own chat. A single
-  // in-flight create promise must be shared, so exactly one chat gets
-  // created and both messages land in it.
+  // Both sends see activeChatId null before createChat resolves; the shared promise must yield one chat.
   it('two rapid sends before createChat resolves create exactly one chat', async () => {
     mockMatchMedia()
     client.setConfig({ baseUrl: 'http://localhost:3000' })
@@ -143,10 +114,7 @@ describe('Chat empty /chat route (audit finding 8)', () => {
 
     const store = new ChatStore()
     const submitSpy = vi.spyOn(store, 'submit').mockResolvedValue(undefined)
-    host = document.createElement('div')
-    document.body.appendChild(host)
-    const mounted = await mountEmptyChat(host, store)
-    root = mounted.root
+    const mounted = await mountEmptyChat(store)
 
     await mounted.sendMessage('first message')
     expect(api.createChat).toHaveBeenCalledTimes(1) // first send kicked off the (still-pending) create

@@ -17,13 +17,7 @@ import {
   type ArtifactRow,
 } from './envelope'
 
-// Re-export the parser so import sites that only need the data (tests) don't
-// have to pull in JSX.
-export * from './envelope'
-
-// Test-only render probe (PR #1300 review finding 2): counts every actual
-// invocation of TriggerMessage's function body, so a perf test can pin
-// memo(TriggerMessage) directly instead of inferring it from render timing (unreliable under jsdom - AssistantText's own useMemo chain already prevents most of the markdown re-parse cost the memo used to be gated on).
+// Test-only probe: lets a test pin memo(TriggerMessage) directly, since render timing is unreliable under jsdom.
 export const triggerMessageRenderProbe = { count: 0 }
 
 // A button press on an A2UI surface: the turn's text is machine JSON, so show what was
@@ -43,9 +37,8 @@ function A2uiActionPill({ name, surfaceId, context }: { name: string; surfaceId:
   )
 }
 
-// TriggerMessage renders the user-turn bubble for a GitHub-triggered chat:
-// the XML-ish envelope (design: .quack/trigger-prompts-v2.md) as collapsible
-// structured sections, permissions/deliverable/ask always visible, everything else collapsed. `content` that doesn't parse as an envelope (a plain typed message, or malformed input) renders exactly as it always has - the plain blue bubble, never a blank message (#667). Content is immutable for the life of a run but Chat.tsx re-renders this on every store notification (one per animation frame); memo + a stable `attachments` element keep re-renders from re-parsing the envelope markdown.
+// Non-envelope content falls back to the plain bubble, never a blank message. Chat.tsx re-renders this every
+// frame, so memo plus a stable `attachments` element keep it from re-parsing the envelope markdown.
 export const TriggerMessage = memo(function TriggerMessage({
   content,
   attachments,
@@ -54,19 +47,14 @@ export const TriggerMessage = memo(function TriggerMessage({
 }: {
   content: string
   attachments?: ReactNode
-  // This chat's earlier turns' raw envelope text, oldest first - lets the
-  // <comments> section fold this turn's delta onto the running history
-  // instead of rendering just what this one trigger saw.
+  // Earlier turns' raw envelopes, oldest first, so <comments> folds this delta onto the running history.
   priorContents?: string[]
-  // Present only for a real chat - gates whether an <artifacts> row can open
-  // the artifact panel (needs a chat to look the artifact's owning node up in).
+  // Opening an <artifacts> row needs a chat to look up the artifact's owning node.
   chatId?: string
 }) {
   triggerMessageRenderProbe.count++
   const blocks = useMemo(() => parseEnvelope(content), [content])
-  // The artifact panel opens onto a NODE (resolved from the tapped row's
-  // artifact id - see ArtifactsSection.openRow below), with that same
-  // artifact id passed through as a focus hint so the panel shows the TAPPED artifact as primary, not just whichever of the node's outputs selectPrimaryOutput would otherwise pick (#1250 review). null means closed.
+  // The panel opens on a node; artifactId is a focus hint so the tapped artifact shows as primary.
   const [openArtifact, setOpenArtifact] = useState<{ nodeId: string; artifactId: string } | null>(null)
   const action = useMemo(() => parseA2uiActionText(content), [content])
   if (action) return <A2uiActionPill name={action.name} surfaceId={action.surfaceId} context={action.context} />
@@ -134,8 +122,7 @@ function EnvelopeBlockView({
   }
 }
 
-// InfoLine is the always-visible, one-line permissions/deliverable row - the
-// two things a human scanning a run wants first, so they're never behind a click.
+// Permissions and deliverable are what a reader wants first, so they're never behind a click.
 function InfoLine({ label, text }: { label: string; text: string }) {
   return (
     <div className="text-xs">
@@ -145,9 +132,7 @@ function InfoLine({ label, text }: { label: string; text: string }) {
   )
 }
 
-// CollapsibleSection is the shared shell for every collapsed-by-default
-// block - native <details>/<summary>, matching the disclosure pattern
-// already used for tool calls/reasoning (AgentParts) and the DAG "Steps" toggle (TurnView), rather than a second collapse mechanism. Long content inside is separately height-locked with Expandable (below) so a big body can't wall off the page even once opened.
+// Native <details>, the same disclosure used across the chat UI; bodies are height-locked separately with Expandable.
 function CollapsibleSection({ summary, children }: { summary: ReactNode; children: ReactNode }) {
   return (
     <details className="rounded-lg border border-gray-200 dark:border-gray-700 not-prose">
@@ -159,9 +144,7 @@ function CollapsibleSection({ summary, children }: { summary: ReactNode; childre
   )
 }
 
-// RawFallback is the degrade-gracefully view for a block whose body didn't
-// parse the way this section expects (bad JSON, missing child tags, an
-// unknown tag) - the raw text, never dropped.
+// A body that didn't parse as expected shows as raw text, never dropped.
 function RawFallback({ text }: { text: string }) {
   if (!text) return <span className="text-[11px] text-gray-500 dark:text-gray-400 italic">(empty)</span>
   return (
@@ -176,9 +159,8 @@ function formatTimestamp(iso: string): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString()
 }
 
-// <issue>/<pull_request>: title as a heading, description as
-// markdown. Always visible (not collapsible) - it's the thing being worked
-// on - but a long description is height-locked (#746 item 8): a short one renders whole with no control, a long one collapses to its first lines with a Show more toggle, so it can't push everything else off screen.
+// Always visible since it's the thing being worked on, but a long description is height-locked so it
+// can't push everything else off screen.
 function AskSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'ask' }> }) {
   return (
     <div>
@@ -195,9 +177,7 @@ function AskSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'ask' }> 
   )
 }
 
-// StatusBadge marks a delta comment's quack_status (edited/deleted) - a
-// deleted comment's body reads identically to a live one otherwise, and
-// treating a retracted comment as current is the exact failure this prevents.
+// A deleted comment's body reads like a live one; this badge keeps it from being taken as current.
 function StatusBadge({ status }: { status: string }) {
   const deleted = status === 'deleted'
   return (
@@ -213,9 +193,6 @@ function StatusBadge({ status }: { status: string }) {
   )
 }
 
-// IncompleteHistoryNotice marks an accumulated comment list this client
-// can't vouch for as complete - no seed turn is visible (a rehydrated store,
-// or a chat opened after reaping), so what follows is only what's been captured since, not the issue's whole thread.
 function IncompleteHistoryNotice() {
   return (
     <div className="mb-2 rounded border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 px-2 py-1 text-[11px] text-amber-800 dark:text-amber-300">
@@ -224,9 +201,8 @@ function IncompleteHistoryNotice() {
   )
 }
 
-// CommentsSection - the collapsed header always reports THIS turn's own
-// count/delta (what the model actually saw, per envelope.go's commentsBlock);
-// the expanded body renders the running history folded from this turn plus every earlier turn's delta (new appends, edited replaces by id, deleted removes - accumulateComments), not just this trigger's slice (#730). Expandable caps the opened thread's height so a long backlog doesn't wall off the message (#667 test case).
+// The header reports this turn's own delta (what the model saw); the body shows the running history
+// folded across all turns.
 function CommentsSection({ block, priorContents }: { block: Extract<EnvelopeBlock, { kind: 'comments' }>; priorContents: string[] }) {
   const acc = useMemo(() => block.comments ? accumulateComments(priorContents, block) : undefined, [block, priorContents])
   return (
@@ -261,8 +237,6 @@ function CommentsSection({ block, priorContents }: { block: Extract<EnvelopeBloc
   )
 }
 
-// ChangedFilesSection - collapsed, header is "N files, +A/-D"; expands to the
-// per-file churn list.
 function ChangedFilesSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'changed_files' }> }) {
   return (
     <CollapsibleSection summary={changedFilesSummaryLabel(block)}>
@@ -285,15 +259,11 @@ function ChangedFilesSection({ block }: { block: Extract<EnvelopeBlock, { kind: 
   )
 }
 
-// failingCheck reports whether a check's terminal state should read as a
-// failure - the same rule checksBlock uses to build its own summary counts.
+// Same rule the backend's checksBlock uses for its summary counts.
 function failingCheck(c: { status: string; conclusion?: string }): boolean {
   return c.status === 'completed' && (c.conclusion === 'failure' || c.conclusion === 'timed_out')
 }
 
-// ChecksSection - collapsed, header is the backend's failing/pending/passing
-// summary; expands to one monospace line per check, failing ones in the
-// existing red danger token so they read at a glance.
 function ChecksSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'checks' }> }) {
   return (
     <CollapsibleSection summary={checksSummaryLabel(block)}>
@@ -320,9 +290,7 @@ function ChecksSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'check
   )
 }
 
-// topLevelFields pulls the event JSON's own top-level PRIMITIVE fields
-// (skipping nested objects/arrays, which stay in the full JSON body below) -
-// #746 item 9: a wide pane rendering one "key: value" per line wastes the width it has; a grid puts related fields side by side instead.
+// Primitive top-level fields only; nested values stay in the full JSON body below.
 function topLevelFields(pretty: string | null): [string, string][] {
   if (!pretty) return []
   try {
@@ -336,9 +304,7 @@ function topLevelFields(pretty: string | null): [string, string][] {
   }
 }
 
-// EventSection - collapsed, header is the event name; expands to the
-// top-level fields as a responsive grid (#746 item 9), then the full
-// pretty-printed JSON below for anything nested. The JSON is routed through AssistantText's own ```json fence so it gets the same rehype-highlight syntax colouring as any other code block, rather than a second highlighter.
+// The JSON goes through AssistantText's ```json fence to reuse its highlighter rather than add a second one.
 function EventSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'event' }> }) {
   const body = block.pretty ?? block.raw
   const fields = topLevelFields(block.pretty)
@@ -361,8 +327,6 @@ function EventSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'event'
   )
 }
 
-// ContextSection - collapsed, header is the file count; expands to filenames
-// with the endpoint each came from.
 function ContextSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'context' }> }) {
   const n = block.files.length
   return (
@@ -383,9 +347,7 @@ function ContextSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'cont
   )
 }
 
-// ARTIFACT_ICON_PATHS - one inline Material-Symbols-style path per id
-// `kind:` prefix, distinguishing at a glance without a shared Icon
-// component (chore/material-icons isn't merged yet - switch to it once it is).
+// One inline path per id `kind:` prefix.
 const ARTIFACT_ICON_PATHS: Record<string, string> = {
   text: 'M6 2a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6H6zm7 1.5L17.5 8H13V3.5zM8 13h8v1.5H8V13zm0 3h8v1.5H8V16zm0-6h4v1.5H8V10z',
   structured: 'M8 3H7a2 2 0 0 0-2 2v3a1 1 0 0 1-1 1H3v2h1a1 1 0 0 1 1 1v3a2 2 0 0 0 2 2h1v-2H7v-4a2 2 0 0 0-1-1.73A2 2 0 0 0 7 8V5h1V3zm8 0h1a2 2 0 0 1 2 2v3a1 1 0 0 0 1 1h1v2h-1a1 1 0 0 0-1 1v3a2 2 0 0 1-2 2h-1v-2h1v-4a2 2 0 0 1 1-1.73A2 2 0 0 1 17 8V5h-1V3z',
@@ -402,9 +364,7 @@ function ArtifactIcon({ kindPrefix }: { kindPrefix: string }) {
   )
 }
 
-// ArtifactStatusChip maps an artifact's new/updated/unchanged status onto
-// the same colour tokens ChangedFilesSection already uses for +/- churn -
-// green for new (matches +additions), amber for updated (matches StatusBadge's edited), neutral gray for unchanged (no existing "unchanged" token).
+// Reuses the churn colours: green new, amber updated (as StatusBadge's edited), gray otherwise.
 function ArtifactStatusChip({ status }: { status: string }) {
   const cls =
     status === 'new'
@@ -415,9 +375,6 @@ function ArtifactStatusChip({ status }: { status: string }) {
   return <span className={`px-1 rounded text-[11px] font-medium uppercase tracking-wide shrink-0 ${cls}`}>{status}</span>
 }
 
-// <artifacts>: one compact row per artifact (icon, name,
-// revision, status chip, summary), tapping a row opens that artifact in
-// the artifact panel (#1250) rather than the raw XML that used to fall through to UnknownSection.
 function ArtifactsSection({
   block,
   chatId,
@@ -427,9 +384,7 @@ function ArtifactsSection({
   chatId?: string
   onOpenArtifact: (nodeId: string, artifactId: string) => void
 }) {
-  // Resolving a row to a node is one API round trip shared by every row in
-  // this block - the artifact panel opens by node id, not artifact id
-  // (#1178 removed the id-based picker), so a tap looks up the tapped artifact's owning node on demand rather than eagerly fetching for a block that's usually never opened.
+  // The panel opens by node id, so a tap looks up the owning node on demand; the block is usually never opened.
   const [pending, setPending] = useState<string | null>(null)
   const openRow = (row: ArtifactRow) => {
     if (!chatId || pending) return
@@ -472,9 +427,7 @@ function ArtifactsSection({
   )
 }
 
-// UnknownSection - a block type this view doesn't recognise renders as
-// a labelled collapsed section with its raw content rather than being
-// dropped (#667's hardest requirement: a viewer silently missing part of the trigger is worse than an ugly one).
+// An unrecognised block shows raw rather than dropped: an ugly view beats silently missing part of a trigger.
 function UnknownSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'unknown' }> }) {
   return (
     <CollapsibleSection summary={<code className="font-mono">{`<${block.tag}>`}</code>}>

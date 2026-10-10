@@ -1,15 +1,9 @@
-export type Change = 'added' | 'modified' | 'removed' | 'unchanged'
-export type ChangeType = 'feature' | 'refactor' | 'behavior' | 'bugfix' | 'test' | 'config' | 'docs'
+import type { DiagramSpec } from './A2uiSurface'
 
-interface DiagramLayer { id: string; title: string; description: string }
-export interface DiagramNode { id: string; label: string; layer: string; change?: Change; type?: ChangeType; detail: string }
-export interface DiagramEdge { id: string; from: string; to: string; label?: string; change?: Change; detail: string }
-export interface DiagramSpec {
-  direction?: 'TB' | 'LR' | 'BT' | 'RL'
-  layers: DiagramLayer[]
-  nodes: DiagramNode[]
-  edges: DiagramEdge[]
-}
+export type { DiagramSpec }
+export type DiagramNode = DiagramSpec['nodes'][number]
+export type DiagramEdge = DiagramSpec['edges'][number]
+export type Change = NonNullable<DiagramNode['change']>
 
 // Light fills with dark text read in both themes; the mark is the non-colour cue.
 export const CHANGE_STYLE: Record<Change, { label: string; mark: string; fill: string; stroke: string; text: string }> = {
@@ -45,8 +39,8 @@ export function buildMermaid(spec: DiagramSpec): string {
     const label = e.label?.trim() ? `|${text(CHANGE_STYLE[e.change ?? 'unchanged'].mark, e.label)}|` : ''
     lines.push(`  ${nodeKey(from)} ${edgeKey(i)}@${arrow}${label} ${nodeKey(to)}`)
   })
-  // Invisible links between each layer's first node stack the layers in declared order; real edges alone leave them side by side.
-  // Appended after the real edges so their positional ids and linkStyle indexes stay put.
+  // Invisible links between each layer's first node stack layers in declared order; appended last so the
+  // real edges' positional ids and linkStyle indexes stay put.
   const anchors = spec.layers.flatMap(l => { const i = spec.nodes.findIndex(n => n.layer === l.id); return i < 0 ? [] : [nodeKey(i)] })
   anchors.slice(1).forEach((a, i) => lines.push(`  ${anchors[i]} ~~~ ${a}`))
   for (const [c, s] of Object.entries(CHANGE_STYLE)) {

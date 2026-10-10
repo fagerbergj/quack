@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach } from 'vitest'
-import { act, createElement } from 'react'
-import { createRoot } from 'react-dom/client'
+import { createElement } from 'react'
+import { cleanup, render } from '@testing-library/react'
 import { MemoryEntry, memoryTier, memoryTierLabel, memoryTierBadgeClass } from './MemoryEntry'
 import type { Memory } from '../api'
+
+afterEach(cleanup)
 
 const BASE: Memory = {
   id: 'e5f4a1',
@@ -25,9 +27,7 @@ describe('memoryTier (design doc §3/§8 step 6 - lifecycle tier)', () => {
     expect(memoryTier({ status: 'invalidated' })).toBe('invalidated')
   })
 
-  // The generated type only names three statuses, but the backend's actual
-  // JSON can drift from it at runtime (a future status added server-side
-  // before the frontend regenerates) - cast past the type to simulate that.
+  // Backend JSON can carry a status the generated type doesn't name yet; cast past the type to simulate it.
   it('reads a status this build does not recognize as unknown, never as unverified', () => {
     expect(memoryTier({ status: 'pending_review' as Memory['status'] })).toBe('unknown')
   })
@@ -68,59 +68,40 @@ describe('memoryTierBadgeClass', () => {
 })
 
 describe('MemoryEntry tier rendering', () => {
-  let root: ReturnType<typeof createRoot> | undefined
-  let host: HTMLDivElement | undefined
-
-  afterEach(() => {
-    act(() => root?.unmount())
-    host?.remove()
-    root = undefined
-    host = undefined
-  })
-
-  function render(memory: Memory) {
-    // @ts-expect-error react act environment flag
-    globalThis.IS_REACT_ACT_ENVIRONMENT = true
-    host = document.createElement('div')
-    document.body.appendChild(host)
-    root = createRoot(host)
-    act(() => {
-      root!.render(createElement(MemoryEntry, { memory, onForget: async () => {}, onVote: async () => {} }))
-    })
-    return host
+  function mount(memory: Memory) {
+    return render(createElement(MemoryEntry, { memory, onForget: async () => {}, onVote: async () => {} })).container
   }
 
   it('shows the unverified badge for a pre-lifecycle memory with no status', () => {
-    const el = render(BASE)
+    const el = mount(BASE)
     expect(el.textContent).toContain('unverified')
   })
 
   it('shows the reinforcement count for a reinforced memory', () => {
-    const el = render({ ...BASE, status: 'reinforced', reinforcement_count: 5 })
+    const el = mount({ ...BASE, status: 'reinforced', reinforcement_count: 5 })
     expect(el.textContent).toContain('reinforced ×5')
   })
 
   it('shows the invalidation reason inline for an invalidated memory', () => {
-    const el = render({ ...BASE, status: 'invalidated', invalidation_reason: 'pr closed unmerged' })
+    const el = mount({ ...BASE, status: 'invalidated', invalidation_reason: 'pr closed unmerged' })
     expect(el.textContent).toContain('invalidated')
     expect(el.textContent).toContain('pr closed unmerged')
   })
 
   it('renders no reason line for an invalidated memory carrying no reason', () => {
-    const el = render({ ...BASE, status: 'invalidated' })
+    const el = mount({ ...BASE, status: 'invalidated' })
     expect(el.textContent).toContain('invalidated')
   })
 
   it('renders an unrecognized status as its raw value on the lifecycle badge', () => {
-    // Row text can legitimately still say "unverified" elsewhere - the
-    // separate vote-based tier badge (epic #1255 P4, memory.tier) defaults to
-    // unverified independent of this lifecycle status; memoryTierLabel's unit tests above cover the "never masquerades as unverified" claim for THIS badge specifically.
-    const el = render({ ...BASE, status: 'pending_review' as Memory['status'] })
+    // The row may still say "unverified" via the separate vote-based tier; memoryTierLabel's unit tests
+    // above cover this badge specifically.
+    const el = mount({ ...BASE, status: 'pending_review' as Memory['status'] })
     expect(el.textContent).toContain('pending_review')
   })
 
   it('still reads a missing status as unverified (unchanged by the unknown-status handling)', () => {
-    const el = render({ ...BASE, status: undefined })
+    const el = mount({ ...BASE, status: undefined })
     expect(el.textContent).toContain('unverified')
   })
 })

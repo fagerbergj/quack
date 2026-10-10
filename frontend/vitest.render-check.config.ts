@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 import { playwright } from '@vitest/browser-playwright'
 
 // Separate config from the default `npm test` (node-env, logic-only per
@@ -7,7 +8,7 @@ import { playwright } from '@vitest/browser-playwright'
 // catch what tsc/eslint/vitest/build cannot: stray JSX text nodes, dialog
 // stacking-context bugs, and horizontal overflow (#1192).
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   test: {
     include: ['src/render-check.browser.test.tsx'],
     browser: {

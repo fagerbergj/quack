@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ChatSummary } from '../api'
 import { isGithubChat, parseGithubRef, type GithubRef } from '../lib/github'
 import { computeFacets, filterChats, parseFilterState, serializeFilterState, type SelectedFacets } from '../lib/chatFilters'
-import { paletteClasses } from '../lib/colorHash'
+import { paletteClasses, TONE } from '../lib/colorHash'
 import { FilterPanel } from './FilterPanel'
 import { StatusDot } from './StatusDot'
 import { navigate, useSearch } from '../router'
@@ -10,41 +10,19 @@ import { useMediaQuery } from '../hooks/useMediaQuery'
 import { useDrawer } from '../hooks/useDrawer'
 import { Icon, type IconName } from './Icon'
 
+const GITHUB_STATE_TONE = new Map<string, string>([['open', TONE.green], ['closed', TONE.red], ['merged', TONE.purple], ['draft', TONE.yellow]])
+
 export function githubStateBadgeClass(state: string): string {
-  switch (state) {
-    case 'open': return 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400'
-    case 'closed': return 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'
-    case 'merged': return 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400'
-    case 'draft': return 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-500'
-    default: return ''
-  }
+  return GITHUB_STATE_TONE.get(state) ?? ''
 }
 
-// Mirrors GitHub's own state colors for the generic origin badge (#832), but
-// only for these three exact values - an extension's own badge vocabulary
-// (e.g. "draft", a doc's revision label) is unknown to us and must not be guessed at; it keeps the neutral chip below.
+// GitHub's colours for an origin badge, but never for 'draft': an extension's own badge
+// vocabulary (a doc's "draft" revision label) must not be guessed at, so it stays neutral.
 export function originBadgeClass(badge: string): string {
-  switch (badge) {
-    case 'open': return 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400'
-    case 'merged': return 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400'
-    case 'closed': return 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'
-    default: return 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300'
-  }
+  return (badge !== 'draft' && GITHUB_STATE_TONE.get(badge)) || TONE.gray
 }
 
-export function githubStateLabel(state: string): string {
-  const map: Record<string, string> = {
-    open: 'open',
-    closed: 'closed',
-    merged: 'merged',
-    draft: 'draft',
-  }
-  return map[state] ?? ''
-}
-
-// githubStateIcon is the Material icon paired with githubStateLabel's text -
-// the badge's color (githubStateBadgeClass) plus this icon convey the state,
-// not color alone (WCAG 1.4.1).
+// Icon plus colour convey the state, never colour alone (WCAG 1.4.1).
 export function githubStateIcon(state: string): IconName | undefined {
   const map: Record<string, IconName> = {
     open: 'dot',
@@ -68,8 +46,7 @@ function relativeDate(iso: string): string {
 }
 
 export interface ChatListProps {
-  // #809: server-scoped to active chats only (status=active) - never carries
-  // archived rows, so this list and archivedChats page independently.
+  // Server-scoped to status=active, so this list and archivedChats page independently.
   chats: ChatSummary[]
   activeChatId: string | null
   open: boolean
@@ -77,29 +54,20 @@ export interface ChatListProps {
   onNewChat: () => void
   onDelete: (id: string, e: React.MouseEvent) => void
   onCloseMobile: () => void
-  // #736: the chat list is server-paginated - a `next_page_token` means more
-  // chats exist beyond what's loaded.
   hasMoreChats?: boolean
   onLoadMoreChats?: () => void
   loadingMoreChats?: boolean
   onArchive?: (chatId: string) => void
   onUnarchive?: (chatId: string) => void
-  // #809: the Archived section's own scoped (status=archived) list, fetched
-  // only once the section is first expanded - absent/undefined means not yet loaded.
+  // Fetched on first expand of the Archived section; undefined means not yet loaded.
   archivedChats?: ChatSummary[]
   hasMoreArchivedChats?: boolean
   onLoadMoreArchivedChats?: () => void
   loadingMoreArchivedChats?: boolean
-  // Fired the moment the Archived section expands (not on collapse) - tells
-  // the parent to fetch archivedChats if it hasn't already.
+  // Fires on expand only, never on collapse.
   onExpandArchived?: () => void
 }
 
-// A single chat row. Every row has exactly one always-visible kebab (#1319):
-// an active row's menu holds Archive (reversible); an archived row's holds
-// Restore and permanent Delete. Reusable by both sections.
-// ChatBadges: the row's badge line - GitHub repo/Issue/PR/state badges and
-// the generic origin chip (extension-dispatched chats, e.g. reMarkable).
 function ChatBadges({ s, githubRef }: { s: ChatSummary; githubRef: GithubRef | undefined }) {
   const ref = githubRef
   return (
@@ -123,7 +91,7 @@ function ChatBadges({ s, githubRef }: { s: ChatSummary; githubRef: GithubRef | u
           rel="noopener noreferrer"
           onClick={e => e.stopPropagation()}
           title={ref.kind === 'pr' ? `Pull request #${ref.number}` : `Issue #${ref.number}`}
-          className="flex-shrink-0 text-[11px] font-semibold tracking-wide px-1 py-1 rounded bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 hover:underline"
+          className={`flex-shrink-0 text-[11px] font-semibold tracking-wide px-1 py-1 rounded ${TONE.gray} hover:text-blue-600 dark:hover:text-blue-400 hover:underline`}
         >
           {ref.kind === 'pr' ? 'PR' : 'Issue'} #{ref.number}
         </a>
@@ -134,12 +102,10 @@ function ChatBadges({ s, githubRef }: { s: ChatSummary; githubRef: GithubRef | u
           title={s.github_state}
         >
           {githubStateIcon(s.github_state) && <Icon name={githubStateIcon(s.github_state)!} className="w-2.5 h-2.5" />}
-          {githubStateLabel(s.github_state)}
+          {GITHUB_STATE_TONE.has(s.github_state) && s.github_state}
         </span>
       )}
-      {/* Generic origin chip (extension-dispatched chats, e.g. reMarkable) -
-          label chip, optional badge, subject link. GitHub stays on its own
-          dedicated fields above until it migrates to stamping origin itself. */}
+      {/* Extension-dispatched chats. GitHub keeps its dedicated fields above until it stamps origin itself. */}
       {s.origin && (
         <>
           {s.origin.href ? (
@@ -175,9 +141,7 @@ function ChatBadges({ s, githubRef }: { s: ChatSummary; githubRef: GithubRef | u
   )
 }
 
-// ChatRowMenu: the row's kebab - one action point, absolutely positioned in
-// the top-right corner, NOT in flow, so it never grows the row's height.
-// Always visible: touch has no hover to reveal it.
+// Absolutely positioned, not in flow, so it never grows the row's height. Always visible: touch has no hover.
 function ChatRowMenu({ s, menuRef, btnRef, menuOpen, onToggle, archived, onArchive, onUnarchive, onDelete }: {
   s: ChatSummary
   menuRef: React.RefObject<HTMLDivElement | null>
@@ -190,10 +154,6 @@ function ChatRowMenu({ s, menuRef, btnRef, menuOpen, onToggle, archived, onArchi
   onDelete: (e: React.MouseEvent) => void
 }) {
   return (
-    // Every row's one action point (#1319 - archive/delete both live here,
-    // two clicks instead of a bare one-tap control). Absolutely positioned
-    // in the top-right corner, NOT in flow, so it never grows the row's
-    // height. Always visible: touch has no hover to reveal it.
     <div ref={menuRef} className="absolute right-0 top-0">
       <button
         ref={btnRef}
@@ -250,9 +210,7 @@ function ChatRowMenu({ s, menuRef, btnRef, menuOpen, onToggle, archived, onArchi
   )
 }
 
-// A single chat row. Every row has exactly one always-visible kebab (#1319):
-// an active row's menu holds Archive (reversible); an archived row's holds
-// Restore and permanent Delete. Reusable by both sections.
+// Active rows' menu holds Archive (reversible); archived rows' holds Restore and permanent Delete.
 function ChatRow({
   s,
   activeChatId,
@@ -274,13 +232,9 @@ function ChatRow({
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const btnRef = useRef<HTMLButtonElement>(null)
-  // The menu unmounts on close, so without an explicit return a keyboard or
-  // screen-reader user is dropped on <body> (APG menu button pattern, same as
-  // DagNode's NodeMenu).
+  // The menu unmounts on close; without an explicit return, keyboard users land on <body> (APG menu button).
   const close = () => { setMenuOpen(false); btnRef.current?.focus() }
 
-  // Outside click/tap closes; Escape closes and returns focus to the kebab;
-  // arrow keys move between items.
   useEffect(() => {
     if (!menuOpen) return
     function onDocMouseDown(e: MouseEvent) {
@@ -304,8 +258,6 @@ function ChatRow({
     }
   }, [menuOpen])
 
-  // Move focus onto the first item when the menu opens (keyboard Enter/Space
-  // on the trigger, or a mouse click - refocusing on click is harmless).
   useEffect(() => {
     if (!menuOpen) return
     menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus()
@@ -331,9 +283,7 @@ function ChatRow({
           {s.title || 'New chat'}
         </span>
       </span>
-      {/* Badge row below the title: always rendered so every row reserves
-          the same vertical space and stays aligned. Repo/Issue/PR badges
-          link out to GitHub - filtering by repo/type lives in the FilterPanel. */}
+      {/* Always rendered so every row reserves the same height and stays aligned. */}
       <div className="flex items-center gap-1 h-4 mt-0.5 pr-6">
         <ChatBadges s={s} githubRef={ref} />
       </div>
@@ -353,28 +303,21 @@ function ChatRow({
   )
 }
 
-// mergeFilterState folds a partial update (search box / facet panel / clear)
-// into the current filter state - untouched fields keep their values.
 function mergeFilterState(q: string, selected: SelectedFacets, next: { q?: string; selected?: SelectedFacets }) {
   return { q: next.q ?? q, selected: next.selected ?? selected }
 }
 
-// withFacetToggled toggles one facet value: present drops it, absent adds it.
 function withFacetToggled(selected: SelectedFacets, facetKey: string, value: string) {
   const current = selected[facetKey] ?? []
   return { ...selected, [facetKey]: current.includes(value) ? current.filter(v => v !== value) : [...current, value] }
 }
 
-// NoChats: the list's empty state - "No conversations yet" when the chat
-// list is empty, "No matches" when search/filters hide every chat.
 function NoChats({ chats, listEmpty }: { chats: ChatSummary[]; listEmpty: boolean }) {
   if (!listEmpty) return null
   return <div className="text-xs text-gray-500 dark:text-gray-400 text-center py-6 px-3">{chats.length === 0 ? 'No conversations yet' : 'No matches'}</div>
 }
 
-// Archived section: collapsed by default. Always rendered (not gated
-// on archived.length) so it's discoverable before its own list has
-// ever been fetched - #809 loads it lazily on first expand.
+// Always rendered, not gated on archived.length, so it is discoverable before its lazy first fetch.
 function ArchivedSection({ archived, loaded, expanded, onToggle, activeChatId, onSelect, onDelete, onUnarchive, hasMore, loading, onLoadMore }: {
   archived: ChatSummary[]
   loaded: boolean
@@ -440,15 +383,12 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
   const facets = computeFacets(chats)
   const filtered = filterChats(chats, filterState)
 
-  // #722 group the sidebar by run state: running first (no header), active
-  // chats below, archived in a collapsed section at bottom. Empty groups
-  // render nothing.
   const [archivedExpanded, setArchivedExpanded] = useState(false)
 
   function toggleArchived() {
     setArchivedExpanded(prev => {
       const next = !prev
-      if (next) onExpandArchived?.() // #809: fetch archived on expand only, never on collapse
+      if (next) onExpandArchived?.()
       return next
     })
   }
@@ -461,13 +401,11 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
     return filtered.filter(c => c.status !== 'running')
   }, [filtered])
 
-  // #809: archivedChats is server-scoped (status=archived) already - no
-  // client-side archived filter or re-sort needed, just the shared search/facet filter.
+  // archivedChats is already server-scoped to status=archived; only search/facets apply here.
   const archived = filterChats(archivedChats ?? [], filterState)
 
-  // Off-canvas below `medium` (600px, `fixed medium:static` below - the one
-  // compact/expanded line the whole app switches on), persistent alongside
-  // the chat pane above it (#1131). The drawer a11y wiring (Esc, focus trap, scroll lock, return focus) is armed on that same query - no width where the panel is off-canvas but the wiring is dark.
+  // Must match the `medium` (600px) breakpoint in `fixed medium:static` below, so the drawer a11y wiring
+  // is armed at every width where the panel is off-canvas.
   const offCanvas = useMediaQuery('(max-width: 599px)')
   const panelRef = useDrawer(open && offCanvas, onCloseMobile)
   const dialogAria = offCanvas && open
@@ -521,7 +459,6 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
       <div className="flex-1 overflow-y-auto overscroll-contain chat-list-scroll">
         <NoChats chats={chats} listEmpty={running.length === 0 && active.length === 0 && archived.length === 0} />
 
-        {/* Active groups: running then idle — empty groups render nothing */}
         {running.map(s => (
           <ChatRow key={s.id} s={s} activeChatId={activeChatId} onSelect={onSelect} onDelete={onDelete} onArchive={onArchive} />
         ))}

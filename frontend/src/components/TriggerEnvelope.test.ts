@@ -1,25 +1,23 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { act, createElement } from 'react'
-import { createRoot } from 'react-dom/client'
+import { createElement } from 'react'
+import { act, cleanup, render } from '@testing-library/react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { parseEnvelope, commentsSummaryLabel, changedFilesSummaryLabel, checksSummaryLabel, artifactsSummaryLabel, accumulateComments, type EnvelopeBlock } from './envelope'
 
-// api.listChatArtifacts is the only network call a click on an <artifacts>
-// row makes (it resolves the tapped artifact id to its owning node id) -
-// stubbed so the interaction test below never hits a real endpoint.
+// Stubbed: the only network call a row click makes, resolving the artifact id to its owning node.
 const listChatArtifacts = vi.fn()
 vi.mock('../api', () => ({ api: { listChatArtifacts: (...args: unknown[]) => listChatArtifacts(...args) } }))
 
-// ArtifactPanel itself (its dialog, ChatStoreProvider dependency, and REST
-// surface) is covered by ArtifactPanel.rtl.test.tsx - this file only needs
-// proof that a row click resolves to the right node and that node id reaches the panel, so the component is replaced with a prop-recording stub.
+// ArtifactPanel has its own tests; this stub only records that the resolved node id reaches it.
 const artifactPanelProps = vi.fn()
 vi.mock('./ArtifactPanel', () => ({
   ArtifactPanel: (props: unknown) => { artifactPanelProps(props); return null },
 }))
 
 import { TriggerMessage } from './TriggerEnvelope'
+
+afterEach(cleanup)
 
 // A full CI-fix envelope (design: .quack/trigger-prompts-v2.md, Step 6/7) -
 // every known block type in envelope order.
@@ -177,9 +175,7 @@ lint: completed success
   })
 })
 
-// #730 fixtures: a seed turn (full snapshot, envelope.go's commentsBlock with
-// gh.delta == nil) followed by two resume deltas, mirroring a real
-// issue-comment back-and-forth across three triggers.
+// A seed snapshot followed by two resume deltas, mirroring a comment back-and-forth across three triggers.
 const SEED_TURN = `<permissions>join_issue_conversation</permissions>
 <deliverable>an answer to their message</deliverable>
 <comments count="2">${JSON.stringify([
@@ -331,28 +327,11 @@ describe('TriggerMessage', () => {
   })
 })
 
-// renderToStaticMarkup proves the collapsed markup exists; it never runs a
-// click. These mount into real jsdom (Expandable.test.ts's pattern - no
-// testing-library in this repo) and dispatch an actual click on <summary>, so what's asserted is the native <details> `open` toggle actually firing - the same mechanism the browser's UA stylesheet uses to show/hide the content.
+// renderToStaticMarkup never runs a click; these mount into jsdom and click <summary>, so what's
+// asserted is the native <details> `open` toggle the browser uses to show/hide the content.
 describe('TriggerMessage interaction (real DOM, not string assertions)', () => {
-  let root: ReturnType<typeof createRoot> | undefined
-  let host: HTMLDivElement | undefined
-
-  afterEach(() => {
-    act(() => root?.unmount())
-    host?.remove()
-    root = undefined
-    host = undefined
-  })
-
   function mount(content: string, extra?: { chatId?: string }) {
-    host = document.createElement('div')
-    document.body.appendChild(host)
-    root = createRoot(host)
-    // @ts-expect-error react act environment flag
-    globalThis.IS_REACT_ACT_ENVIRONMENT = true
-    act(() => root!.render(createElement(TriggerMessage, { content, ...extra })))
-    return host
+    return render(createElement(TriggerMessage, { content, ...extra })).container
   }
 
   it('a click on <summary> actually opens its <details>, not just markup that claims to be collapsible', () => {
@@ -376,8 +355,7 @@ describe('TriggerMessage interaction (real DOM, not string assertions)', () => {
     ]
     for (const input of brokenInputs) {
       expect(() => mount(input)).not.toThrow()
-      act(() => root!.unmount())
-      host!.remove()
+      cleanup()
     }
   })
 

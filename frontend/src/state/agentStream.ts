@@ -1,14 +1,7 @@
-// Shared event vocabulary and dispatch for the agent SSE stream. Both
-// transports - fetched ReadableStream (a chat's initial POST) and EventSource
-// (chatStore's GET reconnect) - route events through dispatchAgentEvent so
-// the per-event JSON shape lives in one place.
+// Shared event vocabulary and dispatch for the agent SSE stream: both transports (the POST body and chatStore's
+// EventSource) route through dispatchAgentEvent, so each event's JSON shape lives in one place.
 
-interface ConfirmationRequestPayload {
-  callId: string
-  toolName: string
-  hint: string
-  payload: Record<string, unknown>
-}
+import type { DagNodeDef, DagEdge as DagEdgeDef } from '../generated'
 
 export type Stage = 'worker' | 'judge' | 'revise'
 
@@ -41,35 +34,15 @@ interface AgentCompletePayload {
   finishReason?: string
   model?: string
   totalTokens?: number
-  // contextTokens is the LAST measured prompt-token count of this run (not
-  // summed across tool round trips like totalTokens) - the context meter's
-  // live "used" reading.
+  // Last measured prompt tokens of this run (not summed across tool round trips like totalTokens):
+  // the context meter's live "used" reading.
   contextTokens?: number
-  // The server wall-clock (epoch ms) the run closed - lets a replayed/reconnected
-  // client compute this run's duration from two server timestamps instead of "now"
-  // at replay time. Absent from an older-server event; callers fall back to Date.now() then.
+  // Server wall-clock (epoch ms) the run closed, so a replay computes duration from two server timestamps.
+  // Absent from older servers; callers fall back to Date.now().
   finishedAtMs?: number
 }
 
-// DagNodeDef is one node in a DAG plan, as received from the server.
-export interface DagNodeDef {
-  id: string
-  agent: string
-  task: string
-  depends_on: string[]
-  // context_window is the assigned agent's configured limit (0/absent if
-  // unset) - the context meter's static ceiling.
-  context_window?: number
-  // artifact is the node's declared output artifact kind - the record name
-  // its output is saved as on gate pass; absent when the node declares none.
-  artifact?: string
-}
-
-// DagEdgeDef is one edge in a DAG plan.
-export interface DagEdgeDef {
-  from: string
-  to: string
-}
+export type { DagNodeDef, DagEdgeDef }
 
 // NodeDoneMeta carries optional completion metadata from node_done.
 export interface NodeDoneMeta {
@@ -90,9 +63,8 @@ export interface NodeDoneMeta {
   judgePassed?: boolean
 }
 
-// The compaction event payload: a node's worker session was rewritten
-// mid-round by adk's own runner-level compaction. runId is quack's own run_id
-// (stream.RunIDFromBranch) - the same one the round's agent_start carries, so it matches by exact run_id, not a heuristic.
+// A node's worker session was rewritten mid-round by adk's runner-level compaction. runId is quack's run_id
+// (stream.RunIDFromBranch), matching the round's agent_start exactly.
 interface CompactionPayload {
   nodeId: string
   runId: string
@@ -112,9 +84,8 @@ interface DagPlanPayload {
   traceId?: string
 }
 
-// One staged item's ACTUAL outward-boundary outcome (push + PR/review/comment),
-// as the delivering extension observed it - never the worker's self-report.
-// "none" is the phantom-success class: a judge-passed work-request that recorded no delivery attempt at all.
+// One staged item's ACTUAL outward delivery outcome (push + PR/review/comment) as the extension observed it.
+// "none" is the phantom-success class: a judge-passed work-request that recorded no delivery attempt.
 interface DeliveryResultPayload {
   nodeId: string
   outcome: 'delivered' | 'draft' | 'failed' | 'none'
@@ -124,8 +95,7 @@ interface DeliveryResultPayload {
   traceId?: string
 }
 
-// ArtifactRevisionPayload mirrors internal/stream.ArtifactRevisionData - one
-// artifact revision written by a judge/worker round (#1092).
+// Mirrors internal/stream.ArtifactRevisionData: one artifact revision written by a judge/worker round.
 export interface ArtifactRevisionPayload {
   id: string
   revision: number
@@ -140,9 +110,8 @@ interface ArtifactScoredRef {
   revision: number
 }
 
-// ArtifactJudgeRoundPayload mirrors internal/stream.ArtifactJudgeRoundData -
-// the judge_round record a round wrote, referencing revisions already
-// announced via artifact_revision.
+// Mirrors internal/stream.ArtifactJudgeRoundData: a round's judge_round record, referencing revisions
+// already announced via artifact_revision.
 export interface ArtifactJudgeRoundPayload {
   id: string
   passed: boolean
@@ -158,12 +127,10 @@ export interface AgentStreamHandlers {
   onAgentToolResult?: (runId: string, callId: string, name: string, result: unknown, nodeId?: string) => void
   onAgentToken?: (runId: string, text: string, nodeId?: string) => void
   onAgentComplete?: (d: AgentCompletePayload) => void
-  onConfirmationRequest?: (req: ConfirmationRequestPayload) => void
   onChatTitle?: (title: string) => void
   onError?: (msg: string) => void
   onDone?: () => void
-  // response_created is the very first event of a run, naming the turn
-  // (response_id) so the client can cancel it via
+  // First event of a run, naming the turn so the client can cancel it via
   // PUT /chats/{chat_id}/responses/{response_id}/status.
   onResponseCreated?: (responseId: string) => void
   // DAG lifecycle
@@ -178,26 +145,21 @@ export interface AgentStreamHandlers {
   onNodeDone?: (nodeId: string, preview: string, meta: NodeDoneMeta) => void
   // finishedAtMs: see AgentCompletePayload.finishedAtMs.
   onNodeFailed?: (nodeId: string, error: string, finishedAtMs?: number) => void
-  // The node was stopped by the user (PUT node status {"status":"cancelled"}) -
-  // rendered neutrally ("stopped"), distinct from a real gate failure.
+  // Stopped by the user: rendered neutrally ("stopped"), distinct from a gate failure.
   // finishedAtMs: see AgentCompletePayload.finishedAtMs.
   onNodeCancelled?: (nodeId: string, finishedAtMs?: number) => void
   // The node was suspended by the user (PUT node status {"status":"paused"}) -
   // keeps its accumulated work; resumable via {"status":"running"}.
   onNodePaused?: (nodeId: string) => void
-  // One staged item's actual delivery outcome - not yet rendered in the UI;
-  // wired so the event is parsed rather than silently dropped (see M13/OTel
-  // observability: this is the phantom-success visibility signal).
+  // One staged item's delivery outcome, the phantom-success signal; chatStore reads only its trace id so far.
   onDeliveryResult?: (d: DeliveryResultPayload) => void
   onNodeSteered?: (nodeId: string, guidance: string) => void
   // A node paused to ask the user a question (mid-node HITL). The next message
   // sent on the chat is delivered to the node as the answer.
   onNodeNeedsInput?: (nodeId: string, interruptId: string, message: string) => void
-  // A node's worker session was compacted mid-round by adk's own runner-level
-  // compaction (#1185 follow-up).
+  // A node's worker session was compacted mid-round by adk's runner-level compaction.
   onCompaction?: (d: CompactionPayload) => void
-  // One artifact revision written by a round - fires before the round's own
-  // artifact_judge_round event (#1092).
+  // One artifact revision written by a round; fires before that round's artifact_judge_round event.
   onArtifactRevision?: (d: ArtifactRevisionPayload) => void
   // The judge_round record a round wrote.
   onArtifactJudgeRound?: (d: ArtifactJudgeRoundPayload) => void
@@ -281,18 +243,6 @@ function handleAgentComplete(parsed: unknown, handlers: AgentStreamHandlers): vo
   }
 }
 
-function handleConfirmationRequest(parsed: unknown, handlers: AgentStreamHandlers): void {
-  if (hasStringField(parsed, 'call_id')) {
-    const p = parsed as { call_id: string; tool_name?: string; hint?: string; payload?: Record<string, unknown> }
-    handlers.onConfirmationRequest?.({
-      callId: p.call_id,
-      toolName: p.tool_name ?? '',
-      hint: p.hint ?? '',
-      payload: p.payload ?? {},
-    })
-  }
-}
-
 function handleChatTitle(parsed: unknown, handlers: AgentStreamHandlers): void {
   if (hasStringField(parsed, 'title')) handlers.onChatTitle?.(parsed.title)
 }
@@ -305,7 +255,7 @@ function handleDone(_parsed: unknown, handlers: AgentStreamHandlers): void {
   handlers.onDone?.()
 }
 
-// DAG lifecycle events (M3)
+// DAG lifecycle events
 function handleResponseCreated(parsed: unknown, handlers: AgentStreamHandlers): void {
   if (hasStringField(parsed, 'response_id')) handlers.onResponseCreated?.(parsed.response_id)
 }
@@ -461,9 +411,7 @@ function handleArtifactJudgeRound(parsed: unknown, handlers: AgentStreamHandlers
   }
 }
 
-// The dispatch table: one entry per wire event, so adding an
-// event is a handler + a line here. AGENT_EVENT_NAMES derives from it,
-// so EventSource registration cannot drift from what dispatch understands.
+// One entry per wire event; AGENT_EVENT_NAMES derives from it, so EventSource registration can't drift from dispatch.
 const HANDLERS: Record<string, (parsed: unknown, handlers: AgentStreamHandlers) => void> = {
   agent_start: handleAgentStart,
   agent_thinking: handleAgentThinking,
@@ -471,7 +419,6 @@ const HANDLERS: Record<string, (parsed: unknown, handlers: AgentStreamHandlers) 
   agent_tool_result: handleAgentToolResult,
   agent_token: handleAgentToken,
   agent_complete: handleAgentComplete,
-  confirmation_request: handleConfirmationRequest,
   chat_title: handleChatTitle,
   error: handleError,
   done: handleDone,
@@ -495,9 +442,7 @@ const HANDLERS: Record<string, (parsed: unknown, handlers: AgentStreamHandlers) 
 // Wire-level event names. Mirrors internal/stream/event.go.
 const AGENT_EVENT_NAMES = Object.keys(HANDLERS)
 
-// dispatchAgentEvent routes one already-parsed SSE payload to the matching
-// handler. Returns true if the event was recognized (whether or not a
-// handler was registered for it).
+// Routes one parsed SSE payload to its handler; returns true if the event was recognized, handler or not.
 function dispatchAgentEvent(
   event: string,
   parsed: unknown,
@@ -508,9 +453,8 @@ function dispatchAgentEvent(
   handle(parsed, handlers)
   return true
 }
-// Parses a fetched SSE ReadableStream (the chat send flow: request body +
-// response stream). Returns whether a `done` event was actually seen before
-// the body ended - the caller's only signal the stream ended cleanly (vs. a dropped connection worth reconnecting over) - plus the highest `id:` line seen, so a dropped-connection handoff can resume past it instead of replaying the whole run (every event carries `id:`, same sseWriter as the GET stream; EventSource just parses it there). A read error (anything but an intentional abort) is treated the same as the body closing: report done=false and let the caller reconnect.
+// Parses the POST's SSE body. Returns whether `done` was seen (a clean end vs a drop) and the highest applied `id:`,
+// so a reconnect resumes past it. A read error (not an abort) counts as a drop: done=false.
 export async function readAgentStream(
   body: ReadableStream<Uint8Array>,
   handlers: AgentStreamHandlers,
@@ -521,9 +465,8 @@ export async function readAgentStream(
   let currentEvent = 'message'
   let sawDone = false
   let lastEventId = 0
-  // pendingId is the `id:` line's value for the event currently being parsed;
-  // it only becomes lastEventId once that event's `data:` line actually
-  // dispatches, so a drop between the two (a real TCP boundary) can't advance past an event never applied.
+  // pendingId becomes lastEventId only once its event's `data:` dispatches, so a drop between `id:` and `data:`
+  // can't advance past an event never applied.
   let pendingId = 0
   while (true) {
     let chunk: ReadableStreamReadResult<Uint8Array>
@@ -560,12 +503,8 @@ export async function readAgentStream(
   return { done: sawDone, lastEventId }
 }
 
-// attachAgentEventSource wires an EventSource (chatStore.openEventSource, the chat stream) to
-// the same handler shape readAgentStream consumes. Returns a teardown that
-// closes the EventSource. shouldDispatch, if given, gates each event BEFORE
-// it reaches handlers - e.g. chatStore's id-contiguity check (#audit-6):
-// a gap must never be applied, so the gate has to run ahead of dispatch,
-// not as a second independent listener racing it.
+// Wires the chat EventSource to readAgentStream's handler shape; returns a teardown that closes it.
+// shouldDispatch gates each event BEFORE handlers (e.g. the id-contiguity check), not as a racing second listener.
 export function attachAgentEventSource(
   es: EventSource,
   handlers: AgentStreamHandlers,

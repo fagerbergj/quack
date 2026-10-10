@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { act, createElement } from 'react'
-import { createRoot } from 'react-dom/client'
+import { createElement } from 'react'
+import { act, cleanup, render } from '@testing-library/react'
 import { Composer } from './Composer'
 
-// #759 item 2: the keyboard hint in the idle placeholder wraps to a second
-// line that gets clipped at phone widths - dropped below Tailwind's sm
-// breakpoint (matchMedia, not the story's container width).
+afterEach(cleanup)
+
+// The placeholder's keyboard hint wraps and clips at phone widths, so it drops below the sm breakpoint.
 function mockMatchMedia(matches: boolean) {
   vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
     matches,
@@ -17,137 +17,94 @@ function mockMatchMedia(matches: boolean) {
 }
 
 describe('Composer idle placeholder', () => {
-  let root: ReturnType<typeof createRoot> | undefined
-  let host: HTMLDivElement | undefined
+  let host: HTMLElement | undefined
 
   afterEach(() => {
-    act(() => root?.unmount())
-    host?.remove()
-    root = undefined
-    host = undefined
     vi.unstubAllGlobals()
   })
 
-  function render() {
-    host = document.createElement('div')
-    document.body.appendChild(host)
-    root = createRoot(host)
-    act(() => {
-      root!.render(createElement(Composer, { disabled: false, streaming: false, onSubmit: () => {}, onStop: () => {} }))
-    })
+  function mount() {
+    host = render(createElement(Composer, { disabled: false, streaming: false, onSubmit: () => {}, onStop: () => {} })).container
   }
 
   it('keeps the keyboard hint at normal widths', () => {
     mockMatchMedia(false)
-    render()
+    mount()
     const ta = host!.querySelector('textarea')!
     expect(ta.placeholder).toBe('Ask something… (Enter to send, Shift+Enter for newline)')
   })
 
   it('drops the keyboard hint below the narrow breakpoint', () => {
     mockMatchMedia(true)
-    render()
+    mount()
     const ta = host!.querySelector('textarea')!
     expect(ta.placeholder).toBe('Ask something…')
   })
 })
 
 describe('Composer streaming placeholder', () => {
-  let root: ReturnType<typeof createRoot> | undefined
-  let host: HTMLDivElement | undefined
+  let host: HTMLElement | undefined
 
   afterEach(() => {
-    act(() => root?.unmount())
-    host?.remove()
-    root = undefined
-    host = undefined
     vi.unstubAllGlobals()
   })
 
-  function render() {
-    host = document.createElement('div')
-    document.body.appendChild(host)
-    root = createRoot(host)
-    act(() => {
-      root!.render(createElement(Composer, { disabled: false, streaming: true, onSubmit: () => {}, onStop: () => {} }))
-    })
+  function mount() {
+    host = render(createElement(Composer, { disabled: false, streaming: true, onSubmit: () => {}, onStop: () => {} })).container
   }
 
   it('keeps the queuing explanation at normal widths', () => {
     mockMatchMedia(false)
-    render()
+    mount()
     const ta = host!.querySelector('textarea')!
     expect(ta.placeholder).toBe('Type a follow-up… (queues until the current response finishes)')
   })
 
   it('drops the queuing explanation below the narrow breakpoint, same as the idle placeholder', () => {
     mockMatchMedia(true)
-    render()
+    mount()
     const ta = host!.querySelector('textarea')!
     expect(ta.placeholder).toBe('Type a follow-up…')
   })
 })
 
-// An archived chat's Composer is disabled like "no chat selected", but must say
-// so distinctly - "Select or start a chat first" is actively wrong once a real,
-// archived chat is focused (part of the "focused archived chat appears active" fix).
+// Archived must say so distinctly: "Select or start a chat first" is wrong once an archived chat is focused.
 describe('Composer archived placeholder', () => {
-  let root: ReturnType<typeof createRoot> | undefined
-  let host: HTMLDivElement | undefined
+  let host: HTMLElement | undefined
 
   afterEach(() => {
-    act(() => root?.unmount())
-    host?.remove()
-    root = undefined
-    host = undefined
     vi.unstubAllGlobals()
   })
 
-  function render() {
+  function mount() {
     mockMatchMedia(false)
-    host = document.createElement('div')
-    document.body.appendChild(host)
-    root = createRoot(host)
-    act(() => {
-      root!.render(createElement(Composer, { disabled: true, streaming: false, archived: true, onSubmit: () => {}, onStop: () => {} }))
-    })
+    host = render(createElement(Composer, { disabled: true, streaming: false, archived: true, onSubmit: () => {}, onStop: () => {} })).container
   }
 
   it('shows the read-only placeholder instead of the generic disabled one', () => {
-    render()
+    mount()
     const ta = host!.querySelector('textarea')!
     expect(ta.placeholder).toBe('Archived chats are read-only - restore to continue')
   })
 
   it('disables the textarea', () => {
-    render()
+    mount()
     const ta = host!.querySelector('textarea')!
     expect(ta.disabled).toBe(true)
   })
 })
 
-// #1174: both width-variant auto-grow caps must be pinned. jsdom reports
-// scrollHeight 0 (no layout), so each test shadows it on the instance; the
-// value is set through the native prototype setter - React 19 defines its own `value` accessor on controlled nodes that keeps the value tracker in step (a plain assignment registers no change to the dispatched `input` event; the same trick user-event uses internally).
+// jsdom reports scrollHeight 0, so tests shadow it. Value goes through the native prototype setter: React's own
+// `value` accessor would swallow a plain assignment and the dispatched `input` event would register no change.
 describe('Composer auto-grow cap', () => {
-  let root: ReturnType<typeof createRoot> | undefined
-  let host: HTMLDivElement | undefined
+  let host: HTMLElement | undefined
 
   afterEach(() => {
-    act(() => root?.unmount())
-    host?.remove()
-    root = undefined
-    host = undefined
     vi.unstubAllGlobals()
   })
 
-  function render() {
-    host = document.createElement('div')
-    document.body.appendChild(host)
-    root = createRoot(host)
-    act(() => {
-      root!.render(createElement(Composer, { disabled: false, streaming: false, onSubmit: () => {}, onStop: () => {} }))
-    })
+  function mount() {
+    host = render(createElement(Composer, { disabled: false, streaming: false, onSubmit: () => {}, onStop: () => {} })).container
   }
 
   function setLongValue() {
@@ -162,7 +119,7 @@ describe('Composer auto-grow cap', () => {
 
   it('caps the textarea at 128px when compact', () => {
     mockMatchMedia(true)
-    render()
+    mount()
     const ta = host!.querySelector('textarea') as HTMLTextAreaElement
     setLongValue()
     expect(ta.style.height).toBe('128px')
@@ -171,7 +128,7 @@ describe('Composer auto-grow cap', () => {
 
   it('caps the textarea at 192px at normal widths', () => {
     mockMatchMedia(false)
-    render()
+    mount()
     const ta = host!.querySelector('textarea') as HTMLTextAreaElement
     setLongValue()
     expect(ta.style.height).toBe('192px')

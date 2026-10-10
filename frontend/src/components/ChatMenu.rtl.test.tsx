@@ -4,9 +4,7 @@ import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ChatMenu } from './ChatMenu'
 
-// jsdom has no matchMedia; ChatMenu's theme picker (useTheme) calls it on
-// mount - stub per-test like App.test.tsx/Composer.rtl.test.tsx, not at
-// module scope.
+// useTheme calls matchMedia on mount and jsdom lacks it; stub per test, not at module scope.
 function mockMatchMedia() {
   vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
     matches: false,
@@ -26,9 +24,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-// #1136: the header hides its inline token/model UsageSummary below the
-// medium (600px) size class - this is the escape hatch, always available
-// through the same kebab regardless of width.
+// The header hides its inline UsageSummary below `medium`; this menu shows it at every width.
 describe('ChatMenu usage row', () => {
   it('shows the token/model summary in the menu when a usage prop is given', async () => {
     const user = userEvent.setup()
@@ -52,8 +48,7 @@ describe('ChatMenu usage row', () => {
     expect(btn.className).toContain('min-h-[44px]')
   })
 
-  // #1314 review: same floor as the trigger, on every item inside the menu -
-  // a class regression here left compact-width rows short of 44px.
+  // Same 44px floor as the trigger, on every item inside the menu.
   it('pins the 44px floor on every menu item at compact width', async () => {
     const user = userEvent.setup()
     render(<ChatMenu chatId="c1" />)
@@ -76,8 +71,7 @@ describe('ChatMenu usage row', () => {
   })
 })
 
-// #1173: the kebab's Light/Dark/System entries are the only in-app theme
-// control.
+// The kebab's Light/Dark/System entries are the only in-app theme control.
 describe('ChatMenu theme picker', () => {
   it('switches to Dark and persists it to localStorage', async () => {
     const user = userEvent.setup()

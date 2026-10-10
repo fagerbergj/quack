@@ -1,6 +1,5 @@
-// Quack REST client. Types and the request SDK are generated from
-// ../../openapi.yaml (`npm run generate`); this module only unwraps the
-// generated results and throws on error. Streaming is handled by the chat store.
+// Quack REST client: types and SDK are generated from ../../openapi.yaml (`npm run generate`); this module unwraps
+// results and throws on error. Streaming lives in the chat store.
 import {
   listChats as sdkListChats,
   createChat as sdkCreateChat,
@@ -29,35 +28,38 @@ import {
 
 export type { ChatSummary, ChatDetail, ChatList, Turn, Memory, MemoryList, ExtensionInfo, ClientConfig, ArtifactSummary, ArtifactRevisionInfo, NodeMemory, NodeMemoryList, MemoryStats, MemoryWeekStats, MemoryScopeStats, Plugin, PluginUpdate, PluginReloadReport } from './generated'
 
-import type { ChatSummary, ChatDetail, ChatList, Turn, MemoryList, ExtensionInfo, ClientConfig, ArtifactList, ArtifactRevisionList, NodeMemoryList, MemoryStats, Plugin, PluginList, PluginUpdateList, PluginDeleted, PluginReloadReport } from './generated'
+import type { ChatSummary, ChatDetail, ChatList, Turn, MemoryList, ExtensionInfo, ClientConfig, ArtifactList, ArtifactRevisionList, NodeMemoryList, MemoryStats, Plugin, PluginList, PluginUpdateList, PluginDeleted, PluginReloadReport, VoteMemoryBody, ListMemoriesData } from './generated'
 
-// VoteDirection is the UI-facing shape of a manual vote - "none" clears the
-// caller's own prior vote (the Reddit-style toggle-off), matching the
-// backend's VoteMemoryBody vote enum.
-export type VoteDirection = 'up' | 'down' | 'none'
-
-// MemoryListSort mirrors openapi.yaml's listMemories `sort` enum (#1266) -
-// server-side ordering that spans every page, not a client re-sort of one.
-export type MemoryListSort = 'newest' | 'oldest' | 'score' | 'upvotes' | 'downvotes' | 'recalls' | 'last_recalled'
+// "none" clears the caller's own prior vote.
+export type VoteDirection = VoteMemoryBody['vote']
+type MemoryListQuery = NonNullable<ListMemoriesData['query']>
+export type MemoryListSort = NonNullable<MemoryListQuery['sort']>
 
 type Result<T> = { data?: T; error?: unknown; response?: Response }
 
+// The thrown error keeps the HTTP status and, for a plugin 422, the reload report beside the message.
 function unwrap<T>(r: Result<T>): T {
   if (!r.response || !r.response.ok || r.error !== undefined) {
     const msg =
       r.error && typeof r.error === 'object' && 'error' in r.error
         ? String((r.error as { error: unknown }).error)
         : `Request failed (${r.response ? r.response.status : 'no response'})`
-    // A plugin 422 carries the reload report beside the message; keep it for the page.
     const reload = r.error && typeof r.error === 'object' && 'reload' in r.error ? r.error.reload : undefined
-    throw Object.assign(new Error(msg), { reload })
+    throw Object.assign(new Error(msg), { reload, status: r.response?.status })
   }
   return r.data as T
 }
 
+// For bodiless deletes: only the status matters.
+function expectOk(r: Result<unknown>, what: string): void {
+  if (!r.response || !r.response.ok) {
+    throw new Error(`${what} failed (${r.response ? r.response.status : 'no response'})`)
+  }
+}
+
 export const api = {
-  // page_token is opaque - pass back exactly what next_page_token gave.
-  // status is a multi-select (default ['active']); a token is only valid against the exact set it was issued for, so switching restarts the walk. An explicitly empty array is a 400.
+  // page_token is opaque: pass back exactly what next_page_token gave. status is multi-select (default ['active']);
+  // a token is only valid for the set it was issued for, so switching restarts the walk. An empty array is a 400.
   listChats: async (opts?: { limit?: number; page_token?: string; status?: Array<'active' | 'archived'> }): Promise<ChatList> =>
     unwrap(await sdkListChats({ query: opts })),
 
@@ -67,12 +69,8 @@ export const api = {
   getChat: async (chatId: string): Promise<ChatDetail> =>
     unwrap(await sdkGetChat({ path: { chat_id: chatId } })),
 
-  deleteChat: async (chatId: string): Promise<void> => {
-    const r = await sdkDeleteChat({ path: { chat_id: chatId } })
-    if (!r.response || !r.response.ok) {
-      throw new Error(`Delete failed (${r.response ? r.response.status : 'no response'})`)
-    }
-  },
+  deleteChat: async (chatId: string): Promise<void> =>
+    expectOk(await sdkDeleteChat({ path: { chat_id: chatId } }), 'Delete'),
 
   renameChat: async (chatId: string, title: string): Promise<ChatSummary> =>
     unwrap(await sdkUpdateChat({ path: { chat_id: chatId }, body: { title } })),
@@ -88,22 +86,10 @@ export const api = {
 
   // page_token is opaque, same contract as listChats' - pass back exactly what
   // a previous response's next_page_token gave, never parsed or constructed here.
-  listMemories: async (params: {
-    bucket?: string
-    q?: string
-    limit?: number
-    page_token?: string
-    include_invalidated?: boolean
-    tier?: 'unverified' | 'verified'
-    sort?: MemoryListSort
-  }): Promise<MemoryList> => unwrap(await sdkListMemories({ query: params })),
+  listMemories: async (params: MemoryListQuery): Promise<MemoryList> => unwrap(await sdkListMemories({ query: params })),
 
-  forgetMemory: async (id: string): Promise<void> => {
-    const r = await sdkDeleteMemory({ path: { memory_id: id } })
-    if (!r.response || !r.response.ok) {
-      throw new Error(`Forget failed (${r.response ? r.response.status : 'no response'})`)
-    }
-  },
+  forgetMemory: async (id: string): Promise<void> =>
+    expectOk(await sdkDeleteMemory({ path: { memory_id: id } }), 'Forget'),
 
   voteMemory: async (id: string, vote: VoteDirection, reason?: string) =>
     unwrap(await sdkVoteMemory({ path: { memory_id: id }, body: { vote, reason } })),
@@ -126,22 +112,10 @@ export const api = {
   listArtifactRevisions: async (chatId: string, artifactName: string): Promise<ArtifactRevisionList> =>
     unwrap(await sdkListArtifactRevisions({ path: { chat_id: chatId, artifact_name: artifactName } })),
 
-  // Raw unified diff text (text/plain, not JSON); unlike the other unwrap()
-  // callers this keeps the HTTP status on the thrown error - the panel maps
-  // 413 (>256KB) / 415 (binary) itself. The 413 body embeds the artifact's id; never render it outside Details (#1178).
-  diffArtifactRevisions: async (chatId: string, artifactName: string, from: number, to: number): Promise<string> => {
-    const r = await sdkDiffArtifactRevisions({ path: { chat_id: chatId, artifact_name: artifactName }, query: { from, to } })
-    if (!r.response || !r.response.ok || r.error !== undefined) {
-      const msg =
-        r.error && typeof r.error === 'object' && 'error' in r.error
-          ? String((r.error as { error: unknown }).error)
-          : `Request failed (${r.response ? r.response.status : 'no response'})`
-      const err = new Error(msg) as Error & { status?: number }
-      err.status = r.response?.status
-      throw err
-    }
-    return r.data as string
-  },
+  // Raw unified diff text; the panel maps a thrown 413 (>256KB) / 415 (binary) itself.
+  // The 413 body embeds the artifact's id; never render it outside Details.
+  diffArtifactRevisions: async (chatId: string, artifactName: string, from: number, to: number): Promise<string> =>
+    unwrap(await sdkDiffArtifactRevisions({ path: { chat_id: chatId, artifact_name: artifactName }, query: { from, to } })),
 
   // Plain fetch, not the generated client: the response is
   // application/octet-stream (any mime) and the panel only wants text - a Blob round-trip would just get .text()'d.

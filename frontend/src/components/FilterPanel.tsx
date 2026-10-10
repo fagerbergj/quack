@@ -26,9 +26,7 @@ function activeFilterCount(selected: Record<string, string[]>): number {
   return Object.values(selected).reduce((n, vs) => n + vs.length, 0)
 }
 
-// A filter-icon button that opens a popover of facet groups (origin, status,
-// repo, type…), each a multi-select checklist with counts. Owns only its
-// open/closed state; the active selection lives in the parent (so it can be mirrored to the URL).
+// Owns only its open/closed state; the selection lives in the parent so it can be mirrored to the URL.
 export function FilterPanel({ facets, selected, onToggle, onClear }: FilterPanelProps) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)

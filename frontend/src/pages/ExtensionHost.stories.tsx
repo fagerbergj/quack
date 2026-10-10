@@ -10,9 +10,7 @@ export default meta
 
 type Story = StoryObj<typeof ExtensionHost>
 
-// #870: an extension's own UI in a same-origin iframe, inside the SPA shell -
-// NavRail stays put and back-nav works, unlike the old <a href> that left
-// the app entirely. about:blank stands in for a real extension route (no /usage server route to load in Storybook).
+// about:blank stands in for a real extension route; Storybook has no /usage server route.
 export const Default: Story = {
   args: {
     name: 'usage',

@@ -43,9 +43,8 @@ function stubFetch() {
   vi.stubGlobal('fetch', fetchMock)
 }
 
-// #1171: the drawer's open state lives in App (never persisted) and each
-// page's NavToggle drives it, so open/close paths are tested here, where the
-// state lives; NavRail's suites cover the drawer body itself.
+// The drawer's open state lives in App (never persisted) and each page's NavToggle drives it, so open/close
+// paths are tested here; NavRail's suites cover the drawer body.
 describe('App nav drawer', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -86,8 +85,7 @@ describe('App nav drawer', () => {
     await waitFor(() => expect(document.querySelector('iframe')).toBeTruthy())
   })
 
-  // #1175: the rail's hamburger duplicated the chat-list toggle's glyph. With
-  // the rail's column gone, the chat-list toggle is the only hamburger button.
+  // With the rail's column gone, the chat-list toggle is the only hamburger button.
   it('has exactly one hamburger toggle in the DOM - the chat-list one', () => {
     renderAt('/chat')
     const toggles = Array.from(document.querySelectorAll('button[aria-label="Toggle chat list"]'))
@@ -112,9 +110,8 @@ describe('App nav drawer', () => {
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Close navigation' }))
   })
 
-  // jsdom does no layout, so the hit-test the stacking bug depends on can't
-  // be reproduced - assert the z-index ordering instead: the overlay must
-  // outrank ChatList's z-40 (off-canvas stacking below md) or the drawer is unclickable at md+.
+  // jsdom does no layout, so assert z-index order instead: the overlay must outrank ChatList's z-40 (off-canvas
+  // below md) or the drawer is unclickable at md+.
   it('drawer overlay outranks the chat list z-index at desktop widths', async () => {
     const user = userEvent.setup()
     renderAt('/chat')

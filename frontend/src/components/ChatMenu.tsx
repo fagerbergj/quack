@@ -10,9 +10,7 @@ const THEME_OPTIONS: { value: Theme; label: string }[] = [
   { value: 'system', label: 'System' },
 ]
 
-// The chat header's ⋯ overflow menu (#746 items 2/3): per-chat actions not
-// worth permanent header real estate. Today: Download Logs (still a plain
-// link to the same endpoint) and, at compact width (#1136), the token/model usage summary the header hides there to give the title its width back. It does NOT hold Memory - Memory is a NavRail peer of Chats, not a per-chat action. Same disclosure pattern as DagNode's NodeMenu: a button toggling a role="menu" popover, closed on outside click or Escape.
+// Per-chat actions only; Memory is a NavRail peer of Chats, not a per-chat action, so it does not belong here.
 export function ChatMenu({ chatId, usage }: { chatId: string; usage?: UsageSummaryProps }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -39,10 +37,7 @@ export function ChatMenu({ chatId, usage }: { chatId: string; usage?: UsageSumma
       </button>
       {open && (
         <Sheet anchored role="menu" onClose={() => setOpen(false)} className="medium:absolute medium:right-0 medium:mt-1 medium:w-44 medium:rounded-lg medium:border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 pt-1 medium:pb-1 text-sm medium:text-xs">
-          {/* Shown here always when the header itself hides the inline
-              UsageSummary (compact width, `hidden medium:flex` in Chat.tsx) -
-              the header stays the source of truth for whether it's shown
-              inline; this is just the escape hatch when it isn't. */}
+          {/* Shown only where the header's `hidden medium:flex` UsageSummary (Chat.tsx) is hidden. */}
           {usage && (usage.models.length > 0 || (usage.usage?.total_tokens ?? 0) > 0) && (
             <div className="px-3 py-1.5 border-b border-gray-100 dark:border-gray-700 medium:hidden">
               <UsageSummary {...usage} />
@@ -57,10 +52,7 @@ export function ChatMenu({ chatId, usage }: { chatId: string; usage?: UsageSumma
           >
             <Icon name="download" className="w-3.5 h-3.5" /> Download Logs
           </a>
-          {/* #1173: Light/Dark/System - only in-app way to change theme.
-              APG menuitemradio: activating changes the selection but leaves
-              the menu open (unlike Download Logs above), so a user can
-              change their mind without reopening. */}
+          {/* APG menuitemradio: selecting leaves the menu open so the user can change their mind without reopening. */}
           <div role="group" aria-label="Theme" className="border-t border-gray-100 dark:border-gray-700 mt-1 pt-1">
             {THEME_OPTIONS.map(opt => (
               <button

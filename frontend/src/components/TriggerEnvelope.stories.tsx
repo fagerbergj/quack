@@ -11,9 +11,7 @@ export default meta
 
 type Story = StoryObj<typeof TriggerMessage>
 
-// A CI-fix trigger (design: .quack/trigger-prompts-v2.md, Step 6): permissions
-// and deliverable always visible, PR title/description expanded, comments/
-// changed-files/event/context collapsed behind their summary line.
+// A CI-fix trigger: permissions, deliverable and the PR stay visible; everything else is collapsed.
 export const CiFix: Story = {
   args: {
     content: `<permissions>push_commits_to_pr, join_pr_conversation</permissions>
@@ -50,9 +48,7 @@ export const IssuePlan: Story = {
   },
 }
 
-// <checks> (quack-extensions/github's checksBlock): the collapsed header uses
-// the backend's own failing/pending/passing summary; opened, failing checks
-// read in the danger token, distinct from pending/passing.
+// Header uses the backend's failing/pending/passing summary; failing checks read in the danger token.
 export const ChecksMixedStatuses: Story = {
   args: {
     content: `<permissions>push_commits_to_pr, join_pr_conversation</permissions>
@@ -85,8 +81,7 @@ export const MalformedChecks: Story = {
   },
 }
 
-// A block type quack starts emitting after this UI shipped: rendered as a
-// labelled collapsed section with its raw content, never dropped (#667).
+// A block type newer than this UI renders as a labelled raw section, never dropped.
 export const UnknownBlock: Story = {
   args: {
     content: `<permissions>join_pr_conversation</permissions>
@@ -138,9 +133,7 @@ export const A2uiActionTurn: Story = {
   },
 }
 
-// Delta comments carrying quack_status (internal/github/envelope.go): a
-// deleted comment must read as retracted, not as a live one (#667's
-// quack_status field exists specifically so a miscount can't hide this).
+// A deleted delta comment must read as retracted, not as a live one.
 export const CommentStatuses: Story = {
   args: {
     content: `<permissions>join_pr_conversation</permissions>
@@ -153,8 +146,7 @@ export const CommentStatuses: Story = {
   },
 }
 
-// <event> whose body isn't valid JSON - degrades to the raw text instead of
-// throwing or dropping the block (#667).
+// An <event> body that isn't valid JSON degrades to raw text instead of throwing or dropping the block.
 export const InvalidEventJson: Story = {
   args: {
     content: `<permissions>join_issue_conversation</permissions>
@@ -163,9 +155,7 @@ export const InvalidEventJson: Story = {
   },
 }
 
-// #746 item 9: the event section's TOP-LEVEL primitive fields render as a
-// responsive grid above the full JSON, using the wide pane's width instead of
-// one "key: value" per line - the full payload (with its nested objects) is still there below, no longer the only view.
+// Top-level primitive fields render as a grid above the full JSON, which keeps the nested objects.
 export const EventFieldsGrid: Story = {
   args: {
     content: `<permissions>join_pr_conversation</permissions>
@@ -179,8 +169,7 @@ export const EventFieldsGrid: Story = {
   },
 }
 
-// #746 item 8: a long issue/PR description collapses to its first lines with
-// a Show more control (a short one, see CiFix above, gets no control at all).
+// A long description collapses behind Show more; a short one (CiFix above) gets no control.
 export const LongDescriptionCollapses: Story = {
   args: {
     content: `<permissions>join_issue_conversation</permissions>
@@ -193,9 +182,7 @@ export const LongDescriptionCollapses: Story = {
   },
 }
 
-// A comment body and PR description containing a literal "<" (the envelope
-// seeds GitHub bodies verbatim, unescaped - envelope.ts's own rationale for
-// hand-rolled tag matching over a real XML/HTML parser).
+// Bodies are seeded verbatim, unescaped, so a literal "<" must survive the hand-rolled tag matcher.
 export const LiteralAngleBracketInBody: Story = {
   args: {
     content: `<permissions>join_pr_conversation</permissions>
@@ -210,9 +197,7 @@ export const LiteralAngleBracketInBody: Story = {
   },
 }
 
-// Truncated/unterminated tags at multiple levels - takes the rest of the
-// string as that block's content and stops, rather than throwing or blanking
-// the whole message (envelope.ts's parseTopLevel).
+// An unterminated tag takes the rest of the string as content and stops, never blanking the message.
 export const TruncatedTags: Story = {
   args: {
     content: `<permissions>join_pr_conversation</permissions>
@@ -221,9 +206,8 @@ export const TruncatedTags: Story = {
   },
 }
 
-// #730: a resumed trigger whose <comments> section shows the ISSUE'S RUNNING
-// HISTORY (this turn's delta folded onto every earlier turn it was seeded
-// with), not just this trigger's envelope - the collapsed header still reports this turn's own delta ("1 new, 0 edited, 0 deleted"); open the section to see all four comments across three triggers.
+// A resumed trigger: the body shows the issue's running history across three triggers, while the header
+// still reports this turn's own delta ("1 new, 0 edited, 0 deleted").
 export const AccumulatedCommentHistory: Story = {
   args: {
     content: `<permissions>join_issue_conversation</permissions>
@@ -254,9 +238,7 @@ export const AccumulatedCommentHistory: Story = {
   },
 }
 
-// #730: a chat opened after the run's context was reaped (or a rehydrated
-// store) - the earliest turn this client can see is ITSELF a delta, so there
-// is no seed to accumulate onto; the UI must say so rather than presenting this one comment as the issue's whole thread.
+// No seed turn is visible (reaped context or rehydrated store), so the UI must flag incomplete history.
 export const IncompleteCommentHistory: Story = {
   args: {
     content: `<permissions>join_pr_conversation</permissions>
@@ -270,9 +252,7 @@ export const IncompleteCommentHistory: Story = {
   },
 }
 
-// #730 empty state: a fresh issue's seed turn with no comments yet. The
-// section opens to a plain "no comments" line, not an empty list or a
-// misleading incomplete-history notice.
+// A seed turn with no comments opens to "no comments", not an incomplete-history notice.
 export const EmptyCommentHistory: Story = {
   args: {
     content: `<permissions>join_issue_conversation</permissions>
@@ -286,9 +266,7 @@ export const EmptyCommentHistory: Story = {
   },
 }
 
-// #1250: the <artifacts> block from the owner's phone screenshot - rendered
-// as a compact row list (icon/name/revision/status chip/summary), not the
-// raw XML code block it used to fall through to via UnknownSection.
+// The <artifacts> block renders as a compact row list, not a raw XML code block.
 export const Artifacts: Story = {
   args: {
     content: `<permissions>push_commits_to_pr, join_pr_conversation</permissions>
@@ -309,9 +287,7 @@ export const Artifacts: Story = {
   },
 }
 
-// Wide, unbroken content (a long nested file path, a JSON payload with a long
-// single-token value) must scroll inside its own container - never make the
-// page itself scroll sideways. Verified at a narrow (~380px) viewport too.
+// Wide unbroken content must scroll inside its own container, never the page, even at ~380px.
 export const WideContent: Story = {
   args: {
     content: `<permissions>push_commits_to_pr</permissions>

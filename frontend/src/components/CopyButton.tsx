@@ -1,9 +1,8 @@
 import { useState } from 'react'
 import { Icon } from './Icon'
 
-// Small icon-style copy button flashing a brief check mark. It's the escape
-// hatch every tool call carries (#404): whatever the rendered view above it
-// does or doesn't show, the raw input/output JSON is always one click away. Styled to match the codebase's other small icon buttons (ChatList's delete ×, AttachmentUI's remove ×): a bare muted glyph, no border; Material "content-copy" (unambiguous at 12px, unlike a pencil).
+// The escape hatch every tool call carries: whatever the rendered view shows, the raw JSON is one click
+// away. Uses "content-copy" because it stays unambiguous at 12px.
 export function CopyButton({ text, label = 'Copy' }: { text: string; label?: string }) {
   const [copied, setCopied] = useState(false)
   const copy = (e: React.MouseEvent) => {

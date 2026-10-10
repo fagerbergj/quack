@@ -27,8 +27,8 @@ function interactive(el: Element, key: string, label: string) {
   el.setAttribute('style', `${el.getAttribute('style') ?? ''};cursor:pointer`)
 }
 
-// Mermaid's flowchart ids: node g "<svg>-flowchart-<id>-<n>", cluster g "<svg>-<id>", edge path and label g data-id="<edge id>" (set by the `e0@-->` syntax).
-// Edges get an invisible wide twin so a 1.5px line is clickable; the registry maps spec ids to the elements to dim and mark.
+// Mermaid ids: node "<svg>-flowchart-<id>-<n>", cluster "<svg>-<id>", edge data-id="<edge id>" (from `e0@-->`).
+// Edges get an invisible wide twin so a 1.5px line is clickable.
 function decorate(host: HTMLElement, spec: DiagramSpec): Map<string, Target> {
   const reg = new Map<string, Target>()
   // Mermaid scales the svg to the column; below ~560px labels get unreadably small, so scroll instead.

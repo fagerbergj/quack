@@ -1,9 +1,10 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 import { configDefaults } from 'vitest/config'
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   test: {
     // render-check.browser.test.tsx needs Vitest browser mode (its own
     // vitest.render-check.config.ts, run via `npm run render-check`) - the

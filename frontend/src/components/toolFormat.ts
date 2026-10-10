@@ -1,8 +1,6 @@
 // Small formatting helpers for rendering tool calls.
 
-// summarizeArgs picks a representative arg to show beside the tool name in the
-// collapsed summary, so a call is identifiable without expanding it. Ordered by
-// specificity: a file path / command is more telling than a bare dir.
+// A representative arg shown beside the tool name so a collapsed call is identifiable.
 export function summarizeArgs(args: Record<string, unknown>): string {
   for (const key of ['query', 'url', 'path', 'command', 'message', 'id', 'q']) {
     const v = args[key]
@@ -11,9 +9,8 @@ export function summarizeArgs(args: Record<string, unknown>): string {
   return ''
 }
 
-// previewLine collapses to a single-line preview for thinking blocks (#385),
-// now preferring sentence boundaries (#959) to avoid mid-word cuts in folded
-// blocks. Markdown markup is stripped first: the expanded view renders it, so a collapsed row showing "## **May**" reads as noise.
+// Prefers sentence boundaries to avoid mid-word cuts. Markdown is stripped because the expanded view
+// renders it, so a collapsed "## **May**" reads as noise.
 export function previewLine(text: string, max = 80): string {
   const oneLine = text
     .replace(/^[ \t]*(#{1,6}\s*|>\s?|[-*]\s+)/gm, '')
@@ -33,8 +30,7 @@ export function fmtTokenCount(n: number): string {
   return n >= 1000 ? `${Math.round(n / 1000)}K` : String(n)
 }
 
-// TOOL_VERBS labels the compact live-status line's tool call (#725) with a
-// present-participle verb; anything unmapped just shows its raw name.
+// Present-participle verbs for the live-status line; unmapped tools show their raw name.
 const TOOL_VERBS: Record<string, string> = {
   edit_file: 'editing', write_file: 'writing', read_file: 'reading', delete_path: 'deleting',
   run_command: 'running', list_dir: 'listing', glob: 'searching', grep: 'searching',
@@ -50,9 +46,7 @@ export function toolActionLine(name: string, args: Record<string, unknown>): str
   return target ? `${verb} ${target}` : verb
 }
 
-// toolFailed reports whether a completed tool call's result carries an error -
-// the compact summary line's status icon (cross vs check, #385) keys off this rather
-// than any particular tool's own result shape.
+// Keys the summary line's cross/check icon off a generic error field, not any tool's own result shape.
 export function toolFailed(result: unknown): boolean {
   return !!(result && typeof result === 'object' && 'error' in (result as Record<string, unknown>))
 }
@@ -66,7 +60,6 @@ export function prettyJSON(v: unknown): string {
   }
 }
 
-// str reads a string field off a loosely-typed args/result bag, or undefined.
 export function str(bag: unknown, key: string): string | undefined {
   if (bag && typeof bag === 'object') {
     const v = (bag as Record<string, unknown>)[key]
@@ -75,7 +68,6 @@ export function str(bag: unknown, key: string): string | undefined {
   return undefined
 }
 
-// num reads a number field off a loosely-typed args/result bag, or undefined.
 export function num(bag: unknown, key: string): number | undefined {
   if (bag && typeof bag === 'object') {
     const v = (bag as Record<string, unknown>)[key]
@@ -84,7 +76,6 @@ export function num(bag: unknown, key: string): number | undefined {
   return undefined
 }
 
-// bool reads a boolean field off a loosely-typed args/result bag, or undefined.
 export function bool(bag: unknown, key: string): boolean | undefined {
   if (bag && typeof bag === 'object') {
     const v = (bag as Record<string, unknown>)[key]
@@ -98,9 +89,7 @@ export function bool(bag: unknown, key: string): boolean | undefined {
 type DiffType = 'add' | 'remove' | 'context' | 'meta'
 export interface DiffLine { type: DiffType; text: string }
 
-// lineDiff computes a minimal line-level diff of old → new via an LCS walk -
-// the flagship of edit_file rendering: the tool's `old`/`new` strings become
-// a before→after diff (removed red, added green). Deterministic and dependency-free - no diff library. Empty inputs yield no lines.
+// Minimal line diff via an LCS walk, deliberately without a diff library. Empty inputs yield no lines.
 export function lineDiff(oldStr: string, newStr: string): DiffLine[] {
   if (oldStr === '' && newStr === '') return []
   const a = oldStr.split('\n')
@@ -135,9 +124,7 @@ export function lineDiff(oldStr: string, newStr: string): DiffLine[] {
   return out
 }
 
-// parseUnifiedDiff classifies the lines of a git-style unified diff string so
-// git_diff renders coloured instead of as a raw blob. Leading +/- mark add/remove
-// (but +++/--- file headers and @@ hunks are meta); everything else is context.
+// Leading +/- mark add/remove, but +++/--- file headers and @@ hunks are meta; everything else is context.
 export function parseUnifiedDiff(diff: string): DiffLine[] {
   if (!diff) return []
   return diff.split('\n').map((text): DiffLine => {

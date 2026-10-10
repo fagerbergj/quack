@@ -5,9 +5,7 @@ import { useDrawer } from '../hooks/useDrawer'
 import { serverVersion } from '../state/clientConfig'
 import { Icon, ICON_NAMES, type IconName } from './Icon'
 
-// displayVersion normalizes a raw build version for display: "dev" stays
-// "dev", anything else gets exactly one leading "v" (never "vv0.51.26" if
-// the stamped value already carries one).
+// "dev" stays "dev"; anything else gets exactly one leading "v", even if the stamped value has one.
 export function displayVersion(v: string): string {
   if (v === 'dev') return v
   return v.startsWith('v') ? v : `v${v}`
@@ -24,16 +22,14 @@ export interface NavRailProps {
   // Storybook/test seam: overrides the version footer instead of reading
   // the live clientConfig singleton (which resolves async off GET /api/v1/config).
   versionOverride?: string
-  // #1171: whether the drawer is open - the only shape the nav has. false
-  // renders nothing (zero DOM, zero layout weight); true mounts the fixed
-  // overlay at every viewport width. App.tsx owns the state; the drawer remembers nothing (always closed on load, no localStorage).
+  // false renders nothing; true mounts the overlay at every width. App.tsx owns the state, and nothing is
+  // persisted, so the drawer is always closed on load.
   open: boolean
   onClose: () => void
 }
 
-// The app's navigation drawer (#1171): Chats and Memory as peers plus the
-// extensions' own routes, in an off-canvas overlay at every width (the #1145
-// overlay, now unpinned) - the persistent rail, 40px collapsed strip, navRailCollapsed key and collapse toggle are gone, and with them the second hamburger glyph (#1175). Opens from the NavToggle in each page's header leading slot; closes on item selection, backdrop tap, the close button, or Esc (focus trap, scroll lock, focus-return from useDrawer).
+// Off-canvas drawer at every width. Closes on item selection, backdrop tap, the close button or Esc;
+// useDrawer supplies the focus trap, scroll lock and focus return.
 export function NavRail({ route, activeExtension, initialExtensions, versionOverride, open, onClose }: NavRailProps) {
   const [extensions, setExtensions] = useState<ExtensionInfo[]>(initialExtensions ?? [])
   const version = versionOverride ?? serverVersion()
@@ -54,9 +50,7 @@ export function NavRail({ route, activeExtension, initialExtensions, versionOver
     }
   }, [initialExtensions])
 
-  // An extension with no UI descriptor has nowhere to navigate to - an inert
-  // entry is just noise in a nav drawer, so it's dropped entirely rather
-  // than shown unclickable.
+  // An extension with no UI descriptor has nowhere to navigate, so it is dropped rather than shown inert.
   const linkedExtensions = extensions.filter(ext => !!ext.href)
 
   const drawerPanelRef = useDrawer(open, onClose)
@@ -139,9 +133,8 @@ function NavItem({
   )
 }
 
-// Extension icon from its own UI descriptor (ExtensionInfo.icon, which still
-// accepts any string): a known Material icon name renders as that icon; an
-// inline <svg> renders as raw SVG (dangerouslySetInnerHTML - the extension registry is trusted, same trust boundary as its href/title); anything else (including a raw emoji, the legacy shape) falls back to the generic "extension" glyph. Extensions should migrate to Material icon names.
+// Inline <svg> is injected raw because the extension registry is trusted (same boundary as its href/title);
+// anything not a known icon name or SVG, such as an emoji, falls back to the generic glyph.
 const warnedUnknownIcons = new Set<string>()
 
 function extensionIcon(ext: ExtensionInfo): ReactNode {
@@ -159,9 +152,8 @@ function extensionIcon(ext: ExtensionInfo): ReactNode {
   return <Icon name="extension" className="w-4 h-4" />
 }
 
-// Navigates client-side to this app's own /ext/:name host page (#870,
-// ExtensionHost) rather than a real <a href> - that would leave the SPA
-// behind. The extension's own server route is still reachable directly; this is purely an in-app wrapper. Only href-bearing extensions ever reach this component - see linkedExtensions.
+// Navigates client-side to the /ext/:name host page; a real <a href> would leave the SPA.
+// Only href-bearing extensions reach this (see linkedExtensions).
 function ExtensionNavItem({ ext, active, onNavigate }: { ext: ExtensionInfo; active: boolean; onNavigate?: () => void }) {
   const label = ext.title ?? ext.name
   return (

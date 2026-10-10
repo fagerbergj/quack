@@ -34,9 +34,7 @@ export const SearchResult: Story = {
   args: { memory: { ...REPO_FACT, id: 's1', score: 0.87 } },
 }
 
-// The three lifecycle tiers (design doc §3/§8 step 6). A missing status
-// (Default, above) reads as unverified - a memory minted before the field
-// existed - so it isn't restated as its own story.
+// The three lifecycle tiers. A missing status (Default, above) reads as unverified, so it has no story.
 export const Reinforced: Story = {
   args: { memory: { ...REPO_FACT, id: 'r1', status: 'reinforced', reinforcement_count: 3 } },
 }
@@ -72,7 +70,7 @@ export const LongContent: Story = {
   },
 }
 
-// Verified tier (upvotes >= 1) plus recall/last-upvote metadata (epic #1255 P4).
+// Verified tier (upvotes >= 1) plus recall/last-upvote metadata.
 export const VerifiedWithRecalls: Story = {
   args: {
     memory: {
@@ -89,25 +87,21 @@ export const VerifiedWithRecalls: Story = {
   },
 }
 
-// A consolidation merge absorbed other memories into this one (epic #1255
-// P5) - a purple "merged ×N" chip, id list on hover.
+// A consolidation merge absorbed other memories into this one: a "merged ×N" chip, id list on hover.
 export const WithAbsorbedLineage: Story = {
   args: {
     memory: { ...REPO_FACT, id: 'm1', tier: 'verified', upvotes: 2, vote_score: 2, absorbed_ids: ['dup-1', 'dup-2'] },
   },
 }
 
-// The caller's own upvote is highlighted (epic #1255 P4) - the accent color
-// on the up arrow, not a separate badge.
+// The caller's own upvote shows as the accent color on the up arrow, not a separate badge.
 export const OwnVoteActive: Story = {
   args: {
     memory: { ...REPO_FACT, id: 'ov1', tier: 'verified', upvotes: 2, vote_score: 2, own_vote: 'up' },
   },
 }
 
-// #1266 regression check: one tier chip (not a duplicate "unverified"), the
-// author/node-id pill neutral rather than hash-red, vote control reachable
-// below the text, no horizontal overflow at 390px.
+// One tier chip, a neutral author pill rather than hash-red, and no horizontal overflow at 390px.
 export const MobileViewport: Story = {
   args: { memory: { ...REPO_FACT, author: 'review-new-commits', tier: 'verified', upvotes: 2, vote_score: 2 } },
   parameters: { layout: 'fullscreen' },

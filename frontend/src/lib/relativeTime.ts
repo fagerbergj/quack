@@ -1,6 +1,5 @@
-// Coarse "3h ago"-style label for a memory's last-upvote/last-recall
-// timestamps (epic #1255 P4) - no i18n library pulled in for a handful of
-// buckets (Intl.RelativeTimeFormat would be the upgrade if this ever needs locale-correct pluralization/language).
+// Coarse "3h ago" label for memory upvote/recall timestamps; no i18n library for a handful of buckets.
+// Intl.RelativeTimeFormat is the upgrade if this needs locale-correct pluralization.
 export function relativeTime(iso: string | undefined): string | null {
   if (!iso) return null
   const then = new Date(iso).getTime()

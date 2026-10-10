@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { act, createElement } from 'react'
-import { createRoot } from 'react-dom/client'
+import { createElement } from 'react'
+import { act, cleanup, render } from '@testing-library/react'
 import Plugins from './Plugins'
 import { client } from '../generated/client.gen'
+
+afterEach(cleanup)
 
 // Node's fetch/Request refuses to build a Request from a relative URL - see
 // MemoryTab.test.ts for why baseUrl is set here.
@@ -39,9 +41,7 @@ const ROW2 = {
   installed_sha: '0a4dd63ad4541f4f655c4108a295916f3c1d8fd',
 }
 
-// Routes each fetch by method+path substring to a queue of canned responses,
-// so a test only has to set up the endpoints it actually cares about -
-// list/updates/create/delete/update all interleave in one page.
+// Routes each fetch by method+path substring so a test sets up only the endpoints it cares about.
 function routedFetch(routes: Record<string, Array<Response | Promise<Response>>>) {
   return vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
@@ -59,29 +59,19 @@ function routedFetch(routes: Record<string, Array<Response | Promise<Response>>>
 }
 
 describe('Plugins', () => {
-  let root: ReturnType<typeof createRoot> | undefined
-  let host: HTMLDivElement | undefined
+  let host: HTMLElement | undefined
 
   beforeEach(() => {
-    // @ts-expect-error react act environment flag
-    globalThis.IS_REACT_ACT_ENVIRONMENT = true
     vi.stubGlobal('confirm', vi.fn(() => true))
   })
 
   afterEach(() => {
-    act(() => root?.unmount())
-    host?.remove()
-    root = undefined
-    host = undefined
     vi.unstubAllGlobals()
   })
 
   async function renderAndFlush() {
-    host = document.createElement('div')
-    document.body.appendChild(host)
-    root = createRoot(host)
+    host = render(createElement(Plugins, { navOpen: false, onToggleNav: () => {} })).container
     await act(async () => {
-      root!.render(createElement(Plugins, { navOpen: false, onToggleNav: () => {} }))
       await new Promise(resolve => setTimeout(resolve, 0))
     })
   }
@@ -115,9 +105,7 @@ describe('Plugins', () => {
 
     const input = host!.querySelector('input[aria-label="Plugin entry"]') as HTMLInputElement
     const form = host!.querySelector('form') as HTMLFormElement
-    // Goes through the native setter (bypassing React's value tracker) so the
-    // 'input' event is seen as a real change - setting .value directly is a
-    // no-op from React's perspective (see Chat.test.ts's setInputValue).
+    // Uses the native setter so React's value tracker sees the 'input' event as a real change.
     const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!
     await act(async () => {
       setter.call(input, 'bad')
@@ -192,8 +180,6 @@ describe('Plugins', () => {
     })).toBe(false)
   })
 
-  // severe#3 regression: a failed action must not blank the list that
-  // already loaded fine.
   it('shows a DELETE failure as a banner without hiding the other rows', async () => {
     vi.stubGlobal('fetch', routedFetch({
       'GET /plugins/updates': [jsonResponse({ updates: [] })],
@@ -212,8 +198,7 @@ describe('Plugins', () => {
     expect(host!.textContent).toContain('boom')
   })
 
-  // PR #1442 carry-over: DELETE succeeds but the silent post-action refresh
-  // then fails - the rows on screen must survive, surfaced as actionError.
+  // DELETE succeeds but the silent refresh fails: the rows must survive, surfaced as actionError.
   it('keeps the rows and shows actionError when a silent post-action refresh fails', async () => {
     vi.stubGlobal('fetch', routedFetch({
       'GET /plugins/updates': [jsonResponse({ updates: [] })],
@@ -233,8 +218,6 @@ describe('Plugins', () => {
       await new Promise(resolve => setTimeout(resolve, 0))
     })
 
-    // The DELETE succeeded, but the refresh it triggered failed - the rows
-    // from the first, successful GET must still be on screen.
     expect(host!.textContent).toContain('dotagents')
     expect(host!.textContent).toContain('ponytail')
     expect(host!.textContent).toContain('boom')

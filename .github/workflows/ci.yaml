@@ -154,16 +154,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
         working-directory: frontend
-      - run: npx tsc --noEmit
-        working-directory: frontend
-      - run: npx eslint src/
-        working-directory: frontend
-      - run: npm run check-stories
-        working-directory: frontend
-      - run: npm run check-no-emoji
-        working-directory: frontend
-      - run: npm run check-icons
-        working-directory: frontend
+      # eslint and check-* run in frontend-test's `npm run lint`; `npm run build` runs tsc.
       - run: npm run knip
         working-directory: frontend
       - run: npm run build
@@ -202,8 +193,6 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
         working-directory: frontend
-      # Lint (eslint incl. the CC-15 slop rule + the three content checks)
-      # was never gated in CI - it only ran locally.
       - run: npm run lint
         working-directory: frontend
       - run: npm test

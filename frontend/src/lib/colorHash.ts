@@ -1,10 +1,8 @@
-// Deterministic colour coding (#746 items 10/13): a repo badge or a memory
-// pill (bucket/author/kind) gets the same colour every time, derived from
-// its own label - not assignment order - so it survives a reload and is identical across chats. Colour is always paired with the label text; it is never the only signal (WCAG 1.4.1, and this tool's terminal-adjacent audience includes colour-blind readers).
+// Deterministic colour from a label (repo badge, memory pill), so it survives reloads and matches across chats.
+// Colour always pairs with the label text, never the only signal (WCAG 1.4.1).
 
-// A fixed, named palette - every class below is a literal string so
-// Tailwind's scanner generates the CSS; hashPalette only ever SELECTS one of
-// these, never constructs a class name at runtime. Each entry pairs a light and dark background with a same-hue text colour chosen for contrast.
+// Every class is a literal string so Tailwind's scanner emits it; hashPalette only selects, never builds class names.
+// Each entry pairs light/dark backgrounds with a same-hue, contrasting text colour.
 const PALETTE = [
   'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
   'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300',
@@ -17,6 +15,15 @@ const PALETTE = [
   'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300',
   'bg-pink-100 text-pink-700 dark:bg-pink-900/40 dark:text-pink-300',
 ] as const
+
+// Fixed tones for a named state rather than a hashed label; pair each with text or an icon.
+export const TONE = {
+  green: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400',
+  red: 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400',
+  purple: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400',
+  yellow: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-500',
+  gray: 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300',
+} as const
 
 // hashString is a small, deterministic (non-cryptographic) string hash - the
 // same input always maps to the same output, across reloads and sessions.
