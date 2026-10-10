@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -69,6 +68,7 @@ func (c *Client) CreateDatasetRunItem(ctx context.Context, req CreateDatasetRunI
 }
 
 // call sends one request, maps non-2xx to *APIError, and decodes a 2xx body into out when non-nil.
+// Unbounded on purpose: a dataset page can exceed the prompt client's maxOKBody.
 func (c *Client) call(ctx context.Context, method, path string, q url.Values, body, out any) (int, error) {
 	resp, err := c.do(ctx, method, path, q, body)
 	if err != nil {
@@ -79,7 +79,7 @@ func (c *Client) call(ctx context.Context, method, path string, q url.Values, bo
 		return resp.StatusCode, fmt.Errorf("langfuse: %s %s: %w", method, path, newAPIError(resp))
 	}
 	if out != nil {
-		if err := json.NewDecoder(io.LimitReader(resp.Body, maxOKBody)).Decode(out); err != nil {
+		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
 			return resp.StatusCode, markPermanent(fmt.Errorf("langfuse: decode %s: %w", path, err))
 		}
 	}

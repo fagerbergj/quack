@@ -48,7 +48,8 @@ func Build(b *Bundle, prompts *artifactsrc.Pinned, m model.LLM, tools []tool.Too
 	return llmagent.New(cfg)
 }
 
-// BuildChat is Build for a runner-root agent with no steer queue or prompt meter.
+// BuildChat is Build for a runner-root agent with no steer queue or prompt meter. Mode stays unset: adk
+// v2.4.0 resolves a root to chat in ctx without writing the shared agent (older versions raced on that write).
 func BuildChat(b *Bundle, prompts *artifactsrc.Pinned, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, memoryGuidance string, grading string) (adkagent.Agent, error) {
 	return Build(b, prompts, m, tools, toolsets, memoryGuidance, grading, nil, nil)
 }
