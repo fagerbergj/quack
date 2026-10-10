@@ -8,9 +8,8 @@ import (
 	"github.com/fagerbergj/quack/internal/dag"
 )
 
-// A retry re-runs a node that already completed with a trace id from the
-// earlier run. node_start owns the column, so an empty id from a span-less
-// retry must CLEAR the stale one - a preserved id renders a deep link to the wrong execution, which reads as correct in the UI.
+// A retry re-runs a node that has an earlier run's trace id. node_start owns the column, so a span-less retry's
+// empty id must clear it: a stale id deep-links to the wrong execution.
 func TestUpsertDagNode_NodeStartOwnsTraceID(t *testing.T) {
 	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {

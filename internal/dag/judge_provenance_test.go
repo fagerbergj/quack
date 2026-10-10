@@ -21,10 +21,8 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// TestRunPlanAsGraph_JudgePromptProvenance pins #1420's split: a judge round
-// runs on system/judge, so its llm.call records THAT artifact's version, while
-// bundle.hash stays the worker's - whose answer is under review. The worker's
-// own rows keep the worker's prompt version.
+// A judge round records system/judge's prompt version while bundle.hash stays the
+// worker's; the worker's own rows keep the worker's prompt version.
 func TestRunPlanAsGraph_JudgePromptProvenance(t *testing.T) {
 	capExp := &ledgerCaptureExporter{}
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
@@ -40,7 +38,7 @@ func TestRunPlanAsGraph_JudgePromptProvenance(t *testing.T) {
 		wantWorkerPrompt = "workerpromptv1"
 	)
 
-	stub := ledgerCoordsStub{}
+	stub := dateToolLLM("today's date, as reported by the tool, is noted")
 	// Separate instances: SetLedgerCoords mutates the wrapper, so one shared
 	// model would leave the judge round reading the worker round's last stamp.
 	workerModel := inference.TracedModelForTesting(stub, "lc-worker-model")
@@ -109,7 +107,7 @@ func TestRunPlanAsGraph_JudgePromptProvenance(t *testing.T) {
 	if got := judgeAttrs["quack.bundle.hash"]; got != wantBundle {
 		t.Errorf("judge quack.bundle.hash = %q, want the worker's %q - whose answer is under review", got, wantBundle)
 	}
-	// #1422 N3: a typo in the attribute key must not silently disable pinning.
+	// A typo in the attribute key must not silently disable pinning.
 	if got := judgeAttrs["quack.prompt.artifact"]; got != "system/judge" {
 		t.Errorf("judge quack.prompt.artifact = %q, want %q", got, "system/judge")
 	}

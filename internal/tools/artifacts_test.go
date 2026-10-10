@@ -1,6 +1,3 @@
-// artifacts_test.go: happy-path coverage for the ADK-native artifact tool
-// wrappers (mirrors internal/acp/artifact_tools_test.go's MCP-path coverage;
-// #1091 adversarial review finding #2).
 package tools
 
 import (
@@ -25,9 +22,7 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// fakeLedger: minimal in-memory ledger.LedgerStore double (mirrors
-// internal/recordstore's own test copy) so a write_<kind> test can prove
-// parent_revision without a database (#1153).
+// fakeLedger: in-memory ledger.LedgerStore so a write_<kind> test can prove parent_revision without a database.
 type fakeLedger struct {
 	mu      sync.Mutex
 	seqs    map[string]int64
@@ -69,9 +64,8 @@ func (f *fakeLedger) ReadEntries(_ context.Context, chatID string, fromSeq int64
 	return out, nil
 }
 
-// metaAwareInMemory implements the optional SaveWithMeta/LoadWithMeta pair
-// over artifact.InMemoryService() so a test can read back real lineage
-// without a database (production wraps a TurnAwareService; plain InMemoryService is a known zero-lineage ceiling).
+// metaAwareInMemory adds SaveWithMeta/LoadWithMeta over artifact.InMemoryService(), which drops lineage,
+// so a test can read real lineage back without a database.
 type metaAwareInMemory struct {
 	artifact.Service
 	mu   sync.Mutex
@@ -107,8 +101,7 @@ func (m *metaAwareInMemory) LoadWithMeta(ctx context.Context, req *artifact.Load
 	return resp, "", "", m.meta[metaKey(req.AppName, req.UserID, req.SessionID, req.FileName)], nil
 }
 
-// artifactsToolCtx: fakeCtx plus the ToolConfirmation stub functiontool.Run
-// requires (mirrors check_mermaid_test.go's checkMermaidToolCtx).
+// artifactsToolCtx: fakeCtx plus the ToolConfirmation stub functiontool.Run requires.
 type artifactsToolCtx struct{ *fakeCtx }
 
 func (artifactsToolCtx) ToolConfirmation() *toolconfirmation.ToolConfirmation { return nil }
@@ -183,9 +176,8 @@ func TestNewEditArtifactTool_DirectApply(t *testing.T) {
 	}
 }
 
-// TestNewWriteKindTools_EveryKindRegistersWithoutError: ADK-native mirror of
-// acp's TestArtifactWriteToolsMCP_EveryKindRegistersWithoutWarning - every
-// recordstore.Kinds() entry must yield a write_<kind> tool; a failure would mean an un-guarded schema check was reintroduced (#1108 finding 3).
+// TestNewWriteKindTools_EveryKindRegistersWithoutError: every recordstore.Kinds() entry must yield a
+// write_<kind> tool; a failure means an unguarded schema check.
 func TestNewWriteKindTools_EveryKindRegistersWithoutError(t *testing.T) {
 	rc := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat-a")
 	toolsList, err := NewWriteKindTools(rc, "n1", &RoundCoords{}, "")
@@ -214,9 +206,7 @@ func TestNewWriteKindTools_EveryKindRegistersWithoutError(t *testing.T) {
 	}
 }
 
-// TestWriteArtifactDescription_ListsBlobKinds: the write_artifact tool
-// description must name every registered blob kind (#1108 B1 - Kinds() used
-// to return structured kinds only, so this list silently rendered empty).
+// TestWriteArtifactDescription_ListsBlobKinds: the description must name every registered blob kind.
 func TestWriteArtifactDescription_ListsBlobKinds(t *testing.T) {
 	desc := writeArtifactDescription()
 	blobKinds := recordstore.KindsForClass(recordstore.Blob)
@@ -288,9 +278,8 @@ func TestEditArtifact_RejectsSystemKind(t *testing.T) {
 	}
 }
 
-// TestNewEditArtifactTool_ConflictIsStructuredSuccess: a real conflict is a
-// structured success, not a tool error; pins the JSON payload shape with the
-// same field names as the MCP surface's editConflictResult so the surfaces can't drift (#1108 finding 3).
+// TestNewEditArtifactTool_ConflictIsStructuredSuccess: a real conflict is a structured success, with the
+// same field names as the MCP surface's editConflictResult so the surfaces can't drift.
 func TestNewEditArtifactTool_ConflictIsStructuredSuccess(t *testing.T) {
 	svc := artifact.InMemoryService()
 	rc := recordstore.New(svc, "quack", "u1", "chat-a")
@@ -332,9 +321,8 @@ func TestNewEditArtifactTool_ConflictIsStructuredSuccess(t *testing.T) {
 	}
 }
 
-// TestNewWriteKindTool_WriteCodeReviewUsesSessionHint: ADK-native mirror of
-// acp's TestWriteCodeReviewMCP_UsesSessionSubjectHint (#1108 finding 1) -
-// write_code_review succeeds with the session-derived hint, minting exactly the id from requireHint + vetting.SubjectHint.
+// TestNewWriteKindTool_WriteCodeReviewUsesSessionHint: write_code_review succeeds with the session-derived
+// hint, minting exactly the id from requireHint + vetting.SubjectHint.
 func TestNewWriteKindTool_WriteCodeReviewUsesSessionHint(t *testing.T) {
 	svc := artifact.InMemoryService()
 	chatID := "ext:github:github-owner-repo-42"
@@ -374,9 +362,8 @@ func TestNewWriteKindTool_WriteCodeReviewUsesSessionHint(t *testing.T) {
 	}
 }
 
-// TestNewWriteArtifactTool_HintRequiringAndHintOptionalKinds: ADK-native mirror of
-// TestWriteArtifactMCP_HintRequiringKind (#1108 finding 2) - a hint-requiring
-// blob kind (document) uses the session hint; a hint-optional kind (text) keeps its content-hash id.
+// A hint-requiring blob kind (document) uses the session hint; a hint-optional kind (text) keeps its
+// content-hash id.
 func TestNewWriteArtifactTool_HintRequiringAndHintOptionalKinds(t *testing.T) {
 	svc := artifact.InMemoryService()
 	chatID := "ext:github:github-owner-repo-7"
@@ -417,9 +404,8 @@ func TestNewWriteArtifactTool_HintRequiringAndHintOptionalKinds(t *testing.T) {
 	}
 }
 
-// TestNewEditArtifactTool_RoundCoordsRestampBetweenRounds: a native gated node's
-// tools are built once, before its judge/revise loop starts (#1123); the gate restamps
-// the shared *RoundCoords pointer, so a round-2 edit must carry round 2's trigger_annotation (the prior round's judge_round id), not round 1's.
+// A native gated node's tools are built once before its judge/revise loop; the gate restamps the shared
+// *RoundCoords, so a round-2 edit must carry round 2's trigger_annotation, not round 1's.
 func TestNewEditArtifactTool_RoundCoordsRestampBetweenRounds(t *testing.T) {
 	svc := newMetaAwareInMemory()
 	rc := recordstore.New(svc, "quack", "u1", "chat-a")
@@ -438,8 +424,6 @@ func TestNewEditArtifactTool_RoundCoordsRestampBetweenRounds(t *testing.T) {
 		t.Fatal("edit_artifact tool is not runnable")
 	}
 
-	// Gate restamps for round 2, same as newGatedNode's cfg.RoundCoordsSink
-	// would on the second judge/revise round.
 	*coords = RoundCoords{Round: 2, TurnID: "turn-1", HeadSHA: "deadbeef", TriggerAnnotation: "judge-r1"}
 
 	out, err := rt.Run(newArtifactsToolCtx(), map[string]any{
@@ -472,8 +456,7 @@ func TestNewEditArtifactTool_RoundCoordsRestampBetweenRounds(t *testing.T) {
 	}
 }
 
-// findKindSpec looks up spec by name from recordstore.Kinds() - avoids
-// importing internal/vetting just for its unexported kind constants.
+// findKindSpec avoids importing internal/vetting just for its unexported kind constants.
 func findKindSpec(t *testing.T, name string) (recordstore.KindSpec, error) {
 	t.Helper()
 	for _, spec := range recordstore.Kinds() {
@@ -485,9 +468,8 @@ func findKindSpec(t *testing.T, name string) (recordstore.KindSpec, error) {
 	return recordstore.KindSpec{}, nil
 }
 
-// TestNewWriteKindTool_ParentRevisionChain: write_<kind> (and write_artifact)
-// build their Lineage with no ParentRevision (#1153); recordstore.save fills it
-// only from the store's latest revision when WithLedger-armed - two tool saves must chain revision 2 to revision 1, in the returned lineage and the WAL's artifact.revision intent (fold's oracle, epic #1090 item 1.5).
+// TestNewWriteKindTool_ParentRevisionChain: tool saves leave ParentRevision unset and recordstore.save fills it
+// from the latest revision, so two saves chain revision 2 to 1 in the lineage and the ledger intent.
 func TestNewWriteKindTool_ParentRevisionChain(t *testing.T) {
 	svc := newMetaAwareInMemory()
 	fl := newFakeLedger()
@@ -514,8 +496,7 @@ func TestNewWriteKindTool_ParentRevisionChain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Same id, different body: a real second revision, not a no-op
-	// identical-content match (the ledger's IdempotencyKey, #1123/#1144 P4).
+	// Same id, different body: a real second revision, not an identical-content no-op.
 	args2 := map[string]any{"path": "a.go", "title": "leaked resource", "state": "resolved"}
 	out2, err := rt.Run(newArtifactsToolCtx(), args2)
 	if err != nil {
@@ -561,8 +542,6 @@ func TestNewWriteKindTool_ParentRevisionChain(t *testing.T) {
 	}
 }
 
-// storeWebPageArtifact saves content as a web_page artifact of rc's chat, for
-// grep_artifacts/read_artifact window tests.
 func storeWebPageArtifact(t *testing.T, rc *recordstore.Client, url, content string) string {
 	t.Helper()
 	id, _, err := rc.SaveBlob(context.Background(), kindWebPage, []byte(content), "text/markdown", url,
@@ -676,7 +655,6 @@ func TestReadArtifactTool_OffsetLinesWindow(t *testing.T) {
 		t.Fatalf("windowed result = %q, leaked lines outside the window", result)
 	}
 
-	// No offset/lines: unchanged whole-content behavior.
 	full, err := rt.Run(newArtifactsToolCtx(), map[string]any{"id": id})
 	if err != nil {
 		t.Fatal(err)

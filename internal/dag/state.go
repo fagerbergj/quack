@@ -92,9 +92,8 @@ const (
 	PauseAwaitingInput PauseReason = "awaiting_input" // HITL: the worker asked the user something
 )
 
-// IsPaused reports whether a persisted status means "suspended, resumable".
-// StatusNeedsInput is the legacy wire spelling of paused/awaiting_input; the
-// REST surface still emits it, so both spellings answer here.
+// IsPaused reports whether a persisted status means "suspended, resumable". StatusNeedsInput, the
+// legacy wire spelling of paused/awaiting_input, is still emitted by REST, so both answer here.
 func IsPaused(s NodeStatus) bool { return s == StatusPaused || s == StatusNeedsInput }
 
 // IsTerminal reports a finished node: done, failed or cancelled.

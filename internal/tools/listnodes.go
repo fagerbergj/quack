@@ -14,29 +14,21 @@ import (
 
 type listNodesArgs struct{}
 
-// nodeSummary is one entry of list_nodes' response.
 type nodeSummary struct {
 	NodeID    string `json:"node_id"`
 	Agent     string `json:"agent"`
 	Status    string `json:"status"`
 	ContextID string `json:"context_id,omitempty"`
 	LastTask  string `json:"last_task,omitempty"`
-	// LastTaskID: the A2A task_id execute recorded for this node's current
-	// assignment (dag.Assignment.TaskID) - lets a caller correlate this
-	// dispatch with its A2A task without re-deriving it.
+	// LastTaskID: the A2A task_id execute recorded for the current assignment.
 	LastTaskID string   `json:"last_task_id,omitempty"`
 	Artifacts  []string `json:"artifacts,omitempty"`
-	// Resumable: true when naming this node_id in create_plan/edit_plan
-	// continues its own session with the new task as its next turn, instead
-	// of a "currently running"/"hasn't run yet" rejection. Reason always says why (or why not).
+	// Resumable: reassigning this node_id continues its session with the new task. Reason says why (not).
 	Resumable bool   `json:"resumable"`
 	Reason    string `json:"reason"`
 }
 
-// NewListNodesTool: this chat's nodes - people already hired to do an
-// agent's job, with id, agent, live status, A2A context_id, the first line
-// of their latest assignment, the artifacts they've written, and whether
-// reassigning them resumes their own session. nodeIsRunning is nil-safe.
+// NewListNodesTool: nodeIsRunning may be nil.
 func NewListNodesTool(c *recordstore.Client, nodeIsRunning func(nodeID string) bool) (tool.Tool, error) {
 	return functiontool.New[listNodesArgs, string](
 		functiontool.Config{
@@ -71,7 +63,7 @@ func buildNodeSummaries(ctx context.Context, c *recordstore.Client, nodeIsRunnin
 	}
 	lastTask := map[string]string{}
 	lastTaskID := map[string]string{}
-	if plan, _, ok, _ := loadDagPlan(ctx, c); ok {
+	if plan, ok, _ := loadDagPlan(ctx, c); ok {
 		for _, a := range plan.Assignments {
 			lastTask[a.NodeID] = firstLine(a.Task)
 			lastTaskID[a.NodeID] = a.TaskID

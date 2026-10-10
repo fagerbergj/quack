@@ -22,8 +22,7 @@ type summarizeArgs struct {
 	Focus string `json:"focus,omitempty"`
 }
 
-// newSummarize builds the summarize tool, which calls a model to condense text.
-// It lets the researcher compress fetched pages before reasoning over them.
+// newSummarize lets the researcher compress fetched pages before reasoning over them.
 func newSummarize(d Deps) (tool.Tool, error) {
 	if d.Summarizer == nil {
 		return nil, fmt.Errorf("summarize requires a model")

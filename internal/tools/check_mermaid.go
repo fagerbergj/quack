@@ -14,9 +14,7 @@ type checkMermaidArgs struct {
 	Diagram string `json:"diagram" jsonschema:"one mermaid diagram's source, without the surrounding fence"`
 }
 
-// newCheckMermaid builds check_mermaid: pre-flight validation against the SAME
-// mermaid parser the delivery gate runs (vetting.CheckMermaid), so passing the
-// tool means the gate's mermaid_valid criterion passes - no regenerate-the-answer cycle burned on a syntax error.
+// newCheckMermaid runs the gate's own parser (vetting.CheckMermaid), so a pass here means mermaid_valid passes.
 func newCheckMermaid(_ Deps) (tool.Tool, error) {
 	return functiontool.New[checkMermaidArgs, string](
 		functiontool.Config{

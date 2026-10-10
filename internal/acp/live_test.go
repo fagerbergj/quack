@@ -12,10 +12,8 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// TestLive_PiRound drives one REAL pi-acp round (tools/pi-acp/pi-acp.mjs
-// driving pi) against a live OpenAI-compatible endpoint - the smoke harness
-// for the integration, not a CI test. Run it by hand:
-// QUACK_ACP_LIVE=1 QUACK_LLM_ENDPOINT=http://host:port/v1 QUACK_CODER_MODEL=qwen3-coder-next go test ./internal/acp/ -run TestLive_PiRound -v -timeout 10m
+// TestLive_PiRound drives one real pi-acp round against a live OpenAI-compatible endpoint; a hand-run smoke test:
+// QUACK_ACP_LIVE=1 QUACK_LLM_ENDPOINT=<url>/v1 QUACK_CODER_MODEL=<model> go test ./internal/acp -run TestLive_PiRound -v
 func TestLive_PiRound(t *testing.T) {
 	if os.Getenv("QUACK_ACP_LIVE") == "" {
 		t.Skip("live test: set QUACK_ACP_LIVE=1 (needs node, pi, and a live endpoint on PATH)")

@@ -14,10 +14,8 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// versionedMetaInMemory implements recordstore's optional SaveWithMeta/
-// LoadWithMeta over artifact.InMemoryService(), keyed by (id, version) - a
-// production Postgres-backed store keeps a past revision's own lineage, which
-// this stands in for so DependencyArtifact's per-revision scan is actually exercised.
+// versionedMetaInMemory adds SaveWithMeta/LoadWithMeta keyed by (id, version), standing in
+// for a store that keeps each revision's lineage so the per-revision scan is exercised.
 type versionedMetaInMemory struct {
 	artifact.Service
 	mu   sync.Mutex
@@ -83,9 +81,7 @@ func depPlan(depArtifact, depAgent string) Plan {
 	}
 }
 
-// TestBuildTask_AppendsDependencyArtifactAfterTheAnswer pins prod chat
-// effc2636: a researcher answered "fixed in artifact revision 3", and its
-// dependent must see BOTH that answer AND the full document, appended, not swapped for it.
+// A dependent must see both the dep's answer and its full artifact, appended.
 func TestBuildTask_AppendsDependencyArtifactAfterTheAnswer(t *testing.T) {
 	svc := newVersionedMetaInMemory()
 	c := recordstore.New(svc, artifactref.AppName, "u1", "chat1")
@@ -108,10 +104,8 @@ func TestBuildTask_AppendsDependencyArtifactAfterTheAnswer(t *testing.T) {
 	}
 }
 
-// TestBuildTask_SiblingsSharingAnAgentEachGetTheirOwnArtifact pins the #1504
-// review's blocker: the typed kind's id is chat-scoped, so two sibling
-// researcher nodes writing "document" collide on the same id - buildTask must
-// still give each dependent only ITS OWN dep's artifact.
+// The typed kind's id is chat-scoped, so sibling nodes writing "document" collide;
+// each dependent must still get only its own dep's artifact.
 func TestBuildTask_SiblingsSharingAnAgentEachGetTheirOwnArtifact(t *testing.T) {
 	svc := newVersionedMetaInMemory()
 	c := recordstore.New(svc, artifactref.AppName, "u1", "chat1")
@@ -138,9 +132,7 @@ func TestBuildTask_SiblingsSharingAnAgentEachGetTheirOwnArtifact(t *testing.T) {
 	}
 }
 
-// TestBuildTask_NewerTurnBeatsAnOlderTurnsHigherRound: the text:<dep> id is
-// chat-scoped across every turn, not just this one - an earlier turn's round
-// 8 must never outrank this turn's round 1.
+// text:<dep> is chat-scoped across turns: an earlier turn's round 8 never outranks this turn's round 1.
 func TestBuildTask_NewerTurnBeatsAnOlderTurnsHigherRound(t *testing.T) {
 	svc := newVersionedMetaInMemory()
 	c := recordstore.New(svc, artifactref.AppName, "u1", "chat1")
@@ -197,9 +189,8 @@ func TestBuildTask_KeepsAnswerWhenNoArtifact(t *testing.T) {
 	}
 }
 
-// TestBuildTask_CapTruncatesWithReadArtifactMarker proves an oversized
-// artifact is capped to the dependent node's own budget, with a trailing
-// marker naming the id so the node can read_artifact the rest.
+// An oversized artifact is capped to the dependent's budget with a marker naming the
+// id, so the node can read_artifact the rest.
 func TestBuildTask_CapTruncatesWithReadArtifactMarker(t *testing.T) {
 	svc := newVersionedMetaInMemory()
 	c := recordstore.New(svc, artifactref.AppName, "u1", "chat1")
@@ -246,10 +237,8 @@ func TestBuildTask_BudgetExhaustedByAnEarlierDependencyAppendsNothingMore(t *tes
 	}
 }
 
-// TestBuildTask_HeaderAndMarkerBytesCountTowardBudget: dep-a's content alone
-// fits under the budget (so appendDependencyArtifact never truncates it), but
-// its header text pushes the actual bytes spent over budget - dep-b must get
-// nothing once that overspend is counted.
+// Header bytes count toward the budget: dep-a's content fits alone but its header
+// overspends, so dep-b gets nothing.
 func TestBuildTask_HeaderAndMarkerBytesCountTowardBudget(t *testing.T) {
 	svc := newVersionedMetaInMemory()
 	c := recordstore.New(svc, artifactref.AppName, "u1", "chat1")

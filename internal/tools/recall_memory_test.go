@@ -42,9 +42,8 @@ func (c echoToolConsolidator) GenerateContent(_ context.Context, _ *model.LLMReq
 	}
 }
 
-// TestNewRecallMemory_LogsLedgerEntryWithCoords covers epic #1255 P2's
-// native-worker verification: a call appends one memory.recall ledger entry
-// with source "tool" and the coords ledger.StampCoords restamped onto the tool after Build (dag/graph.go), not the zero value.
+// TestNewRecallMemory_LogsLedgerEntryWithCoords: a call appends one memory.recall entry with
+// source "tool" and the coords StampCoords set after Build, not the zero value.
 func TestNewRecallMemory_LogsLedgerEntryWithCoords(t *testing.T) {
 	ctx := context.Background()
 	store, err := memory.OpenSQLite(ctx, t.TempDir()+"/mem.db", fakeToolEmbedder{}, echoToolConsolidator{content: "the build uses bazel"}, "test_recall_tool", "task", 5, 0)
@@ -76,9 +75,8 @@ func TestNewRecallMemory_LogsLedgerEntryWithCoords(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	// Run's result is a map[string]any (functiontool's own JSON-schema
-	// conversion, not a direct Go type assertion) - roundtrip it back into
-	// the typed shape, same as recallMemoryHits does for a real session event.
+	// Run returns functiontool's JSON-converted map, so round-trip it into the typed shape
+	// as recallMemoryHits does.
 	b, err := json.Marshal(out)
 	if err != nil {
 		t.Fatalf("marshal Run result: %v", err)
@@ -103,10 +101,8 @@ func TestNewRecallMemory_LogsLedgerEntryWithCoords(t *testing.T) {
 	}
 }
 
-// TestNewRecallMemoryTool_OrchestratorCountsOncePerInstance covers the orchestrator's
-// recall_memory (#1470): it has no vetting-gated round to dedupe against, so it counts
-// each id once per built tool instance instead - every call still logs its own ledger
-// entry, but calling twice for the same memory only bumps recalls once.
+// TestNewRecallMemoryTool_OrchestratorCountsOncePerInstance: with no gated round to dedupe
+// against, each id bumps recalls once per tool instance; every call still logs an entry.
 func TestNewRecallMemoryTool_OrchestratorCountsOncePerInstance(t *testing.T) {
 	ctx := context.Background()
 	store, err := memory.OpenSQLite(ctx, t.TempDir()+"/mem.db", fakeToolEmbedder{}, echoToolConsolidator{content: "the build uses bazel"}, "test_orch_recall", "task", 5, 0)
@@ -164,10 +160,8 @@ func TestNewRecallMemoryTool_OrchestratorCountsOncePerInstance(t *testing.T) {
 	}
 }
 
-// TestNewLoadMemory_LogsLedgerEntryDeferringRecallsCount: load_memory logs like
-// recall_memory (source "tool", one entry per call, hit carries a score/tier for the
-// judge) but does not bump recalls itself (#1470) - that bump is deferred to vetting's
-// per-round received-set merge, the only place that knows which ids this round is new.
+// TestNewLoadMemory_LogsLedgerEntryDeferringRecallsCount: load_memory logs like recall_memory but
+// leaves the recalls bump to vetting's per-round merge, the only place that knows which ids are new.
 func TestNewLoadMemory_LogsLedgerEntryDeferringRecallsCount(t *testing.T) {
 	ctx := context.Background()
 	store, err := memory.OpenSQLite(ctx, t.TempDir()+"/mem.db", fakeToolEmbedder{}, echoToolConsolidator{content: "the build uses bazel"}, "test_load_tool", "task", 5, 0)
@@ -259,9 +253,8 @@ func TestWrapRunnable_ErrorPaths(t *testing.T) {
 	}
 }
 
-// TestRecallScope_NoNodeIDLegacyBucket: #1262/#1263 - recallScope's bucket
-// list is exactly [role:..., ...], never a Legacy bucket keyed by the raw
-// node id; asserts the Scope directly, since Commit never routes a Legacy-only scope to a real bucket (a round-trip-through-Commit test would be vacuous).
+// TestRecallScope_NoNodeIDLegacyBucket: recallScope never includes a Legacy bucket keyed by the
+// raw node id; asserted on the Scope since Commit never routes a Legacy-only scope.
 func TestRecallScope_NoNodeIDLegacyBucket(t *testing.T) {
 	sc := recallScope(Deps{MemoryRole: "task"}, newFakeCtx(), ledger.Coords{ChatID: "chat1", Node: "node1"})
 	want := []string{"role:task"}
@@ -288,9 +281,8 @@ func TestNewRecallMemory_EmptyQueryRejected(t *testing.T) {
 	}
 }
 
-// TestNewRecallMemory_NilStoreIsSafe matches stage_memory's own leniency: a
-// Deps with no Memory store still builds (a tools.Build caller may resolve tool
-// names ahead of the real per-agent wiring - see TestNoNativeAgentGrantedGitHubWriteTool), and simply recalls nothing.
+// TestNewRecallMemory_NilStoreIsSafe: with no Memory store the tool still builds (Build may run
+// before per-agent wiring) and recalls nothing.
 func TestNewRecallMemory_NilStoreIsSafe(t *testing.T) {
 	tl, err := newRecallMemory(Deps{})
 	if err != nil {

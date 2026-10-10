@@ -2,7 +2,6 @@ package vetting
 
 import (
 	"context"
-	"iter"
 	"testing"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -24,9 +23,7 @@ func (c *captureEvalExporter) Export(_ context.Context, records []sdklog.Record)
 func (c *captureEvalExporter) Shutdown(context.Context) error   { return nil }
 func (c *captureEvalExporter) ForceFlush(context.Context) error { return nil }
 
-// TestEmitEvaluationResults_DeterministicOrder guards against map iteration
-// (v.Criteria) making the emitted event order flap run to run - a
-// replay/diff consumer needs a stable order, not just a stable set.
+// Emitted event order must not follow map iteration: a replay/diff consumer needs a stable order.
 func TestEmitEvaluationResults_DeterministicOrder(t *testing.T) {
 	capExp := &captureEvalExporter{}
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
@@ -67,9 +64,7 @@ func TestEmitEvaluationResults_DeterministicOrder(t *testing.T) {
 	}
 }
 
-// TestEmitEvaluationResults_AgentAttribute: per-criterion events must carry
-// gen_ai.agent.name (ledger's only "per agent" query key) when ctx carries
-// it - previously only response id/name/score/explanation were stamped.
+// Per-criterion events must carry gen_ai.agent.name (ledger's only per-agent query key) when ctx has it.
 func TestEmitEvaluationResults_AgentAttribute(t *testing.T) {
 	capExp := &captureEvalExporter{}
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
@@ -96,16 +91,10 @@ func TestEmitEvaluationResults_AgentAttribute(t *testing.T) {
 }
 
 // usageLLM answers every verifier call with a reply whose usage reports a cached prefix.
-type usageLLM struct{}
-
-func (usageLLM) Name() string { return "usage-llm" }
-
-func (usageLLM) GenerateContent(context.Context, *model.LLMRequest, bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		yield(&model.LLMResponse{Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: `{"items":[]}`}}}, TurnComplete: true,
-			UsageMetadata: &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 1000, CachedContentTokenCount: 816, CandidatesTokenCount: 20}}, nil)
-	}
-}
+var usageLLM = fnLLM(func(*model.LLMRequest) (*model.LLMResponse, error) {
+	return &model.LLMResponse{Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: `{"items":[]}`}}}, TurnComplete: true,
+		UsageMetadata: &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 1000, CachedContentTokenCount: 816, CandidatesTokenCount: 20}}, nil
+})
 
 // TestVerifierCallRecordsCachedTokens: the verifier's calls go through the judge model's traced
 // wrapper, so its llm.call entries carry the same cached/input split as every other call.
@@ -114,7 +103,7 @@ func TestVerifierCallRecordsCachedTokens(t *testing.T) {
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
 	restore := otelobs.SetLoggerProviderForTesting(lp)
 	defer restore()
-	Verifier{LLM: inference.TracedModelForTesting(usageLLM{}, "judge")}.VerifyChecks(context.Background(), []UnitCheck{secondLookCheck()})
+	Verifier{LLM: inference.TracedModelForTesting(usageLLM, "judge")}.VerifyChecks(context.Background(), []UnitCheck{secondLookCheck()})
 	var cached, input int64
 	for _, r := range capExp.records {
 		r.WalkAttributes(func(kv attribute.KeyValue) bool {

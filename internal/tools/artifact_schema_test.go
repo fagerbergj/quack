@@ -1,6 +1,4 @@
-// artifact_schema_test.go: the native write_artifact/edit_artifact tools
-// refuse a write that fails its kind's registered schema (extsdk.ArtifactSchemas),
-// mirroring internal/acp/artifact_schema_test.go's MCP-path coverage.
+// Native write_artifact/edit_artifact refuse a write that fails its kind's registered schema.
 package tools
 
 import (
@@ -43,10 +41,8 @@ func TestWriteArtifact_SchemaValid_Succeeds(t *testing.T) {
 	}
 }
 
-// TestWriteArtifact_SchemaViolation_RefusesAndCarriesSchema pins the exact text
-// a model sees on a schema-violating write_artifact call: the write must not
-// land, and the message must name the kind, list the violation, and tell the
-// model to retry.
+// TestWriteArtifact_SchemaViolation_RefusesAndCarriesSchema: the write must not land, and the message
+// names the kind, lists the violation, and tells the model to retry.
 func TestWriteArtifact_SchemaViolation_RefusesAndCarriesSchema(t *testing.T) {
 	rc := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat-a").WithSchemas(nameSchemaRegistry(t, "document"))
 	tl, err := NewWriteArtifactTool(rc, "n1", &RoundCoords{}, "hint")
@@ -91,8 +87,7 @@ func TestWriteArtifact_InvalidJSON_Refuses(t *testing.T) {
 }
 
 func TestWriteArtifact_UnregisteredKindUnaffected(t *testing.T) {
-	// Registry only knows about "document" - "bytes" has no declared schema, so
-	// arbitrary content must still write exactly as before this feature.
+	// Only "document" has a schema, so "bytes" content must still write unchecked.
 	rc := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat-a").WithSchemas(nameSchemaRegistry(t, "document"))
 	tl, err := NewWriteArtifactTool(rc, "n1", &RoundCoords{}, "hint")
 	if err != nil {

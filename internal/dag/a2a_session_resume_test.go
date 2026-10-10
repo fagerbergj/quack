@@ -19,9 +19,8 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// reviseStub drafts once, then (after the judge's fail) revises. Its second
-// draft asserts the remote session CONTINUED: the revise round's request must
-// still carry the first draft, which only happens when the node resumed the SAME remote A2A contextID (multi-turn dispatch). A per-node identity must keep this working - unique across nodes, but stable across a node's rounds.
+// reviseStub drafts once, then revises; its second request must still carry the first
+// draft, which only happens if the node resumed the SAME remote A2A contextID.
 type reviseStub struct {
 	mu       sync.Mutex
 	calls    int
@@ -47,31 +46,8 @@ func (s *reviseStub) GenerateContent(_ context.Context, req *model.LLMRequest, _
 	}
 }
 
-// failThenPassJudge fails the first verdict (forcing a revise round) and passes
-// the second.
-type failThenPassJudge struct {
-	mu     sync.Mutex
-	rounds int
-}
-
-func (*failThenPassJudge) Name() string { return "failThenPassJudge" }
-func (j *failThenPassJudge) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		j.mu.Lock()
-		j.rounds++
-		n := j.rounds
-		j.mu.Unlock()
-		if n == 1 {
-			yield(atCall("submit_verdict", map[string]any{"score": 0.2, "feedback": "add detail"}), nil)
-			return
-		}
-		yield(atCall("submit_verdict", map[string]any{"score": 0.9, "feedback": ""}), nil)
-	}
-}
-
-// TestNodeOverA2A_ResumesItsOwnRemoteSessionAcrossRounds: the per-node identity
-// must stay STABLE across a node's judge/revise rounds - the revise dispatch has
-// to land back in the node's own remote A2A session (carrying the draft it is revising), not a fresh one.
+// The per-node identity must stay stable across judge/revise rounds so the revise
+// dispatch lands back in the node's own remote A2A session.
 func TestNodeOverA2A_ResumesItsOwnRemoteSessionAcrossRounds(t *testing.T) {
 	sessions := session.InMemoryService()
 	stub := &reviseStub{}
@@ -95,7 +71,7 @@ func TestNodeOverA2A_ResumesItsOwnRemoteSessionAcrossRounds(t *testing.T) {
 		{ID: "n1", AgentName: "solo", Task: "Write the thing.", Rubric: "detailed"},
 	}}
 	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"solo": client}, nil,
-		vetting.NewJudgeFactory(&failThenPassJudge{}, nil, nil),
+		vetting.NewJudgeFactory(failOnceJudge(0.2, "add detail"), nil, nil),
 		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
 
 	outputs := map[string]string{}

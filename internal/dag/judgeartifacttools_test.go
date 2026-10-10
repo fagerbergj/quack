@@ -1,6 +1,5 @@
-// #1497: the judge only ever held jail-scoped repo read tools (no
-// list_artifacts/read_artifact), so an answer pointing at an artifact scored
-// zero for grounding. Drives a gated node and checks the judge's own read_artifact reaches the worker's chat-scoped store.
+// A gated node's judge must reach the worker's chat-scoped artifact store via its own
+// read_artifact, or answers pointing at artifacts score zero for grounding.
 package dag_test
 
 import (
@@ -23,18 +22,6 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// jatWorkerStub answers immediately, no tools - the artifact under test is
-// seeded directly (as the worker's own write_artifact tool would have left it).
-type jatWorkerStub struct{}
-
-func (jatWorkerStub) Name() string { return "jatWorkerStub" }
-
-func (jatWorkerStub) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		yield(lcText("see the artifact I wrote"), nil)
-	}
-}
-
 // jatJudgeStub calls read_artifact(id) once, records what came back, then
 // passes - proving the judge round's own tool actually reached the store.
 type jatJudgeStub struct {
@@ -48,10 +35,10 @@ func (j jatJudgeStub) GenerateContent(_ context.Context, req *model.LLMRequest, 
 	return func(yield func(*model.LLMResponse, error) bool) {
 		if s, ok := jatFuncResponseResult(req, "read_artifact"); ok {
 			*j.got = s
-			yield(lcCall("submit_verdict", map[string]any{"score": 0.9, "feedback": ""}), nil)
+			yield(atCall("submit_verdict", map[string]any{"score": 0.9, "feedback": ""}), nil)
 			return
 		}
-		yield(lcCall("read_artifact", map[string]any{"id": j.id}), nil)
+		yield(atCall("read_artifact", map[string]any{"id": j.id}), nil)
 	}
 }
 
@@ -72,9 +59,8 @@ func jatFuncResponseResult(req *model.LLMRequest, name string) (string, bool) {
 	return "", false
 }
 
-// TestGatedNodeJudgeReadsChatScopedArtifact: a worker artifact seeded under
-// (appName, userID, chatID) must be exactly what the SAME node's judge round
-// reads back - its recordstore.Client is built from those same coordinates (buildGateNodes), not a separate/unscoped one.
+// The judge's recordstore.Client is built from the node's own (app, user, chat), so it
+// reads back exactly the worker's artifact.
 func TestGatedNodeJudgeReadsChatScopedArtifact(t *testing.T) {
 	const userID = "u"
 	const chatID = "judge-artifact-chat"
@@ -88,7 +74,7 @@ func TestGatedNodeJudgeReadsChatScopedArtifact(t *testing.T) {
 		t.Fatalf("seed artifact: %v", err)
 	}
 
-	workerModel := inference.TracedModelForTesting(jatWorkerStub{}, "jat-worker-model")
+	workerModel := inference.TracedModelForTesting(textLLM("see the artifact I wrote"), "jat-worker-model")
 	worker, err := llmagent.New(llmagent.Config{Name: "w", Model: workerModel, Description: "w", Instruction: "ROLE:w Answer."})
 	if err != nil {
 		t.Fatalf("llmagent.New: %v", err)

@@ -8,9 +8,8 @@ import (
 	"github.com/fagerbergj/quack/internal/schema"
 )
 
-// chatOrigin decodes a chat row's opaque Origin JSON (marshaled from
-// *extsdk.ChatOrigin by an extension's Dispatch - see
-// internal/serve/extensions.go's newExtDispatch) into the wire schema. Nil on no origin, a malformed blob, or a missing required field - never a partially-filled chip.
+// chatOrigin decodes a chat row's Origin JSON (an *extsdk.ChatOrigin from an extension's Dispatch) into the
+// wire schema. Nil on no origin, a malformed blob, or a missing required field; never a partial chip.
 func chatOrigin(originJSON string) *schema.ChatOrigin {
 	if originJSON == "" {
 		return nil
@@ -30,9 +29,8 @@ func chatOrigin(originJSON string) *schema.ChatOrigin {
 		Badge:     strPtr(sdkOrigin.Badge),
 	}
 	if len(sdkOrigin.Labels) > 0 {
-		// Labels' generated element type is an anonymous struct (oapi-codegen);
-		// go through wireLabelValue (omitempty-tagged) rather than hand-matching
-		// its field order, and so an unset Display/Href lands as absent, not a pointer to "".
+		// Labels' element type is an anonymous generated struct; going through wireLabelValue avoids
+		// matching its field order and leaves unset Display/Href absent rather than "".
 		wire := make(map[string][]wireLabelValue, len(sdkOrigin.Labels))
 		for dim, vals := range sdkOrigin.Labels {
 			values := make([]wireLabelValue, len(vals))
@@ -48,9 +46,8 @@ func chatOrigin(originJSON string) *schema.ChatOrigin {
 	return &out
 }
 
-// wireLabelValue mirrors the openapi ChatOrigin.labels element schema's
-// JSON shape (value/display,omitempty/href,omitempty) - the bridge onto the
-// generated anonymous struct type via a JSON round-trip.
+// wireLabelValue mirrors the openapi ChatOrigin.labels element's JSON shape,
+// bridged onto the generated anonymous struct by a JSON round-trip.
 type wireLabelValue struct {
 	Value   string `json:"value"`
 	Display string `json:"display,omitempty"`

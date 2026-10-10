@@ -2,6 +2,7 @@ package otelobs
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync/atomic"
 	"time"
@@ -61,29 +62,25 @@ const (
 
 	// GenAIOperationPlan - "plan" has no registered semconv enum.
 	GenAIOperationPlan = "plan"
-	// GenAIOperationPlanRejected - the plan judge declined a proposed plan (#693);
+	// GenAIOperationPlanRejected - the plan judge declined a proposed plan;
 	// the ledger record of a rejection reason that must never reach the user reply.
 	GenAIOperationPlanRejected = "plan_rejected"
 	// GenAIOperationDecision - one decision-model call (internal/decide); QuackDecision carries its ledger payload as JSON.
 	GenAIOperationDecision = "decision"
 	QuackDecision          = "quack.decision"
 
-	// QuackNode identifies the DAG node a span or record belongs to. Exported
-	// so the generation span carries the same key the log records do - it is
-	// what makes a Langfuse trace filterable down to one node.
+	// QuackNode identifies a span's or record's DAG node; the generation span shares the key so Langfuse
+	// traces filter down to one node.
 	QuackNode = "quack.node"
 
 	quackNodeKey  = QuackNode
 	quackRoundKey = "quack.round"
 
-	// QuackModel carries the model a wrapper span (node, worker round) ran under. Vendor-namespaced on purpose: Langfuse types any span with a model-named attribute ("model", gen_ai.request.model, ...) as a
-	// GENERATION, and these spans make no model call (#927). ponytail: never
-	// rename to gen_ai.request.model - ADK's own span already carries the real GENERATION (model/tokens/cost); renaming this would double-count both against it.
+	// QuackModel is vendor-namespaced: Langfuse types any span with a model-named attribute as a GENERATION.
+	// ponytail: never rename to gen_ai.request.model - ADK's own span already carries the real GENERATION (model/tokens/cost); renaming this would double-count both against it.
 	QuackModel = "quack.model"
 
-	// QuackVersion/QuackBundleHash/GenAIUsageCost/GenAIUsageCachedTokens:
-	// llm.call provenance (#1096) - no semconv equivalent exists for any of
-	// these yet (cached tokens are a metric-only dimension in v1.41.0, not a registered log attribute).
+	// llm.call provenance with no semconv equivalent (cached tokens are a metric-only dimension in v1.41.0).
 	QuackVersion           = "quack.version"
 	QuackBundleHash        = "quack.bundle.hash"
 	GenAIUsageCost         = "gen_ai.usage.cost"
@@ -93,17 +90,15 @@ const (
 	GenAIUsageReasoningTokens = "gen_ai.usage.reasoning_tokens"
 
 	// QuackPromptSource/QuackPromptVersionID: which store the round's system
-	// prompt resolved from and its version there (#1420) - provenance.
+	// prompt resolved from and its version there.
 	QuackPromptSource    = "quack.prompt.source"
 	QuackPromptVersionID = "quack.prompt.version_id"
-	// QuackPlugins: invoke_agent provenance (#1427 P1) - a JSON array of
+	// QuackPlugins: invoke_agent provenance - a JSON array of
 	// {name,sha} for the plugins in scope of the round, no semconv equivalent.
 	QuackPlugins = "quack.plugins"
-	// QuackPromptArtifact: the resolved artifact's name (#1422), not the agent name.
+	// QuackPromptArtifact: the resolved artifact's name, not the agent name.
 	QuackPromptArtifact = "quack.prompt.artifact"
-	// QuackArtifacts: every artifact the round resolved through artifactsrc -
-	// a JSON array of {name,source,version_id}, superseding QuackPromptSource/
-	// QuackPromptVersionID/QuackPromptArtifact's single-artifact shape.
+	// QuackArtifacts: a JSON array of {name,source,version_id} for every artifact the round resolved.
 	QuackArtifacts = "quack.artifacts"
 )
 
@@ -116,9 +111,7 @@ var (
 	// GenAIProviderOpenAI is quack's one implemented inference provider kind.
 	GenAIProviderOpenAI = semconv.GenAIProviderNameOpenAI.Value.AsString()
 
-	// gen_ai.token.type values. Only input/output are registered semconv
-	// enums; reasoning/cached are quack-specific (llama.cpp's
-	// prompt_tokens_details.cached_tokens and OpenAI's reasoning_tokens both need a bucket semconv doesn't yet define).
+	// gen_ai.token.type values: only input/output are semconv enums; reasoning/cached are quack-specific.
 	GenAITokenTypeInput     = semconv.GenAITokenTypeInput.Value.AsString()
 	GenAITokenTypeOutput    = semconv.GenAITokenTypeOutput.Value.AsString()
 	GenAITokenTypeReasoning = "reasoning"
@@ -166,7 +159,7 @@ func initLogs(ctx context.Context, res *resource.Resource, cfg config.Observabil
 		}
 	}
 	// Opt-in, unlike traces/metrics: exporting logs at a collector with no
-	// logs pipeline 404s on every batch (and #814's path pinning applies here too).
+	// logs pipeline 404s on every batch.
 	for _, e := range cfg.Otel.Exporters {
 		if !e.Wants(config.SignalLogs) {
 			continue
@@ -215,4 +208,34 @@ func EmitLog(ctx context.Context, scope, body string, attrs ...attribute.KeyValu
 	}
 	rec.AddAttributes(attrs...)
 	lg.Emit(ctx, rec)
+}
+
+// EmitToolCall records one execute_tool event under scope; a nil args or result is left off.
+func EmitToolCall(ctx context.Context, scope, name string, args, result any, err error) {
+	if !LoggingEnabled(scope) {
+		return
+	}
+	attrs := []attribute.KeyValue{
+		attribute.String(GenAIOperationName, GenAIOperationExecuteTool),
+		attribute.String(GenAIToolName, name),
+		attribute.String(GenAIToolType, "function"),
+	}
+	add := func(key string, v any) {
+		if v == nil {
+			return
+		}
+		if b, jerr := json.Marshal(v); jerr == nil {
+			attrs = append(attrs, attribute.String(key, string(b)))
+		}
+	}
+	add(GenAIToolCallArguments, args)
+	add(GenAIToolCallResult, result)
+	if err != nil {
+		attrs = append(attrs, attribute.String(ErrorType, err.Error()))
+	}
+	// EmitLog stamps chat/node/round only; the agent name groups the stream like emitChatEvent's.
+	if c := ledger.CoordsFromContext(ctx); c.Agent != "" {
+		attrs = append(attrs, attribute.String(GenAIAgentName, c.Agent))
+	}
+	EmitLog(ctx, scope, "", attrs...)
 }

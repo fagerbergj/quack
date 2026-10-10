@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"iter"
+	"slices"
 	"strings"
 	"testing"
 
@@ -18,39 +19,43 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// workerModel is a canned two-turn model: turn 1 emits a thought + a call to the
-// echo tool; seeing the tool's FunctionResponse it emits the final answer.
-// It exercises the full event vocabulary (thinking / tool_call / tool_result / token) across the A2A round-trip with no network or model.
-type workerModel struct{}
+// fakeLLM answers each call with one response computed from the request.
+type fakeLLM struct {
+	gen func(*model.LLMRequest) *model.LLMResponse
+}
 
-func (workerModel) Name() string { return "worker-model" }
+func (*fakeLLM) Name() string { return "fake" }
 
-func (workerModel) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	sawToolResult := false
+func (f *fakeLLM) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) { yield(f.gen(req), nil) }
+}
+
+// turn is one complete model turn made of parts.
+func turn(parts ...*genai.Part) *model.LLMResponse {
+	return &model.LLMResponse{Content: &genai.Content{Role: "model", Parts: parts}, TurnComplete: true}
+}
+
+// funcResponses lists every FunctionResponse in req.
+func funcResponses(req *model.LLMRequest) []*genai.FunctionResponse {
+	var out []*genai.FunctionResponse
 	for _, c := range req.Contents {
 		for _, p := range c.Parts {
 			if p.FunctionResponse != nil {
-				sawToolResult = true
+				out = append(out, p.FunctionResponse)
 			}
 		}
 	}
-	return func(yield func(*model.LLMResponse, error) bool) {
-		if sawToolResult {
-			yield(&model.LLMResponse{
-				Content:      &genai.Content{Role: "model", Parts: []*genai.Part{{Text: "Answer: pong"}}},
-				TurnComplete: true,
-			}, nil)
-			return
-		}
-		yield(&model.LLMResponse{
-			Content: &genai.Content{Role: "model", Parts: []*genai.Part{
-				{Text: "let me check", Thought: true},
-				{FunctionCall: &genai.FunctionCall{ID: "c1", Name: "echo", Args: map[string]any{"msg": "ping"}}},
-			}},
-			TurnComplete: true,
-		}, nil)
-	}
+	return out
 }
+
+// workerModel thinks and calls echo, then answers once it sees the tool result, covering the full event vocabulary.
+var workerModel = &fakeLLM{func(req *model.LLMRequest) *model.LLMResponse {
+	if len(funcResponses(req)) > 0 {
+		return turn(&genai.Part{Text: "Answer: pong"})
+	}
+	return turn(&genai.Part{Text: "let me check", Thought: true},
+		&genai.Part{FunctionCall: &genai.FunctionCall{ID: "c1", Name: "echo", Args: map[string]any{"msg": "ping"}}})
+}}
 
 type echoArgs struct {
 	Msg string `json:"msg"`
@@ -73,7 +78,7 @@ func newWorker(t *testing.T) adkagent.Agent {
 	ag, err := llmagent.New(llmagent.Config{
 		Name:        "spike-worker",
 		Description: "A test worker agent.",
-		Model:       workerModel{},
+		Model:       workerModel,
 		Instruction: "Use the echo tool then answer.",
 		Tools:       []tool.Tool{echoTool(t)},
 	})
@@ -83,9 +88,8 @@ func newWorker(t *testing.T) adkagent.Agent {
 	return ag
 }
 
-// collect drains a runner stream into the wire-event vocabulary via the stateful
-// Translator. The worker here is ungated, so its raw thinking/tool/text parts map
-// to agent_thinking / agent_tool_call / agent_tool_result / agent_token.
+// collect drains a runner stream through the Translator; the worker is ungated, so its parts map to
+// agent_thinking / agent_tool_call / agent_tool_result / agent_token.
 func collect(t *testing.T, seq iter.Seq2[*session.Event, error]) (thinking, answer string, toolCalls, toolResults []string) {
 	t.Helper()
 	tr := stream.NewTranslator()
@@ -109,9 +113,7 @@ func collect(t *testing.T, seq iter.Seq2[*session.Event, error]) (thinking, answ
 	return
 }
 
-// TestA2ARoundTripPreservesEventVocabulary is the M1 spike for risk #1: it serves
-// a worker over real ephemeral-loopback A2A, dispatches via the remote client,
-// and asserts thinking / tool_call / tool_result / token all survive the round-trip (adka2a DataPart metadata <-> genai parts).
+// Thinking, tool_call, tool_result and token must all survive a real loopback A2A round-trip.
 func TestA2ARoundTripPreservesEventVocabulary(t *testing.T) {
 	srv, err := Serve(newWorker(t), session.InMemoryService(), nil, nil, Compaction{}, "", nil)
 	if err != nil {
@@ -151,42 +153,18 @@ func TestA2ARoundTripPreservesEventVocabulary(t *testing.T) {
 	}
 }
 
-// transferModel emits a transfer_to_agent call to the named target, then (once it
-// sees a tool result) a short wrapper answer. It fakes the orchestrator's
-// delegation decision.
-type transferModel struct{ target string }
-
-func (transferModel) Name() string { return "transfer-model" }
-
-func (m transferModel) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	transferred := false
-	for _, c := range req.Contents {
-		for _, p := range c.Parts {
-			if p.FunctionResponse != nil && p.FunctionResponse.Name == "transfer_to_agent" {
-				transferred = true
-			}
+// transferModel fakes the orchestrator's delegation: transfer to target, then answer once transferred.
+func transferModel(target string) *fakeLLM {
+	return &fakeLLM{func(req *model.LLMRequest) *model.LLMResponse {
+		if slices.ContainsFunc(funcResponses(req), func(fr *genai.FunctionResponse) bool { return fr.Name == "transfer_to_agent" }) {
+			return turn(&genai.Part{Text: "done"})
 		}
-	}
-	return func(yield func(*model.LLMResponse, error) bool) {
-		if transferred {
-			yield(&model.LLMResponse{
-				Content:      &genai.Content{Role: "model", Parts: []*genai.Part{{Text: "done"}}},
-				TurnComplete: true,
-			}, nil)
-			return
-		}
-		yield(&model.LLMResponse{
-			Content: &genai.Content{Role: "model", Parts: []*genai.Part{
-				{FunctionCall: &genai.FunctionCall{ID: "t1", Name: "transfer_to_agent", Args: map[string]any{"agent_name": m.target}}},
-			}},
-			TurnComplete: true,
-		}, nil)
-	}
+		return turn(&genai.Part{FunctionCall: &genai.FunctionCall{ID: "t1", Name: "transfer_to_agent", Args: map[string]any{"agent_name": target}}})
+	}}
 }
 
-// TestOrchestratorTransfersToA2ASubAgent is the M1 spike for risk #2: an llmagent
-// orchestrator with the A2A client as a sub-agent transfers to it, and the
-// sub-agent's events surface through the orchestrator's runner.
+// An orchestrator with the A2A client as a sub-agent transfers to it, and the sub-agent's events surface
+// through the orchestrator's runner.
 func TestOrchestratorTransfersToA2ASubAgent(t *testing.T) {
 	srv, err := Serve(newWorker(t), session.InMemoryService(), nil, nil, Compaction{}, "", nil)
 	if err != nil {
@@ -202,7 +180,7 @@ func TestOrchestratorTransfersToA2ASubAgent(t *testing.T) {
 	orch, err := llmagent.New(llmagent.Config{
 		Name:        "orchestrator",
 		Description: "Dispatches to sub-agents.",
-		Model:       transferModel{target: client.Name()},
+		Model:       transferModel(client.Name()),
 		Instruction: "Delegate to the worker.",
 		SubAgents:   []adkagent.Agent{client},
 	})
@@ -232,9 +210,7 @@ func TestOrchestratorTransfersToA2ASubAgent(t *testing.T) {
 	}
 }
 
-// branchCtx fakes the remote agent's InvocationContext for the part converter:
-// a plain context that also reports the current run's branch, which is all
-// sanitizeWorkflowPlumbingPart reads off it.
+// branchCtx is a context reporting the run's branch, all sanitizeWorkflowPlumbingPart reads off it.
 type branchCtx struct {
 	context.Context
 	branch string
@@ -242,9 +218,8 @@ type branchCtx struct {
 
 func (b branchCtx) Branch() string { return b.branch }
 
-// TestSanitizePart_DropsForeignBranchEvents: the converter must drop parts of
-// events from a SIBLING node's branch (without this, remoteagent's history sweep folds a concurrently-running node's prompt and plumbing into this
-// node's outbound message), while keeping branchless events, the current branch, and ancestors.
+// The converter drops a sibling branch's events (else remoteagent's history sweep leaks them into this node's message),
+// keeping branchless events, the current branch, and ancestors.
 func TestSanitizePart_DropsForeignBranchEvents(t *testing.T) {
 	cur := "n1@1.researcher@worker-r0"
 	textPart := &genai.Part{Text: "some content"}
@@ -279,9 +254,8 @@ func TestSanitizePart_DropsForeignBranchEvents(t *testing.T) {
 	}
 }
 
-// TestDescribeEvent_KeepsMediaParts guards the media-reader bug: the gate's prompt-delivery event is authored "quack-gate" (foreign), so scopeMessage
-// renders it via describeEvent; an attached image rides as an InlineData part
-// and must be carried across the wire as a raw file part, not dropped (which left the vision model blind).
+// The gate's prompt event is foreign-authored, so describeEvent renders it; an attached image must cross the
+// wire as a file part rather than be dropped, which left the vision model blind.
 func TestDescribeEvent_KeepsMediaParts(t *testing.T) {
 	imgBytes := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A} // PNG magic
 	ev := &session.Event{}
@@ -310,11 +284,9 @@ func TestDescribeEvent_KeepsMediaParts(t *testing.T) {
 	}
 }
 
-// TestNativeCompactionConfig covers NativeCompactionConfig's Config build:
-// disabled leaves native compaction off; enabled builds one from quack's own
-// prompt, carrying over quack's thresholds.
+// Disabled leaves native compaction off; enabled builds it from quack's prompt and thresholds.
 func TestNativeCompactionConfig(t *testing.T) {
-	base := Compaction{Enabled: true, Summarizer: workerModel{}, ContextWindow: 65_000, TokenThreshold: 40_000, EventRetentionSize: 20}
+	base := Compaction{Enabled: true, Summarizer: workerModel, ContextWindow: 65_000, TokenThreshold: 40_000, EventRetentionSize: 20}
 
 	if cfg, err := NativeCompactionConfig(Compaction{}); err != nil || cfg != nil {
 		t.Fatalf("disabled: got (%v, %v), want (nil, nil)", cfg, err)
@@ -335,44 +307,18 @@ func TestNativeCompactionConfig(t *testing.T) {
 	}
 }
 
-// summarizerModel is a canned model for compaction's LLMSummarizer: it always
-// answers with fixed summary text, regardless of the transcript it is given.
-type summarizerModel struct{}
-
-func (summarizerModel) Name() string { return "summarizer-model" }
-
-func (summarizerModel) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		yield(&model.LLMResponse{
-			Content:      &genai.Content{Role: "model", Parts: []*genai.Part{{Text: "the user asked a question"}}},
-			TurnComplete: true,
-		}, nil)
-	}
+// textModel always answers with text and no tool calls, so one Run is one complete turn.
+func textModel(text string) *fakeLLM {
+	return &fakeLLM{func(*model.LLMRequest) *model.LLMResponse { return turn(&genai.Part{Text: text}) }}
 }
 
-// answerOnlyModel answers immediately with no tool calls, so a single Run
-// invocation is one complete turn for the post-invocation compactor to act on.
-type answerOnlyModel struct{}
-
-func (answerOnlyModel) Name() string { return "answer-only-model" }
-
-func (answerOnlyModel) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		yield(&model.LLMResponse{
-			Content:      &genai.Content{Role: "model", Parts: []*genai.Part{{Text: "Answer: 42"}}},
-			TurnComplete: true,
-		}, nil)
-	}
-}
-
-// TestCompactionSessionsObservesRealCompaction proves compactionSessions
-// (a2a.go) catches a compaction fired by adk/v2's own runner-level compaction, not one this test hands it: with CompactionInterval:1 the real
-// sliding-window compactor fires its own AppendEvent after a single complete invocation, the way the reviewer on #1247 required.
+// compactionSessions must catch a compaction adk's own runner fires: with CompactionInterval:1 the real
+// sliding-window compactor appends after one complete invocation.
 func TestCompactionSessionsObservesRealCompaction(t *testing.T) {
 	ag, err := llmagent.New(llmagent.Config{
 		Name:        "compaction-worker",
 		Description: "A test worker agent.",
-		Model:       answerOnlyModel{},
+		Model:       textModel("Answer: 42"),
 		Instruction: "Answer directly.",
 	})
 	if err != nil {
@@ -381,7 +327,7 @@ func TestCompactionSessionsObservesRealCompaction(t *testing.T) {
 
 	adkComp, err := NativeCompactionConfig(Compaction{
 		Enabled:            true,
-		Summarizer:         summarizerModel{},
+		Summarizer:         textModel("the user asked a question"),
 		CompactionInterval: 1,
 	})
 	if err != nil {

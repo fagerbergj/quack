@@ -30,15 +30,13 @@ type Options struct {
 	SPA           fs.FS               // optional embedded frontend dist
 	SDKExtensions []SDKExtensionMount // optional quack-extensions SDK modules, mounted at /<name>
 	Auth          *auth.Auth          // optional inbound auth (nil = disabled, open)
-	// ADKDebug is adkdebug.Mount.Handler, gated by config observability.adk_debug
-	// (default off). It runs agents ungated (see adkdebug package doc) - mounted
-	// INSIDE the auth group deliberately, never as an unauthenticated extension.
+	// ADKDebug is adkdebug.Mount.Handler, gated by observability.adk_debug (default off). It runs agents
+	// ungated, so it is mounted inside the auth group, never as an unauthenticated extension.
 	ADKDebug http.Handler
 }
 
-// SDKExtensionMount is one quack-extensions SDK module's route registration,
-// mounted at /<name>/: an authed router (session auth) and a public one
-// (webhook-class) - mirrors sdk.Extension.RegisterRoutes so serve can pass it straight through. Name must pass ValidateExtensionName before it reaches here - the caller (internal/serve) is expected to check at startup, not this constructor.
+// SDKExtensionMount is one SDK extension's routes at /<name>/, an authed and a public (webhook-class) router.
+// The caller must have run ValidateExtensionName on Name at startup.
 type SDKExtensionMount struct {
 	Name           string
 	RegisterRoutes func(authed, public chi.Router)
@@ -66,9 +64,8 @@ func New(opts Options) http.Handler {
 		schema.HandlerFromMux(opts.REST, r)
 	})
 
-	// ONE mount per extension: authed routes go through a middleware-wrapped
-	// view of the same router, avoiding a duplicate-mount conflict with public.
-	// Mounted at the bare name, not a shared /ext/ prefix - ValidateExtensionName is what keeps a name from shadowing the SPA/API surface below.
+	// One mount per extension: authed routes use a middleware-wrapped view of the same router, avoiding
+	// a duplicate-mount conflict. Bare names are safe because ValidateExtensionName rejects reserved ones.
 	for _, m := range opts.SDKExtensions {
 		combined := chi.NewRouter()
 		authed := combined.With(requireAuthExceptHealth(opts.Auth))
@@ -139,18 +136,16 @@ func spaHandler(spa fs.FS) http.HandlerFunc {
 	}
 }
 
-// hashedAssetRE matches Vite's fingerprinted output (assets/name-<hash>.ext);
-// deliberately conservative so a verbatim-copied public/ file (e.g.
-// assets/ext/v1/kit.css) never gets mistaken for one.
+// hashedAssetRE matches Vite's fingerprinted output (assets/name-<hash>.ext), conservatively so a
+// verbatim public/ file such as assets/ext/v1/kit.css never matches.
 var hashedAssetRE = regexp.MustCompile(`-[0-9A-Za-z_]{8,}\.[0-9A-Za-z]+$`)
 
 func isHashedAsset(p string) bool {
 	return strings.HasPrefix(p, "assets/") && hashedAssetRE.MatchString(p)
 }
 
-// setCacheHeaders implements #859: a hashed Vite asset is immutable for a
-// year, everything else (index.html, verbatim public/ files) revalidates on
-// every load via ETag so a stale SPA shell can't survive a deploy.
+// setCacheHeaders makes hashed Vite assets immutable for a year; everything else revalidates via ETag
+// so a stale SPA shell can't survive a deploy.
 func setCacheHeaders(w http.ResponseWriter, p string, etags map[string]string) {
 	if isHashedAsset(p) {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
@@ -162,9 +157,8 @@ func setCacheHeaders(w http.ResponseWriter, p string, etags map[string]string) {
 	}
 }
 
-// buildETags hashes every non-hashed-asset file once at startup - the
-// embedded FS is fixed for the process lifetime (and its modtimes are zero,
-// so http.FileServer's own Last-Modified path never fires).
+// buildETags hashes every non-hashed file once at startup: the embedded FS is fixed, and its zero modtimes
+// mean http.FileServer's Last-Modified path never fires.
 func buildETags(spa fs.FS) map[string]string {
 	etags := make(map[string]string)
 	_ = fs.WalkDir(spa, ".", func(p string, d fs.DirEntry, err error) error {

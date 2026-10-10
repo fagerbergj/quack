@@ -17,9 +17,8 @@ import (
 	"github.com/fagerbergj/quack/internal/schema"
 )
 
-// isGithubChat mirrors frontend/src/lib/github.ts's isGithubChat: GithubUrl is
-// the authoritative signal (set by the webhook at dispatch time), the
-// "github-" id prefix a fallback for chats persisted before that field existed.
+// isGithubChat mirrors frontend/src/lib/github.ts: GithubUrl is authoritative; the "github-" id
+// prefix covers chats persisted before that field existed.
 func isGithubChat(c schema.ChatSummary) bool {
 	return c.GithubUrl != nil || strings.HasPrefix(c.Id, "github-")
 }
@@ -32,9 +31,8 @@ type githubRef struct {
 	Number int
 }
 
-// parseGithubRef mirrors frontend/src/lib/github.ts's parseGithubRef: the
-// issue/PR kind + number come off GithubUrl's path shape, the repo off
-// GithubRepo (falling back to the URL's owner/repo segment).
+// parseGithubRef mirrors frontend/src/lib/github.ts: kind and number come from GithubUrl's path,
+// the repo from GithubRepo (falling back to the URL's owner/repo).
 func parseGithubRef(c schema.ChatSummary) (githubRef, bool) {
 	if c.GithubUrl == nil || *c.GithubUrl == "" {
 		return githubRef{}, false
@@ -70,9 +68,8 @@ func githubRefLabel(c schema.ChatSummary) string {
 	return fmt.Sprintf("Issue #%d", ref.Number)
 }
 
-// originFilterKeep reports whether c passes the --filter value ("all",
-// "github", "direct"); an unrecognised value keeps everything (validated by
-// the caller before this is ever reached).
+// originFilterKeep reports whether c passes --filter ("all", "github", "direct"); an unknown value
+// keeps everything (the caller validates first).
 func originFilterKeep(c schema.ChatSummary, filter string) bool {
 	switch filter {
 	case "github":
@@ -84,9 +81,8 @@ func originFilterKeep(c schema.ChatSummary, filter string) bool {
 	}
 }
 
-// chatListFilters bundles the `chat list` narrowing flags. Each empty
-// field imposes no constraint; validate() rejects unrecognised values before
-// any of them reach the keep-checks below (mirrors frontend/src/lib/chatFilters.ts's matchesFacets: every active facet must match, no ordering dependency). archived is the odd one out: it picks the server's active/archived scope (the status= query param) rather than a client-side keep-check.
+// chatListFilters are the `chat list` narrowing flags; every non-empty one must match (as in the web
+// sidebar). archived picks the server's active/archived scope rather than filtering client-side.
 type chatListFilters struct {
 	origin   string // "", "all", "github", "direct"
 	status   string // "", or a ChatStatus value
@@ -158,9 +154,8 @@ func (f chatListFilters) keep(c schema.ChatSummary) bool {
 	return true
 }
 
-// RunChatList is `quack chat list`: a table of chats (id, title, status,
-// origin, ref, updated), or raw JSON with --json. STATUS is one of the four
-// ChatStatus values (running/needs_input/failed/idle) so the row is grep-able (`grep needs_input`); the pending question itself is `chat show`/--json's job - this table stays narrow. filters narrows by origin, status, github repo, and issue/PR type - a chat must pass every active one (mirrors the web sidebar's facet filtering). Empty list points at the next step.
+// RunChatList is `quack chat list`: a table of chats, or raw JSON with --json. STATUS is a ChatStatus
+// value so rows are grep-able; the pending question itself is `chat show`'s job.
 func RunChatList(ctx context.Context, out io.Writer, server string, asJSON bool, filters chatListFilters) error {
 	if err := filters.validate(); err != nil {
 		return err
@@ -204,9 +199,8 @@ func RunChatList(ctx context.Context, out io.Writer, server string, asJSON bool,
 	return tw.Flush()
 }
 
-// RunChatNew is `quack chat new`: create a chat and print its id to stdout -
-// create-only, no TUI, no first-message send (that's `chat send`/`-p`'s job,
-// one send path).
+// RunChatNew is `quack chat new`: create a chat and print its id. Create-only; sending is
+// `chat send`/`-p`'s job so there's one send path.
 func RunChatNew(ctx context.Context, out io.Writer, server string) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {
@@ -220,9 +214,8 @@ func RunChatNew(ctx context.Context, out io.Writer, server string) error {
 	return nil
 }
 
-// RunChatExport is `quack chat export <id>`: a readable transcript, or raw JSON
-// with --json. The transcript pairs each turn's user input with the assistant's
-// message text (DAG/activity items are omitted - use --json for the full record).
+// RunChatExport is `quack chat export <id>`: each turn's user input paired with the assistant's text,
+// or the full record as JSON with --json.
 func RunChatExport(ctx context.Context, out io.Writer, server, id string, asJSON bool) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {
@@ -266,9 +259,8 @@ func reportAction(out io.Writer, asJSON bool, r nodeActionResult) error {
 	return nil
 }
 
-// RunChatStop is `quack chat stop <id>`: cancel the active run (no-op if none).
-// Cancelling by response id is the server's only cancel path now, so this
-// looks up the chat's latest turn (the in-progress run, if any) first.
+// RunChatStop is `quack chat stop <id>`: cancel the active run (no-op if none). The server cancels
+// only by response id, so this looks up the chat's latest turn first.
 func RunChatStop(ctx context.Context, out io.Writer, server, id string, asJSON bool) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {
@@ -354,9 +346,8 @@ func RunNodePause(ctx context.Context, out io.Writer, server, chatID, nodeID str
 		Message: fmt.Sprintf("Pausing node %s (chat %s) at its next turn boundary - resume it with `quack chat node resume %s %s`.", nodeID, chatID, chatID, nodeID)})
 }
 
-// RunNodeResume is `quack chat node resume <chat-id> <node-id>`: resume a
-// PAUSED node - a fresh re-run (like retry), reusing the rest of the plan's
-// stored outputs. Watch it with `chat show -f`.
+// RunNodeResume is `quack chat node resume <chat-id> <node-id>`: re-run a paused node fresh,
+// reusing the rest of the plan's stored outputs.
 func RunNodeResume(ctx context.Context, out io.Writer, server, chatID, nodeID string, asJSON bool) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {
@@ -369,9 +360,8 @@ func RunNodeResume(ctx context.Context, out io.Writer, server, chatID, nodeID st
 		Message: fmt.Sprintf("Resuming node %s (chat %s) - watch it with `quack chat show %s -f`.", nodeID, chatID, chatID)})
 }
 
-// RunNodeQueue is `quack chat node queue <chat-id> <node-id> <message>`:
-// append a message to a RUNNING node's queue, delivered at its next turn
-// boundary (never mid-turn) - replaces the old interrupt-based steer.
+// RunNodeQueue is `quack chat node queue <chat-id> <node-id> <message>`: queue a message for a
+// running node, delivered at its next turn boundary.
 func RunNodeQueue(ctx context.Context, out io.Writer, server, chatID, nodeID, message string, asJSON bool) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {
@@ -413,9 +403,8 @@ func RunNodeQueueRemove(ctx context.Context, out io.Writer, server, chatID, node
 		Message: fmt.Sprintf("Removed queued message %s for node %s (chat %s).", messageID, nodeID, chatID)})
 }
 
-// RunNodeEditTask is `quack chat node edit <chat-id> <node-id> <task>`:
-// replace a not-yet-started node's prompt. Errors (409) once the node has
-// started - its prompt is then immutable.
+// RunNodeEditTask is `quack chat node edit <chat-id> <node-id> <task>`: replace a not-yet-started
+// node's prompt; 409 once it has started.
 func RunNodeEditTask(ctx context.Context, out io.Writer, server, chatID, nodeID, task string, asJSON bool) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {
@@ -428,9 +417,8 @@ func RunNodeEditTask(ctx context.Context, out io.Writer, server, chatID, nodeID,
 		Message: fmt.Sprintf("Edited node %s's prompt (chat %s).", nodeID, chatID)})
 }
 
-// RunNodeRetry is `quack chat node retry <chat-id> <node-id> [--guidance]`:
-// re-queue a finished node (done/failed/cancelled); it and everything
-// downstream re-run, reusing the stored outputs of all other nodes.
+// RunNodeRetry is `quack chat node retry <chat-id> <node-id> [--guidance]`: re-queue a finished node;
+// it and everything downstream re-run, reusing all other nodes' stored outputs.
 func RunNodeRetry(ctx context.Context, out io.Writer, server, chatID, nodeID, guidance string, asJSON bool) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {
@@ -501,9 +489,8 @@ func AssistantText(items []schema.OutputItem) string {
 			continue
 		}
 		for _, part := range m.Content {
-			// OutputTextPart and ReasoningPart share the same {text, type}
-			// shape, so AsOutputTextPart() unmarshals a reasoning part
-			// without error too - check the discriminator first, or the orchestrator's raw chain-of-thought leaks in as if it were the answer (#419).
+			// OutputTextPart and ReasoningPart share a {text, type} shape, so check the discriminator
+			// first or the orchestrator's chain-of-thought leaks in as the answer.
 			disc, err := part.Discriminator()
 			if err != nil || disc != string(schema.OutputText) {
 				continue
@@ -531,7 +518,7 @@ func nodeErrAs(err error, chatID, nodeID string) error {
 	if errors.As(err, &ce) && ce.Current != "" && slices.Contains([]string{"done", "failed", "cancelled"}, ce.Current) {
 		return fmt.Errorf("node %s already finished (%s)", nodeID, ce.Current)
 	}
-	if err == ErrNotFound { //nolint:errorlint // identity is deliberate: a notFoundErr carrying the server message must pass through uncollapsed
+	if err == ErrNotFound { //nolint:errorlint // identity: a notFoundErr carrying a server message passes through
 		return fmt.Errorf("chat %s or node not found", chatID)
 	}
 	return err
@@ -553,10 +540,8 @@ var (
 	textMarshalerType = reflect.TypeFor[encoding.TextMarshaler]()
 )
 
-// denullSlices deep-copies v, nil slices to empty; a type with its own
-// MarshalJSON or MarshalText (time.Time, a netip.Addr-shaped type with
-// unexported state) is left untouched - a reflection-based deep copy would
-// zero unexported fields a real json.Marshal never touches.
+// denullSlices deep-copies v with nil slices made empty. Types with their own MarshalJSON/MarshalText
+// are left alone: a reflective copy would zero unexported fields json.Marshal never touches.
 func denullSlices(v reflect.Value) reflect.Value {
 	if hasOwnMarshaler(v.Type()) {
 		return v

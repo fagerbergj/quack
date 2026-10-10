@@ -15,10 +15,8 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// TestMain mirrors main()'s dispatch so tests can exercise the REAL
-// self-exec mechanisms rather than calling their logic in-process:
-//   - __sandbox-exec (workspace.RunSandboxExecIfInvoked): the Landlock shim.
-//   - GIT_ASKPASS (isGitAskpassInvocation): symlinks the test binary under the askpass link name and execs it exactly the way git execs $GIT_ASKPASS - direct program path, prompt as the single argument, no shell. Catches an unexecutable GIT_ASKPASS value that an in-process call would miss.
+// TestMain mirrors main()'s argv dispatch (__sandbox-exec and GIT_ASKPASS) so tests exercise the real
+// self-exec paths, catching an unexecutable GIT_ASKPASS value an in-process call would miss.
 func TestMain(m *testing.M) {
 	workspace.RunSandboxExecIfInvoked()
 	if isGitAskpassInvocation() {
@@ -45,9 +43,8 @@ func execAskpass(t *testing.T, link, prompt string, env map[string]string) strin
 	return out.String()
 }
 
-// TestGitAskpassSymlinkExecsBothPrompts is the test that would have caught
-// the live bug: it execs the GIT_ASKPASS value directly (no shell, prompt as
-// argv[1] - precisely git's invocation) through a symlink named tools.GitAskpassLinkName, and asserts BOTH halves of git's two-call protocol: the Username prompt answers with the configured username, the Password prompt with the token.
+// TestGitAskpassSymlinkExecsBothPrompts execs GIT_ASKPASS exactly as git does (symlink, no shell, prompt as
+// argv[1]): the Username prompt gets the username, the Password prompt the token.
 func TestGitAskpassSymlinkExecsBothPrompts(t *testing.T) {
 	self, err := os.Executable()
 	if err != nil {

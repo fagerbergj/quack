@@ -28,9 +28,7 @@ func (failingListService) List(context.Context, *artifact.ListRequest) (*artifac
 	return nil, errors.New("artifact store unreachable")
 }
 
-// TestFailSoftListArtifacts_DegradesToEmpty proves a List failure (which would
-// otherwise fail the whole orchestrator turn via loadartifactstool) degrades
-// to "no artifacts offered" instead of propagating.
+// A List failure degrades to "no artifacts offered" instead of failing the turn.
 func TestFailSoftListArtifacts_DegradesToEmpty(t *testing.T) {
 	wrapped := failSoftListArtifacts{failingListService{artifact.InMemoryService()}}
 	resp, err := wrapped.List(context.Background(), &artifact.ListRequest{AppName: AppName, UserID: "u1", SessionID: "c1"})
@@ -42,9 +40,7 @@ func TestFailSoftListArtifacts_DegradesToEmpty(t *testing.T) {
 	}
 }
 
-// TestFailSoftListArtifacts_RecordsStoreFailure is #1193: a List failure must
-// not just degrade silently - it has to leave a trace inference.LastStoreFailure
-// can surface into a failed run outcome (store/runstatus.go's DeriveTerminalStatus).
+// A degraded List failure must still leave a record DeriveTerminalStatus can surface.
 func TestFailSoftListArtifacts_RecordsStoreFailure(t *testing.T) {
 	const chatID = "c-1193"
 	t.Cleanup(func() { inference.ClearStoreFailure(chatID) })
@@ -57,9 +53,7 @@ func TestFailSoftListArtifacts_RecordsStoreFailure(t *testing.T) {
 		t.Fatal("want a recorded store failure after a failed List, got none")
 	}
 
-	// A later successful List (store recovered) must clear the stale record -
-	// otherwise a genuine unrelated silent gap later in the same chat would
-	// wrongly report a DB outage that's long over.
+	// A later successful List must clear it, or a later unrelated gap would report a stale outage.
 	if _, err := wrapped.List(context.Background(), &artifact.ListRequest{AppName: AppName, UserID: "u1", SessionID: chatID}); err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -83,13 +77,8 @@ func (s *onceFailingListService) List(ctx context.Context, req *artifact.ListReq
 	return s.Service.List(ctx, req)
 }
 
-// TestFailSoftListArtifacts_LoadBounded proves load_artifacts (the ADK-native
-// read path) degrades an oversized artifact to a text notice instead of
-// dumping it into model context unbounded (#1006 item 7) - the same
-// artifactref.InlineMaxBytes cap read_artifact (ACP, internal/acp/memorymcp.go)
-// already enforces - and, per #1225, returns no error: ADK's loadartifactstool
-// runs every requested name in one errgroup, so one bad Load must not cancel
-// its siblings and fail the whole turn.
+// load_artifacts degrades an oversized artifact to a text notice capped at InlineMaxBytes, with
+// no error: one failed Load in loadartifactstool's errgroup would cancel its siblings.
 func TestFailSoftListArtifacts_LoadBounded(t *testing.T) {
 	ctx := context.Background()
 	svc := artifact.InMemoryService()
@@ -128,9 +117,7 @@ func TestFailSoftListArtifacts_LoadBounded(t *testing.T) {
 	}
 }
 
-// TestFailSoftListArtifacts_LoadMissingDegradesToText is #1225's defense in
-// depth: a not-found Load (e.g. a stale name the model still asks for) must
-// not error either, for the same errgroup-cancels-siblings reason.
+// A not-found Load must not error either, for the same errgroup reason.
 func TestFailSoftListArtifacts_LoadMissingDegradesToText(t *testing.T) {
 	ctx := context.Background()
 	wrapped := failSoftListArtifacts{artifact.InMemoryService()}
@@ -189,10 +176,7 @@ func (s *loadArtifactsStub) GenerateContent(_ context.Context, req *model.LLMReq
 	}
 }
 
-// TestOrchestratorRun_LoadArtifactsTool proves that once SetArtifacts is
-// wired, the orchestrator's own runner can list and load a session artifact
-// through the load_artifacts tool - end to end via Run, not just at
-// construction time.
+// Once SetArtifacts is wired, Run can list and load a session artifact through load_artifacts.
 func TestOrchestratorRun_LoadArtifactsTool(t *testing.T) {
 	ctx := context.Background()
 	svc := artifact.InMemoryService()
@@ -226,13 +210,11 @@ func TestOrchestratorRun_LoadArtifactsTool(t *testing.T) {
 	}
 }
 
-// TestOrchestratorRun_NoArtifactService_ToolAbsentNoPanic: an orchestrator
-// with no artifact service wired must not offer load_artifacts, and must not
-// panic when a run happens regardless.
+// With no artifact service, load_artifacts is not offered and Run must not panic.
 func TestOrchestratorRun_NoArtifactService_ToolAbsentNoPanic(t *testing.T) {
 	ctx := context.Background()
 	sessions := session.InMemoryService()
-	textModel := scriptedModel{reply: "no tools needed"}
+	textModel := replyModel("no tools needed")
 	o := New(sessions, textModel, func(context.Context) string { return "you are the orchestrator" }, dag.NewPlanner(nil, nil, nil), dag.NewExecutor(sessions, nil, nil, nil, nil, nil), nil, nil, nil)
 	// o.artifacts left nil deliberately.
 

@@ -9,12 +9,8 @@ import (
 	"github.com/fagerbergj/quack/internal/ledger"
 )
 
-// AdmittingLLM wraps an LLM so a generate call holds admission capacity only
-// while it is actually generating. The orchestrator needs this: its run spans
-// the whole DAG, but it sits idle while worker nodes execute - holding a
-// session across that span deadlocks any config whose sessions cap is at or
-// below the number of concurrent runs (the orchestrators would own every
-// session their own nodes are waiting for).
+// AdmittingLLM holds admission only while generating. The orchestrator idles across the whole DAG run,
+// so holding a session there deadlocks any sessions cap at or below the number of concurrent runs.
 type AdmittingLLM struct {
 	model.LLM
 	admission  *Admission
@@ -23,8 +19,8 @@ type AdmittingLLM struct {
 	onAdmitted func()
 }
 
-// NewAdmittingLLM returns inner unwrapped when there is nothing to enforce, so an unlimited model keeps its call path.
-// onQueued/onAdmitted may be nil: state events for UI persistence (#1484).
+// NewAdmittingLLM returns inner unwrapped when there is nothing to enforce. onQueued/onAdmitted may
+// be nil: state events for UI persistence.
 func NewAdmittingLLM(inner model.LLM, admission *Admission, spec AdmissionSpec, onQueued, onAdmitted func()) model.LLM {
 	if admission == nil || spec.Model == "" {
 		return inner
@@ -38,8 +34,7 @@ func NewAdmittingLLM(inner model.LLM, admission *Admission, spec AdmissionSpec, 
 	return &AdmittingLLM{LLM: inner, admission: admission, spec: spec, onQueued: onQueued, onAdmitted: onAdmitted}
 }
 
-// SetLedgerCoords forwards to the wrapped model so per-round stamps still
-// reach the inference model behind this hold (#1482 wraps the worker base).
+// SetLedgerCoords forwards to the wrapped model so per-round stamps still reach the inference model.
 func (a *AdmittingLLM) SetLedgerCoords(c ledger.Coords) {
 	if cs, ok := a.LLM.(interface{ SetLedgerCoords(ledger.Coords) }); ok {
 		cs.SetLedgerCoords(c)
@@ -67,14 +62,8 @@ func (a *AdmittingLLM) GenerateContent(ctx context.Context, req *model.LLMReques
 		}
 		defer release() // fallback: an error, cancellation, or early consumer exit before a complete response
 		for resp, err := range a.LLM.GenerateContent(ctx, req, stream) {
-			// Release BEFORE yielding the complete response, not after the whole
-			// iterator returns: the caller (ADK's own flow) runs tool calls
-			// synchronously in reaction to this yield, nested inside this same
-			// iteration - for the orchestrator, that includes execute() running
-			// a DAG node through this exact admission pool (RunPlanStep). Holding
-			// the reservation across that nested call deadlocks the node it just
-			// queued: the turn's own reservation never frees until the node it's
-			// waiting on is admitted, which can't happen while the turn holds it.
+			// Release before yielding the complete response: ADK runs tool calls nested in this yield, and the
+			// orchestrator's execute() admits a DAG node through this same pool, which would deadlock on our hold.
 			if resp != nil && !resp.Partial {
 				release()
 			}

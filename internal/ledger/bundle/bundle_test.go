@@ -91,9 +91,7 @@ func evalResult(ts time.Time, node, round, responseID, criterion string, score f
 	}}
 }
 
-// rootChat builds a root-stream (top-level orchestrator) chat entry - the
-// zero-value Node/Agent/Round every orchestrator-level call carries, since
-// ledger.WithCoords is only ever called from a node's worker/judge round.
+// rootChat builds a root-stream chat entry: zero Node/Agent/Round, since only node rounds set ledger coords.
 func rootChat(ts time.Time, model string, extra map[string]any) entry {
 	return chat(ts, "", "", "", model, extra)
 }
@@ -199,9 +197,8 @@ func TestLoad_Zip(t *testing.T) {
 	}
 }
 
-// TestUserTurns_MultiTurn: each root-stream chat call carries the full history so far -
-// return both turns, oldest first, not repeating turn 1 from turn 2's context; node-level
-// (non-root) role:user task prompts must NOT be picked up as end-user turns.
+// TestUserTurns_MultiTurn: both turns come back oldest first without repeating turn 1 from turn 2's history,
+// and node-level role:user prompts are not end-user turns.
 func TestUserTurns_MultiTurn(t *testing.T) {
 	path := writeJSONL(t, []entry{
 		rootChat(t0(), "orch-model", map[string]any{
@@ -286,9 +283,7 @@ func TestEvaluationResults(t *testing.T) {
 	}
 }
 
-// TestNodeRuns_ACPOnlyStream: an ACP-backed agent (code-reviewer) emits no
-// llm.call, only one invoke_agent record per round - NodeRuns must still
-// produce a run for it, not drop it.
+// TestNodeRuns_ACPOnlyStream: an ACP agent emits only invoke_agent records, no llm.call, and still yields a run.
 func TestNodeRuns_ACPOnlyStream(t *testing.T) {
 	sent := []string{`{"jsonrpc":"2.0","id":1,"method":"session/prompt","params":{"prompt":[{"type":"text","text":"review this diff"}]}}`}
 	received := []string{
@@ -316,10 +311,8 @@ func TestNodeRuns_ACPOnlyStream(t *testing.T) {
 	}
 }
 
-// TestNodeRuns_ACPArtifactsAndPlugins: an ACP round's artifacts/plugins
-// (invokeAgentEntry -> acpRoundRun -> NodeRun, #1455) must survive the same
-// copy the llm.call side already gets (dataset_test.go's MetadataBlock case) -
-// a broken copy here would silently drop provenance from every ACP export.
+// TestNodeRuns_ACPArtifactsAndPlugins: an ACP round's artifacts/plugins survive into NodeRun, or every ACP
+// export silently loses provenance.
 func TestNodeRuns_ACPArtifactsAndPlugins(t *testing.T) {
 	sent := []string{`{"jsonrpc":"2.0","id":1,"method":"session/prompt","params":{"prompt":[{"type":"text","text":"review this diff"}]}}`}
 	received := []string{
@@ -352,9 +345,8 @@ func TestNodeRuns_ACPArtifactsAndPlugins(t *testing.T) {
 	}
 }
 
-// TestNodeRuns_ACPAnswerResetsOnToolCall: the delivered answer only ever
-// contains text after the last tool call (translate.go resets t.answer on
-// each u.ToolCall) - NodeRuns must mirror that, not concatenate the whole round.
+// TestNodeRuns_ACPAnswerResetsOnToolCall: the answer is only the text after the last tool call, mirroring
+// translate.go's reset.
 func TestNodeRuns_ACPAnswerResetsOnToolCall(t *testing.T) {
 	sent := []string{`{"jsonrpc":"2.0","id":1,"method":"session/prompt","params":{"prompt":[{"type":"text","text":"review this diff"}]}}`}
 	received := []string{
@@ -380,9 +372,8 @@ func TestNodeRuns_ACPAnswerResetsOnToolCall(t *testing.T) {
 	}
 }
 
-// TestNodeRuns_DraftPlusRevise: draft and revise are separate rounds/streams
-// of the same node - NodeRuns must collapse them into one run, task from the
-// draft, answer from the later (by At) revise.
+// TestNodeRuns_DraftPlusRevise: draft and revise collapse into one run, task from the draft and answer from
+// the later revise.
 func TestNodeRuns_DraftPlusRevise(t *testing.T) {
 	path := writeJSONL(t, []entry{
 		chat(t0(), "node-a", "synthesizer", "worker-r0", "gpt", map[string]any{

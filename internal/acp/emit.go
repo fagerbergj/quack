@@ -16,22 +16,17 @@ import (
 // through.
 const acpScope = "quack.acp"
 
-// maxTeeBytes bounds each direction's captured conversation - a full
-// protocol transcript, not a tail (see tailBuffer's stderr use, which wants
-// the opposite): a long-running round's early handshake matters as much as its last message, so capture stops rather than slides once the cap is hit.
+// maxTeeBytes bounds each direction's captured transcript. Capture stops rather than slides at the cap:
+// a round's early handshake matters as much as its last message (unlike tailBuffer's stderr).
 const maxTeeBytes = 4 << 20 // 4 MiB per direction
 
-// teeBuffer is an io.Writer that accumulates up to maxTeeBytes bytes,
-// dropping (not truncating from the front) whatever comes after the cap -
-// the whole point is "record everything up to a bound", not "record the tail" (contrast tailBuffer in proc.go).
+// teeBuffer accumulates up to maxTeeBytes and drops whatever comes after (contrast tailBuffer in proc.go).
 type teeBuffer struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
 }
 
-// reset clears the buffer for reuse across a pinned process's next round -
-// acp.go's round() owns one teeBuffer's worth of content per round even
-// when the underlying subprocess now spans several (#1006).
+// reset clears the buffer between a pinned process's rounds; each round owns its own slice of the wire.
 func (t *teeBuffer) reset() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -48,15 +43,13 @@ func (t *teeBuffer) Write(p []byte) (int, error) {
 		}
 		t.buf.Write(p)
 	}
-	// ALWAYS report the full original write consumed: this Writer is paired
-	// with the real transport via io.MultiWriter (stdin), which treats any
-	// short count as io.ErrShortWrite and fails the whole write - a capture buffer must never be able to break the connection it's tapping.
+	// Always report the full write consumed: io.MultiWriter treats a short count as ErrShortWrite,
+	// and a capture buffer must never break the connection it taps.
 	return n, nil
 }
 
-// lines splits the captured ndjson (one JSON-RPC message per line, ACP's
-// wire framing) into a []json.RawMessage - the shape both a JSON array
-// attribute and a lenient reader want. A trailing partial line (buffer cap hit mid-message) is dropped, not emitted malformed.
+// lines splits the captured ndjson (one JSON-RPC message per line) into []json.RawMessage.
+// A trailing partial line (cap hit mid-message) is dropped, not emitted malformed.
 func (t *teeBuffer) lines() []json.RawMessage {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -71,9 +64,8 @@ func (t *teeBuffer) lines() []json.RawMessage {
 	return out
 }
 
-// emitInvokeAgent records one gen_ai "invoke_agent" ledger event per ACP
-// round (teeBuffer.reset makes this true even when a pinned subprocess spans
-// several rounds), carrying the full teed protocol conversation: sent is what quack wrote to the subprocess's stdin, received is what it read back from stdout. Coordinates (conversation/node/round) come off ctx - the SAME ledger.Coords the vetting gate stamped before invoking this agent's RunNode, since an ACP round runs inside that same call tree.
+// emitInvokeAgent records one invoke_agent ledger event per ACP round with the teed conversation (sent = stdin,
+// received = stdout). Coords come off ctx: the gate stamped them before calling RunNode, in this call tree.
 func emitInvokeAgent(ctx context.Context, agentName string, sent, received *teeBuffer, roundErr error, plugins []ledger.PluginRef, artifacts []ledger.ArtifactRef) {
 	if !otelobs.LoggingEnabled(acpScope) {
 		return // nothing listening - skip parsing/marshaling the teed conversation

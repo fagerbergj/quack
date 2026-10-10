@@ -1,6 +1,5 @@
-// Package artifactref encodes/decodes a lightweight reference to one
-// artifact.Service revision as a genai.Part - the shape that flows through
-// plans, session events, and the gen_ai ledger instead of attachment bytes.
+// Package artifactref encodes a reference to one artifact.Service revision as a genai.Part, which flows
+// through plans, session events and the ledger instead of attachment bytes.
 package artifactref
 
 import (
@@ -11,23 +10,20 @@ import (
 	"google.golang.org/genai"
 )
 
-// AppName is the ADK artifact.Service app name for all quack chat
-// attachments. Mirrors orchestrator.AppName/store's chatAppName (each
-// package keeps its own copy to avoid an import cycle).
+// AppName is the ADK artifact app name for chat attachments, duplicated in orchestrator and store to avoid
+// an import cycle.
 const AppName = "quack"
 
-// InlineMaxBytes caps payloads the read_artifact tool and REST artifact diff
-// endpoint return inline (shared so "too big" means the same in both).
-// Bigger payloads must be fetched by another means, not flood a response.
+// InlineMaxBytes caps payloads read_artifact and the REST artifact diff return inline, so "too big" means
+// the same in both.
 const InlineMaxBytes = 256 * 1024
 
 // Scheme names a reference's FileData.FileURI - never a scheme a real
 // FileData part carries (gs://, https://, ...), so it can't collide.
 const Scheme = "quack-artifact"
 
-// Encode builds a reference part for one artifact revision. FileData (not
-// InlineData, which exists to embed bytes, or Text, which could collide
-// with real model-visible text) carries it.
+// Encode builds a reference part carried in FileData: InlineData embeds bytes and Text could collide with
+// real model-visible text.
 func Encode(userID, sessionID, name string, revision int64, mimeType string) *genai.Part {
 	u := url.URL{
 		Scheme: Scheme,

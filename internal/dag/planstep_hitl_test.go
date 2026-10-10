@@ -13,12 +13,8 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// TestRunPlanStep_HITLPauseThenResume is BLOCKING 1's proof (#slice3
-// review): a node paused mid-incremental-step, through the REAL
-// RunPlanStep/ResumePlanStep pair (not a fake), parks cleanly on step 1 and
-// finishes once step 2 answers it - the same adk_request_input
-// FunctionResponse shape and interrupt id format (hitl-<node>-r<round>)
-// orchestrator.go's resume path already uses for a whole-plan resume.
+// A node paused mid-step through the real RunPlanStep/ResumePlanStep parks on step 1
+// and finishes once step 2 answers it (hitl-<node>-r<round>).
 func TestRunPlanStep_HITLPauseThenResume(t *testing.T) {
 	stub := &graphStub{}
 	worker, err := llmagent.New(llmagent.Config{
@@ -86,13 +82,8 @@ func TestRunPlanStep_HITLPauseThenResume(t *testing.T) {
 	}
 }
 
-// TestRunPlanStep_ReusedNodeEmitsNodeQueuedFirst pins the QA rig regression
-// (#slice3 review): "persistNodeEvent: dag_node status update failed ...
-// illegal status transition done -> running" for a node reassigned in a
-// later incremental step - dag.CanTransition refuses a direct done ->
-// running (only done -> queued -> running is legal), so RunPlanStep must
-// emit node_queued for a REUSED node exactly as a fresh dispatch does, not
-// jump straight to node_start.
+// done -> running is illegal (only done -> queued -> running), so a reused node must
+// emit node_queued before node_start.
 func TestRunPlanStep_ReusedNodeEmitsNodeQueuedFirst(t *testing.T) {
 	stub := &graphStub{}
 	worker, err := llmagent.New(llmagent.Config{

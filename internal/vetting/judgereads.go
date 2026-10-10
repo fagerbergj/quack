@@ -8,10 +8,8 @@ import (
 	"sync/atomic"
 
 	"google.golang.org/adk/v2/agent"
-	"google.golang.org/adk/v2/model"
+	"google.golang.org/adk/v2/agent/llmagent"
 	"google.golang.org/adk/v2/tool"
-	"google.golang.org/adk/v2/tool/toolutils"
-	"google.golang.org/genai"
 )
 
 // readCounter: tally for one judge round's read-tool calls.
@@ -22,51 +20,20 @@ type readCounter struct {
 
 func (c *readCounter) count() int64 { return c.n.Load() }
 
-// countingTool: wraps a read-only tool to tally invocations (mirrors guardedTool).
-type countingTool struct {
-	inner runnableTool
-	c     *readCounter
-}
-
-// runnableTool: what functiontool-built tool.Tool satisfies (local to avoid vetting→tools import cycle).
-type runnableTool interface {
-	tool.Tool
-	Declaration() *genai.FunctionDeclaration
-	Run(ctx agent.Context, args any) (map[string]any, error)
-	ProcessRequest(ctx agent.Context, req *model.LLMRequest) error
-}
-
-func (t *countingTool) Name() string        { return t.inner.Name() }
-func (t *countingTool) Description() string { return t.inner.Description() }
-func (t *countingTool) IsLongRunning() bool { return t.inner.IsLongRunning() }
-func (t *countingTool) Declaration() *genai.FunctionDeclaration {
-	return t.inner.Declaration()
-}
-
-// ProcessRequest packs the wrapper, not the inner tool, into the request's
-// tool map (mirrors guardedTool) - packing inner here would register the
-// unwrapped tool for dispatch and this wrapper's Run would never be called.
-func (t *countingTool) ProcessRequest(_ agent.Context, req *model.LLMRequest) error {
-	return toolutils.PackTool(req, t)
-}
-
-func (t *countingTool) Run(ctx agent.Context, args any) (map[string]any, error) {
-	t.c.n.Add(1)
-	return t.inner.Run(ctx, args)
-}
-
-// countReads: wraps tools to tally reads. Non-runnableTool passes through uncounted (more lenient, never harsher).
-func countReads(tools []tool.Tool) ([]tool.Tool, *readCounter) {
+// countReads tallies calls to these tools by name. A before-tool callback fires exactly when the
+// tool would run, so the judge sees its tools unwrapped.
+func countReads(tools []tool.Tool) (*readCounter, llmagent.BeforeToolCallback) {
 	c := &readCounter{hadTools: len(tools) > 0}
-	out := make([]tool.Tool, 0, len(tools))
+	names := make(map[string]bool, len(tools))
 	for _, t := range tools {
-		if rt, ok := t.(runnableTool); ok {
-			out = append(out, &countingTool{inner: rt, c: c})
-			continue
-		}
-		out = append(out, t)
+		names[t.Name()] = true
 	}
-	return out, c
+	return c, func(_ agent.Context, t tool.Tool, _ map[string]any) (map[string]any, error) {
+		if names[t.Name()] {
+			c.n.Add(1)
+		}
+		return nil, nil
+	}
 }
 
 // unreadPass: judge held read tools, passed, and never called one.
@@ -125,9 +92,8 @@ func priorReadsSection(c judgeReadCounters, limit int) string {
 	return b.String()
 }
 
-// unreadArtifactPass: the worker wrote/edited an artifact this round, the
-// judge passed, and never called read_artifact - nothing in the verdict
-// checked what the worker actually produced.
+// unreadArtifactPass: the worker wrote an artifact this round and the judge passed without calling
+// read_artifact, so nothing checked what the worker produced.
 func unreadArtifactPass(c *readCounter, v verdict, workerWroteArtifact bool) bool {
 	return c != nil && workerWroteArtifact && v.Passed && c.count() == 0
 }

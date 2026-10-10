@@ -12,14 +12,14 @@ import (
 	"github.com/go-chi/chi/v5"
 	"google.golang.org/adk/v2/tool"
 
+	"github.com/fagerbergj/quack/internal/orchestrator"
 	"github.com/fagerbergj/quack/internal/runlog"
 	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// TestMapExtRunOutcome pins the extsdk.RunStatus mapping (#879's quack
-// half): cancelled must win regardless of what the DB-derived status says,
-// and the pre-existing failed/needs_input/done rules stay put.
+// TestMapExtRunOutcome: cancelled wins regardless of the DB-derived status; failed/needs_input/done
+// map through.
 func TestMapExtRunOutcome(t *testing.T) {
 	needsInput := stream.NodeNeedsInputData{NodeID: "node-7"}
 	tests := []struct {
@@ -56,9 +56,8 @@ func TestMapExtRunOutcome(t *testing.T) {
 	}
 }
 
-// TestMapExtRunOutcome_FailedWithNodeErrorFillsError is sdk v0.10.0's fix:
-// RunOutcome.Error carries a failed run's real cause; Answer stays empty
-// rather than folding the cause into it (formerly #1105's stopgap).
+// TestMapExtRunOutcome_FailedWithNodeErrorFillsError: RunOutcome.Error carries a failed run's cause;
+// Answer stays empty.
 func TestMapExtRunOutcome_FailedWithNodeErrorFillsError(t *testing.T) {
 	needsInput := stream.NodeNeedsInputData{}
 	out := mapExtRunOutcome(store.RunStatusFailed, "", "model gateway returned 502 Bad Gateway on 5 consecutive attempts over 48m0s",
@@ -74,9 +73,8 @@ func TestMapExtRunOutcome_FailedWithNodeErrorFillsError(t *testing.T) {
 	}
 }
 
-// TestMapExtRunOutcome_TrueSilentGapErrorStaysEmpty proves the #568 path is
-// untouched: no failed-node error means Error stays empty for the
-// extension's own silent-gap text.
+// TestMapExtRunOutcome_TrueSilentGapErrorStaysEmpty: no failed-node error leaves Error empty
+// for the extension's own silent-gap text.
 func TestMapExtRunOutcome_TrueSilentGapErrorStaysEmpty(t *testing.T) {
 	needsInput := stream.NodeNeedsInputData{}
 	out := mapExtRunOutcome(store.RunStatusIdle, "", "", "", true, needsInput, false, false)
@@ -104,9 +102,8 @@ var (
 	_ extsdk.RunObserver = (*cancelOutcomeObserver)(nil)
 )
 
-// TestDriveExtensionRunEvents_UserCancelReportsRunCancelled proves the
-// seam a user Stop actually goes through: hub.CancelRun (DELETE /chats/{id},
-// and the same runHandle a Stop-button PATCH cancels) reaches the in-flight run as ctx.Canceled, and RunEnded must receive extsdk.RunCancelled - not RunDone with whatever partial answer the run left behind (#879).
+// TestDriveExtensionRunEvents_UserCancelReportsRunCancelled: hub.CancelRun (the path a user Stop takes)
+// must reach RunEnded as RunCancelled, not RunDone with a partial answer.
 func TestDriveExtensionRunEvents_UserCancelReportsRunCancelled(t *testing.T) {
 	st, orch, hub, _, _ := newExtTestStack(t)
 	chatID := "ext:cancel-test:user-stop"
@@ -154,4 +151,10 @@ func TestDriveExtensionRunEvents_UserCancelReportsRunCancelled(t *testing.T) {
 	if got.Status != extsdk.RunCancelled {
 		t.Errorf("Status = %q, want %q", got.Status, extsdk.RunCancelled)
 	}
+}
+
+// driveExtensionRunEvents is the begin+finish pair Dispatch splits around its ack, run synchronously.
+func driveExtensionRunEvents(ctx context.Context, name string, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, extHolder *atomic.Pointer[extsdk.Extension], userID, chatID, turnID string, timeout time.Duration, run func(context.Context) iter.Seq2[stream.SSEEvent, error]) {
+	runCtx, cancelRun := beginExtRun(ctx, st, hub, chatID, turnID, timeout)
+	finishExtRun(ctx, runCtx, cancelRun, name, orch, st, hub, eventLog, extHolder, userID, chatID, turnID, run)
 }

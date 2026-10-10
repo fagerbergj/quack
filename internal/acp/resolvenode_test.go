@@ -9,9 +9,8 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// TestResolveNodeWorktreeParentInvokesWorktreeHook pins the acp side of Part
-// A: a node whose AdvisorTask carries a WorktreeParent (a read-only
-// qualifying node - reviewer, explorer - in a plan.Setup chain) must have its cwd resolved through Options.Worktree, not the plain Jail.EnsureDir path, with the parent/this-node workspace ids threaded through unchanged.
+// TestResolveNodeWorktreeParentInvokesWorktreeHook: a node with WorktreeParent resolves its cwd via
+// Options.Worktree, not Jail.EnsureDir, with parent/node workspace ids passed through.
 func TestResolveNodeWorktreeParentInvokesWorktreeHook(t *testing.T) {
 	var gotUser, gotChat, gotParent, gotNode string
 	a := &Agent{opts: Options{
@@ -39,9 +38,8 @@ func TestResolveNodeWorktreeParentInvokesWorktreeHook(t *testing.T) {
 	}
 }
 
-// TestResolveNodeUsesChatIDNotSessionIDOnRetry pins #997: RetryNode (both
-// REST retry and boot-resume ride it) runs the re-entered node under a
-// synthetic ADK session id ("chatID::retry", see orchestrator.RetryNode) - distinct from the real chat scope the setup clone was provisioned under. resolveNode must key every workspace call off ChatID, never SessionID, or a retried worktree/reviewer/explorer node resolves into a scope the clone was never provisioned in (the issue's "worktree add ... no such file or directory").
+// TestResolveNodeUsesChatIDNotSessionIDOnRetry: RetryNode runs under a synthetic "chatID::retry" session id,
+// so resolveNode must key workspace calls off ChatID or resolve into an unprovisioned scope.
 func TestResolveNodeUsesChatIDNotSessionIDOnRetry(t *testing.T) {
 	var gotChat string
 	a := &Agent{opts: Options{
@@ -66,9 +64,8 @@ func TestResolveNodeUsesChatIDNotSessionIDOnRetry(t *testing.T) {
 	}
 }
 
-// TestResolveNodeWorktreeParentWithoutHookErrors: a node that needs a
-// worktree but has no Worktree executor configured is a wiring bug - fail
-// loudly, mirroring dag.SetupFunc's nil-executor error, rather than silently falling back to a bare directory that would hand the node an empty dir with none of the parent clone's content.
+// TestResolveNodeWorktreeParentWithoutHookErrors: needing a worktree with no Worktree executor is a wiring bug;
+// fail loudly rather than hand the node an empty dir.
 func TestResolveNodeWorktreeParentWithoutHookErrors(t *testing.T) {
 	a := &Agent{opts: Options{UserID: "u1"}}
 	token := vetting.AdvisorThreadToken("plan-1", "review1")
@@ -83,9 +80,7 @@ func TestResolveNodeWorktreeParentWithoutHookErrors(t *testing.T) {
 	}
 }
 
-// TestResolveNodeNonWorktreeNodeUsesJail: a node with no WorktreeParent (a
-// writer, or a plain non-Setup node) still resolves via the plain
-// Jail.EnsureDir path, unaffected by worktree isolation.
+// TestResolveNodeNonWorktreeNodeUsesJail: a node with no WorktreeParent resolves via Jail.EnsureDir.
 func TestResolveNodeNonWorktreeNodeUsesJail(t *testing.T) {
 	dir := t.TempDir()
 	jail, err := workspace.NewJail(dir)
@@ -112,9 +107,8 @@ func TestResolveNodeNonWorktreeNodeUsesJail(t *testing.T) {
 	}
 }
 
-// TestResolveNodeReturnsAdvisorTaskReadOnly is #754's acp-side pin:
-// resolveNode surfaces THIS node's AdvisorTask.ReadOnly (set per-run by
-// dag.nodeGateConfig, not the agent's static config) so runPrompt can build per-round Caps with it - the seam a planOnly run's dynamic override needs.
+// TestResolveNodeReturnsAdvisorTaskReadOnly: resolveNode surfaces this node's AdvisorTask.ReadOnly
+// (set per run, not static config) so runPrompt can build per-round Caps.
 func TestResolveNodeReturnsAdvisorTaskReadOnly(t *testing.T) {
 	dir := t.TempDir()
 	jail, err := workspace.NewJail(dir)
@@ -138,9 +132,8 @@ func TestResolveNodeReturnsAdvisorTaskReadOnly(t *testing.T) {
 	}
 }
 
-// TestResolveNodeGrantsScratchDir pins the writable-scratch fix: resolveNode
-// derives a per-node scratch dir (workspace.Jail.ScratchDir) from the SAME
-// (UserID, SessionID, WorkspaceNodeID) coordinate the cwd resolves under - created, and distinct from the node's own working directory - regardless of the node's ReadOnly flag (a read-only reviewer needs scratch exactly as much as a writer does).
+// TestResolveNodeGrantsScratchDir: resolveNode creates a per-node scratch dir under the cwd's coordinates,
+// distinct from the cwd, whatever the node's ReadOnly flag.
 func TestResolveNodeGrantsScratchDir(t *testing.T) {
 	dir := t.TempDir()
 	jail, err := workspace.NewJail(dir)
@@ -198,9 +191,8 @@ func TestResolveNodeNoJailNoScratchDir(t *testing.T) {
 	}
 }
 
-// TestResolveNodeChatAndNodeIDKeyOffAdvisorThread (#998 review): a setup
-// chain's writer node has WorkspaceNodeID collapsed to the shared repo scope
-// (dag.workspaceNodeID) while NodeID stays the plan node's own id - the executor's controls (and REST QueueNodeMessage) are keyed by the LATTER, so resolveNode must return the advisor thread's own ChatID/NodeID (the real chat scope, not the ADK SessionID a retry aliases - see AdvisorTask.ChatID) and never the workspace scope, or the live-steer hook registers under a key nothing looks up.
+// TestResolveNodeChatAndNodeIDKeyOffAdvisorThread: a setup-chain writer's WorkspaceNodeID collapses to the repo
+// scope, so resolveNode returns the advisor thread's ChatID/NodeID or live steer registers under a dead key.
 func TestResolveNodeChatAndNodeIDKeyOffAdvisorThread(t *testing.T) {
 	jail, err := workspace.NewJail(t.TempDir())
 	if err != nil {

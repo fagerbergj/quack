@@ -21,20 +21,18 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// planToolCtx supplies a nil ToolConfirmation (no pending confirm) - the
-// functiontool runner consults it on every call, and StrictContextMock alone
-// panics ("not implemented"). Mirrors hostpath_test.go's confirmlessCtx.
+// planToolCtx supplies a nil ToolConfirmation: the functiontool runner reads it on every call
+// and StrictContextMock alone panics ("not implemented").
 type planToolCtx struct{ *fakeCtx }
 
 func (planToolCtx) ToolConfirmation() *toolconfirmation.ToolConfirmation { return nil }
 
-// buildPlan drives create_plan then execute exactly as the model would -
-// through Run, with JSON-shaped args - and returns the resulting cached
-// plan. Shared by the #661 deterministic-setup tests below.
+// buildPlan drives create_plan then execute through Run with JSON-shaped args, as the model
+// would, and returns the plan execute dispatched.
 func buildPlan(t *testing.T, planner *dag.Planner, cache *PlanCache, githubSetup *dag.Setup, args map[string]any) dag.Plan {
 	t.Helper()
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
-	createTl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, nil, dag.AgentNames())
+	createTl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, nil, dag.AgentNamesFor(context.Background()))
 	if err != nil {
 		t.Fatalf("NewCreatePlanTool: %v", err)
 	}
@@ -48,7 +46,8 @@ func buildPlan(t *testing.T, planner *dag.Planner, cache *PlanCache, githubSetup
 	}
 	planID, _ := cres["plan_id"].(string)
 
-	execTl, err := NewExecuteTool(planner, c, cache, nil, nil, nil, nil, "", nil, githubSetup, nil, "", nil, false, "orchestrator", nil)
+	var p dag.Plan
+	execTl, err := NewExecuteTool(planner, c, cache, nil, capturePlan(&p), nil, nil, "", nil, githubSetup, nil, "", nil, false, "orchestrator", nil)
 	if err != nil {
 		t.Fatalf("NewExecuteTool: %v", err)
 	}
@@ -59,9 +58,8 @@ func buildPlan(t *testing.T, planner *dag.Planner, cache *PlanCache, githubSetup
 	if _, err := ert.Run(newExecToolCtx(), map[string]any{"plan_id": planID}); err != nil {
 		t.Fatalf("execute Run: %v", err)
 	}
-	p, ok := cache.Get(planID)
-	if !ok {
-		t.Fatalf("plan %q not found in cache", planID)
+	if p.ID != planID {
+		t.Fatalf("plan %q never dispatched", planID)
 	}
 	return p
 }
@@ -72,17 +70,14 @@ func implementAssignment() []map[string]any {
 	return []map[string]any{{"agent": "code-implementer", "task": "implement the feature"}}
 }
 
-// TestExecuteToolStampsPlanOnly pins #739's plumbing half: execute stamps
-// dag.Plan.PlanOnly from the harness-computed flag it's constructed with,
-// never from anything the model submits (same as WorkerBackground/
-// ContextItems) - carrying the quack:plan label's intent down to
-// buildGateNodes, which enforces it.
+// TestExecuteToolStampsPlanOnly: execute stamps dag.Plan.PlanOnly from its harness-computed
+// flag, never from model input, so buildGateNodes can enforce the quack:plan label.
 func TestExecuteToolStampsPlanOnly(t *testing.T) {
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
 	cache := NewPlanCache()
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
 
-	createTl, err := NewCreatePlanTool(c, "orchestrator", nil, nil, nil, nil, dag.AgentNames())
+	createTl, err := NewCreatePlanTool(c, "orchestrator", nil, nil, nil, nil, dag.AgentNamesFor(context.Background()))
 	if err != nil {
 		t.Fatalf("NewCreatePlanTool: %v", err)
 	}
@@ -93,7 +88,8 @@ func TestExecuteToolStampsPlanOnly(t *testing.T) {
 	}
 	planID, _ := cres["plan_id"].(string)
 
-	execTl, err := NewExecuteTool(planner, c, cache, nil, nil, nil, nil, "", nil, nil, nil, "", nil, true, "orchestrator", nil)
+	var p dag.Plan
+	execTl, err := NewExecuteTool(planner, c, cache, nil, capturePlan(&p), nil, nil, "", nil, nil, nil, "", nil, true, "orchestrator", nil)
 	if err != nil {
 		t.Fatalf("NewExecuteTool: %v", err)
 	}
@@ -101,18 +97,13 @@ func TestExecuteToolStampsPlanOnly(t *testing.T) {
 	if _, err := ert.Run(newExecToolCtx(), map[string]any{"plan_id": planID}); err != nil {
 		t.Fatalf("execute Run: %v", err)
 	}
-	p, ok := cache.Get(planID)
-	if !ok {
-		t.Fatalf("plan %q not found in cache", planID)
-	}
 	if !p.PlanOnly {
 		t.Error("p.PlanOnly = false, want true - execute was constructed with planOnly=true")
 	}
 }
 
-// TestGitHubSetupOverridesPlannerSetupNoRoundTrip is issue #661's first test
-// case: an issue-implement run gets a deterministic work_branch even when the
-// model never declares `setup` at all (no planner round-trip).
+// TestGitHubSetupOverridesPlannerSetupNoRoundTrip: an issue-implement run gets a deterministic
+// work_branch even when the model never declares `setup`.
 func TestGitHubSetupOverridesPlannerSetupNoRoundTrip(t *testing.T) {
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
 	githubSetup := &dag.Setup{
@@ -132,13 +123,8 @@ func TestGitHubSetupOverridesPlannerSetupNoRoundTrip(t *testing.T) {
 	}
 }
 
-// TestGitHubSetupWorkBranchOverrideStillWins is issue #661's second test
-// case, the PR-scoped half: a planner-supplied work_branch does not survive -
-// the trigger's real PR head wins, with CheckoutExistingHead landing on top.
-// repo/base_ref match the trigger here (a work_branch difference is
-// legitimate - each dispatch can pick its own working branch); a
-// repo/base_ref mismatch is a different, now-rejected case - see
-// TestCreatePlanRejectsWholesaleMismatchedSetup.
+// TestGitHubSetupWorkBranchOverrideStillWins: on a PR-scoped run the trigger's real PR head
+// beats a planner-supplied work_branch, with CheckoutExistingHead set.
 func TestGitHubSetupWorkBranchOverrideStillWins(t *testing.T) {
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
 	githubSetup := &dag.Setup{
@@ -170,18 +156,13 @@ func TestGitHubSetupWorkBranchOverrideStillWins(t *testing.T) {
 	}
 }
 
-// TestCreatePlanIgnoresWholesaleMismatchedSetup supersedes the QA rig's
-// original owner rule (#slice3 review): a planner-invented setup.repo/
-// base_ref that disagrees with the trigger's own used to be rejected
-// outright, costing the model its whole (otherwise valid) plan over a field
-// it can't actually change - the trigger's own setup always wins regardless
-// (rec.Setup, TestGitHubSetupWorkBranchOverrideStillWins above). It's
-// accepted and silently ignored now, noted in the summary instead.
+// TestCreatePlanIgnoresWholesaleMismatchedSetup: a planner setup.repo/base_ref that disagrees
+// with the trigger is ignored (the trigger always wins) and noted in the summary, not rejected.
 func TestCreatePlanIgnoresWholesaleMismatchedSetup(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
 	githubSetup := &dag.Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "main", WorkBranch: "feat/real-pr-head"}
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
-	createTl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, nil, dag.AgentNames())
+	createTl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, nil, dag.AgentNamesFor(context.Background()))
 	if err != nil {
 		t.Fatalf("NewCreatePlanTool: %v", err)
 	}
@@ -203,9 +184,8 @@ func TestCreatePlanIgnoresWholesaleMismatchedSetup(t *testing.T) {
 	}
 }
 
-// TestNonGitHubRunKeepsPlannerSetup is issue #661's third test case: a plain
-// (non-GitHub) run has no trigger Setup to draw from, so the planner's own
-// declaration must pass through untouched.
+// TestNonGitHubRunKeepsPlannerSetup: a non-GitHub run has no trigger Setup, so the planner's
+// own declaration passes through untouched.
 func TestNonGitHubRunKeepsPlannerSetup(t *testing.T) {
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
 	args := map[string]any{
@@ -226,7 +206,7 @@ func TestNonGitHubRunKeepsPlannerSetup(t *testing.T) {
 
 func TestNewCreatePlanToolMetadata(t *testing.T) {
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
-	tl, err := NewCreatePlanTool(c, "orchestrator", nil, nil, nil, nil, dag.AgentNames())
+	tl, err := NewCreatePlanTool(c, "orchestrator", nil, nil, nil, nil, dag.AgentNamesFor(context.Background()))
 	if err != nil {
 		t.Fatalf("NewCreatePlanTool error: %v", err)
 	}
@@ -242,9 +222,8 @@ func TestNewCreatePlanToolMetadata(t *testing.T) {
 	}
 }
 
-// summarizePlanRecord is the summary the model sees back after calling
-// create_plan/edit_plan - it must surface the declared setup/delivery so the
-// model can catch its own mistake before calling execute.
+// The create_plan/edit_plan summary must surface the declared setup/delivery so the model
+// can catch its own mistake before execute.
 func TestSummarizePlanRecordIncludesSetupAndDelivery(t *testing.T) {
 	rec := dag.DagPlanRecord{
 		PlanID:      "p1",
@@ -304,9 +283,8 @@ func TestEmitPlanEvent_ProducesWellFormedEvent(t *testing.T) {
 	}
 }
 
-// TestEmitPlanEvent_OmitsStepWhenNonPositive: a rejected step never reaches
-// SaveStructured, so it has no revision to record - the ledger event must
-// not claim step 0/negative as if it were a real one.
+// TestEmitPlanEvent_OmitsStepWhenNonPositive: a rejected step has no revision, so the ledger
+// event must not claim step 0 or a negative step.
 func TestEmitPlanEvent_OmitsStepAttributeWhenNonPositive(t *testing.T) {
 	capExp := &recordCapture{}
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
@@ -326,9 +304,8 @@ func TestEmitPlanEvent_OmitsStepAttributeWhenNonPositive(t *testing.T) {
 	}
 }
 
-// TestEmitPlanEvent_RecordsInputMessages is issue #635: replaying a planning
-// decision needs the ask alongside the plan - asserts the real Planner.Build
-// fields (History, UserMessage) round-trip into gen_ai.input.messages, not a reconstruction from the plan's nodes; an inline-data attachment carries its mime type, never raw bytes (oversized gen_ai.input.messages risks OTel dropping the whole attribute).
+// TestEmitPlanEvent_RecordsInputMessages: Planner.Build's History and UserMessage round-trip into
+// gen_ai.input.messages; inline data carries its mime type, never raw bytes (OTel drops oversized attrs).
 func TestEmitPlanEvent_RecordsInputMessages(t *testing.T) {
 	capExp := &recordCapture{}
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
@@ -387,9 +364,8 @@ func TestPlanEdges(t *testing.T) {
 	}
 }
 
-// TestDagPlanEventCarriesContextWindow pins the context meter's static-limit
-// path: DagPlanEvent must forward each node's ContextWindow (stamped by the
-// planner from its agent's config) onto the wire DagNodeDef.
+// TestDagPlanEventCarriesContextWindow: DagPlanEvent forwards each node's planner-stamped
+// ContextWindow onto the wire DagNodeDef, for the context meter's static limit.
 func TestDagPlanEventCarriesContextWindow(t *testing.T) {
 	p := dag.Plan{ID: "p1", Nodes: []dag.Node{
 		{ID: "a", AgentName: "web-researcher", ContextWindow: 131072},
@@ -412,9 +388,8 @@ func TestDagPlanEventCarriesContextWindow(t *testing.T) {
 	}
 }
 
-// TestDagPlanEventCarriesArtifact pins the #1178 wire path: DagPlanEvent must
-// forward each node's declared output artifact kind (dag.Node.Artifact) onto the
-// wire DagNodeDef so the frontend can pick the node's primary output exactly; a node declaring none carries an empty field.
+// TestDagPlanEventCarriesArtifact: DagPlanEvent forwards each node's declared artifact kind onto
+// the wire DagNodeDef so the frontend can pick its primary output; none declared stays empty.
 func TestDagPlanEventCarriesArtifact(t *testing.T) {
 	p := dag.Plan{ID: "p1", Nodes: []dag.Node{
 		{ID: "a", AgentName: "code-explorer", Artifact: "text"},
@@ -437,10 +412,8 @@ func TestDagPlanEventCarriesArtifact(t *testing.T) {
 	}
 }
 
-// TestReviewDispatchSetupSatisfiesExistingHead pins the v0.29.0 cutover
-// regression: a review-only dispatch declares its existing PR head via Setup
-// (sdk ExistingHeadRef -> CheckoutExistingHead), so execute must take the
-// head from the Setup, not reject every plan with "needs the PR's real head branch".
+// TestReviewDispatchSetupSatisfiesExistingHead: a review-only dispatch names its PR head via
+// Setup.CheckoutExistingHead, and execute must take it from there rather than reject the plan.
 func TestReviewDispatchSetupSatisfiesExistingHead(t *testing.T) {
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-reviewer"}}, nil, nil)
 	githubSetup := &dag.Setup{
@@ -454,9 +427,8 @@ func TestReviewDispatchSetupSatisfiesExistingHead(t *testing.T) {
 	}
 }
 
-// TestPlanTool_OriginFallbackSetupSatisfiesExistingHead is #1180's second
-// defect: a nudge/retry dispatch carries no Run.Setup of its own, so serve's
-// mergeExtOrigin resolves the chat's stored origin into a dag.Setup via WithGitHubSetup - indistinguishable at execute; pins that the fallback path is accepted as TestReviewDispatchSetupSatisfiesExistingHead pins the fresh path.
+// TestPlanTool_OriginFallbackSetupSatisfiesExistingHead: a nudge/retry dispatch's Setup comes from
+// the chat's stored origin (serve's mergeExtOrigin) and must be accepted like a fresh one.
 func TestPlanTool_OriginFallbackSetupSatisfiesExistingHead(t *testing.T) {
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-reviewer"}}, nil, nil)
 	// Stands in for what mergeExtOrigin(storedOriginJSON, nil, nil) returns
@@ -472,9 +444,8 @@ func TestPlanTool_OriginFallbackSetupSatisfiesExistingHead(t *testing.T) {
 	}
 }
 
-// TestReviewWithoutExistingHeadStillRejected keeps #520's guard: a
-// review-only plan whose dispatch Setup does NOT name an existing head must
-// still be rejected by execute rather than reviewing a freshly-cut empty branch.
+// TestReviewWithoutExistingHeadStillRejected: a review-only plan whose Setup names no existing
+// head is rejected rather than reviewing a freshly-cut empty branch.
 func TestReviewWithoutExistingHeadStillRejected(t *testing.T) {
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-reviewer"}}, nil, nil)
 	githubSetup := &dag.Setup{
@@ -482,7 +453,7 @@ func TestReviewWithoutExistingHeadStillRejected(t *testing.T) {
 		WorkBranch: "quack/issue-836", // no CheckoutExistingHead
 	}
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
-	createTl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, nil, dag.AgentNames())
+	createTl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, nil, dag.AgentNamesFor(context.Background()))
 	if err != nil {
 		t.Fatalf("NewCreatePlanTool: %v", err)
 	}

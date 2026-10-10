@@ -8,9 +8,7 @@ import (
 	"testing"
 )
 
-// The -U0 diff parser is load-bearing for the gate: a misparsed hunk
-// silently un-gates a function, so the parsing and overlap logic get
-// table tests even though they are 30 lines.
+// A misparsed -U0 hunk silently un-gates a function, so the parser and overlap logic get table tests.
 
 func TestChangedRanges(t *testing.T) {
 	cases := []struct {

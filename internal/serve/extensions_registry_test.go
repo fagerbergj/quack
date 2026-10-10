@@ -6,9 +6,8 @@ import (
 	extsdk "github.com/fagerbergj/quack-extensions/sdk"
 )
 
-// TestSDKExtensionRegistryHasBlessedModules pins that every module blank-
-// imported in extensions_registry.go actually registered itself with the SDK
-// - the compiled-in half of "compiled but unconfigured stays dormant".
+// TestSDKExtensionRegistryHasBlessedModules: every module blank-imported in extensions_registry.go
+// registered itself with the SDK.
 func TestSDKExtensionRegistryHasBlessedModules(t *testing.T) {
 	factories := extsdk.Registered()
 	for _, name := range []string{"noop", "remarkable", "sleeper", "usage"} {

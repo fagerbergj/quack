@@ -7,9 +7,8 @@ import (
 	"text/tabwriter"
 )
 
-// RunMemoryRescope is `quack memory rescope`: move role:* memories whose
-// provenance chat has a GitHub origin into their repo:* bucket (#1262). Dry
-// run by default; --apply actually writes the change.
+// RunMemoryRescope is `quack memory rescope`: move role:* memories whose provenance chat has a GitHub
+// origin into their repo:* bucket. Dry run unless --apply.
 func RunMemoryRescope(ctx context.Context, out io.Writer, server string, apply, asJSON bool) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {

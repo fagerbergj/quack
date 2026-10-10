@@ -9,12 +9,12 @@ import (
 
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/memory"
+	"github.com/fagerbergj/quack/internal/memoryrules"
 	"github.com/fagerbergj/quack/internal/store"
 )
 
-// storeOpsLog adapts internal/store's persistence to memory.OpsLog - the one place both packages
-// meet: internal/memory can't import internal/store (dependency direction runs the other way), so
-// bootstrap wires the concrete audit sink here (see openMemory in serve.go).
+// storeOpsLog adapts internal/store to memory.OpsLog here because internal/memory can't import
+// internal/store (the dependency runs the other way).
 type storeOpsLog struct{ st *store.Store }
 
 func (o storeOpsLog) LogMemoryOp(ctx context.Context, memoryID string, op memory.OpsLogOp, actor memory.OpsLogActor, reason string) error {
@@ -43,17 +43,15 @@ func zonedSchedule(schedule string, loc *time.Location) string {
 	return "CRON_TZ=" + loc.String() + " " + schedule
 }
 
-// wireForgettingRules applies rm's memory.forgetting.rules (epic #1255 P3),
-// or leaves the store's DefaultRules() in place when the operator configured
-// none. Expression syntax is already validated by config.Validate() at load
-// time (internal/memoryrules); SetForgettingRules re-validates defensively.
+// wireForgettingRules applies memory.forgetting.rules, or keeps DefaultRules() when none are configured.
+// config.Validate already checked the syntax; SetForgettingRules re-validates defensively.
 func wireForgettingRules(s *memory.Store, rm config.ResolvedMemory) error {
 	if rm.Consolidation.Forgetting == nil {
 		return nil
 	}
-	rules := make([]memory.Rule, len(rm.Consolidation.Forgetting.Rules))
+	rules := make([]memoryrules.Rule, len(rm.Consolidation.Forgetting.Rules))
 	for i, r := range rm.Consolidation.Forgetting.Rules {
-		rules[i] = memory.Rule{When: r.When, Then: r.Then}
+		rules[i] = memoryrules.Rule{When: r.When, Then: r.Then}
 	}
 	return s.SetForgettingRules(rules)
 }

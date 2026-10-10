@@ -5,8 +5,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -22,9 +23,8 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// PlanRejectedError: the plan judge declined a proposed plan. Reason is the
-// judge's internal text - never surface it as a user-facing answer (#693);
-// it belongs in logs and the ledger, which judgeRouting already writes it to.
+// PlanRejectedError: the plan judge declined a proposed plan. Reason is the judge's internal text:
+// never surface it as a user-facing answer; it belongs in logs and the ledger.
 type PlanRejectedError struct {
 	Reason string
 }
@@ -40,33 +40,24 @@ const (
 )
 const explorerAgent = "code-explorer"
 
-// agentDeliveryKind maps a job whose work IS a specific delivery mechanism -
-// same hardcoded-name ceiling as checkReviewDeliverable below (no other
-// machine-readable declaration of this exists) - to the Delivery.Kind that
-// work can only reach GitHub through.
+// agentDeliveryKind maps an agent whose work IS a delivery mechanism to the only Delivery.Kind it can
+// reach GitHub through. Hardcoded names: nothing machine-readable declares this.
 var agentDeliveryKind = map[string]string{
 	reviewerAgent:    "review",
 	implementerAgent: "pull_request",
 }
 
-// RequiredDeliveryKind reports the Delivery.Kind agent's job is coupled to,
-// ok=false for an agent with no such coupling (research/synthesis agents can
-// feed any delivery kind). Lets create_plan/edit_plan reject hiring an agent
-// whose only possible delivery isn't in this dispatch's allowed set BEFORE
-// the node runs, rather than discovering it after a full node execution
-// burns real tokens only to have delivery itself refuse the result.
+// RequiredDeliveryKind reports the Delivery.Kind agent's job is coupled to (ok=false if none), so
+// create_plan/edit_plan can reject an undeliverable hire before the node burns tokens.
 func RequiredDeliveryKind(agent string) (kind string, ok bool) {
 	kind, ok = agentDeliveryKind[agent]
 	return kind, ok
 }
 
-// reviewChurnThreshold: max lines before reviewer must fan out.
 const reviewChurnThreshold = 800
 
-// changedChurnRe: matches "(+add/-del)" churn markers in webhook summaries.
 var changedChurnRe = regexp.MustCompile(`\(\+(\d+)/-(\d+)\)`)
 
-// totalChurn: sums added+deleted lines in the changed-files summary.
 func totalChurn(message string) int {
 	sum := 0
 	for _, m := range changedChurnRe.FindAllStringSubmatch(message, -1) {
@@ -77,17 +68,14 @@ func totalChurn(message string) int {
 	return sum
 }
 
-// AgentInfo describes one available agent for the orchestrator.
 type AgentInfo struct {
 	Name        string
 	Description string
-	// ContextWindow: the agent's configured context_window (0 if unset) - carried onto
-	// each node it's assigned to, for the frontend's context meter.
+	// ContextWindow: the agent's configured context_window (0 if unset), carried onto each node for the
+	// frontend's context meter.
 	ContextWindow int
-	// DefaultArtifact: this agent's bundle-declared default output artifact
-	// kind (agent-card.json's "artifact" field, "" if unset) - a property of
-	// the job, not a per-node override, so assemble() stamps it onto every
-	// node assigned this agent.
+	// DefaultArtifact: the bundle-declared default output artifact kind ("" if unset); assemble() stamps
+	// it onto every node assigned this agent.
 	DefaultArtifact string
 }
 
@@ -99,8 +87,8 @@ type Planner struct {
 	decisions     *decide.Decider
 }
 
-// planAccept asks one holistic question (per-criterion questions calibrated badly for plans). In decide mode
-// only a confident accept skips the judge: a reject was never validated on bad plans, so the judge rules.
+// planAccept asks one holistic question (per-criterion questions calibrated badly for plans). In decide
+// mode only a confident accept skips the judge: a reject was never validated on bad plans.
 var planAccept = decide.Register(decide.Point{
 	ID:      "plan.accept",
 	Primary: "accept",
@@ -113,7 +101,7 @@ var planAccept = decide.Register(decide.Point{
 	Modes:       []string{config.DecisionModeObserve, config.DecisionModeDecide},
 }, func(top string) bool { return top == "true" })
 
-// NewPlanner: returns a Planner over the agent roster, check prefixes, and plan judge.
+// NewPlanner returns a Planner over the agent roster, check prefixes, and plan judge.
 func NewPlanner(agents []AgentInfo, checkCommands []string, judge vetting.PlanJudge) *Planner {
 	SetAgentRoster(agents)
 	SetCheckCommands(checkCommands)
@@ -123,11 +111,10 @@ func NewPlanner(agents []AgentInfo, checkCommands []string, judge vetting.PlanJu
 // SetDecisions attaches the decision intercept points; nil (the default) disables them.
 func (p *Planner) SetDecisions(d *decide.Decider) { p.decisions = d }
 
-// CheckCommands: configured check-command prefixes.
 func (p *Planner) CheckCommands() []string { return p.checkCommands }
 
-// RawNode is one DAG node Build/BuildBound assembles into a Plan - from a
-// dag_plan record's assignments (execute) or a bound workflow shape's config.
+// RawNode is one DAG node Build/BuildBound assembles into a Plan, from a dag_plan record's
+// assignments (execute) or a bound workflow shape's config.
 type RawNode struct {
 	ID        string   `json:"id"`
 	Agent     string   `json:"agent"`
@@ -136,34 +123,20 @@ type RawNode struct {
 	DependsOn []string `json:"depends_on"`
 	Checks    []string `json:"checks,omitempty"`
 	Workdir   string   `json:"workdir,omitempty"`
-	// Artifact: registered recordstore kind this node's output is saved as on
-	// gate pass. Set by workflowcatalog.Bind from config.WorkflowNode.Artifact;
-	// assemble validates it, or falls back to the assigned agent's own
-	// bundle-declared default when unset.
-	Artifact string `json:"artifact,omitempty"`
-	// ResumedFrom: see Node.ResumedFrom - carried through unchanged by assemble.
+	// Artifact: registered recordstore kind this node's output is saved as on gate pass; assemble
+	// validates it or falls back to the agent's bundle-declared default.
+	Artifact    string `json:"artifact,omitempty"`
 	ResumedFrom string `json:"resumed_from,omitempty"`
-	// Result: see Node.Result - carried through unchanged by assemble.
-	Result string `json:"result,omitempty"`
-	// Status: see Node.Status - carried through unchanged by assemble.
-	Status string `json:"status,omitempty"`
+	Result      string `json:"result,omitempty"`
+	Status      string `json:"status,omitempty"`
 }
 
-// ValidateArtifactKind rejects an artifact selector outside the registered
-// recordstore kinds. Thin wrapper around recordstore.ValidateArtifactKind,
-// kept here for plan-build callers; config's own workflow-node validation
-// calls recordstore directly to avoid an import cycle (dag -> inference -> config).
+// ValidateArtifactKind rejects an artifact selector outside the registered recordstore kinds.
+// config calls recordstore directly to avoid an import cycle (dag -> inference -> config).
 func ValidateArtifactKind(kind string) error { return recordstore.ValidateArtifactKind(kind) }
 
-// AssignmentsToRawNodes converts a dag_plan record's assignments into Build's
-// RawNode input, resolving each assignment's agent from nodeAgent (the join
-// a dag_plan record can't make on its own - it only ever stores node ids;
-// execute resolves this from the matching dag_node records before calling
-// Build). resumedFrom, keyed by node id, carries each reused node's prior
-// dag_node ContextID (execute only populates an entry for a node whose
-// record is already terminal - see tools.buildResumedFrom); nil or a
-// missing entry both mean "fresh node". Errors when an assignment
-// references a node id with no such entry.
+// AssignmentsToRawNodes converts a dag_plan record's assignments into Build's input, resolving each
+// agent from nodeAgent and each prior ContextID from resumedFrom (missing = fresh node). Errors on an unknown node id.
 func AssignmentsToRawNodes(assignments []Assignment, nodeAgent, resumedFrom map[string]string) ([]RawNode, error) {
 	out := make([]RawNode, 0, len(assignments))
 	for _, a := range assignments {
@@ -180,7 +153,7 @@ func AssignmentsToRawNodes(assignments []Assignment, nodeAgent, resumedFrom map[
 	return out, nil
 }
 
-// Build: validates submitted nodes into a Plan and stamps turn context.
+// Build validates submitted nodes into a Plan and stamps turn context.
 func (p *Planner) Build(ctx context.Context, nodes []RawNode, setup *Setup, delivery *Delivery, history []HistoryTurn, message string, attachments []*genai.Part, allowedKinds []string) (plan *Plan, err error) {
 	ctx, span := otelobs.Start(ctx, "plan")
 	defer func() { otelobs.End(span, err) }()
@@ -208,13 +181,8 @@ func (p *Planner) Build(ctx context.Context, nodes []RawNode, setup *Setup, deli
 	return plan, nil
 }
 
-// BuildBound builds a Plan directly from a workflow-catalog shape's fixed
-// node list (an extension dispatch naming a bound workflow) - the same
-// structural validation Build runs, but no plan judge and no
-// review-fanout heuristic: both react to an arbitrary model-authored plan,
-// while a bound shape's structure was already validated once at config load.
-// This is the "no planner LLM call per dispatch" path - callers never
-// reach the orchestrator's own llmagent turn for a bound dispatch either.
+// BuildBound builds a Plan from a workflow-catalog shape's fixed node list: Build's structural
+// validation, but no plan judge or fan-out heuristic, since the shape was validated at config load.
 func (p *Planner) BuildBound(ctx context.Context, nodes []RawNode, setup *Setup, delivery *Delivery, message string, attachments []*genai.Part, allowedKinds []string) (plan *Plan, err error) {
 	_, span := otelobs.Start(ctx, "plan.bound")
 	defer func() { otelobs.End(span, err) }()
@@ -234,8 +202,8 @@ func (p *Planner) BuildBound(ctx context.Context, nodes []RawNode, setup *Setup,
 	return plan, nil
 }
 
-// infosFor: the pinned roster's agents (Executor.Pin), else the ones NewPlanner
-// was given - also for NewExecutor's Gen 0 placeholder, which carries no Infos.
+// infosFor: the pinned roster's agents (Executor.Pin), else NewPlanner's; also covers NewExecutor's
+// Gen 0 placeholder, which carries no Infos.
 func (p *Planner) infosFor(ctx context.Context) []AgentInfo {
 	if r := pinnedRoster(ctx); r != nil && r.Gen > 0 {
 		return r.Infos
@@ -287,8 +255,8 @@ func (p *Planner) judgeRouting(ctx context.Context, plan *Plan, message string) 
 	return &PlanRejectedError{Reason: reason}
 }
 
-// planAccept starts plan.accept; in decide mode it waits for the answer and reports a confident accept, which
-// skips the judge (a sampled audit still runs it in the background). settle records the judge's verdict otherwise.
+// planAccept starts plan.accept; in decide mode it waits and reports a confident accept, which skips
+// the judge (a sampled audit still runs it). settle records the judge's verdict otherwise.
 func (p *Planner) planAccept(ctx context.Context, plan *Plan, message, repoKey string) (func(string) <-chan struct{}, bool) {
 	state := "User's request:\n" + message + "\n\nProposed plan:\n" + renderPlan(plan, true)
 	if p.decisions.Mode(planAccept.ID) != config.DecisionModeDecide {
@@ -318,8 +286,8 @@ func judgeVerdict(accept bool, _ string, err error) string {
 	return strconv.FormatBool(accept)
 }
 
-// emitPlanRejectedEvent: records the judge's rejection reason to the ledger, verbatim -
-// the durable trail for a rejection whose text must never reach the user-facing reply (#693).
+// emitPlanRejectedEvent records the judge's rejection reason to the ledger verbatim: the durable
+// trail for text that must never reach the user-facing reply.
 func emitPlanRejectedEvent(ctx context.Context, plan *Plan, reason string) {
 	if !otelobs.LoggingEnabled("quack.planner") {
 		return
@@ -331,14 +299,13 @@ func emitPlanRejectedEvent(ctx context.Context, plan *Plan, reason string) {
 	)
 }
 
-// resultPreviewLen caps how much of an already-run node's result the judge
-// sees - enough to judge progress, not a full re-read of the output.
+// resultPreviewLen caps how much of an already-run node's result the judge sees.
 const resultPreviewLen = 600
 
 func planSummary(p *Plan) string { return renderPlan(p, false) }
 
-// renderPlan is the judge's summary, or with facts plan.accept's state: earlier nodes'
-// outputs reduced to status, artifact kind and size, and no quack-authored hints.
+// renderPlan is the judge's summary, or with facts plan.accept's state: earlier nodes' outputs
+// reduced to status, artifact kind and size, and no quack-authored hints.
 func renderPlan(p *Plan, facts bool) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "%d node(s):", len(p.Nodes))
@@ -383,26 +350,11 @@ func writeNodeFacts(sb *strings.Builder, n Node) {
 	}
 }
 
-// checkReviewDeliverable: deterministic guard - runs unconditionally, unlike
-// checkReviewFanout, because the incident it fixes (#888) was the LLM plan
-// judge itself wrongly accepting an explorer+synthesizer plan for a
-// quack:review dispatch; nothing in that plan could ever stage a formal
-// review, so the run's prose posted as a bare issue comment and merge
-// automation saw no review. Oracle: node.AgentName == reviewerAgent, the same
-// literal the runtime already uses to grant the review MCP tools
-// (dag/graph.go's cfg.IsReviewer) - not a fresh rule, a mirror of the one
-// that actually gates stage_review/stage_review_comment at runtime.
-// ponytail: a hardcoded agent name, not a config-derived "review-capable"
-// set - there is no other machine-readable declaration of review capability
-// to derive from (agent-card.json carries skills, not MCP-surface grants).
-// Ceiling: a plan WITH a code-reviewer node always passes even if that
-// node's task text never actually calls stage_review - this only catches
-// the structurally-impossible case, not a lazy reviewer task.
-//
-// Fires only off an EXPLICITLY declared plan.Delivery, never a dispatch's
-// merely-allowed kinds: a step with no reviewer node yet may just be
-// partial, waiting on delivery to be declared once the plan grows there.
+// checkReviewDeliverable runs unconditionally: the LLM plan judge once accepted a review dispatch with
+// no reviewer node. Fires only off an explicitly declared plan.Delivery; a step may just be partial.
 func checkReviewDeliverable(plan *Plan) error {
+	// ponytail: hardcoded agent name (no machine-readable review capability exists); a code-reviewer
+	// node passes even if its task never calls stage_review. Derive from agent cards if that matters.
 	if plan.Delivery == nil || plan.Delivery.Kind != "review" {
 		return nil
 	}
@@ -450,9 +402,8 @@ func checkReviewFanout(agents []AgentInfo, plan *Plan, message string) error {
 		totalChurn(message), reviewChurnThreshold, reviewerAgent, explorerAgent, reviewerAgent, reviewerAgent)
 }
 
-// AttachmentDesc: description of attachment MIME types for the text-only
-// orchestrator. Attachments are artifactref reference parts (FileData) by
-// the time they reach here, not InlineData - both are checked for raw-InlineData callers.
+// AttachmentDesc describes attachment MIME types for the text-only orchestrator. Attachments arrive
+// as artifactref FileData parts; InlineData is checked too for raw callers.
 func AttachmentDesc(parts []*genai.Part) string {
 	if len(parts) == 0 {
 		return ""
@@ -472,7 +423,7 @@ func AttachmentDesc(parts []*genai.Part) string {
 	return fmt.Sprintf("[User attached: %d file(s): %s]", len(mimes), strings.Join(mimes, ", "))
 }
 
-// assemble: validates nodes, hardens synthesizer deps, checks acyclicity, validates delivery kind.
+// assemble validates nodes, hardens synthesizer deps, checks acyclicity, validates delivery kind.
 func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup *Setup, delivery *Delivery, allowedKinds []string) (*Plan, error) {
 	if len(nodes) == 0 {
 		return nil, fmt.Errorf("plan has no nodes")
@@ -495,7 +446,6 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 		plan.Nodes = append(plan.Nodes, node)
 	}
 
-	// Harden: synthesizer fan-in.
 	plan.Nodes = hardenSynthesizer(plan.Nodes, known)
 
 	if _, topoErr := topoLayers(*plan); topoErr != nil {
@@ -507,7 +457,7 @@ func assemble(nodes []RawNode, agents []AgentInfo, checkCommands []string, setup
 	return plan, nil
 }
 
-// validateChecks: enforces prefix-matching against workspace.check_commands.
+// validateChecks enforces prefix-matching against workspace.check_commands.
 func validateChecks(checks, checkCommands []string) error {
 	if len(checkCommands) == 0 {
 		return fmt.Errorf("checks are unavailable (workspace.check_commands is empty) - omit `checks`")
@@ -528,10 +478,8 @@ func validateChecks(checks, checkCommands []string) error {
 
 var deliveryKinds = map[string]bool{"pull_request": true, "review": true, "comment": true}
 
-// DefaultDeliveryFromAllowedKinds resolves an explicit-but-kindless delivery
-// declaration when the triggering dispatch grants exactly one kind. nil when
-// the dispatch is unrestricted or grants a genuine choice among several -
-// the model must name the kind itself in that case.
+// DefaultDeliveryFromAllowedKinds resolves a kindless delivery when the dispatch grants exactly one
+// kind; nil when unrestricted or several, so the model must name it.
 func DefaultDeliveryFromAllowedKinds(allowed []string) *Delivery {
 	if len(allowed) != 1 || !deliveryKinds[allowed[0]] {
 		return nil
@@ -549,17 +497,7 @@ func validateDelivery(d *Delivery) error {
 	return nil
 }
 
-func sortedKeys(m map[string]AgentInfo) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}
-
-// didYouMean: cheap near-miss hint - only when exactly one candidate is within
-// edit distance 2, so a genuinely ambiguous typo stays silent rather than guessing.
+// didYouMean: a near-miss hint only when exactly one candidate is within edit distance 2.
 func didYouMean(got string, candidates []string) string {
 	var best string
 	matches := 0
@@ -575,7 +513,7 @@ func didYouMean(got string, candidates []string) string {
 	return ""
 }
 
-// editDistance: classic Levenshtein, used only for short agent/node names.
+// editDistance: Levenshtein, used only for short agent/node names.
 func editDistance(a, b string) int {
 	prev := make([]int, len(b)+1)
 	for j := range prev {
@@ -589,22 +527,11 @@ func editDistance(a, b string) int {
 			if a[i-1] == b[j-1] {
 				cost = 0
 			}
-			cur[j] = min3(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
 		}
 		prev = cur
 	}
 	return prev[len(b)]
-}
-
-func min3(a, b, c int) int {
-	m := a
-	if b < m {
-		m = b
-	}
-	if c < m {
-		m = c
-	}
-	return m
 }
 
 func descendants(nodes []Node, id string) map[string]bool {
@@ -629,8 +556,8 @@ func descendants(nodes []Node, id string) map[string]bool {
 	return out
 }
 
-// resolveDelivery: infers a kindless delivery from a single-kind dispatch; an omitted delivery means
-// "not yet" and is NEVER inferred (#slice3 review).
+// resolveDelivery infers a kindless delivery from a single-kind dispatch; an omitted delivery means
+// "not yet" and is never inferred.
 func resolveDelivery(delivery *Delivery, allowedKinds []string) (*Delivery, error) {
 	if delivery != nil && delivery.Kind == "" {
 		def := DefaultDeliveryFromAllowedKinds(allowedKinds)
@@ -645,7 +572,7 @@ func resolveDelivery(delivery *Delivery, allowedKinds []string) (*Delivery, erro
 	return delivery, nil
 }
 
-// buildNode: validates one raw node against the dispatch's agents/commands and shapes it.
+// buildNode validates one raw node against the dispatch's agents/commands and shapes it.
 func buildNode(n RawNode, known map[string]AgentInfo, checkCommands []string, ids map[string]bool) (Node, error) {
 	if n.ID == "" {
 		return Node{}, fmt.Errorf("node missing id")
@@ -655,8 +582,9 @@ func buildNode(n RawNode, known map[string]AgentInfo, checkCommands []string, id
 	}
 	agentInfo, ok := known[n.Agent]
 	if !ok {
+		names := slices.Sorted(maps.Keys(known))
 		return Node{}, fmt.Errorf("unknown agent %q for node %q; valid agents: %s%s",
-			n.Agent, n.ID, strings.Join(sortedKeys(known), ", "), didYouMean(n.Agent, sortedKeys(known)))
+			n.Agent, n.ID, strings.Join(names, ", "), didYouMean(n.Agent, names))
 	}
 	if len(n.Checks) > 0 {
 		if err := validateChecks(n.Checks, checkCommands); err != nil {
@@ -668,8 +596,7 @@ func buildNode(n RawNode, known map[string]AgentInfo, checkCommands []string, id
 			return Node{}, fmt.Errorf("node %q: %w", n.ID, err)
 		}
 	}
-	// n.Artifact (a config-bound workflow node) overrides; otherwise the
-	// agent's own bundle-declared default applies.
+	// n.Artifact (a config-bound workflow node) overrides the agent's bundle-declared default.
 	artifactKind := n.Artifact
 	if artifactKind == "" {
 		artifactKind = agentInfo.DefaultArtifact
@@ -691,8 +618,8 @@ func buildNode(n RawNode, known map[string]AgentInfo, checkCommands []string, id
 	}, nil
 }
 
-// hardenSynthesizer: the synthesizer depends on every non-synthesizer node NOT downstream of it. Only a
-// review fan-out (2+ reviewers) without one gets a synthesizer appended: it stages the overall verdict.
+// hardenSynthesizer: the synthesizer depends on every non-synthesizer node not downstream of it. Only a
+// review fan-out (2+ reviewers) without one gets a synthesizer appended, to stage the overall verdict.
 func hardenSynthesizer(nodes []Node, known map[string]AgentInfo) []Node {
 	reviewers, hasSynth := 0, false
 	for i, n := range nodes {

@@ -51,9 +51,8 @@ type GateResult struct {
 	Score    float64
 	Feedback string
 	Rounds   int
-	// ChecksSkipReason: raw skipChecks reason ("" if checks ran, or ran but
-	// were never computed - e.g. no judge round). Filtered/worded for
-	// display by checksSkipNote before it reaches the delivered artifact.
+	// ChecksSkipReason: raw skipChecks reason ("" if checks ran or were never computed);
+	// checksSkipNote words it for display.
 	ChecksSkipReason string
 }
 
@@ -68,9 +67,8 @@ const (
 	judgeStatusNoVerdict   = "no_verdict"
 )
 
-// judgeFailureFeedback distinguishes a judge that never got to run (transport/model
-// outage) from one that ran and simply never committed a verdict (ErrJudgeNoVerdict) -
-// judge.go is the only place that knows which happened, so it returns a typed sentinel rather than this checking the error string (#779).
+// judgeFailureFeedback tells a judge that never ran (outage) from one that ran without a verdict
+// (ErrJudgeNoVerdict); judge.go returns a typed sentinel so this never parses the error string.
 func judgeFailureFeedback(jerr error) (status, feedback string) {
 	if errors.Is(jerr, ErrJudgeNoVerdict) {
 		return judgeStatusNoVerdict, "quack's judge ran but ended without a verdict, so this answer could not be scored: " + jerr.Error()
@@ -85,14 +83,11 @@ type NodeControl interface {
 	// PauseForInput parks the node on a worker question, persisting it
 	// before the pause is acted on (dag.PauseAwaitingInput).
 	PauseForInput(question string)
-	// MarkDelivered records that commitDelivery ran for this node, so
-	// dagStream can report NodeDone even if a pause/cancel flag races in
-	// right after (the delivered==true call site below).
+	// MarkDelivered records that commitDelivery ran, so dagStream reports NodeDone even
+	// if a pause/cancel flag races in right after.
 	MarkDelivered()
-	// RepeatFailure reports (and clears) a hard-stop message the repeat
-	// guard left via dag.Executor.RepeatGuardTripped, so the round's error
-	// is reported as a real failure, not the user-cancel path's silent
-	// empty continue-but-warn.
+	// RepeatFailure reports (and clears) the repeat guard's hard-stop message, so the round fails
+	// for real instead of taking the user-cancel path's silent continue-but-warn.
 	RepeatFailure() (string, bool)
 	// ShuttingDown reports that the shutdown drain cut this node's run; boot resumes it.
 	ShuttingDown() bool
@@ -105,7 +100,7 @@ const AskToolName = "ask_user"
 const memoryCommitTimeout = 3 * time.Minute
 
 // maxTruncationContinuations: continuation turns for a MAX_TOKENS-cut worker
-// round before the round is judged truncated regardless (prod chat 3f4d9045).
+// round before the round is judged truncated regardless.
 const maxTruncationContinuations = 2
 
 // truncationTailChars: trailing chars of a cut-off answer quoted back to the
@@ -116,7 +111,7 @@ const truncationTailChars = 200
 var envScaffoldRe = regexp.MustCompile(`(?s)^\s*<env>.*?</env>\s*`)
 
 // stripLeadingEnvScaffold drops a leading <env> block so an answer that is
-// nothing but environment preamble reads as empty, not as real content (#709).
+// nothing but environment preamble reads as empty, not as real content.
 func stripLeadingEnvScaffold(answer string) string {
 	return envScaffoldRe.ReplaceAllString(answer, "")
 }
@@ -139,38 +134,44 @@ type hitlScan struct {
 
 func scanNodeAsks(sess session.Session, invocationID, nodeID string) hitlScan {
 	var s hitlScan
-	if sess == nil {
-		return s
-	}
-	prefix := "hitl-" + nodeID + "-r"
-	answers := map[string]string{}
-	for ev := range sess.Events().All() {
-		scanAskEvent(ev, invocationID, nodeID, prefix, &s, answers)
-	}
+	pauses, answers := scanNodePauses(sess, invocationID, nodeID, "hitl", func(fc *genai.FunctionCall) {
+		if fc.Name == AskToolName {
+			q, _ := fc.Args["question"].(string)
+			s.turns = append(s.turns, hitlTurn{question: strings.TrimSpace(q)})
+		}
+	})
+	s.pauses = pauses
 	for i := range s.turns {
 		s.turns[i].answer = answers[hitlInterruptID(nodeID, i+1)]
 	}
 	return s
 }
 
-// scanAskEvent: one session event for the node's HITL state - user answers are
-// collected, worker ask/workflow_input calls are recorded on s.
-func scanAskEvent(ev *session.Event, invocationID, nodeID, prefix string, s *hitlScan, answers map[string]string) {
-	if ev == nil || ev.Content == nil || ev.InvocationID != invocationID {
-		return
+// scanNodePauses replays nodeID's "<kind>-<node>-r<N>" workflow_input pauses: it counts them, collects
+// the user's answers by interrupt id, and hands every other node function call to onCall.
+func scanNodePauses(sess session.Session, invocationID, nodeID, kind string, onCall func(*genai.FunctionCall)) (int, map[string]string) {
+	pauses, answers := 0, map[string]string{}
+	if sess == nil {
+		return pauses, answers
 	}
-	if ev.Author == "user" {
-		for _, p := range ev.Content.Parts {
-			collectAnswerPart(p, prefix, answers)
+	prefix := kind + "-" + nodeID + "-r"
+	for ev := range sess.Events().All() {
+		if ev == nil || ev.Content == nil || ev.InvocationID != invocationID {
+			continue
 		}
-		return
+		user := ev.Author == "user"
+		if !user && !pathHasNode(ev, nodeID) {
+			continue
+		}
+		for _, p := range ev.Content.Parts {
+			if user {
+				collectAnswerPart(p, prefix, answers)
+			} else if p != nil && p.FunctionCall != nil {
+				pauses += recordPausePart(p.FunctionCall, prefix, onCall)
+			}
+		}
 	}
-	if !pathHasNode(ev, nodeID) {
-		return
-	}
-	for _, p := range ev.Content.Parts {
-		recordAskPart(p, prefix, s)
-	}
+	return pauses, answers
 }
 
 // collectAnswerPart: a user FunctionResponse to the node's workflow_input -
@@ -187,23 +188,16 @@ func collectAnswerPart(p *genai.Part, prefix string, answers map[string]string) 
 	}
 }
 
-// recordAskPart: a worker ask (question turn) or workflow_input (pause) call.
-func recordAskPart(p *genai.Part, prefix string, s *hitlScan) {
-	if p == nil || p.FunctionCall == nil {
-		return
+// recordPausePart returns 1 for this node's own workflow_input pause; any other call goes to onCall.
+func recordPausePart(fc *genai.FunctionCall, prefix string, onCall func(*genai.FunctionCall)) int {
+	if fc.Name != workflow.WorkflowInputFunctionCallName {
+		onCall(fc)
+		return 0
 	}
-	switch p.FunctionCall.Name {
-	case AskToolName:
-		q := ""
-		if qq, ok := p.FunctionCall.Args["question"].(string); ok {
-			q = strings.TrimSpace(qq)
-		}
-		s.turns = append(s.turns, hitlTurn{question: q})
-	case workflow.WorkflowInputFunctionCallName:
-		if strings.HasPrefix(p.FunctionCall.ID, prefix) {
-			s.pauses++
-		}
+	if strings.HasPrefix(fc.ID, prefix) {
+		return 1
 	}
+	return 0
 }
 
 // pathHasNode: is event under graph node? (NodeInfo.Path: "name@run").
@@ -222,7 +216,6 @@ func pathHasNode(ev *session.Event, nodeID string) bool {
 	return false
 }
 
-// withUserAnswer: folds Q&A transcript into prompt.
 func withUserAnswer(prompt string, turns []hitlTurn) string {
 	var b strings.Builder
 	b.WriteString(prompt)
@@ -237,7 +230,6 @@ func withUserAnswer(prompt string, turns []hitlTurn) string {
 	return b.String()
 }
 
-// replyString: coerces HITL payload to text.
 func replyString(reply any) string {
 	if s, ok := reply.(string); ok {
 		return s
@@ -248,9 +240,8 @@ func replyString(reply any) string {
 	return fmt.Sprintf("%v", reply)
 }
 
-// appendNodeEvent is the WAL's node.* observational path (#1090 §4.9): a
-// best-effort AppendIntent call, Warn-logged and otherwise ignored - it must
-// never affect the run, unlike an artifact.revision save (including a judge_round one), which is fail-closed. No-op when cfg.Ledger is unset.
+// appendNodeEvent appends the WAL's node.* observational entry: best-effort and Warn-logged, unlike a
+// fail-closed artifact.revision save, so it never affects the run. No-op when cfg.Ledger is unset.
 func appendNodeEvent(ctx context.Context, cfg Config, nodeID, turnID, kind string, rounds int) {
 	if cfg.Ledger == nil {
 		return
@@ -274,9 +265,8 @@ func appendNodeEvent(ctx context.Context, cfg Config, nodeID, turnID, kind strin
 	}
 }
 
-// deliveryTarget resolves the recordstore artifact backing this node's delivery, if any: the code_review subject for a reviewer, or cfg.Artifact
-// for a document node. false when this delivery has no backing artifact
-// (a plain PR-only delivery) - the WAL/delivery_record path is skipped entirely in that case (#1093: idempotency key = artifact id + revision, nothing to key on without one).
+// deliveryTarget resolves the artifact backing this node's delivery (a reviewer's code_review subject or
+// cfg.Artifact); false for a plain PR-only delivery, which has no idempotency key and skips the WAL.
 func deliveryTarget(ctx context.Context, cfg Config) (id string, revision int, ok bool) {
 	c := recordClient(cfg)
 	if c == nil {
@@ -340,8 +330,8 @@ func dependencyArtifactCandidates(cfg Config, dep string) []string {
 	return candidates
 }
 
-// bestDependencyRevision: cid's newest revision authored by dep - a chat-scoped
-// id can carry every node's and every turn's writes, so this stops (and stops loading) at the first NodeID match, newest-first.
+// bestDependencyRevision: cid's newest revision authored by dep. A chat-scoped id can carry every node's
+// and every turn's writes, so this stops (and stops loading) at the first NodeID match, newest-first.
 func bestDependencyRevision(ctx context.Context, c *recordstore.Client, cid, dep string) (revision int, content string, savedAt time.Time, ok bool) {
 	return newestRevisionWhere(ctx, c, cid, func(l recordstore.Lineage) bool { return l.NodeID == dep })
 }
@@ -365,22 +355,20 @@ func newestRevisionWhere(ctx context.Context, c *recordstore.Client, cid string,
 	return 0, "", time.Time{}, false
 }
 
-// deliveryIdempotencyKey: target artifact id + revision (#1090 V4 §4.9) -
-// unambiguous since "@" never appears in an artifact id (ids use ":").
+// deliveryIdempotencyKey: target artifact id + revision, unambiguous
+// since "@" never appears in an artifact id (ids use ":").
 func deliveryIdempotencyKey(targetID string, revision int) string {
 	return targetID + "@" + strconv.Itoa(revision)
 }
 
-// appendDeliveryIntent is the WAL's delivery.intent entry (#1090 §4.9,
-// fail-closed): appended right before the gate pushes/hands staged items to
-// the extension. A non-nil error means the caller must not deliver at all.
+// appendDeliveryIntent appends the fail-closed WAL delivery.intent right before the gate pushes or
+// hands staged items to the extension. A non-nil error means the caller must not deliver at all.
 func appendDeliveryIntent(ctx context.Context, cfg Config, nodeID, key, targetID string, revision int, cloneURL string, issueNumber int) error {
 	if cfg.Ledger == nil {
 		return nil
 	}
-	// CloneURL/IssueNumber (#1093 finding 4): the minimal DeliveryContext
-	// fields `quack ledger recover` needs to rebuild one offline, since it
-	// has no live worker activity to derive them from after a crash.
+	// CloneURL/IssueNumber: `quack ledger recover` needs them to rebuild a DeliveryContext
+	// offline, with no live worker activity to derive them from after a crash.
 	payload, err := json.Marshal(struct {
 		TargetID    string `json:"target_id"`
 		Revision    int    `json:"revision"`
@@ -452,8 +440,8 @@ func newGateRun(ctx adkagent.Context, nodeID string, workerNode workflow.Node, w
 		attribute.String(otelobs.QuackModel, modelName(workerModel)),
 	)
 	g.nodeCtx = nodeCtx
-	// turnID: closest stand-in for the store row's turn_id (#1090 V4.2) - no
-	// chat-turn id is plumbed this deep; the ADK invocation id is per-run.
+	// turnID: closest stand-in for the store row's turn_id; no chat-turn id
+	// is plumbed this deep, and the ADK invocation id is per-run.
 	g.turnID = ctx.InvocationID()
 	g.startedAt = time.Now().UTC()
 	appendNodeEvent(nodeCtx, cfg, nodeID, g.turnID, ledger.KindNodeStarted, 0)
@@ -462,7 +450,7 @@ func newGateRun(ctx adkagent.Context, nodeID string, workerNode workflow.Node, w
 	cfg.NodeBaseSHA = cloneHeadSHA(cfg)
 	if g.advisorToken != "" {
 		// Draft round: seed round=1 coords before the first worker call so a
-		// tool write during draft (before any judge round) gets real lineage (#1091 finding #4).
+		// tool write during draft (before any judge round) gets real lineage.
 		SetAdvisorThreadRound(g.advisorToken, 1, g.turnID, cfg.NodeBaseSHA, "")
 		if cfg.RoundCoordsSink != nil {
 			cfg.RoundCoordsSink(1, g.turnID, cfg.NodeBaseSHA, "")
@@ -477,7 +465,7 @@ func newGateRun(ctx adkagent.Context, nodeID string, workerNode workflow.Node, w
 	g.recallWorkerMemory()
 	g.applyPreloads()
 	// basePrompt must reflect the prefill recall/preloads: a queued-message
-	// re-run rebuilds from it, and they are not re-recalled (#1404 review).
+	// re-run rebuilds from it, and they are not re-recalled.
 	g.basePrompt = g.prompt
 	// Per-node workspace dir prevents concurrent node collision.
 	nodeDir := workspace.NodeDir(cfg.NodeID)
@@ -558,7 +546,7 @@ func (g *gateRun) recallWorkerMemory() {
 	recallLedgerEntry(g.nodeCtx, g.cfg, g.nodeID, 0, "prefill", hits)
 }
 
-// applyPreloads: episodic record preload (#1006) - review for reviewer nodes,
+// applyPreloads: episodic record preload - review for reviewer nodes,
 // body for reMarkable-style stage nodes (outside a clone, no git filter).
 func (g *gateRun) applyPreloads() {
 	if p := BuildReviewPreload(g.nodeCtx, g.cfg, g.nodeID); p != "" {
@@ -597,18 +585,11 @@ func (g *gateRun) runWorkerOnce(input any, runID, stage, termMsg, failMsg string
 	return "", &gateExit{"", GateResult{}, err}
 }
 
-// fillHitlReply: record the resumed reply on the last ask turn while its
-// answer is still empty (ResumedInput is the authority, this is the fold).
-func fillHitlReply(turns []hitlTurn, reply any) {
-	if n := len(turns); n > 0 && turns[n-1].answer == "" {
-		turns[n-1].answer = replyString(reply)
-	}
-}
-
-// fillConfirmReply: the confirm-turn twin of fillHitlReply.
-func fillConfirmReply(turns []confirmTurn, reply any) {
-	if n := len(turns); n > 0 && turns[n-1].answer == "" {
-		turns[n-1].answer = replyString(reply)
+// fillLastReply: record the resumed reply on the last turn while its answer
+// is still empty (ResumedInput is the authority, this is the fold).
+func fillLastReply[T any](turns []T, answer func(*T) *string, reply any) {
+	if n := len(turns); n > 0 && *answer(&turns[n-1]) == "" {
+		*answer(&turns[n-1]) = replyString(reply)
 	}
 }
 
@@ -620,7 +601,7 @@ func (g *gateRun) confirmResume(sfx string) (string, *gateExit, bool) {
 	}
 	if reply, ok := g.ctx.ResumedInput(confirmInterruptID(g.nodeID, cscan.pauses)); ok {
 		turns := cscan.turns
-		fillConfirmReply(turns, reply)
+		fillLastReply(turns, func(t *confirmTurn) *string { return &t.answer }, reply)
 		a, exit := g.resumeRun("confirm", fmt.Sprintf("worker-confirm-r%d%s", cscan.pauses, sfx), "node resumed with confirm decision", "post-decision worker run terminated: repeat guard", "post-decision worker run failed", cscan.pauses, workerInput(withConfirmDecision(g.prompt, turns), g.attachments))
 		if exit != nil {
 			return "", exit, false
@@ -640,7 +621,7 @@ func (g *gateRun) draftOrResume(sfx string) (string, *gateExit) {
 	if scan := scanNodeAsks(g.ctx.Session(), g.ctx.InvocationID(), g.nodeID); scan.pauses > 0 {
 		if reply, ok := g.ctx.ResumedInput(hitlInterruptID(g.nodeID, scan.pauses)); ok {
 			turns := scan.turns
-			fillHitlReply(turns, reply)
+			fillLastReply(turns, func(t *hitlTurn) *string { return &t.answer }, reply)
 			a, exit := g.resumeRun("hitl", fmt.Sprintf("worker-hitl-r%d%s", scan.pauses, sfx), "node resumed with user answer", "post-answer worker run terminated: repeat guard", "post-answer worker run failed", scan.pauses, workerInput(withUserAnswer(g.prompt, turns), g.attachments))
 			if exit != nil {
 				return "", exit
@@ -709,7 +690,7 @@ func (g *gateRun) continueWorker(sfx, answer string) (string, *gateExit) {
 			}
 			if g.cancelled() {
 				contSpan.End()
-				return "", &gateExit{"", GateResult{}, nil} // round aborted mid-flight by CancelNode, not a real failure
+				return "", &gateExit{"", GateResult{}, nil} // aborted mid-flight by CancelNode, not a failure
 			}
 			g.log.Log(g.ctx, errLevel(g.ctx), "worker continuation failed", "attempt", attempt, "err", err)
 			contSpan.End()
@@ -794,15 +775,15 @@ func (g *gateRun) commitFinal(answer string, res GateResult, episodicRoundsWritt
 		commitMemoryOnPass(g.ctx, g.nodeCtx, g.cfg, g.nodeID, answer, act.staged)
 	}
 	// A judge-less node (JudgeRounds == 0, e.g. a deterministic-only reMarkable
-	// stage) never entered the round loop - write its one round here (#1090 P2).
+	// stage) never entered the round loop - write its one round here.
 	if episodicRoundsWritten == 0 && strings.TrimSpace(stripLeadingEnvScaffold(answer)) != "" {
-		saveEpisodicRoundWritten(g.nodeCtx, g.cfg, g.nodeID, g.turnID, 1, answer, act.stagedDelivery["review"], nil, act.artifactsWritten)
+		saveEpisodicRound(g.nodeCtx, g.cfg, g.nodeID, g.turnID, 1, answer, act.stagedDelivery["review"], nil, act.artifactsWritten)
 	}
 	// Deliver even on judge FAIL (graceful degradation). Memory stays pass-only.
 	g.delivered = true
 	if g.ctrl != nil {
 		// Before commitDelivery: a pause/cancel landing during it must still
-		// see delivered==true (dagStream's terminal-event race, #1340 review).
+		// see delivered==true (dagStream's terminal-event race).
 		g.ctrl.MarkDelivered()
 	}
 	act.answer = answer
@@ -865,7 +846,7 @@ func queueSuffix(attempt int) string {
 // loop, and delivery of the gated answer.
 func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Node, workerModel model.LLM, judge JudgeFactory, cfg Config, prompt string, attachments []*genai.Part, ctrl NodeControl, emit func(*session.Event) error) (answer string, res GateResult, err error) {
 	g, span := newGateRun(ctx, nodeID, workerNode, workerModel, judge, cfg, prompt, attachments, ctrl, emit)
-	// Must run unconditionally (#942): a staged review lives in this process,
+	// Must run unconditionally: a staged review lives in this process,
 	// not the dying ACP subprocess; declared after the span close-out (LIFO first).
 	defer func() { g.finish(span, res, err) }()
 	defer func() { g.resolveAborted(answer, err) }()
@@ -1071,8 +1052,8 @@ func (j *judgeRounds) roundGate(round int) bool {
 	return true
 }
 
-// checkTruncation: MAX_TOKENS on the round's call means the text was cut off
-// (prod chat 3f4d9045) - continue it, then fail complete_output if still cut off.
+// checkTruncation: MAX_TOKENS on the round's call means the text was cut off -
+// continue it, then fail complete_output if still cut off.
 func (j *judgeRounds) checkTruncation(round int) bool {
 	j.truncated = false
 	finish := workerRunFinishReason(j.ctx.Session(), j.ctx.InvocationID(), j.nodeID, j.lastAnswerRunID)
@@ -1163,32 +1144,29 @@ func truncationSeam(cont string) string {
 // revision, the judge span, and the ledger coords.
 func (j *judgeRounds) prepareJudge(round int) (runID string, judgeCtx context.Context, jspan *stageSpan, ledgerCtx context.Context, act workerActivity) {
 	act = j.actFor(j.answer)
-	// recall_memory hits merge in fresh every round (#1255 P2); recalls only bumps for ids
-	// new to the dispatch-lifetime received set, so a round's repeat calls count once (#1470).
+	// recall_memory hits merge in fresh every round; recalls only bumps for ids new to the
+	// dispatch-lifetime received set, so a round's repeat calls count once.
 	j.receivedMemories = mergeAndCountRecalledMemories(j.nodeCtx, j.cfg, j.advisorToken, j.receivedMemories, act.recalled)
-	// Every judge round writes a revision, gate-passed or not - only delivery stays
-	// gate-passed-only (#1090 P2), and every gated node writes one (#1095).
-	j.episodicState = saveEpisodicRoundWritten(j.nodeCtx, j.cfg, j.nodeID, j.turnID, round, j.answer, act.stagedDelivery["review"], j.episodicState, act.artifactsWritten)
+	// Every judge round writes a revision, gate-passed or not; only delivery
+	// stays gate-passed-only.
+	j.episodicState = saveEpisodicRound(j.nodeCtx, j.cfg, j.nodeID, j.turnID, round, j.answer, act.stagedDelivery["review"], j.episodicState, act.artifactsWritten)
 	j.episodicRoundsWritten++
 	runID = fmt.Sprintf("judge-r%d", round)
 	judgeCtx, jspan = startStageSpan(j.nodeCtx, j.sink, j.cfg, j.nodeID, "judge", stream.StageJudge, runID, round)
-	// This round runs on system/judge, not the worker's bundle prompt, so its
-	// llm.call carries that artifact's provenance; BundleHash stays the
-	// worker's - whose answer is under review.
+	// This round runs on system/judge, not the worker's bundle prompt, so its llm.call carries that
+	// artifact's provenance; BundleHash stays the worker's, whose answer is under review.
 	promptSource, promptVersion, promptArtifact := j.cfg.PromptSource, j.cfg.PromptVersionID, ""
 	jp, jpErr := resolveJudgePrompt(judgeCtx, j.cfg.Prompts)
 	if jpErr != nil {
-		// promptArtifact stays "" (not "system/judge"): the version above is
-		// the WORKER's boot fallback, and pairing it with the judge's artifact
-		// name would record a mismatched (source, version, artifact) triple (#1422 N2).
+		// promptArtifact stays "": the version above is the WORKER's boot fallback, and pairing it with
+		// the judge's artifact name would record a mismatched (source, version, artifact) triple.
 		slog.WarnContext(judgeCtx, "judge prompt unresolved", "component", "vetting", "node", j.cfg.NodeID, "err", jpErr)
 	} else {
 		j.cfg.judgePrompt = jp
 		promptSource, promptVersion, promptArtifact = jp.art.Source, jp.art.VersionID, "system/judge"
 	}
-	// L2: still apply the static binding for this round when the prompt itself
-	// didn't resolve - jp.art is its zero value then, which RefreshJudgeBinding
-	// (Config.ResolveBinding on a nil Config map) treats as no override.
+	// Still apply the static binding when the prompt didn't resolve: jp.art is then zero,
+	// which RefreshJudgeBinding treats as no override.
 	if j.cfg.RefreshJudgeBinding != nil {
 		j.judge, j.cfg.JudgeModel, j.cfg.JudgeThinkingLevel = j.cfg.RefreshJudgeBinding(jp.art, j.cfg.HasWorkspaceClone())
 	}
@@ -1202,7 +1180,7 @@ func (j *judgeRounds) prepareJudge(round int) (runID string, judgeCtx context.Co
 		cs.SetLedgerCoords(judgeCoords)
 	}
 	// Nothing reads a "judge"-role failure record today - clear it on entry so a
-	// failed judge round leaves no permanent orphan (#1109).
+	// failed judge round leaves no permanent orphan.
 	inference.ClearFailure(j.cfg.ChatID, j.cfg.NodeID, "judge")
 	return runID, judgeCtx, jspan, ledgerCtx, act
 }
@@ -1210,7 +1188,6 @@ func (j *judgeRounds) prepareJudge(round int) (runID string, judgeCtx context.Co
 // runJudge: deterministic criteria up front, then the judge call itself -
 // skipped on the terminal round when a criterion already fails by weakest-link.
 func (j *judgeRounds) runJudge(round int, runID string, judgeCtx context.Context, ledgerCtx context.Context, act workerActivity) (verdict, map[string]criterionScore, error) {
-	// Compute deterministic criteria before judge runs.
 	det, skip := computeDeterministicCriteria(judgeCtx, j.answer, act, j.cfg, j.nodeID, j.startedAt)
 	if skip != "" {
 		j.checksSkipReason = skip
@@ -1237,11 +1214,10 @@ func (j *judgeRounds) runJudge(round int, runID string, judgeCtx context.Context
 		j.log.Info("terminal round has a failing deterministic criterion; skipping the judge", "round", round)
 		return verdict{}, det, nil
 	}
-	// Render-check screenshot evidence (#1211): attached only when this node's
+	// Render-check screenshot evidence: attached only when this node's
 	// own rubric scores them; judge-only, never touches the worker's content.
 	shots := renderScreenshotEvidence(judgeCtx, j.cfg, j.nodeID, skip == "", act)
-	// Judge generates too: hold its own spec for this call so the freed
-	// worker slot can't admit a second worker while it runs.
+	// Judge generates too: hold its own spec so the freed worker slot can't admit a second worker.
 	// One per-node abort covers the admission wait, the verify pass and the judge call.
 	abortCtx, endAbort := abortableRound(ledgerCtx, j.ctrl)
 	defer endAbort()
@@ -1321,8 +1297,8 @@ func (j *judgeRounds) applyJudgeFailure(round int, runID string, jspan *stageSpa
 // Returns true when the loop stops (WAL fail-closed, pass, or terminal round).
 func (j *judgeRounds) recordRoundVerdict(round int, runID string, jspan *stageSpan, ledgerCtx context.Context, v verdict, det map[string]criterionScore, act workerActivity) (bool, verdictEnvelope, JudgeRoundRecord) {
 	if isNonDeliveringSlice(j.cfg) {
-		// Fan-out (#1092, design V4 §4.6): a reviewer feeding a synthesizer never owns the
-		// delivered verdict, so its VERDICT-consistency score would gate on something it doesn't control.
+		// Fan-out: a reviewer feeding a synthesizer never owns the delivered verdict,
+		// so its VERDICT-consistency score would gate on something it doesn't control.
 		v = dropCriteria(v, "structured_verdict")
 	}
 	v = sanitizeAnchors(v, j.answer, j.cfg)
@@ -1334,12 +1310,12 @@ func (j *judgeRounds) recordRoundVerdict(round int, runID string, jspan *stageSp
 	if j.episodicState != nil {
 		scored = j.episodicState.roundWrites
 	}
-	// judge_round record (#1144 P2): this SaveStructured call IS the WAL entry for
-	// this round's verdict (recordstore appends artifact.revision before the row).
+	// This SaveStructured call IS the WAL entry for this round's verdict
+	// (recordstore appends artifact.revision before the row).
 	jr := buildJudgeRoundRecord(j.turnID, round, j.res.Passed, j.res.Score, scored, v, det, j.answer)
 	jrID, _, saveErr := saveJudgeRoundRecord(j.nodeCtx, j.cfg, j.nodeID, j.turnID, round, jr)
 	if saveErr != nil && j.cfg.Ledger != nil {
-		// Fail-closed (#1090 §4.9), WAL-scoped only: with no ledger configured this
+		// Fail-closed, WAL-scoped only: with no ledger configured this
 		// failure stays fail-open (Warned inside saveJudgeRoundRecord).
 		j.log.Error("judge_round WAL save failed; stopping the round loop", "round", round, "err", saveErr)
 		verdictWord := "failed"
@@ -1351,10 +1327,10 @@ func (j *judgeRounds) recordRoundVerdict(round int, runID string, jspan *stageSp
 		return true, env, jr
 	}
 	if j.res.Passed {
-		// Memory votes (#1255 P1): applied only on the round that actually passes -
-		// a failed round (incl. one flipped by the WAL fail-closed above) records nothing.
+		// Memory votes apply only on the round that actually passes - a failed round
+		// (incl. one flipped by the WAL fail-closed above) records nothing.
 		if missingMemoryVotes(memoryIDs(j.receivedMemories), v) {
-			// #1259: the in-session nudge already tried once; still incomplete means the judge ignored it.
+			// The in-session nudge already tried once; still incomplete means the judge ignored it.
 			j.log.Warn("judge received memories but left some unvoted after the nudge", "round", round, "received", len(j.receivedMemories), "voted", len(v.Memories))
 		}
 		applyMemoryVotesOnPass(j.nodeCtx, j.cfg, j.nodeID, round, j.receivedMemories, v.Memories)
@@ -1364,7 +1340,7 @@ func (j *judgeRounds) recordRoundVerdict(round int, runID string, jspan *stageSp
 	}
 	if jrID != "" {
 		// Next round's writes point back at THIS round's verdict
-		// (design V4 §7 case 3's trigger_annotation chain).
+		// (the trigger_annotation chain).
 		if j.episodicState != nil {
 			j.episodicState.triggerAnnotation = jrID
 		}
@@ -1385,7 +1361,7 @@ func (j *judgeRounds) recordRoundVerdict(round int, runID string, jspan *stageSp
 // loop (outcome or no-op revise); hardErr is repeat-guard or a self-ask pause.
 func (j *judgeRounds) reviseRound(round int, act workerActivity, v verdict, env verdictEnvelope, jr JudgeRoundRecord) (bool, error) {
 	// Re-check control now that the verdict failed: the judge's own model call
-	// can run long, and a cancel landing in it must stop here too, not next round (#879).
+	// can run long, and a cancel landing in it must stop here too, not next round.
 	if j.ctrl != nil {
 		if j.ctrl.Cancelled() {
 			j.outcome = &judgeRoundOutcome{exit: true}
@@ -1400,7 +1376,7 @@ func (j *judgeRounds) reviseRound(round int, act workerActivity, v verdict, env 
 			return false, nil
 		}
 	}
-	// #762: undo this round's commits before another try, only if commit_h hygiene
+	// Undo this round's commits before another try, only if commit_h hygiene
 	// says it swept in off-task work - an ordinary wrong round keeps its commits.
 	resetCloneToNodeBase(j.cfg, v)
 	revisePrompt := contentPlainText(buildRevisionContent(j.cfg.Constitution, j.question, j.answer, env, act, citationOnlyFailure(v, j.cfg.Threshold), jr.Notes, storedPageIDs(j.nodeCtx, j.cfg, act)))
@@ -1489,9 +1465,8 @@ func pauseIfWorkerRaisedHITL(ctx adkagent.Context, nodeID string, ctrl NodeContr
 	return false, nil
 }
 
-// parkForInput folds an ADK HITL park into the node state machine: mark the control paused/awaiting_input with the question (persisted before the park
-// is acted on), then wrap ADK's sentinel in ErrNodePaused so quack code sees
-// one sentinel. ErrNodeInterrupted stays in the chain because ADK's engine keys the park itself off it - dropping it would fail the node instead.
+// parkForInput marks the control paused/awaiting_input with the question, then wraps ADK's sentinel in
+// ErrNodePaused. ErrNodeInterrupted stays in the chain: ADK's engine keys the park off it.
 func parkForInput(ctrl NodeControl, question string, ierr error) error {
 	if !errors.Is(ierr, workflow.ErrNodeInterrupted) {
 		return ierr // emit failure, not a park
@@ -1502,9 +1477,8 @@ func parkForInput(ctrl NodeControl, question string, ierr error) error {
 	return fmt.Errorf("%w: %w", ErrNodePaused, ierr)
 }
 
-// recallMemoryHits: parses a native recall_memory FunctionResponse (a tools.recallMemoryResult round-tripped through session-event JSON) back
-// into the hits it delivered - a JSON roundtrip rather than manual map
-// assertions, since ADK's own representation of a nested slice varies by path (live run vs replay) and json.Marshal handles either uniformly.
+// recallMemoryHits parses a native recall_memory FunctionResponse back into its hits via a JSON round
+// trip: ADK's representation of a nested slice differs between live run and replay.
 func recallMemoryHits(resp map[string]any) []memory.Delivered {
 	if resp == nil {
 		return nil
@@ -1609,9 +1583,8 @@ func commitMemoryOnPass(ctx adkagent.Context, spanCtx context.Context, cfg Confi
 	}()
 }
 
-// resolveCloneCoordinates: the repo/branch this node itself cloned, setup-provisioned
-// or not. Shared by commitDelivery's own dc-building and the review fan-in's
-// RecordClone (#1059) - same precedence, single source of truth.
+// resolveCloneCoordinates: the repo/branch this node itself cloned, setup-provisioned or not;
+// shared by commitDelivery and the review fan-in's RecordClone so the precedence stays single-sourced.
 func resolveCloneCoordinates(cfg Config, act workerActivity) (cloneURL, branch string) {
 	if cfg.Setup != nil {
 		return cfg.Setup.Repo, cfg.Setup.WorkBranch
@@ -1624,7 +1597,7 @@ func resolveCloneCoordinates(cfg Config, act workerActivity) (cloneURL, branch s
 
 // commitDelivery: posts final staged delivery exactly once. Blocking (delivery failure is user-visible).
 func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config, nodeID string, act workerActivity, res GateResult) {
-	// Multi-reviewer plan (#867): a synthesizer node hands its consolidated review to
+	// Multi-reviewer plan: a synthesizer node hands its consolidated review to
 	// the fan-in, which delivers the merged, worst-of-verdict review exactly once.
 	if cfg.ReviewFanout != nil {
 		if commitFanoutStage(ctx, sink, &cfg, nodeID, &act, res) {
@@ -1635,8 +1608,8 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 		emitNoDelivery(ctx, sink, nodeID, cfg, res)
 		return
 	}
-	// Render from the durable record instead of the worker's own restatement (#1093 P6/P10): a
-	// draft-on-fail delivery renders and records the same revision it posts, never staged text.
+	// Render from the durable record instead of the worker's own restatement: a draft-on-fail
+	// delivery renders and records the same revision it posts, never staged text.
 	renderedFromStaged := act.skipArtifactRender
 	if !renderedFromStaged {
 		act.stagedDelivery, renderedFromStaged = artifactRenderedDelivery(ctx, cfg, nodeID, act.stagedDelivery)
@@ -1660,8 +1633,8 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 	span.SetAttributes(attribute.StringSlice("staged_kinds", kinds))
 	cctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	// #1093: artifact-backed deliveries get a fail-closed WAL delivery.intent entry; a
-	// staged-text render is never treated as artifact-backed, even when a target exists.
+	// Artifact-backed deliveries get a fail-closed WAL delivery.intent entry; a staged-text
+	// render is never treated as artifact-backed, even when a target exists.
 	targetID, targetRev, hasTarget := deliveryTarget(ctx, cfg)
 	hasTarget = hasTarget && !renderedFromStaged
 	if hasTarget {
@@ -1675,8 +1648,8 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 			return
 		}
 	}
-	// Gate-owned push: a push failure still reaches Deliver (carried on dc.PushError) - the
-	// extension is the only thing that can tell the human on GitHub a delivery failed (#1155).
+	// Gate-owned push: a push failure still reaches Deliver (on dc.PushError) - the extension
+	// is the only thing that can tell the human on GitHub a delivery failed.
 	if pushErr := ensurePush(cctx, cfg, &dc); pushErr != nil {
 		slog.Error("gate push failed", "component", "vetting", "node", nodeID, "err", pushErr, "branch", dc.Branch)
 		dc.PushError = pushErr.Error()
@@ -1697,9 +1670,8 @@ func commitDelivery(ctx context.Context, sink func(stream.SSEEvent), cfg Config,
 	slog.Info("delivery committed", "component", "vetting", "node", nodeID, "count", len(dc.Items))
 }
 
-// setDeliveryOutputAttr stamps the delivered text onto ctx's span (g.nodeCtx's
-// "quack.node" span, not the trace root quack has no handle on here) as both
-// langfuse.observation.output and langfuse.trace.output (M2).
+// setDeliveryOutputAttr stamps the delivered text onto ctx's "quack.node" span (quack has no handle on
+// the trace root here) as both langfuse.observation.output and langfuse.trace.output.
 func setDeliveryOutputAttr(ctx context.Context, dc DeliveryContext) {
 	span := oteltrace.SpanFromContext(ctx)
 	if !span.IsRecording() || !otelobs.CaptureContentEnabled() {
@@ -1727,8 +1699,8 @@ func setDeliveryOutputAttr(ctx context.Context, dc DeliveryContext) {
 // deliveryOutputAttrCap matches internal/inference/span.go's spanAttrCap convention.
 const deliveryOutputAttrCap = 8192
 
-// commitFanoutStage hands this node's review to the run's ReviewFanout (#867):
-// a synthesizer's consolidated answer (#965), or one reviewer's staged review.
+// commitFanoutStage hands this node's review to the run's ReviewFanout:
+// a synthesizer's consolidated answer, or one reviewer's staged review.
 func commitFanoutStage(ctx context.Context, sink func(stream.SSEEvent), cfg *Config, nodeID string, act *workerActivity, res GateResult) bool {
 	if !cfg.IsReviewer {
 		// The structured code_review record is read here, not act.answer - a native
@@ -1828,7 +1800,7 @@ func buildDeliveryContext(cfg Config, act workerActivity, res GateResult, nodeID
 // all-dropped means nothing left to deliver.
 func dropVerdictlessReviews(dc *DeliveryContext, sink func(stream.SSEEvent), nodeID, traceID string, cfg Config, res GateResult) bool {
 	// A review with comments/findings but no verdict is not a reviewed PR - drop just
-	// that item so a sibling pr/comment item in the same delivery still ships (#1198 C).
+	// that item so a sibling pr/comment item in the same delivery still ships.
 	verdictless, rest := partitionEmptyVerdictReview(dc.Items)
 	if len(verdictless) == 0 {
 		return false
@@ -1876,8 +1848,8 @@ func failDeliveryOutcomes(sink func(stream.SSEEvent), nodeID string, dc Delivery
 	}
 }
 
-// postDeliveryRecord writes the delivery_record revision on the context detached from
-// the run's cancellation (#1187: the GitHub side effect already happened).
+// postDeliveryRecord writes the delivery_record revision on a context detached from
+// the run's cancellation: the GitHub side effect already happened.
 func postDeliveryRecord(ctx context.Context, cfg Config, nodeID string, dc DeliveryContext, itemOutcomes []DeliveryItemOutcome, res GateResult, renderedFromStaged bool, targetID string, targetRev int, err error) {
 	if ctx.Err() != nil {
 		slog.Warn("run context cancelled before post-delivery bookkeeping; continuing on a detached context",
@@ -1893,7 +1865,7 @@ func postDeliveryRecord(ctx context.Context, cfg Config, nodeID string, dc Deliv
 				break
 			}
 		}
-		// This save IS the delivery.intent's completion (#1144 P2 - the delivery_record
+		// This save IS the delivery.intent's completion (the delivery_record
 		// artifact is the record, not a delivery.done entry).
 		saveDeliveryRecord(bctx, cfg, nodeID, DeliveryRecord{
 			TargetID: targetID, DeliveredRevision: targetRev, RemoteURL: remoteURL, PRNumber: dc.IssueNumber, At: time.Now().UTC(),
@@ -1939,9 +1911,8 @@ func emitDeliveryOutcomes(sink func(stream.SSEEvent), nodeID string, dc Delivery
 	recordDeliveryOutcomeMetric(cfg, res, true, anyDelivered || (err == nil && res.Passed))
 }
 
-// deliverMergedReview: posts the fan-in's merged review as this node's own single-item delivery. cfg.ReviewFanout is cleared first so the recursive
-// commitDelivery call goes straight through instead of re-intercepting. A merge with nothing valid in it (every reviewer node failed/staged
-// nothing) posts nothing - there is nothing true to tell the reader.
+// deliverMergedReview posts the fan-in's merged review as this node's one-item delivery, clearing
+// cfg.ReviewFanout so the recursive commitDelivery doesn't re-intercept. An all-failed merge posts nothing.
 func deliverMergedReview(ctx context.Context, sink func(stream.SSEEvent), cfg Config, nodeID string, merged StagedDelivery) {
 	cloneURL, branch := cfg.ReviewFanout.Clone()
 	cfg.ReviewFanout.forget()
@@ -1951,9 +1922,8 @@ func deliverMergedReview(ctx context.Context, sink func(stream.SSEEvent), cfg Co
 		return
 	}
 	cfg.ReviewFanout = nil
-	// The delivering node (often a synthesizer) may have cloned nothing
-	// itself - fall back to a reviewer sibling's clone coordinates (#1059). The merge is already the final worst-of text; a reviewer-node terminal
-	// (latent plan shape, see #1118 review) must never let the render clobber it with that node's own individual code_review record.
+	// The delivering node may have cloned nothing itself, so fall back to a reviewer sibling's clone. The
+	// merge is already the final worst-of text; skipArtifactRender keeps a node's own record from clobbering it.
 	act := workerActivity{stagedDelivery: map[string]StagedDelivery{"review": merged}, currentBranch: branch, skipArtifactRender: true}
 	if cloneURL != "" {
 		act.clonedRepos = []string{cloneURL}
@@ -1961,20 +1931,18 @@ func deliverMergedReview(ctx context.Context, sink func(stream.SSEEvent), cfg Co
 	commitDelivery(ctx, sink, cfg, nodeID, act, GateResult{Passed: true})
 }
 
-// isReviewerPauseSentinel: true when err means "parked, may still resume" - not a terminal outcome for the review fan-in. Both of RunGatedRefine's own
-// early-return sentinel ErrNodePaused (every quack pause, HITL included) and ADK's own workflow.ErrNodeInterrupted (which the scheduler can still raise
-// on its own, so it stays recognised here) mean the node is not done - registering it as failed here would let the fan-in deliver without it, then silently discard its real verdict on resume.
+// isReviewerPauseSentinel: err means "parked, may still resume" (ErrNodePaused or ADK's ErrNodeInterrupted).
+// Registering such a node as failed would let the fan-in deliver without it and drop its verdict on resume.
 func isReviewerPauseSentinel(err error) bool {
 	return errors.Is(err, ErrNodePaused) || errors.Is(err, workflow.ErrNodeInterrupted)
 }
 
 // abortedRoundNote: flags a delivered review as coming from a dead round,
-// not a clean pass (#942).
+// not a clean pass.
 const abortedRoundNote = "_The round that produced this review ended abnormally (worker error, timeout, or cancel) after the verdict below was staged. Delivering it as-is rather than discarding it._\n\n"
 
-// resolveAbortedReviewer: delivers a dead node's staged review (#942) instead
-// of discarding it. No ReviewFanout → deliver directly; otherwise resolve
-// this node's fanout slot so a dead sibling can't block the merge (#867).
+// resolveAbortedReviewer: delivers a dead node's staged review instead of discarding it. No ReviewFanout
+// delivers directly; otherwise resolve this node's fanout slot so a dead sibling can't block the merge.
 func resolveAbortedReviewer(ctx context.Context, sink func(stream.SSEEvent), cfg Config, nodeID string, act workerActivity) {
 	item, hasItem := act.stagedDelivery["review"]
 	if hasItem {
@@ -1992,7 +1960,7 @@ func resolveAbortedReviewer(ctx context.Context, sink func(stream.SSEEvent), cfg
 	if cfg.IsReviewer {
 		merged, deliverNow = cfg.ReviewFanout.Finish(nodeID, item, hasItem, !hasItem)
 	} else {
-		// Empty answer falls the merge back to per-node concatenation (#965).
+		// Empty answer falls the merge back to per-node concatenation.
 		merged, deliverNow = cfg.ReviewFanout.FinishSynthesis("", CodeReviewRecord{}, false)
 	}
 	if deliverNow {
@@ -2014,9 +1982,8 @@ func partitionByAllowedKinds(items []StagedDelivery, allowedKinds []string) (all
 	return allowed, refused, reasons
 }
 
-// partitionEmptyVerdictReview splits staged items, dropping a "review" item
-// whose Event is empty (#1198 part C) - GitHub has no "no verdict" review, and posting one anyway is the markers-only bug. Per-item, like
-// partitionByAllowedKinds: a sibling pr/comment item in the same delivery still ships.
+// partitionEmptyVerdictReview drops a "review" item with an empty Event: GitHub has no "no verdict" review.
+// Per-item, like partitionByAllowedKinds, so a sibling pr/comment item still ships.
 func partitionEmptyVerdictReview(items []StagedDelivery) (verdictless, rest []StagedDelivery) {
 	for _, item := range items {
 		if item.Kind == "review" && strings.TrimSpace(item.Event) == "" {
@@ -2035,9 +2002,8 @@ func emitDeliveryResult(sink func(stream.SSEEvent), nodeID string, ev stream.SSE
 	}
 }
 
-// emitArtifactRevision sends one artifact_revision SSE event (#1092) for a
-// revision this round wrote, before the round's artifact_judge_round event -
-// the record it was scored under references a revision that already exists.
+// emitArtifactRevision sends one artifact_revision SSE event before the round's artifact_judge_round
+// event, so the record it was scored under references a revision that already exists.
 func emitArtifactRevision(sink func(stream.SSEEvent), id string, revision int, kind, nodeID string, round int) {
 	if sink == nil {
 		return
@@ -2047,7 +2013,7 @@ func emitArtifactRevision(sink func(stream.SSEEvent), id string, revision int, k
 	}})
 }
 
-// emitJudgeRound sends the artifact_judge_round SSE event (#1092), after
+// emitJudgeRound sends the artifact_judge_round SSE event, after
 // every artifact_revision event for the round's own scored writes.
 func emitJudgeRound(sink func(stream.SSEEvent), id string, passed bool, score float64, scored []ScoredRef) {
 	if sink == nil {
@@ -2062,9 +2028,8 @@ func emitJudgeRound(sink func(stream.SSEEvent), id string, passed bool, score fl
 	}})
 }
 
-// isNonDeliveringSlice reports whether cfg is a reviewer node that is part
-// of a fan-out with a downstream synthesizer (#1092, design V4 §4.6) - such
-// a node's own verdict is never what delivery renders, so it isn't judged on structured_verdict.
+// isNonDeliveringSlice: cfg is a reviewer in a fan-out with a downstream synthesizer, whose own verdict
+// is never what delivery renders, so it isn't judged on structured_verdict.
 func isNonDeliveringSlice(cfg Config) bool {
 	return cfg.IsReviewer && cfg.ReviewFanout != nil && cfg.ReviewFanout.SynthExpected()
 }
@@ -2086,9 +2051,8 @@ func recordDeliveryOutcomeMetric(cfg Config, res GateResult, attempted, delivere
 	}
 }
 
-// MemoryScope: node's memory entitlement (repo, role, user). Exported for ACP
-// MCP surface. Legacy is deliberately unset here - it exists only so
-// memories committed before per-scope buckets (keyed by agent NAME, e.g. "web-researcher") still recall; a node id is not that key.
+// MemoryScope: node's memory entitlement (repo, role, user), exported for the ACP MCP surface. Legacy stays
+// unset: it only recalls pre-bucket memories keyed by agent NAME, and a node id is not that key.
 func MemoryScope(ctx adkagent.Context, cfg Config) memory.Scope {
 	sc := memory.Scope{Role: cfg.MemoryRole}
 	if s := ctx.Session(); s != nil {
@@ -2100,9 +2064,8 @@ func MemoryScope(ctx adkagent.Context, cfg Config) memory.Scope {
 	return sc
 }
 
-// runWorkerNode: runs worker as sub-branched child, strips thinking content.
-// attachments are artifactref reference parts by the time they arrive here
-// (rerouted at the REST/plan entry boundary) - real bytes are swapped back in only at the model boundary (internal/inference's hydratingModel).
+// workerInput: attachments are artifactref parts by now (rerouted at the REST/plan entry); real bytes
+// are swapped back in only at the model boundary (internal/inference's hydratingModel).
 func workerInput(prompt string, attachments []*genai.Part) any {
 	if len(attachments) == 0 {
 		return prompt
@@ -2110,14 +2073,12 @@ func workerInput(prompt string, attachments []*genai.Part) any {
 	return &genai.Content{Role: "user", Parts: append([]*genai.Part{{Text: prompt}}, attachments...)}
 }
 
-// gatePromptAuthor authors the prompt-delivery events emitPrompt writes. NOT
-// "user" (a user-authored event would split a chat turn in store. groupSessionEvents and confuse the runner's turn detection) and never an
-// agent's name (remoteagent presents foreign-authored events to the remote model as user messages - exactly what a prompt should be).
+// gatePromptAuthor authors emitPrompt's events. Not "user" (that would split a chat turn and confuse
+// the runner's turn detection), nor an agent's name (remoteagent shows foreign authors as user messages).
 const gatePromptAuthor = "quack-gate"
 
-// emitPrompt writes the worker's prompt into the session as a gate-authored event, immediately before the RunNode that consumes it. A local llmagent takes
-// RunNode input directly, but production workers are A2A REMOTE agents, which build their outbound message from SESSION EVENTS ONLY - without this event a
-// remote worker never sees its task, and an empty session tail skips the dispatch entirely. emit completes durably before it returns, so there is no ordering race. The event is filtered everywhere else by its author/branch.
+// emitPrompt writes the worker's prompt into the session before RunNode: A2A remote workers build their
+// message from session events only. emit completes durably, so there is no ordering race.
 func emitPrompt(ctx adkagent.Context, emit func(*session.Event) error, input any) {
 	if emit == nil {
 		return
@@ -2190,16 +2151,15 @@ func runWorkerNodeTraced(ctx adkagent.Context, spanCtx context.Context, cfg Conf
 		attribute.String(otelobs.QuackModel, modelName(workerModel)),
 		attribute.String("stage", stage),
 	)
-	// Round start is the one point the worker's prompt may move (epic #1418:
-	// nothing re-resolves mid-round), so the version recorded here is the one
-	// every model call of this round runs on.
+	// Round start is the one point the worker's prompt may move (nothing re-resolves mid-round),
+	// so the version recorded here is the one every model call of this round runs on.
 	promptSource, promptVersion, promptArtifact := cfg.PromptSource, cfg.PromptVersionID, cfg.PromptArtifact
 	if cfg.RefreshPrompt != nil {
 		if art := cfg.RefreshPrompt(spanCtx); art.VersionID != "" {
 			promptSource, promptVersion, promptArtifact = art.Source, art.VersionID, art.Name
 		}
-		// L3: RefreshPrompt is what performs a bound round's model swap (nativeNodeBuilder's
-		// OverridableModel) - re-read quack.model now so the span agrees with RecordRoundDuration below.
+		// RefreshPrompt performs a bound round's model swap (OverridableModel), so re-read
+		// quack.model now and the span agrees with RecordRoundDuration below.
 		ts.Span.SetAttributes(attribute.String(otelobs.QuackModel, modelName(workerModel)))
 	}
 	workerArtifacts := gateArtifacts(promptArtifact, promptSource, promptVersion, cfg.MemoryArtifact)
@@ -2258,9 +2218,8 @@ func judgePartEmitter(sink func(stream.SSEEvent), nodeID, runID string) func(*ge
 	}
 }
 
-// computeDeterministicCriteria: computes code-owned criteria before judge runs.
-// checksSkipReason is the raw checksPassCriterion skip reason ("" if checks
-// ran), for the caller to attach to GateResult (#780).
+// computeDeterministicCriteria: code-owned criteria computed before the judge runs. checksSkipReason is
+// the raw checksPassCriterion skip reason ("" if checks ran), for the caller to attach to GateResult.
 func computeDeterministicCriteria(ctx context.Context, answer string, act workerActivity, cfg Config, nodeID string, since time.Time) (det map[string]criterionScore, checksSkipReason string) {
 	det = map[string]criterionScore{}
 	if ls := lengthScore(answer); ls < 1.0 {
@@ -2287,7 +2246,7 @@ func computeDeterministicCriteria(ctx context.Context, answer string, act worker
 	} else {
 		checksSkipReason = c.Reason
 	}
-	// Added test files that name no production identifier are vacuous by construction (#716).
+	// Added test files that name no production identifier are vacuous by construction.
 	if c, ok := vacuousTestsCriterion(cfg); ok {
 		det["no_vacuous_tests"] = c
 	}
@@ -2398,9 +2357,8 @@ func codeOwnedCriterion(name string, specs map[string]criterionSpec) bool {
 	return static || name == "cites_sources"
 }
 
-// deterministicCriterionSpec: definition/fix declared per deterministic
-// criterion name (#941). A static table rather than editing each of the ~10 constructor sites (checks.go, mermaid.go, shape.go, vacuoustests.go,
-// delivery.go) - the criterion names are a fixed, code-owned set, so one lookup keyed by name is a smaller diff with the same effect.
+// deterministicCriterionSpec: definition/fix per deterministic criterion name. The names are a fixed,
+// code-owned set, so one table keyed by name replaces editing each constructor site.
 var deterministicCriterionSpec = map[string]struct {
 	definition string
 	fix        string
@@ -2426,8 +2384,8 @@ var EnvironmentOnlyCriteria = map[string]bool{
 	"review_posted": true, "behaviour_verified": true, "artifact_valid": true,
 }
 
-// citesSourcesBands: the cites_sources tier legend, moved out of the reason
-// string and into structured bands per #941 (must stop being re-emitted per round).
+// citesSourcesBands: the cites_sources tier legend as structured bands, so it
+// isn't re-emitted in the reason string every round.
 var citesSourcesBands = []bandSpec{
 	{Min: 0.00, Max: 0.24, Meaning: "never seen anywhere - the citation is fabricated"},
 	{Min: 0.25, Max: 0.74, Meaning: "same host seen but this exact page never fetched - likely invented"},
@@ -2436,18 +2394,13 @@ var citesSourcesBands = []bandSpec{
 
 const citesSourcesFix = "Fetch each source, or remove the citation and any claim resting on it."
 
-// mergeDeterministic: folds deterministic criteria into verdict and re-aggregates.
-// Stamps Deterministic here (not in computeDeterministicCriteria) since det's
-// keys are exactly the code-owned set - composeFeedback reads it to tell a
-// code-owned failure from a judge-scored one (#791). Also stamps each
-// criterion's declared definition/bands/fix (#941): cfg.RubricSpecs/RubricFixes
-// (loaded from the node's rubric.yaml) win when the rubric names the criterion (e.g. cites_sources in web-researcher/synthesizer's rubric.yaml);
-// deterministicCriterionSpec/citesSourcesBands below are the fallback for criteria no rubric declares (checks_pass, delivery_complete, ...) or when no structured rubric was loaded for this node at all.
+// mergeDeterministic folds deterministic criteria into v, stamping Deterministic (composeFeedback uses it) and
+// each one's definition/bands/fix: rubric specs win, deterministicCriterionSpec/citesSourcesBands are the fallback.
 func mergeDeterministic(v verdict, det map[string]criterionScore, cfg Config) verdict {
 	if v.Criteria == nil {
 		v.Criteria = map[string]criterionScore{}
 	}
-	// A judge score for a code-owned criterion never stands in: when code computed nothing this round the criterion is absent.
+	// A judge score for a code-owned criterion never stands in: absent when code computed nothing.
 	for name, c := range v.Criteria {
 		if !c.Deterministic && codeOwnedCriterion(name, cfg.RubricSpecs) {
 			delete(v.Criteria, name)
@@ -2478,21 +2431,19 @@ func mergeDeterministic(v verdict, det map[string]criterionScore, cfg Config) ve
 	return aggregateVerdict(v)
 }
 
-// composeFeedback builds the #941 structured envelope from v and a rendered one-paragraph summary for callers that still want prose: AgentCompleteData.Feedback
-// (kept for one release so the UI does not blank) and GateResult.Feedback (the
-// delivery-caveat text). The envelope itself - not this summary - is what buildRevisionContent hands the worker.
+// composeFeedback builds the structured envelope plus a one-paragraph summary for AgentCompleteData.Feedback
+// and GateResult.Feedback (the delivery caveat). The envelope, not the summary, is what the worker gets.
 func composeFeedback(v verdict, threshold float64, round int) (verdictEnvelope, string) {
 	env := buildEnvelope(v, threshold, round)
 	return env, renderFeedbackSummary(env, v.Feedback, v.Findings)
 }
 
-// renderFeedbackSummary: prose rendering of the envelope, in the same
-// deterministic-leads/judge-follows shape composeFeedback used before #941 -
-// a code-owned failure has one correct fix, a low judge score is arguable, and collapsing them together misrepresents the judge's opinion as decided (#791).
+// renderFeedbackSummary: prose rendering of the envelope, deterministic failures first. A code-owned failure
+// has one correct fix while a low judge score is arguable, so merging them would present opinion as decided.
 func renderFeedbackSummary(env verdictEnvelope, judgeFeedback string, findings []findingVerdict) string {
 	detFails := failureShortfalls(env.DeterministicFailures)
 	judgeFails := failureShortfalls(env.JudgeFailures)
-	sort.Strings(detFails) // stable order (buildEnvelope already sorts by name, but keep this local to the function's own contract)
+	sort.Strings(detFails)
 	sort.Strings(judgeFails)
 	findingsFeedback := composeFindingsFeedback(findings)
 	if len(detFails) == 0 && len(judgeFails) == 0 && findingsFeedback == "" {
@@ -2568,7 +2519,6 @@ func citationOnlyFailure(v verdict, threshold float64) bool {
 	return failing > 0
 }
 
-// activityFromSession: reconstructs worker's retrieval and workspace ledger from session events.
 func joinWritten(cwd, p string) string {
 	if strings.HasPrefix(p, "/") {
 		return strings.TrimPrefix(p, "/")
@@ -2579,9 +2529,8 @@ func joinWritten(cwd, p string) string {
 	return filepath.Join(cwd, p)
 }
 
-// writtenRel resolves a worker's write/edit path to a CHAT-relative path for Jail.Resolve - the read-side mirror of tools.jailPath. Worker paths are
-// NODE-relative (the node dir is invisible to the model), re-applied here; a
-// leading "/" is the chat-root escape hatch, ignoring both. Must match the judge's resolution, or it silently reads NOTHING (has bitten twice).
+// writtenRel resolves a worker's NODE-relative write/edit path to a CHAT-relative one, mirroring
+// tools.jailPath; a leading "/" is the chat-root escape. Must match the judge's resolution or it reads nothing.
 func writtenRel(nodeDir, cwd, p string) string {
 	if strings.HasPrefix(p, "/") {
 		return strings.TrimPrefix(p, "/")
@@ -2659,8 +2608,8 @@ func (s *activityScanner) scanCall(fc *genai.FunctionCall) {
 		if u, ok := fc.Args["url"].(string); ok && strings.TrimSpace(u) != "" {
 			s.pendingLegacyURL[fc.ID] = strings.TrimSpace(u)
 		}
-		// Route into workspace ledger (web_fetch signals web-sourced claims);
-		// which URLs it fetched is read back from the response itself (recordFetch), since one batched call covers many.
+		// Route into the workspace ledger; the fetched URLs are read back from the response
+		// (recordFetch), since one batched call covers many.
 		s.pendingWs[fc.ID] = fc.Args
 		s.pendingWsTool[fc.ID] = "web_fetch"
 	case "stage_memory":
@@ -2710,7 +2659,6 @@ func (s *activityScanner) scanResponse(fr *genai.FunctionResponse) {
 		s.recordRender(fr.Response, s.pendingData[fr.ID].args)
 	}
 	if isWorkspaceTool(fr.Name) {
-		// Only completed call/response pairs enter the ledger.
 		if args, known := s.pendingWs[fr.ID]; known && s.pendingWsTool[fr.ID] == fr.Name {
 			delete(s.pendingWs, fr.ID)
 			delete(s.pendingWsTool, fr.ID)
@@ -2792,8 +2740,7 @@ func (s *activityScanner) recordSearch(args map[string]any) {
 	}
 }
 
-// recordFetch: marks every successfully fetched URL in a batched response -
-// a stored-artifact header counts the same as inline text; an error doesn't.
+// recordFetch marks every fetched URL in a batched response (a stored-artifact header counts, an error doesn't);
 // legacyURL backs a pre-batching response (resp["result"], no url of its own).
 func (s *activityScanner) recordFetch(legacyURL string, resp map[string]any) {
 	if results, ok := resp["results"].([]any); ok {
@@ -2921,9 +2868,8 @@ func isArtifactWriteTool(name string) bool {
 	return ok && spec.AgentWritable
 }
 
-// recordArtifactWrite captures a successful write's id (skips an
-// edit_artifact conflict reply, which wrote nothing). ACP tool replies land
-// under "output" (translate.go's default case), not "result" - fall back.
+// recordArtifactWrite captures a successful write's id, skipping an edit_artifact conflict reply.
+// ACP tool replies land under "output" (translate.go's default case), not "result".
 func (s *activityScanner) recordArtifactWrite(resp map[string]any) {
 	if s.otherNode {
 		return
@@ -2988,9 +2934,8 @@ func hasAnswerKey(v any) bool {
 	return false
 }
 
-// excludedDataToolNames: tools already visible to the judge through another
-// path (evidence, artifacts, memory, staging) or with no checkable payload -
-// never counted as a data tool.
+// excludedDataToolNames: tools already visible to the judge another way (evidence, artifacts, memory,
+// staging) or with no checkable payload - never counted as a data tool.
 var excludedDataToolNames = map[string]bool{
 	"web_search": true, "web_fetch": true, "summarize": true,
 	"load_skill": true, "load_skill_resource": true,
@@ -3013,9 +2958,8 @@ func isDataToolCall(name string) bool {
 // well under dataToolTotalCap so one call can never exhaust the section.
 const dataToolEntryCap = 8000
 
-// recordDataTool appends one call/response pair as a compact, capped entry -
-// a native tool's raw reply and an ACP-wrapped {"output"/"error": ...} one
-// (translate.go) marshal to the same shape.
+// recordDataTool appends one call/response pair as a compact, capped entry; a native reply and an
+// ACP-wrapped {"output"/"error": ...} one (translate.go) marshal to the same shape.
 func (s *activityScanner) recordDataTool(name string, args, resp map[string]any) {
 	argsJSON, _ := json.Marshal(args)
 	respJSON, _ := json.Marshal(resp)

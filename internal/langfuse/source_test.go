@@ -23,9 +23,7 @@ func TestSourceGet(t *testing.T) {
 	}
 }
 
-// TestSourceStampedWithStoreName proves the resolver stamps a store's OWN
-// configured name onto a resolved artifact (M5) - not a fixed "langfuse" that
-// would hide which of several langfuse stores actually answered.
+// The resolver stamps the store's own configured name, so multiple langfuse stores stay distinguishable.
 func TestSourceStampedWithStoreName(t *testing.T) {
 	c := testClient(t, rawPrompt(`{"name":"system/foo","version":5,"type":"text","prompt":"hi"}`))
 	src := &Source{Client: c, StoreKey: "prod-langfuse"}

@@ -1,11 +1,5 @@
-// Package recordstore is a typed record store over the ADK artifact.Service
-// (#1090 P2). A record is identified by a kind/instance id; the id is never
-// composed by a caller - the kind registry derives it from the saved content
-// (via the kind's registered Identity func) and Save returns it. Two content
-// classes share the store: structured (JSON, validated against a registered
-// kind) and blob (raw bytes + mime, e.g. markdown/text/PDF). Kind naming,
-// schemas, and identity functions live with each record type's own package
-// (e.g. internal/vetting/reviewrecord.go); recordstore only holds the registry.
+// Package recordstore is a typed record store over the ADK artifact.Service. A record's kind/instance id is
+// derived from the saved content by the kind's registered Identity func, never composed by a caller.
 package recordstore
 
 import (
@@ -36,9 +30,8 @@ import (
 // artifact/version" sentinel, which every backend wraps around fs.ErrNotExist.
 func isNotFound(err error) bool { return errors.Is(err, fs.ErrNotExist) }
 
-// idSep joins kind/instance (design's logical shape uses "/", but ADK's
-// artifact.Service rejects "/" and "\" in FileName - validateFileName - so
-// the physical record id substitutes ":"); an instance value may itself contain ":" (e.g. "pr:123"), which is safe because KindOf/id only ever split on the first separator.
+// idSep joins kind/instance: artifact.Service rejects "/" in FileName. An instance may itself contain ":"
+// (e.g. "pr:123"); that is safe because ids are only ever split on the first separator.
 const idSep = ":"
 
 // KindOf extracts the kind segment from an id, "" if malformed.
@@ -58,27 +51,23 @@ const (
 	Blob       Class = "blob"       // raw bytes + mime, no validation beyond size
 )
 
-// IdentityFunc derives a kind's instance segment from the content being
-// saved (already marshaled to bytes) and an optional hint the caller
-// supplies (e.g. the chat's external subject identity) - never from a caller-composed string; a finding's identity ignores hint entirely and hashes fields inside content, so it comes out the same regardless of which node or hint produced it.
+// IdentityFunc derives a kind's instance segment from the marshaled content and an optional caller hint
+// (e.g. the chat's subject identity), never from a caller-composed string.
 type IdentityFunc func(content []byte, hint string) (instance string, err error)
 
-// KindSpec is one registered kind's shape: content class, schema version and
-// JSON Schema text (for #1091's generated write_<kind> tools - "" for a blob
-// kind, which has no schema), a validator (nil for a blob kind), and the identity function that derives its instance segment.
+// KindSpec is one registered kind's shape. JSONSchema feeds the generated write_<kind> tools ("" and a
+// nil Validate for a blob kind).
 type KindSpec struct {
 	Class         Class
 	SchemaVersion int
-	JSONSchema    string // #1091 tool generation input; the write_<kind> tool's input schema verbatim
+	JSONSchema    string // the write_<kind> tool's input schema verbatim
 	Validate      func(json.RawMessage) error
 	Identity      IdentityFunc
-	// RequiresHint declares that Identity fails without a non-empty hint
-	// (the requireHint pattern) - callers that can't supply a real session
-	// hint (e.g. write_artifact/write_<kind> for an arbitrary caller-chosen kind) use this to decide whether to pass one at all, rather than passing a hint unconditionally and corrupting a hint-optional kind's content-hash identity (#1108 finding 2).
+	// RequiresHint: Identity fails without a non-empty hint. Callers check it rather than always passing a
+	// hint, which would corrupt a hint-optional kind's content-hash identity.
 	RequiresHint bool
-	// AgentWritable gates the generic write_<kind> MCP/ADK tool generators
-	// (#1091) - false for a gate-only kind (judge_round, delivery_record) so
-	// a worker can't forge a verdict/delivery record into the gate's WAL.
+	// AgentWritable gates the generic write_<kind> tools; false for gate-only kinds (judge_round,
+	// delivery_record) so a worker can't forge a verdict or delivery record.
 	AgentWritable bool
 	// System excludes a Blob kind from KindsForClass(Blob), so from
 	// write_artifact/MCP and the plan-level kind selector - agent-forgeable evidence risk (e.g. web_page).
@@ -95,9 +84,8 @@ var (
 	registry   = map[string]KindSpec{}
 )
 
-// Register declares kind's shape (§4.3/§4.4). Call once (package init) per
-// kind from the record type's own package - #1090 P2's registered kinds are
-// code_review, finding, document, pr_body, text, bytes. Panics on a duplicate registration, a spec missing Identity (a wiring bug - every kind must derive its own id), or a JSONSchema that doesn't parse: the write_<kind> tool generators (MCP and ADK) both trust this schema is valid and previously skipped the tool silently on either surface when it wasn't, so failing here means both surfaces fail the same way, loudly, at startup (#1108 finding 3).
+// Register declares kind's shape; call once per kind from package init. It panics on a duplicate, a missing
+// Identity, or an unparseable JSONSchema, so both write_<kind> tool surfaces fail loudly at startup.
 func Register(kind string, spec KindSpec) {
 	registryMu.Lock()
 	defer registryMu.Unlock()
@@ -108,9 +96,8 @@ func Register(kind string, spec KindSpec) {
 		panic("recordstore: kind " + kind + " registered with no Identity func")
 	}
 	if spec.Class == Structured && spec.JSONSchema == "" {
-		// An empty schema on a structured kind survives startup but then makes
-		// the two write_<kind> generators diverge - MCP Warns-and-skips, ADK
-		// hard-fails the whole run (#1108 L1) - so reject it here instead.
+		// An empty schema survives startup but makes the MCP and ADK write_<kind> generators diverge
+		// (one skips, the other fails the run).
 		panic("recordstore: kind " + kind + " registered as structured without a JSONSchema")
 	}
 	if spec.JSONSchema != "" {
@@ -122,9 +109,8 @@ func Register(kind string, spec KindSpec) {
 	registry[kind] = spec
 }
 
-// SpecFor returns kind's registered spec, or ok=false if it isn't registered -
-// exported so a generic write path (write_artifact) can check RequiresHint
-// for a caller-chosen kind before deciding whether to pass one.
+// SpecFor returns kind's registered spec, so a generic write path can check RequiresHint for a
+// caller-chosen kind.
 func SpecFor(kind string) (spec KindSpec, ok bool) {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
@@ -142,16 +128,14 @@ func lookupKind(kind string) (KindSpec, error) {
 	return spec, nil
 }
 
-// Lineage is the per-revision provenance envelope (#1090 §4.2), stamped on
-// the store row rather than inside the bytes - so blob kinds carry it too.
-// NodeID is provenance only (the node that authored this revision), never part of the artifact's id.
+// Lineage is the per-revision provenance stamped on the store row, not inside the bytes, so blob kinds carry
+// it too. NodeID is provenance only, never part of the artifact's id.
 type Lineage struct {
 	NodeID         string `json:"node_id"`
 	Round          int    `json:"round"`
 	ParentRevision int    `json:"parent_revision"`
-	// BaseRevision is the revision the editor last read (Edit's caller-supplied
-	// base_revision) - advisory only, recorded for observability; the merge
-	// itself always targets whatever is actually latest (see Edit).
+	// BaseRevision is the revision the editor last read: advisory, for observability only. The merge always
+	// targets whatever is actually latest.
 	BaseRevision      int       `json:"base_revision"`
 	TriggerAnnotation string    `json:"trigger_annotation,omitempty"`
 	HeadSHA           string    `json:"head_sha,omitempty"`
@@ -160,15 +144,12 @@ type Lineage struct {
 	// SourceURL: the external URL this revision's content was fetched from,
 	// if any (e.g. web_page) - content itself stays a pure copy of the page.
 	SourceURL string `json:"source_url,omitempty"`
-	// TurnID targets the store row's existing turn_id column (internal/store's
-	// TurnAwareService.SaveForTurn concept), not the lineage JSON blob -
-	// excluded from marshaling so it isn't duplicated in both places.
+	// TurnID targets the store row's turn_id column, so it is excluded from the lineage JSON.
 	TurnID string `json:"-"`
 }
 
-// metaSaver/metaLoader are implemented by *store.TurnAwareService (checked
-// structurally, so recordstore never imports internal/store). A plain
-// artifact.Service without them - artifact.InMemoryService(), used by most tests - still saves/loads fine; kind/class/lineage just don't persist.
+// metaSaver/metaLoader are implemented by *store.TurnAwareService, checked structurally to avoid importing
+// internal/store. Without them saves still work, but kind/class/lineage don't persist.
 type metaSaver interface {
 	SaveWithMeta(ctx context.Context, req *artifact.SaveRequest, kind, class string, lineageJSON []byte, turnID string) (*artifact.SaveResponse, error)
 }
@@ -180,9 +161,8 @@ type metaLoader interface {
 type Client struct {
 	svc                        artifact.Service
 	appName, userID, sessionID string
-	// ledgerStore: the WAL's fail-closed AppendIntent path (#1090 §4.9/#1100);
-	// nil = no WAL; Save* behaves exactly as before #1100. Set only via
-	// WithLedger, by a caller that has already restricted it to a transactional (postgres) backend - see vetting.Config.Ledger's doc.
+	// ledgerStore is the fail-closed WAL path; nil means no WAL. Set only via WithLedger, by a caller that
+	// already restricted it to a transactional (postgres) backend.
 	ledgerStore ledger.LedgerStore
 	// schemas: per-kind JSON Schemas an SDK extension declared (WithSchemas);
 	// nil = no enforcement, Save*/Edit behave exactly as before this existed.
@@ -202,9 +182,8 @@ func New(svc artifact.Service, appName, userID, sessionID string) *Client {
 	return &Client{svc: svc, appName: appName, userID: userID, sessionID: sessionID}
 }
 
-// WithLedger arms the fail-closed WAL path on c and returns c. store should
-// already be filtered to a transactional backend by the caller (see
-// vetting.Config.Ledger) - recordstore itself doesn't inspect the backend kind, it just trusts a non-nil store to make AppendIntent atomic.
+// WithLedger arms the fail-closed WAL path on c. The caller must already restrict store to a transactional
+// backend; recordstore trusts a non-nil store to make AppendIntent atomic.
 func (c *Client) WithLedger(store ledger.LedgerStore) *Client {
 	c.ledgerStore = store
 	return c
@@ -241,9 +220,8 @@ func (c *Client) checkSchema(kind string, content []byte) error {
 	return &SchemaViolation{Kind: kind, Violations: violations, Schema: c.schemas.Schema(kind)}
 }
 
-// artifactRevisionPayload is the artifact.revision WAL entry's payload
-// (#1090 §4.9): bytes_ref is the store row's key (the id), never the bytes,
-// so a large blob is one small entry.
+// artifactRevisionPayload: bytes_ref is the store row's key, never the bytes, so a large blob stays one small
+// WAL entry.
 type artifactRevisionPayload struct {
 	ID             string  `json:"id"`
 	Revision       int     `json:"revision"`
@@ -258,9 +236,8 @@ type artifactRevisionPayload struct {
 // conflict resolves next attempt; this only guards a wedged id (saveAt's doc).
 const maxSaveRetries = 20
 
-// idempotencyKey derives the store-level dedup key for id/data (#1144 P4),
-// replacing the old read-then-compare "identical to latest" check.
-// Deliberately content-only, NOT parentRev-qualified: a writer's crash-then-retry must collide with its OWN original intent no matter how far the tip has moved since, so claimAndSave's content-mismatch check (#1237) can still catch a different writer having adopted the same orphaned slot. A save whose bytes match an OLDER, non-tip revision falls through to revertKey instead (finding 2).
+// idempotencyKey is content-only, not parentRev-qualified: a crash-then-retry must collide with its own
+// intent however far the tip has moved. A match on an older, non-tip revision falls through to revertKey.
 func idempotencyKey(id string, data []byte) string {
 	h := sha256.New()
 	h.Write([]byte(id))
@@ -269,9 +246,8 @@ func idempotencyKey(id string, data []byte) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// revertKey is claimAndSave's fallback claim key when a dup hit's matched
-// revision isn't the one the caller expected resolved (finding 2: a
-// deliberate revert, not a retry of the same attempt) - qualified by parentRev so the retried claim can't collide with that same stale entry.
+// revertKey is the fallback claim key for a deliberate revert (dup hit at an unexpected revision), qualified
+// by parentRev so the retried claim can't collide with that stale entry.
 func revertKey(id string, parentRev int, data []byte) string {
 	h := sha256.New()
 	h.Write([]byte(id))
@@ -282,19 +258,15 @@ func revertKey(id string, parentRev int, data []byte) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// errStaleContentMatch: claimAndSave's dup hit matched identical content at
-// a revision other than expectResolvedAt - not this attempt's own intent,
-// so the caller must retry under a fresh key rather than treat it as done.
+// errStaleContentMatch: a dup hit matched identical content at a revision other than expectResolvedAt, so
+// the caller must retry under a fresh key rather than treat it as done.
 var errStaleContentMatch = errors.New("recordstore: idempotency key matched a stale, non-tip revision")
 
-// adoptAfterAttempts bounds how many plain retries saveAtOrAdopt insists on
-// before it will treat a still-conflicting parent as an orphan (saveAt's doc
-// below). A live concurrent writer for the SAME id needs only one AppendIntent + one saveRow to finish; giving up several real round trips of headroom first means "still conflicting" is overwhelmingly a genuine crash, not a writer that simply hasn't reached saveRow yet - the #1100 stress test (20 goroutines racing one brand-new id) is exactly the case an immediate check-and-adopt gets wrong.
+// adoptAfterAttempts plain retries come before treating a conflicting parent as an orphan: a live writer
+// needs one round trip to finish, so adopting immediately would steal a slow writer's slot.
 const adoptAfterAttempts = 3
 
-// retryBackoff is the delay before save/Edit's next ErrStaleParent retry -
-// small, growing, jittered, so maxSaveRetries's 20 attempts under real
-// contention are not a tight spin against Postgres.
+// retryBackoff is small, growing and jittered so maxSaveRetries under contention isn't a tight spin.
 func retryBackoff(attempt int) time.Duration {
 	d := time.Duration(attempt+1) * 3 * time.Millisecond
 	if d > 30*time.Millisecond {
@@ -303,9 +275,8 @@ func retryBackoff(attempt int) time.Duration {
 	return d + time.Duration(rand.IntN(5))*time.Millisecond
 }
 
-// idLocks serializes read-latest through row-write per (chat,id): the ledger's
-// unique index only orders WAL claims, while artifact.Service numbers revisions
-// independently, so unlocked writers can end up with claimed != stored (#1144 P4). ponytail: process-local, a second replica needs a Postgres advisory lock.
+// idLocks serializes read-latest through row-write per (chat,id): artifact.Service numbers revisions
+// independently of the ledger. ponytail: process-local, a second replica needs a Postgres advisory lock.
 var idLocks sync.Map // "chatID\x00id" -> *sync.Mutex
 
 func (c *Client) lockFor(id string) *sync.Mutex {
@@ -324,16 +295,14 @@ func (c *Client) LockKey(key string) (unlock func()) {
 	return mu.Unlock
 }
 
-// save picks id's current latest revision as the parent and retries on
-// ledger.ErrStaleParent for a cross-process conflict; a same-process
-// conflict for the same id can't happen at all - lockFor serializes it.
+// save uses id's latest revision as the parent and retries on ledger.ErrStaleParent for a cross-process
+// conflict; lockFor rules out same-process conflicts.
 func (c *Client) save(ctx context.Context, id, kind string, class Class, mime string, data []byte, lineage Lineage) (int, error) {
 	mu := c.lockFor(id)
 	mu.Lock()
 	defer mu.Unlock()
 	for attempt := 0; ; attempt++ {
-		// No ledger: nothing arbitrates writers anyway, so keep the caller's
-		// own tracked ParentRevision as before #1144 P4.
+		// No ledger: nothing arbitrates writers anyway, so keep the caller's own tracked ParentRevision.
 		parentRev := lineage.ParentRevision
 		if c.ledgerStore != nil {
 			versions, err := c.versionsDesc(ctx, id)
@@ -343,9 +312,8 @@ func (c *Client) save(ctx context.Context, id, kind string, class Class, mime st
 			parentRev = 0
 			if len(versions) > 0 {
 				parentRev = int(versions[0])
-				// Saving exactly what's already at the tip is a genuine
-				// no-op: report it with no new revision and no WAL entry.
-				// Content matching an OLDER, non-latest revision (a revert) falls through to saveAtOrAdopt and mints its own new one: this tip comparison is what makes only a same-as-tip save collapse; idempotencyKey itself is content-only (finding 2).
+				// Saving exactly the tip is a no-op: no new revision, no WAL entry. Matching an older
+				// revision (a revert) falls through and mints a new one.
 				if latest, ok, lerr := c.LoadVersion(ctx, id, parentRev); lerr == nil && ok && bytes.Equal(latest, data) {
 					return parentRev, nil
 				}
@@ -360,9 +328,8 @@ func (c *Client) save(ctx context.Context, id, kind string, class Class, mime st
 	}
 }
 
-// saveAtOrAdopt tries saveAt at parentRev; on ledger.ErrStaleParent, once
-// attempt reaches adoptAfterAttempts it checks whether the intent that
-// already claimed parentRev is an orphan - a crash or transient backend error left its row unwritten (#1144 P4 follow-up: checking "does the row exist" costs nothing extra a normal save wasn't already going to do, replacing byte-duplication into the ledger). If parentRev+1 has no row yet, this save ADOPTS that slot: writes the row with its OWN data at that exact revision, completing the orphaned intent instead of failing forever. If the slot fills in between the check and the write (a genuine concurrent writer that was just slow), the mismatch falls through to a normal ErrStaleParent retry.
+// saveAtOrAdopt retries saveAt; past adoptAfterAttempts, if parentRev+1 still has no row its claim is an
+// orphan (crashed writer) and this save adopts that slot with its own data. A slot filled meanwhile retries.
 func (c *Client) saveAtOrAdopt(ctx context.Context, id, kind string, class Class, mime string, data []byte, lineage Lineage, parentRev, attempt int) (int, error) {
 	rev, err := c.saveAt(ctx, id, kind, class, mime, data, lineage, parentRev)
 	if !errors.Is(err, ledger.ErrStaleParent) || c.ledgerStore == nil || attempt < adoptAfterAttempts {
@@ -379,9 +346,8 @@ func (c *Client) saveAtOrAdopt(ctx context.Context, id, kind string, class Class
 	return adopted, nil
 }
 
-// saveAt writes data as parentRev+1, first claiming that parent in the
-// ledger (#1144 P4). Tries the content-only key first so a crash-retry
-// fails closed against a foreign adoption (#1237); only a stale, non-tip match (finding 2's revert case) falls back to a parentRev-qualified key.
+// saveAt writes data as parentRev+1 after claiming that parent in the ledger. The content-only key comes
+// first so a crash-retry fails closed against a foreign adoption; only a stale match falls back to revertKey.
 func (c *Client) saveAt(ctx context.Context, id, kind string, class Class, mime string, data []byte, lineage Lineage, parentRev int) (int, error) {
 	lineage.ParentRevision = parentRev
 	if c.ledgerStore == nil {
@@ -394,9 +360,8 @@ func (c *Client) saveAt(ctx context.Context, id, kind string, class Class, mime 
 	return rev, err
 }
 
-// claimAndSave appends the ledger intent under key, claiming parentRev+1,
-// and completes it. expectResolvedAt is the revision a dup hit must match
-// to count as THIS attempt's own no-op (current tip for the content-only key; parentRev+1 for revertKey's fallback claim) - a dup hit anywhere else with matching bytes is a stale match (errStaleContentMatch); with mismatching bytes it's a foreign writer's adoption (#1237, fail closed).
+// claimAndSave claims parentRev+1 under key and writes the row. A dup hit is this attempt's own no-op only
+// at expectResolvedAt with matching bytes; elsewhere it's stale, and mismatched bytes are a foreign adoption.
 func (c *Client) claimAndSave(ctx context.Context, id, kind string, class Class, mime string, data []byte, lineage Lineage, parentRev int, key string, expectResolvedAt int) (int, error) {
 	nextRev := parentRev + 1
 	payload, err := json.Marshal(artifactRevisionPayload{ID: id, Revision: nextRev, ParentRevision: parentRev, Kind: kind, Class: class, Lineage: lineage, BytesRef: id})
@@ -414,13 +379,11 @@ func (c *Client) claimAndSave(ctx context.Context, id, kind string, class Class,
 		if jerr := json.Unmarshal(dup.Existing.Payload, &p); jerr != nil {
 			return 0, fmt.Errorf("recordstore: duplicate intent for %s had an unparseable payload: %w", id, jerr)
 		}
-		// The idempotency key is committed by AppendIntent BEFORE saveRow, so
-		// a duplicate hit alone does NOT prove the row was ever written - the
-		// original save may have crashed between the two (#1237 review: this used to report success with no row). Verify first; an orphaned duplicate is completed the same way saveAtOrAdopt completes any other orphan, never reported as a no-op without a row.
+		// AppendIntent commits the key before saveRow, so a duplicate hit doesn't prove the row exists:
+		// verify it, and complete an orphan like saveAtOrAdopt does.
 		if existing, ok, lerr := c.LoadVersion(ctx, id, p.Revision); lerr == nil && ok {
-			// The row can exist WITHOUT matching our content: a different
-			// writer may have adopted this same orphaned slot first (#1237
-			// review). Comparing bytes, not just presence, is what makes this actually "identical content already recorded" rather than a silent handoff of someone else's data under our name.
+			// A different writer may have adopted this orphaned slot first; compare bytes, not just presence,
+			// so someone else's data is never reported as ours.
 			if !bytes.Equal(existing, data) {
 				return 0, fmt.Errorf("recordstore: duplicate intent for %s matched idempotency key but revision %d's content differs - a different writer already adopted this slot", id, p.Revision)
 			}
@@ -441,8 +404,7 @@ func (c *Client) claimAndSave(ctx context.Context, id, kind string, class Class,
 		return adopted, nil
 	}
 	if err != nil {
-		// Fail-closed (#1090 §4.9 case 11), including ledger.ErrStaleParent:
-		// no entry, no row.
+		// Fail closed, including ledger.ErrStaleParent: no entry, no row.
 		return 0, err
 	}
 	rev, err := c.saveRow(ctx, id, kind, class, mime, data, lineage)
@@ -450,9 +412,8 @@ func (c *Client) claimAndSave(ctx context.Context, id, kind string, class Class,
 		return 0, err
 	}
 	if rev != nextRev {
-		// The ledger claimed nextRev but the store assigned something else -
-		// with the parent claim now exclusive at the store level, this can
-		// only mean the two have genuinely diverged: fail closed rather than let a mismatched revision-content pairing propagate silently.
+		// The store assigned a different revision than the ledger claimed: they have diverged, so fail
+		// closed rather than pair a revision with the wrong content.
 		return 0, fmt.Errorf("recordstore: store assigned revision %d for %s, WAL expected %d", rev, id, nextRev)
 	}
 	return rev, nil
@@ -481,9 +442,8 @@ func (c *Client) saveRow(ctx context.Context, id, kind string, class Class, mime
 	return int(resp.Version), nil
 }
 
-// SaveStructured validates doc against kind's registered validator, derives
-// its id via the kind's Identity func (hint feeds identity for kinds whose
-// instance comes from outside the content, e.g. a subject id; ignored by a content-hashed kind like finding), and saves it as a new JSON revision, returning the derived id and the new revision.
+// SaveStructured validates doc, derives its id via the kind's Identity func (hint feeds kinds whose instance
+// comes from outside the content), and saves it as a new JSON revision.
 func (c *Client) SaveStructured(ctx context.Context, kind string, doc any, hint string, lineage Lineage) (string, int, error) {
 	return c.saveStructured(ctx, kind, doc, hint, lineage, true)
 }
@@ -523,9 +483,7 @@ func (c *Client) saveStructured(ctx context.Context, kind string, doc any, hint 
 	return id, rev, err
 }
 
-// SaveBlob saves data (any mime, no validation beyond the size bound callers
-// already enforce) as a new revision, deriving its id via the kind's
-// Identity func the same way SaveStructured does.
+// SaveBlob saves data of any mime as a new revision, deriving its id like SaveStructured.
 func (c *Client) SaveBlob(ctx context.Context, kind string, data []byte, mime, hint string, lineage Lineage) (string, int, error) {
 	spec, err := lookupKind(kind)
 	if err != nil {
@@ -546,12 +504,11 @@ func (c *Client) SaveBlob(ctx context.Context, kind string, data []byte, mime, h
 	return id, rev, err
 }
 
-// ponytail: no async Save*. The one caller (vetting's per-round write site)
-// now calls SaveStructured/SaveBlob synchronously so it can capture the real
-// assigned revision for the next round's ParentRevision, and so a node's own rounds for one id can never interleave (#1090 adversarial review finding #3); add back a fire-and-forget wrapper if a caller with no revision-chain need shows up.
-// IdentityFor computes what SaveStructured would derive as the id for doc,
-// without saving - pure and synchronous, so a caller can know an id (e.g.
-// for its own in-memory bookkeeping across rounds) before firing an async save; the only sanctioned way to obtain an id outside a save, with the registry's Identity func still the sole place identity logic lives.
+// ponytail: no async Save*; callers need the assigned revision for the next ParentRevision.
+// Add a fire-and-forget wrapper if a caller without a revision chain shows up.
+
+// IdentityFor computes the id SaveStructured would derive for doc, without saving: the only sanctioned way
+// to obtain an id outside a save.
 func IdentityFor(kind string, doc any, hint string) (string, error) {
 	spec, err := lookupKind(kind)
 	if err != nil {
@@ -594,9 +551,8 @@ func (c *Client) Latest(ctx context.Context, id string) ([]byte, int, bool, erro
 	return raw, rev, ok, err
 }
 
-// LatestWithMeta is Latest, also returning mime and the row's lineage when
-// the wrapped service supports it (zero Lineage otherwise - #1090 known
-// ceiling for a non-Postgres backend, e.g. artifact.InMemoryService() in tests).
+// LatestWithMeta is Latest plus mime and lineage when the wrapped service supports it (zero Lineage
+// otherwise, e.g. artifact.InMemoryService()).
 func (c *Client) LatestWithMeta(ctx context.Context, id string) ([]byte, string, Lineage, int, bool, error) {
 	req := &artifact.LoadRequest{AppName: c.appName, UserID: c.userID, SessionID: c.sessionID, FileName: id}
 	var resp *artifact.LoadResponse
@@ -626,8 +582,7 @@ func (c *Client) LatestWithMeta(ctx context.Context, id string) ([]byte, string,
 	return resp.Part.InlineData.Data, resp.Part.InlineData.MIMEType, lineage, rev, true, nil
 }
 
-// LoadVersionWithMeta is LoadVersion, also returning that specific revision's
-// own lineage - a past revision keeps its own, never the latest's (zero on a backend with no row to read it from, as LatestWithMeta).
+// LoadVersionWithMeta is LoadVersion plus that revision's own lineage (zero where LatestWithMeta's is).
 func (c *Client) LoadVersionWithMeta(ctx context.Context, id string, version int) ([]byte, Lineage, bool, error) {
 	req := &artifact.LoadRequest{AppName: c.appName, UserID: c.userID, SessionID: c.sessionID, FileName: id, Version: int64(version)}
 	var resp *artifact.LoadResponse
@@ -652,9 +607,7 @@ func (c *Client) LoadVersionWithMeta(ctx context.Context, id string, version int
 	return resp.Part.InlineData.Data, lineage, true, nil
 }
 
-// Versions returns id's saved revision numbers, newest first, nil if none -
-// the public counterpart of versionsDesc, for a caller (delivery_record's
-// history read, #1093) that needs every revision of one id, not just Latest.
+// Versions returns id's saved revision numbers, newest first, nil if none.
 func (c *Client) Versions(ctx context.Context, id string) ([]int, error) {
 	vs, err := c.versionsDesc(ctx, id)
 	if err != nil {
@@ -685,7 +638,7 @@ func (c *Client) LoadVersion(ctx context.Context, id string, version int) ([]byt
 	return resp.Part.InlineData.Data, true, nil
 }
 
-// ArtifactSummary is one id's listing row (§4.4 list_artifacts).
+// ArtifactSummary is one id's list_artifacts row.
 type ArtifactSummary struct {
 	ID       string
 	Kind     string
@@ -694,9 +647,8 @@ type ArtifactSummary struct {
 	SavedAt  time.Time // lineage.saved_at of the latest revision; zero if unavailable (e.g. artifact.InMemoryService())
 }
 
-// List returns every id in this chat whose kind matches kindFilter ("" =
-// all), each with its latest revision and authoring node. Best-effort per
-// id: an id that fails to load is skipped rather than failing the whole call.
+// List returns every id whose kind matches kindFilter ("" = all) with its latest revision and authoring node.
+// An id that fails to load is skipped rather than failing the call.
 func (c *Client) List(ctx context.Context, kindFilter string) ([]ArtifactSummary, error) {
 	resp, err := c.svc.List(ctx, &artifact.ListRequest{AppName: c.appName, UserID: c.userID, SessionID: c.sessionID})
 	if err != nil {
@@ -727,9 +679,8 @@ type EditOp struct {
 	New string
 }
 
-// EditConflict is returned when ops cannot be resolved against the current
-// latest revision - the caller should show Content/Revision to the agent
-// and let it retry with fresh edits.
+// EditConflict is returned when ops don't resolve against the current latest; the caller shows
+// Content/Revision to the agent so it can retry with fresh edits.
 type EditConflict struct {
 	ID       string
 	Revision int
@@ -740,9 +691,8 @@ func (e *EditConflict) Error() string {
 	return fmt.Sprintf("recordstore: edit %s: no unique match against revision %d", e.ID, e.Revision)
 }
 
-// applyEdits applies ops to content in order; each Old must appear exactly
-// once in the content as of that point, else the whole batch is rejected
-// (no partial writes) - ambiguous (0 or 2+ matches) is a failure.
+// applyEdits applies ops in order; each Old must match exactly once at that point, else the whole batch is
+// rejected (no partial writes).
 func applyEdits(content []byte, ops []EditOp) ([]byte, error) {
 	s := string(content)
 	for _, op := range ops {
@@ -755,17 +705,14 @@ func applyEdits(content []byte, ops []EditOp) ([]byte, error) {
 	return []byte(s), nil
 }
 
-// stringLeaf is one JSON string value found while walking a document, along
-// with the raw byte span of its quoted literal (including the quotes) - the
-// span applyStructuredEdits splices a re-encoded replacement into.
+// stringLeaf is one JSON string value plus the byte span of its quoted literal, where a replacement is spliced.
 type stringLeaf struct {
 	start, end int
 	value      string
 }
 
-// stringLeaves walks content's JSON token stream and returns every string
-// that is a value (array element or object field value), never an object
-// key - a match against a key, or one that would only exist by concatenating two adjacent leaves, is invisible here and correctly counts as no match.
+// stringLeaves returns every JSON string value, never an object key, so a match on a key or across two
+// adjacent leaves correctly counts as no match.
 func stringLeaves(content []byte) ([]stringLeaf, error) {
 	dec := json.NewDecoder(bytes.NewReader(content))
 	type frame struct{ isObject, keyNext bool }
@@ -820,9 +767,8 @@ func stringLeaves(content []byte) ([]stringLeaf, error) {
 	return leaves, nil
 }
 
-// applyStructuredEdits is applyEdits for Structured content: each Old is
-// matched against decoded JSON string values (so a New containing a raw
-// newline, quote, or backslash is encoded correctly) rather than raw bytes. Old must occur exactly once across every leaf's decoded value combined - 0 or 2+ is ambiguous, same failure as applyEdits; only the matched leaf is re-encoded and spliced back in, so everything else (key order, spacing) is untouched and a no-op edit is byte-identical.
+// applyStructuredEdits matches each Old against decoded JSON string values, so a New with a newline, quote or
+// backslash encodes correctly. Only the matched leaf is re-encoded, so key order and spacing are untouched.
 func applyStructuredEdits(content []byte, ops []EditOp) ([]byte, error) {
 	for _, op := range ops {
 		leaves, err := stringLeaves(content)
@@ -853,9 +799,8 @@ func applyStructuredEdits(content []byte, ops []EditOp) ([]byte, error) {
 	return content, nil
 }
 
-// Edit applies ops to id's latest revision and writes N+1 (§4.4/§9). The
-// merge is unconditional on baseRevision: edits are always re-applied against
-// whatever is latest right now, and succeed exactly when every Old still matches uniquely - that's what makes a stale-but-non-intersecting edit merge instead of failing; structured content is re-validated before the write, and any match failure returns *EditConflict (with the current latest), never a partial write. Holds the same per-id lock save() does, so an Edit and a gate save can never interleave their read-latest and write; a cross-process conflict still retries on ledger.ErrStaleParent: reread the new latest and reapply ops, same as a stale baseRevision.
+// Edit re-applies ops to id's current latest, whatever baseRevision was, and writes N+1; any match failure
+// returns *EditConflict, never a partial write. It holds save's per-id lock and retries on ErrStaleParent.
 func (c *Client) Edit(ctx context.Context, id string, baseRevision int, ops []EditOp, lineage Lineage) (int, []byte, error) {
 	mu := c.lockFor(id)
 	mu.Lock()
@@ -897,9 +842,8 @@ func (c *Client) tryEdit(ctx context.Context, id string, baseRevision int, ops [
 	if spec.System {
 		return 0, nil, fmt.Errorf("recordstore: edit %s: kind %q is not editable directly", id, kind)
 	}
-	// Structured edits target decoded field text - a raw byte search/replace on
-	// the serialized JSON breaks the moment New has a newline, quote, or
-	// backslash. Blob has no JSON structure to speak of, so it keeps the byte path.
+	// Structured edits target decoded field text: raw byte replace on JSON breaks on newlines, quotes or
+	// backslashes. Blob keeps the byte path.
 	var merged []byte
 	if spec.Class == Structured {
 		merged, err = applyStructuredEdits(raw, ops)
@@ -925,13 +869,10 @@ func (c *Client) tryEdit(ctx context.Context, id string, baseRevision int, ops [
 	return rev, merged, nil
 }
 
-// Kinds returns every registered structured kind's name and JSONSchema, for
-// #1091's generated write_<kind> tools - one per structured kind.
+// Kinds returns every registered structured kind's name and JSONSchema, for the generated write_<kind> tools.
 func Kinds() []KindSpec { return KindsForClass(Structured) }
 
-// KindsForClass returns every registered spec of class, name populated,
-// sorted by name - the only enumerator that can see Blob kinds (Kinds() only
-// ever returned Structured, so write_artifact's kind list rendered empty; #1108 finding 2 regression).
+// KindsForClass returns every registered spec of class, name populated, sorted by name.
 func KindsForClass(class Class) []KindSpec {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
@@ -947,9 +888,7 @@ func KindsForClass(class Class) []KindSpec {
 	return out
 }
 
-// ArtifactKindNames returns the sorted names of every registered blob-class
-// kind - the closed set a node's `artifact` field may select, since
-// SaveBlob only accepts a registered kind (#1128).
+// ArtifactKindNames returns the sorted blob-class kinds: the closed set a node's `artifact` field may select.
 func ArtifactKindNames() []string {
 	specs := KindsForClass(Blob)
 	names := make([]string, len(specs))
@@ -959,9 +898,8 @@ func ArtifactKindNames() []string {
 	return names
 }
 
-// ValidateArtifactKind rejects an artifact selector that isn't one of
-// ArtifactKindNames() - the shared guard for #1128, used at plan-build time
-// (dag, planner-authored nodes) and at config-bind time (config, operator-authored workflow nodes) so both routes to SaveBlob agree.
+// ValidateArtifactKind rejects a selector outside ArtifactKindNames(); shared by plan-build (dag) and
+// config-bind (config) so both routes to SaveBlob agree.
 func ValidateArtifactKind(kind string) error {
 	for _, name := range ArtifactKindNames() {
 		if name == kind {

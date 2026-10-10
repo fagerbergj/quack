@@ -76,9 +76,7 @@ func TestSaveBlob_UnregisteredKindUnaffected(t *testing.T) {
 
 func TestSaveStructured_SchemaViolationBeyondGoValidator_Refuses(t *testing.T) {
 	ctx := context.Background()
-	// test.structured's own Go Validate only requires "a" - the registered
-	// extension schema below requires "c" too, so this proves the extension
-	// schema is a second, independent check, not a duplicate of spec.Validate.
+	// Go Validate only requires "a"; the extension schema also requires "c", proving it is an independent check.
 	c := newTestClient(t).WithSchemas(fakeRequiredFieldSchema{kind: "test.structured", field: "c"})
 	_, _, err := c.SaveStructured(ctx, "test.structured", doc{A: "x"}, "main", Lineage{})
 	var sv *SchemaViolation

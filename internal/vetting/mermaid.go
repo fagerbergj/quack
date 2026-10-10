@@ -1,4 +1,4 @@
-// mermaid.go: scans ```mermaid blocks bound for delivery and validates them via the real mermaid parser.
+// mermaid.go: validates ```mermaid blocks bound for delivery with the real mermaid parser.
 package vetting
 
 import (
@@ -20,19 +20,15 @@ import (
 // fenceOpenRe matches a fence-opening line (CommonMark: 3 leading spaces, 3+ backticks/tildes, optional info).
 var fenceOpenRe = regexp.MustCompile(`(?i)^( {0,3})(` + "`{3,}|~{3,}" + `)[ \t]*(\S*)`)
 
-// mermaidLineRe matches jison's fixed "Parse error on line N:" header - part
-// of jison's own generated-parser boilerplate, not mermaid's prose about the
-// diagram.
+// mermaidLineRe matches jison's fixed "Parse error on line N:" header, not mermaid's prose.
 var mermaidLineRe = regexp.MustCompile(`^Parse error on line (\d+):$`)
 
-// mermaidGotTokenRe pulls the terminal jison actually saw out of its
-// "Expecting '...', got '<TOKEN>'" tail. That token is the signal; the
-// Expecting list is grammar-internal noise we deliberately drop.
+// mermaidGotTokenRe pulls the terminal jison saw from its "Expecting '...', got '<TOKEN>'" tail;
+// the Expecting list is grammar noise and is dropped.
 var mermaidGotTokenRe = regexp.MustCompile(`got '([^']*)'\s*$`)
 
-// mermaidLabelPunctuation maps a jison terminal to the unquoted character
-// that produced it, for the single family of errors this translates: a
-// punctuation character mermaid treats as a label terminator. Confirmed against the live parser (each character here reproduced, and quoting the label fixed, every case below) - not guessed from mermaid's grammar names.
+// mermaidLabelPunctuation maps a jison terminal to the unquoted label punctuation that produced it.
+// Each entry was reproduced against the live parser, and quoting the label fixed it.
 var mermaidLabelPunctuation = map[string]string{
 	"PS":            "(",
 	"PE":            ")",
@@ -43,13 +39,11 @@ var mermaidLabelPunctuation = map[string]string{
 	"STR":           `"`,
 }
 
-// mermaidIssue: one invalid top-level ```mermaid block: line number + reason.
 type mermaidIssue struct {
 	line int
 	err  string
 }
 
-// FindInvalidMermaid walks md fence-depth-aware, detecting invalid top-level ```mermaid blocks.
 func FindInvalidMermaid(md string) []mermaidIssue {
 	if !strings.Contains(md, "```") && !strings.Contains(md, "~~~") {
 		return nil
@@ -62,12 +56,6 @@ func FindInvalidMermaid(md string) []mermaidIssue {
 		}
 	})
 	return issues
-}
-
-// Feedback formats one issue as "line N: reason" - the shape mermaidCriterion
-// feeds the gate.
-func (i mermaidIssue) Feedback() string {
-	return fmt.Sprintf("line %d: %s", i.line, i.err)
 }
 
 // walkMermaidBlocks visits each top-level ```mermaid block with its body text.
@@ -126,17 +114,12 @@ func resolveMermaidValidatorPath() string {
 	return rel
 }
 
-func pathExists(p string) bool {
-	_, err := os.Stat(p)
-	return err == nil
-}
-
 var warnMermaidValidatorUnavailable = sync.OnceFunc(func() {
 	slog.Warn("mermaid diagrams are not being validated: node is missing or scripts/mermaid-validate.mjs was not found",
 		"component", "vetting")
 })
 
-// mermaidError validates body via the real mermaid.js parser. "" = valid; degrades gracefully when node/script absent.
+// mermaidError validates body via mermaid.js; "" means valid or no validator available.
 func mermaidError(body string) string {
 	msg, _ := mermaidVerdict(body)
 	return msg
@@ -158,9 +141,7 @@ func mermaidVerdict(body string) (msg string, ok bool) {
 	cmd := exec.CommandContext(ctx, "node", mermaidValidatorPath)
 	cmd.Stdin = strings.NewReader(body)
 	out, err := cmd.Output()
-	// A kill on timeout arrives as an ExitError, so it would otherwise fall
-	// through and report a VALID diagram as unreadable - a slow box must not
-	// fail the gate.
+	// A kill on timeout arrives as an ExitError; a slow box must not report a valid diagram as broken.
 	if ctx.Err() != nil {
 		warnMermaidValidatorTimeout()
 		return "", false
@@ -169,8 +150,8 @@ func mermaidVerdict(body string) (msg string, ok bool) {
 		OK    bool   `json:"ok"`
 		Error string `json:"error"`
 	}
-	// The script catches parse errors itself and always exits 0 printing
-	// {"ok":...}: a crash or unparseable output is a broken validator, never an invalid diagram.
+	// The script catches parse errors and always exits 0 printing {"ok":...}, so a crash or
+	// unparseable output means a broken validator, never an invalid diagram.
 	if err != nil || json.Unmarshal(out, &res) != nil {
 		warnMermaidValidatorBroken(err, out)
 		return "", false
@@ -181,9 +162,8 @@ func mermaidVerdict(body string) (msg string, ok bool) {
 	return "", true
 }
 
-// mermaidValidateTimeout bounds one node invocation. Generous on purpose: the
-// validator loads mermaid's full parser, and a timeout here is indistinguishable
-// from an invalid diagram to the caller. A var so tests can shorten it.
+// mermaidValidateTimeout is generous because the validator loads mermaid's full parser and a
+// timeout looks like an invalid diagram to the caller. A var so tests can shorten it.
 var mermaidValidateTimeout = 60 * time.Second
 
 var warnBrokenOnce sync.Once
@@ -200,9 +180,8 @@ func warnMermaidValidatorTimeout() {
 		"component", "vetting", "timeout", mermaidValidateTimeout)
 }
 
-// translateMermaidError turns mermaid's raw jison parse error into a message a worker can act on: keep the diagram's own line/column and source excerpt
-// (the caret genuinely points at the offending column), drop the grammar-internal "Expecting '...'" token list, and translate the "got
-// '<TOKEN>'" terminal into a plain-language cause when it's a known unquoted-punctuation case. Parses jison's fixed output structure, never mermaid's English prose (#735) - that changes between mermaid versions, the structure doesn't.
+// translateMermaidError keeps jison's line/column and excerpt, drops the Expecting list, and names
+// known unquoted-punctuation causes. It parses jison's structure, not mermaid's prose, which drifts.
 func translateMermaidError(raw string) string {
 	lines := strings.Split(raw, "\n")
 	if len(lines) < 4 {
@@ -234,9 +213,8 @@ func translateMermaidError(raw string) string {
 		m[1], caretIdx+1, excerpt, caretLine, ch, ch)
 }
 
-// unrecognizedMermaidError is the fallback for any error shape or "got" token
-// translateMermaidError doesn't recognize: still names where it broke (when
-// jison's structure is present) and a generic quoting hint, and always keeps the raw parser text - never swallowed into a generic message (#735).
+// unrecognizedMermaidError is the fallback for unknown shapes: where it broke (if known), a quoting
+// hint, and always the raw parser text.
 func unrecognizedMermaidError(raw string) string {
 	lines := strings.Split(raw, "\n")
 	var located string
@@ -254,9 +232,8 @@ func unrecognizedMermaidError(raw string) string {
 // unrecognizedMermaidError's "diagram line N, column C:" prefix.
 var mermaidLocatedRe = regexp.MustCompile(`^parse error: diagram line (\d+), column (\d+):`)
 
-// CheckMermaid validates one mermaid diagram's source (no fence wrapper) via
-// the SAME validator the delivery gate runs (mermaidError) - so a worker
-// calling this tool before submitting gets exactly the gate's verdict, not a second reimplementation that could disagree with it. line/column are 1-based, 0 when the error has no known location.
+// CheckMermaid runs the same validator as the delivery gate, so a worker's pre-check matches the gate.
+// line/column are 1-based, 0 when unknown.
 func CheckMermaid(source string) (ok bool, line, column int, message string) {
 	msg := mermaidError(source)
 	if msg == "" {
@@ -269,7 +246,6 @@ func CheckMermaid(source string) (ok bool, line, column int, message string) {
 	return false, line, column, msg
 }
 
-// mermaidCriterion scans the answer and staged delivery bodies for invalid ```mermaid blocks.
 func mermaidCriterion(answer string, act workerActivity) (criterionScore, bool) {
 	for _, t := range deliveryTexts(answer, act) {
 		if issues := FindInvalidMermaid(t); len(issues) > 0 {

@@ -7,9 +7,8 @@ import (
 	"google.golang.org/genai"
 )
 
-// boundExcerpt leaves within-cap input untouched and, over the cap, returns a
-// head+tail excerpt with the truncation marker - both ends of the original are
-// preserved so nothing salient (opening framing, closing detail) is lost wholesale.
+// boundExcerpt leaves within-cap input untouched; over the cap it keeps head and tail around a
+// truncation marker.
 func TestBoundExcerpt(t *testing.T) {
 	small := "a short section"
 	if got := boundExcerpt(small, 1_000); got != small {
@@ -37,9 +36,8 @@ func TestBoundExcerpt(t *testing.T) {
 	}
 }
 
-// A pathological revise input (huge original prompt embedding upstream outputs,
-// huge previous answer, huge activity ledger, huge feedback) must not produce an
-// unbounded contents[0]. The composed prompt stays within a documented cap and carries truncation markers; small inputs pass through verbatim.
+// A pathological revise input must not produce an unbounded contents[0]: the prompt stays within its
+// cap with truncation markers, and small inputs pass through verbatim.
 func TestBuildRevisionContentBounded(t *testing.T) {
 	huge := func(c byte, n int) string { return strings.Repeat(string(c), n) }
 	question := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: huge('Q', 200_000)}}}

@@ -14,9 +14,8 @@ import (
 	"github.com/fagerbergj/quack/internal/serve"
 )
 
-// newEvalCmd re-runs a recorded bundle's user turns LIVE through a fresh
-// in-process server built from the LOCAL quack.yaml, with --role's model
-// swapped in, then compares the fresh run's judge scores against the recording's own. Every model/tool/agent call is live - only the recorded USER TURNS are consumed from the bundle.
+// newEvalCmd replays a bundle's user turns live through an in-process server from the local quack.yaml
+// with --role's model swapped in, then compares judge scores against the recording's.
 func newEvalCmd() *cobra.Command {
 	var model, role, sourceServer string
 	var asJSON bool
@@ -96,9 +95,8 @@ func runEval(cmd *cobra.Command, target, model, role, sourceServer string, asJSO
 	return nil
 }
 
-// resolveBundle resolves target into a local bundle file path: unchanged if
-// it's already a readable file, else fetched as a chat id from
-// sourceServer's recording endpoint (cli.Client.FetchRecording) into a temp file. cleanup removes that temp file; a no-op for an already-local path.
+// resolveBundle returns target as-is if it's a readable file, else fetches it as a chat id's recording
+// into a temp file that cleanup removes.
 func resolveBundle(ctx context.Context, sourceServer, target string) (path string, cleanup func(), err error) {
 	noop := func() {}
 	if st, statErr := os.Stat(target); statErr == nil && !st.IsDir() {

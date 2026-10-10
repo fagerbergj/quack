@@ -306,7 +306,7 @@ func (w weatherAPI) getJSON(ctx context.Context, u string, out any) error {
 			return err
 		}
 		if w.cache != nil {
-			w.cache.Set(weatherCachePrefix+u, body)
+			w.cache.Add(weatherCachePrefix+u, body)
 		}
 	}
 	if err := json.Unmarshal([]byte(body), out); err != nil {

@@ -114,9 +114,8 @@ func TestGetChatRecordingNoSession(t *testing.T) {
 	}
 }
 
-// TestGetChatRecordingNoSession_PostgresStore mirrors
-// TestGetChatRecordingNoSession against the Postgres ledger store - a chat
-// with zero rows must 404, not 200 with an empty ZIP (openapi.yaml promises 404 for never-recorded/GC'd/disabled).
+// TestGetChatRecordingNoSession_PostgresStore: on the Postgres ledger store, a chat with zero rows 404s
+// (per openapi.yaml), not a 200 with an empty ZIP.
 func TestGetChatRecordingNoSession_PostgresStore(t *testing.T) {
 	h := newTestHandler(t)
 	h.ledgerStore = newTestPGLedgerStore(t)
@@ -206,8 +205,7 @@ func TestGetChatRecordingRoundTrip(t *testing.T) {
 	}
 }
 
-// A hostile chat id must never reach Content-Disposition verbatim (quack
-// review on #611: header-parameter injection via `;` / quotes).
+// A hostile chat id must never reach Content-Disposition verbatim (header-parameter injection via `;`/quotes).
 func TestGetChatRecording_SanitizesContentDisposition(t *testing.T) {
 	h := newTestHandler(t)
 	store := ledgertest.NewMemStore()

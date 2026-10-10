@@ -27,8 +27,8 @@ func unreaped(argv []string) []string {
 	return argv
 }
 
-// escapeScript forks a grandchild into its own session (out of the process group quack used to
-// kill), records its pid in gc.pid, and waits until it has.
+// escapeScript forks a grandchild into its own session, out of reach of a process-group kill,
+// and waits until it has recorded its pid in gc.pid.
 const escapeScript = `setsid -f sh -c 'echo $$ > gc.pid; exec sleep 300'; while [ ! -s gc.pid ]; do sleep 0.01; done`
 
 // reapModes runs fn per non-bwrap sandbox mode, skipping landlock where the kernel lacks it.

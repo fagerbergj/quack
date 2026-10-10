@@ -11,14 +11,10 @@ import (
 	"github.com/fagerbergj/quack/internal/artifactsrc"
 )
 
-// TestBundlePromptResolvesPerRound: the #1420 acceptance case - editing an
-// agent's prompt.md on disk changes the next round, with no restart and no
-// reload of the bundle.
+// Editing prompt.md on disk changes the next round with no restart or bundle reload.
 func TestBundlePromptResolvesPerRound(t *testing.T) {
 	t.Chdir(t.TempDir())
-	// Must be a still-genuinely-shipped agents/<x> name (BundleName's string
-	// check names an artifact regardless of cwd; the shipped registry scan
-	// then also needs to find it, whichever cwd happened to run it first).
+	// Must be a genuinely shipped agents/<x> name: the shipped registry scan has to find it too.
 	dir := filepath.Join("agents", "web-researcher")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -60,9 +56,7 @@ func TestBundlePromptResolvesPerRound(t *testing.T) {
 	}
 }
 
-// TestOutOfTreeBundleHasVersionID: a bundle outside agents/ has no artifact
-// name, but its bytes are still hashed - otherwise the ledger records no
-// version and the assembled-prompt cache key never moves.
+// A bundle outside agents/ is still hashed, or the ledger records no version and the prompt cache key never moves.
 func TestOutOfTreeBundleHasVersionID(t *testing.T) {
 	t.Chdir(t.TempDir())
 	dir := filepath.Join("vendor-bundles", "custom")

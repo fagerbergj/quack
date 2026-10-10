@@ -11,7 +11,5 @@ go generate ./internal/schema/...
 echo "==> TypeScript client (openapi-ts)"
 ( cd frontend && npm run generate )
 
-echo "==> Langfuse vendored client (oapi-codegen)"
-go generate ./internal/langfuse/...
 
 echo "Done."

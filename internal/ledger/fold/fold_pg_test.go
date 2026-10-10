@@ -12,9 +12,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// newTestPGStore mirrors internal/ledger's container test helper (fold needs
-// the REAL PGStore, not MemStore, to exercise ReadEntriesPage's paging); skips
-// (not fails) when Docker isn't reachable.
+// newTestPGStore: fold needs the real PGStore to exercise ReadEntriesPage paging. Skips without Docker.
 func newTestPGStore(t *testing.T) *ledger.PGStore {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -50,13 +48,9 @@ func newTestPGStore(t *testing.T) *ledger.PGStore {
 	return store
 }
 
-// TestFold_Postgres_KeyIndexAndPaging exercises the real PGStore path
-// (ReadEntriesPage), proving LastRevision and Fold agree with each other
-// against a real database, not just MemStore's in-memory scan.
+// TestFold_Postgres_KeyIndexAndPaging proves paged Fold against a real database.
 func TestFold_Postgres_KeyIndexAndPaging(t *testing.T) {
-	// No t.Parallel(): this test and TestFold_PagingMatchesOneSlice both mutate the
-	// package-level pageSize var (#1111 review finding); add t.Parallel() back only
-	// after threading the page limit into readAll instead of sharing pageSize.
+	// No t.Parallel(): this and TestFold_PagingMatchesOneSlice both mutate the package-level pageSize.
 	store := newTestPGStore(t)
 	ctx := context.Background()
 	const chatID = "chat-fold-pg"
@@ -83,14 +77,6 @@ func TestFold_Postgres_KeyIndexAndPaging(t *testing.T) {
 	}{Revision: 1, ParentRevision: 0})
 	if _, err := store.AppendIntent(ctx, ledger.Entry{ChatID: chatID, Kind: ledger.KindArtifactRevision, Key: "id2", Payload: other}); err != nil {
 		t.Fatalf("AppendIntent id2: %v", err)
-	}
-
-	rev, err := LastRevision(ctx, store, chatID, "id1")
-	if err != nil {
-		t.Fatalf("LastRevision: %v", err)
-	}
-	if rev != 12 {
-		t.Fatalf("LastRevision = %d, want 12", rev)
 	}
 
 	old := pageSize

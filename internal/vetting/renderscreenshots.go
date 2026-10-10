@@ -1,6 +1,5 @@
-// renderscreenshots.go: hands render-check's per-story screenshots to the
-// judge as `bytes:` artifacts (#1211, follow-up to #1192). The trigger is an
-// explicit `npm run render-check` entry in the node's own `checks:` list - deriveChecks never emits it, so this never fires implicitly on frontend nodes.
+// renderscreenshots.go: hands render-check's per-story screenshots to the judge as `bytes:` artifacts.
+// Fires only on an explicit `npm run render-check` in the node's `checks:`; deriveChecks never emits it.
 package vetting
 
 import (
@@ -18,27 +17,23 @@ import (
 	"github.com/fagerbergj/quack/internal/recordstore"
 )
 
-// renderCheckCommand: the exact npm script config/quack.yaml's check_commands
-// allowlist ("npm run" prefix) permits for this to apply (#1192).
+// renderCheckCommand: the exact npm script the check_commands allowlist must permit.
 const renderCheckCommand = "npm run render-check"
 
 // maxJudgeScreenshots caps image evidence handed to the judge per round -
 // bounded like every other judge-prompt input, not a full gallery dump.
 const maxJudgeScreenshots = 6
 
-// renderCheckScreenshotDir: where render-check.browser.test.tsx saves PNGs,
-// relative to the checked package dir (sibling of its own src/ - see that
-// file's page.screenshot call).
+// renderCheckScreenshotDir: where render-check.browser.test.tsx saves PNGs, relative to the
+// checked package dir.
 const renderCheckScreenshotDir = "render-check"
 
-// frontendScreenshotsCriterion is the rubric criterion name that scores
-// attached screenshots (.agents/plugins/github/agents/code-reviewer/rubric.yaml). Only nodes whose
-// resolved rubric declares it get screenshots - an implementer's rubric has no such criterion, so attaching there would only cost tokens for nothing.
+// frontendScreenshotsCriterion: only a rubric declaring this criterion gets screenshots;
+// attaching them elsewhere would cost tokens for nothing.
 const frontendScreenshotsCriterion = "frontend_screenshots_reviewed"
 
-// renderScreenshotEvidence returns this round's render-check PNGs as judge-ready image parts, saving each as a `bytes:` artifact scoped to
-// nodeID. checksRan gates the whole path (computeDeterministicCriteria already knows whether checks executed this round) so a node whose checks
-// were skipped never touches the filesystem here. Re-derives the checks list itself (cheap: cfg.Checks, or a filesystem stat via deriveChecks) rather than threading a new return value through checksPassCriterion's dozen existing call sites for one extra bit of information.
+// renderScreenshotEvidence returns this round's render-check PNGs as judge image parts, each saved as
+// a `bytes:` artifact; skipped entirely unless checksRan.
 func renderScreenshotEvidence(ctx context.Context, cfg Config, nodeID string, checksRan bool, act workerActivity) []*genai.Part {
 	if !checksRan || cfg.Workspace == nil {
 		return nil
@@ -81,9 +76,8 @@ func renderScreenshotEvidence(ctx context.Context, cfg Config, nodeID string, ch
 	return parts
 }
 
-// attachScreenshots returns a judge-only copy of question with shots
-// appended - the worker's own question.Parts slice is never mutated, so the
-// same content stays safe to reuse for revision prompts.
+// attachScreenshots returns a judge-only copy of question; question.Parts is never mutated,
+// so it stays safe to reuse for revision prompts.
 func attachScreenshots(question *genai.Content, shots []*genai.Part) *genai.Content {
 	if len(shots) == 0 {
 		return question
@@ -91,9 +85,7 @@ func attachScreenshots(question *genai.Content, shots []*genai.Part) *genai.Cont
 	return &genai.Content{Role: question.Role, Parts: append(append([]*genai.Part{}, question.Parts...), shots...)}
 }
 
-// hasInlineData reports whether question carries any image (or other
-// binary) part - used to decide whether a judge failure is worth a
-// text-only retry.
+// hasInlineData: does question carry a binary part, i.e. is a text-only retry worth it.
 func hasInlineData(question *genai.Content) bool {
 	for _, p := range question.Parts {
 		if p != nil && p.InlineData != nil {
@@ -103,8 +95,7 @@ func hasInlineData(question *genai.Content) bool {
 	return false
 }
 
-// stripInlineData returns a copy of question with InlineData parts removed,
-// for the one-shot degrade-to-text-only judge retry (#1229).
+// stripInlineData: a copy of question without InlineData parts, for the text-only judge retry.
 func stripInlineData(question *genai.Content) *genai.Content {
 	out := &genai.Content{Role: question.Role, Parts: make([]*genai.Part, 0, len(question.Parts))}
 	for _, p := range question.Parts {
@@ -115,9 +106,8 @@ func stripInlineData(question *genai.Content) *genai.Content {
 	return out
 }
 
-// selectScreenshots picks at most maxJudgeScreenshots PNGs from dir,
-// deterministically: screenshots whose filename references a story/component
-// this round actually changed come first, then the rest are strided evenly so the sample spans the whole suite rather than just its alphabetic head.
+// selectScreenshots picks at most maxJudgeScreenshots PNGs deterministically: changed stories first,
+// then the rest strided evenly so the sample spans the suite, not its alphabetic head.
 func selectScreenshots(dir string, written []string) []string {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -138,9 +128,7 @@ func selectScreenshots(dir string, written []string) []string {
 	if len(out) > maxJudgeScreenshots {
 		out = out[:maxJudgeScreenshots]
 	}
-	// ponytail: fixed stride, not a weighted sample - good enough to spread
-	// coverage across the suite; a smarter sampler can replace this if a
-	// real gap in coverage shows up in practice.
+	// ponytail: fixed stride, not a weighted sample; swap in a smarter sampler if coverage gaps show up.
 	remaining := maxJudgeScreenshots - len(out)
 	if remaining > 0 && len(rest) > 0 {
 		stride := len(rest) / remaining
@@ -154,9 +142,8 @@ func selectScreenshots(dir string, written []string) []string {
 	return out
 }
 
-// partitionByChangedStory splits screenshot paths into ones whose filename
-// prefix (render-check's sanitized module path) contains a changed file's
-// basename, first, then the rest, both in their original (sorted) order.
+// partitionByChangedStory: paths whose name contains a changed file's basename first,
+// then the rest, both in sorted order.
 func partitionByChangedStory(files, written []string) (changed, rest []string) {
 	for _, f := range files {
 		if screenshotMatchesChange(filepath.Base(f), written) {
@@ -168,9 +155,8 @@ func partitionByChangedStory(files, written []string) (changed, rest []string) {
 	return changed, rest
 }
 
-// screenshotMatchesChange: name is "<safeName>__story__viewport__theme.png";
-// safeName mangles the module path's non-alnum chars to '_' (render-check's
-// own convention) - match a changed file's basename, mangled the same way.
+// screenshotMatchesChange: name is "<safeName>__story__viewport__theme.png", where safeName maps the
+// module path's non-alnum chars to '_'; the changed basename is mangled the same way.
 func screenshotMatchesChange(name string, written []string) bool {
 	safeName, _, ok := strings.Cut(name, "__")
 	if !ok {

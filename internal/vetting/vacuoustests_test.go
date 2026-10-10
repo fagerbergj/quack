@@ -24,9 +24,7 @@ func writeAndCommit(t *testing.T, repo string, files map[string]string) {
 	git(t, repo, "commit", "-qm", "worker change")
 }
 
-// Regression fixture: issue #716 - the trust gate passed a Kotlin test that
-// declares a lambda, invokes it, and asserts the lambda it just invoked ran.
-// SettingsScreen is never named.
+// A Kotlin test that declares a lambda, invokes it, and asserts it ran; SettingsScreen is never named.
 const vacuousKotlinTest = "package com.example.app\n\n" +
 	"import org.junit.Test\n" +
 	"import com.google.common.truth.Truth.assertThat\n\n" +
@@ -140,9 +138,7 @@ func TestVacuousTestsCriterion_PassesTableDrivenGoTest(t *testing.T) {
 	}
 }
 
-// A helper/fixture file has no func Test.../func Example... declaration, so it
-// is never treated as an executed test in the first place - it must not trip
-// the check even though it adds nothing referencing production code.
+// A helper file with no Test/Example declaration is not an executed test, so it never trips the check.
 func TestVacuousTestsCriterion_SkipsHelperFixtureFile(t *testing.T) {
 	cfg, repo := clonedRepoConfig(t, nil, map[string]string{
 		"go.mod": "module example.com/x\n\ngo 1.24\n",
@@ -170,9 +166,8 @@ func TestVacuousTestsCriterion_SkipsUnknownLanguage(t *testing.T) {
 	}
 }
 
-// Shallow-clone / unparseable-source case (blocking review comment on PR #721, see issue #585 for the same failure mode in checksPassCriterion): if the repo
-// has NO production Go files the declaration regex can find anything in - e.g. a shallow clone that never fetched them, or a language that legitimately has
-// only test files right now - productionIdentifiers comes back empty. That is US failing to parse, not evidence the test is vacuous, so the file must PASS even though its body never references anything (it can't, there IS nothing).
+// No parseable production identifiers (shallow clone, test-only language) means we failed to parse,
+// not that the test is vacuous: the file must pass.
 func TestVacuousTestsCriterion_EmptyProductionIdentifiersSkipsRatherThanFails(t *testing.T) {
 	cfg, repo := clonedRepoConfig(t, nil, map[string]string{"go.mod": "module example.com/x\n\ngo 1.24\n"})
 	selfReferential := "package mathutil\n\n" +
@@ -197,9 +192,7 @@ func TestVacuousTestsCriterion_EmptyProductionIdentifiersSkipsRatherThanFails(t 
 	}
 }
 
-// The issue scopes this check to ADDED test files only. A pre-existing test
-// file gutted down to a vacuous body in place (git status: modified, not
-// added) is out of scope - see issue #716's "REQUIRED FIX".
+// Only ADDED test files are in scope; one gutted in place (modified, not added) is not.
 func TestVacuousTestsCriterion_IgnoresModifiedNotAddedTestFile(t *testing.T) {
 	legitAtBase := "package mathutil\n\n" +
 		"import \"testing\"\n\n" +

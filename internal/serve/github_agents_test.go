@@ -30,9 +30,8 @@ func resolveGithubPlugin(t *testing.T) plugin.Plugin {
 	return plugins[0]
 }
 
-// enableGithubExtension sets cfg.Extensions.Modules["github"] to an enabled
-// block - the seeding gate only checks this node's presence/enabled flag
-// (moduleEnabledIn), never the extension's own App-secret validation.
+// enableGithubExtension enables extensions.github; the seeding gate checks only presence and
+// the enabled flag, never the extension's App-secret validation.
 func enableGithubExtension(t *testing.T, cfg *config.Config) {
 	t.Helper()
 	var node yaml.Node
@@ -45,9 +44,8 @@ func enableGithubExtension(t *testing.T, cfg *config.Config) {
 	cfg.Extensions.Modules["github"] = node
 }
 
-// TestGithubPluginSeedsAgentsWhenExtensionEnabled: with extensions.github
-// enabled, the plugin seeds exactly its three agents, each merging config/quack.yaml's
-// own override (memory bucket + acp block) onto the plugin's bundle/model_role/judge_rounds defaults.
+// TestGithubPluginSeedsAgentsWhenExtensionEnabled: the plugin seeds exactly its three agents, each merging
+// config/quack.yaml's override (memory bucket, acp) onto the plugin's defaults.
 func TestGithubPluginSeedsAgentsWhenExtensionEnabled(t *testing.T) {
 	requireStageDeliverEnv(t)
 	cfg, err := config.LoadDeferringAgentCompleteness("../../config/quack.yaml")
@@ -95,9 +93,8 @@ func TestGithubPluginSeedsAgentsWhenExtensionEnabled(t *testing.T) {
 	}
 }
 
-// TestGithubPluginAbsentWhenExtensionDisabled: with extensions.github off
-// (the shipped default), the three override-only entries are dropped from
-// cfg.Agents entirely - not seeded then dropped, never filled in and pruned - and the config still passes RequireAgentBundlesAndModels.
+// TestGithubPluginAbsentWhenExtensionDisabled: with extensions.github off, the three override-only entries
+// are dropped from cfg.Agents and the config still passes RequireAgentBundlesAndModels.
 func TestGithubPluginAbsentWhenExtensionDisabled(t *testing.T) {
 	requireStageDeliverEnv(t)
 	cfg, err := config.LoadDeferringAgentCompleteness("../../config/quack.yaml")

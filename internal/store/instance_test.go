@@ -12,9 +12,8 @@ import (
 	"github.com/fagerbergj/quack/internal/dag"
 )
 
-// TestResumePausedDagNodes_DoesNotTouchLiveInstanceNodes is issue #683's core
-// repro: a second Store opened against the same database (a CLI subcommand's
-// startup, sharing QUACK_DATABASE_URL with a running server) must not fail a node a live instance owns, even without #683's other fix (InProcess never calling FailStaleDagNodes at all) - this proves the reconciliation query itself is safe.
+// A second Store on the same database (a CLI sharing QUACK_DATABASE_URL with a running server) must not
+// fail a node a live instance owns: the reconciliation query itself is safe.
 func TestResumePausedDagNodes_DoesNotTouchLiveInstanceNodes(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "quack.db")
 	ctx := context.Background()
@@ -46,9 +45,7 @@ func TestResumePausedDagNodes_DoesNotTouchLiveInstanceNodes(t *testing.T) {
 	}
 }
 
-// TestResumePausedDagNodes_ReconcilesOwnPriorIncarnation proves a real server
-// restart (same persisted instance id from LoadOrCreateInstanceID) still
-// cleans up what it left running/queued before it died.
+// A restart with the same persisted instance id still cleans up what it left running/queued.
 func TestResumePausedDagNodes_ReconcilesOwnPriorIncarnation(t *testing.T) {
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "quack.db")
@@ -103,9 +100,7 @@ func TestResumePausedDagNodes_ReconcilesOwnPriorIncarnation(t *testing.T) {
 	}
 }
 
-// TestResumePausedDagNodes_ConcurrentServersDontFailEachOther covers two
-// separately-deployed servers (distinct persisted instance ids) sharing one
-// database: reconciling one's startup must never touch the other's live row.
+// Two servers with distinct instance ids share one database: one's startup never touches the other's live row.
 func TestResumePausedDagNodes_ConcurrentServersDontFailEachOther(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "quack.db")
 	ctx := context.Background()
@@ -152,9 +147,8 @@ func TestResumePausedDagNodes_ConcurrentServersDontFailEachOther(t *testing.T) {
 	}
 }
 
-// TestResumePausedDagNodes_ReconcilesPreMigrationRows proves an existing
-// database upgrades cleanly: a row written before InstanceID existed (empty
-// column, simulated here by inserting outside UpsertDagNode's stamping) must not be read as "belongs to some other instance" and become immortal.
+// A row written before InstanceID existed (empty column) must not read as another instance's and become
+// immortal.
 func TestResumePausedDagNodes_ReconcilesPreMigrationRows(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "quack.db")
 	ctx := context.Background()
@@ -187,14 +181,13 @@ func TestResumePausedDagNodes_ReconcilesPreMigrationRows(t *testing.T) {
 	}
 }
 
-// TestResumePausedDagNodes_MigratesExistingDatabaseCleanly is the literal
-// upgrade case: a dag_nodes table that predates the InstanceID/UpdatedAt
-// columns, with a row already stuck in "running". AutoMigrate must add the columns without erroring on the existing row, and that row must not become unreconcilable (immortal) just because it belongs to nobody.
+// A dag_nodes table without the InstanceID/UpdatedAt columns and a stuck "running" row: AutoMigrate adds
+// the columns, and the row stays reconcilable.
 func TestResumePausedDagNodes_MigratesExistingDatabaseCleanly(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "quack.db")
 	ctx := context.Background()
 
-	// Build the pre-#683 table shape directly - no instance_id, no updated_at.
+	// Build the pre-InstanceID table shape directly - no instance_id, no updated_at.
 	raw, err := sql.Open(sqlite.DriverName, dbPath)
 	if err != nil {
 		t.Fatalf("open raw sqlite: %v", err)
@@ -234,9 +227,7 @@ func TestResumePausedDagNodes_MigratesExistingDatabaseCleanly(t *testing.T) {
 	}
 }
 
-// TestResumePausedDagNodes_StaleNodeCeilingCatchesPermanentOrphan is the
-// dead-man's-switch: a node whose owning instance never comes back (its
-// persisted identity file lost, e.g. a fresh volume) must still get cleaned up eventually rather than staying in-flight forever.
+// A node whose owning instance never returns (identity file lost) is still cleaned up past the ceiling.
 func TestResumePausedDagNodes_StaleNodeCeilingCatchesPermanentOrphan(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "quack.db")
 	ctx := context.Background()
@@ -272,9 +263,8 @@ func TestResumePausedDagNodes_StaleNodeCeilingCatchesPermanentOrphan(t *testing.
 	}
 }
 
-// TestResumePausedDagNodes_PeerPausedNodeUntouched pins the ownership guard on
-// the paused/needs_input branch: a booting instance must not resume a live
-// peer's user-paused node (#683) - only the running branch was tested before.
+// The ownership guard covers the paused branch too: a booting instance must not resume a live peer's
+// user-paused node.
 func TestResumePausedDagNodes_PeerPausedNodeUntouched(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "quack.db")
 	ctx := context.Background()

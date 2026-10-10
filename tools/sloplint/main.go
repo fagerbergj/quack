@@ -1,5 +1,5 @@
-// sloplint: the slop-gate half no standard tool covers - a comment-run
-// gate over diff-touched lines (diff <ref>) + a report-only repo ledger (repo); CC/dup gating is golangci-lint's (.golangci.yml).
+// sloplint: a comment-run gate over diff-touched lines (diff <ref>) plus a report-only repo ledger (repo).
+// CC/dup gating is golangci-lint's (.golangci.yml).
 package main
 
 import (
@@ -8,9 +8,11 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -181,9 +183,8 @@ func funcsFail(fset *token.FileSet, f *ast.File, rel string, rs []rng, src []byt
 	return fail
 }
 
-// ccAllowed: the reviewable exemption for inherent branchiness no split
-// can reduce - the directive must carry a reason, scanning the lines
-// directly above the declaration (fd.Doc only binds the adjacent block).
+// ccAllowed: the reviewable exemption for inherent branchiness. The directive must carry a reason; scan the
+// lines above the declaration since fd.Doc only binds the adjacent block.
 func ccAllowed(src []byte, fset *token.FileSet, fd *ast.FuncDecl) bool {
 	const mark = "sloplint: cc-allow"
 	top := fset.Position(fd.Pos()).Line
@@ -412,13 +413,8 @@ func testCounts(root string) map[string]struct{ logic, test int } {
 
 func printTestRatio(root string) bool {
 	pkgs := testCounts(root)
-	var names []string
-	for n := range pkgs {
-		names = append(names, n)
-	}
-	sort.Strings(names)
 	fmt.Println("\ntest vs logic (SLOC):")
-	for _, n := range names {
+	for _, n := range slices.Sorted(maps.Keys(pkgs)) {
 		c := pkgs[n]
 		fmt.Printf("  %-34s %6d total   %4.0f%% test\n", n, c.logic+c.test, 100*float64(c.test)/float64(c.logic+c.test))
 	}

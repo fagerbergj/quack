@@ -1,10 +1,11 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
-// #1045: exporters replace the single otlp_endpoint so traces can go to a trace
-// backend while metrics go to a collector - the shape that made Langfuse
-// unusable, since it ingests traces only.
+// Exporters let traces go to a trace-only backend (Langfuse) while metrics go to a collector.
 func TestOtelExporters_Validation(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -33,7 +34,7 @@ func TestOtelExporters_Validation(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			case tc.wantErr != "" && err == nil:
 				t.Fatalf("want an error containing %q, got none", tc.wantErr)
-			case tc.wantErr != "" && !contains(err.Error(), tc.wantErr):
+			case tc.wantErr != "" && !strings.Contains(err.Error(), tc.wantErr):
 				t.Errorf("error = %q, want it to contain %q", err, tc.wantErr)
 			}
 		})
@@ -63,15 +64,4 @@ func TestOtelExporter_Wants(t *testing.T) {
 	if e.Wants(SignalMetrics) {
 		t.Error("Wants must not report an undeclared signal - metrics would go to a trace-only backend")
 	}
-}
-
-func contains(s, sub string) bool {
-	return len(sub) == 0 || (len(s) >= len(sub) && (func() bool {
-		for i := 0; i+len(sub) <= len(s); i++ {
-			if s[i:i+len(sub)] == sub {
-				return true
-			}
-		}
-		return false
-	})())
 }

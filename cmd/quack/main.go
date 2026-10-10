@@ -1,7 +1,5 @@
-// Command quack is Quack's one-binary CLI and server. `quack server run`
-// runs the REST + MCP API and the embedded SPA; the other verbs (`chat`,
-// `api`, `server`) drive a running server over HTTP + SSE. There is no TUI:
-// `-p`, `chat send`, and `chat show` are the interface, and their pause/failure exit codes (0/1/2 - see internal/cli's Report) make them pipeable and scriptable. This file is the cobra wiring only - command funcs stay thin and dispatch into internal/cli (see the quack-cli skill).
+// Command quack is Quack's one-binary CLI and server: cobra wiring only, with command funcs dispatching
+// into internal/cli. There is no TUI; -p, chat send and chat show use 0/1/2 exit codes so they script.
 package main
 
 import (
@@ -10,9 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"os/signal"
+	"path"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -29,26 +30,18 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// version is the build stamp, overridden at release time via
-//
-//	-ldflags "-X main.version=v1.2.3"
-//
-// so `quack version` and the server report the same string (M10).
+// version is the build stamp, set at release via -ldflags "-X main.version=v1.2.3",
+// so `quack version` and the server report the same string.
 var version = "dev"
 
 func main() {
-	// Threaded through to internal/serve so a recording bundle's
-	// manifest.json (GetChatRecording) reports the same build stamp as
-	// `quack version`.
+	// Recording bundles' manifest.json reports the same build stamp as `quack version`.
 	serve.Version = version
-	// __sandbox-exec mode, dispatched on argv[1] BEFORE cobra: the Landlock
-	// self-exec (see workspace.RunSandboxExecIfInvoked) - never returns on
-	// success (syscall.Exec replaces this process).
+	// __sandbox-exec mode, dispatched on argv[1] before cobra: the Landlock self-exec.
+	// Never returns on success (syscall.Exec replaces this process).
 	workspace.RunSandboxExecIfInvoked()
-	// GIT_ASKPASS mode, dispatched on argv[0] BEFORE cobra: when this binary
-	// is exec'd through the workspace askpass symlink (git runs $GIT_ASKPASS
-	// directly as one program path - see cmd/quack/git_askpass.go), answer
-	// git's credential prompt and exit.
+	// GIT_ASKPASS mode, dispatched on argv[0] before cobra: exec'd via the workspace askpass symlink,
+	// since git runs $GIT_ASKPASS as one program path. Answers git's credential prompt and exits.
 	if isGitAskpassInvocation() {
 		gitAskpassMain(os.Args, os.Stdout)
 		return
@@ -110,9 +103,8 @@ func newRootCmd() *cobra.Command {
 	return root
 }
 
-// exitIfNonZero calls os.Exit(code) for a non-zero code - used by the
-// bulletproof-CLI commands (-p, chat send, chat show) whose exit codes (0
-// answered / 1 failed / 2 paused) don't fit cobra's error-only exit(1) model. A zero code returns normally so deferred cleanup (e.g. an in-process server's teardown) still runs.
+// exitIfNonZero exits with code when non-zero: -p, chat send and chat show use 0/1/2, which cobra's
+// error-only exit(1) can't express. Zero returns normally so deferred cleanup still runs.
 func exitIfNonZero(code int) {
 	if code != 0 {
 		os.Exit(code)
@@ -175,9 +167,8 @@ func newChatCmd() *cobra.Command {
 	return c
 }
 
-// targetCmd builds the thin shape the target-driven commands share: resolve
-// the server via withTarget, then call action; commands needing extra flags
-// add them after the call returns.
+// targetCmd builds the shared shape of target-driven commands: resolve the server via withTarget,
+// then call action. Callers add extra flags to the result.
 func targetCmd(use, short string, args cobra.PositionalArgs, asJSON *bool, action func(ctx context.Context, out io.Writer, t string, args []string) error, chatCompletion ...bool) *cobra.Command {
 	c := &cobra.Command{
 		Use:   use,
@@ -264,9 +255,8 @@ func newChatNewCmd() *cobra.Command {
 		})
 }
 
-// newChatSendCmd: `chat send <id> "<msg>"` - the non-interactive way to answer
-// a needs_input question or ask a follow-up (see internal/cli's Report for the
-// 0/1/2 exit-code semantics).
+// newChatSendCmd: `chat send <id> "<msg>"`, the non-interactive way to answer a needs_input question
+// or ask a follow-up.
 func newChatSendCmd() *cobra.Command {
 	var asJSON, showEvents bool
 	var attach []string
@@ -289,9 +279,8 @@ func newChatSendCmd() *cobra.Command {
 	return c
 }
 
-// newChatShowCmd: `chat show <id>` - a status snapshot (id/title/status/
-// pending question, the last turn's per-node table, then its answer), or the
-// full ChatDetail with --json. -f/--follow attaches to the live stream after the snapshot (replaces the TUI's live view).
+// newChatShowCmd: `chat show <id>`, a status snapshot or the full ChatDetail with --json;
+// -f/--follow attaches to the live stream after the snapshot.
 func newChatShowCmd() *cobra.Command {
 	var asJSON, follow bool
 	c := &cobra.Command{
@@ -405,9 +394,7 @@ func asJSONFlag(c *cobra.Command, dst *bool) {
 	c.Flags().BoolVar(dst, "json", false, "output raw JSON")
 }
 
-// newMemoryCmd: browse and invalidate the server's memory store (#849's
-// remediation path - `quack api DELETE /api/v1/memories/<id>` by hand - gets
-// a real verb).
+// newMemoryCmd: browse and invalidate the server's memory store.
 func newMemoryCmd() *cobra.Command {
 	c := &cobra.Command{Use: "memory", Short: "Browse and invalidate remembered facts"}
 	c.AddCommand(newMemoryListCmd(), newMemoryShowCmd(), newMemoryForgetCmd(), newMemorySweepCmd(), newMemoryRescopeCmd(), newMemoryStatsCmd())
@@ -438,8 +425,7 @@ func newMemoryListCmd() *cobra.Command {
 	return c
 }
 
-// newMemoryShowCmd: `memory show <id>` prints one memory's votes/tier/last
-// recalled (epic #1255 P1 observability).
+// newMemoryShowCmd: `memory show <id>` prints one memory's votes, tier and last recall.
 func newMemoryShowCmd() *cobra.Command {
 	var asJSON bool
 	c := targetCmd("show <memory-id>", "Show one memory's full detail, including votes/tier/last recalled", cobra.ExactArgs(1), &asJSON,
@@ -469,9 +455,8 @@ func newMemoryForgetCmd() *cobra.Command {
 	return c
 }
 
-// newMemorySweepCmd: `memory sweep [--dry-run]` runs the forgetting-rule
-// sweep (epic #1255 P3) on demand - the same code path the nightly
-// consolidation job calls.
+// newMemorySweepCmd: `memory sweep [--dry-run]` runs the forgetting-rule sweep on demand,
+// via the same path the nightly consolidation job uses.
 func newMemorySweepCmd() *cobra.Command {
 	var asJSON, dryRun, dedupe, apply bool
 	c := &cobra.Command{
@@ -491,9 +476,8 @@ func newMemorySweepCmd() *cobra.Command {
 	return c
 }
 
-// newMemoryRescopeCmd: `memory rescope` (#1262) moves role:* memories whose
-// provenance chat has a GitHub origin into their repo:* bucket - a one-off
-// fix for the years of memories worktree-per-node's RepoKey="" misfiled.
+// newMemoryRescopeCmd: `memory rescope` moves role:* memories whose provenance chat has a GitHub origin
+// into their repo:* bucket, fixing ones misfiled under an empty RepoKey.
 func newMemoryRescopeCmd() *cobra.Command {
 	var asJSON, apply bool
 	c := targetCmd("rescope", "Move role:* memories into their resolved repo:* bucket", cobra.NoArgs, &asJSON,
@@ -555,9 +539,8 @@ func runNodeResume(ctx context.Context, out io.Writer, t string, args []string, 
 	return cli.RunNodeResume(ctx, out, t, args[0], args[1], asJSON)
 }
 
-// newNodeQueueCmd: `chat node queue` - append a message to a RUNNING node's
-// queue, delivered at its next turn boundary (never mid-turn). Replaces the
-// old interrupt-based `chat node steer`.
+// newNodeQueueCmd: `chat node queue` appends a message to a running node's queue,
+// delivered at its next turn boundary.
 func newNodeQueueCmd() *cobra.Command {
 	return nodeTargetCmd("queue <chat-id> <node-id> <message>", "Queue a message for a running node, delivered at its next turn boundary", 3, runNodeQueue)
 }
@@ -643,9 +626,8 @@ func newServerCmd() *cobra.Command {
 	return c
 }
 
-// newServerLoginCmd: `quack server login <name>` - OIDC login against a
-// registered server's IdP. Separate from `server add` (which just records
-// name→url) so a server that needs no auth never has to know about issuer/client-id, and re-login (token lost, revoked, or issuer rotated) is just re-running this one command.
+// newServerLoginCmd: `quack server login <name>`, OIDC login against a registered server's IdP. Separate
+// from `server add` so no-auth servers never see issuer/client-id, and re-login is one command.
 func newServerLoginCmd() *cobra.Command {
 	var scopes []string
 	c := &cobra.Command{
@@ -748,13 +730,12 @@ func printServerValidate(w io.Writer, res serverValidateResult) {
 	}
 }
 
-// staleAgentBundles catches a stale or typo'd `bundle:` path up front, via
-// bundledir.ReadFile's own disk-then-embedded resolution (raw os.Stat would
-// misreport a shipped bundle served from the embedded copy as missing).
+// staleAgentBundles catches a stale or typo'd `bundle:` path via bundledir.ReadFile's disk-then-embedded
+// lookup; a raw os.Stat would misreport an embedded bundle as missing.
 func staleAgentBundles(cfg *config.Config) []string {
 	var stale []string
 	for name, ac := range cfg.Agents {
-		if _, err := bundledir.ReadFile(bundledir.PathJoin(ac.Bundle, "agent-card.json")); err != nil {
+		if _, err := bundledir.ReadFile(path.Join(ac.Bundle, "agent-card.json")); err != nil {
 			stale = append(stale, name)
 		}
 	}
@@ -885,9 +866,8 @@ type serverListRow struct {
 	Active bool   `json:"active"`
 }
 
-// serverVersion best-effort fetches a registered server's build version for
-// `server list`; "" (not an error) on any failure - an unreachable or old
-// server just shows no version, same as an empty registry entry.
+// serverVersion best-effort fetches a server's build version for `server list`;
+// "" on any failure, so an unreachable or old server just shows none.
 func serverVersion(ctx context.Context, url string) string {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
@@ -909,11 +889,7 @@ func newServerListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			names := make([]string, 0, len(c.Servers))
-			for name := range c.Servers {
-				names = append(names, name)
-			}
-			sort.Strings(names)
+			names := slices.Sorted(maps.Keys(c.Servers))
 			if asJSON {
 				rows := make([]serverListRow, len(names))
 				for i, name := range names {
@@ -926,10 +902,8 @@ func newServerListCmd() *cobra.Command {
 				fmt.Fprintln(out, "no servers registered - run `quack init` or `quack server add`")
 				return nil
 			}
-			// One line per server, so keep the version lookup (a live request
-			// per server) to registries small enough to stay within 10 lines.
-			// Concurrent, not sequential: ten dead servers at a 2s timeout each
-			// would otherwise make `server list` take ~20s.
+			// Look versions up only for registries of <=10 servers, concurrently:
+			// ten dead servers at a 2s timeout each would otherwise take ~20s.
 			withVersions := len(names) <= 10
 			versions := make([]string, len(names))
 			if withVersions {
@@ -1055,10 +1029,8 @@ func newVersionCmd() *cobra.Command {
 	}
 }
 
-// defaultConfigPath resolves the server config: $QUACK_CONFIG if set, else
-// ./quack.yaml in cwd - matching what `quack init` writes, so init→run just
-// works in a fresh dir. The repo's example config at config/quack.yaml is
-// reached via --config (the Makefile's run target does this) or QUACK_CONFIG.
+// defaultConfigPath is $QUACK_CONFIG, else ./quack.yaml (what `quack init` writes);
+// the repo's config/quack.yaml is reached via --config or QUACK_CONFIG.
 func defaultConfigPath() string {
 	if p := os.Getenv("QUACK_CONFIG"); p != "" {
 		return p
@@ -1066,9 +1038,8 @@ func defaultConfigPath() string {
 	return "quack.yaml"
 }
 
-// resolveTarget returns the server base URL a client command should talk to
-// plus a stop func to call when done. If a remote is configured (--server
-// override or an active registry entry) it's used as-is and stop is a no-op. Otherwise the duck is started in-process on a loopback port and stop tears it down - so the CLI works locally with no separate `quack server run`.
+// resolveTarget returns the server URL plus a stop func: a configured remote is used as-is (no-op stop);
+// otherwise the duck starts in-process on a loopback port and stop tears it down.
 func resolveTarget(ctx context.Context, override string) (string, func(), error) {
 	noop := func() {}
 	cc, err := cli.LoadClient()

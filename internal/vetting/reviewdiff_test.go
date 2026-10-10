@@ -8,9 +8,8 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// TestChangedFilesSection_ReviewNodeGetsDiff pins #498 step 1: a review
-// node's act.written is always empty (read-only), so before this fix the judge's changedFiles slot was empty too and it could only score the
-// review's internal consistency. With cfg.IsReviewer set, changedFilesSection must source the actual base..HEAD diff off the clone instead.
+// TestChangedFilesSection_ReviewNodeGetsDiff: a review node's act.written is always empty, so with
+// cfg.IsReviewer set the judge gets the actual base..HEAD diff off the clone instead.
 func TestChangedFilesSection_ReviewNodeGetsDiff(t *testing.T) {
 	cfg := probeRepo(t, true)
 	cfg.IsReviewer = true
@@ -26,9 +25,8 @@ func TestChangedFilesSection_ReviewNodeGetsDiff(t *testing.T) {
 	}
 }
 
-// TestChangedFilesSection_ImplementNodeNeverGetsReviewHeader pins that a non-review node never gets the review-only header/framing, even when a
-// setup clone is present - review and implement diffs are framed differently
-// (see TestChangedFilesSection_ImplementNodeGetsDiffAndContent for what an implement node DOES get).
+// TestChangedFilesSection_ImplementNodeNeverGetsReviewHeader: a non-review node never gets the
+// review-only header, even with a setup clone present.
 func TestChangedFilesSection_ImplementNodeNeverGetsReviewHeader(t *testing.T) {
 	cfg := probeRepo(t, true)
 	cfg.IsReviewer = false
@@ -43,9 +41,8 @@ func TestChangedFilesSection_ImplementNodeNeverGetsReviewHeader(t *testing.T) {
 	}
 }
 
-// TestChangedFilesSection_ImplementNodeGetsDiffAndContent pins the #498 residual fix: an implement node with a setup clone gets BOTH the actual
-// base..HEAD diff (so change-shape criteria like diff_minimality can see what
-// was actually added vs. pre-existing) and the full re-read file content (still needed for whole-file quality criteria) - not one or the other.
+// TestChangedFilesSection_ImplementNodeGetsDiffAndContent: an implement node with a clone gets BOTH the
+// base..HEAD diff (for change-shape criteria) and the full re-read file content (for whole-file criteria).
 func TestChangedFilesSection_ImplementNodeGetsDiffAndContent(t *testing.T) {
 	cfg := probeRepo(t, true)
 	cfg.IsReviewer = false
@@ -60,9 +57,8 @@ func TestChangedFilesSection_ImplementNodeGetsDiffAndContent(t *testing.T) {
 	}
 }
 
-// TestChangedFilesSection_ImplementNodeNoCloneKeepsWrittenOnly pins the fallback: an implement node with no Setup clone (a non-code node, or a
-// worker with no pre-provisioned repo) must keep today's act.written-only
-// behaviour - buildImplementDiffSection degrading to "" must not blank out the section entirely.
+// TestChangedFilesSection_ImplementNodeNoCloneKeepsWrittenOnly: with no Setup clone, an empty
+// buildImplementDiffSection must not blank out the act.written section.
 func TestChangedFilesSection_ImplementNodeNoCloneKeepsWrittenOnly(t *testing.T) {
 	cfg := probeRepo(t, true)
 	cfg.IsReviewer = false
@@ -78,9 +74,8 @@ func TestChangedFilesSection_ImplementNodeNoCloneKeepsWrittenOnly(t *testing.T) 
 	}
 }
 
-// TestChangedFilesSection_CarriesStagedVerdict pins #520: the judge must see
-// the reviewer's STRUCTURED verdict (stage_review's event / the answer's VERDICT: tail, already resolved into act.stagedDelivery["review"]) as a
-// fact, not have to infer it from summary prose the reviewer is told never to restate it in.
+// TestChangedFilesSection_CarriesStagedVerdict: the judge sees the reviewer's structured verdict
+// (act.stagedDelivery["review"]) as a fact, not something to infer from prose.
 func TestChangedFilesSection_CarriesStagedVerdict(t *testing.T) {
 	for _, event := range []string{"approve", "request_changes"} {
 		t.Run(event, func(t *testing.T) {
@@ -115,9 +110,8 @@ func TestChangedFilesSection_CarriesStagedVerdict(t *testing.T) {
 	})
 }
 
-// TestBuildReviewDiffSection_NoClone pins the fallback: no Setup/Workspace or
-// no .git in the resolved dir must return "" rather than error, so a judge
-// round never fails over a missing clone.
+// TestBuildReviewDiffSection_NoClone: no Setup/Workspace or no .git returns "" rather than an
+// error, so a judge round never fails over a missing clone.
 func TestBuildReviewDiffSection_NoClone(t *testing.T) {
 	cfg := probeRepo(t, true)
 	cfg.Setup = nil
@@ -132,9 +126,8 @@ func TestBuildReviewDiffSection_NoClone(t *testing.T) {
 	}
 }
 
-// TestBuildReviewDiffSection_GitError pins the fallback when the resolved dir
-// exists but isn't a git repo (or the base commit can't be determined) - a
-// git error must degrade to "", never fail the judge round.
+// TestBuildReviewDiffSection_GitError: a dir that isn't a git repo (or has no resolvable base)
+// degrades to "", never failing the judge round.
 func TestBuildReviewDiffSection_GitError(t *testing.T) {
 	cfg := probeRepo(t, true)
 	dir, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.SetupCloneDir(cfg.NodeID))
@@ -151,9 +144,8 @@ func TestBuildReviewDiffSection_GitError(t *testing.T) {
 	}
 }
 
-// TestBuildReviewDiffSection_Truncates pins the budget cap: a diff larger than
-// changedFilesBudget bytes must be cut down to size with the truncation
-// marker, never handed to the judge whole.
+// TestBuildReviewDiffSection_Truncates: a diff over changedFilesBudget bytes is cut with the
+// truncation marker, never handed to the judge whole.
 func TestBuildReviewDiffSection_Truncates(t *testing.T) {
 	cfg := probeRepo(t, false) // no commit yet - we add a big one ourselves
 	dir, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.SetupCloneDir(cfg.NodeID))
@@ -183,9 +175,8 @@ func TestBuildReviewDiffSection_Truncates(t *testing.T) {
 	}
 }
 
-// TestBuildImplementDiffSection_NoCloneOrGitError mirrors the review-diff
-// fallback tests for the implement-node formatter: both share diffSince, so
-// this pins that the sharing didn't drop the degrade-to-"" behaviour.
+// TestBuildImplementDiffSection_NoCloneOrGitError: the implement-node formatter shares diffSince,
+// so it degrades to "" the same way.
 func TestBuildImplementDiffSection_NoCloneOrGitError(t *testing.T) {
 	cfg := probeRepo(t, true)
 	cfg.Setup = nil

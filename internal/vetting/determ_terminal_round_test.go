@@ -16,9 +16,8 @@ import (
 	"google.golang.org/genai"
 )
 
-// alwaysPassModel: worker answers, judge awards full marks on every criterion
-// it is asked about - so any failure below can only come from a deterministic
-// criterion, never from the judge model.
+// alwaysPassModel: the judge awards full marks on every criterion, so any failure comes from a
+// deterministic criterion.
 type alwaysPassModel struct{ workerCalls, judgeCalls int }
 
 func (m *alwaysPassModel) Name() string { return "always-pass" }
@@ -31,16 +30,14 @@ func (m *alwaysPassModel) GenerateContent(_ context.Context, req *model.LLMReque
 			return
 		}
 		m.workerCalls++
-		// Text varies by call so the revise-dedup guard (identical answer skips
-		// the round) doesn't mask what this test targets: the terminal round's own judge skip.
+		// Text varies by call so the revise-dedup guard doesn't mask the terminal round's judge skip.
 		yield(stubText(fmt.Sprintf("A thorough answer #%d with plenty of substance so sufficient_length passes easily. "+
 			"It restates the finding, explains the mechanism, and closes with a recommendation.", m.workerCalls)), nil)
 	}
 }
 
-// TestDeterministicFailSkipsJudgeOnTerminalRound proves a deterministic
-// criterion already below threshold (RequireRetrieval with zero retrieval
-// activity here) decides the terminal round without paying for a judge model call whose feedback nothing would ever consume.
+// A deterministic criterion already below threshold decides the terminal round without a judge model call
+// whose feedback nothing would consume.
 func TestDeterministicFailSkipsJudgeOnTerminalRound(t *testing.T) {
 	stub := &alwaysPassModel{}
 	worker, err := llmagent.New(llmagent.Config{Name: "web-researcher", Model: stub, Description: "r", Instruction: "Answer."})
@@ -67,9 +64,8 @@ func TestDeterministicFailSkipsJudgeOnTerminalRound(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// Round loop runs JudgeRounds+1 rounds (2 revises + 1 terminal). Every
-	// revise round still needs the judge to produce feedback the worker can
-	// act on, but the terminal round's judge call is skipped once a deterministic criterion has already failed - JudgeRounds calls, not JudgeRounds+1.
+	// JudgeRounds+1 rounds run; revise rounds need judge feedback, but the terminal round's judge call is
+	// skipped once a deterministic criterion failed.
 	if stub.judgeCalls != cfg.JudgeRounds {
 		t.Fatalf("judge model rounds run = %d, want %d (terminal round must skip the judge once grounded_in_retrieval already fails)", stub.judgeCalls, cfg.JudgeRounds)
 	}

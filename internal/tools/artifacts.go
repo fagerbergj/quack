@@ -1,6 +1,5 @@
-// artifacts.go: ADK-native equivalents of the ACP loopback MCP artifact
-// tools (internal/acp/memorymcp.go) - same recordstore functions in thin
-// agent.Context wrappers, so merge/validation/identity lives in one place (#1090 P4, #1091).
+// Native twins of the ACP loopback MCP artifact tools (internal/acp/memorymcp.go): thin wrappers over the
+// same recordstore calls, so merge/validation/identity live in one place.
 package tools
 
 import (
@@ -22,12 +21,10 @@ import (
 	"github.com/fagerbergj/quack/internal/recordstore"
 )
 
-// listArtifactsArgs is list_artifacts' input.
 type listArtifactsArgs struct {
 	Kind string `json:"kind,omitempty"`
 }
 
-// NewListArtifactsTool: same recordstore.Client.List the MCP tool calls.
 func NewListArtifactsTool(c *recordstore.Client) (tool.Tool, error) {
 	return functiontool.New[listArtifactsArgs, string](
 		functiontool.Config{
@@ -51,7 +48,6 @@ func NewListArtifactsTool(c *recordstore.Client) (tool.Tool, error) {
 	)
 }
 
-// editArtifactArgs is edit_artifact's input.
 type editArtifactArgs struct {
 	ID           string             `json:"id"`
 	BaseRevision int                `json:"base_revision"`
@@ -63,21 +59,8 @@ type editArtifactEdit struct {
 	New string `json:"new"`
 }
 
-// NewEditArtifactTool: same optimistic-locking merge as the MCP edit_artifact
-// tool (recordstore.Client.Edit) - see internal/acp/memorymcp.go for the
-// merge algorithm's description.
-// RoundCoords is the gate's per-round lineage stamp (round/turn/head-sha) -
-// vetting.AdvisorTask's own coordinates for a node running inside a
-// judge/revise round; the zero value ({}) is correct for a caller with no
-// round concept (e.g. the top-level orchestrator agent) rather than a
-// hardcoded literal (#1091 adversarial review finding #4).
-//
-// Passed to tool constructors as a *RoundCoords, not a value: a native gated
-// node's tools are built once, before its judge/revise loop starts, while the
-// round/turn/head-sha/trigger-annotation are only known once the gate reaches
-// that round (vetting.Config.RoundCoordsSink writes through the same pointer
-// every tool closure shares) - mirrors ledger.Coords' per-round
-// SetLedgerCoords restamping (#1123).
+// RoundCoords: the gate's per-round lineage stamp; zero outside a judge/revise round. Passed as a pointer:
+// tools are built before the loop, and RoundCoordsSink writes each round through it.
 type RoundCoords struct {
 	Round             int
 	TurnID            string
@@ -110,9 +93,7 @@ func NewEditArtifactTool(c *recordstore.Client, nodeID string, coords *RoundCoor
 			if err != nil {
 				var conflict *recordstore.EditConflict
 				if errors.As(err, &conflict) {
-					// A conflict is an expected, actionable outcome (re-read and retry with
-					// fresh edits), not a tool failure - success, not an error (#1108 finding 3,
-					// matches the MCP surface's editConflictResult field names).
+					// A conflict is actionable (re-read and retry), so it's a result, not an error; fields match the MCP's.
 					out := struct {
 						Conflict bool   `json:"conflict"`
 						Revision int    `json:"revision"`
@@ -134,16 +115,13 @@ func NewEditArtifactTool(c *recordstore.Client, nodeID string, coords *RoundCoor
 	)
 }
 
-// writeArtifactArgs is write_artifact's input - blob kinds only.
 type writeArtifactArgs struct {
 	Kind  string `json:"kind"`
 	Mime  string `json:"mime"`
 	Bytes string `json:"bytes"`
 }
 
-// writeArtifactDescription lists the registered Blob kinds by name instead of
-// a hand-written example list, so it can't drift from what the registry
-// actually holds (#1108 finding 2, mirrors internal/acp/memorymcp.go).
+// writeArtifactDescription names the registered Blob kinds, so it can't drift from the registry.
 func writeArtifactDescription() string {
 	var kinds []string
 	for _, spec := range recordstore.KindsForClass(recordstore.Blob) {
@@ -155,8 +133,8 @@ func writeArtifactDescription() string {
 		"A reply cut off by the model's output limit is continued automatically; never restart from the top.", strings.Join(kinds, ", "))
 }
 
-// NewWriteArtifactTool: blob writes only; structured kinds go through write_<kind>. hint is the
-// session-derived DocumentHint for hint-requiring kinds (document, pr_body, lineup) - never a tool argument (#1108).
+// NewWriteArtifactTool: blob kinds only (structured ones use write_<kind>). hint is the session's
+// DocumentHint for hint-requiring kinds, never a tool argument.
 func NewWriteArtifactTool(c *recordstore.Client, nodeID string, coords *RoundCoords, hint string) (tool.Tool, error) {
 	return functiontool.New[writeArtifactArgs, string](
 		functiontool.Config{
@@ -175,9 +153,7 @@ func NewWriteArtifactTool(c *recordstore.Client, nodeID string, coords *RoundCoo
 				return "", fmt.Errorf("write_artifact: kind %q is not writable directly", a.Kind)
 			}
 			lineage := recordstore.Lineage{NodeID: nodeID, Round: coords.Round, TurnID: coords.TurnID, HeadSHA: coords.HeadSHA, TriggerAnnotation: coords.TriggerAnnotation, Author: "worker", SavedAt: time.Now().UTC()}
-			// Only hint-requiring blob kinds (document, pr_body) get hint -
-			// hint-optional kinds (text, bytes) must keep deriving their id from
-			// content, or every write collapses onto one id (#1108 finding 2, mirrors memorymcp.go).
+			// Only hint-requiring kinds get hint; text/bytes derive ids from content, or every write shares one id.
 			blobHint := ""
 			if ok && spec.RequiresHint {
 				blobHint = hint
@@ -194,9 +170,7 @@ func NewWriteArtifactTool(c *recordstore.Client, nodeID string, coords *RoundCoo
 	)
 }
 
-// NewWriteKindTool generates one write_<kind> tool whose input schema IS
-// spec's registered JSONSchema, parsed once rather than reflected from a Go
-// struct (#1090 §4.4) - mirrors memorymcp.go's registerWriteKindTool.
+// NewWriteKindTool's input schema is spec's registered JSONSchema, not reflected from a Go struct.
 func NewWriteKindTool(c *recordstore.Client, nodeID, kind string, spec recordstore.KindSpec, coords *RoundCoords, hint string) (tool.Tool, error) {
 	var schema jsonschema.Schema
 	if err := json.Unmarshal([]byte(spec.JSONSchema), &schema); err != nil {
@@ -226,9 +200,7 @@ func NewWriteKindTool(c *recordstore.Client, nodeID, kind string, spec recordsto
 	)
 }
 
-// NewWriteKindTools builds one write_<kind> tool per registered structured
-// kind. recordstore.Register already rejects a bad JSONSchema at startup
-// (#1108 finding 3), so a failure is only theoretical - surfaced, never skipped, so the two surfaces can't drift.
+// NewWriteKindTools surfaces a schema failure rather than skipping the kind, so the two surfaces can't drift.
 func NewWriteKindTools(c *recordstore.Client, nodeID string, coords *RoundCoords, hint string) ([]tool.Tool, error) {
 	out := make([]tool.Tool, 0, len(recordstore.Kinds()))
 	for _, spec := range recordstore.Kinds() {
@@ -244,21 +216,16 @@ func NewWriteKindTools(c *recordstore.Client, nodeID string, coords *RoundCoords
 	return out, nil
 }
 
-// readArtifactArgs is read_artifact's input - id-addressed (from
-// list_artifacts), unlike the MCP surface's filename-addressed variant,
-// since recordstore is the native surface's only source of ids.
+// readArtifactArgs is id-addressed (from list_artifacts), unlike the MCP's filename-addressed variant.
 type readArtifactArgs struct {
 	ID       string `json:"id"`
 	Revision int    `json:"revision,omitempty"`
-	// Offset/Lines window a large text artifact instead of returning it whole -
-	// a window bypasses InlineMaxBytes, since only the slice is ever returned.
+	// Offset/Lines window a large text artifact; a window bypasses InlineMaxBytes.
 	Offset int `json:"offset,omitempty"`
 	Lines  int `json:"lines,omitempty"`
 }
 
-// NewReadArtifactTool: the native equivalent of the MCP-only read_artifact
-// tool (#1012 wired it into ACP's loopback MCP only) - same recordstore
-// Client reads; an un-windowed web_page/bytes read is cut at fetchReturnMaxBytes, like the judge's.
+// NewReadArtifactTool: an un-windowed web_page/bytes read is cut at fetchReturnMaxBytes, like the judge's.
 func NewReadArtifactTool(c *recordstore.Client) (tool.Tool, error) {
 	return functiontool.New[readArtifactArgs, string](
 		functiontool.Config{
@@ -285,8 +252,7 @@ func NewReadArtifactTool(c *recordstore.Client) (tool.Tool, error) {
 			if !ok {
 				return "", fmt.Errorf("read_artifact: %s: not found", a.ID)
 			}
-			// prov (a stored page's url/title/fetched_at) sits outside whatever
-			// follows, never inside the counted lines an offset/grep hit indexes.
+			// prov sits outside the counted lines an offset/grep hit indexes.
 			prov := provenanceHeader(lineage, data)
 			if prov != "" {
 				prov += "\n\n"
@@ -296,8 +262,7 @@ func NewReadArtifactTool(c *recordstore.Client) (tool.Tool, error) {
 	)
 }
 
-// shapeReadArtifact: read_artifact's body once the artifact is found -
-// windowed, too-large-refusal, or whole (base64 if binary).
+// shapeReadArtifact: windowed, too-large refusal, or whole (base64 if binary).
 func shapeReadArtifact(data []byte, mime string, a readArtifactArgs) string {
 	// LoadVersion carries no stored mime; a historical revision falls back to
 	// a UTF-8 sniff (ponytail: a misprint risk on a binary kind, not data loss).
@@ -327,19 +292,16 @@ func shapeReadArtifact(data []byte, mime string, a readArtifactArgs) string {
 	return fmt.Sprintf("mime: %s\n\n%s", mime, text)
 }
 
-// grepArtifactsArgs is grep_artifacts' input.
 type grepArtifactsArgs struct {
 	Pattern string   `json:"pattern"`
 	IDs     []string `json:"ids,omitempty"`
 }
 
-// newGrepArtifacts: registry constructor for grep_artifacts.
 func newGrepArtifacts(d Deps) (tool.Tool, error) {
 	return NewGrepArtifactsTool(d.RecordStore)
 }
 
-// NewGrepArtifactsTool: regexes across the chat's stored web_page artifacts
-// (or just ids, when given). A nil c builds fine but errors only on a call.
+// NewGrepArtifactsTool: a nil c builds fine but errors on a call.
 func NewGrepArtifactsTool(c *recordstore.Client) (tool.Tool, error) {
 	return functiontool.New[grepArtifactsArgs, string](
 		functiontool.Config{
@@ -371,8 +333,7 @@ func NewGrepArtifactsTool(c *recordstore.Client) (tool.Tool, error) {
 	)
 }
 
-// grepArtifactIDs: matches pattern across every id's latest revision,
-// capped at fetchGrepMaxLines total hits across all of them.
+// grepArtifactIDs caps hits at fetchGrepMaxLines across all ids.
 func grepArtifactIDs(ctx agent.Context, c *recordstore.Client, ids []string, pattern string) string {
 	matchLine := compileGrepMatcher(pattern)
 	var hits []string
@@ -393,8 +354,7 @@ outer:
 				capped = true
 				break outer
 			}
-			// One provenance line per id, before its first hit - outside the
-			// per-line count so a hit's own line number stays exact.
+			// One provenance line per id, outside the line count so hit line numbers stay exact.
 			if firstForID {
 				if prov := provenanceHeader(lineage, data); prov != "" {
 					hits = append(hits, prov)
@@ -415,8 +375,9 @@ outer:
 	return capFetchReturn(strings.Join(hits, "\n")) + footer
 }
 
-// BuildNativeArtifactTools is the one place orchestrator and gated nodes build artifact tools (#1123).
-// blobHint (DocumentHint) and structuredHint (SubjectHint) differ because each kind's save path looks up its own id.
+// BuildNativeArtifactTools: blobHint (DocumentHint) and structuredHint (SubjectHint) differ because
+// each kind's save path looks up its own id.
+
 func BuildNativeArtifactTools(c *recordstore.Client, nodeID string, coords *RoundCoords, blobHint, structuredHint string) ([]tool.Tool, error) {
 	if coords == nil {
 		coords = &RoundCoords{}
@@ -460,9 +421,8 @@ func IsNativeArtifactTool(name string) bool {
 	return ok && spec.AgentWritable
 }
 
-// SelectArtifactTools keeps the read tools every native node gets (web_fetch
-// stubs point at them) plus each write tool configured names; a card artifact
-// kind implies write_artifact/edit_artifact, its only delivery path.
+// SelectArtifactTools always keeps the read tools (web_fetch stubs point at them); a card artifact kind
+// implies write_artifact/edit_artifact, its only delivery path.
 func SelectArtifactTools(all []tool.Tool, configured []string, artifactKind bool) []tool.Tool {
 	want := map[string]bool{"list_artifacts": true, "read_artifact": true, "write_artifact": artifactKind, "edit_artifact": artifactKind}
 	for _, n := range configured {

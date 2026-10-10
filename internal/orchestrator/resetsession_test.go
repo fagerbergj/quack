@@ -7,9 +7,8 @@ import (
 	"google.golang.org/adk/v2/session"
 )
 
-// TestResetSession_InvokesNodeSessionReaper is a regression test for the
-// ADK audit's A2 finding: ResetSession used to delete only the chat's own
-// AppName="quack" session, leaving every DAG node's own worker session (AppName is whichever agent bundle ran the node) untouched. It must now also call the wired node-session reaper (store.ReapNodeSessions in production) with the same chat id.
+// ResetSession must also call the node-session reaper with the chat id, since node sessions
+// live under each agent bundle's AppName.
 func TestResetSession_InvokesNodeSessionReaper(t *testing.T) {
 	sessions := session.InMemoryService()
 	o := New(sessions, nil, func(context.Context) string { return "" }, nil, nil, nil, nil, nil)
@@ -37,9 +36,7 @@ func TestResetSession_InvokesNodeSessionReaper(t *testing.T) {
 	}
 }
 
-// TestResetSession_NilReaperIsNoOp confirms the zero Orchestrator (no
-// SetNodeSessionReaper call, e.g. in tests that construct one directly)
-// still resets the chat-level session without panicking.
+// With no reaper wired, ResetSession still resets the chat session.
 func TestResetSession_NilReaperIsNoOp(t *testing.T) {
 	sessions := session.InMemoryService()
 	o := New(sessions, nil, func(context.Context) string { return "" }, nil, nil, nil, nil, nil)

@@ -8,9 +8,8 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// A node must be told that the verbatim user request is BACKGROUND, and that
-// the rest of it belongs to its siblings. Regression: an explorer read the
-// full multi-phase request "for context," saw a later phase's instructions, and went off and did a sibling node's job. Nothing marked the request as background, and nothing told the node its siblings existed.
+// A node is told the verbatim user request is background and that the rest belongs to its
+// siblings, so it doesn't do a sibling's job.
 func TestBuildTaskMarksTheRequestAsBackgroundAndNamesTheSiblings(t *testing.T) {
 	plan := Plan{
 		UserMessage: "Research OpenHands, goose and quack. PHASE 2 - synthesize a plan for quack. PHASE 3 - implement it.",
@@ -56,9 +55,8 @@ func TestBuildTaskSingleNodeHasNoSiblingWarning(t *testing.T) {
 	}
 }
 
-// TestBuildTaskWorkerBackgroundOverridesUserMessage pins #664: a GitHub run's
-// scoped ask (WorkerBackground) is what a node's BACKGROUND carries, not the
-// orchestrator's own full envelope (UserMessage) - which for a GitHub run carries evidence (e.g. the full changed-files list) no node needs.
+// A GitHub run's scoped ask (WorkerBackground) is the node's BACKGROUND, not the
+// orchestrator's full envelope.
 func TestBuildTaskWorkerBackgroundOverridesUserMessage(t *testing.T) {
 	plan := Plan{
 		UserMessage:      "<changed_files count=\"40\" additions=\"900\" deletions=\"200\">[... 40 files ...]</changed_files>",
@@ -74,9 +72,7 @@ func TestBuildTaskWorkerBackgroundOverridesUserMessage(t *testing.T) {
 	}
 }
 
-// TestBuildTaskWorkerBackgroundFallsBackToUserMessage pins the degrade path:
-// a Plan built without WorkerBackground (every non-GitHub caller, and every
-// test that constructs a Plan directly) behaves exactly as before #664.
+// Without WorkerBackground the node's BACKGROUND falls back to UserMessage.
 func TestBuildTaskWorkerBackgroundFallsBackToUserMessage(t *testing.T) {
 	plan := Plan{
 		UserMessage: "Add a feature and open a PR.",
@@ -88,9 +84,7 @@ func TestBuildTaskWorkerBackgroundFallsBackToUserMessage(t *testing.T) {
 	}
 }
 
-// TestBuildTaskContextItemsScopedToTheNodeThatNamesThem pins #664's test case
-// 2: a fix worker's node prompt carries the annotation detail for the check
-// ITS OWN task names, and not the other failing checks' detail - a sibling fix node working a different check must never see this one's annotations.
+// A fix node's prompt carries only the annotation detail for the check its own task names.
 func TestBuildTaskContextItemsScopedToTheNodeThatNamesThem(t *testing.T) {
 	plan := Plan{
 		ContextItems: []ContextItem{
@@ -112,9 +106,7 @@ func TestBuildTaskContextItemsScopedToTheNodeThatNamesThem(t *testing.T) {
 	}
 }
 
-// TestRenderUpstreamForJudgeCarriesGateFailedAndNoAnswerMarkers pins the
-// same gate-failed/no-answer warnings buildTask gives the worker: without
-// them the judge can read a flagged upstream answer as if it were trustworthy.
+// Upstream answers rendered for the judge keep the gate-failed/no-answer warnings.
 func TestRenderUpstreamForJudgeCarriesGateFailedAndNoAnswerMarkers(t *testing.T) {
 	upstream := map[string]string{"explore": "the bug is in graph.go:262"}
 	got := renderUpstreamForJudge(upstream, []string{"explore", "missing"}, map[string]bool{"explore": true})

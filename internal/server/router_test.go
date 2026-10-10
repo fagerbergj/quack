@@ -46,9 +46,8 @@ func TestRouterHealthAlwaysPublic(t *testing.T) {
 	}
 }
 
-// TestRouterHealthNonGetNeverReaches200Unauthenticated is the composed-stack
-// companion to TestRequireAuthExceptHealthMethodRestricted (package server):
-// with only GET registered for /health, a non-GET request never reaches an authenticated 200 without credentials - chi's own method-not-allowed handling covers it, but this pins the observable contract regardless of which layer produces the rejection.
+// TestRouterHealthNonGetNeverReaches200Unauthenticated: through the composed router, a non-GET /health
+// without credentials never gets a 200, whichever layer rejects it.
 func TestRouterHealthNonGetNeverReaches200Unauthenticated(t *testing.T) {
 	a, err := auth.New(&config.InboundAuthConfig{
 		TrustedHeaders: &config.TrustedHeadersConfig{User: "X-authentik-username"},
@@ -200,9 +199,8 @@ func TestRouterMountsSDKExtensionAtBareName(t *testing.T) {
 	}
 }
 
-// TestRouterServesStaticSPAAssetVerbatim pins the split spaHandler relies
-// on: a real file under the embedded dist (e.g. frontend/public's
-// assets/ext/v1/kit.css, copied through verbatim by Vite) is served as itself, not swallowed by the index.html client-route fallback.
+// TestRouterServesStaticSPAAssetVerbatim: a real file in the embedded dist (assets/ext/v1/kit.css)
+// is served as itself, not swallowed by the index.html fallback.
 func TestRouterServesStaticSPAAssetVerbatim(t *testing.T) {
 	spa := fstest.MapFS{
 		"index.html":                 &fstest.MapFile{Data: []byte("<html>spa</html>")},
@@ -223,7 +221,7 @@ func TestRouterServesStaticSPAAssetVerbatim(t *testing.T) {
 	if ct := rec.Header().Get("Content-Type"); ct != "text/css; charset=utf-8" {
 		t.Errorf("Content-Type = %q, want text/css", ct)
 	}
-	// kit.css is a verbatim public/ file, not a Vite-hashed asset (#859): revalidate every load.
+	// kit.css is a verbatim public/ file, not a Vite-hashed asset: revalidate every load.
 	if cc := rec.Header().Get("Cache-Control"); cc != "no-cache" {
 		t.Errorf("kit.css Cache-Control = %q, want no-cache", cc)
 	}

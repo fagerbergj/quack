@@ -18,9 +18,8 @@ import (
 	"google.golang.org/adk/v2/session"
 )
 
-// echoModel is the smallest model.LLM that lets a real runner.Run happen,
-// standing in for the fake-model test infra (internal/inference.NewReplayModel)
-// that needs a recorded bundle - this test only needs one turn.
+// echoModel is the smallest model.LLM that lets a real runner.Run happen;
+// the replay model needs a recorded bundle and this test only needs one turn.
 type echoModel struct{}
 
 func (echoModel) Name() string { return "echo" }
@@ -34,9 +33,8 @@ func (echoModel) GenerateContent(ctx context.Context, req *model.LLMRequest, str
 	}
 }
 
-// TestMount_TraceFromRealRun proves the memo's open question: with the
-// mount's SpanProcessor registered onto the live TracerProvider, a real
-// agent run (not a mock) populates /debug/trace/session/{id}.
+// TestMount_TraceFromRealRun: with the mount's SpanProcessor on the live TracerProvider,
+// a real agent run populates /debug/trace/session/{id}.
 func TestMount_TraceFromRealRun(t *testing.T) {
 	ag, err := llmagent.New(llmagent.Config{Name: "echo", Model: echoModel{}, Description: "test agent"})
 	if err != nil {

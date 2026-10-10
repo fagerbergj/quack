@@ -61,14 +61,10 @@ func TestShippedWebResearcherBundle(t *testing.T) {
 	}
 }
 
-// TestBundlePromptArtifact guards H2's bug class: PromptArtifact (#1422) must
-// be the resolved "system/<dir>" artifact name, derived from Dir - not
-// Card.Name or any other caller-supplied key - and PinPrompt's own boot
-// artifact must carry that same name, not the raw Dir path.
+// PromptArtifact must be "system/<dir>" derived from Dir, not Card.Name, and PinPrompt's boot artifact
+// must carry the same name rather than the raw Dir path.
 func TestBundlePromptArtifact(t *testing.T) {
-	// bundledir resolves relative to the repo root (embedded fallback), so this
-	// must be the "agents/<x>" shape BundleName expects, unlike the disk-relative
-	// "../../agents/web-researcher" other tests in this file use.
+	// The embedded fallback resolves from the repo root, so this must be BundleName's "agents/<x>" shape.
 	b, err := LoadBundle(context.Background(), nil, "agents/web-researcher")
 	if err != nil {
 		t.Fatal(err)
@@ -99,7 +95,7 @@ func TestLoadBundleErrors(t *testing.T) {
 }
 
 // TestLoadBundleHash: stable across two loads of the same files, changes
-// when prompt.md changes (#1096 ledger provenance).
+// when prompt.md changes.
 func TestLoadBundleHash(t *testing.T) {
 	card := `{"name":"x","description":"d"}`
 	dir := writeBundle(t, card, "prompt one")
@@ -161,9 +157,7 @@ func (hardErrSource) Get(context.Context, string) (artifactsrc.Artifact, bool, e
 }
 func (hardErrSource) Seed(context.Context, string, artifactsrc.Artifact) error { return nil }
 
-// TestLoadBundleMemoryPropagatesHardResolverError: a genuine store failure on
-// a bundle that DOES have memory.md must surface as an error, not silently
-// read as "no memory.md" (fs.ErrNotExist is the only case that means that).
+// A store failure on a bundle with memory.md must surface; only fs.ErrNotExist means "no memory.md".
 func TestLoadBundleMemoryPropagatesHardResolverError(t *testing.T) {
 	res := artifactsrc.New("langfuse", hardErrSource{}, time.Minute)
 	// dir must read literally "agents/<x>" (BundleName is a string check, no

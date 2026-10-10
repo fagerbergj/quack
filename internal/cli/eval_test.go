@@ -14,9 +14,7 @@ import (
 	"github.com/fagerbergj/quack/internal/ledger/bundle"
 )
 
-// newRecordingBundle builds a minimal valid recording ZIP (manifest.json +
-// entries.jsonl with one eval.score entry) - the shape FetchRecording
-// downloads and bundle.Load reads.
+// newRecordingBundle builds a minimal recording ZIP (manifest.json plus one eval.score entry).
 func newRecordingBundle(t *testing.T, criterion string, score float64) []byte {
 	t.Helper()
 	var buf bytes.Buffer
@@ -40,9 +38,8 @@ func newRecordingBundle(t *testing.T, criterion string, score float64) []byte {
 	return buf.Bytes()
 }
 
-// TestRunEval_MultiTurnAndScored: two recorded turns are sent in order, each
-// only after the previous turn's run completes; once both are done the fresh
-// chat's own recording is fetched and scored, and the comparison table (recorded vs new) is printed.
+// TestRunEval_MultiTurnAndScored: turns are sent in order, each after the previous run completes;
+// then the fresh chat's recording is scored and the comparison printed.
 func TestRunEval_MultiTurnAndScored(t *testing.T) {
 	var turnsSeen []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -109,9 +106,8 @@ func TestRunEval_TurnFails(t *testing.T) {
 	}
 }
 
-// TestRunEval_RecordingUnavailable: the fresh chat's recording can't be
-// fetched (disabled, or GC'd) - eval still completes and exits 0, with the
-// new side reported as unscored rather than the whole command failing.
+// TestRunEval_RecordingUnavailable: an unfetchable fresh recording still exits 0,
+// with the new side reported unscored.
 func TestRunEval_RecordingUnavailable(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {

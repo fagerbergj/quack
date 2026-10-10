@@ -20,9 +20,8 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// blockingJudgeStub answers its worker call instantly but blocks its judge
-// call on release, closing judging the first time it's entered - lets a test
-// hold a node in its judge phase while checking what capacity is free.
+// blockingJudgeStub answers workers instantly but blocks judge calls on release,
+// closing judging on first entry, to hold a node in its judge phase.
 type blockingJudgeStub struct {
 	judging chan struct{}
 	release chan struct{}
@@ -67,8 +66,8 @@ func (s *signalingStub) GenerateContent(_ context.Context, req *model.LLMRequest
 	}
 }
 
-// TestJudgePhaseFreesWorkerSlotForSecondNode proves node1's worker spec is
-// released before its judge call, so node2 admits onto the same pool-of-one spec while node1 is still judging (the old whole-lifetime bracket would deadlock this).
+// node1's worker spec is released before its judge call, so node2 admits onto the
+// same pool-of-one while node1 is still judging.
 func TestJudgePhaseFreesWorkerSlotForSecondNode(t *testing.T) {
 	admission := NewAdmission(map[string]int{"w": 1}, nil, nil, 0)
 	workerSpec := AdmissionSpec{Model: "w"}
@@ -300,10 +299,8 @@ func TestJudgePhaseNoDeadlockOnSimultaneousTransition(t *testing.T) {
 
 func idFor(i int) string { return string(rune('a' + i)) }
 
-// TestSetupAdmissionReQueuesOnMidRunWait proves the #1480 fix: a node
-// already running that blocks re-acquiring its slot (the worker/judge swap)
-// fires node_queued, then node_admitted once let back in - both legal moves
-// against dag.CanTransition, not just SSE noise nothing acts on.
+// A running node that blocks re-acquiring its slot fires node_queued then
+// node_admitted, both legal moves under dag.CanTransition.
 func TestSetupAdmissionReQueuesOnMidRunWait(t *testing.T) {
 	admission := NewAdmission(map[string]int{"w": 1}, nil, nil, 0)
 	spec := AdmissionSpec{Model: "w"}

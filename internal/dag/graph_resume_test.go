@@ -17,10 +17,8 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// seenACPSessionIDStub reads back whatever ACP session id the gate seeded on
-// this node's AdvisorTask - it parses the advisor-thread token out of its own
-// prompt (the same marker the real ACP transport looks for) and looks the
-// live registration up while it is still registered.
+// seenACPSessionIDStub records the ACP session id the gate seeded on this node's
+// AdvisorTask, looked up via the advisor-thread token while still registered.
 type seenACPSessionIDStub struct {
 	mu   sync.Mutex
 	seen string
@@ -42,21 +40,8 @@ func (s *seenACPSessionIDStub) GenerateContent(ctx context.Context, req *model.L
 	}
 }
 
-type alwaysPassJudge struct{}
-
-func (*alwaysPassJudge) Name() string { return "alwaysPassJudge" }
-func (*alwaysPassJudge) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		yield(atCall("submit_verdict", map[string]any{"score": 0.9, "feedback": ""}), nil)
-	}
-}
-
-// TestNewGatedNode_SeedsACPSessionIDFromResumedFrom is the missing link
-// between reuse (list_nodes/create_plan naming an existing node id) and ACP
-// resume (session/load): a node's AdvisorTask must be registered with
-// ACPSessionID already set to Node.ResumedFrom, before its first round ever
-// dispatches - internal/acp's own resolveNode reads exactly that field as
-// this round's priorSessionID.
+// A reused node's AdvisorTask must be registered with ACPSessionID = Node.ResumedFrom
+// before its first round, since internal/acp reads it as priorSessionID.
 func TestNewGatedNode_SeedsACPSessionIDFromResumedFrom(t *testing.T) {
 	sessions := session.InMemoryService()
 	stub := &seenACPSessionIDStub{}
@@ -71,7 +56,7 @@ func TestNewGatedNode_SeedsACPSessionIDFromResumedFrom(t *testing.T) {
 		{ID: "n1", AgentName: "solo", Task: "continue the work.", ResumedFrom: "prior-acp-session-xyz"},
 	}}
 	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"solo": worker}, nil,
-		vetting.NewJudgeFactory(&alwaysPassJudge{}, nil, nil),
+		vetting.NewJudgeFactory(passJudge, nil, nil),
 		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
 
 	outputs := map[string]string{}
@@ -107,7 +92,7 @@ func TestNewGatedNode_FreshNodeHasNoACPSessionID(t *testing.T) {
 		{ID: "n1", AgentName: "solo", Task: "do the work."},
 	}}
 	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"solo": worker}, nil,
-		vetting.NewJudgeFactory(&alwaysPassJudge{}, nil, nil),
+		vetting.NewJudgeFactory(passJudge, nil, nil),
 		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
 
 	outputs := map[string]string{}

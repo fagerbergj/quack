@@ -27,8 +27,7 @@ func decodeChatList(t *testing.T, rec *httptest.ResponseRecorder) schema.ChatLis
 	return out
 }
 
-// TestListChats_NoParams: a request with no parameters still works (issue
-// #736 test case 4) - the current SPA and CLI send none.
+// TestListChats_NoParams: a request with no parameters still works; the SPA and CLI send none.
 func TestListChats_NoParams(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()
@@ -51,9 +50,8 @@ func TestListChats_NoParams(t *testing.T) {
 	}
 }
 
-// TestListChats_PageTokenIsOpaqueRoundTrip proves the query params reach the
-// store AND that the page_token is genuinely opaque to the caller: this test
-// never decodes it, never inspects its shape, only ever passes back byte-for-byte what the previous response gave it - exactly the contract a real client follows - and pagination still lands on every chat exactly once.
+// TestListChats_PageTokenIsOpaqueRoundTrip: passing page_token back byte-for-byte, never decoding it,
+// still lands on every chat exactly once.
 func TestListChats_PageTokenIsOpaqueRoundTrip(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()
@@ -163,8 +161,7 @@ func TestListChats_ExcludeArchivedByDefault(t *testing.T) {
 	}
 }
 
-// TestListChats_StatusArchivedReturnsOnlyArchived is #809 test case 3 at the
-// REST layer: status=archived returns only archived chats.
+// TestListChats_StatusArchivedReturnsOnlyArchived: status=archived returns only archived chats.
 func TestListChats_StatusArchivedReturnsOnlyArchived(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()
@@ -190,7 +187,7 @@ func TestListChats_StatusArchivedReturnsOnlyArchived(t *testing.T) {
 }
 
 // TestListChats_StatusActiveAndArchivedReturnsBoth: selecting both statuses
-// is how a caller now asks for everything - there is no separate "all" value.
+// is how a caller asks for everything; there is no separate "all" value.
 func TestListChats_StatusActiveAndArchivedReturnsBoth(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()
@@ -223,8 +220,7 @@ func TestListChats_StatusEmptyArray400(t *testing.T) {
 	}
 }
 
-// TestListChats_StatusOverridesShowArchived: status wins when both are given
-// - the reconciliation the PR states explicitly.
+// TestListChats_StatusOverridesShowArchived: status wins when both are given.
 func TestListChats_StatusOverridesShowArchived(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()
@@ -244,9 +240,8 @@ func TestListChats_StatusOverridesShowArchived(t *testing.T) {
 	}
 }
 
-// TestListChats_TokenScopeMismatch400 is #809 test case 4 at the REST layer:
-// a page_token issued for one status selection, replayed against another, is
-// a 400 - never a silently mixed page.
+// TestListChats_TokenScopeMismatch400: a page_token replayed against a different status
+// selection is a 400, never a silently mixed page.
 func TestListChats_TokenScopeMismatch400(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()
@@ -270,9 +265,8 @@ func TestListChats_TokenScopeMismatch400(t *testing.T) {
 	}
 }
 
-// TestListChats_StatusOrderInvariant is the coordinator-requested regression:
-// ?status=active&status=archived and the reverse order must mint the
-// identical page token and page the identical rows - the multi-select collapses to two flags, so list order carries no meaning.
+// TestListChats_StatusOrderInvariant: status=active&status=archived in either order mints the same
+// token and pages the same rows, since the multi-select collapses to two flags.
 func TestListChats_StatusOrderInvariant(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()

@@ -19,10 +19,8 @@ func seedDagNode(t *testing.T, svc artifact.Service, rec DagNodeRecord) *records
 	return c
 }
 
-// TestUpdateDagNodeStatusRejectsIllegalTransition: a stale read racing an
-// interleaved cancel/done pair must not leave the record on a non-terminal
-// status forever - CanTransition gates the write, not just logs a warning
-// (mirrors runlog.PersistNodeEvent's own store-row check).
+// A stale read racing a cancel/done pair must not leave the record non-terminal:
+// CanTransition gates the write.
 func TestUpdateDagNodeStatusRejectsIllegalTransition(t *testing.T) {
 	SetAgentRoster([]AgentInfo{{Name: "code-implementer"}})
 	svc := artifact.InMemoryService()
@@ -46,9 +44,7 @@ func TestUpdateDagNodeStatusRejectsIllegalTransition(t *testing.T) {
 	}
 }
 
-// TestUpdateDagNodeContextRoundTrips: the ACP transport session id learned at
-// node completion must be readable back off the record - what execute reads
-// to seed a later reuse's session/load.
+// The ACP session id learned at completion is read back to seed a later session/load.
 func TestUpdateDagNodeContextRoundTrips(t *testing.T) {
 	SetAgentRoster([]AgentInfo{{Name: "code-implementer"}})
 	svc := artifact.InMemoryService()
@@ -124,12 +120,8 @@ func TestDagNodeRecordResumable(t *testing.T) {
 	}
 }
 
-// TestDagNodeRecordResumable_NeverStarted: CanTransition allows queued ->
-// failed/cancelled directly (an admission/setup failure, or a cancel before
-// dispatch), so a terminal status alone does NOT prove a real session ever
-// existed - Started must gate it, for both transports, or an ACP node's
-// leftover mint-time placeholder gets threaded into session/load as a
-// doomed "resume".
+// queued -> failed/cancelled is legal, so a terminal status does not prove a session
+// existed; Started must gate resumability or a placeholder reaches session/load.
 func TestDagNodeRecordResumable_NeverStarted(t *testing.T) {
 	for _, status := range []NodeStatus{StatusDone, StatusFailed, StatusCancelled} {
 		rec := DagNodeRecord{NodeID: "n1", Agent: "code-implementer", Status: status, Started: false}

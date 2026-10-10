@@ -65,10 +65,8 @@ func attrsOf(t *testing.T, r sdklog.Record) map[string]attribute.Value {
 	return out
 }
 
-// TestTracedModel_EmitsWellFormedChatEvent is the emission-wrapper test the
-// issue asks for: a fake model.LLM run through tracedModel must produce one
-// gen_ai "chat" log record carrying the full request/response content, the
-// coordinates from ctx, and no per-chunk noise (only the final response).
+// One gen_ai "chat" record per call: full request/response, ctx coords, and only the final
+// response, no per-chunk noise.
 func TestTracedModel_EmitsWellFormedChatEvent(t *testing.T) {
 	capExp := &captureExporter{}
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
@@ -174,8 +172,7 @@ func TestTracedModel_EmitsWellFormedChatEvent(t *testing.T) {
 	}
 }
 
-// TestTracedModel_EmitsProvenance: #1096 - quack.version, quack.bundle.hash
-// and gen_ai.usage.cost land on the emitted llm.call record.
+// quack.version, quack.bundle.hash and gen_ai.usage.cost land on the emitted llm.call record.
 func TestTracedModel_EmitsProvenance(t *testing.T) {
 	capExp := &captureExporter{}
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
@@ -212,7 +209,7 @@ func TestTracedModel_EmitsProvenance(t *testing.T) {
 	if got := attrs["quack.bundle.hash"].AsString(); got != "deadbeefcafe0000" {
 		t.Errorf("quack.bundle.hash = %q, want deadbeefcafe0000", got)
 	}
-	// #1420: which prompt artifact version produced this call.
+	// Which prompt artifact version produced this call.
 	if got := attrs["quack.prompt.source"].AsString(); got != "static" {
 		t.Errorf("quack.prompt.source = %q, want static", got)
 	}
@@ -225,9 +222,7 @@ func TestTracedModel_EmitsProvenance(t *testing.T) {
 	}
 }
 
-// TestTracedModel_EmitsArtifactsAndPlugins: every artifact the round
-// resolved through artifactsrc, and the plugins in scope, land on the round's
-// llm.call as quack.artifacts/quack.plugins JSON arrays.
+// Resolved artifacts and in-scope plugins land on llm.call as JSON arrays.
 func TestTracedModel_EmitsArtifactsAndPlugins(t *testing.T) {
 	capExp := &captureExporter{}
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
@@ -262,9 +257,8 @@ func TestTracedModel_EmitsArtifactsAndPlugins(t *testing.T) {
 	}
 }
 
-// TestTracedModel_EmitsCachedTokens pins the llm.call payload's
-// cached_tokens field (was silently dropped: emitChatEvent used genai's raw
-// PromptTokenCount for input_tokens and never read CachedContentTokenCount at all). input_tokens must exclude the cached count, matching recordUsageMetrics' otel-metric split (splitPromptTokens), so a consumer summing input+cached never double-counts.
+// input_tokens excludes cached_tokens, matching the otel metric split, so input+cached never
+// double-counts.
 func TestTracedModel_EmitsCachedTokens(t *testing.T) {
 	capExp := &captureExporter{}
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
@@ -297,9 +291,7 @@ func TestTracedModel_EmitsCachedTokens(t *testing.T) {
 	}
 }
 
-// TestTracedModel_EmitsReasoningTokens is #1485's fix: gen_ai.usage.reasoning_tokens
-// is recorded from UsageMetadata.ThoughtsTokenCount, split out from output tokens,
-// so a judge/researcher round's ledger entry can tell thinking spend from decode spend.
+// reasoning_tokens is split from output tokens so a round can tell thinking spend from decode spend.
 func TestTracedModel_EmitsReasoningTokens(t *testing.T) {
 	capExp := &captureExporter{}
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
@@ -352,9 +344,7 @@ func TestTracedModel_EmitsErrorType(t *testing.T) {
 	}
 }
 
-// TestChatRequestAttrs_ReasoningEffortIsLowerCase pins L5: genai's ThinkingLevel
-// enum is upper-case ("LOW"), but ledger.LLMCallPayload.ReasoningEffort documents
-// low/medium/high (matching models.<id>.effort's own casing) - emit.go must lower it.
+// genai's ThinkingLevel is upper-case; the ledger documents low/medium/high.
 func TestChatRequestAttrs_ReasoningEffortIsLowerCase(t *testing.T) {
 	req := &model.LLMRequest{Config: &genai.GenerateContentConfig{
 		ThinkingConfig: &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh},

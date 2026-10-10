@@ -11,24 +11,8 @@ import (
 	"github.com/fagerbergj/quack/internal/ledger"
 )
 
-// probeLLM records the node coords that were actually in ctx when the call ran.
-type probeLLM struct {
-	mu   sync.Mutex
-	seen []string
-}
-
-func (p *probeLLM) Name() string { return "probe" }
-
-func (p *probeLLM) GenerateContent(ctx context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	p.mu.Lock()
-	p.seen = append(p.seen, ledger.CoordsFromContext(ctx).Node)
-	p.mu.Unlock()
-	return func(yield func(*model.LLMResponse, error) bool) {}
-}
-
-// #1039: one tracedModel instance is shared by every node using that model -
-// the judge model by definition, since every gated node judges with it. The
-// shared stamp used to OVERWRITE per-call ctx coords, so a caller that had already put the right node in ctx (vetting's judge round does exactly that, via ledger.WithCoords) still got whatever node stamped last. Ledger events, tokens and cost then land on the wrong node. Mutex-guarded, so -race never sees it.
+// One tracedModel is shared by every node using that model (always the judge), so a caller's own
+// ctx coords must beat whichever node stamped last, or usage lands on the wrong node.
 func TestTracedModel_CtxCoordsWinOverTheSharedStamp(t *testing.T) {
 	p := &probeLLM{}
 	m := TracedModelForTesting(p, "shared-judge-model")
@@ -47,8 +31,8 @@ func TestTracedModel_CtxCoordsWinOverTheSharedStamp(t *testing.T) {
 	if len(p.seen) != 1 {
 		t.Fatalf("want 1 call, got %d", len(p.seen))
 	}
-	if p.seen[0] != "my-node" {
-		t.Errorf("call attributed to %q; the caller's own ctx coords must win over another node's stamp", p.seen[0])
+	if p.seen[0].Node != "my-node" {
+		t.Errorf("call attributed to %q; the caller's own ctx coords must win over another node's stamp", p.seen[0].Node)
 	}
 }
 
@@ -64,16 +48,15 @@ func TestTracedModel_StampStillAppliesWhenCtxHasNoCoords(t *testing.T) {
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if len(p.seen) != 1 || p.seen[0] != "worker-node" {
+	if len(p.seen) != 1 || p.seen[0].Node != "worker-node" {
 		t.Fatalf("stamp must still fill in when ctx carries no coords; got %v", p.seen)
 	}
 }
 
-// The case that let the first attempt through: production NEVER starts from
-// a bare context. The orchestrator stamps partial coords on the run ctx
-// (orchestrator.go:404 - ChatID/User/Source, no node), and those survive down to the model call. An all-or-nothing "does ctx have coords?" check treats that as authoritative and drops node/agent/round on every worker call - attributing to NO node, which is worse than attributing to the wrong one.
+// Production never starts from a bare ctx: the run carries ChatID/User/Source with no node, which an
+// all-or-nothing check would treat as authoritative, dropping node attribution on every worker call.
 func TestTracedModel_OuterRunCoordsDoNotSuppressTheStamp(t *testing.T) {
-	p := &probeLLMFull{}
+	p := &probeLLM{}
 	m := TracedModelForTesting(p, "worker-model")
 	m.(interface{ SetLedgerCoords(ledger.Coords) }).SetLedgerCoords(ledger.Coords{
 		ChatID: "chat-1", Node: "n1", Agent: "web-researcher", Round: "worker-r0", User: "u", Source: "ui",
@@ -98,7 +81,7 @@ func TestTracedModel_OuterRunCoordsDoNotSuppressTheStamp(t *testing.T) {
 // A field the caller set is never overwritten by another node's stamp, even
 // when the rest of the stamp is filling blanks.
 func TestTracedModel_StampNeverOverwritesAFieldTheCallerSet(t *testing.T) {
-	p := &probeLLMFull{}
+	p := &probeLLM{}
 	m := TracedModelForTesting(p, "shared-judge-model")
 	m.(interface{ SetLedgerCoords(ledger.Coords) }).SetLedgerCoords(ledger.Coords{
 		ChatID: "chat-1", Node: "sibling-node", Agent: "judge", Round: "judge-r1",
@@ -119,14 +102,15 @@ func TestTracedModel_StampNeverOverwritesAFieldTheCallerSet(t *testing.T) {
 	}
 }
 
-type probeLLMFull struct {
+// probeLLM records the coords in ctx when each call ran.
+type probeLLM struct {
 	mu   sync.Mutex
 	seen []ledger.Coords
 }
 
-func (p *probeLLMFull) Name() string { return "probe-full" }
+func (p *probeLLM) Name() string { return "probe" }
 
-func (p *probeLLMFull) GenerateContent(ctx context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+func (p *probeLLM) GenerateContent(ctx context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	p.mu.Lock()
 	p.seen = append(p.seen, ledger.CoordsFromContext(ctx))
 	p.mu.Unlock()

@@ -7,9 +7,8 @@ import (
 	"sync"
 )
 
-// ReviewFanout: run-scoped accumulator for a plan with more than one reviewer node (#867). A review VERDICT is semantically run-scoped even though delivery used to be node-scoped: the first reviewer node to finish
-// could post a real APPROVED review while siblings were still running. Reviewer nodes stage into this instead of delivering themselves; the last
-// one to reach a terminal state merges everything staged so far and delivers exactly once.
+// ReviewFanout: run-scoped accumulator for a plan with several reviewer nodes, so the first to finish can't post an
+// APPROVED while siblings still run. Nodes stage here; the last to reach a terminal state merges and delivers once.
 type ReviewFanout struct {
 	mu        sync.Mutex
 	planID    string
@@ -17,9 +16,8 @@ type ReviewFanout struct {
 	terminal  map[string]reviewFanoutEntry
 	delivered bool
 
-	// A downstream synthesizer node owns the final consolidated review
-	// (#965): delivery waits for it, and its answer becomes the summary
-	// body. On synthesizer failure the merge falls back to the per-node concatenation so nothing is stranded.
+	// A downstream synthesizer owns the final consolidated review: delivery waits for it. On synthesizer
+	// failure the merge falls back to per-node concatenation so nothing is stranded.
 	synthWanted bool
 	synthDone   bool
 	synthBody   string // raw chat reply, last-resort fallback only (see mergeReviews)
@@ -31,9 +29,8 @@ type ReviewFanout struct {
 	synthVerified   []string
 	synthNotes      []string
 
-	// cloneURL/branch: the repo a reviewer node actually cloned (#1059). The
-	// synthesizer node that ends up delivering the merged review never
-	// clones anything itself, so it has no clone coordinates of its own - first reviewer to report one wins, the rest are the same repo/PR.
+	// cloneURL/branch: the repo a reviewer cloned. The delivering synthesizer never clones, so the first
+	// reviewer to report one wins (they all review the same PR).
 	cloneURL string
 	branch   string
 
@@ -45,9 +42,8 @@ type ReviewFanout struct {
 	scopeFirstReview bool
 }
 
-// RecordClone captures the repo/branch a reviewer node cloned, first one
-// wins. Called before Finish/FinishSynthesis so the eventual deliverer -
-// possibly a synthesizer node with no clone of its own - has coordinates to deliver against (#1059).
+// RecordClone captures the repo/branch a reviewer node cloned, first one wins, so a delivering
+// synthesizer with no clone of its own has coordinates to deliver against.
 func (f *ReviewFanout) RecordClone(cloneURL, branch string) {
 	if cloneURL == "" {
 		return
@@ -59,7 +55,6 @@ func (f *ReviewFanout) RecordClone(cloneURL, branch string) {
 	}
 }
 
-// Clone returns the recorded reviewer clone coordinates, if any.
 func (f *ReviewFanout) Clone() (cloneURL, branch string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -87,17 +82,15 @@ type reviewFanoutEntry struct {
 
 var reviewFanouts sync.Map // plan ID -> *ReviewFanout
 
-// GetReviewFanout returns the shared fan-in for a plan, creating it on the
-// first call. total is the plan's reviewer-node count. Only called for
-// plans with more than one reviewer node - single-reviewer plans keep today's node-scoped delivery (cfg.ReviewFanout stays nil).
+// GetReviewFanout returns the shared fan-in for a plan, creating it on first call; total is the reviewer-node count.
+// Only for multi-reviewer plans; single-reviewer plans deliver per node (cfg.ReviewFanout stays nil).
 func GetReviewFanout(planID string, total int) *ReviewFanout {
 	v, _ := reviewFanouts.LoadOrStore(planID, &ReviewFanout{planID: planID, total: total})
 	return v.(*ReviewFanout)
 }
 
-// ResetReviewFanout drops any fan-in left over from a previous run of this
-// plan. Cleanup otherwise happens on exactly one path (deliverMergedReview),
-// so an interrupted run would poison every later run of the same plan (#1040).
+// ResetReviewFanout drops a fan-in left over from a previous run: cleanup otherwise happens only in
+// deliverMergedReview, so an interrupted run would poison every later run of the plan.
 func ResetReviewFanout(planID string) {
 	reviewFanouts.Delete(planID)
 }
@@ -108,21 +101,17 @@ func (f *ReviewFanout) forget() {
 	reviewFanouts.Delete(f.planID)
 }
 
-// SiblingsPending reports whether any reviewer node in the plan, besides
-// whichever one is asking, is still running. Used by the staging seam
-// (ReviewStage.SetVerdict) to refuse an early approve while an early request_changes is still allowed.
+// SiblingsPending reports whether any other reviewer node in the plan is still running, so
+// ReviewStage.SetVerdict can refuse an early approve while still allowing an early request_changes.
 func (f *ReviewFanout) SiblingsPending() bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	// total - terminal counts every not-yet-terminal node, including the
-	// caller itself (which hasn't reached its own terminal state yet since
-	// it's still staging) - more than one means a sibling is also pending.
+	// The caller itself is still staging, so it counts as not terminal: more than one means a sibling is pending.
 	return f.total-len(f.terminal) > 1
 }
 
-// Finish records nodeID's terminal outcome. item/ok is this node's own
-// staged review (ok=false if it staged nothing, or aborted before staging). failed marks a node that errored or was cancelled, so it must not block
-// the run forever waiting on it. Once every reviewer node in the plan has called Finish, the caller that completes the set gets deliver=true and the merged review - callers must deliver on that signal exactly once.
+// Finish records nodeID's terminal outcome; ok=false if it staged nothing, failed so an errored node can't block
+// the run. The call completing the set gets deliver=true and the merged review, and must deliver exactly once.
 func (f *ReviewFanout) Finish(nodeID string, item StagedDelivery, ok, failed bool) (merged StagedDelivery, deliver bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -133,17 +122,16 @@ func (f *ReviewFanout) Finish(nodeID string, item StagedDelivery, ok, failed boo
 	return f.deliverIfReady()
 }
 
-// SynthExpected reports whether this plan has a downstream synthesizer node
-// (#1092): a reviewer node feeding one never owns the delivered verdict.
+// SynthExpected reports whether this plan has a downstream synthesizer node:
+// a reviewer node feeding one never owns the delivered verdict.
 func (f *ReviewFanout) SynthExpected() bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.synthWanted
 }
 
-// ExpectSynthesis marks the plan as having a synthesizer node downstream of
-// the reviewers: delivery waits for FinishSynthesis. Called during graph
-// assembly, before any node runs.
+// ExpectSynthesis marks the plan as having a downstream synthesizer, so delivery waits for
+// FinishSynthesis. Called during graph assembly, before any node runs.
 func (f *ReviewFanout) ExpectSynthesis() {
 	f.mu.Lock()
 	f.synthWanted = true

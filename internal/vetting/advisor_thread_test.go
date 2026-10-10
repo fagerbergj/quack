@@ -7,9 +7,8 @@ import (
 	"testing"
 )
 
-// TestUnregisterMemSession_WarnsWhenNeverConnected pins #640's observability
-// requirement: a session that was registered (the surface offered) but never
-// saw a real request (MarkMemSessionConnected never called) must warn loudly on teardown - the silent "offered but unreachable" gap that let the #628 rename survive a full day of dogfooding.
+// A session registered but never connected must warn on teardown: an offered-but-unreachable
+// surface is otherwise silent.
 func TestUnregisterMemSession_WarnsWhenNeverConnected(t *testing.T) {
 	var buf bytes.Buffer
 	restore := slog.Default()
@@ -25,9 +24,6 @@ func TestUnregisterMemSession_WarnsWhenNeverConnected(t *testing.T) {
 	}
 }
 
-// TestUnregisterMemSession_SilentWhenConnected confirms the warning above
-// doesn't fire on the normal, healthy path - MarkMemSessionConnected before
-// teardown.
 func TestUnregisterMemSession_SilentWhenConnected(t *testing.T) {
 	var buf bytes.Buffer
 	restore := slog.Default()
@@ -44,9 +40,8 @@ func TestUnregisterMemSession_SilentWhenConnected(t *testing.T) {
 	}
 }
 
-// TestUnregisterAdvisorThread_FiresNodeSessionClosedHook pins the acp/vetting
-// seam a pinned ACP process's cleanup rides on (#1006 perf): every advisor
-// thread teardown - not just the ones dag/graph.go happens to exercise - must reach NodeSessionClosed with the exact token, or a pinned subprocess for that node leaks forever with nothing left to evict it.
+// Every teardown must reach NodeSessionClosed with the exact token, or a pinned ACP
+// subprocess for that node leaks with nothing left to evict it.
 func TestUnregisterAdvisorThread_FiresNodeSessionClosedHook(t *testing.T) {
 	old := NodeSessionClosed
 	defer func() { NodeSessionClosed = old }()
@@ -63,9 +58,7 @@ func TestUnregisterAdvisorThread_FiresNodeSessionClosedHook(t *testing.T) {
 	}
 }
 
-// TestUnregisterAdvisorThread_NilHookDoesNotPanic: acp wires NodeSessionClosed
-// at server boot (serve.go); any other caller (an in-process test, `quack api`
-// paths without a server, ...) must not crash for lack of that wiring.
+// NodeSessionClosed is wired only at server boot; other callers must not crash without it.
 func TestUnregisterAdvisorThread_NilHookDoesNotPanic(t *testing.T) {
 	old := NodeSessionClosed
 	defer func() { NodeSessionClosed = old }()
@@ -76,9 +69,8 @@ func TestUnregisterAdvisorThread_NilHookDoesNotPanic(t *testing.T) {
 	UnregisterAdvisorThread(token) // must not panic
 }
 
-// TestUnregisterMemSession_BackstopDoubleCallDoesNotDoubleWarn pins the
-// dag.buildGateNodes pattern: node.go's own explicit unregister plus a
-// deferred backstop call both target the same secret. The second call must be a true no-op, not a second never-connected warning (always finding the registry already cleared).
+// An explicit unregister plus a deferred backstop hit the same secret; the second call must
+// be a no-op, not a second never-connected warning.
 func TestUnregisterMemSession_BackstopDoubleCallDoesNotDoubleWarn(t *testing.T) {
 	var buf bytes.Buffer
 	restore := slog.Default()

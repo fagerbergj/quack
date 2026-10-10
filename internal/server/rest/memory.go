@@ -72,9 +72,8 @@ func (a *listMemoriesArgs) listMemoriesPaging(params schema.ListMemoriesParams) 
 		a.sortBy = string(*params.Sort)
 	}
 	if params.PageToken != nil && *params.PageToken != "" {
-		// Bound to sortBy too (not just bucketFilter): an offset from one sort
-		// order names a different row under another, so a page_token replayed
-		// against a changed `sort` must 400, not silently return the wrong page.
+		// Bound to sortBy too: an offset under one sort order names a different row under another,
+		// so a page_token replayed against a changed sort must 400.
 		off, err := memory.DecodePageToken(*params.PageToken, a.bucketFilter, a.sortBy)
 		if err != nil {
 			return err
@@ -105,9 +104,8 @@ func (a *listMemoriesArgs) listMemoriesPage(ctx context.Context, stores []*memor
 	return out, nil
 }
 
-// ListMemories browses (or, with `q`, searches) every configured memory store.
-// A bucket filter is passed to each store as-is - a store that doesn't own that
-// bucket just contributes nothing, so no prefix-routing guesswork is needed.
+// ListMemories browses (or, with `q`, searches) every configured memory store. The bucket filter goes to
+// each store as-is; a store not owning that bucket just contributes nothing.
 func (h *Handler) ListMemories(w http.ResponseWriter, r *http.Request, params schema.ListMemoriesParams) {
 	stores := h.memStores()
 	a := listMemoriesBase(params)
@@ -154,9 +152,8 @@ func (h *Handler) GetMemory(w http.ResponseWriter, r *http.Request, memoryID sch
 	writeJSON(w, http.StatusOK, memoriesWire([]memory.Memory{m})[0])
 }
 
-// DeleteMemory invalidates one memory (soft-delete, design doc §4(b)) - the
-// point stays in the index with status=invalidated; nothing is removed. 404
-// if no configured store has that id.
+// DeleteMemory invalidates one memory (soft delete: the point stays with status=invalidated).
+// 404 if no configured store has that id.
 func (h *Handler) DeleteMemory(w http.ResponseWriter, r *http.Request, memoryID schema.MemoryID) {
 	var body schema.DeleteMemoryBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
@@ -179,9 +176,8 @@ func (h *Handler) DeleteMemory(w http.ResponseWriter, r *http.Request, memoryID 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// listMemories delegates straight to the one configured store when there's
-// only one; with two (task + user both enabled) it fetches each store's
-// matching set (capped at DefaultListLimit=50 per store - see the ponytail comment below), merges, and pages in Go, which is the only way to keep offset/limit meaningful across two independent backends. includeInvalidated rides straight through to the index-level filter (Store.List) so the total and the page both agree, rather than a Go post-filter after paging.
+// listMemories delegates to the only store when there's one; with two it merges each store's matches and pages
+// in Go, the only way to keep offset/limit meaningful across two backends.
 func listMemories(ctx context.Context, stores []*memory.Store, buckets []string, offset, limit int, includeInvalidated bool, tier, sortBy string) ([]memory.Memory, int, error) {
 	if len(stores) == 0 {
 		return nil, 0, nil
@@ -191,9 +187,8 @@ func listMemories(ctx context.Context, stores []*memory.Store, buckets []string,
 	}
 	var all []memory.Memory
 	for _, st := range stores {
-		// ponytail: 0,0 does NOT fetch each store's full matching set - Store.List
-		// coerces limit<=0 to DefaultListLimit (50, store.go), so two-store mode
-		// is only correct up to ~50 matches per store (~100 combined); beyond that, total/every page/next_page_token silently go wrong. Predates this PR (not introduced by sortBy) - fix is an unbounded List variant or an explicit high cap, if a deployment's corpus ever needs it.
+		// ponytail: Store.List coerces limit<=0 to DefaultListLimit (50), so two-store mode is only right up to
+		// ~50 matches per store; add an unbounded List variant or a high cap if a corpus ever needs it.
 		mems, _, err := st.List(ctx, buckets, 0, 0, includeInvalidated, tier, sortBy)
 		if err != nil {
 			return nil, 0, err
@@ -300,9 +295,8 @@ func runDedupeSweep(ctx context.Context, stores []namedSweepStore, apply bool) (
 	return results, errs
 }
 
-// SweepMemories runs the forgetting-rule sweep (epic #1255 P3) on demand
-// against every configured store - the same Store.ForgetSweep the nightly
-// consolidation job calls, so there is exactly one sweep code path.
+// SweepMemories runs the forgetting-rule sweep on demand against every configured store,
+// via the same Store.ForgetSweep the nightly consolidation job calls.
 func (h *Handler) SweepMemories(w http.ResponseWriter, r *http.Request) {
 	var body schema.SweepMemoriesBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
@@ -374,9 +368,8 @@ func sweepReportWire(storeName string, report memory.ForgettingReport) schema.Sw
 	return schema.SweepStoreResult{Store: storeName, Evaluated: report.Evaluated, Kept: report.Kept, Rules: rules}
 }
 
-// RescopeMemories moves role:* memories whose provenance chat has a GitHub
-// origin into that repo's bucket (#1262). dry run by default; apply:true in
-// the body writes the change and audits it.
+// RescopeMemories moves role:* memories whose provenance chat has a GitHub origin into that repo's bucket.
+// Dry run unless the body sets apply:true, which writes and audits the change.
 func (h *Handler) RescopeMemories(w http.ResponseWriter, r *http.Request) {
 	var body schema.RescopeMemoriesBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
@@ -416,9 +409,8 @@ func (h *Handler) RescopeMemories(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, schema.RescopeReport{Applied: apply, Repos: repos, SkippedNoProvenance: &skippedNoProvenance})
 }
 
-// chatRepo resolves a chat's stored GitHub origin (the "repo" Labels
-// dimension the github extension stamps at dispatch) to the same identity
-// format workspace.RepoIdentity produces, so a rescoped point lands in the SAME bucket a live worker's RepoKey would compute.
+// chatRepo resolves a chat's stored GitHub origin to workspace.RepoIdentity's format,
+// so a rescoped point lands in the bucket a live worker's RepoKey would compute.
 func (h *Handler) chatRepo(ctx context.Context, chatID string) (string, bool) {
 	c, err := h.store.GetChat(ctx, chatID)
 	if err != nil || c == nil {
@@ -435,13 +427,11 @@ func (h *Handler) chatRepo(ctx context.Context, chatID string) (string, bool) {
 	return repoKey, true
 }
 
-// defaultStatsWeeks is `GET /api/v1/memories/stats`'s weeks default when the
-// query param is omitted (epic #1255 P5) - a quarter's worth at a glance.
+// defaultStatsWeeks is `GET /api/v1/memories/stats`'s weeks default: a quarter at a glance.
 const defaultStatsWeeks = 12
 
-// GetMemoryStats serves weekly recall precision/vote/recall counts plus a per-scope
-// live/invalidated/never-recalled/no-votes/unsupported-verified snapshot,
-// computed from every chat's ledger (memory.recall/memory.vote entries) and memory_ops - no new tables. Weeks with no ledger/memory_ops activity yet still appear, zeroed, so the caller can chart a continuous series.
+// GetMemoryStats serves weekly recall precision/vote/recall counts plus a per-scope snapshot, computed from
+// the ledger and memory_ops. Weeks with no activity appear zeroed so the series stays continuous.
 func (h *Handler) GetMemoryStats(w http.ResponseWriter, r *http.Request, params schema.GetMemoryStatsParams) {
 	weeks := defaultStatsWeeks
 	if params.Weeks != nil && *params.Weeks > 0 {
@@ -483,9 +473,8 @@ func (h *Handler) GetMemoryStats(w http.ResponseWriter, r *http.Request, params 
 	writeJSON(w, http.StatusOK, schema.MemoryStats{Weeks: weekStatsWire(weekStats), Scopes: scopeStatsWire(scopes)})
 }
 
-// memoryLedgerEvents scans every chat's ledger for memory.recall/memory.vote entries
-// within the weeks window - the only way to get memory usage across ALL chats, since the
-// ledger is per-chat and there is no cross-chat memory index. Pushes both the kind and `at >= since` filters into one query via ReadAllByKindsSince instead of List() plus one ReadByKinds per chat plus a Go-side window filter (perf audit #12: 94 queries and 0.8-5.0s per memory-page load on a 465k-entry ledger). nil ledgerStore (recording disabled) yields no events, not an error.
+// memoryLedgerEvents scans every chat's ledger for memory.recall/memory.vote entries in the window, in one
+// ReadAllByKindsSince query (per-chat reads cost seconds on big ledgers). nil ledgerStore yields no events.
 func memoryLedgerEvents(ctx context.Context, led ledger.LedgerStore, now time.Time, weeks int) ([]memory.VoteEvent, []memory.RecallEvent, error) {
 	if led == nil {
 		return nil, nil, nil
@@ -519,9 +508,8 @@ func memoryLedgerEvents(ctx context.Context, led ledger.LedgerStore, now time.Ti
 	return votes, recalls, nil
 }
 
-// mergeScopeStats sums two stores' per-scope tallies (task + user memory can
-// both use a "user:" or "role:" bucket only in principle, but never the same
-// key in practice - summed defensively either way).
+// mergeScopeStats sums two stores' per-scope tallies; they shouldn't share a bucket key,
+// but are summed defensively.
 func mergeScopeStats(acc []memory.ScopeStats, add []memory.ScopeStats) []memory.ScopeStats {
 	byScope := make(map[string]memory.ScopeStats, len(acc)+len(add))
 	for _, s := range acc {
@@ -585,7 +573,7 @@ func memoriesWire(mems []memory.Memory) []schema.Memory {
 			score := m.Score
 			w.Score = &score
 		}
-		// Status "" predates the lifecycle fields (design doc §3) and reads as unverified.
+		// Status "" is from before the lifecycle fields and reads as unverified.
 		status := schema.MemoryStatus(m.Status)
 		if status == "" {
 			status = schema.MemoryStatusUnverified
@@ -626,9 +614,8 @@ func memoriesWire(mems []memory.Memory) []schema.Memory {
 	return out
 }
 
-// ownVoteWire maps the store's internal "up"/"down"/"" to the wire enum -
-// "" (never voted, or last voted "none") comes back as a nil pointer, so
-// the field is simply absent from the JSON.
+// ownVoteWire maps the store's "up"/"down"/"" to the wire enum; "" (never voted, or retracted)
+// becomes nil so the field is absent.
 func ownVoteWire(humanVote string) *schema.MemoryOwnVote {
 	switch humanVote {
 	case memory.HumanVoteUp:
@@ -642,9 +629,8 @@ func ownVoteWire(humanVote string) *schema.MemoryOwnVote {
 	}
 }
 
-// VoteMemory casts or clears the human's own vote on one memory (epic #1255
-// P4). Fail-closed: the memory.vote ledger entry is appended before the
-// point is mutated, under the memory's provenance chat if it has one, else a fixed "human" chat key (chat-less human votes need a ledger home, and nothing else keys entries by anything BUT a chat).
+// VoteMemory casts or clears the human's vote. Fail-closed: the memory.vote ledger entry is appended first,
+// under the memory's provenance chat, else humanVoteChatKey.
 func (h *Handler) VoteMemory(w http.ResponseWriter, r *http.Request, memoryID schema.MemoryID) {
 	var body schema.VoteMemoryBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -672,9 +658,8 @@ func (h *Handler) VoteMemory(w http.ResponseWriter, r *http.Request, memoryID sc
 		errMsg(w, http.StatusNotFound, "not found")
 		return
 	}
-	// Validated BEFORE the ledger entry is appended (#1265 review finding 3):
-	// an invalidated memory gets neither an orphan memory.vote entry nor a
-	// misleading "not found" - a clear 409 instead.
+	// Checked before appending the ledger entry: an invalidated memory gets a clear 409,
+	// not an orphan memory.vote entry or a misleading 404.
 	if m.Status == string(memory.StatusInvalidated) {
 		errMsg(w, http.StatusConflict, "memory is invalidated")
 		return
@@ -714,14 +699,12 @@ func (h *Handler) VoteMemory(w http.ResponseWriter, r *http.Request, memoryID sc
 	writeJSON(w, http.StatusOK, memoriesWire([]memory.Memory{updated})[0])
 }
 
-// humanVoteChatKey is the fixed ledger chat id for a human vote on a memory
-// with no provenance chat (minted before #875, or never associated with a
-// chat) - the ledger has no chat-less entry shape, so this is its home.
+// humanVoteChatKey is the ledger chat id for a human vote on a memory with no provenance chat;
+// the ledger has no chat-less entry shape.
 const humanVoteChatKey = "human"
 
-// humanLedgerVote maps up/down/none to the judge's supported/contradicted
-// vocabulary so a human vote uses the same ledger vote kind. "none" (a
-// retraction, not itself a stance) logs as not_relevant, still an audit trail of what happened even though it carries no score delta.
+// humanLedgerVote maps up/down/none to the judge's vote vocabulary; "none" (a retraction) logs as
+// not_relevant, an audit trail with no score delta.
 func humanLedgerVote(vote string) ledger.MemoryVote {
 	switch vote {
 	case memory.HumanVoteUp:
@@ -733,9 +716,8 @@ func humanLedgerVote(vote string) ledger.MemoryVote {
 	}
 }
 
-// findMemoryByID tries each store's direct GetByID in turn (correct
-// regardless of how many memories exist or which List page id would land
-// on - #1265 review finding 1) and returns the first hit, including an invalidated point so the caller can decide what that means for its purpose. Returns a nil store, zero Memory if none of the stores has it.
+// findMemoryByID returns the first store whose GetByID has id, including invalidated points;
+// a nil store and zero Memory if none does.
 func findMemoryByID(ctx context.Context, stores []*memory.Store, id string) (*memory.Store, memory.Memory, error) {
 	for _, st := range stores {
 		m, err := st.GetByID(ctx, id)
@@ -749,9 +731,8 @@ func findMemoryByID(ctx context.Context, stores []*memory.Store, id string) (*me
 	return nil, memory.Memory{}, nil
 }
 
-// ListNodeMemories folds one node's memory.recall/memory.vote ledger entries
-// into its received-memories set (epic #1255 P4), enriched with each
-// memory's current content/tier from the store (the ledger entries carry only id+score, not the point's live fields) and the human's own vote.
+// ListNodeMemories folds one node's memory.recall/memory.vote ledger entries into its received memories,
+// enriched with each memory's live content/tier and the human's own vote.
 func (h *Handler) ListNodeMemories(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, nodeID schema.NodeID) {
 	if !h.requireChat(w, r, chatID) {
 		return
@@ -771,8 +752,7 @@ func (h *Handler) ListNodeMemories(w http.ResponseWriter, r *http.Request, chatI
 		writeJSON(w, http.StatusOK, out)
 		return
 	}
-	// Direct per-id lookup (#1265 review finding 1), not a bulk List+scan - correct
-	// regardless of corpus size, and include-invalidated by design.
+	// Direct per-id lookup, not a List scan: correct at any corpus size, invalidated points included.
 	content, ok := h.nodeMemoryContent(w, r, order)
 	if !ok {
 		return
@@ -823,8 +803,7 @@ func nodeMemorySignals(entries []ledger.Entry, nodeID schema.NodeID) ([]string, 
 	return order, recalls, votes
 }
 
-// nodeMemoryContent: direct per-id lookup (#1265 review finding 1); ok=false after an
-// httpError when a lookup fails hard.
+// nodeMemoryContent looks each id up directly; ok=false after an httpError when a lookup fails hard.
 func (h *Handler) nodeMemoryContent(w http.ResponseWriter, r *http.Request, order []string) (map[string]memory.Memory, bool) {
 	stores := h.memStores()
 	content := map[string]memory.Memory{}

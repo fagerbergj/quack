@@ -15,11 +15,8 @@ import (
 // --server must not hang the user's tab-complete.
 const completionTimeout = 2 * time.Second
 
-// completeWithTarget resolves --server, then hands the target to fn; any
-// failure degrades to no completions rather than a shell-visible error.
-// Unlike resolveTarget's other callers, this never boots the duck in-process:
-// a local dev dir with no remote target would pay a full server boot on
-// every <TAB>, eating the completion budget with nothing to show for it.
+// completeWithTarget resolves --server and hands the target to fn; failures yield no completions.
+// It never boots the duck in-process: a full server boot per <TAB> would blow the completion budget.
 func completeWithTarget(cmd *cobra.Command, fn func(ctx context.Context, target string) ([]string, error)) ([]string, cobra.ShellCompDirective) {
 	server, _ := cmd.Flags().GetString("server")
 	cc, err := cli.LoadClient()

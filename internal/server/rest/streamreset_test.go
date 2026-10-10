@@ -12,14 +12,11 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// staleRunMarker tags the stale previous run's events so a test can tell
-// "the new run legitimately produced its own events already" (fine) apart
-// from "the previous run's stale events leaked through" (the bug).
+// staleRunMarker tags the previous run's events, so a test can tell the new run's own events
+// apart from leaked stale ones.
 const staleRunMarker = "STALE-PREVIOUS-RUN-MARKER"
 
-// seedStaleTerminalRun leaves a finished run's durable events - including its
-// terminal `done` - on chatID, standing in for whatever the chat's previous
-// run left behind.
+// seedStaleTerminalRun leaves a finished run's durable events, including its terminal `done`, on chatID.
 func seedStaleTerminalRun(t *testing.T, h *Handler, chatID string) {
 	t.Helper()
 	ctx := context.Background()
@@ -34,9 +31,8 @@ func seedStaleTerminalRun(t *testing.T, h *Handler, chatID string) {
 	}
 }
 
-// assertEventLogAlreadyReset fails if chatID's durable event log still
-// carries the stale marker - the state it must be in the instant a
-// run-starting handler responds, well before its background goroutine gets a chance to run. It does not require the log to be totally empty: the new run's own goroutine may already have raced ahead and appended its own (legitimate) events by the time this runs.
+// assertEventLogAlreadyReset fails if the durable log still carries the stale marker when the handler
+// responds. The log needn't be empty: the new run may already have appended its own events.
 func assertEventLogAlreadyReset(t *testing.T, h *Handler, chatID string) {
 	t.Helper()
 	evs, err := h.eventLog.LoadEvents(context.Background(), chatID, 0)
@@ -53,9 +49,8 @@ func assertEventLogAlreadyReset(t *testing.T, h *Handler, chatID string) {
 	}
 }
 
-// TestStartNode_AwaitingInputResetsBeforeResponding pins finding 5: a
-// subscriber landing in a resumed node's start window must never replay the
-// previous run's terminal `done`; startNodeAsync used to reset the durable event log from inside its own spawned goroutine, so a subscriber racing the 200 could read the stale run straight off the durable table.
+// TestStartNode_AwaitingInputResetsBeforeResponding: the durable log is reset before the 200, so a subscriber
+// racing a resumed node's start never replays the previous run's terminal `done`.
 func TestStartNode_AwaitingInputResetsBeforeResponding(t *testing.T) {
 	h := newTestHandler(t)
 	chatID, planID, nodeID := "c1", "p1", "n1"
@@ -72,9 +67,8 @@ func TestStartNode_AwaitingInputResetsBeforeResponding(t *testing.T) {
 	assertEventLogAlreadyReset(t, h, chatID)
 }
 
-// TestUpdateNodeStatus_RetryResetsBeforeResponding is
-// TestStartNode_AwaitingInputResetsBeforeResponding's counterpart for
-// retryNodeAsync (queued/paused -> running via PUT status).
+// TestUpdateNodeStatus_RetryResetsBeforeResponding is the same check for retryNodeAsync
+// (queued/paused -> running via PUT status).
 func TestUpdateNodeStatus_RetryResetsBeforeResponding(t *testing.T) {
 	h := newTestHandler(t)
 	chatID, planID, nodeID := "c1", "p1", "n1"
@@ -91,9 +85,8 @@ func TestUpdateNodeStatus_RetryResetsBeforeResponding(t *testing.T) {
 	assertEventLogAlreadyReset(t, h, chatID)
 }
 
-// TestSubscribeDuringNodeStartWindow drives the full symptom end to end: a
-// subscriber connecting right after the 200 - before the resumed run has
-// published anything - must not be served the previous run's terminal done.
+// TestSubscribeDuringNodeStartWindow: a subscriber connecting right after the 200, before the resumed run
+// publishes, isn't served the previous run's terminal done.
 func TestSubscribeDuringNodeStartWindow(t *testing.T) {
 	h := newTestHandler(t)
 	chatID, planID, nodeID := "c1", "p1", "n1"

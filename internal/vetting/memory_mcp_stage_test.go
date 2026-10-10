@@ -20,9 +20,8 @@ import (
 	"github.com/fagerbergj/quack/internal/memory"
 )
 
-// fakeMemEmbedder returns a fixed unit vector for every text, so any recall
-// query matches any stored point (cosine = 1) - the round-trip is exercised
-// through the SCOPE filter, not embedding similarity (mirrors internal/memory's own fakeEmbedder).
+// fakeMemEmbedder returns one fixed unit vector, so any query matches any point and recall is
+// exercised through the scope filter, not similarity.
 type fakeMemEmbedder struct{}
 
 func (fakeMemEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
@@ -33,9 +32,8 @@ func (fakeMemEmbedder) Embed(_ context.Context, texts []string) ([][]float32, er
 	return out, nil
 }
 
-// echoConsolidator replies with a single ADD op that echoes back the FIRST
-// staged candidate's content verbatim - enough to prove a specific staged
-// candidate reached Store.Commit, without pulling in a real consolidation model.
+// echoConsolidator replies with one ADD op echoing the first staged candidate, proving that candidate
+// reached Store.Commit.
 type echoConsolidator struct{}
 
 func (echoConsolidator) Name() string { return "echo-consolidator" }
@@ -56,20 +54,13 @@ func (echoConsolidator) GenerateContent(_ context.Context, req *model.LLMRequest
 	}
 }
 
-// fixedScoreModel is a worker+judge stub whose judge score is fixed at build
-// time - enough to drive RunGatedRefine to a deterministic pass or fail without
-// a scripted revise dance.
-type fixedScoreModel struct{ score float64 }
-
-func (fixedScoreModel) Name() string { return "fixed-score" }
-
-func (m fixedScoreModel) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
+// fixedScoreModel is a worker+judge stub with a fixed judge score, for a deterministic pass or fail.
+func fixedScoreModel(score float64) fnLLM {
+	return func(req *model.LLMRequest) (*model.LLMResponse, error) {
 		if stubHasTool(req, submitVerdictTool) {
-			yield(stubCall(submitVerdictTool, map[string]any{"score": m.score, "feedback": "ok"}), nil)
-			return
+			return stubCall(submitVerdictTool, map[string]any{"score": score, "feedback": "ok"}), nil
 		}
-		yield(stubText("the answer"), nil)
+		return stubText("the answer"), nil
 	}
 }
 
@@ -78,7 +69,7 @@ func (m fixedScoreModel) GenerateContent(_ context.Context, req *model.LLMReques
 func runStagedMemoryNode(t *testing.T, nodeID, token string, cfg Config, judgeScore float64) GateResult {
 	t.Helper()
 	cfg.AdvisorToken = token
-	m := fixedScoreModel{score: judgeScore}
+	m := fixedScoreModel(judgeScore)
 	worker, err := llmagent.New(llmagent.Config{Name: nodeID, Model: m, Description: "worker", Instruction: "answer"})
 	if err != nil {
 		t.Fatalf("worker: %v", err)
@@ -100,7 +91,7 @@ func runStagedMemoryNode(t *testing.T, nodeID, token string, cfg Config, judgeSc
 	if err != nil {
 		t.Fatalf("runner: %v", err)
 	}
-	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "do the task " + AdvisorThreadMarker(token)}}}
+	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "do the task [[quack:advisor-thread:" + token + "]]"}}}
 	for ev, err := range r.Run(t.Context(), "u", "s-"+nodeID, task, adkagent.RunConfig{}) {
 		if err != nil {
 			t.Fatalf("run: %v", err)
@@ -110,18 +101,16 @@ func runStagedMemoryNode(t *testing.T, nodeID, token string, cfg Config, judgeSc
 	return res
 }
 
-// TestRunGatedRefine_MCPStagedMemory_CommitsOnlyOnPass pins the ACP memory MCP
-// surface's staging contract (#344): a candidate the stage_memory tool appended
-// to the node's MemStage lands in commitMemoryOnPass's input, and - exactly like a native agent's stage_memory tool call - is only ever written to shared memory when the gate's judge round PASSES.
+// A candidate the ACP stage_memory tool appended to MemStage reaches commitMemoryOnPass and, like a
+// native stage_memory call, is written to shared memory only when the gate passes.
 func TestRunGatedRefine_MCPStagedMemory_CommitsOnlyOnPass(t *testing.T) {
 	ctx := context.Background()
 	store, err := memory.OpenSQLite(ctx, t.TempDir()+"/mem.db", fakeMemEmbedder{}, echoConsolidator{}, "test_stage", "task", 5, 0)
 	if err != nil {
 		t.Fatalf("OpenSQLite: %v", err)
 	}
-	// The scope commitMemoryOnPass actually writes with is computed by
-	// MemoryScope(ctx, cfg) - cfg.MemoryRole + the runner's session user
-	// (fixed to "u" below) - so the assertions' View must match it exactly.
+	// commitMemoryOnPass writes with MemoryScope(ctx, cfg): cfg.MemoryRole plus the session user ("u"),
+	// so the assertions' View must match it exactly.
 	cfg := Config{JudgeRounds: 1, Threshold: 0.7, Rubric: "score 0-10", CommitMemory: true, Memory: store, MemoryRole: "coding"}
 	scope := memory.Scope{Role: "coding", User: "u"}
 
@@ -186,11 +175,8 @@ func TestRunGatedRefine_MCPStagedMemory_CommitsOnlyOnPass(t *testing.T) {
 	})
 }
 
-// TestRunGatedRefine_ACPRecalledMemory_CountsOnceDespiteRepeatCalls covers #1470's ACP
-// half: MemSession.Recalled accumulates one raw entry per recall_memory/load_memory call
-// (not deduped by itself - see the ACP loopback's own handlers), but the round merge in
-// prepareJudge (mergeMemoryHits) only bumps recalls for ids new to the round's received
-// set, so three identical-id adds from one round's repeat calls count once.
+// MemSession.Recalled gets one raw entry per recall call, but prepareJudge's merge bumps recalls only
+// for ids new to the round, so three identical-id adds count once.
 func TestRunGatedRefine_ACPRecalledMemory_CountsOnceDespiteRepeatCalls(t *testing.T) {
 	ctx := context.Background()
 	store, err := memory.OpenSQLite(ctx, t.TempDir()+"/mem.db", fakeMemEmbedder{}, echoConsolidator{}, "test_acp_recall_count", "task", 5, 0)

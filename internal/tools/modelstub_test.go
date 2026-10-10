@@ -7,9 +7,8 @@ import (
 	"google.golang.org/genai"
 )
 
-// shared stub-model helpers (mirrors internal/dag's gCall/gText/gSysText -
-// duplicated here because internal/tools already imports internal/dag, so a
-// dag-package test file can't import tools back without a cycle)
+// Stub-model helpers mirroring internal/dag's gCall/gText/gSysText; duplicated because
+// tools imports dag, so sharing them would be an import cycle.
 
 func atText(s string) *model.LLMResponse {
 	return &model.LLMResponse{
@@ -29,9 +28,8 @@ func atCall(name string, args map[string]any) *model.LLMResponse {
 	}
 }
 
-// atAllText concatenates every non-thought text part across the request's
-// contents (the running conversation, INCLUDING tool call/response parts'
-// adjacent text) - used to assert what a stub model actually saw.
+// atAllText concatenates every non-thought text part in the request's contents, to assert
+// what a stub model actually saw.
 func atAllText(req *model.LLMRequest) string {
 	var b strings.Builder
 	for _, c := range req.Contents {

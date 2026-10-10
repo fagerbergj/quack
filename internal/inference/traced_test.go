@@ -109,9 +109,8 @@ func TestTracedModel_GenerateContentStopsEarlyOnConsumerBreak(t *testing.T) {
 	}
 }
 
-// TestTracedModel_GenerateContentRecordsGatewayFailure proves the #1105
-// wire: a generate() error still reaches the chat+node failure tracker even
-// though ADK's own runner later swallows the returned error into an empty node completion - this is the only place the real cause survives that.
+// ADK swallows a node's generate() error into an empty completion; the failure tracker is
+// the only place the cause survives.
 func TestTracedModel_GenerateContentRecordsGatewayFailure(t *testing.T) {
 	const chatID, node, agent = "chat-traced-1105", "write-plan", "synthesizer"
 	t.Cleanup(func() { ClearFailure(chatID, node, agent) })
@@ -169,9 +168,7 @@ func (e *usageEmbeddableStub) EmbedWithUsage(ctx context.Context, texts []string
 	return e.vectors, e.usage, nil
 }
 
-// TestTracedModel_Embed_RecordsTokenUsageInput pins the embeddings shape:
-// only token_type=input is ever recorded (no output/reasoning/cached), and a
-// call with no ctx coords falls back to defaultAgent - the same fallback rule GenerateContent uses.
+// Embeddings record token_type=input only, and fall back to defaultAgent without ctx coords.
 func TestTracedModel_Embed_RecordsTokenUsageInput(t *testing.T) {
 	reader := newUsageTestMeter(t)
 
@@ -207,9 +204,7 @@ func TestTracedModel_Embed_RecordsTokenUsageInput(t *testing.T) {
 	}
 }
 
-// TestTracedModel_Embed_RealCoordsWinOverDefault guards the fallback
-// direction for Embed the same way GenerateContent's own test does: a
-// per-round Coords.Agent must win over defaultAgent, never be replaced by it.
+// A per-round Coords.Agent wins over defaultAgent for Embed too.
 func TestTracedModel_Embed_RealCoordsWinOverDefault(t *testing.T) {
 	reader := newUsageTestMeter(t)
 
@@ -256,9 +251,7 @@ func TestTracedModel_Embed_RecordsDuration(t *testing.T) {
 	}
 }
 
-// TestTracedModel_Embed_NoUsage_NoPanic guards the defensive path: a
-// response with no usage (PromptTokens==0, the EmbedUsage zero value) must
-// record no token/cost metric and must not panic - the same "never fabricate a zero" rule recordUsageMetrics follows for a nil UsageMetadata.
+// A usage-less embed response records no metric rather than a fabricated zero.
 func TestTracedModel_Embed_NoUsage_NoPanic(t *testing.T) {
 	reader := newUsageTestMeter(t)
 
@@ -280,9 +273,7 @@ func TestTracedModel_Embed_NoUsage_NoPanic(t *testing.T) {
 // Ensure tracedModel satisfies Embedder (NewEmbedder's type assertion relies on this).
 var _ Embedder = (*tracedModel)(nil)
 
-// newUsageTestMeter installs a fresh manual-reader-backed meter as the
-// otelobs package singleton, so tracedModel's token/cost Record calls land
-// somewhere this test can read back.
+// newUsageTestMeter swaps the otelobs meter singleton for one this test can read back.
 func newUsageTestMeter(t *testing.T) *sdkmetric.ManualReader {
 	t.Helper()
 	reader := sdkmetric.NewManualReader()
@@ -361,11 +352,8 @@ func usageResp(prompt, cached, candidates, thoughts int32) *model.LLMResponse {
 	}
 }
 
-// TestTracedModel_TokenUsage_SplitsCachedFromInput pins the token_type
-// fan-out: genai's PromptTokenCount already includes cached tokens, so
-// token_type=input must report the NON-cached remainder or input+cached
-// would double-count a cache hit. Attribution (agent/user/source) comes
-// through ctx, exactly like emitChatEvent's coords.
+// PromptTokenCount includes cached tokens, so token_type=input must report the remainder or a cache
+// hit double-counts. Attribution comes through ctx.
 func TestTracedModel_TokenUsage_SplitsCachedFromInput(t *testing.T) {
 	reader := newUsageTestMeter(t)
 
@@ -401,9 +389,7 @@ func TestTracedModel_TokenUsage_SplitsCachedFromInput(t *testing.T) {
 	}
 }
 
-// TestTracedModel_Cost_ComputedFromConfiguredPricing pins the price math:
-// cost = raw prompt total (cached billed at the input rate, no separate
-// cached tier configured) * input price + (output+reasoning) * output price.
+// cost = prompt total (cached at the input rate) * input price + (output+reasoning) * output price.
 func TestTracedModel_Cost_ComputedFromConfiguredPricing(t *testing.T) {
 	reader := newUsageTestMeter(t)
 
@@ -444,9 +430,7 @@ func TestTracedModel_NoPricing_NoCostMetric(t *testing.T) {
 	}
 }
 
-// TestTracedModel_CachedExceedsPrompt_ClampsInputToZero guards a malformed
-// provider response (cached > prompt total) from producing a negative
-// token_type=input value on the hot path every model call traverses.
+// A malformed response with cached > prompt must not record a negative input count.
 func TestTracedModel_CachedExceedsPrompt_ClampsInputToZero(t *testing.T) {
 	reader := newUsageTestMeter(t)
 
@@ -460,9 +444,7 @@ func TestTracedModel_CachedExceedsPrompt_ClampsInputToZero(t *testing.T) {
 	}
 }
 
-// TestTracedModel_NoUsageMetadata_NoMetrics guards a response that never
-// carried usage (a provider outage, a malformed reply) - no metric at all,
-// never a fabricated zero.
+// A response without usage records no metric, never a fabricated zero.
 func TestTracedModel_NoUsageMetadata_NoMetrics(t *testing.T) {
 	reader := newUsageTestMeter(t)
 
@@ -478,9 +460,7 @@ func TestTracedModel_NoUsageMetadata_NoMetrics(t *testing.T) {
 	}
 }
 
-// TestTracedModel_AttributionAbsentWhenCoordsUnset guards "omit, don't
-// guess": a call with no ledger coords on ctx must not stamp empty-string
-// agent/user/source attributes.
+// No ctx coords means no empty-string agent/user/source attributes.
 func TestTracedModel_AttributionAbsentWhenCoordsUnset(t *testing.T) {
 	reader := newUsageTestMeter(t)
 
@@ -500,9 +480,7 @@ func TestTracedModel_AttributionAbsentWhenCoordsUnset(t *testing.T) {
 	}
 }
 
-// TestTracedModel_DefaultAgentFillsTokenUsageWhenCoordsCarryNone pins the
-// orchestrator's own top-level turn, which never runs inside a DAG node and
-// so never gets a ctx-carried Coords.Agent.
+// The orchestrator's top-level turn runs outside any DAG node, so it has no ctx Coords.Agent.
 func TestTracedModel_DefaultAgentFillsTokenUsageWhenCoordsCarryNone(t *testing.T) {
 	reader := newUsageTestMeter(t)
 
@@ -521,9 +499,7 @@ func TestTracedModel_DefaultAgentFillsTokenUsageWhenCoordsCarryNone(t *testing.T
 	}
 }
 
-// TestTracedModel_DefaultAgentNeverOverridesRealCoords guards the fallback
-// direction: a per-round Coords.Agent (a DAG node's worker/judge call) must
-// win over defaultAgent, never be replaced by it.
+// A per-round Coords.Agent always wins over defaultAgent.
 func TestTracedModel_DefaultAgentNeverOverridesRealCoords(t *testing.T) {
 	reader := newUsageTestMeter(t)
 
@@ -538,8 +514,7 @@ func TestTracedModel_DefaultAgentNeverOverridesRealCoords(t *testing.T) {
 	}
 }
 
-// TestTracedModel_DefaultAgentNeverLeaksIntoChatEvent guards #617: replay's
-// StreamKey needs the root chat event's Coords.Agent to stay empty.
+// Replay's StreamKey needs the root chat event's Coords.Agent to stay empty.
 func TestTracedModel_DefaultAgentNeverLeaksIntoChatEvent(t *testing.T) {
 	capExp := &captureExporter{}
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))

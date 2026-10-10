@@ -1,6 +1,5 @@
-// Package httpx provides quack's shared resilient http.RoundTripper: a
-// method-aware retry policy that composes with any existing *http.Client
-// (set it as the Transport, keep the client's own Timeout/etc).
+// Package httpx provides quack's shared method-aware retrying http.RoundTripper,
+// set as any *http.Client's Transport.
 package httpx
 
 import (
@@ -24,14 +23,11 @@ const (
 	DefaultMaxDelay    = 5 * time.Second
 )
 
-// idempotencyKey marks a request's context as safe to retry under the
-// GET/HEAD policy despite an unsafe HTTP method - for a call whose repeat
-// has no unwanted side effect (e.g. regenerating an LLM completion).
+// idempotencyKey marks a context's requests as safe to retry like GET/HEAD despite an unsafe method.
 type idempotencyKey struct{}
 
-// WithIdempotent lets a POST/PATCH/PUT/DELETE built from this ctx retry as
-// freely as GET/HEAD. Only where a duplicate send is harmless - never for
-// calls that create or mutate state others can see (comment, review, merge).
+// WithIdempotent lets POST/PATCH/PUT/DELETE from ctx retry like GET/HEAD. Use only where a duplicate is
+// harmless (e.g. regenerating an LLM completion), never for visible mutations like comments or merges.
 func WithIdempotent(ctx context.Context) context.Context {
 	return context.WithValue(ctx, idempotencyKey{}, true)
 }
@@ -57,9 +53,8 @@ type transport struct {
 	maxDelay    time.Duration
 }
 
-// NewTransport wraps next (http.DefaultTransport if nil) with a method-aware retry policy: GET/HEAD (or
-// WithIdempotent) retry on connection errors, timeouts, 429, and 5xx; other methods only on errors
-// proving the request never reached the server (a 5xx/timeout may already have been processed); Retry-After honoured, attempts bounded.
+// NewTransport wraps next (default: http.DefaultTransport): GET/HEAD/WithIdempotent retry on errors, timeouts,
+// 429 and 5xx; other methods only when the request provably never arrived. Retry-After honoured, attempts bounded.
 func NewTransport(next http.RoundTripper, opts ...Option) http.RoundTripper {
 	if next == nil {
 		next = http.DefaultTransport

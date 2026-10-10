@@ -6,9 +6,8 @@ import (
 	"time"
 )
 
-// duplicateOfRe extracts a survivor id from a DELETE op's reason shaped like the
-// consolidation prompts' own convention ("duplicate of <id>") - epic #1255 P5 treats
-// only this shape as a lineage-recording absorption; any other DELETE reason (e.g. "contradicted by newer info") is a bare invalidation, unchanged from before.
+// duplicateOfRe extracts a survivor id from a "duplicate of <id>" DELETE reason; only that shape
+// records lineage, any other reason is a bare invalidation.
 var duplicateOfRe = regexp.MustCompile(`(?i)duplicate of[:\s]+['"]?([A-Za-z0-9_-]+)['"]?`)
 
 // parseSurvivorID returns the id a DELETE reason names as the memory it
@@ -21,9 +20,8 @@ func parseSurvivorID(reason string) string {
 	return m[1]
 }
 
-// absorbedByReason is the fixed invalidation_reason an absorbed memory carries (epic
-// #1255 P5) - normalized, not the raw "duplicate of" text the consolidator wrote, so
-// lineage always reads the same regardless of the model's exact wording.
+// absorbedByReason is the normalized invalidation_reason of an absorbed memory, independent of
+// the model's wording.
 func absorbedByReason(survivorID string) string { return "absorbed by " + survivorID }
 
 // absorbFields is the subset of a memory's state computeAbsorbDelta merges -
@@ -41,7 +39,8 @@ type absorbDelta struct {
 	AbsorbedIDs                                           []string
 }
 
-// computeAbsorbDelta sums survivor+absorbed votes (upvotes/downvotes/supported/not_relevant, epic #1456 P1), recomputes tier from the merged supported count via tierFromSupported, takes the later of the two last_upvoted_at/last_recalled_at, and flattens lineage: absorbedID plus anything IT had already absorbed (an absorption chain, A absorbed by B absorbed by C, lands all of A/B on C) join survivor's own absorbed_ids.
+// computeAbsorbDelta sums both memories' votes, recomputes tier, keeps the later timestamps, and flattens
+// lineage so an absorption chain (A into B into C) lands A and B on C.
 func computeAbsorbDelta(survivor, absorbed absorbFields, absorbedID string) absorbDelta {
 	up, down := survivor.Upvotes+absorbed.Upvotes, survivor.Downvotes+absorbed.Downvotes
 	supported, notRelevant := survivor.Supported+absorbed.Supported, survivor.NotRelevant+absorbed.NotRelevant
@@ -95,9 +94,7 @@ func maxRFC3339(a, b string) string {
 	}
 }
 
-// absorbedIDSep joins/splits the AbsorbedIDs list for storage as one string
-// column/payload value (both backends) - ids are uuids, so a plain comma
-// never collides.
+// absorbedIDSep joins AbsorbedIDs into one stored value; ids are uuids, so a comma never collides.
 const absorbedIDSep = ","
 
 func joinIDs(ids []string) string { return strings.Join(ids, absorbedIDSep) }

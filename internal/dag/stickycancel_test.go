@@ -8,9 +8,8 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// TestExecute_RetryClearsStaleCancelSticky: runControls.cancelled is
-// deliberately sticky past unregister (so the stream can label a node
-// "cancelled" instead of "failed"), but nothing on the retry path reset it - register() cleared only the paused sticky. "stop node, then retry node" (cancelled -> queued is the only legal transition) ran the node to completion and then discarded its answer, because the stream still saw the PREVIOUS attempt's cancel flag.
+// runControls.cancelled stays sticky past unregister, so retry must clear it or the stream
+// discards the retried node's answer as cancelled.
 func TestExecute_RetryClearsStaleCancelSticky(t *testing.T) {
 	const chatID, nodeID = "chat-sticky", "n1"
 	ex := NewExecutor(session.InMemoryService(), nil, nil, nil, nil, nil)
@@ -22,9 +21,7 @@ func TestExecute_RetryClearsStaleCancelSticky(t *testing.T) {
 	}
 	ex.controls.unregister(chatID, nodeID)
 
-	// retry: RetryNode -> RetryPlanInNode -> buildGateNodes -> newGatedNode ->
-	// register. No ResetNodeCancels anywhere on this path - that only runs at
-	// the start of a new turn (orchestrator.go), never on a retry.
+	// The retry path reaches register() without ResetNodeCancels, which runs only per turn.
 	c, _, _ := ex.controls.register(chatID, nodeID)
 	defer ex.controls.unregister(chatID, nodeID)
 	if c.Cancelled() {

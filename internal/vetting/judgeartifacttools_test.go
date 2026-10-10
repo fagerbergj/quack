@@ -13,8 +13,7 @@ import (
 	"github.com/fagerbergj/quack/internal/recordstore"
 )
 
-// judgeToolCtx: StrictContextMock plus the ToolConfirmation stub
-// functiontool.Run needs (mirrors internal/tools/artifacts_test.go's own).
+// judgeToolCtx: StrictContextMock plus the ToolConfirmation stub functiontool.Run needs.
 type judgeToolCtx struct{ adkagent.StrictContextMock }
 
 func (judgeToolCtx) ToolConfirmation() *toolconfirmation.ToolConfirmation { return nil }
@@ -76,9 +75,8 @@ func TestNewJudgeArtifactToolsListAndRead(t *testing.T) {
 	}
 }
 
-// TestJudgeReadArtifactBase64ForBinary: a non-text artifact (a media agent's
-// blob) must come back base64-encoded, never raw bytes - raw bytes are not
-// valid UTF-8 and corrupt the judge's own genai request (review finding #2).
+// A binary artifact must come back base64-encoded: raw bytes are not valid UTF-8 and corrupt the judge's
+// genai request.
 func TestJudgeReadArtifactBase64ForBinary(t *testing.T) {
 	ctx := &judgeToolCtx{StrictContextMock: adkagent.NewStrictContextMock(context.Background())}
 	rc := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
@@ -102,8 +100,7 @@ func TestJudgeReadArtifactBase64ForBinary(t *testing.T) {
 	}
 }
 
-// TestJudgeReadArtifactWindow: offset/lines windows a large text artifact
-// instead of returning it whole - the only way to read past judgeArtifactReadCap.
+// offset/lines windows a large text artifact, the only way to read past judgeArtifactReadCap.
 func TestJudgeReadArtifactWindow(t *testing.T) {
 	ctx := &judgeToolCtx{StrictContextMock: adkagent.NewStrictContextMock(context.Background())}
 	rc := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
@@ -126,9 +123,8 @@ func TestJudgeReadArtifactWindow(t *testing.T) {
 	}
 }
 
-// TestJudgeListArtifactsHidesGateOwnedKinds: judge_round/delivery_record are
-// the gate's own verdict/delivery decisions - listing them lets a judge treat
-// its own prior scoring as evidence, so they're excluded (review nit).
+// judge_round/delivery_record are the gate's own decisions; listing them would let a judge treat its prior
+// scoring as evidence.
 func TestJudgeListArtifactsHidesGateOwnedKinds(t *testing.T) {
 	ctx := &judgeToolCtx{StrictContextMock: adkagent.NewStrictContextMock(context.Background())}
 	rc := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")

@@ -80,9 +80,8 @@ func TestAugmentFromRepo_ReadsCommitsOffDisk(t *testing.T) {
 	if !ok {
 		t.Fatal("a PR-demanding task with commits must synthesize a staged PR")
 	}
-	// Kind must be the delivery discriminator github's deliverOne switches on
-	// ("pull_request"), NOT the staging-slot key - a live delivery failed on
-	// kind "pr" while the judge had already passed the node.
+	// Kind must be the delivery discriminator ("pull_request") deliverOne switches on, not the
+	// staging-slot key "pr".
 	if pr.Kind != "pull_request" || pr.Title != "add x package" || pr.Branch != "quack/work" {
 		t.Fatalf("staged PR: %+v", pr)
 	}
@@ -97,9 +96,8 @@ func TestAugmentFromRepo_NoCommitsNoChange(t *testing.T) {
 	}
 }
 
-// countingGitShim puts a `git` wrapper ahead of the real one on PATH that
-// appends one line per invocation to a log file, then execs the real git -
-// lets the test count actual subprocess invocations instead of just asserting on act's final state.
+// countingGitShim puts a `git` wrapper first on PATH that logs one line per invocation and then execs
+// the real git, so the test counts real subprocesses.
 func countingGitShim(t *testing.T) (logFile string) {
 	t.Helper()
 	realGit, err := exec.LookPath("git")
@@ -128,9 +126,8 @@ func countGitInvocations(t *testing.T, logFile string) int {
 	return len(strings.Split(strings.TrimRight(string(b), "\n"), "\n"))
 }
 
-// augmentFromRepo shelled out to git on every actFor() call with
-// no caching (ponytail note at gitprobe.go). A node's continuation loop calls
-// actFor back-to-back with no git-changing action between the calls, so the second call should replay the first probe's result instead of re-running the diff/log/branch battery against an unchanged HEAD.
+// actFor runs back-to-back with no git change between calls, so the second call must replay the first
+// probe instead of re-running git against an unchanged HEAD.
 func TestAugmentFromRepo_MemoisesOnUnchangedHead(t *testing.T) {
 	cfg := probeRepo(t, true)
 	logFile := countingGitShim(t)
@@ -170,9 +167,8 @@ func TestAugmentFromRepo_SkipsNonSetupNodes(t *testing.T) {
 	}
 }
 
-// #710: chained nodes share one clone, so diffing from the reflog's oldest
-// entry showed every sibling's commits too - the change-shape criteria then
-// failed a node for work it never did and could not remove. NodeBaseSHA scopes the diff to this node's own contribution.
+// Chained nodes share one clone, so a diff from the reflog's oldest entry shows siblings' commits too;
+// NodeBaseSHA scopes it to this node's own work.
 func TestDiffSinceScopesToNodeBaseSHA(t *testing.T) {
 	dir := t.TempDir()
 	run := func(args ...string) string {
@@ -217,7 +213,7 @@ func TestDiffSinceScopesToNodeBaseSHA(t *testing.T) {
 		t.Errorf("node-scoped diff missing this node's own file:\n%s", res.Output)
 	}
 
-	// The old behaviour, for contrast: from the reflog base both appear.
+	// From the reflog base both appear.
 	b, err := baseCommit(dir, caps)
 	if err != nil {
 		t.Fatalf("baseCommit: %v", err)
@@ -228,17 +224,15 @@ func TestDiffSinceScopesToNodeBaseSHA(t *testing.T) {
 	}
 }
 
-// lowCommitHygiene: a verdict shaped like the judge's real #762 output - the
-// off-task-commit signal resetCloneToNodeBase keys on.
+// lowCommitHygiene: a judge verdict carrying the off-task-commit signal resetCloneToNodeBase keys on.
 func lowCommitHygiene() verdict {
 	return verdict{Criteria: map[string]criterionScore{
 		"commit_hygiene": {Score: 0.0, Reason: "the commit swept in files with no plausible connection to the task"},
 	}}
 }
 
-// #762 test case 3: resetCloneToNodeBase is computed purely from
-// cfg.NodeBaseSHA plus the judge's commit_hygiene score - it must undo a
-// rejected round's commit(s) regardless of what they contain, never by reading commit messages or diffs itself for topicality.
+// resetCloneToNodeBase keys only on cfg.NodeBaseSHA and the commit_hygiene score: it undoes a rejected
+// round's commits without reading their messages or diffs.
 func TestResetCloneToNodeBase_RewindsToStampedSHA(t *testing.T) {
 	cfg := probeRepo(t, false) // base commit + empty work branch, nothing committed yet
 	dir, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.SetupCloneDir(cfg.NodeID))
@@ -268,14 +262,13 @@ func TestResetCloneToNodeBase_RewindsToStampedSHA(t *testing.T) {
 	if head != cfg.NodeBaseSHA {
 		t.Fatalf("HEAD = %s, want cfg.NodeBaseSHA %s (reset must land exactly on the stamped base)", head, cfg.NodeBaseSHA)
 	}
-	if fileExists(dir, "unrelated.go") {
+	if pathExists(dir, "unrelated.go") {
 		t.Fatal("the rejected round's file survived the reset")
 	}
 }
 
-// resetCloneToNodeBase must no-op (never touch the clone) when there's nothing
-// safe to reset against: a read-only node, no clone, no stamped base, no
-// commit_hygiene criterion at all, or a commit_hygiene score that isn't in the off-task band - an ordinary incomplete/wrong round must keep its commits so the next round builds on them.
+// resetCloneToNodeBase must not touch the clone without a safe base (read-only, no clone, no stamped base,
+// no commit_hygiene) or when the score isn't in the off-task band.
 func TestResetCloneToNodeBase_NoopsWithoutABase(t *testing.T) {
 	cfg := probeRepo(t, true)
 	dir, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.SetupCloneDir(cfg.NodeID))

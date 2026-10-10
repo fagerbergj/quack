@@ -18,9 +18,8 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// coopStub records worker + judge calls and blocks the FIRST worker call until the
-// test unblocks it - so the test can set a cancel/steer via the executor before
-// the gate reaches its next stage boundary. The judge always passes.
+// coopStub records worker + judge calls and blocks the FIRST worker call until released,
+// so a cancel/steer can land before the next stage boundary. The judge always passes.
 type coopStub struct {
 	mu          sync.Mutex
 	workerCalls int
@@ -76,9 +75,7 @@ func drain(t *testing.T, ex *Executor, plan Plan) {
 	runPlanSSE(t, ex, plan, "chat")
 }
 
-// TestExecute_TaskOverrideAppliesBeforeNodeStarts: SetNodeTaskOverride, called
-// before the node has started, actually drives the worker's prompt - a
-// regression test for the override having been dead code (getOverride was never consulted; the node ran the plan's original node.Task regardless of what the REST 200 implied was saved).
+// SetNodeTaskOverride before the node starts must actually drive the worker's prompt.
 func TestExecute_TaskOverrideAppliesBeforeNodeStarts(t *testing.T) {
 	stub := &coopStub{started: make(chan struct{}, 1), unblock: make(chan struct{})}
 	close(stub.unblock) // nothing to synchronize on; the override lands well before drain
@@ -102,9 +99,8 @@ func TestExecute_TaskOverrideAppliesBeforeNodeStarts(t *testing.T) {
 	}
 }
 
-// TestExecute_TaskOverrideRejectedOnceNodeStarted: closes the TOCTOU between
-// "is this node started?" and "stash the override" - registerAndTakeOverride
-// registers the live control BEFORE the worker's first call, so an override attempt that only lands once the worker is already running (as this test forces via coopStub's start signal) must be rejected outright, never silently accepted-but-ignored.
+// registerAndTakeOverride registers the live control before the worker's first call, so
+// an override landing once the worker runs is rejected, never accepted-but-ignored.
 func TestExecute_TaskOverrideRejectedOnceNodeStarted(t *testing.T) {
 	stub := &coopStub{started: make(chan struct{}, 1), unblock: make(chan struct{})}
 	ex, plan := newCoopExecutor(t, stub, 1)
@@ -147,9 +143,8 @@ func TestExecute_CancelNodeStopsBeforeJudge(t *testing.T) {
 	}
 }
 
-// judgeBlockStub blocks the FIRST judge call (the one carrying submit_verdict)
-// until the test unblocks it, then returns a failing verdict - so the test can
-// inject a cancel while the judge's own model call is in flight and confirm the gate stops before the revise round starts. The worker draft never blocks.
+// judgeBlockStub blocks the FIRST judge call until released, then fails the verdict,
+// so a cancel can land while the judge's model call is in flight.
 type judgeBlockStub struct {
 	mu          sync.Mutex
 	workerCalls int
@@ -198,9 +193,7 @@ func newJudgeBlockExecutor(t *testing.T, stub *judgeBlockStub, rounds int) (*Exe
 	return ex, plan
 }
 
-// TestExecute_CancelDuringJudgeStopsBeforeRevise: the cooperative ctrl check
-// used to run only at the TOP of each judge round, so a cancel that lands
-// while the judge's own model call is in flight still paid for a full revise round before the next boundary honored it (#879 incident). A cancel set during the judge call must stop the gate before revise starts.
+// A cancel set during the judge's model call must stop the gate before revise starts.
 func TestExecute_CancelDuringJudgeStopsBeforeRevise(t *testing.T) {
 	stub := &judgeBlockStub{started: make(chan struct{}, 1), unblock: make(chan struct{})}
 	ex, plan := newJudgeBlockExecutor(t, stub, 1)
@@ -222,9 +215,8 @@ func TestExecute_CancelDuringJudgeStopsBeforeRevise(t *testing.T) {
 	}
 }
 
-// repeatTripStub blocks the worker's first model call on ctx (unlike coopStub's
-// plain channel) so a mid-round RepeatGuardTripped must interrupt it, not
-// just set a flag nobody reads until the round returns on its own.
+// repeatTripStub blocks the worker's first call on ctx, so a mid-round
+// RepeatGuardTripped must interrupt it rather than set an unread flag.
 type repeatTripStub struct {
 	mu      sync.Mutex
 	calls   int
@@ -265,9 +257,7 @@ func newRepeatTripExecutor(t *testing.T, stub *repeatTripStub, rounds int) (*Exe
 	return ex, plan
 }
 
-// TestExecute_RepeatGuardTrippedAbortsNativeRoundAndReportsFailure: the tool
-// layer's hard stop reaches here via Executor.RepeatGuardTripped and must
-// abort the in-flight model call, not just wait for the round to give up.
+// Executor.RepeatGuardTripped must abort the in-flight model call, not wait for the round.
 func TestExecute_RepeatGuardTrippedAbortsNativeRoundAndReportsFailure(t *testing.T) {
 	stub := &repeatTripStub{started: make(chan struct{}, 1)}
 	ex, plan := newRepeatTripExecutor(t, stub, 1)
@@ -322,9 +312,8 @@ func nodeEnd(events []stream.SSEEvent, nodeID string) string {
 	return ""
 }
 
-// TestExecute_CancelFlagDoesNotLeakAcrossTurns: node IDs (n1, n2, …) repeat
-// every turn, and the user-cancelled flag survives its control's unregister -
-// so a node cancelled last turn must not mark THIS turn's same-ID node "stopped". Two independent guards cover it: ResetNodeCancels, called at the start of each Run, and (since the retry fix - see TestExecute_RetryClearsStaleCancelSticky) register() itself clearing the per-node sticky the moment the node starts again, turn or retry alike.
+// Node IDs repeat every turn, so last turn's cancel must not mark this turn's same-ID node
+// stopped; ResetNodeCancels and register() each clear the sticky flag.
 func TestExecute_CancelFlagDoesNotLeakAcrossTurns(t *testing.T) {
 	// A prior turn's cancel left cancelled["s"]["n1"] set; this turn n1 completes.
 	newRun := func() (*Executor, Plan) {
@@ -349,9 +338,8 @@ func TestExecute_CancelFlagDoesNotLeakAcrossTurns(t *testing.T) {
 	}
 }
 
-// TestExecute_QueueNodeMessageReRunsWithGuidance: queueing a message for a
-// running node re-runs its worker with the message folded in (drained at the
-// next gate-stage boundary, never mid-call), then proceeds to the judge.
+// A queued message re-runs the worker with it folded in (drained at the next stage
+// boundary, never mid-call), then proceeds to the judge.
 func TestExecute_QueueNodeMessageReRunsWithGuidance(t *testing.T) {
 	stub := &coopStub{started: make(chan struct{}, 1), unblock: make(chan struct{})}
 	ex, plan := newCoopExecutor(t, stub, 1)
@@ -378,8 +366,7 @@ func TestExecute_QueueNodeMessageReRunsWithGuidance(t *testing.T) {
 	}
 }
 
-// TestExecute_QueueNodeMessageDeliversLiveVsBoundary (#998): with a live-steer
-// hook registered, a message delivers immediately with no boundary re-run.
+// With a live-steer hook registered, a message delivers immediately with no boundary re-run.
 func TestExecute_QueueNodeMessageDeliversLiveVsBoundary(t *testing.T) {
 	stub := &coopStub{started: make(chan struct{}, 1), unblock: make(chan struct{})}
 	ex, plan := newCoopExecutor(t, stub, 1)
@@ -412,9 +399,8 @@ func TestExecute_QueueNodeMessageDeliversLiveVsBoundary(t *testing.T) {
 	}
 }
 
-// TestExecute_PauseNodeStopsBeforeJudgeAndKeepsAnswer: pausing a running node
-// stops it at its next gate-stage boundary (like cancel) but the answer
-// propagates as a paused node, resumable - not cancelled.
+// Pause stops a running node at its next stage boundary like cancel, but the answer
+// propagates as a resumable paused node.
 func TestExecute_PauseNodeStopsBeforeJudge(t *testing.T) {
 	stub := &coopStub{started: make(chan struct{}, 1), unblock: make(chan struct{})}
 	ex, plan := newCoopExecutor(t, stub, 1)
@@ -438,9 +424,7 @@ func TestExecute_PauseNodeStopsBeforeJudge(t *testing.T) {
 	}
 }
 
-// TestExecute_CancelNodeReportsDelivery: CancelNode tells the truth about whether
-// it reached a live node - the API's "200 OK, node kept running" lie started
-// with the handler discarding this bool. NodeCancelled is the same fact, queryable by the tool layer.
+// CancelNode reports whether it reached a live node; NodeCancelled exposes the same fact.
 func TestExecute_CancelNodeReportsDelivery(t *testing.T) {
 	stub := &coopStub{started: make(chan struct{}, 1), unblock: make(chan struct{})}
 	ex, plan := newCoopExecutor(t, stub, 1)
@@ -472,9 +456,7 @@ func TestExecute_CancelNodeReportsDelivery(t *testing.T) {
 	}
 }
 
-// TestExecute_QueueNodeMessageReportsDelivery: queueing a message aimed at a
-// genuinely running node is delivered (ok=true) and picked up; one aimed at
-// nothing is not (ok=false, which the handler surfaces as 404).
+// A message for a running node is delivered (ok=true); one aimed at nothing is not (404).
 func TestExecute_QueueNodeMessageReportsDelivery(t *testing.T) {
 	stub := &coopStub{started: make(chan struct{}, 1), unblock: make(chan struct{})}
 	ex, plan := newCoopExecutor(t, stub, 1)
@@ -536,9 +518,7 @@ func TestExecute_EditRemoveQueuedMessage(t *testing.T) {
 	}
 }
 
-// TestQueuedMsg_StatusTransitions (steer-status enum): covers the four ways a
-// message's Status is set, including deriving from a pre-enum persisted row
-// that only carried the old Delivered bool.
+// Covers the four ways Status is set, including a pre-enum row with only Delivered.
 func TestQueuedMsg_StatusTransitions(t *testing.T) {
 	t.Run("enqueue without a live round queues", func(t *testing.T) {
 		c := &nodeControl{}
@@ -592,9 +572,8 @@ func TestQueuedMsg_StatusTransitions(t *testing.T) {
 	})
 }
 
-// A row written by this binary must stay correct when an OLDER binary reads it
-// back after a rollback: without the legacy bool it would look still-queued and
-// be re-delivered to the node.
+// An older binary reading this row after a rollback needs the legacy bool, or it
+// re-delivers the message.
 func TestQueuedMsg_MarshalKeepsLegacyDeliveredForRollback(t *testing.T) {
 	for _, tc := range []struct {
 		status MsgStatus
@@ -623,9 +602,8 @@ func TestQueuedMsg_MarshalKeepsLegacyDeliveredForRollback(t *testing.T) {
 	}
 }
 
-// TestCancelNode_FiresRegisteredRoundAbort (#1030): CancelNode must reach a
-// round already mid-flight via the abort func an ACP round registers with
-// SetNodeRoundAbort, not just the cancelled flag - that flag alone is invisible to acp.Agent.round until the round returns on its own.
+// CancelNode must fire the abort func an in-flight ACP round registered; the cancelled
+// flag alone is invisible until the round returns.
 func TestCancelNode_FiresRegisteredRoundAbort(t *testing.T) {
 	ex := &Executor{controls: newRunControls()}
 	ex.controls.register("chat", "n1")
@@ -643,9 +621,8 @@ func TestCancelNode_FiresRegisteredRoundAbort(t *testing.T) {
 	}
 }
 
-// TestCancelNode_RoundAbortIdempotentAndUnregistered: a cancel that arrives
-// before any round registers an abort func must not panic (falls back to
-// the cooperative flag, checked at the next boundary as before); a cancel after the abort func is cleared (round already ended) is likewise a harmless no-op.
+// A cancel before any abort func is registered, or after it is cleared, is a harmless
+// no-op that falls back to the cooperative flag.
 func TestCancelNode_RoundAbortIdempotentAndUnregistered(t *testing.T) {
 	ex := &Executor{controls: newRunControls()}
 	ex.controls.register("chat", "n1")

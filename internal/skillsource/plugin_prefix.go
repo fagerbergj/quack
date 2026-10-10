@@ -8,9 +8,8 @@ import (
 	"google.golang.org/adk/v2/tool/skilltoolset/skill"
 )
 
-// Prefixed qualifies every skill name from src as "plugin:name" (#1427's
-// plugin:skill naming) - the only thing that lets two plugins ship a
-// same-named skill through skill.NewMergedSource without ErrDuplicateSkill.
+// Prefixed names every skill from src "plugin:name", which lets two plugins ship a same-named skill
+// through skill.NewMergedSource without ErrDuplicateSkill.
 func Prefixed(plugin string, src skill.Source) skill.Source {
 	return &prefixed{prefix: plugin + ":", src: src}
 }

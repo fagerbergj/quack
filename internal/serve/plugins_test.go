@@ -26,9 +26,8 @@ func TestCheckPluginModules_LinkedModulePasses(t *testing.T) {
 	}
 }
 
-// Go cannot load a Go module at runtime, so a manifest promising one this
-// binary was not built with must fail the boot naming the import to add -
-// never boot a server quietly missing what it advertised.
+// Go can't load a module at runtime, so a manifest promising one this binary lacks must fail boot,
+// naming the import to add.
 func TestCheckPluginModules_UnlinkedModuleIsABootError(t *testing.T) {
 	p := plugin.Plugin{Name: "ghost", Modules: []plugin.Module{{Name: "ghost", Path: "github.com/fagerbergj/quack-extensions/ghost"}}}
 	err := checkModuleLinked(p)
@@ -63,9 +62,8 @@ func TestCheckPluginConfig(t *testing.T) {
 	if err := checkConfigRequired(required, map[string]yaml.Node{"usage": node(t, "prometheus_url: http://p:9090")}); err != nil {
 		t.Errorf("configured required plugin: %v", err)
 	}
-	// Present-but-empty is the failure the namespace block is declaring.
-	// The shape an operator actually types is `extensions: {usage: {}}` - a
-	// mapping node with no content, not a zero Node.
+	// Present-but-empty is the failure the namespace block declares; operators type
+	// `extensions: {usage: {}}`, a mapping node with no content, not a zero Node.
 	if err := checkConfigRequired(required, map[string]yaml.Node{"usage": node(t, "{}")}); err == nil {
 		t.Error("empty mapping for config:required = nil, want a boot error")
 	}
@@ -78,9 +76,8 @@ func TestCheckPluginConfig(t *testing.T) {
 	}
 }
 
-// TestPluginMCPTools_HangingServerCostsOnlyItsTools pins the boot-enumeration
-// deadline (spec §7.2.2 rule 5): a server that never handshakes must time out
-// and cost only its own tools, not stall the boot.
+// TestMCPSetNext_HangingServerCostsOnlyItsTools: a server that never handshakes times out
+// and costs only its own tools, not the boot.
 func TestMCPSetNext_HangingServerCostsOnlyItsTools(t *testing.T) {
 	old := mcpEnumerateTimeout
 	mcpEnumerateTimeout = 300 * time.Millisecond
@@ -105,9 +102,8 @@ func TestMCPSetNext_HangingServerCostsOnlyItsTools(t *testing.T) {
 	}
 }
 
-// TestSeedRegistryWarnsOnIdentityCollisionKeepsDiskRow: a seed entry sharing
-// a name with an on-disk row under a DIFFERENT identity is warned about, not
-// fatal, and the on-disk row is left untouched (#1430 carry-over).
+// TestSeedRegistryWarnsOnIdentityCollisionKeepsDiskRow: a seed entry sharing a name with an on-disk row of
+// a different identity is warned about, not fatal, and the on-disk row is untouched.
 func TestSeedRegistryWarnsOnIdentityCollisionKeepsDiskRow(t *testing.T) {
 	root := t.TempDir()
 	reg := pluginreg.NewFSRegistry(root)
@@ -128,9 +124,8 @@ func TestSeedRegistryWarnsOnIdentityCollisionKeepsDiskRow(t *testing.T) {
 	}
 }
 
-// TestSeedRegistryPropagatesPutFailureOnNewInsert: a new seed name whose
-// Put fails (here: blocked by a same-path file, a real on-disk collision)
-// surfaces the error rather than being swallowed.
+// TestSeedRegistryPropagatesPutFailureOnNewInsert: a new seed name whose Put fails (blocked by a
+// same-path file) surfaces the error.
 func TestSeedRegistryPropagatesPutFailureOnNewInsert(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "widgets"), []byte("x"), 0o644); err != nil {
@@ -142,9 +137,8 @@ func TestSeedRegistryPropagatesPutFailureOnNewInsert(t *testing.T) {
 	}
 }
 
-// TestPersistPluginRefusalLogsOnWriteFailure: a Put failure while
-// persisting a boot refusal is logged, not returned or panicked on -
-// there is nothing left for the caller to do about it.
+// TestPersistPluginRefusalLogsOnWriteFailure: a Put failure while persisting a boot refusal is logged,
+// not returned; the caller can't do anything about it.
 func TestPersistPluginRefusalLogsOnWriteFailure(t *testing.T) {
 	var buf bytes.Buffer
 	prev := slog.Default()
@@ -164,9 +158,8 @@ func TestPersistPluginRefusalLogsOnWriteFailure(t *testing.T) {
 	}
 }
 
-// TestAdmitPlugins_PersistsRefusalOnTheRegistryRow: a REST-added row's
-// refusal is dropped from the roster AND written to its registry row, so
-// GET /plugins shows why boot/rebuild dropped it.
+// TestAdmitPlugins_PersistsRefusalOnTheRegistryRow: a REST-added row's refusal is dropped from the roster
+// and written to its registry row, so GET /plugins shows why.
 func TestAdmitPlugins_PersistsRefusalOnTheRegistryRow(t *testing.T) {
 	root := t.TempDir()
 	reg := pluginreg.NewFSRegistry(root)
@@ -190,9 +183,8 @@ func TestAdmitPlugins_PersistsRefusalOnTheRegistryRow(t *testing.T) {
 	}
 }
 
-// pluginWithAgent builds a plugin.Plugin whose AgentsDir/Agents list exactly
-// one real, valid bundle - the fixture admitPlugins' manifest checks need
-// (CheckManifestLists must pass) to reach the cross-plugin collision check.
+// pluginWithAgent builds a plugin listing exactly one valid bundle, enough to pass CheckManifestLists
+// and reach admitPlugins' cross-plugin collision check.
 func pluginWithAgent(t *testing.T, pluginName, agentName string) plugin.Plugin {
 	t.Helper()
 	dir := t.TempDir()
@@ -200,10 +192,8 @@ func pluginWithAgent(t *testing.T, pluginName, agentName string) plugin.Plugin {
 	return plugin.Plugin{Name: pluginName, Root: t.TempDir(), AgentsDir: dir, Agents: []string{agentName}}
 }
 
-// Two REST-added (non-seed) rows listing the same agent name: the second
-// collides and is dropped, warned and recorded in refusals; the first stays
-// admitted, and boot itself never fails for a non-seed row (#1430) - the
-// exact scenario review finding 4 flagged as bricking boot before this fix.
+// Two REST-added rows listing the same agent: the second is dropped, warned and recorded in refusals;
+// the first stays admitted and boot never fails for a non-seed row.
 func TestAdmitPlugins_CrossPluginCollisionDropsNonSeedRow(t *testing.T) {
 	reg := pluginreg.NewFSRegistry(t.TempDir())
 	a := pluginWithAgent(t, "a", "scout")
@@ -229,12 +219,8 @@ func TestAdmitPlugins_CrossPluginCollisionDropsNonSeedRow(t *testing.T) {
 	}
 }
 
-// Same collision, but b is a plugins.seed row: admitPlugins must fail boot
-// outright, not drop it - #1430's seed-row treatment applies to a manifest
-// collision exactly like any other refusal. b loses the claim here because a
-// (non-seed) is FIRST in plugins - admitPlugins claims in argument order, so
-// every caller must feed it pluginreg.OrderBySeed's seed-first ordering for a
-// seed row to reliably win; see TestAdmitPlugins_SeedRowWinsCollisionWhenFedFirst.
+// Same collision with b a plugins.seed row: boot fails outright. admitPlugins claims in argument order, so
+// callers must feed it pluginreg.OrderBySeed's seed-first order (see ..._SeedRowWinsCollisionWhenFedFirst).
 func TestAdmitPlugins_CrossPluginCollisionFatalForSeedRow(t *testing.T) {
 	reg := pluginreg.NewFSRegistry(t.TempDir())
 	a := pluginWithAgent(t, "a", "scout")
@@ -248,9 +234,8 @@ func TestAdmitPlugins_CrossPluginCollisionFatalForSeedRow(t *testing.T) {
 	}
 }
 
-// The production-guaranteed order (pluginreg.OrderBySeed puts seed rows
-// first): a seed row claiming a name before a same-named REST row wins - the
-// REST row is dropped, not fatal.
+// With pluginreg.OrderBySeed's seed-first order, a seed row claiming a name first wins;
+// the same-named REST row is dropped, not fatal.
 func TestAdmitPlugins_SeedRowWinsCollisionWhenFedFirst(t *testing.T) {
 	reg := pluginreg.NewFSRegistry(t.TempDir())
 	seed := pluginWithAgent(t, "seed", "scout")
@@ -270,9 +255,8 @@ func TestAdmitPlugins_SeedRowWinsCollisionWhenFedFirst(t *testing.T) {
 	}
 }
 
-// A plugin whose module is not configured (gated off) never seeds, so its
-// listed names must not block a different, actually-enabled plugin from
-// claiming the same name.
+// A plugin whose module isn't configured never seeds, so its names must not block
+// an enabled plugin from claiming them.
 func TestAdmitPlugins_GatedOffPluginDoesNotClaimNames(t *testing.T) {
 	reg := pluginreg.NewFSRegistry(t.TempDir())
 	off := pluginWithAgent(t, "off", "scout")
@@ -299,9 +283,8 @@ func TestAdmitPlugins_GatedOffPluginDoesNotClaimNames(t *testing.T) {
 	}
 }
 
-// A REST-added row listing an agent that doesn't exist on disk is dropped
-// like any other refusal, not a fatal boot error - review finding 4's core
-// scenario: a third-party plugin over POST /plugins must never brick boot.
+// A REST-added row listing an agent missing on disk is dropped like any refusal, not fatal:
+// a third-party plugin over POST /plugins must never brick boot.
 func TestAdmitPlugins_ListedButMissingDropsNonSeedRow(t *testing.T) {
 	reg := pluginreg.NewFSRegistry(t.TempDir())
 	bad := plugin.Plugin{Name: "bad", Root: t.TempDir(), AgentsDir: t.TempDir(), Agents: []string{"ghost"}}
@@ -316,9 +299,8 @@ func TestAdmitPlugins_ListedButMissingDropsNonSeedRow(t *testing.T) {
 	}
 }
 
-// A manifest listing the same name twice is its own plugin's contract
-// error - a distinct "listed twice" message, never the cross-plugin
-// "plugin X and plugin X both list it" self-collision phrasing.
+// A manifest listing the same name twice gets a distinct "listed twice" error,
+// not the cross-plugin "plugin X and plugin X both list it" phrasing.
 func TestAdmitPlugins_DuplicateNameInOwnListErrorsDistinctly(t *testing.T) {
 	reg := pluginreg.NewFSRegistry(t.TempDir())
 	dup := pluginWithAgent(t, "dup", "scout")
@@ -444,8 +426,8 @@ func TestResolveRegistryPlugins_GithubRowBrokenMCPWarnsAndDropsOnlyItsTools(t *t
 	}
 }
 
-// TestResolveRegistryPlugins_LocalRowKeepsMCPServers: a local root (config-
-// only, plugins.seed) is unaffected - only github: rows are in #1434's scope.
+// TestResolveRegistryPlugins_LocalRowKeepsMCPServers: a local root (config-only, plugins.seed)
+// keeps its MCP servers; only github: rows are affected.
 func TestResolveRegistryPlugins_LocalRowKeepsMCPServers(t *testing.T) {
 	root := t.TempDir()
 	writePluginManifest(t, root, "local-plugin")

@@ -8,13 +8,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fagerbergj/quack/internal/store/storetest"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 )
 
-// TestSQLiteStoreRoundTrip proves the dialector swap: New("sqlite", path) migrates
-// both the app tables AND the ADK session/event tables on a pure-Go SQLite file,
-// and the app methods round-trip. Runs cgo-free (modernc driver).
+// New("sqlite", path) migrates both the app tables and ADK's session/event tables on pure-Go SQLite,
+// and the app methods round-trip.
 func TestSQLiteStoreRoundTrip(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "quack.db")
 	st, err := New("sqlite", dbPath)
@@ -64,9 +64,8 @@ func TestSQLiteStoreRoundTrip(t *testing.T) {
 	}
 }
 
-// TestChatUsageAggregate covers GetChatUsage/ChatsUsageTotals: SQL SUM across
-// a chat's plain-reply turns AND its DAG nodes (joined through the plan),
-// never loading a row into memory; two chats prove ChatsUsageTotals doesn't cross-contaminate between them.
+// GetChatUsage/ChatsUsageTotals SUM a chat's plain-reply turns and DAG nodes in SQL; two chats prove the
+// totals don't cross-contaminate.
 func TestChatUsageAggregate(t *testing.T) {
 	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {
@@ -199,9 +198,8 @@ func TestChatEventLog(t *testing.T) {
 	}
 }
 
-// TestSetChatGitHub covers both the create-if-missing path (webhook dispatch
-// can fire before the chat row exists) and updating an existing row. Also
-// pins #512's read/write asymmetry fix: SessionUser is recorded on create and must NOT move on a later dispatch by a different commenter, since existing session history was already written under the original login.
+// SetChatGitHub creates a missing row (the webhook can precede the chat) and updates an existing one, but
+// never moves SessionUser: existing session history was written under the original login.
 func TestSetChatGitHub(t *testing.T) {
 	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {
@@ -224,9 +222,7 @@ func TestSetChatGitHub(t *testing.T) {
 		t.Fatalf("SessionUser = %q, want %q", got.SessionUser, "alice")
 	}
 
-	// Second call (row now exists, different commenter) must update the
-	// github fields in place, not error/duplicate - and must NOT move
-	// SessionUser off the login the existing session was written under.
+	// A second call by a different commenter updates the github fields in place and keeps SessionUser.
 	if err := st.SetChatGitHub(ctx, id, "acme/widget-app", "https://github.com/acme/widget-app/pull/42", "", "bob"); err != nil {
 		t.Fatalf("SetChatGitHub (update): %v", err)
 	}
@@ -239,115 +235,6 @@ func TestSetChatGitHub(t *testing.T) {
 	}
 	if chats, _, err := st.ListChats(ctx, 0, "", ChatsScope{Active: true}); err != nil || len(chats) != 1 {
 		t.Fatalf("ListChats: %d err=%v (update must not create a duplicate row)", len(chats), err)
-	}
-}
-
-// TestGithubSnapshotRoundTrip pins the #459 snapshot store: no row yet reads
-// as (ok=false, no error), a set is readable back verbatim, and a second set
-// updates in place (one row per chat, not a growing history).
-func TestGithubSnapshotRoundTrip(t *testing.T) {
-	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
-	if err != nil {
-		t.Fatalf("New sqlite: %v", err)
-	}
-	ctx := context.Background()
-	id := "github-acme-widgets-7"
-
-	if _, ok, err := st.GetGithubSnapshot(ctx, id); err != nil || ok {
-		t.Fatalf("GetGithubSnapshot before any Set: ok=%v err=%v; want (false, nil)", ok, err)
-	}
-
-	if err := st.SetGithubSnapshot(ctx, id, `{"title":"v1"}`); err != nil {
-		t.Fatalf("SetGithubSnapshot (create): %v", err)
-	}
-	got, ok, err := st.GetGithubSnapshot(ctx, id)
-	if err != nil || !ok || got != `{"title":"v1"}` {
-		t.Fatalf("GetGithubSnapshot after create: got=%q ok=%v err=%v", got, ok, err)
-	}
-
-	if err := st.SetGithubSnapshot(ctx, id, `{"title":"v2"}`); err != nil {
-		t.Fatalf("SetGithubSnapshot (update): %v", err)
-	}
-	got, ok, err = st.GetGithubSnapshot(ctx, id)
-	if err != nil || !ok || got != `{"title":"v2"}` {
-		t.Fatalf("GetGithubSnapshot after update: got=%q ok=%v err=%v", got, ok, err)
-	}
-}
-
-// TestGithubReviewBaselineRoundTrip pins the #459 follow-up fix's store half:
-// separate from GithubSnapshot, no row until explicitly set, then readable
-// back verbatim and updatable in place.
-func TestGithubReviewBaselineRoundTrip(t *testing.T) {
-	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
-	if err != nil {
-		t.Fatalf("New sqlite: %v", err)
-	}
-	ctx := context.Background()
-	id := "github-acme-widgets-7"
-
-	if _, ok, err := st.GetGithubReviewBaseline(ctx, id); err != nil || ok {
-		t.Fatalf("GetGithubReviewBaseline before any Set: ok=%v err=%v; want (false, nil)", ok, err)
-	}
-
-	if err := st.SetGithubReviewBaseline(ctx, id, `["pid1"]`); err != nil {
-		t.Fatalf("SetGithubReviewBaseline (create): %v", err)
-	}
-	got, ok, err := st.GetGithubReviewBaseline(ctx, id)
-	if err != nil || !ok || got != `["pid1"]` {
-		t.Fatalf("GetGithubReviewBaseline after create: got=%q ok=%v err=%v", got, ok, err)
-	}
-
-	if err := st.SetGithubReviewBaseline(ctx, id, `["pid1","pid2"]`); err != nil {
-		t.Fatalf("SetGithubReviewBaseline (update): %v", err)
-	}
-	got, ok, err = st.GetGithubReviewBaseline(ctx, id)
-	if err != nil || !ok || got != `["pid1","pid2"]` {
-		t.Fatalf("GetGithubReviewBaseline after update: got=%q ok=%v err=%v", got, ok, err)
-	}
-
-	// Independent of GithubSnapshot - setting one must not create/affect the other.
-	if _, ok, err := st.GetGithubSnapshot(ctx, id); err != nil || ok {
-		t.Fatalf("GetGithubSnapshot should be untouched by SetGithubReviewBaseline: ok=%v err=%v", ok, err)
-	}
-}
-
-// TestGithubMergeIntentRoundTrip pins the standing quack:merge intent's store
-// half: no row until explicitly set, then readable back with the recorder,
-// updatable in place (re-applying the label refreshes it), and gone after delete (consumed by a merge).
-func TestGithubMergeIntentRoundTrip(t *testing.T) {
-	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
-	if err != nil {
-		t.Fatalf("New sqlite: %v", err)
-	}
-	ctx := context.Background()
-	id := "github-acme-widgets-7"
-
-	if got, err := st.GetGithubMergeIntent(ctx, id); err != nil || got != nil {
-		t.Fatalf("GetGithubMergeIntent before any Set: got=%v err=%v; want (nil, nil)", got, err)
-	}
-
-	if err := st.SetGithubMergeIntent(ctx, id, "alice"); err != nil {
-		t.Fatalf("SetGithubMergeIntent (create): %v", err)
-	}
-	got, err := st.GetGithubMergeIntent(ctx, id)
-	if err != nil || got == nil || got.RequestedBy != "alice" {
-		t.Fatalf("GetGithubMergeIntent after create: got=%+v err=%v", got, err)
-	}
-
-	// A second application (by someone else) refreshes the authorizer in place.
-	if err := st.SetGithubMergeIntent(ctx, id, "bob"); err != nil {
-		t.Fatalf("SetGithubMergeIntent (update): %v", err)
-	}
-	got, err = st.GetGithubMergeIntent(ctx, id)
-	if err != nil || got == nil || got.RequestedBy != "bob" {
-		t.Fatalf("GetGithubMergeIntent after update: got=%+v err=%v", got, err)
-	}
-
-	if err := st.DeleteGithubMergeIntent(ctx, id); err != nil {
-		t.Fatalf("DeleteGithubMergeIntent: %v", err)
-	}
-	if got, err := st.GetGithubMergeIntent(ctx, id); err != nil || got != nil {
-		t.Fatalf("GetGithubMergeIntent after delete: got=%v err=%v; want (nil, nil)", got, err)
 	}
 }
 
@@ -371,9 +258,8 @@ func asstEvent(parts ...*genai.Part) *session.Event {
 	return ev
 }
 
-// orchestratorAgentNodeEvent is the orchestrator's OWN reply as ADK actually
-// stamps it in production: the orchestrator llmagent is wrapped in a
-// workflow.AgentNode too (Start → agentNode), so its real events carry NodeInfo just like a gate-internal node's - "author, not NodeInfo" is what distinguishes them. Regression fixture for the bug where a plain `NodeInfo != nil` exclusion filter dropped the orchestrator's own conversational (no-DAG) answer entirely.
+// orchestratorAgentNodeEvent is the orchestrator's own reply as ADK stamps it: AgentNode-wrapped, so it
+// carries NodeInfo too. Author, not NodeInfo, distinguishes it from a gate-internal node's event.
 func orchestratorAgentNodeEvent(text string) *session.Event {
 	ev := session.NewEvent(context.Background(), "test")
 	ev.Author = "orchestrator"
@@ -441,9 +327,8 @@ func TestGroupSessionEvents(t *testing.T) {
 	}
 }
 
-// compactionEvent mirrors what ADK's compactor actually persists (adk/v2
-// internal/compactioninternal summary_event.go newSummaryEvent): Author
-// "user" (a summary is injected context, re-authored "model" only when materialized into a prompt) but no top-level Content - the summary prose lives solely under Actions.Compaction.CompactedContent. groupSessionEvents' `ev.Content == nil` guard must skip it rather than reading Author=="user" as a new turn boundary (#A3: the orchestrator's chat session can now carry one of these once compaction is enabled).
+// compactionEvent mirrors ADK's persisted compaction summary: Author "user" but no top-level Content (the
+// prose lives under Actions.Compaction). groupSessionEvents must not read it as a turn boundary.
 func compactionEvent() *session.Event {
 	ev := session.NewEvent(context.Background(), "test")
 	ev.Author = "user"
@@ -453,9 +338,8 @@ func compactionEvent() *session.Event {
 	return ev
 }
 
-// TestGroupSessionEvents_CompactionEventDoesNotSplitATurn is a regression
-// test for the ADK audit's A3 finding: a compaction summary event has no
-// top-level Content (see compactionEvent), so it must not register as a bogus Author=="user" turn boundary - that would desync groupSessionEvents' output length from ListTurns' row count and shift every later turn's content onto the wrong ChatTurn in GetTurnsWithContent's offset alignment.
+// A compaction summary must not register as a turn boundary, or groupSessionEvents' length desyncs from
+// the turn rows and every later turn's content shifts onto the wrong ChatTurn.
 func TestGroupSessionEvents_CompactionEventDoesNotSplitATurn(t *testing.T) {
 	events := []*session.Event{
 		userEvent("turn one"),
@@ -478,9 +362,8 @@ func TestGroupSessionEvents_CompactionEventDoesNotSplitATurn(t *testing.T) {
 	}
 }
 
-// nodeEvent is a gate-internal event (a worker draft, an advisor consult, a
-// revision) - tagged with NodeInfo, unlike the orchestrator's own top-level
-// events (asstEvent, persistAnswer). Never the user-facing message.
+// nodeEvent is a gate-internal event (a worker draft, an advisor consult), tagged with NodeInfo: never the
+// user-facing message.
 func nodeEvent(path string, parts ...*genai.Part) *session.Event {
 	ev := session.NewEvent(context.Background(), "test")
 	ev.Author = "web-researcher"
@@ -489,9 +372,8 @@ func nodeEvent(path string, parts ...*genai.Part) *session.Event {
 	return ev
 }
 
-// TestGroupSessionEvents_NodeActivityExcluded guards the leak that made a node's
-// internal deliberation (advisor guidance, a worker's raw draft) show up as the
-// turn's message: gate-internal events (NodeInfo set) must contribute NEITHER asstText NOR toolCalls - only the orchestrator's own top-level events do.
+// Gate-internal events (NodeInfo set) contribute neither asstText nor toolCalls, so a node's deliberation
+// never shows as the turn's message.
 func TestGroupSessionEvents_NodeActivityExcluded(t *testing.T) {
 	events := []*session.Event{
 		userEvent("research X"),
@@ -522,9 +404,8 @@ func TestGroupSessionEvents_NodeActivityExcluded(t *testing.T) {
 	}
 }
 
-// TestGroupSessionEvents_UsageAccumulation covers Turn.usage's data source: the
-// orchestrator's own model events carry UsageMetadata, summed per turn - while a
-// gate-internal node event's usage (already surfaced separately via DagNodeState) must NOT leak into it, mirroring the asstText/toolCalls exclusion above.
+// The orchestrator's own model events' UsageMetadata sums per turn; a gate-internal node's usage (surfaced
+// via DagNodeState) must not leak in.
 func TestGroupSessionEvents_UsageAccumulation(t *testing.T) {
 	orch1 := asstEvent(&genai.Part{Text: "thinking"})
 	orch1.UsageMetadata = &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 30, CandidatesTokenCount: 5}
@@ -552,9 +433,7 @@ func TestGroupSessionEvents_UsageAccumulation(t *testing.T) {
 	}
 }
 
-// TestGetTurnsWithContent_UsageFallbackIsSymmetric pins the review fix: a
-// turn that predates SetTurnUsage (ChatTurn's token columns are zero) falls
-// back to the session-walk-derived usage for ALL five fields, not just the three original ones - cachedTokens/totalTokens used to stay 0 even though groupSessionEvents already computed them.
+// A turn without SetTurnUsage's stamp falls back to the session-walk usage for all five token fields.
 func TestGetTurnsWithContent_UsageFallbackIsSymmetric(t *testing.T) {
 	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {
@@ -603,9 +482,8 @@ func TestGetTurnsWithContent_UsageFallbackIsSymmetric(t *testing.T) {
 	}
 }
 
-// TestGetTurnsWithContent_SurvivesSessionReset pins #1226: a ResetHistory
-// dispatch deletes the whole ADK session (orchestrator.ResetSession), which
-// leaves turns that predate it with no session events at all - not even a misaligned one. GetTurnsWithContent must still show the user's original text for that turn, from the ChatTurn.UserText column stamped at SaveTurn, instead of rendering it as {"content": ""} forever.
+// A ResetHistory dispatch deletes the whole ADK session; earlier turns must still show the user's text
+// from ChatTurn.UserText instead of empty content.
 func TestGetTurnsWithContent_SurvivesSessionReset(t *testing.T) {
 	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {
@@ -632,9 +510,8 @@ func TestGetTurnsWithContent_SurvivesSessionReset(t *testing.T) {
 		t.Fatalf("AppendEvent: %v", err)
 	}
 
-	// A ResetHistory dispatch for turn 2 deletes the whole session
-	// (Orchestrator.ResetSession) before the new turn's own events land. The
-	// ADK schema declares its events table as CASCADE-owned by the session row (see adk/v2/session/database storageEvent), which Postgres enforces on every delete; SQLite's enforcement is per-connection and flaky under gorm's pool, so this deletes the orphaned event row directly to pin the CASCADE behavior deterministically.
+	// Reset deletes the session before the new turn's events land. ADK's events cascade on session delete, but
+	// SQLite enforces that per-connection, so delete the orphaned event row directly to stay deterministic.
 	if err := st.Sessions.Delete(ctx, &session.DeleteRequest{AppName: chatAppName, UserID: "local", SessionID: chatID}); err != nil {
 		t.Fatalf("session Delete: %v", err)
 	}
@@ -667,9 +544,8 @@ func TestGetTurnsWithContent_SurvivesSessionReset(t *testing.T) {
 	}
 }
 
-// TestDeleteChat_ReapsSession pins #352 bug 2: deleting a chat must not
-// strand its turns, DAG plan/node state, durable event log, or ADK session -
-// all of it lives in tables/services keyed off the chat id, and the "chats" row was the only thing DeleteChat used to touch. Also covers a GitHub-dispatched chat that predates #512's SessionUser column (id prefix github-, no recorded SessionUser): its ADK session was written under fallback user "github" - the reap must find it there, not the row (already deleted by the time the ADK cleanup runs).
+// DeleteChat must reap everything keyed off the chat id: turns, DAG state, event log and ADK session. A
+// GitHub chat with no recorded SessionUser has its session under fallback user "github".
 func TestDeleteChat_ReapsSession(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "quack.db")
 	st, err := New("sqlite", dbPath)
@@ -724,9 +600,8 @@ func TestDeleteChat_ReapsSession(t *testing.T) {
 	}
 }
 
-// TestSessionUserForChat_RoundTrip pins the #512 read/write asymmetry fix: a
-// GitHub chat created for commenter "alice" resolves "alice" (not the old
-// hardcoded "github") via both SessionUserFor and SessionUserForChat, and DeleteChat reaps the ADK session under that SAME identity. An older/unrecorded GitHub chat (empty SessionUser) still falls back to "github"; a non-GitHub chat falls back to "local".
+// A GitHub chat for "alice" resolves "alice" via SessionUserFor and SessionUserForChat, and DeleteChat reaps
+// under it. Unrecorded GitHub chats fall back to "github"; non-GitHub chats to "local".
 func TestSessionUserForChat_RoundTrip(t *testing.T) {
 	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {
@@ -773,9 +648,8 @@ func TestSessionUserForChat_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestGroupSessionEvents_OrchestratorOwnReplyKept guards the regression: the
-// orchestrator's own conversational (no-DAG) reply carries NodeInfo (it's
-// AgentNode-wrapped too) but must still be captured - only gate-internal (different-author) events are excluded.
+// The orchestrator's own (no-DAG) reply carries NodeInfo but must still be captured: only different-author
+// events are excluded.
 func TestGroupSessionEvents_OrchestratorOwnReplyKept(t *testing.T) {
 	events := []*session.Event{
 		userEvent("what is the tallest mountain?"),
@@ -790,42 +664,7 @@ func TestGroupSessionEvents_OrchestratorOwnReplyKept(t *testing.T) {
 	}
 }
 
-// TestRecordedQuerySQL_OffByDefaultAndBounded is the #1113 second-review
-// regression: record_sql's callback is registered unconditionally in New(),
-// so without a gate + cap it would grow forever on a live server. Proves both halves: recording off (the production default) leaves the slice empty no matter how many queries run, and recording on caps at querySQLCap regardless of how many more queries run past it.
-func TestRecordedQuerySQL_OffByDefaultAndBounded(t *testing.T) {
-	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	ctx := context.Background()
-	const n = 10_000
-	for i := 0; i < n; i++ {
-		if _, err := st.GetChat(ctx, "nonexistent"); err != nil {
-			t.Fatalf("GetChat: %v", err)
-		}
-	}
-	if got := st.QueryCount(); got < n {
-		t.Fatalf("QueryCount = %d, want at least %d (the plain counter always runs)", got, n)
-	}
-	if got := st.RecordedQuerySQL(); len(got) != 0 {
-		t.Fatalf("RecordedQuerySQL = %d entries, want 0 - recording is off by default", len(got))
-	}
-
-	st.EnableQueryRecording()
-	for i := 0; i < n; i++ {
-		if _, err := st.GetChat(ctx, "nonexistent"); err != nil {
-			t.Fatalf("GetChat: %v", err)
-		}
-	}
-	if got := len(st.RecordedQuerySQL()); got != querySQLCap {
-		t.Fatalf("RecordedQuerySQL length = %d, want exactly querySQLCap (%d) after %d queries", got, querySQLCap, n)
-	}
-}
-
-// TestUpdateTitle_CapsLength is #1124's backstop: a titler that ignores its
-// own "3-6 words" instruction (or a manual rename, or an extension's origin
-// label) must never persist an unbounded string as a chat's title - capped once here, not duplicated per caller.
+// Every persisted title is capped once here, whatever the caller (titler, manual rename, origin label).
 func TestUpdateTitle_CapsLength(t *testing.T) {
 	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {
@@ -853,7 +692,7 @@ func TestUpdateTitle_CapsLength(t *testing.T) {
 	}
 }
 
-// TestTruncateTitle_WordBoundary is #1232: a long PR title must not be cut
+// TestTruncateTitle_WordBoundary: a long PR title must not be cut
 // mid-word with no indication it was shortened.
 func TestTruncateTitle_WordBoundary(t *testing.T) {
 	title := "fix(ledger,vetting): one representation per fact - delivery and judge rounds (#1230)"
@@ -872,9 +711,7 @@ func TestTruncateTitle_WordBoundary(t *testing.T) {
 	}
 }
 
-// TestDeleteChat_RemovesCheckpointRow pins the #1238 review follow-up: a
-// chat's ledger_checkpoints row must not survive DeleteChat - UUIDv4 ids
-// never repeat, so a leftover row can never be read back and is pure leak.
+// A chat's ledger_checkpoints row must not survive DeleteChat: chat ids never repeat, so it would only leak.
 func TestDeleteChat_RemovesCheckpointRow(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "quack.db")
 	st, err := New("sqlite", dbPath)
@@ -901,9 +738,8 @@ func TestDeleteChat_RemovesCheckpointRow(t *testing.T) {
 	}
 }
 
-// TestGetTurnsWithContent_NodesQueryIsConstant pins the perf audit #5 fix:
-// dag_nodes must be fetched with one plan_id IN (?) query, not one
-// GetDagNodes call per turn - so the query delta between N=5 and N=20 turns (each with its own plan+node) must be the same, not proportional to N.
+// dag_nodes are fetched with one plan_id IN (?) query, so the query delta between 5 and 20 turns
+// (each with its own plan+node) is constant.
 func TestGetTurnsWithContent_NodesQueryIsConstant(t *testing.T) {
 	ctx := context.Background()
 	run := func(n int) int64 {
@@ -928,11 +764,11 @@ func TestGetTurnsWithContent_NodesQueryIsConstant(t *testing.T) {
 				t.Fatalf("UpsertDagNode: %v", err)
 			}
 		}
-		before := st.QueryCount()
+		queries := storetest.RecordQueries(t, st.DB())
 		if _, err := st.GetTurnsWithContent(ctx, chatAppName, "local", c.ID); err != nil {
 			t.Fatalf("GetTurnsWithContent: %v", err)
 		}
-		return st.QueryCount() - before
+		return int64(len(queries()))
 	}
 
 	q5 := run(5)
@@ -942,12 +778,8 @@ func TestGetTurnsWithContent_NodesQueryIsConstant(t *testing.T) {
 	}
 }
 
-// TestGetTurnsWithContent_RunningPlanShowsOneCardPerNode is the QA rig
-// regression test for "node progress does not show": a plan mid-execution
-// (one node done, one still running, one not yet started) must still fold
-// into one DagNode per node in the turn's content - the REST snapshot a
-// running chat's UI polls must never wait for the whole plan to finish
-// before any node card appears.
+// A plan mid-execution (done, running, not started) still folds into one DagNode per node: the running
+// chat's UI must not wait for the whole plan before any node card appears.
 func TestGetTurnsWithContent_RunningPlanShowsOneCardPerNode(t *testing.T) {
 	st, err := New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {

@@ -11,9 +11,8 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// toolPhaseModel: a fakeLLM that fires toolPhase the moment its single
-// (complete) response is yielded - the caller's synchronous tool run, where
-// the GPU holds nothing and the per-call hold has just been released.
+// toolPhaseModel fires toolPhase as its response is yielded: the caller's synchronous
+// tool run, when the per-call hold has just been released.
 type toolPhaseModel struct {
 	fakeLLM
 	toolPhase func()
@@ -31,18 +30,15 @@ func (m *toolPhaseModel) GenerateContent(ctx context.Context, req *model.LLMRequ
 	}
 }
 
-// TestPerCallHoldsOverlapToolPhases is #1482's concurrency proof: on a
-// one-slot kv pool, a native node's slot frees between model calls, so a
-// second node's model call admits into the first node's tool phase. A
-// whole-run hold deadlocks this: B would wait out A's entire run.
+// On a one-slot pool a native node's slot frees between model calls, so a second node
+// admits into the first's tool phase; a whole-run hold would deadlock here.
 func TestPerCallHoldsOverlapToolPhases(t *testing.T) {
 	t.Parallel()
 	spec := AdmissionSpec{Model: "w", KVTokens: 1}
 	a := NewAdmission(nil, map[string]int{"w": 1}, nil, 0)
 
-	// buffered release: the hold frees the slot before the response yield,
-	// so the fake may already be past <-release by the time a later call
-	// closes it; an unbuffered close there would deadlock the test.
+	// Buffered release: the hold frees the slot before the response yield, so an
+	// unbuffered close after the fake is past <-release would deadlock.
 	aGen := &toolPhaseModel{fakeLLM: fakeLLM{entered: make(chan struct{}), release: make(chan struct{}, 1)}}
 	bGen := &toolPhaseModel{fakeLLM: fakeLLM{entered: make(chan struct{}), release: make(chan struct{}, 1)}}
 
@@ -82,10 +78,8 @@ func TestPerCallHoldsOverlapToolPhases(t *testing.T) {
 	<-bTool
 }
 
-// TestPerCallNoOpHooksSurviveWiring pins the #1519 round-2 fix: with
-// perCall=true the no-op ReleaseWorker/AdmitWorker must survive the
-// judge-hook wiring below them, else a gated native worker re-holds its
-// whole-run slot after the first judge round and self-deadlocks.
+// With perCall=true the no-op ReleaseWorker/AdmitWorker must survive the judge-hook
+// wiring, else a gated native worker re-holds its slot and self-deadlocks.
 func TestPerCallNoOpHooksSurviveWiring(t *testing.T) {
 	admission := NewAdmission(map[string]int{"w": 1}, nil, nil, 0)
 	spec := AdmissionSpec{Model: "w"}
@@ -95,8 +89,6 @@ func TestPerCallNoOpHooksSurviveWiring(t *testing.T) {
 		t.Fatalf("setupAdmission(perCall=true): %v", err)
 	}
 	free()
-	// pre-fix, AdmitWorker was re-assigned unconditionally and re-hold
-	// spec; a full pool then blocks. The no-op must admit instantly.
 	// Occupy the single w slot so only a genuine re-hold would block.
 	if !admission.Admit(context.Background(), spec, nil) {
 		t.Fatal("test setup: could not pre-hold the w slot")

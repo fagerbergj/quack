@@ -9,10 +9,10 @@ import (
 	"io/fs"
 	"iter"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -22,11 +22,9 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
-	"gopkg.in/yaml.v3"
 
 	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/artifactschema"
-	"github.com/fagerbergj/quack/internal/cli"
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/ledger"
@@ -55,9 +53,7 @@ const extRunUserID = "ext"
 type builtSDKExtension struct {
 	name string
 	ext  extsdk.Extension
-	// title/href/icon come from the module's optional sdk.UI descriptor,
-	// captured once at build time; all empty when the module implements no
-	// UI (the SPA nav then lists it name-only).
+	// From the module's optional sdk.UI descriptor; all empty when it has no UI (nav lists it name-only).
 	title string
 	href  string
 	icon  string
@@ -82,9 +78,8 @@ type sdkBuildDeps struct {
 	ledgerStore   ledger.LedgerStore
 }
 
-// buildSDKExtensions validates and mounts every configured extension module in stable
-// name order (enabled:false modules stay dormant; nil is not an error). The
-// orchRef/judgeModelRef pointers are read lazily inside the Dispatch/Classify closures.
+// buildSDKExtensions mounts every configured extension in name order (enabled:false stays dormant).
+// orchRef/judgeModelRef are read lazily inside the Dispatch/Classify closures.
 func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, orchRef *atomic.Pointer[orchestrator.Orchestrator], artifacts *store.TurnAwareService, jail *workspace.Jail, judgeModelRef *atomic.Pointer[model.LLM], taskMem, userMem *memory.Store, ledgerStore ledger.LedgerStore, shapesRef *atomic.Pointer[[]workflowcatalog.Shape], decisions *extDecisions) ([]builtSDKExtension, error) {
 	if decisions == nil {
 		decisions = &extDecisions{}
@@ -92,17 +87,11 @@ func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, ev
 	d := sdkBuildDeps{cfg: cfg, factories: extsdk.Registered(), shapesRef: shapesRef,
 		orchRef: orchRef, st: st, hub: hub, eventLog: eventLog, artifacts: artifacts, judgeModelRef: judgeModelRef,
 		decisions: decisions, taskMem: taskMem, userMem: userMem, ledgerStore: ledgerStore}
-	names := make([]string, 0, len(cfg.Extensions.Modules))
-	for name := range cfg.Extensions.Modules {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
-	built := make([]builtSDKExtension, 0, len(names))
-	for _, name := range names {
+	built := make([]builtSDKExtension, 0, len(cfg.Extensions.Modules))
+	for _, name := range slices.Sorted(maps.Keys(cfg.Extensions.Modules)) {
 		factory, ok := d.factories[name]
 		if !ok {
-			return nil, fmt.Errorf("config: extensions.%s is not a compiled extension (compiled: %s)", name, strings.Join(sortedExtensionNames(d.factories), ", "))
+			return nil, fmt.Errorf("config: extensions.%s is not a compiled extension (compiled: %s)", name, strings.Join(slices.Sorted(maps.Keys(d.factories)), ", "))
 		}
 		b, disabled, err := buildOneSDKExtension(name, factory, d)
 		if err != nil {
@@ -115,16 +104,6 @@ func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, ev
 		slog.Info("sdk extension enabled", "component", "startup", "extension", name)
 	}
 	return built, nil
-}
-
-// sortedExtensionNames: the sorted keys of an extension-name map (factories or config blocks).
-func sortedExtensionNames[V any](byName map[string]V) []string {
-	known := make([]string, 0, len(byName))
-	for k := range byName {
-		known = append(known, k)
-	}
-	sort.Strings(known)
-	return known
 }
 
 // extensionConfig is one configured extension's boot/validate prelude, so the two can't diverge.
@@ -140,22 +119,15 @@ func loadExtensionConfig(cfg *config.Config, name string) (extensionConfig, erro
 	if err := server.ValidateExtensionName(name); err != nil {
 		return extensionConfig{}, fmt.Errorf("config: extensions.%s: %w", name, err)
 	}
-	enabled, err := moduleEnabledIn(cfg.Extensions.Modules, name)
+	raw, base, err := parseModuleConfig(cfg.Extensions.Modules, name)
 	if err != nil {
 		return extensionConfig{}, err
 	}
-	node := cfg.Extensions.Modules[name]
-	raw, err := yaml.Marshal(&node)
-	if err != nil {
-		return extensionConfig{}, fmt.Errorf("extensions.%s: re-marshal config: %w", name, err)
-	}
-	var base extsdk.BaseConfig
-	_ = yaml.Unmarshal(raw, &base) // moduleEnabledIn already parsed these same bytes
 	dataDir := base.DataDir
 	if dataDir == "" {
 		dataDir = filepath.Join(cfg.Workspace.Root, "extensions", name)
 	}
-	return extensionConfig{raw: raw, enabled: enabled, dataDir: dataDir}, nil
+	return extensionConfig{raw: raw, enabled: base.Enabled == nil || *base.Enabled, dataDir: dataDir}, nil
 }
 
 // ExtensionCheck is ValidateExtensions' per-extension verdict.
@@ -164,9 +136,8 @@ type ExtensionCheck struct {
 	Disabled []string
 }
 
-// ValidateExtensions runs each configured, enabled extension's Factory as boot does, but with a
-// throwaway data dir: some Factories open their stores eagerly, and validate must not touch the real one.
-// It then checks decisions.points against the core and declared points, as boot does.
+// ValidateExtensions runs each enabled extension's Factory against a throwaway data dir (some open stores
+// eagerly), then checks decisions.points as boot does.
 func ValidateExtensions(cfg *config.Config) (ExtensionCheck, error) {
 	var res ExtensionCheck
 	tmp, err := os.MkdirTemp("", "quack-validate-ext-")
@@ -177,7 +148,7 @@ func ValidateExtensions(cfg *config.Config) (ExtensionCheck, error) {
 	factories := extsdk.Registered()
 	var errs []error
 	var decisions extDecisions
-	for _, name := range sortedExtensionNames(cfg.Extensions.Modules) {
+	for _, name := range slices.Sorted(maps.Keys(cfg.Extensions.Modules)) {
 		ext, err := validateOneExtension(cfg, name, factories, filepath.Join(tmp, name))
 		if err == nil && ext != nil {
 			err = decisions.declare(name, ext)
@@ -203,7 +174,7 @@ func ValidateExtensions(cfg *config.Config) (ExtensionCheck, error) {
 func validateOneExtension(cfg *config.Config, name string, factories map[string]extsdk.Factory, scratch string) (extsdk.Extension, error) {
 	factory, ok := factories[name]
 	if !ok {
-		return nil, fmt.Errorf("config: extensions.%s is not a compiled extension (compiled: %s)", name, strings.Join(sortedExtensionNames(factories), ", "))
+		return nil, fmt.Errorf("config: extensions.%s is not a compiled extension (compiled: %s)", name, strings.Join(slices.Sorted(maps.Keys(factories)), ", "))
 	}
 	ec, err := loadExtensionConfig(cfg, name)
 	if err != nil || !ec.enabled {
@@ -359,9 +330,7 @@ func sdkExtensionTools(exts []builtSDKExtension) []extTool {
 	return out
 }
 
-// findFirstExt: the detection shared by the find* helpers below - the first extension
-// implementing the interface match asserts wins; later matches log a warning (ifaceName
-// only appears in that warning). Deterministic build order, sorted by name.
+// findFirstExt: the first extension (sorted by name) whose match succeeds wins; later matches log a warning.
 func findFirstExt[T any](exts []builtSDKExtension, ifaceName string, match func(*builtSDKExtension) (T, bool)) (T, string) {
 	var found T
 	var foundName string
@@ -396,13 +365,8 @@ func findDeliverer(exts []builtSDKExtension) (extsdk.Deliverer, string) {
 	})
 }
 
-// toSDKAssignment converts quack's own dag.Assignment into the sdk's wire
-// shape for the two node-reuse hooks below - the one place that crosses the
-// SDK boundary, so an extension never sees quack's internal type. planID,
-// agentName and contextID aren't on dag.Assignment itself (agent/context
-// are dag_node facts, plan id is a dag_plan fact - dag.Assignment carries
-// none of the three), so every caller threads them through from whichever
-// record it already read them off.
+// toSDKAssignment converts dag.Assignment to the sdk wire shape. planID/agentName/contextID live on
+// dag_plan/dag_node rows, not dag.Assignment, so callers pass them in.
 func toSDKAssignment(planID, agentName, contextID string, a dag.Assignment) extsdk.Assignment {
 	return extsdk.Assignment{
 		PlanID: planID, NodeID: a.NodeID, Agent: agentName, Task: a.Task,
@@ -464,9 +428,7 @@ func safeArtifactSchemas(name string, as extsdk.ArtifactSchemas) (schemas map[st
 	return as.ArtifactSchemas(), nil
 }
 
-// sdkGitCredentialAdapter bridges sdk.GitCredentialSource to
-// tools.GitTokenSource - same shape, different concrete credential type
-// (the SDK boundary can't share quack's own internal type).
+// sdkGitCredentialAdapter bridges sdk.GitCredentialSource to tools.GitTokenSource.
 type sdkGitCredentialAdapter struct{ src extsdk.GitCredentialSource }
 
 func sdkCredFields(c *extsdk.GitCredential) (string, string, string) {
@@ -510,60 +472,29 @@ func (a sdkDeliverAdapter) Deliver(ctx context.Context, dc vetting.DeliveryConte
 	return out, err
 }
 
-// sdkRecoverAdapter bridges sdk.DeliveryRecoverer to cli.DeliveryRecoverer -
-// cli's copy predates the sdk v0.9.0 pin (see cli.DeliveryRecoverer's doc);
-// this is the wiring that replaces it wholesale once cli imports sdk directly.
-type sdkRecoverAdapter struct{ recoverer extsdk.DeliveryRecoverer }
-
-func (a sdkRecoverAdapter) RecoverDelivery(ctx context.Context, key string, dc cli.DeliveryContext) (bool, cli.DeliveryItemOutcome, error) {
-	found, outcome, err := a.recoverer.RecoverDelivery(ctx, key, extsdk.DeliveryContext{CloneURL: dc.CloneURL, IssueNumber: dc.IssueNumber})
-	return found, cli.DeliveryItemOutcome{Kind: outcome.Kind, URL: outcome.URL, Error: outcome.Error}, err
-}
-
-// BuildDeliveryRecoverer constructs just the configured extension that
-// implements sdk.DeliveryRecoverer, for `quack ledger recover` (an offline
-// CLI command with no running server, hub, or orchestrator to wire a full
-// buildSDKExtensions call against). The factory only needs Host.DataDir/Log
-// to build (github's factory() reads nothing else eagerly) - Dispatch,
-// UpdateChatOrigin and the rest are never invoked by RecoverDelivery, so this
-// intentionally skips building them rather than threading live server state
-// through a CLI command. Returns (nil, "", nil) when no configured module
-// implements the interface.
-func BuildDeliveryRecoverer(cfg *config.Config) (cli.DeliveryRecoverer, string, error) {
+// BuildDeliveryRecoverer builds just the configured extension implementing sdk.DeliveryRecoverer, for the
+// offline `quack ledger recover`: RecoverDelivery needs only Host.DataDir/Log. (nil, "", nil) when none does.
+func BuildDeliveryRecoverer(cfg *config.Config) (extsdk.DeliveryRecoverer, string, error) {
 	factories := extsdk.Registered()
-	names := make([]string, 0, len(cfg.Extensions.Modules))
-	for name := range cfg.Extensions.Modules {
-		names = append(names, name)
-	}
-	sort.Strings(names) // deterministic scan order, same convention as findDeliverer
-	var found cli.DeliveryRecoverer
+	var found extsdk.DeliveryRecoverer
 	var foundName string
-	for _, name := range names {
+	for _, name := range slices.Sorted(maps.Keys(cfg.Extensions.Modules)) {
 		factory, ok := factories[name]
 		if !ok {
 			continue
 		}
-		node := cfg.Extensions.Modules[name]
-		raw, err := yaml.Marshal(&node)
+		ec, err := loadExtensionConfig(cfg, name)
 		if err != nil {
-			return nil, "", fmt.Errorf("extensions.%s: re-marshal config: %w", name, err)
+			return nil, "", err
 		}
-		var base extsdk.BaseConfig
-		if err := yaml.Unmarshal(raw, &base); err != nil {
-			return nil, "", fmt.Errorf("extensions.%s: parse base config: %w", name, err)
-		}
-		if base.Enabled != nil && !*base.Enabled {
+		if !ec.enabled {
 			continue
 		}
-		dataDir := base.DataDir
-		if dataDir == "" {
-			dataDir = filepath.Join(cfg.Workspace.Root, "extensions", name)
-		}
-		if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		if err := os.MkdirAll(ec.dataDir, 0o755); err != nil {
 			return nil, "", fmt.Errorf("extensions.%s: data dir: %w", name, err)
 		}
-		host := extsdk.Host{Log: slog.Default().With("component", "ext."+name), DataDir: dataDir}
-		ext, err := factory(host, raw)
+		host := extsdk.Host{Log: slog.Default().With("component", "ext."+name), DataDir: ec.dataDir}
+		ext, err := factory(host, ec.raw)
 		if err != nil {
 			return nil, "", fmt.Errorf("extensions.%s: factory: %w", name, err)
 		}
@@ -576,7 +507,7 @@ func BuildDeliveryRecoverer(cfg *config.Config) (cli.DeliveryRecoverer, string, 
 				"component", "startup", "using", foundName, "ignoring", name)
 			continue
 		}
-		found, foundName = sdkRecoverAdapter{recoverer: rec}, name
+		found, foundName = rec, name
 	}
 	return found, foundName, nil
 }
@@ -682,8 +613,7 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 		}
 		attachments := extAttachmentParts(runCtx, name, artifacts, userID, chatID, turnID, req.Ask.Attachments)
 
-		// Reset synchronously, before the caller's ack, so a subscriber landing in the
-		// run's start window never reads the previous dispatch's events (#audit-5).
+		// Reset before the caller's ack so a subscriber never reads the previous dispatch's events.
 		hub.Reset(chatID)
 		eventLog.Reset(runCtx, chatID)
 
@@ -704,8 +634,7 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 		}
 
 		runCtx = extRunContext(runCtx, allowedKinds, req, effectiveSetup)
-		// Never hand the orchestrator's LLM turn an empty prompt (#1195): a caller bug
-		// must surface as a real dispatch error, not a run that produces nothing.
+		// Never hand the orchestrator an empty prompt: a caller bug must surface as a dispatch error.
 		composed := composeDispatchMessage(req)
 		if strings.TrimSpace(composed) == "" {
 			return fmt.Errorf("extensions.%s: dispatch composed an empty message (Ask.Message was %q)", name, req.Ask.Message)
@@ -716,11 +645,10 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 	}
 }
 
-// prepareExtChat: merge the dispatch's origin/setup/grant onto the stored state (a nudge carries
-// none, #1180), reset the session, stamp origin/title. Returns the grant this run runs under.
+// prepareExtChat merges the dispatch's origin/setup/grant onto stored state (a nudge carries none), resets
+// the session, and stamps origin/title. Returns the grant this run runs under.
 func prepareExtChat(runCtx context.Context, name string, st *store.Store, orch *orchestrator.Orchestrator, chatID string, userID *string, req extsdk.DispatchRequest) (*dag.Setup, []string, error) {
-	// Merge onto the chat's stored state rather than replacing it: a nudge/retry
-	// re-dispatch (quack-extensions#47) carries neither Origin nor Run.Setup (#1180).
+	// Merge, don't replace: a nudge/retry re-dispatch carries neither Origin nor Run.Setup.
 	existing, getErr := st.GetChat(runCtx, chatID)
 	if getErr != nil {
 		slog.Warn("extension dispatch: chat origin lookup failed; not merging onto prior state",
@@ -782,8 +710,8 @@ func extRunContext(runCtx context.Context, allowedKinds []string, req extsdk.Dis
 	// which reads these facts back off ctx (tools.AllowedDeliveryKindsFromContext etc.).
 	runCtx = tools.WithAllowedDeliveryKinds(runCtx, allowedKinds)
 	if effectiveSetup != nil {
-		// mergeExtOrigin's own merged Setup, NOT req.Run.Setup (#1180): github
-		// always sends a non-nil Setup; applying it unconditionally would clobber the fallback.
+		// Use mergeExtOrigin's merged Setup, not req.Run.Setup: github always sends a non-nil Setup,
+		// which would clobber the fallback head ref.
 		runCtx = tools.WithGitHubSetup(runCtx, *effectiveSetup)
 	}
 	if req.Ask.NodeContext != "" {
@@ -808,26 +736,19 @@ func deliveryKindStrings(kinds []extsdk.DeliveryKind) []string {
 	return out
 }
 
-// extOriginRecord is Chat.Origin for an ext chat: the extension's ChatOrigin at top level plus
-// quack's own fields, which mergeExtOrigin (#1181) carries across every origin write and nudge.
+// extOriginRecord is Chat.Origin for an ext chat: the extension's ChatOrigin plus quack's own fields,
+// which mergeExtOrigin carries across every origin write.
 type extOriginRecord struct {
 	*extsdk.ChatOrigin
-	// Setup: the latest dispatch's sdk Setup (#1180), the only record of a PR's head ref (sdk
-	// type because dag.Setup's CheckoutExistingHead is json:"-"; toDagSetup recomputes it).
+	// Setup: the latest dispatch's sdk Setup, the only record of a PR's head ref (dag.Setup's
+	// CheckoutExistingHead is json:"-"; toDagSetup recomputes it).
 	Setup *extsdk.Setup `json:"quackSetup,omitempty"`
 	// Grant is the latest dispatch's delivery grant (tools.WithOriginGrant), re-applied on REST turns.
 	Grant *[]string `json:"quackAllowedDeliveryKinds,omitempty"`
 }
 
-// stableDispatchUser is #1198's fix: SessionUser is fixed at chat creation
-// (store.SetChatOrigin's own OnConflict never touches it on later dispatches),
-// so the run/session/record-client user for a re-dispatch must agree with
-// that stored value - not whichever commenter's req.Chat.User triggered THIS
-// dispatch (e.g. a /review from a different GitHub user than the one who
-// opened the PR). Without this, the node's ADK session and recordstore
-// writes land under a user the chat's own artifact listing never looks
-// under, since the listing reads the stored (first-dispatch) user.
-// existingSessionUser == "" (brand new chat) keeps reqUser as-is.
+// stableDispatchUser keeps a re-dispatch on the chat's stored SessionUser, not the triggering commenter,
+// so sessions and artifacts land where the chat's listing looks. "" (new chat) keeps reqUser.
 func stableDispatchUser(existingSessionUser, reqUser string) string {
 	if existingSessionUser != "" {
 		return existingSessionUser
@@ -835,13 +756,8 @@ func stableDispatchUser(existingSessionUser, reqUser string) string {
 	return reqUser
 }
 
-// resolveArtifactUser is the one place that decides which user an
-// extension-dispatched chat's ADK session and its input artifacts share:
-// existing's stored SessionUser once the chat row exists, else fallback -
-// never SessionUserForChat's id-shape ("github"/"local") default, which let
-// a pre-dispatch WriteArtifact and the later Dispatch land under different
-// users (#1225, artifacts written before the chat row existed). newExtDispatch
-// and readExtInputArtifact/writeExtInputArtifact all resolve through this.
+// resolveArtifactUser decides the user an ext chat's session and input artifacts share: the stored
+// SessionUser once the row exists, else fallback (never SessionUserForChat's id-shape default).
 func resolveArtifactUser(existing *store.Chat, fallback string) string {
 	if existing == nil {
 		return fallback
@@ -849,18 +765,8 @@ func resolveArtifactUser(existing *store.Chat, fallback string) string {
 	return stableDispatchUser(existing.SessionUser, fallback)
 }
 
-// mergeExtOrigin folds a dispatch's own Origin/Setup onto whatever this chat
-// already has stored, so a dispatch missing one (a nudge or retry re-dispatch
-// - quack-extensions#47) never blanks it. Returns the JSON to persist (""
-// when there's nothing to store) and the Setup this turn should actually
-// plan with, converted to dag.Setup - the caller's ONLY source for
-// tools.WithGitHubSetup; it must never additionally apply req.Run.Setup raw.
-//
-// newSetup being non-nil is NOT proof it has a real head ref: github's own
-// dispatch() always builds a non-nil sdk.Setup, even when its snapshot fetch
-// came back without one, so "no Setup" and "Setup with a blank
-// ExistingHeadRef" both need the same fallback to the last known-good ref
-// (#1180 recurrence - the earlier fix only handled the former).
+// mergeExtOrigin folds a dispatch's Origin/Setup onto the stored ones so a nudge never blanks them; the
+// returned Setup is the caller's only source for tools.WithGitHubSetup. A blank head ref falls back too.
 func mergeExtOrigin(existingOriginJSON string, newOrigin *extsdk.ChatOrigin, newSetup *extsdk.Setup) (originJSON string, effectiveSetup *dag.Setup) {
 	var rec extOriginRecord
 	if existingOriginJSON != "" {
@@ -877,9 +783,7 @@ func mergeExtOrigin(existingOriginJSON string, newOrigin *extsdk.ChatOrigin, new
 	case newSetup.ExistingHeadRef != "" || rec.Setup == nil || rec.Setup.ExistingHeadRef == "":
 		rec.Setup = newSetup
 	default:
-		// newSetup is non-nil but its head ref is blank, and we have a better one on record - keep
-		// everything else from this dispatch (repo/base/work branch can legitimately change turn to
-		// turn), just borrow the real head ref rather than losing it.
+		// Keep this dispatch's repo/base/work branch, but borrow the recorded head ref over the blank one.
 		merged := *newSetup
 		merged.ExistingHeadRef = rec.Setup.ExistingHeadRef
 		rec.Setup = &merged
@@ -898,9 +802,7 @@ func mergeExtOrigin(existingOriginJSON string, newOrigin *extsdk.ChatOrigin, new
 	return string(b), effectiveSetup
 }
 
-// toDagSetup adapts the SDK's Setup to dag.Setup. ExistingHeadRef overrides WorkBranch for the
-// checkout rather than supplementing it (mirrors what dag.OverrideExistingPRHead used to do
-// post-hoc from tools.WithGitHubPR - now folded into Setup itself, generalized past GitHub).
+// toDagSetup adapts the SDK's Setup; ExistingHeadRef overrides WorkBranch for the checkout.
 func toDagSetup(s extsdk.Setup) dag.Setup {
 	out := dag.Setup{Repo: s.Repo, BaseRef: s.BaseRef, WorkBranch: s.WorkBranch}
 	if s.ExistingHeadRef != "" {
@@ -919,21 +821,17 @@ func toDagContextItems(items []extsdk.NamedContext) []dag.ContextItem {
 	return out
 }
 
-// inputArtifactKind is the recordstore kind every dispatch input artifact is saved under (#1010
-// P3) - callers address by name alone (ReadArtifact/WriteArtifact take no kind), so the kind must
-// be the same constant on read and write; "bytes" is the generic blob kind in internal/vetting/reviewrecord.go.
+// inputArtifactKind: callers address input artifacts by name alone, so read and write must share one kind;
+// "bytes" is the generic blob kind.
 const inputArtifactKind = "bytes"
 
-// inputArtifactLineage stamps every dispatch input artifact the same way:
-// author=dispatch (#1090 §4.3), no parent chain - inputs are never revised
-// mid-run, only re-seeded on the next dispatch.
+// inputArtifactLineage: author=dispatch, no parent chain; inputs are re-seeded per dispatch, never revised.
 func inputArtifactLineage() recordstore.Lineage {
 	return recordstore.Lineage{Author: "dispatch", SavedAt: time.Now()}
 }
 
-// extChatUser backs Host.ChatUser: the sdk doc requires ok=false for an unknown chatID, so this
-// reads the row directly rather than via SessionUserForChat's id-shape fallback, which would
-// claim a stable user for a chat that doesn't exist yet (#1225 footgun).
+// extChatUser backs Host.ChatUser, which must return ok=false for an unknown chat, so it reads the row
+// rather than SessionUserForChat's id-shape fallback.
 func extChatUser(st *store.Store) func(chatID string) (string, bool) {
 	return func(chatID string) (string, bool) {
 		c, err := st.GetChat(context.Background(), chatID)
@@ -999,9 +897,8 @@ func readLatestOfKind(ctx context.Context, client *recordstore.Client, name stri
 	return data, true
 }
 
-// writeExtInputArtifact backs Host.WriteArtifact: saves a new revision only when data changed
-// since the latest one (recordstore.SaveBlob always writes a revision - the byte comparison
-// happens here so an unchanged input artifact never advances turn_id/lineage.saved_at for no reason).
+// writeExtInputArtifact saves a revision only when data changed (SaveBlob always writes one), so an
+// unchanged input never advances turn_id or lineage.
 func writeExtInputArtifact(st *store.Store, artifacts *store.TurnAwareService) func(chatID, user, name, mimeType string, data []byte) (int64, bool, error) {
 	return func(chatID, user, name, mimeType string, data []byte) (int64, bool, error) {
 		if artifacts == nil {
@@ -1045,19 +942,12 @@ func indentJSON(mimeType string, data []byte) []byte {
 	return b.Bytes()
 }
 
-// attachmentHintPrefix keeps a dispatch attachment's id ("bytes:upload-
-// <filename>") out of the dispatch input-artifact namespace ("bytes:<name>",
-// readExtInputArtifact/writeExtInputArtifact above) - both share the "bytes"
-// kind and chat session, so an attachment named e.g. "pull" or "files" would
-// otherwise silently collide with (and overwrite) an input artifact of the
-// same name (#1208 review). Mirrors internal/server/rest/handler.go's own
-// attachmentHintPrefix.
+// attachmentHintPrefix keeps attachment ids out of the input-artifact namespace: both use kind "bytes" in
+// the same session, so an attachment named like an input would overwrite it. Mirrors rest's prefix.
 const attachmentHintPrefix = "upload-"
 
-// saveExtAttachment mirrors rest.Handler.saveAttachment: durably store the
-// bytes as a recordstore blob artifact (kind/class/lineage set, #1126) and
-// hand back a reference part (internal/artifactref), never the bytes, so
-// plans/session events/the gen_ai ledger carry no attachment bytes.
+// saveExtAttachment mirrors rest.Handler.saveAttachment: store the bytes as a blob artifact and return a
+// reference part, so plans, session events and the ledger never carry attachment bytes.
 func saveExtAttachment(ctx context.Context, artifacts *store.TurnAwareService, userID, chatID, turnID, name string, data []byte, mimeType string) (*genai.Part, error) {
 	if artifacts == nil {
 		return nil, fmt.Errorf("no artifact service configured")
@@ -1071,12 +961,8 @@ func saveExtAttachment(ctx context.Context, artifacts *store.TurnAwareService, u
 	return artifactref.Encode(userID, chatID, id, int64(rev), mimeType), nil
 }
 
-// composeDispatchMessage folds the Workflow hint into Ask.Message. Only
-// reached when Workflow names an unbound shape (no Nodes) or is empty - a
-// bound shape never reaches here, it takes the BuildBoundPlan/
-// driveBoundExtensionRun path instead. For an unbound shape this is still
-// just a nudge: the orchestrator's own LLM turn reads the workflow-catalog
-// table (internal/workflowcatalog) and decides what to do with it.
+// composeDispatchMessage folds the Workflow hint into Ask.Message for unbound or empty workflows; bound
+// shapes take driveBoundExtensionRun. The orchestrator's LLM turn decides what to do with the hint.
 func composeDispatchMessage(req extsdk.DispatchRequest) string {
 	msg := req.Ask.Message
 	if req.Run.Workflow != "" {
@@ -1085,9 +971,7 @@ func composeDispatchMessage(req extsdk.DispatchRequest) string {
 	return msg
 }
 
-// ensureExtChatTitle sets a fresh chat's title - an explicit Chat.Title if
-// given, else Origin.Label - mirroring internal/github's ensureTitle; never
-// overwrites a title already set.
+// ensureExtChatTitle sets a fresh chat's title from Chat.Title, else Origin.Label; never overwrites one.
 func ensureExtChatTitle(ctx context.Context, st *store.Store, chatID, title string, origin *extsdk.ChatOrigin) {
 	if title == "" && origin != nil {
 		title = origin.Label
@@ -1102,18 +986,8 @@ func ensureExtChatTitle(ctx context.Context, st *store.Store, chatID, title stri
 	_ = st.UpdateTitle(ctx, chatID, title)
 }
 
-// newExtUpdateChatOrigin builds the sdk.Host.UpdateChatOrigin closure: same
-// "ext:<name>:<localID>" namespacing newExtDispatch uses, and the same
-// origin marshaling newExtDispatch does for a fresh dispatch. Returns
-// extsdk.ErrUnknownChat when localID never reached Dispatch, so a
-// state-change webhook for an issue/PR that was never dispatched (the common
-// case) fails predictably rather than silently minting a bare chat row.
-//
-// Also where memory-lifecycle design doc §4(b)/§5's core-side interpretation
-// lives: the extension only ever reports the domain fact (State); mapping a
-// State transition to a memory outcome, and which stores that outcome
-// touches, is core's own call - memory concepts never cross the SDK
-// boundary. taskMem/userMem stay nil-tolerant like every other Host field.
+// newExtUpdateChatOrigin builds Host.UpdateChatOrigin. ErrUnknownChat for a never-dispatched localID, so
+// webhooks don't mint bare chats. Mapping State to a memory outcome stays core-side (see applyMemoryOutcome).
 func newExtUpdateChatOrigin(name string, st *store.Store, taskMem, userMem *memory.Store, ledgerStore ledger.LedgerStore) func(localID string, origin extsdk.ChatOrigin) error {
 	return func(localID string, origin extsdk.ChatOrigin) error {
 		chatID := fmt.Sprintf("ext:%s:%s", name, localID)
@@ -1126,9 +1000,7 @@ func newExtUpdateChatOrigin(name string, st *store.Store, taskMem, userMem *memo
 			return fmt.Errorf("extensions.%s: update chat origin: %w", name, extsdk.ErrUnknownChat)
 		}
 		prevState := priorOriginState(c.Origin)
-		// Merge, don't replace (#1181 review): a bare json.Marshal(&origin) here wiped the stored
-		// quackSetup field on every state-transition webhook (synchronize/close/merge) between a
-		// dispatch and a nudge - undoing mergeExtOrigin's whole point and reopening #1180.
+		// Merge, don't replace: a bare marshal wiped the stored quackSetup on every state-change webhook.
 		originJSON, _ := mergeExtOrigin(c.Origin, &origin, nil)
 		if err := st.SetChatOrigin(ctx, chatID, c.SessionUser, originJSON); err != nil {
 			return fmt.Errorf("extensions.%s: update chat origin: %w", name, err)
@@ -1138,9 +1010,8 @@ func newExtUpdateChatOrigin(name string, st *store.Store, taskMem, userMem *memo
 	}
 }
 
-// priorOriginState reads State off a chat's previously stored origin JSON (opaque to internal/
-// store - see Chat.Origin), so newExtUpdateChatOrigin can tell a transition from steady state.
-// "" (no prior origin, or pre-sdk v0.5.0's State) reads as unknown, same as the SDK's zero value.
+// priorOriginState reads State off the stored origin JSON so a transition can be told from steady state;
+// "" reads as unknown, like the SDK's zero value.
 func priorOriginState(originJSON string) extsdk.SubjectState {
 	if originJSON == "" {
 		return ""
@@ -1152,16 +1023,8 @@ func priorOriginState(originJSON string) extsdk.SubjectState {
 	return o.State
 }
 
-// applyMemoryOutcome maps a ChatOrigin.State transition to a memory outcome
-// (design doc §4(b)/§5, recall-based per epic #1255 P1): merged reinforces,
-// closed (from anything) invalidates with a fixed reason, open/"" is a no-op
-// either direction - stickiness against a reopen-after-close lives in
-// memory.Store.ApplyOutcome itself, not here. The outcome targets memories
-// RECALLED into chatID (folded from the ledger's memory.recall entries), not
-// minted there - minting still sets provenance, but no longer drives
-// reinforcement. Steady state (prev == next, e.g. a repeated closed webhook)
-// never reaches an outcome. Fire-and-forget: an error is logged, never
-// surfaced - the origin update it rides on must not fail because of it.
+// applyMemoryOutcome: merged reinforces, closed invalidates, open/"" and steady state do nothing; it targets
+// memories recalled into chatID. Errors are logged only: the origin update must not fail because of it.
 func applyMemoryOutcome(ctx context.Context, name, chatID string, prev, next extsdk.SubjectState, ledgerStore ledger.LedgerStore, stores ...*memory.Store) {
 	if prev == next {
 		return
@@ -1176,9 +1039,7 @@ func applyMemoryOutcome(ctx context.Context, name, chatID string, prev, next ext
 		return
 	}
 	if ledgerStore == nil {
-		// Only worth a warn when a memory store is actually configured - no
-		// stores means there was never anything to reinforce/invalidate
-		// here anyway, so this isn't a misconfiguration (#1257 review).
+		// Warn only when a memory store is configured; with none there is nothing to update.
 		for _, s := range stores {
 			if s != nil {
 				slog.Warn("apply memory outcome: no ledger configured; skipping (recalled-set outcomes need the WAL)",
@@ -1225,20 +1086,6 @@ func driveBoundExtensionRun(ctx, runCtx context.Context, cancelRun context.Cance
 	})
 }
 
-// driveExtensionRunEvents drains one dispatched turn's SSE stream to
-// completion, then fires RunEnded - the noop extension's dispatch counter
-// only advances here, which is how the E2E test proves the whole
-// register->route->dispatch->run loop actually ran. Shared by the unshaped
-// (orch.Run) and bound (orch.RunBoundPlan) paths - identical bookkeeping
-// either way, only the event source differs. run is called with runCtx (not
-// ctx) so hub-driven cancellation (cancelRun) actually reaches the run.
-// timeout>0 bounds runCtx itself (Run.Timeout) so TimedOut is observable
-// below - cancelRun (deferred) is what actually releases it either way.
-func driveExtensionRunEvents(ctx context.Context, name string, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, extHolder *atomic.Pointer[extsdk.Extension], userID, chatID, turnID string, timeout time.Duration, run func(context.Context) iter.Seq2[stream.SSEEvent, error]) {
-	runCtx, cancelRun := beginExtRun(ctx, st, hub, chatID, turnID, timeout)
-	finishExtRun(ctx, runCtx, cancelRun, name, orch, st, hub, eventLog, extHolder, userID, chatID, turnID, run)
-}
-
 // beginExtRun registers the run with the hub and stamps it active. Dispatch calls it before
 // spawning the goroutine so a status read or shutdown drain right after the ack already sees the run.
 func beginExtRun(ctx context.Context, st *store.Store, hub *stream.Hub, chatID, turnID string, timeout time.Duration) (context.Context, context.CancelFunc) {
@@ -1271,15 +1118,14 @@ func finishExtRun(ctx, runCtx context.Context, cancelRun context.CancelFunc, nam
 	// same tail, so an extension-dispatched chat gets it too.
 	runlog.StampTurn(runCtx, st, chatID, turnID, res)
 
-	// Shutdown force-cancelled this run - skip RunEnded so a deploy never posts a PR comment for
-	// work the process didn't get to finish. Per-chat marker, not global Draining: a run finishing
-	// normally during the drain window keeps its RunEnded. The drain pauses nodes (#962) - boot resumes.
+	// Shutdown force-cancelled this run: skip RunEnded so a deploy never posts for unfinished work. A run that
+	// finishes normally during the drain keeps its RunEnded; boot resumes the paused nodes.
 	if hub.WasInterrupted(chatID) {
 		stampCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		if err := st.StampRunOutcome(stampCtx, chatID, store.RunStatusPaused, ""); err != nil {
 			slog.Warn("extension run: interrupted stamp failed", "component", "ext."+name, "chat", chatID, "err", err)
 		}
-		if err := st.WriteCheckpoint(stampCtx, chatID); err != nil { // #1144 P5: best-effort
+		if err := st.WriteCheckpoint(stampCtx, chatID); err != nil { // best-effort
 			slog.Warn("extension run: checkpoint write failed", "component", "ext."+name, "chat", chatID, "err", err)
 		}
 		cancel()
@@ -1290,8 +1136,7 @@ func finishExtRun(ctx, runCtx context.Context, cancelRun context.CancelFunc, nam
 	timedOut := errors.Is(runCtx.Err(), context.DeadlineExceeded)
 	// hub.RegisterRun's cancel func is runCtx's own - a user Stop surfaces here as Canceled.
 	cancelled := errors.Is(runCtx.Err(), context.Canceled)
-	// #1144 P5: best-effort, bounded the same way the shutdown branch above
-	// is - a hung Postgres must not block RunEnded/delivery indefinitely.
+	// Bounded like the shutdown branch: a hung Postgres must not block RunEnded/delivery.
 	checkpointCtx, checkpointCancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	if err := st.WriteCheckpoint(checkpointCtx, chatID); err != nil {
 		slog.Warn("extension run: checkpoint write failed", "component", "ext."+name, "chat", chatID, "err", err)
@@ -1311,12 +1156,8 @@ func finishExtRun(ctx, runCtx context.Context, cancelRun context.CancelFunc, nam
 	}
 }
 
-// buildExtRunOutcome mirrors rest.Handler.stampRunOutcome / github's
-// stampRunOutcome (#738's terminal-status rule) and additionally builds the
-// RunOutcome RunObserver expects. timedOut is the caller's own
-// Run.Timeout-scoped deadline check (buildExtRunOutcome's own ctx is
-// deliberately WithoutCancel of parent, so it can't observe parent's
-// deadline itself).
+// buildExtRunOutcome mirrors rest.Handler.stampRunOutcome and builds the RunOutcome RunObserver expects.
+// The caller passes timedOut because this ctx is WithoutCancel of parent and can't see its deadline.
 func buildExtRunOutcome(parent context.Context, orch *orchestrator.Orchestrator, st *store.Store, userID, chatID string, planRan bool, needsInput stream.NodeNeedsInputData, timedOut, cancelled bool) extsdk.RunOutcome {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 10*time.Second)
 	defer cancel()
@@ -1327,9 +1168,8 @@ func buildExtRunOutcome(parent context.Context, orch *orchestrator.Orchestrator,
 	return mapExtRunOutcome(status, question, nodeError, answer, planRan, needsInput, timedOut, cancelled)
 }
 
-// mapExtRunOutcome is buildExtRunOutcome's classification step, split out so it's testable without
-// a live store/orch. cancelled wins over status - it interrupted whatever DeriveTerminalStatus
-// derived from the turn. nodeError is the failed node's own error text (#1105) - "" for a true silent gap.
+// mapExtRunOutcome classifies without a live store/orch. cancelled wins over status; nodeError is the
+// failed node's error text, "" for a true silent gap.
 func mapExtRunOutcome(status, question, nodeError, answer string, planRan bool, needsInput stream.NodeNeedsInputData, timedOut, cancelled bool) extsdk.RunOutcome {
 	out := extsdk.RunOutcome{PlanRan: planRan, TimedOut: timedOut, Answer: answer}
 	switch {
@@ -1337,11 +1177,8 @@ func mapExtRunOutcome(status, question, nodeError, answer string, planRan bool, 
 		out.Status = extsdk.RunCancelled
 	case status == store.RunStatusFailed:
 		out.Status = extsdk.RunFailed
-		// nodeError is either sanitized (dag.emptyNodeError via
-		// inference.SanitizeGatewayError) or, for a rejected `execute` call,
-		// quack's own unsanitized rejection text - never a raw gateway
-		// URL/body/key either way. Answer stays for a real partial answer
-		// only; the cause goes in Error (sdk v0.10.0+).
+		// nodeError is sanitized or quack's own rejection text, never a raw gateway URL/body/key.
+		// Answer stays for a real partial answer only; the cause goes in Error.
 		out.Error = nodeError
 	case status == store.RunStatusNeedsInput:
 		out.Status = extsdk.RunNeedsInput
@@ -1350,9 +1187,7 @@ func mapExtRunOutcome(status, question, nodeError, answer string, planRan bool, 
 	default:
 		out.Status = extsdk.RunDone
 		if out.Answer == "" && !timedOut {
-			// Silent-gap (#568): a run that finished with no error, no failed node, and no answer.
-			// Was GitHub-only (internal/github's own call); centralized here so every extension's
-			// dispatch gets the same metric, matching rest.Handler's runs once it adopts this accounting.
+			// Silent gap: no error, no failed node, no answer.
 			otelobs.RecordRunNoAnswer()
 		}
 	}

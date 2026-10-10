@@ -45,9 +45,8 @@ func spanAttrsOf(s tracetest.SpanStub) map[string]string {
 	return out
 }
 
-// TestTracedModel_DecoratesSpanBeforeADKEndsIt pins the ordering trap: ADK's
-// generate_content span is ended synchronously the instant a non-partial
-// response is handed to its own range-loop body - here simulated by ending the span immediately inside tracedModel's yield callback, exactly where ADK's real base_flow.go does it. If setResponseSpanAttrs ran in a deferred emit (after ADK's End()) instead of before yield, this test would fail with no output-message attribute recorded - SetAttributes on an ended span is a silent no-op, so a naive regression would NOT panic, it would just vanish.
+// ADK ends the span inside the yield of a non-partial response (simulated here); attributes set
+// after that are silently dropped, so a deferred emit would lose the output message.
 func TestTracedModel_DecoratesSpanBeforeADKEndsIt(t *testing.T) {
 	withContentCapture(t, true)
 	exp := withTestTracer(t)
@@ -88,11 +87,8 @@ func TestTracedModel_DecoratesSpanBeforeADKEndsIt(t *testing.T) {
 	}
 }
 
-// TestSetRequestSpanAttrs_Redacts proves content reaching a span attribute
-// passes the same key-name redaction the log path gets via
-// ledger.NewRedactingProcessor - span attributes never flow through that
-// processor, so redactedSpanAttr is the only thing standing between a
-// secret-keyed field and an exported OTLP span.
+// Spans never pass through the log RedactingProcessor, so redactedSpanAttr is the only guard
+// between a secret-keyed field and an exported span.
 func TestSetRequestSpanAttrs_Redacts(t *testing.T) {
 	withContentCapture(t, true)
 	exp := withTestTracer(t)
@@ -135,9 +131,8 @@ func TestSetRequestSpanAttrs_ConversationID(t *testing.T) {
 	}
 }
 
-// TestSetRequestSpanAttrs_LangfusePromptLink proves a round resolved from a
-// store-backed prompt stamps the resolved ARTIFACT name (not the agent key,
-// H2) and version under Langfuse v4's documented observation.prompt.* keys.
+// A store-backed prompt stamps the resolved artifact name (not the agent key) and version
+// under Langfuse's observation.prompt.* keys.
 func TestSetRequestSpanAttrs_LangfusePromptLink(t *testing.T) {
 	withContentCapture(t, false)
 	exp := withTestTracer(t)
@@ -177,9 +172,7 @@ func TestSetRequestSpanAttrs_NonLangfuseSourceSkipsPromptLink(t *testing.T) {
 	}
 }
 
-// TestSpanAttrs_ContentCaptureOffByDefault proves the new invariant: with
-// captureContent unset (the deploy default), no message content reaches span
-// attributes even though the span is recording.
+// With content capture unset (the default), no message content reaches a recording span.
 func TestSpanAttrs_ContentCaptureOffByDefault(t *testing.T) {
 	withContentCapture(t, false)
 	exp := withTestTracer(t)
@@ -205,9 +198,8 @@ func TestSpanAttrs_ContentCaptureOffByDefault(t *testing.T) {
 	}
 }
 
-// The generation span is ADK's, and ADK never says which node ran it. Without
-// node/agent a multi-node trace can't be narrowed to one card - and these are
-// correlation keys, so they must survive with content capture off.
+// ADK never says which node ran its span; node/agent are correlation keys, so they survive with
+// content capture off.
 func TestSetRequestSpanAttrs_NodeAndAgentSurviveContentGate(t *testing.T) {
 	withContentCapture(t, false)
 	exp := tracetest.NewInMemoryExporter()
@@ -233,9 +225,7 @@ func TestSetRequestSpanAttrs_NodeAndAgentSurviveContentGate(t *testing.T) {
 	}
 }
 
-// A node id is free text from the orchestrator's plan. Anything that isn't
-// slug-shaped could be message-derived, and this attribute sits outside the
-// content gate, so it must not be exported.
+// A non-slug node id could be message-derived and sits outside the content gate, so it isn't exported.
 func TestSetRequestSpanAttrs_NonSlugNodeIDIsNotExported(t *testing.T) {
 	withContentCapture(t, false)
 	for _, node := range []string{

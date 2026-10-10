@@ -11,10 +11,6 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// setupCloneAndBranch is dag.Plan's declared Setup PRE-step, past URL
-// validation - the deterministic twin of a worker's own git_clone +
-// git_checkout -b, run once by the harness before any node.
-
 func TestSetupCloneAndBranchClonesAndChecksOutNewBranch(t *testing.T) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)
@@ -45,9 +41,8 @@ func TestSetupCloneAndBranchClonesAndChecksOutNewBranch(t *testing.T) {
 	}
 }
 
-// TestSetupCloneAndBranchStaleCleanupFailureMessage is #1213: a stale clone
-// dir left read-only by go's module cache must surface as a local-cleanup
-// message, never worded as the repository being unreachable.
+// TestSetupCloneAndBranchStaleCleanupFailureMessage: a stale clone dir left read-only by go's
+// module cache surfaces as a local-cleanup error, never as the repository being unreachable.
 func TestSetupCloneAndBranchStaleCleanupFailureMessage(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores the write bit; the failure this test reproduces cannot happen")
@@ -77,8 +72,8 @@ func TestSetupCloneAndBranchStaleCleanupFailureMessage(t *testing.T) {
 	}
 }
 
-// TestCleanupErrorMessageNeverClaimsUnreachable pins the exact wording #1213
-// asks for and proves it never contains the fetch-failure "unreachable" text.
+// TestCleanupErrorMessageNeverClaimsUnreachable pins the cleanup wording and that it never
+// contains the fetch-failure "unreachable" text.
 func TestCleanupErrorMessageNeverClaimsUnreachable(t *testing.T) {
 	err := &cleanupError{path: "/workspace/local/x/quack-shared-repo", cause: os.ErrPermission}
 	msg := err.Error()
@@ -118,9 +113,8 @@ func TestSetupCloneRejectsNonHTTPS(t *testing.T) {
 	}
 }
 
-// TestSetupCloneRunsCheckSetup pins the #856 follow-up's other call site: the
-// shared clone must be bootstrapped quack-side, right after checkout, so
-// implementer nodes (which use it directly, no worktree) land in an already-bootstrapped tree without waiting for gate-check time; exercises setupCloneAndBranch + workspace.RunCheckSetup directly (SetupClone's own composition), since SetupClone's https-only URL check has no local-fixture bypass, same as every other clone-behavior test in this file.
+// TestSetupCloneRunsCheckSetup: the shared clone is bootstrapped right after checkout. Composes
+// setupCloneAndBranch + RunCheckSetup as SetupClone does, since SetupClone accepts only https.
 func TestSetupCloneRunsCheckSetup(t *testing.T) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)
@@ -136,9 +130,8 @@ func TestSetupCloneRunsCheckSetup(t *testing.T) {
 	}
 }
 
-// A worker addressing a setup-provisioned clone with a PLAIN relative path
-// (no "repo/" prefix, no absolute path) must resolve - the whole point of
-// workspace.SetupCloneDir landing the clone AT the node's own root rather than a subdirectory of it (before this, a production worker guessed neither the prefix nor `cd`, fell back to run_command with an absolute path, and escaped read_file/edit_file's windowing and loop guard).
+// A plain relative path resolves into a setup-provisioned clone, because SetupCloneDir lands the
+// clone at the node's root; otherwise workers fall back to absolute paths and escape the fs guards.
 func TestReadFileResolvesSetupCloneWithNoPrefix(t *testing.T) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)
@@ -166,9 +159,8 @@ func TestReadFileResolvesSetupCloneWithNoPrefix(t *testing.T) {
 
 }
 
-// TestReadFileResolvesSetupCloneLeadingSlash pins #502/#498: the trust-gate
-// judge (same fs tools as the worker, see NewJudgeFactory) tried
-// list_dir("/frontend") against a setup-provisioned clone and got "no such file" - jailPath's "/" branch still applies the node's own dir (nodeDir), but a call whose advisor-thread registration doesn't carry a WorkspaceNodeID must resolve identically either way. Registers exactly as dag/graph.go does for a repo-touching (implementer/reviewer) chain node - WorkspaceNodeID = workspace.SharedRepoScope, distinct from NodeID - the shape a judge's own invocation carries too (same token, same registration).
+// TestReadFileResolvesSetupCloneLeadingSlash: "/frontend" resolves into the clone for a repo chain
+// node registered as dag/graph.go does (WorkspaceNodeID = SharedRepoScope), the judge's shape too.
 func TestReadFileResolvesSetupCloneLeadingSlash(t *testing.T) {
 	j, err := workspace.NewJail(t.TempDir())
 	if err != nil {
@@ -182,7 +174,7 @@ func TestReadFileResolvesSetupCloneLeadingSlash(t *testing.T) {
 	})
 	t.Cleanup(func() { vetting.UnregisterAdvisorThread(token) })
 	fb.scope = CallScope{AdvisorToken: token}
-	ctx := &gatedCtx{fakeCtx: *newFakeCtx(), prompt: "review the PR\n\n" + vetting.AdvisorThreadMarker(token)}
+	ctx := &gatedCtx{fakeCtx: *newFakeCtx(), prompt: "review the PR\n\n[[quack:advisor-thread:" + token + "]]"}
 
 	cloneDir, err := j.EnsureDir("u1", "c1", workspace.SetupCloneDir(workspace.SharedRepoScope))
 	if err != nil {
@@ -208,9 +200,8 @@ func TestReadFileResolvesSetupCloneLeadingSlash(t *testing.T) {
 	}
 }
 
-// TestSetupCloneAndBranchIsIdempotent pins that a second call at the same
-// target/repo/base_ref succeeds without re-cloning (see the reuse tests
-// below) - it must never fail just because the directory already exists.
+// TestSetupCloneAndBranchIsIdempotent: a second call at the same target/repo/base_ref succeeds
+// without re-cloning, never failing because the directory exists.
 func TestSetupCloneAndBranchIsIdempotent(t *testing.T) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)
@@ -228,9 +219,8 @@ func TestSetupCloneAndBranchIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestSetupCloneAndBranchReuseKeepsLocalCommit pins that a follow-up turn on
-// the same repo/base_ref never wipes the tree - the second call must land
-// back on the same work branch with its local (possibly unpushed) commit intact.
+// TestSetupCloneAndBranchReuseKeepsLocalCommit: a follow-up turn on the same repo/base_ref lands on
+// the same work branch with its local, possibly unpushed, commit intact.
 func TestSetupCloneAndBranchReuseKeepsLocalCommit(t *testing.T) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)
@@ -262,9 +252,8 @@ func TestSetupCloneAndBranchReuseKeepsLocalCommit(t *testing.T) {
 	}
 }
 
-// TestSetupCloneAndBranchDifferentBaseRefReClones pins that reuse only
-// applies when base_ref matches too - a different base_ref at the same
-// target must still wipe and re-clone.
+// TestSetupCloneAndBranchDifferentBaseRefReClones: a different base_ref at the same target wipes
+// and re-clones.
 func TestSetupCloneAndBranchDifferentBaseRefReClones(t *testing.T) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)
@@ -289,9 +278,8 @@ func TestSetupCloneAndBranchDifferentBaseRefReClones(t *testing.T) {
 	}
 }
 
-// TestSetupCloneAndBranchCorruptTreeReClones pins that a half-written clone
-// (e.g. left behind by a killed process) is never trusted - any git failure
-// reading it means "not reusable", not "crash".
+// TestSetupCloneAndBranchCorruptTreeReClones: a half-written clone is never trusted; any git
+// failure reading it means "not reusable", not a crash.
 func TestSetupCloneAndBranchCorruptTreeReClones(t *testing.T) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)
@@ -317,10 +305,8 @@ func TestSetupCloneAndBranchCorruptTreeReClones(t *testing.T) {
 	}
 }
 
-// TestSetupCloneAndBranchReuseFetchesFreshBaseRef pins that cutting a NEW
-// work branch on a reused clone never freezes base_ref at the first turn's
-// shallow clone tip - a commit landed on the remote base between turns must
-// show up in the branch the second turn cuts.
+// TestSetupCloneAndBranchReuseFetchesFreshBaseRef: a new work branch on a reused clone includes
+// base commits that landed on the remote since the first turn's shallow clone.
 func TestSetupCloneAndBranchReuseFetchesFreshBaseRef(t *testing.T) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)
@@ -348,12 +334,8 @@ func TestSetupCloneAndBranchReuseFetchesFreshBaseRef(t *testing.T) {
 	}
 }
 
-// TestSetupCloneAndBranchUntrackedConflictReClones pins that a checkout
-// blocked only by untracked content (a killed process's leftover build
-// output, say) never wedges the chat - `git status --porcelain
-// --untracked-files=no` reports this tree as clean, and its branch already
-// matches origin, so reuse must fall back to a clean reclone rather than
-// move anything aside.
+// TestSetupCloneAndBranchUntrackedConflictReClones: a checkout blocked only by untracked files on a
+// tree matching origin falls back to a clean reclone rather than wedging or moving it aside.
 func TestSetupCloneAndBranchUntrackedConflictReClones(t *testing.T) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)
@@ -388,10 +370,8 @@ func TestSetupCloneAndBranchUntrackedConflictReClones(t *testing.T) {
 	}
 }
 
-// TestSetupCloneAndBranchUncommittedChangeProtectsTree pins that an
-// uncommitted change alone - no commit ahead of origin at all - still stops
-// a wipe. A blocked checkout with nothing but a dirty tracked file must move
-// the tree aside, not silently re-clone over the edit.
+// TestSetupCloneAndBranchUncommittedChangeProtectsTree: a dirty tracked file alone still stops a
+// wipe; the blocked tree is moved aside, not re-cloned over.
 func TestSetupCloneAndBranchUncommittedChangeProtectsTree(t *testing.T) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)
@@ -425,9 +405,8 @@ func TestSetupCloneAndBranchUncommittedChangeProtectsTree(t *testing.T) {
 	}
 }
 
-// TestSetupCloneAndBranchMidRebaseProtectsTree pins that an interrupted
-// rebase - a killed process's most likely leftover, and invisible to a plain
-// `git status` once the working tree itself is clean - still stops a wipe.
+// TestSetupCloneAndBranchMidRebaseProtectsTree: an interrupted rebase, invisible to plain
+// `git status` on a clean tree, still stops a wipe.
 func TestSetupCloneAndBranchMidRebaseProtectsTree(t *testing.T) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)
@@ -468,10 +447,8 @@ func TestSetupCloneAndBranchMidRebaseProtectsTree(t *testing.T) {
 	}
 }
 
-// TestSetupCloneAndBranchPartiallyPushedCommitCountsAgainstFetchedRef pins
-// that the commit count comes from a fetched copy of origin's own workBranch
-// (a shallow single-branch clone never tracks it by default) - one pushed
-// commit plus one local-only commit on top must count as exactly one unpushed.
+// TestSetupCloneAndBranchPartiallyPushedCommitCountsAgainstFetchedRef: unpushed commits are counted
+// against a fetched origin workBranch, which a shallow single-branch clone doesn't track.
 func TestSetupCloneAndBranchPartiallyPushedCommitCountsAgainstFetchedRef(t *testing.T) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)
@@ -526,9 +503,8 @@ func TestSetupCloneAndBranchPartiallyPushedCommitCountsAgainstFetchedRef(t *test
 	}
 }
 
-// TestSetupCloneAndBranchConfiguresCommitterIdentity pins the git-identity
-// gap: a worker that shells out to `git commit` (rather than the git_commit
-// tool) needs a committer identity in the clone, or the commit fails exit 128 ("Author identity unknown") - Setup must configure it.
+// TestSetupCloneAndBranchConfiguresCommitterIdentity: Setup configures a committer identity so a
+// worker's own `git commit` doesn't fail with "Author identity unknown".
 func TestSetupCloneAndBranchConfiguresCommitterIdentity(t *testing.T) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)
@@ -551,9 +527,8 @@ func TestSetupCloneAndBranchConfiguresCommitterIdentity(t *testing.T) {
 	}
 }
 
-// addBranchFixture pushes a new branch to bare, off its current main, with one
-// extra commit - simulating a PR head that exists on the remote but was never
-// created by this clone.
+// addBranchFixture pushes a branch with one extra commit off main to bare, simulating a PR head
+// this clone never created.
 func addBranchFixture(t *testing.T, bare, branch string) {
 	t.Helper()
 	seed := t.TempDir()
@@ -567,9 +542,8 @@ func addBranchFixture(t *testing.T, bare, branch string) {
 	runGitT(t, seed, "push", "--quiet", "origin", branch)
 }
 
-// TestSetupCloneAndBranchReviewChecksOutRealHeadCommits pins the bug behind
-// #494: a review's Setup.WorkBranch names an EXISTING remote PR head, not a
-// branch to create - `checkout -b` off base (the implement behavior) makes an empty LOCAL branch shadowing the real one, so the reviewer sees base with no diff. checkoutExistingHead=true must fetch the real branch and land on its actual commit, with base history present so a three-dot diff resolves.
+// TestSetupCloneAndBranchReviewChecksOutRealHeadCommits: checkoutExistingHead fetches the real PR
+// head rather than shadowing it with an empty local branch, and keeps base history for three-dot diffs.
 func TestSetupCloneAndBranchReviewChecksOutRealHeadCommits(t *testing.T) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)
@@ -601,9 +575,8 @@ func TestSetupCloneAndBranchReviewChecksOutRealHeadCommits(t *testing.T) {
 	}
 }
 
-// TestSetupCloneAndBranchImplementStillCreatesFreshBranch pins that the
-// review fix left the implement path untouched: checkoutExistingHead=false
-// still creates workBranch fresh off baseRef, even when a branch of that name already exists on the remote (a re-run/supersede must start clean, not continue the stale remote branch).
+// TestSetupCloneAndBranchImplementStillCreatesFreshBranch: checkoutExistingHead=false creates
+// workBranch fresh off baseRef even if the remote already has it, so a re-run starts clean.
 func TestSetupCloneAndBranchImplementStillCreatesFreshBranch(t *testing.T) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)
@@ -626,9 +599,8 @@ func TestSetupCloneAndBranchImplementStillCreatesFreshBranch(t *testing.T) {
 	}
 }
 
-// TestSetupThenPushPreservesExistingPRHeadCommit pins the invariant: a run
-// bound to an existing PR branch must never rewrite that branch's history -
-// new commits land ON TOP of what was already there. Without checkoutExistingHead, an implementer branches fresh off base, commits unrelated work, and PushBranch's required --force overwrites the remote branch outright, destroying the PR's real commit; with it, setup fetches and checks out that commit FIRST, so the push is a fast-forward.
+// TestSetupThenPushPreservesExistingPRHeadCommit: on an existing PR branch new commits land on top,
+// so PushBranch's --force is a fast-forward rather than destroying the PR's commit.
 func TestSetupThenPushPreservesExistingPRHeadCommit(t *testing.T) {
 	requireGit(t)
 
@@ -682,7 +654,8 @@ func TestSetupThenPushPreservesExistingPRHeadCommit(t *testing.T) {
 	})
 }
 
-// A reused clone's origin/<branch> ref holds the pre-rebase commit; the next review setup must still fetch the rewritten head.
+// A reused clone's origin/<branch> holds the pre-rebase commit; the next review setup must
+// still fetch the rewritten head.
 func TestSetupCloneAndBranchReviewFollowsForcePushedBranch(t *testing.T) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)

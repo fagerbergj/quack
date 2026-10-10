@@ -7,19 +7,16 @@ import (
 	"sort"
 )
 
-// dedupeCosineThreshold is the near-duplicate bar for the per-bucket sweep
-// (issue #1269): the same bar the pre-implementation measurement used to
-// size the duplicate rate (29 live pairs >= 0.90 across two buckets).
+// dedupeCosineThreshold is the near-duplicate bar for the per-bucket sweep, the bar the measured
+// duplicate rate was sized with (29 live pairs >= 0.90 across two buckets).
 const dedupeCosineThreshold = 0.90
 
-// dedupeMaxClusterSize bounds one cluster's size (transitive cosine
-// chaining otherwise has no ceiling) so a degenerate blob of mutually
-// similar memories can't force one giant consolidation prompt.
+// dedupeMaxClusterSize bounds transitive chaining so a blob of similar memories can't force one
+// giant consolidation prompt.
 const dedupeMaxClusterSize = 12
 
-// dedupeMaxLLMCalls caps how many clusters one DedupeSweep(apply=true) run will send to the
-// consolidation model, so a large backlog (e.g. right after a rescope) can't spike one sweep
-// tick's cost unboundedly. Clusters beyond the cap are simply left for the next sweep.
+// dedupeMaxLLMCalls caps clusters sent to the model per sweep, so a backlog (e.g. after a rescope)
+// can't spike one tick's cost; the rest wait for the next sweep.
 const dedupeMaxLLMCalls = 30
 
 // dedupeExampleCap bounds how many members of a cluster the report carries -
@@ -54,9 +51,8 @@ type DedupeReport struct {
 	Dropped     int // clusters skipped once LLMCalls hit dedupeMaxLLMCalls
 }
 
-// DedupeSweep clusters every bucket's live memories (reinforced/verified included - a duplicate pair
-// among verified memories is exactly the one that should merge, P5 lineage sums their votes onto the
-// survivor) by cosine similarity (issue #1269): the burst sweep only ever compares memories minted by the same chat within a 15-minute window, so a fact re-derived independently by a different run - even days later - never gets compared. It reads each point's ALREADY-STORED vector via list() (both backends keep it - qdrant's WithVectors, sqlite's blob column), never re-embeds, clusters transitively at >= dedupeCosineThreshold, and feeds each cluster of size >= 2 to the same consolidation model the burst sweep uses (consolidateCluster, P5 lineage: the survivor keeps summed votes, the absorbed is invalidated "absorbed by <id>"). Cluster members are ordered highest-voted-then-oldest first so the dedupe prompt can prefer that one as the survivor. apply=false only clusters and reports (no LLM call, no write); apply=true runs consolidation (bounded by dedupeMaxLLMCalls) and applies its ops.
+// DedupeSweep clusters each bucket's live memories by stored-vector cosine, catching duplicates the burst
+// sweep misses across runs, and with apply merges each cluster via consolidateCluster (<= dedupeMaxLLMCalls).
 func (s *Store) DedupeSweep(ctx context.Context, apply bool) (DedupeReport, error) {
 	byBucket := map[string][]scored{}
 	err := s.forEachSweepPage(ctx, false, true, func(page []scored) { // currently-valid only, with vectors
@@ -107,9 +103,8 @@ func clusterReport(bucket string, cluster []scored) DedupeCluster {
 	return c
 }
 
-// cosineClusters unions pts[i]/pts[j] whenever their OWN stored vectors' cosine similarity is >=
-// threshold (transitive: a-b and b-c above threshold puts a, b, c in one cluster even if a-c is
-// below it), bounded to maxSize per cluster; only size >= 2 clusters are returned. Each cluster is ordered highest-VoteScore-then-oldest-MintedAt first: the dedupe prompt is told to prefer keeping that member as the survivor when wording is otherwise comparable, so a verified/upvoted memory outranks a freshly re-derived duplicate rather than being the one absorbed. ponytail: O(n²) pairwise cosine per bucket - fine at memory's documented scale (hundreds-thousands per bucket, run nightly off the hot path); revisit with an ANN index only if a bucket's dedupe pass measurably lags.
+// cosineClusters transitively unions pts at >= threshold (size <= maxSize, only >= 2 returned), ordering
+// highest-VoteScore-then-oldest first so upvoted memories survive. ponytail: O(n²) per bucket, ANN if it lags.
 func cosineClusters(pts []scored, threshold float32, maxSize int) [][]scored {
 	n := len(pts)
 	parent := make([]int, n)

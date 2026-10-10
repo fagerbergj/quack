@@ -16,9 +16,7 @@ import (
 	"google.golang.org/adk/v2/workflow"
 
 	"github.com/fagerbergj/quack/internal/artifactref"
-	"github.com/fagerbergj/quack/internal/artifactschema"
 	"github.com/fagerbergj/quack/internal/artifactsrc"
-	"github.com/fagerbergj/quack/internal/decide"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/stream"
@@ -33,41 +31,36 @@ const (
 	gateContextKey = "quack.gate_context/" // this round's resumable transport context id, "" for a native node
 )
 
-// nodeScopedWorker: fresh worker/model/tools per DAG node.
 type nodeScopedWorker interface {
-	// Builds a node's own worker, model and tools (internal/serve's nativeAgent); see that
-	// implementation for drain, setRoundCoords, sink, ctx and release semantics.
+	// ForNode builds a node's own worker, model and tools; see internal/serve's nativeAgent for the
+	// drain, setRoundCoords, sink, ctx and release semantics.
 	ForNode(ctx context.Context, nodeKey, advisorToken string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (worker adkagent.Agent, m model.LLM, tools []tool.Tool, setRoundCoords func(round int, turnID, headSHA, triggerAnnotation string), refreshPrompt func(context.Context) artifactsrc.Artifact, release func(paused bool), err error)
 }
 
-// buildGateNodes: one gated node per plan node. source is the run's origin (extension name or a fixed
-// app value) - observability only, see vetting.Config.Source. userID scopes the recordstore.Client behind
-// a native node's artifact tools (#1123) and must match the userID the rest of the chat's artifacts (e.g. the orchestrator's own writes) were saved under, or a node's list/read/edit silently sees nothing.
-func buildGateNodes(ctx context.Context, plan Plan, roster *Roster, judge vetting.JudgeFactory, controls *runControls, chatID, userID, source string, recordGate func(nodeID string, score float64, passed bool, rounds int, contextID string), admission *Admission, judgeSpec AdmissionSpec, artifacts artifact.Service, walLedger ledger.LedgerStore, schemas *artifactschema.Registry, decisions *decide.Decider,
-	refreshSetup func(context.Context, Node, vetting.Config) bool, sink func(stream.SSEEvent)) (map[string]workflow.Node, []adkagent.Agent, error) {
+// buildGateNodes: one gated node per plan node. userID scopes the native node's artifact tools and must
+// match the userID the chat's other artifacts were saved under, or a node's list/read/edit sees nothing.
+func (e *Executor) buildGateNodes(ctx context.Context, plan Plan, chatID, userID, source string, artifacts artifact.Service,
+	refreshSetup func(context.Context, Node, vetting.Config) bool, sink func(stream.SSEEvent)) (map[string]workflow.Node, error) {
+	roster, controls := e.RosterFor(ctx), e.controls
+	recordGate := func(nodeID string, score float64, passed bool, rounds int, contextID string) {
+		e.recordGateResult(chatID, nodeID, score, passed, rounds, contextID)
+	}
 	nodesByID := make(map[string]workflow.Node, len(plan.Nodes))
-	var subAgents []adkagent.Agent
-	seenAgent := map[string]bool{}
 	// judgeArtifactTools: one list_artifacts/read_artifact pair over the chat, shared by
 	// every node's judge rounds; each round hides its node's ForeignNodes' artifacts.
 	var judgeArtifactTools []tool.Tool
 	if artifacts != nil {
-		// No WithLedger: these tools are read-only and never call Save*, so
-		// there is no parent_revision write to stamp a WAL entry for.
+		// No WithLedger: these tools are read-only, so there is no parent_revision write to log.
 		rc := recordstore.New(artifacts, artifactref.AppName, userID, chatID)
 		var jerr error
 		if judgeArtifactTools, jerr = vetting.NewJudgeArtifactTools(rc); jerr != nil {
-			return nil, nil, fmt.Errorf("dag: judge artifact tools: %w", jerr)
+			return nil, fmt.Errorf("dag: judge artifact tools: %w", jerr)
 		}
 	}
 	for _, n := range plan.Nodes {
 		ag, ok := roster.Agents[n.AgentName]
 		if !ok {
-			return nil, nil, fmt.Errorf("dag: no agent %q for node %q", n.AgentName, n.ID)
-		}
-		if !seenAgent[n.AgentName] {
-			seenAgent[n.AgentName] = true
-			subAgents = append(subAgents, ag)
+			return nil, fmt.Errorf("dag: no agent %q for node %q", n.AgentName, n.ID)
 		}
 		worker := ag
 		workerModel := roster.Models[n.AgentName]
@@ -84,41 +77,39 @@ func buildGateNodes(ctx context.Context, plan Plan, roster *Roster, judge vettin
 		if scoped, ok := ag.(nodeScopedWorker); ok {
 			w, m, wt, src, rp, rel, err := scoped.ForNode(ctx, plan.ID+":"+n.ID, vetting.AdvisorThreadToken(plan.ID, n.ID), liveSteerDrain(controls, chatID, n.ID), artifacts, artifactref.AppName, userID, chatID, n.ID, sink)
 			if err != nil {
-				return nil, nil, fmt.Errorf("dag: node %q: per-node agent construction: %w", n.ID, err)
+				return nil, fmt.Errorf("dag: node %q: per-node agent construction: %w", n.ID, err)
 			}
 			worker, workerModel, workerTools, setRoundCoords, refreshPrompt, release = w, m, wt, src, rp, rel
-			// #1482: the per-call hold lives on the model buildWorker wraps, so the slot
-			// frees between this node's model calls (tool phases overlap).
+			// The per-call hold lives on the model buildWorker wraps, so the slot frees between this
+			// node's model calls (tool phases overlap).
 			perCall = true
 		}
 		worker, err := withRoundAbort(worker, controls, chatID, node.ID, vetting.AdvisorThreadToken(plan.ID, node.ID))
 		if err != nil {
-			return nil, nil, fmt.Errorf("dag: node %q: round-abort wrap: %w", node.ID, err)
+			return nil, fmt.Errorf("dag: node %q: round-abort wrap: %w", node.ID, err)
 		}
 		workerNode, err := vetting.NewWorkerNode(worker)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		cfg := nodeGateConfig(ctx, plan, node, worker, roster.CfgFor, chatID, source)
 		cfg.Artifacts = artifacts
-		// buildTask's dependency-artifact lookup scopes recordstore reads by this,
-		// same as vetting.newGateRun's own cfg.User stamp for the node's own rounds.
+		// buildTask's dependency-artifact lookup scopes recordstore reads by this.
 		cfg.User = userID
-		cfg.Ledger = walLedger
-		// Store invariant, not grading opinion: armed regardless of cfgFor's own
-		// gated:false or gates-disabled result, same as Artifacts/User/Ledger above.
-		cfg.Schemas = schemas
-		cfg.Decisions = decisions
+		cfg.Ledger = e.walLedger
+		// Store invariant, not grading opinion: armed even when cfgFor returns gated:false.
+		cfg.Schemas = e.schemas
+		cfg.Decisions = e.decisions
 		cfg.RoundCoordsSink = setRoundCoords
 		cfg.RefreshPrompt = refreshPrompt
 		cfg.JudgeArtifactTools = judgeArtifactTools
-		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, workerModel, worker, workerTools, judge, cfg, roster.Media, controls, chatID, recordGate, release, admission, spec, judgeSpec, refreshSetup, perCall)
+		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, workerModel, worker, workerTools, e.judge, cfg, roster.Media, controls, chatID, recordGate, release, e.admission, spec, e.judgeSpec, refreshSetup, perCall)
 	}
-	return nodesByID, subAgents, nil
+	return nodesByID, nil
 }
 
-// withRoundAbort wraps the worker so a node cancel or RepeatGuardTripped can abort its round, and stamps
-// the node's advisor token on its ctx (an in-process ACP worker's only scope source). Must wrap the Agent itself.
+// withRoundAbort lets a node cancel or RepeatGuardTripped abort the round, and stamps the advisor
+// token on ctx (an in-process ACP worker's only scope source). Must wrap the Agent itself.
 func withRoundAbort(inner adkagent.Agent, controls *runControls, chatID, nodeID, token string) (adkagent.Agent, error) {
 	return adkagent.New(adkagent.Config{
 		Name:        inner.Name(),
@@ -151,9 +142,8 @@ func withRoundAbort(inner adkagent.Agent, controls *runControls, chatID, nodeID,
 	})
 }
 
-// liveSteerDrain: the per-node hook that delivers a steer into a RUNNING round
-// (#1029). It PEEKS - consuming here would burn the -sN generation the UI
-// resolves and rob the gate boundary of its durable delivery.
+// liveSteerDrain delivers a steer into a running round. It peeks: consuming here would burn the -sN
+// generation the UI resolves and rob the gate boundary of its durable delivery.
 func liveSteerDrain(controls *runControls, chatID, nodeID string) func() string {
 	return func() string {
 		if controls == nil {
@@ -166,8 +156,8 @@ func liveSteerDrain(controls *runControls, chatID, nodeID string) func() string 
 	}
 }
 
-// foreignNodes: plan nodes other than id and its (transitive) dependencies - siblings
-// and descendants, whose fetches and artifacts must never back id's claims.
+// foreignNodes: plan nodes other than id and its transitive dependencies, whose fetches and
+// artifacts must never back id's claims.
 func foreignNodes(plan Plan, id string) []string {
 	up := ancestors(plan.Nodes, id)
 	var out []string
@@ -179,12 +169,8 @@ func foreignNodes(plan Plan, id string) []string {
 	return out
 }
 
-// nodeGateConfig assembles one node's trust-gate config from the agent's base
-// config (cfgFor) plus the node's and plan's own facts. A planOnly plan
-// forces every node read-only with no delivery target here, in the one place
-// cfgFor's result is turned into a node's actual config - regardless of which
-// agent the planner picked (#739). Filtering by agent name would miss a
-// future writable agent; this keys on the capability fields themselves.
+// nodeGateConfig assembles one node's trust-gate config from cfgFor plus node and plan facts. A planOnly
+// plan forces read-only/no-delivery here by capability fields, so a future writable agent can't slip past.
 func nodeGateConfig(ctx context.Context, plan Plan, node Node, worker adkagent.Agent, cfgFor func(context.Context, string) vetting.Config, chatID, source string) vetting.Config {
 	cfg := cfgFor(ctx, node.AgentName)
 	cfg.DeliverPromptEvent = vetting.PromptEventNeeded(worker)
@@ -195,13 +181,9 @@ func nodeGateConfig(ctx context.Context, plan Plan, node Node, worker adkagent.A
 	cfg.ForeignNodes = foreignNodes(plan, node.ID)
 	cfg.Agent = node.AgentName
 	cfg.AllowedDeliveryKinds = plan.AllowedDeliveryKinds
-	// code-reviewer nodes are always review-delivery nodes by construction.
 	cfg.IsReviewer = node.AgentName == reviewerAgent
-	// >1 reviewer node: review delivery is run-scoped, not node-scoped (#867) -
-	// see vetting.ReviewFanout. A single reviewer node keeps today's behavior.
-	// The plan's single synthesizer node, when present, owns the final
-	// consolidated review (#965): reviewers stage into the fan-in without
-	// delivering, and the synthesizer's answer becomes the review body.
+	// >1 reviewer node: review delivery is run-scoped (vetting.ReviewFanout). A single synthesizer node
+	// owns the consolidated review: reviewers stage into the fan-in and its answer becomes the review body.
 	if n := reviewerNodeCount(plan); n > 1 {
 		synth := synthesizerNodeCount(plan) == 1
 		if cfg.IsReviewer || (synth && node.AgentName == synthesizerAgent) {
@@ -228,11 +210,8 @@ func nodeGateConfig(ctx context.Context, plan Plan, node Node, worker adkagent.A
 		cfg.ReadOnly = true
 		cfg.Deliver = nil
 	}
-	// A read-only node (no delivery tools - review/exploration/research) can
-	// never satisfy a build/test check: cfg.ReadOnly already reflects the
-	// agent's actual capability (perAgentGateCfg), not its name, so this
-	// catches every read-only agent, not just code-reviewer (#1083 follow-up:
-	// the trust gate fail-closed on a reviewer's guessed workdir).
+	// A read-only node can never satisfy a build/test check, and cfg.ReadOnly reflects actual capability,
+	// so this drops checks for every read-only agent (the gate fail-closed on a reviewer's guessed workdir).
 	if cfg.ReadOnly && len(cfg.Checks) > 0 {
 		slog.Info("dropping planner-authored checks for a read-only node",
 			"component", "dag", "node", node.ID, "agent", node.AgentName, "checks", cfg.Checks)
@@ -248,8 +227,8 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 	refreshSetup func(context.Context, Node, vetting.Config) bool, perCall bool) workflow.Node {
 	return workflow.NewDynamicNode[any, string](node.ID,
 		func(ctx adkagent.Context, in any, emit func(*session.Event) error) (string, error) {
-			// paused stays false on every path except the HITL-park return below:
-			// it tells release() whether the node is truly finishing or only parking (a resume needs its state intact).
+			// paused is true only on the HITL-park return: it tells release() whether the node is finishing
+			// or only parking (a resume needs its state intact).
 			paused := false
 			if release != nil {
 				defer func() { release(paused) }()
@@ -276,8 +255,7 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			enterNode(chatID)
 			defer leaveNode(chatID)
 
-			// Before the prompt is built, so a refreshed tree and the note
-			// describing it reach the worker together.
+			// Before the prompt is built, so a refreshed tree and the note describing it reach the worker together.
 			refreshed := refreshSetup != nil && refreshSetup(ctx, node, cfg)
 
 			upstream := upstreamFromInput(in, node.DependsOn)
@@ -295,10 +273,8 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 				ReadOnly:        cfg.ReadOnly,
 				InvocationID:    ctx.InvocationID(),
 				ChatID:          chatID, // real chat scope; the ADK session id below is a retry-only alias
-				// ACPSessionID seeded from the reused node's prior context: a
-				// no-op for a fresh node (empty) or a native node (never read
-				// by the ACP transport); an ACP node's resolveNode passes it to
-				// session/load as this round's priorSessionID.
+				// ACPSessionID: the reused node's prior context, passed by an ACP node's resolveNode to session/load;
+				// empty for a fresh node and never read for a native one.
 				ACPSessionID:         cfg.ResumedFrom,
 				AllowedDeliveryKinds: cfg.AllowedDeliveryKinds,
 				PlanOnly:             plan.PlanOnly,
@@ -320,8 +296,7 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 				atts = nil
 			}
 			ledger.StampCoords(workerTools, ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent})
-			// ACP agents ignore workerModel (never invoked - the subprocess does the
-			// real work), so their gen_ai metrics attribution rides on worker itself.
+			// ACP agents never invoke workerModel, so gen_ai metrics attribution rides on worker itself.
 			ledger.StampCoords([]adkagent.Agent{worker}, ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent, User: cfg.User, Source: cfg.Source})
 			answer, res, err := vetting.RunGatedRefine(ctx, node.ID, workerNode, workerModel, judge, cfg, prompt, atts, ctrl, emit)
 			return finishGatedNode(ctx, node.ID, token, res, recordGate, answer, err, &paused)
@@ -329,11 +304,11 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 		workflow.NodeConfig{})
 }
 
-// setupAdmission wires RunGatedRefine's four judge-swap hooks. perCall (native models wrapped in AdmittingLLM, #1482) skips the whole-run worker admit and no-ops the worker hooks; ACP nodes keep it - their subprocess round is the hold unit.
+// setupAdmission wires RunGatedRefine's judge-swap hooks. perCall (native models in AdmittingLLM) skips
+// the whole-run worker admit; ACP nodes keep it, as their subprocess round is the hold unit.
 func setupAdmission(ctx context.Context, nodeID string, cfg *vetting.Config, admission *Admission, spec, judgeSpec AdmissionSpec, perCall bool) (func(), error) {
 	yield, hasYield := stream.YieldFromContext(ctx)
-	// admit wraps one Admit call so every wait - not just the node's first -
-	// persists queued while blocked and running again once let back in.
+	// admit wraps one Admit call so every wait, not just the first, persists queued and then running.
 	waited := false
 	onQueued := func() {}
 	if hasYield {
@@ -350,8 +325,7 @@ func setupAdmission(ctx context.Context, nodeID string, cfg *vetting.Config, adm
 	if !perCall && !admit(ctx, spec) {
 		return nil, ctx.Err()
 	}
-	// held tracks the currently-reserved spec, swapped by RunGatedRefine
-	// between spec and judgeSpec, so the release below always frees what's actually held.
+	// held tracks the reserved spec as RunGatedRefine swaps spec and judgeSpec, so release frees what's held.
 	held := spec
 	if perCall {
 		// The worker hold is per model call (held inside AdmittingLLM), never here.
@@ -376,8 +350,8 @@ func setupAdmission(ctx context.Context, nodeID string, cfg *vetting.Config, adm
 		return true
 	}
 	cfg.ReleaseJudge = func() { admission.Release(judgeSpec); held = AdmissionSpec{} }
-	// A parallel verifier batch takes one more judge-model session; its KV rides the held
-	// judge reservation, whose whole window sits idle while the verify tier runs.
+	// A parallel verifier batch takes one more judge-model session; its KV rides the held judge
+	// reservation, whose window sits idle while the verify tier runs.
 	extra := AdmissionSpec{Model: judgeSpec.Model}
 	cfg.TryAdmitVerify = func() (func(), bool) {
 		if !admission.TryAdmit(extra) {
@@ -388,8 +362,8 @@ func setupAdmission(ctx context.Context, nodeID string, cfg *vetting.Config, adm
 	return func() { admission.Release(held) }, nil
 }
 
-// setupMemStages: wire the ACP memory/review/PR/artifact stages onto the
-// advisor task for the nodes that carry them. Returns the session cleanup.
+// setupMemStages wires the ACP memory/review/PR/artifact stages onto the advisor task for the nodes
+// that carry them. Returns the session cleanup.
 func setupMemStages(ctx adkagent.Context, chatID, nodeID, token string, cfg *vetting.Config, task *vetting.AdvisorTask) func() {
 	if !cfg.ExternalWorker {
 		return nil
@@ -435,8 +409,8 @@ func setupMemStages(ctx adkagent.Context, chatID, nodeID, token string, cfg *vet
 	return func() { vetting.UnregisterMemSession(secret) }
 }
 
-// finishGatedNode: the gate result tail - the ACP context id captured unconditionally (an
-// ACP node that establishes a transport session before failing still reaches the dag_node record),
+// finishGatedNode records the gate result; the ACP context id is captured unconditionally so a node
+// that failed after establishing a transport session still reaches the dag_node record.
 func finishGatedNode(ctx adkagent.Context, nodeID, token string, res vetting.GateResult, recordGate func(nodeID string, score float64, passed bool, rounds int, contextID string), answer string, err error, paused *bool) (string, error) {
 	contextID := ""
 	if at, ok := vetting.LookupAdvisorThread(token); ok {
@@ -453,8 +427,8 @@ func finishGatedNode(ctx adkagent.Context, nodeID, token string, res vetting.Gat
 	if errors.Is(err, vetting.ErrNodePaused) {
 		markGateFailed(ctx, nodeID)
 		*paused = true
-		// A HITL park wraps ADK's own sentinel: the engine keys the park (and the
-		// persisted RequestInput a resume reads) off it, so it must propagate.
+		// A HITL park wraps ADK's own sentinel: the engine keys the park (and the persisted RequestInput a
+		// resume reads) off it, so it must propagate.
 		if errors.Is(err, workflow.ErrNodeInterrupted) {
 			return answer, err
 		}
@@ -490,7 +464,6 @@ func reviewerNodeCount(plan Plan) int {
 	return n
 }
 
-// markGateFailed: flags node with no answer for continue-but-warn.
 type unreviewedSeedsKey struct{}
 
 // WithUnreviewedSeeds flags seeded outputs that never passed review (a stopped draft, a failed
@@ -534,8 +507,8 @@ func readGateFailed(ctx adkagent.Context, dependsOn []string) map[string]bool {
 	return out
 }
 
-// renderUpstreamForJudge: same upstream outputs and gate-failed/no-answer
-// markers buildTask hands the worker, so the judge can't read a flagged upstream answer as trustworthy.
+// renderUpstreamForJudge gives the judge the same upstream outputs and failure markers buildTask gives
+// the worker, so a flagged upstream answer isn't read as trustworthy.
 func renderUpstreamForJudge(upstream map[string]string, dependsOn []string, gateFailed map[string]bool) string {
 	var sb strings.Builder
 	for _, dep := range dependsOn {

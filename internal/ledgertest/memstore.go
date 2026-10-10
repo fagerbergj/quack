@@ -1,5 +1,4 @@
-// Package ledgertest provides an in-memory ledger.LedgerStore for tests.
-// It is not a runtime backend: nothing survives the process, and config
+// Package ledgertest provides an in-memory ledger.LedgerStore for tests, never a runtime backend: config
 // refuses anything but Postgres as the WAL.
 package ledgertest
 
@@ -26,7 +25,7 @@ var (
 
 func NewMemStore() *MemStore { return &MemStore{entries: map[string][]ledger.Entry{}} }
 
-// AppendIntent enforces the same two constraints PGStore does (#1144 P4) by
+// AppendIntent enforces the same two constraints PGStore does by
 // scanning this chat's entries - fine for a test-only store.
 func (s *MemStore) AppendIntent(_ context.Context, e ledger.Entry) (int64, error) {
 	if e.ChatID == "" || e.Kind == "" {
@@ -72,9 +71,8 @@ func (s *MemStore) ReadEntries(_ context.Context, chatID string, fromSeq int64) 
 	return out, nil
 }
 
-// ReadEntriesFilteredSince implements ledger.CrossChatFilteredReader, so a test using
-// MemStore exercises the same one-query code path PGStore does (perf audit #12) rather than
-// always falling back to ReadAllByKindsSince's per-chat loop.
+// ReadEntriesFilteredSince implements ledger.CrossChatFilteredReader, so tests exercise PGStore's one-query
+// path rather than ReadAllByKindsSince's per-chat fallback.
 func (s *MemStore) ReadEntriesFilteredSince(_ context.Context, kinds []string, since time.Time) ([]ledger.Entry, error) {
 	want := make(map[string]bool, len(kinds))
 	for _, k := range kinds {

@@ -10,23 +10,20 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// Outcome statuses for a non-interactive turn - the vocabulary shared by `-p`,
-// `chat send`, and `chat show -f`. Deliberately mirrors schema.ChatStatus
-// (running/needs_input/failed/idle) minus "running": a send blocks until its own run ends, so it never observes itself as running.
+// Outcome statuses shared by `-p`, `chat send` and `chat show -f`: schema.ChatStatus minus "running",
+// since a send blocks until its own run ends.
 const (
 	StatusCompleted  = "completed"
 	StatusNeedsInput = "needs_input"
 	StatusFailed     = "failed"
 )
 
-// getUserChoiceTool mirrors tools.ChoiceToolName (internal/tools) - duplicated
-// as a literal rather than imported so the CLI stays decoupled from the
-// server's internal packages (it only ever talks to the server over HTTP+SSE).
+// getUserChoiceTool mirrors tools.ChoiceToolName as a literal so the CLI stays decoupled from server
+// packages (it only speaks HTTP+SSE).
 const getUserChoiceTool = "get_user_choice"
 
-// SendResult is the observable outcome of one non-interactive turn. Exactly one
-// of Answer/Question/Error is meaningful, selected by Status. This is also the
-// --json shape on all three call sites (`-p`, `chat send`, `chat show -f`), so a scripted agent gets one object shape regardless of entry point.
+// SendResult is one non-interactive turn's outcome; Status selects which of Answer/Question/Error
+// is meaningful. It is also the --json shape for `-p`, `chat send` and `chat show -f`.
 type SendResult struct {
 	ChatID   string `json:"chat_id"`
 	Status   string `json:"status"`
@@ -35,9 +32,8 @@ type SendResult struct {
 	Error    string `json:"error,omitempty"`
 }
 
-// streamState accumulates a run's observable outcome as its SSE events arrive.
-// Shared by send (POST /responses, callback-style) and follow (GET /stream via
-// Subscribe, channel-style) so both classify completed/needs_input/failed identically - the bulletproof-CLI spec's one place for "what happened".
+// streamState accumulates a run's outcome from SSE events, shared by send (POST) and follow (GET)
+// so both classify completed/needs_input/failed identically.
 type streamState struct {
 	err       error
 	orch      strings.Builder // orchestrator's own streamed answer (node_id == "")
@@ -149,7 +145,7 @@ func (s *streamState) onToolCall(data json.RawMessage) {
 		return
 	}
 	if d.NodeID == "" {
-		// Narration before an orchestrator tool call is preamble, not its answer (#358, #387): the
+		// Narration before an orchestrator tool call is preamble, not its answer: the
 		// CLI's final printed answer (Report) must never include it.
 		s.orch.Reset()
 	}
@@ -158,9 +154,8 @@ func (s *streamState) onToolCall(data json.RawMessage) {
 	}
 }
 
-// result classifies the accumulated state into a SendResult: failed (a stream
-// error) beats needs_input (a pause) beats completed (an answer). The answer
-// preference mirrors the original PrintPrompt logic: the terminal DAG node's output when a plan ran, falling back to any no-successor node with output, and only then the orchestrator's own reply (a direct, no-DAG answer).
+// result classifies the state: failed beats needs_input beats completed. The answer is the terminal DAG
+// node's output, else any sink node's output, else the orchestrator's own reply.
 func (s *streamState) result(chatID string) SendResult {
 	if s.err != nil {
 		return SendResult{ChatID: chatID, Status: StatusFailed, Error: s.err.Error()}
@@ -205,9 +200,8 @@ func (s *streamState) sinkSections() string {
 	return stream.JoinSinkAnswers(sinks)
 }
 
-// send drives one non-interactive turn against an existing chatID and
-// classifies the result. Shared by RunChatSend (`chat send`) and PrintPrompt
-// (`-p`, after CreateChat) - the ONE place both determine "what happened".
+// send drives one non-interactive turn on chatID and classifies the result, for both `chat send`
+// and `-p`.
 func send(ctx context.Context, c *Client, chatID, content string, attachPaths []string, events io.Writer) SendResult {
 	st := newStreamState()
 	onEvent := func(ev SSEEvent) error {
@@ -226,9 +220,8 @@ func send(ctx context.Context, c *Client, chatID, content string, attachPaths []
 	return st.result(chatID)
 }
 
-// Report writes a SendResult per the CLI's bulletproof pause/failure semantics
-// and returns the process exit code: 0 completed, 1 failed, 2 needs_input.
-// asJSON writes one JSON object to out instead of the human-readable lines - same exit codes either way, so a scripted caller can rely on the code alone.
+// Report writes r (one JSON object when asJSON) and returns the exit code: 0 completed, 1 failed,
+// 2 needs_input.
 func Report(out, errOut io.Writer, chatID string, r SendResult, asJSON bool) int {
 	if asJSON {
 		_ = WriteJSON(out, r)
@@ -270,9 +263,8 @@ func exitCode(status string) int {
 	}
 }
 
-// RunChatSend is `quack chat send <id> "<msg>"`: a non-interactive turn on an
-// existing chat, streaming the final answer to stdout. This is how an agent
-// answers a needs_input question (the server routes a plain-text turn to the paused node) or asks a follow-up - no TUI required. showEvents routes the pipeline trace to errOut; asJSON emits one SendResult object instead of the human-readable lines. Returns the process exit code (see Report).
+// RunChatSend is `quack chat send <id> "<msg>"`: a non-interactive turn on an existing chat, e.g. to
+// answer a needs_input question. showEvents traces the pipeline to errOut. Returns the exit code.
 func RunChatSend(ctx context.Context, out, errOut io.Writer, server, id, content string, attachPaths []string, showEvents, asJSON bool) int {
 	c, err := NewClient(ctx, server)
 	if err != nil {
@@ -287,9 +279,8 @@ func RunChatSend(ctx context.Context, out, errOut io.Writer, server, id, content
 	return Report(out, errOut, id, res, asJSON)
 }
 
-// PrintPrompt is `quack -p`: create a chat, send the prompt, and report the
-// outcome via the SAME send/Report path `chat send` uses. The new chat's id is
-// printed to errOut (`chat: <id>`) so stdout stays answer-only for pipes. Returns the process exit code (see Report).
+// PrintPrompt is `quack -p`: create a chat and send the prompt via the same path as `chat send`.
+// The chat id goes to errOut so stdout stays answer-only. Returns the exit code.
 func PrintPrompt(ctx context.Context, out, errOut, events io.Writer, server, prompt string, attachPaths []string, asJSON bool) int {
 	c, err := NewClient(ctx, server)
 	if err != nil {

@@ -82,9 +82,8 @@ func (v Verifier) VerifyChecks(ctx context.Context, checks []UnitCheck) []UnitCh
 	return checks
 }
 
-// recheckUnsupported reads every unsupported item of among once more in a window three
-// times wider: a false fail costs a revise, so an item stays unsupported only when both reads agree.
-// failed: items whose second look got no answer, whose cannot_tell is not worth remembering.
+// recheckUnsupported rereads each unsupported item in a 3x wider window; a false fail costs a revise,
+// so it stays unsupported only when both reads agree. failed: items whose second look got no answer.
 func (v Verifier) recheckUnsupported(ctx context.Context, checks []UnitCheck, among []int) (failed map[int]bool) {
 	failed = map[int]bool{}
 	first := map[int]Verdict{}

@@ -11,9 +11,8 @@ import (
 	"time"
 )
 
-// NodeStateStore is the write-through seam for the node state machine: every
-// pause/start/stop and steer-queue edit lands here before it is acted on, so a
-// kill can't lose it. Stringly typed (internal/store imports internal/dag); *store.Store implements it.
+// NodeStateStore is the write-through seam for the node state machine: every pause/start/stop and
+// steer-queue edit lands here before it is acted on, so a kill can't lose it. Stringly typed to avoid an import cycle.
 type NodeStateStore interface {
 	SetNodeStatusForChat(ctx context.Context, chatID, nodeID, status, pauseReason, pendingQuestion string) error
 	SetNodeQueue(ctx context.Context, chatID, nodeID, queueJSON string) error
@@ -37,9 +36,8 @@ type queuedMsg struct {
 	CreatedAt time.Time
 }
 
-// UnmarshalJSON derives Status from a legacy row that only has the old
-// Delivered bool: true meant "drained" for the vast majority of historical
-// rows (the gate-boundary path predates live delivery, #1029/#1042).
+// UnmarshalJSON derives Status from a legacy row with only Delivered: true meant "drained" for
+// nearly all historical rows (the gate-boundary path predates live delivery).
 func (m *queuedMsg) UnmarshalJSON(b []byte) error {
 	var shape struct {
 		ID        string
@@ -63,9 +61,8 @@ func (m *queuedMsg) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// MarshalJSON also writes the legacy Delivered bool so a row written here and
-// read back by an OLDER binary (a rollback) is not seen as still-queued and
-// re-delivered to the node.
+// MarshalJSON also writes the legacy Delivered bool so an older binary (a rollback) doesn't see the
+// row as still-queued and re-deliver it.
 func (m queuedMsg) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		ID        string
@@ -89,34 +86,28 @@ type nodeControl struct {
 	paused    bool
 	reason    PauseReason
 	queue     []*queuedMsg
-	drained   [][]string // one entry per TakeQueued() drain, in order - generation N (the -sN run suffix) reads drained[N-1]
+	drained   [][]string // one entry per TakeQueued() drain; generation N (-sN suffix) reads drained[N-1]
 
-	// liveSteer forwards a message into the running round instead of parking
-	// it. nil when the node isn't mid-round.
+	// liveSteer forwards a message into the running round; nil when the node isn't mid-round.
 	liveSteer func(text string) bool
 
-	// roundAbort aborts the in-flight round (ACP session/cancel RPC #1030,
-	// native via graph.go's withRoundAbort) - cancel only, not pause: pause
-	// must keep the round's work so it can resume, so it never calls this.
+	// roundAbort aborts the in-flight round (ACP session/cancel, or native withRoundAbort). Cancel only:
+	// pause must keep the round's work so it can resume.
 	roundAbort context.CancelFunc
 
-	// repeatFailure: set by RepeatGuardTripped on a tool-loop hard stop.
-	// Distinct from cancelled (user-initiated) so it surfaces as a real
-	// failure, not the cancel path's silent empty continue-but-warn.
+	// repeatFailure: set by RepeatGuardTripped. Distinct from cancelled so it surfaces as a real failure,
+	// not the cancel path's silent continue-but-warn.
 	repeatFailure string
 
 	// Write-through coordinates; nil store = in-memory only (tests).
 	store          NodeStateStore
 	chatID, nodeID string
-	// owner: nil in a test that constructs nodeControl directly rather than
-	// via runControls.register - MarkDelivered no-ops then, same as every
-	// other nil-guarded seam here (store, liveSteer, roundAbort).
+	// owner: nil when a test constructs nodeControl directly; MarkDelivered no-ops then.
 	owner *runControls
 }
 
-// MarkDelivered records that RunGatedRefine reached commitDelivery for this
-// node (vetting.NodeControl) - see runControls.delivered's doc for why
-// dagStream needs this signal instead of inferring delivery from output text.
+// MarkDelivered records that RunGatedRefine reached commitDelivery for this node; see
+// runControls.delivered for why dagStream can't infer delivery from output text.
 func (c *nodeControl) MarkDelivered() {
 	if c.owner != nil {
 		c.owner.markDelivered(c.chatID, c.nodeID)
@@ -131,8 +122,7 @@ func (c *nodeControl) NoteDraft(draft string) {
 	}
 }
 
-// setLiveSteer/clearLiveSteer: the live round's forward hook, registered for
-// the round's duration only - see acp.Agent.round.
+// setLiveSteer/clearLiveSteer: the live round's forward hook, registered for the round's duration only.
 func (c *nodeControl) setLiveSteer(f func(text string) bool) {
 	c.mu.Lock()
 	c.liveSteer = f
@@ -145,8 +135,7 @@ func (c *nodeControl) clearLiveSteer() {
 	c.mu.Unlock()
 }
 
-// setRoundAbort/clearRoundAbort: registered for the round's duration only,
-// same lifecycle as setLiveSteer/clearLiveSteer - see acp.Agent.round.
+// setRoundAbort/clearRoundAbort: registered for the round's duration only, like setLiveSteer.
 func (c *nodeControl) setRoundAbort(cancel context.CancelFunc) {
 	c.mu.Lock()
 	c.roundAbort = cancel
@@ -159,8 +148,7 @@ func (c *nodeControl) clearRoundAbort() {
 	c.mu.Unlock()
 }
 
-// SetRoundAbort/ClearRoundAbort: exported so graph.go's withRoundAbort can
-// register a native round's cancel on the same field an ACP round uses.
+// SetRoundAbort/ClearRoundAbort let withRoundAbort register a native round's cancel on the ACP field.
 // Firing cancel immediately covers a round that starts after the stop.
 func (c *nodeControl) SetRoundAbort(cancel context.CancelFunc) {
 	c.setRoundAbort(cancel)
@@ -174,8 +162,7 @@ func (c *nodeControl) SetRoundAbort(cancel context.CancelFunc) {
 
 func (c *nodeControl) ClearRoundAbort() { c.clearRoundAbort() }
 
-// RepeatGuardTripped records a tool-call-loop hard stop and aborts the
-// in-flight round so the node's turn actually ends, not hangs.
+// RepeatGuardTripped records a tool-call-loop hard stop and aborts the in-flight round so the turn ends.
 func (c *nodeControl) RepeatGuardTripped(msg string) {
 	c.mu.Lock()
 	if c.repeatFailure != "" {
@@ -190,8 +177,7 @@ func (c *nodeControl) RepeatGuardTripped(msg string) {
 	}
 }
 
-// RepeatFailure reports RepeatGuardTripped's message, if any, and clears
-// it - a one-shot read so the next round (a retry) starts clean.
+// RepeatFailure reports and clears RepeatGuardTripped's message, so the next round starts clean.
 func (c *nodeControl) RepeatFailure() (string, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -220,9 +206,8 @@ func (c *nodeControl) Paused() bool {
 	return c.paused
 }
 
-// PeekQueued returns pending messages WITHOUT consuming them. Live delivery
-// only nudges the running round; the gate boundary still owns durable delivery
-// - the prompt fold, the -sN generation record and persistence (#1029).
+// PeekQueued returns pending messages without consuming them. Live delivery only nudges the running
+// round; the gate boundary still owns durable delivery (prompt fold, -sN generation, persistence).
 func (c *nodeControl) PeekQueued() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -252,8 +237,7 @@ func (c *nodeControl) TakeQueued() string {
 	c.drained = append(c.drained, out)
 	joined := strings.Join(out, "\n\n")
 	c.mu.Unlock()
-	// Synchronous: an async snapshot could land after a newer enqueue's write
-	// and drop a steer from the row (the restart-survival guarantee).
+	// Synchronous: an async snapshot could land after a newer enqueue's write and drop a steer from the row.
 	c.persistQueue()
 	return joined
 }
@@ -289,12 +273,10 @@ func (c *nodeControl) markCancelled() {
 	c.persistStatus(StatusCancelled, "", "")
 }
 
-// markPaused is the single pause path: HITL, a user pause and shutdown all
-// come through here. The store write happens BEFORE the flag is visible, so
-// a crash between the two can only lose the in-memory copy, never the row.
+// markPaused is the single pause path (HITL, user pause, shutdown). The store write happens before
+// the flag is visible, so a crash between them loses only the in-memory copy.
 func (c *nodeControl) markPaused(reason PauseReason, question string) {
-	// Empty status: the HITL park's status arrives on the needs_input event;
-	// this write is here for the reason + question.
+	// Empty status: the HITL park's status arrives on the needs_input event; this writes reason + question.
 	status := StatusPaused
 	if reason == PauseAwaitingInput {
 		status = ""
@@ -342,14 +324,13 @@ func (c *nodeControl) persistQueue() {
 	}
 }
 
-// enqueue appends a new queued message and returns a copy, delivering
-// straight into a live round when possible.
+// enqueue appends a queued message and returns a copy, delivering into a live round when possible.
 func (c *nodeControl) enqueue(text string) queuedMsg {
 	c.mu.Lock()
 	live := c.liveSteer
 	c.mu.Unlock()
-	// liveSteer is ACP-only (native rounds inject via steerCallback's own peek+dedupe),
-	// so a native round's steer stays "queued" here even after that callback injects it.
+	// liveSteer is ACP-only (native rounds inject via steerCallback's peek+dedupe), so a native
+	// round's steer stays "queued" here even after injection.
 	status := MsgQueued
 	if live != nil && live(text) {
 		status = MsgForwarded
@@ -362,11 +343,8 @@ func (c *nodeControl) enqueue(text string) queuedMsg {
 	return *m
 }
 
-// restore rebuilds a fresh control's steer queue from dag_nodes so a node
-// re-registered after a restart still carries its undelivered messages. A
-// persisted pause is NOT rehydrated - a registering node is starting, so the
-// pause is cleared instead (paused|needs_input → running, the legal resume
-// target), keeping row and memory agreed before the first gate check.
+// restore rebuilds a control's steer queue from dag_nodes after a restart. A persisted pause is
+// cleared, not rehydrated: a registering node is starting (paused|needs_input -> running).
 func (c *nodeControl) restore() {
 	if c.store == nil {
 		return
@@ -441,17 +419,13 @@ func (c *nodeControl) snapshotQueue() []queuedMsg {
 type runControls struct {
 	mu        sync.Mutex
 	m         map[string]map[string]*nodeControl // chatID → nodeID → control (live)
-	cancelled map[string]map[string]bool         // chatID → nodeID → user-cancelled; persists after the control is unregistered so the stream can mark the node "cancelled" (not "failed")
-	paused    map[string]map[string]PauseReason  // chatID → nodeID → why it paused this run; persists past unregister, same reason as cancelled
-	// delivered: chatID → nodeID → RunGatedRefine reached commitDelivery this
-	// run. Sticky past unregister for the same reason as cancelled/paused -
-	// dagStream.handle's terminal-event case can run after unregister, and a
-	// truly delivered answer must outrank a pause/cancel flag set afterward
-	// (the race #1340 only closed for PauseShutdown; a live pause/cancel
-	// arriving in the same window still needs this, not the out!="" guess).
+	cancelled map[string]map[string]bool         // chatID → nodeID → user-cancelled; survives unregister ("cancelled", not "failed")
+	paused    map[string]map[string]PauseReason  // chatID → nodeID → pause reason this run; survives unregister
+	// delivered: chatID -> nodeID -> RunGatedRefine reached commitDelivery this run. Sticky past unregister:
+	// handle's terminal case can run after it, and a delivered answer must outrank a later pause/cancel flag.
 	delivered map[string]map[string]bool
 	drafts    map[string]map[string]string // chatID -> nodeID -> latest worker draft, for a stop's node_cancelled
-	overrides map[string]map[string]string // chatID → nodeID → pending prompt edit for a not-yet-started node (see graph.go's effectiveNode.Task)
+	overrides map[string]map[string]string // chatID → nodeID → pending task edit for a not-yet-started node
 	store     NodeStateStore
 	shutdown  sync.Map // chatID -> struct{}, see Executor.MarkShutdown
 }
@@ -498,8 +472,7 @@ func (r *runControls) clearPausedSticky(chatID, nodeID string) {
 	delete(r.paused[chatID], nodeID)
 }
 
-// markDelivered records that RunGatedRefine reached commitDelivery for
-// nodeID this run - see the delivered field's doc.
+// markDelivered records that RunGatedRefine reached commitDelivery for nodeID this run.
 func (r *runControls) markDelivered(chatID, nodeID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -595,11 +568,8 @@ func (r *runControls) setOverrideIfNotStarted(chatID, nodeID, task string) bool 
 	return true
 }
 
-// register builds the control and rehydrates its persisted queue. Starting is
-// the resume transition: restore() clears any persisted pause, and the sticky
-// pause AND cancelled flags go with it, so the stream can't relabel the new
-// run as paused or cancelled (a retry is exactly the transition out of
-// "cancelled" - cancelled -> queued is the only legal move into here).
+// register builds the control and rehydrates its persisted queue. Starting is the resume transition:
+// the sticky pause and cancelled flags are cleared so the stream can't relabel the new run.
 func (r *runControls) register(chatID, nodeID string) (*nodeControl, string, bool) {
 	c, override, ok := r.registerAndTakeOverride(chatID, nodeID)
 	c.restore()
@@ -612,13 +582,11 @@ func (r *runControls) register(chatID, nodeID string) (*nodeControl, string, boo
 	return c, override, ok
 }
 
-// SetNodeStateStore wires write-through persistence for the node state
-// machine. Nil (the default) keeps every control in memory only.
+// SetNodeStateStore wires write-through persistence for the node state machine; nil keeps it in memory.
 func (e *Executor) SetNodeStateStore(s NodeStateStore) { e.controls.store = s }
 
-// NodeIsLive reports whether nodeID already has a registered control (a
-// dispatch running it). Used to refuse a second concurrent dispatch of the
-// same node (resuming a paused node before its cooperative pause lands).
+// NodeIsLive reports whether nodeID has a registered control; used to refuse a second concurrent
+// dispatch of the same node.
 func (e *Executor) NodeIsLive(chatID, nodeID string) bool {
 	return e.controls.get(chatID, nodeID) != nil
 }
@@ -650,8 +618,7 @@ func (e *Executor) NodeCancelled(chatID, nodeID string) bool {
 	return e.controls.wasCancelled(chatID, nodeID)
 }
 
-// RepeatGuardTripped reaches a live node's control from internal/tools' repeat
-// guard to abort a tool-call-loop round. False if the node isn't running.
+// RepeatGuardTripped lets internal/tools' repeat guard abort a looping round. False if not running.
 func (e *Executor) RepeatGuardTripped(chatID, nodeID, msg string) bool {
 	c := e.controls.get(chatID, nodeID)
 	if c == nil {
@@ -661,9 +628,8 @@ func (e *Executor) RepeatGuardTripped(chatID, nodeID, msg string) bool {
 	return true
 }
 
-// PauseNode suspends a running node at its next gate boundary. reason
-// distinguishes a human pause from a shutdown drain; HITL pauses itself
-// through the same seam (nodeControl.PauseForInput). Empty reason = user.
+// PauseNode suspends a running node at its next gate boundary. reason distinguishes a human pause
+// from a shutdown drain; empty reason = user.
 func (e *Executor) PauseNode(chatID, nodeID string, reason PauseReason) bool {
 	if reason == "" {
 		reason = PauseUser
@@ -677,9 +643,8 @@ func (e *Executor) PauseNode(chatID, nodeID string, reason PauseReason) bool {
 	return true
 }
 
-// StartNode clears a node's pause so its graph can be re-entered (the
-// re-entry itself is the orchestrator's - see Orchestrator.StartNode). Returns the pause
-// reason: awaiting_input = the message answers a question, else (user/shutdown) nothing at all.
+// StartNode clears a node's pause so Orchestrator.StartNode can re-enter its graph. Returns the pause
+// reason: awaiting_input means the message answers a question.
 func (e *Executor) StartNode(chatID, nodeID string) (PauseReason, bool) {
 	reason := e.NodePauseReason(chatID, nodeID)
 	if c := e.controls.get(chatID, nodeID); c != nil {
@@ -702,16 +667,15 @@ func (e *Executor) NodePauseReason(chatID, nodeID string) PauseReason {
 	return e.controls.paused[chatID][nodeID]
 }
 
-// SetNodeLiveSteer registers a live round's forward hook (#998). No-op if unregistered.
+// SetNodeLiveSteer registers a live round's forward hook. No-op if unregistered.
 func (e *Executor) SetNodeLiveSteer(chatID, nodeID string, f func(text string) bool) {
 	if c := e.controls.get(chatID, nodeID); c != nil {
 		c.setLiveSteer(f)
 	}
 }
 
-// SetNodeRoundAbort registers the in-flight round's cancel func (#1030); if
-// the node was already cancelled before the round reached this point, fires it
-// immediately instead of leaving the round to run until its next boundary check.
+// SetNodeRoundAbort registers the in-flight round's cancel func, firing it immediately if the node
+// was already cancelled.
 func (e *Executor) SetNodeRoundAbort(chatID, nodeID string, cancel context.CancelFunc) {
 	if c := e.controls.get(chatID, nodeID); c != nil {
 		c.SetRoundAbort(cancel)
@@ -792,8 +756,8 @@ func (e *Executor) NodeQueue(chatID, nodeID string) []QueuedMessage {
 	return out
 }
 
-// QueuedMessage is the REST/SSE-facing shape. Delivered is derived (true for
-// forwarded and drained) for old wire consumers; Status carries the detail.
+// QueuedMessage is the REST/SSE-facing shape. Delivered is derived (forwarded or drained) for old
+// wire consumers; Status carries the detail.
 type QueuedMessage struct {
 	ID        string
 	Text      string

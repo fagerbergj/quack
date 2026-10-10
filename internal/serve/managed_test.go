@@ -6,9 +6,8 @@ import (
 	"testing"
 )
 
-// TestStoresComposeEmbedded proves the embed resolved and the file we hand to
-// docker is the stores-only stack (db + qdrant), not the repo's dev
-// docker-compose.yml (which also has searxng/crawl4ai/app).
+// TestStoresComposeEmbedded: the embedded compose file is the stores-only stack (db + qdrant),
+// not the repo's dev docker-compose.yml.
 func TestStoresComposeEmbedded(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	if err := writeStoresCompose(); err != nil {
@@ -24,9 +23,8 @@ func TestStoresComposeEmbedded(t *testing.T) {
 			t.Errorf("stores compose missing %q", want)
 		}
 	}
-	// Tool backends and the app are NOT managed here (config-driven / separate).
-	// Check service keys, not bare substrings - the header comment mentions the
-	// backends by name, which is fine.
+	// Tool backends and the app aren't managed here. Check service keys, not substrings:
+	// the header comment names the backends.
 	for _, notWant := range []string{"  searxng:", "  crawl4ai:", "  app:"} {
 		if strings.Contains(s, notWant) {
 			t.Errorf("stores compose should not define a %q service (tool backends are config-driven, not managed)", notWant)

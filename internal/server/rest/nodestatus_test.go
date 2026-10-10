@@ -25,9 +25,8 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// stubModel is a minimal model.LLM that always answers with a plain text
-// reply and no tool calls, so the orchestrator's llmagent completes without
-// going through plan/execute - enough to exercise SendChatMessage end to end without a real research run.
+// stubModel always answers with plain text and no tool calls, so a SendChatMessage turn
+// completes without plan/execute.
 type stubModel struct{}
 
 func (stubModel) Name() string { return "stub" }
@@ -42,9 +41,8 @@ func (stubModel) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool)
 	}
 }
 
-// newTestHandler builds a Handler backed by a real (sqlite, temp-file)
-// store and a real Orchestrator/Executor with an empty agent roster and a
-// stub top-level model - enough to run CancelNode/SteerNode/RetryNode (which never reach a real gated node in these tests) and a full SendChatMessage direct-answer turn (no plan/execute).
+// newTestHandler builds a Handler on a temp sqlite store and a real Orchestrator/Executor with an empty
+// roster and a stub model: enough for node-control endpoints and a direct-answer turn.
 func newTestHandler(t *testing.T) *Handler {
 	t.Helper()
 	return newTestHandlerWithModel(t, stubModel{})
@@ -70,9 +68,8 @@ func newTestHandlerWithModel(t *testing.T, m model.LLM) *Handler {
 	return NewHandler(st, orch, nil, nil, nil, nil, "test", nil, nil, store.NewTurnAwareService(artifacts), nil)
 }
 
-// mustCreateChat inserts a real chat row and returns its (store-minted) id -
-// SendChatMessage/SubscribeChatStream 404 preflight-check chat existence now,
-// so any test driving them needs a real row, not an arbitrary literal id.
+// mustCreateChat inserts a real chat row and returns its id; SendChatMessage/SubscribeChatStream
+// 404 on a chat that doesn't exist.
 func mustCreateChat(t *testing.T, h *Handler) string {
 	t.Helper()
 	c, err := h.store.CreateChat(context.Background(), "")
@@ -87,8 +84,7 @@ func mustCreateChat(t *testing.T, h *Handler) string {
 func seedPlan(t *testing.T, h *Handler, chatID, planID, nodeID string) {
 	t.Helper()
 	ctx := context.Background()
-	// chat_turns/dag_plans now FK to chats.id (#1296) - upsert a bare row so
-	// callers can keep using a literal chatID instead of mustCreateChat's UUID.
+	// chat_turns/dag_plans FK to chats.id: upsert a bare row so callers can use a literal chatID.
 	if err := h.store.SetChatOrigin(ctx, chatID, "", ""); err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
@@ -114,9 +110,8 @@ func putNodeStatus(t *testing.T, h *Handler, chatID, nodeID string, body schema.
 	return rec
 }
 
-// TestUpdateNodeStatus_CancelUndeliverable409: cancel, like steer, is NOT
-// optimistic. The node's persisted row says "running", but with no live control
-// registered the cancel lands nowhere - and the old handler discarded CancelNode's bool and answered 200 + "cancelled" anyway. Live the user hit Cancel six times in one second, got six 200s, and the node ran on: "cancel and steer is seemingly doing nothing". Delivery success is exercised at the dag layer (control tests) and live e2e.
+// TestUpdateNodeStatus_CancelUndeliverable409: cancel isn't optimistic. With the row "running" but no live
+// control registered, the cancel lands nowhere and must 409, not 200 "cancelled".
 func TestUpdateNodeStatus_CancelUndeliverable409(t *testing.T) {
 	h := newTestHandler(t)
 	chatID, planID, nodeID := "c1", "p1", "n1"
@@ -149,9 +144,8 @@ func TestUpdateNodeStatus_IllegalTransition409(t *testing.T) {
 		t.Fatalf("seed done node: %v", err)
 	}
 
-	// done → needs_input is illegal (done only legally re-queues via retry) and
-	// needs no guidance, so it isolates the 409 transition check from the 400
-	// guidance-required check (covered separately below).
+	// done -> needs_input is illegal and needs no guidance, isolating the 409 transition
+	// check from the 400 guidance check.
 	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusNeedsInput})
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409; body=%s", rec.Code, rec.Body.String())
@@ -188,9 +182,8 @@ func TestUpdateNodeStatus_CancelledToNeedsInput409(t *testing.T) {
 	}
 }
 
-// TestUpdateNodeStatus_PauseUndeliverable409: pause, like cancel, is NOT
-// optimistic - the node's persisted row says "running", but with no live
-// control registered the pause lands nowhere.
+// TestUpdateNodeStatus_PauseUndeliverable409: like cancel, pause with no live control
+// registered lands nowhere and must 409.
 func TestUpdateNodeStatus_PauseUndeliverable409(t *testing.T) {
 	h := newTestHandler(t)
 	chatID, planID, nodeID := "c1", "p1", "n1"
@@ -232,9 +225,8 @@ func TestUpdateNodeStatus_ResumePausedNode(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 }
 
-// TestUpdateNodeStatus_ResumeAlreadyLiveConflict409 pins finding 12: a pause
-// is cooperative (the node keeps running until its next gate boundary), so
-// the persisted row can say "paused" while the first run is still live. A second resume request must not dispatch a second concurrent run of the same node - it must 409, the same shape as the other undeliverable-control responses in this file.
+// TestUpdateNodeStatus_ResumeAlreadyLiveConflict409: pause is cooperative, so a "paused" row can still have
+// a live run; a second resume must 409, not dispatch a concurrent run of the same node.
 func TestUpdateNodeStatus_ResumeAlreadyLiveConflict409(t *testing.T) {
 	h := newTestHandler(t)
 	chatID, planID, nodeID := "c1", "p1", "n1"
@@ -251,8 +243,7 @@ func TestUpdateNodeStatus_ResumeAlreadyLiveConflict409(t *testing.T) {
 	}
 }
 
-// TestStartNode_ResumeAlreadyLiveConflict409 is the /start endpoint's half of
-// finding 12.
+// TestStartNode_ResumeAlreadyLiveConflict409 is the /start endpoint's half of the same check.
 func TestStartNode_ResumeAlreadyLiveConflict409(t *testing.T) {
 	h := newTestHandler(t)
 	chatID, planID, nodeID := "c1", "p1", "n1"
@@ -268,9 +259,8 @@ func TestStartNode_ResumeAlreadyLiveConflict409(t *testing.T) {
 	}
 }
 
-// TestUpdateNodeStatus_ResumeRegistersRunSynchronously pins finding 14:
-// startRun registers synchronously "so cancel can never miss the run"
-// (handler.go's own doc); retryNodeAsync/startNodeAsync must match that shape instead of registering inside the spawned goroutine, or a shutdown drain snapshotting hub.ActiveChatIDs() right after the handler returns can miss a dispatch that hasn't reached RegisterRun yet.
+// TestUpdateNodeStatus_ResumeRegistersRunSynchronously: retryNodeAsync registers the run before returning,
+// or a shutdown drain reading hub.ActiveChatIDs() right after could miss the dispatch.
 func TestUpdateNodeStatus_ResumeRegistersRunSynchronously(t *testing.T) {
 	h := newTestHandler(t)
 	chatID, planID, nodeID := "c1", "p1", "n1"
@@ -288,8 +278,7 @@ func TestUpdateNodeStatus_ResumeRegistersRunSynchronously(t *testing.T) {
 	}
 }
 
-// TestStartNode_AwaitingInputRegistersRunSynchronously is the startNodeAsync
-// half of finding 14.
+// TestStartNode_AwaitingInputRegistersRunSynchronously is the startNodeAsync half of the same check.
 func TestStartNode_AwaitingInputRegistersRunSynchronously(t *testing.T) {
 	h := newTestHandler(t)
 	chatID, planID, nodeID := "c1", "p1", "n1"
@@ -307,9 +296,8 @@ func TestStartNode_AwaitingInputRegistersRunSynchronously(t *testing.T) {
 	}
 }
 
-// TestUpdateNodeStatus_AwaitingInputRetryRejected: needs_input -> running
-// via the generic status endpoint must be refused, not routed into
-// retryNodeAsync - the node's worker A2A session survives an awaiting_input pause on purpose (#A2) with an unanswered function call at its tail, and a bare retry dispatch would land in that same deterministic session without ever answering it. Only StartNode (with an answer) may resume it.
+// TestUpdateNodeStatus_AwaitingInputRetryRejected: needs_input -> running via the status endpoint is refused.
+// The worker session keeps an unanswered call at its tail, so only StartNode (with an answer) may resume it.
 func TestUpdateNodeStatus_AwaitingInputRetryRejected(t *testing.T) {
 	h := newTestHandler(t)
 	chatID, planID, nodeID := "c1", "p1", "n1"
@@ -337,9 +325,8 @@ func TestUpdateNodeStatus_AwaitingInputRetryRejected(t *testing.T) {
 	}
 }
 
-// TestUpdateNodeStatus_RunningSelfLoopIllegal: the old steer-via-status
-// (running → running) no longer exists - steering is queueing a message
-// (POST .../queue), which doesn't transition the node's status at all.
+// TestUpdateNodeStatus_RunningSelfLoopIllegal: running -> running is illegal;
+// steering is queueing a message (POST .../queue), not a status transition.
 func TestUpdateNodeStatus_RunningSelfLoopIllegal(t *testing.T) {
 	h := newTestHandler(t)
 	chatID, planID, nodeID := "c1", "p1", "n1"
@@ -395,9 +382,8 @@ func TestStartNode_QueuedOK(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 }
 
-// TestStartStopNode_UnknownNode404: a node id absent from the chat's latest
-// plan must 404 - GetDagNode returns (nil, nil) for a missing row, so
-// falling through would treat it as a startable queued node.
+// TestStartStopNode_UnknownNode404: a node absent from the latest plan 404s; GetDagNode returns (nil, nil)
+// for a missing row, so falling through would treat it as a startable queued node.
 func TestStartStopNode_UnknownNode404(t *testing.T) {
 	h := newTestHandler(t)
 	chatID, planID := "c1", "p1"
@@ -552,9 +538,8 @@ func TestUpdateNodeStatus_PauseReasonShutdown(t *testing.T) {
 	}
 	reason := schema.PauseReason("shutdown")
 	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusPaused, Reason: &reason})
-	// No live control registered in this test (no run in flight), so this is
-	// the same "not pausable" 409 as TestUpdateNodeStatus_PauseUndeliverable409 -
-	// it exercises that the reason field decodes and flows through untouched.
+	// No live control is registered, so this is PauseUndeliverable409's 409;
+	// it checks the reason field decodes and flows through.
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409 (nothing live to pause); body=%s", rec.Code, rec.Body.String())
 	}
@@ -719,9 +704,8 @@ func TestUpdateResponseStatus_WrongResponseID404(t *testing.T) {
 	}
 }
 
-// TestDeleteChat_CancelsActiveRun is #468's core regression: DELETE must kill
-// a run still in flight on the chat, not just drop its row while the run
-// keeps executing. Registers a run's cancel handle the same way startRun does (via the shared hub) and asserts DeleteChat invokes it.
+// TestDeleteChat_CancelsActiveRun: DELETE invokes the in-flight run's cancel handle (registered via the hub,
+// as startRun does) rather than only dropping the row.
 func TestDeleteChat_CancelsActiveRun(t *testing.T) {
 	h := newTestHandler(t)
 	chatID := "c1"
@@ -797,9 +781,7 @@ func TestDeleteChat_RunStuckRefuses(t *testing.T) {
 	}
 }
 
-// TestDeleteChat_UnknownOrFinishedChatNoOp confirms DELETE stays a safe no-op
-// (still 204, no panic) when nothing is registered - the already-finished or
-// never-started case.
+// TestDeleteChat_UnknownOrFinishedChatNoOp: DELETE with nothing registered is a safe 204.
 func TestDeleteChat_UnknownOrFinishedChatNoOp(t *testing.T) {
 	h := newTestHandler(t)
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/chats/no-such-chat", nil)
@@ -823,9 +805,8 @@ func TestUpdateResponseStatus_NoActiveRun404(t *testing.T) {
 	}
 }
 
-// TestSendChatMessage_ResponseCreatedFirst runs a full (stubbed) turn and
-// checks that response_created is the very first SSE event, carrying the same
-// id as the chat's persisted turn - and that the response is no longer cancellable by that id once the run (and handler call) has returned.
+// TestSendChatMessage_ResponseCreatedFirst: response_created is the first SSE event, carrying the persisted
+// turn's id, and that id stops being cancellable once the run returns.
 func TestSendChatMessage_ResponseCreatedFirst(t *testing.T) {
 	h := newTestHandler(t)
 	chatID := mustCreateChat(t, h)
@@ -891,18 +872,16 @@ func parseSSEBody(t *testing.T, body string) []sseEvent {
 	return out
 }
 
-// TestNeedsInputPersistsAcrossReload: a HITL pause (node_needs_input) persists
-// the node's DB status as "needs_input", but the wire boundary normalizes
-// that to paused/awaiting_input - visible in the turn's quack:dag output item after a simulated reload (GetTurnsWithContent → buildTurn), not just in the live SSE stream. The DAG item itself reads in_progress while any node is still paused (a paused run is not "completed").
+// TestNeedsInputPersistsAcrossReload: a needs_input node reads as paused/awaiting_input on the reloaded
+// turn's quack:dag item, which stays in_progress while any node is paused.
 func TestNeedsInputPersistsAcrossReload(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()
 	chatID, planID, nodeID := "c1", "p1", "n1"
 	seedPlan(t, h, chatID, planID, nodeID)
 
-	// A real HITL pause always follows node_start (running); persist that first
-	// and wait for it to land so the needs_input write below is a legal
-	// running → needs_input transition, not queued → needs_input.
+	// A real pause follows node_start: persist it first so the needs_input write below is
+	// a legal running -> needs_input transition.
 	runlog.PersistNodeEvent(h.store, chatID, planID, stream.NodeStart(nodeID, "a"))
 	waitForDagNodeStatus(t, h, planID, nodeID, "running")
 

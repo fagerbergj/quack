@@ -8,9 +8,7 @@ import (
 	"testing"
 )
 
-// fakeEmbeddings serves an OpenAI-compatible /embeddings response. It returns the
-// data out of input order (indices reversed) so the test proves Embed re-orders
-// by the declared index rather than trusting array position.
+// fakeEmbeddings returns data in reversed order, proving Embed orders by declared index.
 func fakeEmbeddings(t *testing.T, vectors [][]float64) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

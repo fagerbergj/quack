@@ -5,9 +5,8 @@ import (
 	"testing"
 )
 
-// TestRenderReviewOverview_Golden pins the fixed review format's rendered
-// output for each verdict/scope shape the design calls out - one fixed
-// format, generated in code, never free text (see reviewoverview.go's doc comment).
+// TestRenderReviewOverview_Golden pins the fixed review format's rendered output for each
+// verdict/scope shape the design calls out.
 func TestRenderReviewOverview_Golden(t *testing.T) {
 	cases := []struct {
 		name string
@@ -40,9 +39,8 @@ func TestRenderReviewOverview_Golden(t *testing.T) {
 					{Path: "internal/bar.go", Line: 6, Body: "nit: rename var. Minor clarity."},
 				},
 			},
-			// Every blocking finding is a row; suggestions/nits are counted
-			// in the verdict line but never listed here (findings stay
-			// inline - the Highlights table only surfaces blockers, or suggestions when there is no blocker at all).
+			// Every blocking finding is a row; suggestions/nits are only counted in the verdict line
+			// (Highlights lists suggestions only when there is no blocker).
 			want: "**Verdict: request changes** · 2 blocking · 1 suggestion · 1 nit · head def4567\n\n" +
 				"Scope: first review, whole PR (3 files)\n\n" +
 				"Two blocking issues, both in the fallback path.\n\n" +
@@ -87,9 +85,8 @@ func TestRenderReviewOverview_Golden(t *testing.T) {
 				"| blocking | y.go:20 | still broken here |",
 		},
 		{
-			// nit 9: a prior head is known but rev-list couldn't resolve a
-			// commit count (force-pushed away) - the whole "N commits
-			// since <sha7>" clause is omitted, never "0 commits since".
+			// A prior head is known but rev-list couldn't count commits (force-pushed away): the whole
+			// "N commits since <sha7>" clause is omitted, never "0 commits since".
 			name: "rereview_unresolved_commit_count",
 			in: reviewOverviewInput{
 				Verdict: "approve", ScopeKnown: true, FirstReview: false, PriorHeadSHA: "bbb2222222222", CommitsSinceKnown: false, FileCount: 4, HeadSHA: "ccc3333333333",
@@ -143,9 +140,8 @@ func TestRenderReviewOverview_Golden(t *testing.T) {
 				"| blocking | internal/gate.go:7 | leaks on error |",
 		},
 		{
-			// Two distinct findings that land on the same line, each with
-			// its own FindingID, must both survive - the path+line fallback
-			// only applies when at least one side has no id.
+			// Two distinct findings on the same line, each with its own FindingID, both survive;
+			// the path+line fallback only applies when one side has no id.
 			name: "distinct_findings_same_line_not_collapsed",
 			in: reviewOverviewInput{
 				Verdict: "request_changes",
@@ -164,9 +160,8 @@ func TestRenderReviewOverview_Golden(t *testing.T) {
 				Verdict:       "approve",
 				LegacySummary: "This is a long free-text summary from before the migration to structured fields, kept for history.",
 			},
-			// A pre-migration record has no Takeaway/Verified/Notes: only
-			// the verdict line renders plus the legacy summary, folded
-			// into Notes rather than lost.
+			// A pre-migration record has no Takeaway/Verified/Notes: only the verdict line renders,
+			// plus the legacy summary folded into Notes.
 			want: "**Verdict: approve**\n\n" +
 				"### Notes\n\n- This is a long free-text summary from before the migration to structured fields, kept for history.",
 		},
@@ -181,9 +176,8 @@ func TestRenderReviewOverview_Golden(t *testing.T) {
 	}
 }
 
-// TestRenderReviewOverview_LegacySummaryTruncated proves a long pre-migration
-// summary is capped, not reproduced at 1,000+ characters (the exact defect
-// this format replaces).
+// TestRenderReviewOverview_LegacySummaryTruncated: a long pre-migration summary is capped,
+// not reproduced at 1,000+ characters.
 func TestRenderReviewOverview_LegacySummaryTruncated(t *testing.T) {
 	long := strings.Repeat("x", legacySummaryDisplayCap+200)
 	got := renderReviewOverview(reviewOverviewInput{Verdict: "comment", LegacySummary: long})

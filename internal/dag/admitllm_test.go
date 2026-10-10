@@ -64,9 +64,8 @@ func TestAdmittingLLMReleasesBetweenTurns(t *testing.T) {
 	a.Release(spec)
 }
 
-// A cap of 1 shared between the orchestrator and its nodes must not deadlock.
-// The turn must be mid-flight when the node asks, or this proves nothing: that
-// overlap is exactly what a run-scoped reservation would never release.
+// A cap of 1 shared by the orchestrator and its nodes must not deadlock; the turn
+// must be mid-flight when the node asks, or this proves nothing.
 func TestAdmittingLLMDoesNotDeadlockNodesOnSameModel(t *testing.T) {
 	spec := AdmissionSpec{Model: "m"}
 	a := NewAdmission(map[string]int{"m": 1}, nil, nil, 0)
@@ -98,16 +97,8 @@ func TestAdmittingLLMDoesNotDeadlockNodesOnSameModel(t *testing.T) {
 	}
 }
 
-// TestAdmittingLLMReleasesBeforeYieldingCompleteResponse pins the production
-// deadlock this fixes (#slice3 review): ADK's own flow runs tool calls
-// synchronously INSIDE the yield callback, nested in the same iteration -
-// for the orchestrator, that's execute() admitting a DAG node through this
-// exact pool (dag.Executor.RunPlanStep). The reservation must be gone
-// before the complete response is yielded, not after the whole
-// GenerateContent call returns, or a same-size nested Admit inside that
-// yield - exactly what a tool call triggers - blocks forever: the turn's
-// own reservation never frees until the node it's waiting on is admitted,
-// which can't happen while the turn holds it.
+// ADK runs tool calls synchronously inside the yield callback, so the reservation must
+// be released before the complete response is yielded or a nested Admit blocks forever.
 func TestAdmittingLLMReleasesBeforeYieldingCompleteResponse(t *testing.T) {
 	spec := AdmissionSpec{Model: "m"}
 	a := NewAdmission(map[string]int{"m": 1}, nil, nil, 0)

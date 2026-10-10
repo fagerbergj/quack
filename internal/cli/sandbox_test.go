@@ -21,12 +21,12 @@ func TestNormalizeSandboxMode(t *testing.T) {
 		{"nonsense", "", true},
 	}
 	for _, c := range cases {
-		got, err := NormalizeSandboxMode(c.in)
+		got, err := normalizeSandboxMode(c.in)
 		if (err != nil) != c.wantErr {
-			t.Fatalf("NormalizeSandboxMode(%q): err=%v, wantErr=%v", c.in, err, c.wantErr)
+			t.Fatalf("normalizeSandboxMode(%q): err=%v, wantErr=%v", c.in, err, c.wantErr)
 		}
 		if got != c.want {
-			t.Errorf("NormalizeSandboxMode(%q) = %q, want %q", c.in, got, c.want)
+			t.Errorf("normalizeSandboxMode(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}
 }

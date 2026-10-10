@@ -27,9 +27,8 @@ type askResult struct {
 	Status string `json:"status"`
 }
 
-// newAskTool mirrors tools.NewAskUserTool: a plain tool that records the question
-// (in its call args) and ends the worker's turn; the GATE detects the call and
-// pauses the node. Built inline to avoid the tools→dag import cycle.
+// newAskTool mirrors tools.NewAskUserTool (records the question, ends the turn); built
+// inline to avoid the tools->dag import cycle.
 func newAskTool(t *testing.T) tool.Tool {
 	t.Helper()
 	tl, err := functiontool.New[askArgs, askResult](
@@ -44,9 +43,8 @@ func newAskTool(t *testing.T) tool.Tool {
 	return tl
 }
 
-// hitlStub: as a judge it passes; as a worker it asks the user via ask_user unless
-// its request already carries the delivered answer (the gate's withUserAnswer
-// prompt), in which case it writes the final answer.
+// hitlStub: as judge it passes; as worker it calls ask_user unless the delivered answer
+// is already in its request, then writes the final answer.
 type hitlStub struct {
 	mu          sync.Mutex
 	workerCalls int
@@ -82,9 +80,8 @@ func (s *hitlStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ b
 	}
 }
 
-// TestHITL_SingleNodePauseResume covers the degenerate plan where the ASKER is
-// itself the terminal node (no synthesizer): run 1 parks it under hitl-n1-r1; the
-// answer turn re-enters it and its output becomes the plan's terminal answer.
+// The asker is itself the terminal node: run 1 parks it, the answer turn re-enters it,
+// and its output becomes the plan's answer.
 func TestHITL_SingleNodePauseResume(t *testing.T) {
 	stub := &hitlStub{}
 	ag, err := llmagent.New(llmagent.Config{
@@ -139,9 +136,8 @@ func TestHITL_SingleNodePauseResume(t *testing.T) {
 	}
 }
 
-// newChattyAskTool is an ask_user tool that, unlike newAskTool, does NOT set
-// SkipSummarization - so after the ask the worker's model gets another turn
-// and writes a DRAFT. That reproduces the live-bug STATE the plain ask can't: a worker whose RunNode returns a NON-EMPTY draft while a fresh ask_user sits unanswered in the session (a chatty code-implementer that asked a real design question yet also kept writing). scanNodeAsks keys on the ask_user call name, so the gate detects the ask regardless of SkipSummarization; the fix is that the pause must fire even though the draft is non-empty.
+// newChattyAskTool omits SkipSummarization, so the worker writes a draft after asking:
+// a non-empty draft with an unanswered ask_user in the session.
 func newChattyAskTool(t *testing.T) tool.Tool {
 	t.Helper()
 	tl, err := functiontool.New[askArgs, askResult](
@@ -155,9 +151,8 @@ func newChattyAskTool(t *testing.T) tool.Tool {
 	return tl
 }
 
-// chattyAskStub asks once, then (given a second turn, because newChattyAskTool
-// doesn't end the turn) writes a non-empty draft. On the post-answer run it
-// writes the final answer and records the folded answer text.
+// chattyAskStub asks once, then writes a non-empty draft; after the answer it writes the
+// final answer and records the folded answer text.
 type chattyAskStub struct {
 	mu        sync.Mutex
 	calls     int
@@ -198,9 +193,8 @@ func (s *chattyAskStub) GenerateContent(_ context.Context, req *model.LLMRequest
 	}
 }
 
-// TestHITL_PausesDespiteNonEmptyDraft is the regression for the live bug: a
-// worker that calls ask_user AND still produces draft text must PAUSE the node
-// (the fresh ask isn't dropped just because a draft exists), discarding the answer-less draft; the answer turn re-runs the worker with the Q&A folded in. Before the fix the non-empty draft masked the fresh ask and sailed to the judge, so the question was never answerable.
+// A worker that asks AND drafts must still pause, discarding the draft; the answer turn
+// re-runs it with the Q&A folded in.
 func TestHITL_PausesDespiteNonEmptyDraft(t *testing.T) {
 	stub := &chattyAskStub{}
 	ag, err := llmagent.New(llmagent.Config{
@@ -258,9 +252,7 @@ func TestHITL_PausesDespiteNonEmptyDraft(t *testing.T) {
 	}
 }
 
-// multiRoundStub asks TWO questions across two separate pauses before finally
-// answering, so the test can assert the round-2+ prompt folds in the FULL
-// transcript (both Q&A pairs), not just the latest one.
+// multiRoundStub asks two questions across two pauses before answering.
 type multiRoundStub struct {
 	mu        sync.Mutex
 	finalText string // the full prompt text seen on the final (answering) call
@@ -274,9 +266,8 @@ func (s *multiRoundStub) GenerateContent(_ context.Context, req *model.LLMReques
 			yield(gCall("submit_verdict", map[string]any{"score": 0.9, "feedback": ""}), nil)
 			return
 		}
-		// Route on which answers are present, not on occurrence counts: a scoped
-		// single-turn worker's request carries the prompt twice (ADK prepends the
-		// node input alongside the seeded user event), so counting "\nA: " would double-count.
+		// Route on which answers are present, not counts: ADK repeats the prompt in a scoped
+		// single-turn request, so counting "\nA: " double-counts.
 		txt := gUserText(req)
 		switch {
 		case !strings.Contains(txt, "A: north"):
@@ -292,9 +283,7 @@ func (s *multiRoundStub) GenerateContent(_ context.Context, req *model.LLMReques
 	}
 }
 
-// TestHITL_MultiRoundFoldsFullTranscript: a node paused for TWO separate
-// questions across two rounds must see BOTH Q&A pairs on its final (answering)
-// run - not just the most recent. Guards the withUserAnswer/hitlScan full-transcript fix (a single-pair fold would silently drop round 1's Q&A).
+// A node paused twice must see BOTH Q&A pairs on its final run, not just the latest.
 func TestHITL_MultiRoundFoldsFullTranscript(t *testing.T) {
 	stub := &multiRoundStub{}
 	ag, err := llmagent.New(llmagent.Config{

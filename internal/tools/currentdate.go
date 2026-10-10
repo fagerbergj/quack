@@ -10,9 +10,8 @@ import (
 
 type currentDateArgs struct{}
 
-// newCurrentDate builds the current_date tool: the real date and time in the user's zone, so the agent
-// anchors time-sensitive research in the present instead of its training cutoff.
-// Models trust a tool RESULT they actively fetched over the static prompt line - for "recent/latest/this year" queries the tool overcomes the training-data prior.
+// newCurrentDate: models trust a date they fetched over the prompt's static line, so "latest/this year"
+// research anchors in the present instead of the training cutoff.
 func newCurrentDate(_ Deps) (tool.Tool, error) {
 	return functiontool.New[currentDateArgs, string](
 		functiontool.Config{

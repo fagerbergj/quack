@@ -19,9 +19,8 @@ import (
 	"github.com/zitadel/oidc/v3/pkg/oidc"
 )
 
-// fakeOP is a minimal OIDC provider for the CLI login/refresh tests: serves
-// discovery, an authorize endpoint that enforces PKCE, and a token endpoint
-// that mints a fresh access/refresh token pair per grant type.
+// fakeOP is a minimal OIDC provider: discovery, a PKCE-enforcing authorize endpoint, and a token
+// endpoint minting a fresh access/refresh pair per grant.
 type fakeOP struct {
 	srv *httptest.Server
 
@@ -102,9 +101,8 @@ func newFakeOP(t *testing.T) *fakeOP {
 	return op
 }
 
-// issueToken mints an access/refresh token pair with no id_token - Login
-// tolerates rp.ErrMissingIDToken from a token response like this one, the
-// same way most fake/minimal OPs in the wild behave for a client that didn't strictly require one.
+// issueToken mints an access/refresh pair with no id_token, as many minimal OPs do;
+// Login tolerates rp.ErrMissingIDToken.
 func (op *fakeOP) issueToken(w http.ResponseWriter) {
 	op.mu.Lock()
 	op.accessTokenSeq++
@@ -119,9 +117,8 @@ func (op *fakeOP) issueToken(w http.ResponseWriter) {
 	})
 }
 
-// simulateBrowser plays the user's browser: GETs authURL (not following the
-// redirect, so the Location can be inspected), then GETs that Location -
-// quack's own loopback callback - completing the round trip synchronously.
+// simulateBrowser GETs authURL without following the redirect, then GETs its Location
+// (quack's loopback callback), completing the round trip synchronously.
 func simulateBrowser(t *testing.T, authURL string) {
 	t.Helper()
 	noRedirect := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
@@ -144,9 +141,8 @@ func simulateBrowser(t *testing.T, authURL string) {
 	defer cbResp.Body.Close()
 }
 
-// TestLoginAuthCodePKCE drives the full authorization code + PKCE flow
-// against a fake OP (via a stubbed openBrowser simulating the user) and
-// confirms the resulting tokens land on the registered server, and that the fake OP's token endpoint actually verified the code_verifier against the code_challenge from the authorize step - the PKCE round trip is real, not just plumbed through.
+// TestLoginAuthCodePKCE drives the full code + PKCE flow against a fake OP: tokens land on the
+// registered server and the OP really verified the code_verifier against the challenge.
 func TestLoginAuthCodePKCE(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	op := newFakeOP(t)
@@ -209,9 +205,7 @@ func TestLoginAuthCodePKCE(t *testing.T) {
 	}
 }
 
-// TestLoginStateMismatchRejected drives a callback whose state doesn't match
-// what Login generated (a confused-deputy/CSRF redirect) and confirms Login
-// rejects it and stores nothing.
+// TestLoginStateMismatchRejected: a callback with the wrong state (CSRF) is rejected and nothing is stored.
 func TestLoginStateMismatchRejected(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	op := newFakeOP(t)
@@ -285,9 +279,8 @@ func TestEnsureFreshTokenNoAuth(t *testing.T) {
 	}
 }
 
-// TestEnsureFreshTokenNotExpiredSkipsRefresh proves a token well inside its
-// expiry is returned as-is - the fake OP's token endpoint would fail this
-// test if hit, since ParseForm on an empty POST won't match any grant type and returns 400.
+// TestEnsureFreshTokenNotExpiredSkipsRefresh: a token well inside expiry is returned as-is;
+// hitting the fake token endpoint would 400.
 func TestEnsureFreshTokenNotExpiredSkipsRefresh(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	op := newFakeOP(t)
@@ -314,9 +307,8 @@ func TestEnsureFreshTokenNotExpiredSkipsRefresh(t *testing.T) {
 	}
 }
 
-// TestEnsureFreshTokenRefreshesNearExpiry proves a token within the skew
-// window is refreshed via the token endpoint, and the new tokens are
-// persisted back to the registry.
+// TestEnsureFreshTokenRefreshesNearExpiry: a token within the skew window is refreshed and the new
+// tokens are persisted.
 func TestEnsureFreshTokenRefreshesNearExpiry(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	op := newFakeOP(t)
@@ -355,9 +347,8 @@ func TestEnsureFreshTokenRefreshesNearExpiry(t *testing.T) {
 	}
 }
 
-// TestEnsureFreshTokenRefreshSurvivesCallerCancellation pins the fix for the
-// finding that a refresh must not be bound to the caller's own context: the
-// ctx passed in is already cancelled (as if the request that triggered the refresh was aborted), but the refresh - detached via context.WithoutCancel - still completes and persists.
+// TestEnsureFreshTokenRefreshSurvivesCallerCancellation: with the caller's ctx already cancelled,
+// the detached refresh still completes and persists.
 func TestEnsureFreshTokenRefreshSurvivesCallerCancellation(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	op := newFakeOP(t)
@@ -400,9 +391,8 @@ func TestEnsureFreshTokenRefreshSurvivesCallerCancellation(t *testing.T) {
 	}
 }
 
-// TestEnsureFreshTokenNoRefreshTokenReturnsAsIs: an expired token with no
-// refresh token to use is handed back unchanged - the server 401s it, which
-// is the caller's signal to `server login` again.
+// TestEnsureFreshTokenNoRefreshTokenReturnsAsIs: an expired token with no refresh token comes back
+// unchanged; the server's 401 tells the user to `server login` again.
 func TestEnsureFreshTokenNoRefreshTokenReturnsAsIs(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	cc, err := LoadClient()
@@ -422,9 +412,8 @@ func TestEnsureFreshTokenNoRefreshTokenReturnsAsIs(t *testing.T) {
 	}
 }
 
-// TestEnsureFreshTokenConcurrentRefreshCoalesces pins review suggestion #3:
-// several goroutines racing the same near-expiry token (e.g. the TUI firing
-// off more than one client call at once) must coalesce into exactly one refresh, with every caller observing the same resulting token - not each independently hitting the token endpoint and risking a rotating-refresh IdP invalidating one of them out from under the other.
+// TestEnsureFreshTokenConcurrentRefreshCoalesces: goroutines racing one near-expiry token make exactly
+// one refresh and all see the same result, so a rotating-refresh IdP can't invalidate one of them.
 func TestEnsureFreshTokenConcurrentRefreshCoalesces(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	op := newFakeOP(t)
@@ -475,9 +464,8 @@ func TestEnsureFreshTokenConcurrentRefreshCoalesces(t *testing.T) {
 	}
 }
 
-// TestNewClientAttachesBearerToken is the end-to-end path: a registered
-// server with a stored session gets its access token attached as a bearer
-// credential on every request NewClient's Client makes.
+// TestNewClientAttachesBearerToken: a registered server with a stored session gets its access token
+// on every request.
 func TestNewClientAttachesBearerToken(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 
@@ -518,9 +506,7 @@ func TestNewClientAttachesBearerToken(t *testing.T) {
 	}
 }
 
-// TestNewClientNoAuthConfiguredAttachesNothing is the unchanged path: a
-// server with no stored session sends no Authorization header at all -
-// today's open behavior for a server with no auth configured.
+// TestNewClientNoAuthConfiguredAttachesNothing: a server with no stored session gets no Authorization header.
 func TestNewClientNoAuthConfiguredAttachesNothing(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 
@@ -558,9 +544,7 @@ func TestNewClientNoAuthConfiguredAttachesNothing(t *testing.T) {
 	}
 }
 
-// TestSaveIsPrivate confirms the registry file (and its directory) are
-// written without group/other permissions - the cheap mitigation for a file
-// that can hold OIDC access/refresh tokens once `server login` has run.
+// TestSaveIsPrivate: the registry file and dir have no group/other permissions, since they can hold tokens.
 func TestSaveIsPrivate(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX permission bits don't apply on windows")

@@ -12,17 +12,11 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// A test file that never names a single production identifier can only be
-// asserting against locals/lambdas it declares itself - vacuous by
-// construction (#716). The oracle is structural (does the test file's text
-// contain a token declared in the repo's own non-test source), never a
-// re-run of the worker's own claims, so it can't be gamed the way a
-// worker-chosen mutation could.
-// Flaky-gate rule: prefer false negatives. A file whose language we don't parse, that isn't unambiguously a test (no @Test/func Test.../etc.), or where the repo/diff can't be resolved is SKIPPED, never failed.
+// A test file that names no production identifier can only assert against its own locals.
+// Prefer false negatives: an unparsed language, a non-test file or an unresolvable diff is skipped.
 
-// vacuousTestLang: one language's test-file convention, "is this really an
-// executed test" signal, and the regex that finds identifiers declared in
-// production (non-test) source.
+// vacuousTestLang: one language's test-file convention, executed-test signal, and production
+// identifier declaration regex.
 type vacuousTestLang struct {
 	name        string
 	ext         []string
@@ -85,9 +79,8 @@ var vacuousTestSkipDirs = map[string]bool{
 // identTokenRe tokenizes a test file's raw text into candidate identifiers.
 var identTokenRe = regexp.MustCompile(`[A-Za-z_]\w*`)
 
-// vacuousTestsCriterion: added test files that reference no production identifier
-// are vacuous by construction. Runs only against THIS node's own new commits (base = cfg.NodeBaseSHA, same scoping as checksPassCriterion/#710) and only
-// against files git reports as newly ADDED - a pre-existing test edited in place is out of scope, see issue #716.
+// vacuousTestsCriterion: newly ADDED test files in this node's own commits that reference no
+// production identifier; tests edited in place are out of scope.
 func vacuousTestsCriterion(cfg Config) (criterionScore, bool) {
 	if cfg.Workspace == nil || cfg.ReadOnly {
 		return criterionScore{}, false

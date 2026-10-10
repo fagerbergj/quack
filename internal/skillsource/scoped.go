@@ -7,10 +7,8 @@ import (
 	"google.golang.org/adk/v2/tool/skilltoolset/skill"
 )
 
-// Scoped restricts src to only the named skills - an agent's declared
-// skill scope (config.AgentConfig.Skills / config.OrchestratorConfig.Skills). A name outside the scope behaves exactly as if it didn't exist (ErrSkillNotFound), so an out-of-scope load_skill fails the same way a typo'd name would.
-//
-// Apply Scoped to the BUILT-IN source only, before wrapping it with New - a cloned repo's project skills (arbitrary, unknown at config time) stay fully additive and unrestricted, and built-in still wins any collision.
+// Scoped restricts src to an agent's declared skill scope; an out-of-scope name is ErrSkillNotFound. Apply
+// it to the built-in source only: project skills stay unrestricted and built-in wins collisions.
 func Scoped(src skill.Source, names []string) skill.Source {
 	allow := make(map[string]bool, len(names))
 	for _, n := range names {
@@ -24,9 +22,8 @@ type scoped struct {
 	allow map[string]bool
 }
 
-// resolve maps name to the name to forward to src: a real allowed literal
-// name wins, else the FIRST src name whose bare form is allowed (merge
-// order) - keeps every method agreeing with ListFrontmatters (#1427 F3).
+// resolve: an allowed literal name wins, else the first src name whose bare form is allowed (merge order),
+// so every method agrees with ListFrontmatters.
 func (s *scoped) resolve(ctx context.Context, name string) (string, error) {
 	// allow can itself hold a bare entry, so "in allow" alone isn't proof
 	// name is real - confirm src actually has a skill by that exact name.
@@ -47,9 +44,8 @@ func (s *scoped) resolve(ctx context.Context, name string) (string, error) {
 		if BareName(fm.Name) != bare {
 			continue
 		}
-		// fm.Name is the first-wins resolution of bare. A caller that asked
-		// for a DIFFERENT plugin's qualified name is out of scope, never
-		// silently redirected to this one (#1427 R2).
+		// fm.Name is bare's first-wins resolution; a different plugin's qualified name is out of scope, never
+		// redirected here.
 		if name == bare || name == fm.Name {
 			return fm.Name, nil
 		}

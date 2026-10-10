@@ -11,9 +11,8 @@ import (
 	"gorm.io/gorm"
 )
 
-// ledgerSeedPath is the perf audit's seeded ledger (93 chats x 5,000 entries, ~8.6KB
-// llm.call payloads, 4.0GB) - read-only scratch data, not built by this repo. Benchmarks
-// below skip when it's absent, which is the normal case off the audit's own machine.
+// ledgerSeedPath is a large seeded ledger (93 chats x 5,000 entries, 4.0GB) not built by this repo; the
+// benchmarks skip when it's absent, which is the normal case.
 const ledgerSeedPath = "/home/jason/workspace/wt/audit/scratch-perf/ledger.db"
 
 func openLedgerSeedDB(tb testing.TB) *gorm.DB {
@@ -33,9 +32,8 @@ func openLedgerSeedDB(tb testing.TB) *gorm.DB {
 	return db
 }
 
-// BenchmarkMemoryStatsOldPerChatLoop is the pre-fix shape memoryLedgerEvents used (perf
-// audit #12): a GROUP BY chat_id scan (List()'s query, inlined with a string Last column - the
-// driver pair can't Scan MAX(at) into time.Time) plus one ReadEntriesFiltered per chat.
+// BenchmarkMemoryStatsOldPerChatLoop measures the per-chat loop shape (List()'s GROUP BY plus one
+// ReadEntriesFiltered per chat) for comparison against the pushdown.
 func BenchmarkMemoryStatsOldPerChatLoop(b *testing.B) {
 	db := openLedgerSeedDB(b)
 	s := &PGStore{db: db}
@@ -67,7 +65,7 @@ func BenchmarkMemoryStatsOldPerChatLoop(b *testing.B) {
 }
 
 // BenchmarkMemoryStatsOneQuery is the fix: one cross-chat `kind IN (?) AND at >= ?` query,
-// with the 12-week window pushed into SQL instead of filtered in Go (perf audit #12).
+// with the 12-week window pushed into SQL instead of filtered in Go.
 func BenchmarkMemoryStatsOneQuery(b *testing.B) {
 	db := openLedgerSeedDB(b)
 	s := &PGStore{db: db}

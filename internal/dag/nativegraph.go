@@ -152,33 +152,24 @@ func graphNodeNameFromPath(path string, known map[string]bool) string {
 
 // RunPlanAsGraph: runs plan as a native ADK graph.
 func (e *Executor) RunPlanAsGraph(ctx context.Context, plan Plan, appName, userID, chatID string, content *genai.Content, yield func(stream.SSEEvent, error) bool, nodeOutputs map[string]string, resumeNodes []string) (paused bool, err error) {
-	// Empty resumeNodes = fresh run; setup runs once, never on resume. Same
-	// signal clears any review fan-in left by a previous aborted run of this
-	// plan ID (#1040) - a resume/retry must NOT reset it, since a peer
-	// reviewer already staged is not a descendant and never re-runs.
+	// Empty resumeNodes = fresh run: setup runs once, and any review fan-in left by an aborted run of this
+	// plan ID is cleared. A resume/retry must not reset it: an already-staged peer reviewer never re-runs.
 	if len(resumeNodes) == 0 {
-		// Cleared first: a push landing mid-clone must stay flagged. A resume
-		// deliberately keeps the flag - the branch is still ahead of the tree.
+		// Cleared first: a push landing mid-clone must stay flagged. A resume keeps the flag, as the branch
+		// is still ahead of the tree.
 		clearSetupStale(chatID)
 		if serr := e.runPlanSetup(ctx, userID, chatID, plan); serr != nil {
 			return false, fmt.Errorf("dag: plan setup: %w", serr)
 		}
 		vetting.ResetReviewFanout(plan.ID)
 	}
-	// Source travels on ctx up to THIS point only (buildGateNodes is called
-	// synchronously, before workflow.RunNode ever schedules a child) - past
-	// here it's carried on vetting.Config, same reason cfg.Agent is.
+	// Source and sink travel on ctx only up to here (buildGateNodes runs before RunNode schedules a
+	// child); past here they're plain values, since workflow.RunNode stops propagating ctx.
 	source := ledger.CoordsFromContext(ctx).Source
-	// sink travels the same way as source above, for the same reason: grabbed
-	// here while ctx is still live, then carried as a plain value past the
-	// point workflow.RunNode stops propagating it (#1185 follow-up).
 	sink, _ := stream.YieldFromContext(ctx)
-	gateNodes, _, err := buildGateNodes(ctx, plan, e.RosterFor(ctx), e.judge, e.controls, chatID, userID, source,
-		func(nodeID string, score float64, passed bool, rounds int, contextID string) {
-			e.recordGateResult(chatID, nodeID, score, passed, rounds, contextID)
-		}, e.admission, e.judgeSpec, e.artifacts, e.walLedger, e.schemas, e.decisions, func(nctx context.Context, node Node, cfg vetting.Config) bool {
-			return e.refreshStaleSetup(nctx, userID, chatID, &plan, node, cfg)
-		}, sink)
+	gateNodes, err := e.buildGateNodes(ctx, plan, chatID, userID, source, e.artifacts, func(nctx context.Context, node Node, cfg vetting.Config) bool {
+		return e.refreshStaleSetup(nctx, userID, chatID, &plan, node, cfg)
+	}, sink)
 	if err != nil {
 		return false, err
 	}
@@ -186,8 +177,8 @@ func (e *Executor) RunPlanAsGraph(ctx context.Context, plan Plan, appName, userI
 	if err != nil {
 		return false, err
 	}
-	// e.maxActive is a host-resource ceiling (jail/clone CPU+RAM), not the GPU
-	// limiter - the Admission ledger inside each gate node (#1007) is the real one.
+	// e.maxActive is a host-resource ceiling (jail/clone CPU+RAM); each gate node's Admission ledger
+	// is the GPU limiter.
 	wf, err := workflow.New(planWrapperName, edges, workflow.WithMaxConcurrency(e.maxActive))
 	if err != nil {
 		return false, fmt.Errorf("dag: plan graph: %w", err)

@@ -58,10 +58,8 @@ workspace:
 	}
 }
 
-// A configured agent whose bundle: directory is missing (a stale or typo'd
-// path - e.g. left behind by a plugin migration) is reported, not silently
-// accepted; validate still reports overall status ok, since boot's own
-// optional-drop/failure handling is the real gate, not this preview.
+// A configured agent with a missing bundle: dir is reported, but validate stays ok:
+// boot's optional-drop handling is the real gate.
 func TestServerValidate_StaleAgentBundlePathReported(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "quack.yaml")
@@ -116,10 +114,8 @@ workspace:
 	}
 }
 
-// `server validate` must stay read-only and offline: validating the real
-// shipped config/quack.yaml (plugins.seed includes two github: entries) in a
-// clean temp workspace must create no files and touch no network - a
-// github: entry with no local clone yet is reported unresolvable, never fetched.
+// `server validate` on the shipped config in a clean workspace creates no files and touches no network;
+// a github: entry with no local clone is reported unresolvable, never fetched.
 func TestServerValidate_OfflineNoNetworkNoFileWrites(t *testing.T) {
 	wsRoot := filepath.Join(t.TempDir(), "workspace")
 	for k, v := range map[string]string{
@@ -164,10 +160,8 @@ func TestServerValidate_OfflineNoNetworkNoFileWrites(t *testing.T) {
 	}
 }
 
-// staleAgentBundles must resolve a bundle: path the way LoadBundle does
-// (bundledir: disk in cwd, then the embedded copy) - validating from a
-// directory with no repo checkout must still find every shipped agent's
-// embedded bundle, not misreport all seven as missing.
+// staleAgentBundles resolves bundle: paths like LoadBundle (cwd disk, then embedded),
+// so validating outside a repo checkout still finds every shipped agent.
 func TestServerValidate_ShippedBundlesResolveFromEmbeddedWhenCwdHasNoRepo(t *testing.T) {
 	cfgAbs, err := filepath.Abs("../../config/quack.yaml")
 	if err != nil {
@@ -302,10 +296,8 @@ plugins:
 	}
 }
 
-// writeOverrideOnlyPluginConfig lays down the exact rig-reported scenario:
-// agents.scout: overrides provider/model/context_window but names no
-// bundle:, trusting the plugin to supply it. seedPlugin controls whether
-// the acme plugin (declared above) is actually listed under plugins.seed.
+// writeOverrideOnlyPluginConfig writes agents.scout overrides with no bundle:, trusting the acme plugin
+// to supply it; seedPlugin controls whether that plugin is under plugins.seed.
 func writeOverrideOnlyPluginConfig(t *testing.T, dir, pluginDir string, seedPlugin bool) string {
 	t.Helper()
 	t.Setenv("QUACK_RESEARCHER_MODEL", "m")
@@ -367,9 +359,8 @@ func writeAcmeScoutPlugin(t *testing.T, dir string) string {
 	return pluginDir
 }
 
-// The rig bug: agents.scout overrides fields but names no bundle:, trusting
-// the plugin to supply it - with the plugin seeded, validate must succeed
-// and the override's model/context_window must win over the plugin's.
+// With the plugin seeded, an override naming no bundle: validates and its model/context_window
+// win over the plugin's.
 func TestServerValidate_OverrideWithoutBundleValidWhenPluginPresent(t *testing.T) {
 	dir := t.TempDir()
 	pluginDir := writeAcmeScoutPlugin(t, dir)

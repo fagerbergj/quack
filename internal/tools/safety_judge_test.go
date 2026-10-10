@@ -9,9 +9,8 @@ import (
 	"google.golang.org/adk/v2/model"
 )
 
-// safetyStub is a model.LLM that answers a safety-judge run by calling
-// submit_safety_verdict with a fixed verdict - or with plain text (never
-// calling the tool) when submit is false, to prove the no-verdict error path.
+// safetyStub answers a safety-judge run via submit_safety_verdict with a fixed verdict, or with
+// plain text when submit is false, to exercise the no-verdict error path.
 type safetyStub struct {
 	allow     bool
 	reason    string
@@ -68,9 +67,8 @@ func TestSafetyJudgeNoVerdictIsError(t *testing.T) {
 	}
 }
 
-// TestSafetyJudgeInstructionCalibration pins the system prompt's load-bearing
-// content in BOTH directions: the prompt must not describe a run_command
-// (shell) tool that no longer exists - a judge told about a shell it can no longer be asked to guard wastes its calibration on the wrong threat; the must-NOT-contain half guards against that regressing.
+// TestSafetyJudgeInstructionCalibration pins the prompt in both directions; it must not describe a
+// run_command shell tool, which would spend the judge's calibration on a threat it never guards.
 func TestSafetyJudgeInstructionCalibration(t *testing.T) {
 	for _, want := range []string{
 		// What actually holds - stated as narrowly as it is true.
@@ -92,7 +90,7 @@ func TestSafetyJudgeInstructionCalibration(t *testing.T) {
 			t.Errorf("safetyJudgeInstruction missing calibration anchor %q", want)
 		}
 	}
-	// Claims about a tool that no longer exists. These must never come back.
+	// The judge never guards a shell tool, so the prompt must not mention one.
 	for _, forbidden := range []string{
 		"run_command",
 		"RunShell",

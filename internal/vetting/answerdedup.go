@@ -1,6 +1,5 @@
-// answerdedup.go: collapses a node's chat-visible answer when it only
-// restates a record the same round already staged (review, PR body, ...) -
-// the fix for the doubled-review-body bug. Structural, not prompt-dependent: applies to every agent kind that stages via act.stagedDelivery, keyed generically by Kind rather than "review" only.
+// answerdedup.go: collapses a node's chat answer when it only restates a record the same round already
+// staged (review, PR body, ...), keyed by Kind for every agent.
 package vetting
 
 import (
@@ -12,26 +11,20 @@ import (
 // to reliably distinguish "the answer restates it" from coincidence.
 const minDedupBodyLen = 40
 
-// overlapThreshold: fraction of the staged body's words that must also
-// appear in the answer for a paraphrase (not just verbatim containment) to
-// count as a restatement.
+// overlapThreshold: fraction of the staged body's words the answer must share for a paraphrase to count
+// as a restatement.
 const overlapThreshold = 0.8
 
-// maxAnswerWordRatio: an answer may carry at most this many times the staged body's word count and still count as "just a restatement". Without
-// this bound, an answer that quotes the body verbatim and then adds a real
-// question, decision, or new finding was being collapsed to the one-line status - losing the very content the reply exists to carry. Ceiling, not exact: a generous preamble/wrapper still passes; substantial added content does not.
+// maxAnswerWordRatio caps answer/body word count for a restatement: past it, the answer carries real
+// added content (a question, decision, finding) that collapsing would lose.
 const maxAnswerWordRatio = 1.5
 
-// normalizeForCompare lowercases and collapses whitespace so markdown/
-// formatting drift between the answer and the staged record doesn't defeat
-// the comparison.
+// normalizeForCompare lowercases and collapses whitespace so formatting drift doesn't defeat the comparison.
 func normalizeForCompare(s string) string {
 	return strings.Join(strings.Fields(strings.ToLower(s)), " ")
 }
 
-// restatesRecord reports whether answer substantially repeats body: near-
-// verbatim containment either direction, or >= overlapThreshold of body's
-// words also present in answer (catches a light paraphrase).
+// restatesRecord: near-verbatim containment either way, or >= overlapThreshold of body's words in answer.
 func restatesRecord(answer, body string) bool {
 	body = strings.TrimSpace(body)
 	if len(body) < minDedupBodyLen {
@@ -96,13 +89,10 @@ func summarizeStaged(sd StagedDelivery) string {
 	}
 }
 
-// dedupeAnswerAgainstStaged returns answer unchanged unless it substantially
-// restates a record already staged this round, in which case it returns a
-// short status line derived from that record instead. Recovered entries are skipped - their Body was parsed OUT of the answer (no separate staged record to be duplicating), and empty bodies never trigger anything. Applies to any staged Kind (review, pull_request, ...), not review-only.
+// dedupeAnswerAgainstStaged swaps answer for a one-line status when it restates a staged record.
+// Recovered entries are skipped: their Body was parsed out of the answer itself.
 func dedupeAnswerAgainstStaged(answer string, staged map[string]StagedDelivery) string {
-	// sortedStagedDelivery, not a raw map range: if the answer happens to
-	// restate more than one staged record, which one wins the collapse must
-	// not depend on Go's randomized map iteration order.
+	// Sorted, not a raw map range: when the answer restates several records, the winner must be deterministic.
 	for _, sd := range sortedStagedDelivery(staged) {
 		if sd.Recovered || strings.TrimSpace(sd.Body) == "" {
 			continue

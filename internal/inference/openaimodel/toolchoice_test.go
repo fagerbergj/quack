@@ -33,3 +33,15 @@ func TestApplyConfigKnobs_ToolChoiceNone(t *testing.T) {
 		t.Errorf("request = %s, want no tool_choice without a NONE mode", got)
 	}
 }
+
+func TestConvertSchema_LowercasesNestedTypes(t *testing.T) {
+	m, err := convertSchema(&genai.Schema{Type: genai.TypeObject, Required: []string{"q"},
+		Properties: map[string]*genai.Schema{"q": {Type: genai.TypeArray, Items: &genai.Schema{Type: genai.TypeString}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(m)
+	if want := `{"properties":{"q":{"items":{"type":"string"},"type":"array"}},"required":["q"],"type":"object"}`; string(b) != want {
+		t.Fatalf("convertSchema = %s, want %s", b, want)
+	}
+}

@@ -29,22 +29,18 @@ const tracerName = "github.com/fagerbergj/quack"
 // ServiceName is the OTel resource's service.name prefix.
 const ServiceName = "quack"
 
-// Resource attributes for "which build, which deployment" - neither has a
-// semconv form quack can use here: v1.26 predates deployment.environment.name,
-// and release is a Langfuse field with no semantic convention at all (its version field reads service.version, its release field only langfuse.release).
+// No usable semconv for these: v1.26 predates deployment.environment.name, and release is a Langfuse field.
 const (
 	DeploymentEnvironmentName = "deployment.environment.name"
 	langfuseRelease           = "langfuse.release"
 )
 
-// ChatIDKey is the input-side key callers pass to name the chat/run in scope;
-// sessionAttrs consumes it and exports only gen_ai.conversation.id (what
-// OTel-native tooling, e.g. Langfuse sessions, groups a trace by) - it never reaches the span itself.
+// ChatIDKey is the input key naming the chat in scope; sessionAttrs turns it into gen_ai.conversation.id
+// and never puts it on the span.
 const ChatIDKey = "chat_id"
 
-// Providers holds the process-wide OTel wiring; emission-only - Grafana owns viewing.
-// ADK's internal spans DO flow through it (the global TracerProvider delegates). The
-// real gap is upstream: Runner.Run never opens its own span (runner.go:184).
+// Providers holds the process-wide OTel wiring (emission only). ADK's spans flow through it, but
+// Runner.Run never opens its own span upstream.
 type Providers struct {
 	TracerProvider *sdktrace.TracerProvider
 	MeterProvider  *metric.MeterProvider
@@ -53,9 +49,8 @@ type Providers struct {
 
 // Init builds tracer+meter+logger providers and installs globals; disabled returns no-ops.
 
-// signalURL appends the OTLP signal path to an endpoint, unconditionally:
-// a base URL that already carries a path (Langfuse's /api/public/otel) still
-// needs /v1/traces on the end - the old path-detection rule made such endpoints unusable for every signal (#1045). An endpoint already ending in the signal path is left alone so an explicitly-specified full URL does not double up.
+// signalURL always appends the OTLP signal path, even to a base URL with a path (Langfuse's /api/public/otel),
+// unless the endpoint already ends in it.
 func signalURL(endpoint, path string) string {
 	trimmed := strings.TrimRight(endpoint, "/")
 	if strings.HasSuffix(trimmed, path) {
@@ -97,9 +92,7 @@ func newMetricReader(ctx context.Context, endpoint string) (*metric.PeriodicRead
 	return metric.NewPeriodicReader(mexp), nil
 }
 
-// newResource builds the resource every signal carries. version is the build
-// stamp (serve.Version); a dev build leaves it empty and the attributes are
-// omitted rather than exported as "".
+// newResource builds the resource every signal carries; a dev build's empty version omits the attributes.
 func newResource(cfg config.OtelConfig, version string) (*resource.Resource, error) {
 	attrs := []attribute.KeyValue{semconv.ServiceName(ServiceName)}
 	if version != "" {
@@ -127,8 +120,7 @@ func Init(ctx context.Context, cfg config.ObservabilityConfig, ledgerStore ledge
 	mpOpts := []metric.Option{metric.WithResource(res)}
 	// tp and mp own their processors/readers, so only the log provider needs its own shutdown.
 	var shutdowns []func(context.Context) error
-	// One exporter per destination per signal: a trace backend and a metrics
-	// collector are usually different systems (#1045).
+	// One exporter per destination per signal: a trace backend and a metrics collector are usually different systems.
 	for _, e := range cfg.Otel.Exporters {
 		if e.Wants(config.SignalTraces) {
 			bsp, err := newTraceExporter(ctx, e.Endpoint)
@@ -147,9 +139,7 @@ func Init(ctx context.Context, cfg config.ObservabilityConfig, ledgerStore ledge
 	}
 	tp := sdktrace.NewTracerProvider(tpOpts...)
 	otel.SetTracerProvider(tp)
-	// otelhttp (agent/a2a.go's per-node client+server) reads the global
-	// propagator to inject/extract traceparent - unset, it's a no-op and every
-	// A2A hop starts a fresh trace root (#1046).
+	// otelhttp reads the global propagator for traceparent; unset, every A2A hop starts a fresh trace root.
 	otel.SetTextMapPropagator(propagation.TraceContext{})
 
 	mp := metric.NewMeterProvider(mpOpts...)
@@ -182,9 +172,8 @@ func Init(ctx context.Context, cfg config.ObservabilityConfig, ledgerStore ledge
 // tracer reads otel.GetTracerProvider() lazily so disabled config yields no-ops.
 func tracer() oteltrace.Tracer { return otel.Tracer(tracerName) }
 
-// sessionAttrs adds gen_ai.conversation.id (from the explicit chat_id attr,
-// else ctx coords - the same source EmitLog reads) and user.id, so every
-// quack span carries the session identity OTel consumers resolve traces by. The bare chat_id attr callers pass is consumed here, not re-exported - gen_ai.conversation.id is the one identifier that reaches the span.
+// sessionAttrs adds gen_ai.conversation.id (from the chat_id attr, else ctx coords) and user.id;
+// the chat_id attr itself is consumed, not re-exported.
 func sessionAttrs(ctx context.Context, attrs []attribute.KeyValue) []attribute.KeyValue {
 	c := ledger.CoordsFromContext(ctx)
 	chatID := c.ChatID

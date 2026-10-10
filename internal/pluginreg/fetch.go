@@ -41,13 +41,6 @@ var RemoteURL = func(owner, repo string) string {
 	return fmt.Sprintf("https://github.com/%s/%s.git", owner, repo)
 }
 
-// Fetch clones or updates p's clone to its target ref and returns the
-// updated row. Free function (not an FSRegistry method) so P3's sqlite/
-// postgres backends can reuse the same git logic against their own root.
-func Fetch(ctx context.Context, root string, p Plugin) (Plugin, error) {
-	return fetch(ctx, root, p, nil)
-}
-
 // fetch runs commit (when set) on the row it is about to check out, so a
 // failed commit leaves the row and the tree both on the old sha.
 func fetch(ctx context.Context, root string, p Plugin, commit func(Plugin) error) (Plugin, error) {
@@ -98,15 +91,14 @@ func fetchAndPut(ctx context.Context, root string, reg Registry, p Plugin) (Plug
 	return p, errors.Join(fetchErr, reg.Put(ctx, p))
 }
 
-// Fetch runs the free Fetch against r's root and persists the result
+// Fetch clones or updates p under r's root and persists the result
 // regardless of success, so a failure is still visible via List.
 func (r *FSRegistry) Fetch(ctx context.Context, p Plugin) (Plugin, error) {
 	return fetchAndPut(ctx, r.root, r, p)
 }
 
-// fetchInto clones dir if absent or not a git repo, else points origin at
-// url (in case the entry moved to a different repo) and fetches all
-// branches and tags, --force so a moved tag's local ref follows the remote.
+// fetchInto clones dir if absent or not a git repo, else repoints origin at url (the entry may have moved)
+// and force-fetches branches and tags so a moved tag follows the remote.
 func fetchInto(ctx context.Context, dir, url string) error {
 	if isGitRepo(ctx, dir) {
 		match, err := originMatches(ctx, dir, url)
@@ -152,9 +144,8 @@ func realParentDir(dir string) (string, error) {
 	return filepath.Join(parent, filepath.Base(abs)), nil
 }
 
-// isGitRepo reports whether dir is itself a git repo, not merely inside one -
-// rev-parse --git-dir walks up to an ancestor repo otherwise, which would
-// mistake a killed clone nested in the user's own checkout for that repo.
+// isGitRepo reports whether dir is itself a repo: rev-parse --git-dir walks up, mistaking a killed clone
+// nested in the user's checkout for that checkout.
 func isGitRepo(ctx context.Context, dir string) bool {
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
 		return false
@@ -179,9 +170,8 @@ func originMatches(ctx context.Context, dir, want string) (bool, error) {
 	return strings.TrimSpace(out) == want, nil
 }
 
-// resolveSHA: "" follows the remote default branch (set-head --auto first,
-// the local HEAD symref never updates otherwise); a pinned ref is tried as
-// remote branch, then tag, then bare commit-ish.
+// resolveSHA: "" follows the remote default branch (set-head --auto, since the local HEAD symref never
+// updates); a pinned ref tries remote branch, tag, then commit-ish.
 func resolveSHA(ctx context.Context, dir, ref string) (string, error) {
 	if ref == "" {
 		if err := gitRun(ctx, dir, "remote", "set-head", "origin", "--auto"); err != nil {
@@ -244,9 +234,8 @@ func lsRemoteHEAD(ctx context.Context, url string) (string, error) {
 	return firstField(out), nil
 }
 
-// lsRemoteRef resolves a branch/tag name to its sha, branch then peeled tag
-// then tag - the same precedence resolveSHA uses locally, so CheckUpdate and
-// Fetch never disagree on a same-named branch+tag pair.
+// lsRemoteRef resolves branch, then peeled tag, then tag: resolveSHA's precedence, so CheckUpdate and Fetch
+// agree on a same-named branch+tag pair.
 func lsRemoteRef(ctx context.Context, url, ref string) (string, error) {
 	out, err := gitOutput(ctx, "", "ls-remote", url, "refs/heads/"+ref, "refs/tags/"+ref, "refs/tags/"+ref+"^{}")
 	if err != nil {
@@ -284,7 +273,8 @@ func firstField(out string) string {
 	return fields[0]
 }
 
-// gitPassEnv is all registry git inherits from the server: the route to the remote (proxy, private CA) and scratch space.
+// gitPassEnv is all registry git inherits from the server: the route to the remote (proxy, private CA)
+// and scratch space.
 var gitPassEnv = []string{
 	"PATH", "TMPDIR", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy",
 	"ALL_PROXY", "all_proxy", "GIT_SSL_CAINFO", "GIT_SSL_CAPATH", "SSL_CERT_FILE", "SSL_CERT_DIR",
@@ -338,9 +328,7 @@ func runGitRW(ctx context.Context, dir string, rw []string, args ...string) (str
 		if msg == "" {
 			msg = err.Error()
 		}
-		// Only the subcommand name, never the full args: they can carry a
-		// url or ref an operator pasted from somewhere sensitive, and this
-		// message is persisted verbatim onto the row (entry.json "error").
+		// Only the subcommand name: args can carry a sensitive url or ref, and this message is persisted on the row.
 		return "", fmt.Errorf("git %s: %s", args[0], msg)
 	}
 	return stdout.String(), nil

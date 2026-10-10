@@ -2,7 +2,6 @@ package dag
 
 import (
 	"context"
-	"iter"
 	"testing"
 
 	adkagent "google.golang.org/adk/v2/agent"
@@ -14,35 +13,19 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// establishThenEmptyStub simulates an ACP round that DOES establish a real
-// transport session (SetAdvisorThreadSessionID, exactly what
-// internal/acp.Agent.round does after session/new or session/load succeeds)
-// and then produces an empty draft, forcing the node to fail. Proves the
-// node's real session id is captured even on the ErrNodeEmpty exit path -
-// not just on success.
-type establishThenEmptyStub struct{}
-
-func (establishThenEmptyStub) Name() string { return "establishThenEmptyStub" }
-func (establishThenEmptyStub) GenerateContent(ctx context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
+// An ACP node's real session id, once established, must reach node_failed's ContextID
+// so a later reuse's session/load gets it instead of the mint-time placeholder.
+func TestNodeFailed_CarriesRealContextIDEstablishedBeforeFailing(t *testing.T) {
+	// An ACP round that establishes a real session id, then drafts nothing.
+	stub := fnLLM(func(ctx context.Context, req *model.LLMRequest) *model.LLMResponse {
 		if gHasTool(req, "submit_verdict") {
-			yield(gCall("submit_verdict", map[string]any{"score": 0.9}), nil)
-			return
+			return gCall("submit_verdict", map[string]any{"score": 0.9})
 		}
 		if token := vetting.AdvisorTokenFromContext(ctx); token != "" {
 			vetting.SetAdvisorThreadSessionID(token, "acp-real-session-on-failure")
 		}
-		yield(gText(""), nil)
-	}
-}
-
-// TestNodeFailed_CarriesRealContextIDEstablishedBeforeFailing: an ACP
-// node's real session id, once established, must reach the node_failed
-// event's ContextID - runlog then persists it onto the dag_node record, so
-// a later reuse's session/load gets something real instead of the
-// mint-time placeholder.
-func TestNodeFailed_CarriesRealContextIDEstablishedBeforeFailing(t *testing.T) {
-	stub := establishThenEmptyStub{}
+		return gText("")
+	})
 	ag, err := llmagent.New(llmagent.Config{Name: "w", Model: stub, Description: "w", Instruction: "ROLE:w Answer."})
 	if err != nil {
 		t.Fatal(err)

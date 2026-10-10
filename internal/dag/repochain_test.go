@@ -2,7 +2,6 @@ package dag
 
 import (
 	"context"
-	"iter"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -36,9 +35,8 @@ func TestWorkspaceNodeID(t *testing.T) {
 		{"no setup: everyone else gets their own dir", Plan{}, Node{ID: "n1", AgentName: "researcher"}, "n1"},
 		{"setup, non-repo agent: own dir", Plan{Setup: setup}, Node{ID: "n1", AgentName: "researcher"}, "n1"},
 		{"setup, implementer (the writer): shared", Plan{Setup: setup}, Node{ID: "n1", AgentName: implementerAgent}, workspace.SharedRepoScope},
-		// Read-only qualifying nodes keep their OWN dir even under Setup - it's
-		// provisioned as a linked worktree of the shared clone (worktreeParentID),
-		// never the shared clone directory itself (see worktreeParentID).
+		// Read-only qualifying nodes keep their own dir under Setup: a linked worktree of the
+		// shared clone, never the clone itself.
 		{"setup, reviewer: own dir (worktree)", Plan{Setup: setup}, Node{ID: "n1", AgentName: reviewerAgent}, "n1"},
 		{"setup, explorer: own dir (worktree)", Plan{Setup: setup}, Node{ID: "n1", AgentName: explorerAgent}, "n1"},
 	}
@@ -51,9 +49,8 @@ func TestWorkspaceNodeID(t *testing.T) {
 	}
 }
 
-// TestWorktreeParentID pins the half workspaceNodeID alone doesn't show: a read-only
-// qualifying node's own dir is a worktree OF the shared clone - named only for a
-// non-writer with plan.Setup; writers get the shared clone directly (parent "").
+// A read-only node's own dir is a worktree of the shared clone only with plan.Setup;
+// writers get the shared clone directly (parent "").
 func TestWorktreeParentID(t *testing.T) {
 	setup := &Setup{Repo: "r", BaseRef: "main", WorkBranch: "w"}
 	cases := []struct {
@@ -103,10 +100,8 @@ func TestNonTerminalRepoChainNode(t *testing.T) {
 	}
 }
 
-// stagePRArgs/stagePRResult/chainStagePRTool give the chain's worker agent a
-// real stage_pr tool so a FunctionCall dispatches to an actual FunctionResponse
-// (the ledger scan that fills workerActivity.stagedDelivery reads session
-// events, not stub intent).
+// A real stage_pr tool, so the call yields an actual FunctionResponse: stagedDelivery is
+// read from session events, not stub intent.
 type stagePRArgs struct {
 	Title string `json:"title"`
 	Body  string `json:"body"`
@@ -128,27 +123,17 @@ func chainStagePRTool(t *testing.T) tool.Tool {
 	return tl
 }
 
-// chainStub drives every node identically: stage a PR, then finish. The judge
-// always passes. Used by both nodes in the chain - since they're chained
-// (never concurrent), sharing one stub/agent instance is safe (see
-// checks_gate_test.go's note on why that's unsafe only for TRUE concurrency).
-type chainStub struct{}
-
-func (chainStub) Name() string { return "chainStub" }
-
-func (chainStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		if gHasTool(req, "submit_verdict") {
-			yield(gCall("submit_verdict", map[string]any{"score": 0.9, "feedback": "ok"}), nil)
-			return
-		}
-		if !gHasResponse(req, "stage_pr") {
-			yield(gCall("stage_pr", map[string]any{"title": "Add widget", "body": "adds it"}), nil)
-			return
-		}
-		yield(gText("done"), nil)
+// chainStub stages a PR then finishes; the judge always passes. Sharing it across
+// chained nodes is safe because they never run concurrently.
+var chainStub = fnLLM(func(_ context.Context, req *model.LLMRequest) *model.LLMResponse {
+	if gHasTool(req, "submit_verdict") {
+		return gCall("submit_verdict", map[string]any{"score": 0.9, "feedback": "ok"})
 	}
-}
+	if !gHasResponse(req, "stage_pr") {
+		return gCall("stage_pr", map[string]any{"title": "Add widget", "body": "adds it"})
+	}
+	return gText("done")
+})
 
 func gHasResponse(req *model.LLMRequest, name string) bool {
 	for _, c := range req.Contents {
@@ -191,15 +176,12 @@ func runChainGit(t *testing.T, dir string, argv ...string) {
 	}
 }
 
-// newChainExecutor wires an Executor + jail for the chain e2e tests: ONE
-// implementer agent (shared by every node), a Deliver that forwards to
-// deliverCh, and a setup stub that provisions a REAL git repo (committed,
-// remoted to a local bare repo) - commitDelivery's gate-owned push now runs
-// for real when a chain stages a pull_request.
+// newChainExecutor wires one shared implementer agent, a Deliver forwarding to deliverCh,
+// and a setup stub provisioning a real git repo with a local bare remote.
 func newChainExecutor(t *testing.T) (ex *Executor, jail *workspace.Jail, deliverCh chan vetting.DeliveryContext, setupCalls *int32Counter, repo string) {
 	t.Helper()
 	requireChainGit(t)
-	stub := chainStub{}
+	stub := chainStub
 	ag, err := llmagent.New(llmagent.Config{
 		Name: implementerAgent, Model: stub, Description: "impl",
 		Instruction: "ROLE Answer.", Tools: []tool.Tool{chainStagePRTool(t)},
@@ -258,9 +240,7 @@ func runChainPlan(t *testing.T, ex *Executor, plan Plan) {
 	}
 }
 
-// (a) A two-node implementer CHAIN shares ONE clone+branch (one setupFn call)
-// and delivers ONE PR - at the terminal node only, even though BOTH nodes
-// stage one.
+// A two-node implementer chain shares one clone+branch and delivers one PR, at the terminal.
 func TestRunPlanAsGraph_ChainSharesOneCloneAndDeliversOnceAtTerminal(t *testing.T) {
 	ex, jail, deliverCh, setupCalls, repo := newChainExecutor(t)
 	plan := Plan{
@@ -299,9 +279,8 @@ func TestRunPlanAsGraph_ChainSharesOneCloneAndDeliversOnceAtTerminal(t *testing.
 	}
 }
 
-// (d) #848: the execute tool provisions eagerly (Provision) before handing
-// the plan to the run phase - RunPlanAsGraph's own runPlanSetup must see
-// Setup.Provisioned and skip, never re-clone the same real repo fixture.
+// After an eager Provision, RunPlanAsGraph's runPlanSetup sees Setup.Provisioned and
+// never re-clones.
 func TestRunPlanAsGraph_EagerProvisionThenRunDoesNotDoubleClone(t *testing.T) {
 	ex, _, deliverCh, setupCalls, repo := newChainExecutor(t)
 	plan := Plan{
@@ -335,8 +314,7 @@ func TestRunPlanAsGraph_EagerProvisionThenRunDoesNotDoubleClone(t *testing.T) {
 	}
 }
 
-// (c) Regression: a single repo-touching node (no chain) still gets its clone
-// provisioned and its delivery posted, exactly as before #310.
+// A single repo-touching node (no chain) still gets its clone provisioned and delivery posted.
 func TestRunPlanAsGraph_SingleRepoNodeStillDelivers(t *testing.T) {
 	ex, _, deliverCh, setupCalls, repo := newChainExecutor(t)
 	plan := Plan{

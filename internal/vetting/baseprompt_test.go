@@ -1,6 +1,5 @@
-// baseprompt_test.go: a queued-message re-run rebuilds its prompt from
-// basePrompt - the recalled memory and preloads must survive that rebuild,
-// so basePrompt is captured AFTER the prefill recall, not before (#1404 review).
+// baseprompt_test.go: a queued-message re-run rebuilds from basePrompt, so it must be captured after the
+// prefill recall or the recalled memory and preloads are lost.
 package vetting
 
 import (
@@ -67,9 +66,8 @@ func (s *basePromptStub) GenerateContent(_ context.Context, req *model.LLMReques
 	}
 }
 
-// TestRunGatedRefine_QueuedRerunKeepsRecalledMemory: the re-run after a queued
-// message folds in basePrompt + the message. If basePrompt was captured before
-// the prefill recall, the re-run silently drops the recalled memory.
+// The re-run after a queued message folds in basePrompt plus the message; basePrompt captured before the
+// prefill recall would silently drop the recalled memory.
 func TestRunGatedRefine_QueuedRerunKeepsRecalledMemory(t *testing.T) {
 	ctx := t.Context()
 	store, err := memory.OpenSQLite(ctx, t.TempDir()+"/mem.db", fakeMemEmbedder{}, echoConsolidator{}, "base_prompt", "task", 5, 0)

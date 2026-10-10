@@ -40,11 +40,8 @@ func withFixedRemote(t *testing.T, url string) {
 	t.Cleanup(func() { pluginreg.RemoteURL = prev })
 }
 
-// newPluginsTestHandler builds a Handler wired to a real FSRegistry rooted
-// under t.TempDir(), with a rebuild-count hook so tests can assert the
-// native skill roster is rebuilt on every row/sha change. atomic.Int64, not
-// a bare counter - mapConcurrently means CheckUpdate/Fetch (and so a test's
-// concurrent requests) can call this from more than one goroutine.
+// newPluginsTestHandler builds a Handler on a real FSRegistry under t.TempDir() with a rebuild-count hook.
+// atomic.Int64 because mapConcurrently can call the hook from several goroutines.
 func newPluginsTestHandler(t *testing.T) (*Handler, *atomic.Int64) {
 	t.Helper()
 	root := t.TempDir()
@@ -239,10 +236,8 @@ func TestListPluginUpdatesShowsBehindAfterPush(t *testing.T) {
 	}
 }
 
-// TestUpdatePluginInstallsNewShaAndServesNewText proves the P2 verification
-// requirement literally: after a push, POST .../update installs the new sha
-// AND the clone on disk (what any live skill.Source reads) carries the new
-// content - the "next run loads the new text" the issue asks to prove.
+// TestUpdatePluginInstallsNewShaAndServesNewText: after a push, POST .../update installs the new sha
+// and the clone on disk (what a live skill.Source reads) carries the new content.
 func TestUpdatePluginInstallsNewShaAndServesNewText(t *testing.T) {
 	bare, work := newFixtureRepo(t)
 	withFixedRemote(t, bare)
@@ -286,10 +281,8 @@ func TestUpdatePluginNotFound(t *testing.T) {
 	}
 }
 
-// TestCreatePluginRejectsNonGitHubEntries is the adversarial-review severe#1
-// regression: REST manages github: entries only - a bare string, an
-// absolute path, an https URL and whitespace must never become a local-root
-// row (they used to 201 and enter the skill roots).
+// TestCreatePluginRejectsNonGitHubEntries: REST manages github: entries only; a bare string, absolute path,
+// https URL or whitespace must never become a local-root row.
 func TestCreatePluginRejectsNonGitHubEntries(t *testing.T) {
 	for _, entry := range []string{"just-garbage", "/etc", "https://github.com/a/b", "  "} {
 		t.Run(entry, func(t *testing.T) {
@@ -314,10 +307,8 @@ func jsonStr(s string) string {
 	return string(b)
 }
 
-// TestPutPreservesShaOnFailedRefetch is the adversarial-review severe#2
-// regression: re-POSTing an already-installed entry must not wipe
-// installed_sha/fetched_at when the immediately-following Fetch fails - the
-// last good clone still serves that sha (ledger provenance, P4).
+// TestPutPreservesShaOnFailedRefetch: re-POSTing an installed entry keeps installed_sha/fetched_at
+// when the following Fetch fails, since the last good clone still serves that sha.
 func TestPutPreservesShaOnFailedRefetch(t *testing.T) {
 	bare, _ := newFixtureRepo(t)
 	withFixedRemote(t, bare)
@@ -346,9 +337,8 @@ func TestPutPreservesShaOnFailedRefetch(t *testing.T) {
 	}
 }
 
-// TestCreatePluginNameCollisionIs409 is should-fix#6: only a genuine
-// identity collision maps to 409 (pluginreg.ErrNameCollision), everything
-// else is a 500.
+// TestCreatePluginNameCollisionIs409: only pluginreg.ErrNameCollision maps to 409;
+// anything else is a 500.
 func TestCreatePluginNameCollisionIs409(t *testing.T) {
 	bare1, _ := newFixtureRepo(t)
 	h, _ := newPluginsTestHandler(t)
@@ -377,8 +367,7 @@ func TestDeletePluginInvalidNameIs400(t *testing.T) {
 	}
 }
 
-// TestCreatePluginRejectsReservedNames is should-fix#10: a plugin named
-// "update"/"updates" would collide with the fixed REST path segment.
+// TestCreatePluginRejectsReservedNames: "update"/"updates" would collide with the fixed REST path segment.
 func TestCreatePluginRejectsReservedNames(t *testing.T) {
 	for _, entry := range []string{"github:acme/update", "github:acme/updates"} {
 		t.Run(entry, func(t *testing.T) {
@@ -391,9 +380,8 @@ func TestCreatePluginRejectsReservedNames(t *testing.T) {
 	}
 }
 
-// TestUpdateAllPluginsFetchesOnlyBehindRows is should-fix#8: a row CheckUpdate
-// reports current must not be re-fetched (its fetched_at stays put); only
-// the behind row's Fetch (and fetched_at) actually runs.
+// TestUpdateAllPluginsFetchesOnlyBehindRows: a row CheckUpdate reports current isn't re-fetched
+// (fetched_at stays put); only the behind row's Fetch runs.
 func TestUpdateAllPluginsFetchesOnlyBehindRows(t *testing.T) {
 	staleBare, staleWork := newFixtureRepo(t)
 	currentBare, _ := newFixtureRepo(t)
@@ -413,9 +401,8 @@ func TestUpdateAllPluginsFetchesOnlyBehindRows(t *testing.T) {
 
 	commitAndPush(t, staleWork, "v2") // only "stale" is now behind
 
-	// CheckUpdate/Fetch resolve per-row through pluginreg.RemoteURL by
-	// owner/repo, not a single global override - route each name to its
-	// own fixture bare repo.
+	// CheckUpdate/Fetch resolve each row through pluginreg.RemoteURL by owner/repo,
+	// so route each name to its own fixture bare repo.
 	prevRemoteURL := pluginreg.RemoteURL
 	pluginreg.RemoteURL = func(owner, repo string) string {
 		if repo == "stale" {
@@ -452,10 +439,8 @@ func findWirePlugin(rows []schema.Plugin, name string) (schema.Plugin, bool) {
 	return schema.Plugin{}, false
 }
 
-// TestRebuildRefusalIs422AndStoresError is should-fix#9: a rebuild refusal
-// naming the JUST-CREATED row must 422 with that row's own message. Real
-// persistence of the refusal onto the row (admitPlugins' job, not REST's -
-// review#2) is covered by internal/serve's TestRebuildSkillsDropsOnlyTheRefusedRow.
+// TestRebuildRefusalIs422AndStoresError: a rebuild refusal naming the just-created row 422s with its message.
+// Persisting the refusal is admitPlugins' job (serve's TestRebuildSkillsDropsOnlyTheRefusedRow).
 func TestRebuildRefusalIs422AndStoresError(t *testing.T) {
 	bare, _ := newFixtureRepo(t)
 	withFixedRemote(t, bare)
@@ -573,7 +558,7 @@ func TestDeletePluginRefusesLocalRoot(t *testing.T) {
 	}
 }
 
-// A POST takes a seeded row over from config: plugins.seed no longer moves it.
+// A POST takes a seeded row over from config, so plugins.seed stops moving it.
 func TestCreatePluginClearsSeeded(t *testing.T) {
 	bare, _ := newFixtureRepo(t)
 	withFixedRemote(t, bare)

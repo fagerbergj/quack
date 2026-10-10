@@ -11,9 +11,8 @@ import (
 	"gorm.io/gorm"
 )
 
-// TestSweepOrphanChatRows_SkipsOnceConstraintExists pins perf audit #11: once the
-// chats(id) ON DELETE CASCADE FK exists (every boot after the first), sweepOrphanChatRows
-// must issue no DELETE at all, instead of re-scanning every FK'd table for nothing. Counting via a Raw callback (db.Exec goes through gorm's Raw processor, unlike Query) observes the SQL that actually ran, rather than inferring it from row counts - deleting 0 rows looks identical to never running.
+// Once the cascade FK exists, sweepOrphanChatRows issues no DELETE. Counts via a Raw callback (db.Exec
+// uses gorm's Raw processor), since deleting 0 rows looks identical to never running.
 func TestSweepOrphanChatRows_SkipsOnceConstraintExists(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "quack.db")
 	if _, err := New("sqlite", path); err != nil {
@@ -46,9 +45,8 @@ func TestSweepOrphanChatRows_SkipsOnceConstraintExists(t *testing.T) {
 	}
 }
 
-// TestSweepOrphanChatRows_RunsOnFreshDB is the negative case: a DB with the FK tables but
-// no constraint yet (pre-migration) must still get swept, or a pre-existing orphan survives
-// to break AutoMigrate's later ALTER TABLE ADD CONSTRAINT.
+// With FK tables but no constraint yet, the sweep must still run, or an orphan breaks the later
+// ALTER TABLE ADD CONSTRAINT.
 func TestSweepOrphanChatRows_RunsOnFreshDB(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "quack.db")
 	dialector, err := dialectorFor("sqlite", path)
@@ -60,7 +58,7 @@ func TestSweepOrphanChatRows_RunsOnFreshDB(t *testing.T) {
 		t.Fatalf("gorm.Open: %v", err)
 	}
 	// Migrate the tables without their CASCADE FK (Chat is a plain struct here, not the
-	// constraint-carrying field) - mirrors the pre-#1296 schema sweepOrphanChatRows exists for.
+	// constraint-carrying field) - the pre-FK schema sweepOrphanChatRows exists for.
 	if err := db.Exec(`CREATE TABLE chats (id TEXT PRIMARY KEY)`).Error; err != nil {
 		t.Fatalf("create chats: %v", err)
 	}
@@ -87,9 +85,8 @@ func TestSweepOrphanChatRows_RunsOnFreshDB(t *testing.T) {
 	}
 }
 
-// TestSweepOrphanChatRows_Postgres proves HasConstraint's "Chat" field lookup - which
-// resolves to a driver-agnostic generated FK name via GORM's own relationship reflection,
-// not a literal constraint-name string - actually round-trips on Postgres, not only sqlite: a false negative here would only cost the 400-510ms scan, but a false positive (constraint reported present when it isn't) means the sweep never runs on a first Postgres boot with real orphans, which is a boot crash loop, not a slow boot (#1307's reviewer flagged this exact risk). Covers both orders: pre-migration (sweep must still run) and post-AutoMigrate (sweep must skip); skips if Docker isn't reachable.
+// HasConstraint's "Chat" lookup must round-trip on Postgres too: a false positive skips the sweep on a first
+// boot with real orphans, a crash loop. Covers pre- and post-AutoMigrate; skips without Docker.
 func TestSweepOrphanChatRows_Postgres(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()

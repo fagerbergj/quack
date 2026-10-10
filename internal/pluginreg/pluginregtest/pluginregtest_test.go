@@ -5,10 +5,7 @@ import (
 	"testing"
 )
 
-// TestNewFixtureRepoAndCommitAndPush exercises the fixture helpers directly -
-// this package has no _test.go of its own otherwise (it IS the test harness,
-// shared by pluginreg's and rest's tests), so its own statements never
-// showed up covered under either caller's package.
+// Exercises the fixture helpers directly so this package's statements count as covered in its own package.
 func TestNewFixtureRepoAndCommitAndPush(t *testing.T) {
 	bare, work := NewFixtureRepo(t)
 	if bare == "" || work == "" {

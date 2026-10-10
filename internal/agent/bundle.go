@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"path"
 	"strings"
 
 	"github.com/fagerbergj/quack/internal/artifactsrc"
@@ -20,35 +21,27 @@ import (
 type Bundle struct {
 	Card   Card
 	Prompt string
-	// Hash: stable digest over agent-card.json + prompt.md + rubric.yaml (if present) AS RESOLVED for this round - ledger provenance for "this bundle
-	// produced this output" (#1096). rubric.yaml is read directly here rather than via vetting (would import-cycle). memory.md is deliberately excluded: its
-	// content is folded into the resolved system instruction the model actually sees, already covered by that call's gen_ai.prompt.version content hash.
+	// Hash digests agent-card.json + prompt.md + rubric.yaml as resolved this round, for ledger provenance.
+	// memory.md is excluded: it lands in the system instruction, already covered by gen_ai.prompt.version.
 	Hash string
-	// Dir: where the bundle came from, so PinPrompt can re-resolve it each
-	// round. PromptSource/PromptVersion are where system/<agent> came from -
-	// the llm.call ledger's prompt provenance.
+	// Dir lets PinPrompt re-resolve each round; PromptSource/PromptVersion are the llm.call ledger's prompt provenance.
 	Dir           string
 	PromptSource  string
 	PromptVersion string
-	// PromptArtifact: the resolved system prompt's artifact name (#1422),
-	// e.g. "system/code-reviewer" - derived from Dir, not the agent's own name.
+	// PromptArtifact is e.g. "system/code-reviewer", derived from Dir, not the agent's own name.
 	PromptArtifact string
 }
 
-// Card is the agent's identity, parsed from agent-card.json. Skills are
-// informational metadata about what the agent can do.
+// Card is the agent's identity, parsed from agent-card.json; Skills are informational only.
 type Card struct {
 	Name        string  `json:"name"`
 	Description string  `json:"description"`
 	Skills      []Skill `json:"skills,omitempty"`
-	// Artifact: this job's default output kind, one of
-	// recordstore.ArtifactKindNames() - stamped onto every node this agent is
-	// assigned (dag.AgentInfo.DefaultArtifact) as a property of the job, not
-	// a per-assignment override.
+	// Artifact is this job's default output kind (one of recordstore.ArtifactKindNames()),
+	// stamped onto every node assigned this agent rather than chosen per assignment.
 	Artifact string `json:"artifact,omitempty"`
 }
 
-// Skill is one declared capability of an agent.
 type Skill struct {
 	ID          string   `json:"id"`
 	Name        string   `json:"name"`
@@ -62,11 +55,10 @@ const (
 	memoryFile = "memory.md"
 )
 
-// LoadBundle reads and validates the agent bundle in dir, taking its prompt
-// and rubric from res (nil resolves the shipped files). Call it again at round
-// start - Resolve is the cheap path once the bundle exists.
+// LoadBundle reads and validates the bundle in dir, taking prompt and rubric from res (nil = shipped files).
+// It is cheap enough to call again at each round start.
 func LoadBundle(ctx context.Context, res *artifactsrc.Resolver, dir string) (*Bundle, error) {
-	rawCard, err := bundledir.ReadFile(bundledir.PathJoin(dir, cardFile))
+	rawCard, err := bundledir.ReadFile(path.Join(dir, cardFile))
 	if err != nil {
 		return nil, fmt.Errorf("agent bundle %q: read %s: %w", dir, cardFile, err)
 	}
@@ -113,21 +105,19 @@ func (b *Bundle) PinPrompt(res *artifactsrc.Resolver) *artifactsrc.Pinned {
 	return artifactsrc.NewPinned(res, artifactsrc.BundleName("system", b.Dir), boot)
 }
 
-// ResolvePrompt resolves system/<agent> once, for a caller that assembles the
-// prompt at a round's start and consumes it immediately (the ACP preamble).
+// ResolvePrompt resolves system/<agent> once for a caller that consumes it immediately (the ACP preamble).
 // A blank or unresolvable version keeps the bundle's loaded bytes.
 func (b *Bundle) ResolvePrompt(ctx context.Context, res *artifactsrc.Resolver) artifactsrc.Artifact {
 	return b.PinPrompt(res).Refresh(ctx)
 }
 
-// resolveBundle resolves one of a bundle's sourceable files, keeping the
-// artifact (its version id is the round's prompt provenance). A bundle outside
-// agents/ has no name to resolve, so its bytes are hashed the same way.
+// resolveBundle resolves one sourceable bundle file, keeping the artifact for provenance.
+// A bundle outside agents/ has no name to resolve, so its bytes are hashed the same way.
 func resolveBundle(ctx context.Context, res *artifactsrc.Resolver, kind, dir, file string) (artifactsrc.Artifact, error) {
 	if name := artifactsrc.BundleName(kind, dir); name != "" {
 		return res.ResolveUsable(ctx, name)
 	}
-	p := bundledir.PathJoin(dir, file)
+	p := path.Join(dir, file)
 	raw, err := bundledir.ReadFile(p)
 	if err != nil {
 		return artifactsrc.Artifact{}, err
@@ -135,9 +125,8 @@ func resolveBundle(ctx context.Context, res *artifactsrc.Resolver, kind, dir, fi
 	return artifactsrc.FileArtifact(p, raw), nil
 }
 
-// LoadBundleMemory resolves the bundle's optional memory.md ("" when it has none). The
-// returned Artifact is ledger provenance for the memory/<agent> entry - its zero
-// value when the bundle has no memory.md, so callers never record a nonexistent artifact.
+// LoadBundleMemory resolves the bundle's optional memory.md ("" when absent). The returned Artifact is
+// ledger provenance, zero when there is no memory.md so callers never record a nonexistent artifact.
 func LoadBundleMemory(ctx context.Context, res *artifactsrc.Resolver, dir string) (string, artifactsrc.Artifact, error) {
 	art, err := artifactsrc.ResolveBundleFile(ctx, res, "memory", dir, memoryFile)
 	if err != nil {

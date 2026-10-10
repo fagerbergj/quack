@@ -40,10 +40,8 @@ func TestLastFailure_UnknownKeyReportsNotOK(t *testing.T) {
 	}
 }
 
-// TestRecordCallResult_KeysByAgentRole is #1109 review finding 3: a judge
-// failure on the same chat+node must not be visible under the worker's own
-// agent role, or a later unrelated empty completion from a healthy model
-// would misreport the judge's failure as its own gateway error.
+// A judge failure on the same chat+node must not surface under the worker's role, or a later
+// empty completion would misreport it as the worker's gateway error.
 func TestRecordCallResult_KeysByAgentRole(t *testing.T) {
 	const chatID, node = "chat-1105-roles", "write-plan"
 	t.Cleanup(func() {
@@ -89,9 +87,8 @@ type fakeAddr string
 func (a fakeAddr) Network() string { return "tcp" }
 func (a fakeAddr) String() string  { return string(a) }
 
-// TestSanitizeStoreError_NeverLeaksDSNFragments covers the two exotic DSN
-// shapes the #1200 review flagged: a single-quoted password containing an
-// @, and a raw user@host embedded inside a DSN. Both are baked into the wrapped error's text (as a real pgconn/gorm error might carry), proving SanitizeStoreError's structured-field-only approach never echoes them - unlike the prior regex approach, which matched only up to the first @ or unquoted whitespace and leaked the remainder.
+// Exotic DSN shapes (quoted password with @, embedded user@host) in the error text must never be
+// echoed; only structured fields are read.
 func TestSanitizeStoreError_NeverLeaksDSNFragments(t *testing.T) {
 	tests := []struct {
 		name   string

@@ -92,9 +92,8 @@ func TestExporterEmitsTypedEntries(t *testing.T) {
 	}
 }
 
-// TestExporterMapsPluginsAttribute: quack.plugins (a JSON array attribute,
-// emit.go) becomes AgentInvokePayload.Plugins - asserted on the literal wire
-// shape (#1427 P1), since that's the contract a replay reader depends on.
+// TestExporterMapsPluginsAttribute: quack.plugins becomes AgentInvokePayload.Plugins, asserted on the literal
+// wire shape a replay reader depends on.
 func TestExporterMapsPluginsAttribute(t *testing.T) {
 	store := ledgertest.NewMemStore()
 	emitVia(t, store,
@@ -115,9 +114,8 @@ func TestExporterMapsPluginsAttribute(t *testing.T) {
 	}
 }
 
-// TestExporterMapsArtifactsAttribute_Chat: quack.artifacts becomes
-// LLMCallPayload.Artifacts on a native round's llm.call, alongside the
-// existing single-artifact PromptSource/PromptVersionID/PromptArtifact fields.
+// TestExporterMapsArtifactsAttribute_Chat: quack.artifacts becomes LLMCallPayload.Artifacts alongside the
+// single-artifact Prompt* fields.
 func TestExporterMapsArtifactsAttribute_Chat(t *testing.T) {
 	store := ledgertest.NewMemStore()
 	emitVia(t, store,
@@ -171,9 +169,8 @@ func TestExporterMapsArtifactsAttribute_InvokeAgent(t *testing.T) {
 	}
 }
 
-// TestExporterCostUSD_NilVsZero: #1096 - an unpriced model must not report
-// cost_usd:0 (that reads as "confirmed free"); a priced model with a
-// genuine $0 call must still report the explicit 0, not omit the field.
+// TestExporterCostUSD_NilVsZero: an unpriced model omits cost_usd (0 would read as "confirmed free"); a
+// priced $0 call reports an explicit 0.
 func TestExporterCostUSD_NilVsZero(t *testing.T) {
 	store := ledgertest.NewMemStore()
 	emitVia(t, store, // unpriced: no gen_ai.usage.cost attribute at all

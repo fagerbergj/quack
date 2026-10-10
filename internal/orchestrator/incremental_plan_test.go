@@ -1,8 +1,4 @@
-// incremental_plan_test.go: an end-to-end fake-model pin of slice-3's core
-// promise - a plan authored as A, then B once A's result is known, run
-// across two execute() calls in ONE orchestrator turn: create_plan(A) ->
-// execute (partial, no delivery, turn continues) -> edit_plan(add B depends
-// on A, declare delivery) -> execute (delivers, turn ends).
+// A plan grown from A to A+B across two execute() calls in one orchestrator turn.
 package orchestrator
 
 import (
@@ -16,19 +12,14 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// partialPlanCall is the orchestrator authoring a one-assignment plan with NO
-// delivery declared - a genuine partial first step, unlike planCall
-// (continue_test.go), which declares delivery so most tests' "one execute
-// finishes the run" assumption still holds.
+// partialPlanCall declares no delivery, unlike planCall, so the first execute is partial.
 func partialPlanCall() *model.LLMResponse {
 	return stubCall("create_plan", map[string]any{"assignments": []any{map[string]any{
 		"agent": "web-researcher", "task": "research the thing",
 	}}})
 }
 
-// editPlanAddB builds the edit_plan call that adds assignment B depending on
-// aNodeID and declares delivery - the step that turns a partial plan into a
-// finished one.
+// editPlanAddB adds B depending on aNodeID and declares delivery.
 func editPlanAddB(planID, aNodeID string) *model.LLMResponse {
 	return stubCall("edit_plan", map[string]any{
 		"plan_id": planID,
@@ -75,9 +66,7 @@ func createPlanNodeID(req *model.LLMRequest, agent string) (string, bool) {
 	return "", false
 }
 
-// executedPlanIDs collects every plan_id an execute FunctionCall named -
-// used here to tell the first (partial) execute call apart from the second
-// (delivering) one, since both name the SAME plan_id under incremental planning.
+// executedPlanIDs collects every plan_id an execute call named.
 func executedPlanIDs(req *model.LLMRequest) []string {
 	var out []string
 	for _, c := range req.Contents {
@@ -95,11 +84,7 @@ func executedPlanIDs(req *model.LLMRequest) []string {
 	return out
 }
 
-// hasFunctionCall reports whether req's history already contains a
-// FunctionCall named name - used to make the growth step (edit_plan) fire
-// exactly once instead of every invocation, since executedPlanIDs alone
-// can't distinguish "edit_plan just ran" from "not yet" (edit_plan never
-// itself adds an execute call to that count).
+// hasFunctionCall makes edit_plan fire once: edit_plan never adds to the execute count.
 func hasFunctionCall(req *model.LLMRequest, name string) bool {
 	for _, c := range req.Contents {
 		if c == nil {
@@ -114,12 +99,8 @@ func hasFunctionCall(req *model.LLMRequest, name string) bool {
 	return false
 }
 
-// incrementalStub scripts: create_plan(A) -> [auto: first execute, partial]
-// -> edit_plan(add B, declare delivery) -> [auto: second execute, delivers].
-// It reuses orchStub's auto-execute-once-a-plan_id-is-known behavior for the
-// FIRST execute call, then supplies its own scripted edit_plan/execute for
-// the growth step, since orchStub's auto-execute would otherwise also fire
-// for the second plan_id occurrence.
+// incrementalStub: create_plan(A) -> execute (partial) -> edit_plan(add B, delivery) -> execute.
+// orchStub's auto-execute would also fire on the second plan_id, so it scripts the growth step.
 type incrementalStub struct {
 	orchStub
 }
@@ -135,10 +116,7 @@ func (s *incrementalStub) GenerateContent(ctx context.Context, req *model.LLMReq
 		// response is in history - fall through to orchStub's auto-execute).
 		return s.orchStub.GenerateContent(ctx, req, isStream)
 	case !hasFunctionCall(req, "edit_plan"):
-		// The first (partial) execute already ran and edit_plan hasn't fired
-		// yet - grow the plan and declare delivery. Gated on edit_plan, not
-		// len(execs), since edit_plan itself never adds an execute call - a
-		// switch on len(execs) alone would re-issue this every invocation.
+		// Gated on edit_plan, not len(execs), which edit_plan never changes.
 		aID, ok := createPlanNodeID(req, "web-researcher")
 		if !ok {
 			return s.orchStub.GenerateContent(ctx, req, isStream)
@@ -164,10 +142,8 @@ func countEvent(evs []stream.SSEEvent, name string) int {
 	return n
 }
 
-// TestOrchestrator_IncrementalPlan_SecondExecuteDeclaresDeliveryAndEndsTurn
-// pins the whole slice-3 loop in one turn: the first execute's results lead
-// to an edit_plan that adds B and declares delivery, and the second execute
-// delivers the answer - both nodes actually ran, across two dag_plan steps.
+// The first execute's result leads to an edit_plan that adds B, and the second execute
+// delivers; both nodes ran across two dag_plan steps.
 func TestOrchestrator_IncrementalPlan_SecondExecuteDeclaresDeliveryAndEndsTurn(t *testing.T) {
 	stub := &incrementalStub{orchStub: orchStub{replies: []*model.LLMResponse{partialPlanCall()}}}
 	o := newTestOrch(t, stub)

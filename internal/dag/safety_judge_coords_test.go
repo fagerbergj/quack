@@ -1,11 +1,9 @@
-// Package dag_test: measures what ledger.CoordsFromContext(ctx) actually
-// contains when runSafetyJudge fires inside a guarded tool call on a real
-// worker node. See internal/dag/ledger_coords_test.go's header for why this lives in the external test package.
+// Measures ledger.CoordsFromContext when runSafetyJudge fires inside a guarded tool call
+// on a real worker node (external package: see ledger_coords_test.go).
 package dag_test
 
 import (
 	"context"
-	"iter"
 	"testing"
 
 	adkagent "google.golang.org/adk/v2/agent"
@@ -23,29 +21,9 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// sjStub: worker calls the guarded tool once, then answers.
-type sjStub struct{}
-
-func (sjStub) Name() string { return "sjStub" }
-
-func (sjStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		switch {
-		case lcHasTool(req, "submit_verdict"):
-			yield(lcCall("submit_verdict", map[string]any{"score": 0.9, "feedback": "fine"}), nil)
-		case lcHasFuncResponse(req, "current_date"):
-			yield(lcText("done"), nil)
-		default:
-			yield(lcCall("current_date", map[string]any{}), nil)
-		}
-	}
-}
-
-// TestSafetyJudgeCoords_MeasuredAtCallTime drives a real gated node through
-// dag.Executor.RunPlanAsGraph with current_date wrapped as a judge-tier
-// guarded tool, and records verbatim what ledger.CoordsFromContext(ctx) contains at the moment runSafetyJudge's judge func fires.
+// Wraps current_date as a judge-tier guarded tool and records the coords the judge func sees.
 func TestSafetyJudgeCoords_MeasuredAtCallTime(t *testing.T) {
-	stub := sjStub{}
+	stub := dateToolLLM("done")
 	workerModel := inference.TracedModelForTesting(stub, "sj-coords-model")
 
 	var captured ledger.Coords
@@ -97,8 +75,7 @@ func TestSafetyJudgeCoords_MeasuredAtCallTime(t *testing.T) {
 	}
 	t.Logf("MEASURED ledger.CoordsFromContext(ctx) inside runSafetyJudge: %+v (calls=%d)", captured, calls)
 
-	// Pins #1052: the safety judge fires on this node's worker, so its ledger
-	// events must carry this node's attribution, not blanks.
+	// The safety judge fires on this node's worker, so its ledger events carry this node's attribution.
 	if captured.ChatID != chatID {
 		t.Errorf("ChatID = %q, want %q", captured.ChatID, chatID)
 	}

@@ -10,9 +10,8 @@ import (
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 )
 
-// Exporter adapts a LedgerStore to sdklog.Exporter: every gen_ai.* log record becomes
-// one typed observation Entry. Recording is best-effort by design - Export never
-// errors (store failures are logged at Warn and the record dropped), so a broken store can never affect the run.
+// Exporter turns every gen_ai.* log record into a typed observation Entry. Export never errors (store failures
+// are logged and the record dropped) so a broken store can't affect the run.
 type Exporter struct {
 	store LedgerStore
 	log   *slog.Logger
@@ -33,7 +32,7 @@ func (e *Exporter) Export(ctx context.Context, records []sdklog.Record) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 	defer cancel()
 	for _, r := range records {
-		entry, ok := EntryFromRecord(r)
+		entry, ok := entryFromRecord(r)
 		if !ok {
 			continue
 		}
@@ -48,10 +47,9 @@ func (e *Exporter) Export(ctx context.Context, records []sdklog.Record) error {
 func (e *Exporter) Shutdown(context.Context) error   { return nil }
 func (e *Exporter) ForceFlush(context.Context) error { return nil }
 
-// EntryFromRecord converts one gen_ai.* log record into a typed observation
-// Entry. ok=false for records no observation kind describes (plan events,
-// records without a conversation id) - those still reach any OTLP exporter.
-func EntryFromRecord(r sdklog.Record) (Entry, bool) {
+// entryFromRecord converts one gen_ai.* log record into an observation Entry. ok=false for records no kind
+// describes (plan events, no conversation id); those still reach any OTLP exporter.
+func entryFromRecord(r sdklog.Record) (Entry, bool) {
 	attrs := make(map[string]any, r.AttributesLen())
 	r.WalkAttributes(func(kv attribute.KeyValue) bool {
 		attrs[string(kv.Key)] = valueToAny(kv.Value)
@@ -103,9 +101,7 @@ func EntryFromRecord(r sdklog.Record) (Entry, bool) {
 			PromptArtifact: str("quack.prompt.artifact")}
 		unmarshalIfPresent(attrs, "quack.artifacts", &p.Artifacts)
 		unmarshalIfPresent(attrs, "quack.plugins", &p.Plugins)
-		// Present-but-nil vs. present-with-zero: only set CostUSD when the
-		// emitter actually recorded a cost (pricing configured) - a plain
-		// num() lookup can't tell "unpriced" from a genuine $0 call.
+		// Set CostUSD only when a cost was recorded: num() can't tell "unpriced" from a genuine $0 call.
 		if _, ok := attrs["gen_ai.usage.cost"]; ok {
 			cost := num("gen_ai.usage.cost")
 			p.CostUSD = &cost
@@ -149,9 +145,8 @@ func unmarshalIfPresent(attrs map[string]any, key string, v any) {
 	}
 }
 
-// valueToAny converts an attribute.Value to the generic shape encoding/json
-// already marshals: otel/log v0.21.0 dropped its own Value/Kind types in favor
-// of attribute.Value/Type (record.go embeds attribute.Value directly - v0.21.0 release notes).
+// valueToAny converts an attribute.Value to a JSON-marshalable shape (otel/log v0.21.0 uses attribute.Value
+// directly).
 func valueToAny(v attribute.Value) any {
 	switch v.Type() {
 	case attribute.BOOL:

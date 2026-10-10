@@ -17,9 +17,8 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// #1033: the retry/subset path runs nodes on OUR goroutines (runDAGSubset), not
-// ADK's, so ADK's scheduler recover never sees them. A ctx-yield consumer that
-// panics - which safeYield now re-raises rather than swallowing - would kill the process here with nothing to catch it. It must surface as a node error.
+// The retry path runs nodes on our goroutines, outside ADK's recover, so a panicking
+// ctx-yield consumer must surface as a node error, not kill the process.
 func TestRetryPlanInNode_ConsumerPanicBecomesNodeError(t *testing.T) {
 	stub := okStub{}
 	mk := func() adkagent.Agent {

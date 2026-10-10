@@ -8,9 +8,7 @@ import (
 	"google.golang.org/genai"
 )
 
-// TestGenerate_EstimatesReasoningTokensWhenUsageOmitsThem covers #968:
-// llama-server reports no reasoning_tokens, so the adapter estimates
-// chars/4 from reasoning_content and subtracts it from candidates.
+// llama-server reports no reasoning_tokens, so the adapter estimates chars/4 and subtracts it.
 func TestGenerate_EstimatesReasoningTokensWhenUsageOmitsThem(t *testing.T) {
 	// 40-char reasoning_content -> chars/4 = 10 estimated reasoning tokens.
 	srv := jsonServer(t, `{"id":"1","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"the answer","reasoning_content":"0123456789012345678901234567890123456789"}}],"usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150}}`)
@@ -37,9 +35,7 @@ func TestGenerate_EstimatesReasoningTokensWhenUsageOmitsThem(t *testing.T) {
 	}
 }
 
-// TestGenerate_SubtractsProviderReportedReasoningTokens: an exact
-// reasoning_tokens count passes through untouched but is still subtracted
-// from CandidatesTokenCount (completion_tokens already includes it).
+// A reported reasoning_tokens passes through but is subtracted from candidates, which include it.
 func TestGenerate_SubtractsProviderReportedReasoningTokens(t *testing.T) {
 	srv := jsonServer(t, `{"id":"1","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"the answer","reasoning_content":"some reasoning text here"}}],"usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150,"completion_tokens_details":{"reasoning_tokens":30}}}`)
 	defer srv.Close()
@@ -140,9 +136,7 @@ func TestStreaming_SubtractsProviderReportedReasoningTokens(t *testing.T) {
 	}
 }
 
-// TestGenerate_EstimateClampsAtZero covers the estimate path when chars/4
-// exceeds completion_tokens: CandidatesTokenCount must clamp at 0, not go
-// negative.
+// An estimate above completion_tokens clamps candidates at 0.
 func TestGenerate_EstimateClampsAtZero(t *testing.T) {
 	// 200-char reasoning_content -> chars/4 = 50 estimated, > completion_tokens (10).
 	longReasoning := ""

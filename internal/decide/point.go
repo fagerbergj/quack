@@ -1,7 +1,6 @@
 package decide
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"maps"
@@ -92,39 +91,6 @@ func registeredIDs() []string {
 type Typed[T any] struct {
 	Point
 	Parse func(top string) T
-}
-
-// Decision is a Result with its top answer parsed; Value is T's zero value when there is no answer.
-type Decision[T any] struct {
-	Result
-	Value T
-}
-
-// Decide is Decider.Decide with the answer parsed; baseline is quack's own value. A fallback records it as
-// given, so a caller whose replaced step produces the baseline uses Decider.Await and settles after that step.
-func (t Typed[T]) Decide(ctx context.Context, d *Decider, state any, baseline T) Decision[T] {
-	r := d.DecideWith(ctx, t.Point, state, fmt.Sprint(baseline))
-	x := Decision[T]{Result: r}
-	if r.Top != "" {
-		x.Value = t.Parse(r.Top)
-	}
-	return x
-}
-
-// Choose is decide mode: the handler's answer when it acted, else fallback.
-func (x Decision[T]) Choose(fallback T) T {
-	if x.Act() {
-		return x.Value
-	}
-	return fallback
-}
-
-// Guard is guard mode: the handler's answer only when it restricts, else current.
-func (x Decision[T]) Guard(current T) T {
-	if x.Restricts() {
-		return x.Value
-	}
-	return current
 }
 
 // Annotated is a state whose Meta is recorded beside it but never sent to the handler,

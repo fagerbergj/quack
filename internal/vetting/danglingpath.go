@@ -6,17 +6,15 @@ import (
 	"strings"
 )
 
-// pointerKeywords: words that, near a locating preposition, signal the answer
-// is naming WHERE the deliverable lives ("saved to X") rather than merely
-// citing X as a source among others ("see X for the schema").
+// pointerKeywords: words that, near a locating preposition, mark the answer naming where the deliverable lives
+// ("saved to X") rather than citing X as a source ("see X for the schema").
 var pointerKeywords = []string{
 	"written", "wrote", "saved", "save", "stored", "located",
 	"available", "complete", "output", "result",
 }
 
-// danglingDeliverablePathCriterion catches an answer pointing to a path this run wrote but never committed (act.written, !act.committed) - the node's working directory is discarded at run end, so nothing downstream can ever
-// reach that file. Scoped to the run's OWN writes, AND only when the mention
-// reads as "here is where I put it" (a pointer keyword followed by at/in/to right before the path) - a plain citation of a file the run also happens to have touched must not trip this (#footgun: basename collisions are common filenames an honest answer legitimately names in prose).
+// danglingDeliverablePathCriterion flags an answer pointing at a path this run wrote but never committed: the
+// working dir is discarded at run end. Only pointer phrasing counts, since honest prose often names such files.
 func danglingDeliverablePathCriterion(answer string, act workerActivity, nodeDir string) (criterionScore, bool) {
 	if act.committed {
 		return criterionScore{}, false
@@ -48,9 +46,8 @@ func danglingDeliverablePathCriterion(answer string, act workerActivity, nodeDir
 	return criterionScore{}, false
 }
 
-// pointerPhraseNear reports whether some occurrence of path in answer is
-// immediately preceded by a locating preposition, with a pointerKeyword
-// earlier in that same short window - the shape of "the plan is complete at `X`", not an incidental citation like "the config is in `X`, alongside...".
+// pointerPhraseNear reports whether some occurrence of path follows a locating preposition with a pointerKeyword
+// earlier in the same short window ("the plan is complete at `X`", not "the config is in `X`").
 func pointerPhraseNear(answer, path string) bool {
 	const lookback = 60
 	from := 0
@@ -89,7 +86,6 @@ func hasPointerShape(window string) bool {
 	return false
 }
 
-// lastWord: the final whitespace-delimited token of s.
 func lastWord(s string) string {
 	s = strings.TrimRight(s, " \t\n")
 	if i := strings.LastIndexAny(s, " \t\n"); i >= 0 {

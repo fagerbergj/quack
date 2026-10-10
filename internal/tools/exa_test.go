@@ -10,8 +10,7 @@ import (
 	"testing"
 )
 
-// exaSample mirrors the real web_search_exa text output: Key: value header lines,
-// a Highlights body, records separated by a "---" line.
+// exaSample mirrors real web_search_exa text output: Key: value headers, a Highlights body, "---" separators.
 const exaSample = `Title: TFI Bus Services | Transport for Ireland
 URL: https://www.transportforireland.ie/getting-around/by-bus/tfi-bus-services/
 Published: 2019-08-01T09:51:18.000Z
@@ -60,8 +59,7 @@ func TestParseExaResults_SkipsNonResultBlocks(t *testing.T) {
 	}
 }
 
-// TestParseExaREST covers the keyed JSON path: highlights become the snippet, and
-// a result with no highlights falls back to its text body.
+// Keyed JSON path: highlights become the snippet; a result with none falls back to its text body.
 func TestParseExaREST(t *testing.T) {
 	const body = `{"results":[
 		{"title":"TFI Bus","url":"https://transportforireland.ie/","highlights":["Dublin Bus operates 130+ routes.","Wheelchair accessible."]},
@@ -83,8 +81,7 @@ func TestParseExaREST(t *testing.T) {
 	}
 }
 
-// TestExaSearchREST drives the keyed path end to end against a stub Exa: it must
-// POST with the x-api-key header and the query in the body, then parse the JSON.
+// The keyed path must POST with the x-api-key header and the query in the body, then parse the JSON.
 func TestExaSearchREST(t *testing.T) {
 	var gotKey, gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

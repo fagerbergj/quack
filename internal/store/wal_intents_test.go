@@ -10,9 +10,8 @@ import (
 	"github.com/fagerbergj/quack/internal/ledgertest"
 )
 
-// TestSaveTurn_CrashBetweenIntentAndRow is #1144 P5's required kill-9 test:
-// the process appends turn.created and dies before the ChatTurn row lands
-// (SaveTurn's real path is AppendIntent-then-Create, so this is the documented gap between them, not a hypothetical). No CLI/recovery machinery is wired for this new writer family (out of scope for P5 - see the PR body); this proves the WAL invariant recovery would rely on: the intent alone carries everything SaveTurn's row would have, so replaying it reaches the identical row.
+// The process appends turn.created and dies before the ChatTurn row lands. No recovery is wired for this
+// writer; this proves the intent alone carries everything the row would, so replaying it reaches the same row.
 func TestSaveTurn_CrashBetweenIntentAndRow(t *testing.T) {
 	ctx := context.Background()
 	st := newTestStore(t)
@@ -24,9 +23,7 @@ func TestSaveTurn_CrashBetweenIntentAndRow(t *testing.T) {
 		t.Fatalf("CreateChat: %v", err)
 	}
 
-	// Simulate the crash directly, the same way TestRecover_CrashBetweenIntentAndRow
-	// does for artifact revisions: append the intent SaveTurn would have
-	// appended, then never call the row write it precedes.
+	// Simulate the crash: append the intent SaveTurn would have, then never write the row.
 	payload, err := json.Marshal(struct {
 		UserText string `json:"user_text"`
 		Seq      int    `json:"seq"`
@@ -83,9 +80,7 @@ func TestSaveTurn_CrashBetweenIntentAndRow(t *testing.T) {
 	}
 }
 
-// TestCreateChat_LedgerAppendFailureBlocksRow proves the fail-closed half of
-// the same invariant from the other direction: if the intent never lands,
-// the row must never land either - the ordering that makes "row without a matching intent" impossible.
+// Fail-closed: if the intent never lands, the row never lands, so a row without an intent is impossible.
 func TestCreateChat_LedgerAppendFailureBlocksRow(t *testing.T) {
 	st := newTestStore(t)
 	st.SetWALLedger(failingLedger{})
@@ -110,9 +105,7 @@ func (failingLedger) AppendIntent(context.Context, ledger.Entry) (int64, error) 
 	return 0, errors.New("ledger: unreachable")
 }
 
-// TestSaveDagPlan_ResumeIsWALIdempotent proves the boot-resume re-yield case
-// (SaveDagPlan's doc: "a boot resume re-yields the same stashed plan") never
-// grows a duplicate plan.saved entry - the WAL append shares the same skip-if-exists behavior the DB row already had.
+// A boot resume re-yields the same stashed plan; the WAL append must skip-if-exists like the DB row does.
 func TestSaveDagPlan_ResumeIsWALIdempotent(t *testing.T) {
 	ctx := context.Background()
 	st := newTestStore(t)
@@ -184,9 +177,8 @@ func TestSaveDagPlan_ExtensionRecordsItsTurn(t *testing.T) {
 	}
 }
 
-// TestWriteCheckpoint_UpsertsOneRowAndSeedsNextFold is #1144 P5 review's
-// design change made concrete: the checkpoint is ONE row (chat_id primary
-// key), replaced in place, not an entry appended to the ledger every turn - and a second WriteCheckpoint call must actually consume the first row as its fold seed (this exact bug - passing the seed's own LastSeq as fold.ApplySeeded's `from` - silently skipped seeding and would have shipped un-caught without this test).
+// The checkpoint is one row replaced in place, and a second WriteCheckpoint must consume it as its seed
+// (passing the seed's own LastSeq as ApplySeeded's `from` silently skips seeding).
 func TestWriteCheckpoint_UpsertsOneRowAndSeedsNextFold(t *testing.T) {
 	ctx := context.Background()
 	st := newTestStore(t)

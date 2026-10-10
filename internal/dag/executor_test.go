@@ -50,9 +50,8 @@ func ev(path string, parts ...*genai.Part) *session.Event {
 	return e
 }
 
-// TestDagStream_WorkerActivityAndNodeDone: a worker run's thinking/tool/token activity is
-// translated to SSE under the plan node, bracketed by agent_start/agent_complete, and the
-// node's output event yields node_done with the judge score from state.
+// Worker activity becomes SSE under the plan node, bracketed by agent_start/agent_complete,
+// and the node's output yields node_done with the judge score.
 func TestDagStream_WorkerActivityAndNodeDone(t *testing.T) {
 	const wpath = "quack-dag-p@1/n1@rr/web-researcher@worker-r0"
 	const npath = "quack-dag-p@1/n1@rr"
@@ -83,9 +82,8 @@ func TestDagStream_WorkerActivityAndNodeDone(t *testing.T) {
 		t.Fatalf("event sequence:\n got=%v\nwant=%v", g, want)
 	}
 
-	// agent_start is scoped to the plan node with the worker stage/run, and
-	// carries a real wall-clock timestamp (anchors the sub-step timer across
-	// reconnect/replay, #root cause of the sub-step-timer-resets-on-refresh bug).
+	// agent_start carries a real wall-clock timestamp, anchoring the sub-step timer across
+	// reconnect/replay.
 	as := got[1].Data.(stream.AgentStartData)
 	if as.NodeID != "n1" || as.RunID != "worker-r0" || as.Stage != stream.StageWorker {
 		t.Fatalf("agent_start = %+v", as)
@@ -108,12 +106,8 @@ func TestDagStream_WorkerActivityAndNodeDone(t *testing.T) {
 	}
 }
 
-// TestDagStream_EmptyNodeReportsRecordedGatewayFailure is #1105's regression
-// guard: a node whose model call failed repeatedly (recorded by
-// inference.RecordCallResult, the wire tracedModel.GenerateContent uses)
-// still surfaces the real cause on node_failed once ADK's runner swallows the
-// worker's error into an empty completion - instead of the generic
-// "produced no answer" a true silent gap gets.
+// When ADK swallows a repeatedly failing model call into an empty completion,
+// node_failed must still surface the recorded cause, not "produced no answer".
 func TestDagStream_EmptyNodeReportsRecordedGatewayFailure(t *testing.T) {
 	const chatID, node, agent = "chat-1105", "n1", "web-researcher"
 	t.Cleanup(func() { inference.ClearFailure(chatID, node, agent) })
@@ -150,8 +144,7 @@ func TestDagStream_EmptyNodeReportsRecordedGatewayFailure(t *testing.T) {
 	if !strings.Contains(nf.Error, "502 Bad Gateway") || !strings.Contains(nf.Error, "5 consecutive attempts") {
 		t.Fatalf("node_failed.Error = %q, want it to name the error class and attempt count", nf.Error)
 	}
-	// #1109 review finding 1: no URL, port, or upstream body content - the raw
-	// error carries all three - reaches this PUBLIC-eventually text.
+	// No URL, port, or upstream body from the raw error may reach this eventually-public text.
 	for _, leaked := range []string{"llm-swap", "11436", "sk-fake-key-xyz", "POST"} {
 		if strings.Contains(nf.Error, leaked) {
 			t.Fatalf("node_failed.Error = %q leaked %q", nf.Error, leaked)
@@ -159,9 +152,7 @@ func TestDagStream_EmptyNodeReportsRecordedGatewayFailure(t *testing.T) {
 	}
 }
 
-// TestDagStream_EmptyNodeIgnoresOtherRolesFailure is #1109 review finding 3:
-// a judge failure recorded under the "judge" role must not be picked up for
-// an empty completion under the node's own worker agent role.
+// A judge failure recorded under the "judge" role must not explain the worker's empty completion.
 func TestDagStream_EmptyNodeIgnoresOtherRolesFailure(t *testing.T) {
 	const chatID, node, agent = "chat-1105-roles", "n1", "web-researcher"
 	t.Cleanup(func() { inference.ClearFailure(chatID, node, "judge") })
@@ -191,10 +182,8 @@ func TestDagStream_EmptyNodeIgnoresOtherRolesFailure(t *testing.T) {
 	}
 }
 
-// TestDagStream_EmptyNodeUsesWorkspaceScopeForSetupPlanImplementer is the #1109 re-review
-// finding: for a setup/repo-chain implementer node the recorder keys generate() calls under
-// workspace.SharedRepoScope ("quack-shared-repo"), not the plan node id; NewDagStream must
-// resolve the same scope so emptyNodeError finds the record the recorder wrote.
+// Setup/repo-chain implementers record under workspace.SharedRepoScope, not the node id;
+// NewDagStream must resolve the same scope to find the record.
 func TestDagStream_EmptyNodeUsesWorkspaceScopeForSetupPlanImplementer(t *testing.T) {
 	const chatID, agent = "chat-1105-setup", implementerAgent
 	scope := "quack-shared-repo" // workspace.SharedRepoScope, avoiding an import cycle-prone dependency in the test
@@ -233,8 +222,7 @@ func TestDagStream_EmptyNodeUsesWorkspaceScopeForSetupPlanImplementer(t *testing
 	}
 }
 
-// TestDagStream_EmptyNodeWithNoRecordedFailureStaysSilentGap proves the true
-// silent-gap path (#568) is untouched: no tracked failure means the generic message stands.
+// With no tracked failure, the generic silent-gap message stands.
 func TestDagStream_EmptyNodeWithNoRecordedFailureStaysSilentGap(t *testing.T) {
 	const npath = "quack-dag-p@1/n1@rr"
 	got := drive([]*session.Event{{NodeInfo: &session.NodeInfo{Path: npath}, Output: ""}}, map[string]string{"n1": "web-researcher"}, gateScore{})
@@ -249,12 +237,8 @@ func TestDagStream_EmptyNodeWithNoRecordedFailureStaysSilentGap(t *testing.T) {
 	}
 }
 
-// TestDagStream_DedupsToolCallByID: ACP's start+completion updates both carry
-// the FunctionCall part for one call_id (internal/acp/translate.go's ToolCall
-// then ToolCallUpdate); dagStream.part must not turn that into two
-// agent_tool_call events for the worker's own tool calls (PR #1102 review
-// finding - the orchestrator Translator was fixed but ACP worker calls,
-// routed through dagStream, were not).
+// ACP's start and completion updates both carry the FunctionCall for one call_id;
+// dagStream.part must emit one agent_tool_call, not two.
 func TestDagStream_DedupsToolCallByID(t *testing.T) {
 	const wpath = "quack-dag-p@1/n1@rr/web-researcher@worker-r0"
 	agentByID := map[string]string{"n1": "web-researcher"}
@@ -305,11 +289,8 @@ func TestDagStream_ReviseRoundStage(t *testing.T) {
 	}
 }
 
-// TestDagStream_WorkerCompleteStampsLastActivityNotJudgeGap (#1290): worker-r0's
-// agent_complete isn't raised until worker-r1 (revise) starts, but its
-// FinishedAtMs must reflect worker-r0's own last event, not the gap a judge
-// round spends between them - else the worker card's duration on replay
-// includes the judge round that ran after it.
+// worker-r0's agent_complete is raised only when worker-r1 starts, but its FinishedAtMs
+// must be its own last event, not include the judge round in between.
 func TestDagStream_WorkerCompleteStampsLastActivityNotJudgeGap(t *testing.T) {
 	const r0 = "quack-dag-p@1/n1@rr/web-researcher@worker-r0"
 	const r1 = "quack-dag-p@1/n1@rr/web-researcher@worker-r1"
@@ -405,10 +386,8 @@ func equalStrings(a, b []string) bool {
 	return true
 }
 
-// TestDagStream_SteeredRunEmitsNodeSteered: the first event of a -sN steered
-// re-run announces node_steered (with the delivered guidance) BEFORE the run's
-// agent_start - each generation exactly once. Regression: steers landed
-// server-side but the UI never heard about them (no emitter).
+// A -sN steered re-run emits node_steered (with the guidance) before its agent_start,
+// exactly once per generation.
 func TestDagStream_SteeredRunEmitsNodeSteered(t *testing.T) {
 	agentByID := map[string]string{"n1": "web-researcher"}
 	var got []stream.SSEEvent

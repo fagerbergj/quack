@@ -26,9 +26,8 @@ func run(t *testing.T, dir string, args ...string) string {
 	return string(out)
 }
 
-// newFixtureRepo makes a bare "remote" repo plus a pushing work tree under
-// t.TempDir() - the fetch target in place of github.com (#1427 F1: no test
-// may touch the network).
+// newFixtureRepo makes a bare "remote" repo plus a pushing work tree under t.TempDir(),
+// the fetch target in place of github.com: no test may touch the network.
 func newFixtureRepo(t *testing.T) string {
 	t.Helper()
 	bare := filepath.Join(t.TempDir(), "remote.git")
@@ -48,12 +47,8 @@ func newFixtureRepo(t *testing.T) string {
 	return bare
 }
 
-// TestBootPluginRegistrySeedsFetchesAndSkipsEmbedded is the P1 boot-seeding
-// verification against local fixtures only (#1427 F1): a reachable row gets
-// a sha, an unreachable one (still a local path - no network) stores an
-// error and boot continues, a local entry is never fetched. Folds in the old
-// registryPluginRoots-skips-embedded assertion as one on-disk check: every
-// seeded row gets entry.json, the in-memory embedded quack row never does.
+// TestBootPluginRegistrySeedsFetchesAndSkipsEmbedded: a reachable row gets a sha, an unreachable one stores
+// an error and boot continues, a local entry is never fetched, and only on-disk rows get entry.json.
 func TestBootPluginRegistrySeedsFetchesAndSkipsEmbedded(t *testing.T) {
 	bare := newFixtureRepo(t)
 	prev := pluginreg.RemoteURL
@@ -109,7 +104,7 @@ func TestBootPluginRegistrySeedsFetchesAndSkipsEmbedded(t *testing.T) {
 	}
 }
 
-// TestSeedRegistryPreservesFetchedState is #1427 F6: re-seeding a name
+// TestSeedRegistryPreservesFetchedState: re-seeding a name
 // already on disk must never reset what a prior fetch recorded.
 func TestSeedRegistryPreservesFetchedState(t *testing.T) {
 	root := t.TempDir()
@@ -135,9 +130,8 @@ func TestSeedRegistryPreservesFetchedState(t *testing.T) {
 	}
 }
 
-// TestAcpRegistryPluginRefs is #1427 F4/R4: the embedded quack ref (no sha)
-// is ALWAYS present, even with an empty registry (it's always in scope), and
-// a row literally named "quack" dedupes/wins over the synthetic one.
+// TestAcpRegistryPluginRefs: the embedded quack ref (no sha) is always present, even with an empty
+// registry, and a row literally named "quack" wins over the synthetic one.
 func TestAcpRegistryPluginRefs(t *testing.T) {
 	root := t.TempDir()
 	reg := pluginreg.NewFSRegistry(root)
@@ -190,7 +184,7 @@ func TestAcpRegistryPluginRefs(t *testing.T) {
 	}
 }
 
-// TestRegistrySignature is #1427 F5's cache key: stable for the same rows,
+// TestRegistrySignature: the cache key is stable for the same rows,
 // different when a sha (fetch outcome) or the row set changes.
 func TestRegistrySignature(t *testing.T) {
 	a1 := []pluginreg.Plugin{{Name: "dotagents", SHA: "aaa"}}
@@ -204,12 +198,8 @@ func TestRegistrySignature(t *testing.T) {
 	}
 }
 
-// TestAcpRegistryClosuresUseTheDBBackedRegistry is the adversarial-review S1
-// regression: acpRegistrySkillPaths/acpRegistryPluginRefs used to always
-// build their own pluginreg.NewFSRegistry(cfg.Plugins.Root), so a
-// DB-backed plugins.store left ACP children with no skill_paths and no
-// plugin provenance - List() against the filesystem root always came back
-// empty. Both closures now take the SAME registry boot opened.
+// TestAcpRegistryClosuresUseTheDBBackedRegistry: both ACP registry closures read the registry boot opened,
+// so a DB-backed plugins.store still gives ACP children skill_paths and plugin provenance.
 func TestAcpRegistryClosuresUseTheDBBackedRegistry(t *testing.T) {
 	pluginRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(pluginRoot, "plugin.json"), []byte(`{"name":"extra"}`), 0o644); err != nil {
@@ -235,9 +225,8 @@ func TestAcpRegistryClosuresUseTheDBBackedRegistry(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// plugins.root here is deliberately a DIFFERENT, empty directory - if
-	// either closure fell back to a filesystem registry over cfg.Plugins.Root
-	// it would see zero rows, not the one Put above through the DB registry.
+	// plugins.root is a different, empty dir: a closure falling back to a filesystem registry
+	// would see zero rows instead of the one Put through the DB registry.
 	cfg := &config.Config{Plugins: &config.PluginsConfig{Root: t.TempDir()}}
 
 	refs := acpRegistryPluginRefs(cfg, reg)()

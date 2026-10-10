@@ -11,13 +11,11 @@ import (
 	"github.com/fagerbergj/quack/internal/recordstore"
 )
 
-// newEditPlanForTest seeds a fresh chat with one create_plan call, then
-// returns the edit_plan tool over the same store plus the plan_id to edit.
 func newEditPlanForTest(t *testing.T, roster []dag.AgentInfo, nodeIsRunning func(string) bool) (runnableTool, *recordstore.Client, string) {
 	t.Helper()
 	dag.NewPlanner(roster, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
-	createTl, err := NewCreatePlanTool(c, "orchestrator", nil, nodeIsRunning, nil, nil, dag.AgentNames())
+	createTl, err := NewCreatePlanTool(c, "orchestrator", nil, nodeIsRunning, nil, nil, dag.AgentNamesFor(context.Background()))
 	if err != nil {
 		t.Fatalf("NewCreatePlanTool: %v", err)
 	}
@@ -30,7 +28,7 @@ func newEditPlanForTest(t *testing.T, roster []dag.AgentInfo, nodeIsRunning func
 	}
 	planID, _ := res["plan_id"].(string)
 
-	editTl, err := NewEditPlanTool(c, "orchestrator", nil, nodeIsRunning, nil, nil, dag.AgentNames())
+	editTl, err := NewEditPlanTool(c, "orchestrator", nil, nodeIsRunning, nil, nil, dag.AgentNamesFor(context.Background()))
 	if err != nil {
 		t.Fatalf("NewEditPlanTool: %v", err)
 	}
@@ -41,7 +39,6 @@ func newEditPlanForTest(t *testing.T, roster []dag.AgentInfo, nodeIsRunning func
 	return ert, c, planID
 }
 
-// TestEditPlanUnknownPlanIDRejected covers a stale plan_id.
 func TestEditPlanUnknownPlanIDRejected(t *testing.T) {
 	rt, _, _ := newEditPlanForTest(t, []dag.AgentInfo{{Name: "web-researcher"}}, nil)
 	_, err := rt.Run(planToolCtx{newFakeCtx()}, map[string]any{"plan_id": "not-the-real-plan"})
@@ -50,8 +47,7 @@ func TestEditPlanUnknownPlanIDRejected(t *testing.T) {
 	}
 }
 
-// TestEditPlanRemoveUnknownNodeIDRejected is the BLOCKING regression test:
-// removing a node_id not on the plan must error, not silently no-op.
+// Removing a node_id not on the plan must error, not silently no-op.
 func TestEditPlanRemoveUnknownNodeIDRejected(t *testing.T) {
 	rt, _, planID := newEditPlanForTest(t, []dag.AgentInfo{{Name: "web-researcher"}}, nil)
 	_, err := rt.Run(planToolCtx{newFakeCtx()}, map[string]any{"plan_id": planID, "remove": []string{"ghost-1"}})
@@ -63,13 +59,11 @@ func TestEditPlanRemoveUnknownNodeIDRejected(t *testing.T) {
 	}
 }
 
-// TestEditPlanRemoveAlreadyRanAssignmentRejected pins #slice3: an
-// assignment that already ran (task_id set) is load-bearing history -
-// execute's seed map for any dependent added later - so removing it is a
-// one-line error, not a silent rewrite.
+// An assignment that already ran (task_id set) seeds execute's map for later dependents, so removing it
+// errors.
 func TestEditPlanRemoveAlreadyRanAssignmentRejected(t *testing.T) {
 	rt, c, planID := newEditPlanForTest(t, []dag.AgentInfo{{Name: "web-researcher"}}, nil)
-	rec, _, ok, err := loadDagPlan(newFakeCtx(), c)
+	rec, ok, err := loadDagPlan(newFakeCtx(), c)
 	if err != nil || !ok {
 		t.Fatalf("loadDagPlan: ok=%v err=%v", ok, err)
 	}
@@ -88,10 +82,9 @@ func TestEditPlanRemoveAlreadyRanAssignmentRejected(t *testing.T) {
 	}
 }
 
-// seedDonePlan marks the chat's current plan "done" (delivered) in place.
 func seedDonePlan(t *testing.T, c *recordstore.Client) dag.DagPlanRecord {
 	t.Helper()
-	rec, _, ok, err := loadDagPlan(newFakeCtx(), c)
+	rec, ok, err := loadDagPlan(newFakeCtx(), c)
 	if err != nil || !ok {
 		t.Fatalf("loadDagPlan: ok=%v err=%v", ok, err)
 	}
@@ -102,11 +95,8 @@ func seedDonePlan(t *testing.T, c *recordstore.Client) dag.DagPlanRecord {
 	return rec
 }
 
-// TestEditPlanOnDeliveredPlanStartsNewPlan is the rig regression (audit
-// finding 4): a done plan rejected edit_plan outright, and the quantized 9B
-// looped create_plan against the repeat guard instead of recovering. edit_plan
-// on a delivered plan must instead start a fresh plan from the given
-// assignments and say so plainly, plan_id included.
+// edit_plan on a delivered plan starts a fresh plan from the given assignments and says so, plan_id
+// included, rather than rejecting the call (a small model looped create_plan instead).
 func TestEditPlanOnDeliveredPlanStartsNewPlan(t *testing.T) {
 	rt, c, planID := newEditPlanForTest(t, []dag.AgentInfo{{Name: "web-researcher"}}, nil)
 	seedDonePlan(t, c)
@@ -127,7 +117,7 @@ func TestEditPlanOnDeliveredPlanStartsNewPlan(t *testing.T) {
 		t.Errorf("summary = %q, want it to say plainly that a new plan started, naming its plan_id", summary)
 	}
 
-	rec, _, ok, err := loadDagPlan(newFakeCtx(), c)
+	rec, ok, err := loadDagPlan(newFakeCtx(), c)
 	if err != nil || !ok {
 		t.Fatalf("loadDagPlan: ok=%v err=%v", ok, err)
 	}
@@ -139,10 +129,8 @@ func TestEditPlanOnDeliveredPlanStartsNewPlan(t *testing.T) {
 	}
 }
 
-// TestEditPlanOnDeliveredPlanReusesExistingNode covers a follow-up that
-// names a node_id from the delivered plan: dag_node records outlive a plan
-// (list_nodes lists every one in the chat), so the new plan must still
-// reuse it rather than mint a redundant node.
+// dag_node records outlive a plan, so a new plan naming a delivered node_id reuses that node rather than
+// minting a redundant one.
 func TestEditPlanOnDeliveredPlanReusesExistingNode(t *testing.T) {
 	rt, c, planID := newEditPlanForTest(t, []dag.AgentInfo{{Name: "web-researcher"}}, nil)
 	seedDonePlan(t, c)
@@ -167,9 +155,7 @@ func TestEditPlanOnDeliveredPlanReusesExistingNode(t *testing.T) {
 	}
 }
 
-// TestEditPlanOnDeliveredPlanWithNoAssignmentsRejected: a done plan can't
-// start a new one without assignments to carry - the generic "nothing to
-// change" message names the wrong remedy (no plan is being changed).
+// A done plan cannot start a new one without assignments; "nothing to change" would name the wrong remedy.
 func TestEditPlanOnDeliveredPlanWithNoAssignmentsRejected(t *testing.T) {
 	rt, c, planID := newEditPlanForTest(t, []dag.AgentInfo{{Name: "web-researcher"}}, nil)
 	seedDonePlan(t, c)
@@ -180,9 +166,7 @@ func TestEditPlanOnDeliveredPlanWithNoAssignmentsRejected(t *testing.T) {
 	}
 }
 
-// TestEditPlanOnDeliveredPlanRemoveWithoutAssignmentsRejected: remove alone
-// targets the delivered plan's own assignments, which no longer exist once
-// a new plan starts - reject it by name instead of silently ignoring it.
+// Remove alone targets the delivered plan's assignments, which a new plan drops, so it is rejected by name.
 func TestEditPlanOnDeliveredPlanRemoveWithoutAssignmentsRejected(t *testing.T) {
 	rt, c, planID := newEditPlanForTest(t, []dag.AgentInfo{{Name: "web-researcher"}}, nil)
 	seedDonePlan(t, c)
@@ -196,11 +180,8 @@ func TestEditPlanOnDeliveredPlanRemoveWithoutAssignmentsRejected(t *testing.T) {
 	}
 }
 
-// TestEditPlanOnDeliveredPlanWithAssignmentsIgnoresRemove: once assignments
-// are given, a done plan starts a new one from them regardless of a stray
-// `remove` - the delivered-plan wording must never mask a call that DID
-// give assignments (audit finding 4 rig follow-up: it was masking the real
-// missing-agent/node_id error the model needed to see).
+// Given assignments, a done plan starts a new one regardless of a stray `remove`, and the delivered-plan
+// wording must not mask a real error in those assignments.
 func TestEditPlanOnDeliveredPlanWithAssignmentsIgnoresRemove(t *testing.T) {
 	rt, c, planID := newEditPlanForTest(t, []dag.AgentInfo{{Name: "web-researcher"}}, nil)
 	seedDonePlan(t, c)
@@ -218,12 +199,8 @@ func TestEditPlanOnDeliveredPlanWithAssignmentsIgnoresRemove(t *testing.T) {
 	}
 }
 
-// TestEditPlanOnDeliveredPlanSurfacesMissingAgentError is the rig blocker
-// (audit finding 4 follow-up): a real edit_plan call on a delivered plan
-// whose assignment omits both agent and node_id must return newPlanRecord's
-// own error (naming the assignment index and the accepted agent names),
-// never the generic delivered-plan wording - the model can't recover from
-// advice that contradicts what it actually sent.
+// An assignment with neither agent nor node_id on a delivered plan returns newPlanRecord's own error
+// (index and accepted agent names), never the generic delivered-plan wording.
 func TestEditPlanOnDeliveredPlanSurfacesMissingAgentError(t *testing.T) {
 	rt, c, planID := newEditPlanForTest(t, []dag.AgentInfo{{Name: "web-researcher"}}, nil)
 	seedDonePlan(t, c)
@@ -243,10 +220,8 @@ func TestEditPlanOnDeliveredPlanSurfacesMissingAgentError(t *testing.T) {
 	}
 }
 
-// TestEditPlanOnDeliveredPlanSurfacesEachNewPlanRecordError checks every
-// other newPlanRecord failure mode reaches the model unmasked too: unknown
-// agent, unknown depends_on id, a dependency cycle, an empty task, and a
-// disallowed deliverable each keep their own message on the done-plan path.
+// Every other newPlanRecord failure keeps its own message on the done-plan path: unknown agent, unknown
+// depends_on id, cycle, empty task.
 func TestEditPlanOnDeliveredPlanSurfacesEachNewPlanRecordError(t *testing.T) {
 	roster := []dag.AgentInfo{{Name: "web-researcher"}, {Name: "code-reviewer"}}
 	cases := []struct {
@@ -300,15 +275,11 @@ func TestEditPlanOnDeliveredPlanSurfacesEachNewPlanRecordError(t *testing.T) {
 	}
 }
 
-// TestEditPlanOnDeliveredPlanSurfacesDisallowedDeliverableError covers the
-// last newPlanRecord failure mode: hiring an agent whose only deliverable
-// this dispatch doesn't allow must keep its own message on the done-plan
-// path too, not the delivered-plan wording.
+// Hiring an agent whose only deliverable this dispatch disallows keeps its own message on the done-plan path.
 func TestEditPlanOnDeliveredPlanSurfacesDisallowedDeliverableError(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}, {Name: "code-reviewer"}}, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
-	// Seed a delivered plan directly - create_plan would already reject
-	// hiring code-implementer under an allowedKinds=["review"] dispatch too.
+	// Seeded directly: create_plan would already reject this hire under allowedKinds=["review"].
 	rec := dag.DagPlanRecord{
 		PlanID:      "p1",
 		Status:      "done",
@@ -321,7 +292,7 @@ func TestEditPlanOnDeliveredPlanSurfacesDisallowedDeliverableError(t *testing.T)
 		t.Fatalf("seed dag_node: %v", err)
 	}
 
-	editTl, err := NewEditPlanTool(c, "orchestrator", nil, nil, []string{"review"}, nil, dag.AgentNames())
+	editTl, err := NewEditPlanTool(c, "orchestrator", nil, nil, []string{"review"}, nil, dag.AgentNamesFor(context.Background()))
 	if err != nil {
 		t.Fatalf("NewEditPlanTool: %v", err)
 	}
@@ -341,11 +312,8 @@ func TestEditPlanOnDeliveredPlanSurfacesDisallowedDeliverableError(t *testing.T)
 	}
 }
 
-// TestEditPlanRejectsNoOpCall pins the rig regression (#slice3 review): a
-// model that calls edit_plan with only plan_id and nothing to change (no
-// assignments, remove, setup, or delivery) got a happy no-op result and
-// looped it eight times against the same execute rejection. A no-op must
-// error and name what the tool actually accepts.
+// edit_plan with only plan_id and nothing to change must error and name what the tool accepts; a happy
+// no-op let a model loop it against the same execute rejection.
 func TestEditPlanRejectsNoOpCall(t *testing.T) {
 	rt, _, planID := newEditPlanForTest(t, []dag.AgentInfo{{Name: "web-researcher"}}, nil)
 	_, err := rt.Run(planToolCtx{newFakeCtx()}, map[string]any{"plan_id": planID})
@@ -357,8 +325,7 @@ func TestEditPlanRejectsNoOpCall(t *testing.T) {
 	}
 }
 
-// TestEditPlanUpsertReplacesExistingAssignment covers reassigning a node
-// list_nodes already showed instead of hiring a redundant one.
+// Reassigning a node list_nodes already showed replaces it instead of hiring a redundant one.
 func TestEditPlanUpsertReplacesExistingAssignment(t *testing.T) {
 	rt, c, planID := newEditPlanForTest(t, []dag.AgentInfo{{Name: "web-researcher"}}, nil)
 	res, err := rt.Run(planToolCtx{newFakeCtx()}, map[string]any{
@@ -377,7 +344,7 @@ func TestEditPlanUpsertReplacesExistingAssignment(t *testing.T) {
 		t.Errorf("assignments[0].task = %v, want the revised task", entry["task"])
 	}
 
-	rec, _, ok, err := loadDagPlan(newFakeCtx(), c)
+	rec, ok, err := loadDagPlan(newFakeCtx(), c)
 	if err != nil || !ok {
 		t.Fatalf("loadDagPlan: ok=%v err=%v", ok, err)
 	}
@@ -386,10 +353,8 @@ func TestEditPlanUpsertReplacesExistingAssignment(t *testing.T) {
 	}
 }
 
-// TestEditPlanDuplicateNodeIDInOneCallRejected is the BLOCKING regression
-// test: the same node_id appearing twice in one edit_plan call must error,
-// not silently collapse to the last write (mergeAssignments' map-keyed merge
-// would otherwise swallow it before validateDagPlanRecord ever sees it).
+// The same node_id twice in one call must error; mergeAssignments' map-keyed merge would otherwise
+// swallow it before validateDagPlanRecord sees it.
 func TestEditPlanDuplicateNodeIDInOneCallRejected(t *testing.T) {
 	rt, _, planID := newEditPlanForTest(t, []dag.AgentInfo{{Name: "web-researcher"}}, nil)
 	_, err := rt.Run(planToolCtx{newFakeCtx()}, map[string]any{
@@ -404,8 +369,7 @@ func TestEditPlanDuplicateNodeIDInOneCallRejected(t *testing.T) {
 	}
 }
 
-// TestEditPlanRejectionMintsNoOrphanNodes is the BLOCKING regression test
-// for edit_plan's own copy of the validate-before-mint ordering.
+// edit_plan validates before minting: a rejected call leaves no dag_node records.
 func TestEditPlanRejectionMintsNoOrphanNodes(t *testing.T) {
 	rt, c, planID := newEditPlanForTest(t, []dag.AgentInfo{{Name: "web-researcher"}}, nil)
 	_, err := rt.Run(planToolCtx{newFakeCtx()}, map[string]any{
@@ -424,16 +388,13 @@ func TestEditPlanRejectionMintsNoOrphanNodes(t *testing.T) {
 	}
 }
 
-// TestEditPlanTriggerBackedIgnoresSubmittedSetupWithNote mirrors
-// create_plan's own regression test (#slice3 review): edit_plan must accept
-// a setup override that disagrees with the trigger's own repo, ignore it
-// (the trigger's setup always overwrites rec.Setup regardless), and say so
-// in the summary - not reject the whole call over a field it can't change.
+// edit_plan accepts a setup that disagrees with the trigger's repo, ignores it (the trigger's setup always
+// wins), and says so in the summary.
 func TestEditPlanTriggerBackedIgnoresSubmittedSetupWithNote(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher"}}, nil, nil)
 	c := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat1")
 	githubSetup := &dag.Setup{Repo: "https://github.com/fagerbergj/quack.git", BaseRef: "main"}
-	createTl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, nil, dag.AgentNames())
+	createTl, err := NewCreatePlanTool(c, "orchestrator", githubSetup, nil, nil, nil, dag.AgentNamesFor(context.Background()))
 	if err != nil {
 		t.Fatalf("NewCreatePlanTool: %v", err)
 	}
@@ -446,7 +407,7 @@ func TestEditPlanTriggerBackedIgnoresSubmittedSetupWithNote(t *testing.T) {
 	}
 	planID, _ := res["plan_id"].(string)
 
-	editTl, err := NewEditPlanTool(c, "orchestrator", githubSetup, nil, nil, nil, dag.AgentNames())
+	editTl, err := NewEditPlanTool(c, "orchestrator", githubSetup, nil, nil, nil, dag.AgentNamesFor(context.Background()))
 	if err != nil {
 		t.Fatalf("NewEditPlanTool: %v", err)
 	}
@@ -462,7 +423,7 @@ func TestEditPlanTriggerBackedIgnoresSubmittedSetupWithNote(t *testing.T) {
 	if !strings.Contains(summary, "setup ignored") || !strings.Contains(summary, githubSetup.Repo) {
 		t.Errorf("summary = %q, want a setup-ignored note naming the trigger's own repo", summary)
 	}
-	rec, _, ok, err := loadDagPlan(context.Background(), c)
+	rec, ok, err := loadDagPlan(context.Background(), c)
 	if err != nil || !ok {
 		t.Fatalf("loadDagPlan: ok=%v err=%v", ok, err)
 	}

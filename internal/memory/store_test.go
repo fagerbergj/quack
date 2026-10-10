@@ -10,9 +10,7 @@ import (
 	"google.golang.org/adk/v2/model"
 )
 
-// fakeEmbedder returns a fixed unit vector for every text, so any query matches
-// any stored point (cosine = 1). Enough to exercise the round-trip + scope filter
-// without a real embedding model.
+// fakeEmbedder returns one fixed unit vector, so any query matches any point (cosine = 1).
 type fakeEmbedder struct{}
 
 func (fakeEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
@@ -23,9 +21,7 @@ func (fakeEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error
 	return out, nil
 }
 
-// newSQLiteStore builds a Store backed by an embedded sqlite file in a temp dir -
-// the always-on backend for unit tests (no container). The shared Store logic
-// (scope, recall, consolidation) is identical to the qdrant backend.
+// newSQLiteStore is the container-free backend for unit tests; Store logic is shared with qdrant.
 func newSQLiteStore(t *testing.T, domain string, consolidator model.LLM) *Store {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "mem.db")
@@ -36,9 +32,8 @@ func newSQLiteStore(t *testing.T, domain string, consolidator model.LLM) *Store 
 	return s
 }
 
-// upsertScoped writes one fixed-vector point under the given bucket, so the
-// fakeEmbedder makes any query match and only the bucket filter decides. Used to
-// plant LEGACY (pre-bucket, agent-name-scoped) points too - see scope_test.go.
+// upsertScoped plants a fixed-vector point so only the bucket filter decides a match; also plants
+// legacy agent-name-scoped points.
 func upsertScoped(t *testing.T, s *Store, id, scope, content string) {
 	t.Helper()
 	if err := s.idx.upsert(context.Background(), []point{{
@@ -78,9 +73,8 @@ func TestEmbedMemoizesSingleInputs(t *testing.T) {
 	}
 }
 
-// failEnsureIndex is a minimal index stub whose ensure always errors - the only method
-// newStore reaches before giving up (it returns on ensure's error, never calling
-// backfillTiers or anything else), so embedding a nil index for the rest of the interface is safe.
+// failEnsureIndex errors on ensure, the only method newStore reaches before returning, so the nil
+// embedded index is never called.
 type failEnsureIndex struct {
 	index
 	err error
@@ -90,9 +84,7 @@ func (f *failEnsureIndex) ensure(context.Context, func() (int, error)) error {
 	return f.err
 }
 
-// TestNewStore_EnsureErrorFailsLoudly is the "fail loudly at boot" half of the timestamp-index
-// startup check (qdrantIndex.ensureTimestampIndex): newStore (called from
-// Open/memory.New on every server boot) must surface an index-setup error to its caller, not swallow it and start up with a broken index.
+// newStore must surface an index-setup error at boot rather than start with a broken index.
 func TestNewStore_EnsureErrorFailsLoudly(t *testing.T) {
 	wantErr := errors.New("timestamp index: boom")
 	_, err := newStore(context.Background(), &failEnsureIndex{err: wantErr}, fakeEmbedder{}, nil, "test_fail_ensure", "task", 5, 0.5)

@@ -8,9 +8,7 @@ import (
 	"time"
 )
 
-// setRetryBackoff is a test helper that sets RetryBackoff and restores it via
-// t.Cleanup, so the package global is restored even on test failure/panic
-// (#1200 review: manual end-of-test resets skip that on a t.Fatal).
+// setRetryBackoff sets RetryBackoff and restores it via t.Cleanup, so a t.Fatal can't leak it.
 func setRetryBackoff(t *testing.T, d time.Duration) {
 	t.Helper()
 	orig := RetryBackoff
@@ -42,9 +40,7 @@ func TestWithDialRetry_RecoversAfterTransientFailures(t *testing.T) {
 	}
 }
 
-// TestWithDialRetry_GivesUpAfterMaxAttempts proves this only retries the dial
-// itself (bounded), never turns into an unbounded loop - a query-level error
-// never reaches this func at all, since it wraps net dial, not db/sql query execution.
+// TestWithDialRetry_GivesUpAfterMaxAttempts: only the dial retries, and boundedly.
 func TestWithDialRetry_GivesUpAfterMaxAttempts(t *testing.T) {
 	setRetryBackoff(t, time.Millisecond)
 	calls := 0
@@ -62,9 +58,8 @@ func TestWithDialRetry_GivesUpAfterMaxAttempts(t *testing.T) {
 	}
 }
 
-// TestWithDialRetry_ContextCanceledDuringBackoff: canceling ctx during a
-// retry backoff returns promptly with ctx.Err() - shutdown must not run out
-// the remaining attempts (#1200 review: this branch had no coverage).
+// TestWithDialRetry_ContextCanceledDuringBackoff: canceling during backoff returns ctx.Err() promptly
+// instead of running out the attempts.
 func TestWithDialRetry_ContextCanceledDuringBackoff(t *testing.T) {
 	setRetryBackoff(t, time.Hour) // would hang/timeout the test if cancellation didn't cut it short
 	ctx, cancel := context.WithCancel(context.Background())

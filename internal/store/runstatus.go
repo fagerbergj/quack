@@ -11,9 +11,8 @@ import (
 	"github.com/fagerbergj/quack/internal/inference"
 )
 
-// Chat.RunStatus values - a run's terminal outcome. Never "queued"/"running": those stay
-// live, in-memory-only signals (hub/orchestrator), not something a crashed process can get
-// stuck reporting (#738).
+// Chat.RunStatus values: a run's terminal outcome. Never "queued"/"running", which stay live in-memory
+// signals a crashed process can't get stuck reporting.
 const (
 	RunStatusIdle       = "idle"
 	RunStatusFailed     = "failed"
@@ -26,8 +25,8 @@ const (
 	RunStatusInterruptedLegacy = "interrupted"
 )
 
-// MarkRunActive records that chatID has turnID in flight, so a crash before
-// StampRunOutcome runs is detectable: ActiveTurnID left non-empty with no live hub/queue signal (#738). Logs its own failure: every caller discards the error, and a lost marker is invisible to ScanOrphanedRuns - the chat then keeps whatever status the run BEFORE it stamped, with nothing at boot to correct it (#920).
+// MarkRunActive records turnID in flight so a crash before StampRunOutcome is detectable. Logs its own
+// failure: callers discard the error, and a lost marker leaves nothing at boot to correct the status.
 func (s *Store) MarkRunActive(ctx context.Context, chatID, turnID string) error {
 	err := s.db.WithContext(ctx).Model(&Chat{}).Where("id = ?", chatID).Update("active_turn_id", turnID).Error
 	if err != nil {
@@ -37,9 +36,8 @@ func (s *Store) MarkRunActive(ctx context.Context, chatID, turnID string) error 
 	return err
 }
 
-// StampRunOutcome records a run's terminal status on the chat row and clears the in-flight
-// marker, replacing Touch (also bumps updated_at) - the read path uses this instead of
-// recomputing status per chat (#738).
+// StampRunOutcome records a run's terminal status on the chat row, clears the in-flight marker and bumps
+// updated_at.
 func (s *Store) StampRunOutcome(ctx context.Context, chatID, status, pendingQuestion string) error {
 	return s.db.WithContext(ctx).Model(&Chat{}).Where("id = ?", chatID).Updates(map[string]any{
 		"run_status":       status,
@@ -49,9 +47,8 @@ func (s *Store) StampRunOutcome(ctx context.Context, chatID, status, pendingQues
 	}).Error
 }
 
-// DeriveTerminalStatus computes a chat's terminal status from its turns and whether a
-// question is still pending. Shared by the REST and GitHub run drivers so both stamp the
-// same rule the read path relies on (#738). nodeError is the failed node's own DagNode.Error (#1105) - "" for every other status, including a genuine silent gap (empty answer, no failed node) so that path stays exactly as it was. chatID also covers the orchestrator's own pre-DAG planning give-up (#1156): a gateway outage during planning never produces a DagNode to read an error off of, so it falls back to the same failure tracker DagNode failures use, keyed with an empty node/agent (see orchestratorGiveUpError).
+// DeriveTerminalStatus computes a chat's terminal status from its turns and pending question. nodeError is
+// the failed node's DagNode.Error; chatID keys the failure trackers for give-ups that leave no DagNode.
 func DeriveTerminalStatus(chatID string, turns []TurnContent, pendingQuestion string, hasPendingQuestion bool) (status, question, nodeError string) {
 	if hasPendingQuestion {
 		return RunStatusNeedsInput, pendingQuestion, ""
@@ -62,15 +59,11 @@ func DeriveTerminalStatus(chatID string, turns []TurnContent, pendingQuestion st
 			if errText, failed := failedDagNodeError(last.Nodes); failed {
 				return RunStatusFailed, "", errText
 			}
-			// Store failure checked before the gateway/plan-rejection fallbacks
-			// (#1193): a DB dial error surviving the pgdial retry (internal/store's
-			// openPostgres) is stronger, more specific evidence than a generic gateway or rejection reason for the same silent-answer turn.
+			// A DB failure that survived pgdial's retries is more specific evidence than a gateway or rejection reason.
 			if reason, failed := inference.LastStoreFailure(chatID); failed {
 				return RunStatusFailed, "", fmt.Sprintf("database unavailable: %s", reason)
 			}
-			// Gateway failure checked first (#1181 review): a real gateway
-			// outage during THIS turn is stronger evidence than an earlier
-			// rejection on the same turn, if both happened to occur.
+			// A gateway outage during this turn is stronger evidence than an earlier rejection on the same turn.
 			if errText, failed := orchestratorGiveUpError(chatID); failed {
 				return RunStatusFailed, "", errText
 			}
@@ -101,9 +94,8 @@ func (s *Store) ChatsWithRunningNode(ctx context.Context, chatIDs []string) (map
 	return out, err
 }
 
-// orchestratorGiveUpError reports the classified model-gateway error when the
-// orchestrator's own planning loop (orchestrator.go's Run, before any DAG plan exists) exhausted its retries because every call to the model failed (#1156). The orchestrator's own model calls stamp an empty node/agent in ledger.Coords, so that's the key inference's failure tracker holds it under - same tracker #1109's dag.emptyNodeError reads for a DAG node, reused here via its exported classification helper (inference.SanitizeGatewayError) rather than a second copy of the format.
-// Deliberately does NOT clear the tracker (unlike dag.emptyNodeError, which consumes it once into a persisted DagNode.Error column): this is called on every read of a chat's terminal status - including well after the run ended, e.g. GetChat - and clearing here would make the SECOND read fall back to idle while the first-stamped Chat.RunStatus still says failed; the next real model call for this chat (success or otherwise) naturally supersedes the record via RecordCallResult's own nil-err clear.
+// orchestratorGiveUpError reports the gateway error when the orchestrator's planning loop failed every call,
+// keyed by an empty node/agent. Doesn't clear the tracker: it runs on every read, and the next call supersedes it.
 func orchestratorGiveUpError(chatID string) (string, bool) {
 	err, streak, dur, ok := inference.LastFailure(chatID, "", "")
 	if !ok || streak == 0 {
@@ -113,9 +105,8 @@ func orchestratorGiveUpError(chatID string) (string, bool) {
 	return fmt.Sprintf("%s on %d consecutive attempts over %s", class, streak, dur.Round(time.Second)), true
 }
 
-// StampTerminalOutcome loads the newest turn, derives the terminal status via
-// DeriveTerminalStatus, and persists it - the shared tail every dispatch
-// path (REST, SDK extensions, GitHub webhook) runs once a run's events stop draining. pendingQuestion is the caller's own PendingQuestion lookup, kept as a func value so callers don't need to share a concrete runner type. Uses GetLastTurnWithContent, not GetTurnsWithContent: DeriveTerminalStatus only ever reads turns[len(turns)-1], so loading the whole chat here paid to decode the entire ADK session on every run end for nothing (perf audit #3).
+// StampTerminalOutcome derives the newest turn's terminal status and persists it: every dispatch path's tail
+// once events stop draining. Loads only the last turn, all DeriveTerminalStatus reads.
 func (s *Store) StampTerminalOutcome(ctx context.Context, appName, userID, chatID string, pendingQuestion func() (string, bool)) (status, question, nodeError string) {
 	last, err := s.GetLastTurnWithContent(ctx, appName, userID, chatID)
 	if err != nil {
@@ -174,7 +165,7 @@ func (s *Store) settleInterrupted(ctx context.Context, chatID string) {
 }
 
 // stampRunStatusKeepingQuestion is StampRunOutcome minus the pending_question
-// write - see ScanOrphanedRuns (#957).
+// write - see ScanOrphanedRuns.
 func (s *Store) stampRunStatusKeepingQuestion(ctx context.Context, chatID, status string) error {
 	return s.db.WithContext(ctx).Model(&Chat{}).Where("id = ?", chatID).Updates(map[string]any{
 		"run_status":     status,
@@ -199,9 +190,8 @@ func (s *Store) chatsWithPausedNodes(ctx context.Context) (map[string]bool, erro
 	return out, nil
 }
 
-// failedDagNodeError reports the first failed node's own error text, so a
-// gateway failure the node recorded (#1105) survives past DeriveTerminalStatus
-// instead of collapsing into a bare "failed" with nothing to say why. A node whose Error is exactly dag.SilentGapError (#568's true silent gap) reports "" - that sentinel is for the DagNode row, not for downstream public text (PR #1109 review finding 2).
+// failedDagNodeError reports the first failed node's error so a recorded gateway failure explains "failed".
+// dag.SilentGapError reports "": that sentinel is for the row, not public text.
 func failedDagNodeError(nodes []DagNode) (errText string, failed bool) {
 	for _, n := range nodes {
 		if n.Status == "failed" {

@@ -106,9 +106,8 @@ func TestServerList_ShowsVersion(t *testing.T) {
 	}
 }
 
-// TestServerList_SkipsVersionOverTenServers: past 10 registered servers the
-// per-server version lookup (a live request each) is skipped, not attempted -
-// the list stays readable and the command doesn't stall on a slow registry.
+// TestServerList_SkipsVersionOverTenServers: past 10 servers the per-server version lookup is skipped,
+// so the list doesn't stall on a large registry.
 func TestServerList_SkipsVersionOverTenServers(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	rc, err := cli.LoadClient()
@@ -135,9 +134,8 @@ func TestServerList_SkipsVersionOverTenServers(t *testing.T) {
 	}
 }
 
-// TestServerList_VersionLookupsRunConcurrently: each server's version fetch
-// has its own 2s timeout - sequentially, two unresponsive servers would take
-// ~4s, but they must run in parallel, so wall time stays near one timeout.
+// TestServerList_VersionLookupsRunConcurrently: two unresponsive servers (2s timeout each)
+// must cost about one timeout, not two.
 func TestServerList_VersionLookupsRunConcurrently(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	block := make(chan struct{})

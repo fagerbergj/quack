@@ -74,9 +74,7 @@ func TestTraceIDOf(t *testing.T) {
 	}
 }
 
-// TestNewResource_CarriesVersionAndEnvironment: a trace backend answers "which
-// build produced this run" and "is this the deployed server or a laptop" from
-// the resource alone, so the exported span has to carry both.
+// A trace backend answers "which build" and "deployed or laptop" from the resource alone.
 func TestNewResource_CarriesVersionAndEnvironment(t *testing.T) {
 	res, err := newResource(config.OtelConfig{Environment: "staging"}, "v0.36.0")
 	if err != nil {
@@ -159,9 +157,7 @@ func spanAttrs(t *testing.T, exp *tracetest.InMemoryExporter, name string) map[s
 	return nil
 }
 
-// TestStart_EmitsConversationIDNotChatID: Langfuse (and OTel-native tooling
-// generally) derives a trace's session from gen_ai.conversation.id and never
-// from a vendor key; chat_id is consumed to compute it, not re-exported.
+// Langfuse derives a trace's session from gen_ai.conversation.id, never a vendor key; chat_id is consumed.
 func TestStart_EmitsConversationIDNotChatID(t *testing.T) {
 	exp := withTestTracer(t)
 

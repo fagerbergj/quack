@@ -37,9 +37,8 @@ func newShutdownTestStore(t *testing.T) *store.Store {
 	return st
 }
 
-// TestDriveExtensionRunEvents_InterruptedSkipsRunEnded proves a run whose
-// context dies via Hub.MarkInterrupted+CancelRun never reaches RunEnded and
-// gets stamped RunStatusPaused (#962: the drain paused its nodes; boot resumes).
+// TestDriveExtensionRunEvents_InterruptedSkipsRunEnded: a run killed via Hub.MarkInterrupted+CancelRun
+// never reaches RunEnded and is stamped RunStatusPaused (the drain paused its nodes; boot resumes them).
 func TestDriveExtensionRunEvents_InterruptedSkipsRunEnded(t *testing.T) {
 	st := newShutdownTestStore(t)
 	hub := stream.NewHub()
@@ -95,9 +94,8 @@ func TestDriveExtensionRunEvents_InterruptedSkipsRunEnded(t *testing.T) {
 	}
 }
 
-// TestDrainActiveRuns_FinishesWithinGrace proves the common case: a run that
-// completes on its own before the grace window elapses is left alone -
-// never marked interrupted, never force-cancelled.
+// TestDrainActiveRuns_FinishesWithinGrace: a run completing before the grace window ends is never
+// marked interrupted or force-cancelled.
 func TestDrainActiveRuns_FinishesWithinGrace(t *testing.T) {
 	hub := stream.NewHub()
 	chatID := "chat-finishes"
@@ -123,9 +121,8 @@ func TestDrainActiveRuns_FinishesWithinGrace(t *testing.T) {
 	}
 }
 
-// TestDrainActiveRuns_ForceCancelsPastGrace proves the escalation path: a
-// run still registered once grace elapses is marked interrupted and its
-// cancel func is invoked.
+// TestDrainActiveRuns_ForceCancelsPastGrace: a run still registered once grace elapses is marked
+// interrupted and its cancel func invoked.
 func TestDrainActiveRuns_ForceCancelsPastGrace(t *testing.T) {
 	hub := stream.NewHub()
 	chatID := "chat-stuck"
@@ -147,16 +144,15 @@ func TestDrainActiveRuns_ForceCancelsPastGrace(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("run was not force-cancelled and cleaned up within the settle window")
 	}
-	// A force-cancel sets the per-chat cut marker so the run's own tail skips
-	// RunEnded and stamps the chat paused (#962); runs that finish on their
-	// own during the drain never get it (see TestDrainActiveRuns_FinishesWithinGrace).
+	// A force-cancel sets the per-chat cut marker so the run's tail skips RunEnded and stamps the chat
+	// paused; runs finishing on their own never get it.
 	if !hub.WasInterrupted(chatID) {
 		t.Error("force-cancel did not set the per-chat cut marker")
 	}
 }
 
-// TestDrainActiveRuns_CatchesRunRegisteredAfterSnapshot pins finding 14:
-// DrainActiveRuns snapshots hub.ActiveChatIDs() once, right after BeginDraining. A run for a chat NOT in that snapshot - registered a moment later, the exact race a dispatch entrypoint that checked Draining() just before it flipped can hit - must still be waited for and eventually force-cancelled, not silently invisible to drain for the rest of the process's life. chat-known starts registered so the wait loop has something to poll on, then unregisters on its own (an unrelated run finishing) - it must not let the loop exit before it notices chat-late.
+// TestDrainActiveRuns_CatchesRunRegisteredAfterSnapshot: a run registered after the drain's one-time
+// ActiveChatIDs snapshot is still waited for and force-cancelled, and chat-known ending early can't end the loop.
 func TestDrainActiveRuns_CatchesRunRegisteredAfterSnapshot(t *testing.T) {
 	hub := stream.NewHub()
 	hub.RegisterRun("chat-known", "turn-known", func() {})

@@ -14,6 +14,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/schema"
+	"github.com/fagerbergj/quack/internal/store/storetest"
 )
 
 func TestListChatArtifacts_Empty(t *testing.T) {
@@ -46,9 +47,8 @@ func TestListChatArtifacts_UnknownChat_404(t *testing.T) {
 	}
 }
 
-// saveTestArtifact saves one revision directly through the handler's
-// artifact service, stamping turnID exactly like SendChatMessage's
-// saveAttachment would - the test-side equivalent of an upload.
+// saveTestArtifact saves one revision through the handler's artifact service, stamping turnID
+// as an upload would.
 func saveTestArtifact(t *testing.T, h *Handler, userID, chatID, turnID, name, mimeType string, data []byte) {
 	t.Helper()
 	if _, err := h.artifacts.SaveForTurn(context.Background(), &artifact.SaveRequest{
@@ -190,12 +190,10 @@ func TestListArtifactRevisions_NewestFirstWithLineage(t *testing.T) {
 	}
 }
 
-// TestListArtifactRevisions_UsesNameScopedQuery is the adversarial-review
-// follow-up (#1094, then #1113): the endpoint must issue RevisionsForName's
-// WHERE name = ? query, not the ListForSession fallback's full-chat scan - asserted on the raw SQL gorm renders, not QueryCount, since both paths issue exactly one SELECT (a bare count can't tell them apart; it only guards against N+1, not against an unscoped single scan).
+// TestListArtifactRevisions_UsesNameScopedQuery asserts the rendered SQL uses RevisionsForName's WHERE name = ?,
+// not a full-chat scan: both issue one SELECT, so a query count can't tell them apart.
 func TestListArtifactRevisions_UsesNameScopedQuery(t *testing.T) {
 	h := newTestHandler(t)
-	h.store.EnableQueryRecording() // off by default in production; this test is the one real consumer
 	chatID := mustCreateChat(t, h)
 	userID := h.sessionUser(context.Background(), chatID)
 
@@ -205,7 +203,7 @@ func TestListArtifactRevisions_UsesNameScopedQuery(t *testing.T) {
 	saveTestArtifact(t, h, userID, chatID, "turn-1", "finding:target", "application/json", []byte(`{"v":1}`))
 	saveTestArtifact(t, h, userID, chatID, "turn-2", "finding:target", "application/json", []byte(`{"v":2}`))
 
-	before := len(h.store.RecordedQuerySQL())
+	queries := storetest.RecordQueries(t, h.store.DB())
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/chats/"+chatID+"/artifacts/finding:target/revisions", nil)
 	rec := httptest.NewRecorder()
 	h.ListArtifactRevisions(rec, req, chatID, "finding:target")
@@ -214,7 +212,7 @@ func TestListArtifactRevisions_UsesNameScopedQuery(t *testing.T) {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	seenScoped, seenUnscopedArtifactScan := false, false
-	for _, sql := range h.store.RecordedQuerySQL()[before:] {
+	for _, sql := range queries() {
 		if !strings.Contains(sql, "`artifacts`") { // sqlite renders identifiers backtick-quoted, not double-quoted
 			continue // requireChat/sessionUser's own lookups - not the query under test
 		}
@@ -231,10 +229,10 @@ func TestListArtifactRevisions_UsesNameScopedQuery(t *testing.T) {
 		}
 	}
 	if !seenScoped {
-		t.Errorf("no name-scoped (WHERE name = ...) artifact query issued; recorded SQL: %v", h.store.RecordedQuerySQL()[before:])
+		t.Errorf("no name-scoped (WHERE name = ...) artifact query issued; recorded SQL: %v", queries())
 	}
 	if seenUnscopedArtifactScan {
-		t.Errorf("revisions endpoint issued an unscoped full-chat artifact scan; recorded SQL: %v", h.store.RecordedQuerySQL()[before:])
+		t.Errorf("revisions endpoint issued an unscoped full-chat artifact scan; recorded SQL: %v", queries())
 	}
 }
 
@@ -319,9 +317,8 @@ func TestDiffArtifactRevisions_UnknownRevision_404(t *testing.T) {
 	}
 }
 
-// TestGetChatArtifact_InlineAllowlist is the security-critical case: only
-// the allowlisted image mime types render inline, and SVG - despite being
-// "an image" colloquially - must NOT, since it can carry a <script>.
+// TestGetChatArtifact_InlineAllowlist (security): only allowlisted image types render inline;
+// SVG must not, since it can carry a <script>.
 func TestGetChatArtifact_InlineAllowlist(t *testing.T) {
 	cases := []struct {
 		name string

@@ -5,9 +5,8 @@ import (
 	"fmt"
 )
 
-// ChatRepoResolver resolves a chat's GitHub origin (owner/repo) to the same identity format
-// RepoIdentity/NormalizeRepoURL produce (e.g. "github.com/acme/games"). ok=false
-// when the chat has no GitHub origin. internal/memory can't import internal/store (dependency direction), so the server bootstrap wires a concrete resolver over the chat store.
+// ChatRepoResolver resolves a chat's GitHub origin to RepoIdentity's format (e.g. "github.com/acme/games"),
+// ok=false if it has none. internal/serve wires it, since this package can't import internal/store.
 type ChatRepoResolver func(ctx context.Context, chatID string) (repoKey string, ok bool)
 
 // RescopeRepoStat is one target repo's rescope tally.
@@ -16,8 +15,7 @@ type RescopeRepoStat struct {
 	Examples []string // a few memory content previews, for --dry-run sanity checking
 }
 
-// RescopeResult is Rescope's full report: per-repo tallies plus points that
-// couldn't be resolved at all (no provenance chat_id - #875 predates it).
+// RescopeResult is Rescope's report: per-repo tallies plus points with no provenance chat_id.
 type RescopeResult struct {
 	ByRepo              map[string]*RescopeRepoStat
 	SkippedNoProvenance int
@@ -29,9 +27,8 @@ type rescopeMove struct {
 	id, srcBucket, dstBucket string
 }
 
-// Rescope moves every live role:* memory whose provenance chat resolves to a GitHub repo into
-// that repo's bucket (#1262: worktree-per-node made RepoKey return "" for years of memories,
-// all landing in role:coding/research instead of repo:<x>). apply=false only tallies; apply=true also writes the bucket change and a memory_ops audit row per point. The scan is tally-only; every write happens in a second pass over the collected moves. role:* shrinks as points are moved out of it, so writing WHILE paginating that same bucket would skip the page tail that shifted under the offset - the apply tally must equal the dry-run tally by construction, not by luck of page size vs. eligible count.
+// Rescope moves live role:* memories whose provenance chat resolves to a repo into that repo's bucket.
+// Writes happen after the scan: moving while paging role:* would skip rows, breaking dry-run == apply.
 func (s *Store) Rescope(ctx context.Context, resolve ChatRepoResolver, apply bool) (RescopeResult, error) {
 	result := RescopeResult{ByRepo: map[string]*RescopeRepoStat{}}
 	var moves []rescopeMove
@@ -65,9 +62,8 @@ func (s *Store) Rescope(ctx context.Context, resolve ChatRepoResolver, apply boo
 	return result, nil
 }
 
-// rescopeOne is Rescope's per-memory step: tally the resolved repo into the
-// report and record the move when apply is set. nil = not a move: no
-// provenance chat_id (counted as skipped) or the chat has no GitHub origin.
+// rescopeOne tallies one memory's repo and returns its move when apply is set; nil when it has no
+// provenance chat_id (counted as skipped) or no GitHub origin.
 func rescopeOne(ctx context.Context, m Memory, resolve ChatRepoResolver, apply bool, result *RescopeResult, srcBucket string) *rescopeMove {
 	if m.ChatID == "" {
 		result.SkippedNoProvenance++

@@ -14,19 +14,14 @@ import (
 )
 
 const (
-	// defaultExaMCP is Exa's hosted, keyless MCP endpoint (the no-key fallback).
+	// defaultExaMCP: Exa's keyless hosted MCP endpoint.
 	defaultExaMCP = "https://mcp.exa.ai/mcp"
-	// exaRESTSearch is Exa's REST search endpoint (used when an API key is set).
 	exaRESTSearch = "https://api.exa.ai/search"
-	// exaNumResults caps how many hits we request per query.
 	exaNumResults = 6
-	// exaSnippetMax caps a result's snippet length.
 	exaSnippetMax = 500
 )
 
-// exaSearcher is the WebSearcher adapter for Exa: with an API key it uses the
-// REST API (structured JSON); without one, Exa's keyless hosted MCP, whose text
-// output it parses. Either path satisfies the same port - the agent only ever sees web_search.
+// exaSearcher uses the REST API with a key, else the keyless hosted MCP, whose text output it parses.
 type exaSearcher struct {
 	apiKey       string
 	client       *http.Client
@@ -84,8 +79,7 @@ type exaRESTResponse struct {
 	} `json:"results"`
 }
 
-// parseExaREST decodes Exa's search JSON into SearchResults. The snippet is the
-// joined highlights, or the text body when no highlights came back.
+// parseExaREST: the snippet is the joined highlights, or the text body when there are none.
 func parseExaREST(r io.Reader) ([]SearchResult, string, error) {
 	var body exaRESTResponse
 	if err := json.NewDecoder(r).Decode(&body); err != nil {
@@ -128,7 +122,6 @@ func (e *exaSearcher) searchMCP(ctx context.Context, query string) ([]SearchResu
 	return parseExaResults(exaText(res.Content)), "", nil
 }
 
-// exaText concatenates the text parts of an MCP tool result.
 func exaText(content []mcp.Content) string {
 	var b strings.Builder
 	for _, ct := range content {
@@ -139,13 +132,11 @@ func exaText(content []mcp.Content) string {
 	return b.String()
 }
 
-// exaRecordSep splits web_search_exa's text output into per-result blocks: records
-// are separated by a line containing only "---".
+// exaRecordSep: web_search_exa separates records with a line of only "---".
 var exaRecordSep = regexp.MustCompile(`(?m)^\s*---\s*$`)
 
-// parseExaResults turns web_search_exa's text output into structured hits:
-// "Key: value" lines (Title, URL, Published, …) followed by a "Highlights:" body kept
-// as the snippet (ponytail: parses Exa's LLM-formatted text; the keyed path uses parseExaREST).
+// parseExaResults: "Key: value" lines then a "Highlights:" body kept as the snippet
+// (ponytail: parses Exa's LLM-formatted text; the keyed path uses parseExaREST).
 func parseExaResults(text string) []SearchResult {
 	var out []SearchResult
 	for _, block := range exaRecordSep.Split(text, -1) {
@@ -182,11 +173,7 @@ func parseExaResults(text string) []SearchResult {
 	return out
 }
 
-// exaSnippet trims and caps a snippet string.
 func exaSnippet(s string) string {
 	s = strings.TrimSpace(s)
-	if len(s) > exaSnippetMax {
-		s = strings.ToValidUTF8(s[:exaSnippetMax], "") + "…"
-	}
-	return s
+	return clip(s, exaSnippetMax, "…")
 }

@@ -25,9 +25,7 @@ import (
 	"github.com/fagerbergj/quack/internal/runlog"
 )
 
-// fixedEmbedder returns the same unit vector for every text - enough to
-// round-trip a memory through Commit without a real embedding model, same
-// stand-in as rest.fixedEmbedder.
+// fixedEmbedder returns one unit vector for every text: enough to round-trip a memory through Commit.
 type fixedEmbedder struct{}
 
 func (fixedEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
@@ -38,9 +36,7 @@ func (fixedEmbedder) Embed(_ context.Context, texts []string) ([][]float32, erro
 	return out, nil
 }
 
-// echoConsolidator ADDs each staged candidate verbatim - a stand-in for the
-// real consolidation model so a test can seed a recognizable memory (mirrors
-// rest.echoConsolidator).
+// echoConsolidator ADDs each staged candidate verbatim, so a test can seed a recognizable memory.
 type echoConsolidator struct{}
 
 func (echoConsolidator) Name() string { return "echo-consolidator" }
@@ -68,9 +64,8 @@ func (echoConsolidator) GenerateContent(_ context.Context, req *model.LLMRequest
 	}
 }
 
-// newMemStoreForTest opens a real SQLite-backed memory.Store at a fresh temp
-// file - domain selects the consolidation prompt ("task" | "user"), mirroring
-// openMemory's own domain argument in serve.go. Returns the backing file path too, so a test can reach in at the raw-SQL level (dropMemoriesTable) to force a genuine backend error.
+// newMemStoreForTest opens a SQLite memory.Store for domain ("task" | "user"); the returned path lets
+// dropMemoriesTable force a real backend error.
 func newMemStoreForTest(t *testing.T, domain string) (*memory.Store, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "mem.db")
@@ -81,9 +76,8 @@ func newMemStoreForTest(t *testing.T, domain string) (*memory.Store, string) {
 	return s, path
 }
 
-// dropMemoriesTable opens a second raw connection to s's backing file and
-// drops its table, so the next call through s hits a real backend error
-// ("no such table") instead of a fake/mocked one - proves applyMemoryOutcome's error handling against an actual failure mode.
+// dropMemoriesTable drops s's table over a second raw connection, so the next call hits a real
+// "no such table" error rather than a mock.
 func dropMemoriesTable(t *testing.T, path string) {
 	t.Helper()
 	raw, err := sql.Open("sqlite", path)
@@ -96,9 +90,7 @@ func dropMemoriesTable(t *testing.T, path string) {
 	}
 }
 
-// fakeOpsLog records every memory_ops write for assertion, mirroring
-// internal/memory's own lifecycle_test.go fixture (unexported there, so
-// re-declared locally).
+// fakeOpsLog records memory_ops writes (internal/memory's equivalent fixture is unexported).
 type fakeOpsLog struct {
 	mu   sync.Mutex
 	rows []fakeOpRow
@@ -128,9 +120,8 @@ func (f *fakeOpsLog) snapshot() []fakeOpRow {
 	return append([]fakeOpRow(nil), f.rows...)
 }
 
-// seedMemory mints one memory under chatID via the real Commit path (not a
-// direct index poke), so it carries the same provenance/status a live run
-// would leave behind, then records it as RECALLED into chatID via a memory.recall ledger entry (epic #1255 P1: applyMemoryOutcome now targets the recalled set, not the minted one) - mirroring what a real gate's recall injection + recallLedgerEntry would have written. Returns the minted memory's id.
+// seedMemory mints a memory via the real Commit path and records it RECALLED into chatID with a
+// memory.recall ledger entry (applyMemoryOutcome targets the recalled set). Returns its id.
 func seedMemory(t *testing.T, s *memory.Store, ledgerStore ledger.LedgerStore, sc memory.Scope, bucket, chatID, content string) string {
 	t.Helper()
 	n, err := s.Commit(context.Background(), sc, "test", memory.Provenance{ChatID: chatID},
@@ -176,9 +167,8 @@ func listAll(t *testing.T, s *memory.Store, buckets []string) []memory.Memory {
 	return mems
 }
 
-// TestUpdateChatOriginOpenToClosedInvalidatesBothStores covers design doc §7
-// case 1 at the wiring level: a State transition to closed invalidates the
-// chat's minted memories in BOTH configured stores, one memory_ops row each (actor=outcome-feedback), and the origin update itself succeeds.
+// TestUpdateChatOriginOpenToClosedInvalidatesBothStores: a transition to closed invalidates the chat's
+// memories in both stores, one memory_ops row each (actor=outcome-feedback).
 func TestUpdateChatOriginOpenToClosedInvalidatesBothStores(t *testing.T) {
 	st, orch, hub, artifacts, jail := newExtTestStack(t)
 	_ = jail
@@ -234,9 +224,8 @@ func TestUpdateChatOriginOpenToClosedInvalidatesBothStores(t *testing.T) {
 	}
 }
 
-// TestUpdateChatOriginOpenToMergedReinforces covers design doc §7 case 2 at
-// the wiring level: a State transition to merged reinforces (unverified →
-// reinforced, count 0→1), and a second update at the same State is a no-op (steady state, not a transition).
+// TestUpdateChatOriginOpenToMergedReinforces: a transition to merged reinforces (count 0->1); a second
+// update at the same State is a no-op.
 func TestUpdateChatOriginOpenToMergedReinforces(t *testing.T) {
 	st, orch, hub, artifacts, jail := newExtTestStack(t)
 	_ = jail
@@ -288,9 +277,8 @@ func TestUpdateChatOriginOpenToMergedReinforces(t *testing.T) {
 	}
 }
 
-// TestUpdateChatOriginRepeatedClosedAppliesNothing covers design doc §7's
-// "repeat webhook" case directly at the State-comparison level: a chat
-// dispatched already closed, then updated to closed again, is steady state (prev == next) - never a transition, so no outcome fires and no memory_ops row is written.
+// TestUpdateChatOriginRepeatedClosedAppliesNothing: closed -> closed (a repeat webhook) is steady state,
+// so no outcome fires and no memory_ops row is written.
 func TestUpdateChatOriginRepeatedClosedAppliesNothing(t *testing.T) {
 	st, orch, hub, artifacts, jail := newExtTestStack(t)
 	_ = jail
@@ -330,9 +318,8 @@ func TestUpdateChatOriginRepeatedClosedAppliesNothing(t *testing.T) {
 	}
 }
 
-// TestUpdateChatOriginStatelessOriginAppliesNothing covers design doc §7's
-// older-extension case: an origin update from an extension pinned below
-// sdk v0.5.0 carries State="" - unknown, never treated as a transition into (or out of) anything, and never an error.
+// TestUpdateChatOriginStatelessOriginAppliesNothing: State="" (an extension below sdk v0.5.0) is unknown,
+// never a transition and never an error.
 func TestUpdateChatOriginStatelessOriginAppliesNothing(t *testing.T) {
 	st, orch, hub, artifacts, jail := newExtTestStack(t)
 	_ = jail
@@ -372,9 +359,8 @@ func TestUpdateChatOriginStatelessOriginAppliesNothing(t *testing.T) {
 	}
 }
 
-// TestUpdateChatOriginFollowsStateNotBadge is design doc §5's typed-field
-// rule pinned as a test: core must never branch on Badge (display-only). A
-// mismatched pair - Badge still reading "open" while State says closed - must invalidate, following State alone.
+// TestUpdateChatOriginFollowsStateNotBadge: core never branches on Badge (display-only); Badge "open"
+// with State closed must invalidate.
 func TestUpdateChatOriginFollowsStateNotBadge(t *testing.T) {
 	st, orch, hub, artifacts, jail := newExtTestStack(t)
 	_ = jail
@@ -411,9 +397,8 @@ func TestUpdateChatOriginFollowsStateNotBadge(t *testing.T) {
 	}
 }
 
-// TestUpdateChatOriginSucceedsDespiteMemoryStoreFailure covers the design
-// doc's off-the-hot-path rule: applyMemoryOutcome logs and moves on when a
-// configured store's ApplyOutcome fails - the origin update it rides on must still succeed. taskMem hits a genuine backend error (its table is dropped out from under it, not a mock returning a canned error); userMem is entirely absent (nil) - both are the "fake/absent" cases the design calls out, exercised together.
+// TestUpdateChatOriginSucceedsDespiteMemoryStoreFailure: applyMemoryOutcome logs and moves on, so the
+// origin update succeeds with taskMem's table dropped and userMem nil.
 func TestUpdateChatOriginSucceedsDespiteMemoryStoreFailure(t *testing.T) {
 	st, orch, hub, artifacts, jail := newExtTestStack(t)
 	_ = jail
@@ -451,9 +436,8 @@ func TestUpdateChatOriginSucceedsDespiteMemoryStoreFailure(t *testing.T) {
 	}
 }
 
-// TestUpdateChatOriginReinforcesRecalledNotMinted covers epic #1255 P1's
-// reinforcement-semantics change directly: a memory minted in the chat but
-// NEVER recalled (no memory.recall ledger entry) must not be reinforced by a merged outcome, while one that WAS recalled is.
+// TestUpdateChatOriginReinforcesRecalledNotMinted: a merged outcome reinforces only memories recalled
+// into the chat (memory.recall entry), not ones merely minted there.
 func TestUpdateChatOriginReinforcesRecalledNotMinted(t *testing.T) {
 	st, orch, hub, artifacts, jail := newExtTestStack(t)
 	_ = jail

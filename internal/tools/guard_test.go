@@ -45,11 +45,9 @@ func TestParseGuardTier(t *testing.T) {
 	}
 }
 
-// unit: the judge tier (deny short-circuits, allow executes, missing judge
-//    fails closed)
+// unit: the judge tier (deny short-circuits, allow executes, missing judge fails closed)
 
-// fakeRunnable is a hand-rolled runnableTool that records executions - used
-// instead of a functiontool so unit tests need no agent.Context plumbing.
+// fakeRunnable records executions without the agent.Context plumbing a functiontool needs.
 type fakeRunnable struct {
 	mu   sync.Mutex
 	runs int
@@ -146,39 +144,35 @@ func TestBuildWrapsGuardedTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Build's outermost layer is now emitWrap (registry.go); the repeat guard
-	// (repeatguard.go) sits just inside it, and the guard-ladder wrapper inside that.
+	// Build wraps emitTool > repeatGuard > guardedTool, outermost first.
 	et0, ok := tools[0].(*emitTool)
 	if !ok {
 		t.Fatalf("ask_user = %T, want *emitTool(outer)", tools[0])
 	}
-	rg0, ok := et0.inner.(*repeatGuard)
+	rg0, ok := et0.runnableTool.(*repeatGuard)
 	if !ok {
-		t.Fatalf("ask_user = %T, want *repeatGuard", et0.inner)
+		t.Fatalf("ask_user = %T, want *repeatGuard", et0.runnableTool)
 	}
-	if _, ok := rg0.inner.(*guardedTool); !ok {
-		t.Errorf("ask_user (guards: judge) inner = %T, want *guardedTool", rg0.inner)
+	if _, ok := rg0.runnableTool.(*guardedTool); !ok {
+		t.Errorf("ask_user (guards: judge) inner = %T, want *guardedTool", rg0.runnableTool)
 	}
 	et1, ok := tools[1].(*emitTool)
 	if !ok {
 		t.Fatalf("current_date = %T, want *emitTool(outer)", tools[1])
 	}
-	rg1, ok := et1.inner.(*repeatGuard)
+	rg1, ok := et1.runnableTool.(*repeatGuard)
 	if !ok {
-		t.Fatalf("current_date = %T, want *repeatGuard", et1.inner)
+		t.Fatalf("current_date = %T, want *repeatGuard", et1.runnableTool)
 	}
-	if _, ok := rg1.inner.(*guardedTool); ok {
+	if _, ok := rg1.runnableTool.(*guardedTool); ok {
 		t.Error("current_date (unlisted) must NOT be guard-laddered")
 	}
 }
 
-// integration: the confirm tier pauses the NODE via the adk_request_
-//    confirmation marker + the existing HITL park, and resumes on the human's
-//    decision (mirrors internal/dag/hitl_test.go's pause/resume pattern).
+// integration: the confirm tier parks the node via adk_request_confirmation and resumes on the decision.
 
-// confirmStub drives the worker + the vetting judge: judge requests (submit_verdict
-// tool present) always pass; a history carrying the guarded tool's RESOLVED response
-// (post-approval) → final answer; APPROVED prompt → re-issue the risky_op call; DENIED → answer without the operation; otherwise (fresh draft) → propose risky_op.
+// confirmStub: judge requests pass; a resolved guarded response gives the final answer; APPROVED re-issues
+// risky_op; DENIED answers without it; a fresh draft proposes risky_op.
 type confirmStub struct{}
 
 func (*confirmStub) Name() string { return "confirmStub" }
@@ -222,9 +216,8 @@ func reqHasTool(req *model.LLMRequest, name string) bool {
 	return false
 }
 
-// reqHasResolvedResponse reports whether the request's history carries a
-// FunctionResponse for name marked with vetting.GuardResolvedKey - i.e. the
-// guarded tool already executed for real this round.
+// reqHasResolvedResponse: the history carries a FunctionResponse for name marked GuardResolvedKey, i.e.
+// the guarded tool already ran this round.
 func reqHasResolvedResponse(req *model.LLMRequest, name string) bool {
 	for _, c := range req.Contents {
 		if c == nil {
@@ -242,9 +235,8 @@ func reqHasResolvedResponse(req *model.LLMRequest, name string) bool {
 	return false
 }
 
-// newConfirmHarness builds a one-node plan whose worker carries a REAL
-// confirm-guarded tool (built by this package), run by the REAL dag executor -
-// so the pause rides the production plumbing end to end.
+// newConfirmHarness runs a real confirm-guarded tool under the real dag executor, so the pause rides the
+// production plumbing end to end.
 func newConfirmHarness(t *testing.T) (*dag.Executor, dag.Plan, session.Service, *fakeRunnable) {
 	t.Helper()
 	sessions := session.InMemoryService()
@@ -268,8 +260,7 @@ func newConfirmHarness(t *testing.T) (*dag.Executor, dag.Plan, session.Service, 
 	return ex, plan, sessions, inner
 }
 
-// sessionHasConfirmationCall asserts the ADK-native adk_request_confirmation
-// FunctionCall landed in the session (the wire marker the design doc names).
+// sessionHasConfirmationCall asserts the adk_request_confirmation FunctionCall landed in the session.
 func sessionHasConfirmationCall(t *testing.T, sessions session.Service, appName, userID, sessID string) bool {
 	t.Helper()
 	resp, err := sessions.Get(context.Background(), &session.GetRequest{AppName: appName, UserID: userID, SessionID: sessID})
@@ -373,9 +364,8 @@ func TestGuardConfirmTier_PauseDenyResume(t *testing.T) {
 	}
 }
 
-// pinStub drives the args-pinning scenario: it proposes risky_op(target:x), and after
-// the human APPROVES it re-issues the call with DIFFERENT args (target:EVIL) -
-// modeling a steered/injected model; after that swapped call's confirmation is DENIED it re-issues the original (target:x), which must still consume the original approval.
+// pinStub proposes risky_op(target:x), re-issues it with target:EVIL after approval (a steered model), then
+// after that call is denied re-issues target:x, which must consume the original approval.
 type pinStub struct{}
 
 func (*pinStub) Name() string { return "pinStub" }
@@ -404,9 +394,8 @@ func (s *pinStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bo
 	}
 }
 
-// TestGuardConfirmTier_ApprovalPinnedToArgs: an approval is pinned to the exact
-// operation the human saw. A re-issued call with different arguments must NOT
-// consume it (nor execute it) - it becomes a fresh proposal whose confirmation warns it DIFFERS; the original approval stays available for a later same-args call.
+// An approval is pinned to the exact args the human saw: a different-args call neither consumes nor runs it
+// and raises a fresh confirmation saying it differs.
 func TestGuardConfirmTier_ApprovalPinnedToArgs(t *testing.T) {
 	sessions := session.InMemoryService()
 	inner := &fakeRunnable{}
@@ -434,9 +423,8 @@ func TestGuardConfirmTier_ApprovalPinnedToArgs(t *testing.T) {
 		t.Fatalf("run1: want pause confirm-n1-r1, got paused=%v id=%q", paused, pauseID)
 	}
 
-	// Run 2: human APPROVES target:x - the worker re-issues with target:EVIL.
-	// The swapped call must NOT execute and must raise a FRESH confirmation
-	// whose message says it DIFFERS.
+	// Run 2: approved target:x, but the worker re-issues target:EVIL: it must not run, and its fresh
+	// confirmation says it DIFFERS.
 	out2, paused2, pauseID2, pauseMsg2 := runConfirmTurn(t, ex, plan, confirmAnswer(pauseID, "approve"), []string{"n1"})
 	if !paused2 || pauseID2 != "confirm-n1-r2" {
 		t.Fatalf("run2: want a second pause confirm-n1-r2, got paused=%v id=%q out=%q", paused2, pauseID2, out2["n1"])
@@ -451,9 +439,8 @@ func TestGuardConfirmTier_ApprovalPinnedToArgs(t *testing.T) {
 		t.Errorf("run2: pause message %q does not show the swapped arguments", pauseMsg2)
 	}
 
-	// Run 3: human DENIES the swapped op. The worker retries the ORIGINAL
-	// target:x call - the round-1 approval is still unconsumed and pinned to
-	// exactly those args, so it executes now, exactly once.
+	// Run 3: the swapped op is denied; the retried target:x consumes the still-pinned round-1 approval and
+	// runs exactly once.
 	out3, paused3, _, _ := runConfirmTurn(t, ex, plan, confirmAnswer(pauseID2, "deny"), []string{"n1"})
 	if paused3 {
 		t.Fatal("run3: still paused after the denial")

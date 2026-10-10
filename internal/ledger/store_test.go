@@ -11,9 +11,8 @@ import (
 	"github.com/fagerbergj/quack/internal/ledgertest"
 )
 
-// TestReadByKindsFallbackFilters (perf audit #1): a store with no FilteredReader
-// (MemStore, every test fake) must still return only the requested kinds, in seq
-// order - ReadByKinds filters itself instead of pushing to SQL.
+// TestReadByKindsFallbackFilters: a store without FilteredReader still gets only the requested kinds, in
+// seq order.
 func TestReadByKindsFallbackFilters(t *testing.T) {
 	ctx := context.Background()
 	store := ledgertest.NewMemStore()
@@ -54,9 +53,8 @@ func TestReadByKindsEmptyResult(t *testing.T) {
 	}
 }
 
-// noPushdownStore forwards to MemStore WITHOUT embedding it, so ReadEntriesFilteredSince
-// is not promoted and ReadAllByKindsSince must take its List()-plus-per-chat fallback
-// path - the shape MemStore/every test fake used before perf audit #12's fix.
+// noPushdownStore forwards to MemStore without embedding it, so ReadEntriesFilteredSince isn't promoted and
+// ReadAllByKindsSince takes its per-chat fallback.
 type noPushdownStore struct{ mem *ledgertest.MemStore }
 
 func (s noPushdownStore) AppendIntent(ctx context.Context, e ledger.Entry) (int64, error) {
@@ -77,9 +75,7 @@ func (s noPushdownStore) Delete(ctx context.Context, chatID string) error {
 
 var _ ledger.LedgerStore = noPushdownStore{}
 
-// TestReadAllByKindsSinceFallbackMatchesPushdown pins perf audit #12: the fallback path
-// (List + per-chat ReadByKinds + Go-side time filter) and the pushdown path
-// (ReadEntriesFilteredSince) must return the identical set of entries for the same seed.
+// TestReadAllByKindsSinceFallbackMatchesPushdown: the fallback and pushdown paths return identical entries.
 func TestReadAllByKindsSinceFallbackMatchesPushdown(t *testing.T) {
 	ctx := context.Background()
 	mem := ledgertest.NewMemStore()

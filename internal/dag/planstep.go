@@ -1,7 +1,3 @@
-// planstep.go: runs one incremental execute() step - the nodes a growing
-// plan hasn't dispatched yet - synchronously from inside the execute tool
-// call, so the orchestrator's own tool loop can read the step's results and
-// keep going instead of ending its turn (#slice3).
 package dag
 
 import (
@@ -18,47 +14,21 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// planStepSessionSuffix names the dedicated ADK session a plan's incremental
-// steps run under. Kept separate from the chat session because RunPlanStep
-// runs synchronously from inside the execute TOOL CALL, nested inside the
-// orchestrator's own live runner.Run on the chat session - a second
-// runner.Run against that same session while the first is mid-iteration
-// risks corrupting its event/branch bookkeeping, so this step gets its own.
+// planStepSessionSuffix names a dedicated ADK session: RunPlanStep runs inside the execute tool call,
+// nested in the orchestrator's live runner.Run on the chat session, and a second Run there risks corruption.
 const planStepSessionSuffix = "::plan-step"
 
-// PlanStepSessionID is the ADK session a plan's incremental steps run under -
-// exported so the orchestrator's own pending-question/resume lookups (which
-// otherwise only ever scan the chat session) know where to also look for a
-// node paused mid-step.
+// PlanStepSessionID is where the orchestrator's pending-question/resume lookups find a node paused mid-step.
 func PlanStepSessionID(chatID string) string { return chatID + planStepSessionSuffix }
 
-// RunPlanStep runs exactly the nodes named in run and streams their events
-// through ctx's yield chain (stream.YieldFromContext) - the same one the
-// calling tool's context already carries. workflow.RunNode (which
-// RunPlanIncrement dispatches through) requires a live sub-scheduler, which
-// only a workflow.NewDynamicNode body provides (see its doc), so this wraps
-// the call in its own disposable workflow+runner rather than driving it
-// directly from ctx. needsInput names exactly the run-set node(s) that
-// parked on a HITL question this round (nil/empty when none did) - see
-// ResumePlanStep to answer one; a caller that only needs to know WHETHER
-// anything paused can check len(needsInput) > 0. started names exactly the
-// run-set node(s) that actually reached running: runDAGSubset processes
-// topo layers sequentially and aborts the remaining ones on the first
-// error, so a node whose dependency paused earlier in the SAME step is
-// requested here but never dispatched - the caller must treat that as
-// not-yet-run, not as ran-and-produced-nothing.
+// RunPlanStep runs exactly the nodes in run in a disposable workflow+runner (RunNode needs a live sub-scheduler).
+// needsInput: nodes parked on a HITL question; started: nodes that reached running (a later layer may never dispatch).
 func (e *Executor) RunPlanStep(ctx context.Context, plan Plan, appName, userID, chatID string, seeded map[string]string, run map[string]bool) (outputs map[string]string, needsInput map[string]bool, started map[string]bool, err error) {
 	if len(run) == 0 {
 		return map[string]string{}, nil, nil, nil
 	}
-	// Every node in run gets queued first, fresh hire or reused - the only
-	// lawful way into "running" for a REUSED node, whose prior status can be
-	// terminal (done/failed/cancelled -> queued -> running; CanTransition
-	// refuses a direct done -> running, #slice3 review's rig regression). A
-	// fresh node's own queued -> queued (or the empty-status default) is
-	// just an idempotent re-queue. ResumePlanStep must NOT do this: its node
-	// is mid-flight (paused/needs_input), and queued isn't a legal target
-	// from there - driveStep, which both share, stays untouched.
+	// Every node is queued first: the only lawful way into running for a reused node whose status may be
+	// terminal. ResumePlanStep must not do this - its node is mid-flight, where queued isn't legal.
 	if sink, ok := stream.YieldFromContext(ctx); ok {
 		for nid := range run {
 			sink(stream.NodeQueued(nid))
@@ -68,16 +38,8 @@ func (e *Executor) RunPlanStep(ctx context.Context, plan Plan, appName, userID, 
 	return e.driveStep(ctx, plan, appName, userID, chatID, seeded, run, content)
 }
 
-// ResumePlanStep answers a node's question from a prior RunPlanStep call
-// that parked on it (interruptID/answer - the same adk_request_input
-// FunctionResponse shape orchestrator.go's startNodeRun already builds for a
-// whole-plan resume). run must name exactly the node(s) still unresolved
-// from that step (a sibling that already finished needs no seat here -
-// dag_plan's own task_id already marks it done); workflowagent.New's runner
-// (see its own doc) detects the FunctionResponse and resumes the SAME
-// session's paused RunState instead of starting the step over. needsInput
-// and started are RunPlanStep's own (the resumed node re-asking, or a
-// dependent never reached, are exactly the same shapes).
+// ResumePlanStep answers a node's question from a prior RunPlanStep that parked on it; run names the
+// nodes still unresolved, and the runner resumes the same session's paused RunState.
 func (e *Executor) ResumePlanStep(ctx context.Context, plan Plan, appName, userID, chatID string, seeded map[string]string, run map[string]bool, interruptID, answer string) (outputs map[string]string, needsInput map[string]bool, started map[string]bool, err error) {
 	if len(run) == 0 {
 		return map[string]string{}, nil, nil, nil
@@ -92,9 +54,8 @@ func (e *Executor) ResumePlanStep(ctx context.Context, plan Plan, appName, userI
 	return e.driveStep(ctx, plan, appName, userID, chatID, seeded, run, content)
 }
 
-// driveStep builds the disposable per-chat workflow+runner RunPlanStep/
-// ResumePlanStep share and drives it with content - "run" (fresh dispatch)
-// or an adk_request_input answer (resume).
+// driveStep builds the disposable workflow+runner RunPlanStep/ResumePlanStep share and drives it with
+// content: "run" (fresh dispatch) or an adk_request_input answer (resume).
 func (e *Executor) driveStep(ctx context.Context, plan Plan, appName, userID, chatID string, seeded map[string]string, run map[string]bool, content *genai.Content) (outputs map[string]string, needsInput map[string]bool, started map[string]bool, err error) {
 	nodeOutputs := make(map[string]string)
 	stepNode := workflow.NewDynamicNode[any, string]("__exec-step",

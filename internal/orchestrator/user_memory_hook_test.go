@@ -24,9 +24,8 @@ import (
 	"github.com/fagerbergj/quack/internal/otelobs"
 )
 
-// TestUserMemoryPreFilter: narrowed to preference-shaped phrases (#1283
-// audit finding 9) - the old alternation included bare never/always/instead
-// of/don't, which matched 26.1% of a 2,389-paragraph technical-prose corpus (this repo's own commit messages); 91% of those hits came from four keywords that never on their own state a durable preference. The narrowed regex measured 0.3% on the same corpus. Ten preference-shaped sentences must still match; ten ordinary technical sentences using bare never/always/instead of/don't must not.
+// Ten preference-shaped sentences must match; ten technical sentences using bare
+// never/always/instead of/don't must not.
 func TestUserMemoryPreFilter(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -70,33 +69,16 @@ func TestUserMemoryPreFilter(t *testing.T) {
 	}
 }
 
-// scriptedModel is a model.LLM that always replies with the same scripted text,
-// for driving a memory-agent stand-in without a real model. usage is nil by
-// default (existing callers get no usage metadata, matching prior behaviour).
-type scriptedModel struct {
-	reply string
-	usage *genai.GenerateContentResponseUsageMetadata
-}
-
-func (scriptedModel) Name() string { return "scripted-memory-agent" }
-
-func (s scriptedModel) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		yield(&model.LLMResponse{
-			Content:       &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: s.reply}}},
-			FinishReason:  genai.FinishReasonStop,
-			TurnComplete:  true,
-			UsageMetadata: s.usage,
-		}, nil)
-	}
-}
-
 func buildScriptedAgent(t *testing.T, reply string) adkagent.Agent {
+	return memoryAgent(t, replyModel(reply))
+}
+
+func memoryAgent(t *testing.T, m model.LLM) adkagent.Agent {
 	t.Helper()
 	ag, err := llmagent.New(llmagent.Config{
 		Name:        "test-memory-agent",
 		Description: "test double",
-		Model:       scriptedModel{reply: reply},
+		Model:       m,
 		Instruction: "reply with the scripted text",
 	})
 	if err != nil {
@@ -178,9 +160,8 @@ func TestMineUserMemory(t *testing.T) {
 	}
 }
 
-// TestMineUserMemory_DefaultAgentFillsTokenUsage pins serve.go's memory-hook
-// wiring: mineUserMemory runs from a fire-and-forget goroutine after the
-// orchestrator's own turn ends, via its own nested runner.Run, so the memory-hook model's tracedModel needs the SetDefaultAgent("memory-hook") fallback to attribute its token usage at all.
+// mineUserMemory runs in its own nested runner.Run after the turn, so token usage needs
+// tracedModel's SetDefaultAgent fallback.
 func TestMineUserMemory_DefaultAgentFillsTokenUsage(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
@@ -189,10 +170,11 @@ func TestMineUserMemory_DefaultAgentFillsTokenUsage(t *testing.T) {
 		t.Fatalf("InitMetricsForTesting: %v", err)
 	}
 
-	m := inference.TracedModelForTesting(scriptedModel{
-		reply: `[]`,
-		usage: &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 10, CandidatesTokenCount: 5},
-	}, "memory-hook-test-model")
+	m := inference.TracedModelForTesting(funcModel(func(context.Context, *model.LLMRequest) iter.Seq2[*model.LLMResponse, error] {
+		resp := stubText(`[]`)
+		resp.UsageMetadata = &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 10, CandidatesTokenCount: 5}
+		return func(yield func(*model.LLMResponse, error) bool) { yield(resp, nil) }
+	}), "memory-hook-test-model")
 	if da, ok := m.(interface{ SetDefaultAgent(string) }); ok {
 		da.SetDefaultAgent("memory-hook")
 	} else {
@@ -237,9 +219,7 @@ func TestMineUserMemory_DefaultAgentFillsTokenUsage(t *testing.T) {
 	}
 }
 
-// fakeEmbedder returns a fixed unit vector for every text, matching internal/memory's
-// own test fixture - any query matches any stored point, so only the scope filter
-// decides what recall sees.
+// fakeEmbedder returns a fixed unit vector, so only the scope filter decides what recall sees.
 type fakeEmbedder struct{}
 
 func (fakeEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
@@ -250,14 +230,11 @@ func (fakeEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error
 	return out, nil
 }
 
-// stagedCandidateLine matches one "- [kind] content" or "- content" line inside
-// the consolidation prompt's STAGED CANDIDATES section (internal/memory/commit.go
-// decide()).
+// stagedCandidateLine matches a "- [kind] content" line in the consolidation prompt's STAGED
+// CANDIDATES section.
 var stagedCandidateLine = regexp.MustCompile(`(?m)^- (?:\[(\w+)\] )?(.+)$`)
 
-// fakeConsolidator is a model.LLM standing in for the memory store's
-// consolidation model: it turns every staged candidate straight into an ADD
-// op, skipping any real reconciliation - enough to exercise Commit's write path without hitting a real model.
+// fakeConsolidator turns every staged candidate into an ADD op, enough to exercise Commit's writes.
 type fakeConsolidator struct{}
 
 func (fakeConsolidator) Name() string { return "fake-consolidator" }
@@ -427,73 +404,26 @@ func TestMaybeMineUserMemory_NeverBlocksTheCaller(t *testing.T) {
 	}
 }
 
-// buildScriptedAgentFunc is buildScriptedAgent plus a side-effect hook invoked
-// whenever the model is called - used to prove a call did or didn't happen.
+// buildScriptedAgentFunc is buildScriptedAgent plus onCall, run whenever the model is called.
 func buildScriptedAgentFunc(t *testing.T, onCall func(), reply string) adkagent.Agent {
-	t.Helper()
-	ag, err := llmagent.New(llmagent.Config{
-		Name:        "test-memory-agent",
-		Description: "test double",
-		Model:       hookedModel{onCall: onCall, reply: reply},
-		Instruction: "reply with the scripted text",
-	})
-	if err != nil {
-		t.Fatalf("llmagent.New: %v", err)
-	}
-	return ag
-}
-
-type hookedModel struct {
-	onCall func()
-	reply  string
-}
-
-func (hookedModel) Name() string { return "hooked-memory-agent" }
-
-func (m hookedModel) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		if m.onCall != nil {
-			m.onCall()
+	return memoryAgent(t, funcModel(func(ctx context.Context, req *model.LLMRequest) iter.Seq2[*model.LLMResponse, error] {
+		if onCall != nil {
+			onCall()
 		}
-		yield(&model.LLMResponse{
-			Content:      &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: m.reply}}},
-			FinishReason: genai.FinishReasonStop,
-			TurnComplete: true,
-		}, nil)
-	}
+		return replyModel(reply)(ctx, req)
+	}))
 }
 
-// buildBlockingAgent never replies until release is closed - simulates a slow
-// model call, to prove the hook never blocks its caller on it.
+// buildBlockingAgent never replies until release is closed, to prove the hook never blocks on it.
 func buildBlockingAgent(t *testing.T, release <-chan struct{}) adkagent.Agent {
-	t.Helper()
-	ag, err := llmagent.New(llmagent.Config{
-		Name:        "test-blocking-memory-agent",
-		Description: "test double",
-		Model:       blockingModel{release: release},
-		Instruction: "reply with the scripted text",
-	})
-	if err != nil {
-		t.Fatalf("llmagent.New: %v", err)
-	}
-	return ag
-}
-
-type blockingModel struct{ release <-chan struct{} }
-
-func (blockingModel) Name() string { return "blocking-memory-agent" }
-
-func (m blockingModel) GenerateContent(ctx context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		select {
-		case <-m.release:
-		case <-ctx.Done():
-			return
+	return memoryAgent(t, funcModel(func(ctx context.Context, req *model.LLMRequest) iter.Seq2[*model.LLMResponse, error] {
+		return func(yield func(*model.LLMResponse, error) bool) {
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return
+			}
+			yield(stubText("[]"), nil)
 		}
-		yield(&model.LLMResponse{
-			Content:      &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: "[]"}}},
-			FinishReason: genai.FinishReasonStop,
-			TurnComplete: true,
-		}, nil)
-	}
+	}))
 }

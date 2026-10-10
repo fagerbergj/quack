@@ -88,9 +88,8 @@ func TestMiddlewareTrustedHeaders(t *testing.T) {
 	}
 }
 
-// TestMiddlewareTrustedHeadersTakePriority pins the documented precedence: a
-// trusted header wins even when oidc is ALSO configured and the request
-// carries no bearer token that would otherwise be required.
+// TestMiddlewareTrustedHeadersTakePriority: a trusted header wins even with OIDC also configured
+// and no bearer token present.
 func TestMiddlewareTrustedHeadersTakePriority(t *testing.T) {
 	idp := newTestIdP(t)
 	a, err := New(&config.InboundAuthConfig{
@@ -113,9 +112,7 @@ func TestMiddlewareTrustedHeadersTakePriority(t *testing.T) {
 	}
 }
 
-// TestMiddlewareOIDCFallsBackWhenNoTrustedHeader covers a request that has
-// neither a trusted header value nor bearer token satisfied by headers -
-// falls through to bearer verification.
+// TestMiddlewareOIDCBearer: with no trusted header value, requests fall through to bearer verification.
 func TestMiddlewareOIDCBearer(t *testing.T) {
 	idp := newTestIdP(t)
 	a, err := New(&config.InboundAuthConfig{
@@ -172,10 +169,8 @@ func TestMiddlewareOIDCBearer(t *testing.T) {
 	}
 }
 
-// TestMiddlewareOIDCRejectionBodyIsGeneric pins the fix for the finding that
-// a rejected bearer token's verifier error (issuer/JWKS/validation detail)
-// must never reach the HTTP response - only a generic body, with the real
-// error going to the log instead.
+// TestMiddlewareOIDCRejectionBodyIsGeneric: a rejected token's verifier error goes to the log;
+// the response body stays generic.
 func TestMiddlewareOIDCRejectionBodyIsGeneric(t *testing.T) {
 	idp := newTestIdP(t)
 	a, err := New(&config.InboundAuthConfig{

@@ -13,9 +13,8 @@ import (
 	"github.com/fagerbergj/quack/internal/config"
 )
 
-// loadConfigForTest defers agent completeness: coding agents are now
-// override-only (no bundle:), same as a real boot's LoadDeferringAgentCompleteness
-// before plugin seeding fills them in.
+// loadConfigForTest defers agent completeness, as a real boot does before plugin seeding
+// fills in the override-only coding agents.
 func loadConfigForTest(path string) (*config.Config, error) {
 	return config.LoadDeferringAgentCompleteness(path)
 }
@@ -282,9 +281,7 @@ func TestEmitServerConfigRoundTrip(t *testing.T) {
 	if cfg.Providers["default"].Endpoint != a.Endpoint {
 		t.Errorf("endpoint = %q, want %q hardcoded", cfg.Providers["default"].Endpoint, a.Endpoint)
 	}
-	// Every model referenced anywhere below (agents, gates.judge, the vector
-	// store's embedder) must have its own models: registry entry, or Load
-	// above would already have failed.
+	// Every referenced model needs its own models: entry, or Load above would have failed.
 	for model, role := range map[string]string{
 		a.MainModel: "worker", a.AudioModel: "worker", a.VisionModel: "worker",
 		a.JudgeModel: "judge", a.EmbedModel: "embed",
@@ -424,9 +421,8 @@ func TestEmitFillsBlankBackendURL(t *testing.T) {
 	}
 }
 
-// TestEmitServerConfigCoding: the coding feature emits the three coding agents
-// as ACP workers (no tools: list - quack has no native repo/exec tools), the
-// workspace section the ACP children run inside, and loads through the real config loader.
+// TestEmitServerConfigCoding: the coding feature emits the three coding agents as ACP workers plus
+// their workspace section, and the result loads through the real config loader.
 func TestEmitServerConfigCoding(t *testing.T) {
 	t.Setenv("QUACK_LLM_API_KEY", "k")
 	base := InitAnswers{

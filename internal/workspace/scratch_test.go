@@ -9,9 +9,8 @@ import (
 	"testing"
 )
 
-// TestHomeTmpDirPrefersScratchDir is the choke-point pin: homeTmpDir (and
-// therefore SandboxTmpDir/landlockTmpDir/tmpArgs, every caller that
-// resolves a sandboxed child's tmp) prefers caps.ScratchDir over the shared caps.HomeDir/tmp when both are set, and creates it on demand.
+// TestHomeTmpDirPrefersScratchDir: every sandboxed tmp resolves through homeTmpDir, which prefers
+// ScratchDir over HomeDir/tmp and creates it.
 func TestHomeTmpDirPrefersScratchDir(t *testing.T) {
 	home := t.TempDir()
 	scratch := filepath.Join(t.TempDir(), "not-yet-created")
@@ -26,9 +25,7 @@ func TestHomeTmpDirPrefersScratchDir(t *testing.T) {
 	}
 }
 
-// TestHomeTmpDirFallsBackWithoutScratchDir pins the OTHER half: a caller
-// that never wires ScratchDir (the gate's own one-shot check commands until
-// #., or any caller pre-dating this fix) keeps the pre-fix shared HomeDir/tmp - this fix must not regress a caller that hasn't opted in.
+// TestHomeTmpDirFallsBackWithoutScratchDir: a caller without ScratchDir keeps the shared HomeDir/tmp.
 func TestHomeTmpDirFallsBackWithoutScratchDir(t *testing.T) {
 	home := t.TempDir()
 	caps := Caps{HomeDir: home}
@@ -39,9 +36,7 @@ func TestHomeTmpDirFallsBackWithoutScratchDir(t *testing.T) {
 	}
 }
 
-// TestSandboxTmpDirReflectsScratchDirUnderLandlock: SandboxTmpDir (the ACP
-// TMPDIR seam, workspace.SandboxTmpDir) returns caps.ScratchDir under
-// landlock, not the shared HomeDir/tmp, once a caller scopes one.
+// TestSandboxTmpDirReflectsScratchDirUnderLandlock: the ACP TMPDIR is ScratchDir once a caller scopes one.
 func TestSandboxTmpDirReflectsScratchDirUnderLandlock(t *testing.T) {
 	home := t.TempDir()
 	scratch := t.TempDir()
@@ -51,9 +46,7 @@ func TestSandboxTmpDirReflectsScratchDirUnderLandlock(t *testing.T) {
 	}
 }
 
-// TestLandlockGrantsIncludesScratchDirRW: the per-node scratch dir lands
-// in the RW grant set regardless of caps.ReadOnly - a read-only reviewer
-// needs TMPDIR/mktemp/heredocs to work exactly as much as a writer does; only the node's OWN tree differs by ReadOnly.
+// TestLandlockGrantsIncludesScratchDirRW: scratch is RW even for ReadOnly; a reviewer needs TMPDIR too.
 func TestLandlockGrantsIncludesScratchDirRW(t *testing.T) {
 	for _, readOnly := range []bool{true, false} {
 		dir := t.TempDir()
@@ -72,9 +65,7 @@ func TestLandlockGrantsIncludesScratchDirRW(t *testing.T) {
 	}
 }
 
-// runWrapArgv builds argv the SAME way internal/acp's wrappedArgv does
-// (workspace.WrapArgv) and actually executes it, mirroring landlock_test.go's
-// runSandboxExec but going through the real production seam instead of the raw shim - this is the seam a caps bug in the ACP write path would surface through, not just an argv-assembly check.
+// runWrapArgv executes through WrapArgv, the real seam the ACP child uses, not the raw shim.
 func runWrapArgv(t *testing.T, dir string, argv []string, caps Caps) (string, int) {
 	t.Helper()
 	wrapped := WrapArgv(dir, argv, caps, nil, nil)
@@ -88,9 +79,8 @@ func runWrapArgv(t *testing.T, dir string, argv []string, caps Caps) (string, in
 	return string(out), code
 }
 
-// TestWrapArgvRWWorkerWritesOwnNodeDirEndToEnd is test case 2 from the
-// sandbox-scratch fix: does the RW implementer's own worktree actually
-// accept a write through the REAL seam its subprocess runs through (WrapArgv), or was the live "permission denied … in the workspace root" report actually a caps bug rather than the worker reaching outside its own node dir? This proves it is NOT a caps bug - a write inside the node's own directory succeeds end to end under landlock.
+// TestWrapArgvRWWorkerWritesOwnNodeDirEndToEnd: an RW worker's write inside its own node dir succeeds
+// through WrapArgv under landlock.
 func TestWrapArgvRWWorkerWritesOwnNodeDirEndToEnd(t *testing.T) {
 	requireLandlock(t)
 	dir := t.TempDir()
@@ -105,9 +95,8 @@ func TestWrapArgvRWWorkerWritesOwnNodeDirEndToEnd(t *testing.T) {
 	}
 }
 
-// TestWrapArgvScratchDirWritableForBothWorkerClasses is test case 1 end
-// to end, through the real WrapArgv seam: a per-node ScratchDir is
-// writable for BOTH a read-only reviewer and an RW implementer, so a worker whose own tree is (correctly) denied still has somewhere to put a temp file instead of churning on write-denials with nowhere to fall back to.
+// TestWrapArgvScratchDirWritableForBothWorkerClasses: ScratchDir is writable for reviewers and implementers,
+// so a denied tree still leaves somewhere for temp files.
 func TestWrapArgvScratchDirWritableForBothWorkerClasses(t *testing.T) {
 	requireLandlock(t)
 	for _, tc := range []struct {
@@ -142,9 +131,7 @@ func TestWrapArgvScratchDirWritableForBothWorkerClasses(t *testing.T) {
 	}
 }
 
-// TestWrapArgvTmpdirEnvPointsAtScratchDir is test case 4: TMPDIR (the env
-// var internal/acp's spawnEnv sets from workspace.SandboxTmpDir) both names
-// AND grants the same scratch dir - a mismatch between the two would leave TMPDIR pointing somewhere the sandbox denies.
+// TestWrapArgvTmpdirEnvPointsAtScratchDir: TMPDIR must name the same dir the sandbox grants.
 func TestWrapArgvTmpdirEnvPointsAtScratchDir(t *testing.T) {
 	requireLandlock(t)
 	dir := t.TempDir()
@@ -169,9 +156,8 @@ func TestWrapArgvTmpdirEnvPointsAtScratchDir(t *testing.T) {
 	}
 }
 
-// TestWrapArgvScratchDirGrantedUnderBwrap (#921): the scratch dir is bound
-// RW at its identity path under bwrap too, and SandboxTmpDir names that same
-// path - a mismatch would leave TMPDIR pointing at something the namespace doesn't have (the server's own ambient /tmp is a private tmpfs in there).
+// TestWrapArgvScratchDirGrantedUnderBwrap: under bwrap the scratch dir is bound RW at its identity path,
+// the same path SandboxTmpDir names.
 func TestWrapArgvScratchDirGrantedUnderBwrap(t *testing.T) {
 	dir := t.TempDir()
 	scratch := t.TempDir()
@@ -185,9 +171,7 @@ func TestWrapArgvScratchDirGrantedUnderBwrap(t *testing.T) {
 	}
 }
 
-// TestWrapArgvScratchDirUnwrappedUnderNone: `none` has no boundary to wrap
-// into, so ScratchDir grants nothing there; TMPDIR still names the process
-// tmp dir, same as any other caller of SandboxTmpDir.
+// TestWrapArgvScratchDirUnwrappedUnderNone: none grants nothing; TMPDIR names the process tmp dir.
 func TestWrapArgvScratchDirUnwrappedUnderNone(t *testing.T) {
 	dir := t.TempDir()
 	scratch := t.TempDir()
@@ -203,9 +187,7 @@ func TestWrapArgvScratchDirUnwrappedUnderNone(t *testing.T) {
 	}
 }
 
-// TestLandlockTmpDirWorkRootFallbackIsSilent: with a WorkRoot to derive
-// scratch from, landlockTmpDir must return the workspace-filesystem dir and
-// NOT emit the shared-/tmp boot warning.
+// TestLandlockTmpDirWorkRootFallbackIsSilent: a WorkRoot-derived dir emits no shared-/tmp warning.
 func TestLandlockTmpDirWorkRootFallbackIsSilent(t *testing.T) {
 	var buf strings.Builder
 	restore := slog.Default()

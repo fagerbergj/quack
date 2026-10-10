@@ -72,9 +72,7 @@ diff --git a/internal/cli/ledger_test.go b/internal/cli/ledger_test.go
 	}
 }
 
-// TestIsGenerated_HeaderDetection: a generated-code marker anywhere in the file (not just
-// the hardcoded internal/schema/frontend prefixes) takes a file out of the gate, so a new
-// generated dir (e.g. internal/langfuse/langfusegen) doesn't need this list updated.
+// A generated-code marker takes any file out of the gate, so a new generated dir needs no list update.
 func TestIsGenerated_HeaderDetection(t *testing.T) {
 	dir := t.TempDir()
 	gen := dir + "/gen.go"
@@ -96,9 +94,7 @@ func TestIsGenerated_HeaderDetection(t *testing.T) {
 	}
 }
 
-// TestIsGenerated_MarkerOnlyInLeadingComments: a DO NOT EDIT line after real code (e.g.
-// quoted in a string literal or doc example near EOF) must not exempt the file - only
-// the file's own leading comment block counts.
+// A DO NOT EDIT line after real code (a string literal, a doc example) must not exempt the file.
 func TestIsGenerated_MarkerOnlyInLeadingComments(t *testing.T) {
 	dir := t.TempDir()
 	eof := dir + "/eof.go"

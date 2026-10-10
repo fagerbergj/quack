@@ -17,8 +17,7 @@ import (
 // envOnly discards environmentBlock's Artifact return - this file only golden-checks the rendered text.
 func envOnly(s string, _ artifactsrc.Artifact) string { return s }
 
-// updateEnvGolden regenerates testdata/prompts. The goldens were captured
-// before the artifact-resolver change (#1420) and must stay byte-identical.
+// updateEnvGolden regenerates testdata/prompts; the goldens must stay byte-identical.
 var updateEnvGolden = flag.Bool("update-golden", false, "rewrite the environment block golden files")
 
 func checkEnvGolden(t *testing.T, name, got string) {
@@ -110,9 +109,8 @@ func TestGoldenEnvironmentBlock(t *testing.T) {
 
 var normHexSha = regexp.MustCompile(`HEAD [0-9a-f]{7,40}`)
 
-// runGitIsolated runs git isolated from the runner's own global/system config (a missing
-// user.name/email, an unexpected safe.directory or hooksPath entry) so fixture setup is
-// self-contained; unlike runGit, no config from outside this call can make it flaky.
+// runGitIsolated runs git without the runner's global/system config (missing user.name, safe.directory,
+// hooksPath) so fixture setup can't be made flaky from outside.
 func runGitIsolated(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)

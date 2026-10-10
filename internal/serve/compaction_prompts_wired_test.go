@@ -8,7 +8,7 @@ import (
 )
 
 // A Langfuse edit to system/compaction must reach the summarizer, so the built
-// Compaction has to carry the resolver (it was dropped once and only the docs noticed).
+// Compaction has to carry the resolver.
 func TestBuildCompactionCarriesResolver(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Session.Compaction.Enabled = true

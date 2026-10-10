@@ -10,9 +10,8 @@ import (
 	"github.com/fagerbergj/quack/internal/schema"
 )
 
-// TestSendChatMessage_UnknownChat404 pins finding 2: an unknown chat_id must
-// 404 BEFORE the SSE stream opens - never an in-stream error event.
-// TestSendChatMessage_ResponseCreatedFirst (nodestatus_test.go) already covers the happy-path stream for a real chat.
+// TestSendChatMessage_UnknownChat404: an unknown chat_id 404s before the SSE stream opens,
+// never as an in-stream error event.
 func TestSendChatMessage_UnknownChat404(t *testing.T) {
 	h := newTestHandler(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/chats/no-such-chat/responses", strings.NewReader(`{"content":"hi"}`))
@@ -32,9 +31,7 @@ func TestSendChatMessage_UnknownChat404(t *testing.T) {
 	}
 }
 
-// TestSubscribeChatStream_UnknownChat404 is TestSendChatMessage_UnknownChat404's
-// counterpart for the standalone subscribe endpoint. TestSubscribeLiveTail
-// (livetail_test.go) already covers the happy-path stream for a real chat.
+// TestSubscribeChatStream_UnknownChat404 is the same check for the standalone subscribe endpoint.
 func TestSubscribeChatStream_UnknownChat404(t *testing.T) {
 	h := newTestHandler(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/chats/no-such-chat/stream", nil)

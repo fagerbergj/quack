@@ -158,9 +158,7 @@ func TestPauseForInputPersistsQuestion(t *testing.T) {
 	}
 }
 
-// TestQueuedSteerSurvivesRestart: enqueue, throw the in-memory control away
-// (a process restart), rebuild from the persisted row - the undelivered
-// message is still there and still deliverable.
+// An undelivered queued message survives a restart (control rebuilt from the persisted row).
 func TestQueuedSteerSurvivesRestart(t *testing.T) {
 	fake := newFakeNodeStore()
 	controls := newRunControls()
@@ -192,9 +190,8 @@ func TestQueuedSteerSurvivesRestart(t *testing.T) {
 	}
 }
 
-// TestResumedNodeActuallyRuns: pause a live node (row lands paused/user),
-// throw the executor away (restart), re-run the plan against the same store -
-// the re-registered node must clear the persisted pause and do real work, not rehydrate the pause and re-park itself before its first worker round.
+// After a restart a resumed node must clear the persisted pause and run, not re-park
+// itself before its first worker round.
 func TestResumedNodeActuallyRuns(t *testing.T) {
 	fake := newFakeNodeStore()
 	stub := &coopStub{started: make(chan struct{}, 1), unblock: make(chan struct{})}
@@ -238,9 +235,8 @@ func TestResumedNodeActuallyRuns(t *testing.T) {
 	}
 }
 
-// TestStartNodeOnLiveControlPersistsRunning: StartNode against a LIVE control
-// goes through resume(), whose store write (paused -> running) no other
-// store-wired test reaches - both restart tests use a fresh executor.
+// StartNode on a live control goes through resume(), whose paused -> running store write
+// no restart test reaches.
 func TestStartNodeOnLiveControlPersistsRunning(t *testing.T) {
 	fake := newFakeNodeStore()
 	stub := &coopStub{started: make(chan struct{}, 1), unblock: make(chan struct{})}

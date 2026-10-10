@@ -11,11 +11,8 @@ import (
 	"github.com/fagerbergj/quack/internal/tools"
 )
 
-// gitAskpassMain is quack's GIT_ASKPASS mode, entered via argv[0] dispatch
-// (the busybox pattern): the git tools maintain a symlink
-// <workspace root>/.quack-askpass -> the quack binary and set
-// GIT_ASKPASS=<that symlink>; main() sees isGitAskpassInvocation() and lands
-// here BEFORE cobra. Required because git execs $GIT_ASKPASS DIRECTLY as one program path with the prompt as its single argument - no shell splitting, so a "<binary> <subcommand>" value is unexecutable.
+// gitAskpassMain is quack's GIT_ASKPASS mode, reached by argv[0] dispatch via the <workspace root>/.quack-askpass
+// symlink: git execs $GIT_ASKPASS as one program path, so a "<binary> <subcommand>" value can't work.
 func gitAskpassMain(args []string, out io.Writer) {
 	prompt := ""
 	if len(args) > 1 {
@@ -24,16 +21,14 @@ func gitAskpassMain(args []string, out io.Writer) {
 	fmt.Fprintln(out, tools.GitAskpassAnswer(prompt))
 }
 
-// isGitAskpassInvocation reports whether this process was exec'd through the
-// askpass symlink (see gitAskpassMain). Split out so main() and the test
-// binary's TestMain share the exact dispatch predicate.
+// isGitAskpassInvocation reports whether this process was exec'd through the askpass symlink;
+// shared by main() and the test binary's TestMain.
 func isGitAskpassInvocation() bool {
 	return len(os.Args) > 0 && filepath.Base(os.Args[0]) == tools.GitAskpassLinkName
 }
 
-// newGitAskpassCmd keeps `quack git-askpass <prompt>` as a hidden secondary
-// entry to the same logic (handy for manually debugging a credential setup);
-// the mechanism git actually uses is the argv[0] dispatch above.
+// newGitAskpassCmd is a hidden `quack git-askpass <prompt>` entry to the same logic, for debugging
+// credentials by hand; git itself uses the argv[0] dispatch.
 func newGitAskpassCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:    "git-askpass [prompt]",

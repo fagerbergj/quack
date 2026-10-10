@@ -42,7 +42,6 @@ var wsOpSpecs = map[string]wsOpSpec{
 	"github_submit_review":      {args: []string{"owner", "repo", "pull_number", "event"}, results: []string{"url", "comments"}},
 }
 
-// isWorkspaceTool: is name in the ledger?
 func isWorkspaceTool(name string) bool {
 	_, ok := wsOpSpecs[name]
 	return ok
@@ -123,9 +122,8 @@ const maxLedgerOps = 80
 // above dataToolEntryCap so a handful of calls never gets cut mid-round.
 const dataToolTotalCap = 48000
 
-// buildDataToolsSection: renders the round's data-tool call/results (already
-// per-entry capped by recordDataTool) for the judge prompt, keeping the
-// newest entries when the total exceeds dataToolTotalCap. Empty when no calls.
+// buildDataToolsSection: the round's data-tool calls for the judge prompt, newest kept past
+// dataToolTotalCap. Empty when no calls.
 func buildDataToolsSection(act workerActivity) string {
 	if len(act.dataTools) == 0 {
 		return ""

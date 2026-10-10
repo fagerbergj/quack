@@ -45,9 +45,8 @@ type A2AServer struct {
 	runs     *workerRuns
 }
 
-// Serve starts an A2A server for ag on 127.0.0.1:<ephemeral> and returns it with the AgentCard. comp.Enabled wires adk/v2's native runner-level compaction here; the zero Compaction leaves the runner's Compaction nil and changes nothing. nodeID/sink re-emit a `compaction` SSE event,
-// the only observable, because neither native compaction strategy yields its summary into the runner's event stream (both only call sessions.AppendEvent - see compactionSessions); nodeID is baked in per node, so a fan-out sibling can never misattribute another node's compaction. sink nil (no active run, or a caller with no hub, e.g. tests) is a no-op: Serve never touches the hub directly. artifacts is set on the worker's own RunnerConfig - the
-// DAG/orchestrator runners already get one; leaving a worker's nil made ctx.Artifacts() a silent nil in every worker tool/callback even though the caller has a live service to give it (#A7).
+// Serve starts an A2A server for ag on 127.0.0.1:<ephemeral>. nodeID/sink re-emit compaction summaries
+// (compactionSessions); nodeID is per node so siblings never misattribute one, and a nil sink is a no-op.
 func Serve(ag adkagent.Agent, sessions session.Service, mem adkmemory.Service, artifacts artifact.Service, comp Compaction, nodeID string, sink func(stream.SSEEvent)) (*A2AServer, error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -92,9 +91,7 @@ func Serve(ag adkagent.Agent, sessions session.Service, mem adkmemory.Service, a
 	mux.Handle(a2asrv.WellKnownAgentCardPath, a2asrv.NewStaticAgentCardHandler(card))
 	mux.Handle(invokePath, a2asrv.NewJSONRPCHandler(a2asrv.NewHandler(trackedExecutor{AgentExecutor: executor, runs: runs})))
 
-	// otelhttp extracts the client's traceparent header so the request ctx's
-	// span (see clientNamed's transport) continues the caller's trace instead
-	// of rooting a fresh one (#1046).
+	// otelhttp extracts the client's traceparent so the request continues the caller's trace.
 	go func() { _ = http.Serve(listener, otelhttp.NewHandler(mux, "a2a.invoke")) }()
 
 	return &A2AServer{Card: card, listener: listener, runs: runs}, nil
@@ -155,12 +152,10 @@ func (t trackedExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorCo
 	}
 }
 
-// Close stops the A2A server's listener.
 func (s *A2AServer) Close() error { return s.listener.Close() }
 
-// compactionSessions re-emits the compaction summaries adk/v2's native strategies append to the session store, which the runner's event stream never carries (the
-// post-invocation sliding-window pass and the token-threshold pass both only call AppendEvent on the configured session.Service). A straggler landing mid-append can
-// trigger a repair record covering the same range, so AppendEvent can rarely fire twice for one compaction. ponytail: accepted as a rare duplicate SSE/span rather than tracked and deduped; revisit if a duplicate row is actually seen in the feed.
+// compactionSessions re-emits compaction summaries, which adk's strategies only AppendEvent to the session store.
+// ponytail: a mid-append straggler can rarely emit one compaction twice; dedupe if a duplicate row shows up.
 type compactionSessions struct {
 	session.Service
 	nodeID string
@@ -175,16 +170,14 @@ func (s compactionSessions) AppendEvent(ctx context.Context, sess session.Sessio
 	return nil
 }
 
-// maxTranscriptChars sizes adk's summarizer transcript cap from the model's
-// context window (0 = unknown, keeps adk's own 200k-char default) so
-// compaction keeps engaging past adk's default on large-window models.
+// maxTranscriptChars sizes adk's summarizer transcript cap from the context window
+// (0 = unknown keeps adk's 200k-char default) so compaction keeps engaging on large-window models.
 func maxTranscriptChars(comp Compaction) int {
 	return comp.ContextWindow * charsPerToken
 }
 
-// NativeCompactionConfig builds adk/v2's runner-level compaction.Config from
-// comp, or nil when compaction is disabled. It reuses quack's own tuned
-// summarizer prompt (system/compaction + system/compaction.summary, compaction_prompts.go) rather than adk's default.
+// NativeCompactionConfig builds adk's runner-level compaction.Config with quack's own summarizer prompt,
+// or nil when compaction is disabled.
 func NativeCompactionConfig(comp Compaction) (*compaction.Config, error) {
 	if !comp.Enabled {
 		return nil, nil
@@ -192,8 +185,7 @@ func NativeCompactionConfig(comp Compaction) (*compaction.Config, error) {
 	if comp.Summarizer == nil {
 		return nil, fmt.Errorf("compaction: enabled requires a summarizer model")
 	}
-	// Background: this runs at node build, off any round's context, and a
-	// prompt source is expected to carry its own deadline.
+	// Runs at node build, off any round's context; a prompt source carries its own deadline.
 	sys, tmpl, err := compactionPrompts(context.Background(), comp.Prompts)
 	if err != nil {
 		return nil, err
@@ -203,9 +195,7 @@ func NativeCompactionConfig(comp Compaction) (*compaction.Config, error) {
 		Model:              comp.Summarizer,
 		PromptTemplate:     prompt,
 		MaxTranscriptChars: maxTranscriptChars(comp),
-		// ADK's 2000-char default (llm_summarizer.go) would cut the rolling
-		// summary itself on the way back in; quack's own prompt asks for full
-		// technical content and can legitimately run tens of KB.
+		// ADK's 2000-char default would cut the rolling summary itself, which can legitimately run tens of KB.
 		MaxToolContentChars: -1,
 	})
 	if serr != nil {
@@ -218,9 +208,7 @@ func NativeCompactionConfig(comp Compaction) (*compaction.Config, error) {
 		EventRetentionSize: comp.EventRetentionSize,
 		Summarizer:         summarizer,
 	}
-	// TokenThreshold defaults to 0 (disabled) in adk; quack's own threshold()
-	// falls back to the model's context window when unset, so mirror that here
-	// rather than silently disabling tail retention.
+	// adk treats 0 as disabled; mirror quack's threshold() fallback to the context window.
 	if cfg.TokenThreshold == 0 && comp.ContextWindow > 0 {
 		cfg.TokenThreshold = usable(comp.ContextWindow)
 	}
@@ -236,21 +224,17 @@ func NativeCompactionConfig(comp Compaction) (*compaction.Config, error) {
 	return cfg, nil
 }
 
-// buildSkills returns the A2A skills for ag.
 func buildSkills(ag adkagent.Agent) []a2a.AgentSkill {
 	return adka2a.BuildAgentSkills(ag)
 }
 
-// ClientForNode returns an ADK agent that dispatches to this server over A2A under an identity unique to nodeKey (works around an ADK remote-session
-// collision bug for concurrent sibling nodes). contextID seeds the message's
-// ContextID whenever ADK sends one with none, so the worker session this node creates gets a deterministic address, not a server-minted random UUID (#A2 - see WorkerSessionID).
+// ClientForNode dispatches over A2A under a name unique to nodeKey, working around ADK's remote-session collision for
+// concurrent siblings. contextID fills an empty ContextID so the worker session has a deterministic address.
 func (s *A2AServer) ClientForNode(nodeKey, contextID string) (adkagent.Agent, error) {
 	return s.clientNamed(s.Card.Name+"#"+nodeKey, contextID)
 }
 
-// WorkerSessionID is the deterministic ADK session id a node's own A2A
-// worker session is created under - shared by ClientForNode's caller (to
-// derive contextID) and release()'s cleanup (to delete the same row).
+// WorkerSessionID is a node's deterministic worker session id, shared by ClientForNode's caller and release().
 func WorkerSessionID(chatID, nodeID string) string { return chatID + ":" + nodeID }
 
 // WorkerSessionUser is the ADK user id a2a-go (server/adka2a/v2/metadata.go)
@@ -259,8 +243,7 @@ func WorkerSessionUser(contextID string) string { return "A2A_USER_" + contextID
 
 // clientNamed builds a remote agent for this server under the given local name.
 func (s *A2AServer) clientNamed(name, contextID string) (adkagent.Agent, error) {
-	// otelhttp injects the caller's traceparent header so the per-node A2A
-	// server's handler continues this trace instead of starting a new one (#1046).
+	// otelhttp injects traceparent so the per-node A2A server continues this trace.
 	factory := a2aclient.NewFactory(
 		a2aclient.WithJSONRPCTransport(&http.Client{Transport: httpx.NewTransport(otelhttp.NewTransport(nil))}),
 	)
@@ -325,13 +308,8 @@ func tagRun(req *a2a.SendMessageRequest) string {
 	return key
 }
 
-// scopeMessage rewrites req's parts in place, scoped to invocation + branch,
-// and clears its task/context IDs when ADK's own branch-blind resume scan
-// crossed into a sibling node's event to get them - leaves them alone
-// otherwise, since a HITL resume derives its own IDs a different way.
-//
-// defaultContextID seeds req.Message.ContextID when it arrives empty -
-// otherwise a2a-go mints a fresh random UUID per message (agentexec.go:createNewExecutionContext) and the worker session it addresses is never seen again, so nothing can ever delete it (#A2).
+// scopeMessage scopes req's parts to invocation + branch and clears task/context IDs taken from a sibling's event.
+// defaultContextID fills an empty ContextID; otherwise a2a-go mints a random one and the worker session leaks.
 func scopeMessage(ctx context.Context, req *a2a.SendMessageRequest, defaultContextID string) {
 	if req == nil || req.Message == nil {
 		return
@@ -418,9 +396,8 @@ func describeEvent(ev *session.Event) []*a2a.Part {
 	return append([]*a2a.Part{a2a.NewTextPart("For context:")}, parts...)
 }
 
-// sanitizeWorkflowPlumbingPart neutralizes HITL/resume FunctionCall/Response
-// pairs before they cross the A2A wire (mismatched pairing otherwise causes
-// silent empty completions on the remote server).
+// sanitizeWorkflowPlumbingPart neutralizes HITL/resume FunctionCall/Response pairs before they cross the A2A wire;
+// mismatched pairs otherwise cause silent empty completions on the remote server.
 func sanitizeWorkflowPlumbingPart(ctx context.Context, adkEvent *session.Event, part *genai.Part) (*a2a.Part, error) {
 	if part == nil {
 		return nil, nil

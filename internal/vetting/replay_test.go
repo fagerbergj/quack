@@ -8,8 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	adkagent "google.golang.org/adk/v2/agent"
-	"google.golang.org/adk/v2/tool"
 	"google.golang.org/genai"
 )
 
@@ -77,9 +75,8 @@ func TestReplayRound_ArtifactWrittenFlagged(t *testing.T) {
 	}
 }
 
-// TestReplayRebuildsDataToolSection: the replay path (quack judge replay)
-// must reproduce the same data-tool section live judging builds, from the
-// recorded session alone.
+// TestReplayRebuildsDataToolSection: judge replay rebuilds live judging's data-tool section from
+// the recorded session alone.
 func TestReplayRebuildsDataToolSection(t *testing.T) {
 	call := replayContent(genai.RoleModel, &genai.Part{FunctionCall: &genai.FunctionCall{ID: "1", Name: "sleeper_matchup",
 		Args: map[string]any{"week": 2}}})
@@ -149,18 +146,6 @@ func TestLoadReplayRubric_OverridePathNotFound(t *testing.T) {
 func TestLoadReplayRubric_BundleDirWithNoRubric(t *testing.T) {
 	if _, err := LoadReplayRubric(context.Background(), nil, "no/such/bundle-dir", ""); err == nil {
 		t.Fatal("LoadReplayRubric on a bundle with no rubric.yaml: err = nil, want an error naming --rubric")
-	}
-}
-
-func TestCountingJudgeFactory_CountsInvocations(t *testing.T) {
-	calls := 0
-	base := JudgeFactory(func(judgePrompt, *verdict, *forceClose, int, int, string, []string, []tool.Tool) (adkagent.Agent, judgeReadCounters, error) {
-		return nil, judgeReadCounters{}, nil
-	})
-	wrapped := CountingJudgeFactory(base, &calls)
-	_, _, _ = wrapped(judgePrompt{}, nil, nil, 0, 0, "", nil, nil)
-	if calls != 1 {
-		t.Errorf("calls = %d, want 1", calls)
 	}
 }
 
@@ -239,7 +224,7 @@ func TestReplayRound_ShadowUnitsOnlyWithPages(t *testing.T) {
 	if res.Units[0].State != "located" || res.Units[1].State != "uncited" {
 		t.Fatalf("states = %s/%s, want located/uncited", res.Units[0].State, res.Units[1].State)
 	}
-	rc.Verifier = &Verifier{LLM: textLLM{text: `{"items":[{"n":1,"state":"supported","quote":"users rose 30% in a year"}]}`}}
+	rc.Verifier = &Verifier{LLM: textLLM(`{"items":[{"n":1,"state":"supported","quote":"users rose 30% in a year"}]}`, nil, nil)}
 	res, err = ReplayRound(context.Background(), Config{Threshold: 0.5}, nil, rc)
 	if err != nil || res.Units[0].Verdict.State != "supported" || res.Units[1].Verdict.State != "" {
 		t.Fatalf("with a verifier: %+v err=%v, want the located row supported and the uncited row untouched", res.Units, err)

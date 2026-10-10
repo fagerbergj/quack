@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"iter"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -27,9 +26,8 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// The staged-delivery spine: a worker STAGES a pull request
-// (stage_pr) instead of opening one - commitDelivery posts the FINAL
-// staged set exactly once, and only when the gate's judge round passes.
+// A worker stages a PR (stage_pr) instead of opening one; commitDelivery posts the final staged
+// set exactly once, when the judge round passes.
 
 func TestStagedDeliveryTargetUpsertAndUnstage(t *testing.T) {
 	act := activityFromSessionAt(newTestSession(t,
@@ -109,9 +107,8 @@ func TestCommitDeliveryOnPassCarriesCloneCoordinates(t *testing.T) {
 	}
 }
 
-// A setup-provisioned node (cfg.Setup set) must deliver on the plan's declared
-// work_branch - never the worker's own git-tracking ledger, which a
-// setup-provisioned worker is told not to touch (internal/github/webhook.go). This is the regression #308 fixes: before, a setup-provisioned worker never called git_checkout/git_clone itself, so act.currentBranch/clonedDirs stayed empty and delivery failed with "no branch to open it from".
+// A setup-provisioned node delivers on the plan's work_branch, not its git ledger, which stays
+// empty because such a worker never clones or checks out itself.
 func TestCommitDeliveryOnPassUsesSetupBranchWhenDeclared(t *testing.T) {
 	j, err := workspace.NewJail(t.TempDir())
 	if err != nil {
@@ -131,17 +128,14 @@ func TestCommitDeliveryOnPassUsesSetupBranchWhenDeclared(t *testing.T) {
 			return nil, nil
 		},
 		Setup: &SetupBranch{Repo: "https://github.com/fagerbergj/games", WorkBranch: "quack/work"},
-		// The workspace-directory scope commitDelivery resolves
-		// SetupCloneDir against - dag.buildGateNodes stamps this (node.ID
-		// normally); the caller below passes the SAME "impl" as the nodeID argument, matching production wiring for a single, unshared node.
+		// The scope SetupCloneDir resolves against; matches the nodeID passed below, as in production.
 		NodeID:          "impl",
 		Workspace:       j,
 		WorkspaceUserID: "u1",
 		ChatID:          "chat1",
 	}
-	// The worker never cloned or checked out anything itself (setup-provisioned
-	// runs are told not to) - the ledger fields commitDelivery would
-	// otherwise fall back to are empty on purpose. Kind "review" (not "pull_request") - no GitCredentials configured here, and this test is about branch/URL/dir resolution, not the push itself.
+	// Ledger fields are empty on purpose. Kind "review" avoids the push (no GitCredentials); this
+	// tests branch/URL/dir resolution only.
 	commitDelivery(context.Background(), nil, cfg, "impl", workerActivity{
 		stagedDelivery: map[string]StagedDelivery{"review": {Kind: "review", Event: "approve", Body: "looks good"}},
 	}, GateResult{Passed: true})
@@ -184,56 +178,31 @@ func stagePRTestTool(t *testing.T) tool.Tool {
 	return tl
 }
 
-// deliveryStub drives a worker through commit → stage_pr → done, then lets the
-// judge score whatever judgeScore says - so a test can force a pass or a
-// permanent fail and observe whether commitDelivery fires.
-type deliveryStub struct {
-	judgeScore float64
-}
-
-func (m *deliveryStub) Name() string { return "deliveryStub" }
-
-func (m *deliveryStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
+// deliveryStub drives a worker through commit -> stage_pr -> done; judge answers every verdict call.
+func deliveryStub(judge func() (*model.LLMResponse, error)) fnLLM {
+	return func(req *model.LLMRequest) (*model.LLMResponse, error) {
 		switch {
 		case stubHasTool(req, submitVerdictTool):
-			// A named criterion, not a flat score: aggregateVerdict recomputes the
-			// overall score as the weakest-link MIN across v.Criteria whenever foldDeterministic has added any (delivery_complete, here, once the
-			// worker has committed+staged) - a bare "score" would be silently discarded by that recomputation.
-			yield(stubCall(submitVerdictTool, map[string]any{
-				"criteria": map[string]any{"task_completeness": map[string]any{"score": m.judgeScore, "reason": "judged"}},
-				"score":    m.judgeScore, "feedback": "ok",
-			}), nil)
+			return judge()
 		case !stubHasResponse(req, "git_commit"):
-			yield(stubCall("git_commit", map[string]any{"message": "add the game"}), nil)
+			return stubCall("git_commit", map[string]any{"message": "add the game"}), nil
 		case !stubHasResponse(req, "stage_pr"):
-			yield(stubCall("stage_pr", map[string]any{"title": "Add flappy bird", "body": "adds a game"}), nil)
+			return stubCall("stage_pr", map[string]any{"title": "Add flappy bird", "body": "adds a game"}), nil
 		default:
-			yield(stubText("Committed and staged for delivery."), nil)
+			return stubText("Committed and staged for delivery."), nil
 		}
 	}
 }
 
-// deliveryStubJudgeErrors drives a worker through the same commit -> stage_pr
-// -> done spine as deliveryStub, but the judge call always fails with a
-// non-transient error (never recovers, even after runJudgeAgent's backoff retries) - the stand-in for #572's permanent judge outage.
-type deliveryStubJudgeErrors struct{}
-
-func (m *deliveryStubJudgeErrors) Name() string { return "deliveryStubJudgeErrors" }
-
-func (m *deliveryStubJudgeErrors) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		switch {
-		case stubHasTool(req, submitVerdictTool):
-			yield(nil, errors.New("judge model permanently unreachable"))
-		case !stubHasResponse(req, "git_commit"):
-			yield(stubCall("git_commit", map[string]any{"message": "add the game"}), nil)
-		case !stubHasResponse(req, "stage_pr"):
-			yield(stubCall("stage_pr", map[string]any{"title": "Add flappy bird", "body": "adds a game"}), nil)
-		default:
-			yield(stubText("Committed and staged for delivery."), nil)
-		}
-	}
+// scoredDeliveryStub's judge scores a named criterion: once delivery_complete is folded in,
+// aggregateVerdict recomputes the score as the MIN over criteria and drops a bare "score".
+func scoredDeliveryStub(score float64) fnLLM {
+	return deliveryStub(func() (*model.LLMResponse, error) {
+		return stubCall(submitVerdictTool, map[string]any{
+			"criteria": map[string]any{"task_completeness": map[string]any{"score": score, "reason": "judged"}},
+			"score":    score, "feedback": "ok",
+		}), nil
+	})
 }
 
 const deliveryGateTask = "Add a game to the repo, commit it, push the branch and open a pull request."
@@ -285,7 +254,7 @@ func TestGate_DeliversStagedPROnceOnJudgePass(t *testing.T) {
 		return nil, nil
 	}
 	cfg := Config{JudgeRounds: 1, Threshold: 0.7, Rubric: "score 0-10", Task: deliveryGateTask, Deliver: deliver}
-	runDeliveryGate(t, &deliveryStub{judgeScore: 0.9}, cfg)
+	runDeliveryGate(t, scoredDeliveryStub(0.9), cfg)
 
 	deadline := time.Now().Add(2 * time.Second)
 	for atomic.LoadInt32(&calls) == 0 && time.Now().Before(deadline) {
@@ -296,9 +265,8 @@ func TestGate_DeliversStagedPROnceOnJudgePass(t *testing.T) {
 	}
 }
 
-// A gate that never clears the judge threshold still DELIVERS - graceful
-// degradation: the work is done, so it ships with GatePassed=false so the
-// extension attaches a caveat (App.Deliver's gateCaveat), rather than the work being silently dropped.
+// A gate that never clears the threshold still delivers, with GatePassed=false so the extension
+// attaches a caveat instead of the work being dropped.
 func TestGate_DeliversWithCaveatOnJudgeFail(t *testing.T) {
 	got := make(chan DeliveryContext, 1)
 	deliver := func(_ context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) {
@@ -309,7 +277,7 @@ func TestGate_DeliversWithCaveatOnJudgeFail(t *testing.T) {
 		return nil, nil
 	}
 	cfg := Config{JudgeRounds: 1, Threshold: 0.99, Rubric: "score 0-10", Task: deliveryGateTask, Deliver: deliver}
-	runDeliveryGate(t, &deliveryStub{judgeScore: 0.5}, cfg)
+	runDeliveryGate(t, scoredDeliveryStub(0.5), cfg)
 
 	select {
 	case dc := <-got:
@@ -321,9 +289,8 @@ func TestGate_DeliversWithCaveatOnJudgeFail(t *testing.T) {
 	}
 }
 
-// TestGate_JudgeOutageDeliversWithCaveatNeverStrandsVerdict pins #572: when the judge call itself errors and never recovers (not a low score - the model was unreachable), the gate must NOT return early and skip
-// commitDelivery. Before the fix, that early return meant nothing was ever staged/delivered through the gate's own path - for a GitHub review, the
-// verdict marker (the ONLY place a self-review's verdict can live) was never written, and the reviewer's text instead surfaced elsewhere as a plain, unmarked comment that read exactly like a normal approved review.
+// A permanent judge outage must not skip commitDelivery, or a review's verdict marker is never
+// written and its text reads like an approved review.
 func TestGate_JudgeOutageDeliversWithCaveatNeverStrandsVerdict(t *testing.T) {
 	got := make(chan DeliveryContext, 1)
 	deliver := func(_ context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) {
@@ -334,7 +301,9 @@ func TestGate_JudgeOutageDeliversWithCaveatNeverStrandsVerdict(t *testing.T) {
 		return nil, nil
 	}
 	cfg := Config{JudgeRounds: 1, Threshold: 0.7, Rubric: "score 0-10", Task: deliveryGateTask, Deliver: deliver}
-	runDeliveryGate(t, &deliveryStubJudgeErrors{}, cfg)
+	runDeliveryGate(t, deliveryStub(func() (*model.LLMResponse, error) {
+		return nil, errors.New("judge model permanently unreachable")
+	}), cfg)
 
 	select {
 	case dc := <-got:
@@ -352,9 +321,7 @@ func TestGate_JudgeOutageDeliversWithCaveatNeverStrandsVerdict(t *testing.T) {
 	}
 }
 
-// TestCommitDeliveryFiresOnFailWithCaveat pins graceful degradation: delivery
-// happens even on a judge FAIL, and the DeliveryContext carries the verdict so
-// the extension can attach a caveat (GatePassed=false, GateFeedback set).
+// Delivery happens on a judge FAIL too, carrying GatePassed=false and GateFeedback for a caveat.
 func TestCommitDeliveryFiresOnFailWithCaveat(t *testing.T) {
 	done := make(chan DeliveryContext, 1)
 	cfg := Config{Deliver: func(_ context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) {
@@ -380,9 +347,8 @@ func TestCommitDeliveryFiresOnFailWithCaveat(t *testing.T) {
 	}
 }
 
-// #1155: a gate push failure must still reach Deliver, carrying the push error on dc.PushError - the extension is the only thing that can tell the
-// human on GitHub a delivery failed, and it was never invoked at all before
-// this fix (the run just went quiet with the worker's own, possibly stale, answer text).
+// A gate push failure still reaches Deliver with dc.PushError: only the extension can tell the
+// human on GitHub that delivery failed.
 func TestCommitDeliveryStillReachesDeliverOnPushFailure(t *testing.T) {
 	j, err := workspace.NewJail(t.TempDir())
 	if err != nil {
@@ -425,9 +391,8 @@ func TestCommitDeliveryStillReachesDeliverOnPushFailure(t *testing.T) {
 	}
 }
 
-// #1059: a multi-reviewer plan's merged review is delivered by the
-// synthesizer node, which never clones anything itself - its own cfg/act
-// carry no clone URL. The merged delivery must still carry the URL one of the actual reviewer nodes cloned, or Deliver has nothing to post against.
+// The synthesizer delivering a merged review never clones, so the delivery must carry a
+// reviewer node's clone URL or Deliver has nothing to post against.
 func TestReviewFanoutMergedDeliveryCarriesReviewerCloneURL(t *testing.T) {
 	const planID = "plan-1059"
 	fanout := GetReviewFanout(planID, 2)
@@ -529,18 +494,15 @@ func TestReviewFanout_SynthesizerCodeReviewRecordFlowsThroughCommitDelivery(t *t
 	}
 }
 
-// #1187: a run-level cancel landing the instant Deliver returns (shutdown
-// drain, hub.CancelRun) must not lose the post-delivery bookkeeping - the
-// GitHub side effect already happened, so the delivery_record completion must still be written even though the caller's context is now Done.
+// A cancel landing as Deliver returns must not lose the delivery_record completion: the GitHub
+// side effect already happened.
 func TestCommitDelivery_BookkeepingSurvivesCancelAfterDeliver(t *testing.T) {
 	cfg := Config{IsReviewer: true, ChatID: "ext:github:owner-repo-1187", User: "u1", Artifacts: artifact.InMemoryService()}
 	finding := FindingRecord{Path: "a.go", Title: "x", State: "new"}
 	fid, _ := recordstore.IdentityFor(kindFinding, finding, "")
 	seedCodeReview(t, cfg, "approve", "s", map[string]FindingRecord{fid: finding})
 
-	// wraps fakeGateLedger to record whether the ctx AppendIntent actually
-	// received was already cancelled - the fake itself ignores ctx, so this
-	// is what makes the test fail without the WithoutCancel fix.
+	// Records whether AppendIntent's ctx was already cancelled; fakeGateLedger ignores ctx.
 	shim := &ctxCapturingLedger{fakeGateLedger: newFakeGateLedger()}
 	cfg.Ledger = shim
 
@@ -564,9 +526,8 @@ func TestCommitDelivery_BookkeepingSurvivesCancelAfterDeliver(t *testing.T) {
 	}
 }
 
-// ctxCapturingLedger records the Err() of the ctx passed to the
-// delivery_record's artifact.revision AppendIntent call (its completion,
-// #1144 P2), since fakeGateLedger itself ignores ctx.
+// ctxCapturingLedger records ctx.Err() at the delivery_record's AppendIntent, which
+// fakeGateLedger ignores.
 type ctxCapturingLedger struct {
 	*fakeGateLedger
 	sawDeliveryRecord bool

@@ -10,8 +10,7 @@ import (
 	"google.golang.org/genai"
 )
 
-// hasFunctionCall is the one part of the old prod helper the assertions here
-// still need: did this content carry a FunctionCall part.
+// hasFunctionCall reports whether c carries a FunctionCall part.
 func hasFunctionCall(c *genai.Content) bool {
 	if c == nil {
 		return false
@@ -35,10 +34,8 @@ func (r *recordingBudgetLLM) GenerateContent(_ context.Context, req *model.LLMRe
 	return func(yield func(*model.LLMResponse, error) bool) { yield(&model.LLMResponse{}, nil) }
 }
 
-// bigCallResponsePair simulates one plan-judge round trip: a FunctionCall
-// content (a create_plan/execute call with a sizable args blob, standing in
-// for a full plan JSON) immediately followed by its FunctionResponse content
-// (a sizable rejection reason).
+// bigCallResponsePair is one plan-judge round trip: a sizable FunctionCall followed
+// by its sizable FunctionResponse.
 func bigCallResponsePair(n int) []*genai.Content {
 	blob := strings.Repeat("x", n)
 	return []*genai.Content{
@@ -47,11 +44,8 @@ func bigCallResponsePair(n int) []*genai.Content {
 	}
 }
 
-// TestBudgetedLLMTrimsAToolLoopGrowingPastTheWindow is the regression test
-// for the QA rig's context-overflow finding: a fake model's tool loop grows
-// well past the configured window (ADK's own EventRetentionSize-gated
-// tail-retention declines on a loop this shape - see BudgetedLLM's doc), and
-// BudgetedLLM must still never forward a request over budget.
+// A tool loop growing well past the window (ADK's tail-retention declines on this
+// shape) must still never be forwarded over budget.
 func TestBudgetedLLMTrimsAToolLoopGrowingPastTheWindow(t *testing.T) {
 	rec := &recordingBudgetLLM{}
 	const contextWindow = 8000 // reserve = contextWindow/4 = 2000, budget = 6000
@@ -102,10 +96,8 @@ func TestBudgetedLLMTrimNoteIsFixedText(t *testing.T) {
 	}
 }
 
-// TestBudgetedLLMNeverOrphansACallOrResponse pins the pairing invariant: a
-// trim never leaves a FunctionCall without its FunctionResponse, or vice
-// versa - most providers 400 on that wire shape, which would trade one
-// failure mode for another.
+// A trim never leaves a FunctionCall without its FunctionResponse or vice versa;
+// most providers 400 on that wire shape.
 func TestBudgetedLLMNeverOrphansACallOrResponse(t *testing.T) {
 	rec := &recordingBudgetLLM{}
 	const contextWindow = 1600 // reserve = contextWindow/4 = 400, budget = 1200
@@ -137,16 +129,8 @@ func TestBudgetedLLMNeverOrphansACallOrResponse(t *testing.T) {
 	}
 }
 
-// TestBudgetedLLMPlainTextTurnsNeverAdjacentSameRole pins the reviewer's
-// finding (#slice3 review): the three tests above only exercise tool-loop
-// layouts (back-to-back FunctionCall/FunctionResponse pairs), where the
-// pairing rule happens to already drop two at a time. A plain multi-turn
-// TEXT chat (no tool calls at all) alternates strictly user/model/user/...;
-// dropping a single content from the middle - as the old code did for
-// anything that wasn't a FunctionCall - joins its two neighbors into an
-// adjacent SAME role, exactly the shape the note-splice comment already
-// calls unsafe. Every surviving content here must still alternate role with
-// its neighbor.
+// Plain text turns alternate user/model; dropping one middle content would join its
+// neighbours into adjacent same-role turns, so every survivor must still alternate.
 func TestBudgetedLLMPlainTextTurnsNeverAdjacentSameRole(t *testing.T) {
 	rec := &recordingBudgetLLM{}
 	const contextWindow = 800 // reserve capped at contextWindow/4 = 200, so budget = 600 - tight
@@ -177,13 +161,8 @@ func TestBudgetedLLMPlainTextTurnsNeverAdjacentSameRole(t *testing.T) {
 	}
 }
 
-// TestBudgetedLLMPreservesTheCurrentQueryOnAChatWithHistory pins the rig
-// regression (#slice3 review): on a chat with history, Contents[0] is the
-// SESSION's first-ever turn, not this invocation's own query - which is
-// always the LAST content (whatever the model must respond to next, plain
-// text or a mid-loop FunctionResponse). A front-to-back trim that protects
-// only index 0 can erase that current query while older, larger history
-// survives, and the model server then 500s with "no user query found".
+// The current query is always the LAST content, not Contents[0]; a trim that erases it
+// makes the model server 500 with "no user query found".
 func TestBudgetedLLMPreservesTheCurrentQueryOnAChatWithHistory(t *testing.T) {
 	rec := &recordingBudgetLLM{}
 	const contextWindow = 800 // reserve capped at contextWindow/4 = 200, so budget = 600 - tight

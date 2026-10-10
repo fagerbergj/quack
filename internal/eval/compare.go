@@ -4,15 +4,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/fagerbergj/quack/internal/ledger/bundle"
 )
 
-// CriterionComparison is one rubric criterion's recorded-vs-new judge score.
-// *OK is false when that side's bundle carried no score for this criterion at
-// all (the rubric changed between runs, or a judge-unavailable round, which emits no evaluation event - see vetting/judge.go); Delta is only meaningful when both are true.
+// CriterionComparison is one criterion's recorded-vs-new judge score. *OK is false when that side has no
+// score for it (rubric changed, or judge unavailable); Delta needs both.
 type CriterionComparison struct {
 	Name       string  `json:"name"`
 	Recorded   float64 `json:"recorded,omitempty"`
@@ -22,9 +22,8 @@ type CriterionComparison struct {
 	Delta      float64 `json:"delta,omitempty"`
 }
 
-// Comparison is eval's whole result for one bundle re-run: the swap that was
-// made, both runs' final-answer lengths, and the per-criterion score table
-// plus each side's weakest-link overall (vetting.aggregateVerdict's own aggregation - the lowest criterion, no averaging, no caps).
+// Comparison is one bundle re-run's result: the swap, both final-answer lengths, the per-criterion table,
+// and each side's weakest-link overall (lowest criterion, as vetting aggregates).
 type Comparison struct {
 	Role              string                `json:"role"`
 	Model             string                `json:"model"`
@@ -42,18 +41,9 @@ func Build(role, model string, changedAgents []string, recordedScores, newScores
 	rec := latestPerCriterion(recordedScores)
 	neu := latestPerCriterion(newScores)
 
-	names := make(map[string]bool, len(rec)+len(neu))
-	for n := range rec {
-		names[n] = true
-	}
-	for n := range neu {
-		names[n] = true
-	}
-	sorted := make([]string, 0, len(names))
-	for n := range names {
-		sorted = append(sorted, n)
-	}
-	sort.Strings(sorted)
+	names := maps.Clone(rec)
+	maps.Copy(names, neu)
+	sorted := slices.Sorted(maps.Keys(names))
 
 	c := Comparison{
 		Role:              role,
@@ -80,9 +70,8 @@ func Build(role, model string, changedAgents []string, recordedScores, newScores
 	return c
 }
 
-// latestPerCriterion collapses a bundle's raw evaluation.result events into one score per criterion name: the LATEST (by timestamp) reading, which is
-// the gate's final verdict for whichever node/round most recently judged it (an earlier, lower score from a revise loop is superseded - the gate's own
-// pass/fail decision only ever looks at the last round, see vetting/node.go). v1 ceiling: a multi-node run's SAME criterion name from two different nodes collapses into one row - fine for the common single/few-node eval target this feature ships for, not a cross-node breakdown.
+// latestPerCriterion keeps each criterion's latest score, the gate's final verdict.
+// Ceiling: the same criterion from two nodes collapses into one row.
 func latestPerCriterion(scores []bundle.EvalScore) map[string]bundle.EvalScore {
 	out := map[string]bundle.EvalScore{}
 	for _, s := range scores {

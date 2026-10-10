@@ -10,16 +10,14 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// readOnlyGateCfg mimics a real code-reviewer/code-explorer's startup-time
-// config (internal/serve/serve.go's perAgentGateCfg): ACP-backed, read-only,
-// no delivery target - the shape any read-only agent's cfgFor hands back, regardless of what a planner-authored node asks for.
+// readOnlyGateCfg mimics serve's perAgentGateCfg for a read-only agent: ACP-backed,
+// read-only, no delivery target.
 func readOnlyGateCfg() vetting.Config {
 	return vetting.Config{ExternalWorker: true, ReadOnly: true}
 }
 
-// TestNodeGateConfigDropsChecksForReadOnlyNode pins the prod failure (trust
-// gate fail-closed: `checks_pass: check "go build ./...": workspace: workdir
-// ".../review-f65532f/repo" does not exist`) at its root: a read-only node (any agent lacking write/push tools, not just code-reviewer by name) never gets a deterministic build check, because it can never satisfy one.
+// A read-only node never gets a deterministic build check: it can never satisfy one,
+// and the gate would fail closed on a missing workdir.
 func TestNodeGateConfigDropsChecksForReadOnlyNode(t *testing.T) {
 	for _, agent := range []string{reviewerAgent, explorerAgent, "web-researcher"} {
 		t.Run(agent, func(t *testing.T) {
@@ -50,9 +48,7 @@ func TestNodeGateConfigDropsChecksForReadOnlyNode(t *testing.T) {
 	}
 }
 
-// TestNodeGateConfigKeepsChecksForWritableNode is the contrast case: an
-// implementer (or any writable agent) keeps its planner-authored checks and
-// workdir untouched.
+// A writable agent keeps its planner-authored checks and workdir.
 func TestNodeGateConfigKeepsChecksForWritableNode(t *testing.T) {
 	plan := Plan{Nodes: []Node{{ID: "n1", AgentName: implementerAgent, Checks: []string{"go build ./..."}, Workdir: "sub"}}}
 	cfgFor := func(context.Context, string) vetting.Config { return writableGateCfg() }
@@ -66,9 +62,7 @@ func TestNodeGateConfigKeepsChecksForWritableNode(t *testing.T) {
 	}
 }
 
-// TestNodeGateConfigReviewerHasNoChecksPassCriterion proves the practical
-// consequence for a reviewer node: with Checks nil and DeriveChecks false
-// (reviewer is never the implementer), vetting.checksPassCriterion's own "not_configured" skip fires - the gate never evaluates a checks_pass criterion for it at all.
+// With Checks nil and DeriveChecks false, checksPassCriterion skips as "not_configured".
 func TestNodeGateConfigReviewerHasNoChecksPassCriterion(t *testing.T) {
 	plan := Plan{Nodes: []Node{{ID: "review", AgentName: reviewerAgent, Checks: []string{"go build ./..."}, Workdir: "guessed"}}}
 	cfgFor := func(context.Context, string) vetting.Config { return readOnlyGateCfg() }

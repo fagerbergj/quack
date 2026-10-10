@@ -61,42 +61,27 @@ func newDecider(t *testing.T, url, pointID, mode string, actAt float64) *Decider
 
 func TestPolicy(t *testing.T) {
 	for _, c := range []struct {
-		name, mode    string
-		p             float64
-		want          Outcome
-		choose, guard bool // Choose(false) and Guard(true) on the parsed answer
+		name, mode string
+		p          float64
+		want       Outcome
 	}{
-		{"decide confident yes acts", config.DecisionModeDecide, 0.95, OutcomeAct, true, true},
-		{"decide exactly at act_at acts", config.DecisionModeDecide, 0.9, OutcomeAct, true, true},
-		{"decide below act_at falls back", config.DecisionModeDecide, 0.85, OutcomeFallback, false, true},
-		{"decide confident no acts", config.DecisionModeDecide, 0.02, OutcomeAct, false, true},
-		{"guard confident restrictive answer restricts", config.DecisionModeGuard, 0.05, OutcomeRestrict, false, false},
-		{"guard never widens", config.DecisionModeGuard, 0.99, OutcomePass, false, true},
-		{"guard below act_at passes", config.DecisionModeGuard, 0.2, OutcomePass, false, true},
-		{"observe never acts", config.DecisionModeObserve, 0.01, OutcomeObserve, false, true},
+		{"decide confident yes acts", config.DecisionModeDecide, 0.95, OutcomeAct},
+		{"decide exactly at act_at acts", config.DecisionModeDecide, 0.9, OutcomeAct},
+		{"decide below act_at falls back", config.DecisionModeDecide, 0.85, OutcomeFallback},
+		{"decide confident no acts", config.DecisionModeDecide, 0.02, OutcomeAct},
+		{"guard confident restrictive answer restricts", config.DecisionModeGuard, 0.05, OutcomeRestrict},
+		{"guard never widens", config.DecisionModeGuard, 0.99, OutcomePass},
+		{"guard below act_at passes", config.DecisionModeGuard, 0.2, OutcomePass},
+		{"observe never acts", config.DecisionModeObserve, 0.01, OutcomeObserve},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			var calls atomic.Int32
 			d := newDecider(t, noulServer(t, &calls, c.p, nil), testAccept.ID, c.mode, 0.9)
-			x := testAccept.Decide(context.Background(), d, "state", true)
+			x := d.DecideWith(context.Background(), testAccept.Point, "state", "true")
 			if x.Err != nil || x.Outcome != c.want {
 				t.Fatalf("outcome = %s err = %v, want %s", x.Outcome, x.Err, c.want)
 			}
-			if got := x.Choose(false); got != c.choose {
-				t.Errorf("Choose(false) = %v, want %v", got, c.choose)
-			}
-			if got := x.Guard(true); got != c.guard {
-				t.Errorf("Guard(true) = %v, want %v", got, c.guard)
-			}
 		})
-	}
-}
-
-func TestGuardCannotWidenARestrictiveCurrentValue(t *testing.T) {
-	var calls atomic.Int32
-	d := newDecider(t, noulServer(t, &calls, 0.99, nil), testAccept.ID, config.DecisionModeGuard, 0.9)
-	if got := testAccept.Decide(context.Background(), d, "s", false).Guard(false); got {
-		t.Error("a confident accept turned the caller's reject into an accept")
 	}
 }
 
@@ -122,8 +107,8 @@ func TestDisabledPointMakesNoCall(t *testing.T) {
 
 func TestServiceDownIsNoDecision(t *testing.T) {
 	d := newDecider(t, "http://127.0.0.1:1", testAccept.ID, config.DecisionModeDecide, 0.5)
-	x := testAccept.Decide(context.Background(), d, "s", true)
-	if x.Err == nil || x.Outcome != OutcomeUnavailable || x.Act() || x.Choose(true) != true || x.Guard(true) != true {
+	x := d.DecideWith(context.Background(), testAccept.Point, "s", "true")
+	if x.Err == nil || x.Outcome != OutcomeUnavailable || x.Act() || x.Restricts() {
 		t.Errorf("%+v, want unavailable with the caller's values kept", x)
 	}
 }
@@ -267,7 +252,7 @@ func TestRecordingPayload(t *testing.T) {
 	var calls atomic.Int32
 	d := newDecider(t, noulServer(t, &calls, 0.97, nil), testAccept.ID, config.DecisionModeDecide, 0.9)
 	ctx := ledger.WithCoords(context.Background(), ledger.Coords{ChatID: "chat-1", Node: "n1"})
-	testAccept.Decide(ctx, d, map[string]string{"plan": "p"}, false)
+	d.DecideWith(ctx, testAccept.Point, map[string]string{"plan": "p"}, "false")
 
 	got := decisionEntries(t, mem, "chat-1")
 	if len(got) != 1 {
@@ -346,12 +331,12 @@ func TestGuardFailClosedRestrictsWithoutADecision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	x := testAccept.Decide(context.Background(), d, "s", true)
-	if x.Err == nil || x.Outcome != OutcomeRestrict || x.Guard(true) != false {
+	x := d.DecideWith(context.Background(), testAccept.Point, "s", "true")
+	if x.Err == nil || x.Outcome != OutcomeRestrict || x.Top != "false" {
 		t.Errorf("%+v, want a fail-closed restrict to false", x)
 	}
 	open := newDecider(t, "http://127.0.0.1:1", testAccept.ID, config.DecisionModeGuard, 0.9)
-	if x := testAccept.Decide(context.Background(), open, "s", true); x.Outcome != OutcomeUnavailable || x.Guard(true) != true {
+	if x := open.DecideWith(context.Background(), testAccept.Point, "s", "true"); x.Outcome != OutcomeUnavailable || x.Restricts() {
 		t.Errorf("%+v, want fail open to keep the caller's value", x)
 	}
 }

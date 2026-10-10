@@ -12,15 +12,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fagerbergj/quack/internal/langfuse/langfusegen"
+	"github.com/fagerbergj/quack/internal/langfuse"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/ledgertest"
 	"github.com/fagerbergj/quack/internal/store"
 )
 
-func datasetItemFromInput(t *testing.T, id string, input map[string]any) langfusegen.DatasetItem {
+func datasetItemFromInput(t *testing.T, id string, input map[string]any) langfuse.DatasetItem {
 	t.Helper()
-	return langfusegen.DatasetItem{Id: id, Input: input}
+	return langfuse.DatasetItem{ID: id, Input: input}
 }
 
 // stubRunner is a fake itemRunner: returns a fixed (answer, traceID) per task, or errs
@@ -56,7 +56,7 @@ func TestRunExperiment_ReportsRealTraceID(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	lf := newTestGenClient(t, srv)
+	lf := newTestClient(t, srv)
 
 	runner := &stubRunner{traceID: "trace-abc123"}
 	results, err := RunExperiment(context.Background(), io.Discard, runner, lf,
@@ -83,7 +83,7 @@ func TestRunExperiment_ItemErrorIsReportedNotFatal(t *testing.T) {
 		t.Fatalf("run item should not be created for a failed run: %s", r.URL.Path)
 	}))
 	defer srv.Close()
-	lf := newTestGenClient(t, srv)
+	lf := newTestClient(t, srv)
 
 	runner := &stubRunner{errOn: "fail me"}
 	results, err := RunExperiment(context.Background(), io.Discard, runner, lf, ExperimentOpts{Dataset: "my-dataset", RunName: "run1"})
@@ -112,13 +112,13 @@ func TestListDatasetItems_PagesUntilEmpty(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	lf := newTestGenClient(t, srv)
+	lf := newTestClient(t, srv)
 
 	items, err := listDatasetItems(context.Background(), lf, "my-dataset", 0)
 	if err != nil {
 		t.Fatalf("listDatasetItems: %v", err)
 	}
-	if len(items) != 2 || items[0].Id != "item1" || items[1].Id != "item2" {
+	if len(items) != 2 || items[0].ID != "item1" || items[1].ID != "item2" {
 		t.Fatalf("want both pages' items in order, got %+v", items)
 	}
 }
@@ -133,7 +133,7 @@ func TestListDatasetItems_LimitStopsBeforeSecondPage(t *testing.T) {
 			"meta": map[string]any{"page": 1, "limit": 1, "totalItems": 2, "totalPages": 2}})
 	}))
 	defer srv.Close()
-	lf := newTestGenClient(t, srv)
+	lf := newTestClient(t, srv)
 
 	items, err := listDatasetItems(context.Background(), lf, "my-dataset", 1)
 	if err != nil {
@@ -149,7 +149,7 @@ func TestRunExperiment_ListDatasetItemsError(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer srv.Close()
-	lf := newTestGenClient(t, srv)
+	lf := newTestClient(t, srv)
 
 	_, err := RunExperiment(context.Background(), io.Discard, &stubRunner{}, lf, ExperimentOpts{Dataset: "my-dataset", Limit: 5})
 	if err == nil {
@@ -163,7 +163,7 @@ func TestRunExperiment_MissingTaskStopsTheRun(t *testing.T) {
 			"meta": map[string]any{"page": 1, "limit": 1, "totalItems": 1, "totalPages": 1}})
 	}))
 	defer srv.Close()
-	lf := newTestGenClient(t, srv)
+	lf := newTestClient(t, srv)
 
 	_, err := RunExperiment(context.Background(), io.Discard, &stubRunner{}, lf, ExperimentOpts{Dataset: "my-dataset"})
 	if err == nil {
@@ -182,7 +182,7 @@ func TestRunExperiment_RecordRunItemError(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	lf := newTestGenClient(t, srv)
+	lf := newTestClient(t, srv)
 
 	_, err := RunExperiment(context.Background(), io.Discard, &stubRunner{traceID: "t1"}, lf, ExperimentOpts{Dataset: "my-dataset"})
 	if err == nil {
@@ -190,9 +190,7 @@ func TestRunExperiment_RecordRunItemError(t *testing.T) {
 	}
 }
 
-// TestRunExperiment_HardErrorReportsCompletedItems: a hard error on item 2
-// must still print item 1's completed row to errOut (PR #1444 round-2
-// finding - experiment.go:64's partial-summary print had no test covering it).
+// A hard error on item 2 must still print item 1's completed row.
 func TestRunExperiment_HardErrorReportsCompletedItems(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -215,7 +213,7 @@ func TestRunExperiment_HardErrorReportsCompletedItems(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	lf := newTestGenClient(t, srv)
+	lf := newTestClient(t, srv)
 
 	var errOut bytes.Buffer
 	_, err := RunExperiment(context.Background(), &errOut, &stubRunner{traceID: "t1"}, lf,
@@ -243,9 +241,7 @@ func recordingBody(t *testing.T, chatID, node, agent, task, answer string) []byt
 	return buf.Bytes()
 }
 
-// TestLiveItemRunner_RunItem drives RunItem end to end against an httptest fake of the
-// quack HTTP API: create chat, stream SSE to completion, fetch the recording, resolve the
-// agent's node run and its trace id off a real Store.
+// TestLiveItemRunner_RunItem drives RunItem against an httptest fake of the quack API and a real Store.
 func TestLiveItemRunner_RunItem(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
@@ -413,7 +409,7 @@ func TestRunExperiment_EmptyTraceIDIsAnError(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	lf := newTestGenClient(t, srv)
+	lf := newTestClient(t, srv)
 
 	res, err := RunExperiment(context.Background(), io.Discard, &stubRunner{}, lf, ExperimentOpts{Dataset: "my-dataset"})
 	if err != nil {

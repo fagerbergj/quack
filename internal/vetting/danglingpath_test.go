@@ -5,9 +5,8 @@ import (
 	"testing"
 )
 
-// TestDanglingDeliverablePathCriterion_CatchesUncommittedPointer pins #569:
-// a plan-only run wrote PLAN_58_HOME_FRAGMENT_COMPOSE.md into its (discarded)
-// working directory and then posted a comment pointing at it as the deliverable, never having committed anything.
+// A plan-only run that wrote a file into its discarded working dir and pointed at it as the deliverable,
+// never committing, must fail.
 func TestDanglingDeliverablePathCriterion_CatchesUncommittedPointer(t *testing.T) {
 	act := workerActivity{written: []string{"node1/PLAN_58_HOME_FRAGMENT_COMPOSE.md"}}
 	answer := "The implementation plan is complete at `PLAN_58_HOME_FRAGMENT_COMPOSE.md`. Here's what it covers: ..."
@@ -23,9 +22,7 @@ func TestDanglingDeliverablePathCriterion_CatchesUncommittedPointer(t *testing.T
 	}
 }
 
-// TestDanglingDeliverablePathCriterion_CommittedIsFine: a committed write
-// ships on the branch/PR the delivery step pushes - referencing it is not
-// dangling.
+// A committed write ships on the delivered branch, so referencing it is not dangling.
 func TestDanglingDeliverablePathCriterion_CommittedIsFine(t *testing.T) {
 	act := workerActivity{written: []string{"node1/PLAN.md"}, committed: true}
 	answer := "Committed the plan to `PLAN.md` on the work branch."
@@ -34,9 +31,7 @@ func TestDanglingDeliverablePathCriterion_CommittedIsFine(t *testing.T) {
 	}
 }
 
-// TestDanglingDeliverablePathCriterion_NoWrittenPathMentioned: the answer
-// happens to mention an unrelated filename - only a path THIS run actually
-// wrote (act.written) can trigger the criterion.
+// Only a path this run actually wrote (act.written) can trigger the criterion.
 func TestDanglingDeliverablePathCriterion_NoWrittenPathMentioned(t *testing.T) {
 	act := workerActivity{written: []string{"node1/scratch.tmp"}}
 	answer := "See `main.go` for the entrypoint; the router is wired in `router.go`."
@@ -51,9 +46,8 @@ func TestDanglingDeliverablePathCriterion_NothingWritten(t *testing.T) {
 	}
 }
 
-// TestDanglingDeliverablePathCriterion_DiscussingAnEditedFile pins the home-server#3 false positive: a code-explorer run strayed off-task and
-// edited deepwiki/docker-compose.yml, but its actual answer only ever CITES that path (and the unrelated docker-compose.yml it was asked to read) in a
-// findings table - it never claims the file IS the deliverable. Basename substring matching alone flags this because "docker-compose.yml" is a common name the answer legitimately discusses in prose; this must not fire.
+// An answer that only cites an edited file in a findings table never claims it is the deliverable; a common
+// basename like docker-compose.yml must not fire on substring match alone.
 func TestDanglingDeliverablePathCriterion_DiscussingAnEditedFile(t *testing.T) {
 	act := workerActivity{written: []string{"explore-llm/deepwiki/docker-compose.yml"}}
 	answer := "### 1. Full docker-compose.yml — `llm/docker-compose.yml`\n\n" +
@@ -66,9 +60,7 @@ func TestDanglingDeliverablePathCriterion_DiscussingAnEditedFile(t *testing.T) {
 	}
 }
 
-// TestDanglingDeliverablePathCriterion_BasenameFallbackStillNeedsPointerPhrase:
-// a bare-basename occurrence (no directory prefix) still must not fire
-// without pointer language nearby.
+// A bare-basename occurrence still must not fire without pointer language nearby.
 func TestDanglingDeliverablePathCriterion_BasenameFallbackStillNeedsPointerPhrase(t *testing.T) {
 	act := workerActivity{written: []string{"node1/sub/docker-compose.yml"}}
 	answer := "Reading `docker-compose.yml` shows the deepwiki service routes through llm-swap."
@@ -77,9 +69,7 @@ func TestDanglingDeliverablePathCriterion_BasenameFallbackStillNeedsPointerPhras
 	}
 }
 
-// TestDanglingDeliverablePathCriterion_BasenameFallbackWithPointerPhrase: the
-// full relative path never appears (only the bare filename), but the
-// pointer phrasing is genuine - this is still the true positive the criterion exists for.
+// Only the bare filename appears, but the pointer phrasing is genuine: still a true positive.
 func TestDanglingDeliverablePathCriterion_BasenameFallbackWithPointerPhrase(t *testing.T) {
 	act := workerActivity{written: []string{"node1/sub/report.md"}}
 	answer := "The full write-up is saved to `report.md`."

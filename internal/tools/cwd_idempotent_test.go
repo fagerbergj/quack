@@ -2,9 +2,8 @@ package tools
 
 import "testing"
 
-// A path that ALREADY carries the cwd must not be joined onto the cwd again:
-// every tool speaks ONE node-relative namespace, so read_file("openhands/README.md")
-// after `cd openhands` is unambiguous and must WORK (a live explorer node flailed through 34 of 69 calls doubling it to openhands/openhands/...).
+// A path that already carries the cwd must not be joined onto it again: read_file("openhands/README.md")
+// after `cd openhands` must work.
 func TestJoinCwd_DoesNotDoubleTheCwd(t *testing.T) {
 	const cwd = "openhands"
 
@@ -44,7 +43,6 @@ func TestJoinCwd_DoesNotDoubleTheCwd(t *testing.T) {
 	}
 }
 
-// With no cwd set, paths pass through unchanged.
 func TestJoinCwd_NoCwd(t *testing.T) {
 	if got := joinCwd("", "a/b.go"); got != "a/b.go" {
 		t.Fatalf("joinCwd(\"\", %q) = %q", "a/b.go", got)

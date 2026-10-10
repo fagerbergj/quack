@@ -322,15 +322,11 @@ func TestRunJudgeReplayDeterministicOnlyNeverTouchesJudge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load bundle: %v", err)
 	}
-	calls := 0
-	judge := vetting.CountingJudgeFactory(vetting.NewJudgeFactory(fakeLLM{t: t}, nil, nil), &calls)
+	judge := vetting.NewJudgeFactory(fakeLLM{t: t}, nil, nil) // fakeLLM fails the test if the judge runs
 
 	opts := ReplayOptions{RubricPath: rubricFile(t, "existence check", 0.85), DeterministicOnly: true}
 	var buf bytes.Buffer
 	RunJudgeReplay(ctx, fixtureConfig(), sess, opts, judge, nil, false, &buf, false)
-	if calls != 0 {
-		t.Fatalf("judge factory invoked %d time(s) under --deterministic-only, want 0", calls)
-	}
 }
 
 func TestRunJudgeReplayNodeAndRoundFilters(t *testing.T) {
@@ -447,9 +443,9 @@ func TestActivityScopeIncludesOtherNodesBeforeJudgeRound(t *testing.T) {
 
 func TestRubricConfigForRendersRubricIntoCfgRubric(t *testing.T) {
 	rubricPath := rubricFile(t, "a distinctive marker for this test", 0.85)
-	gc, err := RubricConfigFor(context.Background(), fixtureConfig(), "web-researcher", rubricPath, nil)
+	gc, err := rubricConfigFor(context.Background(), fixtureConfig(), "web-researcher", rubricPath, nil)
 	if err != nil {
-		t.Fatalf("RubricConfigFor: %v", err)
+		t.Fatalf("rubricConfigFor: %v", err)
 	}
 	if !strings.Contains(gc.Rubric, "a distinctive marker for this test") {
 		t.Errorf("cfg.Rubric = %q, want it to carry the working-copy rubric's own text (buildJudgePrompt embeds cfg.Rubric verbatim)", gc.Rubric)
@@ -457,14 +453,14 @@ func TestRubricConfigForRendersRubricIntoCfgRubric(t *testing.T) {
 }
 
 func TestRubricConfigForUnknownAgent(t *testing.T) {
-	if _, err := RubricConfigFor(context.Background(), &config.Config{}, "no-such-agent", "", nil); err == nil {
-		t.Fatal("RubricConfigFor for an agent absent from quack.yaml: err = nil, want an error")
+	if _, err := rubricConfigFor(context.Background(), &config.Config{}, "no-such-agent", "", nil); err == nil {
+		t.Fatal("rubricConfigFor for an agent absent from quack.yaml: err = nil, want an error")
 	}
 }
 
 func TestRubricConfigForEmptyAgentName(t *testing.T) {
-	if _, err := RubricConfigFor(context.Background(), &config.Config{}, "", "", nil); err == nil {
-		t.Fatal("RubricConfigFor with no recorded worker agent: err = nil, want a clear error")
+	if _, err := rubricConfigFor(context.Background(), &config.Config{}, "", "", nil); err == nil {
+		t.Fatal("rubricConfigFor with no recorded worker agent: err = nil, want a clear error")
 	}
 }
 

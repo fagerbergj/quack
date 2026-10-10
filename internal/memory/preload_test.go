@@ -64,9 +64,7 @@ func TestStoreRecall(t *testing.T) {
 	}
 }
 
-// TestRecallWithHits_PopulatesScore covers the #1257 review finding: a Delivered hit
-// must carry the real cosine score, not the zero value every memory.recall ledger
-// entry silently recorded before recall() threaded its scored points back out.
+// A Delivered hit must carry the real cosine score, not the zero value.
 func TestRecallWithHits_PopulatesScore(t *testing.T) {
 	consolidator := fakeModel{reply: `{"ops":[{"action":"ADD","content":"build with make dev, not npm run build","kind":"convention"}]}`}
 	s := newSQLiteStore(t, "task", consolidator)
@@ -81,17 +79,13 @@ func TestRecallWithHits_PopulatesScore(t *testing.T) {
 	if len(hits) != 1 {
 		t.Fatalf("hits = %+v, want exactly 1", hits)
 	}
-	// fakeEmbedder returns the same fixed vector for every text, so cosine
-	// similarity is exactly 1 - any non-zero value proves the score reached
-	// Delivered rather than being silently dropped.
+	// fakeEmbedder gives cosine exactly 1, so any non-zero value proves the score reached Delivered.
 	if hits[0].Score == 0 {
 		t.Fatalf("hits[0].Score = %v, want non-zero (real cosine similarity)", hits[0].Score)
 	}
 }
 
-// TestCapForInjection_TruncatesAndReports covers epic #1255 P2's byte-budget
-// requirement: once cumulative Content bytes exceed budget, later hits are
-// dropped and truncated is reported - not silently swallowed.
+// Once cumulative Content bytes exceed budget, later hits are dropped and truncated is reported.
 func TestCapForInjection_TruncatesAndReports(t *testing.T) {
 	hits := []Delivered{{ID: "a", Content: strings.Repeat("x", 6)}, {ID: "b", Content: strings.Repeat("y", 6)}}
 	kept, truncated := CapForInjection(hits, 10)
@@ -112,9 +106,7 @@ func TestCapForInjection_TruncatesAndReports(t *testing.T) {
 	}
 }
 
-// TestRecallForTool_CapsToTopKAndScopeIsolation covers two of P2's required
-// verifications together: k narrows but never widens past the store's own
-// top_k, and a caller in one repo's scope never sees another repo's memories.
+// k narrows but never widens past the store's top_k, and one repo's scope never sees another's memories.
 func TestRecallForTool_CapsToTopKAndScopeIsolation(t *testing.T) {
 	consolidator := fakeModel{reply: `{"ops":[{"action":"ADD","content":"seed","kind":"note"}]}`}
 	s := newSQLiteStore(t, "task", consolidator) // top_k=5, min_score=0.5
@@ -153,10 +145,8 @@ func TestRecallForTool_CapsToTopKAndScopeIsolation(t *testing.T) {
 	}
 }
 
-// TestLogRecallLedgerOnly_LogsButNeverBumps covers the primitive itself: N calls append N
-// ledger entries and never touch recalls - the round-scoped dedup that decides WHEN to
-// call RecordRecall is vetting's job (this package can't import vetting to prove it end
-// to end; see vetting's TestRunGatedRefine_NativeRecalledMemory_CountsOnceOnJudgePass).
+// N calls append N ledger entries and never bump recalls; the round-scoped dedup is vetting's job
+// (TestRunGatedRefine_NativeRecalledMemory_CountsOnceOnJudgePass).
 func TestLogRecallLedgerOnly_LogsButNeverBumps(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
 		ctx := context.Background()

@@ -34,9 +34,7 @@ func (s *slowWorkerStub) GenerateContent(ctx context.Context, req *model.LLMRequ
 	return s.orchStub.GenerateContent(ctx, req, st)
 }
 
-// planFanout: fanN new nodes plus a synthesizer depending on all of them by
-// their 0-based position in this same call's assignments array - node ids
-// are minted, so a brand-new sibling has none yet to reference by name.
+// planFanout: fanN nodes plus a synthesizer depending on them by 0-based position (ids are minted).
 func planFanout() *model.LLMResponse {
 	var assignments, deps []any
 	for i := range fanN {
@@ -49,9 +47,8 @@ func planFanout() *model.LLMResponse {
 	return stubCall("create_plan", map[string]any{"assignments": assignments})
 }
 
-// #1033: the run consumer stops ranging mid-run - in REST, runChat returns
-// on an error event (handler.go:657) while sibling nodes are still live.
-// yield then returns false while node goroutines still hold the ctx-stored yield. Pre-fix the next node emit tripped "range function continued iteration after function for loop body returned false", safeYield recovered it without resuming, and Go killed the process at the range site.
+// The consumer stops ranging while sibling nodes still hold the ctx yield; the next node emit
+// must not panic the process at the range site.
 func TestRun_ConsumerStopsRangingMidRun_ProcessSurvives(t *testing.T) {
 	stub := &slowWorkerStub{orchStub: orchStub{replies: []*model.LLMResponse{planFanout()}}}
 	agents := map[string]adkagent.Agent{}

@@ -9,17 +9,14 @@ import (
 	"github.com/fagerbergj/quack/internal/inference"
 )
 
-// Store-backend kinds. Empty kind defaults to the only bundled adapter (Qdrant), so existing
-// config keeps working without naming a kind. Mirrors the inference.NewModel provider-kind
-// factory and the tools backend factory - the one selection convention for every swappable backend.
+// Store-backend kinds. Empty defaults to Qdrant so existing config needn't name a kind.
 const (
 	KindQdrant = "qdrant"
 	KindSQLite = "sqlite"
 )
 
-// New selects the semantic-memory store adapter for kind (default: qdrant) and opens it.
-// qdrant is generic OSS infra directed by addr (host:port); sqlite is an embedded file at
-// addr (a path) for the no-docker path. A future backend (e.g. pgvector) is a new case here, not a change to any caller.
+// New opens the store adapter for kind (default qdrant): qdrant takes addr as host:port, sqlite as a
+// file path (the no-docker path).
 func New(ctx context.Context, kind, addr string, embedder inference.Embedder, consolidator model.LLM, collection, domain string, topK int, minScore float32) (*Store, error) {
 	if kind == "" {
 		kind = KindQdrant

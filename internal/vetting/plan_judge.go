@@ -20,9 +20,8 @@ import (
 	"github.com/fagerbergj/quack/internal/memory"
 )
 
-// PlanJudge: decides whether a proposed DAG plan is a well-formed answer to
-// the user's request. repoKey is the plan's normalized repo identity (e.g.
-// "github.com/owner/repo") when the plan declares setup, "" otherwise.
+// PlanJudge decides whether a proposed DAG plan answers the user's request. repoKey is the plan's
+// normalized repo identity ("github.com/owner/repo") when it declares setup, else "".
 type PlanJudge func(ctx context.Context, request, planSummary, repoKey string) (accept bool, reason string, err error)
 
 // submitPlanVerdictTool: structured-termination tool for plan judge, mirrors submit_verdict.
@@ -33,7 +32,7 @@ type planVerdictArgs struct {
 	Reason string `json:"reason"`
 }
 
-// planRubricInstruction: five-criterion rubric for plan shape (not answer quality), replaces old regex routing.
+// planRubricInstruction: five-criterion rubric for plan shape, not answer quality.
 const planRubricInstruction = `You are an independent reviewer judging one STEP of a PROPOSED PLAN - a DAG of agent nodes, some already run - against the user's actual request and the conversation so far. You did not author the plan, you have no tools, and you are not judging any node's output quality; you are judging whether running this step is the right move.
 
 You will be shown the user's request, the proposed plan (each node's id, agent, task, and dependencies - a node marked "ALREADY RAN" also shows its result), and the plan's declared setup (working clone + branch) and delivery (how the result reaches GitHub) - or "(none declared - this step may be a partial plan, more nodes to follow)" for either.
@@ -53,9 +52,8 @@ Give the plan the benefit of the doubt on ambiguous phrasing - this check exists
 
 Call submit_plan_verdict exactly once with accept (bool) and reason (if rejecting: name the ONE specific edit that fixes it - e.g. "add a terminal node that actually writes the plan - the current terminal node only explores", "this is a plan-only request; drop the code-implementer node", "declare delivery so the shipped code can reach GitHub", "split the implementer into a chain of independent, goal-scoped nodes", or "shrink this to the commit/threads/files the user actually named instead of the whole PR" - never a vague "reconsider the plan"; if accepting: a brief reason is fine, or "").`
 
-// NewPlanJudge: builds PlanJudge backed by judgeModel (reuses the trust gate's judge). Isolated in-memory
-// session per call. maxOutputTokens caps the round's own reply tokens; <= 0 leaves it uncapped (#889).
-// thinkingLevel is gates.judge.thinking_level ("", "low", "medium", "high"); "" sends no ThinkingConfig. mem/led are optional (epic #1255 P2): nil skips the project-memory section entirely.
+// NewPlanJudge runs judgeModel in an isolated in-memory session per call. maxOutputTokens <= 0 leaves
+// replies uncapped; thinkingLevel "" sends no ThinkingConfig; nil mem/led skip the memory section.
 func NewPlanJudge(judgeModel model.LLM, maxOutputTokens int, thinkingLevel string, mem *memory.Store, led ledger.LedgerStore) PlanJudge {
 	return func(ctx context.Context, request, planSummary, repoKey string) (bool, string, error) {
 		var memSection string
@@ -125,7 +123,7 @@ func NewPlanJudge(judgeModel model.LLM, maxOutputTokens int, thinkingLevel strin
 					repeats.observe(p.Text)
 				}
 			}
-			// A runaway repeat loop must not decode the same text forever (#889).
+			// A runaway repeat loop must not decode the same text forever.
 			if repeats.tripped {
 				slog.Warn("plan judge aborted: runaway repeat detected mid-generation", "component", "vetting")
 				cancel()
@@ -139,8 +137,7 @@ func NewPlanJudge(judgeModel model.LLM, maxOutputTokens int, thinkingLevel strin
 	}
 }
 
-// buildPlanJudgePrompt: assembles the plan judge's user message. memSection
-// is "" when no project memory matched (epic #1255 P2).
+// buildPlanJudgePrompt assembles the user message; memSection is "" when no project memory matched.
 func buildPlanJudgePrompt(request, planSummary, memSection string) string {
 	var sb strings.Builder
 	if memSection != "" {

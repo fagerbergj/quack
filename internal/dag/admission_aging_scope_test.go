@@ -6,9 +6,8 @@ import (
 	"time"
 )
 
-// #1038: the aging gate is global. Once ANY waiter ages past the threshold,
-// fits() is false for every other waiter regardless of what it wants - so a
-// node contending for nothing stalls behind an unrelated starved one while its own capacity sits idle. On the deployed config (two models with session caps, node runtimes in minutes against a 2-minute threshold) that presents as a DAG hanging, which is easy to misread as a deadlock.
+// The aging gate is per dimension: an aged waiter must not stall a node contending for
+// unrelated capacity, which presents as a DAG hang.
 func TestAdmit_AgedWaiterDoesNotBlockAnUnrelatedDimension(t *testing.T) {
 	const aging = 40 * time.Millisecond
 	a := NewAdmission(map[string]int{"busy": 1, "free": 4}, nil, nil, aging)

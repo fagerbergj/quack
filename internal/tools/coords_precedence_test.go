@@ -11,9 +11,8 @@ import (
 	"github.com/fagerbergj/quack/internal/otelobs"
 )
 
-// #1048: emitTool.Run read only the shared stamp (e.coords), overwriting
-// whatever the caller's own ctx carried, unlike traced.go's field-by-field merge
-// (#1047) - a concurrent sibling node's stamp could steal this call's attribution.
+// The caller's ctx coords must win over emitTool's shared stamp, or a concurrent sibling node's stamp
+// steals this call's attribution.
 func TestEmitTool_CtxCoordsWinOverTheSharedStamp(t *testing.T) {
 	capExp := &recordCapture{}
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
@@ -21,14 +20,10 @@ func TestEmitTool_CtxCoordsWinOverTheSharedStamp(t *testing.T) {
 	defer restore()
 
 	inner := &fakeRunnable{}
-	wrapped, err := emitWrap(inner, ledger.Coords{})
-	if err != nil {
-		t.Fatalf("emitWrap: %v", err)
-	}
+	wrapped := emitWrap(inner, ledger.Coords{})
 	e := wrapped.(*emitTool)
 
-	// A concurrent sibling node stamped last and is still "current" on this
-	// shared tool instance.
+	// A concurrent sibling node stamped last on this shared tool instance.
 	e.SetLedgerCoords(ledger.Coords{ChatID: "chat-1", Node: "sibling-node", Agent: "judge"})
 
 	fc := newFakeCtx()

@@ -8,13 +8,8 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// TestDagStream_LateOutputOverridesPause: a shutdown-drain pause flipped
-// after the node already produced its answer (e.g. it landed inside
-// commitDelivery, which runs before graph.go unregisters the control) must
-// not suppress node_done - the PR/review is already posted, so dropping the
-// output leaves dag_nodes at paused with no output and the boot sweep
-// (ListPausedDagNodes) re-runs it. A live user pause is different: node.go's
-// own cooperative check is what caught it, before delivery, so it still wins.
+// A shutdown pause flipped after the node already delivered must not suppress node_done,
+// or the boot sweep re-runs it; a live user pause caught before delivery still wins.
 func TestDagStream_LateOutputOverridesPause(t *testing.T) {
 	agentByID := map[string]string{"n1": "a"}
 	var got []stream.SSEEvent
@@ -37,9 +32,8 @@ func TestDagStream_LateOutputOverridesPause(t *testing.T) {
 	t.Fatalf("got %v; want node_done - a late shutdown pause must not discard a delivered answer", names(got))
 }
 
-// TestDagStream_LiveUserPauseStillWinsOverDraftOutput: a user pause caught by node.go's own
-// cooperative check (not a late shutdown race) still reports node_paused - its draft answer
-// was never delivered, so node_done would be a lie.
+// A user pause caught by node.go's cooperative check still reports node_paused: the draft
+// was never delivered.
 func TestDagStream_LiveUserPauseStillWinsOverDraftOutput(t *testing.T) {
 	agentByID := map[string]string{"n1": "a"}
 	var got []stream.SSEEvent
@@ -62,13 +56,8 @@ func TestDagStream_LiveUserPauseStillWinsOverDraftOutput(t *testing.T) {
 	t.Fatalf("got %v; want node_paused - a live user pause must not be reported as delivered", names(got))
 }
 
-// TestDagStream_DeliveredOutranksLivePauseRace closes the gap
-// TestDagStream_LiveUserPauseStillWinsOverDraftOutput's own out!="" heuristic
-// could not: a live user pause racing in AFTER commitDelivery already ran
-// (not caught by node.go's own cooperative check beforehand) leaves the
-// node's answer genuinely delivered - node.go's own MarkDelivered signal,
-// not the ambiguous "is Output non-empty" guess, must win. The #1340 review
-// only closed this race for PauseShutdown; a live PauseUser still needed it.
+// A live user pause racing in after commitDelivery: node.go's MarkDelivered signal, not
+// the "is Output non-empty" guess, must win.
 func TestDagStream_DeliveredOutranksLivePauseRace(t *testing.T) {
 	agentByID := map[string]string{"n1": "a"}
 	var got []stream.SSEEvent
@@ -92,15 +81,8 @@ func TestDagStream_DeliveredOutranksLivePauseRace(t *testing.T) {
 	t.Fatalf("got %v; want node_done - MarkDelivered must outrank a pause that raced in after commitDelivery", names(got))
 }
 
-// TestDagStream_FinishSweepDeliveredOutranksEmptyOutputAndPause exercises
-// Finish()'s own terminal sweep (review finding): the tests above all go
-// through handle()+flush() with non-empty output, so none of them reach a
-// node the sweep - not handle() - has to close out. The motivating case is a
-// delivered answer that dedupeAnswerAgainstStaged collapsed to empty/
-// whitespace, racing a pause that lands after commitDelivery: delivered must
-// still outrank both the empty-output-means-failed guess and the pause flag,
-// or dropping the `!delivered &&` guards on those branches would go
-// unnoticed.
+// Finish's own sweep: a delivered answer deduped to empty, racing a late pause, must
+// still be done, not failed or paused.
 func TestDagStream_FinishSweepDeliveredOutranksEmptyOutputAndPause(t *testing.T) {
 	agentByID := map[string]string{"n1": "a"}
 	var got []stream.SSEEvent
@@ -113,9 +95,7 @@ func TestDagStream_FinishSweepDeliveredOutranksEmptyOutputAndPause(t *testing.T)
 		func(string, int) string { return "" },
 	)
 	ds.deliveredOf = func(string) bool { return true }
-	// Never calling ds.handle: n1 is never doneEmitted, so Finish's own sweep
-	// (not handle/flush) is what has to decide it, matching the motivating
-	// race - a pause landing after commitDelivery, before graph.go's Finish.
+	// Never calling ds.handle leaves n1 for Finish's sweep to decide.
 
 	s := &DagStream{
 		ds:        ds,

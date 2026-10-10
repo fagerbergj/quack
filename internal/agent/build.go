@@ -9,49 +9,25 @@ import (
 	"google.golang.org/adk/v2/agent/llmagent"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/tool"
-	"google.golang.org/adk/v2/tool/skilltoolset/skill"
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/artifactsrc"
 	"github.com/fagerbergj/quack/internal/promptbuilder"
 )
 
-// Build turns a loaded bundle into a runnable ADK llmagent, given its model, selected built-in tools, and optional ADK toolsets (context compaction is
-// wired separately at the runner, see a2a.go's Serve). memoryGuidance (the bundle's memory.md, M6) is appended to the behaviour layer only for
-// memory-participating agents; skills is the agent's declared skill scope (promptbuilder.Agent); grading is the pre-rendered trust-gate contract (promptbuilder.GradingFacts), "" when ungated or judge-less.
-func Build(b *Bundle, prompts *artifactsrc.Pinned, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, memoryGuidance string, skills []*skill.Frontmatter, grading string, drain func() string, meter *PromptMeter) (adkagent.Agent, error) {
-	return build(b, prompts, m, tools, toolsets, memoryGuidance, skills, grading, "", drain, meter)
-}
-
-// BuildChat is Build with the delegation mode PINNED to ModeChat, for agents
-// running as a runner's ROOT over a multi-turn session (e.g. the advisor). Pinning matters: runner.Run force-sets an unset mode to ModeChat with an
-// unsynchronized check-then-write on the shared agent - a data race under concurrent consults; a pre-set mode turns that write into a pure read. Workers keep Build's unset mode (single-turn task mode, what the gate wants).
-func BuildChat(b *Bundle, prompts *artifactsrc.Pinned, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, memoryGuidance string, skills []*skill.Frontmatter, grading string) (adkagent.Agent, error) {
-	return build(b, prompts, m, tools, toolsets, memoryGuidance, skills, grading, llmagent.ModeChat, nil, nil)
-}
-
-// BehaviourLayer is the behaviour layer of an assembled system prompt: the
-// bundle's prompt.md followed by its memory guidance when the agent has one.
-func BehaviourLayer(prompt, memoryGuidance string) string {
-	if g := strings.TrimSpace(memoryGuidance); g != "" {
-		return prompt + "\n\n" + g
-	}
-	return prompt
-}
-
-func build(b *Bundle, prompts *artifactsrc.Pinned, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, memoryGuidance string, skills []*skill.Frontmatter, grading string, mode llmagent.Mode, drain func() string, meter *PromptMeter) (adkagent.Agent, error) {
+// Build turns a loaded bundle into a runnable ADK llmagent; compaction is wired at the runner (a2a.go's Serve).
+// grading is the pre-rendered trust-gate contract (promptbuilder.GradingFacts), "" when ungated or judge-less.
+func Build(b *Bundle, prompts *artifactsrc.Pinned, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, memoryGuidance string, grading string, drain func() string, meter *PromptMeter) (adkagent.Agent, error) {
 	name, desc := b.Card.Name, b.Card.Description
 	if prompts == nil {
 		prompts = b.PinPrompt(nil)
 	}
-	// Every Agent() input below is fixed once build() returns except today() and
-	// the pinned prompt, which only the gate moves - at a round's start, never here.
+	// Every input below is fixed once Build returns except today() and the pinned prompt, which only the gate moves.
 	prompt := promptbuilder.CacheByDay(
 		func(context.Context) string { return prompts.Get().VersionID },
 		func(context.Context) string {
-			// "" workspace: native bundles are never a coding agent (those run as external ACP subprocesses - see internal/serve's ACP branch),
-			// so there is no sandboxed clone/toolchain to state facts about. Tools and skills are left out: each tool's declaration and the
-			// SkillToolset's own ProcessRequest already reach the model, so listing them here too would duplicate them in every request (audit finding A4).
+			// Native bundles never get a workspace (coding agents run over ACP). Tools and skills are omitted:
+			// their declarations and the SkillToolset already reach the model, so listing them would duplicate them.
 			layer := BehaviourLayer(strings.TrimSpace(prompts.Get().Body), memoryGuidance)
 			return promptbuilder.Agent(name, desc, nil, false, layer, grading, "")
 		})
@@ -64,7 +40,6 @@ func build(b *Bundle, prompts *artifactsrc.Pinned, m model.LLM, tools []tool.Too
 		},
 		Tools:    tools,
 		Toolsets: toolsets,
-		Mode:     mode,
 	}
 	cfg.BeforeModelCallbacks = []llmagent.BeforeModelCallback{steerCallback(drain)}
 	if meter != nil {
@@ -73,12 +48,24 @@ func build(b *Bundle, prompts *artifactsrc.Pinned, m model.LLM, tools []tool.Too
 	return llmagent.New(cfg)
 }
 
-// steerCallback delivers a message queued against a RUNNING node on the round's
-// next model call. Without it a steer waits for the next gate boundary, which
-// for a long native round is minutes away or never (#1029).
+// BuildChat is Build for a runner-root agent with no steer queue or prompt meter. Mode stays unset: adk
+// v2.4.0 resolves a root to chat in ctx without writing the shared agent (older versions raced on that write).
+func BuildChat(b *Bundle, prompts *artifactsrc.Pinned, m model.LLM, tools []tool.Tool, toolsets []tool.Toolset, memoryGuidance string, grading string) (adkagent.Agent, error) {
+	return Build(b, prompts, m, tools, toolsets, memoryGuidance, grading, nil, nil)
+}
+
+// BehaviourLayer is the bundle's prompt.md followed by its memory guidance when the agent has one.
+func BehaviourLayer(prompt, memoryGuidance string) string {
+	if g := strings.TrimSpace(memoryGuidance); g != "" {
+		return prompt + "\n\n" + g
+	}
+	return prompt
+}
+
+// steerCallback delivers a steer queued against a RUNNING node on the round's next model call,
+// rather than at the next gate boundary, which for a long native round may be minutes away or never.
 func steerCallback(drain func() string) llmagent.BeforeModelCallback {
-	// Peeked text stays pending until the gate drains it, so without this the
-	// same steer would be re-injected on every model call of the round.
+	// Peeked text stays pending until the gate drains it; without this the same steer repeats every model call.
 	var mu sync.Mutex
 	seen := map[string]bool{}
 	return func(_ adkagent.Context, req *model.LLMRequest) (*model.LLMResponse, error) {
@@ -87,9 +74,7 @@ func steerCallback(drain func() string) llmagent.BeforeModelCallback {
 		}
 		q := strings.TrimSpace(drain())
 		if q == "" {
-			// Empty means the gate drained the queue, so anything after this is
-			// a NEW steer - including the same words sent again because the
-			// first appeared to do nothing.
+			// The gate drained the queue, so the same words sent again later are a NEW steer.
 			mu.Lock()
 			clear(seen)
 			mu.Unlock()

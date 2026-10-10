@@ -13,8 +13,7 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// TestEnvironmentBlockShape pins the environment block's shape: absolute cwd, whether it's a
-// git repo (with branch/HEAD when so), and the top-level entries - all
+// TestEnvironmentBlockShape: absolute cwd, git repo (branch/HEAD when so) and top-level entries,
 // wrapped in a factual <environment_context> block, never an instruction.
 func TestEnvironmentBlockShape(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
@@ -63,9 +62,7 @@ func TestEnvironmentBlockNonRepo(t *testing.T) {
 	}
 }
 
-// TestEnvironmentBlockBoundsEntries pins the "a pathological dir must not
-// blow the context window" requirement: entries beyond maxEnvironmentEntries
-// are dropped, and the block says so, rather than growing without bound.
+// TestEnvironmentBlockBoundsEntries: entries beyond maxEnvironmentEntries are dropped and the block says so.
 func TestEnvironmentBlockBoundsEntries(t *testing.T) {
 	dir := t.TempDir()
 	for i := 0; i < maxEnvironmentEntries+50; i++ {
@@ -97,9 +94,8 @@ func TestEnvironmentBlockEmptyDir(t *testing.T) {
 	}
 }
 
-// TestEnvironmentBlockDisclosesReadOnly: a read-only round's block names both
-// sides - which path is read-only and which are writable. Naming only the
-// read-only half is what left reviewers either burning a round on an unexplained EACCES or abandoning "run it" entirely. Stays silent when the tree is writable.
+// TestEnvironmentBlockDisclosesReadOnly: a read-only round names the read-only path and the writable ones;
+// naming only the read-only half leaves reviewers stuck on EACCES. Silent when the tree is writable.
 func TestEnvironmentBlockDisclosesReadOnly(t *testing.T) {
 	dir := t.TempDir()
 

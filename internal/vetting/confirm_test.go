@@ -2,9 +2,8 @@ package vetting
 
 import "testing"
 
-// TestSameArgsJSONNormalization: the pinning comparison must survive JSON
-// transport differences - an int pinned at approval time still matches the
-// same value arriving as float64 on the re-issued call - while any real difference in values, keys, or nesting breaks the match.
+// TestSameArgsJSONNormalization: an int pinned at approval still matches the same value arriving as float64,
+// while any real difference in values, keys, or nesting breaks the match.
 func TestSameArgsJSONNormalization(t *testing.T) {
 	cases := []struct {
 		name string

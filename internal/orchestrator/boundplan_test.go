@@ -17,22 +17,13 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// neverCalledModel fails the test the instant it's asked to generate - used
-// where a setup failure must abort the run before any node's worker runs.
-type neverCalledModel struct{ t *testing.T }
-
-func (neverCalledModel) Name() string { return "never-called" }
-
-func (m neverCalledModel) GenerateContent(context.Context, *model.LLMRequest, bool) iter.Seq2[*model.LLMResponse, error] {
-	m.t.Fatal("worker model must never be called - setup should have aborted the run first")
-	return func(func(*model.LLMResponse, error) bool) {}
-}
-
-// TestRunBoundPlan_UnreachableRepoAbortsWithHumanErrorBeforeAnyNodeRuns pins
-// #848's "bound workflows too" edge: a dispatch-bound plan skips the
-// orchestrator LLM turn entirely (BuildBoundPlan -> RunBoundPlan), so there is no execute tool call to fail into. RunBoundPlan must provision the Setup itself, up front, and turn a clone failure into a human stream error - never a raw git dump, and never by letting a node start against an unprovisioned clone.
+// A bound plan has no execute tool call to fail into, so RunBoundPlan must provision up front and
+// turn a clone failure into a human stream error before any node starts.
 func TestRunBoundPlan_UnreachableRepoAbortsWithHumanErrorBeforeAnyNodeRuns(t *testing.T) {
-	stub := neverCalledModel{t: t}
+	stub := funcModel(func(context.Context, *model.LLMRequest) iter.Seq2[*model.LLMResponse, error] {
+		t.Fatal("worker model must never be called - setup should have aborted the run first")
+		return nil
+	})
 	ag, err := llmagent.New(llmagent.Config{
 		Name: "code-implementer", Model: stub, Description: "impl", Instruction: "ROLE Answer.",
 	})

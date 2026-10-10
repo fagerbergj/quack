@@ -1,8 +1,6 @@
 package vetting
 
 import (
-	"context"
-	"iter"
 	"os"
 	"path/filepath"
 	"testing"
@@ -25,9 +23,8 @@ type jailedReadResult struct {
 	Error   string `json:"error,omitempty"`
 }
 
-// newJailedReadTool builds a read_file stand-in that resolves its path
-// through the SAME scope derivation internal/tools' fs bindings use for the judge
-// (the round ctx's advisor token → Jail.Resolve) - package-local because importing internal/tools here would cycle. Proves the judge's tool calls land in the worker's real clone dir without a separate clone.
+// newJailedReadTool is a read_file stand-in resolving paths the way internal/tools' fs bindings do
+// (advisor token -> Jail.Resolve); importing internal/tools would cycle.
 func newJailedReadTool(t *testing.T, jail *workspace.Jail, userID string) tool.Tool {
 	t.Helper()
 	rt, err := functiontool.New[jailedReadArgs, jailedReadResult](
@@ -60,27 +57,21 @@ func newJailedReadTool(t *testing.T, jail *workspace.Jail, userID string) tool.T
 	return rt
 }
 
-// claimCheckingJudge calls read_file for the path the answer claims to
-// reference, then scores based on whether the file's real content backs the
-// claim - a stand-in for "verify the answer's claim against ground truth" rather than trusting it on sight.
-type claimCheckingJudge struct{ path string }
-
-func (claimCheckingJudge) Name() string { return "claim-checking-judge" }
-
-func (j claimCheckingJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
+// claimCheckingJudge reads the path the answer claims, then scores on whether its real content backs
+// the claim.
+func claimCheckingJudge(path string) fnLLM {
+	return func(req *model.LLMRequest) (*model.LLMResponse, error) {
 		if content, seen := readFileResponseContent(req); seen {
 			score := 0.2
 			if content != "" {
 				score = 0.9
 			}
-			yield(stubCall(submitVerdictTool, map[string]any{
+			return stubCall(submitVerdictTool, map[string]any{
 				"criteria": map[string]any{"grounded": map[string]any{"score": score, "reason": "checked against the real file"}},
 				"score":    score, "feedback": "",
-			}), nil)
-			return
+			}), nil
 		}
-		yield(stubCall("read_file", map[string]any{"path": j.path}), nil)
+		return stubCall("read_file", map[string]any{"path": path}), nil
 	}
 }
 
@@ -115,14 +106,14 @@ func TestJudgeReadToolsResolveWorkersRealClone(t *testing.T) {
 	RegisterAdvisorThread(foreign, AdvisorTask{NodeID: "n2", SessionID: chatID})
 	t.Cleanup(func() { UnregisterAdvisorThread(foreign) })
 
-	prompt := "Implement the game in game.go\n\n" + AdvisorThreadMarker(token) + "\nqueued: " + AdvisorThreadMarker(foreign)
+	prompt := "Implement the game in game.go\n\n[[quack:advisor-thread:" + token + "]]\nqueued: [[quack:advisor-thread:" + foreign + "]]"
 	question := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: prompt}}}
 
 	readTool := newJailedReadTool(t, jail, userID)
-	factory := NewJudgeFactory(claimCheckingJudge{path: "game.go"}, []tool.Tool{readTool}, nil)
+	factory := NewJudgeFactory(claimCheckingJudge("game.go"), []tool.Tool{readTool}, nil)
 
 	v, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10", AdvisorToken: token}, question,
-		"I implemented Play() in game.go "+AdvisorThreadMarker(foreign), workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
+		"I implemented Play() in game.go [[quack:advisor-thread:"+foreign+"]]", workerActivity{}, nil, nil, func(*genai.Part) bool { return true })
 	if err != nil {
 		t.Fatalf("runJudgeAgent: %v", err)
 	}
@@ -155,7 +146,7 @@ func TestJudgeReadToolsResolveViaConfigAdvisorToken(t *testing.T) {
 	question := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Implement the game in game.go"}}}
 
 	readTool := newJailedReadTool(t, jail, userID)
-	factory := NewJudgeFactory(claimCheckingJudge{path: "game.go"}, []tool.Tool{readTool}, nil)
+	factory := NewJudgeFactory(claimCheckingJudge("game.go"), []tool.Tool{readTool}, nil)
 
 	v, err := runJudgeAgent(t.Context(), factory, Config{Rubric: "score 0-10", AdvisorToken: token}, question,
 		"I implemented Play() in game.go", workerActivity{}, nil, nil, func(*genai.Part) bool { return true })

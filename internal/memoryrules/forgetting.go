@@ -6,9 +6,8 @@ import (
 	"strings"
 )
 
-// Rule is one forgetting rule: When is a boolean expression over Fields, Then is "invalidate",
-// "demote", or "keep" (first match wins, no match keeps the memory). Reason overrides the
-// stamped invalidation_reason for invalidate (falls back to "rule N: expr"); demote's is fixed.
+// Rule is one forgetting rule: When is a boolean expression over Fields, Then is invalidate|demote|keep
+// (first match wins, none keeps). Reason overrides invalidate's default "rule N: expr".
 type Rule struct {
 	When   string
 	Then   string
@@ -21,9 +20,8 @@ const (
 	ThenKeep       = "keep"
 )
 
-// Fields is one memory's forgetting-relevant snapshot, computed by the
-// caller from a point (age/days-since fields use "never" = age_days per the
-// epic decision, so a memory never upvoted/recalled ages out on age alone).
+// Fields is one memory's forgetting-relevant snapshot; days-since fields fall back to age_days when
+// never upvoted/recalled, so such a memory ages out on age alone.
 type Fields struct {
 	Upvotes         int
 	Downvotes       int
@@ -39,16 +37,14 @@ type Fields struct {
 	Scope           string
 }
 
-// ReasonNeverRecalled/ReasonRecalledWithoutSupport: the fixed invalidation_reason DefaultRules'
-// usage-based rules stamp (epic #1456 P2).
+// ReasonNeverRecalled/ReasonRecalledWithoutSupport: invalidation_reasons DefaultRules' usage rules stamp.
 const (
 	ReasonNeverRecalled          = "never recalled"
 	ReasonRecalledWithoutSupport = "recalled without support"
 )
 
-// DefaultRules are applied when config carries no memory.forgetting.rules - first match wins.
-// Demote only resets tier; supported is left untouched, so the row re-promotes on its own next
-// vote or consolidator write (tier is always recomputed from supported), not just a fresh vote.
+// DefaultRules apply when config has no memory.forgetting.rules. Demote resets tier only, leaving
+// supported intact, so the next vote or consolidator write recomputes tier from it.
 func DefaultRules() []Rule {
 	return []Rule{
 		{When: `tier == "unverified" && supported == 0 && recalls == 0 && days_since_minted > 30`, Then: ThenInvalidate, Reason: ReasonNeverRecalled},
@@ -59,9 +55,8 @@ func DefaultRules() []Rule {
 	}
 }
 
-// ValidateRules parses every rule's expression and rejects an unknown Then,
-// so a config error is caught at load time (rule index + token position)
-// rather than crashing or silently no-op'ing a bad rule inside the nightly sweep.
+// ValidateRules parses every expression and rejects an unknown Then, so a bad rule fails at config load
+// instead of inside the nightly sweep.
 func ValidateRules(rules []Rule) error {
 	for i, r := range rules {
 		if r.Then != ThenInvalidate && r.Then != ThenDemote && r.Then != ThenKeep {
@@ -74,9 +69,8 @@ func ValidateRules(rules []Rule) error {
 	return nil
 }
 
-// Evaluate runs expr against f (hand-written tokenizer + recursive-descent parser,
-// no dependency). Precedence: `||`, `&&`, `!`, comparison, primary. `==`/`!=` accept
-// strings; other comparisons require numeric on both sides.
+// Evaluate runs expr against f. Precedence: `||`, `&&`, `!`, comparison, primary. `==`/`!=` accept
+// strings; other comparisons need numbers on both sides.
 func Evaluate(expr string, f Fields) (bool, error) {
 	if strings.TrimSpace(expr) == "" {
 		return false, fmt.Errorf("when must not be empty")
@@ -186,7 +180,7 @@ func literalStarts(expr string, i int) bool {
 	return c == '"' || isIdentStart(c) || (c >= '0' && c <= '9') || (c == '-' && i+1 < len(expr) && expr[i+1] >= '0' && expr[i+1] <= '9')
 }
 
-// scanLiteral: the literal starting at i (string, integer, or identifier); returns the token and the index just past it.
+// scanLiteral returns the string, integer or identifier token at i and the index just past it.
 func scanLiteral(expr string, i int) (token, int, error) {
 	if expr[i] == '"' {
 		return scanString(expr, i)

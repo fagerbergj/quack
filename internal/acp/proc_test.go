@@ -18,9 +18,7 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// TestSpawnEnvIsHermetic: PATH is workspace.ChildPath(caps) in EVERY sandbox
-// mode, never the server's ambient PATH - the toolchain the agent needs to
-// run is already covered by Caps.ExtraPath + the fixed system dirs, so ambient added no reach a leak couldn't also use.
+// TestSpawnEnvIsHermetic: PATH is workspace.ChildPath(caps) in every sandbox mode, never the server's PATH.
 func TestSpawnEnvIsHermetic(t *testing.T) {
 	t.Setenv("PATH", "/totally/not/hermetic")
 	for _, mode := range []workspace.SandboxMode{"", workspace.SandboxNone, workspace.SandboxBwrap, workspace.SandboxLandlock} {
@@ -43,9 +41,8 @@ func TestSpawnEnvIsHermetic(t *testing.T) {
 	}
 }
 
-// TestSpawnEnvTracksRoundScratchDir pins the writable-scratch fix: spawnEnv
-// must build TMPDIR from THIS round's caps (the parameter, with per-node
-// ScratchDir already resolved by resolveNode/runPrompt), not the agent's static a.opts.Caps - before this fix TMPDIR always read a.opts.Caps, so a round's ScratchDir override never reached the subprocess's actual environment despite being correctly computed and granted.
+// TestSpawnEnvTracksRoundScratchDir: TMPDIR comes from this round's caps (per-node ScratchDir resolved),
+// not the agent's static a.opts.Caps.
 func TestSpawnEnvTracksRoundScratchDir(t *testing.T) {
 	home := t.TempDir()
 	static := workspace.Caps{Sandbox: workspace.SandboxLandlock, HomeDir: home}
@@ -106,9 +103,8 @@ func TestWrappedArgvBwrapACPStateDirRidesHomeDirGrant(t *testing.T) {
 	}
 }
 
-// TestSpawnEnvSetsGitCredentialNeuteringVars pins #936's authority half:
-// spawnEnv carries GIT_ASKPASS/GIT_SSH_COMMAND=/bin/false and
-// GIT_TERMINAL_PROMPT=0 so the ACP child can't authenticate to a real remote - checking these three strings alone would pass even if `git push` were still denied outright, so TestSpawnEnvAllowsLocalGitPush proves the capability half stayed intact.
+// TestSpawnEnvSetsGitCredentialNeuteringVars: the ACP child can't authenticate to a real remote;
+// TestSpawnEnvAllowsLocalGitPush proves push itself still works.
 func TestSpawnEnvSetsGitCredentialNeuteringVars(t *testing.T) {
 	a := &Agent{opts: Options{Caps: workspace.DefaultCaps(), Home: t.TempDir()}}
 	want := map[string]bool{
@@ -128,9 +124,8 @@ func TestSpawnEnvSetsGitCredentialNeuteringVars(t *testing.T) {
 	}
 }
 
-// TestSpawnEnvAllowsLocalGitPush proves #936's capability half with a real git
-// process, not just an env-var assertion: under the exact env spawnEnv builds
-// for the ACP child, `git push` to a local bare remote must succeed - the credential-neutering vars remove authority over a real remote, they must not also block the command against one the sandbox already trusts (the project's own test fixtures push exactly this way).
+// TestSpawnEnvAllowsLocalGitPush runs real git under spawnEnv's env: push to a local bare remote must succeed,
+// since credential neutering removes authority over real remotes only.
 func TestSpawnEnvAllowsLocalGitPush(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not on PATH")
@@ -156,9 +151,8 @@ func TestSpawnEnvAllowsLocalGitPush(t *testing.T) {
 	}
 }
 
-// TestWrappedArgvLandlock: mode landlock wraps Command through the Landlock
-// shim - argv carries the SandboxExecArg dispatch, and the node dir (cwd) is
-// granted, with the original command preserved past "--".
+// TestWrappedArgvLandlock: landlock wraps Command via the SandboxExecArg dispatch, grants the node dir,
+// and keeps the original command past "--".
 func TestWrappedArgvLandlock(t *testing.T) {
 	cwd := t.TempDir()
 	a := &Agent{opts: Options{
@@ -179,9 +173,8 @@ func TestWrappedArgvLandlock(t *testing.T) {
 	}
 }
 
-// TestWrappedArgvBwrap (#921): bwrap wraps the ACP child too, as identity bind
-// mounts - the node dir bound at its own path (never SandboxWorkRoot: quack and
-// the ACP subprocess trade absolute paths over JSON-RPC), the skill paths read-only, and the original command past "--".
+// TestWrappedArgvBwrap: bwrap identity-binds the node dir (never SandboxWorkRoot: quack and the child trade
+// absolute paths over JSON-RPC), skill paths read-only, original command past "--".
 func TestWrappedArgvBwrap(t *testing.T) {
 	cwd := t.TempDir()
 	home := t.TempDir()
@@ -197,9 +190,8 @@ func TestWrappedArgvBwrap(t *testing.T) {
 			t.Errorf("wrappedArgv bwrap = %v, missing %q", argv, strings.ReplaceAll(want, "\x00", " "))
 		}
 	}
-	// Token equality, not substring: in the jail TMPDIR is under
-	// /tmp/workspace/..., which contains SandboxWorkRoot ("/workspace") as a
-	// substring of an unrelated path and would false-positive here.
+	// Token equality, not substring: the jail's TMPDIR under /tmp/workspace/... contains "/workspace"
+	// and would false-positive.
 	for _, arg := range argv {
 		if arg == workspace.SandboxWorkRoot {
 			t.Errorf("wrappedArgv bwrap remapped the node dir onto %s: %v", workspace.SandboxWorkRoot, argv)
@@ -225,9 +217,8 @@ func TestWrappedArgvUnwrappedUnderNone(t *testing.T) {
 	}
 }
 
-// TestSpawnEnvPinsJavaTmpDir: the JVM ignores TMPDIR (java.io.tmpdir is /tmp on
-// Linux), and landlock never grants the real /tmp - so without JAVA_TOOL_OPTIONS
-// every JVM build the agent runs dies in a static initialiser writing there (Room's KSP: "AccessDeniedException: /tmp/...libsqlitejdbc.so.lck" surfacing as ExceptionInInitializerError). Only landlock needs it: bwrap remaps /tmp and none leaves the real one reachable.
+// TestSpawnEnvPinsJavaTmpDir: the JVM ignores TMPDIR and landlock never grants the real /tmp, so without
+// JAVA_TOOL_OPTIONS JVM builds die writing there. bwrap remaps /tmp, so only landlock needs it.
 func TestSpawnEnvPinsJavaTmpDir(t *testing.T) {
 	home := t.TempDir()
 	for _, tc := range []struct {
@@ -273,8 +264,8 @@ func TestSpawnEnvOperatorOverridesJavaToolOptions(t *testing.T) {
 	}
 }
 
-// TestWrappedArgvBwrapAcpHandshake (#921) is the one thing an argv assertion cannot prove: that wrapping the
-// ACP child in a bwrap namespace does not break the protocol it speaks - a real `initialize` round-trip through the production seam pair (wrappedArgv + spawnEnv). Skips (loudly) where bwrap or node is unavailable.
+// TestWrappedArgvBwrapAcpHandshake: a real initialize round trip through wrappedArgv + spawnEnv proves bwrap
+// doesn't break the protocol. Skips loudly without bwrap or node.
 func TestWrappedArgvBwrapAcpHandshake(t *testing.T) {
 	if _, err := workspace.ResolveSandbox(workspace.SandboxBwrap); err != nil {
 		t.Skipf("SKIPPING ACP sandbox test: bubblewrap is not usable here (%v)", err)
@@ -339,9 +330,8 @@ func TestWrappedArgvBwrapAcpHandshake(t *testing.T) {
 	}
 }
 
-// TestSpawnEnvSetsGoCacheVars pins #954: GOMODCACHE/GOCACHE/GOFLAGS/
-// GOTOOLCHAIN all land in spawnEnv, GOMODCACHE and GOCACHE pointing at
-// writable dirs under the jail's HOME grant - not Go's compiled-in default under /home/nonroot (unwritable) and not the #940 preseed directly (also unwritable: it's RO-mounted under /usr).
+// TestSpawnEnvSetsGoCacheVars: GOMODCACHE/GOCACHE/GOFLAGS/GOTOOLCHAIN land in spawnEnv, the caches under the
+// jail's writable HOME, not /home/nonroot or the RO-mounted preseed.
 func TestSpawnEnvSetsGoCacheVars(t *testing.T) {
 	home := t.TempDir()
 	a := &Agent{opts: Options{Caps: workspace.Caps{Sandbox: workspace.SandboxLandlock}, Home: home}}
@@ -374,9 +364,8 @@ func TestSpawnEnvSetsGoCacheVars(t *testing.T) {
 	}
 }
 
-// TestSkillPathsQueriedFreshEachSpawn proves #1427 P1's seam: wrappedArgv
-// consults Options.SkillPaths (not a snapshot taken at New) so a registry
-// change between two spawns is picked up without rebuilding the Agent.
+// TestSkillPathsQueriedFreshEachSpawn: wrappedArgv reads Options.SkillPaths per spawn, so a registry change
+// lands without rebuilding the Agent.
 func TestSkillPathsQueriedFreshEachSpawn(t *testing.T) {
 	paths := []string{"/plugins/a"}
 	a := &Agent{opts: Options{
@@ -395,10 +384,8 @@ func TestSkillPathsQueriedFreshEachSpawn(t *testing.T) {
 	}
 }
 
-// TestExtraROGrantsSandboxButNotSkillPathsEnv is #1430's carry-over: ExtraRO
-// (e.g. plugins.root) must widen the sandbox RO grant so the pi shim's own
-// file reads work, but must NOT reach PI_ACP_CONFIG's skill_paths - that
-// would hand pi's recursive skill scan every SKILL.md in the whole registry.
+// TestExtraROGrantsSandboxButNotSkillPathsEnv: ExtraRO widens the sandbox RO grant but never reaches
+// skill_paths, which would hand pi's skill scan every SKILL.md in the registry.
 func TestExtraROGrantsSandboxButNotSkillPathsEnv(t *testing.T) {
 	a := &Agent{opts: Options{
 		Command:    []string{"pi-acp", "run"},
@@ -430,9 +417,8 @@ func TestExtraROGrantsSandboxButNotSkillPathsEnv(t *testing.T) {
 	}
 }
 
-// TestMergeSkillPathsRewritesPIAcpConfig proves spawnEnv folds a fresh
-// SkillPaths result into PI_ACP_CONFIG's skill_paths field (the pi-acp shim
-// reads it into settings.json per spawn), leaving other env entries alone.
+// TestMergeSkillPathsRewritesPIAcpConfig: spawnEnv folds fresh SkillPaths into PI_ACP_CONFIG's
+// skill_paths, leaving other env entries alone.
 func TestMergeSkillPathsRewritesPIAcpConfig(t *testing.T) {
 	env := []string{"FOO=bar", `PI_ACP_CONFIG={"model":"m1"}`}
 	got := mergeSkillPaths(env, []string{"/plugins/dotagents"})
@@ -463,10 +449,8 @@ func TestTraceparentEnv(t *testing.T) {
 	}
 }
 
-// TestWrappedArgvDoesNotMutateSkillPathsCache is the #1430 review-2 race
-// fix: SkillPaths() can return a cached slice with spare capacity
-// (acpRegistrySkillPaths) - concurrent spawns appending ExtraRO onto it in
-// place would race and corrupt the cache's backing array under -race.
+// TestWrappedArgvDoesNotMutateSkillPathsCache: concurrent spawns appending ExtraRO onto a cached
+// SkillPaths slice in place would corrupt its backing array under -race.
 func TestWrappedArgvDoesNotMutateSkillPathsCache(t *testing.T) {
 	cached := make([]string, 1, 4) // cap > len, like the real cache
 	cached[0] = "/plugins/dotagents/skills"
