@@ -1214,9 +1214,6 @@ func (j *judgeRounds) runJudge(round int, runID string, judgeCtx context.Context
 		j.log.Info("terminal round has a failing deterministic criterion; skipping the judge", "round", round)
 		return verdict{}, det, nil
 	}
-	// Render-check screenshot evidence: attached only when this node's
-	// own rubric scores them; judge-only, never touches the worker's content.
-	shots := renderScreenshotEvidence(judgeCtx, j.cfg, j.nodeID, skip == "", act)
 	// Judge generates too: hold its own spec so the freed worker slot can't admit a second worker.
 	// One per-node abort covers the admission wait, the verify pass and the judge call.
 	abortCtx, endAbort := abortableRound(ledgerCtx, j.ctrl)
@@ -1233,7 +1230,7 @@ func (j *judgeRounds) runJudge(round int, runID string, judgeCtx context.Context
 		det[specificsSupportedCriterion] = c
 	}
 	j.cfg.judgeEvidence, j.cfg.judgeCheckedPages = judgeEvidenceSection(checks), checkedPages(checks)
-	v, jerr := runJudgeAgent(abortCtx, j.judge, j.cfg, attachScreenshots(j.question, shots), j.answer, act, det, j.receivedMemories, judgePartEmitter(j.sink, j.nodeID, runID))
+	v, jerr := runJudgeAgent(abortCtx, j.judge, j.cfg, j.question, j.answer, act, det, j.receivedMemories, judgePartEmitter(j.sink, j.nodeID, runID))
 	if j.cfg.ReleaseJudge != nil && j.cfg.AdmitWorker != nil {
 		j.cfg.ReleaseJudge()
 		if !j.cfg.AdmitWorker(j.ctx) {

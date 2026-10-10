@@ -369,10 +369,6 @@ observability:
     store: default_postgres
     # retention_days is gone (#1144 P5): the ledger is never GC'd except by
     # chat hard-delete; checkpoints bound fold cost instead of trimming the log.
-  # Mounts ADK's REST debug console at /debug/adk. DANGER: /run, /run_sse
-  # and /run_live execute any loaded agent WITHOUT the trust gate - protected
-  # only by quack's auth + this flag. MUST stay off in production.
-  adk_debug: false
 
 # Backs adkagent.Context.Artifacts() and chat attachment storage. No store:
 # key -> in-memory (session-scoped, lost on restart). store: <name> -> that
@@ -403,8 +399,6 @@ artifacts: {}
 #   boot and kept up to date from the UI/REST) or a local directory path
 #   (config-only - no clone, resolved in place, cannot be added/updated/
 #   removed over REST).
-#
-# skills.plugins: is the deprecated spelling of plugins.seed and is still read.
 plugins:
   # dotagents floats: it's quack's own library, main is the intended baseline,
   # and the Plugins page shows when it moves. ponytail is third-party, pinned,
@@ -568,9 +562,8 @@ workspace:
   # only) simply derives nothing instead of failing nodes. An EXPLICIT [] still
   # disables checks entirely.
   check_commands: ["go build", "go vet", "go test", "npm run", "npm test", "npx tsc", "make"]
-  # `npm run render-check` (#1192) is never derived automatically - it only
-  # runs when a node's own `checks:` names it explicitly. When it does, its
-  # PNGs are handed to the reviewing judge as `bytes:` artifacts (#1211).
+  # `npm run render-check` is never derived automatically - it only runs when
+  # a node's own `checks:` names it explicitly.
 
   # check_setup: repo bootstrap commands, run once per dir (a shared clone, a
   # node's linked worktree, or the baseline worktree the gate diffs against)
@@ -731,7 +724,6 @@ workspace:
 #     # jwks_url: ${QUACK_OIDC_JWKS_URL}  # optional: skips discovery when set
 #   # trusted_headers names the headers a forward-auth gateway (e.g. Traefik +
 #   # Authentik) injects after authenticating the request itself; quack trusts
-#   # them as-is rather than re-verifying. groups is optional.
+#   # them as-is rather than re-verifying.
 #   # trusted_headers:
 #   #   user: X-authentik-username
-#   #   groups: X-authentik-groups

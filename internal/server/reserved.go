@@ -8,7 +8,7 @@ import (
 // ReservedRouteNames are top-level segments quack's routes and the SPA router (frontend/src/router.ts) claim;
 // an extension mounted at one would shadow or be shadowed. Extend it with every new top-level route.
 var ReservedRouteNames = []string{
-	"api", "assets", "chat", "debug", "ext", "health", "healthz", "memory", "static",
+	"api", "assets", "chat", "ext", "health", "healthz", "memory", "static",
 }
 
 // extensionNamePattern: lowercase letters, digits, and single dashes between

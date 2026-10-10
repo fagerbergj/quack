@@ -56,7 +56,6 @@ import (
 	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/runlog"
 	"github.com/fagerbergj/quack/internal/server"
-	"github.com/fagerbergj/quack/internal/server/adkdebug"
 	mcpserver "github.com/fagerbergj/quack/internal/server/mcp"
 	"github.com/fagerbergj/quack/internal/server/rest"
 	"github.com/fagerbergj/quack/internal/skillsource"
@@ -488,25 +487,24 @@ func (b *boot) runCleanups() {
 }
 
 // initAuthAndObservability builds auth, then the ledger store, then starts otel.
-func (b *boot) initAuthAndObservability(ctx context.Context) (*auth.Auth, ledger.LedgerStore, *otelobs.Providers, error) {
+func (b *boot) initAuthAndObservability(ctx context.Context) (*auth.Auth, ledger.LedgerStore, error) {
 	authMW, err := auth.New(b.cfg.Auth)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("auth init failed: %w", err)
+		return nil, nil, fmt.Errorf("auth init failed: %w", err)
 	}
 	ledgerStore := LedgerStoreFromConfig(b.cfg)
-	otelProviders, err := b.initObservability(ctx, ledgerStore)
-	if err != nil {
-		return nil, nil, nil, err
+	if err := b.initObservability(ctx, ledgerStore); err != nil {
+		return nil, nil, err
 	}
-	return authMW, ledgerStore, otelProviders, nil
+	return authMW, ledgerStore, nil
 }
 
 // initializes otel, wiring its shutdown (with a bounded context) into the boot cleanups
-func (b *boot) initObservability(ctx context.Context, ledgerStore ledger.LedgerStore) (*otelobs.Providers, error) {
+func (b *boot) initObservability(ctx context.Context, ledgerStore ledger.LedgerStore) error {
 	inference.Version = Version // llm.call ledger provenance
-	otelProviders, otelShutdown, err := otelobs.Init(ctx, b.cfg.Observability, ledgerStore, Version)
+	_, otelShutdown, err := otelobs.Init(ctx, b.cfg.Observability, ledgerStore, Version)
 	if err != nil {
-		return nil, fmt.Errorf("otel init failed: %w", err)
+		return fmt.Errorf("otel init failed: %w", err)
 	}
 	b.cleanups = append(b.cleanups, func() {
 		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -520,7 +518,7 @@ func (b *boot) initObservability(ctx context.Context, ledgerStore ledger.LedgerS
 	if b.cfg.Observability.Otel.IsEnabled() && len(b.cfg.Observability.Otel.Exporters) > 0 && !b.cfg.Observability.Otel.Content {
 		slog.Info("span content capture is off (observability.otel.capture_content) - generation spans export with no prompt/response text", "component", "otelobs")
 	}
-	return otelProviders, nil
+	return nil
 }
 
 // creates the workspace jail; managed servers also bring up their store containers
@@ -831,8 +829,8 @@ func (b *boot) initOrchestrator(ctx context.Context, st *store.Store, llm model.
 }
 
 // mounts the HTTP handler and starts the workspace GC
-func (b *boot) initHTTP(ctx context.Context, st *store.Store, orch *orchestrator.Orchestrator, llm model.LLM, jail *workspace.Jail, runHub *stream.Hub, ledgerStore ledger.LedgerStore, clientMap map[string]adkagent.Agent, taskStore, userStore *memory.Store, artifacts *store.TurnAwareService, sdkExts []builtSDKExtension, otelProviders *otelobs.Providers, authMW *auth.Auth, reload *reloader, pluginReg pluginreg.FetchRegistry) (http.Handler, error) {
-	handler, err := mountHTTP(b.cfg, st, orch, llm, jail, runHub, ledgerStore, clientMap, taskStore, userStore, artifacts, sdkExts, otelProviders, authMW, reload, pluginReg)
+func (b *boot) initHTTP(ctx context.Context, st *store.Store, orch *orchestrator.Orchestrator, llm model.LLM, jail *workspace.Jail, runHub *stream.Hub, ledgerStore ledger.LedgerStore, taskStore, userStore *memory.Store, artifacts *store.TurnAwareService, sdkExts []builtSDKExtension, authMW *auth.Auth, reload *reloader, pluginReg pluginreg.FetchRegistry) (http.Handler, error) {
+	handler, err := mountHTTP(b.cfg, st, orch, llm, jail, runHub, ledgerStore, taskStore, userStore, artifacts, sdkExts, authMW, reload, pluginReg)
 	if err != nil {
 		return nil, err
 	}
@@ -864,7 +862,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 		addr = fmt.Sprintf(":%d", port)
 	}
 
-	authMW, ledgerStore, otelProviders, err := b.initAuthAndObservability(ctx)
+	authMW, ledgerStore, err := b.initAuthAndObservability(ctx)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -932,7 +930,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	rr.exec = executorRef.Load()
 	skills.reload.attach(rr)
 	b.cleanups = append(b.cleanups, skills.reload.shutdown)
-	handler, err = b.initHTTP(ctx, st, orch, llm, jail, runHub, ledgerStore, built.clients, taskStore, userStore, artifacts, sdkExts, otelProviders, authMW, skills.reload, skills.reg)
+	handler, err = b.initHTTP(ctx, st, orch, llm, jail, runHub, ledgerStore, taskStore, userStore, artifacts, sdkExts, authMW, skills.reload, skills.reg)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -1640,10 +1638,7 @@ func (b *nativeNodeBuilder) bindPromptRefresher(prompts *artifactsrc.Pinned, ove
 // resolveGateCfg resolves an agent's trust-gate config, recording gated ones in gateCfgs with the
 // closure that re-resolves their artifacts at run start.
 func resolveGateCfg(cfg *config.Config, res *artifactsrc.Resolver, base vetting.Config, name string, ac config.AgentConfig, taskMemAvailable bool, memGuidance string, memArt artifactsrc.Artifact, bundle *agent.Bundle, gateCfgs *gateConfigs, reg pluginreg.FetchRegistry) (string, error) {
-	if cfg.Gates.Enabled() && !ac.IsGated() {
-		slog.Info("trust gate skipped for agent (gated: false)", "component", "startup", "agent", name)
-	}
-	if cfg.Gates.Enabled() && ac.IsGated() {
+	if cfg.Gates.Enabled() {
 		c, err := perAgentGateCfg(context.Background(), res, base, name, ac, taskMemAvailable, memGuidance)
 		if err != nil {
 			return "", err
@@ -2030,26 +2025,10 @@ func assembleOrchestrator(ctx context.Context, cfg *config.Config, res *artifact
 	return orch, nil
 }
 
-func mountHTTP(cfg *config.Config, st *store.Store, orch *orchestrator.Orchestrator, llm model.LLM, jail *workspace.Jail, runHub *stream.Hub, ledgerStore ledger.LedgerStore, clientMap map[string]adkagent.Agent, taskStore, userStore *memory.Store, artifacts *store.TurnAwareService, sdkExts []builtSDKExtension, otelProviders *otelobs.Providers, authMW *auth.Auth, reload *reloader, pluginReg pluginreg.FetchRegistry) (http.Handler, error) {
+func mountHTTP(cfg *config.Config, st *store.Store, orch *orchestrator.Orchestrator, llm model.LLM, jail *workspace.Jail, runHub *stream.Hub, ledgerStore ledger.LedgerStore, taskStore, userStore *memory.Store, artifacts *store.TurnAwareService, sdkExts []builtSDKExtension, authMW *auth.Auth, reload *reloader, pluginReg pluginreg.FetchRegistry) (http.Handler, error) {
 	spa, err := fs.Sub(webDist, "web/dist")
 	if err != nil {
 		return nil, fmt.Errorf("embed SPA fs failed: %w", err)
-	}
-
-	var adkDebugHandler http.Handler
-	if cfg.Observability.ADKDebug {
-		if mount, derr := adkdebug.New(st.Sessions, clientMap, artifacts); derr != nil {
-			slog.Warn("adk debug mount failed; disabled", "component", "startup", "err", derr)
-		} else {
-			if otelProviders.TracerProvider != nil {
-				otelProviders.TracerProvider.RegisterSpanProcessor(mount.SpanProcessor())
-			} else {
-				slog.Warn("adk debug mount enabled but otel is disabled; /debug/trace will stay empty", "component", "startup")
-			}
-			adkDebugHandler = mount.Handler
-			slog.Warn("ADK debug surface mounted - runs agents WITHOUT quack's trust gate; dev/trusted use only",
-				"component", "startup", "path", adkdebug.MountPath)
-		}
 	}
 
 	restHandler := rest.NewHandler(st, orch, llm, jail, runHub, ledgerStore, Version, taskStore, userStore, artifacts, extensionDescriptors(sdkExts))
@@ -2063,7 +2042,6 @@ func mountHTTP(cfg *config.Config, st *store.Store, orch *orchestrator.Orchestra
 		SPA:           spa,
 		SDKExtensions: sdkExtensionMounts(sdkExts),
 		Auth:          authMW,
-		ADKDebug:      adkDebugHandler,
 	}), nil
 }
 

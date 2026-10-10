@@ -40,25 +40,6 @@ func TestFromConfigResolvesArtifacts(t *testing.T) {
 	}
 }
 
-// TestFromConfigInlineOverridesWin: inline prose short-circuits resolution, so
-// a planner-authored rubric is never overwritten by the shipped one.
-func TestFromConfigInlineOverridesWin(t *testing.T) {
-	c, err := FromConfig(context.Background(), nil, config.GatesConfig{
-		Constitution: "  be kind  ",
-		Rubric:       "  score it  ",
-		Judge:        config.JudgeConfig{MaxRounds: 1},
-	})
-	if err != nil {
-		t.Fatalf("FromConfig: %v", err)
-	}
-	if c.Constitution != "be kind" || c.Rubric != "score it" {
-		t.Errorf("inline overrides not used: %+v", c)
-	}
-	if c.RubricSpecs != nil {
-		t.Error("a prose override has no structured specs")
-	}
-}
-
 // TestFromConfigNoJudgeSkipsRubric: a deterministic-only gate needs no rubric.
 func TestFromConfigNoJudgeSkipsRubric(t *testing.T) {
 	c, err := FromConfig(context.Background(), nil, config.GatesConfig{})

@@ -346,7 +346,7 @@ func TestMergeAgentConfig_EveryFieldOverrides(t *testing.T) {
 	trueVal := true
 	override := AgentConfig{
 		Provider: "custom", Model: "m2", ContextWindow: 999,
-		Tools: []string{"t1"}, Inputs: []string{"text"}, Gated: &trueVal, JudgeRounds: 5, Judge: &trueVal,
+		Tools: []string{"t1"}, Inputs: []string{"text"}, JudgeRounds: 5, Judge: &trueVal,
 		Memory: MemoryConfig{Bucket: "coding"}, Skills: []string{"s1"}, Acp: &AcpAgentConfig{Command: []string{"pi"}},
 		Bundle: "ignored", Optional: false,
 	}
@@ -354,8 +354,8 @@ func TestMergeAgentConfig_EveryFieldOverrides(t *testing.T) {
 	if merged.Provider != "custom" || merged.Model != "m2" || merged.ContextWindow != 999 {
 		t.Errorf("merged = %+v, want provider/model/context_window overridden", merged)
 	}
-	if len(merged.Tools) != 1 || len(merged.Inputs) != 1 || merged.Gated == nil || merged.JudgeRounds != 5 || merged.Judge == nil {
-		t.Errorf("merged = %+v, want tools/inputs/gated/judge_rounds/judge overridden", merged)
+	if len(merged.Tools) != 1 || len(merged.Inputs) != 1 || merged.JudgeRounds != 5 || merged.Judge == nil {
+		t.Errorf("merged = %+v, want tools/inputs/judge_rounds/judge overridden", merged)
 	}
 	if merged.Memory.Bucket != "coding" || len(merged.Skills) != 1 || merged.Acp == nil {
 		t.Errorf("merged = %+v, want memory/skills/acp overridden", merged)

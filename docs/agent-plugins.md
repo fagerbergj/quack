@@ -30,16 +30,6 @@ plugins:
 - `root` - where clones live. Defaults to `<workspace.root>/.quack/plugins` (a dot-dir so it never collides with repo checkouts on the same volume).
 - `seed` - applied at every boot (a Reload does not re-read quack.yaml). An absent name is inserted and marked `seeded`. A row that config owns - a local root, or a row seeding created - follows its seed entry: when the entry changes (a new ref, or a vendored local root moved to a `github:` entry), the row is replaced and the boot fetch moves the clone. A row added or re-POSTed over REST is operator-owned and never changed by seeding; a REST add of a seeded row's name takes it over. Any row whose entry equals its seed entry is marked seeded at boot, so a REST row that matches the seed is handed back to config then; to hold a row at the seed's current ref across later bumps, POST a different entry for it (e.g. `@<sha>`). The row's `seeded` field on `GET /api/v1/plugins` shows which rows config owns. A seed row deleted over REST comes back at the next boot while it stays in `seed`; a row added over REST is never removed. Setting `seed` **replaces** the stock defaults (dotagents, ponytail, usage) - it is not an extension of them; list the defaults explicitly if you still want them.
 
-`plugins:` as a bare YAML list (the pre-registry local-root form) is treated as `seed:` with the filesystem backend:
-
-```yaml
-plugins:
-  - /opt/checkouts/my-plugin
-  - .agents/plugins/usage
-```
-
-The old `skills.plugins:` key still works and is read as a deprecated alias for `plugins.seed` (a warning is logged). `plugins.seed` wins only when it is actually set; a `plugins:` block that sets only `store`/`root` with no `seed:` key still takes its seed list from `skills.plugins` if that is set.
-
 ### Entry syntax
 
 A seed entry, or an entry POSTed to `/api/v1/plugins`, is one of:
@@ -273,7 +263,7 @@ model_role: researcher   # researcher | coder | judge
 
 ### Precedence
 
-A deployment's `agents.<name>:` entry - already in `config.Agents` before a plugin's bundles are seeded - overrides the plugin's `agent.yaml` defaults field by field (`provider`, `model`, `context_window`, `tools`, `skills`, `judge_rounds`, `memory`, `gated`, `judge`, `acp`, `inputs`); an unset field keeps the plugin's own value. `bundle` and `optional: true` are never overridable - every plugin agent is implicitly optional, so one that fails to build for any reason (unresolved tools, a broken bundle, a bad model) is dropped from the roster with a warning, at boot and on a reload alike.
+A deployment's `agents.<name>:` entry - already in `config.Agents` before a plugin's bundles are seeded - overrides the plugin's `agent.yaml` defaults field by field (`provider`, `model`, `context_window`, `tools`, `skills`, `judge_rounds`, `memory`, `judge`, `acp`, `inputs`); an unset field keeps the plugin's own value. `bundle` and `optional: true` are never overridable - every plugin agent is implicitly optional, so one that fails to build for any reason (unresolved tools, a broken bundle, a bad model) is dropped from the roster with a warning, at boot and on a reload alike.
 
 `tools:` **replaces** the plugin's list wholesale, never merges with it - the documented way to drop a tool whose backend the deployment doesn't run. A plugin agent whose tool fails to build because its backend isn't configured (e.g. `web_search` with no SearXNG url or Exa key) is dropped like any other build failure, so override `agents.<name>.tools` to the subset the deployment can actually build rather than lose the agent.
 

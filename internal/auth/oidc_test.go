@@ -250,33 +250,11 @@ func TestOIDCVerifyToken(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := v.verify(t.Context(), tt.token)
+			err := v.verify(t.Context(), tt.token)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("verify() err = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
-	}
-}
-
-func TestOIDCVerifyExtractsIdentity(t *testing.T) {
-	idp := newTestIdP(t)
-	v, err := newOIDCVerifier(&config.OIDCConfig{Issuer: idp.srv.URL, Audience: "quack"})
-	if err != nil {
-		t.Fatalf("newOIDCVerifier: %v", err)
-	}
-	tok := idp.token(t, "quack", time.Hour, jwt.MapClaims{
-		"preferred_username": "jason",
-		"groups":             []any{"admins", "devs"},
-	})
-	id, err := v.verify(t.Context(), tok)
-	if err != nil {
-		t.Fatalf("verify: %v", err)
-	}
-	if id.User != "jason" {
-		t.Errorf("User = %q, want jason", id.User)
-	}
-	if len(id.Groups) != 2 || id.Groups[0] != "admins" || id.Groups[1] != "devs" {
-		t.Errorf("Groups = %v", id.Groups)
 	}
 }
 
@@ -302,7 +280,7 @@ func TestOIDCVerifySignedByWrongKeyFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sign: %v", err)
 	}
-	if _, err := v.verify(t.Context(), s); err == nil {
+	if err := v.verify(t.Context(), s); err == nil {
 		t.Fatal("expected error for a token signed by an unpublished key")
 	}
 }

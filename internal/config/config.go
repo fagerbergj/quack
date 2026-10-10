@@ -36,9 +36,7 @@ type Config struct {
 	Dag          DagConfig              `yaml:"dag"`
 	Server       ServerConfig           `yaml:"server"`
 	Workspace    WorkspaceConfig        `yaml:"workspace"`
-	Skills       SkillsConfig           `yaml:"skills"`
-	// Plugins is the plugin registry block (store, root, seed). A bare YAML list is read as seed:;
-	// skills.plugins stays a deprecated alias of that form.
+	// Plugins is the plugin registry block (store, root, seed).
 	Plugins *PluginsConfig `yaml:"plugins"`
 	// Workflows is top-level, not under skills:, since it binds onto the DAG planner.
 	Workflows     []WorkflowShape     `yaml:"workflows"`
@@ -63,11 +61,6 @@ type Config struct {
 	skipRuntimeValidation bool
 }
 
-// SkillsConfig is the deprecated home of the plugin-root list; use top-level plugins: instead.
-type SkillsConfig struct {
-	Plugins []string `yaml:"plugins"`
-}
-
 // PluginsConfig is the plugins: block: store picks the registry backend ("" filesystem, else a
 // sqlite/postgres stores[] entry); root holds clones; seed replaces the defaults.
 type PluginsConfig struct {
@@ -76,50 +69,14 @@ type PluginsConfig struct {
 	Seed  []string `yaml:"seed"`
 }
 
-// pluginsConfigFields must match PluginsConfig's yaml tags: a custom UnmarshalYAML bypasses
-// the decoder's KnownFields(true).
-var pluginsConfigFields = map[string]bool{"store": true, "root": true, "seed": true}
-
-// UnmarshalYAML lets plugins: stay a bare list - today's local-root form,
-// treated as seed: - alongside the new {store, root, seed} block.
-func (p *PluginsConfig) UnmarshalYAML(value *yaml.Node) error {
-	if value.Kind == yaml.SequenceNode {
-		return value.Decode(&p.Seed)
-	}
-	if value.Kind != yaml.MappingNode {
-		return fmt.Errorf("config: plugins: expected a list or a mapping")
-	}
-	for i := 0; i+1 < len(value.Content); i += 2 {
-		key := value.Content[i].Value
-		if !pluginsConfigFields[key] {
-			return fmt.Errorf("config: plugins: unknown field %q (known: store, root, seed)", key)
-		}
-	}
-	type plain PluginsConfig
-	return value.Decode((*plain)(p))
-}
-
 // validatePlugins normalizes c.Plugins, checks plugins.store, fills root's default, and checks
 // every seed entry parses.
 func (c *Config) validatePlugins() error {
-	// bothSet: plugins: actually wins over skills.plugins (a block with no
-	// seed: key falls through to it below, so it isn't "ignored" at all).
-	bothSet := c.Plugins != nil && c.Plugins.Seed != nil && c.Skills.Plugins != nil
-	if bothSet {
-		slog.Warn("both plugins: and skills.plugins are set; skills.plugins is ignored", "component", "config")
-	}
 	if c.Plugins == nil {
 		c.Plugins = &PluginsConfig{}
 	}
 	if c.Plugins.Seed == nil {
-		seed := append([]string{}, defaultSkillPlugins...)
-		if c.Skills.Plugins != nil {
-			seed = c.Skills.Plugins
-		}
-		c.Plugins.Seed = seed
-	}
-	if c.Skills.Plugins != nil && !bothSet {
-		slog.Warn("skills.plugins is deprecated; rename it to the top-level plugins:", "component", "config")
+		c.Plugins.Seed = append([]string{}, defaultSkillPlugins...)
 	}
 	if err := c.validatePluginsStore(); err != nil {
 		return err
@@ -283,9 +240,6 @@ var defaultSkillPlugins = []string{"github:fagerbergj/dotagents", "github:Dietri
 type ObservabilityConfig struct {
 	Otel      OtelConfig      `yaml:"otel"`
 	Recording RecordingConfig `yaml:"recording"`
-	// ADKDebug mounts ADK's debug console at /debug/adk. DANGER: /run* execute any agent WITHOUT the
-	// trust gate, guarded only by auth and this flag. MUST stay off in production.
-	ADKDebug bool `yaml:"adk_debug"`
 }
 
 // RecordingConfig names the ledger (WAL) store. The ledger is on whenever Store is set;
@@ -325,8 +279,7 @@ type OIDCConfig struct {
 }
 
 type TrustedHeadersConfig struct {
-	User   string `yaml:"user"`
-	Groups string `yaml:"groups"`
+	User string `yaml:"user"`
 }
 
 // OtelSignal names one OTLP signal. An exporter declares which it wants, so
@@ -526,10 +479,6 @@ type CompactionConfig struct {
 const defaultMaxActiveNodes = 32
 
 type DagConfig struct {
-	// MaxActiveRuns is deprecated, kept as a no-op so an already-deployed
-	// quack.yaml with "max_active_runs: N" doesn't crash-loop.
-	MaxActiveRuns int `yaml:"max_active_runs"`
-
 	// MaxActiveNodes caps concurrent nodes within one run as a host-resource guard. GPU concurrency
 	// is models.<m>.limits.sessions/kv_tokens and providers.<p>.limits.active.
 	MaxActiveNodes int `yaml:"max_active_nodes"`
@@ -537,9 +486,7 @@ type DagConfig struct {
 
 type GatesConfig struct {
 	ConstitutionPath    string      `yaml:"constitution_path"`
-	Constitution        string      `yaml:"constitution"`
 	RubricPath          string      `yaml:"rubric_path"`
-	Rubric              string      `yaml:"rubric"`
 	DeterministicChecks StageConfig `yaml:"deterministic_checks"`
 	Judge               JudgeConfig `yaml:"judge"`
 }
@@ -577,7 +524,6 @@ type AgentConfig struct {
 	ContextWindow int             `yaml:"context_window"`
 	Tools         []string        `yaml:"tools"`
 	Inputs        []string        `yaml:"inputs"`
-	Gated         *bool           `yaml:"gated"`
 	JudgeRounds   int             `yaml:"judge_rounds"`
 	Judge         *bool           `yaml:"judge"`
 	Memory        MemoryConfig    `yaml:"memory"`
@@ -603,8 +549,6 @@ type AcpAgentConfig struct {
 	// repos the gate never provisions); requires ReadOnly and a boundary-enforcing sandbox.
 	AllowClone bool `yaml:"allow_clone"`
 }
-
-func (a AgentConfig) IsGated() bool { return a.Gated == nil || *a.Gated }
 
 type ToolConfig struct {
 	Kind       string      `yaml:"kind"`
@@ -907,20 +851,6 @@ func validateNoLiteralTokens(raw string) error {
 	return nil
 }
 
-var knownRenames = map[string]string{
-	"memory_role": "memory.bucket",
-}
-
-func scanForKnownRenames(raw string) error {
-	for oldKey := range knownRenames {
-		re := regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(oldKey) + `:`)
-		if re.MatchString(raw) {
-			return fmt.Errorf("config: unknown field %q — use %s instead", oldKey, knownRenames[oldKey])
-		}
-	}
-	return nil
-}
-
 const (
 	coderModelFallbackEnv = "QUACK_CODER_MODEL"
 	researcherModelEnv    = "QUACK_RESEARCHER_MODEL"
@@ -956,13 +886,7 @@ func load(path string, skipRuntimeValidation bool) (*Config, error) {
 	if err := validateNoLiteralTokens(string(raw)); err != nil {
 		return nil, err
 	}
-	if err := scanForKnownRenames(string(raw)); err != nil {
-		return nil, err
-	}
 	expanded := os.Expand(string(raw), expandEnv)
-	if err := detectOldPricingShape(expanded); err != nil {
-		return nil, err
-	}
 
 	var c Config
 	dec := yaml.NewDecoder(bytes.NewReader([]byte(expanded)))
@@ -980,26 +904,6 @@ func load(path string, skipRuntimeValidation bool) (*Config, error) {
 		return nil, err
 	}
 	return &c, nil
-}
-
-// detectOldPricingShape rejects per-model prices nested under providers.<p>.models with a
-// migration hint, instead of KnownFields(true) dropping them as unknown.
-func detectOldPricingShape(expanded string) error {
-	var generic map[string]any
-	if err := yaml.Unmarshal([]byte(expanded), &generic); err != nil {
-		return nil // let the real decode below surface this parse error
-	}
-	providers, _ := generic["providers"].(map[string]any)
-	for name, raw := range providers {
-		p, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		if _, ok := p["models"]; ok {
-			return fmt.Errorf("config: providers.%s.models is no longer supported — move per-model pricing to the top-level models.<name>.cost.{input_per_mtok,output_per_mtok}", name)
-		}
-	}
-	return nil
 }
 
 func (c *Config) validate() error {
@@ -1347,14 +1251,8 @@ func (c *Config) validateGates() error {
 		if g.DeterministicChecks.MaxRounds < 0 || g.Judge.MaxRounds < 0 {
 			return fmt.Errorf("config: gates.*.max_rounds must be >= 0")
 		}
-		if g.ConstitutionPath != "" && g.Constitution != "" {
-			return fmt.Errorf("config: gates sets both constitution_path and constitution; use one")
-		}
-		if g.RubricPath != "" && g.Rubric != "" {
-			return fmt.Errorf("config: gates sets both rubric_path and rubric; use one")
-		}
-		if g.JudgeEnabled() && g.RubricPath == "" && g.Rubric == "" {
-			return fmt.Errorf("config: gates needs one of rubric_path or rubric when judge is enabled")
+		if g.JudgeEnabled() && g.RubricPath == "" {
+			return fmt.Errorf("config: gates needs rubric_path when judge is enabled")
 		}
 		if g.JudgeEnabled() {
 			if err := c.validateGateJudge(g); err != nil {
@@ -1444,14 +1342,6 @@ func (c *Config) validateDag() error {
 	if c.Dag.MaxActiveNodes < 1 {
 		return fmt.Errorf("config: dag.max_active_nodes must be >= 1")
 	}
-	if c.Dag.MaxActiveRuns < 0 {
-		return fmt.Errorf("config: dag.max_active_runs must be >= 0 (got %d)", c.Dag.MaxActiveRuns)
-	}
-	if c.Dag.MaxActiveRuns != 0 {
-		slog.Warn("dag.max_active_runs is deprecated and ignored; chat state derives from node rows now",
-			"component", "config", "value", c.Dag.MaxActiveRuns)
-	}
-
 	return nil
 }
 

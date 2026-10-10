@@ -1,14 +1,9 @@
 package config
 
-import (
-	"bytes"
-	"log/slog"
-	"strings"
-	"testing"
-)
+import "testing"
 
 // A plugins: block that sets root but omits seed: still falls back to the default roots
-// (Seed nil is "omitted", []string{} is "explicit empty" - see PluginsConfig.UnmarshalYAML).
+// (Seed nil is "omitted", []string{} is "explicit empty").
 func TestLoadPluginsBlockOmittedSeedUsesDefaults(t *testing.T) {
 	c, err := Load(writeTemp(t, baseConfig+`
 plugins:
@@ -44,7 +39,6 @@ plugins:
 	}
 }
 
-// The block form's custom UnmarshalYAML bypasses KnownFields(true), so it must reject unknown keys itself.
 func TestLoadPluginsBlockRejectsUnknownField(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+`
 plugins:
@@ -136,33 +130,6 @@ plugins:
 	}
 }
 
-// A plugins: block with no seed: falls through to skills.plugins, so the "skills.plugins is ignored"
-// warning must not fire.
-func TestLoadPluginsBlockNoSeedFallsBackToSkillsPluginsWithoutWarning(t *testing.T) {
-	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
-	defer slog.SetDefault(prev)
-
-	c, err := Load(writeTemp(t, baseConfig+`
-skills:
-  plugins:
-    - .agents/local/dotagents
-plugins:
-  root: /custom/plugins/root
-`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := c.Plugins.Seed
-	if len(got) != 1 || got[0] != ".agents/local/dotagents" {
-		t.Fatalf("Plugins.Seed = %v, want skills.plugins to be used", got)
-	}
-	if strings.Contains(buf.String(), "skills.plugins is ignored") {
-		t.Fatalf("skills.plugins was actually used but the log says it was ignored:\n%s", buf.String())
-	}
-}
-
 // A degenerate local root like "/" fails config load via ParseEntry, not as a later registry error.
 func TestLoadPluginsRejectsDegenerateLocalSeed(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+`
@@ -171,22 +138,6 @@ plugins:
 `))
 	if err == nil {
 		t.Fatal("expected an error for the degenerate local seed entry \"/\"")
-	}
-}
-
-func TestLoadPluginsBareListStillMeansSeed(t *testing.T) {
-	c, err := Load(writeTemp(t, baseConfig+`
-plugins:
-  - .agents/local/dotagents
-  - github:fagerbergj/ponytail@v1.4
-`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []string{".agents/local/dotagents", "github:fagerbergj/ponytail@v1.4"}
-	got := c.Plugins.Seed
-	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
-		t.Fatalf("Plugins.Seed = %v, want %v (bare list means seed:, local and github: entries alike)", got, want)
 	}
 }
 

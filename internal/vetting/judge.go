@@ -640,33 +640,23 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	var counters judgeReadCounters
 	v, counters, err = judgeAttemptLoop(ctx, factory, cfg, question, fitted, changedFiles, known, fittedPrompt, act, received, emit)
 
-	// A non-transient failure with images attached degrades once to a text-only retry; q keeps every
-	// later retry text-only so the same rejection doesn't recur.
-	q := question
-	if err != nil && ctx.Err() == nil && !isTransientJudgeErr(err) && hasInlineData(question) {
-		slog.Warn("judge round failed with images attached; retrying once without them",
-			"component", "vetting", "agent", cfg.Agent, "chat", cfg.ChatID, "err", err)
-		q = stripInlineData(question)
-		v, counters, err = runJudgeRound(ctx, factory, cfg, q, fitted, changedFiles, known, "", act, received, emit)
-	}
-
 	if errors.Is(err, ErrJudgeNoVerdict) && ctx.Err() == nil {
-		v, err = retryNoVerdict(ctx, factory, cfg, q, fitted, changedFiles, known, act, received, emit, counters, errors.Is(err, ErrJudgeOutputCapped))
+		v, err = retryNoVerdict(ctx, factory, cfg, question, fitted, changedFiles, known, act, received, emit, counters, errors.Is(err, ErrJudgeOutputCapped))
 		return
 	}
 
 	if err == nil || ctx.Err() != nil {
-		v = finishJudgeRound(ctx, factory, cfg, q, fitted, changedFiles, known, act, received, emit, v, counters)
+		v = finishJudgeRound(ctx, factory, cfg, question, fitted, changedFiles, known, act, received, emit, v, counters)
 		return
 	}
-	retryAnswer, retryPrompt := fitJudgeAnswer(cfg, q, fitted, changedFiles, known, act, 0.5)
+	retryAnswer, retryPrompt := fitJudgeAnswer(cfg, question, fitted, changedFiles, known, act, 0.5)
 	if retryAnswer == fitted {
 		// Nothing left to shrink: return the zero verdict directly - it must never
 		// reach finishJudgeRound (which assumes a real verdict to re-check).
 		v = verdict{}
 		return
 	}
-	v, _, err = runJudgeRound(ctx, factory, cfg, q, retryAnswer, changedFiles, known, retryPrompt, act, received, emit)
+	v, _, err = runJudgeRound(ctx, factory, cfg, question, retryAnswer, changedFiles, known, retryPrompt, act, received, emit)
 	return
 }
 

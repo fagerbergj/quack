@@ -97,7 +97,7 @@ func (e *Executor) buildGateNodes(ctx context.Context, plan Plan, chatID, userID
 		// buildTask's dependency-artifact lookup scopes recordstore reads by this.
 		cfg.User = userID
 		cfg.Ledger = e.walLedger
-		// Store invariant, not grading opinion: armed even when cfgFor returns gated:false.
+		// Store invariant, not grading opinion: armed even for an ungated node.
 		cfg.Schemas = e.schemas
 		cfg.Decisions = e.decisions
 		cfg.RoundCoordsSink = setRoundCoords

@@ -10,7 +10,6 @@ auth:
     jwks_url: ${OIDC_JWKS_URL} # optional override; see below
   trusted_headers:
     user: X-authentik-username
-    groups: X-authentik-groups
 ```
 
 Present, `auth:` needs at least one of the two sub-blocks below - config loading rejects a present-but-empty `auth:` section at startup. Configuring only one is normal; both together is also valid (see precedence).
@@ -23,7 +22,6 @@ Present, `auth:` needs at least one of the two sub-blocks below - config loading
 - On startup, `internal/auth.New` fetches `<issuer>/.well-known/openid-configuration` (via [`github.com/zitadel/oidc/v3`](https://github.com/zitadel/oidc)'s `client.Discover`) and reads its `jwks_uri` - **discovery is the default path**. Discovery also rejects a response whose own `issuer` field doesn't match the configured one. This happens once, synchronously, followed by one reachability probe of the JWKS itself: an unreachable or malformed issuer or JWKS is a startup error, not a silent fallback to open auth.
 - `jwks_url` is an optional override that skips discovery entirely when set - use it only when discovery itself is unavailable or network-blocked. It still means exactly what it did before: the JWKS endpoint quack fetches signing keys from.
 - Signing-key resolution and caching is `rp.NewRemoteKeySet` (zitadel/oidc's relying-party package, used here purely as a JWKS-backed `oidc.KeySet` - no browser/redirect flow, no `RelyingParty` object beyond the verifier itself), which refreshes the JWKS lazily and selects the verification key by the token's `kid`. Verification (`rp.VerifyIDToken` against an `*oidc.IDTokenClaims`) checks signature, `iss`, `aud`, `exp`, and `iat`.
-- The caller identity is read from the token's claims: `preferred_username` (falling back to `sub`) for the user, and an optional `groups` claim.
 
 A request with no bearer token, an expired one, a bad signature, or a mismatched issuer/audience gets `401 Unauthorized`.
 
@@ -31,7 +29,7 @@ A request with no bearer token, an expired one, a bad signature, or a mismatched
 
 `auth.trusted_headers` names the headers a forward-auth gateway injects after authenticating the request itself - the SPA's own traffic doesn't re-run the OIDC flow against quack directly, it arrives through something like a Traefik + Authentik forward-auth middleware:
 
-- `user` is required; `groups` is optional.
+- `user` is required.
 - When the named user header is present on a request, quack trusts it outright and does **not** attempt bearer-token verification, even if `oidc` is also configured.
 
 This precedence - trusted headers win when present - is deliberate: it's the gateway-fronted path, and the gateway has already done the real authentication work.
@@ -41,15 +39,15 @@ This precedence - trusted headers win when present - is deliberate: it's the gat
 | `auth:` section | Request has trusted header | Request has bearer token | Result |
 |---|---|---|---|
 | absent | - | - | open, no enforcement |
-| `trusted_headers` only | yes | - | trusted, identity from header |
+| `trusted_headers` only | yes | - | trusted |
 | `trusted_headers` only | no | - | `401` |
-| `oidc` only | - | valid | verified, identity from claims |
+| `oidc` only | - | valid | verified |
 | `oidc` only | - | missing/invalid | `401` |
-| both | yes | (ignored) | trusted, identity from header |
-| both | no | valid | verified, identity from claims |
+| both | yes | (ignored) | trusted |
+| both | no | valid | verified |
 | both | no | missing/invalid | `401` |
 
-The verified identity (`auth.Identity{User, Groups}`) is attached to the request context (`auth.FromContext`) either way, for handlers that want to authorize on it.
+The middleware is pass/fail only: it attaches no caller identity to the request context.
 
 ## Implementation
 
