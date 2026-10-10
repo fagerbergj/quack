@@ -17,9 +17,6 @@ import {
   type ArtifactRow,
 } from './envelope'
 
-// Test-only probe: lets a test pin memo(TriggerMessage) directly, since render timing is unreliable under jsdom.
-export const triggerMessageRenderProbe = { count: 0 }
-
 // A button press on an A2UI surface: the turn's text is machine JSON, so show what was
 // sent as a pill, with the context the model receives one tap away.
 function A2uiActionPill({ name, surfaceId, context }: { name: string; surfaceId: string; context: unknown }) {
@@ -52,7 +49,6 @@ export const TriggerMessage = memo(function TriggerMessage({
   // Opening an <artifacts> row needs a chat to look up the artifact's owning node.
   chatId?: string
 }) {
-  triggerMessageRenderProbe.count++
   const blocks = useMemo(() => parseEnvelope(content), [content])
   // The panel opens on a node; artifactId is a focus hint so the tapped artifact shows as primary.
   const [openArtifact, setOpenArtifact] = useState<{ nodeId: string; artifactId: string } | null>(null)

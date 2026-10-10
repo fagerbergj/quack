@@ -162,6 +162,7 @@ function InputRow({ answering, value, onChange, onSubmit }: {
     <div className="flex items-center gap-2">
       <input
         autoFocus={answering}
+        data-autofocus={answering || undefined}
         value={value}
         onChange={e => onChange(e.target.value)}
         onKeyDown={e => {
@@ -226,7 +227,7 @@ export function NodePopup({
   }
 
   return (
-    <Sheet onClose={onClose} className="relative max-w-2xl medium:max-h-[85dvh] medium:rounded-2xl bg-gray-50 dark:bg-gray-900 px-5 medium:pb-6 pt-2 space-y-2">
+    <Sheet onClose={onClose} aria-label={`Node ${node.agent}`} className="relative medium:max-h-[85dvh] medium:rounded-2xl bg-gray-50 dark:bg-gray-900 px-5 medium:pb-6 pt-2 space-y-2">
       {/* Close on its own row so it never overlaps the content bubbles. */}
       <div className="flex justify-end -mb-2">
         <button

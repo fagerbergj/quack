@@ -30,9 +30,10 @@ describe('NodePopup compact sheet', () => {
 
   it('docks to the bottom edge below medium and centers above it', () => {
     render(<NodePopup node={node} state={{ status: 'done' }} onClose={() => {}} />)
-    const panel = screen.getByRole('dialog')
-    expect(panel.parentElement?.className).toContain('items-end')
-    expect(panel.parentElement?.className).toContain('medium:items-center')
+    const dialog = screen.getByRole('dialog', { name: 'Node web-researcher' })
+    expect(dialog.className).toContain('mt-auto')
+    expect(dialog.className).toContain('medium:m-auto')
+    const panel = dialog.firstElementChild!
     expect(panel.className).toContain('rounded-t-2xl')
     expect(panel.className).toContain('medium:rounded-2xl')
   })

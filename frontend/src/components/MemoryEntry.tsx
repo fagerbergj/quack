@@ -202,12 +202,7 @@ function MetaRow({ memory }: { memory: Memory }) {
 }
 
 // memo: a vote changes one row of 20, so without it every row re-renders on any sibling's vote.
-// Test-only render counter: the memo test asserts on counts, never on timings.
-export const memoryEntryRenderProbe = { count: 0 }
-
 export const MemoryEntry = memo(function MemoryEntry({ memory, onForget, onVote }: MemoryEntryProps) {
-  memoryEntryRenderProbe.count++
-
   return (
     <div className="px-3 py-2.5 border-b border-gray-100 dark:border-gray-700 flex items-start gap-2">
       <div className="flex-1 min-w-0">

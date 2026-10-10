@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { navigate, type Route } from '../router'
 import { api, type ExtensionInfo } from '../api'
-import { useDrawer } from '../hooks/useDrawer'
+import { closeOnBackdrop, useDrawer } from '../hooks/useDrawer'
 import { serverVersion } from '../state/clientConfig'
 import { Icon, ICON_NAMES, type IconName } from './Icon'
 
@@ -29,7 +29,7 @@ export interface NavRailProps {
 }
 
 // Off-canvas drawer at every width. Closes on item selection, backdrop tap, the close button or Esc;
-// useDrawer supplies the focus trap, scroll lock and focus return.
+// a native modal <dialog> via useDrawer.
 export function NavRail({ route, activeExtension, initialExtensions, versionOverride, open, onClose }: NavRailProps) {
   const [extensions, setExtensions] = useState<ExtensionInfo[]>(initialExtensions ?? [])
   const version = versionOverride ?? serverVersion()
@@ -53,58 +53,49 @@ export function NavRail({ route, activeExtension, initialExtensions, versionOver
   // An extension with no UI descriptor has nowhere to navigate, so it is dropped rather than shown inert.
   const linkedExtensions = extensions.filter(ext => !!ext.href)
 
-  const drawerPanelRef = useDrawer(open, onClose)
+  const dialogRef = useDrawer(open)
 
   if (!open) return null
 
-  // z-50: above ChatList's z-40 (which needs it only for its own off-canvas
-  // stacking below md) so the drawer isn't buried behind it at desktop widths.
   return (
-    <div className="fixed inset-0 z-50">
-      <div
-        className="absolute inset-0 bg-black/50"
-        onClick={onClose}
-        aria-hidden="true"
-      />
-      <div
-        ref={drawerPanelRef}
-        role="dialog"
-        aria-modal="true"
-        aria-label="Main navigation"
-        className="absolute inset-y-0 left-0 w-64 max-w-[85vw] flex flex-col bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 shadow-lg"
-      >
-        <div className="flex items-center justify-between p-2 border-b border-gray-200 dark:border-gray-700">
-          <span className="px-1.5 text-sm font-semibold text-gray-700 dark:text-gray-200">Navigation</span>
-          <button
-            onClick={onClose}
-            aria-label="Close navigation"
-            title="Close navigation"
-            className="flex items-center justify-center w-11 h-11 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-          >
-            <Icon name="close" className="w-4 h-4" />
-          </button>
-        </div>
-        <div className="flex-1 py-2 px-2 space-y-1 overflow-y-auto">
-          <NavItem icon={<Icon name="chat" className="w-4 h-4" />} label="Chats" active={route === 'chat'} onClick={() => { navigate('/chat'); onClose() }} />
-          <NavItem icon={<Icon name="lightbulb" className="w-4 h-4" />} label="Memory" active={route === 'memory'} onClick={() => { navigate('/memory'); onClose() }} />
-          <NavItem icon={<Icon name="extension" className="w-4 h-4" />} label="Plugins" active={route === 'plugins'} onClick={() => { navigate('/plugins'); onClose() }} />
-          {linkedExtensions.length > 0 && (
-            <div className="pt-1 mt-1 border-t border-gray-100 dark:border-gray-700 space-y-1">
-              {linkedExtensions.map(ext => (
-                <ExtensionNavItem key={ext.name} ext={ext} active={activeExtension === ext.name} onNavigate={onClose} />
-              ))}
-            </div>
-          )}
-        </div>
-        {version && (
-          <div className="shrink-0 px-3 py-1.5">
-            <span className="text-[11px] text-gray-500 dark:text-gray-400" title={version}>
-              {displayVersion(version)}
-            </span>
+    <dialog
+      ref={dialogRef}
+      aria-label="Main navigation"
+      onClose={onClose}
+      onClick={closeOnBackdrop}
+      className="m-0 h-dvh max-h-none w-64 max-w-[85vw] p-0 open:flex flex-col bg-white dark:bg-gray-800 border-0 border-r border-gray-200 dark:border-gray-700 shadow-lg backdrop:bg-black/50"
+    >
+      <div className="flex items-center justify-between p-2 border-b border-gray-200 dark:border-gray-700">
+        <span className="px-1.5 text-sm font-semibold text-gray-700 dark:text-gray-200">Navigation</span>
+        <button
+          onClick={onClose}
+          aria-label="Close navigation"
+          title="Close navigation"
+          className="flex items-center justify-center w-11 h-11 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+        >
+          <Icon name="close" className="w-4 h-4" />
+        </button>
+      </div>
+      <div className="flex-1 py-2 px-2 space-y-1 overflow-y-auto">
+        <NavItem icon={<Icon name="chat" className="w-4 h-4" />} label="Chats" active={route === 'chat'} onClick={() => { navigate('/chat'); onClose() }} />
+        <NavItem icon={<Icon name="lightbulb" className="w-4 h-4" />} label="Memory" active={route === 'memory'} onClick={() => { navigate('/memory'); onClose() }} />
+        <NavItem icon={<Icon name="extension" className="w-4 h-4" />} label="Plugins" active={route === 'plugins'} onClick={() => { navigate('/plugins'); onClose() }} />
+        {linkedExtensions.length > 0 && (
+          <div className="pt-1 mt-1 border-t border-gray-100 dark:border-gray-700 space-y-1">
+            {linkedExtensions.map(ext => (
+              <ExtensionNavItem key={ext.name} ext={ext} active={activeExtension === ext.name} onNavigate={onClose} />
+            ))}
           </div>
         )}
       </div>
-    </div>
+      {version && (
+        <div className="shrink-0 px-3 py-1.5">
+          <span className="text-[11px] text-gray-500 dark:text-gray-400" title={version}>
+            {displayVersion(version)}
+          </span>
+        </div>
+      )}
+    </dialog>
   )
 }
 

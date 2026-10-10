@@ -6,40 +6,49 @@ import { Sheet } from './Sheet'
 afterEach(cleanup)
 
 describe('Sheet', () => {
-  it('opens as a modal dialog docked to the bottom edge below medium', () => {
+  it('opens as a labelled modal dialog docked to the bottom edge below medium', () => {
     render(<Sheet onClose={() => {}} aria-label="Things"><button>Item</button></Sheet>)
     const dialog = screen.getByRole('dialog', { name: 'Things' })
-    expect(dialog.getAttribute('aria-modal')).toBe('true')
-    expect(dialog.className).toContain('rounded-t-2xl')
-    expect(dialog.parentElement?.className).toContain('items-end')
+    expect(dialog.tagName).toBe('DIALOG')
+    expect(dialog.className).toContain('mt-auto')
+    expect(dialog.className).toContain('medium:m-auto')
   })
 
-  it('Escape and a scrim click both close it', () => {
+  it('a backdrop click closes it; a click inside does not', () => {
     const onClose = vi.fn()
-    render(<Sheet onClose={onClose}><button>Item</button></Sheet>)
-    fireEvent.keyDown(document, { key: 'Escape' })
-    expect(onClose).toHaveBeenCalledTimes(1)
-    fireEvent.click(screen.getByRole('dialog').parentElement!)
-    expect(onClose).toHaveBeenCalledTimes(2)
+    render(<Sheet onClose={onClose} aria-label="Things"><button>Item</button></Sheet>)
     fireEvent.click(screen.getByRole('button', { name: 'Item' }))
-    expect(onClose).toHaveBeenCalledTimes(2)
+    expect(onClose).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('dialog'))
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 
-  it('moves focus in on open and returns it to the opener on close', () => {
+  it('returns focus to the opener when unmounted while open', () => {
     const opener = document.createElement('button')
     document.body.appendChild(opener)
     opener.focus()
-    const { unmount } = render(<Sheet onClose={() => {}}><button>Item</button></Sheet>)
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Item' }))
+    const { unmount } = render(<Sheet onClose={() => {}} aria-label="Things"><button>Item</button></Sheet>)
+    screen.getByRole('button', { name: 'Item' }).focus()
     unmount()
     expect(document.activeElement).toBe(opener)
     opener.remove()
   })
 
-  it('anchored: collapses the scrim at medium+ so the panel can be a popover', () => {
-    render(<Sheet anchored role="menu" onClose={() => {}}><button>Item</button></Sheet>)
-    const menu = screen.getByRole('menu')
-    expect(menu.hasAttribute('aria-modal')).toBe(false)
-    expect(menu.parentElement?.className).toContain('medium:contents')
+  // jsdom has no matchMedia, so this renders the desktop (medium+) mode.
+  it('anchored: a non-modal popover menu below its trigger at medium+, closed by light dismiss', () => {
+    const onClose = vi.fn()
+    render(<Sheet anchored="right" role="menu" aria-label="Actions" onClose={onClose}><button>Item</button></Sheet>)
+    const dialog = screen.getByRole('dialog', { name: 'Actions' })
+    expect(dialog.getAttribute('popover')).toBe('auto')
+    expect(dialog.querySelector('[role="menu"]')).not.toBeNull()
+    expect(dialog.className).toContain('medium:[position-area:bottom_span-left]')
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Item' }))
+    dialog.hidePopover()
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('unanchored: always a modal, never a popover', () => {
+    render(<Sheet onClose={() => {}} aria-label="Things"><button>Item</button></Sheet>)
+    expect(screen.getByRole('dialog', { name: 'Things' }).hasAttribute('popover')).toBe(false)
   })
 })

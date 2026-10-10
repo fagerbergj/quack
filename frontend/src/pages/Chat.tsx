@@ -845,14 +845,6 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
   return (
     // The app owns all scrolling; without overflow-hidden an over-tall child scrolls the page past the composer.
     <div className="flex h-full overflow-hidden bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white">
-      {chatListOpen && (
-        <div
-          className="medium:hidden fixed inset-0 z-30 bg-black/50"
-          onClick={() => setChatListOpen(false)}
-          aria-hidden="true"
-        />
-      )}
-
       <ChatList
         chats={chats}
         activeChatId={activeChatId}

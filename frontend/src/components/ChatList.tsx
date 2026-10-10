@@ -7,7 +7,7 @@ import { FilterPanel } from './FilterPanel'
 import { StatusDot } from './StatusDot'
 import { navigate, useSearch } from '../router'
 import { useMediaQuery } from '../hooks/useMediaQuery'
-import { useDrawer } from '../hooks/useDrawer'
+import { closeOnBackdrop, useDrawer } from '../hooks/useDrawer'
 import { Icon, type IconName } from './Icon'
 
 const GITHUB_STATE_TONE = new Map<string, string>([['open', TONE.green], ['closed', TONE.red], ['merged', TONE.purple], ['draft', TONE.yellow]])
@@ -404,27 +404,12 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
   // archivedChats is already server-scoped to status=archived; only search/facets apply here.
   const archived = filterChats(archivedChats ?? [], filterState)
 
-  // Must match the `medium` (600px) breakpoint in `fixed medium:static` below, so the drawer a11y wiring
-  // is armed at every width where the panel is off-canvas.
+  // Below `medium` (600px) the list is an off-canvas modal <dialog>; above it, a static sidebar.
   const offCanvas = useMediaQuery('(max-width: 599px)')
-  const panelRef = useDrawer(open && offCanvas, onCloseMobile)
-  const dialogAria = offCanvas && open
+  const dialogRef = useDrawer(open && offCanvas)
 
-  return (
-    <div
-      ref={panelRef}
-      role={dialogAria ? 'dialog' : undefined}
-      aria-modal={dialogAria ? true : undefined}
-      aria-label={dialogAria ? 'Chat list' : undefined}
-      className={`
-      fixed medium:static inset-y-0 left-0 z-40
-      h-dvh w-[250px] flex-shrink-0 flex flex-col
-      border-r border-gray-200 dark:border-gray-700
-      bg-white dark:bg-gray-800
-      transition-transform duration-200
-      medium:translate-x-0
-      ${open ? 'translate-x-0' : '-translate-x-full medium:translate-x-0'}
-    `}>
+  const body = (
+    <>
       <div className="p-3 border-b border-gray-200 dark:border-gray-700 flex items-center gap-2">
         <button
           onClick={onNewChat}
@@ -490,6 +475,20 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
           </button>
         )}
       </div>
-    </div>
+    </>
+  )
+  const surface = 'h-dvh w-[250px] flex-col border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800'
+  return offCanvas ? (
+    <dialog
+      ref={dialogRef}
+      aria-label="Chat list"
+      onClose={onCloseMobile}
+      onClick={closeOnBackdrop}
+      className={`${surface} m-0 max-h-none max-w-[85vw] p-0 border-0 border-r open:flex backdrop:bg-black/50 transition-transform duration-200 starting:-translate-x-full`}
+    >
+      {body}
+    </dialog>
+  ) : (
+    <div className={`${surface} flex flex-shrink-0`}>{body}</div>
   )
 }

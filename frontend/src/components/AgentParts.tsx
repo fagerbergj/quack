@@ -88,7 +88,7 @@ function AssistantDocument({ text }: { text: string }) {
 // Settled prefix of the streaming split: same string keeps memo true, so it renders once per prefix advance.
 const FrozenAssistantDocument = memo(AssistantDocument)
 
-// Measured in src/perf/split.bperf.test.tsx: 17k frozen + 2k live cut re-render from 65.6 to 5.7 ms/token.
+// Measured: 17k frozen + 2k live cut re-render from 65.6 to 5.7 ms/token.
 const LIVE_TAIL_CHARS = 2000
 
 // While streaming, splits at the last safe block boundary so only the tail re-parses per token. Once done,

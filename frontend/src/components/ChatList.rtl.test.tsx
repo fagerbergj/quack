@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ChatList } from './ChatList'
 
@@ -30,30 +30,15 @@ function baseProps(onCloseMobile: () => void) {
   }
 }
 
-// The mobile drawer's a11y wiring: Esc closes and focus returns to the trigger.
+// The mobile drawer is a native modal <dialog>; Esc, the focus trap and focus restore are the browser's.
 describe('ChatList mobile drawer a11y', () => {
-  it('opening moves focus into the panel, Esc closes it, and closing returns focus to the trigger', async () => {
+  it('a backdrop tap closes it', async () => {
     mockCompact(true)
     const onCloseMobile = vi.fn()
-    const user = userEvent.setup()
-    const trigger = document.createElement('button')
-    trigger.textContent = 'open'
-    document.body.appendChild(trigger)
-    trigger.focus()
-
-    const { rerender } = render(<ChatList {...baseProps(onCloseMobile)} open={true} />)
-    await waitFor(() => expect(screen.getByRole('dialog', { name: 'Chat list' })).toBeTruthy())
-    // Opening moves focus into the panel - the first focusable in it is "New Chat".
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'New Chat' }))
-
-    await user.keyboard('{Escape}')
+    render(<ChatList {...baseProps(onCloseMobile)} open={true} />)
+    fireEvent.click(await screen.findByRole('dialog', { name: 'Chat list' }))
     expect(onCloseMobile).toHaveBeenCalled()
-
-    // onCloseMobile is a spy here (doesn't flip real state) - drive the actual
-    // close the caller would perform, so the effect's cleanup (focus-restore) runs.
-    rerender(<ChatList {...baseProps(onCloseMobile)} open={false} />)
-    expect(document.activeElement).toBe(trigger)
-    trigger.remove()
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 
   it('is not a dialog when closed or above the compact width', () => {

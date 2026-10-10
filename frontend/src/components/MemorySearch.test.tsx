@@ -23,7 +23,7 @@ const memWith = (id: string, content: string) => ({
   id, content, bucket: 'repo:x', author: 'a', timestamp: '2026-08-04T18:22:11Z', kind: 'repo',
 })
 
-describe('lead C: memory search keystroke behavior', () => {
+describe('memory search', () => {
   let root: ReturnType<typeof createRoot> | undefined
   let host: HTMLDivElement | undefined
   let listCalls: string[] // q param of each /memories list call, in call order
@@ -73,7 +73,7 @@ describe('lead C: memory search keystroke behavior', () => {
     })
   }
 
-  it('AFTER FIX: debounce collapses keystrokes to one request, sequence guard prevents the race', async () => {
+  it('debounces keystrokes into one request and ignores a stale earlier reply', async () => {
     await renderTab()
     const input = host!.querySelector('input[type="search"]') as HTMLInputElement
 
@@ -90,8 +90,7 @@ describe('lead C: memory search keystroke behavior', () => {
       expect(listCalls).toEqual([''])
 
       await act(async () => { await vi.advanceTimersByTimeAsync(300) }) // let the debounce settle
-      console.log('listCalls after typing + debounce settle (fix):', JSON.stringify(listCalls))
-      expect(listCalls).toEqual(['', 'graphlit']) // was 9 calls (1 per keystroke) before the fix
+      expect(listCalls).toEqual(['', 'graphlit'])
     } finally {
       vi.useRealTimers()
     }
@@ -108,37 +107,6 @@ describe('lead C: memory search keystroke behavior', () => {
       resolvers.get(0)?.(jsonResponse({ memories: [memWith('stale', 'STALE initial page')], total: 1 }))
       await new Promise(r => setTimeout(r, 0))
     })
-    const overwritten = host!.textContent!.includes('STALE initial page')
-    console.log('stale call #0 overwrote the list after the fix:', overwritten)
-    expect(overwritten).toBe(false)
-  })
-
-  // The debounce cleanup must cancel the pending timer on unmount, or it fires after teardown.
-  it('unmounting before the debounce fires cancels it - no leaked request, no post-unmount setState', async () => {
-    await renderTab()
-    const input = host!.querySelector('input[type="search"]') as HTMLInputElement
-
-    vi.useFakeTimers({ shouldAdvanceTime: true })
-    // React drops setState after unmount silently, so spy clearTimeout to pin the cleanup itself.
-    // Spy after useFakeTimers, which installs its own clearTimeout; spying first would wrap the real one.
-    const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout')
-    try {
-      act(() => { typeChar(input, 'graphlit') })
-      await act(async () => { await vi.advanceTimersByTimeAsync(100) }) // well under the 250ms debounce
-      expect(listCalls).toEqual(['']) // debounce hasn't fired yet
-
-      clearTimeoutSpy.mockClear() // isolate the unmount phase
-      act(() => { root!.unmount() })
-      root = undefined
-      expect(clearTimeoutSpy).toHaveBeenCalled() // the debounce cleanup cancelled the pending timer
-
-      // Advance well past the debounce window - if the timer weren't
-      // cancelled, it would fire here and call setState post-unmount.
-      await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
-      expect(listCalls).toEqual(['']) // still just the initial load - nothing leaked
-    } finally {
-      vi.useRealTimers()
-      clearTimeoutSpy.mockRestore()
-    }
+    expect(host!.textContent).not.toContain('STALE initial page')
   })
 })

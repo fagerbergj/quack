@@ -1,5 +1,5 @@
 import { Icon } from './Icon'
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import type { MemoryListSort, MemoryScopeStats } from '../api'
 import { Sheet } from './Sheet'
 
@@ -30,22 +30,14 @@ export interface MemorySortFilterProps {
   scopes?: MemoryScopeStats[]
 }
 
-// Same disclosure idiom as the chat sidebar's FilterPanel: icon button to popover, closed on outside click
+// Same disclosure idiom as the chat sidebar's FilterPanel: icon button to popover, closed on backdrop click
 // or Escape, so the filters take no toolbar width until opened.
 export function MemorySortFilter({ sort, onSortChange, bucket, buckets, onBucketChange, tier, onTierChange, scopes }: MemorySortFilterProps) {
   const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
   const active = sort !== 'newest' || bucket !== '' || tier !== ''
 
-  useEffect(() => {
-    if (!open) return
-    const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
-    document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
-  }, [open])
-
   return (
-    <div ref={ref} className="relative flex-shrink-0">
+    <div className="relative flex-shrink-0">
       <button
         onClick={() => setOpen(o => !o)}
         aria-label="Sort and filter memories"
@@ -62,7 +54,7 @@ export function MemorySortFilter({ sort, onSortChange, bucket, buckets, onBucket
       </button>
 
       {open && (
-        <Sheet anchored aria-label="Sort and filter memories" onClose={() => setOpen(false)} className="medium:absolute medium:right-0 medium:mt-1 medium:w-56 medium:rounded-lg medium:border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-2 medium:pb-2 text-sm medium:text-xs">
+        <Sheet anchored="right" aria-label="Sort and filter memories" onClose={() => setOpen(false)} className="medium:w-56 medium:rounded-lg medium:border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-2 medium:pb-2 text-sm medium:text-xs">
           <div className="px-1 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Sort</div>
           {SORT_OPTIONS.map(({ value, label }) => (
             <label key={value} className="flex items-center gap-2 min-h-[44px] medium:min-h-0 px-1 py-1 rounded cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700">

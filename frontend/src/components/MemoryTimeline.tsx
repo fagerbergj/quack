@@ -28,12 +28,8 @@ export interface AgeGroup {
   memories: Memory[]
 }
 
-// Test-only call counter for the useMemo in MemoryTimeline.
-export const groupByAgeProbe = { count: 0 }
-
 // Assumes the caller already sorted by time; consecutive same-band memories share one group.
 export function groupByAge(memories: Memory[], now = Date.now()): AgeGroup[] {
-  groupByAgeProbe.count++
   const groups: AgeGroup[] = []
   for (const m of memories) {
     const label = bandLabel(m.timestamp, now)

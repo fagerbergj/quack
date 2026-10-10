@@ -18,6 +18,7 @@ export default tseslint.config(
             '*.js',
             'openapi-ts.config.ts',
             'vitest.render-check.config.ts',
+            'vitest.setup.ts',
             '.storybook/*.ts',
             'scripts/*.mjs',
           ],
