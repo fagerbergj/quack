@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useId, useState } from 'react'
 import { UsageSummary, type UsageSummaryProps } from './UsageSummary'
 import { useTheme, type Theme } from '../hooks/useTheme'
 import { Icon } from './Icon'
@@ -10,25 +10,18 @@ const THEME_OPTIONS: { value: Theme; label: string }[] = [
   { value: 'system', label: 'System' },
 ]
 
-// The chat header's ⋯ overflow menu (#746 items 2/3): per-chat actions not
-// worth permanent header real estate. Today: Download Logs (still a plain
-// link to the same endpoint) and, at compact width (#1136), the token/model usage summary the header hides there to give the title its width back. It does NOT hold Memory - Memory is a NavRail peer of Chats, not a per-chat action. Same disclosure pattern as DagNode's NodeMenu: a button toggling a role="menu" popover, closed on outside click or Escape.
+// Per-chat actions only; Memory is a NavRail peer of Chats, not a per-chat action, so it does not belong here.
 export function ChatMenu({ chatId, usage }: { chatId: string; usage?: UsageSummaryProps }) {
   const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
+  const sheetId = useId()
   const [theme, setTheme] = useTheme()
 
-  useEffect(() => {
-    if (!open) return
-    const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
-    document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
-  }, [open])
-
   return (
-    <div ref={ref} className="relative flex-shrink-0">
+    <div className="relative flex-shrink-0">
       <button
         onClick={() => setOpen(o => !o)}
+        popoverTarget={sheetId}
+        popoverTargetAction="show"
         aria-label="Chat actions"
         aria-haspopup="menu"
         aria-expanded={open}
@@ -38,11 +31,8 @@ export function ChatMenu({ chatId, usage }: { chatId: string; usage?: UsageSumma
         <Icon name="more_horiz" className="w-5 h-5" />
       </button>
       {open && (
-        <Sheet anchored role="menu" onClose={() => setOpen(false)} className="medium:absolute medium:right-0 medium:mt-1 medium:w-44 medium:rounded-lg medium:border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 pt-1 medium:pb-1 text-sm medium:text-xs">
-          {/* Shown here always when the header itself hides the inline
-              UsageSummary (compact width, `hidden medium:flex` in Chat.tsx) -
-              the header stays the source of truth for whether it's shown
-              inline; this is just the escape hatch when it isn't. */}
+        <Sheet id={sheetId} anchored="right" role="menu" aria-label="Chat actions" onClose={() => setOpen(false)} className="medium:w-44 medium:rounded-lg medium:border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 pt-1 medium:pb-1 text-sm medium:text-xs">
+          {/* Shown only where the header's `hidden medium:flex` UsageSummary (Chat.tsx) is hidden. */}
           {usage && (usage.models.length > 0 || (usage.usage?.total_tokens ?? 0) > 0) && (
             <div className="px-3 py-1.5 border-b border-gray-100 dark:border-gray-700 medium:hidden">
               <UsageSummary {...usage} />
@@ -57,10 +47,7 @@ export function ChatMenu({ chatId, usage }: { chatId: string; usage?: UsageSumma
           >
             <Icon name="download" className="w-3.5 h-3.5" /> Download Logs
           </a>
-          {/* #1173: Light/Dark/System - only in-app way to change theme.
-              APG menuitemradio: activating changes the selection but leaves
-              the menu open (unlike Download Logs above), so a user can
-              change their mind without reopening. */}
+          {/* APG menuitemradio: selecting leaves the menu open so the user can change their mind without reopening. */}
           <div role="group" aria-label="Theme" className="border-t border-gray-100 dark:border-gray-700 mt-1 pt-1">
             {THEME_OPTIONS.map(opt => (
               <button

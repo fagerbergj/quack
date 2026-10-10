@@ -72,7 +72,7 @@ export const MobileViewport390: Story = {
   )],
 }
 
-// ActionError (severe#3): a failed per-row Update/Remove must show as a
+// A failed per-row Update/Remove must show as a
 // banner ABOVE the list, not replace it - the rows stay visible.
 export const ActionError: Story = {
   args: {

@@ -9,7 +9,7 @@ import { surfacesByTurn } from '../lib/a2ui'
 const EMPTY: ArtifactList = { data: [] }
 const NO_IMAGES: Record<string, AttachmentPreview[]> = {}
 
-// #1138: per-turn image thumbnails and A2UI surfaces from the chat's artifacts. Refetched per archived
+// Per-turn image thumbnails and A2UI surfaces from the chat's artifacts. Refetched per archived
 // turn (an attachment turn archives when the NEXT one is sent) and per a2ui_surface revision event.
 export function useTurnArtifacts(chatId: string | null, state: ChatState) {
   const [artifacts, setArtifacts] = useState<{ chatId: string | null; list: ArtifactList; images: Record<string, AttachmentPreview[]> }>({ chatId: null, list: EMPTY, images: {} })

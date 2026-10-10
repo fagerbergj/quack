@@ -1,9 +1,8 @@
 import { useRef, useState } from 'react'
 import type { ComponentPropsWithoutRef } from 'react'
 
-// Wraps a fenced code block in a relative container with a one-click copy
-// button. rehype-highlight runs AFTER sanitize (AgentParts' AssistantText),
-// so the hljs token markup is intact by the time this renders. Also the fallback rendering for a mermaid block that's invalid or still streaming (MermaidDiagram / AgentParts) - a plain code block is always a safe fallback.
+// rehype-highlight runs after sanitize, so hljs markup is intact here. Also the fallback for a mermaid
+// block that's invalid or still streaming.
 export function CopyablePre({ children, ...props }: ComponentPropsWithoutRef<'pre'>) {
   const ref = useRef<HTMLPreElement>(null)
   const [copied, setCopied] = useState(false)

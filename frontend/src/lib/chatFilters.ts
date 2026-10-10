@@ -14,9 +14,8 @@ export interface FilterState {
 const FACET_KEYS = ['origin', 'status', 'repo', 'type'] as const
 type FacetKey = (typeof FACET_KEYS)[number]
 
-// LABEL_FACET_PREFIX namespaces facets derived from origin.labels dimensions
-// (extension-supplied, e.g. "tags", "folder") so they can never collide with
-// the fixed FACET_KEYS above - the github-specific repo/type facets survive unchanged until the GitHub extension migrates to stamping origin itself.
+// Namespaces facets from origin.labels dimensions (e.g. "tags", "folder") so they can't collide with FACET_KEYS;
+// the github repo/type facets stay until the GitHub extension stamps origin itself.
 const LABEL_FACET_PREFIX = 'label:'
 
 // originLabelDimensions lists every distinct origin.labels key present
@@ -29,9 +28,8 @@ function originLabelDimensions(chats: ChatSummary[]): string[] {
   return Array.from(dims).sort()
 }
 
-// countByLabelValue tallies one dimension's values across chats, keyed by
-// LabelValue.value (what matching/counting keys on), carrying its display
-// text along (falls back to value when absent - the same rule the API uses).
+// Tallies one dimension's values across chats, keyed by LabelValue.value, carrying display text (falling back
+// to value, as the API does).
 function countByLabelValue(chats: ChatSummary[], dim: string): Map<string, { count: number; display: string }> {
   const counts = new Map<string, { count: number; display: string }>()
   for (const c of chats) {
@@ -72,9 +70,7 @@ function countBy(chats: ChatSummary[], key: FacetKey): Map<string, number> {
   return counts
 }
 
-// computeFacets derives the facet groups (with per-option counts) from the
-// chats actually present. A facet with no options (e.g. no GitHub-originated
-// chats in the list) is omitted.
+// Facet groups with per-option counts from the chats present; a facet with no options is omitted.
 export function computeFacets(chats: ChatSummary[]): Facet[] {
   const facets: Facet[] = []
 
@@ -124,9 +120,7 @@ export function computeFacets(chats: ChatSummary[]): Facet[] {
     })
   }
 
-  // One facet per origin.labels dimension actually present - an extension's
-  // own grouping (repo, folder, tags, ...), generic to whichever extension
-  // supplied it.
+  // One facet per origin.labels dimension actually present, generic to whichever extension supplied it.
   for (const dim of originLabelDimensions(chats)) {
     const counts = countByLabelValue(chats, dim)
     if (counts.size === 0) continue
@@ -142,9 +136,8 @@ export function computeFacets(chats: ChatSummary[]): Facet[] {
   return facets
 }
 
-// matchesFacets: a chat matches when it satisfies every facet that has an
-// active selection (AND across facets); within a facet, any selected value
-// matches (OR). An empty/absent selection for a facet imposes no constraint. Iterates every key actually present in `selected` (not just FACET_KEYS) so a dynamic label:<dimension> selection is enforced too.
+// AND across facets with an active selection, OR within one; an empty selection imposes nothing.
+// Iterates every key in `selected`, not just FACET_KEYS, so dynamic label:<dimension> selections apply too.
 export function matchesFacets(chat: ChatSummary, selected: SelectedFacets): boolean {
   for (const key of Object.keys(selected)) {
     const values = selected[key]
@@ -173,9 +166,8 @@ export function filterChats(chats: ChatSummary[], state: FilterState): ChatSumma
   return chats.filter(c => matchesSearch(c, q) && matchesFacets(c, state.selected))
 }
 
-// parseFilterState / serializeFilterState round-trip the search box + facet
-// selection through the URL query string
-// (?q=…&origin=github&status=running&repo=owner%2Frepo&type=pr&label%3Atags=urgent) so a filtered view is shareable and bookmarkable. label:<dimension> keys are data-driven (an extension's own origin.labels), so they're read/written generically rather than through the fixed FACET_KEYS allowlist.
+// Round-trip the search box and facet selection through the URL query, so a filtered view is shareable.
+// label:<dimension> keys are data-driven, so they're read and written generically, not via the FACET_KEYS allowlist.
 export function parseFilterState(search: string): FilterState {
   const params = new URLSearchParams(search)
   const q = params.get('q') ?? ''

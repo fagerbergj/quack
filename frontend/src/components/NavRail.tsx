@@ -1,13 +1,11 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { navigate, type Route } from '../router'
 import { api, type ExtensionInfo } from '../api'
-import { useDrawer } from '../hooks/useDrawer'
+import { closeOnBackdrop, useDrawer } from '../hooks/useDrawer'
 import { serverVersion } from '../state/clientConfig'
 import { Icon, ICON_NAMES, type IconName } from './Icon'
 
-// displayVersion normalizes a raw build version for display: "dev" stays
-// "dev", anything else gets exactly one leading "v" (never "vv0.51.26" if
-// the stamped value already carries one).
+// "dev" stays "dev"; anything else gets exactly one leading "v", even if the stamped value has one.
 export function displayVersion(v: string): string {
   if (v === 'dev') return v
   return v.startsWith('v') ? v : `v${v}`
@@ -24,16 +22,14 @@ export interface NavRailProps {
   // Storybook/test seam: overrides the version footer instead of reading
   // the live clientConfig singleton (which resolves async off GET /api/v1/config).
   versionOverride?: string
-  // #1171: whether the drawer is open - the only shape the nav has. false
-  // renders nothing (zero DOM, zero layout weight); true mounts the fixed
-  // overlay at every viewport width. App.tsx owns the state; the drawer remembers nothing (always closed on load, no localStorage).
+  // false renders nothing; true mounts the overlay at every width. App.tsx owns the state, and nothing is
+  // persisted, so the drawer is always closed on load.
   open: boolean
   onClose: () => void
 }
 
-// The app's navigation drawer (#1171): Chats and Memory as peers plus the
-// extensions' own routes, in an off-canvas overlay at every width (the #1145
-// overlay, now unpinned) - the persistent rail, 40px collapsed strip, navRailCollapsed key and collapse toggle are gone, and with them the second hamburger glyph (#1175). Opens from the NavToggle in each page's header leading slot; closes on item selection, backdrop tap, the close button, or Esc (focus trap, scroll lock, focus-return from useDrawer).
+// Off-canvas drawer at every width. Closes on item selection, backdrop tap, the close button or Esc;
+// a native modal <dialog> via useDrawer.
 export function NavRail({ route, activeExtension, initialExtensions, versionOverride, open, onClose }: NavRailProps) {
   const [extensions, setExtensions] = useState<ExtensionInfo[]>(initialExtensions ?? [])
   const version = versionOverride ?? serverVersion()
@@ -54,63 +50,52 @@ export function NavRail({ route, activeExtension, initialExtensions, versionOver
     }
   }, [initialExtensions])
 
-  // An extension with no UI descriptor has nowhere to navigate to - an inert
-  // entry is just noise in a nav drawer, so it's dropped entirely rather
-  // than shown unclickable.
+  // An extension with no UI descriptor has nowhere to navigate, so it is dropped rather than shown inert.
   const linkedExtensions = extensions.filter(ext => !!ext.href)
 
-  const drawerPanelRef = useDrawer(open, onClose)
+  const dialogRef = useDrawer(open)
 
   if (!open) return null
 
-  // z-50: above ChatList's z-40 (which needs it only for its own off-canvas
-  // stacking below md) so the drawer isn't buried behind it at desktop widths.
   return (
-    <div className="fixed inset-0 z-50">
-      <div
-        className="absolute inset-0 bg-black/50"
-        onClick={onClose}
-        aria-hidden="true"
-      />
-      <div
-        ref={drawerPanelRef}
-        role="dialog"
-        aria-modal="true"
-        aria-label="Main navigation"
-        className="absolute inset-y-0 left-0 w-64 max-w-[85vw] flex flex-col bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 shadow-lg"
-      >
-        <div className="flex items-center justify-between p-2 border-b border-gray-200 dark:border-gray-700">
-          <span className="px-1.5 text-sm font-semibold text-gray-700 dark:text-gray-200">Navigation</span>
-          <button
-            onClick={onClose}
-            aria-label="Close navigation"
-            title="Close navigation"
-            className="flex items-center justify-center w-11 h-11 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-          >
-            <Icon name="close" className="w-4 h-4" />
-          </button>
-        </div>
-        <div className="flex-1 py-2 px-2 space-y-1 overflow-y-auto">
-          <NavItem icon={<Icon name="chat" className="w-4 h-4" />} label="Chats" active={route === 'chat'} onClick={() => { navigate('/chat'); onClose() }} />
-          <NavItem icon={<Icon name="lightbulb" className="w-4 h-4" />} label="Memory" active={route === 'memory'} onClick={() => { navigate('/memory'); onClose() }} />
-          <NavItem icon={<Icon name="extension" className="w-4 h-4" />} label="Plugins" active={route === 'plugins'} onClick={() => { navigate('/plugins'); onClose() }} />
-          {linkedExtensions.length > 0 && (
-            <div className="pt-1 mt-1 border-t border-gray-100 dark:border-gray-700 space-y-1">
-              {linkedExtensions.map(ext => (
-                <ExtensionNavItem key={ext.name} ext={ext} active={activeExtension === ext.name} onNavigate={onClose} />
-              ))}
-            </div>
-          )}
-        </div>
-        {version && (
-          <div className="shrink-0 px-3 py-1.5">
-            <span className="text-[11px] text-gray-500 dark:text-gray-400" title={version}>
-              {displayVersion(version)}
-            </span>
+    <dialog
+      ref={dialogRef}
+      aria-label="Main navigation"
+      onClose={onClose}
+      onClick={closeOnBackdrop}
+      className="m-0 h-dvh max-h-none w-64 max-w-[85vw] p-0 open:flex flex-col bg-white dark:bg-gray-800 border-0 border-r border-gray-200 dark:border-gray-700 shadow-lg backdrop:bg-black/50"
+    >
+      <div className="flex items-center justify-between p-2 border-b border-gray-200 dark:border-gray-700">
+        <span className="px-1.5 text-sm font-semibold text-gray-700 dark:text-gray-200">Navigation</span>
+        <button
+          onClick={onClose}
+          aria-label="Close navigation"
+          title="Close navigation"
+          className="flex items-center justify-center w-11 h-11 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+        >
+          <Icon name="close" className="w-4 h-4" />
+        </button>
+      </div>
+      <div className="flex-1 py-2 px-2 space-y-1 overflow-y-auto">
+        <NavItem icon={<Icon name="chat" className="w-4 h-4" />} label="Chats" active={route === 'chat'} onClick={() => { navigate('/chat'); onClose() }} />
+        <NavItem icon={<Icon name="lightbulb" className="w-4 h-4" />} label="Memory" active={route === 'memory'} onClick={() => { navigate('/memory'); onClose() }} />
+        <NavItem icon={<Icon name="extension" className="w-4 h-4" />} label="Plugins" active={route === 'plugins'} onClick={() => { navigate('/plugins'); onClose() }} />
+        {linkedExtensions.length > 0 && (
+          <div className="pt-1 mt-1 border-t border-gray-100 dark:border-gray-700 space-y-1">
+            {linkedExtensions.map(ext => (
+              <ExtensionNavItem key={ext.name} ext={ext} active={activeExtension === ext.name} onNavigate={onClose} />
+            ))}
           </div>
         )}
       </div>
-    </div>
+      {version && (
+        <div className="shrink-0 px-3 py-1.5">
+          <span className="text-[11px] text-gray-500 dark:text-gray-400" title={version}>
+            {displayVersion(version)}
+          </span>
+        </div>
+      )}
+    </dialog>
   )
 }
 
@@ -139,9 +124,8 @@ function NavItem({
   )
 }
 
-// Extension icon from its own UI descriptor (ExtensionInfo.icon, which still
-// accepts any string): a known Material icon name renders as that icon; an
-// inline <svg> renders as raw SVG (dangerouslySetInnerHTML - the extension registry is trusted, same trust boundary as its href/title); anything else (including a raw emoji, the legacy shape) falls back to the generic "extension" glyph. Extensions should migrate to Material icon names.
+// Inline <svg> is injected raw because the extension registry is trusted (same boundary as its href/title);
+// anything not a known icon name or SVG, such as an emoji, falls back to the generic glyph.
 const warnedUnknownIcons = new Set<string>()
 
 function extensionIcon(ext: ExtensionInfo): ReactNode {
@@ -159,9 +143,8 @@ function extensionIcon(ext: ExtensionInfo): ReactNode {
   return <Icon name="extension" className="w-4 h-4" />
 }
 
-// Navigates client-side to this app's own /ext/:name host page (#870,
-// ExtensionHost) rather than a real <a href> - that would leave the SPA
-// behind. The extension's own server route is still reachable directly; this is purely an in-app wrapper. Only href-bearing extensions ever reach this component - see linkedExtensions.
+// Navigates client-side to the /ext/:name host page; a real <a href> would leave the SPA.
+// Only href-bearing extensions reach this (see linkedExtensions).
 function ExtensionNavItem({ ext, active, onNavigate }: { ext: ExtensionInfo; active: boolean; onNavigate?: () => void }) {
   const label = ext.title ?? ext.name
   return (

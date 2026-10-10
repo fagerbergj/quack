@@ -41,8 +41,7 @@ const CHATS: ChatSummary[] = [
   chat('4', 'Postgres connection pooling'),
 ]
 
-// A mixed list: direct chats interleaved with GitHub-originated ones (issue #386),
-// with varied status and both issue/PR refs across two repos (issue #396 follow-up).
+// Direct chats interleaved with GitHub-originated ones, varied status, issue and PR refs across two repos.
 const MIXED_CHATS: ChatSummary[] = [
   chat('direct-1', 'Best time to visit Dublin'),
   githubChat('github-quack-386', 'Chats aren’t filterable by origin', 'fagerbergj/quack', 'issues', 'running'),
@@ -84,9 +83,7 @@ export const Searchable: Story = {
   args: { chats: CHATS, activeChatId: null },
 }
 
-// A mixed list: GitHub-originated rows carry a repo badge and an Issue/PR
-// badge - both link out to GitHub - plus (when not idle) a colored status
-// dot. Filtering by Origin/Status/Repo/Type lives entirely in the funnel popover.
+// GitHub rows carry a repo badge and an Issue/PR badge, both linking out; filtering lives in the funnel popover.
 export const MixedOrigin: Story = {
   args: { chats: MIXED_CHATS, activeChatId: null },
 }
@@ -105,9 +102,7 @@ export const StatusDots: Story = {
   },
 }
 
-// #870: the origin badge mirrors GitHub's own state colors for open/merged/
-// closed - any other badge value (e.g. "draft", or an extension-specific
-// label) keeps the existing neutral gray chip rather than inventing a color.
+// Only open/merged/closed get GitHub's colours; any other badge (e.g. "draft") stays neutral gray.
 export const OriginBadgeStates: Story = {
   args: {
     chats: [
@@ -120,8 +115,7 @@ export const OriginBadgeStates: Story = {
   },
 }
 
-// #736: a `next_page_token` from the server surfaces as a "Load more" row at the
-// bottom of the list.
+// A server `next_page_token` surfaces as a "Load more" row at the bottom.
 export const WithLoadMore: Story = {
   args: { chats: CHATS, activeChatId: '2', hasMoreChats: true, onLoadMoreChats: () => alert('load more') },
 }
@@ -148,14 +142,12 @@ export const FilteredToRepo: Story = {
   },
 }
 
-// Expands the collapsed Archived section: each row gets one always-visible
-// kebab top-right (Restore and permanent Delete live inside it), absolutely
-// positioned so the row height matches an active row's exactly.
+// Archived rows get one always-visible kebab (Restore, Delete), absolutely positioned so row height
+// matches an active row's.
 export const WithArchivedChats: Story = {
   args: {
     chats: [chat('active-1', 'Current project notes')],
-    // #809: archivedChats is the section's own already-loaded list here -
-    // in the app it stays undefined until the section is first expanded.
+    // In the app archivedChats stays undefined until the section is first expanded.
     archivedChats: [
       chat('archived-1', 'Old debugging session', 'idle', true),
       chat('archived-2', 'Abandoned experiment', 'idle', true),
@@ -184,8 +176,7 @@ export const ArchivedRowKebabMenu: Story = {
   },
 }
 
-// #1319: opens an active row's kebab menu to reveal the sole Archive action -
-// archive and delete both live behind the kebab now, never a bare row button.
+// An active row's kebab holds the sole Archive action; there is no bare row button.
 export const ActiveRowKebabMenu: Story = {
   args: {
     chats: [chat('active-1', 'Current project notes')],

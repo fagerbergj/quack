@@ -19,50 +19,41 @@ import { MermaidDiagram } from './MermaidDiagram'
 import { isTrailingMermaidFenceOpen, lastSafeSplitOffset } from './mermaidSource'
 import { StatusDot, type DotStatus } from './StatusDot'
 
-// Answer text is Markdown with a little raw HTML - the collapsible
-// `<details><summary>Sources</summary>` block the researcher/synthesizer emit.
-// rehype-raw parses it; rehype-sanitize (model-authored, web-shaped text) strips everything but <details>/<summary>.
-const mdSchema = {
+// Answers carry raw `<details><summary>Sources</summary>` HTML; text is model-authored and web-shaped,
+// so sanitize allows only <details>/<summary> beyond the default schema.
+export const mdSchema = {
   ...defaultSchema,
   tagNames: [...(defaultSchema.tagNames ?? []), 'details', 'summary'],
 }
 
-// Re-export the data layer so import sites (`from '.../AgentParts'`) keep working;
-// the run model + reducers live in messageParts.ts.
 export * from './messageParts'
 
-// RECENT is how many of a run's most recent activity items stay visible; older
-// ones fold into a "⋯ N earlier" toggle so a long run stays scannable.
+// Older activity folds into a "⋯ N earlier" toggle so a long run stays scannable.
 const RECENT = 3
 
-// Mirrors config/quack.yaml's acp-bound bundles - the only agents whose tool
-// calls arrive over ACP, remapped by internal/acp/translate.go. No per-call
-// wire marker (#404); the agent name is threaded onto every run and ACP/native bundles never overlap.
+// Mirrors config/quack.yaml's acp-bound bundles. There is no per-call wire marker, so the agent name
+// decides; ACP and native bundles never overlap.
 const ACP_AGENTS = new Set(['code-implementer', 'code-reviewer', 'code-explorer'])
 
 export function isAcpAgent(agent?: string): boolean {
   return !!agent && ACP_AGENTS.has(agent)
 }
 
-// Reads the <code class="language-mermaid"> info string straight off the AST,
-// independent of how rehype-highlight renders children - robust for a language
-// highlight.js doesn't know.
+// Reads the info string off the AST so it works even though highlight.js doesn't know mermaid.
 function mermaidLang(preNode: Element | undefined): boolean {
   const code = preNode?.children.find((c): c is Element => c.type === 'element' && c.tagName === 'code')
   const classNames = code?.properties?.className
   return Array.isArray(classNames) && classNames.some(c => typeof c === 'string' && c.toLowerCase() === 'language-mermaid')
 }
 
-// hastText concatenates a hast node's text descendants - the raw mermaid
-// source, unaffected by any syntax-highlighting markup applied to its <code>.
+// Raw mermaid source, unaffected by highlighting markup applied to its <code>.
 function hastText(node: Element | undefined): string {
   if (!node) return ''
   return node.children.map(c => (c.type === 'text' ? c.value : hastText(c as Element))).join('')
 }
 
-// One markdown parse of `text` (audit finding 2: re-parsing the whole doc
-// past ~20k chars cost 65+ ms/token). A ```mermaid block renders as a diagram only
-// once its closing fence arrives - an unterminated fence swallows the doc tail, so at most one can be open (the last block); node.position.end.offset vs isTrailingMermaidFenceOpen(text) is the stable open-test. rehypeHighlightSubset runs LAST, so sanitize keeps its hljs classes.
+// A mermaid block renders as a diagram only once closed; only the last block can be open, so its end offset
+// is the stable open-test. rehypeHighlightSubset runs after sanitize so its hljs classes survive.
 function AssistantDocument({ text }: { text: string }) {
   const trailingOpen = useMemo(() => isTrailingMermaidFenceOpen(text), [text])
   const docEnd = useMemo(() => text.replace(/\s+$/, '').length, [text])
@@ -76,17 +67,15 @@ function AssistantDocument({ text }: { text: string }) {
       }
       return <CopyablePre {...rest}>{children}</CopyablePre>
     },
-    // A wide table scrolls inside its own box instead of pushing the bubble
-    // past its column (or the viewport on a phone).
+    // A wide table scrolls in its own box instead of pushing the bubble past the viewport.
     table: (props: ComponentPropsWithoutRef<'table'> & { node?: Element }) => {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { node, ...rest } = props
       return <div className="overflow-x-auto"><table {...rest} /></div>
     },
   }), [trailingOpen, docEnd])
-  // Memoize the parsed output itself: ReactMarkdown re-parses on every call
-  // regardless of prop equality, and the parent (a streaming bubble) re-renders
-  // far more often than `text`/`components` actually change.
+  // ReactMarkdown re-parses on every render regardless of prop equality, and a streaming parent
+  // re-renders far more often than `text` changes.
   return useMemo(() => (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
@@ -96,27 +85,20 @@ function AssistantDocument({ text }: { text: string }) {
   ), [text, components])
 }
 
-// The settled-prefix half of the streaming split: identical string content
-// keeps memo's default shallow comparison true, so it renders exactly once per
-// prefix advance rather than once per token.
+// Settled prefix of the streaming split: same string keeps memo true, so it renders once per prefix advance.
 const FrozenAssistantDocument = memo(AssistantDocument)
 
-// How much of the tail stays live/unmemoized. Measured (src/perf/split.bperf.test.tsx,
-// audit finding 2): 17k frozen + 2k live cut whole-document re-render from
-// 65.6 to 5.7 ms/token at 19k chars - most of a long answer no longer re-parses per token.
+// Measured: 17k frozen + 2k live cut re-render from 65.6 to 5.7 ms/token.
 const LIVE_TAIL_CHARS = 2000
 
-// Renders model text as markdown. While `streaming`, splits at the last safe
-// CommonMark block boundary (a blank line outside any open fence - lastSafeSplitOffset)
-// before the live tail: the prefix renders through the memoized FrozenAssistantDocument, only the short tail re-parses per token. Once the stream ends, the whole text renders through ONE AssistantDocument - a table, footnote, or link reference spanning the old split must resolve as a single document, not two halves.
+// While streaming, splits at the last safe block boundary so only the tail re-parses per token. Once done,
+// renders as ONE document so tables, footnotes and link refs spanning the split resolve.
 export function AssistantText({ text, streaming = false }: { text: string; streaming?: boolean }) {
-  // #746 item 16: a stray punctuation backtick earlier in the text defeats
-  // CommonMark's greedy backtick pairing for every later inline code span -
-  // fix it before parsing, never inside a fenced block. Offsets below derive from THIS fixed string (escaping shifts everything after it).
+  // A stray backtick defeats CommonMark's backtick pairing for every later inline span.
+  // Offsets below derive from this fixed string, since escaping shifts everything after it.
   const fixed = useMemo(() => escapeUnmatchedBackticks(text), [text])
-  // The frozen boundary only advances forward, and only once the live tail
-  // would exceed LIVE_TAIL_CHARS: re-freezing re-parses the WHOLE prefix
-  // (O(prefix)), so ~2000-char steps keep total streaming cost near-linear, not quadratic.
+  // Re-freezing re-parses the whole prefix, so advance only forward and in ~LIVE_TAIL_CHARS steps
+  // to keep total streaming cost near-linear.
   const frozenCutRef = useRef(0)
   if (!streaming) {
     frozenCutRef.current = 0
@@ -139,8 +121,7 @@ export function AssistantText({ text, streaming = false }: { text: string; strea
   )
 }
 
-// StoppedBadge labels an answer card whose node the user stopped: a draft is shown
-// "not reviewed"; with no draft the card is just a "Stopped" marker.
+// A stopped node's draft shows "not reviewed"; with no draft the card is a bare "Stopped" marker.
 export type StoppedBadge = 'draft' | 'bare'
 
 export function stoppedBadge(stopped: boolean | undefined, text: string | undefined): StoppedBadge | undefined {
@@ -148,9 +129,8 @@ export function stoppedBadge(stopped: boolean | undefined, text: string | undefi
   return text ? 'draft' : 'bare'
 }
 
-// Compact author line atop an assistant bubble: real usage only, no
-// estimate - model/tokens omitted when not (yet) known. `status` is optional (#416):
-// only the live orchestrator card shows a StatusDot by the name (matching DagNode's header) - completed turns and DAG-terminal attribution have no live status.
+// Real usage only, no estimates: model/tokens are omitted until known. Only the live orchestrator card
+// passes `status`; completed turns have no live status.
 export function BubbleHeader({ agent, model, tokens, status, stopped }: { agent: string; model?: string; tokens?: number; status?: DotStatus; stopped?: StoppedBadge }) {
   return (
     <div className="flex items-center gap-2 mb-2 text-[11px] text-gray-500 dark:text-gray-400">
@@ -174,9 +154,7 @@ export function BubbleHeader({ agent, model, tokens, status, stopped }: { agent:
   )
 }
 
-// ActivityList renders a run's ordered activity (thinking + tool calls), windowed
-// to the most recent few. Keys index into the append-only list so streaming
-// reconciliation stays stable.
+// Keys index into the append-only list so streaming reconciliation stays stable.
 export function ActivityList({ activity }: { activity: Activity[] }) {
   const [showAll, setShowAll] = useState(false)
   const hidden = Math.max(0, activity.length - RECENT)
@@ -202,14 +180,11 @@ export function ActivityList({ activity }: { activity: Activity[] }) {
   )
 }
 
-// The RUNNING substitute for ActivityList (#725): a full activity list
-// re-renders markdown/Expandable/ToolCallView on every streamed SSE event,
-// which locks the tab on a busy node; this renders two short lines (current thinking + latest tool call) no matter how long the run.
+// Stands in for ActivityList while running: a full list re-renders on every SSE event and locks the tab
+// on a busy node. One line, truncating rather than stacking on a phone.
 export function LiveStatusLine({ activity }: { activity: Activity[] }) {
   const { thinking, tool, compacted } = liveStatusLine(activity)
   if (!thinking && !tool && !compacted) return null
-  // One line, not one per fact: on a phone the card's running state is this
-  // line plus the header, so the tool action truncates rather than stacking.
   return (
     <div className="flex items-center gap-1.5 min-w-0 py-0.5 text-[11px] text-gray-500 dark:text-gray-400 not-prose">
       <Dots variant="compact" size="w-1 h-1" />
@@ -220,9 +195,7 @@ export function LiveStatusLine({ activity }: { activity: Activity[] }) {
   )
 }
 
-// Inline SVG with currentColor so it inherits the muted text colour in both
-// themes - replaces an earlier emoji glyph, which the platform colour-emoji
-// font rendered pixelated/mismatched on a dark background.
+// SVG, not an emoji: colour-emoji fonts render pixelated on dark backgrounds; currentColor follows the theme.
 function ThoughtIcon() {
   return (
     <svg aria-hidden="true" viewBox="0 0 16 16" className="shrink-0 w-3 h-3" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
@@ -234,9 +207,8 @@ function ThoughtIcon() {
   )
 }
 
-// Reasoning as a single-line, collapsed-by-default summary that expands to the
-// full chain-of-thought on demand (#385). Long reasoning is height-locked
-// (Expandable) once expanded so it can't wall off the node; a thin left rail (not a boxed card) keeps it visually subordinate to tool calls.
+// Expanded reasoning is height-locked so it can't wall off the node; a thin rail, not a card,
+// keeps it subordinate to tool calls.
 function ThinkBlock({ text }: { text: string }) {
   return (
     <details className="group my-0.5 not-prose">
@@ -254,9 +226,8 @@ function ThinkBlock({ text }: { text: string }) {
   )
 }
 
-// One-line inline row marking a mid-round history rewrite; never expands.
-// adk reports no before/after conversation-size total (unlike the pre-#1239
-// quack engine), so this shows the summarizer's own spend when known and falls back to a bare label otherwise.
+// Marks a mid-round history rewrite. adk reports no before/after context size, so this shows the
+// summarizer's own spend when known.
 function CompactionBlock({ summaryInputTokens, summaryOutputTokens }: { summaryInputTokens?: number; summaryOutputTokens?: number }) {
   const hasTokens = !!summaryInputTokens || !!summaryOutputTokens
   return (
@@ -273,9 +244,8 @@ function CompactionBlock({ summaryInputTokens, summaryOutputTokens }: { summaryI
   )
 }
 
-// Marks a tool call that arrived over the Agent Client Protocol (an external
-// code-implementer/-reviewer/-explorer subprocess, #404): its payload shapes
-// aren't fully ours to control, so ToolCallView renders it best-effort and the always-present copy button is the escape hatch.
+// ACP payload shapes aren't ours to control, so ToolCallView renders them best-effort and the
+// copy button is the escape hatch.
 export function AcpBadge() {
   return (
     <span
@@ -287,15 +257,10 @@ export function AcpBadge() {
   )
 }
 
-// A single-line, collapsed-by-default tool-call summary expanding to a per-tool
-// rich view (ToolCallView: a diff for edit_file, formatted views otherwise);
-// #385 styling: thin left rail on expand, check/cross status icon instead of "working" dots once settled. The copy button sits in a sibling header row, not nested inside the <summary> (#435): a button inside a summary is invalid HTML that breaks keyboard use (Enter/Space conflict).
+// Never nest a button inside <summary>: it is invalid HTML and breaks Enter/Space keyboard use.
 export function ToolBlock({ tool }: { tool: ToolCall }) {
-  // #1312 made the relay carry the real MCP tool name instead of "other",
-  // so name alone is always meaningful now.
   const label = tool.name
-  // The human-readable "<verb> <target>" is the row; the raw tool id is
-  // demoted to the tooltip (audit #14).
+  // The row shows "<verb> <target>"; the raw tool id lives in the tooltip.
   return (
     <div className="relative my-0.5 not-prose">
       <details className="group">
@@ -311,9 +276,7 @@ export function ToolBlock({ tool }: { tool: ToolCall }) {
   )
 }
 
-// Compact status marker heading a tool-call summary line: "working" dots in
-// flight, a check once it completed, a cross on error - status conveyed by
-// icon+colour together (WCAG 1.4.1), not colour alone.
+// Icon plus colour, never colour alone (WCAG 1.4.1).
 function ToolStatusIcon({ tool }: { tool: ToolCall }) {
   if (!tool.done) return <Dots variant="compact" size="w-1 h-1" />
   return toolFailed(tool.result)
@@ -321,9 +284,8 @@ function ToolStatusIcon({ tool }: { tool: ToolCall }) {
     : <Icon name="check" className="w-3 h-3 text-green-600 dark:text-green-400 shrink-0" />
 }
 
-// The "working" indicator. Two variants (#421): 'chat' = three staggered
-// bounce dots - the count is deliberate, do not shrink to one (#424); 'compact'
-// = a single pulse dot for high-multiplicity spots where three independent bounce timelines are real animation cost. `size` is a Tailwind w/h class pair.
+// 'chat' keeps three bounce dots on purpose; 'compact' is one pulse dot for high-multiplicity spots where
+// three bounce timelines cost real animation time. `size` is a Tailwind w/h class pair.
 export function Dots({ className = '', size = 'w-1.5 h-1.5', variant = 'chat' }: { className?: string; size?: string; variant?: 'chat' | 'compact' }) {
   if (variant === 'compact') {
     return (

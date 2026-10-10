@@ -6,7 +6,8 @@ import { DiagramView } from './DiagramView'
 import A2uiSurfaceView from './A2uiSurface'
 import { retrySpec, retrySurface } from './diagram.fixtures'
 
-// jsdom has no SVG layout, so mermaid can't run: stand in an SVG with mermaid's id scheme (checked against real output in the Storybook story).
+// jsdom has no SVG layout, so mermaid can't run: stand in an SVG with mermaid's id scheme
+// (checked against real output in the Storybook story).
 vi.mock('./MermaidDiagram', async importOriginal => {
   const real = await importOriginal<typeof import('./MermaidDiagram')>()
   const fakeSvg = (code: string) => {

@@ -5,9 +5,8 @@ import { createRoot } from 'react-dom/client'
 import { MemoryTab } from './MemoryTab'
 import { client } from '../generated/client.gen'
 
-// React's controlled-input value setter (native setter, bypassing React's
-// tracked-value shim) so dispatching 'input' registers a change - used with
-// fake timers below since userEvent's internal timers would fight vi.useFakeTimers.
+// The native value setter bypasses React's tracked-value shim so 'input' registers a change; used instead
+// of userEvent, whose internal timers fight vi.useFakeTimers.
 function typeChar(input: HTMLInputElement, value: string) {
   const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!
   setter.call(input, value)
@@ -24,7 +23,7 @@ const memWith = (id: string, content: string) => ({
   id, content, bucket: 'repo:x', author: 'a', timestamp: '2026-08-04T18:22:11Z', kind: 'repo',
 })
 
-describe('lead C: memory search keystroke behavior', () => {
+describe('memory search', () => {
   let root: ReturnType<typeof createRoot> | undefined
   let host: HTMLDivElement | undefined
   let listCalls: string[] // q param of each /memories list call, in call order
@@ -74,7 +73,7 @@ describe('lead C: memory search keystroke behavior', () => {
     })
   }
 
-  it('AFTER FIX: debounce collapses keystrokes to one request, sequence guard prevents the race', async () => {
+  it('debounces keystrokes into one request and ignores a stale earlier reply', async () => {
     await renderTab()
     const input = host!.querySelector('input[type="search"]') as HTMLInputElement
 
@@ -91,15 +90,13 @@ describe('lead C: memory search keystroke behavior', () => {
       expect(listCalls).toEqual([''])
 
       await act(async () => { await vi.advanceTimersByTimeAsync(300) }) // let the debounce settle
-      console.log('listCalls after typing + debounce settle (fix):', JSON.stringify(listCalls))
-      expect(listCalls).toEqual(['', 'graphlit']) // was 9 calls (1 per keystroke) before the fix
+      expect(listCalls).toEqual(['', 'graphlit'])
     } finally {
       vi.useRealTimers()
     }
 
-    // Resolve the final (correct) call, then simulate a late stale reply
-    // arriving afterward for call #0 (the initial empty-query load) - proves
-    // the sequence guard, not just the debounce.
+    // Resolve the final call, then let a stale reply for the initial empty-query load arrive late:
+    // this proves the sequence guard, not just the debounce.
     const finalIdx = listCalls.length - 1
     await act(async () => {
       resolvers.get(finalIdx)?.(jsonResponse({ memories: [memWith('correct', 'graphlit result')], total: 1 }))
@@ -110,40 +107,6 @@ describe('lead C: memory search keystroke behavior', () => {
       resolvers.get(0)?.(jsonResponse({ memories: [memWith('stale', 'STALE initial page')], total: 1 }))
       await new Promise(r => setTimeout(r, 0))
     })
-    const overwritten = host!.textContent!.includes('STALE initial page')
-    console.log('stale call #0 overwrote the list after the fix:', overwritten)
-    expect(overwritten).toBe(false)
-  })
-
-  // #1300 review: the debounce effect's cleanup (clearTimeout) must win a
-  // race against unmount - otherwise the pending setTimeout fires after
-  // teardown and calls setState on an unmounted component. Confirms no leaked request, no throw.
-  it('unmounting before the debounce fires cancels it - no leaked request, no post-unmount setState', async () => {
-    await renderTab()
-    const input = host!.querySelector('input[type="search"]') as HTMLInputElement
-
-    vi.useFakeTimers({ shouldAdvanceTime: true })
-    // Since React 18, setState on an unmounted component is a silent no-op,
-    // so listCalls staying [''] can't tell "cleanup cancelled the timer" from
-    // "timer fired post-unmount and React dropped the setState" - spy clearTimeout to pin the cleanup itself. Spied AFTER useFakeTimers (it installs its own clearTimeout on globalThis; spying first would wrap the real one).
-    const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout')
-    try {
-      act(() => { typeChar(input, 'graphlit') })
-      await act(async () => { await vi.advanceTimersByTimeAsync(100) }) // well under the 250ms debounce
-      expect(listCalls).toEqual(['']) // debounce hasn't fired yet
-
-      clearTimeoutSpy.mockClear() // isolate the unmount phase
-      act(() => { root!.unmount() })
-      root = undefined
-      expect(clearTimeoutSpy).toHaveBeenCalled() // the debounce cleanup cancelled the pending timer
-
-      // Advance well past the debounce window - if the timer weren't
-      // cancelled, it would fire here and call setState post-unmount.
-      await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
-      expect(listCalls).toEqual(['']) // still just the initial load - nothing leaked
-    } finally {
-      vi.useRealTimers()
-      clearTimeoutSpy.mockRestore()
-    }
+    expect(host!.textContent).not.toContain('STALE initial page')
   })
 })

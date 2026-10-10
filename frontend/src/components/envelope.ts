@@ -1,6 +1,7 @@
-// Parses the GitHub trigger envelope (design: .quack/trigger-prompts-v2.md) - an
-// XML-ish wrapper around GitHub's own JSON, seeded verbatim. Hand-rolled
-// rather than DOMParser: the content inside <title>/<description>/JSON is NOT XML-escaped (seeded verbatim per spec), so a real XML parser chokes on a literal `<` in a body; best-effort tag matching degrades instead of throwing - never blank the message over one malformed block (#667). No JSX here so this stays trivially testable; rendering lives in TriggerEnvelope.tsx.
+import { tryParseJSON } from '../lib/json'
+
+// Hand-rolled, not DOMParser: envelope content is seeded verbatim, not XML-escaped, so a literal `<` would
+// break a real parser. Best-effort matching degrades instead of blanking the message.
 
 import { str, num } from './toolFormat'
 
@@ -9,8 +10,7 @@ interface Comment {
   createdAt?: string
   author?: string
   body: string
-  // quack_status (delta mode only): "new" | "edited" | "deleted" - a retracted
-  // comment's body reads identically to a live one, so this is the only signal.
+  // Delta mode only: a deleted comment's body reads like a live one, so this is the only signal.
   quackStatus?: string
 }
 
@@ -34,10 +34,8 @@ interface CheckRun {
 
 export interface ArtifactRow {
   id: string
-  // The id's `kind:` prefix (bytes/text/structured/image/...) - drives the
-  // row icon. No prefix (malformed id) falls back to 'bytes'.
+  // Drives the row icon; a malformed id with no prefix falls back to 'bytes'.
   kindPrefix: string
-  // id with the `kindPrefix:` stripped - the row's display name.
   name: string
   revision?: number
   status?: string
@@ -56,9 +54,7 @@ export type EnvelopeBlock =
   | { kind: 'artifacts'; items: ArtifactRow[]; raw: string }
   | { kind: 'unknown'; tag: string; attrs: Record<string, string>; raw: string }
 
-// The tags that mark this string as an envelope rather than a plain chat
-// message - present on every step in the design doc, so any one of them is a
-// reliable signal. A plain message starting with "<" (rare, but possible free text) won't match any of these and falls back untouched.
+// Every envelope carries one of these; a plain message that merely starts with "<" matches none.
 const ENVELOPE_MARKERS = new Set(['permissions', 'deliverable', 'event'])
 
 interface RawBlock {
@@ -67,7 +63,6 @@ interface RawBlock {
   content: string
 }
 
-// parseAttrs reads double-quoted `key="value"` pairs off a tag's attribute string.
 function parseAttrs(attrsStr: string): Record<string, string> {
   const attrs: Record<string, string> = {}
   const re = /([\w-]+)="([^"]*)"/g
@@ -76,9 +71,8 @@ function parseAttrs(attrsStr: string): Record<string, string> {
   return attrs
 }
 
-// parseTopLevel walks `src` left to right, matching one tag at a time and
-// pairing it with its first matching close tag. Stray text between tags
-// (whitespace, or anything a mismatched/unterminated tag left behind) is skipped rather than rejected - the whole point is not to fail closed on content that isn't strictly valid XML.
+// Pairs each tag with its first matching close tag; stray text between tags is skipped, not rejected,
+// so content that isn't strict XML never fails closed.
 function parseTopLevel(src: string): RawBlock[] {
   const blocks: RawBlock[] = []
   const tagRe = /<([a-zA-Z][\w-]*)((?:\s+[\w-]+="[^"]*")*)\s*(\/)?>/g
@@ -108,9 +102,7 @@ function parseTopLevel(src: string): RawBlock[] {
   return blocks
 }
 
-// flattenTrigger inlines any <trigger> wrapper's children as top-level blocks,
-// so the parser doesn't care whether permissions/deliverable/event/context
-// arrive wrapped or flat.
+// Blocks may arrive wrapped in <trigger> or flat; both parse the same.
 function flattenTrigger(blocks: RawBlock[]): RawBlock[] {
   const out: RawBlock[] = []
   for (const b of blocks) {
@@ -128,16 +120,6 @@ function extractChildTag(src: string, tag: string): string | null {
   const end = src.indexOf(close, start + open.length)
   if (end === -1) return null
   return src.slice(start + open.length, end)
-}
-
-function tryParseJSON(text: string): unknown | undefined {
-  const trimmed = text.trim()
-  if (!trimmed) return undefined
-  try {
-    return JSON.parse(trimmed)
-  } catch {
-    return undefined
-  }
 }
 
 function toComment(item: unknown): Comment {
@@ -160,8 +142,6 @@ function toChangedFile(item: unknown): ChangedFile {
   }
 }
 
-// toAskBlock builds the 'ask' block for an <issue>/<pull_request> tag - the
-// title/description child tags, falling back to the raw block when malformed.
 function toAskBlock(b: RawBlock): EnvelopeBlock {
   const title = extractChildTag(b.content, 'title')
   const description = extractChildTag(b.content, 'description')
@@ -170,8 +150,7 @@ function toAskBlock(b: RawBlock): EnvelopeBlock {
     askKind: b.tag as 'issue' | 'pull_request',
     number: b.attrs.number,
     title: title?.trim() ?? '',
-    // Neither child tag found (malformed) - fall back to the raw block so
-    // nothing silently disappears.
+    // Neither child tag found: fall back to the raw block so nothing silently disappears.
     description: description != null ? description.trim() : (title == null ? b.content.trim() : ''),
   }
 }
@@ -259,9 +238,7 @@ function toEnvelopeBlock(b: RawBlock): EnvelopeBlock {
   }
 }
 
-// parseCheckLine reads one checksBlock line ("name: status" or "name:
-// completed conclusion"). Splits on the LAST ": " - a job name can itself
-// contain a colon (e.g. "test: unit (node 18)"), but the appended status/conclusion never does.
+// Splits on the LAST ": " since a job name can contain one ("test: unit (node 18)") but the status never does.
 function parseCheckLine(line: string): CheckRun | null {
   const idx = line.lastIndexOf(': ')
   if (idx === -1) return null
@@ -276,9 +253,7 @@ function parseCheckLine(line: string): CheckRun | null {
   return { name, status: rest }
 }
 
-// parseChecks parses every line of a <checks> block's body, or returns null
-// if any line doesn't match - the whole block falls back to raw rather than
-// silently dropping the checks it couldn't parse.
+// One unparseable line sends the whole block to raw rather than silently dropping checks.
 function parseChecks(raw: string): CheckRun[] | null {
   const lines = raw.split('\n').map(l => l.trim()).filter(Boolean)
   if (lines.length === 0) return null
@@ -291,9 +266,7 @@ function parseChecks(raw: string): CheckRun[] | null {
   return checks
 }
 
-// toArtifactRow splits an id's `kind:instance` shape (e.g. "bytes:comments")
-// into the row's icon-driving prefix and display name; an id with no colon
-// (malformed) falls back to 'bytes' with the whole id as the name.
+// Splits "kind:instance"; an id with no colon falls back to 'bytes' with the whole id as the name.
 function toArtifactRow(b: RawBlock): ArtifactRow {
   const id = b.attrs.id ?? ''
   const i = id.indexOf(':')
@@ -315,9 +288,7 @@ function numAttr(v: string | undefined): number | undefined {
   return Number.isFinite(n) ? n : undefined
 }
 
-// parseEnvelope returns the ordered top-level blocks of a GitHub trigger
-// envelope, or null when `raw` doesn't look like one (a plain chat message,
-// or - if anything goes wrong parsing it - malformed input). Callers fall back to rendering `raw` as-is on null.
+// Null for a plain message or any parse failure; callers then render `raw` as-is.
 export function parseEnvelope(raw: string): EnvelopeBlock[] | null {
   try {
     const trimmed = raw.trim()
@@ -333,30 +304,23 @@ export function parseEnvelope(raw: string): EnvelopeBlock[] | null {
 
 type CommentsBlock = Extract<EnvelopeBlock, { kind: 'comments' }>
 
-// commentsBlockOf parses one turn's raw envelope content and returns its own
-// <comments> block, or undefined if the turn has none / isn't an envelope.
 function commentsBlockOf(content: string): CommentsBlock | undefined {
   return parseEnvelope(content)?.find((b): b is CommentsBlock => b.kind === 'comments')
 }
 
-// isSeed reports whether a <comments> block is the full first-load snapshot
-// (envelope.go's commentsBlock: no new/edited/deleted attrs) rather than a
-// resume delta.
+// A full first-load snapshot carries no new/edited/deleted attrs; a resume delta does.
 function isSeed(b: CommentsBlock): boolean {
   return b.added == null && b.edited == null && b.deleted == null
 }
 
 export interface AccumulatedComments {
   comments: Comment[]
-  // False when the earliest turn this client can see is itself a delta (no
-  // seed in the visible window - a rehydrated store, or a chat opened after
-  // reaping) - the list below is everything captured so far, not the issue's whole history.
+  // False when the earliest visible turn is itself a delta, so the list is not the issue's whole history.
   complete: boolean
 }
 
-// Folds a chat's <comments> blocks (`priorContents` oldest
-// first, `current` last) into one running history, replaying the same
-// new/edited/deleted rule the server applied when it built each delta (envelope.go's diffSnapshots) rather than re-sending anything to the model.
+// Replays the server's new/edited/deleted rule (envelope.go's diffSnapshots) over `priorContents`
+// (oldest first) then `current`.
 export function accumulateComments(priorContents: string[], current: CommentsBlock): AccumulatedComments {
   const blocks: CommentsBlock[] = []
   for (const c of priorContents) {
@@ -372,9 +336,8 @@ export function accumulateComments(priorContents: string[], current: CommentsBlo
     for (const c of b.comments ?? []) {
       const id = c.id ?? `_${anonymous++}`
       if (c.quackStatus === 'deleted') {
-        // A comment already in the running history is removed outright. One
-        // this client never saw alive (its own removal is the first record of
-        // it - no seed in the visible window) is kept and marked deleted rather than silently vanishing: the incompleteness is what `complete` is for, not a reason to drop data this delta actually carried.
+        // A comment never seen alive is kept, marked deleted, rather than dropped: `complete` already
+        // flags the gap, so don't lose data the delta carried.
         if (byId.has(id)) {
           byId.delete(id)
           order.splice(order.indexOf(id), 1)
@@ -391,8 +354,6 @@ export function accumulateComments(priorContents: string[], current: CommentsBlo
   return { comments: order.map(id => byId.get(id)!), complete: isSeed(blocks[0]) }
 }
 
-// commentsSummaryLabel is the collapsed header for a <comments> block: a plain
-// count, or a new/edited/deleted breakdown when those delta attributes are present.
 export function commentsSummaryLabel(b: Extract<EnvelopeBlock, { kind: 'comments' }>): string {
   if (b.added != null || b.edited != null || b.deleted != null) {
     return `${b.added ?? 0} new, ${b.edited ?? 0} edited, ${b.deleted ?? 0} deleted`
@@ -401,7 +362,6 @@ export function commentsSummaryLabel(b: Extract<EnvelopeBlock, { kind: 'comments
   return `${n} comment${n === 1 ? '' : 's'}`
 }
 
-// changedFilesSummaryLabel is the collapsed header for a <changed_files> block.
 export function changedFilesSummaryLabel(b: Extract<EnvelopeBlock, { kind: 'changed_files' }>): string {
   const n = b.count ?? b.files?.length ?? 0
   const add = b.additions ?? 0
@@ -409,15 +369,12 @@ export function changedFilesSummaryLabel(b: Extract<EnvelopeBlock, { kind: 'chan
   return `${n} file${n === 1 ? '' : 's'}, +${add}/-${del}`
 }
 
-// artifactsSummaryLabel is the collapsed header for an <artifacts> block.
 export function artifactsSummaryLabel(b: Extract<EnvelopeBlock, { kind: 'artifacts' }>): string {
   const n = b.items.length
   return `${n} artifact${n === 1 ? '' : 's'}`
 }
 
-// checksSummaryLabel is the collapsed header for a <checks> block: the
-// backend's own failing/pending/passing summary attribute when present
-// (checksBlock always sends one alongside a non-empty block), else a plain count.
+// The backend sends a summary attr with every non-empty block; the count is the fallback.
 export function checksSummaryLabel(b: Extract<EnvelopeBlock, { kind: 'checks' }>): string {
   if (b.summary) return `checks: ${b.summary}`
   const n = b.count ?? b.checks?.length ?? 0

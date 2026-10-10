@@ -1,12 +1,11 @@
 import { Icon } from './Icon'
-import { useEffect, useRef, useState } from 'react'
+import { useId, useState } from 'react'
 import type { MemoryListSort, MemoryScopeStats } from '../api'
 import { Sheet } from './Sheet'
 
 export type MemorySort = MemoryListSort
 
-// SORT_OPTIONS labels every server-side sort (#1266 owner follow-up) - the
-// order they list in here is the order they appear in the popover.
+// Listed in popover order.
 const SORT_OPTIONS: { value: MemorySort; label: string }[] = [
   { value: 'newest', label: 'Newest first' },
   { value: 'oldest', label: 'Oldest first' },
@@ -27,31 +26,23 @@ export interface MemorySortFilterProps {
   onBucketChange: (bucket: string) => void
   tier: MemoryTierFilter
   onTierChange: (tier: MemoryTierFilter) => void
-  // Current live/invalidated snapshot per bucket (#1267), shown read-only
-  // below the filters - not another filter, just where recall-stats context
-  // lives now that this popover is the one place bucket-scoped numbers show.
+  // Read-only live/invalidated counts per bucket, shown below the filters; not another filter.
   scopes?: MemoryScopeStats[]
 }
 
-// (#746 items 11/15) combines sort and the bucket filter in one dialog,
-// matching the disclosure pattern the chat sidebar's FilterPanel already
-// uses (icon button -> popover, closed on outside click or Escape) rather than a second idiom. The bucket filter is a dropdown here (item 11), not the free-text input it used to be - no horizontal space in the toolbar until opened.
+// Same disclosure idiom as the chat sidebar's FilterPanel: icon button to popover, closed on backdrop click
+// or Escape, so the filters take no toolbar width until opened.
 export function MemorySortFilter({ sort, onSortChange, bucket, buckets, onBucketChange, tier, onTierChange, scopes }: MemorySortFilterProps) {
   const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
+  const sheetId = useId()
   const active = sort !== 'newest' || bucket !== '' || tier !== ''
 
-  useEffect(() => {
-    if (!open) return
-    const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
-    document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
-  }, [open])
-
   return (
-    <div ref={ref} className="relative flex-shrink-0">
+    <div className="relative flex-shrink-0">
       <button
         onClick={() => setOpen(o => !o)}
+        popoverTarget={sheetId}
+        popoverTargetAction="show"
         aria-label="Sort and filter memories"
         aria-haspopup="dialog"
         aria-expanded={open}
@@ -66,7 +57,7 @@ export function MemorySortFilter({ sort, onSortChange, bucket, buckets, onBucket
       </button>
 
       {open && (
-        <Sheet anchored aria-label="Sort and filter memories" onClose={() => setOpen(false)} className="medium:absolute medium:right-0 medium:mt-1 medium:w-56 medium:rounded-lg medium:border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-2 medium:pb-2 text-sm medium:text-xs">
+        <Sheet id={sheetId} anchored="right" aria-label="Sort and filter memories" onClose={() => setOpen(false)} className="medium:w-56 medium:rounded-lg medium:border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-2 medium:pb-2 text-sm medium:text-xs">
           <div className="px-1 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Sort</div>
           {SORT_OPTIONS.map(({ value, label }) => (
             <label key={value} className="flex items-center gap-2 min-h-[44px] medium:min-h-0 px-1 py-1 rounded cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700">

@@ -10,8 +10,7 @@ const meta: Meta<typeof ArtifactPanel> = {
   // Every story renders at 390px too: the dialog is a bottom sheet below
   // `medium`, and a typed view (table, snippet block) is exactly what overflows a narrow width first.
   parameters: { layout: 'fullscreen', renderCheck: { viewports: ['mobile', 'desktop'] } },
-  // The panel reads chatStore for live SSE follow (#1114) - every story
-  // needs the provider, same as the real app's tree under Chat.tsx.
+  // The panel reads chatStore for live SSE follow, so every story needs the provider.
   decorators: [Story => <ChatStoreProvider><Story /></ChatStoreProvider>],
 }
 export default meta
@@ -43,7 +42,7 @@ const reviewJudge = JSON.stringify({
   round: 1,
   passed: false,
   score: 0.6,
-  // Judge criteria are 0-3 by design (#941), not a 0-1 fraction (#1139).
+  // Judge criteria are 0-3, not a 0-1 fraction.
   criteria: [{ name: 'evidence', score: 1.5 }, { name: 'coverage', score: 2.5 }],
   // The round judged revision 1 of the review - tapping the chip jumps to
   // it and stamps its notes.
@@ -61,15 +60,13 @@ const reviewJudge2 = JSON.stringify({
   notes: [],
 })
 
-// Flipped mid-story (LiveUpdate's play function) to simulate the server
-// having written a 3rd revision - the fixture, not just the SSE event,
-// has to reflect it since the panel's refresh is a real REST refetch.
+// Flipped by LiveUpdate's play function: the panel's refresh is a real REST refetch,
+// so the fixture, not just the SSE event, must show a 3rd revision.
 let reviewRev3Written = false
 const reviewMdV3 = '# Review summary (live update)\n\nA third revision just landed over SSE.\n'
 
-// The generated client's per-request fetch always passes a real Request
-// instance (client.gen.ts) - String(request) is "[object Request]", so its
-// .url must be read; getArtifactText's plain fetch() still passes a bare string (the ternary covers it). buildUrl percent-encodes artifact_name (":" -> "%3A").
+// The generated client passes a Request (String() gives "[object Request]"), getArtifactText a bare string.
+// buildUrl percent-encodes artifact_name (":" -> "%3A").
 function urlOf(input: RequestInfo | URL): string {
   return decodeURIComponent(input instanceof Request ? input.url : String(input))
 }
@@ -130,9 +127,8 @@ function chatReviewLegacyRoute(url: string): Response | null {
   return jsonResponse({ data: [] })
 }
 
-// The panel talks to the real REST client, so a story stubs global.fetch
-// with canned responses matching the generated schema - no MSW in this repo
-// (frontend-design skill), and this is its whole surface. Routes on the chat id in the URL: chat-1 (a finished review node), chat-failed (a failed node, no artifacts), chat-more (lots of secondary artifacts).
+// Stubs global.fetch with schema-shaped responses routed on chat id: chat-1 (finished review node),
+// chat-failed (failed node, no artifacts), chat-more (many secondary artifacts).
 function chatMoreRoute(url: string): Response | null {
   if (!url.includes('/chats/chat-more/')) return null
   if (url.endsWith('/artifacts')) {
@@ -165,7 +161,7 @@ function chatMoreRoute(url: string): Response | null {
 }
 
 function chatOneRoute(url: string): Response | null {
-  // chat-1: the finished review node (#1178's primary story).
+  // chat-1: the finished review node.
   if (url.includes('/artifacts/text:review-1/revisions')) {
     return jsonResponse({
       data: [
@@ -205,8 +201,8 @@ function chatOneRoute(url: string): Response | null {
   return null
 }
 
-// Real shapes captured off a code-reviewer node reviewing PR #1464, long
-// strings shortened; finding_ids adapted to the four findings captured here.
+// Real shapes captured off a code-reviewer node, long strings shortened;
+// finding_ids adapted to the four findings captured here.
 const reviewFindingIds = ['finding:89f3e6d1', 'finding:e11c2106', 'finding:c1a68ddf', 'finding:76f9df59']
 const codeReview1464 = {
   verdict: 'approve',
@@ -276,7 +272,7 @@ function chatReviewer1466Route(url: string): Response | null {
         { name: 'finding:c1a68ddf', kind: 'finding', class: 'structured', latest_revision: 2, lineage: { node_id: 'code-reviewer-1', author: 'worker' }, revisions: [] },
         { name: 'finding:76f9df59', kind: 'finding', class: 'structured', latest_revision: 2, lineage: { node_id: 'code-reviewer-1', author: 'worker' }, revisions: [] },
         { name: 'judge_round:e-f957a075-1', kind: 'judge_round', class: 'structured', latest_revision: 1, lineage: { node_id: 'code-reviewer-1', author: 'judge' }, revisions: [] },
-        // dag_node is bookkeeping, never selectable; dag_plan belongs to the orchestrator, so it never appears here either.
+        // dag_node is bookkeeping and dag_plan belongs to the orchestrator, so neither appears here.
         { name: 'dag_node:code-reviewer-1', kind: 'dag_node', class: 'structured', latest_revision: 4, lineage: { node_id: 'code-reviewer-1', author: 'system' }, revisions: [] },
         { name: 'dag_plan:main', kind: 'dag_plan', class: 'structured', latest_revision: 2, lineage: { node_id: 'orchestrator', author: 'system' }, revisions: [] },
       ],
@@ -316,9 +312,8 @@ function textResponse(body: string): Response {
   return new Response(body, { status: 200, headers: { 'Content-Type': 'text/plain' } })
 }
 
-// A finished review node (#1178): opens on the node's result (the review
-// markdown under the node's own name) with the two-round judge timeline
-// under the header, "More" for finding/code_review, provenance in Details. Verified light; WithResultDark pins dark - #1114's "black on gray" complaint was found in this exact panel.
+// A finished review node: the review markdown under the node's name, the two-round judge timeline,
+// "More" for finding/code_review, provenance in Details. WithResultDark pins the dark theme.
 export const WithResult: Story = {
   args: {
     chatId: 'chat-1',
@@ -330,9 +325,7 @@ export const WithResult: Story = {
   },
 }
 
-// Minimal EventSource fake (mirrors chatStore.test.ts's own) so the play
-// function can dispatch a real SSE frame through chatStore's own
-// EventSource handling, rather than reaching into the store's internals.
+// Minimal EventSource fake so play dispatches a real SSE frame through chatStore's own handling.
 class FakeEventSource {
   static last: FakeEventSource | null = null
   onerror: (() => void) | null = null
@@ -346,9 +339,8 @@ class FakeEventSource {
 }
 window.EventSource = FakeEventSource as unknown as typeof EventSource
 
-// #1114: the panel follows a live artifact_revision event over the chat's
-// own SSE stream, no page reload - the story injects its own ChatStore,
-// attaches it (opening the fake EventSource above), and play fires the event exactly as the real stream would.
+// The story injects its own ChatStore and attaches it (opening the fake EventSource);
+// play fires an artifact_revision event exactly as the real stream would.
 const liveStore = new ChatStore()
 liveStore.seed('chat-1', [])
 liveStore.attach('chat-1')
@@ -366,9 +358,7 @@ export const LiveUpdate: Story = {
   },
 }
 
-// The bug this story exists to catch (#1216 review): a real agent prompt can
-// run to a kilobyte-plus. The header must stay 2 lines regardless - the full
-// text is only reachable in Details.
+// A real agent prompt can run to a kilobyte-plus; the header must stay 2 lines, the full text only in Details.
 export const WithLongTask: Story = {
   ...WithResult,
   args: {
@@ -379,15 +369,12 @@ export const WithLongTask: Story = {
 
 export const WithResultDark: Story = {
   ...WithResult,
-  // A local `.dark` ancestor is enough: Tailwind's dark: variant matches any
-  // dark-classed ancestor, not just <html>, so this pins the theme without
-  // touching the global toolbar toggle .storybook/preview.tsx provides.
+  // Tailwind's dark: variant matches any `.dark` ancestor, so this pins the theme without the global toolbar toggle.
   decorators: [Story => <div className="dark"><Story /></div>],
 }
 
-// #1178 mobile: the dialog is a full-height bottom sheet (h-dvh) below
-// `sm`, the timeline pinned under the header. No viewport addon in this repo
-// (.storybook/main.ts's addons list is empty), so this wraps the fixed 390x844 box directly - a real, sized container the panel's own `sm:` breakpoint reacts to exactly like a real small screen (DevTools emulation and this box agree at 390px).
+// Mobile: a bottom sheet with the timeline pinned under the header. No viewport addon is installed,
+// so this wraps a fixed 390x844 box.
 export const WithResultMobile: Story = {
   ...WithResult,
   decorators: [Story => (
@@ -472,8 +459,8 @@ export const OrchestratorNode: Story = {
   },
 }
 
-// An ACP implementer that delivers through git and writes no artifact at
-// all - the empty state renders the FULL vetted answer as markdown (a one-line caption names the "no artifact" fact, not the content).
+// An ACP implementer that delivers through git and writes no artifact: the empty state renders the full
+// vetted answer as markdown under a one-line "no artifact" caption.
 export const ImplementerDeliveredNoArtifact: Story = {
   args: {
     chatId: 'chat-failed',

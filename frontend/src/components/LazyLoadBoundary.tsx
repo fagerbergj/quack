@@ -1,12 +1,11 @@
 import { Component, type ReactNode } from 'react'
 import { Icon } from './Icon'
 
-interface Props { children: ReactNode }
+interface Props { children: ReactNode; fallback?: ReactNode }
 interface State { failed: boolean }
 
-// Wraps a React.lazy route (Memory/ExtensionHost in App.tsx): a failed chunk
-// fetch (deploy rolled the asset hashes mid-session, tab went offline) otherwise
-// throws past Suspense and white-screens the whole app. Must be a class component - React has no hook equivalent for getDerivedStateFromError/componentDidCatch.
+// Keeps a failed lazy chunk or a render crash inside its box instead of white-screening the app.
+// fallback replaces the default full-page reload prompt. Class-only: hooks can't catch render errors.
 export class LazyLoadBoundary extends Component<Props, State> {
   state: State = { failed: false }
 
@@ -15,11 +14,12 @@ export class LazyLoadBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: unknown) {
-    console.error('LazyLoadBoundary: route chunk failed to load', error)
+    console.error('LazyLoadBoundary: subtree failed to load or render', error)
   }
 
   render() {
     if (this.state.failed) {
+      if (this.props.fallback !== undefined) return this.props.fallback
       return (
         <div className="flex-1 flex flex-col items-center justify-center gap-3 p-6 text-center text-sm text-gray-500 dark:text-gray-400">
           <p>This page couldn&apos;t load. Check your connection and try again.</p>

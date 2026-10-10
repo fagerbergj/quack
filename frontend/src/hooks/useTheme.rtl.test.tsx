@@ -42,7 +42,6 @@ describe('useTheme', () => {
     expect(document.documentElement.classList.contains('dark')).toBe(false)
     act(() => fireOsChange(true))
     expect(document.documentElement.classList.contains('dark')).toBe(true)
-    expect(document.documentElement.style.colorScheme).toBe('dark')
   })
 
   it('an explicit dark choice survives a later system change', () => {
@@ -59,10 +58,8 @@ describe('useTheme', () => {
     localStorage.setItem('theme', 'light')
     render(<Probe />)
     expect(document.documentElement.classList.contains('dark')).toBe(false)
-    expect(document.documentElement.style.colorScheme).toBe('light')
     act(() => fireOsChange(true))
     expect(document.documentElement.classList.contains('dark')).toBe(false)
-    expect(document.documentElement.style.colorScheme).toBe('light')
   })
 
   it('switching from dark to light removes the dark class', () => {
@@ -71,7 +68,6 @@ describe('useTheme', () => {
     expect(document.documentElement.classList.contains('dark')).toBe(true)
     act(() => screen.getByText('set-light').click())
     expect(document.documentElement.classList.contains('dark')).toBe(false)
-    expect(document.documentElement.style.colorScheme).toBe('light')
   })
 
   it('choosing System removes the stored theme key', () => {

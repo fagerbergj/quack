@@ -10,9 +10,8 @@ function mem(id: string, timestamp: string): Memory {
   return { id, content: `content ${id}`, bucket: 'repo:x', author: 'a', kind: 'repo', timestamp }
 }
 
-// #1266 review: groupByAge assumes time-ordered input. A non-time sort
-// (upvotes/score/downvotes/recalls/last_recalled) hands the timeline a page
-// with non-monotonic ages - grouped=false must skip the age-band headers entirely rather than render repeating, interleaved "Today...Older...Today".
+// A non-time sort gives non-monotonic ages, so grouped=false must skip age-band headers entirely rather
+// than render interleaved "Today...Older...Today".
 describe('MemoryTimeline grouping (#1266)', () => {
   const nonTimeOrderedMemories = [
     mem('a', '2026-02-10T09:00:00Z'), // Older

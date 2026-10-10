@@ -2,13 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, type NodeMemory, type VoteDirection } from '../api'
 import { Icon, type IconName } from './Icon'
 import { VoteControl } from './VoteControl'
+import { TONE } from '../lib/colorHash'
 
 export interface NodeMemoriesPanelProps {
   chatId: string
   nodeId: string
-  // Bumping this (the node's judge-round counter, chatStore's
-  // NodeState.judgeRounds) triggers a refetch - the chat's SSE stream
-  // already carries judge-round completion, the "live update" hook epic #1255 P4 asks for without a dedicated subscription.
+  // Bumping the node's judge-round counter triggers a refetch: the SSE stream already carries
+  // judge-round completion, so no dedicated subscription is needed.
   judgeRounds?: number
   onClose: () => void
 }
@@ -39,20 +39,17 @@ function JudgeVoteIcon({ vote, reason }: { vote: string; reason?: string }) {
   )
 }
 
-// SourceBadge: prefill (injected before the worker started) vs tool (a
-// recall_memory call mid-round, epic #1255 P2) - the two ways a memory can
-// reach a worker.
+// prefill (injected before the worker started) vs tool (a recall_memory call mid-round).
 function SourceBadge({ source }: { source: string }) {
   return (
-    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-medium bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300">
+    <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-medium ${TONE.gray}`}>
       {source}
     </span>
   )
 }
 
-// One row: content, source, tier, the judge's vote (if the
-// round has voted yet), and a manual vote control - NodeMemory carries no
-// corpus-wide vote_score (that lives on the full Memory the memory page shows); this control only reflects the caller's own vote highlight. Vote control sits at the row's end (#1266 owner follow-up), matching the memory page's layout - not a left gutter, so the text gets full width.
+// NodeMemory has no corpus-wide vote_score (that's on the full Memory), so the control only reflects the caller's
+// own vote. It sits at the row's end, matching the memory page, so the text gets full width.
 function NodeMemoryRow({ memory, onVote }: { memory: NodeMemory; onVote: (id: string, vote: VoteDirection) => Promise<void> }) {
   return (
     <div className="px-3 py-2.5 border-b border-gray-100 dark:border-gray-700 flex items-start gap-2">
@@ -78,9 +75,8 @@ function NodeMemoryRow({ memory, onVote }: { memory: NodeMemory; onVote: (id: st
   )
 }
 
-// (Epic #1255 P4): the memories a worker node received
-// (prefill and/or recall_memory calls), with the judge's per-memory
-// vote once the round has judged them, and a manual vote control. Read from GET /api/v1/chats/{id}/nodes/{node}/memories.
+// The memories a worker node received (prefill and/or recall_memory) with the judge's per-memory vote
+// once judged, plus a manual vote control.
 export function NodeMemoriesPanel({ chatId, nodeId, judgeRounds, onClose }: NodeMemoriesPanelProps) {
   const [memories, setMemories] = useState<NodeMemory[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -100,9 +96,8 @@ export function NodeMemoriesPanel({ chatId, nodeId, judgeRounds, onClose }: Node
     const prev = memories
     setMemories(cur => cur.map(m => (m.id === id ? { ...m, own_vote: vote === 'none' ? undefined : vote } : m)))
     try {
-      // Merge the server's authoritative tier/own_vote back onto the row
-      // (#1265 review finding 7) - the optimistic own_vote above can be
-      // right about direction but not about tier (an up-vote can newly verify the memory).
+      // Merge the server's tier/own_vote back: the optimistic own_vote has the right direction
+      // but not the tier (an up-vote can newly verify the memory).
       const updated = await api.voteMemory(id, vote)
       setMemories(cur => cur.map(m => (m.id === id ? { ...m, tier: updated.tier, own_vote: updated.own_vote } : m)))
     } catch (e) {
@@ -111,9 +106,7 @@ export function NodeMemoriesPanel({ chatId, nodeId, judgeRounds, onClose }: Node
     }
   }
 
-  // Native <dialog> + showModal() (mirrors ArtifactPanel): Esc closes,
-  // focus is trapped in the top layer, and the browser itself restores
-  // focus to whatever opened this once it closes - no manual focus-trap/restore code needed (#1265 review finding 6).
+  // Native <dialog> + showModal(): Esc closes, focus is trapped, and the browser restores it to the opener.
   const dialogRef = useRef<HTMLDialogElement>(null)
   useEffect(() => { dialogRef.current?.showModal() }, [])
 

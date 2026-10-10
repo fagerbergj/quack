@@ -5,7 +5,7 @@ import { ChatHeaderStatus } from './Chat'
 
 afterEach(cleanup)
 
-// Audit #6: a chat with a live run shows its state and elapsed time in the
+// A chat with a live run shows its state and elapsed time in the
 // header, not only inside the node cards.
 describe('ChatHeaderStatus', () => {
   it('names the run state and ticks an elapsed time from startedAt', () => {

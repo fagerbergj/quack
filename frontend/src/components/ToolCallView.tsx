@@ -12,11 +12,8 @@ import {
   type DiffLine,
 } from './toolFormat'
 
-// Per-tool rich body keyed by tool name, falling back to a tidy formatted
-// view (never a raw JSON blob); the flagship is edit_file → a before→after
-// diff. Long bodies are wrapped in Expandable so a big file/diff/output can't wall off the node. Every native quack tool (internal/tools/*) and every name internal/acp/translate.go remaps an ACP call onto has a case here; anything else - an ACP kind we don't specially map, or a tool added after this file was last updated - falls to GenericView, which is still formatted (key→value / pretty JSON), never a raw blob.
-// Lookup record (keyed like the old switch's cases) so unknown names fall
-// to GenericView; every view is a hoisted function declaration below.
+// Covers every native tool (internal/tools/*) and every name internal/acp/translate.go remaps onto;
+// anything else falls to GenericView, which is still formatted, never a raw blob.
 const TOOL_VIEWS: Record<string, (props: { tool: ToolCall }) => ReactNode> = {
   edit_file: EditFileView,
   write_file: WriteFileView,
@@ -100,17 +97,13 @@ function lineClass(t: DiffLine['type']): string {
   }
 }
 
-// isFlatRecord reports whether v is a plain object whose values are all
-// primitives (or absent) - the shape KeyValueBlock can render as a scannable
-// key→value list instead of a pretty-printed JSON block.
+// True when every value is a primitive (or absent): the shape KeyValueBlock can render.
 function isFlatRecord(v: unknown): v is Record<string, unknown> {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return false
   return Object.values(v as Record<string, unknown>).every(x => x == null || typeof x !== 'object')
 }
 
-// KeyValueBlock renders a flat object as a compact key→value list - the
-// fallback's preferred shape (#404) when every field is a primitive, e.g. an
-// ACP tool call whose args are just `{title: "..."}`.
+// The fallback's preferred shape, e.g. an ACP tool call whose args are just `{title: "..."}`.
 function KeyValueBlock({ data }: { data: Record<string, unknown> }) {
   const entries = Object.entries(data).filter(([, v]) => v !== undefined && v !== '')
   if (entries.length === 0) return <span className="text-[11px] text-gray-500 dark:text-gray-400">(empty)</span>
@@ -128,9 +121,7 @@ function KeyValueBlock({ data }: { data: Record<string, unknown> }) {
   )
 }
 
-// FormattedValue is the fallback's per-value renderer: a compact key→value
-// list for a flat object, else a pretty-printed (never raw single-line) JSON
-// block - either way, never a raw dump (#404).
+// Key→value list for a flat object, else pretty-printed JSON; never a raw single-line dump.
 function FormattedValue({ value }: { value: unknown }) {
   if (isFlatRecord(value)) return <KeyValueBlock data={value} />
   return <Code text={prettyJSON(value)} cap={160} />
@@ -148,9 +139,7 @@ function ResultJSON({ result }: { result: unknown }) {
 }
 
 
-// EditFileView - the flagship: renders the targeted replacement as a before→after
-// diff (old lines red, new lines green), headed by the file path. `replace_all`
-// and the applied-replacements count (from the result) surface as badges.
+// `replace_all` and the applied-replacements count from the result surface as badges.
 function EditFileView({ tool }: { tool: ToolCall }) {
   const path = str(tool.args, 'path') ?? '(unknown path)'
   const oldStr = str(tool.args, 'old') ?? ''
@@ -412,9 +401,8 @@ function StageMemoryView({ tool }: { tool: ToolCall }) {
   )
 }
 
-// Recalled memory entries as short prose snippets. ADK's native result shape
-// (`memories: [{content: {parts: [{text}]}, author}]`) is read defensively -
-// memoryText tries a few known shapes and falls back to FormattedValue rather than assume the exact schema.
+// ADK's result shape (`memories: [{content: {parts: [{text}]}, author}]`) is read defensively:
+// memoryText tries known shapes and falls back to FormattedValue rather than assume the schema.
 function memoryText(entry: unknown): string {
   const content = entry && typeof entry === 'object' ? (entry as Record<string, unknown>).content : undefined
   const parts = content && typeof content === 'object' ? (content as Record<string, unknown>).parts : undefined
@@ -536,11 +524,7 @@ function GitPushView({ tool }: { tool: ToolCall }) {
   )
 }
 
-// GenericView - the tidy fallback for tools without a custom view: a compact
-// key→value list when args/result are flat, else pretty (never raw-blob) JSON -
-// either way height-locked so an unfamiliar tool can't wall off the node.
-// RenderUiView - an A2UI surface write. answer_key is never shown: the rendered
-// surface is the readable form, and the key would spoil its quiz.
+// answer_key is never shown: the rendered surface is the readable form, and the key would spoil its quiz.
 function RenderUiView({ tool }: { tool: ToolCall }) {
   const { answer_key: key, ...args } = tool.args
   return (

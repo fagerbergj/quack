@@ -1,54 +1,44 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, type MouseEvent } from 'react'
 
-// useDrawer wires the a11y behavior every off-canvas drawer needs (#1131,
-// MDN's dialogs-become-sheets guidance): Esc closes, focus moves into the
-// panel and is trapped there while open, background scroll is locked, and focus returns to whatever opened it on close. Shared by NavRail's nav drawer and ChatList's mobile drawer so both off-canvas panels behave identically, not just look identical.
-export function useDrawer(open: boolean, onClose: () => void) {
-  const panelRef = useRef<HTMLDivElement>(null)
-  // Both call sites pass an inline closure, so it gets a new identity on
-  // every render of the owning component - a ref keeps the effect below
-  // from tearing down/re-running (and re-stealing focus) on every one of those re-renders (e.g. Chat's 5s chat-list poll) while the drawer is open.
-  const onCloseRef = useRef(onClose)
-  onCloseRef.current = onClose
+const FOCUSABLE = 'button, a[href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+
+// Shows the returned <dialog> while `open`: as a modal (Esc, focus trap, ::backdrop), or as a `popover="auto"`
+// (Esc and light dismiss, page stays interactive). index.css already locks body scroll for the whole app.
+export function useDrawer(open: boolean, popover = false) {
+  const ref = useRef<HTMLDialogElement>(null)
+  const opener = useRef<Element | null>(null)
+  // The element last shown, so StrictMode's effect re-run neither re-shows it nor re-captures the opener.
+  const shown = useRef<HTMLDialogElement | null>(null)
 
   useEffect(() => {
-    if (!open) return
-    const opener = document.activeElement
-    const panel = panelRef.current
-    function focusable(): HTMLElement[] {
-      return Array.from(panel?.querySelectorAll<HTMLElement>('button, a[href], input, [tabindex]:not([tabindex="-1"])') ?? [])
+    const d = ref.current
+    if (!d) return
+    if (!open) {
+      if (d.open) d.close()
+      shown.current = null
+      return
     }
-    // A panel that autofocuses its own input (NodePopup's answer box) keeps it.
-    if (!panel?.contains(document.activeElement)) focusable()[0]?.focus()
-
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape') {
-        e.stopPropagation()
-        onCloseRef.current()
-        return
-      }
-      if (e.key !== 'Tab') return
-      const items = focusable()
-      if (items.length === 0) return
-      const first = items[0]
-      const last = items[items.length - 1]
-      if (e.shiftKey && document.activeElement === first) {
-        e.preventDefault()
-        last.focus()
-      } else if (!e.shiftKey && document.activeElement === last) {
-        e.preventDefault()
-        first.focus()
-      }
+    if (shown.current !== d) {
+      shown.current = d
+      opener.current = document.activeElement
+      if (popover) d.showPopover()
+      else d.showModal()
+      // React's autoFocus fires while the dialog is still hidden, and a popover takes no initial focus itself.
+      const first = d.querySelector<HTMLElement>('[data-autofocus]') ?? (popover ? d.querySelector<HTMLElement>(FOCUSABLE) : null)
+      first?.focus()
     }
-    document.addEventListener('keydown', onKeyDown)
-    const prevOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
+    // Removing an open dialog skips the native focus restore. Only reclaim focus nobody else took: a light
+    // dismiss by clicking another control must leave focus on that control.
     return () => {
-      document.removeEventListener('keydown', onKeyDown)
-      document.body.style.overflow = prevOverflow
-      if (opener instanceof HTMLElement) opener.focus()
+      const lost = !document.activeElement || document.activeElement === document.body
+      if (lost && opener.current instanceof HTMLElement) opener.current.focus()
     }
-  }, [open])
+  }, [open, popover])
 
-  return panelRef
+  return ref
+}
+
+// A click whose target is the <dialog> itself landed on ::backdrop, given the panel fills the dialog box.
+export function closeOnBackdrop(e: MouseEvent<HTMLDialogElement>) {
+  if (e.target === e.currentTarget) e.currentTarget.close()
 }

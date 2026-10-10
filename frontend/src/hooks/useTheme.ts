@@ -10,18 +10,13 @@ function readTheme(): Theme {
   return stored === 'dark' || stored === 'light' ? stored : 'system'
 }
 
-// Applies the resolved theme to <html> - both the `dark` class (Tailwind's
-// dark: variant) and color-scheme (native controls/scrollbars/dialog
-// backdrops, #1173) so they never drift apart. Exported so App can call it synchronously before first paint, ahead of this hook's own effect.
+// Toggles Tailwind's `dark` class on <html>; index.css derives color-scheme from it.
+// Exported so App can apply it before first paint, ahead of this hook's effect.
 export function applyTheme(theme: Theme = readTheme()) {
   const dark = theme === 'dark' || (theme === 'system' && query().matches)
   document.documentElement.classList.toggle('dark', dark)
-  document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
 }
 
-// #1173: theme init/apply lives here (not inline in App) so the kebab menu
-// can drive the same state. App still calls apply() synchronously before
-// first paint; this hook is for anything that needs to read/change it after.
 export function useTheme(): [Theme, (t: Theme) => void] {
   const [theme, setThemeState] = useState<Theme>(readTheme)
 

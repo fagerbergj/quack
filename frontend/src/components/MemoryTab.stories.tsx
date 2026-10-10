@@ -81,9 +81,7 @@ export const SearchResults: Story = {
   },
 }
 
-// All three lifecycle tiers (design doc §3/§8 step 6) in one list: an
-// unverified memory (missing status, MEMORIES[0]), a reinforced one, and an
-// invalidated one carrying its reason.
+// All three lifecycle tiers: unverified (missing status), reinforced, and invalidated with its reason.
 const MIXED_TIERS: Memory[] = [
   MEMORIES[0],
   { ...MEMORIES[1], status: 'reinforced', reinforcement_count: 4 },
@@ -94,9 +92,7 @@ export const MixedTiers: Story = {
   args: { initialState: { memories: MIXED_TIERS, total: MIXED_TIERS.length }, initialStats: { weeks: [], scopes: [] } },
 }
 
-// Clicking "Show invalidated" is a plain checkbox, off by default - this
-// story just demonstrates it's reachable and toggleable, since the fetch it
-// triggers has no backend here (initialState skips the live GET).
+// Shows "Show invalidated" is reachable and toggleable; the fetch it triggers has no backend here.
 export const ShowInvalidatedToggled: Story = {
   args: { initialState: { memories: MIXED_TIERS, total: MIXED_TIERS.length }, initialStats: { weeks: [], scopes: [] } },
   play: async ({ canvasElement }) => {

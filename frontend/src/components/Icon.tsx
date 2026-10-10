@@ -1,6 +1,5 @@
-// Shared icon component: inline Material Symbols Outlined (24px grid) paths,
-// so controls/badges/labels render as consistent, theme-safe glyphs without a
-// font or icon-library dependency. Paths are copied verbatim from the `d` attribute of github.com/google/material-design-icons symbols/web/<name>/materialsymbolsoutlined/<name>_24px.svg - hand-written path data drifts from the real glyph, copy from there instead.
+// Copy paths verbatim from material-design-icons symbols/web/<name>/materialsymbolsoutlined/<name>_24px.svg;
+// hand-written path data drifts from the real glyph.
 const PATHS = {
   close: 'm256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z',
   check: 'M382-240 154-468l57-57 171 171 367-367 57 57-424 424Z',

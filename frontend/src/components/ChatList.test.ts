@@ -1,16 +1,17 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { act, createElement } from 'react'
-import { createRoot } from 'react-dom/client'
+import { createElement } from 'react'
+import { act, cleanup, render } from '@testing-library/react'
 
 import { filterChats } from '../lib/chatFilters'
 import { isGithubChat } from '../lib/github'
-import { ChatList, githubStateBadgeClass, githubStateLabel, githubStateIcon, originBadgeClass } from './ChatList'
+import { ChatList, githubStateBadgeClass, githubStateIcon, originBadgeClass } from './ChatList'
 import type { ChatSummary } from '../api'
 
-// No @testing-library/react in this repo - filter/facet logic lives in
-// ../lib/chatFilters and ../lib/github (see their own test files for the bulk
-// of the coverage); this file covers the origin-filter wiring ChatList's badge/facet row depends on directly.
+afterEach(cleanup)
+
+// Filter/facet logic lives in ../lib/chatFilters and ../lib/github, whose own tests carry the bulk;
+// this file covers the origin-filter wiring ChatList's badge/facet row depends on directly.
 
 function chat(overrides: Partial<ChatSummary>): ChatSummary {
   return {
@@ -56,37 +57,20 @@ describe('origin badge signal (isGithubChat)', () => {
   })
 })
 
-// #759 item 4: the repo badge drops the owner (identical on every row here)
-// and keeps just the name - the owner is still available in the title
-// attribute for the day a chat's repo isn't fagerbergj's.
+// The repo badge drops the owner (identical on every row) but keeps it in the title attribute.
 describe('repo badge text', () => {
-  let root: ReturnType<typeof createRoot> | undefined
-  let host: HTMLDivElement | undefined
-
-  afterEach(() => {
-    act(() => root?.unmount())
-    host?.remove()
-    root = undefined
-    host = undefined
-  })
+  let host: HTMLElement | undefined
 
   it('shows only the repo name, with the full owner/name in the title', () => {
-    // @ts-expect-error react act environment flag
-    globalThis.IS_REACT_ACT_ENVIRONMENT = true
-    host = document.createElement('div')
-    document.body.appendChild(host)
-    root = createRoot(host)
-    act(() => {
-      root!.render(createElement(ChatList, {
-        chats: CHATS,
-        activeChatId: null,
-        open: true,
-        onSelect: () => {},
-        onNewChat: () => {},
-        onDelete: () => {},
-        onCloseMobile: () => {},
-      }))
-    })
+    host = render(createElement(ChatList, {
+      chats: CHATS,
+      activeChatId: null,
+      open: true,
+      onSelect: () => {},
+      onNewChat: () => {},
+      onDelete: () => {},
+      onCloseMobile: () => {},
+    })).container
     const badge = host!.querySelector('a[title="acme/widget"]')
     expect(badge?.textContent).toBe('widget')
   })
@@ -95,25 +79,10 @@ describe('repo badge text', () => {
 // Generic origin chip: label (linked when href is present), plus an
 // optional badge chip - independent of the GitHub-specific fields above.
 describe('origin chip', () => {
-  let root: ReturnType<typeof createRoot> | undefined
-  let host: HTMLDivElement | undefined
-
-  afterEach(() => {
-    act(() => root?.unmount())
-    host?.remove()
-    root = undefined
-    host = undefined
-  })
+  let host: HTMLElement | undefined
 
   function renderList(chats: ChatSummary[]) {
-    // @ts-expect-error react act environment flag
-    globalThis.IS_REACT_ACT_ENVIRONMENT = true
-    host = document.createElement('div')
-    document.body.appendChild(host)
-    root = createRoot(host)
-    act(() => {
-      root!.render(createElement(ChatList, { chats, activeChatId: null, open: true, onSelect: () => {}, onNewChat: () => {}, onDelete: () => {}, onCloseMobile: () => {} }))
-    })
+    host = render(createElement(ChatList, { chats, activeChatId: null, open: true, onSelect: () => {}, onNewChat: () => {}, onDelete: () => {}, onCloseMobile: () => {} })).container
   }
 
   it('renders the label as a link when origin.href is present', () => {
@@ -138,9 +107,7 @@ describe('origin chip', () => {
     expect(host!.textContent).not.toContain('undefined')
   })
 
-  // #870: the origin badge mirrors GitHub's own state colors for exactly
-  // these three values - any other extension-defined badge stays the
-  // existing neutral chip rather than guessing at unknown semantics.
+  // Any other extension-defined badge stays neutral rather than guessing at unknown semantics.
   it('colors the badge chip for open/merged/closed like GitHub, and leaves anything else neutral', () => {
     expect(originBadgeClass('open')).toContain('green')
     expect(originBadgeClass('merged')).toContain('purple')
@@ -156,66 +123,34 @@ describe('origin chip', () => {
   })
 })
 
-// #870: thin themed scrollbar on the sidebar's own scroll container.
+// Thin themed scrollbar on the sidebar's own scroll container.
 describe('ChatList scroll container', () => {
-  let root: ReturnType<typeof createRoot> | undefined
-  let host: HTMLDivElement | undefined
-
-  afterEach(() => {
-    act(() => root?.unmount())
-    host?.remove()
-    root = undefined
-    host = undefined
-  })
+  let host: HTMLElement | undefined
 
   it('carries the themed thin-scrollbar class', () => {
-    // @ts-expect-error react act environment flag
-    globalThis.IS_REACT_ACT_ENVIRONMENT = true
-    host = document.createElement('div')
-    document.body.appendChild(host)
-    root = createRoot(host)
-    act(() => {
-      root!.render(createElement(ChatList, {
-        chats: CHATS, activeChatId: null, open: true,
-        onSelect: () => {}, onNewChat: () => {}, onDelete: () => {}, onCloseMobile: () => {},
-      }))
-    })
+    host = render(createElement(ChatList, {
+      chats: CHATS, activeChatId: null, open: true,
+      onSelect: () => {}, onNewChat: () => {}, onDelete: () => {}, onCloseMobile: () => {},
+    })).container
     expect(host!.querySelector('.chat-list-scroll')).toBeTruthy()
   })
 })
 
-// #736: the sidebar is server-paginated - "Load more" only appears once the
-// parent signals a next page exists (hasMoreChats), and clicking it defers
-// to the parent's fetch (onLoadMoreChats), not a local re-fetch.
+// "Load more" appears only when the parent signals a next page, and clicking defers to the parent's fetch.
 describe('ChatList "Load more" affordance', () => {
-  let root: ReturnType<typeof createRoot> | undefined
-  let host: HTMLDivElement | undefined
-
-  afterEach(() => {
-    act(() => root?.unmount())
-    host?.remove()
-    root = undefined
-    host = undefined
-  })
+  let host: HTMLElement | undefined
 
   function renderList(props: Partial<Parameters<typeof ChatList>[0]> = {}) {
-    // @ts-expect-error react act environment flag
-    globalThis.IS_REACT_ACT_ENVIRONMENT = true
-    host = document.createElement('div')
-    document.body.appendChild(host)
-    root = createRoot(host)
-    act(() => {
-      root!.render(createElement(ChatList, {
-        chats: CHATS,
-        activeChatId: null,
-        open: true,
-        onSelect: () => {},
-        onNewChat: () => {},
-        onDelete: () => {},
-        onCloseMobile: () => {},
-        ...props,
-      }))
-    })
+    host = render(createElement(ChatList, {
+      chats: CHATS,
+      activeChatId: null,
+      open: true,
+      onSelect: () => {},
+      onNewChat: () => {},
+      onDelete: () => {},
+      onCloseMobile: () => {},
+      ...props,
+    })).container
   }
 
   it('is absent when hasMoreChats is not set', () => {
@@ -243,13 +178,12 @@ describe('ChatList "Load more" affordance', () => {
 
 describe('github_state badge', () => {
   it.each([
-    { state: 'open', label: 'open', icon: 'dot', cls: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400' },
-    { state: 'closed', label: 'closed', icon: 'close', cls: 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400' },
-    { state: 'merged', label: 'merged', icon: 'check', cls: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400' },
-    { state: 'draft', label: 'draft', icon: 'edit', cls: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-500' },
-  ])('renders correct class, icon and label for state="$state"', ({ state, label, icon, cls }) => {
+    { state: 'open', icon: 'dot', cls: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400' },
+    { state: 'closed', icon: 'close', cls: 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400' },
+    { state: 'merged', icon: 'check', cls: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400' },
+    { state: 'draft', icon: 'edit', cls: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-500' },
+  ])('renders correct class and icon for state="$state"', ({ state, icon, cls }) => {
     expect(githubStateBadgeClass(state)).toBe(cls)
-    expect(githubStateLabel(state)).toBe(label)
     expect(githubStateIcon(state)).toBe(icon)
   })
 
@@ -263,37 +197,11 @@ describe('github_state badge', () => {
     expect(githubStateBadgeClass(input)).toBe(expected)
   })
 
-  it.each([
-    { input: 'open', expected: 'open' },
-    { input: 'closed', expected: 'closed' },
-    { input: 'merged', expected: 'merged' },
-    { input: 'draft', expected: 'draft' },
-    { input: '', expected: '' },
-    { input: 'unknown', expected: '' },
-  ])('githubStateLabel("$input") returns label or empty string', ({ input, expected }) => {
-    expect(githubStateLabel(input)).toBe(expected)
-  })
-
-  let root: ReturnType<typeof createRoot> | undefined
-  let host: HTMLDivElement | undefined
-
-  afterEach(() => {
-    act(() => root?.unmount())
-    host?.remove()
-    root = undefined
-    host = undefined
-  })
+  let host: HTMLElement | undefined
 
   function renderGithubChats(githubState: ChatSummary['github_state']) {
-    // @ts-expect-error react act environment flag
-    globalThis.IS_REACT_ACT_ENVIRONMENT = true
-    host = document.createElement('div')
-    document.body.appendChild(host)
-    root = createRoot(host)
     const githubChats: ChatSummary[] = [chat({ id: 'pr-1', title: 'PR chat', github_repo: 'acme/widget', github_url: 'https://github.com/acme/widget/pull/42', github_state: githubState })]
-    act(() => {
-      root!.render(createElement(ChatList, { chats: githubChats, activeChatId: null, open: true, onSelect: () => {}, onNewChat: () => {}, onDelete: () => {}, onCloseMobile: () => {} }))
-    })
+    host = render(createElement(ChatList, { chats: githubChats, activeChatId: null, open: true, onSelect: () => {}, onNewChat: () => {}, onDelete: () => {}, onCloseMobile: () => {} })).container
   }
 
   it.each([
@@ -333,41 +241,26 @@ describe('github_state badge', () => {
   })
 })
 
-// The kebab is a two-stage trash: archive on an active row, hard-delete on an
-// archived one. This is the regression guard - a mis-wiring here would
-// silently hard-delete an active chat on a single click.
+// Regression guard: a mis-wiring here would hard-delete an active chat on a single click.
 describe('ChatRow kebab menu (archive vs. hard delete)', () => {
-  let root: ReturnType<typeof createRoot> | undefined
-  let host: HTMLDivElement | undefined
+  let host: HTMLElement | undefined
 
   afterEach(() => {
-    act(() => root?.unmount())
-    host?.remove()
-    root = undefined
-    host = undefined
     vi.restoreAllMocks()
   })
 
-  // #809: the active list never carries archived rows, so an archived fixture
-  // is passed via archivedChats (the section's own server-scoped list), not chats.
+  // The active list never carries archived rows, so archived fixtures go through archivedChats.
   function renderList(chats: ChatSummary[], props: Partial<Parameters<typeof ChatList>[0]> = {}) {
-    // @ts-expect-error react act environment flag
-    globalThis.IS_REACT_ACT_ENVIRONMENT = true
-    host = document.createElement('div')
-    document.body.appendChild(host)
-    root = createRoot(host)
-    act(() => {
-      root!.render(createElement(ChatList, {
-        chats,
-        activeChatId: null,
-        open: true,
-        onSelect: () => {},
-        onNewChat: () => {},
-        onDelete: () => {},
-        onCloseMobile: () => {},
-        ...props,
-      }))
-    })
+    host = render(createElement(ChatList, {
+      chats,
+      activeChatId: null,
+      open: true,
+      onSelect: () => {},
+      onNewChat: () => {},
+      onDelete: () => {},
+      onCloseMobile: () => {},
+      ...props,
+    })).container
   }
 
   function expandArchived() {
@@ -423,8 +316,7 @@ describe('ChatRow kebab menu (archive vs. hard delete)', () => {
     expect(onDelete).not.toHaveBeenCalled()
   })
 
-  // #1319: owner instruction - every row has exactly one kebab, no bare
-  // Archive/Delete button sitting directly on the row.
+  // No bare Archive/Delete button sits directly on the row.
   it('every row has exactly one kebab and no bare Archive/Delete button', () => {
     renderList([chat({ id: 'a4', title: 'Active' })], {
       archivedChats: [chat({ id: 'a5', title: 'Archived', archived: true })],
@@ -478,8 +370,7 @@ describe('ChatRow kebab menu (archive vs. hard delete)', () => {
     expect(host!.querySelector('[role="menuitem"][aria-label="Unarchive chat"]')).toBeNull()
   })
 
-  // Sits top-right, out of flow (absolute), and always visible - touch has
-  // no hover, so a hover-only reveal hid it on every phone. Icons, not glyphs.
+  // Always visible, not hover-revealed: touch has no hover.
   it('the kebab trigger is an always visible Material icon, out of flow', () => {
     renderList([], { onUnarchive: vi.fn(), archivedChats: [chat({ id: 'a10', archived: true })] })
     expandArchived()
@@ -494,38 +385,21 @@ describe('ChatRow kebab menu (archive vs. hard delete)', () => {
   })
 })
 
-// #809 test case 5: the sidebar's initial load never fetches archived chats -
-// archivedChats starts undefined/unfetched, and only expanding the Archived
-// section triggers the parent's own fetch for it.
+// Initial load never fetches archived chats; only expanding the section triggers the parent's fetch.
 describe('Archived section fetches its own list only on expand', () => {
-  let root: ReturnType<typeof createRoot> | undefined
-  let host: HTMLDivElement | undefined
-
-  afterEach(() => {
-    act(() => root?.unmount())
-    host?.remove()
-    root = undefined
-    host = undefined
-  })
+  let host: HTMLElement | undefined
 
   function renderList(props: Partial<Parameters<typeof ChatList>[0]> = {}) {
-    // @ts-expect-error react act environment flag
-    globalThis.IS_REACT_ACT_ENVIRONMENT = true
-    host = document.createElement('div')
-    document.body.appendChild(host)
-    root = createRoot(host)
-    act(() => {
-      root!.render(createElement(ChatList, {
-        chats: [chat({ id: 'c1' })],
-        activeChatId: null,
-        open: true,
-        onSelect: () => {},
-        onNewChat: () => {},
-        onDelete: () => {},
-        onCloseMobile: () => {},
-        ...props,
-      }))
-    })
+    host = render(createElement(ChatList, {
+      chats: [chat({ id: 'c1' })],
+      activeChatId: null,
+      open: true,
+      onSelect: () => {},
+      onNewChat: () => {},
+      onDelete: () => {},
+      onCloseMobile: () => {},
+      ...props,
+    })).container
   }
 
   it('does not call onExpandArchived on initial render', () => {

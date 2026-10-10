@@ -15,9 +15,8 @@ beforeEach(() => {
   window.history.replaceState(null, '', '/')
 })
 
-// #1171: NavRail is a pure drawer at every width - no persistent rail, no
-// hamburger column, no compact/media-query branch, so nothing to mock the
-// viewport for. This harness stands in for App.tsx: it owns the open state (closed on load, remembering nothing) and carries the toggle the drawer's useDrawer focus-return targets.
+// Stands in for App.tsx: owns the open state and carries the toggle that focus returns to.
+// The drawer has no viewport branch, so nothing mocks the viewport.
 function Harness({ route = 'chat', initialExtensions = [], versionOverride }: { route?: 'chat' | 'memory' | 'ext'; initialExtensions?: ExtensionInfo[]; versionOverride?: string }) {
   const [open, setOpen] = useState(false)
   return (
@@ -39,7 +38,7 @@ describe('NavRail drawer', () => {
     expect(screen.getByRole('button', { name: 'Toggle navigation' })).toBeTruthy()
   })
 
-  it('opens the drawer with the Chats/Memory list on toggle, focus moving into the panel', async () => {
+  it('opens the drawer with the Chats/Memory list on toggle', async () => {
     const user = userEvent.setup()
     render(<Harness />)
     await user.click(screen.getByRole('button', { name: 'Toggle navigation' }))
@@ -48,39 +47,26 @@ describe('NavRail drawer', () => {
     expect(dialog).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Chats' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Memory' })).toBeTruthy()
-    // Opening moves focus into the panel - the first focusable in it is "Close navigation".
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Close navigation' }))
   })
 
-  it('closes on Esc and returns focus to the trigger', async () => {
+  it('returns focus to the trigger on close', async () => {
     const user = userEvent.setup()
     render(<Harness />)
     const trigger = screen.getByRole('button', { name: 'Toggle navigation' })
     await user.click(trigger)
     await screen.findByRole('dialog', { name: 'Main navigation' })
 
-    await user.keyboard('{Escape}')
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-    expect(document.activeElement).toBe(trigger)
-  })
-
-  it('closes on the ✕ close button', async () => {
-    const user = userEvent.setup()
-    render(<Harness />)
-    await user.click(screen.getByRole('button', { name: 'Toggle navigation' }))
-    await screen.findByRole('dialog', { name: 'Main navigation' })
     await user.click(screen.getByRole('button', { name: 'Close navigation' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(document.activeElement).toBe(trigger)
   })
 
   it('closes on a backdrop tap', async () => {
     const user = userEvent.setup()
     render(<Harness />)
     await user.click(screen.getByRole('button', { name: 'Toggle navigation' }))
-    await screen.findByRole('dialog', { name: 'Main navigation' })
-    const backdrop = document.querySelector('.bg-black\\/50')
-    expect(backdrop).not.toBeNull()
-    await user.click(backdrop!)
+    // A click targeting the <dialog> itself is a ::backdrop click.
+    await user.click(await screen.findByRole('dialog', { name: 'Main navigation' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   })
 
@@ -106,8 +92,7 @@ describe('NavRail drawer', () => {
     expect(window.location.pathname).toBe('/ext/remarkable')
   })
 
-  // #1326: the version footer at the bottom of the drawer - muted, titled
-  // with the full string, not one of the Chats/Memory/extension nav buttons.
+  // The version footer is titled with the full string and is not one of the nav buttons.
   it('shows the version footer, muted and titled with the full string', async () => {
     const user = userEvent.setup()
     render(<Harness versionOverride="0.51.26" />)

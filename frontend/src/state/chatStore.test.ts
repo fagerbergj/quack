@@ -6,6 +6,29 @@ import {
 } from './chatStore'
 import { pendingChoice } from '../components/messageParts'
 import type { Turn } from '../generated'
+import { client } from '../generated/client.gen'
+
+// Node's Request rejects the generated client's relative URLs.
+client.setConfig({ baseUrl: 'http://localhost' })
+
+let fetchMock: ReturnType<typeof vi.fn>
+beforeEach(() => {
+  fetchMock = vi.fn()
+  vi.stubGlobal('fetch', fetchMock)
+  vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
+  FakeEventSource.last = null
+})
+
+// The generated client sends a Request object; read back the nth fetch call (default: last).
+async function sent(n = -1): Promise<{ method: string; path: string; body: string }> {
+  const calls = fetchMock.mock.calls
+  const req = calls[n < 0 ? calls.length + n : n][0] as Request
+  return { method: req.method, path: new URL(req.url).pathname, body: await req.clone().text() }
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+}
 
 function turnWith(...output: Turn['output']): Turn {
   return { id: 't1', created_at: '', input: { role: 'user', content: 'hi' }, output }
@@ -45,9 +68,8 @@ describe('activityFromTurn', () => {
   })
 })
 
-// Minimal SSE stream that closes immediately so the store doesn't hang.
-// Always terminated by `done` - every real completed run ends with one, and
-// the store treats its absence as a dropped connection worth reconnecting over (see the "reconnect on drop" tests below).
+// Minimal SSE stream that closes at once. Always ends with `done`: the store treats a missing `done` as a dropped
+// connection and reconnects (see the "reconnect on drop" tests).
 function makeStream(body: string): Response {
   const encoder = new TextEncoder()
   const stream = new ReadableStream({
@@ -60,19 +82,12 @@ function makeStream(body: string): Response {
 }
 
 describe('ChatStore.submit - loading indicator gap (regression)', () => {
-  let fetchMock: ReturnType<typeof vi.fn>
   let store: ChatStore
 
-  beforeEach(() => {
-    fetchMock = vi.fn()
-    vi.stubGlobal('fetch', fetchMock)
-    store = new ChatStore()
-    store.seed('chat-1', [])
-  })
+  beforeEach(() => { store = new ChatStore(); store.seed('chat-1', []) })
 
-  // On a follow-up message the previous finished turn lingers in `live` and must be
-  // archived via a GET round-trip. The `submitting` indicator must appear BEFORE that
-  // GET resolves - otherwise the spinner doesn't show until the first token.
+  // A follow-up archives the lingering `live` via a GET; `submitting` must show BEFORE that GET resolves,
+  // or the spinner waits for the first token.
   it('sets submitting/pendingUserText before the archive GET resolves', async () => {
     // First turn - complete it so a finished `live` lingers (the archive trigger).
     fetchMock.mockResolvedValueOnce(makeStream(''))
@@ -91,7 +106,7 @@ describe('ChatStore.submit - loading indicator gap (regression)', () => {
     expect(store.get('chat-1').submitting).toBe(true)
     expect(store.get('chat-1').pendingUserText).toBe('msg2')
 
-    resolveArchive(new Response(JSON.stringify({ turns: [] }), { status: 200 }))
+    resolveArchive(jsonResponse({ turns: [] }))
     await p
 
     // Once streaming starts the indicator clears and the live turn carries the text.
@@ -110,9 +125,8 @@ describe('ChatStore.submit - loading indicator gap (regression)', () => {
     await p
   })
 
-  // Regression: the archive GET can race the server's own persistence of the
-  // turn that just finished streaming. If the refetch's `turns` doesn't yet
-  // contain that turn, the previous answer must survive (synthesized from the in-memory `live`) instead of dropping until a manual refresh.
+  // The archive GET can race the server persisting the just-finished turn; if `turns` lacks it, the answer must
+  // survive (synthesized from `live`) instead of dropping until a refresh.
   it('keeps the previous answer when the archive refetch omits the just-finished turn', async () => {
     const sse = [
       'event: response_created',
@@ -128,7 +142,7 @@ describe('ChatStore.submit - loading indicator gap (regression)', () => {
     expect(store.get('chat-1').live?.text).toBe('first answer')
 
     // The archive GET comes back WITHOUT resp-1 (server hasn't persisted it yet).
-    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ turns: [] }), { status: 200 }))
+    fetchMock.mockResolvedValueOnce(jsonResponse({ turns: [] }))
     fetchMock.mockResolvedValueOnce(makeStream(''))
     await store.submit('chat-1', 'msg2')
 
@@ -141,9 +155,7 @@ describe('ChatStore.submit - loading indicator gap (regression)', () => {
   })
 })
 
-// makeHangingStream is a `submit` response whose body never closes until the
-// test calls `close()` - lets a test observe state while a run is still
-// streaming, and then trigger its completion at will.
+// A `submit` response whose body stays open until the test calls `close()`, to observe state mid-run.
 function makeHangingStream(): { response: Response; close: () => void } {
   const encoder = new TextEncoder()
   let controller!: ReadableStreamDefaultController<Uint8Array>
@@ -158,15 +170,9 @@ function makeHangingStream(): { response: Response; close: () => void } {
 }
 
 describe('ChatStore - main-chat message queue', () => {
-  let fetchMock: ReturnType<typeof vi.fn>
   let store: ChatStore
 
-  beforeEach(() => {
-    fetchMock = vi.fn()
-    vi.stubGlobal('fetch', fetchMock)
-    store = new ChatStore()
-    store.seed('chat-1', [])
-  })
+  beforeEach(() => { store = new ChatStore(); store.seed('chat-1', []) })
 
   it('queueing while streaming holds the message instead of starting a second run', async () => {
     const hang = makeHangingStream()
@@ -191,7 +197,7 @@ describe('ChatStore - main-chat message queue', () => {
     const p = store.submit('chat-1', 'msg1')
     store.queueTurn('chat-1', 'follow-up')
 
-    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ turns: [] }), { status: 200 })) // archive GET
+    fetchMock.mockResolvedValueOnce(jsonResponse({ turns: [] })) // archive GET
     fetchMock.mockResolvedValueOnce(makeStream(''))                                               // follow-up's own run
 
     hang.close()
@@ -209,7 +215,7 @@ describe('ChatStore - main-chat message queue', () => {
     store.queueTurn('chat-1', 'follow-up-2')
     expect(store.get('chat-1').queue.map(q => q.text)).toEqual(['follow-up-1', 'follow-up-2'])
 
-    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ turns: [] }), { status: 200 })) // archive GET
+    fetchMock.mockResolvedValueOnce(jsonResponse({ turns: [] })) // archive GET
     const hang2 = makeHangingStream()
     fetchMock.mockResolvedValueOnce(hang2.response)                                               // follow-up-1's run
 
@@ -221,7 +227,7 @@ describe('ChatStore - main-chat message queue', () => {
     expect(store.get('chat-1').queue.map(q => q.text)).toEqual(['follow-up-2'])
     expect(store.get('chat-1').live?.streaming).toBe(true)
 
-    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ turns: [] }), { status: 200 })) // archive GET
+    fetchMock.mockResolvedValueOnce(jsonResponse({ turns: [] })) // archive GET
     fetchMock.mockResolvedValueOnce(makeStream(''))                                               // follow-up-2's run
     hang2.close()
 
@@ -244,15 +250,9 @@ describe('ChatStore - main-chat message queue', () => {
 })
 
 describe('ChatStore - mid-node steering', () => {
-  let fetchMock: ReturnType<typeof vi.fn>
   let store: ChatStore
 
-  beforeEach(() => {
-    fetchMock = vi.fn()
-    vi.stubGlobal('fetch', fetchMock)
-    store = new ChatStore()
-    store.seed('c', [])
-  })
+  beforeEach(() => { store = new ChatStore(); store.seed('c', []) })
 
   it('node_steered keeps the node running (not queued) and records the guidance', async () => {
     const sse = [
@@ -269,16 +269,13 @@ describe('ChatStore - mid-node steering', () => {
     fetchMock.mockResolvedValueOnce(makeStream(sse))
     await store.submit('c', 'go')
     const ns = store.get('c').live?.dag?.nodeStates['a']
-    // Regression (#870): onNodeSteered used to set 'queued' - an illegal
-    // running→queued transition per the backend's state machine - and nothing
-    // ever restored 'running', so the node rendered idle chrome for the whole steered re-run.
+    // running->queued is illegal in the backend's state machine; the node must stay 'running' through a steer.
     expect(ns?.status).toBe('running')
     expect(ns?.steers).toEqual(['focus on cost'])
   })
 
-  // Full steer→resume sequence, observed as it streams (not just at the end):
-  // the node must read 'running' (DagNode's running-derived UI -
-  // pulse/spinner/canQueue) at every point between the steer and node_done, never dropping to 'queued' or idle chrome while the resumed run streams tokens.
+  // Full steer->resume sequence as it streams: the node reads 'running' (DagNode's pulse/spinner/canQueue)
+  // at every point between the steer and node_done.
   it('stays running across the full node_steered → agent_start → agent_token → node_done sequence', async () => {
     const encoder = new TextEncoder()
     let controller!: ReadableStreamDefaultController<Uint8Array>
@@ -293,7 +290,7 @@ describe('ChatStore - mid-node steering', () => {
     send('event: node_steered\ndata: {"node_id":"a","guidance":"focus on cost"}\n\n')
     await vi.waitFor(() => expect(store.get('c').live?.dag?.nodeStates['a']?.status).toBe('running'))
 
-    // Resumed run: agent_start must restore/keep 'running' (the fix's (b) half).
+    // Resumed run: agent_start must restore/keep 'running'.
     send('event: agent_start\ndata: {"node_id":"a","run_id":"worker-r1","agent":"researcher","stage":"worker"}\n\n')
     await vi.waitFor(() => expect(store.get('c').live?.dag?.nodeRuns['a']?.length).toBe(1))
     expect(store.get('c').live?.dag?.nodeStates['a']?.status).toBe('running')
@@ -427,15 +424,13 @@ describe('ChatStore - mid-node steering', () => {
     const answer = store.get('c').live?.dag?.nodeAnswer['a']
     expect(answer).toBe('REVISED ANSWER (sourced)')
 
-    // #696: keeping judge text OUT of the answer must not throw it away - it
-    // belongs in the judge's own card. judgePartEmitter only emits
-    // agent_thinking for parts the model marks Thought (local models mostly don't), so dropping agent_token discarded nearly all of it.
+    // Judge text kept out of the answer still belongs in the judge's own card: judgePartEmitter only emits
+    // agent_thinking for Thought-marked parts, and local models rarely mark them.
     const judgeRun = store.get('c').live?.dag?.nodeRuns?.['a']?.find(r => r.runId === 'judge-r1')
     expect(judgeRun?.activity).toContainEqual({ kind: 'thinking', text: 'Feedback: needs more sourcing.' })
   })
 
-  // The other half of #696: a revise run IS an answer stage, so its text goes to
-  // the answer box and must NOT also be duplicated into its own card.
+  // A revise run IS an answer stage, so its text goes to the answer box and must not be duplicated into its own card.
   it("a revise run's text goes to the answer box, not into its card's activity", async () => {
     const sse = [
       'event: dag_plan',
@@ -458,9 +453,8 @@ describe('ChatStore - mid-node steering', () => {
     expect(rev?.activity).toEqual([])
   })
 
-  // #387: narration a worker emits BEFORE a tool call must not render as if
-  // it were the answer once the real answer streams in after the call -
-  // mirrors translate.go's per-round reset (#358), applied to the live stream (a node's own worker/revise run, not just the ACP-delivered final text).
+  // Narration a worker emits BEFORE a tool call must not render as the answer once the real one streams in;
+  // mirrors translate.go's per-round reset, applied to the live stream.
   it("a tool call within a worker run discards narration emitted before it from the node's answer", async () => {
     const sse = [
       'event: dag_plan',
@@ -511,9 +505,8 @@ describe('ChatStore - mid-node steering', () => {
     expect(store.get('c').live?.text).toBe('the real answer')
   })
 
-  // #422: a second top-level run against the same live turn (e.g. the GitHub
-  // dispatch driving the orchestrator twice when its first pass ran no plan)
-  // must not concatenate its answer onto the first run's - the answer bubble rendered the reply doubled before this reset.
+  // A second top-level run on the same live turn (e.g. the GitHub dispatch re-driving the orchestrator when no plan
+  // ran) must not concatenate its answer onto the first run's.
   it('a second top-level run replaces the first run\'s live text instead of appending to it', async () => {
     const sse = [
       'event: agent_start',
@@ -540,28 +533,20 @@ describe('ChatStore - mid-node steering', () => {
     expect(store.get('c').live?.text).toBe('second attempt answer')
   })
 
-  it('stopNode POSTs to the stop endpoint and pauseNode PUTs the status endpoint with a reason', () => {
-    fetchMock.mockResolvedValue(new Response(null, { status: 200 }))
+  it('stopNode POSTs to the stop endpoint and pauseNode PUTs the status endpoint with a reason', async () => {
+    fetchMock.mockImplementation(async () => new Response(null, { status: 200 }))
     store.stopNode('c', 'a')
-    expect(fetchMock).toHaveBeenCalledWith(
-      '/api/v1/chats/c/nodes/a/stop',
-      expect.objectContaining({ method: 'POST' }),
-    )
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    expect(await sent()).toEqual({ method: 'POST', path: '/api/v1/chats/c/nodes/a/stop', body: '' })
     store.pauseNode('c', 'a')
-    expect(fetchMock).toHaveBeenCalledWith(
-      '/api/v1/chats/c/nodes/a/status',
-      expect.objectContaining({ method: 'PUT', body: JSON.stringify({ status: 'paused', reason: undefined }) }),
-    )
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    expect(await sent()).toEqual({ method: 'PUT', path: '/api/v1/chats/c/nodes/a/status', body: JSON.stringify({ status: 'paused' }) })
     store.pauseNode('c', 'a', 'shutdown')
-    expect(fetchMock).toHaveBeenCalledWith(
-      '/api/v1/chats/c/nodes/a/status',
-      expect.objectContaining({ method: 'PUT', body: JSON.stringify({ status: 'paused', reason: 'shutdown' }) }),
-    )
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3))
+    expect(await sent()).toEqual({ method: 'PUT', path: '/api/v1/chats/c/nodes/a/status', body: JSON.stringify({ status: 'paused', reason: 'shutdown' }) })
   })
 
   it('startNode POSTs an answer to the start endpoint', async () => {
-    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
-    FakeEventSource.last = null
     const sse = [
       `event: dag_plan\ndata: ${JSON.stringify({ plan_id: 'p', nodes: [{ id: 'a', agent: 'r', task: 't', depends_on: [] }], edges: [] })}\n\n`,
       `event: node_needs_input\ndata: {"node_id":"a","interrupt_id":"i1","message":"which region?"}\n\n`,
@@ -570,17 +555,13 @@ describe('ChatStore - mid-node steering', () => {
     fetchMock.mockResolvedValueOnce(makeStream(sse))
     await store.submit('c', 'go')
 
-    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ status: 'queued' }), { status: 200 }))
+    fetchMock.mockResolvedValueOnce(jsonResponse({ status: 'queued' }))
     store.startNode('c', 'a', 'the answer')
-    expect(fetchMock).toHaveBeenCalledWith(
-      '/api/v1/chats/c/nodes/a/start',
-      expect.objectContaining({ method: 'POST', body: JSON.stringify({ content: 'the answer' }) }),
-    )
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    expect(await sent()).toEqual({ method: 'POST', path: '/api/v1/chats/c/nodes/a/start', body: JSON.stringify({ content: 'the answer' }) })
   })
 
   it('startNode mid-stream is refused with a node error note, not a silent no-op', async () => {
-    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
-    FakeEventSource.last = null
     // Stream stays OPEN (no close, no done): the run is mid-flight when
     // startNode is called, so submit is deliberately not awaited.
     const sse = `event: dag_plan\ndata: ${JSON.stringify({ plan_id: 'p', nodes: [{ id: 'a', agent: 'r', task: 't', depends_on: [] }], edges: [] })}\n\nevent: node_paused\ndata: {"node_id":"a"}\n\n`
@@ -597,12 +578,9 @@ describe('ChatStore - mid-node steering', () => {
   })
 
   it('queueNodeMessage POSTs to the queue endpoint and ignores empty text', async () => {
-    fetchMock.mockResolvedValue(new Response(JSON.stringify({ id: 'q1', text: 'do X', status: 'queued', delivered: false, created_at: '2026-01-01T00:00:00Z' }), { status: 200 }))
+    fetchMock.mockResolvedValue(jsonResponse({ id: 'q1', text: 'do X', status: 'queued', delivered: false, created_at: '2026-01-01T00:00:00Z' }))
     await store.queueNodeMessage('c', 'a', '  do X  ')
-    expect(fetchMock).toHaveBeenCalledWith(
-      '/api/v1/chats/c/nodes/a/queue',
-      expect.objectContaining({ method: 'POST', body: JSON.stringify({ message: 'do X' }) }),
-    )
+    expect(await sent()).toEqual({ method: 'POST', path: '/api/v1/chats/c/nodes/a/queue', body: JSON.stringify({ message: 'do X' }) })
     fetchMock.mockClear()
     await store.queueNodeMessage('c', 'a', '   ')
     expect(fetchMock).not.toHaveBeenCalled()
@@ -620,17 +598,12 @@ describe('ChatStore - mid-node steering', () => {
     fetchMock.mockResolvedValueOnce(new Response(null, { status: 200 }))
     const ok = await store.editNodeTask('c', 'a', 'revised task')
     expect(ok).toBe(true)
-    expect(fetchMock).toHaveBeenCalledWith(
-      '/api/v1/chats/c/nodes/a',
-      expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ task: 'revised task' }) }),
-    )
+    expect(await sent()).toEqual({ method: 'PATCH', path: '/api/v1/chats/c/nodes/a', body: JSON.stringify({ task: 'revised task' }) })
     const node = store.get('c').live?.dag?.nodes.find(n => n.id === 'a')
     expect(node?.task).toBe('revised task')
   })
 
   it('retryNode resets the target + descendants, PUTs the node status endpoint, then watches progress via GET /stream', async () => {
-    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
-    FakeEventSource.last = null
 
     // Seed a live DAG: a → b, a done (with an answer), b failed.
     const sse = [
@@ -644,7 +617,7 @@ describe('ChatStore - mid-node steering', () => {
     await store.submit('c', 'hello')
     expect(store.get('c').live?.dag?.nodeStates['b']?.status).toBe('failed')
 
-    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ status: 'queued' }), { status: 200 }))
+    fetchMock.mockResolvedValueOnce(jsonResponse({ status: 'queued' }))
     store.retryNode('c', 'b', '  focus on X  ')
 
     // Synchronous reset: b (the target) cleared; a (upstream, not downstream of b) kept.
@@ -653,11 +626,8 @@ describe('ChatStore - mid-node steering', () => {
     expect(dag?.nodeStates['b']?.status).toBe('queued')
     expect(dag?.nodeAnswer['a']).toContain('A-ANSWER')
 
-    await new Promise(r => setTimeout(r, 0)) // let the PUT's .then() fire
-    expect(fetchMock).toHaveBeenLastCalledWith(
-      '/api/v1/chats/c/nodes/b/status',
-      expect.objectContaining({ method: 'PUT', body: JSON.stringify({ status: 'queued', guidance: 'focus on X' }) }),
-    )
+    await vi.waitFor(() => expect(FakeEventSource.last).not.toBeNull())
+    expect(await sent()).toEqual({ method: 'PUT', path: '/api/v1/chats/c/nodes/b/status', body: JSON.stringify({ status: 'queued', guidance: 'focus on X' }) })
     // The re-run's progress streams over GET /stream, not the PUT's own body.
     const es = FakeEventSource.last!
     expect(es.url).toBe('/api/v1/chats/c/stream')
@@ -681,9 +651,8 @@ describe('ChatStore - mid-node steering', () => {
     expect(dag?.nodeStates['a'].startedAt).toBe(2000)
   })
 
-  // Root cause of the sub-step (worker/judge/revise) timer resetting on page
-  // refresh: agent_start carried no server timestamp, so a replayed run
-  // always anchored to Date.now() at replay time. Mirrors the dag/node test above.
+  // agent_start must carry a server timestamp, or a replayed sub-step (worker/judge/revise) timer anchors to Date.now()
+  // and resets on refresh. Mirrors the dag/node test above.
   it('uses server started_at_ms for a sub-step (agent_start) timer, not replay-time Date.now()', async () => {
     const sse = [
       'event: dag_plan',
@@ -725,9 +694,8 @@ describe('ChatStore - mid-node steering', () => {
     expect(run?.startedAt).toBeLessThanOrEqual(after)
   })
 
-  // Clock skew: a server clock ahead of the client stores the RAW server
-  // value, unclamped - clamping to the client's now (a prior version did)
-  // corrupted a finished run's duration (finished_at_ms - clamped start). The "never show a negative elapsed" guard lives in fmtMs (floors at 0), so a still-live timer never renders negative even while raw start > client now.
+  // A server clock ahead of the client is stored raw, unclamped: clamping to client now corrupts finished durations.
+  // fmtMs floors at 0, so a live timer never renders negative even while raw start > client now.
   it('stores a future server started_at_ms (clock skew) unclamped', async () => {
     const future = Date.now() + 60_000
     const sse = [
@@ -748,19 +716,12 @@ describe('ChatStore - mid-node steering', () => {
   })
 })
 
-// #1480: a worker/judge admission-slot swap re-queues an already-running
-// node, then re-admits it - node_start fires once, so node_admitted (not
-// another node_start) must be what puts it back to 'running'.
+// A worker/judge admission-slot swap re-queues a running node then re-admits it; node_start fires once,
+// so node_admitted must put it back to 'running'.
 describe('ChatStore - node_admitted resumes a node re-queued mid-run (#1480)', () => {
-  let fetchMock: ReturnType<typeof vi.fn>
   let store: ChatStore
 
-  beforeEach(() => {
-    fetchMock = vi.fn()
-    vi.stubGlobal('fetch', fetchMock)
-    store = new ChatStore()
-    store.seed('c', [])
-  })
+  beforeEach(() => { store = new ChatStore(); store.seed('c', []) })
 
   it('node_queued after node_start re-queues, node_admitted resumes running', async () => {
     const encoder = new TextEncoder()
@@ -789,13 +750,11 @@ describe('ChatStore - node_admitted resumes a node re-queued mid-run (#1480)', (
   })
 })
 
-// agent_complete/node_done/node_failed/node_cancelled carry a server-clock
-// finished_at_ms, so a finished run/node's duration comes from two server
-// timestamps - never Date.now() at whatever moment the client processes (or replays) the event.
+// agent_complete/node_done/node_failed/node_cancelled carry a server-clock finished_at_ms, so durations come from
+// two server timestamps, never Date.now() at (re)play time.
 describe('ChatStore - server-timestamped durations survive replay', () => {
-  // One node running worker -> judge(reject) -> revise -> judge(pass) -> done,
-  // every agent_start/agent_complete/node_done carrying explicit server
-  // timestamps. runDagOnce replays this SAME event list into a fresh store.
+  // One node running worker -> judge(reject) -> revise -> judge(pass) -> done, every event server-timestamped.
+  // runDagOnce replays this SAME event list into a fresh store.
   function dagSSE(): string {
     return [
       'event: dag_plan',
@@ -874,9 +833,8 @@ describe('ChatStore - server-timestamped durations survive replay', () => {
     }
   })
 
-  // Regression: anchorTime used to clamp a stored startedAt to
-  // min(serverMs, Date.now()) - since finished_at_ms is never clamped, a client
-  // trailing the server picked up its OWN (earlier) now as the start, stretching every finished-start subtraction by the skew. Every dagSSE() timestamp (1000-25000ms) sits well ahead of this mocked "now" (500ms), so the old clamp fired on every one of them.
+  // Clamping startedAt to min(serverMs, Date.now()) stretches finished durations by the skew when the client trails.
+  // Every dagSSE() timestamp (1000-25000ms) sits ahead of this mocked "now" (500ms), so a clamp would fire on each.
   it('a client clock trailing the server does not inflate sub-run or plan durations', async () => {
     const dag = await runDagOnce(500)
     expect(dag.startedAt).toBe(1000)
@@ -887,8 +845,6 @@ describe('ChatStore - server-timestamped durations survive replay', () => {
 
 describe('ChatStore - finished_at_ms: remaining lifecycle paths', () => {
   it('a run still open at replay time (no terminal event yet) gets its duration from server timestamps once it completes live', () => {
-    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
-    FakeEventSource.last = null
     const store = new ChatStore()
     store.seed('c', [dagTurn('in_progress')])
     store.attach('c')
@@ -966,15 +922,9 @@ describe('ChatStore - finished_at_ms: remaining lifecycle paths', () => {
 })
 
 describe('ChatStore - context meter + compaction', () => {
-  let fetchMock: ReturnType<typeof vi.fn>
   let store: ChatStore
 
-  beforeEach(() => {
-    fetchMock = vi.fn()
-    vi.stubGlobal('fetch', fetchMock)
-    store = new ChatStore()
-    store.seed('c', [])
-  })
+  beforeEach(() => { store = new ChatStore(); store.seed('c', []) })
 
   it("a worker agent_complete's context_tokens becomes the node's live contextTokens reading", async () => {
     const sse = [
@@ -1039,19 +989,12 @@ describe('ChatStore - context meter + compaction', () => {
   })
 })
 
-// #1114: artifact_revision/artifact_judge_round populate ChatState.artifactEvents
-// and fan out through the existing subscribe() seam, so a late-mounted
-// component (ArtifactPanel) not otherwise wired into chatStore can follow them.
+// artifact_revision/artifact_judge_round populate ChatState.artifactEvents and fan out through subscribe(),
+// so a late-mounted component (ArtifactPanel) can follow them.
 describe('ChatStore - artifact live events (#1114)', () => {
-  let fetchMock: ReturnType<typeof vi.fn>
   let store: ChatStore
 
-  beforeEach(() => {
-    fetchMock = vi.fn()
-    vi.stubGlobal('fetch', fetchMock)
-    store = new ChatStore()
-    store.seed('c', [])
-  })
+  beforeEach(() => { store = new ChatStore(); store.seed('c', []) })
 
   it('records artifact_revision and artifact_judge_round, incrementing seq each time', async () => {
     const sse = [
@@ -1093,9 +1036,7 @@ describe('ChatStore - artifact live events (#1114)', () => {
   })
 })
 
-// dag builds a minimal DagTurnState: two nodes, b depends on a (a is not
-// terminal, b is), so answer attribution + total tokens have a real "which node
-// is terminal" question to answer.
+// Two nodes, b depends on a, so attribution and total tokens have a real "which node is terminal" question.
 function dag(nodeStates: DagTurnState['nodeStates']): DagTurnState {
   return {
     planId: 'p',
@@ -1253,9 +1194,8 @@ describe('isTurnInProgress - re-subscribe gate', () => {
   })
 })
 
-// Minimal EventSource stand-in: jsdom has none. Captures listeners so a test
-// can feed the same SSE vocabulary the hub replays, and records close().
-// emit's optional `id` mirrors the SSE `id:` field - EventSource surfaces it as MessageEvent.lastEventId, which a reconnect resumes past.
+// Minimal EventSource stand-in (jsdom has none): captures listeners and records close().
+// emit's optional `id` mirrors the SSE `id:` field, surfaced as MessageEvent.lastEventId for reconnect resume.
 class FakeEventSource {
   static last: FakeEventSource | null = null
   url: string
@@ -1273,11 +1213,7 @@ class FakeEventSource {
 
 describe('ChatStore.attach - reconnect to a live run', () => {
   let store: ChatStore
-  beforeEach(() => {
-    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
-    FakeEventSource.last = null
-    store = new ChatStore()
-  })
+  beforeEach(() => { store = new ChatStore() })
 
   it('subscribes to /stream, rebuilds the DAG from replay, and ends on done', () => {
     store.seed('c', [dagTurn('in_progress')])
@@ -1306,9 +1242,8 @@ describe('ChatStore.attach - reconnect to a live run', () => {
     expect(FakeEventSource.last).toBe(first) // no new EventSource opened
   })
 
-  // #282: opening a chat while its node is actively running must show LIVE
-  // activity (tool calls, streamed tokens) as it lands on the held-open
-  // stream - not just the terminal node_start/done bookends.
+  // Opening a chat while its node runs must show LIVE activity (tool calls, tokens) as it lands on the held-open
+  // stream, not just the node_start/done bookends.
   it('activity events (tool_call, token) landing on the held-open stream update the store live, no reload', () => {
     store.seed('c', [dagTurn('in_progress')])
     store.attach('c')
@@ -1328,19 +1263,11 @@ describe('ChatStore.attach - reconnect to a live run', () => {
   })
 })
 
-// Finding 11: switching away from a chat mid-run used to leave it
-// permanently "streaming" - detachStream closed the EventSource but never
-// cleared the flag, so a later attach() (gated on isStreaming) no-op'd forever and submit() refused to send; reload was the only recovery.
+// Switching away mid-run must clear `streaming`; otherwise attach() (gated on isStreaming) no-ops forever
+// and submit() refuses to send.
 describe('ChatStore.detachStream - leaving mid-run does not strand the chat (finding 11)', () => {
-  let fetchMock: ReturnType<typeof vi.fn>
   let store: ChatStore
-  beforeEach(() => {
-    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
-    FakeEventSource.last = null
-    fetchMock = vi.fn()
-    vi.stubGlobal('fetch', fetchMock)
-    store = new ChatStore()
-  })
+  beforeEach(() => { store = new ChatStore() })
 
   it('clears streaming on detach so a later attach re-subscribes, and the composer re-enables once the server reports done', async () => {
     store.seed('c', [dagTurn('in_progress')])
@@ -1362,7 +1289,7 @@ describe('ChatStore.detachStream - leaving mid-run does not strand the chat (fin
     expect(store.get('c').live?.streaming).toBe(false)
 
     // Composer enabled: submit() no longer refuses to send.
-    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ turns: [] }), { status: 200 })) // archive GET
+    fetchMock.mockResolvedValueOnce(jsonResponse({ turns: [] })) // archive GET
     fetchMock.mockResolvedValueOnce(makeStream(''))                                              // POST
     await store.submit('c', 'follow up')
     expect(fetchMock).toHaveBeenCalled()
@@ -1391,16 +1318,10 @@ describe('ChatStore.detachStream - leaving mid-run does not strand the chat (fin
   })
 })
 
-// Issue #383: a dropped SSE connection must be retried automatically -
-// resuming via Last-Event-ID - instead of tearing the run down and forcing a
-// manual page refresh.
+// A dropped SSE connection must be retried automatically, resuming via Last-Event-ID, not torn down.
 describe('ChatStore - reconnect on a dropped stream (#383)', () => {
   let store: ChatStore
-  beforeEach(() => {
-    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
-    FakeEventSource.last = null
-    store = new ChatStore()
-  })
+  beforeEach(() => { store = new ChatStore() })
 
   it('an EventSource drop mid-run reconnects with Last-Event-ID and resumes without losing or duplicating events', () => {
     vi.useFakeTimers()
@@ -1501,9 +1422,8 @@ describe('ChatStore - reconnect on a dropped stream (#383)', () => {
     const es = FakeEventSource.last!
     expect(es.url).toBe('/api/v1/chats/c/stream') // no `id:` line was seen on this path - full replay
 
-    // The replayed dag_plan (a fresh plan) resets the stale top-level text
-    // from the dropped body, same as any fresh dag_plan (#463) - no separate
-    // pre-handoff reset is needed.
+    // The replayed dag_plan (a fresh plan) resets the stale top-level text from the dropped body,
+    // so no separate pre-handoff reset is needed.
     es.emit('dag_plan', '{"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}', 1)
     expect(store.get('c').live?.text).toBe('')
     es.emit('node_done', '{"node_id":"a","output_preview":"final"}', 2)
@@ -1513,9 +1433,8 @@ describe('ChatStore - reconnect on a dropped stream (#383)', () => {
     expect(store.get('c').live?.streaming).toBe(false)
   })
 
-  // #1090 perf audit item 4: the POST body carries `id:` lines on the wire
-  // (same sseWriter as the GET stream) - a drop mid-run should resume past
-  // whatever was already applied, not replay the run from 0.
+  // The POST body carries `id:` lines (same sseWriter as the GET stream), so a mid-run drop resumes past
+  // what was already applied instead of replaying from 0.
   it('a POST stream that drops after seeing `id:` lines hands off to the GET stream past the last id applied', async () => {
     const dropped = [
       'id: 1',
@@ -1545,9 +1464,8 @@ describe('ChatStore - reconnect on a dropped stream (#383)', () => {
     expect(store.get('c').live?.streaming).toBe(false)
   })
 
-  // A drop can land between an `id:` line and its `data:` line - a real TCP
-  // boundary, not a corner case. Resuming past an id whose event was never
-  // actually dispatched would silently drop that event from the UI.
+  // A drop can land between an `id:` line and its `data:` line; resuming past an id whose event never
+  // dispatched would silently drop that event.
   it('a POST stream that drops right after an `id:` line (before its `data:` arrives) does not resume past the undelivered event', async () => {
     const dropped = [
       'id: 1',
@@ -1570,16 +1488,11 @@ describe('ChatStore - reconnect on a dropped stream (#383)', () => {
   })
 })
 
-// Finding 6 (stream audit): the hub now drops (closes) a subscriber whose
-// buffer backs up instead of silently skipping an event mid-stream, so the
-// client must detect the resulting id gap itself - an out-of-order id must never just advance the cursor, or the gap is unrecoverable (the resume cursor only replays events after the id it's given).
+// The hub closes a subscriber whose buffer backs up, so the client must detect the id gap itself: an out-of-order
+// id must never advance the cursor, since resume only replays events after the id it's given.
 describe('ChatStore - resume from the last contiguous id on an id gap (#audit-6)', () => {
   let store: ChatStore
-  beforeEach(() => {
-    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
-    FakeEventSource.last = null
-    store = new ChatStore()
-  })
+  beforeEach(() => { store = new ChatStore() })
 
   it('a non-contiguous id reconnects from the last contiguous id, not the jump', () => {
     vi.useFakeTimers()
@@ -1597,9 +1510,8 @@ describe('ChatStore - resume from the last contiguous id on an id gap (#audit-6)
       // dropped this subscriber for falling behind).
       es1.emit('node_done', '{"node_id":"a"}', 5)
 
-      // The gapped event must not be applied, and the stream must reconnect
-      // (bounded backoff, same as a connection drop) from the last
-      // contiguous id (2), not from the jump.
+      // The gapped event must not be applied, and the stream must reconnect (bounded backoff)
+      // from the last contiguous id (2), not from the jump.
       expect(store.get('c').live?.dag?.nodeStates['a'].status).toBe('running')
       expect(es1.closed).toBe(true)
       expect(FakeEventSource.last).toBe(es1) // no immediate hammer
@@ -1619,13 +1531,10 @@ describe('ChatStore - resume from the last contiguous id on an id gap (#audit-6)
   })
 })
 
-// #1090 perf audit item 4: a fresh attach still replays from 0 - a real page
-// reload starts a new ChatStore with no memory of what this client already
-// applied, so it has no cursor to resume from (a durable per-chat cursor needs a backend field; not implemented). The POST-drop handoff (above) is the one case where this client DOES already know how far it got - see the two tests just above.
+// A fresh attach still replays from 0: a reloaded ChatStore has no cursor (a durable per-chat one needs a backend
+// field). Only the POST-drop handoff above knows how far it got.
 describe('ChatStore.attach - a fresh attach has no cursor, replays from 0 (#1090)', () => {
   it('attach on a chat this client has never streamed opens /stream with no last_event_id', () => {
-    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
-    FakeEventSource.last = null
     const store = new ChatStore()
     store.seed('c', [dagTurn('in_progress')])
     store.attach('c')
@@ -1633,20 +1542,11 @@ describe('ChatStore.attach - a fresh attach has no cursor, replays from 0 (#1090
   })
 })
 
-// Issue #463: when a fresh dag_plan arrives on a LiveTurn that has
-// accumulated stale top-level TEXT (pre-DAG orchestrator narration, replays
-// into an old turn), it bleeds into the new DAG scope. Fix: onDagPlan resets
-// live.text on a fresh DAG. live.runs is NOT reset here (#slice3 review): the
-// orchestrator's own top-level run (load_skill/list_nodes/create_plan, and
-// its later execute calls) must survive a dag_plan, or onAgentToolCall's
-// later appends have no run left to append to.
+// A fresh dag_plan must reset stale top-level TEXT (pre-DAG narration) so it doesn't bleed into the new DAG.
+// live.runs survives: the orchestrator's own run keeps appending tool calls after dag_plan.
 describe('ChatStore - fresh dag_plan resets stale top-level text (#463)', () => {
   let store: ChatStore
-  beforeEach(() => {
-    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
-    FakeEventSource.last = null
-    store = new ChatStore()
-  })
+  beforeEach(() => { store = new ChatStore() })
 
   it('a fresh dag_plan emitted into a live turn that has accumulated stale text clears it but keeps the run', () => {
     store.seed('c', [dagTurn('in_progress')])
@@ -1662,22 +1562,15 @@ describe('ChatStore - fresh dag_plan resets stale top-level text (#463)', () => 
     // FINALLY a dag_plan arrives - signals a fresh DAG for a new run.
     es.emit('dag_plan', '{"plan_id":"p-new","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}')
 
-    // #463: stale top-level TEXT must be purged when replacing with a fresh DAG...
+    // Stale top-level TEXT must be purged when replacing with a fresh DAG...
     expect(store.get('c').live?.text).toBe('')
     // ...but the orchestrator's own run survives - it isn't stale, it's still live.
     expect(store.get('c').live?.runs).toHaveLength(1)
   })
 })
 
-// #slice3 review (reviewer finding): a turn attach() lifts can carry its own
-// SEEDED top-level activity (a quack:activity item) - the #463 test above
-// never catches this because its dagTurn fixture has no such item, so its
-// seeded `runs` is always empty. A re-attach whose lifted turn's activity
-// belongs to a genuinely earlier/unrelated run (not THIS stream's own) must
-// not have that stale activity render under a brand-new plan; the
-// orchestrator's own live run (this stream's own top-level agent_start
-// actually fires) must still survive - the owner's original bug report,
-// not to be regressed by this purge.
+// A lifted turn can carry SEEDED top-level activity from an unrelated earlier run; it must not render under a
+// brand-new plan, while the orchestrator's own live run (its agent_start fired on this stream) survives.
 describe('ChatStore - seeded activity purged only when this stream never saw its own top-level start (#slice3)', () => {
   function dagTurnWithActivity(planId: string): Turn {
     return {
@@ -1694,11 +1587,6 @@ describe('ChatStore - seeded activity purged only when this stream never saw its
       ],
     }
   }
-
-  beforeEach(() => {
-    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
-    FakeEventSource.last = null
-  })
 
   it('purges seeded runs when a fresh plan arrives with no top-level agent_start seen', () => {
     const store = new ChatStore()
@@ -1719,8 +1607,7 @@ describe('ChatStore - seeded activity purged only when this stream never saw its
     store.attach('c')
     const es = FakeEventSource.last!
 
-    // This stream's OWN top-level run actually starts - the owner's bug
-    // report shape (create_plan -> dag_plan within the same live turn).
+    // This stream's OWN top-level run starts (create_plan -> dag_plan within the same live turn).
     es.emit('agent_start', '{"run_id":"orchestrator","stage":"worker"}')
     es.emit('dag_plan', '{"plan_id":"new-plan","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}')
 
@@ -1728,13 +1615,10 @@ describe('ChatStore - seeded activity purged only when this stream never saw its
   })
 })
 
-// #slice3 review: the orchestrator's turn continues past dag_plan (create_plan
-// -> dag_plan -> more execute calls, no delivery yet) - its own top-level run
-// must keep accumulating tool calls across that dag_plan, not get orphaned.
+// The orchestrator's turn continues past dag_plan (create_plan -> dag_plan -> more execute calls);
+// its own top-level run must keep accumulating tool calls, not get orphaned.
 describe('ChatStore - orchestrator run survives dag_plan mid-turn (#slice3)', () => {
   it('agent_tool_call(create_plan) -> dag_plan -> agent_tool_call(execute) all land on the same run', () => {
-    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
-    FakeEventSource.last = null
     const store = new ChatStore()
     store.seed('c', [dagTurn('in_progress')])
     store.attach('c')
@@ -1756,15 +1640,10 @@ describe('ChatStore - orchestrator run survives dag_plan mid-turn (#slice3)', ()
 
 describe('ChatStore - attach on idle chat fires live turn (#463)', () => {
   let store: ChatStore
-  beforeEach(() => {
-    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
-    FakeEventSource.last = null
-    store = new ChatStore()
-  })
+  beforeEach(() => { store = new ChatStore() })
 
-  // #463 (part 2): when a run goes active on an already-open chat, the
-  // Chat.tsx useEffect fires attach - lifting any history turns into `live`
-  // and opening the /stream subscribe so events start flowing. Without this path the chat box stays blank while the Running badge shows.
+  // When a run goes active on an open chat, Chat.tsx fires attach: lift history into `live` and open /stream,
+  // or the chat box stays blank while the Running badge shows.
   it('attach called on idle chat lifts history into live and starts streaming', () => {
     store.seed('c', [dagTurn('in_progress')])
     expect(store.get('c').live).toBeUndefined()
@@ -1792,17 +1671,11 @@ describe('ChatStore - attach on idle chat fires live turn (#463)', () => {
   })
 })
 
-// Incremental planning (#slice3): execute() re-sends dag_plan with the SAME
-// plan_id every step, its node list only ever grown - the DAG view must keep
-// earlier steps' node cards (status, runs, answer) instead of wiping them
-// back to "queued" each time the plan grows.
+// Incremental planning: execute() re-sends dag_plan with the SAME plan_id and a grown node list; earlier
+// node cards (status, runs, answer) must survive instead of resetting to "queued".
 describe('ChatStore - a growing plan (same plan_id) keeps earlier steps\' node cards', () => {
   let store: ChatStore
-  beforeEach(() => {
-    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
-    FakeEventSource.last = null
-    store = new ChatStore()
-  })
+  beforeEach(() => { store = new ChatStore() })
 
   it('a second dag_plan with the same plan_id merges in the new node without resetting the done one', () => {
     store.seed('c', [dagTurn('in_progress')])
@@ -1845,16 +1718,11 @@ describe('ChatStore - a growing plan (same plan_id) keeps earlier steps\' node c
   })
 })
 
-// Issue #463 (part 3, live repro): the hub only publishes NEW events, so a
-// client attaching after a run's events already fired gets no replay at all.
-// attach() used to lift the in-progress turn into a BLANK `live` on that assumption - with nothing ever arriving to fill it, the pane rendered empty (earlier history intact, but nothing to show for the visibly "Running" run). Fix: seed `live` from what GET /chats/{id} already persisted for that turn, so it renders immediately.
+// The hub only publishes NEW events, so a late attach gets no replay; `live` must be seeded from what
+// GET /chats/{id} persisted for that turn, or the pane renders empty.
 describe('ChatStore.attach - seeds live from persisted output when the hub replays nothing (#463)', () => {
   let store: ChatStore
-  beforeEach(() => {
-    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
-    FakeEventSource.last = null
-    store = new ChatStore()
-  })
+  beforeEach(() => { store = new ChatStore() })
 
   it('renders the earlier completed turn and the in-progress turn\'s own DAG snapshot, with zero stream events emitted', () => {
     const done: Turn = {
@@ -1888,16 +1756,11 @@ describe('ChatStore.attach - seeds live from persisted output when the hub repla
   })
 })
 
-// #1290: a page reload rebuilt a finished chat's DAG bubble from the
-// persisted node_states rollup alone (no per-run breakdown - the judge/revise
-// sub-run cards a live view showed vanished). attach() itself never gated on turn status; the caller (Chat.tsx's getChat effect) did. These guard the store half: attaching to a chat whose LAST turn is a completed (not just in_progress) DAG still replays chat_events and rebuilds nodeRuns through the same handlers the live path uses - one parser, no separate "history" reconstruction.
+// Attaching to a chat whose LAST turn is a completed DAG still replays chat_events and rebuilds nodeRuns
+// through the live handlers, so a reload keeps the judge/revise sub-run cards.
 describe('ChatStore.attach - rebuilds a finished turn\'s sub-run cards from replay (#1290)', () => {
   let store: ChatStore
-  beforeEach(() => {
-    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
-    FakeEventSource.last = null
-    store = new ChatStore()
-  })
+  beforeEach(() => { store = new ChatStore() })
 
   // One judge/revise round, every event server-timestamped, replayed onto a
   // COMPLETED dag turn (not the in_progress fixture the other attach() tests use).
@@ -1958,17 +1821,11 @@ describe('ChatStore.attach - rebuilds a finished turn\'s sub-run cards from repl
   })
 })
 
-// Issue #463 (part 2): confirm sequential submits already get clean state via archive path.
+// Sequential submits already get clean state via the archive path.
 describe('ChatStore - submit already produces clean turns (#463)', () => {
-  let fetchMock: ReturnType<typeof vi.fn>
   let store: ChatStore
 
-  beforeEach(() => {
-    fetchMock = vi.fn()
-    vi.stubGlobal('fetch', fetchMock)
-    store = new ChatStore()
-    store.seed('c', [])
-  })
+  beforeEach(() => { store = new ChatStore(); store.seed('c', []) })
 
   it('creates fresh LiveTurn for each submit - prev text does not leak into next turn', async () => {
     const sseOld = [
@@ -1984,7 +1841,7 @@ describe('ChatStore - submit already produces clean turns (#463)', () => {
     expect(store.get('c').live?.streaming).toBe(false)
 
     // Next submit: archive GET + fresh LiveTurn.  Stale text must not carry forward.
-    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ turns: [] }), { status: 200 }))
+    fetchMock.mockResolvedValueOnce(jsonResponse({ turns: [] }))
     const sseNew = [
       'event: agent_token',
       'data: {"text":"NEW ANSWER"}',
@@ -2042,7 +1899,7 @@ describe('ChatStore a2ui surface events and double submit', () => {
     await store.submit('chat-d', 'first')
     const p = store.submit('chat-d', 'second')
     await store.submit('chat-d', 'second again')
-    releaseGet(new Response(JSON.stringify({ turns: [] })))
+    releaseGet(jsonResponse({ turns: [] }))
     await p
     const posts = fetchMock.mock.calls.filter(c => (c[1] as RequestInit | undefined)?.method === 'POST')
     expect(posts).toHaveLength(2)
@@ -2052,7 +1909,6 @@ describe('ChatStore a2ui surface events and double submit', () => {
 
 describe('ChatStore.attach', () => {
   it('keeps the lifted turn server start time, the surface created_at fallback anchor', () => {
-    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
     const store = new ChatStore()
     store.seed('chat-r', [{ id: 't9', created_at: '2026-09-27T10:00:00Z', input: { role: 'user', content: 'go' }, output: [] }])
     store.attach('chat-r')
@@ -2082,11 +1938,6 @@ describe('ChatStore - a multi-sink turn after a retry keeps its sectioned answer
     es.emit('done')
   }
 
-  beforeEach(() => {
-    vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource)
-    FakeEventSource.last = null
-  })
-
   it('a reload shows the persisted sections, not the replayed retry node alone', () => {
     const store = new ChatStore()
     store.seed('c', [retriedTurn])
@@ -2101,15 +1952,14 @@ describe('ChatStore - a multi-sink turn after a retry keeps its sectioned answer
     store.attach('c')
     replayRetryOfR1(FakeEventSource.last!)
     const updated = '## r1\n\nCLI ONE\n\n## r2\n\nTWO'
-    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ ...retriedTurn, output: [retriedTurn.output[0], { type: 'message', id: 't1:msg', status: 'completed', content: [{ type: 'output_text', text: updated }] }] }), { status: 200 }))
-    vi.stubGlobal('fetch', fetchMock)
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ...retriedTurn, output: [retriedTurn.output[0], { type: 'message', id: 't1:msg', status: 'completed', content: [{ type: 'output_text', text: updated }] }] }))
     // The poll sees the chat running again; the page re-seeds from GET /chats/{id} and watches.
     store.reattach('c', [retriedTurn])
     const es = FakeEventSource.last!
     expect(store.get('c').live?.id).toBe('t1')
     replayRetryOfR1(es)
     await vi.waitFor(() => expect(liveAnswerText(store.get('c').live!)).toBe(updated))
-    expect(fetchMock).toHaveBeenLastCalledWith('/api/v1/chats/c/responses/t1')
+    expect((await sent()).path).toBe('/api/v1/chats/c/responses/t1')
   })
 
   it('a foreign run on a plain-reply chat with no live turn goes live as its own turn; the reply stays', () => {
@@ -2137,18 +1987,19 @@ describe('ChatStore - a multi-sink turn after a retry keeps its sectioned answer
     store.seed('c', [retriedTurn])
     store.attach('c')
     replayRetryOfR1(FakeEventSource.last!)
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1)) // the replayed run's own answer re-read
     const updated = '## r1\n\nNEW ONE\n\n## r2\n\nTWO'
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'queued' }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ...retriedTurn, output: [retriedTurn.output[0], { type: 'message', id: 't1:msg', status: 'completed', content: [{ type: 'output_text', text: updated }] }] }), { status: 200 }))
-    vi.stubGlobal('fetch', fetchMock)
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ status: 'queued' }))
+      .mockResolvedValueOnce(jsonResponse({ ...retriedTurn, output: [retriedTurn.output[0], { type: 'message', id: 't1:msg', status: 'completed', content: [{ type: 'output_text', text: updated }] }] }))
+    const before = FakeEventSource.last
     store.retryNode('c', 'r1')
-    await new Promise(r => setTimeout(r, 0))
+    await vi.waitFor(() => expect(FakeEventSource.last).not.toBe(before))
     const es = FakeEventSource.last!
     es.emit('agent_token', '{"node_id":"r1","run_id":"worker-r0","text":"NEW ONE"}')
     es.emit('node_done', '{"node_id":"r1"}')
     es.emit('done')
     await vi.waitFor(() => expect(liveAnswerText(store.get('c').live!)).toBe(updated))
-    expect(fetchMock).toHaveBeenLastCalledWith('/api/v1/chats/c/responses/t1')
+    expect((await sent()).path).toBe('/api/v1/chats/c/responses/t1')
   })
 })

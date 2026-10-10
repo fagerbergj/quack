@@ -10,14 +10,14 @@ export default tseslint.config(
     languageOptions: {
       globals: { ...globals.browser },
       parserOptions: {
-        // Type-aware rules (promise discipline) need the TS project. The root
-        // config files sit outside tsconfig's scope; allowDefaultProject
-        // parses them without type info (CI only lints src/, which is in scope).
+        // Type-aware rules need the TS project; allowDefaultProject parses the
+        // root config files outside tsconfig's scope without type info.
         projectService: {
           allowDefaultProject: [
             '*.js',
             'openapi-ts.config.ts',
             'vitest.render-check.config.ts',
+            'vitest.setup.ts',
             '.storybook/*.ts',
             'scripts/*.mjs',
           ],

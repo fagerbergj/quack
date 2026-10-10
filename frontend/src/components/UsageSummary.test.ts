@@ -5,9 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { UsageSummary } from './UsageSummary'
 import type { Usage } from '../generated'
 
-// Static-markup assertions (see DagNode.test.ts) - <details>/<summary> is a
-// native disclosure, so the expandable breakdown is always present in the
-// DOM; no click simulation needed to prove it renders.
+// <details> keeps the breakdown in the DOM, so static markup proves it renders without a click.
 function html(models: string[], usage?: Usage): string {
   return renderToStaticMarkup(createElement(UsageSummary, { models, usage }))
 }
@@ -55,9 +53,7 @@ describe('UsageSummary - session token total and breakdown', () => {
     expect(out).not.toContain('Cache rate')
   })
 
-  // Regression: UsageRow used to hide a row on a falsy value, so a
-  // genuinely-zero dimension (e.g. no reasoning tokens this turn) silently
-  // vanished instead of reading "0" - indistinguishable from "not tracked".
+  // A genuinely-zero dimension must read "0"; hiding it would be indistinguishable from "not tracked".
   it('renders all four breakdown rows even when their values are 0', () => {
     const out = html([], { input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, cached_tokens: 0, total_tokens: 100 })
     expect(out).toContain('Input')

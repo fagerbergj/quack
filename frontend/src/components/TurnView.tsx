@@ -10,9 +10,8 @@ import { dagFromTurn, textFromTurn, stoppedFromTurn, activityFromTurn, dagAnswer
 import { pendingChoice, type Activity } from './messageParts'
 import type { Turn } from '../generated'
 
-// visibleActivity hides get_user_choice tool calls from the activity log - they are
-// surfaced separately as a QuestionBubble button group, so showing the raw tool block
-// too would be redundant. Shared by TurnView (completed turns) and Chat (live turn).
+// get_user_choice calls render as a QuestionBubble, so the raw tool block would be redundant.
+// Shared by TurnView (completed turns) and Chat (live turn).
 export function visibleActivity(activity: Activity[]): Activity[] {
   return activity.filter(a => !(a.kind === 'tool' && a.tool.name === 'get_user_choice'))
 }
@@ -29,13 +28,10 @@ export interface TurnViewProps {
   isChoiceAnswer: boolean
   submittingChoice: boolean
   isCopied: boolean
-  // Earlier turns' raw envelope text, oldest first - threaded into TriggerMessage
-  // so a GitHub trigger's <comments> section can accumulate this turn's delta onto
-  // the running history instead of showing just this trigger's slice (#730).
+  // Earlier turns' raw envelope text, oldest first, so a GitHub trigger's <comments> section can show
+  // the running history instead of only this trigger's slice.
   priorContents: string[]
-  // #1138: this turn's attached images, resolved from the chat's own artifact
-  // store (turn_id-tagged revisions) - undefined/empty means no thumbnail,
-  // never an error state.
+  // Resolved from the chat's turn_id-tagged artifact revisions; empty means no thumbnail, never an error.
   imageAttachments?: AttachmentPreview[]
   // a2ui_surface artifacts this turn created, rendered at their latest revision.
   surfaces?: SurfaceRef[]
@@ -96,9 +92,8 @@ function CopyDownloadRow({ text, copyKey, isCopied, onCopy, onDownload, idx }: {
   )
 }
 
-// TurnView renders one completed turn. Memoized: completed turns are immutable, so
-// this stops re-rendering (and re-parsing markdown/DAG) on every streaming token of
-// a later turn - the props only change for the one turn being copied/answered.
+// Memoized: completed turns are immutable, so this skips re-parsing markdown/DAG on every streaming
+// token of a later turn.
 export const TurnView = memo(function TurnView({
   turn, idx, chatId, choiceAnswer, isChoiceAnswer, submittingChoice, isCopied, priorContents, imageAttachments, surfaces, onChoice, onCopy, onDownload,
 }: TurnViewProps) {
@@ -108,27 +103,23 @@ export const TurnView = memo(function TurnView({
   const turnRuns = activityFromTurn(turn)
   const turnActivity = visibleActivity(turnRuns.flatMap(r => r.activity))
   const turnChoice = pendingChoice(turnRuns)
-  // Attribution for the answer bubble: a DAG turn credits its terminal
-  // node (agent + that node's own model/tokens); a plain reply credits the
-  // orchestrator, with the model persisted on the turn row (turn.model) and tokens from Turn.usage - history attribution matches the live stream.
+  // A DAG turn credits its terminal node; a plain reply credits the orchestrator with turn.model and
+  // Turn.usage, so history attribution matches the live stream.
   const attribution = dagState ? dagAnswerAttribution(dagState, text) : plainReplyAttribution(turn)
   // Skip the answer bubble when the turn produced no visible content for it
   // (e.g. a DAG with no text yet, or a plain turn that only held a tool call).
   const stopped = stoppedBadge(stoppedFromTurn(turn), text)
   const hasAnswerContent = dagState ? (!!text || !!stopped) : (turnActivity.length > 0 || !!text)
   const copyKey = `turn-${turn.id}`
-  // Stable element identity (PR #1300 review nit) so memo(TriggerMessage)
-  // bails on the persisted path too, not just the live one.
+  // Stable element identity so memo(TriggerMessage) bails on the persisted path too.
   const attachmentsEl = useMemo(
     () => (imageAttachments?.length ? <AttachmentPreviews previews={imageAttachments} /> : undefined),
     [imageAttachments],
   )
   return (
     <div>
-      {/* User message - hidden when it's a clarification answer, or when the
-          turn has no user text at all (#434): a label/webhook-triggered plan
-          turn has no typed message, just its synthesized task (rendered in
-          the DAG bubble below), so there's nothing for this bubble to show. */}
+      {/* Hidden for a clarification answer, or a label/webhook-triggered turn with no typed message
+          (its synthesized task renders in the DAG bubble). */}
       {!isChoiceAnswer && turn.input.content && (
         <TriggerMessage
           content={turn.input.content}

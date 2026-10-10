@@ -8,8 +8,7 @@ import { client } from '../generated/client.gen'
 import { ChatStoreProvider } from '../state/ChatStoreProvider'
 import { ChatStore } from '../state/chatStore'
 
-// ArtifactPanel now reads chatStore (live SSE follow, #1114) - every render
-// needs the provider, same as the real app's tree under Chat.tsx.
+// ArtifactPanel reads chatStore for live SSE follow, so every render needs the provider.
 function render(ui: ReactElement, store?: ChatStore) {
   return rtlRender(<ChatStoreProvider store={store}>{ui}</ChatStoreProvider>)
 }
@@ -36,9 +35,8 @@ afterEach(() => {
   document.documentElement.classList.remove('dark')
 })
 
-// Fixture: a FINISHED plan node (#1178 acceptance case a) - text:plan
-// (two revisions), two judge rounds (round 1 failed 0.42, round 2 passed 0.81),
-// a finding + code_review as "More", and one artifact of a DIFFERENT node that must never leak here. No MSW in this repo (frontend-design skill); the panel's whole network surface is the REST client, so a global.fetch stub covers it.
+// A finished plan node: two plan revisions, two judge rounds (0.42 fail, 0.81 pass), a finding + code_review,
+// and another node's artifact that must never leak in. The REST client is the whole network surface, so stub fetch.
 const PLAN_V1 = '# Plan v1\n\nThe apple pie recipe needs a citation.\n'
 const PLAN_V2 = '# Plan v2\n\nThe apple pie recipe is now cited.\n'
 const round1 = JSON.stringify({
@@ -103,9 +101,7 @@ function stubPlanFixture() {
   }))
 }
 
-// The 413 fixture (#1178 requirement 3): a large text artifact whose
-// diff pair the server rejects with 413 over the 256KB bound; that
-// message embeds the artifact id - the panel must show ITS OWN reason instead.
+// The server 413s this diff pair with a message embedding the artifact id; the panel must show its own reason.
 function stubLargeFixture() {
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
     const url = decodeURIComponent(input instanceof Request ? input.url : String(input))
@@ -135,9 +131,8 @@ function stubLargeFixture() {
   }))
 }
 
-// #1250 review: three same-kind, same-revision artifacts on one node.
-// With no focus hint the default (compareOutput's alphabetically-earliest
-// tiebreak) picks `text:alpha`; focusArtifactId overrides with the tapped one.
+// Three same-kind, same-revision artifacts: the default tiebreak picks `text:alpha`,
+// and focusArtifactId overrides it with the tapped one.
 function stubThreeArtifactsFixture() {
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
     const url = decodeURIComponent(input instanceof Request ? input.url : String(input))
@@ -173,27 +168,17 @@ function textResponse(body: string): Response {
 }
 
 beforeEach(() => {
-  // jsdom doesn't implement <dialog> (no showModal/close, no `open` reflection) -
-  // stub both, and set `open` on showModal: RTL's getByRole treats a
-  // dialog with no `open` attribute as closed, hiding everything inside it.
-  HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) { this.setAttribute('open', '') }
-  HTMLDialogElement.prototype.close = function (this: HTMLDialogElement) { this.removeAttribute('open') }
-  // The generated client (client.gen.ts) builds `new Request(url)` itself
-  // before ever calling fetch; Node's Request/undici can't resolve the relative
-  // baseUrl ('/') without a document and throws first. Absolute base, test-only.
+  // The generated client builds `new Request(url)` before fetch, and Node can't resolve the relative '/' baseUrl.
   client.setConfig({ baseUrl: 'http://localhost' })
 })
 
 describe('ArtifactPanel as a result view (#1178)', () => {
-  // (a) Finished plan node: ONE tap shows the rendered plan under the
-  // node's own name, with the judge timeline pinned under the header -
-  // there is no second tap anywhere (no picker step).
+  // One tap, no picker step.
   it("opens directly onto the node's rendered result with the judge-round timeline", async () => {
     stubPlanFixture()
     const { container } = render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan the fix" nodeArtifactKind="text" onClose={() => {}} />)
 
-    // The <h2> is the node's agent label, never an artifact id or the raw
-    // task prompt (#1216).
+    // The <h2> is the agent label, never an artifact id or the raw task prompt.
     const heading = await screen.findByRole('heading', { level: 2, name: 'Planner' })
     expect(heading).toBeTruthy()
 
@@ -217,9 +202,7 @@ describe('ArtifactPanel as a result view (#1178)', () => {
     expect(container.querySelectorAll('select')).toHaveLength(0)
   })
 
-  // #1250 review: an <artifacts> row tap must show the TAPPED artifact, not
-  // just any artifact on its node - focusArtifactId is the hint that makes
-  // that true without reintroducing #1178's id-based picker.
+  // focusArtifactId shows the tapped row's artifact without reintroducing an id-based picker.
   it('focusArtifactId shows the tapped artifact as primary, not the default pick', async () => {
     stubThreeArtifactsFixture()
     // No focus hint: the default tiebreak (earliest name) shows alpha.
@@ -234,8 +217,6 @@ describe('ArtifactPanel as a result view (#1178)', () => {
     expect(screen.queryByRole('heading', { level: 1, name: 'alpha content' })).toBeNull()
   })
 
-  // (#1216 review): a real agent prompt can run to a kilobyte-plus - it must
-  // never render as the header, only inside Details.
   it('titles the panel with the agent label, not the raw task, however long the task is', async () => {
     const user = userEvent.setup()
     stubPlanFixture()
@@ -251,9 +232,6 @@ describe('ArtifactPanel as a result view (#1178)', () => {
     expect(await screen.findByText(longTask.trim())).toBeTruthy()
   })
 
-  // (a/2) Tapping a chip switches to the revision that round judged (its
-  // scored ref), stamps that round's notes as highlights through the #1139
-  // anchor machinery, untouched, and marks itself active.
   it("tapping a judge chip shows that round's notes on the revision it judged", async () => {
     const user = userEvent.setup()
     stubPlanFixture()
@@ -276,9 +254,7 @@ describe('ArtifactPanel as a result view (#1178)', () => {
     expect(await screen.findByText('Cite the source.')).toBeTruthy()
   })
 
-  // (a/3) Manual prev/next clears the active round: notes are anchored to
-  // the round's judged revision, so a manual move must not keep
-  // highlighting lines the round never judged.
+  // Notes anchor to the round's judged revision, so a manual move must not keep highlighting lines it never judged.
   it('moving between revisions clears the active round and its highlights', async () => {
     const user = userEvent.setup()
     stubPlanFixture()
@@ -310,9 +286,6 @@ describe('ArtifactPanel as a result view (#1178)', () => {
     expect(screen.getByRole('button', { name: 'Previous revision' })).toHaveProperty('disabled', true)
   })
 
-  // (a/5) Diff: a single toggle, always against the previous revision -
-  // no "against" picker. On revision 1 it is disabled with a visible
-  // reason.
   it('toggles the diff against the previous revision and explains when it is disabled', async () => {
     const user = userEvent.setup()
     stubPlanFixture()
@@ -334,9 +307,7 @@ describe('ArtifactPanel as a result view (#1178)', () => {
     expect(screen.getByText('No previous revision')).toBeTruthy()
   })
 
-  // (a/6) A 413 from the diff endpoint (over the 256KB bound) degrades to
-  // a disabled toggle with the panel's OWN reason - the server's 413
-  // message embeds the artifact id, which may only appear in Details.
+  // The server's 413 message embeds the artifact id, which may only appear in Details.
   it('degrades the diff toggle to a disabled state with its own reason on a 413', async () => {
     const user = userEvent.setup()
     stubLargeFixture()
@@ -446,9 +417,8 @@ describe('ArtifactPanel as a result view (#1178)', () => {
     expect(await screen.findByRole('button', { name: 'Judge round 2 · 0.81 · passed' })).toBeTruthy()
   })
 
-  // (c) No artifact-id string (kind + ":" + instance) appears anywhere
-  // outside the collapsed Details disclosure - in BOTH themes, at the narrow
-  // (390x844 sheet) and desktop (1280 card) widths. jsdom can't size a viewport and the panel no longer reads matchMedia (one tree at every width) - the stub below exists for the acceptance line, not for any component branch.
+  // No artifact id appears outside the collapsed Details, in both themes and at both widths. jsdom can't size a
+  // viewport and the panel never reads matchMedia, so the width stub only mirrors the acceptance matrix.
   const ID_PATTERN = /\b(text|bytes|finding|code_review|document|pr_body|judge_round):/
   const widths: Array<[string, boolean]> = [['narrow (390x844 sheet)', true], ['desktop (1280 card)', false]]
   for (const [widthLabel, narrow] of widths) {
@@ -484,9 +454,7 @@ describe('ArtifactPanel as a result view (#1178)', () => {
   }
 })
 
-// #1114: the panel follows artifact_revision/artifact_judge_round over the
-// chat's own SSE stream (via chatStore.subscribe) instead of the manual
-// Refresh button or polling.
+// The panel follows artifact_revision/artifact_judge_round over the chat's SSE stream, not polling.
 describe('ArtifactPanel live SSE updates (#1114)', () => {
   // Mutable so a test can grow it between the initial load and the live
   // event, simulating the server having written a new revision.
@@ -546,9 +514,8 @@ describe('ArtifactPanel live SSE updates (#1114)', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'Plan v2' })).toBeTruthy()
   })
 
-  // Regression for the #1223 review's blocking finding: the ref-based "advance
-  // to latest" sentinel was clobbered when the list refetch's re-render landed
-  // before the revisions refetch read it. The test above can't observe it (mock fetch resolves both in one microtask) - this gates the list response behind the revisions response and forces a real re-render between; confirmed failing on the pre-fix sentinel, passes with the explicit loadRevisions param.
+  // The "advance to latest" ref was clobbered when the list refetch's re-render landed before the revisions refetch.
+  // Gate the list response behind the revisions response to force a real re-render between them.
   it('advances to latest even when the list response and its re-render land before the revisions response', async () => {
     stubLiveFixture()
     const store = seededStore()
@@ -572,9 +539,7 @@ describe('ArtifactPanel live SSE updates (#1114)', () => {
 
     FakeEventSource.last!.emit('artifact_revision', { id: 'text:plan', revision: 2, kind: 'text', node_id: 'planner-1', round: 2 })
 
-    // Let the list response land and its setSummaries re-render commit -
-    // reassigning the render-body ref on the old code - before the
-    // revisions response is allowed to resolve.
+    // Let the list response land and its re-render commit before the revisions response resolves.
     await act(async () => {
       resolveList()
       await Promise.resolve()
@@ -644,8 +609,8 @@ describe('ArtifactPanel live SSE updates (#1114)', () => {
     stubLiveFixture()
     const store = seededStore()
     render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan" nodeArtifactKind="text" onClose={() => {}} />, store)
-    // loadContent's own GET fires from a LATER effect - clearing the mock
-    // before that dispatch attributes the trailing initial-load call to the event fired below (flaky: #1300 review). Waiting for the rendered content confirms the fetch landed.
+    // loadContent's GET fires from a later effect; wait for rendered content before clearing the mock,
+    // or the trailing initial-load call is attributed to the event below.
     await screen.findByRole('heading', { level: 1, name: 'Plan v1' })
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
     fetchMock.mockClear()

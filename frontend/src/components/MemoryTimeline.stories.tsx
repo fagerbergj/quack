@@ -16,8 +16,7 @@ function mem(overrides: Partial<Memory> & Pick<Memory, 'id' | 'content' | 'times
   return { bucket: 'repo:NightsOut', author: 'code-implementer', kind: 'repo', ...overrides }
 }
 
-// #746 item 14: a vertical rail carries each entry's date on the left,
-// entries grouped into age bands (Today / This week / This month / Older).
+// Entries grouped into age bands (Today / This week / This month / Older).
 export const Populated: Story = {
   args: {
     memories: [
@@ -34,9 +33,8 @@ export const Empty: Story = {
   args: { memories: [] },
 }
 
-// #1266 review: a non-time sort (e.g. upvotes) hands the timeline a page
-// whose ages are non-monotonic - `grouped=false` renders a flat list instead
-// of interleaved, repeating age-band headers.
+// A non-time sort gives non-monotonic ages, so `grouped=false` renders a flat list instead of
+// interleaved age-band headers.
 export const FlatNonTimeSort: Story = {
   args: {
     grouped: false,
@@ -48,9 +46,8 @@ export const FlatNonTimeSort: Story = {
   },
 }
 
-// #1266 regression check: at <600px the date gutter collapses (the row's own
-// relative-time chip carries it) and the vote control moves into the metadata
-// row, so the text column isn't squeezed to a couple of words wide. The frame IS the simulated device width, like Composer's MobileViewport.
+// Below 600px the date gutter collapses so the text column isn't squeezed to a few words.
+// The frame is the simulated device width, like Composer's MobileViewport.
 export const MobileViewport: Story = {
   args: {
     memories: [
@@ -77,9 +74,7 @@ export const MobileViewport: Story = {
   )],
 }
 
-// Every entry here is well outside "This month" - the whole timeline is one
-// "Older" group, so old memories stay visibly distinct even when that's ALL
-// there is (no Today/This week bands crowding them).
+// Every entry is older than "This month", so the whole timeline is one "Older" group.
 export const Aged: Story = {
   args: {
     memories: [

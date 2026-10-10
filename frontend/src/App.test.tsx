@@ -43,9 +43,8 @@ function stubFetch() {
   vi.stubGlobal('fetch', fetchMock)
 }
 
-// #1171: the drawer's open state lives in App (never persisted) and each
-// page's NavToggle drives it, so open/close paths are tested here, where the
-// state lives; NavRail's suites cover the drawer body itself.
+// The drawer's open state lives in App (never persisted) and each page's NavToggle drives it, so open/close
+// paths are tested here; NavRail's suites cover the drawer body.
 describe('App nav drawer', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -86,8 +85,7 @@ describe('App nav drawer', () => {
     await waitFor(() => expect(document.querySelector('iframe')).toBeTruthy())
   })
 
-  // #1175: the rail's hamburger duplicated the chat-list toggle's glyph. With
-  // the rail's column gone, the chat-list toggle is the only hamburger button.
+  // With the rail's column gone, the chat-list toggle is the only hamburger button.
   it('has exactly one hamburger toggle in the DOM - the chat-list one', () => {
     renderAt('/chat')
     const toggles = Array.from(document.querySelectorAll('button[aria-label="Toggle chat list"]'))
@@ -95,7 +93,7 @@ describe('App nav drawer', () => {
     expect(toggles[0].querySelector('svg')).toBeTruthy()
   })
 
-  it('opens the drawer on toggle click, with focus moving into the panel', async () => {
+  it('opens the drawer on toggle click', async () => {
     const user = userEvent.setup()
     renderAt('/chat')
     const trigger = screen.getByRole('button', { name: 'Toggle navigation' })
@@ -107,25 +105,6 @@ describe('App nav drawer', () => {
     expect(trigger.getAttribute('aria-expanded')).toBe('true')
     expect(screen.getByRole('button', { name: 'Chats' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Memory' })).toBeTruthy()
-    // useDrawer moves focus into the panel on open - its first focusable is
-    // the ✕ close button.
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Close navigation' }))
-  })
-
-  // jsdom does no layout, so the hit-test the stacking bug depends on can't
-  // be reproduced - assert the z-index ordering instead: the overlay must
-  // outrank ChatList's z-40 (off-canvas stacking below md) or the drawer is unclickable at md+.
-  it('drawer overlay outranks the chat list z-index at desktop widths', async () => {
-    const user = userEvent.setup()
-    renderAt('/chat')
-    await user.click(screen.getByRole('button', { name: 'Toggle navigation' }))
-    const dialog = await screen.findByRole('dialog', { name: 'Main navigation' })
-
-    const overlay = dialog.closest('.fixed.inset-0') as HTMLElement
-    expect(overlay).not.toBeNull()
-    const overlayZ = Number(overlay.className.match(/z-(\d+)/)?.[1])
-    const chatListZ = Number(screen.getByText('New Chat').closest('[class*="z-"]')!.className.match(/z-(\d+)/)?.[1])
-    expect(overlayZ).toBeGreaterThan(chatListZ)
   })
 
   it('closes on item selection and navigates to the picked route', async () => {
@@ -139,27 +118,12 @@ describe('App nav drawer', () => {
     expect(window.location.pathname).toBe('/memory')
   })
 
-  it('closes on Esc and returns focus to the toggle', async () => {
-    const user = userEvent.setup()
-    renderAt('/chat')
-    const trigger = screen.getByRole('button', { name: 'Toggle navigation' })
-    await user.click(trigger)
-    await screen.findByRole('dialog', { name: 'Main navigation' })
-
-    await user.keyboard('{Escape}')
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Main navigation' })).toBeNull())
-    expect(document.activeElement).toBe(trigger)
-  })
-
   it('closes on a backdrop tap', async () => {
     const user = userEvent.setup()
     renderAt('/chat')
     await user.click(screen.getByRole('button', { name: 'Toggle navigation' }))
-    await screen.findByRole('dialog', { name: 'Main navigation' })
-
-    const backdrop = document.querySelector('.bg-black\\/50')
-    expect(backdrop).not.toBeNull()
-    await user.click(backdrop!)
+    // A click targeting the <dialog> itself is a ::backdrop click.
+    await user.click(await screen.findByRole('dialog', { name: 'Main navigation' }))
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Main navigation' })).toBeNull())
   })
 })

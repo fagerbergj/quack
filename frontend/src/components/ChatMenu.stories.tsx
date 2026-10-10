@@ -14,8 +14,7 @@ export const Default: Story = {
   args: { chatId: 'chat-1' },
 }
 
-// #1136: on compact width the header hides its inline token/model summary -
-// this menu is where it moves to instead, always available regardless of width.
+// On compact width the header hides its inline token/model summary; this menu carries it instead.
 export const WithUsageOnCompact: Story = {
   args: { chatId: 'chat-1', usage: { models: ['gpt-5'], usage: { total_tokens: 5522, input_tokens: 4000, output_tokens: 1522 } } },
   render: args => (

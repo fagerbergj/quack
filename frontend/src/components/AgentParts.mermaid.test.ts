@@ -4,15 +4,12 @@ import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { AssistantText } from './AgentParts'
 
-// jsdom doesn't implement SVG layout (getBBox), which mermaid needs to size
-// text labels - stub a fixed box on every SVGElement (jsdom's SVG class
-// hierarchy is incomplete); we only care that render completes.
+// jsdom has no SVG layout (getBBox), which mermaid needs to size labels; stub a fixed box everywhere.
 ;(SVGElement.prototype as unknown as { getBBox: () => DOMRect }).getBBox = () =>
   ({ x: 0, y: 0, width: 100, height: 20, top: 0, right: 0, bottom: 0, left: 0, toJSON: () => '' }) as DOMRect
 
-// Must exceed waitFor's own budget below, or vitest kills the test while
-// waitFor still thinks it has time - mermaid's ~1MB import is genuinely slow
-// under full-suite concurrency.
+// Must exceed waitFor's budget below or vitest kills the test first; mermaid's ~1MB import is slow under
+// full-suite concurrency.
 const mermaidTestTimeout = 20_000
 
 async function waitFor(check: () => boolean, timeoutMs = 8000) {

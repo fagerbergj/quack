@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ChatList } from './ChatList'
 
@@ -30,31 +30,15 @@ function baseProps(onCloseMobile: () => void) {
   }
 }
 
-// #1131: the chat list's existing mobile drawer picks up the same a11y
-// wiring (Esc closes, focus returns) NavRail's new drawer uses.
+// The mobile drawer is a native modal <dialog>; Esc, the focus trap and focus restore are the browser's.
 describe('ChatList mobile drawer a11y', () => {
-  it('opening moves focus into the panel, Esc closes it, and closing returns focus to the trigger', async () => {
+  it('a backdrop tap closes it', async () => {
     mockCompact(true)
     const onCloseMobile = vi.fn()
-    const user = userEvent.setup()
-    const trigger = document.createElement('button')
-    trigger.textContent = 'open'
-    document.body.appendChild(trigger)
-    trigger.focus()
-
-    const { rerender } = render(<ChatList {...baseProps(onCloseMobile)} open={true} />)
-    await waitFor(() => expect(screen.getByRole('dialog', { name: 'Chat list' })).toBeTruthy())
-    // Opening moves focus into the panel - the first focusable in it is "New Chat".
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'New Chat' }))
-
-    await user.keyboard('{Escape}')
+    render(<ChatList {...baseProps(onCloseMobile)} open={true} />)
+    fireEvent.click(await screen.findByRole('dialog', { name: 'Chat list' }))
     expect(onCloseMobile).toHaveBeenCalled()
-
-    // onCloseMobile is a spy here (doesn't flip real state) - drive the actual
-    // close the caller would perform, so the effect's cleanup (focus-restore) runs.
-    rerender(<ChatList {...baseProps(onCloseMobile)} open={false} />)
-    expect(document.activeElement).toBe(trigger)
-    trigger.remove()
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 
   it('is not a dialog when closed or above the compact width', () => {
@@ -69,9 +53,7 @@ describe('ChatList mobile drawer a11y', () => {
   })
 })
 
-// #1201: "Load more" measured 249x36px on mobile - under the 44px comfortable
-// touch target. min-h-[44px] fixes the height without visual bloat (the text
-// stays the same size, only the button's padding grows).
+// "Load more" must meet the 44px touch target; min-h grows the padding, not the text.
 describe('ChatList "Load more" touch target (#1201)', () => {
   it('active-list Load more has a >=44px min-height', () => {
     render(<ChatList {...baseProps(() => {})} open={false} hasMoreChats onLoadMoreChats={() => {}} />)
@@ -80,8 +62,7 @@ describe('ChatList "Load more" touch target (#1201)', () => {
   })
 })
 
-// #1137/#1319: every row's kebab (the row's only action point) is a 44x44
-// tap area, on both active and archived rows.
+// Every row's kebab is a 44x44 tap area, on both active and archived rows.
 describe('ChatList kebab touch target (#1137)', () => {
   const chat = {
     id: 'c1', title: 'A chat', system_prompt: '', created_at: '', updated_at: '', status: 'idle',
@@ -104,8 +85,7 @@ describe('ChatList kebab touch target (#1137)', () => {
   })
 })
 
-// #1319: owner instruction - archive and delete both live behind the same
-// always-visible kebab (two clicks), never a bare one-tap control.
+// Archive and delete both live behind the always-visible kebab, never a bare one-tap control.
 describe('ChatList row kebab (#1319)', () => {
   const activeChat = {
     id: 'c1', title: 'Active chat', system_prompt: '', created_at: '', updated_at: '', status: 'idle',

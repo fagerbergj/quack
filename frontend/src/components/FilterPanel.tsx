@@ -1,5 +1,5 @@
 import { Icon } from './Icon'
-import { useState, useRef, useEffect } from 'react'
+import { useId, useState } from 'react'
 import { Sheet } from './Sheet'
 
 interface FacetOption {
@@ -26,28 +26,18 @@ function activeFilterCount(selected: Record<string, string[]>): number {
   return Object.values(selected).reduce((n, vs) => n + vs.length, 0)
 }
 
-// A filter-icon button that opens a popover of facet groups (origin, status,
-// repo, type…), each a multi-select checklist with counts. Owns only its
-// open/closed state; the active selection lives in the parent (so it can be mirrored to the URL).
+// Owns only its open/closed state; the selection lives in the parent so it can be mirrored to the URL.
 export function FilterPanel({ facets, selected, onToggle, onClear }: FilterPanelProps) {
   const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
+  const sheetId = useId()
   const count = activeFilterCount(selected)
 
-  // Close on outside click / Escape.
-  useEffect(() => {
-    if (!open) return
-    const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
-  }, [open])
-
   return (
-    <div ref={ref} className="relative">
+    <div className="relative">
       <button
         onClick={() => setOpen(o => !o)}
+        popoverTarget={sheetId}
+        popoverTargetAction="show"
         aria-label="Filter chats"
         aria-expanded={open}
         className={`relative flex items-center justify-center rounded-lg border min-w-[44px] min-h-[44px] transition-colors ${
@@ -65,7 +55,7 @@ export function FilterPanel({ facets, selected, onToggle, onClear }: FilterPanel
       </button>
 
       {open && (
-        <Sheet anchored aria-label="Filter chats" onClose={() => setOpen(false)} className="medium:absolute medium:left-0 medium:mt-1 medium:w-56 medium:rounded-lg medium:border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-2 medium:pb-2 text-sm medium:text-xs">
+        <Sheet id={sheetId} anchored="left" aria-label="Filter chats" onClose={() => setOpen(false)} className="medium:w-56 medium:rounded-lg medium:border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-2 medium:pb-2 text-sm medium:text-xs">
           <div className="flex items-center justify-between px-1 pb-1.5 mb-1 border-b border-gray-100 dark:border-gray-700">
             <span className="font-semibold text-gray-700 dark:text-gray-200">Filters</span>
             {count > 0 && (

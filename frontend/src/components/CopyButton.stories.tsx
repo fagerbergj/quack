@@ -20,9 +20,8 @@ export const CustomLabel: Story = {
   args: { text: 'go test ./...', label: 'Copy command' },
 }
 
-// Compact width: the glyph stays 12px but the hit area grows to 44px (it sits
-// beside 44px-tall Raw/Diff buttons in the artifacts sheet); desktop keeps
-// the bare-glyph footprint.
+// At compact width the 12px glyph gets a 44px hit area to match the Raw/Diff buttons beside it;
+// desktop keeps the bare-glyph footprint.
 export const MobileViewport: Story = {
   args: { text: 'go test ./...' },
   parameters: { renderCheck: { viewports: ['mobile', 'desktop'] } },

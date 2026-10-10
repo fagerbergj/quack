@@ -14,9 +14,7 @@ const code = `func greet(name string) string {
 \treturn "Hello, " + name
 }`
 
-// CopyablePre's own wrapper already carries `group` (opacity-0
-// group-hover:opacity-100) - the button stays hover/focus-gated here too,
-// same as real use. Hover the code block (or tab to the button) to see it.
+// The button is hover/focus-gated as in real use: hover the code block or tab to the button to see it.
 export const Default: Story = {
   render: () => (
     <div className="max-w-xl">
@@ -30,9 +28,8 @@ export const Dark: Story = {
   globals: { theme: 'dark' },
 }
 
-// 390x844: the copy button must stay reachable without covering wrapped code.
-// fullscreen: this frame IS the simulated device width - the preview's own
-// docs-canvas padding would otherwise push it past 390px (render-check).
+// The copy button must stay reachable without covering wrapped code. fullscreen keeps the docs-canvas
+// padding from pushing the 390px frame wider.
 export const MobileViewport390: Story = {
   parameters: { layout: 'fullscreen' },
   render: () => (

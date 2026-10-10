@@ -1,9 +1,9 @@
 import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
+import type { DependencyList, ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
-import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
+import rehypeSanitize from 'rehype-sanitize'
 import rehypeHighlightSubset from '../lib/rehypeHighlightSubset'
 import 'highlight.js/styles/github-dark.css'
 import type { Element } from 'hast'
@@ -14,13 +14,13 @@ import { CopyablePre } from './CopyablePre'
 import { escapeUnmatchedBackticks } from '../lib/backticks'
 import { useChatStore } from '../state/ChatStoreProvider'
 import { Icon } from './Icon'
-import { AssistantText } from './AgentParts'
+import { AssistantText, mdSchema } from './AgentParts'
+import { tryParseJSON } from '../lib/json'
 import { A2uiSurfaceBox } from './A2uiArtifact'
 import { A2UI_SURFACE_KIND, QUIZ_KEY_KIND, surfacePersistKey, type SurfaceContent } from '../lib/a2ui'
 
-// JudgeRoundContent is the JSON body of a `judge_round` artifact (design V4
-// §4.3) - the only place a note's line anchor lives. Fetched and parsed
-// client-side; not part of the generated schema (it's an artifact body, not a REST response shape).
+// JudgeRoundContent is the JSON body of a `judge_round` artifact, the only place a note's line anchor lives.
+// Parsed client-side: it is an artifact body, not a REST response, so it is not in the generated schema.
 interface JudgeNoteRef {
   artifact_id: string
   revision: number
@@ -37,9 +37,8 @@ interface JudgeRoundContent {
   round?: number
   passed?: boolean
   score?: number
-  // The artifact revisions this round judged (server shape: internal/vetting/reviewrecord.go's
-  // ScoredRef, json "scored"). A round can score several artifacts; the
-  // timeline uses the ref that points at the node's primary output.
+  // Revisions this round judged (server: ScoredRef, json "scored"). A round can score several;
+  // the timeline uses the ref to the node's primary output.
   scored?: { artifact_id: string; revision: number }[]
   notes?: JudgeNote[]
   // criteria/evidence: only JudgeRoundView reads these; the timeline chip
@@ -84,18 +83,15 @@ interface AnchorResult {
   unanchored: JudgeNote[]
 }
 
-// Locates each note in the shown revision: an exact substring match on its
-// quoted snippet wins; line_hint is the fallback (a line shift, a stale
-// snippet after an edit); neither match is unanchored (design V4 §9).
+// Locates each note in the shown revision: an exact match on its snippet wins, line_hint is the fallback,
+// and a note matching neither is unanchored.
 export function anchorNotes(lines: string[], notes: JudgeNote[]): AnchorResult {
   const byLine = new Map<number, JudgeNote[]>()
   const unanchored: JudgeNote[] = []
   for (const note of notes) {
     let idx = -1
     if (note.ref.snippet) {
-      // A multi-line quoted snippet can never satisfy includes() against a
-      // single line - anchor on just its first line instead (same
-      // first-occurrence risk profile a single-line match already has).
+      // A multi-line snippet can never match a single line, so anchor on its first line instead.
       const firstLine = note.ref.snippet.split('\n')[0]
       idx = lines.findIndex(l => l.includes(firstLine))
     }
@@ -138,13 +134,12 @@ function kindRank(a: ArtifactSummary, nodeArtifactKind?: string): number {
   return 4
 }
 
-// The node's RESULT (#1178 - there is no picker): computed via kindRank.
-// judge_round is excluded from ranked candidates, but an explicit focus (a secondary-list tap) can still land on one.
+// The node's result, computed via kindRank. judge_round is excluded from ranked candidates,
+// but an explicit focus (a secondary-list tap) can still land on one.
 export function selectPrimaryOutput(artifacts: ArtifactSummary[], nodeArtifactKind?: string, focusArtifactId?: string): ArtifactSummary | null {
   const eligible = artifacts.filter(a => !isBookkeeping(a))
-  // The focus hint wins outright when it names one of THIS node's artifacts -
-  // it's "show what was tapped," a stronger signal than kind rank or the
-  // newest-wins default (#1250) - a secondary tap inside the panel reuses this same mechanism.
+  // A focus hint naming one of this node's artifacts wins outright: "show what was tapped" beats kind rank
+  // and newest-wins. An in-panel secondary tap reuses this same mechanism.
   const focused = focusArtifactId ? eligible.find(a => a.name === focusArtifactId) : undefined
   if (focused) return focused
   const candidates = eligible.filter(a => a.kind !== 'judge_round')
@@ -224,16 +219,11 @@ export function artifactTitle(summary: ArtifactSummary, body: unknown): string {
   }
 }
 
-// The revision a judge round judged for the given artifact - from the
-// round's scored list (keyed by artifact id, a round can score several) -
-// falling back to the artifact's latest revision when unscored.
+// The revision a judge round judged for this artifact (a round can score several), else the latest revision.
 export function resolveScoredRevision(body: JudgeRoundContent, primaryId: string, fallback: number): number {
   return body.scored?.find(s => s.artifact_id === primaryId)?.revision ?? fallback
 }
 
-// makeActiveRoundEffect builds the "tapped chip moves the cursor" effect
-// body (not the click handler): a tap can land BEFORE the revision list has
-// arrived, since both fetches start together on open.
 function makeActiveRoundEffect(activeRoundId: string | null, judgeBodies: Record<string, JudgeRoundContent>, primaryId: string | null, revisions: ArtifactRevisionInfo[], latestRev: number | null, revIdx: number | null, setRevIdx: (i: number) => void) {
   return () => {
     if (activeRoundId == null || primaryId == null || revisions.length === 0) return
@@ -245,22 +235,18 @@ function makeActiveRoundEffect(activeRoundId: string | null, judgeBodies: Record
     if (target !== revIdx) setRevIdx(target)
   }
 }
-// (openapi.yaml's ArtifactRevisionList) into the ascending list the panel's
-// numeric cursor walks through.
+
+// Reverses the server's newest-first revision list into the ascending order the cursor walks.
 export function toAscending(revs: ArtifactRevisionInfo[]): ArtifactRevisionInfo[] {
   return [...revs].reverse()
 }
 
-// Mirrors the diff endpoint's allowlist (internal/server/rest/artifacts.go:
-// only application/json and text/* - anything else 415s), so the toggle can
-// say why it's disabled BEFORE the request instead of after the error.
+// Mirrors the diff endpoint's allowlist (anything else 415s) so the toggle can explain
+// why it's disabled before the request.
 function isDiffableMime(mime: string): boolean {
   return mime === 'application/json' || mime.startsWith('text/')
 }
 
-// cursorFor derives the primary's revision cursor values (cursor + previous
-// info, the viewed revision, the list's latest) - a pure function of the
-// list and cursor index, computed every render exactly as before.
 function cursorFor(revIdx: number | null, revisions: ArtifactRevisionInfo[], primary: ArtifactSummary | null) {
   const curInfo = revIdx != null ? revisions[revIdx] ?? null : null
   const prevInfo = revIdx != null && revIdx > 0 ? revisions[revIdx - 1] ?? null : null
@@ -269,9 +255,7 @@ function cursorFor(revIdx: number | null, revisions: ArtifactRevisionInfo[], pri
   return { curInfo, prevInfo, currentRev, latestRev }
 }
 
-// diffBlockReason is the Diff toggle's visible disabled reason - no cursor,
-// no previous revision, a binary mime on either side (the endpoint 415s),
-// or the server rejected the pair as too large (413).
+// The Diff toggle's visible disabled reason; binary mimes are blocked up front because the endpoint 415s them.
 function diffBlockReason(curInfo: ArtifactRevisionInfo | null, prevInfo: ArtifactRevisionInfo | null, diffBlocked: string | null): string | null {
   if (curInfo == null) return 'No revision to diff'
   if (prevInfo == null) return 'No previous revision'
@@ -279,28 +263,36 @@ function diffBlockReason(curInfo: ArtifactRevisionInfo | null, prevInfo: Artifac
   return diffBlocked
 }
 
-// displayState derives what the shared renderer stack needs from the
-// cursor's content: the pretty-printed display text and the structured
-// flag (the JSON parse itself stays memoized at the call site).
+// The JSON parse itself stays memoized at the call site.
 function displayState(content: string | null, primary: ArtifactSummary | null) {
   const klass = primary == null ? undefined : primary.class
   return { displayText: content != null ? prettyText(content, klass) : null, isStructured: klass === 'structured' }
 }
 
-// triggerActivation returns the Details "trigger" row's jump handler -
-// only when that trigger's judge round is one of this node's (a known
-// chip); undefined renders it as plain text.
+// The trigger row's jump handler, only when that round is one of this node's chips;
+// undefined renders the row as plain text.
 function triggerActivation(curInfo: ArtifactRevisionInfo | null, judgeBodies: Record<string, JudgeRoundContent>, activateRound: (id: string) => void) {
   const triggerId = curInfo?.lineage?.trigger_annotation
   return triggerId != null && judgeBodies[triggerId] != null ? () => activateRound(triggerId) : undefined
 }
 
+// Runs load now and whenever deps change; live() turns false once a newer run starts, so a
+// slow stale response can't clobber a fresher one. Returns the loader for manual refreshes.
+function useLoader<P>(load: (live: () => boolean, arg?: P) => Promise<unknown> | void, deps: DependencyList) {
+  const token = useRef(0)
+  const run = useCallback((arg?: P) => {
+    const t = ++token.current
+    return load(() => t === token.current, arg)
+  }, deps)
+  useEffect(() => { void run() }, [run])
+  return run
+}
+
 interface Props {
   chatId: string
   nodeId: string
-  // The node's display name - the panel's <h2>. Same agentLabel() DagNode's
-  // card header shows (#1216 review): the raw prompt (nodeTask) can run to a
-  // kilobyte and blew the header past the sheet height when shown here - it now lives only in the Details "Task" row.
+  // The panel's <h2>, the same agentLabel() DagNode's header shows. The raw prompt can run to a kilobyte
+  // and overflowed the sheet here, so it lives only in the Details "Task" row.
   nodeAgent: string
   // The node's raw prompt - shown in Details, never the header (see above).
   nodeTask: string
@@ -313,42 +305,33 @@ interface Props {
   // The node's declared output kind (DagNodeDef.artifact) - makes the
   // primary-output selection exact. Absent when the node declares none.
   nodeArtifactKind?: string
-  // A FOCUS HINT, not a picker (#1178 stays intact): when the caller already
-  // knows which artifact the viewer tapped (#1250's <artifacts> rows), this
-  // makes THAT one the shown primary instead of the default. Ignored if it doesn't name an artifact on this node - the default selection still applies.
+  // A focus hint, not a picker: makes the tapped artifact the shown primary.
+  // Ignored when it names no artifact on this node, so the default selection applies.
   focusArtifactId?: string
   onClose: () => void
 }
 
-// A result view, not a picker (#1178): opening shows the node's primary
-// output under the node's own name, judge rounds as a chip timeline above it,
-// a Revision N-of-M prev/next bar with a single diff toggle, a titled secondary list, and everything provenance-shaped (id, kind, class, lineage, timestamps, the REST link) in a collapsed "Details" disclosure at the bottom. Both native <select>s and the picker-era desktop sidebar are gone - nothing left to pick.
+// A result view, not a picker: the node's primary output under its own name, judge rounds as a chip timeline,
+// a revision bar with one diff toggle, a secondary list, and provenance in a collapsed Details disclosure.
 export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, nodeAnswer, nodeArtifactKind, focusArtifactId, onClose }: Props) {
   const [summaries, setSummaries] = useState<ArtifactSummary[]>([])
   const [error, setError] = useState<string | null>(null)
-  // rawView: the monospace line-list is the FALLBACK view (also what a
-  // judge-note highlight needs a stable line index for - #1114 keeps it as a
-  // toggle rather than dropping it), not the default; structured kinds default to the collapsible tree, blobs to rendered markdown.
+  // The monospace line list is the fallback view (judge-note highlights need its stable line index);
+  // structured kinds default to the collapsible tree, blobs to rendered markdown.
   const [rawView, setRawView] = useState(false)
-  // activeRoundId is the tapped timeline chip (null = no chip active, every
-  // round's matching notes anchor). Declared up here with the other state;
-  // the activation effect below is what it drives.
+  // The tapped timeline chip; null means no chip is active and every round's matching notes anchor.
   const [activeRoundId, setActiveRoundId] = useState<string | null>(null)
-  // focusedOverride: an in-panel secondary tap reuses selectPrimaryOutput's
-  // own focus-hint mechanism (#1250) - the tapped item becomes THE view, no second set of controls.
+  // An in-panel secondary tap reuses selectPrimaryOutput's focus hint: the tapped item becomes the view.
   const [focusedOverride, setFocusedOverride] = useState<string | null>(null)
 
-  const load = useCallback(() => {
-    // Returns the promise (not fire-and-forget) - withScrollPreserved below
-    // awaits it to restore scroll only after the refetch actually lands.
-    return listChatArtifactsShared(chatId).then(l => setSummaries(l.data ?? [])).catch(e => setError(String(e)))
-  }, [chatId])
-  useEffect(() => { void load() }, [load])
+  // Returns the promise: withScrollPreserved restores scroll only after the refetch lands.
+  const load = useLoader(
+    () => listChatArtifactsShared(chatId).then(l => setSummaries(l.data ?? [])).catch(e => setError(String(e))),
+    [chatId],
+  )
 
-  // Membership is by the LATEST revision's lineage.node_id (ArtifactSummary
-  // only carries that revision's lineage - see toArtifactSummary in
-  // internal/server/rest/artifacts.go), not "any revision this node wrote": if a later node revises an artifact (e.g. a judge writes revision 2 of a worker's `finding`) it moves to the reviser's panel and disappears from the original author's - a real gap against a "everything this node wrote is an output" reading of design V4, open as a question on #1094's review pending a spec answer. Fixing it needs per-revision lineage (GET .../revisions) up front for every artifact in the chat, which doesn't scale to "one click opens a panel" - documented here rather than silently wrong.
-  // isBookkeeping excludes dag_node, bytes:* and web_page entirely - run plumbing, never this node's own output.
+  // Membership is by the latest revision's lineage.node_id, so an artifact revised by a later node moves to that
+  // node's panel. Per-revision lineage would fix it but costs a revisions fetch per artifact on open.
   const nodeArtifacts = useMemo(
     () => summaries.filter(s => belongsToNode(s, nodeId) && !isBookkeeping(s)),
     [summaries, nodeId],
@@ -362,9 +345,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
   )
   const primaryId = primary?.name ?? null
 
-  // A different primary (list reloaded and the computed choice changed)
-  // resets the whole view to the latest, un-highlighted state - the
-  // picker-era "select artifact" reset, kept because a refresh can move it.
+  // A new primary (a refresh changed the computed choice) resets the view to the latest, unhighlighted state.
   const lastPrimaryId = useRef<string | null>(null)
   useEffect(() => {
     if (lastPrimaryId.current === primaryId) return
@@ -379,32 +360,37 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
     setActiveRoundId(null)
   }, [primaryId])
 
-  // Judge rounds: one body fetch per round (latest content of each
-  // judge_round artifact), kept in a map the timeline chips and the
-  // activation effect below read from.
-  const judgeIds = useMemo(
-    () => nodeArtifacts.filter(a => a.kind === 'judge_round').map(a => a.name),
-    [nodeArtifacts],
+  // Latest body of every artifact but the primary: titles the secondary list, resolves finding_ids,
+  // and feeds the timeline (a judge round stays fetched even as primary, so its chip survives a tap).
+  const bodyItems = useMemo(
+    () => nodeArtifacts.filter(a => a.name !== primaryId || a.kind === 'judge_round'),
+    [nodeArtifacts, primaryId],
   )
-  const [judgeBodies, setJudgeBodies] = useState<Record<string, JudgeRoundContent>>({})
-  const judgeBodiesToken = useRef(0)
-  const loadJudgeBodies = useCallback(() => {
-    if (judgeIds.length === 0) { setJudgeBodies({}); return }
-    const token = ++judgeBodiesToken.current
+  const [secondaryBodies, setSecondaryBodies] = useState<Record<string, unknown>>({})
+  const loadBodies = useLoader(live => {
+    if (bodyItems.length === 0) { setSecondaryBodies({}); return }
     return Promise.all(
-      judgeIds.map(id =>
-        api.getArtifactText(chatId, id)
-          .then(t => JSON.parse(t) as JudgeRoundContent)
-          .catch(() => null),
+      bodyItems.map(a =>
+        api.getArtifactText(chatId, a.name, a.latest_revision)
+          .then(t => tryParseJSON(t) ?? t)
+          .catch(() => undefined),
       ),
     ).then(bodies => {
-      if (token !== judgeBodiesToken.current) return
-      const map: Record<string, JudgeRoundContent> = {}
-      judgeIds.forEach((id, i) => { const b = bodies[i]; if (b) map[id] = b })
-      setJudgeBodies(map)
+      if (!live()) return
+      const map: Record<string, unknown> = {}
+      bodyItems.forEach((a, i) => { if (bodies[i] !== undefined) map[a.name] = bodies[i] })
+      setSecondaryBodies(map)
     })
-  }, [chatId, judgeIds])
-  useEffect(() => { void loadJudgeBodies() }, [loadJudgeBodies])
+  }, [chatId, bodyItems])
+
+  const judgeBodies = useMemo(() => {
+    const map: Record<string, JudgeRoundContent> = {}
+    for (const a of bodyItems) {
+      const b = secondaryBodies[a.name]
+      if (a.kind === 'judge_round' && b != null && typeof b === 'object') map[a.name] = b as JudgeRoundContent
+    }
+    return map
+  }, [bodyItems, secondaryBodies])
 
   // The timeline: one chip per parsed judge body, round order.
   const chips = useMemo(() => {
@@ -419,27 +405,6 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
     () => nodeArtifacts.filter(a => a.name !== primaryId),
     [nodeArtifacts, primaryId],
   )
-  // Every secondary artifact's own latest_revision body, fetched up front -
-  // titles the list and resolves a review's finding_ids inline, not lazily per tap.
-  const [secondaryBodies, setSecondaryBodies] = useState<Record<string, unknown>>({})
-  const secondaryBodiesToken = useRef(0)
-  const loadSecondaryBodies = useCallback(() => {
-    if (secondaryItems.length === 0) { setSecondaryBodies({}); return }
-    const token = ++secondaryBodiesToken.current
-    return Promise.all(
-      secondaryItems.map(a =>
-        api.getArtifactText(chatId, a.name, a.latest_revision)
-          .then(t => tryParseJSON(t) ?? t)
-          .catch(() => undefined),
-      ),
-    ).then(bodies => {
-      if (token !== secondaryBodiesToken.current) return
-      const map: Record<string, unknown> = {}
-      secondaryItems.forEach((a, i) => { if (bodies[i] !== undefined) map[a.name] = bodies[i] })
-      setSecondaryBodies(map)
-    })
-  }, [chatId, secondaryItems])
-  useEffect(() => { void loadSecondaryBodies() }, [loadSecondaryBodies])
 
   // Revisions of the primary, ascending (the endpoint returns
   // newest-first) - the cursor indexes this list.
@@ -447,57 +412,45 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
   const [revIdx, setRevIdx] = useState<number | null>(null)
   const { curInfo, prevInfo, currentRev, latestRev } = cursorFor(revIdx, revisions, primary)
 
-  const revisionsToken = useRef(0)
-  // Read via a ref (not a useCallback dep) so a cursor MOVE never
-  // re-fetches the list: refresh() calls this directly and wants the
-  // cursor as it is NOW, while the effect only re-fires on a new primary.
+  // A ref rather than a dep so moving the cursor never refetches the list; refresh() reads the current cursor.
   const currentRevRef = useRef(currentRev)
   currentRevRef.current = currentRev
-  const loadRevisions = useCallback((opts?: { toLatest?: boolean }) => {
+  const loadRevisions = useLoader<{ toLatest?: boolean }>((live, opts) => {
     if (!primaryId) { setRevisions([]); setRevIdx(null); return }
-    const token = ++revisionsToken.current
     return api.listArtifactRevisions(chatId, primaryId)
       .then(r => {
-        if (token !== revisionsToken.current) return
+        if (!live()) return
         setError(null)
         const asc = toAscending(r.data ?? [])
         setRevisions(asc)
-        // Keep the currently viewed revision across a refresh if it still
-        // exists; a fresh primary, a vanished revision, or an explicit
-        // toLatest (live-follow) lands on latest. toLatest is passed explicitly rather than via currentRevRef - a ref the render body also writes can be clobbered by a re-render that lands between the intent being set and this read.
+        // Keep the viewed revision across a refresh if it still exists, else land on latest. toLatest is
+        // explicit because a render-written ref can be clobbered by a re-render before this read.
         const want = opts?.toLatest ? null : currentRevRef.current
         const wantIdx = want != null ? asc.findIndex(x => x.revision === want) : -1
         setRevIdx(wantIdx >= 0 ? wantIdx : asc.length - 1)
       })
-      .catch(e => { if (token === revisionsToken.current) setError(String(e)) })
+      .catch(e => { if (live()) setError(String(e)) })
   }, [chatId, primaryId])
-  useEffect(() => { void loadRevisions() }, [loadRevisions])
 
-  // The tapped chip's judged revision, as an effect (not the click handler):
-  // a tap can land BEFORE the revision list has arrived (both fetches start
-  // together on open). move() clears activeRoundId before the cursor changes, so this never fights a manual prev/next.
+  // An effect, not the click handler: a chip tap can land before the revision list arrives.
+  // move() clears activeRoundId before the cursor changes, so this never fights a manual prev/next.
   const activeBody = activeRoundId != null ? judgeBodies[activeRoundId] : null
   useEffect(makeActiveRoundEffect(activeRoundId, judgeBodies, primaryId, revisions, latestRev, revIdx, setRevIdx), [activeRoundId, judgeBodies, revisions])
 
-  // Content of the cursor's revision. A chip tap that targets an as-yet
-  // unloaded revision reaches this same path: revIdx moves, this fires the
-  // getArtifactText fetch; the token ref below keeps a slow prior response from clobbering it (stale-response guard the picker era built, kept - artifact switches are gone, refreshes remain).
+  // A chip tap targeting an unloaded revision fetches through this same path; the token ref keeps
+  // a slow earlier response from clobbering a newer one.
   const [content, setContent] = useState<string | null>(null)
   const [activeNote, setActiveNote] = useState<JudgeNote | null>(null)
-  const contentToken = useRef(0)
-  const loadContent = useCallback(() => {
+  const loadContent = useLoader(live => {
     setActiveNote(null)
     if (!primaryId || currentRev == null) { setContent(null); return }
-    const token = ++contentToken.current
     return api.getArtifactText(chatId, primaryId, currentRev)
-      .then(text => { if (token !== contentToken.current) return; setError(null); setContent(text) })
-      .catch(e => { if (token === contentToken.current) setError(String(e)) })
+      .then(text => { if (!live()) return; setError(null); setContent(text) })
+      .catch(e => { if (live()) setError(String(e)) })
   }, [chatId, primaryId, currentRev])
-  useEffect(() => { void loadContent() }, [loadContent])
 
-  // Diff, always against the PREVIOUS revision (no "against" picker): one
-  // toggle. Disabled with a visible reason when there is no previous
-  // revision, either side is a binary mime (endpoint 415 - checked here against the revision list's own mime_type, mirroring the server's allowlist), or the server has rejected this pair as too large (413 over the 256KB bound).
+  // Diffs always compare to the previous revision. Disabled with a reason when there is none, either side is
+  // binary (the endpoint 415s), or the server rejected the pair as too large (413 over 256KB).
   const [diffOn, setDiffOn] = useState(false)
   const [diffBlocked, setDiffBlocked] = useState<string | null>(null)
   const [diffFailed, setDiffFailed] = useState(false)
@@ -505,28 +458,23 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
   const diffDisabledReason = diffBlockReason(curInfo, prevInfo, diffBlocked)
   const diffActive = diffOn && diffDisabledReason == null
 
-  const diffToken = useRef(0)
-  const loadDiff = useCallback(() => {
+  const loadDiff = useLoader(live => {
     if (!diffActive) {
       setDiffText(null)
-      // Clear a failed-diff error only when a DIFF fetch actually set it:
-      // a content-fetch failure shares the same banner and must survive a
-      // diff toggle.
+      // Clear the error only when a diff fetch set it: a content-fetch failure
+      // shares the same banner and must survive a diff toggle.
       if (diffFailed) { setError(null); setDiffFailed(false) }
       return
     }
-    const token = ++diffToken.current
     return api.diffArtifactRevisions(chatId, primaryId!, prevInfo!.revision, curInfo!.revision)
-      .then(text => { if (token !== diffToken.current) return; setError(null); setDiffText(text) })
+      .then(text => { if (!live()) return; setError(null); setDiffText(text) })
       .catch((e: unknown) => {
-        if (token !== diffToken.current) return
+        if (!live()) return
         setDiffText(null)
         setDiffOn(false)
         const status = (e as { status?: number })?.status
         if (status === 413) {
-          // The server's 413 message embeds this artifact's id - show the
-          // panel's own reason instead, since the id may only appear in
-          // Details.
+          // The server's 413 message embeds the artifact id, which may only appear in Details.
           setDiffBlocked('Too large to diff (256 KB limit)')
         } else if (status === 415) {
           setDiffBlocked('Only text and JSON revisions can be diffed')
@@ -536,11 +484,9 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
         }
       })
   }, [diffActive, chatId, primaryId, prevInfo, curInfo, diffFailed])
-  useEffect(() => { void loadDiff() }, [loadDiff])
 
-  // Judge notes for what's on screen: a tapped chip contributes its OWN
-  // round's notes for the primary at the revision that round judged; with no
-  // chip active, every round's matching notes anchor (#1139, kept). The anchoring machinery - anchorNotes -> notesInRange -> the renderers - is untouched.
+  // A tapped chip contributes its own round's notes at the revision it judged;
+  // with no chip active, every round's matching notes anchor.
   const notes = useMemo(() => {
     if (!primary || currentRev == null) return []
     const roundBodies = activeBody ? [activeBody] : Object.values(judgeBodies)
@@ -549,29 +495,23 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
       .filter(n => n.ref.artifact_id === primary.name && n.ref.revision === currentRev)
   }, [primary, currentRev, activeBody, judgeBodies])
 
-  // refresh re-runs every fetch the panel currently has live: the artifact
-  // list, the judge bodies, and - when there is a primary - its
-  // revisions/content/diff.
   const refresh = useCallback(() => {
     void load()
-    void loadJudgeBodies()
-    void loadSecondaryBodies()
+    void loadBodies()
     void loadRevisions()
     void loadContent()
     void loadDiff()
-  }, [load, loadJudgeBodies, loadSecondaryBodies, loadRevisions, loadContent, loadDiff])
+  }, [load, loadBodies, loadRevisions, loadContent, loadDiff])
 
-  // Live SSE follow (#1114): chatStore.subscribe already fans out to any
-  // listener while mounted (same seam DagNode/NodePopup use) - no new pub/sub.
-  // Refs, not deps: the listener is registered once per chatId and must read state as it is at event time, not subscribe time.
+  // Live SSE follow via chatStore.subscribe. Refs, not deps: the listener registers once per chatId
+  // and must read state as it is at event time, not subscribe time.
   const store = useChatStore()
   const primaryIdRef = useRef(primaryId)
   primaryIdRef.current = primaryId
   const nodeArtifactNamesRef = useRef<Set<string>>(new Set())
   nodeArtifactNamesRef.current = useMemo(() => new Set(nodeArtifacts.map(a => a.name)), [nodeArtifacts])
-  // atLatestRef: true when the cursor is on the newest revision, so a fresh
-  // one should pull the view forward; false (pinned to an older revision by
-  // the user) means the refetch must leave the cursor where it is.
+  // True when the cursor is on the newest revision, so a new one pulls the view forward;
+  // pinned to an older revision, a refetch leaves the cursor where it is.
   const atLatestRef = useRef(true)
   useEffect(() => {
     atLatestRef.current = revIdx == null || revisions.length === 0 || revIdx === revisions.length - 1
@@ -648,23 +588,17 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
   // Dropped from the secondary list below - the review already rendered them inline.
   const reviewFindingNames = useMemo(() => new Set(reviewFindings.map(f => f.id)), [reviewFindings])
 
-  // Details: the one place a raw id may appear. onTrigger jumps to the
-  // round that produced this revision - but only when that round is one of
-  // this node's (a known chip); otherwise it renders as plain text.
   const onTrigger = triggerActivation(curInfo, judgeBodies, activateRound)
 
-  // Native <dialog> + showModal(): Esc closes ('cancel' then 'close'), focus
-  // is trapped in the top layer, and the browser restores focus to the opener
-  // - no manual trap/restore. onClose (the native 'close' event, fired on Esc AND our own .close() calls below) is the single place that tells the parent to unmount us, so that restore always finishes before React removes the dialog.
+  // Native <dialog> + showModal() closes on Esc, traps focus and restores it to the opener. The native 'close'
+  // event (onClose) is the only path that unmounts us, so the restore finishes before React removes the dialog.
   const dialogRef = useRef<HTMLDialogElement>(null)
   useEffect(() => {
     dialogRef.current?.showModal()
   }, [])
 
   const empty = primary == null
-  // Details renders its content only while OPEN: a closed native <details>
-  // keeps its content in the DOM (hidden, still readable by text-scanning
-  // tools), and the raw id must exist NOWHERE until the disclosure is opened (#1178).
+  // See DetailsSection: the raw id must not render until the disclosure opens.
   const [detailsOpen, setDetailsOpen] = useState(false)
 
   return (
@@ -673,20 +607,15 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
       aria-label={`Artifacts for node ${nodeId}`}
       onClose={onClose}
       onClick={e => { if (e.target === dialogRef.current) dialogRef.current?.close() }}
-      // Below `medium`: the same bottom-sheet shell as Sheet/NodePopup (docked
-      // to the bottom edge via mt-auto, rounded top, scrim, safe-area padding);
-      // a centred card at medium+, sized to the viewport rather than a small
-      // fixed box - a review with several findings is not a "small dialog" payload.
+      // Below `medium`: the same bottom-sheet shell as Sheet/NodePopup; a viewport-sized centred card at medium+,
+      // since a review with several findings is not a small-dialog payload.
       className="m-0 mt-auto w-screen max-w-[100vw] h-[90dvh] medium:m-auto medium:w-full medium:max-w-5xl medium:h-[88vh] max-h-[100vh] medium:max-h-[88vh] p-0 border-0 rounded-t-2xl medium:rounded-2xl bg-transparent backdrop:bg-black/40"
     >
       <div
         className="relative flex flex-col w-full h-full overflow-hidden rounded-t-2xl medium:rounded-2xl bg-gray-50 dark:bg-gray-900 shadow-xl pb-[calc(0.75rem+var(--composer-gap))] medium:pb-0"
       >
-        {/* Header: the node's own name (never an artifact id or its raw
-            prompt - #1216), Raw/Copy (apply to whatever is focused, not
-            per-revision), refresh, close - non-scrolling; >=44px targets
-            (#1135). line-clamp-2 is a hard ceiling: even a future caller
-            that passes a long label can't blow the header past 2 lines. */}
+        {/* Header: the node's own name, never an artifact id or raw prompt; >=44px targets.
+            line-clamp-2 is a hard ceiling so a long label can't push the header past 2 lines. */}
         <header className="shrink-0 flex items-start gap-1 px-4 py-1.5 border-b border-gray-200 dark:border-gray-700">
           <h2 className="flex-1 min-w-0 py-2 text-sm font-semibold text-gray-800 dark:text-gray-100 break-words line-clamp-2">
             {nodeAgent}
@@ -763,9 +692,8 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
             </>
           )}
 
-          {/* Judge rounds (and everything else this node wrote) stay reachable
-              even with no deliverable - a vetted no-artifact node's rounds
-              are otherwise chips that do nothing. */}
+          {/* Judge rounds stay reachable with no deliverable, else a vetted
+              no-artifact node's chips would do nothing. */}
           <ActiveNoteCallout note={activeNote} />
           <UnanchoredNotes notes={unanchored} />
           <SecondaryList items={secondaryItems} bodies={secondaryBodies} excludeNames={reviewFindingNames} onSelect={setFocusedOverride} />
@@ -775,26 +703,14 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
   )
 }
 
-// prettyText pretty-prints a JSON structured artifact; returns the bytes
-// unchanged for a blob (markdown/text) - both render as a plain line list so
-// judge-note highlighting has a stable line number to anchor on.
+// Pretty-prints structured JSON and returns a blob unchanged; both render as a line list
+// so judge-note highlighting has a stable line number to anchor on.
 function prettyText(raw: string, klass?: string): string {
   if (klass !== 'structured') return raw
   try {
     return JSON.stringify(JSON.parse(raw), null, 2)
   } catch {
     return raw
-  }
-}
-
-// The tree view's own parse (separate from prettyText's, which already
-// swallows a parse error into a raw-text fallback) - returns undefined rather
-// than throwing so the tree view falls back to raw text for unexpectedly invalid JSON.
-function tryParseJSON(raw: string): unknown {
-  try {
-    return JSON.parse(raw)
-  } catch {
-    return undefined
   }
 }
 
@@ -843,9 +759,8 @@ function SecondaryList({ items, bodies, excludeNames, onSelect }: {
   )
 }
 
-// The monospace "Raw" fallback view: an exact line list, one judge-note
-// highlight per line index. #1114 made ArtifactMarkdown/JsonView the DEFAULT
-// - this stays reachable behind the Raw toggle for when the rendered view's own highlighting (data-line-based, see ArtifactMarkdown) doesn't anchor a note precisely enough.
+// The monospace Raw fallback: an exact line list with one judge-note highlight per line index, for when
+// the rendered view's data-line highlighting doesn't anchor a note precisely enough.
 function ArtifactLines({ lines, byLine, activeNote, onSelectNote }: {
   lines: string[]
   byLine: Map<number, JudgeNote[]>
@@ -864,10 +779,8 @@ function ArtifactLines({ lines, byLine, activeNote, onSelectNote }: {
               className={`px-3 py-0.5 whitespace-pre-wrap break-words ${highlighted ? 'bg-amber-100 dark:bg-amber-900/30' : ''}`}
             >
               {line || ' '}
-              {/* One button PER note, not one for the whole line - a line with
-                  several notes (anchorNotes groups them) used to expose only
-                  notes[0] to click/keyboard/screen readers; each is now its
-                  own reachable, individually announced control. */}
+              {/* One button per note, not per line, so each note on a shared line is
+                  its own reachable, individually announced control. */}
               {notes.map((n, ni) => (
                 <button
                   key={ni}
@@ -917,21 +830,12 @@ export function DiffView({ text }: { text: string }) {
   )
 }
 
-// Answer text is markdown that may embed a little raw HTML (matches
-// AgentParts' AssistantText schema exactly, for the same reason: model text
-// there, judge/worker artifact text here).
-const mdSchema = {
-  ...defaultSchema,
-  tagNames: [...(defaultSchema.tagNames ?? []), 'details', 'summary'],
-}
-
 // BLOCK_TAGS get a data-line attribute + judge-note highlight/click; picked
 // to cover the elements a judge quote is actually likely to land inside.
 const BLOCK_TAGS = ['p', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'td', 'th', 'blockquote'] as const
 
-// HEADING_CLASS sizes headings explicitly rather than trusting the ambient
-// `.prose h1` cascade (#1139 cosmetic follow-up: headings rendered at body
-// size) - this tree sits under DagView's not-prose ancestor, and Tailwind Typography excludes EVERY descendant of a not-prose ancestor from ANY .prose styling, including a nested one.
+// Headings are sized explicitly: this tree sits under DagView's not-prose ancestor, and Tailwind Typography
+// drops .prose styling for every descendant of one, even a nested .prose.
 const HEADING_CLASS: Record<string, string> = {
   h1: 'text-base font-bold mt-3 mb-1.5',
   h2: 'text-sm font-bold mt-3 mb-1.5',
@@ -941,9 +845,8 @@ const HEADING_CLASS: Record<string, string> = {
   h6: 'text-xs font-semibold mt-2 mb-1 text-gray-500 dark:text-gray-400',
 }
 
-// Attaches a note to the block whose source range CONTAINS the anchor line,
-// not just the block whose first line matches (#1139: a note anchored
-// mid-paragraph used to render nowhere and wasn't listed as unanchored). blockquote is excluded: CommonMark nests a `> quote` as <blockquote><p>...</p></blockquote>, and wrapper + inner <p> share the same line range, so blockquote would double-render every note.
+// Attaches a note to the block whose source range contains its anchor line, not just a matching first line.
+// blockquote is skipped: its inner <p> shares the line range, so every note would render twice.
 function notesInRange(byLine: Map<number, JudgeNote[]>, tag: string, node: Element | undefined): JudgeNote[] {
   if (tag === 'blockquote') return []
   const start = node?.position?.start.line
@@ -957,9 +860,8 @@ function notesInRange(byLine: Map<number, JudgeNote[]>, tag: string, node: Eleme
   return notes
 }
 
-// Renders a blob through the same react-markdown pipeline AssistantText uses
-// (headings, tables, code blocks with highlight + copy - #1114), keeping judge
-// notes anchorable: remark/rehype keep each node's source line (node.position.start.line, 1-based, as elsewhere - see AgentParts' mermaid-detection `pre` override) - ponytail: stamping data-line via the existing `components` override achieves what a dedicated rehype plugin would, with no new plugin.
+// Renders a blob through AssistantText's react-markdown pipeline, anchoring judge notes on each node's source line.
+// ponytail: data-line is stamped via the existing `components` override instead of a dedicated rehype plugin.
 function ArtifactMarkdown({ text, byLine, activeNote, onSelectNote }: {
   text: string
   byLine: Map<number, JudgeNote[]>
@@ -1004,9 +906,7 @@ function ArtifactMarkdown({ text, byLine, activeNote, onSelectNote }: {
     return map
   }, [byLine, activeNote, onSelectNote])
 
-  // escapeUnmatchedBackticks (#746) only inserts a `\` before an isolated
-  // backtick within its line - it never adds/removes a newline, so line
-  // numbers (what byLine/data-line anchor on) are unaffected; only within-line offsets shift, which nothing here reads.
+  // Only inserts escapes within a line, never a newline, so the line numbers byLine/data-line anchor on hold.
   const fixed = useMemo(() => escapeUnmatchedBackticks(text), [text])
 
   return (
@@ -1020,9 +920,7 @@ function ArtifactMarkdown({ text, byLine, activeNote, onSelectNote }: {
   )
 }
 
-// typedValue renders one JSON leaf value, colored by type - the same palette
-// DiffView/JudgeCard already use elsewhere in this file/AgentParts, so a
-// number/string/boolean reads the same way across the app, not just here.
+// Colors a JSON leaf by type with the same palette DiffView/JudgeCard use, so values read the same app-wide.
 function typedValue(v: unknown) {
   if (v === null) return <span className="text-gray-500 dark:text-gray-400 italic">null</span>
   if (typeof v === 'string') return <span className="text-green-700 dark:text-green-400 break-words">"{v}"</span>
@@ -1031,9 +929,7 @@ function typedValue(v: unknown) {
   return <span className="text-gray-800 dark:text-gray-100 break-words">{JSON.stringify(v)}</span>
 }
 
-// JsonNode renders one key/value pair of a JsonTree - a nested object/array
-// gets its own <details> (native disclosure, no JS state needed per node);
-// a leaf renders inline via typedValue.
+// A nested container gets its own native <details>, so no per-node JS state.
 function JsonNode({ k, v }: { k?: string; v: unknown }) {
   const isContainer = v !== null && typeof v === 'object'
   if (!isContainer) {
@@ -1064,8 +960,7 @@ function JsonNode({ k, v }: { k?: string; v: unknown }) {
   )
 }
 
-// JsonView is the fallback tree for an unknown structured kind now that the
-// known kinds have their own typed view; Raw (ArtifactLines) still covers all of them.
+// The fallback tree for an unknown structured kind; Raw (ArtifactLines) still covers every kind.
 function JsonView({ data }: { data: unknown }) {
   return (
     <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 overflow-x-auto">
@@ -1107,8 +1002,8 @@ function FindingView({ data, hideHeader }: { data: FindingBody; hideHeader?: boo
   )
 }
 
-// findingSeverityCounts turns a review's rendered findings into "3
-// suggestions · 1 nit" - counts exactly what's on screen, so it agrees with the server's own verdict line and the cards below it.
+// findingSeverityCounts renders "3 suggestions · 1 nit" from exactly the findings on screen,
+// so it agrees with the server's verdict line and the cards below it.
 const SEVERITY_RANK = ['blocking', 'request_changes', 'suggestion', 'nit']
 function findingSeverityCounts(findings: { body: FindingBody | undefined }[]): string {
   const counts = new Map<string, number>()
@@ -1171,8 +1066,8 @@ function MetaList({ label, items }: { label: string; items: string[] | undefined
   )
 }
 
-// JudgeRoundView: score, pass/fail, the criteria table, probes. Reachable
-// via the round's own secondary-list row (the chip keeps its jump-and-highlight job); per-criterion scores are a raw 0-3, not a fraction (#941).
+// Reachable via the round's own secondary-list row (the chip keeps its jump-and-highlight job).
+// Per-criterion scores are a raw 0-3, not a fraction.
 export function JudgeRoundView({ data }: { data: JudgeRoundContent }) {
   return (
     <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2.5 space-y-2 text-sm leading-6">
@@ -1244,9 +1139,7 @@ function typedView(kind: string | undefined, data: unknown, reviewFindings: { id
   }
 }
 
-// The primary output and a focused secondary share ONE renderer stack - the
-// Raw line list, a typed view per known kind (JSON tree for anything else),
-// and rendered markdown - so both surfaces can't drift as kinds grow.
+// The primary and a focused secondary share one renderer stack, so the two surfaces can't drift as kinds grow.
 function ArtifactView({ content, displayText, lines, rawView, isStructured, parsedJson, kind, surface, byLine, activeNote, onSelectNote, reviewFindings }: {
   content: string | null
   displayText: string | null
@@ -1319,9 +1212,8 @@ function RoundChip({ id, round, passed, score, active, onActivate }: {
   )
 }
 
-// The judge-round timeline: pinned directly under the header, non-scrolling
-// block, horizontal scroll when the rounds overflow 390px. Chips are buttons,
-// never a picker: tapping one shows that round's notes on the revision it judged.
+// Pinned under the header, scrolling horizontally when rounds overflow 390px.
+// Chips are buttons, not a picker: a tap shows that round's notes on the revision it judged.
 function TimelineBlock({ chips, activeRoundId, onActivate }: {
   chips: { id: string; b: JudgeRoundContent }[]
   activeRoundId: string | null
@@ -1428,8 +1320,7 @@ function Spoiler({ children }: { children: ReactNode }) {
   )
 }
 
-// The "Unanchored notes" list - judge notes that anchor to no line of the
-// shown revision (design V4 §9).
+// Judge notes that anchor to no line of the shown revision.
 function UnanchoredNotes({ notes }: { notes: JudgeNote[] }) {
   if (notes.length === 0) return null
   return (
@@ -1449,9 +1340,8 @@ function UnanchoredNotes({ notes }: { notes: JudgeNote[] }) {
   )
 }
 
-// Details: the one place a raw id may appear (#1178). Its content renders
-// only while OPEN - a closed native <details> keeps content in the DOM
-// (readable by text-scanning tools), and the raw id must exist NOWHERE until opened.
+// The one place a raw id may appear. Content renders only while open: a closed <details> keeps it in the DOM,
+// and the raw id must not exist anywhere until opened.
 function DetailsSection({ curInfo, open, onOpenChange, nodeTask, primary, revisionCount, onTrigger, chatId }: {
   curInfo: ArtifactRevisionInfo | null
   open: boolean
@@ -1489,11 +1379,8 @@ function DetailsSection({ curInfo, open, onOpenChange, nodeTask, primary, revisi
   )
 }
 
-// The primary output's Revision N-of-M bar: prev/next cursor, the single
-// Diff toggle (disabled with its visible reason), the Raw fallback toggle,
-// and copy.
-// A single revision carries nothing to browse - the bar (Raw/Copy now live
-// in the header) only earns its place at 2+ revisions.
+// Revision N-of-M bar with prev/next and the Diff toggle. A single revision has nothing to browse,
+// so it only renders at 2+ revisions.
 function RevisionBar({ currentRev, count, revIdx, diffActive, diffDisabledReason, onPrev, onNext, onToggleDiff }: {
   currentRev: number | null
   count: number
@@ -1593,9 +1480,7 @@ function EmptyState({ nodeError, nodeAnswer }: { nodeError?: string; nodeAnswer?
   )
 }
 
-// fmtRelative renders "3m ago"/"in 2h" etc via the native
-// Intl.RelativeTimeFormat - no date library for one small formatter
-// (ponytail).
+// Native Intl.RelativeTimeFormat; no date library for one small formatter.
 function fmtRelative(iso: string): string {
   const diffMs = new Date(iso).getTime() - Date.now()
   const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
@@ -1609,16 +1494,13 @@ function fmtRelative(iso: string): string {
   return rtf.format(0, 'second')
 }
 
-// Renders "Jun 21, 14:32" INLINE next to the relative time (#1139: a
-// hover-only `title` tooltip is unreachable on a touch device, and this
-// panel's mobile pass makes touch the primary surface). Full ISO still lives in `title` for a pointer user.
+// Shown inline next to the relative time because a hover-only title tooltip is unreachable on touch;
+// the full ISO stays in `title` for pointer users.
 function fmtAbsoluteShort(iso: string): string {
   return new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
-// MetaRow is one key/value line, same visual language as JsonNode's leaves -
-// the metadata block is "the JSON tree's styling" applied to a fixed set of
-// fields (owner request on #1114) rather than a second, differently-styled table.
+// Same visual language as JsonNode's leaves, so metadata reads as the JSON tree's styling, not a second table.
 function MetaRow({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="py-0.5 text-xs flex gap-1">
@@ -1628,9 +1510,7 @@ function MetaRow({ label, children }: { label: string; children: ReactNode }) {
   )
 }
 
-// The Details' lineage block (node, round, parent revision, trigger, head
-// sha) - the one row that jumps to its chip: trigger, and only when that
-// round is one of this node's (onTrigger); plain text otherwise.
+// Only the trigger row jumps to its chip, and only when that round is one of this node's.
 function LineageRows({ l, onTrigger }: { l: NonNullable<ArtifactRevisionInfo['lineage']>; onTrigger?: () => void }) {
   return (
     <>
@@ -1664,9 +1544,7 @@ function LineageRows({ l, onTrigger }: { l: NonNullable<ArtifactRevisionInfo['li
   )
 }
 
-// The panel's Details disclosure content (#1178): the one place the raw id,
-// kind, class, per-revision lineage, timestamps and the REST link appear.
-// The trigger row (the judge_round that produced this revision) jumps to that round's chip when it's one of this node's; plain text otherwise.
+// Details content: the one place the raw id, kind, class, lineage, timestamps and REST link appear.
 function ArtifactMetadata({ summary, revision, revisionCount, onTrigger, url }: {
   summary: ArtifactSummary
   revision: ArtifactRevisionInfo
@@ -1685,9 +1563,7 @@ function ArtifactMetadata({ summary, revision, revisionCount, onTrigger, url }: 
       <MetaRow label="revision">{revision.revision} of {revisionCount}</MetaRow>
       {l && <LineageRows l={l} onTrigger={onTrigger} />}
       {revision.turn_id && <MetaRow label="turn">{revision.turn_id}</MetaRow>}
-      {/* author covers "dispatch source" for an input too - dispatch is
-          already the value lineage.author carries for one; there's no
-          separate source field in the schema to show beyond it. */}
+      {/* author also covers an input's dispatch source; the schema has no separate source field. */}
       {l?.author && <MetaRow label="author">{l.author}</MetaRow>}
       {revision.created_at && (
         <MetaRow label="saved">

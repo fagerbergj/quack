@@ -32,8 +32,7 @@ type Story = StoryObj<typeof Controlled>
 
 const BUCKETS = ['repo:NightsOut', 'repo:quack', 'role:research', 'user:jason']
 
-// #746 items 11/15: sort and the bucket filter live in ONE dialog, matching
-// the chat sidebar's FilterPanel disclosure pattern - closed by default.
+// Sort and the bucket filter share one dialog, closed by default.
 export const Closed: Story = {
   render: () => <Controlled buckets={BUCKETS} />,
 }
@@ -47,9 +46,7 @@ export const Open: Story = {
   },
 }
 
-// A non-default sort + an active bucket filter both light up the trigger
-// button (border/text turn blue) - the same "active filters" affordance
-// FilterPanel uses.
+// A non-default sort or active bucket filter lights up the trigger, as in FilterPanel.
 export const WithActiveFilters: Story = {
   render: () => <Controlled buckets={BUCKETS} initialSort="oldest" initialBucket="repo:quack" />,
   play: async ({ canvasElement }) => {
@@ -60,7 +57,7 @@ export const WithActiveFilters: Story = {
   },
 }
 
-// #1267: live/invalidated per bucket, read-only, below the tier filter.
+// Live/invalidated per bucket, read-only, below the tier filter.
 export const WithScopes: Story = {
   render: () => (
     <Controlled

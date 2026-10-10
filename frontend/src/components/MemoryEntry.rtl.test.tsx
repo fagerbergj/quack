@@ -12,9 +12,7 @@ const memory: Memory = {
   vote_score: 3, upvotes: 3, downvotes: 0, tier: 'verified',
 }
 
-// #1137: the Forget control (now in the kebab menu, epic #1255 P4) measured
-// 28x28px (w-7 h-7) - under the 44px comfortable touch target. min-w/min-h
-// fixes the hit area without growing the glyph itself.
+// The w-7 h-7 glyph is under the 44px touch target; min-w/min-h grows the hit area, not the glyph.
 describe('MemoryEntry kebab menu touch target (#1137)', () => {
   it('kebab trigger is a 44x44 tap area', () => {
     render(<MemoryEntry memory={memory} onForget={async () => {}} onVote={async () => {}} />)
@@ -29,8 +27,7 @@ describe('MemoryEntry kebab menu touch target (#1137)', () => {
   })
 })
 
-// epic #1255 P4: the vote control sends the request and updates the score
-// optimistically via the caller's onVote; clicking the active arrow again
+// The vote control calls onVote and updates the score optimistically; clicking the active arrow again
 // toggles the vote off.
 describe('MemoryEntry vote control', () => {
   it('clicking an arrow sends the vote', async () => {
@@ -49,9 +46,8 @@ describe('MemoryEntry vote control', () => {
   })
 })
 
-// #1300 review: mintedTimeRelative was memoized on [memory.timestamp] - a
-// value that never changes for a given memory - so it froze at the first
-// computed wall-clock time. A refetch handing the row a new Memory object (same timestamp, different reference - what a real store update looks like) passes memo(MemoryEntry)'s shallow prop check and re-renders, but the frozen memo hid the correct new label.
+// A refetch hands the row a new Memory object with the same timestamp; the relative label must still
+// recompute, which a memo keyed on memory.timestamp would freeze.
 describe('MemoryEntry minted-time freshness (#1300 review)', () => {
   it('reflects the current time on a re-render with a new memory object, not a cached one', () => {
     vi.useFakeTimers()

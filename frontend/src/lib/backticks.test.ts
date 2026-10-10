@@ -11,9 +11,8 @@ describe('escapeUnmatchedBackticks', () => {
     expect(escapeUnmatchedBackticks('nothing to see here')).toBe('nothing to see here')
   })
 
-  // #746 item 16 repro: a bare punctuation backtick earlier in the
-  // paragraph stole the pairing CommonMark would otherwise give to the real
-  // spans - `QUACK_LOG_LEVEL` rendered as plain text. Escaping the stray run restores both real spans.
+  // A bare punctuation backtick earlier in the paragraph stole the pairing from the real spans;
+  // escaping the stray run restores both.
   it('escapes a stray punctuation backtick without touching the real spans after it', () => {
     const text = "Don't use a bare ` unless needed. Instead set `QUACK_LOG_LEVEL` to `debug`."
     const fixed = escapeUnmatchedBackticks(text)

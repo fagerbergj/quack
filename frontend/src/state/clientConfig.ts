@@ -8,9 +8,8 @@ let fetched = false
 
 void api.getConfig().then(c => { template = c.otel_trace_url_template; version = c.version }).catch(() => {}).finally(() => { fetched = true })
 
-// Renders traceId through the server's otel_trace_url_template, or
-// undefined if either is unset (no link) or the config fetch hasn't
-// resolved yet - a later re-render (e.g. on the next SSE event) picks it up.
+// Renders traceId via the server's otel_trace_url_template; undefined if either is unset or config hasn't loaded
+// yet (a later re-render picks it up).
 export function traceUrl(traceId: string | undefined): string | undefined {
   if (!fetched || !template || !traceId) return undefined
   return template.replace('{trace_id}', traceId)

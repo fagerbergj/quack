@@ -5,28 +5,17 @@
    defaults `dark:` to prefers-color-scheme, so override it to the class. */
 @custom-variant dark (&:where(.dark, .dark *));
 
-/* Without an explicit color-scheme, the UA renders native controls (<select>
-   dropdowns/<option>, <dialog>'s ::backdrop, scrollbars, checkboxes) with
-   light chrome even inside a `dark:`-styled container - our own text/background
-   utilities on the OPEN <select> apply, but its native dropdown list and other
-   browser-drawn chrome ignore them, reading as black text on the (light) OS
-   default. This is the root cause of "dark mode looks awful" wherever a
-   native control (the artifact panel's revision <select>, in particular)
-   appears inside a dark-mode surface - #1114. */
+/* Without color-scheme, native controls (<select> lists, <dialog> ::backdrop, scrollbars) keep light chrome
+   inside `dark:` containers, since our utilities don't reach browser-drawn parts. */
 :root { color-scheme: light; }
 .dark { color-scheme: dark; }
 
-/* #1248 follow-up: single source for the composer's bottom offset (12px rest
-   gap, or 12px above the home indicator when the inset is present) - apply
-   it ONLY here, never add env(safe-area-inset-bottom) again elsewhere, or
-   it stacks (the pre-#1249 "too much padding" bug). */
+/* Single source for the composer's bottom offset (12px, above the home indicator when inset); never add
+   env(safe-area-inset-bottom) elsewhere too, or the insets stack. */
 :root { --composer-gap: calc(env(safe-area-inset-bottom, 0px) + 12px); }
 
-/* ponytail: global tone via the color scale - softer, slightly warm neutrals
-   and a calmer accent. Overriding the built-in gray and blue scale here recolors
-   every existing gray/blue utility (backgrounds, borders, text) across the app at
-   once, so no per-component edits. A component that needs a different colour can
-   still use an explicit one. */
+/* ponytail: overriding the gray/blue scale retones every gray/blue utility at once, no per-component edits;
+   a component that needs another colour uses an explicit one. */
 @theme {
   --color-gray-50:  #f7f7f6;
   --color-gray-100: #efefed;
@@ -49,11 +38,8 @@
   --color-blue-900: #262d63;
   --color-blue-950: #1a1f45;
 
-  /* Material 3 window size classes (#1131): compact (<600px, single column,
-     touch-first) is the unprefixed default everywhere below; this custom
-     breakpoint unlocks medium/expanded (600px+, multi-pane) layouts. Kept
-     separate from Tailwind's own sm/md so this PR's compact-width work can't
-     shift any untouched component's existing sm:/md: behaviour. */
+  /* Material 3 compact (<600px) is the unprefixed default; this unlocks medium/expanded (600px+) layouts,
+     separate from Tailwind's sm/md so existing sm:/md: behaviour can't shift. */
   --breakpoint-medium: 600px;
 }
 
@@ -76,10 +62,8 @@
   --a2ui-card-box-shadow: none;
 }
 
-/* The app owns all scrolling (messages pane, sidebar list). The page itself
-   must NEVER scroll: without this, wheel input that hits an inner scroller's
-   end CHAINS to the document, and any stray layout overflow lets the viewport
-   sail past the composer into blank space. */
+/* The app owns all scrolling; the page must never scroll, or wheel input chains past an inner scroller's end
+   and stray overflow lets the viewport sail past the composer. */
 html, body {
   height: 100%;
   overflow: hidden;
@@ -91,9 +75,7 @@ body {
   direction: ltr;
 }
 
-/* Thin themed scrollbar for the chat list (#870) - standards-first
-   (scrollbar-width/-color), with a ::-webkit-scrollbar fallback since Chrome
-   still ignores the standard properties as of this writing. */
+/* Thin themed chat-list scrollbar: standard scrollbar-width/-color, plus a ::-webkit-scrollbar fallback. */
 .chat-list-scroll {
   scrollbar-width: thin;
   scrollbar-color: var(--color-gray-600) transparent;

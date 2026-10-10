@@ -37,8 +37,7 @@ interface Props {
   // Present only for a real chat (not a Storybook fixture) - gates each
   // node's Artifacts button, since the panel reads the REST artifacts API.
   chatId?: string
-  // Present only for a live, streaming run: per-node controls (cancel / pause /
-  // resume / queue a message), surfaced in the node popup (#265).
+  // Present only for a live, streaming run: per-node controls surfaced in the node popup.
   onCancelNode?: (nodeId: string) => void
   onPauseNode?: (nodeId: string) => void
   onResumeNode?: (nodeId: string) => void

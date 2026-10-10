@@ -7,8 +7,7 @@ import type { MemoryWeekStats } from '../api'
 
 afterEach(cleanup)
 
-// #1267: the header numbers come from GET /memories/stats via api.getMemoryStats
-// - stub that call (not initialStats) so this exercises the real fetch wiring.
+// Stubs api.getMemoryStats rather than passing initialStats, so this exercises the real fetch wiring.
 const WEEKS: MemoryWeekStats[] = [
   { week: '2026-W35', recalls: 38, supported: 18, contradicted: 8, not_relevant: 4, precision: 0.69, minted: 3, invalidated: 4 },
   { week: '2026-W36', recalls: 61, supported: 40, contradicted: 3, not_relevant: 3, precision: 0.87, minted: 9, invalidated: 0 },

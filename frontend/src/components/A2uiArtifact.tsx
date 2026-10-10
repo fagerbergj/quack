@@ -1,23 +1,14 @@
-import { Component, Suspense, lazy, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
 import { useChatState, useChatStore } from '../state/ChatStoreProvider'
 import { restoredPicks, surfacePersistKey, type SurfaceContent, type SurfaceRef } from '../lib/a2ui'
 import type { A2UiAction } from '../generated'
+import { LazyLoadBoundary } from './LazyLoadBoundary'
 
 // The renderer (web_core + zod) is its own chunk: most chats never show a surface.
 const A2uiSurfaceView = lazy(() => import('./A2uiSurface'))
 
 const loadFailed = <p className="text-xs text-amber-700 dark:text-amber-400">This interactive view couldn&apos;t load.</p>
-
-// Model-authored content: a renderer crash or a failed chunk load stays inside this box.
-class SurfaceBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
-  state = { failed: false }
-  static getDerivedStateFromError() { return { failed: true } }
-  render() {
-    if (this.state.failed) return loadFailed
-    return this.props.children
-  }
-}
 
 // A surface with its button actions sent as turns of this chat.
 export function A2uiSurfaceBox({ chatId, content, revision, persistKey }: { chatId: string; content: SurfaceContent; revision?: number; persistKey?: string }) {
@@ -28,11 +19,11 @@ export function A2uiSurfaceBox({ chatId, content, revision, persistKey }: { chat
   const liveText = state.live?.userText ?? ''
   const restore = useMemo(() => restoredPicks(content, [...state.turns.map(t => t.input.content), liveText]), [content, state.turns, liveText])
   return (
-    <SurfaceBoundary>
+    <LazyLoadBoundary fallback={loadFailed}>
       <Suspense fallback={<p className="text-xs text-gray-500 dark:text-gray-400" role="status">Loading…</p>}>
         <A2uiSurfaceView content={content} revision={revision} restore={restore} onAction={onAction} persistKey={persistKey} busy={busy} />
       </Suspense>
-    </SurfaceBoundary>
+    </LazyLoadBoundary>
   )
 }
 

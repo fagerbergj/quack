@@ -1,60 +1,43 @@
 // @vitest-environment jsdom
-// Adversarial coverage for the streaming split (lastSafeSplitOffset) where
-// the naive blank-line boundary lands inside a block: post-stream output must match a fresh non-streaming render byte-for-byte, and mid-stream splits must not throw or lose content (transient DOM differences documented per-case).
-import { describe, it, expect } from 'vitest'
-import { act, createElement } from 'react'
-import { createRoot } from 'react-dom/client'
+// Adversarial split points: post-stream output must match a fresh render; mid-stream must not lose content.
+import { describe, it, expect, afterEach } from 'vitest'
+import { cleanup, render } from '@testing-library/react'
 import { AssistantText } from './AgentParts'
 import { lastSafeSplitOffset } from './mermaidSource'
 
+afterEach(cleanup)
+
 function renderHtml(text: string, streaming = false): string {
-  const host = document.createElement('div')
-  document.body.appendChild(host)
-  const root = createRoot(host)
-  // @ts-expect-error react act environment flag
-  globalThis.IS_REACT_ACT_ENVIRONMENT = true
-  act(() => { root.render(createElement(AssistantText, { text, streaming })) })
-  const html = host.innerHTML
-  act(() => root.unmount())
-  host.remove()
+  const { container, unmount } = render(<AssistantText text={text} streaming={streaming} />)
+  const html = container.innerHTML
+  unmount()
   return html
 }
 
-// Simulates the frozen/live split directly (bypassing the LIVE_TAIL_CHARS
-// timing): each half through its own non-streaming AssistantText, unwrapped
-// and rejoined in ONE outer div - matching production's single wrapping div.
+// Simulates the frozen/live split directly, rejoining both halves in one div like production.
 function splitHtml(text: string, cut: number): string {
   const unwrap = (html: string) => html.replace(/^<div class="prose[^"]*">/, '').replace(/<\/div>$/, '')
   return `<div class="prose prose-sm dark:prose-invert max-w-none break-words">`
     + unwrap(renderHtml(text.slice(0, cut))) + unwrap(renderHtml(text.slice(cut))) + `</div>`
 }
 
-// react-markdown emits a source-position newline between sibling top-level
-// blocks; that seam is naturally absent at a join of two independent parses -
-// whitespace between tags, invisible rendered. Ignore it; assertions check real structure.
+// react-markdown emits a newline between sibling blocks that a join of two parses lacks; it's invisible,
+// so ignore it.
 function normTags(html: string): string {
   return html.replace(/>\s+</g, '><')
 }
 
-// Drives AssistantText through a real streaming lifecycle (growing text,
-// streaming=true) then a final streaming=false commit, matching how
-// Chat.tsx flips `streaming={liveActive}` to false once a turn completes.
+// Streams growing text, then commits streaming=false the way Chat.tsx does when a turn completes.
 function streamThenFinish(full: string, chunk = 40): string {
-  const host = document.createElement('div')
-  document.body.appendChild(host)
-  const root = createRoot(host)
-  // @ts-expect-error react act environment flag
-  globalThis.IS_REACT_ACT_ENVIRONMENT = true
   let text = ''
-  act(() => { root.render(createElement(AssistantText, { text, streaming: true })) })
+  const { container, rerender, unmount } = render(<AssistantText text={text} streaming />)
   while (text.length < full.length) {
     text = full.slice(0, text.length + chunk)
-    act(() => { root.render(createElement(AssistantText, { text, streaming: true })) })
+    rerender(<AssistantText text={text} streaming />)
   }
-  act(() => { root.render(createElement(AssistantText, { text: full, streaming: false })) })
-  const html = host.innerHTML
-  act(() => root.unmount())
-  host.remove()
+  rerender(<AssistantText text={full} streaming={false} />)
+  const html = container.innerHTML
+  unmount()
   return html
 }
 
@@ -84,9 +67,8 @@ describe('AssistantText split boundary safety', () => {
     expect(renderHtml(text, false).match(/<pre>/g)?.length).toBe(1)
   })
 
-  // A loose list's item boundary (same indentation, not a continuation) is
-  // NOT caught by the indented-lazy-continuation guard - splitting there
-  // yields two adjacent <ul>s. Accepted: self-heals when streaming ends; see the AgentParts.tsx anchors/ids note for the same tradeoff.
+  // A loose list's item boundary isn't caught by the lazy-continuation guard and yields two <ul>s;
+  // accepted because it self-heals when streaming ends.
   it('a loose list split at an item boundary is a transient visual artifact that heals once streaming ends', () => {
     const text = 'Intro.\n\n- item one\n\n  continuation paragraph within same item\n\n- item two\n\nOutro.\n'
     const itemBoundary = text.indexOf('same item') + 'same item'.length
@@ -138,9 +120,7 @@ describe('AssistantText split boundary safety', () => {
   })
 
   it('a fenced code block inside a blockquote is invisible to the fence walker but has no real blank line to split on', () => {
-    // Blockquote continuation lines are prefixed with "> " - a genuinely
-    // blank ("\n\n") line always ends the blockquote in CommonMark too, so
-    // there is no unsafe internal boundary to find here.
+    // A blank line always ends a blockquote in CommonMark, so there's no unsafe internal boundary here.
     const text = 'Intro.\n\n> ```js\n> const a = 1\n>\n> const b = 2\n> ```\n\nOutro.\n'
     const idx = lastSafeSplitOffset(text, text.length)
     const whole = renderHtml(text, false)

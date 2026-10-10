@@ -3,18 +3,15 @@ import type { MermaidConfig } from 'mermaid'
 import { CopyablePre } from './CopyablePre'
 import { Icon } from './Icon'
 
-// The mermaid package is large (~1MB+ minified) and most chat messages never
-// contain a diagram - load it only when a ```mermaid block actually renders,
-// and only once per page (module-level cache), not once per diagram.
+// mermaid is ~1MB+ and most messages have no diagram, so load it on first render and cache it per page.
 let mermaidPromise: Promise<typeof import('mermaid')> | undefined
 function loadMermaid() {
   mermaidPromise ??= import('mermaid')
   return mermaidPromise
 }
 
-// Mermaid renders SVG generated from model-authored (untrusted) diagram
-// text. 'strict' runs mermaid's own sanitize pass over the generated SVG -
-// script tags, foreignObject, click/href bindings stripped - the same trust boundary rehype-sanitize enforces for markdown HTML, applied to mermaid's own output.
+// Diagram text is model-authored and untrusted: 'strict' strips scripts, foreignObject and click/href
+// bindings from the SVG, the same boundary rehype-sanitize enforces for markdown HTML.
 const BASE_CONFIG: Partial<MermaidConfig> = { startOnLoad: false, securityLevel: 'strict' }
 
 function useIsDarkMode(): boolean {
@@ -74,7 +71,7 @@ export function MermaidPending() {
   )
 }
 
-// Memoized so an unrelated token arriving elsewhere in a streaming message doesn't re-render or re-parse every diagram already on screen.
+// Memoized so a token arriving elsewhere in a streaming message doesn't re-parse diagrams on screen.
 export const MermaidDiagram = memo(function MermaidDiagram({ code }: { code: string }) {
   const { svg, error } = useMermaidSvg(code)
   if (error) return <MermaidError code={code} error={error} />

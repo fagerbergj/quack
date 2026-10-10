@@ -1,9 +1,10 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 import { configDefaults } from 'vitest/config'
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   test: {
     // render-check.browser.test.tsx needs Vitest browser mode (its own
     // vitest.render-check.config.ts, run via `npm run render-check`) - the
@@ -11,6 +12,7 @@ export default defineConfig({
     // Extends (not replaces) Vitest's own defaults - a bare array here would
     // drop dist/cypress/config-file exclusions too.
     exclude: [...configDefaults.exclude, 'src/render-check.browser.test.tsx'],
+    setupFiles: ['vitest.setup.ts'],
     coverage: {
       provider: 'v8',
       // lcov carries per-line hit counts for the changed-line coverage gate

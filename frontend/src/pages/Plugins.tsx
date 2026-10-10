@@ -7,13 +7,10 @@ import { relativeTime } from '../lib/relativeTime'
 export interface PluginsProps {
   navOpen: boolean
   onToggleNav: () => void
-  // Storybook/test seam (same pattern as MemoryTab's initialState): pre-seeds
-  // state and skips the live fetches, so a story can show empty/populated/
-  // error/behind states deterministically with no backend.
+  // Storybook/test seam: pre-seeds state and skips the live fetches.
   initialPlugins?: Plugin[]
   initialUpdates?: PluginUpdate[]
-  // Story-only seam for the action-error banner (severe#3) - never set by
-  // App.tsx; a real one only ever comes from a failed Update/Remove.
+  // Story-only seam; a real action error only comes from a failed Update/Remove.
   initialActionError?: string
   initialReload?: ReloadResult
 }
@@ -39,9 +36,6 @@ function refLabel(p: Plugin): string | undefined {
   return undefined
 }
 
-// useBusyRunner shares the mark-busy/clear-error/run/catch/unmark-busy shape
-// every per-row (and update-all) action follows, so handleRemove/handleUpdate/
-// handleUpdateAll are each one line instead of a repeated try/catch/finally.
 function useBusyRunner(setBusy: React.Dispatch<React.SetStateAction<Set<string>>>, setActionError: (e: string | null) => void, settle: (x: unknown, ok: boolean) => void) {
   return useCallback((key: string, action: () => Promise<unknown>, fallbackMsg: string) => {
     setBusy(prev => new Set(prev).add(key))
@@ -56,8 +50,6 @@ function useBusyRunner(setBusy: React.Dispatch<React.SetStateAction<Set<string>>
   }, [setBusy, setActionError, settle])
 }
 
-// The dynamic plugin registry page (epic #1427 P2): list, add, remove, and
-// update quack's skill plugins. Routed at /plugins - see App.tsx/router.ts.
 export default function Plugins({ navOpen, onToggleNav, initialPlugins, initialUpdates, initialActionError, initialReload }: PluginsProps) {
   const [plugins, setPlugins] = useState<Plugin[]>(initialPlugins ?? [])
   const [updates, setUpdates] = useState<Map<string, PluginUpdate>>(
@@ -65,15 +57,12 @@ export default function Plugins({ navOpen, onToggleNav, initialPlugins, initialU
   )
   const [loading, setLoading] = useState(initialPlugins === undefined)
   const [loadError, setLoadError] = useState<string | null>(null)
-  // actionError is a per-row Update/Remove/Update-all failure - separate from
-  // loadError so it never gates the list render (severe#3): the rows that
-  // ARE loaded stay visible, with the failure as a banner above them.
+  // Separate from loadError so a failed action never hides the rows that did load.
   const [actionError, setActionError] = useState<string | null>(initialActionError ?? null)
   const [busy, setBusy] = useState<Set<string>>(new Set())
   const [report, setReport] = useState<ReloadResult | null>(initialReload ?? null)
 
-  // silent: a post-action refresh - keeps the current list on screen instead
-  // of flashing back to the loading state.
+  // silent: a post-action refresh keeps the list on screen instead of flashing the loading state.
   const load = useCallback((opts?: { silent?: boolean }) => {
     if (initialPlugins !== undefined) return undefined // story/test seam
     let cancelled = false
@@ -183,8 +172,6 @@ function ErrorBanner({ message }: { message: string }) {
   )
 }
 
-// AddPluginForm owns the entry input's own state/submit/error - kept out of
-// Plugins itself so the parent's branch count stays low.
 function AddPluginForm({ onSettled }: { onSettled: (x: unknown, ok: boolean) => void }) {
   const [entry, setEntry] = useState('')
   const [addError, setAddError] = useState<string | null>(null)
@@ -295,8 +282,6 @@ function ReloadReportPanel({ result: { reload: r, aborted }, onDismiss }: { resu
   )
 }
 
-// PluginsBody: loading / error / empty / populated, each an exclusive branch
-// - split out of Plugins so its own complexity is counted separately.
 function PluginsBody({ loading, loadError, plugins, updates, busy, onUpdate, onRemove }: {
   loading: boolean
   loadError: string | null
@@ -338,9 +323,7 @@ function PluginRow({ plugin: p, update, busy, onUpdate, onRemove }: {
   onUpdate: () => void
   onRemove: () => void
 }) {
-  // Only a github row is REST-managed - local rows are config (plugins.seed)
-  // and re-seeded at boot, so "remove" would just come back; embedded never
-  // had a row to remove.
+  // Only github rows are REST-managed: local rows are re-seeded from config at boot, so a remove would come back.
   const removable = p.source === 'github'
   const behind = update?.behind ?? false
   const fetched = relativeTime(p.fetched_at)

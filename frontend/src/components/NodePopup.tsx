@@ -5,24 +5,21 @@ import { Sheet } from './Sheet'
 import { type DagNodeDef } from '../state/agentStream'
 import type { NodeState, QueuedMessage } from '../state/chatStore'
 
-// NodePopup (#384/#265, restyled for 0.9.0) is an extension of the main
-// chat, not a bespoke modal: the node's prompt renders through the same
-// BubbleHeader + AssistantText markdown treatment as every chat bubble, with no standalone header or section dividers - only a light overlay + close affordance to pop it out. Start/stop/pause live one click away in DagNode's ⋮ menu; this surface is for what needs the input/editor - queueing a message, editing a not-yet-started prompt, or answering a pending mid-node question.
+// An extension of the main chat, not a bespoke modal: the prompt renders as a chat bubble under a light overlay.
+// Start/stop/pause live in DagNode's ⋮ menu; this surface is for queueing, prompt editing and answering.
 interface Props {
   node: DagNodeDef
   state: NodeState
-  // Has this node produced at least one run, ever - disambiguates a
-  // never-dispatched 'queued' from a mid-run re-queue (#1480). Defaults to
-  // false (never dispatched) for callers that don't track it.
+  // Whether the node ever produced a run: tells a never-dispatched 'queued' from a mid-run re-queue.
+  // Defaults to false for callers that don't track it.
   dispatched?: boolean
   onClose: () => void
   onQueueMessage?: (nodeId: string, text: string) => void
   onEditQueuedMessage?: (nodeId: string, messageId: string, text: string) => void
   onRemoveQueuedMessage?: (nodeId: string, messageId: string) => void
   onEditTask?: (nodeId: string, task: string) => void
-  // Answers a parked node's mid-node question via the same path the main
-  // chat's QuestionBubble uses: chatStore.startNode, with the answer as
-  // NodeStartBody.content.
+  // Answers a parked node's question the same way QuestionBubble does: chatStore.startNode,
+  // with the answer as NodeStartBody.content.
   onAnswerQuestion?: (nodeId: string, answer: string) => void
 }
 
@@ -165,6 +162,7 @@ function InputRow({ answering, value, onChange, onSubmit }: {
     <div className="flex items-center gap-2">
       <input
         autoFocus={answering}
+        data-autofocus={answering || undefined}
         value={value}
         onChange={e => onChange(e.target.value)}
         onKeyDown={e => {
@@ -192,14 +190,13 @@ function InputRow({ answering, value, onChange, onSubmit }: {
   )
 }
 
-// notStarted/isLive: split out of NodePopup to keep its own complexity under
-// the lint ceiling - 'queued' also fires mid-run, at a worker/judge
-// admission re-wait (#1480), which dispatched disambiguates from a real first wait.
-function notStarted(status: NodeState['status'], dispatched: boolean): boolean {
-  return status === 'queued' && !dispatched
-}
-function isLive(status: NodeState['status'], dispatched: boolean): boolean {
-  return status === 'running' || (status === 'queued' && dispatched)
+// 'queued' also fires mid-run at a worker/judge admission re-wait; dispatched (the node has
+// produced a run) tells that apart from the node's real first wait.
+export function liveState(status: NodeState['status'], dispatched: boolean) {
+  return {
+    notStarted: status === 'queued' && !dispatched,
+    running: status === 'running' || (status === 'queued' && dispatched),
+  }
 }
 
 export function NodePopup({
@@ -210,11 +207,9 @@ export function NodePopup({
 
   // A node is editable-before-start only while still `queued` AND never
   // dispatched - matches the server's check (PATCH .../nodes/{id}).
-  const nodeNotStarted = notStarted(state.status, dispatched)
-  const running = isLive(state.status, dispatched)
-  // Answering resumes the node now; queueing waits for its next turn
-  // boundary - same input widget, chosen by which state the node is in.
-  // needs_input is the legacy DB/SSE spelling; paused/awaiting_input is the wire-normalized one the REST read model returns - both mean "parked on a question".
+  const { notStarted: nodeNotStarted, running } = liveState(state.status, dispatched)
+  // Answering resumes the node now; queueing waits for its next turn boundary. needs_input (legacy DB/SSE) and
+  // paused/awaiting_input (REST read model) both mean "parked on a question".
   const answering = (state.status === 'needs_input' || state.pauseReason === 'awaiting_input') && state.question != null
   const queue = state.queue ?? []
 
@@ -232,7 +227,7 @@ export function NodePopup({
   }
 
   return (
-    <Sheet onClose={onClose} className="relative max-w-2xl medium:max-h-[85dvh] medium:rounded-2xl bg-gray-50 dark:bg-gray-900 px-5 medium:pb-6 pt-2 space-y-2">
+    <Sheet onClose={onClose} aria-label={`Node ${node.agent}`} className="relative medium:max-h-[85dvh] medium:rounded-2xl bg-gray-50 dark:bg-gray-900 px-5 medium:pb-6 pt-2 space-y-2">
       {/* Close on its own row so it never overlaps the content bubbles. */}
       <div className="flex justify-end -mb-2">
         <button
@@ -266,9 +261,8 @@ export function NodePopup({
         <QueueSection nodeId={node.id} queue={queue} onEditQueuedMessage={onEditQueuedMessage} onRemoveQueuedMessage={onRemoveQueuedMessage} />
       )}
 
-      {/* One shared input: queues a message on a running node (delivered at
-          its next turn boundary), or answers a needs_input node (resumes
-          it immediately) - same widget, different destination. */}
+      {/* One shared input: queues on a running node (delivered at its next turn boundary)
+          or answers a needs_input node (resumes it immediately). */}
       {((running && onQueueMessage) || (answering && onAnswerQuestion)) && (
         <InputRow answering={answering} value={inputText} onChange={setInputText} onSubmit={submitInput} />
       )}

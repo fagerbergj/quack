@@ -1,15 +1,16 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { act, createElement } from 'react'
-import { createRoot } from 'react-dom/client'
+import { createElement } from 'react'
+import { act, cleanup, render } from '@testing-library/react'
 import chatSrc from './Chat.tsx?raw'
-import { liveDagFinalText, chatGitHubLink, EditableChatTitle, shouldQueueSubmit, mergeChatsPage, pollWhileVisible, pollPageExcludingPending, nextArchivedChats, chatBelongsInActiveList, resolveActiveChat } from './Chat'
-import type { DagTurnState } from '../state/chatStore'
+import { chatGitHubLink, EditableChatTitle, mergeChatsPage, pollWhileVisible, pollPageExcludingPending, nextArchivedChats, resolveActiveChat } from './Chat'
+import { dagAnswer, type DagTurnState } from '../state/chatStore'
 import type { ChatSummary } from '../api'
 
-// The live (streaming) turn's <TriggerMessage> is the exact turn in #1250's
-// screenshot - a full render harness (SSE + chatStore + DAG) doesn't exist
-// here and would be disproportionate for one prop, so this is a source-level regression guard: chatId must keep flowing, or its <artifacts> rows silently go back to being unclickable (#1252).
+afterEach(cleanup)
+
+// Source-level guard (a full SSE + store + DAG harness is overkill for one prop): the live TriggerMessage
+// must keep receiving chatId, or its <artifacts> rows go unclickable.
 describe('live-turn TriggerMessage chatId wiring (#1252)', () => {
   it('passes chatId through so live-turn artifact rows can open the panel', () => {
     const idx = chatSrc.indexOf('<TriggerMessage')
@@ -26,7 +27,6 @@ describe('foreign run on an open chat', () => {
   })
 })
 
-// dag builds a minimal single-node DagTurnState (that node is the terminal node).
 function dag(nodeAnswer: Record<string, string>): DagTurnState {
   return {
     planId: 'p',
@@ -38,28 +38,17 @@ function dag(nodeAnswer: Record<string, string>): DagTurnState {
   }
 }
 
-describe('shouldQueueSubmit - Composer send decision', () => {
-  it('queues while the chat is streaming', () => {
-    expect(shouldQueueSubmit(true)).toBe(true)
-  })
-
-  it('sends immediately when not streaming', () => {
-    expect(shouldQueueSubmit(false)).toBe(false)
-  })
-})
-
-// Regression: the answer bubble briefly showed the orchestrator's
-// mid-processing narration (top-level `live.text`) before flipping to the
-// terminal node's real answer. Fix: a DAG turn's answer text is ALWAYS the terminal node's nodeAnswer - orchestrator narration never occupies it, even as a fallback while the node answer is still empty.
-describe('liveDagFinalText - no mid-stream flip to orchestrator narration', () => {
+// A DAG turn's answer is always the terminal node's, never orchestrator narration, even while the node answer
+// is still empty; the fallback made the bubble flicker.
+describe('dagAnswer - no mid-stream flip to orchestrator narration', () => {
   it("is empty while the terminal node's answer hasn't arrived yet, even with orchestrator narration present", () => {
     const d = dag({})
-    expect(liveDagFinalText(d)).toBe('')
+    expect(dagAnswer(d).text).toBe('')
   })
 
   it("renders the terminal node's answer once set", () => {
     const d = dag({ a: 'the real answer' })
-    expect(liveDagFinalText(d)).toBe('the real answer')
+    expect(dagAnswer(d).text).toBe('the real answer')
   })
 
   it('streams every sink of a no-synthesizer plan as its own section, not the first sink alone', () => {
@@ -67,16 +56,14 @@ describe('liveDagFinalText - no mid-stream flip to orchestrator narration', () =
       ...dag({ a: 'A', b: 'B' }),
       nodes: [{ id: 'a', agent: 'researcher', task: 't', depends_on: [] }, { id: 'b', agent: 'researcher', task: 'u', depends_on: [] }],
     }
-    expect(liveDagFinalText(d)).toBe('## a\n\nA\n\n## b\n\nB')
+    expect(dagAnswer(d).text).toBe('## a\n\nA\n\n## b\n\nB')
   })
 })
 
-// This mirrors the `liveText` selection in Chat.tsx: for a DAG turn it must be
-// exactly liveDagFinalText(dag) - never `|| liveTopText`, which is what caused
-// the flicker (narration shown, then replaced by the real answer).
+// Mirrors Chat.tsx's `liveText` selection: never `|| liveTopText` for a DAG turn.
 describe('liveText selection (Chat.tsx local formula)', () => {
   function liveText(liveDag: DagTurnState | undefined, liveTopText: string): string {
-    return liveDag ? liveDagFinalText(liveDag) : liveTopText
+    return liveDag ? dagAnswer(liveDag).text : liveTopText
   }
 
   it('never shows orchestrator narration for a DAG turn, before or after the node answer arrives', () => {
@@ -93,8 +80,6 @@ describe('liveText selection (Chat.tsx local formula)', () => {
   })
 })
 
-// #738 test 4: a hidden document does not issue poll requests; making it visible resumes
-// polling (immediately, not on the next interval tick).
 describe('pollWhileVisible - background-tab polling', () => {
   function setHidden(hidden: boolean) {
     Object.defineProperty(document, 'hidden', { value: hidden, configurable: true })
@@ -161,8 +146,6 @@ function chat(overrides: Partial<ChatSummary>): ChatSummary {
   }
 }
 
-// Pins #382: the chat header exposes the originating GitHub PR/issue link for
-// a GitHub-originated chat, and nothing for a direct (local) chat.
 describe('chatGitHubLink', () => {
   it('exposes the url + repo for a GitHub-originated chat', () => {
     const c = chat({ id: 'github-acme-widgets-7', github_url: 'https://github.com/acme/widgets/issues/7', github_repo: 'acme/widgets' })
@@ -178,23 +161,10 @@ describe('chatGitHubLink', () => {
   })
 })
 
-// Drives the header's click-to-edit rename (0.9.0): clicking the title swaps
-// in an input; Enter/blur commits a real change via onRename (the caller wires
-// this to api.renameChat + a store update), Escape cancels, and a blank/unchanged draft is a silent no-op - never a rename to an empty title.
 describe('EditableChatTitle', () => {
-  let root: ReturnType<typeof createRoot> | undefined
-  let host: HTMLDivElement | undefined
+  let host: HTMLElement | undefined
 
-  afterEach(() => {
-    act(() => root?.unmount())
-    host?.remove()
-    root = undefined
-    host = undefined
-  })
-
-  // setInputValue goes through the native setter (bypassing React's value
-  // tracker) so the subsequent 'input' event is seen as a real change -
-  // setting .value directly is a no-op from React's perspective.
+  // Uses the native setter so React's value tracker sees the 'input' event as a real change.
   function setInputValue(input: HTMLInputElement, value: string) {
     const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!
     setter.call(input, value)
@@ -202,14 +172,7 @@ describe('EditableChatTitle', () => {
   }
 
   function renderTitle(props: { title: string; editable: boolean; onRename: (title: string) => void }) {
-    // @ts-expect-error react act environment flag
-    globalThis.IS_REACT_ACT_ENVIRONMENT = true
-    host = document.createElement('div')
-    document.body.appendChild(host)
-    root = createRoot(host)
-    act(() => {
-      root!.render(createElement(EditableChatTitle, props))
-    })
+    host = render(createElement(EditableChatTitle, props)).container
   }
 
   it('commits a renamed title on Enter', () => {
@@ -256,8 +219,6 @@ describe('EditableChatTitle', () => {
     expect(host!.querySelector('input')).toBeNull()
   })
 
-  // Audit #12: one line at every width so the compact header stays one row;
-  // the full text survives in the title attribute.
   it('truncates to one line and keeps the full title as a tooltip', () => {
     const title = 'A very long chat title that would otherwise truncate'
     renderTitle({ title, editable: false, onRename: vi.fn() })
@@ -268,13 +229,11 @@ describe('EditableChatTitle', () => {
   })
 })
 
-// #736 follow-up: the 5s sidebar poll must never shorten the chat list. A
-// poll that re-requests the loaded count comes back clamped to the server's
-// page cap once the user has paged past it (109 chats on the live instance), and replacing the list with that shorter response silently drops the tail - hence a poll that only ever fetches the first page and merges it.
+// A poll re-requesting the loaded count comes back clamped to the server's page cap, so replacing the list
+// would drop the tail; the poll fetches the first page and merges it.
 describe('mergeChatsPage - poll must never shorten the loaded list', () => {
   it('keeps every already-loaded chat when the polled page is smaller than what is loaded', () => {
-    // Stands in for a sidebar paged past the server's page cap (100): the
-    // poll's response (one page) is necessarily shorter than what's on screen.
+    // A sidebar paged past the server's page cap (100).
     const existing = Array.from({ length: 109 }, (_, i) => chat({ id: `c${i}` }))
     const page = existing.slice(0, 20)
 
@@ -300,9 +259,8 @@ describe('mergeChatsPage - poll must never shorten the loaded list', () => {
     expect(merged.map(c => c.id).sort()).toEqual(['c1', 'c2'])
   })
 
-  // Root cause: mergeChatsPage trusts `page` unconditionally (by design - that's
-  // what lets a real status change win). A status=active poll GET in flight when
-  // the user archives the open chat can resolve still listing it active (server hadn't processed the PATCH yet) - merged straight in, it undoes the optimistic removal. The fix is pollPageExcludingPending, applied to the page before mergeChatsPage - exactly what Chat.tsx's poll effect now does.
+  // mergeChatsPage trusts `page` by design (a real status change must win), so a poll in flight during the
+  // archive PATCH would undo the optimistic removal unless pollPageExcludingPending filters it first.
   it('a stale in-flight poll page no longer resurrects a chat just optimistically archived', () => {
     const afterOptimisticArchive = [chat({ id: 'c2' })] // c1 removed locally by handleArchiveChat
     const staleActivePage = [chat({ id: 'c1' }), chat({ id: 'c2' })] // server hadn't caught up yet
@@ -324,9 +282,7 @@ describe('pollPageExcludingPending', () => {
   })
 })
 
-// #809 follow-up: archiving a chat before the Archived section has ever been
-// expanded must not seed archivedChats - that flips it from undefined
-// (unfetched) to a partial list, so handleExpandArchived's undefined check never fires and the section's real first page (which would include the newly archived chat) never loads.
+// Seeding an unfetched archivedChats would make handleExpandArchived's undefined check skip the real first page.
 describe('nextArchivedChats - archive/unarchive transitions', () => {
   it('leaves archivedChats undefined when archiving before the section has ever loaded', () => {
     expect(nextArchivedChats(undefined, chat({ id: 'c1' }), true)).toBeUndefined()
@@ -347,22 +303,7 @@ describe('nextArchivedChats - archive/unarchive transitions', () => {
   })
 })
 
-// Root cause of "a focused archived chat appears active": the getChat effect
-// used to add whatever it fetched into the active-scoped `chats` list
-// unconditionally, so opening an archived chat (its own URL, or a click from the Archived section) resurrected it into the sidebar's active groups and the header's active chrome. chatBelongsInActiveList is the fix's gate.
-describe('chatBelongsInActiveList', () => {
-  it('is true for an active chat', () => {
-    expect(chatBelongsInActiveList(chat({ id: 'c1', archived: false }))).toBe(true)
-  })
-
-  it('is false for an archived chat - it must never join the active list', () => {
-    expect(chatBelongsInActiveList(chat({ id: 'c1', archived: true }))).toBe(false)
-  })
-})
-
-// resolveActiveChat is the focused header/composer's source of truth for
-// `archived` - it must resolve an archived chat's metadata even though
-// chatBelongsInActiveList keeps it out of `chats` (the active-scoped list).
+// The header/composer read `archived` from here, so an archived chat must resolve though absent from `chats`.
 describe('resolveActiveChat', () => {
   it('prefers the active-scoped `chats` list when the chat is there', () => {
     const inList = chat({ id: 'c1', title: 'from list' })

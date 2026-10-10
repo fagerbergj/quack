@@ -13,14 +13,11 @@ import markdown from 'highlight.js/lib/languages/markdown'
 import sql from 'highlight.js/lib/languages/sql'
 import diff from 'highlight.js/lib/languages/diff'
 
-// rehype-highlight statically imports lowlight's `common` set (37 grammars,
-// 156 kB gzip) with no way to shrink it via options (#1297). Agents only ever
-// emit these 11 languages, so registering just them is the whole fix.
+// rehype-highlight statically imports lowlight's `common` set (37 grammars, 156 kB gzip) with no option to shrink it;
+// agents only emit these 11 languages, so register just them.
 const lowlight = createLowlight({ go, typescript, javascript, python, bash, json, yaml, xml, markdown, sql, diff })
 
-// codeText concatenates a hast node's text descendants - same shape as
-// AgentParts.tsx's hastText, pulled local rather than adding hast-util-to-text
-// as another dependency for one string-join.
+// Same shape as AgentParts.tsx's hastText; kept local rather than adding hast-util-to-text for one string-join.
 function codeText(node: Element): string {
   return node.children.map(c => (c.type === 'text' ? (c as Text).value : codeText(c as Element))).join('')
 }

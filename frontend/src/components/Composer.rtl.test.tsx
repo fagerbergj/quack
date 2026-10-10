@@ -4,9 +4,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Composer } from './Composer'
 
-// jsdom has no matchMedia - stub it the way Composer.test.ts does; the
-// matches flag drives both useCompact() ((max-width: 599px)) and the
-// narrow-viewport placeholder ((max-width: 639px)).
+// `matches` drives both the compact (599px) and narrow-placeholder (639px) queries.
 function mockMatchMedia(narrow: boolean) {
   vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
     matches: narrow,
@@ -21,9 +19,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-// #1174: below the 600px medium size class the composer is one compact
-// pill - 44x44 icon buttons (NN/g's touch-target floor), no full-text
-// action buttons, no physical left/right utilities in the row.
+// 44x44 is the touch-target floor for the compact pill's icon buttons.
 describe('Composer compact pill', () => {
   it('compact send is a 44x44 icon button named via aria-label, not text', () => {
     mockMatchMedia(true)
@@ -32,9 +28,7 @@ describe('Composer compact pill', () => {
     expect(send.className).toContain('h-11')
     expect(send.className).toContain('w-11')
     expect(send.getAttribute('aria-label')).toBe('Send')
-    // The visible content is the decorative glyph only - no letters, so the
-    // accessible name above can only come from aria-label (owner rule: no
-    // full-text action buttons where an icon does).
+    // No letters in the visible content, so the accessible name can only come from aria-label.
     expect(send.textContent ?? '').not.toMatch(/\p{L}/u)
   })
 
@@ -55,16 +49,14 @@ describe('Composer compact pill', () => {
     expect(stop.className).toContain('h-11')
     expect(stop.className).toContain('w-11')
     expect(stop.className).toContain('rounded-full')
-    // Follow-up queueing must stay reachable on mobile - the queued chip
-    // depends on it.
+    // Follow-up queueing must stay reachable on mobile.
     const queue = screen.getByRole('button', { name: 'Queue' })
     expect(queue.className).toContain('h-11')
     expect(queue.className).toContain('w-11')
   })
 
   it('the compact row uses no physical left/right utilities under dir=rtl', () => {
-    // jsdom computes no layout - this pins the class strings; the visual
-    // dir=rtl check is the manual browser step.
+    // jsdom has no layout, so this pins class strings; the visual rtl check is manual.
     mockMatchMedia(true)
     render(
       <div dir="rtl">
@@ -86,8 +78,7 @@ describe('Composer compact pill', () => {
   })
 
   it('renders no stray text from a bare JS comment above the compact row', () => {
-    // Regression: a `//` line inside JSX children isn't a comment, it's a
-    // text node - catches it without pinning the wrapper's pixel height.
+    // A `//` line inside JSX children renders as a text node, not a comment.
     mockMatchMedia(true)
     const { container } = render(<Composer disabled={false} streaming={false} onSubmit={() => {}} onStop={() => {}} />)
     expect(container.textContent ?? '').not.toContain('//')
@@ -113,7 +104,6 @@ describe('Composer compact pill', () => {
     const details = chip.closest('details')
     expect(details).not.toBeNull()
     expect(details!.open).toBe(false)
-    // <details> is DOM-handled: tapping the summary opens the chip.
     const user = userEvent.setup()
     await user.click(chip)
     expect(details!.open).toBe(true)
@@ -126,9 +116,7 @@ describe('Composer compact pill', () => {
   })
 })
 
-// Audit finding 8: the empty /chat route (no chat selected) must not read as
-// dead - the composer stays enabled and invites the first message, which is
-// what creates the chat (Chat.tsx's submitMessage).
+// The empty /chat route must not read as dead: the first message is what creates the chat.
 describe('Composer noChat (empty /chat route, audit finding 8)', () => {
   it('stays enabled with an "Ask a question" placeholder, not the old disabled copy', () => {
     mockMatchMedia(false)
@@ -148,9 +136,7 @@ describe('Composer noChat (empty /chat route, audit finding 8)', () => {
   })
 })
 
-// Review finding on #1350: onSubmit used to be fired-and-forgotten, so a
-// rejection (e.g. the empty-route chat create failing) both erased the
-// draft and left an unhandled rejection. submit() must restore it instead.
+// A rejected onSubmit (e.g. chat create failing) must not erase the draft or leave an unhandled rejection.
 describe('Composer restores the draft when onSubmit rejects', () => {
   it('keeps the typed text in the input after a rejected send', async () => {
     mockMatchMedia(false)
@@ -160,10 +146,8 @@ describe('Composer restores the draft when onSubmit rejects', () => {
     const user = userEvent.setup()
     const input = screen.getByPlaceholderText('Ask a question') as HTMLTextAreaElement
     await user.type(input, 'hello{Enter}')
-    // Cleared immediately for a responsive send...
     expect(input.value).toBe('')
     reject(new Error('boom'))
-    // ...then restored once the send actually failed.
     await waitFor(() => expect(input.value).toBe('hello'))
   })
 })

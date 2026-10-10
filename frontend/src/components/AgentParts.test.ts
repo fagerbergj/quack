@@ -109,9 +109,8 @@ describe('run-model reducers', () => {
     expect(runs).toBe(before)
   })
 
-  // #379: append/fill used to copy `run.activity` on every event - O(N^2)
-  // over a run. They now mutate in place; pin that the array REFERENCE never
-  // changes across N events, which only O(1) per-event work allows (a copy would change it each time).
+  // Pins that the activity array reference never changes across N events: a per-event copy would make
+  // a run O(N^2).
   it('appends/fills activity in place - no per-event copy of prior entries', () => {
     let runs: AgentRun[] = startRun([], { runId: 'r1', agent: 'w', stage: 'worker' })
     const activityRef = run(runs, 'r1').activity
@@ -123,9 +122,7 @@ describe('run-model reducers', () => {
     }
     const finalRun = run(runs, 'r1')
     expect(finalRun.activity).toBe(activityRef) // same array throughout - never re-copied
-    // #959: thinking now folds into the run's most recent thinking item across
-    // intervening tool calls, so N tool-call entries + a single folded thinking
-    // entry, not N separate fragments.
+    // Thinking folds into the most recent thinking item across tool calls: N tool entries plus one thinking.
     expect(finalRun.activity).toHaveLength(N + 1)
     const thinkingEntries = finalRun.activity.filter(a => a.kind === 'thinking')
     expect(thinkingEntries).toHaveLength(1)
@@ -133,8 +130,7 @@ describe('run-model reducers', () => {
   })
 })
 
-// #746 item 6 - tool rows dropped their copy button as noise (the row still
-// expands to ToolCallView's full detail on click).
+// Tool rows carry no copy button; the row still expands to ToolCallView's detail.
 describe('ToolBlock - no copy button (#746 item 6)', () => {
   const tool: ToolCall = { callId: 'c1', name: 'run_command', args: { command: 'go test ./...' }, result: { exit_code: 0 }, done: true }
 
@@ -160,8 +156,7 @@ describe('ActivityList - compaction row', () => {
   })
 })
 
-// Audit #14: the collapsed tool row reads as "<verb> <target>", with the
-// raw tool id demoted to the tooltip.
+// The collapsed row reads "<verb> <target>"; the raw tool id lives in the tooltip.
 describe('ToolBlock - human-readable row', () => {
   it('shows the action line and keeps the tool id as the title', () => {
     const tool: ToolCall = { callId: 'c1', name: 'web_fetch', args: { url: 'https://x.test/a' }, result: 'ok', done: true }
