@@ -17,10 +17,8 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// TestConfigHasWorkspaceClone pins the predicate serve.buildGateJudge uses to
-// pick a node's judge tool set (#1485): an ACP node with a jail configured has
-// a clone; a native node, or a deployment with no jail at all, never does -
-// regardless of agent name.
+// TestConfigHasWorkspaceClone: an ACP node with a jail has a clone; a native node or a jail-less
+// deployment never does, regardless of agent name.
 func TestConfigHasWorkspaceClone(t *testing.T) {
 	jail, err := workspace.NewJail(t.TempDir())
 	if err != nil {
@@ -46,11 +44,8 @@ func TestConfigHasWorkspaceClone(t *testing.T) {
 	}
 }
 
-// TestRunGatedRefine_RefreshJudgeBindingHasReadToolsFollowsNode proves prepareJudge
-// passes the ROUND'S OWN node cfg.HasWorkspaceClone() into RefreshJudgeBinding, not
-// a fixed deployment-wide value - a code node keeps read-tool eligibility, a
-// research node (no clone) never gets it, even though gates.judge builds one
-// judge model shared by every node (#1485).
+// TestRunGatedRefine_RefreshJudgeBindingHasReadToolsFollowsNode: the shared judge model gets read-tool
+// eligibility per round from that node's own HasWorkspaceClone.
 func TestRunGatedRefine_RefreshJudgeBindingHasReadToolsFollowsNode(t *testing.T) {
 	jail, err := workspace.NewJail(t.TempDir())
 	if err != nil {
@@ -111,9 +106,8 @@ func TestRunGatedRefine_RefreshJudgeBindingHasReadToolsFollowsNode(t *testing.T)
 	}
 }
 
-// TestRunGatedRefine_RefreshesJudgeBindingEachRound proves prepareJudge calls
-// Config.RefreshJudgeBinding once per judge round with system/judge's resolved
-// artifact, and applies its returned thinking_level to that round (#1421 P2).
+// TestRunGatedRefine_RefreshesJudgeBindingEachRound: RefreshJudgeBinding runs once per judge round with
+// the resolved system/judge, and its thinking_level applies to that round.
 func TestRunGatedRefine_RefreshesJudgeBindingEachRound(t *testing.T) {
 	spy := &judgeModelCoordsSpy{}
 	worker, err := llmagent.New(llmagent.Config{
@@ -165,9 +159,8 @@ func TestRunGatedRefine_RefreshesJudgeBindingEachRound(t *testing.T) {
 	}
 }
 
-// TestRunGatedRefine_JudgeArtifactsAndPlugins: the judge round's
-// llm.call carries system/judge plus whichever rubric/constitution artifacts
-// this node resolved, and the plugin registry rows in scope for the round.
+// TestRunGatedRefine_JudgeArtifactsAndPlugins: the judge's llm.call carries system/judge, the node's
+// resolved rubric/constitution artifacts, and the plugin rows in scope.
 func TestRunGatedRefine_JudgeArtifactsAndPlugins(t *testing.T) {
 	spy := &judgeModelCoordsSpy{}
 	worker, err := llmagent.New(llmagent.Config{

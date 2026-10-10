@@ -1,6 +1,5 @@
-// Package stream defines Quack's wire-level event vocabulary and translates the gate's ADK session events into it.
-// Shared by REST and MCP. See frontend/src/state/agentStream.ts for the client contract.
-// The model is flat: each node runs a sequence of agent invocations (worker, judge, revise), delimited by agent_start/agent_complete with run_id + stage. Activity references that run_id. Client groups by node, pairs tools by call_id.
+// Package stream defines Quack's wire-level event vocabulary and translates gate ADK session events into it.
+// Client contract: frontend/src/state/agentStream.ts; clients group by node and pair tools by call_id.
 package stream
 
 import (
@@ -22,7 +21,7 @@ const (
 	StageRevise = "revise"
 )
 
-// Gate marker tool names: the gate yields these as function-response parts to delimit each run. keepalive is a heartbeat; the Translator drops it.
+// Gate marker tool names delimit each run as function-response parts; the Translator drops keepalive.
 const (
 	agentStartTool    = "record_agent_start"
 	agentCompleteTool = "record_agent_complete"
@@ -55,19 +54,15 @@ const (
 	EventNodePaused     = "node_paused"
 	EventNodeSteered    = "node_steered"
 
-	// EventDeliveryResult reports one staged item's outward-boundary outcome
-	// (push + PR/review/comment) - durable, independent of the judge verdict, so a
-	// phantom "the gate passed" success is distinguishable from an actual delivery failure. See DeliveryResultData.
+	// EventDeliveryResult reports one staged item's push/PR/review outcome, independent of the judge verdict,
+	// so a passed gate is distinguishable from a failed delivery.
 	EventDeliveryResult = "delivery_result"
 
-	// EventCompaction reports a worker node's session being compacted by
-	// adk/v2's native runner-level compaction (internal/agent's Compaction) -
-	// observed by decorating the node's session.Service, since neither native strategy ever yields the summary into the runner's event stream (see internal/agent/a2a.go's compactionSessions).
+	// EventCompaction reports a worker session compacted by adk's runner, observed via a decorated
+	// session.Service since neither native strategy yields the summary into the event stream.
 	EventCompaction = "compaction"
 
-	// EventArtifactRevision reports one artifact revision written by a judge
-	// round (#1090 §4.8/#1092) - emitted before the round's
-	// EventArtifactJudgeRound, so a client sees the revision exist first.
+	// EventArtifactRevision is emitted before the round's EventArtifactJudgeRound, so the revision exists first.
 	EventArtifactRevision = "artifact_revision"
 	// EventArtifactJudgeRound reports the judge_round record a round wrote,
 	// referencing the revisions EventArtifactRevision already announced.
@@ -135,7 +130,8 @@ type AgentToolResultData struct {
 	Result any    `json:"result"`
 }
 
-// Closes an agent run. Fields vary by stage: model/usage for worker/revise; score/passed/feedback for judge; status/reason for abnormal completion.
+// AgentCompleteData closes an agent run: model/usage for worker/revise, score/passed/feedback for judge,
+// status/reason for abnormal completion.
 type AgentCompleteData struct {
 	NodeID string `json:"node_id,omitempty"`
 	RunID  string `json:"run_id"`
@@ -148,30 +144,24 @@ type AgentCompleteData struct {
 	ReasoningTokens  int32  `json:"reasoning_tokens,omitempty"`
 	TotalTokens      int32  `json:"total_tokens,omitempty"`
 	CachedTokens     int32  `json:"cached_tokens,omitempty"` // subset of PromptTokens served from the model's prompt cache
-	// ContextTokens is the LAST measured prompt-token count of this run, not
-	// summed across its tool-call round trips like PromptTokens - the model's
-	// actual context occupancy rather than the round's cumulative spend.
+	// ContextTokens is the LAST measured prompt-token count (context occupancy), not summed like PromptTokens.
 	ContextTokens int32  `json:"context_tokens,omitempty"`
 	FinishReason  string `json:"finish_reason,omitempty"`
 
 	Score    float64 `json:"score,omitempty"`    // judge
 	Passed   bool    `json:"passed,omitempty"`   // judge
-	Feedback string  `json:"feedback,omitempty"` // judge; rendered one-paragraph summary, kept for one release so the UI does not blank (#941)
-	// Envelope: the structured verdict (#941) - deterministic/judge failures
-	// with definition/bands/anchor, and passing criteria. any, not a named
-	// type, to avoid stream <- vetting import cycle; always a *vetting envelope value or nil.
+	Feedback string  `json:"feedback,omitempty"` // judge; rendered one-paragraph summary, kept for one release so the UI does not blank
+	// Envelope is the structured verdict: a *vetting envelope or nil, typed any to avoid an import cycle.
 	Envelope any `json:"envelope,omitempty"` // judge
 
 	Status string `json:"status,omitempty"` // "" ok | "unavailable" (judge unreachable) | "no_verdict" (judge ran, never committed one)
 	Reason string `json:"reason,omitempty"`
 
-	// FinishedAtMs is the server wall-clock (epoch ms) the run closed, stamped once
-	// at emission - so a replayed/reconnected client computes this run's duration
-	// from two server timestamps instead of "now" at replay time.
+	// FinishedAtMs is the server close time (epoch ms), so a replaying client computes duration from server clocks.
 	FinishedAtMs int64 `json:"finished_at_ms,omitempty"`
 }
 
-// Forces judge runs to always serialize score/passed/feedback even at zero values. omitempty would drop 0.0/passed=false.
+// MarshalJSON keeps judge score/passed/feedback even at zero values, which omitempty would drop.
 func (d AgentCompleteData) MarshalJSON() ([]byte, error) {
 	type alias AgentCompleteData // shed the MarshalJSON method to avoid recursion
 	b, err := json.Marshal(alias(d))
@@ -242,7 +232,7 @@ type NodeQueuedData struct {
 }
 
 // NodeQueued builds a node_queued event, emitted at admission-attempt time so
-// a node waiting on capacity (#1007) reads as "waiting", not hung.
+// a node waiting on capacity reads as "waiting", not hung.
 func NodeQueued(nodeID string) SSEEvent {
 	return SSEEvent{Name: EventNodeQueued, Data: NodeQueuedData{NodeID: nodeID}}
 }
@@ -266,9 +256,7 @@ type NodeStartData struct {
 	StartedAtMs int64 `json:"started_at_ms,omitempty"`
 	// TraceID cross-references the OTel trace for this node; "" when otel is disabled.
 	TraceID string `json:"trace_id,omitempty"`
-	// ResumedFrom: non-empty when this dispatch reused an existing node id -
-	// the prior context/session it continues on. Drives the node card's
-	// "continues" line; "" for a freshly minted node.
+	// ResumedFrom is the prior node id this dispatch continues on; "" for a freshly minted node.
 	ResumedFrom string `json:"resumed_from,omitempty"`
 }
 
@@ -293,9 +281,7 @@ type NodeDoneData struct {
 	// FinishedAtMs is the server wall-clock (epoch ms) the node finished - see
 	// AgentCompleteData.FinishedAtMs.
 	FinishedAtMs int64 `json:"finished_at_ms,omitempty"`
-	// ContextID: this node's resumable transport context/session id at
-	// completion - "" for a native node (see dag_node's own ContextID
-	// instead) or an ACP node that never established one.
+	// ContextID is the node's resumable transport context id at completion; "" for native nodes or ACP without one.
 	ContextID string `json:"context_id,omitempty"`
 }
 
@@ -329,7 +315,7 @@ func NodeCancelled(nodeID string) SSEEvent {
 	return SSEEvent{Name: EventNodeCancelled, Data: NodeCancelledData{NodeID: nodeID, FinishedAtMs: time.Now().UnixMilli()}}
 }
 
-// `node_steered` event payload: the node's queued messages were delivered at its next turn boundary. A fresh node_start…node_done follows.
+// NodeSteeredData: queued messages were delivered at the node's next turn boundary; a fresh node_start follows.
 type NodeSteeredData struct {
 	NodeID   string `json:"node_id"`
 	Guidance string `json:"guidance"`
@@ -350,7 +336,7 @@ func NodePaused(nodeID string) SSEEvent {
 	return SSEEvent{Name: EventNodePaused, Data: NodePausedData{NodeID: nodeID}}
 }
 
-// `delivery_result` event payload: one staged item's outward-boundary outcome as the delivering extension observed it. Never the worker's self-report.
+// DeliveryResultData is one staged item's outcome as the delivering extension observed it, never the worker's.
 type DeliveryResultData struct {
 	NodeID  string `json:"node_id"`
 	Outcome string `json:"outcome"` // delivered | draft | failed | none
@@ -368,7 +354,7 @@ func DeliveryResult(nodeID, outcome, kind, url, errMsg, traceID string) SSEEvent
 	}}
 }
 
-// ArtifactRevisionData: `artifact_revision` event payload (#1090 §4.8).
+// ArtifactRevisionData: `artifact_revision` event payload.
 type ArtifactRevisionData struct {
 	ID       string `json:"id"`
 	Revision int    `json:"revision"`
@@ -384,7 +370,7 @@ type ScoredRef struct {
 	Revision   int    `json:"revision"`
 }
 
-// ArtifactJudgeRoundData: `artifact_judge_round` event payload (#1090 §4.8).
+// ArtifactJudgeRoundData: `artifact_judge_round` event payload.
 type ArtifactJudgeRoundData struct {
 	ID     string      `json:"id"`
 	Passed bool        `json:"passed"`
@@ -397,9 +383,8 @@ type ChatTitleData struct {
 	Title string `json:"title"`
 }
 
-// CompactionData: `compaction` event payload. Fields are exactly what
-// adk/v2's session.EventCompaction and the summarizer's UsageMetadata expose
-// on the compaction Event itself - no invented before/after conversation size (adk does not report that; see internal/agent/compaction.go).
+// CompactionData carries exactly what adk's EventCompaction and UsageMetadata expose; adk reports no
+// before/after size.
 type CompactionData struct {
 	NodeID string `json:"node_id,omitempty"`
 	// RunID is the adk invocation that triggered the compaction, not a quack
@@ -411,12 +396,8 @@ type CompactionData struct {
 	SummaryOutputTokens int32  `json:"summary_output_tokens,omitempty"`
 }
 
-// Compaction builds a compaction event. start/end zero values are omitted
-// rather than sent as the epoch, and likewise for zero token counts - adk
-// leaves both unset when it has nothing to report (see internal/telemetry/compaction.go in the vendored module).
-// RunIDFromBranch extracts quack's run id from an ADK branch segment of the
-// form "<name>@<runID>" (workflow.WithUseSubBranch's shape) - the one
-// producer both dag.segRun and compaction event-emission key off of, so a compaction row's run id always matches its round's agent_start run id.
+// RunIDFromBranch extracts the run id from an ADK branch segment "<name>@<runID>", so a compaction row's
+// run id matches its round's agent_start run id.
 func RunIDFromBranch(branch string) string {
 	if i := strings.Index(branch, "@"); i >= 0 {
 		return branch[i+1:]
@@ -424,6 +405,7 @@ func RunIDFromBranch(branch string) string {
 	return ""
 }
 
+// Compaction builds a compaction event; zero times and token counts are omitted, as adk leaves them unset.
 func Compaction(nodeID, runID string, start, end time.Time, inputTokens, outputTokens int32) SSEEvent {
 	d := CompactionData{NodeID: nodeID, RunID: runID, SummaryInputTokens: inputTokens, SummaryOutputTokens: outputTokens}
 	if !start.IsZero() {
@@ -461,11 +443,8 @@ func NodeStart(nodeID, agent string) SSEEvent {
 	}}
 }
 
-// WithTrace stamps a trace id onto a wire event's payload post-construction,
-// same pattern as ScopeToNode/ScopeToRun. Events without a TraceID field are
-// unchanged. Only the raw id travels the wire - never a rendered URL, so a
-// durable/replayed event stays correct even after the operator's trace
-// backend or URL template changes (the frontend renders the link at read time).
+// WithTrace stamps a trace id onto payloads with a TraceID field. Only the raw id travels, never a URL,
+// so a replayed event survives trace-backend changes.
 func WithTrace(ev SSEEvent, traceID string) SSEEvent {
 	if traceID == "" {
 		return ev
@@ -484,9 +463,7 @@ func WithTrace(ev SSEEvent, traceID string) SSEEvent {
 	return ev
 }
 
-// WithResumedFrom stamps a node_start event's ResumedFrom post-construction,
-// same pattern as WithTrace - keeps NodeStart's existing two-arg call sites
-// (tests included) unchanged for the common fresh-node case.
+// WithResumedFrom stamps a node_start event's ResumedFrom, keeping NodeStart two-arg for fresh nodes.
 func WithResumedFrom(ev SSEEvent, resumedFrom string) SSEEvent {
 	if resumedFrom == "" {
 		return ev
@@ -498,11 +475,8 @@ func WithResumedFrom(ev SSEEvent, resumedFrom string) SSEEvent {
 	return ev
 }
 
-// WithContextID stamps a node_failed/node_cancelled event's ContextID
-// post-construction, same pattern as WithResumedFrom/WithTrace - a node can
-// establish a real transport session before it ultimately fails or is
-// cancelled, and that id must reach the dag_node record the same way
-// NodeDoneData's already does (see runlog.PersistNodeEvent).
+// WithContextID stamps a node_failed/node_cancelled ContextID: a node can open a transport session before
+// failing, and that id must reach the dag_node record like NodeDoneData's does.
 func WithContextID(ev SSEEvent, contextID string) SSEEvent {
 	if contextID == "" {
 		return ev
@@ -518,17 +492,14 @@ func WithContextID(ev SSEEvent, contextID string) SSEEvent {
 	return ev
 }
 
-// NodeDone builds a node_done event, stamping FinishedAtMs now - the live
-// executor's choke point. runlog.SynthesizeChatEvents (ledger-fold
-// reconstruction) builds its own NodeDoneData instead, with the source
-// ledger entry's original At, not this call's wall-clock.
+// NodeDone stamps FinishedAtMs now; runlog.SynthesizeChatEvents builds its own with the ledger entry's At.
 func NodeDone(nodeID string, data NodeDoneData) SSEEvent {
 	data.NodeID = nodeID
 	data.FinishedAtMs = time.Now().UnixMilli()
 	return SSEEvent{Name: EventNodeDone, Data: data}
 }
 
-// `node_needs_input` payload: node produced no answer; paused for human steering. interrupt_id must be echoed back on resolve.
+// NodeNeedsInputData: the node produced no answer and paused for steering; echo interrupt_id on resolve.
 type NodeNeedsInputData struct {
 	NodeID      string `json:"node_id"`
 	InterruptID string `json:"interrupt_id"`
@@ -590,12 +561,11 @@ func Errorf(msg string) SSEEvent { return SSEEvent{Name: EventError, Data: Error
 // Done builds the terminal done event.
 func Done() SSEEvent { return SSEEvent{Name: EventDone, Data: struct{}{}} }
 
-// The v1 gate emitted marker FunctionResponses; the v2 gate no longer does. Builder consts stay: the executor still filters defensively.
-
 // Builds a reasoning part the gate yields directly (e.g. judge thinking re-emitted from its isolated run).
 func ThinkingPart(text string) *genai.Part { return &genai.Part{Thought: true, Text: text} }
 
-// Reports whether name is a reserved gate-internal tool name. Hidden from the worker's session view (ADK errors on orphan FunctionResponses).
+// IsGateMarkerName reports a reserved gate-internal tool name, hidden from the worker session
+// (ADK errors on orphan FunctionResponses).
 func IsGateMarkerName(name string) bool {
 	switch name {
 	case agentStartTool, agentCompleteTool, keepaliveTool:
@@ -606,7 +576,8 @@ func IsGateMarkerName(name string) bool {
 
 // ── stateful translation ───
 
-// Converts one node's gate event stream into wire events. Tracks current run for correct attribution. Not safe for concurrent use.
+// Translator converts one node's gate event stream into wire events, tracking the current run.
+// Not safe for concurrent use.
 type Translator struct {
 	curRun   string
 	curStage string
@@ -622,9 +593,8 @@ type Translator struct {
 	seenToolCalls SeenCalls
 }
 
-// SeenCalls tracks call_ids already emitted as agent_tool_call, so a stream
-// translator can collapse ACP's start+completion FunctionCall parts into one event per call.
-// Empty IDs are never deduped: genai.FunctionCall.ID can be empty, and the frontend treats callId=="" as its own non-upsertable case - deduping on "" would drop distinct legitimate empty-id calls.
+// SeenCalls collapses ACP's start+completion FunctionCall parts into one agent_tool_call per call_id.
+// Empty ids are never deduped: the frontend treats callId=="" as distinct, non-upsertable calls.
 type SeenCalls map[string]bool
 
 // Add records callID and reports whether it was already seen (so the caller
@@ -656,8 +626,22 @@ func (t *Translator) Event(ev *session.Event) []SSEEvent {
 	if ev == nil {
 		return nil
 	}
+	t.recordUsage(ev)
+	if ev.Content == nil {
+		return nil
+	}
+	var out []SSEEvent
+	for _, p := range ev.Content.Parts {
+		if p != nil {
+			out = t.appendPart(out, p)
+		}
+	}
+	return out
+}
 
-	// Accumulate usage/model/finish. Reported on agent_complete (marker-delimited runs) or via Usage() (un-gated sessions). Counters reset on new run.
+// recordUsage accumulates per-run counters; they go out on agent_complete (marker runs) or via
+// Usage() (un-gated sessions).
+func (t *Translator) recordUsage(ev *session.Event) {
 	if ev.UsageMetadata != nil {
 		t.prompt += ev.UsageMetadata.PromptTokenCount
 		t.completion += ev.UsageMetadata.CandidatesTokenCount
@@ -671,71 +655,60 @@ func (t *Translator) Event(ev *session.Event) []SSEEvent {
 	if ev.FinishReason != "" && ev.FinishReason != genai.FinishReasonUnspecified {
 		t.finish = string(ev.FinishReason)
 	}
+}
 
-	if ev.Content == nil {
-		return nil
-	}
+func (t *Translator) appendPart(out []SSEEvent, p *genai.Part) []SSEEvent {
+	switch {
+	case p.FunctionResponse != nil && p.FunctionResponse.Name == agentStartTool:
+		r := p.FunctionResponse.Response
+		t.curRun = asString(r["run_id"])
+		t.curStage = asString(r["stage"])
+		t.curRound = asInt(r["round"])
+		t.curAgent = asString(r["agent"])
+		t.prompt, t.completion, t.reasoning, t.total, t.cached = 0, 0, 0, 0, 0
+		t.model, t.finish = "", ""
+		out = append(out, SSEEvent{Name: EventAgentStart, Data: AgentStartData{
+			RunID: t.curRun, Agent: t.curAgent, Stage: t.curStage, Round: t.curRound,
+		}})
 
-	var out []SSEEvent
-	for _, p := range ev.Content.Parts {
-		if p == nil {
-			continue
+	case p.FunctionResponse != nil && p.FunctionResponse.Name == agentCompleteTool:
+		r := p.FunctionResponse.Response
+		d := AgentCompleteData{
+			RunID: asString(r["run_id"]), Stage: asString(r["stage"]), Round: asInt(r["round"]),
+			Score: asFloat(r["score"]), Passed: asBool(r["passed"]),
+			Feedback: asString(r["feedback"]), Status: asString(r["status"]), Reason: asString(r["reason"]),
+			Model: t.model, PromptTokens: t.prompt, CompletionTokens: t.completion,
+			ReasoningTokens: t.reasoning, TotalTokens: t.total, CachedTokens: t.cached, FinishReason: t.finish,
+			FinishedAtMs: time.Now().UnixMilli(),
 		}
-		switch {
-		case p.FunctionResponse != nil && p.FunctionResponse.Name == agentStartTool:
-			r := p.FunctionResponse.Response
-			t.curRun = asString(r["run_id"])
-			t.curStage = asString(r["stage"])
-			t.curRound = asInt(r["round"])
-			t.curAgent = asString(r["agent"])
-			t.prompt, t.completion, t.reasoning, t.total, t.cached = 0, 0, 0, 0, 0
-			t.model, t.finish = "", ""
-			out = append(out, SSEEvent{Name: EventAgentStart, Data: AgentStartData{
-				RunID: t.curRun, Agent: t.curAgent, Stage: t.curStage, Round: t.curRound,
-			}})
+		out = append(out, SSEEvent{Name: EventAgentComplete, Data: d})
+		t.curRun, t.curStage, t.curRound, t.curAgent = "", "", 0, ""
 
-		case p.FunctionResponse != nil && p.FunctionResponse.Name == agentCompleteTool:
-			r := p.FunctionResponse.Response
-			d := AgentCompleteData{
-				RunID: asString(r["run_id"]), Stage: asString(r["stage"]), Round: asInt(r["round"]),
-				Score: asFloat(r["score"]), Passed: asBool(r["passed"]),
-				Feedback: asString(r["feedback"]), Status: asString(r["status"]), Reason: asString(r["reason"]),
-				Model: t.model, PromptTokens: t.prompt, CompletionTokens: t.completion,
-				ReasoningTokens: t.reasoning, TotalTokens: t.total, CachedTokens: t.cached, FinishReason: t.finish,
-				FinishedAtMs: time.Now().UnixMilli(),
-			}
-			out = append(out, SSEEvent{Name: EventAgentComplete, Data: d})
-			t.curRun, t.curStage, t.curRound, t.curAgent = "", "", 0, ""
+	case p.FunctionResponse != nil && p.FunctionResponse.Name == keepaliveTool:
+		// heartbeat, no wire event
 
-		case p.FunctionResponse != nil && p.FunctionResponse.Name == keepaliveTool:
-			// heartbeat, no wire event
-
-		case p.FunctionCall != nil:
-			if p.FunctionCall.Name == transferTool {
-				continue
-			}
-			if t.seenToolCalls.Add(p.FunctionCall.ID) {
-				continue
-			}
-			out = append(out, SSEEvent{Name: EventAgentToolCall, Data: AgentToolCallData{
-				RunID: t.curRun, CallID: p.FunctionCall.ID, Name: p.FunctionCall.Name, Args: p.FunctionCall.Args,
-			}})
-
-		case p.FunctionResponse != nil:
-			if p.FunctionResponse.Name == transferTool {
-				continue
-			}
-			out = append(out, SSEEvent{Name: EventAgentToolResult, Data: AgentToolResultData{
-				RunID: t.curRun, CallID: p.FunctionResponse.ID, Name: p.FunctionResponse.Name, Result: p.FunctionResponse.Response,
-			}})
-
-		case p.Thought && p.Text != "":
-			out = append(out, SSEEvent{Name: EventAgentThinking, Data: AgentThinkingData{RunID: t.curRun, Text: p.Text}})
-
-		case p.Text != "":
-			// Final answer (gate surfaces only the vetted one, curRun cleared → node-level).
-			out = append(out, SSEEvent{Name: EventAgentToken, Data: AgentTokenData{RunID: t.curRun, Text: p.Text}})
+	case p.FunctionCall != nil:
+		if p.FunctionCall.Name == transferTool || t.seenToolCalls.Add(p.FunctionCall.ID) {
+			return out
 		}
+		out = append(out, SSEEvent{Name: EventAgentToolCall, Data: AgentToolCallData{
+			RunID: t.curRun, CallID: p.FunctionCall.ID, Name: p.FunctionCall.Name, Args: p.FunctionCall.Args,
+		}})
+
+	case p.FunctionResponse != nil:
+		if p.FunctionResponse.Name == transferTool {
+			return out
+		}
+		out = append(out, SSEEvent{Name: EventAgentToolResult, Data: AgentToolResultData{
+			RunID: t.curRun, CallID: p.FunctionResponse.ID, Name: p.FunctionResponse.Name, Result: p.FunctionResponse.Response,
+		}})
+
+	case p.Thought && p.Text != "":
+		out = append(out, SSEEvent{Name: EventAgentThinking, Data: AgentThinkingData{RunID: t.curRun, Text: p.Text}})
+
+	case p.Text != "":
+		// Final answer (gate surfaces only the vetted one, curRun cleared → node-level).
+		out = append(out, SSEEvent{Name: EventAgentToken, Data: AgentTokenData{RunID: t.curRun, Text: p.Text}})
 	}
 	return out
 }
@@ -765,7 +738,7 @@ func ScopeToNode(ev SSEEvent, nodeID string) SSEEvent {
 	return ev
 }
 
-// Stamps runID onto wire events with empty RunID so un-gated orchestrator activity attaches to a top-level run. Events with existing RunID are unchanged.
+// ScopeToRun stamps runID onto events lacking one, so un-gated orchestrator activity attaches to a top-level run.
 func ScopeToRun(ev SSEEvent, runID string) SSEEvent {
 	switch d := ev.Data.(type) {
 	case AgentThinkingData:

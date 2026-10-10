@@ -13,14 +13,12 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// forbiddenToolCheckWording pins #688: no ACP bundle prompt may still tell an
-// agent to check whether its tools exist (a bash probe can never see an MCP
-// tool - see #630). The round preamble now asserts the exact offered names as fact (mcpToolNames/mcpToolsBlock, acp.go), so a prompt reasoning about a naming convention or an existence check is instructing the exact failure mode #688 caught in production.
+// forbiddenToolCheckWording: no ACP bundle prompt may tell an agent to check whether its tools exist; a bash
+// probe can't see MCP tools, and the preamble states the offered names as fact.
 var forbiddenToolCheckWording = regexp.MustCompile(`(?i)check your (actual )?tool list|not in your tool list`)
 
-// TestBundlePromptsDoNotAskAgentToCheckToolExistence pins #688: an ACP
-// subprocess cannot prove an MCP tool absent (bash sees nothing; #630's
-// prefix confusion is one way that misfires), so no bundle prompt may invite the agent to self-verify its tool list. The round preamble states the exact offered names as fact instead (mcpToolNames/mcpToolsBlock in acp.go).
+// TestBundlePromptsDoNotAskAgentToCheckToolExistence: an ACP subprocess can't prove an MCP tool absent, so no
+// bundle prompt may invite self-verification; the preamble states the names (mcpToolNames/mcpToolsBlock).
 func TestBundlePromptsDoNotAskAgentToCheckToolExistence(t *testing.T) {
 	for _, bundle := range []string{
 		"../../.agents/plugins/github/agents/code-reviewer",
@@ -37,9 +35,8 @@ func TestBundlePromptsDoNotAskAgentToCheckToolExistence(t *testing.T) {
 	}
 }
 
-// TestMCPToolNamesMatchTheLiveServer proves mcpToolNames (acp.go) - what the
-// round preamble asserts - names exactly the tools memoryMCPHandler actually
-// registers for the SAME session, so a future reviewmcp.go/memorymcp.go rename (#628) can't silently desync the generated preamble from reality.
+// TestMCPToolNamesMatchTheLiveServer: mcpToolNames names exactly what memoryMCPHandler registers for the
+// same session, so a tool rename can't desync the preamble.
 func TestMCPToolNamesMatchTheLiveServer(t *testing.T) {
 	ctx := context.Background()
 	secret := mustMemSecret(t)
@@ -83,8 +80,7 @@ func TestMCPToolNamesMatchTheLiveServer(t *testing.T) {
 		}
 	}
 
-	// mcpToolNames must return nil, and the rendered block must say "none",
-	// when the surface wasn't offered - loud, not silently omitted (#688).
+	// mcpToolNames returns nil and the block says "none" when the surface wasn't offered: loud, not omitted.
 	if got := mcpToolNames(sess, false); got != nil {
 		t.Errorf("mcpToolNames(offered=false) = %v, want nil", got)
 	}
@@ -92,9 +88,8 @@ func TestMCPToolNamesMatchTheLiveServer(t *testing.T) {
 		t.Errorf("mcpToolsBlock(nil) = %q, want it to say none", got)
 	}
 
-	// Every tool the bundle prompts document by bare name must really be
-	// registered - this is what would catch reviewmcp.go/memorymcp.go
-	// renaming a tool without the prompt text following.
+	// Every tool the bundle prompts document by bare name must be registered, catching a rename
+	// the prompt text didn't follow.
 	documented := []string{"stage_review_comment", "stage_review", "stage_pr"}
 	for _, name := range documented {
 		if !registered[name] {
@@ -141,9 +136,8 @@ func hasToolName(names []string, bare string) bool {
 	return false
 }
 
-// TestMCPToolNames_SelectsPushForExistingPR pins #724: mcpToolNames names
-// exactly ONE of stage_pr/stage_push, keyed on MemSession.ExistingPR - never
-// both in the same round (the model is only ever offered the one that fits).
+// TestMCPToolNames_SelectsPushForExistingPR: mcpToolNames names exactly one of stage_pr/stage_push,
+// keyed on MemSession.ExistingPR.
 func TestMCPToolNames_SelectsPushForExistingPR(t *testing.T) {
 	newPR := vetting.MemSession{PRStage: &vetting.PRStage{}}
 	names := mcpToolNames(newPR, true)

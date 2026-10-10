@@ -1,6 +1,5 @@
-// reviewoverview.go: the one fixed format every review overview renders through - sections 2-8 of the design (section 1, the trust-gate banner,
-// and section 9, the merge outcome line, are both owned by the delivering extension and prepended/appended around this renderer's output). Two callers share it: renderReviewFromArtifact (deliveryartifact.go, full
-// scope info from the durable record + a git probe) and the degraded fallbacks - ReviewStage.Snapshot (advisor_thread.go) and the answer-tail recovery path (answerreview.go) - which have no scope/history to report and simply omit those sections.
+// The one fixed format every review overview renders through (design sections 2-8; the delivering extension owns
+// 1 and 9). Only the artifact-backed render has scope/history; degraded fallbacks omit those sections.
 package vetting
 
 import (
@@ -13,22 +12,18 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// reviewOverviewInput bundles everything the renderer needs. Every section
-// beyond the verdict line degrades gracefully to omitted when its inputs
-// are unknown - only the artifact-backed render (which has cfg to shell out to git and read prior rounds) fills in Scope/Since-last-review.
+// reviewOverviewInput: every section beyond the verdict line is omitted when its inputs are unknown.
 type reviewOverviewInput struct {
 	Verdict string // approve | request_changes | comment
 
-	// ScopeKnown gates the whole Scope line (section 3) - unset for every
-	// caller but the artifact-backed render, which resolves it via a git probe.
+	// ScopeKnown gates the whole Scope line; only the artifact-backed render resolves it via a git probe.
 	ScopeKnown   bool
 	HeadSHA      string // full or short sha; "" omits "· head <sha7>"
 	FirstReview  bool
 	PriorHeadSHA string // re-review only; "" omits the whole "since <sha7>" clause
 
-	// CommitsSinceKnown gates the "N commits since" clause independently of
-	// PriorHeadSHA - a re-review still names the prior head even when
-	// rev-list couldn't resolve a commit count (force-pushed away), but never claims "0 commits" when the count is actually unknown.
+	// CommitsSinceKnown gates "N commits since" independently of PriorHeadSHA, so a re-review still names
+	// the prior head but never claims "0 commits" when rev-list couldn't count (force-pushed away).
 	CommitsSinceKnown bool
 	CommitsSince      int
 	FileCount         int // 0 omits the "(N files)" parenthetical
@@ -38,9 +33,8 @@ type reviewOverviewInput struct {
 	Notes         []string
 	LegacySummary string // pre-migration record's summary, rendered under Notes (truncated)
 
-	// Comments: live findings in staged order, Body starting with the Conventional-Comments label (blocking:/suggestion:/nit:/question:,
-	// any of the emoji/bold variants) - source for the verdict line's
-	// counts and the Highlights table. Never re-listed verbatim: findings live inline, only their label/first-sentence surface here.
+	// Comments: live findings in staged order, Body starting with a Conventional-Comments label. Feeds the
+	// verdict counts and Highlights; never re-listed verbatim.
 	Comments []ReviewComment
 
 	// SinceKnown gates section 5 (re-review only).
@@ -50,34 +44,29 @@ type reviewOverviewInput struct {
 	Dismissed  []DismissedEntry
 }
 
-// escapeTableCell escapes a Markdown table delimiter so a finding's title,
-// rationale, or path - free text this renderer didn't author - can never
+// escapeTableCell escapes a Markdown table delimiter so free text this renderer didn't author can never
 // break the Highlights row it lands in.
 func escapeTableCell(s string) string {
 	return strings.ReplaceAll(s, "|", "\\|")
 }
 
-// reviewLabelOrder: verdict-line counts and Highlights precedence, always in
-// this order - deterministic output, never a map iteration.
+// reviewLabelOrder: verdict-line counts and Highlights precedence, fixed so output never follows map order.
 var reviewLabelOrder = []string{"blocking", "suggestion", "nit", "question"}
 
-// commentLabelRe matches a Conventional-Comments label at the start of a finding's body: an optional short emoji/symbol prefix, optional bold markdown wrapping the label AND its colon (the bold closes right after
-// the colon, not before it - "**blocking:**", not "**blocking**:"). Variants seen in the wild: "🚨 **blocking:**", "**blocking:**", "blocking:"
-// - also a decoration like "blocking (security):", which still matches on the bare label. The prefix class excludes '*' so a leading emoji can never swallow the bold markers meant for \*{0,2}.
+// commentLabelRe matches a leading Conventional-Comments label: "🚨 **blocking:**", "blocking (security):".
+// The prefix class excludes '*' so a leading emoji can never swallow the bold markers.
 var commentLabelRe = regexp.MustCompile(`(?i)^\s*[^\pL\pN*]{0,4}\*{0,2}(blocking|suggestion|nit|question)\b[^:]*:\*{0,2}`)
 
 // metaNarrationRe matches only the exact auto-generated staging sentence,
 // never a paragraph that merely mentions a PR number or revision in passing.
 var metaNarrationRe = regexp.MustCompile(`(?i)^review staged for (this )?(pr|pull request) #?\d+ \(code_review revision \d+\):`)
 
-// sentenceAbbrevRe matches a trailing abbreviation (e.g/i.e/vs) right before
-// a candidate sentence-ending period - firstSentence skips the period there
-// rather than treating the abbreviation as the sentence's end.
+// sentenceAbbrevRe matches a trailing abbreviation (e.g/i.e/vs) right before a candidate
+// sentence-ending period, which firstSentence then skips.
 var sentenceAbbrevRe = regexp.MustCompile(`(?i)\b(e\.g|i\.e|vs)$`)
 
-// firstSentence extracts the Highlights table's "why" cell: the text up to (not including) the first sentence-ending period, or the whole string if none is found. A period only ends a sentence when it is followed by
-// whitespace or the end of the string (so "cfg.Setup", "router.go:42", and
-// a mid-sentence URL never truncate early - none of those periods are followed by a space), is not inside a backtick span, and doesn't close a known abbreviation (e.g./i.e./vs.). A newline always ends it, matching a finding body's own "one line, one finding" shape.
+// firstSentence: text up to the first period followed by whitespace/end, outside backticks and not
+// closing e.g./i.e./vs., so "cfg.Setup" or a URL never truncates early. A newline always ends it.
 func firstSentence(s string) string {
 	inBacktick := false
 	for i, r := range s {
@@ -106,9 +95,8 @@ func firstSentence(s string) string {
 	return strings.TrimSpace(s)
 }
 
-// commentLabel splits a finding's body into its Conventional-Comments label
-// (lowercase, "" if none matched) and the first sentence after it - the Highlights table's "why". Falls back to "" (the caller substitutes the
-// finding's path) when the label leaves nothing behind - a label-only body with no explanation.
+// commentLabel splits a body into its lowercase label ("" if none) and the first sentence after it.
+// why is "" for a label-only body; the caller substitutes the finding's path.
 func commentLabel(body string) (label, why string) {
 	line := body
 	rest := ""
@@ -189,16 +177,8 @@ func pluralizeLabel(label string, n int) string {
 	return label + "s"
 }
 
-// sha7: the short sha the design's Scope/Verdict lines show.
-func sha7(sha string) string {
-	if len(sha) > 7 {
-		return sha[:7]
-	}
-	return sha
-}
-
-// truncateRunes caps s at n runes at a word boundary, never mid-word, then
-// marks the cut with "…". Falls back to a hard cut when there's no space.
+// truncateRunes caps s at n runes at a word boundary, then marks the cut with "…".
+// Falls back to a hard cut when there's no space.
 func truncateRunes(s string, n int) string {
 	r := []rune(s)
 	if len(r) <= n {
@@ -229,14 +209,12 @@ func stripMetaNarration(s string) string {
 	return strings.TrimSpace(strings.Join(kept, "\n\n"))
 }
 
-// legacySummaryDisplayCap: how much of a pre-migration record's free-text
-// summary to show under Notes - just enough that history still reads, not a
-// return to 1,000+ character run-ons.
+// legacySummaryDisplayCap: how much of a pre-migration record's free-text summary to show under
+// Notes, enough that history still reads.
 const legacySummaryDisplayCap = 320
 
-// renderReviewOverview produces sections 2-8 of the fixed review format (see
-// this file's doc comment). Never returns an empty string for a non-empty verdict: the verdict line (section 2) always renders. Built as a slice of
-// self-contained blocks joined with a single blank line, rather than ad-hoc "\n\n" concatenation, so an empty section can never leave a stray blank line behind (the bug a prior version had between Verified and Notes).
+// renderReviewOverview: the verdict line always renders for a non-empty verdict. Sections are joined as
+// blocks rather than concatenated, so an empty section never leaves a stray blank line.
 func renderReviewOverview(in reviewOverviewInput) string {
 	comments := dedupeComments(in.Comments)
 	sections := []string{overviewVerdictLine(in, comments)}
@@ -270,7 +248,7 @@ func overviewVerdictLine(in reviewOverviewInput, comments []ReviewComment) strin
 		}
 	}
 	if in.HeadSHA != "" {
-		parts = append(parts, "head "+sha7(in.HeadSHA))
+		parts = append(parts, "head "+shortSHA(in.HeadSHA, 7))
 	}
 	return strings.Join(parts, " \u00b7 ")
 }
@@ -286,9 +264,9 @@ func reviewScopeLine(in reviewOverviewInput) string {
 		scope = "Scope: first review, whole PR"
 	case in.PriorHeadSHA != "" && in.CommitsSinceKnown:
 		scope = fmt.Sprintf("Scope: re-review, %d %s since %s",
-			in.CommitsSince, pluralize(in.CommitsSince, "commit", "commits"), sha7(in.PriorHeadSHA))
+			in.CommitsSince, pluralize(in.CommitsSince, "commit", "commits"), shortSHA(in.PriorHeadSHA, 7))
 	default:
-		// Prior head unknown or rev-list unresolvable (force-pushed away) - never
+		// Prior head unknown or rev-list unresolvable (force-pushed away): never
 		// claim "0 commits since" when the count is actually unknown.
 		scope = "Scope: re-review"
 	}
@@ -393,9 +371,8 @@ func reviewNotesSection(in reviewOverviewInput) string {
 	return "### Notes\n\n" + strings.Join(items, "\n")
 }
 
-// reviewScope resolves one review's diff scope against the same base/head diffSince uses (the diff this review is actually reviewing): the current
-// head and the file count for the Scope line, plus a resolver for "commits
-// since a prior head" on a re-review. ok=false when there's no clone to resolve - the caller just omits the Scope line rather than guessing.
+// reviewScope: the review's head and file count for the Scope line, against the same base/head diffSince uses.
+// ok=false when there's no clone to resolve; the caller omits the Scope line rather than guessing.
 type reviewScope struct {
 	dir       string
 	caps      workspace.Caps
@@ -404,9 +381,8 @@ type reviewScope struct {
 	ok        bool
 }
 
-// resolveReviewScope resolves the review's clone the same way diffSince does (cfg.NodeBaseSHA, falling back to the reflog's oldest HEAD) - see
-// diffSince/buildReviewDiffSection in gitprobe.go, the established source of
-// "the diff this review is OF". ok=false (zero value) when there's no clone yet, or its base/head can't be resolved.
+// resolveReviewScope resolves the clone like diffSince (cfg.NodeBaseSHA, else the reflog's oldest HEAD).
+// Zero value when there's no clone or its base/head can't be resolved.
 func resolveReviewScope(cfg Config) reviewScope {
 	if cfg.Setup == nil || cfg.Workspace == nil {
 		return reviewScope{}

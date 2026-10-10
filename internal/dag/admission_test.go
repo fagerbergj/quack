@@ -215,9 +215,8 @@ func TestBackfillAdmitsSmallNodeBehindLargeOne(t *testing.T) {
 	cancelBig()
 }
 
-// mustBlockFirstArrival starts an Admit call and waits for it to actually be
-// queued (not yet fitting) before returning, so a subsequent smaller Admit is
-// guaranteed to observe it as the (blocked) oldest waiter.
+// mustBlockFirstArrival waits until an Admit is actually queued, so a later smaller
+// Admit is guaranteed to see it as the oldest waiter.
 func mustBlockFirstArrival(t *testing.T, a *Admission, spec AdmissionSpec) (cancel func()) {
 	t.Helper()
 	// occupy all capacity first so `spec` itself cannot fit and must queue
@@ -272,9 +271,8 @@ func TestAgingStopsBackfillAndAdmitsOldest(t *testing.T) {
 	a.Release(fat)
 }
 
-// The aged-waiter check must gate Admit's fast path too, not just the
-// blocking path. Headroom stays at 80/100 (not 100/100) so the block can
-// only be explained by aging, never by capacity.
+// The aged-waiter check gates Admit's fast path too; headroom stays at 80/100 so
+// only aging can explain the block.
 func TestAgingActuallyBlocksLaterBackfill(t *testing.T) {
 	a := NewAdmission(nil, map[string]int{"m": 100}, nil, 40*time.Millisecond)
 	clock := newFakeClock()
@@ -311,9 +309,8 @@ func TestAgingActuallyBlocksLaterBackfill(t *testing.T) {
 	a.Release(fat)
 }
 
-// Release must return capacity even when the caller path is an abort/panic
-// recovery, not just clean completion - exercised here via defer+recover,
-// mirroring how newGatedNode's `defer admission.Release(spec)` behaves.
+// Release must return capacity on the abort/panic recovery path too, mirroring
+// newGatedNode's `defer admission.Release(spec)`.
 func TestReleaseOnPanicPath(t *testing.T) {
 	a := NewAdmission(map[string]int{"m": 1}, nil, nil, time.Hour)
 	spec := AdmissionSpec{Model: "m"}
@@ -355,9 +352,8 @@ func TestAdmitHonoursContextCancel(t *testing.T) {
 // activeKeyTest mirrors serve.activeKey / AdmissionSpec.residencyKey.
 func activeKeyTest(provider, role string) string { return provider + "\x00" + role }
 
-// An already-cancelled ctx must never reserve capacity, even if it fits
-// immediately (#1021: a prior reorder checked fits/reserve before ctx.Err()).
-// Verified by exhausting the freed capacity afterward at full limit.
+// An already-cancelled ctx never reserves capacity even if it fits; checked by
+// exhausting the freed capacity afterward.
 func TestAdmitAlreadyCancelledNeverReserves(t *testing.T) {
 	a := NewAdmission(map[string]int{"m": 1}, nil, nil, time.Hour)
 	spec := AdmissionSpec{Model: "m"}
@@ -374,9 +370,8 @@ func TestAdmitAlreadyCancelledNeverReserves(t *testing.T) {
 	a.Release(spec)
 }
 
-// A panicking onQueued (arbitrary consumer code, runs unlocked) must not
-// leave Admit's deferred Unlock double-unlocking into a fatal "unlock of
-// unlocked mutex" (#1016 prod crash). A real panic is fine; only the fatal isn't.
+// A panicking onQueued (runs unlocked) must not make Admit's deferred Unlock
+// double-unlock into a fatal error; a plain panic is fine.
 func TestAdmitOnQueuedPanicNeverDoubleUnlocks(t *testing.T) {
 	a := NewAdmission(map[string]int{"m": 1}, nil, nil, time.Hour)
 	occupant := AdmissionSpec{Model: "m"}

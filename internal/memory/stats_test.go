@@ -75,9 +75,7 @@ func TestComputeStats_EmptyWeekIsZeroed(t *testing.T) {
 	}
 }
 
-// TestSnapshot_PerScopeDiagnosticCounts plants one invalidated and three live points in the
-// same scope - never-recalled/no-votes, judge-supported verified, and reinforcement-only
-// verified - and checks Snapshot tallies each of the three new counts independently.
+// TestSnapshot_PerScopeDiagnosticCounts checks each diagnostic count is tallied independently.
 func TestSnapshot_PerScopeDiagnosticCounts(t *testing.T) {
 	ctx := context.Background()
 	s := newSQLiteStore(t, "task", fakeModel{})

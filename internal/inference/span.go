@@ -22,8 +22,7 @@ const (
 	langfuseObservationPromptVersion = "langfuse.observation.prompt.version"
 )
 
-// spanAttrCap bounds gen_ai content span attribute values; matches
-// internal/acp/turnspan.go's 8KB truncation convention.
+// spanAttrCap matches internal/acp/turnspan.go's 8KB truncation.
 const spanAttrCap = 8192
 
 func capSpanAttr(s string) string {
@@ -33,9 +32,7 @@ func capSpanAttr(s string) string {
 	return s[:spanAttrCap] + "…[truncated]"
 }
 
-// redactedSpanAttr marshals v, redacts it the same way the log pipeline's
-// RedactingProcessor does, and caps it. Span attributes never pass through
-// that processor, so this is the only redaction a span attribute gets.
+// redactedSpanAttr redacts like the log pipeline's RedactingProcessor, which spans never pass through.
 func redactedSpanAttr(v any) (string, bool) {
 	s, ok := marshalAttr(v)
 	if !ok {
@@ -50,8 +47,7 @@ func redactedSpanAttr(v any) (string, bool) {
 	return capSpanAttr(s), true
 }
 
-// correlationAttrs builds the chat/node/agent/prompt correlation keys from ctx's
-// ledger.Coords - never content, so these apply regardless of the capture-content gate.
+// correlationAttrs are keys, never content, so they bypass the capture-content gate.
 func correlationAttrs(ctx context.Context) []attribute.KeyValue {
 	var attrs []attribute.KeyValue
 	c := ledger.CoordsFromContext(ctx)
@@ -59,18 +55,14 @@ func correlationAttrs(ctx context.Context) []attribute.KeyValue {
 		return attrs
 	}
 	attrs = append(attrs, attribute.String(otelobs.GenAIConversationID, c.ChatID))
-	// Node ids are free text from the orchestrator's plan (planner.assemble checks
-	// only non-empty and unique), so a verbose one could carry message-derived text
-	// onto a span the content gate doesn't cover.
+	// Node ids are free plan text, so a verbose one could carry message content past the gate.
 	if isSlug(c.Node) {
 		attrs = append(attrs, attribute.String(otelobs.QuackNode, c.Node))
 	}
 	if c.Agent != "" {
 		attrs = append(attrs, attribute.String(otelobs.GenAIAgentName, c.Agent))
 	}
-	// Any store-resolved prompt links to Langfuse this way - not just a
-	// literal "langfuse" source name, which M5 dropped in favor of the
-	// actual stores: entry name (there is only one Source kind today).
+	// Any store-resolved prompt links to Langfuse, whatever the store's name.
 	if c.PromptSource != "" && c.PromptSource != artifactsrc.StaticSource && c.PromptArtifact != "" && c.PromptVersionID != "" {
 		attrs = append(attrs,
 			attribute.String(langfuseObservationPromptName, c.PromptArtifact),
@@ -80,23 +72,21 @@ func correlationAttrs(ctx context.Context) []attribute.KeyValue {
 	return attrs
 }
 
-// setRequestSpanAttrs decorates ADK's own generate_content GENERATION span
-// (never opens a competing one - the span in ctx already IS the active one)
-// with request content. Must run before GenerateContent's inner loop yields a response: ADK ends this span synchronously on the first non-partial response, and SetAttributes on an ended span is a silent no-op.
+// setRequestSpanAttrs decorates ADK's own generate_content span. It must run before the first
+// non-partial yield: ADK ends the span then, and SetAttributes on an ended span is a no-op.
 func setRequestSpanAttrs(ctx context.Context, req *model.LLMRequest) {
 	span := oteltrace.SpanFromContext(ctx)
 	if !span.IsRecording() {
-		return // nothing exporting - skip building the (possibly large) payload
+		return // skip building a large payload nobody exports
 	}
-	// Correlation keys, not content - these stay outside the gate below. ADK
-	// names the span but never says which node ran it; without node/agent a
-	// multi-node trace can't be narrowed to the card the user clicked.
+	// ADK never says which node ran the span; without node/agent a multi-node trace can't be
+	// narrowed to the card the user clicked.
 	attrs := correlationAttrs(ctx)
 	if !otelobs.CaptureContentEnabled() {
 		if len(attrs) > 0 {
 			span.SetAttributes(attrs...)
 		}
-		return // opt-in only - see otelobs.CaptureContentEnabled doc comment
+		return // content capture is opt-in
 	}
 	if v, ok := redactedSpanAttr(req.Contents); ok {
 		attrs = append(attrs,
@@ -119,9 +109,7 @@ func setRequestSpanAttrs(ctx context.Context, req *model.LLMRequest) {
 	}
 }
 
-// setResponseSpanAttrs decorates the span with the final response content.
-// Call this BEFORE forwarding a non-partial response to yield - see the
-// ordering-trap comment on setRequestSpanAttrs.
+// setResponseSpanAttrs must run before a non-partial response is yielded (see setRequestSpanAttrs).
 func setResponseSpanAttrs(ctx context.Context, resp *model.LLMResponse) {
 	span := oteltrace.SpanFromContext(ctx)
 	if !span.IsRecording() {

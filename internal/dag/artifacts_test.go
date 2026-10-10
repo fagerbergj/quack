@@ -18,9 +18,8 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// saveLoadArgs/Result: the round-trip tool proves ctx.Artifacts() inside a
-// gated node is the exact instance Executor.SetArtifacts wired in - not a
-// separate/nil service - by saving then immediately loading a blob.
+// saveLoadArgs/Result: saving then loading a blob proves ctx.Artifacts() in a gated
+// node is the instance Executor.SetArtifacts wired in.
 type saveLoadArgs struct{}
 type saveLoadResult struct{ Text string }
 
@@ -73,9 +72,7 @@ func (s *artifactStub) GenerateContent(_ context.Context, req *model.LLMRequest,
 	}
 }
 
-// TestRunPlanAsGraph_ArtifactServiceReachableAtNodeLevel: with
-// Executor.SetArtifacts wired, a node's ctx.Artifacts() is live and usable -
-// answers the "does anything actually consume it" question with a real Save+Load.
+// With Executor.SetArtifacts wired, a node's ctx.Artifacts() is live and usable.
 func TestRunPlanAsGraph_ArtifactServiceReachableAtNodeLevel(t *testing.T) {
 	stub := &artifactStub{}
 	got := make(chan saveLoadResult, 1)

@@ -29,9 +29,8 @@ var knownFrontmatterKeys = func() map[string]bool {
 	return keys
 }()
 
-// NewFileSystemSource wraps fsys in the frontmatter filter before handing it
-// to ADK's skill.NewFileSystemSource, so a SKILL.md carrying a field ADK's
-// KnownFields(true) decoder doesn't recognize (e.g. Claude Code's argument-hint, #1084) still loads instead of being skipped by Tolerant.
+// NewFileSystemSource filters frontmatter before ADK's strict (KnownFields) decoder, so a SKILL.md with a
+// field ADK doesn't know (e.g. Claude Code's argument-hint) still loads.
 func NewFileSystemSource(fsys fs.FS) skill.Source {
 	return skill.NewFileSystemSource(filterFrontmatterFS{fsys})
 }
@@ -74,9 +73,7 @@ func (f filterFrontmatterFS) Stat(name string) (fs.FileInfo, error) {
 	return fs.Stat(f.FS, name)
 }
 
-// lfSep/crlfSep mirror ADK's own two accepted separator forms
-// (frontmatter.go's frontmatterSeparator/frontmatterSeparatorWin); a BOM
-// prefix is out of scope, ADK fails on that regardless of this wrapper.
+// lfSep/crlfSep mirror ADK's two accepted separator forms; a BOM prefix fails in ADK regardless.
 var lfSep = []byte("---\n")
 var crlfSep = []byte("---\r\n")
 
@@ -92,8 +89,8 @@ func leadingSep(content []byte) (sep []byte, ok bool) {
 	return nil, false
 }
 
-// indexLineStart finds the first occurrence of sep that starts a line (index
-// 0, or immediately after a '\n'), skipping any substring hit that doesn't - ADK's own Parse anchors the closing separator to a whole line (bytes.Equal(line, sep)), so a mid-line "---" (inside a scalar value or a block-scalar body) must never be mistaken for it.
+// indexLineStart finds the first sep that starts a line. ADK anchors the closing separator to a whole line,
+// so a mid-line "---" (in a scalar or block body) must not match.
 func indexLineStart(b, sep []byte) int {
 	off := 0
 	for {
@@ -124,14 +121,8 @@ func findSep(b []byte) (idx, seplen int, ok bool) {
 	}
 }
 
-// filterFrontmatter drops unknown top-level keys from the YAML frontmatter
-// block of a SKILL.md's bytes, leaving the "---" delimiters and markdown body
-// byte-identical. It edits the YAML AST (yaml.Node) rather than decoding through a generic map: a map round-trip re-serializes each scalar from its resolved Go type, so `007` comes back `7` and `1.0` comes back `1` even with no unknown key present - a silent corruption of every skill, not just the ones this wrapper exists for. Node-level editing keeps each surviving key's original style/tag, so its literal text is untouched.
-//
-// If no key is unknown, content is returned as-is: no parse-and-rewrite for
-// the common case, which matters because ListFrontmatters runs on every skill on every agent turn (SkillToolset.ProcessRequest), not just at startup.
-//
-// ok is false when the content isn't valid ADK-shaped frontmatter (no separators, bad YAML) - the caller passes the original bytes through unchanged so Tolerant's own parse still decides skip-vs-fatal.
+// filterFrontmatter drops unknown top-level frontmatter keys by editing the yaml.Node AST: a map round-trip
+// rewrites scalars (`007` -> `7`). Returns content as-is if nothing is unknown; ok=false on invalid input.
 func filterFrontmatter(content []byte) (out []byte, ok bool) {
 	openSep, ok := leadingSep(content)
 	if !ok {
@@ -183,9 +174,7 @@ func filterFrontmatter(content []byte) (out []byte, ok bool) {
 	return buf.Bytes(), true
 }
 
-// memFile is a read-only fs.File over rewritten SKILL.md bytes. ADK only
-// reads and closes the frontmatter file, never Stats it, so a minimal Stat
-// is enough to satisfy the fs.File interface.
+// memFile is a read-only fs.File over rewritten SKILL.md bytes; ADK never Stats it, so Stat is minimal.
 type memFile struct {
 	*bytes.Reader
 	size int64

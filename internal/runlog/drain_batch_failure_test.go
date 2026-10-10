@@ -10,9 +10,8 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// TestBatchInsertFailureDoesNotDropGoodRows: a single bad row (e.g. a duplicate
-// (chat_id, seq) from a Reset/retry race) must not take the other ~199 good
-// rows in its batch down with it - InsertChatEvents is one SQL statement, so a PK conflict on any row fails the whole statement unless the drain falls back to per-row isolation.
+// One bad row (a duplicate (chat_id, seq) from a Reset/retry race) must not fail its whole batch:
+// InsertChatEvents is one statement, so the drain falls back to per-row inserts.
 func TestBatchInsertFailureDoesNotDropGoodRows(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
@@ -49,9 +48,8 @@ func TestBatchInsertFailureDoesNotDropGoodRows(t *testing.T) {
 	}
 }
 
-// TestAppendRacingFinishRunNeverLostSilently: an event Append'd on the same chat
-// concurrently with FinishRun's Flush (e.g. a still-unwinding tool goroutine
-// writing after cancelRun fires) is not covered by that Flush's "everything enqueued before this call" contract, but the shared drain channel has no path that discards it either - a later drain of the channel (here, one more Flush) must still find it durably persisted.
+// An Append racing FinishRun's Flush isn't covered by that Flush, but the shared drain channel never
+// discards it: a later Flush must still find it persisted.
 func TestAppendRacingFinishRunNeverLostSilently(t *testing.T) {
 	st := newTestStore(t)
 	hub := stream.NewHub()

@@ -14,23 +14,18 @@ type Caps struct {
 	ExtraPath      []string
 	Env            map[string]string
 	HomeDir        string
-	// ScratchDir is a per-node writable tmp dir (Jail.ScratchDir) that TMPDIR
-	// points at for a sandboxed worker's own scratch use. "" falls back to the
-	// shared HomeDir/tmp (see homeTmpDir) - callers that don't scope scratch per node (the gate's own one-shot check commands, tests).
+	// ScratchDir is a per-node TMPDIR (Jail.ScratchDir); "" falls back to the shared HomeDir/tmp.
 	ScratchDir string
-	// ACPStateDir is a per-node dir (Jail.ACPStateDir) SpawnEnv exposes to an
-	// ACP child as PI_ACP_STATE_DIR - "" omits the env var.
+	// ACPStateDir is exposed to an ACP child as PI_ACP_STATE_DIR; "" omits it.
 	ACPStateDir string
 	WorkRoot    string
 	Sandbox     SandboxMode
 	Limits      Limits
 	ExtraRO     []string
-	// ReadOnly mounts the node's own work/dir RO instead of RW (#754) - set
-	// from the agent's read_only config, not merely stated in its prompt.
+	// ReadOnly mounts the node's own work/dir RO, enforcing the agent's read_only config.
 	ReadOnly bool
-	// BuildDirs (workspace.build_dirs) names work-tree-relative build-output
-	// dirs (e.g. "node_modules", "frontend/dist") that stay writable on a
-	// ReadOnly node PROVIDED the repo's own .gitignore already ignores them (see buildDirGrants) - lets a read-only reviewer run `npm test`/`vite build` in place instead of copying the tree to a writable TMPDIR.
+	// BuildDirs stay writable on a ReadOnly node when the repo's .gitignore already ignores them,
+	// so a read-only reviewer can build in place.
 	BuildDirs []string
 }
 
@@ -45,7 +40,7 @@ func DefaultCaps() Caps {
 	}
 }
 
-// IsZero reports all fields unset. Needed because Caps contains slices/maps.
+// IsZero exists because Caps contains slices and maps, so == doesn't compile.
 func (c Caps) IsZero() bool {
 	return c.MaxReadBytes == 0 && c.MaxWriteBytes == 0 && c.MaxResults == 0 &&
 		c.MaxListEntries == 0 && c.Timeout == 0 && c.MaxOutputBytes == 0 &&

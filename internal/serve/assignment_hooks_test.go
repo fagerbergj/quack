@@ -11,11 +11,8 @@ import (
 	"github.com/fagerbergj/quack/internal/dag"
 )
 
-// githubStubExt stubs the GitHub extension's real implementation of the two
-// node-reuse hooks - the actual GitHub-side behaviour (a live base_sha
-// comparison, a real branch tip lookup) lands in quack-extensions (ext PR
-// #84), not here; this only proves quack's own optional-interface detection,
-// wiring, and dag.Assignment -> sdk.Assignment conversion.
+// githubStubExt stubs the GitHub extension's node-reuse hooks: this proves only quack's optional-interface
+// detection, wiring, and dag.Assignment -> sdk.Assignment conversion, not GitHub-side behaviour.
 type githubStubExt struct {
 	freshnessCalls []extsdk.Assignment
 	freshnessFresh bool
@@ -88,10 +85,8 @@ func TestFindAssignmentMetaExtension(t *testing.T) {
 	}
 }
 
-// TestToSDKAssignment covers the one place quack's internal dag.Assignment
-// crosses into the sdk's wire shape - every field either copied straight
-// across or supplied by the caller (planID/agentName/contextID, none of
-// which live on dag.Assignment itself).
+// TestToSDKAssignment: every sdk field is either copied from dag.Assignment or supplied by the caller
+// (planID/agentName/contextID).
 func TestToSDKAssignment(t *testing.T) {
 	a := dag.Assignment{
 		NodeID: "impl-1", Task: "do the thing", DependsOn: []string{"web-researcher-1"},

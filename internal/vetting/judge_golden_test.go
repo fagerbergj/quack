@@ -11,8 +11,7 @@ import (
 	"github.com/fagerbergj/quack/internal/promptbuilder"
 )
 
-// updateJudgeGolden regenerates testdata/prompts. The goldens were captured
-// before the artifact-resolver change (#1420) and must stay byte-identical.
+// updateJudgeGolden regenerates testdata/prompts; the goldens must stay byte-identical.
 var updateJudgeGolden = flag.Bool("update-golden", false, "rewrite the judge prompt golden files")
 
 var judgeTodayLine = regexp.MustCompile(`Today is [^\n]*\.`)
@@ -61,6 +60,6 @@ func TestGoldenJudgePrompt(t *testing.T) {
 		{"judge.readtools.skills", true, true},
 		{"judge.skills", false, true},
 	} {
-		checkJudgeGolden(t, c.name+".txt", promptbuilder.Judge(nil, mustJudgeBehaviour(t, c.readTools, c.skill)))
+		checkJudgeGolden(t, c.name+".txt", promptbuilder.Judge(mustJudgeBehaviour(t, c.readTools, c.skill)))
 	}
 }

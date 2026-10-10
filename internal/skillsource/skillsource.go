@@ -51,10 +51,8 @@ func sourcesUnder(jail *workspace.Jail, userID, chatID, repoRel string) []skill.
 	return out
 }
 
-// Tolerant wraps src (backed by fsys) so ListFrontmatters skips a single
-// malformed skill instead of failing the whole source (#1080: one plugin's
-// new frontmatter field crash-looped the server at startup). label names
-// fsys in the warning log - a real path, or a descriptive name when fsys has none (an embedded FS).
+// Tolerant makes ListFrontmatters skip one malformed skill instead of failing the whole source (a new
+// frontmatter field once crash-looped startup). label names fsys in the warning.
 func Tolerant(src skill.Source, fsys fs.FS, label string) skill.Source {
 	return &tolerant{Source: src, fsys: fsys, label: label}
 }
@@ -156,9 +154,8 @@ type projectAware struct {
 	userID  string
 }
 
-// ListFrontmatters: built-in plus non-colliding project skills. A project
-// skill's BARE name is hidden by a built-in providing the same bare name
-// ("plugin:x"), not just an identical literal name (#1430).
+// ListFrontmatters: built-in plus non-colliding project skills. A built-in "plugin:x" hides a project
+// skill named x, not just an identical literal.
 func (p *projectAware) ListFrontmatters(ctx context.Context) ([]*skill.Frontmatter, error) {
 	builtin, err := p.builtin.ListFrontmatters(ctx)
 	if err != nil {
@@ -187,12 +184,11 @@ func (p *projectAware) ListFrontmatters(ctx context.Context) ([]*skill.Frontmatt
 	return out, nil
 }
 
-// All Load* try built-in first (by bare name, via ResolveName - the same
-// "built-in wins by bare name" rule ListFrontmatters enforces), falling back
-// to project only when built-in has no match at all (#1430 carry-over).
+// All Load* try built-in first by bare name (resolveName), falling back to project only when built-in has
+// no match at all.
 
 func (p *projectAware) LoadFrontmatter(ctx context.Context, name string) (*skill.Frontmatter, error) {
-	if qualified, err := ResolveName(ctx, p.builtin, name); err == nil {
+	if qualified, err := resolveName(ctx, p.builtin, name); err == nil {
 		return p.builtin.LoadFrontmatter(ctx, qualified)
 	} else if !errors.Is(err, skill.ErrSkillNotFound) {
 		return nil, err
@@ -201,7 +197,7 @@ func (p *projectAware) LoadFrontmatter(ctx context.Context, name string) (*skill
 }
 
 func (p *projectAware) LoadInstructions(ctx context.Context, name string) (string, error) {
-	if qualified, err := ResolveName(ctx, p.builtin, name); err == nil {
+	if qualified, err := resolveName(ctx, p.builtin, name); err == nil {
 		return p.builtin.LoadInstructions(ctx, qualified)
 	} else if !errors.Is(err, skill.ErrSkillNotFound) {
 		return "", err
@@ -210,7 +206,7 @@ func (p *projectAware) LoadInstructions(ctx context.Context, name string) (strin
 }
 
 func (p *projectAware) LoadResource(ctx context.Context, name, resourcePath string) (io.ReadCloser, error) {
-	if qualified, err := ResolveName(ctx, p.builtin, name); err == nil {
+	if qualified, err := resolveName(ctx, p.builtin, name); err == nil {
 		return p.builtin.LoadResource(ctx, qualified, resourcePath)
 	} else if !errors.Is(err, skill.ErrSkillNotFound) {
 		return nil, err
@@ -219,7 +215,7 @@ func (p *projectAware) LoadResource(ctx context.Context, name, resourcePath stri
 }
 
 func (p *projectAware) ListResources(ctx context.Context, name, subpath string) ([]string, error) {
-	if qualified, err := ResolveName(ctx, p.builtin, name); err == nil {
+	if qualified, err := resolveName(ctx, p.builtin, name); err == nil {
 		return p.builtin.ListResources(ctx, qualified, subpath)
 	} else if !errors.Is(err, skill.ErrSkillNotFound) {
 		return nil, err

@@ -10,9 +10,8 @@ import (
 	"text/tabwriter"
 )
 
-// RunArtifactList is `quack chat artifact list <chat-id>`: every artifact
-// visible to the chat, with its latest revision's size and mime type, or raw
-// JSON (full revision history) with --json.
+// RunArtifactList is `quack chat artifact list <chat-id>`: each artifact's latest size and mime type,
+// or the full revision history as JSON with --json.
 func RunArtifactList(ctx context.Context, out io.Writer, server, chatID string, asJSON bool) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {

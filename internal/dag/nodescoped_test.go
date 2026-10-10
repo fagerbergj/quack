@@ -1,12 +1,5 @@
-// Two DAG nodes running the SAME configured agent concurrently must never
-// share the mutable model/tool objects SetLedgerCoords/ledger.StampCoords
-// stamp coordinates onto - a shared object races the stamp and misattributes
-// one node's ledger events to its sibling's coordinates. buildGateNodes'
-// nodeScopedWorker branch (graph.go) is the fix: an agent implementing it
-// gets a FRESH worker/model/tools built per node, never shared.
-//
-// This file drives that mechanism directly with a minimal nodeScopedWorker
-// double whose ForNode records every model/tools pair it builds.
+// Concurrent nodes of the SAME agent must never share the model/tool objects ledger coords
+// are stamped onto; nodeScopedWorker gives each node fresh ones.
 package dag_test
 
 import (
@@ -28,15 +21,15 @@ import (
 	"github.com/fagerbergj/quack/internal/artifactsrc"
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/inference"
+	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/tools"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// nsBarrierStub answers current_date, then a final answer; every DRAFT-round call rendezvous on a shared
-// 2-party barrier first, forcing the wall-clock overlap #609's shared-object bug needed. Per-CALL, not
-// per-instance: it must still pair when both calls land on the SAME shared stub instance (share=true).
+// nsBarrierStub calls current_date then answers; each draft-round call meets a 2-party
+// barrier first (per call, so it pairs even on a shared instance) to force overlap.
 type nsBarrierStub struct {
 	nodeKey string
 	wg      *sync.WaitGroup
@@ -46,42 +39,18 @@ func (s *nsBarrierStub) Name() string { return "nsBarrierStub" }
 
 func (s *nsBarrierStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
-		if lcHasFuncResponse(req, "current_date") {
-			yield(lcText("done: "+s.nodeKey), nil)
+		if atHasFuncResponse(req, "current_date") {
+			yield(atText("done: "+s.nodeKey), nil)
 			return
 		}
 		s.wg.Done()
 		s.wg.Wait()
-		yield(lcCall("current_date", map[string]any{}), nil)
+		yield(atCall("current_date", map[string]any{}), nil)
 	}
 }
 
-// nsSynthStub terminates the plan (ADK allows one terminal node) - a plain
-// fan-in over n1/n2, not itself under test.
-type nsSynthStub struct{}
-
-func (nsSynthStub) Name() string { return "nsSynthStub" }
-func (nsSynthStub) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		yield(lcText("SUMMARY"), nil)
-	}
-}
-
-// nsJudge always passes on the first verdict - the only thing under test is
-// ledger attribution, not gate convergence.
-type nsJudge struct{}
-
-func (nsJudge) Name() string { return "nsJudge" }
-func (nsJudge) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		yield(lcCall("submit_verdict", map[string]any{"score": 0.9, "feedback": ""}), nil)
-	}
-}
-
-// nodeScopedStub is a minimal nodeScopedWorker double for the SAME configured agent
-// across concurrent plan nodes. share=true simulates the pre-fix shared-object bug:
-// model/tools built ONCE and reused across every ForNode call despite distinct client
-// identities; kept only to prove the test is sensitive to the regression it pins.
+// nodeScopedStub is a nodeScopedWorker double; share=true reuses one model/tools pair
+// across ForNode calls to prove the test catches the shared-object bug.
 type nodeScopedStub struct {
 	adkagent.Agent // a throwaway prototype (never Run - ForNode always wins)
 	share          bool
@@ -94,7 +63,7 @@ type nodeScopedStub struct {
 	cachedT []tool.Tool
 }
 
-func (s *nodeScopedStub) ForNode(_ context.Context, nodeKey, _ string, _ func() string, _ artifact.Service, _, _, _, _ string, _ func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, func(int, string, string, string), func(context.Context) artifactsrc.Artifact, func(bool), error) {
+func (s *nodeScopedStub) ForNode(_ context.Context, nodeKey, _ string, _ func() string, _ artifact.Service, _, _, _, _ string, _ func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, ledger.CoordSetter, func(int, string, string, string), func(context.Context) artifactsrc.Artifact, func(bool), error) {
 	s.mu.Lock()
 	s.calls++
 	m, builtins := s.cachedM, s.cachedT
@@ -105,7 +74,7 @@ func (s *nodeScopedStub) ForNode(_ context.Context, nodeKey, _ string, _ func() 
 		m = inference.TracedModelForTesting(stub, "nodeScopedStub")
 		var err error
 		if builtins, err = tools.Build([]string{"current_date"}, tools.Deps{}); err != nil {
-			return nil, nil, nil, nil, nil, nil, err
+			return nil, nil, nil, nil, nil, nil, nil, err
 		}
 		if s.share {
 			s.mu.Lock()
@@ -113,31 +82,24 @@ func (s *nodeScopedStub) ForNode(_ context.Context, nodeKey, _ string, _ func() 
 			s.mu.Unlock()
 		}
 	}
-	// A fresh CLIENT/wrapper identity per node either way - even the
-	// pre-#609 shape gave every node its own client (the older
-	// nodeClient.ForNode); only the model/tools underneath it were shared.
+	// A fresh client identity per node either way; only share=true shares model/tools.
 	worker, err := llmagent.New(llmagent.Config{
 		Name: "w", Model: m, Description: "w",
 		Instruction: "ROLE:w Call current_date, then answer.",
 		Tools:       builtins,
 	})
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, err
 	}
 
 	s.mu.Lock()
 	s.built = append(s.built, fmt.Sprintf("%s:%p", nodeKey, m))
 	s.mu.Unlock()
-	return worker, m, builtins, nil, nil, func(bool) {}, nil
+	return worker, m, builtins, nil, nil, nil, func(bool) {}, nil
 }
 
-// runTwoConcurrentNodes drives a 2-node, no-dependency plan (both nodes named
-// "w", the SAME configured agent) through the real production entry point
-// (dag.Executor.RunPlanAsGraph) with the given nodeScopedStub, and returns
-// the quack.node attribute of each captured draft-round "chat" ledger event,
-// in emission order. Correct attribution is exactly {"n1", "n2"} as a set
-// (order depends on which of the two concurrent nodes' draft round the
-// runner happens to schedule/emit first).
+// runTwoConcurrentNodes runs two concurrent nodes of agent "w" and returns each draft-round
+// chat event's quack.node in emission order; correct is {"n1","n2"} as a set.
 func runTwoConcurrentNodes(t *testing.T, stub *nodeScopedStub) []string {
 	t.Helper()
 	capExp := &ledgerCaptureExporter{}
@@ -146,7 +108,7 @@ func runTwoConcurrentNodes(t *testing.T, stub *nodeScopedStub) []string {
 	defer restore()
 
 	synth, err := llmagent.New(llmagent.Config{
-		Name: "synth", Model: nsSynthStub{}, Description: "synth", Instruction: "ROLE:synth Summarize.",
+		Name: "synth", Model: textLLM("SUMMARY"), Description: "synth", Instruction: "ROLE:synth Summarize.",
 	})
 	if err != nil {
 		t.Fatalf("synth agent: %v", err)
@@ -154,7 +116,7 @@ func runTwoConcurrentNodes(t *testing.T, stub *nodeScopedStub) []string {
 
 	ex := dag.NewExecutor(session.InMemoryService(),
 		map[string]adkagent.Agent{"w": stub, "synth": synth}, nil,
-		vetting.NewJudgeFactory(nsJudge{}, nil, nil),
+		vetting.NewJudgeFactory(passJudge, nil, nil),
 		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 
 	const chatID = "nodescoped-chat"
@@ -172,9 +134,7 @@ func runTwoConcurrentNodes(t *testing.T, stub *nodeScopedStub) []string {
 	var nodes []string
 	for _, r := range capExp.records {
 		attrs := ledgerAttrsOf(r)
-		// Only the "w"-agent (n1/n2) draft rounds are under test - the synth
-		// fan-in node's own chat event (agent "synth") is required for the
-		// graph to have one terminal node but isn't part of the assertion.
+		// Only the "w" draft rounds are under test; synth exists for a single terminal.
 		if attrs["gen_ai.operation.name"] != "chat" || attrs["gen_ai.agent.name"] != "w" {
 			continue
 		}
@@ -183,12 +143,8 @@ func runTwoConcurrentNodes(t *testing.T, stub *nodeScopedStub) []string {
 	return nodes
 }
 
-// TestNodeScopedWorker_PerNodeConstruction_IsolatesLedgerAttribution: two
-// concurrent nodes sharing ONE configured agent each get a FRESH model/tools
-// pair (nodeScopedStub.share=false, ForNode called twice, two DISTINCT
-// objects), forced to genuinely overlap via nsBarrierStub's barrier. Because
-// nothing is shared, each node's ledger events must carry ITS OWN node id -
-// this can never misattribute, structurally, regardless of timing.
+// With fresh model/tools per node, each node's ledger events carry its own id, whatever
+// the timing.
 func TestNodeScopedWorker_PerNodeConstruction_IsolatesLedgerAttribution(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -203,23 +159,14 @@ func TestNodeScopedWorker_PerNodeConstruction_IsolatesLedgerAttribution(t *testi
 		t.Fatalf("built pairs = %v, want two DISTINCT model instances (one per node)", stub.built)
 	}
 
-	// Each node makes TWO model calls (current_date, then the final answer) -
-	// correct attribution is exactly two "n1" and two "n2" events, never a
-	// count that leaks one node's round onto the other.
+	// Each node makes two calls (current_date, final answer): exactly two per node.
 	if c := counts(nodes); c["n1"] != 2 || c["n2"] != 2 || len(nodes) != 4 {
 		t.Errorf("draft/final chat events carried quack.node = %v, want exactly two n1 and two n2", nodes)
 	}
 }
 
-// TestNodeScopedWorker_SharedObjectMisattributes proves the test above is
-// sensitive to the actual #609 bug: with share=true (one model/tools pair
-// reused across both ForNode calls - the pre-fix shape, where buildAgents
-// built a native agent's model/tools ONCE per agent name), the SAME two
-// concurrent, barrier-forced-overlapping nodes misattribute at least one
-// ledger event to the wrong node id. This is the "make it fail first" half
-// of #609's regression coverage, kept as a permanent assertion (not a
-// disabled/skipped test) so a future change that reintroduces sharing here
-// is caught by CI, not rediscovered live.
+// With share=true the same overlapping nodes misattribute at least one event, proving the
+// test above is sensitive to the bug; kept live so CI catches a reintroduction.
 func TestNodeScopedWorker_SharedObjectMisattributes(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(2)

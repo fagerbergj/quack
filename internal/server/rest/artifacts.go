@@ -19,9 +19,8 @@ import (
 	"github.com/fagerbergj/quack/internal/store"
 )
 
-// inlineArtifactMimeTypes is the ONLY set of MIME types GetChatArtifact
-// renders inline. Everything else - including image/svg+xml, which can
-// carry a <script> - downloads as an attachment; same-origin stored-XSS via an SVG "image" is the trap this allowlist exists to close.
+// inlineArtifactMimeTypes is the only set GetChatArtifact renders inline; everything else, including
+// script-capable image/svg+xml, downloads as an attachment to close same-origin stored XSS.
 var inlineArtifactMimeTypes = map[string]bool{
 	"image/png":  true,
 	"image/jpeg": true,
@@ -97,9 +96,8 @@ func toArtifactRevisionInfo(rv store.ArtifactRevision) schema.ArtifactRevisionIn
 	return info
 }
 
-// revisionsForArtifact fetches one artifact name's revisions - the store's
-// WHERE name = ? seam (store.TurnAwareService.RevisionsForName) when the
-// backend supports it, falling back to filtering ListForSession's full-chat listing only for a backend that doesn't (adversarial review follow-up on #1094: the original version always paid for the full-chat scan).
+// revisionsForArtifact fetches one name's revisions via RevisionsForName when the backend supports it,
+// else by filtering the full-chat listing.
 func (h *Handler) revisionsForArtifact(r *http.Request, chatID, name string) ([]store.ArtifactRevision, bool, error) {
 	userID := h.sessionUser(r.Context(), chatID)
 	revs, supported, err := h.artifacts.RevisionsForName(r.Context(), artifactref.AppName, userID, chatID, name)
@@ -135,7 +133,7 @@ func (h *Handler) artifactOK(w http.ResponseWriter, r *http.Request, chatID sche
 }
 
 // ListArtifactRevisions lists one artifact id's revisions, newest first,
-// each with lineage - the revision picker's data source (#1094).
+// each with lineage (the revision picker's data source).
 func (h *Handler) ListArtifactRevisions(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, artifactName schema.ArtifactName) {
 	if !h.artifactOK(w, r, chatID) {
 		return
@@ -167,9 +165,8 @@ func artifactLoadErr(w http.ResponseWriter, err error) {
 	httpError(w, http.StatusInternalServerError, err)
 }
 
-// diffable reports whether a MIME type is worth diffing at byte level:
-// binary blobs (images, PDFs) render as noise, not a review aid -
-// DiffArtifactRevisions 415s anything outside this allowlist instead of pretending a diff exists.
+// diffable reports whether a MIME type is worth a byte-level diff;
+// DiffArtifactRevisions 415s anything else rather than diffing binary noise.
 func diffable(mimeType string) bool {
 	return mimeType == "application/json" || strings.HasPrefix(mimeType, "text/")
 }
@@ -220,8 +217,7 @@ func (h *Handler) DiffArtifactRevisions(w http.ResponseWriter, r *http.Request, 
 	_, _ = w.Write([]byte(out))
 }
 
-// GetChatArtifact streams one artifact revision's bytes - latest by
-// default, or ?revision=n. Content-Disposition defaults to attachment;
+// GetChatArtifact streams one revision's bytes (latest, or ?revision=n);
 // only inlineArtifactMimeTypes renders inline.
 func (h *Handler) GetChatArtifact(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, artifactName schema.ArtifactName, params schema.GetChatArtifactParams) {
 	if !h.artifactOK(w, r, chatID) {

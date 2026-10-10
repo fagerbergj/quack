@@ -14,10 +14,8 @@ import (
 	"github.com/fagerbergj/quack/internal/schema"
 )
 
-// failingRegistry is a pluginreg.FetchRegistry whose every method returns a
-// caller-set error (or delegates CheckUpdate to checkFn, for the budget
-// test) - the "failing registry stub" the adversarial review asked for,
-// exercising error branches no real FSRegistry fixture can force on demand.
+// failingRegistry returns a caller-set error from every method (or delegates CheckUpdate to checkFn),
+// forcing error branches a real FSRegistry fixture can't.
 type failingRegistry struct {
 	rows      []pluginreg.Plugin
 	listErr   error
@@ -47,9 +45,8 @@ func handlerWith(reg pluginreg.FetchRegistry) *Handler {
 	return h
 }
 
-// TestPluginHandlersRequirePluginsConfigured: every handler 500s with a
-// clear message instead of a nil-pointer panic when boot never wired
-// SetPlugins - requirePlugins' guard, exercised from each call site.
+// TestPluginHandlersRequirePluginsConfigured: with SetPlugins never wired, every handler 500s
+// with a clear message instead of a nil-pointer panic.
 func TestPluginHandlersRequirePluginsConfigured(t *testing.T) {
 	h := &Handler{}
 	getCases := map[string]http.HandlerFunc{
@@ -211,9 +208,8 @@ func TestUpdateAllPluginsRebuildRefusalIs422(t *testing.T) {
 	}
 }
 
-// TestRebuildNilReceiverIsNoop: (*Plugins)(nil).rebuild() is the same
-// defensive nil-guard requirePlugins already enforces at the HTTP layer -
-// a second line of defense, cheap to prove directly.
+// TestRebuildNilReceiverIsNoop: (*Plugins)(nil).rebuild() is a no-op, a second guard
+// behind requirePlugins.
 func TestRebuildNilReceiverIsNoop(t *testing.T) {
 	var p *Plugins
 	if rep, err := p.rebuild(context.Background()); err != nil || len(rep.Failures) != 0 {
@@ -246,10 +242,8 @@ func TestPluginWireDeclaresMCPServers(t *testing.T) {
 	}
 }
 
-// TestPluginUpdateBudgetExpires proves ListPluginUpdates/UpdateAllPlugins'
-// context.WithTimeout actually bounds a slow row: shrink the budget, make
-// CheckUpdate block past it, and confirm the per-row result carries the
-// deadline error instead of hanging for the real 30s.
+// TestPluginUpdateBudgetExpires: with a shrunk budget and a CheckUpdate that blocks past it,
+// the row's result carries the deadline error instead of hanging for the real 30s.
 func TestPluginUpdateBudgetExpires(t *testing.T) {
 	prev := pluginUpdateBudget
 	pluginUpdateBudget = 10 * time.Millisecond
@@ -281,9 +275,8 @@ func decodeJSON(t *testing.T, w *httptest.ResponseRecorder, v any) {
 	}
 }
 
-// TestListPluginsShadowedEmbeddedRowNotDuplicated is review#4: a real row
-// already named "quack" (it shadows the embedded baseline, epic #1427 S2)
-// must appear once, never alongside a synthetic embedded row of the same name.
+// TestListPluginsShadowedEmbeddedRowNotDuplicated: a real row named "quack" shadows the embedded baseline
+// and appears once, never beside a synthetic row of the same name.
 func TestListPluginsShadowedEmbeddedRowNotDuplicated(t *testing.T) {
 	h := handlerWith(&failingRegistry{
 		rows: []pluginreg.Plugin{{Name: "quack", Source: pluginreg.SourceGitHub, Owner: "acme", Repo: "quack"}},

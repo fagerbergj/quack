@@ -243,9 +243,9 @@ func recordedFor(sess *bundle.Session, jr judgedRound) map[string]float64 {
 	return out
 }
 
-// RubricConfigFor builds cfg's gate Config for one agent bundle: the same
+// rubricConfigFor builds cfg's gate Config for one agent bundle: the same
 // base+bundle-override rubric resolution serve.go's perAgentGateCfg does.
-func RubricConfigFor(ctx context.Context, cfg *config.Config, agentName, rubricOverride string, judgeArtifactTools []tool.Tool) (vetting.Config, error) {
+func rubricConfigFor(ctx context.Context, cfg *config.Config, agentName, rubricOverride string, judgeArtifactTools []tool.Tool) (vetting.Config, error) {
 	if agentName == "" {
 		return vetting.Config{}, fmt.Errorf("judge replay: no recorded worker agent for this node (an ACP invoke record may be missing from the bundle)")
 	}
@@ -318,7 +318,7 @@ func RunJudgeReplay(ctx context.Context, cfg *config.Config, sess *bundle.Sessio
 	cfgCache := map[string]vetting.Config{}
 	for i, jr := range rounds {
 		rep, code := replayOneRound(ctx, cfg, sess, jr, opts, judge, judgeArtifactTools, hasRealArtifactAccess, cfgCache)
-		exit = maxInt(exit, code)
+		exit = max(exit, code)
 		reports = append(reports, rep)
 		// stderr progress: a --repeat run over many rounds is otherwise silent until the end
 		fmt.Fprintf(os.Stderr, "replayed %d/%d %s %s exit=%d\n", i+1, len(rounds), rep.Node, rep.Round, code)
@@ -343,7 +343,7 @@ func replayOneRound(ctx context.Context, cfg *config.Config, sess *bundle.Sessio
 	gc, ok := cfgCache[jr.agent]
 	if !ok {
 		var err error
-		gc, err = RubricConfigFor(ctx, cfg, jr.agent, opts.RubricPath, judgeArtifactTools)
+		gc, err = rubricConfigFor(ctx, cfg, jr.agent, opts.RubricPath, judgeArtifactTools)
 		if err != nil {
 			rep.Skipped = err.Error()
 			return rep, 1
@@ -592,11 +592,4 @@ func passWord(passed bool) string {
 		return "pass"
 	}
 	return "fail"
-}
-
-func maxInt(a, b int) int {
-	if b > a {
-		return b
-	}
-	return a
 }

@@ -7,9 +7,8 @@ import (
 	"github.com/fagerbergj/quack/internal/artifactsrc"
 )
 
-// compactionPrompts resolves the summarizer's system prompt and output
-// template (system/compaction, system/compaction.summary). They follow
-// GOOSE/OpenHands's drop-and-summarize strategy, not blank-the-old-result-in-place.
+// compactionPrompts resolves system/compaction and system/compaction.summary, a drop-and-summarize strategy
+// (as in GOOSE/OpenHands) rather than blanking old results in place.
 func compactionPrompts(ctx context.Context, res *artifactsrc.Resolver) (system, template string, err error) {
 	sys, err := res.Resolve(ctx, "system/compaction")
 	if err != nil {

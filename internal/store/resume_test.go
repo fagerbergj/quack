@@ -26,8 +26,7 @@ func resumeTestStore(t *testing.T) *Store {
 	return st
 }
 
-// TestSaveDagPlan_DuplicateIsSkippedNotAnError pins #997: a resumed boot
-// re-saves the same planID, which used to error on the unique constraint.
+// A resumed boot re-saves the same planID; the unique constraint must not turn that into an error.
 func TestSaveDagPlan_DuplicateIsSkippedNotAnError(t *testing.T) {
 	st := resumeTestStore(t)
 	ctx := context.Background()
@@ -36,9 +35,8 @@ func TestSaveDagPlan_DuplicateIsSkippedNotAnError(t *testing.T) {
 	}
 }
 
-// TestResumePausedDagNodes_HardKillBecomesPausedNotFailed: no shutdown ran,
-// so the node is still "running" and owned by this instance. That is a hard
-// kill, and a hard kill is resumable state, not a failure.
+// No shutdown ran, so the node is still "running" and owned by this instance: a hard kill, which is
+// resumable state, not a failure.
 func TestResumePausedDagNodes_HardKillBecomesPausedNotFailed(t *testing.T) {
 	st := resumeTestStore(t)
 	ctx := context.Background()
@@ -82,9 +80,8 @@ func TestResumePausedDagNodes_MissingPlanFails(t *testing.T) {
 	}
 }
 
-// TestResumePausedDagNodes_ArchivedChatIsNotResumed pins #1176: a resumable
-// callback that rejects archived chats (as serve.go's boot wiring does) must
-// mark the node failed with that reason, not hand it back to Start - an archived chat's stale paused nodes were being resumed forever in prod.
+// A resumable callback rejecting archived chats (as serve's boot wiring does) marks the node failed with
+// that reason instead of resuming it.
 func TestResumePausedDagNodes_ArchivedChatIsNotResumed(t *testing.T) {
 	st := resumeTestStore(t)
 	ctx := context.Background()
@@ -118,8 +115,7 @@ func TestResumePausedDagNodes_ArchivedChatIsNotResumed(t *testing.T) {
 	}
 }
 
-// TestScanOrphanedRuns_KeepsPendingQuestion pins #957: the boot scan used to
-// blank chats.pending_question, destroying the state a resume needs.
+// The boot scan must not blank chats.pending_question: a resume needs it.
 func TestScanOrphanedRuns_KeepsPendingQuestion(t *testing.T) {
 	st := resumeTestStore(t)
 	ctx := context.Background()

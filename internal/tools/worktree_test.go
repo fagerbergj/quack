@@ -16,9 +16,8 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// TestSetupWorktreeCreatesDistinctDirsAndBranches pins the core of worktree-per-node
-// isolation: two read-only qualifying nodes (reviewer, explorer) sharing one
-// plan.Setup clone must each get their OWN directory AND their own branch - git refuses to check the same branch out in two worktrees at once, so a shared branch name would break the second node outright.
+// TestSetupWorktreeCreatesDistinctDirsAndBranches: two nodes sharing one Setup clone each get their
+// own dir and branch; git refuses one branch in two worktrees.
 func TestSetupWorktreeCreatesDistinctDirsAndBranches(t *testing.T) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)
@@ -70,9 +69,8 @@ func TestSetupWorktreeCreatesDistinctDirsAndBranches(t *testing.T) {
 	}
 }
 
-// TestSetupWorktreeIsIdempotent pins the resumed-run requirement: re-entering
-// the same node calls SetupWorktree again with the same arguments, and that
-// must be a cheap no-op (the SAME worktree, still valid) rather than a disruptive re-link that could clobber files the worker already wrote.
+// TestSetupWorktreeIsIdempotent: a resumed node's repeat SetupWorktree call is a no-op on the same
+// worktree, never a re-link that could clobber the worker's files.
 func TestSetupWorktreeIsIdempotent(t *testing.T) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)
@@ -143,9 +141,8 @@ func TestSetupWorktreeFollowsMovedParentHead(t *testing.T) {
 	}
 }
 
-// TestSetupWorktreeRunsCheckSetup pins the #856 follow-up: a read-only
-// worktree (reviewer/explorer) can never bootstrap itself, so check_setup
-// must run quack-side, in the worktree, before the worker's first round - not only later at gate-check time.
+// TestSetupWorktreeRunsCheckSetup: a read-only worktree can't bootstrap itself, so check_setup runs
+// quack-side in it before the worker's first round.
 func TestSetupWorktreeRunsCheckSetup(t *testing.T) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)
@@ -167,9 +164,8 @@ func TestSetupWorktreeRunsCheckSetup(t *testing.T) {
 	}
 }
 
-// TestSetupWorktreeRunsCheckSetupAfterSharedCloneAlreadyDid pins the per-dir
-// cache key: workspace.RunCheckSetup's cache is shared across every caller
-// (SetupClone and SetupWorktree both call into it), so a naive key (e.g. the parent clone's dir, or the node ID alone) would make the shared clone's bootstrap poison a worktree's own - exactly the live failure (a worktree missing scripts/node_modules). The key must be the worktree's OWN resolved dir.
+// TestSetupWorktreeRunsCheckSetupAfterSharedCloneAlreadyDid: RunCheckSetup's shared cache is keyed by
+// the worktree's own dir, so the clone's bootstrap can't stand in for the worktree's.
 func TestSetupWorktreeRunsCheckSetupAfterSharedCloneAlreadyDid(t *testing.T) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)
@@ -198,8 +194,7 @@ func TestSetupWorktreeRunsCheckSetupAfterSharedCloneAlreadyDid(t *testing.T) {
 	}
 }
 
-// TestSetupWorktreeNoCheckSetupUnchanged pins that an unset check_setup
-// leaves worktree provisioning byte-identical to before this call site existed.
+// TestSetupWorktreeNoCheckSetupUnchanged: an unset check_setup runs no bootstrap step.
 func TestSetupWorktreeNoCheckSetupUnchanged(t *testing.T) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)
@@ -221,9 +216,8 @@ func TestSetupWorktreeNoCheckSetupUnchanged(t *testing.T) {
 	}
 }
 
-// TestSetupWorktreeCheckSetupFailureWarnsAndProceeds pins the shared failure
-// semantics with the gate's own check_setup call (checks.go): a broken
-// bootstrap command must not fail node worktree provisioning.
+// TestSetupWorktreeCheckSetupFailureWarnsAndProceeds: like the gate's check_setup, a broken
+// bootstrap command must not fail worktree provisioning.
 func TestSetupWorktreeCheckSetupFailureWarnsAndProceeds(t *testing.T) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)
@@ -325,8 +319,8 @@ func TestSetupWorktreeSyncIgnoresRetargetedHead(t *testing.T) {
 	}
 }
 
-// TestRedirectRecoveryWarns: a shared clone or worktree whose .git was aimed at another repo is still discarded and
-// recreated, but now with a WARN naming the dir and why; a first-time setup logs none.
+// TestRedirectRecoveryWarns: a clone or worktree whose .git points at another repo is recreated with
+// a WARN naming the dir and why; a first-time setup logs none.
 func TestRedirectRecoveryWarns(t *testing.T) {
 	requireGit(t)
 	var logs bytes.Buffer

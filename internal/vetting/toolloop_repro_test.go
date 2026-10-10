@@ -24,9 +24,8 @@ type probeResult struct {
 	Out string `json:"out"`
 }
 
-// TestWorkerSeesToolError is the direct test of "are ERRORS forwarded?": the
-// probe tool returns a Go error; the worker's follow-up call must carry an error
-// FunctionResponse so the model can adapt (not re-issue the same failing call).
+// TestWorkerSeesToolError: a tool's Go error reaches the worker's follow-up call as an error
+// FunctionResponse, so the model can adapt instead of re-issuing the call.
 func TestWorkerSeesToolError(t *testing.T) {
 	stub := &toolLoopStub{}
 	probe, err := functiontool.New[probeArgs, probeResult](
@@ -71,9 +70,8 @@ func TestWorkerSeesToolError(t *testing.T) {
 	}
 }
 
-// toolLoopStub drives ONE worker tool call and records whether the worker's
-// FOLLOW-UP model call actually carried the tool RESULT back (and under what
-// role). This is the empirical test of "are tool results forwarded to the task-mode worker, or ejected/lost so it re-issues the same call forever".
+// toolLoopStub drives one worker tool call and records whether, and under what role, the follow-up
+// model call carried the tool result back.
 type toolLoopStub struct {
 	workerCalls    int
 	sawProbeResult bool
@@ -109,9 +107,8 @@ func (m *toolLoopStub) GenerateContent(_ context.Context, req *model.LLMRequest,
 	}
 }
 
-// TestWorkerSeesItsOwnToolResult is the reproduction: a task-mode worker (built
-// exactly as production builds nodes - unset Mode, wrapped in a workflow node)
-// makes one tool call; its follow-up model call MUST carry that tool's result, or the worker has amnesia and re-issues the same call forever (the #252 loop).
+// TestWorkerSeesItsOwnToolResult: a task-mode worker built as production builds nodes must see its
+// tool's result in the follow-up call, or it re-issues the same call forever.
 func TestWorkerSeesItsOwnToolResult(t *testing.T) {
 	stub := &toolLoopStub{}
 	probe, err := functiontool.New[probeArgs, probeResult](

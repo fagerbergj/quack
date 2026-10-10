@@ -102,9 +102,8 @@ func TestNewOIDCVerifierBadIssuerFailsLoudly(t *testing.T) {
 	}
 }
 
-// jwksServer serves a JWKS whose raw key objects are exactly keys (bypassing
-// jose.JSONWebKeySet's own marshaling, so a test can hand it a structurally
-// broken key) plus a matching discovery document.
+// jwksServer serves keys verbatim (bypassing jose's marshaling, so a test can serve a broken key)
+// plus a matching discovery document.
 func jwksServer(t *testing.T, keys []map[string]any) *httptest.Server {
 	t.Helper()
 	var srv *httptest.Server
@@ -125,9 +124,8 @@ func jwksServer(t *testing.T, keys []map[string]any) *httptest.Server {
 	return srv
 }
 
-// TestProbeJWKSRejectsKeyMissingKty pins review suggestion #1: a JWKS that
-// decodes fine but whose key has no "kty" is a structurally broken IdP
-// response, and must fail the startup probe rather than pass it silently.
+// TestProbeJWKSRejectsKeyMissingKty: a JWKS that decodes but has a key without "kty"
+// fails the startup probe.
 func TestProbeJWKSRejectsKeyMissingKty(t *testing.T) {
 	srv := jwksServer(t, []map[string]any{{"kid": "k1", "alg": "RS256"}})
 	_, err := newOIDCVerifier(&config.OIDCConfig{Issuer: srv.URL, Audience: "quack"})
@@ -155,9 +153,8 @@ func TestProbeJWKSAcceptsKidOnly(t *testing.T) {
 	}
 }
 
-// TestNewOIDCVerifierRetriesTransientFailure pins review suggestion #2: the
-// first couple of probe attempts hitting a 500 (a rolling-deploy blip) don't
-// fail startup outright - a later attempt that succeeds does.
+// TestNewOIDCVerifierRetriesTransientFailure: probe attempts that 500 (a rolling-deploy blip)
+// don't fail startup if a later attempt succeeds.
 func TestNewOIDCVerifierRetriesTransientFailure(t *testing.T) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -198,9 +195,8 @@ func TestNewOIDCVerifierRetriesTransientFailure(t *testing.T) {
 	}
 }
 
-// TestNewOIDCVerifierFailsAfterExhaustingRetries confirms the fail-fast
-// contract survives the retry: an IdP that never recovers still fails
-// startup, it just takes oidcProbeAttempts tries to say so.
+// TestNewOIDCVerifierFailsAfterExhaustingRetries: an IdP that never recovers still fails startup
+// after oidcProbeAttempts tries.
 func TestNewOIDCVerifierFailsAfterExhaustingRetries(t *testing.T) {
 	mux := http.NewServeMux()
 	var hits atomic.Int32
@@ -254,33 +250,11 @@ func TestOIDCVerifyToken(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := v.verify(t.Context(), tt.token)
+			err := v.verify(t.Context(), tt.token)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("verify() err = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
-	}
-}
-
-func TestOIDCVerifyExtractsIdentity(t *testing.T) {
-	idp := newTestIdP(t)
-	v, err := newOIDCVerifier(&config.OIDCConfig{Issuer: idp.srv.URL, Audience: "quack"})
-	if err != nil {
-		t.Fatalf("newOIDCVerifier: %v", err)
-	}
-	tok := idp.token(t, "quack", time.Hour, jwt.MapClaims{
-		"preferred_username": "jason",
-		"groups":             []any{"admins", "devs"},
-	})
-	id, err := v.verify(t.Context(), tok)
-	if err != nil {
-		t.Fatalf("verify: %v", err)
-	}
-	if id.User != "jason" {
-		t.Errorf("User = %q, want jason", id.User)
-	}
-	if len(id.Groups) != 2 || id.Groups[0] != "admins" || id.Groups[1] != "devs" {
-		t.Errorf("Groups = %v", id.Groups)
 	}
 }
 
@@ -306,7 +280,7 @@ func TestOIDCVerifySignedByWrongKeyFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sign: %v", err)
 	}
-	if _, err := v.verify(t.Context(), s); err == nil {
+	if err := v.verify(t.Context(), s); err == nil {
 		t.Fatal("expected error for a token signed by an unpublished key")
 	}
 }

@@ -7,9 +7,7 @@ import (
 	"testing"
 )
 
-// writeFakeBinary drops an executable shell script named name into dir,
-// printing output to stdout when run - a stand-in for a probed toolchain
-// binary (mirrors internal/vetting/checks_test.go's convention).
+// writeFakeBinary stands in for a probed toolchain binary that prints output.
 func writeFakeBinary(t *testing.T, dir, name, output string) {
 	t.Helper()
 	script := "#!/bin/sh\necho '" + output + "'\n"
@@ -38,9 +36,7 @@ func TestPromptBlockSandboxLine(t *testing.T) {
 }
 
 func TestPromptBlockNeverClaimsNetworkDenial(t *testing.T) {
-	// Neither sandbox mode unshares the network namespace (sandbox.go) - a
-	// prompt claiming otherwise is exactly the silent-degradation shape #663
-	// exists to prevent.
+	// Neither sandbox mode unshares the network namespace, so the prompt must not claim it.
 	t.Setenv("PATH", t.TempDir())
 	for _, mode := range []SandboxMode{SandboxBwrap, SandboxLandlock, SandboxNone} {
 		got := PromptBlock(Caps{Sandbox: mode}, nil)
@@ -92,8 +88,7 @@ func TestPromptBlockBuildDirsLine(t *testing.T) {
 	}
 }
 
-// TestPromptBlockToolchainRemovalRemovesLine is the core #663 assertion: a
-// toolchain absent from what's actually resolvable never appears, and removing it (here: a PATH with no `go` on it) removes exactly its line, nothing else.
+// TestPromptBlockToolchainRemovalRemovesLine: an unresolvable toolchain removes exactly its line.
 func TestPromptBlockToolchainRemovalRemovesLine(t *testing.T) {
 	dir := t.TempDir()
 	writeFakeBinary(t, dir, "go", "go version go1.24.2 linux/amd64")
@@ -104,9 +99,7 @@ func TestPromptBlockToolchainRemovalRemovesLine(t *testing.T) {
 		t.Fatalf("with go on PATH, want go1.24.2 in the toolchain line, got %q", present)
 	}
 
-	// Remove it from the resolvable set (config: exec_path effectively empty,
-	// server PATH has nothing) - the whole line must disappear, since go was
-	// the only toolchain present.
+	// With nothing resolvable the whole line disappears, since go was the only toolchain.
 	t.Setenv("PATH", t.TempDir())
 	absent := PromptBlock(Caps{}, nil)
 	if strings.Contains(absent, "Toolchains on PATH") {
@@ -149,9 +142,7 @@ func TestPromptBlockJavaHomeToolchain(t *testing.T) {
 	}
 }
 
-// TestPromptBlockJavaHomeWithoutReleaseFileOmitted asserts the exact failure
-// mode #663 exists to prevent: a configured-but-unverifiable toolchain must
-// never appear, even though the operator DID set JAVA_HOME.
+// TestPromptBlockJavaHomeWithoutReleaseFileOmitted: a configured but unverifiable toolchain never appears.
 func TestPromptBlockJavaHomeWithoutReleaseFileOmitted(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	home := t.TempDir() // no release file inside
@@ -197,8 +188,8 @@ func TestPromptBlockAndroidSdkRootFallback(t *testing.T) {
 	}
 }
 
-// withFakeExecEnvPath points execEnvPath (the child's fixed system dirs) at an
-// empty fixture - the real system dirs may hold gh/curl, and ChildPath, unlike LookPath, cannot be steered away from those via $PATH.
+// withFakeExecEnvPath empties the child's fixed system dirs, which may hold gh/curl and,
+// unlike LookPath, can't be steered via $PATH.
 func withFakeExecEnvPath(t *testing.T) {
 	t.Helper()
 	old := execEnvPath

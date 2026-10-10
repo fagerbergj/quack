@@ -30,9 +30,8 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// attachStub plays the orchestrator (routes on the "create_plan" tool's
-// presence), the judge (submit_verdict), and the "media" worker - recording
-// the bytes and mime the worker actually received off req.Contents.
+// attachStub plays the orchestrator (routes on create_plan's presence), the judge, and the "media"
+// worker, recording the bytes and mime the worker received.
 type attachStub struct {
 	mu          sync.Mutex
 	workerCalls int
@@ -127,9 +126,8 @@ func attachStubCall(name string, args map[string]any) *model.LLMResponse {
 	}
 }
 
-// newAttachmentTestHandler builds a Handler with a real sqlite store, a
-// row-backed artifact service, and a one-node "media" DAG - everything the
-// attachment reroute + hydration path needs end to end.
+// newAttachmentTestHandler builds a Handler with a real sqlite store, a row-backed artifact service,
+// and a one-node "media" DAG.
 func newAttachmentTestHandler(t *testing.T, dbPath string, stub *attachStub) *Handler {
 	t.Helper()
 	st, err := store.New("sqlite", dbPath)
@@ -143,9 +141,8 @@ func newAttachmentTestHandler(t *testing.T, dbPath string, stub *attachStub) *Ha
 	st.SetArtifactService(artifactSvc)
 	artifacts := store.NewTurnAwareService(artifactSvc)
 
-	// Only the media worker's model is wrapped with hydration - mirrors
-	// production (inference.NewModel wraps every real model this way; the
-	// orchestrator's own model never sees attachment parts directly).
+	// Only the worker's model is wrapped with hydration, as in production:
+	// the orchestrator's model never sees attachment parts directly.
 	hydratedStub := inference.HydratingModelForTesting(stub, artifacts)
 	worker, err := llmagent.New(llmagent.Config{
 		Name: "media", Model: hydratedStub, Description: "reads images", Instruction: "ROLE:media Describe the attached image.",
@@ -191,14 +188,12 @@ func postMultipart(t *testing.T, h *Handler, chatID, content, filename, mimeType
 	}
 }
 
-// fakePNG is not a real PNG - the stub model never decodes it - but it is
-// distinctive enough to prove byte-for-byte round-trip and to search the
-// persisted plan/session JSON for.
+// fakePNG is never decoded, but distinctive enough to prove a byte-for-byte round trip
+// and to search the persisted JSON for.
 var fakePNG = []byte("\x89PNG-fake-pixel-data-0123456789abcdef")
 
-// TestAttachmentRoundTrip is the durability-upgrade proof: an attachment
-// dispatched through SendChatMessage reaches the media worker's model as
-// real bytes, while everything durably persisted (the DAG plan, the ADK session events) carries only a reference - never the bytes themselves.
+// TestAttachmentRoundTrip: an attachment reaches the media worker's model as real bytes, while everything
+// persisted (DAG plan, ADK session events) carries only a reference.
 func TestAttachmentRoundTrip(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "quack.db")
 	stub := &attachStub{}
@@ -250,9 +245,7 @@ func TestAttachmentRoundTrip(t *testing.T) {
 		}
 	}
 
-	// #1126: the attachment lists as a "bytes" recordstore artifact with
-	// kind/class/lineage set, not the null triple the raw artifact-service
-	// path used to leave behind.
+	// The attachment lists as a "bytes" recordstore artifact with kind/class/lineage set.
 	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/chats/"+chatID+"/artifacts", nil)
 	listRec := httptest.NewRecorder()
 	h.ListChatArtifacts(listRec, listReq, chatID)
@@ -280,9 +273,8 @@ func TestAttachmentRoundTrip(t *testing.T) {
 	}
 }
 
-// TestAttachmentRoundTrip_SecondAccessStillHydrates proves hydration isn't a
-// one-shot/turn-scoped effect: loading the SAME artifact revision again
-// (as a later turn's plan would, referencing it by name) still resolves to the original bytes through the model-boundary wrapper.
+// TestAttachmentRoundTrip_SecondAccessStillHydrates: loading the same artifact revision again
+// (as a later turn would) still resolves to the original bytes.
 func TestAttachmentRoundTrip_SecondAccessStillHydrates(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "quack.db")
 	stub := &attachStub{}
@@ -315,9 +307,8 @@ func TestAttachmentRoundTrip_SecondAccessStillHydrates(t *testing.T) {
 	}
 }
 
-// recordingModel records the request hydratingModel actually delegates -
-// GenerateContent must not mutate the caller's own req in place (that req
-// is also what the model.call ledger later logs; see internal/inference/hydrate.go).
+// recordingModel records the request hydratingModel delegates: GenerateContent must not mutate
+// the caller's req, which the model.call ledger later logs.
 type recordingModel struct{ got *model.LLMRequest }
 
 func (m *recordingModel) Name() string { return "recording" }

@@ -9,9 +9,7 @@ import (
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 )
 
-// TestNew_EventsSessionIndex_IdempotentAcrossBoots pins perf audit #3's fix:
-// the CREATE INDEX IF NOT EXISTS in New() must not error on a second boot
-// against the same (already-migrated) database.
+// New()'s CREATE INDEX IF NOT EXISTS must not error on a second boot against a migrated database.
 func TestNew_EventsSessionIndex_IdempotentAcrossBoots(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "quack.db")
 
@@ -34,9 +32,8 @@ func TestNew_EventsSessionIndex_IdempotentAcrossBoots(t *testing.T) {
 	_ = st1
 }
 
-// TestNew_Migrations_IdempotentAcrossBoots_Postgres runs the same two-boot
-// check against real Postgres, where CREATE INDEX IF NOT EXISTS and GORM's
-// AutoMigrate (dag_nodes.plan_id index) have different failure modes than sqlite; skips if Docker isn't reachable.
+// The two-boot check against real Postgres, whose index/AutoMigrate failure modes differ from sqlite.
+// Skips without Docker.
 func TestNew_Migrations_IdempotentAcrossBoots_Postgres(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
@@ -83,9 +80,8 @@ func TestNew_Migrations_IdempotentAcrossBoots_Postgres(t *testing.T) {
 	}
 }
 
-// TestDeleteChatRow_CascadesPerChatTables_Postgres is
-// TestDeleteChatRow_CascadesPerChatTables against real Postgres (#1296):
-// AutoMigrate's relationship-driven FK creation (ALTER TABLE ADD CONSTRAINT) is a different code path than glebarez/sqlite's table-rebuild one, so the cascade needs its own proof on the dialect prod actually runs; skips if Docker isn't reachable.
+// The cascade check on real Postgres, where FKs come from ALTER TABLE ADD CONSTRAINT rather than sqlite's
+// table rebuild. Skips without Docker.
 func TestDeleteChatRow_CascadesPerChatTables_Postgres(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
@@ -133,7 +129,7 @@ func TestDeleteChatRow_CascadesPerChatTables_Postgres(t *testing.T) {
 		t.Fatalf("upsertCheckpoint: %v", err)
 	}
 
-	// Raw SQL, not DeleteChat - the exact bypass #1296 guards against.
+	// Raw SQL, not DeleteChat: the exact bypass the FK guards against.
 	if err := st.db.Exec("DELETE FROM chats WHERE id = ?", chatID).Error; err != nil {
 		t.Fatalf("raw delete chats row: %v", err)
 	}

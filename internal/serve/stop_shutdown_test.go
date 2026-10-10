@@ -235,9 +235,8 @@ func TestFailUnresumable_KeepsReusedNodeRecord(t *testing.T) {
 	}
 }
 
-// TestDriveResume_LoadsNodePlanFromStore: a run cut mid-execute never committed the
-// session stash, so resume runs the node's own plan from the store's copy - including
-// when the stash holds an earlier step of the same growing plan (same id, no n1 yet).
+// TestDriveResume_LoadsNodePlanFromStore: a run cut mid-execute never committed the session stash, so resume
+// runs the node's plan from the store's copy, even when the stash holds an earlier step of the same plan.
 func TestDriveResume_LoadsNodePlanFromStore(t *testing.T) {
 	for _, tc := range []struct {
 		name  string

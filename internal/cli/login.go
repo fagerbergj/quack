@@ -19,28 +19,24 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// DefaultLoginScopes is requested when `server login` is given none: openid
-// (required for a sub/preferred_username-bearing token), profile
-// (preferred_username), and offline_access (a refresh token - several IdPs, e.g. Keycloak and Authentik, only issue one when it's explicitly asked for).
+// DefaultLoginScopes: openid and profile for preferred_username, offline_access for a refresh token
+// (Keycloak and Authentik only issue one when asked).
 var DefaultLoginScopes = []string{"openid", "profile", "offline_access"}
 
 // expirySkew triggers a proactive token refresh shortly before real expiry,
 // so a request in flight doesn't race a token that's about to lapse.
 const expirySkew = 30 * time.Second
 
-// refreshTimeout bounds a token refresh detached from the caller's own
-// context (see ensureFreshToken) - long enough for a slow IdP, short enough
-// that a dead token endpoint doesn't hang the caller indefinitely.
+// refreshTimeout bounds a refresh detached from the caller's context: long enough for a slow IdP,
+// short enough that a dead token endpoint doesn't hang the caller.
 const refreshTimeout = 15 * time.Second
 
-// loginCallbackTimeout bounds how long Login waits for the browser round trip
-// after opening the authorize URL, so an abandoned login doesn't hang the CLI
-// forever. A var so tests don't have to wait out a real timeout to cover the "nobody ever came back" path.
+// loginCallbackTimeout bounds the wait for the browser round trip so an abandoned login doesn't hang.
+// A var so tests can shorten it.
 var loginCallbackTimeout = 5 * time.Minute
 
-// openBrowser best-effort launches url in the user's default browser. A var
-// so tests can replace it with a synchronous fake-IdP + callback round trip
-// (see login_test.go) instead of shelling out. Errors are swallowed - the URL printed to out is always the fallback, and a headless box with no $DISPLAY/xdg-open shouldn't fail login, just leave the user to copy the link.
+// openBrowser best-effort opens url; a var so tests can fake the IdP round trip. Errors are swallowed:
+// the printed URL is the fallback on a headless box.
 var openBrowser = func(url string) {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
@@ -54,9 +50,8 @@ var openBrowser = func(url string) {
 	_ = cmd.Start()
 }
 
-// Login runs the OAuth 2.0 Authorization Code flow with PKCE (RFC 6749 +
-// RFC 7636) against issuer for clientID - the RFC 8252 "native app" pattern:
-// a loopback listener on an ephemeral port stands in for the redirect URI (no port to pre-register with the IdP), the authorize URL is opened in a browser (and printed as a fallback), and Login blocks until the redirect lands back on the listener. Stores the resulting tokens on the already-registered server name so NewClient picks them up automatically. A headless/SSH box with no local browser and no reachable port can't complete this flow - only a device authorization grant (RFC 8628) could, which this does not implement. Only public OIDC clients are supported (no client secret): PKCE is meant for exactly this, and it keeps the stored registry free of anything more sensitive than the tokens themselves.
+// Login runs the OAuth Authorization Code + PKCE flow with a loopback redirect (RFC 8252) and stores the
+// tokens on the registered server. Public clients only, no secret; headless boxes would need RFC 8628.
 func Login(ctx context.Context, out io.Writer, name, issuer, clientID string, scopes []string) error {
 	cc, err := LoadClient()
 	if err != nil {
@@ -126,9 +121,8 @@ func Login(ctx context.Context, out io.Writer, name, issuer, clientID string, sc
 	return nil
 }
 
-// randomURLSafe returns n random bytes, base64url-encoded (no padding) - used
-// for both the PKCE code verifier (RFC 7636 wants 43-128 chars; 32 bytes
-// yields 43) and the CSRF state, sized the same for simplicity.
+// randomURLSafe returns n random bytes base64url-encoded without padding; 32 bytes gives the
+// 43-char minimum RFC 7636 wants for a PKCE verifier.
 func randomURLSafe(n int) (string, error) {
 	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {
@@ -137,9 +131,8 @@ func randomURLSafe(n int) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-// awaitCallback serves exactly one /callback request on listener (closing it
-// on return either way), checking state on the way in to guard against a
-// CSRF/confused-deputy redirect, and returns the authorization code. announce is called once the listener is live, so the caller can print the authorize URL and open a browser - after which awaitCallback blocks until the redirect lands or ctx/loginCallbackTimeout expires.
+// awaitCallback serves one /callback on listener, checks state against CSRF, and returns the code.
+// announce runs once the listener is live, so the caller can print and open the authorize URL.
 func awaitCallback(ctx context.Context, listener net.Listener, state string, announce func()) (string, error) {
 	type result struct {
 		code string
@@ -187,9 +180,8 @@ func awaitCallback(ctx context.Context, listener net.Listener, state string, ann
 	}
 }
 
-// ensureFreshToken returns ref's access token, refreshing it first (via the
-// OAuth2 token endpoint's refresh_token grant) and persisting the result if
-// it's at or near expiry. A ref with no stored auth returns "" (unauthenticated server). A ref whose token has no refresh_token and has expired is returned as-is; the server will 401 it, the caller's signal to `server login` again. Uses golang.org/x/oauth2's Config.TokenSource directly rather than rp.RefreshTokens, which is generic over oidc.IDClaims for ID-token verification this bearer-relaying CLI client has no use for. refreshMu serializes this across goroutines in one process: without it, two callers racing the same near-expiry token can each refresh independently, and an IdP that rotates refresh tokens invalidates the first as soon as the second is consumed. Does not cover two separate `quack` process invocations racing the same file.
+// ensureFreshToken returns ref's access token, refreshing and persisting it if near expiry ("" for no auth).
+// refreshMu serializes refreshes in-process; IdPs that rotate refresh tokens break on concurrent refresh.
 func ensureFreshToken(ctx context.Context, cc *ClientConfig, name string, ref ServerRef) (string, error) {
 	a := ref.Auth
 	if a == nil {
@@ -219,9 +211,8 @@ func ensureFreshToken(ctx context.Context, cc *ClientConfig, name string, ref Se
 		Endpoint: oauth2.Endpoint{TokenURL: a.TokenURL},
 		Scopes:   a.Scopes,
 	}
-	// Detached from the caller's cancellation/deadline: a token refresh must
-	// complete (or time out on its own terms) even if the request that
-	// triggered it was aborted - otherwise a short-lived caller ctx can poison a refresh that every other in-flight caller also depends on. Values (e.g. request-scoped tracing) still flow through via WithoutCancel.
+	// Detached from caller cancellation: an aborted request must not poison a refresh that other
+	// in-flight callers depend on.
 	refreshCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), refreshTimeout)
 	defer cancel()
 	newTok, err := cfg.TokenSource(refreshCtx, &oauth2.Token{
@@ -244,14 +235,11 @@ func ensureFreshToken(ctx context.Context, cc *ClientConfig, name string, ref Se
 	return updated.AccessToken, nil
 }
 
-// refreshMu is package-level (not per-ClientConfig): each ensureFreshToken
-// call typically works off its own freshly-LoadClient'd instance, so a mutex
-// scoped to that struct would never actually be shared between callers.
+// refreshMu is package-level because each caller usually holds its own freshly loaded ClientConfig,
+// so a per-struct mutex would never be shared.
 var refreshMu sync.Mutex
 
-// bearerTransport injects "Authorization: Bearer <token>" into every request
-// it forwards - how a Client attaches a stored OIDC session's access token
-// without every call site having to know about it.
+// bearerTransport adds "Authorization: Bearer <token>" to every request it forwards.
 type bearerTransport struct {
 	token string
 	base  http.RoundTripper

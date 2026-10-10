@@ -106,9 +106,8 @@ func TestRunArtifactDownload(t *testing.T) {
 	}
 }
 
-// TestRunArtifactDownloadDefaultFilename covers the -o-less path: default
-// filename is the artifact's own name in the current directory, latest
-// revision (no ?revision= query param).
+// TestRunArtifactDownloadDefaultFilename: without -o the latest revision lands in the current dir
+// under the artifact's own name.
 func TestRunArtifactDownloadDefaultFilename(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	var gotQuery string

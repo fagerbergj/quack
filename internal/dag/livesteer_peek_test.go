@@ -2,9 +2,8 @@ package dag
 
 import "testing"
 
-// #1029 review: live delivery must PEEK. TakeQueued marks Delivered, records a
-// -sN generation in drained and persists; if the live callback consumed the
-// queue it would (1) burn a generation with no matching -sN run, so node_steered resolves to the wrong text, (2) drop the message before it reaches the durable prompt, and (3) lose it entirely if that model call then fails.
+// Live delivery must peek: consuming would burn a -sN generation, drop the message
+// before the durable prompt, and lose it if the model call fails.
 func TestPeekQueued_DoesNotConsumeOrRecordAGeneration(t *testing.T) {
 	c := &nodeControl{}
 	c.enqueue("FIRST steer")
@@ -54,9 +53,8 @@ func TestPeekQueued_KeepsSteerGenerationsAligned(t *testing.T) {
 	}
 }
 
-// The tests above pin PeekQueued itself; this pins the WIRING. Assembly must
-// hand nodes a NON-consuming drain - swapping it back to TakeQueued leaves the
-// others green while silently reintroducing all three review findings.
+// Assembly must hand nodes a non-consuming drain; swapping in TakeQueued would leave the
+// PeekQueued tests green.
 func TestBuildGateNodes_LiveDrainDoesNotConsumeTheQueue(t *testing.T) {
 	const chatID, nodeID = "chat-peek", "n1"
 	rc := newRunControls()

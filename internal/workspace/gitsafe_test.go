@@ -103,7 +103,7 @@ func TestGitCmdRefusesUnreadableRepoConfig(t *testing.T) {
 	}
 }
 
-// TestGitCmdNeverStripsEnclosingRepo: a dir whose .git is broken fails closed instead of stripping its parent repo's config.
+// TestGitCmdNeverStripsEnclosingRepo: a broken .git fails closed instead of stripping the parent repo's config.
 func TestGitCmdNeverStripsEnclosingRepo(t *testing.T) {
 	bin, dir := gitConfigFixture(t)
 	nested := filepath.Join(dir, "plugins", "x", "repo")

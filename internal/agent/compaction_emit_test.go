@@ -11,9 +11,8 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// TestEmitCompactionReachesHub unit-tests emitCompaction's own translation (field mapping, span attributes) against a hand-built Event; the proof that
-// adk's real compactor ever calls compactionSessions.AppendEvent with one is TestCompactionSessionsObservesRealCompaction in a2a_test.go. It also proves the compaction row's run_id is quack's own run id - the same one the node's
-// agent_start event carries (both derive from the branch via stream.RunIDFromBranch) - not adk's invocation id, so the frontend can match by exact run_id instead of a "most recent run on this node" heuristic.
+// emitCompaction maps a hand-built Event to the hub and a span, with quack's run id (as agent_start carries it)
+// rather than adk's invocation id, so the frontend matches by exact run_id.
 func TestEmitCompactionReachesHub(t *testing.T) {
 	hub := stream.NewHub()
 	const chatID, nodeID = "chat-1", "node-B"
@@ -51,9 +50,7 @@ func TestEmitCompactionReachesHub(t *testing.T) {
 	if got.NodeID != nodeID {
 		t.Errorf("NodeID = %q, want %q", got.NodeID, nodeID)
 	}
-	// Same round/node's agent_start would carry this exact run id (see
-	// dag.segRun, the other caller of stream.RunIDFromBranch) - never adk's
-	// own invocation id ("inv-1").
+	// The round's agent_start carries this exact run id, never adk's invocation id ("inv-1").
 	wantRunID := stream.RunIDFromBranch(branch)
 	if got.RunID != wantRunID {
 		t.Errorf("RunID = %q, want the round's agent_start run id %q", got.RunID, wantRunID)
@@ -66,9 +63,7 @@ func TestEmitCompactionReachesHub(t *testing.T) {
 	}
 }
 
-// TestEmitCompactionNilSinkNoop guards the "no active hub" no-op path
-// (compaction disabled callers, or a test with no run in flight) - it must
-// never panic on a nil sink.
+// A nil sink (no active hub) must be a no-op, never a panic.
 func TestEmitCompactionNilSinkNoop(t *testing.T) {
 	ev := &session.Event{}
 	ev.Actions.Compaction = &session.EventCompaction{}

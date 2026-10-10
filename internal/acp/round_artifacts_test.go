@@ -15,10 +15,8 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// TestRound_EmitsArtifactsAndPlugins: a fresh-session ACP round's
-// agent.invoke carries the resolved environment/preamble artifacts (the only
-// artifactsrc names an ACP round itself resolves) plus the plugin registry
-// rows in scope, on top of its existing sent/received shape.
+// TestRound_EmitsArtifactsAndPlugins: a fresh-session round's agent.invoke carries the resolved
+// environment/preamble artifacts plus the plugin rows in scope.
 func TestRound_EmitsArtifactsAndPlugins(t *testing.T) {
 	capExp := &captureExporter{}
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
@@ -76,9 +74,8 @@ func TestRound_EmitsArtifactsAndPlugins(t *testing.T) {
 	}
 }
 
-// TestRound_OmitsPreambleArtifactsWhenNoPreambleSent: PreambleArtifact/MemoryArtifact
-// being wired is not enough - roundArtifacts must gate on a preamble actually going
-// out this round (steerHooks' own sentPreamble), the same condition that prepends it.
+// TestRound_OmitsPreambleArtifactsWhenNoPreambleSent: roundArtifacts gates on a preamble actually going out
+// this round (sentPreamble), the same condition that prepends it.
 func TestRound_OmitsPreambleArtifactsWhenNoPreambleSent(t *testing.T) {
 	capExp := &captureExporter{}
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))

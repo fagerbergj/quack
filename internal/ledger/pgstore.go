@@ -41,9 +41,7 @@ type pgEntry struct {
 	Payload        string    `gorm:"column:payload;type:jsonb"`
 	ParentRevision int64     `gorm:"column:parent_revision"`
 	IdempotencyKey string    `gorm:"column:idempotency_key"`
-	// SchemaVersion: 0 on every pre-#1144-P5 row - ADD COLUMN never
-	// backfills existing rows, and it doesn't need to: pgRowsToEntries runs
-	// every row through MigrateEntry, which treats 0 as version 1.
+	// SchemaVersion is 0 on rows predating the column (ADD COLUMN never backfills); MigrateEntry reads 0 as 1.
 	SchemaVersion int `gorm:"column:schema_version"`
 }
 
@@ -58,16 +56,14 @@ type pgSeqCounter struct {
 
 func (pgSeqCounter) TableName() string { return "ledger_seq_counters" }
 
-// PGStore is the Postgres LedgerStore adapter (V4 §4.8), meant to share the app's
-// database with internal/store - the only adapter with a transactional, gapless
-// per-chat seq (see nextSeq); List/Delete operate at the chat grain.
+// PGStore is the Postgres LedgerStore, sharing the app's database: the only adapter with a transactional,
+// gapless per-chat seq (see nextSeq). List/Delete operate at the chat grain.
 type PGStore struct {
 	db *gorm.DB
 }
 
-// NewPGStore migrates the ledger's tables on db and returns a store backed by
-// it; db is expected to already point at the app's Postgres database (internal/
-// store.New and store.NewArtifactService open their own connections the same way).
+// NewPGStore migrates the ledger's tables on db (expected to be the app's Postgres database) and returns a
+// store backed by it.
 func NewPGStore(db *gorm.DB) (*PGStore, error) {
 	if err := db.AutoMigrate(&pgEntry{}, &pgSeqCounter{}); err != nil {
 		return nil, fmt.Errorf("ledger: automigrate postgres store: %w", err)
@@ -80,10 +76,8 @@ func NewPGStore(db *gorm.DB) (*PGStore, error) {
 		idxIdempotency)).Error; err != nil {
 		return nil, fmt.Errorf("ledger: create idempotency index: %w", err)
 	}
-	// ReadEntriesFilteredSince's cross-chat `kind IN (?) AND at >= ?` was a full
-	// scan (no index touches kind or at). CONCURRENTLY: a 465k-row ledger must
-	// not block writes for the build; it cannot run inside a transaction, and
-	// NewPGStore's db is never one.
+	// Indexes ReadEntriesFilteredSince's cross-chat `kind IN (?) AND at >= ?`. CONCURRENTLY so a large ledger
+	// doesn't block writes; it can't run in a transaction, and db never is one.
 	if err := recoverInvalidConcurrentIndex(db, idxKindAt); err != nil {
 		return nil, err
 	}
@@ -116,9 +110,8 @@ func recoverInvalidConcurrentIndex(db *gorm.DB, name string) error {
 	return nil
 }
 
-// ensureParentRevisionIndex adds the unique (chat_id, key, parent_revision) index
-// (#1144 P4); a migrated/restored database isn't provably duplicate-free, so this
-// checks first and refuses to start rather than create a broken index or leave the guarantee silently unenforced.
+// ensureParentRevisionIndex adds the unique (chat_id, key, parent_revision) index. A restored database isn't
+// provably duplicate-free, so it checks first and refuses to start rather than leave the guarantee unenforced.
 func ensureParentRevisionIndex(db *gorm.DB) error {
 	var exists int
 	if err := db.Raw(`SELECT count(*) FROM pg_indexes WHERE tablename = 'ledger_entries' AND indexname = ?`, idxParentRevision).Scan(&exists).Error; err != nil {
@@ -127,9 +120,8 @@ func ensureParentRevisionIndex(db *gorm.DB) error {
 	if exists > 0 {
 		return nil // already created (and therefore already free of duplicates) - skip the full-table scan below on every boot
 	}
-	// AutoMigrate's ADD COLUMN leaves parent_revision NULL on pre-existing rows (Postgres
-	// never backfills); left NULL, the dedup GROUP BY below folds ALL of them together
-	// (SQL groups NULLs as equal) and wedges the deploy - backfill from the payload first.
+	// ADD COLUMN leaves parent_revision NULL on old rows, and GROUP BY folds NULLs together, which would
+	// wedge the deploy as false duplicates: backfill from the payload first.
 	if err := db.Exec(`
 		UPDATE ledger_entries SET parent_revision = (payload->>'parent_revision')::bigint
 		WHERE kind = ? AND parent_revision IS NULL
@@ -161,9 +153,8 @@ func ensureParentRevisionIndex(db *gorm.DB) error {
 		idxParentRevision, KindArtifactRevision)).Error
 }
 
-// NewPGStoreFromURL opens its own Postgres connection at url, mirroring
-// internal/store.NewArtifactService (same database, wired independently of
-// internal/store). Uses pgdial.Open for the shared dial retry (#1200 review: a fourth dialector missed by the first pass).
+// NewPGStoreFromURL opens its own Postgres connection at url (same database as internal/store), using
+// pgdial.Open for the shared dial retry.
 func NewPGStoreFromURL(url string) (*PGStore, error) {
 	gormCfg := &gorm.Config{Logger: logger.New(
 		slog.NewLogLogger(slog.Default().Handler(), slog.LevelWarn),
@@ -180,9 +171,8 @@ func NewPGStoreFromURL(url string) (*PGStore, error) {
 	return NewPGStore(db)
 }
 
-// nextSeq atomically allocates the next seq for chatID inside tx: one UPSERT (insert at 1
-// or increment) whose row lock serializes concurrent callers into distinct, gapless values - no
-// advisory lock needed. The increment and the entry insert commit together in tx, so a failed insert never leaves the counter incremented without a row.
+// nextSeq allocates chatID's next seq inside tx with one UPSERT whose row lock serializes callers into
+// gapless values; it commits with the entry insert, so a failed insert never burns a seq.
 func nextSeq(tx *gorm.DB, chatID string) (int64, error) {
 	var row pgSeqCounter
 	err := tx.Raw(`
@@ -196,9 +186,8 @@ func nextSeq(tx *gorm.DB, chatID string) (int64, error) {
 	return row.NextSeq, nil
 }
 
-// appendRow allocates row's seq and inserts it in one transaction, so seq
-// allocation and the row it belongs to are always consistent: a rollback
-// (insert failure) never leaves a seq "used" with no row for it.
+// appendRow allocates row's seq and inserts it in one transaction, so a rollback never leaves a seq "used"
+// with no row.
 func (s *PGStore) appendRow(ctx context.Context, row pgEntry) (int64, error) {
 	var seq int64
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -216,7 +205,7 @@ func (s *PGStore) appendRow(ctx context.Context, row pgEntry) (int64, error) {
 	return seq, nil
 }
 
-// AppendIntent is the fail-closed WAL path (#1144 P4): a non-nil error means
+// AppendIntent is the fail-closed WAL path: a non-nil error means
 // no row was written, including the typed ErrStaleParent/DuplicateIntentError.
 func (s *PGStore) AppendIntent(ctx context.Context, e Entry) (int64, error) {
 	if e.ChatID == "" || e.Kind == "" {
@@ -229,9 +218,8 @@ func (s *PGStore) AppendIntent(ctx context.Context, e Entry) (int64, error) {
 	if payload == nil {
 		payload = json.RawMessage("null")
 	}
-	// Checked before inserting, not just after: a repeat save must short-circuit even with a
-	// now-stale parent (see MemStore's matching comment); a concurrent duplicate can still
-	// race past this read, and the insert's idxIdempotency violation below is the fallback.
+	// Checked before inserting so a repeat short-circuits even with a stale parent; a concurrent duplicate
+	// that races past falls back to the insert's idxIdempotency violation.
 	if e.IdempotencyKey != "" {
 		if existing, ferr := s.findByIdempotencyKey(ctx, e.ChatID, e.IdempotencyKey); ferr == nil {
 			return 0, &DuplicateIntentError{Existing: existing}
@@ -259,9 +247,7 @@ func (s *PGStore) AppendIntent(ctx context.Context, e Entry) (int64, error) {
 	return seq, nil
 }
 
-// pgConstraintName extracts the violated unique index's name from a
-// Postgres 23505 error, "" for anything else (a different error code, or no
-// pgconn.PgError in the chain at all).
+// pgConstraintName extracts the violated unique index's name from a Postgres 23505 error, "" otherwise.
 func pgConstraintName(err error) string {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
@@ -291,9 +277,8 @@ func (s *PGStore) ReadEntries(ctx context.Context, chatID string, fromSeq int64)
 	return pgRowsToEntries(rows), nil
 }
 
-// ReadEntriesFiltered is ReadEntries with `kind IN (?)` pushed to SQL, so
-// Postgres never detoasts the payload of a row the caller doesn't want
-// (perf audit #1 - kinds like agent.invoke run to multi-MB jsonb).
+// ReadEntriesFiltered pushes `kind IN (?)` to SQL so Postgres never detoasts unwanted payloads (agent.invoke
+// rows run to multi-MB jsonb).
 func (s *PGStore) ReadEntriesFiltered(ctx context.Context, chatID string, fromSeq int64, kinds []string) ([]Entry, error) {
 	var rows []pgEntry
 	if err := s.db.WithContext(ctx).
@@ -304,9 +289,8 @@ func (s *PGStore) ReadEntriesFiltered(ctx context.Context, chatID string, fromSe
 	return pgRowsToEntries(rows), nil
 }
 
-// ReadEntriesFilteredSince pushes down ReadAllByKindsSince's cross-chat query: one
-// `kind IN (?) AND at >= ?` scan instead of List() plus one ReadEntriesFiltered per chat
-// (perf audit #12 - 94 queries and 0.8-5.0s per memory-page load on a 465k-entry ledger).
+// ReadEntriesFilteredSince runs ReadAllByKindsSince's cross-chat read as one `kind IN (?) AND at >= ?` scan
+// instead of one query per chat.
 func (s *PGStore) ReadEntriesFilteredSince(ctx context.Context, kinds []string, since time.Time) ([]Entry, error) {
 	var rows []pgEntry
 	if err := s.db.WithContext(ctx).
@@ -317,9 +301,7 @@ func (s *PGStore) ReadEntriesFilteredSince(ctx context.Context, kinds []string, 
 	return pgRowsToEntries(rows), nil
 }
 
-// MaxSeq reads chatID's highest allocated seq straight off the seq counter
-// row (a PK lookup) instead of MAX(seq) over ledger_entries, 0 if the chat
-// never appended.
+// MaxSeq reads chatID's highest allocated seq from the seq counter row (a PK lookup), 0 if it never appended.
 func (s *PGStore) MaxSeq(ctx context.Context, chatID string) (int64, error) {
 	var row pgSeqCounter
 	err := s.db.WithContext(ctx).Where("chat_id = ?", chatID).Take(&row).Error
@@ -332,9 +314,7 @@ func (s *PGStore) MaxSeq(ctx context.Context, chatID string) (int64, error) {
 	return row.NextSeq, nil
 }
 
-// ReadEntriesPage is #1101's paging optimization: fold.Fold pages through a big chat
-// instead of loading it in one slice (ReadEntries's contract). Optional on LedgerStore -
-// a store without it is read in one ReadEntries call.
+// ReadEntriesPage lets fold page through a big chat instead of loading it in one slice.
 func (s *PGStore) ReadEntriesPage(ctx context.Context, chatID string, fromSeq int64, limit int) ([]Entry, error) {
 	var rows []pgEntry
 	if err := s.db.WithContext(ctx).

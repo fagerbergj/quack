@@ -18,12 +18,12 @@ import (
 	"github.com/fagerbergj/quack/internal/orchestrator"
 	"github.com/fagerbergj/quack/internal/schema"
 	"github.com/fagerbergj/quack/internal/store"
+	"github.com/fagerbergj/quack/internal/store/storetest"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// sessionGetSpy wraps a real session.Service but fails (and counts) any Get call - live
-// profiling on #738 found ListChats's old per-chat read wasn't a cheap row lookup, it was
-// orchestrator.PriorEvents -> ADK's databaseService.Get deserializing a chat's ENTIRE event history, 109 times every 5s (81% of a 15s CPU profile, mostly encoding/json). A bounded query count (below) would still pass if a single session load per request crept back in; this asserts the stronger invariant that actually matters - ListChats never reads session history at all.
+// sessionGetSpy fails and counts any session Get: ListChats must never read session history, which
+// profiling showed deserializing whole event histories every poll. Stronger than a bounded query count.
 type sessionGetSpy struct {
 	session.Service
 	gets atomic.Int64
@@ -54,19 +54,18 @@ func newTestHandlerWithSessionSpy(t *testing.T) (*Handler, *sessionGetSpy) {
 // listChatsQueries runs ListChats and returns how many SELECT queries it issued.
 func listChatsQueries(t *testing.T, h *Handler) int64 {
 	t.Helper()
-	before := h.store.QueryCount()
+	queries := storetest.RecordQueries(t, h.store.DB())
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/chats", nil)
 	rec := httptest.NewRecorder()
 	h.ListChats(rec, req, schema.ListChatsParams{})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("ListChats status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	return h.store.QueryCount() - before
+	return int64(len(queries()))
 }
 
-// TestListChatsQueryCountBoundedByChatCount is #738 test 1: with 100+ chats stored,
-// ListChats issues a bounded number of queries that does not grow with chat count - the
-// N+1 the ponytail marker on the old ListChats named - and, the stronger claim the live profile says actually matters, touches the ADK session store not at all (sessionGetSpy above fails any Get; ListChats must never trigger one).
+// TestListChatsQueryCountBoundedByChatCount: with 100+ chats, ListChats' query count doesn't grow with
+// chat count, and it never touches the ADK session store.
 func TestListChatsQueryCountBoundedByChatCount(t *testing.T) {
 	h, spy := newTestHandlerWithSessionSpy(t)
 	ctx := context.Background()
@@ -96,8 +95,8 @@ func TestListChatsQueryCountBoundedByChatCount(t *testing.T) {
 	}
 }
 
-// TestToSummaryReadsStampedOutcome is #738 test 2: a chat whose run ends normally shows
-// its final status from the row StampRunOutcome stamped, with no per-chat status read.
+// TestToSummaryReadsStampedOutcome: a normally ended run's status comes from StampRunOutcome's row,
+// with no per-chat status read.
 func TestToSummaryReadsStampedOutcome(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()
@@ -122,9 +121,9 @@ func TestToSummaryReadsStampedOutcome(t *testing.T) {
 		t.Fatalf("GetChat after stamp: %+v, %v", stamped, err)
 	}
 
-	before := h.store.QueryCount()
+	queries := storetest.RecordQueries(t, h.store.DB())
 	got := h.toSummary(*stamped, 0, false)
-	spent := h.store.QueryCount() - before
+	spent := len(queries())
 
 	if got.Status != schema.ChatStatusFailed {
 		t.Errorf("status = %q, want failed (from the stamp)", got.Status)
@@ -134,9 +133,8 @@ func TestToSummaryReadsStampedOutcome(t *testing.T) {
 	}
 }
 
-// TestCrashedRunDoesNotStickAtRunning is #738 test 3: a run killed mid-flight (MarkRunActive
-// ran, StampRunOutcome never did - simulating process death before the deferred stamp)
-// must not leave the chat reading "running" forever. ListChats never persists "running" in the first place (it's hub.Active, live and per-process - see stream.NewHub's ponytail on single-instance scope) so a fresh process trivially reports not-running; the guard this pins is the READ side noticing the abandoned marker instead of trusting a stale idle/needs_input stamp left over from a run before the one that crashed.
+// TestCrashedRunDoesNotStickAtRunning: a run killed after MarkRunActive but before StampRunOutcome must not
+// read "running" forever; the read side notices the abandoned marker rather than trust an older stamp.
 func TestCrashedRunDoesNotStickAtRunning(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()
@@ -165,9 +163,8 @@ func TestCrashedRunDoesNotStickAtRunning(t *testing.T) {
 	}
 }
 
-// TestListChatsUnchangedIsCheapOnTheWire is #738 test 5: a poll that finds nothing changed
-// costs materially less on the wire than one that finds a change - a conditional GET via
-// ETag/If-None-Match, not a TTL cache (every call still reaches the store and revalidates).
+// TestListChatsUnchangedIsCheapOnTheWire: an unchanged poll costs much less on the wire via ETag/If-None-Match,
+// not a TTL cache (every call still revalidates against the store).
 func TestListChatsUnchangedIsCheapOnTheWire(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()
@@ -211,9 +208,8 @@ func TestListChatsUnchangedIsCheapOnTheWire(t *testing.T) {
 	}
 }
 
-// TestListChatsETagVariesWithPage is #738 requirement 3: the ETag is computed over the
-// page actually returned, so page 2's ETag must differ from page 1's, and replaying
-// page 1's ETag against a page-2 request must not read as unchanged (a naive ETag over just "the chats table changed" would wrongly 304 page 2 with page 1's stale ETag).
+// TestListChatsETagVariesWithPage: the ETag covers the page returned, so page 1's ETag
+// must not read as unchanged against a page-2 request.
 func TestListChatsETagVariesWithPage(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()

@@ -115,9 +115,8 @@ func TestResolveFallsBackWhenSourceErrors(t *testing.T) {
 	}
 }
 
-// TestResolvePropagatesHardError: a Source error wrapping ErrHard must fail
-// the resolve, not fall back to the shipped static artifact (PR #1444
-// round-2 finding - pin-miss enforcement must hold end to end).
+// TestResolvePropagatesHardError: a Source error wrapping ErrHard fails the resolve instead of falling
+// back, so pin-miss enforcement holds end to end.
 func TestResolvePropagatesHardError(t *testing.T) {
 	wantErr := fmt.Errorf("pinned prompt %s@%d not found: %w", "system/judge", 3, ErrHard)
 	src := &stubSource{err: wantErr}
@@ -139,21 +138,19 @@ func TestNamesDerivedFromShippedFiles(t *testing.T) {
 		if !slices.Contains(names, want) {
 			t.Errorf("Names() is missing %q", want)
 		}
-		if _, ok := StaticPath(want); !ok {
-			t.Errorf("StaticPath(%q) not found", want)
+		if _, ok := staticPath(want); !ok {
+			t.Errorf("staticPath(%q) not found", want)
 		}
 	}
-	if p, _ := StaticPath("system/web-researcher"); p != "agents/web-researcher/prompt.md" {
+	if p, _ := staticPath("system/web-researcher"); p != "agents/web-researcher/prompt.md" {
 		t.Errorf("system/web-researcher maps to %q", p)
 	}
-	if p, _ := StaticPath("rubric/global"); p != "config/rubric.md" {
+	if p, _ := staticPath("rubric/global"); p != "config/rubric.md" {
 		t.Errorf("rubric/global maps to %q", p)
 	}
 }
 
-// TestResolveUsableRejectsBlankBody: a store handing back an empty prompt has
-// lost it, not edited it - the shipped file must win rather than the model
-// running with no instruction.
+// TestResolveUsableRejectsBlankBody: an empty stored prompt is lost, not edited, so the shipped file wins.
 func TestResolveUsableRejectsBlankBody(t *testing.T) {
 	src := &stubSource{art: Artifact{Body: "   \n\t "}, ok: true}
 	art, err := New("langfuse", src, time.Minute).ResolveUsable(context.Background(), "system/judge")
@@ -188,9 +185,8 @@ func TestPinnedRefreshKeepsUsable(t *testing.T) {
 	}
 }
 
-// TestRenderFallsBackOnBadTemplate: a stored prompt that will not parse or
-// render degrades to the shipped file instead of erroring out its caller -
-// for system/judge, erroring would disable the trust gate deployment-wide.
+// TestRenderFallsBackOnBadTemplate: a stored prompt that fails to parse or render degrades to the shipped
+// file; erroring would disable system/judge's trust gate everywhere.
 func TestRenderFallsBackOnBadTemplate(t *testing.T) {
 	for _, c := range []struct{ name, body string }{
 		{"unparseable", "{{if .Broken}}no end"},
@@ -283,9 +279,8 @@ func TestBundleName(t *testing.T) {
 	}
 }
 
-// TestResolveBundleFile covers ResolveBundleFile's three shapes: a name that
-// resolves through the store, a disk-only bundle (still a real Artifact via
-// FileArtifact, never a zero one), and a file that resolves nowhere.
+// TestResolveBundleFile: a store-resolved name, a disk-only bundle (real Artifact via FileArtifact), and a
+// file that resolves nowhere.
 func TestResolveBundleFile(t *testing.T) {
 	ctx := context.Background()
 

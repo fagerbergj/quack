@@ -128,9 +128,8 @@ func (s *Session) rootStream() (*streamState, bool) {
 	return st, ok
 }
 
-// NodeRun is one node's delivered task/answer - the shape `quack dataset
-// export` needs per gated node run. A node with several rounds (draft,
-// continuations, revises) collapses to one NodeRun: see NodeRuns.
+// NodeRun is one node's delivered task/answer, the shape `quack dataset export` needs; a node's several
+// rounds collapse into one (see NodeRuns).
 type NodeRun struct {
 	Task   string
 	Answer string
@@ -163,9 +162,8 @@ type roundRun struct {
 	plugins       []ledger.PluginRef
 }
 
-// NodeRuns returns one NodeRun per non-root node whose Agent is in agents:
-// task from its earliest round (the draft, never a synthetic revise prompt),
-// answer from its latest round by timestamp (what the node delivered).
+// NodeRuns returns one NodeRun per non-root node whose Agent is in agents: task from its earliest round
+// (never a synthetic revise prompt), answer from its latest.
 func (s *Session) NodeRuns(agents map[string]bool) map[StreamKey]NodeRun {
 	byNode := map[string][]roundRun{}
 	for key, st := range s.streams {
@@ -225,9 +223,7 @@ func chatRoundRun(key StreamKey, st *streamState) (roundRun, bool) {
 	return roundRun{}, false // chat rows present but none carried a usable answer
 }
 
-// acpRoundRun builds a round's task/answer from its invoke_agent stream - an
-// ACP round (e.g. code-reviewer) emits no llm.call, only one invoke_agent
-// record per round (internal/acp/emit.go), so it needs its own extraction.
+// acpRoundRun builds a round's task/answer from its invoke_agent stream, since an ACP round emits no llm.call.
 func acpRoundRun(key StreamKey, st *streamState) (roundRun, bool) {
 	if len(st.agents) == 0 {
 		return roundRun{}, false
@@ -252,9 +248,8 @@ type acpContentBlock struct {
 	Text string `json:"text"`
 }
 
-// acpTaskAndAnswer extracts the sent session/prompt's text (task) and the
-// received agent_message_chunk stream's concatenated text (answer) from one
-// invoke_agent round's teed protocol frames.
+// acpTaskAndAnswer extracts the session/prompt text (task) and the concatenated agent_message_chunk text
+// (answer) from one round's teed protocol frames.
 func acpTaskAndAnswer(ae invokeAgentEntry) (task, answer string) {
 	for _, raw := range ae.sent {
 		var f acpFrame
@@ -346,9 +341,7 @@ func userTexts(inputJSON string) []string {
 	return out
 }
 
-// partsText concatenates a Content's text parts.
-// partsText is the reply as the gate saw it: reasoning parts (thought: true)
-// are recorded in the output but never reached the judge or the user.
+// partsText is the reply as the gate saw it: reasoning parts (thought: true) never reached the judge or user.
 func partsText(parts []*genai.Part) string {
 	var b []byte
 	for _, p := range parts {
@@ -405,8 +398,8 @@ type ChatTurn struct {
 	At            time.Time
 }
 
-// ChatTurns returns key's recorded llm.call Input/Output pairs, oldest first
-// - a native worker or judge round's full tool-loop conversation, for a caller (judge replay) that needs more than NodeRuns' collapsed task/answer.
+// ChatTurns returns key's recorded llm.call Input/Output pairs, oldest first: a round's full tool-loop
+// conversation, for judge replay.
 func (s *Session) ChatTurns(key StreamKey) []ChatTurn {
 	st, ok := s.streams[key]
 	if !ok {
@@ -419,8 +412,8 @@ func (s *Session) ChatTurns(key StreamKey) []ChatTurn {
 	return out
 }
 
-// RoundTaskAnswer extracts key's task/answer the same way NodeRuns does per
-// round (chatRoundRun/acpRoundRun), without collapsing across a node's several rounds - judge replay needs each round's OWN answer, not just the node's latest.
+// RoundTaskAnswer extracts key's task/answer like NodeRuns does per round, without collapsing a node's rounds:
+// judge replay needs each round's own answer.
 func (s *Session) RoundTaskAnswer(key StreamKey) (task, answer string, at time.Time, ok bool) {
 	st, exists := s.streams[key]
 	if !exists {

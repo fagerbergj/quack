@@ -1,6 +1,5 @@
-// revise_prefix_cache_test.go: regression test for finding 3 of the agent-efficiency audit (stable-first section ordering in buildRevisionContent/buildFinalizeContent/
-// buildContinuationPrompt). Prod serves workers and judge from the same vLLM model with prefix caching, so a byte that is stable across rounds and sits before the
-// first changing byte is a prefill saved. This pins a MINIMUM shared-prefix fraction between revise round 1 and round 2 on a synthetic-but-realistic task, so a future reorder that kills the cache fails loudly.
+// Workers and judge share one prefix-cached vLLM model, so stable bytes before the first changing byte
+// save prefill. Pins a minimum shared prefix between revise rounds so a reorder that kills it fails.
 package vetting
 
 import (
@@ -25,9 +24,8 @@ func commonPrefixLen(a, b string) int {
 	return n
 }
 
-// synthReviewTask is an 80KB+ synthetic PR-review task - the same shape as
-// the audit's bigTask(): big enough that the diff/rubric dwarf the volatile
-// per-round evidence, so the shared-prefix fraction reflects section order, not just section size.
+// synthReviewTask is an 80KB+ synthetic PR-review task, big enough that the shared-prefix fraction
+// reflects section order, not section size.
 func synthReviewTask() string {
 	var sb strings.Builder
 	sb.WriteString("Review pull request #1304 in fagerbergj/quack.\n\n--- DIFF ---\n")
@@ -37,9 +35,8 @@ func synthReviewTask() string {
 	return sb.String()
 }
 
-// TestRevisePromptSharedPrefixAcrossRounds pins finding 3: on the same node,
-// revise round 2 (a different verdict, same original question/answer) must share at least 70% of revise round 1's bytes as a common prefix - the
-// fraction the reorder measured at 80%+ on the audit's synthetic task (24,135 of 29,101 bytes), comfortably above the pre-fix 3.3%.
+// TestRevisePromptSharedPrefixAcrossRounds: revise round 2 shares at least 70% of round 1's bytes
+// as a common prefix (measured 80%+ on this task).
 func TestRevisePromptSharedPrefixAcrossRounds(t *testing.T) {
 	task := synthReviewTask()
 	question := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: task}}}
@@ -69,9 +66,7 @@ func TestRevisePromptSharedPrefixAcrossRounds(t *testing.T) {
 			100*frac, 100*minFraction)
 	}
 
-	// The revise prompt must also share a prefix with what the DRAFT round sent
-	// (the raw task text, unbounded) - the draft->revise1 hop the audit measured
-	// at 0 bytes shared pre-fix.
+	// The revise prompt also shares a prefix with the draft round's raw task text.
 	draftShared := commonPrefixLen(task, r1)
 	if draftShared == 0 {
 		t.Fatalf("revise round 1 shares 0 bytes with the draft round's question - the original question is no longer first")
@@ -79,9 +74,7 @@ func TestRevisePromptSharedPrefixAcrossRounds(t *testing.T) {
 	t.Logf("draft->revise1 shared prefix = %d bytes", draftShared)
 }
 
-// TestBuildRevisionContentSectionsPresent confirms the reorder (finding 3)
-// dropped no content: every section the worker needs - the original
-// question, the instruction paragraph, the verdict, and the previous answer - is still present, just reordered stable-first.
+// TestBuildRevisionContentSectionsPresent: stable-first ordering drops no section the worker needs.
 func TestBuildRevisionContentSectionsPresent(t *testing.T) {
 	question := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "the original question text"}}}
 	env := verdictEnvelope{Passed: false, Score: 0.3, Threshold: 0.7, Round: 1,

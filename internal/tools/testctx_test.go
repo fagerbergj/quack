@@ -6,9 +6,13 @@ package tools
 import (
 	"context"
 	"iter"
+	"sync"
 
 	adkagent "google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/agent/llmagent"
+	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
+	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/toolconfirmation"
 	"google.golang.org/genai"
 )
@@ -68,3 +72,70 @@ func (c *fakeCtx) ToolConfirmation() *toolconfirmation.ToolConfirmation { return
 func (c *fakeCtx) Branch() string                                       { return "" }
 func (c *fakeCtx) Artifacts() adkagent.Artifacts                        { return nil }
 func (c *fakeCtx) State() session.State                                 { return c.state }
+
+// fakeRunnable records executions without the agent.Context plumbing a functiontool needs.
+type fakeRunnable struct {
+	mu   sync.Mutex
+	runs int
+}
+
+func (*fakeRunnable) Name() string        { return "risky_op" }
+func (*fakeRunnable) Description() string { return "a risky operation" }
+func (*fakeRunnable) IsLongRunning() bool { return false }
+func (*fakeRunnable) Declaration() *genai.FunctionDeclaration {
+	return &genai.FunctionDeclaration{Name: "risky_op"}
+}
+func (*fakeRunnable) ProcessRequest(adkagent.Context, *model.LLMRequest) error { return nil }
+func (f *fakeRunnable) Run(adkagent.Context, any) (map[string]any, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.runs++
+	return map[string]any{"ok": true}, nil
+}
+func (f *fakeRunnable) runCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.runs
+}
+
+// hooked runs a tool the way ADK's flow does with h wired: Before callbacks, Run, OnToolError, After.
+type hooked struct {
+	runnableTool
+	h *Hooks
+}
+
+func hook(h *Hooks, p HookPolicy, t tool.Tool) hooked {
+	h.Set(p, t)
+	return hooked{runnableTool: t.(runnableTool), h: h}
+}
+
+func (w hooked) Run(ctx adkagent.Context, args any) (map[string]any, error) {
+	m, _ := args.(map[string]any)
+	var cfg llmagent.Config
+	w.h.Wire(&cfg)
+	var res map[string]any
+	var err error
+	for _, cb := range cfg.BeforeToolCallbacks {
+		if res, err = cb(ctx, w, m); res != nil || err != nil {
+			break
+		}
+	}
+	if res == nil && err == nil {
+		res, err = w.runnableTool.Run(ctx, args)
+	}
+	if err != nil {
+		res = nil
+		for _, cb := range cfg.OnToolErrorCallbacks {
+			if r, e := cb(ctx, w, m, err); r != nil || e != nil {
+				res, err = r, e
+				break
+			}
+		}
+	}
+	for _, cb := range cfg.AfterToolCallbacks {
+		if r, e := cb(ctx, w, m, res, err); r != nil || e != nil {
+			return r, e
+		}
+	}
+	return res, err
+}

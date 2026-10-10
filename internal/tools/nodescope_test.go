@@ -31,7 +31,7 @@ func newGatedCtx(t *testing.T, planID, nodeID, chatID string) *gatedCtx {
 	token := vetting.AdvisorThreadToken(planID, nodeID)
 	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{ChatID: chatID, SessionID: chatID, NodeID: nodeID})
 	t.Cleanup(func() { vetting.UnregisterAdvisorThread(token) })
-	c := &gatedCtx{fakeCtx: *newFakeCtx(), prompt: "do the task\n\n" + vetting.AdvisorThreadMarker(token) + "\nqueued: " + vetting.AdvisorThreadMarker(registerForeignNode(t))}
+	c := &gatedCtx{fakeCtx: *newFakeCtx(), prompt: "do the task\n\n[[quack:advisor-thread:" + token + "]]\nqueued: [[quack:advisor-thread:" + registerForeignNode(t) + "]]"}
 	c.Ctx = vetting.WithAdvisorToken(context.Background(), token)
 	return c
 }
@@ -46,9 +46,8 @@ func registerForeignNode(t *testing.T) string {
 	return token
 }
 
-// TestConcurrentNodesEachSeeOnlyTheirOwnClone is the bug: two nodes of the SAME
-// plan run concurrently in the SAME chat, each cloning a DIFFERENT repo, and each
-// must see ONLY its own clone (pre-per-node scoping both landed in the one per-chat dir, and a research node read the other's repo live).
+// TestConcurrentNodesEachSeeOnlyTheirOwnClone: two concurrent nodes of one plan in one chat,
+// each cloning a different repo, must each see only their own clone.
 func TestConcurrentNodesEachSeeOnlyTheirOwnClone(t *testing.T) {
 	j, err := workspace.NewJail(t.TempDir())
 	if err != nil {
@@ -111,9 +110,8 @@ func TestConcurrentNodesEachSeeOnlyTheirOwnClone(t *testing.T) {
 		t.Error("a relative path reached another node's clone; the node dir must be the default scope")
 	}
 
-	// "/" is the node's OWN root, not the chat root: it is NOT a way out into a
-	// sibling's tree - the last path by which one node could read another's clone
-	// (the sandbox's OS boundary stops a run_command child doing the same).
+	// "/" is the node's own root, not the chat root, so it can't reach a sibling's clone
+	// (the sandbox's OS boundary covers run_command children).
 	if _, err := fb.withCwd(gooseCtx).readFile(readFileArgs{Path: "/openhands_research/openhands/README.md"}); err == nil {
 		t.Error("a \"/\"-prefixed path reached a SIBLING node's clone; \"/\" must mean the node's own root")
 	}
@@ -133,7 +131,7 @@ func TestConcurrentNodesEachSeeOnlyTheirOwnClone(t *testing.T) {
 	}
 }
 
-// seedNodeFile writes content under the node scope ctx's token names - standing in for the clone the node's external worker makes.
+// seedNodeFile writes content under ctx's node scope, standing in for the worker's clone.
 func seedNodeFile(b fsBinding, ctx *gatedCtx, rel, content string) error {
 	scoped := b.withCwd(ctx)
 	real, err := scoped.resolve(rel)
@@ -146,9 +144,8 @@ func seedNodeFile(b fsBinding, ctx *gatedCtx, rel, content string) error {
 	return os.WriteFile(real, []byte(content), 0o644)
 }
 
-// firstComponent returns the first path segment of a slash path ("" for the
-// root) - the immediate-child dir a listing entry sits in. (Was cd.go's helper;
-// the cd tool is gone, the test invariant is not.)
+// firstComponent returns the first segment of a slash path ("" for the root): the
+// immediate-child dir a listing entry sits in.
 func firstComponent(rel string) string {
 	if rel == "" || rel == "." {
 		return ""

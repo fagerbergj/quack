@@ -11,22 +11,21 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/robfig/cron/v3"
 	"gopkg.in/yaml.v3"
 
-	"github.com/fagerbergj/quack/internal/memoryrules"
 	"github.com/fagerbergj/quack/internal/pluginreg"
 	"github.com/fagerbergj/quack/internal/recordstore"
 )
 
 type Config struct {
 	Providers map[string]ProviderConfig `yaml:"providers"`
-	// Models is the canonical model registry (sibling of providers/agents):
-	// each entry binds a provider, a scheduling role, a default context
-	// window, admission limits (enforced by dag.Admission, #1007), and cost.
+	// Models is the canonical model registry: each entry binds a provider, scheduling role,
+	// default context window, admission limits (enforced by dag.Admission), and cost.
 	Models       map[string]ModelConfig `yaml:"models"`
 	Stores       map[string]StoreConfig `yaml:"stores"`
 	Session      SessionConfig          `yaml:"session"`
@@ -37,14 +36,9 @@ type Config struct {
 	Dag          DagConfig              `yaml:"dag"`
 	Server       ServerConfig           `yaml:"server"`
 	Workspace    WorkspaceConfig        `yaml:"workspace"`
-	Skills       SkillsConfig           `yaml:"skills"`
-	// Plugins is the dynamic plugin registry block (epic #1427): store, root
-	// and seed entries. A bare YAML list is treated as seed: (today's
-	// local-root form) - skills.plugins stays a deprecated alias of that form.
+	// Plugins is the plugin registry block (store, root, seed).
 	Plugins *PluginsConfig `yaml:"plugins"`
-	// Workflows is a top-level key, not nested under skills: - it's a
-	// binding mechanism onto the DAG planner, not a skill-library concern
-	// (skills.plugins is a different axis entirely).
+	// Workflows is top-level, not under skills:, since it binds onto the DAG planner.
 	Workflows     []WorkflowShape     `yaml:"workflows"`
 	Extensions    ExtensionsConfig    `yaml:"extensions"`
 	Observability ObservabilityConfig `yaml:"observability"`
@@ -59,82 +53,30 @@ type Config struct {
 	// empty falls back to time.Local (TZ, then /etc/localtime, then UTC).
 	Timezone string `yaml:"timezone"`
 	location *time.Location
-	// Revision identifies the loaded config's content (sha256 of the raw file,
-	// short form) - a deployment-authored workflow shape's provenance stamps
-	// this as its version, so a shape changes version only when quack.yaml does.
+	// Revision is the short sha256 of the raw file; a deployment-authored workflow shape stamps it
+	// as its version, so a shape changes version only when quack.yaml does.
 	Revision string `yaml:"-"`
-	// skipRuntimeValidation - set by LoadForSandbox - skips the checks that require a live LLM endpoint/model/database to be configured (provider
-	// endpoint, orchestrator/agent model, session/artifacts store URL). Every other check (workspace, gates shape, dag, server, etc.) still runs, so
-	// `quack sandbox` validates the SAME workspace config an ACP agent gets, without demanding inference plumbing it never calls.
+	// skipRuntimeValidation (LoadForSandbox) skips checks needing live inference plumbing, so
+	// `quack sandbox` validates the same workspace config an ACP agent gets without it.
 	skipRuntimeValidation bool
-	// deferAgentCompleteness - set by LoadDeferringAgentCompleteness - skips
-	// requiring a non-empty bundle/model per agent until the caller runs
-	// RequireAgentBundlesAndModels, once a plugin merge may have filled them in.
-	deferAgentCompleteness bool
 }
 
-// SkillsConfig is the deprecated home of the plugin-root list; use the
-// top-level plugins: key instead. Still read so existing quack.yaml files
-// keep working.
-type SkillsConfig struct {
-	Plugins []string `yaml:"plugins"`
-}
-
-// PluginsConfig is the plugins: block (#1427): store picks the registry
-// backend ("" filesystem, else a sqlite/postgres stores[] entry, P3); root
-// holds clones. seed, like today's bare list, replaces the defaults.
+// PluginsConfig is the plugins: block: store picks the registry backend ("" filesystem, else a
+// sqlite/postgres stores[] entry); root holds clones; seed replaces the defaults.
 type PluginsConfig struct {
 	Store string   `yaml:"store"`
 	Root  string   `yaml:"root"`
 	Seed  []string `yaml:"seed"`
 }
 
-// pluginsConfigFields is every field UnmarshalYAML's manual mapping-key
-// check accepts - kept in sync with PluginsConfig's yaml tags, since a
-// custom UnmarshalYAML bypasses the decoder's KnownFields(true).
-var pluginsConfigFields = map[string]bool{"store": true, "root": true, "seed": true}
-
-// UnmarshalYAML lets plugins: stay a bare list - today's local-root form,
-// treated as seed: - alongside the new {store, root, seed} block.
-func (p *PluginsConfig) UnmarshalYAML(value *yaml.Node) error {
-	if value.Kind == yaml.SequenceNode {
-		return value.Decode(&p.Seed)
-	}
-	if value.Kind != yaml.MappingNode {
-		return fmt.Errorf("config: plugins: expected a list or a mapping")
-	}
-	for i := 0; i+1 < len(value.Content); i += 2 {
-		key := value.Content[i].Value
-		if !pluginsConfigFields[key] {
-			return fmt.Errorf("config: plugins: unknown field %q (known: store, root, seed)", key)
-		}
-	}
-	type plain PluginsConfig
-	return value.Decode((*plain)(p))
-}
-
-// validatePlugins normalizes c.Plugins, checks plugins.store names a sqlite
-// or postgres stores[] entry ("" = filesystem), fills root's default, and
-// checks every seed entry parses.
+// validatePlugins normalizes c.Plugins, checks plugins.store, fills root's default, and checks
+// every seed entry parses.
 func (c *Config) validatePlugins() error {
-	// bothSet: plugins: actually wins over skills.plugins (a block with no
-	// seed: key falls through to it below, so it isn't "ignored" at all).
-	bothSet := c.Plugins != nil && c.Plugins.Seed != nil && c.Skills.Plugins != nil
-	if bothSet {
-		slog.Warn("both plugins: and skills.plugins are set; skills.plugins is ignored", "component", "config")
-	}
 	if c.Plugins == nil {
 		c.Plugins = &PluginsConfig{}
 	}
 	if c.Plugins.Seed == nil {
-		seed := append([]string{}, defaultSkillPlugins...)
-		if c.Skills.Plugins != nil {
-			seed = c.Skills.Plugins
-		}
-		c.Plugins.Seed = seed
-	}
-	if c.Skills.Plugins != nil && !bothSet {
-		slog.Warn("skills.plugins is deprecated; rename it to the top-level plugins:", "component", "config")
+		c.Plugins.Seed = append([]string{}, defaultSkillPlugins...)
 	}
 	if err := c.validatePluginsStore(); err != nil {
 		return err
@@ -150,9 +92,8 @@ func (c *Config) validatePlugins() error {
 	return nil
 }
 
-// validatePluginsStore checks plugins.store, if set, names a sqlite or
-// postgres stores[] entry - a DB registry backend needs a real table, not
-// a vector or prompt store.
+// validatePluginsStore checks plugins.store, if set, names a sqlite or postgres stores[] entry:
+// a DB registry backend needs a real table.
 func (c *Config) validatePluginsStore() error {
 	if c.Plugins.Store == "" {
 		return nil
@@ -170,20 +111,18 @@ func (c *Config) validatePluginsStore() error {
 	return nil
 }
 
-// WorkflowShape adds a deployment-specific DAG shape to plan-work's "Common
-// workflows" table (#805). With Nodes set, a dispatch naming the shape builds
-// the dag.Plan directly (no planner call); Trigger/Shape still render either way.
+// WorkflowShape adds a deployment-specific DAG shape to plan-work's "Common workflows" table.
+// With Nodes set, a dispatch naming the shape builds the dag.Plan directly (no planner call).
 type WorkflowShape struct {
-	Name    string         `yaml:"name"`    // short id for logs/warnings; also the future storage key (#806)
+	Name    string         `yaml:"name"`    // short id for logs/warnings
 	Trigger string         `yaml:"trigger"` // "Request" column - when this shape applies
 	Shape   string         `yaml:"shape"`   // "DAG shape" column - node chain + what the terminal node produces
 	Agents  []string       `yaml:"agents"`  // every agent name Shape mentions, checked against Agents below
 	Nodes   []WorkflowNode `yaml:"nodes,omitempty"`
 }
 
-// WorkflowNode is one node of a bound workflow shape's fixed DAG. Task may
-// contain the literal token "{{ask}}", substituted verbatim with the
-// dispatching Ask.Message - the only templating this supports, deliberately.
+// WorkflowNode is one node of a bound shape's fixed DAG. Task may contain the literal "{{ask}}",
+// replaced verbatim with Ask.Message - deliberately the only templating.
 type WorkflowNode struct {
 	ID        string   `yaml:"id"`
 	Agent     string   `yaml:"agent"`
@@ -191,13 +130,12 @@ type WorkflowNode struct {
 	DependsOn []string `yaml:"depends_on,omitempty"`
 	Rubric    string   `yaml:"rubric,omitempty"`
 	// Artifact: the registered recordstore kind this node writes on gate pass,
-	// e.g. "document" (#1006/#1090). Empty = write nothing; operator opt-in only.
+	// e.g. "document". Empty = write nothing; operator opt-in only.
 	Artifact string `yaml:"artifact,omitempty"`
 }
 
-// validateWorkflows drops structurally incomplete shapes with a warning
-// (test case 4: never takes down planning) but hard-fails the whole config when a structurally valid shape names an agent that isn't configured
-// (test case 3: never let a plan reach a node the executor can't run), or when a bound shape's node list is malformed - a bindable shape must never fail loud only at dispatch time.
+// validateWorkflows drops incomplete shapes with a warning but fails the config when a valid shape
+// names an unconfigured agent or a bound shape's nodes are malformed: never fail only at dispatch.
 func (c *Config) validateWorkflows() error {
 	valid := make([]WorkflowShape, 0, len(c.Workflows))
 	for i, w := range c.Workflows {
@@ -226,9 +164,8 @@ func (c *Config) validateWorkflows() error {
 	return nil
 }
 
-// validateWorkflowNodes checks a bound shape's node list is a well-formed,
-// acyclic DAG naming only configured agents - the whole structural surface a
-// dispatch's Bind() will later rely on without re-checking.
+// validateWorkflowNodes checks a bound shape's nodes form an acyclic DAG of configured agents -
+// everything Bind() later relies on without re-checking.
 func validateWorkflowNodes(shapeName string, nodes []WorkflowNode, agents map[string]AgentConfig) error {
 	ids := make(map[string]bool, len(nodes))
 	for _, n := range nodes {
@@ -296,23 +233,17 @@ func workflowNodesAcyclic(nodes []WorkflowNode) bool {
 	return placed == len(nodes)
 }
 
-// defaultSkillPlugins are the plugin roots a stock quack loads: dotagents floats
-// (quack's own library; main is the intended baseline, and the Plugins page shows
-// when it moves) while ponytail, third-party, is pinned and moves only by editing the pin.
+// defaultSkillPlugins: dotagents floats on main (quack's own library); ponytail, third-party, is
+// pinned and moves only by editing the pin.
 var defaultSkillPlugins = []string{"github:fagerbergj/dotagents", "github:DietrichGebert/ponytail@v4.9.0", ".agents/plugins/usage"}
 
 type ObservabilityConfig struct {
 	Otel      OtelConfig      `yaml:"otel"`
 	Recording RecordingConfig `yaml:"recording"`
-	// ADKDebug mounts ADK's REST debug console at /debug/adk. DANGER: /run,
-	// /run_sse and /run_live execute any loaded agent WITHOUT the trust gate -
-	// protected only by quack's auth + this flag. MUST stay off in production.
-	ADKDebug bool `yaml:"adk_debug"`
 }
 
-// RecordingConfig names the ledger (WAL) store and whether OTel observation
-// kinds (llm.call, tool.call, ...) are written to it. The ledger itself is
-// always on when Store is set; Observations only gates the observation half.
+// RecordingConfig names the ledger (WAL) store. The ledger is on whenever Store is set;
+// Observations only gates writing OTel observation kinds (llm.call, tool.call, ...).
 type RecordingConfig struct {
 	Observations *bool  `yaml:"observations"`
 	Store        string `yaml:"store"`
@@ -330,9 +261,8 @@ func (r RecordingConfig) ObservationsEnabled(otelEnabled bool) bool {
 	return *r.Observations
 }
 
-// ArtifactsConfig selects the artifact.Service backend, always wired. Empty
-// Store means in-memory (lost on restart); a named store must be postgres
-// (config.validate enforces it) - its large-object backend, durable.
+// ArtifactsConfig selects the artifact.Service backend. Empty Store is in-memory (lost on
+// restart); a named store must be postgres (its durable large-object backend).
 type ArtifactsConfig struct {
 	Store string `yaml:"store"`
 }
@@ -349,8 +279,7 @@ type OIDCConfig struct {
 }
 
 type TrustedHeadersConfig struct {
-	User   string `yaml:"user"`
-	Groups string `yaml:"groups"`
+	User string `yaml:"user"`
 }
 
 // OtelSignal names one OTLP signal. An exporter declares which it wants, so
@@ -363,9 +292,8 @@ const (
 	SignalLogs    OtelSignal = "logs"
 )
 
-// OtelExporter: one OTLP destination and the signals sent to it. The signal
-// path (/v1/traces etc) is always appended to Endpoint, so a base URL carrying
-// a path - Langfuse's /api/public/otel - works like any other (#1045).
+// OtelExporter is one OTLP destination and its signals. The signal path (/v1/traces etc) is
+// always appended, so a base URL with a path (Langfuse's /api/public/otel) works.
 type OtelExporter struct {
 	Endpoint string       `yaml:"endpoint"`
 	Signals  []OtelSignal `yaml:"signals"`
@@ -375,9 +303,8 @@ type OtelConfig struct {
 	Enabled   *bool          `yaml:"enabled"`
 	Exporters []OtelExporter `yaml:"exporters"`
 	Sample    float64        `yaml:"sample"`
-	// Content opts into putting prompt/tool/response text on span attributes -
-	// both the model-call spans (internal/inference) and ACP tool-call spans
-	// (internal/acp/turnspan.go). Off by default: an existing deployment that only wired traces/metrics must not silently start shipping message content on upgrade.
+	// Content puts prompt/tool/response text on model-call and ACP tool-call spans. Off by default
+	// so an upgrade never silently starts shipping message content.
 	Content bool `yaml:"capture_content"`
 	// Environment lands on the OTel resource as deployment.environment.name -
 	// what trace backends split dev traffic from the deployed server by.
@@ -410,9 +337,8 @@ func (o *OtelConfig) applyDefaults() error {
 	if t := o.TraceURLTemplate; t != "" && !strings.HasPrefix(t, "https://") && !strings.HasPrefix(t, "http://") {
 		return fmt.Errorf("config: otel.trace_url_template must start with https:// or http://")
 	}
-	// An endpoint that interpolated to "" means the deployment did not set that
-	// env var - the long-standing way to say "build providers, export nothing".
-	// Drop it rather than refusing to start; serve logs when nothing exports.
+	// An endpoint that interpolated to "" means its env var is unset ("export nothing"):
+	// drop it rather than refuse to start; serve logs when nothing exports.
 	kept := o.Exporters[:0]
 	for _, e := range o.Exporters {
 		if strings.TrimSpace(e.Endpoint) != "" {
@@ -437,17 +363,11 @@ func (o *OtelConfig) applyDefaults() error {
 
 // Wants reports whether this exporter carries sig.
 func (e OtelExporter) Wants(sig OtelSignal) bool {
-	for _, s := range e.Signals {
-		if s == sig {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(e.Signals, sig)
 }
 
-// ExtensionsConfig is the extensions: block - every top-level key is opaque (internal/serve resolves each against sdk.Registered() and hands the raw
-// node to its Factory). internal/github is an SDK module like any other, so
-// its config (formerly the typed GitHubExtensionConfig) lives entirely in quack-extensions/github; quack itself never parses it.
+// ExtensionsConfig is the extensions: block. Every key is opaque: internal/serve resolves it
+// against sdk.Registered() and hands the raw node to its Factory.
 type ExtensionsConfig struct {
 	Modules map[string]yaml.Node `yaml:",inline"`
 }
@@ -472,9 +392,8 @@ const (
 
 var defaultCheckCommands = []string{"go build", "go vet", "go test", "npm run", "npm test", "npx tsc", "make", "gofmt", "npx prettier", "./gradlew"}
 
-// defaultBuildDirs: workspace.build_dirs' default value - work-tree-relative
-// build-output dirs a read-only node's sandbox keeps writable, PROVIDED the
-// repo's own .gitignore already ignores them (workspace.buildDirGrants).
+// defaultBuildDirs: work-tree-relative build-output dirs a read-only node's sandbox keeps
+// writable, provided the repo's own .gitignore ignores them (workspace.buildDirGrants).
 var defaultBuildDirs = []string{
 	"node_modules", "dist", "build", ".vite", ".cache", "coverage", "target",
 	"frontend/node_modules", "frontend/dist", "frontend/build", "frontend/.vite", "frontend/.cache", "frontend/coverage", "frontend/target",
@@ -495,11 +414,8 @@ type WorkspaceConfig struct {
 	ExecPath            []string              `yaml:"exec_path"`
 	Env                 map[string]string     `yaml:"env"`
 	GitCredentials      []GitCredentialConfig `yaml:"git_credentials"`
-	Guards              map[string]string     `yaml:"guards"`
 	Sandbox             string                `yaml:"sandbox"`
-	// BuildDirs (see defaultBuildDirs) - RW even on a ReadOnly node's
-	// otherwise-immutable tree, when the repo's own .gitignore already
-	// ignores them.
+	// BuildDirs (see defaultBuildDirs) stay RW even on a ReadOnly node when .gitignore ignores them.
 	BuildDirs []string          `yaml:"build_dirs"`
 	Limits    WorkspaceLimits   `yaml:"limits"`
 	GC        WorkspaceGCConfig `yaml:"gc"`
@@ -510,9 +426,8 @@ type WorkspaceGCConfig struct {
 	ChatTTLHours    int   `yaml:"chat_ttl_hours"`
 	ScratchTTLHours int   `yaml:"scratch_ttl_hours"`
 	IntervalHours   int   `yaml:"interval_hours"`
-	// HomeMaxMB bounds the ACP agent's shared $HOME (its own private state -
-	// caches, DBs, logs) - the one directory nothing else ever collects. Reset
-	// whole, only when none of the user's chats have a round in flight.
+	// HomeMaxMB bounds the ACP agent's shared $HOME (caches, DBs, logs), which nothing else collects.
+	// Reset whole, only when none of the user's chats have a round in flight.
 	HomeMaxMB int `yaml:"home_max_mb"`
 }
 
@@ -532,8 +447,6 @@ type GitCredentialConfig struct {
 
 const defaultGitCredentialUsername = "x-access-token"
 
-var validGuardTiers = map[string]bool{"none": true, "judge": true, "confirm": true, "judge+confirm": true}
-
 type SessionConfig struct {
 	Store      string           `yaml:"store"`
 	Compaction CompactionConfig `yaml:"compaction"`
@@ -550,37 +463,27 @@ type CompactionConfig struct {
 	Model              string `yaml:"model"`
 	TokenThreshold     int    `yaml:"token_threshold"`
 	EventRetentionSize int    `yaml:"event_retention_size"`
-	// CompactionInterval is the ADK-style regular cadence trigger (in
-	// invocations/turns), independent of TokenThreshold's absolute limit.
-	// 0 disables the cadence trigger (threshold-only, prior behaviour).
+	// CompactionInterval is the cadence trigger in invocations, independent of TokenThreshold;
+	// 0 disables it (threshold-only).
 	CompactionInterval int `yaml:"compaction_interval"`
-	// OverlapSize is how many already-compacted raw events carry into the
-	// next summarization window, so a fact split across a chunk boundary isn't
-	// lost. adk has no default here - 0 disables overlap - and requires CompactionInterval > 0 whenever this is set (see validate()).
+	// OverlapSize carries already-compacted events into the next window so a fact split across a
+	// boundary isn't lost. 0 disables it; adk requires CompactionInterval > 0 when set.
 	OverlapSize int `yaml:"overlap_size"`
 }
 
-// defaultMaxActiveNodes: permissive PER-RUN host-resource ceiling (each run
-// gets its own semaphore, see rundag.go/nativegraph.go), not a GPU limiter
-// (#1007's Admission object bounds that) - jails/clones cost host CPU/RAM the GPU pool doesn't know about.
+// defaultMaxActiveNodes is a per-run host-resource ceiling (jails/clones cost CPU/RAM),
+// not a GPU limiter - dag.Admission bounds that.
 const defaultMaxActiveNodes = 32
 
 type DagConfig struct {
-	// MaxActiveRuns is deprecated, kept as a no-op so an already-deployed
-	// quack.yaml with "max_active_runs: N" doesn't crash-loop.
-	MaxActiveRuns int `yaml:"max_active_runs"`
-
-	// MaxActiveNodes caps concurrently-running nodes WITHIN ONE RUN (each run
-	// gets its own semaphore) as a host-resource guard (jail/clone CPU+RAM),
-	// NOT the GPU concurrency knob - that's models.<m>.limits.sessions/kv_tokens and providers.<p>.limits.active (#1007).
+	// MaxActiveNodes caps concurrent nodes within one run as a host-resource guard. GPU concurrency
+	// is models.<m>.limits.sessions/kv_tokens and providers.<p>.limits.active.
 	MaxActiveNodes int `yaml:"max_active_nodes"`
 }
 
 type GatesConfig struct {
 	ConstitutionPath    string      `yaml:"constitution_path"`
-	Constitution        string      `yaml:"constitution"`
 	RubricPath          string      `yaml:"rubric_path"`
-	Rubric              string      `yaml:"rubric"`
 	DeterministicChecks StageConfig `yaml:"deterministic_checks"`
 	Judge               JudgeConfig `yaml:"judge"`
 }
@@ -596,13 +499,10 @@ type JudgeConfig struct {
 	Threshold     float64 `yaml:"threshold"`
 	MaxIterations int     `yaml:"max_iterations"`
 	ContextWindow int     `yaml:"context_window"`
-	// MaxOutputTokens caps the judge/plan-judge round's own reply
-	// tokens - 0 (the Go zero value, e.g. an older config that predates this
-	// field) leaves it uncapped like before #889. quack.yaml's own default is 8192.
+	// MaxOutputTokens caps the judge/plan-judge reply tokens; 0 leaves it uncapped.
 	MaxOutputTokens int `yaml:"max_output_tokens"`
-	// ThinkingLevel opts the judge/plan-judge request into a capped reasoning
-	// effort ("low", "medium", "high"); "" (default) sends no ThinkingConfig at
-	// all - some OpenAI-compatible endpoints 400 on reasoning_effort for a non-reasoning model, so this must stay opt-in, not forced (#1235).
+	// ThinkingLevel opts the judge into a capped reasoning effort (low/medium/high); "" sends none.
+	// Must stay opt-in: some OpenAI-compatible endpoints 400 on reasoning_effort for non-reasoning models.
 	ThinkingLevel string `yaml:"thinking_level"`
 }
 
@@ -621,7 +521,6 @@ type AgentConfig struct {
 	ContextWindow int             `yaml:"context_window"`
 	Tools         []string        `yaml:"tools"`
 	Inputs        []string        `yaml:"inputs"`
-	Gated         *bool           `yaml:"gated"`
 	JudgeRounds   int             `yaml:"judge_rounds"`
 	Judge         *bool           `yaml:"judge"`
 	Memory        MemoryConfig    `yaml:"memory"`
@@ -647,8 +546,6 @@ type AcpAgentConfig struct {
 	// repos the gate never provisions); requires ReadOnly and a boundary-enforcing sandbox.
 	AllowClone bool `yaml:"allow_clone"`
 }
-
-func (a AgentConfig) IsGated() bool { return a.Gated == nil || *a.Gated }
 
 type ToolConfig struct {
 	Kind       string      `yaml:"kind"`
@@ -678,9 +575,8 @@ type ProviderConfig struct {
 	Kind     string `yaml:"kind"`
 	Endpoint string `yaml:"endpoint"`
 	APIKey   string `yaml:"api_key"`
-	// Limits caps how many DISTINCT models per role may be resident at once
-	// (#1007, enforced by dag.Admission). Absent = any number of
-	// models resident.
+	// Limits caps how many distinct models per role may be resident at once (dag.Admission).
+	// Absent = no cap.
 	Limits *ProviderLimits `yaml:"limits"`
 }
 
@@ -690,22 +586,20 @@ type ProviderLimits struct {
 	Active map[string]int `yaml:"active"`
 }
 
-// ModelConfig is a models: registry entry - the canonical binding of a model
-// name to its provider, scheduling role, default context window, admission
-// limits (#1007, enforced by dag.Admission), and cost.
+// ModelConfig is a models: entry binding a model name to its provider, scheduling role, default
+// context window, admission limits (dag.Admission), and cost.
 type ModelConfig struct {
 	Provider      string        `yaml:"provider"`
 	Role          string        `yaml:"role"`
 	ContextWindow int           `yaml:"context_window"`
 	Limits        *ModelLimits  `yaml:"limits"`
 	Cost          *ModelPricing `yaml:"cost"`
-	// Effort is a reasoning-effort default ("low"/"medium"/"high") mapped to provider-specific params (OpenAI-compatible reasoning_effort); "" (default)
-	// sends no ThinkingConfig unless the request sets its own (e.g. the judge's
-	// gates.judge.thinking_level, which always takes precedence). #1235 - some OpenAI-compatible endpoints 400 on reasoning_effort for a non-reasoning model, so only set this on a model that accepts it.
+	// Effort is a default reasoning effort (low/medium/high); "" sends none unless the request sets
+	// its own. Only set it on a model that accepts reasoning_effort, or some endpoints 400.
 	Effort string `yaml:"effort"`
 }
 
-// ModelLimits gates admission (#1007, enforced by dag.Admission). Absent = unlimited:
+// ModelLimits gates admission (enforced by dag.Admission). Absent = unlimited:
 // no Sessions cap, and a nil/zero KVTokens means context never blocks scheduling.
 type ModelLimits struct {
 	Sessions int `yaml:"sessions"`
@@ -719,9 +613,8 @@ type ModelPricing struct {
 	OutputPerMTok float64 `yaml:"output_per_mtok"`
 }
 
-// checkModelRegistered errors if a non-empty model reference (from any of
-// the several Provider+Model fields outside agents:) isn't in the registry:
-// ModelCost is a silent map lookup, so an unregistered judge/embed/etc model would otherwise load clean and quietly drop its cost metric forever.
+// checkModelRegistered errors on an unregistered non-agent model reference: ModelCost is a silent
+// map lookup, so the model would otherwise load clean and drop its cost metric forever.
 func (c *Config) checkModelRegistered(field, model string) error {
 	if model == "" {
 		return nil
@@ -786,8 +679,7 @@ type StoreConfig struct {
 	Kind    string `yaml:"kind"`
 	URL     string `yaml:"url"`
 	Extends string `yaml:"extends"`
-	// PublicKey/SecretKey: langfuse store credentials, read by the prompt
-	// source in #1421.
+	// PublicKey/SecretKey: langfuse store credentials, read by the prompt source.
 	PublicKey     string               `yaml:"public_key"`
 	SecretKey     string               `yaml:"secret_key"`
 	Embedder      *ProviderModel       `yaml:"embedder"`
@@ -797,30 +689,13 @@ type StoreConfig struct {
 	Collection    string               `yaml:"collection"`
 }
 
-// ConsolidationConfig binds the model for the gated-commit reconcile and
-// periodic sweep (docs/memory-lifecycle.md §4(c)). Schedule nil defaults to
-// defaultConsolidationSchedule; "" disables the sweep (issue #961).
+// ConsolidationConfig binds the model for the gated-commit reconcile and periodic sweep.
+// Schedule nil defaults to defaultConsolidationSchedule; "" disables the sweep.
 type ConsolidationConfig struct {
-	Provider      string            `yaml:"provider"`
-	Model         string            `yaml:"model"`
-	Schedule      *string           `yaml:"schedule"`
-	RetentionDays int               `yaml:"retention_days"`
-	Forgetting    *ForgettingConfig `yaml:"forgetting"`
-}
-
-// ForgettingConfig is memory.forgetting.rules (epic #1255 P3): an ordered
-// list of {when, then} rules the nightly sweep evaluates, first match wins.
-// Absent (nil) means the built-in defaults - see memory.DefaultRules.
-type ForgettingConfig struct {
-	Rules []ForgetRule `yaml:"rules"`
-}
-
-// ForgetRule mirrors memoryrules.Rule with yaml tags - kept as its own type
-// so config doesn't leak yaml tags into the parser package; converted to
-// memoryrules.Rule for validation in Validate() below.
-type ForgetRule struct {
-	When string `yaml:"when"`
-	Then string `yaml:"then"`
+	Provider      string  `yaml:"provider"`
+	Model         string  `yaml:"model"`
+	Schedule      *string `yaml:"schedule"`
+	RetentionDays int     `yaml:"retention_days"`
 }
 
 // defaultConsolidationSchedule: daily at 02:00, standard 5-field cron.
@@ -838,10 +713,8 @@ func (c *Config) resolveStore(name string, seen []string) (StoreConfig, bool) {
 	if s.Extends == "" {
 		return s, true
 	}
-	for _, n := range seen {
-		if n == name {
-			return StoreConfig{}, false
-		}
+	if slices.Contains(seen, name) {
+		return StoreConfig{}, false
 	}
 	parent, ok := c.resolveStore(s.Extends, append(seen, name))
 	if !ok {
@@ -924,9 +797,8 @@ func mergeStore(parent, child StoreConfig) StoreConfig {
 type OrchestratorConfig struct {
 	Provider string `yaml:"provider"`
 	Model    string `yaml:"model"`
-	// ContextWindow is the orchestrator's kv_tokens reservation (#1067), the
-	// counterpart to an agent's own context_window. Unset means context is not
-	// a scheduling dimension for its turns - NOT the model's full window, which one turn would reserve entirely, starving the workers it just planned.
+	// ContextWindow is the orchestrator's kv_tokens reservation. Unset means context isn't scheduled -
+	// not the model's full window, which would starve the workers its turn just planned.
 	ContextWindow  int                  `yaml:"context_window"`
 	Tools          []string             `yaml:"tools"`
 	Skills         []string             `yaml:"skills"`
@@ -945,10 +817,8 @@ type ServerConfig struct {
 	// ShutdownGraceSeconds bounds how long SIGTERM waits for in-flight runs
 	// to finish before force-cancelling them (see serve.DrainActiveRuns).
 	ShutdownGraceSeconds int `yaml:"shutdown_grace_seconds"`
-	// PublicURL is this server's externally reachable base URL (e.g.
-	// "https://quack.example.com"), passed to extensions (SDK Host.PublicURL)
-	// so a posted GitHub comment/review can link back to the run that made it.
-	// Empty means quack doesn't know its own public address.
+	// PublicURL is this server's externally reachable base URL, passed to extensions so a posted
+	// comment can link back to its run. Empty = unknown.
 	PublicURL string `yaml:"public_url"`
 }
 
@@ -978,20 +848,6 @@ func validateNoLiteralTokens(raw string) error {
 	return nil
 }
 
-var knownRenames = map[string]string{
-	"memory_role": "memory.bucket",
-}
-
-func scanForKnownRenames(raw string) error {
-	for oldKey := range knownRenames {
-		re := regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(oldKey) + `:`)
-		if re.MatchString(raw) {
-			return fmt.Errorf("config: unknown field %q — use %s instead", oldKey, knownRenames[oldKey])
-		}
-	}
-	return nil
-}
-
 const (
 	coderModelFallbackEnv = "QUACK_CODER_MODEL"
 	researcherModelEnv    = "QUACK_RESEARCHER_MODEL"
@@ -1007,24 +863,19 @@ func expandEnv(key string) string {
 	return os.Getenv(key)
 }
 
-func Load(path string) (*Config, error) {
-	return load(path, false, false)
-}
-
-// LoadForSandbox loads path like Load but skips checks `quack sandbox` never needs: live inference
-// plumbing (endpoint/model/store urls) and per-agent bundle/model completeness - it only reads one named agent's acp/workspace config, never ac.Bundle, so a sibling's incomplete config (empty env var, unseeded plugin override) can't block it.
+// LoadForSandbox skips live inference checks and per-agent completeness: sandbox reads one agent's
+// acp/workspace config, so a sibling's incomplete entry must not block it.
 func LoadForSandbox(path string) (*Config, error) {
-	return load(path, true, true)
+	return load(path, true)
 }
 
-// LoadDeferringAgentCompleteness loads path like Load but skips requiring a
-// non-empty bundle/model per agent - the caller must call
-// RequireAgentBundlesAndModels itself once plugin seeding has merged in.
+// LoadDeferringAgentCompleteness skips requiring each agent's bundle/model; the caller must run
+// RequireAgentBundlesAndModels once plugin seeding has merged in.
 func LoadDeferringAgentCompleteness(path string) (*Config, error) {
-	return load(path, false, true)
+	return load(path, false)
 }
 
-func load(path string, skipRuntimeValidation, deferAgentCompleteness bool) (*Config, error) {
+func load(path string, skipRuntimeValidation bool) (*Config, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read config %q: %w", path, err)
@@ -1032,13 +883,7 @@ func load(path string, skipRuntimeValidation, deferAgentCompleteness bool) (*Con
 	if err := validateNoLiteralTokens(string(raw)); err != nil {
 		return nil, err
 	}
-	if err := scanForKnownRenames(string(raw)); err != nil {
-		return nil, err
-	}
 	expanded := os.Expand(string(raw), expandEnv)
-	if err := detectOldPricingShape(expanded); err != nil {
-		return nil, err
-	}
 
 	var c Config
 	dec := yaml.NewDecoder(bytes.NewReader([]byte(expanded)))
@@ -1052,32 +897,10 @@ func load(path string, skipRuntimeValidation, deferAgentCompleteness bool) (*Con
 	sum := sha256.Sum256(raw)
 	c.Revision = hex.EncodeToString(sum[:])[:12]
 	c.skipRuntimeValidation = skipRuntimeValidation
-	c.deferAgentCompleteness = deferAgentCompleteness
 	if err := c.validate(); err != nil {
 		return nil, err
 	}
 	return &c, nil
-}
-
-// detectOldPricingShape rejects the pre-#1007 shape (per-model USD prices
-// nested under providers.<p>.models) with a migration hint instead of
-// KnownFields(true) silently dropping the prices as an unknown field.
-func detectOldPricingShape(expanded string) error {
-	var generic map[string]any
-	if err := yaml.Unmarshal([]byte(expanded), &generic); err != nil {
-		return nil // let the real decode below surface this parse error
-	}
-	providers, _ := generic["providers"].(map[string]any)
-	for name, raw := range providers {
-		p, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		if _, ok := p["models"]; ok {
-			return fmt.Errorf("config: providers.%s.models is no longer supported — move per-model pricing to the top-level models.<name>.cost.{input_per_mtok,output_per_mtok}", name)
-		}
-	}
-	return nil
 }
 
 func (c *Config) validate() error {
@@ -1321,15 +1144,6 @@ func (c *Config) validateStoreConsolidation() error {
 		if s.Consolidation.RetentionDays < 0 {
 			return fmt.Errorf("config: store %q consolidation.retention_days must be >= 0", name)
 		}
-		if s.Consolidation.Forgetting != nil {
-			rules := make([]memoryrules.Rule, len(s.Consolidation.Forgetting.Rules))
-			for i, r := range s.Consolidation.Forgetting.Rules {
-				rules[i] = memoryrules.Rule{When: r.When, Then: r.Then}
-			}
-			if err := memoryrules.ValidateRules(rules); err != nil {
-				return fmt.Errorf("config: store %q consolidation.forgetting.rules: %w", name, err)
-			}
-		}
 	}
 
 	return nil
@@ -1362,11 +1176,10 @@ func (c *Config) validateArtifactsStore() error {
 	return nil
 }
 
-// validateAgentModel checks REFERENCES only when c.deferAgentCompleteness -
-// requiredness defers to RequireAgentBundlesAndModels, so a plugin-override
-// entry isn't rejected before SeedPluginAgents fills in what it left empty.
+// validateAgentModel checks references only: requiredness waits for RequireAgentBundlesAndModels,
+// so a plugin-override entry isn't rejected before SeedPluginAgents fills in what it left empty.
 func (c *Config) validateAgentModel() error {
-	return c.validateAgentFields(!c.deferAgentCompleteness)
+	return c.validateAgentFields(false)
 }
 
 // RequireAgentBundlesAndModels re-runs validateAgentModel's requiredness
@@ -1435,14 +1248,8 @@ func (c *Config) validateGates() error {
 		if g.DeterministicChecks.MaxRounds < 0 || g.Judge.MaxRounds < 0 {
 			return fmt.Errorf("config: gates.*.max_rounds must be >= 0")
 		}
-		if g.ConstitutionPath != "" && g.Constitution != "" {
-			return fmt.Errorf("config: gates sets both constitution_path and constitution; use one")
-		}
-		if g.RubricPath != "" && g.Rubric != "" {
-			return fmt.Errorf("config: gates sets both rubric_path and rubric; use one")
-		}
-		if g.JudgeEnabled() && g.RubricPath == "" && g.Rubric == "" {
-			return fmt.Errorf("config: gates needs one of rubric_path or rubric when judge is enabled")
+		if g.JudgeEnabled() && g.RubricPath == "" {
+			return fmt.Errorf("config: gates needs rubric_path when judge is enabled")
 		}
 		if g.JudgeEnabled() {
 			if err := c.validateGateJudge(g); err != nil {
@@ -1477,7 +1284,7 @@ func (c *Config) validateGateJudge(g *GatesConfig) error {
 		return fmt.Errorf("config: gates.judge.max_output_tokens must be >= 0")
 	}
 	// A reply reserve at or past the window leaves no room for the prompt, degrading to a
-	// full-window budget with no log and recreating the #1215 overflow (#1221).
+	// full-window budget with no log and overflowing the context.
 	if g.Judge.ContextWindow > 0 && g.Judge.MaxOutputTokens >= g.Judge.ContextWindow {
 		return fmt.Errorf("config: gates.judge.max_output_tokens %d must be less than gates.judge.context_window %d", g.Judge.MaxOutputTokens, g.Judge.ContextWindow)
 	}
@@ -1500,9 +1307,8 @@ func (c *Config) validateSessionCompaction() error {
 				return err
 			}
 		}
-		// adk's compaction.Config.Validate() rejects this combination outright
-		// (sliding-window compaction would never run); fail at load rather than
-		// on the first long session that dispatches this agent.
+		// adk's compaction.Config.Validate() rejects this (the sliding window would never run);
+		// fail at load, not on the first long session.
 		if cc.OverlapSize > 0 && cc.CompactionInterval == 0 {
 			return fmt.Errorf("config: session.compaction.overlap_size requires compaction_interval > 0")
 		}
@@ -1533,14 +1339,6 @@ func (c *Config) validateDag() error {
 	if c.Dag.MaxActiveNodes < 1 {
 		return fmt.Errorf("config: dag.max_active_nodes must be >= 1")
 	}
-	if c.Dag.MaxActiveRuns < 0 {
-		return fmt.Errorf("config: dag.max_active_runs must be >= 0 (got %d)", c.Dag.MaxActiveRuns)
-	}
-	if c.Dag.MaxActiveRuns != 0 {
-		slog.Warn("dag.max_active_runs is deprecated and ignored; chat state derives from node rows now",
-			"component", "config", "value", c.Dag.MaxActiveRuns)
-	}
-
 	return nil
 }
 
@@ -1639,7 +1437,6 @@ func (w *WorkspaceConfig) applyDefaults() error {
 		w.applyLimitsDefaults,
 		w.applyGCDefaults,
 		w.applyGitCredentialDefaults,
-		w.applyGuardDefaults,
 		w.applyEnvDefaults,
 	} {
 		if err := step(); err != nil {
@@ -1743,18 +1540,9 @@ func (w *WorkspaceConfig) applyGitCredentialDefaults() error {
 	return nil
 }
 
-func (w *WorkspaceConfig) applyGuardDefaults() error {
-	for tool, tier := range w.Guards {
-		if !validGuardTiers[tier] {
-			return fmt.Errorf("config: workspace.guards[%q] has unknown tier %q (want none, judge, confirm, or judge+confirm)", tool, tier)
-		}
-	}
-	return nil
-}
-
 func (w *WorkspaceConfig) applyEnvDefaults() error {
 	// No network in the sandbox: "local" fails fast instead of "auto" deferring a doomed download.
-	// GOMODCACHE is the Dockerfile's pre-seeded copy (the child's HOME is a fresh per-job dir, #936).
+	// GOMODCACHE is the Dockerfile's pre-seeded copy (the child's HOME is a fresh per-job dir).
 	if w.Env == nil {
 		w.Env = map[string]string{}
 	}
@@ -1781,7 +1569,7 @@ func (c *Config) Provider(name string) (ProviderConfig, bool) {
 }
 
 // PromptBinding is the model/provider/effort a resolved prompt artifact binds
-// its round's worker or judge model to (#1421 P2).
+// its round's worker or judge model to.
 type PromptBinding struct {
 	Provider     ProviderConfig
 	ProviderName string
@@ -1817,9 +1605,8 @@ func stringOverrides(override map[string]any) (model, provider, effort string, e
 	return model, provider, effort, nil
 }
 
-// ResolveBinding computes override's binding against baseProv/baseModel. override is a
-// resolved artifact's Config; nil, or one with none of "model"/"provider"/"effort" set,
-// means no override (nil, nil). An invalid model/provider/effort is an error naming which.
+// ResolveBinding resolves override (an artifact's Config) against baseProv/baseModel. No
+// model/provider/effort set means no override (nil, nil); an invalid one is a named error.
 func (c *Config) ResolveBinding(baseProv ProviderConfig, baseModel string, override map[string]any) (*PromptBinding, error) {
 	modelName, providerName, effort, err := stringOverrides(override)
 	if err != nil {
@@ -1847,9 +1634,8 @@ func (c *Config) ResolveBinding(baseProv ProviderConfig, baseModel string, overr
 	return &PromptBinding{Provider: prov, ProviderName: provName, Model: m, Effort: effort}, nil
 }
 
-// resolveBindingModel is ResolveBinding's model/provider half: modelName == ""
-// keeps baseModel, requiring a provider-only override to agree with its
-// registered provider; else validates modelName (and providerName), #1007 admission included.
+// resolveBindingModel is ResolveBinding's model/provider half: "" keeps baseModel (a provider-only
+// override must match its registered provider); else validates modelName, admission included.
 func (c *Config) resolveBindingModel(baseProv ProviderConfig, baseModel, modelName, providerName string) (ProviderConfig, string, error) {
 	if modelName == "" {
 		if providerName == "" {
@@ -1868,9 +1654,8 @@ func (c *Config) resolveBindingModel(baseProv ProviderConfig, baseModel, modelNa
 	if !ok {
 		return ProviderConfig{}, "", fmt.Errorf("prompt binding: model %q is not defined under models", modelName)
 	}
-	// #1007 admission (limits.sessions/kv_tokens) is sized from the static binding
-	// at boot; swapping to a model with its own limits would run it unmetered.
-	// Matches buildAdmission's own field-by-field check - limits: {} (both zero) admits nothing.
+	// Admission is sized from the static binding at boot, so swapping to a model with its own limits
+	// would run it unmetered. limits: {} (both zero) admits nothing.
 	if modelName != baseModel && mc.Limits != nil && (mc.Limits.Sessions > 0 || mc.Limits.KVTokens > 0) {
 		return ProviderConfig{}, "", fmt.Errorf("prompt binding: model %q declares limits: and differs from the static binding %q; admission is sized once at boot", modelName, baseModel)
 	}

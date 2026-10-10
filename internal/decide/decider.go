@@ -88,9 +88,8 @@ type Extension struct {
 	Points []Point
 }
 
-// New checks every point id against the registry and the enabled extensions'
-// declared points (so a typo is caught while disabled), and enabled points' policy;
-// nil when none is enabled. It never calls a handler.
+// New validates point ids against the registry and enabled extensions (catching typos even when disabled);
+// nil when no point is enabled. It never calls a handler.
 func New(cfg config.DecisionsConfig, exts ...Extension) (*Decider, error) {
 	d := &Decider{points: map[string]config.DecisionPoint{}, handlers: map[string]Handler{}, tokens: map[string]int{}}
 	declared, names := map[string]Point{}, map[string][]string{}

@@ -22,9 +22,8 @@ const (
 	OperatorEdited SeedAction = "operator-edited"
 )
 
-// Seed applies #1418's seeding rules: create on 404 (no production label; Langfuse adds
-// "latest" itself), re-seed only when the latest version is itself a stale seed, and
-// never touch a version a person authored.
+// Seed creates on 404 (no production label), re-seeds only over a stale seed, and
+// never touches a version a person authored.
 func (c *Client) Seed(ctx context.Context, name, staticBody, staticHash string) (SeedAction, error) {
 	p, found, err := c.GetPrompt(ctx, name, GetPromptOpts{Label: "latest"})
 	if err != nil {
@@ -64,9 +63,7 @@ func (c *Client) Seed(ctx context.Context, name, staticBody, staticHash string) 
 	return Updated, nil
 }
 
-// unionTag adds tag to tags if missing, preserving order and dropping duplicates.
-// Every POST replaces a prompt's whole tag set, so an update must carry forward
-// whatever operator tags already exist rather than overwriting them with just SeedTag.
+// unionTag keeps operator tags: every POST replaces a prompt's whole tag set.
 func unionTag(tags []string, tag string) []string {
 	out := make([]string, 0, len(tags)+1)
 	seen := false

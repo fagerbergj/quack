@@ -2,9 +2,8 @@ package dag
 
 import "testing"
 
-// A synthesizer is NOT always the terminal fan-in: research → synthesize →
-// implement is valid, with the implementer depending ON the synthesizer.
-// Regression: hardening used to give every synthesizer an edge to EVERY other node, including its own descendants, manufacturing a cycle that quack then rejected as the orchestrator's fault.
+// A synthesizer may feed an implementer; hardening must not give it edges to its own
+// descendants and manufacture a cycle.
 func TestSynthesizerHardeningDoesNotCreateACycle(t *testing.T) {
 	agents := []AgentInfo{
 		{Name: "code-explorer"},

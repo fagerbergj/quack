@@ -10,9 +10,7 @@ import (
 	"github.com/fagerbergj/quack/internal/recordstore"
 )
 
-// TestSaveDagPlanRecord covers #1095: a plan writes "dag_plan:main", its
-// content validates against the registered dag_plan schema, and it shows up
-// in a list_artifacts-style listing.
+// A plan writes "dag_plan:main", validates against the dag_plan schema, and lists.
 func TestSaveDagPlanRecord(t *testing.T) {
 	svc := artifact.InMemoryService()
 	rec := DagPlanRecord{
@@ -64,9 +62,7 @@ func TestSaveDagPlanRecord(t *testing.T) {
 	}
 }
 
-// TestSaveDagPlanRecord_NoArtifactServiceFailsOpen covers the pre-#1090 case
-// (no artifact service configured): the caller Warn-logs and moves on, never
-// blocking plan acceptance.
+// Without an artifact service the save fails open and never blocks plan acceptance.
 func TestSaveDagPlanRecord_NoArtifactServiceFailsOpen(t *testing.T) {
 	rec := DagPlanRecord{PlanID: "p", Assignments: []Assignment{{NodeID: "n1", Task: "x"}}}
 	if _, _, err := SaveDagPlanRecord(context.Background(), nil, "quack", "u1", "chat1", "turn1", rec); err == nil {

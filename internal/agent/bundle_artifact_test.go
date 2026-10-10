@@ -9,10 +9,8 @@ import (
 	"github.com/fagerbergj/quack/internal/recordstore"
 )
 
-// testArtifactKind is a throwaway blob-class kind, registered once so
-// LoadBundle's card.Artifact validation has a real registered kind to accept
-// - registering in init() (not per-test) since Register panics on a
-// duplicate name.
+// testArtifactKind gives card.Artifact validation a registered kind; registered in init() because
+// Register panics on a duplicate name.
 const testArtifactKind = "bundle_test_artifact_kind"
 
 func init() {
@@ -22,9 +20,7 @@ func init() {
 	})
 }
 
-// TestLoadBundleArtifactField covers the card's optional "artifact" field:
-// a registered kind is accepted, an unregistered one is rejected, and
-// omitting it entirely (the default) is fine.
+// The card's optional "artifact" accepts a registered kind, rejects an unregistered one, and may be omitted.
 func TestLoadBundleArtifactField(t *testing.T) {
 	t.Run("valid registered kind", func(t *testing.T) {
 		card, err := json.Marshal(map[string]any{"name": "x", "artifact": testArtifactKind})

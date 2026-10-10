@@ -349,15 +349,11 @@ export const subscribeChatStream = <ThrowOnError extends boolean = false>(option
 });
 
 /**
- * Transition a DAG node's status (cancel, pause/resume, or retry)
+ * Transition a DAG node's status (pause/resume or retry)
  *
  * A single resource-oriented endpoint - the request body names the
- * TARGET status:
+ * TARGET status. To cancel a node, POST `.../nodes/{node_id}/stop`.
  *
- * - `{"status":"cancelled"}` - cancel the node (legal from `queued`,
- * `running`, `paused`, or `needs_input`). Kills the in-flight
- * model/tool call via context; no resume. No-op (200, unchanged
- * state) if the node isn't currently live.
  * - `{"status":"paused"}` - suspend a RUNNING node at its next safe
  * point, keeping its accumulated work. Only legal from `running`.
  * - `{"status":"running"}` - resume a `paused` node: a fresh re-run
@@ -606,7 +602,7 @@ export const listNodeMemories = <ThrowOnError extends boolean = false>(options: 
 /**
  * Run the forgetting-rule sweep on demand
  *
- * Evaluates every configured memory store's `memory.forgetting.rules`
+ * Evaluates the built-in forgetting rules on every configured memory store
  * (epic #1255 P3) against every currently-valid memory, first rule
  * match wins. `dry_run: true` reports what each rule would do without
  * invalidating anything; otherwise it applies invalidations exactly as

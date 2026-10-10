@@ -33,9 +33,8 @@ func (fixedEmbedder) Embed(_ context.Context, texts []string) ([][]float32, erro
 	return out, nil
 }
 
-// echoConsolidator ADDs each staged candidate verbatim as its own point - a
-// stand-in for the real consolidator LLM so Commit can write test fixtures
-// with recognizable, distinct content. Reads only the STAGED CANDIDATES section of the prompt: the EXISTING MEMORIES section commit.go also sends (once a bucket is non-empty) uses the same "- " line prefix, and echoing those back too would re-ADD every prior fact on each subsequent Commit.
+// echoConsolidator ADDs each staged candidate verbatim, standing in for the consolidator LLM. It reads only
+// STAGED CANDIDATES: EXISTING MEMORIES uses the same "- " prefix and would re-ADD prior facts.
 type echoConsolidator struct{}
 
 func (echoConsolidator) Name() string { return "echo-consolidator" }
@@ -75,9 +74,8 @@ func newTestMemStore(t *testing.T) *memory.Store {
 	return s
 }
 
-// commitFact writes one recognizable fact into s via Commit (echoConsolidator
-// ADDs it verbatim), so a test can seed multiple distinct entries and later
-// assert on their content or relative order.
+// commitFact writes one recognizable fact into s via Commit, so tests can assert
+// on content and order.
 func commitFact(t *testing.T, s *memory.Store, bucket, content string) {
 	t.Helper()
 	if _, err := s.Commit(context.Background(), memory.Scope{Repo: bucket}, "test", memory.Provenance{},
@@ -170,9 +168,8 @@ func TestDeleteMemory_UnknownID_404(t *testing.T) {
 	}
 }
 
-// A committed memory shows up in a bucket listing; deleting it invalidates it
-// (design doc §4(b), soft-delete only) - it drops out of the default listing
-// but is still there, reason "manual delete", under include_invalidated=true.
+// A committed memory shows in a bucket listing; deleting soft-invalidates it, so it drops out of the default
+// listing but appears with reason "manual delete" under include_invalidated=true.
 func TestListAndDeleteMemory_RoundTrip(t *testing.T) {
 	ctx := context.Background()
 	h := newTestHandler(t)
@@ -201,8 +198,7 @@ func TestListAndDeleteMemory_RoundTrip(t *testing.T) {
 	if s := got.Memories[0].Status; s == nil || *s != schema.MemoryStatusUnverified {
 		t.Fatalf("status before delete = %v, want unverified", s)
 	}
-	// Epic #1255 P1: a fresh memory carries the new vote fields at their zero
-	// value/default tier, not omitted or nil.
+	// A fresh memory carries the vote fields at zero/default tier, not omitted or nil.
 	m0 := got.Memories[0]
 	if m0.Tier == nil || *m0.Tier != schema.MemoryTierUnverified {
 		t.Fatalf("tier = %v, want unverified", m0.Tier)
@@ -294,18 +290,16 @@ func TestDeleteMemory_CustomReason(t *testing.T) {
 	}
 }
 
-// With both taskMem and userMem configured, a listing merges entries from
-// both and orders the COMBINED set by timestamp - not by concatenating one
-// store's page after the other's. The four facts below interleave stores (task, user, task, user) with real time gaps between commits, so a naive concatenation (which would group all of one store's entries before the other's) produces a visibly different order than a correct merge sort.
+// With taskMem and userMem both configured, a listing merge-sorts the combined set by timestamp. The facts
+// interleave stores, so concatenating one store's page after the other's gives a visibly different order.
 func TestListMemories_MergesAndOrdersAcrossBothStores(t *testing.T) {
 	h := newTestHandler(t)
 	h.taskMem = newTestMemStore(t)
 	h.userMem = newTestMemStore(t)
 
 	const bucket = "NightsOut"
-	// Stamp each commit through the shared clock seam so ordering is
-	// deterministic - RFC3339 timestamps are second-resolution, and sleeping
-	// past real second boundaries would make this test slow and flaky.
+	// Stamp commits through the clock seam: RFC3339 is second-resolution, and sleeping
+	// past second boundaries would be slow and flaky.
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	tick := base
 	nextTick := func() string {
@@ -339,9 +333,8 @@ func TestListMemories_MergesAndOrdersAcrossBothStores(t *testing.T) {
 		t.Fatalf("merged order = %v, want %v (newest first across both stores)", gotOrder, wantOrder)
 	}
 
-	// Paging across the merged set: page 1 ends on fact C (task's) and page 2
-	// starts on fact B (user's) - the boundary sits between the two stores'
-	// entries, exactly where a store-by-store concatenation would misbehave.
+	// Page 1 ends on C (task) and page 2 starts on B (user): the boundary sits between
+	// stores, where concatenation would misbehave.
 	limit := 2
 	w1 := httptest.NewRecorder()
 	h.ListMemories(w1, httptest.NewRequest(http.MethodGet, "/api/v1/memories", nil), schema.ListMemoriesParams{Bucket: &b, Limit: &limit})
@@ -381,8 +374,8 @@ func TestListMemories_MergesAndOrdersAcrossBothStores(t *testing.T) {
 	}
 }
 
-// TestListMemories_SortSpansBothStores (#1266 review): `sort` must order the
-// MERGED set from both configured stores AND survive paging, not just re-sort within whichever store happened to be listed first or only get checked on an unpaged page 0. Timestamps are pinned via memory.SetClockForTest (not the real clock) so `oldest` is unambiguous, and the store listed SECOND (userMem) holds the two oldest facts - a merge that silently fell back to "whichever store's page 0" or ignored sortBy (defaulting to newest) both produce a different, wrong, easily-asserted order here.
+// TestListMemories_SortSpansBothStores: `sort` orders the merged set across pages. userMem, listed second,
+// holds the two oldest facts, so a per-store or newest-default fallback gives a visibly wrong order.
 func TestListMemories_SortSpansBothStores(t *testing.T) {
 	h := newTestHandler(t)
 	h.taskMem = newTestMemStore(t)
@@ -458,9 +451,8 @@ func TestListMemories_InvalidPageToken400(t *testing.T) {
 	}
 }
 
-// TestListMemories_InvalidSort400 (#1266 review): an unrecognized `sort`
-// value is a client error, matching this same handler's page_token
-// convention above - never a silent fallback to newest.
+// TestListMemories_InvalidSort400: an unrecognized `sort` is a 400, like page_token,
+// never a silent fallback to newest.
 func TestListMemories_InvalidSort400(t *testing.T) {
 	h := newTestHandler(t)
 	h.taskMem = newTestMemStore(t)
@@ -472,9 +464,8 @@ func TestListMemories_InvalidSort400(t *testing.T) {
 	}
 }
 
-// TestListMemories_PageTokenBucketMismatch400: a token minted under one
-// bucket filter must not be honored against a different one - it's issued
-// scoped to the filter, same as store.chatsPageToken's scope binding.
+// TestListMemories_PageTokenBucketMismatch400: a token minted under one bucket filter
+// is rejected under another.
 func TestListMemories_PageTokenBucketMismatch400(t *testing.T) {
 	h := newTestHandler(t)
 	h.taskMem = newTestMemStore(t)
@@ -499,10 +490,8 @@ func TestListMemories_PageTokenBucketMismatch400(t *testing.T) {
 	}
 }
 
-// TestListMemories_PageTokenSortMismatch400 mirrors the bucket-mismatch test
-// above for `sort`: TestListMemories_SortSpansBothStores uses one constant
-// sort throughout, so it wouldn't notice if the sort check in
-// DecodePageToken were deleted (review finding).
+// TestListMemories_PageTokenSortMismatch400: a token minted under one `sort` is rejected under another;
+// SortSpansBothStores keeps sort constant, so it wouldn't catch a dropped check.
 func TestListMemories_PageTokenSortMismatch400(t *testing.T) {
 	h := newTestHandler(t)
 	h.taskMem = newTestMemStore(t)
@@ -529,9 +518,8 @@ func TestListMemories_PageTokenSortMismatch400(t *testing.T) {
 	}
 }
 
-// A memory living only in the second configured store (userMem) must still
-// be found and invalidated - invalidateMemory can't stop at the first store
-// that doesn't have the id.
+// A memory only in the second store (userMem) is still found and invalidated:
+// invalidateMemory can't stop at the first store lacking the id.
 func TestDeleteMemory_FindsIDInSecondStore(t *testing.T) {
 	h := newTestHandler(t)
 	h.taskMem = newTestMemStore(t) // stays empty - the id is only in userMem
@@ -565,9 +553,7 @@ func TestDeleteMemory_FindsIDInSecondStore(t *testing.T) {
 	}
 }
 
-// TestSweepMemories_BothStoresOK covers the happy path that apparently had
-// no coverage at all before: both configured stores succeed and both show up
-// in the response, with no errors.
+// TestSweepMemories_BothStoresOK: both stores succeed and both appear in the response with no errors.
 func TestSweepMemories_BothStoresOK(t *testing.T) {
 	h := newTestHandler(t)
 	h.taskMem = newTestMemStore(t)
@@ -597,9 +583,8 @@ func TestSweepMemories_BothStoresOK(t *testing.T) {
 	}
 }
 
-// TestSweepMemories_LaterStoreFails covers the review finding: the second
-// (user) store failing during its list phase must not discard the first
-// (task) store's already-applied report, and the response is still 200 with the failure surfaced in errors. Fault injection via Store.SetListErrorForTest, since the index interface is unexported outside internal/memory.
+// TestSweepMemories_LaterStoreFails: the user store failing its list phase keeps the task store's applied
+// report; the response is a 200 with the failure in errors.
 func TestSweepMemories_LaterStoreFails(t *testing.T) {
 	h := newTestHandler(t)
 	h.taskMem = newTestMemStore(t)
@@ -641,9 +626,8 @@ func TestDeleteMemory_UnknownID_404WithBothStoresConfigured(t *testing.T) {
 	}
 }
 
-// TestGetMemoryStats_WeeklyPrecisionAndScopeSnapshot seeds a ledger vote/recall
-// and a memory_ops mint, then checks the stats endpoint reports them in the current ISO week
-// alongside a scope snapshot - including the committed point's own never-recalled/no-votes counts.
+// TestGetMemoryStats_WeeklyPrecisionAndScopeSnapshot: a ledger vote/recall and a memory_ops mint show in the
+// current ISO week, alongside a scope snapshot with the point's never-recalled/no-votes counts.
 func TestGetMemoryStats_WeeklyPrecisionAndScopeSnapshot(t *testing.T) {
 	ctx := context.Background()
 	h := newTestHandler(t)
@@ -708,9 +692,8 @@ func TestGetMemoryStats_WeeklyPrecisionAndScopeSnapshot(t *testing.T) {
 	}
 }
 
-// TestSweepMemories_DedupeDryRun covers the REST wiring for issue #1269's
-// on-demand dedupe endpoint: {"dedupe":true} reports clusters (fixedEmbedder
-// gives every commit the same vector, so two distinct facts are still a cosine-1 "duplicate" pair) without applying anything.
+// TestSweepMemories_DedupeDryRun: {"dedupe":true} reports clusters without applying; fixedEmbedder gives
+// every commit the same vector, so two distinct facts still pair.
 func TestSweepMemories_DedupeDryRun(t *testing.T) {
 	h := newTestHandler(t)
 	h.taskMem = newTestMemStore(t)

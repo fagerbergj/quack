@@ -14,9 +14,8 @@ const (
 	maxEdges      = 80
 )
 
-// checkDiagram: what the catalog schema can't say about a Diagram - ids unique across layers,
-// nodes and edges (explain_focus names an element by id alone), every reference resolves, every
-// clickable element has text to show. Mermaid parsing is left to the frontend, which generates the source.
+// checkDiagram checks what the catalog schema can't: ids unique across layers, nodes and edges, every reference
+// resolving, every clickable element having text. The frontend parses Mermaid.
 func checkDiagram(c Component) error {
 	d := idOf(c)
 	layers, nodes, edges := records(c["layers"]), records(c["nodes"]), records(c["edges"])

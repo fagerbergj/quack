@@ -7,9 +7,8 @@ import (
 	"time"
 )
 
-// Regression: the node stopped short of the PR (nothing committed, pushed, or
-// opened) yet the judge PASSED it at 0.7 - task_completeness is a flaky LLM
-// judgment; delivery is mechanically checkable, so it is checked mechanically.
+// Delivery is mechanically checkable, so a node that never committed/pushed fails regardless of
+// the judge's task_completeness.
 
 // prTask is the shape of the live task text.
 const prTask = "Add a Flappy Bird game to https://github.com/fagerbergj/games and open it as a pull request. " +
@@ -99,10 +98,8 @@ func TestActivityFromSessionRecordsDelivery(t *testing.T) {
 	}
 }
 
-// TestActivityFromSessionRecordsArtifactWrites (#1497): write_artifact,
-// edit_artifact, and write_<kind> all feed artifactsWritten (deduped); an
-// edit_artifact conflict reply and an unrelated write_file call do not. An
-// ACP worker's reply lands under "output" (translate.go), not "result".
+// write_artifact, edit_artifact, and write_<kind> feed artifactsWritten (deduped); a conflict
+// reply and write_file do not. An ACP worker's reply lands under "output".
 func TestActivityFromSessionRecordsArtifactWrites(t *testing.T) {
 	act := activityFromSessionAt(newTestSession(t,
 		fnCall("1", "write_artifact", map[string]any{"kind": "text", "mime": "text/plain", "bytes": "hi"}),
@@ -144,9 +141,8 @@ func TestDeliveryCriterionNamesOnlyWhatIsMissing(t *testing.T) {
 	}
 }
 
-// Regression (live, 2026-07-13): a code REVIEW of PR #4 on branch
-// `add-flappy-bird-openhands` was classified as implement-and-deliver - the impl
-// verb matched only INSIDE the branch name (\b sits on the hyphen) - so the planner's routing backstop demanded a code-implementer node for a read-only review and rejected the plan 8 times, burning the re-plan budget.
+// An impl verb inside a branch name (\b sits on the hyphen) must not make a review read as
+// implement-and-deliver.
 const reviewPrompt = "Review pull request #4 on the GitHub repository https://github.com/fagerbergj/games " +
 	"(branch add-flappy-bird-openhands). Clone the repo, check out the PR branch, and review the change " +
 	"thoroughly. Post your findings as inline review comments, then submit the review with an overall verdict."
@@ -179,9 +175,7 @@ func TestImplementationIntent(t *testing.T) {
 	}
 }
 
-// TestDeliveryCriterionNamesTheOfferedTool pins #724: a run only ever has
-// stage_pr XOR stage_push (internal/acp/acp.go's mcpToolNames), so the
-// guidance text must name whichever one it actually has - never the other, which the agent has no way to call.
+// A run has stage_pr XOR stage_push, so guidance must name the one it has, never the other.
 func TestDeliveryCriterionNamesTheOfferedTool(t *testing.T) {
 	got, ok := deliveryCriterion(prTask, workerActivity{committed: true}, false)
 	if !ok {
@@ -200,9 +194,7 @@ func TestDeliveryCriterionNamesTheOfferedTool(t *testing.T) {
 	}
 }
 
-// The node-level delivery check keys off the NODE's task text, and a task that
-// directs a commit/push demands delivery on its own terms - the intent heuristic
-// must not be the only way in.
+// A node task that directs a commit/push demands delivery on its own, not only via the intent heuristic.
 func TestDeliveryCriterionAppliesToADirectedDeliveryTask(t *testing.T) {
 	if _, ok := deliveryCriterion("Commit on branch add-foo and open a PR.", workerActivity{}, false); !ok {
 		t.Error("delivery_complete must apply to a task that directs a commit and a PR")
@@ -225,9 +217,8 @@ func TestFoldDeterministicHardFailsUndeliveredNode(t *testing.T) {
 	}
 }
 
-// Regression (#764, live on quack#723): a non-terminal repo-chain node has no
-// delivery target (dag/graph.go clears cfg.Deliver for it) but is not
-// read-only either - it writes code. The old guard only checked ReadOnly, so this node fell into a delivery_complete criterion it structurally could not satisfy (no stage_pr/stage_push tool was ever offered) and burned every revise round on a task-level PR demand that wasn't its job to fulfil.
+// A non-terminal repo-chain node (no Deliver, not ReadOnly) gets no delivery_complete criterion:
+// it has no staging tool to satisfy it.
 func TestIncompleteCriteria_NonTerminalChainNodeSkipsDeliveryDemand(t *testing.T) {
 	act := workerActivity{written: []string{"a.ts"}, committed: true}
 	crit := incompleteCriteria(prTask, act, false /* not read-only */, false /* no delivery target */, false, false)
@@ -236,9 +227,7 @@ func TestIncompleteCriteria_NonTerminalChainNodeSkipsDeliveryDemand(t *testing.T
 	}
 }
 
-// The counterpart: a TERMINAL node (Deliver set) with the identical task text
-// still gets the criterion, and still fails when nothing was staged - only
-// the delivery-target fact changes the outcome, never the task wording.
+// A terminal node with the same task still gets the criterion and fails when nothing was staged.
 func TestIncompleteCriteria_TerminalNodeStillDemandsDelivery(t *testing.T) {
 	act := workerActivity{written: []string{"a.ts"}}
 	crit := incompleteCriteria(prTask, act, false, true /* has a delivery target */, false, false)
@@ -263,9 +252,7 @@ func TestIncompleteCriteria_ReadOnlyNodeUnaffectedByDeliverTarget(t *testing.T) 
 	}
 }
 
-// Regression (#764, TC4): the continuation loop (workIncomplete) must not
-// burn rounds re-asking a non-terminal node to deliver work it has no tool
-// to deliver - the live log showed exactly this: "work not finished; continuing the worker with its tools ... committed=true pushed=false" on a node with no delivery target.
+// workIncomplete must not re-ask a node with no delivery target to deliver.
 func TestWorkIncomplete_NonTerminalChainNodeNotHeldToDelivery(t *testing.T) {
 	act := workerActivity{written: []string{"a.ts"}, committed: true}
 	answer := "I implemented the change and committed it. This node does not deliver; a later node in the chain does."
@@ -274,9 +261,7 @@ func TestWorkIncomplete_NonTerminalChainNodeNotHeldToDelivery(t *testing.T) {
 	}
 }
 
-// The review half of the same mechanism: a non-empty answer (e.g. a status
-// update) with nothing posted used to read as "done" to workIncomplete, so
-// posting a review is checked mechanically too.
+// For a reviewer, a non-empty answer with nothing posted is not done.
 
 // reviewTask is the shape of the live task text.
 const reviewTask = "Review pull request #4 on https://github.com/fagerbergj/games (branch add-flappy-bird-openhands). " +
@@ -307,9 +292,8 @@ func TestReviewCriterionPassesWhenReviewSubmitted(t *testing.T) {
 	}
 }
 
-// TestReviewCriterionDistinguishesRecoveredFromStaged pins #688: a review
-// recovered from the answer's VERDICT/FINDINGS tail must not read identically
-// to one staged via the review MCP tools, in the gate criteria - both are a real pass (the fallback keeps the node moving), but the Reason must say which path produced it.
+// A review recovered from the answer tail and one staged via tools both pass, but the Reason
+// must say which path produced it.
 func TestReviewCriterionDistinguishesRecoveredFromStaged(t *testing.T) {
 	staged := workerActivity{stagedDelivery: map[string]StagedDelivery{
 		"review": {Kind: "review", Event: "approve", Recovered: false},
@@ -337,9 +321,7 @@ func TestReviewCriterionDistinguishesRecoveredFromStaged(t *testing.T) {
 	}
 }
 
-// TestReviewCriterionDirectSubmitReasonDiffersFromStaging proves the three
-// review_posted paths (direct github_submit_review, tool-staged, tail-
-// recovered) each carry their own Reason text - never collapsed to one "submitted (or staged for delivery)" wording that can't tell them apart.
+// Direct submit, tool-staged, and tail-recovered reviews each carry their own Reason text.
 func TestReviewCriterionDirectSubmitReasonDiffersFromStaging(t *testing.T) {
 	direct, _ := reviewCriterion(reviewTask, workerActivity{reviewSubmitted: true}, true)
 	staged, _ := reviewCriterion(reviewTask, workerActivity{stagedDelivery: map[string]StagedDelivery{
@@ -354,9 +336,7 @@ func TestReviewCriterionDirectSubmitReasonDiffersFromStaging(t *testing.T) {
 	}
 }
 
-// Drafted comments are not a posted review: github_add_review_comment only
-// accumulates a draft (see internal/github) - the review exists on the PR only
-// after github_submit_review.
+// Drafted comments are not a posted review; it exists only after github_submit_review.
 func TestReviewCriterionFailsOnDraftedButUnsubmittedComments(t *testing.T) {
 	got, ok := reviewCriterion(reviewTask, workerActivity{reviewCommented: true}, true)
 	if !ok || got.Score != 0 {
@@ -367,9 +347,7 @@ func TestReviewCriterionFailsOnDraftedButUnsubmittedComments(t *testing.T) {
 	}
 }
 
-// The gate is structural now (#482): review_posted never fires for a node that
-// isn't the code-reviewer agent, no matter how the task reads - including the
-// bare label-review default that has no posting verb at all.
+// review_posted keys on the agent, never the task wording, including a bare label-review task.
 func TestReviewCriterionKeysOnIsReviewerNotTaskText(t *testing.T) {
 	nonReviewerTasks := []string{
 		"What do you think of this code? Explain the tradeoffs.",
@@ -382,8 +360,7 @@ func TestReviewCriterionKeysOnIsReviewerNotTaskText(t *testing.T) {
 			t.Errorf("review_posted fired for a non-reviewer node: %q", task)
 		}
 	}
-	// A reviewer node with the bare label-review task (no posting verb -
-	// dag.autoReviewTask's shape pre-#482) still applies the criterion.
+	// A reviewer node with a bare label-review task (no posting verb) still applies the criterion.
 	if _, ok := reviewCriterion("Review this pull request.", workerActivity{}, true); !ok {
 		t.Error("review_posted must apply to a reviewer node even when the task names no posting verb (#482)")
 	}
@@ -424,9 +401,8 @@ func TestActivityFromSessionRecordsReview(t *testing.T) {
 	}
 }
 
-// A read-only reviewer (ReadOnly=true - no commit/push tools) must NOT be held to a
-// delivery demand read off a task polluted with the PR's own "Add …/open a PR"
-// wording - it CANNOT commit, so demanding it loops forever; its completion is review_posted, not delivery.
+// A read-only reviewer is never held to delivery read off the PR's own wording: it cannot commit,
+// so that would loop forever.
 func TestReadOnlyReviewerNotHeldToDelivery(t *testing.T) {
 	pollutedTask := "Review PR #5, whose own description says: open a pull request and push the branch to Add a Flappy Bird game. " +
 		"Read the diff and post inline review comments; submit the review."
@@ -439,8 +415,7 @@ func TestReadOnlyReviewerNotHeldToDelivery(t *testing.T) {
 	}
 }
 
-// The continuation condition: a non-empty answer that posted no review is NOT
-// done - this is the exact live regression (a status update passed as an answer).
+// A non-empty answer that posted no review (e.g. a status update) is not done.
 func TestWorkIncompleteOnAnUnpostedReview(t *testing.T) {
 	statusUpdate := "I encountered technical difficulties with the shallow clone and could not complete the review."
 	if !workIncomplete(statusUpdate, reviewTask, workerActivity{}, false, true, true, false) {
@@ -454,9 +429,8 @@ func TestWorkIncompleteOnAnUnpostedReview(t *testing.T) {
 	}
 }
 
-// behaviour_verified: a code review must EXECUTE the change, not just read
-// it - reading alone once missed a bug a probe on an earlier run had caught.
-// Prompt guidance alone is a coin flip; execution is now a deterministic requirement.
+// behaviour_verified: a code review must execute the change, not just read it; prompt guidance
+// alone is a coin flip.
 
 func TestBehaviourCriterionFailsOnAReadOnlyReview(t *testing.T) {
 	// Only reads: exactly the run that missed the bug.

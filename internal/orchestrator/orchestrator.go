@@ -49,9 +49,8 @@ const AgentName = "orchestrator"
 
 const orchestratorName = AgentName
 
-// SourceApp: the gen_ai.client.token.usage/cost "source" value for a direct
-// UI/REST/MCP chat - as opposed to an extension-dispatched run, whose source
-// is that extension's own registration name.
+// SourceApp is the token usage/cost "source" for a direct UI/REST/MCP chat; an
+// extension-dispatched run uses its registration name.
 const SourceApp = "app"
 
 // Orchestrator: ADK llmagent that selects direct answer or plan + execute.
@@ -71,62 +70,42 @@ type Orchestrator struct {
 	ledgerStore ledger.LedgerStore
 	schemas     *artifactschema.Registry
 	renderUI    bool
-	// nodeSessions best-effort reaps a chat's per-DAG-node ADK sessions
-	// (deterministic "<chatID>:<nodeID>" ids - see internal/agent.WorkerSessionID)
-	// alongside the chat-level one ResetSession already deletes. nil (e.g.
-	// tests) skips it - see SetNodeSessionReaper.
+	// nodeSessions best-effort reaps a chat's "<chatID>:<nodeID>" sessions on reset; nil skips it.
 	nodeSessions func(ctx context.Context, chatID string) error
-	// compaction: built once from config (see SetCompaction) and reused on
-	// every turn's runner.Config - nil leaves the chat session uncompacted,
-	// same as before #A3.
+	// compaction is reused on every turn's runner.Config; nil leaves the chat session uncompacted.
 	compaction *compaction.Config
-	// assignmentFreshness/assignmentMeta: optional extension hooks (see
-	// SetAssignmentFreshnessCheck/SetAssignmentMetaHook) - nil until an
-	// extension implementing the optional interface is active.
+	// Optional extension hooks; nil until an active extension implements them.
 	assignmentFreshness tools.AssignmentFreshnessFunc
 	assignmentMeta      tools.AssignmentMetaFunc
 }
 
-// SetAssignmentFreshnessCheck wires execute's optional per-reused-node
-// staleness check (design: an extension's BeforeAssignment hook, e.g. the
-// GitHub extension comparing assignment.meta.github.base_sha against the
-// branch's current tip). nil (no active extension implements it) means
-// every reused node is always treated as fresh.
+// SetAssignmentFreshnessCheck wires execute's per-reused-node staleness check (an extension's
+// BeforeAssignment hook); nil treats every reused node as fresh.
 func (o *Orchestrator) SetAssignmentFreshnessCheck(fn tools.AssignmentFreshnessFunc) {
 	o.assignmentFreshness = fn
 }
 
-// SetAssignmentMetaHook wires create_plan/edit_plan's optional per-assignment
-// meta stamp (design: an extension's OnAssignment hook) - nil skips it, so
-// assignment.meta.<extension> stays unset until an extension supplies one.
+// SetAssignmentMetaHook wires create_plan/edit_plan's per-assignment meta stamp (an extension's
+// OnAssignment hook); nil leaves assignment.meta unset.
 func (o *Orchestrator) SetAssignmentMetaHook(fn tools.AssignmentMetaFunc) {
 	o.assignmentMeta = fn
 }
 
-// SetCompaction wires adk/v2's native runner-level compaction (built via
-// internal/agent.NativeCompactionConfig, the same helper a worker node's own
-// A2AServer uses - internal/agent.Serve) onto the orchestrator's own runner,
-// so the chat session that persists across every turn compacts too, not
-// only the ephemeral per-node ones (#A3). nil is a valid "disabled" value.
+// SetCompaction wires adk runner-level compaction onto the orchestrator's runner so the
+// persistent chat session compacts too, not only per-node ones. nil disables it.
 func (o *Orchestrator) SetCompaction(cfg *compaction.Config) { o.compaction = cfg }
 
-// SetNodeSessionReaper wires the store-layer sweep (store.ReapNodeSessions)
-// ResetSession uses to also delete a chat's per-node worker sessions -
-// store owns the raw SQL because sessions/events are only addressable that
-// way by chat id (session.Service has no pattern-delete), and orchestrator
-// must not import store (serve already imports both; see New's callers).
+// SetNodeSessionReaper wires store.ReapNodeSessions for ResetSession: session.Service has no
+// pattern-delete, and orchestrator must not import store.
 func (o *Orchestrator) SetNodeSessionReaper(fn func(ctx context.Context, chatID string) error) {
 	o.nodeSessions = fn
 }
 
-// SetArtifacts wires an artifact.Service into the orchestrator's own runner
-// and, when load_artifacts is in orchestrator.tools, exposes the load_artifacts
-// tool. Mirrors dag.Executor.SetArtifacts.
+// SetArtifacts wires an artifact.Service into the orchestrator's runner and its load_artifacts tool.
 func (o *Orchestrator) SetArtifacts(svc artifact.Service) { o.artifacts = svc }
 
-// SetLedger wires the WAL's fail-closed AppendIntent path into the
-// orchestrator's own write_<kind>/write_artifact tools, so a direct-chat
-// write records parent_revision like every gated node does (#1153). Mirrors dag.Executor.SetWALLedger.
+// SetLedger wires the WAL's fail-closed AppendIntent into the orchestrator's write tools, so a
+// direct-chat write records parent_revision like every gated node does.
 func (o *Orchestrator) SetLedger(store ledger.LedgerStore) { o.ledgerStore = store }
 
 // SetSchemas wires registered-schema enforcement into the orchestrator's own
@@ -136,17 +115,15 @@ func (o *Orchestrator) SetSchemas(reg *artifactschema.Registry) { o.schemas = re
 // SetRenderUI offers render_ui (A2UI surfaces) on the orchestrator's own turns.
 func (o *Orchestrator) SetRenderUI(on bool) { o.renderUI = on }
 
-// failSoftListArtifacts: load_artifacts calls List on every LLM request
-// (ADK's loadartifactstool.ProcessRequest), and a List error fails the whole
-// orchestrator turn - not just artifact loading. A transient artifact-store outage shouldn't take down ordinary chat, so List degrades to "no artifacts" instead of erroring; Load/Save/Delete/Versions pass through.
+// failSoftListArtifacts degrades List errors to "no artifacts": load_artifacts lists on every
+// request, and a transient store outage must not fail the whole turn.
 type failSoftListArtifacts struct{ artifact.Service }
 
 func (s failSoftListArtifacts) List(ctx context.Context, req *artifact.ListRequest) (*artifact.ListResponse, error) {
 	resp, err := s.Service.List(ctx, req)
 	if err != nil {
 		slog.Warn("orchestrator: artifact List failed; offering no artifacts this turn", "err", err)
-		// A dial error that survived the pgdial retry (#1193) must not vanish as a
-		// silent gap once this degrades to "no artifacts" - stamp it for DeriveTerminalStatus.
+		// Stamp it for DeriveTerminalStatus so the degraded outage doesn't vanish as a silent gap.
 		inference.RecordStoreFailure(req.SessionID, err)
 		return &artifact.ListResponse{}, nil
 	}
@@ -154,9 +131,8 @@ func (s failSoftListArtifacts) List(ctx context.Context, req *artifact.ListReque
 	return resp, nil
 }
 
-// Load degrades to a text-part message on any failure - not found, oversize,
-// or a transient store error - instead of returning an error: ADK's
-// loadartifactstool runs every requested name's Load in one errgroup, and one error there cancels every sibling load and fails the whole turn (#1225 - one bad name in a model's load_artifacts call killed plan+answer both).
+// Load degrades any failure to a text part: ADK's loadartifactstool loads every name in one
+// errgroup, so one error would cancel its siblings and fail the turn.
 func (s failSoftListArtifacts) Load(ctx context.Context, req *artifact.LoadRequest) (*artifact.LoadResponse, error) {
 	resp, err := s.Service.Load(ctx, req)
 	if err != nil {
@@ -184,9 +160,8 @@ func (o *Orchestrator) SetUserMemoryHook(memAgent adkagent.Agent) {
 // SetDecisions attaches the decision intercept points; nil (the default) disables them.
 func (o *Orchestrator) SetDecisions(d *decide.Decider) { o.decisions = d }
 
-// newSafeYield serializes concurrent node goroutines onto one yield and stops
-// after a panicking call: a second goroutine re-entering the panicked yield
-// makes Go replace the real panic value and kill the process (#1016).
+// newSafeYield serializes node goroutines onto one yield and stops after a panic: re-entering a
+// panicked yield makes Go replace the real panic value and kill the process.
 func newSafeYield(yield func(stream.SSEEvent, error) bool) func(stream.SSEEvent, error) bool {
 	var mu sync.Mutex
 	stopped := false
@@ -198,17 +173,14 @@ func newSafeYield(yield func(stream.SSEEvent, error) bool) func(stream.SSEEvent,
 		}
 		defer func() {
 			if r := recover(); r != nil {
-				// Log the real value, then resume: swallowing a loop-body panic
-				// makes the runtime panic at the range site instead (#1033).
-				// stopped keeps racing nodes out of the dead yield (#1016).
+				// Re-panic: swallowing a loop-body panic makes the runtime panic at the range site instead.
 				stopped = true
 				slog.Error("orchestrator: panic in stream consumer, run aborted",
 					"component", "orchestrator", "panic", r, "stack", string(debug.Stack()))
 				panic(r)
 			}
 		}()
-		// A false return means the consumer stopped ranging (client gone); calling
-		// the exhausted closure again is itself a panic (#1033).
+		// false: the consumer stopped ranging; calling the exhausted closure again panics.
 		if !yield(ev, e) {
 			stopped = true
 			return false
@@ -236,11 +208,6 @@ func (o *Orchestrator) PauseNode(chatID, nodeID string, reason dag.PauseReason) 
 	return o.executor.PauseNode(chatID, nodeID, reason)
 }
 
-// StopNode cancels a node into the terminal cancelled state.
-func (o *Orchestrator) StopNode(chatID, nodeID string) bool {
-	return o.executor.StopNode(chatID, nodeID)
-}
-
 // QueueNodeMessage appends a message to a running node's queue.
 func (o *Orchestrator) QueueNodeMessage(chatID, nodeID, text string) (dag.QueuedMessage, bool) {
 	return o.executor.QueueNodeMessage(chatID, nodeID, text)
@@ -261,16 +228,13 @@ func (o *Orchestrator) SetNodeTaskOverride(chatID, nodeID, task string) bool {
 	return o.executor.SetNodeTaskOverride(chatID, nodeID, task)
 }
 
-// RetryNode re-runs a finished node and its descendants with optional
-// guidance; node-level dag.Admission still gates the work. A non-empty planID
-// names the node's own plan (see planFor), so a stale stash never runs another plan's task.
+// RetryNode re-runs a finished node and its descendants with optional guidance. A non-empty
+// planID names the node's own plan, so a stale stash never runs another plan's task.
 func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID, planID string, seeded map[string]string, nodeID, guidance string) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
 		ctx, done := o.executor.Pin(ctx)
 		defer done()
-		// A retry/resume is its own run, not a continuation of whatever
-		// finished run left this node retryable - it needs its own trace so
-		// a stale trace_id from the earlier run is never mistaken for this one.
+		// A retry is its own run and needs its own trace, not the earlier run's stale trace_id.
 		ctx = runCoords(ctx, chatID, userID)
 		var span oteltrace.Span
 		ctx, span = otelobs.Start(ctx, "run", attribute.String(otelobs.ChatIDKey, chatID))
@@ -383,30 +347,24 @@ func (o *Orchestrator) settleRetried(ctx context.Context, userID, chatID string,
 // builds a bound plan and runs it later pins across both so they agree.
 func (o *Orchestrator) Pin(ctx context.Context) (context.Context, func()) { return o.executor.Pin(ctx) }
 
-// BuildBoundPlan builds a Plan from a workflow-catalog-bound node list (a
-// dispatch naming a shaped workflow) - no plan judge, no review-fanout heuristic, and critically no orchestrator LLM turn: callers pass the result straight to RunBoundPlan instead of Run. allowedKinds: nil = unrestricted, matching AllowedDeliveryKindsFromContext's sentinel on the planner-LLM path.
+// BuildBoundPlan builds a Plan from a workflow-catalog-bound node list: no plan judge, no review
+// fanout, no orchestrator LLM turn. allowedKinds nil means unrestricted.
 func (o *Orchestrator) BuildBoundPlan(ctx context.Context, nodes []dag.RawNode, message string, attachments []*genai.Part, allowedKinds []string) (*dag.Plan, error) {
 	ctx, done := o.executor.Pin(ctx)
 	defer done()
 	return o.planner.BuildBound(ctx, nodes, nil, nil, message, attachments, allowedKinds)
 }
 
-// RunBoundPlan runs an already-built bound Plan directly through the graph
-// executor - the "no planner LLM call per dispatch" path: no orchestrator
-// llmagent turn ever runs. The trust gate is unaffected - RunPlanAsGraph is the exact same executor a model-authored plan runs through, so every node still passes through vetting.RunGatedRefine.
+// RunBoundPlan runs a bound Plan straight through the graph executor with no orchestrator LLM
+// turn; every node still passes the trust gate via RunPlanAsGraph.
 func (o *Orchestrator) RunBoundPlan(ctx context.Context, userID, sessionID, source string, plan dag.Plan) iter.Seq2[stream.SSEEvent, error] {
-	// Same turn-boundary clear as Run - a bound plan never calls the plan
-	// tool itself, but a stale rejection from an earlier unbound turn on this
-	// chat must not leak into this one's terminal status.
+	// An earlier unbound turn's plan rejection must not leak into this run's terminal status.
 	inference.ClearPlanRejection(sessionID)
 	return func(yield func(stream.SSEEvent, error) bool) {
 		ctx, done := o.executor.Pin(ctx)
 		defer done()
 		var span oteltrace.Span
-		// A prior turn's unconsumed planning failure (empty node/agent key,
-		// store.orchestratorGiveUpError's read) must not leak into THIS run's
-		// silent gap - RunBoundPlan makes no orchestrator model call to ever
-		// naturally clear it (#1109 review finding 3 precedent, #1156).
+		// Clear a prior turn's planning failure: this path makes no model call that would clear it.
 		inference.ClearFailure(sessionID, "", "")
 		// Coords first: the root span reads them for gen_ai.conversation.id/user.id.
 		ctx = ledger.WithCoords(ctx, ledger.Coords{ChatID: sessionID, User: userID, Source: source})
@@ -424,8 +382,7 @@ func (o *Orchestrator) RunBoundPlan(ctx context.Context, userID, sessionID, sour
 			}
 			return origYield(ev, err)
 		}
-		// Concurrent DAG nodes below all funnel through this one yield (#1016);
-		// Run/RetryNode wrap it, RunBoundPlan must too.
+		// Concurrent DAG nodes all funnel through this one yield.
 		safeYield := newSafeYield(yield)
 
 		o.executor.ResetNodeCancels(sessionID)
@@ -433,14 +390,11 @@ func (o *Orchestrator) RunBoundPlan(ctx context.Context, userID, sessionID, sour
 		ctx = stream.WithYield(ctx, func(ev stream.SSEEvent) { safeYield(ev, nil) })
 		safeYield(tools.DagPlanEvent(ctx, plan), nil)
 
-		// A bound plan skips the llmagent turn entirely, so nothing else ever
-		// appends this turn's "user" event - without it, groupSessionEvents
-		// (store.GetTurnsWithContent) sees zero events for this ChatTurn row and misaligns every later turn's persisted content against it (#1195).
+		// No llmagent turn appends this turn's user event; without it, store.GetTurnsWithContent
+		// misaligns every later turn's content.
 		o.persistUserMessage(ctx, userID, sessionID, plan.UserMessage)
 
-		// A bound plan never passes through the execute tool (no orchestrator
-		// LLM turn exists to revise from), so provisioning failure here has no
-		// tool call to fail into - surface the human form directly on the stream.
+		// No execute tool call exists to fail into, so surface setup failure on the stream.
 		if perr := o.executor.Provision(ctx, userID, sessionID, &plan); perr != nil {
 			safeYield(stream.Errorf("orchestrator: bound plan setup: "+perr.Error()), nil)
 			return
@@ -452,9 +406,8 @@ func (o *Orchestrator) RunBoundPlan(ctx context.Context, userID, sessionID, sour
 			safeYield(stream.Errorf("orchestrator: bound plan run: "+err.Error()), nil)
 			return
 		}
-		// Stashed exactly like the execute tool stashes a model-authored plan,
-		// so a later HITL resume (LatestPendingQuestion -> stashedPlan) finds
-		// it regardless of which path the resuming dispatch takes. Only after RunPlanAsGraph: its own runner is what auto-creates the session - nothing exists to stash into before that.
+		// Stash like execute does so a HITL resume finds it; only after RunPlanAsGraph, whose runner
+		// auto-creates the session.
 		o.stashPlanForResume(ctx, userID, sessionID, plan)
 		if !paused {
 			answer := o.finalizeAnswer(ctx, plan, nodeOutputs, sessionID, nil)
@@ -464,9 +417,8 @@ func (o *Orchestrator) RunBoundPlan(ctx context.Context, userID, sessionID, sour
 	}
 }
 
-// stashPlanForResume persists plan into session state under the same key the
-// execute tool uses (tools.ExecPlanKey), so a bound run that parks on a HITL
-// node resumes the same way a model-authored one does.
+// stashPlanForResume stores plan under tools.ExecPlanKey so a bound run parked on HITL resumes
+// like a model-authored one.
 func (o *Orchestrator) stashPlanForResume(ctx context.Context, userID, sessionID string, plan dag.Plan) {
 	planJSON, err := json.Marshal(plan)
 	if err != nil {
@@ -487,7 +439,6 @@ func (o *Orchestrator) stashPlanForResume(ctx context.Context, userID, sessionID
 	}
 }
 
-// New builds the orchestrator from its dependencies.
 func New(sessions session.Service, m model.LLM, sysPrompt func(context.Context) string, planner *dag.Planner, executor *dag.Executor, skillTS tool.Toolset, userMem, taskMem *memory.Store) *Orchestrator {
 	return &Orchestrator{
 		sessions:  sessions,
@@ -501,21 +452,17 @@ func New(sessions session.Service, m model.LLM, sysPrompt func(context.Context) 
 	}
 }
 
-// Run processes message as the orchestrator agent and yields SSE events.
-// source: the run's origin for gen_ai.client.token.usage/cost attribution -
-// an extension's registration name, or SourceApp for a direct UI/REST/MCP chat.
+// Run processes message as the orchestrator agent and yields SSE events. source attributes
+// token usage/cost: an extension's registration name, or SourceApp.
 func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, message string, attachments []*genai.Part) iter.Seq2[stream.SSEEvent, error] {
-	// Bound to this turn (#1181 review): an earlier turn's rejection must
-	// never outlive it - a later silent gap or gateway failure on the same
-	// chat needs its OWN evidence, not a stale reason from a turn that already ended.
+	// An earlier turn's plan rejection must not explain this turn's failures.
 	inference.ClearPlanRejection(sessionID)
 	return func(yield func(stream.SSEEvent, error) bool) {
 		ctx, done := o.executor.Pin(ctx)
 		defer done()
 		var span oteltrace.Span
-		// A prior turn's unconsumed planning failure (empty node/agent key,
-		// store.orchestratorGiveUpError's read) must not leak into THIS run:
-		// if this turn itself never calls the model again before ending in its own empty gap (e.g. a pending-choice reply, or a plan that runs but ends silent), the stale record would still be sitting there (#1109 review finding 3 precedent, #1156).
+		// Clear a prior turn's planning failure, or a turn that ends silent without another model
+		// call would report the stale reason.
 		inference.ClearFailure(sessionID, "", "")
 		// Coords first: the root span reads them for gen_ai.conversation.id/user.id.
 		ctx = ledger.WithCoords(ctx, ledger.Coords{ChatID: sessionID, User: userID, Source: source})
@@ -537,7 +484,6 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 		o.executor.ResetNodeCancels(sessionID)
 		s := &orchRun{o: o, ctx: ctx, userID: userID, sessionID: sessionID, source: source, message: message, attachments: attachments}
 		s.planCache = tools.NewPlanCache()
-		repeats := tools.NewRepeatStates()
 		// Set by the repeat guard's hard stop - marks this as an unbreakable
 		// loop, not a retryable blank turn.
 		var guardStopped atomic.Bool
@@ -579,34 +525,17 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 			yield(stream.Errorf(e), nil)
 			return
 		}
-		var toolsets []tool.Toolset
 		if o.skillTS != nil {
-			// Same repeats/guardTripped as s.toolList below - load_skill is as loop-prone as any hand-built tool.
-			toolsets = []tool.Toolset{tools.RepeatWrapToolset(o.skillTS, repeats, guardTripped, tools.CallScope{})}
+			s.toolsets = []tool.Toolset{o.skillTS}
 		}
-		s.toolsets = toolsets
-		// Hand-built, unlike a worker node's tools.Build path - see RepeatWrap's doc. One pass over the whole toolList, once every tool this turn offers is assembled.
-		// The identical-call loop class RepeatWrap guards against applies to any of them, not just the five DAG tools.
-		for i, t := range s.toolList {
-			// memory.NewPreload() and similar request-mutating-only tools have
-			// no Run for a model to repeat - nothing to guard, leave as-is.
-			if !tools.SupportsRepeatGuard(t) {
-				continue
-			}
-			wrapped, err := tools.RepeatWrap(t, repeats, guardTripped)
-			if err != nil {
-				yield(stream.Errorf("orchestrator: repeat guard: "+err.Error()), nil)
-				return
-			}
-			s.toolList[i] = wrapped
-		}
+		// The fallback covers the skill toolset, as loop-prone as any hand-built tool; hand-built tools emit no ledger row.
+		s.hooks = tools.NewHooks(tools.Deps{RepeatGuardTripped: guardTripped}, tools.HookRepeat|tools.HookEmit)
+		s.hooks.Set(tools.HookRepeat, s.toolList...)
 		if e := s.buildRunner(); e != "" {
 			yield(stream.Errorf(e), nil)
 			return
 		}
-		// Concurrent DAG nodes funnel through this one yield (#1016); ctx
-		// consumers like onQueued call it from a node goroutine, so it must be
-		// the wrapped one - #1021 fixed the other three entrypoints but missed Run().
+		// Node goroutines (e.g. onQueued) call the ctx yield, so it must be the serialized one.
 		s.safeYield = newSafeYield(yield)
 		s.ctx = stream.WithYield(s.ctx, func(ev stream.SSEEvent) { s.safeYield(ev, nil) })
 		s.ctx = tools.WithNodeStopped(s.ctx, func(nodeID string) bool { return o.executor.NodeStopped(sessionID, nodeID) })
@@ -634,14 +563,12 @@ const maxOrchestratorContinues = 3
 
 const continuationMarker = "CONTINUE - your last turn produced no plan and no answer."
 
-// planExhaustedNotice: the fixed, plain-language reply for a run whose planning
-// never produced an acceptable plan (#693). Never build this from the plan
-// judge's own reason - that text is internal machinery talk, not an answer.
+// planExhaustedNotice is the fixed reply when planning never produced an acceptable plan; never
+// built from the plan judge's reason, which is internal machinery talk.
 const planExhaustedNotice = "I could not produce a workable plan for this request."
 
-// minRejectionsForExhaustion: rejections at or above this count mean the
-// model kept retrying and failing (NightsOut#97 saw four) - below it, a
-// single rejection followed by an answer is the model correctly pivoting away from a plan it didn't need (#760), not exhaustion.
+// minRejectionsForExhaustion: below this, one rejection then an answer is the model correctly
+// pivoting away from a plan, not exhaustion.
 const minRejectionsForExhaustion = 2
 
 func continuationContent() *genai.Content {
@@ -683,9 +610,8 @@ func (o *Orchestrator) SetPlanLoader(load func(ctx context.Context, planID strin
 	o.planLoader = load
 }
 
-// planFor returns plan planID holding nodeID. The store's copy wins: every step of a growing
-// plan shares its id, and the stash commits only with execute's tool response, so it can lag.
-// An empty planID takes whatever the stash holds.
+// planFor returns plan planID holding nodeID (empty planID: whatever is stashed). The store's
+// copy wins: the stash commits only with execute's tool response, so it can lag.
 func (o *Orchestrator) planFor(ctx context.Context, userID, chatID, planID, nodeID string) (dag.Plan, error) {
 	plan, ok := dag.Plan{}, false
 	if planID != "" && o.planLoader != nil {
@@ -754,9 +680,7 @@ func latestPendingNodeInterrupt(events []*session.Event) (pendingInterrupt, bool
 	return out, found
 }
 
-// persistUserMessage appends the user-authored event a bound-plan run would
-// otherwise never write (see RunBoundPlan's call site). Mirrors persistAnswer's
-// own Get-then-AppendEvent shape.
+// persistUserMessage appends the user event a bound-plan run would otherwise never write.
 func (o *Orchestrator) persistUserMessage(ctx context.Context, userID, sessionID, message string) {
 	if message == "" {
 		return
@@ -794,12 +718,8 @@ func (o *Orchestrator) resumeNodeRun(ctx context.Context, userID, sessionID, mes
 	o.startNodeRun(ctx, userID, sessionID, "", message, &pend, pend.nodeID, yield)
 }
 
-// StartNode is the "start a paused node" transition: it re-enters the
-// stashed plan's graph at the node that paused. A node parked on a question
-// (pause_reason awaiting_input, i.e. an unanswered HITL interrupt in the session) takes message as the answer; a node paused by a user or by shutdown needs no message and simply resumes at its last gate boundary.
-// A node paused mid-incremental-step (dag.PlanStepSessionID, not the chat
-// session - see startIncrementalNodeRun) is checked separately, since that
-// resume re-enters a structurally different wrapper than the whole-plan graph.
+// StartNode re-enters the stashed plan's graph at a paused node; message answers a parked HITL
+// question. A node paused mid-incremental-step resumes through its plan-step session instead.
 func (o *Orchestrator) StartNode(ctx context.Context, userID, sessionID, planID, nodeID, message string, yield func(stream.SSEEvent, error) bool) {
 	ctx, done := o.executor.Pin(ctx)
 	defer done()
@@ -816,21 +736,14 @@ func (o *Orchestrator) StartNode(ctx context.Context, userID, sessionID, planID,
 	o.startNodeRun(ctx, userID, sessionID, planID, message, nil, nodeID, yield)
 }
 
-// pendingStepInterrupt checks a plan's own dedicated incremental-step
-// session for a paused node - RunPlanStep runs there, not on the chat
-// session (see dag.PlanStepSessionID's doc: a nested runner.Run on the live
-// chat session would risk corrupting its event/branch bookkeeping).
+// pendingStepInterrupt checks the plan-step session, where RunPlanStep runs: a nested
+// runner.Run on the live chat session would corrupt its event bookkeeping.
 func (o *Orchestrator) pendingStepInterrupt(ctx context.Context, userID, sessionID string) (pendingInterrupt, bool) {
 	return latestPendingNodeInterrupt(o.PriorEvents(ctx, userID, dag.PlanStepSessionID(sessionID)))
 }
 
-// startIncrementalNodeRun answers a node paused mid-incremental-step
-// (dag.Executor.ResumePlanStep) and persists its result onto the dag_plan
-// record exactly like execute() does for a freshly-run assignment, so a
-// later execute/list_nodes call sees it as done. Unlike startNodeRun (which
-// always finalizes once the whole graph stops pausing), finishing here only
-// means THIS assignment is done - the plan may still be partial, so the
-// answer is only finalized when the plan's own declared delivery covers it.
+// startIncrementalNodeRun answers a node paused mid-step and records its result like execute()
+// does; it finalizes only when the plan's declared delivery covers it, as the plan may be partial.
 func (o *Orchestrator) startIncrementalNodeRun(ctx context.Context, userID, sessionID, message string, pend pendingInterrupt, yield func(stream.SSEEvent, error) bool) {
 	plan, rec, recordSvc, errMsg := o.loadResumePlan(ctx, userID, sessionID, pend.nodeID)
 	if errMsg != "" {
@@ -858,10 +771,7 @@ func (o *Orchestrator) startIncrementalNodeRun(ctx context.Context, userID, sess
 	out := outputs[pend.nodeID]
 	for i := range rec.Assignments {
 		if rec.Assignments[i].NodeID == pend.nodeID && started[pend.nodeID] {
-			// Shares execute.go's own success/failure decision (paused=false:
-			// the step already confirmed it isn't) - a resumed node with
-			// empty output is exactly as "failed" as a freshly-run one, and
-			// must not silently finalize on it (#slice3 review).
+			// Same success/failure decision as execute: an empty resumed output fails, never finalizes.
 			if tools.ApplyAssignmentOutcome(&rec.Assignments[i], out, false, o.executor.NodeStopped(sessionID, pend.nodeID)) == "failed" {
 				anyFailed = true
 			}
@@ -871,10 +781,8 @@ func (o *Orchestrator) startIncrementalNodeRun(ctx context.Context, userID, sess
 		slog.Warn("resume: dag_plan update failed", "component", "orchestrator", "err", serr)
 	}
 
-	// B's completion may have unblocked dependents (B -> C, C terminal) that
-	// the paused-node-only resume dispatch above never ran - without this,
-	// finalizing on rec.Assignments right here would deliver a terminal
-	// node's still-empty result (#slice3 review: no delivery ever fires).
+	// Completion may unblock dependents the resume never ran; finalizing now would deliver a
+	// terminal node's still-empty result.
 	turnEnded, moreFailed := o.driveUnblocked(ctx, plan, rec, recordSvc, userID, sessionID, safeYield)
 	anyFailed = anyFailed || moreFailed
 	if turnEnded {
@@ -1029,13 +937,8 @@ func (o *Orchestrator) driveUnblocked(ctx context.Context, plan dag.Plan, rec da
 	return turnEnded, anyFailed
 }
 
-// unblockedByDeps returns every not-yet-run assignment (TaskID == "") whose
-// dependencies (if any) have already run (TaskID set, success or failure -
-// "ran" is what unblocks a dependent, same convention partitionAssignments
-// and execute.go's own dispatch already use). Not scoped to the resumed
-// node's own chain: a dependency-free assignment an unrelated edit_plan call
-// added is just as "ready" and comes back here too - same as a fresh
-// execute() step would dispatch it.
+// unblockedByDeps returns not-yet-run assignments whose deps all ran (success or failure). Not
+// scoped to the resumed chain: an unrelated dependency-free assignment is just as ready.
 func unblockedByDeps(assignments []dag.Assignment) map[string]bool {
 	ran := make(map[string]bool, len(assignments))
 	for _, a := range assignments {
@@ -1063,9 +966,7 @@ func unblockedByDeps(assignments []dag.Assignment) map[string]bool {
 }
 
 func (o *Orchestrator) startNodeRun(ctx context.Context, userID, sessionID, planID, message string, pend *pendingInterrupt, nodeID string, yield func(stream.SSEEvent, error) bool) {
-	// Single choke point for both StartNode (fresh dispatch, bare ctx, needs a
-	// real span) and Run's resumeNodeRun (already inside Run's "run" span) -
-	// skip opening a redundant child so resumed-node traces don't show run-under-run.
+	// Run's resumes already sit inside its "run" span; only a bare StartNode ctx opens one.
 	var span oteltrace.Span
 	if !oteltrace.SpanFromContext(ctx).SpanContext().IsValid() {
 		ctx, span = otelobs.Start(ctx, "run", attribute.String(otelobs.ChatIDKey, sessionID))
@@ -1251,10 +1152,8 @@ func LatestPendingQuestion(events []*session.Event) (PendingQuestion, bool) {
 	return PendingQuestion{}, false
 }
 
-// pendingSessionEvents merges a chat's events with its plan-step session's
-// (dag.PlanStepSessionID) - execute()'s incremental dispatch runs nodes there, not on the chat session.
-// The timestamp merge is safe because the two sessions never carry an open interrupt at once:
-// Run short-circuits into resume before its tool loop could open the other.
+// pendingSessionEvents merges the chat and plan-step sessions' events by time; safe because Run
+// resumes before its tool loop could open an interrupt in the other.
 func (o *Orchestrator) pendingSessionEvents(ctx context.Context, userID, sessionID string) []*session.Event {
 	events := append(o.PriorEvents(ctx, userID, sessionID), o.PriorEvents(ctx, userID, dag.PlanStepSessionID(sessionID))...)
 	sort.SliceStable(events, func(i, j int) bool { return events[i].Timestamp.Before(events[j].Timestamp) })
@@ -1266,9 +1165,7 @@ func (o *Orchestrator) LatestPendingQuestion(ctx context.Context, userID, sessio
 	return LatestPendingQuestion(o.pendingSessionEvents(ctx, userID, sessionID))
 }
 
-// PendingQuestion is LatestPendingQuestion over a session's prior events, exposed so callers
-// outside this package (e.g. the GitHub extension stamping a run's terminal status, #738)
-// don't need to reimplement the scan.
+// PendingQuestion is LatestPendingQuestion's message, for callers outside this package.
 func (o *Orchestrator) PendingQuestion(ctx context.Context, userID, sessionID string) (string, bool) {
 	pq, ok := o.LatestPendingQuestion(ctx, userID, sessionID)
 	if !ok {

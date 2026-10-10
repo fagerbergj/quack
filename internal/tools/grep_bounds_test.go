@@ -9,8 +9,7 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// grep must be bounded in BYTES, not just in match count (a live grep
-// returned 48 MB against a match cap - bound the bytes, not just the count).
+// grep is bounded in bytes, not just match count: a live grep returned 48 MB under a match cap.
 func TestGrepIsBoundedInBytes(t *testing.T) {
 	b, root := testBinding(t)
 
@@ -37,8 +36,7 @@ func TestGrepIsBoundedInBytes(t *testing.T) {
 	}
 }
 
-// grep must not descend into vendored/generated trees. This is where the monster
-// results live, and a hit there is never what anyone asked for.
+// grep must not descend into vendored/generated trees: a hit there is never what anyone asked for.
 func TestGrepSkipsGeneratedTrees(t *testing.T) {
 	b, root := testBinding(t)
 
@@ -63,8 +61,7 @@ func TestGrepSkipsGeneratedTrees(t *testing.T) {
 	}
 }
 
-// ...but pointing `path` straight AT a generated tree only ever means it. An agent
-// that deliberately reads a dependency's source must still be able to.
+// ...but a `path` pointing straight at a generated tree means it: an agent reading a dependency's source can.
 func TestGrepSearchesAGeneratedTreeWhenAskedExplicitly(t *testing.T) {
 	b, root := testBinding(t)
 	writeFile(t, root, "node_modules/left-pad/index.js", "needle")
@@ -78,8 +75,7 @@ func TestGrepSearchesAGeneratedTreeWhenAskedExplicitly(t *testing.T) {
 	}
 }
 
-// grep must never slurp a huge file into memory: it reads whole files, so an
-// unbounded read is an OOM. (This machine has been OOM-killed by less.)
+// grep reads whole files, so it must skip huge ones or risk an OOM.
 func TestGrepSkipsOversizedFiles(t *testing.T) {
 	b, root := testBinding(t)
 	writeFile(t, root, "huge.txt", strings.Repeat("needle\n", (grepFileMaxBytes/7)+10))
@@ -93,8 +89,7 @@ func TestGrepSkipsOversizedFiles(t *testing.T) {
 	}
 }
 
-// glob must not hand back thousands of paths from generated trees - the agent
-// then wastes its turns reading them.
+// glob must not return thousands of generated-tree paths the agent then wastes turns reading.
 func TestGlobSkipsGeneratedTrees(t *testing.T) {
 	b, root := testBinding(t)
 	writeFile(t, root, "src/app.ts", "x")

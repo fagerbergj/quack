@@ -10,6 +10,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/schema"
 	"github.com/fagerbergj/quack/internal/store"
+	"github.com/fagerbergj/quack/internal/store/storetest"
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
@@ -87,10 +88,10 @@ func TestChatStatus_LiveRunSkipsNodeQuery(t *testing.T) {
 	h := newTestHandler(t)
 	chatID := mustCreateChat(t, h)
 	h.hub.Publish(chatID, 1, stream.ResponseCreated("turn-1"))
-	h.store.EnableQueryRecording()
+	queries := storetest.RecordQueries(t, h.store.DB())
 	h.GetChat(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/v1/chats/"+chatID, nil), chatID)
 	h.ListChats(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/v1/chats", nil), schema.ListChatsParams{})
-	for _, q := range h.store.RecordedQuerySQL() {
+	for _, q := range queries() {
 		if strings.Contains(q, "JOIN dag_plans") && strings.Contains(q, "dag_nodes.status") {
 			t.Errorf("ran the running-node query for a live chat: %s", q)
 		}

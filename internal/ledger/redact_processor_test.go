@@ -9,9 +9,8 @@ import (
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 )
 
-// captureProcExporter is a minimal sdklog.Exporter that records whatever it
-// receives - standing in for the ledger exporter and (separately) an OTLP
-// exporter, so a test can assert BOTH see the same, already-redacted data.
+// captureProcExporter records what it receives, standing in for the ledger and OTLP exporters so a test can
+// assert both see redacted data.
 type captureProcExporter struct{ records []sdklog.Record }
 
 func (c *captureProcExporter) Export(_ context.Context, records []sdklog.Record) error {
@@ -41,9 +40,8 @@ func attrString(t *testing.T, r sdklog.Record, key string) string {
 	return got
 }
 
-// TestRedactingProcessorProtectsEveryDownstreamProcessor (the blocking finding): a
-// production-shaped LoggerProvider (redacting processor first, then TWO independent
-// exporters, ledger + OTLP stand-in) must hand BOTH already-redacted data - before, the second processor saw the raw record.
+// TestRedactingProcessorProtectsEveryDownstreamProcessor: with the redacting processor first, both
+// downstream exporters (ledger + OTLP stand-in) receive already-redacted data.
 func TestRedactingProcessorProtectsEveryDownstreamProcessor(t *testing.T) {
 	ledgerExp := &captureProcExporter{}
 	otlpStandIn := &captureProcExporter{}
@@ -84,9 +82,8 @@ func TestRedactingProcessorProtectsEveryDownstreamProcessor(t *testing.T) {
 	}
 }
 
-// TestRedactingProcessorIsIdempotent guards the "double-redaction must stay
-// harmless" property the ledger exporter's OWN redaction relies on: running
-// an already-redacted record through the processor again changes nothing.
+// TestRedactingProcessorIsIdempotent: redacting an already-redacted record changes nothing, which the
+// exporter's own redaction relies on.
 func TestRedactingProcessorIsIdempotent(t *testing.T) {
 	exp := &captureProcExporter{}
 	lp := sdklog.NewLoggerProvider(

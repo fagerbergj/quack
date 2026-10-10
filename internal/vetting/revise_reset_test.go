@@ -21,9 +21,8 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// #762: an ACP worker commits directly to the clone on disk, outside quack's session ledger - so a rejected round's commit is invisible to everything
-// except a probe that reads the clone itself. strayCommitStub reproduces the
-// production sequence: round 0 commits something unrelated to the task and the judge zeroes it, the revise round commits the real task and the judge passes it - all in the SAME clone, exactly as RunGatedRefine drives it.
+// An ACP worker commits straight to the clone, outside the session ledger. strayCommitStub: round 0
+// commits off-task work the judge zeroes, the revise round commits the real task and passes.
 type strayCommitStub struct {
 	t       *testing.T
 	dir     string
@@ -47,8 +46,7 @@ func (m *strayCommitStub) GenerateContent(_ context.Context, req *model.LLMReque
 		if stubHasTool(req, submitVerdictTool) {
 			m.judgeN++
 			if m.judgeN == 1 {
-				// The judge catching the off-task round in production: all three
-				// named criteria at zero (#762's observed verdict).
+				// The judge catching the off-task round: all three named criteria at zero.
 				yield(stubCall(submitVerdictTool, map[string]any{
 					"criteria": map[string]any{
 						"task_completeness":     map[string]any{"score": 0.0, "reason": "implemented an unrelated feature"},
@@ -131,9 +129,6 @@ func runStrayCommitGate(t *testing.T, stub model.LLM, cfg Config) {
 	if err != nil {
 		t.Fatalf("worker: %v", err)
 	}
-	// cfg.NodeBaseSHA mirrors what RunGatedRefine stamps at entry -
-	// this test drives RunGatedRefine directly via newTestGatedNode, which does
-	// stamp it, so nothing extra is needed here; kept for documentation.
 	node, err := newTestGatedNode("impl-gate", worker, stub, NewJudgeFactory(stub, nil, nil), cfg)
 	if err != nil {
 		t.Fatalf("node: %v", err)
@@ -160,9 +155,8 @@ func runStrayCommitGate(t *testing.T, stub model.LLM, cfg Config) {
 	}
 }
 
-// TestGate1_RejectedRoundsCommitNeverSurvivesToDelivery is issue #762 test case
-// 1: a rejected round's commit must not still be on the branch once a later round passes and the gate delivers. This FAILS on main - nothing resets the
-// clone between a failed judge round and the revise round it triggers, so the off-task commit from the draft round rides along into the branch the passing revise round delivers.
+// TestGate1_RejectedRoundsCommitNeverSurvivesToDelivery: a rejected round's commit must be gone
+// from the branch once a later round passes and the gate delivers.
 func TestGate1_RejectedRoundsCommitNeverSurvivesToDelivery(t *testing.T) {
 	cfg, dir := strayCommitTestRepo(t)
 	stub := &strayCommitStub{t: t, dir: dir}
@@ -180,8 +174,7 @@ func TestGate1_RejectedRoundsCommitNeverSurvivesToDelivery(t *testing.T) {
 	}
 }
 
-// TestGate2_NormalRunDeliversOnlyItsOwnCommits is issue #762 test case 2: a
-// clean single-round pass must be unaffected by the reset (nothing to undo).
+// TestGate2_NormalRunDeliversOnlyItsOwnCommits: a clean single-round pass has nothing to reset.
 func TestGate2_NormalRunDeliversOnlyItsOwnCommits(t *testing.T) {
 	cfg, dir := strayCommitTestRepo(t)
 	cfg.JudgeRounds = 1
@@ -193,7 +186,7 @@ func TestGate2_NormalRunDeliversOnlyItsOwnCommits(t *testing.T) {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
 	}
-	stub := &cleanPassStub{t: t, dir: dir, git: git}
+	stub := cleanPassStub(t, dir, git)
 	runStrayCommitGate(t, stub, cfg)
 
 	res, err := workspace.RunArgv(context.Background(), dir, []string{"git", "log", "--format=%s", "main..quack/work"}, workspace.DefaultCaps())
@@ -207,9 +200,8 @@ func TestGate2_NormalRunDeliversOnlyItsOwnCommits(t *testing.T) {
 	}
 }
 
-// incompleteOnTaskStub commits real, on-task work in the draft round that the
-// judge rejects for being short of the task (missing .dockerignore, say) - commit_hygiene itself scores fine. The revise round adds a SECOND file/commit
-// rather than redoing the first, the way an ACP worker naturally continues when its own prior commit is still sitting in the clone.
+// incompleteOnTaskStub commits on-task but incomplete work the judge rejects (commit_hygiene fine);
+// the revise round adds a second commit on top, as an ACP worker naturally continues.
 type incompleteOnTaskStub struct {
 	t      *testing.T
 	dir    string
@@ -253,9 +245,8 @@ func (m *incompleteOnTaskStub) GenerateContent(_ context.Context, req *model.LLM
 	}
 }
 
-// TestGate4_IncompleteButOnTaskRoundIsNotReset: the fourth case the coordinator asked for on top of the issue's three - a round rejected for
-// being INCOMPLETE, not off-task, must keep its commit so the revise round builds on it. This fails before the commit_hygiene keying: an unconditional
-// reset on every judge failure wipes the draft's "Add CD publishing to GHCR" commit right along with the (nonexistent, here) contamination.
+// TestGate4_IncompleteButOnTaskRoundIsNotReset: a round rejected as INCOMPLETE, not off-task,
+// keeps its commit so the revise round builds on it.
 func TestGate4_IncompleteButOnTaskRoundIsNotReset(t *testing.T) {
 	cfg, dir := strayCommitTestRepo(t)
 	git := func(args ...string) {
@@ -284,30 +275,21 @@ func TestGate4_IncompleteButOnTaskRoundIsNotReset(t *testing.T) {
 
 // cleanPassStub commits the real task once and passes the judge immediately -
 // the ordinary, uncontaminated single-round case.
-type cleanPassStub struct {
-	t       *testing.T
-	dir     string
-	git     func(args ...string)
-	drafted bool
-}
-
-func (m *cleanPassStub) Name() string { return "clean-pass-stub" }
-
-func (m *cleanPassStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
+func cleanPassStub(t *testing.T, dir string, git func(args ...string)) fnLLM {
+	drafted := false
+	return func(req *model.LLMRequest) (*model.LLMResponse, error) {
 		if stubHasTool(req, submitVerdictTool) {
-			yield(stubCall(submitVerdictTool, map[string]any{
+			return stubCall(submitVerdictTool, map[string]any{
 				"criteria": map[string]any{"task_completeness": map[string]any{"score": 1.0, "reason": "correct"}},
 				"score":    0.95, "feedback": "",
-			}), nil)
-			return
+			}), nil
 		}
-		if !m.drafted {
-			m.drafted = true
-			writeFile(m.t, filepath.Join(m.dir, "publish.yml"), "name: publish\n")
-			m.git("add", "-A")
-			m.git("commit", "-q", "-m", "Add CD publishing to GHCR")
+		if !drafted {
+			drafted = true
+			writeFile(t, filepath.Join(dir, "publish.yml"), "name: publish\n")
+			git("add", "-A")
+			git("commit", "-q", "-m", "Add CD publishing to GHCR")
 		}
-		yield(stubText("Added the CD workflow publishing to GHCR."), nil)
+		return stubText("Added the CD workflow publishing to GHCR."), nil
 	}
 }

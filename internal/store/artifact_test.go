@@ -216,9 +216,7 @@ func TestArtifactService_UserScoped_VisibleAcrossSessions(t *testing.T) {
 	}
 }
 
-// TestArtifactService_RowBackend_SurvivesRestart is the durability-upgrade
-// proof for sqlite: a fresh Store handle over the SAME db file (a cheap
-// restart simulation) still loads an artifact saved by the OLD handle.
+// A fresh Store over the same sqlite file still loads an artifact saved by the old handle.
 func TestArtifactService_RowBackend_SurvivesRestart(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "quack.db")
 
@@ -255,9 +253,8 @@ func TestArtifactService_RowBackend_SurvivesRestart(t *testing.T) {
 	}
 }
 
-// TestRecordstoreKeepsEveryRevision proves recordstore.Client (#1090 P2)
-// behaves the same over the row-backed store and ADK's in-memory service -
-// no retention call exists (design V4.1 #2), so every save keeps its own revision on both backends.
+// recordstore.Client keeps every save's own revision on both the row-backed store and ADK's in-memory
+// service (no retention call exists).
 var registerRetentionTestKindOnce = sync.OnceFunc(func() {
 	recordstore.Register("store.retention.test", recordstore.KindSpec{
 		Class:    recordstore.Blob,
@@ -287,9 +284,8 @@ func TestRecordstoreKeepsEveryRevision(t *testing.T) {
 	}
 }
 
-// TestSaveWithMetaPersistsLineage proves the row-backed store round-trips
-// kind/class/lineage through SaveWithMeta/LoadWithMeta (#1090 P2) - the
-// in-memory service in bothArtifactServices has no row, so this only runs against the GORM-backed service directly.
+// The row-backed store round-trips kind/class/lineage through SaveWithMeta/LoadWithMeta; the in-memory
+// service has no row, so this runs against the GORM service only.
 func TestSaveWithMetaPersistsLineage(t *testing.T) {
 	st := newTestStore(t)
 	row, err := NewRowArtifactService(st.db)
@@ -319,9 +315,8 @@ func TestSaveWithMetaPersistsLineage(t *testing.T) {
 	}
 }
 
-// TestConcurrentSaveSameID_NoLostRevisions covers #1090 adversarial review
-// finding #3: N goroutines saving the same (app,user,session,name) key must
-// come out with revisions exactly 1..N, no error and no two goroutines landing on the same revision - the MAX(revision)+Create race the per-key mutex (and, as a backstop, the unique-violation retry) close. Run under -race; also exercises the row-backed and in-memory backends the same way KeepEveryRevision does.
+// N goroutines saving one key get revisions exactly 1..N with no error: the MAX(revision)+Create race the
+// per-key mutex and unique-violation retry close. Run under -race, on both backends.
 func TestConcurrentSaveSameID_NoLostRevisions(t *testing.T) {
 	for name, svc := range bothArtifactServices(t) {
 		t.Run(name, func(t *testing.T) {

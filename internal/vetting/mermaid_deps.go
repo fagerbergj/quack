@@ -8,9 +8,8 @@ import (
 	"time"
 )
 
-// EnsureMermaidValidatorDeps provisions scripts/node_modules (npm ci) so the mermaid validator tests just work on a fresh clone. Both internal/vetting's
-// and internal/tools' tests call this SAME function - they used to run their
-// own `npm ci` independently, which raced when go test ran both packages' binaries in parallel against the same scripts/ directory. An flock-style lockfile serializes the provisioning across the separate OS processes go test spawns per package (a sync.Once only dedupes within one process). A stale lock (holder crashed mid-install) is reclaimed after lockStaleAfter rather than wedging the suite forever.
+// EnsureMermaidValidatorDeps runs npm ci in scripts/ for the validator tests. vetting and tools tests
+// share it under a cross-process lockfile because go test runs their binaries in parallel.
 func EnsureMermaidValidatorDeps() error {
 	dir := filepath.Dir(mermaidValidatorPath)
 	if mermaidDepsPresent(dir) {
@@ -38,9 +37,7 @@ func EnsureMermaidValidatorDeps() error {
 	return nil
 }
 
-// mermaidDepsPresent is the cheap idempotency check: both packages the
-// validator needs, actually installed - not just a node_modules directory
-// left over from a partial/interrupted install.
+// mermaidDepsPresent checks both validator packages are installed, not just a leftover node_modules.
 func mermaidDepsPresent(dir string) bool {
 	for _, pkg := range [...]string{"mermaid", "jsdom"} {
 		if _, err := os.Stat(filepath.Join(dir, "node_modules", pkg, "package.json")); err != nil {
@@ -55,9 +52,8 @@ const (
 	lockStaleAfter  = 90 * time.Second
 )
 
-// acquireLock is an O_EXCL-based mutex across processes (not goroutines -
-// separate `go test` binaries per package can't share a Go-level lock). A
-// lock file older than lockStaleAfter is assumed abandoned by a crashed holder and reclaimed, so a dead process can't wedge the suite forever.
+// acquireLock is an O_EXCL mutex across processes (separate go test binaries can't share a Go lock).
+// A lock file older than lockStaleAfter is reclaimed so a crashed holder can't wedge the suite.
 func acquireLock(path string, timeout time.Duration) (release func(), err error) {
 	deadline := time.Now().Add(timeout)
 	for {

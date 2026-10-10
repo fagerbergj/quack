@@ -5,9 +5,8 @@ import (
 	"testing"
 )
 
-// TestExampleConfigsLoad pins the shipped docs/configuration/examples/*.yaml
-// against real config.Load — a docs-only edit that breaks one of them (a
-// missing models: registry entry, an unregistered model name, a bad argv) fails here, not at a user's server start. Each file runs with the env vars it references set to the model names its own registry registers.
+// The shipped docs/configuration/examples/*.yaml must pass the real loader, each with the env vars
+// it references set to model names its own registry registers.
 func TestExampleConfigsLoad(t *testing.T) {
 	for _, tc := range []struct {
 		file string
@@ -35,9 +34,7 @@ func TestExampleConfigsLoad(t *testing.T) {
 			for _, kv := range tc.env {
 				t.Setenv(kv[0], kv[1])
 			}
-			// Deferred: remote-full.yaml/docker-compose.yaml's code-implementer/
-			// reviewer/explorer are override-only (the github plugin supplies
-			// bundle/model), same as config/quack.yaml itself.
+			// remote-full.yaml/docker-compose.yaml's code agents are override-only, like config/quack.yaml.
 			c, err := LoadDeferringAgentCompleteness(filepath.Join("..", "..", "docs", "configuration", "examples", tc.file))
 			if err != nil {
 				t.Fatalf("Load: %v", err)

@@ -2,9 +2,8 @@ package serve
 
 import "testing"
 
-// TestAcpChildEnvAgentOverridesWorkspace: workspace.env is the deployment-wide
-// default; a matching key in the agent's own acp.env is more specific and
-// wins - the precedence rule documented on WorkspaceConfig.Env.
+// TestAcpChildEnvAgentOverridesWorkspace: a key in the agent's own acp.env beats the
+// deployment-wide workspace.env default (the precedence documented on WorkspaceConfig.Env).
 func TestAcpChildEnvAgentOverridesWorkspace(t *testing.T) {
 	workspaceEnv := map[string]string{"JAVA_HOME": "/opt/jdk-21", "ANDROID_HOME": "/opt/android-sdk"}
 	agentEnv := map[string]string{"JAVA_HOME": "/opt/jdk-17-for-this-agent"}

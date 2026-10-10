@@ -1,20 +1,21 @@
 package dag
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
 
 func TestValidateAgentNameAcceptsRosterMember(t *testing.T) {
 	SetAgentRoster([]AgentInfo{{Name: "code-implementer"}, {Name: "code-reviewer"}})
-	if err := ValidateAgentName("code-reviewer"); err != nil {
-		t.Fatalf("ValidateAgentName: %v", err)
+	if err := ValidateAgentNameIn("code-reviewer", AgentNamesFor(context.Background())); err != nil {
+		t.Fatalf("ValidateAgentNameIn: %v", err)
 	}
 }
 
 func TestValidateAgentNameRejectsUnknown(t *testing.T) {
 	SetAgentRoster([]AgentInfo{{Name: "code-implementer"}})
-	err := ValidateAgentName("cod-implementer")
+	err := ValidateAgentNameIn("cod-implementer", AgentNamesFor(context.Background()))
 	if err == nil {
 		t.Fatal("want an error for an unknown agent")
 	}
@@ -27,7 +28,7 @@ func TestValidateAgentNameRejectsUnknown(t *testing.T) {
 }
 
 func TestValidateAgentNameRejectsEmpty(t *testing.T) {
-	if err := ValidateAgentName(""); err == nil {
+	if err := ValidateAgentNameIn("", AgentNamesFor(context.Background())); err == nil {
 		t.Fatal("want an error for an empty agent")
 	}
 }
@@ -43,7 +44,7 @@ func TestValidateTaskRejectsBlank(t *testing.T) {
 
 func TestNewPlannerSyncsAgentRoster(t *testing.T) {
 	NewPlanner([]AgentInfo{{Name: "web-researcher"}}, nil, nil)
-	if err := ValidateAgentName("web-researcher"); err != nil {
+	if err := ValidateAgentNameIn("web-researcher", AgentNamesFor(context.Background())); err != nil {
 		t.Fatalf("NewPlanner must sync the package-level roster: %v", err)
 	}
 }

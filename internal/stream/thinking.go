@@ -2,24 +2,14 @@ package stream
 
 import "strings"
 
-// thinkOpen/thinkClose are the reasoning delimiters qwen3.x emits into content
-// when llama.cpp's reasoning parser doesn't capture the block (the opening tag
-// never reaches it, so it can't route the block to reasoning_content).
+// qwen3.x reasoning delimiters that leak into content when llama.cpp's parser misses the opening tag.
 const (
 	thinkOpen  = "<think>"
 	thinkClose = "</think>"
 )
 
-// StripThinking removes a model's reasoning block from text that should hold
-// only the final answer. Two leak shapes:
-//   - Closed: "<think>…</think>answer" (or a bare leading "</think>answer") -
-//     drop up to and including the first </think>.
-//   - UNCLOSED: "<think>…" with no </think> (budget hit, or stream ended
-//     mid-think) - everything from <think> on is reasoning, so drop it all;
-//     requiring a closing tag would leak the whole block.
-//
-// No markers ⇒ returned unchanged. An entirely-unclosed answer becomes ""
-// - callers treat that as "no answer" and recover.
+// StripThinking drops a leaked reasoning block: up to the first </think>, or everything from an unclosed
+// <think> (budget hit). An entirely-unclosed answer becomes "", which callers treat as no answer.
 func StripThinking(s string) string {
 	if i := strings.Index(s, thinkClose); i >= 0 {
 		return strings.TrimSpace(s[i+len(thinkClose):])

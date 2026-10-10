@@ -5,9 +5,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// duckTheme is a rubber-duck-themed huh theme: a yellow focused border (the
-// duck) with an orange "beak" selector and cursor. Built on ThemeBase so the
-// layout/spacing stays conventional; only the accent colors move.
+// duckTheme is ThemeBase with duck accents: a yellow focused border and an orange "beak"
+// selector and cursor.
 func duckTheme() *huh.Theme {
 	t := huh.ThemeBase()
 
@@ -28,9 +27,8 @@ func duckTheme() *huh.Theme {
 	t.Focused.Title = lipgloss.NewStyle().Foreground(lipgloss.Color(duck)).Bold(true)
 	t.Focused.Description = lipgloss.NewStyle().Foreground(lipgloss.Color(blurred)) // field subtitle
 
-	// Group title/description (the section header). ThemeBase leaves these as a
-	// zero style - unlike ThemeCharm et al., which set them at the end - so a
-	// group's .Title()/.Description() renders blank unless we set them here.
+	// ThemeBase leaves group title/description as a zero style (unlike ThemeCharm),
+	// so they render blank unless set here.
 	t.Group.Title = lipgloss.NewStyle().Foreground(lipgloss.Color(duck)).Bold(true)
 	t.Group.Description = lipgloss.NewStyle().Foreground(lipgloss.Color(blurred))
 

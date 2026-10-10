@@ -138,14 +138,8 @@ func (s *resumeStubLLM) workerPrompts() []string {
 	return append([]string(nil), s.prompts...)
 }
 
-// TestResumeGuardArchivedOrStale pins #1176's admissibility rules: an
-// archived chat is never resumed, a plan older than staleResumePlanCeiling is
-// marked failed rather than re-entered - unless the node is parked on
-// awaiting_input, which holds no run slot and must be left alone even past
-// the ceiling (review: failing it would strand the pending question). Finding
-// 13: a node a human paused (dag.PauseUser) must never be silently
-// auto-resumed on restart - boot does not get to override that decision -
-// regardless of plan age.
+// TestResumeGuardArchivedOrStale: archived chats never resume; plans past staleResumePlanCeiling fail,
+// except awaiting_input (holds no slot). A user-paused node is never auto-resumed, regardless of age.
 func TestResumeGuardArchivedOrStale(t *testing.T) {
 	now := time.Now()
 	cases := []struct {
@@ -235,11 +229,8 @@ func TestBoundedGoRun_DispatchDoesNotBlockOnFullSemaphore(t *testing.T) {
 	}
 }
 
-// TestDriveResume_ReentryRunsPausedNodeOnly is the boot half of #962 end to
-// end against real executor wiring: n1 done, n2 paused/shutdown (as the drain
-// leaves it), n3 queued. driveResume must run n2's worker (not re-park on the
-// persisted pause), schedule n3 as its descendant, leave n1 alone, and land
-// n2 done on disk.
+// TestDriveResume_ReentryRunsPausedNodeOnly: n1 done, n2 paused/shutdown, n3 queued - driveResume runs n2
+// (not re-parking on the persisted pause), schedules n3 as its descendant, and leaves n1 alone.
 func TestDriveResume_ReentryRunsPausedNodeOnly(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
@@ -329,15 +320,8 @@ func TestDriveResume_ReentryRunsPausedNodeOnly(t *testing.T) {
 	}
 }
 
-// TestDriveResume_TailSurvivesCancelledRunCtx pins finding 15: driveResume's
-// tail (StampTurn/StampTerminalOutcome/PendingQuestion) must not run on
-// runCtx itself. hub.CancelRun(chatID) is exactly what DrainActiveRuns' force
-// cancel (past the shutdown grace window) or a user cancel does in
-// production - a boot-resumed node re-entering right as the process is
-// asked to shut down again is not exotic. If the tail uses the same
-// (now-dead) context, every write in it fails with "context canceled" and
-// the chat is left run_status="" with active_turn_id still set - a chat the
-// UI shows as running forever.
+// TestDriveResume_TailSurvivesCancelledRunCtx: the tail (StampTurn/StampTerminalOutcome/PendingQuestion)
+// must not use runCtx - a cancel there would leave the chat showing as running forever.
 func TestDriveResume_TailSurvivesCancelledRunCtx(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
@@ -399,9 +383,8 @@ func TestDriveResume_TailSurvivesCancelledRunCtx(t *testing.T) {
 	}
 }
 
-// TestDriveResume_ReachesWorkerInOriginalScope pins #997: RetryNode's
-// synthetic "chatID::retry" session id must not leak into workspace/jail
-// scope - the resumed node's read_file must still find the original clone.
+// TestDriveResume_ReachesWorkerInOriginalScope: RetryNode's synthetic "chatID::retry" session id must not
+// leak into workspace/jail scope - the resumed node must still find the original clone.
 func TestDriveResume_ReachesWorkerInOriginalScope(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
@@ -418,9 +401,7 @@ func TestDriveResume_ReachesWorkerInOriginalScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewJail: %v", err)
 	}
-	// The repo the (unrelated to this test) extension setup left behind at
-	// original dispatch, under the node's own workspace dir in the REAL chat
-	// scope - never re-cloned on resume.
+	// The repo setup left at original dispatch, in the REAL chat scope - never re-cloned on resume.
 	repoDir, err := jail.EnsureDir(userID, chatID, workspace.NodeDir("n1"))
 	if err != nil {
 		t.Fatalf("EnsureDir: %v", err)

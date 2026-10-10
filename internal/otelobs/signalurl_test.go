@@ -2,9 +2,7 @@ package otelobs
 
 import "testing"
 
-// otlp*http 1.45 posts path-less endpoints to / (losing telemetry silently -
-// the deployed otel-collector endpoint is path-less), so these pin the join
-// instead of trusting the exporter; the path-bearing cases are #1045.
+// otlp*http 1.45 posts path-less endpoints to / and silently loses telemetry, so these pin the join.
 func TestSignalURL(t *testing.T) {
 	for _, tc := range []struct {
 		name, endpoint, path, want string

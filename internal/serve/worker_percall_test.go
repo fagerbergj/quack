@@ -17,8 +17,7 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// TestWorkerModelHoldsPerCall proves #1482's wiring: the model the served
-// worker agent holds is the per-call admitting wrap, so a worker's slot
+// TestWorkerModelHoldsPerCall: the served worker's model is the per-call admitting wrap, so its slot
 // frees between model calls and tool phases overlap other nodes' runs.
 func TestWorkerModelHoldsPerCall(t *testing.T) {
 	jail, err := workspace.NewJail(t.TempDir())
@@ -63,7 +62,7 @@ func TestWorkerModelHoldsPerCall(t *testing.T) {
 	if !ok {
 		t.Fatalf("clientMap[%q] = %T, want nativeAgent", "tester", clientMap["tester"])
 	}
-	_, wm, _, _, _, release, err := na.ForNode(context.Background(), "test-plan:test-node", "test-plan/test-node", nil, artifact.InMemoryService(), "quack-test", "u1", "chat-1", "test-node", nil)
+	_, wm, _, _, _, _, release, err := na.ForNode(context.Background(), "test-plan:test-node", "test-plan/test-node", nil, artifact.InMemoryService(), "quack-test", "u1", "chat-1", "test-node", nil)
 	if err != nil {
 		t.Fatalf("ForNode: %v", err)
 	}

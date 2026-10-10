@@ -10,16 +10,9 @@ import (
 	"github.com/fagerbergj/quack/internal/config"
 )
 
-func echoIdentityHandler() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id, ok := r.Context().Value(identityCtxKey{}).(Identity)
-		if !ok {
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte("no-identity"))
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(id.User))
+func okHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("ok"))
 	})
 }
 
@@ -37,20 +30,20 @@ func TestMiddlewareNilAuthPassesThrough(t *testing.T) {
 	var a *Auth
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/chats", nil)
-	a.Middleware(echoIdentityHandler()).ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK || rec.Body.String() != "no-identity" {
-		t.Errorf("got %d %q, want 200 no-identity", rec.Code, rec.Body.String())
+	a.Middleware(okHandler()).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || rec.Body.String() != "ok" {
+		t.Errorf("got %d %q, want 200 ok", rec.Code, rec.Body.String())
 	}
 }
 
 func TestMiddlewareTrustedHeaders(t *testing.T) {
 	a, err := New(&config.InboundAuthConfig{
-		TrustedHeaders: &config.TrustedHeadersConfig{User: "X-authentik-username", Groups: "X-authentik-groups"},
+		TrustedHeaders: &config.TrustedHeadersConfig{User: "X-authentik-username"},
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	handler := a.Middleware(echoIdentityHandler())
+	handler := a.Middleware(okHandler())
 
 	tests := []struct {
 		name     string
@@ -60,9 +53,9 @@ func TestMiddlewareTrustedHeaders(t *testing.T) {
 	}{
 		{
 			name:     "trusted header present",
-			headers:  map[string]string{"X-authentik-username": "jason", "X-authentik-groups": "admins,devs"},
+			headers:  map[string]string{"X-authentik-username": "jason"},
 			wantCode: http.StatusOK,
-			wantBody: "jason",
+			wantBody: "ok",
 		},
 		{
 			name:     "no headers, no oidc configured -> unauthorized",
@@ -88,9 +81,8 @@ func TestMiddlewareTrustedHeaders(t *testing.T) {
 	}
 }
 
-// TestMiddlewareTrustedHeadersTakePriority pins the documented precedence: a
-// trusted header wins even when oidc is ALSO configured and the request
-// carries no bearer token that would otherwise be required.
+// TestMiddlewareTrustedHeadersTakePriority: a trusted header wins even with OIDC also configured
+// and no bearer token present.
 func TestMiddlewareTrustedHeadersTakePriority(t *testing.T) {
 	idp := newTestIdP(t)
 	a, err := New(&config.InboundAuthConfig{
@@ -100,7 +92,7 @@ func TestMiddlewareTrustedHeadersTakePriority(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	handler := a.Middleware(echoIdentityHandler())
+	handler := a.Middleware(okHandler())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/chats", nil)
 	req.Header.Set("X-authentik-username", "jason")
@@ -108,14 +100,12 @@ func TestMiddlewareTrustedHeadersTakePriority(t *testing.T) {
 	// would 401.
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK || rec.Body.String() != "jason" {
-		t.Errorf("got %d %q, want 200 jason", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK || rec.Body.String() != "ok" {
+		t.Errorf("got %d %q, want 200 ok", rec.Code, rec.Body.String())
 	}
 }
 
-// TestMiddlewareOIDCFallsBackWhenNoTrustedHeader covers a request that has
-// neither a trusted header value nor bearer token satisfied by headers -
-// falls through to bearer verification.
+// TestMiddlewareOIDCBearer: with no trusted header value, requests fall through to bearer verification.
 func TestMiddlewareOIDCBearer(t *testing.T) {
 	idp := newTestIdP(t)
 	a, err := New(&config.InboundAuthConfig{
@@ -124,7 +114,7 @@ func TestMiddlewareOIDCBearer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	handler := a.Middleware(echoIdentityHandler())
+	handler := a.Middleware(okHandler())
 
 	tests := []struct {
 		name       string
@@ -172,10 +162,8 @@ func TestMiddlewareOIDCBearer(t *testing.T) {
 	}
 }
 
-// TestMiddlewareOIDCRejectionBodyIsGeneric pins the fix for the finding that
-// a rejected bearer token's verifier error (issuer/JWKS/validation detail)
-// must never reach the HTTP response - only a generic body, with the real
-// error going to the log instead.
+// TestMiddlewareOIDCRejectionBodyIsGeneric: a rejected token's verifier error goes to the log;
+// the response body stays generic.
 func TestMiddlewareOIDCRejectionBodyIsGeneric(t *testing.T) {
 	idp := newTestIdP(t)
 	a, err := New(&config.InboundAuthConfig{
@@ -184,7 +172,7 @@ func TestMiddlewareOIDCRejectionBodyIsGeneric(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	handler := a.Middleware(echoIdentityHandler())
+	handler := a.Middleware(okHandler())
 
 	tests := []struct {
 		name       string
@@ -209,31 +197,6 @@ func TestMiddlewareOIDCRejectionBodyIsGeneric(t *testing.T) {
 			body := strings.TrimSpace(rec.Body.String())
 			if body != "unauthorized" {
 				t.Errorf("body = %q, want exactly %q (no verifier detail leaked)", body, "unauthorized")
-			}
-		})
-	}
-}
-
-func TestSplitGroups(t *testing.T) {
-	tests := []struct {
-		name string
-		raw  string
-		want []string
-	}{
-		{name: "single", raw: "admins", want: []string{"admins"}},
-		{name: "multiple with spaces", raw: "admins, devs , ops", want: []string{"admins", "devs", "ops"}},
-		{name: "empty", raw: "", want: []string{}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := splitGroups(tt.raw)
-			if len(got) != len(tt.want) {
-				t.Fatalf("splitGroups(%q) = %v, want %v", tt.raw, got, tt.want)
-			}
-			for i := range got {
-				if got[i] != tt.want[i] {
-					t.Errorf("splitGroups(%q)[%d] = %q, want %q", tt.raw, i, got[i], tt.want[i])
-				}
 			}
 		})
 	}

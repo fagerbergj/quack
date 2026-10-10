@@ -22,6 +22,7 @@ func TestToOpenAI_ModelTurnStaysAssistant(t *testing.T) {
 		{Role: genai.RoleModel, Parts: []*genai.Part{{Text: "only a thought", Thought: true}}},
 		{Role: genai.RoleModel, Parts: []*genai.Part{{Text: "part one"}, {Text: "part two"}}},
 	}}
+	req.Contents = DropThoughts(req.Contents) // tracedModel does this before the adapter
 	got, err := toOpenAIChatCompletionRequest(req, "m")
 	if err != nil {
 		t.Fatal(err)
@@ -84,6 +85,7 @@ func TestToOpenAI_ToolMessageFollowsItsCall(t *testing.T) {
 			{FunctionCall: &genai.FunctionCall{ID: "c1", Name: "web_search", Args: map[string]any{"q": "x"}}}}},
 		{Role: genai.RoleModel, Parts: []*genai.Part{{FunctionResponse: &genai.FunctionResponse{ID: "c1", Name: "web_search", Response: map[string]any{"r": 1}}}}},
 	}}
+	req.Contents = DropThoughts(req.Contents) // tracedModel does this before the adapter
 	got, err := toOpenAIChatCompletionRequest(req, "m")
 	if err != nil {
 		t.Fatal(err)

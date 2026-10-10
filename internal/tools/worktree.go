@@ -11,9 +11,8 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// SetupWorktree provisions one node's git worktree, linked off the plan's
-// shared setup clone. Idempotent: a resumed run finds its worktree already registered and moved to the clone's HEAD;
-// untracked files survive. checkSetup bootstraps the worktree quack-side, before any sandboxed worker starts in it - a read-only worker (reviewer/explorer) can never run it itself, and the shared clone's own bootstrap (SetupClone) is not carried by `worktree add` for untracked state (e.g. an untracked vendor dir).
+// SetupWorktree is idempotent; a resumed run's untracked files survive. checkSetup runs quack-side: a
+// read-only worker can't, and `worktree add` doesn't carry the clone's untracked bootstrap.
 func SetupWorktree(ctx context.Context, jail *workspace.Jail, userID, chatID, parentDir, nodeRelDir, branch string, caps workspace.Caps, checkSetup []string) (string, error) {
 	b := gitBinding{userID: userID, jail: jail, caps: caps}
 	b.chatID = chatID
@@ -38,8 +37,7 @@ func SetupWorktree(ctx context.Context, jail *workspace.Jail, userID, chatID, pa
 	if _, _, err := runGitIn(ctx, parentDir, parentDir, []string{"worktree", "add", "--quiet", "-B", branch, target, "HEAD"}, caps, nil, target); err != nil {
 		return "", fmt.Errorf("setup: worktree add %q: %w", branch, err)
 	}
-	// Before any sandboxed (possibly read-only) worker starts in target - see
-	// PrecreateBuildDirs.
+	// Before any sandboxed (possibly read-only) worker starts in target.
 	workspace.PrecreateBuildDirs(target, caps.BuildDirs)
 	workspace.RunCheckSetup(target, checkSetup, caps)
 	return target, nil
@@ -77,7 +75,6 @@ func syncWorktree(ctx context.Context, target, parentDir, branch string, caps wo
 	return err == nil
 }
 
-// worktreeValid: idempotency check for SetupWorktree.
 func worktreeValid(target, parentDir string) bool {
 	common := workspace.WorktreeCommonGitDir(target)
 	if common == "" {

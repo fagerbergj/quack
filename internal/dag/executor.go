@@ -37,12 +37,10 @@ type Executor struct {
 	maxActive int
 	setupFn   SetupFunc
 	artifacts artifact.Service // ADK's own artifact tools/debug console; see SetArtifacts
-	// walLedger: the WAL's fail-closed AppendIntent path (#1090 §4.9/#1100),
-	// gated to a postgres-backed ledger only by SetWALLedger's caller - see
-	// vetting.Config.Ledger's doc. nil = no WAL.
+	// walLedger: the WAL's fail-closed AppendIntent path; nil = no WAL. Only a postgres-backed
+	// ledger should be set here - see vetting.Config.Ledger.
 	walLedger ledger.LedgerStore
-	// schemas: registered-schema enforcement for every gate node this executor
-	// builds (SetSchemas) - stamped regardless of that node's own gated setting.
+	// schemas: registered-schema enforcement, stamped on every gate node regardless of its gated setting.
 	schemas   *artifactschema.Registry
 	decisions *decide.Decider
 	admission *Admission
@@ -52,40 +50,37 @@ type Executor struct {
 	gateResults sync.Map
 }
 
-// SetAdmission wires the #1007 capacity ledger and the judge's own spec (nil
-// admission runs unbounded); per-agent worker specs come from Roster.SpecFor.
+// SetAdmission wires the capacity ledger and the judge's spec (nil admission runs unbounded);
+// per-agent worker specs come from Roster.SpecFor.
 func (e *Executor) SetAdmission(admission *Admission, judgeSpec AdmissionSpec) {
 	e.admission, e.judgeSpec = admission, judgeSpec
 }
 
-// SetMaxActive: sets concurrent-node cap (no-op for n < 1).
+// SetMaxActive sets the concurrent-node cap (no-op for n < 1).
 func (e *Executor) SetMaxActive(n int) {
 	if n >= 1 {
 		e.maxActive = n
 	}
 }
 
-// SetArtifacts wires an artifact.Service into the plan graph's runner,
-// reachable via adkagent.Context.Artifacts(). Node attachments are rerouted
-// separately, at the REST/plan entry boundary (internal/artifactref).
+// SetArtifacts wires an artifact.Service into the plan graph's runner (adkagent.Context.Artifacts()).
+// Node attachments are rerouted separately, at the REST/plan entry boundary (internal/artifactref).
 func (e *Executor) SetArtifacts(svc artifact.Service) { e.artifacts = svc }
 
-// SetWALLedger wires the WAL's fail-closed AppendIntent into every gate node
-// this executor builds (#1090 §4.9/#1100). Pass nil unless store is
-// postgres-backed: the FS ledger's AppendIntent is best-effort, not fail-closed (see vetting Config.Ledger doc).
+// SetWALLedger wires the WAL's fail-closed AppendIntent into every gate node. Pass nil unless store is
+// postgres-backed: the FS ledger's AppendIntent is best-effort, not fail-closed.
 func (e *Executor) SetWALLedger(store ledger.LedgerStore) { e.walLedger = store }
 
-// SetSchemas wires registered-schema enforcement into every gate node this
-// executor builds - unconditional, like SetArtifacts, not gate policy.
+// SetSchemas wires registered-schema enforcement into every gate node, unconditionally.
 func (e *Executor) SetSchemas(reg *artifactschema.Registry) { e.schemas = reg }
 
 // SetDecisions attaches the decision intercept points to every gate node; nil disables them.
 func (e *Executor) SetDecisions(d *decide.Decider) { e.decisions = d }
 
-// ResetNodeCancels: clears user-cancelled node flags for the next turn.
+// ResetNodeCancels clears user-cancelled node flags for the next turn.
 func (e *Executor) ResetNodeCancels(chatID string) { e.controls.resetCancelled(chatID) }
 
-// DagStream: translates gate-node events into SSE.
+// DagStream translates gate-node events into SSE.
 type DagStream struct {
 	ctx       context.Context
 	ds        *dagStream
@@ -96,10 +91,10 @@ type DagStream struct {
 	shutdown  func() bool
 }
 
-// ScopeToRetry: restricts terminal sweep to retried node and descendants.
+// ScopeToRetry restricts the terminal sweep to the retried node and its descendants.
 func (s *DagStream) ScopeToRetry(nodeID string) { s.only = retrySet(s.plan, nodeID) }
 
-// ScopeToResume: restricts sweep to resumed nodes and descendants.
+// ScopeToResume restricts the sweep to resumed nodes and their descendants.
 func (s *DagStream) ScopeToResume(nodeIDs []string) {
 	s.only = map[string]bool{}
 	for _, id := range nodeIDs {
@@ -109,19 +104,14 @@ func (s *DagStream) ScopeToResume(nodeIDs []string) {
 	}
 }
 
-// ScopeToStep: restricts terminal sweep to exactly run, unlike
-// ScopeToRetry/ScopeToResume - a step's descendants haven't run yet.
+// ScopeToStep restricts the terminal sweep to exactly run: a step's descendants haven't run yet.
 func (s *DagStream) ScopeToStep(run map[string]bool) { s.only = run }
 
-// NewDagStream: builds a router for one plan's gate-node events.
+// NewDagStream builds a router for one plan's gate-node events.
 func (e *Executor) NewDagStream(ctx context.Context, plan Plan, appName, userID, sessionID, cancelKey string, yield func(stream.SSEEvent, error) bool, nodeOutputs map[string]string) *DagStream {
 	agentByID := make(map[string]string, len(plan.Nodes))
-	// scopeByID: workspaceNodeID(plan, n) per node - the SAME key
-	// vetting.RunGatedRefine's recorder uses (cfg.NodeID), which diverges
-	// from the plan node id for implementer nodes in setup/repo-chain plans
-	// (workspace.SharedRepoScope, shared across sibling implementers). The
-	// failure lookup below must use this, not the raw plan node id, or the
-	// record the recorder wrote is never found (#1109 re-review finding).
+	// scopeByID: workspaceNodeID per node, the key RunGatedRefine's recorder uses. It differs from the
+	// plan node id for setup/repo-chain implementers, so the failure lookup must use it.
 	scopeByID := make(map[string]string, len(plan.Nodes))
 	resumedFromByID := make(map[string]string, len(plan.Nodes))
 	for _, n := range plan.Nodes {
@@ -145,7 +135,7 @@ func (e *Executor) NewDagStream(ctx context.Context, plan Plan, appName, userID,
 	return &DagStream{ctx: ctx, plan: plan, agentByID: agentByID, yield: yield, ds: ds, shutdown: shutdown}
 }
 
-// Handle: routes gate-node events → SSE (true) or orchestrator events → caller (false).
+// Handle routes gate-node events to SSE (true) or orchestrator events to the caller (false).
 func (s *DagStream) Handle(ev *session.Event) bool {
 	if ev == nil {
 		return false
@@ -160,22 +150,18 @@ func (s *DagStream) Handle(ev *session.Event) bool {
 // Paused reports whether any node in this stream parked on a HITL question.
 func (s *DagStream) Paused() bool { return len(s.ds.needsInput) > 0 }
 
-// NeedsInput reports which nodes this stream saw pause on a HITL question -
-// a caller reporting per-assignment status (execute.go) needs the node id,
-// not just whether ANY node paused.
+// NeedsInput reports which nodes paused on a HITL question.
 func (s *DagStream) NeedsInput() map[string]bool { return s.ds.needsInput }
 
-// Started reports which run-set nodes actually reached running (node_start
-// emitted) - a node whose dependency paused earlier can be requested but
-// never dispatched, and the caller must not treat that as "ran and failed".
+// Started reports which run-set nodes reached running. A node behind a paused dependency can be
+// requested but never dispatched; callers must not treat it as "ran and failed".
 func (s *DagStream) Started() map[string]bool { return s.ds.started }
 
-// Finish flushes the last run and emits a terminal event for every unsettled
-// in-scope node. Call after the runner loop ends cleanly.
+// Finish flushes the last run and emits a terminal event for every unsettled in-scope node.
 func (s *DagStream) Finish() { s.settle(false, nil) }
 
-// Abort is Finish for a runner that ended on err, so no started node stays "running".
-// A shutdown cut emits nothing: boot re-stamps a still-running row paused/shutdown and resumes it.
+// Abort is Finish for a runner that ended on err. A shutdown cut emits nothing: boot re-stamps
+// a still-running row paused/shutdown and resumes it.
 func (s *DagStream) Abort(err error) {
 	if s.shutdown != nil && s.shutdown() {
 		return
@@ -211,8 +197,7 @@ func (s *DagStream) settle(stopped bool, runErr error) {
 	}
 }
 
-// emitFinishTerminal: settle's terminal event for one node - the
-// delivered/paused/cancelled checks in that priority order, then failed or done.
+// emitFinishTerminal: delivered/paused/cancelled checks in that priority order, then failed or done.
 func (s *DagStream) emitFinishTerminal(n Node, stopped bool, runErr error) {
 	delivered := s.ds.deliveredOf != nil && s.ds.deliveredOf(n.ID)
 	if !delivered && s.ds.pauseReasonOf != nil && s.ds.pauseReasonOf(n.ID) != "" {
@@ -231,29 +216,22 @@ func (s *DagStream) emitFinishTerminal(n Node, stopped bool, runErr error) {
 	s.yield(stream.NodeDone(n.ID, s.ds.nodeDoneData(n.ID)), nil)
 }
 
-// RetryPlanInNode: re-runs target node + descendants with seeded outputs.
-// Retry is "same task, fresh session" - a native node's own A2A worker
-// session now outlives normal completion (node reuse), so retry must reap
-// ITS target node's session itself rather than relying on that no longer
-// happening; an ACP node needs no equivalent because its resume is opt-in
-// via Node.ResumedFrom, which a retry's stashed plan never carries.
-// ponytail: only the named target, not a re-cascaded descendant - the same
-// class of staleness could in principle reach one of those too, add if it
-// shows up in practice.
+// RetryPlanInNode re-runs the target node and descendants with seeded outputs, in a fresh session:
+// a native node's A2A session outlives completion, so retry reaps it (ACP resume is opt-in via ResumedFrom).
 func (e *Executor) RetryPlanInNode(ctx adkagent.Context, plan Plan, chatID, nodeID string, seeded map[string]string) (map[string]string, error) {
+	// ponytail: only the named target, not a re-cascaded descendant - the same class of staleness
+	// could in principle reach one of those too, add if it shows up in practice.
 	e.resetNativeWorkerSession(context.WithoutCancel(ctx), plan, chatID, nodeID)
 	return e.runSubset(ctx, plan, chatID, seeded, retrySet(plan, nodeID))
 }
 
-// RunPlanIncrement runs exactly the nodes named in run as fresh dispatches -
-// never retries - seeding every other node's output from seeded so a new
-// node depending on an already-run one still sees its result.
+// RunPlanIncrement runs exactly the nodes in run as fresh dispatches, seeding every other node's
+// output from seeded so a new node depending on an already-run one still sees its result.
 func (e *Executor) RunPlanIncrement(ctx adkagent.Context, plan Plan, chatID string, seeded map[string]string, run map[string]bool) (map[string]string, error) {
 	return e.runSubset(ctx, plan, chatID, seeded, run)
 }
 
-// runSubset builds gate nodes for plan and dispatches exactly the ids in run
-// through them - the ADK plumbing shared by RetryPlanInNode and RunPlanIncrement.
+// runSubset builds gate nodes for plan and dispatches exactly the ids in run.
 func (e *Executor) runSubset(ctx adkagent.Context, plan Plan, chatID string, seeded map[string]string, run map[string]bool) (map[string]string, error) {
 	source := ledger.CoordsFromContext(ctx).Source
 	var userID string
@@ -261,27 +239,21 @@ func (e *Executor) runSubset(ctx adkagent.Context, plan Plan, chatID string, see
 	if sess := ctx.Session(); sess != nil {
 		userID = sess.UserID()
 	} else {
-		// No session, no real userID - artifact tools would scope to "" and
-		// silently see nothing, so skip building them rather than lie about scope.
+		// No session means no real userID: artifact tools would scope to "" and see nothing.
 		artifacts = nil
 		slog.Warn("dag: no session, skipping artifact tools", "component", "dag", "chat_id", chatID)
 	}
 	sink, _ := stream.YieldFromContext(ctx)
-	gateNodes, _, err := buildGateNodes(ctx, plan, e.RosterFor(ctx), e.judge, e.controls, chatID, userID, source,
-		func(nodeID string, score float64, passed bool, rounds int, contextID string) {
-			e.recordGateResult(chatID, nodeID, score, passed, rounds, contextID)
-		}, e.admission, e.judgeSpec, artifacts, e.walLedger, e.schemas, e.decisions, nil, sink) // a subset run never re-runs setup, so nothing to refresh
+	// A subset run never re-runs setup, so nothing to refresh.
+	gateNodes, err := e.buildGateNodes(ctx, plan, chatID, userID, source, artifacts, nil, sink)
 	if err != nil {
 		return nil, err
 	}
 	return runDAGSubset(ctx, plan, gateNodes, e.maxActive, seeded, run)
 }
 
-// resetNativeWorkerSession deletes nodeID's deterministic A2A worker session
-// (quackagent.WorkerSessionID) before a retry dispatch - since that session
-// now survives normal completion (node reuse), retry must reap it itself to
-// keep its own guarantee: same task, fresh session. Best-effort/no-op when
-// there's nothing to delete (an ACP node, or one that never ran).
+// resetNativeWorkerSession deletes nodeID's deterministic A2A worker session before a retry.
+// Best-effort; a no-op for an ACP node or one that never ran.
 func (e *Executor) resetNativeWorkerSession(ctx context.Context, plan Plan, chatID, nodeID string) {
 	if e.sessions == nil {
 		return
@@ -305,35 +277,27 @@ func (e *Executor) resetNativeWorkerSession(ctx context.Context, plan Plan, chat
 	}
 }
 
-// NewExecutor: returns a graph Executor over a Gen 0 roster of agents, models,
-// cfgFor and mediaAgents; SetRoster replaces it.
+// NewExecutor returns a graph Executor over a Gen 0 roster; SetRoster replaces it.
 func NewExecutor(sessions session.Service, agents map[string]adkagent.Agent, models map[string]model.LLM, judge vetting.JudgeFactory, cfgFor func(context.Context, string) vetting.Config, mediaAgents map[string]bool) *Executor {
 	e := &Executor{sessions: sessions, judge: judge, controls: newRunControls(), maxActive: 2}
 	e.roster.Store(&Roster{Agents: agents, Models: models, CfgFor: cfgFor, Media: mediaAgents})
 	return e
 }
 
-// gateScore: node's trust-gate result.
 type gateScore struct {
 	score  float64
 	passed bool
 	rounds int
-	// contextID: the ACP transport session id this round established, "" for
-	// a native node or one that never got one - see graph.go's recordGate call.
+	// contextID: the ACP transport session id this round established; "" for a native node.
 	contextID string
 }
 
-// SilentGapError is the true silent-gap message (#568): empty output with no
-// failure on record. store.failedDagNodeError treats this exact string as
-// "nothing to report", so it must stay a comparable sentinel, not a format string.
+// SilentGapError: empty output with no failure on record. store.failedDagNodeError matches this
+// exact string, so it must stay a comparable sentinel, not a format string.
 const SilentGapError = "produced no answer"
 
-// emptyNodeError names a node's empty completion: a sanitized (no URL/body -
-// see inference.SanitizeGatewayError) classification when ADK's runner
-// swallowed a worker's repeated gateway errors into a silent empty output
-// (#1105), or SilentGapError when no failure was recorded for this node's
-// own agent role (a judge failure on the same node id/chat is tracked
-// separately - #1109 review finding 3).
+// emptyNodeError names an empty completion: the sanitized gateway error ADK's runner swallowed into
+// an empty output, or SilentGapError when none was recorded for this node's agent role.
 func emptyNodeError(chatID, nodeID, agent string) string {
 	if err, streak, dur, ok := inference.LastFailure(chatID, nodeID, agent); ok && streak > 0 {
 		inference.ClearFailure(chatID, nodeID, agent)
@@ -399,39 +363,27 @@ func (e *Executor) gateScore(ctx context.Context, appName, userID, sessionID, no
 
 // dagStream converts workflow events into SSE, synthesizing per-node worker runs.
 type dagStream struct {
-	// traceID is the run's OTel trace id, resolved once at construction - not
-	// per-node/per-round: every span in this plan run shares one trace, so a
-	// live context.Context (Finding 4) would add nothing but staleness risk.
+	// traceID: the run's OTel trace id, resolved once; every span in the plan run shares it.
 	traceID string
-	// chatID: real chat scope (both NewDagStream call sites pass their
-	// cancelKey, which is always the chat id) - used to look up a
-	// gateway-failure record when a node's output comes back empty (#1105).
+	// chatID: real chat scope, used to look up a gateway-failure record for an empty output.
 	chatID    string
 	agentByID map[string]string
-	// scopeByID: per-node workspace scope (workspaceNodeID) - the failure
-	// tracker's real key component, distinct from the plan node id for
-	// setup/repo-chain implementer nodes (#1109 re-review finding).
+	// scopeByID: per-node workspace scope, the failure tracker's key (see NewDagStream).
 	scopeByID map[string]string
 	yield     func(stream.SSEEvent, error) bool
 	outputs   map[string]string
 	scoreOf   func(string) gateScore
 	startedAt map[string]time.Time
 	cancelled func(string) bool
-	// pauseReasonOf: "" if not paused. A shutdown-drain pause (PauseShutdown)
-	// doesn't block a delivered node_done the way a live user pause does - see
-	// handle()'s switch.
+	// pauseReasonOf: "" if not paused. A shutdown-drain pause doesn't block a delivered node_done
+	// the way a live user pause does - see handle()'s switch.
 	pauseReasonOf func(string) PauseReason
 	steerOf       func(string, int) string
-	// deliveredOf: true once RunGatedRefine reached commitDelivery for this
-	// node. Set only by the one production caller (NewDagStream) - nil in
-	// every test, which is safe (handle's switch guards it) and keeps every
-	// existing newDagStream(...) test call site unchanged.
+	// deliveredOf: true once RunGatedRefine reached commitDelivery for this node; nil in tests.
 	deliveredOf func(string) bool
 	// draftOf: the gate's latest draft for a node (NoteDraft); nil in tests.
 	draftOf func(string) string
-	// resumedFromByID: per-node dag.Node.ResumedFrom, keyed the same way as
-	// agentByID. Same "set post-construction" reason as deliveredOf; a nil
-	// map reads as "" everywhere, the fresh-node default.
+	// resumedFromByID: per-node Node.ResumedFrom; a nil map reads as "", the fresh-node default.
 	resumedFromByID map[string]string
 
 	started     map[string]bool
@@ -440,25 +392,23 @@ type dagStream struct {
 	curRun      map[string]string
 	steerSeen   map[string]int
 	usage       map[string]*runUsage // open run only; reset on each closeRun
-	nodeUsage   map[string]*runUsage // cumulative across the node's whole life (worker-r0, worker-r1, ...); feeds node_done
+	nodeUsage   map[string]*runUsage // cumulative across all the node's rounds; feeds node_done
 	last        string
 	stopped     bool
 
-	// toolCallSeen dedups agent_tool_call per node: ACP's start+completion
-	// updates both carry the FunctionCall part for the same call_id.
+	// toolCallSeen dedups agent_tool_call per node: ACP's start and completion updates both carry
+	// the FunctionCall part for the same call_id.
 	toolCallSeen map[string]stream.SeenCalls
 }
 
 type runUsage struct {
 	prompt, completion, reasoning, total, cached int32
-	// ctxTokens is the LAST measured prompt-token count seen, not summed like
-	// the fields above - a multi-tool-call round sums past the model's actual
-	// context occupancy, so the context meter needs this instead.
+	// ctxTokens is the last measured prompt-token count, not summed: a multi-tool-call round's sum
+	// overstates the model's actual context occupancy.
 	ctxTokens     int32
 	model, finish string
-	// lastAt: wall-clock time this run's most recent event was handled - the
-	// round's real finish, as opposed to closeRun's call time, which can lag
-	// behind it by an intervening judge round (#1290).
+	// lastAt: when this run's latest event was handled, the round's real finish; closeRun's call time
+	// can lag it by an intervening judge round.
 	lastAt time.Time
 }
 
@@ -470,9 +420,7 @@ func newDagStream(traceID, chatID string, agentByID, scopeByID map[string]string
 	}
 }
 
-// scope returns node's workspace scope (the failure recorder's real key
-// component), falling back to the raw node id when scopeByID has no entry
-// (e.g. an unpopulated test harness, or a node id that is already its own scope).
+// scope returns node's workspace scope, falling back to the raw node id when scopeByID has none.
 func (s *dagStream) scope(node string) string {
 	if sc, ok := s.scopeByID[node]; ok && sc != "" {
 		return sc
@@ -480,10 +428,7 @@ func (s *dagStream) scope(node string) string {
 	return node
 }
 
-// contextOf returns node's resumable transport context id if one was ever
-// established (nil-safe scoreOf) - captured unconditionally in graph.go
-// regardless of outcome, so this reads the same value on a failure/
-// cancellation path as nodeDoneData does on success.
+// contextOf returns node's resumable transport context id, captured in graph.go on every outcome.
 func (s *dagStream) contextOf(node string) string {
 	if s.scoreOf == nil {
 		return ""
@@ -565,8 +510,8 @@ func (s *dagStream) handle(ev *session.Event) bool {
 	return s.handleWorkerRun(node, runID, ev)
 }
 
-// handleWorkerRun: a worker-run segment under the node - close the prior run, stamp
-// usage, relay a newer steer generation, emit agent-start, then accumulate content.
+// handleWorkerRun: close the prior run, stamp usage, relay a newer steer generation, emit
+// agent-start, then accumulate content.
 func (s *dagStream) handleWorkerRun(node, runID string, ev *session.Event) bool {
 	if s.curRun[node] != runID {
 		if !s.closeRun(node) {
@@ -673,9 +618,8 @@ func (s *dagStream) accum(node string, ev *session.Event) {
 	}
 }
 
-// closeRun: emits agent_complete for active worker run, and folds its usage
-// into the node's cumulative total (node_done reports the whole node's spend
-// across every worker/revise round, not just the last one).
+// closeRun emits agent_complete for the active worker run and folds its usage into the node's
+// cumulative total, which node_done reports across every round.
 func (s *dagStream) closeRun(node string) bool {
 	runID := s.curRun[node]
 	if runID == "" {
@@ -698,8 +642,7 @@ func (s *dagStream) closeRun(node string) bool {
 			nu.total += u.total
 			nu.cached += u.cached
 			nu.model, nu.finish = u.model, u.finish
-			// Overwritten, not accumulated: node_done should report the freshest
-			// context occupancy across the node's rounds, not their sum.
+			// Overwritten, not accumulated: node_done reports the freshest context occupancy, not the sum.
 			if u.ctxTokens > 0 {
 				nu.ctxTokens = u.ctxTokens
 			}
@@ -719,8 +662,7 @@ func (s *dagStream) flush() bool {
 	return !s.stopped
 }
 
-// nodeDoneData: builds node_done payload from output, cumulative worker-run
-// usage, and judge result.
+// nodeDoneData builds the node_done payload from output, cumulative usage and the judge result.
 func (s *dagStream) nodeDoneData(node string) stream.NodeDoneData {
 	out := s.outputs[node]
 	d := stream.NodeDoneData{Output: out, OutputPreview: preview(out)}
@@ -772,8 +714,8 @@ func segRun(seg string) string {
 	return stream.RunIDFromBranch(seg)
 }
 
-// stageRound: maps run ID to SSE stage + round. A queued round carries a
-// "-s%d" suffix (node.go's sfx) that must come off before the round parses.
+// stageRound maps a run ID to SSE stage and round. A queued round carries a "-s%d" suffix
+// (node.go's sfx) that must come off before the round parses.
 func stageRound(runID string) (string, int) {
 	if strings.HasPrefix(runID, "worker-r") {
 		if n := toInt(trimQueueSuffix(runID[len("worker-r"):])); n > 0 {
@@ -816,13 +758,7 @@ func (s *dagStream) cancelledEvent(node string) stream.SSEEvent {
 	return stream.WithContextID(ev, s.contextOf(node))
 }
 
-func preview(s string) string {
-	const n = 250
-	if len(s) <= n {
-		return s
-	}
-	return s[:n]
-}
+func preview(s string) string { return safeTruncateBytes(s, 250) }
 
 // toFloat/toInt read state values tolerantly (JSON round-trips as float64).
 func toFloat(v any) float64 {
@@ -854,17 +790,15 @@ func toInt(v any) int {
 	return 0
 }
 
-// artifactContextShare/artifactBytesPerToken: a dependent's inlined-artifact
-// budget as a fraction of its own context window, not a fixed size.
+// artifactContextShare/artifactBytesPerToken: a dependent's inlined-artifact budget as a fraction
+// of its own context window, not a fixed size.
 const artifactContextShare = 0.4
 const artifactBytesPerToken = 4
 
-// defaultNodeContextWindow: artifactByteBudget's fallback when a node carries
-// no ContextWindow (mirrors vetting's own defaultJudgeContextWindow).
+// defaultNodeContextWindow: fallback when a node has no ContextWindow (mirrors vetting's judge default).
 const defaultNodeContextWindow = 32_768
 
-// artifactByteBudget: node's total inlined-artifact budget in bytes, shared
-// across every dependency buildTask appends one to.
+// artifactByteBudget: node's total inlined-artifact budget in bytes, shared across its dependencies.
 func artifactByteBudget(node Node) int {
 	window := node.ContextWindow
 	if window <= 0 {
@@ -873,9 +807,8 @@ func artifactByteBudget(node Node) int {
 	return int(float64(window)*artifactContextShare) * artifactBytesPerToken
 }
 
-// buildTask assembles a node's worker prompt from user request, dependencies, and task.
-// cfg carries the Artifacts/User/ChatID connection so a dependency's own
-// artifact can be appended after its answer (prod chat effc2636).
+// buildTask assembles a node's worker prompt from user request, dependencies and task; cfg's
+// artifact connection lets a dependency's own artifact follow its answer.
 func buildTask(ctx context.Context, plan Plan, node Node, upstream map[string]string, gateFailed map[string]bool, cfg vetting.Config) string {
 	background := plan.WorkerBackground
 	if background == "" {
@@ -919,9 +852,8 @@ func buildTask(ctx context.Context, plan Plan, node Node, upstream map[string]st
 	return sb.String()
 }
 
-// appendDependencyArtifact: dep's own artifact appended after its answer under
-// a header naming its id/revision - never a replacement. "" when there's
-// nothing to add: no match, content equals the answer already, or budget is spent.
+// appendDependencyArtifact appends dep's artifact after its answer under an id/revision header.
+// "" when there's no match, the content equals the answer, or the budget is spent.
 func appendDependencyArtifact(ctx context.Context, plan Plan, cfg vetting.Config, dep, answer string, budget int) (block string, used int) {
 	if budget <= 0 {
 		return "", 0
@@ -949,13 +881,11 @@ func appendDependencyArtifact(ctx context.Context, plan Plan, cfg vetting.Config
 	if truncated {
 		fmt.Fprintf(&b, "\n\n[... truncated; read_artifact(%q) for the rest]", id)
 	}
-	// used is the whole block (header/marker included), not just content - the
-	// running per-task budget must reflect every byte actually spent.
+	// used counts the whole block including header/marker, so the running budget reflects every byte.
 	return b.String(), b.Len()
 }
 
-// safeTruncateBytes: content's first n bytes, backing off to the last full
-// rune - never splits a multi-byte UTF-8 sequence.
+// safeTruncateBytes returns content's first n bytes without splitting a UTF-8 sequence.
 func safeTruncateBytes(content string, n int) string {
 	if n < 0 {
 		n = 0
@@ -997,7 +927,7 @@ func siblingIDs(plan Plan, self string) string {
 	return strings.Join(ids, ", ")
 }
 
-// ensureTerminal: seeds a single-sink plan's sink from fallback when capture missed it; with several
+// ensureTerminal seeds a single-sink plan's sink from fallback when capture missed it; with several
 // sinks, fallback may be another sink's output.
 func ensureTerminal(plan Plan, nodeOutputs map[string]string, fallback string) {
 	sinks := TerminalIDs(plan.Nodes)
@@ -1024,22 +954,21 @@ func steerGen(runID string) int {
 	return n
 }
 
-// terminalSpec: the finished node's terminal event, by priority - delivery, live
-// pause, cancel, delivered answer, shutdown pause, then failure.
+// terminalSpec: the finished node's terminal event, by priority - delivery, live pause, cancel,
+// delivered answer, shutdown pause, then failure.
 func (s *dagStream) terminalSpec(node, out string, pauseReason PauseReason) stream.SSEEvent {
 	switch {
 	case s.deliveredOf != nil && s.deliveredOf(node):
-		// ctrl.MarkDelivered() fired inside commitDelivery - the authoritative signal, outranking
-		// every pause/cancel reason: the work is genuinely done regardless of a flag that raced in (#1340 review).
+		// MarkDelivered fired inside commitDelivery: authoritative, outranking any pause/cancel flag that raced in.
 		return stream.NodeDone(node, s.nodeDoneData(node))
 	case pauseReason != "" && pauseReason != PauseShutdown:
-		// Live user/HITL pause: node.go's cooperative check caught this before commitDelivery ran, so the draft answer was never delivered.
+		// Live user/HITL pause caught before commitDelivery ran, so the draft was never delivered.
 		return stream.NodePaused(node)
 	case s.cancelled != nil && s.cancelled(node):
 		return s.cancelledEvent(node)
 	case out != "":
-		// A delivered answer wins over a shutdown-drain pause flipped after the gate loop
-		// last checked (e.g. inside commitDelivery) - the work already happened; serve.DrainActiveRuns pauses exactly this population on SIGTERM.
+		// A delivered answer wins over a shutdown-drain pause flipped after the gate loop last checked;
+		// serve.DrainActiveRuns pauses exactly this population on SIGTERM.
 		return stream.NodeDone(node, s.nodeDoneData(node))
 	case pauseReason == PauseShutdown:
 		return stream.NodePaused(node)
@@ -1049,7 +978,7 @@ func (s *dagStream) terminalSpec(node, out string, pauseReason PauseReason) stre
 	}
 }
 
-// emitNodeTerminal: the terminal event, emitted once (the original switch emitted exactly one and returned on failure).
+// emitNodeTerminal emits the terminal event exactly once.
 func (s *dagStream) emitNodeTerminal(node, out string, pauseReason PauseReason) bool {
 	return s.emit(s.terminalSpec(node, out, pauseReason))
 }

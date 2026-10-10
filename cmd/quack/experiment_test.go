@@ -24,9 +24,8 @@ func TestNowStamp_Format(t *testing.T) {
 	}
 }
 
-// TestPinnedPromptSource_NameMustMatchAgent pins suggestion 8: a pin whose
-// artifact name doesn't match "system/"+agent must fail loudly rather than
-// silently resolving --agent's own unpinned prompt from the store.
+// TestPinnedPromptSource_NameMustMatchAgent: a pin whose name isn't "system/"+agent fails loudly
+// instead of silently resolving the agent's unpinned prompt.
 func TestPinnedPromptSource_NameMustMatchAgent(t *testing.T) {
 	_, err := pinnedPromptSource(context.Background(), &config.Config{}, "code-reviewer", "system/synthesizer@5")
 	if err == nil || !strings.Contains(err.Error(), "system/code-reviewer") {

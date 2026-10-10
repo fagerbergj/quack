@@ -19,9 +19,8 @@ import (
 	"google.golang.org/genai"
 )
 
-// fabricationStub reenacts a live-e2e defect: the worker reads one file, then ANSWERS claiming a commit it never made and quoting README
-// content it never read. The judge side captures the full prompt it receives,
-// so the test can assert the workspace ledger reached it - the fix under test. The judge passes (0.9): what's being proven is the judge now HAS the evidence, not any particular verdict.
+// fabricationStub: the worker reads one file, then claims a commit and README content it never
+// saw; the judge captures its prompt so the test can check the ledger reached it.
 type fabricationStub struct {
 	mu          sync.Mutex
 	judgePrompt string
@@ -48,16 +47,12 @@ func (s *fabricationStub) GenerateContent(_ context.Context, req *model.LLMReque
 			yield(stubCall("read_file", map[string]any{"path": "README.md"}), nil)
 			return
 		}
-		// Second turn (the tool result is now in context) - fabricate: claim a
-		// commit that never happened and quote content the README does not
-		// contain.
+		// Second turn: fabricate a commit and README content.
 		yield(stubText("I committed the change as abc123. The README says \"run pytest in a virtualenv\"."), nil)
 	}
 }
 
-// newStubReadFileTool is a test double registered under the REAL read_file
-// name, so the session events it produces are exactly what activityFromSession
-// ledgers in production.
+// newStubReadFileTool uses the real read_file name, so its events ledger as in production.
 func newStubReadFileTool(t *testing.T) tool.Tool {
 	t.Helper()
 	type args struct {
@@ -75,9 +70,8 @@ func newStubReadFileTool(t *testing.T) tool.Tool {
 	return tl
 }
 
-// TestJudgeSeesWorkspaceLedger drives the REAL gate loop (RunGatedRefine on the ADK workflow engine) with a worker that performs one read_file and then
-// fabricates a commit claim. Asserts the judge's incoming prompt carries the
-// workspace ledger - the read_file entry WITH its content sample - and no git_commit entry, giving claims_match_activity everything it needs to fail the fabrication.
+// Through the real gate loop, the judge prompt carries the read_file ledger entry with its
+// sample and no git_commit entry, so the fabricated commit claim can be failed.
 func TestJudgeSeesWorkspaceLedger(t *testing.T) {
 	stub := &fabricationStub{}
 	worker, err := llmagent.New(llmagent.Config{

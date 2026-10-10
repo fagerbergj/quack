@@ -28,9 +28,8 @@ var (
 	sleeperAgentNames         = []string{"fixture-analyst"}
 )
 
-// resolveSleeperPlugin resolves the sleeper plugin root directly - the
-// registry's own relative plugins.seed entries resolve against the SERVER's
-// cwd, not a test binary's package-dir cwd, so tests bypass the registry.
+// resolveSleeperPlugin resolves the sleeper plugin root directly: relative plugins.seed entries resolve
+// against the server's cwd, not the test binary's.
 func resolveSleeperPlugin(t *testing.T) plugin.Plugin {
 	t.Helper()
 	plugins, err := plugin.Resolve([]string{sleeperPluginRoot})
@@ -43,9 +42,8 @@ func resolveSleeperPlugin(t *testing.T) plugin.Plugin {
 	return plugins[0]
 }
 
-// enableSleeperExtension sets cfg.Extensions.Modules["sleeper"] to an
-// enabled block, the same shape config.Load would produce from an
-// uncommented extensions.sleeper: { enabled: true } in quack.yaml.
+// enableSleeperExtension enables extensions.sleeper, as `extensions.sleeper: {enabled: true}`
+// in quack.yaml would.
 func enableSleeperExtension(t *testing.T, cfg *config.Config) {
 	t.Helper()
 	var node yaml.Node
@@ -84,9 +82,8 @@ func sleeperExtToolsByName(t *testing.T) map[string]tool.Tool {
 	return byName
 }
 
-// TestSleeperPluginSeedsAgentsAndShapesWhenExtensionEnabled: with
-// extensions.sleeper enabled, the plugin seeds its agents and shapes, each
-// agent's sleeper tools resolve against the linked extension, and every shape binds.
+// TestSleeperPluginSeedsAgentsAndShapesWhenExtensionEnabled: the plugin seeds its agents and shapes,
+// each agent's sleeper tools resolve against the extension, and every shape binds.
 func TestSleeperPluginSeedsAgentsAndShapesWhenExtensionEnabled(t *testing.T) {
 	requireStageDeliverEnv(t)
 	cfg, err := config.LoadDeferringAgentCompleteness("../../config/quack.yaml")
@@ -128,7 +125,7 @@ func TestSleeperPluginSeedsAgentsAndShapesWhenExtensionEnabled(t *testing.T) {
 		if !ok {
 			t.Fatalf("agent %q: unknown provider %q", name, ac.Provider)
 		}
-		wm, err := inference.NewModel(prov, ac.Model, nil, cfg.ModelCost(ac.Model))
+		wm, err := inference.NewModel(prov, ac.Model, nil, cfg.ModelCost(ac.Model), "")
 		if err != nil {
 			t.Fatalf("agent %q: model: %v", name, err)
 		}
@@ -161,9 +158,8 @@ func TestSleeperPluginSeedsAgentsAndShapesWhenExtensionEnabled(t *testing.T) {
 	}
 }
 
-// TestSleeperPluginAbsentWhenExtensionDisabled: with extensions.sleeper off
-// (the shipped default), the gate keeps the plugin's agents and shapes OUT
-// of cfg entirely - not seeded then dropped, simply never added.
+// TestSleeperPluginAbsentWhenExtensionDisabled: with extensions.sleeper off, the plugin's agents and shapes
+// are never added to cfg.
 func TestSleeperPluginAbsentWhenExtensionDisabled(t *testing.T) {
 	requireStageDeliverEnv(t)
 	cfg, err := config.LoadDeferringAgentCompleteness("../../config/quack.yaml")

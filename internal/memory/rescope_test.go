@@ -6,16 +6,15 @@ import (
 	"testing"
 )
 
-// TestRescope_ApplyMatchesDryRunAcrossPages is the review's regression case for #1263's
-// finding #1: role:coding shrinks as points move out of it under apply, so pagination by
-// offset over that SAME bucket must not skip the tail once the eligible set spans more than one List page (DefaultListLimit = 50). 100 resolvable points + 20 with no provenance, on sqlite.
+// role:coding shrinks as points move out under apply, so offset paging over that bucket must not skip
+// the tail once the eligible set spans more than one List page (DefaultListLimit = 50).
 func TestRescope_ApplyMatchesDryRunAcrossPages(t *testing.T) {
 	backends := []struct {
 		name string
 		open func(*testing.T) *Store
 	}{
 		{"sqlite", func(t *testing.T) *Store {
-			s, err := OpenSQLite(context.Background(), t.TempDir()+"/mem.db", fixedTestEmbedder{}, nil, "test_rescope_scale", "task", 5, 0)
+			s, err := OpenSQLite(context.Background(), t.TempDir()+"/mem.db", fakeEmbedder{}, nil, "test_rescope_scale", "task", 5, 0)
 			if err != nil {
 				t.Fatalf("OpenSQLite: %v", err)
 			}
@@ -24,7 +23,7 @@ func TestRescope_ApplyMatchesDryRunAcrossPages(t *testing.T) {
 		{"qdrant", func(t *testing.T) *Store {
 			addr := qdrantTestAddr(t)
 			coll := fmt.Sprintf("test_rescope_scale_%d", qdrantCollSeq.Add(1))
-			s, err := Open(context.Background(), addr, fixedTestEmbedder{}, nil, coll, "task", 5, 0)
+			s, err := Open(context.Background(), addr, fakeEmbedder{}, nil, coll, "task", 5, 0)
 			if err != nil {
 				t.Fatalf("Open (qdrant): %v", err)
 			}
@@ -109,14 +108,4 @@ func testRescopeApplyMatchesDryRunAcrossPages(t *testing.T, s *Store) {
 	if leftTotal != noProvenance {
 		t.Fatalf("role:coding after apply = %d, want only the %d no-provenance points left", leftTotal, noProvenance)
 	}
-}
-
-type fixedTestEmbedder struct{}
-
-func (fixedTestEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
-	out := make([][]float32, len(texts))
-	for i := range texts {
-		out[i] = []float32{1, 0, 0, 0}
-	}
-	return out, nil
 }

@@ -36,7 +36,7 @@ func seqOf(evs []*session.Event) iter.Seq[*session.Event] {
 	}
 }
 
-// BenchmarkGroupSessionEvents pins perf audit #4: groupSessionEvents' turn text fields
+// groupSessionEvents' turn text fields
 // must stay strings.Builder, not +=, or a 2,000-event turn goes back to 197 MB/op.
 func BenchmarkGroupSessionEvents(b *testing.B) {
 	chunk := "a chunk of assistant output text that is roughly the size of one streamed segment in production"

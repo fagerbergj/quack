@@ -5,11 +5,10 @@ import (
 	"testing"
 )
 
-// A read-only node must not be held to a delivery its own task never asked
-// for: the continuation loop must test completion against the NODE'S OWN task,
-// not the whole worker prompt (which carries the user's verbatim request as background) - a read-only explorer with no commit/push tools was judged incomplete forever and never reached a judge round.
+// A read-only node must be tested for completion against its own task, not the whole worker prompt that
+// carries the user's request: an explorer without commit/push tools never finished otherwise.
 func TestReadOnlyNodeIsNotHeldToTheUserRequestsDelivery(t *testing.T) {
-	// The node's OWN task: read-only. This is what cfg.Task carries.
+	// The node's own read-only task, as cfg.Task carries it.
 	const explorerTask = "Clone https://github.com/aaif-goose/goose (shallow) and read the ACTUAL SOURCE " +
 		"to understand how goose exposes tools/extensions to the model. Cite the files you read."
 
@@ -28,18 +27,14 @@ func TestReadOnlyNodeIsNotHeldToTheUserRequestsDelivery(t *testing.T) {
 		t.Fatal("an explorer that produced its report is being called incomplete against its OWN task")
 	}
 
-	// The bug: judged against the assembled prompt, the explorer inherits the user's
-	// delivery demand and can never finish.
+	// Judged against the assembled prompt, the explorer inherits the user's delivery demand and can never finish.
 	if !workIncomplete(answer, assembledPrompt, act, false, true, false, false) {
 		t.Fatal("assembled prompt no longer reads as implement-and-deliver - this oracle can no longer detect the regression it exists to catch")
 	}
-	// ...which is precisely why the loop must never be given the prompt. Guard it:
-	// the gate's completion test takes cfg.Task, and cfg.Task is the node's own task.
-	// (See node.go's continuation loop - it used `prompt` and hung every explorer.)
+	// ...so the gate's completion test must take cfg.Task, the node's own task, never the prompt.
 }
 
-// The implementer, whose own task DOES demand delivery, must still be held to it -
-// this is the check that stopped workers from "finishing" with uncommitted code.
+// An implementer whose own task demands delivery must still be held to it.
 func TestImplementerIsStillHeldToItsDelivery(t *testing.T) {
 	const implementerTask = "Implement code mode in quack with tests, run the repo's checks, " +
 		"commit on a branch named feat/code-mode, push it, and open a pull request."
@@ -54,9 +49,8 @@ func TestImplementerIsStillHeldToItsDelivery(t *testing.T) {
 	}
 }
 
-// The JUDGE must score a node against its own task too - the same
-// contamination, one stage later: it is handed the worker's full prompt as
-// "the user's question", which carries the whole request as background. A judge scoring a read-only explorer against "commit, push, open a PR" fails it for work that was never its to do.
+// The judge must score a node against its own task too: judged against the full worker prompt, a read-only
+// explorer fails for "commit, push, open a PR" work that was never its to do.
 func TestJudgeIsScopedToTheNodesOwnTask(t *testing.T) {
 	const explorerTask = "Clone goose and read how it exposes tools. Cite the files you read."
 	const fullPrompt = "BACKGROUND - the user's full request.\nImplement code mode in quack. " +

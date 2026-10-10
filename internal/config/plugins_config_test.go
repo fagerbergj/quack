@@ -1,16 +1,9 @@
 package config
 
-import (
-	"bytes"
-	"log/slog"
-	"strings"
-	"testing"
-)
+import "testing"
 
-// TestLoadPluginsBlockOmittedSeedUsesDefaults covers issue #13: a plugins:
-// block that sets root but omits seed: must still fall back to the default
-// plugin roots, not silently drop every default (Seed == nil is "omitted",
-// Seed == []string{} is "explicit empty" - see PluginsConfig.UnmarshalYAML).
+// A plugins: block that sets root but omits seed: still falls back to the default roots
+// (Seed nil is "omitted", []string{} is "explicit empty").
 func TestLoadPluginsBlockOmittedSeedUsesDefaults(t *testing.T) {
 	c, err := Load(writeTemp(t, baseConfig+`
 plugins:
@@ -46,9 +39,6 @@ plugins:
 	}
 }
 
-// TestLoadPluginsBlockRejectsUnknownField covers issue #14: the custom
-// UnmarshalYAML for the block form bypasses the decoder's KnownFields(true),
-// so it must reject unrecognized keys itself.
 func TestLoadPluginsBlockRejectsUnknownField(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+`
 plugins:
@@ -70,7 +60,7 @@ plugins:
 }
 
 // TestLoadPluginsRejectsNonDBStoreKind: plugins.store must be sqlite or
-// postgres (P3) - a qdrant/langfuse store makes no sense as a row store.
+// postgres - a qdrant/langfuse store makes no sense as a row store.
 func TestLoadPluginsRejectsNonDBStoreKind(t *testing.T) {
 	_, err := Load(writeTemp(t, `
 providers:
@@ -140,38 +130,7 @@ plugins:
 	}
 }
 
-// TestLoadPluginsBlockNoSeedFallsBackToSkillsPluginsWithoutWarning: a
-// plugins: block with no seed: key still falls through to skills.plugins
-// (issue #13's fix), so the "skills.plugins is ignored" warning must not
-// fire in that case - it would actually be used.
-func TestLoadPluginsBlockNoSeedFallsBackToSkillsPluginsWithoutWarning(t *testing.T) {
-	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
-	defer slog.SetDefault(prev)
-
-	c, err := Load(writeTemp(t, baseConfig+`
-skills:
-  plugins:
-    - .agents/local/dotagents
-plugins:
-  root: /custom/plugins/root
-`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := c.Plugins.Seed
-	if len(got) != 1 || got[0] != ".agents/local/dotagents" {
-		t.Fatalf("Plugins.Seed = %v, want skills.plugins to be used", got)
-	}
-	if strings.Contains(buf.String(), "skills.plugins is ignored") {
-		t.Fatalf("skills.plugins was actually used but the log says it was ignored:\n%s", buf.String())
-	}
-}
-
-// TestLoadPluginsRejectsDegenerateLocalSeed: a degenerate local root like "/"
-// must fail config load via ParseEntry, not surface later as an opaque
-// registry-put error.
+// A degenerate local root like "/" fails config load via ParseEntry, not as a later registry error.
 func TestLoadPluginsRejectsDegenerateLocalSeed(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+`
 plugins:
@@ -182,26 +141,8 @@ plugins:
 	}
 }
 
-func TestLoadPluginsBareListStillMeansSeed(t *testing.T) {
-	c, err := Load(writeTemp(t, baseConfig+`
-plugins:
-  - .agents/local/dotagents
-  - github:fagerbergj/ponytail@v1.4
-`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []string{".agents/local/dotagents", "github:fagerbergj/ponytail@v1.4"}
-	got := c.Plugins.Seed
-	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
-		t.Fatalf("Plugins.Seed = %v, want %v (bare list means seed:, local and github: entries alike)", got, want)
-	}
-}
-
-// TestLoadPluginsRejectsEmptyStoreURL is the adversarial-review S2
-// regression: plugins.store naming a stores[] entry with no url must fail
-// load, not silently reach pluginreg.OpenDB with an empty DSN (which, for
-// sqlite, creates a db file literally named "?_pragma=..." in the CWD).
+// plugins.store naming a stores[] entry with no url fails load: an empty sqlite DSN would create
+// a db file literally named "?_pragma=..." in the CWD.
 func TestLoadPluginsRejectsEmptyStoreURL(t *testing.T) {
 	_, err := Load(writeTemp(t, `
 providers:

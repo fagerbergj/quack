@@ -1,15 +1,15 @@
-// coverdiff gates changed-line statement coverage: lines added in
-// `diff <ref>` must sit at >= minPct covered; test files, generated
-// dirs and statement-less lines are outside the denominator.
+// coverdiff gates changed-line statement coverage at >= minPct; test files, generated dirs and
+// statement-less lines are outside the denominator.
 package main
 
 import (
 	"bufio"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -20,9 +20,8 @@ var (
 	// profile line: <file>.go:start.col,end.col numstmt count
 	profileRe = regexp.MustCompile(`^(.*)\.go:(\d+)\.(\d+),(\d+)\.(\d+) (\d+) (\d+)$`)
 	hunkRe    = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@`)
-	// The standard Go generated-code marker (golang.org/s/generatedcode): a whole line
-	// matching this in the file's leading comment block marks it generated - not
-	// anywhere in the file (see TestIsGenerated_MarkerOnlyInLeadingComments).
+	// The standard Go generated-code marker (golang.org/s/generatedcode), honored only in the leading comment
+	// block.
 	generatedRe = regexp.MustCompile(`(?m)^// Code generated .* DO NOT EDIT\.$`)
 )
 
@@ -136,7 +135,8 @@ func report(num, den int, misses map[string][]miss) bool {
 	return true
 }
 
-// relRepoPath: "github.com/fagerbergj/quack/internal/x/y" -> "internal/x/y" (no .go suffix; the diff side strips it to match).
+// relRepoPath: "github.com/fagerbergj/quack/internal/x/y" -> "internal/x/y" (no .go suffix; the diff side
+// strips it to match).
 func relRepoPath(profilePath string) string {
 	if i := strings.Index(profilePath, "quack/"); i >= 0 {
 		return profilePath[i+len("quack/"):]
@@ -184,9 +184,8 @@ func isGenerated(p string) bool {
 	return hasGeneratedHeader(p)
 }
 
-// hasGeneratedHeader reports whether p's leading comment block carries the standard
-// DO NOT EDIT marker. Only that leading block counts - a marker later in the file
-// (a string literal, a doc example) must not exempt hand-written code.
+// hasGeneratedHeader reports whether p's leading comment block carries the DO NOT EDIT marker; a marker
+// later in the file must not exempt hand-written code.
 func hasGeneratedHeader(p string) bool {
 	f, err := os.Open(p)
 	if err != nil {
@@ -208,10 +207,5 @@ func hasGeneratedHeader(p string) bool {
 }
 
 func sortedMissFiles(m map[string][]miss) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
+	return slices.Sorted(maps.Keys(m))
 }

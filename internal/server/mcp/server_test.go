@@ -11,9 +11,8 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// fakeOrch stands in for *orchestrator.Orchestrator: the first run() call for a
-// session ends with no token (paused) and pending() reports a question; once
-// answered is set, run() completes with a token derived from the message it was given, and pending() reports no question.
+// fakeOrch stands in for the orchestrator: a session's first run pauses with a pending question;
+// once answered is set, run completes with a token derived from the message.
 type fakeOrch struct {
 	question string
 	answered bool
@@ -36,9 +35,8 @@ func (f *fakeOrch) pending(_ context.Context, _ string) (orchestrator.PendingQue
 	return orchestrator.PendingQuestion{Message: f.question}, true
 }
 
-// connect wires newAskHandler's ask tool onto a fresh in-memory-transport MCP
-// server/client pair backed by f, mirroring the go-sdk's own mrtr_test.go
-// mustConnect helper.
+// connect wires the ask tool onto an in-memory MCP server/client pair backed by f,
+// like the go-sdk's mrtr_test.go mustConnect.
 func connect(t *testing.T, f *fakeOrch, clientOpts *mcp.ClientOptions) *mcp.ClientSession {
 	t.Helper()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "quack-test", Version: "0.0.0"}, nil)
@@ -71,9 +69,8 @@ func textOf(res *mcp.CallToolResult) string {
 	return tc.Text
 }
 
-// TestAskHandler_ManualRoundTrip drives the MRTR round trip by hand (the
-// client's own multi-round-trip middleware disabled), mirroring the go-sdk's
-// TestMultiRoundTrip_ManualRetry: the first call surfaces input_required with the question and an echoable RequestState; the caller retries with the elicitation response.
+// TestAskHandler_ManualRoundTrip drives MRTR by hand (client middleware disabled): the first call
+// surfaces input_required with an echoable RequestState, and the retry carries the elicitation answer.
 func TestAskHandler_ManualRoundTrip(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -141,9 +138,8 @@ func TestAskHandler_ManualRoundTrip(t *testing.T) {
 	}
 }
 
-// TestAskHandler_PlainCallUnaffected proves a run that never needs input
-// behaves exactly as before MRTR existed: no InputRequests, plain content.
-// This is the common case, unconditionally on the wire for every client.
+// TestAskHandler_PlainCallUnaffected: a run that never needs input returns plain content
+// with no InputRequests, the common case for every client.
 func TestAskHandler_PlainCallUnaffected(t *testing.T) {
 	f := &fakeOrch{answered: true} // never pauses
 	cs := connect(t, f, nil)
@@ -166,9 +162,8 @@ func TestAskHandler_PlainCallUnaffected(t *testing.T) {
 	}
 }
 
-// TestAskHandler_NonMRTRClientUnaffected proves a client that never implements
-// the SEP-2322 retry loop itself - just an ElicitationHandler, the pre-MRTR way
-// of answering a server question - still gets one complete answer from a single CallTool call: the go-sdk's default client-side middleware fulfils the elicitation and retries underneath it, so existing callers built against this SDK need no code change to keep working.
+// TestAskHandler_NonMRTRClientUnaffected: a client with only an ElicitationHandler still gets one answer
+// from a single CallTool, since the go-sdk's default middleware fulfils and retries underneath.
 func TestAskHandler_NonMRTRClientUnaffected(t *testing.T) {
 	f := &fakeOrch{question: "which color?"}
 	cs := connect(t, f, &mcp.ClientOptions{
@@ -195,9 +190,8 @@ func TestAskHandler_NonMRTRClientUnaffected(t *testing.T) {
 	}
 }
 
-// TestAskHandler_NoElicitationSupport_ErrorsCleanly covers the one client that
-// is NOT unaffected: one with genuinely no way to answer a clarifying question
-// (no ElicitationHandler at all). It gets a clean CallTool error, not a hang or a silently wrong/partial answer - the pre-MRTR failure mode for this case.
+// TestAskHandler_NoElicitationSupport_ErrorsCleanly: a client with no ElicitationHandler gets a clean
+// CallTool error, not a hang or a partial answer.
 func TestAskHandler_NoElicitationSupport_ErrorsCleanly(t *testing.T) {
 	f := &fakeOrch{question: "which color?"}
 	cs := connect(t, f, nil)

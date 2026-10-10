@@ -14,25 +14,20 @@ import (
 	"github.com/fagerbergj/quack/internal/inference/openaimodel"
 )
 
-// hydratingModel swaps artifactref reference parts for real bytes just
-// before the model sees them. tracedModel wraps THIS (factory.go), so its
-// gen_ai ledger logs the unmodified, reference-only request.
+// hydratingModel swaps artifactref parts for real bytes; tracedModel wraps it, so the ledger
+// logs the reference-only request.
 type hydratingModel struct {
 	model.LLM
 	artifacts artifact.Service
 }
 
-// HydratingModelForTesting wraps m like NewModel's "openai" branch does, for
-// tests that need hydration without the full factory (config.ProviderConfig
-// has no slot for a fake model.LLM).
+// HydratingModelForTesting wraps m like NewModel does; ProviderConfig has no slot for a fake LLM.
 func HydratingModelForTesting(m model.LLM, artifacts artifact.Service) model.LLM {
 	return &hydratingModel{LLM: m, artifacts: artifacts}
 }
 
-// GenerateContent must never mutate req in place: tracedModel (the caller,
-// factory.go) holds the SAME req pointer and logs it via emitChatEvent AFTER
-// this returns - an in-place hydrate would leak real bytes into that ledger
-// entry. hydrateRequest returns a distinct copy instead.
+// GenerateContent never mutates req: tracedModel logs the same pointer afterwards, and an
+// in-place hydrate would leak real bytes into the ledger.
 func (h *hydratingModel) GenerateContent(ctx context.Context, req *model.LLMRequest, stream bool) iter.Seq2[*model.LLMResponse, error] {
 	sendReq := req
 	if h.artifacts != nil {
@@ -43,7 +38,6 @@ func (h *hydratingModel) GenerateContent(ctx context.Context, req *model.LLMRequ
 	return h.LLM.GenerateContent(ctx, sendReq, stream)
 }
 
-// Embed passes through - embedding requests carry no attachment parts.
 func (h *hydratingModel) Embed(ctx context.Context, texts []string) ([][]float32, error) {
 	e, ok := h.LLM.(Embedder)
 	if !ok {
@@ -52,8 +46,7 @@ func (h *hydratingModel) Embed(ctx context.Context, texts []string) ([][]float32
 	return e.Embed(ctx, texts)
 }
 
-// EmbedWithUsage passes through like Embed, promoting the inner model's usage
-// reporting (openaimodel.OpenAIModel) so tracedModel can reach it through this layer.
+// EmbedWithUsage lets tracedModel reach the inner model's usage through this layer.
 func (h *hydratingModel) EmbedWithUsage(ctx context.Context, texts []string) ([][]float32, openaimodel.EmbedUsage, error) {
 	e, ok := h.LLM.(usageEmbedder)
 	if !ok {
@@ -62,9 +55,7 @@ func (h *hydratingModel) EmbedWithUsage(ctx context.Context, texts []string) ([]
 	return e.EmbedWithUsage(ctx, texts)
 }
 
-// hydrateRequest builds a shallow copy of req with reference parts replaced
-// by real bytes, touching neither req nor its Contents slice - see the
-// GenerateContent doc comment for why that matters.
+// hydrateRequest returns a shallow copy, touching neither req nor its Contents slice.
 func hydrateRequest(ctx context.Context, svc artifact.Service, req *model.LLMRequest) (*model.LLMRequest, bool) {
 	newContents := make([]*genai.Content, len(req.Contents))
 	anyChanged := false

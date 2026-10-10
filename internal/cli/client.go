@@ -23,17 +23,15 @@ import (
 	"github.com/fagerbergj/quack/internal/schema"
 )
 
-// Client talks to a quack server's REST + SSE API. The HTTP client has no
-// per-request timeout on purpose: a research run streams for minutes - request
-// lifetime is bounded by the caller's context instead.
+// Client talks to a quack server's REST + SSE API. No per-request HTTP timeout on purpose:
+// a research run streams for minutes, so the caller's context bounds request lifetime.
 type Client struct {
 	BaseURL string
 	HTTP    *http.Client
 }
 
-// NewClient resolves the server URL (override → active registry → localhost)
-// and returns a ready client. override is the --server flag value ("" to use
-// the active server from ~/.quack/servers.yaml). If the resolved URL matches a registered server that has a stored OIDC session (`quack server login`), every request attaches its access token as a Bearer credential - refreshed first if it's at or near expiry. ctx bounds that refresh call only; it does not outlive NewClient.
+// NewClient resolves the server URL (override, then active registry, then localhost). A registered server
+// with a stored OIDC session gets a Bearer token, refreshed if near expiry; ctx bounds only that refresh.
 func NewClient(ctx context.Context, override string) (*Client, error) {
 	cc, err := LoadClient()
 	if err != nil {
@@ -117,9 +115,8 @@ func (c *Client) UpdateChat(ctx context.Context, id string, title *string, archi
 	return out, json.Unmarshal(respBody, &out)
 }
 
-// ListRecordings returns every session the ledger has a recording entry for
-// (server orders however LedgerStore.List does; today that's directory
-// order, unsorted). 404 (recording disabled) surfaces as ErrNotFound.
+// ListRecordings returns every session with a ledger recording, unsorted.
+// 404 (recording disabled) surfaces as ErrNotFound.
 func (c *Client) ListRecordings(ctx context.Context) ([]schema.RecordingSummary, error) {
 	var out schema.RecordingList
 	if err := c.getJSON(ctx, "/api/v1/recordings", &out); err != nil {
@@ -149,9 +146,8 @@ func (c *Client) ListDecisions(ctx context.Context, f DecisionFilter, withState 
 	return out, err
 }
 
-// GetVersion fetches the server's build version via GET /api/v1/config, for
-// `quack server list`'s optional version column. "" if the server predates
-// the version field.
+// GetVersion fetches the server's build version via GET /api/v1/config;
+// "" if the server doesn't report one.
 func (c *Client) GetVersion(ctx context.Context) (string, error) {
 	var cfg schema.ClientConfig
 	if err := c.getJSON(ctx, "/api/v1/config", &cfg); err != nil {
@@ -256,13 +252,11 @@ func (c *Client) GetMemory(ctx context.Context, id string) (schema.Memory, error
 // ForgetMemory invalidates (soft-deletes) one memory. 404 (unknown id)
 // surfaces as ErrNotFound.
 func (c *Client) ForgetMemory(ctx context.Context, memoryID, reason string) error {
-	b, _ := json.Marshal(schema.DeleteMemoryBody{Reason: &reason})
-	return c.sendBody(ctx, http.MethodDelete, "/api/v1/memories/"+memoryID, b)
+	return c.sendBody(ctx, http.MethodDelete, "/api/v1/memories/"+memoryID, schema.DeleteMemoryBody{Reason: &reason})
 }
 
-// SweepMemories runs the forgetting-rule sweep (epic #1255 P3) on demand,
-// dryRun reporting without mutating anything. dedupe switches to the
-// per-bucket similarity dedupe sweep instead (issue #1269); apply then controls whether it writes merges or only reports clusters.
+// SweepMemories runs the forgetting-rule sweep on demand. dedupe switches to the per-bucket similarity
+// dedupe sweep; dryRun/apply control whether either writes or only reports.
 func (c *Client) SweepMemories(ctx context.Context, dryRun, dedupe, apply bool) (schema.SweepMemoriesResult, error) {
 	var out schema.SweepMemoriesResult
 	err := c.postJSON(ctx, "/api/v1/memories/sweep", schema.SweepMemoriesBody{DryRun: &dryRun, Dedupe: &dedupe, Apply: &apply}, &out)
@@ -270,7 +264,7 @@ func (c *Client) SweepMemories(ctx context.Context, dryRun, dedupe, apply bool) 
 }
 
 // RescopeMemories moves role:* memories with a resolvable GitHub-origin chat
-// into their repo:* bucket (#1262). apply=false only tallies.
+// into their repo:* bucket. apply=false only tallies.
 func (c *Client) RescopeMemories(ctx context.Context, apply bool) (schema.RescopeReport, error) {
 	var out schema.RescopeReport
 	err := c.postJSON(ctx, "/api/v1/memories/rescope", schema.RescopeMemoriesBody{Apply: &apply}, &out)
@@ -300,39 +294,34 @@ func (c *Client) DeleteChat(ctx context.Context, id string) error {
 	return c.send(ctx, http.MethodDelete, "/api/v1/chats/"+id)
 }
 
-// CancelRun cancels the chat's active run by response id (the id surfaced in
-// the run's opening response_created SSE event) - only legal while that
-// response is the active run; a stale/finished id 404s.
+// CancelRun cancels the chat's active run by response id (from its response_created SSE event);
+// a stale or finished id 404s.
 func (c *Client) CancelRun(ctx context.Context, chatID, responseID string) error {
-	return c.putStatus(ctx, "/api/v1/chats/"+chatID+"/responses/"+responseID+"/status",
+	return c.sendBody(ctx, http.MethodPut, "/api/v1/chats/"+chatID+"/responses/"+responseID+"/status",
 		schema.ResponseStatusUpdateBody{Status: schema.Cancelled})
 }
 
-// CancelNode stops one running node of a chat's active run; the rest of the DAG
-// continues (continue-but-warn). No-op if no such node is active.
+// CancelNode stops one non-terminal node (running, queued or paused); the rest of the DAG continues.
 func (c *Client) CancelNode(ctx context.Context, chatID, nodeID string) error {
-	return c.putStatus(ctx, "/api/v1/chats/"+chatID+"/nodes/"+nodeID+"/status",
-		schema.NodeStatusUpdateBody{Status: schema.NodeStatusCancelled})
+	return c.send(ctx, http.MethodPost, "/api/v1/chats/"+chatID+"/nodes/"+nodeID+"/stop")
 }
 
-// PauseNode suspends one running node at its next turn boundary, keeping its
-// accumulated work (resumable). No-op if no such node is active.
-// ponytail note: pause is a real, working feature (not a stub), but resume is a FRESH re-run (like retry), not a literal frozen-thread checkpoint - ADK v2's static workflow graph needs the node to return to unblock its dependents, so there is no way to freeze it mid-tool-call the way an ask_user HITL pause does. See dag.Executor.PauseNode's own note.
+// PauseNode suspends a running node at its next turn boundary. Resume is a fresh re-run, not a frozen
+// checkpoint: ADK's static graph needs the node to return to unblock its dependents.
 func (c *Client) PauseNode(ctx context.Context, chatID, nodeID string) error {
-	return c.putStatus(ctx, "/api/v1/chats/"+chatID+"/nodes/"+nodeID+"/status",
-		schema.NodeStatusUpdateBody{Status: schema.NodeStatusPaused})
+	return c.sendBody(ctx, http.MethodPut, "/api/v1/chats/"+chatID+"/nodes/"+nodeID+"/status",
+		schema.NodeStatusUpdateBody{Status: schema.NodeStatusUpdateBodyStatusPaused})
 }
 
 // ResumeNode resumes a paused node: a fresh re-run (like retry), reusing the
 // rest of the plan's stored outputs. Only legal from `paused`.
 func (c *Client) ResumeNode(ctx context.Context, chatID, nodeID string) error {
-	return c.putStatus(ctx, "/api/v1/chats/"+chatID+"/nodes/"+nodeID+"/status",
-		schema.NodeStatusUpdateBody{Status: schema.NodeStatusRunning})
+	return c.sendBody(ctx, http.MethodPut, "/api/v1/chats/"+chatID+"/nodes/"+nodeID+"/status",
+		schema.NodeStatusUpdateBody{Status: schema.NodeStatusUpdateBodyStatusRunning})
 }
 
-// QueueNodeMessage appends a message to a running node's queue, delivered at
-// its next turn boundary (never mid-turn) - replaces the old interrupt-based
-// SteerNode. Returns the created queued message (its id, for later editing or removal). 404 if the node isn't currently running.
+// QueueNodeMessage queues a message for a running node, delivered at its next turn boundary.
+// 404 if the node isn't currently running.
 func (c *Client) QueueNodeMessage(ctx context.Context, chatID, nodeID, text string) (schema.QueuedMessage, error) {
 	var out schema.QueuedMessage
 	b, _ := json.Marshal(schema.QueueMessageBody{Message: text})
@@ -352,8 +341,7 @@ func (c *Client) QueueNodeMessage(ctx context.Context, chatID, nodeID, text stri
 // EditQueuedMessage rewrites a not-yet-delivered queued message. Errors
 // (surfaced as a 409) if it was already delivered.
 func (c *Client) EditQueuedMessage(ctx context.Context, chatID, nodeID, messageID, text string) error {
-	b, _ := json.Marshal(schema.QueueMessageBody{Message: text})
-	return c.sendBody(ctx, http.MethodPatch, "/api/v1/chats/"+chatID+"/nodes/"+nodeID+"/queue/"+messageID, b)
+	return c.sendBody(ctx, http.MethodPatch, "/api/v1/chats/"+chatID+"/nodes/"+nodeID+"/queue/"+messageID, schema.QueueMessageBody{Message: text})
 }
 
 // RemoveQueuedMessage drops a not-yet-delivered queued message. Errors
@@ -365,14 +353,14 @@ func (c *Client) RemoveQueuedMessage(ctx context.Context, chatID, nodeID, messag
 // EditNodeTask replaces a not-yet-started node's task text. Errors (surfaced
 // as a 409) once the node has started - its prompt is then immutable.
 func (c *Client) EditNodeTask(ctx context.Context, chatID, nodeID, task string) error {
-	b, _ := json.Marshal(schema.EditNodeTaskBody{Task: task})
-	return c.sendBody(ctx, http.MethodPatch, "/api/v1/chats/"+chatID+"/nodes/"+nodeID, b)
+	return c.sendBody(ctx, http.MethodPatch, "/api/v1/chats/"+chatID+"/nodes/"+nodeID, schema.EditNodeTaskBody{Task: task})
 }
 
-// sendBody issues a request with a JSON body and discards the response;
+// sendBody issues a request with body JSON-encoded and discards the response;
 // 404 → ErrNotFound, mirroring send.
-func (c *Client) sendBody(ctx context.Context, method, path string, body []byte) error {
-	status, respBody, err := c.Request(ctx, method, path, bytes.NewReader(body))
+func (c *Client) sendBody(ctx context.Context, method, path string, body any) error {
+	b, _ := json.Marshal(body)
+	status, respBody, err := c.Request(ctx, method, path, bytes.NewReader(b))
 	if err != nil {
 		return err
 	}
@@ -385,43 +373,18 @@ func (c *Client) sendBody(ctx context.Context, method, path string, body []byte)
 	return nil
 }
 
-// RetryNode re-queues a finished node (done, failed, or cancelled) - it and
-// every node downstream re-run, reusing the stored outputs of all other nodes.
-// guidance is optional and folded into the node's task.
+// RetryNode re-queues a finished node; it and everything downstream re-run, reusing all other nodes'
+// stored outputs. guidance is optional and folded into the node's task.
 func (c *Client) RetryNode(ctx context.Context, chatID, nodeID, guidance string) error {
-	body := schema.NodeStatusUpdateBody{Status: schema.NodeStatusQueued}
+	body := schema.NodeStatusUpdateBody{Status: schema.NodeStatusUpdateBodyStatusQueued}
 	if guidance != "" {
 		body.Guidance = &guidance
 	}
-	return c.putStatus(ctx, "/api/v1/chats/"+chatID+"/nodes/"+nodeID+"/status", body)
+	return c.sendBody(ctx, http.MethodPut, "/api/v1/chats/"+chatID+"/nodes/"+nodeID+"/status", body)
 }
 
-// putStatus PUTs body (a *StatusUpdateBody schema type) to path - the shared
-// shape of the node/response status-transition endpoints.
-func (c *Client) putStatus(ctx context.Context, path string, body any) error {
-	b, _ := json.Marshal(body)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.BaseURL+path, bytes.NewReader(b))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		return c.reachErr(err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode == http.StatusNotFound {
-		return wrapNotFound(errBody(resp.Body))
-	}
-	if resp.StatusCode >= 400 {
-		return httpFailure(http.MethodPut, path, resp.StatusCode, readAll(resp.Body))
-	}
-	return nil
-}
-
-// errBody extracts a human-readable reason from an error response body: the
-// JSON "error" field (plus "allowed" statuses when present, the TransitionError
-// shape), else the raw body text. "" when the body is empty/unreadable.
+// errBody extracts a readable reason from an error body: the JSON "error" field (plus "allowed"
+// statuses when present), else the raw text; "" when empty or unreadable.
 func errBody(r io.Reader) string {
 	raw, err := io.ReadAll(io.LimitReader(r, 4096))
 	if err != nil || len(bytes.TrimSpace(raw)) == 0 {
@@ -506,9 +469,8 @@ func readAll(r io.Reader) []byte {
 	return b
 }
 
-// FetchRecording downloads a chat's ledger recording bundle (ZIP) - the
-// fetch endpoint GET /api/v1/chats/{chat_id}/recording (#601), resolved into
-// a local bundle file for `quack eval` and `quack experiment run`. ErrNotFound when the chat has no recording (never recorded, GC'd by retention, or recording disabled).
+// FetchRecording downloads a chat's ledger recording bundle (ZIP) for `quack eval` and
+// `quack experiment run`. ErrNotFound when the chat has no recording.
 func (c *Client) FetchRecording(ctx context.Context, chatID string) ([]byte, error) {
 	status, body, err := c.Request(ctx, http.MethodGet, "/api/v1/chats/"+chatID+"/recording", nil)
 	if err != nil {
@@ -536,9 +498,8 @@ func (c *Client) CreateChat(ctx context.Context, systemPrompt string) (string, e
 	return out.Id, nil
 }
 
-// Request performs an arbitrary REST call and returns the status code and the
-// response body. path may be absolute ("/health") or root-relative ("health");
-// body is nil for none (Content-Type defaults to JSON when a body is sent).
+// Request performs an arbitrary REST call and returns the status and body. path may omit the leading
+// "/"; a non-nil body is sent as JSON.
 func (c *Client) Request(ctx context.Context, method, path string, body io.Reader) (int, []byte, error) {
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
@@ -559,9 +520,8 @@ func (c *Client) Request(ctx context.Context, method, path string, body io.Reade
 	return resp.StatusCode, b, err
 }
 
-// RunAPI is `quack api`: a raw REST passthrough (à la `gh api`). It writes the
-// response body to out and returns a non-nil error on a 4xx/5xx so the command
-// exits non-zero. body is the request body (nil for none).
+// RunAPI is `quack api`, a raw REST passthrough (like `gh api`): it writes the response body to out
+// and returns an error on 4xx/5xx so the command exits non-zero.
 func RunAPI(ctx context.Context, out io.Writer, server, method, path string, body io.Reader) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {
@@ -585,15 +545,13 @@ func RunAPI(ctx context.Context, out io.Writer, server, method, path string, bod
 type SSEEvent struct {
 	Name string
 	Data json.RawMessage
-	// ID is the SSE `id:` field, if any - the durable-log seq a reconnecting
-	// subscriber resumes past via Last-Event-ID (set by subscribeSSE events
-	// only; the POST send path doesn't carry ids).
+	// ID is the SSE `id:` field (the durable-log seq a reconnect resumes past via Last-Event-ID);
+	// only subscribeSSE events carry one.
 	ID string
 }
 
-// Reconnect tuning for subscribeSSE's dropped-connection retry: capped
-// exponential backoff so a dead server/proxy isn't hammered, bounded so a
-// permanently unreachable server eventually surfaces as an error instead of retrying forever.
+// Reconnect backoff for subscribeSSE: capped so a dead server isn't hammered, bounded so a
+// permanently unreachable one eventually surfaces as an error.
 const (
 	maxSSEReconnectAttempts = 6
 	sseReconnectBaseDelay   = time.Second
@@ -610,18 +568,16 @@ var sseReconnectDelay = func(attempt int) time.Duration {
 	return d
 }
 
-// Subscribe attaches to a chat's live (or just-finished) run via the standalone
-// GET stream endpoint - for resuming a run started elsewhere, or by this client
-// before a reconnect. The hub replays the events so far, then tails live. Same channel contract as Stream.
+// Subscribe attaches to a chat's live or just-finished run via the GET stream endpoint: the hub
+// replays events so far, then tails live. Same channel contract as Stream.
 func (c *Client) Subscribe(ctx context.Context, chatID string) <-chan SSEEvent {
 	return c.streamChan(ctx, func(onEvent func(SSEEvent) error) error {
 		return c.subscribeSSE(ctx, chatID, onEvent)
 	})
 }
 
-// streamChan runs an SSE-producing call on a goroutine and pumps its events to a
-// channel, closing on completion/cancel and surfacing a transport error as a
-// final error event. Shared by Stream (POST) and Subscribe (GET).
+// streamChan pumps an SSE-producing call's events to a channel, closing on completion or cancel
+// and surfacing a transport error as a final error event.
 func (c *Client) streamChan(ctx context.Context, run func(onEvent func(SSEEvent) error) error) <-chan SSEEvent {
 	ch := make(chan SSEEvent, 64)
 	go func() {
@@ -645,9 +601,8 @@ func (c *Client) streamChan(ctx context.Context, run func(onEvent func(SSEEvent)
 	return ch
 }
 
-// subscribeSSE GETs the chat's stream endpoint and dispatches each SSE event to
-// onEvent until the stream ends normally (a `done` event was seen) or ctx is
-// cancelled. A connection dropped mid-run - no `done` seen, whether the body just closed or the request itself failed - is retried with capped exponential backoff, resuming past the last event actually delivered via Last-Event-ID (the server's durable event log, M8), so `chat show -f` recovers from a transient break without the caller doing anything.
+// subscribeSSE dispatches the chat stream's events to onEvent until a `done` event or ctx cancel. A drop
+// before `done` is retried with backoff, resuming via Last-Event-ID so `chat show -f` survives breaks.
 func (c *Client) subscribeSSE(ctx context.Context, chatID string, onEvent func(SSEEvent) error) error {
 	var lastID string
 	var lastErr error
@@ -725,9 +680,8 @@ func (c *Client) SendMessage(ctx context.Context, chatID, content string, onEven
 	return parseSSE(resp.Body, onEvent)
 }
 
-// SendMessageWithFiles posts content plus file attachments (image/audio) as
-// multipart/form-data (field "content" + repeated "files") and streams the SSE
-// response. The per-file Content-Type is inferred from the extension so the server threads the right MIME to a media-capable node. Used by `-p --attach`.
+// SendMessageWithFiles posts content plus attachments as multipart/form-data and streams the SSE response.
+// Each file's Content-Type comes from its extension so a media-capable node gets the right MIME.
 func (c *Client) SendMessageWithFiles(ctx context.Context, chatID, content string, filePaths []string, onEvent func(SSEEvent) error) error {
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
@@ -805,9 +759,8 @@ func (c *Client) reachErr(err error) error {
 	return fmt.Errorf("couldn't reach quack server at %s: %w\n(is `quack server run` up? check with `quack server list`)", c.BaseURL, err)
 }
 
-// parseSSE reads an SSE body and dispatches each event to onEvent. Framing:
-// `event:`/`id:`/`data:` lines, events separated by a blank line; multiple
-// data lines join with newlines (per the SSE spec); `:` comment lines are ignored.
+// parseSSE dispatches each SSE event in r to onEvent: `event:`/`id:`/`data:` lines, blank-line separated;
+// multiple data lines join with newlines (per spec) and `:` comment lines are ignored.
 func parseSSE(r io.Reader, onEvent func(SSEEvent) error) error {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024) // a tool_result event can be large
@@ -844,7 +797,3 @@ func parseSSE(r io.Reader, onEvent func(SSEEvent) error) error {
 	}
 	return flush() // a final event may not be terminated by a blank line
 }
-
-// PrintPrompt (`quack -p`) and RunChatSend (`quack chat send`) live in send.go,
-// built on SendMessage/SendMessageWithFiles below - they share one
-// classify-the-outcome path (streamState) so their pause/failure semantics agree.

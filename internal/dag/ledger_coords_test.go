@@ -1,18 +1,9 @@
-// Package dag_test: needs both the real dag.Executor/gate machinery and
-// internal/tools.Build; internal/tools already imports internal/dag, so a
-// same-package test can't import tools back without a cycle - only an
-// external test package can.
-//
-// Pins a real regression: workflow.RunNode's dynamic-child scheduling does
-// NOT propagate a context.WithValue stamp down to the model/tool call
-// underneath it, so worker-round ledger events lost node/agent attribution
-// until tracedModel/emitTool.SetLedgerCoords plus newGatedNode's
-// ledger.StampCoords carried coordinates through explicitly.
+// External test package: internal/tools imports internal/dag, so only dag_test can use
+// tools.Build. RunNode drops ctx values, so coords must be stamped explicitly.
 package dag_test
 
 import (
 	"context"
-	"iter"
 	"testing"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -35,9 +26,7 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// ledgerCaptureExporter records every emitted log record - the simplest
-// possible sdklog.Exporter for inspecting attrs directly (mirrors
-// internal/inference/emit_test.go's captureExporter).
+// ledgerCaptureExporter records every emitted log record.
 type ledgerCaptureExporter struct{ records []sdklog.Record }
 
 func (c *ledgerCaptureExporter) Export(_ context.Context, records []sdklog.Record) error {
@@ -47,9 +36,8 @@ func (c *ledgerCaptureExporter) Export(_ context.Context, records []sdklog.Recor
 func (c *ledgerCaptureExporter) Shutdown(context.Context) error   { return nil }
 func (c *ledgerCaptureExporter) ForceFlush(context.Context) error { return nil }
 
-// ledgerAttrsOf collects only the STRING-valued attributes (every field
-// this test asserts on is one) - AsString() on a non-string Kind (e.g. the
-// Slice-valued gen_ai.tool.definitions) logs a spurious internal warning.
+// ledgerAttrsOf collects only string attributes: AsString() on another Kind logs a
+// spurious internal warning.
 func ledgerAttrsOf(r sdklog.Record) map[string]string {
 	out := map[string]string{}
 	r.WalkAttributes(func(kv attribute.KeyValue) bool {
@@ -61,89 +49,21 @@ func ledgerAttrsOf(r sdklog.Record) map[string]string {
 	return out
 }
 
-// lcScopedAgent is a minimal nodeScopedWorker double: ForNode returns the
-// same worker/model/tools it was built with, so buildGateNodes' scoped path
-// (the one production always takes) is what stamps ledger coords here too.
+// lcScopedAgent's ForNode returns its fixed worker/model/tools, so the scoped path
+// production always takes is what stamps ledger coords.
 type lcScopedAgent struct {
 	adkagent.Agent
 	model model.LLM
 	tools []tool.Tool
+	hooks *tools.Hooks
 }
 
-func (a lcScopedAgent) ForNode(context.Context, string, string, func() string, artifact.Service, string, string, string, string, func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, func(int, string, string, string), func(context.Context) artifactsrc.Artifact, func(bool), error) {
-	return a.Agent, a.model, a.tools, nil, nil, func(bool) {}, nil
+func (a lcScopedAgent) ForNode(context.Context, string, string, func() string, artifact.Service, string, string, string, string, func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, ledger.CoordSetter, func(int, string, string, string), func(context.Context) artifactsrc.Artifact, func(bool), error) {
+	return a.Agent, a.model, a.tools, a.hooks, nil, nil, func(bool) {}, nil
 }
 
-// ledgerCoordsStub calls current_date once, answers, and passes the judge (verdict 0.9) -
-// the shortest path producing one chat AND one execute_tool event. Local duplicate of dag's
-// unexported gCall/gText/gHasTool stub helpers (see graphrun_test.go's identical note).
-type ledgerCoordsStub struct{}
-
-func (ledgerCoordsStub) Name() string { return "ledgerCoordsStub" }
-
-func (ledgerCoordsStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		switch {
-		case lcHasTool(req, "submit_verdict"):
-			yield(lcCall("submit_verdict", map[string]any{"score": 0.9, "feedback": "fine"}), nil)
-		case lcHasFuncResponse(req, "current_date"):
-			yield(lcText("today's date, as reported by the tool, is noted"), nil)
-		default:
-			yield(lcCall("current_date", map[string]any{}), nil)
-		}
-	}
-}
-
-func lcHasTool(req *model.LLMRequest, name string) bool {
-	if req.Config == nil {
-		return false
-	}
-	for _, tl := range req.Config.Tools {
-		if tl == nil {
-			continue
-		}
-		for _, fd := range tl.FunctionDeclarations {
-			if fd != nil && fd.Name == name {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func lcHasFuncResponse(req *model.LLMRequest, name string) bool {
-	for _, c := range req.Contents {
-		if c == nil {
-			continue
-		}
-		for _, p := range c.Parts {
-			if p != nil && p.FunctionResponse != nil && p.FunctionResponse.Name == name {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func lcText(s string) *model.LLMResponse {
-	return &model.LLMResponse{
-		Content:      &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: s}}},
-		FinishReason: genai.FinishReasonStop,
-		TurnComplete: true,
-	}
-}
-
-func lcCall(name string, args map[string]any) *model.LLMResponse {
-	return &model.LLMResponse{
-		Content:      &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{Name: name, Args: args}}}},
-		FinishReason: genai.FinishReasonStop,
-		TurnComplete: true,
-	}
-}
-
-// TestRunPlanAsGraph_LedgerCoordsReachModelAndTool drives one gated node through the
-// production entry point (dag.Executor.RunPlanAsGraph, the same call serve.go makes) and
-// asserts both "chat" and "execute_tool" ledger events carry the run's coordinates.
+// Through the production entry point, both "chat" and "execute_tool" ledger events carry
+// the run's coordinates.
 func TestRunPlanAsGraph_LedgerCoordsReachModelAndTool(t *testing.T) {
 	capExp := &ledgerCaptureExporter{}
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
@@ -151,26 +71,28 @@ func TestRunPlanAsGraph_LedgerCoordsReachModelAndTool(t *testing.T) {
 	defer restore()
 
 	// The SAME wrapping seams production uses: inference.NewModel always
-	// wraps in tracedModel; tools.Build always wraps a builtin in emitTool.
-	stub := ledgerCoordsStub{}
+	// wraps in tracedModel; a builtin's ledger row comes from its tools.Hooks.
+	stub := dateToolLLM("today's date, as reported by the tool, is noted")
 	workerModel := inference.TracedModelForTesting(stub, "ledger-coords-model")
 	builtins, err := tools.Build([]string{"current_date"}, tools.Deps{})
 	if err != nil {
 		t.Fatalf("tools.Build: %v", err)
 	}
 
-	worker, err := llmagent.New(llmagent.Config{
+	hooks := tools.NewHooks(tools.Deps{}, 0)
+	hooks.Set(tools.HookBuilt, builtins...)
+	cfg := llmagent.Config{
 		Name: "w", Model: workerModel, Description: "w",
 		Instruction: "ROLE:w Answer, calling current_date first.", Tools: builtins,
-	})
+	}
+	hooks.Wire(&cfg)
+	worker, err := llmagent.New(cfg)
 	if err != nil {
 		t.Fatalf("llmagent.New: %v", err)
 	}
 
-	// Production always dispatches through a nodeScopedWorker (nativeAgent's
-	// ForNode) so ledger.StampCoords reaches the tools actually invoked;
-	// mirror that here rather than relying on the plain agent.
-	scoped := lcScopedAgent{Agent: worker, model: workerModel, tools: builtins}
+	// Production dispatches through a nodeScopedWorker, so StampCoords reaches the invoked tools.
+	scoped := lcScopedAgent{Agent: worker, model: workerModel, tools: builtins, hooks: hooks}
 
 	ex := dag.NewExecutor(session.InMemoryService(),
 		map[string]adkagent.Agent{"w": scoped},
@@ -182,9 +104,8 @@ func TestRunPlanAsGraph_LedgerCoordsReachModelAndTool(t *testing.T) {
 	const chatID = "ledger-coords-chat"
 	plan := dag.Plan{ID: "t", UserMessage: "what's today's date?", Nodes: []dag.Node{{ID: "n1", AgentName: "w", Task: "answer"}}}
 
-	// Seed the run's PARTIAL coords the way production does (orchestrator.go stamps
-	// ChatID/User/Source before any node runs); a bare context is what let the #1039
-	// broken coords-precedence fix through - node/agent/round dropped, test still passing.
+	// Seed partial coords as orchestrator.go does; a bare ctx let a broken
+	// coords-precedence fix pass.
 	ctx := stream.WithYield(
 		ledger.WithCoords(context.Background(), ledger.Coords{ChatID: chatID, User: "u", Source: "ui"}),
 		func(stream.SSEEvent) {})

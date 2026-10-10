@@ -78,9 +78,8 @@ var loadSchemas = sync.OnceValues(func() (*schemas, error) {
 	return out, nil
 })
 
-// flattenCatalog moves the catalog's "components"/"functions" maps into $defs
-// (jsonschema-go only follows JSON Pointers through schema keywords) and takes
-// the $id the spec's relative "catalog.json" refs resolve to. Returns the component names.
+// flattenCatalog moves the catalog's components/functions into $defs (jsonschema-go follows pointers only through
+// schema keywords) and sets the $id its relative refs resolve to. Returns the component names.
 func flattenCatalog(cat map[string]any) ([]string, error) {
 	defs, _ := cat["$defs"].(map[string]any)
 	comps, _ := cat["components"].(map[string]any)
@@ -138,9 +137,8 @@ func allowedProps(defs map[string]map[string]any, comp map[string]any) []string 
 	return slices.Sorted(maps.Keys(set))
 }
 
-// Validate checks s against the v0.9.1 message schema and quack's catalog
-// plus component integrity, including the createSurface/updateComponents/
-// updateDataModel envelope a client would receive. The error names the first problem.
+// Validate checks s, wrapped in the envelope a client receives, against the v0.9.1 schema, quack's catalog,
+// and component integrity. The error names the first problem.
 func Validate(s Surface) error {
 	if err := CheckSurfaceID(s.SurfaceID); err != nil {
 		return err

@@ -49,19 +49,8 @@ func (s *probeStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ 
 	}
 }
 
-type passJudge struct{}
-
-func (*passJudge) Name() string { return "passJudge" }
-func (*passJudge) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		yield(atCall("submit_verdict", map[string]any{"score": 0.9, "feedback": ""}), nil)
-	}
-}
-
-// TestNodeOverA2A_ReusedAcrossSeparateRunPlanAsGraphInvocations probes whether
-// two SEPARATE top-level RunPlanAsGraph calls (simulating two separate plan
-// executions on different chat turns) for the SAME node identity see the
-// same remote session history, when nothing deletes the session in between.
+// Probes whether two separate RunPlanAsGraph calls for the same node identity see the same
+// remote session history when nothing deletes it in between.
 func TestNodeOverA2A_ReusedAcrossSeparateRunPlanAsGraphInvocations(t *testing.T) {
 	sessions := session.InMemoryService()
 	stub := &probeStub{}
@@ -86,7 +75,7 @@ func TestNodeOverA2A_ReusedAcrossSeparateRunPlanAsGraphInvocations(t *testing.T)
 			{ID: "n1", AgentName: "solo", Task: "Write the thing.", Rubric: "detailed"},
 		}}
 		ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"solo": client}, nil,
-			vetting.NewJudgeFactory(&passJudge{}, nil, nil),
+			vetting.NewJudgeFactory(passJudge, nil, nil),
 			func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
 		outputs := map[string]string{}
 		content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "x"}}}
@@ -111,12 +100,8 @@ func TestNodeOverA2A_ReusedAcrossSeparateRunPlanAsGraphInvocations(t *testing.T)
 	}
 }
 
-// testNativeWorker mirrors internal/serve's real nativeAgent.build closure
-// (minus artifact tools, irrelevant here): a fresh per-node A2A server, a
-// client scoped to quackagent.WorkerSessionID(chatID, nodeID) - the SAME
-// identity production code computes - and a release() that only closes the
-// server, never deletes the session (the post-reuse behavior), so this
-// harness reproduces the real retry hazard rather than a synthetic one.
+// testNativeWorker mirrors serve's nativeAgent.build: a fresh per-node A2A server, a client
+// scoped to WorkerSessionID(chat, node), and a release that never deletes the session.
 type testNativeWorker struct{ adkagent.Agent }
 
 func (w testNativeWorker) ForNode(_ context.Context, nodeKey, _ string, _ func() string, _ artifact.Service, _, _, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, func(round int, turnID, headSHA, triggerAnnotation string), func(paused bool), error) {
@@ -132,17 +117,12 @@ func (w testNativeWorker) ForNode(_ context.Context, nodeKey, _ string, _ func()
 	return client, nil, nil, nil, func(bool) { _ = srv.Close() }, nil
 }
 
-// testNativeWorkerSessions: package-level so RunPlanAsGraph's dispatch and a
-// later RetryPlanInNode's dispatch share the same underlying session store,
-// the same way one Executor's e.sessions field does in production.
+// Package-level so the run's and a later retry's dispatch share one session store, as one
+// Executor's e.sessions does in production.
 var testNativeWorkerSessions session.Service
 
-// TestRetryPlanInNode_NativeNodeGetsFreshSession is the retry-side twin of
-// the reuse test above: a native node's worker session now outlives normal
-// completion (node reuse), so RetryPlanInNode must reap its OWN target
-// node's session before redispatching - retry stays "same task, fresh
-// session" even though a later plan-driven reuse of the same node id would
-// legitimately resume it.
+// A native worker session outlives completion for reuse, so RetryPlanInNode must reap its
+// target node's session first: retry is "same task, fresh session".
 func TestRetryPlanInNode_NativeNodeGetsFreshSession(t *testing.T) {
 	testNativeWorkerSessions = session.InMemoryService()
 	stub := &probeStub{}
@@ -158,7 +138,7 @@ func TestRetryPlanInNode_NativeNodeGetsFreshSession(t *testing.T) {
 		{ID: "n1", AgentName: "solo", Task: "Write the thing.", Rubric: "detailed"},
 	}}
 	ex := dag.NewExecutor(testNativeWorkerSessions, map[string]adkagent.Agent{"solo": nativeWorker}, nil,
-		vetting.NewJudgeFactory(&passJudge{}, nil, nil),
+		vetting.NewJudgeFactory(passJudge, nil, nil),
 		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
 
 	outputs := map[string]string{}
@@ -202,10 +182,7 @@ func TestRetryPlanInNode_NativeNodeGetsFreshSession(t *testing.T) {
 	}
 }
 
-// isolationStub is like probeStub, but also fails the test outright if it
-// ever sees the SIBLING node's marker text - each node's own
-// quackagent.WorkerSessionID(chatID, nodeID) must keep their session
-// histories from ever crossing.
+// isolationStub is probeStub that also flags any sight of the sibling node's marker text.
 type isolationStub struct {
 	mu          sync.Mutex
 	calls       int
@@ -238,11 +215,8 @@ func (s *isolationStub) GenerateContent(_ context.Context, req *model.LLMRequest
 	}
 }
 
-// TestNodeOverA2A_SiblingNodesDoNotShareSessionHistory is the cross-node
-// isolation regression the reuse mechanism structurally implies
-// (WorkerSessionID is unique per node) but had no direct test: two sibling
-// nodes in the SAME chat, both reused across two RunPlanAsGraph calls, must
-// each see only their own prior output, never the other's.
+// Two sibling nodes in one chat, both reused across two runs, each see only their own
+// prior output.
 func TestNodeOverA2A_SiblingNodesDoNotShareSessionHistory(t *testing.T) {
 	sessions := session.InMemoryService()
 	stubA := &isolationStub{ownFirst: "NODE-A-OUTPUT-ONE", siblingText: "NODE-B-OUTPUT-ONE"}
@@ -264,15 +238,13 @@ func TestNodeOverA2A_SiblingNodesDoNotShareSessionHistory(t *testing.T) {
 		"b":     agentFor("b", stubB),
 		"synth": testNativeWorker{Agent: synthAg},
 	}
-	// n1/n2 are true siblings (no dependency between them) - synth exists
-	// only so the static plan graph has the single terminal node
-	// buildPlanGraph requires; its own output is never checked.
+	// n1/n2 are true siblings; synth only gives buildPlanGraph its single terminal.
 	plan := dag.Plan{ID: "p1", UserMessage: "x", Nodes: []dag.Node{
 		{ID: "n1", AgentName: "a", Task: "Write A.", Rubric: "detailed"},
 		{ID: "n2", AgentName: "b", Task: "Write B.", Rubric: "detailed"},
 		{ID: "synth", AgentName: "synth", Task: "Combine.", DependsOn: []string{"n1", "n2"}},
 	}}
-	ex := dag.NewExecutor(sessions, agents, nil, vetting.NewJudgeFactory(&passJudge{}, nil, nil),
+	ex := dag.NewExecutor(sessions, agents, nil, vetting.NewJudgeFactory(passJudge, nil, nil),
 		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
 
 	run := func() map[string]string {

@@ -125,9 +125,8 @@ func TestSeedPluginAgentsAndShapes_SkillsOnlyPluginContributesNothing(t *testing
 	}
 }
 
-// A plugin with no declared module, agents seeded, deployment override
-// supplying the model (model_role left unset in this fixture) - proves the
-// unconditional-seed path reaches c.Agents through SeedPluginAgentsAndShapes.
+// A plugin with no declared module seeds unconditionally; the deployment override supplies the model,
+// and the agents reach c.Agents through SeedPluginAgentsAndShapes.
 func TestSeedPluginAgentsAndShapes_UnconditionalPluginSeeds(t *testing.T) {
 	cfg := minimalPluginTestConfig()
 	cfg.Agents["scout"] = config.AgentConfig{Model: "m"}
@@ -147,9 +146,8 @@ func TestSeedPluginAgentsAndShapes_UnconditionalPluginSeeds(t *testing.T) {
 	}
 }
 
-// A malformed extensions.<module> block (enabled: isn't a bool) makes
-// moduleEnabledIn error, which pluginGateEnabled and SeedPluginAgentsAndShapes
-// both propagate rather than silently treating as disabled.
+// A malformed extensions.<module> block (enabled: isn't a bool) is an error that pluginGateEnabled and
+// SeedPluginAgentsAndShapes propagate, not a silent "disabled".
 func TestPluginGateEnabled_MalformedModuleBlockErrors(t *testing.T) {
 	cfg := minimalPluginTestConfig()
 	cfg.Extensions.Modules = map[string]yaml.Node{"acme": moduleNode(t, "enabled: not-a-bool")}

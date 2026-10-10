@@ -28,9 +28,8 @@ func (hardErrSource) Get(context.Context, string) (artifactsrc.Artifact, bool, e
 }
 func (hardErrSource) Seed(context.Context, string, artifactsrc.Artifact) error { return nil }
 
-// TestEnvironmentBlockDegradesOnHardResolverError: a resolver that can't even
-// fall back to the shipped file degrades the whole block to "", never panics
-// or propagates the error into the round's prompt.
+// TestEnvironmentBlockDegradesOnHardResolverError: a resolver that can't fall back to the shipped file
+// degrades the block to "", never panics or leaks the error into the prompt.
 func TestEnvironmentBlockDegradesOnHardResolverError(t *testing.T) {
 	res := artifactsrc.New("langfuse", hardErrSource{}, time.Minute)
 	got, art := environmentBlock(context.Background(), res, t.TempDir(), workspace.Caps{})
@@ -39,9 +38,8 @@ func TestEnvironmentBlockDegradesOnHardResolverError(t *testing.T) {
 	}
 }
 
-// TestEnvironmentBlockSurvivesBadStoredTemplate: a typo in a stored
-// system/acp.environment falls back to the shipped file rather than silently
-// dropping the block the round is grounded on.
+// TestEnvironmentBlockSurvivesBadStoredTemplate: a typo in a stored system/acp.environment falls back
+// to the shipped file rather than dropping the block.
 func TestEnvironmentBlockSurvivesBadStoredTemplate(t *testing.T) {
 	res := artifactsrc.New("langfuse", badSource{body: "{{if .Git}}unclosed"}, time.Minute)
 	got, _ := environmentBlock(context.Background(), res, t.TempDir(), workspace.Caps{})
@@ -50,9 +48,7 @@ func TestEnvironmentBlockSurvivesBadStoredTemplate(t *testing.T) {
 	}
 }
 
-// TestRenderEnvironmentBranches covers the system/acp.environment branches the
-// golden files cannot reach (a git repo, a truncated entry list) - the template
-// is what renders them now, so a broken conditional must fail here.
+// TestRenderEnvironmentBranches covers template branches the goldens can't reach (a git repo, a truncated listing).
 func TestRenderEnvironmentBranches(t *testing.T) {
 	base := envFacts{Cwd: "/w", Entries: "a, b", MaxEntries: 200}
 	for _, c := range []struct {

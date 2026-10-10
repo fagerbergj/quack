@@ -77,16 +77,14 @@ func seedPoint(t *testing.T, s *Store, p point) {
 	}
 }
 
-// TestSQLiteAbsorb_VotesAndTimestampsMerge exercises the index-level absorb
-// against sqlite (the always-on backend - see store_test.go; qdrant has no
-// live harness in this repo, see qdrant_filter_test.go).
+// TestSQLiteAbsorb_VotesAndTimestampsMerge exercises the index-level absorb against sqlite.
 func TestSQLiteAbsorb_VotesAndTimestampsMerge(t *testing.T) {
 	ctx := context.Background()
 	s := newSQLiteStore(t, "task", nil)
 	seedPoint(t, s, point{ID: "survivor", Scope: "role:coding", Content: "x", Upvotes: 1, Supported: 1, VoteScore: 1, LastUpvotedAt: "2026-01-01T00:00:00Z"})
 	seedPoint(t, s, point{ID: "dup", Scope: "role:coding", Content: "y", Upvotes: 2, Downvotes: 1, VoteScore: 1, LastRecalledAt: "2026-03-01T00:00:00Z"})
 
-	ok, err := s.idx.absorb(ctx, "survivor", "dup", absorbedByReason("survivor"))
+	ok, err := s.absorb(ctx, "survivor", "dup", absorbedByReason("survivor"))
 	if err != nil {
 		t.Fatalf("absorb: %v", err)
 	}
@@ -128,9 +126,7 @@ func TestSQLiteAbsorb_VotesAndTimestampsMerge(t *testing.T) {
 	}
 }
 
-// TestSQLiteAbsorb_ChainReproducesSummedVotes proves A absorbed by B absorbed
-// by C ends with C carrying BOTH ids and A's votes (folded into B first,
-// then B's total - including A's - folded into C).
+// A absorbed by B absorbed by C ends with C carrying both ids and A's votes summed through B.
 func TestAbsorb_ChainReproducesSummedVotes(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
 		ctx := context.Background()
@@ -140,10 +136,10 @@ func TestAbsorb_ChainReproducesSummedVotes(t *testing.T) {
 		seedPoint(t, s, point{ID: bID, Scope: "role:coding", Content: "b", Upvotes: 1, VoteScore: 1})
 		seedPoint(t, s, point{ID: cID, Scope: "role:coding", Content: "c"})
 
-		if ok, err := s.idx.absorb(ctx, bID, aID, absorbedByReason(bID)); err != nil || !ok {
+		if ok, err := s.absorb(ctx, bID, aID, absorbedByReason(bID)); err != nil || !ok {
 			t.Fatalf("absorb(B,A) = %v, %v", ok, err)
 		}
-		if ok, err := s.idx.absorb(ctx, cID, bID, absorbedByReason(cID)); err != nil || !ok {
+		if ok, err := s.absorb(ctx, cID, bID, absorbedByReason(cID)); err != nil || !ok {
 			t.Fatalf("absorb(C,B) = %v, %v", ok, err)
 		}
 
@@ -182,7 +178,7 @@ func TestSQLiteAbsorb_AlreadyInvalidatedIsNoop(t *testing.T) {
 	seedPoint(t, s, point{ID: "survivor", Scope: "role:coding", Content: "x"})
 	seedPoint(t, s, point{ID: "dup", Scope: "role:coding", Content: "y", Status: string(StatusInvalidated), InvalidationReason: "net score"})
 
-	ok, err := s.idx.absorb(ctx, "survivor", "dup", absorbedByReason("survivor"))
+	ok, err := s.absorb(ctx, "survivor", "dup", absorbedByReason("survivor"))
 	if err != nil {
 		t.Fatalf("absorb: %v", err)
 	}
@@ -197,15 +193,14 @@ func TestSQLiteAbsorb_AlreadyInvalidatedIsNoop(t *testing.T) {
 	}
 }
 
-// TestApplyVotes_DropsForAlreadyAbsorbedID: a vote arriving for an id that was already
-// absorbed (invalidated) is dropped, not redirected to the survivor - the same
-// sticky "already invalidated" rule every vote/outcome path already applies.
+// A vote for an already-absorbed id is dropped, not redirected to the survivor, matching every other
+// vote path's sticky "already invalidated" rule.
 func TestApplyVotes_DropsForAlreadyAbsorbedID(t *testing.T) {
 	ctx := context.Background()
 	s := newSQLiteStore(t, "task", nil)
 	seedPoint(t, s, point{ID: "survivor", Scope: "role:coding", Content: "x"})
 	seedPoint(t, s, point{ID: "dup", Scope: "role:coding", Content: "y"})
-	if ok, err := s.idx.absorb(ctx, "survivor", "dup", absorbedByReason("survivor")); err != nil || !ok {
+	if ok, err := s.absorb(ctx, "survivor", "dup", absorbedByReason("survivor")); err != nil || !ok {
 		t.Fatalf("absorb = %v, %v", ok, err)
 	}
 

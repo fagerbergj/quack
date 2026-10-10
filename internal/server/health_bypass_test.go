@@ -9,9 +9,8 @@ import (
 	"github.com/fagerbergj/quack/internal/config"
 )
 
-// TestRequireAuthExceptHealthMethodRestricted tests requireAuthExceptHealth
-// in isolation (not through the full chi router, whose own method-not-allowed
-// handling for a path with only a GET handler would mask what this middleware itself decides): only GET/HEAD to /health skip a's auth check; every other method - and every other path - always goes through it.
+// TestRequireAuthExceptHealthMethodRestricted tests the middleware alone (chi's own 405 handling would mask it):
+// only GET/HEAD to /health skip auth; every other method and path goes through it.
 func TestRequireAuthExceptHealthMethodRestricted(t *testing.T) {
 	a, err := auth.New(&config.InboundAuthConfig{
 		TrustedHeaders: &config.TrustedHeadersConfig{User: "X-authentik-username"},

@@ -13,9 +13,8 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// syncRecorder guards httptest.ResponseRecorder, whose bytes.Buffer is not safe
-// for the concurrent write/read these live-tail tests do (handler goroutine
-// writes while the test polls). Only the live tests need it. Not embedded: promoted Result/Code/Header would bypass mu and race the handler goroutine silently.
+// syncRecorder guards httptest.ResponseRecorder, whose buffer isn't safe for the handler-writes/test-polls
+// race. Not embedded: promoted Result/Code/Header would bypass mu.
 type syncRecorder struct {
 	mu  sync.Mutex
 	rec *httptest.ResponseRecorder
@@ -72,9 +71,8 @@ func waitForBody(t *testing.T, rec *syncRecorder, want string) {
 	}
 }
 
-// TestSubscribeLiveTail is issue #282's core scenario: a node is actively
-// running (events already published, more still to come) and the request must
-// stay open, delivering new events as they land, instead of snapshotting the history so far and closing. Crucially, the run here is published exactly as the GitHub extension does - through the shared hub, with NOTHING registered in the handler's own activeCancels (that map is REST-only; a GitHub-dispatched run registers in the extension's separate map) - so this also pins that "active" is derived from the shared hub, not that REST-only registry.
+// TestSubscribeLiveTail: a running node's stream stays open and delivers new events as they land. The run
+// is published through the shared hub only, as the GitHub extension does, so "active" must come from the hub.
 func TestSubscribeLiveTail(t *testing.T) {
 	h := newTestHandler(t)
 	chatID := mustCreateChat(t, h)
@@ -105,9 +103,8 @@ func TestSubscribeLiveTail(t *testing.T) {
 	pub.Publish(stream.NodeDone("n1", stream.NodeDoneData{}))
 	waitForBody(t, rec, "node_done")
 
-	// The run ending closes the stream - mirrors what every driver of a run
-	// (REST handler, GitHub webhook dispatcher) does: publish Done, then close
-	// the hub topic so it stops accepting a next run's events as this one's.
+	// Every run driver publishes Done and then closes the hub topic, so it can't accept
+	// a next run's events as this one's.
 	pub.Publish(stream.Done())
 	h.hub.Close(chatID)
 	select {
@@ -118,9 +115,8 @@ func TestSubscribeLiveTail(t *testing.T) {
 	cancel()
 }
 
-// TestSubscribeIdleSnapshotsAndCloses is the non-regression counterpart: a
-// finished (or never-started) chat must still snapshot-and-close promptly -
-// the fix for #282 must not turn every stream into a hanging connection.
+// TestSubscribeIdleSnapshotsAndCloses: a finished or never-started chat still snapshots and closes
+// promptly rather than hanging.
 func TestSubscribeIdleSnapshotsAndCloses(t *testing.T) {
 	h := newTestHandler(t)
 	chatID := mustCreateChat(t, h)
@@ -152,9 +148,8 @@ func TestSubscribeIdleSnapshotsAndCloses(t *testing.T) {
 	}
 }
 
-// TestSubscribeLiveReconnectByLastEventID: a reconnect mid-run (Last-Event-ID
-// set) must resume past what the client already saw and pick up the live
-// tail without duplicating or dropping events - not just on the cold/durable path (TestSubscribeColdReplay covers that), but on the warm hub path too.
+// TestSubscribeLiveReconnectByLastEventID: a mid-run reconnect with Last-Event-ID resumes on the warm hub
+// path without duplicating or dropping events.
 func TestSubscribeLiveReconnectByLastEventID(t *testing.T) {
 	h := newTestHandler(t)
 	chatID := mustCreateChat(t, h)
@@ -189,17 +184,8 @@ func TestSubscribeLiveReconnectByLastEventID(t *testing.T) {
 	}
 }
 
-// TestSubscribeCloseRacesActiveRead is the harvest review finding: Active is
-// read before Subscribe, so a Hub.Close landing in that window leaves active
-// stale-true while Subscribe reports done and returns a nil live channel.
-// Falling into the warm path with that nil channel never delivers the
-// buffered replay: the client sees an empty stream (the goroutine itself
-// blocks on the nil channel indefinitely, but nothing more is ever written to
-// the response, so from the caller's side the response is just empty). The
-// discriminating check is the body content, not "did the call return" - a
-// future change could make the buggy path return quickly for an unrelated
-// reason and still drop the replay, and a return-only assertion would miss
-// that.
+// TestSubscribeCloseRacesActiveRead: a Hub.Close between the Active read and Subscribe leaves a nil live
+// channel; the buffered replay must still be written. Asserts body content, not just that the call returned.
 func TestSubscribeCloseRacesActiveRead(t *testing.T) {
 	h := newTestHandler(t)
 	chatID := mustCreateChat(t, h)
@@ -223,9 +209,8 @@ func TestSubscribeCloseRacesActiveRead(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		// The buggy path blocks the goroutine forever on the nil live
-		// channel rather than erroring - fall through to the content check
-		// below, which is what actually distinguishes the two behaviors.
+		// The buggy path blocks forever on the nil channel; the content check below
+		// is what tells the two apart.
 	}
 	if !strings.Contains(rec.body(), "node_done") {
 		t.Fatalf("Hub.Close racing the Active read dropped the buffered replay; body:\n%q", rec.body())

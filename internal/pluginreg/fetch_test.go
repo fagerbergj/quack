@@ -177,9 +177,8 @@ func TestFetchRemoteUnreachableKeepsOldSHA(t *testing.T) {
 	}
 	oldSHA := good.SHA
 
-	// Existing clones fetch from the origin remote already recorded in .git,
-	// not from RemoteURL(), so simulate "unreachable" by removing the bare
-	// repo itself rather than re-pointing RemoteURL.
+	// Existing clones fetch from the origin recorded in .git, not RemoteURL(), so remove the bare repo to make
+	// it unreachable.
 	if err := os.RemoveAll(bare); err != nil {
 		t.Fatal(err)
 	}
@@ -286,9 +285,7 @@ func TestFetchPinnedNonDefaultBranch(t *testing.T) {
 	withFixedRemote(t, bare)
 	root := t.TempDir()
 	reg := NewFSRegistry(root)
-	// "feature" was never the checked-out branch of the initial clone, so
-	// only a remote-tracking ref exists for it - `checkout --detach feature`
-	// used to fail outright for exactly this shape.
+	// "feature" was never checked out in the initial clone, so only a remote-tracking ref exists for it.
 	e, err := ParseEntry("github:acme/widgets@feature")
 	if err != nil {
 		t.Fatal(err)
@@ -388,10 +385,8 @@ func TestCheckUpdateAnnotatedTagPeels(t *testing.T) {
 	}
 }
 
-// TestCheckUpdateBranchWinsOverSameNamedTag: a branch and a tag can share a
-// name; CheckUpdate must agree with resolveSHA's precedence (branch first),
-// or Fetch checks out one commit while CheckUpdate reports a different one
-// as "current" forever.
+// A branch and tag can share a name; CheckUpdate must match resolveSHA's branch-first precedence or it
+// reports a different commit than Fetch checked out, forever.
 func TestCheckUpdateBranchWinsOverSameNamedTag(t *testing.T) {
 	bare := newFixtureRepo(t)
 	work := t.TempDir()
@@ -600,9 +595,8 @@ func TestFetchDoesNotLeakTokenOnFailure(t *testing.T) {
 	}
 }
 
-// TestFetchDoesNotEscapeToOuterRepo: a killed clone's dir, nested inside the
-// user's own workspace checkout, must never be mistaken for that outer repo
-// (rev-parse --git-dir walks up when dir has no .git of its own).
+// A killed clone's dir nested in the user's own checkout must never be mistaken for that outer repo
+// (rev-parse --git-dir walks up).
 func TestFetchDoesNotEscapeToOuterRepo(t *testing.T) {
 	outer := t.TempDir()
 	run(t, "", "init", "--quiet", "--initial-branch=main", outer)
@@ -632,7 +626,7 @@ func TestFetchDoesNotEscapeToOuterRepo(t *testing.T) {
 	}
 	p := FromEntry(e)
 
-	got, err := Fetch(context.Background(), root, p)
+	got, err := NewFSRegistry(root).Fetch(context.Background(), p)
 	if err != nil {
 		t.Fatal(err)
 	}

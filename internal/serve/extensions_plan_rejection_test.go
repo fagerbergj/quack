@@ -19,12 +19,8 @@ import (
 	"github.com/fagerbergj/quack/internal/runlog"
 )
 
-// rejectedPlanModel always proposes a review-delivery plan that dag's own
-// OverrideExistingPRHead deterministically rejects at execute time (a
-// review-only setup with no real PR head ref in context - #1180's live
-// repro), then ends its invocation with no plan and no answer once it sees
-// the rejection, so the orchestrator's continuation loop tries again from
-// scratch rather than looping forever inside one invocation.
+// rejectedPlanModel proposes a review-delivery plan OverrideExistingPRHead always rejects (no PR head ref),
+// then ends with no plan and no answer, so the continuation loop retries instead of looping in-invocation.
 type rejectedPlanModel struct{}
 
 func (rejectedPlanModel) Name() string { return "rejected-plan-stub" }
@@ -102,9 +98,8 @@ func planIDFromCreatePlanResponse(req *model.LLMRequest) (string, bool) {
 	return "", false
 }
 
-// TestPlanRejection_EndsRunFailedWithRejectionReason is #1180's guard: an all-rejected
-// planner turn ending with no plan and no answer must end the run failed with the rejection
-// text - not the generic silent-gap comment.
+// TestPlanRejection_EndsRunFailedWithRejectionReason: an all-rejected planner turn with no plan and no answer
+// ends failed with the rejection text, not the generic silent-gap comment.
 func TestPlanRejection_EndsRunFailedWithRejectionReason(t *testing.T) {
 	st, orch, hub, artifacts, _ := newExtTestStackWithModelAndAgents(t, rejectedPlanModel{},
 		[]dag.AgentInfo{{Name: "code-reviewer", Description: "reviews PRs"}})
@@ -151,9 +146,8 @@ func TestPlanRejection_EndsRunFailedWithRejectionReason(t *testing.T) {
 	}
 }
 
-// rejectThenSilentModel behaves like rejectedPlanModel for its first dispatch, then once
-// the request names "TURN2" always answers empty, never touching the plan tool - a second,
-// unrelated, genuine silent-gap turn on the same chat.
+// rejectThenSilentModel rejects like rejectedPlanModel, then answers empty once the request names "TURN2"
+// - a genuine silent-gap turn on the same chat.
 type rejectThenSilentModel struct{}
 
 func (rejectThenSilentModel) Name() string { return "reject-then-silent-stub" }
@@ -178,9 +172,8 @@ func (rejectThenSilentModel) GenerateContent(_ context.Context, req *model.LLMRe
 	return rejectedPlanModel{}.GenerateContent(context.Background(), req, s)
 }
 
-// TestPlanRejection_DoesNotLeakIntoALaterSilentGap is the #1181 review's suggestion:
-// an earlier turn's rejection must not outlive it - a later unrelated no-output turn on
-// the SAME chat must derive a true silent gap (idle, no error), not the stale rejection.
+// TestPlanRejection_DoesNotLeakIntoALaterSilentGap: a later no-output turn on the same chat derives a true
+// silent gap (idle, no error), not the earlier turn's rejection.
 func TestPlanRejection_DoesNotLeakIntoALaterSilentGap(t *testing.T) {
 	st, orch, hub, artifacts, _ := newExtTestStackWithModelAndAgents(t, rejectThenSilentModel{},
 		[]dag.AgentInfo{{Name: "code-reviewer", Description: "reviews PRs"}})
@@ -201,9 +194,7 @@ func TestPlanRejection_DoesNotLeakIntoALaterSilentGap(t *testing.T) {
 		t.Fatalf("turn 1 RunStatus = %+v, want failed (setup for the leak check)", c)
 	}
 
-	// waitRunSettled alone would race here: RunStatus is already "failed"
-	// (non-empty) from turn 1, so wait for the row's updated_at to move past
-	// turn 1's own stamp instead of just "RunStatus is set".
+	// waitRunSettled alone would race (RunStatus is already "failed" from turn 1), so wait for updated_at to move.
 	t1, err := st.GetChat(context.Background(), chatID)
 	if err != nil || t1 == nil {
 		t.Fatalf("GetChat after turn 1: %v, %v", t1, err)

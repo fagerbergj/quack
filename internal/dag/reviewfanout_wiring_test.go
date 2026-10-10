@@ -7,9 +7,8 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// TestNodeGateConfig_MultiReviewerPlanGetsSharedFanout pins #867: a plan with
-// more than one code-reviewer node stamps every reviewer node's cfg with the
-// SAME ReviewFanout instance (they must all fan into one accumulator) - non-reviewer nodes (explorer, implementer) never get one.
+// Every reviewer node of a multi-reviewer plan shares one ReviewFanout; non-reviewer nodes
+// never get one.
 func TestNodeGateConfig_MultiReviewerPlanGetsSharedFanout(t *testing.T) {
 	plan := Plan{ID: "plan-867", Nodes: []Node{
 		{ID: "impl", AgentName: implementerAgent},
@@ -40,9 +39,7 @@ func TestNodeGateConfig_MultiReviewerPlanGetsSharedFanout(t *testing.T) {
 	}
 }
 
-// TestNodeGateConfig_SingleReviewerPlanNoFanout pins the regression risk: a
-// plan with exactly one code-reviewer node must NOT get a ReviewFanout -
-// that node keeps delivering its own review exactly like before #867.
+// A single-reviewer plan gets no ReviewFanout; that node delivers its own review.
 func TestNodeGateConfig_SingleReviewerPlanNoFanout(t *testing.T) {
 	plan := Plan{ID: "plan-solo", Nodes: []Node{
 		{ID: "impl", AgentName: implementerAgent},

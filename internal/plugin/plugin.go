@@ -1,6 +1,5 @@
-// Package plugin discovers plugins packaged per the Agent Plugins standard (https://agent-plugins.org/) or its Codex predecessor. A resolved root can
-// contribute skills (skills/, spec §7.1), MCP servers (mcp.json, spec §7.2), quack's own client-extension declarations (plugin.json's extensions[Namespace], spec §8), and - Agent Plugins format only - agent bundles (agents/) and workflow shapes (workflows/), quack's own layout additions.
-// Distribution is out of scope - see internal/pluginreg for the fetch/clone side.
+// Package plugin resolves plugin roots in the Agent Plugins (https://agent-plugins.org/) or Codex layout into
+// skills, MCP servers, namespace declarations, agent bundles and workflows; fetching lives in internal/pluginreg.
 package plugin
 
 import (
@@ -15,19 +14,16 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Namespace is quack's client-extension namespace (Agent Plugins §8). It is
-// derived from github.com/fagerbergj, the account controlling both quack and
-// quack-extensions; quack owns no registered domain of its own.
+// Namespace is quack's client-extension namespace (Agent Plugins §8), derived from the GitHub account that
+// owns quack, since quack has no registered domain.
 const Namespace = "io.github.fagerbergj.quack"
 
-// nsSchemaVersion is the only version of the namespace block quack
-// understands. §8 leaves validation inside a namespace to its owner, and a
-// block quack cannot read is declaring compiled-in code, so it is an error rather than a skip.
+// nsSchemaVersion is the only namespace block version quack reads. A block it cannot read declares
+// compiled-in code, so it is an error rather than a skip.
 const nsSchemaVersion = 1
 
-// Plugin is one resolved plugin root. Every component is optional: §6.2
-// requires an absent fixed location to be a non-error, so a plugin may carry
-// only skills, only MCP servers, only module declarations, or any mix.
+// Plugin is one resolved plugin root. Every component is optional (§6.2: an absent fixed location is
+// not an error).
 type Plugin struct {
 	Name string
 	Root string
@@ -55,14 +51,12 @@ type Plugin struct {
 	// Workflows is the namespace block's "workflows" list, same contract as Agents.
 	Workflows []string
 
-	// Modules are the compiled-in Go modules this plugin declares. quack
-	// cannot load Go code dynamically, so these are checked against the
-	// linked registry at boot, never loaded.
+	// Modules are compiled-in Go modules this plugin declares; quack cannot load Go dynamically, so they are
+	// only checked against the linked registry at boot.
 	Modules []Module
 
-	// ConfigRequired mirrors the namespace block's "config": a module-bearing
-	// plugin keeps fail-on-empty-config boot semantics, a skill-only one
-	// warns and skips.
+	// ConfigRequired mirrors the namespace block's "config": a module-bearing plugin fails boot on empty
+	// config, a skill-only one warns and skips.
 	ConfigRequired bool
 
 	// MCPServers are mcp.json's stdio entries, unexpanded - ${PLUGIN_DATA}
@@ -72,17 +66,14 @@ type Plugin struct {
 	MCPSkipped map[string]string
 }
 
-// Module is one host-coupled Go module a plugin declares. Path is carried so
-// a boot failure can name the import a developer has to add; quack never
-// resolves it at runtime.
+// Module is one Go module a plugin declares. Path lets a boot failure name the import to add.
 type Module struct {
 	Name string `json:"name"`
 	Path string `json:"path"`
 }
 
-// rootManifest is the Agent Plugins root plugin.json. The portable schema is
-// closed (additionalProperties: false) with only $schema and name required,
-// so extensions is the only place client-specific data can legally live.
+// rootManifest is the Agent Plugins root plugin.json. Its schema is closed, so extensions is the only
+// legal home for client-specific data.
 type rootManifest struct {
 	Name       string                     `json:"name"`
 	Extensions map[string]json.RawMessage `json:"extensions"`
@@ -99,9 +90,8 @@ type nsBlock struct {
 	Workflows []string `json:"workflows"`
 }
 
-// codexManifest is .codex-plugin/plugin.json: the same identity fields as the
-// Agent Plugins manifest, plus an explicit "skills" path. Its "interface"
-// block (Codex UI metadata) is deliberately not decoded - never read, never a reason to fail.
+// codexManifest is .codex-plugin/plugin.json; its "interface" block (Codex UI metadata) is deliberately
+// not decoded, so it can never fail a load.
 type codexManifest struct {
 	Name   string `json:"name"`
 	Skills string `json:"skills"`
@@ -120,14 +110,8 @@ func (e *NamespaceError) Error() string {
 
 func (e *NamespaceError) Unwrap() error { return e.Err }
 
-// Resolve resolves each root, in order, via: root plugin.json (Agent Plugins)
-// else .codex-plugin/plugin.json (Codex) else skipped. Detection is by path,
-// never by sniffing fields inside either file. A root that fails to resolve
-// logs a warning naming it and the reason, then is dropped - a broken or
-// missing plugin never fails the run, it just loses that plugin's components.
-//
-// The one exception is quack's own namespace block: an unreadable one is
-// returned as an error, because it declares compiled-in Go code and silently dropping it would boot a server missing the module it promised.
+// Resolve resolves each root via plugin.json, else .codex-plugin/plugin.json, else skips it with a warning.
+// An unreadable quack namespace block is an error: dropping it would boot without a promised module.
 func Resolve(roots []string) ([]Plugin, error) {
 	var out []Plugin
 	for _, root := range roots {
@@ -176,9 +160,8 @@ func resolveRoot(root string) (*Plugin, error) {
 	return p, nil
 }
 
-// fromRootManifest reads <root>/plugin.json. A missing file returns a wrapped
-// os.ErrNotExist so the caller falls through to the Codex format; any other
-// failure is terminal for this root - a manifest that exists but is broken is never reinterpreted as merely absent.
+// fromRootManifest returns a wrapped os.ErrNotExist for a missing file so the caller tries Codex; a
+// manifest that exists but is broken is terminal for this root.
 func fromRootManifest(abs string) (*Plugin, error) {
 	b, err := os.ReadFile(filepath.Join(abs, "plugin.json"))
 	if err != nil {
@@ -193,8 +176,8 @@ func fromRootManifest(abs string) (*Plugin, error) {
 	}
 
 	p := &Plugin{Name: m.Name, Root: abs}
-	// §6.2: an absent skills/ is not an error - a plugin may carry only MCP
-	// servers or module declarations. agents/ and workflows/ are discovered the same way, gated by the namespace block's lists below.
+	// §6.2: an absent skills/ is not an error; agents/ and workflows/ are found the same way, gated by the
+	// namespace block's lists.
 	dir := filepath.Join(abs, "skills")
 	if st, err := os.Stat(dir); err == nil && st.IsDir() {
 		p.SkillsDir = dir
@@ -315,9 +298,8 @@ func warnUnlisted(pluginName, kind string, listed []string, present map[string]b
 	}
 }
 
-// dirEntryNames lists agents/<name>/ names that are actually bundles (carry
-// agent-card.json) - the same predicate config.SeedPluginAgents seeds by, so
-// "present" here can never diverge from what would actually seed.
+// dirEntryNames lists agents/<name>/ dirs carrying agent-card.json, the same predicate
+// config.SeedPluginAgents seeds by.
 func dirEntryNames(dir string) map[string]bool {
 	out := map[string]bool{}
 	if dir == "" {
@@ -394,9 +376,8 @@ func workflowShapeName(path string) (string, error) {
 	return shape.Name, nil
 }
 
-// fromCodexManifest reads <root>/.codex-plugin/plugin.json. Its "skills"
-// value is plugin-relative and resolved under abs; a value that escapes the
-// root is refused (error, not silently followed). The Codex format predates the extensions field, so it never carries a namespace block.
+// fromCodexManifest resolves "skills" under abs and refuses a path escaping the root. Codex has no
+// extensions field, so no namespace block.
 func fromCodexManifest(abs string) (*Plugin, error) {
 	b, err := os.ReadFile(filepath.Join(abs, ".codex-plugin", "plugin.json"))
 	if err != nil {
@@ -435,9 +416,8 @@ func containedPath(base, rel string) (string, error) {
 	return p, nil
 }
 
-// SkillDirs is the skills directories of already-resolved plugins, in order
-// and never deduped. Callers that resolved once at boot use this instead of
-// ResolveSkillDirs, which would re-read every manifest.
+// SkillDirs is the skills directories of already-resolved plugins, in order and not deduped; it avoids
+// re-reading manifests like ResolveSkillDirs does.
 func SkillDirs(plugins []Plugin) []string {
 	var dirs []string
 	for _, p := range plugins {

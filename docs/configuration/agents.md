@@ -124,7 +124,7 @@ The card's `skills` are what the planner sees and routes on - capability-level, 
 
 ## Extending the workflow catalog
 
-`skills/plan-work/SKILL.md` opens with a "Common workflows" table mapping request shapes ("Single information topic", "Write/fix/refactor code in a repo", ...) to DAG shapes - it's the first thing the planner matches a request against. A deployment running agents the shipped table doesn't know about (a document-ingest pipeline, a reMarkable-notes agent, any house-standard node chain) teaches the planner that shape via the top-level `workflows:` key in `config/quack.yaml` (not nested under `skills:` - it binds onto the DAG planner, a different axis from the skill-library `skills.plugins` above), without forking the skill:
+`skills/plan-work/SKILL.md` opens with a "Common workflows" table mapping request shapes ("Single information topic", "Write/fix/refactor code in a repo", ...) to DAG shapes - it's the first thing the planner matches a request against. A deployment running agents the shipped table doesn't know about (a document-ingest pipeline, a reMarkable-notes agent, any house-standard node chain) teaches the planner that shape via the top-level `workflows:` key in `config/quack.yaml` (it binds onto the DAG planner, a different axis from the skill-library `plugins.seed`), without forking the skill:
 
 ```yaml
 workflows:

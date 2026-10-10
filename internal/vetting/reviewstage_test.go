@@ -2,9 +2,8 @@ package vetting
 
 import "testing"
 
-// TestAugmentFromReviewStage_ToolStagedWins proves the gate reads a tool-staged
-// review (the #451 review MCP surface, resolved via advisor token → MemSecret →
-// MemSession.Review) into act.stagedDelivery["review"], and that the answer-tail fallback (augmentFromAnswer) does NOT overwrite it - the two never conflict.
+// TestAugmentFromReviewStage_ToolStagedWins: a tool-staged review (via advisor token → MemSession.Review)
+// lands in act.stagedDelivery["review"], and the answer-tail fallback does NOT overwrite it.
 func TestAugmentFromReviewStage_ToolStagedWins(t *testing.T) {
 	secret, err := NewMemSecret()
 	if err != nil {
@@ -42,9 +41,8 @@ func TestAugmentFromReviewStage_ToolStagedWins(t *testing.T) {
 	}
 }
 
-// TestReviewStage_SnapshotVerdictless proves comments without an explicit
-// verdict still produce a deliverable review, defaulting to a comment event -
-// mirroring augmentFromAnswer's verdict-less fallback so a reviewer that only stages inline findings never deadlocks the node.
+// TestReviewStage_SnapshotVerdictless: comments with no explicit verdict still deliver as a comment
+// event, so a reviewer that only stages inline findings never deadlocks the node.
 func TestReviewStage_SnapshotVerdictless(t *testing.T) {
 	review := &ReviewStage{}
 	if _, ok := review.Snapshot(); ok {
@@ -60,9 +58,8 @@ func TestReviewStage_SnapshotVerdictless(t *testing.T) {
 	}
 }
 
-// TestReviewStage_RemoveComment proves unstage_review_comment's backing store
-// (#562): removal is by id, a same-line different-body finding survives
-// untouched, and removing an unknown id (never staged, or already removed) reports ok=false so the caller can surface an explicit error.
+// TestReviewStage_RemoveComment: removal is by id, a same-line different-body finding survives,
+// and an unknown id reports ok=false so the caller can surface an error.
 func TestReviewStage_RemoveComment(t *testing.T) {
 	review := &ReviewStage{}
 	id1, _ := review.AddComment("a.go", 3, "nit: rename x")
@@ -110,9 +107,8 @@ func TestReviewStage_RemoveComment(t *testing.T) {
 	}
 }
 
-// TestReviewStage_IDsMonotonicPerLocation proves the id scheme (#562): #n is
-// monotonic per (path, line) within the review and NEVER reused, even after the comment it named is unstaged. Re-staging a finding at the same spot
-// mints a new id, and the OLD id must stay unresolvable - reusing it would let a stale reference (judge feedback, a log line, a retry) silently resolve to a different comment.
+// TestReviewStage_IDsMonotonicPerLocation: #n ids are monotonic per (path, line) and never reused, so a
+// stale reference can't silently resolve to a different comment after an unstage/restage.
 func TestReviewStage_IDsMonotonicPerLocation(t *testing.T) {
 	review := &ReviewStage{}
 	id1, _ := review.AddComment("a.go", 3, "first finding at this line")
@@ -141,9 +137,8 @@ func TestReviewStage_IDsMonotonicPerLocation(t *testing.T) {
 	}
 }
 
-// TestReviewStage_AddCommentDedupes proves staging the identical
-// path/line/body twice yields one comment: the second call reports the
-// duplicate flag and hands back the first call's id instead of minting a second copy that would double-post on delivery.
+// TestReviewStage_AddCommentDedupes: staging the identical path/line/body twice yields one comment;
+// the second call reports duplicate and returns the first id, so delivery never double-posts.
 func TestReviewStage_AddCommentDedupes(t *testing.T) {
 	review := &ReviewStage{}
 	id1, dup1 := review.AddComment("a.go", 3, "blocking: nil deref")

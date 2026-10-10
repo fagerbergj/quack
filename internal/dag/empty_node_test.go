@@ -2,7 +2,6 @@ package dag
 
 import (
 	"context"
-	"iter"
 	"testing"
 
 	adkagent "google.golang.org/adk/v2/agent"
@@ -14,25 +13,10 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// emptyStub returns an empty worker draft (→ ErrNodeEmpty), so the gated node
-// fails; the judge always passes (never reached on an empty draft).
-type emptyStub struct{}
-
-func (emptyStub) Name() string { return "emptyStub" }
-func (emptyStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		if gHasTool(req, "submit_verdict") {
-			yield(gCall("submit_verdict", map[string]any{"score": 0.9}), nil)
-			return
-		}
-		yield(gText(""), nil)
-	}
-}
-
 // TestExecute_EmptyNode_FailsLoud: a node that produces no answer surfaces as a
 // loud node_failed (not a quiet node_done); the run still completes.
 func TestExecute_EmptyNode_FailsLoud(t *testing.T) {
-	stub := emptyStub{}
+	stub := fixedLLM("", nil)
 	ag, err := llmagent.New(llmagent.Config{Name: "w", Model: stub, Description: "w", Instruction: "ROLE:w Answer."})
 	if err != nil {
 		t.Fatal(err)

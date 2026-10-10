@@ -8,9 +8,7 @@ import (
 	"sort"
 	"time"
 
-	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/session"
-	"google.golang.org/adk/v2/tool"
 	"google.golang.org/genai"
 )
 
@@ -195,13 +193,4 @@ func decodeContent(raw string) *genai.Content {
 		return nil
 	}
 	return &c
-}
-
-// CountingJudgeFactory wraps factory, incrementing *calls on invocation -
-// lets a caller outside this package prove a judge factory was never reached.
-func CountingJudgeFactory(factory JudgeFactory, calls *int) JudgeFactory {
-	return func(prompt judgePrompt, sink *verdict, forced *forceClose, maxIters, maxOutputTokens int, thinkingLevel string, receivedIDs []string, artifactTools []tool.Tool) (adkagent.Agent, judgeReadCounters, error) {
-		*calls++
-		return factory(prompt, sink, forced, maxIters, maxOutputTokens, thinkingLevel, receivedIDs, artifactTools)
-	}
 }

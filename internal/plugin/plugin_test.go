@@ -23,9 +23,7 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
-// pluginRoot lays down a root with the given plugin.json / .codex-plugin
-// manifest contents (either may be "" to omit it) and the given skill names
-// under the given skills subdirectory ("skills" or a custom codex target).
+// pluginRoot lays down a root with the given manifests ("" omits one) and skills under skillsSubdir.
 func pluginRoot(t *testing.T, rootJSON, codexJSON, skillsSubdir string, skills ...string) string {
 	t.Helper()
 	root := t.TempDir()
@@ -111,9 +109,8 @@ func TestResolveSkillDirs_CodexSkillsEscapesRoot_Refused(t *testing.T) {
 	}
 }
 
-// A malformed plugin.json is skipped with a warning, other configured
-// plugins still load - and does NOT fall through to a .codex-plugin manifest
-// that happens to also be present (an existing but broken root manifest is terminal, not "absent").
+// A malformed plugin.json is skipped while other plugins load, and does not fall through to a present
+// .codex-plugin manifest.
 func TestResolveSkillDirs_MalformedRootManifest_SkippedNoFallthrough(t *testing.T) {
 	root := pluginRoot(t, `{not valid json`, `{"name":"x","skills":"./skills/"}`, "skills", "s")
 	good := pluginRoot(t, `{"$schema":"x","name":"good"}`, "", "skills", "s")

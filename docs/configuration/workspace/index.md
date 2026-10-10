@@ -91,7 +91,7 @@ workspace:
 
 Quack's own git calls (setup clone, fetch and checkout, worktree ops, the gate's push) ignore git configuration an agent can write. Each runs with an empty per-call `HOME`, no system or global config, and hooks, fsmonitor, credential helpers, ssh, gpg signing and gc all off. Before any call inside an existing clone, quack strips that clone's repository config down to core settings, `remote.origin.url`/`fetch`, branch tracking and `user.name`/`email` - which drops filter and merge drivers, `url.<base>.insteadOf` and `remote.<url>.url` rewrites that a `-c` override cannot outrank. Each call names its repository explicitly (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`) rather than letting git discover it from the working tree, and refuses to run unless that repository is the clone quack created - its own `.git` directory, or `.git/worktrees/<name>` for a linked worktree whose `commondir` leads back - with no object alternates. A clone or worktree directory reached through a symlink is never followed: setup removes the link with a warning and clones afresh. Workspace GC prunes a worktree only from a clone inside the workspace root. Fetches and pushes use the repository URL itself rather than a named remote, and the credential helper answers only prompts for that URL's host. These calls drop `SSH_ASKPASS` and every `GIT_*` variable except `GIT_SSL_CAINFO` and `GIT_SSL_CAPATH` from `workspace.env`. Whenever the kernel supports Landlock, whatever `sandbox` says, each of these calls also runs under Landlock with write access only to its own clone (plus the new clone or worktree directory it creates, refused if any part of its path is a symlink) and its per-call `HOME`, so a symlink or object alternate inside `.git` that leads outside the clone is denied by the kernel. Without Landlock, quack warns at startup that its own git runs unconfined.
 
-`git_push` (the one outward-facing, non-undoable git operation) is gated through `guards.git_push` below, not a top-level toggle - there is no `workspace.git_push` field. Even when the guard passes, a push can never force-push (unexpressible - no argv path ever adds `--force`) and refuses `main`/`master`.
+`git_push` (the one outward-facing, non-undoable git operation) is gate-owned delivery, not a top-level toggle - there is no `workspace.git_push` field. A push can never force-push (unexpressible - no argv path ever adds `--force`) and refuses `main`/`master`.
 
 ## `gc`: the workspace reaper
 
@@ -108,25 +108,3 @@ workspace:
 ```
 
 Chat and scratch TTLs are idle-time based and never touch a chat with a run in flight; linked git worktrees are detached before their dir is removed. `home_max_mb` is quota-based instead - the home is one shared directory with no per-entry idle time - and is reset whole only when the user has no round in flight. `enabled: false` is the only way to stop the reaper - a zeroed field falls back to its default on load, so per-class TTLs can't be disabled individually.
-
-## The guard ladder
-
-```yaml
-workspace:
-  guards:
-    run_command: judge+confirm
-    git_push: judge+confirm
-```
-
-`guards` maps a tool name to a tier: `none` (default for anything unlisted) | `judge` | `confirm` | `judge+confirm`. Tier 0 - the jail, the OS sandbox, no force-push/no-push-to-main - always applies underneath any guard result; it's never what decides *what* a command may do, only *where* it can reach.
-
-- `judge` runs an independent safety-judge model call (reusing `gates.judge`'s provider/model) before the tool executes; a denial returns the refusal as the tool's result and the tool never runs.
-- `confirm` pauses the DAG node for a human approve/deny, riding the same mid-node pause/resume path as a worker's `ask_user` question.
-
-quack's shipped defaults guard `delete_path: judge`, `git_rebase: judge`, `git_push: judge+confirm`, and `run_command: judge+confirm` - the sandbox contains *where* a command reaches, the judge is what contains *what* it does. An off-task or exfiltrating command inside a perfectly good sandbox is still an off-task command.
-
-**Since the code agents moved to external ACP subprocesses** (see [agents.md](../agents.md#native-agents-vs-external-acp-agents)), the native fs/git write tools this ladder used to guard mostly don't exist anymore for those agents - delivery (including `git_push`) is gate-owned and runs after the trust gate, never inside the subprocess itself. `config/quack.yaml` ships `guards:` empty by default for that reason; the walls that remain are the jail on the surviving read tools and the OS sandbox around gate-check children.
-
-### A webhook / autonomous deployment must drop `git_push` off `confirm`
-
-The `confirm` tier pauses the run for a *human* to approve or deny. A webhook-triggered run - `quack:implement` on an issue, an auto-review on PR open - has no human sitting in the loop to answer that pause; a `confirm`-gated `git_push` in that path would just hang forever. That's why delivery in the ACP world is gate-owned rather than tool-gated: the trust gate decides whether the work is good enough to push, and a gate-failed PR opens as a draft instead of pausing for a confirmation nobody's there to give. If you do re-introduce a `confirm`-tiered tool into an autonomous path, make sure something on that path can actually answer the pause, or budget for the run timing out.

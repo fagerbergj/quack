@@ -183,15 +183,12 @@ func (m *growthModel) GenerateContent(_ context.Context, req *model.LLMRequest, 
 	}
 }
 
-// summaryModel stands in for the compaction model and counts its calls.
-type summaryModel struct{ calls int }
-
-func (s *summaryModel) Name() string { return "summary" }
-func (s *summaryModel) GenerateContent(context.Context, *model.LLMRequest, bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		s.calls++
-		yield(&model.LLMResponse{Content: genai.NewContentFromText("MODEL SUMMARY", genai.RoleModel), TurnComplete: true}, nil)
-	}
+// summaryModel stands in for the compaction model, counting its calls in *calls.
+func summaryModel(calls *int) *fakeLLM {
+	return &fakeLLM{func(*model.LLMRequest) *model.LLMResponse {
+		*calls++
+		return &model.LLMResponse{Content: genai.NewContentFromText("MODEL SUMMARY", genai.RoleModel), TurnComplete: true}
+	}}
 }
 
 // runGrowth runs one 30-fetch round under tail-retention compaction at threshold,
@@ -212,9 +209,10 @@ func runGrowth(t *testing.T, threshold int, stored bool) ([]int, []string, int) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, summ, meter := &growthModel{n: 30}, &summaryModel{}, NewPromptMeter()
+	var summCalls int
+	m, summ, meter := &growthModel{n: 30}, summaryModel(&summCalls), NewPromptMeter()
 	b := &Bundle{Card: Card{Name: "tester", Description: "a test agent"}, Prompt: "Research."}
-	ag, err := Build(b, nil, m, append([]tool.Tool{fetch}, fakeTools(toolReadArtifact)...), nil, "", nil, "", nil, meter)
+	ag, err := Build(b, nil, m, append([]tool.Tool{fetch}, fakeTools(toolReadArtifact)...), nil, "", "", nil, meter)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +229,7 @@ func runGrowth(t *testing.T, threshold int, stored bool) ([]int, []string, int) 
 			t.Fatal(err)
 		}
 	}
-	return m.sizes, m.sent, summ.calls
+	return m.sizes, m.sent, summCalls
 }
 
 // TestCompaction_CollapsesBeforeSummarizing: the prompt grows to the compaction
@@ -279,10 +277,10 @@ func TestCompaction_SummarizesWhenNothingStored(t *testing.T) {
 // could never be followed back; without compaction nothing collapses at all.
 func TestCompaction_OffWithoutReadArtifactOrCompaction(t *testing.T) {
 	meter := NewPromptMeter()
-	if _, err := Build(&Bundle{Card: Card{Name: "t"}}, nil, &growthModel{}, fakeTools(toolWebFetch), nil, "", nil, "", nil, meter); err != nil {
+	if _, err := Build(&Bundle{Card: Card{Name: "t"}}, nil, &growthModel{}, fakeTools(toolWebFetch), nil, "", "", nil, meter); err != nil {
 		t.Fatal(err)
 	}
-	comp, err := NativeCompactionConfig(Compaction{Enabled: true, Summarizer: &summaryModel{}, TokenThreshold: 1_000, EventRetentionSize: 2, Meter: meter})
+	comp, err := NativeCompactionConfig(Compaction{Enabled: true, Summarizer: summaryModel(new(int)), TokenThreshold: 1_000, EventRetentionSize: 2, Meter: meter})
 	if err != nil {
 		t.Fatal(err)
 	}

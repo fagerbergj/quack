@@ -2,60 +2,24 @@ package tools
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 
 	"google.golang.org/adk/v2/agent"
-	"google.golang.org/adk/v2/model"
-	"google.golang.org/adk/v2/tool"
-	"google.golang.org/genai"
-
-	"github.com/fagerbergj/quack/internal/ledger"
 )
 
-// repeatGuard: breaks identical-call loops - refuses the 3rd+ consecutive identical call.
-type repeatGuard struct {
-	inner  runnableTool
-	states *repeatStates
-	// tripped fires on every hard stop - the signal a caller outside this
-	// package uses to tell a hard stop apart from a turn that simply produced nothing.
-	tripped func(chatID, nodeID, msg string) bool
-	scope   CallScope
-}
-
-// repeatThreshold: consecutive identical calls before refusal (1st=run, 2nd=retry, 3rd=refused).
+// repeatThreshold: consecutive identical calls before the repeat guard refuses (1st=run, 2nd=retry, 3rd=refused).
 const repeatThreshold = 3
 
-// repeatHardStopAfter: further identical calls the model can make after
-// being refused before the turn is force-ended - for a worker node via
-// tripped, for the orchestrator's own tools via SkipSummarization (Run()'s
-// hardStop). The owner's settled direction for this guard: return the error
-// to the model and let it try something else; only end the turn outright
-// once it keeps treading on the same refused call regardless of caller -
-// ending it on the very first refusal denied the model any chance to
-// correct and retry within the same turn (a rig regression: a missing
-// `agent` field refused, then the turn ended before the model could resupply it).
+// repeatHardStopAfter: identical calls allowed after a refusal before the turn is force-ended; ending
+// on the first refusal denied the model any chance to correct its arguments within the turn.
 const repeatHardStopAfter = 2
 
-// repeatStates: tracks last call fingerprint per session (adjacency), plus
-// each (session, tool, args) key's own cross-call streak (crossCalls),
-// unaffected by call order - so the same tool called with the same args
-// counts toward ITS OWN streak even with other tool calls (or other args to
-// the same tool) sitting between, which is exactly the shape a model stuck
-// alternating two different tools takes (e.g. edit_plan/execute). Both
-// checks run independently in Run(): adjacency catches a tool whose result
-// always differs a little even on a genuine immediate repeat (e.g.
-// write_artifact's own fresh revision number); crossCalls catches the same
-// tool+args recurring with the SAME result despite other calls between
-// occurrences, without flagging a result that keeps changing (e.g.
-// execute's own per-round judge feedback). crossCalls tracking is further
-// scoped to crossCallTools (below) - see that doc for why.
+// repeatStates: per-session adjacency fingerprints plus per-(session, tool, args) result streaks (crossCalls).
 // ponytail: entries never pruned - add if sessions number in the millions.
-// crossCalls specifically stays bounded regardless (see crossCallTools).
 type repeatStates struct {
 	mu         sync.Mutex
 	last       map[string]*repeatState
@@ -71,7 +35,7 @@ type repeatState struct {
 type crossCallState struct {
 	resultFP string
 	streak   int // consecutive occurrences of this key whose result matched the previous one
-	total    int // total occurrences of this key this session, refusals included - drives the refusal message's counter, so it never repeats itself
+	total    int // occurrences this session, refusals included: the refusal message's counter
 }
 
 func newRepeatStates() *repeatStates {
@@ -91,13 +55,8 @@ func (s *repeatStates) observe(sessionID, fingerprint string) int {
 	return st.count
 }
 
-// resetSession clears a session's streak counter after a hard stop, so a
-// retry (e.g. a revise round) starts with a fresh budget instead of
-// immediately hard-stopping again on its very first call. Also drops this
-// session's crossCalls entries (keyed sessionID+"|"+...) - a hard stop means
-// the same key already built a cross streak too, and leaving it would trip
-// the cross check on the very next identical call instead of the fresh
-// budget this is meant to grant.
+// resetSession clears a session's adjacency and cross-call streaks after a hard stop, so a retry
+// (e.g. a revise round) starts with a fresh budget instead of hard-stopping on its first call.
 func (s *repeatStates) resetSession(sessionID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -110,10 +69,8 @@ func (s *repeatStates) resetSession(sessionID string) {
 	}
 }
 
-// crossStreak returns key's current confirmed-identical-result streak
-// without mutating it - checked BEFORE running, so a key already at
-// repeatThreshold-1 is refused on this call rather than run a further time
-// just to reconfirm what two prior identical results already established.
+// crossStreak is checked before running, so a key at repeatThreshold-1 is refused rather than run
+// again to reconfirm what two identical results already established.
 func (s *repeatStates) crossStreak(key string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -123,9 +80,7 @@ func (s *repeatStates) crossStreak(key string) int {
 	return 0
 }
 
-// recordCrossRefusal bumps key's total for the refusal message's counter,
-// without touching streak - a refused call never ran, so there's no new
-// result to fold in.
+// recordCrossRefusal bumps key's total but not its streak: a refused call has no result to fold in.
 func (s *repeatStates) recordCrossRefusal(key string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -138,11 +93,8 @@ func (s *repeatStates) recordCrossRefusal(key string) int {
 	return st.total
 }
 
-// observeCrossResult folds a completed call's own outcome into key's
-// streak: a result identical to the last one recorded for this key extends
-// the streak; a different one resets it to 1 - a judge rejection whose
-// reason varies round to round must never count as a repeat just because
-// the call arguments happened to stay the same.
+// observeCrossResult extends key's streak on an identical result and resets it otherwise, so a
+// judge rejection whose reason varies never counts as a repeat.
 func (s *repeatStates) observeCrossResult(key, resultFP string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -160,14 +112,12 @@ func (s *repeatStates) observeCrossResult(key, resultFP string) {
 	}
 }
 
-// resourceFailCount returns consecutive-failure count without mutating.
 func (s *repeatStates) resourceFailCount(sessionID, resourceKey string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.fails[sessionID+"|"+resourceKey]
 }
 
-// observeResourceFail records call outcome: success resets, failure increments.
 func (s *repeatStates) observeResourceFail(sessionID, resourceKey string, failed bool) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -180,153 +130,116 @@ func (s *repeatStates) observeResourceFail(sessionID, resourceKey string, failed
 	return s.fails[k]
 }
 
-func newRepeatGuard(inner tool.Tool, states *repeatStates, tripped func(chatID, nodeID, msg string) bool, scope CallScope) (tool.Tool, error) {
-	rt, ok := inner.(runnableTool)
-	if !ok {
-		return nil, fmt.Errorf("tool %q does not support repeat guarding (not a runnable function tool)", inner.Name())
-	}
-	return &repeatGuard{inner: rt, states: states, tripped: tripped, scope: scope}, nil
-}
-
-func (g *repeatGuard) Name() string        { return g.inner.Name() }
-func (g *repeatGuard) Description() string { return g.inner.Description() }
-func (g *repeatGuard) IsLongRunning() bool { return g.inner.IsLongRunning() }
-
-// SetLedgerCoords: pass-through wrapper, forward to inner (#1052).
-func (g *repeatGuard) SetLedgerCoords(c ledger.Coords) {
-	if cs, ok := g.inner.(ledger.CoordSetter); ok {
-		cs.SetLedgerCoords(c)
-	}
-}
-
-func (g *repeatGuard) Declaration() *genai.FunctionDeclaration { return g.inner.Declaration() }
-
-// ProcessRequest re-points dispatch at the wrapper.
-func (g *repeatGuard) ProcessRequest(ctx agent.Context, req *model.LLMRequest) error {
-	return rebindToolMap(g.inner, g, ctx, req)
-}
-
 // pathFailThreshold: consecutive failures against a (tool, resource) before refusing the next call.
 const pathFailThreshold = 3
 
-// crossCallTools: repeatGuard's cross-call streak (crossCalls) only applies
-// to the orchestrator's own plan tools, where a same-args-same-result
-// repeat can never be useful progress - unlike a worker node's own tools
-// (read_file, read_artifact, ...), where re-reading the exact same resource
-// late in a long incremental-planning session is a legitimate no-op, not a
-// loop (#slice3 review). This also bounds crossCalls' own memory: none of
-// these names are ever in a worker node's tool list (registry.go's Build
-// has no constructor for any of them - they're hand-built in
-// orchestrator.go), so the long-lived repeatStates a worker agent's tools
-// share across every chat never populates crossCalls at all; the
-// orchestrator's own repeatStates (orchestrator.go) is rebuilt fresh every
-// turn regardless, so entries never outlive the turn that created them.
+// crossCallTools: only the orchestrator's plan tools, where a same-args-same-result repeat is never progress
+// (a worker re-reading a file is). Bounds crossCalls too: these are never in a worker's long-lived tool list.
+// ponytail: load_skill isn't here, so an alternating load_skill/list_skills loop evades adjacency - add it if that shows up.
 var crossCallTools = map[string]bool{"create_plan": true, "edit_plan": true, "execute": true}
 
-// Run refuses back-to-back identical calls, identical cross-call streaks (crossCallTools) and resource-failure churn; a refusal
-// leaves the turn open until repeatHardStopAfter more repeats, then tripped ends a node's round, SkipSummarization the orchestrator's.
-func (g *repeatGuard) Run(ctx agent.Context, args any) (map[string]any, error) {
-	argsJSON, err := json.Marshal(args)
-	if err != nil {
-		return g.inner.Run(ctx, args) // unfingerprintable args: never block
-	}
-	sessionID := ctx.SessionID()
-	fingerprint := g.Name() + ":" + string(argsJSON)
-	crossKey := sessionID + "|" + fingerprint
-	chatID, nodeID := g.scope.node(ctx)
-	crossTracked := crossCallTools[g.Name()]
-
-	// Adjacency: this exact call immediately repeated, regardless of
-	// result - catches a tool whose own result always differs a little
-	// even on a genuine immediate repeat (e.g. a fresh artifact revision
-	// number on an otherwise byte-identical write).
-	if n := g.states.observe(sessionID, fingerprint); n >= repeatThreshold {
-		if n > repeatThreshold+repeatHardStopAfter {
-			return nil, g.hardStop(ctx, sessionID, chatID, nodeID, n)
-		}
-		// Adjacency trips on 3 identical ARGUMENTS alone - that's the whole
-		// point, catching a tool whose result varies slightly even on a
-		// genuine repeat (e.g. a fresh revision number) - so it hasn't
-		// confirmed the result also matches.
-		return nil, g.refuse(sessionID, n, false)
-	}
-	// Cross-call: same tool+args recurring with the SAME result even with
-	// other tool calls (or other args to this tool) sitting between - the
-	// shape a model stuck alternating two tools takes (e.g.
-	// edit_plan/execute). Never trips on a result that keeps changing
-	// (e.g. execute's own per-round judge feedback).
-	if crossTracked && g.states.crossStreak(crossKey) >= repeatThreshold-1 {
-		cn := g.states.recordCrossRefusal(crossKey)
-		if cn > repeatThreshold+repeatHardStopAfter {
-			return nil, g.hardStop(ctx, sessionID, chatID, nodeID, cn)
-		}
-		return nil, g.refuse(sessionID, cn, true) // crossStreak fingerprints args AND result - this tier HAS confirmed it
-	}
-
-	resource, hasResource := resourceFingerprint(g.Name(), argsJSON)
-	resourceKey := g.Name() + ":" + resource
-	if hasResource {
-		if fails := g.states.resourceFailCount(sessionID, resourceKey); fails >= pathFailThreshold {
-			slog.Warn("tool call refused: repeated failures against same resource", "component", "tools",
-				"tool", g.Name(), "resource", resource, "consecutive_fails", fails, "session", sessionID)
-			return nil, fmt.Errorf(
-				"REFUSED: %s against %q has now failed %d times in a row with varying arguments. Varying the arguments "+
-					"further is not working - the problem is with %q itself or your understanding of it, not the "+
-					"specific call. Stop retrying this resource: inspect it a different way (e.g. list its "+
-					"surroundings), pick a different resource, or report the failure in your final answer.",
-				g.Name(), resource, fails, resource)
-		}
-	}
-
-	result, runErr := g.inner.Run(ctx, args)
-	if hasResource {
-		g.states.observeResourceFail(sessionID, resourceKey, runErr != nil || batchAllFailed(g.Name(), result))
-	}
-	if crossTracked {
-		g.states.observeCrossResult(crossKey, resultFingerprint(result, runErr))
-	}
-	return result, runErr
+// repeatKeys: one call's fingerprints; ok is false for unfingerprintable args, which are never blocked.
+type repeatKeys struct {
+	sessionID, fingerprint, crossKey, resource, resourceKey string
+	hasResource, crossTracked                               bool
 }
 
-// refuse logs and builds the REFUSED error both the adjacency and
-// cross-call soft-refusal tiers return - the turn is NOT ended here (the
-// owner's settled direction: return the error, let the model try something
-// else). n is whichever check's own occurrence count tripped, so
-// consecutive refusals for the same key are never byte-identical (the model
-// can tell it's still being refused, not stuck on a cached response).
-// sameResult is only true for the cross-call tier, which fingerprints args
-// AND result - the adjacency tier trips on identical arguments alone, so
-// claiming it also got the same result would be false for the exact tools
-// it's meant to catch (e.g. a fresh artifact revision number every call).
-func (g *repeatGuard) refuse(sessionID string, n int, sameResult bool) error {
+func newRepeatKeys(ctx agent.Context, name string, args map[string]any) (repeatKeys, bool) {
+	argsJSON, err := json.Marshal(args)
+	if err != nil {
+		return repeatKeys{}, false
+	}
+	k := repeatKeys{sessionID: ctx.SessionID(), fingerprint: name + ":" + string(argsJSON), crossTracked: crossCallTools[name]}
+	k.crossKey = k.sessionID + "|" + k.fingerprint
+	k.resource, k.hasResource = resourceFingerprint(name, argsJSON)
+	k.resourceKey = name + ":" + k.resource
+	return k, true
+}
+
+// checkRepeat refuses adjacent repeats, cross-call streaks and resource-failure churn; after repeatHardStopAfter
+// more repeats, tripped ends a node's round and SkipSummarization the orchestrator's.
+func (h *Hooks) checkRepeat(ctx agent.Context, name string, args map[string]any) error {
+	k, ok := newRepeatKeys(ctx, name, args)
+	if !ok {
+		return nil
+	}
+	chatID, nodeID := h.scope.node(ctx)
+	// Adjacency ignores the result: some tools' results always differ a little (a fresh revision number).
+	if n := h.repeats.observe(k.sessionID, k.fingerprint); n >= repeatThreshold {
+		if n > repeatThreshold+repeatHardStopAfter {
+			return h.hardStop(ctx, name, k.sessionID, chatID, nodeID, n)
+		}
+		return refuseRepeat(name, k.sessionID, n, false)
+	}
+	// Cross-call: same args and same result with other calls between (e.g. edit_plan/execute alternating).
+	if k.crossTracked && h.repeats.crossStreak(k.crossKey) >= repeatThreshold-1 {
+		cn := h.repeats.recordCrossRefusal(k.crossKey)
+		if cn > repeatThreshold+repeatHardStopAfter {
+			return h.hardStop(ctx, name, k.sessionID, chatID, nodeID, cn)
+		}
+		return refuseRepeat(name, k.sessionID, cn, true) // crossStreak confirmed the result matches too
+	}
+	if !k.hasResource {
+		return nil
+	}
+	if fails := h.repeats.resourceFailCount(k.sessionID, k.resourceKey); fails >= pathFailThreshold {
+		slog.Warn("tool call refused: repeated failures against same resource", "component", "tools",
+			"tool", name, "resource", k.resource, "consecutive_fails", fails, "session", k.sessionID)
+		return &refusal{fmt.Sprintf(
+			"REFUSED: %s against %q has now failed %d times in a row with varying arguments. Varying the arguments "+
+				"further is not working - the problem is with %q itself or your understanding of it, not the "+
+				"specific call. Stop retrying this resource: inspect it a different way (e.g. list its "+
+				"surroundings), pick a different resource, or report the failure in your final answer.",
+			name, k.resource, fails, k.resource)}
+	}
+	return nil
+}
+
+// recordRepeat folds a call that ran into the resource-failure and cross-call streaks.
+func (h *Hooks) recordRepeat(ctx agent.Context, name string, args, result map[string]any, runErr error) {
+	k, ok := newRepeatKeys(ctx, name, args)
+	if !ok {
+		return
+	}
+	if k.hasResource {
+		h.repeats.observeResourceFail(k.sessionID, k.resourceKey, runErr != nil || batchAllFailed(name, result))
+	}
+	if k.crossTracked {
+		h.repeats.observeCrossResult(k.crossKey, resultFingerprint(result, runErr))
+	}
+}
+
+// refuseRepeat builds the soft-refusal error without ending the turn; n varies so consecutive refusals are
+// never byte-identical. sameResult only for the cross-call tier: adjacency never compared results.
+func refuseRepeat(name, sessionID string, n int, sameResult bool) error {
 	slog.Warn("tool call refused: identical call repeated", "component", "tools",
-		"tool", g.Name(), "consecutive", n, "session", sessionID)
+		"tool", name, "consecutive", n, "session", sessionID)
 	result := ""
 	if sameResult {
 		result = " and got the same result"
 	}
-	return fmt.Errorf(
+	return &refusal{fmt.Sprintf(
 		"REFUSED (attempt %d): this is the %s consecutive time you issued this exact %s call with these exact "+
 			"arguments%s - it is already in the conversation above. Re-issuing it again will "+
 			"END THIS TURN as a failure. Take a DIFFERENT action: use the result you already have, try a different "+
 			"tool or different arguments, or if you are finished, stop calling tools and write your final answer now.",
-		n-repeatThreshold+1, ordinal(n), g.Name(), result)
+		n-repeatThreshold+1, ordinal(n), name, result)}
 }
 
 // hardStop ends the turn once the model keeps re-issuing a refused call. It
 // fires tripped; the orchestrator (nodeID=="") also gets SkipSummarization.
-func (g *repeatGuard) hardStop(ctx agent.Context, sessionID, chatID, nodeID string, n int) error {
-	msg := fmt.Sprintf("tool-call loop: %s called with identical arguments and the same result %d times despite being refused; turn terminated", g.Name(), n)
+func (h *Hooks) hardStop(ctx agent.Context, name, sessionID, chatID, nodeID string, n int) error {
+	msg := fmt.Sprintf("tool-call loop: %s called with identical arguments and the same result %d times despite being refused; turn terminated", name, n)
 	slog.Warn("tool call loop: ending the turn", "component", "tools",
-		"tool", g.Name(), "consecutive", n, "session", sessionID)
-	if g.tripped != nil {
-		g.tripped(chatID, nodeID, msg)
+		"tool", name, "consecutive", n, "session", sessionID)
+	if h.tripped != nil {
+		h.tripped(chatID, nodeID, msg)
 	}
 	if nodeID == "" {
 		ctx.Actions().SkipSummarization = true
 	}
-	g.states.resetSession(sessionID)
-	return errors.New(msg)
+	h.repeats.resetSession(sessionID)
+	return &refusal{msg}
 }
 
 // resourceFingerprint extracts the `path`/`url` field, or web_fetch's sorted
@@ -365,7 +278,7 @@ func batchURLFingerprint(args map[string]any) (string, bool) {
 	if len(strs) == 0 {
 		return "", false
 	}
-	sort.Strings(strs)
+	slices.Sort(strs)
 	return strings.Join(strs, ","), true
 }
 
@@ -391,10 +304,9 @@ func batchAllFailed(toolName string, result map[string]any) bool {
 	return true
 }
 
-// resultFingerprint serializes a call's own outcome so repeatStates can tell
-// "the exact same call, producing the exact same result" (a real loop) from
-// "the exact same call whose result keeps changing" (e.g. a judge round
-// whose rejection reason varies) - only the former counts as a repeat.
+// resultFingerprint lets a repeat count only when the result is unchanged too, not when it keeps
+// changing (e.g. a judge whose rejection reason varies).
+
 func resultFingerprint(result map[string]any, runErr error) string {
 	if runErr != nil {
 		return "err:" + runErr.Error()
@@ -424,89 +336,4 @@ func ordinal(n int) string {
 	default:
 		return fmt.Sprintf("%dth", n)
 	}
-}
-
-// repeatWrap applies the identical-call breaker.
-func repeatWrap(t tool.Tool, states *repeatStates, tripped func(chatID, nodeID, msg string) bool, scope CallScope) (tool.Tool, error) {
-	return newRepeatGuard(t, states, tripped, scope)
-}
-
-// NewRepeatStates and RepeatWrap expose the identical-call breaker to a
-// caller outside this package that builds tools individually rather than
-// through Build - the orchestrator's own hand-built list_nodes/create_plan/
-// edit_plan/execute, which Build's registry loop never sees and so never
-// wrapped (a model that keeps sending the same malformed create_plan call
-// had nothing stopping it - see the QA rig's 386-call loop this closes).
-func NewRepeatStates() *repeatStates { return newRepeatStates() }
-
-// RepeatWrap is repeatWrap, exported for the same reason as NewRepeatStates.
-// tripped fires on a hard stop (see repeatGuard.tripped); pass nil to ignore it.
-func RepeatWrap(t tool.Tool, states *repeatStates, tripped func(chatID, nodeID, msg string) bool) (tool.Tool, error) {
-	return repeatWrap(t, states, tripped, CallScope{})
-}
-
-// SupportsRepeatGuard reports whether t can be passed to RepeatWrap - false
-// for a tool with no Run (e.g. memory.NewPreload(), which only mutates the
-// request and is never independently "called" by the model, so it has
-// nothing a repeated-call loop could target). A caller wrapping a
-// heterogeneous list built outside Build's own registry (which only ever
-// holds runnable function tools) should check this first and leave a
-// non-runnable tool as-is, rather than treat RepeatWrap's error as fatal.
-func SupportsRepeatGuard(t tool.Tool) bool {
-	_, ok := t.(runnableTool)
-	return ok
-}
-
-// repeatGuardedToolset applies repeatGuard to every tool a Toolset exposes -
-// covers a toolset attached directly to the agent, which Build's per-tool wrapper chain never sees.
-type repeatGuardedToolset struct {
-	inner   tool.Toolset
-	states  *repeatStates
-	tripped func(chatID, nodeID, msg string) bool
-	scope   CallScope
-}
-
-// RepeatWrapToolset wraps every tool ts exposes with states/tripped - the SAME instances
-// a caller's other repeat-guarded tools use, so ts's calls share that one budget. scope is the node's (zero outside one).
-func RepeatWrapToolset(ts tool.Toolset, states *repeatStates, tripped func(chatID, nodeID, msg string) bool, scope CallScope) tool.Toolset {
-	return &repeatGuardedToolset{inner: ts, states: states, tripped: tripped, scope: scope}
-}
-
-func (w *repeatGuardedToolset) Name() string { return w.inner.Name() }
-
-// Tools wraps each inner tool with repeatGuard; a non-runnable one passes through unwrapped.
-// ponytail: load_skill isn't in crossCallTools, so an alternating load_skill/list_skills loop evades adjacency - add it there if that shape shows up.
-func (w *repeatGuardedToolset) Tools(ctx agent.ReadonlyContext) ([]tool.Tool, error) {
-	inner, err := w.inner.Tools(ctx)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]tool.Tool, len(inner))
-	for i, t := range inner {
-		if !SupportsRepeatGuard(t) {
-			out[i] = t
-			continue
-		}
-		if out[i], err = repeatWrap(t, w.states, w.tripped, w.scope); err != nil {
-			return nil, err
-		}
-		// #1478: toolset-expanded tools never pass Build's registry, so without
-		// this a skill load leaves no tool.call. Zero coords: the round's ctx carries them.
-		out[i], _ = emitWrap(out[i], ledger.Coords{})
-	}
-	return out, nil
-}
-
-// toolsetRequestProcessor structurally mirrors ADK's unexported toolinternal.RequestProcessor,
-// which SkillToolset implements to inject its skill list into the system instruction.
-type toolsetRequestProcessor interface {
-	ProcessRequest(ctx agent.Context, req *model.LLMRequest) error
-}
-
-// ProcessRequest forwards to the inner toolset if it processes requests itself; a no-op otherwise.
-func (w *repeatGuardedToolset) ProcessRequest(ctx agent.Context, req *model.LLMRequest) error {
-	if rp, ok := w.inner.(toolsetRequestProcessor); ok {
-		return rp.ProcessRequest(ctx, req)
-	}
-	return nil
 }

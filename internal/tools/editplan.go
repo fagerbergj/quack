@@ -20,14 +20,8 @@ type editPlanArgs struct {
 	Delivery    *dag.Delivery     `json:"delivery,omitempty"`
 }
 
-// NewEditPlanTool: upserts assignments (keyed by node_id, same shape as
-// create_plan - agent hires, node_id reassigns) into the chat's current
-// plan, drops assignments named in `remove`, and updates setup/delivery
-// when given. Unmentioned assignments are left exactly as they are. nodeID
-// is the AUTHORING lineage id stamped on the saved records (e.g.
-// "orchestrator") - unrelated to a dag_node's own node_id. onAssignment,
-// when non-nil, stamps assignment.meta.<extension> - whichever active
-// extension supplies it, keyed by its own name (e.g. "github").
+// NewEditPlanTool leaves unmentioned assignments untouched. nodeID is the authoring lineage id
+// (e.g. "orchestrator"), unrelated to a dag_node's node_id.
 func NewEditPlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setup, nodeIsRunning func(string) bool, allowedKinds []string, onAssignment AssignmentMetaFunc, agents []string) (tool.Tool, error) {
 	schema, err := assignmentInputSchema[editPlanArgs](githubSetup, agents)
 	if err != nil {
@@ -37,8 +31,6 @@ func NewEditPlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setu
 	setupDesc := ", and/or update `setup`/`delivery`"
 	setupOverride := "a setup override that disagrees with the trigger, "
 	if githubSetup != nil {
-		// setup isn't even in this call's schema: the trigger's own repo/base_ref
-		// always wins, so there's nothing for the model to usefully set.
 		changeList = "assignments/remove/delivery"
 		setupDesc = ", and/or update `delivery`; `setup` isn't offered here - this dispatch's repo/base_ref is fixed by its trigger"
 		setupOverride = ""
@@ -78,9 +70,8 @@ func NewEditPlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Setu
 	)
 }
 
-// editPlanPrecheck: load the chat's current plan and reject a stale plan_id up front.
 func editPlanPrecheck(tc agent.Context, c *recordstore.Client, planID string) (dag.DagPlanRecord, error) {
-	current, _, ok, err := loadDagPlan(tc, c)
+	current, ok, err := loadDagPlan(tc, c)
 	if err != nil {
 		return dag.DagPlanRecord{}, fmt.Errorf("edit_plan: %w", err)
 	}
@@ -93,8 +84,7 @@ func editPlanPrecheck(tc agent.Context, c *recordstore.Client, planID string) (d
 	return current, nil
 }
 
-// editDeliveredPlan: editing an already-delivered plan starts a NEW plan from
-// assignments.
+// editDeliveredPlan: editing a delivered plan starts a new one from assignments.
 func editDeliveredPlan(tc agent.Context, c *recordstore.Client, current dag.DagPlanRecord, nodeID string, githubSetup *dag.Setup, nodeIsRunning func(string) bool, allowedKinds []string, onAssignment AssignmentMetaFunc, agents []string, a editPlanArgs) (planUpsertResult, error) {
 	// The delivered-plan wording only fits when there are no assignments to even attempt:
 	// a rejection of given assignments must come from newPlanRecord verbatim.
@@ -112,8 +102,6 @@ func editDeliveredPlan(tc agent.Context, c *recordstore.Client, current dag.DagP
 	return res, nil
 }
 
-// applyEdit: apply remove + upserts + setup/delivery to the current plan and save it
-// (dag_plan first, then any minted dag_node rows).
 func applyEdit(tc agent.Context, c *recordstore.Client, current dag.DagPlanRecord, nodeID string, githubSetup *dag.Setup, nodeIsRunning func(string) bool, allowedKinds []string, onAssignment AssignmentMetaFunc, agents []string, a editPlanArgs) (planUpsertResult, error) {
 	remaining, err := removeAssignments(current.Assignments, a.Remove)
 	if err != nil {
@@ -154,8 +142,7 @@ func applyEdit(tc agent.Context, c *recordstore.Client, current dag.DagPlanRecor
 	if a.Delivery != nil {
 		rec.Delivery = a.Delivery
 	}
-	// dag_plan (which validates) saves before any minted dag_node, so a rejected
-	// call leaves no orphan "hired" node behind for list_nodes.
+	// dag_plan (which validates) saves first, so a rejected call leaves no orphan hired node.
 	now := time.Now().UTC()
 	lineage := recordstore.Lineage{NodeID: nodeID, Author: "worker", SavedAt: now}
 	if _, _, err := c.SaveStructured(tc, "dag_plan", rec, "", lineage); err != nil {
@@ -164,8 +151,6 @@ func applyEdit(tc agent.Context, c *recordstore.Client, current dag.DagPlanRecor
 	for _, n := range minted {
 		nodeLineage := recordstore.Lineage{NodeID: nodeID, Author: "worker", SavedAt: now}
 		if _, _, err := c.SaveStructured(tc, "dag_node", n, n.NodeID, nodeLineage); err != nil {
-			// The dag_plan revision above already saved - a bare error here leaves a live
-			// plan referencing a node list_nodes won't show yet.
 			return planUpsertResult{}, fmt.Errorf("edit_plan: save dag_node %s: %w; "+
 				"the plan was already saved - call edit_plan again to replace it", n.NodeID, err)
 		}
@@ -179,12 +164,8 @@ func applyEdit(tc agent.Context, c *recordstore.Client, current dag.DagPlanRecor
 	}, nil
 }
 
-// removeAssignments drops every assignment whose node_id is in remove.
-// Errors on a remove id naming no current assignment (a typo must not
-// silently no-op) or one that already ran (dag.Assignment.TaskID != "") -
-// a done assignment's task_id/result is load-bearing (execute's seed map for
-// any dependent added later), so removing it is a one-line error, not a
-// silent history rewrite.
+// removeAssignments errors on an unknown id (a typo must not no-op) or a run one, whose result
+// seeds later dependents.
 func removeAssignments(assignments []dag.Assignment, remove []string) ([]dag.Assignment, error) {
 	if len(remove) == 0 {
 		return assignments, nil
@@ -215,9 +196,7 @@ func removeAssignments(assignments []dag.Assignment, remove []string) ([]dag.Ass
 	return out, nil
 }
 
-// mergeAssignments upserts upserts into current by node_id, preserving
-// current's order for an assignment that already existed and appending a
-// brand-new one at the end.
+// mergeAssignments upserts by node_id, keeping current's order and appending new ones.
 func mergeAssignments(current, upserts []dag.Assignment) []dag.Assignment {
 	byID := make(map[string]dag.Assignment, len(upserts))
 	for _, u := range upserts {

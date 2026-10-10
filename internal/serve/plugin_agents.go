@@ -23,9 +23,8 @@ type PluginSeedResult struct {
 	Shapes []string `json:"shapes,omitempty"`
 }
 
-// SeedPluginAgentsAndShapes merges every admitted plugin's agents/ bundles
-// and workflows/ shapes into cfg, gated per plugin on pluginGateEnabled, and
-// returns the overrides no plugin claimed (dropped). Call before buildAgents.
+// SeedPluginAgentsAndShapes merges admitted plugins' agents and workflow shapes into cfg (gated by
+// pluginGateEnabled) and returns the overrides no plugin claimed. Call before buildAgents.
 func SeedPluginAgentsAndShapes(cfg *config.Config, plugins []plugin.Plugin) ([]PluginSeedResult, []string, error) {
 	var results []PluginSeedResult
 	for _, p := range plugins {
@@ -108,27 +107,31 @@ func pluginModuleGateEnabled(modules map[string]yaml.Node, p plugin.Plugin) (boo
 	return true, nil
 }
 
-// moduleEnabledIn reports whether extensions.<name> is configured and not explicitly
-// disabled - the one decision plugin gating and loadExtensionConfig (boot, validate) share.
+// moduleEnabledIn reports whether extensions.<name> is configured and not explicitly disabled.
 func moduleEnabledIn(modules map[string]yaml.Node, name string) (bool, error) {
-	node, ok := modules[name]
-	if !ok {
+	if _, ok := modules[name]; !ok {
 		return false, nil
 	}
-	raw, err := yaml.Marshal(&node)
-	if err != nil {
-		return false, fmt.Errorf("extensions.%s: re-marshal config: %w", name, err)
-	}
-	var base extsdk.BaseConfig
-	if err := yaml.Unmarshal(raw, &base); err != nil {
-		return false, fmt.Errorf("extensions.%s: parse base config: %w", name, err)
-	}
-	return base.Enabled == nil || *base.Enabled, nil
+	_, base, err := parseModuleConfig(modules, name)
+	return err == nil && (base.Enabled == nil || *base.Enabled), err
 }
 
-// ResolveConfiguredPlugins resolves every plugins.seed row from what is
-// already on disk - no registry seed/write, no git fetch, no store open.
-// A github: entry with no local clone yet is reported unresolvable, never fetched.
+// parseModuleConfig re-marshals extensions.<name> and parses its shared BaseConfig fields.
+func parseModuleConfig(modules map[string]yaml.Node, name string) ([]byte, extsdk.BaseConfig, error) {
+	var base extsdk.BaseConfig
+	node := modules[name]
+	raw, err := yaml.Marshal(&node)
+	if err != nil {
+		return nil, base, fmt.Errorf("extensions.%s: re-marshal config: %w", name, err)
+	}
+	if err := yaml.Unmarshal(raw, &base); err != nil {
+		return nil, base, fmt.Errorf("extensions.%s: parse base config: %w", name, err)
+	}
+	return raw, base, nil
+}
+
+// ResolveConfiguredPlugins resolves plugins.seed from disk only: no registry write, git fetch or store
+// open. A github: entry with no local clone is reported unresolvable.
 func ResolveConfiguredPlugins(cfg *config.Config) (resolved []plugin.Plugin, unresolvable []string, err error) {
 	var rows []pluginreg.Plugin
 	for _, s := range cfg.Plugins.Seed {

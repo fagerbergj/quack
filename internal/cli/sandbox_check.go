@@ -7,9 +7,8 @@ import (
 	"strings"
 )
 
-// SandboxProbeStatus is one probe's verdict: PASS/FAIL drive `check`'s exit
-// code, INFO never does (a probe about a nice-to-have, e.g. nested-namespace
-// availability, not a guarantee the jail makes).
+// SandboxProbeStatus is one probe's verdict: PASS/FAIL drive `check`'s exit code, INFO never does
+// (nice-to-haves such as nested-namespace availability).
 type SandboxProbeStatus string
 
 const (
@@ -26,9 +25,7 @@ type SandboxProbeResult struct {
 	Evidence string             `json:"evidence"`
 }
 
-// SandboxRunner is the seam `check`'s probes run a shell command through -
-// satisfied by a real seat (sh -c "$CMD" wrapped through WrapArgv/spawnEnv,
-// see cmd/quack/sandbox.go) or a fake for unit tests.
+// SandboxRunner runs a probe's shell command: a real seat (see cmd/quack/sandbox.go) or a test fake.
 type SandboxRunner interface {
 	// Run runs sh -c script in the seat, returning combined stdout+stderr and
 	// the exit code (0 on success).
@@ -45,9 +42,8 @@ type sandboxProbe struct {
 	script string
 }
 
-// RunSandboxChecks runs every built-in probe through r and returns the
-// table. checkCommands are the config's workspace.check_commands entries
-// (each probed for presence on ChildPath - the issue body's "one probe per check_commands entry"). enforced is whether the resolved mode OS-enforces a boundary (workspace.EnforcesBoundary) - under `none` the boundary probes (EACCES-on-write, clone-denied-without-boundary) degrade to INFO rather than FAIL, since there is no boundary to have failed.
+// RunSandboxChecks runs every built-in probe plus a ChildPath presence probe per check_commands entry.
+// Without an enforced boundary (mode none) the boundary probes degrade to INFO, since nothing could fail.
 func RunSandboxChecks(ctx context.Context, r SandboxRunner, readOnly, enforced bool, checkCommands []string) []SandboxProbeResult {
 	probes := []sandboxProbe{
 		{name: "write $TMPDIR", script: `f="$TMPDIR/quack-sandbox-probe-$$"; echo x > "$f" && rm -f "$f"`},
@@ -83,9 +79,8 @@ func RunSandboxChecks(ctx context.Context, r SandboxRunner, readOnly, enforced b
 
 func runOneSandboxProbe(ctx context.Context, r SandboxRunner, p sandboxProbe, readOnly bool) SandboxProbeResult {
 	script := p.script
-	// The cwd-write probe expects success unless the agent is read-only, in
-	// which case EACCES is the PASS condition (issue body: "cwd EACCES iff
-	// read-only").
+	// The cwd-write probe expects success unless the agent is read-only,
+	// in which case EACCES is the PASS condition.
 	wantFail := p.name == "write cwd" && readOnly
 
 	out, code, err := r.Run(ctx, script)
@@ -136,9 +131,8 @@ func shQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-// goBuildProbeScript builds a throwaway one-file module under $TMPDIR and
-// builds it with GOFLAGS=-mod=mod, network disabled - the issue body's
-// "go build ./... in a copy of a tiny Go module under $TMPDIR, offline".
+// goBuildProbeScript builds a throwaway one-file module under $TMPDIR offline
+// (GOFLAGS=-mod=mod, network disabled).
 const goBuildProbeScript = `
 set -e
 d="$TMPDIR/quack-sandbox-gobuild-$$"
@@ -158,9 +152,8 @@ EOF
 GOFLAGS=-mod=mod GOPROXY=off go build ./...
 `
 
-// gitPushProbeScript proves git init+commit+push to a bare repo under
-// $TMPDIR works with no EXDEV (the hardlink-across-devices failure #936
-// chased) - both repos live under $TMPDIR so this only proves same-device git via push; gitCloneLocalProbeScript covers the clone --local hardlink path.
+// gitPushProbeScript proves init+commit+push to a bare repo under $TMPDIR works without EXDEV
+// (hardlinks across devices); gitCloneLocalProbeScript covers clone --local.
 const gitPushProbeScript = `
 set -e
 base="$TMPDIR/quack-sandbox-gitpush-$$"
@@ -177,9 +170,8 @@ git commit -qm probe
 git push -q "$base/bare.git" HEAD:refs/heads/probe
 `
 
-// gitCloneLocalProbeScript proves `git clone --local` (the hardlink path) works
-// into $TMPDIR. Self-contained: cwd may not be a repo (a fresh --cwd is not),
-// so it inits one under $TMPDIR and clones that - same-device hardlinks are what the probe is for, not cwd's identity.
+// gitCloneLocalProbeScript proves `git clone --local` (the hardlink path) into $TMPDIR. It clones a repo
+// it inits under $TMPDIR, since cwd may not be a repo.
 const gitCloneLocalProbeScript = `
 set -e
 base="$TMPDIR/quack-sandbox-clonelocal-$$"

@@ -304,9 +304,7 @@ func TestRunMemoryShowNotFound(t *testing.T) {
 	}
 }
 
-// TestRunMemorySweepPartialFailure covers the CLI regression fixed alongside
-// the partial-failure REST change: a non-empty res.Errors must show up in
-// human output and make the command fail, not silently exit 0.
+// TestRunMemorySweepPartialFailure: a non-empty res.Errors shows in human output and fails the command.
 func TestRunMemorySweepPartialFailure(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -329,9 +327,8 @@ func TestRunMemorySweepPartialFailure(t *testing.T) {
 	}
 }
 
-// TestRunMemorySweepPartialFailureJSON: --as-json must still print the full
-// response (including errors) and, unlike the human path, RunMemorySweep
-// itself doesn't error on the JSON path since the response was decoded fine.
+// TestRunMemorySweepPartialFailureJSON: JSON output prints the full response including errors,
+// and doesn't error since the response decoded fine.
 func TestRunMemorySweepPartialFailureJSON(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -358,9 +355,8 @@ func TestRunMemorySweepPartialFailureJSON(t *testing.T) {
 	}
 }
 
-// TestRunMemorySweepAllStoresFail covers the reordering fix: empty Stores
-// with non-empty Errors must print the failures and exit non-zero, not the
-// misleading "No memory stores configured." (that early return only applies when Errors is also empty).
+// TestRunMemorySweepAllStoresFail: no stores but some errors prints the failures and exits non-zero,
+// not "No memory stores configured."
 func TestRunMemorySweepAllStoresFail(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

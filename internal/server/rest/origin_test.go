@@ -32,9 +32,8 @@ func TestChatOrigin_MissingRequiredField(t *testing.T) {
 	}
 }
 
-// TestChatOrigin_RoundTrip proves the store's opaque JSON (marshaled from
-// *extsdk.ChatOrigin with no json tags, so Go-capitalized keys) decodes
-// into the wire schema's lowercase-tagged shape, including the nested Labels dimension map.
+// TestChatOrigin_RoundTrip: the store's JSON (*extsdk.ChatOrigin, untagged so capitalized keys) decodes into
+// the wire schema's lowercase shape, including nested Labels.
 func TestChatOrigin_RoundTrip(t *testing.T) {
 	sdkOrigin := extsdk.ChatOrigin{
 		Extension: "remarkable",
@@ -85,9 +84,8 @@ func TestChatOrigin_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestListChats_SurfacesOrigin is the store→wire integration point:
-// SetChatOrigin persists the same opaque JSON an extension's Dispatch
-// writes, and ListChats/ToSummary must decode it onto ChatSummary.origin.
+// TestListChats_SurfacesOrigin: origin JSON persisted by SetChatOrigin, as an extension's Dispatch writes it,
+// decodes onto ChatSummary.origin.
 func TestListChats_SurfacesOrigin(t *testing.T) {
 	h := newTestHandler(t)
 	chatID := "ext:remarkable:doc-42"
@@ -115,9 +113,8 @@ func TestListChats_SurfacesOrigin(t *testing.T) {
 	}
 }
 
-// TestGetChat_SurfacesOriginAndGithubFields covers GetChat's ChatDetail,
-// which builds its summary-shaped fields separately from toSummary - a
-// prior gap where github_url/github_repo/github_state/archived/origin were silently dropped from the detail response.
+// TestGetChat_SurfacesOriginAndGithubFields: GetChat builds its summary fields separately from toSummary,
+// so github_url/github_repo/github_state/archived/origin must each be set there too.
 func TestGetChat_SurfacesOriginAndGithubFields(t *testing.T) {
 	h := newTestHandler(t)
 	chatID := mustCreateChat(t, h)

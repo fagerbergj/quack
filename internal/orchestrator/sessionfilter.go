@@ -54,9 +54,8 @@ func (c conversationSessions) Get(ctx context.Context, req *session.GetRequest) 
 	return passthroughView(resp, err, resp.Session, viewOfGet)
 }
 
-// AppendEvent unwraps the view before delegating (underlying services type-assert their own session).
-// A DAG plan's own nested runner.Run shares this chat's session id and can advance its UpdateTime
-// mid-turn; ADK has no sentinel for the resulting stale write, only this substring - retry instead of failing the turn.
+// AppendEvent unwraps the view before delegating. A plan's nested runner.Run can advance this
+// session's UpdateTime mid-turn; ADK flags that stale write only by substring, so retry.
 func (c conversationSessions) AppendEvent(ctx context.Context, sess session.Session, ev *session.Event) error {
 	if v, ok := sess.(conversationSession); ok {
 		sess = v.Session

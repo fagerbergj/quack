@@ -22,12 +22,11 @@ import (
 // artifact can't blow the judge's own prompt budget.
 const judgeArtifactReadCap = 24_000
 
-// judgeSeededReadCap bounds one prior read seeded into a retry's prompt (the deliverable keeps judgeArtifactReadCap).
+// judgeSeededReadCap bounds one prior read seeded into a retry's prompt.
 const judgeSeededReadCap = 8_000
 
-// judgeView is one judge round's view of the chat: a foreign node's artifacts are hidden
-// unless this node wrote, fetched or read them, or its own lineage wrote a revision.
-// checked: web_pages the verify tier already read this round, so the judge is not shown them.
+// judgeView is one judge round's view of the chat: a foreign node's artifacts are hidden unless this node
+// wrote, fetched or read them, or its lineage wrote a revision. checked: web_pages the verify tier read.
 type judgeView struct {
 	foreign map[string]bool
 	own     map[string]bool
@@ -147,9 +146,7 @@ func newJudgeListArtifactsTool(c *recordstore.Client) (tool.Tool, error) {
 	)
 }
 
-// judgeReadArtifactArgs mirrors tools.readArtifactArgs's id/revision/window
-// shape (internal/tools/artifacts.go) - the judge needs the same window a
-// large artifact requires, not just the worker.
+// judgeReadArtifactArgs mirrors tools.readArtifactArgs's id/revision/window shape.
 type judgeReadArtifactArgs struct {
 	ID       string `json:"id"`
 	Revision int    `json:"revision,omitempty"`
@@ -202,9 +199,8 @@ func loadJudgeArtifact(ctx context.Context, c *recordstore.Client, a judgeReadAr
 // tools.maxWindowLines.
 const judgeArtifactWindowLines = 500
 
-// shapeJudgeReadArtifact: windowed or bounded text, or base64 for binary data
-// (mirrors tools.shapeReadArtifact - a judge round hits the same large/binary
-// artifacts a worker's own read_artifact call does).
+// shapeJudgeReadArtifact: windowed or bounded text, or base64 for binary data (mirrors
+// tools.shapeReadArtifact).
 func shapeJudgeReadArtifact(data []byte, mime string, a judgeReadArtifactArgs, limit int) string {
 	isText := (mime != "" && (strings.HasPrefix(mime, "text/") || mime == "application/json")) ||
 		(mime == "" && utf8.Valid(data))

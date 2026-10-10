@@ -15,9 +15,7 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// captureLogExporter records every emitted log record - a test-only sdklog.Exporter,
-// mirrors internal/vetting's captureEvalExporter for the same reason (no shared
-// export - each package's test double stays local to that package).
+// captureLogExporter records every emitted log record.
 type captureLogExporter struct{ records []sdklog.Record }
 
 func (c *captureLogExporter) Export(_ context.Context, records []sdklog.Record) error {
@@ -99,9 +97,7 @@ func TestBuildRejectsBadPlans(t *testing.T) {
 	}
 }
 
-// TestBuildErrorsEnumerateValidOptions: an unknown-agent rejection must name
-// every valid agent, not just the bad guess - retrying blind costs a full
-// planning round (regression: prod hit "unknown agent \"code-explementer\"").
+// An unknown-agent rejection names every valid agent; retrying blind costs a planning round.
 func TestBuildErrorsEnumerateValidOptions(t *testing.T) {
 	p := testPlanner()
 	cases := map[string]struct {
@@ -131,9 +127,7 @@ func TestBuildErrorsEnumerateValidOptions(t *testing.T) {
 	}
 }
 
-// TestBuildBoundProducesExactPlanWithoutJudge is test case 1 (workflow
-// binding): a shaped catalog entry's nodes render into the exact expected
-// Plan and - unlike Build - never touch the plan judge, proving the bound path involves no LLM call at all (not even the optional one).
+// A bound catalog entry renders into the exact Plan without any LLM call, plan judge included.
 func TestBuildBoundProducesExactPlanWithoutJudge(t *testing.T) {
 	judgeCalled := false
 	judge := func(context.Context, string, string, string) (bool, string, error) {
@@ -167,9 +161,7 @@ func TestBuildBoundProducesExactPlanWithoutJudge(t *testing.T) {
 	}
 }
 
-// TestBuildBoundStillValidatesStructure: BuildBound reuses the same
-// structural checks as Build (unknown agent, cycle, ...) - config-time
-// validation is a backstop, not the only line of defense.
+// BuildBound reuses Build's structural checks; config-time validation is only a backstop.
 func TestBuildBoundStillValidatesStructure(t *testing.T) {
 	p := NewPlanner([]AgentInfo{{Name: "image-reader"}}, nil, nil)
 	if _, err := p.BuildBound(context.Background(), []RawNode{
@@ -237,9 +229,8 @@ func TestBuildNoSynthesizerAppendedForChain(t *testing.T) {
 	}
 }
 
-// A large PR review planned as a LONE code-reviewer must be rejected and told
-// to fan out (per-file-group explorers → one reviewer); a fanned-out plan, a
-// small PR, and a roster without a code-explorer all pass. Judge is nil throughout - this backstop is the FALLBACK for a judge-disabled deployment (see TestReviewFanoutBackstopInertWhenJudgePresent for the judge-wired case).
+// With no judge, a large PR reviewed by a lone code-reviewer is rejected and told to fan
+// out; fanned-out plans, small PRs, and rosters without a code-explorer pass.
 func TestReviewFanoutBackstop(t *testing.T) {
 	roster := []AgentInfo{{Name: "code-explorer"}, {Name: "code-reviewer"}}
 	p := NewPlanner(roster, nil, nil)
@@ -266,9 +257,8 @@ func TestReviewFanoutBackstop(t *testing.T) {
 	}
 }
 
-// TestReviewFanoutBackstopInertWhenJudgePresent pins the PR-607 fix: with a
-// judge wired, the mechanical churn count must NOT override a plan the judge
-// already accepted - e.g. a lone code-reviewer node for a scoped re-check on a large PR. The judge (ask-fidelity aware, see plan_judge.go) is the authority on review sizing whenever one is available; the line-count backstop is only the fallback for a judge-disabled deployment.
+// With a judge wired, the churn backstop must not override a plan the judge accepted;
+// it is only the fallback for judge-disabled deployments.
 func TestReviewFanoutBackstopInertWhenJudgePresent(t *testing.T) {
 	roster := []AgentInfo{{Name: "code-explorer"}, {Name: "code-reviewer"}}
 	judge, _, _, _ := fakePlanJudge(true, "", nil)
@@ -283,9 +273,8 @@ func TestReviewFanoutBackstopInertWhenJudgePresent(t *testing.T) {
 	}
 }
 
-// Checks are OPTIONAL (regression, live e2e 2026-07-12): PR #180's checkCodeChecks
-// backstop REJECTED any code-implementer node with empty `checks` whenever check
-// commands were configured - but the planner authors the DAG before anything has looked at the repo, so it can only GUESS the commands (it guessed `go build` for a JavaScript repo); the run thrashed through 7 rejected plans and executed ZERO nodes. Checks are a property of the REPO: the trust gate now derives them from the cloned repo (vetting.deriveChecks); a planner-set list still wins.
+// Checks are optional: the planner can only guess commands before seeing the repo, so the
+// gate derives them from the clone (vetting.deriveChecks); a planner-set list still wins.
 
 func TestBuildAcceptsImplementerNodeWithoutChecks(t *testing.T) {
 	p := testPlanner("npx tsc", "npx vitest")
@@ -308,9 +297,8 @@ func TestBuildAcceptsImplementerNodeWithChecks(t *testing.T) {
 	}
 }
 
-// Plan-rubric judge (judgeRouting) - replaces the old regex routing backstop.
-// A fake vetting.PlanJudge stands in for the LLM so these tests don't need a
-// live model; they prove the WIRING (request/plan reach the judge, its verdict drives accept/reject, and a judge error degrades gracefully) rather than any particular model's judgment.
+// Plan-rubric judge: a fake vetting.PlanJudge proves the wiring (request/plan reach it,
+// its verdict drives accept/reject, an error degrades gracefully).
 
 // fakePlanJudge returns a vetting.PlanJudge that records the last request/plan
 // summary it was called with and returns the canned verdict.
@@ -335,9 +323,8 @@ func fakePlanJudgeWithRepoKey(accept bool, reason string, callErr error) (judge 
 	return judge, calls, lastRequest, lastSummary, lastRepoKey
 }
 
-// TestJudgeRoutingPassesRepoKeyFromDeclaredSetup pins the fix for a
-// GitHub-dispatched chat: the repo is known before the plan is judged (the
-// plan declares setup with a clone URL), so the judge must receive the normalized repo key - not "" (which would force its recall to user-only scope).
+// A plan that declares setup with a clone URL passes the judge the normalized repo key,
+// not "" (which would force user-only recall).
 func TestJudgeRoutingPassesRepoKeyFromDeclaredSetup(t *testing.T) {
 	judge, _, _, _, lastRepoKey := fakePlanJudgeWithRepoKey(true, "", nil)
 	p := NewPlanner([]AgentInfo{{Name: "code-reviewer"}}, nil, judge)
@@ -353,9 +340,8 @@ func TestJudgeRoutingPassesRepoKeyFromDeclaredSetup(t *testing.T) {
 	}
 }
 
-// A plan-only run (explore → synthesize, no code-implementer) that the judge
-// accepts must pass - the case the old regex heuristic mis-fired on (a
-// plan-only issue whose acceptance text mentions "open a PR" for the EVENTUAL implementation, not this request).
+// A judge-accepted plan-only run (explore -> synthesize) passes even when its acceptance
+// text mentions opening a PR later.
 func TestJudgeRoutingAcceptsPlanOnlyPlan(t *testing.T) {
 	judge, calls, lastRequest, lastSummary := fakePlanJudge(true, "", nil)
 	p := NewPlanner([]AgentInfo{{Name: "web-researcher"}, {Name: "synthesizer"}, {Name: "code-implementer"}}, nil, judge)
@@ -383,9 +369,8 @@ func TestJudgeRoutingAcceptsPlanOnlyPlan(t *testing.T) {
 	}
 }
 
-// An implement-and-deliver request whose plan has only explorer nodes (no
-// terminal code-implementer) must be rejected when the judge says so, with
-// the judge's reason surfaced in the error so the orchestrator's re-plan loop can act on it.
+// A judge rejection of an implement request with no implementer node surfaces the judge's
+// reason so the re-plan loop can act on it.
 func TestJudgeRoutingRejectsImplementWithoutImplementerNode(t *testing.T) {
 	reason := "add a terminal code-implementer node"
 	judge, calls, _, _ := fakePlanJudge(false, reason, nil)
@@ -458,9 +443,7 @@ func TestJudgeRoutingDegradesGracefullyOnJudgeError(t *testing.T) {
 	}
 }
 
-// TestJudgeRoutingRejectionErrorTypeCarriesReason pins #693's plumbing: a
-// rejection is a typed *PlanRejectedError (not a bare fmt.Errorf), so a
-// caller can distinguish "the plan judge rejected this" from any other Build failure without parsing error text.
+// A rejection is a typed *PlanRejectedError, distinguishable without parsing error text.
 func TestJudgeRoutingRejectionErrorTypeCarriesReason(t *testing.T) {
 	reason := "add a terminal node that actually writes the plan"
 	judge, _, _, _ := fakePlanJudge(false, reason, nil)
@@ -490,9 +473,7 @@ func TestJudgeRoutingWaived(t *testing.T) {
 	}
 }
 
-// TestJudgeRoutingRejection_EmitsLedgerEventPerRejection pins #693 test case 2:
-// every plan-judge rejection - not just the last one - is recorded to the
-// ledger with the judge's reason verbatim, independent of whatever the orchestrator eventually does with (or without) the plan.
+// Every plan-judge rejection, not just the last, is recorded to the ledger with its reason.
 func TestJudgeRoutingRejection_EmitsLedgerEventPerRejection(t *testing.T) {
 	capExp := &captureLogExporter{}
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
@@ -578,9 +559,7 @@ func TestBuildRejectsCheckNotMatchingAnyPrefix(t *testing.T) {
 }
 
 func TestBuildAcceptsCheckWithQuotedMetachar(t *testing.T) {
-	// Metachars are no longer rejected (#277): checks run shell-less, so a quoted
-	// regex with parens is literal argv under an allowed prefix. The prefix
-	// allowlist - not a metachar scan - is the boundary.
+	// Checks run shell-less, so metachars are literal argv; the prefix allowlist is the boundary.
 	p := testPlanner("go build", "go test", "go vet", "npx tsc", "npm test")
 	plan, err := p.Build(context.Background(), []RawNode{
 		{ID: "impl", Agent: "code-implementer", Task: "x", Checks: []string{"go test -run 'Test(Foo)'"}, Workdir: "repo"},
@@ -631,9 +610,8 @@ func TestBuildRejectsChecksWhenAllowlistEmpty(t *testing.T) {
 	}
 }
 
-// TestBuildRejectsUnregisteredArtifactKind covers #1128: a planner-authored
-// free-text `artifact` selector (not a registered recordstore kind) must be
-// rejected, naming the bad value, rather than reaching the gate and failing there with the output never saved at all.
+// An unregistered artifact selector is rejected at build, naming the bad value, rather
+// than failing at the gate with the output never saved.
 func TestBuildRejectsUnregisteredArtifactKind(t *testing.T) {
 	p := testPlanner()
 	_, err := p.Build(context.Background(), []RawNode{
@@ -732,17 +710,8 @@ func TestBuildAcceptsEachValidDeliveryKind(t *testing.T) {
 	}
 }
 
-// A partial step (no reviewer yet, delivery undeclared) in a dispatch that
-// merely ALLOWS review among several kinds is not yet the structurally-
-// impossible case #888 guards against - the model hasn't committed to
-// "review" as this plan's delivery, so checkReviewDeliverable must not fire
-// off the dispatch's allowed kinds alone (a partial plan is valid, more
-// nodes to follow - #slice3).
-// Single-kind allowedKinds ("review" only) - the exact shape that used to
-// collide (checkReviewDeliverable dropped its own AllowedDeliveryKinds
-// check, but assemble()'s blanket auto-fill from a single allowed kind could
-// still hand the judge a non-nil plan.Delivery for a step the model never
-// declared delivery on). Both checks must see the SAME undeclared delivery.
+// A partial step that merely allows review among its kinds has not committed to review
+// delivery, so neither checkReviewDeliverable nor assemble's auto-fill may fire.
 func TestBuildAllowsPartialReviewDispatchWhenDeliveryUndeclared(t *testing.T) {
 	judge, calls, _, _ := fakePlanJudge(true, "", nil)
 	p := NewPlanner([]AgentInfo{{Name: explorerAgent}, {Name: "synthesizer"}}, nil, judge)
@@ -783,9 +752,7 @@ func TestBuildRejectsDeclaredReviewDeliveryWithoutReviewerNode(t *testing.T) {
 	}
 }
 
-// Non-review dispatches (no "review" in AllowedDeliveryKinds, no declared
-// review Delivery) are unaffected: an issue/implement plan with no reviewer
-// node keeps passing.
+// Non-review dispatches without a reviewer node keep passing.
 func TestBuildAllowsNonReviewDispatchWithoutReviewerNode(t *testing.T) {
 	p := NewPlanner([]AgentInfo{{Name: "code-implementer"}}, nil, nil)
 	_, err := p.Build(context.Background(), []RawNode{
@@ -796,12 +763,8 @@ func TestBuildAllowsNonReviewDispatchWithoutReviewerNode(t *testing.T) {
 	}
 }
 
-// #slice3 review: delivery must NEVER be inferred from mere omission - the
-// judge (which reads this same plan.Delivery) and execute (which reads the
-// model's own undecorated declaration) must agree on whether delivery is
-// declared. A single-kind trigger no longer makes an omitted delivery final;
-// see TestBuildResolvesKindlessDeliveryFromSingleAllowedKind for the
-// explicit-signal path that still infers it.
+// Delivery is never inferred from omission: the judge and execute must agree on whether
+// it was declared, even with a single allowed kind.
 func TestBuildOmittedDeliveryStaysUndeclaredEvenWithSingleAllowedKind(t *testing.T) {
 	p := NewPlanner([]AgentInfo{{Name: reviewerAgent}}, nil, nil)
 	plan, err := p.Build(context.Background(), []RawNode{
@@ -815,8 +778,7 @@ func TestBuildOmittedDeliveryStaysUndeclaredEvenWithSingleAllowedKind(t *testing
 	}
 }
 
-// The explicit-but-kindless signal ({Kind: ""}) still resolves from a
-// single-kind trigger - the one path DefaultDeliveryFromAllowedKinds serves now.
+// The explicit-but-kindless signal ({Kind: ""}) still resolves from a single-kind trigger.
 func TestBuildResolvesKindlessDeliveryFromSingleAllowedKind(t *testing.T) {
 	p := NewPlanner([]AgentInfo{{Name: reviewerAgent}}, nil, nil)
 	plan, err := p.Build(context.Background(), []RawNode{
@@ -868,9 +830,8 @@ func TestDefaultDeliveryFromAllowedKindsIgnoresMultipleOrUnknown(t *testing.T) {
 	}
 }
 
-// #310: a plan that declares Setup (one shared clone+branch) but whose
-// repo-touching nodes could run CONCURRENTLY (no depends_on between them)
-// must be rejected at build - they'd corrupt the one shared working tree.
+// With a shared Setup clone, concurrent repo-touching nodes are rejected at build: they
+// would corrupt the one working tree.
 func TestBuildRejectsConcurrentRepoTouchingNodesWithSetup(t *testing.T) {
 	p := testPlanner()
 	setup := &Setup{Repo: "https://github.com/o/r", BaseRef: "main", WorkBranch: "quack/work"}
@@ -903,9 +864,7 @@ func TestBuildAllowsChainedRepoTouchingNodesWithSetup(t *testing.T) {
 	}
 }
 
-// #555: explorers are read-only, so PARALLEL explorer nodes sharing a
-// plan.Setup clone must be accepted - unlike implementer/reviewer, they
-// never mutate branch state, so there is nothing for concurrency to corrupt and no reason to force them into a chain.
+// Explorers are read-only, so parallel explorer nodes sharing a Setup clone are accepted.
 func TestBuildAllowsConcurrentExplorerNodesWithSetup(t *testing.T) {
 	p := NewPlanner([]AgentInfo{{Name: "code-explorer"}}, nil, nil)
 	setup := &Setup{Repo: "https://github.com/o/r", BaseRef: "main", WorkBranch: "quack/work"}
@@ -921,9 +880,8 @@ func TestBuildAllowsConcurrentExplorerNodesWithSetup(t *testing.T) {
 	}
 }
 
-// Worktree isolation: a reviewer no longer shares the shared clone
-// directly - it gets its own linked git worktree - so PARALLEL reviewer nodes
-// sharing a plan.Setup clone must be accepted exactly like parallel explorers above. Before worktree isolation this was rejected (reviewer was in the same repo-touching set as implementer); validateRepoChain now only orders the WRITER (implementer).
+// Reviewers get their own linked worktree, so parallel reviewers sharing a Setup clone are
+// accepted; validateRepoChain orders only the implementer.
 func TestBuildAllowsConcurrentReviewerNodesWithSetup(t *testing.T) {
 	p := NewPlanner([]AgentInfo{{Name: "code-reviewer"}}, nil, nil)
 	setup := &Setup{Repo: "https://github.com/o/r", BaseRef: "main", WorkBranch: "quack/work"}
@@ -939,9 +897,7 @@ func TestBuildAllowsConcurrentReviewerNodesWithSetup(t *testing.T) {
 	}
 }
 
-// Mixing a mutating repo-touching node with explorers: the implementer/
-// reviewer subset still needs its depends_on chain even though the
-// explorers running alongside them need none.
+// The implementer subset still needs its depends_on chain even with explorers alongside.
 func TestBuildRejectsConcurrentImplementerNodesEvenWithExplorerPresent(t *testing.T) {
 	p := NewPlanner([]AgentInfo{{Name: "code-implementer"}, {Name: "code-explorer"}}, nil, nil)
 	setup := &Setup{Repo: "https://github.com/o/r", BaseRef: "main", WorkBranch: "quack/work"}
@@ -955,9 +911,7 @@ func TestBuildRejectsConcurrentImplementerNodesEvenWithExplorerPresent(t *testin
 	}
 }
 
-// Without a declared Setup, repo-touching nodes each get their OWN
-// independent clone (unchanged pre-#310 behavior) - concurrent ones share
-// nothing, so the chain requirement does not apply.
+// Without a declared Setup each repo-touching node gets its own clone, so no chain is needed.
 func TestBuildAllowsConcurrentRepoTouchingNodesWithoutSetup(t *testing.T) {
 	p := testPlanner()
 	_, err := p.Build(context.Background(), []RawNode{
@@ -969,9 +923,7 @@ func TestBuildAllowsConcurrentRepoTouchingNodesWithoutSetup(t *testing.T) {
 	}
 }
 
-// The plan judge must see the declared setup/delivery (or their absence) so
-// it can validate them against the request type - planSummary is the only
-// channel it has into the plan.
+// planSummary is the judge's only view of the plan, so it must show setup/delivery or their absence.
 func TestPlanSummaryIncludesSetupAndDelivery(t *testing.T) {
 	plan := &Plan{
 		Nodes:    []Node{{ID: "impl", AgentName: "code-implementer"}},
@@ -994,10 +946,8 @@ func TestPlanSummaryNotesAbsentSetupAndDelivery(t *testing.T) {
 	}
 }
 
-// TestPlanSummaryShowsAlreadyRanResult: the plan judge judges a growing
-// plan's WHOLE shape on every step, so an already-run node's result (carried
-// from dag.Assignment.Result via AssignmentsToRawNodes/assemble) must appear
-// in the summary the judge reads, not just its task.
+// The judge sees the whole growing plan each step, so an already-run node's result must
+// appear in its summary.
 func TestPlanSummaryShowsAlreadyRanResult(t *testing.T) {
 	plan := &Plan{Nodes: []Node{
 		{ID: "r", AgentName: "web-researcher", Task: "find the file", Result: "FOUND: internal/foo/bar.go defines it"},

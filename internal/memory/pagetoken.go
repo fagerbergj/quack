@@ -11,16 +11,11 @@ import (
 // caller requests, mirroring store.ChatsPageMaxLimit.
 const MemoryPageMaxLimit = 200
 
-// ErrInvalidPageToken is returned by DecodePageToken when the token doesn't
-// decode, or was issued under a different bucket filter or sort than it's
-// being replayed against.
+// ErrInvalidPageToken: the token doesn't decode, or was issued under a different bucket filter or sort.
 var ErrInvalidPageToken = errors.New("memory: invalid page token")
 
-// pageToken is listMemories' opaque continuation token: an offset anchor
-// bound to the bucket filter AND sort it was issued under (the same way
-// store.chatsPageToken binds to scope) - an offset from one sort order names
-// a different row under another, so replaying it against a changed sort
-// must fail loudly instead of silently returning the wrong page.
+// pageToken is listMemories' offset anchor, bound to the bucket filter and sort it was issued under:
+// an offset under one sort names a different row under another, so replay must fail loudly.
 type pageToken struct {
 	Sort   string `json:"s"`
 	Bucket string `json:"b"`

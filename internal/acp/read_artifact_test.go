@@ -47,9 +47,8 @@ func TestReadArtifactMCP_ReadsOwnChatArtifact(t *testing.T) {
 	}
 }
 
-// TestReadArtifactMCP_CrossSessionDenied is the security property: a node
-// registered for chat-a can never read chat-b's artifact, because the tool's
-// scope (app/user/chat) comes only from the registered session, never from a tool argument - there is no session id in read_artifact's input at all.
+// TestReadArtifactMCP_CrossSessionDenied: a node registered for chat-a can never read chat-b's artifact;
+// scope comes only from the registered session and read_artifact takes no session id.
 func TestReadArtifactMCP_CrossSessionDenied(t *testing.T) {
 	ctx := context.Background()
 	svc := artifact.InMemoryService()
@@ -68,9 +67,7 @@ func TestReadArtifactMCP_CrossSessionDenied(t *testing.T) {
 	t.Cleanup(func() { ts.Close() })
 	cs := connectMCP(t, ts, secret)
 
-	// The tool only accepts a filename - there is no way to pass chat-b's id.
-	// Asking for chat-b's file by name still resolves against chat-a's scope
-	// and must fail, since chat-a never had "secret.txt" saved to it.
+	// Asking for chat-b's file by name still resolves in chat-a's scope and must fail.
 	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "read_artifact", Arguments: map[string]any{"name": "secret.txt"}})
 	if err != nil {
 		t.Fatalf("CallTool read_artifact: %v", err)
@@ -80,9 +77,8 @@ func TestReadArtifactMCP_CrossSessionDenied(t *testing.T) {
 	}
 }
 
-// TestReadArtifactMCP_ScopedToRegisteredSession pins scope selection itself:
-// the same filename exists in both chats with different content, so a broken
-// scope that resolves to *something* (not just "nothing") would still be caught.
+// TestReadArtifactMCP_ScopedToRegisteredSession: the same filename differs per chat, so a scope that
+// resolves to the wrong chat is caught too.
 func TestReadArtifactMCP_ScopedToRegisteredSession(t *testing.T) {
 	ctx := context.Background()
 	svc := artifact.InMemoryService()
@@ -186,9 +182,7 @@ func TestReadArtifactMCP_AtSizeLimitIsReturned(t *testing.T) {
 	}
 }
 
-// TestReadArtifactMCP_AbsentServiceMeansToolUnavailable: a node without an
-// artifact service degrades gracefully - the tool is simply not registered,
-// no panic.
+// TestReadArtifactMCP_AbsentServiceMeansToolUnavailable: without an artifact service the tool isn't registered.
 func TestReadArtifactMCP_AbsentServiceMeansToolUnavailable(t *testing.T) {
 	secret := mustMemSecret(t)
 	vetting.RegisterMemSession(secret, vetting.MemSession{}) // no Artifacts

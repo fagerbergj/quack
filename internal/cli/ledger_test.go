@@ -34,8 +34,7 @@ func newTestStack(t *testing.T) (*store.Store, ledger.LedgerStore, *store.TurnAw
 	if err != nil {
 		t.Fatalf("store.New: %v", err)
 	}
-	// Every test in this file seeds chat-1 - chat_turns/dag_plans/
-	// projection_watermarks now FK to chats.id (#1296).
+	// Every test in this file seeds chat-1: chat_turns/dag_plans/projection_watermarks FK to chats.id.
 	if err := st.SetChatOrigin(context.Background(), "chat-1", "", ""); err != nil {
 		t.Fatalf("seed chat-1: %v", err)
 	}
@@ -48,9 +47,8 @@ func newTestStack(t *testing.T) (*store.Store, ledger.LedgerStore, *store.TurnAw
 	return st, ls, artifacts
 }
 
-// TestRunLedgerRebuild_RegeneratesArtifactMeta is V4 §7 case 14's artifact
-// side: after wiping a revision's kind/class/lineage columns, rebuild must
-// restore them from the ledger fold - bytes are untouched throughout.
+// TestRunLedgerRebuild_RegeneratesArtifactMeta: after wiping a revision's kind/class/lineage, rebuild
+// restores them from the ledger fold; bytes are untouched.
 func TestRunLedgerRebuild_RegeneratesArtifactMeta(t *testing.T) {
 	ctx := context.Background()
 	st, ls, artifacts := newTestStack(t)
@@ -119,9 +117,8 @@ func TestRunLedgerRebuild_JSON(t *testing.T) {
 	}
 }
 
-// TestRunLedgerRebuild_DryRunWritesNothing: --dry-run reports the same
-// counts but leaves the drifted row untouched. Seeds a REAL lineage
-// (Author/NodeID/Round all set) and drifts it to a DIFFERENT real lineage, so this test cannot pass vacuously (an empty-vs-empty lineage comparison would pass even if dry-run silently wrote - #1111 review finding).
+// TestRunLedgerRebuild_DryRunWritesNothing: --dry-run reports the same counts but leaves the drifted row.
+// It drifts one real lineage to a different real one, so the check can't pass vacuously.
 func TestRunLedgerRebuild_DryRunWritesNothing(t *testing.T) {
 	ctx := context.Background()
 	st, ls, artifacts := newTestStack(t)
@@ -158,9 +155,8 @@ func TestRunLedgerRebuild_DryRunWritesNothing(t *testing.T) {
 	}
 }
 
-// TestRunLedgerRebuild_RegeneratesSSETable is #1121's "missing lifecycle
-// rows are inserted" case (the table starts EMPTY - every row is missing) -
-// and rebuild's honest ceiling: it reconstructs node LIFECYCLE only (which node, which terminal status), never the richer live payload (tokens, output, model) the skinny node.* WAL entry never carried. It asserts the event's actual content (id, node id, name), not just a row count, so a rebuild that silently wrote the wrong node or the wrong terminal state would fail.
+// TestRunLedgerRebuild_RegeneratesSSETable: rebuild reinserts missing node lifecycle rows (id, node, status),
+// never the live payload the node.* WAL entries never carried.
 func TestRunLedgerRebuild_RegeneratesSSETable(t *testing.T) {
 	ctx := context.Background()
 	st, ls, artifacts := newTestStack(t)
@@ -193,7 +189,7 @@ func TestRunLedgerRebuild_RegeneratesSSETable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunLedgerRebuild: %v", err)
 	}
-	// n1 gets BOTH node_start and node_done (#1121: tracked independently),
+	// n1 gets BOTH node_start and node_done (tracked independently),
 	// n2 gets node_start only - 3 rows, all missing since the table started empty.
 	if report.SSERowsInserted != 3 {
 		t.Fatalf("SSERowsInserted = %d, want 3 (n1 start+done, n2 start)", report.SSERowsInserted)
@@ -233,9 +229,8 @@ func TestRunLedgerRebuild_RegeneratesSSETable(t *testing.T) {
 	}
 }
 
-// TestRunLedgerRebuild_HealthyChatIsANoop is #1121's core regression, updated
-// for #1144 P3: rebuild no longer diffs artifact metadata (that heuristic is
-// deleted - a watermark reset always re-writes every revision it finds), so ArtifactRevisionsChanged now counts revisions PROCESSED, not revisions that differed. What still must hold on a healthy chat is idempotence: the content written is byte-identical to what was already there, and the SSE table's row count and content are completely unchanged (only truly missing lifecycle rows are ever inserted). This is the scenario that used to replace ~4000 chat_events rows with 3 synthesized ones.
+// TestRunLedgerRebuild_HealthyChatIsANoop: on a healthy chat rebuild rewrites identical content and
+// leaves the SSE table's rows unchanged; only truly missing lifecycle rows are ever inserted.
 func TestRunLedgerRebuild_HealthyChatIsANoop(t *testing.T) {
 	ctx := context.Background()
 	st, ls, artifacts := newTestStack(t)
@@ -249,9 +244,8 @@ func TestRunLedgerRebuild_HealthyChatIsANoop(t *testing.T) {
 		t.Fatalf("SaveStructured: %v", err)
 	}
 
-	// A node that already reached done, PLUS its own node_start and
-	// node_done rows already in the table (a healthy run leaves both) and
-	// a chunk of observational history the ledger has no source for at all.
+	// A done node with its node_start and node_done rows already present, plus observational
+	// history the ledger has no source for.
 	payload, err := json.Marshal(struct {
 		NodeID string `json:"node_id"`
 		Turn   string `json:"turn"`
@@ -321,9 +315,8 @@ func TestRunLedgerRebuild_HealthyChatIsANoop(t *testing.T) {
 	}
 }
 
-// TestRunLedgerRebuild_NodeAcrossTurnsIsStillANoop is the #1125 review's
-// blocking scenario end-to-end: turn 1's node N fails, turn 2's N (a later
-// re-run, fresh turn id) completes - the CURRENT table (per-run) only ever holds turn 2's rows. Rebuild must not resurrect turn 1's stale node_failed (nor insert a second node_start) - it must be a no-op, exactly like a chat with only one turn per node.
+// TestRunLedgerRebuild_NodeAcrossTurnsIsStillANoop: node N fails in turn 1 and completes in turn 2;
+// rebuild must not resurrect turn 1's node_failed or add a second node_start.
 func TestRunLedgerRebuild_NodeAcrossTurnsIsStillANoop(t *testing.T) {
 	ctx := context.Background()
 	st, ls, artifacts := newTestStack(t)
@@ -395,9 +388,8 @@ func TestRunLedgerRebuild_NodeAcrossTurnsIsStillANoop(t *testing.T) {
 	}
 }
 
-// TestRunLedgerRebuild_InsertsMissingWithoutTouchingOthers seeds a table
-// with real observational rows and ONE existing lifecycle row, then folds a
-// WAL with a genuinely missing second node's lifecycle - rebuild must add only that missing row and leave every other row (observational AND the other node's existing lifecycle row) byte-for-byte untouched.
+// TestRunLedgerRebuild_InsertsMissingWithoutTouchingOthers: rebuild adds only the genuinely missing
+// lifecycle row and leaves every existing row byte-for-byte untouched.
 func TestRunLedgerRebuild_InsertsMissingWithoutTouchingOthers(t *testing.T) {
 	ctx := context.Background()
 	st, ls, artifacts := newTestStack(t)
@@ -466,9 +458,8 @@ func TestRunLedgerRebuild_InsertsMissingWithoutTouchingOthers(t *testing.T) {
 	}
 }
 
-// TestRunLedgerRebuild_RegeneratesNodeState is #1144 P3's node_state side:
-// a node that reached "done" in the ledger but whose DagNode row still says
-// "running" (a crash between the terminal WAL entry and the row write) gets its row corrected by rebuild, atomically with the node_state watermark.
+// TestRunLedgerRebuild_RegeneratesNodeState: a node done in the ledger but "running" in its DagNode row
+// (crash before the row write) is corrected, atomically with the node_state watermark.
 func TestRunLedgerRebuild_RegeneratesNodeState(t *testing.T) {
 	ctx := context.Background()
 	st, ls, artifacts := newTestStack(t)
@@ -510,9 +501,8 @@ func TestRunLedgerRebuild_RegeneratesNodeState(t *testing.T) {
 	}
 }
 
-// TestRunLedgerRebuild_MultiPlanNodeIDReuse is the two-plans review finding:
-// res.Nodes folds the whole CHAT lifetime keyed by bare node ID, but a node
-// ID (e.g. the auto-appended "synthesize" node) legitimately recurs across plans - rebuild must only write terminal status for node IDs the LATEST plan actually declares, never stomp it with an older plan's re-run of the same ID.
+// TestRunLedgerRebuild_MultiPlanNodeIDReuse: node ids recur across plans, so rebuild writes terminal
+// status only for ids the latest plan declares.
 func TestRunLedgerRebuild_MultiPlanNodeIDReuse(t *testing.T) {
 	ctx := context.Background()
 	st, ls, artifacts := newTestStack(t)
@@ -573,9 +563,7 @@ func TestRunLedgerRebuild_MultiPlanNodeIDReuse(t *testing.T) {
 	}
 }
 
-// seedEvent inserts one real ChatEvent row directly - a stand-in for what a
-// live Publisher would have written, so tests can set up a table state
-// without driving an actual run.
+// seedEvent inserts one ChatEvent row directly, standing in for a live Publisher.
 func seedEvent(t *testing.T, ctx context.Context, st *store.Store, chatID string, seq int64, ev stream.SSEEvent) {
 	t.Helper()
 	js, err := runlog.MarshalEvent(ev)
@@ -587,9 +575,8 @@ func seedEvent(t *testing.T, ctx context.Context, st *store.Store, chatID string
 	}
 }
 
-// TestRunLedgerShow_DeliveryAndJudgeRoundListedOnce is #1144 P2's ledger-show
-// requirement: a chat with one delivery and one judge round lists each ONE
-// time - no delivery.done/judge.round duplicate entry kind exists to double count them, since both are now just the delivery_record/judge_round artifact.revision they always also wrote.
+// TestRunLedgerShow_DeliveryAndJudgeRoundListedOnce: one delivery and one judge round are each listed once,
+// as the artifact.revision they wrote.
 func TestRunLedgerShow_DeliveryAndJudgeRoundListedOnce(t *testing.T) {
 	ctx := context.Background()
 	_, ls, artifacts := newTestStack(t)
@@ -641,9 +628,8 @@ func TestRunLedgerShow_DeliveryAndJudgeRoundListedOnce(t *testing.T) {
 	}
 }
 
-// TestRunLedgerShow_PrintsJSONLines exercises the JSONL contract `show`
-// advertises across MULTIPLE entries and kinds - each line independently
-// parseable, in seq order, with --from-seq's ">=" boundary honored - not just the one-entry case (#1111 review finding).
+// TestRunLedgerShow_PrintsJSONLines: across several entries and kinds, each line parses alone,
+// lines are in seq order, and --from-seq is inclusive.
 func TestRunLedgerShow_PrintsJSONLines(t *testing.T) {
 	ctx := context.Background()
 	_, ls, artifacts := newTestStack(t)

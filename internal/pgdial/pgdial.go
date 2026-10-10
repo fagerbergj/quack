@@ -1,6 +1,5 @@
-// Package pgdial is a retrying postgres dial + GORM dialector, a leaf package so
-// both internal/store and internal/ledger can depend on it without an import
-// cycle (#1200 review: NewPGStoreFromURL was a fourth dialector, missed by the first retry pass).
+// Package pgdial is a retrying postgres dial + GORM dialector, a leaf package so store and ledger can share
+// it without an import cycle.
 package pgdial
 
 import (
@@ -14,16 +13,14 @@ import (
 	"gorm.io/gorm"
 )
 
-// RetryAttempts/RetryBackoff absorb a short DNS/dial blip (#1193: Docker's
-// embedded DNS failed quack-postgres for ~20s every 30min) without failing a
-// run. Only the TCP dial retries - a connected query error never does.
+// RetryAttempts/RetryBackoff absorb a short DNS/dial blip (Docker's embedded DNS drops out for seconds).
+// Only the TCP dial retries, never a query.
 const RetryAttempts = 3
 
 var RetryBackoff = 2 * time.Second
 
-// withDialRetry wraps a dial func so a transient failure (DNS, connection
-// refused) gets a couple of short retries before giving up. Split out from
-// retryingDialFunc so a test can inject a fake dial instead of a real net.Dialer.
+// withDialRetry gives a transient dial failure (DNS, connection refused) a few short retries; dial is
+// injectable for tests.
 func withDialRetry(dial func(ctx context.Context, network, addr string) (net.Conn, error)) func(ctx context.Context, network, addr string) (net.Conn, error) {
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		var lastErr error
@@ -51,9 +48,7 @@ func retryingDialFunc() func(ctx context.Context, network, addr string) (net.Con
 	return withDialRetry(d.DialContext)
 }
 
-// Open is the single construction point for every postgres GORM dialector
-// (main store, session service, artifact service, ledger store) - dial
-// retries apply once here rather than at each call site.
+// Open is the single construction point for every postgres GORM dialector, so dial retries apply once.
 func Open(url string) (gorm.Dialector, error) {
 	cfg, err := pgx.ParseConfig(url)
 	if err != nil {

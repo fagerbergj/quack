@@ -7,8 +7,7 @@ import (
 	"testing"
 )
 
-// readRubricText: a .yaml rubric renders to markdown (#941); anything else
-// (config/rubric.md, still raw prose) reads as-is.
+// readRubricText: a .yaml rubric renders to markdown; anything else reads as-is.
 func readRubricText(path string) (string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -24,9 +23,8 @@ func readRubricText(path string) (string, error) {
 	return string(raw), nil
 }
 
-// TestCleanOutputRubricCatchesDeliberation pins clean_output failing visible
-// deliberation (self-correction, an abandoned draft, a rewritten snippet), not just preamble/trailing narration, across the default rubric and every
-// bundle override. Globbed rather than hardcoded, so a new bundle omitting the language fails this test instead of silently reopening the gap.
+// TestCleanOutputRubricCatchesDeliberation: clean_output fails visible deliberation, not just
+// narration, in the default rubric and every bundle; globbed so a new bundle can't omit it.
 func TestCleanOutputRubricCatchesDeliberation(t *testing.T) {
 	rubrics := []string{"../../config/rubric.md"}
 	bundleRubrics, err := filepath.Glob("../../agents/*/rubric.yaml")
@@ -49,9 +47,8 @@ func TestCleanOutputRubricCatchesDeliberation(t *testing.T) {
 		checked++
 
 		t.Run(path, func(t *testing.T) {
-			// Isolate the clean_output section so markers can't match a
-			// different criterion, then collapse whitespace - the prose wraps
-			// mid-phrase, so multi-word markers must match across line breaks.
+			// Isolate clean_output so markers can't match another criterion; collapse whitespace
+			// since the prose wraps mid-phrase.
 			section := rubric[i:]
 			if j := strings.Index(section[1:], "\n### `"); j >= 0 {
 				section = section[:j+1]
@@ -85,13 +82,8 @@ func TestCleanOutputRubricCatchesDeliberation(t *testing.T) {
 	}
 }
 
-// TestStructuredVerdictRubricCatchesSeverityCoherence pins a live review
-// failure: a finding labeled `blocking (security):` on an issue that was
-// neither blocking nor security-related, staged alongside an overall APPROVE
-// verdict - self-contradictory, and nothing deterministic catches it (the
-// maintainer's explicit call: this is a judgment call for the judge to
-// reason about, not a regex). Pins that structured_verdict's own text names
-// both directions of the contradiction (a blocking/security label under an approve verdict, and a request_changes verdict backed by only nits) so a live judge is actually told to check it.
+// TestStructuredVerdictRubricCatchesSeverityCoherence: structured_verdict must name both directions
+// of a severity/verdict contradiction (blocking label under approve, nits-only request_changes).
 func TestStructuredVerdictRubricCatchesSeverityCoherence(t *testing.T) {
 	rubric, err := readRubricText("../../.agents/plugins/github/agents/code-reviewer/rubric.yaml")
 	if err != nil {
@@ -122,9 +114,8 @@ func TestStructuredVerdictRubricCatchesSeverityCoherence(t *testing.T) {
 	}
 }
 
-// TestConstructiveActionableRubricScoresCodeBlocks pins the actionability extension: a finding that proposes specific code must actually show that
-// code (a plain fenced block, NOT a GitHub ```suggestion block - the reviewer prompt forbids those for now, staging can't validate their exact-anchor
-// discipline yet), while a purely observational finding (a question, a naming nit) must be explicitly exempt from that requirement.
+// TestConstructiveActionableRubricScoresCodeBlocks: a finding proposing code must show it in a
+// plain fenced block (not ```suggestion), while observational findings are exempt.
 func TestConstructiveActionableRubricScoresCodeBlocks(t *testing.T) {
 	rubric, err := readRubricText("../../.agents/plugins/github/agents/code-reviewer/rubric.yaml")
 	if err != nil {

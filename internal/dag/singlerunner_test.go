@@ -2,7 +2,6 @@ package dag
 
 import (
 	"context"
-	"iter"
 	"sync"
 	"testing"
 
@@ -16,9 +15,8 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// runPlanSSE runs a plan the way the orchestrator does now - as a native
-// first-class-node graph (RunPlanAsGraph) - and returns the SSE the DagStream
-// emits plus the captured node outputs. chatID keys BOTH the run session and the per-node control registry (CancelNode/SteerNode), matching production.
+// runPlanSSE runs a plan as a native graph and returns the DagStream's SSE plus node outputs.
+// chatID keys both the run session and the per-node control registry, as in production.
 func runPlanSSE(t *testing.T, ex *Executor, plan Plan, chatID string) ([]stream.SSEEvent, map[string]string) {
 	t.Helper()
 	outputs := map[string]string{}
@@ -38,29 +36,16 @@ func runPlanSSE(t *testing.T, ex *Executor, plan Plan, chatID string) ([]stream.
 	return events, outputs
 }
 
-// sinkStub answers every worker call with fixed findings and passes every judge round.
-type sinkStub struct{}
-
-func (sinkStub) Name() string { return "sinkStub" }
-func (sinkStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		if gHasTool(req, "submit_verdict") {
-			yield(gCall("submit_verdict", map[string]any{"score": 0.9, "feedback": ""}), nil)
-			return
-		}
-		yield(gText("findings"), nil)
-	}
-}
-
 // TestRunPlanAsGraph_MultiSinkPlan: two independent sinks run as one graph and both outputs come
 // back - ADK fails a run where two terminal nodes yield output, so the plan graph fans them in.
 func TestRunPlanAsGraph_MultiSinkPlan(t *testing.T) {
-	worker, err := llmagent.New(llmagent.Config{Name: "w", Model: sinkStub{}, Description: "w", Instruction: "ROLE:w Answer."})
+	sink := fixedLLM("findings", nil)
+	worker, err := llmagent.New(llmagent.Config{Name: "w", Model: sink, Description: "w", Instruction: "ROLE:w Answer."})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"w": worker}, map[string]model.LLM{"w": sinkStub{}},
-		vetting.NewJudgeFactory(sinkStub{}, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+	ex := NewExecutor(session.InMemoryService(), map[string]adkagent.Agent{"w": worker}, map[string]model.LLM{"w": sink},
+		vetting.NewJudgeFactory(sink, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 	plan := Plan{ID: "t", UserMessage: "x", Nodes: []Node{{ID: "r1", AgentName: "w", Task: "one"}, {ID: "r2", AgentName: "w", Task: "two"}}}
 	_, outputs := runPlanSSE(t, ex, plan, "chat")
 	if outputs["r1"] == "" || outputs["r2"] == "" {

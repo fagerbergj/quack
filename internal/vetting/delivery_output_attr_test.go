@@ -47,9 +47,8 @@ func outputAttrs(exp *tracetest.InMemoryExporter) (obs string, obsOK bool, trace
 	return obs, obsOK, trace, traceOK
 }
 
-// TestSetDeliveryOutputAttr proves the delivered text lands on the enclosing
-// (node root) span as langfuse.observation.output, gated the same way every
-// other content span attribute is.
+// The delivered text lands on the node root span as langfuse.observation.output, gated like
+// every other content attribute.
 func TestSetDeliveryOutputAttr(t *testing.T) {
 	prev := otelobs.CaptureContentEnabled()
 	otelobs.SetCaptureContent(true)

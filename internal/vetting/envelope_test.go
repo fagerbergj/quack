@@ -2,9 +2,8 @@ package vetting
 
 import "testing"
 
-// TestJudgeScoreForDeterministicCriterionIsDropped: when code had nothing to
-// compute for a code-owned criterion, the judge's own score for it must not
-// stand in - neither as a criterion nor inside the aggregate the gate passes on.
+// When code computed nothing for a code-owned criterion, the judge's score for it must not stand in,
+// neither as a criterion nor inside the aggregate.
 func TestJudgeScoreForDeterministicCriterionIsDropped(t *testing.T) {
 	specs := map[string]criterionSpec{
 		"checks_ok": {Name: "checks_ok", Deterministic: true},

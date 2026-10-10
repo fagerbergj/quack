@@ -1,4 +1,4 @@
-// Package dag: task planning + execution via DAG of specialist agents.
+// Package dag plans and executes tasks as a DAG of specialist agents.
 package dag
 
 import (
@@ -19,15 +19,13 @@ type Plan struct {
 	Attachments []*genai.Part
 	Setup       *Setup
 	Delivery    *Delivery
-	// AllowedDeliveryKinds: nil = unrestricted (no trigger governs this run);
-	// non-nil (including empty) restricts staged delivery to exactly these
-	// kinds - see vetting.Config.AllowedDeliveryKinds, the same sentinel.
+	// AllowedDeliveryKinds: nil = unrestricted; non-nil (even empty) restricts staged delivery to exactly
+	// these kinds, the same sentinel as vetting.Config.AllowedDeliveryKinds.
 	AllowedDeliveryKinds []string
 	WorkerBackground     string
 	ContextItems         []ContextItem
-	// PlanOnly: this run's deliverable is a plan, not a change (#739). Stamped
-	// by the harness from the triggering label, never model-authored - forces
-	// every node read-only with no delivery target regardless of agent (buildGateNodes).
+	// PlanOnly: the deliverable is a plan, not a change. Stamped by the harness from the triggering label,
+	// never model-authored; forces every node read-only with no delivery target.
 	PlanOnly bool
 }
 
@@ -46,9 +44,8 @@ type Setup struct {
 
 	CheckoutExistingHead bool `json:"-"`
 
-	// Provisioned: set once Executor.Provision has cloned this Setup - makes a
-	// second Provision/runPlanSetup call (execute tool, then run phase) a no-op
-	// instead of a double clone. Skips resume-plan JSON: setup never re-runs on resume anyway.
+	// Provisioned: set once Executor.Provision cloned this Setup, so a second call is a no-op instead
+	// of a double clone. Not in resume-plan JSON: setup never re-runs on resume.
 	Provisioned bool `json:"-"`
 }
 
@@ -57,8 +54,7 @@ type Delivery struct {
 	Kind string `json:"kind"`
 }
 
-// Node.ContextWindow is stamped from the assigned agent's config at plan
-// assembly - the static limit the context meter compares live usage against.
+// Node.ContextWindow is the assigned agent's configured limit, which the context meter compares live usage against.
 type Node struct {
 	ID            string
 	AgentName     string
@@ -68,17 +64,13 @@ type Node struct {
 	Checks        []string
 	Workdir       string
 	ContextWindow int
-	// Artifact: episodic record name this node writes on gate pass (#1006).
+	// Artifact: episodic record name this node writes on gate pass.
 	Artifact string
-	// ResumedFrom: this node's dag_node ContextID at plan-build time, set
-	// only when the assignment named an existing (terminal-status) node id -
-	// "" for a freshly minted node. Seeds an ACP node's session/load and
-	// drives the "continues" ledger/UI signal for both transports; a native
-	// node resumes automatically off its own stable A2A contextID regardless.
+	// ResumedFrom: an existing terminal node's dag_node ContextID, "" for a fresh node. Seeds an ACP node's
+	// session/load and drives the "continues" signal; a native node resumes off its stable A2A contextID anyway.
 	ResumedFrom string
-	// Result: this node's output from an earlier execute step, carried from
-	// Assignment.Result - "" for a node not yet run. Lets the plan judge see
-	// what already happened when judging a growing plan (planSummary).
+	// Result: this node's output from an earlier execute step ("" if not yet run), so the plan judge
+	// can see what already happened.
 	Result string
 	// Status: the earlier step's outcome (Assignment.Status), "" for a node not yet run.
 	Status string

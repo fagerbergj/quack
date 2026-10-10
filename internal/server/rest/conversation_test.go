@@ -13,9 +13,8 @@ import (
 	"google.golang.org/genai"
 )
 
-// recallModel answers each turn with a marker and records the full text of
-// every request it receives, so a test can assert what history the
-// orchestrator's llmagent actually saw on a follow-up turn.
+// recallModel answers each turn with a marker and records every request's full text,
+// so a test can assert what history the orchestrator saw on a follow-up turn.
 type recallModel struct {
 	mu       sync.Mutex
 	requests []string // one concatenated text blob per GenerateContent call
@@ -61,9 +60,8 @@ func postMessage(t *testing.T, h *Handler, chatID, content string) {
 	}
 }
 
-// TestOrchestratorRemembersConversation: the SECOND turn's LLM request must
-// contain the first turn's user message AND the orchestrator's own first
-// reply. Regression for the amnesia bug: the orchestrator llmagent runs wrapped in a workflow AgentNode, which forces an UNSET mode to ModeSingleTurn - discarding all session history - so one turn after delivering a plan it answered "I don't see a previously created plan in our conversation". llmagent.Config now pins Mode: ModeChat.
+// TestOrchestratorRemembersConversation: turn 2's request contains turn 1's user message and reply.
+// AgentNode forces an unset mode to ModeSingleTurn (no history), so llmagent.Config pins ModeChat.
 func TestOrchestratorRemembersConversation(t *testing.T) {
 	m := &recallModel{}
 	h := newTestHandlerWithModel(t, m)

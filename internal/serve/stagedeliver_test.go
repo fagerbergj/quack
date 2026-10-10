@@ -13,9 +13,8 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// Agents STAGE (tool calls, git commits); the gate DELIVERS - #669 (see
-// config/quack.yaml's guards comment). This file asserts that invariant the
-// way the runtime actually resolves tools (buildAgents), not from a hand-written list of tool names - a name added on either side (a new ExtTool, a new agent) is caught automatically, only a genuinely new WRITE capability needs a line here.
+// Agents stage (tool calls, git commits); the gate delivers. These tests check that through buildAgents'
+// real tool resolution, so only a genuinely new write capability needs a line here.
 
 func requireStageDeliverEnv(t *testing.T) {
 	t.Helper()
@@ -28,9 +27,8 @@ func requireStageDeliverEnv(t *testing.T) {
 	}
 }
 
-// mutatingGitHubTools names every tool that writes to shared GitHub state.
-// Derived from the SAME extension buildAgents wires into ExtTools
-// (github.App.Tools()), not hand-listed: App.Tools()'s own doc comment commits it to outbound-posting tools ONLY ("NOT here: anything that opens a PR or submits a review" - delivery stays gate-owned), so every name it returns today is a write by that contract, and a future addition there is picked up here with no edit.
+// mutatingGitHubTools names every tool that writes to shared GitHub state, taken from github.App.Tools(),
+// whose contract is outbound-posting tools only, so new ones are picked up without an edit.
 func mutatingGitHubTools() map[string]bool {
 	names := map[string]bool{}
 	for _, tl := range (&github.App{}).Tools() {
@@ -39,9 +37,8 @@ func mutatingGitHubTools() map[string]bool {
 	return names
 }
 
-// nativeAgentGitHubWriteGrants resolves every NATIVE agent's real tool set
-// exactly as buildAgents does - resolveToolNames, then tools.Build against
-// the live registry plus the github extension's tools - and reports "<agent>: <tool>" for each resolved tool matching mutating. ACP agents are skipped: config's tools: is ignored for them (they carry no quack tools at all - internal/config's AcpAgentConfig doc comment).
+// nativeAgentGitHubWriteGrants resolves each native agent's tools as buildAgents does and reports
+// "<agent>: <tool>" for each mutating one. ACP agents carry no quack tools and are skipped.
 func nativeAgentGitHubWriteGrants(t *testing.T, cfg *config.Config, mutating map[string]bool) []string {
 	t.Helper()
 	jail, err := workspace.NewJail(t.TempDir())
@@ -66,7 +63,7 @@ func nativeAgentGitHubWriteGrants(t *testing.T, cfg *config.Config, mutating map
 		if !ok {
 			t.Fatalf("agent %q: unknown provider %q", name, ac.Provider)
 		}
-		wm, err := inference.NewModel(prov, ac.Model, nil, cfg.ModelCost(ac.Model))
+		wm, err := inference.NewModel(prov, ac.Model, nil, cfg.ModelCost(ac.Model), "")
 		if err != nil {
 			t.Fatalf("agent %q: model: %v", name, err)
 		}
@@ -95,9 +92,8 @@ func nativeAgentGitHubWriteGrants(t *testing.T, cfg *config.Config, mutating map
 	return violations
 }
 
-// TestNoNativeAgentGrantedGitHubWriteTool is the #669 drift test's first
-// half: no agent in config/quack.yaml resolves, through the real build path,
-// to a tool that can push/comment/review/create-issue on GitHub. Currently green because no agent's tools: list names github_comment, github_reply_to_review_comment or github_react_to_comment - the only extension tools the github App exposes.
+// TestNoNativeAgentGrantedGitHubWriteTool: no agent in config/quack.yaml resolves, through the real build
+// path, to a tool that can push, comment, review or create issues on GitHub.
 func TestNoNativeAgentGrantedGitHubWriteTool(t *testing.T) {
 	requireStageDeliverEnv(t)
 	cfg, err := config.LoadDeferringAgentCompleteness("../../config/quack.yaml")
@@ -109,9 +105,8 @@ func TestNoNativeAgentGrantedGitHubWriteTool(t *testing.T) {
 	}
 }
 
-// TestGitHubWriteGrantCheckCatchesHypotheticalGrant proves
-// nativeAgentGitHubWriteGrants is not vacuous: granting a hypothetical
-// mutating tool (issue #669's own example) to any agent must fail it. Uses a synthetic config rather than editing the shipped one.
+// TestGitHubWriteGrantCheckCatchesHypotheticalGrant: granting a hypothetical mutating tool to any agent
+// fails the check, so it isn't vacuous.
 func TestGitHubWriteGrantCheckCatchesHypotheticalGrant(t *testing.T) {
 	requireStageDeliverEnv(t)
 	cfg, err := config.LoadDeferringAgentCompleteness("../../config/quack.yaml")
@@ -128,9 +123,8 @@ func TestGitHubWriteGrantCheckCatchesHypotheticalGrant(t *testing.T) {
 	}
 }
 
-// TestGitPushToolNotBuildable pins fact #2 from #669: the native write-side
-// tools (including a "git_push" agent tool) were deleted in 0.6.0 when code
-// agents moved to ACP. There is nothing named git_push in the builtin registry NOR the github extension for an agent to be granted, by construction - tools.Build must refuse to resolve it under any config.
+// TestGitPushToolNotBuildable: nothing named git_push exists in the builtin registry or the github
+// extension, so tools.Build refuses it under any config.
 func TestGitPushToolNotBuildable(t *testing.T) {
 	if _, err := tools.Build([]string{"git_push"}, tools.Deps{}); err == nil {
 		t.Fatal("tools.Build resolved \"git_push\" - a write-side tool has reappeared in the agent-callable registry; see #669")

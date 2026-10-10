@@ -13,9 +13,8 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// SetupClone: harness-executed clone + branch checkout, run once before any
-// node. checkSetup bootstraps the clone (e.g. `npm --prefix scripts ci`) right after
-// checkout, quack-side, before any sandboxed worker starts in it - the gate's checksPassCriterion reruns the same call, a no-op once this has (see workspace.RunCheckSetup's cache).
+// SetupClone runs once before any node. checkSetup bootstraps the clone quack-side before any sandboxed
+// worker starts; the gate's rerun is a no-op via workspace.RunCheckSetup's cache.
 func SetupClone(ctx context.Context, jail *workspace.Jail, userID, chatID, dir, repoURL, baseRef, workBranch string, checkoutExistingHead bool, caps workspace.Caps, credentials []GitCredential, tokenSource GitTokenSource, checkSetup []string) (string, error) {
 	if _, err := validateCloneURL(repoURL); err != nil {
 		return "", err
@@ -26,17 +25,14 @@ func SetupClone(ctx context.Context, jail *workspace.Jail, userID, chatID, dir, 
 	if err != nil {
 		return "", err
 	}
-	// Before check_setup (which may itself populate node_modules/ - either
-	// way MkdirAll on an existing populated dir is a no-op) and always before
-	// any node's own ReadOnly caps can apply to this tree.
+	// Before check_setup and before any node's ReadOnly caps apply to this tree.
 	workspace.PrecreateBuildDirs(target, caps.BuildDirs)
 	workspace.RunCheckSetup(target, checkSetup, caps)
 	return target, nil
 }
 
-// cleanupError: a stale-clone removal failure, never a fetch failure - the dag
-// package structurally matches LocalCleanupFailure (dag never imports this
-// package, see dag/graph.go) so its wrapping setupError doesn't reword it into a bogus "repository is unreachable" (#1213).
+// cleanupError structurally matches dag's LocalCleanupFailure, so dag never rewords a local
+// cleanup failure as "repository is unreachable".
 type cleanupError struct {
 	path  string
 	cause error
@@ -50,9 +46,8 @@ func (e *cleanupError) Unwrap() error { return e.cause }
 
 func (e *cleanupError) LocalCleanupFailure() {}
 
-// unwipeableTreeError: a blocked reuse checkout on a work branch that still
-// holds something a wipe would destroy - the tree is moved aside instead, so
-// this must never be reworded as the repository being unreachable.
+// unwipeableTreeError: the tree held work a wipe would destroy and was moved aside; never reword it
+// as the repository being unreachable.
 type unwipeableTreeError struct {
 	target, movedTo, workBranch, reason string
 	checkoutErr, moveErr                error
@@ -71,17 +66,12 @@ func (e *unwipeableTreeError) Unwrap() error { return e.checkoutErr }
 
 func (e *unwipeableTreeError) LocalCleanupFailure() {}
 
-// localRefExists reports whether dir has a local branch named ref - used
-// both to recognize a reusable clone (its baseRef branch survives the first
-// checkout -b) and to tell a fresh workBranch from one a prior turn cut already.
 func localRefExists(ctx context.Context, dir, ref string, caps workspace.Caps) bool {
 	_, _, err := runGit(ctx, dir, []string{"show-ref", "--verify", "--quiet", "refs/heads/" + ref}, caps, nil)
 	return err == nil
 }
 
-// hasRebaseOrMergeState reports whether dir's .git shows an interrupted
-// rebase or merge - a killed process can leave this with an otherwise clean
-// `git status` (untouched working tree, conflict only in the index).
+// hasRebaseOrMergeState: a killed process can leave an interrupted rebase/merge under a clean `git status`.
 func hasRebaseOrMergeState(dir string) bool {
 	for _, p := range []string{"rebase-merge", "rebase-apply", "MERGE_HEAD"} {
 		if _, err := os.Stat(filepath.Join(dir, ".git", p)); err == nil {
@@ -91,15 +81,8 @@ func hasRebaseOrMergeState(dir string) bool {
 	return false
 }
 
-// unpushedCommitCount reports how many commits on target's local workBranch
-// aren't reachable from origin's copy of it - or, if origin has no such
-// branch (it was never pushed), aren't reachable from baseRef. A shallow,
-// single-branch clone's configured fetch refspec never covers workBranch, so
-// this fetches it explicitly (an explicit refspec bypasses that restriction)
-// rather than trusting a local remote-tracking ref that may not exist even
-// after a real push. ok=false means the count itself couldn't be determined
-// (a failed rev-list) - the caller must treat that as "assume unpushed work",
-// the same direction a failed fetch already degrades in, never the reverse.
+// unpushedCommitCount fetches workBranch explicitly: a single-branch clone's refspec never covers it.
+// ok=false (count unknown) must be treated as unpushed work.
 func unpushedCommitCount(ctx context.Context, b gitBinding, target, repoURL, baseRef, workBranch string) (count int, ok bool) {
 	if !localRefExists(ctx, target, workBranch, b.caps) {
 		return 0, true
@@ -127,14 +110,8 @@ func unpushedCommitCount(ctx context.Context, b gitBinding, target, repoURL, bas
 // (whose config is unstripped); a moved gitlink still shows.
 var cleanStatusArgv = []string{"status", "--porcelain", "--untracked-files=no", "--ignore-submodules=dirty"}
 
-// unwipeableReason says why target must not be wiped, or "" when it's safe
-// to discard. Checked in order: an interrupted rebase/merge (invisible to
-// `git status` when the working tree itself is untouched), an uncommitted
-// change to a tracked file (untracked content - e.g. build output - is
-// exempt via --untracked-files=no, so that alone still re-clones), then
-// commits workBranch has that origin doesn't. A git failure at any step
-// (porcelain status, commit count) is treated the same as finding something
-// to protect - never let an inability to check excuse a wipe.
+// unwipeableReason: "" when target is safe to discard (untracked files alone don't count). A git failure
+// counts as something to protect: an inability to check never excuses a wipe.
 func unwipeableReason(ctx context.Context, b gitBinding, target, repoURL, baseRef, workBranch string) string {
 	if hasRebaseOrMergeState(target) {
 		return "a rebase or merge is in progress"
@@ -171,12 +148,8 @@ func repoReadErr(ctx context.Context, target string, caps workspace.Caps) error 
 	return err
 }
 
-// canReuseClone reports whether target is already a healthy clone of repoURL
-// cut from baseRef, so setupCloneAndBranch can skip the wipe+reclone. Any git
-// failure here (missing dir, non-repo, wrong remote, corrupt tree left by a
-// killed process) means "not reusable" - the caller falls back to a clean clone.
-// It says nothing about whether baseRef is still current - runSetupCheckout
-// fetches it fresh before ever cutting a new branch from it.
+// canReuseClone: any git failure means not reusable. It doesn't check baseRef is current;
+// runSetupCheckout fetches it before cutting a branch.
 func canReuseClone(ctx context.Context, target, repoURL, baseRef string, caps workspace.Caps) bool {
 	out, _, err := runGit(ctx, target, []string{"remote", "get-url", "origin"}, caps, nil)
 	if err != nil || strings.TrimSpace(out) != repoURL {
@@ -185,9 +158,7 @@ func canReuseClone(ctx context.Context, target, repoURL, baseRef string, caps wo
 	return localRefExists(ctx, target, baseRef, caps)
 }
 
-// isShallowRepo reports whether dir is a shallow clone - `fetch --unshallow`
-// errors on a repo that already isn't, which a reused review clone can be
-// on its second setup call.
+// isShallowRepo: `fetch --unshallow` errors on a repo that isn't, as a reused clone can be.
 func isShallowRepo(ctx context.Context, dir string, caps workspace.Caps) bool {
 	out, _, err := runGit(ctx, dir, []string{"rev-parse", "--is-shallow-repository"}, caps, nil)
 	return err == nil && strings.TrimSpace(out) == "true"
@@ -199,12 +170,8 @@ func trackingRefspec(ref string) string {
 	return "+refs/heads/" + ref + ":refs/remotes/origin/" + ref
 }
 
-// runSetupCheckout lands target on workBranch, given a clone that either was
-// just cut fresh (reused=false, HEAD already sits on baseRef's tip) or is
-// being reused from a prior turn (reused=true, so baseRef's local ref may be
-// stale and the tree may carry an unmerged/dirty index - mid-rebase, a stale
-// index.lock - that makes a plain checkout refuse). It never forces past
-// such a refusal; the caller treats any error here as "reuse failed."
+// runSetupCheckout never forces past a refused checkout (a reused tree may hold a dirty index);
+// the caller treats any error as "reuse failed".
 func runSetupCheckout(ctx context.Context, b gitBinding, target, repoURL, baseRef, workBranch string, checkoutExistingHead, reused bool) error {
 	if checkoutExistingHead {
 		auth, err := b.authFor(repoURL)
@@ -226,17 +193,14 @@ func runSetupCheckout(ctx context.Context, b gitBinding, target, repoURL, baseRe
 		return nil
 	}
 	if reused && localRefExists(ctx, target, workBranch, b.caps) {
-		// A prior turn already cut workBranch here - switch onto it as-is,
-		// never -B, so its local (possibly unpushed) commits survive.
+		// Never -B: a prior turn's local, possibly unpushed commits must survive.
 		if _, _, err := runGit(ctx, target, []string{"checkout", "--quiet", workBranch}, b.caps, nil); err != nil {
 			return fmt.Errorf("setup: checkout %q: %w", workBranch, err)
 		}
 		return nil
 	}
 	if reused {
-		// The clone is shallow and depth-1 from the first turn - baseRef's
-		// local ref is frozen at that turn's tip. Fetch before cutting a new
-		// branch from it, or every later turn silently misses upstream commits.
+		// baseRef's local ref is frozen at the first turn's tip; fetch or later turns miss upstream commits.
 		auth, err := b.authFor(repoURL)
 		if err != nil {
 			return fmt.Errorf("setup: resolve credentials for %s: %w", repoURL, err)
@@ -255,7 +219,6 @@ func runSetupCheckout(ctx context.Context, b gitBinding, target, repoURL, baseRe
 	return nil
 }
 
-// finishSetup configures committer identity so a raw `git commit` works in target.
 func finishSetup(ctx context.Context, b gitBinding, target string) (string, error) {
 	for _, kv := range [][2]string{{"user.name", GitCommitAuthorName}, {"user.email", GitCommitAuthorEmail}} {
 		if _, _, err := runGit(ctx, target, []string{"config", kv[0], kv[1]}, b.caps, nil); err != nil {
@@ -277,26 +240,20 @@ func setupCloneAndBranch(ctx context.Context, b gitBinding, dir, repoURL, baseRe
 	if err != nil {
 		return "", fmt.Errorf("setup: resolve clone dir: %w", err)
 	}
-	// A follow-up turn on the same repo/base_ref finds its own prior clone
-	// here - try to reuse it so a resumed node's local commits survive.
+	// Reuse a prior turn's clone so a resumed node's local commits survive.
 	if canReuseClone(ctx, target, repoURL, baseRef, b.caps) {
 		checkoutErr := runSetupCheckout(ctx, b, target, repoURL, baseRef, workBranch, checkoutExistingHead, true)
 		if checkoutErr == nil {
 			return finishSetup(ctx, b, target)
 		}
-		// Reuse couldn't land cleanly (an unmerged/dirty index, e.g.
-		// mid-rebase). A tree with nothing at risk just falls through to the
-		// reclone below; one holding uncommitted work, a rebase in progress,
-		// or commits origin doesn't have is moved aside instead of wiped -
-		// never destroy the exact data this exists to keep.
+		// Reuse failed: a tree holding work at risk is moved aside, never wiped; anything else is recloned.
 		if reason := unwipeableReason(ctx, b, target, repoURL, baseRef, workBranch); reason != "" {
 			movedTo := target + ".unwiped-" + strconv.FormatInt(time.Now().UTC().UnixNano(), 10)
 			moveErr := os.Rename(target, movedTo)
 			return "", &unwipeableTreeError{target: target, movedTo: movedTo, workBranch: workBranch, reason: reason, checkoutErr: checkoutErr, moveErr: moveErr}
 		}
 	}
-	// Clear stale clone from a previous run. Local cleanup, not a fetch - its
-	// error must never read as the repository being unreachable (#1213).
+	// Local cleanup, not a fetch: its error must never read as the repository being unreachable.
 	if err := repoReadErr(ctx, target, b.caps); err != nil {
 		slog.Warn("git: re-cloning a clone git cannot read", "component", "tools", "dir", target, "err", err)
 	}
@@ -304,7 +261,7 @@ func setupCloneAndBranch(ctx context.Context, b gitBinding, dir, repoURL, baseRe
 	if err := workspace.RemoveAllForce(target); err != nil {
 		return "", &cleanupError{path: target, cause: err}
 	}
-	if _, err := b.cloneRepo(repoURL, dir, nil, baseRef); err != nil {
+	if err := b.cloneRepo(repoURL, dir, baseRef); err != nil {
 		return "", fmt.Errorf("setup: clone: %w", err)
 	}
 	if err := runSetupCheckout(ctx, b, target, repoURL, baseRef, workBranch, checkoutExistingHead, false); err != nil {

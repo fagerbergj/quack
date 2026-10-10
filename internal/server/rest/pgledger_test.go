@@ -11,9 +11,8 @@ import (
 	"gorm.io/gorm"
 )
 
-// newTestPGLedgerStore starts a real Postgres container and returns a
-// ledger.PGStore backed by it - mirrors internal/ledger's own container
-// test and internal/store's artifact_largeobject_test.go; skips (not fails) when Docker isn't reachable.
+// newTestPGLedgerStore returns a ledger.PGStore on a real Postgres container;
+// skips when Docker isn't reachable.
 func newTestPGLedgerStore(t *testing.T) *ledger.PGStore {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)

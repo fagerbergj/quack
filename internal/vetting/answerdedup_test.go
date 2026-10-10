@@ -2,9 +2,7 @@ package vetting
 
 import "testing"
 
-// reviewBody: 17 unique words, well over minDedupBodyLen, used to derive
-// verbatim/paraphrase/dilute variants below without hand-counting overlap
-// on every table row.
+// reviewBody: 17 unique words, well over minDedupBodyLen; the rows below derive variants from it.
 const reviewBody = "blocking the retry loop never releases mutex on error path and it causes a permanent deadlock now"
 
 func TestRestatesRecord(t *testing.T) {
@@ -22,8 +20,7 @@ func TestRestatesRecord(t *testing.T) {
 		},
 		{
 			name: "paraphrase over threshold",
-			// same 17 words minus 2 (blocking, now), reordered - not a
-			// substring match, but 15/17 = 0.88 word overlap.
+			// 15 of the 17 words, reordered: no substring match, but 0.88 word overlap.
 			answer: "the retry loop never releases mutex on error path and it causes a permanent deadlock issue",
 			body:   reviewBody,
 			want:   true,
@@ -43,8 +40,7 @@ func TestRestatesRecord(t *testing.T) {
 		},
 		{
 			name: "verbatim body plus a follow-up question kept",
-			// quotes the body verbatim, then asks something only the user
-			// can answer - collapsing this loses the question entirely.
+			// Quotes the body verbatim, then asks something only the user can answer.
 			answer: "Summary: " + reviewBody + " Given that, do you want me to fix it now, or file a follow-up and merge as-is?",
 			body:   reviewBody,
 			want:   false,

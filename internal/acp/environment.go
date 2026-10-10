@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"text/template"
 
@@ -13,13 +13,12 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// maxEnvironmentEntries bounds the top-level entry listing in the environment
-// block - a pathological directory (an agent that wrote thousands of files at
-// its root) must never blow the round's context window just to say "here's your cwd".
+// maxEnvironmentEntries bounds the top-level listing so a directory with thousands of root files
+// can't blow the round's context window.
 const maxEnvironmentEntries = 200
 
-// environmentBlock renders the round's <environment_context>: cwd, git state, top-level entries, and the sandbox/runtime facts every agent otherwise re-discovers per round (filesystem grants, the module cache, a clean-tree copy, where CI's verdict lives).
-// Deterministic given (cwd, repo state, caps), so it costs nothing to include on every round.
+// environmentBlock renders <environment_context>: cwd, git state, top-level entries and the sandbox facts agents
+// would otherwise rediscover each round. Deterministic given (cwd, repo state, caps), so cheap every round.
 func environmentBlock(ctx context.Context, res *artifactsrc.Resolver, cwd string, caps workspace.Caps) (string, artifactsrc.Artifact) {
 	f := envFacts{
 		Cwd: cwd, MaxEntries: maxEnvironmentEntries, ReadOnly: caps.ReadOnly,
@@ -31,9 +30,8 @@ func environmentBlock(ctx context.Context, res *artifactsrc.Resolver, cwd string
 	entries, truncated := topLevelEntries(cwd)
 	f.Entries, f.Truncated = strings.Join(entries, ", "), truncated
 	if caps.ReadOnly {
-		// landlock and bwrap both enforce this. Name which paths, not what to do
-		// with them: an agent told only "read-only" either burns a round on
-		// EACCES or gives up on running the change. Naming the writable paths is what makes "run it" achievable here.
+		// Name the writable paths, not just "read-only": without them an agent burns a round on EACCES
+		// or gives up on running the change. landlock and bwrap both enforce this.
 		writable := []string{workspace.SandboxTmpDir(caps)}
 		if caps.HomeDir != "" {
 			writable = append(writable, caps.HomeDir)
@@ -103,9 +101,8 @@ func gitInfo(ctx context.Context, cwd string, caps workspace.Caps) (branch, sha 
 	return branch, sha, true
 }
 
-// topLevelEntries lists cwd's immediate entries (name only, directories
-// suffixed "/"), sorted, bounded to maxEnvironmentEntries. "" (empty, false)
-// for an unreadable cwd - a node whose worker hasn't written anything yet.
+// topLevelEntries lists cwd's entries (dirs suffixed "/"), sorted and bounded to maxEnvironmentEntries;
+// empty for an unreadable cwd (a worker that hasn't written anything yet).
 func topLevelEntries(cwd string) (entries []string, truncated bool) {
 	des, err := os.ReadDir(cwd)
 	if err != nil {
@@ -119,7 +116,7 @@ func topLevelEntries(cwd string) (entries []string, truncated bool) {
 		}
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	if len(names) > maxEnvironmentEntries {
 		return names[:maxEnvironmentEntries], true
 	}

@@ -8,9 +8,8 @@ import (
 	"github.com/fagerbergj/quack/internal/otelobs"
 )
 
-// recordUsage emits gen_ai.client.token.usage (+cost when priced) once per
-// completed ACP round, from the ACP agent's round-aggregate sdk.Usage; u nil
-// emits nothing, never a fabricated zero. This is coarser than it looks: an ACP round makes many internal model calls (translate.go's SessionUpdate stream carries no per-call token breakdown, only this round total), so cache-hit-rate or per-call cost derived from this series is a round-level average, not a per-model-call measurement. Unlike genai's PromptTokenCount, the ACP agent's InputTokens already excludes cache reads, so (unlike inference.recordUsageMetrics) no subtraction is needed.
+// recordUsage emits gen_ai.client.token.usage (+cost when priced) once per round from the round-aggregate Usage;
+// nil emits nothing. Per-call figures derived from it are round averages; InputTokens already excludes cache reads.
 func recordUsage(modelName string, coords ledger.Coords, pricing *config.ModelPricing, u *sdk.Usage) {
 	if u == nil {
 		return

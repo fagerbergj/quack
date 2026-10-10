@@ -9,16 +9,16 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
 // probeAugmentFromRepo: ledger event name for the probe (emitProbeEvent).
 const probeAugmentFromRepo = "augment_from_repo"
 
-// gitProbeCache memoises augmentFromRepo's git reads per (dir, HEAD sha): actFor calls it ~9 times per node run, usually with no git state change
-// between calls. Never evicted - same unbounded-growth ceiling as the
-// existing baselineCache in baseline.go; a jail dir is reused across a node's rounds but not across nodes/chats, so this stays small in practice. ponytail: process-lifetime sync.Map, add a TTL/size cap if it ever shows up in profiling.
-var gitProbeCache sync.Map // key: dir + "\x00" + head → *gitProbeResult, or a nil *gitProbeResult for "nothing committed yet"
+// gitProbeCache memoises augmentFromRepo's git reads per (dir, HEAD sha); actFor calls it ~9 times a run.
+// ponytail: process-lifetime sync.Map, never evicted; add a TTL/size cap if it shows up in profiling.
+var gitProbeCache sync.Map // dir+"\x00"+head → *gitProbeResult; nil means "nothing committed yet"
 
 // gitProbeResult is the git-derived slice of augmentFromRepo's work, replayed
 // onto a fresh workerActivity on a cache hit instead of re-shelling to git.
@@ -55,7 +55,7 @@ func augmentFromRepo(ctx context.Context, act *workerActivity, cfg Config) {
 
 	var result map[string]any
 	var probeErr error
-	defer func() { emitProbeEvent(ctx, probeAugmentFromRepo, nil, result, probeErr) }()
+	defer func() { otelobs.EmitToolCall(ctx, probeScope, probeAugmentFromRepo, nil, result, probeErr) }()
 
 	base, err := baseCommit(dir, caps)
 	if err != nil {
@@ -90,7 +90,7 @@ func buildGitProbe(dir string, caps workspace.Caps, cfg Config, base, head strin
 	}
 	gp.commitLog = fmt.Sprintf(
 		"git_commit(disk probe) → head=%q, files_changed=%d (commits found in the clone itself; the worker commits with its own git)",
-		short(head), len(changed))
+		shortSHA(head, 12), len(changed))
 
 	// Delivery handoff for a terminal node with no stage_pr/stage_push call: stage the PR from commits.
 	if cfg.Deliver != nil {
@@ -102,9 +102,7 @@ func buildGitProbe(dir string, caps workspace.Caps, cfg Config, base, head strin
 	return gp
 }
 
-// applyGitProbe replays a cached (or freshly computed) git probe onto act -
-// the mutation augmentFromRepo used to do inline, shared by the cache-hit and
-// cache-miss paths. gp == nil replays the memoised "nothing committed yet".
+// applyGitProbe replays a cached or fresh git probe onto act; gp == nil replays "nothing committed yet".
 func applyGitProbe(act *workerActivity, gp *gitProbeResult, cfg Config) {
 	if gp == nil {
 		return
@@ -170,7 +168,7 @@ func diffSince(cfg Config) (diff, base, head string) {
 	if len(out) > changedFilesBudget {
 		out = out[:changedFilesBudget] + diffTruncatedMarker
 	}
-	return out, short(b), short(h)
+	return out, shortSHA(b, 12), shortSHA(h, 12)
 }
 
 // buildReviewDiffSection sources the REVIEW node's changedFiles from clone diff (act.written is empty for reviewers).
@@ -218,17 +216,15 @@ func gitLines(dir string, caps workspace.Caps, args ...string) []string {
 	return out
 }
 
-// commitReachable reports whether sha exists in dir's history (survives a
-// force-push that dropped it). Exit-status aware, unlike gitLines' callers
-// that only read output - `git cat-file` exits non-zero on a missing object.
+// commitReachable reports whether sha exists in dir's history (a force-push may drop it). It checks the
+// exit status: `git cat-file` exits non-zero on a missing object.
 func commitReachable(dir string, caps workspace.Caps, sha string) bool {
 	res, err := workspace.RunArgv(context.Background(), dir, []string{"git", "cat-file", "-e", sha + "^{commit}"}, caps)
 	return err == nil && res.ExitCode == 0
 }
 
-// fileLineAt returns one line (1-based) of file as it read at sha, "" on any
-// failure (missing sha/file/line - the finding-hash snippet input degrades
-// gracefully, never blocks the write). Used instead of reading off disk because HEAD may have moved past sha by the time this runs.
+// fileLineAt returns line (1-based) of file at sha, "" on any failure, so the finding hash degrades
+// instead of blocking. It reads at sha, not disk, because HEAD may have moved past sha.
 func fileLineAt(dir string, caps workspace.Caps, sha, file string, line int) string {
 	if sha == "" || line <= 0 {
 		return ""
@@ -244,16 +240,10 @@ func fileLineAt(dir string, caps workspace.Caps, sha, file string, line int) str
 	return lines[line-1]
 }
 
-func short(sha string) string {
-	if len(sha) > 12 {
-		return sha[:12]
-	}
-	return sha
-}
+func shortSHA(sha string, n int) string { return sha[:min(n, len(sha))] }
 
-// cloneHeadSHA is the shared clone's HEAD right now - stamped once per node so
-// diffSince can scope its diff to what THIS node did (#710). "" when there is
-// no clone yet, which is the single-node/no-repo case diffSince falls back on.
+// cloneHeadSHA is the clone's HEAD now, stamped once per node so diffSince scopes to this node's work.
+// "" when there is no clone yet.
 func cloneHeadSHA(cfg Config) string {
 	if cfg.Setup == nil || cfg.Workspace == nil {
 		return ""
@@ -265,14 +255,12 @@ func cloneHeadSHA(cfg Config) string {
 	return gitLine(dir, checksCaps(cfg), "rev-parse", "HEAD")
 }
 
-// commitHygieneOffTaskCeiling: code-implementer's commit_hygiene criterion
-// scores below this (normalised) when a commit swept in files with no
-// connection to the task - the contamination band, distinct from a merely thin commit message or an incomplete-but-on-task round (#762).
+// commitHygieneOffTaskCeiling: commit_hygiene below this (normalised) means a commit swept in off-task
+// files, distinct from a thin message or an incomplete on-task round.
 const commitHygieneOffTaskCeiling = 0.4
 
-// resetCloneToNodeBase discards everything the just-rejected round committed, before the worker is re-prompted to revise - but only when commit_hygiene
-// says that round swept in off-task work (#762). An ordinary incomplete or wrong round keeps its commits: its code is largely right, and revise is
-// expected to build on it, not redo it from scratch. Keyed on the judge's criterion score, never on reading commits/diffs for topicality; a rubric that doesn't name commit_hygiene gets no reset, failing open rather than guessing from something else.
+// resetCloneToNodeBase drops a rejected round's commits before revise, only when commit_hygiene says they
+// swept in off-task work; on-task commits stay for revise to build on. No commit_hygiene, no reset.
 func resetCloneToNodeBase(cfg Config, v verdict) {
 	cs, ok := v.Criteria["commit_hygiene"]
 	if !ok || cs.Score >= commitHygieneOffTaskCeiling {

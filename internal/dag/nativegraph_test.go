@@ -19,9 +19,8 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// graphStub drives a 3-node plan: the ASK-TASK worker asks the user, the
-// PLAIN-TASK worker answers immediately, the SYNTH-TASK worker combines. The
-// judge always passes. Counters expose which workers ran.
+// graphStub: ASK-TASK asks the user, PLAIN-TASK answers, SYNTH-TASK combines; the judge
+// passes. Counters expose which workers ran.
 type graphStub struct {
 	mu          sync.Mutex
 	plainRuns   int
@@ -62,25 +61,12 @@ func (s *graphStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ 
 	}
 }
 
-// TestRunPlanAsGraph_HITLPauseResume is THE goal proof: a plan run as a native
-// first-class ADK graph where one researcher pauses to ask the user. Run 1: the
-// sibling completes (node_done), the asker parks (node_needs_input), the
-// synthesizer waits - nothing false-fails. Run 2 (the answer as an
-// adk_request_input FunctionResponse on the same session): ADK re-enters ONLY the
-// asker (the sibling durably skips - its worker never re-runs), the join settles
-// via the wrapper's state patch, and the synthesizer produces the terminal answer
-// from both outputs.
+// Run 1: sibling done, asker parked, synth waiting. Run 2 (answer as adk_request_input):
+// only the asker re-runs and the synthesizer combines both outputs.
 func TestRunPlanAsGraph_HITLPauseResume(t *testing.T) {
 	stub := &graphStub{}
-	// One llmagent instance PER concurrent node (production shape: one agent per
-	// A2A server), each on its own model-stub routing. The CI flake this test
-	// once suffered (n2 "pausing on n1's question", plainRuns=0) was NOT an
-	// instance-sharing race: all nodes share ONE workflow session, and ADK's
-	// single-turn "current turn" pivot scan ignores branches, so a concurrent
-	// sibling's tail event evicted this worker's own seeded prompt from its
-	// request (the stub then saw an EMPTY request and fell through to its
-	// ask_user default). Fixed for real by the per-run isolation scope in
-	// vetting.runWorkerNode - see the comment there.
+	// One llmagent per concurrent node, as production has one per A2A server; the shared
+	// session needs vetting.runWorkerNode's per-run isolation scope.
 	mk := func(name string) adkagent.Agent {
 		a, err := llmagent.New(llmagent.Config{
 			Name: name, Model: stub, Description: name, Instruction: "ROLE:" + name + " Answer.",

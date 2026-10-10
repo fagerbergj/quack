@@ -64,9 +64,8 @@ func reviewPlan() *Plan {
 	}
 }
 
-// TestRefreshStaleSetupRecloneGates pins every gate on the destructive path:
-// setupCloneAndBranch RemoveAll's the tree, so a refresh must happen only for
-// a read-only node in a review-only plan with nothing uncommitted.
+// setupCloneAndBranch RemoveAll's the tree, so a refresh happens only for a read-only node
+// in a review-only plan with nothing uncommitted.
 func TestRefreshStaleSetupRecloneGates(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -184,9 +183,8 @@ func (s *promptSnoopStub) GenerateContent(_ context.Context, req *model.LLMReque
 	}
 }
 
-// TestRefreshedNodeTellsItsWorker: a node that started against a re-cloned
-// tree must say so - an earlier node's output in the same prompt describes
-// the pre-push state, and nothing else in the run flags the discontinuity.
+// A node started against a re-cloned tree must say so: earlier outputs in its prompt
+// describe the pre-push state.
 func TestRefreshedNodeTellsItsWorker(t *testing.T) {
 	for _, refreshed := range []bool{true, false} {
 		name := "refreshed"
@@ -215,9 +213,8 @@ func TestRefreshedNodeTellsItsWorker(t *testing.T) {
 	}
 }
 
-// TestStaleFlagClearedOnFreshRunKeptOnResume: a fresh run clones, so any
-// earlier signal is spent; a resume never clones, so the branch really is
-// still ahead of the tree and the flag has to survive for the first safe node boundary to act on it.
+// A fresh run clones, so the stale flag is spent; a resume never clones, so the flag
+// survives for the first safe node boundary.
 func TestStaleFlagClearedOnFreshRunKeptOnResume(t *testing.T) {
 	stub := &setupStub{}
 	ag, err := llmagent.New(llmagent.Config{Name: implementerAgent, Model: stub, Description: "impl", Instruction: "ROLE Answer."})
@@ -252,9 +249,8 @@ func TestStaleFlagClearedOnFreshRunKeptOnResume(t *testing.T) {
 	}
 }
 
-// TestRefreshHeldWhileASiblingNodeRuns: read-only nodes work in worktrees
-// linked off the shared clone, so re-cloning it would pull the gitdir out
-// from under a sibling mid-round. The parent tree reads clean either way - the sibling's edits are in its own worktree.
+// Read-only nodes use worktrees linked off the shared clone, so re-cloning mid-round
+// would pull the gitdir from under a sibling.
 func TestRefreshHeldWhileASiblingNodeRuns(t *testing.T) {
 	e, cfg, _, calls := newInvalidateFixture(t)
 	staleSetups.Delete("c1")

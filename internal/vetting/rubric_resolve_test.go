@@ -10,9 +10,8 @@ import (
 	"github.com/fagerbergj/quack/internal/config"
 )
 
-// TestFromConfigResolvesArtifacts: the gate's rubric and constitution come from
-// the rubric/global and rubric/constitution artifacts when no inline override
-// or path is set, which is what a run resolves at its start (#1420).
+// TestFromConfigResolvesArtifacts: with no inline override or path, rubric and constitution
+// come from the rubric/global and rubric/constitution artifacts.
 func TestFromConfigResolvesArtifacts(t *testing.T) {
 	ctx := context.Background()
 	c, err := FromConfig(ctx, nil, config.GatesConfig{
@@ -41,25 +40,6 @@ func TestFromConfigResolvesArtifacts(t *testing.T) {
 	}
 }
 
-// TestFromConfigInlineOverridesWin: inline prose short-circuits resolution, so
-// a planner-authored rubric is never overwritten by the shipped one.
-func TestFromConfigInlineOverridesWin(t *testing.T) {
-	c, err := FromConfig(context.Background(), nil, config.GatesConfig{
-		Constitution: "  be kind  ",
-		Rubric:       "  score it  ",
-		Judge:        config.JudgeConfig{MaxRounds: 1},
-	})
-	if err != nil {
-		t.Fatalf("FromConfig: %v", err)
-	}
-	if c.Constitution != "be kind" || c.Rubric != "score it" {
-		t.Errorf("inline overrides not used: %+v", c)
-	}
-	if c.RubricSpecs != nil {
-		t.Error("a prose override has no structured specs")
-	}
-}
-
 // TestFromConfigNoJudgeSkipsRubric: a deterministic-only gate needs no rubric.
 func TestFromConfigNoJudgeSkipsRubric(t *testing.T) {
 	c, err := FromConfig(context.Background(), nil, config.GatesConfig{})
@@ -85,9 +65,8 @@ func TestLoadBundleRubricResolvesAndAbsent(t *testing.T) {
 	}
 }
 
-// TestLoadBundleRubricSpecsArtifactProvenance: the per-agent rubric.yaml
-// artifact is "static" and version-hashed when present, and zero when absent
-// (a bundle with no rubric.yaml records no rubric/<agent> entry at all).
+// TestLoadBundleRubricSpecsArtifactProvenance: the rubric.yaml artifact is "static" and
+// version-hashed when present, and zero when absent.
 func TestLoadBundleRubricSpecsArtifactProvenance(t *testing.T) {
 	ctx := context.Background()
 	_, _, _, art, err := LoadBundleRubricSpecs(ctx, nil, "agents/web-researcher")
@@ -134,9 +113,8 @@ func (proseSource) Get(context.Context, string) (artifactsrc.Artifact, bool, err
 }
 func (proseSource) Seed(context.Context, string, artifactsrc.Artifact) error { return nil }
 
-// TestJudgePromptSurvivesBadStoredVersion: a stored system/judge that will not
-// render falls back to the shipped file. Erroring instead would fail every
-// judge round, i.e. disable the trust gate deployment-wide.
+// TestJudgePromptSurvivesBadStoredVersion: an unrenderable stored system/judge falls back to the
+// shipped file; erroring would disable the trust gate deployment-wide.
 func TestJudgePromptSurvivesBadStoredVersion(t *testing.T) {
 	res := artifactsrc.New("langfuse", proseSource{}, time.Minute)
 	p, err := resolveJudgePrompt(context.Background(), res)

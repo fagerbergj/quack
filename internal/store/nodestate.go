@@ -23,9 +23,8 @@ func (s *Store) planForChat(ctx context.Context, chatID string) (string, error) 
 	return p.ID, nil
 }
 
-// SetNodeStatus is the one write-through for a node lifecycle transition: it
-// validates from → to against dag's table and updates status + pause metadata
-// in a single statement. Synchronous by design - a pause must be on disk before it is acted on, so a kill can't lose it (#827's goroutine race). Passing an empty status leaves the status alone and only stamps the pause metadata (the HITL park, whose status arrives on the needs_input event).
+// SetNodeStatus validates from -> to against dag's table and writes status + pause metadata synchronously, so
+// a pause is on disk before it's acted on. Empty to stamps only the pause metadata (the HITL park).
 func (s *Store) SetNodeStatus(ctx context.Context, planID, nodeID string, to dag.NodeStatus, reason dag.PauseReason, question string) error {
 	fields := map[string]any{"pause_reason": string(reason), "pending_question": question}
 	if to == "" {
@@ -46,9 +45,8 @@ func (s *Store) SetNodeStatus(ctx context.Context, planID, nodeID string, to dag
 	return s.casNodeStatus(ctx, planID, nodeID, from, to, fields)
 }
 
-// casNodeStatus commits only if the row's status still equals from: a
-// legality check run against a read that's since been superseded (a pause
-// racing the node's own done write, #late-pause-cancel) must not silently overwrite the newer status just because it once looked legal.
+// casNodeStatus commits only if status still equals from, so a stale legality check (a pause racing the
+// node's own done write) never overwrites the newer status.
 func (s *Store) casNodeStatus(ctx context.Context, planID, nodeID string, from, to dag.NodeStatus, fields map[string]any) error {
 	fields["status"] = string(to)
 	res := s.db.WithContext(ctx).Model(&DagNode{}).
@@ -97,9 +95,7 @@ func (s *Store) GetNodeState(ctx context.Context, chatID, nodeID string) (status
 	return n.Status, n.PauseReason, n.PendingQuestion, n.QueuedMessages, nil
 }
 
-// ListPausedDagNodes returns every suspended node (paused or its legacy
-// needs_input spelling) across all plans - PR 2's boot-time "start every
-// paused node" sweep reads this.
+// ListPausedDagNodes returns every suspended node (paused or legacy needs_input) across all plans.
 func (s *Store) ListPausedDagNodes(ctx context.Context) ([]DagNode, error) {
 	var out []DagNode
 	err := s.db.WithContext(ctx).

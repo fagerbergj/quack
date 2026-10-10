@@ -1,6 +1,5 @@
-// Package ledger is quack's write-ahead log: one append-only, per-chat stream of typed
-// Entry rows. Intents (artifact revisions, deliveries, node lifecycle) and observations
-// (model/tool/agent calls, judge scores) share the same shape, seq space, and reader API.
+// Package ledger is quack's write-ahead log: one append-only, per-chat stream of typed Entry rows shared by
+// intents and observations.
 package ledger
 
 import (
@@ -11,23 +10,20 @@ import (
 	"time"
 )
 
-// ErrStaleParent: another entry already claimed (chat_id, key,
-// parent_revision) - the store-level index that replaced idLocks (#1144 P4).
-// Nothing was written; the caller rereads the real latest and retries.
+// ErrStaleParent: another entry already claimed (chat_id, key, parent_revision). Nothing was written; the
+// caller rereads the real latest and retries.
 var ErrStaleParent = errors.New("ledger: parent revision already claimed")
 
-// DuplicateIntentError: entry.IdempotencyKey already exists for this chat
-// (#1144 P4) - nothing was written; Existing is the entry that won, and the
-// caller treats this as a no-op rather than an error to surface.
+// DuplicateIntentError: entry.IdempotencyKey already exists for this chat. Nothing was written; Existing is
+// the winning entry, and callers treat this as a no-op.
 type DuplicateIntentError struct{ Existing Entry }
 
 func (e *DuplicateIntentError) Error() string {
 	return fmt.Sprintf("ledger: duplicate idempotency key, existing seq %d", e.Existing.Seq)
 }
 
-// ParentRevisionOf reads an artifact.revision entry's parent_revision out of
-// its payload, so PGStore/ledgertest.MemStore enforce uniqueness without either
-// owning recordstore's artifactRevisionPayload type. Exported for ledgertest.
+// ParentRevisionOf reads an artifact.revision payload's parent_revision, so stores can enforce uniqueness
+// without owning recordstore's payload type.
 func ParentRevisionOf(kind string, payload json.RawMessage) int64 {
 	if kind != KindArtifactRevision {
 		return 0
@@ -46,13 +42,11 @@ type SessionRef struct {
 	ModTime time.Time
 }
 
-// LedgerStore is the WAL backend. Postgres is the only backend that gives
-// the transactional, gapless seq the intent path needs; MemStore exists for
-// tests. Never mutate or delete a single entry; Delete only drops a chat.
+// LedgerStore is the WAL backend; only Postgres gives the transactional, gapless seq the intent path needs.
+// Never mutate or delete a single entry; Delete only drops a chat.
 type LedgerStore interface {
-	// AppendIntent allocates entry.Seq and writes entry atomically. A non-nil
-	// error means nothing was written and the caller must not perform the
-	// state change the entry describes.
+	// AppendIntent allocates entry.Seq and writes entry atomically. On error nothing was written and the
+	// caller must not perform the state change the entry describes.
 	AppendIntent(ctx context.Context, entry Entry) (seq int64, err error)
 	// ReadEntries returns every Entry for chatID with Seq >= fromSeq, in seq order.
 	ReadEntries(ctx context.Context, chatID string, fromSeq int64) ([]Entry, error)
@@ -65,23 +59,20 @@ type LedgerStore interface {
 	Delete(ctx context.Context, sessionID string) error
 }
 
-// FilteredReader is optionally implemented by a LedgerStore that can push a
-// kind filter to the database (PGStore) instead of decoding every row's
-// payload just to discard most of it - see ReadByKinds.
+// FilteredReader is a LedgerStore that can push a kind filter to the database instead of decoding every
+// payload just to discard it.
 type FilteredReader interface {
 	ReadEntriesFiltered(ctx context.Context, chatID string, fromSeq int64, kinds []string) ([]Entry, error)
 }
 
-// CrossChatFilteredReader is optionally implemented by a LedgerStore that can push both a
-// kind filter and an `at >= since` time filter across every chat in one query (perf audit
-// #12), instead of List() plus one ReadByKinds per chat plus a Go-side time filter.
+// CrossChatFilteredReader is a LedgerStore that can filter by kind and `at >= since` across every chat in
+// one query.
 type CrossChatFilteredReader interface {
 	ReadEntriesFilteredSince(ctx context.Context, kinds []string, since time.Time) ([]Entry, error)
 }
 
-// ReadAllByKindsSince returns every chat's entries with Kind in kinds and At >= since. Uses
-// store's own CrossChatFilteredReader when it has one (PGStore and MemStore both do); a store
-// without one (older fakes) falls back to List() + per-chat ReadByKinds + an in-process time filter, so results are identical either way.
+// ReadAllByKindsSince returns every chat's entries with Kind in kinds and At >= since, via the store's
+// CrossChatFilteredReader when present, else a per-chat fallback with identical results.
 func ReadAllByKindsSince(ctx context.Context, store LedgerStore, kinds []string, since time.Time) ([]Entry, error) {
 	if cr, ok := store.(CrossChatFilteredReader); ok {
 		return cr.ReadEntriesFilteredSince(ctx, kinds, since)
@@ -105,9 +96,8 @@ func ReadAllByKindsSince(ctx context.Context, store LedgerStore, kinds []string,
 	return out, nil
 }
 
-// ReadByKinds returns chatID's entries with Kind in kinds and Seq >= fromSeq, in seq order
-// (perf audit #1: a handful of small kinds mustn't pay to detoast every agent.invoke/llm.call/otel
-// payload). Uses store's own FilteredReader (PGStore pushes `kind IN (...)` to SQL); MemStore/fakes filter in-process (same results).
+// ReadByKinds returns chatID's entries with Kind in kinds and Seq >= fromSeq, in seq order, pushing the
+// filter to SQL when store is a FilteredReader.
 func ReadByKinds(ctx context.Context, store LedgerStore, chatID string, fromSeq int64, kinds []string) ([]Entry, error) {
 	if fr, ok := store.(FilteredReader); ok {
 		return fr.ReadEntriesFiltered(ctx, chatID, fromSeq, kinds)

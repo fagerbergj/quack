@@ -11,9 +11,8 @@ import (
 	"github.com/fagerbergj/quack/internal/memory"
 )
 
-// failingLedger wraps a real LedgerStore but fails AppendIntent for a
-// chosen entry kind - proves memory.vote's fail-closed path against a
-// genuine append failure, not a mock returning a canned success.
+// failingLedger wraps a real LedgerStore and fails AppendIntent for one entry kind, to test
+// memory.vote's fail-closed path against a genuine append failure.
 type failingLedger struct {
 	*ledgertest.MemStore
 	failKind string
@@ -35,9 +34,8 @@ func newMemoryStoreForVoteTest(t *testing.T) *memory.Store {
 	return s
 }
 
-// TestApplyMemoryVotesOnPass_SupportedAndContradicted covers epic #1255 P1's
-// core verification: two recalled memories, one supported and one
-// contradicted, yield +1/-1 and a memory.vote ledger entry each, and the supported one's tier flips to verified.
+// One supported and one contradicted memory yield +1/-1 and a memory.vote entry each, and the
+// supported one's tier flips to verified.
 func TestApplyMemoryVotesOnPass_SupportedAndContradicted(t *testing.T) {
 	ctx := context.Background()
 	store := newMemoryStoreForVoteTest(t)
@@ -107,9 +105,7 @@ func TestApplyMemoryVotesOnPass_SupportedAndContradicted(t *testing.T) {
 	}
 }
 
-// TestApplyMemoryVotesOnPass_IgnoresVoteForUnknownID covers the "the judge
-// named a memory it was never given" hardening: a vote whose id isn't in the
-// received set is dropped, never trusted blindly.
+// A vote for an id the worker was never given is dropped, never trusted.
 func TestApplyMemoryVotesOnPass_IgnoresVoteForUnknownID(t *testing.T) {
 	ctx := context.Background()
 	store := newMemoryStoreForVoteTest(t)
@@ -132,9 +128,8 @@ func TestApplyMemoryVotesOnPass_IgnoresVoteForUnknownID(t *testing.T) {
 	}
 }
 
-// TestRecallLedgerEntry_AppendsMemoryRecall covers the usage-tracking half:
-// a recall delivery appends one memory.recall ledger entry naming every
-// delivered id, stamped with the node's agent and round (#1259 - these were previously left blank, unlike every other coord-bearing entry).
+// A recall delivery appends one memory.recall entry naming every delivered id, stamped with the
+// node's agent and round.
 func TestRecallLedgerEntry_AppendsMemoryRecall(t *testing.T) {
 	ctx := context.Background()
 	lgr := ledgertest.NewMemStore()
@@ -155,9 +150,8 @@ func TestRecallLedgerEntry_AppendsMemoryRecall(t *testing.T) {
 	}
 }
 
-// TestApplyMemoryVotesOnPass_LedgerAppendFailureSkipsMutation covers the
-// fail-closed discipline: the point mutation is a PROJECTION of the
-// memory.vote ledger entry, so a failed AppendIntent must skip the point mutation AND the memory_ops row entirely - never apply a vote the ledger never durably recorded.
+// The point mutation projects the memory.vote entry, so a failed AppendIntent skips the mutation AND
+// the memory_ops row: never apply a vote the ledger didn't record.
 func TestApplyMemoryVotesOnPass_LedgerAppendFailureSkipsMutation(t *testing.T) {
 	ctx := context.Background()
 	store := newMemoryStoreForVoteTest(t)
@@ -194,9 +188,7 @@ func TestApplyMemoryVotesOnPass_LedgerAppendFailureSkipsMutation(t *testing.T) {
 	}
 }
 
-// TestMergeMemoryHits_DedupesByID covers the adversarial review finding: a
-// memory recalled by both prefill and a recall_memory tool call must appear
-// once in the received set, not twice (double-voting).
+// A memory recalled by both prefill and recall_memory appears once in the received set (no double vote).
 func TestMergeMemoryHits_DedupesByID(t *testing.T) {
 	base := []memory.Delivered{{ID: "m1", Content: "from prefill"}}
 	add := []memory.Delivered{{ID: "m1", Content: "from tool call"}, {ID: "m2", Content: "new"}}
@@ -220,9 +212,8 @@ func TestMergeMemoryHits_DedupesByID(t *testing.T) {
 	}
 }
 
-// TestRecallMemoryHits_ParsesFunctionResponse covers a native worker's
-// recall_memory call: its FunctionResponse (a recallMemoryResult round-
-// tripped through session-event JSON) must parse back into the hits it returned, the shape the round loop merges into the received set.
+// A native worker's recall_memory FunctionResponse, round-tripped through session-event JSON, parses
+// back into the hits it returned.
 func TestRecallMemoryHits_ParsesFunctionResponse(t *testing.T) {
 	resp := map[string]any{
 		"hits": []any{
@@ -274,9 +265,7 @@ func (f *fakeOpsLogRecorder) LogMemoryOp(_ context.Context, memoryID string, op 
 
 func (f *fakeOpsLogRecorder) PruneMemoryOps(context.Context, time.Time) (int, error) { return 0, nil }
 
-// TestApplyMemoryVotesOnPass_NoVotesWhenNoneGiven covers "a failed round
-// yields no votes": RunGatedRefine never calls applyMemoryVotesOnPass for a failed round (see node.go's res.Passed guard), but this pins the
-// function's own behavior when called with an empty verdict.Memories, the shape a failed round's zero-value verdict would carry if it were.
+// An empty verdict.Memories applies no votes (the shape a failed round would carry).
 func TestApplyMemoryVotesOnPass_NoVotesWhenNoneGiven(t *testing.T) {
 	ctx := context.Background()
 	store := newMemoryStoreForVoteTest(t)
@@ -301,11 +290,8 @@ func TestApplyMemoryVotesOnPass_NoVotesWhenNoneGiven(t *testing.T) {
 	}
 }
 
-// TestMissingMemoryVotes_PartialVoteStillMissing pins the fix for a verdict
-// that voted on SOME but not all received memories: len(v.Memories) > 0 alone
-// used to read as "not missing" and skip the retry nudge, leaving every
-// unvoted id permanently unvoted (the applied set is exactly what's present
-// in v.Memories, see applyMemoryVotesOnPass).
+// A verdict voting on SOME received memories is still missing votes, since only ids present in
+// v.Memories are applied.
 func TestMissingMemoryVotes_PartialVoteStillMissing(t *testing.T) {
 	received := []string{"m1", "m2", "m3"}
 	cases := []struct {
@@ -331,10 +317,8 @@ func TestMissingMemoryVotes_PartialVoteStillMissing(t *testing.T) {
 	}
 }
 
-// TestMissingMemoryVotes_VoteOutsideRecallSetDoesNotCountAsCoverage pins the
-// case the table above doesn't: a vote on an id that was never received must
-// not cover a different, unvoted received id (review finding) - the loop
-// must key off receivedIDs, not v.Memories.
+// A vote on an id never received must not cover a different, unvoted received id: the check keys off
+// receivedIDs, not v.Memories.
 func TestMissingMemoryVotes_VoteOutsideRecallSetDoesNotCountAsCoverage(t *testing.T) {
 	v := verdict{Memories: []memoryVerdict{{ID: "m2", Vote: "supported"}}}
 	if !missingMemoryVotes([]string{"m1"}, v) {

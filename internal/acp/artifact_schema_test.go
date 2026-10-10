@@ -1,7 +1,5 @@
-// artifact_schema_test.go: the loopback MCP write_artifact/edit_artifact
-// tools refuse a write that fails its kind's registered schema
-// (extsdk.ArtifactSchemas), mirroring internal/tools/artifact_schema_test.go's
-// native-path coverage - a model must see the same story on either surface.
+// The loopback MCP write_artifact/edit_artifact tools refuse a write that fails its kind's schema,
+// matching internal/tools' native-path coverage.
 package acp
 
 import (
@@ -55,9 +53,8 @@ func TestWriteArtifactMCP_SchemaValid_Succeeds(t *testing.T) {
 	}
 }
 
-// TestWriteArtifactMCP_SchemaViolation_RefusesAndCarriesSchema pins the exact
-// text a model sees on this surface - it must read identically to the native
-// tool path (internal/tools's TestWriteArtifact_SchemaViolation_RefusesAndCarriesSchema).
+// TestWriteArtifactMCP_SchemaViolation_RefusesAndCarriesSchema: the refusal text must match the native
+// tool path's (internal/tools TestWriteArtifact_SchemaViolation_RefusesAndCarriesSchema).
 func TestWriteArtifactMCP_SchemaViolation_RefusesAndCarriesSchema(t *testing.T) {
 	ctx := context.Background()
 	secret := mustMemSecret(t)

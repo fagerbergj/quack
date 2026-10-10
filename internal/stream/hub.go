@@ -10,7 +10,7 @@ import (
 type Hub struct {
 	mu          sync.Mutex
 	topics      map[string]*topic
-	runs        map[string]*runHandle // chatID → run; under mu (a sync.Map let RegisterRun land between EndRun's Load and Delete, review finding)
+	runs        map[string]*runHandle // chatID → run; under mu so RegisterRun can't land inside EndRun's check-and-delete
 	draining    atomic.Bool
 	interrupted sync.Map // chatID → struct{}, set right before a shutdown force-cancel (see MarkInterrupted)
 }
@@ -36,11 +36,8 @@ func (h *Hub) UnregisterRun(chatID string) {
 	delete(h.runs, chatID)
 }
 
-// EndRun retires the run responseID names and closes its topic, guarded by a
-// compare-and-delete: if a newer run already registered its own handle for
-// this chat (a fast retry racing this run's own tail between its cancelRun
-// and this call), that handle and topic are left alone instead of being
-// wiped out from under the successor (#1342 review finding).
+// EndRun retires responseID's run and closes its topic via compare-and-delete: a newer run's handle,
+// registered by a fast retry, is left alone.
 func (h *Hub) EndRun(chatID, responseID string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -63,7 +60,7 @@ func (h *Hub) CancelRun(chatID string) bool {
 	return true
 }
 
-// Reports whether chatID has a run registered (queued or executing). Unlike Active, covers runs still waiting to be admitted. Used by workspace GC.
+// HasRegisteredRun reports a queued or executing run; unlike Active it covers unadmitted runs. Used by workspace GC.
 func (h *Hub) HasRegisteredRun(chatID string) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -83,17 +80,13 @@ func (h *Hub) ActiveChatIDs() []string {
 	return ids
 }
 
-// BeginDraining marks the server as shutting down: dispatch entrypoints
-// (REST SendChatMessage, SDK extension Dispatch) consult Draining and refuse
-// new work, so nothing starts a run this process won't stick around to finish.
+// BeginDraining marks shutdown: dispatch entrypoints check Draining and refuse runs this process won't finish.
 func (h *Hub) BeginDraining() { h.draining.Store(true) }
 
 // Draining reports whether BeginDraining has been called.
 func (h *Hub) Draining() bool { return h.draining.Load() }
 
-// MarkInterrupted flags chatID's run as cut short by shutdown, set by
-// DrainActiveRuns right before its force-cancel so the run's own tail can
-// tell that apart from an ordinary error or completion.
+// MarkInterrupted flags chatID's run as cut short by shutdown, so its tail can tell that from an error.
 func (h *Hub) MarkInterrupted(chatID string) { h.interrupted.Store(chatID, struct{}{}) }
 
 // WasInterrupted reports and clears chatID's interrupted flag - read once, at
@@ -131,12 +124,10 @@ type topic struct {
 	started bool // true once a run has actually Published - see Active.
 }
 
-// NewHub returns an empty hub.
-//
 // ponytail: topic structs (not buffers - Close frees those) are retained per chat forever; a live run's buffer is bounded by MaxReplay. Fine for a single self-hosted instance. Upgrade path if it grows: LRU/TTL eviction of done topics, or a shared event bus when running multiple replicas.
 func NewHub() *Hub { return &Hub{topics: map[string]*topic{}, runs: map[string]*runHandle{}} }
 
-// Appends a sequenced event to the chat's topic and fans it to live subscribers. First publish after done starts a fresh topic.
+// Publish appends a sequenced event and fans it out; the first publish after done starts a fresh topic.
 func (h *Hub) Publish(key string, seq int64, ev SSEEvent) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -152,10 +143,8 @@ func (h *Hub) Publish(key string, seq int64, ev SSEEvent) {
 		t.buf = t.buf[len(t.buf)-MaxReplay:]
 	}
 	for ch := range t.subs {
-		// Non-blocking: a subscriber too slow to keep up is DROPPED, not
-		// skipped past - skipping an event here would silently lose a
-		// contiguous range the resume cursor can never recover (finding 6).
-		// Closing ends the connection so the client sees the drop and reconnects, replaying from its last contiguous id.
+		// Non-blocking: a slow subscriber is DROPPED (closed), not skipped past, so it reconnects and replays
+		// from its last contiguous id instead of silently losing a range.
 		select {
 		case ch <- it:
 		default:
@@ -165,7 +154,7 @@ func (h *Hub) Publish(key string, seq int64, ev SSEEvent) {
 	}
 }
 
-// Reports whether a chat has a live (not yet Closed) run. Gated on started, not topic existence: Subscribe auto-vivifies an empty topic that must not read as "running".
+// Active reports a live run. Gated on started, not topic existence: Subscribe auto-vivifies empty topics.
 func (h *Hub) Active(key string) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -173,18 +162,14 @@ func (h *Hub) Active(key string) bool {
 	return t != nil && t.started && !t.done
 }
 
-// Marks the run finished, closes live subscriber channels, and frees the
-// replay buffer - the cold path (durable chat_events table) already serves
-// replay for a finished run, so keeping it in memory only leaks (#perf-audit item 4).
+// Close marks the run finished, closes subscribers, and frees the replay buffer; chat_events serves cold replay.
 func (h *Hub) Close(key string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.closeLocked(key)
 }
 
-// closeLocked is Close's body for callers that already hold h.mu (EndRun's
-// compare-and-delete needs the run-registry check and the topic close to be
-// one atomic step).
+// closeLocked is Close for callers holding h.mu (EndRun needs the check and close as one atomic step).
 func (h *Hub) closeLocked(key string) {
 	t := h.topics[key]
 	if t == nil {
@@ -198,9 +183,8 @@ func (h *Hub) closeLocked(key string) {
 	}
 }
 
-// Drops the chat's topic so a new run gets a fresh buffer. Publish does the
-// same lazily; call this to attach subscribers before publishing. Closes any
-// live subscribers first - dropping the map entry alone would orphan them with a channel neither fed nor closed (they'd hang until their HTTP connection dies on its own).
+// Reset drops the chat's topic so a new run gets a fresh buffer, closing live subscribers first so none
+// hang on a channel that is never fed nor closed.
 func (h *Hub) Reset(key string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -213,7 +197,7 @@ func (h *Hub) Reset(key string) {
 	delete(h.topics, key)
 }
 
-// Returns replay events and a live channel. done=true means the run has finished (live is nil). Snapshot + registration are atomic.
+// Subscribe returns replay and a live channel atomically; done=true means the run finished and live is nil.
 func (h *Hub) Subscribe(key string) (replay []Event, live <-chan Event, cancel func(), done bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

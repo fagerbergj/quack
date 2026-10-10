@@ -59,10 +59,8 @@ func (r *recordingLLM) GenerateContent(_ context.Context, req *model.LLMRequest,
 	return func(yield func(*model.LLMResponse, error) bool) { yield(&model.LLMResponse{}, nil) }
 }
 
-// TestHydratingModel_DoesNotMutateCallerRequest is the regression test for
-// the ledger-leak bug: tracedModel (factory.go) wraps hydratingModel and
-// logs the SAME req pointer via emitChatEvent after GenerateContent returns.
-// If hydration mutated req.Contents in place, that log would carry real bytes.
+// tracedModel logs the same req pointer after GenerateContent returns, so an in-place hydrate
+// would leak real bytes into the ledger.
 func TestHydratingModel_DoesNotMutateCallerRequest(t *testing.T) {
 	svc := artifact.InMemoryService()
 	ref := seedArtifact(t, svc, "u", "s", "photo.png", "image/png", []byte("pixels"))

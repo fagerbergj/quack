@@ -1,9 +1,3 @@
-// dagplanrecord.go: the "dag_plan" record kind. A plan ties assignments
-// together - one bit of work per node, in the scope of that node's agent's
-// job - plus the plan-level setup/delivery declarations.
-// create_plan/edit_plan (internal/tools) write it with the
-// existing write_artifact/edit_artifact machinery; execute reads its latest
-// revision, runs the plan judge against it, and only then runs it.
 package dag
 
 import (
@@ -21,10 +15,8 @@ import (
 
 const kindDagPlan = "dag_plan"
 
-// Assignment is one bit of work in the scope of a node's job: a task, the
-// handoffs it waits on (DependsOn - the tasks this one references, A2A
-// referenceTaskIds; ordering is implied and results travel as those
-// referenced tasks' artifacts), and the deterministic checks it runs.
+// Assignment is one bit of work in the scope of a node's job: a task, the A2A referenceTaskIds it
+// waits on (DependsOn; results travel as their artifacts), and the deterministic checks it runs.
 type Assignment struct {
 	NodeID    string   `json:"node_id"`
 	Task      string   `json:"task"`
@@ -35,12 +27,10 @@ type Assignment struct {
 	// TaskID: the A2A task_id this assignment dispatched as, recorded once execute runs it.
 	TaskID string `json:"task_id,omitempty"`
 	Result string `json:"result,omitempty"`
-	// Meta: per-extension namespaced context (meta["github"] = {base_sha,
-	// ...}) written only by an extension's SDK hook at plan creation, never
-	// by the model - the freshness check at execute reads it back.
+	// Meta: per-extension namespaced context (meta["github"] = {base_sha, ...}) written only by an
+	// extension's SDK hook at plan creation, never by the model; execute's freshness check reads it.
 	Meta map[string]map[string]any `json:"meta,omitempty"`
-	// ForkOf: reserved for a later slice (dynamic DAGs/session forking) -
-	// accepted and persisted, not yet written or interpreted by anything.
+	// ForkOf: reserved; accepted and persisted, not yet written or interpreted by anything.
 	ForkOf string `json:"fork_of,omitempty"`
 	// Stopped: the user stopped this node, so Result is an unreviewed draft - never an answer,
 	// in any later turn either (the executor's own stop flag is per turn).
@@ -60,12 +50,8 @@ func (a Assignment) Status() string {
 	return "done"
 }
 
-// DagPlanRecord is the "dag_plan" kind's structured body. Assignment.NodeID
-// references a "dag_node" record minted by create_plan/edit_plan -
-// validateDagPlanRecord only checks depends_on within this record's own
-// assignment set; confirming a referenced node actually exists (and isn't
-// currently running) needs a cross-record/live-state lookup no
-// recordstore.Validate closure can make, so that's the tool layer's job.
+// DagPlanRecord is the "dag_plan" kind's body. Assignment.NodeID references a dag_node record; whether
+// that node exists and is idle needs a live lookup no Validate closure can make, so the tool layer checks it.
 type DagPlanRecord struct {
 	PlanID      string       `json:"plan_id"`
 	Assignments []Assignment `json:"assignments"`
@@ -101,21 +87,16 @@ func init() {
 		Class:      recordstore.Structured,
 		JSONSchema: dagPlanJSONSchema,
 		Validate:   validateDagPlanRecord,
-		// Single instance per chat: every plan a chat ever builds is one id's
-		// revision history, not a per-plan-id fan-out.
+		// Single instance per chat: every plan a chat builds is one id's revision history.
 		Identity: func(_ []byte, _ string) (string, error) { return "main", nil },
-		// AgentWritable false: only create_plan/edit_plan author a plan (node
-		// minting, live-node checks) - a bare write_dag_plan would bypass both.
+		// AgentWritable false: only create_plan/edit_plan author a plan (node minting, live-node checks);
+		// a bare write_dag_plan would bypass both.
 		AgentWritable: false,
 	})
 }
 
-// validateDagPlanRecord is dag_plan's structural validator: empty task, a
-// depends_on id outside this plan's own assignments, a dependency cycle,
-// and a checks entry outside the configured prefix allowlist - each a
-// one-line error naming the field and the fix. It does NOT check that an
-// assignment's node_id names a real, idle dag_node - the tool layer checks
-// both before ever calling SaveStructured.
+// validateDagPlanRecord checks empty tasks, unknown or cyclic depends_on, and disallowed checks, each a
+// one-line error naming the field and the fix. Node existence is the tool layer's job.
 func validateDagPlanRecord(raw json.RawMessage) error {
 	var rec DagPlanRecord
 	if err := json.Unmarshal(raw, &rec); err != nil {
@@ -164,9 +145,8 @@ func validateDagPlanRecord(raw json.RawMessage) error {
 	return nil
 }
 
-// SaveDagPlanRecord writes rec as this chat's next dag_plan revision.
-// artifacts nil = no artifact service configured (fail-open, same as every
-// other episodic write) - the caller Warn-logs and moves on.
+// SaveDagPlanRecord writes rec as this chat's next dag_plan revision. nil artifacts = no service
+// configured (fail-open); the caller Warn-logs and moves on.
 func SaveDagPlanRecord(ctx context.Context, artifacts artifact.Service, appName, userID, chatID, turnID string, rec DagPlanRecord) (id string, revision int, err error) {
 	if artifacts == nil || chatID == "" {
 		return "", 0, errors.New("dag: no artifact service configured")
@@ -176,8 +156,7 @@ func SaveDagPlanRecord(ctx context.Context, artifacts artifact.Service, appName,
 	return c.SaveStructured(ctx, kindDagPlan, rec, "", lineage)
 }
 
-// LoadDagPlanRecord reads the chat's current dag_plan record. ok is false
-// when no plan has ever been created this chat.
+// LoadDagPlanRecord reads the chat's current dag_plan record; ok is false when none was ever created.
 func LoadDagPlanRecord(ctx context.Context, artifacts artifact.Service, appName, userID, chatID string) (rec DagPlanRecord, revision int, ok bool, err error) {
 	if artifacts == nil || chatID == "" {
 		return DagPlanRecord{}, 0, false, nil

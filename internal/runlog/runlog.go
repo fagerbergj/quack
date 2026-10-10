@@ -17,20 +17,18 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// drainItem is either a real event row or a flush marker (ev is the zero value;
-// done is closed once every item enqueued ahead of it has drained). One channel,
-// one consumer: the marker can only be dequeued after the real events ahead of it in FIFO order have already been included in an earlier (or the same) INSERT batch.
+// drainItem is an event row or a flush marker (zero ev; done closes once everything ahead drained).
+// One FIFO consumer guarantees the marker dequeues after every event ahead of it was inserted.
 type drainItem struct {
 	ev   store.ChatEvent
 	done chan struct{}
 }
 
-// EventLog persists SSE events to the store, draining in order off the hot path; full queue drops (durability loss only).
+// EventLog persists SSE events off the hot path, in order; a full queue drops (durability loss only).
 type EventLog struct {
 	store *store.Store
 	ch    chan drainItem
-	// ledgerStore: LoadEvents' fold fallback (#1101, see fold.go). nil = no
-	// WAL; LoadEvents then behaves exactly like a direct table read.
+	// ledgerStore: LoadEvents' fold fallback (see fold.go); nil = no WAL, a plain table read.
 	ledgerStore ledger.LedgerStore
 }
 
@@ -40,9 +38,7 @@ func NewEventLog(s *store.Store) *EventLog {
 	return l
 }
 
-// drainBatchSize bounds one INSERT's row count; a run streaming faster than
-// the drain can keep up with fills batches to this size instead of falling
-// back to one round trip per event (perf-audit item 2: 139 ev/s -> ~4,480 ev/s measured).
+// drainBatchSize bounds one INSERT's row count, so a fast run fills batches instead of one round trip per event.
 const drainBatchSize = 200
 
 func (l *EventLog) run() {
@@ -78,9 +74,8 @@ func (l *EventLog) run() {
 	}
 }
 
-// persistBatch: one multi-row INSERT, falling back to row-by-row when the batch
-// fails - a single bad row (e.g. a duplicate seq from a Reset/retry race) fails
-// the whole statement, so retry row-by-row so that one bad row costs one row, not the batch.
+// persistBatch does one multi-row INSERT, falling back to row-by-row on failure so one bad row
+// (a duplicate seq from a Reset/retry race) costs one row, not the batch.
 func (l *EventLog) persistBatch(batch []store.ChatEvent) {
 	persisted := batch
 	if err := l.store.InsertChatEvents(context.Background(), batch); err != nil {
@@ -114,24 +109,16 @@ func (l *EventLog) trimPersisted(persisted []store.ChatEvent) {
 	}
 }
 
-// Flush blocks until every event Append'd before this call was made has been drained
-// (persisted, or dropped-with-warning on a store error - the same at-most-once contract as Append's own full-queue drop). A caller must call this before releasing any in-memory copy of those events (e.g. stream.Hub.Close frees the hub's replay buffer) - see FinishRun, which is the shared, ordered version of that every run-ending path must use. Implemented as a marker sent through the same channel as real events (never a shared counter): a WaitGroup shared by every concurrent Append/Flush across every chat can panic ("Add called concurrently with Wait") the instant its counter returns to zero while another chat is still mid-run - this channel design has no such counter to race.
+// Flush blocks until every earlier Append has drained; call it before freeing in-memory copies (see FinishRun).
+// A marker on the event channel, not a shared WaitGroup, which panics when Add races Wait across chats.
 func (l *EventLog) Flush() {
 	done := make(chan struct{})
 	l.ch <- drainItem{done: done} // blocking: a dropped flush marker would hang the caller forever instead
 	<-done
 }
 
-// FinishRun is the one correct sequence for ending a run: flush this chat's
-// buffered events to the DB, THEN cancel the run context, THEN retire the
-// hub's replay buffer and registry entry (EndRun, guarded by responseID so a
-// newer run's handle can't be wiped mid-race, #1342) - in that order. Every
-// run-ending goroutine must route through this rather than hand-roll the
-// same calls: the registry drop is what Hub.HasRegisteredRun (and shutdown's
-// DrainActiveRuns poll on it) treats as "safe to consider this run over", so
-// it must not fire until this run's tail is durably persisted - getting that
-// ordering right by hand, spread across five call sites via bare `defer`, is
-// exactly how three of them previously unregistered before flushing.
+// FinishRun ends a run in the one safe order: flush events, cancel the run, then EndRun. HasRegisteredRun
+// (polled by DrainActiveRuns) treats the registry drop as "run over", so it must follow the durable flush.
 func (l *EventLog) FinishRun(hub *stream.Hub, chatID, responseID string, cancelRun context.CancelFunc) {
 	l.Flush()
 	cancelRun()
@@ -208,16 +195,13 @@ func (p *Publisher) Publish(ev stream.SSEEvent) {
 	p.log.Append(p.chatID, p.seq, ev)
 }
 
-// DriveResult is what draining one run's event stream to a Publisher determined -
-// the plan/pause signals every dispatch path (REST, SDK extensions, the GitHub
-// webhook) needs to decide what happens next, plus the orchestrator's own model/usage for StampTurn's tail.
+// DriveResult is the plan/pause signals every dispatch path needs from a drained run, plus the orchestrator's
+// model/usage for StampTurn.
 type DriveResult struct {
 	// SawPlan is true the moment any dag_plan event is seen, name-only -
 	// even a test double's bare one with no Data payload.
 	SawPlan bool
-	// PlanID is "" unless a dag_plan event carried real DagPlanData; only
-	// this gates SaveDagPlan/PersistNodeEvent (a name-only event has nothing
-	// to persist).
+	// PlanID is "" unless a dag_plan event carried real DagPlanData; only this gates plan/node persistence.
 	PlanID string
 	// Paused is true iff a node_needs_input event carried real
 	// NodeNeedsInputData (mirrors PlanID's Data-required rule).
@@ -229,9 +213,8 @@ type DriveResult struct {
 	Usage store.TurnUsage
 }
 
-// Step folds one event into res: DAG plan/node persistence, pause tracking, and
-// model/usage capture - the per-event logic shared by Drive and rest.Handler's own
-// loop (REST interleaves title-send between events, so it can't range through Drive directly; both must still agree on this step). persist gates the store writes (Drive passes pub != nil; a caller with no store, e.g. a test double, passes false and still gets plan/pause/usage tracking).
+// Step folds one event into res; shared by Drive and rest.Handler's loop, which interleaves title-send.
+// persist gates store writes; without it plan/pause/usage tracking still runs.
 func (res *DriveResult) Step(st *store.Store, chatID, turnID string, persist bool, ev stream.SSEEvent) {
 	if ev.Name == stream.EventDagPlan {
 		res.SawPlan = true
@@ -261,13 +244,11 @@ func (res *DriveResult) Step(st *store.Store, chatID, turnID string, persist boo
 	}
 }
 
-// Drive drains run's event stream to pub, mirroring DAG plan/node state into st as
-// it goes - the shared loop behind every dispatch path (REST, SDK extensions, the
-// GitHub webhook), so the three don't each hand-roll their own copy. onErr, if non-nil, is called for each per-event error the iterator yields; the loop keeps draining regardless (never fatal). pub may be nil (a caller with no store to persist against, e.g. a test double) - persistence/publish are skipped, but plan/pause/usage tracking still runs.
+// Drive drains run to pub, mirroring DAG plan/node state into st; shared by every dispatch path. onErr sees each
+// per-event error and draining continues. pub nil skips persistence/publish but still tracks plan/pause/usage.
 func Drive(turnID string, st *store.Store, pub *Publisher, run iter.Seq2[stream.SSEEvent, error], onErr func(error)) (res DriveResult) {
-	// A recovered node-yield panic still poisons range-over-func state (#1016):
-	// the next yield, or this loop's own exit, re-panics per Go's rangefunc
-	// contract. REST has chi's Recoverer; extension/boot drive goroutines don't.
+	// A recovered node-yield panic still poisons range-over-func state: the next yield or loop exit re-panics.
+	// REST has chi's Recoverer; extension/boot drive goroutines don't.
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("runlog: drive panicked; run aborted, not the process",
@@ -306,9 +287,8 @@ func StampTurn(ctx context.Context, st *store.Store, chatID, turnID string, res 
 	}
 }
 
-// nodeEventRow maps one lifecycle SSE event to its DagNode row, target
-// status, and any ACP context id - split from PersistNodeEvent to keep the
-// per-event-type branching out of its CC. ok=false for a non-lifecycle event.
+// nodeEventRow maps a lifecycle event to its DagNode row, target status, and ACP context id;
+// ok=false for a non-lifecycle event.
 func nodeEventRow(st *store.Store, planID string, ev stream.SSEEvent) (n store.DagNode, nodeID string, to dag.NodeStatus, contextID string, ok bool) {
 	t := time.Now().UTC()
 	n = store.DagNode{PlanID: planID}
@@ -358,9 +338,8 @@ func nodeEventRow(st *store.Store, planID string, ev stream.SSEEvent) (n store.D
 	return n, nodeID, to, contextID, true
 }
 
-// PersistNodeEvent upserts DagNode state for node-lifecycle events - illegal
-// transitions are logged, not blocked. Synchronous by design (a goroutine per
-// event could let a stale write clobber node_done); the store row and dag_node record below write independently and can transiently diverge.
+// PersistNodeEvent upserts DagNode state synchronously (a goroutine could let a stale write clobber
+// node_done). Illegal moves are logged; only one out of a terminal row is dropped, so a late pause can't undo a stop.
 func PersistNodeEvent(st *store.Store, chatID, planID string, ev stream.SSEEvent) {
 	n, nodeID, to, contextID, ok := nodeEventRow(st, planID, ev)
 	if !ok {
@@ -375,21 +354,22 @@ func PersistNodeEvent(st *store.Store, chatID, planID string, ev stream.SSEEvent
 	if from != to && !dag.CanPersist(from, to) {
 		slog.Warn("persistNodeEvent: illegal node-status transition", "component", "dag",
 			"plan_id", planID, "node_id", nodeID, "from", from, "to", to)
+		if dag.IsTerminal(from) {
+			return
+		}
 	}
 	if err := st.UpsertDagNode(ctx, n); err != nil {
 		slog.Warn("persistNodeEvent: upsert failed", "component", "dag",
 			"plan_id", planID, "node_id", nodeID, "err", err)
 	}
-	// Mirrors the same transition onto the dag_node record - list_nodes must
-	// see a finished node's status past "live" (nodeIsRunning goes false the instant a node stops running, success or failure).
+	// Mirror the transition onto the dag_node record so list_nodes sees a finished node's status.
 	userID := st.SessionUserForChat(ctx, chatID)
 	if err := dag.UpdateDagNodeStatus(ctx, st.Artifacts(), artifactref.AppName, userID, chatID, nodeID, to); err != nil {
 		slog.Warn("persistNodeEvent: dag_node status update failed", "component", "dag",
 			"chat", chatID, "node_id", nodeID, "err", err)
 	}
-	// An ACP node's real transport session id, once learned, replaces the
-	// record's ContextID so a later reuse's session/load has something real
-	// to resume - a no-op for a native node (contextID stays "").
+	// An ACP node's real transport session id replaces the record's ContextID so a later reuse can resume it;
+	// a no-op for native nodes.
 	if err := dag.UpdateDagNodeContext(ctx, st.Artifacts(), artifactref.AppName, userID, chatID, nodeID, contextID); err != nil {
 		slog.Warn("persistNodeEvent: dag_node context update failed", "component", "dag",
 			"chat", chatID, "node_id", nodeID, "err", err)

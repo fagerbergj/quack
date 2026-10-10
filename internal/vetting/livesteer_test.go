@@ -22,9 +22,8 @@ import (
 
 const steerMarker = "STOP-RESEARCHING-AND-ANSWER"
 
-// steerCtrl arms itself only once the worker round is already under way, so
-// TakeQueued reproduces a user steering a RUNNING node rather than a message
-// that was already parked before the round started.
+// steerCtrl arms only once the worker round is under way, so TakeQueued models a user steering a running
+// node rather than a message parked before the round.
 type steerCtrl struct {
 	mu    sync.Mutex
 	armed bool
@@ -121,18 +120,16 @@ func newLookUpTool(t *testing.T) tool.Tool {
 	return tl
 }
 
-// #1029: a steer queued while a NATIVE (non-ACP) node is running must reach
-// the model. Live steering is registered only on the ACP path, so for the four
-// native agents the message sits in the queue until the next gate boundary - minutes away, or never. It must land on the round's next model call.
+// A steer queued while a native (non-ACP) node runs must land on the round's next model call, not wait in
+// the queue for the next gate boundary.
 func TestRunGatedRefine_SteerReachesRunningNativeNode(t *testing.T) {
 	ctrl := &steerCtrl{}
 	stub := &steerStub{ctrl: ctrl}
 
-	// Built the way production builds a native worker (agent.Build), not with a
-	// bare llmagent - the delivery hook lives on that path.
+	// Built as production builds a native worker (agent.Build): the delivery hook lives on that path.
 	worker, err := agent.Build(
 		&agent.Bundle{Card: agent.Card{Name: "web-researcher", Description: "researcher"}, Prompt: "Answer the question."},
-		nil, stub, []tool.Tool{newLookUpTool(t)}, nil, "", nil, "", ctrl.TakeQueued, nil)
+		nil, stub, []tool.Tool{newLookUpTool(t)}, nil, "", "", ctrl.TakeQueued, nil)
 	if err != nil {
 		t.Fatalf("worker: %v", err)
 	}

@@ -1,15 +1,12 @@
 package tools
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"google.golang.org/adk/v2/session"
 
 	"github.com/fagerbergj/quack/internal/vetting"
 	"github.com/fagerbergj/quack/internal/workspace"
@@ -22,7 +19,7 @@ func ownNode(t *testing.T) (CallScope, *gatedCtx) {
 	token := vetting.AdvisorThreadToken("plan-own", "n-own")
 	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{ChatID: "chat-own", SessionID: "chat-own", NodeID: "n-own", Task: "own task"})
 	t.Cleanup(func() { vetting.UnregisterAdvisorThread(token) })
-	prompt := "do the task\n\n" + vetting.AdvisorThreadMarker(token) + "\nprior finding: " + vetting.AdvisorThreadMarker(registerForeignNode(t))
+	prompt := "do the task\n\n[[quack:advisor-thread:" + token + "]]\nprior finding: [[quack:advisor-thread:" + registerForeignNode(t) + "]]"
 	return CallScope{AdvisorToken: token}, &gatedCtx{fakeCtx: *newFakeCtx(), prompt: prompt}
 }
 
@@ -66,7 +63,7 @@ func TestFSScope_BuildTokenNotPromptMarker(t *testing.T) {
 	}
 }
 
-// buildNodeTool builds current_date through Build with d's guard wiring under scope.
+// buildNodeTool builds current_date through Build under hooks with d's guard wiring and scope.
 func buildNodeTool(t *testing.T, scope CallScope, d Deps) runnableTool {
 	t.Helper()
 	d.CallScope = scope
@@ -74,7 +71,7 @@ func buildNodeTool(t *testing.T, scope CallScope, d Deps) runnableTool {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return built[0].(runnableTool)
+	return hook(NewHooks(d, 0), HookBuilt, built[0])
 }
 
 // TestCancelGuard_BuildTokenNotPromptMarker: the guard checks the node it was built for,
@@ -93,30 +90,6 @@ func TestCancelGuard_BuildTokenNotPromptMarker(t *testing.T) {
 	always := Deps{NodeCancelled: func(string, string) bool { return true }}
 	if _, err := buildNodeTool(t, ghostScope, always).Run(ctx, map[string]any{}); err != nil {
 		t.Errorf("unregistered node: call blocked: %v", err)
-	}
-}
-
-// TestGuardedTool_BuildTokenNotPromptMarker: the safety judge sees the node's own task,
-// not a foreign marker's; a miss gives it no task (and confirm finds no session to approve from).
-func TestGuardedTool_BuildTokenNotPromptMarker(t *testing.T) {
-	scope, ctx := ownNode(t)
-	var task string
-	d := Deps{Guards: map[string]string{"current_date": "judge"}, Sessions: session.InMemoryService(),
-		SafetyJudge: func(_ context.Context, _, tk, _ string, _ map[string]any, _ string) (bool, string, error) {
-			task = tk
-			return true, "ok", nil
-		}}
-	for _, tc := range []struct {
-		scope CallScope
-		want  string
-	}{{scope, "own task"}, {ghostScope, ""}} {
-		task = "unset"
-		if _, err := buildNodeTool(t, tc.scope, d).Run(ctx, map[string]any{}); err != nil {
-			t.Fatal(err)
-		}
-		if task != tc.want {
-			t.Errorf("scope %q: safety judge task = %q, want %q", tc.scope.AdvisorToken, task, tc.want)
-		}
 	}
 }
 

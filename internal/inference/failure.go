@@ -12,9 +12,39 @@ import (
 	"time"
 )
 
-// callFailure tracks consecutive generate() failures for one chat+node+agent
-// triple. ADK's own runner swallows a worker node's returned error into a
-// silent empty completion (no error reaches the session event) - this is the only place the real cause still exists once that happens (#1105).
+// keyed is a mutex-guarded map, the shape of each per-chat failure record below.
+type keyed[V any] struct {
+	mu sync.Mutex
+	m  map[string]V
+}
+
+func newKeyed[V any]() *keyed[V] { return &keyed[V]{m: map[string]V{}} }
+
+func (k *keyed[V]) get(key string) (V, bool) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	v, ok := k.m[key]
+	return v, ok
+}
+
+// update stores fn(current, present) under key atomically.
+func (k *keyed[V]) update(key string, fn func(V, bool) V) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	v, ok := k.m[key]
+	k.m[key] = fn(v, ok)
+}
+
+func (k *keyed[V]) put(key string, v V) { k.update(key, func(V, bool) V { return v }) }
+
+func (k *keyed[V]) del(key string) {
+	k.mu.Lock()
+	delete(k.m, key)
+	k.mu.Unlock()
+}
+
+// callFailure tracks consecutive generate() failures for one chat+node+agent. ADK's runner
+// swallows a worker's error into a silent empty completion, so this is the only record of the cause.
 type callFailure struct {
 	err     error
 	streak  int
@@ -23,119 +53,65 @@ type callFailure struct {
 }
 
 var (
-	failuresMu sync.Mutex
-	// ponytail: unbounded map keyed by chat+node+agent, swept by
-	// RecordCallResult's success case, dag's LastFailure/consume reads, and
-	// each RunGatedRefine/judge-round entry's own-role ClearFailure; add a reaper if a leak ever shows up (bounded today by concurrently-running invocations per chat+node+agent, not requests).
-	failures = map[string]*callFailure{}
+	// ponytail: unbounded, swept by success, LastFailure consumers and ClearFailure; add a reaper if it ever leaks.
+	failures       = newKeyed[callFailure]()
+	planRejections = newKeyed[string]()
+	storeFailures  = newKeyed[string]()
 )
 
-// failureKey includes agent (e.g. "judge" vs. the node's real agent name)
-// so a judge failure after a worker's own success can't be mistaken for a
-// worker gateway failure on a later, unrelated empty completion (PR #1109
-// review finding 3) - judge coords always stamp Agent: "judge", distinct
-// from any real node agent name.
+// failureKey includes agent so a judge failure (Agent "judge") is never mistaken for the worker's.
 func failureKey(chatID, node, agent string) string { return chatID + "\x00" + node + "\x00" + agent }
 
-// RecordCallResult updates the consecutive-failure streak for chatID+node+agent.
-// A nil err (success) clears the streak - a later empty completion for this
-// node is then a real silent gap, not a masked gateway failure.
+// RecordCallResult updates the chat+node+agent failure streak; a nil err clears it.
 func RecordCallResult(chatID, node, agent string, err error) {
 	if chatID == "" && node == "" {
 		return
 	}
 	key := failureKey(chatID, node, agent)
-	failuresMu.Lock()
-	defer failuresMu.Unlock()
 	if err == nil {
-		delete(failures, key)
+		failures.del(key)
 		return
 	}
-	f := failures[key]
-	if f == nil {
-		f = &callFailure{firstAt: time.Now()}
-		failures[key] = f
-	}
-	f.err = err
-	f.streak++
-	f.lastAt = time.Now()
+	failures.update(key, func(f callFailure, ok bool) callFailure {
+		if !ok {
+			f.firstAt = time.Now()
+		}
+		f.err = err
+		f.streak++
+		f.lastAt = time.Now()
+		return f
+	})
 }
 
-// LastFailure reports the tracked consecutive-failure state for
-// chatID+node+agent. ok is false when the last recorded call succeeded or
-// nothing was recorded - callers must treat that as a genuine silent gap, not a masked error. duration is how long the streak has been running (lastAt - firstAt), not a point in time.
+// LastFailure reports the open failure streak; !ok means a genuine silent gap, not a masked error.
+// duration is lastAt - firstAt.
 func LastFailure(chatID, node, agent string) (err error, streak int, duration time.Duration, ok bool) {
-	key := failureKey(chatID, node, agent)
-	failuresMu.Lock()
-	defer failuresMu.Unlock()
-	f := failures[key]
-	if f == nil {
+	f, ok := failures.get(failureKey(chatID, node, agent))
+	if !ok {
 		return nil, 0, 0, false
 	}
 	return f.err, f.streak, f.lastAt.Sub(f.firstAt), true
 }
 
-// ClearFailure drops tracked state for chatID+node+agent, once a caller has
-// consumed it into a durable report, the node succeeded on retry, or a fresh
-// gate-refine invocation is starting (a node id is reused across turns/plans on the same chat, so a stale unconsumed record must not leak forward - #1109 review finding 3).
-func ClearFailure(chatID, node, agent string) {
-	key := failureKey(chatID, node, agent)
-	failuresMu.Lock()
-	delete(failures, key)
-	failuresMu.Unlock()
-}
+// ClearFailure drops the record once consumed or before a fresh gate-refine run:
+// node ids are reused across turns, so a stale record must not leak forward.
+func ClearFailure(chatID, node, agent string) { failures.del(failureKey(chatID, node, agent)) }
 
-// toolRejectionsMu/toolRejections track the last `execute` tool rejection per
-// chat: a planner turn whose execute calls were all rejected and that ends
-// with no plan and no answer needs the same terminal-failure path as a
-// gateway outage during planning, but the rejection text is quack's own
-// dag.PlanRejectedError.Reason - never sanitized like a gateway error.
-var (
-	toolRejectionsMu sync.Mutex
-	toolRejections   = map[string]string{}
-)
-
-// RecordPlanRejection notes the reason the plan judge declined a proposed
-// plan on chatID. Overwrites any prior reason for the chat - only the most
-// recent rejection matters to the give-up path.
+// RecordPlanRejection keeps the latest plan-judge rejection reason for chatID. A planner turn
+// with every execute rejected needs the gateway-outage give-up path, with quack's own (unsanitized) text.
 func RecordPlanRejection(chatID, reason string) {
-	if chatID == "" {
-		return
+	if chatID != "" {
+		planRejections.put(chatID, reason)
 	}
-	toolRejectionsMu.Lock()
-	defer toolRejectionsMu.Unlock()
-	toolRejections[chatID] = reason
 }
 
-// LastPlanRejection returns the last recorded plan rejection reason for
-// chatID, if any.
-func LastPlanRejection(chatID string) (reason string, ok bool) {
-	toolRejectionsMu.Lock()
-	defer toolRejectionsMu.Unlock()
-	reason, ok = toolRejections[chatID]
-	return reason, ok
-}
+func LastPlanRejection(chatID string) (reason string, ok bool) { return planRejections.get(chatID) }
 
-// ClearPlanRejection drops chatID's recorded rejection - called once a plan
-// is accepted, so a later turn's genuine silent gap doesn't inherit a stale
-// reason from an earlier, unrelated rejection on the same chat.
-func ClearPlanRejection(chatID string) {
-	toolRejectionsMu.Lock()
-	delete(toolRejections, chatID)
-	toolRejectionsMu.Unlock()
-}
+// ClearPlanRejection runs once a plan is accepted, so a later silent gap doesn't inherit a stale reason.
+func ClearPlanRejection(chatID string) { planRejections.del(chatID) }
 
-// storeFailuresMu/storeFailures track the last store (DB) error per chat
-// (#1193): a dial/connection error surviving the pgdial retry gets swallowed
-// into "no artifacts" by the planner's failSoftListArtifacts, so the run's terminal status needs the same give-up path a gateway outage uses, keyed separately from callFailure since a store error has no node/agent.
-var (
-	storeFailuresMu sync.Mutex
-	storeFailures   = map[string]string{}
-)
-
-// SanitizeStoreError reduces a store/DB error to text safe to surface in a
-// run outcome. A pgconn/gorm dial error's Error() text can itself contain
-// the raw DSN in arbitrary quoting (#1200 review: regex-stripping credentials out of that text leaked fragments of quoted or @-containing passwords), so this never looks at err.Error() at all - only the structured dial address (net.OpError.Addr / net.DNSError.Name) and a coarse error class. The raw error is still available server-side via the slog.Warn call at the one caller (orchestrator.failSoftListArtifacts.List).
+// SanitizeStoreError reduces a store error to text safe for a run outcome. It never reads err.Error():
+// a pgconn dial error can embed the raw DSN, so only the dial address and an error class are used.
 func SanitizeStoreError(err error) string {
 	if err == nil {
 		return ""
@@ -155,9 +131,7 @@ func SanitizeStoreError(err error) string {
 	return "database unavailable: connection error"
 }
 
-// dialErrorClass buckets a dial error into one of a few known classes
-// without ever formatting err itself into the result - only errors.Is/As
-// checks against structured error values, so nothing from err.Error() (which could echo a DSN) reaches the returned string.
+// dialErrorClass buckets err with errors.Is/As only, so no err.Error() text (a possible DSN) leaks.
 func dialErrorClass(err error) string {
 	switch {
 	case errors.Is(err, syscall.ECONNREFUSED):
@@ -176,8 +150,7 @@ func dialErrorClass(err error) string {
 	return "connection error"
 }
 
-// IsDialFailure reports whether err is a connection-level failure (refused,
-// timeout, DNS) rather than an HTTP status the server actually answered with.
+// IsDialFailure reports a connection-level failure (refused, timeout, DNS), not an HTTP status.
 func IsDialFailure(err error) bool {
 	if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ETIMEDOUT) {
 		return true
@@ -187,42 +160,23 @@ func IsDialFailure(err error) bool {
 	return errors.As(err, &dnsErr) || errors.As(err, &opErr)
 }
 
-// RecordStoreFailure notes a sanitized store error for chatID, overwriting
-// any prior one - only the most recent failure matters to the give-up path.
+// RecordStoreFailure keeps chatID's latest sanitized store error: the planner swallows a DB
+// outage into "no artifacts", so the run needs the same give-up path a gateway outage uses.
 func RecordStoreFailure(chatID string, err error) {
-	if chatID == "" || err == nil {
-		return
+	if chatID != "" && err != nil {
+		storeFailures.put(chatID, SanitizeStoreError(err))
 	}
-	storeFailuresMu.Lock()
-	defer storeFailuresMu.Unlock()
-	storeFailures[chatID] = SanitizeStoreError(err)
 }
 
-// ClearStoreFailure drops chatID's recorded store failure - called once a
-// store call for that chat succeeds again, so a later genuine silent gap
-// doesn't inherit a stale DB-outage reason.
-func ClearStoreFailure(chatID string) {
-	storeFailuresMu.Lock()
-	delete(storeFailures, chatID)
-	storeFailuresMu.Unlock()
-}
+// ClearStoreFailure runs once a store call succeeds again, so a later silent gap isn't blamed on the DB.
+func ClearStoreFailure(chatID string) { storeFailures.del(chatID) }
 
-// LastStoreFailure returns chatID's last recorded (already-sanitized) store
-// failure reason, if any.
-func LastStoreFailure(chatID string) (reason string, ok bool) {
-	storeFailuresMu.Lock()
-	defer storeFailuresMu.Unlock()
-	reason, ok = storeFailures[chatID]
-	return reason, ok
-}
+func LastStoreFailure(chatID string) (reason string, ok bool) { return storeFailures.get(chatID) }
 
-// statusRe pulls the HTTP status code out of openaimodel's "status <N>: ..."
-// error shape without touching the rest of the string.
 var statusRe = regexp.MustCompile(`status (\d{3})`)
 
-// SanitizeGatewayError reduces a generate() error to a status-code
-// classification safe to disclose publicly (a PR/issue comment) - unlike
-// err.Error() itself, which for an HTTP failure carries the raw endpoint URL and the unmodified upstream response body (openaimodel.apiErr's shape), and for a 401 can echo the API key back verbatim (#1109 review finding 1). The raw error stays available server-side via slog (apiErr already logs it) and DagNode.Error is not touched by this - only the text handed to an extension's RunOutcome is. transient reports whether a retry is likely to help (5xx/408/429), for callers deciding whether "retry" is honest advice (finding 4).
+// SanitizeGatewayError reduces a generate() error to a status class safe to post publicly: err.Error()
+// carries the endpoint URL and raw body, and a 401 can echo the API key. transient: 5xx/408/429.
 func SanitizeGatewayError(err error) (summary string, transient bool) {
 	if err == nil {
 		return "", false

@@ -10,9 +10,8 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// TestAgentBundlesLoad guards that every agent bundle referenced by the shipped
-// config (plus the orchestrator) loads - a malformed agent-card.json or missing
-// prompt.md fails here instead of at startup.
+// TestAgentBundlesLoad: a malformed agent-card.json or missing prompt.md in any shipped bundle
+// fails here instead of at startup.
 func TestAgentBundlesLoad(t *testing.T) {
 	for _, kv := range [][2]string{
 		{"QUACK_LLM_ENDPOINT", "http://x/v1"}, {"QUACK_LLM_API_KEY", "k"}, {"QUACK_DATABASE_URL", "postgres://localhost/db"},
@@ -39,9 +38,8 @@ func TestAgentBundlesLoad(t *testing.T) {
 	}
 }
 
-// TestCodeImplementerBundle pins the bundle's specifics beyond the generic sweep above:
-// the card's name matches its config key (buildAgents keys gate configs by that name), and
-// the rubric.md override loads non-empty via buildAgents' path (vetting.LoadBundleRubric).
+// TestCodeImplementerBundle: the card name matches its config key (buildAgents keys gate configs by it),
+// and the rubric override loads non-empty via vetting.LoadBundleRubric.
 func TestCodeImplementerBundle(t *testing.T) {
 	b, err := agent.LoadBundle(context.Background(), nil, "../../.agents/plugins/github/agents/code-implementer")
 	if err != nil {
@@ -57,18 +55,15 @@ func TestCodeImplementerBundle(t *testing.T) {
 	if rubric == "" {
 		t.Fatal("rubric override is empty - buildAgents would silently fall back to the default rubric")
 	}
-	// Spot-check the rubric carries its contract: research criteria, the ponytail section, and
-	// the claims-vs-ledger fabrication criterion. "weakest-link" is judge-prompt content, not
-	// rubric content (#941) - judge.go states the aggregation method once, not per rubric.
+	// "weakest-link" is judge-prompt content, not rubric content: judge.go states the aggregation once.
 	for _, marker := range []string{"checks_pass", "complexity_proportionate", "module_shape", "coupling",
 		"claims_match_activity", "Workspace activity", "ledger"} {
 		if !strings.Contains(rubric, marker) {
 			t.Errorf("rubric missing expected marker %q", marker)
 		}
 	}
-	// The prompt carries the anti-fabrication hard rule that pairs with the
-	// judge's claims_match_activity criterion (ACP phrasing: the gate reads the
-	// clone, so claims are checked against git itself).
+	// The anti-fabrication rule pairs with the judge's claims_match_activity criterion
+	// (ACP: the gate reads the clone, so claims are checked against git itself).
 	for _, marker := range []string{"Report only what actually happened", "you never push or open the PR"} {
 		if !strings.Contains(b.Prompt, marker) {
 			t.Errorf("prompt missing expected hard-rule marker %q", marker)
@@ -76,9 +71,8 @@ func TestCodeImplementerBundle(t *testing.T) {
 	}
 }
 
-// TestCodeReviewerBundlePrefersStaging pins #639: staging the review must be
-// the imperative and the structured tail a conditional fallback, not a
-// standing instruction that invites writing every finding twice.
+// TestCodeReviewerBundlePrefersStaging: staging the review must be the imperative and the structured
+// tail a conditional fallback, or the reviewer writes every finding twice.
 func TestCodeReviewerBundlePrefersStaging(t *testing.T) {
 	b, err := agent.LoadBundle(context.Background(), nil, "../../.agents/plugins/github/agents/code-reviewer")
 	if err != nil {
@@ -93,8 +87,7 @@ func TestCodeReviewerBundlePrefersStaging(t *testing.T) {
 		}
 	}
 
-	// The tail is gated behind a condition (tools absent from the round's
-	// generated MCP list, #688), not unconditional.
+	// The tail is gated on the tools being absent from the round's generated MCP list.
 	if !strings.Contains(prompt, "has no `stage_review_comment`/`stage_review`") {
 		t.Error("prompt does not condition the structured tail on the staging tools being unavailable")
 	}

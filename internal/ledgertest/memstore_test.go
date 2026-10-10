@@ -9,9 +9,7 @@ import (
 	"github.com/fagerbergj/quack/internal/ledger"
 )
 
-// TestMemStoreAppendIntent_ParentRevisionConflict is the fast, no-docker
-// mirror of TestPGStoreAppendIntent_ParentRevisionConflict (#1144 P4): the
-// same contract, checked without a real Postgres container.
+// TestMemStoreAppendIntent_ParentRevisionConflict mirrors the PGStore contract test without Docker.
 func TestMemStoreAppendIntent_ParentRevisionConflict(t *testing.T) {
 	s := NewMemStore()
 	ctx := context.Background()

@@ -11,16 +11,15 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-const maxGitOutputBytes = 64 * 1024
-
-// defaultCloneDepth is git_clone's default shallow depth when `depth` is unset.
-const defaultCloneDepth = 1
+const (
+	maxGitOutputBytes = 64 * 1024
+	gitTruncMarker    = "\n... (truncated)"
+)
 
 // Env for git child processes only (never on quack server).
 const (
@@ -143,7 +142,6 @@ type gitBinding struct {
 	caps        workspace.Caps
 	credentials []GitCredential
 	tokenSource GitTokenSource
-	allowPush   bool
 	cwd         string
 	chatID      string
 	nodeDir     string
@@ -173,9 +171,6 @@ func (b gitBinding) credentialFor(rawURL string) *GitCredential {
 	return nil
 }
 
-// runGit: every git tool executes through this function.
-
-// gitBinaryPath: resolves git via PATH.
 func gitBinaryPath() (string, error) {
 	p, err := exec.LookPath("git")
 	if err != nil {
@@ -184,7 +179,7 @@ func gitBinaryPath() (string, error) {
 	return p, nil
 }
 
-// gitChildPath: scrubbed env for git child.
+// gitChildPath: the scrubbed PATH for a git child.
 func gitChildPath(caps workspace.Caps) string {
 	base := "/usr/bin:/bin"
 	if len(caps.ExtraPath) == 0 {
@@ -227,13 +222,6 @@ func keepForGit(k string) bool {
 	return !strings.HasPrefix(k, "GIT_") && k != "SSH_ASKPASS"
 }
 
-func capOutput(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max] + "\n... (truncated)"
-}
-
 // runGit runs in dir as its own quack-created clone ("" for no repo).
 func runGit(ctx context.Context, dir string, argv []string, caps workspace.Caps, auth *gitAuth) (stdout, stderr string, err error) {
 	return runGitIn(ctx, dir, dir, argv, caps, auth)
@@ -262,8 +250,8 @@ func runGitIn(ctx context.Context, clone, dir string, argv []string, caps worksp
 	cmd.Stderr = &errBuf
 
 	runErr := cmd.Run()
-	out := capOutput(outBuf.String(), maxGitOutputBytes)
-	errOut := capOutput(errBuf.String(), maxGitOutputBytes)
+	out := clip(outBuf.String(), maxGitOutputBytes, gitTruncMarker)
+	errOut := clip(errBuf.String(), maxGitOutputBytes, gitTruncMarker)
 
 	exitCode := -1
 	if cmd.ProcessState != nil {
@@ -284,13 +272,6 @@ func runGitIn(ctx context.Context, clone, dir string, argv []string, caps worksp
 	return out, errOut, nil
 }
 
-type gitCloneResult struct {
-	Dir           string `json:"dir"`
-	Head          string `json:"head"`
-	DefaultBranch string `json:"default_branch"`
-	Cwd           string `json:"cwd"`
-}
-
 // validateCloneURL: enforces https-only, rejects URLs with inline credentials.
 func validateCloneURL(raw string) (*url.URL, error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
@@ -306,31 +287,23 @@ func validateCloneURL(raw string) (*url.URL, error) {
 	return u, nil
 }
 
-func (b gitBinding) cloneRepo(rawURL, dir string, depthArg *int, branch string) (gitCloneResult, error) {
+func (b gitBinding) cloneRepo(rawURL, dir, branch string) error {
 	if err := validateRef(branch, "git_clone"); branch != "" && err != nil {
-		return gitCloneResult{}, err
+		return err
 	}
 	target, err := b.resolve(dir)
 	if err != nil {
-		return gitCloneResult{}, err
+		return err
 	}
 	relRoot, err := b.resolve("")
 	if err != nil {
-		return gitCloneResult{}, err
+		return err
 	}
 	// Jail may not exist yet.
 	if err := os.MkdirAll(relRoot, 0o755); err != nil {
-		return gitCloneResult{}, fmt.Errorf("git_clone: create workspace dir: %w", err)
+		return fmt.Errorf("git_clone: create workspace dir: %w", err)
 	}
-
-	depth := defaultCloneDepth
-	if depthArg != nil {
-		depth = *depthArg
-	}
-	argv := []string{"clone", "--quiet"}
-	if depth > 0 {
-		argv = append(argv, "--depth", strconv.Itoa(depth))
-	}
+	argv := []string{"clone", "--quiet", "--depth", "1"}
 	if branch != "" {
 		argv = append(argv, "--branch", branch)
 	}
@@ -338,36 +311,11 @@ func (b gitBinding) cloneRepo(rawURL, dir string, depthArg *int, branch string) 
 
 	auth, err := b.authFor(rawURL)
 	if err != nil {
-		return gitCloneResult{}, err
+		return err
 	}
 	// Run from an empty dir: a repo enclosing relRoot must not lend clone its config.
-	if _, _, err := runGitIn(context.Background(), "", "", argv, b.caps, auth, target); err != nil {
-		return gitCloneResult{}, err
-	}
-
-	head, branch, err := gitHeadInfo(target, b.caps)
-	if err != nil {
-		return gitCloneResult{}, err
-	}
-	relDir, err := filepath.Rel(relRoot, target)
-	if err != nil {
-		relDir = dir
-	}
-	return gitCloneResult{Dir: filepath.ToSlash(relDir), Head: head, DefaultBranch: branch, Cwd: displayCwd(b.cwd)}, nil
-}
-
-func gitHeadInfo(dir string, caps workspace.Caps) (head, branch string, err error) {
-	out, _, err := runGit(context.Background(), dir, []string{"rev-parse", "--short", "HEAD"}, caps, nil)
-	if err != nil {
-		return "", "", err
-	}
-	head = strings.TrimSpace(out)
-	out, _, err = runGit(context.Background(), dir, []string{"rev-parse", "--abbrev-ref", "HEAD"}, caps, nil)
-	if err != nil {
-		return "", "", err
-	}
-	branch = strings.TrimSpace(out)
-	return head, branch, nil
+	_, _, err = runGitIn(context.Background(), "", "", argv, b.caps, auth, target)
+	return err
 }
 
 // validateRef: rejects refs starting with "-" (flag smuggling).
@@ -387,5 +335,3 @@ const (
 	GitCommitAuthorName  = "quack"
 	GitCommitAuthorEmail = "agent@quack.local"
 )
-
-// Section markers for git_worktree_create/remove and git_pull/rebase.

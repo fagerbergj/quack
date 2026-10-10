@@ -7,9 +7,7 @@ import (
 	"testing"
 )
 
-// bundledRubricYAMLs globs every rubric.yaml under the shipped agents/ tree
-// plus every plugin's own agents/ (e.g. .agents/plugins/github) - the two
-// roots a bundle can live under, same pair prompt_golden_test.go walks.
+// bundledRubricYAMLs globs every rubric.yaml under agents/ and each plugin's own agents/.
 func bundledRubricYAMLs(t *testing.T) []string {
 	t.Helper()
 	matches, err := filepath.Glob("../../agents/*/rubric.yaml")
@@ -23,9 +21,7 @@ func bundledRubricYAMLs(t *testing.T) []string {
 	return append(matches, pluginMatches...)
 }
 
-// TestBundledRubricsLoadAndValidate loads every shipped agents/*/rubric.yaml
-// and validates it - #941: a rubric that fails to validate is a startup
-// error, so this catches an authoring mistake in any of the nine converted rubrics before it ever reaches a running judge.
+// TestBundledRubricsLoadAndValidate: an invalid shipped rubric is a startup error, so catch it here.
 func TestBundledRubricsLoadAndValidate(t *testing.T) {
 	matches := bundledRubricYAMLs(t)
 	if len(matches) < 9 {
@@ -48,9 +44,8 @@ func TestBundledRubricsLoadAndValidate(t *testing.T) {
 	}
 }
 
-// TestBundledRubricsNoEmptyBands: every non-deterministic criterion must anchor its scale with written bands - an empty bands:[] leaves the score
-// entirely unanchored (#claims_grounded was shipped this way) - and every integer level of its configured scale must have its OWN descriptor, not
-// just some subset: a scale with more levels than bands is the same phantom-precision bug in a different shape.
+// TestBundledRubricsNoEmptyBands: every non-deterministic criterion anchors its scale with bands,
+// and every integer level of the scale has its own descriptor (no phantom precision).
 func TestBundledRubricsNoEmptyBands(t *testing.T) {
 	matches := bundledRubricYAMLs(t)
 	for _, path := range matches {
@@ -163,9 +158,8 @@ func TestValidateRubricDocRejectsUnknownAnchorKind(t *testing.T) {
 	}
 }
 
-// TestRenderRubricMarkdownWebResearcherGolden pins the judge-facing render: per-criterion headers/definition/steps/bands stay in the same shape the
-// judge prompt has always carried, and the deleted rubric.md's G-Eval
-// preamble ("How to score", the 0-10 scale walkthrough, "Aggregation") is gone - that's now judge.go content, not rubric content (#941 redirect).
+// TestRenderRubricMarkdownWebResearcherGolden pins the judge-facing per-criterion render; the
+// general grading preamble belongs to the judge prompt and must not appear.
 func TestRenderRubricMarkdownWebResearcherGolden(t *testing.T) {
 	raw, err := os.ReadFile("../../agents/web-researcher/rubric.yaml")
 	if err != nil {
@@ -208,8 +202,7 @@ func TestRenderRubricMarkdownWebResearcherGolden(t *testing.T) {
 	}
 }
 
-// TestRubricDocSpecsAndFixes: rubricDocSpecs/rubricDocFixes read the doc
-// directly - no parser between the YAML and the envelope (#941).
+// TestRubricDocSpecsAndFixes: specs and fixes come straight from the doc, no parser in between.
 func TestRubricDocSpecsAndFixes(t *testing.T) {
 	doc := rubricDoc{
 		Scale: rubricScale{Min: 0, Max: 10, Pass: 7},
@@ -238,9 +231,8 @@ func TestRubricDocSpecsAndFixes(t *testing.T) {
 	}
 }
 
-// TestGuidanceReachesJudgePromptNotEnvelope pins the split the coordinator asked for: `guidance` (judge-only asides - recency caveats, "don't verify this here",
-// how to weigh things) must render into the judge's rubric prompt, but must never reach rubricDocSpecs - the envelope only ever gets `definition`, the short
-// worker-actionable summary. A worker rejection must never surface a sentence meant for the judge's eyes only.
+// TestGuidanceReachesJudgePromptNotEnvelope: judge-only `guidance` renders into the judge's rubric
+// but never reaches rubricDocSpecs, so a worker rejection never surfaces it.
 func TestGuidanceReachesJudgePromptNotEnvelope(t *testing.T) {
 	doc := rubricDoc{
 		Scale: rubricScale{Min: 0, Max: 10, Pass: 7},
@@ -266,9 +258,8 @@ func TestGuidanceReachesJudgePromptNotEnvelope(t *testing.T) {
 	}
 }
 
-// TestMemoryAgentRubricRendersNotesAlongsideCriteria: memory-agent's rubric.yaml carries both cross-cutting notes (the candidate quality bar)
-// and scored criteria, ready for gating even though the fire-and-forget
-// memory hook has no vetting node today. loadRubric/LoadBundleRubric must still render the notes as non-empty text (the judge/chat build needs it).
+// TestMemoryAgentRubricRendersNotesAlongsideCriteria: memory-agent's notes still render as
+// non-empty text next to its criteria.
 func TestMemoryAgentRubricRendersNotesAlongsideCriteria(t *testing.T) {
 	raw, err := os.ReadFile("../../agents/memory-agent/rubric.yaml")
 	if err != nil {
@@ -290,9 +281,8 @@ func TestMemoryAgentRubricRendersNotesAlongsideCriteria(t *testing.T) {
 	}
 }
 
-// TestEnvelopeFromCriteriaLessVerdictIsEmpty: an envelope built from a
-// verdict with no criteria at all (any agent whose rubric happens to score
-// nothing this round) must have empty Passing/Deterministic/Judge arrays rather than erroring.
+// TestEnvelopeFromCriteriaLessVerdictIsEmpty: a verdict with no criteria yields empty
+// Passing/Deterministic/Judge arrays, not an error.
 func TestEnvelopeFromCriteriaLessVerdictIsEmpty(t *testing.T) {
 	env := buildEnvelope(verdict{}, 0.7, 1)
 	if len(env.Passing) != 0 || len(env.DeterministicFailures) != 0 || len(env.JudgeFailures) != 0 {

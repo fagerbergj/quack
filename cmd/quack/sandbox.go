@@ -21,8 +21,7 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// sandboxFlags are the flags every quack sandbox form shares (issue #951's
-// "[same flags]" on run/check/info).
+// sandboxFlags are the flags every quack sandbox form (shell, run, check, info) shares.
 type sandboxFlags struct {
 	agent string
 	cwd   string
@@ -38,9 +37,8 @@ func addSandboxFlags(c *cobra.Command, f *sandboxFlags) {
 	_ = c.RegisterFlagCompletionFunc("agent", completeAgentNames)
 }
 
-// newSandboxCmd: `quack sandbox` - construct the exact jail an ACP agent gets
-// and either drop into an interactive shell inside it (no args) or run one
-// of the one-shot forms (run/check/info). See docs/sandbox-cli.md.
+// newSandboxCmd: `quack sandbox` builds the exact jail an ACP agent gets, then opens an interactive shell
+// in it (no args) or runs a one-shot form (run/check/info). See docs/sandbox-cli.md.
 func newSandboxCmd() *cobra.Command {
 	var f sandboxFlags
 	c := &cobra.Command{
@@ -61,9 +59,8 @@ func newSandboxCmd() *cobra.Command {
 	return c
 }
 
-// withSeatAndAgent is the shared prologue of the sandbox run and info
-// commands: open the seat, tear it down on exit, and re-resolve the
-// AgentConfig for the spawnEnv merge.
+// withSeatAndAgent is the sandbox run/info prologue: open the seat, tear it down on exit,
+// and re-resolve the AgentConfig for the spawnEnv merge.
 func withSeatAndAgent(f sandboxFlags, fn func(seat cli.SandboxSeat, ac config.AgentConfig, teardown func()) error) error {
 	seat, teardown, err := openSandboxSeat(f)
 	if err != nil {
@@ -77,9 +74,7 @@ func withSeatAndAgent(f sandboxFlags, fn func(seat cli.SandboxSeat, ac config.Ag
 	return fn(seat, ac, teardown)
 }
 
-// openSandboxSeat loads the local quack.yaml, opens the configured jail, and
-// resolves a cli.SandboxSeat for f - the shared setup every sandbox form does
-// first.
+// openSandboxSeat loads the local quack.yaml, opens the configured jail, and resolves f's seat.
 func openSandboxSeat(f sandboxFlags) (cli.SandboxSeat, func(), error) {
 	cfgPath := defaultConfigPath()
 	cfg, err := config.LoadForSandbox(cfgPath)
@@ -102,9 +97,8 @@ func openSandboxSeat(f sandboxFlags) (cli.SandboxSeat, func(), error) {
 	return seat, teardown, nil
 }
 
-// sandboxAgentConfig re-resolves the AgentConfig for seat.AgentName - needed
-// alongside the seat for SandboxSpawnEnv's acp.env merge (cli.SandboxSeat
-// deliberately carries only Caps, not the full AgentConfig).
+// sandboxAgentConfig re-resolves seat.AgentName's AgentConfig for SandboxSpawnEnv's acp.env merge;
+// cli.SandboxSeat deliberately carries only Caps.
 func sandboxAgentConfig(f sandboxFlags) (config.AgentConfig, error) {
 	cfg, err := config.LoadForSandbox(defaultConfigPath())
 	if err != nil {
@@ -114,9 +108,8 @@ func sandboxAgentConfig(f sandboxFlags) (config.AgentConfig, error) {
 	return ac, err
 }
 
-// runSandboxInteractive: sh -i through the SAME wrappedArgv/spawnEnv path
-// the ACP child gets (workspace.WrapArgv + cli.SandboxSpawnEnv), with a real
-// pty crossing the sandbox boundary so job control and the prompt work under bwrap/landlock, not just `none`.
+// runSandboxInteractive runs sh -i through the ACP child's WrapArgv/SandboxSpawnEnv path, with a real pty
+// across the boundary so job control and the prompt work under bwrap/landlock too.
 func runSandboxInteractive(cmd *cobra.Command, f sandboxFlags) error {
 	seat, teardown, err := openSandboxSeat(f)
 	if err != nil {
@@ -146,9 +139,8 @@ func runSandboxInteractive(cmd *cobra.Command, f sandboxFlags) error {
 
 	stdinFd := int(os.Stdin.Fd())
 	if !term.IsTerminal(stdinFd) {
-		// No tty available (e.g. piped stdin, non-interactive CI): a pty-less
-		// interactive shell is the broken-prompt failure mode this issue calls
-		// out explicitly - refuse instead of pretending it worked.
+		// No tty (piped stdin, CI): a pty-less interactive shell has a broken prompt,
+		// so refuse rather than pretend it worked.
 		return fmt.Errorf("quack sandbox: stdin is not a terminal; interactive mode needs one (docker exec needs -it). Use `quack sandbox run` for a non-interactive command")
 	}
 
@@ -201,9 +193,8 @@ func envOr(key, def string) string {
 	return def
 }
 
-// shOnChildPath reports whether sh (an absolute path, e.g. $SHELL) resolves
-// on the hermetic ChildPath the sandboxed child actually gets - a $SHELL from
-// the operator's ambient env may not exist inside the jail at all.
+// shOnChildPath reports whether sh (absolute, e.g. $SHELL) resolves on the child's hermetic ChildPath;
+// the operator's $SHELL may not exist inside the jail.
 func shOnChildPath(caps workspace.Caps, shellPath string) bool {
 	for _, dir := range strings.Split(workspace.ChildPath(caps), ":") {
 		if dir == "" {
@@ -269,9 +260,8 @@ func (r cmdSandboxRunner) Run(ctx context.Context, script string) (string, int, 
 	return string(out), code, nil
 }
 
-// spawnSandboxCmd builds the exact child a sandboxed one-shot command gets:
-// WrapArgv + SandboxSpawnEnv + the exec context. Stdin/Stdout/Stderr stay
-// unset - each form wires its own.
+// spawnSandboxCmd builds the exact child a one-shot sandbox command gets (WrapArgv + SandboxSpawnEnv);
+// each form wires its own stdio.
 func spawnSandboxCmd(ctx context.Context, dir string, caps workspace.Caps, ac config.AgentConfig, script string) *exec.Cmd {
 	argv := workspace.WrapArgv(dir, []string{"sh", "-c", script}, caps, nil, nil)
 	env := cli.SandboxSpawnEnv(caps, ac, nil)

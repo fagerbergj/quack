@@ -5,9 +5,8 @@ import (
 	"testing"
 )
 
-// TestQdrantLess (#1266 review): qdrant's list() sorts entirely in Go (it already
-// fetches the whole matching set via Scroll), so qdrantLess is the one place that
-// ordering logic lives - a pure function over []scored, no live qdrant harness needed (same reasoning as TestExcludeInvalidatedFilter).
+// qdrant's list() sorts entirely in Go, so qdrantLess is the only place ordering lives; a pure function,
+// no live qdrant needed.
 func TestQdrantLess(t *testing.T) {
 	all := []scored{
 		{ID: "a", Timestamp: "2026-08-01T00:00:00Z", Upvotes: 1, Downvotes: 5, VoteScore: -4, Recalls: 1, LastRecalledAt: "2026-08-01T00:00:00Z"},
@@ -25,9 +24,7 @@ func TestQdrantLess(t *testing.T) {
 		{SortUpvotes, []string{"b", "c", "a"}},
 		{SortDownvotes, []string{"a", "c", "b"}},
 		{SortRecalls, []string{"b", "c", "a"}},
-		// last_recalled: descending by recency, but "c" (never recalled) must
-		// sort LAST, not first - a naive string compare would put "" ahead of
-		// any RFC3339 timestamp and get this backwards.
+		// "c" (never recalled) must sort last; a naive string compare puts "" ahead of any timestamp.
 		{SortLastRecalled, []string{"b", "a", "c"}},
 	}
 	for _, tc := range cases {
@@ -48,9 +45,7 @@ func TestQdrantLess(t *testing.T) {
 	}
 }
 
-// TestQdrantLess_IDTieBreak: two rows sharing the sort column's value must
-// still order deterministically (by ID, descending) - otherwise paging a tie
-// through offset/limit could duplicate or drop a row across page boundaries.
+// Ties on the sort column order by ID descending, else offset paging could duplicate or drop a row.
 func TestQdrantLess_IDTieBreak(t *testing.T) {
 	all := []scored{
 		{ID: "x", Timestamp: "2026-08-01T00:00:00Z", Upvotes: 2},

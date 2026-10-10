@@ -10,9 +10,7 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// A finished node must report its cost: duration and what the trust gate said.
-// Regression: duration_ms was never assigned in nodeDoneData (structurally
-// always 0); judge fields were read back via a fresh sessions.Get before the gated node's state delta had appended, so the read saw nothing; started_at was nulled by the node_done upsert (store.UpsertDagNode).
+// A finished node reports its duration, gate result and started_at.
 func TestNodeDoneReportsDurationAndGateResult(t *testing.T) {
 	const node = "explorer-goose"
 
@@ -64,9 +62,8 @@ func TestRecordedGateResultIsReadableImmediately(t *testing.T) {
 	}
 }
 
-// Regression: node_done reported zero tokens - nodeDoneData read the per-run
-// usage accumulator, which closeRun always nils before node_done is built.
-// Token usage (and cached, added alongside) must be a cumulative total across every worker/revise round, not just the last one closed.
+// Token usage must be cumulative across every worker/revise round; closeRun nils the
+// per-run accumulator before node_done is built.
 func TestNodeDoneReportsCumulativeTokenUsage(t *testing.T) {
 	const r0 = "quack-dag-p@1/n1@rr/web-researcher@worker-r0"
 	const r1 = "quack-dag-p@1/n1@rr/web-researcher@worker-r1"
@@ -118,9 +115,8 @@ func TestNodeDoneReportsCumulativeTokenUsage(t *testing.T) {
 	}
 }
 
-// ContextTokens must be the LAST measured prompt-token count, not summed like
-// PromptTokens - a multi-tool-call round's calls each report the model's
-// growing context size, so summing them overshoots what the model actually held at any one time.
+// ContextTokens is the LAST measured prompt count: each tool call reports the growing
+// context, so summing overshoots.
 func TestAgentCompleteContextTokensIsLastNotSummed(t *testing.T) {
 	const r0 = "quack-dag-p@1/n1@rr/web-researcher@worker-r0"
 	const r1 = "quack-dag-p@1/n1@rr/web-researcher@worker-r1"
@@ -134,9 +130,7 @@ func TestAgentCompleteContextTokensIsLastNotSummed(t *testing.T) {
 	}
 
 	evs := []*session.Event{
-		// r0: two tool-call round trips within the same round - context grows
-		// with each call, so the round's occupancy is the LAST one (60k), not
-		// the sum (100k).
+		// r0: two tool-call trips in one round; occupancy is the last (60k), not the sum.
 		withPrompt(r0, 40_000),
 		withPrompt(r0, 60_000),
 		// r1: one call.

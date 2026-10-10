@@ -3,47 +3,7 @@ package tools
 import (
 	"path/filepath"
 	"strings"
-
-	"google.golang.org/adk/v2/agent"
-	"google.golang.org/adk/v2/model"
-	"google.golang.org/adk/v2/tool"
-	"google.golang.org/genai"
 )
-
-// pathScrub: respells host paths in errors to the model's namespace.
-type pathScrub struct {
-	inner runnableTool
-	b     fsBinding
-}
-
-// newPathScrub wraps inner; non-runnable tools pass through.
-func newPathScrub(inner tool.Tool, b fsBinding) tool.Tool {
-	rt, ok := inner.(runnableTool)
-	if !ok {
-		return inner
-	}
-	return &pathScrub{inner: rt, b: b}
-}
-
-func (p *pathScrub) Name() string        { return p.inner.Name() }
-func (p *pathScrub) Description() string { return p.inner.Description() }
-func (p *pathScrub) IsLongRunning() bool { return p.inner.IsLongRunning() }
-
-func (p *pathScrub) Declaration() *genai.FunctionDeclaration { return p.inner.Declaration() }
-
-// ProcessRequest packs the wrapper into the request's tool map.
-func (p *pathScrub) ProcessRequest(ctx agent.Context, req *model.LLMRequest) error {
-	return rebindToolMap(p.inner, p, ctx, req)
-}
-
-// Run is a pass-through except on error, where host paths are respelled.
-func (p *pathScrub) Run(ctx agent.Context, args any) (map[string]any, error) {
-	res, err := p.inner.Run(ctx, args)
-	if err == nil {
-		return res, nil
-	}
-	return res, scrubHostPaths(err, p.b.jail.Root(), p.b.withCwd(ctx).workRoot())
-}
 
 // scrubbedError: wraps error with host-path-free message, keeps original in chain.
 type scrubbedError struct {

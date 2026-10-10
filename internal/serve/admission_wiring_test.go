@@ -84,7 +84,7 @@ func TestBuildAgents_PlanJudgeReservesAndReleases(t *testing.T) {
 			"judge-model": {Provider: "judge-test"},
 		},
 		Gates: config.GatesConfig{
-			Rubric: "be good",
+			RubricPath: "config/rubric.md",
 			Judge: config.JudgeConfig{
 				Provider: "judge-test", Model: "judge-model", MaxRounds: 1,
 				Threshold: 0.7, MaxIterations: 2,
@@ -159,7 +159,7 @@ func TestBootInitAgents_WrapsClassifyModel(t *testing.T) {
 			"judge-model": {Provider: "judge-test"},
 		},
 		Gates: config.GatesConfig{
-			Rubric: "be good",
+			RubricPath: "config/rubric.md",
 			Judge: config.JudgeConfig{
 				Provider: "judge-test", Model: "judge-model", MaxRounds: 1,
 				Threshold: 0.7, MaxIterations: 2,
@@ -308,7 +308,7 @@ func TestBuildUserMemoryHookAgent_ReservesAndReleases(t *testing.T) {
 	admission.Release(occupySpec)
 }
 
-// TestOrchestratorWrap_Unchanged: the same wrap assembleOrchestrator uses, now
+// TestOrchestratorWrap_Unchanged: the same wrap assembleOrchestrator uses,
 // fed a ledger built outside it - the block/release contract must still hold.
 func TestOrchestratorWrap_Unchanged(t *testing.T) {
 	cfg := &config.Config{

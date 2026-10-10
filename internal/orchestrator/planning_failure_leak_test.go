@@ -3,14 +3,12 @@ package orchestrator
 import (
 	"context"
 	"errors"
-	"iter"
 	"testing"
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
-	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/inference"
@@ -18,31 +16,14 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// emptyWorkerModel always answers with an empty completion - the true
-// silent-gap shape (#568), not an error.
-type emptyWorkerModel struct{}
-
-func (emptyWorkerModel) Name() string { return "empty-worker" }
-
-func (emptyWorkerModel) GenerateContent(context.Context, *model.LLMRequest, bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		yield(&model.LLMResponse{
-			Content:      &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: ""}}},
-			FinishReason: genai.FinishReasonStop,
-			TurnComplete: true,
-		}, nil)
-	}
-}
-
-// TestRunBoundPlan_ClearsStalePlanningFailureSoALaterSilentGapStaysASilentGap
-// is #1156's follow-up leak fix: a chat that once failed planning with a
-// gateway error leaves a record under the orchestrator's own empty node/agent key (store.orchestratorGiveUpError's read target). RunBoundPlan makes no orchestrator model call of its own to ever naturally clear that record via RecordCallResult's success path (unlike Run, whose own planning call would) - without clearing it at entry, a LATER bound run that legitimately ends in its own silent gap would have store.DeriveTerminalStatus misreport it as failed, citing the OLD error.
+// A stale gateway failure under the orchestrator's empty key must not make a later bound run's own
+// silent gap misreport as failed: RunBoundPlan makes no model call that would clear it.
 func TestRunBoundPlan_ClearsStalePlanningFailureSoALaterSilentGapStaysASilentGap(t *testing.T) {
 	const chatID = "chat-stale-1156"
 	inference.RecordCallResult(chatID, "", "", errors.New(`status 502: POST "http://llm-swap:11436/v1/chat/completions": 502 Bad Gateway`))
 	t.Cleanup(func() { inference.ClearFailure(chatID, "", "") })
 
-	stub := emptyWorkerModel{}
+	stub := replyModel("")
 	ag, err := llmagent.New(llmagent.Config{
 		Name: "web-researcher", Model: stub, Description: "researcher", Instruction: "ROLE:researcher",
 	})
@@ -66,9 +47,7 @@ func TestRunBoundPlan_ClearsStalePlanningFailureSoALaterSilentGapStaysASilentGap
 		t.Fatalf("stale planning-failure record survived RunBoundPlan (streak=%d) - it leaks into a later unrelated silent gap", streak)
 	}
 
-	// The chat's next turn ends in a TRUE silent gap (no dag node failure
-	// recorded at all) - the exact shape a later bound run's own empty
-	// completion produces. With the stale record cleared, this must derive idle/"", not resurrect the old 502 via orchestratorGiveUpError.
+	// A true silent gap must derive idle, not resurrect the old 502 via orchestratorGiveUpError.
 	turns := []store.TurnContent{{AsstText: ""}}
 	status, _, nodeError := store.DeriveTerminalStatus(chatID, turns, "", false)
 	if status != store.RunStatusIdle || nodeError != "" {

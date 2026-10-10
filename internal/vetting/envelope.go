@@ -9,9 +9,8 @@ import (
 	"strings"
 )
 
-// marshalEnvelope renders the envelope as indented JSON for the worker's
-// revise prompt fenced block. Falls back to a terse error string rather than
-// panicking - a malformed envelope must not crash the revise round.
+// marshalEnvelope renders the envelope as indented JSON for the revise prompt. It falls back to a
+// terse error string: a malformed envelope must not crash the revise round.
 func marshalEnvelope(env verdictEnvelope) string {
 	b, err := json.MarshalIndent(env, "", "  ")
 	if err != nil {
@@ -20,8 +19,7 @@ func marshalEnvelope(env verdictEnvelope) string {
 	return string(b)
 }
 
-// marshalNotes renders a judge_round record's notes for the revise prompt
-// (#1092) - same fallback-on-error contract as marshalEnvelope.
+// marshalNotes renders a judge_round record's notes for the revise prompt, with the same fallback.
 func marshalNotes(notes []JudgeNote) string {
 	b, err := json.MarshalIndent(notes, "", "  ")
 	if err != nil {
@@ -30,9 +28,8 @@ func marshalNotes(notes []JudgeNote) string {
 	return string(b)
 }
 
-// scaleSpec: a criterion's score range, explicit per criterion (#941) - judge
-// criteria are 0-3, deterministic checks like cites_sources keep their own
-// native scale (0-1).
+// scaleSpec: a criterion's score range. Judge criteria are 0-3; deterministic checks like
+// cites_sources keep their native 0-1.
 type scaleSpec struct {
 	Min float64 `json:"min"`
 	Max float64 `json:"max"`
@@ -58,8 +55,7 @@ type criterionSpec struct {
 	Deterministic bool `json:"-"`
 }
 
-// anchorSpec: where in the answer a criticism points. Typed per #941; kind
-// determines which of the other fields apply.
+// anchorSpec: where in the answer a criticism points; kind decides which other fields apply.
 type anchorSpec struct {
 	// Kind is optional on the way in: judges near-miss it (trace 9ea8cbee), so
 	// aggregateVerdict infers it from whichever payload field is set.
@@ -80,9 +76,7 @@ type evidenceItem struct {
 	Why   string  `json:"why,omitempty"`
 }
 
-// failureEntry: one failed criterion. Deterministic and judge failures are
-// the same type; they differ only in which optional fields are set
-// (Evidence for deterministic, Anchor for judge).
+// failureEntry: one failed criterion. Deterministic failures set Evidence, judge failures set Anchor.
 type failureEntry struct {
 	Criterion criterionSpec  `json:"criterion"`
 	Score     float64        `json:"score"`
@@ -100,12 +94,12 @@ type passingEntry struct {
 	Threshold float64       `json:"threshold"`
 }
 
-// verdictEnvelope: the structured replacement for composeFeedback's prose (#941).
+// verdictEnvelope: the structured feedback a worker gets for a failed round.
 type verdictEnvelope struct {
 	Passed    bool    `json:"passed"`
 	Score     float64 `json:"score"`
 	Threshold float64 `json:"threshold"`
-	// Scoring is currently always "lowest_criterion" - weakest-link gating (#941 non-goal: no change to scoring).
+	// Scoring is always "lowest_criterion" (weakest-link gating).
 	Scoring               string         `json:"scoring"`
 	Round                 int            `json:"round"`
 	DeterministicFailures []failureEntry `json:"deterministic_failures,omitempty"`
@@ -115,9 +109,8 @@ type verdictEnvelope struct {
 
 const scoringLowestCriterion = "lowest_criterion"
 
-// criterionText: a criterion's diagnosis text, preferring the new Shortfall
-// field over the deprecated Reason - aggregateVerdict only copies Reason INTO
-// Shortfall, never the reverse, so a judge that submits only `shortfall` (the new schema) must still be readable everywhere that used to read `reason`.
+// criterionText prefers Shortfall over Reason. aggregateVerdict only copies Reason into Shortfall, so
+// a judge that submits only shortfall must still be readable.
 func criterionText(c criterionScore) string {
 	if s := strings.TrimSpace(c.Shortfall); s != "" {
 		return c.Shortfall
@@ -125,9 +118,8 @@ func criterionText(c criterionScore) string {
 	return c.Reason
 }
 
-// formatCriteriaDetail renders the DEBUG per-criterion line. Score is 0-1
-// (see aggregateVerdict); %.0f collapsed 0.9 and 1.0 to the same "1", which
-// hid the score-compression pattern the log exists to surface.
+// formatCriteriaDetail renders the DEBUG per-criterion line. Score is 0-1, so %.0f would collapse 0.9
+// and 1.0 and hide the score compression this log exists to surface.
 func formatCriteriaDetail(criteria map[string]criterionScore) string {
 	parts := make([]string, 0, len(criteria))
 	for name, cs := range criteria {
@@ -137,9 +129,8 @@ func formatCriteriaDetail(criteria map[string]criterionScore) string {
 	return strings.Join(parts, " | ")
 }
 
-// buildEnvelope replaces composeFeedback's prose rendering: it turns a
-// verdict into the structured shape #941 specifies. Deterministic failures
-// are named by mergeDeterministic (Deterministic==true); everything else failing below threshold is a judge failure.
+// buildEnvelope turns a verdict into the structured envelope. mergeDeterministic marks deterministic
+// failures; anything else below threshold is a judge failure.
 func buildEnvelope(v verdict, threshold float64, round int) verdictEnvelope {
 	env := verdictEnvelope{
 		Passed:    v.Score >= threshold,
@@ -185,13 +176,8 @@ func buildEnvelope(v verdict, threshold float64, round int) verdictEnvelope {
 	return env
 }
 
-// #941 redirect: the rubric is authored as YAML (rubricyaml.go) - it IS data, so the envelope reads it directly (rubricDocSpecs) rather than parsing it
-// back out of rendered markdown. applyRubricSpecs stays a name->spec lookup for exactly one reason: a DAG planner can still hand a node a raw,
-// unstructured rubric override at runtime (dag.Node.Rubric, config.go's GatesConfig.Rubric inline string) that was never YAML and has no criterion sections to look up - RubricSpecs is nil in that case, and every criterion silently keeps a zero-value spec (empty definition/bands) rather than failing the round.
-
-// applyRubricSpecs fills each judge (non-deterministic) failing/passing
-// criterion's Definition/Scale/Bands from the node's loaded rubric specs, by
-// name. specs nil (no YAML rubric loaded for this node - e.g. a raw planner override) or missing entries leave zero-value spec fields.
+// applyRubricSpecs fills judge criteria's Definition/Scale/Bands from the node's YAML rubric specs by name.
+// A raw planner rubric override has no specs (nil), leaving zero-value fields rather than failing the round.
 func applyRubricSpecs(v verdict, specs map[string]criterionSpec) verdict {
 	if len(specs) == 0 || len(v.Criteria) == 0 {
 		return v
@@ -210,9 +196,8 @@ func applyRubricSpecs(v verdict, specs map[string]criterionSpec) verdict {
 	return v
 }
 
-// sanitizeAnchors drops any judge-submitted anchor that fails its gate check
-// (quote not found verbatim in the answer, or path outside the node's clone
-// roots), logging each drop - the judge invented a locatable complaint that isn't actually locatable, not grounds to fail the round.
+// sanitizeAnchors drops (and logs) judge anchors that fail their check: quote not verbatim in the answer,
+// or path outside the clone roots. An unlocatable complaint is not grounds to fail the round.
 func sanitizeAnchors(v verdict, answer string, cfg Config) verdict {
 	for name, c := range v.Criteria {
 		if c.Anchor == nil {

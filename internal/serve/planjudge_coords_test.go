@@ -19,9 +19,8 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// newPlanJudgeStubProvider serves a fixed OpenAI-compatible chat.completion
-// answering submit_plan_verdict(accept:true) - a gate round's non-streaming
-// default (RunConfig{}'s StreamingMode) needs no SSE framing.
+// newPlanJudgeStubProvider serves a fixed non-streaming chat.completion answering
+// submit_plan_verdict(accept:true), the gate round's default mode.
 func newPlanJudgeStubProvider(t *testing.T) config.ProviderConfig {
 	t.Helper()
 	body := `{"id":"1","object":"chat.completion","model":"judge-model","choices":[{"index":0,"finish_reason":"tool_calls",` +
@@ -55,7 +54,7 @@ func TestBuildAgents_PlanJudgeDoesNotInheritGatedNodeStamp(t *testing.T) {
 			"judge-test": newPlanJudgeStubProvider(t),
 		},
 		Gates: config.GatesConfig{
-			Rubric: "be good",
+			RubricPath: "config/rubric.md",
 			Judge: config.JudgeConfig{
 				Provider: "judge-test", Model: "judge-model", MaxRounds: 1,
 				Threshold: 0.7, MaxIterations: 2,

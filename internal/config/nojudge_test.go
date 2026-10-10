@@ -2,9 +2,8 @@ package config
 
 import "testing"
 
-// judge: false must be parseable and distinct from unset (nil = judge on, false = off).
-// A text judge (gemma) cannot evaluate a media transcription it never saw, so media/image
-// readers set judge: false - the gate then skips the judge (JudgeRounds forced to 0 in serve.go; RunGatedRefine loops `round <= JudgeRounds`).
+// judge: false must parse distinct from unset (nil = on): media/image readers set it, since a text
+// judge cannot evaluate a transcription of media it never saw.
 func TestAgentJudgeToggleParses(t *testing.T) {
 	on := true
 	off := false

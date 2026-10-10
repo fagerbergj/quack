@@ -19,9 +19,8 @@ import (
 	"github.com/fagerbergj/quack/internal/pgdial"
 )
 
-// Artifact is the durable metadata record for one artifact revision.
-// Payload bytes live elsewhere: a Postgres large object (LOOid) or a
-// sibling ArtifactBlob row (RowBlobID), never inline here.
+// Artifact is the durable metadata record for one revision. Payload bytes live in a Postgres large object
+// (LOOid) or a sibling ArtifactBlob row (RowBlobID), never inline.
 type Artifact struct {
 	ID        uint   `gorm:"primaryKey;autoIncrement"`
 	AppName   string `gorm:"column:app_name;uniqueIndex:idx_artifact_rev"`
@@ -38,9 +37,8 @@ type Artifact struct {
 	// TurnID: the turn that created this revision, "" if unknown. Identity
 	// is chat-level (same name, new revision across turns); this is per-revision.
 	TurnID string `gorm:"column:turn_id;index:idx_artifact_turn"`
-	// Kind/Class/Lineage (#1090 P2): additive columns, nullable/zero-value
-	// for every pre-existing row - AutoMigrate only adds columns, never
-	// backfills or drops, so old revisions keep working with "" everywhere. Kind = registered record kind ("code_review", "finding", ...); Class = "structured" or "blob"; Lineage = JSON envelope (node_id, round, parent_revision, trigger_annotation, head_sha, saved_at, author) - opaque to SQL, read back only through LoadWithMeta.
+	// Kind/Class/Lineage are additive columns, zero for old rows. Lineage is an opaque JSON envelope
+	// (node_id, round, parent_revision, ...), read back only through LoadWithMeta.
 	Kind      string `gorm:"column:kind"`
 	Class     string `gorm:"column:class"`
 	Lineage   string `gorm:"column:lineage"`
@@ -61,9 +59,8 @@ const userScopedArtifactKey = "user"
 
 func fileHasUserNamespace(name string) bool { return len(name) >= 5 && name[:5] == "user:" }
 
-// artifactBlobBackend stores/loads/deletes payload bytes for one Artifact
-// row. save runs before the row exists; it returns the locator to stamp on
-// the row the caller then creates.
+// artifactBlobBackend stores/loads/deletes payload bytes for one Artifact row. save runs before the row
+// exists and returns the locator to stamp on it.
 type artifactBlobBackend interface {
 	migrate(db *gorm.DB) error
 	save(ctx context.Context, db *gorm.DB, data []byte) (loOid *uint32, rowBlobID *uint, err error)
@@ -72,9 +69,8 @@ type artifactBlobBackend interface {
 	delete(ctx context.Context, db *gorm.DB, a Artifact) error
 }
 
-// gormArtifactService is a GORM-backed adk artifact.Service. Version
-// numbering, latest-by-default Load, and delete-nonexistent-not-an-error
-// mirror ADK's own inmemory/gcsartifact services - load_artifacts depends on it.
+// gormArtifactService is a GORM-backed artifact.Service. Version numbering, latest-by-default Load and
+// delete-nonexistent-is-ok mirror ADK's own services: load_artifacts depends on it.
 type gormArtifactService struct {
 	db    *gorm.DB
 	blobs artifactBlobBackend
@@ -96,9 +92,7 @@ func NewRowArtifactService(db *gorm.DB) (artifact.Service, error) {
 	return newGormArtifactService(db, rowBlobBackend{})
 }
 
-// NewLargeObjectArtifactService returns a GORM-backed artifact.Service
-// storing payload bytes as Postgres large objects (see
-// https://www.postgresql.org/docs/current/largeobjects.html). db must be postgres.
+// NewLargeObjectArtifactService stores payload bytes as Postgres large objects. db must be postgres.
 func NewLargeObjectArtifactService(db *gorm.DB) (artifact.Service, error) {
 	sqlDB, err := db.DB()
 	if err != nil {
@@ -107,9 +101,8 @@ func NewLargeObjectArtifactService(db *gorm.DB) (artifact.Service, error) {
 	return newGormArtifactService(db, &loBlobBackend{sqlDB: sqlDB})
 }
 
-// NewArtifactService opens a dedicated Postgres connection at url and
-// returns the large-object-backed artifact.Service - durable across
-// restarts. url must be a postgres DSN (config.validate enforces this).
+// NewArtifactService opens a dedicated Postgres connection at url (a postgres DSN, enforced by config)
+// and returns the large-object-backed artifact.Service.
 func NewArtifactService(url string) (artifact.Service, error) {
 	dialector, err := pgdial.Open(url)
 	if err != nil {
@@ -152,9 +145,8 @@ func turnIDFromContext(ctx context.Context) string {
 	return id
 }
 
-// artifactMetaContextKey mirrors turnIDContextKey: carries kind/class/lineage
-// onto a Save through ctx, since ADK's SaveRequest has no room for them
-// either (#1090 P2). Set only by SaveWithMeta.
+// artifactMetaContextKey carries kind/class/lineage onto a Save through ctx, since ADK's SaveRequest has
+// no room for them. Set only by SaveWithMeta.
 type artifactMetaContextKey struct{}
 
 type artifactMeta struct {
@@ -171,9 +163,8 @@ func artifactMetaFromContext(ctx context.Context) artifactMeta {
 	return m
 }
 
-// TurnAwareService adds SaveForTurn to an artifact.Service - the entry-point
-// addition. Embeds the interface, so every other method (including the
-// plain turn-blind Save ADK's own runner/tools use) passes through unchanged.
+// TurnAwareService adds turn and metadata saves to an artifact.Service; every other method, including the
+// turn-blind Save ADK's runner uses, passes through.
 type TurnAwareService struct {
 	artifact.Service
 }
@@ -189,9 +180,8 @@ func (w *TurnAwareService) SaveForTurn(ctx context.Context, req *artifact.SaveRe
 	return w.Service.Save(withTurnID(ctx, turnID), req)
 }
 
-// SaveWithMeta is Save, stamping kind/class/lineage onto the row (#1090 P2:
-// lineage lives on the row, not inside the bytes, so blob kinds carry it
-// too) and turnID onto the existing turn_id column (same as SaveForTurn).
+// SaveWithMeta is Save stamping kind/class/lineage and turnID onto the row; lineage lives on the row, not
+// in the bytes, so blob kinds carry it too.
 func (w *TurnAwareService) SaveWithMeta(ctx context.Context, req *artifact.SaveRequest, kind, class string, lineageJSON []byte, turnID string) (*artifact.SaveResponse, error) {
 	ctx = withArtifactMeta(withTurnID(ctx, turnID), artifactMeta{Kind: kind, Class: class, LineageJSON: lineageJSON})
 	return w.Service.Save(ctx, req)
@@ -203,9 +193,8 @@ type metaLoader interface {
 	loadMeta(ctx context.Context, req *artifact.LoadRequest) (kind, class string, lineageJSON []byte, err error)
 }
 
-// LoadWithMeta is Load, also returning kind/class/lineage when the wrapped
-// service is the row-backed store; zero values otherwise (#1090 known
-// ceiling: ADK's own interface carries no lineage, so a non-Postgres backend degrades to "no metadata" rather than erroring).
+// LoadWithMeta is Load plus kind/class/lineage from the row-backed store; other backends return zero values
+// since ADK's interface carries no lineage.
 func (w *TurnAwareService) LoadWithMeta(ctx context.Context, req *artifact.LoadRequest) (resp *artifact.LoadResponse, kind, class string, lineageJSON []byte, err error) {
 	resp, err = w.Service.Load(ctx, req)
 	if err != nil {
@@ -222,9 +211,8 @@ type metaUpdater interface {
 	updateMeta(ctx context.Context, appName, userID, sessionID, name string, revision int64, kind, class string, lineageJSON []byte) error
 }
 
-// UpdateArtifactMeta overwrites one revision's kind/class/lineage -
-// #1101's `quack ledger rebuild` write path, for a backend that can (the
-// row-backed store); errors on artifact.InMemoryService() and similar, which have no row to update.
+// UpdateArtifactMeta overwrites one revision's kind/class/lineage (`quack ledger rebuild`); errors on
+// backends with no row to update, like artifact.InMemoryService().
 func (w *TurnAwareService) UpdateArtifactMeta(ctx context.Context, appName, userID, sessionID, name string, revision int64, kind, class string, lineageJSON []byte) error {
 	mu, ok := w.Service.(metaUpdater)
 	if !ok {
@@ -257,9 +245,8 @@ type sessionArtifactLister interface {
 	ListForSession(ctx context.Context, appName, userID, sessionID string) ([]ArtifactSummary, error)
 }
 
-// ListForSession lists every artifact visible to a session (including
-// user-scoped ones), each with its full revision history, or nil for a
-// backend with no such history.
+// ListForSession lists every artifact visible to a session (including user-scoped ones) with full revision
+// history, or nil for a backend with no such history.
 func (w *TurnAwareService) ListForSession(ctx context.Context, appName, userID, sessionID string) ([]ArtifactSummary, error) {
 	l, ok := w.Service.(sessionArtifactLister)
 	if !ok {
@@ -270,16 +257,13 @@ func (w *TurnAwareService) ListForSession(ctx context.Context, appName, userID, 
 
 var _ sessionArtifactLister = (*gormArtifactService)(nil)
 
-// nameArtifactLister is implemented by gormArtifactService; not by
-// artifact.InMemoryService(). Adversarial-review follow-up (#1094): the
-// artifacts REST API's revisions endpoint used to reuse ListForSession and filter client-side, pulling every artifact + revision in the chat to find one name - this is the narrower query the same WHERE clause supports.
+// nameArtifactLister is implemented by gormArtifactService, not artifact.InMemoryService().
 type nameArtifactLister interface {
 	RevisionsForName(ctx context.Context, appName, userID, sessionID, name string) ([]ArtifactRevision, error)
 }
 
-// RevisionsForName lists one artifact name's revisions (ascending, like
-// ListForSession's per-name slice), or nil for a backend with no such
-// history; ok is false only when the backend doesn't support the query at all (not when the name simply has no revisions - that's an empty slice).
+// RevisionsForName lists one name's revisions ascending, or nil for a backend without history; ok is false
+// only when the backend doesn't support the query (no revisions is an empty slice).
 func (w *TurnAwareService) RevisionsForName(ctx context.Context, appName, userID, sessionID, name string) ([]ArtifactRevision, bool, error) {
 	l, ok := w.Service.(nameArtifactLister)
 	if !ok {
@@ -307,7 +291,7 @@ type ArtifactRevision struct {
 	Size      int64     `json:"size"`
 	TurnID    string    `json:"turn_id,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
-	// Kind/Class/Lineage (#1090 P2 columns): zero-value for a pre-#1090 row.
+	// Kind/Class/Lineage: zero-value for rows written before those columns existed.
 	Kind        string `json:"kind,omitempty"`
 	Class       string `json:"class,omitempty"`
 	LineageJSON string `json:"-"`
@@ -329,9 +313,8 @@ func (s *gormArtifactService) RevisionsByTurn(ctx context.Context, appName, user
 	return out, nil
 }
 
-// Save implements [artifact.Service]. Version numbering always
-// auto-increments (matches ADK's own services - both ignore an explicit SaveRequest.Version; see inmemory.go/gcsartifact's Save).
-// artifactRevisionLocks serializes MAX(revision)+Create per (app, user, session, name) key within this process - two rounds of the same node, or two nodes, writing the same id can no longer both read the same MAX and have one insert silently fail the unique index (#1090 adversarial review finding #3). recordstore.Client's own per-(chat,id) lock (#1107) is the primary serializer for every write that goes through recordstore; this one is a defensive backstop for a caller that reaches artifact.Service directly, bypassing recordstore entirely (e.g. attachments, REST reads that Save via the raw ADK service) - that path has no other lock at all. ponytail: process-local only, not a real distributed lock (Postgres advisory lock keyed on hashtext(...) would cover multiple replicas too) - the retry loop below is the cross-process safety net for that gap, and quack runs single-instance today.
+// artifactRevisionLocks serializes MAX(revision)+Create per (app, user, session, name) for callers that bypass
+// recordstore's own lock. ponytail: process-local only; the insert retry loop is the cross-replica net.
 var artifactRevisionLocks sync.Map // key -> *sync.Mutex
 
 func revisionLockFor(appName, userID, sessionID, name string) *sync.Mutex {
@@ -340,9 +323,7 @@ func revisionLockFor(appName, userID, sessionID, name string) *sync.Mutex {
 	return v.(*sync.Mutex)
 }
 
-// maxRevisionInsertAttempts bounds the retry-on-unique-violation loop below -
-// a losing insert (this process's mutex missed it, e.g. a second replica)
-// gets a couple of fresh-MAX retries before giving up loud.
+// maxRevisionInsertAttempts bounds the fresh-MAX retries after a unique-violation (a write the mutex missed).
 const maxRevisionInsertAttempts = 5
 
 // scopedSessionID: user-namespaced artifacts share one synthetic session
@@ -374,9 +355,8 @@ func (s *gormArtifactService) Save(ctx context.Context, req *artifact.SaveReques
 	sessionID := scopedSessionID(req.SessionID, req.FileName)
 	data, mime := partBytes(req.Part)
 
-	// Blob write happens before the metadata row: a failure here orphans
-	// nothing. A row-create failure after this orphans the blob - vacuumlo
-	// (postgres) / a dead row (sqlite) is the accepted cost.
+	// Blob before row: a failure here orphans nothing. A row-create failure after this orphans the blob,
+	// left to vacuumlo (postgres) / a dead row (sqlite).
 	loOid, rowBlobID, err := s.blobs.save(ctx, s.db, data)
 	if err != nil {
 		return nil, fmt.Errorf("store: save artifact blob: %w", err)
@@ -461,9 +441,8 @@ func (s *gormArtifactService) loadMeta(ctx context.Context, req *artifact.LoadRe
 	return a.Kind, a.Class, []byte(a.Lineage), nil
 }
 
-// updateMeta overwrites one revision's kind/class/lineage in place - #1101's
-// `quack ledger rebuild` write path. Bytes and revision number are never
-// touched; only the metadata a fold recomputes from the WAL.
+// updateMeta overwrites one revision's kind/class/lineage for `quack ledger rebuild`; bytes and revision
+// number are never touched.
 func (s *gormArtifactService) updateMeta(ctx context.Context, appName, userID, sessionID, name string, revision int64, kind, class string, lineageJSON []byte) error {
 	sessionID = scopedSessionID(sessionID, name)
 	res := s.db.WithContext(ctx).Model(&Artifact{}).
@@ -524,9 +503,8 @@ func (s *gormArtifactService) List(ctx context.Context, req *artifact.ListReques
 	return &artifact.ListResponse{FileNames: names}, nil
 }
 
-// ListForSession lists every artifact visible to the session (same
-// session-or-user-scoped rule as List), each with its full revision
-// history in ascending revision order - the artifacts API's list shape.
+// ListForSession lists every artifact visible to the session (session or user scoped), each with its
+// revisions ascending.
 func (s *gormArtifactService) ListForSession(ctx context.Context, appName, userID, sessionID string) ([]ArtifactSummary, error) {
 	var rows []Artifact
 	if err := s.db.WithContext(ctx).
@@ -546,9 +524,7 @@ func (s *gormArtifactService) ListForSession(ctx context.Context, appName, userI
 	return summaries, nil
 }
 
-// RevisionsForName lists one artifact name's revisions in the session (same
-// session-or-user-scoped rule as ListForSession), ascending - the WHERE name
-// = ? sibling of ListForSession, for a caller that only wants one artifact's history instead of the whole chat's.
+// RevisionsForName lists one name's revisions in the session, ascending (same scoping as ListForSession).
 func (s *gormArtifactService) RevisionsForName(ctx context.Context, appName, userID, sessionID, name string) ([]ArtifactRevision, error) {
 	var rows []Artifact
 	if err := s.db.WithContext(ctx).
@@ -636,9 +612,8 @@ func (rowBlobBackend) delete(ctx context.Context, db *gorm.DB, a Artifact) error
 	return db.WithContext(ctx).Delete(&ArtifactBlob{}, *a.RowBlobID).Error
 }
 
-// loBlobBackend stores payload bytes as Postgres large objects. pgx's
-// LargeObjects API needs a real pgx.Tx, so each op grabs a raw conn via
-// sqlDB.Conn + (*sql.Conn).Raw - separate from any GORM tx (see Save).
+// loBlobBackend stores payload bytes as Postgres large objects. pgx's LargeObjects API needs a real pgx.Tx,
+// so each op takes a raw conn, separate from any GORM tx.
 type loBlobBackend struct {
 	sqlDB *sql.DB
 }
@@ -718,9 +693,7 @@ func (b *loBlobBackend) load(ctx context.Context, _ *gorm.DB, a Artifact) ([]byt
 	return data, err
 }
 
-// delete unlinks the large object. Orphans from elsewhere (e.g. a crash
-// between blob-write and row-create in Save) are vacuumlo's job, not this
-// method's - it only covers the delete it's actually asked to do.
+// delete unlinks the large object; orphans from elsewhere (a crash between blob and row) are vacuumlo's job.
 func (b *loBlobBackend) delete(ctx context.Context, _ *gorm.DB, a Artifact) error {
 	if a.LOOid == nil {
 		return nil

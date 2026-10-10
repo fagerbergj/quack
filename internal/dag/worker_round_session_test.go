@@ -46,28 +46,6 @@ func (s *roundStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ 
 	}
 }
 
-// failOnceJudge fails the first verdict and passes every later one, forcing
-// exactly one revise round.
-type failOnceJudge struct {
-	mu    sync.Mutex
-	calls int
-}
-
-func (*failOnceJudge) Name() string { return "failOnceJudge" }
-func (j *failOnceJudge) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		j.mu.Lock()
-		j.calls++
-		first := j.calls == 1
-		j.mu.Unlock()
-		if first {
-			yield(atCall("submit_verdict", map[string]any{"score": 0.1, "feedback": "add more detail"}), nil)
-			return
-		}
-		yield(atCall("submit_verdict", map[string]any{"score": 0.9, "feedback": ""}), nil)
-	}
-}
-
 // countingCreates counts the worker-side A2A sessions a node creates.
 type countingCreates struct {
 	session.Service
@@ -107,7 +85,7 @@ func TestReviseRound_StartsAFreshWorkerSession(t *testing.T) {
 	sessions := session.InMemoryService()
 	plan := dag.Plan{ID: "p1", UserMessage: "x", Nodes: []dag.Node{{ID: "n1", AgentName: "solo", Task: "Write the thing.", Rubric: "detailed"}}}
 	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"solo": client}, nil,
-		vetting.NewJudgeFactory(&failOnceJudge{}, nil, nil),
+		vetting.NewJudgeFactory(failOnceJudge(0.1, "add more detail"), nil, nil),
 		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
 	outputs := map[string]string{}
 	content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "x"}}}

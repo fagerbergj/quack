@@ -22,11 +22,8 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// TestBuildAgentsDropsOptionalAgentOnUnresolvedTools proves buildAgents'
-// degrade-honestly path (serve.go): an agent marked optional: true whose
-// tools don't resolve (its extension is off, here simulated with a made-up
-// tool name) is dropped from the roster with a warning, not a boot error -
-// while a normal, resolvable agent still builds.
+// TestBuildAgentsDropsOptionalAgentOnUnresolvedTools: an optional agent whose tools don't resolve is
+// dropped with a warning, not a boot error, while a resolvable agent still builds.
 func TestBuildAgentsDropsOptionalAgentOnUnresolvedTools(t *testing.T) {
 	jail, err := workspace.NewJail(t.TempDir())
 	if err != nil {
@@ -57,10 +54,8 @@ func TestBuildAgentsDropsOptionalAgentOnUnresolvedTools(t *testing.T) {
 		},
 	}
 
-	// Wired exactly as boot() wires it: builtinSkillSrc is WrapRef over
-	// shapesRef, so it (and everything built from it below, including
-	// newScopedSkillTS - the orchestrator's own plan-work path) live-reflects
-	// whatever catalogShapes later Stores.
+	// Wired as boot() does: builtinSkillSrc wraps shapesRef, so everything built from it (including
+	// newScopedSkillTS's plan-work path) reflects whatever catalogShapes later stores.
 	rawShapes := workflowcatalog.FromConfig(cfg.Workflows, cfg.Revision)
 	var shapesRef atomic.Pointer[[]workflowcatalog.Shape]
 	shapesRef.Store(&rawShapes)
@@ -75,9 +70,8 @@ func TestBuildAgentsDropsOptionalAgentOnUnresolvedTools(t *testing.T) {
 		src := skillsource.New(skillsource.Scoped(builtinSkillSrc, names), jail, localUserID)
 		return skilltoolset.New(context.Background(), skilltoolset.Config{Source: src})
 	}
-	// planWorkInstructions mirrors what assembleOrchestrator actually reads
-	// (newScopedSkillTS(cfg.Orchestrator.Skills), serve.go) - the real path
-	// round 2 found the old test never exercised.
+	// planWorkInstructions reads what assembleOrchestrator reads:
+	// newScopedSkillTS(cfg.Orchestrator.Skills).
 	planWorkInstructions := func() string {
 		t.Helper()
 		src := skillsource.New(skillsource.Scoped(builtinSkillSrc, []string{"plan-work"}), jail, localUserID)
@@ -107,9 +101,8 @@ func TestBuildAgentsDropsOptionalAgentOnUnresolvedTools(t *testing.T) {
 		t.Error(`clientMap["broken-optional"] present - an optional agent with unresolved tools must be dropped`)
 	}
 
-	// catalogShapes (reload.go) must remove "drops-shape" - it names
-	// the dropped agent - from the REAL rendered plan-work table, and log why,
-	// while "resolves-shape" (names the agent that built fine) survives.
+	// catalogShapes must remove "drops-shape" (it names the dropped agent) from the rendered plan-work
+	// table and log why, while "resolves-shape" survives.
 	var buf bytes.Buffer
 	prevLog := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))

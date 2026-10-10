@@ -7,9 +7,8 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// #1033: newSafeYield used to recover a consumer's loop-body panic and return
-// normally. Go then panics at the RANGE SITE with "range function recovered a
-// loop body panic and did not resume panicking" - which in production lands in startRun's detached goroutine and kills the process. The consumer must see its OWN panic value instead.
+// A recovered loop-body panic makes Go panic at the range site and kill the process, so the
+// consumer must see its own panic value.
 func TestSafeYield_ResumesConsumerPanic(t *testing.T) {
 	seq := iter.Seq2[stream.SSEEvent, error](func(yield func(stream.SSEEvent, error) bool) {
 		newSafeYield(yield)(stream.Done(), nil)
@@ -31,9 +30,7 @@ func TestSafeYield_ResumesConsumerPanic(t *testing.T) {
 	}
 }
 
-// A consumer that breaks out of the range makes yield return false - the
-// ordinary dropped-SSE-client case. Re-entering that exhausted closure is
-// itself a panic, so safeYield must latch stopped on a false return (#1033).
+// A consumer break makes yield return false; re-entering it panics, so safeYield must latch stopped.
 func TestSafeYield_StopsAfterConsumerBreaks(t *testing.T) {
 	var after bool
 	var panicked any

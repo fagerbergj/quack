@@ -30,9 +30,8 @@ func (f *fakeExtensionCaller) CallExtension(_ context.Context, method string, pa
 	return nil, f.err
 }
 
-// TestSteerForward_DeliversOverAckedExtensionCall (#998, replaces the flaky
-// #1202 round()-based e2e version: that test could not be made to fail
-// deterministically after 2000+ -race runs, so per the no-flaky-gates rule it was deleted and replaced with this direct unit test of the same production closure - no subprocess, no goroutine handoff, nothing to race).
+// TestSteerForward_DeliversOverAckedExtensionCall unit-tests the production steer closure directly:
+// no subprocess or goroutine handoff, so nothing to race.
 func TestSteerForward_DeliversOverAckedExtensionCall(t *testing.T) {
 	fake := &fakeExtensionCaller{}
 	fwd := steerForward(fake)
@@ -51,9 +50,8 @@ func TestSteerForward_DeliversOverAckedExtensionCall(t *testing.T) {
 	}
 }
 
-// TestSteerForward_ReportsFailureOnRejectedCall (#998 review): the forward
-// func must use an ACKED call (CallExtension), not a fire-and-forget
-// notification - otherwise a steer landing after the shim has settled the round would report delivered while silently dropped. An error from the extension call must surface as false so enqueue's caller parks the message instead of marking it delivered.
+// TestSteerForward_ReportsFailureOnRejectedCall: the forward func uses an acked CallExtension, so a rejected
+// steer surfaces as false and enqueue's caller parks the message instead of marking it delivered.
 func TestSteerForward_ReportsFailureOnRejectedCall(t *testing.T) {
 	fake := &fakeExtensionCaller{err: errors.New("no live round to steer")}
 	fwd := steerForward(fake)
@@ -63,9 +61,8 @@ func TestSteerForward_ReportsFailureOnRejectedCall(t *testing.T) {
 	}
 }
 
-// TestRound_SteerRejectedByShimReportsFailure (#998 review): the forward
-// func must use an ACKED call (CallExtension), not a fire-and-forget
-// notification - otherwise a steer landing in the window between the shim settling the round and quack's deferred Unregister would report delivered while silently dropped. The "steer-reject" fake agent errors every _quack/steer call (as the shim does once promptReq is already nil) - the forward func must surface that as false so enqueue's caller parks instead of marking the message delivered.
+// TestRound_SteerRejectedByShimReportsFailure: a steer landing after the shim settled the round ("steer-reject"
+// errors every call) must surface as false so the message is parked, not marked delivered.
 func TestRound_SteerRejectedByShimReportsFailure(t *testing.T) {
 	jail, err := workspace.NewJail(t.TempDir())
 	if err != nil {

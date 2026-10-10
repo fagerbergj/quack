@@ -122,9 +122,8 @@ func runStubNode(t *testing.T, worker adkagent.Agent, msg string) {
 	}
 }
 
-// TestNativeNode_RenderUIEmitsAndStampsTurn: render_ui called by a real DAG
-// node's worker (behind its A2A server, whose tool ctx carries neither the
-// chat sink nor the turn id) still emits artifact_revision and stamps the chat turn.
+// TestNativeNode_RenderUIEmitsAndStampsTurn: render_ui from a real DAG node's worker (whose tool ctx lacks the
+// chat sink and turn id) still emits artifact_revision and stamps the chat turn.
 func TestNativeNode_RenderUIEmitsAndStampsTurn(t *testing.T) {
 	provider := toolCallProvider(t, "render_ui", map[string]any{"surface_id": "s1", "components": []any{map[string]any{"id": "root", "component": "Text", "text": "hi"}}})
 	defer provider.Close()
@@ -141,7 +140,7 @@ func TestNativeNode_RenderUIEmitsAndStampsTurn(t *testing.T) {
 		}
 	}
 	ctx := stream.WithTurnID(context.Background(), "turn-7")
-	worker, _, _, _, _, release, err := agent.ForNode(ctx, "p:n1", "p/n1", nil, artifacts, "quack", "u1", "chat-1", "n1", sink)
+	worker, _, _, _, _, _, release, err := agent.ForNode(ctx, "p:n1", "p/n1", nil, artifacts, "quack", "u1", "chat-1", "n1", sink)
 	if err != nil {
 		t.Fatalf("ForNode: %v", err)
 	}

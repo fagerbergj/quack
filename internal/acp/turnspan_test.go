@@ -63,9 +63,8 @@ func attrsOf(s tracetest.SpanStub) map[string]string {
 	return out
 }
 
-// TestRound_ToolSpansEndInsideTheRound is #924: an ACP round that runs for two
-// hours must not export its first span two hours in. The per-tool-call child
-// spans end as their session updates are handled, so they flush while the round is still running - which the exporter records as an end time strictly earlier than the prompt and round spans that enclose them.
+// TestRound_ToolSpansEndInsideTheRound: per-tool-call spans end as updates are handled, so their end time
+// is strictly earlier than the enclosing prompt and round spans.
 func TestRound_ToolSpansEndInsideTheRound(t *testing.T) {
 	exp := withTestTracer(t)
 	a := testAgent(t, "happy")
@@ -93,9 +92,8 @@ func TestRound_ToolSpansEndInsideTheRound(t *testing.T) {
 	if got := attrs["tool_title"]; got != "go test ./..." {
 		t.Errorf("tool span tool_title = %q, want the tool call's title", got)
 	}
-	// Any model-named attribute types the span as a Langfuse GENERATION and
-	// drops wall-clock into every per-model cost aggregate (#927/#930). These
-	// spans wrap a tool call, not a model call.
+	// A model-named attribute would type the span a Langfuse GENERATION and fold wall-clock into
+	// per-model cost aggregates; these spans wrap a tool call, not a model call.
 	for _, k := range []string{"model", otelobs.GenAIRequestModel, otelobs.GenAIResponseModel, "llm.model_name", otelobs.QuackModel} {
 		if v, ok := attrs[k]; ok {
 			t.Errorf("tool span carries %s=%q - that types it as a GENERATION", k, v)
@@ -103,9 +101,8 @@ func TestRound_ToolSpansEndInsideTheRound(t *testing.T) {
 	}
 }
 
-// TestTurnSpans_UnfinishedToolCallStillExports covers the wedged round: a tool
-// call that never reaches a terminal status still gets a span, ended with an
-// error when the round exits, so a stall is visible without querying Postgres.
+// TestTurnSpans_UnfinishedToolCallStillExports: a call that never reaches a terminal status still gets
+// a span, ended with an error when the round exits.
 func TestTurnSpans_UnfinishedToolCallStillExports(t *testing.T) {
 	exp := withTestTracer(t)
 	turns := newTurnSpans(context.Background(), "code-reviewer")
@@ -130,9 +127,8 @@ func TestTurnSpans_UnfinishedToolCallStillExports(t *testing.T) {
 	}
 }
 
-// TestTurnSpans_ToolCallDetailAttributes: the span carries the actual call -
-// arguments from rawInput, result from the terminal update - so a runaway
-// tool call is diagnosable from Langfuse without querying chat_events.
+// TestTurnSpans_ToolCallDetailAttributes: the span carries arguments (rawInput) and result (terminal update),
+// so a runaway call is diagnosable from Langfuse.
 func TestTurnSpans_ToolCallDetailAttributes(t *testing.T) {
 	withContentCapture(t, true)
 	exp := withTestTracer(t)
@@ -154,9 +150,8 @@ func TestTurnSpans_ToolCallDetailAttributes(t *testing.T) {
 	}
 }
 
-// TestTurnSpans_ToolCallDetailAbsentByDefault: with capture off (the deploy
-// default), tool call arguments/output never reach the span, even though it
-// is recording - ACP does most of the tool-calling in this codebase, so this is the invariant that actually matters.
+// TestTurnSpans_ToolCallDetailAbsentByDefault: with capture off (the deploy default), arguments/output never
+// reach the span even though it records; ACP does most of the tool calling.
 func TestTurnSpans_ToolCallDetailAbsentByDefault(t *testing.T) {
 	exp := withTestTracer(t)
 	turns := newTurnSpans(context.Background(), "code-reviewer")
@@ -176,9 +171,8 @@ func TestTurnSpans_ToolCallDetailAbsentByDefault(t *testing.T) {
 	}
 }
 
-// TestTurnSpans_ContentFallbackAndTruncation: with no rawOutput the result
-// comes from the content text blocks, and oversized values are capped at
-// attrCap with the shim's truncation marker.
+// TestTurnSpans_ContentFallbackAndTruncation: with no rawOutput the result comes from content text blocks,
+// and oversized values are capped at attrCap with the shim's truncation marker.
 func TestTurnSpans_ContentFallbackAndTruncation(t *testing.T) {
 	withContentCapture(t, true)
 	exp := withTestTracer(t)
@@ -204,9 +198,8 @@ func TestTurnSpans_ContentFallbackAndTruncation(t *testing.T) {
 	}
 }
 
-// TestTurnSpans_MCPCallNeverSpanNamedOther: a bridged MCP call's span is named
-// after the real tool, matching translate.go's mapToolCall identity
-// resolution, not the literal "acp.tool.other" (#1278).
+// TestTurnSpans_MCPCallNeverSpanNamedOther: a bridged MCP call's span is named after the real tool,
+// not "acp.tool.other".
 func TestTurnSpans_MCPCallNeverSpanNamedOther(t *testing.T) {
 	exp := withTestTracer(t)
 	turns := newTurnSpans(context.Background(), "code-reviewer")
@@ -224,9 +217,8 @@ func TestTurnSpans_MCPCallNeverSpanNamedOther(t *testing.T) {
 	}
 }
 
-// TestTurnSpans_UnresolvedKindSpanStaysBounded: a genuinely unclassifiable
-// call (no MCP identity, kind "other") must NOT explode the span name into
-// the agent-supplied title - that's an unbounded, arbitrary string, and unlike translate.go's persisted tool NAME, a span name is a cardinality dimension in the tracing backend. The title still rides the tool_title attribute for identification.
+// TestTurnSpans_UnresolvedKindSpanStaysBounded: an unclassifiable call's span name never takes the unbounded
+// agent-supplied title (a cardinality dimension); the title rides tool_title.
 func TestTurnSpans_UnresolvedKindSpanStaysBounded(t *testing.T) {
 	exp := withTestTracer(t)
 	turns := newTurnSpans(context.Background(), "code-reviewer")

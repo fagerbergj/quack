@@ -7,16 +7,14 @@ import (
 
 type allowedDeliveryKindsContextKey struct{}
 
-// WithAllowedDeliveryKinds attaches the trigger's computed delivery-kind
-// allowlist (#657, #662) to ctx. Call ONLY from the GitHub webhook (or an
-// extension dispatch), before it dispatches the orchestrator - the allowlist is computed from labels/authorship/fork state and never re-derived from model output.
+// WithAllowedDeliveryKinds: call only from a webhook or extension dispatch; the allowlist comes from
+// labels/authorship/fork state, never from model output.
 func WithAllowedDeliveryKinds(ctx context.Context, kinds []string) context.Context {
 	return context.WithValue(ctx, allowedDeliveryKindsContextKey{}, kinds)
 }
 
-// AllowedDeliveryKindsFromContext reads back the allowlist
-// WithAllowedDeliveryKinds attached, if any. Read exactly ONCE at the top of
-// Orchestrator.Run and threaded as a plain closed-over value (see GitHubPRFromContext), not trusted to survive deep in the tool-call plumbing; nil = no trigger governs this run (plain REST/MCP) - unrestricted delivery.
+// AllowedDeliveryKindsFromContext is read once at the top of Orchestrator.Run, not trusted deeper in the
+// tool-call plumbing; nil means no trigger governs the run (unrestricted).
 func AllowedDeliveryKindsFromContext(ctx context.Context) []string {
 	kinds, _ := ctx.Value(allowedDeliveryKindsContextKey{}).([]string)
 	return kinds
@@ -26,8 +24,7 @@ func AllowedDeliveryKindsFromContext(ctx context.Context) []string {
 // JSON, so a later REST turn on that chat runs under the same grant.
 const originGrantKey = "quackAllowedDeliveryKinds"
 
-// WithOriginGrant returns originJSON with kinds recorded. nil kinds (a nudge
-// carrying no Delivery) keeps whatever grant is already recorded - fail-safe.
+// WithOriginGrant: nil kinds (a nudge with no Delivery) keeps the grant already recorded.
 func WithOriginGrant(originJSON string, kinds []string) string {
 	m := map[string]json.RawMessage{}
 	if kinds == nil || (originJSON != "" && json.Unmarshal([]byte(originJSON), &m) != nil) {

@@ -1,5 +1,4 @@
-// artifacttools_native_test.go: a native node always gets the artifact read tools (#1123),
-// and the write tools only when its config or card asks for them.
+// A native node always gets the artifact read tools, and the write tools only when its config or card asks.
 package serve
 
 import (
@@ -69,7 +68,7 @@ func TestBuildAgents_NativeNodeArtifactToolsFollowConfig(t *testing.T) {
 		if !ok {
 			t.Fatalf("clientMap[%q] = %T, want nativeAgent", name, clientMap[name])
 		}
-		_, _, tools, setRoundCoords, refreshPrompt, release, err := na.ForNode(context.Background(), "test-plan:"+name, "test-plan/"+name, nil, artifacts, "quack-test", "u1", "chat-1", name, nil)
+		_, _, tools, _, setRoundCoords, refreshPrompt, release, err := na.ForNode(context.Background(), "test-plan:"+name, "test-plan/"+name, nil, artifacts, "quack-test", "u1", "chat-1", name, nil)
 		if err != nil {
 			t.Fatalf("%s: ForNode: %v", name, err)
 		}

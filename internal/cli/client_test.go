@@ -18,9 +18,8 @@ import (
 	"github.com/fagerbergj/quack/internal/schema"
 )
 
-// TestPrintPrompt drives the full print-mode path against a fake server: create
-// a chat, stream SSE, and prove only top-level agent_token text (no node_id) is
-// printed - node-scoped tokens are intermediate research output and excluded.
+// TestPrintPrompt: print mode prints only top-level agent_token text; node-scoped tokens are
+// intermediate output.
 func TestPrintPrompt(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir()) // isolate from the real registry
 
@@ -58,9 +57,8 @@ func TestPrintPrompt(t *testing.T) {
 	}
 }
 
-// TestRunAPI covers the raw passthrough: GET prints the body (+ trailing
-// newline), POST forwards the request body, and a 4xx returns an error while
-// still printing the response body.
+// TestRunAPI: GET prints the body plus newline, POST forwards the body, and a 4xx errors
+// while still printing the response.
 func TestRunAPI(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 
@@ -137,9 +135,8 @@ func TestPrintPromptServerError(t *testing.T) {
 	}
 }
 
-// TestPrintPromptNeedsInput: a paused run (node_needs_input) prints `question:
-// <text>` on stdout, a hint on stderr, and exits 2 - --json mode reports the
-// same status/exit code via one JSON object.
+// TestPrintPromptNeedsInput: a paused run prints `question: <text>`, hints on stderr and exits 2;
+// --json reports the same via one object.
 func TestPrintPromptNeedsInput(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 
@@ -202,7 +199,7 @@ func TestPauseNode(t *testing.T) {
 	if err := c.PauseNode(context.Background(), "c1", "n2"); err != nil {
 		t.Fatalf("PauseNode: %v", err)
 	}
-	if gotBody.Status != schema.NodeStatusPaused {
+	if gotBody.Status != schema.NodeStatusUpdateBodyStatusPaused {
 		t.Errorf("server got status %q, want %q", gotBody.Status, schema.NodeStatusPaused)
 	}
 }
@@ -224,7 +221,7 @@ func TestResumeNode(t *testing.T) {
 	if err := c.ResumeNode(context.Background(), "c1", "n2"); err != nil {
 		t.Fatalf("ResumeNode: %v", err)
 	}
-	if gotBody.Status != schema.NodeStatusRunning {
+	if gotBody.Status != schema.NodeStatusUpdateBodyStatusRunning {
 		t.Errorf("server got status %q, want %q", gotBody.Status, schema.NodeStatusRunning)
 	}
 	if gotBody.Guidance != nil {
@@ -322,9 +319,8 @@ func TestSendMessageWithFiles(t *testing.T) {
 	}
 }
 
-// TestSubscribeSSEReconnectsWithLastEventID: issue #383 - a dropped
-// subscribe stream (the body closes mid-run, no `done` seen) is retried
-// automatically, resuming past the last event actually delivered via Last-Event-ID, without losing or duplicating any event.
+// TestSubscribeSSEReconnectsWithLastEventID: a stream dropped before `done` is retried via
+// Last-Event-ID without losing or duplicating events.
 func TestSubscribeSSEReconnectsWithLastEventID(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	orig := sseReconnectDelay

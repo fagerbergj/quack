@@ -43,9 +43,8 @@ func seedRegistry(ctx context.Context, reg pluginreg.FetchRegistry, seed []strin
 			return err
 		}
 		name := e.Name()
-		// A name repeated under a different entry is a config error, not a
-		// Put collision (#1427 S3) - the vendored copy and a github: copy of
-		// the SAME repo are expected to coexist under DIFFERENT names.
+		// A name repeated under a different entry is a config error; a vendored and a github: copy of the
+		// same repo must use different names.
 		if prev, dup := seenInSeed[name]; dup && prev != e.Raw {
 			return fmt.Errorf("config: plugins.seed: name %q is listed twice, as %q and %q", name, prev, e.Raw)
 		}
@@ -109,9 +108,8 @@ func warnRESTOwnedRow(existing, seeded pluginreg.Plugin) {
 	slog.Warn("plugin row was set over REST; not following plugins.seed", "component", "startup", "name", seeded.Name, "row", existing.Entry, "seed", seeded.Entry)
 }
 
-// fetchRegistryPlugins fetches every non-local row against its pinned/tracked
-// ref (P0's gitTimeout per call already bounds each one). A failure is logged
-// and left on the row - Fetch persists it - so boot continues on the last good clone.
+// fetchRegistryPlugins fetches each non-local row (gitTimeout bounds each call). A failure stays on the
+// row, so boot continues on the last good clone.
 func fetchRegistryPlugins(ctx context.Context, reg pluginreg.FetchRegistry, rows []pluginreg.Plugin) []pluginreg.Plugin {
 	out := make([]pluginreg.Plugin, 0, len(rows))
 	for _, p := range rows {
@@ -128,9 +126,8 @@ func fetchRegistryPlugins(ctx context.Context, reg pluginreg.FetchRegistry, rows
 	return out
 }
 
-// openPluginRegistry picks the backend plugins.store names ("" filesystem,
-// else a sqlite/postgres stores[] entry), reusing st's connection when it's
-// the SAME store session.store uses instead of opening a second pool.
+// openPluginRegistry picks the plugins.store backend ("" = filesystem), reusing st's connection when it
+// is the same store session.store uses.
 func (b *boot) openPluginRegistry(st *store.Store) (pluginreg.FetchRegistry, error) {
 	cfg := b.cfg
 	if cfg.Plugins.Store == "" {
@@ -172,9 +169,7 @@ func (b *boot) bootPluginRegistry(ctx context.Context, st *store.Store) (pluginr
 	return reg, rows, nil
 }
 
-// registryPluginRoots is every non-embedded row's resolved Root() - what
-// plugin.Resolve reads (plugin.json/skills/mcp.json), replacing
-// cfg.PluginRoots() as of #1427 P1.
+// registryPluginRoots: each non-embedded row's Root(), which plugin.Resolve reads.
 func registryPluginRoots(registryRoot string, rows []pluginreg.Plugin) []string {
 	var out []string
 	for _, p := range rows {
@@ -226,9 +221,8 @@ func resolveRegistryPlugins(registryRoot string, rows []pluginreg.Plugin) ([]plu
 // server gets at boot. Per-call contexts govern everything after.
 var mcpEnumerateTimeout = 20 * time.Second // var so tests can shrink it
 
-// checkModuleLinked matches p's declared modules under quack's namespace
-// against the modules actually linked into this binary. Go has no safe
-// dynamic loading, so a declared-but-unlinked module names the import to add.
+// checkModuleLinked: Go has no safe dynamic loading, so a declared-but-unlinked module names the
+// import to add.
 func checkModuleLinked(p plugin.Plugin) error {
 	linked := extsdk.Registered()
 	for _, m := range p.Modules {
@@ -239,9 +233,8 @@ func checkModuleLinked(p plugin.Plugin) error {
 	return nil
 }
 
-// checkConfigRequired enforces the namespace block's config: "required" for
-// p. A module not configured at all stays dormant; one whose extensions:
-// block is present but empty fails, named, rather than deeper in its factory.
+// checkConfigRequired enforces config: "required": an unconfigured module stays dormant, but an
+// empty extensions: block fails here, named, rather than deeper in its factory.
 func checkConfigRequired(p plugin.Plugin, modules map[string]yaml.Node) error {
 	if !p.ConfigRequired {
 		return nil
@@ -258,8 +251,7 @@ func checkConfigRequired(p plugin.Plugin, modules map[string]yaml.Node) error {
 	return nil
 }
 
-// checkPlugin runs both refusal checks against ONE plugin - the shared unit
-// boot admission and a reload both check against (#1430 severe).
+// checkPlugin runs both refusal checks; boot admission and reload share it.
 func checkPlugin(p plugin.Plugin, modules map[string]yaml.Node) error {
 	if err := checkModuleLinked(p); err != nil {
 		return err
@@ -267,9 +259,8 @@ func checkPlugin(p plugin.Plugin, modules map[string]yaml.Node) error {
 	return checkConfigRequired(p, modules)
 }
 
-// manifestClaims tracks, across one admission pass, which plugin already
-// claimed each manifest-listed agent/workflow name - the manifest-list era's
-// replacement for the old silent config merge.
+// manifestClaims tracks which plugin first claimed each manifest-listed agent/workflow name in one
+// admission pass.
 type manifestClaims struct {
 	agents    map[string]string
 	workflows map[string]string
@@ -338,9 +329,8 @@ func admitPlugins(ctx context.Context, reg pluginreg.FetchRegistry, rows []plugi
 	refusals := make(map[string]error)
 	out := make([]plugin.Plugin, 0, len(plugins))
 	claims := newManifestClaims()
-	// claims.claim resolves a name collision to whichever plugin reaches it
-	// first in plugins' order; every caller relies on pluginreg.OrderBySeed
-	// having already put every seed row ahead of REST-added ones.
+	// First plugin wins a name collision; callers rely on pluginreg.OrderBySeed putting seed rows ahead
+	// of REST-added ones.
 	for _, p := range plugins {
 		plugin.WarnUnlistedManifestEntries(p)
 		if err := admitOnePlugin(p, modules, claims); err != nil {
@@ -372,9 +362,8 @@ func persistPluginRefusal(ctx context.Context, reg pluginreg.FetchRegistry, rows
 	}
 }
 
-// pluginSpawnCaps is the sandbox bound an MCP server subprocess runs under -
-// the same mode and exec path every other quack child gets, with the jail's
-// home so TMPDIR lands inside a granted directory.
+// pluginSpawnCaps: MCP subprocesses get the same sandbox mode and exec path as every quack child,
+// with the jail's home so TMPDIR lands inside a granted directory.
 func pluginSpawnCaps(cfg *config.Config, jail *workspace.Jail) (workspace.Caps, error) {
 	sandbox, err := workspace.ResolveSandbox(workspace.SandboxMode(cfg.Workspace.Sandbox))
 	if err != nil {
@@ -401,12 +390,8 @@ func mcpCommand(p plugin.Plugin, s plugin.MCPServer, dataRoot string, caps works
 		return nil, err
 	}
 
-	// WorkRoot pins the writable grant to PLUGIN_DATA. Without it
-	// landlockGrants falls back to cwd, and since landlock UNIONS per-path
-	// rules a root appearing in both lists would stay writable - a server
-	// able to rewrite the skills/ that reach agent prompts. cwd is inside
-	// data (see MCPServer.Launch) so the root is never re-added as an
-	// outside-cwd grant either.
+	// Pin the writable grant to PLUGIN_DATA: landlock unions per-path rules, so falling back to cwd could
+	// leave the plugin root (skills that reach prompts) writable.
 	caps.WorkRoot = data
 	wrapped := workspace.WrapArgv(cwd, argv, caps, []string{p.Root}, []string{data})
 	cmd := exec.Command(wrapped[0], wrapped[1:]...)
@@ -423,9 +408,8 @@ func mcpCommand(p plugin.Plugin, s plugin.MCPServer, dataRoot string, caps works
 	return cmd, nil
 }
 
-// bootToolCtx satisfies agent.ReadonlyContext for the one call that needs it: quack selects tools
-// per node BY NAME (extToolsByName), so an MCP server's tools have to be enumerated when it spawns,
-// before any invocation exists. Every accessor is zero-valued; the real agent.Context arrives at call time.
+// bootToolCtx lets an MCP server's tools be listed at spawn, before any invocation exists (tools are
+// selected per node by name). Accessors are zero-valued; the real agent.Context arrives at call time.
 type bootToolCtx struct{ context.Context }
 
 func (bootToolCtx) UserContent() *genai.Content          { return nil }

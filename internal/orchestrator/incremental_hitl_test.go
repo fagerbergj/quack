@@ -1,9 +1,4 @@
-// incremental_hitl_test.go: BLOCKING 1 (#slice3 review) - a node paused
-// mid-incremental-step (dag.Executor.RunPlanStep, its own dedicated
-// dag.PlanStepSessionID session) must still be answerable through the
-// normal StartNode entrypoint (Chat.tsx's Answer button), not just
-// cancellable. Proves the real pause -> StartNode -> ResumePlanStep path,
-// end to end through the orchestrator.
+// A node paused mid-incremental-step must be answerable through StartNode, end to end.
 package orchestrator
 
 import (
@@ -33,9 +28,7 @@ type askHITLResult struct {
 	Status string `json:"status"`
 }
 
-// newHITLAskTool mirrors dag's own newAskTool (internal/dag/hitl_test.go) -
-// the gate watches for this call by name and pauses the node; built here
-// too since a cross-package test helper import isn't worth it for one tool.
+// newHITLAskTool mirrors dag's newAskTool: the gate pauses the node on this call by name.
 func newHITLAskTool(t *testing.T) tool.Tool {
 	t.Helper()
 	tl, err := functiontool.New[askHITLArgs, askHITLResult](
@@ -50,9 +43,8 @@ func newHITLAskTool(t *testing.T) tool.Tool {
 	return tl
 }
 
-// hitlOrchStub plays the orchestrator (create_plan(asker) -> auto-execute,
-// via the embedded orchStub's own routing) AND the asker worker itself: asks
-// a question, then answers once its prompt shows the user's reply.
+// hitlOrchStub plays the orchestrator and the asker worker: it asks, then answers once its
+// prompt shows the user's reply.
 type hitlOrchStub struct {
 	orchStub
 	sawAnswer string
@@ -79,9 +71,7 @@ func (s *hitlOrchStub) GenerateContent(ctx context.Context, req *model.LLMReques
 	}
 }
 
-// askerPlanCall authors a single-assignment, delivering plan for the asker -
-// delivery is declared so a successful resume finalizes, proving the whole
-// round trip, not just that the node itself finishes.
+// askerPlanCall declares delivery so a successful resume finalizes, proving the round trip.
 func askerPlanCall() *model.LLMResponse {
 	return stubCall("create_plan", map[string]any{
 		"assignments": []any{map[string]any{"agent": "asker", "task": "ask the direction"}},
@@ -106,18 +96,13 @@ func newHITLTestOrch(t *testing.T, stub model.LLM, askTool tool.Tool) *Orchestra
 		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "asker", Description: "asks the user things"}}, nil, nil)
 	o := New(sessions, stub, func(context.Context) string { return "You are the orchestrator." }, planner, ex, nil, nil, nil)
-	// A real dag_plan record store, shared across Run() and StartNode() calls -
-	// without it each falls back to its OWN ephemeral in-memory service and
-	// StartNode can never see what Run() wrote (needed for this test's resume).
+	// Shared record store: otherwise StartNode can't see what Run() wrote.
 	o.SetArtifacts(artifact.InMemoryService())
 	return o
 }
 
-// TestOrchestrator_NodePausedMidStep_StartNodeResumesAndFinishes is BLOCKING
-// 1's proof: step 1 dispatches the asker through the REAL RunPlanStep, it
-// pauses on a question (its own dedicated plan-step session, not the chat
-// one), and StartNode's answer resumes and finishes it - the plan's declared
-// delivery then finalizes, proving the dag_plan record was updated too.
+// The asker pauses in its own plan-step session; StartNode's answer resumes and finishes it,
+// and the declared delivery finalizes from the updated record.
 func TestOrchestrator_NodePausedMidStep_StartNodeResumesAndFinishes(t *testing.T) {
 	stub := &hitlOrchStub{orchStub: orchStub{replies: []*model.LLMResponse{askerPlanCall()}}}
 	o := newHITLTestOrch(t, stub, newHITLAskTool(t))
@@ -167,14 +152,8 @@ func TestOrchestrator_NodePausedMidStep_StartNodeResumesAndFinishes(t *testing.T
 	}
 }
 
-// failingHITLOrchStub is hitlOrchStub except every worker round after the
-// initial question comes back empty - the gate's own continuation loop and
-// writer-recovery fallback (internal/vetting/node.go) both run out on empty
-// text too, so the node ends in ErrNodeEmpty, same as any other failed node.
-// Keyed on "asked" rather than prompt content: the continuation and
-// writer-recovery prompts don't carry the same "they answered" marker the
-// post-resume prompt does, so a content match only reproduces a second
-// pause, not the failure this test needs.
+// failingHITLOrchStub returns empty text on every round after the question, so the node ends
+// in ErrNodeEmpty. Keyed on "asked": recovery prompts lack the post-resume marker.
 type failingHITLOrchStub struct {
 	orchStub
 	asked bool
@@ -194,11 +173,8 @@ func (s *failingHITLOrchStub) GenerateContent(ctx context.Context, req *model.LL
 	}
 }
 
-// TestOrchestrator_ResumedNodeFails_ReportsFailedAndDoesNotFinalize pins the
-// shared-guard fix (#slice3 review): a resumed node that finishes with empty
-// output is exactly as failed as a freshly-run one - it must not be
-// silently marked done, and a plan whose delivery depended on it must not
-// finalize on the failure.
+// A resumed node with empty output fails like a fresh one: not marked done, and its
+// dependent delivery must not finalize.
 func TestOrchestrator_ResumedNodeFails_ReportsFailedAndDoesNotFinalize(t *testing.T) {
 	stub := &failingHITLOrchStub{orchStub: orchStub{replies: []*model.LLMResponse{askerPlanCall()}}}
 	o := newHITLTestOrch(t, stub, newHITLAskTool(t))
@@ -232,11 +208,8 @@ func TestOrchestrator_ResumedNodeFails_ReportsFailedAndDoesNotFinalize(t *testin
 	}
 }
 
-// stubSystemInstruction reads req's system instruction text - unlike the
-// user content (stubUserText), which can carry shared plan/task context a
-// sibling node's prompt also echoes, each worker's OWN Instruction
-// (llmagent.Config) is unique to its agent, so it's the reliable way to
-// tell which of two DIFFERENT agents' workers this call is for.
+// stubSystemInstruction reads the system instruction, which is unique per agent unlike the
+// user content a sibling's prompt can echo.
 func stubSystemInstruction(req *model.LLMRequest) string {
 	if req.Config == nil || req.Config.SystemInstruction == nil {
 		return ""
@@ -250,12 +223,8 @@ func stubSystemInstruction(req *model.LLMRequest) string {
 	return b.String()
 }
 
-// bcHitlStub plays the orchestrator (a 2-node create_plan: asker -> closer,
-// closer depends_on asker) AND both workers - asker asks then answers,
-// closer (the terminal, delivering node) just answers once it sees the
-// dependency handoff. Routed on the system instruction (ROLE:asker vs
-// ROLE:closer, each llmagent's own), not task text - a node's prompt can
-// echo shared plan context another node's task text also appears in.
+// bcHitlStub plays the orchestrator (asker -> closer) and both workers, routed on each
+// agent's system instruction rather than echoable task text.
 type bcHitlStub struct {
 	orchStub
 	sawAnswer string
@@ -287,12 +256,8 @@ func (s *bcHitlStub) GenerateContent(ctx context.Context, req *model.LLMRequest,
 	}
 }
 
-// askerCloserPlanCall authors the natural shape (#slice3 second review): both
-// assignments and delivery in ONE create_plan call, closer depends_on the
-// sibling hired in this same call (its 0-based index, per create_plan's own
-// depends_on contract - see createplan.go). The single execute() call this
-// triggers dispatches both in one run set; asker pauses first, and closer -
-// downstream in a later topo layer - must be left not-yet-run, not failed.
+// askerCloserPlanCall hires asker and closer (depends_on asker) with delivery in one
+// create_plan; asker pauses first, and closer must be left not-yet-run, not failed.
 func askerCloserPlanCall() *model.LLMResponse {
 	return stubCall("create_plan", map[string]any{
 		"assignments": []any{
@@ -335,15 +300,8 @@ func newBCHitlTestOrch(t *testing.T, stub model.LLM, askTool tool.Tool) *Orchest
 	return o
 }
 
-// TestOrchestrator_ResumeDrivesUnblockedDependent_BThenCDelivers is the
-// reviewer's [IMPORTANT] finding (#slice3 review, orchestrator.go ~1111),
-// extended to the natural shape the SECOND review demanded: one create_plan
-// call hires both asker and closer (closer depends_on asker) with delivery
-// already declared, and one execute() call dispatches both together. asker
-// pauses first; closer sits in a later topo layer and must come out of that
-// SAME execute() call not-yet-run (never "failed" - the second review's
-// blocking regression), then the resume completes asker, drives closer, and
-// delivers on ITS output.
+// One execute dispatches asker and closer; asker pauses, closer stays not-yet-run, then the
+// resume completes asker, drives closer, and delivers its output.
 func TestOrchestrator_ResumeDrivesUnblockedDependent_BThenCDelivers(t *testing.T) {
 	stub := &bcHitlStub{orchStub: orchStub{replies: []*model.LLMResponse{askerCloserPlanCall()}}}
 	o := newBCHitlTestOrch(t, stub, newHITLAskTool(t))
@@ -356,9 +314,7 @@ func TestOrchestrator_ResumeDrivesUnblockedDependent_BThenCDelivers(t *testing.T
 		t.Fatalf("turn 1: node_needs_input events = %d, want 1; events=%v", got, evs)
 	}
 
-	// closer-1 must come out of turn 1's own execute() call not-yet-run: it
-	// never started (asker paused first, in an earlier topo layer), so it
-	// must NOT be marked failed or minted a task_id (#slice3 second review).
+	// closer-1 never started (asker paused first), so it must not be failed or minted a task_id.
 	rec1, _, ok, err := dag.LoadDagPlanRecord(context.Background(), o.artifacts, artifactref.AppName, "u", "chat")
 	if err != nil || !ok {
 		t.Fatalf("LoadDagPlanRecord after turn 1: ok=%v err=%v", ok, err)
@@ -389,9 +345,7 @@ func TestOrchestrator_ResumeDrivesUnblockedDependent_BThenCDelivers(t *testing.T
 	if stub.sawAnswer != "north" {
 		t.Errorf("asker never received the answer (saw %q)", stub.sawAnswer)
 	}
-	// Both B (asker) and C (closer) must finish within this SAME resume turn -
-	// the whole point of driving now-unblocked dependents after the paused
-	// node completes.
+	// Both nodes must finish within this same resume turn.
 	doneIDs := map[string]bool{}
 	for _, ev := range resumeEvs {
 		if d, ok := ev.Data.(stream.NodeDoneData); ok {

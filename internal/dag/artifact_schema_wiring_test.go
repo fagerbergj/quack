@@ -1,20 +1,15 @@
-// artifact_schema_wiring_test.go: buildGateNodes must stamp cfg.Schemas
-// unconditionally, in the same lines as cfg.Artifacts/User/Ledger, so an
-// agent with no per-agent gate config (gated: false, or gates disabled
-// altogether - cfgFor returning the zero vetting.Config either way) still
-// gets its writes checked (B2).
+// buildGateNodes must stamp cfg.Schemas unconditionally so an ungated agent's
+// writes are still schema-checked.
 package dag_test
 
 import (
 	"context"
 	"encoding/json"
-	"iter"
 	"testing"
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
 	"google.golang.org/adk/v2/artifact"
-	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
@@ -25,22 +20,6 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
-
-// proseStub answers with plain prose (no tool call, no JSON) on every call -
-// the gate's own fallback save (saveDocumentRound) is what tries to store it
-// under the node's declared artifact kind.
-type proseStub struct{}
-
-func (proseStub) Name() string { return "proseStub" }
-
-func (proseStub) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		yield(&model.LLMResponse{
-			Content:      &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: "plain prose, not json at all"}}},
-			FinishReason: genai.FinishReasonStop, TurnComplete: true,
-		}, nil)
-	}
-}
 
 func ungatedNameRequiredSchema(t *testing.T, kind string) *artifactschema.Registry {
 	t.Helper()
@@ -53,17 +32,12 @@ func ungatedNameRequiredSchema(t *testing.T, kind string) *artifactschema.Regist
 	return reg
 }
 
-// TestBuildGateNodes_SchemasArmedForUngatedAgent: cfgFor returns the ZERO
-// vetting.Config (no Threshold/JudgeRounds/DeterministicRounds - exactly what
-// an agent with gated:false, or gates disabled entirely, gets from
-// resolveGateCfg/gateCfgs.boot). With SetSchemas armed on the Executor, the
-// node's declared "document" kind still has its registered schema enforced:
-// the gate's fallback save of plain prose must be refused and fall back to
-// text:<node>, never landing under the document id as-is.
+// A zero vetting.Config (gates disabled) still enforces the node's
+// "document" schema: prose falls back to text:<node>, never lands under the document id.
 func TestBuildGateNodes_SchemasArmedForUngatedAgent(t *testing.T) {
 	svc := artifact.InMemoryService()
 	worker, err := llmagent.New(llmagent.Config{
-		Name: "w", Model: proseStub{}, Description: "w", Instruction: "ROLE:w Just answer.",
+		Name: "w", Model: textLLM("plain prose, not json at all"), Description: "w", Instruction: "ROLE:w Just answer.",
 	})
 	if err != nil {
 		t.Fatalf("llmagent.New: %v", err)

@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"google.golang.org/adk/v2/model"
+
+	"github.com/fagerbergj/quack/internal/memoryrules"
 )
 
 // daysAgo formats an RFC3339 UTC timestamp n days before now, matching
@@ -14,9 +16,7 @@ func daysAgo(n int) string {
 	return time.Now().UTC().Add(-time.Duration(n) * 24 * time.Hour).Format(time.RFC3339)
 }
 
-// TestFieldsFor_DaysSinceMintedFallback pins the legacy-row fallback chain (MintedAt -> ValidFrom
-// -> Timestamp): a consolidator reword re-stamps Timestamp to now on every UPDATE, so a legacy
-// row's age must come from ValidFrom (preserved across UPDATE) when both are present.
+// An UPDATE re-stamps Timestamp, so a legacy row's age falls back MintedAt -> ValidFrom -> Timestamp.
 func TestFieldsFor_DaysSinceMintedFallback(t *testing.T) {
 	p := scored{MintedAt: "", ValidFrom: daysAgo(300), Timestamp: daysAgo(0)}
 	f := fieldsFor(p, time.Now().UTC())
@@ -25,9 +25,8 @@ func TestFieldsFor_DaysSinceMintedFallback(t *testing.T) {
 	}
 }
 
-// TestForgetSweep_DefaultRules seeds one memory per default rule (epic #1456 P2's usage-based
-// set) plus one that matches none, and proves a dry run reports without mutating while a real
-// sweep applies the same matches - invalidate, demote, and keep all included.
+// One memory per default rule plus one matching none: a dry run reports without mutating, and a real
+// sweep applies the same matches.
 func TestForgetSweep_DefaultRules(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
 		ctx := context.Background()
@@ -75,8 +74,8 @@ func TestForgetSweep_DefaultRules(t *testing.T) {
 				t.Errorf("rule %d matched = %d, want %d", r.Index, r.Matched, wantMatched[r.Index])
 			}
 		}
-		if report.Rules[3].Then != ThenDemote {
-			t.Errorf("rule 3 then = %q, want %q", report.Rules[3].Then, ThenDemote)
+		if report.Rules[3].Then != memoryrules.ThenDemote {
+			t.Errorf("rule 3 then = %q, want %q", report.Rules[3].Then, memoryrules.ThenDemote)
 		}
 
 		// Dry run must not mutate anything.
@@ -89,9 +88,9 @@ func TestForgetSweep_DefaultRules(t *testing.T) {
 			t.Fatalf("real sweep: %v", err)
 		}
 		assertStatus(t, s, neverRecalledID, string(StatusInvalidated))
-		assertReason(t, s, neverRecalledID, ReasonNeverRecalled)
+		assertReason(t, s, neverRecalledID, memoryrules.ReasonNeverRecalled)
 		assertStatus(t, s, recalledNoSupportID, string(StatusInvalidated))
-		assertReason(t, s, recalledNoSupportID, ReasonRecalledWithoutSupport)
+		assertReason(t, s, recalledNoSupportID, memoryrules.ReasonRecalledWithoutSupport)
 		assertStatus(t, s, badScoreID, string(StatusInvalidated))
 		assertStatus(t, s, supportDecayedID, string(StatusReinforced)) // demote never invalidates
 		assertTier(t, s, supportDecayedID, TierUnverified)
@@ -99,24 +98,21 @@ func TestForgetSweep_DefaultRules(t *testing.T) {
 		assertTier(t, s, keptVerifiedID, TierVerified)
 		assertStatus(t, s, untouchedID, string(StatusUnverified)) // untouched
 
-		// Idempotent: invalidated points are excluded from the next sweep's currently-valid
-		// page, and the demoted point no longer matches its own rule (tier is now unverified),
-		// so a second run changes nothing.
+		// Idempotent: invalidated points leave the valid page and the demoted point no longer matches its rule.
 		report2, err := s.ForgetSweep(ctx, false)
 		if err != nil {
 			t.Fatalf("second sweep: %v", err)
 		}
 		for _, r := range report2.Rules {
-			if r.Matched != 0 && r.Then != ThenKeep {
+			if r.Matched != 0 && r.Then != memoryrules.ThenKeep {
 				t.Errorf("second sweep rule %d matched %d, want 0 (idempotent)", r.Index, r.Matched)
 			}
 		}
 	})
 }
 
-// TestForgetSweep_Demote covers demote end to end on both backends: tier flips, status/score
-// stay untouched, one memory_ops row lands, and a second sweep neither re-demotes the now-
-// unverified point nor invalidates it as "never recalled" (rule 0's supported==0 guard).
+// Demote flips the tier only, writes one memory_ops row, and a second sweep neither re-demotes nor
+// invalidates the now-unverified point (rule 0's supported==0 guard).
 func TestForgetSweep_Demote(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
 		ctx := context.Background()
@@ -161,9 +157,7 @@ func TestForgetSweep_Demote(t *testing.T) {
 	})
 }
 
-// TestDemoteTier_NoOpOnUnverified drives the index's demoteTier and Store.demoteByRule directly
-// against an already-unverified point - the sweep's own rule shape never routes an unverified row
-// to demoteTier, so a rule-engine-driven test can't exercise this guard on both backends.
+// The sweep's rules never route an unverified row to demoteTier, so this guard is driven directly.
 func TestDemoteTier_NoOpOnUnverified(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
 		ctx := context.Background()
@@ -175,7 +169,7 @@ func TestDemoteTier_NoOpOnUnverified(t *testing.T) {
 		seedMemory(t, s, point{ID: id, Content: "c", Scope: "repo:r", Author: "a", Timestamp: "t",
 			MintedAt: daysAgo(5), ValidFrom: "t", Status: string(StatusUnverified), Tier: TierUnverified})
 
-		touched, err := s.idx.demoteTier(ctx, []string{id})
+		touched, err := s.demoteTier(ctx, []string{id})
 		if err != nil {
 			t.Fatalf("demoteTier: %v", err)
 		}
@@ -272,33 +266,8 @@ func TestForgetSweep_OpsLog(t *testing.T) {
 	}
 }
 
-// TestForgetSweep_CustomRules exercises SetForgettingRules end-to-end,
-// including rejecting a bad rule at wiring time.
-func TestForgetSweep_CustomRules(t *testing.T) {
-	s := newSQLiteStore(t, "task", nil)
-	if err := s.SetForgettingRules([]Rule{{When: "recalls == 0", Then: ThenInvalidate}}); err != nil {
-		t.Fatalf("SetForgettingRules: %v", err)
-	}
-	seedMemory(t, s, point{ID: "never-recalled", Content: "c", Scope: "repo:r", Author: "a",
-		Timestamp: "t", MintedAt: daysAgo(1), ValidFrom: "t", Status: string(StatusUnverified)})
-
-	report, err := s.ForgetSweep(context.Background(), false)
-	if err != nil {
-		t.Fatalf("sweep: %v", err)
-	}
-	if report.Rules[0].Matched != 1 {
-		t.Errorf("custom rule matched = %d, want 1", report.Rules[0].Matched)
-	}
-	assertStatus(t, s, "never-recalled", string(StatusInvalidated))
-
-	if err := s.SetForgettingRules([]Rule{{When: "bogus_field == 1", Then: ThenInvalidate}}); err == nil {
-		t.Error("expected SetForgettingRules to reject an unknown field")
-	}
-}
-
-// TestSweepOnce_ForgetThenRetain covers epic #1255 P3 verification (f): the forgetting step
-// invalidates a stale memory, then retentionOnce hard-removes it once its (backdated)
-// invalidation would be past the window - proving forgetOnce runs before retentionOnce in sweepOnce, not just each in isolation.
+// forgetOnce invalidates a stale memory, then retentionOnce removes it once past the window: proves the
+// order inside sweepOnce, not just each step alone.
 func TestSweepOnce_ForgetThenRetain(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
 		ctx := context.Background()

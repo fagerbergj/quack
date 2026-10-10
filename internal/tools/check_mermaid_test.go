@@ -14,9 +14,8 @@ type checkMermaidToolCtx struct{ *fakeCtx }
 
 func (checkMermaidToolCtx) ToolConfirmation() *toolconfirmation.ToolConfirmation { return nil }
 
-// requireNode provisions the SAME scripts/node_modules as vetting's
-// requireMermaidValidator (via vetting.EnsureMermaidValidatorDeps), so the two
-// packages' parallel test binaries don't race independent `npm ci` runs in the same directory.
+// requireNode provisions the same scripts/node_modules as vetting's requireMermaidValidator, so the two
+// packages' parallel test binaries don't race independent `npm ci` runs in one directory.
 func requireNode(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("node"); err != nil {

@@ -16,9 +16,8 @@ type eventSpec struct {
 	usage   *genai.GenerateContentResponseUsageMetadata
 }
 
-// Thinking deltas arrive one per streamed token - raw, that's a DB row per
-// token. Coalesce into batches flushed on whichever limit hits first; the
-// flush check only runs when the next update arrives (acp.go's select loop isn't ours to add a ticker to), so a round that ends mid-batch with no further updates drops the trailing partial thought.
+// Thinking deltas arrive per token; coalesce into batches flushed on whichever limit hits first. The check
+// only runs on the next update, so a round ending mid-batch with no further updates drops the partial thought.
 const (
 	thinkFlushElapsed = 1500 * time.Millisecond
 	thinkFlushBytes   = 750
@@ -166,9 +165,8 @@ func (t *translator) flushThought() (eventSpec, bool) {
 	return eventSpec{partial: true, parts: []*genai.Part{{Text: txt, Thought: true}}}, true
 }
 
-// finalSpec is the round's durable answer event: the agent message text
-// accumulated since the last tool call (what RunNode[string] returns via the
-// node Output) - earlier narration was reset away at each ToolCall dispatch.
+// finalSpec is the round's durable answer event: agent message text since the last tool call
+// (what RunNode[string] returns); earlier narration is reset at each ToolCall.
 func finalSpec(t *translator) eventSpec {
 	return eventSpec{parts: []*genai.Part{{Text: t.answer.String()}}, usage: t.usage}
 }
@@ -177,9 +175,8 @@ func terminalStatus(s sdk.ToolCallStatus) bool {
 	return s == sdk.ToolCallStatusCompleted || s == sdk.ToolCallStatusFailed
 }
 
-// pairSpec builds the durable call+response event for one finished tool call.
-// Parts are ordered call-then-response so the ledger's pairing scan works
-// within the single event.
+// pairSpec builds the durable call+response event for one finished tool call, ordered call-then-response
+// so the ledger's pairing scan works within the single event.
 func (t *translator) pairSpec(id, name string, args map[string]any, p pendingTool, failed bool, rawOutput any) eventSpec {
 	resp := t.toolResponse(name, p, failed, rawOutput)
 	return eventSpec{parts: []*genai.Part{
@@ -188,14 +185,12 @@ func (t *translator) pairSpec(id, name string, args map[string]any, p pendingToo
 	}}
 }
 
-// mcpMetaKey is the _meta key an ACP agent bridging quack's own MCP tools
-// (pi-acp) sets to carry the tool's real, unprefixed name - ACP's ToolKind
-// enum has no slot for "this is one of quack's own tools" (#1278).
+// mcpMetaKey is the _meta key a bridging agent (pi-acp) sets to the tool's real unprefixed name;
+// ACP's ToolKind enum has no slot for quack's own tools.
 const mcpMetaKey = "quack_mcp_tool"
 
-// mcpIdentity resolves an ACP tool call back to the real quack MCP tool name.
-// pi-acp sets _meta[mcpMetaKey] directly; an agent that can't touch _meta
-// (e.g. gemini-cli) still registers the tool as "<mcpServerName>_<tool>" and surfaces that as its title, so stripping the prefix there works too.
+// mcpIdentity resolves an ACP tool call to the real quack MCP tool name: _meta[mcpMetaKey] when set (pi-acp),
+// else the "<mcpServerName>_<tool>" title prefix agents like gemini-cli surface.
 func mcpIdentity(meta map[string]any, title string) (string, bool) {
 	if v, _ := meta[mcpMetaKey].(string); v != "" {
 		return v, true
@@ -282,8 +277,7 @@ func (t *translator) mapSearch(p pendingTool, in map[string]any) (string, map[st
 	return "grep", args
 }
 
-// mapGeneric: a genuinely unknown kind (a third-party tool ACP has no enum slot for,
-// including the literal "other") is named after its title, never "other" (#959).
+// mapGeneric: an unknown kind (including the literal "other") is named after its title, never "other".
 func (t *translator) mapGeneric(p pendingTool) (string, map[string]any) {
 	name := string(p.kind)
 	useTitle := name == "" || p.kind == sdk.ToolKindOther
@@ -370,9 +364,8 @@ func (t *translator) firstPath(p pendingTool) string {
 	return ""
 }
 
-// rel converts the agent's ABSOLUTE path (ACP mandates absolute paths) to a
-// node-relative one. A path outside the node dir is kept verbatim - the jail
-// resolve downstream refuses it, which is the right failure.
+// rel converts the agent's absolute path to a node-relative one. A path outside the node dir is kept
+// verbatim; the jail resolve downstream refuses it, which is the right failure.
 func (t *translator) rel(p string) string {
 	if t.cwd == "" || !filepath.IsAbs(p) {
 		return p
@@ -435,9 +428,10 @@ func blockText(b sdk.ContentBlock) string {
 	return ""
 }
 
+// bound cuts s to at most n bytes on a rune boundary, marking the cut.
 func bound(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n] + "…[truncated]"
+	return strings.ToValidUTF8(s[:n], "") + "…[truncated]"
 }

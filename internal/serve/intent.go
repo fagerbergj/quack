@@ -8,9 +8,8 @@ import (
 	"google.golang.org/genai"
 )
 
-// classifyWithModel is one free-text model round trip: prompt in, the model's raw text out. Backs
-// Host.Classify, bound to the SAME judge model the trust gate already runs (gates.judge) -
-// co-resident with the workers, so classification costs no model swap.
+// classifyWithModel backs Host.Classify on the trust gate's judge model, which is co-resident with the
+// workers, so classification costs no model swap.
 func classifyWithModel(ctx context.Context, m model.LLM, prompt string) (string, error) {
 	req := &model.LLMRequest{
 		Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: prompt}}}},

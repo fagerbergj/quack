@@ -11,7 +11,6 @@ import (
 	"github.com/fagerbergj/quack/internal/auth"
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/server"
-	"github.com/fagerbergj/quack/internal/server/adkdebug"
 	"github.com/fagerbergj/quack/internal/server/rest"
 )
 
@@ -46,9 +45,8 @@ func TestRouterHealthAlwaysPublic(t *testing.T) {
 	}
 }
 
-// TestRouterHealthNonGetNeverReaches200Unauthenticated is the composed-stack
-// companion to TestRequireAuthExceptHealthMethodRestricted (package server):
-// with only GET registered for /health, a non-GET request never reaches an authenticated 200 without credentials - chi's own method-not-allowed handling covers it, but this pins the observable contract regardless of which layer produces the rejection.
+// TestRouterHealthNonGetNeverReaches200Unauthenticated: through the composed router, a non-GET /health
+// without credentials never gets a 200, whichever layer rejects it.
 func TestRouterHealthNonGetNeverReaches200Unauthenticated(t *testing.T) {
 	a, err := auth.New(&config.InboundAuthConfig{
 		TrustedHeaders: &config.TrustedHeadersConfig{User: "X-authentik-username"},
@@ -125,53 +123,6 @@ func TestRouterMCPOpenWhenAuthUnconfigured(t *testing.T) {
 	}
 }
 
-func TestRouterADKDebugGatedWhenAuthConfigured(t *testing.T) {
-	a, err := auth.New(&config.InboundAuthConfig{
-		TrustedHeaders: &config.TrustedHeadersConfig{User: "X-authentik-username"},
-	})
-	if err != nil {
-		t.Fatalf("auth.New: %v", err)
-	}
-	h := server.New(server.Options{
-		REST:     &rest.Handler{},
-		Auth:     a,
-		ADKDebug: stubHandler("adkdebug"),
-	})
-
-	tests := []struct {
-		name     string
-		header   string
-		wantCode int
-	}{
-		{name: "no identity -> unauthorized", wantCode: http.StatusUnauthorized},
-		{name: "trusted header -> reaches adkdebug", header: "jason", wantCode: http.StatusOK},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, adkdebug.MountPath+"/api/list-apps", nil)
-			if tt.header != "" {
-				req.Header.Set("X-authentik-username", tt.header)
-			}
-			rec := httptest.NewRecorder()
-			h.ServeHTTP(rec, req)
-			if rec.Code != tt.wantCode {
-				t.Errorf("status = %d, want %d", rec.Code, tt.wantCode)
-			}
-		})
-	}
-}
-
-func TestRouterADKDebugAbsentByDefault(t *testing.T) {
-	h := server.New(server.Options{REST: &rest.Handler{}})
-
-	req := httptest.NewRequest(http.MethodGet, adkdebug.MountPath+"/api/list-apps", nil)
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	if rec.Code == http.StatusOK {
-		t.Errorf("ADKDebug unset (default) should not be reachable, got 200")
-	}
-}
-
 // TestRouterMountsSDKExtensionAtBareName pins the route shape Jason asked
 // for: an SDK extension mounts at its bare name, not a shared /ext/ prefix.
 func TestRouterMountsSDKExtensionAtBareName(t *testing.T) {
@@ -200,9 +151,8 @@ func TestRouterMountsSDKExtensionAtBareName(t *testing.T) {
 	}
 }
 
-// TestRouterServesStaticSPAAssetVerbatim pins the split spaHandler relies
-// on: a real file under the embedded dist (e.g. frontend/public's
-// assets/ext/v1/kit.css, copied through verbatim by Vite) is served as itself, not swallowed by the index.html client-route fallback.
+// TestRouterServesStaticSPAAssetVerbatim: a real file in the embedded dist (assets/ext/v1/kit.css)
+// is served as itself, not swallowed by the index.html fallback.
 func TestRouterServesStaticSPAAssetVerbatim(t *testing.T) {
 	spa := fstest.MapFS{
 		"index.html":                 &fstest.MapFile{Data: []byte("<html>spa</html>")},
@@ -223,7 +173,7 @@ func TestRouterServesStaticSPAAssetVerbatim(t *testing.T) {
 	if ct := rec.Header().Get("Content-Type"); ct != "text/css; charset=utf-8" {
 		t.Errorf("Content-Type = %q, want text/css", ct)
 	}
-	// kit.css is a verbatim public/ file, not a Vite-hashed asset (#859): revalidate every load.
+	// kit.css is a verbatim public/ file, not a Vite-hashed asset: revalidate every load.
 	if cc := rec.Header().Get("Cache-Control"); cc != "no-cache" {
 		t.Errorf("kit.css Cache-Control = %q, want no-cache", cc)
 	}

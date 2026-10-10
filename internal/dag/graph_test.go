@@ -9,9 +9,8 @@ import (
 	"google.golang.org/genai"
 )
 
-// stubG is a deterministic model.LLM routing by agent role (system-instruction
-// marker) and by the presence of the judge's submit_verdict tool. Researchers
-// return distinct findings; the judge always passes; the synthesizer echoes the prompt it received - so a passing test proves both researcher outputs reached the synthesizer via JoinNode fan-in + buildTask assembly keyed by node ID.
+// stubG routes by agent role and the judge's submit_verdict tool; the synthesizer echoes its
+// prompt, so a pass proves both researcher outputs reached it via JoinNode + buildTask.
 type stubG struct{}
 
 func (stubG) Name() string { return "stubG" }
@@ -97,5 +96,27 @@ func gCall(name string, args map[string]any) *model.LLMResponse {
 		}}},
 		FinishReason: genai.FinishReasonStop,
 		TurnComplete: true,
+	}
+}
+
+// fnLLM is a func-backed model.LLM: each call yields the one response fn returns.
+type fnLLM func(context.Context, *model.LLMRequest) *model.LLMResponse
+
+func (fnLLM) Name() string { return "fnLLM" }
+
+func (f fnLLM) GenerateContent(ctx context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) { yield(f(ctx, req), nil) }
+}
+
+// fixedLLM answers every worker call with reply (after wait, if non-nil) and passes every judge round.
+func fixedLLM(reply string, wait <-chan struct{}) fnLLM {
+	return func(_ context.Context, req *model.LLMRequest) *model.LLMResponse {
+		if gHasTool(req, "submit_verdict") {
+			return gCall("submit_verdict", map[string]any{"score": 0.9, "feedback": ""})
+		}
+		if wait != nil {
+			<-wait
+		}
+		return gText(reply)
 	}
 }

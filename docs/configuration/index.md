@@ -1,6 +1,6 @@
 # Configuration
 
-Everything structural in quack — models, thresholds, budgets, stores, agent bindings — is declarative YAML, kept out of the code so it can change without a rebuild. Secrets never live in the file: any value that looks like a token, key, or DSN is written as an `${ENV_VAR}` reference and interpolated at load time (`internal/config.Load`). A `token`, `private_key`, or `webhook_secret` written as a literal instead of `${VAR}` is a hard startup error, not a silent leak.
+Everything structural in quack — models, thresholds, budgets, stores, agent bindings — is declarative YAML, kept out of the code so it can change without a rebuild. Secrets never live in the file: any value that looks like a token, key, or DSN is written as an `${ENV_VAR}` reference and interpolated at load time (`internal/config`). A `token`, `private_key`, or `webhook_secret` written as a literal instead of `${VAR}` is a hard startup error, not a silent leak.
 
 The shipped config lives at `config/quack.yaml`; the schema and defaults are in `internal/config/config.go`.
 
@@ -43,7 +43,7 @@ Each section gets its own page below:
 - **[Trust gate](trust-gate.md)** — deterministic checks, the independent judge, rubrics.
 - **[Stores](stores.md)** — postgres, qdrant, and the named-store registry.
 - **[Auth](auth.md)** — inbound OIDC and the gateway's trusted headers.
-- **[Workspace](workspace/index.md)** — the filesystem jail, the OS sandbox, and the guard ladder.
+- **[Workspace](workspace/index.md)** — the filesystem jail and the OS sandbox.
   - **[Toolchains](workspace/toolchains.md)** — supplying Java/Android, Go, or any toolchain the image does not ship.
 - **[Deployment shapes](deployment.md)** — three full worked examples ([`examples/`](examples/)): fully local, Docker stack, remote full-featured.
 - **[Decision points](decisions.md)** — intercept points answered by System One decision models: handlers, modes, recording.

@@ -13,8 +13,7 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// resumeTestPlan seeds a one-node plan naming a TERMINAL (done) node id, the
-// shape a reuse assignment produces, plus the dag_node record it resumes.
+// resumeTestPlan seeds a one-node plan naming a done node id, plus the dag_node record it resumes.
 func resumeTestPlan(t *testing.T) (*recordstore.Client, *PlanCache) {
 	t.Helper()
 	dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
@@ -28,13 +27,13 @@ func resumeTestPlan(t *testing.T) (*recordstore.Client, *PlanCache) {
 	return c, NewPlanCache()
 }
 
-// TestExecuteTool_ResumesTerminalNode: an assignment naming an already-done
-// node id must reach the assembled plan with ResumedFrom set to that node's
-// stored context id - the seed for graph.go's AdvisorTask.ACPSessionID.
+// An assignment naming a done node id gets ResumedFrom = that node's stored context id, which seeds
+// graph.go's AdvisorTask.ACPSessionID.
 func TestExecuteTool_ResumesTerminalNode(t *testing.T) {
 	c, cache := resumeTestPlan(t)
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
-	tl, err := NewExecuteTool(planner, c, cache, nil, nil, nil, nil, "keep going", nil, nil, nil, "", nil, false, "orchestrator", nil)
+	var got dag.Plan
+	tl, err := NewExecuteTool(planner, c, cache, nil, capturePlan(&got), nil, nil, "keep going", nil, nil, nil, "", nil, false, "orchestrator", nil)
 	if err != nil {
 		t.Fatalf("NewExecuteTool: %v", err)
 	}
@@ -42,20 +41,13 @@ func TestExecuteTool_ResumesTerminalNode(t *testing.T) {
 	if _, err := rt.Run(newExecToolCtx(), map[string]any{"plan_id": "p1"}); err != nil {
 		t.Fatalf("execute Run: %v", err)
 	}
-	got, ok := cache.Get("p1")
-	if !ok {
-		t.Fatal("plan not found in cache")
-	}
 	if len(got.Nodes) != 1 || got.Nodes[0].ResumedFrom != "prior-acp-session" {
 		t.Fatalf("plan.Nodes = %+v, want impl-1 with ResumedFrom=prior-acp-session", got.Nodes)
 	}
 }
 
-// TestExecuteTool_ResumesFailedNodeWithRealSession: an ACP node that failed
-// AFTER establishing a real transport session (Started=true, ContextID =
-// the real session, not the mint-time placeholder) is still reused,
-// threading that real id into ResumedFrom for graph.go to seed as
-// session/load's target - not a doomed guess.
+// An ACP node that failed after establishing a real session (Started=true) is still reused, threading that
+// real id into ResumedFrom as session/load's target.
 func TestExecuteTool_ResumesFailedNodeWithRealSession(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
 	rec := dag.DagPlanRecord{
@@ -67,7 +59,8 @@ func TestExecuteTool_ResumesFailedNodeWithRealSession(t *testing.T) {
 	})
 	cache := NewPlanCache()
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
-	tl, err := NewExecuteTool(planner, c, cache, nil, nil, nil, nil, "keep going", nil, nil, nil, "", nil, false, "orchestrator", nil)
+	var got dag.Plan
+	tl, err := NewExecuteTool(planner, c, cache, nil, capturePlan(&got), nil, nil, "keep going", nil, nil, nil, "", nil, false, "orchestrator", nil)
 	if err != nil {
 		t.Fatalf("NewExecuteTool: %v", err)
 	}
@@ -75,18 +68,12 @@ func TestExecuteTool_ResumesFailedNodeWithRealSession(t *testing.T) {
 	if _, err := rt.Run(newExecToolCtx(), map[string]any{"plan_id": "p1"}); err != nil {
 		t.Fatalf("execute Run: %v", err)
 	}
-	got, ok := cache.Get("p1")
-	if !ok {
-		t.Fatal("plan not found in cache")
-	}
 	if len(got.Nodes) != 1 || got.Nodes[0].ResumedFrom != "acp-real-session-on-failure" {
 		t.Fatalf("plan.Nodes = %+v, want impl-1 resumed with the real session id", got.Nodes)
 	}
 }
 
-// TestExecuteTool_NeverStartedFailedNodeIsNotResumed: a node that failed
-// before ever running (Started=false) has no real session - execute must
-// never thread its leftover mint-time placeholder into ResumedFrom.
+// A node that failed before running (Started=false) has only a mint-time placeholder, never a ResumedFrom.
 func TestExecuteTool_NeverStartedFailedNodeIsNotResumed(t *testing.T) {
 	dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
 	rec := dag.DagPlanRecord{
@@ -98,7 +85,8 @@ func TestExecuteTool_NeverStartedFailedNodeIsNotResumed(t *testing.T) {
 	})
 	cache := NewPlanCache()
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
-	tl, err := NewExecuteTool(planner, c, cache, nil, nil, nil, nil, "keep going", nil, nil, nil, "", nil, false, "orchestrator", nil)
+	var got dag.Plan
+	tl, err := NewExecuteTool(planner, c, cache, nil, capturePlan(&got), nil, nil, "keep going", nil, nil, nil, "", nil, false, "orchestrator", nil)
 	if err != nil {
 		t.Fatalf("NewExecuteTool: %v", err)
 	}
@@ -106,18 +94,12 @@ func TestExecuteTool_NeverStartedFailedNodeIsNotResumed(t *testing.T) {
 	if _, err := rt.Run(newExecToolCtx(), map[string]any{"plan_id": "p1"}); err != nil {
 		t.Fatalf("execute Run: %v", err)
 	}
-	got, ok := cache.Get("p1")
-	if !ok {
-		t.Fatal("plan not found in cache")
-	}
 	if len(got.Nodes) != 1 || got.Nodes[0].ResumedFrom != "" {
 		t.Fatalf("plan.Nodes = %+v, want impl-1 NOT resumed (never started)", got.Nodes)
 	}
 }
 
-// TestExecuteTool_FreshnessCheckClearsStaleResume: a freshness check that
-// reports stale must run the same node id on a brand-new session instead -
-// ResumedFrom must NOT reach the assembled plan.
+// A stale freshness check runs the same node id on a brand-new session: no ResumedFrom.
 func TestExecuteTool_FreshnessCheckClearsStaleResume(t *testing.T) {
 	c, cache := resumeTestPlan(t)
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
@@ -126,7 +108,8 @@ func TestExecuteTool_FreshnessCheckClearsStaleResume(t *testing.T) {
 		sawNodeID = a.NodeID
 		return false, "branch moved past the node's cloned base_sha"
 	})
-	tl, err := NewExecuteTool(planner, c, cache, nil, nil, nil, nil, "keep going", nil, nil, nil, "", nil, false, "orchestrator", freshness)
+	var got dag.Plan
+	tl, err := NewExecuteTool(planner, c, cache, nil, capturePlan(&got), nil, nil, "keep going", nil, nil, nil, "", nil, false, "orchestrator", freshness)
 	if err != nil {
 		t.Fatalf("NewExecuteTool: %v", err)
 	}
@@ -137,18 +120,11 @@ func TestExecuteTool_FreshnessCheckClearsStaleResume(t *testing.T) {
 	if sawNodeID != "impl-1" {
 		t.Fatalf("freshness check never consulted for impl-1 (saw %q)", sawNodeID)
 	}
-	got, ok := cache.Get("p1")
-	if !ok {
-		t.Fatal("plan not found in cache")
-	}
 	if len(got.Nodes) != 1 || got.Nodes[0].ResumedFrom != "" {
 		t.Fatalf("plan.Nodes = %+v, want ResumedFrom cleared once freshnessCheck reports stale", got.Nodes)
 	}
 }
 
-// TestExecuteTool_StampsTaskIDAndRunningStatus: execute must record a
-// task_id per dispatched assignment and advance the plan record's status
-// past "planned".
 func TestExecuteTool_StampsTaskIDAndRunningStatus(t *testing.T) {
 	c, cache := resumeTestPlan(t)
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
@@ -177,9 +153,7 @@ func TestExecuteTool_StampsTaskIDAndRunningStatus(t *testing.T) {
 	}
 }
 
-// TestExecuteTool_RejectionSavesAnchoredJudgeRound: a plan-judge rejection
-// must both fail the tool call AND persist a judge_round record anchored to
-// the authoring lineage node id, so the artifact panel shows it.
+// A plan-judge rejection fails the call and persists a judge_round anchored to the authoring node id.
 func TestExecuteTool_RejectionSavesAnchoredJudgeRound(t *testing.T) {
 	rejectingJudge := vetting.PlanJudge(func(_ context.Context, _, _, _ string) (bool, string, error) {
 		return false, "the plan skips required review", nil
@@ -208,9 +182,8 @@ func TestExecuteTool_RejectionSavesAnchoredJudgeRound(t *testing.T) {
 	if len(summaries) != 1 {
 		t.Fatalf("judge_round records = %d, want exactly 1 for the rejection", len(summaries))
 	}
-	// The hint-derived id ("<turn>-<node>-<round>") embeds the anchor node id
-	// directly - lineage.NodeID round-trips only through a metaSaver-capable
-	// artifact.Service, which the in-memory test double here isn't.
+	// The hint-derived id embeds the anchor node id; lineage.NodeID needs a metaSaver-capable service,
+	// which the in-memory double is not.
 	if !strings.Contains(summaries[0].ID, "-orchestrator-0") {
 		t.Errorf("judge_round id = %q, want it anchored to the authoring lineage id %q", summaries[0].ID, "orchestrator")
 	}

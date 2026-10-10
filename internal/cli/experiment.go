@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fagerbergj/quack/internal/langfuse/langfusegen"
+	"github.com/fagerbergj/quack/internal/langfuse"
 	"github.com/fagerbergj/quack/internal/ledger/bundle"
 	"github.com/fagerbergj/quack/internal/store"
 )
@@ -40,16 +40,15 @@ type experimentItemInput struct {
 	Task string `json:"task"`
 }
 
-// itemRunner executes one dataset item's task against an agent, returning its answer and the
-// node's real OTel trace id. Split out of RunExperiment so the loop/summary/run-item-reporting
-// can be unit tested against a stub, without booting serve.InProcessFromConfig.
+// itemRunner runs one item's task and returns the answer and the node's OTel trace id;
+// it's the seam that lets RunExperiment be tested without booting serve.
 type itemRunner interface {
 	RunItem(ctx context.Context, task string) (answer, traceID string, err error)
 }
 
 // RunExperiment runs opts.Agent's node against every item in opts.Dataset outside any live
 // GitHub event, via runner (see itemRunner), reporting each as a Langfuse dataset run item.
-func RunExperiment(ctx context.Context, errOut io.Writer, runner itemRunner, lf *langfusegen.ClientWithResponses, opts ExperimentOpts) ([]ExperimentResult, error) {
+func RunExperiment(ctx context.Context, errOut io.Writer, runner itemRunner, lf *langfuse.Client, opts ExperimentOpts) ([]ExperimentResult, error) {
 	items, err := listDatasetItems(ctx, lf, opts.Dataset, opts.Limit)
 	if err != nil {
 		return nil, err
@@ -70,56 +69,49 @@ func RunExperiment(ctx context.Context, errOut io.Writer, runner itemRunner, lf 
 	return results, nil
 }
 
-// listDatasetItems pages through dataset's items (params.Page, 1-based) until a page
-// comes back empty or past meta.TotalPages, stopping early once limit items are
-// collected. limit <= 0 means no cap - every item in the dataset.
-func listDatasetItems(ctx context.Context, lf *langfusegen.ClientWithResponses, dataset string, limit int) ([]langfusegen.DatasetItem, error) {
-	var out []langfusegen.DatasetItem
+// listDatasetItems pages until an empty or last page, stopping at limit (<= 0 means no cap).
+func listDatasetItems(ctx context.Context, lf *langfuse.Client, dataset string, limit int) ([]langfuse.DatasetItem, error) {
+	var out []langfuse.DatasetItem
 	for page := 1; ; page++ {
-		p := page
-		params := &langfusegen.DatasetItemsListParams{DatasetName: &dataset, Page: &p}
-		resp, err := lf.DatasetItemsListWithResponse(ctx, params)
+		items, totalPages, err := lf.ListDatasetItems(ctx, dataset, page)
 		if err != nil {
 			return nil, fmt.Errorf("experiment run: list dataset %q items: %w", dataset, err)
 		}
-		if resp.JSON200 == nil {
-			return nil, fmt.Errorf("experiment run: list dataset %q items: %s", dataset, resp.Status())
-		}
-		if len(resp.JSON200.Data) == 0 {
+		if len(items) == 0 {
 			break
 		}
-		out = append(out, resp.JSON200.Data...)
+		out = append(out, items...)
 		if limit > 0 && len(out) >= limit {
 			return out[:limit], nil
 		}
-		if page >= resp.JSON200.Meta.TotalPages {
+		if page >= totalPages {
 			break
 		}
 	}
 	return out, nil
 }
 
-func runExperimentItem(ctx context.Context, runner itemRunner, lf *langfusegen.ClientWithResponses, item langfusegen.DatasetItem, opts ExperimentOpts) (ExperimentResult, error) {
+func runExperimentItem(ctx context.Context, runner itemRunner, lf *langfuse.Client, item langfuse.DatasetItem, opts ExperimentOpts) (ExperimentResult, error) {
 	task, err := itemTask(item)
 	if err != nil {
-		return ExperimentResult{}, fmt.Errorf("experiment run: item %s: %w", item.Id, err)
+		return ExperimentResult{}, fmt.Errorf("experiment run: item %s: %w", item.ID, err)
 	}
 	start := time.Now()
 	_, traceID, err := runner.RunItem(ctx, task)
 	duration := time.Since(start)
 	if err != nil {
-		return ExperimentResult{ItemID: item.Id, TraceID: traceID, Prompt: opts.Prompt, Duration: duration, Error: err.Error()}, nil
+		return ExperimentResult{ItemID: item.ID, TraceID: traceID, Prompt: opts.Prompt, Duration: duration, Error: err.Error()}, nil
 	}
 	if traceID == "" {
-		return ExperimentResult{ItemID: item.Id, Prompt: opts.Prompt, Duration: duration, Error: "no trace id recorded for the node run"}, nil
+		return ExperimentResult{ItemID: item.ID, Prompt: opts.Prompt, Duration: duration, Error: "no trace id recorded for the node run"}, nil
 	}
-	if err := recordRunItem(ctx, lf, opts, item.Id, traceID); err != nil {
+	if err := recordRunItem(ctx, lf, opts, item.ID, traceID); err != nil {
 		return ExperimentResult{}, err
 	}
-	return ExperimentResult{ItemID: item.Id, TraceID: traceID, Prompt: opts.Prompt, Duration: duration}, nil
+	return ExperimentResult{ItemID: item.ID, TraceID: traceID, Prompt: opts.Prompt, Duration: duration}, nil
 }
 
-func itemTask(item langfusegen.DatasetItem) (string, error) {
+func itemTask(item langfuse.DatasetItem) (string, error) {
 	b, err := json.Marshal(item.Input)
 	if err != nil {
 		return "", err
@@ -129,35 +121,26 @@ func itemTask(item langfusegen.DatasetItem) (string, error) {
 		return "", err
 	}
 	if in.Task == "" {
-		return "", fmt.Errorf("item %s: input has no task field", item.Id)
+		return "", fmt.Errorf("item %s: input has no task field", item.ID)
 	}
 	return in.Task, nil
 }
 
-// recordRunItem's description names the run's prompt/agent once (RunDescription is
-// run-level and idempotent, unlike Metadata - openapi.yml:11282). The answer itself
-// isn't repeated here; it already lives on the trace RunItem reported.
-func recordRunItem(ctx context.Context, lf *langfusegen.ClientWithResponses, opts ExperimentOpts, itemID, traceID string) error {
+// recordRunItem puts prompt/agent in RunDescription, which is run-level and idempotent
+// (unlike Metadata); the answer already lives on the trace.
+func recordRunItem(ctx context.Context, lf *langfuse.Client, opts ExperimentOpts, itemID, traceID string) error {
 	desc := fmt.Sprintf("prompt=%s agent=%s", opts.Prompt, opts.Agent)
-	req := langfusegen.CreateDatasetRunItemRequest{
-		DatasetItemId:  itemID,
-		RunName:        opts.RunName,
-		TraceId:        &traceID,
-		RunDescription: &desc,
+	req := langfuse.CreateDatasetRunItemRequest{
+		DatasetItemID: itemID, RunName: opts.RunName, TraceID: traceID, RunDescription: desc,
 	}
-	resp, err := lf.DatasetRunItemsCreateWithResponse(ctx, req)
-	if err != nil {
+	if err := lf.CreateDatasetRunItem(ctx, req); err != nil {
 		return fmt.Errorf("experiment run: item %s: create run item: %w", itemID, err)
-	}
-	if resp.JSON200 == nil {
-		return fmt.Errorf("experiment run: item %s: create run item: %s", itemID, resp.Status())
 	}
 	return nil
 }
 
-// LiveItemRunner is the itemRunner `quack experiment run` actually drives: a fresh chat
-// against an in-process duck (Base), with the real trace id read back from Store's DagNode
-// row for Agent's node (dag_nodes.trace_id - stamped by the node-start ledger write).
+// LiveItemRunner runs each item as a fresh chat against Base and reads the trace id
+// back from Agent's dag_nodes row.
 type LiveItemRunner struct {
 	Base  string
 	Store *store.Store

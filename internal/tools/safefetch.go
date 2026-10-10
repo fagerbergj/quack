@@ -12,11 +12,11 @@ import (
 	"github.com/fagerbergj/quack/internal/httpx"
 )
 
-// SSRF protection: ValidateURL rejects blocked schemes/addresses; GuardedClient re-checks at dial time (defeats DNS rebinding).
+// SSRF: ValidateURL rejects blocked schemes/addresses; GuardedClient re-checks at dial time (DNS rebinding).
 
 const maxRedirects = 10
 
-// ValidateURL: parses and validates URL, rejects non-http(s) and blocked literal IPs.
+// ValidateURL rejects non-http(s) and blocked literal IPs.
 func ValidateURL(raw string) (*url.URL, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -35,7 +35,7 @@ func ValidateURL(raw string) (*url.URL, error) {
 	return u, nil
 }
 
-// blockedIP: reports whether ip is in a blocked range (loopback, private, link-local, CGNAT, etc).
+// blockedIP: loopback, private, link-local, CGNAT and metadata ranges.
 func blockedIP(ip net.IP) bool {
 	if ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() ||
 		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() {

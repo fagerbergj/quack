@@ -6,9 +6,7 @@ import (
 	"testing"
 )
 
-// TestSQLiteIndex exercises the brute-force backend directly (the shared Store
-// tests use an all-equal fakeEmbedder, which can't show ranking): real cosine
-// ordering, UPDATE-overwrites-in-place, DELETE, and scope isolation.
+// TestSQLiteIndex hits the backend directly because the shared tests' all-equal fakeEmbedder can't show ranking.
 func TestSQLiteIndex(t *testing.T) {
 	ctx := context.Background()
 	s := newSQLiteStore(t, "task", nil) // s.idx is a *sqliteIndex

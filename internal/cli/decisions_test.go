@@ -155,12 +155,11 @@ func TestExportDecisions(t *testing.T) {
 	var calls []lfCall
 	srv := fakeDecisionLangfuse(t, &calls)
 	defer srv.Close()
-	lf := newTestGenClient(t, srv)
-	ing := langfuse.New(srv.URL, "pk", "sk", langfuse.WithHTTPClient(srv.Client()))
+	lf := newTestClient(t, srv)
 	recs := fixture()
 	recs[0].At = time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 
-	sums, err := ExportDecisions(context.Background(), lf, ing, "0.62.0", recs)
+	sums, err := ExportDecisions(context.Background(), lf, "0.62.0", recs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,10 +241,9 @@ func TestExportDecisionsRunsDeduped(t *testing.T) {
 	var calls []lfCall
 	srv := fakeDecisionLangfuse(t, &calls)
 	defer srv.Close()
-	ing := langfuse.New(srv.URL, "pk", "sk", langfuse.WithHTTPClient(srv.Client()))
 	recs := fixture()
 	recs[2].Handler = "old" // a handler change inside the window: plan.accept has 4 items, 2 runs
-	sums, err := ExportDecisions(context.Background(), newTestGenClient(t, srv), ing, "v", recs)
+	sums, err := ExportDecisions(context.Background(), newTestClient(t, srv), "v", recs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,8 +262,7 @@ func TestExportDecisionsIdempotentIDs(t *testing.T) {
 	run := func(calls *[]lfCall) {
 		srv := fakeDecisionLangfuse(t, calls)
 		defer srv.Close()
-		ing := langfuse.New(srv.URL, "pk", "sk", langfuse.WithHTTPClient(srv.Client()))
-		if _, err := ExportDecisions(context.Background(), newTestGenClient(t, srv), ing, "v", fixture()); err != nil {
+		if _, err := ExportDecisions(context.Background(), newTestClient(t, srv), "v", fixture()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -289,8 +286,7 @@ func TestIngestReportsEventErrors(t *testing.T) {
 		_, _ = w.Write([]byte(`{"successes":[],"errors":[{"id":"e1","status":400,"message":"bad"}]}`))
 	}))
 	defer srv.Close()
-	ing := langfuse.New(srv.URL, "pk", "sk", langfuse.WithHTTPClient(srv.Client()))
-	if err := ing.Ingest(context.Background(), []langfuse.IngestEvent{{ID: "e1"}}); err == nil || !strings.Contains(err.Error(), "bad") {
+	if err := newTestClient(t, srv).Ingest(context.Background(), []langfuse.IngestEvent{{ID: "e1"}}); err == nil || !strings.Contains(err.Error(), "bad") {
 		t.Errorf("err = %v", err)
 	}
 }
@@ -353,9 +349,8 @@ func TestRunDecisionsExport(t *testing.T) {
 	var calls []lfCall
 	lfSrv := fakeDecisionLangfuse(t, &calls)
 	defer lfSrv.Close()
-	ing := langfuse.New(lfSrv.URL, "pk", "sk", langfuse.WithHTTPClient(lfSrv.Client()))
 	var out bytes.Buffer
-	if err := RunDecisionsExport(context.Background(), &out, srv.URL, DecisionFilter{}, newTestGenClient(t, lfSrv), ing); err != nil {
+	if err := RunDecisionsExport(context.Background(), &out, srv.URL, DecisionFilter{}, newTestClient(t, lfSrv)); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(q, "with_state=true") || !strings.Contains(out.String(), "decisions/plan.accept: 4 item(s), runs clef@1.2.3") {

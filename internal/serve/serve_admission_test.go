@@ -6,9 +6,8 @@ import (
 	"github.com/fagerbergj/quack/internal/config"
 )
 
-// An orchestrator with no declared context_window must not make kv a
-// scheduling dimension: reserving the model's whole budget (#1067) would let
-// one turn block every worker node on that model.
+// An orchestrator with no declared context_window must not make kv a scheduling dimension:
+// reserving the model's whole budget would let one turn block every worker on that model.
 func TestOrchestratorSpecOmitsKVWhenNoContextWindow(t *testing.T) {
 	cfg := &config.Config{
 		Orchestrator: config.OrchestratorConfig{Model: "m"},

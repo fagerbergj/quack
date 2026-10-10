@@ -1,21 +1,17 @@
-// Package bundledir resolves agent bundles and skills from files in cwd, falling back to the
-// embedded copies, so an installed binary works from any directory (a fresh project's `quack
-// init` → `server run` needs its own agents). Disk preference picks up repo dev edits without a rebuild.
+// Package bundledir reads agent bundles and skills from cwd, falling back to the embedded copies, so an
+// installed binary works anywhere while repo edits apply without a rebuild.
 package bundledir
 
 import (
 	"io/fs"
 	"maps"
 	"os"
-	"path"
 	"slices"
 
 	root "github.com/fagerbergj/quack"
 )
 
-// embedded is the agents/ + skills/ tree baked in at the repo root (see
-// embed.go). Disk-in-cwd is tried first for live repo edits; this is the
-// fallback that makes an installed binary work from any directory.
+// embedded is the agents/ + skills/ tree baked in at the repo root (embed.go), the fallback after disk.
 var embedded = root.Embedded
 
 // ReadFile resolves name (e.g. "agents/orchestrator/agent-card.json") from disk
@@ -27,9 +23,8 @@ func ReadFile(name string) ([]byte, error) {
 	return embedded.ReadFile(name)
 }
 
-// SubFS returns an fs.FS rooted at subdir (e.g. "skills"), disk in cwd first,
-// then the embedded subtree. A missing subtree yields an empty fs.FS that
-// errors on every open (the caller self-disables).
+// SubFS returns an fs.FS rooted at subdir, disk first, then embedded. A missing subtree yields an fs.FS
+// that errors on every open (the caller self-disables).
 func SubFS(subdir string) fs.FS {
 	if _, err := os.Stat(subdir); err == nil {
 		if sub, err := fs.Sub(os.DirFS("."), subdir); err == nil {
@@ -43,9 +38,8 @@ func SubFS(subdir string) fs.FS {
 	return sub
 }
 
-// UnionDirNames lists dir under subdir from BOTH disk and the embedded copy,
-// deduped and sorted. SubFS prefers disk wholesale, so a partial bind-mount of
-// agents/ would otherwise silently hide every shipped entry it does not cover.
+// UnionDirNames lists dir under subdir from both disk and embedded, deduped and sorted: SubFS prefers disk
+// wholesale, so a partial bind-mount would hide shipped entries.
 func UnionDirNames(subdir, dir string) []string {
 	seen := map[string]bool{}
 	read := func(fsys fs.FS) {
@@ -69,7 +63,3 @@ func UnionDirNames(subdir, dir string) []string {
 type errFS struct{}
 
 func (errFS) Open(string) (fs.File, error) { return nil, fs.ErrNotExist }
-
-// PathJoin joins bundle-relative path elements with forward slashes (works for
-// both embed.FS and os.DirFS on every platform).
-func PathJoin(elems ...string) string { return path.Join(elems...) }

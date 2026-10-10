@@ -1,6 +1,5 @@
-// Package bundle reads a recorded ledger bundle (quack ledger export's ZIP,
-// or a bare entries.jsonl) back into a queryable Session - the shared read
-// path `quack eval`, `quack dataset export` and `quack experiment run` need.
+// Package bundle reads a recorded ledger bundle (export ZIP or bare entries.jsonl) back into a queryable
+// Session for `quack eval`, `quack dataset export` and `quack experiment run`.
 package bundle
 
 import (
@@ -18,9 +17,8 @@ import (
 	"github.com/fagerbergj/quack/internal/ledger"
 )
 
-// Load reads a bundle from path (ZIP from ledger.AssembleBundle or bare
-// entries.jsonl of ledger.Entry lines). Only ledger.LedgerVersion bundles
-// are supported; older OTel-attribute bundles are rejected by their manifest.
+// Load reads a bundle from path (ZIP or bare entries.jsonl). Only ledger.LedgerVersion bundles are
+// supported; older OTel-attribute bundles are rejected by their manifest.
 func Load(path string) (*Session, error) {
 	if strings.HasSuffix(path, ".zip") {
 		return loadZip(path)

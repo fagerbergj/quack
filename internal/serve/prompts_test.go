@@ -57,8 +57,8 @@ func TestSeedPromptArtifactsNilSource(t *testing.T) {
 	seedPromptArtifacts(context.Background(), nil)
 }
 
-// TestSeedPromptArtifactsPartialFailure proves one name's Seed error does not
-// block the others from seeding: the loop continues past a failed name (#1421 P2).
+// TestSeedPromptArtifactsPartialFailure: one name's Seed error doesn't
+// block the others; the loop continues past a failed name.
 func TestSeedPromptArtifactsPartialFailure(t *testing.T) {
 	names := artifactsrc.Names()
 	if len(names) < 2 {

@@ -8,9 +8,8 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// sseWriter writes Quack's event vocabulary as Server-Sent Events, flushing
-// after each so the client receives them incrementally. The framing
-// (`event: <name>\ndata: <json>\n\n`) is what the frontend's readAgentStream parses.
+// sseWriter writes quack's events as SSE (`event: <name>\ndata: <json>\n\n`), flushing after each
+// so the frontend's readAgentStream receives them incrementally.
 type sseWriter struct {
 	w       http.ResponseWriter
 	flusher http.Flusher
@@ -33,10 +32,8 @@ func newSSEWriter(w http.ResponseWriter) (*sseWriter, bool) {
 	return &sseWriter{w: w, flusher: flusher}, true
 }
 
-// sendID writes one event with its per-chat seq as the SSE id, so a reconnecting
-// subscriber resumes from the next event via the Last-Event-ID header. Used by
-// both the subscribe endpoint and the POST run's body stream (both go through
-// streamHub), so a client that falls back to reconnecting mid-POST can resume too.
+// sendID writes one event with its per-chat seq as the SSE id, so a reconnecting subscriber
+// (including one falling back mid-POST) resumes via Last-Event-ID.
 func (s *sseWriter) sendID(seq int64, ev stream.SSEEvent) error {
 	data, err := json.Marshal(ev.Data)
 	if err != nil {

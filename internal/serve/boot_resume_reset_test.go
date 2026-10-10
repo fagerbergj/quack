@@ -20,9 +20,8 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// TestStartResumedNodes_ResetsBeforeDispatch pins finding 5 for boot resume:
-// driveResume used to reset the durable event log from inside its own
-// goroutine (spawned by boundedGoRun), so a subscriber reaching the API before that goroutine actually ran could read the previous process's stale terminal event straight off the durable table. startResumedNodes must reset every resumable chat synchronously before dispatching any of them.
+// TestStartResumedNodes_ResetsBeforeDispatch: every resumable chat's durable event log is reset before
+// any dispatch, so an early subscriber can't read the previous process's stale terminal event.
 func TestStartResumedNodes_ResetsBeforeDispatch(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))

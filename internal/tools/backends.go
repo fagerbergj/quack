@@ -27,7 +27,6 @@ type Backend struct {
 	Key  string
 }
 
-// Backend kinds.
 const (
 	backendSearXNG  = "searxng"
 	backendExa      = "exa"
@@ -35,9 +34,7 @@ const (
 	backendCrawl4AI = "crawl4ai"
 )
 
-// newWebSearcher selects the web-search adapter for kind (default: searxng),
-// followed by any fallback the same config also names: keyed Exa falls back
-// to keyless Exa, and Exa to the SearXNG at base when one is set.
+// newWebSearcher (default searxng): keyed Exa falls back to keyless Exa, and Exa to SearXNG when base is set.
 func newWebSearcher(kind, base, key string, client *http.Client) (WebSearcher, error) {
 	if kind == "" {
 		kind = backendSearXNG
@@ -72,7 +69,6 @@ type searchBackend struct {
 	failing atomic.Bool
 }
 
-// fallbackSearcher tries each backend in order until one answers.
 type fallbackSearcher []*searchBackend
 
 func (f fallbackSearcher) Search(ctx context.Context, query string) ([]SearchResult, string, error) {
@@ -95,5 +91,3 @@ func (f fallbackSearcher) Search(ctx context.Context, query string) ([]SearchRes
 	}
 	return nil, "", errors.Join(errs...)
 }
-
-// web_fetch's adapter is selected by newFetcher in fetch.go.

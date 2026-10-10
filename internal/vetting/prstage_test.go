@@ -5,9 +5,8 @@ import (
 	"testing"
 )
 
-// TestAugmentFromPRStage_ToolStagedWins proves a stage_pr-staged PR (the
-// implementer authored it via the pr-authoring skill, resolved advisor token →
-// MemSecret → MemSession.PRStage) overrides augmentFromRepo's commit-subject fallback while keeping the branch the disk probe resolved.
+// A stage_pr-staged PR overrides augmentFromRepo's commit-subject fallback but keeps the branch the disk
+// probe resolved.
 func TestAugmentFromPRStage_ToolStagedWins(t *testing.T) {
 	secret, err := NewMemSecret()
 	if err != nil {
@@ -41,8 +40,7 @@ func TestAugmentFromPRStage_ToolStagedWins(t *testing.T) {
 	}
 }
 
-// TestAugmentFromPRStage_NoCallKeepsFallback proves that with no stage_pr call
-// the commit-subject fallback stands untouched.
+// With no stage_pr call the commit-subject fallback stands untouched.
 func TestAugmentFromPRStage_NoCallKeepsFallback(t *testing.T) {
 	secret, err := NewMemSecret()
 	if err != nil {
@@ -63,9 +61,8 @@ func TestAugmentFromPRStage_NoCallKeepsFallback(t *testing.T) {
 	}
 }
 
-// TestPRStage_SetPushTracksOmittedFields pins #724: stage_push's optional
-// title/body must reach the gate marked omitted, distinct from an empty
-// string the agent explicitly sent - the two must never read the same, since downstream delivery blanks the field for the latter but not the former.
+// stage_push's optional title/body must reach the gate marked omitted, distinct from an explicit empty string:
+// delivery blanks the field for the latter but not the former.
 func TestPRStage_SetPushTracksOmittedFields(t *testing.T) {
 	bare := &PRStage{}
 	bare.SetPush("", false, "", false)
@@ -89,9 +86,8 @@ func TestPRStage_SetPushTracksOmittedFields(t *testing.T) {
 	}
 }
 
-// TestAugmentFromPRStage_PreservesOmittedFlags proves a stage_push snapshot's
-// TitleOmitted/BodyOmitted survive the fold into workerActivity - delivery
-// reads them off act.stagedDelivery["pr"], not the PRStage directly.
+// TitleOmitted/BodyOmitted must survive the fold into workerActivity: delivery reads them off
+// act.stagedDelivery["pr"], not the PRStage.
 func TestAugmentFromPRStage_PreservesOmittedFlags(t *testing.T) {
 	secret, err := NewMemSecret()
 	if err != nil {

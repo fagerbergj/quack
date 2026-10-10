@@ -11,9 +11,7 @@ import (
 	"github.com/fagerbergj/quack/internal/recordstore"
 )
 
-// extReadFallbackTestKind is a Blob kind registered only for
-// TestReadExtInputArtifactKindFallback's table, distinct from any kind a
-// real agent bundle registers.
+// extReadFallbackTestKind is a Blob kind registered only for TestReadExtInputArtifactKindFallback.
 const extReadFallbackTestKind = "ext_read_fallback_test_kind"
 
 func init() {
@@ -24,8 +22,8 @@ func init() {
 	})
 }
 
-// TestWriteExtInputArtifactUnchangedNoNewRevision pins #1010's delta rule:
-// re-writing identical bytes for the same name must not mint a new revision.
+// TestWriteExtInputArtifactUnchangedNoNewRevision: re-writing identical bytes for the same name
+// must not mint a new revision.
 func TestWriteExtInputArtifactUnchangedNoNewRevision(t *testing.T) {
 	st, _, _, artifacts, _ := newExtTestStack(t)
 	write := writeExtInputArtifact(st, artifacts)
@@ -84,12 +82,8 @@ func TestWriteExtInputArtifactChangedNewRevision(t *testing.T) {
 	}
 }
 
-// TestReadArtifactNeedsBytesPrefix pins the cross-repo contract the docs
-// describe (PR #1110 review): the pinned github v0.8.1 manifest renders a
-// bare local name ("comments"), but read_artifact (internal/acp/memorymcp.go)
-// does an exact FileName match against what WriteArtifact actually stored -
-// "bytes:<name>". A worker must prefix the manifest's id before calling
-// read_artifact; the bare name alone does not resolve.
+// TestReadArtifactNeedsBytesPrefix: read_artifact matches the stored "bytes:<name>" exactly,
+// so a worker must prefix the manifest's bare name; the bare name alone doesn't resolve.
 func TestReadArtifactNeedsBytesPrefix(t *testing.T) {
 	st, _, _, artifacts, _ := newExtTestStack(t)
 	write := writeExtInputArtifact(st, artifacts)
@@ -112,9 +106,8 @@ func TestReadArtifactNeedsBytesPrefix(t *testing.T) {
 	}
 }
 
-// TestReadExtInputArtifactMissingReturnsNotFound pins the "no baseline" path
-// a first dispatch relies on: an artifact never written reads as ok=false,
-// not an error.
+// TestReadExtInputArtifactMissingReturnsNotFound: a never-written artifact reads as ok=false,
+// not an error (a first dispatch has no baseline).
 func TestReadExtInputArtifactMissingReturnsNotFound(t *testing.T) {
 	st, _, _, artifacts, _ := newExtTestStack(t)
 	read := readExtInputArtifact(st, artifacts)
@@ -125,12 +118,8 @@ func TestReadExtInputArtifactMissingReturnsNotFound(t *testing.T) {
 	}
 }
 
-// TestSaveExtAttachmentDoesNotCollideWithSameNamedInputArtifact pins #1208's
-// review finding: an attachment and a dispatch input artifact both save
-// under the "bytes" kind in the same chat session, so a naive save-by-bare-
-// name would let an attachment named e.g. "pull" silently overwrite the
-// extension's own "bytes:pull" input artifact (or vice versa).
-// attachmentHintPrefix ("upload-") is what keeps them apart.
+// TestSaveExtAttachmentDoesNotCollideWithSameNamedInputArtifact: attachments and dispatch inputs share
+// the "bytes" kind and session; attachmentHintPrefix keeps an upload named "pull" off "bytes:pull".
 func TestSaveExtAttachmentDoesNotCollideWithSameNamedInputArtifact(t *testing.T) {
 	st, _, _, artifacts, _ := newExtTestStack(t)
 	write := writeExtInputArtifact(st, artifacts)
@@ -169,10 +158,8 @@ func TestSaveExtAttachmentDoesNotCollideWithSameNamedInputArtifact(t *testing.T)
 	}
 }
 
-// TestReadExtInputArtifactKindFallback covers readExtInputArtifact's fallback
-// to the newest artifact of a Blob kind matching name, once no "bytes:<name>"
-// input exists - the path an extension UI relies on to read an agent's own
-// typed output artifact by job id.
+// TestReadExtInputArtifactKindFallback: with no "bytes:<name>" input, readExtInputArtifact falls back to
+// the newest artifact of a matching Blob kind (how an extension UI reads an agent's output by job id).
 func TestReadExtInputArtifactKindFallback(t *testing.T) {
 	const chatID = "github-acme-widgets-7"
 

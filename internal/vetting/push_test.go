@@ -72,9 +72,8 @@ func addBranchFixture(t *testing.T, bare, branch string) {
 	runGitT(t, seed, "push", "--quiet", "origin", branch)
 }
 
-// TestPushBranchRecoversFromSurvivingRemoteBranch pins #714: a branch left
-// over from a prior run on the same issue must not fail delivery outright -
-// PushBranch fetches it, rebases local work on top, and retries once.
+// TestPushBranchRecoversFromSurvivingRemoteBranch: a branch left from a prior run on the same issue
+// doesn't fail delivery; PushBranch fetches it, rebases local work on top, and retries once.
 func TestPushBranchRecoversFromSurvivingRemoteBranch(t *testing.T) {
 	checkPushRecovers(t, func(string) {})
 }
@@ -91,7 +90,7 @@ func TestConfinedPushBranchRecovers(t *testing.T) {
 	})
 }
 
-// checkPushRecovers runs the #714 recovery; confine runs once the fixtures exist, before PushBranch.
+// checkPushRecovers runs the recovery; confine runs once the fixtures exist, before PushBranch.
 func checkPushRecovers(t *testing.T, confine func(bare string)) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)
@@ -126,8 +125,7 @@ func checkPushRecovers(t *testing.T, confine func(bare string)) {
 	}
 }
 
-// TestPushBranchRebaseRecoveryFailureLeavesBranchAlone pins the other half of
-// #714: when recovery itself can't resolve, PushBranch gives up cleanly.
+// TestPushBranchRebaseRecoveryFailureLeavesBranchAlone: an unresolvable recovery gives up cleanly.
 func TestPushBranchRebaseRecoveryFailureLeavesBranchAlone(t *testing.T) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)
@@ -219,9 +217,8 @@ func (s stubCredentialSource) GitCredential(context.Context, string) (*GitCreden
 	return s.cred, s.err
 }
 
-// TestEnsurePushSkipsWhenNothingStagesAPush pins #452 at the new boundary:
-// a review/comment-only delivery must never attempt a push, even with a
-// real CloneDir and a working credential source.
+// TestEnsurePushSkipsWhenNothingStagesAPush: a review/comment-only delivery never pushes, even with
+// a real CloneDir and working credentials.
 func TestEnsurePushSkipsWhenNothingStagesAPush(t *testing.T) {
 	dc := DeliveryContext{
 		Branch:   "some-pr-branch",
@@ -237,9 +234,8 @@ func TestEnsurePushSkipsWhenNothingStagesAPush(t *testing.T) {
 	}
 }
 
-// TestEnsurePushRequiresCredentialsWhenPushDemanded pins the delivery-boundary
-// failure mode: a staged pull_request with no GitCredentials configured must
-// fail loudly, never silently skip the push.
+// TestEnsurePushRequiresCredentialsWhenPushDemanded: a staged pull_request with no GitCredentials
+// fails loudly, never silently skipping the push.
 func TestEnsurePushRequiresCredentialsWhenPushDemanded(t *testing.T) {
 	dc := DeliveryContext{
 		Branch:   "feature",

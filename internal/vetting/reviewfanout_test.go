@@ -12,9 +12,8 @@ import (
 	"google.golang.org/adk/v2/workflow"
 )
 
-// Multi-reviewer plan (#867): three reviewer nodes fan out; nothing may be
-// delivered until every one of them has gone terminal, and the eventual
-// delivery must be exactly one, worst-of verdict, with findings attributed.
+// Three reviewer nodes fan out; nothing is delivered until all are terminal, then exactly one
+// delivery with the worst-of verdict and attributed findings.
 func TestReviewFanout_DeliversOnceWorstOfWhenAllTerminal(t *testing.T) {
 	done := make(chan DeliveryContext, 1)
 	deliver := func(_ context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) {
@@ -104,8 +103,7 @@ func TestReviewFanout_AllApprovesDeliverApprove(t *testing.T) {
 	}
 }
 
-// Single-reviewer plan: cfg.ReviewFanout is nil, so commitDelivery must
-// behave exactly as it did before #867 - this pins the regression risk.
+// Single-reviewer plan: cfg.ReviewFanout is nil, so commitDelivery delivers per node as usual.
 func TestReviewFanout_SingleReviewerPlanUnchanged(t *testing.T) {
 	done := make(chan DeliveryContext, 1)
 	deliver := func(_ context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) {
@@ -155,9 +153,8 @@ func TestReviewStage_RefusesEarlyApproveAllowsEarlyRequestChanges(t *testing.T) 
 	}
 }
 
-// A reviewer node that errors or is cancelled must not block the run's
-// delivery forever (#867 sibling-failure policy: deliver what you have,
-// with a note - never silently swallow the surviving reviews, never hang).
+// A reviewer node that errors or is cancelled must not block delivery forever: deliver what's
+// there with a note, never hang or swallow the surviving reviews.
 func TestReviewFanout_FailedSiblingDoesNotBlockDelivery(t *testing.T) {
 	done := make(chan DeliveryContext, 1)
 	deliver := func(_ context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) {
@@ -193,8 +190,8 @@ func TestReviewFanout_FailedSiblingDoesNotBlockDelivery(t *testing.T) {
 	}
 }
 
-// #942: in a multi-reviewer fanout, a killed sibling's staged review must
-// reach the merge as real content, not just a "did not complete" note.
+// In a multi-reviewer fanout, a killed sibling's staged review reaches the merge as real
+// content, not just a "did not complete" note.
 func TestResolveAbortedReviewer_KilledSiblingStagedReviewReachesMerge(t *testing.T) {
 	done := make(chan DeliveryContext, 1)
 	deliver := func(_ context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) {
@@ -228,9 +225,8 @@ func TestResolveAbortedReviewer_KilledSiblingStagedReviewReachesMerge(t *testing
 	}
 }
 
-// #942: a single-reviewer plan (no ReviewFanout) whose round dies (killed,
-// timed out, errored) after quackmcp_stage_review already staged the full
-// verdict must deliver that staged review, flagged as abnormal - not discard it and not substitute anything else.
+// A solo reviewer whose round dies after stage_review staged a full verdict delivers that
+// staged review flagged as abnormal, rather than discarding or substituting it.
 func TestResolveAbortedReviewer_SoloReviewerDeliversStagedReviewInsteadOfDiscarding(t *testing.T) {
 	done := make(chan DeliveryContext, 1)
 	deliver := func(_ context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) {
@@ -260,9 +256,8 @@ func TestResolveAbortedReviewer_SoloReviewerDeliversStagedReviewInsteadOfDiscard
 	}
 }
 
-// #1118 regression: a solo reviewer's round that dies must still post the
-// staged review + abort note, not the stale code_review record left by a
-// prior round on the same chat (the artifact render would clobber both the note and the current staged verdict with old content).
+// A solo reviewer's dead round posts the staged review + abort note, not a stale code_review
+// record from a prior round on the same chat.
 func TestResolveAbortedReviewer_SoloReviewerNotClobberedByStaleArtifact(t *testing.T) {
 	cfg := Config{IsReviewer: true, ChatID: "ext:github:owner-repo-1118", User: "u1", Artifacts: artifact.InMemoryService()}
 	seedCodeReview(t, cfg, "approve", "STALE prior-round summary", nil)
@@ -312,9 +307,8 @@ func TestResolveAbortedReviewer_SoloReviewerNothingStagedDeliversNothing(t *test
 	}
 }
 
-// isReviewerPauseSentinel: both pause sentinels exclude a node from the
-// abort path; a real dead end (nil w/ no delivery, or a plain error) does
-// not.
+// isReviewerPauseSentinel: both pause sentinels exclude a node from the abort path; a real dead
+// end (nil with no delivery, or a plain error) does not.
 func TestIsReviewerPauseSentinel(t *testing.T) {
 	cases := []struct {
 		name string
@@ -334,9 +328,8 @@ func TestIsReviewerPauseSentinel(t *testing.T) {
 	}
 }
 
-// A reviewer node parked on a human question (workflow.ErrNodeInterrupted, ADK's HITL park sentinel, returned by pauseIfWorkerRaisedHITL) must NOT be
-// registered as a failed terminal - it isn't done yet. Nothing may deliver
-// while it's parked; once it resumes and stages its real verdict, the fan-in completes and that verdict is included, not discarded (#948 review finding).
+// A reviewer parked on a human question (workflow.ErrNodeInterrupted) isn't a failed terminal: nothing
+// delivers while it's parked, and its verdict joins the fan-in once it resumes and stages.
 func TestReviewFanout_ParkedReviewerNotCountedFailedThenResumesIntoDelivery(t *testing.T) {
 	done := make(chan DeliveryContext, 1)
 	deliver := func(_ context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) {
@@ -351,9 +344,8 @@ func TestReviewFanout_ParkedReviewerNotCountedFailedThenResumesIntoDelivery(t *t
 		stagedDelivery: map[string]StagedDelivery{"review": {Kind: "review", Event: "request_changes", Body: "found a bug"}},
 	}, GateResult{Passed: true})
 
-	// r2 parks on a human question - RunGatedRefine's defer sees
-	// workflow.ErrNodeInterrupted and, per isReviewerPauseSentinel, must NOT
-	// call resolveAbortedReviewer.
+	// r2 parks on a human question; per isReviewerPauseSentinel, RunGatedRefine's defer must
+	// NOT call resolveAbortedReviewer.
 	if !isReviewerPauseSentinel(workflow.ErrNodeInterrupted) {
 		t.Fatal("workflow.ErrNodeInterrupted must be treated as a pause, not a failure")
 	}
@@ -387,9 +379,8 @@ func TestReviewFanout_ParkedReviewerNotCountedFailedThenResumesIntoDelivery(t *t
 	}
 }
 
-// Review plan with a downstream synthesizer (the PR #965 incident): two reviewer nodes finish, but the plan's synthesizer node owns the final
-// consolidated review - nothing may go to GitHub until it finishes, and the
-// one delivery must carry the synthesizer's body, worst-of verdict, and the reviewers' attributed inline comments.
+// With a downstream synthesizer, nothing is delivered until it finishes; the one delivery carries the
+// synthesizer's body, the worst-of verdict, and the reviewers' attributed inline comments.
 func TestReviewFanout_SynthesizerOwnsDelivery(t *testing.T) {
 	done := make(chan DeliveryContext, 1)
 	deliver := func(_ context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) {
@@ -455,10 +446,8 @@ func TestReviewFanout_SynthesizerOwnsDelivery(t *testing.T) {
 	}
 }
 
-// A synthesizer that DOES answer in the structured VERDICT/TAKEAWAY tail
-// format must produce the exact same shape a single-node review does -
-// verdict line with counts, a Highlights table for its blocking finding,
-// no ad hoc "## Verdict:"/"### Scope:" headings of its own.
+// A synthesizer answering in the VERDICT/TAKEAWAY tail format renders the same fixed shape a
+// single-node review does, with no ad hoc "## Verdict:"/"### Scope:" headings.
 func TestReviewFanout_SynthesizerStructuredAnswerRendersFixedFormat(t *testing.T) {
 	done := make(chan DeliveryContext, 1)
 	deliver := func(_ context.Context, dc DeliveryContext) ([]DeliveryItemOutcome, error) {
@@ -537,8 +526,8 @@ func TestReviewFanout_SynthesizerAbortFallsBackToConcat(t *testing.T) {
 	}
 }
 
-// The #1148 refusal text must never read as an instruction to wait - that's
-// what drove both slice siblings into a sleep-poll loop against each other.
+// The refusal text must never read as an instruction to wait; that drove slice siblings
+// into a sleep-poll loop against each other.
 func TestReviewStage_RefusalDoesNotInviteWaiting(t *testing.T) {
 	fanout := freshFanout(t, 2)
 	stage := NewReviewStage(fanout)
@@ -554,9 +543,8 @@ func TestReviewStage_RefusalDoesNotInviteWaiting(t *testing.T) {
 	}
 }
 
-// A slice feeding a synthesizer (#1148) must be reported as non-delivering
-// so callers can withhold its verdict tools; a plan with no synthesizer,
-// or with every sibling terminal, must not be.
+// A slice feeding a synthesizer is non-delivering, so callers can withhold its verdict tools;
+// a plan with no synthesizer, or with every sibling terminal, is not.
 func TestReviewStage_IsNonDeliveringSlice(t *testing.T) {
 	fanout := freshFanout(t, 2)
 	fanout.ExpectSynthesis()

@@ -1,6 +1,5 @@
-// Package fold projects a chat's ledger.Entry stream into read models (V4 §4.9):
-// artifact revisions, node lifecycle, judge rounds - the ONE definition of the
-// aborted/later-entry-wins rule (recordstore.lastRevision duplicated it pre-#1101).
+// Package fold projects a chat's ledger.Entry stream into read models (artifact revisions, node lifecycle,
+// judge rounds): the one definition of the aborted/later-entry-wins rule.
 package fold
 
 import (
@@ -12,18 +11,15 @@ import (
 	"github.com/fagerbergj/quack/internal/ledger"
 )
 
-// pageSize bounds one page when the store supports paging (PGStore) -
-// ponytail: fixed size, no adaptive backoff. var, not const, so tests can
-// shrink it to exercise the multi-page path without 1000+ fixture rows.
+// pageSize bounds one page when the store supports paging. ponytail: fixed size, no adaptive backoff.
+// A var so tests can shrink it to exercise multi-page reads.
 var pageSize = 1000
 
 // judgeRoundKind is vetting's kindJudgeRound artifact kind name, duplicated
 // here (not imported) to keep fold dependency-free of vetting.
 const judgeRoundKind = "judge_round"
 
-// pagedReader is implemented by a LedgerStore that can page results
-// server-side (PGStore.ReadEntriesPage); a store without it is
-// read in one ReadEntries call.
+// pagedReader is a LedgerStore that pages server-side (PGStore); others are read in one ReadEntries call.
 type pagedReader interface {
 	ReadEntriesPage(ctx context.Context, chatID string, fromSeq int64, limit int) ([]ledger.Entry, error)
 }
@@ -77,25 +73,8 @@ func (a *Artifact) Latest() (ArtifactRevision, bool) {
 	return a.Revisions[len(a.Revisions)-1], true
 }
 
-// NodeState is one NODE's (not node+turn's) lifecycle, keyed by NodeID
-// alone - a turn is fresh per invocation (uuid.NewString() at
-// server/rest/handler.go, serve/extensions.go) while the WAL is per-chat
-// lifetime and node IDs are only unique within one plan, so the same node
-// ID legitimately recurs across turns; keying by turn would keep a stale
-// turn's state around forever, which rebuild (matching the live, per-run
-// table by node id + event name alone) could resurrect as a spurious row.
-// TurnID reflects the MOST RECENT entry only. Richer per-round fields
-// (tokens, output, model) never made it into the skinny node.* payload, so
-// this is a lossy reconstruction, not a byte-for-byte replay of the SSE
-// table's real events. StartedSeq and Terminal* are tracked INDEPENDENTLY
-// (each is its own "later entry wins" slot, same rule as an artifact
-// revision key) so a node that has already reached done/failed still
-// reports its node.started seq too - #1121: a rebuild must be able to
-// regenerate BOTH the node_start and node_done/failed rows, not just the
-// terminal one. A later node.started clears any earlier terminal (entries
-// arrive in seq order, so the terminal necessarily precedes a re-run's
-// start) - otherwise a completed run's node would still carry a PRIOR
-// turn's stale terminal status.
+// NodeState is keyed by NodeID alone (IDs recur across turns; per-turn keys let a rebuild resurrect stale rows).
+// StartedSeq and Terminal* are independent later-wins slots so a rebuild regenerates both start and end rows.
 type NodeState struct {
 	NodeID, TurnID string
 	StartedSeq     int64     // 0 = no node.started entry seen
@@ -106,8 +85,7 @@ type NodeState struct {
 	Round          int
 }
 
-// JudgeRound is one judge_round artifact.revision (#1144 P2: no dedicated
-// entry kind - the round IS the artifact write, folded like any other id).
+// JudgeRound is one judge_round artifact.revision: the round is the artifact write, folded like any other id.
 type JudgeRound struct {
 	ID             string
 	NodeID, TurnID string
@@ -115,15 +93,14 @@ type JudgeRound struct {
 	Seq            int64
 }
 
-// Result is one chat's ledger folded into its projections (V4 §4.9).
+// Result is one chat's ledger folded into its projections.
 type Result struct {
 	Artifacts   map[string]*Artifact  // by id (Entry.Key)
 	Nodes       map[string]*NodeState // by NodeID alone - see NodeState's doc for why not (node_id, turn_id)
 	JudgeRounds []JudgeRound          // seq order
 	LastSeq     int64
 
-	// MemoryRecalls/MemoryVotes (epic #1255 P1): by memory id. Pure counters -
-	// unlike artifacts, nothing retracts a recall or vote, so they accumulate
+	// MemoryRecalls/MemoryVotes are keyed by memory id. Nothing retracts a recall or vote, so they accumulate
 	// directly into Result rather than through the live/finalize rebuild.
 	MemoryRecalls map[string]*MemoryRecallState
 	MemoryVotes   map[string]*MemoryVoteState
@@ -142,15 +119,13 @@ type MemoryVoteState struct {
 	Upvotes       int
 	Downvotes     int
 	LastUpvotedAt time.Time
-	// humanVote is the LAST actor=human entry's direction ("up"/"down"/"" - #1265 review finding
-	// 4): a human's vote is a toggle, not a stack, so re-applying it must undo the prior
-	// contribution first. Judge entries stay purely additive and never touch this field.
+	// humanVote is the last actor=human direction ("up"/"down"/""): a human vote is a toggle, so re-applying
+	// it must undo the prior contribution first. Judge entries never touch it.
 	humanVote string
 }
 
-// applyHumanVote folds one actor=human memory.vote entry into s with latest-wins semantics
-// (#1265 review finding 4): a human's vote is a toggle (up -> none -> down = three entries, one
-// live vote), so it undoes s.humanVote's prior contribution before applying vote's. supported/contradicted/not_relevant map to up/down/none the way the REST vote handler's humanLedgerVote does in reverse.
+// applyHumanVote folds an actor=human memory.vote latest-wins, undoing s.humanVote's prior contribution
+// first. supported/contradicted/not_relevant map to up/down/none, the inverse of rest's humanLedgerVote.
 func applyHumanVote(s *MemoryVoteState, vote ledger.MemoryVote, at time.Time) {
 	switch s.humanVote {
 	case "up":
@@ -179,9 +154,8 @@ func applyHumanVote(s *MemoryVoteState, vote ledger.MemoryVote, at time.Time) {
 	}
 }
 
-// FoldAbsorption redirects every id in r.MemoryVotes/MemoryRecalls that absorbedBy (absorbed id ->
-// survivor, from the live store's AbsorbedIDs) names onto its survivor, summing counts and taking
-// the later timestamp (epic #1255 P5: a post-vote consolidation merge must not orphan that history); absorbedBy is chain-safe (A absorbed by B absorbed by C resolves both to C). Call after Fold/Apply, before comparing a rebuild against the live store.
+// FoldAbsorption redirects votes/recalls for absorbed ids onto their (chain-resolved) survivor, summing counts
+// and keeping the later timestamp. Call after Fold/Apply, before comparing a rebuild against the live store.
 func (r *Result) FoldAbsorption(absorbedBy map[string]string) {
 	if r == nil || len(absorbedBy) == 0 {
 		return
@@ -218,9 +192,7 @@ func (r *Result) FoldAbsorption(absorbedBy map[string]string) {
 	r.MemoryRecalls = recalls
 }
 
-// resolveSurvivor follows absorbedBy to its end (an id absorbedBy doesn't
-// mention resolves to itself), guarding against a cyclic map so a bad input
-// can't loop forever.
+// resolveSurvivor follows absorbedBy to its end, guarding against a cyclic map.
 func resolveSurvivor(id string, absorbedBy map[string]string) string {
 	seen := map[string]bool{}
 	for {
@@ -233,9 +205,7 @@ func resolveSurvivor(id string, absorbedBy map[string]string) string {
 	}
 }
 
-// RecalledIDs returns every memory id this chat's ledger recorded a
-// memory.recall for - the recalled set applyMemoryOutcome (design decision
-// #1255) reinforces/invalidates instead of the memories minted in the chat.
+// RecalledIDs returns every memory id this chat's ledger recorded a memory.recall for.
 func (r *Result) RecalledIDs() []string {
 	if r == nil {
 		return nil
@@ -272,9 +242,8 @@ type revKey struct {
 	rev int
 }
 
-// applyLoop is the fold's one true loop: entries MUST be in seq order (as every ReadEntries*/readAll path
-// returns them) - a later entry for the same (id, revision) or (node, turn) key overrides an earlier one, an
-// artifact.revision.aborted deletes its revision, and a retried save reusing the same number re-adds it. res and live are mutated in place so Apply can seed them from a prior Result instead of always starting empty.
+// applyLoop requires entries in seq order: a later entry for the same key overrides an earlier one and an
+// aborted entry deletes its revision. res and live are mutated in place so Apply can seed them.
 func applyLoop(res *Result, live map[revKey]ArtifactRevision, entries []ledger.Entry) {
 	for _, e := range entries {
 		if e.Seq > res.LastSeq {
@@ -389,9 +358,8 @@ func applyMemoryVote(res *Result, e ledger.Entry) {
 	}
 }
 
-// finalize rebuilds res.Artifacts and res.JudgeRounds from live (the
-// materialized revision set) - always from scratch, since an aborted entry
-// can remove a revision a prior Result's Artifacts map already held.
+// finalize rebuilds res.Artifacts and res.JudgeRounds from live, always from scratch, since an aborted entry
+// can remove a revision a prior Result already held.
 func finalize(res *Result, live map[revKey]ArtifactRevision) *Result {
 	res.Artifacts = map[string]*Artifact{}
 	res.JudgeRounds = nil
@@ -406,9 +374,7 @@ func finalize(res *Result, live map[revKey]ArtifactRevision) *Result {
 	for id, a := range res.Artifacts {
 		sort.Slice(a.Revisions, func(i, j int) bool { return a.Revisions[i].Revision < a.Revisions[j].Revision })
 		for _, r := range a.Revisions {
-			// judge_round has no dedicated entry kind (#1144 P2): the round
-			// IS the artifact write, so JudgeRounds is a view over it, not a
-			// second fold input.
+			// The judge round is the artifact write itself, so JudgeRounds is a view over it.
 			if r.Kind == judgeRoundKind {
 				res.JudgeRounds = append(res.JudgeRounds, JudgeRound{ID: id, NodeID: r.NodeID, TurnID: r.TurnID, At: r.At, Seq: r.Seq})
 			}
@@ -418,22 +384,16 @@ func finalize(res *Result, live map[revKey]ArtifactRevision) *Result {
 	return res
 }
 
-// applyEntries folds entries from scratch - Fold's and LastRevision's shared path.
-func applyEntries(entries []ledger.Entry) *Result {
+// ApplyEntries folds entries already in hand from scratch. After a kind-filtered read, LastSeq covers
+// only those kinds, so never persist it as a watermark (a later fold would skip the rest).
+func ApplyEntries(entries []ledger.Entry) *Result {
 	res := newResult()
 	live := map[revKey]ArtifactRevision{}
 	applyLoop(res, live, entries)
 	return finalize(res, live)
 }
 
-// ApplyEntries is applyEntries, exported for a caller that already has entries in hand (cli.RunLedgerRecover folds its own read).
-// If entries came from a kind-filtered read, Result.LastSeq is the max seq among only the filtered kinds, NOT the chat's true last seq - never persist it as a projection watermark (a later fold would skip unprocessed kinds). Recover's caller is fine: it never persists LastSeq.
-func ApplyEntries(entries []ledger.Entry) *Result {
-	return applyEntries(entries)
-}
-
-// RequiredKinds are the only ledger.Entry kinds applyLoop reads - a caller
-// fetching entries itself can project the read to just these and skip the much
+// RequiredKinds are the only kinds applyLoop reads, so a caller fetching entries itself can skip the much
 // larger agent.invoke/llm.call/otel payloads.
 var RequiredKinds = []string{
 	ledger.KindArtifactRevision, ledger.KindArtifactRevisionAborted,
@@ -452,30 +412,23 @@ func newResult() *Result {
 	}
 }
 
-// Fold reads every entry for chatID from fromSeq (in seq-order pages) and folds them into
-// Result. A fromSeq=0 convenience over Apply - the one fold entry point (#1144 P3): every
-// catch-up (SSE, artifact, node_state) reads from a watermark through Apply instead of its own loop.
+// Fold folds every entry for chatID from fromSeq; a convenience over Apply.
 func Fold(ctx context.Context, store ledger.LedgerStore, chatID string, fromSeq int64) (*Result, error) {
 	return Apply(ctx, store, chatID, fromSeq-1)
 }
 
-// Apply folds only the entries newer than from (a projection's watermark),
-// instead of re-folding chatID's whole history (#1144 P3). from=-1 (via
-// Fold's fromSeq=0) is a fresh fold of the whole chat.
+// Apply folds only entries newer than from (a projection's watermark); from=-1 folds the whole chat.
 func Apply(ctx context.Context, store ledger.LedgerStore, chatID string, from int64) (*Result, error) {
 	return ApplySeeded(ctx, store, chatID, nil, from)
 }
 
-// ApplySeeded is Apply starting from a previously folded Result (checkpoint) instead of empty state
-// (#1144 P5); seed nil is exactly Apply. from is the caller's OWN already-known watermark (pass 0 or -1
-// when the seed is the only state, e.g. internal/store.Store.WriteCheckpoint). Seeding keys off seed.LastSeq > from - passing seed.LastSeq as from would silently skip seeding. A stale checkpoint (read from a concurrent, slightly-behind turn) still folds correctly, just re-processing a few extra entries (see internal/store.Checkpoint's doc - #1144 P5 review moved it out of the ledger).
+// ApplySeeded is Apply starting from a checkpoint Result. Seeding applies only when seed.LastSeq > from, so
+// pass the caller's own watermark (0 or -1), never seed.LastSeq. A stale checkpoint just re-folds a few entries.
 func ApplySeeded(ctx context.Context, store ledger.LedgerStore, chatID string, seed *Result, from int64) (*Result, error) {
 	live := map[revKey]ArtifactRevision{}
 	nodes := map[string]*NodeState{}
 	res := newResult()
-	// Same "seed.LastSeq > from" gate as live/nodes above (not just seed != nil, #1257 review):
-	// a STALE seed the caller's from already supersedes must contribute nothing, memory
-	// projections included, or a stale checkpoint's counts get seeded back in.
+	// A stale seed the caller's from already supersedes must contribute nothing, memory counts included.
 	if seed != nil && seed.LastSeq > from {
 		seedFold(seed, live, nodes)
 		res.MemoryRecalls, res.MemoryVotes = seedMemory(seed)
@@ -518,17 +471,4 @@ func seedFold(seed *Result, live map[revKey]ArtifactRevision, nodes map[string]*
 		cp := *n
 		nodes[id] = &cp
 	}
-}
-
-// LastRevision returns id's highest materialized revision in chatID's
-// ledger, 0 if none - a diagnostic/recovery helper; recordstore's save path
-// no longer calls this (#1144 P4 reads the artifact store's real latest - see recordstore.saveAt's doc).
-func LastRevision(ctx context.Context, store ledger.LedgerStore, chatID, id string) (int, error) {
-	entries, err := readAll(ctx, store, chatID, 0)
-	if err != nil {
-		return 0, err
-	}
-	res := applyEntries(entries)
-	rev, _ := res.Artifacts[id].Latest()
-	return rev.Revision, nil
 }

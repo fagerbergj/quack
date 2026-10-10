@@ -7,10 +7,9 @@ import (
 	"google.golang.org/adk/v2/tool/skilltoolset/skill"
 )
 
-// ResolveName resolves name against src: a literal match wins outright,
-// else the FIRST skill in src's list order whose bare name equals name wins -
-// the merge-order "first plugin wins" rule every bare-name lookup here uses.
-func ResolveName(ctx context.Context, src skill.Source, name string) (string, error) {
+// resolveName: a literal match wins, else the first skill in src's order whose bare name equals name
+// (merge-order "first plugin wins").
+func resolveName(ctx context.Context, src skill.Source, name string) (string, error) {
 	if _, err := src.LoadFrontmatter(ctx, name); err == nil {
 		return name, nil
 	} else if !errors.Is(err, skill.ErrSkillNotFound) {
@@ -28,11 +27,10 @@ func ResolveName(ctx context.Context, src skill.Source, name string) (string, er
 	return "", skill.ErrSkillNotFound
 }
 
-// Resolve loads name's frontmatter via ResolveName - the same bare-name
-// fallback Scoped gives agents, for the boot-time lookups that must succeed
-// against a plugin-qualified library (#1427 S1).
+// Resolve loads name's frontmatter with the same bare-name fallback Scoped gives agents, for boot-time
+// lookups against a plugin-qualified library.
 func Resolve(ctx context.Context, src skill.Source, name string) (*skill.Frontmatter, error) {
-	qualified, err := ResolveName(ctx, src, name)
+	qualified, err := resolveName(ctx, src, name)
 	if err != nil {
 		return nil, err
 	}

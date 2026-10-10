@@ -9,8 +9,7 @@ import (
 	"strings"
 )
 
-// searxngSearcher is the SearXNG adapter for the WebSearcher port. SearXNG is a
-// trusted internal host, so it uses the plain client (not the SSRF-guarded one).
+// searxngSearcher: SearXNG is a trusted internal host, so it uses the plain, unguarded client.
 type searxngSearcher struct {
 	client *http.Client
 	base   string // trimmed of a trailing slash
@@ -20,22 +19,18 @@ func (s *searxngSearcher) Search(ctx context.Context, query string) ([]SearchRes
 	return searchWeb(ctx, s.client, s.base, query)
 }
 
-// searxResponse is the subset of SearXNG's JSON we consume.
 type searxResponse struct {
 	Results []struct {
 		Title   string `json:"title"`
 		URL     string `json:"url"`
 		Content string `json:"content"`
 	} `json:"results"`
-	// UnresponsiveEngines lists backends SearXNG could not get results from for
-	// this query, each an [engine, reason, ...] tuple (e.g. ["brave", "Too many
-	// requests"]); SearXNG still returns HTTP 200 when its upstream engines fail, so this is the ONLY signal distinguishing "rate-limited" from "no matches".
+	// UnresponsiveEngines: [engine, reason, ...] tuples. SearXNG returns 200 when its engines fail, so this is
+	// the only signal telling "rate-limited" from "no matches".
 	UnresponsiveEngines [][]any `json:"unresponsive_engines"`
 }
 
-// searchWeb queries SearXNG's JSON API and returns the top results. The second
-// return value is a non-fatal note for the agent (e.g. some backends were
-// rate-limited but others returned hits); an error is reserved for a search that produced nothing usable.
+// searchWeb: the string is a non-fatal note (some engines rate-limited); an error means nothing usable.
 func searchWeb(ctx context.Context, client *http.Client, base, query string) ([]SearchResult, string, error) {
 	q := strings.TrimSpace(query)
 	if q == "" {
@@ -69,9 +64,7 @@ func searchWeb(ctx context.Context, client *http.Client, base, query string) ([]
 		results = append(results, SearchResult{Title: r.Title, URL: r.URL, Snippet: r.Content})
 	}
 
-	// SearXNG returns HTTP 200 even when its upstream engines fail (rate limits,
-	// timeouts), reporting them only in unresponsive_engines - surface that so the
-	// agent can tell "rate-limited" apart from "genuinely no matches" instead of a silently empty list.
+	// Surface engine failures so the agent can tell "rate-limited" from "no matches".
 	if down := formatUnresponsiveEngines(parsed.UnresponsiveEngines); down != "" {
 		if len(results) == 0 {
 			return nil, "", fmt.Errorf("web_search: no results - every search backend failed: %s (likely rate-limited; back off and retry shortly)", down)
@@ -82,9 +75,7 @@ func searchWeb(ctx context.Context, client *http.Client, base, query string) ([]
 	return results, "", nil
 }
 
-// formatUnresponsiveEngines renders SearXNG's unresponsive_engines entries (each
-// an [engine, reason, ...] tuple) as "engine (reason), ...". Returns "" when no
-// engine failed.
+// formatUnresponsiveEngines renders "engine (reason), ..."; "" when none failed.
 func formatUnresponsiveEngines(engines [][]any) string {
 	parts := make([]string, 0, len(engines))
 	for _, e := range engines {

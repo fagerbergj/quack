@@ -46,9 +46,8 @@ func substantive(s Specific) bool {
 	return false
 }
 
-// specificsCitedScore counts substantive specifics and how many are backed:
-// cited in their unit, or located in the received research (fan-in nodes
-// inherit their dependencies' citations, so an uncited figure copied from upstream is grounded).
+// specificsCitedScore counts substantive specifics and those backed by a citation in their unit or
+// by the received research (an uncited figure copied from upstream is grounded).
 func specificsCitedScore(units []Unit, received string) (backed, total int, uncited []UnitCheck) {
 	for _, u := range units {
 		for _, s := range u.Specifics {

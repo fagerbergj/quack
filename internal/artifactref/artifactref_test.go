@@ -62,9 +62,8 @@ func TestDecodeRejectsNonReferences(t *testing.T) {
 	}
 }
 
-// A reference part must never satisfy the InlineData-carrying checks the
-// rest of the codebase uses to detect real bytes (e.g. the OpenAI adapter,
-// SaveRequest.Validate) - it is a FileData part, nothing else.
+// A reference part must never satisfy the InlineData checks that detect real bytes (OpenAI adapter,
+// SaveRequest.Validate).
 func TestEncodeNeverSetsInlineDataOrText(t *testing.T) {
 	part := Encode("u", "s", "n", 1, "image/png")
 	if part.InlineData != nil {

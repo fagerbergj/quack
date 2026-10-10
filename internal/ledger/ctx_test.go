@@ -6,9 +6,8 @@ import (
 	"github.com/fagerbergj/quack/internal/ledger"
 )
 
-// TestFillBlankCoords_CtxWinsPerField: a field ctx already set is never
-// overwritten by the shared stamp, but a blank one is filled - including the
-// Artifacts/Plugins lists, which fill or stay exactly like every scalar field.
+// TestFillBlankCoords_CtxWinsPerField: a field ctx set is never overwritten by the stamp and a blank one is
+// filled, Artifacts/Plugins lists included.
 func TestFillBlankCoords_CtxWinsPerField(t *testing.T) {
 	ctxArtifacts := []ledger.ArtifactRef{{Name: "system/code-reviewer", Source: "static", VersionID: "1"}}
 	stampArtifacts := []ledger.ArtifactRef{{Name: "system/other-agent", Source: "static", VersionID: "2"}}

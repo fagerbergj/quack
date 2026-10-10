@@ -29,28 +29,6 @@ func TestStubArtifactToolsBuilds(t *testing.T) {
 	}
 }
 
-func TestWindowLines(t *testing.T) {
-	body := "one\ntwo\nthree\nfour\nfive"
-	cases := []struct {
-		name          string
-		offset, lines int
-		want          string
-	}{
-		{"no window", 0, 0, body},
-		{"offset only", 3, 0, "three\nfour\nfive"},
-		{"offset and lines", 2, 2, "two\nthree"},
-		{"offset past end", 100, 2, ""},
-		{"lines clamps to end", 4, 10, "four\nfive"},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := windowLines(body, c.offset, c.lines); got != c.want {
-				t.Errorf("windowLines(%d, %d) = %q, want %q", c.offset, c.lines, got, c.want)
-			}
-		})
-	}
-}
-
 func TestFormatArtifactSummaries(t *testing.T) {
 	strPtr := func(s string) *string { return &s }
 	int64Ptr := func(i int64) *int64 { return &i }

@@ -9,9 +9,7 @@ import (
 	"testing"
 )
 
-// TestPutAllowsMovingPinOnSameRepo is the #1429 carry-over from PR #1436's
-// review: moving a pin (github:o/r@v1 -> github:o/r@v2) on the SAME repo
-// must not be treated as a name collision.
+// Moving a pin (github:o/r@v1 -> @v2) on the same repo is an update, not a name collision.
 func TestPutAllowsMovingPinOnSameRepo(t *testing.T) {
 	root := t.TempDir()
 	reg := NewFSRegistry(root)
@@ -70,9 +68,8 @@ func TestEntryJSONFieldNamesLiteral(t *testing.T) {
 	}
 }
 
-// TestSameIdentityEmptyBothIsFalse: two github rows that both fail to
-// resolve an owner/repo (empty fields, unparsable entry) are never "the
-// same" plugin merely because both are blank.
+// Two github rows that both fail to resolve an owner/repo are never the same plugin merely because both
+// are blank.
 func TestSameIdentityEmptyBothIsFalse(t *testing.T) {
 	a := Plugin{Source: SourceGitHub, Entry: "not-a-github-entry"}
 	b := Plugin{Source: SourceGitHub, Entry: "also-not-one"}
@@ -94,10 +91,8 @@ func TestRootGitHubWithAndWithoutPath(t *testing.T) {
 	}
 }
 
-// TestRootGitHubEscapingPathFallsBackToCloneDir: a Path that escapes the
-// clone (a row trusted off disk without re-parsing, #1430) falls back to
-// the clone root rather than serving outside it - exercises containedPath's
-// own escape check too.
+// A Path escaping the clone (rows are trusted off disk) falls back to the clone root; also covers
+// containedPath's own escape check.
 func TestRootGitHubEscapingPathFallsBackToCloneDir(t *testing.T) {
 	p := Plugin{Name: "widgets", Source: SourceGitHub, Path: "../../etc"}
 	if got, want := p.Root("/reg"), CloneDir("/reg", "widgets"); got != want {
@@ -113,9 +108,8 @@ func TestEmbeddedQuackPlugin(t *testing.T) {
 	}
 }
 
-// TestOrderBySeedOrdersBySeedThenAppendsRest: seed order wins for rows it
-// names; a row not in seed (added via REST) sorts after, in List's order;
-// an unparsable seed entry is skipped, not fatal.
+// Seed order wins for rows it names; rows not in seed sort after in List's order; an unparsable seed entry
+// is skipped, not fatal.
 func TestOrderBySeedOrdersBySeedThenAppendsRest(t *testing.T) {
 	rows := []Plugin{
 		{Name: "alpha"}, {Name: "beta"}, {Name: "extra"},
@@ -143,9 +137,7 @@ func TestGithubIdentityUnresolvableEntry(t *testing.T) {
 	}
 }
 
-// TestPutFailsWhenNameCollidesWithAFile: MkdirAll fails when the row's
-// directory path is already occupied by a regular file - a real, if rare,
-// on-disk-corruption case, not a mocked one.
+// MkdirAll fails when a regular file occupies the row's directory path (a real on-disk corruption case).
 func TestPutFailsWhenNameCollidesWithAFile(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "widgets"), []byte("x"), 0o644); err != nil {
@@ -177,9 +169,8 @@ func TestPutFailsWhenDirIsReadOnly(t *testing.T) {
 	}
 }
 
-// TestDeleteStatGenericErrorIsNotNotFound: a Stat failure that ISN'T
-// "not exist" (permission denied on the parent) propagates as its own
-// error, not the os.ErrNotExist Delete wraps for the ordinary missing case.
+// A Stat failure other than not-exist (permission denied) propagates as itself, not as Delete's wrapped
+// os.ErrNotExist.
 func TestDeleteStatGenericErrorIsNotNotFound(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores directory permissions")

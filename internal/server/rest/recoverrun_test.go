@@ -9,9 +9,8 @@ import (
 	"github.com/fagerbergj/quack/internal/store"
 )
 
-// #1033: the run goroutines outlive the HTTP request, so chi's Recoverer never
-// covers them - an unrecovered panic there takes the process, not just the run.
-// recoverRun is the only thing standing between a panicking run and process death in the production shape, where the panic surfaces on a node goroutine rather than at the range site.
+// Run goroutines outlive the request, so chi's Recoverer doesn't cover them: recoverRun is all that
+// keeps a panic on a node goroutine from killing the process.
 func TestRecoverRun_ContainsPanicAndLogsIt(t *testing.T) {
 	var buf strings.Builder
 	prev := slog.Default()
@@ -55,9 +54,8 @@ func TestRecoverRun_LeavesCleanupDefersRunning(t *testing.T) {
 	}
 }
 
-// The helper tests above pin recoverRun itself; this pins the WIRING. Deleting
-// any `defer recoverRun(...)` line leaves those green but kills the process
-// here, because a panicking run's cleanup defers never run and the hub topic stays open - subscribers hang forever instead of seeing the stream close.
+// This pins the wiring: dropping any `defer recoverRun(...)` kills the process here, since the run's cleanup
+// defers never run and subscribers hang on an open hub topic.
 func TestRunGoroutinePanic_StillClosesHubTopic(t *testing.T) {
 	dp := &store.DagPlan{ID: "p1", TurnID: "t1"}
 	for _, tc := range []struct {

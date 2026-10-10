@@ -8,9 +8,7 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// settleWindow: fixed grace-on-top-of-grace for a force-cancelled run's own
-// goroutine to unwind and persist before the process exits - not a knob
-// operators need to tune.
+// settleWindow: extra grace for a force-cancelled run to unwind and persist before exit; not a knob.
 const settleWindow = 5 * time.Second
 
 const drainPollInterval = 200 * time.Millisecond
@@ -23,14 +21,8 @@ type nodePauser interface {
 	MarkShutdown(chatID string)
 }
 
-// DrainActiveRuns is SIGTERM's counterpart to store.ScanOrphanedRuns: reject
-// new dispatches, pause every running node with reason=shutdown, and give the
-// runs up to grace to reach a gate boundary. A node still mid-turn at the
-// deadline is already persisted `paused/shutdown` (PauseNode's store write is
-// synchronous), so cancelling its in-flight turn loses only the turn - boot
-// resumes the node from its pause. Nothing here marks a chat interrupted:
-// interrupted means "cut short, resend to resume", and a shutdown pause is
-// resumed by the server itself (#962).
+// DrainActiveRuns rejects new dispatches, pauses running nodes (reason=shutdown) and waits up to grace.
+// The pause is persisted synchronously, so cancelling a mid-turn node loses only the turn; boot resumes it.
 func DrainActiveRuns(hub *stream.Hub, ex nodePauser, grace time.Duration) {
 	hub.BeginDraining()
 	ids := hub.ActiveChatIDs()
@@ -55,9 +47,8 @@ func DrainActiveRuns(hub *stream.Hub, ex nodePauser, grace time.Duration) {
 			"nodes", paused, "chats", chats, "runs", len(ids), "grace", grace)
 	}
 
-	// Re-reads hub.ActiveChatIDs() on every poll rather than iterating the snapshot above: a
-	// dispatch that checked Draining()==false just before BeginDraining flipped it registers
-	// moments later, for a chat this snapshot never saw - invisible forever, not merely late.
+	// Re-read ActiveChatIDs each poll: a dispatch that saw Draining()==false just before the flip registers
+	// later, for a chat the snapshot above never saw.
 	waitWhileAnyRegistered(hub, grace)
 
 	remaining := hub.ActiveChatIDs()

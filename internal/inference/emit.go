@@ -5,7 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -16,12 +17,9 @@ import (
 	"github.com/fagerbergj/quack/internal/otelobs"
 )
 
-// inferenceScope names the logger every chat event is emitted through -
-// internal/otelobs.Logger(scope) picks the instrumentation scope.
 const inferenceScope = "quack.inference"
 
-// chatRequestAttrs: the gen_ai request attributes (contents, tools, config knobs);
-// returns them plus the system-instruction hash (prompt provenance).
+// chatRequestAttrs also returns the system-instruction hash for prompt provenance.
 func chatRequestAttrs(req *model.LLMRequest) ([]attribute.KeyValue, string) {
 	var attrs []attribute.KeyValue
 	if Version != "" {
@@ -53,16 +51,14 @@ func chatRequestAttrs(req *model.LLMRequest) ([]attribute.KeyValue, string) {
 			attrs = append(attrs, attribute.Int64(otelobs.GenAIRequestSeed, int64(*req.Config.Seed)))
 		}
 		if tc := req.Config.ThinkingConfig; tc != nil {
-			// genai's enum is upper-case ("LOW"); ledger.LLMCallPayload.ReasoningEffort
-			// documents low/medium/high, matching models.<id>.effort's own casing.
+			// genai's enum is upper-case; the ledger and models.<id>.effort use lower-case.
 			attrs = append(attrs, attribute.String(otelobs.GenAIRequestReasoningEffort, strings.ToLower(string(tc.ThinkingLevel))))
 		}
 	}
 	return attrs, sysHash
 }
 
-// chatProvenanceAttrs: prompt provenance - the coordinating agent name (the closest
-// proxy for the bundle id at this layer) and the system-instruction hash.
+// chatProvenanceAttrs uses the agent name as the closest proxy for the bundle id at this layer.
 func chatProvenanceAttrs(ctx context.Context, sysHash string) []attribute.KeyValue {
 	var attrs []attribute.KeyValue
 	c := ledger.CoordsFromContext(ctx)
@@ -98,8 +94,7 @@ func chatProvenanceAttrs(ctx context.Context, sysHash string) []attribute.KeyVal
 	return attrs
 }
 
-// chatResponseAttrs: the gen_ai response attributes (content, model, finish reason,
-// usage/cost - input excludes cached, matching the otel metric's convention).
+// chatResponseAttrs reports input excluding cached tokens, matching the otel metric.
 func chatResponseAttrs(resp *model.LLMResponse, pricing *config.ModelPricing) []attribute.KeyValue {
 	var attrs []attribute.KeyValue
 	if resp == nil {
@@ -116,7 +111,6 @@ func chatResponseAttrs(resp *model.LLMResponse, pricing *config.ModelPricing) []
 		attrs = append(attrs, attribute.Slice(otelobs.GenAIResponseFinishReasons, attribute.StringValue(string(resp.FinishReason))))
 	}
 	if u := resp.UsageMetadata; u != nil {
-		// Cost accounting per node/round, and the parity a swapped-model eval re-run (#606) compares against.
 		input, cached := splitPromptTokens(u)
 		if input != 0 {
 			attrs = append(attrs, attribute.Int64(otelobs.GenAIUsageInputTokens, input))
@@ -131,19 +125,18 @@ func chatResponseAttrs(resp *model.LLMResponse, pricing *config.ModelPricing) []
 			attrs = append(attrs, attribute.Int64(otelobs.GenAIUsageReasoningTokens, int64(u.ThoughtsTokenCount)))
 		}
 		if pricing != nil {
-			cost := float64(u.PromptTokenCount)/1e6*pricing.InputPerMTok + float64(u.CandidatesTokenCount+u.ThoughtsTokenCount)/1e6*pricing.OutputPerMTok
+			cost := callCost(pricing, int64(u.PromptTokenCount), int64(u.CandidatesTokenCount+u.ThoughtsTokenCount))
 			attrs = append(attrs, attribute.Float64(otelobs.GenAIUsageCost, cost))
 		}
 	}
 	return attrs
 }
 
-// emitChatEvent records one gen_ai.* "chat" log event for a completed model call -
-// the full request and the FINAL assembled response; marshal failures degrade a
-// field to omitted and never abort the event (recording must not affect the run).
+// emitChatEvent logs the full request and final response; a marshal failure omits that field
+// rather than aborting, since recording must not affect the run.
 func emitChatEvent(ctx context.Context, name string, req *model.LLMRequest, resp *model.LLMResponse, callErr error, pricing *config.ModelPricing) {
 	if !otelobs.LoggingEnabled(inferenceScope) {
-		return // nothing listening - skip building a (potentially large) event nobody reads
+		return // skip building a large event nobody reads
 	}
 	attrs := []attribute.KeyValue{
 		attribute.String(otelobs.GenAIOperationName, otelobs.GenAIOperationChat),
@@ -160,9 +153,7 @@ func emitChatEvent(ctx context.Context, name string, req *model.LLMRequest, resp
 	otelobs.EmitLog(ctx, inferenceScope, "", attrs...)
 }
 
-// marshalAttr JSON-marshals v for a gen_ai attribute value; shared by the log
-// path (emitChatEvent) and the span path (span.go) so both render the same
-// bytes for the same field. false when there is nothing worth recording.
+// marshalAttr is shared by the log and span paths so both render identical bytes; false means nothing to record.
 func marshalAttr(v any) (string, bool) {
 	if v == nil {
 		return "", false
@@ -174,24 +165,10 @@ func marshalAttr(v any) (string, bool) {
 	return string(b), true
 }
 
-// toolNames extracts the sorted tool names offered on the request. req.Tools
-// holds live tool.Tool instances (json:"-" on LLMRequest, deliberately not
-// serializable), so a name list is what gen_ai.tool.definitions carries here - a bundle's full per-tool schema is already visible in gen_ai.input.messages' system instructions and the tool's own execute_tool events.
-func toolNames(tools map[string]any) []string {
-	if len(tools) == 0 {
-		return nil
-	}
-	names := make([]string, 0, len(tools))
-	for n := range tools {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	return names
-}
+// toolNames: req.Tools holds live, unserializable tools, so gen_ai.tool.definitions carries names only.
+func toolNames(tools map[string]any) []string { return slices.Sorted(maps.Keys(tools)) }
 
-// contentHash is the prompt-version content hash: a short, stable digest of
-// the system instruction bytes, recorded so a later diff can tell "the
-// prompt changed" from "everything else did".
+// contentHash is a short digest of the system instruction, so a diff can tell a prompt change apart.
 func contentHash(b []byte) string {
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])[:16]

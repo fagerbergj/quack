@@ -3,6 +3,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -14,10 +15,9 @@ import (
 	"iter"
 	"log/slog"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
 
+	extsdk "github.com/fagerbergj/quack-extensions/sdk"
 	"github.com/glebarez/sqlite"
 	"github.com/google/uuid"
 	"google.golang.org/adk/v2/artifact"
@@ -43,96 +43,69 @@ type Chat struct {
 	SystemPrompt string    `json:"system_prompt"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
-	// Set only for GitHub-originated chats (id github-<owner>-<repo>-<number>).
+	// Legacy GitHub columns: nothing writes them now, so read them through GitHub().
 	GithubRepo  string `json:"github_repo,omitempty"`
 	GithubURL   string `json:"github_url,omitempty"`
 	GithubState string `json:"github_state,omitempty"`
 	// ADK session identity (GitHub commenter's login for dispatched chats).
 	// Column is adk_session_user: session_user collides with Postgres' SESSION_USER.
 	SessionUser string `gorm:"column:adk_session_user" json:"session_user,omitempty"`
-	// RunStatus/PendingQuestion are the last run's terminal outcome (RunStatus* consts),
-	// stamped by StampRunOutcome so ListChats reads it instead of recomputing per chat (#738).
-	// Never "queued"/"running" - those stay live, in-memory-only signals.
+	// RunStatus/PendingQuestion are the last run's terminal outcome (RunStatus* consts), stamped so ListChats
+	// needn't recompute per chat. Never "queued"/"running": those stay live, in-memory-only signals.
 	RunStatus       string `json:"-"`
 	PendingQuestion string `json:"-"`
-	// ActiveTurnID is set by MarkRunActive when a run starts and cleared by StampRunOutcome
-	// when it ends cleanly. Left over (non-empty) with no live hub/queue signal means the run
-	// died before it could stamp an outcome - the read path's crash fallback (#738).
+	// ActiveTurnID is set by MarkRunActive and cleared by StampRunOutcome on a clean end. Left set with no live
+	// hub/queue signal, the run died before stamping an outcome: the read path's crash fallback.
 	ActiveTurnID string `json:"-"`
 	// Archived hides the chat from the main list by default (toggled by the user or auto-archived
 	// on PR merge when config AutoArchiveOnMerge is enabled; untouched by archive ops).
 	Archived bool `gorm:"column:archived;default:false" json:"archived"`
-	// Origin is an extension-set sdk.ChatOrigin, marshaled opaquely (#275). Not yet
-	// API-exposed - ChatSummary.origin is a follow-up once the SPA renders it generically.
+	// Origin is an extension-set sdk.ChatOrigin, marshaled opaquely; not API-exposed.
 	Origin string `json:"-"`
+}
+
+// GitHub returns the chat's originating repo, link and state from the github extension's Origin,
+// falling back per field to the legacy columns for rows stamped before Origin carried them.
+func (c Chat) GitHub() (repo, href, state string) {
+	var o extsdk.ChatOrigin
+	if c.Origin != "" && json.Unmarshal([]byte(c.Origin), &o) == nil && o.Extension == "github" {
+		if v := o.Labels["repo"]; len(v) > 0 {
+			repo = v[0].Value
+		}
+		href, state = o.Href, string(o.State)
+	}
+	return cmp.Or(repo, c.GithubRepo), cmp.Or(href, c.GithubURL), cmp.Or(state, c.GithubState)
 }
 
 // ChatTurn is one user→assistant exchange. Its ID is the response_id in the REST API.
 type ChatTurn struct {
 	ID     string `gorm:"primaryKey" json:"id"`
 	ChatID string `gorm:"index" json:"chat_id"`
-	// Chat is constraint-only (#1296): never populated, so GORM's
-	// zero-value skip never tries to save it - it exists purely to teach
-	// AutoMigrate the ON DELETE CASCADE FK to chats.id.
+	// Chat is constraint-only: never populated (so GORM never saves it), it teaches AutoMigrate the
+	// ON DELETE CASCADE FK to chats.id.
 	Chat      Chat      `gorm:"foreignKey:ChatID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
 	Seq       int       `json:"seq"`
 	CreatedAt time.Time `json:"created_at"`
 	// Model that produced the orchestrator's reply; ADK drops ModelVersion on read.
 	// Empty for DAG turns (per-node on DagNode).
 	Model string `json:"model,omitempty"`
-	// Orchestrator's own token usage, stamped alongside Model (same reason:
-	// SQL-summable for the chat-wide aggregate without walking ADK session
-	// events). Empty for DAG turns (per-node on DagNode).
+	// Orchestrator's own token usage, SQL-summable for the chat-wide aggregate without walking session events.
+	// Empty for DAG turns (per-node on DagNode).
 	PromptTokens     int32 `json:"prompt_tokens,omitempty"`
 	CompletionTokens int32 `json:"completion_tokens,omitempty"`
 	ReasoningTokens  int32 `json:"reasoning_tokens,omitempty"`
 	TotalTokens      int32 `json:"total_tokens,omitempty"`
 	CachedTokens     int32 `json:"cached_tokens,omitempty"`
-	// UserText is the turn's own copy of the user's message, independent of
-	// the ADK session events GetTurnsWithContent otherwise reads it from:
-	// a ResetHistory dispatch (#1226) deletes the whole session, which would otherwise strand every earlier turn with no content to render.
+	// UserText is the turn's own copy of the user's message: a ResetHistory dispatch deletes the whole session,
+	// which would otherwise strand every earlier turn with no content to render.
 	UserText string `json:"-"`
-}
-
-// GithubSnapshot stores the full GitHub state fetched at a github-origin
-// chat's last dispatch. JSON is opaque to this package (mirrors DagPlan.PlanJSON).
-type GithubSnapshot struct {
-	ChatID    string    `gorm:"primaryKey;column:chat_id" json:"chat_id"`
-	JSON      string    `json:"json"`
-	UpdatedAt time.Time `json:"updated_at"`
-}
-
-// GithubReviewBaseline stores the patch-ids of PR commits quack has actually
-// reviewed. Separate from GithubSnapshot: only a review-delivering dispatch advances this.
-type GithubReviewBaseline struct {
-	ChatID    string    `gorm:"primaryKey;column:chat_id" json:"chat_id"`
-	PatchIDs  string    `json:"patch_ids"` // JSON array of strings; row absent = never reviewed
-	UpdatedAt time.Time `json:"updated_at"`
-}
-
-// GithubFixState tracks the CI auto-heal loop bound for one PR chat.
-// Durable so process restart doesn't reset state and thrash forever.
-type GithubFixState struct {
-	ChatID    string    `gorm:"primaryKey;column:chat_id" json:"chat_id"`
-	LastSHA   string    `gorm:"column:last_sha" json:"last_sha"`
-	Stopped   bool      `json:"stopped"`
-	UpdatedAt time.Time `json:"updated_at"`
-}
-
-// GithubMergeIntent records a standing merge authorization for a PR chat,
-// durable across restarts so quack:merge applied before a review still works.
-type GithubMergeIntent struct {
-	ChatID      string    `gorm:"primaryKey;column:chat_id" json:"chat_id"`
-	RequestedBy string    `json:"requested_by"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // DagPlan stores the JSON-encoded DAG plan for a chat turn (re-display on reload).
 type DagPlan struct {
 	ID     string `gorm:"primaryKey" json:"id"`
 	ChatID string `gorm:"index" json:"chat_id"`
-	// Chat is constraint-only (#1296) - see ChatTurn.Chat's doc.
+	// Chat is constraint-only - see ChatTurn.Chat's doc.
 	Chat      Chat      `gorm:"foreignKey:ChatID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
 	TurnID    string    `gorm:"index" json:"turn_id"`
 	PlanJSON  string    `json:"plan_json"`
@@ -149,12 +122,11 @@ func (p DagPlan) RunTurnID() string {
 	return p.TurnID
 }
 
-// DagExecPlan is a chat's latest full dag.Plan, one row per chat (only the latest plan is
-// ever resumed). Unlike the session stash it is written as the plan starts, so a run cut
+// DagExecPlan is a chat's latest full dag.Plan, one row per chat, written as the plan starts so a run cut
 // mid-execute can still resume; its own table keeps the blob off every dag_plans read.
 type DagExecPlan struct {
 	ChatID string `gorm:"primaryKey"`
-	// Chat is constraint-only (#1296) - see ChatTurn.Chat's doc.
+	// Chat is constraint-only - see ChatTurn.Chat's doc.
 	Chat     Chat `gorm:"foreignKey:ChatID;references:ID;constraint:OnDelete:CASCADE"`
 	PlanID   string
 	PlanJSON string
@@ -163,19 +135,18 @@ type DagExecPlan struct {
 // ChatEvent backs the hub's durable replay after restart. Cleared on new run per chat.
 type ChatEvent struct {
 	ChatID string `gorm:"primaryKey;column:chat_id" json:"chat_id"`
-	// Chat is constraint-only (#1296) - see ChatTurn.Chat's doc.
+	// Chat is constraint-only - see ChatTurn.Chat's doc.
 	Chat      Chat      `gorm:"foreignKey:ChatID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
 	Seq       int64     `gorm:"primaryKey;autoIncrement:false" json:"seq"`
 	Event     string    `json:"event"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// ProjectionWatermark tracks how far one chat's projection (sse, artifact,
-// node) has folded the WAL (#1144 P3): the projection writer advances
-// FoldedSeq in the same transaction as its own write, so a restart resumes the fold from here instead of a full re-fold or a diff-against-drift guess.
+// ProjectionWatermark tracks how far one chat's projection (sse, artifact, node) has folded the WAL; the writer
+// advances FoldedSeq in the same transaction as its own write, so a restart resumes the fold from here.
 type ProjectionWatermark struct {
 	ChatID string `gorm:"column:chat_id;primaryKey" json:"chat_id"`
-	// Chat is constraint-only (#1296) - see ChatTurn.Chat's doc.
+	// Chat is constraint-only - see ChatTurn.Chat's doc.
 	Chat       Chat      `gorm:"foreignKey:ChatID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
 	Projection string    `gorm:"column:projection;primaryKey" json:"projection"`
 	FoldedSeq  int64     `gorm:"column:folded_seq" json:"folded_seq"`
@@ -185,8 +156,7 @@ type ProjectionWatermark struct {
 // DagNode stores the execution state of one DAG node.
 type DagNode struct {
 	NodeID string `gorm:"primaryKey;column:node_id" json:"node_id"`
-	// PK leads with node_id, so plan_id lookups (chat-list usage totals, item 9 of
-	// the perf audit) seq-scan without this index.
+	// PK leads with node_id, so plan_id lookups (chat-list usage totals) seq-scan without this index.
 	PlanID        string `gorm:"primaryKey;column:plan_id;index:idx_dag_nodes_plan_id" json:"plan_id"`
 	Status        string `json:"status"` // dag.NodeStatus value
 	OutputPreview string `json:"output_preview"`
@@ -211,9 +181,8 @@ type DagNode struct {
 	// node_start owns trace_id and must be able to clear a previous run's id;
 	// every other upsert simply omits the column.
 	TraceIDSet bool `gorm:"-" json:"-"`
-	// Lifecycle columns below are written only by SetNodeStatus/SetNodeQueue;
-	// UpsertDagNode omits them so a stream-driven upsert can never blank a
-	// pause a resume depends on. Why a paused node is paused: user | shutdown | awaiting_input.
+	// Lifecycle columns below are written only by SetNodeStatus/SetNodeQueue, so a stream-driven upsert can never
+	// blank a pause a resume depends on. PauseReason: user | shutdown | awaiting_input.
 	PauseReason string `gorm:"column:pause_reason" json:"pause_reason,omitempty"`
 	// HITL question this node is parked on (node-scoped; chats.pending_question is the legacy chat-scoped copy).
 	PendingQuestion string `gorm:"column:pending_question" json:"pending_question,omitempty"`
@@ -271,9 +240,8 @@ const (
 // Mirrors orchestrator.orchestratorName; gate-internal activity is never the user-facing message.
 const orchestratorAuthor = "orchestrator"
 
-// Per-turn content extracted from a session's events.
-// userText/asstText/asstThink are strings.Builder, not string: a turn assembled from
-// streamed events otherwise appends with += for every chunk, copying the whole accumulated text each time - O(n^2) in events per turn (perf audit #4: 197 MB for one 2,000-event turn; strings.Builder measured at 5.6 MB for 50x280).
+// turnGroup is one turn's content extracted from session events. Builders, not strings: appending streamed
+// chunks with += is O(n^2) per turn (197 MB for one 2,000-event turn).
 type turnGroup struct {
 	userText, asstText, asstThink                                              strings.Builder
 	toolCalls                                                                  []ToolCallRecord
@@ -453,34 +421,21 @@ type Store struct {
 	Sessions session.Service
 	// Identifies this store for node-ownership tracking (random per New, or overridden).
 	instanceID string
-	// Counts SELECT queries issued on db - test instrumentation for N+1 regressions (#738).
-	// A plain atomic counter, unbounded but O(1) memory - safe to always run.
-	queryCount atomic.Int64
-	// Records each SELECT's raw SQL - test instrumentation for asserting WHICH
-	// query ran, not just how many (#1113 review: QueryCount alone can't tell
-	// a name-scoped query apart from an unscoped full-table scan that happens to also issue exactly one SELECT). Off by default (queryRecordingEnabled): the callback that appends to querySQL is registered unconditionally in New() below, so without a gate it would record every SELECT a live server ever issues, forever (#1113 second review - a real production memory leak, not just a test concern). EnableQueryRecording turns it on for the lifetime of one *Store, test-only; querySQLCap bounds it even then, so a long test run can't grow it unbounded either.
-	queryRecordingEnabled atomic.Bool
-	querySQLMu            sync.Mutex
-	querySQL              []string
 	// artifacts: nil unless SetArtifactService was called - DeleteChat cascades into it when set.
 	artifacts artifact.Service
-	// walLedger: the WAL's fail-closed AppendIntent path (#1144 P5), covering
-	// the direct-write projections P1-P4 left alone (chat/turn creation,
-	// plan); nil = no WAL, same as before P5 - CreateChat/SaveTurn/SaveDagPlan behave exactly as they did.
+	// walLedger: the WAL's fail-closed AppendIntent path for chat/turn creation and plan saves; nil = no WAL.
 	walLedger ledger.LedgerStore
 }
 
-// SetWALLedger wires the WAL's fail-closed AppendIntent path into
-// CreateChat/SaveTurn/SaveDagPlan (#1144 P5). Callers must pass nil unless
-// store is a postgres-backed LedgerStore - same restriction as dag.Executor.SetWALLedger/recordstore.WithLedger.
+// SetWALLedger wires the WAL into CreateChat/SaveTurn/SaveDagPlan. Pass nil unless store is a postgres-backed
+// LedgerStore, same as dag.Executor.SetWALLedger/recordstore.WithLedger.
 func (s *Store) SetWALLedger(store ledger.LedgerStore) { s.walLedger = store }
 
-// Checkpoint is chatID's last folded ledger state - ONE row, replaced every
-// turn end, not an entry in the WAL (#1144 P5 review: a checkpoint is
-// derived state, not a fact the ledger recorded, so it doesn't belong in an append-only log; storing it as entries made per-chat ledger storage grow O(turns x state size) with no GC left once the retention sweep was deleted). LastSeq is denormalized from Payload for cheap inspection (`SELECT last_seq FROM ledger_checkpoints`) without deserializing it - fold.ApplySeeded still trusts Payload's own LastSeq, never this column, so a torn write here is still safe to fold from (same invariant the stale-checkpoint test proves).
+// Checkpoint is chatID's last folded ledger state: one row replaced every turn end (derived state, not a WAL fact).
+// LastSeq mirrors Payload for inspection only; fold trusts Payload's own LastSeq, so a torn write stays safe.
 type Checkpoint struct {
 	ChatID string `gorm:"column:chat_id;primaryKey"`
-	// Chat is constraint-only (#1296) - see ChatTurn.Chat's doc.
+	// Chat is constraint-only - see ChatTurn.Chat's doc.
 	Chat          Chat   `gorm:"foreignKey:ChatID;references:ID;constraint:OnDelete:CASCADE"`
 	LastSeq       int64  `gorm:"column:last_seq"`
 	SchemaVersion int    `gorm:"column:schema_version"`
@@ -490,9 +445,8 @@ type Checkpoint struct {
 
 func (Checkpoint) TableName() string { return "ledger_checkpoints" }
 
-// loadCheckpointSeed reads chatID's checkpoint row, if any. Any problem
-// (no row, a bad payload) returns nil - the safe fallback is always "fold
-// from scratch", never an error, since a checkpoint is purely an optimization. fold.ApplySeeded reads the seed's OWN LastSeq to decide how far it covers - callers pass 0 as their own baseline `from`, not this seed's LastSeq, or ApplySeeded's "only seed if it's newer than what I already have" guard skips seeding entirely.
+// loadCheckpointSeed returns nil on any problem: the fallback is folding from scratch. Callers pass 0 as `from`,
+// not the seed's LastSeq, or ApplySeeded's "seed only if newer than from" guard skips seeding.
 func (s *Store) loadCheckpointSeed(ctx context.Context, chatID string) *fold.Result {
 	var row Checkpoint
 	if err := s.db.WithContext(ctx).Where("chat_id = ?", chatID).Take(&row).Error; err != nil {
@@ -514,9 +468,8 @@ func (s *Store) upsertCheckpoint(ctx context.Context, chatID string, lastSeq int
 	}).Create(&row).Error
 }
 
-// WriteCheckpoint folds chatID from its last checkpoint (or from scratch,
-// if it has none) and replaces the checkpoint row with the result (#1144 P5),
-// so the next fold starts here instead of reading the chat's entire history. Called at every turn-end path: rest.Handler.stampRunOutcome (both its WasInterrupted and normal branches) and both exits of internal/serve/extensions.go's driveExtensionRunEvents - a no-op without a WAL. Best-effort: a failed write only costs a slower fold later, never correctness. NOT covered by boot recovery: unlike artifact revisions and delivery intents, an orphaned chat.created/turn.created/plan.saved row (WAL append succeeded, the projection write it preceded never landed) is not checked by cli.RunLedgerRecover or counted in quack_ledger_unresolved_intents - out of scope for P5 (see internal/store/wal_intents_test.go's kill-9 test, which proves the invariant a recoverer WOULD rely on, not that one exists); `quack ledger show`/`list` still see every entry regardless.
+// WriteCheckpoint folds chatID from its last checkpoint and replaces the row, so the next fold starts here.
+// Called at every turn end; a no-op without a WAL. Best-effort: a failed write only costs a slower fold.
 func (s *Store) WriteCheckpoint(ctx context.Context, chatID string) error {
 	if s.walLedger == nil {
 		return nil
@@ -536,76 +489,12 @@ func (s *Store) WriteCheckpoint(ctx context.Context, chatID string) error {
 	return nil
 }
 
-// querySQLCap bounds RecordedQuerySQL's ring buffer - the oldest entry is
-// dropped once a recording *Store hits this many, so even an enabled
-// recorder can't grow past a fixed small size.
-const querySQLCap = 1000
-
-// QueryCount returns the number of SELECT queries issued so far. Test-only instrumentation.
-func (s *Store) QueryCount() int64 { return s.queryCount.Load() }
-
-// EnableQueryRecording turns on RecordedQuerySQL's capture for this Store.
-// Test-only: call it right after store.New() in a test that needs to assert
-// which query ran, not just how many - production code never calls this, so the record_sql callback is a no-op append for every real server process.
-func (s *Store) EnableQueryRecording() { s.queryRecordingEnabled.Store(true) }
-
-// RecordedQuerySQL returns the raw SQL of the last querySQLCap SELECTs
-// issued on db, oldest first, or nil if EnableQueryRecording was never
-// called. Test-only instrumentation, like QueryCount.
-func (s *Store) RecordedQuerySQL() []string {
-	s.querySQLMu.Lock()
-	defer s.querySQLMu.Unlock()
-	return append([]string(nil), s.querySQL...)
-}
-
-// SetArtifactService wires the artifact service DeleteChat cascades chat
-// deletion into. Not part of New - the artifact service is built separately
-// (see internal/serve) and may be a different store than this one's.
+// SetArtifactService wires the artifact service DeleteChat cascades into; it is built separately and may be
+// a different store than this one.
 func (s *Store) SetArtifactService(svc artifact.Service) { s.artifacts = svc }
 
 // Artifacts returns the wired artifact service, nil if SetArtifactService was never called.
 func (s *Store) Artifacts() artifact.Service { return s.artifacts }
-
-// chatFKTables are the tables gaining the chats(id) ON DELETE CASCADE FK
-// (#1296), in the same order New() migrates them.
-var chatFKTables = []string{"chat_turns", "dag_plans", "chat_events", "projection_watermarks", "ledger_checkpoints", "dag_exec_plans"}
-
-// chatFKModels maps each of chatFKTables to the struct sweepOrphanChatRows checks
-// HasConstraint against - every one carries a field named "Chat" for exactly this FK.
-var chatFKModels = map[string]any{
-	"chat_turns":            &ChatTurn{},
-	"dag_plans":             &DagPlan{},
-	"chat_events":           &ChatEvent{},
-	"projection_watermarks": &ProjectionWatermark{},
-	"ledger_checkpoints":    &Checkpoint{},
-	"dag_exec_plans":        &DagExecPlan{},
-}
-
-// sweepOrphanChatRows deletes rows whose chat_id has no matching chats row,
-// before AutoMigrate below adds the ON DELETE CASCADE FK. A pre-existing
-// orphan - a chat hard-deleted by raw SQL before this FK existed - makes the ALTER TABLE ADD CONSTRAINT (Postgres) or table-rebuild (SQLite) that follows fail outright, and the orphan survives a restart, so that's a crash loop rather than a one-time failure. No-op on a fresh DB (no chats table yet) or once every table is already clean; once the FK exists it makes new orphans impossible, so every boot after the first paid for a full anti-join scan for nothing (perf audit #11: 400-510ms over 1.35M chat_events, deleting 0 rows) - skip a table the moment its constraint is in place.
-func sweepOrphanChatRows(db *gorm.DB) error {
-	if !db.Migrator().HasTable(&Chat{}) {
-		return nil
-	}
-	for _, table := range chatFKTables {
-		if !db.Migrator().HasTable(table) {
-			continue
-		}
-		if db.Migrator().HasConstraint(chatFKModels[table], "Chat") {
-			continue
-		}
-		res := db.Exec(fmt.Sprintf("DELETE FROM %s WHERE chat_id NOT IN (SELECT id FROM chats)", table))
-		if res.Error != nil {
-			return fmt.Errorf("store: sweep orphan %s rows: %w", table, res.Error)
-		}
-		if res.RowsAffected > 0 {
-			slog.Warn("store: swept orphan rows with no owning chat before migration",
-				"component", "store", "table", table, "count", res.RowsAffected)
-		}
-	}
-	return nil
-}
 
 // New opens the persistence store, runs migrations, and returns it.
 func New(kind, url string) (*Store, error) {
@@ -619,15 +508,9 @@ func New(kind, url string) (*Store, error) {
 		return nil, err
 	}
 	s := &Store{db: db}
-	if err := sweepOrphanChatRows(db); err != nil {
+	if err := db.AutoMigrate(&Chat{}, &ChatTurn{}, &DagPlan{}, &DagNode{}, &ChatEvent{}, &MemoryOp{}, &ProjectionWatermark{}, &Checkpoint{}, &DagExecPlan{}); err != nil {
 		return nil, err
 	}
-	if err := db.AutoMigrate(&Chat{}, &ChatTurn{}, &DagPlan{}, &DagNode{}, &ChatEvent{}, &GithubSnapshot{}, &GithubReviewBaseline{}, &GithubFixState{}, &GithubMergeIntent{}, &MemoryOp{}, &ProjectionWatermark{}, &Checkpoint{}, &DagExecPlan{}); err != nil {
-		return nil, err
-	}
-	// database.NewSessionService below calls gorm.Open again against the SAME
-	// gormCfg pointer - gorm.Open reinitializes Config.Callback when it opens
-	// a *second* DB against a shared Config, silently replacing db's callback processor out from under it (found chasing #1113's SQL-capture test: count_queries/record_sql registered before this point simply never fired - QueryCount had been a silent no-op the whole time). Registering AFTER every gorm.Open() that shares gormCfg is done keeps them live.
 	sessions, err := database.NewSessionService(dialector(), gormCfg)
 	if err != nil {
 		return nil, err
@@ -635,38 +518,18 @@ func New(kind, url string) (*Store, error) {
 	if err := database.AutoMigrate(sessions); err != nil {
 		return nil, err
 	}
-	// The ADK schema's PK on events is (id, app_name, user_id, session_id) with id
-	// leading, so Sessions.Get's WHERE on the other three columns walks the whole
-	// index (perf audit #3: 7ms/0 rows at 1x, 1.7s at 10x). Additive, idempotent.
+	// The ADK events PK leads with id, so Sessions.Get's WHERE on the other three columns walks the whole index.
+	// Additive, idempotent.
 	if err := db.Exec("CREATE INDEX IF NOT EXISTS idx_events_session_lookup ON events (app_name, user_id, session_id, timestamp)").Error; err != nil {
 		return nil, err
 	}
 	s.Sessions = sessions
 	s.instanceID = uuid.NewString()
-	if err := db.Callback().Query().After("gorm:query").Register("quack:count_queries", func(*gorm.DB) {
-		s.queryCount.Add(1)
-	}); err != nil {
-		return nil, err
-	}
-	if err := db.Callback().Query().After("gorm:query").Register("quack:record_sql", func(tx *gorm.DB) {
-		if !s.queryRecordingEnabled.Load() {
-			return
-		}
-		s.querySQLMu.Lock()
-		s.querySQL = append(s.querySQL, tx.Statement.SQL.String())
-		if len(s.querySQL) > querySQLCap {
-			s.querySQL = s.querySQL[len(s.querySQL)-querySQLCap:]
-		}
-		s.querySQLMu.Unlock()
-	}); err != nil {
-		return nil, err
-	}
 	return s, nil
 }
 
-// DB exposes the underlying *gorm.DB for a caller that owns its own schema
-// on this same database (pluginreg's DB registry backends, P3) rather than
-// opening a second connection pool to the identical DB.
+// DB exposes the underlying *gorm.DB for a caller owning its own schema on this database (pluginreg's DB
+// backends) instead of opening a second pool.
 func (s *Store) DB() *gorm.DB { return s.db }
 
 // InstanceID identifies this Store for node-ownership tracking.
@@ -676,9 +539,7 @@ func (s *Store) InstanceID() string { return s.instanceID }
 // (LoadOrCreateInstanceID) before any node writes; ephemeral CLIs keep the default.
 func (s *Store) SetInstanceID(id string) { s.instanceID = id }
 
-// slogGormLogger routes GORM's slow-query warnings through slog. Shared by
-// New and the standalone artifact-service opener (artifact.go), which don't
-// otherwise share a construction path.
+// slogGormLogger routes GORM's slow-query warnings through slog, for New and the standalone artifact opener.
 func slogGormLogger() logger.Interface {
 	return logger.New(
 		slog.NewLogLogger(slog.Default().Handler(), slog.LevelWarn),
@@ -699,9 +560,7 @@ func dialectorFor(kind, url string) (func() gorm.Dialector, error) {
 			return nil, fmt.Errorf("store: parse postgres url: %w", err)
 		}
 		return func() gorm.Dialector {
-			// Reparses url each call (dialectorFor already proved it parses) - New()
-			// calls this factory twice (main db, then the session service) and each
-			// needs its own *sql.DB/pool.
+			// Reparses url each call: New() calls this factory twice and each needs its own *sql.DB pool.
 			d, _ := pgdial.Open(url)
 			return d
 		}, nil
@@ -717,9 +576,8 @@ func dialectorFor(kind, url string) (func() gorm.Dialector, error) {
 	}
 }
 
-// CreateChat inserts a new chat and returns it. Fail-closed on the WAL
-// (#1144 P5): with a ledger wired, the chat.created intent must land before
-// the row does - a failed append means no chat is created at all.
+// CreateChat inserts a new chat. Fail-closed on the WAL: with a ledger wired, the chat.created intent must
+// land first, so a failed append creates no chat.
 func (s *Store) CreateChat(ctx context.Context, systemPrompt string) (*Chat, error) {
 	now := time.Now().UTC()
 	id := uuid.NewString()
@@ -749,29 +607,23 @@ const ChatsPageDefaultLimit = 20
 // ChatsPageMaxLimit bounds limit regardless of what a caller requests.
 const ChatsPageMaxLimit = 100
 
-// ErrInvalidPageToken is returned by ListChats when the page token doesn't
-// decode, or was issued under a different ordering or scope than it's being
-// replayed against (never silently honored under the wrong one).
+// ErrInvalidPageToken: the token doesn't decode, or was issued under a different ordering or scope.
 var ErrInvalidPageToken = errors.New("invalid page token")
 
-// chatsSort names the ordering a page token was issued under. ListChats
-// supports exactly one ordering today; this exists so a future second
-// ordering gets its own value here instead of a token silently being replayed against an ordering it wasn't issued for.
+// chatsSort names the ordering a page token was issued under, so a token is never replayed against another.
 type chatsSort string
 
 const chatsSortUpdatedAtDesc chatsSort = "updated_at_desc"
 
-// ChatsScope selects which chats ListChats considers, pushed into the SQL
-// predicate so a page never fetches rows the caller can't see. Two
-// independent flags, not a 3-valued enum - "all" was never a chat status, just "don't filter"; the zero value (both false) defaults to Active-only, and both true means no archived predicate at all (not archived IN (true,false)), so the planner sees a plain scan.
+// ChatsScope selects which chats ListChats considers, in the SQL predicate. Zero value means Active-only;
+// both true means no archived predicate at all.
 type ChatsScope struct {
 	Active   bool `json:"a"`
 	Archived bool `json:"r"`
 }
 
-// chatsPageToken is ListChats' opaque continuation token. The caller-visible
-// contract is just "an anchor under a named ordering and scope": ID anchors
-// it because ID is immutable, unlike UpdatedAt, which churns under an active run. UpdatedAt still rides along inside the token - resolving an ID anchor back to its position in an updated_at-sorted list needs the value it was last seen at, so the token carries it as its own implementation detail, not as part of the contract a caller is meant to understand. Scope is a struct of independent flags rather than an ordered list, so encoding it is inherently canonical - {active,archived} and {archived,active} collapse to the identical Go value (and therefore identical JSON) with no sort step.
+// chatsPageToken anchors on the immutable ID; UpdatedAt rides along only to locate that ID in the
+// updated_at-sorted list. Scope is a struct of flags, so its JSON is canonical.
 type chatsPageToken struct {
 	Sort      chatsSort  `json:"s"`
 	Scope     ChatsScope `json:"sc"`
@@ -784,9 +636,8 @@ func encodeChatsPageToken(t chatsPageToken) string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-// decodeChatsPageToken validates the token was issued for the sort and scope
-// it's being replayed against. A token minted before scoping existed carries
-// a zero-value Scope ({false false}) - treated as {Active: true}, the pre-existing default behavior, rather than rejected outright.
+// decodeChatsPageToken rejects a token issued for another sort or scope; a zero Scope (minted before
+// scoping) is read as {Active: true}.
 func decodeChatsPageToken(s string, scope ChatsScope) (chatsPageToken, error) {
 	var t chatsPageToken
 	b, err := base64.RawURLEncoding.DecodeString(s)
@@ -809,9 +660,8 @@ func decodeChatsPageToken(s string, scope ChatsScope) (chatsPageToken, error) {
 	return t, nil
 }
 
-// ListChats returns up to limit chats within scope, most-recently-updated
-// first, starting after pageToken ("" for the first page); returns the
-// opaque token for the next page, or "" if this page was the last. limit <= 0 becomes ChatsPageDefaultLimit; limit above ChatsPageMaxLimit is capped; the zero-value scope (both flags false) defaults to {Active: true}. This is keyset (not offset) pagination (see chatsPageToken): the scope predicate is applied in SQL, not filtered from an already-fetched page, so a page always returns exactly limit rows (or fewer only at the true end of that scope) and the cursor never advances past a row the caller never saw.
+// ListChats returns up to limit chats in scope, newest-updated first, after pageToken, plus the next token
+// ("" at the end). Keyset pagination with the scope in SQL, so pages are always full and never skip rows.
 func (s *Store) ListChats(ctx context.Context, limit int, pageToken string, scope ChatsScope) ([]Chat, string, error) {
 	if limit <= 0 {
 		limit = ChatsPageDefaultLimit
@@ -873,9 +723,8 @@ func (s *Store) rowsExist(ctx context.Context, model any, col, val string) (bool
 	return count > 0, err
 }
 
-// ChatExists reports whether id has a live chats row - the shared check
-// behind every boot-time resume/recovery pass (#1296), so a chat hard-deleted
-// by raw SQL (bypassing DeleteChat's cascade) is never resumed from its leftover dag_plans/dag_nodes rows.
+// ChatExists reports whether id has a live chats row, so boot resume never revives a chat hard-deleted by raw
+// SQL from leftover dag_plans/dag_nodes rows.
 func (s *Store) ChatExists(ctx context.Context, id string) (bool, error) {
 	return s.rowsExist(ctx, &Chat{}, "id", id)
 }
@@ -933,7 +782,7 @@ func (s *Store) DeleteChat(ctx context.Context, id string) error {
 		if err := tx.Where("chat_id = ?", id).Delete(&ChatEvent{}).Error; err != nil {
 			return err
 		}
-		// Otherwise a leaked row per deleted chat (#1238): UUIDv4 ids never
+		// Otherwise a leaked row per deleted chat: UUIDv4 ids never
 		// reuse, so nothing would ever read it back.
 		if err := tx.Where("chat_id = ?", id).Delete(&Checkpoint{}).Error; err != nil {
 			return err
@@ -961,24 +810,21 @@ func reapNodeSessionsWarn(s *Store, ctx context.Context, id, what string) {
 	}
 }
 
-// ReapNodeSessions deletes every per-DAG-node ADK session this chat owns: each node's A2A worker session (internal/agent.WorkerSessionID, "<chatID>:<nodeID>") and its in-node retry session ("<chatID>::retry"), across whichever agent bundle's AppName ran that node - the ADK schema's session PK is (app_name, user_id, id) with events cascading on delete (google.golang.org/adk/v2/session/database), so one raw sweep on id reaps both tables without knowing which bundle a node used.
-// A node's own worker session now lives until this runs (chat archive/delete) - node reuse needs it to survive
-// past a single dispatch, so internal/serve/nativeagent.go's perNodeServers.track no longer reaps it at completion.
+// ReapNodeSessions deletes the chat's per-node worker ("<chatID>:<nodeID>") and retry ("<chatID>::retry") sessions.
+// Hard-codes ADK's session schema: one sweep on sessions.id across app/user, events cascade on delete.
 func (s *Store) ReapNodeSessions(ctx context.Context, chatID string) error {
 	return s.db.WithContext(ctx).Exec("DELETE FROM sessions WHERE id = ? OR id LIKE ? ESCAPE '\\'",
 		chatID, likeEscape(chatID)+":%").Error
 }
 
-// likeEscape backslash-escapes a LIKE pattern's own wildcards (%, _) so a
-// value used as a literal prefix - a chat id, which can legitimately contain either character (e.g. a GitHub repo name with an underscore) - can't widen the match to another chat's rows. Pair with `ESCAPE '\'` in the query.
+// likeEscape escapes LIKE wildcards so a chat id containing % or _ can't widen a prefix match to another
+// chat's rows. Pair with `ESCAPE '\'`.
 func likeEscape(s string) string {
 	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 	return r.Replace(s)
 }
 
-// deleteChatArtifacts best-effort cascades chat deletion into the artifact
-// service (attachment bytes for this chat's session) - same failure posture
-// as the ADK session reap above: log and move on, never block the delete.
+// deleteChatArtifacts best-effort cascades chat deletion into the artifact service: log and move on.
 func (s *Store) deleteChatArtifacts(ctx context.Context, chatID, sessionUser string) {
 	if s.artifacts == nil {
 		return
@@ -1013,9 +859,8 @@ func (s *Store) SetChatGitHub(ctx context.Context, id, repo, url, state, session
 	}).Create(c).Error
 }
 
-// SetChatOrigin upserts an extension-dispatched chat's SessionUser and Origin
-// JSON. Creates the row if missing (dispatch may arrive before any chat
-// exists) - SessionUser is fixed at creation, same rule as SetChatGitHub.
+// SetChatOrigin upserts an extension chat's SessionUser and Origin JSON, creating the row if missing
+// (dispatch may precede the chat); SessionUser is fixed at creation.
 func (s *Store) SetChatOrigin(ctx context.Context, id, sessionUser, originJSON string) error {
 	now := time.Now().UTC()
 	c := &Chat{ID: id, CreatedAt: now, UpdatedAt: now, SessionUser: sessionUser, Origin: originJSON}
@@ -1025,94 +870,8 @@ func (s *Store) SetChatOrigin(ctx context.Context, id, sessionUser, originJSON s
 	}).Create(c).Error
 }
 
-// takeChatScoped returns one chat-scoped row by chat_id, or (nil, nil) when
-// absent.
-func takeChatScoped[T any](db *gorm.DB, ctx context.Context, chatID string) (*T, error) {
-	var row T
-	err := db.WithContext(ctx).Where("chat_id = ?", chatID).Take(&row).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &row, nil
-}
-
-// chatScopedField is takeChatScoped projected onto one string column.
-func chatScopedField[T any](db *gorm.DB, ctx context.Context, chatID string, field func(*T) string) (string, bool, error) {
-	row, err := takeChatScoped[T](db, ctx, chatID)
-	if row == nil {
-		return "", false, err
-	}
-	return field(row), true, nil
-}
-
-func (s *Store) GetGithubSnapshot(ctx context.Context, chatID string) (string, bool, error) {
-	return chatScopedField[GithubSnapshot](s.db, ctx, chatID, func(row *GithubSnapshot) string {
-		return row.JSON
-	})
-}
-
-func (s *Store) SetGithubSnapshot(ctx context.Context, chatID, json string) error {
-	return s.upsertChatScoped(ctx, &GithubSnapshot{ChatID: chatID, JSON: json, UpdatedAt: time.Now().UTC()}, "json")
-}
-
-func (s *Store) GetGithubReviewBaseline(ctx context.Context, chatID string) (string, bool, error) {
-	return chatScopedField[GithubReviewBaseline](s.db, ctx, chatID, func(row *GithubReviewBaseline) string {
-		return row.PatchIDs
-	})
-}
-
-func (s *Store) SetGithubReviewBaseline(ctx context.Context, chatID, patchIDsJSON string) error {
-	return s.upsertChatScoped(ctx, &GithubReviewBaseline{ChatID: chatID, PatchIDs: patchIDsJSON, UpdatedAt: time.Now().UTC()}, "patch_ids")
-}
-
-// upsertChatScoped inserts or updates a chat_id-conflict row, touching the
-// given column plus updated_at on conflict.
-func (s *Store) upsertChatScoped(ctx context.Context, row any, col string) error {
-	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "chat_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{col, "updated_at"}),
-	}).Create(row).Error
-}
-
-func (s *Store) GetGithubFixState(ctx context.Context, chatID string) (*GithubFixState, error) {
-	return takeChatScoped[GithubFixState](s.db, ctx, chatID)
-}
-
-func (s *Store) SetGithubFixState(ctx context.Context, st GithubFixState) error {
-	st.UpdatedAt = time.Now().UTC()
-	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "chat_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"last_sha", "stopped", "updated_at"}),
-	}).Create(&st).Error
-}
-
-func (s *Store) DeleteGithubFixState(ctx context.Context, chatID string) error {
-	return s.db.WithContext(ctx).Where("chat_id = ?", chatID).Delete(&GithubFixState{}).Error
-}
-
-func (s *Store) GetGithubMergeIntent(ctx context.Context, chatID string) (*GithubMergeIntent, error) {
-	return takeChatScoped[GithubMergeIntent](s.db, ctx, chatID)
-}
-
-func (s *Store) SetGithubMergeIntent(ctx context.Context, chatID, requestedBy string) error {
-	now := time.Now().UTC()
-	row := &GithubMergeIntent{ChatID: chatID, RequestedBy: requestedBy, CreatedAt: now, UpdatedAt: now}
-	return s.db.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "chat_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"requested_by", "updated_at"}),
-	}).Create(row).Error
-}
-
-func (s *Store) DeleteGithubMergeIntent(ctx context.Context, chatID string) error {
-	return s.db.WithContext(ctx).Where("chat_id = ?", chatID).Delete(&GithubMergeIntent{}).Error
-}
-
-// MaxTitleLen caps every persisted chat title, regardless of caller (the
-// generated titler, its failure-path fallback, a user's manual rename, or an
-// extension's origin label) - a single backstop against a titler that ignores its own "3-6 words" instruction and echoes back a long answer verbatim (#1124), enforced once here rather than duplicated per caller.
+// MaxTitleLen caps every persisted chat title, one backstop for every caller (including a titler that ignores
+// its own "3-6 words" instruction).
 const MaxTitleLen = 80
 
 // UpdateTitle sets the human-readable title for a chat, truncated to
@@ -1121,9 +880,8 @@ func (s *Store) UpdateTitle(ctx context.Context, id, title string) error {
 	return s.db.WithContext(ctx).Model(&Chat{}).Where("id = ?", id).Update("title", truncateTitle(title, MaxTitleLen)).Error
 }
 
-// truncateTitle cuts title to at most maxLen runes, backing off to the last
-// preceding space so a long PR/issue title doesn't sever mid-word (#1232),
-// then appends an ellipsis. No-op if title already fits.
+// truncateTitle cuts title to maxLen runes, backing off to the last space so it doesn't sever mid-word,
+// then appends an ellipsis.
 func truncateTitle(title string, maxLen int) string {
 	r := []rune(title)
 	if len(r) <= maxLen {
@@ -1139,14 +897,8 @@ func truncateTitle(title string, maxLen int) string {
 	return string(r[:cut]) + "…"
 }
 
-// ArchiveChat toggles the archived flag on a chat.
-// Archiving never touches UpdatedAt so that archive/unarchive doesn't reorder
-// the recency-sorted chat list - UpdateColumn (not Update) is required for that: GORM auto-stamps UpdatedAt on any plain Update/Updates call by field-name convention, and only UpdateColumn/UpdateColumns skip that.
-// Archiving (not unarchiving) also reaps every per-node worker session this
-// chat's nodes hold open - the same best-effort ReapNodeSessions DeleteChat
-// runs, since node reuse now keeps those sessions alive past a single node's
-// completion; archive is the first point in a chat's life where they're safe
-// to let go (unarchiving to keep working starts those nodes fresh, same as if they'd never run).
+// ArchiveChat uses UpdateColumn, which skips GORM's UpdatedAt stamp, so archiving doesn't reorder the list.
+// Archiving also best-effort reaps the chat's per-node worker sessions: nothing reuses them after archive.
 func (s *Store) ArchiveChat(ctx context.Context, id string, archived bool) error {
 	if err := s.db.WithContext(ctx).Model(&Chat{}).Where("id = ?", id).UpdateColumn("archived", archived).Error; err != nil {
 		return err
@@ -1157,9 +909,8 @@ func (s *Store) ArchiveChat(ctx context.Context, id string, archived bool) error
 	return nil
 }
 
-// SaveTurn persists a new turn at the next available sequence position.
-// userText is stored on the row itself (see ChatTurn.UserText) so the chat
-// view survives a later ResetHistory dispatch wiping the session events it would otherwise read the turn's content from.
+// SaveTurn persists a new turn at the next sequence. userText lives on the row so the view survives a
+// ResetHistory wiping the session events.
 func (s *Store) SaveTurn(ctx context.Context, chatID, turnID, userText string) error {
 	var count int64
 	if err := s.db.WithContext(ctx).Model(&ChatTurn{}).Where("chat_id = ?", chatID).Count(&count).Error; err != nil {
@@ -1190,9 +941,7 @@ type TurnUsage struct {
 	PromptTokens, CompletionTokens, ReasoningTokens, TotalTokens, CachedTokens int32
 }
 
-// SetTurnUsage stamps the model + token usage on the turn row in one write
-// (ADK drops both ModelVersion and a chat-wide-summable usage shape on
-// read - see GetChatUsage). Called once at run end for a plain-reply turn.
+// SetTurnUsage stamps model + token usage on the turn row at run end; ADK drops both on read.
 func (s *Store) SetTurnUsage(ctx context.Context, chatID, turnID, model string, u TurnUsage) error {
 	return s.db.WithContext(ctx).Model(&ChatTurn{}).
 		Where("id = ? AND chat_id = ?", turnID, chatID).
@@ -1225,9 +974,8 @@ func (s *Store) SaveDagPlan(ctx context.Context, chatID, planID, turnID, planJSO
 		if err != nil {
 			return fmt.Errorf("store: marshal plan.saved payload: %w", err)
 		}
-		// IdempotencyKey = planID: a boot resume re-yields the same stashed
-		// plan through this path (see doc above) - the DB write is already
-		// skip-if-exists, so the WAL append must be too, or a resumed chat grows one plan.saved entry per resume forever.
+		// IdempotencyKey = planID: a boot resume re-saves the same plan, so the WAL append must be skip-if-exists
+		// like the DB write, or each resume adds a plan.saved entry.
 		_, err = s.walLedger.AppendIntent(ctx, ledger.Entry{
 			ChatID: chatID, TurnID: turnID, Kind: ledger.KindPlanSaved, Key: planID,
 			At: now, Payload: payload, IdempotencyKey: "plan.saved:" + planID + ":" + contentKey(turnID, planJSON),
@@ -1298,9 +1046,8 @@ func (s *Store) InsertChatEvent(ctx context.Context, ev ChatEvent) error {
 	return s.db.WithContext(ctx).Create(&ev).Error
 }
 
-// InsertChatEvents persists a batch of run events in one multi-row INSERT
-// (perf-audit item 2: single-row inserts capped the drain at ~139 ev/s).
-// No-op for an empty slice.
+// InsertChatEvents persists a batch of run events in one multi-row INSERT (single-row inserts capped the drain
+// at ~139 ev/s).
 func (s *Store) InsertChatEvents(ctx context.Context, evs []ChatEvent) error {
 	if len(evs) == 0 {
 		return nil
@@ -1317,9 +1064,8 @@ func (s *Store) LoadChatEvents(ctx context.Context, chatID string, afterSeq int6
 	return evs, err
 }
 
-// ChatEventsExist reports whether chatID has ANY row in the SSE table,
-// regardless of seq - runlog.EventLog.LoadEvents' fold-fallback decision
-// (#1101): a chat with rows but none newer than some fromSeq is "caught up", not "table is gone", and must not trigger a resend of the whole reconstructed history.
+// ChatEventsExist reports whether chatID has any SSE row regardless of seq: a chat with rows but none newer
+// than fromSeq is caught up, and must not resend the whole reconstructed history.
 func (s *Store) ChatEventsExist(ctx context.Context, chatID string) (bool, error) {
 	return s.rowsExist(ctx, &ChatEvent{}, "chat_id", chatID)
 }
@@ -1334,9 +1080,7 @@ func (s *Store) TrimChatEvents(ctx context.Context, chatID string, upToSeq int64
 	return s.db.WithContext(ctx).Where("chat_id = ? AND seq <= ?", chatID, upToSeq).Delete(&ChatEvent{}).Error
 }
 
-// InTx runs fn inside one transaction on s's underlying db - callers that
-// need a projection write and its watermark advance to commit atomically
-// (#1144 P3) use this plus InsertChatEventTx/SetProjectionWatermarkTx.
+// InTx runs fn in one transaction, so a projection write and its watermark advance commit atomically.
 func (s *Store) InTx(ctx context.Context, fn func(tx *gorm.DB) error) error {
 	return s.db.WithContext(ctx).Transaction(fn)
 }
@@ -1346,9 +1090,7 @@ func InsertChatEventTx(tx *gorm.DB, ev ChatEvent) error {
 	return tx.Create(&ev).Error
 }
 
-// GetProjectionWatermark returns projection's folded_seq for chatID, 0 if no
-// row exists yet (a fresh chat, or one never migrated - both correctly fold
-// from the start).
+// GetProjectionWatermark returns projection's folded_seq for chatID, 0 if no row exists yet.
 func (s *Store) GetProjectionWatermark(ctx context.Context, chatID, projection string) (int64, error) {
 	var w ProjectionWatermark
 	err := s.db.WithContext(ctx).Where("chat_id = ? AND projection = ?", chatID, projection).First(&w).Error
@@ -1358,9 +1100,8 @@ func (s *Store) GetProjectionWatermark(ctx context.Context, chatID, projection s
 	return w.FoldedSeq, err
 }
 
-// SetProjectionWatermarkTx upserts (chatID, projection)'s folded_seq using
-// tx, so a caller can advance it in the SAME transaction as its own
-// projection write (#1144 P3) - pass s.DB() (or the tx it's already in).
+// SetProjectionWatermarkTx upserts (chatID, projection)'s folded_seq in tx, alongside the caller's own
+// projection write.
 func SetProjectionWatermarkTx(tx *gorm.DB, chatID, projection string, foldedSeq int64) error {
 	return tx.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "chat_id"}, {Name: "projection"}},
@@ -1374,9 +1115,8 @@ func (s *Store) SetProjectionWatermark(ctx context.Context, chatID, projection s
 	return SetProjectionWatermarkTx(s.db.WithContext(ctx), chatID, projection, foldedSeq)
 }
 
-// UpsertNodeTerminalStatusTx sets a node's terminal status (done/failed)
-// inside tx, bypassing SetNodeStatus's transition machine - `quack ledger
-// rebuild`'s node_state reconciliation write (#1144 P3), not a live lifecycle transition. Creates the row if the crash that orphaned this watermark also lost it - same lossy-reconstruction ceiling as fold.NodeState (only status is known, not the row's other columns).
+// UpsertNodeTerminalStatusTx sets a node's done/failed status in tx, bypassing SetNodeStatus's transitions,
+// for `quack ledger rebuild`. Creates a lost row with status only (same lossy ceiling as fold.NodeState).
 func UpsertNodeTerminalStatusTx(tx *gorm.DB, planID, nodeID, status string) error {
 	return tx.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "plan_id"}, {Name: "node_id"}},
@@ -1384,30 +1124,25 @@ func UpsertNodeTerminalStatusTx(tx *gorm.DB, planID, nodeID, status string) erro
 	}).Create(&DagNode{PlanID: planID, NodeID: nodeID, Status: status}).Error
 }
 
-// ResetProjectionWatermark sets (chatID, projection) back to 0 - `quack
-// ledger rebuild`'s whole job post-#1144-P3: reset the watermark and let the
-// next fold repopulate it, instead of a --force wipe-and-replace.
+// ResetProjectionWatermark sets (chatID, projection) to 0 so the next fold repopulates it.
 func (s *Store) ResetProjectionWatermark(ctx context.Context, chatID, projection string) error {
 	return SetProjectionWatermarkTx(s.db.WithContext(ctx), chatID, projection, 0)
 }
 
-// SeedProjectionWatermarks marks every chat that already has chat_events
-// rows as caught up through its OWN ledger history (same seed shape for "artifact" - already-materialized artifact rows - and "node_state" - already-materialized DagNode rows - so each projection's first watermark-gated write never re-derives, replays, or duplicates its pre-existing data), so migrating an existing deployment to watermark-gated folding never replays or duplicates it. It seeds with the ledger's own MAX(seq) for that chat, NOT MAX(chat_events.seq): the table's Seq is a PER-RUN counter that resets on every run while the ledger's Seq is per-chat-LIFETIME (see runlog.LoadEvents's doc for why the two spaces are never comparable) - a literal copy of the table's Seq would seed a lifetime watermark from a per-run number, wrong on any chat that has run more than once. "Caught up through the whole ledger so far" is the safe superset: pre-existing rows came from direct live writes, not a fold, so there is nothing for a fold to replay. Idempotent (ON CONFLICT DO NOTHING) - safe to call on every boot; a chat that already has a watermark row is never touched. ledgerStore may be a wholly separate database (Postgres ledger next to a sqlite session store, the only sanctioned topology); it is read through its own Go API, never joined to from this Store's SQL.
+// SeedProjectionWatermarks marks existing chats caught up to their ledger MAX(seq) (never chat_events.seq: a
+// per-run counter), so a first watermark-gated fold never replays live-written rows. Idempotent.
 func (s *Store) SeedProjectionWatermarks(ctx context.Context, ledgerStore ledger.LedgerStore) error {
 	seeds := []struct {
 		projection, listChats string
 	}{
-		// "sse" reads chats, not chat_events: every chat_events row's
-		// chat_id has a chats row (the FK direction), and chats.id is the
-		// PK - a 496 MB DISTINCT seq scan otherwise (perf audit #8).
+		// "sse" reads chats, not chat_events: every chat_events row has a chats row and chats.id is the PK,
+		// avoiding a huge DISTINCT scan.
 		{"sse", "SELECT id AS chat_id FROM chats"},
 		{"artifact", "SELECT DISTINCT session_id AS chat_id FROM artifacts"},
 		{"node_state", "SELECT DISTINCT dp.chat_id AS chat_id FROM dag_nodes dn JOIN dag_plans dp ON dn.plan_id = dp.id"},
 	}
 	now := time.Now().UTC()
-	// maxSeqCache: a chat can appear in more than one projection's list
-	// (chat_events + artifacts + dag_nodes), and ledgerStore.MaxSeq is one
-	// per-chat round trip - cache it instead of re-deriving the same number per projection.
+	// A chat can appear in several projections and MaxSeq is a round trip, so cache it.
 	maxSeqCache := map[string]int64{}
 	for _, sd := range seeds {
 		var chatIDs []string
@@ -1431,9 +1166,8 @@ func (s *Store) SeedProjectionWatermarks(ctx context.Context, ledgerStore ledger
 				Columns:   []clause.Column{{Name: "chat_id"}, {Name: "projection"}},
 				DoNothing: true,
 			}).Create(&ProjectionWatermark{ChatID: chatID, Projection: sd.projection, FoldedSeq: maxSeq, UpdatedAt: now}).Error
-			// artifact/node_state read chat ids from OTHER tables (artifacts,
-			// dag_nodes) that the chats(id) FK (#1296) doesn't cover - a chat_id
-			// with no chats row there is a pre-existing dangling reference, not a new bug; skip it instead of aborting every other chat's seed.
+			// artifact/node_state read chat ids from tables the chats FK doesn't cover; skip a dangling one instead of
+			// aborting every other chat's seed.
 			if errors.Is(err, gorm.ErrForeignKeyViolated) {
 				slog.Warn("projection watermark seed: chat row is gone; skipping", "component", "store", "projection", sd.projection, "chat", chatID)
 				continue
@@ -1468,30 +1202,14 @@ type ResumeReport struct {
 	Failed        []UnresumableNode // genuinely unresumable, marked failed with the reason in `error`
 }
 
-// ResumePausedDagNodes is boot's counterpart to serve.DrainActiveRuns, and
-// replaces the old FailStaleDagNodes: a node the last process left suspended
-// is state to resume, not damage to write off.
-//
-//   - status paused/needs_input (any reason) -> resumable; awaiting_input goes
-//     to AwaitingInput (it needs an answer first), everything else to Start.
-//   - status running belonging to THIS instance's previous life, or past
-//     staleNodeCeiling: a hard kill. Re-stamped paused/shutdown and resumed
-//     the same way - the process died, the work didn't.
-//   - queued nodes are left alone: the resumed graph re-enters at the paused
-//     node and walks its descendants, which is what schedules them.
-//
-// resumable, when non-nil, is the caller's liveness/admissibility check for a
-// node (serve passes a clone-dir + archived-chat + stale-plan check);
-// pauseReason lets it exempt parked HITL questions from a ceiling that only
-// makes sense for work nodes. A false verdict, or a missing plan row, is the
-// only path left to `failed`, with the reason in `error`.
+// ResumePausedDagNodes resumes what the last process left suspended: paused/needs_input nodes, and running ones
+// from this instance's previous life or past staleNodeCeiling (re-stamped paused/shutdown). Queued nodes wait.
 func (s *Store) ResumePausedDagNodes(ctx context.Context, resumable func(chatID, pauseReason string) (bool, string)) (ResumeReport, error) {
 	var rep ResumeReport
 	cutoff := time.Now().UTC().Add(-staleNodeCeiling)
 	var nodes []DagNode
-	// IS NULL covers ALTER TABLE ADD COLUMN no-default rows. The ownership
-	// guard applies to both branches: in a shared DB (#683) a booting
-	// instance must not resume a live peer's nodes; a dead peer's nodes are picked up past staleNodeCeiling.
+	// IS NULL covers no-default added-column rows. In a shared DB a booting instance must not resume a live
+	// peer's nodes; a dead peer's are picked up past staleNodeCeiling.
 	owned := s.db.Where("instance_id IS NULL OR instance_id = ? OR instance_id = ? OR updated_at < ?", "", s.instanceID, cutoff)
 	err := s.db.WithContext(ctx).Model(&DagNode{}).
 		Where("status IN ?", []string{string(dag.StatusPaused), string(dag.StatusNeedsInput), string(dag.StatusRunning)}).
@@ -1502,7 +1220,7 @@ func (s *Store) ResumePausedDagNodes(ctx context.Context, resumable func(chatID,
 	}
 
 	chatOf := map[string]string{} // planID -> chatID, "" = plan row gone
-	chatLive := map[string]bool{} // chatID -> chats row still exists (#1296)
+	chatLive := map[string]bool{} // chatID -> chats row still exists
 	for _, n := range nodes {
 		chatID, ok := chatOf[n.PlanID]
 		if !ok {
@@ -1516,9 +1234,7 @@ func (s *Store) ResumePausedDagNodes(ctx context.Context, resumable func(chatID,
 			rep.Failed = append(rep.Failed, s.FailUnresumable(ctx, "", n, "plan row is gone"))
 			continue
 		}
-		// A raw SQL delete of the chats row bypasses DeleteChat's cascade and
-		// leaves this plan/node behind (#1296) - never resume into a chat that
-		// no longer exists, or the run writes chat_events for a phantom chat.
+		// Never resume into a chat deleted by raw SQL (bypassing the cascade), or the run writes a phantom's events.
 		live, ok := chatLive[chatID]
 		if !ok {
 			var e error
@@ -1674,23 +1390,19 @@ func (s *Store) GetLatestDagPlan(ctx context.Context, chatID string) (*DagPlan, 
 	return &p, nil
 }
 
-// CountDagPlans returns how many DAG plans chatID has - `quack ledger
-// rebuild`'s multi-plan guard (a node ID recurs across plans, so node_state
-// attribution is only safe when there is exactly one plan to attribute to).
+// CountDagPlans returns chatID's DAG plan count: rebuild's guard, since node IDs recur across plans.
 func (s *Store) CountDagPlans(ctx context.Context, chatID string) (int64, error) {
 	var n int64
 	err := s.db.WithContext(ctx).Model(&DagPlan{}).Where("chat_id = ?", chatID).Count(&n).Error
 	return n, err
 }
 
-// buildTurnContent joins one ChatTurn row with its session-derived group
-// (nil if the turn has none - e.g. it fell outside the alignment window, or ResetHistory wiped the session outright, #1226), its DAG plan, and that plan's nodes. Shared by GetTurnsWithContent and GetLastTurnWithContent so the two loaders can't drift on how a turn's content is assembled.
+// buildTurnContent joins a ChatTurn with its session group (nil if outside the window or wiped), plan and
+// nodes; shared by both turn loaders so they can't drift.
 func buildTurnContent(t ChatTurn, g *turnGroup, plan *DagPlan, nodesByPlan map[string][]DagNode, answers map[string]markedAnswer) TurnContent {
 	tc := TurnContent{
 		ID: t.ID, CreatedAt: t.CreatedAt, Model: t.Model,
-		// Stamped by SetTurnUsage at run end - the SQL-summable source of
-		// truth. Turns that predate that stamp fall back to the session
-		// walk below.
+		// Stamped by SetTurnUsage; turns without the stamp fall back to the session walk below.
 		PromptTokens: t.PromptTokens, CompletionTokens: t.CompletionTokens,
 		ReasoningTokens: t.ReasoningTokens, TotalTokens: t.TotalTokens, CachedTokens: t.CachedTokens,
 	}
@@ -1725,14 +1437,12 @@ func buildTurnContent(t ChatTurn, g *turnGroup, plan *DagPlan, nodesByPlan map[s
 	return tc
 }
 
-// lastTurnWindow is getLastTurnGroup's starting NumRecentEvents window, grown 8x per iteration until
-// a user event comes into view. 512 covers the audit's median turn (~280 events) in one
-// round trip; only a turn bigger than the window costs a second fetch.
+// lastTurnWindow is getLastTurnGroup's starting window, grown 8x until a user event is in view.
+// 512 covers a median turn (~280 events) in one round trip.
 const lastTurnWindow = 512
 
-// getLastTurnGroup fetches only enough of the session's tail to derive the newest turn's
-// content, instead of GetTurnsWithContent's whole-session load (perf audit #3 - 278MB/939k allocs/270-735ms per run end on a 14,050-event session). A window with no user event in view means that turn is bigger than the window, not that the group is incomplete: groupSessionEvents only starts a group at a user event, so a window truncated mid-turn yields zero groups rather than a partial one; growing the window (not guessing a single large constant) keeps this correct regardless of turn size while still bounding the fetch for the common case.
-// Mirrors GetTurnsWithContent's own tolerance for a missing/unreadable session (no session row yet, or one ResetHistory deleted, #1226): any Sessions.Get error just means no group, not a call failure - the caller falls back to the ChatTurn row's own stored text.
+// getLastTurnGroup fetches only the session tail; a window truncated mid-turn yields no group, so it grows.
+// A missing/unreadable session means no group: the caller falls back to the ChatTurn row's own text.
 func (s *Store) getLastTurnGroup(ctx context.Context, appName, userID, chatID string) (turnGroup, bool) {
 	for n := lastTurnWindow; ; n *= 8 {
 		resp, err := s.Sessions.Get(ctx, &session.GetRequest{AppName: appName, UserID: userID, SessionID: chatID, NumRecentEvents: n})
@@ -1750,9 +1460,7 @@ func (s *Store) getLastTurnGroup(ctx context.Context, appName, userID, chatID st
 	}
 }
 
-// GetLastTurnWithContent returns just the newest turn's content. The run-end paths
-// (StampTerminalOutcome, stampRunOutcome) only ever look at the last of GetTurnsWithContent's
-// turns, so this never loads the rest of the chat (perf audit #3).
+// GetLastTurnWithContent returns just the newest turn's content, without loading the rest of the chat.
 func (s *Store) GetLastTurnWithContent(ctx context.Context, appName, userID, chatID string) (*TurnContent, error) {
 	var t ChatTurn
 	err := s.db.WithContext(ctx).Where("chat_id = ?", chatID).Order("seq desc").Limit(1).First(&t).Error
@@ -1846,8 +1554,7 @@ func (s *Store) GetTurnsWithContent(ctx context.Context, appName, userID, chatID
 		planIDs[i] = plans[i].ID
 	}
 
-	// One IN query for all plans' nodes instead of one GetDagNodes per turn
-	// (perf audit #5: N+1, 56 queries at 50 turns collapses to 1 here).
+	// One IN query for all plans' nodes instead of one GetDagNodes per turn (N+1).
 	var allNodes []DagNode
 	if len(planIDs) > 0 {
 		_ = s.db.WithContext(ctx).Where("plan_id IN ?", planIDs).Find(&allNodes).Error
@@ -1857,8 +1564,8 @@ func (s *Store) GetTurnsWithContent(ctx context.Context, appName, userID, chatID
 		nodesByPlan[n.PlanID] = append(nodesByPlan[n.PlanID], n)
 	}
 
-	// groups can be shorter than turns - a ResetHistory dispatch (#1195) wipes
-	// older session events while every ChatTurn row survives forever, and only ever removes OLDER events, never reorders what's left. So the surviving groups always line up with the MOST RECENT len(groups) turns, never the first: align from the end, not the front, or a reset silently shifts every later turn's content onto the wrong (earlier) turn.
+	// ResetHistory only removes OLDER events, so surviving groups line up with the most recent turns:
+	// align from the end, or a reset shifts content onto the wrong turn.
 	offset := len(turns) - len(groups)
 	answers := keyedAnswers(groups)
 	result := make([]TurnContent, len(turns))
@@ -1876,9 +1583,8 @@ func (s *Store) GetTurnsWithContent(ctx context.Context, appName, userID, chatID
 	return result, nil
 }
 
-// GetTurnWithContent returns the fully-joined content for a single turn. The common case -
-// a turn just finished streaming - asks for the newest one, so try the tail-only loader
-// first (perf audit #3); only a request for an older turn pays for the full per-chat load.
+// GetTurnWithContent returns one turn's joined content, trying the tail-only loader first since the common
+// request is the newest turn.
 func (s *Store) GetTurnWithContent(ctx context.Context, appName, userID, chatID, turnID string) (*TurnContent, error) {
 	if last, err := s.GetLastTurnWithContent(ctx, appName, userID, chatID); err != nil {
 		return nil, err
@@ -1944,9 +1650,7 @@ func (s *Store) GetChatUsage(ctx context.Context, chatID string) (UsageAggregate
 	return agg, nil
 }
 
-// ChatsUsageTotals sums each chat's total tokens (turns + DAG nodes) for a
-// batch of chat ids in two GROUP BY queries - the sidebar's one extra
-// round-trip per page, not one per chat.
+// ChatsUsageTotals sums each chat's total tokens (turns + DAG nodes) in two GROUP BY queries.
 func (s *Store) ChatsUsageTotals(ctx context.Context, chatIDs []string) (map[string]int64, error) {
 	totals := make(map[string]int64, len(chatIDs))
 	if len(chatIDs) == 0 {

@@ -79,9 +79,6 @@ func mergeAgentConfig(base, override AgentConfig) AgentConfig {
 	if len(override.Inputs) > 0 {
 		merged.Inputs = override.Inputs
 	}
-	if override.Gated != nil {
-		merged.Gated = override.Gated
-	}
 	if override.JudgeRounds != 0 {
 		merged.JudgeRounds = override.JudgeRounds
 	}
@@ -112,8 +109,8 @@ func allowSet(listed []string) map[string]bool {
 	return allowed
 }
 
-// SeedPluginAgents merges c.Agents from agentsDir's bundles named in listed -
-// the manifest's list is the only input, so a nil/empty listed seeds nothing. An override in c.Agents wins field by field via mergeAgentConfig.
+// SeedPluginAgents merges c.Agents from agentsDir's bundles named in listed (nil/empty seeds nothing).
+// An override already in c.Agents wins field by field via mergeAgentConfig.
 func (c *Config) SeedPluginAgents(pluginName, agentsDir string, listed []string) ([]string, error) {
 	entries, err := os.ReadDir(agentsDir)
 	if err != nil {

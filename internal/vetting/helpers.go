@@ -25,9 +25,8 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// judgeSessionID: real chat id groups a judge/writer run under the chat that
-// caused it in Langfuse (ADK stamps gen_ai.conversation.id from this session id).
-// Each caller gets its own throwaway InMemoryService per run, so reusing chatID across calls can't leak conversation state between them (only observability grouping is affected). Empty chatID falls back rather than emitting "".
+// judgeSessionID groups a judge/writer run under its chat in Langfuse. Each run has its own
+// throwaway session service, so reusing chatID only affects observability grouping.
 func judgeSessionID(chatID, fallback string) string {
 	if chatID == "" {
 		return fallback
@@ -37,9 +36,8 @@ func judgeSessionID(chatID, fallback string) string {
 
 // Config carries per-agent trust-gate settings for RunGatedRefine and the judge.
 type Config struct {
-	// NodeBaseSHA is the clone's HEAD when THIS node started. Chained nodes share
-	// one clone, so diffing from the reflog's oldest entry shows every sibling's
-	// work too and the change-shape criteria fail on commits this node never made (#710). Empty ⇒ fall back to the reflog base (single-node plans, no clone).
+	// NodeBaseSHA is the clone's HEAD when THIS node started: chained nodes share one clone, so the
+	// reflog base would include siblings' commits. Empty falls back to the reflog base.
 	NodeBaseSHA          string
 	DeterministicRounds  int     // > 0 turns the gate on without a judge; logged only, never a round cap
 	JudgeRounds          int     // model-judge/revise rounds
@@ -50,18 +48,16 @@ type Config struct {
 	JudgeThinkingLevel   string  // gates.judge.thinking_level: "", "low", "medium", "high"; "" = no ThinkingConfig sent
 	Constitution         string  // global principles for judge prompt
 	Rubric               string  // scoring guide; global default or per-agent override; rendered markdown for the judge prompt
-	// ConstitutionArtifact/RubricArtifact/MemoryArtifact: ledger provenance
-	// for Constitution/Rubric/the agent's memory.md guidance - zero Name when the
-	// value came from an inline gates: override or config has none to resolve.
+	// ConstitutionArtifact/RubricArtifact/MemoryArtifact: ledger provenance; zero Name when the
+	// value came from an inline gates: override or there is none to resolve.
 	ConstitutionArtifact artifactsrc.Artifact
 	RubricArtifact       artifactsrc.Artifact
 	MemoryArtifact       artifactsrc.Artifact
 	// Plugins: the plugin registry rows in scope for this node's rounds,
 	// refreshed alongside Rubric/Constitution at each run's start; nil = no registry.
 	Plugins []ledger.PluginRef
-	// RubricSpecs: per-criterion definition/scale/bands, only when Rubric was
-	// loaded from a rubric.yaml (rubricyaml.go) - nil for a raw prose rubric
-	// override (dag planner / inline GatesConfig.Rubric), which has no structured criteria to look up (#941).
+	// RubricSpecs: per-criterion definition/scale/bands when Rubric came from a rubric.yaml;
+	// nil for a raw prose rubric override, which has no structured criteria.
 	RubricSpecs map[string]criterionSpec
 	// RubricFixes: declared fix text per deterministic criterion the rubric
 	// names (rubricyaml.go's rubricDocFixes) - nil for a raw prose override.
@@ -73,30 +69,26 @@ type Config struct {
 	RequireRetrieval bool // zero retrieval = ungrounded
 	ReadOnly         bool // no delivery tools - completion is review/exploration
 	IsReviewer       bool // stamped from node agent, never from task wording
-	// ReviewFanout: non-nil only for a reviewer node in a plan with >1
-	// reviewer node (#867). Such a node never delivers its own review -
-	// it stages into ReviewFanout, and the last reviewer node to finish delivers the merged, worst-of-verdict review exactly once.
+	// ReviewFanout: non-nil only in a plan with >1 reviewer node. Each stages into it and the
+	// last to finish delivers the merged, worst-of-verdict review exactly once.
 	ReviewFanout *ReviewFanout
 	Artifacts    artifact.Service // nil = read_artifact tool unavailable to this node
 	// RecordReader reads a written artifact's latest body for code-owned checks;
 	// nil = recordClient(cfg) (live), replay hands in its REST-backed loader.
 	RecordReader PageLoader
-	// RoundCoordsSink: called with fresh round/turn/head-sha/trigger-annotation
-	// at the same two points SetAdvisorThreadRound is (draft seed + every judge
-	// round) - lets a native node's already-built artifact tools (which don't have an ACP session/AdvisorToken to poll) get restamped by the gate that actually knows the current round, without vetting importing tools (#1123).
+	// RoundCoordsSink restamps a native node's already-built artifact tools with fresh round
+	// coords (draft seed and every judge round), without vetting importing tools.
 	RoundCoordsSink func(round int, turnID, headSHA, triggerAnnotation string)
-	// Ledger: the WAL's fail-closed AppendIntent path. nil = no WAL (no
-	// recording.store configured); recordstore and the gate then write
-	// projections directly.
+	// Ledger: the WAL's fail-closed AppendIntent path. nil = no WAL; recordstore and the gate
+	// then write projections directly.
 	Ledger ledger.LedgerStore
 	// Schemas: boot-collected extsdk.ArtifactSchemas registry; nil = no
 	// extension declared a schema, so no recordstore write here is checked.
 	Schemas *artifactschema.Registry
 	// Decisions: the enabled decision points (answer.accept, research.source); nil disables them.
 	Decisions *decide.Decider
-	// Artifact: episodic record name this node writes on gate pass ("body" or
-	// "" for none). "review" is written for IsReviewer nodes regardless of
-	// this field - it names only the reMarkable-style extra record (#1006).
+	// Artifact: episodic record name written on gate pass ("" for none). IsReviewer nodes write
+	// "review" regardless; this names only the extra record.
 	Artifact           string
 	Memory             *memory.Store // staged tradecraft on pass
 	CommitMemory       bool          // task-memory participant
@@ -105,25 +97,20 @@ type Config struct {
 	Checks             []string      // per-node deterministic gate commands
 	DeriveChecks       bool          // derive from repo when Checks empty
 	CheckCommands      []string      // prefix allowlist; empty ⇒ checks disabled
-	CheckSetup         []string      // repo bootstrap commands; run once per clone (checks.go, baseline.go) before checks are derived/run, both in the worker's tree and the base baseline worktree
+	CheckSetup         []string      // repo bootstrap commands, run once per clone (worker tree and baseline)
 	NodeID             string        // workspace scope for checks/clone resolution
 	AdvisorToken       string        // the node's advisor token, set by dag (never parsed from the prompt); empty = no node
 	Agent              string        // observability only
-	// BundleHash: this agent's bundle content hash (agent.Bundle.Hash) -
-	// ledger provenance only (#1096), stamped onto worker ledger.Coords
-	// alongside Agent.
+	// BundleHash: the agent bundle's content hash; ledger provenance only.
 	BundleHash string
-	// PromptSource/PromptVersionID: where this node's system/<agent> artifact
-	// came from ("static" or the store name) and which version of it - ledger
-	// provenance only (#1420), stamped alongside BundleHash.
+	// PromptSource/PromptVersionID: where the system/<agent> artifact came from ("static" or the
+	// store name) and its version; ledger provenance only.
 	PromptSource    string
 	PromptVersionID string
-	// PromptArtifact: the resolved artifact's name (#1422), from the bundle
-	// directory, not Agent (the agent's own name).
+	// PromptArtifact: the resolved artifact's name, from the bundle directory, not Agent.
 	PromptArtifact string
-	// RefreshPrompt re-resolves the worker's system prompt at a round's start and
-	// reports what that round runs on, so the prompt the model sees and the
-	// version the ledger records can never disagree mid-round. nil keeps the above.
+	// RefreshPrompt re-resolves the worker's system prompt at a round's start, so the prompt the
+	// model sees and the version the ledger records never disagree mid-round. nil keeps the above.
 	RefreshPrompt func(ctx context.Context) artifactsrc.Artifact
 	// Prompts resolves the judge's own system/judge, once per judge round;
 	// nil resolves the shipped file.
@@ -154,15 +141,14 @@ type Config struct {
 	ExternalWorker       bool         // ACP-backed; gate supplements session ledger
 	Setup                *SetupBranch // pre-cloned checkout; delivery on this branch
 	ExistingPR           bool         // run pushes onto an already-open PR; stage_push offered instead of stage_pr
-	// JudgeModel: the boot judge model, or (#1421 P2) whichever bound-in model
-	// prepareJudge picked for the round - stamped with per-round coords like workerModel.
+	// JudgeModel: the boot judge model, or whichever bound-in model prepareJudge picked for the
+	// round; stamped with per-round coords like workerModel.
 	JudgeModel model.LLM
 	// RefreshJudgeBinding picks this round's own JudgeFactory/model/thinking_level;
 	// hasReadTools is the node's own tool eligibility, kept through a rebind.
 	RefreshJudgeBinding func(art artifactsrc.Artifact, hasReadTools bool) (JudgeFactory, model.LLM, string)
-	// ResumedFrom: dag.Node.ResumedFrom passed through - "" for a fresh
-	// node. Seeds an ACP node's first-round session/load id and marks the
-	// node.started ledger entry/stream event as a continuation.
+	// ResumedFrom: "" for a fresh node; otherwise seeds an ACP node's first-round session/load
+	// id and marks node.started as a continuation.
 	ResumedFrom string
 	// AdmitJudge/ReleaseJudge/AdmitWorker/ReleaseWorker: swap the caller's admission
 	// reservation to the judge spec for each judge call, and back. All nil without an admission ledger.
@@ -185,9 +171,8 @@ type Config struct {
 	judgeCheckedPages map[string]bool
 }
 
-// HasWorkspaceClone reports whether this node's worker actually has a repo
-// checkout to read - ExternalWorker (ACP) nodes clone one; native nodes never
-// do, regardless of agent name (#1485).
+// HasWorkspaceClone: only ExternalWorker (ACP) nodes have a repo checkout; native nodes never
+// do, regardless of agent name.
 func (c Config) HasWorkspaceClone() bool {
 	return c.ExternalWorker && c.Workspace != nil
 }
@@ -204,18 +189,16 @@ type StagedDelivery struct {
 	Branch string
 	Title  string
 	Body   string
-	// TitleOmitted/BodyOmitted: Kind pull_request via stage_push only - the agent
-	// didn't supply that field, so delivery must PATCH without the key rather
-	// than send an empty string (which would blank it on GitHub). Zero value (false) matches every other path, which always carries both fields.
+	// TitleOmitted/BodyOmitted (stage_push only): the agent omitted that field, so delivery must
+	// PATCH without the key; an empty string would blank it on GitHub.
 	TitleOmitted bool
 	BodyOmitted  bool
 	Event        string          // review verdict: approve | request_changes | comment
 	Slot         string          // comment target, for Kind == "comment"
 	Comments     []ReviewComment // inline findings
 	Recovered    bool            // parsed from answer tail, not tool-staged
-	// Takeaway/Verified/Notes: Kind == "review" only - the raw ingredients
-	// for the code_review record and the fixed-format renderer (one fixed
-	// review format). Body already carries a rendered fallback for when no code_review artifact backs this delivery.
+	// Takeaway/Verified/Notes (Kind "review" only): ingredients for the code_review record and
+	// renderer; Body carries a rendered fallback for when no code_review artifact backs it.
 	Takeaway string
 	Verified []string
 	Notes    []string
@@ -226,9 +209,8 @@ type ReviewComment struct {
 	Path string
 	Line int
 	Body string
-	// FindingID: the backing FindingRecord's hash id, when known - lets the
-	// overview renderer dedupe a finding that was both written natively
-	// (write_finding) and staged as an inline comment for the same issue.
+	// FindingID: the backing FindingRecord's hash id, when known, so the overview dedupes a
+	// finding both written via write_finding and staged as an inline comment.
 	FindingID string
 	// SourceNode: the reviewer node that staged this finding in a fan-out
 	// review - lineage only, never rendered into the posted body.
@@ -251,16 +233,13 @@ type DeliveryContext struct {
 	GateFeedback string // feedback for caveat when GatePassed is false
 	// PushedSHA: the branch head the gate itself pushed; "" = no push happened.
 	PushedSHA string
-	// PushError: non-empty when ensurePush failed before Deliver was called -
-	// Items are still the originally staged set (never attempted). Deliver
-	// implementations should skip attempting them and report this as each item's failure instead, mirroring the PushedSHA-verify-mismatch path (#1155).
+	// PushError: ensurePush failed before Deliver; Items were never attempted, so Deliver
+	// should report this as each item's failure instead of attempting them.
 	PushError string
-	// ChecksSkipNote: non-empty when GatePassed but no build/test check ran
-	// for a reason worth telling the reader (#780). Already worded for
-	// display; "" means say nothing (checks ran, or the reason is operator config, not a property of the change).
+	// ChecksSkipNote: display-ready note when GatePassed but no build/test check ran for a reason
+	// worth telling the reader; "" says nothing.
 	ChecksSkipNote string
-	// IdempotencyKey: target artifact id + revision (#1093 V4 §4.9) - "" when
-	// this delivery has no backing artifact revision to key on.
+	// IdempotencyKey: target artifact id + revision; "" with no backing artifact revision.
 	IdempotencyKey string
 }
 
@@ -296,9 +275,8 @@ type workerActivity struct {
 	staged    []memory.Candidate
 	workspace []wsOp
 
-	// recalled: recall_memory hits a NATIVE worker's own tool call returned
-	// this run (epic #1255 P2) - scanned from session events (see
-	// activityFromSessionAt's "recall_memory" case), since a native worker's tool calls, unlike an ACP worker's, land in this session directly.
+	// recalled: recall_memory hits from a native worker's own calls, scanned from session events
+	// (unlike an ACP worker's, a native worker's tool calls land in this session).
 	recalled []memory.Delivered
 
 	// sourceReads: ids of stored source artifacts (dispatch inputs, fetched pages) read successfully.
@@ -314,8 +292,7 @@ type workerActivity struct {
 	// other judge-visible path (e.g. sleeper_matchup) - oldest first.
 	dataTools []string
 
-	// artifactsWritten: ids the worker wrote/edited via a native artifact tool
-	// this round (write_artifact/edit_artifact/write_<kind>) - feeds the
+	// artifactsWritten: ids written/edited via a native artifact tool this round; feeds the
 	// artifact-read zero-reads discard rule.
 	artifactsWritten []string
 	// rendered: render_ui surface and quiz key ids - kept out of artifactsWritten so
@@ -330,25 +307,24 @@ type workerActivity struct {
 
 	ranCommand bool
 
-	answer string // the node's final answer (set just before commitDelivery; the synthesizer's is its review body, #965)
+	answer string // final answer, set just before commitDelivery (a synthesizer's is its review body)
 
 	stagedDelivery map[string]StagedDelivery
 	currentBranch  string
 
-	// skipArtifactRender: post stagedDelivery text as-is, never the
-	// code_review/pr_body artifact - it may be stale relative to this
-	// item (aborted round's salvaged text, or an already-merged review).
+	// skipArtifactRender: post stagedDelivery text as-is, never the code_review/pr_body artifact,
+	// which may be stale (an aborted round's salvaged text, or an already-merged review).
 	skipArtifactRender bool
 	// ponytail: prefer plan.Setup's PR/issue number over ledger inference.
 	prNumber int
 }
 
-// retrieved reports any retrieval this session: a fetch, a search result seen, a clone, a file read, or a source-artifact read.
+// retrieved: a fetch, search result, clone, file read, or source-artifact read this session.
 func (a workerActivity) retrieved() bool {
 	return len(a.fetched) > 0 || len(a.seen) > 0 || len(a.clonedRepos) > 0 || len(a.paths) > 0 || a.readSource()
 }
 
-// readSource: a source artifact read that this node did not write itself - reading back its own write retrieves nothing.
+// readSource: a source-artifact read of something this node did not write itself.
 func (a workerActivity) readSource() bool {
 	for _, id := range a.sourceReads {
 		if !slices.Contains(a.artifactsWritten, id) {
@@ -389,7 +365,6 @@ type wsOp struct {
 	sample string
 }
 
-// contentPlainText: concatenates plain-text parts of genai.Content.
 func contentPlainText(c *genai.Content) string {
 	if c == nil {
 		return ""
@@ -447,7 +422,7 @@ func recordSearchResultItems(seen map[string]string, results any) {
 	}
 }
 
-// sortedStagedDelivery: returns staged set sorted by target key for stable delivery order.
+// sortedStagedDelivery: sorted by target key for a stable delivery order.
 func sortedStagedDelivery(staged map[string]StagedDelivery) []StagedDelivery {
 	if len(staged) == 0 {
 		return nil

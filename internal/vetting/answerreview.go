@@ -11,20 +11,16 @@ import (
 var (
 	verdictRe = regexp.MustCompile(`(?mi)^\s*VERDICT:\s*(approve|request_changes|comment)\s*$`)
 	findingRe = regexp.MustCompile(`(?m)^\s*[-*]\s+([^\s:]+):(\d+):\s*(.+)$`)
-	// sectionHeaderRe: a tail section header line (FINDINGS:/DISMISSED:/CLEAN:/
-	// VERIFIED:/NOTES:), used to bound each section so one header's lines
-	// don't bleed into another's.
+	// sectionHeaderRe bounds each tail section so one header's lines don't bleed into another's.
 	sectionHeaderRe = regexp.MustCompile(`(?mi)^\s*(FINDINGS|DISMISSED|CLEAN|VERIFIED|NOTES):\s*$`)
 	// cleanLineRe: a CLEAN: section entry, bare path (no line number).
 	cleanLineRe = regexp.MustCompile(`(?m)^\s*[-*]\s+(\S+)\s*$`)
 	// bulletLineRe: a free-text bullet, VERIFIED:/NOTES: entries (unlike
 	// CLEAN's bare path, these carry a full sentence).
 	bulletLineRe = regexp.MustCompile(`(?m)^\s*[-*]\s+(.+)$`)
-	// takeawayRe: the tail's one-sentence takeaway, same field stage_review's
-	// takeaway arg carries - the structured-tail fallback states this as a
-	// fact too, never as prose ahead of the tags (one fixed review format).
+	// takeawayRe: the tail's one-sentence takeaway, the same field as stage_review's takeaway arg.
 	takeawayRe = regexp.MustCompile(`(?mi)^\s*TAKEAWAY:\s*(.+)$`)
-	// Matches reviewer's fallback preamble (explanation for us, not human reader).
+	// fallbackPreambleRe: the reviewer's fallback preamble, meant for us, not the human reader.
 	fallbackPreambleRe = regexp.MustCompile(`(?mi)^.*\bstaging tools?\b.*\bfallback\b.*$\n?`)
 )
 
@@ -70,9 +66,8 @@ func parseFindingLines(body string) []ReviewComment {
 	return out
 }
 
-// ParseAnswerReviewSections is the section-aware parse (VERDICT/FINDINGS/
-// DISMISSED/CLEAN). When a FINDINGS: header is present, findings come only
-// from that section; otherwise the unscoped whole-answer scan is the fallback (kept so unstructured answers still work).
+// ParseAnswerReviewSections is the section-aware parse. With a FINDINGS: header, findings come only from that
+// section; otherwise the whole-answer scan keeps unstructured answers working.
 func ParseAnswerReviewSections(answer string) AnswerReview {
 	m := verdictRe.FindStringSubmatch(answer)
 	if m == nil {
@@ -83,7 +78,7 @@ func ParseAnswerReviewSections(answer string) AnswerReview {
 	if fb := sectionBody(answer, "FINDINGS"); fb != "" {
 		r.Findings = parseFindingLines(fb)
 	} else if !sectionHeaderRe.MatchString(answer) {
-		// No structured sections at all: unscoped fallback (pre-#1006 behavior).
+		// No structured sections at all: unscoped fallback.
 		r.Findings = parseFindingLines(answer)
 	}
 	if db := sectionBody(answer, "DISMISSED"); db != "" {
@@ -110,7 +105,7 @@ func ParseAnswerReviewSections(answer string) AnswerReview {
 	return r
 }
 
-// augmentFromReviewStage: folds tool-staged review into activity (runs before augmentFromAnswer, Snapshot - non-clearing).
+// augmentFromReviewStage folds the tool-staged review into act (non-clearing Snapshot); runs before augmentFromAnswer.
 func augmentFromReviewStage(act *workerActivity, advisorToken string) {
 	if advisorToken == "" {
 		return
@@ -133,7 +128,7 @@ func augmentFromReviewStage(act *workerActivity, advisorToken string) {
 	act.stagedDelivery["review"] = sd
 }
 
-// augmentFromPRStage folds a stage_pr/stage_push-staged PR over augmentFromRepo's fallback (keeps the disk-probe branch).
+// augmentFromPRStage folds a stage_pr/stage_push PR over augmentFromRepo's fallback, keeping its branch.
 func augmentFromPRStage(act *workerActivity, advisorToken string) {
 	if advisorToken == "" {
 		return
@@ -192,7 +187,6 @@ func augmentFromAnswer(act *workerActivity, cfg Config, answer string) {
 	if act.stagedDelivery == nil {
 		act.stagedDelivery = map[string]StagedDelivery{}
 	}
-	// Loud: review MCP surface was not used this round.
 	slog.Warn("review recovered from the answer's VERDICT/FINDINGS tail, not staged via the review MCP tools",
 		"component", "vetting", "node", cfg.NodeID)
 	act.stagedDelivery["review"] = StagedDelivery{

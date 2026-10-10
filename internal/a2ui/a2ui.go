@@ -89,9 +89,8 @@ func CheckSurfaceID(id string) error {
 	return nil
 }
 
-// Apply upserts comps onto s and keyIn onto key by question id, shuffles every
-// graded incoming ChoicePicker, validates, then re-derives each answer's value
-// from its label on the merged surface. Returns the merged key.
+// Apply upserts comps onto s and keyIn onto key, shuffles graded incoming ChoicePickers, validates,
+// then re-derives each answer's value from its label. Returns the merged key.
 func Apply(s *Surface, key map[string]QuizAnswer, comps []Component, dataModel map[string]any, keyIn map[string]QuizAnswer) (map[string]QuizAnswer, error) {
 	merged := maps.Clone(key)
 	if merged == nil {
@@ -104,7 +103,7 @@ func Apply(s *Surface, key map[string]QuizAnswer, comps []Component, dataModel m
 		}
 		merged[q] = a
 	}
-	ShuffleQuiz(s.SurfaceID, comps, slices.Collect(maps.Keys(merged)))
+	shuffleQuiz(s.SurfaceID, comps, slices.Collect(maps.Keys(merged)))
 	var err error
 	if s.Components, err = Merge(s.Components, comps); err != nil {
 		return nil, err
@@ -173,9 +172,9 @@ func Merge(base, upd []Component) ([]Component, error) {
 	return out, nil
 }
 
-// ShuffleQuiz reorders the labels of every graded ChoicePicker in comps as a pure function of
+// shuffleQuiz reorders the labels of every graded ChoicePicker in comps as a pure function of
 // (surfaceID, picker id, label set), so a re-send in any order lands the same; values stay positional.
-func ShuffleQuiz(surfaceID string, comps []Component, graded []string) {
+func shuffleQuiz(surfaceID string, comps []Component, graded []string) {
 	for _, q := range graded {
 		c := pickerFor(comps, q)
 		opts, ok := pickerOptions(c)

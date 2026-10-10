@@ -51,9 +51,8 @@ func confineWithFixture(t *testing.T, bare string) {
 	t.Cleanup(func() { workspace.GitFixtureDirs = nil; workspace.ConfineGit(false) })
 }
 
-// Seeding owns local rows and rows it created: each follows a changed seed
-// entry on either backend. A REST-owned row keeps its entry; one predating the flag
-// that still matches its seed is marked seeded.
+// Seeding owns local rows and rows it created; each follows a changed seed entry on either backend.
+// A REST-owned row keeps its entry; an unflagged row still matching its seed is marked seeded.
 func TestSeedRegistryFollowsChangedEntriesOfRowsItOwns(t *testing.T) {
 	dbReg := func(t *testing.T) pluginreg.FetchRegistry {
 		db, err := pluginreg.OpenDB("sqlite", filepath.Join(t.TempDir(), "plugins.db"))

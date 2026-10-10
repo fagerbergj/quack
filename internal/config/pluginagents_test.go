@@ -7,9 +7,7 @@ import (
 	"testing"
 )
 
-// baseConfigForPluginSeed loads a minimal, otherwise-valid Config with one
-// registered agent (host) and one model (m) - the fixture every
-// SeedPluginAgents/SeedPluginShapes test merges into.
+// baseConfigForPluginSeed loads a minimal valid Config with one agent (host) and one model (m).
 func baseConfigForPluginSeed(t *testing.T) *Config {
 	t.Helper()
 	t.Setenv("QUACK_RESEARCHER_MODEL", "m")
@@ -121,9 +119,8 @@ func TestSeedPluginAgents_NilOrEmptyListedSeedsNothing(t *testing.T) {
 	}
 }
 
-// A deployment's agents.<name>: entry, already in c.Agents before seeding,
-// overrides the plugin's defaults field by field - untouched fields keep
-// the plugin's value, and Bundle/Optional stay plugin-owned regardless.
+// A deployment's agents.<name>: entry overrides the plugin's defaults field by field;
+// Bundle/Optional stay plugin-owned regardless.
 func TestSeedPluginAgents_DeploymentOverrideWinsFieldByField(t *testing.T) {
 	c := baseConfigForPluginSeed(t)
 	t.Setenv("QUACK_JUDGE_MODEL", "judge-model")
@@ -211,10 +208,8 @@ func TestSeedPluginShapes_ListedFiltersOutUnlistedFile(t *testing.T) {
 	}
 }
 
-// A non-atomic deploy's exact failure mode: the old config still carries a
-// workflows: entry the new plugin also ships. The config's entry must win -
-// one row, no duplicate, and (since compose()'s trigger-collision warning
-// only fires on a genuine second row) nothing left for it to collide with.
+// A non-atomic deploy: the old config still carries a workflows: entry the new plugin also ships.
+// The config's entry wins, with no duplicate row for compose()'s trigger-collision warning to hit.
 func TestSeedPluginShapes_DedupesAgainstExistingConfigShape(t *testing.T) {
 	c := baseConfigForPluginSeed(t)
 	c.Workflows = append(c.Workflows, WorkflowShape{
@@ -241,9 +236,7 @@ func TestSeedPluginShapes_DedupesAgainstExistingConfigShape(t *testing.T) {
 	}
 }
 
-// Two plugins declaring the same shape name: the first to seed wins,
-// matching the "first in seed order wins" rule bare-skill-name resolution
-// already uses.
+// Two plugins declaring the same shape name: the first to seed wins, as bare-skill-name resolution does.
 func TestSeedPluginShapes_DedupesAgainstEarlierPlugin(t *testing.T) {
 	c := baseConfigForPluginSeed(t)
 	firstDir := t.TempDir()
@@ -289,9 +282,7 @@ func TestSeedPluginShapes_MissingAgentFailsNamingPlugin(t *testing.T) {
 	}
 }
 
-// A structurally incomplete shape is dropped with validateWorkflows' own
-// warning, same as a config-authored one - not a boot error, and absent from
-// the returned names.
+// A structurally incomplete shape is dropped with validateWorkflows' warning, not a boot error.
 func TestSeedPluginShapes_MalformedShapeDroppedNotFatal(t *testing.T) {
 	c := baseConfigForPluginSeed(t)
 	workflowsDir := t.TempDir()
@@ -313,7 +304,6 @@ func TestSeedPluginShapes_MalformedShapeDroppedNotFatal(t *testing.T) {
 // is optional, same as a shipped bundle's rubric.yaml/memory.md.
 func TestSeedPluginAgents_NoAgentYAMLUsesZeroDefaults(t *testing.T) {
 	c := baseConfigForPluginSeed(t)
-	c.skipRuntimeValidation = true // no model_role, no override - skip the empty-model check
 	agentsDir := t.TempDir()
 	writeAgentBundle(t, agentsDir, "scout", "")
 
@@ -326,11 +316,8 @@ func TestSeedPluginAgents_NoAgentYAMLUsesZeroDefaults(t *testing.T) {
 	}
 }
 
-// agent.yaml existing but unreadable as a regular file (bundleDir is itself
-// a file, so the join can't be a directory) surfaces the raw read error, not
-// the NotExist short-circuit.
-// "scout" is a FILE, not a directory: agent.yaml can't be a child path
-// under it, so os.ReadFile fails with a non-NotExist error.
+// "scout" is a file, so reading agent.yaml under it fails with a non-NotExist error that
+// must propagate rather than short-circuit.
 func TestReadPluginAgentDefaults_NonNotExistReadErrorPropagates(t *testing.T) {
 	scoutPath := filepath.Join(t.TempDir(), "scout")
 	if err := os.WriteFile(scoutPath, []byte("not a dir"), 0o644); err != nil {
@@ -359,7 +346,7 @@ func TestMergeAgentConfig_EveryFieldOverrides(t *testing.T) {
 	trueVal := true
 	override := AgentConfig{
 		Provider: "custom", Model: "m2", ContextWindow: 999,
-		Tools: []string{"t1"}, Inputs: []string{"text"}, Gated: &trueVal, JudgeRounds: 5, Judge: &trueVal,
+		Tools: []string{"t1"}, Inputs: []string{"text"}, JudgeRounds: 5, Judge: &trueVal,
 		Memory: MemoryConfig{Bucket: "coding"}, Skills: []string{"s1"}, Acp: &AcpAgentConfig{Command: []string{"pi"}},
 		Bundle: "ignored", Optional: false,
 	}
@@ -367,8 +354,8 @@ func TestMergeAgentConfig_EveryFieldOverrides(t *testing.T) {
 	if merged.Provider != "custom" || merged.Model != "m2" || merged.ContextWindow != 999 {
 		t.Errorf("merged = %+v, want provider/model/context_window overridden", merged)
 	}
-	if len(merged.Tools) != 1 || len(merged.Inputs) != 1 || merged.Gated == nil || merged.JudgeRounds != 5 || merged.Judge == nil {
-		t.Errorf("merged = %+v, want tools/inputs/gated/judge_rounds/judge overridden", merged)
+	if len(merged.Tools) != 1 || len(merged.Inputs) != 1 || merged.JudgeRounds != 5 || merged.Judge == nil {
+		t.Errorf("merged = %+v, want tools/inputs/judge_rounds/judge overridden", merged)
 	}
 	if merged.Memory.Bucket != "coding" || len(merged.Skills) != 1 || merged.Acp == nil {
 		t.Errorf("merged = %+v, want memory/skills/acp overridden", merged)
@@ -386,15 +373,12 @@ func TestSeedPluginAgents_ReadDirErrorNamesPlugin(t *testing.T) {
 	}
 }
 
-// A nil c.Agents (a Config built directly, not through Load) still seeds -
-// the lazy-init path config-authored callers never hit since Load's decode
-// always leaves a non-nil map when agents: is present.
+// A nil c.Agents (a Config built directly, not decoded) still seeds.
 func TestSeedPluginAgents_NilAgentsMapInitializes(t *testing.T) {
 	c := &Config{
 		Providers: map[string]ProviderConfig{"default": {Kind: "openai", Endpoint: "http://x"}},
 		Models:    map[string]ModelConfig{"m": {Provider: "default", Role: "worker"}},
 	}
-	c.skipRuntimeValidation = true // nil Agents map, no override to supply a model - skip the empty-model check
 	agentsDir := t.TempDir()
 	writeAgentBundle(t, agentsDir, "scout", "")
 
@@ -406,14 +390,10 @@ func TestSeedPluginAgents_NilAgentsMapInitializes(t *testing.T) {
 	}
 }
 
-// Even when a stray non-directory entry or a cardless directory is itself
-// listed, SeedPluginAgents' own defense-in-depth still skips it rather than
-// trusting the caller's list blindly - plugin.CheckManifestLists is expected
-// to have already refused a plugin in this state upstream, but this proves
-// SeedPluginAgents never relies on that alone.
+// SeedPluginAgents skips a listed non-directory or cardless entry itself, rather than relying
+// only on plugin.CheckManifestLists having refused the plugin upstream.
 func TestSeedPluginAgents_ListedButNonBundleEntriesStillSkipped(t *testing.T) {
 	c := baseConfigForPluginSeed(t)
-	c.skipRuntimeValidation = true // no model_role, no override - skip the empty-model check
 	agentsDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(agentsDir, "README.md"), []byte("not a bundle"), 0o644); err != nil {
 		t.Fatal(err)
@@ -432,9 +412,7 @@ func TestSeedPluginAgents_ListedButNonBundleEntriesStillSkipped(t *testing.T) {
 	}
 }
 
-// A plugin agent whose model_role resolves to a model id absent from
-// models: fails the same validateAgentModel check a config-authored agent
-// naming an unregistered model would.
+// A plugin agent whose model_role resolves to an unregistered model fails validateAgentModel.
 func TestSeedPluginAgents_ValidateAgentModelErrorNamesPlugin(t *testing.T) {
 	c := baseConfigForPluginSeed(t)
 	t.Setenv("QUACK_RESEARCHER_MODEL", "not-a-registered-model")
@@ -487,8 +465,7 @@ func TestSeedPluginShapes_MalformedYAMLDecodeErrorNamesPlugin(t *testing.T) {
 	}
 }
 
-// deferredConfigForPluginSeed is baseConfigForPluginSeed's LoadDeferring
-// variant: an agents: entry may omit bundle/model, since a plugin merge is
+// deferredConfigForPluginSeed: an agents: entry may omit bundle/model, since a plugin merge is
 // expected to complete it before RequireAgentBundlesAndModels runs.
 func deferredConfigForPluginSeed(t *testing.T, agentsBlock string) *Config {
 	t.Helper()
@@ -515,9 +492,8 @@ workspace:
 	return c
 }
 
-// The bug this locks in: a deployment override that omits bundle: (the
-// documented field-by-field precedence - the plugin supplies it) must not
-// be rejected before SeedPluginAgents gets to fill it in.
+// A deployment override that omits bundle: (the plugin supplies it) must not be rejected
+// before SeedPluginAgents fills it in.
 func TestSeedPluginAgents_OverrideWithoutBundleWaitsForPluginDefault(t *testing.T) {
 	c := deferredConfigForPluginSeed(t, "  scout:\n    provider: default\n    model: m2\n    context_window: 8192\n")
 	agentsDir := t.TempDir()
@@ -538,9 +514,8 @@ func TestSeedPluginAgents_OverrideWithoutBundleWaitsForPluginDefault(t *testing.
 	}
 }
 
-// The same override, but no plugin ever seeds "scout" (absent or disabled) -
-// the agent stays incomplete, and RequireAgentBundlesAndModels must still
-// give the same clear error Load() gave before deferral existed.
+// The same override with no plugin seeding "scout": RequireAgentBundlesAndModels still gives
+// a clear error.
 func TestRequireAgentBundlesAndModels_StillIncompleteWithoutPluginErrors(t *testing.T) {
 	c := deferredConfigForPluginSeed(t, "  scout:\n    provider: default\n    model: m\n")
 	err := c.RequireAgentBundlesAndModels()
@@ -573,9 +548,8 @@ workspace:
 	}
 }
 
-// A deployment override's tools: list REPLACES the plugin's, not merges -
-// the documented way to drop a tool whose backend isn't configured (e.g.
-// trend-scout's web_search on a deployment with no SearXNG/Exa key).
+// A deployment override's tools: list replaces the plugin's, the documented way to drop a tool
+// whose backend isn't configured.
 func TestSeedPluginAgents_OverrideToolsReplacesNotMerges(t *testing.T) {
 	c := baseConfigForPluginSeed(t)
 	c.Agents["scout"] = AgentConfig{Tools: []string{"current_date"}}

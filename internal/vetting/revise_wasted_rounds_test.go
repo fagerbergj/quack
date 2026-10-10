@@ -16,9 +16,8 @@ import (
 	"google.golang.org/genai"
 )
 
-// emptyReviseModel: draft answers, judge always fails, revise returns "" -
-// the shape an ACP round takes when it ends on a tool call with no trailing
-// text (finalSpec answer_len 0).
+// emptyReviseModel: draft answers, judge always fails, revise returns "" (an ACP round ending
+// on a tool call with no trailing text).
 type emptyReviseModel struct {
 	workerCalls  int
 	judgeCalls   int
@@ -44,9 +43,8 @@ func (m *emptyReviseModel) GenerateContent(_ context.Context, req *model.LLMRequ
 	}
 }
 
-// TestEmptyReviseStopsRoundLoop proves an empty revise answer ends the round
-// loop keeping the current verdict instead of re-judging byte-identical
-// content (node.go's revise guard at the end of the round loop).
+// TestEmptyReviseStopsRoundLoop: an empty revise answer ends the round loop keeping the current
+// verdict instead of re-judging identical content.
 func TestEmptyReviseStopsRoundLoop(t *testing.T) {
 	stub := &emptyReviseModel{}
 	worker, err := llmagent.New(llmagent.Config{Name: "web-researcher", Model: stub, Description: "researcher", Instruction: "Answer."})
@@ -103,9 +101,7 @@ func (m *identicalReviseModel) GenerateContent(_ context.Context, req *model.LLM
 	}
 }
 
-// TestIdenticalReviseStopsRoundLoop proves a revise that returns the same
-// bytes as the current answer ends the round loop instead of re-judging
-// content the judge already scored (node.go's revise guard).
+// TestIdenticalReviseStopsRoundLoop: a revise returning the current answer's bytes ends the loop.
 func TestIdenticalReviseStopsRoundLoop(t *testing.T) {
 	stub := &identicalReviseModel{}
 	worker, err := llmagent.New(llmagent.Config{Name: "web-researcher", Model: stub, Description: "researcher", Instruction: "Answer."})

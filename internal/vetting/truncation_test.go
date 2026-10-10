@@ -24,10 +24,8 @@ type queuedTurn struct {
 	finish genai.FinishReason
 }
 
-// truncationStubModel drives MAX_TOKENS/STOP scripted worker turns to test
-// the gate's cut-off continuation loop; a submit_verdict-bearing call is the
-// judge and always passes, so a round's judging never depends on how many
-// continuations it took to assemble the answer.
+// truncationStubModel scripts MAX_TOKENS/STOP worker turns; as judge (submit_verdict offered) it
+// always passes, so judging never depends on how many continuations a round took.
 type truncationStubModel struct {
 	queue       []queuedTurn
 	workerCalls int
@@ -63,9 +61,7 @@ func (m *truncationStubModel) GenerateContent(_ context.Context, req *model.LLMR
 	}
 }
 
-// runTruncationNode drives one RunGatedRefine dispatch through the real ADK
-// runner (mirrors newTestGatedNode's siblings above), returning the final
-// answer and the captured GateResult.
+// runTruncationNode drives one RunGatedRefine dispatch through the real ADK runner.
 func runTruncationNode(t *testing.T, stub *truncationStubModel) (string, GateResult) {
 	t.Helper()
 	worker, err := llmagent.New(llmagent.Config{
@@ -112,9 +108,8 @@ func runTruncationNode(t *testing.T, stub *truncationStubModel) (string, GateRes
 	return final, res
 }
 
-// TestRunGatedRefine_TruncatedAnswerGetsOneContinuation is the #3f4d9045 case:
-// a MAX_TOKENS draft is continued once, the remainder is appended verbatim
-// (never repeated), and the round is judged normally once complete.
+// TestRunGatedRefine_TruncatedAnswerGetsOneContinuation: a MAX_TOKENS draft is continued once,
+// the remainder appended verbatim, and the round judged normally.
 func TestRunGatedRefine_TruncatedAnswerGetsOneContinuation(t *testing.T) {
 	stub := &truncationStubModel{queue: []queuedTurn{
 		{text: "It was a dark and stormy ni", finish: genai.FinishReasonMaxTokens},
@@ -156,10 +151,8 @@ func TestRunGatedRefine_TruncatedAnswerGetsTwoContinuations(t *testing.T) {
 	}
 }
 
-// TestRunGatedRefine_ExhaustedContinuationsFailClosed: three consecutive
-// MAX_TOKENS turns burn the round's continuation budget (2), and the
-// budget-exhausted revision round does too - proving complete_output=0 fails
-// the round by weakest-link no matter what the judge would have scored it.
+// TestRunGatedRefine_ExhaustedContinuationsFailClosed: MAX_TOKENS turns past the continuation budget
+// make complete_output=0 fail the round whatever the judge scores.
 func TestRunGatedRefine_ExhaustedContinuationsFailClosed(t *testing.T) {
 	stub := &truncationStubModel{queue: []queuedTurn{
 		{text: "A", finish: genai.FinishReasonMaxTokens}, // round 1 draft
@@ -202,9 +195,8 @@ func TestRunGatedRefine_CompleteAnswerNeverContinues(t *testing.T) {
 	}
 }
 
-// TestRunGatedRefine_ContinuationCallFailureStillJudges: a transport error on
-// the continuation call itself (not a repeat-guard abort) doesn't hang or
-// retry forever - it judges the still-cut-off answer as truncated instead.
+// TestRunGatedRefine_ContinuationCallFailureStillJudges: a transport error on the continuation call
+// neither hangs nor retries forever; the cut-off answer is judged as truncated.
 func TestRunGatedRefine_ContinuationCallFailureStillJudges(t *testing.T) {
 	stub := &truncationStubModel{
 		queue: []queuedTurn{
@@ -242,9 +234,8 @@ func TestBuildTruncationContinuationPrompt_LongAnswerQuotesOnlyTheTail(t *testin
 	}
 }
 
-// TestBuildTruncationContinuationPrompt_RuneSafeTail: the byte cutoff lands
-// inside "日"'s 3-byte encoding - the trailing partial rune must be dropped,
-// not left to corrupt the quoted tail (valid UTF-8 in, valid UTF-8 out).
+// TestBuildTruncationContinuationPrompt_RuneSafeTail: the byte cutoff lands inside "日";
+// the partial rune is dropped so the quoted tail stays valid UTF-8.
 func TestBuildTruncationContinuationPrompt_RuneSafeTail(t *testing.T) {
 	answer := "日" + strings.Repeat("x", truncationTailChars-1) // len = 3 + 199 = 202
 	got := buildTruncationContinuationPrompt(answer)

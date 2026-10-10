@@ -81,9 +81,7 @@ func TestPDFToImageParts_PageCapWarns(t *testing.T) {
 	}
 }
 
-// TestPDFToImageParts_MissingBinary needs no pdftoppm installed - it forces the
-// absent-binary path via an empty PATH, asserting the error names the missing
-// dependency rather than silently dropping the document.
+// An empty PATH forces the missing-pdftoppm error, which must name the dependency.
 func TestPDFToImageParts_MissingBinary(t *testing.T) {
 	t.Setenv("PATH", "")
 
@@ -97,10 +95,7 @@ func TestPDFToImageParts_MissingBinary(t *testing.T) {
 	}
 }
 
-// TestConvertPDFPart_EndToEnd runs a genai part carrying application/pdf
-// through the full per-message conversion (the code path GenerateContent
-// actually uses), confirming the PDF-rejection case now expands into image
-// parts on the outgoing OpenAI message instead of erroring.
+// An application/pdf part expands into image parts through the full message conversion.
 func TestConvertPDFPart_EndToEnd(t *testing.T) {
 	requirePdftoppm(t)
 

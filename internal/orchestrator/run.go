@@ -33,8 +33,7 @@ import (
 
 const orchRunID = "orchestrator"
 
-// orchRun: the per-turn state Run assembles - one turn's identity, the
-// built tools/runner, and the event sink; each build/invoke/finish method handles one phase.
+// orchRun is the per-turn state Run assembles; each build/invoke/finish method handles one phase.
 type orchRun struct {
 	o           *Orchestrator
 	ctx         context.Context
@@ -51,6 +50,7 @@ type orchRun struct {
 
 	toolList   []tool.Tool
 	toolsets   []tool.Toolset
+	hooks      *tools.Hooks
 	memSvc     adkmemory.Service
 	artifacts  artifact.Service
 	runner     *runner.Runner
@@ -175,7 +175,7 @@ func (s *orchRun) buildMemoryArtifactTools(githubSetup *dag.Setup) string {
 // buildRunner: agent, agent node, single-node workflow, and the runner.
 // Returns the message to yield on failure, "" on success.
 func (s *orchRun) buildRunner() string {
-	ag, err := llmagent.New(llmagent.Config{
+	cfg := llmagent.Config{
 		Name:        orchestratorName,
 		Description: "Routes requests to the right specialist agents - web research, code implementation, media reading - and answers conversational queries directly.",
 		Model:       s.o.model,
@@ -185,7 +185,9 @@ func (s *orchRun) buildRunner() string {
 		Tools:    s.toolList,
 		Toolsets: s.toolsets,
 		Mode:     llmagent.ModeChat,
-	})
+	}
+	s.hooks.Wire(&cfg)
+	ag, err := llmagent.New(cfg)
 	if err != nil {
 		return "orchestrator: build agent: " + err.Error()
 	}
@@ -207,8 +209,7 @@ func (s *orchRun) buildRunner() string {
 		MemoryService:     s.memSvc,
 		ArtifactService:   s.artifacts,
 		AutoCreateSession: true,
-		// The long-lived chat session, unlike a node's - it otherwise
-		// grows unbounded across every turn (#A3).
+		// The long-lived chat session otherwise grows unbounded across turns.
 		Compaction: s.o.compaction,
 	})
 	if err != nil {
@@ -261,9 +262,6 @@ func (s *orchRun) invoke(content *genai.Content) (produced, stop bool) {
 	if _, selected := s.planCache.Selected(); selected {
 		produced = true
 	}
-	if _, pending := s.planCache.Pending(); pending {
-		produced = false
-	}
 	if _, _, tripped := s.planCache.LoopGuard(); tripped {
 		produced = true // the turn hands the user a choice; no continuation nudge
 	}
@@ -281,8 +279,8 @@ func (s *orchRun) emitAgentComplete() {
 	}}, nil)
 }
 
-// handlePlanExhaustion: planning that EXHAUSTS its rejection budget without an acceptable plan is a
-// FAILED run, not an answer (#693); a single rejection is normal iteration (#760/home-server#3), a pending clarifying question a legitimate stop. True = the turn terminated here.
+// handlePlanExhaustion fails a run whose planning exhausted its rejection budget; one rejection is
+// normal iteration and a pending question a legitimate stop. True = the turn terminated here.
 func (s *orchRun) handlePlanExhaustion() bool {
 	if _, selected := s.planCache.Selected(); !selected {
 		if count, reason := s.planCache.Rejections(); count >= minRejectionsForExhaustion {
@@ -329,8 +327,8 @@ func (s *orchRun) askAfterPlanLoop(reason, shapeKey string) {
 	s.safeYield(stream.Done(), nil)
 }
 
-// planLoopQuestion names the options in its text (a GitHub comment shows only the question). Only the app
-// shows the judge's reason, one line and truncated: it can quote recalled memory, never for GitHub/extensions (#693).
+// planLoopQuestion names the options in its text (a GitHub comment shows only the question). Only
+// the app shows the judge's reason, truncated: it can quote recalled memory.
 func planLoopQuestion(source, reason string) string {
 	reply := fmt.Sprintf("Reply %q to run it anyway, or %q.", planLoopRunAsIs, planLoopRephrase)
 	if source != SourceApp {
@@ -354,12 +352,11 @@ func waivedPlanShape(pending PendingQuestion, hasPending bool, message string) s
 	return key
 }
 
-// finishLoop: every terminal outcome after the first invoke - continue-retry,
-// repeat-guard hard stop, usage, give-up, plan exhaustion. Returns the attempt count and whether the turn ended.
+// finishLoop handles every terminal outcome after the first invoke. Returns the attempt count and
+// whether the turn ended.
 func (s *orchRun) finishLoop(produced, stop bool) (int, bool) {
 	attempts := 1
-	// A hard-stopped turn reproduces the identical loop on an unchanged
-	// retry (the QA rig measured this) - give up immediately instead.
+	// A hard-stopped turn reproduces the identical loop on an unchanged retry, so give up now.
 	for attempt := 1; !produced && !stop && !s.guardStopped.Load() && attempt <= maxOrchestratorContinues; attempt++ {
 		slog.Warn("orchestrator turn produced no plan and no answer; continuing it",
 			"component", "orchestrator", "chat", s.sessionID, "attempt", attempt)

@@ -10,30 +10,30 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// A tool error must speak the ONE namespace the model speaks - the same
-// invariant established for RESULTS, still leaking through the ERROR paths.
-// The ids below are deliberately distinctive strings: any of them appearing in a returned error is the leak.
+// Tool errors must speak the model's namespace, as results do.
+// The ids below are distinctive: any of them in a returned error is a host-path leak.
 const (
 	leakChatID = "2dfbfc35-7114-4065-84db-bab4b4abdb9e"
 	leakNodeID = "explorer"
 )
 
-// buildToolsForLeakTest builds the real, fully-wrapped tool set over a fresh jail
-// (exactly as production does - same Build) and returns it with the jail root, so
-// a test can grep a returned error for the host path.
+// buildToolsForLeakTest builds the production-hooked tool set over a fresh jail and returns
+// the jail root, so a test can grep a returned error for the host path.
 func buildToolsForLeakTest(t *testing.T, names ...string) (map[string]tool.Tool, string) {
 	t.Helper()
 	j, err := workspace.NewJail(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewJail: %v", err)
 	}
-	built, err := Build(names, Deps{Workspace: j, WorkspaceUserID: "local"})
+	d := Deps{Workspace: j, WorkspaceUserID: "local"}
+	built, err := Build(names, d)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
+	h := NewHooks(d, 0)
 	byName := map[string]tool.Tool{}
 	for _, b := range built {
-		byName[b.Name()] = b
+		byName[b.Name()] = hook(h, HookBuilt, b)
 	}
 	return byName, j.Root()
 }
@@ -49,9 +49,8 @@ func assertNoHostPath(t *testing.T, msg, root string) {
 	}
 }
 
-// runTool invokes a built tool the way the model does - through its own Run,
-// under a real gated node (which is what puts the chat id and the node dir into
-// the resolved path in the first place).
+// runTool calls a built tool's Run under a real gated node, which puts the chat id and
+// node dir into the resolved path.
 func runTool(t *testing.T, tools map[string]tool.Tool, name string, args map[string]any) (map[string]any, error) {
 	t.Helper()
 	rt, ok := tools[name].(runnableTool)
@@ -82,9 +81,8 @@ func TestReadFileErrorNamesTheModelPathNotTheHostPath(t *testing.T) {
 	}
 }
 
-// THE STRUCTURAL GUARANTEE. The leak comes from os/git handing back the resolved path,
-// which every tool faithfully wraps with %w - so the scrub is applied at Build's ONE
-// wrap point: every tool Build produces carries it, and a tool that skips the wrap point fails here.
+// os/git errors carry the resolved host path and tools wrap them with %w, so the Build tools'
+// hooks apply the scrub; a tool that skips it fails here.
 func TestEveryBuiltToolIsPathScrubbed(t *testing.T) {
 	var names []string
 	for name, ctor := range registry {
@@ -106,25 +104,10 @@ func TestEveryBuiltToolIsPathScrubbed(t *testing.T) {
 	}
 }
 
-// scrubbed walks a built tool's wrapper chain (cancel guard → guard ladder →
-// scrub → the tool) looking for the scrub.
+// scrubbed: the tool runs under hooks that scrub its errors (a HookNode policy over a workspace).
 func scrubbed(t tool.Tool) bool {
-	for {
-		switch v := t.(type) {
-		case *pathScrub:
-			return true
-		case *emitTool:
-			t = v.inner
-		case *cancelGuard:
-			t = v.inner
-		case *repeatGuard:
-			t = v.inner
-		case *guardedTool:
-			t = v.inner
-		default:
-			return false
-		}
-	}
+	h, ok := t.(hooked)
+	return ok && h.h.scrub != nil && h.h.policyOf(t.Name())&HookNode != 0
 }
 
 func mustJail(t *testing.T) *workspace.Jail {

@@ -30,27 +30,24 @@ const (
 	skipReasonUnsupportedBuild = "unsupported_build_system"
 )
 
-// skipChecks records that the deterministic checks criterion did not apply.
-// The reason rides back in criterionScore.Reason (ignored by callers that only
-// check ok) so a passing node can still say why nothing was verified - same string the span attribute and metric record (#780).
+// skipChecks reports the checks criterion as not applicable; the reason rides in criterionScore.Reason
+// so a passing node can say why nothing was verified (same string as the span attribute and metric).
 func skipChecks(ctx context.Context, reason string) (criterionScore, bool) {
 	oteltrace.SpanFromContext(ctx).SetAttributes(attribute.String("skip_reason", reason))
 	otelobs.RecordChecksSkipped(reason)
 	return criterionScore{Reason: reason}, false
 }
 
-// checksSkipNoteReasons: skip reasons that are a property of the CHANGE
-// (repo state quack could not verify), not operator config - worth
-// surfacing on a passing node. not_configured/no_workspace stay silent (#780).
+// checksSkipNoteReasons: skip reasons about the change (repo state quack could not verify), worth
+// surfacing on a passing node. not_configured/no_workspace stay silent.
 var checksSkipNoteReasons = map[string]bool{
 	skipReasonNoRepo:           true,
 	skipReasonNoChecksDerived:  true,
 	skipReasonUnsupportedBuild: true,
 }
 
-// checksSkipNote composes the passing-node caveat for a skip reason worth
-// surfacing, or "" when the reason doesn't qualify (or checks ran, reason ==
-// ""). Embeds the exact skip_reason string RecordChecksSkipped records, so the log, the metric, and this note agree.
+// checksSkipNote is the passing-node caveat for a reason worth surfacing, else "". It embeds the exact
+// skip_reason RecordChecksSkipped records, so the log, metric and note agree.
 func checksSkipNote(reason string) string {
 	if !checksSkipNoteReasons[reason] {
 		return ""
@@ -64,7 +61,7 @@ func checksSkipNote(reason string) string {
 // maxCheckOutputChars caps failing check output in revise-prompt feedback.
 const maxCheckOutputChars = 2_000
 
-// checksPassCriterion runs cfg.Checks or derived checks. Workspace.RunPipeline - argv-only. Weakest-link.
+// checksPassCriterion runs cfg.Checks or derived checks (argv-only RunPipeline); weakest link wins.
 func checksPassCriterion(ctx context.Context, cfg Config) (criterionScore, bool) {
 	dir, checks, exit := resolveChecks(ctx, cfg)
 	if exit != nil {
@@ -152,7 +149,6 @@ type checkOutcome struct {
 	reason   string
 }
 
-// runOneCheck runs one check command: SplitPipeline + RunPipeline + probe event.
 func runOneCheck(ctx context.Context, cfg Config, dir, check string, caps workspace.Caps) checkOutcome {
 	stages, err := workspace.SplitPipeline(check)
 	if err != nil {
@@ -163,7 +159,7 @@ func runOneCheck(ctx context.Context, cfg Config, dir, check string, caps worksp
 	if err == nil {
 		probeResult = map[string]any{"exit_code": res.ExitCode, "output": boundCheckOutput(res.Output)}
 	}
-	emitProbeEvent(ctx, probeChecksPass, map[string]any{"check": check}, probeResult, err)
+	otelobs.EmitToolCall(ctx, probeScope, probeChecksPass, map[string]any{"check": check}, probeResult, err)
 	if err != nil {
 		return checkOutcome{failed: true, reason: fmt.Sprintf("deterministic: check %q: %v", check, err)}
 	}
@@ -198,9 +194,8 @@ func boundCheckOutput(out string) string {
 		maxCheckOutputChars, len(out))
 }
 
-// checksCaps stamps the node's own directory as WorkRoot for sandbox
-// consistency, and a per-node scratch dir (Jail.ScratchDir) as TMPDIR so a
-// check command's own tmp use never lands in the checked-out tree.
+// checksCaps uses the node's own directory as WorkRoot and a per-node scratch dir as TMPDIR, so a
+// check's tmp use never lands in the checked-out tree.
 func checksCaps(cfg Config) workspace.Caps {
 	caps := cfg.WorkspaceCaps
 	if cfg.CheckTimeout > 0 {
@@ -217,7 +212,8 @@ func checksCaps(cfg Config) workspace.Caps {
 	return caps
 }
 
-// checksDir: the planner's Workdir (explicit checks) or the one repo dir (derived). Node-first to avoid sibling clones.
+// checksDir: the planner's Workdir (explicit checks) or the one repo dir (derived), node dir first
+// so a sibling's clone is never picked.
 func checksDir(cfg Config) (string, bool, error) {
 	// Workdir ignored when Checks is empty (planner sometimes sets it anyway).
 	workdir := cfg.Workdir
@@ -242,23 +238,20 @@ func checksDir(cfg Config) (string, bool, error) {
 	return "", false, nil
 }
 
-// explicitChecksDir: the planner-named workdir for explicit checks - fail
-// closed on a missing workdir, node-first to avoid sibling clones (#1083).
+// explicitChecksDir: the planner-named workdir, failing closed when it is missing.
 func explicitChecksDir(cfg Config, workdir, nodeStart, chatStart string) (string, bool, error) {
 	if nodeStart != chatStart && !isDir(nodeStart) && isDir(chatStart) {
 		return chatStart, true, nil
 	}
 	if !isDir(nodeStart) {
 		nodeBare, berr := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.NodeDir(cfg.NodeID))
-		// Only fall back to the bare node dir when it IS the repo the discarded
-		// workdir segment named - otherwise an uncreated subdir silently falls
-		// back onto an unrelated module and reports a false pass (quack#1083).
+		// Fall back to the bare node dir only when it IS the repo the workdir named; otherwise an uncreated
+		// subdir would fall back onto an unrelated module and report a false pass.
 		if berr == nil && repoNameMatches(nodeBare, workdir) {
 			return nodeBare, true, nil
 		}
-		// cfg.Setup is set only when this node has one deterministic pre-cloned checkout (dag.setupQualifyingAgent) - unlike the
-		// ambiguous case above, nodeBare is unambiguously the target repo,
-		// so name it for the planner instead of fail-closing on the raw "workdir does not exist" exec error.
+		// cfg.Setup means one deterministic pre-cloned checkout, so nodeBare is the target repo: name it for
+		// the planner instead of failing closed on the raw "workdir does not exist" error.
 		if berr == nil && cfg.Setup != nil && isDir(nodeBare) {
 			return "", false, fmt.Errorf("planner set workdir %q; the repo root is %q", workdir, nodeBare)
 		}
@@ -279,9 +272,8 @@ func deriveSingleRepo(nodeStart, chatStart string) (string, bool) {
 	return "", false
 }
 
-// repoNameMatches reports whether dir is a git repo whose origin identity
-// ends in the same name as workdir's last segment, i.e. dir positively IS
-// the repo the discarded workdir was trying to name (not just any repo).
+// repoNameMatches reports whether dir is a git repo whose origin name matches workdir's last segment,
+// i.e. dir is the repo the discarded workdir named, not just any repo.
 func repoNameMatches(dir, workdir string) bool {
 	if workdir == "" || !isDir(dir) {
 		return false
@@ -298,8 +290,8 @@ func isDir(p string) bool {
 	return err == nil && fi.IsDir()
 }
 
-func fileExists(dir, name string) bool {
-	_, err := os.Stat(filepath.Join(dir, name))
+func pathExists(elem ...string) bool {
+	_, err := os.Stat(filepath.Join(elem...))
 	return err == nil
 }
 
@@ -315,7 +307,7 @@ var makeTargetRe = regexp.MustCompile(`(?m)^([A-Za-z0-9_./-]+)\s*:(?:[^=]|$)`)
 // deriveChecks returns the repo's own check commands filtered by the allowlist.
 func deriveChecks(dir string, allow []string) []string {
 	var cands []string
-	if fileExists(dir, "package.json") {
+	if pathExists(dir, "package.json") {
 		scripts := packageScripts(dir)
 		for _, s := range npmCheckScripts {
 			if scripts[s] {
@@ -323,16 +315,16 @@ func deriveChecks(dir string, allow []string) []string {
 			}
 		}
 	}
-	if fileExists(dir, "go.mod") {
+	if pathExists(dir, "go.mod") {
 		cands = append(cands, "go build ./...", "go vet ./...", "go test ./...")
 		// gofmt -l exits 0 always; pipe count through grep to get exit status.
 		cands = append(cands, "gofmt -l . | wc -l | grep -q ^0$")
 	}
-	// Gradle: compile is the critical check the gate previously missed (#638).
-	if fileExists(dir, "gradlew") {
+	// Gradle: compile is the check that matters most.
+	if pathExists(dir, "gradlew") {
 		cands = append(cands, "./gradlew compileDebugKotlin", "./gradlew testDebugUnitTest")
 	}
-	if fileExists(dir, "Makefile") {
+	if pathExists(dir, "Makefile") {
 		targets := makeTargets(dir)
 		for _, t := range makeCheckTargets {
 			if targets[t] {
@@ -347,7 +339,7 @@ func deriveChecks(dir string, allow []string) []string {
 		}
 	}
 	// npx prettier --check: derived for JS/TS repos where the binary exists and the prefix is allowed.
-	if fileExists(dir, "package.json") && toolchainPresent(dir, "npx prettier") && workspace.MatchesCheckPrefix("npx prettier", allow) {
+	if pathExists(dir, "package.json") && toolchainPresent(dir, "npx prettier") && workspace.MatchesCheckPrefix("npx prettier", allow) {
 		out = append(out, "npx prettier --check")
 	}
 	return out
@@ -367,7 +359,7 @@ func unsupportedBuildSystem(dir string) string {
 		{"CMakeLists.txt", "cmake"},
 		{"BUILD.bazel", "bazel"},
 	} {
-		if fileExists(dir, m.file) {
+		if pathExists(dir, m.file) {
 			return m.name
 		}
 	}
@@ -384,7 +376,6 @@ func toolchainPresent(dir, check string) bool {
 	return err == nil
 }
 
-// packageScripts returns script names from dir/package.json.
 func packageScripts(dir string) map[string]bool {
 	raw, err := os.ReadFile(filepath.Join(dir, "package.json"))
 	if err != nil {
@@ -403,7 +394,6 @@ func packageScripts(dir string) map[string]bool {
 	return set
 }
 
-// makeTargets returns the set of targets declared in dir/Makefile.
 func makeTargets(dir string) map[string]bool {
 	raw, err := os.ReadFile(filepath.Join(dir, "Makefile"))
 	if err != nil {

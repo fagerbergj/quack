@@ -18,16 +18,13 @@ import (
 	ll "github.com/landlock-lsm/go-landlock/landlock/syscall"
 )
 
-// landlockABI is the minimum ABI SandboxExecMain requires. V3 adds file truncation.
-// go-landlock 0.10.0 adds V10 (UDP bind/connect/send rules); not adopted here - no network rules in scope.
+// landlockABI is the minimum SandboxExecMain requires; V3 adds file truncation.
 var landlockABI = landlock.V3
 
-// landlockABIVersion is landlockABI's number for the env marker.
 const landlockABIVersion = 3
 
-// probeLandlock proves Landlock ABI >= V3 actually works HERE by applying a
-// trivial strict ruleset in a THROWAWAY child process (self-spawned in
-// --probe mode) - never in the server process, which a successful RestrictPaths call would otherwise confine for the rest of its life.
+// probeLandlock applies a strict ruleset in a throwaway child, never the server, which a successful
+// RestrictPaths would confine for the rest of its life.
 func probeLandlock() error {
 	cmd := exec.Command(landlockSelfExe(), SandboxExecArg, "--probe")
 	out, err := cmd.CombinedOutput()
@@ -37,10 +34,8 @@ func probeLandlock() error {
 	return nil
 }
 
-// SandboxExecMain implements the __sandbox-exec argv mode: parse repeatable
-// --rw/--ro grants and an optional --probe up to "--", apply a STRICT (no
-// BestEffort) Landlock ruleset at landlockABI, then syscall.Exec the target -
-// which REPLACES this process, so a nil return only ever happens for --probe. A path in --rw/--ro that doesn't exist is skipped (IgnoreIfMissing), mirroring bwrap's --*-bind-try tolerance for an optional grant.
+// SandboxExecMain applies a strict (no BestEffort) ruleset, then execs the target, so only --probe returns nil.
+// Missing grant paths are skipped, like bwrap's --*-bind-try.
 func SandboxExecMain(args []string) error {
 	rw, ro, probe, target, err := parseSandboxExecArgs(args)
 	if err != nil {
@@ -48,17 +43,13 @@ func SandboxExecMain(args []string) error {
 	}
 
 	if probe {
-		// A trivial strict ruleset, applied and immediately discarded with
-		// this throwaway process - proves the syscalls work at this ABI
-		// without granting anything a real child would use.
+		// Discarded with this throwaway process; proves the syscalls work without granting anything.
 		return landlockABI.RestrictPaths(landlock.RODirs("/").IgnoreIfMissing())
 	}
 	if len(target) == 0 {
 		return fmt.Errorf("sandbox-exec: no target command (missing --)")
 	}
-	// Resolve the target BEFORE restricting: LookPath needs to read PATH's
-	// directories, which the ruleset below may or may not cover, and this
-	// mirrors newChildCmd's own "resolve first, restrict after" order.
+	// Resolve before restricting: LookPath reads PATH dirs the ruleset may not cover.
 	bin, err := exec.LookPath(target[0])
 	if err != nil {
 		return fmt.Errorf("sandbox-exec: %q not found: %w", target[0], err)
@@ -71,9 +62,8 @@ func SandboxExecMain(args []string) error {
 	roDirs, roFiles := splitFiles(ro)
 	var rules []landlock.Rule
 	if len(rwDirs) > 0 {
-		// WithRefer grants LANDLOCK_ACCESS_FS_REFER: without it, cross-directory
-		// link()/rename() within these RW dirs is denied and reported as EXDEV
-		// even on one filesystem - breaking git's object writes and `git clone --local`. Safe to request unconditionally: landlockABI is fixed at V3 (REFER needs only ABI>=2), so any kernel this ruleset applies on already supports it.
+		// Without REFER, cross-directory link()/rename() fails with EXDEV, breaking git's object writes.
+		// Always safe: REFER needs ABI >= 2 and landlockABI is V3.
 		rules = append(rules, landlock.RWDirs(rwDirs...).WithRefer().IgnoreIfMissing())
 	}
 	if len(roDirs) > 0 {
@@ -89,9 +79,8 @@ func SandboxExecMain(args []string) error {
 		return fmt.Errorf("sandbox-exec: restrict: %w", err)
 	}
 	execArgv := append([]string{bin}, target[1:]...)
-	// Stamp the ruleset into the environment we exec into. syscall.Exec
-	// replaces this process image, so a confined child is
-	// indistinguishable from a bare one in `ps`, and kernels through 6.8 expose no Landlock field in /proc/<pid>/status - without this there is no way to answer "is this confined?" from outside. NOT a security control: the child can overwrite it (same caveat Codex documents for CODEX_PERMISSION_PROFILE), so it is for operators, not for enforcement decisions.
+	// For operators only: kernels through 6.8 show no Landlock state in /proc, and the child can
+	// overwrite this, so it is never an enforcement signal.
 	env := append(os.Environ(), fmt.Sprintf("%s=landlock:abi%d:rw%d:ro%d",
 		SandboxEnvMarker, landlockABIVersion, len(rw), len(ro)))
 	return syscall.Exec(bin, execArgv, env)
@@ -163,8 +152,6 @@ func withSignalScope(cfg landlock.Config) landlock.Config {
 	return cfg
 }
 
-// parseSandboxExecArgs splits the __sandbox-exec argv into its repeatable
-// grants, the --probe flag, and the target command past "--".
 func parseSandboxExecArgs(args []string) (rw, ro []string, probe bool, target []string, err error) {
 	i := 0
 	for ; i < len(args); i++ {

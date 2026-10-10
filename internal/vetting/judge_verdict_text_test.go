@@ -1,9 +1,7 @@
 package vetting
 
 import (
-	"context"
 	"errors"
-	"iter"
 	"strings"
 	"testing"
 	"time"
@@ -83,16 +81,9 @@ func TestParseVerdict_FailsClosedWithoutAVerdict(t *testing.T) {
 }
 
 // replyJudge answers every call with the same parts and no tool call.
-type replyJudge struct {
-	parts  []*genai.Part
-	finish genai.FinishReason
-}
-
-func (j replyJudge) Name() string { return "reply-judge" }
-
-func (j replyJudge) GenerateContent(context.Context, *model.LLMRequest, bool) iter.Seq2[*model.LLMResponse, error] {
-	return func(yield func(*model.LLMResponse, error) bool) {
-		yield(&model.LLMResponse{Content: &genai.Content{Role: genai.RoleModel, Parts: j.parts}, FinishReason: j.finish, TurnComplete: true}, nil)
+func replyJudge(parts []*genai.Part, finish genai.FinishReason) fnLLM {
+	return func(*model.LLMRequest) (*model.LLMResponse, error) {
+		return &model.LLMResponse{Content: &genai.Content{Role: genai.RoleModel, Parts: parts}, FinishReason: finish, TurnComplete: true}, nil
 	}
 }
 
@@ -100,7 +91,7 @@ func (j replyJudge) GenerateContent(context.Context, *model.LLMRequest, bool) it
 // inference layer's promoted copy of it (openaimodel applyFallbackLadder).
 func TestRunJudgeAgent_VerdictPromotedFromReasoning(t *testing.T) {
 	reasoning := judgeReasoningProse + judgeReasoningVerdict
-	judge := replyJudge{parts: []*genai.Part{{Text: reasoning, Thought: true}, {Text: reasoning}}, finish: genai.FinishReasonStop}
+	judge := replyJudge([]*genai.Part{{Text: reasoning, Thought: true}, {Text: reasoning}}, genai.FinishReasonStop)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Build the tutor surface."}}}
 	cfg := Config{Rubric: "score 0-3", JudgeMaxIterations: 6, Threshold: 0.6, RubricSpecs: tutorRubric}
 
@@ -114,7 +105,7 @@ func TestRunJudgeAgent_VerdictPromotedFromReasoning(t *testing.T) {
 }
 
 func TestRunJudgeAgent_NonVerdictJSONRoutesToNoVerdict(t *testing.T) {
-	judge := replyJudge{parts: []*genai.Part{{Text: judgeReasoningProse}}, finish: genai.FinishReasonStop}
+	judge := replyJudge([]*genai.Part{{Text: judgeReasoningProse}}, genai.FinishReasonStop)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Build the tutor surface."}}}
 	cfg := Config{Rubric: "score 0-3", JudgeMaxIterations: 6, Threshold: 0.6, RubricSpecs: tutorRubric}
 
@@ -131,7 +122,7 @@ func TestRunJudgeAgent_TruncatedTurnNeverYieldsATextVerdict(t *testing.T) {
 		"quoted worker verdict": judgeReasoningProse + "The worker's own verdict reads " + judgeReasoningVerdict + " but",
 		"retracted draft":       "Draft: " + judgeReasoningVerdict + " wait, actually criterion answers_not_guessable fails because",
 	} {
-		judge := replyJudge{parts: []*genai.Part{{Text: text, Thought: true}, {Text: text}}, finish: genai.FinishReasonMaxTokens}
+		judge := replyJudge([]*genai.Part{{Text: text, Thought: true}, {Text: text}}, genai.FinishReasonMaxTokens)
 		q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Build the tutor surface."}}}
 		cfg := Config{Rubric: "score 0-3", JudgeMaxIterations: 6, Threshold: 0.6, RubricSpecs: tutorRubric}
 

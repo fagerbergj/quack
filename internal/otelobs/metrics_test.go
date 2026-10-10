@@ -12,9 +12,8 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
 
-// newTestMeter builds a fresh SDK MeterProvider backed by a ManualReader and
-// installs its instruments as the package singleton (initMetrics), so the
-// public Record*/Start*/End* functions under test record into THIS reader rather than whatever a prior test (or Init) left wired up.
+// newTestMeter installs a ManualReader-backed singleton so Record*/Start*/End* record into THIS reader,
+// not whatever a prior test left wired.
 func newTestMeter(t *testing.T) *metric.ManualReader {
 	t.Helper()
 	reader := metric.NewManualReader()
@@ -26,9 +25,7 @@ func newTestMeter(t *testing.T) *metric.ManualReader {
 	return reader
 }
 
-// TestInstrumentUnits pins the unit of every unit-carrying instrument - the
-// Int64Counter case once silently dropped d.unit (gen_ai.client.token.usage
-// lost "{"token}"; #1410 review), and no other test would have caught it.
+// Pins every unit-carrying instrument's unit; the Int64Counter case once silently dropped d.unit.
 func TestInstrumentUnits(t *testing.T) {
 	reader := newTestMeter(t)
 	RecordTokenUsage("model-a", "", "", "", 1, 1, 0, 0)
@@ -62,9 +59,7 @@ func collect(t *testing.T, reader *metric.ManualReader, name string) metricdata.
 	return metricdata.Metrics{}
 }
 
-// sumTotal returns an int64 Sum instrument's current net value - the reading
-// an UpDownCounter-backed gauge like quack.runs.active/quack.nodes.active
-// exposes with cumulative temporality (the default here).
+// sumTotal returns an int64 Sum's net value, which an UpDownCounter gauge exposes cumulatively.
 func sumTotal(t *testing.T, reader *metric.ManualReader, name string) int64 {
 	t.Helper()
 	sum, ok := collect(t, reader, name).Data.(metricdata.Sum[int64])
@@ -121,9 +116,7 @@ func histogramSumCount(t *testing.T, reader *metric.ManualReader, name string) (
 	return sum, count
 }
 
-// TestRunGauge_ReturnsToZero_AfterErroredCancelledAndCleanRuns is #354's
-// core regression guard: quack.runs.active must net back to 0 once every
-// RunStarted has a matching RunFinished, on EVERY exit shape - a plain error, a context-cancellation, and a clean return.
+// quack.runs.active must net to 0 once every RunStarted has a RunFinished: error, cancellation, or clean.
 func TestRunGauge_ReturnsToZero_AfterErroredCancelledAndCleanRuns(t *testing.T) {
 	reader := newTestMeter(t)
 
@@ -159,9 +152,7 @@ func TestRunGauge_CountsAResumedRun(t *testing.T) {
 	}
 }
 
-// TestNodeGauge_TracksInFlightThenReturnsToZero exercises concurrency (two
-// nodes in flight at once, mirroring the "4 active with 1 serial run"
-// production report) and confirms the gauge both reflects the in-flight count AND nets to 0 once an errored and a clean node both end.
+// Two nodes in flight at once: the gauge reflects the in-flight count and nets to 0 once both end.
 func TestNodeGauge_TracksInFlightThenReturnsToZero(t *testing.T) {
 	reader := newTestMeter(t)
 
@@ -182,9 +173,8 @@ func TestNodeGauge_TracksInFlightThenReturnsToZero(t *testing.T) {
 	}
 }
 
-// TestJudgeMetrics_CoverNonExplorerAgents guards #354's item 2: the judge
-// score/verdict series must appear for ANY agent whose node reaches the
-// shared judge loop, not just one. It also exercises the judge-errored path (RecordJudgeUnavailable), which previously left NO metric at all for a round the judge failed to score.
+// Judge score/verdict series appear for any agent reaching the judge loop, and RecordJudgeUnavailable
+// leaves a metric for an unscored round.
 func TestJudgeMetrics_CoverNonExplorerAgents(t *testing.T) {
 	reader := newTestMeter(t)
 
@@ -212,9 +202,7 @@ func TestJudgeMetrics_CoverNonExplorerAgents(t *testing.T) {
 	}
 }
 
-// TestRoundDuration_MatchesTimedSpanWindow guards #354's item 3: the
-// recorded worker-round duration must equal TimedSpan's own window, never a
-// blown-up value from a mismatched/independent timer (the reported symptom was ~31min recorded for rounds Tempo showed as 4-12min).
+// The recorded worker-round duration must equal TimedSpan's own window, never an independent timer's.
 func TestRoundDuration_MatchesTimedSpanWindow(t *testing.T) {
 	reader := newTestMeter(t)
 
@@ -236,9 +224,7 @@ func TestRoundDuration_MatchesTimedSpanWindow(t *testing.T) {
 	}
 }
 
-// TestRecordMemoryCommitFailure guards #436: a fire-and-forget memory-commit
-// error must leave a queryable counter series (reason + agent), not just a
-// WARN log - the gap the owner flagged after ~every node's commit timed out under burst load.
+// A fire-and-forget memory-commit error must leave a queryable counter series (reason + agent), not just a log.
 func TestRecordMemoryCommitFailure(t *testing.T) {
 	reader := newTestMeter(t)
 
@@ -272,8 +258,7 @@ func TestClassifyMemoryCommitError(t *testing.T) {
 	}
 }
 
-// TestRecordRunNoAnswer_Counts guards #568: a run that completes without an
-// answer must leave a queryable trace, not just a placeholder comment.
+// A run that completes without an answer must leave a queryable trace, not just a placeholder comment.
 func TestRecordRunNoAnswer_Counts(t *testing.T) {
 	reader := newTestMeter(t)
 	RecordRunNoAnswer()
@@ -357,9 +342,7 @@ func TestRecordTokenUsage_ZeroTypeOmitted(t *testing.T) {
 	}
 }
 
-// TestRecordTokenUsage_AbsentAttributionOmitsAttribute guards the "omit,
-// don't guess" rule: an empty agent/user/source must never show up as the
-// empty-string attribute value.
+// An empty agent/user/source must never appear as an empty-string attribute value.
 func TestRecordTokenUsage_AbsentAttributionOmitsAttribute(t *testing.T) {
 	reader := newTestMeter(t)
 
@@ -377,9 +360,7 @@ func TestRecordTokenUsage_AbsentAttributionOmitsAttribute(t *testing.T) {
 	}
 }
 
-// TestRecordCost_ComputesFromConfiguredPricing exercises RecordCost directly
-// (the price math itself lives in inference.recordUsageMetrics - this pins
-// the instrument's own attribute/value contract).
+// Pins RecordCost's attribute/value contract; the price math lives in inference.recordUsageMetrics.
 func TestRecordCost_ComputesFromConfiguredPricing(t *testing.T) {
 	reader := newTestMeter(t)
 
@@ -404,9 +385,7 @@ func TestRecordCost_ComputesFromConfiguredPricing(t *testing.T) {
 	}
 }
 
-// TestJudgeScoreHistogram_HasExplicitBuckets guards #433: a 0-1 score
-// recorded against the OTel default buckets (5, 10, ...) lands entirely in
-// one bucket, making the histogram useless. Explicit sub-1.0 boundaries must spread scores across multiple buckets.
+// A 0-1 score on OTel's default buckets lands in one bucket; explicit sub-1.0 boundaries must spread it.
 func TestJudgeScoreHistogram_HasExplicitBuckets(t *testing.T) {
 	reader := newTestMeter(t)
 	RecordJudgeVerdict("web-researcher", 0.3, false)

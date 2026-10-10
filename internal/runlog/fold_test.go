@@ -13,8 +13,7 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// mustSeedChat upserts a bare chats row - chat_events/dag_plans now FK to
-// chats.id (#1296), so a fold/table-write test needs one before it can insert.
+// mustSeedChat upserts a bare chats row: chat_events/dag_plans FK to chats.id.
 func mustSeedChat(t *testing.T, st *store.Store, chatID string) {
 	t.Helper()
 	if err := st.SetChatOrigin(context.Background(), chatID, "", ""); err != nil {
@@ -39,9 +38,7 @@ func appendNode(t *testing.T, s ledger.LedgerStore, chatID, nodeID, turn, kind s
 	return seq
 }
 
-// TestLoadEvents_FallsBackToFold: an empty SSE table with a WAL armed
-// resumes from the fold instead of returning nothing - BOTH the node_start
-// and node_done rows (#1121: start and terminal are synthesized independently).
+// An empty SSE table with a WAL armed resumes from the fold, with both node_start and node_done.
 func TestLoadEvents_FallsBackToFold(t *testing.T) {
 	st := newTestStore(t)
 	ls := ledgertest.NewMemStore()
@@ -98,9 +95,8 @@ func TestLoadEvents_PrefersTable(t *testing.T) {
 	}
 }
 
-// TestLoadEvents_NeverFoldsWithPriorProgress: the table's Seq (per-RUN) and the
-// ledger's Seq (per-CHAT LIFETIME) are different numbering spaces - a client with
-// fromSeq > 0 already holds a per-run id, which the fold cannot honestly satisfy. A lost table must return empty for such a client, never a fold-derived guess in the wrong space.
+// Table seq (per run) and ledger seq (per chat) differ, so a lost table returns empty for a fromSeq > 0
+// client, never a fold-derived guess.
 func TestLoadEvents_NeverFoldsWithPriorProgress(t *testing.T) {
 	st := newTestStore(t)
 	ls := ledgertest.NewMemStore()
@@ -117,9 +113,7 @@ func TestLoadEvents_NeverFoldsWithPriorProgress(t *testing.T) {
 	}
 }
 
-// TestLoadEvents_CaughtUpClientNeverFolds: a table that already has rows,
-// none newer than fromSeq, is "caught up" - it must return empty, NOT fall
-// back to the fold and resend reconstructed history.
+// A caught-up table (no rows newer than fromSeq) returns empty, never resent reconstructed history.
 func TestLoadEvents_CaughtUpClientNeverFolds(t *testing.T) {
 	st := newTestStore(t)
 	ls := ledgertest.NewMemStore()
@@ -145,9 +139,8 @@ func TestLoadEvents_CaughtUpClientNeverFolds(t *testing.T) {
 	}
 }
 
-// TestLoadEvents_CrashBetweenIntentAndWatermark is #1144 P3's kill-9 test: the
-// ledger already has durable node.* intents (as if a live writer had appended
-// them) but the process died before this chat's "sse" projection ever wrote a single row or watermark - simulating a kill -9 right after the WAL append. A brand-new EventLog (a fresh boot's process) must resume by folding the WHOLE chat from watermark 0 and land on exactly what an independent fold.Fold computes - no CLI, no rebuild command involved. A second resume on the same (now-populated) table must not re-insert or duplicate anything, proving the watermark advance actually stuck.
+// Kill -9 after the WAL append, before any SSE row or watermark: a fresh EventLog must fold the whole chat
+// to exactly fold.Fold's result, and a second resume must not duplicate rows.
 func TestLoadEvents_CrashBetweenIntentAndWatermark(t *testing.T) {
 	ctx := context.Background()
 	st := newTestStore(t)
@@ -155,9 +148,7 @@ func TestLoadEvents_CrashBetweenIntentAndWatermark(t *testing.T) {
 	const chatID = "chat-crash"
 	mustSeedChat(t, st, chatID)
 
-	// The "crash": these intents are durably in the ledger, but nothing ever
-	// wrote to chat_events or projection_watermarks for this chat - as if the
-	// process died between the ledger append and the first SSE fold+write.
+	// The "crash": durable intents, but nothing written to chat_events or projection_watermarks.
 	appendNode(t, ls, chatID, "n1", "t1", ledger.KindNodeStarted)
 	appendNode(t, ls, chatID, "n1", "t1", ledger.KindNodeDone)
 	appendNode(t, ls, chatID, "n2", "t1", ledger.KindNodeStarted)
@@ -178,10 +169,7 @@ func TestLoadEvents_CrashBetweenIntentAndWatermark(t *testing.T) {
 	if len(got) != len(wantEvents) {
 		t.Fatalf("resumed %d events, want %d (independent fold): got=%+v want=%+v", len(got), len(wantEvents), got, wantEvents)
 	}
-	// Compare node id + event name, not the raw JSON: LoadEvents' fold runs
-	// independently of the `want` fold above, and node.* payloads carry no
-	// content beyond node id (Agent/Output are populated by the live path,
-	// not reconstructed) - the two folds' events differ in nothing else.
+	// Compare node id + event name, not raw JSON: node.* payloads carry nothing else the two folds could share.
 	for i := range got {
 		gotEv, err := UnmarshalEvent(got[i].Event)
 		if err != nil {
@@ -217,11 +205,7 @@ func TestLoadEvents_CrashBetweenIntentAndWatermark(t *testing.T) {
 	}
 }
 
-// TestSynthesizeChatEvents_UsesSourceEntryTimestamps pins the fold-
-// reconstruction fix: a folded node_start/node_done must carry the ORIGINAL
-// ledger entry's At, not the wall-clock moment of reconstruction - otherwise
-// a resumed/rebuilt chat renders a started/finished_at_ms minutes (or
-// rebuild-runs later than the entry, days) after the real run.
+// A folded node_start/node_done must carry the original entry's At, not the reconstruction wall-clock.
 func TestSynthesizeChatEvents_UsesSourceEntryTimestamps(t *testing.T) {
 	ctx := context.Background()
 	ls := ledgertest.NewMemStore()

@@ -19,13 +19,8 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// repeatLoopStub scripts the QA rig's live failure (a 9B model sent the same
-// malformed create_plan call 386 times in a row - internal/tools' repeat
-// guard was never wired to the orchestrator's own hand-built tools, unlike a
-// worker node's tools.Build path, which always applied it). Unlike a model
-// that reads the REFUSED error, this one IGNORES it and keeps re-issuing
-// the identical bad call forever - proving the guard's own hard-stop tier
-// (not the model choosing to stop) is what ultimately bounds it.
+// repeatLoopStub ignores every REFUSED error and re-issues the identical bad create_plan, so
+// only the guard's hard-stop tier can bound it.
 type repeatLoopStub struct{ calls int }
 
 func (s *repeatLoopStub) Name() string { return "repeatLoopStub" }
@@ -37,17 +32,8 @@ func (s *repeatLoopStub) GenerateContent(_ context.Context, _ *model.LLMRequest,
 	}
 }
 
-// TestOrchestratorRepeatGuardStopsIdenticalCreatePlanLoop is the QA rig
-// regression test: a model spamming the identical malformed create_plan
-// call, ignoring every REFUSED error, must still terminate - via the
-// guard's own hard-stop tier once it keeps treading on regardless, in
-// exactly ONE orchestrator invocation. A hard-stopped turn used to be
-// retried unchanged (up to maxOrchestratorContinues times), reproducing the
-// identical loop every time; it must give up on the first hard stop
-// instead. The owner's settled direction (#slice3 review) is a SOFT refusal
-// alone must never end the turn (that denies the model any chance to
-// self-correct within it); this pins the other half - a model that ignores
-// the soft refusal anyway is still bounded, to one invocation.
+// The identical-call spam must end via the hard stop in exactly one invocation: a hard-stopped
+// turn is never retried, though a soft refusal alone must not end the turn.
 func TestOrchestratorRepeatGuardStopsIdenticalCreatePlanLoop(t *testing.T) {
 	var logs bytes.Buffer
 	prev := slog.Default()
@@ -72,10 +58,8 @@ func TestOrchestratorRepeatGuardStopsIdenticalCreatePlanLoop(t *testing.T) {
 
 	evs := runTurn(t, o, "do the flaky retry loop review")
 
-	// tools.repeatThreshold+repeatHardStopAfter+1 (3+2+1, unexported -
-	// mirrored here as a literal): the hard-stop tier fires on the call
-	// AFTER exceeding that sum, so one orchestrator invocation makes exactly
-	// this many stub calls before ending itself.
+	// tools.repeatThreshold+repeatHardStopAfter+1 (unexported): the hard stop fires on the call after
+	// that sum.
 	const guardAttemptsPerInvocation = 6
 	if stub.calls != guardAttemptsPerInvocation {
 		t.Fatalf("stub called %d times, want exactly %d - a hard-stopped turn must not be retried unchanged",
@@ -96,12 +80,8 @@ func TestOrchestratorRepeatGuardStopsIdenticalCreatePlanLoop(t *testing.T) {
 	}
 }
 
-// repeatWriteArtifactStub is repeatLoopStub's twin for write_artifact - a
-// hand-built tool appended AFTER the DAG tools (orchestrator.go), the class
-// the repeat guard used to skip entirely. Unlike repeatLoopStub, this one
-// DOES correct itself once refused (different bytes) - the owner's settled
-// direction pins that a soft refusal must let a model that corrects proceed
-// within the SAME turn, not force it through a fresh wrapper-level retry.
+// repeatWriteArtifactStub spams an appended tool (write_artifact), then corrects after the
+// refusal, which must proceed within the same turn.
 type repeatWriteArtifactStub struct{ calls int }
 
 func (s *repeatWriteArtifactStub) Name() string { return "repeatWriteArtifactStub" }
@@ -124,14 +104,8 @@ func (s *repeatWriteArtifactStub) GenerateContent(_ context.Context, _ *model.LL
 	}
 }
 
-// TestOrchestratorRepeatGuardCoversAppendedTools proves the guard wraps the
-// WHOLE final tool list, not just the five DAG tools set up before memory/
-// artifact tools are appended (a model spamming an identical write_artifact
-// call must be refused too), AND that a model correcting its call right
-// after the refusal succeeds within the SAME turn - exactly 5 stub
-// invocations (3 identical + 1 corrected + the final text), never needing a
-// wrapper-level retry (#slice3 review: ending the turn on the first
-// refusal used to deny exactly this recovery).
+// The guard wraps the whole tool list, and a corrected call succeeds in the same turn: exactly 5
+// stub calls (3 identical + 1 corrected + final text).
 func TestOrchestratorRepeatGuardCoversAppendedTools(t *testing.T) {
 	stub := &repeatWriteArtifactStub{}
 	sessions := session.InMemoryService()

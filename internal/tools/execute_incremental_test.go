@@ -1,7 +1,3 @@
-// execute_incremental_test.go: pins slice-3 incremental planning at the
-// execute tool level - a partial step (no delivery) returns results and
-// leaves the turn open, a second execute call dispatches only what hasn't
-// run yet, and a delivering step ends the turn and sets the cache's answer.
 package tools
 
 import (
@@ -11,15 +7,13 @@ import (
 	"github.com/fagerbergj/quack/internal/dag"
 )
 
-// fakeRunStep records the run/seeded sets it was called with and returns
-// canned outputs, keyed by node id.
 type fakeRunStep struct {
 	calls      int
 	lastRun    map[string]bool
 	lastSeeded map[string]string
 	outputs    map[string]string
 	needsInput map[string]bool
-	notStarted map[string]bool // run-set node ids that never reached running (a dependency paused first, #slice3 review)
+	notStarted map[string]bool // run-set node ids that never reached running (a dependency paused first)
 }
 
 func (f *fakeRunStep) run(_ context.Context, _ dag.Plan, seeded map[string]string, run map[string]bool) (map[string]string, map[string]bool, map[string]bool, error) {
@@ -40,9 +34,7 @@ func (f *fakeRunStep) run(_ context.Context, _ dag.Plan, seeded map[string]strin
 	return out, f.needsInput, started, nil
 }
 
-// execResults reads out["results"] (a []any of map[string]any, the shape a
-// functiontool.Run's JSON round-trip leaves executeResult in) as the single
-// entry a single-assignment test expects.
+// execResult reads the single entry of out["results"], as left by functiontool.Run's JSON round-trip.
 func execResult(t *testing.T, out map[string]any) map[string]any {
 	t.Helper()
 	list, ok := out["results"].([]any)
@@ -56,16 +48,14 @@ func execResult(t *testing.T, out map[string]any) map[string]any {
 	return entry
 }
 
-// TestExecuteTool_PartialStepReturnsResultsAndContinuesTurn: a plan with no
-// declared delivery is a partial step - execute runs it, returns per-node
-// results, and must NOT set SkipSummarization (the model's turn continues).
+// A plan with no declared delivery is a partial step: execute returns per-node results and must not set
+// SkipSummarization, so the turn continues.
 func TestExecuteTool_PartialStepReturnsResultsAndContinuesTurn(t *testing.T) {
 	rec := dag.DagPlanRecord{
 		PlanID:      "p1",
 		Assignments: []dag.Assignment{{NodeID: "r-1", Task: "find the file"}},
 	}
-	// NewPlanner registers the agent roster dag_node records validate against
-	// (dag.SetAgentRoster, package-global) - must run before seedPlanRecord.
+	// NewPlanner sets the package-global agent roster dag_node records validate against: run it before seedPlanRecord.
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher"}}, nil, nil)
 	c := seedPlanRecord(t, rec, []dag.DagNodeRecord{{NodeID: "r-1", Agent: "web-researcher"}})
 	cache := NewPlanCache()
@@ -102,18 +92,14 @@ func TestExecuteTool_PartialStepReturnsResultsAndContinuesTurn(t *testing.T) {
 	}
 }
 
-// TestExecuteTool_PausedStepMarksNodePausedAndEndsTurn: a node that parks on
-// a HITL question must be reported "paused" (not "failed"), must keep no
-// task_id (so a later execute retries it fresh, not seeds it with an empty
-// result forever), and must still end the orchestrator's turn - looping the
-// model straight back into execute/edit_plan would just repeat the step.
+// A node parked on a HITL question is reported "paused" with no task_id (so a later execute retries it
+// fresh) and still ends the turn; looping back into execute would just repeat the step.
 func TestExecuteTool_PausedStepMarksNodePausedAndEndsTurn(t *testing.T) {
 	rec := dag.DagPlanRecord{
 		PlanID:      "p1",
 		Assignments: []dag.Assignment{{NodeID: "impl-1", Task: "ask the user something"}},
 	}
-	// NewPlanner registers the agent roster dag_node records validate against
-	// (dag.SetAgentRoster, package-global) - must run before seedPlanRecord.
+	// NewPlanner sets the package-global agent roster dag_node records validate against: run it before seedPlanRecord.
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "code-implementer"}}, nil, nil)
 	c := seedPlanRecord(t, rec, []dag.DagNodeRecord{{NodeID: "impl-1", Agent: "code-implementer"}})
 	cache := NewPlanCache()
@@ -143,7 +129,7 @@ func TestExecuteTool_PausedStepMarksNodePausedAndEndsTurn(t *testing.T) {
 		t.Error("SkipSummarization = false on a paused step, want true - the turn must end, not loop back into execute")
 	}
 
-	rec2, _, ok, err := loadDagPlan(newFakeCtx(), c)
+	rec2, ok, err := loadDagPlan(newFakeCtx(), c)
 	if err != nil || !ok {
 		t.Fatalf("loadDagPlan: ok=%v err=%v", ok, err)
 	}
@@ -152,13 +138,8 @@ func TestExecuteTool_PausedStepMarksNodePausedAndEndsTurn(t *testing.T) {
 	}
 }
 
-// TestExecuteTool_MixedPausedAndFailedReportsEachCorrectly pins the
-// reviewer's finding (#slice3 review): ApplyAssignmentOutcome used to take
-// the whole step's aggregate "did anything pause" flag, so a genuinely
-// failed node (empty output, nothing to do with a question) sharing a step
-// with a paused one was reported "paused" too - misleading, and it means
-// the model doesn't learn a real failure happened. Each node's own status
-// must come from whether THAT node itself paused, not the step overall.
+// Each node's status comes from whether that node paused, not the step: a failed node sharing a step with
+// a paused one must still report "failed".
 func TestExecuteTool_MixedPausedAndFailedReportsEachCorrectly(t *testing.T) {
 	rec := dag.DagPlanRecord{
 		PlanID: "p1",
@@ -173,9 +154,7 @@ func TestExecuteTool_MixedPausedAndFailedReportsEachCorrectly(t *testing.T) {
 		{NodeID: "impl-1", Agent: "code-implementer"},
 	})
 	cache := NewPlanCache()
-	// ask-1 parks on a question (no output, needsInput); impl-1 genuinely
-	// fails (no output, NOT in needsInput) - same step, same empty output,
-	// different reasons.
+	// ask-1 parks on a question; impl-1 genuinely fails. Same empty output, different reasons.
 	step := &fakeRunStep{needsInput: map[string]bool{"ask-1": true}}
 
 	tl, err := NewExecuteTool(planner, c, cache, nil, step.run, nil, nil, "do it", nil, nil, nil, "", nil, false, "orchestrator", nil)
@@ -203,7 +182,7 @@ func TestExecuteTool_MixedPausedAndFailedReportsEachCorrectly(t *testing.T) {
 		t.Errorf("impl-1 status = %q, want failed (it never asked a question - reporting it paused would be misleading)", statuses["impl-1"])
 	}
 
-	rec2, _, ok, err := loadDagPlan(newFakeCtx(), c)
+	rec2, ok, err := loadDagPlan(newFakeCtx(), c)
 	if err != nil || !ok {
 		t.Fatalf("loadDagPlan: ok=%v err=%v", ok, err)
 	}
@@ -219,14 +198,8 @@ func TestExecuteTool_MixedPausedAndFailedReportsEachCorrectly(t *testing.T) {
 	}
 }
 
-// TestExecuteTool_NeverStartedDependentStaysQueuedNotFailed pins the second
-// #slice3 review's blocking regression: a node whose dependency pauses first
-// in the same runSubset never gets its own goroutine dispatched (topo layers
-// abort on the first error), so runStep reports it in neither outputs nor
-// needsInput. Marking that "failed" (as ApplyAssignmentOutcome's default
-// branch used to, unconditionally) mints a task_id that editplan.go then
-// refuses to ever reassign - the plan is stuck forever. It must instead be
-// left exactly as before the call: empty task_id, reported "queued".
+// A dependent never dispatched because its dependency paused first must stay "queued" with an empty
+// task_id; marking it "failed" would mint a task_id editplan.go refuses to reassign, stranding the plan.
 func TestExecuteTool_NeverStartedDependentStaysQueuedNotFailed(t *testing.T) {
 	rec := dag.DagPlanRecord{
 		PlanID: "p1",
@@ -242,8 +215,7 @@ func TestExecuteTool_NeverStartedDependentStaysQueuedNotFailed(t *testing.T) {
 		{NodeID: "close-1", Agent: "closer"},
 	})
 	cache := NewPlanCache()
-	// ask-1 pauses; close-1 is in the run set but never reaches running - the
-	// exact shape runDAGSubset produces when an earlier layer's node parks.
+	// close-1 never reaches running: the shape runDAGSubset produces when an earlier layer parks.
 	step := &fakeRunStep{needsInput: map[string]bool{"ask-1": true}, notStarted: map[string]bool{"close-1": true}}
 	finalizeCalled := false
 	finalize := func(_ context.Context, _ dag.Plan, _ map[string]string) string {
@@ -280,7 +252,7 @@ func TestExecuteTool_NeverStartedDependentStaysQueuedNotFailed(t *testing.T) {
 		t.Error("finalize was called though the delivering node never ran")
 	}
 
-	rec2, _, ok, err := loadDagPlan(newFakeCtx(), c)
+	rec2, ok, err := loadDagPlan(newFakeCtx(), c)
 	if err != nil || !ok {
 		t.Fatalf("loadDagPlan: ok=%v err=%v", ok, err)
 	}
@@ -293,9 +265,7 @@ func TestExecuteTool_NeverStartedDependentStaysQueuedNotFailed(t *testing.T) {
 	}
 }
 
-// TestExecuteTool_SecondExecuteRunsOnlyNewAssignments: an assignment that
-// already ran (task_id set) must not be re-dispatched, and its result seeds
-// a dependent new assignment's run.
+// An assignment that already ran (task_id set) is not re-dispatched, and its result seeds a new dependent.
 func TestExecuteTool_SecondExecuteRunsOnlyNewAssignments(t *testing.T) {
 	rec := dag.DagPlanRecord{
 		PlanID: "p1",
@@ -304,8 +274,7 @@ func TestExecuteTool_SecondExecuteRunsOnlyNewAssignments(t *testing.T) {
 			{NodeID: "impl-1", Task: "add the comment", DependsOn: []string{"r-1"}},
 		},
 	}
-	// NewPlanner registers the agent roster dag_node records validate against
-	// (dag.SetAgentRoster, package-global) - must run before seedPlanRecord.
+	// NewPlanner sets the package-global agent roster dag_node records validate against: run it before seedPlanRecord.
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "web-researcher"}, {Name: "code-implementer"}}, nil, nil)
 	c := seedPlanRecord(t, rec, []dag.DagNodeRecord{
 		{NodeID: "r-1", Agent: "web-researcher", Status: dag.StatusDone, Started: true},
@@ -334,16 +303,13 @@ func TestExecuteTool_SecondExecuteRunsOnlyNewAssignments(t *testing.T) {
 	}
 }
 
-// TestExecuteTool_DeliveringStepEndsTurnAndDelivers: once the plan declares
-// delivery, execute ends the model's turn and records the finalized answer.
 func TestExecuteTool_DeliveringStepEndsTurnAndDelivers(t *testing.T) {
 	rec := dag.DagPlanRecord{
 		PlanID:      "p1",
 		Assignments: []dag.Assignment{{NodeID: "s-1", Task: "answer"}},
 		Delivery:    &dag.Delivery{Kind: "comment"},
 	}
-	// NewPlanner registers the agent roster dag_node records validate against
-	// (dag.SetAgentRoster, package-global) - must run before seedPlanRecord.
+	// NewPlanner sets the package-global agent roster dag_node records validate against: run it before seedPlanRecord.
 	planner := dag.NewPlanner([]dag.AgentInfo{{Name: "synthesizer"}}, nil, nil)
 	c := seedPlanRecord(t, rec, []dag.DagNodeRecord{{NodeID: "s-1", Agent: "synthesizer"}})
 	cache := NewPlanCache()
@@ -378,10 +344,8 @@ func TestExecuteTool_DeliveringStepEndsTurnAndDelivers(t *testing.T) {
 	}
 }
 
-// TestExecuteTool_NothingNewToRunSkipsJudgeAndReturnsClearResult pins the CI
-// hang fix (#slice3 review, BLOCKING 3a): a call with every assignment
-// already run must not re-run the judge/build/finalize pipeline - it's a
-// clear no-op result, and runStep must never be invoked.
+// With every assignment already run, execute must not re-run the judge/build/finalize pipeline: a clear
+// no-op result, and runStep is never invoked.
 func TestExecuteTool_NothingNewToRunSkipsJudgeAndReturnsClearResult(t *testing.T) {
 	rec := dag.DagPlanRecord{
 		PlanID:      "p1",
@@ -416,9 +380,7 @@ func TestExecuteTool_NothingNewToRunSkipsJudgeAndReturnsClearResult(t *testing.T
 	}
 }
 
-// TestExecuteTool_NothingNewOnDonePlanEndsTurn: the same no-op short-circuit,
-// but the plan already delivered - repeating the call must not leave the
-// turn hanging open forever.
+// The same no-op on an already-delivered plan must end the turn, not leave it open.
 func TestExecuteTool_NothingNewOnDonePlanEndsTurn(t *testing.T) {
 	rec := dag.DagPlanRecord{
 		PlanID:      "p1",
@@ -452,9 +414,7 @@ func TestExecuteTool_NothingNewOnDonePlanEndsTurn(t *testing.T) {
 	}
 }
 
-// TestExecuteTool_FailedDeliveringStepDoesNotFinalizeOrEndTurn pins BLOCKING
-// 3b: a delivering step whose node actually failed must not be marked done
-// or finalized on garbage - the turn stays open so the model can react.
+// A delivering step whose node failed is neither marked done nor finalized; the turn stays open.
 func TestExecuteTool_FailedDeliveringStepDoesNotFinalizeOrEndTurn(t *testing.T) {
 	rec := dag.DagPlanRecord{
 		PlanID:      "p1",
@@ -498,7 +458,7 @@ func TestExecuteTool_FailedDeliveringStepDoesNotFinalizeOrEndTurn(t *testing.T) 
 		t.Error("SkipSummarization = true on a failed delivering step, want false - the turn must stay open so the model can react")
 	}
 
-	rec2, _, ok, err := loadDagPlan(newFakeCtx(), c)
+	rec2, ok, err := loadDagPlan(newFakeCtx(), c)
 	if err != nil || !ok {
 		t.Fatalf("loadDagPlan: ok=%v err=%v", ok, err)
 	}

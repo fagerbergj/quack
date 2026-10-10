@@ -16,22 +16,21 @@ import (
 	"github.com/fagerbergj/quack/internal/schema"
 )
 
-// pluginUpdateBudget bounds one GET /plugins/updates or POST /plugins/update
-// call's total wall time, regardless of row count - var so a test can shrink
-// it to prove the budget actually expires, instead of waiting 30s.
+// pluginUpdateBudget bounds one updates check or update-all call's total wall time;
+// a var so a test can shrink it.
 var pluginUpdateBudget = 30 * time.Second
 
 // pluginConcurrency bounds how many rows' CheckUpdate/Fetch run in flight at
 // once - a fixed small number, not one goroutine per row.
 const pluginConcurrency = 4
 
-// Plugins is the REST handler's boot-owned registry access (epic #1427 P2).
+// Plugins is the REST handler's boot-owned registry access.
 type Plugins struct {
 	reg  pluginreg.FetchRegistry
 	root string
 	seed []string
 	// reload rebuilds the roster from the registry; an error means nothing
-	// swapped, and a refused row is a failure with stage admission (#1430).
+	// swapped, and a refused row is a failure with stage admission.
 	reload func(ctx context.Context) (schema.PluginReloadReport, error)
 	// mcpDeclared reports, by row name, which plugins currently declare an
 	// mcp.json server - the note on the wire row.
@@ -99,9 +98,8 @@ func refusal(rep schema.PluginReloadReport, name string) (string, bool) {
 	return "", false
 }
 
-// allRows lists every registry row plus the embedded "quack" baseline -
-// unless a real row already named "quack" shadows it (epic #1427 S2):
-// one row named quack, never two.
+// allRows lists every registry row plus the embedded "quack" baseline,
+// unless a real row named "quack" shadows it.
 func (p *Plugins) allRows(ctx context.Context) ([]pluginreg.Plugin, error) {
 	rows, err := p.reg.List(ctx)
 	if err != nil {
@@ -196,9 +194,8 @@ func (h *Handler) ListPlugins(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, schema.PluginList{Plugins: wire})
 }
 
-// CreatePlugin parses entry (github: only - a local root stays config-only),
-// stores the row, then fetches it synchronously. A fetch failure still
-// returns 201 with the row (error set), not a failed add.
+// CreatePlugin stores a github: entry (local roots stay config-only) and fetches it synchronously.
+// A fetch failure still returns 201 with the row's error set.
 func (h *Handler) CreatePlugin(w http.ResponseWriter, r *http.Request) {
 	if !h.requirePlugins(w) {
 		return
@@ -232,9 +229,8 @@ func (h *Handler) CreatePlugin(w http.ResponseWriter, r *http.Request) {
 		errMsg(w, status, err.Error())
 		return
 	}
-	// Put may have preserved an already-installed sha/fetched_at (a re-POST
-	// of the same entry, severe#2) - re-read so a failed Fetch below reports
-	// that preserved state, not the blank row this func built.
+	// Put may have preserved an installed sha/fetched_at (re-POST of the same entry), so re-read
+	// to report that state on a failed Fetch.
 	if rows, err := h.plugins.reg.List(r.Context()); err == nil {
 		if existing, ok := findPluginRow(rows, row.Name); ok {
 			row = existing
@@ -244,9 +240,8 @@ func (h *Handler) CreatePlugin(w http.ResponseWriter, r *http.Request) {
 	h.writeReloaded(w, r, http.StatusCreated, fetched)
 }
 
-// writeReloaded reloads after an add or update of row: 422 when nothing
-// swapped or row itself was refused (admitPlugins already persisted that on
-// it). The row stays registered either way, to be fixed and updated.
+// writeReloaded reloads after adding or updating row: 422 when nothing swapped or row was refused.
+// The row stays registered either way.
 func (h *Handler) writeReloaded(w http.ResponseWriter, r *http.Request, status int, row pluginreg.Plugin) {
 	rep, err := h.plugins.rebuild(r.Context())
 	if err != nil {
@@ -321,9 +316,8 @@ func (h *Handler) ReloadPlugins(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, status, rep)
 }
 
-// ListPluginUpdates checks every github-sourced row against its tracked ref,
-// bounded to pluginUpdateBudget total and pluginConcurrency in flight. A
-// per-row check failure lands in that row's error field only.
+// ListPluginUpdates checks every github row against its tracked ref within pluginUpdateBudget and
+// pluginConcurrency; a per-row failure lands only in that row's error field.
 func (h *Handler) ListPluginUpdates(w http.ResponseWriter, r *http.Request) {
 	if !h.requirePlugins(w) {
 		return
@@ -355,9 +349,8 @@ func (h *Handler) ListPluginUpdates(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, schema.PluginUpdateList{Updates: updates})
 }
 
-// UpdatePlugin re-fetches one row against its tracked/pinned ref - a manual,
-// per-row click, so unlike UpdateAllPlugins it fetches regardless of
-// CheckUpdate's answer.
+// UpdatePlugin re-fetches one row against its tracked/pinned ref; a manual click,
+// so it fetches regardless of CheckUpdate.
 func (h *Handler) UpdatePlugin(w http.ResponseWriter, r *http.Request, name schema.PluginName) {
 	if !h.requirePlugins(w) {
 		return
@@ -378,9 +371,8 @@ func (h *Handler) UpdatePlugin(w http.ResponseWriter, r *http.Request, name sche
 	h.writeReloaded(w, r, http.StatusOK, fetched)
 }
 
-// UpdateAllPlugins fetches only the rows CheckUpdate reports behind (epic:
-// "(all behind)") - a row already current, or one whose check itself
-// failed, is reported but not fetched. Bounded like ListPluginUpdates.
+// UpdateAllPlugins fetches only rows CheckUpdate reports behind; current or failed-check rows
+// are reported, not fetched.
 func (h *Handler) UpdateAllPlugins(w http.ResponseWriter, r *http.Request) {
 	if !h.requirePlugins(w) {
 		return

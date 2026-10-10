@@ -13,8 +13,7 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// requireGit skips the test when the git binary isn't on PATH (dev sandboxes
-// without git installed) rather than failing the whole suite.
+// requireGit skips rather than fails when the git binary is not on PATH.
 func requireGit(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
@@ -43,7 +42,6 @@ func newTestGitBinding(t *testing.T) gitBinding {
 	return gitBinding{userID: "u1", jail: j, caps: workspace.DefaultCaps()}
 }
 
-// runGitT is a test helper that fails the test on error.
 func runGitT(t *testing.T, dir string, argv ...string) string {
 	t.Helper()
 	out, _, err := runGit(context.Background(), dir, argv, workspace.DefaultCaps(), nil)
@@ -63,9 +61,8 @@ func runGitInT(t *testing.T, clone, dir string, argv ...string) string {
 	return out
 }
 
-// newBareRepoFixture creates a bare "remote" repo (outside any jail) seeded
-// with one commit on main containing README.md, entirely via runGit - no
-// network. Returns the bare repo's path.
+// newBareRepoFixture creates a bare "remote" repo outside any jail with one commit on main (README.md),
+// entirely via runGit: no network.
 func newBareRepoFixture(t *testing.T) string {
 	t.Helper()
 	bare := t.TempDir()
@@ -82,7 +79,7 @@ func newBareRepoFixture(t *testing.T) string {
 	return bare
 }
 
-// git_clone: https-only + credential-URL rejection (no network needed - both are rejected before any git process runs)
+// git_clone URL validation: both rejections happen before any git process runs.
 
 func TestGitCloneRejectsNonHTTPS(t *testing.T) {
 	for _, url := range []string{
@@ -111,9 +108,7 @@ func TestGitCloneRejectsCredentialedURL(t *testing.T) {
 }
 
 func TestGitCloneAcceptsPlainHTTPS(t *testing.T) {
-	// validateCloneURL only inspects the URL's scheme/userinfo - prove the
-	// VALIDATION itself accepts a credential-free https URL (no network call;
-	// the round-trip test below exercises the real clone path via runGit).
+	// Validation alone accepts a credential-free https URL; the round-trip test exercises the real clone.
 	u, err := validateCloneURL("https://github.com/example/repo.git")
 	if err != nil {
 		t.Fatalf("validateCloneURL: %v", err)
@@ -123,9 +118,7 @@ func TestGitCloneAcceptsPlainHTTPS(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // gitEnv / GIT_ASKPASS injection shape
-// ---------------------------------------------------------------------------
 
 func TestGitEnvInjectsAskpassOnlyWithAuth(t *testing.T) {
 	env := gitEnv(workspace.Caps{}, nil)
@@ -143,9 +136,8 @@ func TestGitEnvInjectsAskpassOnlyWithAuth(t *testing.T) {
 	env2 := gitEnv(workspace.Caps{}, auth)
 	want := map[string]bool{
 		GitAskpassHostEnv + "=github.com": false,
-		// GIT_ASKPASS must be EXACTLY the executable symlink path - git execs the
-		// value directly as one program, so any "<path> <arg>" form is a broken
-		// (unexecutable) configuration: the regression guard for the live "cannot exec 'quack git-askpass'" failure.
+		// GIT_ASKPASS must be exactly the symlink path: git execs the value as one program, so a "<path> <arg>"
+		// form cannot run.
 		"GIT_ASKPASS=/workspace/" + GitAskpassLinkName: false,
 		GitAskpassUserEnv + "=x-access-token":          false,
 		GitAskpassTokenEnv + "=secret":                 false,
@@ -165,8 +157,7 @@ func TestGitEnvInjectsAskpassOnlyWithAuth(t *testing.T) {
 	}
 }
 
-// TestGitEnvIncludesWorkspaceEnv: workspace.env reaches git children too (a
-// hook or filter may legitimately need the configured toolchain).
+// workspace.env reaches git children too: a hook or filter may need the configured toolchain.
 func TestGitEnvIncludesWorkspaceEnv(t *testing.T) {
 	caps := workspace.Caps{Env: map[string]string{
 		"JAVA_HOME": "/opt/jdk-21", "GIT_SSL_CAINFO": "/ca.pem", "GIT_SSL_CAPATH": "/certs",
@@ -186,9 +177,7 @@ func TestGitEnvIncludesWorkspaceEnv(t *testing.T) {
 	}
 }
 
-// TestEnsureAskpassLink: the symlink is created pointing at the current
-// executable, is stable across calls, and a stale link (pointing elsewhere)
-// is repaired.
+// The symlink points at the current executable, is stable across calls, and a stale link is repaired.
 func TestEnsureAskpassLink(t *testing.T) {
 	root := t.TempDir()
 	self, err := os.Executable()
@@ -228,9 +217,8 @@ func TestEnsureAskpassLink(t *testing.T) {
 	}
 }
 
-// TestAuthForCreatesAskpassLink: resolving a credentialed host yields an auth
-// whose askpass path is a live symlink to this executable; a credential-less
-// host yields nil auth and no error.
+// A credentialed host yields an auth whose askpass path is a live symlink to this executable; a
+// credential-less host yields nil auth and no error.
 func TestAuthForCreatesAskpassLink(t *testing.T) {
 	b := newTestGitBinding(t)
 	b.credentials = []GitCredential{{Host: "github.com", Username: "u", Token: "tok"}}
@@ -276,9 +264,8 @@ func TestCredentialForMatchesExactHostOnly(t *testing.T) {
 	}
 }
 
-// TestRunGitNeutralizesHooks: an executable .git/hooks/post-checkout that
-// writes a marker file must NOT fire when runGit checks out a branch -
-// otherwise it's an escape hatch a sandboxed ACP agent's own commit could trigger via this unconfined git binary.
+// A post-checkout hook must not fire when runGit checks out a branch, or a sandboxed ACP agent's own commit
+// could trigger it through this unconfined git binary.
 func TestRunGitNeutralizesHooks(t *testing.T) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)
@@ -301,9 +288,7 @@ func TestRunGitNeutralizesHooks(t *testing.T) {
 	}
 }
 
-// git_checkout - the reviewer's path to a PR branch. A shallow clone
-// (--depth 1, which git implies --single-branch for) lands on the default branch
-// ONLY: no other branch is reachable, so a code review of a PR was impossible before this tool existed.
+// git_checkout: a shallow clone (--depth 1 implies --single-branch) reaches only the default branch.
 
 // anyHostToken credentials every URL, so file:// fixtures take the credentialed path.
 type anyHostToken struct{}
@@ -327,8 +312,8 @@ func newDecoyRepoFixture(t *testing.T) string {
 	return bare
 }
 
-// TestCredentialedGitIgnoresHomeConfig: a url rewrite in the HOME git used to get (caps.HomeDir)
-// must not steer the credentialed clone or the reuse fetch away from the requested repo.
+// A url rewrite in the HOME gitconfig (caps.HomeDir) must not steer the credentialed clone or the reuse
+// fetch away from the requested repo.
 func TestCredentialedGitIgnoresHomeConfig(t *testing.T) {
 	requireGit(t)
 	real, decoy := newBareRepoFixture(t), newDecoyRepoFixture(t)
@@ -382,8 +367,8 @@ func TestRunGitIgnoresRepoHooksPath(t *testing.T) {
 	}
 }
 
-// TestRunGitStripsFilterDriverAndAttributes: a repo-level clean/smudge filter selected by .gitattributes
-// runs arbitrary code on checkout/reset. quack's own checkout and reset must never fire it (config stripped).
+// A clean/smudge filter selected by .gitattributes runs arbitrary code; quack's own checkout and reset
+// must never fire it.
 func TestRunGitStripsFilterDriverAndAttributes(t *testing.T) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)
@@ -410,8 +395,8 @@ func TestRunGitStripsFilterDriverAndAttributes(t *testing.T) {
 	}
 }
 
-// TestRunGitNeutralizesGpgSign: a repo that forces commit.gpgSign with gpg.program pointing at a marker
-// must produce an unsigned commit without running that program - the -c overrides win over repo config.
+// A repo forcing commit.gpgSign with a marker gpg.program must yield an unsigned commit without running it:
+// the -c overrides beat repo config.
 func TestRunGitNeutralizesGpgSign(t *testing.T) {
 	requireGit(t)
 	bare := newBareRepoFixture(t)
@@ -435,8 +420,8 @@ func TestRunGitNeutralizesGpgSign(t *testing.T) {
 	}
 }
 
-// TestGitEnvCarriesNoServerSecrets: the git child's env is built from gitEnv + GitCmd's pins only, never
-// quack's os.Environ - so a QUACK_* server secret set in the parent never reaches the unsandboxed git process.
+// The git child's env comes from gitEnv + GitCmd's pins only, never os.Environ, so a QUACK_* server secret
+// never reaches the unsandboxed git process.
 func TestGitEnvCarriesNoServerSecrets(t *testing.T) {
 	requireGit(t)
 	t.Setenv("QUACK_LLM_API_KEY", "super-secret")
@@ -460,8 +445,8 @@ func TestGitEnvCarriesNoServerSecrets(t *testing.T) {
 	}
 }
 
-// nestedRepoFixture: an upstream whose tree commits a gitlink "inner", and a clone of it holding its own inner
-// repo with a staged change - the shape a child git in inner would inspect.
+// nestedRepoFixture: an upstream committing a gitlink "inner", and a clone holding its own inner repo with a
+// staged change.
 func nestedRepoFixture(t *testing.T) (bare, seed, clone string) {
 	t.Helper()
 	bare, seed, clone = t.TempDir(), t.TempDir(), t.TempDir()
@@ -494,7 +479,7 @@ func commitInner(t *testing.T, seed string) {
 
 var innerCd = regexp.MustCompile(`"cd":"([^"]*/)?inner"`)
 
-// nestedChildren runs quack's git in clone under trace2 and returns the child processes it started inside inner.
+// nestedChildren runs quack's git in clone under trace2 and returns the child processes started in inner.
 func nestedChildren(t *testing.T, clone string, argv ...string) (out string, children []string) {
 	t.Helper()
 	bin, err := gitBinaryPath()
@@ -520,8 +505,8 @@ func nestedChildren(t *testing.T, clone string, argv ...string) (out string, chi
 	return string(o), children
 }
 
-// TestQuackGitSpawnsNoGitInNestedRepos: status and fetch never start a child git inside a nested repo, whose own
-// config quack does not strip - even when the tree's .gitmodules asks for it.
+// status and fetch never start a child git inside a nested repo, whose config quack does not strip, even
+// when .gitmodules asks for it.
 func TestQuackGitSpawnsNoGitInNestedRepos(t *testing.T) {
 	requireGit(t)
 	bare, seed, clone := nestedRepoFixture(t)

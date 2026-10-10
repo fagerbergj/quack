@@ -143,9 +143,8 @@ func TestNilJailReturnsBuiltin(t *testing.T) {
 	}
 }
 
-// writeUnknownFieldSkill writes a SKILL.md carrying frontmatter keys ADK's
-// strict decoder (KnownFields(true)) doesn't recognize - the #1080 shape: a
-// third-party plugin (ponytail) added `argument-hint`, and ADK's FileSystemSource.ListFrontmatters aborts its ENTIRE listing on the first unparseable skill, crash-looping server startup in production 0.50.0.
+// writeUnknownFieldSkill writes frontmatter ADK's strict decoder rejects (e.g. argument-hint); ADK's
+// ListFrontmatters aborts its whole listing on one such skill.
 func writeUnknownFieldSkill(t *testing.T, dir, name string) {
 	t.Helper()
 	d := filepath.Join(dir, name)
@@ -159,8 +158,7 @@ func writeUnknownFieldSkill(t *testing.T, dir, name string) {
 	}
 }
 
-// TestTolerantSkipsUnknownFrontmatterField is the #1080 regression: a
-// builtin/plugin source wrapped in Tolerant must still list every OTHER skill when one carries a field ADK's strict decoder rejects, instead of erroring the whole source (the crash-loop root cause - see writeUnknownFieldSkill).
+// A Tolerant-wrapped source still lists every other skill when one carries a field ADK rejects.
 func TestTolerantSkipsUnknownFrontmatterField(t *testing.T) {
 	dir := t.TempDir()
 	writeSkill(t, dir, "good-skill", "a valid skill", "body")
@@ -182,17 +180,13 @@ func TestTolerantSkipsUnknownFrontmatterField(t *testing.T) {
 	}
 }
 
-// writeBadSkill writes a SKILL.md whose frontmatter fails validation (a
-// description over the skilltoolset's 1024-char ceiling) - the shape that took
-// every project skill down in production.
+// writeBadSkill writes a SKILL.md whose description exceeds the skilltoolset's 1024-char ceiling.
 func writeBadSkill(t *testing.T, dir, name string) {
 	t.Helper()
 	writeSkill(t, dir, name, strings.Repeat("x", 1100), "body")
 }
 
-// TestMalformedSkillDoesNotKillListing: one bad SKILL.md in a cloned repo must
-// not disable the WHOLE project-skill listing (nor the built-in library). The
-// bad skill is skipped; every skill that parsed is returned.
+// One bad SKILL.md in a cloned repo must not disable the project-skill or built-in listing; it is skipped.
 func TestMalformedSkillDoesNotKillListing(t *testing.T) {
 	j, userRoot, builtin := setup(t, map[string]string{"plan-work": "builtin body"})
 	skillsDir := filepath.Join(userRoot, "chatA", "myrepo", ".agents", "skills")
@@ -241,9 +235,7 @@ func TestMalformedSkillWarnsOnce(t *testing.T) {
 	}
 }
 
-// TestScopedRestrictsListingAndLoad proves the per-agent scoping contract
-// (#251): a name outside an agent's declared scope is invisible to
-// ListFrontmatters and unloadable - exactly as if it never existed.
+// A name outside an agent's declared scope is invisible to ListFrontmatters and unloadable.
 func TestScopedRestrictsListingAndLoad(t *testing.T) {
 	_, _, builtin := setup(t, map[string]string{
 		"develop-feature": "builtin body",
@@ -275,9 +267,8 @@ func TestScopedRestrictsListingAndLoad(t *testing.T) {
 	}
 }
 
-// TestScopedPreservesProjectSkillDiscovery proves a cloned repo's own project
-// skills stay fully additive and unrestricted when Scoped is applied to only
-// the built-in layer (the wiring internal/serve/serve.go uses): a web-researcher-shaped scope with NO code-review skills still sees a project skill discovered in the jail, and the built-in library still wins a name collision.
+// With Scoped on the built-in layer only (serve's wiring), a repo's project skills stay visible to a
+// narrow scope, and the built-in library still wins a name collision.
 func TestScopedPreservesProjectSkillDiscovery(t *testing.T) {
 	j, userRoot, builtin := setup(t, map[string]string{
 		"plan-work":   "builtin body",
@@ -316,9 +307,8 @@ func TestScopedPreservesProjectSkillDiscovery(t *testing.T) {
 	}
 }
 
-// errSource is a skill.Source whose every method fails with the same
-// non-ErrSkillNotFound error - proves projectAware's Load*/ListResources
-// propagate a real builtin error immediately instead of falling to project.
+// errSource fails every method with a non-ErrSkillNotFound error, proving projectAware propagates a real
+// builtin error instead of falling to project.
 type errSource struct{ err error }
 
 func (e errSource) ListFrontmatters(context.Context) ([]*skill.Frontmatter, error) { return nil, e.err }
@@ -385,10 +375,8 @@ func TestLoadAndListResourcesPropagateNonNotFoundBuiltinError(t *testing.T) {
 	}
 }
 
-// TestListFrontmattersHidesProjectSkillMatchingBuiltinBareName is the direct
-// regression for #1430's bare-name fix: a built-in "acme:foo" (Prefixed)
-// must hide a project skill literally named "foo" from ListFrontmatters,
-// not just from a literal-name lookup.
+// A built-in "acme:foo" hides a project skill named "foo" from ListFrontmatters, not just from a literal
+// lookup.
 func TestListFrontmattersHidesProjectSkillMatchingBuiltinBareName(t *testing.T) {
 	j, userRoot, _ := setup(t, nil)
 	builtinDir := t.TempDir()

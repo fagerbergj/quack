@@ -11,6 +11,18 @@ import (
 	"time"
 )
 
+// Load is the strict loader: it requires every agent's bundle/model up front.
+func Load(path string) (*Config, error) {
+	c, err := load(path, false)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.RequireAgentBundlesAndModels(); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
 func writeTemp(t *testing.T, content string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "quack.yaml")
@@ -20,9 +32,8 @@ func writeTemp(t *testing.T, content string) string {
 	return p
 }
 
-// TestLoadForSandbox_SkipsRuntimeValidation: a config with every runtime
-// value (endpoint/model/db) left as an unset ${VAR} - e.g. a CI image with
-// no QUACK_*_MODEL/QUACK_DATABASE_URL - loads under LoadForSandbox (the path `quack sandbox` uses) but still fails Load, so nothing that DOES need live inference plumbing starts on an incomplete config.
+// A config whose runtime values (endpoint/model/db) are unset ${VAR}s loads under LoadForSandbox
+// but still fails Load, so nothing needing live inference starts on an incomplete config.
 func TestLoadForSandbox_SkipsRuntimeValidation(t *testing.T) {
 	path := writeTemp(t, `
 providers:
@@ -167,47 +178,7 @@ orchestrator: { provider: default, model: m }
 	}
 }
 
-// TestLoadAcceptsDeprecatedMaxActiveRuns pins that dag.max_active_runs still
-// loads as a no-op instead of tripping strict unknown-field parsing.
-func TestLoadAcceptsDeprecatedMaxActiveRuns(t *testing.T) {
-	_, err := Load(writeTemp(t, `
-providers:
-  default: { kind: openai, endpoint: http://x }
-models:
-  m: { provider: default, role: worker }
-stores:
-  main: { kind: postgres, url: u }
-session: { store: main }
-orchestrator: { provider: default, model: m }
-dag: { max_active_runs: 6 }
-`))
-	if err != nil {
-		t.Fatalf("deprecated dag.max_active_runs must still load: %v", err)
-	}
-}
-
-// TestLoadRejectsNegativeMaxActiveRuns pins that a negative value still fails
-// loudly - the deprecation ignores the field, it doesn't swallow a typo.
-func TestLoadRejectsNegativeMaxActiveRuns(t *testing.T) {
-	_, err := Load(writeTemp(t, `
-providers:
-  default: { kind: openai, endpoint: http://x }
-models:
-  m: { provider: default, role: worker }
-stores:
-  main: { kind: postgres, url: u }
-session: { store: main }
-orchestrator: { provider: default, model: m }
-dag: { max_active_runs: -5 }
-`))
-	if err == nil || !strings.Contains(err.Error(), "max_active_runs must be >= 0") {
-		t.Fatalf("expected a negative max_active_runs validation error, got %v", err)
-	}
-}
-
-// TestLoadRejectsDeprecatedCompactionEngine pins that session.compaction.engine
-// - the no-op shim removed after #1239 - is now an unknown field like any
-// other, so a stale deployed quack.yaml fails loudly at load, not silently ignored.
+// session.compaction.engine is an unknown field like any other, so a stale quack.yaml fails loudly.
 func TestLoadRejectsDeprecatedCompactionEngine(t *testing.T) {
 	_, err := Load(writeTemp(t, `
 providers:
@@ -224,9 +195,7 @@ orchestrator: { provider: default, model: m }
 	}
 }
 
-// TestLoadRejectsOverlapWithoutInterval pins that overlap_size without
-// compaction_interval fails at config load - adk's compaction.Config.Validate()
-// rejects that combination at every dispatch of this agent, so it must be caught before the config reaches a running node.
+// overlap_size without compaction_interval fails at load: adk rejects it on every dispatch.
 func TestLoadRejectsOverlapWithoutInterval(t *testing.T) {
 	_, err := Load(writeTemp(t, `
 providers:
@@ -449,10 +418,8 @@ func TestServerTopology(t *testing.T) {
 	}
 }
 
-// TestServerPublicURL: valid absolute http(s) URLs pass and round-trip,
-// a trailing slash and a non-http(s) scheme are rejected, and unset is fine
-// (the field extensions rely on to link a posted comment/review back to the
-// run that made it - see internal/serve/extensions.go's Host.PublicURL).
+// Valid absolute http(s) URLs round-trip; a trailing slash or non-http(s) scheme is rejected;
+// unset is fine.
 func TestServerPublicURL(t *testing.T) {
 	for _, tc := range []struct {
 		yaml      string
@@ -555,43 +522,6 @@ tools:
 	}
 }
 
-// TestLoadRejectsBadForgettingRuleExpression pins that a syntactically bad
-// memory.forgetting.rules[].when expression fails at Load, not just at server
-// startup (regression guard for the config <-> memory import cycle that deferred this check).
-func TestLoadRejectsBadForgettingRuleExpression(t *testing.T) {
-	const cfg = `
-providers:
-  default: { kind: openai, endpoint: http://x }
-models:
-  m: { provider: default, role: worker }
-  e: { provider: default, role: embed }
-  c: { provider: default, role: worker }
-stores:
-  main: { kind: postgres, url: u }
-  vec:
-    kind: qdrant
-    url: qdrant:6334
-    embedder: { provider: default, model: e }
-    consolidation:
-      provider: default
-      model: c
-      forgetting:
-        rules:
-          - { when: "score @ 1", then: invalidate }
-session: { store: main }
-orchestrator: { provider: default, model: m }
-tools:
-  stage_memory: { store: vec, collection: task_memory }
-`
-	_, err := Load(writeTemp(t, cfg))
-	if err == nil {
-		t.Fatal("expected error for malformed forgetting rule expression")
-	}
-	if !strings.Contains(err.Error(), "rule 0") || !strings.Contains(err.Error(), `'@'`) {
-		t.Errorf("error should name rule index and bad token, got: %v", err)
-	}
-}
-
 // TestStoreExtends checks a child store inherits the parent's connection and
 // overrides only the fields it sets.
 func TestStoreExtends(t *testing.T) {
@@ -665,16 +595,6 @@ tools:
 	}
 	if _, ok := c.MemoryStore("stage_memory"); ok {
 		t.Error("empty store URL should self-disable memory")
-	}
-}
-
-func TestAgentConfigIsGated(t *testing.T) {
-	if !(AgentConfig{}).IsGated() {
-		t.Error("agents are gated by default")
-	}
-	f := false
-	if (AgentConfig{Gated: &f}).IsGated() {
-		t.Error("gated: false should opt out of the trust gate")
 	}
 }
 
@@ -756,7 +676,6 @@ func TestLoadAuthTrustedHeaders(t *testing.T) {
 auth:
   trusted_headers:
     user: X-authentik-username
-    groups: X-authentik-groups
 `))
 	if err != nil {
 		t.Fatal(err)
@@ -764,7 +683,7 @@ auth:
 	if c.Auth == nil || c.Auth.TrustedHeaders == nil {
 		t.Fatal("expected Auth.TrustedHeaders to be set")
 	}
-	if c.Auth.TrustedHeaders.User != "X-authentik-username" || c.Auth.TrustedHeaders.Groups != "X-authentik-groups" {
+	if c.Auth.TrustedHeaders.User != "X-authentik-username" {
 		t.Errorf("TrustedHeaders = %+v", c.Auth.TrustedHeaders)
 	}
 }
@@ -803,25 +722,20 @@ auth:
 func TestLoadRejectsAuthTrustedHeadersMissingUser(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+`
 auth:
-  trusted_headers:
-    groups: X-authentik-groups
+  trusted_headers: {}
 `))
-	if err == nil {
-		t.Fatal("expected error for trusted_headers block missing user")
+	if err == nil || !strings.Contains(err.Error(), "trusted_headers.user is empty") {
+		t.Fatalf("expected error for trusted_headers block missing user, got %v", err)
 	}
 }
 
-// TestLoadOldConfigWithoutPostgresLedgerStillParses guards #1100: a config with
-// no recording block at all (every field pre-dating the Postgres ledger
-// option) must keep parsing - prod's quack.yaml is bind-mounted and STRICT, so an old config can never start failing after this change.
+// A config with no recording block keeps parsing: prod's quack.yaml is bind-mounted and strict.
 func TestLoadOldConfigWithoutPostgresLedgerStillParses(t *testing.T) {
 	if _, err := Load(writeTemp(t, baseConfig)); err != nil {
 		t.Fatalf("old config without a recording block should still load: %v", err)
 	}
 }
 
-// TestLoadAcceptsPostgresRecordingStore is the new capability #1100 adds:
-// recording.store names a postgres store.
 func TestLoadAcceptsPostgresRecordingStore(t *testing.T) {
 	c, err := Load(writeTemp(t, baseConfig+`
 observability:
@@ -850,9 +764,8 @@ session: { store: main }
 orchestrator: { provider: default, model: m }
 `
 
-// TestRealConfigLoads is a smoke test that the shipped config/quack.yaml parses
-// and validates against the current structs (guards against config drift). Env
-// is set so required URLs are non-empty; QUACK_QDRANT_URL unset exercises the memory self-disable path.
+// The shipped config/quack.yaml must parse and validate against the current structs.
+// QUACK_QDRANT_URL stays unset to exercise the memory self-disable path.
 func TestRealConfigLoads(t *testing.T) {
 	for _, kv := range [][2]string{
 		{"QUACK_LLM_ENDPOINT", "http://x/v1"}, {"QUACK_LLM_API_KEY", "k"}, {"QUACK_DATABASE_URL", "postgres://localhost/db"},
@@ -865,10 +778,8 @@ func TestRealConfigLoads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("shipped config/quack.yaml failed to load: %v", err)
 	}
-	// Negative control: the shipped config is override-only (agent bundles come
-	// from the github plugin's seed), so strict Load MUST reject it - the ledger
-	// /dataset CLI sites depend on using the deferring loader, and this is the
-	// test that fails if one of them is ever switched back to Load.
+	// The shipped config is override-only (bundles come from plugin seeding), so strict Load must
+	// reject it; this fails if a CLI site is ever switched from the deferring loader back to Load.
 	if _, err := Load("../../config/quack.yaml"); err == nil {
 		t.Error("strict Load accepted the shipped override-only config; the deferring loader is no longer what makes it load")
 	}
@@ -880,9 +791,8 @@ func TestRealConfigLoads(t *testing.T) {
 	}
 }
 
-// TestRealConfigWorkersHaveNoDirectGitHubMutation pins the staged-delivery
-// spine's core safety property: git_push and github_pull_request/ github_submit_review (the latter no longer a registered tool, see
-// internal/github/tools.go) must never appear in a worker's tools: list - a worker commits locally and stages; only the trust gate, post judge-pass, pushes and posts.
+// git_push and github_pull_request must never be in a worker's tools: a worker commits locally
+// and stages; only the trust gate, after judge-pass, pushes and posts.
 func TestRealConfigWorkersHaveNoDirectGitHubMutation(t *testing.T) {
 	for _, kv := range [][2]string{
 		{"QUACK_LLM_ENDPOINT", "http://x/v1"}, {"QUACK_LLM_API_KEY", "k"}, {"QUACK_DATABASE_URL", "postgres://localhost/db"},
@@ -903,9 +813,8 @@ func TestRealConfigWorkersHaveNoDirectGitHubMutation(t *testing.T) {
 			}
 		}
 	}
-	// The code agents are external ACP subprocesses (0.6.0): no quack tools at
-	// all, and the reviewer/explorer are read_only - delivery is entirely
-	// gate-owned (disk probe + answer probe).
+	// The code agents are external ACP subprocesses: no quack tools, and the reviewer/explorer are
+	// read_only - delivery is entirely gate-owned.
 	for _, name := range []string{"code-implementer", "code-reviewer", "code-explorer"} {
 		ac, ok := c.Agents[name]
 		if !ok {
@@ -931,9 +840,7 @@ func TestRealConfigWorkersHaveNoDirectGitHubMutation(t *testing.T) {
 	}
 }
 
-// TestManagedConfigLoads guards config/managed.yaml drift: it must parse,
-// validate, and actually be the managed topology (the thing `quack server`
-// reads to decide whether to bring up the stores stack).
+// config/managed.yaml must parse, validate, and be the managed topology `quack server` reads.
 func TestManagedConfigLoads(t *testing.T) {
 	for _, kv := range [][2]string{
 		{"QUACK_LLM_ENDPOINT", "http://x/v1"}, {"QUACK_LLM_API_KEY", "k"},
@@ -993,9 +900,8 @@ func TestWorkspaceDefaults(t *testing.T) {
 	if len(w.CheckCommands) == 0 {
 		t.Errorf("CheckCommands = %v, want the default allowlist (checks ON by default; derived checks are toolchain-gated)", w.CheckCommands)
 	}
-	// The child-process sandbox is ON by default: a deployment that says nothing
-	// must get the OS boundary, not the pre-sandbox behaviour where a child
-	// (any `sh -c`, whose text trips no metachar wall) had the server user's whole filesystem. An unusable bwrap then refuses to START (workspace.ResolveSandbox); opting out is explicit.
+	// The sandbox is on by default: a deployment that says nothing gets the OS boundary, and an
+	// unusable bwrap refuses to start; opting out is explicit.
 	if w.Sandbox != "bwrap" {
 		t.Errorf("Sandbox = %q, want bwrap (a config that says nothing must still confine child processes)", w.Sandbox)
 	}
@@ -1065,9 +971,7 @@ workspace:
 	}
 }
 
-// TestWorkspaceGCRejectsNegativeHours: a negative TTL/interval is a config
-// error, not a silent default (0 alone means "use the default" - see
-// WorkspaceGCConfig's doc).
+// A negative TTL/interval is a config error, not a silent default (0 means "use the default").
 func TestWorkspaceGCRejectsNegativeHours(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+`
 workspace:
@@ -1092,9 +996,8 @@ workspace:
 	}
 }
 
-// TestWorkspaceSandboxOverrides: `none` is the explicit opt-out, the limits
-// round-trip, and any other value is a startup error rather than a typo that
-// silently degrades to "no sandbox".
+// `none` is the explicit opt-out, limits round-trip, and any other value is a startup error
+// rather than a typo that silently means "no sandbox".
 func TestWorkspaceSandboxOverrides(t *testing.T) {
 	c, err := Load(writeTemp(t, baseConfig+`
 workspace:
@@ -1119,9 +1022,7 @@ workspace:
 	}
 }
 
-// TestWorkspaceParsesOverrides proves every workspace: field round-trips (the
-// yaml gotcha this guards against: yaml.Unmarshal silently ignores
-// unknown/misspelled keys, so a wrong field name would parse clean but leave the default in place).
+// Every workspace: field round-trips, so a misspelled yaml tag can't parse clean and keep the default.
 func TestWorkspaceParsesOverrides(t *testing.T) {
 	t.Setenv("QUACK_WORKSPACE_ROOT", "/data/workspace")
 	c, err := Load(writeTemp(t, baseConfig+`
@@ -1180,7 +1081,7 @@ workspace:
 }
 
 // TestWorkspaceEnvDefaultsEmpty: no workspace.env section ⇒ just the
-// GOTOOLCHAIN/GOMODCACHE defaults the sandbox needs to build offline (#936).
+// GOTOOLCHAIN/GOMODCACHE defaults the sandbox needs to build offline.
 func TestWorkspaceEnvDefaultsEmpty(t *testing.T) {
 	c, err := Load(writeTemp(t, baseConfig))
 	if err != nil {
@@ -1245,9 +1146,7 @@ workspace:
 	}
 }
 
-// TestWorkspaceEnvRejectsPathAndHome: PATH/HOME already have dedicated knobs
-// (exec_path, the jail's isolated per-user home) - silently letting env
-// override either would undo the hermetic-child guarantees those document.
+// PATH/HOME have dedicated knobs; letting env override either would undo the hermetic-child guarantees.
 func TestWorkspaceEnvRejectsPathAndHome(t *testing.T) {
 	for _, key := range []string{"PATH", "HOME"} {
 		_, err := Load(writeTemp(t, baseConfig+"\nworkspace:\n  env:\n    "+key+": /tmp/x\n"))
@@ -1257,9 +1156,7 @@ func TestWorkspaceEnvRejectsPathAndHome(t *testing.T) {
 	}
 }
 
-// TestGitCredentialsParsesAndDefaultsUsername proves git_credentials round-trips
-// (the ${VAR} value interpolates, an omitted username defaults to
-// x-access-token) and guards parse.
+// git_credentials round-trips: ${VAR} interpolates and an omitted username defaults to x-access-token.
 func TestGitCredentialsParsesAndDefaultsUsername(t *testing.T) {
 	t.Setenv("QUACK_GITHUB_TOKEN", "ghp_secret123")
 	c, err := Load(writeTemp(t, baseConfig+`
@@ -1270,8 +1167,6 @@ workspace:
     - host: gitlab.example.com
       username: custom-user
       token: ${QUACK_GITHUB_TOKEN}
-  guards:
-    web_fetch: judge
 `))
 	if err != nil {
 		t.Fatal(err)
@@ -1290,9 +1185,6 @@ workspace:
 	if second.Username != "custom-user" {
 		t.Errorf("Username = %q, want custom-user (explicit, not defaulted)", second.Username)
 	}
-	if c.Workspace.Guards["web_fetch"] != "judge" {
-		t.Errorf("Guards[web_fetch] = %q, want judge", c.Workspace.Guards["web_fetch"])
-	}
 }
 
 func TestGitCredentialsRejectsEmptyHost(t *testing.T) {
@@ -1307,20 +1199,7 @@ workspace:
 	}
 }
 
-func TestGuardsRejectsUnknownTier(t *testing.T) {
-	_, err := Load(writeTemp(t, baseConfig+`
-workspace:
-  guards:
-    delete_path: yolo
-`))
-	if err == nil {
-		t.Fatal("expected error for an unknown guard tier")
-	}
-}
-
-// TestGitCredentialTokenRejectsLiteralValue is the mechanical raw-YAML check:
-// a token: value that isn't an ${VAR} reference is a startup error, not a
-// silent leak - checked BEFORE ${VAR} expansion (see validateNoLiteralTokens).
+// A token: that isn't a ${VAR} reference is a startup error, checked on the raw YAML before expansion.
 func TestGitCredentialTokenRejectsLiteralValue(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+`
 workspace:
@@ -1346,9 +1225,7 @@ workspace:
 	}
 }
 
-// An unrecognized top-level key under extensions: must pass strict parsing
-// as a raw node (issue #275) - internal/serve resolves it against
-// sdk.Registered() later, config never interprets it.
+// An unknown key under extensions: passes strict parsing as a raw node; internal/serve resolves it.
 func TestExtensionsModulesPassThroughOpaquely(t *testing.T) {
 	c, err := Load(writeTemp(t, baseConfig+`
 extensions:
@@ -1373,9 +1250,8 @@ extensions:
 	}
 }
 
-// TestExtensionsGitHubPassesThroughOpaquely pins the GitHub-extension
-// migration's config-surface consequence: extensions.github is no longer
-// typed/strict in quack itself (config.GitHubExtensionConfig is gone) - it passes through Modules exactly like any other module, unknown fields included; quack-extensions/github's Factory validates it now.
+// extensions.github is opaque like any other module, unknown fields included;
+// quack-extensions/github's Factory validates it.
 func TestExtensionsGitHubPassesThroughOpaquely(t *testing.T) {
 	c, err := Load(writeTemp(t, baseConfig+`
 extensions:
@@ -1416,7 +1292,7 @@ func TestLoadGatesDefaultsAndDisabled(t *testing.T) {
 	// Judge enabled with zero threshold/iterations ⇒ defaults applied.
 	c, err = Load(writeTemp(t, baseConfig+`
 gates:
-  rubric: "be good"
+  rubric_path: config/rubric.md
   deterministic_checks: { max_rounds: 4 }
   judge:
     provider: default
@@ -1452,13 +1328,11 @@ gates:
 	}
 }
 
-// TestLoadGatesJudgeMaxOutputTokensRoundTrips proves an explicit
-// max_output_tokens value survives loading unchanged - the field is additive
-// and never Go-side defaulted, so whatever the operator writes is what ships.
+// An explicit max_output_tokens survives loading unchanged: it is never Go-side defaulted.
 func TestLoadGatesJudgeMaxOutputTokensRoundTrips(t *testing.T) {
 	c, err := Load(writeTemp(t, baseConfig+`
 gates:
-  rubric: "be good"
+  rubric_path: config/rubric.md
   judge: { provider: default, model: m, max_rounds: 1, max_output_tokens: 4096 }
 `))
 	if err != nil {
@@ -1483,8 +1357,7 @@ gates: { rubric: r, judge: { provider: default, model: j, max_rounds: 1, thresho
 gates: { rubric: r, deterministic_checks: { max_rounds: -1 }, judge: { provider: default, model: j, max_rounds: 1 } }`,
 		"negative max_output_tokens": `
 gates: { rubric: r, judge: { provider: default, model: j, max_rounds: 1, max_output_tokens: -1 } }`,
-		// #1221: a reply reserve at or past the window leaves no room for the
-		// prompt, recreating the #1215 overflow silently.
+		// A reply reserve at or past the window leaves no room for the prompt.
 		"max_output_tokens at context_window": `
 gates: { rubric: r, judge: { provider: default, model: j, max_rounds: 1, context_window: 4096, max_output_tokens: 4096 } }`,
 	}
@@ -1495,9 +1368,7 @@ gates: { rubric: r, judge: { provider: default, model: j, max_rounds: 1, context
 	}
 }
 
-// TestCoderModelFallsBackToResearcherModel proves agents.code-implementer's
-// model (${QUACK_CODER_MODEL}) resolves to QUACK_RESEARCHER_MODEL's value when
-// QUACK_CODER_MODEL is unset - the documented (config/quack.yaml) but, before this, unenforced fallback; see expandEnv.
+// An unset QUACK_CODER_MODEL falls back to QUACK_RESEARCHER_MODEL (see expandEnv).
 func TestCoderModelFallsBackToResearcherModel(t *testing.T) {
 	t.Setenv("QUACK_RESEARCHER_MODEL", "researcher-model")
 	// Deliberately NOT setting QUACK_CODER_MODEL.
@@ -1548,9 +1419,7 @@ agents:
 	}
 }
 
-// TestCoderModelEmptyWithNoResearcherModelEither proves the fallback chain's
-// end state (both env vars unset) is a normal "empty model" validation
-// error, not a panic or a silent pass - expandEnv has no third fallback.
+// With both env vars unset, the result is a normal "empty model" validation error.
 func TestCoderModelEmptyWithNoResearcherModelEither(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+`
 agents:
@@ -1561,9 +1430,8 @@ agents:
 	}
 }
 
-// An UNSET check_commands defaults to the shipped allowlist (derived checks
-// are further gated on the toolchain existing - vetting.toolchainPresent);
-// an EXPLICIT empty list still means "checks disabled".
+// Unset check_commands defaults to the shipped allowlist (still gated on the toolchain existing);
+// an explicit empty list means "checks disabled".
 func TestWorkspaceDefaults_CheckCommands(t *testing.T) {
 	unset := WorkspaceConfig{}
 	if err := unset.applyDefaults(); err != nil {
@@ -1597,16 +1465,7 @@ func TestWorkspaceDefaults_CheckSetupNotEnabledByDefault(t *testing.T) {
 // TestKnownFieldsRejectsUnknownTopLevel proves a completely unknown top-level
 // key is caught by KnownFields(true) and named in the error.
 func TestKnownFieldsRejectsUnknownTopLevel(t *testing.T) {
-	_, err := Load(writeTemp(t, `
-providers:
-  default: { kind: openai, endpoint: http://x }
-models:
-  m: { provider: default, role: worker }
-stores:
-  main: { kind: postgres, url: u }
-session: { store: main }
-orchestrator: { provider: default, model: m }
-foobar: true
+	_, err := Load(writeTemp(t, baseConfig+`foobar: true
 `))
 	if err == nil {
 		t.Fatal("expected error for unknown top-level key 'foobar'")
@@ -1634,7 +1493,7 @@ workspace:
 			"foobar"}, // workspace block
 		{`
 gates:
-  rubric: r
+  rubric_path: r
   judge:
     provider: default
     model: j
@@ -1653,50 +1512,9 @@ gates:
 	}
 }
 
-// TestKnownFieldsRejectsMemoryRoleRename proves the deprecated memory_role key
-// is rejected with a migration hint naming the replacement.
-func TestKnownFieldsRejectsMemoryRoleRename(t *testing.T) {
-	_, err := Load(writeTemp(t, `
-providers:
-  default: { kind: openai, endpoint: http://x }
-models:
-  m: { provider: default, role: worker }
-stores:
-  main: { kind: postgres, url: u }
-session: { store: main }
-orchestrator: { provider: default, model: m }
-agents:
-  code-reviewer:
-    bundle: agents/code-reviewer
-    provider: default
-    model: c-model
-    memory_role: coding
-`))
-	if err == nil {
-		t.Fatal("expected error for deprecated memory_role key")
-	}
-	if !strings.Contains(err.Error(), "memory_role") {
-		t.Errorf("error should mention the old key 'memory_role': %v", err)
-	}
-	if !strings.Contains(err.Error(), "memory.bucket") {
-		t.Errorf("error should name the replacement 'memory.bucket': %v", err)
-	}
-}
-
-// TestAllowCloneRequiresReadOnly: clone is only safe for an agent that cannot
-// write its worktree, so allow_clone without read_only is a config error, not a
-// silently-granted capability.
+// Clone is only safe for an agent that cannot write its worktree, so allow_clone requires read_only.
 func TestAllowCloneRequiresReadOnly(t *testing.T) {
-	_, err := Load(writeTemp(t, `
-providers:
-  default: { kind: openai, endpoint: http://x }
-models:
-  m: { provider: default, role: worker }
-stores:
-  main: { kind: postgres, url: u }
-session: { store: main }
-orchestrator: { provider: default, model: m }
-agents:
+	_, err := Load(writeTemp(t, baseConfig+`agents:
   code-implementer:
     bundle: agents/code-implementer
     provider: default
@@ -1748,7 +1566,7 @@ agents:
 tools:
   stage_memory: { store: main }
 gates:
-  rubric: "be good"
+  rubric_path: config/rubric.md
   deterministic_checks: { max_rounds: 2 }
   judge:
     provider: default
@@ -1764,41 +1582,6 @@ gates:
 	}
 	if c.Server.Addr != ":9999" {
 		t.Errorf("addr = %q, want :9999", c.Server.Addr)
-	}
-}
-
-// TestKnownRenamesMapIsPopulated ensures the map has at least one entry so nobody
-// deletes it accidentally and the pre-scan path is nontrivial.
-func TestKnownRenamesMapHasEntries(t *testing.T) {
-	if len(knownRenames) == 0 {
-		t.Fatal("knownRenames map should not be empty")
-	}
-	if _, ok := knownRenames["memory_role"]; !ok {
-		t.Error("expected 'memory_role' in knownRenames")
-	}
-}
-
-// TestScanForKnownRenames tests the scan-for-renames helper directly.
-func TestScanForKnownRenames(t *testing.T) {
-	cases := []struct {
-		name    string
-		yaml    string
-		wantErr bool
-	}{
-		{"memory_role present", "  memory_role: coding", true},
-		{"memory_role with indent", "\nagents:\n  reviewer:\n    memory_role: x\n", true},
-		{"no renamed keys", "  bucket: coding\n  provider: default\n", false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			err := scanForKnownRenames(tc.yaml)
-			if tc.wantErr && err == nil {
-				t.Error("expected error")
-			}
-			if !tc.wantErr && err != nil {
-				t.Errorf("unexpected error: %v", err)
-			}
-		})
 	}
 }
 
@@ -1863,17 +1646,14 @@ observability:
 }
 
 func TestRecordingUnconfiguredStoreDoesNotFailLoad(t *testing.T) {
-	// No observability: section at all - otel and recording both default
-	// enabled, but no store is named. Per the ledger's "off or store error ⇒
-	// zero behavior change" rule, this must degrade at wiring time, not fail config load.
+	// No observability: section names no store: the ledger must degrade at wiring time,
+	// not fail config load.
 	if _, err := Load(baseObservabilityYAML(t, "")); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 }
 
-// TestRecordingStoreMustBePostgres: the ledger is the WAL, so any other
-// backend is refused at load - even with observations off, since the
-// intent path does not depend on the observation toggle.
+// The ledger is the WAL, so any non-postgres backend is refused even with observations off.
 func TestRecordingStoreMustBePostgres(t *testing.T) {
 	if _, err := Load(baseObservabilityYAML(t, `
 observability:
@@ -1915,9 +1695,7 @@ agents:
     model: m
 `
 
-// TestWorkflowShapeValidIsComposable pins issue #805 test case 1's config
-// side: a well-formed shape naming a configured agent survives validation,
-// carrying provenance (operator source, config revision, approved).
+// A well-formed shape naming a configured agent survives validation, carrying provenance.
 func TestWorkflowShapeValidIsComposable(t *testing.T) {
 	c, err := Load(writeTemp(t, baseConfig+workflowAgentConfig+`
 workflows:
@@ -1941,9 +1719,7 @@ workflows:
 	}
 }
 
-// TestWorkflowShapeMissingAgentFailsStartup is issue #805 test case 3: a shape
-// naming an agent that isn't configured must fail loudly at startup, naming
-// both the shape and the missing agent - never silently produce a plan the executor can't run.
+// A shape naming an unconfigured agent fails startup, naming both the shape and the agent.
 func TestWorkflowShapeMissingAgentFailsStartup(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+`
 workflows:
@@ -1960,9 +1736,7 @@ workflows:
 	}
 }
 
-// TestWorkflowShapeMalformedIsSkipped is issue #805 test case 4: a malformed
-// shape (missing a required field) is dropped with a warning, never fails
-// startup, and a well-formed shape alongside it still loads.
+// A malformed shape is dropped with a warning and a well-formed one alongside it still loads.
 func TestWorkflowShapeMalformedIsSkipped(t *testing.T) {
 	c, err := Load(writeTemp(t, baseConfig+workflowAgentConfig+`
 workflows:
@@ -1994,9 +1768,7 @@ func TestWorkflowShapesDefaultEmpty(t *testing.T) {
 	}
 }
 
-// TestWorkflowShapeBoundNodesValid pins workflow binding: a well-formed nodes:
-// list on a shape survives validation and round-trips verbatim
-// (id/agent/task/depends_on/rubric), so workflowcatalog.Bind has exactly what it needs.
+// A well-formed nodes: list round-trips verbatim, so workflowcatalog.Bind has what it needs.
 func TestWorkflowShapeBoundNodesValid(t *testing.T) {
 	c, err := Load(writeTemp(t, baseConfig+workflowAgentConfig+`
 workflows:
@@ -2026,9 +1798,7 @@ workflows:
 	}
 }
 
-// TestWorkflowShapeBoundNodeUnregisteredArtifactFailsStartup: a bound node's
-// artifact must be a registered recordstore kind (#1128) - a typo here
-// previously reached SaveBlob at run time and was silently warn-logged away.
+// A bound node's artifact must be a registered recordstore kind, else a typo fails only at run time.
 func TestWorkflowShapeBoundNodeUnregisteredArtifactFailsStartup(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+workflowAgentConfig+`
 workflows:
@@ -2050,9 +1820,7 @@ workflows:
 	}
 }
 
-// TestWorkflowShapeBoundNodeUnknownAgentFailsStartup: a bound node naming an
-// agent absent from `agents:` must fail loud at config load, not surface
-// only when a dispatch tries to bind it later.
+// A bound node naming an agent absent from `agents:` fails at load, not at bind time.
 func TestWorkflowShapeBoundNodeUnknownAgentFailsStartup(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+workflowAgentConfig+`
 workflows:
@@ -2073,9 +1841,7 @@ workflows:
 	}
 }
 
-// TestWorkflowShapeBoundNodeCycleFailsStartup: a bound shape whose nodes
-// depend on each other in a cycle must fail loud at config load - the whole
-// point of validating structure once, so a dispatch never rediscovers it.
+// A bound shape whose nodes form a cycle fails at load, so a dispatch never rediscovers it.
 func TestWorkflowShapeBoundNodeCycleFailsStartup(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+workflowAgentConfig+`
 workflows:
@@ -2126,9 +1892,8 @@ workflows:
 	}
 }
 
-// TestWorkflowShapeBoundNodeMissingFieldFailsStartup: a bound node missing
-// id/agent/task is a malformed BINDING, not a malformed hint - it fails
-// startup loudly rather than silently dropping (a malformed trigger/shape/agents shape is only ever a hint and gets skipped).
+// A bound node missing id/agent/task is a malformed binding and fails startup; a malformed
+// trigger/shape/agents hint is only skipped.
 func TestWorkflowShapeBoundNodeMissingFieldFailsStartup(t *testing.T) {
 	_, err := Load(writeTemp(t, baseConfig+workflowAgentConfig+`
 workflows:
@@ -2148,9 +1913,8 @@ workflows:
 	}
 }
 
-// TestRealConfigDocumentIngestWorkflowExampleLoads loads the shipped config/quack.yaml (real agents:, not a throwaway fixture) with an
-// uncommented copy of its own extensions.remarkable + document-ingest
-// workflows: examples appended, proving the shipped example actually parses and binds against the real image-reader/synthesizer agents.
+// The shipped config/quack.yaml plus its own commented extensions.remarkable/document-ingest
+// examples, uncommented, must parse and bind against the real agents.
 func TestRealConfigDocumentIngestWorkflowExampleLoads(t *testing.T) {
 	for _, kv := range [][2]string{
 		{"QUACK_LLM_ENDPOINT", "http://x/v1"}, {"QUACK_LLM_API_KEY", "k"}, {"QUACK_DATABASE_URL", "postgres://localhost/db"},
@@ -2165,9 +1929,7 @@ func TestRealConfigDocumentIngestWorkflowExampleLoads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read shipped config: %v", err)
 	}
-	// The shipped file ships no workflows: key by default (#1505 moved the
-	// Sleeper shapes into their plugin), so this example injects its own,
-	// spliced in just before the next top-level section.
+	// The shipped file has no workflows: key, so splice the example in before the next top-level section.
 	const anchor = "\n# The agents' working disk"
 	idx := strings.Index(string(raw), anchor)
 	if idx == -1 {
@@ -2272,9 +2034,8 @@ workspace:
 	}
 }
 
-// TestModelsRegistry pins the #1007 config-layer prerequisite: the models:
-// registry, its validation rules, and provider derivation. Each case is a full
-// config; failure cases assert both an error and that it names the offender.
+// The models: registry's validation rules and provider derivation. Each case is a full config;
+// failure cases assert an error that names the offender.
 func TestModelsRegistry(t *testing.T) {
 	const providers = `
 providers:
@@ -2382,7 +2143,7 @@ agents:
 			wantErr: `agent "worker" provider "other" disagrees with model "w1"'s provider "default"`,
 		},
 		{
-			name: "old-shape provider-nested pricing is a migration error, not silently dropped",
+			name: "old-shape provider-nested pricing is rejected, not silently dropped",
 			yaml: `
 providers:
   default:
@@ -2394,7 +2155,7 @@ stores: { main: { kind: postgres, url: u } }
 session: { store: main }
 orchestrator: { provider: default, model: m }
 `,
-			wantErr: `providers.default.models is no longer supported`,
+			wantErr: `field models not found`,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2437,9 +2198,7 @@ agents:
 	}
 }
 
-// TestModelCostResolvesThroughNewPath proves cost lookup now reads
-// models.<name>.cost - the location gen_ai.client.cost/Langfuse readers must
-// use post-#1007-config-layer - not the old providers.<p>.models path.
+// Cost lookup reads models.<name>.cost, not providers.<p>.models.
 func TestModelCostResolvesThroughNewPath(t *testing.T) {
 	c, err := Load(writeTemp(t, `
 providers:
@@ -2466,9 +2225,8 @@ orchestrator: { provider: default, model: priced }
 	}
 }
 
-// TestDuplicateModelKeyGetsHelpfulHint: two roles resolving to the same
-// model name (common with an env-var-keyed models: registry) hits a raw
-// YAML duplicate-key error; it should still name the model and hint why.
+// Two roles resolving to the same model name hit a YAML duplicate-key error that must still
+// name the model and hint why.
 func TestDuplicateModelKeyGetsHelpfulHint(t *testing.T) {
 	_, err := Load(writeTemp(t, `
 providers:
@@ -2488,9 +2246,8 @@ orchestrator: { provider: default, model: shared }
 	}
 }
 
-// TestModelRegistrationCoversNonAgentRefs pins each of the six non-agent
-// Provider+Model fields (orchestrator, user_memory_hook, gates.judge,
-// session.compaction, store embedder/consolidation) against an unregistered model - one per checkModelRegistered call site, each error must name that field.
+// Each non-agent Provider+Model field (one per checkModelRegistered call site) rejects an
+// unregistered model with an error naming that field.
 func TestModelRegistrationCoversNonAgentRefs(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -2535,7 +2292,7 @@ stores: { main: { kind: postgres, url: u } }
 session: { store: main }
 orchestrator: { provider: default, model: m }
 gates:
-  rubric: "be good"
+  rubric_path: config/rubric.md
   judge: { provider: default, model: ghost, max_rounds: 1 }
 `,
 			wantErr: `gates.judge.model "ghost" is not defined under models`,

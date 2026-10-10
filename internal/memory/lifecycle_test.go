@@ -2,9 +2,7 @@ package memory
 
 import (
 	"context"
-	"database/sql"
 	"errors"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -18,9 +16,7 @@ import (
 	"github.com/fagerbergj/quack/internal/ledgertest"
 )
 
-// fakeOpsLog records every memory_ops write for assertion, mirroring how a
-// real internal/store-backed OpsLog would be called (see internal/serve's
-// storeOpsLog adapter).
+// fakeOpsLog records memory_ops writes the way serve's storeOpsLog adapter receives them.
 type fakeOpsLog struct {
 	mu          sync.Mutex
 	rows        []opRow
@@ -53,9 +49,7 @@ func (f *fakeOpsLog) PruneMemoryOps(_ context.Context, cutoff time.Time) (int, e
 	return f.pruneResult, nil
 }
 
-// TestApply_AddSetsLifecycleAndLogsOp covers design doc §4(a): a fresh ADD is
-// unverified, reinforcement_count 0, valid_from stamped, and logs one
-// memory_ops row.
+// A fresh ADD is unverified with reinforcement_count 0 and valid_from stamped, and logs one ops row.
 func TestApply_AddSetsLifecycleAndLogsOp(t *testing.T) {
 	const fixedNow = "2026-08-13T00:00:00Z"
 	orig := nowRFC3339
@@ -97,9 +91,8 @@ func TestApply_AddSetsLifecycleAndLogsOp(t *testing.T) {
 	}
 }
 
-// TestApplyOutcome_Invalidate covers design doc §5/§7 case 1: an invalidated
-// memory is soft-deleted (still present, queryable by id), excluded from
-// recall at the backend-query level, and logs one memory_ops row.
+// Invalidate soft-deletes (still queryable by id), is excluded from recall at the backend query, and
+// logs one ops row.
 func TestApplyOutcome_Invalidate(t *testing.T) {
 	ctx := context.Background()
 	s := newSQLiteStore(t, "task", nil)
@@ -158,9 +151,8 @@ func TestApplyOutcome_Invalidate(t *testing.T) {
 	}
 }
 
-// TestApplyOutcome_Reinforce covers design doc §5/§7 case 2 plus the sticky
-// invalidation rule: reinforce bumps unverified→reinforced and 0→1, a second
-// reinforce bumps to ×2, and an already-invalidated memory is skipped even when its id is explicitly named (recalled-set semantics, epic #1255 P1).
+// Reinforce bumps unverified->reinforced and the count each time; an already-invalidated memory is
+// skipped even when named explicitly.
 func TestApplyOutcome_Reinforce(t *testing.T) {
 	ctx := context.Background()
 	s := newSQLiteStore(t, "task", nil)
@@ -215,9 +207,8 @@ func TestApplyOutcome_Reinforce(t *testing.T) {
 		t.Fatalf("m2 (sticky) = %+v, want unchanged (still invalidated, count 0)", rows["m2"])
 	}
 
-	// A recalled reinforced-only memory still reads unverified (epic #1456 P1: the tier prefix
-	// reflects tier/supported, not status/reinforcement_count - reinforcement alone must never
-	// present to the worker as trustworthy).
+	// A reinforced-only memory still recalls as unverified: the prefix reads tier/supported, not
+	// status/reinforcement_count.
 	resp, _, err := s.recall(ctx, []string{"repo:r"}, "convention")
 	if err != nil {
 		t.Fatalf("recall: %v", err)
@@ -248,9 +239,7 @@ func TestApplyOutcome_Reinforce(t *testing.T) {
 	}
 }
 
-// TestApplyOutcome_ReinforceAloneNeverPromotesTier covers epic #1456 P1: merge reinforcement
-// still bumps reinforcement_count/upvotes for the audit trail, but tier promotion requires a
-// judge-supported vote - reinforcing a memory repeatedly must never flip it to verified.
+// Reinforcement bumps reinforcement_count/upvotes but never promotes tier; that takes a supported vote.
 func TestApplyOutcome_ReinforceAloneNeverPromotesTier(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
 		ctx := context.Background()
@@ -281,9 +270,7 @@ func TestApplyOutcome_ReinforceAloneNeverPromotesTier(t *testing.T) {
 	})
 }
 
-// TestApplyVotes_SupportedAndContradicted covers epic #1255 P1: a supported
-// vote is +1 upvote and flips tier to verified, a contradicted vote is +1
-// downvote, and each vote writes one memory_ops row (actor=judge).
+// Supported is +1 upvote and verified, contradicted is +1 downvote; each writes one ops row (actor=judge).
 func TestApplyVotes_SupportedAndContradicted(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
 		ctx := context.Background()
@@ -336,9 +323,7 @@ func TestApplyVotes_SupportedAndContradicted(t *testing.T) {
 	})
 }
 
-// TestRecordRecall_BumpsCountAndTimestamp covers the usage-tracking half of
-// #1255 P1: RecordRecall bumps recalls and stamps last_recalled_at, and a
-// second delivery accumulates rather than overwriting the count.
+// RecordRecall bumps recalls and stamps last_recalled_at; a second delivery accumulates.
 func TestRecordRecall_BumpsCountAndTimestamp(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
 		ctx := context.Background()
@@ -475,9 +460,7 @@ func TestLogRecall_RecordsRecallEvenWhenLedgerAppendFails(t *testing.T) {
 	})
 }
 
-// TestApplyVotes_NetScoreInvalidates covers the net-score invalidation rule:
-// a second contradicted vote drops the score to the threshold and the
-// memory is soft-invalidated with the fixed reason.
+// A second contradicted vote drops the score to the threshold and soft-invalidates with the fixed reason.
 func TestApplyVotes_NetScoreInvalidates(t *testing.T) {
 	ctx := context.Background()
 	s := newSQLiteStore(t, "task", nil)
@@ -503,9 +486,7 @@ func TestApplyVotes_NetScoreInvalidates(t *testing.T) {
 	}
 }
 
-// TestApplyVotes_DuplicateVoteForSameMemoryCollapsesToOne covers the "duplicate votes
-// for the same memory in one round" edge case: a judge that names the same id twice
-// in one submit_verdict call must not double count - only the last vote applies.
+// A judge naming the same id twice in one submit_verdict must not double count; the last vote applies.
 func TestApplyVotes_DuplicateVoteForSameMemoryCollapsesToOne(t *testing.T) {
 	ctx := context.Background()
 	s := newSQLiteStore(t, "task", nil)
@@ -558,9 +539,8 @@ func TestApplyVotes_SkipsAlreadyInvalidated(t *testing.T) {
 	}
 }
 
-// TestApplyVotes_NotRelevantThreeInvalidatesWithoutSupport covers epic #1456 P1: three
-// not_relevant votes with zero supported invalidates (reason recalled without support), but a
-// supported vote anywhere in the sequence protects the memory even past that count.
+// Three not_relevant votes with zero supported invalidate, but a supported vote anywhere in the sequence
+// protects the memory past that count.
 func TestApplyVotes_NotRelevantThreeInvalidatesWithoutSupport(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
 		ctx := context.Background()
@@ -612,8 +592,8 @@ func TestApplyVotes_NotRelevantThreeInvalidatesWithoutSupport(t *testing.T) {
 	})
 }
 
-// TestApplyOutcome_ReinforceKeepsVoteScoreInvariant covers the #1257 review finding: with a memory
-// already carrying both an upvote and a downvote (vote_score 0), a merged outcome's reinforce must land vote_score at upvotes-downvotes (1), not upvotes+1 (2) or vote_score+1 (1, coincidentally right here - the divergence only shows once downvotes != 0, which this case exercises). reinforcedVoteScore is the one function both backends call for this, so pinning it once here (sqlite) covers both backends without needing the live qdrant harness (qdranttest_test.go, #1268).
+// With upvotes == downvotes, reinforce must land vote_score at upvotes-downvotes (1), not upvotes+1 (2).
+// reinforcedVoteScore is shared by both backends, so sqlite coverage suffices.
 func TestApplyOutcome_ReinforceKeepsVoteScoreInvariant(t *testing.T) {
 	if got := reinforcedVoteScore(1, 1); got != 1 {
 		t.Fatalf("reinforcedVoteScore(1, 1) = %d, want 1 (upvotes+1 - downvotes)", got)
@@ -658,9 +638,7 @@ func TestApplyOutcome_ReinforceKeepsVoteScoreInvariant(t *testing.T) {
 	}
 }
 
-// TestApplyOutcome_SkipsVerifiedOnInvalidate covers design decision #1255:
-// closed-unmerged only invalidates recalled-and-UNVERIFIED memories - a
-// verified one recalled into the same chat gets no vote, not an invalidation.
+// Closed-unmerged invalidates only recalled unverified memories; a recalled verified one gets no vote.
 func TestApplyOutcome_SkipsVerifiedOnInvalidate(t *testing.T) {
 	ctx := context.Background()
 	s := newSQLiteStore(t, "task", nil)
@@ -696,212 +674,8 @@ func TestApplyOutcome_SkipsVerifiedOnInvalidate(t *testing.T) {
 	}
 }
 
-// TestBackfillTiers_IdempotentAcrossTwoBoots covers epic #1255 P1's migration: a point with
-// reinforcement_count>=1 backfills to tier=verified with upvotes mirroring the count, a point
-// with none backfills to unverified, and a second boot (a fresh OpenSQLite against the same file) leaves a judge-voted point untouched - though epic #1456 P1's backfillJudgeSupport, which runs the same boot, does demote the reinforcement-only point since it never earned real judge support.
-func TestBackfillTiers_IdempotentAcrossTwoBoots(t *testing.T) {
-	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "mem.db")
-
-	s, err := OpenSQLite(ctx, path, fakeEmbedder{}, nil, "test_task", "task", 5, 0.5)
-	if err != nil {
-		t.Fatalf("OpenSQLite (boot 1): %v", err)
-	}
-	if err := s.idx.upsert(ctx, []point{
-		{ID: "reinforced1", Vector: []float32{1, 0, 0, 0}, Content: "was reinforced pre-P1", Scope: "repo:r", Status: string(StatusReinforced), ReinforcementCount: 3},
-		{ID: "fresh1", Vector: []float32{1, 0, 0, 0}, Content: "never reinforced", Scope: "repo:r", Status: string(StatusUnverified)},
-	}); err != nil {
-		t.Fatalf("seed upsert: %v", err)
-	}
-	// upsert happened after boot 1's own (no-op, empty collection) backfill -
-	// run it again directly, exactly as a boot that found existing data would.
-	if _, err := s.idx.backfillTiers(ctx); err != nil {
-		t.Fatalf("backfillTiers: %v", err)
-	}
-
-	byID := func() map[string]scored {
-		pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "", false)
-		if err != nil {
-			t.Fatalf("list: %v", err)
-		}
-		out := make(map[string]scored, len(pts))
-		for _, p := range pts {
-			out[p.ID] = p
-		}
-		return out
-	}
-
-	rows := byID()
-	if r := rows["reinforced1"]; r.Tier != TierVerified || r.Upvotes != 3 {
-		t.Fatalf("reinforced1 = %+v, want tier=verified upvotes=3", r)
-	}
-	if r := rows["fresh1"]; r.Tier != TierUnverified || r.Upvotes != 0 {
-		t.Fatalf("fresh1 = %+v, want tier=unverified upvotes=0", r)
-	}
-
-	// Simulate a judge vote landing between boots - backfill must never touch
-	// a point that already has a tier again.
-	if _, err := s.ApplyVotes(ctx, []Vote{{MemoryID: "fresh1", Vote: VoteSupported, Actor: ActorJudge}}, DefaultInvalidateThreshold); err != nil {
-		t.Fatalf("ApplyVotes: %v", err)
-	}
-
-	// Boot 2: a fresh OpenSQLite against the same file re-runs backfill.
-	s2, err := OpenSQLite(ctx, path, fakeEmbedder{}, nil, "test_task", "task", 5, 0.5)
-	if err != nil {
-		t.Fatalf("OpenSQLite (boot 2): %v", err)
-	}
-	pts, err := s2.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "", false)
-	if err != nil {
-		t.Fatalf("list (boot 2): %v", err)
-	}
-	after := make(map[string]scored, len(pts))
-	for _, p := range pts {
-		after[p.ID] = p
-	}
-	if r := after["fresh1"]; r.Tier != TierVerified || r.Upvotes != 1 {
-		t.Fatalf("fresh1 after boot 2 = %+v, want unchanged from its vote (tier=verified upvotes=1) - backfill must not re-touch it", r)
-	}
-	if r := after["reinforced1"]; r.Upvotes != 3 || r.Tier != TierUnverified {
-		t.Fatalf("reinforced1 after boot 2 = %+v, want upvotes=3 (idempotent) but tier demoted to unverified (backfillJudgeSupport, epic #1456 P1)", r)
-	}
-}
-
-// TestBackfillTiers_RealPreP1SchemaMigrates covers the #1257 review finding: a genuinely
-// pre-P1 sqlite file (created with raw SQL, none of the P1 columns present at all - not just
-// a fresh AutoMigrate'd file with them zero-valued) must migrate cleanly through OpenSQLite's AutoMigrate + backfillTiers, with no NULL-scan error and correct values. AutoMigrate's ADD COLUMN leaves existing rows NULL for a new column with no default; this proves that reads back as the Go zero value, never an error, and that backfill then computes tier/upvotes from reinforcement_count/status exactly as if the row had always had these columns. old-reinforced ends up demoted back to unverified: backfillTiers sets upvotes=reinforcement_count for it, which backfillJudgeSupport (epic #1456 P1, same boot) then reads as "no judge ever voted supported".
-func TestBackfillTiers_RealPreP1SchemaMigrates(t *testing.T) {
-	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "mem.db")
-
-	raw, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatalf("raw open: %v", err)
-	}
-	// The pre-P1 schema (phase 2 lifecycle fields only) - no tier, upvotes,
-	// downvotes, vote_score, recalls, last_upvoted_at, last_recalled_at.
-	if _, err := raw.Exec(`CREATE TABLE memories (
-		id TEXT PRIMARY KEY, collection TEXT, scope TEXT, content TEXT, author TEXT,
-		timestamp TEXT, kind TEXT, chat_id TEXT, node_id TEXT, source TEXT, minted_at TEXT,
-		status TEXT, valid_from TEXT, invalidated_at TEXT, invalidation_reason TEXT,
-		reinforcement_count INTEGER, vector BLOB
-	)`); err != nil {
-		t.Fatalf("create pre-P1 table: %v", err)
-	}
-	if _, err := raw.Exec(`INSERT INTO memories
-		(id, collection, scope, content, author, timestamp, status, reinforcement_count)
-		VALUES
-		('old-reinforced', 'test_task', 'repo:r', 'a pre-P1 reinforced fact', 'a', 't', 'reinforced', 2),
-		('old-fresh', 'test_task', 'repo:r', 'a pre-P1 never-reinforced fact', 'a', 't', 'unverified', 0)
-	`); err != nil {
-		t.Fatalf("seed pre-P1 rows: %v", err)
-	}
-	if err := raw.Close(); err != nil {
-		t.Fatalf("close raw: %v", err)
-	}
-
-	// OpenSQLite runs AutoMigrate (adds the missing P1 columns, NULL on the
-	// existing rows) then backfillTiers - the exact boot sequence a real
-	// upgrade goes through.
-	s, err := OpenSQLite(ctx, path, fakeEmbedder{}, nil, "test_task", "task", 5, 0.5)
-	if err != nil {
-		t.Fatalf("OpenSQLite (migrate pre-P1 file): %v", err)
-	}
-	pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "", false)
-	if err != nil {
-		t.Fatalf("list after migration: %v", err)
-	}
-	byID := make(map[string]scored, len(pts))
-	for _, p := range pts {
-		byID[p.ID] = p
-	}
-
-	if r := byID["old-reinforced"]; r.Tier != TierUnverified || r.Upvotes != 2 || r.Downvotes != 0 || r.VoteScore != 2 || r.Recalls != 0 {
-		t.Fatalf("old-reinforced = %+v, want tier=unverified (demoted, no judge support) upvotes=2 downvotes=0 vote_score=2 recalls=0 (no NULL surprises)", r)
-	}
-	if r := byID["old-fresh"]; r.Tier != TierUnverified || r.Upvotes != 0 || r.Downvotes != 0 || r.Recalls != 0 {
-		t.Fatalf("old-fresh = %+v, want tier=unverified upvotes=0 downvotes=0 recalls=0", r)
-	}
-	if byID["old-reinforced"].LastUpvotedAt != "" || byID["old-fresh"].LastRecalledAt != "" {
-		t.Fatalf("last_upvoted_at/last_recalled_at = %+v / %+v, want empty (never voted/recalled pre-P1)",
-			byID["old-reinforced"].LastUpvotedAt, byID["old-fresh"].LastRecalledAt)
-	}
-}
-
-// TestBackfillJudgeSupport_DemotesReinforcementOnlyVerified covers epic #1456 P1's migration: a
-// legacy point verified purely by merge reinforcement (upvotes == reinforcement_count) demotes to
-// unverified; a legacy point verified purely by judge support, and one verified by BOTH judge
-// support and reinforcement, both stay verified with `supported` backfilled to the true historical
-// count (upvotes - reinforcement_count) - not just left at zero, which would let a future
-// not_relevant vote wrongly re-invalidate a memory that really was judge-supported. A second run touches nothing.
-func TestBackfillJudgeSupport_DemotesReinforcementOnlyVerified(t *testing.T) {
-	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
-		ctx := context.Background()
-		s := newStore("task", nil)
-		reinforcedOnlyID, judgeSupportedID, partialSupportID := testID("reinforced-only"), testID("judge-supported"), testID("partial-support")
-		if err := s.idx.upsert(ctx, []point{
-			{ID: reinforcedOnlyID, Vector: []float32{1, 0, 0, 0}, Content: "verified via reinforcement only", Scope: "repo:r",
-				Status: string(StatusReinforced), Tier: TierVerified, Upvotes: 2, ReinforcementCount: 2},
-			{ID: judgeSupportedID, Vector: []float32{1, 0, 0, 0}, Content: "verified via real judge support", Scope: "repo:r",
-				Status: string(StatusUnverified), Tier: TierVerified, Upvotes: 1, ReinforcementCount: 0},
-			{ID: partialSupportID, Vector: []float32{1, 0, 0, 0}, Content: "verified via judge support plus reinforcement", Scope: "repo:r",
-				Status: string(StatusReinforced), Tier: TierVerified, Upvotes: 3, ReinforcementCount: 1},
-		}); err != nil {
-			t.Fatalf("seed upsert: %v", err)
-		}
-
-		n, err := s.idx.backfillJudgeSupport(ctx)
-		if err != nil {
-			t.Fatalf("backfillJudgeSupport: %v", err)
-		}
-		if n != 3 {
-			t.Fatalf("backfillJudgeSupport touched %d, want 3 (every currently-verified point)", n)
-		}
-
-		byID := func() map[string]scored {
-			pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "", false)
-			if err != nil {
-				t.Fatalf("list: %v", err)
-			}
-			out := make(map[string]scored, len(pts))
-			for _, p := range pts {
-				out[p.ID] = p
-			}
-			return out
-		}
-
-		rows := byID()
-		if r := rows[reinforcedOnlyID]; r.Tier != TierUnverified || r.Supported != 0 {
-			t.Fatalf("reinforced-only = %+v, want demoted to unverified, supported=0", r)
-		}
-		if r := rows[judgeSupportedID]; r.Tier != TierVerified || r.Supported != 1 {
-			t.Fatalf("judge-supported = %+v, want still verified, supported backfilled to 1", r)
-		}
-		if r := rows[partialSupportID]; r.Tier != TierVerified || r.Supported != 2 {
-			t.Fatalf("partial-support = %+v, want still verified, supported backfilled to 2 (3 upvotes - 1 reinforcement)", r)
-		}
-
-		// The regression this backfill closes: without a backfilled supported count, this
-		// not_relevant vote would see supported=0 and wrongly invalidate a memory that really did earn judge support.
-		if _, err := s.ApplyVotes(ctx, []Vote{{MemoryID: partialSupportID, Vote: VoteNotRelevant, Actor: ActorJudge}}, DefaultInvalidateThreshold); err != nil {
-			t.Fatalf("ApplyVotes not_relevant: %v", err)
-		}
-		if r := byID()[partialSupportID]; r.Tier != TierVerified {
-			t.Fatalf("partial-support after a not_relevant vote = %+v, want still verified", r)
-		}
-
-		n, err = s.idx.backfillJudgeSupport(ctx)
-		if err != nil {
-			t.Fatalf("backfillJudgeSupport (2nd run): %v", err)
-		}
-		if n != 0 {
-			t.Fatalf("backfillJudgeSupport (2nd run) touched %d, want 0 (idempotent)", n)
-		}
-	})
-}
-
-// TestInvalidateByID_HumanDelete covers design doc §7 case 5: a human delete via the REST
-// handler invalidates by id (not chat_id, unlike ApplyOutcome), defaults the reason to
-// "manual delete", writes one memory_ops row actor "human" op "invalidate", excludes the point from recall, and is idempotent on a second call against the same (now-invalidated) id.
+// A human delete invalidates by id (not chat_id), defaults reason "manual delete", logs one human
+// invalidate row, drops out of recall, and is idempotent.
 func TestInvalidateByID_HumanDelete(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
 		ctx := context.Background()
@@ -959,9 +733,7 @@ func TestInvalidateByID_HumanDelete(t *testing.T) {
 	})
 }
 
-// TestRecall_VerifiedTierPrefixShowsSupportedCount covers epic #1456 P1: tierPrefix reads
-// tier/supported, not status/reinforcement_count, so a judge-supported memory recalls with
-// "[verified, supported ×N]" - the honest trust signal this PR exists to give the worker.
+// A judge-supported memory recalls as "[verified, supported ×N]", read from tier/supported.
 func TestRecall_VerifiedTierPrefixShowsSupportedCount(t *testing.T) {
 	ctx := context.Background()
 	s := newSQLiteStore(t, "task", nil)
@@ -986,9 +758,7 @@ func TestRecall_VerifiedTierPrefixShowsSupportedCount(t *testing.T) {
 	}
 }
 
-// TestRecall_PreLifecyclePointsReadAsValidAndUnverified covers points minted
-// by phase 1 (provenance-only, no status field at all): recall must still
-// surface them (missing status ≠ invalidated) and tag them unverified.
+// Points with no status field still recall (missing status != invalidated) and tag as unverified.
 func TestRecall_PreLifecyclePointsReadAsValidAndUnverified(t *testing.T) {
 	ctx := context.Background()
 	s := newSQLiteStore(t, "task", nil)
@@ -1013,9 +783,8 @@ func TestRecall_PreLifecyclePointsReadAsValidAndUnverified(t *testing.T) {
 	}
 }
 
-// TestApply_ConsolidatorDeleteInvalidatesWithReason covers design doc §4(a): the
-// consolidator's DELETE soft-invalidates (never removes) and carries a reason, and the
-// invalidated point drops out of the reconcile neighbour set so it can never be NOOP'd against or hallucination-targeted again.
+// The consolidator's DELETE soft-invalidates with a reason and drops the point from the reconcile
+// neighbour set, so no later op can NOOP against or target it.
 func TestApply_ConsolidatorDeleteInvalidatesWithReason(t *testing.T) {
 	ctx := context.Background()
 	s := newSQLiteStore(t, "task", nil)
@@ -1052,9 +821,7 @@ func TestApply_ConsolidatorDeleteInvalidatesWithReason(t *testing.T) {
 		t.Fatalf("op row = %+v, want {dup1 invalidate consolidator \"duplicate of new-id\"}", r)
 	}
 
-	// Reconcile neighbour set excludes it: a legitimate re-add of the same
-	// subject must not see dup1 and NOOP against it, nor can a later op name
-	// its id (the "valid" map in apply() no longer contains it).
+	// A re-add of the same subject must not see dup1, nor can a later op name its id.
 	neighbours, err := s.neighbours(ctx, "repo:r", "duplicate fact", nil)
 	if err != nil {
 		t.Fatalf("neighbours: %v", err)
@@ -1064,10 +831,8 @@ func TestApply_ConsolidatorDeleteInvalidatesWithReason(t *testing.T) {
 	}
 }
 
-// TestSetHumanVote_ToggleAndSwitch covers epic #1255 P4 (+ #1456 P1: a human up counts as
-// support): an up vote is +1 upvote/+1 supported/verified; voting up again is a no-op (not a
-// double-count); "none" removes it back to 0 and demotes tier (no longer sticky); and switching
-// directly from up to down moves the vote rather than stacking it.
+// Up is +1 upvote/supported/verified; up again is a no-op; "none" removes it and demotes; up->down moves
+// the vote rather than stacking it.
 func TestSetHumanVote_ToggleAndSwitch(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
 		ctx := context.Background()
@@ -1130,9 +895,7 @@ func TestSetHumanVote_ToggleAndSwitch(t *testing.T) {
 	})
 }
 
-// TestSetHumanVote_UpSurvivesNotRelevantVotes covers epic #1456 P1: a human up vote is real
-// support, so it must protect a memory exactly like a judge supported vote - three subsequent
-// not_relevant votes must not invalidate it, and it must stay verified.
+// A human up vote is real support: three later not_relevant votes must not invalidate it.
 func TestSetHumanVote_UpSurvivesNotRelevantVotes(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
 		ctx := context.Background()
@@ -1160,45 +923,6 @@ func TestSetHumanVote_UpSurvivesNotRelevantVotes(t *testing.T) {
 		}
 		if pts[0].Status == string(StatusInvalidated) || pts[0].Tier != TierVerified {
 			t.Fatalf("m1 = %+v, want still verified, NOT invalidated (the human upvote is real support)", pts[0])
-		}
-	})
-}
-
-// TestBackfillJudgeSupport_SkipsPostMigrationHumanUpvote covers epic #1456 P1: a row created
-// (or human-upvoted) after this migration ships already carries a correct supported count, so
-// the "one-time" backfill must not re-touch it on a later boot - a human vote is not a
-// perpetually-unmigrated row.
-func TestBackfillJudgeSupport_SkipsPostMigrationHumanUpvote(t *testing.T) {
-	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
-		ctx := context.Background()
-		s := newStore("task", nil)
-		m1ID := testID("m1")
-		if err := s.idx.upsert(ctx, []point{
-			{ID: m1ID, Vector: []float32{1, 0, 0, 0}, Content: "reinforced then human-upvoted", Scope: "repo:r", Status: string(StatusReinforced), ReinforcementCount: 1},
-		}); err != nil {
-			t.Fatalf("seed upsert: %v", err)
-		}
-		if _, err := s.ApplyOutcome(ctx, []string{m1ID}, OutcomeSignal{Kind: OutcomeReinforced}); err != nil {
-			t.Fatalf("ApplyOutcome: %v", err)
-		}
-		if err := s.SetHumanVote(ctx, m1ID, HumanVoteUp); err != nil {
-			t.Fatalf("SetHumanVote up: %v", err)
-		}
-
-		n, err := s.idx.backfillJudgeSupport(ctx)
-		if err != nil {
-			t.Fatalf("backfillJudgeSupport: %v", err)
-		}
-		if n != 0 {
-			t.Fatalf("backfillJudgeSupport touched %d, want 0 (a post-migration human upvote already carries supported)", n)
-		}
-
-		pts, err := s.idx.list(ctx, []string{"repo:r"}, 0, 10, true, "", false)
-		if err != nil {
-			t.Fatalf("list: %v", err)
-		}
-		if pts[0].Tier != TierVerified || pts[0].Supported != 1 {
-			t.Fatalf("m1 = %+v, want still tier=verified supported=1, untouched by the backfill", pts[0])
 		}
 	})
 }

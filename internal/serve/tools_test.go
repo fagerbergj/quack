@@ -72,9 +72,8 @@ func TestResolveToolNames(t *testing.T) {
 			wantNames:  []string{"web_search", "web_fetch", "summarize", "current_date", "ask_user"},
 		},
 		{
-			// Extension tool names (internal/github.App.Tools()) are not special-cased
-			// here - they resolve later, in tools.Build, against Deps.ExtTools. An
-			// agent gets one only by listing it, same as any builtin.
+			// Extension tool names aren't special-cased: they resolve later in tools.Build against
+			// Deps.ExtTools, and an agent gets one only by listing it.
 			name:       "extension tool names pass through unchanged",
 			configured: []string{"read_file", "github_add_review_comment"},
 			wantNames:  []string{"read_file", "github_add_review_comment"},
@@ -134,7 +133,7 @@ func TestConfigListingBothMemoryToolsBuildsOne(t *testing.T) {
 }
 
 // fakeToolCtx supplies a real Ctx (StrictContextMock panics without one) plus the
-// identity fields the repeatGuard/emit wrapper chain reads to Run a built tool.
+// identity fields a built tool reads in Run.
 type fakeToolCtx struct {
 	adkagent.StrictContextMock
 }
@@ -153,10 +152,8 @@ func (c *fakeToolCtx) Session() session.Session                             { re
 func (c *fakeToolCtx) Branch() string                                       { return "" }
 func (c *fakeToolCtx) ToolConfirmation() *toolconfirmation.ToolConfirmation { return nil }
 
-// TestEmitServerConfigToolsBuild runs the `quack init` wizard's own output through the
-// server's startup tool resolution (resolveToolNames + tools.Build): the wizard kept
-// emitting the pre-ACP toolset (cd/git_clone/run_command/run_code; #343 deleted their
-// constructors), so a fresh config died at boot with `unknown builtin tool "cd"`.
+// TestEmitServerConfigToolsBuild runs the `quack init` wizard's output through startup tool resolution
+// (resolveToolNames + tools.Build), so the wizard can't emit tools that no longer exist.
 func TestEmitServerConfigToolsBuild(t *testing.T) {
 	t.Setenv("QUACK_LLM_API_KEY", "k")
 	a := cli.InitAnswers{

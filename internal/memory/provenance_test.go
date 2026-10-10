@@ -5,8 +5,7 @@ import (
 	"testing"
 )
 
-// TestCommitProvenance covers memory-lifecycle Phase 1 (design doc, issue #849):
-// every write is stamped with who minted it, and an UPDATE never re-mints.
+// Every write is stamped with who minted it, and an UPDATE never re-mints.
 func TestCommitProvenance(t *testing.T) {
 	const fixedNow = "2026-08-12T00:00:00Z"
 	orig := nowRFC3339

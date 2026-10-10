@@ -25,9 +25,8 @@ func (s *stubBindingSource) Get(_ context.Context, name string) (artifactsrc.Art
 }
 func (s *stubBindingSource) Seed(context.Context, string, artifactsrc.Artifact) error { return nil }
 
-// TestPromptBindingOverridesWorkerModel proves a resolved prompt's Config
-// rebinds the round's model, and an invalid override falls back to the
-// static binding instead of failing the round (#1421 P2 item 4).
+// TestPromptBindingOverridesWorkerModel: a resolved prompt's Config rebinds the round's model, and an invalid
+// override falls back to the static binding instead of failing the round.
 func TestPromptBindingOverridesWorkerModel(t *testing.T) {
 	jail, err := workspace.NewJail(t.TempDir())
 	if err != nil {
@@ -81,7 +80,7 @@ func TestPromptBindingOverridesWorkerModel(t *testing.T) {
 	if !ok {
 		t.Fatalf("clientMap[%q] = %T, want nativeAgent", "tester", clientMap["tester"])
 	}
-	_, wm, _, _, refreshPrompt, release, err := na.ForNode(context.Background(), "test-plan:test-node", "test-plan/test-node", nil, artifacts, "quack-test", "u1", "chat-1", "test-node", nil)
+	_, wm, _, _, _, refreshPrompt, release, err := na.ForNode(context.Background(), "test-plan:test-node", "test-plan/test-node", nil, artifacts, "quack-test", "u1", "chat-1", "test-node", nil)
 	if err != nil {
 		t.Fatalf("ForNode: %v", err)
 	}

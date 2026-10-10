@@ -19,13 +19,11 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// A run is SERVER-SIDE work; an SSE client is just a viewer. These tests pin
-// that: whatever the client does - stops reading (a sleeping laptop), drops the
-// connection (a closed tab, a killed curl) - the run keeps executing to completion. Only the explicit cancel endpoint may kill it.
+// A run is server-side work and an SSE client only a viewer: whether the client stops reading or
+// disconnects, the run completes. Only the explicit cancel endpoint may kill it.
 
-// gatedModel is a model.LLM whose reply is gated on a channel: it announces the
-// call on started, then waits for unblock (or ctx cancellation, which it
-// reports back as a cancelled call); reply is padded to size bytes so a run can out-write a client that never reads.
+// gatedModel announces each call on started, then waits for unblock (or ctx cancel, reported back);
+// its reply is padded to size bytes so a run can out-write a client that never reads.
 type gatedModel struct {
 	started   chan struct{}
 	unblock   chan struct{}
@@ -80,9 +78,8 @@ func runServer(t *testing.T, h *Handler, chatID string) *httptest.Server {
 	return srv
 }
 
-// watch attaches a second viewer to the chat's live run through the hub - the
-// same path SubscribeChatStream serves - and reports whether the run reaches its
-// terminal `done` event within d.
+// watch attaches a second viewer through the hub, as SubscribeChatStream does, and reports
+// whether the run reaches `done` within d.
 func watch(t *testing.T, h *Handler, chatID string, d time.Duration) bool {
 	t.Helper()
 	deadline := time.After(d)
@@ -121,9 +118,8 @@ func watch(t *testing.T, h *Handler, chatID string, d time.Duration) bool {
 	}
 }
 
-// TestRunSurvivesClientThatStopsReading: the sleeping-laptop case. The client
-// opens the stream and never reads a byte; the run's reply is far larger than
-// the socket buffers, so writing to that client blocks forever. The run must still finish - it must not be pulled by (and stall behind) the SSE write.
+// TestRunSurvivesClientThatStopsReading: the client never reads and the reply outgrows the socket
+// buffers, yet the run must finish rather than stall behind the SSE write.
 func TestRunSurvivesClientThatStopsReading(t *testing.T) {
 	m := newGatedModel(4 << 20) // 4MB reply: dwarfs any kernel/socket buffer
 	h := newTestHandlerWithModel(t, m)
@@ -153,9 +149,8 @@ func TestRunSurvivesClientThatStopsReading(t *testing.T) {
 	}
 }
 
-// TestRunSurvivesClientDisconnect: the dropped-curl / closed-tab case. The
-// client disconnects mid-run; the run must continue to completion and stay
-// watchable by anyone who attaches.
+// TestRunSurvivesClientDisconnect: a client disconnecting mid-run leaves the run to complete
+// and stay watchable by anyone who attaches.
 func TestRunSurvivesClientDisconnect(t *testing.T) {
 	m := newGatedModel(0)
 	h := newTestHandlerWithModel(t, m)
@@ -190,9 +185,8 @@ func TestRunSurvivesClientDisconnect(t *testing.T) {
 	}
 }
 
-// TestExplicitCancelStillKillsRun: decoupling the run from the request must not
-// cost us the one legitimate way to stop it - PUT .../responses/{id}/status
-// {"status":"cancelled"}.
+// TestExplicitCancelStillKillsRun: PUT .../responses/{id}/status {"status":"cancelled"}
+// still stops a run decoupled from its request.
 func TestExplicitCancelStillKillsRun(t *testing.T) {
 	m := newGatedModel(0) // never unblocked: only a cancel can end this run
 	h := newTestHandlerWithModel(t, m)

@@ -7,9 +7,8 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// commitDelivery is the sole enforcement point (#662): a node that stages a
-// review it was never granted must have it refused, loudly - the delivery
-// function must never even see it, and the refusal must surface as a failed delivery_result.
+// commitDelivery is the sole enforcement point: an ungranted review never reaches Deliver and
+// surfaces as a failed delivery_result.
 func TestCommitDeliveryRefusesUngrantedReview(t *testing.T) {
 	var called int32
 	cfg := Config{
@@ -41,9 +40,7 @@ func TestCommitDeliveryRefusesUngrantedReview(t *testing.T) {
 	}
 }
 
-// TestCommitDeliveryRefusesReviewWithNoVerdict is #1198 part C: a staged
-// review with an empty Event (findings/comments but no approve/
-// request_changes/comment) must never reach cfg.Deliver - GitHub has no "no verdict" review, and posting one anyway is the markers-only bug.
+// A staged review with an empty Event must never reach Deliver: GitHub has no verdict-less review.
 func TestCommitDeliveryRefusesReviewWithNoVerdict(t *testing.T) {
 	var called int32
 	cfg := Config{
@@ -75,9 +72,8 @@ func TestCommitDeliveryRefusesReviewWithNoVerdict(t *testing.T) {
 	}
 }
 
-// TestCommitDeliveryRefusesVerdictlessReviewButDeliversSiblingItem is #1198
-// part C's per-item shape (review comment thread 3937400235): a verdict-less review is refused, but a sibling "pr" item staged in the SAME delivery
-// still reaches cfg.Deliver - the same per-item contract TestCommitDeliveryDeliversGrantedItemsAlongsideRefusedOnes pins for the allowed-kinds check.
+// Refusal is per item: a verdict-less review is refused while a sibling "pr" item in the same
+// delivery still reaches Deliver.
 func TestCommitDeliveryRefusesVerdictlessReviewButDeliversSiblingItem(t *testing.T) {
 	var got DeliveryContext
 	cfg := Config{
@@ -165,9 +161,8 @@ func TestCommitDeliveryNilAllowedKindsDeliversEverything(t *testing.T) {
 	}
 }
 
-// A non-nil, empty AllowedDeliveryKinds denies everything - the sentinel that
-// distinguishes "no trigger governs this run" (nil) from "this trigger
-// granted nothing" (empty).
+// Empty (non-nil) AllowedDeliveryKinds denies everything: "granted nothing", unlike nil's
+// "no trigger governs this run".
 func TestCommitDeliveryEmptyAllowedKindsDeniesEverything(t *testing.T) {
 	var called int32
 	cfg := Config{

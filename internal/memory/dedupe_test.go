@@ -8,9 +8,8 @@ import (
 	"google.golang.org/adk/v2/model"
 )
 
-// TestDedupeSweep_CrossChatClusterMerges covers issue #1269's core gap: two near-duplicate
-// memories minted by DIFFERENT chats (so burstClusters never compares them) still get clustered
-// and merged by DedupeSweep, with P5 lineage carrying the absorbed point's votes into the survivor. Run against both backends (#1268's forEachBackend) since clustering now reads each backend's own stored-vector plumbing (qdrant WithVectors / sqlite blob).
+// Near-duplicates from different chats (never compared by burstClusters) still cluster and merge,
+// with lineage carrying the absorbed point's votes into the survivor.
 func TestDedupeSweep_CrossChatClusterMerges(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
 		ctx := context.Background()
@@ -38,7 +37,7 @@ func TestDedupeSweep_CrossChatClusterMerges(t *testing.T) {
 			t.Fatal("expected ops applied (update survivor + invalidate absorbed)")
 		}
 
-		b, ok, err := s.idx.getByID(ctx, bID)
+		b, ok, err := s.getByID(ctx, bID)
 		if err != nil || !ok {
 			t.Fatalf("getByID b: %v %v", ok, err)
 		}
@@ -46,7 +45,7 @@ func TestDedupeSweep_CrossChatClusterMerges(t *testing.T) {
 			t.Fatalf("b status = %q, want invalidated (absorbed)", b.Status)
 		}
 
-		a, ok, err := s.idx.getByID(ctx, aID)
+		a, ok, err := s.getByID(ctx, aID)
 		if err != nil || !ok {
 			t.Fatalf("getByID a: %v %v", ok, err)
 		}
@@ -62,7 +61,7 @@ func TestDedupeSweep_DryRunMakesNoLLMCall(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
 		ctx := context.Background()
 		calls := 0
-		consolidator := countingErrModel{calls: &calls}
+		consolidator := counting(&calls, "not valid json")
 		s := newStore("task", consolidator)
 
 		seedMemory(t, s, point{ID: testID("a"), Content: "dup one", Scope: "repo:x", ChatID: "chat-1", MintedAt: "2026-08-13T00:00:00Z", Vector: []float32{1, 0, 0, 0}})
@@ -87,9 +86,7 @@ func TestDedupeSweep_DryRunMakesNoLLMCall(t *testing.T) {
 	})
 }
 
-// TestCosineClusters_BoundedSize proves the cluster-size cap: a chain of
-// mutually-similar points longer than maxSize splits into more than one
-// cluster rather than growing without bound. Pure function, no backend.
+// A similar-point chain longer than maxSize splits into several clusters rather than growing unbounded.
 func TestCosineClusters_BoundedSize(t *testing.T) {
 	n := 6
 	pts := make([]scored, n)
@@ -109,9 +106,7 @@ func TestCosineClusters_BoundedSize(t *testing.T) {
 	}
 }
 
-// TestCosineClusters_SurvivorOrderPrefersHighestVotedThenOldest verifies the per-cluster
-// ordering DedupeSweep relies on: the highest-VoteScore member comes first (a tie-break
-// candidate for the survivor the consolidation prompt is told to prefer), then oldest MintedAt. Pure function, no backend.
+// Per-cluster order: highest VoteScore first (the survivor the prompt prefers), then oldest MintedAt.
 func TestCosineClusters_SurvivorOrderPrefersHighestVotedThenOldest(t *testing.T) {
 	pts := []scored{
 		{ID: "newer-high-vote", VoteScore: 3, MintedAt: "2026-09-01T00:00:00Z", Vector: []float32{1, 0, 0, 0}},
@@ -131,9 +126,8 @@ func TestCosineClusters_SurvivorOrderPrefersHighestVotedThenOldest(t *testing.T)
 	}
 }
 
-// TestDedupeSweep_NoEmbedderCalls is the coordinator's correction: DedupeSweep must cluster on
-// each point's already-stored vector (list() with vectors), never re-embed. A countingEmbedder
-// proves zero Embed calls happen during a full apply=true sweep. Sqlite-only: forEachBackend's newStore ctor doesn't take a custom embedder, and the behavior under test (DedupeSweep's Go code never calling s.embed) is backend-independent - it's the same code path regardless of which index answers list().
+// DedupeSweep clusters on stored vectors and never re-embeds. Sqlite-only: forEachBackend can't take a
+// custom embedder, and the code path is backend-independent.
 func TestDedupeSweep_NoEmbedderCalls(t *testing.T) {
 	ctx := context.Background()
 	ce := &countingEmbedder{}
@@ -156,9 +150,7 @@ func TestDedupeSweep_NoEmbedderCalls(t *testing.T) {
 	}
 }
 
-// TestDedupeSweep_VerifiedPairMergesWithSummedVotes is the coordinator's other
-// correction: a reinforced/verified pair must still be eligible for clustering (not
-// excluded), and P5 lineage sums their votes onto the survivor exactly like an unverified merge.
+// A verified pair is still eligible for clustering, and its votes sum onto the survivor.
 func TestDedupeSweep_VerifiedPairMergesWithSummedVotes(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
 		ctx := context.Background()
@@ -181,7 +173,7 @@ func TestDedupeSweep_VerifiedPairMergesWithSummedVotes(t *testing.T) {
 			t.Fatalf("clusters = %d, want 1 (verified points must not be excluded from clustering)", report.NumClusters)
 		}
 
-		sv, ok, err := s.idx.getByID(ctx, survivorID)
+		sv, ok, err := s.getByID(ctx, survivorID)
 		if err != nil || !ok {
 			t.Fatalf("getByID survivor: %v %v", ok, err)
 		}
@@ -192,7 +184,7 @@ func TestDedupeSweep_VerifiedPairMergesWithSummedVotes(t *testing.T) {
 			t.Fatal("survivor should stay live")
 		}
 
-		dup, ok, err := s.idx.getByID(ctx, dupID)
+		dup, ok, err := s.getByID(ctx, dupID)
 		if err != nil || !ok {
 			t.Fatalf("getByID dup: %v %v", ok, err)
 		}
@@ -202,9 +194,7 @@ func TestDedupeSweep_VerifiedPairMergesWithSummedVotes(t *testing.T) {
 	})
 }
 
-// TestMMRSelect_FiveNearDuplicatesYieldOne is the recall-diversity test (issue #1269
-// item 4): five near-identical points (mutual cosine >= 0.90) must not all occupy the
-// top-k - at most one should survive mmrSelect. Pure function, no backend.
+// Five near-identical points (mutual cosine >= 0.90) collapse to at most one in mmrSelect's top-k.
 func TestMMRSelect_FiveNearDuplicatesYieldOne(t *testing.T) {
 	pts := make([]scored, 5)
 	for i := range pts {
@@ -219,9 +209,7 @@ func TestMMRSelect_FiveNearDuplicatesYieldOne(t *testing.T) {
 	}
 }
 
-// TestMMRSelect_DistinctHitsAllSurvive is the negative case: hits that are
-// NOT near-duplicates of each other all pass through untouched. Pure
-// function, no backend.
+// Hits that are not near-duplicates all pass through untouched.
 func TestMMRSelect_DistinctHitsAllSurvive(t *testing.T) {
 	pts := []scored{
 		{ID: "a", Score: 3, Vector: []float32{1, 0, 0, 0}},
@@ -234,9 +222,7 @@ func TestMMRSelect_DistinctHitsAllSurvive(t *testing.T) {
 	}
 }
 
-// TestRecall_MMRDropsNearDuplicates is an end-to-end check that Store.recall itself (not
-// just mmrSelect) applies the diversity re-rank: five near-identical points seeded with
-// slightly different vectors, topK=5, should not all come back. Run against both backends since it exercises each backend's own query()-with-vectors plumbing.
+// Store.recall itself applies the MMR re-rank, through each backend's query-with-vectors plumbing.
 func TestRecall_MMRDropsNearDuplicates(t *testing.T) {
 	forEachBackend(t, func(t *testing.T, newStore func(string, model.LLM) *Store) {
 		ctx := context.Background()

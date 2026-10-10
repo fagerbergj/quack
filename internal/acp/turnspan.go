@@ -13,14 +13,12 @@ import (
 	"github.com/fagerbergj/quack/internal/otelobs"
 )
 
-// errToolUnfinished marks a tool call still in flight when the round exited
-// (cancel, idle timeout, crash) - the span exports with an error status
-// instead of vanishing, which is exactly the one worth seeing on a wedged round.
+// errToolUnfinished marks a tool call still in flight when the round exited, so its span exports with
+// an error status instead of vanishing: the one worth seeing on a wedged round.
 var errToolUnfinished = errors.New("acp: round ended with the tool call still running")
 
-// turnSpans emits one child span per ACP tool call under quack.acp.prompt,
-// started and ended as the session updates arrive, so a long round exports
-// telemetry WHILE it runs rather than in one burst at the end (#924). Tool call is the granularity: thought and message chunks arrive per token (the 1,845 chat_events of a single review), tool calls arrive in the tens to low hundreds. The spans carry no model-named attribute - that is what types a span as a Langfuse GENERATION and folds wall-clock into per-model aggregates (#927/#930) - and the ACP agent's own model calls go straight to llm-swap with no trace context, so they are neither nested nor linked here.
+// turnSpans emits one child span per tool call under quack.acp.prompt as updates arrive, so long rounds export
+// mid-run. No model-named attribute: that would type it a Langfuse GENERATION and skew per-model aggregates.
 type turnSpans struct {
 	ctx   context.Context // the prompt span's context: these hang off it
 	agent string
@@ -56,13 +54,6 @@ func (t *turnSpans) observe(u sdk.SessionUpdate) {
 // shim's 8KB truncation convention (tools/pi-acp/otel.mjs).
 const attrCap = 8192
 
-func capAttr(s string) string {
-	if len(s) <= attrCap {
-		return s
-	}
-	return s[:attrCap] + "…[truncated]"
-}
-
 // jsonAttr renders v for a span attribute; false when there is nothing to record.
 func jsonAttr(v any) (string, bool) {
 	if v == nil {
@@ -72,7 +63,7 @@ func jsonAttr(v any) (string, bool) {
 	if err != nil || string(b) == "null" {
 		return "", false
 	}
-	return capAttr(string(b)), true
+	return bound(string(b), attrCap), true
 }
 
 // record stamps tool input/output onto an open span as they arrive.
@@ -91,7 +82,7 @@ func (t *turnSpans) record(id string, rawInput, rawOutput any, content []sdk.Too
 	if v, ok := jsonAttr(rawOutput); ok {
 		span.SetAttributes(attribute.String(otelobs.GenAIToolCallResult, v))
 	} else if txt := toolContentText(content); txt != "" {
-		span.SetAttributes(attribute.String(otelobs.GenAIToolCallResult, capAttr(txt)))
+		span.SetAttributes(attribute.String(otelobs.GenAIToolCallResult, bound(txt, attrCap)))
 	}
 }
 
@@ -117,9 +108,8 @@ func (t *turnSpans) start(id string, kind sdk.ToolKind, title string, rawInput a
 	if _, dup := t.open[id]; id == "" || dup {
 		return
 	}
-	// A bridged MCP call's span is named after the real tool (same identity
-	// resolution as translate.go's mapToolCall) - bounded to quack's own known
-	// MCP tool set. Unlike mapToolCall, a genuinely unresolved kind stays "other" here rather than the arbitrary title: the title is unbounded, agent-supplied text, and a span NAME (unlike an attribute) is a cardinality dimension in the tracing backend - it still rides the tool_title attribute below for identification.
+	// A bridged MCP call's span is named after the real tool (bounded set). An unresolved kind stays "other", not
+	// the title: a span name is a cardinality dimension; the title rides the tool_title attribute.
 	name := string(kind)
 	if mcpName, ok := mcpIdentity(meta, title); ok {
 		name = mcpName

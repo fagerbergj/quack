@@ -25,9 +25,8 @@ func (c *countingSessions) Create(ctx context.Context, req *session.CreateReques
 	return resp, err
 }
 
-// TestWorkerSessionsUseDeterministicIDs is a regression test for the ADK audit's A2 finding: every first dispatch to a node left
-// req.Message.ContextID empty, and a2a-go (agentexec.go createNewExecutionContext) then minted a fresh random UUID per node execution - an orphaned Postgres
-// sessions/events row nothing could ever address again. scopeMessage now defaults ContextID to WorkerSessionID(chatID, nodeID), a stable, reap-able id per node.
+// An empty ContextID makes a2a-go mint a random session id that nothing can reap, so scopeMessage must
+// default it to WorkerSessionID(chatID, nodeID).
 func TestWorkerSessionsUseDeterministicIDs(t *testing.T) {
 	workerSessions := &countingSessions{Service: session.InMemoryService()}
 	parentSessions := session.InMemoryService()

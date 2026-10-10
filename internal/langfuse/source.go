@@ -16,9 +16,8 @@ type Source struct {
 	StoreKey string
 }
 
-// Get resolves name through the client's pinned label. Source is left blank -
-// artifactsrc.Resolver.fetch stamps it with the stores: entry name (its own
-// documented contract), not a fixed "langfuse" that would hide which store answered.
+// Get resolves name through the pinned label. Source stays blank so the Resolver
+// stamps the stores: entry name that answered.
 func (s *Source) Get(ctx context.Context, name string) (artifactsrc.Artifact, bool, error) {
 	p, found, err := s.Client.Resolve(ctx, name)
 	if err != nil {
