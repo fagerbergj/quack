@@ -45,7 +45,13 @@ func resumeGuardArchivedOrStale(archived, hasPlan bool, pauseReason dag.PauseRea
 // bootResume is what the reconcile left for the started server: nodes to re-enter, and chats it ended instead.
 type bootResume struct {
 	Start   []store.ResumableNode
-	Settled []string // left mid-run, now failed with nothing to resume
+	Settled []settledRun // left mid-run, now failed with nothing to resume
+}
+
+// settledRun: PlanRan is false for a turn interrupted before it planned, so no node row exists.
+type settledRun struct {
+	ChatID  string
+	PlanRan bool
 }
 
 // reconcileNodes hands every node the last process left suspended back to the scheduler. It runs before the
@@ -82,47 +88,47 @@ func reconcileNodes(ctx context.Context, st *store.Store, jail *workspace.Jail, 
 }
 
 // settledChats: chats with a failed node or an interrupted turn and nothing resumed or awaiting an answer.
-func settledChats(rep store.ResumeReport, interrupted []string) []string {
+func settledChats(rep store.ResumeReport, interrupted []string) []settledRun {
 	live := map[string]bool{}
 	for _, n := range append(rep.Start, rep.AwaitingInput...) {
 		live[n.ChatID] = true
 	}
 	seen := map[string]bool{}
-	var out []string
-	add := func(id string) {
+	var out []settledRun
+	add := func(id string, planRan bool) {
 		if id != "" && !live[id] && !seen[id] {
 			seen[id] = true
-			out = append(out, id)
+			out = append(out, settledRun{ChatID: id, PlanRan: planRan})
 		}
 	}
 	for _, f := range rep.Failed {
-		add(f.ChatID)
+		add(f.ChatID, true)
 	}
 	for _, id := range interrupted {
-		add(id)
+		add(id, false)
 	}
 	return out
 }
 
 // endSettledExtRuns tells each dispatching extension that its run ended at boot, so it can post the failure
 // and release the session instead of holding it until its lease expires.
-func endSettledExtRuns(chatIDs []string, exts []builtSDKExtension) {
-	for _, chatID := range chatIDs {
-		if obs := runObserverFor(chatID, exts); obs != nil {
-			endSettledExtRun(obs, chatID)
+func endSettledExtRuns(runs []settledRun, exts []builtSDKExtension) {
+	for _, r := range runs {
+		if obs := runObserverFor(r.ChatID, exts); obs != nil {
+			endSettledExtRun(obs, r)
 		}
 	}
 }
 
 // endSettledExtRun isolates extension code: a panic must not crash boot or skip the remaining chats.
-func endSettledExtRun(obs extsdk.RunObserver, chatID string) {
+func endSettledExtRun(obs extsdk.RunObserver, run settledRun) {
 	defer func() {
 		if r := recover(); r != nil {
-			slog.Error("boot: extension RunEnded panicked", "component", "startup", "chat", chatID, "err", r)
+			slog.Error("boot: extension RunEnded panicked", "component", "startup", "chat", run.ChatID, "err", r)
 		}
 	}()
-	slog.Info("boot ended an extension run it could not resume", "component", "startup", "chat", chatID)
-	obs.RunEnded(chatID, extsdk.RunOutcome{Status: extsdk.RunFailed, PlanRan: true, Error: settledRunError})
+	slog.Info("boot ended an extension run it could not resume", "component", "startup", "chat", run.ChatID)
+	obs.RunEnded(run.ChatID, extsdk.RunOutcome{Status: extsdk.RunFailed, PlanRan: run.PlanRan, Error: settledRunError})
 }
 
 const settledRunError = "quack restarted and could not resume this run; re-trigger it to start over"

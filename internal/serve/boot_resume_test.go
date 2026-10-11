@@ -421,16 +421,17 @@ func TestSettledChatsSkipsLiveChatsAndDedupes(t *testing.T) {
 		AwaitingInput: []store.ResumableNode{{ChatID: "b"}},
 		Failed:        []store.UnresumableNode{{ChatID: "a"}, {ChatID: "c"}, {ChatID: "c"}, {ChatID: ""}},
 	}
-	if got := settledChats(rep, []string{"b", "d", "c"}); !slices.Equal(got, []string{"c", "d"}) {
-		t.Errorf("settledChats = %v, want [c d]", got)
+	want := []settledRun{{ChatID: "c", PlanRan: true}, {ChatID: "d", PlanRan: false}}
+	if got := settledChats(rep, []string{"b", "d", "c"}); !slices.Equal(got, want) {
+		t.Errorf("settledChats = %+v, want %+v", got, want)
 	}
 }
 
 // TestEndSettledExtRunsReportsFailure: a run boot failed instead of resuming reaches its extension as RunFailed.
 func TestEndSettledExtRunsReportsFailure(t *testing.T) {
 	obs := &outcomeObserver{}
-	endSettledExtRuns([]string{"chat-plain", "ext:obs:pr-2"}, []builtSDKExtension{{name: "obs", ext: obs}})
-	if len(obs.outcomes) != 1 || obs.outcomes[0].Status != extsdk.RunFailed || obs.outcomes[0].Error != settledRunError {
+	endSettledExtRuns([]settledRun{{ChatID: "chat-plain"}, {ChatID: "ext:obs:pr-2", PlanRan: true}}, []builtSDKExtension{{name: "obs", ext: obs}})
+	if len(obs.outcomes) != 1 || obs.outcomes[0].Status != extsdk.RunFailed || obs.outcomes[0].Error != settledRunError || !obs.outcomes[0].PlanRan {
 		t.Fatalf("RunEnded outcomes = %+v, want one RunFailed carrying settledRunError", obs.outcomes)
 	}
 }
@@ -461,7 +462,7 @@ func TestDriveResume_InterruptedSkipsRunEnded(t *testing.T) {
 func TestEndSettledExtRunsSurvivesPanic(t *testing.T) {
 	obs := &outcomeObserver{}
 	exts := []builtSDKExtension{{name: "bad", ext: &panicObserver{}}, {name: "obs", ext: obs}}
-	endSettledExtRuns([]string{"ext:bad:1", "ext:obs:2"}, exts)
+	endSettledExtRuns([]settledRun{{ChatID: "ext:bad:1"}, {ChatID: "ext:obs:2"}}, exts)
 	if len(obs.outcomes) != 1 {
 		t.Fatalf("outcomes = %+v, want the chat after the panic still delivered", obs.outcomes)
 	}

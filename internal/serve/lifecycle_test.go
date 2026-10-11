@@ -217,7 +217,7 @@ func TestBootRefusesUserPausedNode(t *testing.T) {
 	if len(resume.Start) != 0 {
 		t.Errorf("started %+v; a node the user paused must never be auto-resumed by boot", resume.Start)
 	}
-	if len(resume.Settled) != 1 || resume.Settled[0] != chatID {
+	if len(resume.Settled) != 1 || resume.Settled[0] != (settledRun{ChatID: chatID, PlanRan: true}) {
 		t.Errorf("Settled = %v, want [%s]: its run ended at boot, so its extension must hear RunEnded", resume.Settled, chatID)
 	}
 	n2 := nodeStatus(t, st, "n2")
