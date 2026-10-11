@@ -6,6 +6,7 @@ import (
 	"iter"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -411,6 +412,26 @@ func TestDriveResume_ExtensionChatGetsRunEnded(t *testing.T) {
 	}
 	if runObserverFor("chat-plain", exts) != nil || runObserverFor("ext:missing:x", exts) != nil {
 		t.Error("only an ext:<name>: chat with a matching observer may get RunEnded")
+	}
+}
+
+func TestSettledChatsSkipsLiveChatsAndDedupes(t *testing.T) {
+	rep := store.ResumeReport{
+		Start:         []store.ResumableNode{{ChatID: "a"}},
+		AwaitingInput: []store.ResumableNode{{ChatID: "b"}},
+		Failed:        []store.UnresumableNode{{ChatID: "a"}, {ChatID: "c"}, {ChatID: "c"}, {ChatID: ""}},
+	}
+	if got := settledChats(rep, []string{"b", "d", "c"}); !slices.Equal(got, []string{"c", "d"}) {
+		t.Errorf("settledChats = %v, want [c d]", got)
+	}
+}
+
+// TestEndSettledExtRunsReportsFailure: a run boot failed instead of resuming reaches its extension as RunFailed.
+func TestEndSettledExtRunsReportsFailure(t *testing.T) {
+	obs := &outcomeObserver{}
+	endSettledExtRuns([]string{"chat-plain", "ext:obs:pr-2"}, []builtSDKExtension{{name: "obs", ext: obs}})
+	if len(obs.outcomes) != 1 || obs.outcomes[0].Status != extsdk.RunFailed || obs.outcomes[0].Error != settledRunError {
+		t.Fatalf("RunEnded outcomes = %+v, want one RunFailed carrying settledRunError", obs.outcomes)
 	}
 }
 

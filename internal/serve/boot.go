@@ -42,13 +42,19 @@ func resumeGuardArchivedOrStale(archived, hasPlan bool, pauseReason dag.PauseRea
 	return true, ""
 }
 
+// bootResume is what the reconcile left for the started server: nodes to re-enter, and chats it ended instead.
+type bootResume struct {
+	Start   []store.ResumableNode
+	Settled []string // left mid-run, now failed with nothing to resume
+}
+
 // reconcileNodes hands every node the last process left suspended back to the scheduler. It runs before the
 // Hub accepts runs (ScanOrphanedRuns has no liveness check); the caller starts the returned nodes later.
-func reconcileNodes(ctx context.Context, st *store.Store, jail *workspace.Jail, resumable func(chatID, pauseReason string) (bool, string)) []store.ResumableNode {
+func reconcileNodes(ctx context.Context, st *store.Store, jail *workspace.Jail, resumable func(chatID, pauseReason string) (bool, string)) bootResume {
 	rep, err := st.ResumePausedDagNodes(ctx, resumable)
 	if err != nil {
 		slog.Error("resume paused dag nodes", "component", "store", "err", err)
-		return nil
+		return bootResume{}
 	}
 	// After the reconcile: a hard-kill orphan is `paused` by now, so the chat
 	// scan sees it and stamps the chat paused instead of interrupted.
@@ -72,8 +78,43 @@ func reconcileNodes(ctx context.Context, st *store.Store, jail *workspace.Jail, 
 			"component", "startup", "chat", id)
 		removeStaleCloneDir(jail, id)
 	}
-	return rep.Start
+	return bootResume{Start: rep.Start, Settled: settledChats(rep, interrupted)}
 }
+
+// settledChats: chats with a failed node or an interrupted turn and nothing resumed or awaiting an answer.
+func settledChats(rep store.ResumeReport, interrupted []string) []string {
+	live := map[string]bool{}
+	for _, n := range append(rep.Start, rep.AwaitingInput...) {
+		live[n.ChatID] = true
+	}
+	seen := map[string]bool{}
+	var out []string
+	add := func(id string) {
+		if id != "" && !live[id] && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	for _, f := range rep.Failed {
+		add(f.ChatID)
+	}
+	for _, id := range interrupted {
+		add(id)
+	}
+	return out
+}
+
+// endSettledExtRuns tells each dispatching extension that its run ended at boot, so it can post the failure
+// and release the session instead of holding it until its lease expires.
+func endSettledExtRuns(chatIDs []string, exts []builtSDKExtension) {
+	for _, chatID := range chatIDs {
+		if obs := runObserverFor(chatID, exts); obs != nil {
+			obs.RunEnded(chatID, extsdk.RunOutcome{Status: extsdk.RunFailed, PlanRan: true, Error: settledRunError})
+		}
+	}
+}
+
+const settledRunError = "quack restarted and could not resume this run; re-trigger it to start over"
 
 // syncFinishedNodeRecords repairs recent finished nodes' dag_node records off the boot path;
 // older plans are left alone, as boot never resumes them either.

@@ -104,7 +104,7 @@ func TestBootResumesPausedNodes(t *testing.T) {
 		t.Fatalf("persist the shutdown pause: %v", err)
 	}
 
-	start := reconcileNodes(ctx, st, nil, nil)
+	start := reconcileNodes(ctx, st, nil, nil).Start
 
 	if len(start) != 1 || start[0].NodeID != "n2" || start[0].ChatID != chatID {
 		t.Fatalf("resumable nodes = %+v, want just n2 on %s", start, chatID)
@@ -187,7 +187,7 @@ func TestBootLeavesAwaitingInputAlone(t *testing.T) {
 		t.Fatalf("park n2: %v", err)
 	}
 
-	start := reconcileNodes(ctx, st, nil, nil)
+	start := reconcileNodes(ctx, st, nil, nil).Start
 
 	if len(start) != 0 {
 		t.Errorf("started %+v; a node awaiting input must not be started", start)
@@ -210,12 +210,15 @@ func TestBootRefusesUserPausedNode(t *testing.T) {
 		t.Fatalf("persist the user pause: %v", err)
 	}
 
-	start := reconcileNodes(ctx, st, nil, func(chatID, pauseReason string) (bool, string) {
+	resume := reconcileNodes(ctx, st, nil, func(chatID, pauseReason string) (bool, string) {
 		return resumeGuardArchivedOrStale(false, true, dag.PauseReason(pauseReason), time.Now())
 	})
 
-	if len(start) != 0 {
-		t.Errorf("started %+v; a node the user paused must never be auto-resumed by boot", start)
+	if len(resume.Start) != 0 {
+		t.Errorf("started %+v; a node the user paused must never be auto-resumed by boot", resume.Start)
+	}
+	if len(resume.Settled) != 1 || resume.Settled[0] != chatID {
+		t.Errorf("Settled = %v, want [%s]: its run ended at boot, so its extension must hear RunEnded", resume.Settled, chatID)
 	}
 	n2 := nodeStatus(t, st, "n2")
 	if n2.Status != string(dag.StatusFailed) {
@@ -256,7 +259,7 @@ func TestBootFailsUnresumableNode(t *testing.T) {
 		t.Cleanup(func() { _ = os.Chmod(roDir, 0o755) })
 	}
 
-	start := reconcileNodes(ctx, st, jail, func(string, string) (bool, string) { return false, "workspace dir is gone" })
+	start := reconcileNodes(ctx, st, jail, func(string, string) (bool, string) { return false, "workspace dir is gone" }).Start
 
 	if len(start) != 0 {
 		t.Errorf("started %+v; an unresumable node must not be started", start)
