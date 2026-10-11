@@ -109,10 +109,20 @@ func settledChats(rep store.ResumeReport, interrupted []string) []string {
 func endSettledExtRuns(chatIDs []string, exts []builtSDKExtension) {
 	for _, chatID := range chatIDs {
 		if obs := runObserverFor(chatID, exts); obs != nil {
-			slog.Info("boot ended an extension run it could not resume", "component", "startup", "chat", chatID)
-			obs.RunEnded(chatID, extsdk.RunOutcome{Status: extsdk.RunFailed, PlanRan: true, Error: settledRunError})
+			endSettledExtRun(obs, chatID)
 		}
 	}
+}
+
+// endSettledExtRun isolates extension code: a panic must not crash boot or skip the remaining chats.
+func endSettledExtRun(obs extsdk.RunObserver, chatID string) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("boot: extension RunEnded panicked", "component", "startup", "chat", chatID, "err", r)
+		}
+	}()
+	slog.Info("boot ended an extension run it could not resume", "component", "startup", "chat", chatID)
+	obs.RunEnded(chatID, extsdk.RunOutcome{Status: extsdk.RunFailed, PlanRan: true, Error: settledRunError})
 }
 
 const settledRunError = "quack restarted and could not resume this run; re-trigger it to start over"

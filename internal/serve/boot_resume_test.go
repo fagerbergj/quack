@@ -435,6 +435,42 @@ func TestEndSettledExtRunsReportsFailure(t *testing.T) {
 	}
 }
 
+// TestDriveResume_InterruptedSkipsRunEnded: a resume cut by another shutdown is resumed again next boot, so
+// finalizing it now would post for unfinished work.
+func TestDriveResume_InterruptedSkipsRunEnded(t *testing.T) {
+	ctx := context.Background()
+	chatID := "ext:obs:pr-interrupted"
+	st, orch, plan := newOneNodeResumeFixture(t, chatID)
+	obs := &outcomeObserver{}
+	hub := stream.NewHub()
+	go func() {
+		for !hub.HasRegisteredRun(chatID) {
+			time.Sleep(time.Millisecond)
+		}
+		hub.MarkInterrupted(chatID) // DrainActiveRuns' force-cancel
+		hub.CancelRun(chatID)
+	}()
+	driveResume(ctx, chatID, []store.ResumableNode{{ChatID: chatID, PlanID: plan.ID, NodeID: "n1", Reason: dag.PauseShutdown}},
+		orch, st, hub, runlog.NewEventLog(st), runObserverFor(chatID, []builtSDKExtension{{name: "obs", ext: obs}}))
+	if len(obs.outcomes) != 0 {
+		t.Errorf("RunEnded outcomes = %+v, want none: a shutdown-cut resume must not finalize", obs.outcomes)
+	}
+}
+
+// TestEndSettledExtRunsSurvivesPanic: one extension's panic neither crashes boot nor skips the other chats.
+func TestEndSettledExtRunsSurvivesPanic(t *testing.T) {
+	obs := &outcomeObserver{}
+	exts := []builtSDKExtension{{name: "bad", ext: &panicObserver{}}, {name: "obs", ext: obs}}
+	endSettledExtRuns([]string{"ext:bad:1", "ext:obs:2"}, exts)
+	if len(obs.outcomes) != 1 {
+		t.Fatalf("outcomes = %+v, want the chat after the panic still delivered", obs.outcomes)
+	}
+}
+
+type panicObserver struct{ fakeRunObserver }
+
+func (*panicObserver) RunEnded(string, extsdk.RunOutcome) { panic("boom") }
+
 type outcomeObserver struct {
 	fakeRunObserver
 	outcomes []extsdk.RunOutcome
