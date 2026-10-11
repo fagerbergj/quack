@@ -147,8 +147,9 @@ func (l *EventLog) Reset(ctx context.Context, chatID string) {
 	}
 }
 
-// Reopen replays chatID's persisted events into hub so a resumed run appends to the interrupted run's
-// transcript. A done/error from a gracefully stopped run is dropped: replayed, it would end the client's run early.
+// Reopen replays chatID's persisted events into hub, renumbered from 1, so a resumed run appends to the
+// interrupted run's transcript. Every done/error and unreadable row is dropped: replayed, a stopped run's
+// terminal event would end the client's view of the run early.
 func (l *EventLog) Reopen(ctx context.Context, hub *stream.Hub, chatID string) {
 	evs, err := l.store.LoadChatEvents(ctx, chatID, 0)
 	if err != nil {
@@ -157,22 +158,31 @@ func (l *EventLog) Reopen(ctx context.Context, hub *stream.Hub, chatID string) {
 		return
 	}
 	kept := make([]store.ChatEvent, 0, len(evs))
+	var replay []stream.SSEEvent
+	changed := false
 	for _, e := range evs {
 		ev, err := UnmarshalEvent(e.Event)
 		if err != nil || ev.Name == stream.EventDone || ev.Name == stream.EventError {
+			changed = true
 			continue
 		}
-		e.Seq = int64(len(kept) + 1)
+		// A trimmed long run's log starts above seq 1, so it needs the rewrite too.
+		seq := int64(len(kept) + 1)
+		changed = changed || e.Seq != seq
+		e.Seq = seq
 		kept = append(kept, e)
-		hub.Publish(chatID, e.Seq, ev)
+		replay = append(replay, ev)
 	}
-	if len(kept) == len(evs) {
-		return
+	// The store is rewritten before the hub sees a seq, so the two never disagree.
+	if changed {
+		if err := l.store.ReplaceChatEvents(ctx, chatID, kept); err != nil {
+			slog.Warn("event log: reopen rewrite failed; the resumed run starts a fresh transcript", "component", "eventlog", "chat", chatID, "err", err)
+			l.Reset(ctx, chatID)
+			return
+		}
 	}
-	// Renumbered so the resumed run's seqs follow on with no gap or collision.
-	l.Reset(ctx, chatID)
-	if err := l.store.InsertChatEvents(ctx, kept); err != nil {
-		slog.Warn("event log: reopen rewrite failed", "component", "eventlog", "chat", chatID, "err", err)
+	for i, ev := range replay {
+		hub.Publish(chatID, kept[i].Seq, ev)
 	}
 }
 

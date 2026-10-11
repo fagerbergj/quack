@@ -526,3 +526,38 @@ func TestReopenKeepsTranscriptAndDropsTerminalEvents(t *testing.T) {
 		t.Errorf("events = %v", names)
 	}
 }
+
+// A long run's trimmed log starts above seq 1; Reopen must renumber the store too, or the resumed run's
+// events collide with the kept rows and are dropped.
+func TestReopenRenumbersATrimmedLog(t *testing.T) {
+	ctx := context.Background()
+	st := newTestStore(t)
+	if err := st.SetChatOrigin(ctx, "c1", "u1", ""); err != nil {
+		t.Fatal(err)
+	}
+	var rows []store.ChatEvent
+	for seq := int64(11); seq <= 13; seq++ {
+		js, err := MarshalEvent(stream.NodeStart("n1", "a"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows = append(rows, store.ChatEvent{ChatID: "c1", Seq: seq, Event: js, CreatedAt: time.Now()})
+	}
+	if err := st.InsertChatEvents(ctx, rows); err != nil {
+		t.Fatal(err)
+	}
+	l := NewEventLog(st)
+	hub := stream.NewHub()
+
+	l.Reopen(ctx, hub, "c1")
+	NewPublisher(ctx, hub, l, "c1").After(hub.LastSeq("c1")).Publish(stream.Done())
+	l.Flush()
+
+	got, err := st.LoadChatEvents(ctx, "c1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 4 || got[0].Seq != 1 || got[3].Seq != 4 || !strings.Contains(got[3].Event, `"done"`) {
+		t.Fatalf("events = %+v, want seqs 1-4 ending in the resumed run's done", got)
+	}
+}
