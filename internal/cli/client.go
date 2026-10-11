@@ -312,7 +312,7 @@ func (c *Client) PauseNode(ctx context.Context, chatID, nodeID string) error {
 		schema.NodeStatusUpdateBody{Status: schema.NodeStatusUpdateBodyStatusPaused})
 }
 
-// ResumeNode resumes a paused node in its saved session (an ACP node re-runs fresh). Only legal from `paused`.
+// ResumeNode resumes a paused node in its saved session. Only legal from `paused`.
 func (c *Client) ResumeNode(ctx context.Context, chatID, nodeID string) error {
 	return c.sendBody(ctx, http.MethodPut, "/api/v1/chats/"+chatID+"/nodes/"+nodeID+"/status",
 		schema.NodeStatusUpdateBody{Status: schema.NodeStatusUpdateBodyStatusRunning})

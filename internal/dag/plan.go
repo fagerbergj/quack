@@ -76,6 +76,8 @@ type Node struct {
 	Status string
 	// Continue: resume this node's own native worker session where it stopped instead of re-sending its task.
 	Continue bool `json:"-"`
+	// ReloadSession: an ACP node reloads the session it last saved in its state dir.
+	ReloadSession bool `json:"-"`
 }
 
 // TerminalIDs are the plan's sinks - nodes nothing depends on - in plan order; each one's output is delivered.

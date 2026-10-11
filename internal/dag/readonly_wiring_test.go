@@ -27,6 +27,7 @@ type advisorSnoopStub struct {
 	readOnly bool
 	kinds    []string
 	planOnly bool
+	reload   bool
 }
 
 func (s *advisorSnoopStub) Name() string { return "advisorSnoopStub" }
@@ -40,7 +41,7 @@ func (s *advisorSnoopStub) GenerateContent(ctx context.Context, req *model.LLMRe
 		if token := vetting.AdvisorTokenFromContext(ctx); token != "" {
 			if at, ok := vetting.LookupAdvisorThread(token); ok {
 				s.mu.Lock()
-				s.sawTask, s.readOnly, s.kinds, s.planOnly = true, at.ReadOnly, at.AllowedDeliveryKinds, at.PlanOnly
+				s.sawTask, s.readOnly, s.kinds, s.planOnly, s.reload = true, at.ReadOnly, at.AllowedDeliveryKinds, at.PlanOnly, at.ReloadACPSession
 				s.mu.Unlock()
 			}
 		}
@@ -162,5 +163,24 @@ func TestNodeGateConfigForeignNodes(t *testing.T) {
 		if got := strings.Join(cfg.ForeignNodes, ","); got != want {
 			t.Errorf("%s: ForeignNodes = %q, want %q", plan.Nodes[node].ID, got, want)
 		}
+	}
+}
+
+// A resumed node that has no native session to continue (an ACP node) gets its AdvisorTask told to
+// reload the ACP session it saved; the native continue prompt stays off.
+func TestResumedACPNodeReloadsItsSession(t *testing.T) {
+	plan := withContinue(Plan{ID: "t-reload", UserMessage: "x", Nodes: []Node{{ID: "n1", AgentName: implementerAgent}}}, "n1", false)
+	cfg := nodeGateConfig(context.Background(), plan, plan.Nodes[0], nil, func(context.Context, string) vetting.Config { return writableGateCfg() }, "chat1", "")
+	if cfg.Continue {
+		t.Fatal("an ACP node got the native continue prompt")
+	}
+
+	stub := &advisorSnoopStub{}
+	runSingleNode(t, plan, cfg, stub, nil)
+
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	if !stub.sawTask || !stub.reload {
+		t.Errorf("AdvisorTask.ReloadACPSession = %v (task seen: %v), want true", stub.reload, stub.sawTask)
 	}
 }
