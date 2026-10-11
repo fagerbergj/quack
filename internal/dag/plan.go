@@ -74,6 +74,8 @@ type Node struct {
 	Result string
 	// Status: the earlier step's outcome (Assignment.Status), "" for a node not yet run.
 	Status string
+	// Continue: resume this node's own native worker session where it stopped instead of re-sending its task.
+	Continue bool `json:"-"`
 }
 
 // TerminalIDs are the plan's sinks - nodes nothing depends on - in plan order; each one's output is delivered.

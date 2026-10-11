@@ -722,8 +722,9 @@ paths:
 
         - `{"status":"paused"}` - suspend a RUNNING node at its next safe
           point, keeping its accumulated work. Only legal from `running`.
-        - `{"status":"running"}` - resume a `paused` node: a fresh re-run
-          (like retry) that reuses the rest of the plan's stored outputs.
+        - `{"status":"running"}` - resume a `paused` node: a native node
+          carries on in its saved session (an ACP node, or one given
+          guidance, re-runs fresh), reusing the plan's other stored outputs.
           Only legal from `paused`.
         - `{"status":"queued","guidance":"..."}` - retry: re-run a finished
           node (and every node downstream of it) reusing the stored outputs
@@ -2367,7 +2368,7 @@ components:
         guidance:
           type: string
           description: Optional and folded into the node's task when status is
-            "queued" (retry, or resuming a paused node via a fresh re-run).
+            "queued" (retry) or "running" (resume, which it turns into a fresh re-run).
             Unused for "paused". To steer a RUNNING node,
             queue a message instead (POST .../nodes/{node_id}/queue) - it is
             delivered at the node's next turn boundary, not mid-turn.

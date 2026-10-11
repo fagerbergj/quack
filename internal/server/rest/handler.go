@@ -937,7 +937,7 @@ func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatI
 	case dag.StatusPaused:
 		h.pauseTransition(w, dn, chatID, nodeID, current, body)
 	case dag.StatusRunning:
-		// paused → running: a fresh re-run reusing the plan's stored outputs. A node
+		// paused → running: continues the node's saved session (RetryNode), reusing the plan's stored outputs. A node
 		// parked awaiting_input must go through StartNode instead (#A2).
 		if current == dag.StatusNeedsInput || (dn != nil && dag.PauseReason(dn.PauseReason) == dag.PauseAwaitingInput) {
 			writeJSON(w, http.StatusConflict, schema.TransitionError{

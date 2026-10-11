@@ -35,7 +35,7 @@ func TestRetryPlanInNode_ConsumerPanicBecomesNodeError(t *testing.T) {
 	var retryErr error
 	orchestrate := workflow.NewDynamicNode[any, string]("orch",
 		func(ctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {
-			_, retryErr = ex.RetryPlanInNode(ctx, plan, "chat", "b", map[string]string{"a": "A-SEED"})
+			_, retryErr = ex.RetryPlanInNode(ctx, plan, "chat", "b", map[string]string{"a": "A-SEED"}, false)
 			return "done", nil
 		}, workflow.NodeConfig{})
 	top, _ := workflowagent.New(workflowagent.Config{Name: "o", Edges: workflow.Chain(workflow.Start, orchestrate)})

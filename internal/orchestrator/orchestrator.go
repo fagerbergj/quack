@@ -246,10 +246,13 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID, planID str
 			yield(stream.Errorf("retry: "+err.Error()), nil)
 			return
 		}
+		// Read before the plan snapshot below re-stamps the node's row. Guidance asks for a fresh attempt.
+		guidance = strings.TrimSpace(guidance)
+		cont := guidance == "" && o.executor.Continuable(ctx, chatID, nodeID)
 		// Lead with the plan snapshot so runlog.Drive-based callers (boot resume) persist the re-run nodes'
 		// state. Emitted before the guidance: persisted plans keep the original task, so it never piles up.
 		yield(tools.DagPlanEvent(ctx, plan), nil)
-		if guidance = strings.TrimSpace(guidance); guidance != "" {
+		if guidance != "" {
 			for i := range plan.Nodes {
 				if plan.Nodes[i].ID == nodeID {
 					plan.Nodes[i].Task += "\n\n[Retry guidance]: " + guidance
@@ -259,7 +262,7 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID, planID str
 		nodeOutputs := make(map[string]string)
 		retryNode := workflow.NewDynamicNode[any, string]("__retry",
 			func(nctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {
-				out, rerr := o.executor.RetryPlanInNode(nctx, plan, chatID, nodeID, seeded)
+				out, rerr := o.executor.RetryPlanInNode(nctx, plan, chatID, nodeID, seeded, cont)
 				if rerr != nil {
 					return "", rerr
 				}

@@ -150,6 +150,8 @@ type Config struct {
 	// ResumedFrom: "" for a fresh node; otherwise seeds an ACP node's first-round session/load
 	// id and marks node.started as a continuation.
 	ResumedFrom string
+	// Continue: the worker's session already holds this node's work, so the first draft asks it to carry on.
+	Continue bool
 	// AdmitJudge/ReleaseJudge/AdmitWorker/ReleaseWorker: swap the caller's admission
 	// reservation to the judge spec for each judge call, and back. All nil without an admission ledger.
 	AdmitJudge    func(ctx context.Context) bool

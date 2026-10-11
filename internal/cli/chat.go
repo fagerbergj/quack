@@ -346,8 +346,7 @@ func RunNodePause(ctx context.Context, out io.Writer, server, chatID, nodeID str
 		Message: fmt.Sprintf("Pausing node %s (chat %s) at its next turn boundary - resume it with `quack chat node resume %s %s`.", nodeID, chatID, chatID, nodeID)})
 }
 
-// RunNodeResume is `quack chat node resume <chat-id> <node-id>`: re-run a paused node fresh,
-// reusing the rest of the plan's stored outputs.
+// RunNodeResume is `quack chat node resume <chat-id> <node-id>`: resume a paused node where it stopped.
 func RunNodeResume(ctx context.Context, out io.Writer, server, chatID, nodeID string, asJSON bool) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {

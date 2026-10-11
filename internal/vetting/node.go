@@ -593,6 +593,11 @@ func fillLastReply[T any](turns []T, answer func(*T) *string, reply any) {
 	}
 }
 
+// continuePrompt: sent to a resumed node's own session in place of its task, which the history already holds.
+const continuePrompt = "Your work on this task was interrupted (the server restarted or the node was paused) and resumes now " +
+	"with your history above. A tool result marked \"interrupted\" never came back: check the current state before repeating " +
+	"that call. Carry on from where you stopped and finish the task."
+
 // draftOrResume: a HITL answer re-runs the worker with the recorded Q&A, else a fresh draft;
 // both converge on the shared park check, since a resumed run can ask again.
 func (g *gateRun) draftOrResume(sfx string) (string, *gateExit) {
@@ -611,7 +616,12 @@ func (g *gateRun) draftOrResume(sfx string) (string, *gateExit) {
 		}
 	}
 	if !ran {
-		a, exit := g.runWorkerOnce(workerInput(g.prompt, g.attachments), "worker-r0"+sfx, "draft", "worker draft terminated: repeat guard", "worker draft failed", []any{"run", "worker-r0"})
+		input, runID := workerInput(g.prompt, g.attachments), "worker-r0"+sfx
+		if g.cfg.Continue && sfx == "" {
+			input, runID = workerInput(continuePrompt, nil), "worker-continue"
+			g.log.Info("node continuing its saved session")
+		}
+		a, exit := g.runWorkerOnce(input, runID, "draft", "worker draft terminated: repeat guard", "worker draft failed", []any{"run", runID})
 		if exit != nil {
 			return "", exit
 		}
