@@ -306,15 +306,13 @@ func (c *Client) CancelNode(ctx context.Context, chatID, nodeID string) error {
 	return c.send(ctx, http.MethodPost, "/api/v1/chats/"+chatID+"/nodes/"+nodeID+"/stop")
 }
 
-// PauseNode suspends a running node at its next turn boundary. Resume is a fresh re-run, not a frozen
-// checkpoint: ADK's static graph needs the node to return to unblock its dependents.
+// PauseNode suspends a running node at its next turn boundary; resume carries on in a native node's saved session.
 func (c *Client) PauseNode(ctx context.Context, chatID, nodeID string) error {
 	return c.sendBody(ctx, http.MethodPut, "/api/v1/chats/"+chatID+"/nodes/"+nodeID+"/status",
 		schema.NodeStatusUpdateBody{Status: schema.NodeStatusUpdateBodyStatusPaused})
 }
 
-// ResumeNode resumes a paused node: a fresh re-run (like retry), reusing the
-// rest of the plan's stored outputs. Only legal from `paused`.
+// ResumeNode resumes a paused node in its saved session (an ACP node re-runs fresh). Only legal from `paused`.
 func (c *Client) ResumeNode(ctx context.Context, chatID, nodeID string) error {
 	return c.sendBody(ctx, http.MethodPut, "/api/v1/chats/"+chatID+"/nodes/"+nodeID+"/status",
 		schema.NodeStatusUpdateBody{Status: schema.NodeStatusUpdateBodyStatusRunning})

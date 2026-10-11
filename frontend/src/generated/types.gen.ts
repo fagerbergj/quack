@@ -666,7 +666,7 @@ export type NodeStatusUpdateBody = {
      */
     status: 'paused' | 'running' | 'queued';
     /**
-     * Optional and folded into the node's task when status is "queued" (retry, or resuming a paused node via a fresh re-run). Unused for "paused". To steer a RUNNING node, queue a message instead (POST .../nodes/{node_id}/queue) - it is delivered at the node's next turn boundary, not mid-turn.
+     * Optional and folded into the node's task when status is "queued" (retry) or "running" (resume, which it turns into a fresh re-run). Unused for "paused". To steer a RUNNING node, queue a message instead (POST .../nodes/{node_id}/queue) - it is delivered at the node's next turn boundary, not mid-turn.
      */
     guidance?: string;
     reason?: PauseReason;

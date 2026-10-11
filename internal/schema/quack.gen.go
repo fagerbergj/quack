@@ -1241,7 +1241,7 @@ type NodeStatus string
 
 // NodeStatusUpdateBody defines model for NodeStatusUpdateBody.
 type NodeStatusUpdateBody struct {
-	// Guidance Optional and folded into the node's task when status is "queued" (retry, or resuming a paused node via a fresh re-run). Unused for "paused". To steer a RUNNING node, queue a message instead (POST .../nodes/{node_id}/queue) - it is delivered at the node's next turn boundary, not mid-turn.
+	// Guidance Optional and folded into the node's task when status is "queued" (retry) or "running" (resume, which it turns into a fresh re-run). Unused for "paused". To steer a RUNNING node, queue a message instead (POST .../nodes/{node_id}/queue) - it is delivered at the node's next turn boundary, not mid-turn.
 	Guidance *string `json:"guidance,omitempty"`
 
 	// Reason Why a node sits in the `paused` status.
