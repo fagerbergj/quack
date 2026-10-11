@@ -96,8 +96,8 @@ type nodeControl struct {
 	roundAbort context.CancelFunc
 	// workerAbort aborts only a worker round (withRoundAbort), never a judge call, so a steer can't kill a judge.
 	workerAbort context.CancelFunc
-	// steerInterrupt: enqueue aborted the worker round to deliver a message now; the gate reads SteerInterrupted.
-	steerInterrupt bool
+	// roundInterrupt: a steer or pause aborted the worker round; the gate reads RoundInterrupted.
+	roundInterrupt bool
 
 	// repeatFailure: set by RepeatGuardTripped. Distinct from cancelled so it surfaces as a real failure,
 	// not the cancel path's silent continue-but-warn.
@@ -170,7 +170,7 @@ func (c *nodeControl) ClearRoundAbort() { c.clearRoundAbort() }
 func (c *nodeControl) SetWorkerRound(cancel context.CancelFunc) {
 	c.mu.Lock()
 	c.workerAbort = cancel
-	c.steerInterrupt = false // a flag the last round never consumed must not abort this one's outcome
+	c.roundInterrupt = false // a flag the last round never consumed must not abort this one's outcome
 	c.mu.Unlock()
 	c.SetRoundAbort(cancel)
 }
@@ -197,12 +197,12 @@ func (c *nodeControl) RepeatGuardTripped(msg string) {
 	}
 }
 
-// SteerInterrupted reports and clears that a queued message aborted the round.
-func (c *nodeControl) SteerInterrupted() bool {
+// RoundInterrupted reports and clears that a steer or pause aborted the worker round.
+func (c *nodeControl) RoundInterrupted() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	was := c.steerInterrupt
-	c.steerInterrupt = false
+	was := c.roundInterrupt
+	c.roundInterrupt = false
 	return was
 }
 
@@ -356,15 +356,23 @@ func (c *nodeControl) enqueue(text string) queuedMsg {
 	c.queue = append(c.queue, m)
 	snapshot := *m // copied under the lock: a drain may rewrite m.Status the moment it's released
 	var abort context.CancelFunc
-	if status == MsgQueued && c.workerAbort != nil {
-		abort = c.workerAbort
-		c.steerInterrupt = true
+	if status == MsgQueued {
+		abort = c.interruptLocked()
 	}
 	c.mu.Unlock()
 	if abort != nil {
 		abort()
 	}
 	return snapshot
+}
+
+// interruptLocked flags an in-flight worker round for the gate and returns its abort, nil between rounds.
+// Caller holds c.mu and fires the abort after unlocking.
+func (c *nodeControl) interruptLocked() context.CancelFunc {
+	if c.workerAbort != nil {
+		c.roundInterrupt = true
+	}
+	return c.workerAbort
 }
 
 // restore rebuilds a control's steer queue from dag_nodes after a restart. A persisted pause is
@@ -653,8 +661,8 @@ func (e *Executor) RepeatGuardTripped(chatID, nodeID, msg string) bool {
 	return true
 }
 
-// PauseNode suspends a running node at its next gate boundary. reason distinguishes a human pause
-// from a shutdown drain; empty reason = user.
+// PauseNode suspends a running node. A user pause aborts its worker round, which the resume continues;
+// a shutdown pause waits for the gate boundary. Empty reason = user.
 func (e *Executor) PauseNode(chatID, nodeID string, reason PauseReason) bool {
 	if reason == "" {
 		reason = PauseUser
@@ -663,8 +671,21 @@ func (e *Executor) PauseNode(chatID, nodeID string, reason PauseReason) bool {
 	if c == nil {
 		return false
 	}
+	if reason == PauseShutdown && c.PauseReason() == PauseUser {
+		return true // relabelled shutdown, boot would resume a node the user paused
+	}
 	c.markPaused(reason, "")
 	e.controls.markPausedSticky(chatID, nodeID, reason)
+	if reason == PauseUser {
+		// ponytail: a shutdown pause stays cooperative; aborting it would end ext runs inside the drain grace
+		// and deliver a premature RunEnded. Make it instant once finishExtRun skips RunEnded while draining.
+		c.mu.Lock()
+		abort := c.interruptLocked()
+		c.mu.Unlock()
+		if abort != nil {
+			abort()
+		}
+	}
 	return true
 }
 

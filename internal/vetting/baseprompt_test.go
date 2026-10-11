@@ -136,4 +136,4 @@ func TestRunGatedRefine_QueuedRerunKeepsRecalledMemory(t *testing.T) {
 	}
 }
 
-func (*basePromptCtrl) SteerInterrupted() bool { return false }
+func (*basePromptCtrl) RoundInterrupted() bool { return false }

@@ -1210,8 +1210,9 @@ type UnresumableNode struct {
 
 // ResumeReport is what a boot reconcile did, for the caller to log and act on.
 type ResumeReport struct {
-	Start         []ResumableNode   // paused/user | paused/shutdown | hard-kill orphans - re-enter the graph
+	Start         []ResumableNode   // paused/shutdown | hard-kill orphans - re-enter the graph
 	AwaitingInput []ResumableNode   // paused/awaiting_input - re-armed, NOT started; needs an answer
+	Held          []ResumableNode   // paused/user - left paused until the user starts it
 	Failed        []UnresumableNode // genuinely unresumable, marked failed with the reason in `error`
 }
 
@@ -1284,6 +1285,10 @@ func (s *Store) ResumePausedDagNodes(ctx context.Context, resumable func(chatID,
 		rn := ResumableNode{ChatID: chatID, PlanID: n.PlanID, NodeID: n.NodeID, Reason: reason}
 		if reason == dag.PauseAwaitingInput || n.Status == string(dag.StatusNeedsInput) {
 			rep.AwaitingInput = append(rep.AwaitingInput, rn)
+			continue
+		}
+		if reason == dag.PauseUser {
+			rep.Held = append(rep.Held, rn)
 			continue
 		}
 		rep.Start = append(rep.Start, rn)

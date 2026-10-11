@@ -34,6 +34,8 @@ type steerCtrl struct {
 	taken       bool
 	interrupted bool
 	pauseToo    bool // the user paused the node as the steer landed
+	noMessage   bool // a pause alone interrupted the round
+	takes       int
 }
 
 func (c *steerCtrl) arm() {
@@ -51,13 +53,14 @@ func (c *steerCtrl) Paused() bool {
 func (c *steerCtrl) TakeQueued() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.armed || c.taken {
+	c.takes++
+	if !c.armed || c.taken || c.noMessage {
 		return ""
 	}
 	c.taken = true
 	return steerMarker
 }
-func (c *steerCtrl) SteerInterrupted() bool {
+func (c *steerCtrl) RoundInterrupted() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	was := c.interrupted
@@ -248,5 +251,17 @@ func TestRunGatedRefine_PauseWithASteerLeavesItQueued(t *testing.T) {
 	}
 	if ctrl.taken {
 		t.Error("the steer was drained into a run that parked")
+	}
+}
+
+// A pause alone that aborts the worker round parks the node at once: no queue is drained and no draft is kept.
+func TestRunGatedRefine_PauseInterruptParksTheNode(t *testing.T) {
+	ctrl := &steerCtrl{pauseToo: true, noMessage: true}
+	reqs, err := runSteeredGate(t, ctrl, func(context.Context) bool { return true })
+	if !errors.Is(err, ErrNodePaused) {
+		t.Fatalf("gate err = %v, want ErrNodePaused", err)
+	}
+	if ctrl.takes != 0 || len(reqs) != 2 {
+		t.Errorf("queue drained %d time(s) and %d worker call(s), want 0 and the 2 of the cut-off round", ctrl.takes, len(reqs))
 	}
 }

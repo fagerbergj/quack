@@ -203,7 +203,7 @@ func (o *Orchestrator) NodeIsLive(chatID, nodeID string) bool {
 	return o.executor.NodeIsLive(chatID, nodeID)
 }
 
-// PauseNode suspends a node at its next gate boundary; resumable.
+// PauseNode suspends a node, cutting off its worker round; resumable.
 func (o *Orchestrator) PauseNode(chatID, nodeID string, reason dag.PauseReason) bool {
 	return o.executor.PauseNode(chatID, nodeID, reason)
 }

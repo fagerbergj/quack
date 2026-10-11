@@ -160,7 +160,7 @@ func TestResumeGuardArchivedOrStale(t *testing.T) {
 		{"no plan row skips the age check", false, false, dag.PauseShutdown, 0, true, ""},
 		{"awaiting_input node past the ceiling is left as-is", false, true, dag.PauseAwaitingInput, staleResumePlanCeiling + time.Minute, true, ""},
 		{"archived still wins over awaiting_input", true, true, dag.PauseAwaitingInput, staleResumePlanCeiling + time.Minute, false, "archived"},
-		{"a human pause is never auto-resumed, even fresh", false, true, dag.PauseUser, time.Minute, false, "user"},
+		{"a human pause past the ceiling is left for the store to hold", false, true, dag.PauseUser, staleResumePlanCeiling + time.Minute, true, ""},
 		{"archived still wins over a human pause", true, true, dag.PauseUser, time.Minute, false, "archived"},
 	}
 	for _, tc := range cases {

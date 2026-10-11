@@ -52,4 +52,4 @@ func TestParkForInput_EmitFailurePassesThrough(t *testing.T) {
 	}
 }
 
-func (*parkCtrl) SteerInterrupted() bool { return false }
+func (*parkCtrl) RoundInterrupted() bool { return false }
