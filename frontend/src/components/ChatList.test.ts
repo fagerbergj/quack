@@ -102,6 +102,15 @@ describe('origin chip', () => {
     expect(host!.textContent).toContain('draft')
   })
 
+  it('skips a GitHub chat\'s origin, which repeats its repo/PR/state badges', () => {
+    renderList([chat({
+      id: 'g1', github_url: 'https://github.com/acme/widget/pull/7', github_state: 'merged',
+      origin: { extension: 'github', label: 'acme/widget pr#7', href: 'https://github.com/acme/widget/pull/7', badge: 'merged' },
+    })])
+    expect(host!.textContent).not.toContain('acme/widget pr#7')
+    expect(host!.textContent?.match(/merged/g)).toHaveLength(1)
+  })
+
   it('renders nothing extra when origin is absent', () => {
     renderList([chat({ id: 'e4' })])
     expect(host!.textContent).not.toContain('undefined')
