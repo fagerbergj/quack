@@ -1192,7 +1192,7 @@ type ResumableNode struct {
 
 // UnresumableNode is a node the reconcile could not hand back, and why.
 type UnresumableNode struct {
-	PlanID, NodeID, Reason string
+	ChatID, PlanID, NodeID, Reason string
 }
 
 // ResumeReport is what a boot reconcile did, for the caller to log and act on.
@@ -1289,7 +1289,7 @@ func (s *Store) FailUnresumable(ctx context.Context, chatID string, n DagNode, w
 	}
 	s.syncDagNodeRecord(ctx, chatID, n.PlanID, n.NodeID, dag.StatusFailed)
 	s.appendNodeFailed(ctx, chatID, n)
-	return UnresumableNode{PlanID: n.PlanID, NodeID: n.NodeID, Reason: why}
+	return UnresumableNode{ChatID: chatID, PlanID: n.PlanID, NodeID: n.NodeID, Reason: why}
 }
 
 // appendNodeFailed records the settle in the ledger so a ledger-only replay agrees with the row;

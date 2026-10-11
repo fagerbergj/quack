@@ -76,7 +76,7 @@ func TestStartResumedNodes_ResetsBeforeDispatch(t *testing.T) {
 	hub := stream.NewHub()
 	eventLog := runlog.NewEventLog(st)
 	nodes := []store.ResumableNode{{ChatID: chatID, PlanID: plan.ID, NodeID: "n1", Reason: dag.PauseShutdown}}
-	startResumedNodes(ctx, nodes, orch, st, hub, eventLog, 4)
+	startResumedNodes(ctx, nodes, orch, st, hub, eventLog, nil, 4)
 
 	evs, err := eventLog.LoadEvents(ctx, chatID, 0)
 	if err != nil {

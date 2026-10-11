@@ -541,18 +541,18 @@ func (b *boot) initWorkspace(ctx context.Context) (*workspace.Jail, error) {
 }
 
 // opens the session store and artifact service, reconciling resumable nodes
-func (b *boot) initStorage(ctx context.Context, reconcile bool, jail *workspace.Jail, ledgerStore ledger.LedgerStore) (*store.Store, []store.ResumableNode, *store.TurnAwareService, error) {
+func (b *boot) initStorage(ctx context.Context, reconcile bool, jail *workspace.Jail, ledgerStore ledger.LedgerStore) (*store.Store, bootResume, *store.TurnAwareService, error) {
 	sessionStore, ok := b.cfg.Store(b.cfg.Session.Store)
 	if !ok {
-		return nil, nil, nil, fmt.Errorf("session store %q not found in stores registry", b.cfg.Session.Store)
+		return nil, bootResume{}, nil, fmt.Errorf("session store %q not found in stores registry", b.cfg.Session.Store)
 	}
 	st, err := store.New(sessionStore.Kind, sessionStore.URL)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("store open failed: %w", err)
+		return nil, bootResume{}, nil, fmt.Errorf("store open failed: %w", err)
 	}
 	artifactSvc, err := BuildArtifactService(b.cfg)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("artifact service init failed: %w", err)
+		return nil, bootResume{}, nil, fmt.Errorf("artifact service init failed: %w", err)
 	}
 	artifacts := store.NewTurnAwareService(artifactSvc)
 	st.SetArtifactService(artifacts)
@@ -561,12 +561,12 @@ func (b *boot) initStorage(ctx context.Context, reconcile bool, jail *workspace.
 		st.SetWALLedger(ledgerStore)
 	}
 	// After SetArtifactService: the reconcile mirrors each node's row status onto its dag_node record.
-	resumeNodes, err := bootReconcile(reconcile, b.cfg, st, jail)
+	resume, err := bootReconcile(reconcile, b.cfg, st, jail)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, bootResume{}, nil, err
 	}
 	warnIfEpisodicRecordsWontSurvive(b.cfg)
-	return st, resumeNodes, artifacts, nil
+	return st, resume, artifacts, nil
 }
 
 // builds the orchestrator model
@@ -803,14 +803,14 @@ func (b *boot) initAgents(st *store.Store, skillTS *skilltoolset.SkillToolset, b
 }
 
 // assembles the orchestrator, re-enters resumed nodes, and starts the extensions and sweeps
-func (b *boot) initOrchestrator(ctx context.Context, st *store.Store, llm model.LLM, roster *dag.Roster, judgeFactory vetting.JudgeFactory, planJudge vetting.PlanJudge, taskStore, userStore *memory.Store, artifacts artifact.Service, ledgerStore ledger.LedgerStore, assignmentFreshness tools.AssignmentFreshnessFunc, assignmentMeta tools.AssignmentMetaFunc, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), skillSrc skill.Source, orchRef *atomic.Pointer[orchestrator.Orchestrator], resumeNodes []store.ResumableNode, runHub *stream.Hub, bootEventLog *runlog.EventLog, sdkExts []builtSDKExtension, startSweeps []func(), hooks *shutdownHooks, executorRef *atomic.Pointer[dag.Executor], setupFn dag.SetupFunc, artifactSchemas *artifactschema.Registry) (*orchestrator.Orchestrator, error) {
+func (b *boot) initOrchestrator(ctx context.Context, st *store.Store, llm model.LLM, roster *dag.Roster, judgeFactory vetting.JudgeFactory, planJudge vetting.PlanJudge, taskStore, userStore *memory.Store, artifacts artifact.Service, ledgerStore ledger.LedgerStore, assignmentFreshness tools.AssignmentFreshnessFunc, assignmentMeta tools.AssignmentMetaFunc, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), skillSrc skill.Source, orchRef *atomic.Pointer[orchestrator.Orchestrator], resume bootResume, runHub *stream.Hub, bootEventLog *runlog.EventLog, sdkExts []builtSDKExtension, startSweeps []func(), hooks *shutdownHooks, executorRef *atomic.Pointer[dag.Executor], setupFn dag.SetupFunc, artifactSchemas *artifactschema.Registry) (*orchestrator.Orchestrator, error) {
 	orch, err := assembleOrchestrator(ctx, b.cfg, b.res, st, llm, roster, judgeFactory, planJudge, b.decisions, taskStore, userStore, artifacts, ledgerStore, assignmentFreshness, assignmentMeta, newScopedSkillTS, skillSrc, orchRef, executorRef, hooks, setupFn, b.admission, artifactSchemas)
 	if err != nil {
 		return nil, err
 	}
 	// Re-enter each resumed node's graph only after the orchestrator exists:
 	// a crash here leaves them paused; the next boot picks them up (reconcile already ran).
-	startResumedNodes(ctx, resumeNodes, orch, st, runHub, bootEventLog, bootResumeConcurrency)
+	startResumedNodes(ctx, resume.Start, orch, st, runHub, bootEventLog, sdkExts, bootResumeConcurrency)
 	go syncFinishedNodeRecords(ctx, st)
 	for _, start := range startSweeps {
 		start()
@@ -818,6 +818,8 @@ func (b *boot) initOrchestrator(ctx context.Context, st *store.Store, llm model.
 	if err := startSDKExtensions(ctx, sdkExts); err != nil {
 		return nil, fmt.Errorf("sdk extensions start failed: %w", err)
 	}
+	// After Start restores the extensions' claims; off the boot path, as RunEnded can make GitHub calls.
+	go endSettledExtRuns(resume.Settled, sdkExts)
 	if userStore != nil && b.cfg.Orchestrator.UserMemoryHook.Enabled {
 		if memAgent, err := buildUserMemoryHookAgent(ctx, b.cfg.Orchestrator.UserMemoryHook, b.cfg, b.res, artifacts, b.admission); err != nil {
 			slog.Warn("user memory hook build failed; hook disabled", "component", "startup", "err", err)
@@ -873,7 +875,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	if err != nil {
 		return nil, nil, "", err
 	}
-	st, resumeNodes, artifacts, err := b.initStorage(ctx, reconcile, jail, ledgerStore)
+	st, resume, artifacts, err := b.initStorage(ctx, reconcile, jail, ledgerStore)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -924,7 +926,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	rr := &rosterReload{pristine: b.pristine, res: b.res, build: rebuild, sdkTools: sdkTools, mcpOn: mcpOn, shapesRef: &shapesRef}
 	rr.cur = rr.generation(ctx, b.cfg, built, mcp, b.seedOwners, 1)
 	shapesRef.Store(&rr.cur.shapes)
-	orch, err := b.initOrchestrator(ctx, st, llm, rr.cur.roster, judgeFactory, planJudge, taskStore, userStore, artifacts, ledgerStore, assignmentFreshness, assignmentMeta, skills.newScopedSkillTS, skills.skillSrc, &orchRef, resumeNodes, runHub, bootEventLog, sdkExts, startSweeps, hooks, executorRef, setupFn, artifactSchemas)
+	orch, err := b.initOrchestrator(ctx, st, llm, rr.cur.roster, judgeFactory, planJudge, taskStore, userStore, artifacts, ledgerStore, assignmentFreshness, assignmentMeta, skills.newScopedSkillTS, skills.skillSrc, &orchRef, resume, runHub, bootEventLog, sdkExts, startSweeps, hooks, executorRef, setupFn, artifactSchemas)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -1770,17 +1772,17 @@ func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderCon
 	return na, nil
 }
 
-func bootReconcile(reconcile bool, cfg *config.Config, st *store.Store, jail *workspace.Jail) ([]store.ResumableNode, error) {
-	var resumeNodes []store.ResumableNode
+func bootReconcile(reconcile bool, cfg *config.Config, st *store.Store, jail *workspace.Jail) (bootResume, error) {
+	var resume bootResume
 	if reconcile {
 		id, err := store.LoadOrCreateInstanceID(cfg.Workspace.Root)
 		if err != nil {
-			return nil, fmt.Errorf("instance id init failed: %w", err)
+			return bootResume{}, fmt.Errorf("instance id init failed: %w", err)
 		}
 		st.SetInstanceID(id)
 		// Runs before anything can register a run with the Hub, so resume starts from a settled DB; the memory
 		// consolidator's boot sweep starts after.
-		resumeNodes = reconcileNodes(context.Background(), st, jail, func(chatID, pauseReason string) (bool, string) {
+		resume = reconcileNodes(context.Background(), st, jail, func(chatID, pauseReason string) (bool, string) {
 			// Never resume an archived chat's paused nodes; the archive should free their run slots.
 			c, _ := st.GetChat(context.Background(), chatID)
 			p, _ := st.GetLatestDagPlan(context.Background(), chatID)
@@ -1799,7 +1801,7 @@ func bootReconcile(reconcile bool, cfg *config.Config, st *store.Store, jail *wo
 			return true, ""
 		})
 	}
-	return resumeNodes, nil
+	return resume, nil
 }
 
 func openMemoryStores(ctx context.Context, cfg *config.Config, st *store.Store, artifacts artifact.Service, admission *dag.Admission) (*memory.Store, *memory.Store, []func(), error) {

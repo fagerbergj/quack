@@ -2,9 +2,13 @@ package serve
 
 import (
 	"context"
+	"errors"
 	"iter"
 	"log/slog"
+	"strings"
 	"time"
+
+	extsdk "github.com/fagerbergj/quack-extensions/sdk"
 
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/orchestrator"
@@ -38,13 +42,25 @@ func resumeGuardArchivedOrStale(archived, hasPlan bool, pauseReason dag.PauseRea
 	return true, ""
 }
 
+// bootResume is what the reconcile left for the started server: nodes to re-enter, and chats it ended instead.
+type bootResume struct {
+	Start   []store.ResumableNode
+	Settled []settledRun // left mid-run, now failed with nothing to resume
+}
+
+// settledRun: PlanRan is false for a turn interrupted before it planned, so no node row exists.
+type settledRun struct {
+	ChatID  string
+	PlanRan bool
+}
+
 // reconcileNodes hands every node the last process left suspended back to the scheduler. It runs before the
 // Hub accepts runs (ScanOrphanedRuns has no liveness check); the caller starts the returned nodes later.
-func reconcileNodes(ctx context.Context, st *store.Store, jail *workspace.Jail, resumable func(chatID, pauseReason string) (bool, string)) []store.ResumableNode {
+func reconcileNodes(ctx context.Context, st *store.Store, jail *workspace.Jail, resumable func(chatID, pauseReason string) (bool, string)) bootResume {
 	rep, err := st.ResumePausedDagNodes(ctx, resumable)
 	if err != nil {
 		slog.Error("resume paused dag nodes", "component", "store", "err", err)
-		return nil
+		return bootResume{}
 	}
 	// After the reconcile: a hard-kill orphan is `paused` by now, so the chat
 	// scan sees it and stamps the chat paused instead of interrupted.
@@ -68,8 +84,54 @@ func reconcileNodes(ctx context.Context, st *store.Store, jail *workspace.Jail, 
 			"component", "startup", "chat", id)
 		removeStaleCloneDir(jail, id)
 	}
-	return rep.Start
+	return bootResume{Start: rep.Start, Settled: settledChats(rep, interrupted)}
 }
+
+// settledChats: chats with a failed node or an interrupted turn and nothing resumed or awaiting an answer.
+func settledChats(rep store.ResumeReport, interrupted []string) []settledRun {
+	live := map[string]bool{}
+	for _, n := range append(rep.Start, rep.AwaitingInput...) {
+		live[n.ChatID] = true
+	}
+	seen := map[string]bool{}
+	var out []settledRun
+	add := func(id string, planRan bool) {
+		if id != "" && !live[id] && !seen[id] {
+			seen[id] = true
+			out = append(out, settledRun{ChatID: id, PlanRan: planRan})
+		}
+	}
+	for _, f := range rep.Failed {
+		add(f.ChatID, true)
+	}
+	for _, id := range interrupted {
+		add(id, false)
+	}
+	return out
+}
+
+// endSettledExtRuns tells each dispatching extension that its run ended at boot, so it can post the failure
+// and release the session instead of holding it until its lease expires.
+func endSettledExtRuns(runs []settledRun, exts []builtSDKExtension) {
+	for _, r := range runs {
+		if obs := runObserverFor(r.ChatID, exts); obs != nil {
+			endSettledExtRun(obs, r)
+		}
+	}
+}
+
+// endSettledExtRun isolates extension code: a panic must not crash boot or skip the remaining chats.
+func endSettledExtRun(obs extsdk.RunObserver, run settledRun) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("boot: extension RunEnded panicked", "component", "startup", "chat", run.ChatID, "err", r)
+		}
+	}()
+	slog.Info("boot ended an extension run it could not resume", "component", "startup", "chat", run.ChatID)
+	obs.RunEnded(run.ChatID, extsdk.RunOutcome{Status: extsdk.RunFailed, PlanRan: run.PlanRan, Error: settledRunError})
+}
+
+const settledRunError = "quack restarted and could not resume this run; re-trigger it to start over"
 
 // syncFinishedNodeRecords repairs recent finished nodes' dag_node records off the boot path;
 // older plans are left alone, as boot never resumes them either.
@@ -99,7 +161,7 @@ func removeStaleCloneDir(jail *workspace.Jail, chatID string) {
 
 // startResumedNodes runs one run per chat (the Hub allows one), re-entering each resumable node's
 // node+descendants subset in turn; maxConcurrent caps chats resuming at once.
-func startResumedNodes(ctx context.Context, nodes []store.ResumableNode, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, maxConcurrent int) {
+func startResumedNodes(ctx context.Context, nodes []store.ResumableNode, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, exts []builtSDKExtension, maxConcurrent int) {
 	byChat := map[string][]store.ResumableNode{}
 	var order []string
 	for _, n := range nodes {
@@ -114,7 +176,7 @@ func startResumedNodes(ctx context.Context, nodes []store.ResumableNode, orch *o
 		eventLog.Reset(ctx, chatID)
 	}
 	boundedGoRun(order, maxConcurrent, func(chatID string) {
-		driveResume(ctx, chatID, byChat[chatID], orch, st, hub, eventLog)
+		driveResume(ctx, chatID, byChat[chatID], orch, st, hub, eventLog, runObserverFor(chatID, exts))
 	})
 }
 
@@ -136,7 +198,8 @@ func boundedGoRun(ids []string, maxConcurrent int, run func(id string)) {
 
 // driveResume re-enters a chat's resumable nodes via the REST-retry subset path (node + descendants);
 // a full-plan run would re-execute done nodes.
-func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog) {
+// obs, when non-nil, is the dispatching extension: it gets RunEnded exactly as an uninterrupted run would.
+func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, obs extsdk.RunObserver) {
 	plan, err := st.GetLatestDagPlan(ctx, chatID)
 	if err != nil || plan == nil {
 		slog.Warn("resume: plan lookup failed", "component", "startup", "chat", chatID, "err", err)
@@ -178,9 +241,33 @@ func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode
 	tailCtx, cancel := context.WithTimeout(context.WithoutCancel(runCtx), 10*time.Second)
 	defer cancel()
 	runlog.StampTurn(tailCtx, st, chatID, turnID, res)
+	// A resume cut by another shutdown skips RunEnded too; the next boot resumes it again.
+	if obs != nil && !hub.WasInterrupted(chatID) {
+		timedOut := errors.Is(runCtx.Err(), context.DeadlineExceeded)
+		cancelled := errors.Is(runCtx.Err(), context.Canceled)
+		out := buildExtRunOutcome(tailCtx, orch, st, userID, chatID, res.PlanID != "", res.NeedsInput, timedOut, cancelled)
+		slog.Info("resume: run ended; outcome delivered to its extension", "component", "startup", "chat", chatID, "status", out.Status)
+		obs.RunEnded(chatID, out)
+		return
+	}
 	st.StampTerminalOutcome(tailCtx, orchestrator.AppName, userID, chatID, func() (string, bool) {
 		return orch.PendingQuestion(tailCtx, userID, chatID)
 	})
+}
+
+// runObserverFor returns the extension that dispatched chatID ("ext:<name>:..."), if it observes runs.
+func runObserverFor(chatID string, exts []builtSDKExtension) extsdk.RunObserver {
+	rest, ok := strings.CutPrefix(chatID, "ext:")
+	if !ok {
+		return nil
+	}
+	name, _, _ := strings.Cut(rest, ":")
+	for _, e := range exts {
+		if obs, ok := e.ext.(extsdk.RunObserver); ok && e.name == name {
+			return obs
+		}
+	}
+	return nil
 }
 
 // lastErrorOf passes run through, keeping the text of its last error event in msg.
