@@ -201,7 +201,7 @@ func TestDriveResume_UnresumableSettlesNode(t *testing.T) {
 				t.Fatalf("first boot = %+v err=%v, want n1 to resume", rep, err)
 			}
 			f.st.SetWALLedger(led)
-			driveResume(ctx, f.chatID, rep.Start, orch, f.st, stream.NewHub(), runlog.NewEventLog(f.st))
+			driveResume(ctx, f.chatID, rep.Start, orch, f.st, stream.NewHub(), runlog.NewEventLog(f.st), nil)
 
 			if n := f.row(t); n.Status != string(dag.StatusFailed) || n.Error == "" {
 				t.Errorf("row = %s (error %q), want failed with the reason", n.Status, n.Error)
@@ -286,7 +286,7 @@ func resumeFromStoreCopy(t *testing.T, stash *dag.Plan) {
 	if err != nil || len(rep.Start) != 1 {
 		t.Fatalf("boot = %+v err=%v, want n1 to resume", rep, err)
 	}
-	driveResume(ctx, f.chatID, rep.Start, orch, f.st, stream.NewHub(), runlog.NewEventLog(f.st))
+	driveResume(ctx, f.chatID, rep.Start, orch, f.st, stream.NewHub(), runlog.NewEventLog(f.st), nil)
 
 	if n := f.row(t); n.Status != string(dag.StatusDone) {
 		t.Errorf("row = %s (error %q), want done", n.Status, n.Error)
@@ -348,7 +348,7 @@ func TestDriveResume_StoppedSeedKeepsItsWarning(t *testing.T) {
 	if err != nil || len(rep.Start) != 1 {
 		t.Fatalf("boot = %+v err=%v, want n1 to resume", rep, err)
 	}
-	driveResume(ctx, f.chatID, rep.Start, orch, f.st, stream.NewHub(), runlog.NewEventLog(f.st))
+	driveResume(ctx, f.chatID, rep.Start, orch, f.st, stream.NewHub(), runlog.NewEventLog(f.st), nil)
 
 	for _, p := range stub.workerPrompts() {
 		if strings.Contains(p, "TASK-ONE") {

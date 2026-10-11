@@ -18,6 +18,8 @@ import (
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/genai"
 
+	extsdk "github.com/fagerbergj/quack-extensions/sdk"
+
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/orchestrator"
 	"github.com/fagerbergj/quack/internal/runlog"
@@ -287,7 +289,7 @@ func TestDriveResume_ReentryRunsPausedNodeOnly(t *testing.T) {
 	_ = resp
 
 	driveResume(ctx, chatID, []store.ResumableNode{{ChatID: chatID, PlanID: plan.ID, NodeID: "n2", Reason: dag.PauseShutdown}},
-		orch, st, stream.NewHub(), runlog.NewEventLog(st))
+		orch, st, stream.NewHub(), runlog.NewEventLog(st), nil)
 
 	prompts := stub.workerPrompts()
 	ran := func(task string) bool {
@@ -320,21 +322,20 @@ func TestDriveResume_ReentryRunsPausedNodeOnly(t *testing.T) {
 	}
 }
 
-// TestDriveResume_TailSurvivesCancelledRunCtx: the tail (StampTurn/StampTerminalOutcome/PendingQuestion)
-// must not use runCtx - a cancel there would leave the chat showing as running forever.
-func TestDriveResume_TailSurvivesCancelledRunCtx(t *testing.T) {
+// newOneNodeResumeFixture: chatID's plan is one node n1 left paused by a shutdown, over a stub LLM.
+func newOneNodeResumeFixture(t *testing.T, chatID string) (*store.Store, *orchestrator.Orchestrator, dag.Plan) {
+	t.Helper()
 	ctx := context.Background()
 	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {
 		t.Fatalf("store.New: %v", err)
 	}
-	chatID := "chat-boot-resume-cancel"
 	if err := st.SetChatOrigin(ctx, chatID, "u1", ""); err != nil {
 		t.Fatalf("SetChatOrigin: %v", err)
 	}
 	userID := st.SessionUserForChat(ctx, chatID)
 
-	plan := dag.Plan{ID: "plan-cancel", UserMessage: "x", Nodes: []dag.Node{
+	plan := dag.Plan{ID: "plan-1node", UserMessage: "x", Nodes: []dag.Node{
 		{ID: "n1", AgentName: "blk", Task: "TASK-ONE"},
 	}}
 	planJSON, _ := json.Marshal(plan)
@@ -363,6 +364,16 @@ func TestDriveResume_TailSurvivesCancelledRunCtx(t *testing.T) {
 		t.Fatalf("session create: %v", err)
 	}
 
+	return st, orch, plan
+}
+
+// TestDriveResume_TailSurvivesCancelledRunCtx: the tail (StampTurn/StampTerminalOutcome/PendingQuestion)
+// must not use runCtx - a cancel there would leave the chat showing as running forever.
+func TestDriveResume_TailSurvivesCancelledRunCtx(t *testing.T) {
+	ctx := context.Background()
+	chatID := "chat-boot-resume-cancel"
+	st, orch, plan := newOneNodeResumeFixture(t, chatID)
+
 	hub := stream.NewHub()
 	go func() {
 		for !hub.HasRegisteredRun(chatID) {
@@ -372,7 +383,7 @@ func TestDriveResume_TailSurvivesCancelledRunCtx(t *testing.T) {
 	}()
 
 	driveResume(ctx, chatID, []store.ResumableNode{{ChatID: chatID, PlanID: plan.ID, NodeID: "n1", Reason: dag.PauseShutdown}},
-		orch, st, hub, runlog.NewEventLog(st))
+		orch, st, hub, runlog.NewEventLog(st), nil)
 
 	c, err := st.GetChat(ctx, chatID)
 	if err != nil || c == nil {
@@ -381,6 +392,35 @@ func TestDriveResume_TailSurvivesCancelledRunCtx(t *testing.T) {
 	if c.ActiveTurnID != "" {
 		t.Errorf("ActiveTurnID = %q, want cleared - the tail's stamp must survive runCtx being cancelled", c.ActiveTurnID)
 	}
+}
+
+// TestDriveResume_ExtensionChatGetsRunEnded: the dispatching extension can only finalize (post, clear its
+// pending row) a run resumed at boot if driveResume hands it the outcome.
+func TestDriveResume_ExtensionChatGetsRunEnded(t *testing.T) {
+	ctx := context.Background()
+	chatID := "ext:obs:pr-1"
+	st, orch, plan := newOneNodeResumeFixture(t, chatID)
+	obs := &outcomeObserver{}
+	exts := []builtSDKExtension{{name: "other", ext: &fakeRunObserver{}}, {name: "obs", ext: obs}}
+
+	driveResume(ctx, chatID, []store.ResumableNode{{ChatID: chatID, PlanID: plan.ID, NodeID: "n1", Reason: dag.PauseShutdown}},
+		orch, st, stream.NewHub(), runlog.NewEventLog(st), runObserverFor(chatID, exts))
+
+	if len(obs.outcomes) != 1 || obs.outcomes[0].Status != extsdk.RunDone || !obs.outcomes[0].PlanRan {
+		t.Fatalf("RunEnded outcomes = %+v, want one RunDone with PlanRan", obs.outcomes)
+	}
+	if runObserverFor("chat-plain", exts) != nil || runObserverFor("ext:missing:x", exts) != nil {
+		t.Error("only an ext:<name>: chat with a matching observer may get RunEnded")
+	}
+}
+
+type outcomeObserver struct {
+	fakeRunObserver
+	outcomes []extsdk.RunOutcome
+}
+
+func (o *outcomeObserver) RunEnded(_ string, out extsdk.RunOutcome) {
+	o.outcomes = append(o.outcomes, out)
 }
 
 // TestDriveResume_ReachesWorkerInOriginalScope: RetryNode's synthetic "chatID::retry" session id must not
@@ -450,7 +490,7 @@ func TestDriveResume_ReachesWorkerInOriginalScope(t *testing.T) {
 	}
 
 	driveResume(ctx, chatID, []store.ResumableNode{{ChatID: chatID, PlanID: plan.ID, NodeID: "n1", Reason: dag.PauseShutdown}},
-		orch, st, stream.NewHub(), runlog.NewEventLog(st))
+		orch, st, stream.NewHub(), runlog.NewEventLog(st), nil)
 
 	n1, err := st.GetDagNode(ctx, plan.ID, "n1")
 	if err != nil || n1 == nil {

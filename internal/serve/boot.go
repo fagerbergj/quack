@@ -2,9 +2,13 @@ package serve
 
 import (
 	"context"
+	"errors"
 	"iter"
 	"log/slog"
+	"strings"
 	"time"
+
+	extsdk "github.com/fagerbergj/quack-extensions/sdk"
 
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/orchestrator"
@@ -99,7 +103,7 @@ func removeStaleCloneDir(jail *workspace.Jail, chatID string) {
 
 // startResumedNodes runs one run per chat (the Hub allows one), re-entering each resumable node's
 // node+descendants subset in turn; maxConcurrent caps chats resuming at once.
-func startResumedNodes(ctx context.Context, nodes []store.ResumableNode, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, maxConcurrent int) {
+func startResumedNodes(ctx context.Context, nodes []store.ResumableNode, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, exts []builtSDKExtension, maxConcurrent int) {
 	byChat := map[string][]store.ResumableNode{}
 	var order []string
 	for _, n := range nodes {
@@ -114,7 +118,7 @@ func startResumedNodes(ctx context.Context, nodes []store.ResumableNode, orch *o
 		eventLog.Reset(ctx, chatID)
 	}
 	boundedGoRun(order, maxConcurrent, func(chatID string) {
-		driveResume(ctx, chatID, byChat[chatID], orch, st, hub, eventLog)
+		driveResume(ctx, chatID, byChat[chatID], orch, st, hub, eventLog, runObserverFor(chatID, exts))
 	})
 }
 
@@ -136,7 +140,8 @@ func boundedGoRun(ids []string, maxConcurrent int, run func(id string)) {
 
 // driveResume re-enters a chat's resumable nodes via the REST-retry subset path (node + descendants);
 // a full-plan run would re-execute done nodes.
-func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog) {
+// obs, when non-nil, is the dispatching extension: it gets RunEnded exactly as an uninterrupted run would.
+func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, obs extsdk.RunObserver) {
 	plan, err := st.GetLatestDagPlan(ctx, chatID)
 	if err != nil || plan == nil {
 		slog.Warn("resume: plan lookup failed", "component", "startup", "chat", chatID, "err", err)
@@ -178,9 +183,31 @@ func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode
 	tailCtx, cancel := context.WithTimeout(context.WithoutCancel(runCtx), 10*time.Second)
 	defer cancel()
 	runlog.StampTurn(tailCtx, st, chatID, turnID, res)
+	// A resume cut by another shutdown skips RunEnded too; the next boot resumes it again.
+	if obs != nil && !hub.WasInterrupted(chatID) {
+		timedOut := errors.Is(runCtx.Err(), context.DeadlineExceeded)
+		cancelled := errors.Is(runCtx.Err(), context.Canceled)
+		obs.RunEnded(chatID, buildExtRunOutcome(tailCtx, orch, st, userID, chatID, res.PlanID != "", res.NeedsInput, timedOut, cancelled))
+		return
+	}
 	st.StampTerminalOutcome(tailCtx, orchestrator.AppName, userID, chatID, func() (string, bool) {
 		return orch.PendingQuestion(tailCtx, userID, chatID)
 	})
+}
+
+// runObserverFor returns the extension that dispatched chatID ("ext:<name>:..."), if it observes runs.
+func runObserverFor(chatID string, exts []builtSDKExtension) extsdk.RunObserver {
+	rest, ok := strings.CutPrefix(chatID, "ext:")
+	if !ok {
+		return nil
+	}
+	name, _, _ := strings.Cut(rest, ":")
+	for _, e := range exts {
+		if obs, ok := e.ext.(extsdk.RunObserver); ok && e.name == name {
+			return obs
+		}
+	}
+	return nil
 }
 
 // lastErrorOf passes run through, keeping the text of its last error event in msg.
