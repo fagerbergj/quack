@@ -222,10 +222,12 @@ func (s *DagStream) emitFinishTerminal(n Node, stopped bool, runErr error) {
 func (e *Executor) RetryPlanInNode(ctx adkagent.Context, plan Plan, chatID, nodeID string, seeded map[string]string, cont bool) (map[string]string, error) {
 	// ponytail: only the named target, not a re-cascaded descendant - the same class of staleness
 	// could in principle reach one of those too, add if it shows up in practice.
-	if cont && e.repairNativeWorkerSession(context.WithoutCancel(ctx), plan, chatID, nodeID) {
-		plan = withContinue(plan, nodeID)
-	} else {
+	native := cont && e.repairNativeWorkerSession(context.WithoutCancel(ctx), plan, chatID, nodeID)
+	if !native {
 		e.resetNativeWorkerSession(context.WithoutCancel(ctx), plan, chatID, nodeID)
+	}
+	if cont {
+		plan = withContinue(plan, nodeID, native)
 	}
 	return e.runSubset(ctx, plan, chatID, seeded, retrySet(plan, nodeID))
 }
@@ -239,10 +241,13 @@ func (e *Executor) Continuable(ctx context.Context, chatID, nodeID string) bool 
 	return err == nil && NodeStatus(status) == StatusPaused && PauseReason(reason) != PauseAwaitingInput
 }
 
-func withContinue(plan Plan, nodeID string) Plan {
+// withContinue: a native node continues its repaired session; any other reloads the ACP session it saved.
+func withContinue(plan Plan, nodeID string, native bool) Plan {
 	plan.Nodes = slices.Clone(plan.Nodes)
 	for i := range plan.Nodes {
-		plan.Nodes[i].Continue = plan.Nodes[i].ID == nodeID
+		target := plan.Nodes[i].ID == nodeID
+		plan.Nodes[i].Continue = target && native
+		plan.Nodes[i].ReloadSession = target && !native
 	}
 	return plan
 }

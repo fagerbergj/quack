@@ -1038,3 +1038,31 @@ func TestRound_ReapsChildThatStopsReadingStdin(t *testing.T) {
 		t.Fatal("round() never returned - a deaf child wedges gracefulCancel on the same writeMu the prompt write holds, so the child is never reaped")
 	}
 }
+
+// A round saves its session id in the state dir, and only a node marked for reload reads it back.
+func TestRound_SavedSessionIDReloadsOnlyWhenAsked(t *testing.T) {
+	a := testAgent(t, "resume-fail")
+	stateDir := t.TempDir()
+	token := "tok-save"
+	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{})
+	defer vetting.UnregisterAdvisorThread(token)
+	if err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{ACPStateDir: stateDir}, "go", artifactsrc.Artifact{}, "", "", token, "", func(eventSpec) bool { return true }); err != nil {
+		t.Fatalf("round: %v", err)
+	}
+	if got := reloadSessionID(token, stateDir); got != "" {
+		t.Errorf("reload without ReloadACPSession = %q, want \"\"", got)
+	}
+
+	reload := "tok-reload"
+	vetting.RegisterAdvisorThread(reload, vetting.AdvisorTask{ReloadACPSession: true})
+	defer vetting.UnregisterAdvisorThread(reload)
+	if got := reloadSessionID(reload, stateDir); got != "s1" {
+		t.Errorf("reload = %q, want the saved session s1", got)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, sessionIDFile), []byte("../escape"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := reloadSessionID(reload, stateDir); got != "" {
+		t.Errorf("reload of a tampered id = %q, want \"\"", got)
+	}
+}

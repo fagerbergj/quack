@@ -4,6 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 
 	sdk "github.com/coder/acp-go-sdk"
 	"go.opentelemetry.io/otel/attribute"
@@ -180,4 +184,38 @@ func (a *Agent) roundLoop(al *roundLoopArgs) (bool, error) {
 			return false, fmt.Errorf("acp: no activity for %s - treating the ACP agent as wedged%s", a.opts.IdleTimeout, al.h.stderrTail())
 		}
 	}
+}
+
+// sessionIDFile, in the node's ACP state dir, names the session a resumed node reloads.
+const sessionIDFile = "quack-session-id"
+
+// restartNote leads a reloaded session's prompt: the task is restated, but the history shows how far it got.
+const restartNote = "Your work on this task was interrupted (the server restarted or the node was paused) and resumes now " +
+	"with your session history above. A tool call left without a real result never finished: check the current state " +
+	"before repeating it. Carry on from where you stopped rather than starting over.\n\n"
+
+var validSessionID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+
+// saveSessionID records sessID at round start, so a node killed mid-round can still reload it.
+func (a *Agent) saveSessionID(stateDir string, sessID sdk.SessionId) {
+	if stateDir == "" {
+		return
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, sessionIDFile), []byte(sessID), 0o600); err != nil {
+		a.log.Warn("acp: could not save the session id; a restart will re-run this node fresh", "err", err)
+	}
+}
+
+// reloadSessionID is the saved session of a node resuming after a pause or restart, or "".
+func reloadSessionID(advisorToken, stateDir string) string {
+	at, ok := vetting.LookupAdvisorThread(advisorToken)
+	if !ok || !at.ReloadACPSession || stateDir == "" {
+		return ""
+	}
+	// The state dir is the child's to write, so only a plain id is trusted.
+	b, err := os.ReadFile(filepath.Join(stateDir, sessionIDFile))
+	if id := strings.TrimSpace(string(b)); err == nil && validSessionID.MatchString(id) {
+		return id
+	}
+	return ""
 }

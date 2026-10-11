@@ -35,6 +35,8 @@ type AdvisorTask struct {
 	InvocationID    string
 	MemSecret       string // unguessable per-node credential for ACP memory
 	ACPSessionID    string // last round's ACP protocol session id, for cross-round resume (judge -> revise -> revise)
+	// ReloadACPSession: the node resumes after a pause or restart, so its first round reloads the saved ACP session.
+	ReloadACPSession bool
 	// Round/TurnID/HeadSHA: the gate's per-round coords, refreshed every round so tool-initiated writes
 	// stamp real lineage; BuildReviewPreload drops any finding with an empty HeadSHA.
 	Round   int

@@ -278,6 +278,7 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 				// ACPSessionID: the reused node's prior context, passed by an ACP node's resolveNode to session/load;
 				// empty for a fresh node and never read for a native one.
 				ACPSessionID:         cfg.ResumedFrom,
+				ReloadACPSession:     node.ReloadSession,
 				AllowedDeliveryKinds: cfg.AllowedDeliveryKinds,
 				PlanOnly:             plan.PlanOnly,
 			}

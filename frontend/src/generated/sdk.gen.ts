@@ -356,9 +356,10 @@ export const subscribeChatStream = <ThrowOnError extends boolean = false>(option
  *
  * - `{"status":"paused"}` - suspend a RUNNING node at its next safe
  * point, keeping its accumulated work. Only legal from `running`.
- * - `{"status":"running"}` - resume a `paused` node: a native node
- * carries on in its saved session (an ACP node, or one given
- * guidance, re-runs fresh), reusing the plan's other stored outputs.
+ * - `{"status":"running"}` - resume a `paused` node: it carries on in
+ * its saved session (an ACP node reloads it and is re-sent its task;
+ * one given guidance re-runs fresh), reusing the plan's other stored
+ * outputs.
  * Only legal from `paused`.
  * - `{"status":"queued","guidance":"..."}` - retry: re-run a finished
  * node (and every node downstream of it) reusing the stored outputs

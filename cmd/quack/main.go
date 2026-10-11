@@ -531,7 +531,7 @@ func runNodePause(ctx context.Context, out io.Writer, t string, args []string, a
 
 // newNodeResumeCmd: `chat node resume` - resume a PAUSED node (updateNodeStatus status=running).
 func newNodeResumeCmd() *cobra.Command {
-	return nodeTargetCmd("resume <chat-id> <node-id>", "Resume a paused node where it stopped (an ACP node re-runs fresh)", 2, runNodeResume)
+	return nodeTargetCmd("resume <chat-id> <node-id>", "Resume a paused node where it stopped", 2, runNodeResume)
 }
 
 func runNodeResume(ctx context.Context, out io.Writer, t string, args []string, asJSON bool) error {

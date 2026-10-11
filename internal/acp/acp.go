@@ -194,6 +194,11 @@ func (a *Agent) runPrompt(ctx adkagent.InvocationContext, prompt string) iter.Se
 			yield(nil, err)
 			return
 		}
+		if priorSessionID == "" {
+			if priorSessionID = reloadSessionID(advisorToken, acpStateDir); priorSessionID != "" {
+				prompt = restartNote + prompt
+			}
+		}
 		// homeTmpDir recreates scratch at the next spawn; removing it here keeps build tmp files
 		// from lingering until the gc TTL sweep.
 		if scratchDir != "" {
@@ -381,6 +386,7 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 		if err != nil {
 			return err
 		}
+		a.saveSessionID(caps.ACPStateDir, sessID)
 		if advisorToken != "" && resumed {
 			// A resumed session that then errors out is probably dead server-side -
 			// don't hand the next round a session id that will just fail LoadSession again.
