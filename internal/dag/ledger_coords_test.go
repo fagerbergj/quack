@@ -58,7 +58,7 @@ type lcScopedAgent struct {
 	hooks *tools.Hooks
 }
 
-func (a lcScopedAgent) ForNode(context.Context, string, string, func() string, artifact.Service, string, string, string, string, func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, ledger.CoordSetter, func(int, string, string, string), func(context.Context) artifactsrc.Artifact, func(bool), error) {
+func (a lcScopedAgent) ForNode(context.Context, string, string, artifact.Service, string, string, string, string, func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, ledger.CoordSetter, func(int, string, string, string), func(context.Context) artifactsrc.Artifact, func(bool), error) {
 	return a.Agent, a.model, a.tools, a.hooks, nil, nil, func(bool) {}, nil
 }
 

@@ -318,7 +318,7 @@ func (c *Client) ResumeNode(ctx context.Context, chatID, nodeID string) error {
 		schema.NodeStatusUpdateBody{Status: schema.NodeStatusUpdateBodyStatusRunning})
 }
 
-// QueueNodeMessage queues a message for a running node, delivered at its next turn boundary.
+// QueueNodeMessage queues a message for a running node, delivered into its running round.
 // 404 if the node isn't currently running.
 func (c *Client) QueueNodeMessage(ctx context.Context, chatID, nodeID, text string) (schema.QueuedMessage, error) {
 	var out schema.QueuedMessage

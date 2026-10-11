@@ -315,7 +315,11 @@ func NodeCancelled(nodeID string) SSEEvent {
 	return SSEEvent{Name: EventNodeCancelled, Data: NodeCancelledData{NodeID: nodeID, FinishedAtMs: time.Now().UnixMilli()}}
 }
 
-// NodeSteeredData: queued messages were delivered at the node's next turn boundary; a fresh node_start follows.
+// SteerRunPrefix starts the run id of a worker round that continues the node's own worker session with a
+// steer, so the A2A client keeps that session instead of opening a fresh one for the new branch.
+const SteerRunPrefix = "worker-steer"
+
+// NodeSteeredData: queued messages were delivered and the node carries on with them; a fresh run follows.
 type NodeSteeredData struct {
 	NodeID   string `json:"node_id"`
 	Guidance string `json:"guidance"`

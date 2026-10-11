@@ -51,3 +51,5 @@ func TestParkForInput_EmitFailurePassesThrough(t *testing.T) {
 		t.Error("an emit failure must not park the node")
 	}
 }
+
+func (*parkCtrl) SteerInterrupted() bool { return false }

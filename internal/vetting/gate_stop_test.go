@@ -235,3 +235,5 @@ func TestRunGatedRefine_StoppedNodeMakesNoMoreCalls(t *testing.T) {
 		t.Errorf("node stopped after its empty draft made %d model calls, want 1", n)
 	}
 }
+
+func (*stopCtrl) SteerInterrupted() bool { return false }

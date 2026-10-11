@@ -1466,7 +1466,7 @@ type nativeNodeBuilder struct {
 	schemas            *artifactschema.Registry
 }
 
-func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func() string, rc *recordstore.Client, nodeID string, coords *tools.RoundCoords, sink func(stream.SSEEvent), turnID string, scope tools.CallScope, meter *agent.PromptMeter, extraTools ...tool.Tool) (adkagent.Agent, model.LLM, *inference.OverridableModel, []tool.Tool, *tools.Hooks, error) {
+func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, rc *recordstore.Client, nodeID string, coords *tools.RoundCoords, sink func(stream.SSEEvent), turnID string, scope tools.CallScope, meter *agent.PromptMeter, extraTools ...tool.Tool) (adkagent.Agent, model.LLM, *inference.OverridableModel, []tool.Tool, *tools.Hooks, error) {
 	base, err := inference.NewModel(b.prov, b.ac.Model, b.artifacts, b.cfg.ModelCost(b.ac.Model), b.cfg.ModelEffort(b.ac.Model))
 	if err != nil {
 		return nil, nil, nil, nil, nil, fmt.Errorf("model: %w", err)
@@ -1524,14 +1524,14 @@ func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, drain func(
 	if len(b.ac.Skills) > 0 {
 		toolsets = []tool.Toolset{b.agentSkillTS}
 	}
-	wag, err := agent.Build(b.bundle, prompts, wrapped, builtins, toolsets, b.memGuidance, b.grading, drain, meter, hooks.Wire)
+	wag, err := agent.Build(b.bundle, prompts, wrapped, builtins, toolsets, b.memGuidance, b.grading, meter, hooks.Wire)
 	if err != nil {
 		return nil, nil, nil, nil, nil, fmt.Errorf("build: %w", err)
 	}
 	return wag, wrapped, wm, builtins, hooks, nil
 }
 
-func (b *nativeNodeBuilder) build(ctx context.Context, nodeKey, advisorToken string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, ledger.CoordSetter, roundCoordsSetter, promptRefresher, nodeRelease, error) {
+func (b *nativeNodeBuilder) build(ctx context.Context, nodeKey, advisorToken string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, ledger.CoordSetter, roundCoordsSetter, promptRefresher, nodeRelease, error) {
 	// One holder per dispatch: two nodes of this agent run concurrently, and a
 	// shared one would let either move the other's prompt mid-round.
 	prompts := b.bundle.PinPrompt(b.res)
@@ -1560,7 +1560,7 @@ func (b *nativeNodeBuilder) build(ctx context.Context, nodeKey, advisorToken str
 	}
 	scope := tools.CallScope{AdvisorToken: advisorToken, ChatID: chatID, UserID: userID}
 	meter := agent.NewPromptMeter()
-	wag, wm, overridable, builtins, hooks, err := b.buildWorker(prompts, drain, rc, nodeID, coords, sink, stream.TurnIDFromContext(ctx), scope, meter, extraTools...)
+	wag, wm, overridable, builtins, hooks, err := b.buildWorker(prompts, rc, nodeID, coords, sink, stream.TurnIDFromContext(ctx), scope, meter, extraTools...)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, err
 	}
@@ -1752,7 +1752,7 @@ func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderCon
 		res:                res,
 		schemas:            gateCfg.Schemas,
 	}
-	protoAgent, _, _, _, _, err := b.buildWorker(bundle.PinPrompt(res), nil, nil, "", nil, nil, "", tools.CallScope{}, nil)
+	protoAgent, _, _, _, _, err := b.buildWorker(bundle.PinPrompt(res), nil, "", nil, nil, "", tools.CallScope{}, nil)
 	if err != nil {
 		return nil, fmtErr(name, "%w", err)
 	}

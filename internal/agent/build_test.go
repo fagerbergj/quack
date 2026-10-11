@@ -69,7 +69,7 @@ func TestBuild_SkillRosterListedOnce(t *testing.T) {
 			TurnComplete: true,
 		}
 	}}
-	ag, err := Build(b, nil, capture, nil, []tool.Toolset{ts}, "", "", nil, nil)
+	ag, err := Build(b, nil, capture, nil, []tool.Toolset{ts}, "", "", nil)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}

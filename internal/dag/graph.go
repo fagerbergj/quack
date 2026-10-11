@@ -34,7 +34,7 @@ const (
 type nodeScopedWorker interface {
 	// ForNode builds a node's own worker, model and tools, plus the tool hooks stamp takes ledger coords for; see
 	// internal/serve's nativeAgent for the drain, setRoundCoords, sink, ctx and release semantics.
-	ForNode(ctx context.Context, nodeKey, advisorToken string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (worker adkagent.Agent, m model.LLM, tools []tool.Tool, stamp ledger.CoordSetter, setRoundCoords func(round int, turnID, headSHA, triggerAnnotation string), refreshPrompt func(context.Context) artifactsrc.Artifact, release func(paused bool), err error)
+	ForNode(ctx context.Context, nodeKey, advisorToken string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (worker adkagent.Agent, m model.LLM, tools []tool.Tool, stamp ledger.CoordSetter, setRoundCoords func(round int, turnID, headSHA, triggerAnnotation string), refreshPrompt func(context.Context) artifactsrc.Artifact, release func(paused bool), err error)
 }
 
 // buildGateNodes: one gated node per plan node. userID scopes the native node's artifact tools and must
@@ -75,7 +75,7 @@ func (e *Executor) buildGateNodes(ctx context.Context, plan Plan, chatID, userID
 		var refreshPrompt func(context.Context) artifactsrc.Artifact
 		perCall := false // native workers hold admission per model call; ACP nodes per subprocess round
 		if scoped, ok := ag.(nodeScopedWorker); ok {
-			w, m, wt, st, src, rp, rel, err := scoped.ForNode(ctx, plan.ID+":"+n.ID, vetting.AdvisorThreadToken(plan.ID, n.ID), liveSteerDrain(controls, chatID, n.ID), artifacts, artifactref.AppName, userID, chatID, n.ID, sink)
+			w, m, wt, st, src, rp, rel, err := scoped.ForNode(ctx, plan.ID+":"+n.ID, vetting.AdvisorThreadToken(plan.ID, n.ID), artifacts, artifactref.AppName, userID, chatID, n.ID, sink)
 			if err != nil {
 				return nil, fmt.Errorf("dag: node %q: per-node agent construction: %w", n.ID, err)
 			}
@@ -101,6 +101,7 @@ func (e *Executor) buildGateNodes(ctx context.Context, plan Plan, chatID, userID
 		// Store invariant, not grading opinion: armed even for an ungated node.
 		cfg.Schemas = e.schemas
 		cfg.Decisions = e.decisions
+		cfg.RepairSession = func(ctx context.Context) bool { return e.repairNativeWorkerSession(ctx, plan, chatID, node.ID) }
 		cfg.RoundCoordsSink = setRoundCoords
 		cfg.RefreshPrompt = refreshPrompt
 		cfg.JudgeArtifactTools = judgeArtifactTools
@@ -128,9 +129,9 @@ func withRoundAbort(inner adkagent.Agent, controls *runControls, chatID, nodeID,
 					return
 				}
 				cctx, cancel := context.WithCancel(ctx)
-				nc.SetRoundAbort(cancel)
+				nc.SetWorkerRound(cancel)
 				defer func() {
-					nc.ClearRoundAbort()
+					nc.ClearWorkerRound()
 					cancel()
 				}()
 				for ev, err := range inner.Run(ctx.WithContext(cctx)) {
@@ -141,20 +142,6 @@ func withRoundAbort(inner adkagent.Agent, controls *runControls, chatID, nodeID,
 			}
 		},
 	})
-}
-
-// liveSteerDrain delivers a steer into a running round. It peeks: consuming here would burn the -sN
-// generation the UI resolves and rob the gate boundary of its durable delivery.
-func liveSteerDrain(controls *runControls, chatID, nodeID string) func() string {
-	return func() string {
-		if controls == nil {
-			return ""
-		}
-		if c := controls.get(chatID, nodeID); c != nil {
-			return c.PeekQueued()
-		}
-		return ""
-	}
 }
 
 // foreignNodes: plan nodes other than id and its transitive dependencies, whose fetches and

@@ -94,6 +94,10 @@ type nodeControl struct {
 	// roundAbort aborts the in-flight round (ACP session/cancel, or native withRoundAbort). Cancel only:
 	// pause must keep the round's work so it can resume.
 	roundAbort context.CancelFunc
+	// workerAbort aborts only a worker round (withRoundAbort), never a judge call, so a steer can't kill a judge.
+	workerAbort context.CancelFunc
+	// steerInterrupt: enqueue aborted the worker round to deliver a message now; the gate reads SteerInterrupted.
+	steerInterrupt bool
 
 	// repeatFailure: set by RepeatGuardTripped. Distinct from cancelled so it surfaces as a real failure,
 	// not the cancel path's silent continue-but-warn.
@@ -162,6 +166,22 @@ func (c *nodeControl) SetRoundAbort(cancel context.CancelFunc) {
 
 func (c *nodeControl) ClearRoundAbort() { c.clearRoundAbort() }
 
+// SetWorkerRound registers a worker round's cancel for stop and steer alike; ClearWorkerRound ends it.
+func (c *nodeControl) SetWorkerRound(cancel context.CancelFunc) {
+	c.mu.Lock()
+	c.workerAbort = cancel
+	c.steerInterrupt = false // a flag the last round never consumed must not abort this one's outcome
+	c.mu.Unlock()
+	c.SetRoundAbort(cancel)
+}
+
+func (c *nodeControl) ClearWorkerRound() {
+	c.mu.Lock()
+	c.workerAbort = nil
+	c.mu.Unlock()
+	c.clearRoundAbort()
+}
+
 // RepeatGuardTripped records a tool-call-loop hard stop and aborts the in-flight round so the turn ends.
 func (c *nodeControl) RepeatGuardTripped(msg string) {
 	c.mu.Lock()
@@ -175,6 +195,15 @@ func (c *nodeControl) RepeatGuardTripped(msg string) {
 	if abort != nil {
 		abort()
 	}
+}
+
+// SteerInterrupted reports and clears that a queued message aborted the round.
+func (c *nodeControl) SteerInterrupted() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	was := c.steerInterrupt
+	c.steerInterrupt = false
+	return was
 }
 
 // RepeatFailure reports and clears RepeatGuardTripped's message, so the next round starts clean.
@@ -204,20 +233,6 @@ func (c *nodeControl) Paused() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.paused
-}
-
-// PeekQueued returns pending messages without consuming them. Live delivery only nudges the running
-// round; the gate boundary still owns durable delivery (prompt fold, -sN generation, persistence).
-func (c *nodeControl) PeekQueued() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	var out []string
-	for _, m := range c.queue {
-		if m.Status == MsgQueued {
-			out = append(out, m.Text)
-		}
-	}
-	return strings.Join(out, "\n\n")
 }
 
 // TakeQueued drains pending messages into one guidance block; only delivery path at gate boundaries.
@@ -329,18 +344,27 @@ func (c *nodeControl) enqueue(text string) queuedMsg {
 	c.mu.Lock()
 	live := c.liveSteer
 	c.mu.Unlock()
-	// liveSteer is ACP-only (native rounds inject via steerCallback's peek+dedupe), so a native
-	// round's steer stays "queued" here even after injection.
+	// An ACP round takes the message live. Otherwise a running round is aborted, and the gate delivers the
+	// still-queued message at once by continuing the worker's session with it.
 	status := MsgQueued
 	if live != nil && live(text) {
 		status = MsgForwarded
 	}
 
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	m := &queuedMsg{ID: newMsgID(), Text: text, Status: status, CreatedAt: time.Now().UTC()}
 	c.queue = append(c.queue, m)
-	return *m
+	snapshot := *m // copied under the lock: a drain may rewrite m.Status the moment it's released
+	var abort context.CancelFunc
+	if status == MsgQueued && c.workerAbort != nil {
+		abort = c.workerAbort
+		c.steerInterrupt = true
+	}
+	c.mu.Unlock()
+	if abort != nil {
+		abort()
+	}
+	return snapshot
 }
 
 // restore rebuilds a control's steer queue from dag_nodes after a restart. A persisted pause is

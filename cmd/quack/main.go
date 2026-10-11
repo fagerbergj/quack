@@ -539,9 +539,9 @@ func runNodeResume(ctx context.Context, out io.Writer, t string, args []string, 
 }
 
 // newNodeQueueCmd: `chat node queue` appends a message to a running node's queue,
-// delivered at its next turn boundary.
+// delivered into its running round.
 func newNodeQueueCmd() *cobra.Command {
-	return nodeTargetCmd("queue <chat-id> <node-id> <message>", "Queue a message for a running node, delivered at its next turn boundary", 3, runNodeQueue)
+	return nodeTargetCmd("queue <chat-id> <node-id> <message>", "Queue a message for a running node, delivered into its running round", 3, runNodeQueue)
 }
 
 func runNodeQueue(ctx context.Context, out io.Writer, t string, args []string, asJSON bool) error {

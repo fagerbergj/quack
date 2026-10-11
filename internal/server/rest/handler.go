@@ -1081,7 +1081,7 @@ func (h *Handler) StopNode(w http.ResponseWriter, r *http.Request, chatID schema
 	writeJSON(w, http.StatusOK, optimisticNodeState(dn, dag.StatusCancelled))
 }
 
-// Appends a message to a running node's queue, delivered at its next turn boundary. 404s if the node isn't live.
+// Appends a message to a running node's queue, delivered into its running round. 404s if the node isn't live.
 func (h *Handler) QueueNodeMessage(w http.ResponseWriter, r *http.Request, chatID schema.ChatID, nodeID schema.NodeID) {
 	var body schema.QueueMessageBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Message) == "" {

@@ -34,8 +34,8 @@ type promptRefresher func(ctx context.Context) artifactsrc.Artifact
 
 // ForNode builds one node's worker and tools; sink and ctx's turn id go to the tools, whose A2A-served
 // ctx carries neither. release(paused) closes its A2A server.
-func (n nativeAgent) ForNode(ctx context.Context, nodeKey, advisorToken string, drain func() string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, ledger.CoordSetter, func(round int, turnID, headSHA, triggerAnnotation string), func(context.Context) artifactsrc.Artifact, func(paused bool), error) {
-	return n.builder.build(ctx, nodeKey, advisorToken, drain, artifacts, appName, userID, chatID, nodeID, sink)
+func (n nativeAgent) ForNode(ctx context.Context, nodeKey, advisorToken string, artifacts artifact.Service, appName, userID, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, ledger.CoordSetter, func(round int, turnID, headSHA, triggerAnnotation string), func(context.Context) artifactsrc.Artifact, func(paused bool), error) {
+	return n.builder.build(ctx, nodeKey, advisorToken, artifacts, appName, userID, chatID, nodeID, sink)
 }
 
 // perNodeServers lets shutdown close per-node A2A servers whose release() never ran; entries prune
