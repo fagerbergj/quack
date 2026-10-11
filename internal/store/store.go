@@ -1075,6 +1075,19 @@ func (s *Store) DeleteChatEvents(ctx context.Context, chatID string) error {
 	return s.db.WithContext(ctx).Where("chat_id = ?", chatID).Delete(&ChatEvent{}).Error
 }
 
+// ReplaceChatEvents swaps chatID's events for evs in one transaction, so a failed rewrite keeps the old log.
+func (s *Store) ReplaceChatEvents(ctx context.Context, chatID string, evs []ChatEvent) error {
+	return s.InTx(ctx, func(tx *gorm.DB) error {
+		if err := tx.Where("chat_id = ?", chatID).Delete(&ChatEvent{}).Error; err != nil {
+			return err
+		}
+		if len(evs) == 0 {
+			return nil
+		}
+		return tx.Create(&evs).Error
+	})
+}
+
 // TrimChatEvents drops events at or below upToSeq (window long runs to replay ceiling).
 func (s *Store) TrimChatEvents(ctx context.Context, chatID string, upToSeq int64) error {
 	return s.db.WithContext(ctx).Where("chat_id = ? AND seq <= ?", chatID, upToSeq).Delete(&ChatEvent{}).Error

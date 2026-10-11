@@ -170,10 +170,10 @@ func startResumedNodes(ctx context.Context, nodes []store.ResumableNode, orch *o
 		}
 		byChat[n.ChatID] = append(byChat[n.ChatID], n)
 	}
-	// Reset before any resume goroutine starts, so an early subscriber never reads the previous run's events.
+	// Before any resume goroutine starts, so an early subscriber reads the whole transcript, old events first.
 	for _, chatID := range order {
 		hub.Reset(chatID)
-		eventLog.Reset(ctx, chatID)
+		eventLog.Reopen(ctx, hub, chatID)
 	}
 	boundedGoRun(order, maxConcurrent, func(chatID string) {
 		driveResume(ctx, chatID, byChat[chatID], orch, st, hub, eventLog, runObserverFor(chatID, exts))
@@ -211,10 +211,10 @@ func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode
 	runCtx = stream.WithTurnID(runCtx, turnID)
 	hub.RegisterRun(chatID, turnID, cancelRun)
 	_ = st.MarkRunActive(runCtx, chatID, turnID)
-	// Reset already ran in startResumedNodes before dispatch; doing it here would race a subscriber.
+	// Reopen already ran in startResumedNodes before dispatch; doing it here would race a subscriber.
 	defer eventLog.FinishRun(hub, chatID, turnID, cancelRun)
 
-	pub := runlog.NewPublisher(runCtx, hub, eventLog, chatID)
+	pub := runlog.NewPublisher(runCtx, hub, eventLog, chatID).After(hub.LastSeq(chatID))
 	pub.Publish(stream.ResponseCreated(turnID))
 
 	var res runlog.DriveResult

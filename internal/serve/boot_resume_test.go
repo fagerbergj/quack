@@ -558,3 +558,54 @@ func TestDriveResume_ReachesWorkerInOriginalScope(t *testing.T) {
 		t.Fatalf("resumed node's output = %q, want it to contain REPO-MARKER - fs tools did not land in the original chat scope", n1.Output)
 	}
 }
+
+// A resumed run appends to the interrupted run's transcript instead of wiping it, so the UI still shows
+// the work the node did before the restart.
+func TestStartResumedNodes_KeepsInterruptedTranscript(t *testing.T) {
+	ctx := context.Background()
+	chatID := "chat-keep-transcript"
+	st, orch, plan := newOneNodeResumeFixture(t, chatID)
+	// The trailing done is a gracefully stopped run's; replayed, it would end the client's run early.
+	before := []stream.SSEEvent{stream.ResponseCreated("turn-1"), stream.NodeStart("n1", "blk"), stream.Done()}
+	var rows []store.ChatEvent
+	for i, ev := range before {
+		js, err := runlog.MarshalEvent(ev)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows = append(rows, store.ChatEvent{ChatID: chatID, Seq: int64(i + 1), Event: js, CreatedAt: time.Now()})
+	}
+	if err := st.InsertChatEvents(ctx, rows); err != nil {
+		t.Fatalf("seed events: %v", err)
+	}
+
+	startResumedNodes(ctx, []store.ResumableNode{{ChatID: chatID, PlanID: plan.ID, NodeID: "n1", Reason: dag.PauseShutdown}},
+		orch, st, stream.NewHub(), runlog.NewEventLog(st), nil, 1)
+
+	var got []store.ChatEvent
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		got, _ = st.LoadChatEvents(ctx, chatID, 0)
+		if n := len(got); n > 0 && strings.Contains(got[n-1].Event, `"done"`) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if len(got) < 3 || !strings.Contains(got[len(got)-1].Event, `"done"`) {
+		t.Fatalf("resumed run never finished: %d events", len(got))
+	}
+	if !strings.Contains(got[1].Event, "node_start") || got[1].Seq != 2 {
+		t.Errorf("event 2 = %d %s, want the pre-restart node_start kept", got[1].Seq, got[1].Event)
+	}
+	if n := len(slices.DeleteFunc(slices.Clone(got), func(e store.ChatEvent) bool { return !strings.Contains(e.Event, `"name":"done"`) })); n != 1 {
+		t.Errorf("%d done events, want only the resumed run's own", n)
+	}
+	if !slices.ContainsFunc(got[2:], func(e store.ChatEvent) bool { return strings.Contains(e.Event, `"dag_plan"`) }) {
+		t.Error("the resumed run's own dag_plan is missing: its first events collided with the kept seqs")
+	}
+	for i := 1; i < len(got); i++ {
+		if got[i].Seq != got[i-1].Seq+1 {
+			t.Fatalf("seqs %d then %d: the resumed run must number after the kept events", got[i-1].Seq, got[i].Seq)
+		}
+	}
+}

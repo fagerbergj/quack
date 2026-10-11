@@ -20,8 +20,8 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// TestStartResumedNodes_ResetsBeforeDispatch: every resumable chat's durable event log is reset before
-// any dispatch, so an early subscriber can't read the previous process's stale terminal event.
+// TestStartResumedNodes_ResetsBeforeDispatch: a resumable chat's stale terminal event is dropped before
+// any dispatch, so an early subscriber can't read the previous process's run as finished.
 func TestStartResumedNodes_ResetsBeforeDispatch(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))

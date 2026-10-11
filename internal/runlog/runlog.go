@@ -147,6 +147,45 @@ func (l *EventLog) Reset(ctx context.Context, chatID string) {
 	}
 }
 
+// Reopen replays chatID's persisted events into hub, renumbered from 1, so a resumed run appends to the
+// interrupted run's transcript. Every done/error and unreadable row is dropped: replayed, a stopped run's
+// terminal event would end the client's view of the run early.
+func (l *EventLog) Reopen(ctx context.Context, hub *stream.Hub, chatID string) {
+	evs, err := l.store.LoadChatEvents(ctx, chatID, 0)
+	if err != nil {
+		slog.Warn("event log: reopen failed; the resumed run starts a fresh transcript", "component", "eventlog", "chat", chatID, "err", err)
+		l.Reset(ctx, chatID)
+		return
+	}
+	kept := make([]store.ChatEvent, 0, len(evs))
+	var replay []stream.SSEEvent
+	changed := false
+	for _, e := range evs {
+		ev, err := UnmarshalEvent(e.Event)
+		if err != nil || ev.Name == stream.EventDone || ev.Name == stream.EventError {
+			changed = true
+			continue
+		}
+		// A trimmed long run's log starts above seq 1, so it needs the rewrite too.
+		seq := int64(len(kept) + 1)
+		changed = changed || e.Seq != seq
+		e.Seq = seq
+		kept = append(kept, e)
+		replay = append(replay, ev)
+	}
+	// The store is rewritten before the hub sees a seq, so the two never disagree.
+	if changed {
+		if err := l.store.ReplaceChatEvents(ctx, chatID, kept); err != nil {
+			slog.Warn("event log: reopen rewrite failed; the resumed run starts a fresh transcript", "component", "eventlog", "chat", chatID, "err", err)
+			l.Reset(ctx, chatID)
+			return
+		}
+	}
+	for i, ev := range replay {
+		hub.Publish(chatID, kept[i].Seq, ev)
+	}
+}
+
 // eventEnvelope: persisted shape of stream.SSEEvent (name + marshalled data).
 type eventEnvelope struct {
 	Name string          `json:"name"`
@@ -183,6 +222,12 @@ type Publisher struct {
 // NewPublisher binds a publisher to the run's ctx, which only gates error events (see Publish).
 func NewPublisher(ctx context.Context, hub *stream.Hub, log *EventLog, chatID string) *Publisher {
 	return &Publisher{ctx: ctx, hub: hub, log: log, chatID: chatID}
+}
+
+// After numbers the next event after seq, for a run continuing a transcript Reopen replayed.
+func (p *Publisher) After(seq int64) *Publisher {
+	p.seq = seq
+	return p
 }
 
 func (p *Publisher) Publish(ev stream.SSEEvent) {
