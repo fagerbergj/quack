@@ -268,6 +268,14 @@ func (e *Extension) Start(ctx context.Context) error {
 	if err := e.store.PrunePendingRuns(ctx, time.Now().Add(-(e.inflightLease() + e.runTimeout))); err != nil {
 		e.host.Log.Warn("github: pending-run prune failed; stale rows stay until the next boot", "err", err)
 	}
+	// A run resumed at boot still holds its session: without its claim a new trigger dispatches a duplicate.
+	claims, err := e.store.PendingClaims(ctx)
+	if err != nil {
+		e.host.Log.Warn("github: pending-run claims not restored; a trigger during a resumed run may duplicate it", "err", err)
+	}
+	for sessionID, at := range claims {
+		e.inflight.LoadOrStore(sessionID, at)
+	}
 	return nil
 }
 

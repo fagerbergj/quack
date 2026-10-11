@@ -355,3 +355,22 @@ func TestStartPrunesStalePendingRuns(t *testing.T) {
 		}
 	}
 }
+
+// Start restores a surviving pending run's claim, so a trigger during the resumed run is deduped, not doubled.
+func TestStartRestoresPendingRunClaims(t *testing.T) {
+	ctx := context.Background()
+	st := newTestStore(t)
+	if err := st.SetPendingRun(ctx, PendingRunRow{ChatID: "c1", SessionID: "s1"}); err != nil {
+		t.Fatal(err)
+	}
+	e := &Extension{store: st, runTimeout: time.Hour}
+	if err := e.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if _, _, claimed := e.claimInflight("s1"); claimed {
+		t.Error("a new trigger claimed s1 while its resumed run is still pending")
+	}
+	if _, _, claimed := e.claimInflight("s2"); !claimed {
+		t.Error("s2 has no pending run, so its trigger must claim")
+	}
+}

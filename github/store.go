@@ -342,6 +342,29 @@ func (s *ghStore) DeletePendingRun(ctx context.Context, chatID string) error {
 	return err
 }
 
+// PendingClaims maps each pending run's session to its dispatch time: the inflight claim it held before a restart.
+func (s *ghStore) PendingClaims(ctx context.Context) (map[string]time.Time, error) {
+	db, err := s.conn()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.QueryContext(ctx, `SELECT session_id, created_at FROM github_pending_run`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	claims := map[string]time.Time{}
+	for rows.Next() {
+		var id string
+		var at time.Time
+		if err := rows.Scan(&id, &at); err != nil {
+			return nil, err
+		}
+		claims[id] = at
+	}
+	return claims, rows.Err()
+}
+
 // PrunePendingRuns deletes rows created before cutoff: runs that never reached RunEnded.
 func (s *ghStore) PrunePendingRuns(ctx context.Context, cutoff time.Time) error {
 	_, err := s.exec(ctx, `DELETE FROM github_pending_run WHERE created_at < ?`, cutoff.UTC())

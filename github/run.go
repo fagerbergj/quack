@@ -116,8 +116,13 @@ func (e *Extension) rebuildPendingRun(chatID string) (*pendingRun, error) {
 		return nil, fmt.Errorf("no persisted pending run")
 	}
 	gh := e.loadGithubContext(ctx, chatID, row.Owner, row.Repo, row.Number, row.IsPR, row.CommentID, false)
+	// Reuse the claim Start restored, so finalize's compare-and-delete releases it.
+	claimedAt := time.Now()
+	if v, ok := e.inflight.Load(row.SessionID); ok {
+		claimedAt = v.(time.Time)
+	}
 	return &pendingRun{
-		sessionID: row.SessionID, claimedAt: time.Now(), owner: row.Owner, repo: row.Repo, number: row.Number,
+		sessionID: row.SessionID, claimedAt: claimedAt, owner: row.Owner, repo: row.Repo, number: row.Number,
 		isPR: row.IsPR, login: row.Login, gh: gh, isPlan: row.IsPlan, isLabelTrigger: row.IsLabelTrigger,
 		explain:        row.SessionID == explainSessionID(row.Owner, row.Repo, row.Number, row.Login),
 		nudged:         true,
