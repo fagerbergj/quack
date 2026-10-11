@@ -262,3 +262,30 @@ func TestStartNodeOnLiveControlPersistsRunning(t *testing.T) {
 		t.Errorf("persisted (%q, %q); want (running, \"\") - resume() must persist the legal target", status, reason)
 	}
 }
+
+// TestContinuable: only a paused node not waiting on an answer carries on in its saved session.
+func TestContinuable(t *testing.T) {
+	fake := newFakeNodeStore()
+	ex := &Executor{controls: newRunControls()}
+	if ex.Continuable(context.Background(), "c", "n") {
+		t.Error("no store: nothing is continuable")
+	}
+	ex.SetNodeStateStore(fake)
+	for _, c := range []struct {
+		status NodeStatus
+		reason PauseReason
+		want   bool
+	}{
+		{StatusPaused, PauseShutdown, true},
+		{StatusPaused, PauseUser, true},
+		{StatusPaused, PauseAwaitingInput, false},
+		{StatusFailed, "", false},
+		{StatusCancelled, "", false},
+	} {
+		fake.set("c", "n", c.status)
+		fake.reason["c/n"] = string(c.reason)
+		if got := ex.Continuable(context.Background(), "c", "n"); got != c.want {
+			t.Errorf("Continuable(%s/%s) = %v, want %v", c.status, c.reason, got, c.want)
+		}
+	}
+}

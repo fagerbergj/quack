@@ -168,7 +168,7 @@ func TestRetryPlanInNode_ReusesUpstream(t *testing.T) {
 	var out map[string]string
 	orchestrate := workflow.NewDynamicNode[any, string]("orch",
 		func(ctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {
-			o, err := ex.RetryPlanInNode(ctx, plan, "chat", "b", seeded)
+			o, err := ex.RetryPlanInNode(ctx, plan, "chat", "b", seeded, false)
 			out = o
 			return "done", err
 		}, workflow.NodeConfig{})

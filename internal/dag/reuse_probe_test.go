@@ -2,6 +2,7 @@ package dag_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -19,7 +20,9 @@ import (
 	"iter"
 
 	quackagent "github.com/fagerbergj/quack/internal/agent"
+	"github.com/fagerbergj/quack/internal/artifactsrc"
 	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
@@ -104,17 +107,17 @@ func TestNodeOverA2A_ReusedAcrossSeparateRunPlanAsGraphInvocations(t *testing.T)
 // scoped to WorkerSessionID(chat, node), and a release that never deletes the session.
 type testNativeWorker struct{ adkagent.Agent }
 
-func (w testNativeWorker) ForNode(_ context.Context, nodeKey, _ string, _ func() string, _ artifact.Service, _, _, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, func(round int, turnID, headSHA, triggerAnnotation string), func(paused bool), error) {
+func (w testNativeWorker) ForNode(_ context.Context, nodeKey, _ string, _ func() string, _ artifact.Service, _, _, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, ledger.CoordSetter, func(round int, turnID, headSHA, triggerAnnotation string), func(context.Context) artifactsrc.Artifact, func(paused bool), error) {
 	srv, err := quackagent.Serve(w.Agent, testNativeWorkerSessions, nil, nil, quackagent.Compaction{}, nodeID, sink)
 	if err != nil {
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, err
 	}
 	client, err := srv.ClientForNode(nodeKey, quackagent.WorkerSessionID(chatID, nodeID))
 	if err != nil {
 		_ = srv.Close()
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, nil, err
 	}
-	return client, nil, nil, nil, func(bool) { _ = srv.Close() }, nil
+	return client, nil, nil, nil, nil, nil, func(bool) { _ = srv.Close() }, nil
 }
 
 // Package-level so the run's and a later retry's dispatch share one session store, as one
@@ -151,26 +154,7 @@ func TestRetryPlanInNode_NativeNodeGetsFreshSession(t *testing.T) {
 		t.Fatalf("first run output = %q", outputs["n1"])
 	}
 
-	var retryOut map[string]string
-	orchestrate := workflow.NewDynamicNode[any, string]("orch",
-		func(ctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {
-			o, rerr := ex.RetryPlanInNode(ctx, plan, "chat1", "n1", map[string]string{})
-			retryOut = o
-			return "done", rerr
-		}, workflow.NodeConfig{})
-	top, err := workflowagent.New(workflowagent.Config{Name: "o", Edges: workflow.Chain(workflow.Start, orchestrate)})
-	if err != nil {
-		t.Fatalf("retry workflow: %v", err)
-	}
-	r, err := runner.New(runner.Config{AppName: "o", Agent: top, SessionService: session.InMemoryService(), AutoCreateSession: true})
-	if err != nil {
-		t.Fatalf("retry runner: %v", err)
-	}
-	for _, rerr := range r.Run(context.Background(), "u", "s", &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "retry"}}}, adkagent.RunConfig{}) {
-		if rerr != nil {
-			t.Fatalf("retry run: %v", rerr)
-		}
-	}
+	retryOut := retryInWorkflow(t, ex, plan, "chat1", "n1", false)
 	if !strings.Contains(retryOut["n1"], "RUN-TWO-OUTPUT") {
 		t.Fatalf("retry output = %q", retryOut["n1"])
 	}
@@ -273,5 +257,115 @@ func TestNodeOverA2A_SiblingNodesDoNotShareSessionHistory(t *testing.T) {
 		if !sawOwn {
 			t.Errorf("node %q never saw its OWN prior output on reuse - test isn't exercising resume", name)
 		}
+	}
+}
+
+// retryInWorkflow runs RetryPlanInNode inside a workflow node, as Orchestrator.RetryNode does.
+func retryInWorkflow(t *testing.T, ex *dag.Executor, plan dag.Plan, chatID, nodeID string, cont bool) map[string]string {
+	t.Helper()
+	var out map[string]string
+	orchestrate := workflow.NewDynamicNode[any, string]("orch",
+		func(ctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {
+			o, rerr := ex.RetryPlanInNode(ctx, plan, chatID, nodeID, map[string]string{}, cont)
+			out = o
+			return "done", rerr
+		}, workflow.NodeConfig{})
+	top, err := workflowagent.New(workflowagent.Config{Name: "o", Edges: workflow.Chain(workflow.Start, orchestrate)})
+	if err != nil {
+		t.Fatalf("retry workflow: %v", err)
+	}
+	r, err := runner.New(runner.Config{AppName: "o", Agent: top, SessionService: session.InMemoryService(), AutoCreateSession: true})
+	if err != nil {
+		t.Fatalf("retry runner: %v", err)
+	}
+	for _, rerr := range r.Run(context.Background(), "u", "s", &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "retry"}}}, adkagent.RunConfig{}) {
+		if rerr != nil {
+			t.Fatalf("retry run: %v", rerr)
+		}
+	}
+	return out
+}
+
+// continueStub answers RUN-ONE-OUTPUT, then records the continued request's contents.
+type continueStub struct {
+	mu      sync.Mutex
+	calls   int
+	resumed []*genai.Content
+}
+
+func (*continueStub) Name() string { return "continueStub" }
+
+func (s *continueStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		s.mu.Lock()
+		s.calls++
+		if s.calls == 2 {
+			s.resumed = req.Contents
+		}
+		n := s.calls
+		s.mu.Unlock()
+		if n == 1 {
+			yield(atText("RUN-ONE-OUTPUT"), nil)
+			return
+		}
+		yield(atText("RUN-TWO-OUTPUT"), nil)
+	}
+}
+
+// A continued node keeps its session: the resumed request carries the earlier work, an "interrupted"
+// answer for the tool call the stopped process never returned from, and the continue prompt.
+func TestRetryPlanInNode_ContinueKeepsSessionAndAnswersDanglingCall(t *testing.T) {
+	testNativeWorkerSessions = session.InMemoryService()
+	stub := &continueStub{}
+	worker, err := llmagent.New(llmagent.Config{Name: "solo", Model: stub, Description: "solo", Instruction: "ROLE:solo Answer."})
+	if err != nil {
+		t.Fatalf("worker agent: %v", err)
+	}
+	plan := dag.Plan{ID: "p1", UserMessage: "x", Nodes: []dag.Node{{ID: "n1", AgentName: "solo", Task: "Write the thing.", Rubric: "detailed"}}}
+	ex := dag.NewExecutor(testNativeWorkerSessions, map[string]adkagent.Agent{"solo": testNativeWorker{Agent: worker}}, nil,
+		vetting.NewJudgeFactory(passJudge, nil, nil),
+		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 2} }, nil)
+	content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "x"}}}
+	if _, err := ex.RunPlanAsGraph(context.Background(), plan, "quack-test", "u", "chat1", content,
+		func(stream.SSEEvent, error) bool { return true }, map[string]string{}, nil); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	// The kill: a model turn whose tool call never got its response persisted.
+	id := quackagent.WorkerSessionID("chat1", "n1")
+	got, err := testNativeWorkerSessions.Get(context.Background(), &session.GetRequest{AppName: "solo", UserID: quackagent.WorkerSessionUser(id), SessionID: id})
+	if err != nil {
+		t.Fatalf("worker session: %v", err)
+	}
+	call := session.NewEvent(context.Background(), "inv-killed")
+	call.Author = "solo"
+	call.Content = &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{ID: "call-1", Name: "web_fetch"}}}}
+	if err := testNativeWorkerSessions.AppendEvent(context.Background(), got.Session, call); err != nil {
+		t.Fatalf("append dangling call: %v", err)
+	}
+
+	if out := retryInWorkflow(t, ex, plan, "chat1", "n1", true); !strings.Contains(out["n1"], "RUN-TWO-OUTPUT") {
+		t.Fatalf("continued output = %q", out["n1"])
+	}
+
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	var text strings.Builder
+	var interrupted bool
+	for _, c := range stub.resumed {
+		for _, p := range c.Parts {
+			text.WriteString(p.Text)
+			if fr := p.FunctionResponse; fr != nil && fr.ID == "call-1" && strings.Contains(fmt.Sprint(fr.Response), "interrupted") {
+				interrupted = true
+			}
+		}
+	}
+	if !strings.Contains(text.String(), "RUN-ONE-OUTPUT") {
+		t.Error("continued request lost the node's earlier work: its session was reset")
+	}
+	if !interrupted {
+		t.Error("the dangling call-1 got no interrupted response")
+	}
+	if !strings.Contains(text.String(), "was interrupted") {
+		t.Error("continued request did not carry the continue prompt")
 	}
 }

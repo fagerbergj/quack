@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -216,13 +217,92 @@ func (s *DagStream) emitFinishTerminal(n Node, stopped bool, runErr error) {
 	s.yield(stream.NodeDone(n.ID, s.ds.nodeDoneData(n.ID)), nil)
 }
 
-// RetryPlanInNode re-runs the target node and descendants with seeded outputs, in a fresh session:
-// a native node's A2A session outlives completion, so retry reaps it (ACP resume is opt-in via ResumedFrom).
-func (e *Executor) RetryPlanInNode(ctx adkagent.Context, plan Plan, chatID, nodeID string, seeded map[string]string) (map[string]string, error) {
+// RetryPlanInNode re-runs the target node and descendants with seeded outputs. With cont, a native target
+// carries on in its saved session; otherwise retry reaps it, as that session outlives completion.
+func (e *Executor) RetryPlanInNode(ctx adkagent.Context, plan Plan, chatID, nodeID string, seeded map[string]string, cont bool) (map[string]string, error) {
 	// ponytail: only the named target, not a re-cascaded descendant - the same class of staleness
 	// could in principle reach one of those too, add if it shows up in practice.
-	e.resetNativeWorkerSession(context.WithoutCancel(ctx), plan, chatID, nodeID)
+	if cont && e.repairNativeWorkerSession(context.WithoutCancel(ctx), plan, chatID, nodeID) {
+		plan = withContinue(plan, nodeID)
+	} else {
+		e.resetNativeWorkerSession(context.WithoutCancel(ctx), plan, chatID, nodeID)
+	}
 	return e.runSubset(ctx, plan, chatID, seeded, retrySet(plan, nodeID))
+}
+
+// Continuable: a paused node (not one waiting on an answer) still has its round's work to carry on from.
+func (e *Executor) Continuable(ctx context.Context, chatID, nodeID string) bool {
+	if e.controls.store == nil {
+		return false
+	}
+	status, reason, _, _, err := e.controls.store.GetNodeState(ctx, chatID, nodeID)
+	return err == nil && NodeStatus(status) == StatusPaused && PauseReason(reason) != PauseAwaitingInput
+}
+
+func withContinue(plan Plan, nodeID string) Plan {
+	plan.Nodes = slices.Clone(plan.Nodes)
+	for i := range plan.Nodes {
+		plan.Nodes[i].Continue = plan.Nodes[i].ID == nodeID
+	}
+	return plan
+}
+
+// interruptedToolResult answers a call the stopped process never returned from; the provider rejects a dangling call.
+const interruptedToolResult = "interrupted: the run stopped before this call returned, so its effects are unknown. Check the current state before repeating it."
+
+// repairNativeWorkerSession answers nodeID's unanswered tool calls so its session can continue.
+// False when there is nothing to continue: no native session (an ACP node) or an empty one.
+func (e *Executor) repairNativeWorkerSession(ctx context.Context, plan Plan, chatID, nodeID string) bool {
+	agentName := planAgentName(plan, nodeID)
+	if e.sessions == nil || agentName == "" {
+		return false
+	}
+	id := quackagent.WorkerSessionID(chatID, nodeID)
+	resp, err := e.sessions.Get(ctx, &session.GetRequest{AppName: agentName, UserID: quackagent.WorkerSessionUser(id), SessionID: id})
+	if err != nil || resp.Session.Events().Len() == 0 {
+		return false
+	}
+	ev := danglingCallsAnswer(resp.Session.Events(), agentName)
+	if ev == nil {
+		return true
+	}
+	if err := e.sessions.AppendEvent(ctx, resp.Session, ev); err != nil {
+		slog.Warn("resume: could not answer the interrupted tool calls; re-running the node fresh",
+			"component", "dag", "node_id", nodeID, "err", err)
+		return false
+	}
+	return true
+}
+
+// danglingCallsAnswer is one tool-response event answering every call in events that never got one, or nil.
+func danglingCallsAnswer(events session.Events, author string) *session.Event {
+	answered := map[string]bool{}
+	for ev := range events.All() {
+		for _, p := range contentParts(ev) {
+			if p.FunctionResponse != nil {
+				answered[p.FunctionResponse.ID] = true
+			}
+		}
+	}
+	var parts []*genai.Part
+	var invocationID string
+	for ev := range events.All() {
+		for _, p := range contentParts(ev) {
+			if fc := p.FunctionCall; fc != nil && !answered[fc.ID] {
+				parts = append(parts, &genai.Part{FunctionResponse: &genai.FunctionResponse{
+					ID: fc.ID, Name: fc.Name, Response: map[string]any{"error": interruptedToolResult},
+				}})
+				invocationID = ev.InvocationID
+			}
+		}
+	}
+	if len(parts) == 0 {
+		return nil
+	}
+	ev := session.NewEvent(context.Background(), invocationID)
+	ev.Author = author
+	ev.Content = &genai.Content{Role: genai.RoleUser, Parts: parts}
+	return ev
 }
 
 // RunPlanIncrement runs exactly the nodes in run as fresh dispatches, seeding every other node's
@@ -255,17 +335,8 @@ func (e *Executor) runSubset(ctx adkagent.Context, plan Plan, chatID string, see
 // resetNativeWorkerSession deletes nodeID's deterministic A2A worker session before a retry.
 // Best-effort; a no-op for an ACP node or one that never ran.
 func (e *Executor) resetNativeWorkerSession(ctx context.Context, plan Plan, chatID, nodeID string) {
-	if e.sessions == nil {
-		return
-	}
-	var agentName string
-	for _, n := range plan.Nodes {
-		if n.ID == nodeID {
-			agentName = n.AgentName
-			break
-		}
-	}
-	if agentName == "" {
+	agentName := planAgentName(plan, nodeID)
+	if e.sessions == nil || agentName == "" {
 		return
 	}
 	workerContextID := quackagent.WorkerSessionID(chatID, nodeID)
@@ -275,6 +346,22 @@ func (e *Executor) resetNativeWorkerSession(ctx context.Context, plan Plan, chat
 		slog.Debug("retry: no prior native worker session to reap (fine for a first attempt or an ACP node)",
 			"component", "dag", "node_id", nodeID, "err", err)
 	}
+}
+
+func contentParts(ev *session.Event) []*genai.Part {
+	if ev.Content == nil {
+		return nil
+	}
+	return ev.Content.Parts
+}
+
+func planAgentName(plan Plan, nodeID string) string {
+	for _, n := range plan.Nodes {
+		if n.ID == nodeID {
+			return n.AgentName
+		}
+	}
+	return ""
 }
 
 // NewExecutor returns a graph Executor over a Gen 0 roster; SetRoster replaces it.
