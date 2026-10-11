@@ -290,3 +290,14 @@ func TestHubRegisterRunRacesEndRun(t *testing.T) {
 		}
 	}
 }
+
+func TestHubLastSeq(t *testing.T) {
+	h := NewHub()
+	if got := h.LastSeq("k"); got != 0 {
+		t.Fatalf("empty LastSeq = %d", got)
+	}
+	h.Publish("k", 7, Done())
+	if got := h.LastSeq("k"); got != 7 {
+		t.Fatalf("LastSeq = %d, want 7", got)
+	}
+}

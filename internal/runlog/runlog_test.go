@@ -480,3 +480,49 @@ func TestPersistNodeEventLatePauseKeepsCancelled(t *testing.T) {
 		t.Fatalf("boot resume sweep sees %d paused nodes (err=%v), want 0", len(paused), err)
 	}
 }
+
+// Reopen keeps a resumed chat's transcript, minus a stopped run's done/error, renumbered so the resumed
+// run's publisher (After the hub's last seq) follows on with no gap or collision.
+func TestReopenKeepsTranscriptAndDropsTerminalEvents(t *testing.T) {
+	ctx := context.Background()
+	st := newTestStore(t)
+	if err := st.SetChatOrigin(ctx, "c1", "u1", ""); err != nil {
+		t.Fatal(err)
+	}
+	var rows []store.ChatEvent
+	for i, ev := range []stream.SSEEvent{stream.ResponseCreated("t1"), stream.Errorf("stopped"), stream.NodeStart("n1", "a"), stream.Done()} {
+		js, err := MarshalEvent(ev)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows = append(rows, store.ChatEvent{ChatID: "c1", Seq: int64(i + 1), Event: js, CreatedAt: time.Now()})
+	}
+	if err := st.InsertChatEvents(ctx, rows); err != nil {
+		t.Fatal(err)
+	}
+	l := NewEventLog(st)
+	hub := stream.NewHub()
+
+	l.Reopen(ctx, hub, "c1")
+	if got := hub.LastSeq("c1"); got != 2 {
+		t.Fatalf("hub last seq = %d, want 2 (response_created, node_start)", got)
+	}
+	NewPublisher(ctx, hub, l, "c1").After(hub.LastSeq("c1")).Publish(stream.Done())
+	l.Flush()
+
+	got, err := st.LoadChatEvents(ctx, "c1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for i, e := range got {
+		ev, _ := UnmarshalEvent(e.Event)
+		names = append(names, ev.Name)
+		if e.Seq != int64(i+1) {
+			t.Errorf("event %d has seq %d", i, e.Seq)
+		}
+	}
+	if strings.Join(names, ",") != "response_created,node_start,done" {
+		t.Errorf("events = %v", names)
+	}
+}

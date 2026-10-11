@@ -183,6 +183,16 @@ func (h *Hub) closeLocked(key string) {
 	}
 }
 
+// LastSeq is the newest seq buffered for key, 0 when none.
+func (h *Hub) LastSeq(key string) int64 {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if t := h.topics[key]; t != nil && len(t.buf) > 0 {
+		return t.buf[len(t.buf)-1].Seq
+	}
+	return 0
+}
+
 // Reset drops the chat's topic so a new run gets a fresh buffer, closing live subscribers first so none
 // hang on a channel that is never fed nor closed.
 func (h *Hub) Reset(key string) {

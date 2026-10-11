@@ -147,6 +147,35 @@ func (l *EventLog) Reset(ctx context.Context, chatID string) {
 	}
 }
 
+// Reopen replays chatID's persisted events into hub so a resumed run appends to the interrupted run's
+// transcript. A done/error from a gracefully stopped run is dropped: replayed, it would end the client's run early.
+func (l *EventLog) Reopen(ctx context.Context, hub *stream.Hub, chatID string) {
+	evs, err := l.store.LoadChatEvents(ctx, chatID, 0)
+	if err != nil {
+		slog.Warn("event log: reopen failed; the resumed run starts a fresh transcript", "component", "eventlog", "chat", chatID, "err", err)
+		l.Reset(ctx, chatID)
+		return
+	}
+	kept := make([]store.ChatEvent, 0, len(evs))
+	for _, e := range evs {
+		ev, err := UnmarshalEvent(e.Event)
+		if err != nil || ev.Name == stream.EventDone || ev.Name == stream.EventError {
+			continue
+		}
+		e.Seq = int64(len(kept) + 1)
+		kept = append(kept, e)
+		hub.Publish(chatID, e.Seq, ev)
+	}
+	if len(kept) == len(evs) {
+		return
+	}
+	// Renumbered so the resumed run's seqs follow on with no gap or collision.
+	l.Reset(ctx, chatID)
+	if err := l.store.InsertChatEvents(ctx, kept); err != nil {
+		slog.Warn("event log: reopen rewrite failed", "component", "eventlog", "chat", chatID, "err", err)
+	}
+}
+
 // eventEnvelope: persisted shape of stream.SSEEvent (name + marshalled data).
 type eventEnvelope struct {
 	Name string          `json:"name"`
@@ -183,6 +212,12 @@ type Publisher struct {
 // NewPublisher binds a publisher to the run's ctx, which only gates error events (see Publish).
 func NewPublisher(ctx context.Context, hub *stream.Hub, log *EventLog, chatID string) *Publisher {
 	return &Publisher{ctx: ctx, hub: hub, log: log, chatID: chatID}
+}
+
+// After numbers the next event after seq, for a run continuing a transcript Reopen replayed.
+func (p *Publisher) After(seq int64) *Publisher {
+	p.seq = seq
+	return p
 }
 
 func (p *Publisher) Publish(ev stream.SSEEvent) {
