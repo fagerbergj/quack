@@ -597,13 +597,14 @@ func (e *Executor) CancelNode(chatID, nodeID string) bool {
 	if c == nil {
 		return false
 	}
-	c.markCancelled()
+	// Recorded before the cancel fires: the run can finish in between, and NodeStopped must already see it.
 	e.controls.mu.Lock()
 	if e.controls.cancelled[chatID] == nil {
 		e.controls.cancelled[chatID] = map[string]bool{}
 	}
 	e.controls.cancelled[chatID][nodeID] = true
 	e.controls.mu.Unlock()
+	c.markCancelled()
 	return true
 }
 
