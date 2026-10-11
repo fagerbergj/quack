@@ -333,7 +333,7 @@ func RunNodeStop(ctx context.Context, out io.Writer, server, chatID, nodeID stri
 }
 
 // RunNodePause is `quack chat node pause <chat-id> <node-id>`: suspend one
-// RUNNING node at its next turn boundary, keeping its accumulated work.
+// RUNNING node at once, keeping its accumulated work.
 func RunNodePause(ctx context.Context, out io.Writer, server, chatID, nodeID string, asJSON bool) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {
@@ -343,7 +343,7 @@ func RunNodePause(ctx context.Context, out io.Writer, server, chatID, nodeID str
 		return nodeErrAs(err, chatID, nodeID)
 	}
 	return reportAction(out, asJSON, nodeActionResult{ChatID: chatID, NodeID: nodeID, Action: "pause",
-		Message: fmt.Sprintf("Pausing node %s (chat %s) at its next turn boundary - resume it with `quack chat node resume %s %s`.", nodeID, chatID, chatID, nodeID)})
+		Message: fmt.Sprintf("Paused node %s (chat %s), cutting off its current step - resume it with `quack chat node resume %s %s`.", nodeID, chatID, chatID, nodeID)})
 }
 
 // RunNodeResume is `quack chat node resume <chat-id> <node-id>`: resume a paused node where it stopped.
