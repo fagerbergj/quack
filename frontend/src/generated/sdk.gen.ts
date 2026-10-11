@@ -260,8 +260,9 @@ export const diffArtifactRevisions = <ThrowOnError extends boolean = false>(opti
  * ({"node_id","finished_at_ms"}), and
  * `node_paused` ({"node_id"}) track node lifecycle. `node_steered`
  * ({"node_id","guidance"}) fires when a node's queued message(s) are
- * delivered at its next turn boundary and it re-runs with them folded
- * in. A node's pending queue itself (add/edit/remove) is tracked
+ * delivered and the node carries on with them, in its own session where
+ * it can (a native node's interrupted first round) or by re-running with
+ * them folded in. A node's pending queue itself (add/edit/remove) is tracked
  * client-side from the POST/PATCH/DELETE `.../queue` responses, not a
  * separate SSE event - those calls are synchronous and already tell the
  * caller what changed.
@@ -367,9 +368,9 @@ export const subscribeChatStream = <ThrowOnError extends boolean = false>(option
  * `cancelled`. `guidance` is optional and folded into the node's task.
  *
  * To steer a running node with a message, POST to
- * `.../nodes/{node_id}/queue` instead - it is delivered at the node's
- * next turn boundary, never mid-turn (replaces the old interrupt-based
- * steer).
+ * `.../nodes/{node_id}/queue` instead - it reaches the running round at
+ * once: an ACP node takes it live, and a native node's round is
+ * interrupted and continues with the message as its next turn.
  *
  * An illegal transition (e.g. `done` → `running`) returns 409 naming the
  * allowed target statuses. The re-run (resume/retry) streams over the
@@ -450,7 +451,7 @@ export const editNodeTask = <ThrowOnError extends boolean = false>(options: Opti
 });
 
 /**
- * Queue a message for a running node, delivered at its next turn boundary
+ * Queue a message for a running node, delivered into its running round
  *
  * Appends to the node's message queue - the replacement for the old
  * interrupt-based steer. The node drains its queue (in order) at its

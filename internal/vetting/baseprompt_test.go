@@ -135,3 +135,5 @@ func TestRunGatedRefine_QueuedRerunKeepsRecalledMemory(t *testing.T) {
 		t.Fatalf("queued re-run dropped the recalled memory (basePrompt captured before recall); prompt was:\n%s", rerun)
 	}
 }
+
+func (*basePromptCtrl) SteerInterrupted() bool { return false }

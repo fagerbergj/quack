@@ -212,7 +212,7 @@ func runGrowth(t *testing.T, threshold int, stored bool) ([]int, []string, int) 
 	var summCalls int
 	m, summ, meter := &growthModel{n: 30}, summaryModel(&summCalls), NewPromptMeter()
 	b := &Bundle{Card: Card{Name: "tester", Description: "a test agent"}, Prompt: "Research."}
-	ag, err := Build(b, nil, m, append([]tool.Tool{fetch}, fakeTools(toolReadArtifact)...), nil, "", "", nil, meter)
+	ag, err := Build(b, nil, m, append([]tool.Tool{fetch}, fakeTools(toolReadArtifact)...), nil, "", "", meter)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +277,7 @@ func TestCompaction_SummarizesWhenNothingStored(t *testing.T) {
 // could never be followed back; without compaction nothing collapses at all.
 func TestCompaction_OffWithoutReadArtifactOrCompaction(t *testing.T) {
 	meter := NewPromptMeter()
-	if _, err := Build(&Bundle{Card: Card{Name: "t"}}, nil, &growthModel{}, fakeTools(toolWebFetch), nil, "", "", nil, meter); err != nil {
+	if _, err := Build(&Bundle{Card: Card{Name: "t"}}, nil, &growthModel{}, fakeTools(toolWebFetch), nil, "", "", meter); err != nil {
 		t.Fatal(err)
 	}
 	comp, err := NativeCompactionConfig(Compaction{Enabled: true, Summarizer: summaryModel(new(int)), TokenThreshold: 1_000, EventRetentionSize: 2, Meter: meter})

@@ -2096,7 +2096,7 @@ type ServerInterface interface {
 	// List the memories one worker node received, with votes
 	// (GET /api/v1/chats/{chat_id}/nodes/{node_id}/memories)
 	ListNodeMemories(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID)
-	// Queue a message for a running node, delivered at its next turn boundary
+	// Queue a message for a running node, delivered into its running round
 	// (POST /api/v1/chats/{chat_id}/nodes/{node_id}/queue)
 	QueueNodeMessage(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID)
 	// Remove a queued message that has not yet been delivered
@@ -2258,7 +2258,7 @@ func (_ Unimplemented) ListNodeMemories(w http.ResponseWriter, r *http.Request, 
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// Queue a message for a running node, delivered at its next turn boundary
+// Queue a message for a running node, delivered into its running round
 // (POST /api/v1/chats/{chat_id}/nodes/{node_id}/queue)
 func (_ Unimplemented) QueueNodeMessage(w http.ResponseWriter, r *http.Request, chatId ChatID, nodeId NodeID) {
 	w.WriteHeader(http.StatusNotImplemented)

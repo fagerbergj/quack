@@ -360,7 +360,7 @@ func RunNodeResume(ctx context.Context, out io.Writer, server, chatID, nodeID st
 }
 
 // RunNodeQueue is `quack chat node queue <chat-id> <node-id> <message>`: queue a message for a
-// running node, delivered at its next turn boundary.
+// running node, delivered into its running round.
 func RunNodeQueue(ctx context.Context, out io.Writer, server, chatID, nodeID, message string, asJSON bool) error {
 	c, err := NewClient(ctx, server)
 	if err != nil {
@@ -371,7 +371,7 @@ func RunNodeQueue(ctx context.Context, out io.Writer, server, chatID, nodeID, me
 		return nodeErrAs(err, chatID, nodeID)
 	}
 	return reportAction(out, asJSON, nodeActionResult{ChatID: chatID, NodeID: nodeID, MessageID: m.Id, Action: "queue",
-		Message: fmt.Sprintf("Queued message %s for node %s (chat %s) - delivered at its next turn boundary.", m.Id, nodeID, chatID)})
+		Message: fmt.Sprintf("Queued message %s for node %s (chat %s) - delivered into its running round.", m.Id, nodeID, chatID)})
 }
 
 // RunNodeQueueEdit is `quack chat node queue-edit <chat-id> <node-id> <message-id> <text>`:

@@ -63,7 +63,7 @@ type nodeScopedStub struct {
 	cachedT []tool.Tool
 }
 
-func (s *nodeScopedStub) ForNode(_ context.Context, nodeKey, _ string, _ func() string, _ artifact.Service, _, _, _, _ string, _ func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, ledger.CoordSetter, func(int, string, string, string), func(context.Context) artifactsrc.Artifact, func(bool), error) {
+func (s *nodeScopedStub) ForNode(_ context.Context, nodeKey, _ string, _ artifact.Service, _, _, _, _ string, _ func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, ledger.CoordSetter, func(int, string, string, string), func(context.Context) artifactsrc.Artifact, func(bool), error) {
 	s.mu.Lock()
 	s.calls++
 	m, builtins := s.cachedM, s.cachedT

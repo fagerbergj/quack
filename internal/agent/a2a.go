@@ -337,9 +337,16 @@ func scopeMessage(ctx context.Context, req *a2a.SendMessageRequest, defaultConte
 		}
 	}
 	req.Message.Parts = collectScopedParts(ic, events, start, len(req.Message.Parts))
-	if req.Message.ContextID == "" && !crossedBranch {
+	// A steer continuation stays in the node's own session; its TaskID stays cleared, since the round it
+	// interrupted was cancelled and a cancelled task can't be continued.
+	if req.Message.ContextID == "" && (!crossedBranch || continuesNodeSession(ic.Branch())) {
 		req.Message.ContextID = defaultContextID
 	}
+}
+
+// continuesNodeSession reports a branch whose run is a steer continuation (stream.SteerRunPrefix).
+func continuesNodeSession(branch string) bool {
+	return strings.HasPrefix(branch[strings.LastIndex(branch, "@")+1:], stream.SteerRunPrefix)
 }
 
 // collectScopedParts: the branch's events from start as A2A parts - foreign authors
