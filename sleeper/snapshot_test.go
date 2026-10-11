@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/fagerbergj/quack-extensions/sdk"
 )
@@ -136,13 +137,17 @@ func TestDiffSnapshotsSortedByPlayerID(t *testing.T) {
 	}
 }
 
+// daysAgo dates a snapshot inside getTrends' window, which is relative to today (withinDays).
+func daysAgo(n int) string { return time.Now().UTC().AddDate(0, 0, -n).Format(time.DateOnly) }
+
 // TestGetTrendsOverTwoSyntheticSnapshots writes two on-disk snapshots (the
 // shape Start's ticker would have produced) and drives the tool end to end.
 func TestGetTrendsOverTwoSyntheticSnapshots(t *testing.T) {
 	dataDir := t.TempDir()
 	e := &extension{client: newTestClient(t), host: sdk.Host{DataDir: dataDir}, cfg: config{DefaultLeague: testLeague}}
-	old := snapshot{Date: "2026-09-10", Players: map[string]playerSnapshot{"11533": {DepthChartOrder: 1}}}
-	newer := snapshot{Date: "2026-09-16", Players: map[string]playerSnapshot{"11533": {DepthChartOrder: 3}}}
+	from, to := daysAgo(6), daysAgo(0)
+	old := snapshot{Date: from, Players: map[string]playerSnapshot{"11533": {DepthChartOrder: 1}}}
+	newer := snapshot{Date: to, Players: map[string]playerSnapshot{"11533": {DepthChartOrder: 3}}}
 	if err := writeSnapshot(dataDir, testLeague, old); err != nil {
 		t.Fatalf("writeSnapshot: %v", err)
 	}
@@ -153,8 +158,8 @@ func TestGetTrendsOverTwoSyntheticSnapshots(t *testing.T) {
 	if err != nil {
 		t.Fatalf("getTrends: %v", err)
 	}
-	if got.FromDate != "2026-09-10" || got.ToDate != "2026-09-16" {
-		t.Errorf("from/to = %s/%s, want 2026-09-10/2026-09-16", got.FromDate, got.ToDate)
+	if got.FromDate != from || got.ToDate != to {
+		t.Errorf("from/to = %s/%s, want %s/%s", got.FromDate, got.ToDate, from, to)
 	}
 	if len(got.Trends) != 1 || got.Trends[0].PlayerID != "11533" || !got.Trends[0].DepthChartChanged {
 		t.Errorf("trends = %+v, want one depth-chart change for 11533", got.Trends)
@@ -168,11 +173,11 @@ func TestGetTrendsOverTwoSyntheticSnapshots(t *testing.T) {
 func TestGetTrendsSkipsUnreadableSnapshotWithNote(t *testing.T) {
 	dataDir := t.TempDir()
 	e := &extension{client: newTestClient(t), host: sdk.Host{DataDir: dataDir}, cfg: config{DefaultLeague: testLeague}}
-	good := snapshot{Date: "2026-09-10", Players: map[string]playerSnapshot{"11533": {DepthChartOrder: 1}}}
+	good := snapshot{Date: daysAgo(6), Players: map[string]playerSnapshot{"11533": {DepthChartOrder: 1}}}
 	if err := writeSnapshot(dataDir, testLeague, good); err != nil {
 		t.Fatalf("writeSnapshot: %v", err)
 	}
-	corruptPath := filepath.Join(snapshotDir(dataDir, testLeague), "2026-09-16.json")
+	corruptPath := filepath.Join(snapshotDir(dataDir, testLeague), daysAgo(0)+".json")
 	if err := os.WriteFile(corruptPath, []byte("not json"), 0o644); err != nil {
 		t.Fatalf("write corrupt snapshot: %v", err)
 	}
