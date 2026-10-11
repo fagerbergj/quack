@@ -629,6 +629,29 @@ func inNodeSession(runID string) bool {
 	return runID == "worker-r0" || runID == "worker-continue" || strings.HasPrefix(runID, stream.SteerRunPrefix)
 }
 
+// draft is the round's draft plus the continuation rounds that finish it.
+func (g *gateRun) draft(sfx string) (string, *gateExit) {
+	a, exit := g.draftOrResume(sfx)
+	if exit != nil {
+		return "", exit
+	}
+	return g.continueWorker(sfx, a)
+}
+
+// steerExit delivers the message of a steer-aborted round and reports that the gate carries on. A pause
+// that landed with it wins and turns exit into the park: taking the message would lose it to a parked run.
+func (g *gateRun) steerExit(exit *gateExit) bool {
+	if !errors.Is(exit.err, errSteered) {
+		return false
+	}
+	if g.paused() {
+		exit.res, exit.err = GateResult{}, ErrNodePaused
+		return false
+	}
+	g.applySteer(strings.TrimSpace(g.ctrl.TakeQueued()))
+	return true
+}
+
 // applySteer delivers queued message q: the worker's own session continues with it when it can be repaired,
 // otherwise the next draft re-runs the task with q folded in. Either way the judge sees q beside the task.
 // An empty q is a steer whose message was removed after it aborted the round: the session just carries on.
@@ -893,13 +916,10 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		// Fresh run ID after queue delivery.
 		sfx := queueSuffix(g.queueAttempt)
 		question := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: g.prompt}}}
-		a, exit := g.draftOrResume(sfx)
-		if exit == nil {
-			answer, exit = g.continueWorker(sfx, a)
-		}
+		a, exit := g.draft(sfx)
+		answer = a
 		if exit != nil {
-			if errors.Is(exit.err, errSteered) {
-				g.applySteer(strings.TrimSpace(g.ctrl.TakeQueued()))
+			if g.steerExit(exit) {
 				continue
 			}
 			return exit.answer, exit.res, exit.err
@@ -1416,14 +1436,8 @@ func (j *judgeRounds) reviseRound(round int, act workerActivity, v verdict, env 
 	reviseCtx, rspan := startStageSpan(j.nodeCtx, nil, j.cfg, j.nodeID, "revise", stream.StageRevise, reviseRunID, round)
 	revised, rerr := runWorkerNodeTraced(j.ctx, reviseCtx, j.cfg, j.workerModel, j.workerNode, revisePrompt, reviseRunID, "revise", j.promptEmit)
 	rspan.end(stream.AgentCompleteData{RunID: reviseRunID, Stage: stream.StageRevise, Round: round}, rerr)
-	// A steer aborted the revision: deliver it now (an aborted round can return no error). The revision ran
-	// in its own fresh session, so recording it as the last run makes the steer re-draft, not continue.
-	if j.ctrl != nil && j.ctrl.SteerInterrupted() && !j.ctrl.Cancelled() {
-		if q := strings.TrimSpace(j.ctrl.TakeQueued()); q != "" {
-			j.lastAnswerRunID = reviseRunID
-			j.outcome = &judgeRoundOutcome{queuedText: q}
-			return false, nil
-		}
+	if j.steeredRevision(reviseRunID) {
+		return false, nil
 	}
 	if rerr != nil {
 		if lerr, ok := j.repeatFailed(); ok {
@@ -1454,6 +1468,21 @@ func (j *judgeRounds) reviseRound(round int, act workerActivity, v verdict, env 
 	}
 	j.lastAnswerRunID = reviseRunID
 	return true, nil
+}
+
+// steeredRevision delivers a steer that aborted the revision (an aborted round can return no error). The
+// revision ran in its own fresh session, so recording it as the last run makes the steer re-draft.
+func (j *judgeRounds) steeredRevision(reviseRunID string) bool {
+	if j.ctrl == nil || !j.ctrl.SteerInterrupted() || j.ctrl.Cancelled() {
+		return false
+	}
+	q := strings.TrimSpace(j.ctrl.TakeQueued())
+	if q == "" {
+		return false
+	}
+	j.lastAnswerRunID = reviseRunID
+	j.outcome = &judgeRoundOutcome{queuedText: q}
+	return true
 }
 
 // judgeRoundOutcome: how the judge/revise loop closed. exit maps to

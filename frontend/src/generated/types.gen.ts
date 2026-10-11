@@ -666,7 +666,7 @@ export type NodeStatusUpdateBody = {
      */
     status: 'paused' | 'running' | 'queued';
     /**
-     * Optional and folded into the node's task when status is "queued" (retry) or "running" (resume, which it turns into a fresh re-run). Unused for "paused". To steer a RUNNING node, queue a message instead (POST .../nodes/{node_id}/queue) - it is delivered at the node's next turn boundary, not mid-turn.
+     * Optional and folded into the node's task when status is "queued" (retry) or "running" (resume, which it turns into a fresh re-run). Unused for "paused". To steer a RUNNING node, queue a message instead (POST .../nodes/{node_id}/queue) - a worker round in flight takes it at once.
      */
     guidance?: string;
     reason?: PauseReason;
@@ -692,7 +692,7 @@ export type QueuedMessage = {
      */
     status: 'queued' | 'forwarded' | 'drained';
     /**
-     * Derived from status (true for forwarded and drained). True once handed to the node - immediately if its round was live (#998), otherwise at the next turn boundary; no longer editable or removable either way. Kept for existing consumers; prefer status for the forwarded-vs-drained distinction.
+     * Derived from status (true for forwarded and drained). True once handed to the node - immediately if its worker round was live, otherwise at the next turn boundary; no longer editable or removable either way. Kept for existing consumers; prefer status for the forwarded-vs-drained distinction.
      */
     delivered: boolean;
     created_at: string;
@@ -1028,7 +1028,7 @@ export type DagNodeState = {
      */
     pending_question?: string;
     /**
-     * The node's steer queue - messages waiting for its next turn boundary.
+     * The node's steer queue - messages not yet delivered to it.
      */
     queued_messages?: Array<QueuedMessage>;
     output_preview?: string;

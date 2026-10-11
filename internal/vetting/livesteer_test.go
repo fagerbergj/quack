@@ -2,6 +2,7 @@ package vetting
 
 import (
 	"context"
+	"errors"
 	"iter"
 	"strings"
 	"sync"
@@ -32,6 +33,7 @@ type steerCtrl struct {
 	armed       bool
 	taken       bool
 	interrupted bool
+	pauseToo    bool // the user paused the node as the steer landed
 }
 
 func (c *steerCtrl) arm() {
@@ -41,7 +43,11 @@ func (c *steerCtrl) arm() {
 }
 
 func (c *steerCtrl) Cancelled() bool { return false }
-func (c *steerCtrl) Paused() bool    { return false }
+func (c *steerCtrl) Paused() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.pauseToo && c.armed
+}
 func (c *steerCtrl) TakeQueued() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -123,7 +129,16 @@ func newLookUpTool(t *testing.T) tool.Tool {
 // runSteeredNode runs one native gated node whose round the user steers, returning every worker request.
 func runSteeredNode(t *testing.T, repair func(context.Context) bool) [][]*genai.Content {
 	t.Helper()
-	ctrl := &steerCtrl{}
+	reqs, err := runSteeredGate(t, &steerCtrl{}, repair)
+	if err != nil {
+		t.Fatalf("gate: %v", err)
+	}
+	return reqs
+}
+
+// runSteeredGate runs the gate once, returning its worker requests and its own error.
+func runSteeredGate(t *testing.T, ctrl *steerCtrl, repair func(context.Context) bool) ([][]*genai.Content, error) {
+	t.Helper()
 	stub := &steerStub{ctrl: ctrl}
 	worker, err := agent.Build(
 		&agent.Bundle{Card: agent.Card{Name: "web-researcher", Description: "researcher"}, Prompt: "Answer the question."},
@@ -136,11 +151,13 @@ func runSteeredNode(t *testing.T, repair func(context.Context) bool) [][]*genai.
 		t.Fatalf("worker node: %v", err)
 	}
 	cfg := Config{JudgeRounds: 1, Threshold: 0.5, Rubric: "score it", ChatID: "chat-1", Agent: "web-researcher", RepairSession: repair}
+	var gateErr error
 	node := workflow.NewDynamicNode[string, string]("researcher-gate",
 		func(ctx adkagent.Context, _ string, emit func(*session.Event) error) (string, error) {
 			answer, _, err := RunGatedRefine(ctx, "researcher-gate", workerNode, stub,
 				NewJudgeFactory(stub, nil, nil), cfg, steerTask, nil, ctrl, emit)
-			return answer, err
+			gateErr = err
+			return answer, nil
 		}, workflow.NodeConfig{})
 	root, err := workflowagent.New(workflowagent.Config{
 		Name: "root", SubAgents: []adkagent.Agent{worker},
@@ -160,7 +177,7 @@ func runSteeredNode(t *testing.T, repair func(context.Context) bool) [][]*genai.
 	}
 	stub.mu.Lock()
 	defer stub.mu.Unlock()
-	return stub.requests
+	return stub.requests, gateErr
 }
 
 // lastUserText is the text of a request's final user turn that carries text.
@@ -219,4 +236,17 @@ func requestText(req *model.LLMRequest) string {
 		}
 	}
 	return b.String()
+}
+
+// A pause landing with a steer parks the node with the message still queued, so the resume delivers it;
+// taking it first would drain it into a run that parks and lose it.
+func TestRunGatedRefine_PauseWithASteerLeavesItQueued(t *testing.T) {
+	ctrl := &steerCtrl{pauseToo: true}
+	_, err := runSteeredGate(t, ctrl, func(context.Context) bool { return true })
+	if !errors.Is(err, ErrNodePaused) {
+		t.Fatalf("gate err = %v, want ErrNodePaused", err)
+	}
+	if ctrl.taken {
+		t.Error("the steer was drained into a run that parked")
+	}
 }

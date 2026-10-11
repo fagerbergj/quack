@@ -354,6 +354,7 @@ func (c *nodeControl) enqueue(text string) queuedMsg {
 	c.mu.Lock()
 	m := &queuedMsg{ID: newMsgID(), Text: text, Status: status, CreatedAt: time.Now().UTC()}
 	c.queue = append(c.queue, m)
+	snapshot := *m // copied under the lock: a drain may rewrite m.Status the moment it's released
 	var abort context.CancelFunc
 	if status == MsgQueued && c.workerAbort != nil {
 		abort = c.workerAbort
@@ -363,7 +364,7 @@ func (c *nodeControl) enqueue(text string) queuedMsg {
 	if abort != nil {
 		abort()
 	}
-	return *m
+	return snapshot
 }
 
 // restore rebuilds a control's steer queue from dag_nodes after a restart. A persisted pause is

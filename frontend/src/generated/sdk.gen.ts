@@ -453,10 +453,11 @@ export const editNodeTask = <ThrowOnError extends boolean = false>(options: Opti
 /**
  * Queue a message for a running node, delivered into its running round
  *
- * Appends to the node's message queue - the replacement for the old
- * interrupt-based steer. The node drains its queue (in order) at its
- * next turn boundary; never mid-turn. Only legal while the node is
- * `running` (404 if no live control).
+ * Appends to the node's message queue. A worker round in flight takes it
+ * at once: an ACP node live, a native node by interrupting the round and
+ * continuing with the message. Otherwise (e.g. during a judge round) the
+ * node drains its queue, in order, at its next turn boundary. Only legal
+ * while the node is `running` (404 if no live control).
  *
  */
 export const queueNodeMessage = <ThrowOnError extends boolean = false>(options: Options<QueueNodeMessageData, ThrowOnError>): RequestResult<QueueNodeMessageResponses, QueueNodeMessageErrors, ThrowOnError> => (options.client ?? client).post<QueueNodeMessageResponses, QueueNodeMessageErrors, ThrowOnError>({

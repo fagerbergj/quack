@@ -920,7 +920,7 @@ type DagNodeState struct {
 	PendingQuestion *string `json:"pending_question,omitempty"`
 	PromptTokens    *int    `json:"prompt_tokens,omitempty"`
 
-	// QueuedMessages The node's steer queue - messages waiting for its next turn boundary.
+	// QueuedMessages The node's steer queue - messages not yet delivered to it.
 	QueuedMessages   *[]QueuedMessage `json:"queued_messages,omitempty"`
 	ReasoningTokens  *int             `json:"reasoning_tokens,omitempty"`
 	ServerDurationMs *int             `json:"server_duration_ms,omitempty"`
@@ -1241,7 +1241,7 @@ type NodeStatus string
 
 // NodeStatusUpdateBody defines model for NodeStatusUpdateBody.
 type NodeStatusUpdateBody struct {
-	// Guidance Optional and folded into the node's task when status is "queued" (retry) or "running" (resume, which it turns into a fresh re-run). Unused for "paused". To steer a RUNNING node, queue a message instead (POST .../nodes/{node_id}/queue) - it is delivered at the node's next turn boundary, not mid-turn.
+	// Guidance Optional and folded into the node's task when status is "queued" (retry) or "running" (resume, which it turns into a fresh re-run). Unused for "paused". To steer a RUNNING node, queue a message instead (POST .../nodes/{node_id}/queue) - a worker round in flight takes it at once.
 	Guidance *string `json:"guidance,omitempty"`
 
 	// Reason Why a node sits in the `paused` status.
@@ -1428,7 +1428,7 @@ type QueueMessageBody struct {
 type QueuedMessage struct {
 	CreatedAt time.Time `json:"created_at"`
 
-	// Delivered Derived from status (true for forwarded and drained). True once handed to the node - immediately if its round was live (#998), otherwise at the next turn boundary; no longer editable or removable either way. Kept for existing consumers; prefer status for the forwarded-vs-drained distinction.
+	// Delivered Derived from status (true for forwarded and drained). True once handed to the node - immediately if its worker round was live, otherwise at the next turn boundary; no longer editable or removable either way. Kept for existing consumers; prefer status for the forwarded-vs-drained distinction.
 	Delivered bool   `json:"delivered"`
 	Id        string `json:"id"`
 

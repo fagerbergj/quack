@@ -898,10 +898,11 @@ paths:
       operationId: queueNodeMessage
       summary: Queue a message for a running node, delivered into its running round
       description: |
-        Appends to the node's message queue - the replacement for the old
-        interrupt-based steer. The node drains its queue (in order) at its
-        next turn boundary; never mid-turn. Only legal while the node is
-        `running` (404 if no live control).
+        Appends to the node's message queue. A worker round in flight takes it
+        at once: an ACP node live, a native node by interrupting the round and
+        continuing with the message. Otherwise (e.g. during a judge round) the
+        node drains its queue, in order, at its next turn boundary. Only legal
+        while the node is `running` (404 if no live control).
       parameters:
         - $ref: "#/components/parameters/ChatID"
         - $ref: "#/components/parameters/NodeID"
@@ -2372,8 +2373,8 @@ components:
           description: Optional and folded into the node's task when status is
             "queued" (retry) or "running" (resume, which it turns into a fresh re-run).
             Unused for "paused". To steer a RUNNING node,
-            queue a message instead (POST .../nodes/{node_id}/queue) - it is
-            delivered at the node's next turn boundary, not mid-turn.
+            queue a message instead (POST .../nodes/{node_id}/queue) - a worker
+            round in flight takes it at once.
         reason:
           $ref: "#/components/schemas/PauseReason"
           description: Only meaningful when status is "paused". Defaults to
@@ -2414,8 +2415,8 @@ components:
         delivered:
           type: boolean
           description: Derived from status (true for forwarded and drained).
-            True once handed to the node - immediately if its round was live
-            (#998), otherwise at the next turn boundary; no longer editable
+            True once handed to the node - immediately if its worker round was
+            live, otherwise at the next turn boundary; no longer editable
             or removable either way. Kept for existing consumers; prefer
             status for the forwarded-vs-drained distinction.
         created_at:
@@ -2955,8 +2956,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/QueuedMessage"
-          description: The node's steer queue - messages waiting for its next
-            turn boundary.
+          description: The node's steer queue - messages not yet delivered
+            to it.
         output_preview:
           type: string
         error:
