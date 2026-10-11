@@ -105,8 +105,8 @@ function ChatBadges({ s, githubRef }: { s: ChatSummary; githubRef: GithubRef | u
           {GITHUB_STATE_TONE.has(s.github_state) && s.github_state}
         </span>
       )}
-      {/* Extension-dispatched chats. GitHub keeps its dedicated fields above until it stamps origin itself. */}
-      {s.origin && (
+      {/* Extension-dispatched chats. GitHub's origin repeats the repo/PR/state badges above, so it is skipped. */}
+      {s.origin && !(isGithubChat(s) && ref) && (
         <>
           {s.origin.href ? (
             <a
@@ -284,7 +284,7 @@ function ChatRow({
         </span>
       </span>
       {/* Always rendered so every row reserves the same height and stays aligned. */}
-      <div className="flex items-center gap-1 h-4 mt-0.5 pr-6">
+      <div className="flex items-center gap-1 h-4 mt-0.5 pr-6 min-w-0 overflow-hidden">
         <ChatBadges s={s} githubRef={ref} />
       </div>
       <span className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{relativeDate(s.updated_at)}</span>
