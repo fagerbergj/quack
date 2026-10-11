@@ -109,6 +109,7 @@ func settledChats(rep store.ResumeReport, interrupted []string) []string {
 func endSettledExtRuns(chatIDs []string, exts []builtSDKExtension) {
 	for _, chatID := range chatIDs {
 		if obs := runObserverFor(chatID, exts); obs != nil {
+			slog.Info("boot ended an extension run it could not resume", "component", "startup", "chat", chatID)
 			obs.RunEnded(chatID, extsdk.RunOutcome{Status: extsdk.RunFailed, PlanRan: true, Error: settledRunError})
 		}
 	}
@@ -228,7 +229,9 @@ func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode
 	if obs != nil && !hub.WasInterrupted(chatID) {
 		timedOut := errors.Is(runCtx.Err(), context.DeadlineExceeded)
 		cancelled := errors.Is(runCtx.Err(), context.Canceled)
-		obs.RunEnded(chatID, buildExtRunOutcome(tailCtx, orch, st, userID, chatID, res.PlanID != "", res.NeedsInput, timedOut, cancelled))
+		out := buildExtRunOutcome(tailCtx, orch, st, userID, chatID, res.PlanID != "", res.NeedsInput, timedOut, cancelled)
+		slog.Info("resume: run ended; outcome delivered to its extension", "component", "startup", "chat", chatID, "status", out.Status)
+		obs.RunEnded(chatID, out)
 		return
 	}
 	st.StampTerminalOutcome(tailCtx, orchestrator.AppName, userID, chatID, func() (string, bool) {
