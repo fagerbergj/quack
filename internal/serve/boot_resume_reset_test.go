@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
@@ -88,5 +89,50 @@ func TestStartResumedNodes_ResetsBeforeDispatch(t *testing.T) {
 				"the resume; the reset must run synchronously before any resume goroutine is dispatched, "+
 				"not from inside driveResume itself: %q", ev.Event)
 		}
+	}
+}
+
+// TestStartResumedNodes_PlanLookupFailureEndsStream: Reopen replays the transcript before driveBootRun looks
+// the plan up, so a lookup that finds nothing must still end the stream, not leave a subscriber waiting.
+func TestStartResumedNodes_PlanLookupFailureEndsStream(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	chatID := "chat-no-plan"
+	if err := st.SetChatOrigin(ctx, chatID, "u1", ""); err != nil {
+		t.Fatal(err)
+	}
+	js, _ := runlog.MarshalEvent(stream.ResponseCreated("turn-1"))
+	if err := st.InsertChatEvent(ctx, store.ChatEvent{ChatID: chatID, Seq: 1, Event: js}); err != nil {
+		t.Fatal(err)
+	}
+	hub := stream.NewHub()
+	eventLog := runlog.NewEventLog(st)
+
+	startResumedNodes(ctx, []store.ResumableNode{{ChatID: chatID, PlanID: "gone", NodeID: "n1"}}, nil, st, hub, eventLog, nil, 1)
+
+	_, live, cancel, done := hub.Subscribe(chatID)
+	defer cancel()
+	timeout := time.After(5 * time.Second)
+	for open := !done; open; {
+		select {
+		case _, open = <-live:
+		case <-timeout:
+			t.Fatal("the reopened stream was never closed after the plan lookup failed")
+		}
+	}
+	// A cold replay must end too, so the persisted transcript closes with done.
+	evs, _ := eventLog.LoadEvents(ctx, chatID, 0)
+	if n := len(evs); n == 0 || func() bool { ev, _ := runlog.UnmarshalEvent(evs[n-1].Event); return ev.Name != stream.EventDone }() {
+		t.Errorf("persisted transcript = %+v, want it to end with done", evs)
+	}
+
+	// A run already holding the chat owns its stream: it must be left alone.
+	hub.RegisterRun(chatID, "turn-2", func() {})
+	endReopenedStream(ctx, hub, eventLog, chatID)
+	if !hub.HasRegisteredRun(chatID) || hub.LastSeq(chatID) != 0 {
+		t.Error("endReopenedStream published into or ended a run it did not start")
 	}
 }
