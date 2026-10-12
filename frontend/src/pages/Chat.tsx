@@ -5,7 +5,7 @@ import { AssistantText, ActivityList, LiveStatusLine, BubbleHeader, Dots, stoppe
 import { QuestionBubble } from '../components/QuestionBubble'
 import { DagView, DagBubbleHeader } from '../components/DagView'
 import { Composer } from '../components/Composer'
-import { ChatList } from '../components/ChatList'
+import { ChatList, UNTITLED_CHAT } from '../components/ChatList'
 import { TurnView, visibleActivity } from '../components/TurnView'
 import { useChatStore, useChatState } from '../state/ChatStoreProvider'
 import { activityFromTurn, dagFromTurn, liveAnswerText, pendingNodeQuestion, dagAnswerAttribution, sessionModels, type DagTurnState, type ChatState } from '../state/chatStore'
@@ -389,7 +389,7 @@ function LiveTurnView({ live, surfaces, liveActive, isArchived, activeChatId, li
 // The sidebar poll can lag the stream, so an 'idle' summary while the turn streams still means running.
 function chatHeaderProps(activeChat: ChatSummary | undefined, activeChatId: string | null, isArchived: boolean, live: NonNullable<ChatState['live']> | undefined) {
   return {
-    title: activeChat?.title || (activeChatId ? 'New chat' : 'Chat'),
+    title: activeChat?.title || (activeChatId ? UNTITLED_CHAT : 'New chat'),
     editable: !!activeChatId && !isArchived,
     status: (activeChat?.status && activeChat.status !== 'idle' ? activeChat.status : 'running') as ChatStatus,
     startedAt: live?.dag?.startedAt ?? live?.runs[0]?.startedAt,
@@ -677,11 +677,11 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
     setChats(prev => prev.map(c => c.id === activeChatId ? updated : c))
   }, [activeChatId])
 
-  async function handleNewChat() {
-    const chat = await api.createChat()
-    setChats(prev => [chat, ...prev])
-    setActiveChatId(chat.id)
-    navigate(`/chat/${chat.id}`)
+  // Lazy: the empty /chat route creates the chat on its first send, so clicking New Chat leaves no empty chats behind.
+  function handleNewChat() {
+    setActiveChatId(null)
+    setChatListOpen(false)
+    navigate('/chat')
   }
 
   async function handleDeleteChat(id: string, e: React.MouseEvent) {
@@ -858,7 +858,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
         activeChatId={activeChatId}
         open={chatListOpen}
         onSelect={selectChat}
-        onNewChat={() => { void handleNewChat() }}
+        onNewChat={handleNewChat}
         onDelete={(id, e) => { void handleDeleteChat(id, e) }}
         onCloseMobile={() => setChatListOpen(false)}
         hasMoreChats={activePager.hasMore}
