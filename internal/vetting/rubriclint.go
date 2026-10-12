@@ -22,6 +22,11 @@ func codeOwnedCriteria() map[string]bool {
 	return out
 }
 
+// IsCodeOwnedCriterion reports whether a deterministic check, not the judge, scores name.
+func IsCodeOwnedCriterion(name string) bool {
+	return codeOwnedCriteria()[name]
+}
+
 // LintRubric reports every authoring problem in one rubric.yaml beyond what boot rejects. Unknown keys fail
 // since a rubric has no weights (aggregation is weakest-link); lintCriterion holds the per-criterion checks.
 func LintRubric(raw []byte, source string) []string {

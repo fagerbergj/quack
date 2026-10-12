@@ -362,7 +362,7 @@ func RunJudgeReplay(ctx context.Context, cfg *config.Config, sess *bundle.Sessio
 		renderReplayReports(out, report)
 	}
 	if opts.ReportPath != "" {
-		if err := writeJSONFile(opts.ReportPath, report); err != nil {
+		if err := WriteJSONFile(opts.ReportPath, report); err != nil {
 			fmt.Fprintf(os.Stderr, "judge replay: %v\n", err)
 			exit = max(exit, 1)
 		}
@@ -370,8 +370,8 @@ func RunJudgeReplay(ctx context.Context, cfg *config.Config, sess *bundle.Sessio
 	return exit
 }
 
-// writeJSONFile writes v as indented JSON to path, the same bytes --json prints.
-func writeJSONFile(path string, v any) error {
+// WriteJSONFile writes v as indented JSON to path, the same bytes --json prints.
+func WriteJSONFile(path string, v any) error {
 	var buf bytes.Buffer
 	if err := WriteJSON(&buf, v); err != nil {
 		return err

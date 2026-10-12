@@ -1,0 +1,19 @@
+{
+  "id": "live-off-question",
+  "note": "Needs a live judge: a fluent answer to a different question.",
+  "rubric": "../../agents/web-researcher/rubric.yaml",
+  "needs_live_model": true,
+  "task": "What is the capital of Australia?",
+  "answer": "Sydney is Australia's largest city, with about 5.3 million residents, and its harbour hosts the Opera House ([city profile](https://example.com/sydney-profile)).",
+  "activity": {
+    "fetched": [
+      "https://example.com/sydney-profile"
+    ]
+  },
+  "labels": {
+    "answers_question": {
+      "pass": false,
+      "reason": "never names the capital (Canberra)"
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "id": "leaked-tool-call",
+  "note": "A malformed tool call leaked into the deliverable.",
+  "rubric": "../../agents/web-researcher/rubric.yaml",
+  "task": "Which year did the Golden Gate Bridge open?",
+  "answer": "The bridge opened in 1937.\n<tool_call>{\"name\": \"web_fetch\", \"arguments\": {\"url\": \"https://example.com\"}}</tool_call>",
+  "activity": {
+    "fetched": [
+      "https://example.com/golden-gate-history"
+    ]
+  },
+  "labels": {
+    "no_tool_call_syntax": {
+      "pass": false,
+      "reason": "raw </tool_call> markup in the answer"
+    }
+  }
+}

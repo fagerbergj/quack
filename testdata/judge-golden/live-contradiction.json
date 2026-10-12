@@ -1,0 +1,19 @@
+{
+  "id": "live-contradiction",
+  "note": "Needs a live judge: two dates for one event.",
+  "rubric": "../../agents/web-researcher/rubric.yaml",
+  "needs_live_model": true,
+  "task": "Which year did the Golden Gate Bridge open?",
+  "answer": "The Golden Gate Bridge opened in May 1937 ([history](https://example.com/golden-gate-history)). Since it opened in 1932, it has carried over two billion vehicles ([history](https://example.com/golden-gate-history)).",
+  "activity": {
+    "fetched": [
+      "https://example.com/golden-gate-history"
+    ]
+  },
+  "labels": {
+    "internally_consistent": {
+      "pass": false,
+      "reason": "opened in 1937 and in 1932 cannot both be true"
+    }
+  }
+}

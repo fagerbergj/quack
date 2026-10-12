@@ -1,0 +1,22 @@
+{
+  "id": "figures-cited",
+  "note": "The same figures, each cited in its own bullet.",
+  "rubric": "../../agents/web-researcher/rubric.yaml",
+  "task": "Summarise the US grid figures from the report.",
+  "answer": "US grid figures for 2024:\n\n- Solar capacity reached 412 GW in 2024 ([report](https://example.com/energy-report-2025)).\n- Wind capacity reached 117 GW in 2024 ([report](https://example.com/energy-report-2025)).\n- Battery storage reached 69 GW in 2024 ([report](https://example.com/energy-report-2025)).\n- Coal generation reached 8.4% in 2024 ([report](https://example.com/energy-report-2025)).\n- Grid losses reached 5.1% in 2024 ([report](https://example.com/energy-report-2025)).\n- Average retail price reached $0.16/kWh in 2024 ([report](https://example.com/energy-report-2025)).\n- Peak demand reached 745 GW in 2024 ([report](https://example.com/energy-report-2025)).\n- Nuclear output reached 782 TWh in 2024 ([report](https://example.com/energy-report-2025)).\n- Hydro output reached 241 TWh in 2024 ([report](https://example.com/energy-report-2025)).\n- Gas share reached 43% in 2024 ([report](https://example.com/energy-report-2025)).\n- EV charging load reached 31 TWh in 2024 ([report](https://example.com/energy-report-2025)).",
+  "activity": {
+    "fetched": [
+      "https://example.com/energy-report-2025"
+    ]
+  },
+  "labels": {
+    "specifics_cited": {
+      "pass": true,
+      "reason": "every figure cites the fetched report in its bullet"
+    },
+    "cites_sources": {
+      "pass": true,
+      "reason": "every link is the fetched report"
+    }
+  }
+}

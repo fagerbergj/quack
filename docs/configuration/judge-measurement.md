@@ -21,6 +21,48 @@ diff <(jq .consistency before.json) <(jq .consistency after.json)
 
 `unstable` counts the (round, criterion) cells whose repeats disagreed. A criterion that is unstable across many rounds needs a narrower definition of what one finding is (see the measured example in [Agents](agents.md)); one that always scores the same band on every answer is not measuring anything.
 
+## Golden set
+
+Consistency says nothing about whether the judge is right. `testdata/judge-golden/` is a labeled set: each item is an answer, the rubric it is graded under, and a human pass/fail per criterion with the reason. `quack judge score-golden <dir>` grades every item through the live gate's own functions (`vetting.ReplayRound`, the same path `quack judge replay` uses) and compares each labeled criterion's pass/fail at the set's threshold with the label:
+
+- A false pass is a criterion the label fails and the gate passes. Its rate is over the labels that say fail.
+- A false fail is a criterion the label passes and the gate fails. Its rate is over the labels that say pass.
+- A criterion the round did not produce cannot fail it (the round score is the weakest criterion present), so it counts as a pass, with `scored: false` in the report.
+
+The run exits 2 when any rate, per criterion or overall, exceeds the limit in the set's `config.json`, and 1 when an item errored or nothing was scored:
+
+```json
+{"threshold": 0.6, "max_false_pass_rate": 0, "max_false_fail_rate": 0}
+```
+
+`threshold` is required and should match the deployment's `gates.judge.threshold`. The checked-in set's limits are zero because its scored items are deterministic; for a live run, copy the set and loosen them. `TestScoreGoldenSeedSetAgreesOffline` runs the set offline in CI.
+
+An item is one JSON file. An inline item carries the task, the answer and the URLs the worker fetched:
+
+```json
+{
+  "id": "cites-fabricated",
+  "rubric": "../../agents/web-researcher/rubric.yaml",
+  "task": "Which year did the Golden Gate Bridge open?",
+  "answer": "The bridge opened in May 1937 ([history](https://example.com/golden-gate-history)), and ... ([review](https://bridges.example.org/golden-gate-review)).",
+  "activity": {"fetched": ["https://example.com/golden-gate-history"]},
+  "labels": {"cites_sources": {"pass": false, "reason": "bridges.example.org was never fetched or searched"}}
+}
+```
+
+A recorded item points at one judged round of a recording instead of `task`/`answer`/`activity`, and is rebuilt exactly as `quack judge replay` rebuilds it: `"recording": {"bundle": "recordings/x.zip", "node": "node-1", "round": 1}`. Paths are relative to the item file. `require_retrieval: true` sets the research-agent policy that scores `grounded_in_retrieval`.
+
+Labels on judge-scored criteria need `"needs_live_model": true`; `--deterministic-only` skips those items, and a live run sends only them to the judge. The loader rejects a judge-scored label on an item without the flag, and a label on a criterion that needs a live workspace (`checks_pass`, `artifact_valid` and the rest of `vetting.EnvironmentOnlyCriteria`).
+
+The seed set covers `cites_sources` (backed and invented links, inline and recorded), `sufficient_length`, `no_tool_call_syntax`, `grounded_in_retrieval` and `specifics_cited` (cited and uncited figures), plus three live items on the web-researcher's `answers_question` and `internally_consistent`.
+
+### Adding items from real recordings
+
+1. Find a round worth labeling, typically one a human disagreed with: `quack ledger list`, then `quack ledger export <chat-id> -o testdata/judge-golden/recordings/<name>.zip`.
+2. See the round's criteria and scores: `quack judge replay testdata/judge-golden/recordings/<name>.zip --deterministic-only --json` (drop `--deterministic-only` to include the judge's criteria).
+3. Write `testdata/judge-golden/<name>.json` with `recording` pointing at the node and judge round, the agent's `rubric`, and a label with a reason for each criterion you have checked by hand. Set `needs_live_model` when any label is judge-scored.
+4. Run `quack judge score-golden testdata/judge-golden --deterministic-only` and commit the bundle with the item. A recording carries the chat's full text; export only chats whose content may live in the repository.
+
 ## Rubric lint
 
 Every `rubric.yaml` under `agents/`, `extensions/*/plugin/agents/` and `config/` is linted by `TestShippedRubricsLintClean` in `internal/vetting`, which the `go-test` CI job runs whenever a PR touches those paths. `quack server validate` lints the rubric of every configured agent, plugin-seeded ones included, and fails on any issue. The lint runs boot's own validation (scale, band coverage, pass mark inside a band, a `fix` on every deterministic criterion) and adds:

@@ -1,0 +1,18 @@
+{
+  "id": "cites-fabricated",
+  "note": "A second link the worker never fetched or saw.",
+  "rubric": "../../agents/web-researcher/rubric.yaml",
+  "task": "Which year did the Golden Gate Bridge open?",
+  "answer": "The Golden Gate Bridge opened in May 1937 ([history](https://example.com/golden-gate-history)), and an engineering review called it the longest span of its era ([review](https://bridges.example.org/golden-gate-review)).",
+  "activity": {
+    "fetched": [
+      "https://example.com/golden-gate-history"
+    ]
+  },
+  "labels": {
+    "cites_sources": {
+      "pass": false,
+      "reason": "bridges.example.org was never fetched or searched: the link is invented"
+    }
+  }
+}

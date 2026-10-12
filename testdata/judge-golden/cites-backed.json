@@ -1,0 +1,18 @@
+{
+  "id": "cites-backed",
+  "note": "One citation to a page the worker fetched.",
+  "rubric": "../../agents/web-researcher/rubric.yaml",
+  "task": "Which year did the Golden Gate Bridge open?",
+  "answer": "The Golden Gate Bridge opened to traffic in May 1937 ([history](https://example.com/golden-gate-history)).",
+  "activity": {
+    "fetched": [
+      "https://example.com/golden-gate-history"
+    ]
+  },
+  "labels": {
+    "cites_sources": {
+      "pass": true,
+      "reason": "the only link is the page the worker fetched"
+    }
+  }
+}

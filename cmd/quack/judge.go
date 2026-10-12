@@ -21,8 +21,85 @@ import (
 // rounds under the working-copy rubric, without re-running the agent.
 func newJudgeCmd() *cobra.Command {
 	c := &cobra.Command{Use: "judge", Short: "Re-grade recorded rounds against the working-copy rubric"}
-	c.AddCommand(newJudgeReplayCmd())
+	c.AddCommand(newJudgeReplayCmd(), newJudgeScoreGoldenCmd())
 	return c
+}
+
+func newJudgeScoreGoldenCmd() *cobra.Command {
+	var deterministicOnly, asJSON bool
+	var outPath string
+	c := &cobra.Command{
+		Use:   "score-golden <dir>",
+		Short: "Grade a labeled golden set and report false-pass/false-fail rates per criterion",
+		Long: "Grades every item in <dir> (config.json plus one JSON file per labeled item) through the\n" +
+			"live gate's own functions and compares each criterion's pass/fail at the set's threshold with\n" +
+			"the human label. Exits 2 when a false-pass or false-fail rate, per criterion or overall,\n" +
+			"exceeds the set's limit, 1 when an item errored or nothing was scored. --deterministic-only\n" +
+			"skips items that need the judge model and needs no quack.yaml; otherwise the local quack.yaml's\n" +
+			"gates.judge model grades the items marked needs_live_model.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runScoreGolden(cmd, args[0], deterministicOnly, asJSON, outPath)
+		},
+	}
+	c.Flags().BoolVar(&deterministicOnly, "deterministic-only", false, "score only the code-owned criteria; skip items that need the judge model")
+	c.Flags().StringVar(&outPath, "out", "", "also write the JSON report to this file")
+	asJSONFlag(c, &asJSON)
+	return c
+}
+
+func runScoreGolden(cmd *cobra.Command, dir string, deterministicOnly, asJSON bool, outPath string) error {
+	gcfg, items, err := cli.LoadGoldenSet(dir)
+	if err != nil {
+		return err
+	}
+	var base vetting.Config
+	var judge vetting.JudgeFactory
+	var artifactTools []tool.Tool
+	if !deterministicOnly {
+		if base, judge, artifactTools, err = goldenJudge(cmd.Context()); err != nil {
+			return err
+		}
+	}
+	rep, code := cli.ScoreGolden(cmd.Context(), gcfg, items, base, judge, artifactTools)
+	if asJSON {
+		err = cli.WriteJSON(cmd.OutOrStdout(), rep)
+	} else {
+		cli.RenderGoldenReport(cmd.OutOrStdout(), rep)
+	}
+	if err == nil && outPath != "" {
+		err = cli.WriteJSONFile(outPath, rep)
+	}
+	if err != nil {
+		return err
+	}
+	exitIfNonZero(code)
+	return nil
+}
+
+// goldenJudge builds the local quack.yaml's gate config and judge model, as judge replay does.
+func goldenJudge(ctx context.Context) (vetting.Config, vetting.JudgeFactory, []tool.Tool, error) {
+	cfgPath := defaultConfigPath()
+	cfg, err := config.LoadDeferringAgentCompleteness(cfgPath)
+	if err != nil {
+		return vetting.Config{}, nil, nil, fmt.Errorf("score-golden needs a local quack.yaml with gates.judge, or --deterministic-only: %w", err)
+	}
+	promptbuilder.SetLocation(cfg.Location())
+	base, err := vetting.FromConfig(ctx, nil, cfg.Gates)
+	if err != nil {
+		return base, nil, nil, err
+	}
+	judge, err := cli.BuildReplayJudge(cfg, func(p config.ProviderConfig, m string) (model.LLM, error) {
+		return inference.NewModel(p, m, nil, cfg.ModelCost(m), cfg.ModelEffort(m))
+	})
+	if err == nil && judge == nil {
+		err = fmt.Errorf("score-golden: gates.judge is not configured in %s; pass --deterministic-only", cfgPath)
+	}
+	if err != nil {
+		return base, nil, nil, err
+	}
+	stub, err := cli.StubArtifactTools()
+	return base, judge, stub, err
 }
 
 func newJudgeReplayCmd() *cobra.Command {
