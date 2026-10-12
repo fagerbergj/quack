@@ -98,7 +98,7 @@ export const DoneWithTokens: Story = {
 // the badges wrap beside it.
 export const LongHeaderBadges: Story = {
   render: () => (
-    <div style={{ width: 445 }}>
+    <div style={{ maxWidth: 445 }}>
       <DagNode
         node={{ ...wrNode, context_window: 131_072 }}
         state={{
