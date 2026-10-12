@@ -31,7 +31,7 @@ func (m *emptyReviseModel) GenerateContent(_ context.Context, req *model.LLMRequ
 		if stubHasTool(req, submitVerdictTool) {
 			m.judgeCalls++
 			m.judgePrompts = append(m.judgePrompts, stubAllText(req))
-			yield(stubCall(submitVerdictTool, map[string]any{"score": 0.4, "feedback": "tighten the claims"}), nil)
+			yield(stubCall(submitVerdictTool, map[string]any{"score": 1, "feedback": "tighten the claims"}), nil)
 			return
 		}
 		m.workerCalls++
@@ -93,7 +93,7 @@ func (m *identicalReviseModel) GenerateContent(_ context.Context, req *model.LLM
 	return func(yield func(*model.LLMResponse, error) bool) {
 		if stubHasTool(req, submitVerdictTool) {
 			m.judgeCalls++
-			yield(stubCall(submitVerdictTool, map[string]any{"score": 0.4, "feedback": "tighten the claims"}), nil)
+			yield(stubCall(submitVerdictTool, map[string]any{"score": 1, "feedback": "tighten the claims"}), nil)
 			return
 		}
 		m.workerCalls++

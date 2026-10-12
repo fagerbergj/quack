@@ -71,9 +71,9 @@ func readFileResponseContent(req *model.LLMRequest) (string, bool) {
 // read loop grounds the score in the real source.
 var scriptedJudge = fnLLM(func(req *model.LLMRequest) (*model.LLMResponse, error) {
 	if content, seen := readFileResponseContent(req); seen {
-		score := 0.2
+		score := 0.0
 		if strings.Contains(content, "func Test") {
-			score = 0.9
+			score = 3.0
 		}
 		return stubCall(submitVerdictTool, map[string]any{"score": score, "feedback": "graded from the file"}), nil
 	}
@@ -86,8 +86,8 @@ func TestJudgeReadsFileBeforeVerdict(t *testing.T) {
 		body      string
 		wantScore float64
 	}{
-		{"missing test fails", "func Play() {}\n", 0.2},
-		{"has test passes", "func Play() {}\nfunc TestPlay(t *testing.T) {}\n", 0.9},
+		{"missing test fails", "func Play() {}\n", 0},
+		{"has test passes", "func Play() {}\nfunc TestPlay(t *testing.T) {}\n", 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -118,7 +118,7 @@ func (recordingJudge) Name() string { return "recording-judge" }
 func (r recordingJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
 		*r.prompt = stubAllText(req)
-		yield(stubCall(submitVerdictTool, map[string]any{"score": 0.8, "feedback": ""}), nil)
+		yield(stubCall(submitVerdictTool, map[string]any{"score": 3, "feedback": ""}), nil)
 	}
 }
 
@@ -154,8 +154,8 @@ func TestRunJudgeAgent_OverBudgetAnswerFitsBudget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runJudgeAgent: %v", err)
 	}
-	if v.Score != 0.8 {
-		t.Errorf("verdict score = %v, want 0.8 (the judge call should have completed)", v.Score)
+	if v.Score != 1 {
+		t.Errorf("verdict score = %v, want 1 (the judge call should have completed)", v.Score)
 	}
 
 	budget := judgeCharBudget(cfg)
@@ -181,8 +181,8 @@ func TestRunJudgeAgent_BuildsPromptOnceForARound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runJudgeAgent: %v", err)
 	}
-	if v.Score != 0.8 {
-		t.Fatalf("verdict score = %v, want 0.8 (a clean, single-attempt round)", v.Score)
+	if v.Score != 1 {
+		t.Fatalf("verdict score = %v, want 1 (a clean, single-attempt round)", v.Score)
 	}
 	if got := judgePromptBuilds.Load() - before; got != 1 {
 		t.Errorf("buildJudgePrompt calls = %d, want 1 (fitJudgeAnswer's prompt must be reused, not rebuilt)", got)
@@ -229,7 +229,7 @@ func (j *flakyTransientJudge) GenerateContent(_ context.Context, _ *model.LLMReq
 			yield(nil, errors.New("openai gemma4-26b-a4b (generate): status 502: bad gateway"))
 			return
 		}
-		yield(stubCall(submitVerdictTool, map[string]any{"score": 0.85, "feedback": "recovered"}), nil)
+		yield(stubCall(submitVerdictTool, map[string]any{"score": 3, "feedback": "recovered"}), nil)
 	}
 }
 
@@ -243,8 +243,8 @@ func TestRunJudgeAgent_RetriesTransientErrorThenSucceeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runJudgeAgent: %v", err)
 	}
-	if v.Score != 0.85 {
-		t.Errorf("verdict score = %v, want 0.85 (the retry that finally recovered)", v.Score)
+	if v.Score != 1 {
+		t.Errorf("verdict score = %v, want 1 (the retry that finally recovered)", v.Score)
 	}
 	if got := atomic.LoadInt32(&judge.calls); got != 3 {
 		t.Errorf("judge model called %d times, want 3 (two transient 502s + the recovering call)", got)
@@ -347,9 +347,9 @@ func skillResponseContent(req *model.LLMRequest) (string, bool) {
 // judge grounds its score in a skill it loaded.
 var skillJudge = fnLLM(func(req *model.LLMRequest) (*model.LLMResponse, error) {
 	if instr, seen := skillResponseContent(req); seen {
-		score := 0.3
+		score := 1.0
 		if strings.Contains(instr, "require a test") {
-			score = 0.9
+			score = 3.0
 		}
 		return stubCall(submitVerdictTool, map[string]any{"score": score, "feedback": "graded against the loaded skill"}), nil
 	}
@@ -363,8 +363,8 @@ func TestJudgeLoadsSkillBeforeVerdict(t *testing.T) {
 		skillBody string
 		wantScore float64
 	}{
-		{"skill without test mandate", "review for clarity", 0.3},
-		{"skill mandates a test", "review code and require a test for every change", 0.9},
+		{"skill without test mandate", "review for clarity", 1.0 / 3},
+		{"skill mandates a test", "review code and require a test for every change", 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -391,7 +391,7 @@ func TestJudgeLoadsSkillBeforeVerdict(t *testing.T) {
 // oneShotJudge submits a verdict on the first turn without calling any tool -
 // the pure-research, no-read-tools path.
 var oneShotJudge = fnLLM(func(*model.LLMRequest) (*model.LLMResponse, error) {
-	return stubCall(submitVerdictTool, map[string]any{"score": 0.8, "feedback": ""}), nil
+	return stubCall(submitVerdictTool, map[string]any{"score": 3, "feedback": ""}), nil
 })
 
 // TestJudgeNoReadToolsOneShot: with no read tools (no workspace jail) the factory still builds a one-shot judge.
@@ -403,7 +403,7 @@ func TestJudgeNoReadToolsOneShot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runJudgeAgent: %v", err)
 	}
-	if v.Score != 0.8 {
+	if v.Score != 1 {
 		t.Errorf("verdict score = %v, want 0.8", v.Score)
 	}
 }
@@ -413,7 +413,7 @@ func TestJudgeNoReadToolsOneShot(t *testing.T) {
 func toolCapturingJudge(got **model.LLMRequest) fnLLM {
 	return func(req *model.LLMRequest) (*model.LLMResponse, error) {
 		*got = req
-		return stubCall(submitVerdictTool, map[string]any{"score": 0.9, "feedback": ""}), nil
+		return stubCall(submitVerdictTool, map[string]any{"score": 3, "feedback": ""}), nil
 	}
 }
 
@@ -446,7 +446,7 @@ func artifactDiscardJudge(calls *int32, second *string) fnLLM {
 		if atomic.AddInt32(calls, 1) == 2 && second != nil {
 			*second = stubAllText(req)
 		}
-		return stubText(`{"score": 0.9, "passed": true, "feedback": ""}`), nil
+		return stubText(`{"score": 3, "passed": true, "feedback": ""}`), nil
 	}
 }
 
@@ -493,7 +493,7 @@ func sawReadArtifactResponse(req *model.LLMRequest) bool {
 func artifactReadingJudge(id string) fnLLM {
 	return func(req *model.LLMRequest) (*model.LLMResponse, error) {
 		if sawReadArtifactResponse(req) {
-			return stubText(`{"score": 0.9, "passed": true, "feedback": ""}`), nil
+			return stubText(`{"score": 3, "passed": true, "feedback": ""}`), nil
 		}
 		return stubCall("read_artifact", map[string]any{"id": id}), nil
 	}
@@ -965,7 +965,7 @@ func maxTokensRecordingJudge(got *int32) fnLLM {
 		if req.Config != nil {
 			atomic.StoreInt32(got, req.Config.MaxOutputTokens)
 		}
-		return stubCall(submitVerdictTool, map[string]any{"score": 0.8, "feedback": ""}), nil
+		return stubCall(submitVerdictTool, map[string]any{"score": 3, "feedback": ""}), nil
 	}
 }
 
@@ -1080,7 +1080,7 @@ func variedJudgeModel(calls *int32) fnLLM {
 			}
 			return resp, nil
 		}
-		return stubCall(submitVerdictTool, map[string]any{"score": 0.9, "feedback": ""}), nil
+		return stubCall(submitVerdictTool, map[string]any{"score": 3, "feedback": ""}), nil
 	}
 }
 
@@ -1098,8 +1098,8 @@ func TestRunJudgeAgent_VariedReplyNotAborted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runJudgeAgent: %v", err)
 	}
-	if v.Score != 0.9 {
-		t.Errorf("verdict score = %v, want 0.9 - varied filler text must not trip the repeat guard", v.Score)
+	if v.Score != 1 {
+		t.Errorf("verdict score = %v, want 1 - varied filler text must not trip the repeat guard", v.Score)
 	}
 }
 
@@ -1188,7 +1188,7 @@ func roundStuckThenRecoversJudge(rounds, calls *int32) fnLLM {
 		if atomic.LoadInt32(rounds) == 1 {
 			return stubCall("read_file", map[string]any{"path": "game.go"}), nil
 		}
-		return stubCall(submitVerdictTool, map[string]any{"score": 0.85, "feedback": "recovered on retry"}), nil
+		return stubCall(submitVerdictTool, map[string]any{"score": 3, "feedback": "recovered on retry"}), nil
 	}
 }
 
@@ -1205,8 +1205,8 @@ func TestRunJudgeAgent_NoVerdictRetriesOnceThenSucceeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runJudgeAgent: %v", err)
 	}
-	if v.Score != 0.85 {
-		t.Errorf("verdict score = %v, want 0.85 (the retry round that recovered)", v.Score)
+	if v.Score != 1 {
+		t.Errorf("verdict score = %v, want 1 (the retry round that recovered)", v.Score)
 	}
 	if got := atomic.LoadInt32(&rounds); got != 2 {
 		t.Errorf("rounds started = %d, want 2 (the failed round + the one retry that recovered)", got)
@@ -1248,7 +1248,7 @@ func TestRunJudgeAgent_NoVerdictRetryExhausted(t *testing.T) {
 func recordingToolsJudge(sawTools *bool) fnLLM {
 	return func(req *model.LLMRequest) (*model.LLMResponse, error) {
 		*sawTools = len(req.Tools) > 0
-		return stubCall(submitVerdictTool, map[string]any{"score": 0.8, "feedback": ""}), nil
+		return stubCall(submitVerdictTool, map[string]any{"score": 3, "feedback": ""}), nil
 	}
 }
 
@@ -1268,7 +1268,7 @@ func TestRunJudgeAgent_NormalRoundKeepsTools(t *testing.T) {
 	if !sawTools {
 		t.Error("forcedVerdictCallback stripped tools on an ordinary first turn, well under budget")
 	}
-	if v.Score != 0.8 {
+	if v.Score != 1 {
 		t.Errorf("verdict score = %v, want 0.8", v.Score)
 	}
 }
@@ -1346,7 +1346,7 @@ func TestSubmitVerdict_NearMissPayloads(t *testing.T) {
 		if _, err := runVerdictTool(t, submit, args); err != nil {
 			t.Fatalf("Run rejected payload with null shortfall: %v", err)
 		}
-		v := aggregateVerdict(sink)
+		v := aggregateVerdict(normalizeScale(sink, nil))
 		c, ok := v.Criteria["completeness"]
 		if !ok {
 			t.Fatal("criterion lost")
@@ -1417,7 +1417,7 @@ func garbledThenSubmitsJudge(calls *int32) fnLLM {
 		if n == 1 {
 			return stubText(`{"score": 3, "criteria": {"constructive_actionable": "reason": "garbled"}}`), nil
 		}
-		return stubCall(submitVerdictTool, map[string]any{"score": 0.9, "feedback": "submitted on the nudge"}), nil
+		return stubCall(submitVerdictTool, map[string]any{"score": 3, "feedback": "submitted on the nudge"}), nil
 	}
 }
 
@@ -1434,8 +1434,8 @@ func TestRunJudgeAgent_SubmitNudgeRecoversGarbledText(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runJudgeAgent: %v", err)
 	}
-	if v.Score != 0.9 {
-		t.Errorf("verdict score = %v, want 0.9 (recovered via the in-session nudge)", v.Score)
+	if v.Score != 1 {
+		t.Errorf("verdict score = %v, want 1 (recovered via the in-session nudge)", v.Score)
 	}
 	if got := atomic.LoadInt32(&calls); got != 2 {
 		t.Errorf("judge model called %d times, want 2 (garbled text + the nudge) - no fresh-session retry should have run", got)

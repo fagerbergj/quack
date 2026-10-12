@@ -33,7 +33,7 @@ func (*graphStub) Name() string { return "graphStub" }
 func (s *graphStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
 		if gHasTool(req, "submit_verdict") {
-			yield(gCall("submit_verdict", map[string]any{"score": 0.9, "feedback": ""}), nil)
+			yield(gCall("submit_verdict", map[string]any{"score": 3, "feedback": ""}), nil)
 			return
 		}
 		txt := gUserText(req)

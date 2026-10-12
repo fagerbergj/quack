@@ -127,7 +127,7 @@ func chainStagePRTool(t *testing.T) tool.Tool {
 // chained nodes is safe because they never run concurrently.
 var chainStub = fnLLM(func(_ context.Context, req *model.LLMRequest) *model.LLMResponse {
 	if gHasTool(req, "submit_verdict") {
-		return gCall("submit_verdict", map[string]any{"score": 0.9, "feedback": "ok"})
+		return gCall("submit_verdict", map[string]any{"score": 3, "feedback": "ok"})
 	}
 	if !gHasResponse(req, "stage_pr") {
 		return gCall("stage_pr", map[string]any{"title": "Add widget", "body": "adds it"})

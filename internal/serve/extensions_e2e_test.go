@@ -814,7 +814,7 @@ func (s *extAttachStub) GenerateContent(_ context.Context, req *model.LLMRequest
 	return func(yield func(*model.LLMResponse, error) bool) {
 		switch {
 		case extAttachStubHasTool(req, "submit_verdict"):
-			yield(extAttachStubCall("submit_verdict", map[string]any{"score": 0.95, "feedback": ""}), nil)
+			yield(extAttachStubCall("submit_verdict", map[string]any{"score": 3, "feedback": ""}), nil)
 			return
 		case !extAttachStubHasTool(req, "create_plan"): // no create_plan tool ⇒ the media worker
 			s.mu.Lock()

@@ -35,7 +35,7 @@ func (j jatJudgeStub) GenerateContent(_ context.Context, req *model.LLMRequest, 
 	return func(yield func(*model.LLMResponse, error) bool) {
 		if s, ok := jatFuncResponseResult(req, "read_artifact"); ok {
 			*j.got = s
-			yield(atCall("submit_verdict", map[string]any{"score": 0.9, "feedback": ""}), nil)
+			yield(atCall("submit_verdict", map[string]any{"score": 3, "feedback": ""}), nil)
 			return
 		}
 		yield(atCall("read_artifact", map[string]any{"id": j.id}), nil)

@@ -35,7 +35,7 @@ func (s *fabricationStub) GenerateContent(_ context.Context, req *model.LLMReque
 			s.mu.Lock()
 			s.judgePrompt = stubAllText(req)
 			s.mu.Unlock()
-			yield(stubCall(submitVerdictTool, map[string]any{"score": 0.9, "feedback": ""}), nil)
+			yield(stubCall(submitVerdictTool, map[string]any{"score": 3, "feedback": ""}), nil)
 			return
 		}
 		s.mu.Lock()

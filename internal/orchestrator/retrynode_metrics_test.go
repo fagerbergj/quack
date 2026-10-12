@@ -33,7 +33,7 @@ func (*gatedLLM) Name() string { return "gated" }
 func (g *gatedLLM) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
 		if stubHasTool(req, "submit_verdict") {
-			yield(stubCall("submit_verdict", map[string]any{"score": 0.9, "feedback": ""}), nil)
+			yield(stubCall("submit_verdict", map[string]any{"score": 3, "feedback": ""}), nil)
 			return
 		}
 		close(g.started)

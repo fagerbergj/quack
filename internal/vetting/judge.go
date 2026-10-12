@@ -345,9 +345,7 @@ func newSubmitVerdictTool(sink *verdict, receivedIDs []string) (tool.Tool, error
 		Description: desc,
 		InputSchema: schema,
 	}, func(ctx adkagent.Context, args verdictArgs) (map[string]any, error) {
-		v := verdict{Score: args.Score, Criteria: args.Criteria, Feedback: args.Feedback, Findings: args.Findings, Memories: args.Memories}
-		normalizeScale(&v)
-		*sink = v
+		*sink = verdict{Score: args.Score, Criteria: args.Criteria, Feedback: args.Feedback, Findings: args.Findings, Memories: args.Memories}
 		ctx.Actions().Escalate = true
 		ctx.Actions().SkipSummarization = true
 		return map[string]any{"recorded": true}, nil
@@ -1139,7 +1137,7 @@ func (s *judgeRoundState) scanPart(p *genai.Part) error {
 // later tool call always supersedes earlier unparsed text.
 func (s *judgeRoundState) verdictFrom() (verdict, bool) {
 	if s.submitted {
-		return aggregateVerdict(s.sink), true
+		return aggregateVerdict(normalizeScale(s.sink, s.cfg.RubricSpecs)), true
 	}
 	if v, perr := parseVerdict(s.accum.String()[s.parseFrom:], s.cfg.RubricSpecs); perr == nil {
 		return v, true
@@ -1515,44 +1513,28 @@ func buildContinuationPrompt(task string, act workerActivity, checks []string, r
 	return sb.String()
 }
 
-// judgeScaleMax: the rubric's raw integer scale max; normalizeScale divides by it.
+// judgeScaleMax: the raw scale the judge prompt asks for (integer 0-3) where no rubric spec declares one.
 const judgeScaleMax = 3
 
-// normalizeScale: converts the judge's raw 0-judgeScaleMax rubric scale to
-// the internal 0-1 axis. Idempotent.
-func normalizeScale(v *verdict) {
-	if verdictAlreadyNormalized(v) {
-		return
-	}
-	v.Score /= judgeScaleMax
+// normalizeScale maps each raw score onto 0-1 by its criterion's declared rubric scale (0-judgeScaleMax
+// without a spec). The values never pick the scale: a sibling's score must not change how one is read.
+func normalizeScale(v verdict, specs map[string]criterionSpec) verdict {
+	v.Score = toUnitScale(v.Score, scaleSpec{Max: judgeScaleMax})
+	v.Criteria = maps.Clone(v.Criteria) // the submit_verdict sink is read more than once per round
 	for name, c := range v.Criteria {
-		c.Score /= judgeScaleMax
+		scale := scaleSpec{Max: judgeScaleMax}
+		if spec, ok := specs[name]; ok && spec.Scale != nil && spec.Scale.Max > spec.Scale.Min {
+			scale = *spec.Scale
+		}
+		c.Score = toUnitScale(c.Score, scale)
 		v.Criteria[name] = c
 	}
+	return v
 }
 
-// verdictAlreadyNormalized: every score is strictly between 0 and 1, so the model answered on 0-1.
-// A whole number is always raw scale, even 1.
-func verdictAlreadyNormalized(v *verdict) bool {
-	found := false
-	check := func(s float64) bool {
-		if s < 0 || s >= 1 {
-			return false
-		}
-		if s != 0 {
-			found = true
-		}
-		return true
-	}
-	if !check(v.Score) {
-		return false
-	}
-	for _, c := range v.Criteria {
-		if !check(c.Score) {
-			return false
-		}
-	}
-	return found
+// toUnitScale rescales raw from [s.Min, s.Max] to [0, 1], clamping an off-scale answer.
+func toUnitScale(raw float64, s scaleSpec) float64 {
+	return min(max((raw-s.Min)/(s.Max-s.Min), 0), 1)
 }
 
 // inferAnchorKind fills a missing anchor kind from whichever payload field is set; ambiguous or empty
@@ -1734,8 +1716,7 @@ func parseVerdict(raw string, specs map[string]criterionSpec) (verdict, error) {
 		v.Criteria[name] = cs
 	}
 
-	normalizeScale(&v)
-	return aggregateVerdict(v), nil
+	return aggregateVerdict(normalizeScale(v, specs)), nil
 }
 
 // lastVerdictObject returns the last top-level JSON object in s that isVerdict accepts. The scan

@@ -33,7 +33,7 @@ func memoryVoteJudge(voteOnRetry bool) fnLLM {
 			return stubText("the answer"), nil
 		}
 		if atomic.AddInt32(&calls, 1) == 1 || !voteOnRetry {
-			return stubCall(submitVerdictTool, map[string]any{"score": 0.95, "feedback": "ok"}), nil
+			return stubCall(submitVerdictTool, map[string]any{"score": 3, "feedback": "ok"}), nil
 		}
 		// Read the owed ids from the nudge text rather than hardcoding what the test seeded.
 		text := stubAllText(req)
@@ -47,7 +47,7 @@ func memoryVoteJudge(voteOnRetry bool) fnLLM {
 				}
 			}
 		}
-		return stubCall(submitVerdictTool, map[string]any{"score": 0.95, "feedback": "ok", "memories": mems}), nil
+		return stubCall(submitVerdictTool, map[string]any{"score": 3, "feedback": "ok", "memories": mems}), nil
 	}
 }
 

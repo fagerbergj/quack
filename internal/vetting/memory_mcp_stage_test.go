@@ -58,7 +58,7 @@ func (echoConsolidator) GenerateContent(_ context.Context, req *model.LLMRequest
 func fixedScoreModel(score float64) fnLLM {
 	return func(req *model.LLMRequest) (*model.LLMResponse, error) {
 		if stubHasTool(req, submitVerdictTool) {
-			return stubCall(submitVerdictTool, map[string]any{"score": score, "feedback": "ok"}), nil
+			return stubCall(submitVerdictTool, map[string]any{"score": score * judgeScaleMax, "feedback": "ok"}), nil
 		}
 		return stubText("the answer"), nil
 	}

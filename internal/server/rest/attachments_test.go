@@ -45,7 +45,7 @@ func (s *attachStub) GenerateContent(_ context.Context, req *model.LLMRequest, _
 	return func(yield func(*model.LLMResponse, error) bool) {
 		switch {
 		case attachStubHasTool(req, "submit_verdict"):
-			yield(attachStubCall("submit_verdict", map[string]any{"score": 0.95, "feedback": ""}), nil)
+			yield(attachStubCall("submit_verdict", map[string]any{"score": 3, "feedback": ""}), nil)
 			return
 		case !attachStubHasTool(req, "create_plan"): // no create_plan tool ⇒ this is the media worker
 			s.mu.Lock()

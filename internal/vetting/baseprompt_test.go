@@ -56,7 +56,7 @@ func (s *basePromptStub) Name() string { return "base-prompt-stub" }
 func (s *basePromptStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
 		if stubHasTool(req, submitVerdictTool) {
-			yield(stubCall(submitVerdictTool, map[string]any{"score": 0.95, "feedback": "ok"}), nil)
+			yield(stubCall(submitVerdictTool, map[string]any{"score": 3, "feedback": "ok"}), nil)
 			return
 		}
 		s.mu.Lock()

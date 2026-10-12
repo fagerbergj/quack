@@ -37,7 +37,7 @@ func (s *coopStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ b
 			s.mu.Lock()
 			s.judgeCalls++
 			s.mu.Unlock()
-			yield(gCall("submit_verdict", map[string]any{"score": 0.9, "feedback": ""}), nil)
+			yield(gCall("submit_verdict", map[string]any{"score": 3, "feedback": ""}), nil)
 			return
 		}
 		s.mu.Lock()
@@ -228,7 +228,7 @@ func (*repeatTripStub) Name() string { return "repeatTripStub" }
 func (s *repeatTripStub) GenerateContent(ctx context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
 		if gHasTool(req, "submit_verdict") {
-			yield(gCall("submit_verdict", map[string]any{"score": 0.9, "feedback": ""}), nil)
+			yield(gCall("submit_verdict", map[string]any{"score": 3, "feedback": ""}), nil)
 			return
 		}
 		s.mu.Lock()

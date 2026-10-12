@@ -62,7 +62,7 @@ func (s *resumeStubLLM) GenerateContent(_ context.Context, req *model.LLMRequest
 			}
 			if hasSubmitVerdict {
 				yield(&model.LLMResponse{Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{
-					FunctionCall: &genai.FunctionCall{Name: "submit_verdict", Args: map[string]any{"score": 0.9, "feedback": ""}},
+					FunctionCall: &genai.FunctionCall{Name: "submit_verdict", Args: map[string]any{"score": 3, "feedback": ""}},
 				}}}, FinishReason: genai.FinishReasonStop, TurnComplete: true}, nil)
 				return
 			}

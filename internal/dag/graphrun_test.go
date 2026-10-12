@@ -81,7 +81,7 @@ func textLLM(s string) fnLLM {
 
 // passJudge passes every verdict.
 var passJudge = fnLLM(func(context.Context, *model.LLMRequest) *model.LLMResponse {
-	return atCall("submit_verdict", map[string]any{"score": 0.9, "feedback": ""})
+	return atCall("submit_verdict", map[string]any{"score": 3, "feedback": ""})
 })
 
 // failOnceJudge fails the first verdict (forcing one revise round) and passes every later one.
@@ -91,7 +91,7 @@ func failOnceJudge(score float64, feedback string) fnLLM {
 		if calls.Add(1) == 1 {
 			return atCall("submit_verdict", map[string]any{"score": score, "feedback": feedback})
 		}
-		return atCall("submit_verdict", map[string]any{"score": 0.9, "feedback": ""})
+		return atCall("submit_verdict", map[string]any{"score": 3, "feedback": ""})
 	}
 }
 
@@ -100,7 +100,7 @@ func dateToolLLM(reply string) fnLLM {
 	return func(_ context.Context, req *model.LLMRequest) *model.LLMResponse {
 		switch {
 		case atHasTool(req, "submit_verdict"):
-			return atCall("submit_verdict", map[string]any{"score": 0.9, "feedback": "fine"})
+			return atCall("submit_verdict", map[string]any{"score": 3, "feedback": "fine"})
 		case atHasFuncResponse(req, "current_date"):
 			return atText(reply)
 		}

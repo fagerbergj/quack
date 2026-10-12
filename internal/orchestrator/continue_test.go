@@ -38,7 +38,7 @@ func (s *orchStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ b
 	return func(yield func(*model.LLMResponse, error) bool) {
 		switch {
 		case stubHasTool(req, "submit_verdict"): // the trust gate's judge
-			yield(stubCall("submit_verdict", map[string]any{"score": 0.9, "feedback": ""}), nil)
+			yield(stubCall("submit_verdict", map[string]any{"score": 3, "feedback": ""}), nil)
 			return
 		case !stubHasTool(req, "create_plan"): // no create_plan tool ⇒ a plan worker
 			yield(stubText("RESEARCH-RESULT"), nil)

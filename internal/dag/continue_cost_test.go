@@ -55,7 +55,7 @@ func reqTokens(req *model.LLMRequest) int {
 func (s *costStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
 		if atHasTool(req, "submit_verdict") {
-			yield(atCall("submit_verdict", map[string]any{"score": 0.9, "feedback": ""}), nil)
+			yield(atCall("submit_verdict", map[string]any{"score": 3, "feedback": ""}), nil)
 			return
 		}
 		tokens := reqTokens(req)
