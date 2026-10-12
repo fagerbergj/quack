@@ -38,11 +38,12 @@ import (
 
 // Chat is the app-level chat record. Its ID doubles as the ADK session ID.
 type Chat struct {
-	ID           string    `gorm:"primaryKey" json:"id"`
+	// idx_chats_list serves ListChats' WHERE archived = ? ORDER BY updated_at desc, id desc LIMIT n as an index walk.
+	ID           string    `gorm:"primaryKey;index:idx_chats_list,priority:3" json:"id"`
 	Title        string    `json:"title"`
 	SystemPrompt string    `json:"system_prompt"`
 	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	UpdatedAt    time.Time `gorm:"index:idx_chats_list,priority:2" json:"updated_at"`
 	// Legacy GitHub columns: nothing writes them now, so read them through GitHub().
 	GithubRepo  string `json:"github_repo,omitempty"`
 	GithubURL   string `json:"github_url,omitempty"`
@@ -59,7 +60,7 @@ type Chat struct {
 	ActiveTurnID string `json:"-"`
 	// Archived hides the chat from the main list by default (toggled by the user or auto-archived
 	// on PR merge when config AutoArchiveOnMerge is enabled; untouched by archive ops).
-	Archived bool `gorm:"column:archived;default:false" json:"archived"`
+	Archived bool `gorm:"column:archived;default:false;index:idx_chats_list,priority:1" json:"archived"`
 	// Origin is an extension-set sdk.ChatOrigin, marshaled opaquely; not API-exposed.
 	Origin string `json:"-"`
 }

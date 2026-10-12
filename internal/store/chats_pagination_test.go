@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/fagerbergj/quack/internal/store/storetest"
 )
 
 // seedChats inserts n chats directly with strictly increasing UpdatedAt, so paging order is deterministic.
@@ -49,6 +52,32 @@ func newTestStore(t *testing.T) *Store {
 		t.Fatalf("New sqlite: %v", err)
 	}
 	return st
+}
+
+// The sidebar polls the active list every few seconds; its query must walk idx_chats_list in order
+// rather than scan and sort every chat (134ms -> 1.2ms at 5000 chats on sqlite).
+func TestListChatsActivePageWalksTheListIndex(t *testing.T) {
+	st := newTestStore(t)
+	queries := storetest.RecordQueries(t, st.DB())
+	if _, _, err := st.ListChats(context.Background(), 20, "", ChatsScope{Active: true}); err != nil {
+		t.Fatalf("ListChats: %v", err)
+	}
+	sqls := queries()
+	if len(sqls) != 1 {
+		t.Fatalf("ListChats issued %d queries, want 1: %v", len(sqls), sqls)
+	}
+	var plan []struct{ Detail string }
+	if err := st.db.Raw("EXPLAIN QUERY PLAN "+sqls[0], false).Scan(&plan).Error; err != nil {
+		t.Fatalf("explain: %v", err)
+	}
+	var details []string
+	for _, p := range plan {
+		details = append(details, p.Detail)
+	}
+	got := strings.Join(details, "; ")
+	if !strings.Contains(got, "SEARCH chats USING INDEX idx_chats_list (archived=?)") || strings.Contains(got, "TEMP B-TREE") {
+		t.Errorf("plan = %q, want an idx_chats_list seek on archived with no sort step", got)
+	}
 }
 
 // Test case 1: default request with 30 chats stored returns the default page

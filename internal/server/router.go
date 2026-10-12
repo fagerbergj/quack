@@ -43,6 +43,8 @@ func New(opts Options) http.Handler {
 	r := chi.NewRouter()
 	r.Use(requestLogger) // slog (not chi's stderr logger) so QUACK_LOG_LEVEL gates it
 	r.Use(middleware.Recoverer)
+	// gzip for chi's text/JSON/JS/CSS list only; text/event-stream isn't on it, so SSE streams pass through.
+	r.Use(middleware.Compress(5))
 
 	// MCP + REST are auth-gated; extensions authenticate via their own schemes.
 	r.Group(func(r chi.Router) {
