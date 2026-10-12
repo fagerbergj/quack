@@ -309,8 +309,8 @@ type PendingRunRow struct {
 	DefaultBranch, CloneURL               string
 }
 
-// SetPendingRun persists a dispatch's coordinates before Dispatch is called,
-// so RunEnded can rebuild them if this process restarts before it fires.
+// SetPendingRun persists an accepted dispatch's coordinates, so RunEnded can rebuild
+// them if this process restarts before it fires.
 func (s *ghStore) SetPendingRun(ctx context.Context, r PendingRunRow) error {
 	_, err := s.exec(ctx, `
 		INSERT INTO github_pending_run (chat_id, session_id, owner, repo, number, is_pr, login, is_plan, is_label_trigger, comment_id, default_branch, installation_id, clone_url, created_at)

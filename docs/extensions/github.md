@@ -41,7 +41,7 @@ Every label handler reacts with 👀 the instant it fires, before the run even s
 
 **Authorship is the flag on PRs quack opened itself.** No label is needed: quack replies on its own PRs, and a `request_changes` review on one it authored engages it to address the findings - the same "keep it green" treatment `quack:fix` gives a labeled PR, just triggered by having written the PR rather than by a label.
 
-Every path shares one session per issue/PR thread, so context (a plan, a prior review) carries forward regardless of which trigger drove which step. Only one run is ever in flight per thread - a trigger that arrives mid-run is deduplicated with a 👀 rather than started concurrently. (`/explain` is the exception: one chat per requester per PR.)
+Every path shares one session per issue/PR thread, so context (a plan, a prior review) carries forward regardless of which trigger drove which step. Only one run is ever in flight per thread - a trigger that arrives mid-run (even a run started from the chat UI) is deduplicated with a 👀 rather than started concurrently. (`/explain` is the exception: one chat per requester per PR.)
 
 ### CI auto-heal (`quack:fix`)
 

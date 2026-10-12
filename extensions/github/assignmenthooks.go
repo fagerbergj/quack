@@ -29,11 +29,10 @@ func (e *Extension) OnAssignment(ctx context.Context, a sdk.Assignment) map[stri
 	if !ok {
 		return nil
 	}
-	v, ok := e.pending.Load(sc.SessionID())
+	pr, ok := e.lookupPending(sc.SessionID())
 	if !ok {
 		return nil
 	}
-	pr := v.(*pendingRun)
 	setup := pr.dispatched.Run.Setup
 	if setup == nil || setup.Repo == "" {
 		return nil

@@ -219,6 +219,7 @@ type Extension struct {
 	inflight           sync.Map        // sessionID → time.Time claim; leased dedup for concurrent triggers
 	mergeMu            keyedMutex      // serializes merge-intent read-verdict-act per session
 	pending            sync.Map        // globalChatID → *pendingRun; correlates RunEnded back to its dispatch
+	pendingMu          keyedMutex      // per chat: dispatchAndRecord's Dispatch+record vs lookupPending
 	runTimeout         time.Duration
 	autoArchiveOnMerge bool
 	bg                 sync.WaitGroup // every webhook-spawned goroutine (see spawn); Wait drains them

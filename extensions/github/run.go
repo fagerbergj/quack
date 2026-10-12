@@ -55,11 +55,8 @@ type pendingRun struct {
 // RunEnded correlates a run's outcome back to its pendingRun: a run with no plan gets one nudge
 // re-dispatch, otherwise finalize settles the chat.
 func (e *Extension) RunEnded(chatID string, outcome sdk.RunOutcome) {
-	v, ok := e.pending.Load(chatID)
-	var pr *pendingRun
-	if ok {
-		pr = v.(*pendingRun)
-	} else {
+	pr, ok := e.lookupPending(chatID)
+	if !ok {
 		// e.pending is in-memory, so this is the normal path for any run resumed at boot:
 		// rebuild from the durable row rather than dropping the outcome.
 		rebuilt, rerr := e.rebuildPendingRun(chatID)
@@ -103,6 +100,18 @@ func (e *Extension) RunEnded(chatID string, outcome sdk.RunOutcome) {
 	e.finish(chatID, pr, outcome)
 }
 
+// lookupPending waits out an in-progress dispatchAndRecord on chatID, so it never reads a record
+// whose Dispatch is still undecided.
+func (e *Extension) lookupPending(chatID string) (*pendingRun, bool) {
+	unlock := e.pendingMu.Lock(chatID)
+	defer unlock()
+	v, ok := e.pending.Load(chatID)
+	if !ok {
+		return nil, false
+	}
+	return v.(*pendingRun), true
+}
+
 // rebuildPendingRun reconstructs a pendingRun from the durable row after a restart; gh is re-fetched.
 // ponytail: nudged forced true (pr.dispatched isn't persisted); persist it if resumed no-plan runs matter.
 func (e *Extension) rebuildPendingRun(chatID string) (*pendingRun, error) {
@@ -144,7 +153,8 @@ func (e *Extension) finish(chatID string, pr *pendingRun, outcome sdk.RunOutcome
 // finalize settles a finished run (or its nudge): verified delivery, a HITL question, or the answer comment.
 func (e *Extension) finalize(chatID string, pr *pendingRun, outcome sdk.RunOutcome) {
 	defer e.inflight.CompareAndDelete(pr.sessionID, pr.claimedAt)
-	defer e.pending.Delete(chatID)
+	// Compare-and-delete: a takeover dispatched after this run marked itself ending owns the slot now.
+	defer e.pending.CompareAndDelete(chatID, pr)
 	defer func() {
 		if err := e.store.DeletePendingRun(context.Background(), chatID); err != nil {
 			e.host.Log.Warn("github: DeletePendingRun failed; a future restart may redundantly rebuild this run", "chat", chatID, "err", err)
