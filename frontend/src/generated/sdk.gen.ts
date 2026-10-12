@@ -362,7 +362,8 @@ export const subscribeChatStream = <ThrowOnError extends boolean = false>(option
  * - `{"status":"running"}` - resume a `paused` node: it carries on in
  * its saved session (an ACP node reloads it and is re-sent its task;
  * one given guidance re-runs fresh), reusing the plan's other stored
- * outputs.
+ * outputs. While other nodes keep the chat's run going, the resume is
+ * accepted and the node starts once that run ends.
  * Only legal from `paused`.
  * - `{"status":"queued","guidance":"..."}` - retry: re-run a finished
  * node (and every node downstream of it) reusing the stored outputs
@@ -399,7 +400,8 @@ export const updateNodeStatus = <ThrowOnError extends boolean = false>(options: 
  * answer to its parked question - the same field SendMessageBody uses,
  * since answering a node's question and answering the chat are the same
  * shape. Any other pause reason (`user`, `shutdown`) needs no `content`;
- * it resumes at its last gate boundary.
+ * it resumes at its last gate boundary, and while other nodes keep the
+ * chat's run going it starts once that run ends.
  *
  * Illegal from any other status (409, naming the allowed targets). The
  * resumed/dispatched run streams over the chat's existing SSE

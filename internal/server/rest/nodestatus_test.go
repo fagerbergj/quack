@@ -200,9 +200,23 @@ func TestUpdateNodeStatus_ResumePausedNode(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 }
 
-// TestUpdateNodeStatus_ResumeAlreadyLiveConflict409: pause is cooperative, so a "paused" row can still have
-// a live run; a second resume must 409, not dispatch a concurrent run of the same node.
-func TestUpdateNodeStatus_ResumeAlreadyLiveConflict409(t *testing.T) {
+// A resume of a paused node while its siblings keep the chat's run live is held: no second run starts while
+// that run lives, and the node starts once it ends.
+func TestUpdateNodeStatus_ResumeWhileTheChatRunsStartsOnceItEnds(t *testing.T) {
+	assertResumeHeldUntilRunEnds(t, func(h *Handler) int {
+		return putNodeStatus(t, h, "c1", "n1", schema.NodeStatusUpdateBody{Status: schema.NodeStatusUpdateBodyStatusRunning}).Code
+	})
+}
+
+// TestStartNode_ResumeWhileTheChatRunsStartsOnceItEnds is the /start endpoint's half of the same check.
+func TestStartNode_ResumeWhileTheChatRunsStartsOnceItEnds(t *testing.T) {
+	assertResumeHeldUntilRunEnds(t, func(h *Handler) int {
+		return postNodeStart(t, h, "c1", "n1", schema.NodeStartBody{}).Code
+	})
+}
+
+// A node stopped while its start is held stays stopped when the chat's run ends.
+func TestUpdateNodeStatus_HeldResumeDropsForAStoppedNode(t *testing.T) {
 	shortPauseUnwind(t)
 	h := newTestHandler(t)
 	chatID, planID, nodeID := "c1", "p1", "n1"
@@ -210,17 +224,22 @@ func TestUpdateNodeStatus_ResumeAlreadyLiveConflict409(t *testing.T) {
 	if err := h.store.UpsertDagNode(context.Background(), store.DagNode{NodeID: nodeID, PlanID: planID, Status: "paused"}); err != nil {
 		t.Fatalf("seed paused node: %v", err)
 	}
-	// Simulate the first resume's dispatch already in flight.
 	h.hub.RegisterRun(chatID, "turn-"+planID, func() {})
-
-	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusUpdateBodyStatusRunning})
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("status = %d, want 409 (a run is already dispatched for this chat); body=%s", rec.Code, rec.Body.String())
+	if rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusUpdateBodyStatusRunning}); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if err := h.store.UpsertDagNode(context.Background(), store.DagNode{NodeID: nodeID, PlanID: planID, Status: "cancelled"}); err != nil {
+		t.Fatalf("stop node: %v", err)
+	}
+	h.hub.UnregisterRun(chatID)
+	time.Sleep(300 * time.Millisecond)
+	if started, _ := h.store.ChatEventsExist(context.Background(), chatID); started {
+		t.Fatal("a held resume started a node stopped meanwhile")
 	}
 }
 
-// TestStartNode_ResumeAlreadyLiveConflict409 is the /start endpoint's half of the same check.
-func TestStartNode_ResumeAlreadyLiveConflict409(t *testing.T) {
+func assertResumeHeldUntilRunEnds(t *testing.T, resume func(*Handler) int) {
+	t.Helper()
 	shortPauseUnwind(t)
 	h := newTestHandler(t)
 	chatID, planID, nodeID := "c1", "p1", "n1"
@@ -228,12 +247,29 @@ func TestStartNode_ResumeAlreadyLiveConflict409(t *testing.T) {
 	if err := h.store.UpsertDagNode(context.Background(), store.DagNode{NodeID: nodeID, PlanID: planID, Status: "paused"}); err != nil {
 		t.Fatalf("seed paused node: %v", err)
 	}
-	h.hub.RegisterRun(chatID, "turn-"+planID, func() {})
+	h.hub.RegisterRun(chatID, "turn-"+planID, func() {}) // a sibling keeps the chat's run live
 
-	rec := postNodeStart(t, h, chatID, nodeID, schema.NodeStartBody{})
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("status = %d, want 409 (a run is already dispatched for this chat); body=%s", rec.Code, rec.Body.String())
+	for range 2 { // a repeated resume joins the held one
+		if code := resume(h); code != http.StatusOK {
+			t.Fatalf("status = %d, want 200 (the start is held, not refused)", code)
+		}
 	}
+	time.Sleep(100 * time.Millisecond)
+	if started, _ := h.store.ChatEventsExist(context.Background(), chatID); started {
+		t.Fatal("a second run started while the chat's run was live")
+	}
+	h.hub.UnregisterRun(chatID)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if started, _ := h.store.ChatEventsExist(context.Background(), chatID); started {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the held resume never started the node after the chat's run ended")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	h.eventLog.Flush()
 }
 
 func shortPauseUnwind(t *testing.T) {
