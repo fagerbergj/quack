@@ -750,6 +750,8 @@ func (s *dagStream) accum(node string, ev *session.Event) {
 	}
 	if ev.ModelVersion != "" {
 		u.model = ev.ModelVersion
+	} else if m, _ := ev.CustomMetadata[quackagent.ModelVersionMeta].(string); m != "" {
+		u.model = m // a native worker's event, whose ModelVersion A2A dropped
 	}
 	if ev.FinishReason != "" && ev.FinishReason != genai.FinishReasonUnspecified {
 		u.finish = string(ev.FinishReason)

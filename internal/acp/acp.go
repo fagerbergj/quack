@@ -541,6 +541,7 @@ func (a *Agent) newEvent(ctx adkagent.InvocationContext, spec eventSpec) *sessio
 	ev.Branch = ctx.Branch()
 	ev.Partial = spec.partial
 	ev.Content = &genai.Content{Role: "model", Parts: spec.parts}
+	ev.ModelVersion = a.opts.ModelName // ACP reports no model, so the round names the one its config binds
 	if spec.usage != nil {
 		ev.UsageMetadata = spec.usage
 	}

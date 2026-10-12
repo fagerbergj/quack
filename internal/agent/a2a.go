@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -83,7 +84,8 @@ func Serve(ag adkagent.Agent, sessions session.Service, mem adkmemory.Service, a
 			AutoCreateSession: true,
 			Compaction:        adkComp,
 		},
-		OutputMode: adka2a.OutputArtifactPerEvent,
+		OutputMode:         adka2a.OutputArtifactPerEvent,
+		AfterEventCallback: carryModelVersion,
 	})
 
 	runs := &workerRuns{}
@@ -95,6 +97,26 @@ func Serve(ag adkagent.Agent, sessions session.Service, mem adkmemory.Service, a
 	go func() { _ = http.Serve(listener, otelhttp.NewHandler(mux, "a2a.invoke")) }()
 
 	return &A2AServer{Card: card, listener: listener, runs: runs}, nil
+}
+
+// ModelVersionMeta: the CustomMetadata key carrying a worker event's ModelVersion across A2A, which drops the field.
+const ModelVersionMeta = "quack_model"
+
+// carryModelVersion puts ev's model in the custom metadata the client restores onto its copy of the event.
+func carryModelVersion(_ adka2a.ExecutorContext, ev *session.Event, out *a2a.TaskArtifactUpdateEvent) error {
+	if ev == nil || ev.ModelVersion == "" || out == nil || out.Artifact == nil {
+		return nil
+	}
+	key := adka2a.ToA2AMetaKey("custom_metadata")
+	custom := map[string]any{ModelVersionMeta: ev.ModelVersion}
+	if prev, ok := out.Artifact.Metadata[key].(map[string]any); ok {
+		maps.Copy(custom, prev) // a copy: prev is the session event's own CustomMetadata
+	}
+	if out.Artifact.Metadata == nil {
+		out.Artifact.Metadata = map[string]any{}
+	}
+	out.Artifact.Metadata[key] = custom
+	return nil
 }
 
 // workerRuns maps a send's runKeyMeta to its in-flight worker. a2a-go runs a worker on a
