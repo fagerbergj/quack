@@ -5,42 +5,18 @@ import (
 	"errors"
 	"io/fs"
 	"testing"
-	"time"
 
-	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
+	"github.com/fagerbergj/quack/internal/pgtest"
 	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/genai"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
-// newTestPostgresLargeObjectService starts real Postgres (sqlite has no large objects); skips without Docker.
-// BasicWaitStrategies waits for the second "ready" log line: the image restarts itself after initdb.
+// newTestPostgresLargeObjectService uses real Postgres (sqlite has no large objects); skips without Docker.
 func newTestPostgresLargeObjectService(t *testing.T) artifact.Service {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-
-	ctr, err := tcpostgres.Run(ctx, "postgres:16-alpine",
-		tcpostgres.WithDatabase("quack_artifacts_test"),
-		tcpostgres.WithUsername("quack"),
-		tcpostgres.WithPassword("quack"),
-		tcpostgres.BasicWaitStrategies(),
-	)
-	if err != nil {
-		t.Skipf("docker unavailable, skipping large-object integration test: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := ctr.Terminate(context.Background()); err != nil {
-			t.Logf("terminate postgres container: %v", err)
-		}
-	})
-
-	dsn, err := ctr.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		t.Fatalf("connection string: %v", err)
-	}
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: slogGormLogger()})
+	db, err := gorm.Open(postgres.Open(pgtest.DSN(t)), &gorm.Config{Logger: slogGormLogger()})
 	if err != nil {
 		t.Fatalf("gorm.Open: %v", err)
 	}

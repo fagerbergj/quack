@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
+	"github.com/fagerbergj/quack/internal/pgtest"
 	"gorm.io/gorm"
 )
 
@@ -29,27 +29,7 @@ func TestOpenDBHandlesStayIndependentAfterSequentialOpens(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pgCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
-	defer cancel()
-	ctr, err := tcpostgres.Run(pgCtx, "postgres:16-alpine",
-		tcpostgres.WithDatabase("quack_opendb_test"),
-		tcpostgres.WithUsername("quack"),
-		tcpostgres.WithPassword("quack"),
-		tcpostgres.BasicWaitStrategies(),
-	)
-	if err != nil {
-		t.Skipf("docker unavailable, skipping OpenDB independence test: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := ctr.Terminate(context.Background()); err != nil {
-			t.Logf("terminate postgres container: %v", err)
-		}
-	})
-	dsn, err := ctr.ConnectionString(pgCtx, "sslmode=disable")
-	if err != nil {
-		t.Fatalf("connection string: %v", err)
-	}
-	pgDB, err := OpenDB("postgres", dsn)
+	pgDB, err := OpenDB("postgres", pgtest.DSN(t))
 	if err != nil {
 		t.Fatalf("OpenDB postgres: %v", err)
 	}
@@ -143,26 +123,7 @@ func TestDBRegistryPutRejectsConcurrentInsertCollision_Sqlite(t *testing.T) {
 // TestDBRegistryPutRejectsConcurrentInsertCollision_Postgres is the same
 // race as the sqlite case, against real postgres (skipped without Docker).
 func TestDBRegistryPutRejectsConcurrentInsertCollision_Postgres(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-	ctr, err := tcpostgres.Run(ctx, "postgres:16-alpine",
-		tcpostgres.WithDatabase("quack_put_race_test"),
-		tcpostgres.WithUsername("quack"),
-		tcpostgres.WithPassword("quack"),
-		tcpostgres.BasicWaitStrategies(),
-	)
-	if err != nil {
-		t.Skipf("docker unavailable, skipping postgres Put-race test: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := ctr.Terminate(context.Background()); err != nil {
-			t.Logf("terminate postgres container: %v", err)
-		}
-	})
-	dsn, err := ctr.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		t.Fatal(err)
-	}
+	dsn := pgtest.DSN(t)
 	root := t.TempDir()
 	dbA, err := OpenDB("postgres", dsn)
 	if err != nil {

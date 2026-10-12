@@ -4,9 +4,8 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
-	"time"
 
-	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
+	"github.com/fagerbergj/quack/internal/pgtest"
 )
 
 // New()'s CREATE INDEX IF NOT EXISTS must not error on a second boot against a migrated database.
@@ -35,28 +34,7 @@ func TestNew_EventsSessionIndex_IdempotentAcrossBoots(t *testing.T) {
 // The two-boot check against real Postgres, whose index/AutoMigrate failure modes differ from sqlite.
 // Skips without Docker.
 func TestNew_Migrations_IdempotentAcrossBoots_Postgres(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-
-	ctr, err := tcpostgres.Run(ctx, "postgres:16-alpine",
-		tcpostgres.WithDatabase("quack_migration_test"),
-		tcpostgres.WithUsername("quack"),
-		tcpostgres.WithPassword("quack"),
-		tcpostgres.BasicWaitStrategies(),
-	)
-	if err != nil {
-		t.Skipf("docker unavailable, skipping postgres migration test: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := ctr.Terminate(context.Background()); err != nil {
-			t.Logf("terminate postgres container: %v", err)
-		}
-	})
-	dsn, err := ctr.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		t.Fatalf("connection string: %v", err)
-	}
-
+	dsn := pgtest.DSN(t)
 	if _, err := New("postgres", dsn); err != nil {
 		t.Fatalf("New (boot 1): %v", err)
 	}
@@ -83,28 +61,8 @@ func TestNew_Migrations_IdempotentAcrossBoots_Postgres(t *testing.T) {
 // The cascade check on real Postgres, where FKs come from ALTER TABLE ADD CONSTRAINT rather than sqlite's
 // table rebuild. Skips without Docker.
 func TestDeleteChatRow_CascadesPerChatTables_Postgres(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-
-	ctr, err := tcpostgres.Run(ctx, "postgres:16-alpine",
-		tcpostgres.WithDatabase("quack_cascade_test"),
-		tcpostgres.WithUsername("quack"),
-		tcpostgres.WithPassword("quack"),
-		tcpostgres.BasicWaitStrategies(),
-	)
-	if err != nil {
-		t.Skipf("docker unavailable, skipping postgres cascade test: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := ctr.Terminate(context.Background()); err != nil {
-			t.Logf("terminate postgres container: %v", err)
-		}
-	})
-	dsn, err := ctr.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		t.Fatalf("connection string: %v", err)
-	}
-	st, err := New("postgres", dsn)
+	ctx := context.Background()
+	st, err := New("postgres", pgtest.DSN(t))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
