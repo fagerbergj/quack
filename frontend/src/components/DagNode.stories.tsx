@@ -94,6 +94,26 @@ export const DoneWithTokens: Story = {
   },
 }
 
+// A half-width card (two researchers side by side) with every header badge: the agent name keeps its floor and
+// the badges wrap beside it.
+export const LongHeaderBadges: Story = {
+  render: () => (
+    <div style={{ width: 445 }}>
+      <DagNode
+        node={{ ...wrNode, context_window: 131_072 }}
+        state={{
+          status: 'done', startedAt: 0, finishedAt: 170_000, serverDurationMs: 170_000, totalTokens: 135_296, cachedTokens: 99_552,
+          contextTokens: 21_000, model: 'qwen3.8-27b-vllm', steers: ['focus on allocators'], resumedFrom: 'sess-1',
+        }}
+        runs={[workerDone(researchActivity)]}
+        answer="Zig 0.17.0 uses explicit allocators."
+        isFinal={false}
+        chatId="chat-1"
+      />
+    </div>
+  ),
+}
+
 export const DoneWithCachedTokens: Story = {
   args: {
     node: wrNode,

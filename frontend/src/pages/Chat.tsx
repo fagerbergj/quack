@@ -115,7 +115,7 @@ export function EditableChatTitle({ title, editable, onRename }: EditableChatTit
     <h1
       onClick={startEdit}
       title={editable ? 'Click to rename' : undefined}
-      className={`group flex items-center gap-1.5 text-base font-semibold text-gray-900 dark:text-white ${editable ? 'cursor-text' : ''}`}
+      className={`group flex min-w-0 items-center gap-1.5 text-base font-semibold text-gray-900 dark:text-white ${editable ? 'cursor-text' : ''}`}
     >
       {/* One line at every width: the compact header's second line is the run status; title holds the full text. */}
       <span className="truncate" title={title}>{title}</span>
@@ -128,6 +128,21 @@ export function EditableChatTitle({ title, editable, onRename }: EditableChatTit
 
 // Recent completed turns mounted by default; "Show N older messages" raises it by the same amount.
 const RENDERED_TURN_TAIL = 100
+
+// The floating composer grows with queued follow-ups and a multi-line draft, so the scroll pane's bottom padding
+// tracks its measured height; the class's fixed padding covers the first paint and jsdom (no ResizeObserver).
+function useComposerClearance() {
+  const ref = useRef<HTMLDivElement>(null)
+  const [height, setHeight] = useState<number>()
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(() => setHeight(el.offsetHeight))
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  return { ref, style: height == null ? undefined : { paddingBottom: height + 24 } }
+}
 
 // Keeps a live DAG visible without scrolling to the node cards.
 export function ChatHeaderStatus({ status, startedAt }: { status: ChatStatus; startedAt?: number }) {
@@ -582,6 +597,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
     [liveAttachmentPreviews],
   )
   const scrollRef = useRef<HTMLDivElement>(null)
+  const composerClearance = useComposerClearance()
 
   // Keyed on turn count so it fires after the async seed lands; deliberately doesn't follow mid-stream tokens.
   useLayoutEffect(() => {
@@ -923,7 +939,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
         {/* The composer floats over the list; the scroll pane's bottom padding keeps the last message clear. */}
         <div className="relative flex-1 min-h-0">
         {/* Clearance is composer height plus --composer-gap, so the inset grows it instead of counting twice. */}
-        <div ref={scrollRef} className="absolute inset-0 overflow-y-auto overscroll-contain px-6 pt-6 pb-[calc(7rem+var(--composer-gap))] medium:pb-[calc(8rem+var(--composer-gap))] space-y-6">
+        <div ref={scrollRef} style={composerClearance.style} className="absolute inset-0 overflow-y-auto overscroll-contain px-6 pt-6 pb-[calc(7rem+var(--composer-gap))] medium:pb-[calc(8rem+var(--composer-gap))] space-y-6">
           <EmptyChatNote notFound={notFound} empty={showEmptyPrompt(activeChatId, state, live)} onNewChat={handleNewChat} />
 
           {hiddenTurnCount > 0 && (
@@ -1004,7 +1020,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
           )}
         </div>
 
-        <div className="absolute inset-x-0 bottom-0">
+        <div ref={composerClearance.ref} className="absolute inset-x-0 bottom-0">
           <Composer
             disabled={isArchived}
             streaming={liveActive}

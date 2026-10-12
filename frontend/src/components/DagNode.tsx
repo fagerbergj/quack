@@ -563,11 +563,11 @@ function NodeStateChips({ steers, resumedFrom }: { steers?: string[]; resumedFro
   )
 }
 
-// The named state leads the metadata group so below `medium` it wraps onto the muted second line
-// instead of squeezing the agent name off the first.
+// The named state leads the metadata group so below `medium` it wraps onto the muted second line. From `medium`
+// up it shares the row, shrinking and wrapping its own badges so the agent name keeps its floor.
 function NodeMetaRow({ state, node, pauseLabel }: { state: NodeState; node: DagNodeDef; pauseLabel?: string }) {
   return (
-    <div className="empty:hidden flex flex-wrap medium:flex-nowrap items-center gap-x-2 gap-y-0.5 basis-full order-last medium:basis-auto medium:order-none">
+    <div className="empty:hidden min-w-0 flex flex-wrap items-center gap-x-2 gap-y-0.5 basis-full order-last medium:basis-auto medium:order-none medium:justify-end">
       <StatusDot status={state.status} label={pauseLabel} />
       {state.model && (
         <span className="text-[11px] text-gray-500 dark:text-gray-400 font-mono truncate max-w-[120px]" title={state.model}>
@@ -820,7 +820,7 @@ export const DagNode = memo(function DagNode({
       {/* One line at every width; below `medium` the metadata group wraps onto its own
           muted line (basis-full + order-last) instead of stacking the row. */}
       <div className="flex flex-wrap medium:flex-nowrap items-center gap-x-2 gap-y-1 px-4 py-3 border-b border-gray-100 dark:border-gray-700">
-        <span className="text-xs font-semibold text-gray-700 dark:text-gray-200 min-w-0 flex-1 truncate" title={agentLabel(node.agent)}>
+        <span className="text-xs font-semibold text-gray-700 dark:text-gray-200 min-w-24 flex-1 truncate" title={agentLabel(node.agent)}>
           {agentLabel(node.agent)}
         </span>
         {isAcpAgent(node.agent) && <AcpBadge />}
