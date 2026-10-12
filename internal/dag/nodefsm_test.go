@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/fagerbergj/quack/internal/stream"
 )
@@ -57,6 +58,8 @@ func (f *fakeNodeStore) GetNodeState(_ context.Context, chatID, nodeID string) (
 	k := chatID + "/" + nodeID
 	return f.status[k], f.reason[k], f.question[k], f.queue[k], nil
 }
+
+func (f *fakeNodeStore) NodeStartedAt(context.Context, string, string) time.Time { return time.Time{} }
 
 // set stamps a row's status directly, standing in for the stream-driven
 // node_start upsert (runlog), which isn't wired in these tests.
@@ -267,7 +270,7 @@ func TestStartNodeOnLiveControlPersistsRunning(t *testing.T) {
 func TestContinuable(t *testing.T) {
 	fake := newFakeNodeStore()
 	ex := &Executor{controls: newRunControls()}
-	if ex.Continuable(context.Background(), "c", "n") {
+	if _, ok := ex.Continuable(context.Background(), "c", "n"); ok {
 		t.Error("no store: nothing is continuable")
 	}
 	ex.SetNodeStateStore(fake)
@@ -284,7 +287,7 @@ func TestContinuable(t *testing.T) {
 	} {
 		fake.set("c", "n", c.status)
 		fake.reason["c/n"] = string(c.reason)
-		if got := ex.Continuable(context.Background(), "c", "n"); got != c.want {
+		if _, got := ex.Continuable(context.Background(), "c", "n"); got != c.want {
 			t.Errorf("Continuable(%s/%s) = %v, want %v", c.status, c.reason, got, c.want)
 		}
 	}

@@ -2,6 +2,8 @@
 package dag
 
 import (
+	"time"
+
 	"google.golang.org/genai"
 )
 
@@ -78,6 +80,8 @@ type Node struct {
 	Continue bool `json:"-"`
 	// ReloadSession: an ACP node reloads the session it last saved in its state dir.
 	ReloadSession bool `json:"-"`
+	// AttemptStartedAt: a continued node's interrupted attempt's first start, so its timing spans the pause.
+	AttemptStartedAt time.Time `json:"-"`
 }
 
 // TerminalIDs are the plan's sinks - nodes nothing depends on - in plan order; each one's output is delivered.

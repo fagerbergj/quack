@@ -113,10 +113,12 @@ func (e *Executor) NewDagStream(ctx context.Context, plan Plan, appName, userID,
 	// plan node id for setup/repo-chain implementers, so the failure lookup must use it.
 	scopeByID := make(map[string]string, len(plan.Nodes))
 	resumedFromByID := make(map[string]string, len(plan.Nodes))
+	attemptStartByID := make(map[string]time.Time, len(plan.Nodes))
 	for _, n := range plan.Nodes {
 		agentByID[n.ID] = n.AgentName
 		scopeByID[n.ID] = workspaceNodeID(plan, n)
 		resumedFromByID[n.ID] = n.ResumedFrom
+		attemptStartByID[n.ID] = n.AttemptStartedAt
 	}
 	ds := newDagStream(otelobs.TraceIDOf(ctx), cancelKey, agentByID, scopeByID, yield, nodeOutputs, func(nodeID string) gateScore {
 		return e.gateScore(ctx, appName, userID, sessionID, nodeID)
@@ -130,6 +132,7 @@ func (e *Executor) NewDagStream(ctx context.Context, plan Plan, appName, userID,
 	ds.deliveredOf = func(nodeID string) bool { return e.controls.wasDelivered(cancelKey, nodeID) }
 	ds.draftOf = func(nodeID string) string { return e.controls.draftOf(cancelKey, nodeID) }
 	ds.resumedFromByID = resumedFromByID
+	ds.attemptStartByID = attemptStartByID
 	shutdown := func() bool { _, ok := e.controls.shutdown.Load(cancelKey); return ok }
 	return &DagStream{ctx: ctx, plan: plan, agentByID: agentByID, yield: yield, ds: ds, shutdown: shutdown}
 }
@@ -240,13 +243,17 @@ func (e *Executor) RetryPlanInNodes(ctx adkagent.Context, plan Plan, chatID stri
 	return e.runSubset(ctx, plan, chatID, seeded, run)
 }
 
-// Continuable: a paused node (not one waiting on an answer) still has its round's work to carry on from.
-func (e *Executor) Continuable(ctx context.Context, chatID, nodeID string) bool {
+// Continuable: a paused node (not one waiting on an answer) still has its round's work to carry on from;
+// startedAt is when that interrupted attempt first started.
+func (e *Executor) Continuable(ctx context.Context, chatID, nodeID string) (startedAt time.Time, ok bool) {
 	if e.controls.store == nil {
-		return false
+		return time.Time{}, false
 	}
 	status, reason, _, _, err := e.controls.store.GetNodeState(ctx, chatID, nodeID)
-	return err == nil && NodeStatus(status) == StatusPaused && PauseReason(reason) != PauseAwaitingInput
+	if err != nil || NodeStatus(status) != StatusPaused || PauseReason(reason) == PauseAwaitingInput {
+		return time.Time{}, false
+	}
+	return e.controls.store.NodeStartedAt(ctx, chatID, nodeID), true
 }
 
 // withContinue: a native node continues its repaired session; any other reloads the ACP session it saved.
@@ -485,6 +492,8 @@ type dagStream struct {
 	draftOf func(string) string
 	// resumedFromByID: per-node Node.ResumedFrom; a nil map reads as "", the fresh-node default.
 	resumedFromByID map[string]string
+	// attemptStartByID: per-node Node.AttemptStartedAt; zero (or a nil map) starts the node now.
+	attemptStartByID map[string]time.Time
 
 	started     map[string]bool
 	doneEmitted map[string]bool
@@ -551,8 +560,12 @@ func (s *dagStream) emit(ev stream.SSEEvent) bool {
 func (s *dagStream) emitNodeStart(node string) bool {
 	if !s.started[node] {
 		s.started[node] = true
-		s.startedAt[node] = time.Now()
-		ev := stream.WithResumedFrom(stream.NodeStart(node, s.agentByID[node]), s.resumedFromByID[node])
+		start := s.attemptStartByID[node]
+		if start.IsZero() {
+			start = time.Now()
+		}
+		s.startedAt[node] = start
+		ev := stream.WithResumedFrom(stream.NodeStartAt(node, s.agentByID[node], start), s.resumedFromByID[node])
 		if !s.emit(stream.WithTrace(ev, s.traceID)) {
 			return false
 		}

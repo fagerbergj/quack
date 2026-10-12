@@ -164,6 +164,7 @@ func nodeGateConfig(ctx context.Context, plan Plan, node Node, worker adkagent.A
 	cfg.DeliverPromptEvent = vetting.PromptEventNeeded(worker)
 	cfg.ResumedFrom = node.ResumedFrom
 	cfg.Continue = node.Continue
+	cfg.AttemptStartedAt = node.AttemptStartedAt
 	cfg.Checks = node.Checks
 	cfg.Workdir = node.Workdir
 	cfg.NodeID = workspaceNodeID(plan, node)

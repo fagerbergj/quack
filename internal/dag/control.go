@@ -17,6 +17,7 @@ type NodeStateStore interface {
 	SetNodeStatusForChat(ctx context.Context, chatID, nodeID, status, pauseReason, pendingQuestion string) error
 	SetNodeQueue(ctx context.Context, chatID, nodeID, queueJSON string) error
 	GetNodeState(ctx context.Context, chatID, nodeID string) (status, pauseReason, pendingQuestion, queueJSON string, err error)
+	NodeStartedAt(ctx context.Context, chatID, nodeID string) time.Time
 }
 
 // MsgStatus is a queued steer message's lifecycle state.

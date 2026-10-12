@@ -162,6 +162,29 @@ func TestAgentCompleteContextTokensIsLastNotSummed(t *testing.T) {
 	}
 }
 
+// A continued node keeps its interrupted attempt's first start, so node_start and node_done's
+// duration span the pause instead of restarting at the resume.
+func TestContinuedNodeTimesFromItsAttemptStart(t *testing.T) {
+	first := nowMinus(t, 600)
+	plan := Plan{ID: "p", Nodes: []Node{{ID: "n1", AgentName: "web-researcher", AttemptStartedAt: first}}}
+	var start stream.NodeStartData
+	yield := func(e stream.SSEEvent, _ error) bool {
+		if d, ok := e.Data.(stream.NodeStartData); ok {
+			start = d
+		}
+		return true
+	}
+	ds := (&Executor{controls: newRunControls()}).NewDagStream(t.Context(), plan, "quack", "u", "s", "c", yield, map[string]string{})
+	ds.Handle(ev("quack-dag-p@1/n1@rr/web-researcher@worker-r0", &genai.Part{Text: "resumed"}))
+
+	if start.StartedAtMs != first.UnixMilli() {
+		t.Errorf("node_start started_at_ms = %d, want the attempt's first start %d", start.StartedAtMs, first.UnixMilli())
+	}
+	if d := ds.ds.nodeDoneData("n1"); d.DurationMs < 599_000 {
+		t.Errorf("node_done duration_ms = %d, want ~600s counted from the attempt's first start", d.DurationMs)
+	}
+}
+
 // nowMinus returns a time n seconds in the past.
 func nowMinus(t *testing.T, secs int) time.Time {
 	t.Helper()

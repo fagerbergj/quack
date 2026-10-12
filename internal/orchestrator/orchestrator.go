@@ -257,16 +257,14 @@ func (o *Orchestrator) retryNodes(ctx context.Context, userID, chatID, planID st
 		}
 		// Read before the plan snapshot below re-stamps the node's row. Guidance asks for a fresh attempt.
 		guidance = strings.TrimSpace(guidance)
-		targets := map[string]bool{}
-		for _, id := range nodeIDs {
-			targets[id] = guidance == "" && o.executor.Continuable(ctx, chatID, id)
-		}
+		targets := o.continueTargets(ctx, &plan, chatID, nodeIDs, guidance == "")
 		// Lead with the plan snapshot so runlog.Drive-based callers (boot resume) persist the re-run nodes'
 		// state. Emitted before the guidance: persisted plans keep the original task, so it never piles up.
 		yield(tools.DagPlanEvent(ctx, plan), nil)
 		if guidance != "" {
 			for i := range plan.Nodes {
-				if targets[plan.Nodes[i].ID] {
+				// targets maps every retried node, its value only whether it continues its session.
+				if _, retried := targets[plan.Nodes[i].ID]; retried {
 					plan.Nodes[i].Task += "\n\n[Retry guidance]: " + guidance
 				}
 			}
@@ -318,6 +316,22 @@ func (o *Orchestrator) retryNodes(ctx context.Context, userID, chatID, planID st
 			o.persistAnswer(ctx, userID, chatID, answer)
 		}
 	}
+}
+
+// continueTargets: per node, whether it carries on its interrupted attempt (never when !mayContinue);
+// each one that does gets that attempt's first start stamped on its plan node.
+func (o *Orchestrator) continueTargets(ctx context.Context, plan *dag.Plan, chatID string, nodeIDs []string, mayContinue bool) map[string]bool {
+	targets := map[string]bool{}
+	for _, id := range nodeIDs {
+		start, cont := o.executor.Continuable(ctx, chatID, id)
+		targets[id] = mayContinue && cont
+		for i := range plan.Nodes {
+			if targets[id] && plan.Nodes[i].ID == id {
+				plan.Nodes[i].AttemptStartedAt = start
+			}
+		}
+	}
+	return targets
 }
 
 // settleRetried records a retry's fresh outputs on the dag_plan record, clearing an earlier stop:
