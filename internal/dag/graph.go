@@ -29,6 +29,7 @@ const (
 	gatePassedKey  = "quack.gate_passed/"
 	gateRoundsKey  = "quack.gate_rounds/"
 	gateContextKey = "quack.gate_context/" // this round's resumable transport context id, "" for a native node
+	parkedMeta     = "quack.parked"        // CustomMetadata on a paused node's park event; see dagStream.handle
 )
 
 type nodeScopedWorker interface {
@@ -290,7 +291,7 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			// ACP agents never invoke workerModel, so gen_ai metrics attribution rides on worker itself.
 			ledger.StampCoords([]adkagent.Agent{worker}, ledger.Coords{ChatID: cfg.ChatID, Node: cfg.NodeID, Agent: cfg.Agent, User: cfg.User, Source: cfg.Source})
 			answer, res, err := vetting.RunGatedRefine(ctx, node.ID, workerNode, workerModel, judge, cfg, prompt, atts, ctrl, emit)
-			return finishGatedNode(ctx, node.ID, token, res, recordGate, answer, err, &paused)
+			return finishGatedNode(ctx, node.ID, token, res, recordGate, answer, err, &paused, emit)
 		},
 		workflow.NodeConfig{})
 }
@@ -402,7 +403,7 @@ func setupMemStages(ctx adkagent.Context, chatID, nodeID, token string, cfg *vet
 
 // finishGatedNode records the gate result; the ACP context id is captured unconditionally so a node
 // that failed after establishing a transport session still reaches the dag_node record.
-func finishGatedNode(ctx adkagent.Context, nodeID, token string, res vetting.GateResult, recordGate func(nodeID string, score float64, passed bool, rounds int, contextID string), answer string, err error, paused *bool) (string, error) {
+func finishGatedNode(ctx adkagent.Context, nodeID, token string, res vetting.GateResult, recordGate func(nodeID string, score float64, passed bool, rounds int, contextID string), answer string, err error, paused *bool, emit func(*session.Event) error) (string, error) {
 	contextID := ""
 	if at, ok := vetting.LookupAdvisorThread(token); ok {
 		contextID = at.ACPSessionID
@@ -423,7 +424,11 @@ func finishGatedNode(ctx adkagent.Context, nodeID, token string, res vetting.Gat
 		if errors.Is(err, workflow.ErrNodeInterrupted) {
 			return answer, err
 		}
-		return answer, nil
+		// A user or shutdown pause parks with no output too, so no dependent starts before the resume.
+		ev := session.NewEvent(ctx, ctx.InvocationID())
+		ev.CustomMetadata = map[string]any{parkedMeta: true}
+		_ = emit(ev)
+		return "", workflow.ErrNodeWaitingForOutput
 	}
 	if err == nil {
 		st := ctx.State()

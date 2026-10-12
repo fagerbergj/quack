@@ -57,8 +57,8 @@ Mid-run control over one node in the active DAG (`quack chat node <verb> <chat-i
 | Verb | Does |
 | --- | --- |
 | `stop` | Stop a running node; the rest of the run continues. |
-| `pause` | Suspend a running node, keeping its accumulated work (resumable). |
-| `resume` | Resume a paused node; the node carries on in its saved session (an ACP node reloads it and is re-sent its task). |
+| `pause` | Suspend a running node, keeping its accumulated work (resumable); the nodes that depend on it wait. |
+| `resume` | Resume a paused node; the node carries on in its saved session (an ACP node reloads it and is re-sent its task), then its waiting dependents run. |
 | `queue <message>` | Queue a message for a running node, delivered into a worker round in flight at once, else at the node's next turn boundary. |
 | `queue-edit <message-id> <text>` | Edit a not-yet-delivered queued message. |
 | `queue-remove <message-id>` | Remove a not-yet-delivered queued message. |

@@ -22,7 +22,7 @@ const planStepSessionSuffix = "::plan-step"
 func PlanStepSessionID(chatID string) string { return chatID + planStepSessionSuffix }
 
 // RunPlanStep runs exactly the nodes in run in a disposable workflow+runner (RunNode needs a live sub-scheduler).
-// needsInput: nodes parked on a HITL question; started: nodes that reached running (a later layer may never dispatch).
+// needsInput: nodes parked on a HITL question or a pause; started: nodes that reached running (a later layer may never dispatch).
 func (e *Executor) RunPlanStep(ctx context.Context, plan Plan, appName, userID, chatID string, seeded map[string]string, run map[string]bool) (outputs map[string]string, needsInput map[string]bool, started map[string]bool, err error) {
 	if len(run) == 0 {
 		return map[string]string{}, nil, nil, nil

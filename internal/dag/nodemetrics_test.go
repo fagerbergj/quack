@@ -1,10 +1,15 @@
 package dag
 
 import (
+	"context"
 	"testing"
 	"time"
 
+	adkagent "google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/agent/workflowagent"
+	"google.golang.org/adk/v2/runner"
 	"google.golang.org/adk/v2/session"
+	"google.golang.org/adk/v2/workflow"
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/stream"
@@ -51,13 +56,13 @@ func TestRecordedGateResultIsReadableImmediately(t *testing.T) {
 	e := &Executor{}
 	e.recordGateResult("chat-1", "n1", 0.85, true, 2, "")
 
-	got := e.gateScore(t.Context(), "quack", "local", "chat-1", "n1")
+	got := e.gateScore(t.Context(), "quack", "local", "chat-1", "chat-1", "n1")
 	if got.score != 0.85 || !got.passed || got.rounds != 2 {
 		t.Fatalf("gateScore = %+v, want {0.85 true 2} - node_done cannot see the gate's own result", got)
 	}
 
 	// A different chat with the same node id must not collide.
-	if other := e.gateScore(t.Context(), "quack", "local", "chat-2", "n1"); other.score != 0 {
+	if other := e.gateScore(t.Context(), "quack", "local", "chat-2", "chat-2", "n1"); other.score != 0 {
 		t.Fatalf("gate result leaked across chats: %+v", other)
 	}
 }
@@ -189,4 +194,50 @@ func TestContinuedNodeTimesFromItsAttemptStart(t *testing.T) {
 func nowMinus(t *testing.T, secs int) time.Time {
 	t.Helper()
 	return time.Now().Add(-time.Duration(secs) * time.Second)
+}
+
+// A retry runs on its own session (chatID::retry, as Orchestrator.retryNodes does); node_done
+// must still carry the gate's result, which is recorded under the chat id.
+func TestRetryNodeDoneCarriesGateResult(t *testing.T) {
+	stub := &coopStub{started: make(chan struct{}, 1), unblock: make(chan struct{})}
+	close(stub.unblock)
+	ex, plan := newCoopExecutor(t, stub, 1)
+	sessions := session.InMemoryService()
+	outputs := map[string]string{}
+	retry := workflow.NewDynamicNode[any, string]("__retry",
+		func(nctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {
+			out, err := ex.RetryPlanInNode(nctx, plan, "chat", "n1", nil, false)
+			for k, v := range out {
+				outputs[k] = v
+			}
+			return "done", err
+		}, workflow.NodeConfig{})
+	wf, err := workflowagent.New(workflowagent.Config{Name: "orchestrator-retry", Edges: workflow.Chain(workflow.Start, retry)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := runner.New(runner.Config{AppName: "quack", Agent: wf, SessionService: sessions, AutoCreateSession: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := &eventLog{}
+	yield := func(ev stream.SSEEvent, _ error) bool { log.add(ev); return true }
+	ds := ex.NewDagStream(context.Background(), plan, "quack", "u", "chat::retry", "chat", yield, outputs)
+	for ev, rerr := range r.Run(context.Background(), "u", "chat::retry", genai.NewContentFromText("retry n1", genai.RoleUser), adkagent.RunConfig{}) {
+		if rerr != nil {
+			t.Fatalf("retry run: %v", rerr)
+		}
+		ds.Handle(ev)
+	}
+	ds.Finish()
+	for _, ev := range log.events {
+		if d, ok := ev.Data.(stream.NodeDoneData); ok && d.NodeID == "n1" {
+			if d.JudgeRounds != 1 || !d.JudgePassed || d.JudgeFinalScore == 0 {
+				t.Errorf("retried node_done judge rounds=%d passed=%v score=%v; want the gate's 1/true/0.9",
+					d.JudgeRounds, d.JudgePassed, d.JudgeFinalScore)
+			}
+			return
+		}
+	}
+	t.Fatal("retried n1 emitted no node_done")
 }

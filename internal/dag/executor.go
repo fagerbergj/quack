@@ -121,7 +121,7 @@ func (e *Executor) NewDagStream(ctx context.Context, plan Plan, appName, userID,
 		attemptStartByID[n.ID] = n.AttemptStartedAt
 	}
 	ds := newDagStream(otelobs.TraceIDOf(ctx), cancelKey, agentByID, scopeByID, yield, nodeOutputs, func(nodeID string) gateScore {
-		return e.gateScore(ctx, appName, userID, sessionID, nodeID)
+		return e.gateScore(ctx, appName, userID, sessionID, cancelKey, nodeID)
 	}, func(nodeID string) bool {
 		return e.controls.wasCancelled(cancelKey, nodeID)
 	}, func(nodeID string) PauseReason {
@@ -149,10 +149,10 @@ func (s *DagStream) Handle(ev *session.Event) bool {
 	return true
 }
 
-// Paused reports whether any node in this stream parked on a HITL question.
+// Paused reports whether any node in this stream parked, on a HITL question or a pause.
 func (s *DagStream) Paused() bool { return len(s.ds.needsInput) > 0 }
 
-// NeedsInput reports which nodes paused on a HITL question.
+// NeedsInput reports which nodes parked, on a HITL question or a pause; none of them has an output.
 func (s *DagStream) NeedsInput() map[string]bool { return s.ds.needsInput }
 
 // Started reports which run-set nodes reached running. A node behind a paused dependency can be
@@ -349,7 +349,7 @@ func (e *Executor) runSubset(ctx adkagent.Context, plan Plan, chatID string, see
 	if err != nil {
 		return nil, err
 	}
-	return runDAGSubset(ctx, plan, gateNodes, e.maxActive, seeded, run)
+	return runDAGSubset(ctx, plan, gateNodes, e.maxActive, seeded, run, func(id string) bool { return e.controls.pauseReason(chatID, id) != "" })
 }
 
 // resetNativeWorkerSession deletes nodeID's deterministic A2A worker session before a retry.
@@ -434,10 +434,11 @@ func (e *Executor) recordGateResult(chatID, nodeID string, score float64, passed
 	e.gateResults.Store(gateResultKey(chatID, nodeID), gateScore{score: score, passed: passed, rounds: rounds, contextID: contextID})
 }
 
-func (e *Executor) gateScore(ctx context.Context, appName, userID, sessionID, nodeID string) gateScore {
+// gateScore: recordGateResult keys by chatID, which a retry's run session (chatID::retry) is not.
+func (e *Executor) gateScore(ctx context.Context, appName, userID, sessionID, chatID, nodeID string) gateScore {
 	var g gateScore
 	// In-process first: state write is a delta not yet appended when node_done is assembled.
-	if v, ok := e.gateResults.Load(gateResultKey(sessionID, nodeID)); ok {
+	if v, ok := e.gateResults.Load(gateResultKey(chatID, nodeID)); ok {
 		if got, ok := v.(gateScore); ok {
 			return got
 		}
@@ -592,6 +593,11 @@ func (s *dagStream) handle(ev *session.Event) bool {
 		s.closeRun(node)
 		s.needsInput[node] = true
 		return s.emit(stream.NodeNeedsInput(node, ev.RequestedInput.InterruptID, ev.RequestedInput.Message))
+	}
+	if parked, _ := ev.CustomMetadata[parkedMeta].(bool); parked {
+		s.closeRun(node)
+		s.needsInput[node] = true
+		return s.emit(stream.NodePaused(node))
 	}
 
 	last := lastSeg(ev.NodeInfo.Path)

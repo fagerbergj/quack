@@ -72,7 +72,7 @@ func runSingleNode(t *testing.T, plan Plan, cfg vetting.Config, stub model.LLM, 
 	orchestrate := workflow.NewDynamicNode[any, string]("orch",
 		func(ctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {
 			all := map[string]bool{plan.Nodes[0].ID: true}
-			_, err := runDAGSubset(ctx, plan, gateNodes, 1, nil, all)
+			_, err := runDAGSubset(ctx, plan, gateNodes, 1, nil, all, func(string) bool { return false })
 			return "done", err
 		}, workflow.NodeConfig{})
 	top, err := workflowagent.New(workflowagent.Config{Name: "o", Edges: workflow.Chain(workflow.Start, orchestrate)})

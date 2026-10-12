@@ -52,7 +52,7 @@ type assignmentResult struct {
 	TaskID    string   `json:"task_id"`
 }
 
-// executeResult.Status: running (no delivery yet), delivered, paused (awaits the user's answer),
+// executeResult.Status: running (no delivery yet), delivered, paused (awaits the user's answer or resume),
 // stopped (every delivering node was stopped) or needs_user (the judge keeps rejecting the same plan).
 type executeResult struct {
 	Status  string             `json:"status"`
@@ -376,7 +376,7 @@ func ApplyAssignmentOutcome(a *dag.Assignment, output string, paused, stopped bo
 		a.Result, a.Stopped = output, false
 		return "done"
 	case paused:
-		// Parked on a HITL question: no task_id, so it's still "to run" (see dag.PlanStepSessionID).
+		// Parked on a HITL question or a pause: no task_id, so it's still "to run" (see dag.PlanStepSessionID).
 		return "paused"
 	default:
 		a.TaskID = uuid.NewString()
