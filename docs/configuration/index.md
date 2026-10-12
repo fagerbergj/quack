@@ -68,7 +68,7 @@ For a native worker that has `read_artifact`, a `token_threshold` compaction fir
 
 - `addr` — listen address (default `:8080`).
 - `topology` — `embedded` (sqlite, default), `managed` (brings up the docker-compose stores), or `external` (you run Postgres/Qdrant yourself).
-- `shutdown_grace_seconds` — how long SIGTERM waits for in-flight runs before force-cancelling them (default 20).
+- `shutdown_grace_seconds` — how long SIGTERM waits for runs to wind down after pausing their nodes, before force-cancelling them (default 20).
 - `public_url` — this server's externally reachable base URL, e.g. `https://quack.example.com`. Must be an absolute `http(s)` URL with no trailing slash when set. Passed to extensions (SDK `Host.PublicURL`) so a posted GitHub comment/review can link back to the run that made it; unset ⇒ no link. Interpolated from `QUACK_PUBLIC_URL`, which is optional — unset expands to empty, not a validation error.
 
 ## `timezone`

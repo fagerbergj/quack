@@ -37,9 +37,9 @@ func TestSetWorkerRound_ClearsAStaleSteerFlag(t *testing.T) {
 	}
 }
 
-// A user pause aborts the worker round but never a judge call; a shutdown pause stays cooperative and must not
+// A pause, by the user or a shutdown, aborts the worker round but never a judge call; a shutdown pause must not
 // relabel a user pause, or boot would resume a node the user paused.
-func TestPauseNode_AbortsOnlyAUserPausedWorkerRound(t *testing.T) {
+func TestPauseNode_AbortsOnlyAWorkerRound(t *testing.T) {
 	ex := &Executor{controls: newRunControls()}
 	c, _, _ := ex.controls.register("chat", "n1")
 	aborted := false
@@ -51,15 +51,17 @@ func TestPauseNode_AbortsOnlyAUserPausedWorkerRound(t *testing.T) {
 	c.ClearRoundAbort()
 	c.resume()
 
-	c.SetWorkerRound(func() { aborted = true })
-	ex.PauseNode("chat", "n1", PauseShutdown)
-	if aborted {
-		t.Fatal("a shutdown pause aborted the worker round")
-	}
-	c.resume()
-	ex.PauseNode("chat", "n1", PauseUser)
-	if !aborted || !c.RoundInterrupted() {
-		t.Fatal("a user pause must interrupt the running worker round")
+	for _, reason := range []PauseReason{PauseShutdown, PauseUser} {
+		aborted = false
+		c.SetWorkerRound(func() { aborted = true })
+		ex.PauseNode("chat", "n1", reason)
+		if !aborted || !c.RoundInterrupted() {
+			t.Fatalf("a %s pause did not interrupt the running worker round", reason)
+		}
+		c.ClearWorkerRound()
+		if reason == PauseShutdown {
+			c.resume()
+		}
 	}
 	ex.PauseNode("chat", "n1", PauseShutdown)
 	if r := c.PauseReason(); r != PauseUser {

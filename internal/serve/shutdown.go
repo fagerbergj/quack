@@ -21,20 +21,15 @@ type nodePauser interface {
 	MarkShutdown(chatID string)
 }
 
-// DrainActiveRuns rejects new dispatches, pauses running nodes (reason=shutdown) and waits up to grace.
-// The pause is persisted synchronously, so cancelling a mid-turn node loses only the turn; boot resumes it.
+// DrainActiveRuns rejects new dispatches, pauses running nodes (reason=shutdown) at once and waits up to grace.
+// The pause is persisted synchronously and keeps the node's session, so boot continues it where it was cut.
 func DrainActiveRuns(hub *stream.Hub, ex nodePauser, grace time.Duration) {
 	hub.BeginDraining()
 	ids := hub.ActiveChatIDs()
 	var paused, chats int
 	if ex != nil {
 		for _, chatID := range ids {
-			n := 0
-			for _, nodeID := range ex.ActiveNodes(chatID) {
-				if ex.PauseNode(chatID, nodeID, dag.PauseShutdown) {
-					n++
-				}
-			}
+			n := pauseForShutdown(hub, ex, chatID)
 			if n > 0 {
 				paused += n
 				chats++
@@ -53,7 +48,7 @@ func DrainActiveRuns(hub *stream.Hub, ex nodePauser, grace time.Duration) {
 
 	remaining := hub.ActiveChatIDs()
 	for _, chatID := range remaining {
-		hub.MarkInterrupted(chatID) // per-chat cut marker: only force-cancelled runs skip their RunEnded tail
+		hub.MarkInterrupted(chatID) // per-chat cut marker: a cut run skips its RunEnded tail
 		if ex != nil {
 			// A node that registered after the sweep above is unpaused; this keeps its abort from settling it cancelled.
 			ex.MarkShutdown(chatID)
@@ -66,6 +61,26 @@ func DrainActiveRuns(hub *stream.Hub, ex nodePauser, grace time.Duration) {
 	slog.Warn("cancelled in-flight turns past the shutdown grace window; their nodes stay paused/shutdown and resume at boot",
 		"component", "serve", "count", len(remaining))
 	waitWhileAnyRegistered(hub, settleWindow)
+}
+
+// pauseForShutdown pauses chatID's live nodes, cutting off their worker rounds. The chat is marked interrupted
+// first: its run now ends inside the grace, and its tail must skip RunEnded as boot resumes the nodes.
+func pauseForShutdown(hub *stream.Hub, ex nodePauser, chatID string) int {
+	nodes := ex.ActiveNodes(chatID)
+	if len(nodes) == 0 {
+		return 0
+	}
+	hub.MarkInterrupted(chatID)
+	n := 0
+	for _, nodeID := range nodes {
+		if ex.PauseNode(chatID, nodeID, dag.PauseShutdown) {
+			n++
+		}
+	}
+	if n == 0 {
+		hub.WasInterrupted(chatID) // clears the mark: nothing paused, so a run finishing on its own keeps RunEnded
+	}
+	return n
 }
 
 // waitWhileAnyRegistered polls hub.ActiveChatIDs() until it is empty, or
