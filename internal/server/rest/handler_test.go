@@ -768,7 +768,8 @@ func TestUpdateChat_ArchiveLeavesRunningRunAlone(t *testing.T) {
 	h := newTestHandlerWithModel(t, bm)
 
 	chatA := mustCreateChat(t, h)
-	h.startRun(chatA, "turn-a", "hello", nil)
+	runCtx, cancelRun, _ := h.claimRun(context.Background(), chatA, "turn-a")
+	h.startRun(runCtx, cancelRun, chatA, "turn-a", "hello", nil)
 	select {
 	case <-bm.entered:
 	case <-time.After(2 * time.Second):

@@ -1515,7 +1515,12 @@ export type SendChatMessageErrors = {
      */
     404: ErrorResponse;
     /**
-     * The chat is archived (read-only); unarchive it before sending
+     * The chat is archived (read-only); unarchive it before sending. Or the
+     * chat already has a run in flight (from any source: a send, a node start
+     * or retry, an extension dispatch, a boot resume): nothing was saved or
+     * started; send again once it finishes. A send arriving while a finished
+     * run is still settling waits for it briefly instead.
+     *
      */
     409: ErrorResponse;
 };

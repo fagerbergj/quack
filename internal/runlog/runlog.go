@@ -125,6 +125,13 @@ func (l *EventLog) FinishRun(hub *stream.Hub, chatID, responseID string, cancelR
 	hub.EndRun(chatID, responseID)
 }
 
+// EndingRun flushes the run's events, then lets a dispatch from its RunEnded supersede it (see Hub.MarkEnding).
+// Flush first: the superseder's Reset must not race this run's queued rows.
+func (l *EventLog) EndingRun(hub *stream.Hub, chatID, responseID string) {
+	l.Flush()
+	hub.MarkEnding(chatID, responseID)
+}
+
 // Append enqueues an event row (non-blocking; drops if queue is full).
 func (l *EventLog) Append(chatID string, seq int64, ev stream.SSEEvent) {
 	js, err := MarshalEvent(ev)
@@ -219,15 +226,14 @@ type Publisher struct {
 	seq    int64
 }
 
-// NewPublisher binds a publisher to the run's ctx, which only gates error events (see Publish).
+// NewPublisher binds a publisher to the run's ctx, which only gates error events (see Publish). It numbers after
+// the newest seq the hub or the log holds, so a reopened transcript or a failed Reset never has a seq reused.
 func NewPublisher(ctx context.Context, hub *stream.Hub, log *EventLog, chatID string) *Publisher {
-	return &Publisher{ctx: ctx, hub: hub, log: log, chatID: chatID}
-}
-
-// After numbers the next event after seq, for a run continuing a transcript Reopen replayed.
-func (p *Publisher) After(seq int64) *Publisher {
-	p.seq = seq
-	return p
+	persisted, err := log.store.MaxChatEventSeq(ctx, chatID)
+	if err != nil {
+		slog.Warn("event log: max seq lookup failed; numbering from the hub", "component", "eventlog", "chat", chatID, "err", err)
+	}
+	return &Publisher{ctx: ctx, hub: hub, log: log, chatID: chatID, seq: max(hub.LastSeq(chatID), persisted)}
 }
 
 func (p *Publisher) Publish(ev stream.SSEEvent) {

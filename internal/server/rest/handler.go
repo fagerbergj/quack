@@ -667,6 +667,18 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 	// Generate a stable turn ID before the run so the DAG plan can reference it, the cancel
 	// endpoint can name it, and (below) an uploaded attachment can be stamped with it.
 	turnID := uuid.NewString()
+	runCtx, cancelRun, ok := h.claimRun(r.Context(), chatID, turnID)
+	if !ok {
+		errMsg(w, http.StatusConflict, "the chat still has a run in flight; nothing was sent - try again once it finishes")
+		return
+	}
+	started := false
+	defer func() {
+		if !started {
+			cancelRun()
+			h.hub.EndRun(chatID, turnID)
+		}
+	}()
 
 	ct := r.Header.Get("Content-Type")
 	if strings.HasPrefix(ct, "multipart/form-data") {
@@ -707,7 +719,8 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID
 	replay, live, unsubscribe, _ := h.hub.Subscribe(chatID)
 	defer unsubscribe()
 
-	h.startRun(chatID, turnID, body.Content, attachments)
+	started = true
+	h.startRun(runCtx, cancelRun, chatID, turnID, body.Content, attachments)
 
 	// From here this handler is only a viewer - it cannot stall or kill the run.
 	streamHub(r.Context(), sse, replay, live, 0)
@@ -822,11 +835,25 @@ func recoverRun(chatID schema.ChatID, turnID string) {
 	}
 }
 
-// startRun launches a chat turn on a server-lifetime context, so it outlives its initiating client.
-func (h *Handler) startRun(chatID, turnID, content string, attachments []*genai.Part) {
+// runTailWait bounds how long a send waits out the previous run's tail: its done event reaches the client
+// (whose queued follow-up then sends) before the run stamps its outcome and unregisters.
+const runTailWait = 5 * time.Second
+
+// claimRun registers turnID's run on a server-lifetime context, so it outlives its initiating client;
+// false means another run still holds the chat past runTailWait.
+func (h *Handler) claimRun(ctx context.Context, chatID, turnID string) (context.Context, context.CancelFunc, bool) {
 	runCtx, cancelRun := context.WithTimeout(context.Background(), runTimeout)
-	// Registered synchronously so cancel can never miss the run.
-	h.hub.RegisterRun(chatID, turnID, cancelRun)
+	for !h.hub.RegisterRun(chatID, turnID, cancelRun) {
+		if !h.waitRunEnded(ctx, chatID, runTailWait) {
+			cancelRun()
+			return nil, nil, false
+		}
+	}
+	return runCtx, cancelRun, true
+}
+
+// startRun launches a turn claimRun registered.
+func (h *Handler) startRun(runCtx context.Context, cancelRun context.CancelFunc, chatID, turnID, content string, attachments []*genai.Part) {
 	// Marks the chat in-flight so a crash before stampRunOutcome runs is detectable.
 	_ = h.store.MarkRunActive(runCtx, chatID, turnID)
 	go func() {
@@ -1260,10 +1287,13 @@ func allowedStatuses(from dag.NodeStatus) []schema.NodeStatus {
 // startNodeAsync dispatches nodeID (fresh from queued, or re-entering at its last gate from paused) and reports
 // whether it did; false means already live, so the caller must 409. Arming happens synchronously so a drain sees it.
 func (h *Handler) startNodeAsync(dp *store.DagPlan, chatID, nodeID, message string) bool {
-	if h.hub.HasRegisteredRun(chatID) || h.orch.NodeIsLive(chatID, nodeID) {
+	if h.orch.NodeIsLive(chatID, nodeID) {
 		return false
 	}
-	runCtx, cancelRun := h.armRun(chatID, dp.RunTurnID())
+	runCtx, cancelRun, ok := h.armRun(chatID, dp.RunTurnID())
+	if !ok {
+		return false
+	}
 	go func() {
 		defer recoverRun(chatID, dp.RunTurnID())
 		// FinishRun flushes, cancels, then guarded-retires the run - see its doc.
@@ -1295,26 +1325,32 @@ func iterFromStart(ctx context.Context, o *orchestrator.Orchestrator, userID, ch
 	}
 }
 
-// armRun resets the hub and durable log before RegisterRun, so a subscriber in the start window never
-// reads the previous run's events, then registers the run and marks it in-flight.
-func (h *Handler) armRun(chatID, turnID string) (context.Context, context.CancelFunc) {
+// armRun claims the chat (false: a run already holds it), then resets the hub and durable log before the
+// caller responds, so a subscriber in the start window never reads the previous run's events.
+func (h *Handler) armRun(chatID, turnID string) (context.Context, context.CancelFunc, bool) {
 	runCtx, cancelRun := context.WithTimeout(context.Background(), runTimeout)
+	if !h.hub.RegisterRun(chatID, turnID, cancelRun) {
+		cancelRun()
+		return nil, nil, false
+	}
 	h.hub.Reset(chatID)
 	h.eventLog.Reset(runCtx, chatID)
-	h.hub.RegisterRun(chatID, turnID, cancelRun)
 	_ = h.store.MarkRunActive(runCtx, chatID, turnID)
-	return stream.WithTurnID(runCtx, turnID), cancelRun
+	return stream.WithTurnID(runCtx, turnID), cancelRun, true
 }
 
 // retryNodeAsync re-runs nodeID and descendants in the background, reusing stored outputs;
 // returns whether it dispatched (see startNodeAsync).
 func (h *Handler) retryNodeAsync(dp *store.DagPlan, chatID, nodeID, guidance string) bool {
-	if h.hub.HasRegisteredRun(chatID) || h.orch.NodeIsLive(chatID, nodeID) {
+	if h.orch.NodeIsLive(chatID, nodeID) {
+		return false
+	}
+	runCtx, cancelRun, ok := h.armRun(chatID, dp.RunTurnID())
+	if !ok {
 		return false
 	}
 	nodes, _ := h.store.GetDagNodes(context.Background(), dp.ID)
 	seeded, unreviewed := store.SeedOutputs(nodes)
-	runCtx, cancelRun := h.armRun(chatID, dp.RunTurnID())
 	go func() {
 		defer recoverRun(chatID, dp.RunTurnID())
 		// FinishRun flushes, cancels, then guarded-retires the run - see its doc.

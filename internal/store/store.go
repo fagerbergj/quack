@@ -1064,6 +1064,13 @@ func (s *Store) LoadChatEvents(ctx context.Context, chatID string, afterSeq int6
 	return evs, err
 }
 
+// MaxChatEventSeq is chatID's highest persisted seq, 0 when it has none.
+func (s *Store) MaxChatEventSeq(ctx context.Context, chatID string) (int64, error) {
+	var seq int64
+	err := s.db.WithContext(ctx).Model(&ChatEvent{}).Where("chat_id = ?", chatID).Select("COALESCE(MAX(seq), 0)").Scan(&seq).Error
+	return seq, err
+}
+
 // ChatEventsExist reports whether chatID has any SSE row regardless of seq: a chat with rows but none newer
 // than fromSeq is caught up, and must not resend the whole reconstructed history.
 func (s *Store) ChatEventsExist(ctx context.Context, chatID string) (bool, error) {
