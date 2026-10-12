@@ -273,25 +273,44 @@ const interruptedToolResult = "interrupted: the run stopped before this call ret
 // repairNativeWorkerSession answers nodeID's unanswered tool calls so its session can continue.
 // False when there is nothing to continue: no native session (an ACP node) or an empty one.
 func (e *Executor) repairNativeWorkerSession(ctx context.Context, plan Plan, chatID, nodeID string) bool {
-	agentName := planAgentName(plan, nodeID)
-	if e.sessions == nil || agentName == "" {
+	sess := e.nativeWorkerSession(ctx, plan, chatID, nodeID)
+	if sess == nil || sess.Events().Len() == 0 {
 		return false
 	}
-	id := quackagent.WorkerSessionID(chatID, nodeID)
-	resp, err := e.sessions.Get(ctx, &session.GetRequest{AppName: agentName, UserID: quackagent.WorkerSessionUser(id), SessionID: id})
-	if err != nil || resp.Session.Events().Len() == 0 {
-		return false
-	}
-	ev := danglingCallsAnswer(resp.Session.Events(), agentName)
+	ev := danglingCallsAnswer(sess.Events(), planAgentName(plan, nodeID))
 	if ev == nil {
 		return true
 	}
-	if err := e.sessions.AppendEvent(ctx, resp.Session, ev); err != nil {
+	if err := e.sessions.AppendEvent(ctx, sess, ev); err != nil {
 		slog.Warn("resume: could not answer the interrupted tool calls; re-running the node fresh",
 			"component", "dag", "node_id", nodeID, "err", err)
 		return false
 	}
 	return true
+}
+
+// nativeWorkerSession loads nodeID's native worker session; nil for an ACP node or when none is saved.
+func (e *Executor) nativeWorkerSession(ctx context.Context, plan Plan, chatID, nodeID string) session.Session {
+	agentName := planAgentName(plan, nodeID)
+	if e.sessions == nil || agentName == "" {
+		return nil
+	}
+	id := quackagent.WorkerSessionID(chatID, nodeID)
+	resp, err := e.sessions.Get(ctx, &session.GetRequest{AppName: agentName, UserID: quackagent.WorkerSessionUser(id), SessionID: id})
+	if err != nil {
+		return nil
+	}
+	return resp.Session
+}
+
+// priorWorkerEvents: a continued node's saved session as it stood before the resume, so the gate credits the
+// interrupted attempt's fetches; the resumed run's own gate session holds none of them.
+func (e *Executor) priorWorkerEvents(ctx context.Context, plan Plan, chatID, nodeID string) []*session.Event {
+	sess := e.nativeWorkerSession(ctx, plan, chatID, nodeID)
+	if sess == nil {
+		return nil
+	}
+	return slices.Collect(sess.Events().All())
 }
 
 // danglingCallsAnswer is one tool-response event answering every call in events that never got one, or nil.

@@ -152,6 +152,8 @@ type Config struct {
 	ResumedFrom string
 	// Continue: the worker's session already holds this node's work, so the first draft asks it to carry on.
 	Continue bool
+	// PriorEvents: a continued node's worker session before the resume; its activity backs this attempt's answer.
+	PriorEvents []*session.Event
 	// AttemptStartedAt: a continued node's interrupted attempt's first start; zero for a fresh attempt.
 	AttemptStartedAt time.Time
 	// RepairSession answers the worker session's interrupted tool calls so a steer can continue it; false when
