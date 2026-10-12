@@ -406,13 +406,13 @@ plugins:
   seed:
     - github:fagerbergj/dotagents           # general-purpose skills
     - github:DietrichGebert/ponytail@v4.9.0 # YAGNI/lazy-senior-dev discipline
-    - github:fagerbergj/quack@plugin/usage/vNEXT#extensions/usage/plugin   # manifest for the compiled-in usage extension
+    - github:fagerbergj/quack@plugin/usage/v0.5.0#extensions/usage/plugin   # manifest for the compiled-in usage extension
     # The extension plugins below ship from this repo at plugin/<name>/vX.Y.Z tags (docs/agent-plugins.md), so
     # a prompt fix is a tag and a ref bump, no image. Each seeds its agents/workflows only once its extensions.<name> is configured.
     # sleeper's agents name its module's tools: tag it at a commit whose tools this image carries.
-    - github:fagerbergj/quack@plugin/sleeper/vNEXT#extensions/sleeper/plugin
-    - github:fagerbergj/quack@plugin/github/vNEXT#extensions/github/plugin     # code-implementer/reviewer/explorer
-    - github:fagerbergj/quack@plugin/remarkable/vNEXT#extensions/remarkable/plugin # the document-ingest workflow
+    - github:fagerbergj/quack@plugin/sleeper/v0.12.0#extensions/sleeper/plugin
+    - github:fagerbergj/quack@plugin/github/v0.22.0#extensions/github/plugin     # code-implementer/reviewer/explorer
+    - github:fagerbergj/quack@plugin/remarkable/v0.1.0#extensions/remarkable/plugin # the document-ingest workflow
 
 # workflows: a top-level key (not nested under skills:) that either teaches
 # plan-work's "Common workflows" table a deployment-specific DAG shape, or -

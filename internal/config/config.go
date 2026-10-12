@@ -236,7 +236,7 @@ func workflowNodesAcyclic(nodes []WorkflowNode) bool {
 // defaultSkillPlugins: dotagents floats on main (quack's own library); ponytail, third-party, is
 // pinned and moves only by editing the pin.
 var defaultSkillPlugins = []string{"github:fagerbergj/dotagents", "github:DietrichGebert/ponytail@v4.9.0",
-	"github:fagerbergj/quack@plugin/usage/vNEXT#extensions/usage/plugin"}
+	"github:fagerbergj/quack@plugin/usage/v0.5.0#extensions/usage/plugin"}
 
 type ObservabilityConfig struct {
 	Otel      OtelConfig      `yaml:"otel"`

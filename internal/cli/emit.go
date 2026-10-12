@@ -157,8 +157,8 @@ func EmitServerConfig(a InitAnswers) string {
 // github plugin: plugins.seed replaces the default, not extends it.
 var codingPluginSeed = []string{
 	"github:fagerbergj/dotagents", "github:DietrichGebert/ponytail@v4.9.0",
-	"github:fagerbergj/quack@plugin/usage/vNEXT#extensions/usage/plugin",
-	"github:fagerbergj/quack@plugin/github/vNEXT#extensions/github/plugin",
+	"github:fagerbergj/quack@plugin/usage/v0.5.0#extensions/usage/plugin",
+	"github:fagerbergj/quack@plugin/github/v0.22.0#extensions/github/plugin",
 }
 
 // emitCodingAgents renders the three coding agents as override-only entries -

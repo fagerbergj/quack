@@ -1,6 +1,6 @@
 # extensions
 
-The extension SDK for quack, plus quack's first-party extensions. Until 2026-10 these lived in `github.com/fagerbergj/quack-extensions`; its history was imported here unsquashed, so `git log -- extensions/` reaches back past the move. Full design: [issue #275](https://github.com/fagerbergj/quack/issues/275#issuecomment-5245275574). How to work on one, ship a plugin change, or add an extension: [docs/extensions/dev-loop.md](../docs/extensions/dev-loop.md).
+The extension SDK for quack, plus quack's first-party extensions. Until 2026-10 these lived in `github.com/fagerbergj/quack-extensions` (archived); their history before the move is there. Full design: [issue #275](https://github.com/fagerbergj/quack/issues/275#issuecomment-5245275574). How to work on one, ship a plugin change, or add an extension: [docs/extensions/dev-loop.md](../docs/extensions/dev-loop.md).
 
 ## The invariant
 
