@@ -118,6 +118,22 @@ func TestFetchIsShallow(t *testing.T) {
 	}
 }
 
+// A full sha pin fetches that commit even after the branch moves past it.
+func TestFetchPinnedFullSHA(t *testing.T) {
+	bare, work := pluginregtest.NewFixtureRepo(t)
+	withFixedRemote(t, "file://"+bare)
+	pinned := strings.TrimSpace(run(t, bare, "rev-parse", "main"))
+	commitAndPush(t, work, "past the pin")
+	e, err := ParseEntry("github:acme/widgets@" + pinned)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := NewFSRegistry(t.TempDir()).Fetch(context.Background(), FromEntry(e))
+	if err != nil || got.Error != "" || got.SHA != pinned {
+		t.Fatalf("Fetch = sha %q err %v %s, want %q", got.SHA, err, got.Error, pinned)
+	}
+}
+
 func TestFetchSecondCallIsNoOp(t *testing.T) {
 	bare := newFixtureRepo(t)
 	withFixedRemote(t, bare)
