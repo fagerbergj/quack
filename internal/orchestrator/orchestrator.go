@@ -428,7 +428,6 @@ func (o *Orchestrator) RunBoundPlan(ctx context.Context, userID, sessionID, sour
 			answer := o.finalizeAnswer(ctx, plan, nodeOutputs, sessionID, nil)
 			o.persistAnswer(ctx, userID, sessionID, answer)
 		}
-		safeYield(stream.Done(), nil)
 	}
 }
 
@@ -570,7 +569,6 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 		// The execute tool itself ran every step's assignments (dag.Executor.RunPlanStep)
 		// and set planCache.Delivered once a step declared delivery - nothing left to run here.
 		s.o.persistAnswer(s.ctx, s.userID, s.sessionID, s.planCache.Delivered())
-		s.safeYield(stream.Done(), nil)
 	}
 }
 
@@ -792,7 +790,6 @@ func (o *Orchestrator) startIncrementalNodeRun(ctx context.Context, userID, sess
 		return
 	}
 	if len(needsInput) > 0 {
-		yield(stream.Done(), nil)
 		return
 	}
 
@@ -815,14 +812,12 @@ func (o *Orchestrator) startIncrementalNodeRun(ctx context.Context, userID, sess
 	turnEnded, moreFailed := o.driveUnblocked(ctx, plan, rec, recordSvc, userID, sessionID, safeYield)
 	anyFailed = anyFailed || moreFailed
 	if turnEnded {
-		yield(stream.Done(), nil)
 		return
 	}
 
 	if !anyFailed && rec.Delivery != nil {
 		o.deliverFromRecord(ctx, userID, sessionID, plan, rec)
 	}
-	yield(stream.Done(), nil)
 }
 
 // deliverFromRecord finalizes a resumed plan from its record; a stopped assignment's draft is masked
@@ -1041,7 +1036,6 @@ func (o *Orchestrator) startNodeRun(ctx context.Context, userID, sessionID, plan
 		answer, _ := o.sinkAnswer(plan, outputs, sessionID, recStopped)
 		o.persistAnswer(ctx, userID, sessionID, answer)
 	}
-	yield(stream.Done(), nil)
 }
 
 // ResetSession deletes session history so the next Run starts fresh.

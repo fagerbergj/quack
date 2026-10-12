@@ -153,6 +153,42 @@ func TestDriveExtensionRunEvents_UserCancelReportsRunCancelled(t *testing.T) {
 	}
 }
 
+// An ext run of a real orchestrator turn ends with exactly one done, its last event: SSE clients close on the first.
+func TestDriveExtensionRunEvents_EndsWithOneDone(t *testing.T) {
+	st, orch, hub, _, _ := newExtTestStack(t)
+	ctx := context.Background()
+	chatID := "ext:done-test:one-done"
+	if err := st.SetChatOrigin(ctx, chatID, "ext", ""); err != nil {
+		t.Fatalf("SetChatOrigin: %v", err)
+	}
+	obs := &cancelOutcomeObserver{}
+	var ext extsdk.Extension = obs
+	var extHolder atomic.Pointer[extsdk.Extension]
+	extHolder.Store(&ext)
+
+	driveExtensionRunEvents(ctx, "done-test", orch, st, hub, runlog.NewEventLog(st), &extHolder, "ext", chatID, "turn-1", 0,
+		func(runCtx context.Context) iter.Seq2[stream.SSEEvent, error] {
+			return orch.Run(runCtx, "ext", chatID, "done-test", "hello", nil)
+		})
+
+	if got := obs.outcome.Load(); got == nil || got.Status != extsdk.RunDone {
+		t.Fatalf("RunEnded outcome = %+v, want %q", got, extsdk.RunDone)
+	}
+	evs, err := st.LoadChatEvents(ctx, chatID, 0)
+	if err != nil || len(evs) == 0 {
+		t.Fatalf("LoadChatEvents: %d events, err %v", len(evs), err)
+	}
+	dones := 0
+	for _, e := range evs {
+		if strings.Contains(e.Event, `"name":"done"`) {
+			dones++
+		}
+	}
+	if dones != 1 || !strings.Contains(evs[len(evs)-1].Event, `"name":"done"`) {
+		t.Errorf("%d done events (last: %s), want exactly one, last", dones, evs[len(evs)-1].Event)
+	}
+}
+
 // driveExtensionRunEvents is the begin+finish pair Dispatch splits around its ack, run synchronously.
 func driveExtensionRunEvents(ctx context.Context, name string, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, extHolder *atomic.Pointer[extsdk.Extension], userID, chatID, turnID string, timeout time.Duration, run func(context.Context) iter.Seq2[stream.SSEEvent, error]) {
 	runCtx, cancelRun := beginExtRun(ctx, st, hub, chatID, turnID, timeout)
