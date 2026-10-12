@@ -11,6 +11,7 @@ import (
 
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/cli"
 	"github.com/fagerbergj/quack/internal/ledger"
 )
 
@@ -22,7 +23,7 @@ func TestNewJudgeReplayCmd_Flags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("find replay subcommand: %v", err)
 	}
-	for _, name := range []string{"node", "round", "rubric", "from-server", "deterministic-only", "json"} {
+	for _, name := range []string{"node", "round", "rubric", "from-server", "deterministic-only", "repeat", "out", "json"} {
 		if replay.Flags().Lookup(name) == nil {
 			t.Errorf("replay command missing --%s flag", name)
 		}
@@ -39,7 +40,7 @@ func TestRunJudgeReplay_NoConfig(t *testing.T) {
 	}
 	c := newJudgeReplayCmd()
 	c.SetContext(context.Background())
-	if err := runJudgeReplay(c, bundlePath, "", 0, 1, "", "", true, false, false); err == nil || !strings.Contains(err.Error(), "quack init") {
+	if err := runJudgeReplay(c, bundlePath, cli.ReplayOptions{Repeat: 1, DeterministicOnly: true}, "", false, false); err == nil || !strings.Contains(err.Error(), "quack init") {
 		t.Fatal("runJudgeReplay with no quack.yaml: err = nil, want an error naming `quack init`")
 	}
 }
@@ -77,7 +78,7 @@ criteria:
 	bundlePath := writeJudgeFixtureBundle(t)
 	c := newJudgeReplayCmd()
 	c.SetContext(context.Background())
-	if err := runJudgeReplay(c, bundlePath, "", 0, 1, rubricPath, "", true, false, false); err != nil {
+	if err := runJudgeReplay(c, bundlePath, cli.ReplayOptions{Repeat: 1, RubricPath: rubricPath, DeterministicOnly: true}, "", false, false); err != nil {
 		t.Fatalf("runJudgeReplay: %v", err)
 	}
 }

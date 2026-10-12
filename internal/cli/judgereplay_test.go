@@ -7,6 +7,7 @@ import (
 	"iter"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -145,11 +146,16 @@ func (f fakeLLM) GenerateContent(context.Context, *model.LLMRequest, bool) iter.
 
 func decodeReports(t *testing.T, buf *bytes.Buffer) []ReplayRoundReport {
 	t.Helper()
-	var reports []ReplayRoundReport
-	if err := json.Unmarshal(buf.Bytes(), &reports); err != nil {
-		t.Fatalf("decode json: %v\n%s", err, buf.String())
+	return decodeReport(t, buf.Bytes()).Rounds
+}
+
+func decodeReport(t *testing.T, raw []byte) ReplayReport {
+	t.Helper()
+	var report ReplayReport
+	if err := json.Unmarshal(raw, &report); err != nil {
+		t.Fatalf("decode json: %v\n%s", err, raw)
 	}
-	return reports
+	return report
 }
 
 func TestRunJudgeReplayReproducesRecordedDeterministicScore(t *testing.T) {
@@ -654,7 +660,7 @@ func TestRunJudgeReplayRepeatReportsSpread(t *testing.T) {
 	}
 	calls := 0
 	var prompts []string
-	judge := vetting.NewJudgeFactory(sequenceJudgeVerdict{scores: []int{3, 1, 3}, calls: &calls, prompts: &prompts}, nil, nil)
+	judge := vetting.NewJudgeFactory(sequenceJudgeVerdict{scores: []int{1, 3, 1}, calls: &calls, prompts: &prompts}, nil, nil)
 	var buf bytes.Buffer
 	RunJudgeReplay(ctx, fixtureConfig(), sess, ReplayOptions{RubricPath: rubricFile(t, "existence check", 0.85), Repeat: 3}, judge, nil, false, &buf, true)
 	if calls != 3 {
@@ -663,18 +669,55 @@ func TestRunJudgeReplayRepeatReportsSpread(t *testing.T) {
 	if prompts[0] != prompts[1] || prompts[1] != prompts[2] {
 		t.Fatalf("each pass must judge the same rebuilt answer; prompts differ:\n%q\n%q\n%q", prompts[0], prompts[1], prompts[2])
 	}
-	reports := decodeReports(t, &buf)
+	report := decodeReport(t, buf.Bytes())
 	var found *ReplayCriterionReport
-	for i, c := range reports[0].Criteria {
+	for i, c := range report.Rounds[0].Criteria {
 		if c.Name == "answers_question" {
-			found = &reports[0].Criteria[i]
+			found = &report.Rounds[0].Criteria[i]
 		}
 	}
-	if found == nil {
-		t.Fatalf("no answers_question in %s", buf.String())
+	if found == nil || found.Spread == nil {
+		t.Fatalf("no answers_question spread in %s", buf.String())
 	}
-	if len(found.Samples) != 3 || found.SD == 0 || found.PassRate <= 0 || found.PassRate >= 1 {
-		t.Errorf("spread = samples %v mean %.2f sd %.2f pass %.2f, want three samples with a non-zero sd and a partial pass rate", found.Samples, found.Mean, found.SD, found.PassRate)
+	// Scores 1,3,1 of 3 at threshold 0.7: one pass, two fails, so two of three repeats agree (on fail).
+	want := ReplaySpread{N: 3, Samples: []float64{0.3333, 1, 0.3333}, Mean: 0.5556, SD: 0.3143, Min: 0.3333, Max: 1, PassRate: 0.3333, Agreement: 0.6667}
+	if !reflect.DeepEqual(*found.Spread, want) {
+		t.Errorf("spread = %+v, want %+v", *found.Spread, want)
+	}
+	if r := report.Rounds[0].Spread; r == nil || r.N != 3 || r.Agreement != 0.6667 || r.Samples != nil {
+		t.Errorf("round spread = %+v, want n=3 agreement=0.6667 and no samples", r)
+	}
+	wantSummary := ReplayConsistency{Rounds: 1, Criteria: 1, Unstable: 1, CriterionAgreement: 0.6667, RoundAgreement: 0.6667, MaxSD: 0.3143}
+	if report.Repeat != 3 || report.Consistency == nil || *report.Consistency != wantSummary {
+		t.Errorf("repeat = %d consistency = %+v, want 3 and %+v", report.Repeat, report.Consistency, wantSummary)
+	}
+}
+
+// --out writes the same report --json prints, and a run without --repeat carries no consistency block.
+func TestRunJudgeReplayReportPathWritesTheJSONReport(t *testing.T) {
+	sess, err := bundle.Load(buildFixtureBundle(t, "worker-r0", map[string]float64{"cites_sources": 1.0}))
+	if err != nil {
+		t.Fatalf("load bundle: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "report.json")
+	opts := ReplayOptions{RubricPath: rubricFile(t, "existence check", 0.85), DeterministicOnly: true, ReportPath: path}
+	var buf bytes.Buffer
+	if code := RunJudgeReplay(context.Background(), fixtureConfig(), sess, opts, nil, nil, false, &buf, true); code != 0 {
+		t.Fatalf("exit = %d: %s", code, buf.String())
+	}
+	written, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(written) != buf.String() {
+		t.Errorf("file = %s\nstdout = %s, want the same bytes", written, buf.String())
+	}
+	if r := decodeReport(t, written); r.Repeat != 1 || r.Consistency != nil || len(r.Rounds) != 1 {
+		t.Errorf("report = %+v, want repeat 1, no consistency, one round", r)
+	}
+	opts.ReportPath = filepath.Join(t.TempDir(), "missing", "report.json")
+	if code := RunJudgeReplay(context.Background(), fixtureConfig(), sess, opts, nil, nil, false, &bytes.Buffer{}, true); code != 1 {
+		t.Errorf("exit = %d for an unwritable --out, want 1", code)
 	}
 }
 

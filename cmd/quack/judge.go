@@ -26,7 +26,7 @@ func newJudgeCmd() *cobra.Command {
 }
 
 func newJudgeReplayCmd() *cobra.Command {
-	var node, rubricPath, sourceServer string
+	var node, rubricPath, sourceServer, outPath string
 	var round, repeat int
 	var deterministicOnly, asJSON, verify bool
 	c := &cobra.Command{
@@ -43,7 +43,8 @@ func newJudgeReplayCmd() *cobra.Command {
 			"skips the judge model entirely, so it runs with no model endpoint configured.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runJudgeReplay(cmd, args[0], node, round, repeat, rubricPath, sourceServer, deterministicOnly, verify, asJSON)
+			opts := cli.ReplayOptions{Node: node, Round: round, RubricPath: rubricPath, DeterministicOnly: deterministicOnly, Repeat: repeat, ReportPath: outPath}
+			return runJudgeReplay(cmd, args[0], opts, sourceServer, verify, asJSON)
 		},
 	}
 	c.Flags().StringVar(&node, "node", "", "only this node id (default: every judged node)")
@@ -51,13 +52,14 @@ func newJudgeReplayCmd() *cobra.Command {
 	c.Flags().StringVar(&rubricPath, "rubric", "", "rubric.yaml to replay against (default: the graded node's own bundled rubric)")
 	c.Flags().StringVar(&sourceServer, "from-server", "", "server to fetch the recording from, when the argument is a chat id (default: --server, else the active registered server)")
 	c.Flags().BoolVar(&deterministicOnly, "deterministic-only", false, "replay only the code-owned criteria; never touches the judge model")
-	c.Flags().IntVar(&repeat, "repeat", 1, "judge each round N times and print every judge-scored criterion's spread (mean, sd, pass rate)")
+	c.Flags().IntVar(&repeat, "repeat", 1, "judge each round N times and report every judge-scored criterion's spread (mean, sd, pass rate, agreement) plus an overall consistency summary")
+	c.Flags().StringVar(&outPath, "out", "", "also write the JSON report to this file, to store and diff against a later run")
 	c.Flags().BoolVar(&verify, "verify", false, "run the shadow verify tier: the judge model reads each located specific's evidence window and answers with a quote code checks (model calls; works with --deterministic-only)")
 	asJSONFlag(c, &asJSON)
 	return c
 }
 
-func runJudgeReplay(cmd *cobra.Command, target string, node string, round, repeat int, rubricPath, sourceServer string, deterministicOnly, verify, asJSON bool) error {
+func runJudgeReplay(cmd *cobra.Command, target string, opts cli.ReplayOptions, sourceServer string, verify, asJSON bool) error {
 	ctx := cmd.Context()
 	sourceServer = recordingSource(cmd, sourceServer)
 	cfgPath := defaultConfigPath()
@@ -83,7 +85,7 @@ func runJudgeReplay(cmd *cobra.Command, target string, node string, round, repea
 	var judge vetting.JudgeFactory
 	var judgeArtifactTools []tool.Tool
 	var hasRealArtifactAccess bool
-	if !deterministicOnly {
+	if !opts.DeterministicOnly {
 		judge, err = cli.BuildReplayJudge(cfg, func(p config.ProviderConfig, m string) (model.LLM, error) {
 			return inference.NewModel(p, m, nil, cfg.ModelCost(m), cfg.ModelEffort(m))
 		})
@@ -95,7 +97,6 @@ func runJudgeReplay(cmd *cobra.Command, target string, node string, round, repea
 		}
 	}
 
-	opts := cli.ReplayOptions{Node: node, Round: round, RubricPath: rubricPath, DeterministicOnly: deterministicOnly, Repeat: repeat}
 	opts.Pages = replayPagesFor(ctx, target, sourceServer)
 	if verify {
 		if opts.Pages == nil {
