@@ -4,10 +4,14 @@ package main
 
 import (
 	"bufio"
+	"errors"
+	"flag"
 	"fmt"
+	"io"
 	"maps"
 	"os"
 	"os/exec"
+	"path"
 	"regexp"
 	"slices"
 	"strconv"
@@ -31,16 +35,35 @@ type miss struct {
 }
 
 func main() {
-	if len(os.Args) != 3 || os.Args[1] != "diff" {
-		fmt.Fprintln(os.Stderr, "usage: coverdiff diff <git-ref>")
+	ref, profile, err := parseArgs(os.Args[1:])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "usage: coverdiff diff [--profile <coverprofile>] <git-ref>")
 		os.Exit(2)
 	}
-	if !gate(os.Args[2]) {
+	if !gate(ref, profile) {
 		os.Exit(1)
 	}
 }
 
-func gate(ref string) bool {
+// parseArgs reads `diff [--profile f] <ref>`; with a profile (CI's own `go test -coverprofile` run) coverdiff
+// skips running tests itself.
+func parseArgs(args []string) (ref, profile string, err error) {
+	if len(args) == 0 || args[0] != "diff" {
+		return "", "", errors.New("missing diff subcommand")
+	}
+	fs := flag.NewFlagSet("diff", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.StringVar(&profile, "profile", "", "existing coverprofile to read instead of running go test")
+	if err := fs.Parse(args[1:]); err != nil {
+		return "", "", err
+	}
+	if fs.NArg() != 1 {
+		return "", "", errors.New("want exactly one git ref")
+	}
+	return fs.Arg(0), profile, nil
+}
+
+func gate(ref, profile string) bool {
 	out, err := exec.Command("git", "diff", "-U0", ref+"...HEAD").Output()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "git diff failed:", err)
@@ -51,26 +74,48 @@ func gate(ref string) bool {
 		fmt.Println("coverdiff: no changed non-test Go files")
 		return true
 	}
-	tmp, err := os.CreateTemp("", "coverdiff-*.out")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "coverdiff:", err)
-		return false
-	}
-	_ = tmp.Close()
-	defer func() { _ = os.Remove(tmp.Name()) }()
-	cmd := exec.Command("go", "test", "-count=1", "-coverprofile="+tmp.Name(), "./cmd/...", "./internal/...")
-	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-	if err := cmd.Run(); err != nil {
-		fmt.Fprintln(os.Stderr, "go test failed (coverage prerequisite):", err)
-		return false
+	if profile == "" {
+		tmp, err := runTests(ownerPackages(changed))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "go test failed (coverage prerequisite):", err)
+			return false
+		}
+		defer func() { _ = os.Remove(tmp) }()
+		profile = tmp
 	}
 	var num, den int
 	misses := map[string][]miss{}
-	if err := matchProfile(tmp.Name(), changed, &num, &den, misses); err != nil {
+	if err := matchProfile(profile, changed, &num, &den, misses); err != nil {
 		fmt.Fprintln(os.Stderr, "coverdiff:", err)
 		return false
 	}
 	return report(num, den, misses)
+}
+
+// ownerPackages lists the packages that own changed files. Without -coverpkg a package's statements are
+// instrumented only in its own test binary, so dependants' tests could not add coverage here anyway.
+func ownerPackages(changed map[string]map[int]bool) []string {
+	dirs := map[string]bool{}
+	for p := range changed {
+		dirs["./"+path.Dir(p)] = true
+	}
+	return slices.Sorted(maps.Keys(dirs))
+}
+
+// runTests writes a coverprofile for pkgs to a temp file and returns its path.
+func runTests(pkgs []string) (string, error) {
+	tmp, err := os.CreateTemp("", "coverdiff-*.out")
+	if err != nil {
+		return "", err
+	}
+	_ = tmp.Close()
+	cmd := exec.Command("go", append([]string{"test", "-count=1", "-coverprofile=" + tmp.Name()}, pkgs...)...)
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	if err := cmd.Run(); err != nil {
+		_ = os.Remove(tmp.Name())
+		return "", err
+	}
+	return tmp.Name(), nil
 }
 
 // matchProfile: walk the coverprofile, count statements that overlap
