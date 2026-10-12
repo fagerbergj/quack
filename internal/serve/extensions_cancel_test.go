@@ -18,29 +18,33 @@ import (
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// TestMapExtRunOutcome: cancelled wins regardless of the DB-derived status; failed/needs_input/done
-// map through.
+// TestMapExtRunOutcome: cancelled wins regardless of the DB-derived status, then a paused node;
+// failed/needs_input/done map through.
 func TestMapExtRunOutcome(t *testing.T) {
 	needsInput := stream.NodeNeedsInputData{NodeID: "node-7"}
 	tests := []struct {
 		name       string
 		status     string
+		paused     string
 		cancelled  bool
 		timedOut   bool
 		wantStatus extsdk.RunStatus
 	}{
-		{"cancelled beats failed", store.RunStatusFailed, true, false, extsdk.RunCancelled},
-		{"cancelled beats needs_input", store.RunStatusNeedsInput, true, false, extsdk.RunCancelled},
-		{"cancelled beats idle/done", store.RunStatusIdle, true, false, extsdk.RunCancelled},
-		{"failed maps through", store.RunStatusFailed, false, false, extsdk.RunFailed},
-		{"needs_input maps through", store.RunStatusNeedsInput, false, false, extsdk.RunNeedsInput},
-		{"idle maps to done", store.RunStatusIdle, false, false, extsdk.RunDone},
-		{"timed out, not cancelled, still done", store.RunStatusIdle, false, true, extsdk.RunDone},
-		{"cancelled beats timed out too", store.RunStatusIdle, true, true, extsdk.RunCancelled},
+		{"cancelled beats failed", store.RunStatusFailed, "", true, false, extsdk.RunCancelled},
+		{"cancelled beats needs_input", store.RunStatusNeedsInput, "", true, false, extsdk.RunCancelled},
+		{"cancelled beats idle/done", store.RunStatusIdle, "", true, false, extsdk.RunCancelled},
+		{"failed maps through", store.RunStatusFailed, "", false, false, extsdk.RunFailed},
+		{"needs_input maps through", store.RunStatusNeedsInput, "", false, false, extsdk.RunNeedsInput},
+		{"idle maps to done", store.RunStatusIdle, "", false, false, extsdk.RunDone},
+		{"timed out, not cancelled, still done", store.RunStatusIdle, "", false, true, extsdk.RunDone},
+		{"cancelled beats timed out too", store.RunStatusIdle, "", true, true, extsdk.RunCancelled},
+		{"a paused node beats done", store.RunStatusIdle, "trends", false, false, extsdk.RunPaused},
+		{"a paused node beats failed", store.RunStatusFailed, "trends", false, false, extsdk.RunPaused},
+		{"cancelled beats a paused node", store.RunStatusIdle, "trends", true, false, extsdk.RunCancelled},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			out := mapExtRunOutcome(tt.status, "what next?", "", "partial answer", true, needsInput, tt.timedOut, tt.cancelled)
+			out := mapExtRunOutcome(tt.status, "what next?", "", "partial answer", true, tt.paused, needsInput, tt.timedOut, tt.cancelled)
 			if out.Status != tt.wantStatus {
 				t.Errorf("Status = %q, want %q", out.Status, tt.wantStatus)
 			}
@@ -52,6 +56,9 @@ func TestMapExtRunOutcome(t *testing.T) {
 					t.Errorf("Question/NodeID = %q/%q, want populated for RunNeedsInput", out.Question, out.NodeID)
 				}
 			}
+			if tt.wantStatus == extsdk.RunPaused && out.NodeID != tt.paused {
+				t.Errorf("NodeID = %q, want the paused node %q", out.NodeID, tt.paused)
+			}
 		})
 	}
 }
@@ -61,7 +68,7 @@ func TestMapExtRunOutcome(t *testing.T) {
 func TestMapExtRunOutcome_FailedWithNodeErrorFillsError(t *testing.T) {
 	needsInput := stream.NodeNeedsInputData{}
 	out := mapExtRunOutcome(store.RunStatusFailed, "", "model gateway returned 502 Bad Gateway on 5 consecutive attempts over 48m0s",
-		"", true, needsInput, false, false)
+		"", true, "", needsInput, false, false)
 	if out.Status != extsdk.RunFailed {
 		t.Fatalf("Status = %q, want RunFailed", out.Status)
 	}
@@ -77,7 +84,7 @@ func TestMapExtRunOutcome_FailedWithNodeErrorFillsError(t *testing.T) {
 // for the extension's own silent-gap text.
 func TestMapExtRunOutcome_TrueSilentGapErrorStaysEmpty(t *testing.T) {
 	needsInput := stream.NodeNeedsInputData{}
-	out := mapExtRunOutcome(store.RunStatusIdle, "", "", "", true, needsInput, false, false)
+	out := mapExtRunOutcome(store.RunStatusIdle, "", "", "", true, "", needsInput, false, false)
 	if out.Answer != "" {
 		t.Fatalf("Answer = %q, want empty for a genuine silent gap", out.Answer)
 	}

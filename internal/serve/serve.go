@@ -2028,6 +2028,7 @@ func mountHTTP(cfg *config.Config, st *store.Store, orch *orchestrator.Orchestra
 	restPlugins := rest.NewPlugins(pluginReg, cfg.Plugins.Root, cfg.Plugins.Seed, reload.reload, reload.mcpDeclared)
 	restHandler.SetPlugins(restPlugins)
 	restHandler.SetTraceURLTemplate(cfg.Observability.Otel.TraceURLTemplate)
+	restHandler.SetRunEnded(restRunEnded(orch, st, sdkExts))
 
 	return server.New(server.Options{
 		REST:          restHandler,

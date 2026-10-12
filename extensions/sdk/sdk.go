@@ -58,7 +58,7 @@ type UI interface {
 // The v1 contract is frozen-additive: a breaking restyle ships at /v2/.
 const UIKitCSS = "/assets/ext/v1/kit.css"
 
-// RunStatus is the terminal outcome of a dispatched run, reported to RunObserver.
+// RunStatus is the outcome of a dispatched run, reported to RunObserver. Every status but RunPaused is terminal.
 type RunStatus string
 
 const (
@@ -69,6 +69,10 @@ const (
 	// RunCancelled means the user stopped the run. Answer may hold mid-thought partial text;
 	// an observer must not deliver it as an answer.
 	RunCancelled RunStatus = "cancelled"
+
+	// RunPaused means the run parked on a user pause; a later RunEnded follows when it resumes and ends.
+	// NodeID names the paused node; Answer is interim text, never the run's answer.
+	RunPaused RunStatus = "paused"
 )
 
 // ArtifactSchemas is optional: artifact kind to JSON Schema. quack refuses a violating write
@@ -78,12 +82,12 @@ type ArtifactSchemas interface {
 }
 
 // RunObserver is optional and observation-only: RunEnded fires after a dispatched run's
-// outcome is final and must never block or mutate the run.
+// outcome is final, or it parked on a user pause (RunPaused), and must never block or mutate the run.
 type RunObserver interface {
 	RunEnded(chatID string, outcome RunOutcome)
 }
 
-// RunOutcome is the terminal state of a dispatched run. Status is always set; the other
+// RunOutcome is the state a dispatched run ended in. Status is always set; the other
 // fields only where Status makes them meaningful.
 type RunOutcome struct {
 	Status RunStatus
@@ -91,7 +95,8 @@ type RunOutcome struct {
 	// Answer is the run's final text; best-effort partial text when TimedOut.
 	Answer string
 
-	// Question and NodeID name the paused node's question when Status is RunNeedsInput.
+	// Question and NodeID name the paused node's question when Status is RunNeedsInput;
+	// NodeID alone names the paused node when Status is RunPaused.
 	Question string
 	NodeID   string
 

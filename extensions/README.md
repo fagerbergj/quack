@@ -10,6 +10,8 @@ A consequence: extensions shape a run only at dispatch time (`DispatchRequest`'s
 
 A chat runs one run at a time. `Host.Dispatch` onto a chat whose run is still live dispatches nothing and returns an error wrapping `sdk.ErrRunInFlight`; treat it as busy, not as a host failure, and retry from that chat's `RunEnded` if the ask must not be lost.
 
+A run whose node the user pauses ends with `sdk.RunPaused`, which is not final: keep whatever the run holds, because resuming the node delivers a second `RunEnded` with the real outcome.
+
 ## SDK versioning
 
 `sdk`'s exported identifiers are the contract between quack and every extension; the doc comments in [`sdk/sdk.go`](sdk/sdk.go) describe the current surface, and the `sdk/vX.Y.Z` tags from the old repository carry its history. Optional capabilities are interfaces quack detects by type assertion, and `Host` func fields may be nil on an older host, so callers nil-check them.

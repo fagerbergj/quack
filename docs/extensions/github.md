@@ -21,6 +21,8 @@ or by mentioning it in a comment:
   → the final answer is posted back as a comment
 ```
 
+Pausing one of the run's nodes in quack posts nothing on GitHub; the outcome is posted once you resume the node and the run ends.
+
 ## Two ways to drive it
 
 **Labels are persistent capability FLAGS, not one-shot triggers.** A label's initial action fires once when applied; the capability it names stays live for as long as the label is present, and removing it turns that capability off. Applying one needs repo write access, so the label itself doubles as the permission model:

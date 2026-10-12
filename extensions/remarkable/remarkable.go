@@ -114,8 +114,12 @@ func (e *extension) Start(ctx context.Context) error {
 	return nil
 }
 
-// RunEnded records the terminal outcome against the doc ID inside the namespaced chat id.
+// RunEnded records the terminal outcome against the doc ID inside the namespaced chat id. A paused run
+// stays in flight: its resume ends it with a later RunEnded.
 func (e *extension) RunEnded(chatID string, outcome sdk.RunOutcome) {
+	if outcome.Status == sdk.RunPaused {
+		return
+	}
 	docID := strings.TrimPrefix(chatID, "ext:"+extensionName+":")
 
 	e.mu.Lock()

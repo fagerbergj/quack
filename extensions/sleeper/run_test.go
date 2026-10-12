@@ -79,6 +79,25 @@ func TestRunEndedUnknownChatIsNoop(t *testing.T) {
 	}
 }
 
+// A paused job stays Running and keeps its armed retry: the resumed run ends it with a later RunEnded.
+func TestRunPausedKeepsTheJobRunning(t *testing.T) {
+	e := &extension{}
+	const chatID = "ext:sleeper:test:2:trends"
+	e.markRunning(chatID)
+	e.armNotesRetry(chatID, testLeague)
+	e.RunEnded(chatID, sdk.RunOutcome{Status: sdk.RunPaused, NodeID: "n1"})
+	if !e.isRunning(chatID) {
+		t.Fatal("a paused run cleared its Running badge")
+	}
+	if _, armed := e.takeNotesRetry(chatID); !armed {
+		t.Error("a paused run consumed its armed retry")
+	}
+	e.RunEnded(chatID, sdk.RunOutcome{Status: sdk.RunDone})
+	if e.isRunning(chatID) {
+		t.Error("the resumed run's RunEnded left the job Running")
+	}
+}
+
 // TestDispatchTrackedMarksRunningBeforeDispatch: a Dispatch that fires RunEnded before returning must
 // not leave the chat marked running.
 func TestDispatchTrackedMarksRunningBeforeDispatch(t *testing.T) {

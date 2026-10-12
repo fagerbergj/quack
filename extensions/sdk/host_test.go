@@ -143,6 +143,7 @@ func TestRunStatusConstValues(t *testing.T) {
 		sdk.RunFailed:     "failed",
 		sdk.RunNeedsInput: "needs_input",
 		sdk.RunCancelled:  "cancelled",
+		sdk.RunPaused:     "paused",
 	}
 	for got, want := range cases {
 		if string(got) != want {
