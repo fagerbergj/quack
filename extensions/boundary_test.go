@@ -1,4 +1,4 @@
-// Package extensions holds only this test; each extension is its own package below it.
+// Package extensions holds only cross-extension tests; each extension is its own package below it.
 package extensions
 
 import (

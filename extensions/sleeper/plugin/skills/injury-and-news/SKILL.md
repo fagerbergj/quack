@@ -22,7 +22,7 @@ call turns on breaking news.
    press-box accounts > anonymous "sources." The team's own announcement is
    "definitive but arrives last"; aggregators are the slowest useful tier
    ([Fantasy News Authority, flagged undated](https://fantasynewsauthority.com/beat-reporters-fantasy-news-value/)).
-   Load `sources.md` for named-source guidance and its limits.
+   Load `references/sources.md` for named-source guidance and its limits.
 2. **Date and attribute every claim.** Name the reporter/outlet and state
    whether it's an observation or speculation. Never cite an aggregator
    without the original source underneath it.
@@ -30,11 +30,11 @@ call turns on breaking news.
    recency or follower count. When two same-tier sources conflict, say so
    rather than picking one silently.
 4. **Check the timing window.** A designation resolves on a fixed weekly
-   calendar; see `news-timing.md` for the practice-report deadlines and the
+   calendar; see `references/news-timing.md` for the practice-report deadlines and the
    90-minute inactive-list rule — the only definitive game-day document.
 5. **Screen for false signals** before acting: a team-published depth chart
    ("unofficial" by the team's own label), an armchair video diagnosis, or a
-   participation level mistaken for a diagnosis. See `false-signals.md`.
+   participation level mistaken for a diagnosis. See `references/false-signals.md`.
 6. **Write the trends artifact:** every item dated and sourced (a Sleeper
    field or a URL); Sleeper's own fields win on conflict with web news, per
    the agent's prompt.
@@ -74,22 +74,22 @@ minutes" for inactives; a FAAB recommendation for an injury replacement
 with no dollar figure or % of remaining budget attached; reading a
 `sleeper_transactions` team-defense (DEF) add/drop as a league-specific
 mechanic instead of the standard streamed roster slot it is - see
-`false-signals.md`.
+`references/false-signals.md`.
 
 ## Resources (load only when the case calls for it)
 
-- `output-schema.json` — the extension UI's schema for the `trends`
+- `references/output-schema.json` — the extension UI's schema for the `trends`
   artifact. Write the artifact to match it exactly (see the agent prompt's
   Output section for the required-field walkthrough).
-- `season-notes-schema.json` — the schema for the separate `season-notes`
+- `references/season-notes-schema.json` — the schema for the separate `season-notes`
   artifact (only written when you're appending a durable, league-specific
   note).
-- `sources.md` — the reliability tier (beat reporter > aggregator) and its
+- `references/sources.md` — the reliability tier (beat reporter > aggregator) and its
   documented limits; load when a news item's *source*, not just its
   content, is in question.
-- `news-timing.md` — the practice-report and inactive-list calendar, and
+- `references/news-timing.md` — the practice-report and inactive-list calendar, and
   why Week 1 is the least data-rich week of the season.
-- `false-signals.md` — depth-chart unreliability, armchair-diagnosis
+- `references/false-signals.md` — depth-chart unreliability, armchair-diagnosis
   cases, and the practice-participation-is-not-a-diagnosis trap.
-- `report.md` — the full R5 research report (54KB). Load for a hard case,
+- `references/report.md` — the full R5 research report (54KB). Load for a hard case,
   or to revise this skill.

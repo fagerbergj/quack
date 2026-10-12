@@ -22,33 +22,33 @@ source; where none exists, say so instead of inventing one.
    replacement-level convention (bench/12th-man, last-starter, or
    waiver-wire — pick one, print which), and the lineup-efficiency
    denominator (total-points-weighted, never a simple average of weekly
-   percentages). Load `reach-steal-definitions.md` and
-   `pick-value-vs-finish.md`.
+   percentages). Load `references/reach-steal-definitions.md` and
+   `references/pick-value-vs-finish.md`.
 2. **Grade the draft.** Price each pick at its ADP slot; compare to
    end-of-season positional finish by PPG. Apply the healthy-play
    filter before calling a bust a draft error. Grade opportunity cost
    against the manager's *next* pick, not one other player. Check the
    declared positional shape (RB-heavy vs. Zero RB is the manager's own
    choice — hold them to it, don't grade against the other camp's rule).
-   Load `positional-allocation-norms.md`.
+   Load `references/positional-allocation-norms.md`.
 3. **Grade lineup execution.** Compute season efficiency as the
    points-weighted ratio, never the average of weekly percentages.
    Never treat a single low-efficiency week as a finding — aggregate
    over weeks; extreme single-season deviations (~±4 pts/week) regress.
-   Load `lineup-efficiency.md`.
+   Load `references/lineup-efficiency.md`.
 4. **Separate luck from process.** Split every season into lineup
    execution (controllable), player-outcome luck, schedule luck
    (uncontrollable — PA is the sum of *opponents'* scores), and a
    pre-kickoff test before calling a specific week a skill error. Report
    the cumulative luck gap across seasons — it does not zero out. Never
    read close losses as clutch/anti-clutch evidence. Load
-   `luck-vs-skill.md`.
+   `references/luck-vs-skill.md`.
 5. **Write the card, not a scold.** Lead with net position (bench
    points, luck gap, net points vs. league), not a grade letter. Every
    criticism names the player, the pick/week, the number, and the rule
    it violates. Grade decision quality at decision time, not by
    outcome — a win never launders a wrong call. Load
-   `report-card-presentation.md`.
+   `references/report-card-presentation.md`.
 
 ## What bad advice looks like
 
@@ -76,21 +76,21 @@ A judge can check any sentence of the output against these:
 
 ## Resources (load only when the case calls for it)
 
-- `pick-value-vs-finish.md` — grading a single pick: freeze-the-price
+- `references/pick-value-vs-finish.md` — grading a single pick: freeze-the-price
   method, healthy-play filter, opportunity cost (DLD), replacement-level
   conventions, slot-quality check.
-- `reach-steal-definitions.md` — the declared reach/steal bands and
+- `references/reach-steal-definitions.md` — the declared reach/steal bands and
   which sources they come from.
-- `positional-allocation-norms.md` — 10-team PPR shape norms, RB-heavy
+- `references/positional-allocation-norms.md` — 10-team PPR shape norms, RB-heavy
   vs. Zero RB, QB/TE timing, K/DEF.
-- `lineup-efficiency.md` — the efficiency formula, why there's no
+- `references/lineup-efficiency.md` — the efficiency formula, why there's no
   universal threshold, the bad-week checklist.
-- `luck-vs-skill.md` — the four-channel decomposition, PF/PA, expected
+- `references/luck-vs-skill.md` — the four-channel decomposition, PF/PA, expected
   wins, close losses, the five-season persistence test.
-- `report-card-presentation.md` — headline numbers, tone rules, the
+- `references/report-card-presentation.md` — headline numbers, tone rules, the
   per-season card structure, and the five-season rollup.
-- `output-schema.json` — the extension UI's schema for the `history`
+- `references/output-schema.json` — the extension UI's schema for the `history`
   artifact. Write the artifact to match it exactly (see the agent
   prompt's Output section).
-- `report.md` — the full R8 research report (v2), every finding with
+- `references/report.md` — the full R8 research report (v2), every finding with
   its full context. Load for a hard case, or to revise this skill.

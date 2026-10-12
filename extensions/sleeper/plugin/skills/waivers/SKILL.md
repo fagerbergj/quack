@@ -26,9 +26,9 @@ combination.** `sleeper_league` resolves Sleeper's single `settings.waiver_type`
 
 | `waiver_type` (from `sleeper_league`) | Underlying Sleeper int | Load |
 | --- | --- | --- |
-| `rolling` | 0 | `rolling-priority.md` |
-| `reverse_standings` | 1 | `rolling-priority.md` (same "spend the queue slot" logic; priority resets weekly instead of on claim) |
-| `faab` | 2 | `faab-bidding.md` |
+| `rolling` | 0 | `references/rolling-priority.md` |
+| `reverse_standings` | 1 | `references/rolling-priority.md` (same "spend the queue slot" logic; priority resets weekly instead of on claim) |
+| `faab` | 2 | `references/faab-bidding.md` |
 
 ## Ordered claims sharing a drop are normal, never an error
 
@@ -87,9 +87,9 @@ Claim A (add X, drop Z) followed by claim B (add Y, drop Z) is a manager express
    injury/role question), run `web_search`/`web_fetch` and cite what changes
    the call as an inline markdown link in that candidate's `why` — never let
    a close call ride on Sleeper's fields alone.
-8. **K/DEF:** stream on matchup per week; see `streaming-k-def.md` — this is
+8. **K/DEF:** stream on matchup per week; see `references/streaming-k-def.md` — this is
    the one category where the rule doesn't depend on FAAB vs. rolling.
-9. **Byes:** see `handcuffs-and-byes.md` for lead time and the double-stack
+9. **Byes:** see `references/handcuffs-and-byes.md` for lead time and the double-stack
    bye trap.
 10. **Write the output:** ranked candidates (rank = claim order — the
     sequence to submit them in), a named drop for every add (checked against
@@ -109,7 +109,7 @@ Claim A (add X, drop Z) followed by claim B (add Y, drop Z) is a manager express
 | The 24-hour rule | a player added via free agency must be rostered 24h before being dropped, or the drop returns him straight to free agency, skipping waivers | [Sleeper Support](https://support.sleeper.com/en/articles/4519433-what-is-the-24-hour-rule); also [ESPN](https://support.espn.com/hc/en-us/articles/360000071352-Claim-a-Player-Off-Waivers) |
 | Claims process in submission-rank order | "you can make as many claims as you like, and each claim is processed in the order you ranked it, with each needing a roster spot (or a conditional drop)" | [Sleeper Support](https://support.sleeper.com/en/articles/3978868-waivers-for-regular-season-playoffs) |
 
-Bid bands by need tier, handcuff screening/payoff rates, and K/DEF cost/ownership gates are not restated here — see `faab-bidding.md`, `handcuffs-and-byes.md`, and `streaming-k-def.md` below, loaded only when the case calls for them.
+Bid bands by need tier, handcuff screening/payoff rates, and K/DEF cost/ownership gates are not restated here — see `references/faab-bidding.md`, `references/handcuffs-and-byes.md`, and `references/streaming-k-def.md` below, loaded only when the case calls for them.
 
 ## No published number
 
@@ -121,18 +121,18 @@ Sizing a rolling/reverse-standings league's claim in FAAB dollars because `waive
 
 ## Resources (load only when the case calls for it)
 
-- `output-schema.json` — the extension UI's schema for the `waivers`
+- `references/output-schema.json` — the extension UI's schema for the `waivers`
   artifact. Write the artifact to match it exactly (see the agent prompt's
   Output section for the required-field walkthrough).
-- `faab-bidding.md` — bid bands by need tier, the "three Ps" pre-bid gate,
+- `references/faab-bidding.md` — bid bands by need tier, the "three Ps" pre-bid gate,
   auction mechanics. FAAB leagues only.
-- `rolling-priority.md` — queue mechanics, the aggressive-vs-patient
+- `references/rolling-priority.md` — queue mechanics, the aggressive-vs-patient
   tradeoff, the Sunday Night Shop tactic. Rolling and reverse-standings
   leagues.
-- `streaming-k-def.md` — weekly K/DEF streaming criteria and cost rules.
-- `handcuffs-and-byes.md` — the two handcuff screening questions and
+- `references/streaming-k-def.md` — weekly K/DEF streaming criteria and cost rules.
+- `references/handcuffs-and-byes.md` — the two handcuff screening questions and
   bye-week lead-time/double-stack rules.
-- `report.md` — the full R2 research report (92KB). Load for a hard case,
+- `references/report.md` — the full R2 research report (92KB). Load for a hard case,
   or to revise this skill. Its own framing describes the researched league
   as running "rolling-priority waivers + $100 FAAB together" — that's not a
   real Sleeper setting (see above); use its bid bands and screening rules,

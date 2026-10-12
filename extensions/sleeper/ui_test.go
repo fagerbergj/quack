@@ -632,6 +632,40 @@ func TestHandleJobsBadJobForStop(t *testing.T) {
 	}
 }
 
+// TestHandleJobsErrorsNameTheFix: a 400 names only what is actually missing (league_id has a configured
+// default) and lists the stop's valid jobs.
+func TestHandleJobsErrorsNameTheFix(t *testing.T) {
+	for _, tc := range []struct {
+		name, defaultLeague, body, want, notWant string
+	}{
+		{"missing stop with a default league", testLeague, `{"job":"trends"}`, "stop and job are required", "league_id"},
+		{"no league and no default", "", `{"stop":"6","job":"trends"}`, "league_id is required", ""},
+		{"unknown job lists valid ones", testLeague, `{"stop":"6","job":"bogus"}`,
+			`job "bogus" is not valid for stop "6"; valid: lineup, waivers, digest, trends, retro, trade-finder, trade`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, r := newTestExtension(t, (&fakeHost{}).sdkHost(), config{DefaultLeague: tc.defaultLeague})
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/jobs", strings.NewReader(tc.body)))
+			var resp struct{ Error string }
+			_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+			got := resp.Error
+			if rec.Code != http.StatusBadRequest || !strings.Contains(got, tc.want) || (tc.notWant != "" && strings.Contains(got, tc.notWant)) {
+				t.Errorf("status %d, error %q; want 400 containing %q", rec.Code, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestHandleArtifactsNoLeagueNamesTheDefault(t *testing.T) {
+	_, r := newTestExtension(t, (&fakeHost{}).sdkHost(), config{})
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/artifacts?stop=6", nil))
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), errNoLeague) {
+		t.Errorf("status %d, body %s; want 400 with %q", rec.Code, rec.Body, errNoLeague)
+	}
+}
+
 func TestHandleJobsBadInput(t *testing.T) {
 	host := &fakeHost{artifacts: map[string]map[string][]byte{}}
 	_, r := newTestExtension(t, host.sdkHost(), config{})
