@@ -283,8 +283,11 @@ func driveBootRun(ctx context.Context, chatID string, orch *orchestrator.Orchest
 	tailCtx, cancel := context.WithTimeout(context.WithoutCancel(runCtx), 10*time.Second)
 	defer cancel()
 	runlog.StampTurn(tailCtx, st, chatID, turnID, res)
-	// A resume cut by another shutdown skips RunEnded too; the next boot resumes it again.
-	if obs != nil && !hub.WasInterrupted(chatID) {
+	// A run cut by another shutdown leaves the chat active, with no RunEnded: the next boot resumes or finishes it.
+	if hub.WasInterrupted(chatID) {
+		return
+	}
+	if obs != nil {
 		timedOut := errors.Is(runCtx.Err(), context.DeadlineExceeded)
 		cancelled := errors.Is(runCtx.Err(), context.Canceled)
 		out := buildExtRunOutcome(tailCtx, orch, st, userID, chatID, res.PlanID != "", res.NeedsInput, timedOut, cancelled)

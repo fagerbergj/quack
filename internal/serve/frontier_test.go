@@ -144,3 +144,27 @@ func TestBootSettlesACutRunWithAFailedNode(t *testing.T) {
 		t.Errorf("Finish = %v, Settled = %v; want the run settled failed", resume.Finish, resume.Settled)
 	}
 }
+
+// A finish cut by another shutdown leaves the chat active and tells the extension nothing, so the next boot
+// finishes it again instead of stamping it idle with no answer.
+func TestBootFinishCutByShutdownStaysForTheNextBoot(t *testing.T) {
+	ctx := context.Background()
+	st, chatID := cutChat(t, []dag.Node{{ID: "n1"}}, map[string]dag.NodeStatus{"n1": dag.StatusDone})
+	userID := st.SessionUserForChat(ctx, chatID)
+	if _, err := st.Sessions.Create(ctx, &session.CreateRequest{AppName: orchestrator.AppName, UserID: userID, SessionID: chatID}); err != nil {
+		t.Fatalf("session create: %v", err)
+	}
+	ex := dag.NewExecutor(st.Sessions, map[string]adkagent.Agent{}, nil, nil, func(context.Context, string) vetting.Config { return vetting.Config{} }, nil)
+	orch := orchestrator.New(st.Sessions, nil, func(context.Context) string { return "" }, nil, ex, nil, nil, nil)
+	hub, obs := stream.NewHub(), &outcomeObserver{}
+	hub.MarkInterrupted(chatID)
+
+	finishCutRun(ctx, chatID, orch, st, hub, runlog.NewEventLog(st), obs)
+
+	if len(obs.outcomes) != 0 {
+		t.Errorf("RunEnded = %+v, want none for a run shutdown cut", obs.outcomes)
+	}
+	if c, _ := st.GetChat(ctx, chatID); c.ActiveTurnID == "" {
+		t.Error("the chat's active turn was cleared; the next boot could not finish the run")
+	}
+}

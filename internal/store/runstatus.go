@@ -147,7 +147,7 @@ func (s *Store) ScanOrphanedRuns(ctx context.Context) (paused, noResumableNode, 
 		}
 		switch {
 		case c.ActiveTurnID == "":
-		case s.planAllDone(ctx, c.ID):
+		case s.planAllDone(ctx, c):
 			finishable = append(finishable, c.ID)
 		default:
 			noResumableNode = append(noResumableNode, c.ID)
@@ -157,11 +157,11 @@ func (s *Store) ScanOrphanedRuns(ctx context.Context) (paused, noResumableNode, 
 	return paused, noResumableNode, finishable, nil
 }
 
-// planAllDone: chatID's latest plan has a done row for every node, so the cut run only lacked its delivery.
-// A failed or cancelled node leaves no clean answer, so that run still settles failed.
-func (s *Store) planAllDone(ctx context.Context, chatID string) bool {
-	p, err := s.GetLatestDagPlan(ctx, chatID)
-	if err != nil || p == nil {
+// planAllDone: c's active turn ran its latest plan and every node of it has a done row this instance owns, so
+// the cut run only lacked its delivery. A newer turn cut before it planned, or a failed node, still settles failed.
+func (s *Store) planAllDone(ctx context.Context, c Chat) bool {
+	p, err := s.GetLatestDagPlan(ctx, c.ID)
+	if err != nil || p == nil || p.RunTurnID() != c.ActiveTurnID {
 		return false
 	}
 	plan, ok := s.LoadExecPlan(ctx, p.ID)
@@ -171,6 +171,9 @@ func (s *Store) planAllDone(ctx context.Context, chatID string) bool {
 	}
 	status := map[string]string{}
 	for _, r := range rows {
+		if !s.ownsNodeRow(r) {
+			return false
+		}
 		status[r.NodeID] = r.Status
 	}
 	ids := make([]string, len(plan.Nodes))

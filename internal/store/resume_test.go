@@ -259,31 +259,40 @@ func TestArmQueued_LeavesARowThatIsNoLongerQueued(t *testing.T) {
 	}
 }
 
-// A cut run whose plan nodes are all done is left for boot to finish; one with a failed node settles failed.
+// A cut run whose plan nodes are all done is left for boot to finish. A failed node, a newer turn cut before it
+// planned, or a row a live peer holds still settles failed (or is left alone) instead.
 func TestScanOrphanedRuns_FinishableOnlyWhenEveryNodeIsDone(t *testing.T) {
 	ctx := context.Background()
 	for _, tc := range []struct {
+		name       string
 		n2         dag.NodeStatus
+		activeTurn string
+		n2Owner    string
 		finishable bool
-	}{{dag.StatusDone, true}, {dag.StatusFailed, false}} {
+	}{
+		{"all done", dag.StatusDone, "t1", "", true},
+		{"a failed node", dag.StatusFailed, "t1", "", false},
+		{"a newer planless turn", dag.StatusDone, "t2", "", false},
+		{"a live peer's row", dag.StatusDone, "t1", "live-peer", false},
+	} {
 		st := resumeTestStore(t)
-		if err := st.MarkRunActive(ctx, "c1", "t1"); err != nil {
+		if err := st.MarkRunActive(ctx, "c1", tc.activeTurn); err != nil {
 			t.Fatal(err)
 		}
 		if err := st.SaveExecPlan(ctx, "c1", "p1", `{"ID":"p1","Nodes":[{"ID":"n1"},{"ID":"n2"}]}`); err != nil {
 			t.Fatal(err)
 		}
-		for id, status := range map[string]dag.NodeStatus{"n1": dag.StatusDone, "n2": tc.n2} {
-			if err := st.UpsertDagNode(ctx, DagNode{NodeID: id, PlanID: "p1", Status: string(status)}); err != nil {
+		for _, n := range []DagNode{
+			{NodeID: "n1", PlanID: "p1", Status: string(dag.StatusDone)},
+			{NodeID: "n2", PlanID: "p1", Status: string(tc.n2), InstanceID: tc.n2Owner},
+		} {
+			if err := st.UpsertDagNode(ctx, n); err != nil {
 				t.Fatal(err)
 			}
 		}
-		_, failed, finishable, err := st.ScanOrphanedRuns(ctx)
-		if err != nil || (len(finishable) == 1) != tc.finishable || (len(failed) == 1) == tc.finishable {
-			t.Errorf("n2 %s: finishable = %v, failed = %v (%v)", tc.n2, finishable, failed, err)
-		}
-		if c, _ := st.GetChat(ctx, "c1"); (c.ActiveTurnID != "") != tc.finishable {
-			t.Errorf("n2 %s: active turn = %q; a finishable run stays active for boot", tc.n2, c.ActiveTurnID)
+		_, _, finishable, err := st.ScanOrphanedRuns(ctx)
+		if err != nil || (len(finishable) == 1) != tc.finishable {
+			t.Errorf("%s: finishable = %v (%v), want finishable %v", tc.name, finishable, err, tc.finishable)
 		}
 	}
 }
