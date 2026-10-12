@@ -18,6 +18,7 @@ jobs:
       frontend: ${{ steps.filter.outputs.frontend }}
       storybook: ${{ steps.filter.outputs.storybook }}
       image: ${{ steps.filter.outputs.image }}
+      prompts: ${{ steps.filter.outputs.prompts }}
     steps:
       - id: filter
         if: github.event_name == 'pull_request'
@@ -41,6 +42,8 @@ jobs:
               - '**'
               - '!docs/**'
               - '!*.md'
+            prompts:
+              - '{agents/**,config/**,skills/**,.agents/embedded/**,extensions/**,internal/tools/**,internal/vetting/**,tools/promptlint/**,go.mod,.github/workflows/ci.yaml}'
 
   go-test:
     needs: changes
@@ -198,6 +201,25 @@ jobs:
           $(go env GOPATH)/bin/golangci-lint run --new-from-rev "$SLOP_BASE" --max-same-issues=0 --max-issues-per-linter=0 ./cmd/... ./internal/... ./extensions/...
           (cd extensions/sdk && $(go env GOPATH)/bin/golangci-lint run --new-from-rev "$SLOP_BASE" --max-same-issues=0 --max-issues-per-linter=0 ./...)
           go run ./tools/sloplint diff "$SLOP_BASE"
+
+  # Prompt and tool-definition lint (docs/promptlint.md): token budgets, broken
+  # refs, overlapping tools offered to one agent. A PR gates only what it touched.
+  prompt-lint:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.prompts == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: promptlint
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -n "$BASE" ]; then go run ./tools/promptlint diff "$BASE"; else go run ./tools/promptlint check; fi
 
   frontend-build:
     needs: changes

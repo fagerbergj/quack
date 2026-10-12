@@ -2420,6 +2420,17 @@ func codeOwnedCriterion(name string, specs map[string]criterionSpec) bool {
 	return static || name == "cites_sources"
 }
 
+// CodeOwnedCriteria names every criterion code computes; a rubric's deterministic: true outside this set
+// is never scored. tools/promptlint checks rubrics against it.
+func CodeOwnedCriteria() []string {
+	names := []string{"cites_sources", specificsCitedCriterion, specificsSupportedCriterion}
+	for n := range deterministicCriterionSpec {
+		names = append(names, n)
+	}
+	slices.Sort(names)
+	return names
+}
+
 // deterministicCriterionSpec: definition/fix per deterministic criterion name. The names are a fixed,
 // code-owned set, so one table keyed by name replaces editing each constructor site.
 var deterministicCriterionSpec = map[string]struct {

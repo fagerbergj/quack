@@ -1,0 +1,16 @@
+orchestrator:
+  skills: [good-skill]
+  tools: [load_artifacts]
+agents:
+  good:
+    bundle: agents/good
+    tools: [alpha_tool]
+  bad:
+    bundle: agents/bad
+    tools: [ghost_tool, ask_x, ask_y]
+    skills: [missing-skill, ponytail:ponytail-review, demo:s]
+  plug:
+    tools: [alpha_tool, ask_x, ask_z]
+  coder:
+    acp:
+      command: [pi]

@@ -127,7 +127,7 @@ func TestSleeperPluginSeedsAgentsAndShapesWhenExtensionEnabled(t *testing.T) {
 		if err != nil {
 			t.Fatalf("agent %q: model: %v", name, err)
 		}
-		toolNames := resolveToolNames(ac.Tools, true)
+		toolNames := tools.ResolveNames(ac.Tools, true)
 		if _, err := tools.Build(toolNames, tools.Deps{
 			WebSearch:       tools.Backend{Kind: cfg.Tools["web_search"].Kind, URL: cfg.Tools["web_search"].URL, Key: cfg.Tools["web_search"].APIKey()},
 			Fetch:           tools.Backend{Kind: cfg.Tools["web_fetch"].Kind, URL: cfg.Tools["web_fetch"].URL},

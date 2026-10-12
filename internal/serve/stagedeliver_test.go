@@ -55,7 +55,7 @@ func nativeAgentGitHubWriteGrants(t *testing.T, cfg *config.Config, mutating map
 		if ac.Acp != nil {
 			continue
 		}
-		toolNames := resolveToolNames(ac.Tools, true)
+		toolNames := tools.ResolveNames(ac.Tools, true)
 		if len(toolNames) == 0 {
 			continue
 		}

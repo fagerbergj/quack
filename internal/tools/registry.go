@@ -3,7 +3,9 @@ package tools
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
+	"slices"
 	"time"
 
 	"google.golang.org/adk/v2/agent"
@@ -42,7 +44,7 @@ type Deps struct {
 	// guard's hard stop, nil leaves only the soft refusal.
 	RepeatGuardTripped func(chatID, nodeID, msg string) bool
 	ExtTools           map[string]tool.Tool
-	Memory             *memory.Store      // recall_memory/load_memory (nil = not offered - see resolveToolNames)
+	Memory             *memory.Store      // recall_memory/load_memory (nil = not offered - see ResolveNames)
 	MemoryRole         string             // recall_memory/load_memory's role bucket; empty falls back to repo then user
 	Ledger             ledger.LedgerStore // recall_memory/load_memory's memory.recall ledger entries
 	// RecordStore/NodeID/Coords back web_fetch's large-page storage and
@@ -77,6 +79,34 @@ var registry = map[string]constructor{
 	"render_ui":      newRenderUI,
 	"grep_artifacts": newGrepArtifacts,
 	"weather":        newWeather,
+}
+
+// BuiltinNames lists the registry's tool names, sorted; tools/promptlint measures each one's declaration.
+func BuiltinNames() []string { return slices.Sorted(maps.Keys(registry)) }
+
+// ResolveNames drops builtins whose dependency is off and collapses recall_memory/load_memory (one
+// tool, two names) to whichever is listed first. Artifact tools are per-dispatch.
+func ResolveNames(configured []string, taskMemAvailable bool) (names []string) {
+	names = make([]string, 0, len(configured))
+	sawMemoryRecall := false
+	for _, t := range configured {
+		if IsNativeArtifactTool(t) {
+			continue
+		}
+		switch t {
+		case "stage_memory":
+			if !taskMemAvailable {
+				continue
+			}
+		case "recall_memory", "load_memory":
+			if !taskMemAvailable || sawMemoryRecall {
+				continue
+			}
+			sawMemoryRecall = true
+		}
+		names = append(names, t)
+	}
+	return names
 }
 
 // ErrUnknownTool: a tools: entry no builtin or enabled extension provides.

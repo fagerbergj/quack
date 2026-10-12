@@ -1,0 +1,7 @@
+scale:
+  min: 0
+  max: 3
+  pass: 5
+criteria:
+  clear:
+    definition: The answer is clear.

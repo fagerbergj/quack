@@ -1,0 +1,49 @@
+# promptlint budgets and allowlists; see docs/promptlint.md. Tokens are estimated as bytes/4.
+# Raising a budget or adding an entry is a reviewed decision: say why in the PR.
+budgets: # default per kind; items above it carry an override below
+  prompt: 2500 # prompt.md, memory.md, config/prompts/*.md, constitution
+  rubric: 4000 # rubric.yaml, config/rubric.md (judge-side)
+  skill: 3000 # SKILL.md bodies, loaded on demand
+  tool: 400 # one tool's name + description + parameter schema
+  agent: 5500 # system prompt + every offered tool + the skill list
+overrides: # seeded at today's size + ~10%; shrink them, never grow them silently
+  extensions/github/plugin/agents/code-reviewer/prompt.md: 5600
+  agents/pr-tutor/prompt.md: 5000
+  extensions/github/plugin/agents/code-implementer/rubric.yaml: 5400
+  extensions/sleeper/plugin/agents/waiver-scout/rubric.yaml: 4500
+  .agents/embedded/dotagents/skills/mermaid-authoring/SKILL.md: 5700
+  tool:create_plan: 660
+  tool:edit_plan: 610
+  agent:orchestrator: 7400
+  agent:pr-tutor: 6700
+overlap:
+  # Jaccard over stemmed name + description words; 0.14 is the highest round value that still flags
+  # ask_user/get_user_choice, stage_memory/commit_memory and read_file/read_artifact.
+  threshold: 0.14
+  allow: # an agent may be offered any two tools of one entry
+    - tools: [sleeper_matchup, sleeper_player, sleeper_roster, sleeper_schedule]
+      reason: distinct Sleeper endpoints; the 0.59-0.77 scores are the timeDoc/lockDoc/playerGameDoc text each description repeats
+    - tools: [sleeper_league, sleeper_roster, sleeper_standings, sleeper_transactions, sleeper_free_agents, sleeper_trends, sleeper_history]
+      reason: distinct Sleeper endpoints sharing league vocabulary (league_id, week, roster)
+    - tools: [list_nodes, create_plan, edit_plan, execute]
+      reason: the four steps of one plan lifecycle; create_plan and edit_plan share the assignment-shape prose
+    - tools: [write_artifact, edit_artifact, write_code_review, write_finding]
+      reason: create vs revise, and generic vs kind-typed writes; write_<kind> descriptions share one template
+    - tools: [web_fetch, read_artifact, grep_artifacts]
+      reason: web_fetch stores a large page as an artifact that read_artifact and grep_artifacts page through
+    - tools: [web_search, web_fetch]
+      reason: search returns URLs and fetch reads one; they share web vocabulary, not a job
+    - tools: [load_memory, recall_memory, stage_memory]
+      reason: the read and write halves of one shared task memory
+    - tools: [current_date, sleeper_schedule]
+      reason: both explain the user's time zone; one returns now, the other kickoff times
+    - tools: [load_skill, load_skill_resource, load_artifacts]
+      reason: ADK's own skilltoolset and loadartifactstool declarations; quack does not write their text
+ignore:
+  - rule: missing_resource
+    subject: .agents/embedded/dotagents/skills/agent-skill-authoring/SKILL.md
+    match: references/api-errors.md
+    reason: an example path in the skill's prose; the snapshot is synced from the dotagents registry
+external_skills: [ponytail] # registry-fetched plugins with no in-tree copy: a miss warns instead of failing
+# Mirrors internal/orchestrator/run.go; promptlint adds every write_<kind> and quack.yaml's orchestrator.tools.
+orchestrator_tools: [list_nodes, create_plan, edit_plan, execute, get_user_choice, list_artifacts, edit_artifact, write_artifact]
