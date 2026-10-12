@@ -263,7 +263,8 @@ func (o *Orchestrator) retryNodes(ctx context.Context, userID, chatID, planID st
 		yield(tools.DagPlanEvent(ctx, plan), nil)
 		if guidance != "" {
 			for i := range plan.Nodes {
-				if targets[plan.Nodes[i].ID] {
+				// targets maps every retried node, its value only whether it continues its session.
+				if _, retried := targets[plan.Nodes[i].ID]; retried {
 					plan.Nodes[i].Task += "\n\n[Retry guidance]: " + guidance
 				}
 			}
