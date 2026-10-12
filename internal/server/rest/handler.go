@@ -534,11 +534,11 @@ func (h *Handler) UpdateChat(w http.ResponseWriter, r *http.Request, chatID sche
 			return
 		}
 		c.Archived = *body.Archived
-		// Best-effort: reap ACP nodes' on-disk sessions now that ArchiveChat has reaped their ADK worker
+		// Best-effort: reap ACP nodes' on-disk sessions and scratch now that ArchiveChat has reaped their ADK worker
 		// sessions; node reuse defers this from node completion to here.
 		if *body.Archived && h.jail != nil {
-			if err := h.jail.RemoveACPState(userID, chatID); err != nil {
-				slog.Warn("acp state cleanup failed; chat archived anyway",
+			if err := h.jail.RemoveNodeDirs(userID, chatID); err != nil {
+				slog.Warn("node dir cleanup failed; chat archived anyway",
 					"component", "rest", "chat", chatID, "err", err)
 			}
 		}
@@ -566,8 +566,8 @@ func (h *Handler) DeleteChat(w http.ResponseWriter, r *http.Request, chatID sche
 			slog.Warn("per-chat workspace cleanup failed; chat deleted anyway",
 				"component", "rest", "chat", chatID, "err", err)
 		}
-		if err := h.jail.RemoveACPState(userID, chatID); err != nil {
-			slog.Warn("acp state cleanup failed; chat deleted anyway",
+		if err := h.jail.RemoveNodeDirs(userID, chatID); err != nil {
+			slog.Warn("node dir cleanup failed; chat deleted anyway",
 				"component", "rest", "chat", chatID, "err", err)
 		}
 	}

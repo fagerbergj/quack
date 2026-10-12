@@ -319,8 +319,8 @@ func TestRemoveChatScope(t *testing.T) {
 	}
 }
 
-// TestRemoveACPState: every node's state dir for the chat goes; a sibling chat's survives.
-func TestRemoveACPState(t *testing.T) {
+// TestRemoveNodeDirs: every node's state and scratch dir for the chat goes; a sibling chat's survive.
+func TestRemoveNodeDirs(t *testing.T) {
 	j := newTestJail(t)
 	n1, err := j.ACPStateDir("alice", "chat1", "node1")
 	if err != nil {
@@ -330,30 +330,40 @@ func TestRemoveACPState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ACPStateDir n2: %v", err)
 	}
+	s1, err := j.ScratchDir("alice", "chat1", "node1")
+	if err != nil {
+		t.Fatalf("ScratchDir: %v", err)
+	}
 	other, err := j.ACPStateDir("alice", "chat2", "node1")
 	if err != nil {
 		t.Fatalf("ACPStateDir other chat: %v", err)
 	}
-
-	if err := j.RemoveACPState("alice", "chat1"); err != nil {
-		t.Fatalf("RemoveACPState: %v", err)
+	otherScratch, err := j.ScratchDir("alice", "chat2", "node1")
+	if err != nil {
+		t.Fatalf("ScratchDir other chat: %v", err)
 	}
-	for _, dir := range []string{n1, n2} {
+
+	if err := j.RemoveNodeDirs("alice", "chat1"); err != nil {
+		t.Fatalf("RemoveNodeDirs: %v", err)
+	}
+	for _, dir := range []string{n1, n2, s1} {
 		if _, err := os.Stat(dir); !os.IsNotExist(err) {
-			t.Errorf("chat1's ACP state dir %q still exists after RemoveACPState: %v", dir, err)
+			t.Errorf("chat1's node dir %q still exists after RemoveNodeDirs: %v", dir, err)
 		}
 	}
-	if _, err := os.Stat(other); err != nil {
-		t.Errorf("chat2's ACP state dir should survive chat1's RemoveACPState: %v", err)
+	for _, dir := range []string{other, otherScratch} {
+		if _, err := os.Stat(dir); err != nil {
+			t.Errorf("chat2's node dir should survive chat1's RemoveNodeDirs: %v", err)
+		}
 	}
 
 	// A chat with no ACP state dirs yet is a clean no-op.
-	if err := j.RemoveACPState("alice", "chat-never-used-acp"); err != nil {
-		t.Errorf("RemoveACPState on a chat with none = %v, want nil (no-op)", err)
+	if err := j.RemoveNodeDirs("alice", "chat-never-used-acp"); err != nil {
+		t.Errorf("RemoveNodeDirs on a chat with none = %v, want nil (no-op)", err)
 	}
 
-	if err := j.RemoveACPState("alice", ""); !errors.Is(err, ErrInvalidChatID) {
-		t.Errorf("RemoveACPState(empty) = %v, want ErrInvalidChatID", err)
+	if err := j.RemoveNodeDirs("alice", ""); !errors.Is(err, ErrInvalidChatID) {
+		t.Errorf("RemoveNodeDirs(empty) = %v, want ErrInvalidChatID", err)
 	}
 }
 

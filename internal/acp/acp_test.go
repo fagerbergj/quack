@@ -504,7 +504,7 @@ func TestClosePinnedSession_KillsProcessAndClearsRegistry(t *testing.T) {
 }
 
 // TestClosePinnedSession_KeepsACPStateDir: node finish keeps the session dir for a later session/load;
-// only chat archive/delete (workspace.Jail.RemoveACPState) removes it.
+// only chat archive/delete (workspace.Jail.RemoveNodeDirs) removes it.
 func TestClosePinnedSession_KeepsACPStateDir(t *testing.T) {
 	a := testAgent(t, "pin")
 	token := "tok-close-pinned-state-dir"
@@ -971,9 +971,9 @@ func TestRequestPermission_JudgeRouting(t *testing.T) {
 	}
 }
 
-// TestRunPrompt_RemovesScratchDirAfterRound: the per-node scratch dir (the child's TMPDIR)
-// does not outlive the round.
-func TestRunPrompt_RemovesScratchDirAfterRound(t *testing.T) {
+// TestRunPrompt_KeepsScratchDirAcrossRounds: the per-node scratch dir (the child's TMPDIR) outlives the round,
+// so a node resumed after a restart, or revising after the judge, still finds what it put there.
+func TestRunPrompt_KeepsScratchDirAcrossRounds(t *testing.T) {
 	a := testAgent(t, "echo")
 	token := vetting.AdvisorThreadToken("plan-1", "impl-scratch")
 	vetting.RegisterAdvisorThread(token, vetting.AdvisorTask{NodeID: "impl-scratch", WorkspaceNodeID: "impl-scratch", ChatID: "s1", SessionID: "s1"})
@@ -981,6 +981,13 @@ func TestRunPrompt_RemovesScratchDirAfterRound(t *testing.T) {
 
 	scratch, err := a.opts.Jail.ScratchDir("u1", "s1", "impl-scratch")
 	if err != nil {
+		t.Fatal(err)
+	}
+	kept := filepath.Join(scratch, "bt", "f")
+	if err := os.MkdirAll(filepath.Dir(kept), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(kept, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	r, err := runner.New(runner.Config{
@@ -995,8 +1002,8 @@ func TestRunPrompt_RemovesScratchDirAfterRound(t *testing.T) {
 			t.Fatalf("run: %v", err)
 		}
 	}
-	if _, statErr := os.Stat(scratch); !os.IsNotExist(statErr) {
-		t.Errorf("scratch dir %q must be removed after the round, stat err = %v", scratch, statErr)
+	if _, statErr := os.Stat(kept); statErr != nil {
+		t.Errorf("scratch file %q must survive the round: %v", kept, statErr)
 	}
 }
 

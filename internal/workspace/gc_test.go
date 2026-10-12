@@ -186,6 +186,59 @@ func TestSweepHomeTmpReapsScratchDirEntries(t *testing.T) {
 	}
 }
 
+// TestSweepHomeTmpKeepsScratchWrittenDeepInside: a node working in tmp/<node>/bt never bumps tmp/<node>'s own
+// mtime, so the sweep must age the entry by its newest write or it reaps a live node's build tree.
+func TestSweepHomeTmpKeepsScratchWrittenDeepInside(t *testing.T) {
+	jail := newTestJail(t)
+	old := time.Now().Add(-12 * time.Hour)
+	scratch, err := jail.ScratchDir("alice", "chat1", "reviewer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bt := filepath.Join(scratch, "bt")
+	touch(t, filepath.Join(bt, "f"), time.Now())
+	for _, dir := range []string{bt, scratch} {
+		if err := os.Chtimes(dir, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if res := Sweep(context.Background(), jail, GCConfig{ScratchTTL: time.Hour}, never, nil); res.ScratchRemoved != 0 {
+		t.Fatalf("ScratchRemoved = %d, want 0", res.ScratchRemoved)
+	}
+	if _, err := os.Stat(filepath.Join(bt, "f")); err != nil {
+		t.Errorf("a recently written scratch file was reaped: %v", err)
+	}
+}
+
+// TestSweepHomeTmpSkipsLiveChat: an idle scratch entry of a chat with a run in flight stays, even when the
+// chat id itself holds the "__" separator; an idle entry of another chat goes.
+func TestSweepHomeTmpSkipsLiveChat(t *testing.T) {
+	jail := newTestJail(t)
+	old := time.Now().Add(-12 * time.Hour)
+	live, err := jail.ScratchDir("alice", "run__1", "reviewer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	idle, err := jail.ScratchDir("alice", "run", "reviewer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{live, idle} {
+		if err := os.Chtimes(dir, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	isLive := func(chatDir string) bool { return chatDir == "run__1" }
+
+	if res := Sweep(context.Background(), jail, GCConfig{ScratchTTL: time.Hour}, isLive, nil); res.ScratchRemoved != 1 {
+		t.Fatalf("ScratchRemoved = %d, want 1", res.ScratchRemoved)
+	}
+	if _, err := os.Stat(live); err != nil {
+		t.Errorf("a live chat's scratch was reaped: %v", err)
+	}
+}
+
 // growHome writes an n-byte file into the user's agent home, simulating
 // agent-state.db/snapshot/tool-output growth from a completed round.
 func growHome(t *testing.T, jail *Jail, userID, name string, n int) {

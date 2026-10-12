@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -199,11 +198,6 @@ func (a *Agent) runPrompt(ctx adkagent.InvocationContext, prompt string) iter.Se
 				prompt = restartNote + prompt
 			}
 		}
-		// homeTmpDir recreates scratch at the next spawn; removing it here keeps build tmp files
-		// from lingering until the gc TTL sweep.
-		if scratchDir != "" {
-			defer func() { _ = os.RemoveAll(scratchDir) }()
-		}
 		// caps.ReadOnly comes from this node's advisor task, not the agent's static config:
 		// a planOnly run forces it true per node.
 		caps := a.opts.Caps
@@ -268,7 +262,7 @@ type pinnedProc struct {
 var pinned sync.Map
 
 // ClosePinnedSession kills token's pinned process (wired to vetting.NodeSessionClosed; acp can't import vetting).
-// The shim's on-disk session stays for later reuse until chat archive/delete (workspace.Jail.RemoveACPState).
+// The shim's on-disk session stays for later reuse until chat archive/delete (workspace.Jail.RemoveNodeDirs).
 func ClosePinnedSession(token string) {
 	if v, ok := pinned.LoadAndDelete(token); ok {
 		closePinnedProc(v.(*pinnedProc))
