@@ -100,6 +100,24 @@ func TestFetchClonesAndRecordsSHA(t *testing.T) {
 	}
 }
 
+// A plugin reads one tree: each fetch brings in only the ref's commit, never the history behind it.
+func TestFetchIsShallow(t *testing.T) {
+	bare, work := pluginregtest.NewFixtureRepo(t)
+	withFixedRemote(t, "file://"+bare)
+	commitAndPush(t, work, "second")
+	root := t.TempDir()
+	e, _ := ParseEntry("github:acme/widgets")
+	for _, step := range []string{"clone", "refetch"} {
+		if got, err := NewFSRegistry(root).Fetch(context.Background(), FromEntry(e)); err != nil || got.Error != "" {
+			t.Fatalf("%s: %v %s", step, err, got.Error)
+		}
+		if n := strings.TrimSpace(run(t, filepath.Join(root, "widgets", "repo"), "rev-list", "--count", "--all")); n != "1" {
+			t.Fatalf("%s: clone holds %s commits, want 1", step, n)
+		}
+		commitAndPush(t, work, "after "+step)
+	}
+}
+
 func TestFetchSecondCallIsNoOp(t *testing.T) {
 	bare := newFixtureRepo(t)
 	withFixedRemote(t, bare)
