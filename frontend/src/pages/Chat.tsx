@@ -387,10 +387,10 @@ function LiveTurnView({ live, surfaces, liveActive, isArchived, activeChatId, li
 }
 
 // The sidebar poll can lag the stream, so an 'idle' summary while the turn streams still means running.
-function chatHeaderProps(activeChat: ChatSummary | undefined, activeChatId: string | null, isArchived: boolean, live: NonNullable<ChatState['live']> | undefined) {
+function chatHeaderProps(activeChat: ChatSummary | undefined, activeChatId: string | null, isArchived: boolean, live: NonNullable<ChatState['live']> | undefined, notFound: boolean) {
   return {
-    title: activeChat?.title || (activeChatId ? UNTITLED_CHAT : 'New chat'),
-    editable: !!activeChatId && !isArchived,
+    title: notFound ? 'Chat not found' : activeChat?.title || (activeChatId ? UNTITLED_CHAT : 'New chat'),
+    editable: !!activeChatId && !isArchived && !notFound,
     status: (activeChat?.status && activeChat.status !== 'idle' ? activeChat.status : 'running') as ChatStatus,
     startedAt: live?.dag?.startedAt ?? live?.runs[0]?.startedAt,
   }
@@ -461,8 +461,32 @@ function ChatHeader({ title, editable, status, startedAt, activeChatId, isArchiv
   )
 }
 
+function isMissingChat(activeChatId: string | null, missingChatId: string | null): boolean {
+  return !!activeChatId && missingChatId === activeChatId
+}
+
 function showEmptyPrompt(activeChatId: string | null, state: ChatState, live: NonNullable<ChatState['live']> | undefined): boolean {
   return !!activeChatId && state.turns.length === 0 && !live && !state.submitting
+}
+
+// A /chat/<id> the server doesn't know gets a not-found note; the Composer stays mounted, so a typed draft carries
+// into the new chat.
+function EmptyChatNote({ notFound, empty, onNewChat }: { notFound: boolean; empty: boolean; onNewChat: () => void }) {
+  if (!notFound) {
+    return empty ? <div className="text-center text-gray-500 dark:text-gray-400 text-sm mt-20">Ask a question</div> : null
+  }
+  return (
+    <div role="status" className="text-center text-sm text-gray-500 dark:text-gray-400 mt-20 space-y-3">
+      <p>This chat doesn't exist or was deleted.</p>
+      <button
+        type="button"
+        onClick={onNewChat}
+        className="min-h-[44px] px-4 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 transition-colors"
+      >
+        Start a new chat
+      </button>
+    </div>
+  )
 }
 
 // Bridges submit to the first stream event; the old `live` still renders above it, so nothing blinks out.
@@ -527,6 +551,11 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
   // Gates the status-triggered re-attach until seed() ran: the poll can mark a chat running before getChat
   // resolves, and an early attach() makes seed() a no-op, dropping history.
   const [seededChatId, setSeededChatId] = useState<string | null>(null)
+  // Set when GET /chats/{id} 404s; only a 404 means not-found, never a network error.
+  const [missingChatId, setMissingChatId] = useState<string | null>(null)
+  const notFound = isMissingChat(activeChatId, missingChatId)
+  // The chat the composer and header act on: none for a not-found one, so a send starts a new chat.
+  const liveChatId = notFound ? null : activeChatId
   // An archived focused chat, kept out of the active-scoped `chats` list.
   const [activeChatDetail, setActiveChatDetail] = useState<ChatSummary | null>(null)
   const activeChat = resolveActiveChat(chats, activeChatId, activeChatDetail)
@@ -629,7 +658,9 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
       if (!detail.archived && (detail.status === 'running' || (lastTurn && dagFromTurn(lastTurn) != null))) {
         store.attach(activeChatId)
       }
-    }).catch(() => {})
+    }).catch((err: unknown) => {
+      if (!cancelled && (err as { status?: number })?.status === 404) setMissingChatId(activeChatId)
+    })
     return () => {
       cancelled = true
       store.detachStream(activeChatId)
@@ -775,7 +806,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
   // A failed chat creation rethrows so the Composer restores the unsent draft. The queue check reads the store,
   // not the render-time `streaming`, since a just-created chat's turn can start before this re-renders.
   const submitMessage = useCallback(async (text: string, files: File[], previews: { url: string; mime: string; name: string }[]) => {
-    let chatId = activeChatId
+    let chatId = liveChatId
     if (!chatId) {
       if (!creatingChatRef.current) {
         creatingChatRef.current = api.createChat()
@@ -802,7 +833,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
     void store.submit(chatId, text, files.length > 0 ? files : undefined, title => {
       setChats(prev => prev.map(c => c.id === chatId ? { ...c, title } : c))
     }).then(() => loadChats().then(data => setChats(data)))
-  }, [activeChatId, store, loadChats])
+  }, [liveChatId, store, loadChats])
 
   const handleRemoveQueued = useCallback((id: string) => {
     if (activeChatId) store.unqueueTurn(activeChatId, id)
@@ -877,8 +908,8 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
 
       <div className="flex flex-col flex-1 min-w-0">
         <ChatHeader
-          {...chatHeaderProps(activeChat, activeChatId, isArchived, live)}
-          activeChatId={activeChatId}
+          {...chatHeaderProps(activeChat, activeChatId, isArchived, live, notFound)}
+          activeChatId={liveChatId}
           isArchived={isArchived}
           githubLink={githubLink}
           liveActive={liveActive}
@@ -893,11 +924,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
         <div className="relative flex-1 min-h-0">
         {/* Clearance is composer height plus --composer-gap, so the inset grows it instead of counting twice. */}
         <div ref={scrollRef} className="absolute inset-0 overflow-y-auto overscroll-contain px-6 pt-6 pb-[calc(7rem+var(--composer-gap))] medium:pb-[calc(8rem+var(--composer-gap))] space-y-6">
-          {showEmptyPrompt(activeChatId, state, live) && (
-            <div className="text-center text-gray-500 dark:text-gray-400 text-sm mt-20">
-              Ask a question
-            </div>
-          )}
+          <EmptyChatNote notFound={notFound} empty={showEmptyPrompt(activeChatId, state, live)} onNewChat={handleNewChat} />
 
           {hiddenTurnCount > 0 && (
             <button
@@ -986,7 +1013,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
             queue={state.queue}
             onRemoveQueued={handleRemoveQueued}
             archived={isArchived}
-            noChat={!activeChatId}
+            noChat={!liveChatId}
           />
         </div>
         </div>
