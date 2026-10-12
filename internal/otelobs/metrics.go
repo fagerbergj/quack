@@ -28,6 +28,7 @@ type metrics struct {
 	judgeScore       metric.Float64Histogram // attrs: agent
 	judgeVerdict     metric.Int64Counter     // attrs: agent, passed
 	judgeUnavailable metric.Int64Counter     // attrs: agent
+	judgePhase       metric.Float64Histogram // attrs: agent, phase, criterion (verify only)
 	delivery         metric.Int64Counter     // attrs: outcome
 	modelCallDur     metric.Float64Histogram // attrs: model
 	permAsk          metric.Int64Counter     // attrs: agent
@@ -115,6 +116,8 @@ func initMetrics(meter metric.Meter) error {
 			[]float64{0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0}}, &m2.judgeScore},
 		{metricDef{"quack.judge.verdict", "judge verdicts by pass/fail", "", nil}, &m2.judgeVerdict},
 		{metricDef{"quack.judge.unavailable", "judge rounds that errored before producing a verdict (no score/verdict recorded for that round) - a gap here on one agent's series explains missing/sparse quack.judge.score|verdict for it", "", nil}, &m2.judgeUnavailable},
+		{metricDef{"quack.judge.phase.duration", "one judge round's wall time per phase (prepare, deterministic, admission, verify, judge_tools, judge_verdict); judge_tools and judge_verdict sum over every judge session in the round, retries and re-judges included", "s",
+			[]float64{0.01, 0.1, 0.5, 1, 2, 5, 10, 30, 60, 120, 300}}, &m2.judgePhase},
 		{metricDef{"quack.delivery.outcome", "delivery outcomes; 'none' on a judge-passed work-request that recorded no delivery is the alertable phantom-success regression", "", nil}, &m2.delivery},
 		{metricDef{"quack.model.call.duration", "model call duration, swap-sensitive", "s",
 			[]float64{1, 2, 5, 10, 30, 60, 120, 300, 600}}, &m2.modelCallDur},
@@ -218,6 +221,18 @@ func RecordJudgeUnavailable(agent string) {
 		return
 	}
 	m.judgeUnavailable.Add(context.Background(), 1, metric.WithAttributes(attrAgent(agent)))
+}
+
+// RecordJudgePhase records one judge round phase's seconds; criterion is "" unless the phase scores one.
+func RecordJudgePhase(agent, phase, criterion string, seconds float64) {
+	if m == nil {
+		return
+	}
+	attrs := []attribute.KeyValue{attrAgent(agent), attribute.String("phase", phase)}
+	if criterion != "" {
+		attrs = append(attrs, attribute.String("criterion", criterion))
+	}
+	m.judgePhase.Record(context.Background(), seconds, metric.WithAttributes(attrs...))
 }
 
 // DeliveryOutcome names the outcome recorded by RecordDeliveryOutcome.

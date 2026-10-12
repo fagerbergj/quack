@@ -63,6 +63,27 @@ The seed set covers `cites_sources` (backed and invented links, inline and recor
 3. Write `testdata/judge-golden/<name>.json` with `recording` pointing at the node and judge round, the agent's `rubric`, and a label with a reason for each criterion you have checked by hand. Set `needs_live_model` when any label is judge-scored.
 4. Run `quack judge score-golden testdata/judge-golden --deterministic-only` and commit the bundle with the item. A recording carries the chat's full text; export only chats whose content may live in the repository.
 
+## Judge round timing
+
+A slow judge round (a trivial one-node lookup once took 2m11s) is split by phase in two places: the round's `judge_round` record, the artifact revision the round writes as its write-ahead-log entry, carries a `timing` object, and every phase is recorded in the `quack.judge.phase.duration` histogram (seconds) with `agent` and `phase` attributes:
+
+| Phase | What it covers |
+|-------|----------------|
+| `prepare` | The activity scan, the round's episodic revision and resolving the judge prompt. |
+| `deterministic` | `computeDeterministicCriteria`: citation backing, length, `checks_pass` (which runs the node's checks), artifact schema, `specifics_cited`. |
+| `admission` | Waiting for a judge-model slot; absent when no admission controller is wired. |
+| `verify` | The `specifics_supported` page check; its metric point carries `criterion=specifics_supported`. |
+| `judge_tools` | Each judge session from its start to its last tool result: the model turns that read files or artifacts, and the reads themselves. |
+| `judge_verdict` | Each judge session from its last tool result (or its start) to the verdict, including any nudge or forced close. |
+
+The record also counts `judge_calls` (judge sessions: more than one means a transient retry, a no-verdict retry or a re-judge after a pass with no reads), `judge_turns` and `tool_calls`:
+
+```text
+"timing": {"phase_seconds": {"<phase>": <seconds, to the ms>, ...}, "judge_calls": <n>, "judge_turns": <n>, "tool_calls": <n>}
+```
+
+Read a slow round as: `judge_calls` above 1 points at the re-judge and retry paths, a high `tool_calls` with most time in `judge_tools` at the read loop (bounded by `gates.judge.max_iterations`, default 14 when unset), and time in `judge_verdict` alone at the model's final generation. The whole round's wall time is the `gate.judge` span's duration in traces.
+
 ## Rubric lint
 
 Every `rubric.yaml` under `agents/`, `extensions/*/plugin/agents/` and `config/` is linted by `TestShippedRubricsLintClean` in `internal/vetting`, which the `go-test` CI job runs whenever a PR touches those paths. `quack server validate` lints the rubric of every configured agent, plugin-seeded ones included, and fails on any issue. The lint runs boot's own validation (scale, band coverage, pass mark inside a band, a `fix` on every deterministic criterion) and adds:

@@ -870,6 +870,7 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	}
 	receivedIDs := memoryIDs(received)
 	st := &judgeRoundState{cfg: cfg, maxIters: maxIters, emit: emit, ctx: ctx, produced: map[string]bool{}}
+	defer cfg.judgeTiming.addJudgeSession(time.Now(), st)
 	for _, id := range act.producedArtifacts() {
 		st.produced[id] = true
 	}
@@ -992,6 +993,9 @@ type judgeRoundState struct {
 	delivered []string                       // per produced id read, its newest entry (ids in first-read order)
 	delivIDs  []string
 	others    []string
+	// lastToolAt/toolCalls: when the latest non-verdict tool result arrived, and how many did.
+	lastToolAt time.Time
+	toolCalls  int
 }
 
 func (s *judgeRoundState) noteCall(fc *genai.FunctionCall) {
@@ -1118,6 +1122,7 @@ func (s *judgeRoundState) scanPart(p *genai.Part) error {
 			return context.Canceled
 		}
 	case p.FunctionResponse != nil:
+		s.lastToolAt, s.toolCalls = time.Now(), s.toolCalls+1
 		s.recordRead(p.FunctionResponse)
 		if !s.emit(&genai.Part{FunctionResponse: p.FunctionResponse}) {
 			return context.Canceled
