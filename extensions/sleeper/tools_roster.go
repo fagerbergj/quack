@@ -52,7 +52,6 @@ type rosterResult struct {
 	FaabLeft  int          `json:"faab_left"`
 }
 
-//nolint:dupl // functiontool wrapper boilerplate: each tool differs only in name/description/handler
 func (e *extension) rosterTool() tool.Tool {
 	t, _ := functiontool.New[rosterArgs, rosterResult](
 		functiontool.Config{

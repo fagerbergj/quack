@@ -830,8 +830,13 @@ type prReview struct {
 }
 
 func (a *App) listReviews(ctx context.Context, owner, repo string, number int) ([]prReview, error) {
-	var out []prReview
-	if err := a.repoJSON(ctx, owner, repo, http.MethodGet, fmt.Sprintf("/repos/%s/%s/pulls/%d/reviews?per_page=100", owner, repo, number), nil, &out); err != nil {
+	return getList[prReview](ctx, a, owner, repo, fmt.Sprintf("/repos/%s/%s/pulls/%d/reviews?per_page=100", owner, repo, number))
+}
+
+// getList GETs one page of a repo-scoped list endpoint.
+func getList[T any](ctx context.Context, a *App, owner, repo, path string) ([]T, error) {
+	var out []T
+	if err := a.repoJSON(ctx, owner, repo, http.MethodGet, path, nil, &out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -930,11 +935,7 @@ type changedFile struct {
 }
 
 func (a *App) pullFiles(ctx context.Context, owner, repo string, number int) ([]changedFile, error) {
-	var out []changedFile
-	if err := a.repoJSON(ctx, owner, repo, http.MethodGet, fmt.Sprintf("/repos/%s/%s/pulls/%d/files?per_page=100", owner, repo, number), nil, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
+	return getList[changedFile](ctx, a, owner, repo, fmt.Sprintf("/repos/%s/%s/pulls/%d/files?per_page=100", owner, repo, number))
 }
 
 func (a *App) prAuthor(ctx context.Context, owner, repo string, number int) (string, error) {

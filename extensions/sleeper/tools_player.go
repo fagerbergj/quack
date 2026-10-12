@@ -49,7 +49,6 @@ type gameLogWeek struct {
 	PtsPPR  float32 `json:"pts_ppr"`
 }
 
-//nolint:dupl // functiontool wrapper boilerplate: each tool differs only in name/description/handler
 func (e *extension) playerTool() tool.Tool {
 	t, _ := functiontool.New[playerArgs, playerResult](
 		functiontool.Config{

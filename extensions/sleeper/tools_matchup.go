@@ -112,7 +112,6 @@ type matchupResult struct {
 	Opponent  side `json:"opponent"`
 }
 
-//nolint:dupl // functiontool wrapper boilerplate: each tool differs only in name/description/handler
 func (e *extension) matchupTool() tool.Tool {
 	t, _ := functiontool.New[matchupArgs, matchupResult](
 		functiontool.Config{

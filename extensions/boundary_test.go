@@ -68,7 +68,12 @@ func TestExtensionsImportCoreOnlyThroughSDK(t *testing.T) {
 
 // Core code links extensions only by blank import; tests may name one to check core's policy against it.
 func TestCoreImportsExtensionsOnlyToRegister(t *testing.T) {
-	for _, root := range []string{"internal", "cmd"} {
+	roots := []string{"internal", "cmd", "tools"}
+	top, _ := filepath.Glob(filepath.Join("..", "*.go"))
+	for _, f := range top {
+		roots = append(roots, filepath.Base(f)) // module-root files such as embed.go
+	}
+	for _, root := range roots {
 		for file, specs := range imports(t, root) {
 			if strings.HasSuffix(file, "_test.go") {
 				continue
