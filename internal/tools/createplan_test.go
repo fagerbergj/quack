@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 
@@ -25,6 +26,23 @@ func newCreatePlanForTest(t *testing.T, roster []dag.AgentInfo, nodeIsRunning fu
 		t.Fatalf("create_plan tool is not runnable")
 	}
 	return rt, c
+}
+
+// TestTaskGuidanceAsksNotAsserts: both places the planner learns to write a task tell it to ask for what it
+// has not verified, so its own guesses never reach a worker as facts to confirm.
+func TestTaskGuidanceAsksNotAsserts(t *testing.T) {
+	tl, _ := newCreatePlanForTest(t, []dag.AgentInfo{{Name: "web-researcher"}}, nil)
+	const rule = "assert as fact only what the user said or a `depends_on` result established"
+	if !strings.Contains(tl.Description(), rule) {
+		t.Errorf("create_plan description lacks %q:\n%s", rule, tl.Description())
+	}
+	skill, err := os.ReadFile("../../skills/plan-work/SKILL.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(skill), "**Ask, don't assert.**") {
+		t.Error("plan-work's Writing a task section lacks the ask-don't-assert rule")
+	}
 }
 
 func TestCreatePlanEmptyTaskRejected(t *testing.T) {

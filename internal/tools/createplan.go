@@ -46,7 +46,8 @@ func NewCreatePlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Se
 			Description: "Tool to start a plan: a list of assignments tying nodes (people doing an agent's job) " +
 				"to work. Each assignment is EITHER `agent` (a name from the Agents list - hires a new node for " +
 				"that job) OR `node_id` (from list_nodes - reassigns a node already hired), plus `task` (self-" +
-				"contained - the node sees only this text) and `depends_on` (the tasks this one references, a " +
+				"contained - the node sees only this text; state the question or objective, and assert as fact only " +
+				"what the user said or a `depends_on` result established) and `depends_on` (the tasks this one references, a " +
 				"HANDOFF not a data dependency: this assignment runs after the named ids and receives their " +
 				"result, nothing else - either a real node_id or, for a sibling being hired in this SAME call, " +
 				"that sibling's 0-based position in this `assignments` array, since a brand-new node has no id yet). " +
