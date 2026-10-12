@@ -74,8 +74,7 @@ func newRootCmd() *cobra.Command {
 			if printPrompt == "" {
 				return cmd.Help()
 			}
-			server, _ := cmd.Flags().GetString("server")
-			target, stop, err := resolveTarget(cmd.Context(), server)
+			target, stop, err := resolveTarget(cmd)
 			if err != nil {
 				return err
 			}
@@ -91,16 +90,40 @@ func newRootCmd() *cobra.Command {
 			return nil
 		},
 	}
-	// Client context: which server to talk to. Resolution (flag → config → default)
-	// lands with internal/cli; here it is just declared so subcommands inherit it.
-	root.PersistentFlags().String("server", "", "quack server URL (default: active server from config, else http://localhost:8080)")
+	// Which server to talk to; resolveTarget resolves flag → active registered server → in-process.
+	root.PersistentFlags().String("server", "", "quack server URL (default: the active registered server, else an in-process server booted from $QUACK_CONFIG or ./quack.yaml)")
 	root.Flags().StringVarP(&printPrompt, "print", "p", "", "one-shot prompt; print the result and exit (no TUI)")
 	root.Flags().Bool("events", false, "with -p: also print the pipeline event trace (plan, node lifecycle) to stderr")
 	root.Flags().StringSlice("attach", nil, "with -p: attach file(s) - image/audio - to the prompt (repeatable)")
 	root.Flags().Bool("json", false, "with -p: print one JSON result object instead of plain text (same exit codes)")
 
 	root.AddCommand(newInitCmd(), newChatCmd(), newServerCmd(), newAPICmd(), newVersionCmd(), newGitAskpassCmd(), newEvalCmd(), newSandboxCmd(), newMemoryCmd(), newLedgerCmd(), newDecisionsCmd(), newDatasetCmd(), newExperimentCmd(), newJudgeCmd())
+	rejectUnknownSubcommands(root)
 	return root
+}
+
+// rejectUnknownSubcommands makes every group command (chat, chat node, ...) error on an unknown
+// subcommand: cobra only does that at the root, and prints help with exit 0 below it.
+func rejectUnknownSubcommands(c *cobra.Command) {
+	for _, sub := range c.Commands() {
+		if sub.HasSubCommands() && !sub.Runnable() {
+			sub.RunE = runGroup
+			sub.SuggestionsMinimumDistance = 2 // cobra's own default, applied only on the root's path
+		}
+		rejectUnknownSubcommands(sub)
+	}
+}
+
+// runGroup is a group command's RunE: bare, it prints help; with an argument, that argument named no subcommand.
+func runGroup(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return cmd.Help()
+	}
+	msg := fmt.Sprintf("unknown command %q for %q", args[0], cmd.CommandPath())
+	if s := cmd.SuggestionsFor(args[0]); len(s) > 0 {
+		msg += "\n\nDid you mean this?\n\t" + strings.Join(s, "\n\t")
+	}
+	return fmt.Errorf("%s\n\nRun '%s --help' for usage", msg, cmd.CommandPath())
 }
 
 // exitIfNonZero exits with code when non-zero: -p, chat send and chat show use 0/1/2, which cobra's
@@ -304,8 +327,7 @@ func newChatShowCmd() *cobra.Command {
 // withTarget runs fn against a resolved server (remote or in-process duck),
 // tearing the in-process server down afterward.
 func withTarget(cmd *cobra.Command, fn func(target string) error) error {
-	server, _ := cmd.Flags().GetString("server")
-	target, stop, err := resolveTarget(cmd.Context(), server)
+	target, stop, err := resolveTarget(cmd)
 	if err != nil {
 		return err
 	}
@@ -328,7 +350,7 @@ func newChatListCmd() *cobra.Command {
 	}
 	asJSONFlag(c, &asJSON)
 	c.Flags().StringVar(&filter, "filter", "all", "filter by origin: all, github, direct")
-	c.Flags().StringVar(&status, "status", "", "filter by status: idle, queued, running, needs_input, failed")
+	c.Flags().StringVar(&status, "status", "", "filter by status: "+strings.Join(cli.ChatStatuses, ", "))
 	c.Flags().StringVar(&repo, "repo", "", "filter to a github repo (owner/repo); github chats only")
 	c.Flags().StringVar(&kind, "type", "", "filter by github ref type: issue, pr")
 	c.Flags().StringVar(&archived, "archived", "exclude", "archived chats: exclude, include, only")
@@ -985,8 +1007,7 @@ func newAPICmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			server, _ := cmd.Flags().GetString("server")
-			target, stop, err := resolveTarget(cmd.Context(), server)
+			target, stop, err := resolveTarget(cmd)
 			if err != nil {
 				return err
 			}
@@ -1037,10 +1058,11 @@ func defaultConfigPath() string {
 	return "quack.yaml"
 }
 
-// resolveTarget returns the server URL plus a stop func: a configured remote is used as-is (no-op stop);
-// otherwise the duck starts in-process on a loopback port and stop tears it down.
-func resolveTarget(ctx context.Context, override string) (string, func(), error) {
+// resolveTarget returns the server URL plus a stop func: --server or the active registered server is used
+// as-is (no-op stop); otherwise the duck starts in-process on a loopback port and stop tears it down.
+func resolveTarget(cmd *cobra.Command) (string, func(), error) {
 	noop := func() {}
+	override, _ := cmd.Flags().GetString("server")
 	cc, err := cli.LoadClient()
 	if err != nil {
 		return "", noop, err
@@ -1048,13 +1070,30 @@ func resolveTarget(ctx context.Context, override string) (string, func(), error)
 	if url := cc.ActiveURL(override); url != "" {
 		return url, noop, nil // remote
 	}
-	cfg := defaultConfigPath()
-	if _, err := os.Stat(cfg); err != nil {
-		return "", noop, fmt.Errorf("no %s found - run `quack init` first (or pass --server <url>)", cfg)
+	path := defaultConfigPath()
+	if _, err := os.Stat(path); err != nil {
+		return "", noop, fmt.Errorf("no %s found - run `quack init` first (or pass --server <url>)", path)
 	}
-	base, stop, err := serve.InProcess(ctx, cfg)
+	cfg, err := config.LoadDeferringAgentCompleteness(path)
+	if err != nil {
+		return "", noop, fmt.Errorf("config load failed: %w", err)
+	}
+	if msg := sharedDBNotice(cfg, path); msg != "" {
+		fmt.Fprintln(cmd.ErrOrStderr(), msg)
+	}
+	base, stop, err := serve.InProcessFromConfig(cmd.Context(), cfg)
 	if err != nil {
 		return "", noop, err
 	}
 	return base, func() { _ = stop() }, nil
+}
+
+// sharedDBNotice warns that an in-process boot opens a postgres session store a running server may share
+// (a second engine on live data); "" for sqlite, which is the local single-user setup.
+func sharedDBNotice(cfg *config.Config, path string) string {
+	st, ok := cfg.Store(cfg.Session.Store)
+	if !ok || (st.Kind != "" && st.Kind != "postgres") {
+		return ""
+	}
+	return fmt.Sprintf("quack: no --server and no active server; running in-process against %s's postgres store - pass --server <url> to talk to a running server instead", path)
 }

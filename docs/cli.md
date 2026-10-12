@@ -1,8 +1,8 @@
 # CLI
 
-`quack` is a one-binary CLI and server. There is no TUI: `-p`, `chat send`, and `chat show` are the interface, and their pause/failure exit codes (`0` answered, `1` failed, `2` paused on a question) make them pipeable and scriptable. Every command also runs against a running server over HTTP + SSE (`--server`, or the active one from `quack server add`/`use`) - there's nothing local-only about it except `server run` itself.
+`quack` is a one-binary CLI and server. There is no TUI: `-p`, `chat send`, and `chat show` are the interface, and their pause/failure exit codes (`0` answered, `1` failed, `2` paused on a question) make them pipeable and scriptable. Every command also runs against a running server over HTTP + SSE (`--server`, or the active one from `quack server add`/`use`) - there's nothing local-only about it except `server run` itself. With neither, the CLI boots a server in-process from `$QUACK_CONFIG` or `./quack.yaml` for that one command; when that config's session store is postgres (likely shared with a running server), it says so on stderr, since a second engine is then working on the same database.
 
-Every command has its own `--help`; this page is the map.
+Every command has its own `--help`; this page is the map. An unknown subcommand (`quack chat lst`) exits 1 with a suggestion. Errors print the server's own message after `Error:` on stderr, without the request's method, URL or HTTP status.
 
 ## Shell completion
 
@@ -39,12 +39,12 @@ A chat is a session; a message on it kicks off a run.
 | Command | Does |
 | --- | --- |
 | `quack chat new` | Create a chat, print its id. |
-| `quack chat send <id> "<msg>"` | Send a message (also how you answer a paused question). |
-| `quack chat show <id> [-f]` | Status snapshot - id/title/status/pending question, node table, last answer; `-f` follows a live run. Applies the same 0/1/2 exit-code contract as `chat send`/`-p` (`--json` too). |
-| `quack chat list [--archived exclude\|include\|only]` | List chats with their status. `--archived` defaults to `exclude`; `only` is the CLI's one path to a chat archived in the web UI. |
+| `quack chat send <id> "<msg>"` | Send a message (also how you answer a paused question). An archived chat is read-only: the send is refused until you `unarchive` it, as `chat node retry` is. A question with choices lists them, numbered, under its `question:` line (`options` in `--json`). |
+| `quack chat show <id> [-f]` | Status snapshot - id/title/status (plus `archived: yes` when archived)/pending question and its choices, node table, last answer; `-f` follows a live run. Applies the same 0/1/2 exit-code contract as `chat send`/`-p` (`--json` too). |
+| `quack chat list [--status idle\|running\|needs_input\|failed] [--archived exclude\|include\|only]` | List chats with their status. `--archived` defaults to `exclude`; `only` is the CLI's one path to a chat archived in the web UI. |
 | `quack chat export <id>` | Export a chat transcript. |
-| `quack chat stop <id> [--json]` | Stop a chat's active run. |
-| `quack chat delete <id> [--json]` | Delete a chat (irreversible); a live run is cancelled and given up to 15 s to finish first, else the server answers 409 and keeps the chat. The confirmation prompt goes to stderr; a non-interactive stdin without `-y` errors instead of silently declining. |
+| `quack chat stop <id> [--json]` | Stop a chat's active run; says whether a run was actually stopped or none was active (`action` `stopped` or `none` in `--json`). |
+| `quack chat delete <id> [--json]` | Delete a chat (irreversible); a live run is cancelled and given up to 15 s to finish first, else the server answers 409 and keeps the chat. An unknown id is an error, not a silent success. The confirmation prompt goes to stderr; a non-interactive stdin without `-y` errors instead of silently declining. |
 | `quack chat rename <id> <title>` | Rename a chat. |
 | `quack chat archive <id>` / `unarchive <id>` | Archive or unarchive a chat. |
 | `quack chat artifact list <id>` | List a chat's artifacts and their revision history. |
@@ -52,7 +52,7 @@ A chat is a session; a message on it kicks off a run.
 
 ## Node control
 
-Mid-run control over one node in the active DAG (`quack chat node <verb> <chat-id> <node-id> ...`); every verb takes `--json`, printing `{"chat_id","node_id","action","message"}`.
+Mid-run control over one node in the active DAG (`quack chat node <verb> <chat-id> <node-id> ...`); every verb takes `--json`, printing `{"chat_id","node_id","action","message"}`. A chat or node that doesn't exist is an error naming which one is missing.
 
 | Verb | Does |
 | --- | --- |
@@ -62,7 +62,7 @@ Mid-run control over one node in the active DAG (`quack chat node <verb> <chat-i
 | `queue <message>` | Queue a message for a running node, delivered into a worker round in flight at once, else at the node's next turn boundary. |
 | `queue-edit <message-id> <text>` | Edit a not-yet-delivered queued message. |
 | `queue-remove <message-id>` | Remove a not-yet-delivered queued message. |
-| `edit <task>` | Edit a not-yet-started node's prompt. |
+| `edit <task>` | Edit a not-yet-started node's prompt; a node that has started or finished refuses the edit. |
 | `retry` | Re-run a finished node (done/failed/cancelled) and everything downstream of it. |
 
 ## Recording and eval
@@ -72,13 +72,13 @@ Runs can be recorded to the ledger and re-driven later - the basis for regressio
 | Command | Does |
 | --- | --- |
 | `quack ledger list` / `export <chat-id>` | List chats with a recording on the server; download one as a bundle for `eval` or a fixture. |
-| `quack ledger show <chat-id> [--from-seq N]` | Print a chat's raw ledger entries (server-side, from the local quack.yaml's stores). |
+| `quack ledger show <chat-id> [--from-seq N]` | Print a chat's raw ledger entries (server-side, from the local quack.yaml's stores). `show`, `recover` and `rebuild` (like `dataset export` and `experiment run`) never talk to a server, so they refuse `--server` rather than ignore it; `ledger export --server <url>` fetches a recording from a server. |
 | `quack ledger recover [chat-id] [--dry-run] [--json]` | Settle intents whose projection write is missing (the same pass the server runs at boot); `--dry-run` reports only. |
 | `quack ledger rebuild <chat-id> [--dry-run] [--json]` | Reconcile a chat's artifact metadata and SSE table against the ledger fold. |
 | `quack decisions report [--since 7d] [--point <id>] [--chat <id>...] [--json]` | Per decision point, compare the decision model against quack's own outcome: call count, unavailable calls, coverage, agreement, confident disagreements, latency, input tokens, and a top-vs-baseline confusion table. See [`docs/configuration/decisions.md`](configuration/decisions.md#reading-the-data). |
 | `quack decisions export --langfuse [--since 7d] [--point <id>] [--chat <id>...]` | Upsert each point's decisions as the Langfuse dataset `decisions/<point id>` (input = state and questions, expected output = quack's baseline), with a run `<handler>@<quack version>` carrying the model's answer and scores. Reads credentials from the local `quack.yaml` (`prompts.store`); safe to re-run. |
-| `quack eval [--from-server <url>]` | Re-run a recorded conversation live with a swapped model and compare judge scores. `--from-server` names where to fetch the recording when the argument is a chat id - distinct from the global `--server` (which this command doesn't otherwise use; the eval run itself always runs from your local `quack.yaml`). |
-| `quack judge replay <chat-id-or-bundle.zip> [--node <id>] [--round N] [--rubric <path>] [--from-server <url>] [--deterministic-only] [--repeat N] [--verify] [--json]` | Re-grade a recording's already-judged rounds under the working-copy rubric, without re-running the agent or the original judge call - proves a rubric or gate-code change against real traffic in seconds instead of a rig cycle. Exits 2 when any criterion's pass/fail flips, 1 when a round could not be replayed or a filter matched nothing, 0 otherwise. `--deterministic-only` replays only the code-owned criteria and never touches a model; against a server the report also carries the shadow locate tier's rows (each specific in the answer looked for in its cited page's stored text), which never gate; `--repeat N` judges each round N times and prints every judge-scored criterion's spread (mean, sd, pass rate), the judge's own noise on a fixed answer. See [`docs/configuration/trust-gate.md`](configuration/trust-gate.md#judge-replay). |
+| `quack eval [--from-server <url>]` | Re-run a recorded conversation live with a swapped model and compare judge scores. `--from-server` names where to fetch the recording when the argument is a chat id (default: the global `--server`, else the active registered server); the eval run itself always runs from your local `quack.yaml`. |
+| `quack judge replay <chat-id-or-bundle.zip> [--node <id>] [--round N] [--rubric <path>] [--from-server <url>] [--deterministic-only] [--repeat N] [--verify] [--json]` | Re-grade a recording's already-judged rounds under the working-copy rubric, without re-running the agent or the original judge call - proves a rubric or gate-code change against real traffic in seconds instead of a rig cycle. A chat id's recording comes from `--from-server`, else `--server`, else the active registered server. Exits 2 when any criterion's pass/fail flips, 1 when a round could not be replayed or a filter matched nothing, 0 otherwise. `--deterministic-only` replays only the code-owned criteria and never touches a model; against a server the report also carries the shadow locate tier's rows (each specific in the answer looked for in its cited page's stored text), which never gate; `--repeat N` judges each round N times and prints every judge-scored criterion's spread (mean, sd, pass rate), the judge's own noise on a fixed answer. See [`docs/configuration/trust-gate.md`](configuration/trust-gate.md#judge-replay). |
 
 ## Datasets and experiments
 

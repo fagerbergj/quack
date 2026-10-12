@@ -55,7 +55,7 @@ func runDatasetExport(cmd *cobra.Command, chatID, repo, since, dataset string, l
 		sinceT = t
 	}
 
-	ls, st, _, err := openLedgerAndStores()
+	ls, st, _, err := openLedgerAndStores(cmd)
 	if err != nil {
 		return err
 	}

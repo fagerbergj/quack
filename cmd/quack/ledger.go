@@ -35,7 +35,7 @@ func newLedgerRecoverCmd() *cobra.Command {
 		Short: "Settle intents whose projection write is missing (a crashed delivery or artifact save)",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ls, st, artifacts, err := openLedgerAndStores()
+			ls, st, artifacts, err := openLedgerAndStores(cmd)
 			if err != nil {
 				return err
 			}
@@ -128,7 +128,7 @@ func newLedgerShowCmd() *cobra.Command {
 		Short: "Print a chat's raw ledger entries (one JSON object per line)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ls, _, _, err := openLedgerAndStores()
+			ls, _, _, err := openLedgerAndStores(cmd)
 			if err != nil {
 				return err
 			}
@@ -155,7 +155,7 @@ func newLedgerRebuildCmd() *cobra.Command {
 			"writes are not transactional against a concurrently running run.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ls, st, artifacts, err := openLedgerAndStores()
+			ls, st, artifacts, err := openLedgerAndStores(cmd)
 			if err != nil {
 				return err
 			}
@@ -184,9 +184,12 @@ func newLedgerRebuildCmd() *cobra.Command {
 }
 
 // openLedgerAndStores builds the ledger store, session store and artifact service from the local quack.yaml
-// as serve.Run does, minus the HTTP server and orchestrator.
-func openLedgerAndStores() (ls ledger.LedgerStore, st *store.Store, artifacts *store.TurnAwareService, err error) {
+// as serve.Run does, minus the HTTP server and orchestrator. It refuses --server rather than ignore it.
+func openLedgerAndStores(cmd *cobra.Command) (ls ledger.LedgerStore, st *store.Store, artifacts *store.TurnAwareService, err error) {
 	cfgPath := defaultConfigPath()
+	if server, _ := cmd.Flags().GetString("server"); server != "" {
+		return nil, nil, nil, fmt.Errorf("`%s` reads the stores in the local %s directly and never talks to a server, so --server does not apply; drop it (to pull a chat's recording from a server, use `quack ledger export <chat-id> --server <url>`)", cmd.CommandPath(), cfgPath)
+	}
 	if _, statErr := os.Stat(cfgPath); statErr != nil {
 		return nil, nil, nil, fmt.Errorf("no %s found - `quack ledger` needs a LOCAL quack.yaml pointing at the same stores your server uses", cfgPath)
 	}

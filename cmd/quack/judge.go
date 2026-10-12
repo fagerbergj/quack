@@ -49,7 +49,7 @@ func newJudgeReplayCmd() *cobra.Command {
 	c.Flags().StringVar(&node, "node", "", "only this node id (default: every judged node)")
 	c.Flags().IntVar(&round, "round", 0, "only this judge round number, e.g. 2 for judge-r2 (default: every round)")
 	c.Flags().StringVar(&rubricPath, "rubric", "", "rubric.yaml to replay against (default: the graded node's own bundled rubric)")
-	c.Flags().StringVar(&sourceServer, "from-server", "", "server to fetch the recording from, when the argument is a chat id (default: active registered server)")
+	c.Flags().StringVar(&sourceServer, "from-server", "", "server to fetch the recording from, when the argument is a chat id (default: --server, else the active registered server)")
 	c.Flags().BoolVar(&deterministicOnly, "deterministic-only", false, "replay only the code-owned criteria; never touches the judge model")
 	c.Flags().IntVar(&repeat, "repeat", 1, "judge each round N times and print every judge-scored criterion's spread (mean, sd, pass rate)")
 	c.Flags().BoolVar(&verify, "verify", false, "run the shadow verify tier: the judge model reads each located specific's evidence window and answers with a quote code checks (model calls; works with --deterministic-only)")
@@ -59,6 +59,7 @@ func newJudgeReplayCmd() *cobra.Command {
 
 func runJudgeReplay(cmd *cobra.Command, target string, node string, round, repeat int, rubricPath, sourceServer string, deterministicOnly, verify, asJSON bool) error {
 	ctx := cmd.Context()
+	sourceServer = recordingSource(cmd, sourceServer)
 	cfgPath := defaultConfigPath()
 	if _, err := os.Stat(cfgPath); err != nil {
 		return fmt.Errorf("no %s found - judge replay needs a LOCAL quack.yaml (run `quack init` first)", cfgPath)
