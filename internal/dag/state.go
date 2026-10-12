@@ -21,6 +21,9 @@ var transitions = map[NodeStatus]map[NodeStatus]bool{
 		StatusRunning:   true,
 		StatusCancelled: true,
 		StatusFailed:    true,
+		// A running node reads queued at every admission wait; a pause then must land. One with no live run is
+		// refused by PauseNode, not here.
+		StatusPaused: true,
 	},
 	StatusRunning: {
 		// A running node re-queues at every admission wait, not just its

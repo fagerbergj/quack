@@ -176,6 +176,21 @@ func TestUpdateNodeStatus_PauseUndeliverable409(t *testing.T) {
 	}
 }
 
+// A running node reads queued at every admission wait, so a pause from queued reaches the live-run check instead
+// of failing as an illegal transition about half the time.
+func TestUpdateNodeStatus_PauseFromAnAdmissionWaitIsLegal(t *testing.T) {
+	h := newTestHandler(t)
+	chatID, planID, nodeID := "c1", "p1", "n1"
+	seedPlan(t, h, chatID, planID, nodeID)
+	if err := h.store.UpsertDagNode(context.Background(), store.DagNode{NodeID: nodeID, PlanID: planID, Status: "queued"}); err != nil {
+		t.Fatalf("seed queued node: %v", err)
+	}
+	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusUpdateBodyStatusPaused})
+	if !strings.Contains(rec.Body.String(), "not pausable") {
+		t.Errorf("body = %s; want the live-run check's answer, not an illegal transition", rec.Body.String())
+	}
+}
+
 // TestUpdateNodeStatus_ResumePausedNode: paused → running (resume) is legal
 // and kicks off a re-run the same way retry does (optimistic "queued").
 func TestUpdateNodeStatus_ResumePausedNode(t *testing.T) {
