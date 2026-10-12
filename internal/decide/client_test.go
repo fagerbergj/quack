@@ -92,6 +92,46 @@ func TestAskGuardSkipsOversizedInputWithoutCalling(t *testing.T) {
 	}
 }
 
+func TestAskWithImagesSendsTopLevelDataURLs(t *testing.T) {
+	var calls atomic.Int32
+	var sent map[string]any
+	srv := fakeServer(t, &calls, func(_ int32, w http.ResponseWriter, body map[string]any) {
+		sent = body
+		_, _ = w.Write([]byte(okBody))
+	})
+	// A screenshot-sized image must not trip the byte-based guard; its tokens scale with pixels.
+	img := "data:image/png;base64," + strings.Repeat("A", 200_000)
+	qs := map[string]Question{"team": {Type: "choice", Criteria: map[string]any{"billing": nil, "shipping": nil}}}
+	r, err := newTestClient(srv.URL, time.Second, 8192).Ask(context.Background(), WithImages{State: "the page", Images: []string{img}}, qs)
+	if err != nil || r.Answers["team"]["billing"] != 0.7 {
+		t.Fatalf("Ask = %v, %v", r.Answers, err)
+	}
+	images, _ := sent["images"].([]any)
+	if sent["state"] != "the page" || len(images) != 1 || images[0] != img || r.RequestBytes < 200_000 {
+		t.Errorf("state = %v, %d images, %d bytes; want the unwrapped state and one top-level data URL", sent["state"], len(images), r.RequestBytes)
+	}
+}
+
+func TestAskWithoutImagesSendsNoImagesField(t *testing.T) {
+	var calls atomic.Int32
+	var sent []map[string]any
+	srv := fakeServer(t, &calls, func(_ int32, w http.ResponseWriter, body map[string]any) {
+		sent = append(sent, body)
+		_, _ = w.Write([]byte(okBody))
+	})
+	c := newTestClient(srv.URL, time.Second, 0)
+	for _, state := range []any{"plain", WithImages{State: "plain"}} {
+		if _, err := c.Ask(context.Background(), state, nil); err != nil {
+			t.Fatalf("Ask: %v", err)
+		}
+	}
+	for i, body := range sent {
+		if _, ok := body["images"]; ok || body["state"] != "plain" {
+			t.Errorf("request %d = %v, want state plain and no images field", i, body)
+		}
+	}
+}
+
 func TestAskRetriesTransient503Once(t *testing.T) {
 	var calls atomic.Int32
 	srv := fakeServer(t, &calls, func(n int32, w http.ResponseWriter, _ map[string]any) {

@@ -103,18 +103,45 @@ type wireResponse struct {
 	LatencyMS float64 `json:"latency_ms"`
 }
 
-// Ask sends one request; RequestBytes is set even when err != nil.
-func (c *Client) Ask(ctx context.Context, state any, questions map[string]Question) (Reply, error) {
+// WithImages is a state with image evidence: Images are data URLs
+// (data:image/png;base64,...) sent as the request's top-level "images".
+type WithImages struct {
+	State  any
+	Images []string
+}
+
+// encode returns the request body and how many of its bytes are image data URLs.
+func (c *Client) encode(state any, questions map[string]Question) ([]byte, int, error) {
+	req := map[string]any{"model": c.model, "state": state, "questions": questions}
+	imageBytes := 0
+	if w, ok := state.(WithImages); ok {
+		req["state"] = w.State
+		if len(w.Images) > 0 {
+			req["images"] = w.Images
+		}
+		for _, img := range w.Images {
+			imageBytes += len(img)
+		}
+	}
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false) // \u003c-style escapes would inflate the size the guard reads
-	if err := enc.Encode(map[string]any{"model": c.model, "state": state, "questions": questions}); err != nil {
-		return Reply{}, fmt.Errorf("decide: encode request: %w", err)
+	if err := enc.Encode(req); err != nil {
+		return nil, 0, fmt.Errorf("decide: encode request: %w", err)
 	}
-	body := buf.Bytes()
+	return buf.Bytes(), imageBytes, nil
+}
+
+// Ask sends one request; RequestBytes is set even when err != nil.
+func (c *Client) Ask(ctx context.Context, state any, questions map[string]Question) (Reply, error) {
+	body, imageBytes, err := c.encode(state, questions)
+	if err != nil {
+		return Reply{}, err
+	}
 	reply := Reply{RequestBytes: len(body)}
-	if c.maxInputTokens > 0 && len(body)/bytesPerToken > c.maxInputTokens {
-		return reply, fmt.Errorf("%w: ~%d tokens, cap %d", ErrTooLarge, len(body)/bytesPerToken, c.maxInputTokens)
+	// Image tokens scale with pixels, not base64 bytes, so the server's 413 judges them.
+	if est := (len(body) - imageBytes) / bytesPerToken; c.maxInputTokens > 0 && est > c.maxInputTokens {
+		return reply, fmt.Errorf("%w: ~%d tokens, cap %d", ErrTooLarge, est, c.maxInputTokens)
 	}
 	if c.timeout > 0 {
 		var cancel context.CancelFunc
