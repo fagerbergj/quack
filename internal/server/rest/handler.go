@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -77,6 +78,8 @@ type Handler struct {
 	traceURLTemplate string
 	// plugins backs the /api/v1/plugins routes; nil in tests that never call them.
 	plugins *Plugins
+	// deferredResumes keys chatID+"\x00"+nodeID for a paused node's start held until its chat's run ends.
+	deferredResumes sync.Map
 }
 
 // SetTraceURLTemplate wires otel.trace_url_template for GET /api/v1/config.
@@ -575,12 +578,49 @@ var deleteStopWait = 15 * time.Second
 // before the run unwinds, so an immediate resume would otherwise race it.
 var pauseUnwindWait = 3 * time.Second
 
-// waitPausedRun gives a just-paused node's run a moment to retire before it is started again.
-// ponytail: a paused node can't rejoin a chat run its siblings keep live; joining that run is the upgrade.
-func (h *Handler) waitPausedRun(ctx context.Context, chatID string, current dag.NodeStatus) {
-	if current == dag.StatusPaused {
-		h.waitRunEnded(ctx, chatID, pauseUnwindWait)
+// resumePaused starts a paused node once its own just-paused run retires. A run its siblings keep live can't
+// take the node back in (a run is one ADK session per chat), so the start is held until that run ends.
+func (h *Handler) resumePaused(ctx context.Context, dp *store.DagPlan, chatID, nodeID, guidance string) {
+	h.waitRunEnded(ctx, chatID, pauseUnwindWait)
+	if !h.retryNodeAsync(dp, chatID, nodeID, guidance) {
+		h.deferResume(dp, chatID, nodeID, guidance)
 	}
+}
+
+// deferResume starts a paused node after the chat's live run ends, unless the node or plan moved on meanwhile.
+// ponytail: held in memory, so a restart first leaves the node paused (held at boot) until it is resumed again.
+func (h *Handler) deferResume(dp *store.DagPlan, chatID, nodeID, guidance string) {
+	key := chatID + "\x00" + nodeID
+	if _, dup := h.deferredResumes.LoadOrStore(key, true); dup {
+		return
+	}
+	go func() {
+		defer h.deferredResumes.Delete(key)
+		for {
+			if !h.waitRunEnded(context.Background(), chatID, runTimeout) {
+				slog.Warn("deferred resume dropped: the chat's run never ended", "component", "rest", "chat", chatID, "node", nodeID)
+				return
+			}
+			if !h.stillResumable(dp, chatID, nodeID) || h.retryNodeAsync(dp, chatID, nodeID, guidance) {
+				return
+			}
+			time.Sleep(100 * time.Millisecond) // the chat's next run got in first
+		}
+	}()
+}
+
+// stillResumable: a held start still applies - same latest plan, node still paused but not on a question.
+func (h *Handler) stillResumable(dp *store.DagPlan, chatID, nodeID string) bool {
+	ctx := context.Background()
+	if h.hub.Draining() || h.chatArchived(ctx, chatID) {
+		return false
+	}
+	latest, err := h.store.GetLatestDagPlan(ctx, chatID)
+	if err != nil || latest == nil || latest.ID != dp.ID {
+		return false
+	}
+	dn, err := h.store.GetDagNode(ctx, dp.ID, nodeID)
+	return err == nil && dn != nil && dag.NodeStatus(dn.Status) == dag.StatusPaused && dag.PauseReason(dn.PauseReason) != dag.PauseAwaitingInput
 }
 
 // waitRunEnded polls until the hub drops chatID's run (FinishRun's last step) or the wait lapses.
@@ -959,10 +999,9 @@ func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatI
 			})
 			return
 		}
-		h.waitPausedRun(r.Context(), chatID, current)
-		h.dispatchRetry(w, r, dp, chatID, nodeID, guidance)
+		h.dispatchRetry(w, r, dp, chatID, nodeID, guidance, current)
 	case dag.StatusQueued:
-		h.dispatchRetry(w, r, dp, chatID, nodeID, guidance)
+		h.dispatchRetry(w, r, dp, chatID, nodeID, guidance, current)
 	}
 }
 
@@ -991,7 +1030,7 @@ func (h *Handler) pauseTransition(w http.ResponseWriter, dn *store.DagNode, chat
 
 // dispatchRetry: the shared running/queued dispatch - drain check, archive check,
 // then a guarded retryNodeAsync.
-func (h *Handler) dispatchRetry(w http.ResponseWriter, r *http.Request, dp *store.DagPlan, chatID schema.ChatID, nodeID schema.NodeID, guidance string) {
+func (h *Handler) dispatchRetry(w http.ResponseWriter, r *http.Request, dp *store.DagPlan, chatID schema.ChatID, nodeID schema.NodeID, guidance string, current dag.NodeStatus) {
 	if h.hub.Draining() {
 		errMsg(w, http.StatusServiceUnavailable, "server is shutting down; try again shortly")
 		return
@@ -1000,7 +1039,9 @@ func (h *Handler) dispatchRetry(w http.ResponseWriter, r *http.Request, dp *stor
 		errMsg(w, http.StatusConflict, "chat is archived; unarchive it before retrying a node")
 		return
 	}
-	if !h.retryNodeAsync(dp, chatID, nodeID, guidance) {
+	if current == dag.StatusPaused {
+		h.resumePaused(r.Context(), dp, chatID, nodeID, guidance)
+	} else if !h.retryNodeAsync(dp, chatID, nodeID, guidance) {
 		errMsg(w, http.StatusConflict, "the chat still has a run in flight; nothing was dispatched - try again once it finishes")
 		return
 	}
@@ -1045,11 +1086,14 @@ func (h *Handler) StartNode(w http.ResponseWriter, r *http.Request, chatID schem
 	}
 	// Only a HITL park re-enters via Orchestrator.StartNode (the answer must reach ADK's Resume); any
 	// other start re-runs the node and its descendants, since a full-plan re-entry re-executes done siblings.
-	h.waitPausedRun(r.Context(), chatID, current)
-	dispatched := false
-	if awaiting {
+	dispatched := true
+	switch {
+	case awaiting:
+		h.waitRunEnded(r.Context(), chatID, pauseUnwindWait)
 		dispatched = h.startNodeAsync(dp, chatID, nodeID, content)
-	} else {
+	case current == dag.StatusPaused:
+		h.resumePaused(r.Context(), dp, chatID, nodeID, "")
+	default:
 		dispatched = h.retryNodeAsync(dp, chatID, nodeID, "")
 	}
 	if !dispatched {
