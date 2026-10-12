@@ -6,37 +6,16 @@ import (
 	"testing"
 	"time"
 
-	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
-
+	"github.com/fagerbergj/quack/internal/pgtest"
 	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
-// newTestPostgresStore starts a real Postgres container (single-row inserts are RTT-bound, so sqlite
+// newTestPostgresStore opens a real Postgres database (single-row inserts are RTT-bound, so sqlite
 // can't reproduce the ceiling). Skips when Docker isn't reachable.
 func newTestPostgresStore(b *testing.B) *store.Store {
 	b.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-	ctr, err := tcpostgres.Run(ctx, "postgres:16-alpine",
-		tcpostgres.WithDatabase("quack_runlog_test"),
-		tcpostgres.WithUsername("quack"),
-		tcpostgres.WithPassword("quack"),
-		tcpostgres.BasicWaitStrategies(),
-	)
-	if err != nil {
-		b.Skipf("docker unavailable, skipping postgres benchmark: %v", err)
-	}
-	b.Cleanup(func() {
-		if err := ctr.Terminate(context.Background()); err != nil {
-			b.Logf("terminate postgres container: %v", err)
-		}
-	})
-	dsn, err := ctr.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		b.Fatalf("connection string: %v", err)
-	}
-	st, err := store.New("postgres", dsn)
+	st, err := store.New("postgres", pgtest.DSN(b))
 	if err != nil {
 		b.Fatalf("store.New: %v", err)
 	}

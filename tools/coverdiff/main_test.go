@@ -2,6 +2,9 @@ package main
 
 import (
 	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -145,5 +148,67 @@ github.com/fagerbergj/quack/internal/cli/ledger.go:200.1,200.10 1 0
 	}
 	if len(misses) != 1 || len(misses["internal/cli/ledger"]) != 1 {
 		t.Fatalf("misses = %v", misses)
+	}
+}
+
+func TestParseArgs(t *testing.T) {
+	ref, profile, err := parseArgs([]string{"diff", "--profile", "cover.out", "origin/main"})
+	if err != nil || ref != "origin/main" || profile != "cover.out" {
+		t.Fatalf("parseArgs(--profile) = %q, %q, %v", ref, profile, err)
+	}
+	ref, profile, err = parseArgs([]string{"diff", "origin/main"})
+	if err != nil || ref != "origin/main" || profile != "" {
+		t.Fatalf("parseArgs(local) = %q, %q, %v", ref, profile, err)
+	}
+	for _, bad := range [][]string{nil, {"cover"}, {"diff"}, {"diff", "a", "b"}, {"diff", "--nope", "a"}} {
+		if _, _, err := parseArgs(bad); err == nil {
+			t.Fatalf("parseArgs(%q) accepted bad args", bad)
+		}
+	}
+}
+
+// gate end to end in a throwaway repo: local mode runs the owning package's tests, --profile reads the
+// given file instead.
+func TestGate_LocalAndProfileModes(t *testing.T) {
+	t.Chdir(t.TempDir())
+	git := func(args ...string) {
+		t.Helper()
+		if out, err := exec.Command("git", append([]string{"-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	files := map[string]string{
+		"go.mod":      "module example.com/quack\n\ngo 1.24\n",
+		"p/p.go":      "package p\n\nfunc F(x int) int {\n\tif x > 0 {\n\t\treturn 1\n\t}\n\treturn 0\n}\n",
+		"p/p_test.go": "package p\n\nimport \"testing\"\n\nfunc TestF(t *testing.T) { F(1); F(0) }\n",
+		"cold.out":    "mode: set\nexample.com/quack/p/p.go:3.20,4.11 1 0\n",
+	}
+	git("init", "-q")
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	for name, body := range files {
+		if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeFile(name, body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git("add", ".")
+	git("commit", "-q", "-m", "add p")
+	if !gate("HEAD~1", "") {
+		t.Fatal("local mode failed a fully covered change")
+	}
+	if gate("HEAD~1", "cold.out") {
+		t.Fatal("--profile mode passed a change its profile marks uncovered")
+	}
+}
+
+// Local mode tests each owning package once, wherever its changed files sit.
+func TestOwnerPackages(t *testing.T) {
+	changed := map[string]map[int]bool{"internal/cli/ledger": {}, "internal/cli/dataset": {}, "tools/coverdiff/main": {}, "embed": {}}
+	got := ownerPackages(changed)
+	want := []string{"./.", "./internal/cli", "./tools/coverdiff"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("ownerPackages = %v, want %v", got, want)
 	}
 }

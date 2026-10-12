@@ -16,6 +16,9 @@ jobs:
       GOTOOLCHAIN: local
     steps:
       - uses: actions/checkout@v7
+        with:
+          # the changed-line coverage gate diffs against the PR base SHA.
+          fetch-depth: 0
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
@@ -33,10 +36,34 @@ jobs:
       - run: go vet ./...
       # One pass, under the race detector: it is a superset of the plain run and the
       # concurrency regression guards (#1016, #1032) pass vacuously without it.
-      # -timeout bounds the whole run well inside the job's 20-minute ceiling,
-      # so a future hang dumps goroutines (SIGQUIT) instead of the job
-      # silently cancelling with no diagnostic output.
-      - run: go test -race -timeout 12m ./...
+      # The same pass writes the coverprofile the coverage gate reads, so the
+      # suite never runs twice. -timeout bounds the whole run well inside the
+      # job's 20-minute ceiling, so a future hang dumps goroutines (SIGQUIT)
+      # instead of the job silently cancelling with no diagnostic output.
+      - run: go test -race -coverprofile=cover.out -timeout 12m ./...
+      # Changed-line coverage gate: new code ships covered (>=70%).
+      - name: coverage gate (changed code only)
+        if: github.event_name == 'pull_request'
+        env:
+          SLOP_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set +e
+          OUT=$(go run ./tools/coverdiff diff --profile cover.out "$SLOP_BASE" 2>&1)
+          RC=$?
+          set -e
+          printf '%s\n' "$OUT"
+          if [ "$RC" -ne 0 ]; then
+            {
+              echo "### Coverage gate: changed lines below the 70% floor"
+              echo ""
+              echo '```'
+              printf '%s\n' "$OUT" | grep -E '^coverdiff:|^  uncovered:'
+              echo '```'
+              echo ""
+              echo "Cover the changed lines above (or split the change).";
+            } | gh pr comment "${{ github.event.pull_request.number }}" --body-file -
+            exit "$RC"
+          fi
 
   go-fmt:
     runs-on: ubuntu-latest
@@ -67,9 +94,17 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      # Pinned to go.mod's toolchain: `@latest` alone builds against whatever the
-      # tool's own go.mod allows, which can lag and then refuse to analyze this repo.
-      - run: GOTOOLCHAIN=go1.26.5 go install golang.org/x/tools/cmd/deadcode@latest
+      # Pinned (tool and toolchain) so findings only shift on a deliberate bump;
+      # the cache key carries the version.
+      - name: cache deadcode
+        uses: actions/cache@v6
+        with:
+          path: ~/go/bin/deadcode
+          key: deadcode-x-tools-v0.50.0-go1.26.5-${{ runner.os }}
+      - name: install deadcode
+        run: |
+          [ -x "$HOME/go/bin/deadcode" ] || \
+            GOTOOLCHAIN=go1.26.5 go install golang.org/x/tools/cmd/deadcode@v0.50.0
       # -test so test-only helpers don't false-positive as unreachable. Package
       # patterns are explicit (not ./...) so a vendored JS package that happens to
       # ship Go source (frontend/node_modules/flatted) never gets pulled in.
@@ -118,30 +153,6 @@ jobs:
           # would let a PR ship a 4th unchecked Close of the same kind.
           $(go env GOPATH)/bin/golangci-lint run --new-from-rev "$SLOP_BASE" --max-same-issues=0 --max-issues-per-linter=0 ./cmd/... ./internal/...
           go run ./tools/sloplint diff "$SLOP_BASE"
-      # Changed-line coverage gate: new code ships covered (>=70%).
-      - name: coverage gate (changed code only)
-        env:
-          SLOP_BASE: ${{ github.event.pull_request.base.sha }}
-        run: |
-          set +e
-          OUT=$(go run ./tools/coverdiff diff "$SLOP_BASE" 2>&1)
-          RC=$?
-          set -e
-          printf '%s\n' "$OUT"
-          if [ "$RC" -ne 0 ]; then
-            # The job log carries the full suite output; the PR gets the
-            # verdict and the uncovered lines.
-            {
-              echo "### Coverage gate: changed lines below the 70% floor"
-              echo ""
-              echo '```'
-              printf '%s\n' "$OUT" | grep -E '^coverdiff:|^  uncovered:'
-              echo '```'
-              echo ""
-              echo "Cover the changed lines above (or split the change).";
-            } | gh pr comment "${{ github.event.pull_request.number }}" --body-file -
-            exit "$RC"
-          fi
 
   frontend-build:
     runs-on: ubuntu-latest
@@ -171,6 +182,14 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
         working-directory: frontend
+      # Browsers are cached per playwright version; the install below is a no-op on a hit.
+      - id: playwright
+        run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+        working-directory: frontend
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
       # No --with-deps: it runs apt-get update, which fails whenever Google's
       # chrome apt mirror is inconsistent, and the runner already ships every
       # library Chromium needs (the step installed nothing on passing runs).
@@ -195,7 +214,8 @@ jobs:
         working-directory: frontend
       - run: npm run lint
         working-directory: frontend
-      - run: npm test
+      # One vitest run; its coverage feeds the gate below.
+      - run: npm test -- --coverage
         working-directory: frontend
       # Changed-line coverage gate: new code ships covered (>=70%).
       - name: changed-line coverage (frontend)
@@ -204,7 +224,6 @@ jobs:
           SLOP_BASE: ${{ github.event.pull_request.base.sha }}
         working-directory: frontend
         run: |
-          npm run test -- --coverage
           set +e
           OUT=$(node ../scripts/coverage-diff.mjs "$SLOP_BASE" 2>&1)
           RC=$?
@@ -230,7 +249,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "24"
-      - run: npx --yes @redocly/cli@latest lint openapi.yaml --config redocly.yaml
+      - run: npx --yes @redocly/cli@2.54.3 lint openapi.yaml --config redocly.yaml
 
   codegen-drift:
     runs-on: ubuntu-latest
