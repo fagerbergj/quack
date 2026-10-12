@@ -9,7 +9,7 @@ The web SPA (`frontend/`, React 19 + Vite + Tailwind) is a graphical front end o
 
 ## What it can do
 
-Everything the [CLI](cli.md) can, graphically:
+Most of what the [CLI](cli.md) can, graphically. One gap: a paused node's Start (resume) appears only after the page's run stops streaming, while `quack chat node resume` can be sent mid-run and starts the node once the run ends.
 
 - Create a chat and send messages (`ChatList`, `Composer`).
 - Watch a run stream in - tokens, thinking, tool calls/results - grouped by node and by stage (worker / judge / revise), via `DagView`/`DagNode`.
