@@ -256,6 +256,11 @@ func dialFailureHint(errText string) string {
 	return ""
 }
 
+// reconnectNotice tells a follower its stream dropped, so a deploy's restart doesn't read as a hang.
+func reconnectNotice(errOut io.Writer) func() {
+	return func() { fmt.Fprintln(errOut, "connection lost; reconnecting…") }
+}
+
 func exitCode(status string) int {
 	switch status {
 	case StatusFailed:
@@ -275,6 +280,7 @@ func RunChatSend(ctx context.Context, out, errOut io.Writer, server, id, content
 		fmt.Fprintln(errOut, "Error:", err)
 		return 1
 	}
+	c.OnReconnect = reconnectNotice(errOut)
 	var events io.Writer
 	if showEvents {
 		events = errOut
@@ -291,6 +297,7 @@ func PrintPrompt(ctx context.Context, out, errOut, events io.Writer, server, pro
 		fmt.Fprintln(errOut, "Error:", err)
 		return 1
 	}
+	c.OnReconnect = reconnectNotice(errOut)
 	chatID, err := c.CreateChat(ctx, "")
 	if err != nil {
 		fmt.Fprintln(errOut, "Error:", err)

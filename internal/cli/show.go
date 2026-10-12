@@ -18,6 +18,7 @@ func RunChatShow(ctx context.Context, out, errOut io.Writer, server, id string, 
 		fmt.Fprintln(errOut, "Error:", err)
 		return 1
 	}
+	c.OnReconnect = reconnectNotice(errOut)
 	detail, err := c.GetChat(ctx, id)
 	if err != nil {
 		fmt.Fprintln(errOut, "Error:", notFoundAs(err, id))

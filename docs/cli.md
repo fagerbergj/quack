@@ -50,6 +50,8 @@ A chat is a session; a message on it kicks off a run.
 | `quack chat artifact list <id>` | List a chat's artifacts and their revision history. |
 | `quack chat artifact download <id> <name> [--revision N] [-o file\|-]` | Download one artifact revision's bytes (default: the artifact's own name, sanitised to a bare local filename). `-o -` streams to stdout instead of writing a file. |
 
+`chat send`, `-p` and `chat show -f` follow a run through a server restart. A deploy pauses the run without ending it, and boot resumes it, so when the stream drops before the run's `done`, the CLI prints `connection lost; reconnecting…` on stderr. It then reconnects with backoff from the last event it saw, for about 3 minutes per outage, and follows the resumed run to its end; the exit code reflects that end. If the server stays down past that, the command exits `1`, and `quack chat show <id> -f` picks the run up again.
+
 ## Node control
 
 Mid-run control over one node in the active DAG (`quack chat node <verb> <chat-id> <node-id> ...`); every verb takes `--json`, printing `{"chat_id","node_id","action","message"}`. A chat or node that doesn't exist is an error naming which one is missing.
