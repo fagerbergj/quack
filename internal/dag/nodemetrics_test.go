@@ -115,6 +115,29 @@ func TestNodeDoneReportsCumulativeTokenUsage(t *testing.T) {
 	}
 }
 
+// A last round that reported no model (cut off before its model call returned) must not blank the
+// model an earlier round reported: `chat show` reads node_done's model as the node's MODEL column.
+func TestNodeDoneKeepsModelWhenLastRunReportsNone(t *testing.T) {
+	const r0 = "quack-dag-p@1/n1@rr/web-researcher@worker-r0"
+	const r1 = "quack-dag-p@1/n1@rr/web-researcher@worker-r1"
+	first := ev(r0, &genai.Part{Text: "draft"})
+	first.ModelVersion = "qwen3"
+	evs := []*session.Event{
+		first,
+		ev(r1, &genai.Part{Text: "revised"}),
+		{NodeInfo: &session.NodeInfo{Path: "quack-dag-p@1/n1@rr"}, Output: "final"},
+	}
+	for _, e := range drive(evs, map[string]string{"n1": "web-researcher"}, gateScore{}) {
+		if e.Name == stream.EventNodeDone {
+			if got := e.Data.(stream.NodeDoneData).Model; got != "qwen3" {
+				t.Fatalf("node_done model = %q, want qwen3 (the last round that reported one)", got)
+			}
+			return
+		}
+	}
+	t.Fatal("no node_done emitted")
+}
+
 // ContextTokens is the LAST measured prompt count: each tool call reports the growing
 // context, so summing overshoots.
 func TestAgentCompleteContextTokensIsLastNotSummed(t *testing.T) {

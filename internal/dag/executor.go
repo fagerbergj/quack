@@ -754,7 +754,10 @@ func (s *dagStream) closeRun(node string) bool {
 			nu.reasoning += u.reasoning
 			nu.total += u.total
 			nu.cached += u.cached
-			nu.model, nu.finish = u.model, u.finish
+			nu.finish = u.finish
+			if u.model != "" { // a round cut off before its model call returned names no model
+				nu.model = u.model
+			}
 			// Overwritten, not accumulated: node_done reports the freshest context occupancy, not the sum.
 			if u.ctxTokens > 0 {
 				nu.ctxTokens = u.ctxTokens
