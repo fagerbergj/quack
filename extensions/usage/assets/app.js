@@ -140,6 +140,34 @@ function promResultOrStatus(resp) {
   return { ok: true, series };
 }
 
+function seriesLine(points, color) {
+  const line = document.createElementNS(SVG_NS, "polyline");
+  line.setAttribute("points", points.join(" "));
+  line.setAttribute("fill", "none");
+  line.setAttribute("stroke", color);
+  line.setAttribute("stroke-width", "2");
+  return line;
+}
+
+// splitRuns cuts sorted timestamps wherever a step is missing, so a scrape gap draws as a gap
+// instead of a straight ramp that reads as real traffic.
+function splitRuns(ts, step) {
+  const runs = [];
+  for (const t of ts) {
+    const run = runs[runs.length - 1];
+    if (run && (!step || t - run[run.length - 1] <= 1.5 * step)) run.push(t);
+    else runs.push([t]);
+  }
+  return runs;
+}
+
+// noDataSince is the last sample time when every series stops more than two steps short of end.
+function noDataSince(series, end, step) {
+  let last = -Infinity;
+  for (const s of series) for (const p of s.points) last = Math.max(last, p.t);
+  return step && end - last > 2 * step ? last : null;
+}
+
 function dotMarker(cx, cy, color) {
   const dot = document.createElementNS(SVG_NS, "circle");
   dot.setAttribute("cx", cx.toFixed(1));
@@ -391,43 +419,35 @@ function renderSeriesChart(el, spec) {
         }
       }
     } else if (spec.mode === "stacked-area") {
-      let cumBottom = ticks.map(() => 0);
+      const cumBottom = new Map();
       for (const s of visible) {
         const m = pointMaps.get(s.key);
-        const top = ticks.map((t, i) => cumBottom[i] + (m.get(t) || 0));
-        const bandPointsTop = ticks.map((t, i) => `${x(t).toFixed(1)},${y(top[i]).toFixed(1)}`);
-        const bandPointsBottom = ticks
-          .map((t, i) => `${x(t).toFixed(1)},${y(cumBottom[i]).toFixed(1)}`)
-          .reverse();
-        const band = document.createElementNS(SVG_NS, "polygon");
-        band.setAttribute("points", bandPointsTop.concat(bandPointsBottom).join(" "));
-        band.setAttribute("fill", s.color);
-        band.setAttribute("fill-opacity", "0.55");
-        band.setAttribute("stroke", "none");
-        svg.appendChild(band);
-
-        const line = document.createElementNS(SVG_NS, "polyline");
-        line.setAttribute("points", bandPointsTop.join(" "));
-        line.setAttribute("fill", "none");
-        line.setAttribute("stroke", s.color);
-        line.setAttribute("stroke-width", "2");
-        svg.appendChild(line);
-        // A 1-2 tick series draws no visible band/segment - mark the points.
-        if (ticks.length <= 2) for (let i = 0; i < ticks.length; i++) svg.appendChild(dotMarker(x(ticks[i]), y(top[i]), s.color));
-
-        cumBottom = top;
+        for (const run of splitRuns(ticks, spec.step)) {
+          const top = run.map((t) => (cumBottom.get(t) || 0) + (m.get(t) || 0));
+          const bandPointsTop = run.map((t, i) => `${x(t).toFixed(1)},${y(top[i]).toFixed(1)}`);
+          const bandPointsBottom = run
+            .map((t) => `${x(t).toFixed(1)},${y(cumBottom.get(t) || 0).toFixed(1)}`)
+            .reverse();
+          const band = document.createElementNS(SVG_NS, "polygon");
+          band.setAttribute("points", bandPointsTop.concat(bandPointsBottom).join(" "));
+          band.setAttribute("fill", s.color);
+          band.setAttribute("fill-opacity", "0.55");
+          band.setAttribute("stroke", "none");
+          svg.appendChild(band);
+          svg.appendChild(seriesLine(bandPointsTop, s.color));
+          // A 1-2 tick run draws no visible band/segment - mark the points.
+          if (run.length <= 2) run.forEach((t, i) => svg.appendChild(dotMarker(x(t), y(top[i]), s.color)));
+          run.forEach((t, i) => cumBottom.set(t, top[i]));
+        }
       }
     } else {
       for (const s of visible) {
-        const pts = s.points.map((p) => `${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join(" ");
-        const line = document.createElementNS(SVG_NS, "polyline");
-        line.setAttribute("points", pts);
-        line.setAttribute("fill", "none");
-        line.setAttribute("stroke", s.color);
-        line.setAttribute("stroke-width", "2");
-        svg.appendChild(line);
-        // A 1-2 point series has no visible segment: mark the points instead.
-        if (s.points.length <= 2) for (const p of s.points) svg.appendChild(dotMarker(x(p.t), y(p.v), s.color));
+        const m = pointMaps.get(s.key);
+        for (const run of splitRuns(s.points.map((p) => p.t), spec.step)) {
+          svg.appendChild(seriesLine(run.map((t) => `${x(t).toFixed(1)},${y(m.get(t)).toFixed(1)}`), s.color));
+          // A 1-2 point run has no visible segment: mark the points instead.
+          if (run.length <= 2) for (const t of run) svg.appendChild(dotMarker(x(t), y(m.get(t)), s.color));
+        }
       }
     }
 
@@ -517,6 +537,14 @@ function renderSeriesChart(el, spec) {
       legendEl.appendChild(btn);
     }
     el.appendChild(legendEl);
+  }
+
+  const since = noDataSince(nonEmpty, spec.end, spec.step);
+  if (since !== null) {
+    const note = document.createElement("div");
+    note.className = "chart-sub";
+    note.textContent = `no data since ${formatClock(since)}`;
+    el.appendChild(note);
   }
 
   return { redraw: draw };
@@ -714,8 +742,10 @@ function callCountQuery(rangeSeconds) {
   return `sum(increase(${LATENCY.metric}_count[${rangeSeconds}s]))`;
 }
 
-function latencyPresenceQuery() {
-  return `count(${LATENCY.metric}_bucket)`;
+// Over the range, not an instant selector: the collector drops an idle histogram after ~5m, so
+// "now" sees nothing while the range still holds every call.
+function latencyPresenceQuery(rangeSeconds) {
+  return `count(last_over_time(${LATENCY.metric}_bucket[${rangeSeconds}s]))`;
 }
 
 function latencyInstantQuantileQuery(q, rangeSeconds) {
@@ -1199,7 +1229,7 @@ async function refreshAll(tf) {
   const now = Math.floor(Date.now() / 1000);
   const [instantTotals, presenceResp] = await Promise.all([
     fetchInstantTotals(rangeSeconds, now),
-    promQuery(latencyPresenceQuery(), now),
+    promQuery(latencyPresenceQuery(rangeSeconds), now),
   ]);
   const presenceStatus = promResultOrStatus(presenceResp);
   const latencyAvailable = presenceStatus.ok && Number(presenceStatus.series[0].value[1]) > 0;
