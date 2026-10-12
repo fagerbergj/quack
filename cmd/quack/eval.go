@@ -33,8 +33,8 @@ func newEvalCmd() *cobra.Command {
 			"itself completed - a WORSE score is a result, not a failure.\n\n" +
 			"<chat-id-or-bundle.zip> is either a local bundle file (dropped in\n" +
 			"testdata/, or downloaded via `quack api GET .../recording`) or a chat\n" +
-			"id - fetched from --from-server (default: the active registered\n" +
-			"server)'s recording endpoint.",
+			"id - fetched from --from-server (default: --server, else the active\n" +
+			"registered server)'s recording endpoint.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runEval(cmd, args[0], model, role, sourceServer, asJSON)
@@ -42,7 +42,7 @@ func newEvalCmd() *cobra.Command {
 	}
 	c.Flags().StringVar(&model, "model", "", "model name to swap in for --role (required)")
 	c.Flags().StringVar(&role, "role", eval.RoleAll, "which agents to swap: coder, researcher, orch, or all")
-	c.Flags().StringVar(&sourceServer, "from-server", "", "server to fetch the recording from, when the argument is a chat id (default: active registered server) - distinct from the global --server")
+	c.Flags().StringVar(&sourceServer, "from-server", "", "server to fetch the recording from, when the argument is a chat id (default: --server, else the active registered server)")
 	asJSONFlag(c, &asJSON)
 	_ = c.MarkFlagRequired("model")
 	return c
@@ -50,7 +50,7 @@ func newEvalCmd() *cobra.Command {
 
 func runEval(cmd *cobra.Command, target, model, role, sourceServer string, asJSON bool) error {
 	ctx := cmd.Context()
-	bundlePath, cleanupBundle, err := resolveBundle(ctx, sourceServer, target)
+	bundlePath, cleanupBundle, err := resolveBundle(ctx, recordingSource(cmd, sourceServer), target)
 	if err != nil {
 		return err
 	}
@@ -93,6 +93,15 @@ func runEval(cmd *cobra.Command, target, model, role, sourceServer string, asJSO
 	code := cli.RunEval(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), base, role, model, changed, turns, recordedScores, recordedAnswer, asJSON)
 	exitIfNonZero(code)
 	return nil
+}
+
+// recordingSource is where a chat id's recording is fetched from: --from-server, else the global --server.
+func recordingSource(cmd *cobra.Command, fromServer string) string {
+	if fromServer != "" {
+		return fromServer
+	}
+	server, _ := cmd.Flags().GetString("server")
+	return server
 }
 
 // resolveBundle returns target as-is if it's a readable file, else fetches it as a chat id's recording

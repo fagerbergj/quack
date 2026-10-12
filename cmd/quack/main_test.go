@@ -2,9 +2,93 @@ package main
 
 import (
 	"bytes"
+	"io"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/fagerbergj/quack/internal/config"
 )
+
+// TestUnknownSubcommandErrors: a typo under a group command fails (exit 1) with a suggestion instead of
+// printing help and exiting 0, which a script would read as success; a bare group still prints help.
+func TestUnknownSubcommandErrors(t *testing.T) {
+	for _, tc := range []struct {
+		args        []string
+		wantErr     string
+		wantSuggest string
+	}{
+		{[]string{"chat", "lst"}, `unknown command "lst" for "quack chat"`, "list"},
+		{[]string{"chat", "node", "pase"}, `unknown command "pase" for "quack chat node"`, "pause"},
+		{[]string{"chat"}, "", ""},
+	} {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			root := newRootCmd()
+			var out bytes.Buffer
+			root.SetOut(&out)
+			root.SetErr(io.Discard)
+			root.SetArgs(tc.args)
+			err := root.Execute()
+			if tc.wantErr == "" {
+				if err != nil || !strings.Contains(out.String(), "Usage:") {
+					t.Fatalf("bare group: err = %v, out = %q; want help and no error", err, out.String())
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) || !strings.Contains(err.Error(), "Did you mean this?\n\t"+tc.wantSuggest) {
+				t.Fatalf("err = %v, want %q suggesting %q", err, tc.wantErr, tc.wantSuggest)
+			}
+		})
+	}
+}
+
+// TestChatListStatusHelpMatchesValidation: the --status help lists exactly the values validation accepts.
+func TestChatListStatusHelpMatchesValidation(t *testing.T) {
+	c, _, err := newRootCmd().Find([]string{"chat", "list"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := c.Flags().Lookup("status").Usage, "filter by status: idle, running, needs_input, failed"; got != want {
+		t.Errorf("--status help = %q, want %q", got, want)
+	}
+}
+
+// TestSharedDBNotice: only a postgres session store (one a running server may share) earns the in-process warning.
+func TestSharedDBNotice(t *testing.T) {
+	for kind, want := range map[string]bool{"postgres": true, "": true, "sqlite": false} {
+		cfg := &config.Config{Session: config.SessionConfig{Store: "s"}, Stores: map[string]config.StoreConfig{"s": {Kind: kind}}}
+		if got := sharedDBNotice(cfg, "quack.yaml") != ""; got != want {
+			t.Errorf("kind %q: notice = %v, want %v", kind, got, want)
+		}
+	}
+}
+
+// TestLocalStoreCommandsRejectServer: ledger show/rebuild/recover read the local stores, so a --server they
+// would silently ignore is refused with the command to use instead.
+func TestLocalStoreCommandsRejectServer(t *testing.T) {
+	t.Setenv("QUACK_CONFIG", filepath.Join(t.TempDir(), "quack.yaml"))
+	for _, args := range [][]string{{"ledger", "show", "c1"}, {"ledger", "rebuild", "c1"}, {"ledger", "recover"}} {
+		root := newRootCmd()
+		root.SetOut(io.Discard)
+		root.SetErr(io.Discard)
+		root.SetArgs(append(args, "--server", "http://localhost:8080"))
+		err := root.Execute()
+		if err == nil || !strings.Contains(err.Error(), "--server does not apply") || !strings.Contains(err.Error(), "quack ledger export") {
+			t.Errorf("%v: err = %v, want --server refused with the export alternative", args, err)
+		}
+	}
+}
+
+// TestRecordingSource: judge replay and eval fetch a chat id's recording from --from-server, else --server.
+func TestRecordingSource(t *testing.T) {
+	c := cmdWithServer(t, "http://global")
+	if got := recordingSource(c, ""); got != "http://global" {
+		t.Errorf("no --from-server: got %q, want the global --server", got)
+	}
+	if got := recordingSource(c, "http://from"); got != "http://from" {
+		t.Errorf("--from-server set: got %q, want it to win", got)
+	}
+}
 
 // TestCommandTree: the expected verbs are registered (an AddCommand typo fails here)
 // and `version` prints the stamp.

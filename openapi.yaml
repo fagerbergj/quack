@@ -164,6 +164,12 @@ paths:
       responses:
         "204":
           description: Deleted
+        "404":
+          description: No such chat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
     patch:
       operationId: updateChat
       summary: Update a chat's mutable fields
@@ -629,6 +635,12 @@ paths:
                 type: string
         "404":
           description: No such chat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The chat is archived (read-only); unarchive it before sending
           content:
             application/json:
               schema:

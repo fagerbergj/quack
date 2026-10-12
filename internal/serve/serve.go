@@ -400,16 +400,7 @@ func Run(ctx context.Context, configPath string, port int) error {
 	return nil
 }
 
-// InProcess builds the server on an ephemeral loopback port for co-hosted CLI use.
-func InProcess(ctx context.Context, configPath string) (baseURL string, stop func() error, err error) {
-	cfg, err := config.LoadDeferringAgentCompleteness(configPath)
-	if err != nil {
-		return "", nil, fmt.Errorf("config load failed: %w", err)
-	}
-	return InProcessFromConfig(ctx, cfg)
-}
-
-// InProcessFromConfig is InProcess for a caller with a resolved *config.Config in memory.
+// InProcessFromConfig builds the server from cfg on an ephemeral loopback port for co-hosted CLI use.
 func InProcessFromConfig(ctx context.Context, cfg *config.Config) (baseURL string, stop func() error, err error) {
 	return InProcessWithPromptSource(ctx, cfg, nil)
 }
@@ -445,7 +436,7 @@ func InProcessWithPromptSource(ctx context.Context, cfg *config.Config, promptSr
 }
 
 // shutdownHooks is an out-param for what Run needs to drain SIGTERM, avoiding a wider buildFromConfig
-// return. nil skips draining (InProcess's CLI use).
+// return. nil skips draining (InProcessFromConfig's CLI use).
 type shutdownHooks struct {
 	hub *stream.Hub
 	// pauser: the drain pauses running nodes rather than cancelling the runs.
@@ -453,7 +444,7 @@ type shutdownHooks struct {
 	grace  time.Duration
 }
 
-// build loads config and constructs the HTTP handler, shared by Run and InProcess.
+// build loads config and constructs the HTTP handler, shared by Run and InProcessFromConfig.
 func build(ctx context.Context, configPath string, port int, reconcile bool, hooks *shutdownHooks) (handler http.Handler, cleanup func(), addr string, err error) {
 	cfg, err := config.LoadDeferringAgentCompleteness(configPath)
 	if err != nil {

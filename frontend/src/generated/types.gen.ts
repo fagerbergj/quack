@@ -1164,6 +1164,15 @@ export type DeleteChatData = {
     url: '/api/v1/chats/{chat_id}';
 };
 
+export type DeleteChatErrors = {
+    /**
+     * No such chat
+     */
+    404: ErrorResponse;
+};
+
+export type DeleteChatError = DeleteChatErrors[keyof DeleteChatErrors];
+
 export type DeleteChatResponses = {
     /**
      * Deleted
@@ -1505,6 +1514,10 @@ export type SendChatMessageErrors = {
      * No such chat
      */
     404: ErrorResponse;
+    /**
+     * The chat is archived (read-only); unarchive it before sending
+     */
+    409: ErrorResponse;
 };
 
 export type SendChatMessageError = SendChatMessageErrors[keyof SendChatMessageErrors];

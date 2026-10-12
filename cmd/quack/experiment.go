@@ -68,7 +68,7 @@ func runExperimentRun(cmd *cobra.Command, dataset, agent, prompt, runName string
 		return err
 	}
 
-	_, st, _, err := openLedgerAndStores()
+	_, st, _, err := openLedgerAndStores(cmd)
 	if err != nil {
 		return err
 	}

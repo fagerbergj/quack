@@ -637,18 +637,62 @@ func TestQueueNodeMessage_EmptyMessage400(t *testing.T) {
 	}
 }
 
-// TestEditNodeTask_NotStartedOK_StartedConflict: a not-yet-started node's task
-// can be edited; once "started" (its control is live) it's immutable.
-func TestEditNodeTask_NotStartedOK_StartedConflict(t *testing.T) {
+// TestEditNodeTask: only a node of the latest plan that never started takes an edit; a missing chat or
+// node 404s and a finished one 409s, so the CLI can't report an edit that will never apply.
+func TestEditNodeTask(t *testing.T) {
 	h := newTestHandler(t)
-	chatID, nodeID := "c1", "n1"
+	seedPlan(t, h, "c1", "p1", "n1")
+	seedPlan(t, h, "c2", "p2", "n2")
+	if err := h.store.UpsertDagNode(context.Background(), store.DagNode{NodeID: "n2", PlanID: "p2", Status: "done", Output: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, chatID, nodeID string
+		want                 int
+		wantBody             string
+	}{
+		{"not started", "c1", "n1", http.StatusOK, ""},
+		{"missing chat", "nope", "n1", http.StatusNotFound, "chat nope not found"},
+		{"missing node", "c1", "ghost", http.StatusNotFound, "no such node"},
+		{"finished node", "c2", "n2", http.StatusConflict, `"current":"done"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body, _ := json.Marshal(schema.EditNodeTaskBody{Task: "revised task"})
+			req := httptest.NewRequest(http.MethodPatch, "/api/v1/chats/"+tc.chatID+"/nodes/"+tc.nodeID, strings.NewReader(string(body)))
+			rec := httptest.NewRecorder()
+			h.EditNodeTask(rec, req, tc.chatID, tc.nodeID)
+			if rec.Code != tc.want || !strings.Contains(rec.Body.String(), tc.wantBody) {
+				t.Fatalf("status = %d body=%s, want %d containing %q", rec.Code, rec.Body.String(), tc.want, tc.wantBody)
+			}
+		})
+	}
+}
 
-	body, _ := json.Marshal(schema.EditNodeTaskBody{Task: "revised task"})
-	req := httptest.NewRequest(http.MethodPatch, "/api/v1/chats/"+chatID+"/nodes/"+nodeID, strings.NewReader(string(body)))
+// TestNodeVerbOnMissingChat404: node verbs on a chat that doesn't exist say so, not "no plan for this chat".
+func TestNodeVerbOnMissingChat404(t *testing.T) {
+	h := newTestHandler(t)
+	rec := putNodeStatus(t, h, "nope", "n1", schema.NodeStatusUpdateBody{Status: schema.NodeStatusUpdateBodyStatusPaused})
+	if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "chat nope not found") {
+		t.Fatalf("status = %d body=%s, want 404 naming the missing chat", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSendChatMessage_ArchivedChat409: an archived chat is read-only, as RetryNode and the UI composer treat it.
+func TestSendChatMessage_ArchivedChat409(t *testing.T) {
+	h := newTestHandler(t)
+	chatID := mustCreateChat(t, h)
+	if err := h.store.ArchiveChat(context.Background(), chatID, true); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/chats/"+chatID+"/responses", strings.NewReader(`{"content":"hello"}`))
+	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	h.EditNodeTask(rec, req, chatID, nodeID)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (node hasn't started); body=%s", rec.Code, rec.Body.String())
+	h.SendChatMessage(rec, req, chatID)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "unarchive") {
+		t.Fatalf("status = %d body=%s, want 409 telling the caller to unarchive", rec.Code, rec.Body.String())
+	}
+	if h.hub.HasRegisteredRun(chatID) {
+		t.Error("a run started on an archived chat")
 	}
 }
 
@@ -764,10 +808,7 @@ func TestUpdateResponseStatus_WrongResponseID404(t *testing.T) {
 // as startRun does) rather than only dropping the row.
 func TestDeleteChat_CancelsActiveRun(t *testing.T) {
 	h := newTestHandler(t)
-	chatID := "c1"
-	if _, err := h.store.CreateChat(context.Background(), ""); err != nil {
-		t.Fatalf("CreateChat: %v", err)
-	}
+	chatID := mustCreateChat(t, h)
 	cancelled := false
 	h.hub.RegisterRun(chatID, "r1", func() { cancelled = true; h.hub.EndRun(chatID, "r1") })
 
@@ -837,15 +878,30 @@ func TestDeleteChat_RunStuckRefuses(t *testing.T) {
 	}
 }
 
-// TestDeleteChat_UnknownOrFinishedChatNoOp: DELETE with nothing registered is a safe 204.
-func TestDeleteChat_UnknownOrFinishedChatNoOp(t *testing.T) {
+// TestDeleteChat_FinishedChatNoRun: DELETE of a chat with nothing registered is a plain 204.
+func TestDeleteChat_FinishedChatNoRun(t *testing.T) {
 	h := newTestHandler(t)
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/chats/no-such-chat", nil)
+	chatID := mustCreateChat(t, h)
 	rec := httptest.NewRecorder()
-	h.DeleteChat(rec, req, "no-such-chat")
+	h.DeleteChat(rec, httptest.NewRequest(http.MethodDelete, "/api/v1/chats/"+chatID, nil), chatID)
 
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want 204; body=%s", rec.Code, rec.Body.String())
+	}
+	if c, _ := h.store.GetChat(context.Background(), chatID); c != nil {
+		t.Error("chat row survived the delete")
+	}
+}
+
+// TestDeleteChat_UnknownChat404: deleting a chat that does not exist is a 404, as archive and rename are,
+// so `quack chat delete <typo>` can't report a deletion that never happened.
+func TestDeleteChat_UnknownChat404(t *testing.T) {
+	h := newTestHandler(t)
+	rec := httptest.NewRecorder()
+	h.DeleteChat(rec, httptest.NewRequest(http.MethodDelete, "/api/v1/chats/no-such-chat", nil), "no-such-chat")
+
+	if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "chat no-such-chat not found") {
+		t.Fatalf("status = %d body=%s, want 404 naming the chat", rec.Code, rec.Body.String())
 	}
 }
 
