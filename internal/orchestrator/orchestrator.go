@@ -231,6 +231,15 @@ func (o *Orchestrator) SetNodeTaskOverride(chatID, nodeID, task string) bool {
 // RetryNode re-runs a finished node and its descendants with optional guidance. A non-empty
 // planID names the node's own plan, so a stale stash never runs another plan's task.
 func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID, planID string, seeded map[string]string, nodeID, guidance string) iter.Seq2[stream.SSEEvent, error] {
+	return o.retryNodes(ctx, userID, chatID, planID, seeded, []string{nodeID}, guidance)
+}
+
+// ResumeNodes re-runs nodeIDs and their descendants as one run, so a descendant they share runs once.
+func (o *Orchestrator) ResumeNodes(ctx context.Context, userID, chatID, planID string, seeded map[string]string, nodeIDs []string) iter.Seq2[stream.SSEEvent, error] {
+	return o.retryNodes(ctx, userID, chatID, planID, seeded, nodeIDs, "")
+}
+
+func (o *Orchestrator) retryNodes(ctx context.Context, userID, chatID, planID string, seeded map[string]string, nodeIDs []string, guidance string) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
 		ctx, done := o.executor.Pin(ctx)
 		defer done()
@@ -241,20 +250,23 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID, planID str
 		defer otelobs.End(span, nil)
 		otelobs.RunStarted()
 		defer otelobs.RunFinished()
-		plan, err := o.planFor(ctx, userID, chatID, planID, nodeID)
+		plan, err := o.planForAll(ctx, userID, chatID, planID, nodeIDs)
 		if err != nil {
 			yield(stream.Errorf("retry: "+err.Error()), nil)
 			return
 		}
 		// Read before the plan snapshot below re-stamps the node's row. Guidance asks for a fresh attempt.
 		guidance = strings.TrimSpace(guidance)
-		cont := guidance == "" && o.executor.Continuable(ctx, chatID, nodeID)
+		targets := map[string]bool{}
+		for _, id := range nodeIDs {
+			targets[id] = guidance == "" && o.executor.Continuable(ctx, chatID, id)
+		}
 		// Lead with the plan snapshot so runlog.Drive-based callers (boot resume) persist the re-run nodes'
 		// state. Emitted before the guidance: persisted plans keep the original task, so it never piles up.
 		yield(tools.DagPlanEvent(ctx, plan), nil)
 		if guidance != "" {
 			for i := range plan.Nodes {
-				if plan.Nodes[i].ID == nodeID {
+				if targets[plan.Nodes[i].ID] {
 					plan.Nodes[i].Task += "\n\n[Retry guidance]: " + guidance
 				}
 			}
@@ -262,7 +274,7 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID, planID str
 		nodeOutputs := make(map[string]string)
 		retryNode := workflow.NewDynamicNode[any, string]("__retry",
 			func(nctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {
-				out, rerr := o.executor.RetryPlanInNode(nctx, plan, chatID, nodeID, seeded, cont)
+				out, rerr := o.executor.RetryPlanInNodes(nctx, plan, chatID, targets, seeded)
 				if rerr != nil {
 					return "", rerr
 				}
@@ -285,8 +297,8 @@ func (o *Orchestrator) RetryNode(ctx context.Context, userID, chatID, planID str
 		safeYield := newSafeYield(yield)
 		ctx = stream.WithYield(ctx, func(ev stream.SSEEvent) { safeYield(ev, nil) })
 		ds := o.executor.NewDagStream(ctx, plan, AppName, userID, runSess, chatID, safeYield, nodeOutputs)
-		ds.ScopeToRetry(nodeID)
-		content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "retry " + nodeID}}}
+		ds.ScopeToResume(nodeIDs)
+		content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "retry " + strings.Join(nodeIDs, ", ")}}}
 		for ev, rerr := range r.Run(ctx, userID, runSess, content, adkagent.RunConfig{}) {
 			if rerr != nil {
 				ds.Abort(rerr)
@@ -631,6 +643,20 @@ func (o *Orchestrator) planFor(ctx context.Context, userID, chatID, planID, node
 		return plan, fmt.Errorf("plan %s has no node %s", plan.ID, nodeID)
 	}
 	return plan, nil
+}
+
+// planForAll is planFor for every one of nodeIDs.
+func (o *Orchestrator) planForAll(ctx context.Context, userID, chatID, planID string, nodeIDs []string) (dag.Plan, error) {
+	if len(nodeIDs) == 0 {
+		return dag.Plan{}, fmt.Errorf("no node to run")
+	}
+	plan, err := o.planFor(ctx, userID, chatID, planID, nodeIDs[0])
+	for _, id := range nodeIDs[1:] {
+		if err == nil && !slices.ContainsFunc(plan.Nodes, func(n dag.Node) bool { return n.ID == id }) {
+			err = fmt.Errorf("plan %s has no node %s", plan.ID, id)
+		}
+	}
+	return plan, err
 }
 
 // stashedPlan loads the dag.Plan the execute tool stored in session state.

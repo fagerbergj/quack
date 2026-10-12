@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"iter"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
 	"google.golang.org/adk/v2/agent/workflowagent"
+	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/runner"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/workflow"
@@ -187,6 +190,52 @@ func TestRetryPlanInNode_ReusesUpstream(t *testing.T) {
 	}
 	if !strings.Contains(out["c"], "ANSWER") || out["c"] == "C-OLD" {
 		t.Errorf("c should be freshly re-run, got %q", out["c"])
+	}
+}
+
+// countingStub is okStub that counts the worker calls it answers.
+type countingStub struct {
+	okStub
+	calls atomic.Int32
+}
+
+func (c *countingStub) GenerateContent(ctx context.Context, req *model.LLMRequest, stream bool) iter.Seq2[*model.LLMResponse, error] {
+	if !gHasTool(req, "submit_verdict") {
+		c.calls.Add(1)
+	}
+	return c.okStub.GenerateContent(ctx, req, stream)
+}
+
+// Two retried targets that share a descendant run it once, after both, with both outputs.
+func TestRetryPlanInNodes_RunsASharedDescendantOnce(t *testing.T) {
+	synth := &countingStub{}
+	mk := func(m model.LLM) adkagent.Agent {
+		a, _ := llmagent.New(llmagent.Config{Name: "w", Model: m, Description: "w", Instruction: "ROLE:w Answer."})
+		return a
+	}
+	agents := map[string]adkagent.Agent{"r": mk(okStub{}), "s": mk(synth)}
+	ex := NewExecutor(session.InMemoryService(), agents, nil, vetting.NewJudgeFactory(okStub{}, nil, nil),
+		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+	plan := Plan{ID: "t", UserMessage: "x", Nodes: []Node{
+		{ID: "r1", AgentName: "r"}, {ID: "r2", AgentName: "r"},
+		{ID: "synth", AgentName: "s", DependsOn: []string{"r1", "r2"}},
+	}}
+	var out map[string]string
+	orchestrate := workflow.NewDynamicNode[any, string]("orch",
+		func(ctx adkagent.Context, _ any, _ func(*session.Event) error) (string, error) {
+			o, err := ex.RetryPlanInNodes(ctx, plan, "chat", map[string]bool{"r1": false, "r2": false}, map[string]string{})
+			out = o
+			return "done", err
+		}, workflow.NodeConfig{})
+	top, _ := workflowagent.New(workflowagent.Config{Name: "o", Edges: workflow.Chain(workflow.Start, orchestrate)})
+	r, _ := runner.New(runner.Config{AppName: "o", Agent: top, SessionService: session.InMemoryService(), AutoCreateSession: true})
+	for _, err := range r.Run(context.Background(), "u", "s", &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "go"}}}, adkagent.RunConfig{}) {
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
+	}
+	if n := synth.calls.Load(); n != 1 || !strings.Contains(out["synth"], "ANSWER") {
+		t.Errorf("synth ran %d worker call(s), output %q; want exactly one run", n, out["synth"])
 	}
 }
 

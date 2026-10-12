@@ -197,8 +197,8 @@ func boundedGoRun(ids []string, maxConcurrent int, run func(id string)) {
 	}
 }
 
-// driveResume re-enters a chat's resumable nodes via the REST-retry subset path (node + descendants);
-// a full-plan run would re-execute done nodes.
+// driveResume re-enters a chat's resumable nodes in one subset run (nodes + descendants), so a descendant
+// they share runs once; a full-plan run would re-execute done nodes.
 // obs, when non-nil, is the dispatching extension: it gets RunEnded exactly as an uninterrupted run would.
 func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, obs extsdk.RunObserver) {
 	plan, err := st.GetLatestDagPlan(ctx, chatID)
@@ -218,7 +218,7 @@ func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode
 	pub := runlog.NewPublisher(runCtx, hub, eventLog, chatID).After(hub.LastSeq(chatID))
 	pub.Publish(stream.ResponseCreated(turnID))
 
-	var res runlog.DriveResult
+	var ids []string
 	for _, n := range nodes {
 		if n.PlanID != plan.ID {
 			// A node paused under an older plan isn't in the latest graph;
@@ -228,13 +228,19 @@ func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode
 			failIfNotResumed(runCtx, st, chatID, n.PlanID, n.NodeID, "its plan was superseded")
 			continue
 		}
+		ids = append(ids, n.NodeID)
+	}
+	var res runlog.DriveResult
+	if len(ids) > 0 {
 		var resumeErr string
 		seeded, unreviewed := seededOutputs(runCtx, st, plan.ID)
-		run := lastErrorOf(orch.RetryNode(dag.WithUnreviewedSeeds(runCtx, unreviewed), userID, chatID, plan.ID, seeded, n.NodeID, ""), &resumeErr)
+		run := lastErrorOf(orch.ResumeNodes(dag.WithUnreviewedSeeds(runCtx, unreviewed), userID, chatID, plan.ID, seeded, ids), &resumeErr)
 		res = runlog.Drive(turnID, st, pub, run, func(err error) {
-			slog.Warn("resume run error", "component", "startup", "chat", chatID, "node", n.NodeID, "err", err)
+			slog.Warn("resume run error", "component", "startup", "chat", chatID, "nodes", ids, "err", err)
 		})
-		failIfNotResumed(runCtx, st, chatID, n.PlanID, n.NodeID, resumeErr)
+		for _, id := range ids {
+			failIfNotResumed(runCtx, st, chatID, plan.ID, id, resumeErr)
+		}
 	}
 	pub.Publish(stream.Done())
 	// A cancel lands on runCtx too, which would fail every write below and leave the chat
