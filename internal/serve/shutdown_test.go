@@ -39,7 +39,7 @@ func newShutdownTestStore(t *testing.T) *store.Store {
 }
 
 // TestDriveExtensionRunEvents_InterruptedSkipsRunEnded: a run killed via Hub.MarkInterrupted+CancelRun
-// never reaches RunEnded and is stamped RunStatusPaused (the drain paused its nodes; boot resumes them).
+// never reaches RunEnded. Cut before it planned, it keeps its in-flight marker for boot to settle.
 func TestDriveExtensionRunEvents_InterruptedSkipsRunEnded(t *testing.T) {
 	st := newShutdownTestStore(t)
 	hub := stream.NewHub()
@@ -47,6 +47,7 @@ func TestDriveExtensionRunEvents_InterruptedSkipsRunEnded(t *testing.T) {
 	if err := st.SetChatOrigin(context.Background(), chatID, "ext", ""); err != nil {
 		t.Fatalf("SetChatOrigin: %v", err)
 	}
+	_ = st.MarkRunActive(context.Background(), chatID, "turn-1") // the dispatch's own mark
 
 	obs := &fakeRunObserver{}
 	var ext extsdk.Extension = obs
@@ -87,11 +88,11 @@ func TestDriveExtensionRunEvents_InterruptedSkipsRunEnded(t *testing.T) {
 	if err != nil || c == nil {
 		t.Fatalf("GetChat: %v, %v", c, err)
 	}
-	if c.RunStatus != store.RunStatusPaused {
-		t.Errorf("RunStatus = %q, want %q", c.RunStatus, store.RunStatusPaused)
+	if c.RunStatus == store.RunStatusPaused || c.ActiveTurnID != "turn-1" {
+		t.Errorf("RunStatus, ActiveTurnID = %q, %q, want not paused and turn-1 kept for boot", c.RunStatus, c.ActiveTurnID)
 	}
-	if c.ActiveTurnID != "" {
-		t.Errorf("ActiveTurnID = %q, want cleared", c.ActiveTurnID)
+	if _, settled, _, err := st.ScanOrphanedRuns(context.Background()); err != nil || len(settled) != 1 || settled[0] != chatID {
+		t.Errorf("boot scan settled %v (%v), want [%s]", settled, err, chatID)
 	}
 }
 

@@ -1829,12 +1829,9 @@ func (h *Handler) settleStoppedPlan(ctx, runCtx context.Context, chatID string) 
 func (h *Handler) stampRunOutcome(parent context.Context, chatID string) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 10*time.Second)
 	defer cancel()
-	// Shutdown force-cancelled this run: its nodes are paused on disk and boot resumes them,
-	// so stamp paused rather than guessing from a cut-off turn.
+	// Shutdown force-cancelled this run: boot resumes or settles it, never a guess from a cut-off turn.
 	if h.hub.WasInterrupted(chatID) {
-		if err := h.store.StampRunOutcome(ctx, chatID, store.RunStatusPaused, ""); err != nil {
-			slog.Warn("stamp run outcome: paused persist failed", "component", "rest", "chat", chatID, "err", err)
-		}
+		h.store.StampCutRun(ctx, chatID)
 		// A turn end too: checkpoint here as well so the interrupted and normal paths don't diverge.
 		if err := h.store.WriteCheckpoint(ctx, chatID); err != nil {
 			slog.Warn("checkpoint write failed", "component", "rest", "chat", chatID, "err", err)
