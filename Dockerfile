@@ -11,7 +11,8 @@ WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 # Cache mount: npm's download cache persists across builds, never lands in a layer.
 RUN --mount=type=cache,target=/root/.npm npm ci
-COPY frontend/ ./
+# Tests and stories never reach the bundle; CI's `npm run build` still type-checks them.
+COPY --exclude=**/*.test.ts --exclude=**/*.test.tsx --exclude=**/*.stories.tsx frontend/ ./
 RUN npm run build
 
 # 1b) Mermaid validator deps (#574): mermaid.parse() run for real, not the Go
@@ -36,10 +37,16 @@ RUN cd /usr/local/go && rm -rf test api doc \
     && find src \( -name testdata -type d -prune -o -name '*_test.go' \) -exec rm -rf {} +
 WORKDIR /app
 COPY go.mod go.sum ./
-# Not cache-mounted (#936): the runtime ships this cache, so it must land in a layer.
+# The runtime ships /go/pkg/mod (#936), so it is filled offline from the cache mount.
 # Zips go: go build/test and go mod verify read the extracted tree plus .ziphash.
-RUN go mod download && find /go/pkg/mod/cache/download -name '*.zip' -delete
-COPY . .
+RUN --mount=type=cache,target=/root/gomod-dl \
+    GOMODCACHE=/root/gomod-dl go mod download \
+    && GOPROXY=file:///root/gomod-dl/cache/download go mod download \
+    && find /go/pkg/mod/cache/download -name '*.zip' -delete
+# Not build inputs, so editing them leaves the go build cached: the SPA comes
+# from the frontend stage and the runtime COPYs pi-acp/config from the context.
+COPY --exclude=docs --exclude=frontend --exclude=scripts --exclude=testdata --exclude=tools \
+     --exclude=Dockerfile --exclude=*.md --exclude=**/*_test.go --exclude=**/testdata . .
 COPY --from=frontend /app/frontend/dist ./internal/serve/web/dist
 
 # `make dev-image` only: --build-context ext=<checkout> replaces this empty stage,
@@ -102,9 +109,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       gcc libc6-dev \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --uid 65532 --no-create-home --shell /usr/sbin/nologin nonroot
+# Symlinks dangle until the COPYs land. No RUN follows the COPYs, and --link
+# caches each COPY on its own content, so a change re-copies only its layer.
+RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
+    && ln -s /usr/local/lib/pi/node_modules/.bin/pi /usr/local/bin/pi
+ENV PATH=/usr/local/go/bin:$PATH
 WORKDIR /
-COPY --from=backend /quack /quack
-COPY --from=backend /quack-sandbox /quack-sandbox
 # Build toolchains for the coding agents (#283): the code-implementer must be
 # able to `go build/test` and `npx tsc`/`npm test` what it writes - without them
 # every check fails with "not found" and the worker grinds hunting a toolchain
@@ -112,44 +123,43 @@ COPY --from=backend /quack-sandbox /quack-sandbox
 # match what CI builds with (~+500MB, a deliberate size tradeoff). Go's
 # per-user caches (GOPATH/GOCACHE) default under $HOME, which quack points at
 # the writable workspace volume - nothing writes outside it.
-COPY --from=backend /usr/local/go /usr/local/go
+COPY --link --from=backend /usr/local/go /usr/local/go
 # go.sum's module cache (#936), under GOROOT rather than $HOME: the sandbox
 # ro-binds /usr whole but never /home, and workspace.env's GOMODCACHE default
 # points here. Extracted read-only (0444/0555) by go mod download itself, so
 # uid 65532 can read it with no chown - and Go still fails loudly, not
 # silently online, on any module go.sum doesn't already cover.
-COPY --from=backend /go/pkg/mod /usr/local/go/pkg/mod
+COPY --link --from=backend /go/pkg/mod /usr/local/go/pkg/mod
+COPY --link --from=frontend /usr/local/bin/node /usr/local/bin/node
+COPY --link --from=frontend /usr/local/lib/node_modules /usr/local/lib/node_modules
 # Under /usr (not /opt): the bwrap jail ro-binds /usr whole; /opt is invisible
 # to worker subprocesses (EACCES at spawn).
 # The ACP coding agent (agents.<name>.acp: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
 # - resolved via the server's PATH). The shim writes pi's per-round config
 # (models.json/settings.json/extensions) into TMPDIR; session state is off
 # (--no-session).
-COPY --from=pi /opt/pi/node_modules /usr/local/lib/pi/node_modules
-RUN ln -s /usr/local/lib/pi/node_modules/.bin/pi /usr/local/bin/pi
-COPY tools/pi-acp/pi-acp.mjs tools/pi-acp/mcp-client.mjs tools/pi-acp/otel.mjs /usr/local/lib/pi-acp/
-COPY --from=frontend /usr/local/bin/node /usr/local/bin/node
-COPY --from=frontend /usr/local/lib/node_modules /usr/local/lib/node_modules
-RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
-    && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
-ENV PATH=/usr/local/go/bin:$PATH
+COPY --link --from=pi /opt/pi/node_modules /usr/local/lib/pi/node_modules
+COPY --link tools/pi-acp/pi-acp.mjs tools/pi-acp/mcp-client.mjs tools/pi-acp/otel.mjs /usr/local/lib/pi-acp/
 # The mermaid validator (internal/vetting/mermaid.go, #574): `node
 # scripts/mermaid-validate.mjs` resolves against CWD / here, exactly like
 # every path below - same relative path the source tree uses in dev.
-COPY --from=mermaid-validator /app/scripts /scripts
+COPY --link --from=mermaid-validator /app/scripts /scripts
 # The config directory: quack.yaml plus files it references by relative path
 # (CWD is /), e.g. the trust gate's rubric at config/constitution.md.
-COPY config/ /config/
+COPY --link config/ /config/
 # Declarative agent bundles (agent-card.json + prompt.md), read at startup. The
 # config references them by the relative path `agents/...` (CWD is /), so keep
 # that layout.
-COPY agents/ /agents/
+COPY --link agents/ /agents/
 # Orchestrator skill bundles (SKILL.md directories), read at startup.
-COPY skills/ /skills/
+COPY --link skills/ /skills/
 # Agent Plugins roots, resolved against CWD / (config's plugins:): the
 # tracked embedded-dotagents snapshot and first-party manifests under
 # .agents/plugins. Registry-fetched plugins clone under plugins.root instead.
-COPY --from=backend /app/.agents/ /.agents/
+COPY --link --from=backend /app/.agents/ /.agents/
+# Last: they change on every code edit, so the layers above stay pullable from cache.
+COPY --link --from=backend /quack-sandbox /quack-sandbox
+COPY --link --from=backend /quack /quack
 ENV QUACK_CONFIG=/config/quack.yaml
 USER nonroot
 EXPOSE 8080
