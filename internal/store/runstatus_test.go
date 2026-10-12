@@ -290,3 +290,81 @@ func TestSeedOutputs_Classification(t *testing.T) {
 		t.Error("a node with no output was seeded")
 	}
 }
+
+// TestStampCutRun: a cut run with a suspended node is stamped paused; one without keeps its in-flight
+// marker, and the next boot settles it failed instead of leaving it paused forever.
+func TestStampCutRun(t *testing.T) {
+	st := resumeTestStore(t)
+	ctx := context.Background()
+	if err := st.SetChatOrigin(ctx, "c2", "u1", ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"c1", "c2"} {
+		if err := st.MarkRunActive(ctx, id, "t1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.UpsertDagNode(ctx, DagNode{PlanID: "p1", NodeID: "n1", Status: string(dag.StatusPaused)}); err != nil {
+		t.Fatal(err)
+	}
+
+	st.StampCutRun(ctx, "c1")
+	st.StampCutRun(ctx, "c2")
+
+	if c, _ := st.GetChat(ctx, "c1"); c.RunStatus != RunStatusPaused || c.ActiveTurnID != "" {
+		t.Errorf("c1 = %q/%q, want paused with the marker cleared", c.RunStatus, c.ActiveTurnID)
+	}
+	if c, _ := st.GetChat(ctx, "c2"); c.RunStatus == RunStatusPaused || c.ActiveTurnID != "t1" {
+		t.Errorf("c2 = %q/%q, want the marker kept and no paused stamp", c.RunStatus, c.ActiveTurnID)
+	}
+	paused, settled, _, err := st.ScanOrphanedRuns(ctx)
+	if err != nil || len(paused) != 1 || paused[0] != "c1" || len(settled) != 1 || settled[0] != "c2" {
+		t.Fatalf("paused=%v settled=%v err=%v, want [c1] and [c2]", paused, settled, err)
+	}
+	if c, _ := st.GetChat(ctx, "c2"); c.RunStatus != RunStatusFailed {
+		t.Errorf("c2 RunStatus = %q, want failed", c.RunStatus)
+	}
+}
+
+// TestStampCutRun_BetweenNodesKeepsFrontier: a run cut after n1 finished, before n2 started, has nothing paused;
+// keeping its marker is what lets boot re-arm n2 rather than strand the chat.
+func TestStampCutRun_BetweenNodesKeepsFrontier(t *testing.T) {
+	st := resumeTestStore(t)
+	ctx := context.Background()
+	if err := st.MarkRunActive(ctx, "c1", "t1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveExecPlan(ctx, "c1", "p1", `{"ID":"p1","Nodes":[{"ID":"n1"},{"ID":"n2","DependsOn":["n1"]}]}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertDagNode(ctx, DagNode{NodeID: "n1", PlanID: "p1", Status: string(dag.StatusDone)}); err != nil {
+		t.Fatal(err)
+	}
+
+	st.StampCutRun(ctx, "c1")
+
+	rep, err := st.ResumePausedDagNodes(ctx, nil)
+	if err != nil || len(rep.Start) != 1 || rep.Start[0].NodeID != "n2" {
+		t.Fatalf("Start = %+v (%v), want n2 re-armed", rep.Start, err)
+	}
+}
+
+// TestScanOrphanedRuns_SettlesPausedWithNothingSuspended: a chat stamped paused whose nodes are gone or failed
+// (an older cut tail, or nodes failed unresumable) can never resume, so boot settles it failed.
+func TestScanOrphanedRuns_SettlesPausedWithNothingSuspended(t *testing.T) {
+	st := resumeTestStore(t)
+	ctx := context.Background()
+	if err := st.StampRunOutcome(ctx, "c1", RunStatusPaused, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertDagNode(ctx, DagNode{PlanID: "p1", NodeID: "n1", Status: string(dag.StatusFailed)}); err != nil {
+		t.Fatal(err)
+	}
+	_, settled, _, err := st.ScanOrphanedRuns(ctx)
+	if err != nil || len(settled) != 1 || settled[0] != "c1" {
+		t.Fatalf("settled = %v err=%v, want [c1]", settled, err)
+	}
+	if c, _ := st.GetChat(ctx, "c1"); c.RunStatus != RunStatusFailed {
+		t.Errorf("RunStatus = %q, want failed", c.RunStatus)
+	}
+}

@@ -1133,12 +1133,10 @@ func finishExtRun(ctx, runCtx context.Context, cancelRun context.CancelFunc, nam
 	runlog.StampTurn(runCtx, st, chatID, turnID, res)
 
 	// Shutdown force-cancelled this run: skip RunEnded so a deploy never posts for unfinished work. A run that
-	// finishes normally during the drain keeps its RunEnded; boot resumes the paused nodes.
+	// finishes normally during the drain keeps its RunEnded; boot resumes the run, or settles it and sends RunEnded.
 	if hub.WasInterrupted(chatID) {
 		stampCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-		if err := st.StampRunOutcome(stampCtx, chatID, store.RunStatusPaused, ""); err != nil {
-			slog.Warn("extension run: interrupted stamp failed", "component", "ext."+name, "chat", chatID, "err", err)
-		}
+		st.StampCutRun(stampCtx, chatID)
 		if err := st.WriteCheckpoint(stampCtx, chatID); err != nil { // best-effort
 			slog.Warn("extension run: checkpoint write failed", "component", "ext."+name, "chat", chatID, "err", err)
 		}

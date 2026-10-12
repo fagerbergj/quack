@@ -33,28 +33,48 @@ func TestSendChatMessage_DrainingRejects503(t *testing.T) {
 	}
 }
 
-// TestStampRunOutcome_Interrupted: once Hub.MarkInterrupted names a chat, stampRunOutcome persists
-// RunStatusPaused (the drain paused its nodes, boot resumes them) whatever the turns would derive.
+// TestStampRunOutcome_Interrupted: a shutdown-cut run with a paused node is stamped paused for boot to resume;
+// one cut before it planned keeps its in-flight marker, so boot settles it instead of leaving it paused.
 func TestStampRunOutcome_Interrupted(t *testing.T) {
-	h := newTestHandler(t)
-	ctx := context.Background()
-	c, err := h.store.CreateChat(ctx, "")
-	if err != nil {
-		t.Fatalf("CreateChat: %v", err)
-	}
-	if err := h.store.MarkRunActive(ctx, c.ID, "turn-1"); err != nil {
-		t.Fatalf("MarkRunActive: %v", err)
-	}
-	h.hub.MarkInterrupted(c.ID)
+	for _, tc := range []struct {
+		name       string
+		pausedNode bool
+		wantStatus string
+		wantTurn   string
+	}{
+		{"paused node", true, store.RunStatusPaused, ""},
+		{"orchestrator only", false, "", "turn-1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newTestHandler(t)
+			ctx := context.Background()
+			c, err := h.store.CreateChat(ctx, "")
+			if err != nil {
+				t.Fatalf("CreateChat: %v", err)
+			}
+			if err := h.store.MarkRunActive(ctx, c.ID, "turn-1"); err != nil {
+				t.Fatalf("MarkRunActive: %v", err)
+			}
+			if tc.pausedNode {
+				if err := h.store.SaveDagPlan(ctx, c.ID, "p1", "turn-1", "{}"); err != nil {
+					t.Fatal(err)
+				}
+				if err := h.store.UpsertDagNode(ctx, store.DagNode{PlanID: "p1", NodeID: "n1", Status: "paused"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			h.hub.MarkInterrupted(c.ID)
 
-	h.stampRunOutcome(ctx, c.ID)
+			h.stampRunOutcome(ctx, c.ID)
 
-	got, err := h.store.GetChat(ctx, c.ID)
-	if err != nil || got == nil {
-		t.Fatalf("GetChat: %v, %v", got, err)
-	}
-	if got.RunStatus != store.RunStatusPaused {
-		t.Errorf("RunStatus = %q, want %q", got.RunStatus, store.RunStatusPaused)
+			got, err := h.store.GetChat(ctx, c.ID)
+			if err != nil || got == nil {
+				t.Fatalf("GetChat: %v, %v", got, err)
+			}
+			if got.RunStatus != tc.wantStatus || got.ActiveTurnID != tc.wantTurn {
+				t.Errorf("RunStatus, ActiveTurnID = %q, %q, want %q, %q", got.RunStatus, got.ActiveTurnID, tc.wantStatus, tc.wantTurn)
+			}
+		})
 	}
 }
 

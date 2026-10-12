@@ -94,7 +94,7 @@ func (j *Jail) nodeHomeDir(userID, chatID, nodeID, subdir, label string) (string
 }
 
 // ScratchDir is a per-node TMPDIR under HomeDir, never in the node's tree (read-only trees stay immutable);
-// one component per node so sweepHomeTmp's TTL reaps it.
+// one component per node so sweepHomeTmp's TTL reaps it. It outlives rounds and restarts, like ACPStateDir.
 func (j *Jail) ScratchDir(userID, chatID, nodeID string) (string, error) {
 	return j.nodeHomeDir(userID, chatID, nodeID, "tmp", "scratch dir")
 }
@@ -271,9 +271,9 @@ func (j *Jail) RemoveChatScope(userID, chatID string) error {
 	return nil
 }
 
-// RemoveACPState: ACP state lives under HomeDir so a session survives a clone re-provision,
-// so RemoveChatScope doesn't cover it. Empty chatID rejected.
-func (j *Jail) RemoveACPState(userID, chatID string) error {
+// RemoveNodeDirs removes chatID's per-node ACP state and scratch dirs. They live under HomeDir so a node's session
+// and tmp outlive a round, a restart and a clone re-provision; RemoveChatScope doesn't cover them. Empty chatID rejected.
+func (j *Jail) RemoveNodeDirs(userID, chatID string) error {
 	if strings.TrimSpace(chatID) == "" {
 		return ErrInvalidChatID
 	}
@@ -281,13 +281,15 @@ func (j *Jail) RemoveACPState(userID, chatID string) error {
 	if err != nil {
 		return err
 	}
-	matches, err := filepath.Glob(filepath.Join(home, "acp-state", ChatDirName(chatID)+"__*"))
-	if err != nil {
-		return fmt.Errorf("workspace: glob acp state for chat %q: %w", chatID, err)
-	}
-	for _, dir := range matches {
-		if err := RemoveAllForce(dir); err != nil {
-			return fmt.Errorf("workspace: remove acp state %q: %w", dir, err)
+	for _, sub := range []string{"acp-state", "tmp"} {
+		matches, err := filepath.Glob(filepath.Join(home, sub, ChatDirName(chatID)+"__*"))
+		if err != nil {
+			return fmt.Errorf("workspace: glob %s for chat %q: %w", sub, chatID, err)
+		}
+		for _, dir := range matches {
+			if err := RemoveAllForce(dir); err != nil {
+				return fmt.Errorf("workspace: remove node dir %q: %w", dir, err)
+			}
 		}
 	}
 	return nil

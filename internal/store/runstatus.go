@@ -47,6 +47,24 @@ func (s *Store) StampRunOutcome(ctx context.Context, chatID, status, pendingQues
 	}).Error
 }
 
+// StampCutRun is the tail of a run shutdown force-cancelled. With a suspended node it stamps the chat paused for
+// boot to resume; with none it leaves the in-flight marker, so boot finishes, re-arms or settles the run.
+func (s *Store) StampCutRun(ctx context.Context, chatID string) {
+	// ponytail: any plan's suspended node counts, as in chatsWithPausedNodes, so an older plan's held node masks a
+	// newer turn cut while planning; scope both to the latest plan (as queuedFrontier does) if that shows up.
+	var n int64
+	err := s.db.WithContext(ctx).Model(&DagNode{}).
+		Joins("JOIN dag_plans ON dag_plans.id = dag_nodes.plan_id").
+		Where("dag_plans.chat_id = ? AND dag_nodes.status IN ?", chatID, []string{string(dag.StatusPaused), string(dag.StatusNeedsInput)}).
+		Count(&n).Error
+	if err != nil || n == 0 {
+		return
+	}
+	if err := s.StampRunOutcome(ctx, chatID, RunStatusPaused, ""); err != nil {
+		slog.Warn("stamp cut run: paused persist failed", "component", "store", "chat", chatID, "err", err)
+	}
+}
+
 // DeriveTerminalStatus computes a chat's terminal status from its turns and pending question. nodeError is
 // the failed node's DagNode.Error; chatID keys the failure trackers for give-ups that leave no DagNode.
 func DeriveTerminalStatus(chatID string, turns []TurnContent, pendingQuestion string, hasPendingQuestion bool) (status, question, nodeError string) {
@@ -146,10 +164,11 @@ func (s *Store) ScanOrphanedRuns(ctx context.Context) (paused, noResumableNode, 
 			continue
 		}
 		switch {
-		case c.ActiveTurnID == "":
-		case s.planAllDone(ctx, c):
+		case c.ActiveTurnID != "" && s.planAllDone(ctx, c):
 			finishable = append(finishable, c.ID)
-		default:
+		// Paused with nothing suspended: its nodes were failed unresumable, or an older tail stamped a cut
+		// orchestrator-only turn paused. Either way nothing will resume it.
+		case c.ActiveTurnID != "" || c.RunStatus == RunStatusPaused:
 			noResumableNode = append(noResumableNode, c.ID)
 			s.settleInterrupted(ctx, c.ID)
 		}

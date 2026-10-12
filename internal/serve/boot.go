@@ -262,7 +262,9 @@ func driveBootRun(ctx context.Context, chatID string, orch *orchestrator.Orchest
 	body func(runCtx context.Context, plan *store.DagPlan, userID string, pub *runlog.Publisher) runlog.DriveResult) {
 	plan, err := st.GetLatestDagPlan(ctx, chatID)
 	if err != nil || plan == nil {
-		slog.Warn("resume: plan lookup failed", "component", "startup", "chat", chatID, "err", err)
+		// The chat keeps its paused nodes or in-flight marker, so the next boot retries it.
+		slog.Warn("resume: plan lookup failed; left for the next boot", "component", "startup", "chat", chatID, "err", err)
+		endReopenedStream(ctx, hub, eventLog, chatID)
 		return
 	}
 	userID := st.SessionUserForChat(ctx, chatID)
@@ -304,6 +306,17 @@ func driveBootRun(ctx context.Context, chatID string, orch *orchestrator.Orchest
 	st.StampTerminalOutcome(tailCtx, orchestrator.AppName, userID, chatID, func() (string, bool) {
 		return orch.PendingQuestion(tailCtx, userID, chatID)
 	})
+}
+
+// endReopenedStream ends the transcript Reopen replayed for a boot run that never started, so no subscriber
+// waits on it forever. A run already holding the chat owns the stream and closes it itself.
+func endReopenedStream(ctx context.Context, hub *stream.Hub, eventLog *runlog.EventLog, chatID string) {
+	noop := func() {}
+	if !hub.RegisterRun(chatID, "", noop) {
+		return
+	}
+	runlog.NewPublisher(ctx, hub, eventLog, chatID).Publish(stream.Done())
+	eventLog.FinishRun(hub, chatID, "", noop)
 }
 
 // runObserverFor returns the extension that dispatched chatID ("ext:<name>:..."), if it observes runs.

@@ -534,11 +534,11 @@ func (h *Handler) UpdateChat(w http.ResponseWriter, r *http.Request, chatID sche
 			return
 		}
 		c.Archived = *body.Archived
-		// Best-effort: reap ACP nodes' on-disk sessions now that ArchiveChat has reaped their ADK worker
+		// Best-effort: reap ACP nodes' on-disk sessions and scratch now that ArchiveChat has reaped their ADK worker
 		// sessions; node reuse defers this from node completion to here.
 		if *body.Archived && h.jail != nil {
-			if err := h.jail.RemoveACPState(userID, chatID); err != nil {
-				slog.Warn("acp state cleanup failed; chat archived anyway",
+			if err := h.jail.RemoveNodeDirs(userID, chatID); err != nil {
+				slog.Warn("node dir cleanup failed; chat archived anyway",
 					"component", "rest", "chat", chatID, "err", err)
 			}
 		}
@@ -566,8 +566,8 @@ func (h *Handler) DeleteChat(w http.ResponseWriter, r *http.Request, chatID sche
 			slog.Warn("per-chat workspace cleanup failed; chat deleted anyway",
 				"component", "rest", "chat", chatID, "err", err)
 		}
-		if err := h.jail.RemoveACPState(userID, chatID); err != nil {
-			slog.Warn("acp state cleanup failed; chat deleted anyway",
+		if err := h.jail.RemoveNodeDirs(userID, chatID); err != nil {
+			slog.Warn("node dir cleanup failed; chat deleted anyway",
 				"component", "rest", "chat", chatID, "err", err)
 		}
 	}
@@ -1829,12 +1829,9 @@ func (h *Handler) settleStoppedPlan(ctx, runCtx context.Context, chatID string) 
 func (h *Handler) stampRunOutcome(parent context.Context, chatID string) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 10*time.Second)
 	defer cancel()
-	// Shutdown force-cancelled this run: its nodes are paused on disk and boot resumes them,
-	// so stamp paused rather than guessing from a cut-off turn.
+	// Shutdown force-cancelled this run: boot resumes or settles it, never a guess from a cut-off turn.
 	if h.hub.WasInterrupted(chatID) {
-		if err := h.store.StampRunOutcome(ctx, chatID, store.RunStatusPaused, ""); err != nil {
-			slog.Warn("stamp run outcome: paused persist failed", "component", "rest", "chat", chatID, "err", err)
-		}
+		h.store.StampCutRun(ctx, chatID)
 		// A turn end too: checkpoint here as well so the interrupted and normal paths don't diverge.
 		if err := h.store.WriteCheckpoint(ctx, chatID); err != nil {
 			slog.Warn("checkpoint write failed", "component", "rest", "chat", chatID, "err", err)

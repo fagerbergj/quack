@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -86,7 +87,7 @@ func Sweep(ctx context.Context, jail *Jail, cfg GCConfig, isActive ActiveChatFun
 		n, b := sweepBaselineTemp(ctx, jail.Root(), cfg.ScratchTTL, cfg.BaselineTempDir, prune)
 		res.ScratchRemoved += n
 		res.BytesReclaimed += b
-		n, b = sweepHomeTmp(cfg.ScratchTTL, jail)
+		n, b = sweepHomeTmp(cfg.ScratchTTL, jail, isActive)
 		res.ScratchRemoved += n
 		res.BytesReclaimed += b
 	}
@@ -180,8 +181,9 @@ func sweepBaselineTemp(ctx context.Context, jailRoot string, ttl time.Duration, 
 	return removed, bytes
 }
 
-// sweepHomeTmp removes stale .quack-home/tmp entries. Caches (npm/go/gradle) are left alone.
-func sweepHomeTmp(ttl time.Duration, jail *Jail) (removed int, bytes int64) {
+// sweepHomeTmp removes .quack-home/tmp entries nothing has written to within ttl. Caches (npm/go/gradle) are left alone.
+// ponytail: a node paused past ttl without writing loses its scratch; skip chats with a suspended node if that bites.
+func sweepHomeTmp(ttl time.Duration, jail *Jail, isActive ActiveChatFunc) (removed int, bytes int64) {
 	userEntries, err := os.ReadDir(jail.Root())
 	if err != nil {
 		return 0, 0
@@ -201,9 +203,12 @@ func sweepHomeTmp(ttl time.Duration, jail *Jail) (removed int, bytes int64) {
 			continue
 		}
 		for _, e := range entries {
+			if tmpEntryChatActive(e.Name(), isActive) {
+				continue
+			}
 			p := filepath.Join(tmpDir, e.Name())
-			fi, err := os.Stat(p)
-			if err != nil || fi.ModTime().After(cutoff) {
+			// The newest write, not the entry's own mtime: a node working inside tmp/<node>/bt never touches tmp/<node>.
+			if t := newestModTime(p); t.IsZero() || t.After(cutoff) {
 				continue
 			}
 			sz := dirSize(p)
@@ -320,6 +325,39 @@ func RemoveAllForce(path string) error {
 		return nil
 	})
 	return os.RemoveAll(path)
+}
+
+// tmpEntryChatActive: a scratch entry is "<chatDir>__<node>" and either part may hold "__", so every split is tried.
+func tmpEntryChatActive(name string, isActive ActiveChatFunc) bool {
+	if isActive == nil {
+		return true
+	}
+	for i := strings.Index(name, "__"); i >= 0; {
+		if isActive(name[:i]) {
+			return true
+		}
+		next := strings.Index(name[i+1:], "__")
+		if next < 0 {
+			break
+		}
+		i += 1 + next
+	}
+	return false
+}
+
+// newestModTime is the latest mtime of root or anything under it; zero if root can't be read.
+func newestModTime(root string) time.Time {
+	var newest time.Time
+	_ = filepath.WalkDir(root, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info, ierr := d.Info(); ierr == nil && info.ModTime().After(newest) {
+			newest = info.ModTime()
+		}
+		return nil
+	})
+	return newest
 }
 
 // dirSize sums regular-file sizes under root. Best-effort.
