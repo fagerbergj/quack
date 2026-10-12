@@ -205,7 +205,8 @@ func TestHubEndRun_StaleResponseIDDoesNotWipeNewerRun(t *testing.T) {
 	_, _, cancelSub, _ := h.Subscribe("c1")
 	defer cancelSub()
 
-	h.RegisterRun("c1", "new-run", func() {}) // a fast retry supersedes the old run
+	h.MarkEnding("c1", "old-run")
+	h.RegisterRun("c1", "new-run", func() {}) // a dispatch from old-run's RunEnded supersedes it
 
 	h.EndRun("c1", "old-run") // the old run's own tail, arriving late
 
@@ -272,6 +273,7 @@ func TestHubRegisterRunRacesEndRun(t *testing.T) {
 	for i := range 200 {
 		chatID := fmt.Sprintf("c%d", i)
 		h.RegisterRun(chatID, "old", func() {})
+		h.MarkEnding(chatID, "old")
 
 		var wg sync.WaitGroup
 		wg.Add(2)
@@ -288,6 +290,46 @@ func TestHubRegisterRunRacesEndRun(t *testing.T) {
 		if !h.HasRegisteredRun(chatID) {
 			t.Fatalf("iteration %d: EndRun(old) wiped the newer RegisterRun racing it", i)
 		}
+	}
+}
+
+// Concurrent starts on one chat (a re-POSTed sleeper job, a dispatch racing a boot resume): exactly one wins.
+// Run with -race.
+func TestHubRegisterRunOneWinner(t *testing.T) {
+	h := NewHub()
+	var wins sync.Map
+	var wg sync.WaitGroup
+	for i := range 16 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if h.RegisterRun("c1", fmt.Sprintf("r%d", i), func() {}) {
+				wins.Store(i, true)
+			}
+		}()
+	}
+	wg.Wait()
+	n := 0
+	wins.Range(func(any, any) bool { n++; return true })
+	if n != 1 {
+		t.Fatalf("%d concurrent RegisterRun calls won chat c1, want exactly 1", n)
+	}
+}
+
+// Only the live run's own MarkEnding opens the chat; a stale id must not.
+func TestHubMarkEndingNamesTheRun(t *testing.T) {
+	h := NewHub()
+	h.RegisterRun("c1", "r1", func() {})
+	h.MarkEnding("c1", "stale")
+	if h.RegisterRun("c1", "r2", func() {}) {
+		t.Fatal("RegisterRun superseded a live run after a stale MarkEnding")
+	}
+	h.MarkEnding("c1", "r1")
+	if !h.RegisterRun("c1", "r2", func() {}) {
+		t.Fatal("RegisterRun refused a run that MarkEnding released")
+	}
+	if !h.HasRegisteredRun("c1") {
+		t.Fatal("the superseding run is not registered")
 	}
 }
 

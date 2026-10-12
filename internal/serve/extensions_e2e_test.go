@@ -128,6 +128,12 @@ func waitRunSettled(t *testing.T, st *store.Store, chatID string) {
 	})
 }
 
+// waitRunEnded waits for chatID's run to unregister: a re-dispatch before then is refused as in flight.
+func waitRunEnded(t *testing.T, hub *stream.Hub, chatID string) {
+	t.Helper()
+	waitUntil(t, 5*time.Second, func() bool { return !hub.HasRegisteredRun(chatID) })
+}
+
 func waitUntil(t *testing.T, timeout time.Duration, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -251,6 +257,7 @@ func TestSDKExtensionDispatchKeepsStableUserAcrossRedispatch(t *testing.T) {
 		t.Fatalf("GetChat after turn 1: %v, %v", t1, err)
 	}
 	turn1UpdatedAt := t1.UpdatedAt
+	waitRunEnded(t, hub, chatID)
 
 	// Turn 2: a /review re-dispatch from a different GitHub commenter.
 	req2 := extsdk.DispatchRequest{Chat: extsdk.ChatRef{LocalID: localID, User: "bob"}, Ask: extsdk.Ask{Message: "please review"}}
@@ -504,6 +511,7 @@ func TestSDKExtensionRedispatchSameChatIDAppendsTurn(t *testing.T) {
 	// Drain the first run fully before firing the second - two overlapping
 	// runs on the same chat would race each other's event-log writes.
 	waitRunSettled(t, st, chatID)
+	waitRunEnded(t, hub, chatID)
 
 	req.Ask.Message = "second turn"
 	if err := dispatch(context.Background(), req); err != nil {
@@ -628,6 +636,7 @@ func TestSDKExtensionRedispatchAfterBoundPlanKeepsAskOnBothTurns(t *testing.T) {
 		t.Fatalf("first (bound) dispatch: %v", err)
 	}
 	waitRunSettled(t, st, chatID)
+	waitRunEnded(t, hub, chatID)
 
 	// Turn 2: unshaped re-dispatch onto the same chat (a bare /review re-trigger).
 	req2 := extsdk.DispatchRequest{
@@ -686,6 +695,9 @@ func TestSDKExtensionDispatchEmptyMessageErrors(t *testing.T) {
 	req := extsdk.DispatchRequest{Chat: extsdk.ChatRef{LocalID: localID}, Ask: extsdk.Ask{Message: "  "}}
 	if err := dispatch(context.Background(), req); err == nil {
 		t.Fatal("expected an error for a blank Ask.Message, got nil")
+	}
+	if hub.HasRegisteredRun("ext:github:" + localID) {
+		t.Error("a failed dispatch kept the chat claimed; every later dispatch would be refused")
 	}
 }
 

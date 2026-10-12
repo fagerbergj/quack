@@ -156,6 +156,7 @@ func TestDispatchGrant_PersistsAcrossOriginUpdate(t *testing.T) {
 	if err := updateOrigin(localID, extsdk.ChatOrigin{Extension: "noop", Label: "o/r#8", Kind: "pull_request", Badge: "synchronize"}); err != nil {
 		t.Fatalf("updateOrigin: %v", err)
 	}
+	waitRunEnded(t, hub, chatID)
 	// A nudge re-dispatch carries no Delivery: the recorded grant must survive it.
 	if err := dispatch(context.Background(), extsdk.DispatchRequest{Chat: extsdk.ChatRef{LocalID: localID}, Ask: extsdk.Ask{Message: "nudge"}}); err != nil {
 		t.Fatalf("nudge dispatch: %v", err)

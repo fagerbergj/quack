@@ -200,6 +200,7 @@ func TestPlanRejection_DoesNotLeakIntoALaterSilentGap(t *testing.T) {
 		t.Fatalf("GetChat after turn 1: %v, %v", t1, err)
 	}
 	turn1UpdatedAt := t1.UpdatedAt
+	waitRunEnded(t, hub, chatID)
 	second := extsdk.DispatchRequest{Chat: extsdk.ChatRef{LocalID: localID}, Ask: extsdk.Ask{Message: "TURN2: say nothing useful"}}
 	if err := dispatch(context.Background(), second); err != nil {
 		t.Fatalf("dispatch 2: %v", err)

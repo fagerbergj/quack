@@ -191,6 +191,9 @@ func TestDriveExtensionRunEvents_EndsWithOneDone(t *testing.T) {
 
 // driveExtensionRunEvents is the begin+finish pair Dispatch splits around its ack, run synchronously.
 func driveExtensionRunEvents(ctx context.Context, name string, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, extHolder *atomic.Pointer[extsdk.Extension], userID, chatID, turnID string, timeout time.Duration, run func(context.Context) iter.Seq2[stream.SSEEvent, error]) {
-	runCtx, cancelRun := beginExtRun(ctx, st, hub, chatID, turnID, timeout)
+	runCtx, cancelRun, ok := beginExtRun(ctx, hub, chatID, turnID, timeout)
+	if !ok {
+		panic("driveExtensionRunEvents: chat " + chatID + " already has a run")
+	}
 	finishExtRun(ctx, runCtx, cancelRun, name, orch, st, hub, eventLog, extHolder, userID, chatID, turnID, run)
 }

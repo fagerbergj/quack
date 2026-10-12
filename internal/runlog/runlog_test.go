@@ -482,7 +482,7 @@ func TestPersistNodeEventLatePauseKeepsCancelled(t *testing.T) {
 }
 
 // Reopen keeps a resumed chat's transcript, minus a stopped run's done/error, renumbered so the resumed
-// run's publisher (After the hub's last seq) follows on with no gap or collision.
+// run's publisher follows on with no gap or collision.
 func TestReopenKeepsTranscriptAndDropsTerminalEvents(t *testing.T) {
 	ctx := context.Background()
 	st := newTestStore(t)
@@ -507,7 +507,7 @@ func TestReopenKeepsTranscriptAndDropsTerminalEvents(t *testing.T) {
 	if got := hub.LastSeq("c1"); got != 2 {
 		t.Fatalf("hub last seq = %d, want 2 (response_created, node_start)", got)
 	}
-	NewPublisher(ctx, hub, l, "c1").After(hub.LastSeq("c1")).Publish(stream.Done())
+	NewPublisher(ctx, hub, l, "c1").Publish(stream.Done())
 	l.Flush()
 
 	got, err := st.LoadChatEvents(ctx, "c1", 0)
@@ -524,6 +524,39 @@ func TestReopenKeepsTranscriptAndDropsTerminalEvents(t *testing.T) {
 	}
 	if strings.Join(names, ",") != "response_created,node_start,done" {
 		t.Errorf("events = %v", names)
+	}
+}
+
+// A publisher on a chat whose old rows survived (a failed Reset) numbers after them: reusing seq 1..3 would
+// drop every event on chat_events_pkey.
+func TestPublisherNumbersAfterPersistedRows(t *testing.T) {
+	ctx := context.Background()
+	st := newTestStore(t)
+	if err := st.SetChatOrigin(ctx, "c1", "u1", ""); err != nil {
+		t.Fatal(err)
+	}
+	js, err := MarshalEvent(stream.NodeStart("n1", "a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []store.ChatEvent
+	for seq := int64(1); seq <= 3; seq++ {
+		rows = append(rows, store.ChatEvent{ChatID: "c1", Seq: seq, Event: js, CreatedAt: time.Now()})
+	}
+	if err := st.InsertChatEvents(ctx, rows); err != nil {
+		t.Fatal(err)
+	}
+	l := NewEventLog(st)
+
+	NewPublisher(ctx, stream.NewHub(), l, "c1").Publish(stream.Done())
+	l.Flush()
+
+	got, err := st.LoadChatEvents(ctx, "c1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 4 || got[3].Seq != 4 || !strings.Contains(got[3].Event, `"done"`) {
+		t.Fatalf("events = %+v, want the done persisted at seq 4", got)
 	}
 }
 
@@ -550,7 +583,7 @@ func TestReopenRenumbersATrimmedLog(t *testing.T) {
 	hub := stream.NewHub()
 
 	l.Reopen(ctx, hub, "c1")
-	NewPublisher(ctx, hub, l, "c1").After(hub.LastSeq("c1")).Publish(stream.Done())
+	NewPublisher(ctx, hub, l, "c1").Publish(stream.Done())
 	l.Flush()
 
 	got, err := st.LoadChatEvents(ctx, "c1", 0)

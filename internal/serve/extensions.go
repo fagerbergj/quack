@@ -582,7 +582,23 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 		if orch == nil {
 			return fmt.Errorf("extensions.%s: orchestrator not ready", name)
 		}
-		pinCtx, done, shape, err := pinShape(context.WithoutCancel(ctx), orch.Pin, name, shapesRef, req.Run.Workflow)
+		// Namespaced so two extensions (or an extension and a user chat)
+		// can never collide on the same global chat id.
+		chatID := fmt.Sprintf("ext:%s:%s", name, req.Chat.LocalID)
+		turnID := uuid.NewString()
+		// Refused, not answered with the live run: Dispatch can't name a run, so the new ask would silently vanish.
+		claimCtx, cancelRun, claimed := beginExtRun(context.WithoutCancel(ctx), hub, chatID, turnID, req.Run.Timeout)
+		if !claimed {
+			return fmt.Errorf("extensions.%s: chat %s already has a run in flight; nothing was dispatched - retry after its RunEnded", name, chatID)
+		}
+		started := false
+		defer func() {
+			if !started {
+				cancelRun()
+				hub.EndRun(chatID, turnID)
+			}
+		}()
+		pinCtx, done, shape, err := pinShape(claimCtx, orch.Pin, name, shapesRef, req.Run.Workflow)
 		if err != nil {
 			return err
 		}
@@ -592,9 +608,6 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 				done()
 			}
 		}()
-		// Namespaced so two extensions (or an extension and a user chat)
-		// can never collide on the same global chat id.
-		chatID := fmt.Sprintf("ext:%s:%s", name, req.Chat.LocalID)
 		userID := req.Chat.User
 		if userID == "" {
 			userID = extRunUserID
@@ -607,7 +620,6 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 		if err != nil {
 			return err
 		}
-		turnID := uuid.NewString()
 		if err := st.SaveTurn(runCtx, chatID, turnID, req.Ask.Message); err != nil {
 			slog.Warn("extension dispatch: save turn failed", "component", "ext."+name, "chat", chatID, "err", err)
 		}
@@ -624,23 +636,24 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 			if err != nil {
 				return fmt.Errorf("extensions.%s: workflow %q bound plan: %w", name, req.Run.Workflow, err)
 			}
-			handedOff = true
-			runCtx, cancelRun := beginExtRun(pinCtx, st, hub, chatID, turnID, req.Run.Timeout)
+			handedOff, started = true, true
+			_ = st.MarkRunActive(pinCtx, chatID, turnID)
 			go func() {
 				defer done()
-				driveBoundExtensionRun(pinCtx, runCtx, cancelRun, name, orch, st, hub, eventLog, extHolder, userID, chatID, turnID, *plan)
+				driveBoundExtensionRun(pinCtx, pinCtx, cancelRun, name, orch, st, hub, eventLog, extHolder, userID, chatID, turnID, *plan)
 			}()
 			return nil
 		}
 
-		runCtx = extRunContext(runCtx, allowedKinds, req, effectiveSetup)
 		// Never hand the orchestrator an empty prompt: a caller bug must surface as a dispatch error.
 		composed := composeDispatchMessage(req)
 		if strings.TrimSpace(composed) == "" {
 			return fmt.Errorf("extensions.%s: dispatch composed an empty message (Ask.Message was %q)", name, req.Ask.Message)
 		}
-		driveCtx, cancelRun := beginExtRun(runCtx, st, hub, chatID, turnID, req.Run.Timeout)
-		go driveExtensionRun(runCtx, driveCtx, cancelRun, name, orch, st, hub, eventLog, extHolder, userID, chatID, turnID, composed, attachments)
+		started = true
+		driveCtx := extRunContext(claimCtx, allowedKinds, req, effectiveSetup)
+		_ = st.MarkRunActive(driveCtx, chatID, turnID)
+		go driveExtensionRun(driveCtx, driveCtx, cancelRun, name, orch, st, hub, eventLog, extHolder, userID, chatID, turnID, composed, attachments)
 		return nil
 	}
 }
@@ -1086,9 +1099,9 @@ func driveBoundExtensionRun(ctx, runCtx context.Context, cancelRun context.Cance
 	})
 }
 
-// beginExtRun registers the run with the hub and stamps it active. Dispatch calls it before
-// spawning the goroutine so a status read or shutdown drain right after the ack already sees the run.
-func beginExtRun(ctx context.Context, st *store.Store, hub *stream.Hub, chatID, turnID string, timeout time.Duration) (context.Context, context.CancelFunc) {
+// beginExtRun claims chatID's run for turnID; false means another run holds the chat. Dispatch claims before
+// prep touches the chat, so a refused dispatch leaves the live run intact.
+func beginExtRun(ctx context.Context, hub *stream.Hub, chatID, turnID string, timeout time.Duration) (context.Context, context.CancelFunc, bool) {
 	var runCtx context.Context
 	var cancelRun context.CancelFunc
 	if timeout > 0 {
@@ -1096,10 +1109,11 @@ func beginExtRun(ctx context.Context, st *store.Store, hub *stream.Hub, chatID, 
 	} else {
 		runCtx, cancelRun = context.WithCancel(ctx)
 	}
-	runCtx = stream.WithTurnID(runCtx, turnID)
-	hub.RegisterRun(chatID, turnID, cancelRun)
-	_ = st.MarkRunActive(runCtx, chatID, turnID)
-	return runCtx, cancelRun
+	if !hub.RegisterRun(chatID, turnID, cancelRun) {
+		cancelRun()
+		return nil, nil, false
+	}
+	return stream.WithTurnID(runCtx, turnID), cancelRun, true
 }
 
 // finishExtRun drains a begun run (see beginExtRun) and delivers its outcome.
@@ -1149,6 +1163,7 @@ func finishExtRun(ctx, runCtx context.Context, cancelRun context.CancelFunc, nam
 	}
 	checkpointCancel()
 	outcome := buildExtRunOutcome(runCtx, orch, st, userID, chatID, res.PlanID != "", res.NeedsInput, timedOut, cancelled)
+	eventLog.EndingRun(hub, chatID, turnID)
 	if p := extHolder.Load(); p != nil {
 		if obs, ok := (*p).(extsdk.RunObserver); ok {
 			obs.RunEnded(chatID, outcome)

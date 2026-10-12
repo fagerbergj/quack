@@ -1,6 +1,7 @@
 package rest
 
 import (
+	"context"
 	"log/slog"
 	"strings"
 	"testing"
@@ -62,7 +63,10 @@ func TestRunGoroutinePanic_StillClosesHubTopic(t *testing.T) {
 		name  string
 		start func(*Handler, string)
 	}{
-		{"startRun", func(h *Handler, c string) { h.startRun(c, "t1", "hi", nil) }},
+		{"startRun", func(h *Handler, c string) {
+			runCtx, cancelRun, _ := h.claimRun(context.Background(), c, "t1")
+			h.startRun(runCtx, cancelRun, c, "t1", "hi", nil)
+		}},
 		{"startNodeAsync", func(h *Handler, c string) { h.startNodeAsync(dp, c, "n1", "") }},
 		{"retryNodeAsync", func(h *Handler, c string) { h.retryNodeAsync(dp, c, "n1", "") }},
 	} {

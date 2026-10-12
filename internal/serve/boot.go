@@ -269,12 +269,17 @@ func driveBootRun(ctx context.Context, chatID string, orch *orchestrator.Orchest
 	turnID := plan.RunTurnID()
 	runCtx, cancelRun := context.WithTimeout(context.WithoutCancel(ctx), 24*time.Hour)
 	runCtx = stream.WithTurnID(runCtx, turnID)
-	hub.RegisterRun(chatID, turnID, cancelRun)
+	if !hub.RegisterRun(chatID, turnID, cancelRun) {
+		// A dispatch got the chat first and runs a newer turn; a node it leaves paused resumes next boot.
+		cancelRun()
+		slog.Warn("resume: the chat already has a run; not resuming", "component", "startup", "chat", chatID)
+		return
+	}
 	_ = st.MarkRunActive(runCtx, chatID, turnID)
 	// Reopen already ran in startResumedNodes before dispatch; doing it here would race a subscriber.
 	defer eventLog.FinishRun(hub, chatID, turnID, cancelRun)
 
-	pub := runlog.NewPublisher(runCtx, hub, eventLog, chatID).After(hub.LastSeq(chatID))
+	pub := runlog.NewPublisher(runCtx, hub, eventLog, chatID)
 	pub.Publish(stream.ResponseCreated(turnID))
 	res := body(runCtx, plan, userID, pub)
 	pub.Publish(stream.Done())
@@ -292,6 +297,7 @@ func driveBootRun(ctx context.Context, chatID string, orch *orchestrator.Orchest
 		cancelled := errors.Is(runCtx.Err(), context.Canceled)
 		out := buildExtRunOutcome(tailCtx, orch, st, userID, chatID, res.PlanID != "", res.NeedsInput, timedOut, cancelled)
 		slog.Info("resume: run ended; outcome delivered to its extension", "component", "startup", "chat", chatID, "status", out.Status)
+		eventLog.EndingRun(hub, chatID, turnID)
 		obs.RunEnded(chatID, out)
 		return
 	}

@@ -36,6 +36,7 @@ func TestExtDispatch_ResetsBeforeAck(t *testing.T) {
 		t.Fatalf("first dispatch: %v", err)
 	}
 	waitRunSettled(t, st, chatID)
+	waitRunEnded(t, hub, chatID)
 
 	js, err := runlog.MarshalEvent(stream.Errorf(staleDispatchMarker))
 	if err != nil {

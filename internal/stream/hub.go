@@ -19,13 +19,29 @@ type Hub struct {
 type runHandle struct {
 	responseID string
 	cancel     context.CancelFunc
+	ending     bool // see MarkEnding
 }
 
-// Records active run before goroutine starts (overwrites stale handles).
-func (h *Hub) RegisterRun(chatID, responseID string, cancel context.CancelFunc) {
+// RegisterRun claims chatID for responseID's run; false means another run holds it, so the caller must
+// not start. It supersedes only an ending run (see MarkEnding).
+func (h *Hub) RegisterRun(chatID, responseID string, cancel context.CancelFunc) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if rh, ok := h.runs[chatID]; ok && !rh.ending {
+		return false
+	}
 	h.runs[chatID] = &runHandle{responseID: responseID, cancel: cancel}
+	return true
+}
+
+// MarkEnding lets a new run supersede responseID's: its events are flushed and only RunEnded remains,
+// which may itself dispatch onto the chat. It stays registered, so a shutdown drain still waits for it.
+func (h *Hub) MarkEnding(chatID, responseID string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if rh, ok := h.runs[chatID]; ok && rh.responseID == responseID {
+		rh.ending = true
+	}
 }
 
 // Drops cancel handle after run ends (idempotent). Blind - see EndRun for the
