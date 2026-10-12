@@ -4,6 +4,7 @@ import (
 	"context"
 	"iter"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -38,8 +39,8 @@ func newShutdownTestStore(t *testing.T) *store.Store {
 	return st
 }
 
-// TestDriveExtensionRunEvents_InterruptedSkipsRunEnded: a run killed via Hub.MarkInterrupted+CancelRun
-// never reaches RunEnded. Cut before it planned, it keeps its in-flight marker for boot to settle.
+// TestDriveExtensionRunEvents_InterruptedSkipsRunEnded: a run killed via Hub.MarkInterrupted+CancelRun never reaches
+// RunEnded or sends done. Cut before it planned, it keeps its in-flight marker for boot to settle.
 func TestDriveExtensionRunEvents_InterruptedSkipsRunEnded(t *testing.T) {
 	st := newShutdownTestStore(t)
 	hub := stream.NewHub()
@@ -72,6 +73,8 @@ func TestDriveExtensionRunEvents_InterruptedSkipsRunEnded(t *testing.T) {
 	if !hub.HasRegisteredRun(chatID) {
 		t.Fatal("run not registered with the hub while in flight")
 	}
+	_, live, unsubscribe, _ := hub.Subscribe(chatID)
+	defer unsubscribe()
 	hub.MarkInterrupted(chatID)
 	hub.CancelRun(chatID)
 
@@ -83,6 +86,20 @@ func TestDriveExtensionRunEvents_InterruptedSkipsRunEnded(t *testing.T) {
 
 	if n := obs.ended.Load(); n != 0 {
 		t.Errorf("RunEnded called %d times, want 0 (shutdown must not notify the extension)", n)
+	}
+	for ev := range live {
+		if ev.SSE.Name == stream.EventDone {
+			t.Error("a subscriber got done; a watching client would stop following the resumed run")
+		}
+	}
+	evs, err := st.LoadChatEvents(context.Background(), chatID, 0)
+	if err != nil || len(evs) == 0 {
+		t.Fatalf("LoadChatEvents: %d events, err %v", len(evs), err)
+	}
+	for _, e := range evs {
+		if strings.Contains(e.Event, `"name":"done"`) {
+			t.Errorf("persisted done at seq %d; a replaying client would stop following the resumed run", e.Seq)
+		}
 	}
 	c, err := st.GetChat(context.Background(), chatID)
 	if err != nil || c == nil {

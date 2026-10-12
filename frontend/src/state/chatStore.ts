@@ -174,7 +174,8 @@ function surfaceEventState(s: ChatState, d: ArtifactRevisionPayload): Partial<Ch
 }
 
 // Capped exponential backoff so a dead server isn't hammered, bounded so a gone server surfaces as an error.
-const MAX_RECONNECT_ATTEMPTS = 6
+// 15 attempts span ~3 minutes (1+2+4+8+11×15s), outlasting a deploy's ~50s restart.
+const MAX_RECONNECT_ATTEMPTS = 15
 const RECONNECT_BASE_DELAY_MS = 1000
 const RECONNECT_MAX_DELAY_MS = 15000
 function reconnectDelay(attempt: number): number {
@@ -587,12 +588,15 @@ export class ChatStore {
       }, reconnectDelay(attempt))
       this.reconnectTimers.set(chatId, timer)
     }
-    // Gates every event before handlers: only a contiguous id advances the cursor and resets backoff.
-    // A jump means the hub dropped us as a slow subscriber; reconnect from the last contiguous id to refill the gap.
+    // Only a contiguous id advances the cursor; a jump means the hub dropped us, so reconnect to refill the gap.
+    // A connection's first event may jump: the server sends only ids past the cursor, so that gap was trimmed.
+    let first = true
     const shouldDispatch = (e: MessageEvent): boolean => {
       const id = Number(e.lastEventId)
       if (!Number.isFinite(id) || id <= latestId) { attempt = 0; return true }
-      if (id === latestId + 1) {
+      const contiguous = id === latestId + 1 || first
+      first = false
+      if (contiguous) {
         latestId = id
         attempt = 0
         return true

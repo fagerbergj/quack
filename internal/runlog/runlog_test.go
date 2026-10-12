@@ -560,9 +560,9 @@ func TestPublisherNumbersAfterPersistedRows(t *testing.T) {
 	}
 }
 
-// A long run's trimmed log starts above seq 1; Reopen must renumber the store too, or the resumed run's
-// events collide with the kept rows and are dropped.
-func TestReopenRenumbersATrimmedLog(t *testing.T) {
+// A long run's trimmed log starts above seq 1; Reopen keeps those seqs, so a client's Last-Event-ID still
+// lines up, and the resumed run's events follow on without colliding with the kept rows.
+func TestReopenKeepsATrimmedLogsSeqs(t *testing.T) {
 	ctx := context.Background()
 	st := newTestStore(t)
 	if err := st.SetChatOrigin(ctx, "c1", "u1", ""); err != nil {
@@ -590,7 +590,43 @@ func TestReopenRenumbersATrimmedLog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 4 || got[0].Seq != 1 || got[3].Seq != 4 || !strings.Contains(got[3].Event, `"done"`) {
-		t.Fatalf("events = %+v, want seqs 1-4 ending in the resumed run's done", got)
+	if len(got) != 4 || got[0].Seq != 11 || got[3].Seq != 14 || !strings.Contains(got[3].Event, `"done"`) {
+		t.Fatalf("events = %+v, want seqs 11-14 ending in the resumed run's done", got)
+	}
+}
+
+// A run cut by shutdown publishes no done, to subscribers or the log: boot resumes it, and a done would end
+// a watching client's stream. An uncut run still ends with one.
+func TestPublisherSkipsDoneForAnInterruptedRun(t *testing.T) {
+	for _, interrupted := range []bool{true, false} {
+		ctx := context.Background()
+		st := newTestStore(t)
+		if err := st.SetChatOrigin(ctx, "c1", "u1", ""); err != nil {
+			t.Fatal(err)
+		}
+		hub := stream.NewHub()
+		l := NewEventLog(st)
+		if interrupted {
+			hub.MarkInterrupted("c1")
+		}
+		pub := NewPublisher(ctx, hub, l, "c1")
+		pub.Publish(stream.ResponseCreated("t1"))
+		pub.Publish(stream.Done())
+		l.Flush()
+
+		got, err := st.LoadChatEvents(ctx, "c1", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantRows, wantSeq := 2, int64(2)
+		if interrupted {
+			wantRows, wantSeq = 1, 1
+		}
+		if len(got) != wantRows || hub.LastSeq("c1") != wantSeq {
+			t.Errorf("interrupted=%v: %d rows, hub last seq %d; want %d, %d", interrupted, len(got), hub.LastSeq("c1"), wantRows, wantSeq)
+		}
+		if interrupted && !hub.WasInterrupted("c1") {
+			t.Error("Publish cleared the interrupted mark; the run's tail must still see it")
+		}
 	}
 }
