@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/fagerbergj/quack/extensions/sdk"
 )
@@ -98,16 +101,88 @@ func TestDispatchTrackedMarksRunningBeforeDispatch(t *testing.T) {
 	}
 }
 
-// TestDispatchTrackedClearsRunningOnError: a synchronous Dispatch failure
-// must not leave a phantom Running mark with nothing left to clear it.
-func TestDispatchTrackedClearsRunningOnError(t *testing.T) {
-	host := &fakeHost{artifacts: map[string]map[string][]byte{}, dispatchErr: errors.New("boom")}
-	e, _ := newTestExtension(t, host.sdkHost(), config{})
-	const chatID = "ext:sleeper:test:chat"
-	if err := e.dispatchTracked(context.Background(), sdk.DispatchRequest{}, chatID); err == nil {
-		t.Fatal("want the Dispatch error back")
+// TestDispatchTrackedRunningOnError: a failed Dispatch clears the mark, or nothing would; a busy
+// refusal keeps it, since the chat's live run is still going and its RunEnded clears it.
+func TestDispatchTrackedRunningOnError(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		err         error
+		wantRunning bool
+	}{
+		{"failed", errors.New("boom"), false},
+		{"busy", fmt.Errorf("chat x %w", sdk.ErrRunInFlight), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			host := &fakeHost{artifacts: map[string]map[string][]byte{}, dispatchErr: tc.err}
+			e, _ := newTestExtension(t, host.sdkHost(), config{})
+			const chatID = "ext:sleeper:test:chat"
+			if err := e.dispatchTracked(context.Background(), sdk.DispatchRequest{}, chatID); !errors.Is(err, tc.err) {
+				t.Fatalf("err = %v, want the Dispatch error back", err)
+			}
+			if got := e.isRunning(chatID); got != tc.wantRunning {
+				t.Errorf("isRunning = %v, want %v", got, tc.wantRunning)
+			}
+		})
 	}
-	if e.isRunning(chatID) {
-		t.Error("a synchronous Dispatch error must clear the running mark")
+}
+
+// notesHost refuses the first season-notes dispatch as busy and records every dispatch; the retry
+// arrives on a goroutine, hence the lock and channel.
+type notesHost struct {
+	mu       sync.Mutex
+	firstErr error
+	calls    []string
+	called   chan struct{}
+}
+
+func (h *notesHost) dispatch(_ context.Context, req sdk.DispatchRequest) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.calls = append(h.calls, req.Chat.LocalID)
+	h.called <- struct{}{}
+	err := h.firstErr
+	h.firstErr = nil
+	return err
+}
+
+func TestSeasonNotesBusyRedispatchesAfterItsRunEnded(t *testing.T) {
+	host := &notesHost{firstErr: fmt.Errorf("chat x %w", sdk.ErrRunInFlight), called: make(chan struct{}, 4)}
+	e, _ := newTestExtension(t, sdk.Host{Dispatch: host.dispatch}, config{})
+	notesLocal := testLeague + ":season-notes"
+	notesChat := globalChatID(notesLocal)
+
+	e.dispatchSeasonNotes(context.Background(), testLeague)
+	<-host.called
+	if !e.isRunning(notesChat) {
+		t.Error("a busy season-notes chat should stay marked running")
+	}
+	e.RunEnded(globalChatID(testLeague+":2:trends"), sdk.RunOutcome{Status: sdk.RunDone})
+	e.runningMu.Lock()
+	armed := e.notesRetry[notesChat]
+	e.runningMu.Unlock()
+	if armed != testLeague {
+		t.Fatalf("notesRetry[%s] = %q after another chat's RunEnded, want %q still armed", notesChat, armed, testLeague)
+	}
+
+	e.RunEnded(notesChat, sdk.RunOutcome{Status: sdk.RunDone})
+	select {
+	case <-host.called:
+	case <-time.After(5 * time.Second):
+		t.Fatal("season notes were not redispatched after their chat's run ended")
+	}
+	host.mu.Lock()
+	defer host.mu.Unlock()
+	if len(host.calls) != 2 || host.calls[1] != notesLocal {
+		t.Errorf("dispatches = %v, want the refused one then its retry on %s", host.calls, notesLocal)
+	}
+}
+
+func TestSeasonNotesFailureArmsNoRetry(t *testing.T) {
+	host := &notesHost{firstErr: errors.New("boom"), called: make(chan struct{}, 4)}
+	e, _ := newTestExtension(t, sdk.Host{Dispatch: host.dispatch}, config{})
+	notesChat := globalChatID(testLeague + ":season-notes")
+	e.dispatchSeasonNotes(context.Background(), testLeague)
+	if _, armed := e.takeNotesRetry(notesChat); armed {
+		t.Error("only a busy refusal should arm a season-notes retry")
 	}
 }

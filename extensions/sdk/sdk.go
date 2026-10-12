@@ -17,6 +17,10 @@ import (
 // or whose chat is gone. It is an expected case: log at Debug.
 var ErrUnknownChat = errors.New("sdk: unknown chat")
 
+// ErrRunInFlight wraps Dispatch's refusal when the target chat already has a live run. Nothing was
+// dispatched and the live run is untouched: an expected case, so retry after that chat's RunEnded.
+var ErrRunInFlight = errors.New("already has a run in flight")
+
 // Extension is what a module provides to quack.
 type Extension interface {
 	// Tools join every agent's tool set; nil for an inbound-only extension.
@@ -106,7 +110,8 @@ type RunOutcome struct {
 // Host is what quack hands an extension's Factory. Func fields other than Dispatch may be
 // nil (unavailable or an older host); callers must nil-check and degrade.
 type Host struct {
-	// Dispatch starts a run, or appends a turn to one in progress (see ChatRef.LocalID).
+	// Dispatch starts a run, or appends a turn to a chat whose run has ended (see ChatRef.LocalID).
+	// A chat with a live run refuses it with an error wrapping ErrRunInFlight.
 	Dispatch DispatchFunc
 
 	// Log is pre-tagged component=ext.<name>; log through it rather than a new handler.
@@ -210,7 +215,8 @@ type Decision struct {
 	Restrict      bool   // a guard says to narrow, never widen
 }
 
-// DispatchFunc starts or continues a run (see ChatRef.LocalID).
+// DispatchFunc starts or continues a run (see ChatRef.LocalID); errors.Is(err, ErrRunInFlight)
+// means the chat's live run refused it.
 type DispatchFunc func(ctx context.Context, req DispatchRequest) error
 
 // DispatchRequest is the entire surface an extension has to influence a run, decided once

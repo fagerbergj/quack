@@ -290,7 +290,9 @@ async function runJob(job, partner, partnerName) {
   renderMenu(); renderMain()
   try {
     const resp = await fetch('api/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-    if (!resp.ok) throw new Error(await resp.text())
+    // 409: this job's earlier run is still going, so keep its Running badge and poll that run.
+    if (resp.status === 409) banner('This job is already running; nothing new was started. Try again once it finishes.')
+    else if (!resp.ok) throw new Error(await resp.text())
   } catch (err) {
     state.running.delete(job)
     banner(`Could not start the run: ${err.message}`)

@@ -21,7 +21,9 @@ step) on the authed router at `GET /sleeper/`, plus four JSON routes:
   via `Host.ReadArtifact` by its `ext:sleeper:<league>:<stop>:<job>` chat id. Until a job has
   run, its card is `found: false`.
 - `POST /sleeper/api/jobs` `{league_id, stop, job, args}` - calls `Host.Dispatch` with that same
-  chat id (a repeat call appends a turn) and returns the chat link.
+  chat id and returns the chat link. A repeat call appends a turn once the job's last run has
+  ended; while it is still running the call answers 409 and the job stays Running. A `trends` run
+  also dispatches season notes; if their chat is busy, they are redispatched when its run ends.
 
 Artifact JSON schemas live in `sleeper/ui/schemas/*.json` (one per job: lineup, waivers, trade,
 digest, trends, retro, draft, history, season-notes) - the renderer in `sleeper/ui/static/

@@ -4,6 +4,8 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -562,6 +564,34 @@ func TestHandleJobsTrendsAlsoDispatchesSeasonNotes(t *testing.T) {
 	}
 	if notesOrigin == nil || notesOrigin.Kind != "season-notes" || notesOrigin.Label != "Season notes" {
 		t.Errorf("season-notes origin = %+v, want kind=season-notes label=%q", notesOrigin, "Season notes")
+	}
+}
+
+// TestHandleJobsDispatchRefusal: a job whose chat still runs answers 409 and keeps its Running badge;
+// any other Dispatch error is a 500 that clears it.
+func TestHandleJobsDispatchRefusal(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		err         error
+		wantCode    int
+		wantRunning bool
+	}{
+		{"busy", fmt.Errorf("chat x %w; nothing was dispatched", sdk.ErrRunInFlight), http.StatusConflict, true},
+		{"failed", errors.New("boom"), http.StatusInternalServerError, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			host := &fakeHost{artifacts: map[string]map[string][]byte{}, dispatchErr: tc.err}
+			e, r := newTestExtension(t, host.sdkHost(), config{})
+			rec := httptest.NewRecorder()
+			body := `{"league_id":"` + testLeague + `","stop":"2","job":"lineup"}`
+			r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/jobs", strings.NewReader(body)))
+			if rec.Code != tc.wantCode || !strings.Contains(rec.Body.String(), tc.err.Error()) {
+				t.Errorf("status = %d body = %s, want %d carrying %q", rec.Code, rec.Body, tc.wantCode, tc.err)
+			}
+			if got := e.isRunning(globalChatID(testLeague + ":2:lineup")); got != tc.wantRunning {
+				t.Errorf("isRunning = %v, want %v", got, tc.wantRunning)
+			}
+		})
 	}
 }
 

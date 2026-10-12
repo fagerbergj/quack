@@ -589,7 +589,7 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 		// Refused, not answered with the live run: Dispatch can't name a run, so the new ask would silently vanish.
 		claimCtx, cancelRun, claimed := beginExtRun(context.WithoutCancel(ctx), hub, chatID, turnID, req.Run.Timeout)
 		if !claimed {
-			return fmt.Errorf("extensions.%s: chat %s already has a run in flight; nothing was dispatched - retry after its RunEnded", name, chatID)
+			return fmt.Errorf("extensions.%s: chat %s %w; nothing was dispatched - retry after its RunEnded", name, chatID, extsdk.ErrRunInFlight)
 		}
 		started := false
 		defer func() {
