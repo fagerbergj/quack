@@ -29,7 +29,9 @@ workspace:
 plugins:
   root: ${QUACK_COMPAT_TMP}/registry
   seed:
+    - ${QUACK_COMPAT_TMP}/plugins/github
     - ${QUACK_COMPAT_TMP}/plugins/sleeper
+    - ${QUACK_COMPAT_TMP}/plugins/usage
 
 extensions:
   github:

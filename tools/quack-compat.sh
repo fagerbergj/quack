@@ -68,7 +68,11 @@ for p in "${plugins[@]}"; do
 	for y in "$(dirname "$p")"/agents/*/agent.yaml; do
 		step="builtin tools named in $y exist in quack"
 		tools=$(sed -n 's/^tools:[[:space:]]*\[\(.*\)\][[:space:]]*$/\1/p' "$y" | tr ',' ' ')
-		[ -n "$tools" ] || { echo "$y: expected a one-line tools: [...] list" >&2; exit 1; }
+		# No tools: key is fine (github's ACP agents get theirs from quack); a multi-line list would go unchecked.
+		if [ -z "$tools" ] && grep -q '^tools:' "$y"; then
+			echo "$y: expected a one-line tools: [...] list" >&2
+			exit 1
+		fi
 		for t in $tools; do
 			[[ $t == "${module}_"* ]] && continue
 			grep -q "\"$t\":" internal/tools/registry.go || { echo "$y: tool \"$t\" is not in quack's internal/tools/registry.go builtin map" >&2; exit 1; }

@@ -18,11 +18,11 @@ Multi-module monorepo, one Go module per directory, each independently tagged (t
 
 ```text
 sdk/         github.com/fagerbergj/quack-extensions/sdk         - the Extension API
-github/      github.com/fagerbergj/quack-extensions/github      - GitHub App integration
+github/      github.com/fagerbergj/quack-extensions/github      - GitHub App integration and its code-agent plugin
 noop/        github.com/fagerbergj/quack-extensions/noop        - proves the loop end to end (quack's e2e test fixture)
 remarkable/  github.com/fagerbergj/quack-extensions/remarkable  - rmfakecloud document browser -> document-ingest
 sleeper/     github.com/fagerbergj/quack-extensions/sleeper     - Sleeper fantasy-football tools, page and plugin
-usage/       github.com/fagerbergj/quack-extensions/usage       - in-app Prometheus usage dashboard (inbound-only)
+usage/       github.com/fagerbergj/quack-extensions/usage       - in-app Prometheus usage dashboard (inbound-only) and its manifest
 tools/       CI-only gates (sloplint, coverdiff) and the quack-compat check
 ```
 
