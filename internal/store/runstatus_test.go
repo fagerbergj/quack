@@ -1,9 +1,11 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -343,6 +345,29 @@ func TestStampCutRun(t *testing.T) {
 	}
 	if c, _ := st.GetChat(ctx, "c2"); c.RunStatus != RunStatusFailed {
 		t.Errorf("c2 RunStatus = %q, want failed", c.RunStatus)
+	}
+}
+
+// A failed count keeps the in-flight marker and warns with the chat id, rather than passing as "nothing suspended".
+func TestStampCutRun_CountErrorWarns(t *testing.T) {
+	st := resumeTestStore(t)
+	if err := st.MarkRunActive(context.Background(), "c1", "t1"); err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	st.StampCutRun(ctx, "c1")
+
+	if !strings.Contains(logs.String(), "stamp cut run") || !strings.Contains(logs.String(), "chat=c1") {
+		t.Errorf("logs = %q; want a warning naming chat c1", logs.String())
+	}
+	if c, _ := st.GetChat(context.Background(), "c1"); c.ActiveTurnID != "t1" {
+		t.Errorf("ActiveTurnID = %q; want the marker kept", c.ActiveTurnID)
 	}
 }
 
