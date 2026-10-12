@@ -820,6 +820,7 @@ func (b *boot) initOrchestrator(ctx context.Context, st *store.Store, llm model.
 	}
 	// After Start restores the extensions' claims; off the boot path, as RunEnded can make GitHub calls.
 	go endSettledExtRuns(resume.Settled, sdkExts)
+	go finishCutRuns(ctx, resume.Finish, orch, st, runHub, bootEventLog, sdkExts)
 	if userStore != nil && b.cfg.Orchestrator.UserMemoryHook.Enabled {
 		if memAgent, err := buildUserMemoryHookAgent(ctx, b.cfg.Orchestrator.UserMemoryHook, b.cfg, b.res, artifacts, b.admission); err != nil {
 			slog.Warn("user memory hook build failed; hook disabled", "component", "startup", "err", err)

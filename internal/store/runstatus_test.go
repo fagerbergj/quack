@@ -49,7 +49,7 @@ func TestScanOrphanedRuns_SettlesInterruptedOnce(t *testing.T) {
 	}
 	dag.SetAgentRoster(nil) // boot runs before any roster exists
 
-	_, ids, err := st.ScanOrphanedRuns(ctx)
+	_, ids, _, err := st.ScanOrphanedRuns(ctx)
 	if err != nil || len(ids) != 1 || ids[0] != "chat-crashed" {
 		t.Fatalf("first boot ids = %v err=%v, want [chat-crashed]", ids, err)
 	}
@@ -62,7 +62,7 @@ func TestScanOrphanedRuns_SettlesInterruptedOnce(t *testing.T) {
 	if json.Unmarshal(raw, &rec) != nil || rec.Status != dag.StatusFailed {
 		t.Errorf("dag_node record = %+v, want failed", rec)
 	}
-	if _, ids, err = st.ScanOrphanedRuns(ctx); err != nil || len(ids) != 0 {
+	if _, ids, _, err = st.ScanOrphanedRuns(ctx); err != nil || len(ids) != 0 {
 		t.Errorf("second boot ids = %v err=%v, want none", ids, err)
 	}
 }
@@ -227,7 +227,7 @@ func TestScanOrphanedRuns_LeavesHealthyChatsAlone(t *testing.T) {
 		}
 	}
 
-	_, ids, err := st.ScanOrphanedRuns(ctx)
+	_, ids, _, err := st.ScanOrphanedRuns(ctx)
 	if err != nil {
 		t.Fatalf("ScanOrphanedRuns: %v", err)
 	}

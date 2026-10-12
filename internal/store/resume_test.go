@@ -129,7 +129,7 @@ func TestScanOrphanedRuns_KeepsPendingQuestion(t *testing.T) {
 		t.Fatalf("UpsertDagNode: %v", err)
 	}
 
-	paused, interrupted, err := st.ScanOrphanedRuns(ctx)
+	paused, interrupted, _, err := st.ScanOrphanedRuns(ctx)
 	if err != nil {
 		t.Fatalf("ScanOrphanedRuns: %v", err)
 	}
@@ -256,5 +256,34 @@ func TestArmQueued_LeavesARowThatIsNoLongerQueued(t *testing.T) {
 	}
 	if n, _ := st.GetDagNode(ctx, "p1", "n1"); n == nil || n.Status != string(dag.StatusDone) {
 		t.Errorf("row = %+v, want it left done", n)
+	}
+}
+
+// A cut run whose plan nodes are all done is left for boot to finish; one with a failed node settles failed.
+func TestScanOrphanedRuns_FinishableOnlyWhenEveryNodeIsDone(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		n2         dag.NodeStatus
+		finishable bool
+	}{{dag.StatusDone, true}, {dag.StatusFailed, false}} {
+		st := resumeTestStore(t)
+		if err := st.MarkRunActive(ctx, "c1", "t1"); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.SaveExecPlan(ctx, "c1", "p1", `{"ID":"p1","Nodes":[{"ID":"n1"},{"ID":"n2"}]}`); err != nil {
+			t.Fatal(err)
+		}
+		for id, status := range map[string]dag.NodeStatus{"n1": dag.StatusDone, "n2": tc.n2} {
+			if err := st.UpsertDagNode(ctx, DagNode{NodeID: id, PlanID: "p1", Status: string(status)}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		_, failed, finishable, err := st.ScanOrphanedRuns(ctx)
+		if err != nil || (len(finishable) == 1) != tc.finishable || (len(failed) == 1) == tc.finishable {
+			t.Errorf("n2 %s: finishable = %v, failed = %v (%v)", tc.n2, finishable, failed, err)
+		}
+		if c, _ := st.GetChat(ctx, "c1"); (c.ActiveTurnID != "") != tc.finishable {
+			t.Errorf("n2 %s: active turn = %q; a finishable run stays active for boot", tc.n2, c.ActiveTurnID)
+		}
 	}
 }

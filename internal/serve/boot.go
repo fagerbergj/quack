@@ -44,6 +44,7 @@ func resumeGuardArchivedOrStale(archived, hasPlan bool, pauseReason dag.PauseRea
 type bootResume struct {
 	Start   []store.ResumableNode
 	Settled []settledRun // left mid-run, now failed with nothing to resume
+	Finish  []string     // chats cut after every node was done, owed only their delivery
 }
 
 // settledRun: PlanRan is false for a turn interrupted before it planned, so no node row exists.
@@ -62,7 +63,7 @@ func reconcileNodes(ctx context.Context, st *store.Store, jail *workspace.Jail, 
 	}
 	// After the reconcile: a hard-kill orphan is `paused` by now, so the chat
 	// scan sees it and stamps the chat paused instead of interrupted.
-	pausedChats, interrupted, err := st.ScanOrphanedRuns(ctx)
+	pausedChats, interrupted, finishable, err := st.ScanOrphanedRuns(ctx)
 	if err != nil {
 		slog.Error("scan orphaned runs", "component", "store", "err", err)
 	}
@@ -85,7 +86,7 @@ func reconcileNodes(ctx context.Context, st *store.Store, jail *workspace.Jail, 
 			"component", "startup", "chat", id)
 		removeStaleCloneDir(jail, id)
 	}
-	return bootResume{Start: rep.Start, Settled: settledChats(rep, interrupted)}
+	return bootResume{Start: rep.Start, Settled: settledChats(rep, interrupted), Finish: finishable}
 }
 
 // settledChats: chats with a failed node or an interrupted turn and nothing resumed or awaiting an answer.
@@ -201,6 +202,64 @@ func boundedGoRun(ids []string, maxConcurrent int, run func(id string)) {
 // they share runs once; a full-plan run would re-execute done nodes.
 // obs, when non-nil, is the dispatching extension: it gets RunEnded exactly as an uninterrupted run would.
 func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, obs extsdk.RunObserver) {
+	driveBootRun(ctx, chatID, orch, st, hub, eventLog, obs, func(runCtx context.Context, plan *store.DagPlan, userID string, pub *runlog.Publisher) runlog.DriveResult {
+		var ids []string
+		for _, n := range nodes {
+			if n.PlanID != plan.ID {
+				// A node paused under an older plan isn't in the latest graph;
+				// re-entering would silently run zero nodes, forever.
+				slog.Warn("resume: node belongs to a non-latest plan, skipping", "component", "startup",
+					"chat", chatID, "node", n.NodeID, "plan", n.PlanID, "latest", plan.ID)
+				failIfNotResumed(runCtx, st, chatID, n.PlanID, n.NodeID, "its plan was superseded")
+				continue
+			}
+			ids = append(ids, n.NodeID)
+		}
+		if len(ids) == 0 {
+			return runlog.DriveResult{}
+		}
+		var resumeErr string
+		seeded, unreviewed := seededOutputs(runCtx, st, plan.ID)
+		run := lastErrorOf(orch.ResumeNodes(dag.WithUnreviewedSeeds(runCtx, unreviewed), userID, chatID, plan.ID, seeded, ids), &resumeErr)
+		res := runlog.Drive(plan.RunTurnID(), st, pub, run, func(err error) {
+			slog.Warn("resume run error", "component", "startup", "chat", chatID, "nodes", ids, "err", err)
+		})
+		for _, id := range ids {
+			failIfNotResumed(runCtx, st, chatID, plan.ID, id, resumeErr)
+		}
+		return res
+	})
+}
+
+// finishCutRuns finishes each chat boot found cut after its nodes were done. It runs after the extensions
+// start, as endSettledExtRuns does: RunEnded needs their restored claims.
+func finishCutRuns(ctx context.Context, chatIDs []string, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, exts []builtSDKExtension) {
+	for _, chatID := range chatIDs {
+		hub.Reset(chatID)
+		eventLog.Reopen(ctx, hub, chatID)
+		finishCutRun(ctx, chatID, orch, st, hub, eventLog, runObserverFor(chatID, exts))
+	}
+}
+
+// finishCutRun ends a run a restart cut after every node finished: it delivers the sinks' answer and runs the
+// usual run tail, so the chat ends done and its extension hears the real outcome.
+func finishCutRun(ctx context.Context, chatID string, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, obs extsdk.RunObserver) {
+	driveBootRun(ctx, chatID, orch, st, hub, eventLog, obs, func(runCtx context.Context, plan *store.DagPlan, userID string, _ *runlog.Publisher) runlog.DriveResult {
+		execPlan, ok := st.LoadExecPlan(runCtx, plan.ID)
+		if !ok {
+			return runlog.DriveResult{}
+		}
+		seeded, _ := seededOutputs(runCtx, st, plan.ID)
+		orch.FinishCutRun(runCtx, userID, chatID, execPlan, seeded)
+		slog.Info("finished a run cut after its nodes were done", "component", "startup", "chat", chatID)
+		return runlog.DriveResult{PlanID: plan.ID}
+	})
+}
+
+// driveBootRun runs body as the chat's run on its latest plan's turn, then the run tail: done, the turn stamp,
+// and RunEnded to obs (or the terminal outcome stamp).
+func driveBootRun(ctx context.Context, chatID string, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, obs extsdk.RunObserver,
+	body func(runCtx context.Context, plan *store.DagPlan, userID string, pub *runlog.Publisher) runlog.DriveResult) {
 	plan, err := st.GetLatestDagPlan(ctx, chatID)
 	if err != nil || plan == nil {
 		slog.Warn("resume: plan lookup failed", "component", "startup", "chat", chatID, "err", err)
@@ -217,31 +276,7 @@ func driveResume(ctx context.Context, chatID string, nodes []store.ResumableNode
 
 	pub := runlog.NewPublisher(runCtx, hub, eventLog, chatID).After(hub.LastSeq(chatID))
 	pub.Publish(stream.ResponseCreated(turnID))
-
-	var ids []string
-	for _, n := range nodes {
-		if n.PlanID != plan.ID {
-			// A node paused under an older plan isn't in the latest graph;
-			// re-entering would silently run zero nodes, forever.
-			slog.Warn("resume: node belongs to a non-latest plan, skipping", "component", "startup",
-				"chat", chatID, "node", n.NodeID, "plan", n.PlanID, "latest", plan.ID)
-			failIfNotResumed(runCtx, st, chatID, n.PlanID, n.NodeID, "its plan was superseded")
-			continue
-		}
-		ids = append(ids, n.NodeID)
-	}
-	var res runlog.DriveResult
-	if len(ids) > 0 {
-		var resumeErr string
-		seeded, unreviewed := seededOutputs(runCtx, st, plan.ID)
-		run := lastErrorOf(orch.ResumeNodes(dag.WithUnreviewedSeeds(runCtx, unreviewed), userID, chatID, plan.ID, seeded, ids), &resumeErr)
-		res = runlog.Drive(turnID, st, pub, run, func(err error) {
-			slog.Warn("resume run error", "component", "startup", "chat", chatID, "nodes", ids, "err", err)
-		})
-		for _, id := range ids {
-			failIfNotResumed(runCtx, st, chatID, plan.ID, id, resumeErr)
-		}
-	}
+	res := body(runCtx, plan, userID, pub)
 	pub.Publish(stream.Done())
 	// A cancel lands on runCtx too, which would fail every write below and leave the chat
 	// showing as running forever, so the tail runs on a detached, bounded context.

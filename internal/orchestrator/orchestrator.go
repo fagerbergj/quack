@@ -239,6 +239,35 @@ func (o *Orchestrator) ResumeNodes(ctx context.Context, userID, chatID, planID s
 	return o.retryNodes(ctx, userID, chatID, planID, seeded, nodeIDs, "")
 }
 
+// FinishCutRun delivers the answer of a run a restart cut after every node finished: its sinks' outputs
+// verbatim, as a resume delivers them. A turn whose answer already reached the session is left alone.
+func (o *Orchestrator) FinishCutRun(ctx context.Context, userID, chatID string, plan dag.Plan, seeded map[string]string) {
+	if o.turnAnswered(ctx, userID, chatID, stream.TurnIDFromContext(ctx)) {
+		return
+	}
+	// Nothing runs here, so every sink's result comes from the plan record, or from the rows without one.
+	outputs, recStopped := o.withRecordedSinks(ctx, userID, chatID, plan, seeded, func(string) bool { return false })
+	answer, _ := o.sinkAnswer(plan, outputs, chatID, recStopped)
+	if answer == "" {
+		answer, _ = o.sinkAnswer(plan, seeded, chatID, nil)
+	}
+	o.persistAnswer(ctx, userID, chatID, answer)
+}
+
+// turnAnswered reports whether turnID's delivered answer is already in the chat session.
+func (o *Orchestrator) turnAnswered(ctx context.Context, userID, chatID, turnID string) bool {
+	resp, err := o.sessions.Get(ctx, &session.GetRequest{AppName: AppName, UserID: userID, SessionID: chatID})
+	if err != nil || resp == nil {
+		return false
+	}
+	for ev := range resp.Session.Events().All() {
+		if t, ok := ev.CustomMetadata[stream.DeliveredAnswerMeta].(string); ok && t == turnID {
+			return true
+		}
+	}
+	return false
+}
+
 func (o *Orchestrator) retryNodes(ctx context.Context, userID, chatID, planID string, seeded map[string]string, nodeIDs []string, guidance string) iter.Seq2[stream.SSEEvent, error] {
 	return func(yield func(stream.SSEEvent, error) bool) {
 		ctx, done := o.executor.Pin(ctx)
