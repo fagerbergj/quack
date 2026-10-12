@@ -112,6 +112,12 @@ func (h *Hub) WasInterrupted(chatID string) bool {
 	return ok
 }
 
+// Interrupted reports chatID's interrupted flag without clearing it, for checks that precede the tail's WasInterrupted.
+func (h *Hub) Interrupted(chatID string) bool {
+	_, ok := h.interrupted.Load(chatID)
+	return ok
+}
+
 // Cancels chatID's active run only if responseID names it (guards against stale ids).
 func (h *Hub) CancelResponse(chatID, responseID string) bool {
 	h.mu.Lock()

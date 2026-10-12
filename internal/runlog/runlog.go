@@ -154,9 +154,8 @@ func (l *EventLog) Reset(ctx context.Context, chatID string) {
 	}
 }
 
-// Reopen replays chatID's persisted events into hub, renumbered from 1, so a resumed run appends to the
-// interrupted run's transcript. Every done/error and unreadable row is dropped: replayed, a stopped run's
-// terminal event would end the client's view of the run early.
+// Reopen replays chatID's persisted events into hub, numbered on from the first row, so a resumed run appends to the
+// cut transcript. Done/error and unreadable rows are dropped: replayed, they would end the client's view early.
 func (l *EventLog) Reopen(ctx context.Context, hub *stream.Hub, chatID string) {
 	evs, err := l.store.LoadChatEvents(ctx, chatID, 0)
 	if err != nil {
@@ -165,6 +164,10 @@ func (l *EventLog) Reopen(ctx context.Context, hub *stream.Hub, chatID string) {
 		return
 	}
 	kept := make([]store.ChatEvent, 0, len(evs))
+	var base int64 // keeps a trimmed log's seqs, so a reconnecting client's Last-Event-ID still lines up
+	if len(evs) > 0 {
+		base = evs[0].Seq - 1
+	}
 	var replay []stream.SSEEvent
 	changed := false
 	for _, e := range evs {
@@ -173,8 +176,7 @@ func (l *EventLog) Reopen(ctx context.Context, hub *stream.Hub, chatID string) {
 			changed = true
 			continue
 		}
-		// A trimmed long run's log starts above seq 1, so it needs the rewrite too.
-		seq := int64(len(kept) + 1)
+		seq := base + int64(len(kept)+1)
 		changed = changed || e.Seq != seq
 		e.Seq = seq
 		kept = append(kept, e)
@@ -239,6 +241,10 @@ func NewPublisher(ctx context.Context, hub *stream.Hub, log *EventLog, chatID st
 func (p *Publisher) Publish(ev stream.SSEEvent) {
 	// A stopped run's errors are the stop's own "context canceled"; its node cards already say stopped.
 	if ev.Name == stream.EventError && errors.Is(p.ctx.Err(), context.Canceled) {
+		return
+	}
+	// A run cut by shutdown is not over: boot resumes it, and a done here would end the client's watch.
+	if ev.Name == stream.EventDone && p.hub.Interrupted(p.chatID) {
 		return
 	}
 	p.seq++
