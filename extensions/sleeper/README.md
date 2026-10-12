@@ -42,36 +42,26 @@ a console error or horizontal overflow; CI runs it as the `sleeper-storybook` jo
 `plugin/` is the Sleeper plugin quack loads through its plugin registry: `plugin.json`, the seven
 job agents under `agents/` (card, prompt, rubric, and `agent.yaml` with tools, skills, and model
 role), the skills under `skills/`, and the ten workflow shapes under `workflows/`. quack seeds it as
-`github:fagerbergj/quack-extensions@sleeper/vX.Y.Z#sleeper/plugin`, a registry row named `sleeper`,
+`github:fagerbergj/quack@plugin/sleeper/vX.Y.Z#extensions/sleeper/plugin`, a registry row named `sleeper`,
 and seeds its agents and workflows only while `extensions.sleeper` is configured.
 
 `plugin_test.go` checks that every tool an `agent.yaml` names is one of this module's tools or a
 quack builtin from its allowlist, that each agent ships a prompt, a rubric and a `sleeper:` skill,
 that each card's artifact kind has a schema in `ArtifactSchemas`, and that each skill's
 `references/*schema*.json` is byte-identical to the `ui/schemas/<kind>.json` quack validates the
-agent's write against. Edit the ui schema and copy it over the reference. `tools/quack-compat.sh`
-seeds `plugin/` into quack, fails unless every agent and workflow in `plugin.json` seeds, and fails
-when a non-`sleeper_` tool is missing from quack's builtin tool map.
+agent's write against. Edit the ui schema and copy it over the reference. quack's
+`TestServerValidate_EveryExtensionAndPlugin` seeds `plugin/` and fails unless every agent and workflow
+in `plugin.json` seeds, and `TestExtensionPluginAgentsNameExistingBuiltins` fails when a
+non-`sleeper_` tool is missing from quack's builtin tool map.
 
-One `sleeper/vX.Y.Z` tag releases both halves. quack pins the Go tools in `go.mod` and the plugin in
-its `plugins.seed` entry, and both pins name the same tag. `plugin.json`'s `version` is that tag's
-version; bump it in the PR that precedes the tag.
-
-1. Merge the change and tag `sleeper/vX.Y.Z`.
-2. In quack, bump `go.mod` and the `plugins.seed` ref to that tag in one PR. A deployment with its
-   own `plugins.seed` bumps its entry to the same tag along with the image.
-3. Restart. quack marks the rows `plugins.seed` creates as seeded, and at boot a seeded row whose
-   seed entry changed moves to the new entry and is fetched at the new tag. A row last set over REST
-   (`POST /api/v1/plugins`) belongs to the operator and does not follow the seed.
-
-The first cutover needs no manual step either. Before the move, deployments seeded
-`.agents/plugins/sleeper` as a local row. Upgrade quack to the release that fetches this plugin and
-change the deployment's seed entry to the `github:` form: boot replaces the local row, since config
-owns local rows, and fetches the plugin. Do not delete the row by hand.
-
-A plugin-only change (prompt, skill, rubric, workflow) can go live before the next image: bump the
-deployment's seed ref and restart. When the change touches Go tools, the image carrying the new
-`go.mod` must ship with it, since a plugin agent naming a tool the binary lacks is dropped.
+The Go tools ship in the image; the plugin ships at a `plugin/sleeper/vX.Y.Z` tag that quack's
+`plugins.seed` pins. Because the agents name those tools, tag the plugin only at a commit whose tools
+the running image already carries: a plugin agent naming a tool the binary lacks is dropped. A change
+to both lands in one PR; once its image is deployed, tag that merge commit and bump the seed (see
+[Shipping a plugin change](../../docs/extensions/dev-loop.md#shipping-a-plugin-change)).
+`plugin.json`'s `version` is the tag's version; bump it in the PR that precedes the tag. A
+plugin-only change (prompt, skill, rubric, workflow) can go live before the next image: tag it, bump
+the deployment's seed ref and restart.
 
 ## Decision points
 

@@ -23,7 +23,7 @@ plugins:
   seed:
     - github:fagerbergj/dotagents
     - github:DietrichGebert/ponytail@v4.9.0
-    - github:fagerbergj/quack-extensions@usage/vX.Y.Z#usage/plugin
+    - github:fagerbergj/quack@plugin/usage/vX.Y.Z#extensions/usage/plugin
 ```
 
 - `store` - which registry backend holds the rows. Omitted or `""` uses the built-in filesystem backend (`<root>/<name>/entry.json`). Any other value must name a `stores:` entry of kind `sqlite` or `postgres`; that store's URL must not be empty (except under `quack sandbox`'s `LoadForSandbox`, which skips this and every other live-inference-plumbing check). A database-backed store holds rows in a `plugin_rows` table - the clones themselves still live on disk under `root`, exactly as the filesystem backend lays them out.
@@ -34,9 +34,9 @@ plugins:
 
 A seed entry, or an entry POSTed to `/api/v1/plugins`, is one of:
 
-- **`github:owner/repo[@ref][#path]`** - a git-hosted plugin, cloned under `root`.
+- **`github:owner/repo[@ref][#path]`** - a git-hosted plugin, cloned under `root`. Each fetch takes only the ref's commit, at depth 1, so a plugin in a large repository costs one checkout, not its history.
   - No `@ref`: **tracked** - follows the repo's default branch; `GET /api/v1/plugins/updates` and the Update button move it forward.
-  - `@ref` (a tag, branch, or commit sha): **pinned** - only moves when the entry is re-POSTed at a different ref (REST). Editing a `plugins.seed` entry moves a seeded row at the next boot; a row last set over REST stays where the operator put it. A 40-hex sha is always reported as not behind.
+  - `@ref` (a tag, branch, or full 40-hex commit sha): **pinned** - only moves when the entry is re-POSTed at a different ref (REST). Editing a `plugins.seed` entry moves a seeded row at the next boot; a row last set over REST stays where the operator put it. A 40-hex sha is always reported as not behind.
   - `#path`: the plugin root is a subdirectory of the repo instead of its root. Relative, and rejected if it escapes the repo.
   - A trailing `.git` on the repo name is stripped.
   - Private repos: set `GITHUB_TOKEN` in the environment quack runs under; the token is passed to git via `GIT_CONFIG_*` as a header for `https://github.com/` URLs, never written to argv or persisted in the row. Registry git inherits only `PATH`, `TMPDIR`, the proxy variables (`HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`, `ALL_PROXY`, either case) and the CA variables (`GIT_SSL_CAINFO`, `GIT_SSL_CAPATH`, `SSL_CERT_FILE`, `SSL_CERT_DIR`) from quack's environment, and runs with an empty per-call `HOME` and no system or global git config.
@@ -47,7 +47,7 @@ A seed entry, or an entry POSTed to `/api/v1/plugins`, is one of:
 
 Every registry row has a **name**, which prefixes its skills as `<name>:<skill>`:
 
-- A `github:` entry's name is the repo component (`github:fagerbergj/dotagents` -> `dotagents`) - or, with a `#path`, the last path segment (`github:fagerbergj/quack-extensions#sleeper/plugin` -> `sleeper`; a trailing `plugin` names its parent, `#sleeper` -> `sleeper`), so one repo can host several plugins. Never `plugin.json`'s own `name` field.
+- A `github:` entry's name is the repo component (`github:fagerbergj/dotagents` -> `dotagents`) - or, with a `#path`, the last path segment (`github:fagerbergj/quack#extensions/sleeper/plugin` -> `sleeper`; a trailing `plugin` names its parent, `#sleeper` -> `sleeper`), so one repo can host several plugins. Never `plugin.json`'s own `name` field.
 - A local entry's name is the base name of its path (`/opt/checkouts/my-checkout` -> `my-checkout:<skill>`), also never the manifest's name.
 - `update`, `updates` and `reload` are reserved outright: they collide with the fixed REST path segments `/api/v1/plugins/update`, `/api/v1/plugins/updates` and `/api/v1/plugins/reload`, and `POST /api/v1/plugins` refuses each name. `quack` is reserved from `POST /api/v1/plugins` the same way, but a `plugins.seed` entry may be named `quack` - that is how a fetched copy shadows the embedded baseline (see below). `DELETE /api/v1/plugins/quack` is refused either way, seed or REST: the embedded baseline itself is never removable.
 
@@ -128,7 +128,7 @@ Every MCP server subprocess, fetched plugin or local root alike, gets read-only 
 
 quack's client-extension namespace is **`io.github.fagerbergj.quack`**.
 
-The spec asks a client to base its namespace on a domain it controls (§8). quack owns no registered domain; `github.com/fagerbergj` is the account that owns both this repository and quack-extensions, so `io.github.fagerbergj` is the reverse-domain root, with `.quack` scoping it to this client rather than to its author personally.
+The spec asks a client to base its namespace on a domain it controls (§8). quack owns no registered domain; `github.com/fagerbergj` is the account that owns this repository, so `io.github.fagerbergj` is the reverse-domain root, with `.quack` scoping it to this client rather than to its author personally.
 
 Everything quack-specific lives under that key. `plugin.json` itself stays strictly spec-shaped — the portable manifest schema is closed (`additionalProperties: false`), so there is nowhere else it could legally go.
 
@@ -143,7 +143,7 @@ quack does **not** use a `io.github.fagerbergj.quack/` extension directory. §8 
   "version": "0.1.0",
   "description": "In-app usage dashboard backed by Prometheus.",
   "license": "MIT",
-  "repository": "https://github.com/fagerbergj/quack-extensions",
+  "repository": "https://github.com/fagerbergj/quack",
   "keywords": ["quack", "observability", "usage"],
   "extensions": {
     "io.github.fagerbergj.quack": {
@@ -151,7 +151,7 @@ quack does **not** use a `io.github.fagerbergj.quack/` extension directory. §8 
       "modules": [
         {
           "name": "usage",
-          "path": "github.com/fagerbergj/quack-extensions/usage"
+          "path": "github.com/fagerbergj/quack/extensions/usage"
         }
       ],
       "config": "required"
@@ -205,7 +205,7 @@ This half is portable on purpose. A quack plugin whose capability is a tool is i
 
 ### Host-coupled surfaces → compiled-in Go modules
 
-`RegisterRoutes`, `UI()`, `RunObserver`, `Starter`/`Stopper`, `Deliverer`, `GitCredentialSource` and `ArtifactSchemas` mount HTTP handlers inside quack's own server, add nav entries to its SPA, observe run outcomes, and declare the JSON Schema an artifact kind must satisfy. None of that is expressible as an MCP tool, and none of it is portable. Those are `sdk.Extension` implementations pinned in `go.mod` and blank-imported in `internal/serve/extensions_registry.go`.
+`RegisterRoutes`, `UI()`, `RunObserver`, `Starter`/`Stopper`, `Deliverer`, `GitCredentialSource` and `ArtifactSchemas` mount HTTP handlers inside quack's own server, add nav entries to its SPA, observe run outcomes, and declare the JSON Schema an artifact kind must satisfy. None of that is expressible as an MCP tool, and none of it is portable. Those are `sdk.Extension` implementations compiled from `extensions/` and blank-imported in `internal/serve/extensions_registry.go`.
 
 An extension implementing `ArtifactSchemas() map[string]json.RawMessage` names each artifact kind it reads and the draft 2020-12 JSON Schema that kind's content must satisfy. quack collects these at boot into one registry; two extensions declaring the same kind, or a schema that fails to compile, fails boot naming both. From then on, `write_artifact`/`write_<kind>`/`edit_artifact` (both the native tool surface and the ACP loopback MCP surface) refuse a write to a schema'd kind whose resulting content does not validate — nothing is stored, and the tool's error lists the violations. A gated node whose declared artifact kind has a schema also gets a deterministic `artifact_valid` criterion (see `docs/configuration/trust-gate.md`).
 
@@ -217,7 +217,7 @@ Go has no safe dynamic loading, and quack does not pretend otherwise. The manife
 
 ```text
 plugin "ghost" declares module "ghost"
-(github.com/fagerbergj/quack-extensions/ghost), which is not linked into this
+(github.com/fagerbergj/quack/extensions/ghost), which is not linked into this
 binary; add its blank import to internal/serve/extensions_registry.go
 ```
 
@@ -313,12 +313,12 @@ The dividing line is whether the failure is silent - and, for the plugin registr
 
 ## Migration
 
-Nothing breaks. `sdk.Extension` is unchanged, extension code still arrives through `go.mod`, and an extension with no manifest works exactly as before — the manifest adds a declaration, it does not become the load path.
+Nothing breaks. `sdk.Extension` is unchanged, extension code is still compiled in from `extensions/`, and an extension with no manifest works exactly as before — the manifest adds a declaration, it does not become the load path.
 
-`usage` was the first extension carrying one, now at quack-extensions' `usage/plugin/`. It ships a manifest and nothing else: no skills, no MCP servers, just the namespace block declaring the module and its config requirement. That exercises every new path (namespace parsing, the linked-module check, the config check, and the no-`skills/` fix) against a real extension without touching the extension's code.
+`usage` was the first extension carrying one, now at `extensions/usage/plugin/`. It ships a manifest and nothing else: no skills, no MCP servers, just the namespace block declaring the module and its config requirement. That exercises every new path (namespace parsing, the linked-module check, the config check, and the no-`skills/` fix) against a real extension without touching the extension's code.
 
-Every first-party plugin ships in quack-extensions beside its module, at `<module>/plugin`, and nothing under `.agents/plugins/` ships in the quack image any more. `github/plugin` carries the `code-implementer`, `code-reviewer` and `code-explorer` bundles and `usage/plugin` the usage manifest, seeded as `github:fagerbergj/quack-extensions@github/vX.Y.Z#github/plugin` and `github:fagerbergj/quack-extensions@usage/vX.Y.Z#usage/plugin`. Their agents name no module tools, so their seed refs are not tied to `go.mod`: a prompt or rubric change is a `github/vX.Y.Z` tag plus a seed bump, with no quack release. A deployment still seeding `.agents/plugins/github` or `.agents/plugins/usage` must switch those entries to the `github:` form; the row keeps its name, so the boot replaces the local row and fetches the clone. Until then the local row points at a directory the image no longer ships, the plugin is skipped, and the code agents' `optional: true` overrides are dropped. Offline, an unfetched plugin is absent the same way: the code agents stay out of the roster until a fetch succeeds.
+Every first-party plugin ships in this repository beside its module, at `extensions/<name>/plugin`, and nothing under `.agents/plugins/` ships in the quack image any more. `github` carries the `code-implementer`, `code-reviewer` and `code-explorer` bundles, `usage` the usage manifest, `remarkable` the `document-ingest` workflow and `sleeper` its job agents, skills and workflows. Each is seeded as `github:fagerbergj/quack@plugin/<name>/vX.Y.Z#extensions/<name>/plugin` at its own `plugin/<name>/vX.Y.Z` tag, which builds no image, so a prompt or rubric change is a tag plus a seed bump with no quack release ([the procedure](extensions/dev-loop.md#shipping-a-plugin-change)). Sleeper's agents name its module's Go tools, so tag `plugin/sleeper/*` only at a commit whose tools the running image carries.
 
-Sleeper's plugin is seeded as `github:fagerbergj/quack-extensions@sleeper/vX.Y.Z#sleeper/plugin`; a deployment whose `plugins.seed` lists that entry has its old local `sleeper` row moved to it at boot, and a later ref bump moves the seeded row the same way (see `seed` above). A deployment with its own `plugins.seed` must edit its sleeper entry itself; until then its local row points at a directory the image no longer ships, the plugin is skipped, and its sleeper overrides are dropped. A converted extension is pinned twice - the registry row's ref for the manifest, agents and skills, a `go.mod` version for the code - and one `sleeper/vX.Y.Z` tag releases both. `TestSleeperPluginSeedMatchesGoModPin` fails when `config/quack.yaml` and `go.mod` name different tags, and the linked-module boot check refuses a plugin whose module is missing.
+Moving from the old `github:fagerbergj/quack-extensions@<module>/vX.Y.Z#<module>/plugin` entries, or from local `.agents/plugins/<name>` rows, needs only the seed edit: the row keeps its name, so the boot replaces a row seeding created (or a local one) and fetches the new entry. A row last set over REST does not follow the seed; re-POST it. Until a deployment edits its own `plugins.seed`, a local row points at a directory the image no longer ships and the plugin is skipped, dropping the overrides it supplied. Offline, an unfetched plugin is absent the same way: its agents stay out of the roster until a fetch succeeds. A workflow defined in the deployment's own `workflows:` overrides a plugin's shape of the same name, so a deployment that hand-wrote `document-ingest` keeps its copy until it removes it.
 
 Upgrading to a release with the `seeded` flag: every existing row starts unseeded, and boot marks the ones whose entry equals their seed entry. A `github:` row whose entry differs from its seed entry (moved over REST, or a seed edited while the old rule ignored edits) stays operator-owned and logs `plugin row was set over REST; not following plugins.seed` at every boot. Compare `GET /api/v1/plugins` entries with `plugins.seed` once after upgrading, and delete each mismatched row you want config to own; the next boot re-seeds it.

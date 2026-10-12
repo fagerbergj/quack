@@ -79,7 +79,7 @@ func (s *Store) ApplyOutcome(ctx context.Context, chatID string,
 One typed-string consequence: core must not branch on `Badge` (a display string — the SDK's ownership rule). `ChatOrigin` gains a small typed field the extension sets alongside the badge it already chooses:
 
 ```go
-// sdk (quack-extensions/sdk) — additive
+// sdk (extensions/sdk) — additive
 type SubjectState string // "" (unknown) | open | merged | closed
 // ChatOrigin gains: State SubjectState
 ```

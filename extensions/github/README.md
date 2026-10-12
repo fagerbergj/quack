@@ -7,28 +7,22 @@ quack's GitHub App integration: webhook triggers, dispatch envelopes, staged del
 `plugin/` is the code-agent plugin quack loads through its plugin registry: `plugin.json` and the
 `code-implementer`, `code-reviewer` and `code-explorer` bundles under `agents/` (card, prompt, rubric,
 memory, and `agent.yaml` with judge rounds, context window and model role). quack seeds it as
-`github:fagerbergj/quack-extensions@github/vX.Y.Z#github/plugin`, a registry row named `github`, and
+`github:fagerbergj/quack@plugin/github/vX.Y.Z#extensions/github/plugin`, a registry row named `github`, and
 seeds its agents only while `extensions.github` is configured. The deployment's own `agents.<name>:`
 override supplies the `acp:` block that makes each one an ACP agent.
 
 The agents name no tools: their staging tools come from quack's own ACP MCP server, not this module.
-So unlike sleeper, the plugin's seed ref need not match quack's `go.mod` pin of this module, and a
-prompt or rubric change ships with a `github/vX.Y.Z` tag and a seed bump, without a quack release.
-`plugin.json`'s `version` is that tag's version; bump it in the PR that precedes the tag.
+So the plugin can move ahead of the image: a prompt or rubric change ships with a
+`plugin/github/vX.Y.Z` tag and a seed bump, without a quack release. `plugin.json`'s `version` is
+that tag's version; bump it in the PR that precedes the tag.
 
 `plugin_test.go` checks each card names its directory and pins the prompt and rubric contracts quack's
 code relies on: staging over the structured tail, slice-scoped reviews staging no verdict, and the
 reviewer rubric's severity/verdict coherence and code-block rules.
 
-To change a prompt on a running deployment:
-
-1. Merge the change and tag `github/vX.Y.Z`.
-2. Bump the deployment's `plugins.seed` entry to that tag, then either restart (a seeded row whose
-   seed entry changed moves to the new entry and is fetched at boot), or apply it live with
-   `quack api POST /api/v1/plugins -d '{"entry":"github:fagerbergj/quack-extensions@github/vX.Y.Z#github/plugin"}'`,
-   which fetches the tag and reloads. A REST-set row belongs to the operator until a boot finds it
-   equal to its seed entry again, so edit the seed too. The first switch from a local
-   `.agents/plugins/github` row needs the restart: REST answers 409 for a name held by a local row.
+To change a prompt on a running deployment, follow
+[Shipping a plugin change](../../docs/extensions/dev-loop.md#shipping-a-plugin-change): merge, tag
+`plugin/github/vX.Y.Z`, bump the deployment's `plugins.seed` entry, then restart or re-POST the row.
 
 ## Decision points
 

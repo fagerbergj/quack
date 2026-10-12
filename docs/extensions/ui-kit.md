@@ -8,7 +8,7 @@ Quack serves a small, hand-authored CSS file for exactly this: same-origin, no b
 /assets/ext/v1/kit.css
 ```
 
-The `quack-extensions/sdk` module exports the path as a constant - `sdk.UIKitCSS` - so an extension doesn't hardcode the string.
+The SDK module (`extensions/sdk`) exports the path as a constant - `sdk.UIKitCSS` - so an extension doesn't hardcode the string.
 
 ## Using it
 
