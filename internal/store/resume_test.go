@@ -219,3 +219,42 @@ func TestResumePausedDagNodes_QueuedFrontierOwnedOnly(t *testing.T) {
 		}
 	}
 }
+
+// A plan whose rows are split between this instance and a live peer is the peer's run: arming its frontier here
+// would run the plan twice.
+func TestResumePausedDagNodes_QueuedFrontierSkipsAMixedOwnerPlan(t *testing.T) {
+	ctx := context.Background()
+	st := resumeTestStore(t)
+	if err := st.MarkRunActive(ctx, "c1", "t1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveExecPlan(ctx, "c1", "p1", `{"ID":"p1","Nodes":[{"ID":"n1"},{"ID":"n2"},{"ID":"n3","DependsOn":["n1"]}]}`); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []DagNode{
+		{NodeID: "n1", PlanID: "p1", Status: string(dag.StatusDone)},
+		{NodeID: "n2", PlanID: "p1", Status: string(dag.StatusRunning), InstanceID: "live-peer"},
+	} {
+		if err := st.UpsertDagNode(ctx, n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := st.queuedFrontier(ctx, "c1"); len(got) != 0 {
+		t.Errorf("frontier = %+v, want none while a live peer holds part of the run", got)
+	}
+}
+
+// A queued row moves to paused only from queued: a row that moved on underneath the boot scan is left alone.
+func TestArmQueued_LeavesARowThatIsNoLongerQueued(t *testing.T) {
+	ctx := context.Background()
+	st := resumeTestStore(t)
+	if err := st.UpsertDagNode(ctx, DagNode{NodeID: "n1", PlanID: "p1", Status: string(dag.StatusDone)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.armQueued(ctx, DagNode{NodeID: "n1", PlanID: "p1"}); err == nil {
+		t.Error("armQueued re-stamped a done row paused")
+	}
+	if n, _ := st.GetDagNode(ctx, "p1", "n1"); n == nil || n.Status != string(dag.StatusDone) {
+		t.Errorf("row = %+v, want it left done", n)
+	}
+}

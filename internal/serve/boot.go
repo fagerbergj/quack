@@ -160,8 +160,8 @@ func removeStaleCloneDir(jail *workspace.Jail, chatID string) {
 	}
 }
 
-// startResumedNodes runs one run per chat (the Hub allows one), re-entering each resumable node's
-// node+descendants subset in turn; maxConcurrent caps chats resuming at once.
+// startResumedNodes runs one run per chat (the Hub allows one), re-entering all of a chat's resumable nodes
+// and their descendants together; maxConcurrent caps chats resuming at once.
 func startResumedNodes(ctx context.Context, nodes []store.ResumableNode, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, exts []builtSDKExtension, maxConcurrent int) {
 	byChat := map[string][]store.ResumableNode{}
 	var order []string
