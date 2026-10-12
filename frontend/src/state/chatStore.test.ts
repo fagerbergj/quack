@@ -1436,16 +1436,47 @@ describe('ChatStore - reconnect on a dropped stream (#383)', () => {
 
       let last = FakeEventSource.last!
       let attempts = 0
-      while (store.get('c').live?.streaming && attempts < 20) {
+      while (store.get('c').live?.streaming && attempts < 30) {
         last.onerror?.()
         vi.advanceTimersByTime(30_000) // more than the max backoff delay
         last = FakeEventSource.last!
         attempts++
       }
 
-      expect(attempts).toBeLessThan(20) // it gave up rather than retrying forever
+      expect(attempts).toBeLessThan(30) // it gave up rather than retrying forever
       expect(store.get('c').live?.streaming).toBe(false)
       expect(store.get('c').error).toMatch(/lost connection/i)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // A deploy takes the server away for ~50s; the resumed run on the new process numbers its events after the old ones.
+  it('keeps reconnecting through a deploy-length outage and resumes the resumed run from the last event id', () => {
+    vi.useFakeTimers()
+    try {
+      store.seed('c', [dagTurn('in_progress')])
+      store.attach('c')
+      let es = FakeEventSource.last!
+      es.emit('dag_plan', '{"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}', 1)
+      es.emit('node_start', '{"node_id":"a","agent":"researcher"}', 2)
+
+      for (let i = 0; i < 10; i++) { // past the old 6-attempt cap, ~2 minutes of refused connections
+        es.onerror?.()
+        vi.advanceTimersByTime(15_000)
+        expect(FakeEventSource.last).not.toBe(es)
+        es = FakeEventSource.last!
+        expect(es.url).toBe('/api/v1/chats/c/stream?last_event_id=2')
+      }
+      expect(store.get('c').live?.streaming).toBe(true)
+      expect(store.get('c').error ?? '').toBe('')
+
+      es.emit('response_created', '{"response_id":"t1"}', 3)
+      es.emit('agent_start', '{"node_id":"a","run_id":"r2","agent":"researcher","stage":"worker"}', 4)
+      es.emit('agent_tool_call', '{"node_id":"a","run_id":"r2","call_id":"tc1","name":"web_search","args":{}}', 5)
+      expect(store.get('c').live?.dag?.nodeRuns['a']?.some(r => r.runId === 'r2')).toBe(true)
+      es.emit('done', '{}', 6)
+      expect(store.get('c').live?.streaming).toBe(false)
     } finally {
       vi.useRealTimers()
     }
@@ -1579,6 +1610,23 @@ describe('ChatStore - resume from the last contiguous id on an id gap (#audit-6)
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  // A long run's log is trimmed to its last MaxReplay events, so a fresh attach starts mid-sequence; no
+  // reconnect can refill what was trimmed.
+  it("accepts a connection's first id past the cursor, then still gates later jumps", () => {
+    store.seed('c', [dagTurn('in_progress')])
+    store.attach('c')
+    const es = FakeEventSource.last!
+    es.emit('dag_plan', '{"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}', 5001)
+    es.emit('node_start', '{"node_id":"a","agent":"researcher"}', 5002)
+    expect(store.get('c').live?.dag?.nodeStates['a'].status).toBe('running')
+    expect(es.closed).toBe(false)
+
+    es.emit('node_done', '{"node_id":"a"}', 5004)
+    expect(store.get('c').live?.dag?.nodeStates['a'].status).toBe('running')
+    expect(es.closed).toBe(true)
+    store.clear('c') // cancels the pending reconnect timer
   })
 })
 
