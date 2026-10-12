@@ -129,7 +129,7 @@ func TestScanOrphanedRuns_KeepsPendingQuestion(t *testing.T) {
 		t.Fatalf("UpsertDagNode: %v", err)
 	}
 
-	paused, interrupted, err := st.ScanOrphanedRuns(ctx)
+	paused, interrupted, _, err := st.ScanOrphanedRuns(ctx)
 	if err != nil {
 		t.Fatalf("ScanOrphanedRuns: %v", err)
 	}
@@ -216,6 +216,83 @@ func TestResumePausedDagNodes_QueuedFrontierOwnedOnly(t *testing.T) {
 		rep, err := st.ResumePausedDagNodes(ctx, nil)
 		if err != nil || len(rep.Start) != tc.want {
 			t.Errorf("owner %q: Start = %+v (%v), want %d", tc.owner, rep.Start, err, tc.want)
+		}
+	}
+}
+
+// A plan whose rows are split between this instance and a live peer is the peer's run: arming its frontier here
+// would run the plan twice.
+func TestResumePausedDagNodes_QueuedFrontierSkipsAMixedOwnerPlan(t *testing.T) {
+	ctx := context.Background()
+	st := resumeTestStore(t)
+	if err := st.MarkRunActive(ctx, "c1", "t1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveExecPlan(ctx, "c1", "p1", `{"ID":"p1","Nodes":[{"ID":"n1"},{"ID":"n2"},{"ID":"n3","DependsOn":["n1"]}]}`); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []DagNode{
+		{NodeID: "n1", PlanID: "p1", Status: string(dag.StatusDone)},
+		{NodeID: "n2", PlanID: "p1", Status: string(dag.StatusRunning), InstanceID: "live-peer"},
+	} {
+		if err := st.UpsertDagNode(ctx, n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := st.queuedFrontier(ctx, "c1"); len(got) != 0 {
+		t.Errorf("frontier = %+v, want none while a live peer holds part of the run", got)
+	}
+}
+
+// A queued row moves to paused only from queued: a row that moved on underneath the boot scan is left alone.
+func TestArmQueued_LeavesARowThatIsNoLongerQueued(t *testing.T) {
+	ctx := context.Background()
+	st := resumeTestStore(t)
+	if err := st.UpsertDagNode(ctx, DagNode{NodeID: "n1", PlanID: "p1", Status: string(dag.StatusDone)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.armQueued(ctx, DagNode{NodeID: "n1", PlanID: "p1"}); err == nil {
+		t.Error("armQueued re-stamped a done row paused")
+	}
+	if n, _ := st.GetDagNode(ctx, "p1", "n1"); n == nil || n.Status != string(dag.StatusDone) {
+		t.Errorf("row = %+v, want it left done", n)
+	}
+}
+
+// A cut run whose plan nodes are all done is left for boot to finish. A failed node, a newer turn cut before it
+// planned, or a row a live peer holds still settles failed (or is left alone) instead.
+func TestScanOrphanedRuns_FinishableOnlyWhenEveryNodeIsDone(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name       string
+		n2         dag.NodeStatus
+		activeTurn string
+		n2Owner    string
+		finishable bool
+	}{
+		{"all done", dag.StatusDone, "t1", "", true},
+		{"a failed node", dag.StatusFailed, "t1", "", false},
+		{"a newer planless turn", dag.StatusDone, "t2", "", false},
+		{"a live peer's row", dag.StatusDone, "t1", "live-peer", false},
+	} {
+		st := resumeTestStore(t)
+		if err := st.MarkRunActive(ctx, "c1", tc.activeTurn); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.SaveExecPlan(ctx, "c1", "p1", `{"ID":"p1","Nodes":[{"ID":"n1"},{"ID":"n2"}]}`); err != nil {
+			t.Fatal(err)
+		}
+		for _, n := range []DagNode{
+			{NodeID: "n1", PlanID: "p1", Status: string(dag.StatusDone)},
+			{NodeID: "n2", PlanID: "p1", Status: string(tc.n2), InstanceID: tc.n2Owner},
+		} {
+			if err := st.UpsertDagNode(ctx, n); err != nil {
+				t.Fatal(err)
+			}
+		}
+		_, _, finishable, err := st.ScanOrphanedRuns(ctx)
+		if err != nil || (len(finishable) == 1) != tc.finishable {
+			t.Errorf("%s: finishable = %v (%v), want finishable %v", tc.name, finishable, err, tc.finishable)
 		}
 	}
 }

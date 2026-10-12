@@ -28,7 +28,7 @@ func TestChatStatus_ListAndDetailAgree(t *testing.T) {
 			if err := h.store.MarkRunActive(ctx, chatID, "turn-1"); err != nil {
 				t.Fatal(err)
 			}
-			if _, _, err := h.store.ScanOrphanedRuns(ctx); err != nil {
+			if _, _, _, err := h.store.ScanOrphanedRuns(ctx); err != nil {
 				t.Fatal(err)
 			}
 		}, schema.ChatStatusFailed},

@@ -588,11 +588,14 @@ func (h *Handler) resumePaused(ctx context.Context, dp *store.DagPlan, chatID, n
 }
 
 // deferResume starts a paused node after the chat's live run ends, unless the node or plan moved on meanwhile.
-// ponytail: held in memory, so a restart first leaves the node paused (held at boot) until it is resumed again.
+// The row is relabelled a shutdown pause, which boot resumes, so a restart before then still starts it.
 func (h *Handler) deferResume(dp *store.DagPlan, chatID, nodeID, guidance string) {
 	key := chatID + "\x00" + nodeID
 	if _, dup := h.deferredResumes.LoadOrStore(key, true); dup {
 		return
+	}
+	if err := h.store.SetNodeStatus(context.Background(), dp.ID, nodeID, "", dag.PauseShutdown, ""); err != nil {
+		slog.Warn("held resume: relabel for boot failed; a restart leaves the node paused", "component", "rest", "chat", chatID, "node", nodeID, "err", err)
 	}
 	go func() {
 		defer h.deferredResumes.Delete(key)

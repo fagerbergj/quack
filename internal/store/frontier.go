@@ -35,7 +35,7 @@ func (s *Store) addQueuedFrontier(ctx context.Context, resumable func(chatID, pa
 }
 
 // queuedFrontier lists chatID's latest-plan nodes that are queued (no row, or waiting on admission) with every
-// dependency done. Empty when this instance doesn't own the run, as for a live peer's.
+// dependency done. Empty unless this instance owns every row: a live peer holding any of them holds the run.
 func (s *Store) queuedFrontier(ctx context.Context, chatID string) []DagNode {
 	p, err := s.GetLatestDagPlan(ctx, chatID)
 	if err != nil || p == nil {
@@ -49,14 +49,15 @@ func (s *Store) queuedFrontier(ctx context.Context, chatID string) []DagNode {
 	if err := s.db.WithContext(ctx).Where("plan_id = ?", p.ID).Find(&rows).Error; err != nil {
 		return nil
 	}
-	status := map[string]string{}
-	owned := false
-	for _, r := range rows {
-		status[r.NodeID] = r.Status
-		owned = owned || s.ownsNodeRow(r)
-	}
-	if !owned {
+	if len(rows) == 0 {
 		return nil
+	}
+	status := map[string]string{}
+	for _, r := range rows {
+		if !s.ownsNodeRow(r) {
+			return nil
+		}
+		status[r.NodeID] = r.Status
 	}
 	var out []DagNode
 	for _, n := range plan.Nodes {
@@ -86,7 +87,16 @@ func (s *Store) ownsNodeRow(n DagNode) bool {
 }
 
 // armQueued stamps a queued node paused/shutdown, creating its row if it never started, so its retry continues it.
+// No client transition pauses a queued node, so an existing row moves by a CAS from queued, not CanTransition.
 func (s *Store) armQueued(ctx context.Context, n DagNode) error {
+	prev, err := s.GetDagNode(ctx, n.PlanID, n.NodeID)
+	if err != nil {
+		return err
+	}
+	if prev != nil {
+		return s.casNodeStatus(ctx, n.PlanID, n.NodeID, dag.StatusQueued, dag.StatusPaused,
+			map[string]any{"pause_reason": string(dag.PauseShutdown), "pending_question": "", "instance_id": s.instanceID})
+	}
 	n.Status, n.InstanceID = string(dag.StatusPaused), s.instanceID
 	if err := s.UpsertDagNode(ctx, n); err != nil {
 		return err

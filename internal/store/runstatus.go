@@ -124,18 +124,18 @@ func (s *Store) StampTerminalOutcome(ctx context.Context, appName, userID, chatI
 	return status, question, nodeError
 }
 
-// ScanOrphanedRuns reconciles chats a killed process left mid-run: paused if
-// a node is suspended, else stamped failed once (settleInterrupted).
-func (s *Store) ScanOrphanedRuns(ctx context.Context) (paused, noResumableNode []string, err error) {
+// ScanOrphanedRuns reconciles chats a killed process left mid-run: paused if a node is suspended, left active
+// for boot to finish if every node of its plan is done, else stamped failed once (settleInterrupted).
+func (s *Store) ScanOrphanedRuns(ctx context.Context) (paused, noResumableNode, finishable []string, err error) {
 	var chats []Chat
 	if err := s.db.WithContext(ctx).
 		Where("active_turn_id <> ? OR run_status = ?", "", RunStatusPaused).
 		Find(&chats).Error; err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	suspended, err := s.chatsWithPausedNodes(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	for _, c := range chats {
 		if suspended[c.ID] {
@@ -145,12 +145,42 @@ func (s *Store) ScanOrphanedRuns(ctx context.Context) (paused, noResumableNode [
 			}
 			continue
 		}
-		if c.ActiveTurnID != "" {
+		switch {
+		case c.ActiveTurnID == "":
+		case s.planAllDone(ctx, c):
+			finishable = append(finishable, c.ID)
+		default:
 			noResumableNode = append(noResumableNode, c.ID)
 			s.settleInterrupted(ctx, c.ID)
 		}
 	}
-	return paused, noResumableNode, nil
+	return paused, noResumableNode, finishable, nil
+}
+
+// planAllDone: c's active turn ran its latest plan and every node of it has a done row this instance owns, so
+// the cut run only lacked its delivery. A newer turn cut before it planned, or a failed node, still settles failed.
+func (s *Store) planAllDone(ctx context.Context, c Chat) bool {
+	p, err := s.GetLatestDagPlan(ctx, c.ID)
+	if err != nil || p == nil || p.RunTurnID() != c.ActiveTurnID {
+		return false
+	}
+	plan, ok := s.LoadExecPlan(ctx, p.ID)
+	rows, err := s.GetDagNodes(ctx, p.ID)
+	if !ok || err != nil || len(plan.Nodes) == 0 {
+		return false
+	}
+	status := map[string]string{}
+	for _, r := range rows {
+		if !s.ownsNodeRow(r) {
+			return false
+		}
+		status[r.NodeID] = r.Status
+	}
+	ids := make([]string, len(plan.Nodes))
+	for i, n := range plan.Nodes {
+		ids[i] = n.ID
+	}
+	return allDone(ids, status)
 }
 
 // settleInterrupted stamps a crashed run with nothing to resume failed (clearing ActiveTurnID,
