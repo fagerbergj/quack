@@ -143,6 +143,15 @@ func runSteeredNode(t *testing.T, repair func(context.Context) bool) [][]*genai.
 func runSteeredGate(t *testing.T, ctrl *steerCtrl, repair func(context.Context) bool) ([][]*genai.Content, error) {
 	t.Helper()
 	stub := &steerStub{ctrl: ctrl}
+	gateErr := runGateOn(t, ctrl, stub, repair)
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	return stub.requests, gateErr
+}
+
+// runGateOn runs one native gated node on llm (worker and judge alike) and returns the gate's own error.
+func runGateOn(t *testing.T, ctrl *steerCtrl, stub model.LLM, repair func(context.Context) bool) error {
+	t.Helper()
 	worker, err := agent.Build(
 		&agent.Bundle{Card: agent.Card{Name: "web-researcher", Description: "researcher"}, Prompt: "Answer the question."},
 		nil, stub, []tool.Tool{newLookUpTool(t)}, nil, "", "", nil)
@@ -178,9 +187,7 @@ func runSteeredGate(t *testing.T, ctrl *steerCtrl, repair func(context.Context) 
 			t.Fatalf("run: %v", err)
 		}
 	}
-	stub.mu.Lock()
-	defer stub.mu.Unlock()
-	return stub.requests, gateErr
+	return gateErr
 }
 
 // lastUserText is the text of a request's final user turn that carries text.
@@ -263,5 +270,44 @@ func TestRunGatedRefine_PauseInterruptParksTheNode(t *testing.T) {
 	}
 	if ctrl.takes != 0 || len(reqs) != 2 {
 		t.Errorf("queue drained %d time(s) and %d worker call(s), want 0 and the 2 of the cut-off round", ctrl.takes, len(reqs))
+	}
+}
+
+// pauseReviseStub: the worker drafts, the judge fails it, and the user pauses during the revise, whose call
+// then dies with the aborted round.
+type pauseReviseStub struct {
+	ctrl   *steerCtrl
+	worker int
+}
+
+func (s *pauseReviseStub) Name() string { return "pause-revise-stub" }
+
+func (s *pauseReviseStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		if !stubHasTool(req, "look_up") {
+			if stubHasTool(req, submitVerdictTool) {
+				yield(stubCall(submitVerdictTool, map[string]any{
+					"criteria": map[string]any{"quality": map[string]any{"score": 0.0, "reason": "wrong"}},
+				}), nil)
+				return
+			}
+			yield(stubText(`{"score": 0, "criteria": {"quality": {"score": 0, "reason": "wrong"}}, "feedback": "redo"}`), nil)
+			return
+		}
+		if s.worker++; s.worker == 1 {
+			yield(stubText("DRAFT"), nil)
+			return
+		}
+		s.ctrl.arm()
+		yield(nil, context.Canceled)
+	}
+}
+
+// A pause that cuts off a revise parks the node; delivering the failed draft would end a run the user paused.
+func TestRunGatedRefine_PauseDuringReviseParksTheNode(t *testing.T) {
+	ctrl := &steerCtrl{pauseToo: true, noMessage: true}
+	err := runGateOn(t, ctrl, &pauseReviseStub{ctrl: ctrl}, func(context.Context) bool { return true })
+	if !errors.Is(err, ErrNodePaused) {
+		t.Fatalf("gate err = %v, want ErrNodePaused", err)
 	}
 }
