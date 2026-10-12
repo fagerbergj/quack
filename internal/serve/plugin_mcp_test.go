@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/tool/mcptoolset"
@@ -74,6 +75,13 @@ func TestClosableTransportStopsChildAndRefusesReconnect(t *testing.T) {
 	}
 	if cmd.ProcessState == nil {
 		t.Fatal("child still running after Close")
+	}
+	// A call that beats the session's own EOF detection hits the closed pipes.
+	if err := tr.conn.Write(ctx, &jsonrpc.Request{Method: "ping"}); !errors.Is(err, errTransportClosed) {
+		t.Fatalf("Write after Close = %v, want errTransportClosed", err)
+	}
+	if _, err := tr.conn.Read(ctx); !errors.Is(err, errTransportClosed) {
+		t.Fatalf("Read after Close = %v, want errTransportClosed", err)
 	}
 	// ADK's connectionRefresher reconnects on a closed connection; the retry must hit our refusal.
 	if _, err := ts.Tools(ctx); err == nil || !strings.Contains(err.Error(), errTransportClosed.Error()) {
