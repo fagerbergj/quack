@@ -17,7 +17,6 @@ internal/serve/web/dist/assets
 /server
 go.work
 go.work.sum
-.dev
 *.test
 *.out
 .env

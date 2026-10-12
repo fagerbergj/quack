@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/fagerbergj/quack-extensions/sleeper/sleepergen"
+	"github.com/fagerbergj/quack/extensions/sleeper/sleepergen"
 )
 
 func TestGetMatchup(t *testing.T) {

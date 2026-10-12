@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fagerbergj/quack-extensions/sdk"
+	"github.com/fagerbergj/quack/extensions/sdk"
 )
 
 // TestHostChatUserArchiveChat pins the ChatUser/ArchiveChat signatures quack wires as closures.

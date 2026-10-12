@@ -12,7 +12,7 @@ import (
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/tool"
 
-	extsdk "github.com/fagerbergj/quack-extensions/sdk"
+	extsdk "github.com/fagerbergj/quack/extensions/sdk"
 	"github.com/go-chi/chi/v5"
 
 	"github.com/fagerbergj/quack/internal/inference"

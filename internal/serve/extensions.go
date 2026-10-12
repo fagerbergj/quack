@@ -18,7 +18,7 @@ import (
 	"syscall"
 	"time"
 
-	extsdk "github.com/fagerbergj/quack-extensions/sdk"
+	extsdk "github.com/fagerbergj/quack/extensions/sdk"
 	"github.com/google/uuid"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"

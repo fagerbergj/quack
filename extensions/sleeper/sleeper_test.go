@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fagerbergj/quack-extensions/sdk"
+	"github.com/fagerbergj/quack/extensions/sdk"
 )
 
 func TestFactoryRejectsUnknownKey(t *testing.T) {

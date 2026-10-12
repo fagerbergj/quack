@@ -16,7 +16,7 @@ import (
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
 
-	extsdk "github.com/fagerbergj/quack-extensions/sdk"
+	extsdk "github.com/fagerbergj/quack/extensions/sdk"
 
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/ledgertest"

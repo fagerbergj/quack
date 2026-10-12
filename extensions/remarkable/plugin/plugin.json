@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "The reMarkable extension's document-ingest workflow: transcribe a tablet export, then summarize it.",
   "license": "MIT",
-  "repository": "https://github.com/fagerbergj/quack-extensions",
+  "repository": "https://github.com/fagerbergj/quack",
   "keywords": ["quack", "remarkable", "ingest"],
   "extensions": {
     "io.github.fagerbergj.quack": {
@@ -12,7 +12,7 @@
       "modules": [
         {
           "name": "remarkable",
-          "path": "github.com/fagerbergj/quack-extensions/remarkable"
+          "path": "github.com/fagerbergj/quack/extensions/remarkable"
         }
       ],
       "config": "required",

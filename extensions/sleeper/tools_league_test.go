@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fagerbergj/quack-extensions/sleeper/sleepergen"
+	"github.com/fagerbergj/quack/extensions/sleeper/sleepergen"
 )
 
 func TestGetUser(t *testing.T) {

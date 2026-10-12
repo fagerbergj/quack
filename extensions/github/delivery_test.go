@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fagerbergj/quack-extensions/sdk"
+	"github.com/fagerbergj/quack/extensions/sdk"
 )
 
 // newDeliveryApp wires an App to an httptest server with install/token caches pre-seeded,

@@ -418,7 +418,7 @@ func TestServerValidate_UnlinkedPluginModuleErrors(t *testing.T) {
 	dir := t.TempDir()
 	pluginDir := mustMkdir(t, filepath.Join(dir, "ghost"))
 	body := `{"$schema":"x","name":"ghost","extensions":{"io.github.fagerbergj.quack":{"schemaVersion":1,` +
-		`"modules":[{"name":"ghost","path":"github.com/fagerbergj/quack-extensions/ghost"}]}}}`
+		`"modules":[{"name":"ghost","path":"github.com/fagerbergj/quack/extensions/ghost"}]}}}`
 	if err := os.WriteFile(filepath.Join(pluginDir, "plugin.json"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}

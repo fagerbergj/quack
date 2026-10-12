@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	ghext "github.com/fagerbergj/quack-extensions/github"
-	extsdk "github.com/fagerbergj/quack-extensions/sdk"
+	ghext "github.com/fagerbergj/quack/extensions/github"
+	extsdk "github.com/fagerbergj/quack/extensions/sdk"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 
 	"github.com/fagerbergj/quack/internal/config"

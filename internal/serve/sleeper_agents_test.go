@@ -1,12 +1,10 @@
 package serve
 
 import (
-	"os"
-	"regexp"
 	"slices"
 	"testing"
 
-	extsdk "github.com/fagerbergj/quack-extensions/sdk"
+	extsdk "github.com/fagerbergj/quack/extensions/sdk"
 	"google.golang.org/adk/v2/tool"
 	"gopkg.in/yaml.v3"
 
@@ -200,26 +198,5 @@ func TestSleeperArtifactSchemasAreRegisteredKinds(t *testing.T) {
 		if err := recordstore.ValidateArtifactKind(kind); err != nil {
 			t.Errorf("sleeper schema kind %q: %v (add it to internal/sleeperkinds)", kind, err)
 		}
-	}
-}
-
-// One sleeper/vX.Y.Z tag releases both the Go tools and the plugin; pinned
-// apart, a plugin agent can name a tool this binary lacks and is dropped.
-func TestSleeperPluginSeedMatchesGoModPin(t *testing.T) {
-	read := func(path string, re *regexp.Regexp) string {
-		b, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		m := re.FindSubmatch(b)
-		if m == nil {
-			t.Fatalf("%s: no match for %s", path, re)
-		}
-		return string(m[1])
-	}
-	seed := read("../../config/quack.yaml", regexp.MustCompile(`github:fagerbergj/quack-extensions@sleeper/(v\S+)#sleeper/plugin`))
-	mod := read("../../go.mod", regexp.MustCompile(`github\.com/fagerbergj/quack-extensions/sleeper (v\S+)`))
-	if seed != mod {
-		t.Fatalf("config/quack.yaml seeds the sleeper plugin at %s but go.mod pins sleeper %s; bump both to one tag", seed, mod)
 	}
 }

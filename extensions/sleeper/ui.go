@@ -18,8 +18,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/fagerbergj/quack-extensions/sdk"
-	"github.com/fagerbergj/quack-extensions/sleeper/sleepergen"
+	"github.com/fagerbergj/quack/extensions/sdk"
+	"github.com/fagerbergj/quack/extensions/sleeper/sleepergen"
 	"github.com/go-chi/chi/v5"
 )
 

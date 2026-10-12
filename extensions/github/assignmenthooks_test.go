@@ -10,7 +10,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/fagerbergj/quack-extensions/sdk"
+	"github.com/fagerbergj/quack/extensions/sdk"
 )
 
 // fakeSessionCtx stands in for quack's agent.Context: OnAssignment recovers the chat id

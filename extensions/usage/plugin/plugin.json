@@ -4,7 +4,7 @@
   "version": "0.4.0",
   "description": "In-app usage dashboard backed by Prometheus.",
   "license": "MIT",
-  "repository": "https://github.com/fagerbergj/quack-extensions",
+  "repository": "https://github.com/fagerbergj/quack",
   "keywords": ["quack", "observability", "usage"],
   "extensions": {
     "io.github.fagerbergj.quack": {
@@ -12,7 +12,7 @@
       "modules": [
         {
           "name": "usage",
-          "path": "github.com/fagerbergj/quack-extensions/usage"
+          "path": "github.com/fagerbergj/quack/extensions/usage"
         }
       ],
       "config": "required"

@@ -5,7 +5,7 @@ import (
 
 	"google.golang.org/adk/v2/tool"
 
-	"github.com/fagerbergj/quack-extensions/github"
+	"github.com/fagerbergj/quack/extensions/github"
 
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/inference"

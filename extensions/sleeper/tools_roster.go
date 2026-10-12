@@ -8,7 +8,7 @@ import (
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/functiontool"
 
-	"github.com/fagerbergj/quack-extensions/sleeper/sleepergen"
+	"github.com/fagerbergj/quack/extensions/sleeper/sleepergen"
 )
 
 // pointsField joins Sleeper's split points pair, e.g. settings["fpts"] and settings["fpts_decimal"].

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fagerbergj/quack-extensions/sdk"
+	"github.com/fagerbergj/quack/extensions/sdk"
 )
 
 // githubContext is the loaded GitHub state for one dispatch.

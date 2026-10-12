@@ -3,7 +3,7 @@ package sleeper
 import (
 	"testing"
 
-	"github.com/fagerbergj/quack-extensions/sleeper/sleepergen"
+	"github.com/fagerbergj/quack/extensions/sleeper/sleepergen"
 )
 
 // TestTeamNameTrims: Sleeper names can carry trailing spaces; every surface goes through teamName/ownerName.

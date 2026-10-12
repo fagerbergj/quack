@@ -29,7 +29,7 @@ import (
 	"google.golang.org/genai"
 	"gopkg.in/yaml.v3"
 
-	extsdk "github.com/fagerbergj/quack-extensions/sdk"
+	extsdk "github.com/fagerbergj/quack/extensions/sdk"
 
 	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/config"

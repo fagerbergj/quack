@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fagerbergj/quack-extensions/sdk"
+	"github.com/fagerbergj/quack/extensions/sdk"
 )
 
 // openStore is newStore plus an eager open, for tests that want migration errors up front.

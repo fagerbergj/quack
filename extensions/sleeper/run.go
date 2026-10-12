@@ -5,7 +5,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/fagerbergj/quack-extensions/sdk"
+	"github.com/fagerbergj/quack/extensions/sdk"
 )
 
 func (e *extension) markRunning(chatID string) {

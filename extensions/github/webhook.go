@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fagerbergj/quack-extensions/sdk"
+	"github.com/fagerbergj/quack/extensions/sdk"
 )
 
 // maxWebhookBody bounds a hostile/oversized request.

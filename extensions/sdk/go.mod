@@ -1,4 +1,4 @@
-module github.com/fagerbergj/quack-extensions/sdk
+module github.com/fagerbergj/quack/extensions/sdk
 
 go 1.26.6
 

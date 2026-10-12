@@ -4,7 +4,7 @@ import (
 	"slices"
 	"sort"
 
-	"github.com/fagerbergj/quack-extensions/sleeper/sleepergen"
+	"github.com/fagerbergj/quack/extensions/sleeper/sleepergen"
 )
 
 var flexKindEligible = map[string][]string{

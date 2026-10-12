@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fagerbergj/quack-extensions/sleeper/sleepergen"
+	"github.com/fagerbergj/quack/extensions/sleeper/sleepergen"
 )
 
 // Per-endpoint TTLs: state moves fastest; players/projections/stats are bulk fetches worth holding longer.

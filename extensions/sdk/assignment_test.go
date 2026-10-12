@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/fagerbergj/quack-extensions/sdk"
+	"github.com/fagerbergj/quack/extensions/sdk"
 )
 
 // fakeAssignmentExt pins AssignmentMetaExtension/AssignmentFreshnessChecker's

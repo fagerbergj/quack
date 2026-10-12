@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fagerbergj/quack-extensions/sdk"
+	"github.com/fagerbergj/quack/extensions/sdk"
 )
 
 // samplePatch: hunk starts at new line 40, so commentable RIGHT lines are 40-43 (41, 42 added);

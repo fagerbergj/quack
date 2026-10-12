@@ -3,7 +3,7 @@ package sdk_test
 import (
 	"testing"
 
-	"github.com/fagerbergj/quack-extensions/sdk"
+	"github.com/fagerbergj/quack/extensions/sdk"
 	"gopkg.in/yaml.v3"
 )
 

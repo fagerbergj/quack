@@ -3,7 +3,7 @@ package serve
 import (
 	"testing"
 
-	extsdk "github.com/fagerbergj/quack-extensions/sdk"
+	extsdk "github.com/fagerbergj/quack/extensions/sdk"
 )
 
 // TestSDKExtensionRegistryHasBlessedModules: every module blank-imported in extensions_registry.go

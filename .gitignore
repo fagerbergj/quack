@@ -17,10 +17,9 @@ frontend/src/__screenshots__/
 *.swp
 *~
 
-# make dev-build's throwaway workspace; a committed go.work would change every build
+# A committed go.work would change every build.
 go.work
 go.work.sum
-/.dev/
 
 # Local env (secrets)
 .env

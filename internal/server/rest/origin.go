@@ -3,7 +3,7 @@ package rest
 import (
 	"encoding/json"
 
-	extsdk "github.com/fagerbergj/quack-extensions/sdk"
+	extsdk "github.com/fagerbergj/quack/extensions/sdk"
 
 	"github.com/fagerbergj/quack/internal/schema"
 )

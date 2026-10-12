@@ -9,7 +9,7 @@ import (
 	"time"
 	_ "time/tzdata" // the `tz` argument must resolve even in an image without /usr/share/zoneinfo
 
-	"github.com/fagerbergj/quack-extensions/sleeper/sleepergen"
+	"github.com/fagerbergj/quack/extensions/sleeper/sleepergen"
 )
 
 // localLayout is the *_local display format, e.g. "Sun Sep 27 3:05 PM CDT".

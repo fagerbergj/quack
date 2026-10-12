@@ -53,7 +53,7 @@ func TestResolve_ForeignNamespacesIgnoredUnvalidated(t *testing.T) {
 func TestResolve_OurNamespaceParsed(t *testing.T) {
 	root := manifest(t, `{"$schema":"x","name":"usage","extensions":{"`+Namespace+`":{
 		"schemaVersion":1,
-		"modules":[{"name":"usage","path":"github.com/fagerbergj/quack-extensions/usage"}],
+		"modules":[{"name":"usage","path":"github.com/fagerbergj/quack/extensions/usage"}],
 		"config":"required"
 	}}}`)
 	got, err := Resolve([]string{root})
@@ -64,7 +64,7 @@ func TestResolve_OurNamespaceParsed(t *testing.T) {
 	if !p.ConfigRequired {
 		t.Error("ConfigRequired = false, want true")
 	}
-	if len(p.Modules) != 1 || p.Modules[0].Name != "usage" || p.Modules[0].Path != "github.com/fagerbergj/quack-extensions/usage" {
+	if len(p.Modules) != 1 || p.Modules[0].Name != "usage" || p.Modules[0].Path != "github.com/fagerbergj/quack/extensions/usage" {
 		t.Errorf("Modules = %+v", p.Modules)
 	}
 }

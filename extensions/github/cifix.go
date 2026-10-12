@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fagerbergj/quack-extensions/sdk"
+	"github.com/fagerbergj/quack/extensions/sdk"
 )
 
 // gitCommitAuthorEmail mirrors quack's internal/tools.GitCommitAuthorEmail; duplicated rather than

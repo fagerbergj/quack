@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	gh "github.com/fagerbergj/quack-extensions/github"
+	gh "github.com/fagerbergj/quack/extensions/github"
 )
 
 func testPEM(t *testing.T) string {

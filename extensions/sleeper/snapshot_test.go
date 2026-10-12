@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fagerbergj/quack-extensions/sdk"
+	"github.com/fagerbergj/quack/extensions/sdk"
 )
 
 // TestSnapshotOnceWritesTodaysFile drives the fetch-only path Start's

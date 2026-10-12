@@ -7,7 +7,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/fagerbergj/quack-extensions/sleeper/sleepergen"
+	"github.com/fagerbergj/quack/extensions/sleeper/sleepergen"
 )
 
 // TestGetHistoryKnownValues pins numbers checked by hand against the fixtures: Barkley drafted RB3

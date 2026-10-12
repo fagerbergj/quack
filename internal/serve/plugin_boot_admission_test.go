@@ -18,7 +18,7 @@ func writeGhostPluginManifest(t *testing.T, root, name string) {
 	t.Helper()
 	body := `{"$schema":"https://agent-plugins.org/schemas/1.0.0/plugin.schema.json","name":"` + name + `",` +
 		`"extensions":{"io.github.fagerbergj.quack":{"schemaVersion":1,` +
-		`"modules":[{"name":"ghost","path":"github.com/fagerbergj/quack-extensions/ghost"}]}}}`
+		`"modules":[{"name":"ghost","path":"github.com/fagerbergj/quack/extensions/ghost"}]}}}`
 	if err := os.WriteFile(filepath.Join(root, "plugin.json"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}

@@ -10,7 +10,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/fagerbergj/quack-extensions/sleeper/sleepergen"
+	"github.com/fagerbergj/quack/extensions/sleeper/sleepergen"
 )
 
 const snapshotTickInterval = 24 * time.Hour

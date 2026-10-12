@@ -7,7 +7,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/fagerbergj/quack-extensions/sdk"
+	"github.com/fagerbergj/quack/extensions/sdk"
 )
 
 // statusResponse is the dispatch-tracking snapshot shared by both /status

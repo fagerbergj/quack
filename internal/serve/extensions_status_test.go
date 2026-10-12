@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	extsdk "github.com/fagerbergj/quack-extensions/sdk"
+	extsdk "github.com/fagerbergj/quack/extensions/sdk"
 	"google.golang.org/adk/v2/model"
 
 	"github.com/fagerbergj/quack/internal/orchestrator"

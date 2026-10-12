@@ -12,7 +12,7 @@ import (
 	"google.golang.org/adk/v2/tool"
 	"gopkg.in/yaml.v3"
 
-	"github.com/fagerbergj/quack-extensions/sdk"
+	"github.com/fagerbergj/quack/extensions/sdk"
 )
 
 const extensionName = "github"

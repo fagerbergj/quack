@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fagerbergj/quack-extensions/sdk"
+	"github.com/fagerbergj/quack/extensions/sdk"
 )
 
 const explainChatID = "ext:github:github-acme-widgets-explain-alice-7"

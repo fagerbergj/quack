@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fagerbergj/quack-extensions/sdk"
+	"github.com/fagerbergj/quack/extensions/sdk"
 )
 
 const decisionsPatch = "@@ -1,2 +1,2 @@\n ctx\n-a\n+b\n@@ -42,2 +42,2 @@\n-old\n+new\n+newer"

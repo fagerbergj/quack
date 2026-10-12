@@ -11,7 +11,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/fagerbergj/quack-extensions/sdk"
+	"github.com/fagerbergj/quack/extensions/sdk"
 	"github.com/go-chi/chi/v5"
 )
 

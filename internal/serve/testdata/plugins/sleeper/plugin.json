@@ -9,7 +9,7 @@
       "modules": [
         {
           "name": "sleeper",
-          "path": "github.com/fagerbergj/quack-extensions/sleeper"
+          "path": "github.com/fagerbergj/quack/extensions/sleeper"
         }
       ],
       "config": "optional",

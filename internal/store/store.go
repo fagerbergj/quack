@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	extsdk "github.com/fagerbergj/quack-extensions/sdk"
+	extsdk "github.com/fagerbergj/quack/extensions/sdk"
 	"github.com/glebarez/sqlite"
 	"github.com/google/uuid"
 	"google.golang.org/adk/v2/artifact"

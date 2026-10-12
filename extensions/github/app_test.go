@@ -14,8 +14,8 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	"github.com/fagerbergj/quack-extensions/github/internal/httpx"
-	"github.com/fagerbergj/quack-extensions/sdk"
+	"github.com/fagerbergj/quack/extensions/github/internal/httpx"
+	"github.com/fagerbergj/quack/extensions/sdk"
 )
 
 // testKeyPEM is defined in webhook_test.go (same package).

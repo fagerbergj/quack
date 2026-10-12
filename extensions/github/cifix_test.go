@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fagerbergj/quack-extensions/sdk"
+	"github.com/fagerbergj/quack/extensions/sdk"
 )
 
 // stubFixGitHub is stubFixGitHubFull with a default PR author ("someone-else"

@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fagerbergj/quack-extensions/sdk"
+	"github.com/fagerbergj/quack/extensions/sdk"
 	"github.com/go-chi/chi/v5"
 	"google.golang.org/adk/v2/tool"
 	"gopkg.in/yaml.v3"

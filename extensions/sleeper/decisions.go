@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fagerbergj/quack-extensions/sdk"
-	"github.com/fagerbergj/quack-extensions/sleeper/sleepergen"
+	"github.com/fagerbergj/quack/extensions/sdk"
+	"github.com/fagerbergj/quack/extensions/sleeper/sleepergen"
 )
 
 // decideTimeout bounds each Decide call and the Sleeper reads the state needs.

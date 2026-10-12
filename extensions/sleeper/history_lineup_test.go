@@ -1,6 +1,6 @@
 package sleeper
 
-import "github.com/fagerbergj/quack-extensions/sleeper/sleepergen"
+import "github.com/fagerbergj/quack/extensions/sleeper/sleepergen"
 
 // playerDumpAt builds a minimal players dump from alternating id/position
 // pairs, for tests that only need position-aware lineup math.
