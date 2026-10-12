@@ -22,6 +22,18 @@ assert.ok(checkPolicy("bash", { command: "git push origin main" }, { allowClone:
 const here = dirname(fileURLToPath(import.meta.url));
 const env = { ...process.env };
 if (!process.env.PI_ACP_REAL) env.PI_ACP_PI_CMD = join(here, "fake-pi.mjs");
+// A real engine with no endpoint given gets mock-openai.mjs, so `PI_ACP_REAL=1 node test.mjs` is one command.
+if (process.env.PI_ACP_REAL && !env.PI_ACP_CONFIG) {
+  const mock = spawn(process.execPath, [join(here, "mock-openai.mjs")], { env: { ...process.env, PORT: "0" }, stdio: ["ignore", "ignore", "pipe"] });
+  const port = await new Promise((resolve, reject) => {
+    mock.on("exit", (code) => reject(new Error(`mock-openai exited (${code})`)));
+    createInterface({ input: mock.stderr }).on("line", (l) => { const m = /on :(\d+)/.exec(l); if (m) resolve(m[1]); });
+  });
+  mock.unref();
+  mock.stderr.destroy();
+  process.on("exit", () => mock.kill());
+  env.PI_ACP_CONFIG = JSON.stringify({ endpoint: `http://127.0.0.1:${port}/v1`, api_key: "unused", model: "stub", context_window: 65536, max_output_tokens: 32768 });
+}
 if (!env.PI_ACP_CONFIG)
   env.PI_ACP_CONFIG = JSON.stringify({
     endpoint: "http://127.0.0.1:1/v1", api_key: "unused", model: "stub",
@@ -126,7 +138,9 @@ if (!process.env.ACP_CMD) {
   const bridge = JSON.parse(readFileSync(join(piDir, "extensions", "quackmcp.json"), "utf8"));
   assert.equal(bridge.prefix, "quackmcp");
   assert.equal(bridge.tools[0].name, "stage_review");
-  readFileSync(join(piDir, "extensions", "quackmcp.ts")); // extension generated
+  // pig-quack carries the gate fused in; pi loads the generated extension.
+  if (env.PI_ACP_ENGINE === "pig") assert.throws(() => readFileSync(join(piDir, "extensions", "quackmcp.ts")), /ENOENT/);
+  else readFileSync(join(piDir, "extensions", "quackmcp.ts"));
 
   const models = JSON.parse(readFileSync(join(piDir, "models.json"), "utf8"));
   assert.equal(models.providers.quack.models[0].contextWindow, 65536, "contextWindow not plumbed from config's context_window");
@@ -240,6 +254,9 @@ if (process.env.PI_ACP_REAL && !process.env.ACP_CMD) {
   assert.equal((await steered).stopReason, "end_turn");
   const reqs = await fetch(`${new URL(JSON.parse(env.PI_ACP_CONFIG).endpoint).origin}/requests`).then((r) => r.json());
   assert.ok(reqs.some((m) => JSON.stringify(m).includes("steer-note")), "steer never reached the model");
+  // pi's four built-ins plus the bridge, on every engine: PIG offers more unless the shim limits it.
+  const bodies = await fetch(`${new URL(JSON.parse(env.PI_ACP_CONFIG).endpoint).origin}/bodies`).then((r) => r.json());
+  assert.deepEqual(bodies[0].tools.toSorted(), ["bash", "edit", "quackmcp_stage_review", "quackmcp_stage_review_comment", "read", "write"], "model offered the wrong tools");
 
   const stalled = say("STALL");
   await new Promise((r) => setTimeout(r, 500));
@@ -374,6 +391,30 @@ if (!process.env.ACP_CMD && !process.env.PI_ACP_REAL) {
     "session/load must fail, not silently start blank, once its session file is gone");
   shim4.stdin.end();
   await new Promise((r) => shim4.on("exit", r));
+}
+
+// PI_ACP_ENGINE=pig against fake-pi: PIG's flags and env, no .ts gate, and no session until the gate reports in.
+if (!process.env.PI_ACP_REAL && !process.env.ACP_CMD) {
+  const pigEnv = { ...env, PI_ACP_ENGINE: "pig", PI_ACP_GATE_READY_MS: "1000" };
+  const mcp = [{ type: "sse", name: "quackmcp", url: mcpUrl, headers: [] }];
+  const p = connectShim(pigEnv);
+  await p.call("initialize", { protocolVersion: 1, clientCapabilities: {} });
+  const ps = await p.call("session/new", { cwd: process.cwd(), mcpServers: mcp });
+  const pDir = join(tmpdir(), "pi-acp-" + ps.sessionId);
+  assert.throws(() => readFileSync(join(pDir, "extensions", "quackmcp.ts")), /ENOENT/, "pig mode wrote the Node gate");
+  const launch = JSON.parse(readFileSync(join(pDir, "fake-pi-launch.json"), "utf8"));
+  assert.ok(launch.argv.includes("--no-extensions"), "pig mode must disable extension discovery");
+  assert.equal(launch.argv[launch.argv.indexOf("--tools") + 1], "read,bash,edit,write,quackmcp_stage_review,quackmcp_stage_review_comment");
+  assert.equal(launch.offline, "1", "pig mode must run offline");
+  p.shim.stdin.end();
+  await new Promise((r) => p.shim.on("exit", r));
+
+  const q = connectShim({ ...pigEnv, FAKE_PI_SILENT_GATE: "1" });
+  await q.call("initialize", { protocolVersion: 1, clientCapabilities: {} });
+  await assert.rejects(q.call("session/new", { cwd: process.cwd(), mcpServers: mcp }), /quackgate did not report in/, "ungated engine got a session");
+  await assert.rejects(q.call("session/prompt", { sessionId: "x", prompt: [{ type: "text", text: "hi" }] }), /no live session/);
+  q.shim.stdin.end();
+  await new Promise((r) => q.shim.on("exit", r));
 }
 
 shim.stdin.end();

@@ -81,6 +81,26 @@ The three agents only seed once `extensions.github` is configured and enabled (t
 
 An ACP agent has **no quack tools at all** — it brings its own (pi's built-in edit/read/shell tools), with the model bound via a generated `PI_ACP_CONFIG` (parsed by the `pi-acp.mjs` shim: endpoint, model, context/output limits, skill paths, `allow_clone`). The subprocess cannot push to a real remote: it has no git credentials, and the shim also refuses a plain `git push` (delivery is gate-owned; see [trust-gate.md](trust-gate.md)). quack's skill library is injected via that same env's skill paths, so the same `skills/` content (e.g. the ponytail coding-discipline skills) is available to an ACP worker without it needing quack tool access to read it.
 
+### The PIG engine (opt-in)
+
+pi stays the default engine until the QA rig has proven the alternative. The image also ships `/usr/local/bin/pig-quack`: [PIG](https://github.com/MichaelKinsy/PiG) v0.4.1, a Go port of pi, with the shim's policy gate and MCP bridge (`tools/pi-acp/pig/quackgate`) fused in. To run one ACP agent on it, set one variable in that agent's `acp.env`:
+
+```yaml
+code-reviewer:
+  acp:
+    command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
+    env:
+      PI_ACP_ENGINE: pig
+```
+
+Unset, or any other value, keeps pi. `PI_ACP_PI_CMD` still overrides the binary path. What changes under `pig`:
+
+- The engine is one static binary with no Node, at about 70MB peak RSS per session against pi's 147MB. The shim itself still runs on Node.
+- The gate is Go code compiled into the engine, not a generated `quackmcp.ts`; the shim writes no `.ts` file. `checkPolicy` matches `mcp-client.mjs` case for case (`quackgate_test.go` runs both on one table).
+- The shim holds `session/new` and `session/load` until the gate reports in from the engine's `session_start` event, and fails the call after 20s (`PI_ACP_GATE_READY_MS`). A gate with a missing or unreadable `quackmcp.json` refuses every tool call and never reports in.
+- The engine runs with `--no-extensions`, `PI_OFFLINE=1`, and `--tools` set to pi's four built-ins (`read`, `bash`, `edit`, `write`) plus the bridged quack tools. Without the limit PIG would also offer `grep`, `find`, `ls`, `powershell`, `codemode` and `tool_search`.
+- PIG reads `PIG_CODING_AGENT_DIR`, which the shim sets beside `PI_CODING_AGENT_DIR`. Session files keep pi's format, so a round started on one engine resumes on the other.
+
 Each ACP round's preamble also carries a generated workspace/toolchain block: OS, sandbox mode, available toolchains, the `check_commands` allowlist, and the address-space limit, rendered from the resolved workspace caps at startup. Each toolchain line is probed, not just read from config — an unverifiable toolchain gets no line at all, so the agent reports it couldn't verify something instead of trusting a tool that isn't actually reachable.
 
 Because the gate can't watch an external subprocess's internals, it reads the ACP agent's *work* off disk instead: `augmentFromRepo` reads the commits/changed files straight off the clone to synthesize a staged PR, and `augmentFromAnswer` parses a reviewer's `VERDICT:`/`FINDINGS:` tail into a staged review with inline comments.

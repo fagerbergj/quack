@@ -49,7 +49,7 @@ func TestLive_PiRound(t *testing.T) {
 	env := []string{"PI_ACP_CONFIG=" + string(content)}
 	// SpawnEnv is hermetic: forward an alternate engine (e.g. PIG behind a launcher) and its knobs.
 	for _, kv := range os.Environ() {
-		if strings.HasPrefix(kv, "PI_ACP_PI_CMD=") || strings.HasPrefix(kv, "PIG_") {
+		if strings.HasPrefix(kv, "PI_ACP_PI_CMD=") || strings.HasPrefix(kv, "PI_ACP_ENGINE=") || strings.HasPrefix(kv, "PIG_") {
 			env = append(env, kv)
 		}
 	}

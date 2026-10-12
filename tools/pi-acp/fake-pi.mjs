@@ -34,6 +34,12 @@ function recordTurn() {
   appendFileSync(join(fakeSessionDir, fakeSessionId + ".turns"), "1\n");
 }
 
+// Under PI_ACP_ENGINE=pig, stand in for pig-quack: record the launch and report the fused gate in.
+if (process.env.PIG_CODING_AGENT_DIR) {
+  writeFileSync(join(process.env.PIG_CODING_AGENT_DIR, "fake-pi-launch.json"), JSON.stringify({ argv: process.argv.slice(2), offline: process.env.PI_OFFLINE }));
+  if (!process.env.FAKE_PI_SILENT_GATE) fetch(`http://127.0.0.1:${extCfg().permPort}/ready`, { method: "POST" });
+}
+
 function extCfg() {
   try {
     return JSON.parse(readFileSync(join(process.env.PI_CODING_AGENT_DIR, "extensions", "quackmcp.json"), "utf8"));

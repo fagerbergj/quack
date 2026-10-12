@@ -87,4 +87,4 @@ createServer((req, res) => {
       res.end(JSON.stringify({ id: "1", object: "chat.completion", model: "stub", choices: [{ index: 0, message, finish_reason: call ? "tool_calls" : "stop" }], usage }));
     }
   });
-}).listen(port, () => console.error("mock-openai on :" + port));
+}).listen(port, function () { console.error("mock-openai on :" + this.address().port); });

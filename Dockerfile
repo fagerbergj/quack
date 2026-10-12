@@ -76,6 +76,23 @@ RUN npm install --no-fund --no-audit @earendil-works/pi-coding-agent@1.0.0 \
     && find node_modules -path '*/@esbuild/*' -prune ! -name "$p" -exec rm -rf {} + \
     && find node_modules -type f -name '*.map' -delete
 
+# 2c) The opt-in PIG engine (PI_ACP_ENGINE=pig): PIG with tools/pi-acp/pig/quackgate fused in, one static
+# ~64MB Node-free binary. PINNED like pi: bump all three values together and rerun the shim's real-engine test.
+FROM golang:1.26-bookworm AS piglet
+# The release's SHA256SUMS entry for the linux-amd64 tarball (the image is amd64-only, see cd.yaml).
+ADD --checksum=sha256:3b4de3587cbfb617def483ec62dddcf35827acc3436b1454cc5694c22dcdaf3f \
+    https://github.com/MichaelKinsy/PiG/releases/download/v0.4.1/pig-0.4.1-linux-amd64.tar.gz /tmp/pig.tgz
+WORKDIR /src
+COPY tools/pi-acp/pig/ ./
+# `piglet build` compiles PIG's own v0.4.1 module source, fetched through GOPROXY and checked by GOSUMDB;
+# pinning its go.sum hash here also catches a retagged release. Network is needed only in this stage.
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    tar -xzf /tmp/pig.tgz -C /tmp \
+    && sum="$(go mod download -json github.com/MichaelKinsy/PiG@v0.4.1 | sed -n 's/^\t"Sum": "\(.*\)",$/\1/p')" \
+    && test "$sum" = "h1:1W63pubkCe4ZuueDtsKkiISli4vqO2fNTEBuI9jVpdE=" \
+    && /tmp/pig-0.4.1-linux-amd64/pig piglet build quack.yaml --format binary --out /pig-quack \
+    && /pig-quack --version
+
 # 3) Minimal runtime. The git tools (internal/tools/git.go) exec the real git
 # binary, which dynamically links against libcurl/libssl/libpcre2/zlib - those
 # don't exist in distroless/static (no libc at all) and hand-copying git's
@@ -133,6 +150,8 @@ COPY --link --from=frontend /usr/local/lib/node_modules /usr/local/lib/node_modu
 # (--no-session).
 COPY --link --from=pi /opt/pi/node_modules /usr/local/lib/pi/node_modules
 COPY --link tools/pi-acp/pi-acp.mjs tools/pi-acp/mcp-client.mjs tools/pi-acp/otel.mjs /usr/local/lib/pi-acp/
+# The shim's PI_ACP_ENGINE=pig default; under /usr so the jail sees it.
+COPY --link --from=piglet /pig-quack /usr/local/bin/pig-quack
 # The mermaid validator (internal/vetting/mermaid.go, #574): `node
 # scripts/mermaid-validate.mjs` resolves against CWD / here, exactly like
 # every path below - same relative path the source tree uses in dev.

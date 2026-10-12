@@ -1,10 +1,11 @@
-// Package quackgate ports pi-acp.mjs's generated quackmcp.ts (tool_call gate + quackmcp_* bridge) to PIG's Go SDK.
-// Spike: PIG builds it (`pig -e` or `pig piglet build ../quack.yaml`), not `go build`; go.mod relies on PIG's staged SDK.
+// Package quackgate ports pi-acp.mjs's generated quackmcp.ts (tool_call gate + quackmcp_* bridge) to PIG's
+// Go SDK. PIG builds it into the pig-quack Piglet (../quack.yaml); `go test` here covers the gate logic.
 package quackgate
 
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -29,24 +30,28 @@ type bridgeCfg struct {
 	} `json:"tools"`
 }
 
+// jsSpace is JavaScript's \s, so the patterns below match exactly what mcp-client.mjs's do.
+const jsSpace = `[\s\v\pZ\x{feff}]`
+
 var (
-	deny    = []*regexp.Regexp{regexp.MustCompile(`^git push(\s|$)`)}
-	clone   = []*regexp.Regexp{regexp.MustCompile(`^git clone(\s|$)`), regexp.MustCompile(`^gh repo clone(\s|$)`)}
+	deny    = []*regexp.Regexp{regexp.MustCompile(`^git push(` + jsSpace + `|$)`)}
+	clone   = []*regexp.Regexp{regexp.MustCompile(`^git clone(` + jsSpace + `|$)`), regexp.MustCompile(`^gh repo clone(` + jsSpace + `|$)`)}
 	envFile = regexp.MustCompile(`(^|/)[^/]*\.env(\.[^/]*)?$`)
+	jsTrim  = regexp.MustCompile(`^` + jsSpace + `+|` + jsSpace + `+$`)
 )
 
-// checkPolicy mirrors tools/pi-acp/mcp-client.mjs checkPolicy: block, ask, or "" for allow.
+// checkPolicy mirrors tools/pi-acp/mcp-client.mjs checkPolicy: block, ask, or both "" for allow.
 func checkPolicy(tool string, input map[string]any, allowClone bool) (block, ask string) {
 	if tool == "bash" {
 		cmd, _ := input["command"].(string)
-		cmd = strings.TrimSpace(cmd)
+		cmd = jsTrim.ReplaceAllString(cmd, "")
 		res := deny
 		if !allowClone {
 			res = append(append([]*regexp.Regexp{}, deny...), clone...)
 		}
 		for _, re := range res {
 			if re.MatchString(cmd) {
-				f := strings.Fields(cmd)
+				f := strings.Split(cmd, " ")
 				return "denied by policy: " + strings.Join(f[:min(3, len(f))], " ") + " (delivery is gate-owned)", ""
 			}
 		}
@@ -57,28 +62,66 @@ func checkPolicy(tool string, input map[string]any, allowClone bool) (block, ask
 	return "", ""
 }
 
-func loadCfg() *bridgeCfg {
-	dir := os.Getenv("PIG_CODING_AGENT_DIR")
+// loadCfg reads the shim's quackmcp.json. An unset dir is an error, not the cwd: the work tree is not trusted.
+func loadCfg(dir string) (*bridgeCfg, error) {
+	if dir == "" {
+		return nil, errors.New("PIG_CODING_AGENT_DIR is unset")
+	}
 	b, err := os.ReadFile(filepath.Join(dir, "extensions", "quackmcp.json"))
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	var c bridgeCfg
-	if json.Unmarshal(b, &c) != nil {
-		return nil
+	if err := json.Unmarshal(b, &c); err != nil {
+		return nil, err
 	}
-	return &c
+	if c.PermPort <= 0 {
+		return nil, errors.New("quackmcp.json has no permPort")
+	}
+	return &c, nil
 }
 
 func post(url string, body any, hdr map[string]string) (*http.Response, error) {
 	b, _ := json.Marshal(body)
-	req, _ := http.NewRequest("POST", url, bytes.NewReader(b))
+	req, err := http.NewRequest("POST", url, bytes.NewReader(b))
+	if err != nil {
+		return nil, err
+	}
 	req.Header.Set("content-type", "application/json")
 	req.Header.Set("accept", "application/json, text/event-stream")
 	for k, v := range hdr {
 		req.Header.Set(k, v)
 	}
 	return http.DefaultClient.Do(req)
+}
+
+// gate is the tool_call verdict: nil allows, a block map refuses. Any failure to reach the judge refuses.
+func gate(cfg *bridgeCfg, name string, input map[string]any) map[string]any {
+	block, ask := checkPolicy(name, input, cfg.AllowClone)
+	if block != "" {
+		return map[string]any{"block": true, "reason": block}
+	}
+	if ask == "" {
+		return nil
+	}
+	res, err := post(fmt.Sprintf("http://127.0.0.1:%d/perm", cfg.PermPort), map[string]any{"toolName": name, "title": ask, "input": input}, nil)
+	var r struct{ Allow bool }
+	if err == nil {
+		_ = json.NewDecoder(res.Body).Decode(&r)
+		_ = res.Body.Close()
+	}
+	if !r.Allow {
+		return map[string]any{"block": true, "reason": "denied by quack safety judge"}
+	}
+	return nil
+}
+
+// reportReady tells the shim the gate is subscribed; the shim holds session/new until it hears this.
+func reportReady(cfg *bridgeCfg) {
+	res, err := post(fmt.Sprintf("http://127.0.0.1:%d/ready", cfg.PermPort), map[string]any{"gate": "quackgate"}, nil)
+	if err == nil {
+		_ = res.Body.Close()
+	}
 }
 
 // mcpClient is the minimal streamable-HTTP client mcp-client.mjs implements.
@@ -105,16 +148,23 @@ func (m *mcpClient) rpc(method string, params any, notify bool) (map[string]any,
 	if err != nil {
 		return nil, err
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	if s := res.Header.Get("mcp-session-id"); s != "" {
+		m.mu.Lock()
 		m.session = s
+		m.mu.Unlock()
 	}
-	if notify || res.StatusCode == 202 {
+	if notify || res.StatusCode == http.StatusAccepted {
 		return nil, nil
 	}
 	raw, _ := io.ReadAll(res.Body)
-	if strings.Contains(res.Header.Get("content-type"), "text/event-stream") {
-		for _, l := range strings.Split(string(raw), "\n") {
+	return decodeRPC(method, raw, res.Header.Get("content-type"))
+}
+
+// decodeRPC takes the first data: line of an SSE body, like mcp-client.mjs parseBody.
+func decodeRPC(method string, raw []byte, contentType string) (map[string]any, error) {
+	if strings.Contains(contentType, "text/event-stream") {
+		for l := range strings.SplitSeq(string(raw), "\n") {
 			if d, ok := strings.CutPrefix(l, "data:"); ok {
 				raw = []byte(strings.TrimSpace(d))
 				break
@@ -122,7 +172,7 @@ func (m *mcpClient) rpc(method string, params any, notify bool) (map[string]any,
 		}
 	}
 	var out struct {
-		Result map[string]any `json:"result"`
+		Result map[string]any            `json:"result"`
 		Error  *struct{ Message string } `json:"error"`
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
@@ -141,35 +191,47 @@ func (m *mcpClient) connect() {
 	})
 }
 
+func (m *mcpClient) call(name string, params map[string]any) (any, error) {
+	m.connect()
+	r, err := m.rpc("tools/call", map[string]any{"name": name, "arguments": params}, false)
+	if err != nil {
+		return nil, err
+	}
+	var txt strings.Builder
+	if cs, ok := r["content"].([]any); ok {
+		for _, c := range cs {
+			if m, ok := c.(map[string]any); ok && m["type"] == "text" {
+				txt.WriteString(fmt.Sprint(m["text"]))
+			}
+		}
+	}
+	isErr, _ := r["isError"].(bool)
+	return sdk.ToolResult{Content: txt.String(), IsError: isErr}, nil
+}
+
+// Extension is the factory pig-quack fuses in. Without a valid config it blocks every tool call and never
+// reports ready, so the shim refuses the session too.
 func Extension() *sdk.Extension {
 	e := sdk.New("quackgate")
-	cfg := loadCfg()
-	if cfg == nil {
-		// Spike only: a real gate must fail closed here, as the TS version does on a missing config.
-		fmt.Fprintln(os.Stderr, "quackgate: no quackmcp.json under PIG_CODING_AGENT_DIR="+os.Getenv("PIG_CODING_AGENT_DIR")+"; gate NOT installed")
+	cfg, err := loadCfg(os.Getenv("PIG_CODING_AGENT_DIR"))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "quackgate: no usable quackmcp.json, blocking every tool call:", err)
+		e.OnEvent(sdk.EventToolCall, func(sdk.Context, map[string]any) (any, error) {
+			return map[string]any{"block": true, "reason": "quackgate has no config: tool calls are refused"}, nil
+		})
 		return e
 	}
-	e.OnEvent("tool_call", func(_ sdk.Context, data map[string]any) (any, error) {
+	e.OnEvent(sdk.EventToolCall, func(_ sdk.Context, data map[string]any) (any, error) {
 		name, _ := data["toolName"].(string)
 		input, _ := data["input"].(map[string]any)
-		block, ask := checkPolicy(name, input, cfg.AllowClone)
-		if block != "" {
-			return map[string]any{"block": true, "reason": block}, nil
+		if v := gate(cfg, name, input); v != nil {
+			return v, nil
 		}
-		if ask == "" {
-			return nil, nil
-		}
-		res, err := post(fmt.Sprintf("http://127.0.0.1:%d/perm", cfg.PermPort), map[string]any{"toolName": name, "title": ask, "input": input}, nil)
-		allow := false
-		if err == nil {
-			var r struct{ Allow bool }
-			_ = json.NewDecoder(res.Body).Decode(&r)
-			res.Body.Close()
-			allow = r.Allow
-		}
-		if !allow {
-			return map[string]any{"block": true, "reason": "denied by quack safety judge"}, nil
-		}
+		return nil, nil
+	})
+	// session_start, not the factory: the ping then proves the engine dispatches events to this extension.
+	e.OnEvent(sdk.EventSessionStart, func(sdk.Context, map[string]any) (any, error) {
+		reportReady(cfg)
 		return nil, nil
 	})
 	client := &mcpClient{url: cfg.URL}
@@ -178,22 +240,12 @@ func Extension() *sdk.Extension {
 		if desc == "" {
 			desc = t.Name
 		}
+		// The SDK panics on a non-object schema; an MCP tool may legally omit one.
+		if t.InputSchema == nil {
+			t.InputSchema = map[string]any{"type": "object"}
+		}
 		e.Tool(cfg.Prefix+"_"+t.Name, desc, t.InputSchema, func(_ sdk.Context, params map[string]any) (any, error) {
-			client.connect()
-			r, err := client.rpc("tools/call", map[string]any{"name": t.Name, "arguments": params}, false)
-			if err != nil {
-				return nil, err
-			}
-			var txt strings.Builder
-			if cs, ok := r["content"].([]any); ok {
-				for _, c := range cs {
-					if m, ok := c.(map[string]any); ok && m["type"] == "text" {
-						txt.WriteString(fmt.Sprint(m["text"]))
-					}
-				}
-			}
-			isErr, _ := r["isError"].(bool)
-			return sdk.ToolResult{Content: txt.String(), IsError: isErr}, nil
+			return client.call(t.Name, params)
 		})
 	}
 	return e

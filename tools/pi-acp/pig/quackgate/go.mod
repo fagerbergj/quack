@@ -1,6 +1,7 @@
-module example.com/quackgate
+module github.com/fagerbergj/quack/tools/pi-acp/pig/quackgate
 
-go 1.26
+// PIG's own go line: a newer one makes the Piglet build demand a go.mod update and fail.
+go 1.26.0
 
-// Pig resolves this requirement to the version-matched staged SDK at build time.
-require github.com/MichaelKinsy/PiG/extensions/sdk v0.0.0
+// PIG swaps in its own version-matched SDK when it fuses the gate into a Piglet.
+require github.com/MichaelKinsy/PiG/extensions/sdk v0.4.1
