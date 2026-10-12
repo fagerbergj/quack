@@ -1104,7 +1104,7 @@ export function dagTotalTokens(dag: DagTurnState): number {
 // else the sinks' streamed answers, else (a retry before its sinks stream) the answer it replaces.
 export function liveAnswerText(live: { dag?: DagTurnState; answer?: string; previousAnswer?: string; streaming: boolean }): string {
   if (!live.streaming && live.answer) return live.answer
-  return (live.dag ? dagAnswer(live.dag).text : '') || (live.previousAnswer ?? '')
+  return (live.dag ? dagAnswer(live.dag).text : '') || live.previousAnswer || (live.answer ?? '')
 }
 
 // attributedSinks are the sinks an answer came from: the "## id" sections of text when it has them,

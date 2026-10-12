@@ -2008,6 +2008,8 @@ describe('ChatStore - a multi-sink turn after a retry keeps its sectioned answer
     store.reattach('c', [retriedTurn])
     const es = FakeEventSource.last!
     expect(store.get('c').live?.id).toBe('t1')
+    // Until the re-run's sink streams, the persisted answer stays up (dogfood finding 7).
+    expect(liveAnswerText(store.get('c').live!)).toBe(sectioned)
     replayRetryOfR1(es)
     await vi.waitFor(() => expect(liveAnswerText(store.get('c').live!)).toBe(updated))
     expect((await sent()).path).toBe('/api/v1/chats/c/responses/t1')
