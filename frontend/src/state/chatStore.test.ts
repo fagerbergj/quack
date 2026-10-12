@@ -648,6 +648,26 @@ describe('ChatStore - mid-node steering', () => {
     expect(es.url).toBe('/api/v1/chats/c/stream')
   })
 
+  it('a retry of a turn streamed on this page keeps its answer until the re-run streams a new one', async () => {
+    const sse = [
+      `event: dag_plan\ndata: ${JSON.stringify({ plan_id: 'p', nodes: [{ id: 'a', agent: 'r', task: 't', depends_on: [] }], edges: [] })}\n\n`,
+      `event: agent_start\ndata: {"node_id":"a","run_id":"worker-r0","agent":"r","stage":"worker"}\n\n`,
+      `event: agent_token\ndata: {"node_id":"a","run_id":"worker-r0","text":"OLD"}\n\n`,
+      `event: node_done\ndata: {"node_id":"a"}\n\n`,
+    ].join('')
+    fetchMock.mockResolvedValueOnce(makeStream(sse))
+    await store.submit('c', 'hello')
+    fetchMock.mockResolvedValueOnce(jsonResponse({ status: 'queued' }))
+    store.retryNode('c', 'a')
+    expect(liveAnswerText(store.get('c').live!)).toBe('OLD')
+
+    await vi.waitFor(() => expect(FakeEventSource.last).not.toBeNull())
+    const es = FakeEventSource.last!
+    es.emit('agent_start', '{"node_id":"a","run_id":"worker-r1","agent":"r","stage":"worker"}')
+    es.emit('agent_token', '{"node_id":"a","run_id":"worker-r1","text":"NEW"}')
+    expect(liveAnswerText(store.get('c').live!)).toBe('NEW')
+  })
+
   // Timers anchor to the server's start time (epoch ms), not Date.now() at event
   // processing - so a reconnect/replay shows true elapsed instead of resetting.
   it('uses server started_at_ms for the dag and node timers', async () => {
@@ -2015,7 +2035,11 @@ describe('ChatStore - a multi-sink turn after a retry keeps its sectioned answer
       .mockResolvedValueOnce(jsonResponse({ status: 'queued' }))
       .mockResolvedValueOnce(jsonResponse({ ...retriedTurn, output: [retriedTurn.output[0], { type: 'message', id: 't1:msg', status: 'completed', content: [{ type: 'output_text', text: updated }] }] }))
     const before = FakeEventSource.last
+    const retriedAt = Date.now()
     store.retryNode('c', 'r1')
+    // Dogfood finding 7: the old answer stays up until the re-run streams, and the timers start at the retry.
+    expect(liveAnswerText(store.get('c').live!)).toBe(sectioned)
+    expect(store.get('c').live!.dag!.startedAt).toBeGreaterThanOrEqual(retriedAt)
     await vi.waitFor(() => expect(FakeEventSource.last).not.toBe(before))
     const es = FakeEventSource.last!
     es.emit('agent_token', '{"node_id":"r1","run_id":"worker-r0","text":"NEW ONE"}')

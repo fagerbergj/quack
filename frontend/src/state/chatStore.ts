@@ -93,6 +93,8 @@ interface LiveTurn {
   // The turn's persisted answer: shown once the run ends, since a replayed or retried run streams only the
   // nodes it re-ran. Set (even '') for an existing turn's run, which re-reads it at done.
   answer?: string
+  // The answer shown before a retry, kept on screen until the re-run's sinks stream a new one.
+  previousAnswer?: string
 }
 
 // A follow-up typed while the run streams: held client-side (no endpoint, unlike the per-node queue)
@@ -450,7 +452,10 @@ export class ChatStore {
       nodeAnswer[id] = ''
       nodeRuns[id] = []
     }
-    this.write(chatId, { ...s, live: { ...s.live!, streaming: true, error: '', answer: '', dag: { ...dag, nodeStates, nodeAnswer, nodeRuns, finishedAt: undefined } } })
+    // startedAt restarts so the header and footer timers time this re-run, not the turn's age.
+    const previousAnswer = liveAnswerText(s.live!) || s.live!.previousAnswer
+    const rerunDag = { ...dag, nodeStates, nodeAnswer, nodeRuns, startedAt: Date.now(), finishedAt: undefined }
+    this.write(chatId, { ...s, live: { ...s.live!, streaming: true, error: '', answer: '', previousAnswer, dag: rerunDag } })
     const generation = this.bumpGeneration(chatId)
     void request().then(r => {
       if (r.response?.ok) return this.subscribeToStream(chatId, generation)
@@ -1096,10 +1101,10 @@ export function dagTotalTokens(dag: DagTurnState): number {
 }
 
 // liveAnswerText is a live DAG turn's answer: its persisted answer once the run ends, when known,
-// else the sinks' streamed answers.
-export function liveAnswerText(live: { dag?: DagTurnState; answer?: string; streaming: boolean }): string {
+// else the sinks' streamed answers, else (a retry before its sinks stream) the answer it replaces.
+export function liveAnswerText(live: { dag?: DagTurnState; answer?: string; previousAnswer?: string; streaming: boolean }): string {
   if (!live.streaming && live.answer) return live.answer
-  return live.dag ? dagAnswer(live.dag).text : ''
+  return (live.dag ? dagAnswer(live.dag).text : '') || (live.previousAnswer ?? '')
 }
 
 // attributedSinks are the sinks an answer came from: the "## id" sections of text when it has them,
