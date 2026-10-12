@@ -16,12 +16,28 @@ func (e *extension) markRunning(chatID string) {
 		e.running = make(map[string]struct{})
 	}
 	e.running[chatID] = struct{}{}
+	delete(e.unverified, chatID)
 }
 
 func (e *extension) clearRunning(chatID string) {
 	e.runningMu.Lock()
 	defer e.runningMu.Unlock()
 	delete(e.running, chatID)
+}
+
+func (e *extension) setUnverified(chatID, note string) {
+	e.runningMu.Lock()
+	defer e.runningMu.Unlock()
+	if e.unverified == nil {
+		e.unverified = make(map[string]string)
+	}
+	e.unverified[chatID] = note
+}
+
+func (e *extension) unverifiedNote(chatID string) string {
+	e.runningMu.Lock()
+	defer e.runningMu.Unlock()
+	return e.unverified[chatID]
 }
 
 func (e *extension) isRunning(chatID string) bool {
@@ -35,6 +51,7 @@ func (e *extension) isRunning(chatID string) bool {
 // chatID (already cleared, or never dispatched here) is a no-op.
 func (e *extension) RunEnded(chatID string, outcome sdk.RunOutcome) {
 	e.clearRunning(chatID)
+	e.setUnverified(chatID, outcome.Unverified)
 	if leagueID, ok := e.takeNotesRetry(chatID); ok {
 		// Off the run's tail: jobOrigin makes a Sleeper call before the redispatch.
 		go e.dispatchSeasonNotes(context.Background(), leagueID)

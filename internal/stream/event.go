@@ -226,6 +226,22 @@ type DagPlanData struct {
 	ExecPlan json.RawMessage `json:"-"`
 }
 
+// SinkIDs are the plan's sinks - nodes no other node depends on - in plan order. Their outputs ARE
+// the turn's answer, mirroring the frontend's sinkNodeIds/liveDagFinalText.
+func (p DagPlanData) SinkIDs() []string {
+	hasSuccessor := make(map[string]bool, len(p.Edges))
+	for _, e := range p.Edges {
+		hasSuccessor[e.From] = true
+	}
+	var ids []string
+	for _, n := range p.Nodes {
+		if !hasSuccessor[n.ID] {
+			ids = append(ids, n.ID)
+		}
+	}
+	return ids
+}
+
 // `node_queued` event payload.
 type NodeQueuedData struct {
 	NodeID string `json:"node_id"`

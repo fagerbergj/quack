@@ -26,7 +26,7 @@ const chatShowDetailJSON = `{
                 {"id":"n2","agent":"synthesizer","task":"t","depends_on":["n1"]}],
        "edges":[{"from":"n1","to":"n2"}],
        "node_states":{
-         "n1":{"status":"done","model":"qwen3.6-35b","total_tokens":1234,"server_duration_ms":2500,"judge_final_score":0.82},
+         "n1":{"status":"done","model":"qwen3.6-35b","total_tokens":1234,"server_duration_ms":2500,"judge_final_score":0.82,"judge_rounds":2,"judge_passed":false},
          "n2":{"status":"failed"}
        }},
       {"type":"message","id":"m1","status":"completed","content":[{"type":"output_text","text":"partial answer"}]}
@@ -52,7 +52,7 @@ func TestRunChatShow(t *testing.T) {
 	for _, want := range []string{
 		"id:     c1", "title:  Research run", "status: needs_input", "question: which region?",
 		"NODE", "AGENT", "STATUS", "MODEL", "TOKENS", "DURATION", "SCORE",
-		"n1", "web-researcher", "done", "qwen3.6-35b", "1234", "2.5s", "0.82",
+		"n1", "web-researcher", "done", "qwen3.6-35b", "1234", "2.5s", "0.82 (failed)",
 		"n2", "synthesizer", "failed",
 		"partial answer",
 	} {

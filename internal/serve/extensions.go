@@ -1174,11 +1174,13 @@ func finishExtRun(ctx, runCtx context.Context, cancelRun context.CancelFunc, nam
 func buildExtRunOutcome(parent context.Context, orch *orchestrator.Orchestrator, st *store.Store, userID, chatID string, planRan bool, needsInput stream.NodeNeedsInputData, timedOut, cancelled bool) extsdk.RunOutcome {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 10*time.Second)
 	defer cancel()
-	status, question, nodeError := st.StampTerminalOutcome(ctx, orchestrator.AppName, userID, chatID, func() (string, bool) {
+	status, question, nodeError, unverified := st.StampTerminalOutcome(ctx, orchestrator.AppName, userID, chatID, func() (string, bool) {
 		return orch.PendingQuestion(ctx, userID, chatID)
 	})
 	answer := strings.TrimSpace(orch.LatestAnswer(ctx, userID, chatID))
-	return mapExtRunOutcome(status, question, nodeError, answer, planRan, needsInput, timedOut, cancelled)
+	out := mapExtRunOutcome(status, question, nodeError, answer, planRan, needsInput, timedOut, cancelled)
+	out.Unverified = unverified
+	return out
 }
 
 // mapExtRunOutcome classifies without a live store/orch. cancelled wins over status; nodeError is the

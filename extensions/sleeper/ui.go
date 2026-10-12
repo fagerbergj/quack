@@ -487,9 +487,11 @@ func (e *extension) handleSeasons(w http.ResponseWriter, r *http.Request) {
 }
 
 type artifactEnvelope struct {
-	Found   bool            `json:"found"`
-	Running bool            `json:"running"`
-	Data    json.RawMessage `json:"data,omitempty"`
+	Found   bool `json:"found"`
+	Running bool `json:"running"`
+	// Unverified is the last run's sdk.RunOutcome.Unverified note, "" when it passed its quality check.
+	Unverified string          `json:"unverified,omitempty"`
+	Data       json.RawMessage `json:"data,omitempty"`
 	// Invalid marks a non-JSON artifact (agent wrote prose); Text carries the raw content and Data is omitted.
 	Invalid bool   `json:"invalid,omitempty"`
 	Text    string `json:"text,omitempty"`
@@ -635,6 +637,7 @@ func (e *extension) handleArtifacts(w http.ResponseWriter, r *http.Request) {
 		chatID := fmt.Sprintf("ext:sleeper:%s:%s:%s", leagueID, stop, job)
 		env := e.readArtifact(chatID, job)
 		env.Running = e.isRunning(chatID)
+		env.Unverified = e.unverifiedNote(chatID)
 		out.Jobs[job] = env
 	}
 	notesChatID := fmt.Sprintf("ext:sleeper:%s:season-notes", leagueID)

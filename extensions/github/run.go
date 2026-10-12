@@ -280,6 +280,9 @@ func (e *Extension) shapeAnswer(pr *pendingRun, outcome sdk.RunOutcome, owner, r
 		e.app.collapsePriorComments(context.Background(), owner, repo, number, "plan")
 		answer += "\n\n" + deliveryMarker("plan")
 	}
+	if outcome.Status == sdk.RunDone && outcome.Unverified != "" {
+		answer = "> [!WARNING]\n> This answer is " + outcome.Unverified + ".\n\n" + answer
+	}
 	return answer
 }
 

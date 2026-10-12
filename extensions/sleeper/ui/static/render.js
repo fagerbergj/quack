@@ -155,7 +155,7 @@ export function injBadge(p) {
 export function jobHead(meta) {
   let m
   if (meta.status === 'running') m = `<span class="qk-badge qk-badge--warn">Running</span><span>${esc(meta.agent || '')} · started just now</span>`
-  else if (meta.status === 'done') m = `<span class="qk-badge qk-badge--ok">From chat</span><span>${esc(meta.agent || '')}</span><a href="${esc(meta.chatHref || '#')}" target="_top">Open chat</a>`
+  else if (meta.status === 'done') m = `${meta.unverified ? `<span class="qk-badge qk-badge--warn" title="${esc(meta.unverified)}">Not verified</span>` : ''}<span class="qk-badge qk-badge--ok">From chat</span><span>${esc(meta.agent || '')}</span><a href="${esc(meta.chatHref || '#')}" target="_top">Open chat</a>`
   else m = '<span class="qk-badge">Not run</span>'
   const chips = (meta.chips || []).join('')
   return `<div class="sl-sec__head"><div class="sl-sec__title"><h2>${esc(meta.title)}</h2>${chips}</div><div class="sl-sec__meta">${m}</div></div>`

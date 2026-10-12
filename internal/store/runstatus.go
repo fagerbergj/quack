@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/inference"
+	"github.com/fagerbergj/quack/internal/stream"
 )
 
 // Chat.RunStatus values: a run's terminal outcome. Never "queued"/"running", which stay live in-memory
@@ -124,8 +126,8 @@ func orchestratorGiveUpError(chatID string) (string, bool) {
 }
 
 // StampTerminalOutcome derives the newest turn's terminal status and persists it: every dispatch path's tail
-// once events stop draining. Loads only the last turn, all DeriveTerminalStatus reads.
-func (s *Store) StampTerminalOutcome(ctx context.Context, appName, userID, chatID string, pendingQuestion func() (string, bool)) (status, question, nodeError string) {
+// once events stop draining. Loads only the last turn, all DeriveTerminalStatus reads; unverified is its UnverifiedNote.
+func (s *Store) StampTerminalOutcome(ctx context.Context, appName, userID, chatID string, pendingQuestion func() (string, bool)) (status, question, nodeError, unverified string) {
 	last, err := s.GetLastTurnWithContent(ctx, appName, userID, chatID)
 	if err != nil {
 		slog.Warn("stamp terminal outcome: turn load failed", "component", "store", "chat", chatID, "err", err)
@@ -133,13 +135,39 @@ func (s *Store) StampTerminalOutcome(ctx context.Context, appName, userID, chatI
 	var turns []TurnContent
 	if last != nil {
 		turns = []TurnContent{*last}
+		unverified = last.UnverifiedNote()
 	}
 	q, hasQ := pendingQuestion()
 	status, question, nodeError = DeriveTerminalStatus(chatID, turns, q, hasQ)
 	if err := s.StampRunOutcome(ctx, chatID, status, question); err != nil {
 		slog.Warn("stamp terminal outcome: persist failed", "component", "store", "chat", chatID, "err", err)
 	}
-	return status, question, nodeError
+	return status, question, nodeError, unverified
+}
+
+// JudgeFailed: the node's judge ran and never passed it, so any output was delivered unverified.
+func (n DagNode) JudgeFailed() bool { return n.JudgeRounds > 0 && !n.JudgePassed }
+
+// UnverifiedNote names the turn's answering (sink) nodes that delivered after failing their judge; "" when none.
+func (tc TurnContent) UnverifiedNote() string {
+	var plan stream.DagPlanData
+	if tc.Plan == nil || json.Unmarshal([]byte(tc.Plan.PlanJSON), &plan) != nil {
+		return ""
+	}
+	sinks := map[string]bool{}
+	for _, id := range plan.SinkIDs() {
+		sinks[id] = true
+	}
+	var parts []string
+	for _, n := range tc.Nodes {
+		if sinks[n.NodeID] && n.JudgeFailed() && strings.TrimSpace(n.Output) != "" {
+			parts = append(parts, fmt.Sprintf("%s: quality check score %.2f", n.NodeID, n.JudgeFinalScore))
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "not verified (" + strings.Join(parts, "; ") + ")"
 }
 
 // ScanOrphanedRuns reconciles chats a killed process left mid-run: paused if a node is suspended, left active
@@ -262,7 +290,7 @@ func SeedOutputs(nodes []DagNode) (seeded map[string]string, unreviewed map[stri
 			continue
 		}
 		seeded[n.NodeID] = n.Output
-		if n.Status == string(dag.StatusCancelled) || n.JudgeRounds > 0 && !n.JudgePassed {
+		if n.Status == string(dag.StatusCancelled) || n.JudgeFailed() {
 			unreviewed[n.NodeID] = true
 		}
 	}

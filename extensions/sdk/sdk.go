@@ -105,6 +105,10 @@ type RunOutcome struct {
 
 	// TimedOut is true when the run hit RunConfig.Timeout before finishing.
 	TimedOut bool
+
+	// Unverified is a display note, e.g. "not verified (waivers: quality check score 0.33)", when an
+	// answering node delivered after failing its quality check; "" when every answer passed or had none.
+	Unverified string
 }
 
 // Host is what quack hands an extension's Factory. Func fields other than Dispatch may be

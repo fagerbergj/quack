@@ -584,7 +584,7 @@ function NodeMetaRow({ state, node, pauseLabel }: { state: NodeState; node: DagN
           className="inline-flex items-center gap-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400"
           title={`The quality check rejected this output after ${state.judgeRounds} round${state.judgeRounds === 1 ? '' : 's'}${state.judgeFinalScore != null ? ` (final score ${(state.judgeFinalScore * 100).toFixed(0)}%)` : ''} - shown without a passing check`}
         >
-          <Icon name="warning" className="w-3 h-3" /> not checked
+          <Icon name="warning" className="w-3 h-3" /> not verified
         </span>
       )}
       {state.totalTokens != null && state.totalTokens > 0 && (

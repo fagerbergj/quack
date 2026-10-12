@@ -96,6 +96,9 @@ type extension struct {
 	// loses Running badges.
 	runningMu sync.Mutex
 	running   map[string]struct{}
+	// unverified maps a chat id to its last run's RunOutcome.Unverified note.
+	// ponytail: in-memory like running; a restart drops the card's marker, persist it if that matters.
+	unverified map[string]string
 	// notesRetry maps a season-notes chat id to the league whose update its live run refused.
 	// ponytail: in-memory like running; a restart or shutdown-cut run drops the retry.
 	notesRetry map[string]string

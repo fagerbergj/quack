@@ -202,6 +202,32 @@ func TestHandleArtifactsReadsExactChatID(t *testing.T) {
 	}
 }
 
+// TestHandleArtifactsCarriesUnverified: a job whose run delivered after failing its quality check says so
+// on its card until the next dispatch of that job.
+func TestHandleArtifactsCarriesUnverified(t *testing.T) {
+	chatID := "ext:sleeper:" + testLeague + ":6:waivers"
+	host := &fakeHost{artifacts: map[string]map[string][]byte{chatID: {"waivers": []byte(`{"week":5}`)}}}
+	e, r := newTestExtension(t, host.sdkHost(), config{})
+	note := "not verified (waivers: quality check score 0.33)"
+	e.RunEnded(chatID, sdk.RunOutcome{Status: sdk.RunDone, Unverified: note})
+	get := func() artifactEnvelope {
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/artifacts?league_id="+testLeague+"&stop=6", nil))
+		var resp artifactsResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode: %v (body %s)", err, rec.Body)
+		}
+		return resp.Jobs["waivers"]
+	}
+	if got := get().Unverified; got != note {
+		t.Errorf("jobs[waivers].unverified = %q, want %q", got, note)
+	}
+	e.markRunning(chatID)
+	if got := get().Unverified; got != "" {
+		t.Errorf("jobs[waivers].unverified = %q after a new dispatch, want cleared", got)
+	}
+}
+
 // TestHandleArtifactsIncludesTradeFinder pins the finder's own artifact
 // kind: one chat per week, read back under jobs["trade-finder"].
 func TestHandleArtifactsIncludesTradeFinder(t *testing.T) {
