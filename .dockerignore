@@ -4,6 +4,9 @@
 # any of those paths would silently ship a broken image.
 .git
 .github
+# Main checkout: agent worktrees live here, over 1GB of build context.
+.claude
+.quack
 .vscode
 .idea
 **/node_modules
@@ -11,6 +14,7 @@ frontend/dist
 internal/serve/web/dist/assets
 /quack
 /quack-sandbox
+/server
 go.work
 go.work.sum
 .dev
