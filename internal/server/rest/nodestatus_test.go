@@ -203,6 +203,7 @@ func TestUpdateNodeStatus_ResumePausedNode(t *testing.T) {
 // TestUpdateNodeStatus_ResumeAlreadyLiveConflict409: pause is cooperative, so a "paused" row can still have
 // a live run; a second resume must 409, not dispatch a concurrent run of the same node.
 func TestUpdateNodeStatus_ResumeAlreadyLiveConflict409(t *testing.T) {
+	shortPauseUnwind(t)
 	h := newTestHandler(t)
 	chatID, planID, nodeID := "c1", "p1", "n1"
 	seedPlan(t, h, chatID, planID, nodeID)
@@ -220,6 +221,7 @@ func TestUpdateNodeStatus_ResumeAlreadyLiveConflict409(t *testing.T) {
 
 // TestStartNode_ResumeAlreadyLiveConflict409 is the /start endpoint's half of the same check.
 func TestStartNode_ResumeAlreadyLiveConflict409(t *testing.T) {
+	shortPauseUnwind(t)
 	h := newTestHandler(t)
 	chatID, planID, nodeID := "c1", "p1", "n1"
 	seedPlan(t, h, chatID, planID, nodeID)
@@ -232,6 +234,31 @@ func TestStartNode_ResumeAlreadyLiveConflict409(t *testing.T) {
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409 (a run is already dispatched for this chat); body=%s", rec.Code, rec.Body.String())
 	}
+}
+
+func shortPauseUnwind(t *testing.T) {
+	old := pauseUnwindWait
+	pauseUnwindWait = 50 * time.Millisecond
+	t.Cleanup(func() { pauseUnwindWait = old })
+}
+
+// A resume sent right after a pause lands while the paused run still unwinds; it waits the run out
+// instead of a 409.
+func TestUpdateNodeStatus_ResumeWaitsForThePausedRunToRetire(t *testing.T) {
+	h := newTestHandler(t)
+	chatID, planID, nodeID := "c1", "p1", "n1"
+	seedPlan(t, h, chatID, planID, nodeID)
+	if err := h.store.UpsertDagNode(context.Background(), store.DagNode{NodeID: nodeID, PlanID: planID, Status: "paused"}); err != nil {
+		t.Fatalf("seed paused node: %v", err)
+	}
+	h.hub.RegisterRun(chatID, "turn-"+planID, func() {})
+	time.AfterFunc(100*time.Millisecond, func() { h.hub.UnregisterRun(chatID) })
+
+	rec := putNodeStatus(t, h, chatID, nodeID, schema.NodeStatusUpdateBody{Status: schema.NodeStatusUpdateBodyStatusRunning})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 once the paused run retired; body=%s", rec.Code, rec.Body.String())
+	}
+	time.Sleep(50 * time.Millisecond)
 }
 
 // TestUpdateNodeStatus_ResumeRegistersRunSynchronously: retryNodeAsync registers the run before returning,

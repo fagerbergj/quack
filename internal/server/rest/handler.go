@@ -546,7 +546,7 @@ func (h *Handler) UpdateChat(w http.ResponseWriter, r *http.Request, chatID sche
 
 func (h *Handler) DeleteChat(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
 	// Stop the run and wait out its tail (checkpoint, settle, delivery) so nothing writes to a deleted chat.
-	if h.hub.CancelRun(chatID) && !h.waitRunEnded(r.Context(), chatID) {
+	if h.hub.CancelRun(chatID) && !h.waitRunEnded(r.Context(), chatID, deleteStopWait) {
 		errMsg(w, http.StatusConflict, "chat's run is still stopping; retry the delete shortly")
 		return
 	}
@@ -571,9 +571,21 @@ func (h *Handler) DeleteChat(w http.ResponseWriter, r *http.Request, chatID sche
 // deleteStopWait bounds how long DeleteChat waits for a cancelled run to unregister.
 var deleteStopWait = 15 * time.Second
 
+// pauseUnwindWait bounds how long starting a paused node waits for its run to retire: node_paused lands
+// before the run unwinds, so an immediate resume would otherwise race it.
+var pauseUnwindWait = 3 * time.Second
+
+// waitPausedRun gives a just-paused node's run a moment to retire before it is started again.
+// ponytail: a paused node can't rejoin a chat run its siblings keep live; joining that run is the upgrade.
+func (h *Handler) waitPausedRun(ctx context.Context, chatID string, current dag.NodeStatus) {
+	if current == dag.StatusPaused {
+		h.waitRunEnded(ctx, chatID, pauseUnwindWait)
+	}
+}
+
 // waitRunEnded polls until the hub drops chatID's run (FinishRun's last step) or the wait lapses.
-func (h *Handler) waitRunEnded(ctx context.Context, chatID string) bool {
-	deadline := time.NewTimer(deleteStopWait)
+func (h *Handler) waitRunEnded(ctx context.Context, chatID string, wait time.Duration) bool {
+	deadline := time.NewTimer(wait)
 	defer deadline.Stop()
 	tick := time.NewTicker(20 * time.Millisecond)
 	defer tick.Stop()
@@ -947,6 +959,7 @@ func (h *Handler) UpdateNodeStatus(w http.ResponseWriter, r *http.Request, chatI
 			})
 			return
 		}
+		h.waitPausedRun(r.Context(), chatID, current)
 		h.dispatchRetry(w, r, dp, chatID, nodeID, guidance)
 	case dag.StatusQueued:
 		h.dispatchRetry(w, r, dp, chatID, nodeID, guidance)
@@ -988,7 +1001,7 @@ func (h *Handler) dispatchRetry(w http.ResponseWriter, r *http.Request, dp *stor
 		return
 	}
 	if !h.retryNodeAsync(dp, chatID, nodeID, guidance) {
-		errMsg(w, http.StatusConflict, "a run is already in flight for this node; nothing was dispatched")
+		errMsg(w, http.StatusConflict, "the chat still has a run in flight; nothing was dispatched - try again once it finishes")
 		return
 	}
 	writeJSON(w, http.StatusOK, schema.DagNodeState{Status: schema.NodeStatusQueued})
@@ -1032,6 +1045,7 @@ func (h *Handler) StartNode(w http.ResponseWriter, r *http.Request, chatID schem
 	}
 	// Only a HITL park re-enters via Orchestrator.StartNode (the answer must reach ADK's Resume); any
 	// other start re-runs the node and its descendants, since a full-plan re-entry re-executes done siblings.
+	h.waitPausedRun(r.Context(), chatID, current)
 	dispatched := false
 	if awaiting {
 		dispatched = h.startNodeAsync(dp, chatID, nodeID, content)
@@ -1039,7 +1053,7 @@ func (h *Handler) StartNode(w http.ResponseWriter, r *http.Request, chatID schem
 		dispatched = h.retryNodeAsync(dp, chatID, nodeID, "")
 	}
 	if !dispatched {
-		errMsg(w, http.StatusConflict, "a run is already in flight for this node; nothing was dispatched")
+		errMsg(w, http.StatusConflict, "the chat still has a run in flight; nothing was dispatched - try again once it finishes")
 		return
 	}
 	writeJSON(w, http.StatusOK, optimisticNodeState(dn, dag.StatusRunning))
