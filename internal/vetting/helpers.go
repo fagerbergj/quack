@@ -152,6 +152,8 @@ type Config struct {
 	ResumedFrom string
 	// Continue: the worker's session already holds this node's work, so the first draft asks it to carry on.
 	Continue bool
+	// AttemptStartedAt: a continued node's interrupted attempt's first start; zero for a fresh attempt.
+	AttemptStartedAt time.Time
 	// RepairSession answers the worker session's interrupted tool calls so a steer can continue it; false when
 	// there is no native session to continue (an ACP node), and the steer re-drafts with the message folded in.
 	RepairSession func(ctx context.Context) bool

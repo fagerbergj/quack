@@ -3,10 +3,11 @@ package vetting
 import (
 	"context"
 	"encoding/json"
-	"google.golang.org/adk/v2/artifact"
 	"strings"
 	"testing"
 	"time"
+
+	"google.golang.org/adk/v2/artifact"
 
 	"github.com/fagerbergj/quack/internal/artifactschema"
 	"github.com/fagerbergj/quack/internal/recordstore"
@@ -199,6 +200,28 @@ func TestArtifactValidCriterion_IgnoresAnEarlierRunsRevision(t *testing.T) {
 	}
 	if got, _ := artifactValidCriterion(context.Background(), cfg, artifactValidTestNodeID, runStart); got.Score != 1 {
 		t.Fatalf("score = %v, want 1 once this run has written a valid artifact (%s)", got.Score, got.Reason)
+	}
+}
+
+// A node continued after a pause or restart keeps credit for what its interrupted attempt wrote,
+// while a fresh attempt (no AttemptStartedAt) still ignores an earlier run's artifact.
+func TestRunGatedRefine_ContinuedNodeSeesItsAttemptsArtifact(t *testing.T) {
+	cfg := artifactValidTestConfig(t, nameRequiredArtifactSchema(t, kindDocument))
+	cfg.User = "u" // runGatedRefineOnce's session user, which the gate scopes records by
+	cfg.JudgeRounds, cfg.Threshold, cfg.Rubric = 1, 0.7, "score the answer 0-10"
+	attemptStart := time.Now().UTC().Add(-time.Hour)
+	if _, _, err := recordClient(cfg).SaveBlob(context.Background(), kindDocument, []byte(`{"name":"before the pause"}`), "application/json",
+		DocumentHint(cfg.ChatID), recordstore.Lineage{NodeID: "impl-gate", SavedAt: attemptStart.Add(time.Minute)}); err != nil {
+		t.Fatalf("SaveBlob (test setup): %v", err)
+	}
+	const answer = "Wrote the document before the pause; this answer is long enough to clear the length check."
+
+	if res := runGatedRefineOnce(t, cfg, answer); res.Passed {
+		t.Fatal("a fresh attempt passed on an artifact written before it started")
+	}
+	cfg.AttemptStartedAt = attemptStart
+	if res := runGatedRefineOnce(t, cfg, answer); !res.Passed {
+		t.Fatalf("continued attempt failed despite its pre-pause artifact: %+v", res)
 	}
 }
 

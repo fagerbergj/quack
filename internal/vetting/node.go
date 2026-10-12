@@ -449,6 +449,10 @@ func newGateRun(ctx adkagent.Context, nodeID string, workerNode workflow.Node, w
 	// is plumbed this deep, and the ADK invocation id is per-run.
 	g.turnID = ctx.InvocationID()
 	g.startedAt = time.Now().UTC()
+	// A continued node's pre-pause writes belong to this attempt; a fresh retry still starts its scope now.
+	if !cfg.AttemptStartedAt.IsZero() {
+		g.startedAt = cfg.AttemptStartedAt
+	}
 	appendNodeEvent(nodeCtx, cfg, nodeID, g.turnID, ledger.KindNodeStarted, 0)
 	// The dag hands the node's token over on cfg; prompt text never carries it.
 	g.advisorToken = cfg.AdvisorToken
