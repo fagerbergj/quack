@@ -289,7 +289,6 @@ func (s *orchRun) handlePlanExhaustion() bool {
 					"component", "orchestrator", "chat", s.sessionID, "rejections", count, "reason", reason)
 				s.safeYield(stream.Errorf(planExhaustedNotice), nil)
 				s.o.persistAnswer(s.ctx, s.userID, s.sessionID, planExhaustedNotice)
-				s.safeYield(stream.Done(), nil)
 				return true
 			}
 		}
@@ -324,7 +323,6 @@ func (s *orchRun) askAfterPlanLoop(reason, shapeKey string) {
 		s.safeYield(stream.ScopeToRun(se, orchRunID), nil)
 	}
 	s.emitAgentComplete()
-	s.safeYield(stream.Done(), nil)
 }
 
 // planLoopQuestion names the options in its text (a GitHub comment shows only the question). Only

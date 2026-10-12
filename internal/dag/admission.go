@@ -113,23 +113,19 @@ func (a *Admission) Admit(ctx context.Context, spec AdmissionSpec, onQueued func
 	defer agingTimer.Stop()
 
 	for {
-		fits := (a.oldestContendingSeqLocked(spec) == mySeq || !a.agingActiveLocked(spec)) && a.fits(spec)
-		if fits {
-			// Never reserve on a dead ctx, even if capacity happens to be free.
-			if ctx.Err() != nil {
-				return false
-			}
+		// A dead ctx never reserves and never waits, so it isn't queued either: a paused node's aborted
+		// round re-enters here, and a queued event would contradict its pause.
+		if ctx.Err() != nil {
+			return false
+		}
+		if (a.oldestContendingSeqLocked(spec) == mySeq || !a.agingActiveLocked(spec)) && a.fits(spec) {
 			a.reserve(spec)
 			return true
 		}
-		// Contention (not fitting) is "queued" regardless of ctx state; firing here never leads to a reservation.
 		if !queuedFired && onQueued != nil {
 			queuedFired = true
 			a.fireUnlocked(onQueued)
 			continue // re-check fits: state may have changed while unlocked
-		}
-		if ctx.Err() != nil {
-			return false
 		}
 		a.cond.Wait()
 	}

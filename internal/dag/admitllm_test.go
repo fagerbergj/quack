@@ -140,3 +140,25 @@ func TestNewAdmittingLLMUnwrapsWhenUnenforced(t *testing.T) {
 		t.Error("an unregistered orchestrator model should return the inner LLM unwrapped")
 	}
 }
+
+// A user pause aborts the worker round, and ADK's next model call arrives on the dead ctx: on a
+// contended pool it must fail without emitting queued, or the paused node is relabelled queued.
+func TestAdmittingLLMAbortedRoundEmitsNoQueued(t *testing.T) {
+	spec := AdmissionSpec{Model: "m"}
+	a := NewAdmission(map[string]int{"m": 1}, nil, nil, time.Hour)
+	mustAdmit(t, a, spec) // another node holds the only slot
+	defer a.Release(spec)
+
+	queued := false
+	llm := NewAdmittingLLM(&fakeLLM{}, a, spec, func() { queued = true }, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, err := range llm.GenerateContent(ctx, nil, false) {
+		if err == nil {
+			t.Fatal("an aborted round's model call was admitted")
+		}
+	}
+	if queued {
+		t.Error("an aborted round's model call emitted queued")
+	}
+}
