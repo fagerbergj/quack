@@ -610,7 +610,8 @@ func fillLastReply[T any](turns []T, answer func(*T) *string, reply any) {
 // continuePrompt: sent to a resumed node's own session in place of its task, which the history already holds.
 const continuePrompt = "Your work on this task was interrupted (the server restarted or the node was paused) and resumes now " +
 	"with your history above. A tool result marked \"interrupted\" never came back: check the current state before repeating " +
-	"that call. Carry on from where you stopped and finish the task."
+	"that call. Carry on from where you stopped and finish the task. Your final reply is the task's answer, exactly as " +
+	"it would have been without the interruption: never describe the interruption or report on the state of your work."
 
 // interrupted reports (and clears) that a steer or pause aborted the round; a stop wins over it.
 func (g *gateRun) interrupted() bool {
