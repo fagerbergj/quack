@@ -12,13 +12,14 @@ export function fmtMs(ms: number): string {
   return `${h}h ${m % 60}m ${rem}s`
 }
 
-// LiveTimer ticks every 100ms while running, then freezes on the final value.
-export function LiveTimer({ startedAt, finishedAt }: { startedAt: number; finishedAt?: number }) {
+// LiveTimer ticks every 100ms while running, then freezes on the final value. `paused` holds the last reading
+// without a timestamp for when the pause began; unpausing jumps to now.
+export function LiveTimer({ startedAt, finishedAt, paused = false }: { startedAt: number; finishedAt?: number; paused?: boolean }) {
   const [now, setNow] = useState(Date.now)
   useEffect(() => {
-    if (finishedAt != null) return
+    if (finishedAt != null || paused) return
     const id = setInterval(() => setNow(Date.now()), 100)
     return () => clearInterval(id)
-  }, [finishedAt])
+  }, [finishedAt, paused])
   return <>{fmtMs((finishedAt ?? now) - startedAt)}</>
 }

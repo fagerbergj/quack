@@ -1140,6 +1140,13 @@ describe('answer-bubble attribution helpers', () => {
     expect(dagTotalTokens(d)).toBe(150)
   })
 
+  // Dogfood finding 16: the header showed only the finished node's tokens, not a paused node's worker rounds.
+  it('dagTotalTokens counts an unfinished node by its runs so far', () => {
+    const run = (runId: string, totalTokens: number) => ({ runId, agent: 'r', stage: 'worker' as const, activity: [], done: true, totalTokens })
+    const d = { ...dag({ a: { status: 'paused' }, b: { status: 'done', totalTokens: 100 } }), nodeRuns: { a: [run('w0', 50), run('w1', 30)], b: [run('w0', 999)] } }
+    expect(dagTotalTokens(d)).toBe(180)
+  })
+
   it('dagTotalTokens is 0 when no node reports usage', () => {
     expect(dagTotalTokens(dag({}))).toBe(0)
   })

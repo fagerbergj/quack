@@ -1088,10 +1088,11 @@ export function dagAnswer(dag: DagTurnState): { text: string; stopped: boolean }
   return { text: ids.map(id => `## ${id}\n\n${body(id)}`).join('\n\n'), stopped: allStopped }
 }
 
-// dagTotalTokens sums total_tokens across every node in a DAG - the DAG bubble
-// header's token count.
+// dagTotalTokens sums every node's tokens for the DAG bubble header: node_done's total, else (a running or paused
+// node) its runs' agent_complete totals so far.
 export function dagTotalTokens(dag: DagTurnState): number {
-  return dag.nodes.reduce((sum, n) => sum + (dag.nodeStates[n.id]?.totalTokens ?? 0), 0)
+  const runTokens = (id: string) => (dag.nodeRuns[id] ?? []).reduce((sum, r) => sum + (r.totalTokens ?? 0), 0)
+  return dag.nodes.reduce((sum, n) => sum + (dag.nodeStates[n.id]?.totalTokens ?? runTokens(n.id)), 0)
 }
 
 // liveAnswerText is a live DAG turn's answer: its persisted answer once the run ends, when known,

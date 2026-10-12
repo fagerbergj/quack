@@ -611,13 +611,15 @@ function NodeMetaRow({ state, node, pauseLabel }: { state: NodeState; node: DagN
   )
 }
 
-// A finished node shows the server-measured duration (reconnect-proof); a running one ticks from the server start.
-function NodeElapsed({ state }: { state: NodeState }) {
+// A finished node shows the server-measured duration (reconnect-proof); a running one ticks from its own node_start,
+// holds while paused, and a node still waiting for its first run shows none.
+function NodeElapsed({ state, notStarted }: { state: NodeState; notStarted: boolean }) {
+  if (notStarted) return null
   return (state.finishedAt != null && state.serverDurationMs != null) ? (
     <span className="shrink-0 text-[11px] text-gray-500 dark:text-gray-400 tabular-nums">{fmtMs(state.serverDurationMs)}</span>
   ) : state.startedAt != null ? (
     <span className="shrink-0 text-[11px] text-gray-500 dark:text-gray-400 tabular-nums">
-      <LiveTimer startedAt={state.startedAt} finishedAt={state.finishedAt} />
+      <LiveTimer startedAt={state.startedAt} finishedAt={state.finishedAt} paused={isPausedStatus(state.status)} />
     </span>
   ) : null
 }
@@ -825,7 +827,7 @@ export const DagNode = memo(function DagNode({
         <QueuedBadge count={pendingQueueCount} />
         <NodeStateChips steers={state.steers} resumedFrom={state.resumedFrom} />
         <NodeMetaRow state={state} node={node} pauseLabel={pauseLabel} />
-        <NodeElapsed state={state} />
+        <NodeElapsed state={state} notStarted={notStarted} />
         <NodeAnswerButton canAnswer={canAnswer} onClick={() => setPopupOpen(true)} />
         <NodeMenu
           nodeId={node.id}

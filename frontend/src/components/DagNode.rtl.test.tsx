@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
-import { cleanup, render as rtlRender, screen, within } from '@testing-library/react'
+import { act, cleanup, render as rtlRender, screen, within } from '@testing-library/react'
 import type { ReactElement } from 'react'
 import userEvent from '@testing-library/user-event'
 import { DagNode } from './DagNode'
@@ -307,6 +307,28 @@ describe('DagNode stays live through a mid-run admission re-queue (#1480)', () =
     await user.click(screen.getByRole('button', { name: 'Node actions' }))
     expect(await screen.findByRole('menuitem', { name: /Start/ })).toBeTruthy()
     expect(screen.queryByRole('menuitem', { name: /Pause/ })).toBeNull()
+  })
+})
+
+// Dogfood finding 16: a not-yet-run node showed a timer, and a paused node's kept counting.
+describe('DagNode elapsed timer', () => {
+  afterEach(() => { vi.useRealTimers() })
+
+  it('a queued node that never ran shows no timer, even with a node_start time', () => {
+    const { container } = render(<DagNode node={node} state={{ status: 'queued', startedAt: Date.now() - 2100 }} runs={[]} answer="" isFinal={false} />)
+    expect(container.textContent).not.toMatch(/\d+\.\ds/)
+  })
+
+  it('a paused node holds its reading while a running one ticks', () => {
+    vi.useFakeTimers()
+    const startedAt = Date.now() - 5000
+    const paused = render(<DagNode node={node} state={{ status: 'paused', startedAt }} runs={[]} answer="" isFinal={false} />)
+    const running = render(<DagNode node={{ ...node, id: 'r2' }} state={{ status: 'running', startedAt }} runs={[]} answer="" isFinal={false} />)
+    const reading = (c: HTMLElement) => c.textContent?.match(/\d+\.\ds/)?.[0]
+    expect(reading(paused.container)).toBe('5.0s')
+    act(() => { vi.advanceTimersByTime(3000) })
+    expect(reading(paused.container)).toBe('5.0s')
+    expect(reading(running.container)).toBe('8.0s')
   })
 })
 
