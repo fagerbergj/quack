@@ -1217,7 +1217,8 @@ type ResumeReport struct {
 }
 
 // ResumePausedDagNodes resumes what the last process left suspended: paused/needs_input nodes, and running ones
-// from this instance's previous life or past staleNodeCeiling (re-stamped paused/shutdown). Queued nodes wait.
+// from this instance's previous life or past staleNodeCeiling (re-stamped paused/shutdown), and the next nodes of
+// a run cut between nodes (addQueuedFrontier).
 func (s *Store) ResumePausedDagNodes(ctx context.Context, resumable func(chatID, pauseReason string) (bool, string)) (ResumeReport, error) {
 	var rep ResumeReport
 	cutoff := time.Now().UTC().Add(-staleNodeCeiling)
@@ -1284,6 +1285,7 @@ func (s *Store) ResumePausedDagNodes(ctx context.Context, resumable func(chatID,
 		s.syncDagNodeRecord(ctx, chatID, n.PlanID, n.NodeID, status)
 		rep.add(ResumableNode{ChatID: chatID, PlanID: n.PlanID, NodeID: n.NodeID, Reason: reason}, n.Status)
 	}
+	s.addQueuedFrontier(ctx, resumable, &rep)
 	return rep, nil
 }
 

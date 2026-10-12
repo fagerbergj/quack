@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -92,10 +93,7 @@ type DagStream struct {
 	shutdown  func() bool
 }
 
-// ScopeToRetry restricts the terminal sweep to the retried node and its descendants.
-func (s *DagStream) ScopeToRetry(nodeID string) { s.only = retrySet(s.plan, nodeID) }
-
-// ScopeToResume restricts the sweep to resumed nodes and their descendants.
+// ScopeToResume restricts the sweep to retried or resumed nodes and their descendants.
 func (s *DagStream) ScopeToResume(nodeIDs []string) {
 	s.only = map[string]bool{}
 	for _, id := range nodeIDs {
@@ -220,16 +218,26 @@ func (s *DagStream) emitFinishTerminal(n Node, stopped bool, runErr error) {
 // RetryPlanInNode re-runs the target node and descendants with seeded outputs. With cont, a native target
 // carries on in its saved session; otherwise retry reaps it, as that session outlives completion.
 func (e *Executor) RetryPlanInNode(ctx adkagent.Context, plan Plan, chatID, nodeID string, seeded map[string]string, cont bool) (map[string]string, error) {
-	// ponytail: only the named target, not a re-cascaded descendant - the same class of staleness
-	// could in principle reach one of those too, add if it shows up in practice.
-	native := cont && e.repairNativeWorkerSession(context.WithoutCancel(ctx), plan, chatID, nodeID)
-	if !native {
-		e.resetNativeWorkerSession(context.WithoutCancel(ctx), plan, chatID, nodeID)
+	return e.RetryPlanInNodes(ctx, plan, chatID, map[string]bool{nodeID: cont}, seeded)
+}
+
+// RetryPlanInNodes is RetryPlanInNode for several targets (node ID -> cont) in one subset run, so a
+// descendant they share runs once.
+func (e *Executor) RetryPlanInNodes(ctx adkagent.Context, plan Plan, chatID string, targets map[string]bool, seeded map[string]string) (map[string]string, error) {
+	run := map[string]bool{}
+	for nodeID, cont := range targets {
+		// ponytail: only the named targets, not a re-cascaded descendant - the same class of staleness
+		// could in principle reach one of those too, add if it shows up in practice.
+		native := cont && e.repairNativeWorkerSession(context.WithoutCancel(ctx), plan, chatID, nodeID)
+		if !native {
+			e.resetNativeWorkerSession(context.WithoutCancel(ctx), plan, chatID, nodeID)
+		}
+		if cont {
+			plan = withContinue(plan, nodeID, native)
+		}
+		maps.Copy(run, retrySet(plan, nodeID))
 	}
-	if cont {
-		plan = withContinue(plan, nodeID, native)
-	}
-	return e.runSubset(ctx, plan, chatID, seeded, retrySet(plan, nodeID))
+	return e.runSubset(ctx, plan, chatID, seeded, run)
 }
 
 // Continuable: a paused node (not one waiting on an answer) still has its round's work to carry on from.
@@ -245,9 +253,9 @@ func (e *Executor) Continuable(ctx context.Context, chatID, nodeID string) bool 
 func withContinue(plan Plan, nodeID string, native bool) Plan {
 	plan.Nodes = slices.Clone(plan.Nodes)
 	for i := range plan.Nodes {
-		target := plan.Nodes[i].ID == nodeID
-		plan.Nodes[i].Continue = target && native
-		plan.Nodes[i].ReloadSession = target && !native
+		if plan.Nodes[i].ID == nodeID {
+			plan.Nodes[i].Continue, plan.Nodes[i].ReloadSession = native, !native
+		}
 	}
 	return plan
 }

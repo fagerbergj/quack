@@ -195,3 +195,27 @@ func TestFailUnresumable_AppendsNodeFailed(t *testing.T) {
 		t.Fatalf("ledger = %+v, want one node.failed for n1 in turn-1", entries)
 	}
 }
+
+// A run cut between nodes is resumed from its next node only by the instance that owns it, never a live peer's.
+func TestResumePausedDagNodes_QueuedFrontierOwnedOnly(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		owner string
+		want  int
+	}{{"", 1}, {"live-peer", 0}} {
+		st := resumeTestStore(t)
+		if err := st.MarkRunActive(ctx, "c1", "t1"); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.SaveExecPlan(ctx, "c1", "p1", `{"ID":"p1","Nodes":[{"ID":"n1"},{"ID":"n2","DependsOn":["n1"]},{"ID":"n3","DependsOn":["n2"]}]}`); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.UpsertDagNode(ctx, DagNode{NodeID: "n1", PlanID: "p1", Status: string(dag.StatusDone), InstanceID: tc.owner}); err != nil {
+			t.Fatal(err)
+		}
+		rep, err := st.ResumePausedDagNodes(ctx, nil)
+		if err != nil || len(rep.Start) != tc.want {
+			t.Errorf("owner %q: Start = %+v (%v), want %d", tc.owner, rep.Start, err, tc.want)
+		}
+	}
+}
