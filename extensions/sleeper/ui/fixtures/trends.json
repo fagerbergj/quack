@@ -1,0 +1,54 @@
+{
+  "items": [
+    {
+      "time": "Today",
+      "source": "Sleeper",
+      "kind": "injury",
+      "player": {
+        "id": "6770",
+        "name": "Joe Burrow",
+        "pos": "QB",
+        "team": "CIN",
+        "inj": "Questionable",
+        "prac": null,
+        "proj": 17.8
+      },
+      "text": "listed Questionable. Watch Friday's designation."
+    },
+    {
+      "time": "Today",
+      "source": "Sleeper",
+      "kind": "injury",
+      "player": {
+        "id": "8142",
+        "name": "Alec Pierce",
+        "pos": "WR",
+        "team": "IND",
+        "inj": "Questionable",
+        "prac": null,
+        "proj": 11.6
+      },
+      "text": "listed Questionable. Watch Friday's designation."
+    },
+    {
+      "time": "Today",
+      "source": "Sleeper",
+      "kind": "waiver",
+      "text": "League-wide waiver heat: Devin Singletary added 525,015 times in 24h, Tampa Bay Buccaneers DEF 253,370. Neither is rostered in this league."
+    },
+    {
+      "time": "Yesterday",
+      "source": "Example web item",
+      "kind": "news",
+      "text": "Beat report: Bengals expect Burrow to test the toe at Thursday's practice; a limited session points to a game-time decision.",
+      "link": "https://example.com"
+    },
+    {
+      "time": "Mon",
+      "source": "Sleeper",
+      "kind": "note",
+      "text": "Week 1 waiver run: 34 completed transactions, the heaviest churn at WR. Rice Cooker and Jockstrappers made the most moves."
+    }
+  ],
+  "source_note": "Sleeper fields win over web reports when they disagree. Web items are dated and linked."
+}

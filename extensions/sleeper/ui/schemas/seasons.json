@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quack.example/sleeper/ui/schemas/seasons.json",
+  "title": "seasons",
+  "description": "GET /sleeper/api/seasons response: the season chain, oldest first, with the default user's record.",
+  "type": "object",
+  "properties": {
+    "current_season": {
+      "type": "string"
+    },
+    "seasons": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "season",
+          "league_id",
+          "wins",
+          "losses",
+          "status"
+        ],
+        "properties": {
+          "season": {
+            "type": "string"
+          },
+          "league_id": {
+            "type": "string"
+          },
+          "wins": {
+            "type": "integer"
+          },
+          "losses": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "required": [
+    "current_season",
+    "seasons"
+  ]
+}

@@ -1,0 +1,9 @@
+name: sleeper-trends
+trigger: "Run the Sleeper trends job for a league (extensions.sleeper dispatch)"
+agents: [trend-scout]
+shape: "ONE `trend-scout` node (terminal - writes the trends artifact)"
+nodes:
+  - id: trends
+    agent: trend-scout
+    task: "Build this week's dated trends timeline for the Sleeper league named below, using the sleeper:injury-and-news skill.\n\n{{ask}}"
+    artifact: trends

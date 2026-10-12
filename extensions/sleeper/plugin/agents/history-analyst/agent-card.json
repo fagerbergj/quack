@@ -1,0 +1,17 @@
+{
+  "name": "history-analyst",
+  "description": "Season review for a Sleeper fantasy football league: walks the league's season chain and reports, per season, the draft report card (which picks were reaches or steals), lineup efficiency (started vs. best possible), close losses, and the bracket outcome. Use for \"review last season\", \"what did our draft get us\", or comparing how a league's efficiency trended across seasons. It reads recorded Sleeper data only - it does not report the current week's games (league-reporter) or track live news (trend-scout).",
+  "skills": [
+    {
+      "id": "season_review",
+      "name": "Season review",
+      "description": "Summarizes one completed season: record, points for/against, lineup efficiency, the weekly hindsight, the draft report card's reaches and steals, and the champion.",
+      "tags": ["fantasy-football", "sleeper", "history", "season-review"],
+      "examples": [
+        "Review our last season",
+        "Which draft picks were reaches?"
+      ]
+    }
+  ],
+  "artifact": "history"
+}

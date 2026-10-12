@@ -1,0 +1,237 @@
+scale:
+  min: 0
+  max: 3
+  pass: 2
+notes: >
+  The judge sees the session's tool results, so every projection,
+  injury/practice designation, and bye date the answer cites is checkable
+  against a `sleeper_roster`, `sleeper_player`, `sleeper_matchup`, or
+  `sleeper_trends` call in the transcript. A figure with no such call
+  behind it is invented, not imprecise. For a trade-finder run the
+  `partner` is the other team; for a trade evaluation it is the named
+  counterparty.
+criteria:
+  both_rosters_checked:
+    definition: >
+      The evaluation is made against both rosters - what this side gives
+      up relative to its own depth, and what it gets relative to the
+      partner's depth - not scored from one side only.
+    steps:
+    - Check the session read the partner's roster (sleeper_roster with the
+      partner's user or roster_id), not just this team's.
+    - Check the call weighs each traded player against the bench depth on
+      both sides, not just the head-to-head projection of the two names.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: both rosters are read and each traded player is weighed against depth on both sides.
+    - min: 2.0
+      max: 2.0
+      meaning: both rosters inform the call, but one side's depth is treated as a formality.
+    - min: 1.0
+      max: 1.0
+      meaning: the call is scored from this roster alone; the partner's side is asserted, not read.
+    - min: 0.0
+      max: 0.0
+      meaning: the partner's roster was never read and the verdict rests on one side's numbers.
+    anchors:
+    - quote
+    - omission
+  projection_swing_stated:
+    definition: >
+      The net value of the deal is stated as a projection swing on this
+      side, with the numbers tracing to tool calls - not a qualitative
+      "you'd be better off."
+    steps:
+    - Check a concrete projection figure (or points-so-far figure) is cited
+      for each traded player.
+    - Check each figure traces to a sleeper_roster/sleeper_player/sleeper_matchup
+      call in the session.
+    - Check the answer states which side the swing favors and by how much.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: every traded player carries a cited projection and the net swing per side is stated.
+    - min: 2.0
+      max: 2.0
+      meaning: the swing is stated with cited numbers, but one traded player is described without a figure.
+    - min: 1.0
+      max: 1.0
+      meaning: projections are mentioned qualitatively ("a step up") with no numbers the judge can trace.
+    - min: 0.0
+      max: 0.0
+      meaning: no projection basis at all, or a cited figure does not match the tool data.
+    anchors:
+    - quote
+    - omission
+  status_and_bye_context:
+    definition: >
+      Injury/practice designations and bye timing for the traded players
+      are checked and reflected - a "healthy" RB with a bye this week is
+      not the same asset.
+    steps:
+    - For each traded player with an injury/practice designation, check the
+      answer names it.
+    - Check bye timing is considered for any player whose value depends on
+      this week's output.
+    - Check a Questionable/Doubtful player is not treated as a lock without
+      a stated play-rate or contingency.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: designations and byes are checked for every traded player and reflected in the call.
+    - min: 2.0
+      max: 2.0
+      meaning: statuses are checked, but one designation or bye is noted without changing the reasoning.
+    - min: 1.0
+      max: 1.0
+      meaning: a traded player's designation or bye is checked but ignored in the verdict.
+    - min: 0.0
+      max: 0.0
+      meaning: injury/practice/bye status is not checked for a player it plainly affects.
+    anchors:
+    - quote
+    - omission
+  verdict_stated:
+    definition: >
+      The answer lands on exactly one of send/counter/decline (a finder run:
+      a ranked, bounded candidate list). Whether the card was written as an
+      artifact is `artifact_delivered`'s job, not this criterion's.
+    steps:
+    - Check the reply names exactly one verdict, or (finder) a ranked list
+      of at most three candidates, never an unbounded "either works."
+    - A `counter` names the concrete counter-offer. An answer that hedges
+      ("depends") names the condition that would flip it and which way.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: a single named verdict (or a bounded ranked list); a counter names its offer, and any hedge names its flip condition.
+    - min: 2.0
+      max: 2.0
+      meaning: a single verdict is named, but a counter leaves its offer vague or a hedge leaves its flip condition unnamed.
+    - min: 1.0
+      max: 1.0
+      meaning: the answer leans one way without committing, or lists more than three candidates unranked.
+    - min: 0.0
+      max: 0.0
+      meaning: no verdict - "either works" or a bare restatement of the offer.
+    anchors:
+    - quote
+    - omission
+  artifact_delivered:
+    definition: >
+      The round's deliverable is a `trade` or `trade-finder` artifact
+      written via write_artifact, matching the extension UI schema exactly -
+      `give`/`get` keyed exactly `give` and `get` (never "I give"/"I get" or
+      any other spelling), and no top-level section beyond what the schema
+      defines (`partner`/`partner_id`/`status`/`offers`/... for a trade card,
+      `league`/`week`/`updated`/`suggestions` for a finder card).
+    steps:
+    - Check a `trade` or `trade-finder` artifact exists for this round
+      (list_artifacts/read_artifact), separate from the reply's own text.
+    - Parse the artifact's content as JSON.
+    - Check every object key matches the schema exactly - flag any renamed
+      or invented key (e.g. "I give"/"I get") or any top-level section the
+      schema does not define.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: the artifact exists, parses as JSON, and every key matches the schema exactly with no invented sections.
+    - min: 2.0
+      max: 2.0
+      meaning: the artifact exists and parses, but one required field is missing or empty.
+    - min: 1.0
+      max: 1.0
+      meaning: no artifact was written this round - the trade content only exists as prose in the reply.
+    - min: 0.0
+      max: 0.0
+      meaning: the round's content does not parse as JSON at all, or a key is renamed/invented against the schema (e.g. "I give"/"I get" instead of give/get).
+    anchors:
+    - quote
+    - omission
+  outside_news_for_traded_players:
+    definition: >
+      Sleeper's own projections and injury/practice tags lag beat-writer
+      reporting and practice-report news, so every player in the trade -
+      both sides of an evaluated offer, or every give/get pair in a
+      finder's suggestions - checks recent news and cites it inline as a
+      markdown link.
+    steps:
+    - List every player named in the trade (an evaluated offer) or in each
+      suggestion (a finder run).
+    - For each, check the `why`/`note` cites a markdown-linked news source,
+      not just the Sleeper projection or designation restated.
+    - Check the cited link is one a web_search/web_fetch call in this
+      session actually returned, not invented.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: every traded player's why/note cites a markdown-linked news source actually returned by a session tool call.
+    - min: 2.0
+      max: 2.0
+      meaning: every traded player has an outside-news citation, but one link cannot be traced to a session tool call.
+    - min: 1.0
+      max: 1.0
+      meaning: one traded player has no outside-news citation.
+    - min: 0.0
+      max: 0.0
+      meaning: multiple traded players rest on Sleeper's fields alone, or a cited link is fabricated.
+    anchors:
+    - quote
+    - omission
+  partner_need_named:
+    definition: >
+      Each suggestion (a finder run) or the partner's side of an evaluated
+      offer rests on that team's own model - its starting slots from
+      sleeper_league, its record/playoff position from sleeper_standings,
+      and its roster's positional surplus/need from sleeper_roster - and
+      names why that team would plausibly say yes, not just what the owner
+      gets.
+    steps:
+    - For each suggestion/offer, check the session read the partner's
+      roster, the league's starting slots, and sleeper_standings for that
+      partner.
+    - Check the `note`/`why` states the partner's positional surplus or
+      need this deal addresses, and whether they're a contender or a
+      rebuilder where that's the deciding factor.
+    - Check the stated need traces to the session's own tool calls, not an
+      assumption about the partner with no data behind it.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: every suggestion/offer names the partner's specific surplus or need, traced to a session tool call.
+    - min: 2.0
+      max: 2.0
+      meaning: the partner's need is named for every suggestion, but one is asserted without a traceable tool call.
+    - min: 1.0
+      max: 1.0
+      meaning: one suggestion/offer gives no reason the partner would say yes.
+    - min: 0.0
+      max: 0.0
+      meaning: no suggestion/offer states the partner's need, or the league/standings data was never read.
+    anchors:
+    - quote
+    - omission
+  note_is_brief:
+    definition: >
+      Every offer's `why` and every suggestion's `note` is one or two short
+      sentences - the deciding line item, not a running commentary.
+    steps:
+    - Read every `why` (offers) and `note` (suggestions) field in the
+      artifact.
+    - Check each is one or two sentences, not a longer paragraph.
+    bands:
+    - min: 3.0
+      max: 3.0
+      meaning: every why/note is one or two short sentences.
+    - min: 2.0
+      max: 2.0
+      meaning: all but one why/note meets the length bar; the outlier is still under a short paragraph.
+    - min: 1.0
+      max: 1.0
+      meaning: several why/note fields run to a paragraph or more.
+    - min: 0.0
+      max: 0.0
+      meaning: why/note fields are consistently paragraph-length across the artifact.
+    anchors:
+    - quote

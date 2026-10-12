@@ -1,0 +1,17 @@
+{
+  "name": "draft-analyst",
+  "description": "Draft analysis for a Sleeper fantasy football league: reads the live draft board (order, picks so far, who's on the clock, best available by position) and turns it into a pick plan for the remaining slots, or grades a finished draft against how the players actually finished. Use for \"what should I take at my next pick\", \"plan my remaining draft picks\", or reviewing last season's draft. It reads Sleeper draft state directly - it does not evaluate trades (trade-analyst) or season performance (history-analyst).",
+  "skills": [
+    {
+      "id": "draft_board",
+      "name": "Draft board and pick plan",
+      "description": "Reads the live draft's order, picks so far, on-the-clock player, and best available by position, then plans the remaining picks slot by slot.",
+      "tags": ["fantasy-football", "sleeper", "draft"],
+      "examples": [
+        "What should I take at pick 15?",
+        "Plan my remaining picks for the draft"
+      ]
+    }
+  ],
+  "artifact": "draft"
+}

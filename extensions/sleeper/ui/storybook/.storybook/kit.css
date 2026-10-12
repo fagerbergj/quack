@@ -1,0 +1,232 @@
+/*
+ * quack extension UI kit - v1
+ *
+ * Contract: frozen-additive. Existing tokens/classes here keep their
+ * current meaning and never get removed or restyled in a breaking way.
+ * A breaking restyle ships as a new /assets/ext/v2/kit.css; this file
+ * keeps serving exactly as-is. Link it directly, no build step:
+ *   <link rel="stylesheet" href="/assets/ext/v1/kit.css">
+ *
+ * Tokens are lifted from frontend/src/index.css's Tailwind theme so an
+ * extension page not built with Tailwind still looks native to the host
+ * SPA. Dark is the default (the host's default look); a light override
+ * follows prefers-color-scheme, same as the SPA's own `dark:` classes.
+ */
+
+:root {
+  --qk-bg: #1d1d1b;
+  --qk-surface: #2a2a27;
+  --qk-surface-2: #3c3c38;
+  --qk-text: #efefed;
+  --qk-muted: #6b6b63;
+  --qk-accent: #4a5bd4;
+  --qk-accent-hover: #3d4eb6;
+  --qk-accent-text: #ffffff;
+  --qk-border: #3c3c38;
+  --qk-radius: 0.5rem;
+  --qk-font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --qk-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --qk-ok-bg: rgba(74, 222, 128, 0.16);
+  --qk-ok-text: #4ade80;
+  --qk-warn-bg: rgba(251, 191, 36, 0.16);
+  --qk-warn-text: #fbbf24;
+  --qk-err-bg: rgba(248, 113, 113, 0.16);
+  --qk-err-text: #f87171;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --qk-bg: #f7f7f6;
+    --qk-surface: #ffffff;
+    --qk-surface-2: #efefed;
+    --qk-text: #1d1d1b;
+    --qk-muted: #6b6b63;
+    --qk-border: #e3e3e0;
+
+    --qk-ok-bg: #dcfce7;
+    --qk-ok-text: #15803d;
+    --qk-warn-bg: #fef3c7;
+    --qk-warn-text: #b45309;
+    --qk-err-bg: #fee2e2;
+    --qk-err-text: #dc2626;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* .qk-page: the page shell every extension page starts from - a centered
+   column with a header row, matching the SPA's own content width rhythm. */
+.qk-page {
+  min-height: 100vh;
+  margin: 0;
+  padding: 2rem 1.5rem 3rem;
+  background: var(--qk-bg);
+  color: var(--qk-text);
+  font-family: var(--qk-font);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.qk-page__inner {
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.qk-page__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--qk-border);
+}
+
+.qk-page__header h1 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.qk-page__header p {
+  margin: 0.25rem 0 0;
+  color: var(--qk-muted);
+  font-size: 0.8125rem;
+}
+
+/* .qk-card: the general-purpose surface - a bordered panel on --qk-surface,
+   the same shape as the SPA's `rounded-lg border bg-white dark:bg-gray-800`. */
+.qk-card {
+  background: var(--qk-surface);
+  border: 1px solid var(--qk-border);
+  border-radius: var(--qk-radius);
+  padding: 1rem;
+}
+
+.qk-card + .qk-card {
+  margin-top: 0.75rem;
+}
+
+/* .qk-chip: a small neutral pill for tags/facets - not a status signal,
+   use .qk-badge for that. */
+.qk-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.125rem 0.5rem;
+  border-radius: 999px;
+  background: var(--qk-surface-2);
+  color: var(--qk-text);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+/* .qk-badge: a status pill. Bare .qk-badge is neutral; pair with a
+   modifier for a specific outcome. */
+.qk-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.125rem 0.5rem;
+  border-radius: 999px;
+  background: var(--qk-surface-2);
+  color: var(--qk-muted);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.qk-badge--ok {
+  background: var(--qk-ok-bg);
+  color: var(--qk-ok-text);
+}
+
+.qk-badge--warn {
+  background: var(--qk-warn-bg);
+  color: var(--qk-warn-text);
+}
+
+.qk-badge--err {
+  background: var(--qk-err-bg);
+  color: var(--qk-err-text);
+}
+
+/* .qk-table-wrap: required overflow-x scroller around .qk-table - the page
+   itself must never scroll horizontally. */
+.qk-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--qk-border);
+  border-radius: var(--qk-radius);
+}
+
+.qk-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+
+.qk-table th,
+.qk-table td {
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.qk-table th {
+  color: var(--qk-muted);
+  font-weight: 600;
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  background: var(--qk-surface-2);
+}
+
+.qk-table tbody tr {
+  border-top: 1px solid var(--qk-border);
+}
+
+.qk-table tbody tr:hover {
+  background: var(--qk-surface-2);
+}
+
+/* .qk-btn: the default button - pair with .qk-btn--primary for the accent
+   fill (the SPA's bg-blue-600 hover:bg-blue-700). */
+.qk-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.5rem 0.875rem;
+  border: 1px solid var(--qk-border);
+  border-radius: var(--qk-radius);
+  background: var(--qk-surface);
+  color: var(--qk-text);
+  font-family: inherit;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.qk-btn:hover {
+  background: var(--qk-surface-2);
+}
+
+.qk-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.qk-btn--primary {
+  border-color: var(--qk-accent);
+  background: var(--qk-accent);
+  color: var(--qk-accent-text);
+}
+
+.qk-btn--primary:hover {
+  background: var(--qk-accent-hover);
+  border-color: var(--qk-accent-hover);
+}

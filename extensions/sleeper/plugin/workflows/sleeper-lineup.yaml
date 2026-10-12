@@ -1,0 +1,9 @@
+name: sleeper-lineup
+trigger: "Run the Sleeper lineup job for a league (extensions.sleeper dispatch)"
+agents: [lineup-analyst]
+shape: "ONE `lineup-analyst` node (terminal - writes the lineup artifact)"
+nodes:
+  - id: lineup
+    agent: lineup-analyst
+    task: "Decide the start/sit call for every roster slot this week for the Sleeper league and team named below, using the sleeper:start-sit skill.\n\n{{ask}}"
+    artifact: lineup

@@ -1,0 +1,12 @@
+name: document-ingest
+trigger: "Ingest a new document (e.g. a reMarkable export) into the knowledge base"
+agents: [media-reader, synthesizer]
+shape: "ONE `media-reader` node (transcribes the attached document) -> ONE `synthesizer` node (terminal - writes the structured summary)"
+nodes:
+  - id: transcribe
+    agent: media-reader
+    task: "Transcribe this document's full content, preserving structure (headings, lists, sketches described in words).\n\n{{ask}}"
+  - id: summarize
+    agent: synthesizer
+    depends_on: [transcribe]
+    task: "Write a structured Markdown summary of the transcribed document above: key facts, decisions, and action items.\n\n{{ask}}"

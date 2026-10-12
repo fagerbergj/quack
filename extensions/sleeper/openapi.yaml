@@ -1,0 +1,1008 @@
+openapi: 3.0.3
+info:
+  title: Sleeper Fantasy Football API (quack-extensions sleeper client)
+  version: "1.0.0"
+  description: >-
+    Sleeper publishes no OpenAPI/Swagger document (probed api.sleeper.app/openapi.json
+    and /swagger.json - both 404; not on APIs.guru; the only docs are a Slate
+    markdown site). This spec is owned by quack-extensions/sleeper, written from
+    endpoints probed live on 2026-09-18 against league 1356407594683482112
+    (see sleeper/README.md). Response schemas are derived from real recorded
+    responses, not from Sleeper's prose docs - fields observed as null in every
+    sample are marked nullable; fields never seen are omitted rather than guessed.
+servers:
+  - url: https://api.sleeper.app
+paths:
+  /v1/user/{identifier}:
+    get:
+      operationId: getUser
+      summary: Look up a user by username or user_id
+      parameters:
+        - name: identifier
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+
+  /v1/user/{userId}/leagues/nfl/{season}:
+    get:
+      operationId: getUserLeagues
+      summary: Leagues a user belongs to for a season
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: season
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/League" }
+
+  /v1/user/{userId}/drafts/nfl/{season}:
+    get:
+      operationId: getUserDrafts
+      summary: Drafts a user has participated in for a season
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: season
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Draft" }
+
+  /v1/league/{leagueId}:
+    get:
+      operationId: getLeague
+      summary: League settings, scoring, roster positions, status
+      parameters:
+        - name: leagueId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/League" }
+
+  /v1/league/{leagueId}/rosters:
+    get:
+      operationId: getLeagueRosters
+      summary: Every roster in the league
+      parameters:
+        - name: leagueId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Roster" }
+
+  /v1/league/{leagueId}/users:
+    get:
+      operationId: getLeagueUsers
+      summary: League members
+      parameters:
+        - name: leagueId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/LeagueUser" }
+
+  /v1/league/{leagueId}/matchups/{week}:
+    get:
+      operationId: getLeagueMatchups
+      summary: One week's matchups, paired by matchup_id
+      parameters:
+        - name: leagueId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: week
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Matchup" }
+
+  /v1/league/{leagueId}/winners_bracket:
+    get:
+      operationId: getWinnersBracket
+      summary: Playoff winners bracket
+      parameters:
+        - name: leagueId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/BracketMatch" }
+
+  /v1/league/{leagueId}/losers_bracket:
+    get:
+      operationId: getLosersBracket
+      summary: Playoff losers (consolation) bracket
+      parameters:
+        - name: leagueId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/BracketMatch" }
+
+  /v1/league/{leagueId}/transactions/{round}:
+    get:
+      operationId: getLeagueTransactions
+      summary: Waivers, free agent adds/drops, and trades for one round (week)
+      parameters:
+        - name: leagueId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: round
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Transaction" }
+
+  /v1/league/{leagueId}/traded_picks:
+    get:
+      operationId: getLeagueTradedPicks
+      summary: Future draft pick ownership after trades
+      parameters:
+        - name: leagueId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TradedPick" }
+
+  /v1/league/{leagueId}/drafts:
+    get:
+      operationId: getLeagueDrafts
+      summary: Drafts belonging to a league
+      parameters:
+        - name: leagueId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Draft" }
+
+  /v1/draft/{draftId}:
+    get:
+      operationId: getDraft
+      summary: One draft's state and settings
+      parameters:
+        - name: draftId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Draft" }
+
+  /v1/draft/{draftId}/picks:
+    get:
+      operationId: getDraftPicks
+      summary: Every pick made in a draft
+      parameters:
+        - name: draftId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/DraftPick" }
+
+  /v1/draft/{draftId}/traded_picks:
+    get:
+      operationId: getDraftTradedPicks
+      summary: Picks traded within a specific draft
+      parameters:
+        - name: draftId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TradedPick" }
+
+  /v1/state/nfl:
+    get:
+      operationId: getNflState
+      summary: Current NFL week/season, for defaulting week/season args
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NflState" }
+
+  /v1/players/nfl:
+    get:
+      operationId: getAllPlayers
+      summary: Every NFL player (and DEF unit), keyed by player_id. Fetch at most once a day.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: { $ref: "#/components/schemas/Player" }
+
+  /v1/players/nfl/{playerId}:
+    get:
+      operationId: getPlayer
+      x-undocumented: true
+      summary: One player - not in Sleeper's own docs, probed live; may vanish.
+      parameters:
+        - name: playerId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Player" }
+
+  /v1/players/nfl/trending/{type}:
+    get:
+      operationId: getTrendingPlayers
+      summary: Players trending up (add) or down (drop) league-wide
+      parameters:
+        - name: type
+          in: path
+          required: true
+          schema: { type: string, enum: [add, drop] }
+        - name: lookback_hours
+          in: query
+          schema: { type: integer, default: 24 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 25 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TrendingPlayer" }
+
+  /v1/projections/nfl/regular/{season}/{week}:
+    get:
+      operationId: getWeekProjections
+      x-undocumented: true
+      summary: Weekly fantasy projections keyed by player_id - probed live; may vanish.
+      parameters:
+        - name: season
+          in: path
+          required: true
+          schema: { type: string }
+        - name: week
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: { $ref: "#/components/schemas/StatMap" }
+
+  /v1/stats/nfl/regular/{season}/{week}:
+    get:
+      operationId: getWeekStats
+      x-undocumented: true
+      summary: Weekly actual stats keyed by player_id - probed live; may vanish.
+      parameters:
+        - name: season
+          in: path
+          required: true
+          schema: { type: string }
+        - name: week
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: { $ref: "#/components/schemas/StatMap" }
+
+  /v1/stats/nfl/regular/{season}:
+    get:
+      operationId: getSeasonStats
+      x-undocumented: true
+      summary: Season-total actual stats keyed by player_id - probed live; may vanish.
+      parameters:
+        - name: season
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: { $ref: "#/components/schemas/StatMap" }
+
+  /projections/nfl/{season}/{week}:
+    get:
+      operationId: getWeekProjectionsRich
+      x-undocumented: true
+      summary: >-
+        Richer per-player projections (no /v1 prefix) - probed live for shape
+        only, not used by the cached client wrapper in this slice; may vanish.
+      parameters:
+        - name: season
+          in: path
+          required: true
+          schema: { type: string }
+        - name: week
+          in: path
+          required: true
+          schema: { type: integer }
+        - name: season_type
+          in: query
+          required: true
+          schema: { type: string, default: regular }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/PlayerStatEntry" }
+
+  /stats/nfl/player/{playerId}:
+    get:
+      operationId: getPlayerSeasonStats
+      x-undocumented: true
+      summary: One player's season-to-date stats - probed live for shape only; may vanish.
+      parameters:
+        - name: playerId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: season_type
+          in: query
+          required: true
+          schema: { type: string, default: regular }
+        - name: season
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlayerStatEntry" }
+
+  /players/nfl/research/regular/{season}/{week}:
+    get:
+      operationId: getPlayerResearch
+      x-undocumented: true
+      summary: Ownership/start-percentage research keyed by player_id - probed live; may vanish.
+      parameters:
+        - name: season
+          in: path
+          required: true
+          schema: { type: string }
+        - name: week
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: { $ref: "#/components/schemas/ResearchEntry" }
+
+  /players/nfl/{team}/depth_chart:
+    get:
+      operationId: getTeamDepthChart
+      x-undocumented: true
+      summary: One NFL team's depth chart, position -> ordered player_ids - probed live; may vanish.
+      parameters:
+        - name: team
+          in: path
+          required: true
+          description: NFL team code, e.g. "TB"
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: array
+                  items: { type: string }
+
+  /schedule/nfl/regular/{season}:
+    get:
+      operationId: getSchedule
+      x-undocumented: true
+      summary: Full season schedule - probed live; may vanish.
+      parameters:
+        - name: season
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Game" }
+
+  /scores/nfl/regular/{season}/{week}:
+    get:
+      operationId: getWeekScores
+      x-undocumented: true
+      summary: One week's games with kickoff instant, venue, and live-score metadata - probed live; may vanish.
+      parameters:
+        - name: season
+          in: path
+          required: true
+          schema: { type: string }
+        - name: week
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/GameScore" }
+
+components:
+  schemas:
+    User:
+      type: object
+      required: [user_id, username]
+      properties:
+        user_id: { type: string }
+        username: { type: string }
+        display_name: { type: string }
+        avatar: { type: string, nullable: true }
+        is_bot: { type: boolean }
+        metadata: { type: object, nullable: true, additionalProperties: true }
+        cookies: { type: string, nullable: true }
+        created: { type: string, nullable: true }
+        currencies: { type: object, nullable: true, additionalProperties: true }
+        data_updated: { type: string, nullable: true }
+        deleted: { type: string, nullable: true }
+        email: { type: string, nullable: true }
+        notifications: { type: object, nullable: true, additionalProperties: true }
+        pending: { type: object, nullable: true, additionalProperties: true }
+        phone: { type: string, nullable: true }
+        real_name: { type: string, nullable: true }
+        solicitable: { type: string, nullable: true }
+        summoner_name: { type: string, nullable: true }
+        summoner_region: { type: string, nullable: true }
+        token: { type: string, nullable: true }
+        verification: { type: string, nullable: true }
+
+    League:
+      type: object
+      required: [league_id, name, season, status, sport, total_rosters, roster_positions, scoring_settings, settings, previous_league_id]
+      properties:
+        league_id: { type: string }
+        name: { type: string }
+        avatar: { type: string, nullable: true }
+        season: { type: string }
+        season_type: { type: string }
+        status: { type: string }
+        sport: { type: string }
+        shard: { type: integer }
+        total_rosters: { type: integer }
+        draft_id: { type: string }
+        previous_league_id: { type: string, nullable: true }
+        roster_positions:
+          type: array
+          items: { type: string }
+        scoring_settings:
+          type: object
+          additionalProperties: { type: number }
+        settings:
+          type: object
+          additionalProperties: { type: integer }
+        metadata:
+          type: object
+          additionalProperties: { type: string }
+        last_author_id: { type: string, nullable: true }
+        last_author_display_name: { type: string, nullable: true }
+        last_author_is_bot: { type: boolean, nullable: true }
+        last_author_avatar: { type: string, nullable: true }
+        last_message_id: { type: string, nullable: true }
+        last_message_time: { type: integer, nullable: true }
+        last_message_attachment: { type: string, nullable: true }
+        last_message_text_map: { type: object, nullable: true, additionalProperties: true }
+        last_pinned_message_id: { type: string, nullable: true }
+        last_read_id: { type: string, nullable: true }
+        last_transaction_id: { type: string, nullable: true }
+        bracket_id: { type: integer, nullable: true }
+        bracket_overrides_id: { type: string, nullable: true }
+        loser_bracket_id: { type: integer, nullable: true }
+        loser_bracket_overrides_id: { type: string, nullable: true }
+        group_id: { type: string, nullable: true }
+        company_id: { type: string, nullable: true }
+        # display_order only appears on /v1/user/{id}/leagues/nfl/{season} items,
+        # not on GET /v1/league/{leagueId} - absent there, not null.
+        display_order: { type: integer }
+
+    Roster:
+      type: object
+      required: [roster_id, league_id, owner_id, players, starters, settings]
+      properties:
+        roster_id: { type: integer }
+        league_id: { type: string }
+        owner_id: { type: string, nullable: true }
+        players:
+          type: array
+          items: { type: string }
+        starters:
+          type: array
+          items: { type: string }
+        reserve: { type: array, nullable: true, items: { type: string } }
+        taxi: { type: array, nullable: true, items: { type: string } }
+        co_owners: { type: array, nullable: true, items: { type: string } }
+        keepers: { type: array, nullable: true, items: { type: string } }
+        player_map: { type: object, nullable: true, additionalProperties: true }
+        settings:
+          type: object
+          additionalProperties: { type: integer }
+        metadata:
+          type: object
+          additionalProperties: { type: string }
+
+    LeagueUser:
+      type: object
+      required: [user_id, league_id, display_name]
+      properties:
+        user_id: { type: string }
+        league_id: { type: string }
+        display_name: { type: string }
+        avatar: { type: string, nullable: true }
+        is_bot: { type: boolean }
+        is_owner: { type: boolean, nullable: true }
+        settings: { type: object, nullable: true, additionalProperties: true }
+        metadata:
+          type: object
+          additionalProperties: { type: string }
+
+    Matchup:
+      type: object
+      required: [roster_id, matchup_id, points, players, starters, players_points]
+      properties:
+        roster_id: { type: integer }
+        matchup_id: { type: integer, nullable: true }
+        points: { type: number }
+        custom_points: { type: number, nullable: true }
+        players:
+          type: array
+          items: { type: string }
+        starters:
+          type: array
+          items: { type: string }
+        starters_points:
+          type: array
+          items: { type: number }
+        players_points:
+          type: object
+          additionalProperties: { type: number }
+
+    BracketMatch:
+      type: object
+      required: [m, r, t1, t2, w, l]
+      properties:
+        m: { type: integer }
+        r: { type: integer }
+        t1: { type: integer, nullable: true }
+        t2: { type: integer, nullable: true }
+        w: { type: integer, nullable: true }
+        l: { type: integer, nullable: true }
+        p: { type: integer }
+        t1_from: { type: object, additionalProperties: { type: integer } }
+        t2_from: { type: object, additionalProperties: { type: integer } }
+
+    Transaction:
+      type: object
+      required: [transaction_id, type, status, roster_ids, adds, drops]
+      properties:
+        transaction_id: { type: string }
+        type: { type: string }
+        status: { type: string }
+        leg: { type: integer }
+        creator: { type: string }
+        created: { type: integer }
+        status_updated: { type: integer }
+        roster_ids:
+          type: array
+          items: { type: integer }
+        consenter_ids:
+          type: array
+          items: { type: integer }
+        adds: { type: object, nullable: true, additionalProperties: { type: integer } }
+        drops: { type: object, nullable: true, additionalProperties: { type: integer } }
+        settings: { type: object, nullable: true, additionalProperties: { type: integer } }
+        metadata: { type: object, nullable: true, additionalProperties: { type: string } }
+        draft_picks:
+          type: array
+          items: { type: object, additionalProperties: true }
+        waiver_budget:
+          type: array
+          items: { type: object, additionalProperties: true }
+
+    TradedPick:
+      type: object
+      description: >-
+        Both leagues have pick_trading disabled (league.settings.pick_trading
+        == 0), so every traded_picks endpoint and every trade transaction's
+        draft_picks return [] - this shape is unverified against a live
+        sample; fields follow Sleeper's documented convention.
+      required: [season, round, roster_id, previous_owner_id, owner_id]
+      properties:
+        season: { type: string }
+        round: { type: integer }
+        roster_id: { type: integer }
+        previous_owner_id: { type: integer }
+        owner_id: { type: integer }
+
+    Draft:
+      type: object
+      required: [draft_id, league_id, season, status, type, settings]
+      properties:
+        draft_id: { type: string }
+        league_id: { type: string }
+        season: { type: string }
+        season_type: { type: string }
+        sport: { type: string }
+        status: { type: string }
+        type: { type: string }
+        start_time: { type: integer }
+        created: { type: integer }
+        last_picked: { type: integer, nullable: true }
+        last_message_id: { type: string, nullable: true }
+        last_message_time: { type: integer, nullable: true }
+        creators: { type: array, nullable: true, items: { type: string } }
+        draft_order: { type: object, nullable: true, additionalProperties: { type: integer } }
+        slot_to_roster_id:
+          type: object
+          additionalProperties: { type: integer }
+        settings:
+          type: object
+          additionalProperties: { type: integer }
+        metadata:
+          type: object
+          additionalProperties: { type: string }
+
+    DraftPick:
+      type: object
+      required: [draft_id, round, draft_slot, pick_no, roster_id, player_id, picked_by]
+      properties:
+        draft_id: { type: string }
+        round: { type: integer }
+        draft_slot: { type: integer }
+        pick_no: { type: integer }
+        roster_id: { type: integer }
+        player_id: { type: string }
+        picked_by: { type: string }
+        is_keeper: { type: boolean, nullable: true }
+        reactions: { type: object, nullable: true, additionalProperties: true }
+        metadata:
+          type: object
+          additionalProperties: { type: string }
+
+    NflState:
+      type: object
+      required: [week, season, season_type]
+      properties:
+        week: { type: integer }
+        leg: { type: integer }
+        season: { type: string }
+        season_type: { type: string }
+        league_season: { type: string }
+        previous_season: { type: string }
+        season_start_date: { type: string }
+        display_week: { type: integer }
+        league_create_season: { type: string }
+        season_has_scores: { type: boolean }
+
+    TrendingPlayer:
+      type: object
+      required: [player_id, count]
+      properties:
+        player_id: { type: string }
+        count: { type: integer }
+
+    Game:
+      type: object
+      required: [game_id, week, home, away]
+      properties:
+        game_id: { type: string }
+        week: { type: integer }
+        date:
+          type: string
+          nullable: true
+          description: Calendar date in US Eastern time (a Monday 8:15pm ET game is that Monday, though its UTC kickoff is Tuesday). No time of day - see GameScore.start_time.
+        status: { type: string, nullable: true }
+        home: { type: string }
+        away: { type: string }
+
+    GameScore:
+      description: One game from /scores; game_id joins it to Game.
+      type: object
+      required: [game_id, week, start_time, metadata]
+      properties:
+        game_id: { type: string }
+        week: { type: integer }
+        date: { type: string, nullable: true }
+        status: { type: string, nullable: true }
+        start_time:
+          type: integer
+          format: int64
+          description: Kickoff instant, Unix epoch milliseconds (equals metadata.date_time).
+        season: { type: string }
+        season_type: { type: string }
+        sport: { type: string }
+        metadata: { $ref: "#/components/schemas/GameScoreMetadata" }
+        provider_id: { type: string, nullable: true }
+        provider_week: { type: integer, nullable: true }
+        schedule_hash: { type: string, nullable: true }
+        reactions: { type: object, nullable: true, additionalProperties: true }
+        total_comments: { type: integer }
+        total_reactions: { type: integer }
+        total_views: { type: integer }
+        last_updated: { type: integer, format: int64 }
+        updated_at: { type: integer, format: int64 }
+
+    GameScoreMetadata:
+      description: >-
+        Only the fields tools read are typed; the ~60 others (live score, odds,
+        forecast, geo_lat/geo_long) pass through as additional properties.
+      type: object
+      additionalProperties: true
+      properties:
+        status:
+          type: string
+          description: >-
+            Observed: "scheduled", "created", "closed", "postponed", "cancelled",
+            "flex-schedule". flex-schedule marks a flex-eligible game whose start_time
+            is a placeholder; a postponed game keeps its original start_time.
+        date_time: { type: string }
+        stadium_details: { $ref: "#/components/schemas/Stadium" }
+
+    Stadium:
+      type: object
+      properties:
+        name: { type: string }
+        city: { type: string }
+        state: { type: string }
+        country: { type: string }
+        zip: { type: string }
+        type: { type: string, description: '"outdoor", "dome", or "retractable_dome"' }
+        playing_surface: { type: string }
+        capacity: { type: integer }
+
+    StatMap:
+      description: A player's weekly projection or stat line, keyed by Sleeper's stat abbreviation.
+      type: object
+      additionalProperties: { type: number }
+
+    ResearchEntry:
+      type: object
+      properties:
+        owned: { type: number, nullable: true }
+        started: { type: number, nullable: true }
+
+    PlayerStatEntry:
+      description: >-
+        Shared shape for the richer no-/v1 projections list and the
+        single-player season-stats endpoint - both wrap a StatMap-like
+        "stats" object with the same envelope fields.
+      type: object
+      required: [player_id, season, season_type]
+      properties:
+        player_id: { type: string }
+        team: { type: string, nullable: true }
+        opponent: { type: string, nullable: true }
+        category: { type: string }
+        company: { type: string }
+        season: { type: string }
+        season_type: { type: string }
+        sport: { type: string }
+        week: { type: integer, nullable: true }
+        status: { type: string, nullable: true }
+        date: { type: string, nullable: true }
+        game_id: { type: string, nullable: true }
+        week_shard: { type: string, nullable: true }
+        is_away_team: { type: boolean, nullable: true }
+        last_modified: { type: integer }
+        updated_at: { type: integer }
+        stats:
+          type: object
+          additionalProperties: { type: number }
+        player:
+          type: object
+          additionalProperties: true
+
+    Player:
+      description: >-
+        Superset of fields seen on both GET /v1/players/nfl (the dump) and
+        the undocumented GET /v1/players/nfl/{playerId} - the single-player
+        endpoint omits the search_*/full_name/hashtag fields the dump adds,
+        and a DEF (team defense) entry omits most fields entirely; every
+        field here is optional so both shapes decode cleanly.
+      type: object
+      required: [player_id]
+      properties:
+        player_id: { type: string }
+        sport: { type: string }
+        active: { type: boolean }
+        status: { type: string, nullable: true }
+        position: { type: string, nullable: true }
+        fantasy_positions:
+          type: array
+          items: { type: string }
+        depth_chart_position: { type: string, nullable: true }
+        depth_chart_order: { type: integer, nullable: true }
+        team: { type: string, nullable: true }
+        team_abbr: { type: string, nullable: true }
+        team_changed_at: { type: string, nullable: true }
+        first_name: { type: string, nullable: true }
+        last_name: { type: string, nullable: true }
+        full_name: { type: string, nullable: true }
+        search_first_name: { type: string, nullable: true }
+        search_last_name: { type: string, nullable: true }
+        search_full_name: { type: string, nullable: true }
+        hashtag: { type: string, nullable: true }
+        number: { type: integer, nullable: true }
+        age: { type: integer, nullable: true }
+        birth_date: { type: string, nullable: true }
+        birth_city: { type: string, nullable: true }
+        birth_state: { type: string, nullable: true }
+        birth_country: { type: string, nullable: true }
+        height: { type: string, nullable: true }
+        weight: { type: string, nullable: true }
+        college: { type: string, nullable: true }
+        high_school: { type: string, nullable: true }
+        years_exp: { type: integer, nullable: true }
+        injury_status: { type: string, nullable: true }
+        injury_body_part: { type: string, nullable: true }
+        injury_notes: { type: string, nullable: true }
+        injury_start_date: { type: string, nullable: true }
+        practice_description: { type: string, nullable: true }
+        practice_participation: { type: string, nullable: true }
+        news_updated: { type: integer, nullable: true }
+        search_rank: { type: integer, nullable: true }
+        competitions:
+          type: array
+          items: {}
+        metadata:
+          type: object
+          nullable: true
+          additionalProperties: { type: string }
+        fantasy_data_id: { type: integer, nullable: true }
+        yahoo_id: { type: integer, nullable: true }
+        espn_id: { type: integer, nullable: true }
+        rotowire_id: { type: integer, nullable: true }
+        rotoworld_id: { type: integer, nullable: true }
+        swish_id: { type: integer, nullable: true }
+        sportradar_id: { type: string, nullable: true }
+        stats_id: { type: integer, nullable: true }
+        gsis_id: { type: string, nullable: true }
+        opta_id: { type: string, nullable: true }
+        oddsjam_id: { type: string, nullable: true }
+        pandascore_id: { type: string, nullable: true }
+        kalshi_id: { type: string, nullable: true }
+        player_shard: { type: string, nullable: true }

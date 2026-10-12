@@ -1,0 +1,16 @@
+# go.work is per-developer; committing one would leak into consumers' builds
+go.work
+go.work.sum
+
+# build artifacts
+*.exe
+*.test
+*.out
+
+# editor/OS cruft
+.DS_Store
+.idea/
+.vscode/
+tools/sloplint/sloplint
+tools/coverdiff/coverdiff
+.cccheck/

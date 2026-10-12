@@ -1,0 +1,9 @@
+name: sleeper-trade
+trigger: "Run the Sleeper trade job for a league (extensions.sleeper dispatch)"
+agents: [trade-analyst]
+shape: "ONE `trade-analyst` node (terminal - writes the trade artifact)"
+nodes:
+  - id: trade
+    agent: trade-analyst
+    task: "Evaluate the trade offer in the ask for the Sleeper league named below, using this roster's and the partner's actual rosters.\n\n{{ask}}"
+    artifact: trade

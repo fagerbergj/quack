@@ -1,0 +1,1877 @@
+{
+  "season": "2026",
+  "draft_id": "1356407594700242944",
+  "type": "snake",
+  "rounds": 14,
+  "teams": 10,
+  "my_slot": 6,
+  "slots": {
+    "5": "I Think I\u2019\u2019m Gonna Puka",
+    "7": "Rice Cooker",
+    "4": "Jockstrappers",
+    "10": "Achane Magic",
+    "6": "Substation Supremacy",
+    "8": "Brown Tuddies Likely ",
+    "2": "Bijan Mustard",
+    "9": "Pitts and Giggles",
+    "1": "Gibbs Me Liberty",
+    "3": "Breece\u2019s Pieces"
+  },
+  "picks": [
+    {
+      "round": 1,
+      "slot": 1,
+      "pick_no": 1,
+      "player": {
+        "id": "9221",
+        "name": "Jahmyr Gibbs",
+        "pos": "RB",
+        "team": "DET"
+      },
+      "adp": 1.0,
+      "mine": false
+    },
+    {
+      "round": 1,
+      "slot": 2,
+      "pick_no": 2,
+      "player": {
+        "id": "9509",
+        "name": "Bijan Robinson",
+        "pos": "RB",
+        "team": "ATL"
+      },
+      "adp": 2.0,
+      "mine": false
+    },
+    {
+      "round": 1,
+      "slot": 3,
+      "pick_no": 3,
+      "player": {
+        "id": "7564",
+        "name": "Ja'Marr Chase",
+        "pos": "WR",
+        "team": "CIN"
+      },
+      "adp": 11.0,
+      "mine": false
+    },
+    {
+      "round": 1,
+      "slot": 4,
+      "pick_no": 4,
+      "player": {
+        "id": "9488",
+        "name": "Jaxon Smith-Njigba",
+        "pos": "WR",
+        "team": "SEA"
+      },
+      "adp": 6.0,
+      "mine": false
+    },
+    {
+      "round": 1,
+      "slot": 5,
+      "pick_no": 5,
+      "player": {
+        "id": "9493",
+        "name": "Puka Nacua",
+        "pos": "WR",
+        "team": "LAR"
+      },
+      "adp": 3.0,
+      "mine": false
+    },
+    {
+      "round": 1,
+      "slot": 6,
+      "pick_no": 6,
+      "player": {
+        "id": "4034",
+        "name": "Christian McCaffrey",
+        "pos": "RB",
+        "team": "SF"
+      },
+      "adp": 4.0,
+      "mine": true
+    },
+    {
+      "round": 1,
+      "slot": 7,
+      "pick_no": 7,
+      "player": {
+        "id": "8138",
+        "name": "James Cook",
+        "pos": "RB",
+        "team": "BUF"
+      },
+      "adp": 5.0,
+      "mine": false
+    },
+    {
+      "round": 1,
+      "slot": 8,
+      "pick_no": 8,
+      "player": {
+        "id": "7547",
+        "name": "Amon-Ra St. Brown",
+        "pos": "WR",
+        "team": "DET"
+      },
+      "adp": 10.0,
+      "mine": false
+    },
+    {
+      "round": 1,
+      "slot": 9,
+      "pick_no": 9,
+      "player": {
+        "id": "6813",
+        "name": "Jonathan Taylor",
+        "pos": "RB",
+        "team": "IND"
+      },
+      "adp": 8.0,
+      "mine": false
+    },
+    {
+      "round": 1,
+      "slot": 10,
+      "pick_no": 10,
+      "player": {
+        "id": "9226",
+        "name": "De'Von Achane",
+        "pos": "RB",
+        "team": "MIA"
+      },
+      "adp": 16.0,
+      "mine": false
+    },
+    {
+      "round": 2,
+      "slot": 10,
+      "pick_no": 11,
+      "player": {
+        "id": "4866",
+        "name": "Saquon Barkley",
+        "pos": "RB",
+        "team": "PHI"
+      },
+      "adp": 17.0,
+      "mine": false
+    },
+    {
+      "round": 2,
+      "slot": 9,
+      "pick_no": 12,
+      "player": {
+        "id": "6786",
+        "name": "CeeDee Lamb",
+        "pos": "WR",
+        "team": "DAL"
+      },
+      "adp": 7.0,
+      "mine": false
+    },
+    {
+      "round": 2,
+      "slot": 8,
+      "pick_no": 13,
+      "player": {
+        "id": "9224",
+        "name": "Chase Brown",
+        "pos": "RB",
+        "team": "CIN"
+      },
+      "adp": 24.0,
+      "mine": false
+    },
+    {
+      "round": 2,
+      "slot": 7,
+      "pick_no": 14,
+      "player": {
+        "id": "8151",
+        "name": "Kenneth Walker",
+        "pos": "RB",
+        "team": "KC"
+      },
+      "adp": 18.0,
+      "mine": false
+    },
+    {
+      "round": 2,
+      "slot": 6,
+      "pick_no": 15,
+      "player": {
+        "id": "6794",
+        "name": "Justin Jefferson",
+        "pos": "WR",
+        "team": "MIN"
+      },
+      "adp": 9.0,
+      "mine": true
+    },
+    {
+      "round": 2,
+      "slot": 5,
+      "pick_no": 16,
+      "player": {
+        "id": "8130",
+        "name": "Trey McBride",
+        "pos": "TE",
+        "team": "ARI"
+      },
+      "adp": 20.0,
+      "mine": false
+    },
+    {
+      "round": 2,
+      "slot": 4,
+      "pick_no": 17,
+      "player": {
+        "id": "12507",
+        "name": "Omarion Hampton",
+        "pos": "RB",
+        "team": "LAC"
+      },
+      "adp": 44.0,
+      "mine": false
+    },
+    {
+      "round": 2,
+      "slot": 3,
+      "pick_no": 18,
+      "player": {
+        "id": "5850",
+        "name": "Josh Jacobs",
+        "pos": "RB",
+        "team": "GB"
+      },
+      "adp": 999.0,
+      "mine": false
+    },
+    {
+      "round": 2,
+      "slot": 2,
+      "pick_no": 19,
+      "player": {
+        "id": "4984",
+        "name": "Josh Allen",
+        "pos": "QB",
+        "team": "BUF"
+      },
+      "adp": 25.0,
+      "mine": false
+    },
+    {
+      "round": 2,
+      "slot": 1,
+      "pick_no": 20,
+      "player": {
+        "id": "3198",
+        "name": "Derrick Henry",
+        "pos": "RB",
+        "team": "BAL"
+      },
+      "adp": 28.0,
+      "mine": false
+    },
+    {
+      "round": 3,
+      "slot": 1,
+      "pick_no": 21,
+      "player": {
+        "id": "8112",
+        "name": "Drake London",
+        "pos": "WR",
+        "team": "ATL"
+      },
+      "adp": 36.0,
+      "mine": false
+    },
+    {
+      "round": 3,
+      "slot": 2,
+      "pick_no": 22,
+      "player": {
+        "id": "5859",
+        "name": "A.J. Brown",
+        "pos": "WR",
+        "team": "NE"
+      },
+      "adp": null,
+      "mine": false
+    },
+    {
+      "round": 3,
+      "slot": 3,
+      "pick_no": 23,
+      "player": {
+        "id": "8155",
+        "name": "Breece Hall",
+        "pos": "RB",
+        "team": "NYJ"
+      },
+      "adp": 39.0,
+      "mine": false
+    },
+    {
+      "round": 3,
+      "slot": 4,
+      "pick_no": 24,
+      "player": {
+        "id": "13287",
+        "name": "Jeremiyah Love",
+        "pos": "RB",
+        "team": "ARI"
+      },
+      "adp": 63.0,
+      "mine": false
+    },
+    {
+      "round": 3,
+      "slot": 5,
+      "pick_no": 25,
+      "player": {
+        "id": "11604",
+        "name": "Brock Bowers",
+        "pos": "TE",
+        "team": "LV"
+      },
+      "adp": 30.0,
+      "mine": false
+    },
+    {
+      "round": 3,
+      "slot": 6,
+      "pick_no": 26,
+      "player": {
+        "id": "11632",
+        "name": "Malik Nabers",
+        "pos": "WR",
+        "team": "NYG"
+      },
+      "adp": 34.0,
+      "mine": true
+    },
+    {
+      "round": 3,
+      "slot": 7,
+      "pick_no": 27,
+      "player": {
+        "id": "12527",
+        "name": "Ashton Jeanty",
+        "pos": "RB",
+        "team": "LV"
+      },
+      "adp": 29.0,
+      "mine": false
+    },
+    {
+      "round": 3,
+      "slot": 8,
+      "pick_no": 28,
+      "player": {
+        "id": "8150",
+        "name": "Kyren Williams",
+        "pos": "RB",
+        "team": "LAR"
+      },
+      "adp": 15.0,
+      "mine": false
+    },
+    {
+      "round": 3,
+      "slot": 9,
+      "pick_no": 29,
+      "player": {
+        "id": "7569",
+        "name": "Nico Collins",
+        "pos": "WR",
+        "team": "HOU"
+      },
+      "adp": 27.0,
+      "mine": false
+    },
+    {
+      "round": 3,
+      "slot": 10,
+      "pick_no": 30,
+      "player": {
+        "id": "4881",
+        "name": "Lamar Jackson",
+        "pos": "QB",
+        "team": "BAL"
+      },
+      "adp": 43.0,
+      "mine": false
+    },
+    {
+      "round": 4,
+      "slot": 10,
+      "pick_no": 31,
+      "player": {
+        "id": "8144",
+        "name": "Chris Olave",
+        "pos": "WR",
+        "team": "NO"
+      },
+      "adp": 19.0,
+      "mine": false
+    },
+    {
+      "round": 4,
+      "slot": 9,
+      "pick_no": 32,
+      "player": {
+        "id": "7588",
+        "name": "Javonte Williams",
+        "pos": "RB",
+        "team": "DAL"
+      },
+      "adp": 12.0,
+      "mine": false
+    },
+    {
+      "round": 4,
+      "slot": 8,
+      "pick_no": 33,
+      "player": {
+        "id": "8137",
+        "name": "George Pickens",
+        "pos": "WR",
+        "team": "DAL"
+      },
+      "adp": 14.0,
+      "mine": false
+    },
+    {
+      "round": 4,
+      "slot": 7,
+      "pick_no": 34,
+      "player": {
+        "id": "7525",
+        "name": "DeVonta Smith",
+        "pos": "WR",
+        "team": "PHI"
+      },
+      "adp": 23.0,
+      "mine": false
+    },
+    {
+      "round": 4,
+      "slot": 6,
+      "pick_no": 35,
+      "player": {
+        "id": "12517",
+        "name": "Colston Loveland",
+        "pos": "TE",
+        "team": "CHI"
+      },
+      "adp": 56.0,
+      "mine": true
+    },
+    {
+      "round": 4,
+      "slot": 5,
+      "pick_no": 36,
+      "player": {
+        "id": "12512",
+        "name": "Quinshon Judkins",
+        "pos": "RB",
+        "team": "CLE"
+      },
+      "adp": 65.0,
+      "mine": false
+    },
+    {
+      "round": 4,
+      "slot": 4,
+      "pick_no": 37,
+      "player": {
+        "id": "12526",
+        "name": "Tetairoa McMillan",
+        "pos": "WR",
+        "team": "CAR"
+      },
+      "adp": 26.0,
+      "mine": false
+    },
+    {
+      "round": 4,
+      "slot": 3,
+      "pick_no": 38,
+      "player": {
+        "id": "12518",
+        "name": "Tyler Warren",
+        "pos": "TE",
+        "team": "IND"
+      },
+      "adp": 58.0,
+      "mine": false
+    },
+    {
+      "round": 4,
+      "slot": 2,
+      "pick_no": 39,
+      "player": {
+        "id": "12514",
+        "name": "Emeka Egbuka",
+        "pos": "WR",
+        "team": "TB"
+      },
+      "adp": 87.0,
+      "mine": false
+    },
+    {
+      "round": 4,
+      "slot": 1,
+      "pick_no": 40,
+      "player": {
+        "id": "11564",
+        "name": "Drake Maye",
+        "pos": "QB",
+        "team": "NE"
+      },
+      "adp": 72.0,
+      "mine": false
+    },
+    {
+      "round": 5,
+      "slot": 1,
+      "pick_no": 41,
+      "player": {
+        "id": "6801",
+        "name": "Tee Higgins",
+        "pos": "WR",
+        "team": "CIN"
+      },
+      "adp": 35.0,
+      "mine": false
+    },
+    {
+      "round": 5,
+      "slot": 2,
+      "pick_no": 42,
+      "player": {
+        "id": "12481",
+        "name": "Cam Skattebo",
+        "pos": "RB",
+        "team": "NYG"
+      },
+      "adp": 55.0,
+      "mine": false
+    },
+    {
+      "round": 5,
+      "slot": 3,
+      "pick_no": 43,
+      "player": {
+        "id": "9997",
+        "name": "Zay Flowers",
+        "pos": "WR",
+        "team": "BAL"
+      },
+      "adp": 31.0,
+      "mine": false
+    },
+    {
+      "round": 5,
+      "slot": 4,
+      "pick_no": 44,
+      "player": {
+        "id": "11635",
+        "name": "Ladd McConkey",
+        "pos": "WR",
+        "team": "LAC"
+      },
+      "adp": 42.0,
+      "mine": false
+    },
+    {
+      "round": 5,
+      "slot": 5,
+      "pick_no": 45,
+      "player": {
+        "id": "7526",
+        "name": "Jaylen Waddle",
+        "pos": "WR",
+        "team": "DEN"
+      },
+      "adp": 51.0,
+      "mine": false
+    },
+    {
+      "round": 5,
+      "slot": 6,
+      "pick_no": 46,
+      "player": {
+        "id": "11584",
+        "name": "Bucky Irving",
+        "pos": "RB",
+        "team": "TB"
+      },
+      "adp": 41.0,
+      "mine": true
+    },
+    {
+      "round": 5,
+      "slot": 7,
+      "pick_no": 47,
+      "player": {
+        "id": "10229",
+        "name": "Rashee Rice",
+        "pos": "WR",
+        "team": "KC"
+      },
+      "adp": 33.0,
+      "mine": false
+    },
+    {
+      "round": 5,
+      "slot": 8,
+      "pick_no": 48,
+      "player": {
+        "id": "7543",
+        "name": "Travis Etienne",
+        "pos": "RB",
+        "team": "NO"
+      },
+      "adp": 100.0,
+      "mine": false
+    },
+    {
+      "round": 5,
+      "slot": 9,
+      "pick_no": 49,
+      "player": {
+        "id": "5892",
+        "name": "David Montgomery",
+        "pos": "RB",
+        "team": "HOU"
+      },
+      "adp": 13.0,
+      "mine": false
+    },
+    {
+      "round": 5,
+      "slot": 10,
+      "pick_no": 50,
+      "player": {
+        "id": "6790",
+        "name": "D'Andre Swift",
+        "pos": "RB",
+        "team": "CHI"
+      },
+      "adp": 82.0,
+      "mine": false
+    },
+    {
+      "round": 6,
+      "slot": 10,
+      "pick_no": 51,
+      "player": {
+        "id": "9487",
+        "name": "Parker Washington",
+        "pos": "WR",
+        "team": "JAX"
+      },
+      "adp": 79.0,
+      "mine": false
+    },
+    {
+      "round": 6,
+      "slot": 9,
+      "pick_no": 52,
+      "player": {
+        "id": "12519",
+        "name": "Luther Burden",
+        "pos": "WR",
+        "team": "CHI"
+      },
+      "adp": 75.0,
+      "mine": false
+    },
+    {
+      "round": 6,
+      "slot": 8,
+      "pick_no": 53,
+      "player": {
+        "id": "8146",
+        "name": "Garrett Wilson",
+        "pos": "WR",
+        "team": "NYJ"
+      },
+      "adp": 21.0,
+      "mine": false
+    },
+    {
+      "round": 6,
+      "slot": 7,
+      "pick_no": 54,
+      "player": {
+        "id": "5927",
+        "name": "Terry McLaurin",
+        "pos": "WR",
+        "team": "WAS"
+      },
+      "adp": 32.0,
+      "mine": false
+    },
+    {
+      "round": 6,
+      "slot": 6,
+      "pick_no": 55,
+      "player": {
+        "id": "8148",
+        "name": "Jameson Williams",
+        "pos": "WR",
+        "team": "DET"
+      },
+      "adp": 54.0,
+      "mine": true
+    },
+    {
+      "round": 6,
+      "slot": 5,
+      "pick_no": 56,
+      "player": {
+        "id": "13286",
+        "name": "Jadarian Price",
+        "pos": "RB",
+        "team": "SEA"
+      },
+      "adp": 78.0,
+      "mine": false
+    },
+    {
+      "round": 6,
+      "slot": 4,
+      "pick_no": 57,
+      "player": {
+        "id": "12490",
+        "name": "Bhayshul Tuten",
+        "pos": "RB",
+        "team": "JAX"
+      },
+      "adp": 137.0,
+      "mine": false
+    },
+    {
+      "round": 6,
+      "slot": 3,
+      "pick_no": 58,
+      "player": {
+        "id": "7611",
+        "name": "Rhamondre Stevenson",
+        "pos": "RB",
+        "team": "NE"
+      },
+      "adp": 71.0,
+      "mine": false
+    },
+    {
+      "round": 6,
+      "slot": 2,
+      "pick_no": 59,
+      "player": {
+        "id": "2133",
+        "name": "Davante Adams",
+        "pos": "WR",
+        "team": "LAR"
+      },
+      "adp": 60.0,
+      "mine": false
+    },
+    {
+      "round": 6,
+      "slot": 1,
+      "pick_no": 60,
+      "player": {
+        "id": "10859",
+        "name": "Sam LaPorta",
+        "pos": "TE",
+        "team": "DET"
+      },
+      "adp": 61.0,
+      "mine": false
+    },
+    {
+      "round": 7,
+      "slot": 1,
+      "pick_no": 61,
+      "player": {
+        "id": "2216",
+        "name": "Mike Evans",
+        "pos": "WR",
+        "team": "SF"
+      },
+      "adp": 48.0,
+      "mine": false
+    },
+    {
+      "round": 7,
+      "slot": 2,
+      "pick_no": 62,
+      "player": {
+        "id": "11620",
+        "name": "Rome Odunze",
+        "pos": "WR",
+        "team": "CHI"
+      },
+      "adp": 115.0,
+      "mine": false
+    },
+    {
+      "round": 7,
+      "slot": 3,
+      "pick_no": 63,
+      "player": {
+        "id": "8167",
+        "name": "Christian Watson",
+        "pos": "WR",
+        "team": "GB"
+      },
+      "adp": 22.0,
+      "mine": false
+    },
+    {
+      "round": 7,
+      "slot": 4,
+      "pick_no": 64,
+      "player": {
+        "id": "8228",
+        "name": "Jaylen Warren",
+        "pos": "RB",
+        "team": "PIT"
+      },
+      "adp": 85.0,
+      "mine": false
+    },
+    {
+      "round": 7,
+      "slot": 5,
+      "pick_no": 65,
+      "player": {
+        "id": "6904",
+        "name": "Jalen Hurts",
+        "pos": "QB",
+        "team": "PHI"
+      },
+      "adp": 37.0,
+      "mine": false
+    },
+    {
+      "round": 7,
+      "slot": 6,
+      "pick_no": 66,
+      "player": {
+        "id": "6770",
+        "name": "Joe Burrow",
+        "pos": "QB",
+        "team": "CIN"
+      },
+      "adp": 93.0,
+      "mine": true
+    },
+    {
+      "round": 7,
+      "slot": 7,
+      "pick_no": 67,
+      "player": {
+        "id": "9484",
+        "name": "Tucker Kraft",
+        "pos": "TE",
+        "team": "GB"
+      },
+      "adp": 50.0,
+      "mine": false
+    },
+    {
+      "round": 7,
+      "slot": 8,
+      "pick_no": 68,
+      "player": {
+        "id": "4983",
+        "name": "DJ Moore",
+        "pos": "WR",
+        "team": "BUF"
+      },
+      "adp": 40.0,
+      "mine": false
+    },
+    {
+      "round": 7,
+      "slot": 9,
+      "pick_no": 69,
+      "player": {
+        "id": "7553",
+        "name": "Kyle Pitts",
+        "pos": "TE",
+        "team": "ATL"
+      },
+      "adp": 95.0,
+      "mine": false
+    },
+    {
+      "round": 7,
+      "slot": 10,
+      "pick_no": 70,
+      "player": {
+        "id": "4217",
+        "name": "George Kittle",
+        "pos": "TE",
+        "team": "SF"
+      },
+      "adp": 69.0,
+      "mine": false
+    },
+    {
+      "round": 8,
+      "slot": 10,
+      "pick_no": 71,
+      "player": {
+        "id": "12529",
+        "name": "TreVeyon Henderson",
+        "pos": "RB",
+        "team": "NE"
+      },
+      "adp": 129.0,
+      "mine": false
+    },
+    {
+      "round": 8,
+      "slot": 9,
+      "pick_no": 72,
+      "player": {
+        "id": "11631",
+        "name": "Brian Thomas",
+        "pos": "WR",
+        "team": "JAX"
+      },
+      "adp": 139.0,
+      "mine": false
+    },
+    {
+      "round": 8,
+      "slot": 8,
+      "pick_no": 73,
+      "player": {
+        "id": "11560",
+        "name": "Caleb Williams",
+        "pos": "QB",
+        "team": "CHI"
+      },
+      "adp": 116.0,
+      "mine": false
+    },
+    {
+      "round": 8,
+      "slot": 7,
+      "pick_no": 74,
+      "player": {
+        "id": "13279",
+        "name": "Carnell Tate",
+        "pos": "WR",
+        "team": "TEN"
+      },
+      "adp": 135.0,
+      "mine": false
+    },
+    {
+      "round": 8,
+      "slot": 6,
+      "pick_no": 75,
+      "player": {
+        "id": "7021",
+        "name": "Rico Dowdle",
+        "pos": "RB",
+        "team": "PIT"
+      },
+      "adp": 96.0,
+      "mine": true
+    },
+    {
+      "round": 8,
+      "slot": 5,
+      "pick_no": 76,
+      "player": {
+        "id": "5967",
+        "name": "Tony Pollard",
+        "pos": "RB",
+        "team": "TEN"
+      },
+      "adp": 141.0,
+      "mine": false
+    },
+    {
+      "round": 8,
+      "slot": 4,
+      "pick_no": 77,
+      "player": {
+        "id": "12506",
+        "name": "Harold Fannin",
+        "pos": "TE",
+        "team": "CLE"
+      },
+      "adp": 91.0,
+      "mine": false
+    },
+    {
+      "round": 8,
+      "slot": 3,
+      "pick_no": 78,
+      "player": {
+        "id": "10232",
+        "name": "Michael Wilson",
+        "pos": "WR",
+        "team": "ARI"
+      },
+      "adp": 105.0,
+      "mine": false
+    },
+    {
+      "round": 8,
+      "slot": 2,
+      "pick_no": 79,
+      "player": {
+        "id": "12489",
+        "name": "RJ Harvey",
+        "pos": "RB",
+        "team": "DEN"
+      },
+      "adp": 134.0,
+      "mine": false
+    },
+    {
+      "round": 8,
+      "slot": 1,
+      "pick_no": 80,
+      "player": {
+        "id": "6806",
+        "name": "J.K. Dobbins",
+        "pos": "RB",
+        "team": "DEN"
+      },
+      "adp": 133.0,
+      "mine": false
+    },
+    {
+      "round": 9,
+      "slot": 1,
+      "pick_no": 81,
+      "player": {
+        "id": "8121",
+        "name": "Romeo Doubs",
+        "pos": "WR",
+        "team": "NE"
+      },
+      "adp": 125.0,
+      "mine": false
+    },
+    {
+      "round": 9,
+      "slot": 2,
+      "pick_no": 82,
+      "player": {
+        "id": "13294",
+        "name": "Makai Lemon",
+        "pos": "WR",
+        "team": "PHI"
+      },
+      "adp": 177.0,
+      "mine": false
+    },
+    {
+      "round": 9,
+      "slot": 3,
+      "pick_no": 83,
+      "player": {
+        "id": "3294",
+        "name": "Dak Prescott",
+        "pos": "QB",
+        "team": "DAL"
+      },
+      "adp": 46.0,
+      "mine": false
+    },
+    {
+      "round": 9,
+      "slot": 4,
+      "pick_no": 84,
+      "player": {
+        "id": "6797",
+        "name": "Justin Herbert",
+        "pos": "QB",
+        "team": "LAC"
+      },
+      "adp": 112.0,
+      "mine": false
+    },
+    {
+      "round": 9,
+      "slot": 5,
+      "pick_no": 85,
+      "player": {
+        "id": "5846",
+        "name": "DK Metcalf",
+        "pos": "WR",
+        "team": "PIT"
+      },
+      "adp": 59.0,
+      "mine": false
+    },
+    {
+      "round": 9,
+      "slot": 6,
+      "pick_no": 86,
+      "player": {
+        "id": "7594",
+        "name": "Chuba Hubbard",
+        "pos": "RB",
+        "team": "CAR"
+      },
+      "adp": 67.0,
+      "mine": true
+    },
+    {
+      "round": 9,
+      "slot": 7,
+      "pick_no": 87,
+      "player": {
+        "id": "11566",
+        "name": "Jayden Daniels",
+        "pos": "QB",
+        "team": "WAS"
+      },
+      "adp": 47.0,
+      "mine": false
+    },
+    {
+      "round": 9,
+      "slot": 8,
+      "pick_no": 88,
+      "player": {
+        "id": "12533",
+        "name": "Jacory Croskey-Merritt",
+        "pos": "RB",
+        "team": "WAS"
+      },
+      "adp": 64.0,
+      "mine": false
+    },
+    {
+      "round": 9,
+      "slot": 9,
+      "pick_no": 89,
+      "player": {
+        "id": "11628",
+        "name": "Marvin Harrison",
+        "pos": "WR",
+        "team": "ARI"
+      },
+      "adp": 118.0,
+      "mine": false
+    },
+    {
+      "round": 9,
+      "slot": 10,
+      "pick_no": 90,
+      "player": {
+        "id": "10222",
+        "name": "Jayden Reed",
+        "pos": "WR",
+        "team": "GB"
+      },
+      "adp": 70.0,
+      "mine": false
+    },
+    {
+      "round": 10,
+      "slot": 10,
+      "pick_no": 91,
+      "player": {
+        "id": "5045",
+        "name": "Courtland Sutton",
+        "pos": "WR",
+        "team": "DEN"
+      },
+      "adp": 111.0,
+      "mine": false
+    },
+    {
+      "round": 10,
+      "slot": 9,
+      "pick_no": 92,
+      "player": {
+        "id": "4037",
+        "name": "Chris Godwin",
+        "pos": "WR",
+        "team": "TB"
+      },
+      "adp": 97.0,
+      "mine": false
+    },
+    {
+      "round": 10,
+      "slot": 8,
+      "pick_no": 93,
+      "player": {
+        "id": "8131",
+        "name": "Isaiah Likely",
+        "pos": "TE",
+        "team": "NYG"
+      },
+      "adp": 101.0,
+      "mine": false
+    },
+    {
+      "round": 10,
+      "slot": 7,
+      "pick_no": 94,
+      "player": {
+        "id": "11583",
+        "name": "Jonathon Brooks",
+        "pos": "RB",
+        "team": "CAR"
+      },
+      "adp": 180.0,
+      "mine": false
+    },
+    {
+      "round": 10,
+      "slot": 6,
+      "pick_no": 95,
+      "player": {
+        "id": "8142",
+        "name": "Alec Pierce",
+        "pos": "WR",
+        "team": "IND"
+      },
+      "adp": 68.0,
+      "mine": true
+    },
+    {
+      "round": 10,
+      "slot": 5,
+      "pick_no": 96,
+      "player": {
+        "id": "13298",
+        "name": "KC Concepcion",
+        "pos": "WR",
+        "team": "CLE"
+      },
+      "adp": 106.0,
+      "mine": false
+    },
+    {
+      "round": 10,
+      "slot": 4,
+      "pick_no": 97,
+      "player": {
+        "id": "DEN",
+        "name": "Denver Broncos",
+        "pos": "DEF",
+        "team": "DEN"
+      },
+      "adp": null,
+      "mine": false
+    },
+    {
+      "round": 10,
+      "slot": 3,
+      "pick_no": 98,
+      "player": {
+        "id": "1466",
+        "name": "Travis Kelce",
+        "pos": "TE",
+        "team": "KC"
+      },
+      "adp": 73.0,
+      "mine": false
+    },
+    {
+      "round": 10,
+      "slot": 2,
+      "pick_no": 99,
+      "player": {
+        "id": "12508",
+        "name": "Jaxson Dart",
+        "pos": "QB",
+        "team": "NYG"
+      },
+      "adp": 89.0,
+      "mine": false
+    },
+    {
+      "round": 10,
+      "slot": 1,
+      "pick_no": 100,
+      "player": {
+        "id": "10236",
+        "name": "Dalton Kincaid",
+        "pos": "TE",
+        "team": "BUF"
+      },
+      "adp": 45.0,
+      "mine": false
+    },
+    {
+      "round": 11,
+      "slot": 1,
+      "pick_no": 101,
+      "player": {
+        "id": "LAR",
+        "name": "Los Angeles Rams",
+        "pos": "DEF",
+        "team": "LAR"
+      },
+      "adp": null,
+      "mine": false
+    },
+    {
+      "round": 11,
+      "slot": 2,
+      "pick_no": 102,
+      "player": {
+        "id": "13330",
+        "name": "Kenyon Sadiq",
+        "pos": "TE",
+        "team": "NYJ"
+      },
+      "adp": 182.0,
+      "mine": false
+    },
+    {
+      "round": 11,
+      "slot": 3,
+      "pick_no": 103,
+      "player": {
+        "id": "7523",
+        "name": "Trevor Lawrence",
+        "pos": "QB",
+        "team": "JAX"
+      },
+      "adp": 107.0,
+      "mine": false
+    },
+    {
+      "round": 11,
+      "slot": 4,
+      "pick_no": 104,
+      "player": {
+        "id": "11533",
+        "name": "Brandon Aubrey",
+        "pos": "K",
+        "team": "DAL"
+      },
+      "adp": null,
+      "mine": false
+    },
+    {
+      "round": 11,
+      "slot": 5,
+      "pick_no": 105,
+      "player": {
+        "id": "421",
+        "name": "Matthew Stafford",
+        "pos": "QB",
+        "team": "LAR"
+      },
+      "adp": 114.0,
+      "mine": false
+    },
+    {
+      "round": 11,
+      "slot": 6,
+      "pick_no": 106,
+      "player": {
+        "id": "13281",
+        "name": "Jordyn Tyson",
+        "pos": "WR",
+        "team": "NO"
+      },
+      "adp": null,
+      "mine": true
+    },
+    {
+      "round": 11,
+      "slot": 7,
+      "pick_no": 107,
+      "player": {
+        "id": "8408",
+        "name": "Jordan Mason",
+        "pos": "RB",
+        "team": "MIN"
+      },
+      "adp": null,
+      "mine": false
+    },
+    {
+      "round": 11,
+      "slot": 8,
+      "pick_no": 108,
+      "player": {
+        "id": "SEA",
+        "name": "Seattle Seahawks",
+        "pos": "DEF",
+        "team": "SEA"
+      },
+      "adp": null,
+      "mine": false
+    },
+    {
+      "round": 11,
+      "slot": 9,
+      "pick_no": 109,
+      "player": {
+        "id": "11563",
+        "name": "Bo Nix",
+        "pos": "QB",
+        "team": "DEN"
+      },
+      "adp": 136.0,
+      "mine": false
+    },
+    {
+      "round": 11,
+      "slot": 10,
+      "pick_no": 110,
+      "player": {
+        "id": "4046",
+        "name": "Patrick Mahomes",
+        "pos": "QB",
+        "team": "KC"
+      },
+      "adp": 98.0,
+      "mine": false
+    },
+    {
+      "round": 12,
+      "slot": 10,
+      "pick_no": 111,
+      "player": {
+        "id": "7567",
+        "name": "Kenny Gainwell",
+        "pos": "RB",
+        "team": "TB"
+      },
+      "adp": 158.0,
+      "mine": false
+    },
+    {
+      "round": 12,
+      "slot": 9,
+      "pick_no": 112,
+      "player": {
+        "id": "2449",
+        "name": "Stefon Diggs",
+        "pos": "WR",
+        "team": "WAS"
+      },
+      "adp": 53.0,
+      "mine": false
+    },
+    {
+      "round": 12,
+      "slot": 8,
+      "pick_no": 113,
+      "player": {
+        "id": "12534",
+        "name": "Kyle Monangai",
+        "pos": "RB",
+        "team": "CHI"
+      },
+      "adp": 176.0,
+      "mine": false
+    },
+    {
+      "round": 12,
+      "slot": 7,
+      "pick_no": 114,
+      "player": {
+        "id": "3451",
+        "name": "Ka'imi Fairbairn",
+        "pos": "K",
+        "team": "HOU"
+      },
+      "adp": null,
+      "mine": false
+    },
+    {
+      "round": 12,
+      "slot": 6,
+      "pick_no": 115,
+      "player": {
+        "id": "11586",
+        "name": "Blake Corum",
+        "pos": "RB",
+        "team": "LAR"
+      },
+      "adp": 104.0,
+      "mine": true
+    },
+    {
+      "round": 12,
+      "slot": 5,
+      "pick_no": 116,
+      "player": {
+        "id": "13305",
+        "name": "Mike Washington",
+        "pos": "RB",
+        "team": "LV"
+      },
+      "adp": 247.0,
+      "mine": false
+    },
+    {
+      "round": 12,
+      "slot": 4,
+      "pick_no": 117,
+      "player": {
+        "id": "9756",
+        "name": "Jordan Addison",
+        "pos": "WR",
+        "team": "MIN"
+      },
+      "adp": 83.0,
+      "mine": false
+    },
+    {
+      "round": 12,
+      "slot": 3,
+      "pick_no": 118,
+      "player": {
+        "id": "8259",
+        "name": "Cameron Dicker",
+        "pos": "K",
+        "team": "LAC"
+      },
+      "adp": null,
+      "mine": false
+    },
+    {
+      "round": 12,
+      "slot": 2,
+      "pick_no": 119,
+      "player": {
+        "id": "11655",
+        "name": "Tyrone Tracy",
+        "pos": "RB",
+        "team": "NYG"
+      },
+      "adp": 323.0,
+      "mine": false
+    },
+    {
+      "round": 12,
+      "slot": 1,
+      "pick_no": 120,
+      "player": {
+        "id": "11786",
+        "name": "Cam Little",
+        "pos": "K",
+        "team": "JAX"
+      },
+      "adp": null,
+      "mine": false
+    },
+    {
+      "round": 13,
+      "slot": 1,
+      "pick_no": 121,
+      "player": {
+        "id": "6819",
+        "name": "Michael Pittman",
+        "pos": "WR",
+        "team": "PIT"
+      },
+      "adp": 66.0,
+      "mine": false
+    },
+    {
+      "round": 13,
+      "slot": 2,
+      "pick_no": 122,
+      "player": {
+        "id": "HOU",
+        "name": "Houston Texans",
+        "pos": "DEF",
+        "team": "HOU"
+      },
+      "adp": null,
+      "mine": false
+    },
+    {
+      "round": 13,
+      "slot": 3,
+      "pick_no": 123,
+      "player": {
+        "id": "PHI",
+        "name": "Philadelphia Eagles",
+        "pos": "DEF",
+        "team": "PHI"
+      },
+      "adp": null,
+      "mine": false
+    },
+    {
+      "round": 13,
+      "slot": 4,
+      "pick_no": 124,
+      "player": {
+        "id": "9500",
+        "name": "Josh Downs",
+        "pos": "WR",
+        "team": "IND"
+      },
+      "adp": 99.0,
+      "mine": false
+    },
+    {
+      "round": 13,
+      "slot": 5,
+      "pick_no": 125,
+      "player": {
+        "id": "9508",
+        "name": "Tyjae Spears",
+        "pos": "RB",
+        "team": "TEN"
+      },
+      "adp": 165.0,
+      "mine": false
+    },
+    {
+      "round": 13,
+      "slot": 6,
+      "pick_no": 126,
+      "player": {
+        "id": "5947",
+        "name": "Jakobi Meyers",
+        "pos": "WR",
+        "team": "JAX"
+      },
+      "adp": 117.0,
+      "mine": true
+    },
+    {
+      "round": 13,
+      "slot": 7,
+      "pick_no": 127,
+      "player": {
+        "id": "13417",
+        "name": "De'Zhaun Stribling",
+        "pos": "WR",
+        "team": "SF"
+      },
+      "adp": null,
+      "mine": false
+    },
+    {
+      "round": 13,
+      "slot": 8,
+      "pick_no": 128,
+      "player": {
+        "id": "2747",
+        "name": "Jason Myers",
+        "pos": "K",
+        "team": "SEA"
+      },
+      "adp": null,
+      "mine": false
+    },
+    {
+      "round": 13,
+      "slot": 9,
+      "pick_no": 129,
+      "player": {
+        "id": "JAX",
+        "name": "Jacksonville Jaguars",
+        "pos": "DEF",
+        "team": "JAX"
+      },
+      "adp": null,
+      "mine": false
+    },
+    {
+      "round": 13,
+      "slot": 10,
+      "pick_no": 130,
+      "player": {
+        "id": "11792",
+        "name": "Will Reichard",
+        "pos": "K",
+        "team": "MIN"
+      },
+      "adp": null,
+      "mine": false
+    },
+    {
+      "round": 14,
+      "slot": 10,
+      "pick_no": 131,
+      "player": {
+        "id": "MIN",
+        "name": "Minnesota Vikings",
+        "pos": "DEF",
+        "team": "MIN"
+      },
+      "adp": null,
+      "mine": false
+    },
+    {
+      "round": 14,
+      "slot": 9,
+      "pick_no": 132,
+      "player": {
+        "id": "4227",
+        "name": "Harrison Butker",
+        "pos": "K",
+        "team": "KC"
+      },
+      "adp": null,
+      "mine": false
+    },
+    {
+      "round": 14,
+      "slot": 8,
+      "pick_no": 133,
+      "player": {
+        "id": "3163",
+        "name": "Jared Goff",
+        "pos": "QB",
+        "team": "DET"
+      },
+      "adp": 124.0,
+      "mine": false
+    },
+    {
+      "round": 14,
+      "slot": 7,
+      "pick_no": 134,
+      "player": {
+        "id": "BAL",
+        "name": "Baltimore Ravens",
+        "pos": "DEF",
+        "team": "BAL"
+      },
+      "adp": null,
+      "mine": false
+    },
+    {
+      "round": 14,
+      "slot": 6,
+      "pick_no": 135,
+      "player": {
+        "id": "NE",
+        "name": "New England Patriots",
+        "pos": "DEF",
+        "team": "NE"
+      },
+      "adp": null,
+      "mine": true
+    },
+    {
+      "round": 14,
+      "slot": 5,
+      "pick_no": 136,
+      "player": {
+        "id": "11539",
+        "name": "Jake Bates",
+        "pos": "K",
+        "team": "DET"
+      },
+      "adp": null,
+      "mine": false
+    },
+    {
+      "round": 14,
+      "slot": 4,
+      "pick_no": 137,
+      "player": {
+        "id": "5022",
+        "name": "Dallas Goedert",
+        "pos": "TE",
+        "team": "PHI"
+      },
+      "adp": 77.0,
+      "mine": false
+    },
+    {
+      "round": 14,
+      "slot": 3,
+      "pick_no": 138,
+      "player": {
+        "id": "8136",
+        "name": "Rachaad White",
+        "pos": "RB",
+        "team": "WAS"
+      },
+      "adp": 143.0,
+      "mine": false
+    },
+    {
+      "round": 14,
+      "slot": 2,
+      "pick_no": 139,
+      "player": {
+        "id": "12015",
+        "name": "Harrison Mevis",
+        "pos": "K",
+        "team": "LAR"
+      },
+      "adp": null,
+      "mine": false
+    },
+    {
+      "round": 14,
+      "slot": 1,
+      "pick_no": 140,
+      "player": {
+        "id": "8183",
+        "name": "Brock Purdy",
+        "pos": "QB",
+        "team": "SF"
+      },
+      "adp": 52.0,
+      "mine": false
+    }
+  ],
+  "clock": {
+    "pick_no": 15,
+    "pick_label": "2.05",
+    "seconds_left": 68,
+    "note": "Justin Jefferson is the last of the WR tier 1 and has fallen 6 past ADP; RB tier 2 has four left and you pick again at 26, so at least two survive. Take Jefferson; RB at 26."
+  },
+  "plan": [
+    {
+      "title": "Slot 6",
+      "note": "Turns at 6/15, 26/35, 46/55. Elite RB at 6 if two of the top four are gone, else the last tier-1 WR; take the other position on the way back."
+    },
+    {
+      "title": "RB",
+      "note": "Tier 1: 4 players. Tier 2: 6. Cliff after pick ~30, so two RBs by pick 35."
+    },
+    {
+      "title": "WR",
+      "note": "Deep to round 6 in this league; 10 teams leave WR3s on the board late."
+    },
+    {
+      "title": "TE",
+      "note": "Loveland or nothing before round 8; the wire holds TE1s all year here."
+    },
+    {
+      "title": "QB",
+      "note": "Rounds 7-9. Never two."
+    },
+    {
+      "title": "K / DEF",
+      "note": "Last two rounds, no exceptions."
+    }
+  ],
+  "report_card": null,
+  "pos_alloc": null,
+  "summary": null
+}

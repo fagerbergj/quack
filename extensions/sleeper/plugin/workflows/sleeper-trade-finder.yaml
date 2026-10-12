@@ -1,0 +1,9 @@
+name: sleeper-trade-finder
+trigger: "Run the Sleeper trade-finder job for a league (extensions.sleeper dispatch)"
+agents: [trade-analyst]
+shape: "ONE `trade-analyst` node (terminal - writes the trade-finder artifact)"
+nodes:
+  - id: trade-finder
+    agent: trade-analyst
+    task: "Scan every other roster in the Sleeper league named below for trades worth making this week, and write the ranked candidate list.\n\n{{ask}}"
+    artifact: trade-finder

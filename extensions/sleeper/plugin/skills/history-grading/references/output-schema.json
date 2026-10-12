@@ -1,0 +1,212 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quack.example/sleeper/ui/schemas/history.json",
+  "title": "history",
+  "description": "One season's review: record/PF/PA ranks, lineup efficiency, weekly chart, draft report card.",
+  "type": "object",
+  "properties": {
+    "season": {
+      "type": "string",
+      "maxLength": 20
+    },
+    "wins": {
+      "type": "integer"
+    },
+    "losses": {
+      "type": "integer"
+    },
+    "pf": {
+      "type": "number"
+    },
+    "pa": {
+      "type": "number"
+    },
+    "pf_rank": {
+      "type": "integer"
+    },
+    "pa_rank": {
+      "type": "integer"
+    },
+    "draft_slot": {
+      "type": "integer"
+    },
+    "eff": {
+      "type": "number"
+    },
+    "left_total": {
+      "type": "number"
+    },
+    "close_losses": {
+      "type": "integer"
+    },
+    "moves": {
+      "type": "integer"
+    },
+    "champion": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 60
+    },
+    "weeks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "week",
+          "started",
+          "best"
+        ],
+        "properties": {
+          "week": {
+            "type": "integer"
+          },
+          "started": {
+            "type": "number"
+          },
+          "best": {
+            "type": "number"
+          },
+          "left": {
+            "type": "number"
+          },
+          "opp": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "won": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "pos_alloc": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "report_card": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "object",
+        "properties": {
+          "round": {
+            "type": "integer"
+          },
+          "pick": {
+            "type": "integer"
+          },
+          "player": {
+            "type": "object",
+            "required": [
+              "id",
+              "name"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "pos": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "team": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "inj": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "prac": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "proj": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            }
+          },
+          "drafted_as": {
+            "type": "string",
+            "maxLength": 20
+          },
+          "finished": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 20
+          },
+          "pts": {
+            "type": "number"
+          },
+          "verdict": {
+            "enum": [
+              "steal",
+              "reach",
+              "fair"
+            ]
+          }
+        }
+      }
+    },
+    "summary": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 400
+    },
+    "cross_season_summary": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "object",
+        "properties": {
+          "n": {
+            "type": "string",
+            "maxLength": 20
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 400
+          },
+          "detail": {
+            "type": "string",
+            "maxLength": 400
+          }
+        }
+      }
+    }
+  },
+  "required": [
+    "season",
+    "wins",
+    "losses",
+    "weeks"
+  ]
+}

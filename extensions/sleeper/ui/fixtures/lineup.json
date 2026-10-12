@@ -1,0 +1,429 @@
+{
+  "week": 3,
+  "team": "Substation Supremacy",
+  "team_record": "0-2",
+  "opponent": "Rice Cooker",
+  "opponent_record": "2-0",
+  "my_proj": 120.7,
+  "opp_proj": 117.7,
+  "plan": "Close game · favour floors",
+  "summary": "Two changes: Hubbard over a questionable Dowdle, Irving over Williams in what projects as a close game. Nabers is Questionable — see the watch note.",
+  "starters": [
+    {
+      "slot": "QB",
+      "player": {
+        "id": "6770",
+        "name": "Joe Burrow",
+        "pos": "QB",
+        "team": "CIN",
+        "inj": null,
+        "prac": null,
+        "proj": 18.2
+      },
+      "proj": 18.2,
+      "floor": 11,
+      "ceiling": 27,
+      "verdict": "start",
+      "why": "Full workload expected; the only risk is a run-heavy script capping his ceiling."
+    },
+    {
+      "slot": "RB1",
+      "player": {
+        "id": "4034",
+        "name": "Christian McCaffrey",
+        "pos": "RB",
+        "team": "SF",
+        "inj": null,
+        "prac": null,
+        "proj": 20.7
+      },
+      "proj": 20.7,
+      "floor": 12,
+      "ceiling": 31,
+      "verdict": "start",
+      "why": "Bell-cow role; RB1 by a wide margin over the bench."
+    },
+    {
+      "slot": "RB2",
+      "player": {
+        "id": "7594",
+        "name": "Chuba Hubbard",
+        "pos": "RB",
+        "team": "CAR",
+        "inj": null,
+        "prac": null,
+        "proj": 14.1
+      },
+      "proj": 14.1,
+      "floor": 8,
+      "ceiling": 21,
+      "verdict": "start",
+      "replaces": {
+        "id": "7021",
+        "name": "Rico Dowdle",
+        "pos": "RB",
+        "team": "PIT",
+        "inj": "Questionable",
+        "prac": null,
+        "proj": 11.1
+      },
+      "why": "Dowdle is questionable on the [Wednesday injury report](https://www.nfl.com/injuries/) and No. 2 on the depth chart."
+    },
+    {
+      "slot": "WR1",
+      "player": {
+        "id": "6794",
+        "name": "Justin Jefferson",
+        "pos": "WR",
+        "team": "MIN",
+        "inj": null,
+        "prac": null,
+        "proj": 16.7
+      },
+      "proj": 16.7,
+      "floor": 9,
+      "ceiling": 28,
+      "verdict": "start",
+      "why": "Target hog regardless of matchup; locked in as WR1."
+    },
+    {
+      "slot": "WR2",
+      "player": {
+        "id": "11632",
+        "name": "Malik Nabers",
+        "pos": "WR",
+        "team": "NYG",
+        "inj": "Questionable",
+        "prac": null,
+        "proj": 13.5
+      },
+      "proj": 13.5,
+      "floor": 5,
+      "ceiling": 24,
+      "verdict": "start",
+      "why": "Full route tree if he suits up; see the watch note if his designation worsens."
+    },
+    {
+      "slot": "TE",
+      "player": {
+        "id": "12517",
+        "name": "Colston Loveland",
+        "pos": "TE",
+        "team": "CHI",
+        "inj": null,
+        "prac": null,
+        "proj": 9.8
+      },
+      "proj": 9.8,
+      "floor": 4,
+      "ceiling": 17,
+      "verdict": "start",
+      "why": "Only TE on the roster; no decision to make."
+    },
+    {
+      "slot": "FLEX",
+      "player": {
+        "id": "11584",
+        "name": "Bucky Irving",
+        "pos": "RB",
+        "team": "TB",
+        "inj": null,
+        "prac": null,
+        "proj": 13.3
+      },
+      "proj": 13.3,
+      "floor": 9,
+      "ceiling": 19,
+      "verdict": "start",
+      "replaces": {
+        "id": "8148",
+        "name": "Jameson Williams",
+        "pos": "WR",
+        "team": "DET",
+        "inj": null,
+        "prac": null,
+        "proj": 12.4
+      },
+      "why": "Close game, so the steadier range wins: Irving 9–19 on a [68% snap share](https://www.fantasypros.com/nfl/reports/snap-counts/) vs Williams 4–23 behind two WRs."
+    },
+    {
+      "slot": "K",
+      "player": {
+        "id": "1945",
+        "name": "Chris Boswell",
+        "pos": "K",
+        "team": "PIT",
+        "inj": null,
+        "prac": null,
+        "proj": 7.8
+      },
+      "proj": 7.8,
+      "floor": 4,
+      "ceiling": 12,
+      "verdict": "start",
+      "why": "Only K on the roster; no decision to make."
+    },
+    {
+      "slot": "DEF",
+      "player": {
+        "id": "NE",
+        "name": "New England Patriots DEF",
+        "pos": "DEF",
+        "team": "NE",
+        "inj": null,
+        "prac": null,
+        "proj": 6.5
+      },
+      "proj": 6.5,
+      "floor": 1,
+      "ceiling": 14,
+      "verdict": "start",
+      "why": "Only DEF on the roster."
+    }
+  ],
+  "bench": [
+    {
+      "player": {
+        "id": "8148",
+        "name": "Jameson Williams",
+        "pos": "WR",
+        "team": "DET",
+        "inj": null,
+        "prac": null,
+        "proj": 12.4
+      },
+      "proj": 12.4,
+      "floor": 4,
+      "ceiling": 23,
+      "why": "FLEX alternative; behind Irving on snap share this week."
+    },
+    {
+      "player": {
+        "id": "7021",
+        "name": "Rico Dowdle",
+        "pos": "RB",
+        "team": "PIT",
+        "inj": "Questionable",
+        "prac": null,
+        "proj": 11.8
+      },
+      "proj": 11.8,
+      "floor": 5,
+      "ceiling": 19,
+      "why": "Behind Hubbard while questionable."
+    },
+    {
+      "player": {
+        "id": "8156",
+        "name": "Rashod Bateman",
+        "pos": "WR",
+        "team": "BAL",
+        "inj": null,
+        "prac": null,
+        "proj": 10.3
+      },
+      "proj": 10.3,
+      "floor": 4,
+      "ceiling": 18,
+      "why": "Depth WR only."
+    },
+    {
+      "player": {
+        "id": "11834",
+        "name": "Devaughn Vele",
+        "pos": "WR",
+        "team": "NO",
+        "inj": null,
+        "prac": null,
+        "proj": 9.9
+      },
+      "proj": 9.9,
+      "floor": 6,
+      "ceiling": 17,
+      "why": "Watch-list stash; starts if Nabers is downgraded."
+    },
+    {
+      "player": {
+        "id": "11586",
+        "name": "Blake Corum",
+        "pos": "RB",
+        "team": "LAR",
+        "inj": null,
+        "prac": null,
+        "proj": 7.8
+      },
+      "proj": 7.8,
+      "floor": 3,
+      "ceiling": 14,
+      "why": "Handcuff value only."
+    }
+  ],
+  "reserve": [
+    {
+      "player": {
+        "id": "13281",
+        "name": "Jordyn Tyson",
+        "pos": "WR",
+        "team": "NO",
+        "inj": "IR",
+        "prac": null,
+        "proj": 0
+      },
+      "why": "Injured reserve; outside the roster count."
+    }
+  ],
+  "reserve_slots": 1,
+  "bench_slots": 5,
+  "opponent_starters": [
+    {
+      "slot": "QB",
+      "player": {
+        "id": "13290",
+        "name": "Tyler Shough",
+        "pos": "QB",
+        "team": "NO",
+        "inj": null,
+        "prac": null,
+        "proj": 18.5
+      },
+      "proj": 18.5,
+      "floor": 11,
+      "ceiling": 27
+    },
+    {
+      "slot": "RB1",
+      "player": {
+        "id": "9509",
+        "name": "Bijan Robinson",
+        "pos": "RB",
+        "team": "ATL",
+        "inj": null,
+        "prac": null,
+        "proj": 19.8
+      },
+      "proj": 19.8,
+      "floor": 12,
+      "ceiling": 30
+    },
+    {
+      "slot": "RB2",
+      "player": {
+        "id": "8151",
+        "name": "Kenneth Walker",
+        "pos": "RB",
+        "team": "SEA",
+        "inj": null,
+        "prac": null,
+        "proj": 13.2
+      },
+      "proj": 13.2,
+      "floor": 7,
+      "ceiling": 20
+    },
+    {
+      "slot": "WR1",
+      "player": {
+        "id": "10050",
+        "name": "Puka Nacua",
+        "pos": "WR",
+        "team": "LAR",
+        "inj": null,
+        "prac": null,
+        "proj": 17.9
+      },
+      "proj": 17.9,
+      "floor": 10,
+      "ceiling": 27
+    },
+    {
+      "slot": "WR2",
+      "player": {
+        "id": "10052",
+        "name": "Garrett Wilson",
+        "pos": "WR",
+        "team": "NYJ",
+        "inj": null,
+        "prac": null,
+        "proj": 12.1
+      },
+      "proj": 12.1,
+      "floor": 5,
+      "ceiling": 21
+    },
+    {
+      "slot": "TE",
+      "player": {
+        "id": "10051",
+        "name": "Sam LaPorta",
+        "pos": "TE",
+        "team": "DET",
+        "inj": null,
+        "prac": null,
+        "proj": 11.0
+      },
+      "proj": 11.0,
+      "floor": 5,
+      "ceiling": 18
+    },
+    {
+      "slot": "FLEX",
+      "player": {
+        "id": "11599",
+        "name": "Jordan Addison",
+        "pos": "WR",
+        "team": "MIN",
+        "inj": null,
+        "prac": null,
+        "proj": 11.4
+      },
+      "proj": 11.4,
+      "floor": 6,
+      "ceiling": 18
+    },
+    {
+      "slot": "K",
+      "player": {
+        "id": "2144",
+        "name": "Justin Tucker",
+        "pos": "K",
+        "team": "BAL",
+        "inj": null,
+        "prac": null,
+        "proj": 8.1
+      },
+      "proj": 8.1,
+      "floor": 4,
+      "ceiling": 13
+    },
+    {
+      "slot": "DEF",
+      "player": {
+        "id": "MIN",
+        "name": "Minnesota Vikings DEF",
+        "pos": "DEF",
+        "team": "MIN",
+        "inj": null,
+        "prac": null,
+        "proj": 7.7
+      },
+      "proj": 7.7,
+      "floor": 1,
+      "ceiling": 15
+    }
+  ],
+  "watch": [
+    {
+      "player": {
+        "id": "11632",
+        "name": "Malik Nabers",
+        "pos": "WR",
+        "team": "NYG",
+        "inj": "Questionable",
+        "prac": null,
+        "proj": 13.5
+      },
+      "text": "If he's listed Doubtful at Friday 4 PM ET, start [Devaughn Vele](https://www.footballguys.com/article/2025-chance-to-play-questionable-vs-doubtful) (6–17) at WR2; Doubtful players play about 7% of the time."
+    }
+  ],
+  "source_note": "Projections: Sleeper week 3 PPR, fetched 2h ago. Floor/ceiling: agent estimate from matchup, snap share and team news. Lock: Thu 20:15 ET."
+}

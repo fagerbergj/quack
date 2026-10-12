@@ -1,0 +1,182 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quack.example/sleeper/ui/schemas/season.json",
+  "title": "season",
+  "description": "GET /sleeper/api/season response: live league facts, me/opponent, standings, recent moves.",
+  "type": "object",
+  "properties": {
+    "league": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "season",
+        "week_now",
+        "status"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "season": {
+          "type": "string"
+        },
+        "week_now": {
+          "type": "integer"
+        },
+        "status": {
+          "type": "string"
+        }
+      }
+    },
+    "facts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "me": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "team": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "wins": {
+          "type": "integer"
+        },
+        "losses": {
+          "type": "integer"
+        },
+        "fpts": {
+          "type": "number"
+        },
+        "waiver_pos": {
+          "type": "integer"
+        }
+      }
+    },
+    "opponent": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "team": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "wins": {
+          "type": "integer"
+        },
+        "losses": {
+          "type": "integer"
+        }
+      }
+    },
+    "standings": {
+      "type": "array",
+      "items": {
+        "allOf": [
+          {
+            "type": "object",
+            "required": [
+              "team",
+              "owner",
+              "wins",
+              "losses"
+            ],
+            "properties": {
+              "team": {
+                "type": "string"
+              },
+              "owner": {
+                "type": "string"
+              },
+              "wins": {
+                "type": "integer"
+              },
+              "losses": {
+                "type": "integer"
+              }
+            }
+          }
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "pf": {
+            "type": "number"
+          },
+          "pa": {
+            "type": "number"
+          },
+          "mine": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "recent_moves": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "type",
+          "week",
+          "label"
+        ],
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "week": {
+            "type": "integer"
+          },
+          "label": {
+            "type": "string"
+          },
+          "adds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "drops": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "by": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "reserve_slots": {
+      "type": "integer"
+    },
+    "playoff_line": {
+      "type": "integer"
+    }
+  },
+  "required": [
+    "league",
+    "standings"
+  ]
+}

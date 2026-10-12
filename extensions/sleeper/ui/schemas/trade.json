@@ -1,0 +1,403 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quack.example/sleeper/ui/schemas/trade.json",
+  "title": "trade",
+  "description": "One trade talk: partner, offer thread, both rosters (for the compose pickers), suggested trades.",
+  "type": "object",
+  "properties": {
+    "partner": {
+      "type": "string",
+      "maxLength": 60
+    },
+    "partner_id": {
+      "type": "string",
+      "description": "The owner's Sleeper user_id - what the chat id and dispatch actually key on."
+    },
+    "partner_owner": {
+      "type": "string",
+      "maxLength": 60
+    },
+    "status": {
+      "enum": [
+        "open",
+        "declined",
+        "accepted"
+      ]
+    },
+    "updated": {
+      "type": "string"
+    },
+    "offers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "by",
+          "when",
+          "give",
+          "get",
+          "verdict"
+        ],
+        "properties": {
+          "by": {
+            "type": "string",
+            "maxLength": 40,
+            "description": "Who made the offer: \"You\", the partner's team name, or \"trade-analyst\" for a counter you would send. It never changes which side give/get describe."
+          },
+          "when": {
+            "type": "string",
+            "maxLength": 40
+          },
+          "give": {
+            "type": "array",
+            "description": "The players YOUR team sends, whoever made the offer: on a partner's offer, the players they ask from you.",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "name"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "pos": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "team": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "inj": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "prac": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "proj": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                }
+              }
+            }
+          },
+          "get": {
+            "type": "array",
+            "description": "The players YOUR team receives, whoever made the offer: on a partner's offer, the players they put up.",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "name"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "pos": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "team": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "inj": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "prac": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "proj": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                }
+              }
+            }
+          },
+          "verdict": {
+            "enum": [
+              "send",
+              "decline",
+              "counter"
+            ]
+          },
+          "delta": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "why": {
+            "type": "string",
+            "maxLength": 400
+          }
+        }
+      }
+    },
+    "my_roster": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "pos": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "team": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "inj": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "prac": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "proj": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "partner_roster": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "pos": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "team": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "inj": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "prac": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "proj": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "suggestions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "partner",
+          "give",
+          "get"
+        ],
+        "properties": {
+          "partner": {
+            "type": "string",
+            "maxLength": 60
+          },
+          "partner_id": {
+            "type": "string"
+          },
+          "partner_owner": {
+            "type": "string",
+            "maxLength": 60
+          },
+          "record": {
+            "type": "string",
+            "maxLength": 20
+          },
+          "partner_need": {
+            "type": "string",
+            "maxLength": 32,
+            "description": "e.g. \"needs RB\"."
+          },
+          "give": {
+            "type": "object",
+            "required": [
+              "id",
+              "name"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "pos": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "team": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "inj": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "prac": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "proj": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            }
+          },
+          "give_proj": {
+            "type": "number"
+          },
+          "get": {
+            "type": "object",
+            "required": [
+              "id",
+              "name"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "pos": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "team": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "inj": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "prac": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "proj": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            }
+          },
+          "get_proj": {
+            "type": "number"
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 400
+          }
+        }
+      }
+    }
+  },
+  "required": [
+    "partner",
+    "partner_id",
+    "status",
+    "offers"
+  ]
+}

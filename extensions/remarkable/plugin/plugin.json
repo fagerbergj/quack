@@ -1,0 +1,22 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.1.0/plugin.schema.json",
+  "name": "remarkable",
+  "version": "0.1.0",
+  "description": "The reMarkable extension's document-ingest workflow: transcribe a tablet export, then summarize it.",
+  "license": "MIT",
+  "repository": "https://github.com/fagerbergj/quack-extensions",
+  "keywords": ["quack", "remarkable", "ingest"],
+  "extensions": {
+    "io.github.fagerbergj.quack": {
+      "schemaVersion": 1,
+      "modules": [
+        {
+          "name": "remarkable",
+          "path": "github.com/fagerbergj/quack-extensions/remarkable"
+        }
+      ],
+      "config": "required",
+      "workflows": ["document-ingest"]
+    }
+  }
+}

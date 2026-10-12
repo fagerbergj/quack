@@ -1,0 +1,19 @@
+version: 2
+updates:
+  # One module per extension (sdk, github, remarkable, usage, noop); the glob
+  # picks up new extensions without editing this file.
+  - package-ecosystem: gomod
+    directories:
+      - "/*"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      go-deps:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
