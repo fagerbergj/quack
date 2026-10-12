@@ -343,7 +343,7 @@ func RunNodePause(ctx context.Context, out io.Writer, server, chatID, nodeID str
 		return nodeErrAs(err, chatID, nodeID)
 	}
 	return reportAction(out, asJSON, nodeActionResult{ChatID: chatID, NodeID: nodeID, Action: "pause",
-		Message: fmt.Sprintf("Paused node %s (chat %s), cutting off its current step - resume it with `quack chat node resume %s %s`.", nodeID, chatID, chatID, nodeID)})
+		Message: fmt.Sprintf("Paused node %s (chat %s); a worker step in flight is cut off, a judge call finishes first - resume it with `quack chat node resume %s %s`.", nodeID, chatID, chatID, nodeID)})
 }
 
 // RunNodeResume is `quack chat node resume <chat-id> <node-id>`: resume a paused node where it stopped.
