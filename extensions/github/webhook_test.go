@@ -29,9 +29,12 @@ import (
 
 const testSecret = "shhh-webhook-secret"
 
+// sharedTestKey: one 2048-bit keygen per test binary; one per test cost ~80s of the suite.
+var sharedTestKey = sync.OnceValues(func() (*rsa.PrivateKey, error) { return rsa.GenerateKey(rand.Reader, 2048) })
+
 func testKeyPEM(t *testing.T) (string, *rsa.PublicKey) {
 	t.Helper()
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	key, err := sharedTestKey()
 	if err != nil {
 		t.Fatalf("gen key: %v", err)
 	}
@@ -2381,8 +2384,12 @@ func TestDispatchGivesClassifierRetryItsFullBudget(t *testing.T) {
 	srv := stubGitHub(t, posted)
 	defer srv.Close()
 	e, fh := newTestExtension(t, srv.URL, nil)
+	// Scaled 10x down: the answer still misses the first budget and lands inside the retry's.
+	oldFirst, oldRetry := intentClassifierTimeout, intentClassifierRetryTimeout
+	intentClassifierTimeout, intentClassifierRetryTimeout = 500*time.Millisecond, 3*time.Second
+	t.Cleanup(func() { intentClassifierTimeout, intentClassifierRetryTimeout = oldFirst, oldRetry })
 
-	classifier := &delayedIntentClassifier{delay: 15 * time.Second, verdict: "WORK"}
+	classifier := &delayedIntentClassifier{delay: 1500 * time.Millisecond, verdict: "WORK"}
 	e.intentClassifier = classifier
 
 	task := "what do you think of this approach?"

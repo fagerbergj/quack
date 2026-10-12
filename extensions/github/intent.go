@@ -15,11 +15,11 @@ type IntentClassifier interface {
 }
 
 // intentClassifierTimeout bounds classification, which runs inline in webhook dispatch.
-const intentClassifierTimeout = 5 * time.Second
+var intentClassifierTimeout = 5 * time.Second
 
 // intentClassifierRetryTimeout: one longer retry before falling back, since a cold
 // worker model on llm-swap can take longer than intentClassifierTimeout to swap in.
-const intentClassifierRetryTimeout = 30 * time.Second
+var intentClassifierRetryTimeout = 30 * time.Second
 
 // bareReReviewRe: only a mention that is NOTHING but the re-run phrase is unambiguous
 // enough to hardcode; anything with extra wording still goes through the model.

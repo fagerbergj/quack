@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"testing"
 	"time"
 
 	// Not modernc.org/sqlite directly: quack already registers "sqlite" via glebarez, and a second
@@ -95,7 +96,12 @@ func (s *ghStore) conn() (*sql.DB, error) {
 // openDB creates and migrates the database. MaxOpenConns(1) serializes every statement,
 // sidestepping SQLITE_BUSY without WAL/busy_timeout tuning (see store_test.go's concurrency test).
 func openDB(path string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", path)
+	dsn := path
+	// Test binaries skip fsync, as quack's sqlitedsn does: a test DB never has to survive a power loss.
+	if testing.Testing() {
+		dsn += "?_pragma=synchronous(OFF)"
+	}
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("github: open store: %w", err)
 	}
