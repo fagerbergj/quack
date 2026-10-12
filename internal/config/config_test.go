@@ -1251,7 +1251,7 @@ extensions:
 }
 
 // extensions.github is opaque like any other module, unknown fields included;
-// quack-extensions/github's Factory validates it.
+// extensions/github's Factory validates it.
 func TestExtensionsGitHubPassesThroughOpaquely(t *testing.T) {
 	c, err := Load(writeTemp(t, baseConfig+`
 extensions:

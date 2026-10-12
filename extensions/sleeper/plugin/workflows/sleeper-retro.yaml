@@ -1,0 +1,9 @@
+name: sleeper-retro
+trigger: "Run the Sleeper retro job for a league (extensions.sleeper dispatch)"
+agents: [league-reporter]
+shape: "ONE `league-reporter` node (terminal - writes the retro artifact)"
+nodes:
+  - id: retro
+    agent: league-reporter
+    task: "Run the retro for the Sleeper league named below for the week in the ask: what was started versus what the roster could have scored, and the specific missed slots.\n\n{{ask}}"
+    artifact: retro

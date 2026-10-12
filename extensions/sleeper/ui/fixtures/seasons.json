@@ -1,0 +1,40 @@
+{
+  "current_season": "2026",
+  "seasons": [
+    {
+      "season": "2022",
+      "league_id": "859931716813455360",
+      "wins": 5,
+      "losses": 9,
+      "status": "complete"
+    },
+    {
+      "season": "2023",
+      "league_id": "989200693972070400",
+      "wins": 4,
+      "losses": 10,
+      "status": "complete"
+    },
+    {
+      "season": "2024",
+      "league_id": "1124856751921852416",
+      "wins": 6,
+      "losses": 8,
+      "status": "complete"
+    },
+    {
+      "season": "2025",
+      "league_id": "1257102049204514816",
+      "wins": 6,
+      "losses": 8,
+      "status": "complete"
+    },
+    {
+      "season": "2026",
+      "league_id": "1356407594683482112",
+      "wins": 0,
+      "losses": 1,
+      "status": "in_season"
+    }
+  ]
+}

@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	extsdk "github.com/fagerbergj/quack-extensions/sdk"
+	extsdk "github.com/fagerbergj/quack/extensions/sdk"
 )
 
 func originJSON(t *testing.T, o extsdk.ChatOrigin) string {

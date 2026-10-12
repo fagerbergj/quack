@@ -20,7 +20,7 @@ import (
 // The migration proof: the manifest quack ships for the usage extension
 // declares a module that IS linked, so a stock boot passes this check.
 func TestCheckPluginModules_LinkedModulePasses(t *testing.T) {
-	p := plugin.Plugin{Name: "usage", Modules: []plugin.Module{{Name: "usage", Path: "github.com/fagerbergj/quack-extensions/usage"}}}
+	p := plugin.Plugin{Name: "usage", Modules: []plugin.Module{{Name: "usage", Path: "github.com/fagerbergj/quack/extensions/usage"}}}
 	if err := checkModuleLinked(p); err != nil {
 		t.Fatalf("checkModuleLinked: %v", err)
 	}
@@ -29,12 +29,12 @@ func TestCheckPluginModules_LinkedModulePasses(t *testing.T) {
 // Go can't load a module at runtime, so a manifest promising one this binary lacks must fail boot,
 // naming the import to add.
 func TestCheckPluginModules_UnlinkedModuleIsABootError(t *testing.T) {
-	p := plugin.Plugin{Name: "ghost", Modules: []plugin.Module{{Name: "ghost", Path: "github.com/fagerbergj/quack-extensions/ghost"}}}
+	p := plugin.Plugin{Name: "ghost", Modules: []plugin.Module{{Name: "ghost", Path: "github.com/fagerbergj/quack/extensions/ghost"}}}
 	err := checkModuleLinked(p)
 	if err == nil {
 		t.Fatal("checkModuleLinked = nil, want an error")
 	}
-	if !strings.Contains(err.Error(), "github.com/fagerbergj/quack-extensions/ghost") {
+	if !strings.Contains(err.Error(), "github.com/fagerbergj/quack/extensions/ghost") {
 		t.Errorf("error %q does not name the missing import path", err)
 	}
 }
@@ -168,7 +168,7 @@ func TestAdmitPlugins_PersistsRefusalOnTheRegistryRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	rows := []pluginreg.Plugin{row}
-	ghost := plugin.Plugin{Name: "ghost", Modules: []plugin.Module{{Name: "ghost", Path: "github.com/fagerbergj/quack-extensions/ghost"}}}
+	ghost := plugin.Plugin{Name: "ghost", Modules: []plugin.Module{{Name: "ghost", Path: "github.com/fagerbergj/quack/extensions/ghost"}}}
 
 	admitted, refusals, err := admitPlugins(context.Background(), reg, rows, []plugin.Plugin{ghost}, nil, nil)
 	if err != nil {
@@ -262,7 +262,7 @@ func TestAdmitPlugins_GatedOffPluginDoesNotClaimNames(t *testing.T) {
 	off := pluginWithAgent(t, "off", "scout")
 	// "usage" is a linked module (checkModuleLinked passes) with no
 	// extensions.usage: configured here, so the gate itself is what's off.
-	off.Modules = []plugin.Module{{Name: "usage", Path: "github.com/fagerbergj/quack-extensions/usage"}}
+	off.Modules = []plugin.Module{{Name: "usage", Path: "github.com/fagerbergj/quack/extensions/usage"}}
 	on := pluginWithAgent(t, "on", "scout")
 	rowOff := pluginreg.Plugin{Name: "off", Source: pluginreg.SourceLocal, Entry: "off"}
 	rowOn := pluginreg.Plugin{Name: "on", Source: pluginreg.SourceLocal, Entry: "on"}
@@ -325,7 +325,7 @@ func TestAdmitPlugins_DuplicateNameInOwnListErrorsDistinctly(t *testing.T) {
 func TestAdmitPlugins_DuplicateNameRefusedEvenWhenGatedOff(t *testing.T) {
 	reg := pluginreg.NewFSRegistry(t.TempDir())
 	off := pluginWithAgent(t, "off", "scout")
-	off.Modules = []plugin.Module{{Name: "usage", Path: "github.com/fagerbergj/quack-extensions/usage"}}
+	off.Modules = []plugin.Module{{Name: "usage", Path: "github.com/fagerbergj/quack/extensions/usage"}}
 	off.Agents = []string{"scout", "scout"}
 	row := pluginreg.Plugin{Name: "off", Source: pluginreg.SourceLocal, Entry: "off"}
 

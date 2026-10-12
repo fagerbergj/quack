@@ -11,7 +11,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-gh_mock="$repo_root/../quack-extensions/github"
+gh_mock="$repo_root/extensions/github"
 fixtures="$repo_root/testdata/qa/github"
 
 url="http://localhost:8080/github/webhook"

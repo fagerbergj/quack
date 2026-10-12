@@ -7,7 +7,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"google.golang.org/adk/v2/tool"
 
-	extsdk "github.com/fagerbergj/quack-extensions/sdk"
+	extsdk "github.com/fagerbergj/quack/extensions/sdk"
 	"github.com/fagerbergj/quack/internal/dag"
 )
 

@@ -246,7 +246,7 @@ func TestInitSkillsShippedSeedResolvesHardRequiredSkills(t *testing.T) {
 	b := &boot{cfg: &config.Config{
 		Plugins: &config.PluginsConfig{
 			Root: t.TempDir(),
-			Seed: []string{dotagents, ".agents/plugins/usage"},
+			Seed: []string{dotagents},
 		},
 	}}
 	skills, err := b.initSkills(context.Background(), jail, nil, nil)
@@ -297,7 +297,7 @@ func TestShippedSeedRosterAndAcpPathsMatchPrePluginRegistryCounts(t *testing.T) 
 	b := &boot{cfg: &config.Config{
 		Plugins: &config.PluginsConfig{
 			Root: t.TempDir(),
-			Seed: []string{daRoot, ptRoot, ".agents/plugins/usage"},
+			Seed: []string{daRoot, ptRoot},
 		},
 	}}
 	skills, err := b.initSkills(context.Background(), jail, nil, nil)

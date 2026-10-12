@@ -8,6 +8,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/cli"
 	"github.com/fagerbergj/quack/internal/config"
+	"github.com/fagerbergj/quack/internal/pluginreg"
 	"github.com/fagerbergj/quack/internal/serve"
 )
 
@@ -23,6 +24,10 @@ func TestEmitServerConfig_WebTogglesBoot(t *testing.T) {
 		{"fetch only", false, true},
 		{"both on", true, true},
 	}
+	// Offline: the seeded plugins' fetch fails fast, and boot serves without them.
+	prev := pluginreg.RemoteURL
+	pluginreg.RemoteURL = func(_, _ string) string { return filepath.Join(t.TempDir(), "absent.git") }
+	t.Cleanup(func() { pluginreg.RemoteURL = prev })
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()

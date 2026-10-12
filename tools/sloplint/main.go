@@ -131,7 +131,7 @@ func overlaps(s, e int, rs []rng) bool {
 }
 
 func checkSlopFile(path, rel string, rs []rng) bool {
-	if !strings.HasSuffix(rel, ".go") || strings.HasSuffix(rel, "_test.go") ||
+	if !strings.HasSuffix(rel, ".go") || strings.HasSuffix(rel, "_test.go") || strings.HasSuffix(rel, ".gen.go") ||
 		strings.Contains(rel, "/testdata/") || strings.Contains(rel, "/schema/") || strings.Contains(rel, "/langfusegen/") {
 		return false
 	}

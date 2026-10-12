@@ -16,7 +16,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	extsdk "github.com/fagerbergj/quack-extensions/sdk"
+	extsdk "github.com/fagerbergj/quack/extensions/sdk"
 	"gorm.io/gorm"
 
 	"github.com/fagerbergj/quack/internal/artifactref"

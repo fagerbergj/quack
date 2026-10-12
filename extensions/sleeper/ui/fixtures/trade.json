@@ -1,0 +1,446 @@
+{
+  "partner": "Gibbs Me Liberty",
+  "partner_id": "860317606291283968",
+  "partner_owner": "Shore69",
+  "status": "open",
+  "updated": "Today 14:20",
+  "offers": [
+    {
+      "by": "You",
+      "when": "Yesterday 21:05",
+      "give": [
+        {
+          "id": "7021",
+          "name": "Rico Dowdle",
+          "pos": "RB",
+          "team": "PIT",
+          "inj": null,
+          "prac": null,
+          "proj": 11.1
+        }
+      ],
+      "get": [
+        {
+          "id": "9481",
+          "name": "Dalton Kincaid",
+          "pos": "TE",
+          "team": "BUF",
+          "inj": null,
+          "prac": null,
+          "proj": 12.8
+        }
+      ],
+      "verdict": "send",
+      "delta": "+1.7/wk for you, fills the TE2 gap",
+      "why": "Dowdle is buried behind Hubbard on your roster; Kincaid starts for you immediately over Loveland's bye weeks."
+    },
+    {
+      "by": "Gibbs Me Liberty",
+      "when": "Today 09:41",
+      "give": [
+        {
+          "id": "7021",
+          "name": "Rico Dowdle",
+          "pos": "RB",
+          "team": "PIT",
+          "inj": null,
+          "prac": null,
+          "proj": 11.1
+        },
+        {
+          "id": "11586",
+          "name": "Blake Corum",
+          "pos": "RB",
+          "team": "LAR",
+          "inj": null,
+          "prac": null,
+          "proj": 7.8
+        }
+      ],
+      "get": [
+        {
+          "id": "9481",
+          "name": "Dalton Kincaid",
+          "pos": "TE",
+          "team": "BUF",
+          "inj": null,
+          "prac": null,
+          "proj": 12.8
+        }
+      ],
+      "verdict": "decline",
+      "delta": "-1.0/wk and your only handcuff gone",
+      "why": "Corum is the piece they actually want; Dowdle alone was already a fair trade for them. Counter below."
+    },
+    {
+      "by": "trade-analyst",
+      "when": "Today 14:20",
+      "give": [
+        {
+          "id": "7021",
+          "name": "Rico Dowdle",
+          "pos": "RB",
+          "team": "PIT",
+          "inj": null,
+          "prac": null,
+          "proj": 11.1
+        }
+      ],
+      "get": [
+        {
+          "id": "9481",
+          "name": "Dalton Kincaid",
+          "pos": "TE",
+          "team": "BUF",
+          "inj": null,
+          "prac": null,
+          "proj": 12.8
+        }
+      ],
+      "verdict": "counter",
+      "delta": "your first offer, unchanged",
+      "why": "Re-send Dowdle alone; they need RB depth but not at the cost of your only McCaffrey handcuff."
+    }
+  ],
+  "my_roster": [
+    {
+      "id": "6770",
+      "name": "Joe Burrow",
+      "pos": "QB",
+      "team": "CIN",
+      "inj": null,
+      "prac": null,
+      "proj": 18.2
+    },
+    {
+      "id": "4034",
+      "name": "Christian McCaffrey",
+      "pos": "RB",
+      "team": "SF",
+      "inj": null,
+      "prac": null,
+      "proj": 20.7
+    },
+    {
+      "id": "11584",
+      "name": "Bucky Irving",
+      "pos": "RB",
+      "team": "TB",
+      "inj": null,
+      "prac": null,
+      "proj": 13.3
+    },
+    {
+      "id": "6794",
+      "name": "Justin Jefferson",
+      "pos": "WR",
+      "team": "MIN",
+      "inj": null,
+      "prac": null,
+      "proj": 16.7
+    },
+    {
+      "id": "11632",
+      "name": "Malik Nabers",
+      "pos": "WR",
+      "team": "NYG",
+      "inj": "Questionable",
+      "prac": null,
+      "proj": 13.5
+    },
+    {
+      "id": "12517",
+      "name": "Colston Loveland",
+      "pos": "TE",
+      "team": "CHI",
+      "inj": null,
+      "prac": null,
+      "proj": 9.8
+    },
+    {
+      "id": "8148",
+      "name": "Jameson Williams",
+      "pos": "WR",
+      "team": "DET",
+      "inj": null,
+      "prac": null,
+      "proj": 12.4
+    },
+    {
+      "id": "1945",
+      "name": "Chris Boswell",
+      "pos": "K",
+      "team": "PIT",
+      "inj": null,
+      "prac": null,
+      "proj": 7.8
+    },
+    {
+      "id": "NE",
+      "name": "New England Patriots DEF",
+      "pos": "DEF",
+      "team": "NE",
+      "inj": null,
+      "prac": null,
+      "proj": 6.5
+    },
+    {
+      "id": "11586",
+      "name": "Blake Corum",
+      "pos": "RB",
+      "team": "LAR",
+      "inj": null,
+      "prac": null,
+      "proj": 7.8
+    },
+    {
+      "id": "11834",
+      "name": "Devaughn Vele",
+      "pos": "WR",
+      "team": "NO",
+      "inj": null,
+      "prac": null,
+      "proj": 9.9
+    },
+    {
+      "id": "7021",
+      "name": "Rico Dowdle",
+      "pos": "RB",
+      "team": "PIT",
+      "inj": "Questionable",
+      "prac": null,
+      "proj": 11.1
+    },
+    {
+      "id": "7594",
+      "name": "Chuba Hubbard",
+      "pos": "RB",
+      "team": "CAR",
+      "inj": null,
+      "prac": null,
+      "proj": 14.1
+    },
+    {
+      "id": "8156",
+      "name": "Rashod Bateman",
+      "pos": "WR",
+      "team": "BAL",
+      "inj": null,
+      "prac": null,
+      "proj": 10.3
+    },
+    {
+      "id": "13281",
+      "name": "Jordyn Tyson",
+      "pos": "WR",
+      "team": "NO",
+      "inj": "IR",
+      "prac": null,
+      "proj": 0
+    }
+  ],
+  "partner_roster": [
+    {
+      "id": "11566",
+      "name": "Jayden Daniels",
+      "pos": "QB",
+      "team": "WAS",
+      "inj": null,
+      "prac": null,
+      "proj": 20.2
+    },
+    {
+      "id": "8138",
+      "name": "James Cook",
+      "pos": "RB",
+      "team": "BUF",
+      "inj": null,
+      "prac": null,
+      "proj": 19.5
+    },
+    {
+      "id": "12527",
+      "name": "Ashton Jeanty",
+      "pos": "RB",
+      "team": "LV",
+      "inj": null,
+      "prac": null,
+      "proj": 14.9
+    },
+    {
+      "id": "10229",
+      "name": "Rashee Rice",
+      "pos": "WR",
+      "team": "KC",
+      "inj": null,
+      "prac": null,
+      "proj": 13.9
+    },
+    {
+      "id": "7525",
+      "name": "DeVonta Smith",
+      "pos": "WR",
+      "team": "PHI",
+      "inj": null,
+      "prac": null,
+      "proj": 14.8
+    },
+    {
+      "id": "9481",
+      "name": "Dalton Kincaid",
+      "pos": "TE",
+      "team": "BUF",
+      "inj": null,
+      "prac": null,
+      "proj": 12.8
+    },
+    {
+      "id": "8151",
+      "name": "Kenneth Walker",
+      "pos": "RB",
+      "team": "SEA",
+      "inj": null,
+      "prac": null,
+      "proj": 16.4
+    },
+    {
+      "id": "3451",
+      "name": "Ka'imi Fairbairn",
+      "pos": "K",
+      "team": "HOU",
+      "inj": null,
+      "prac": null,
+      "proj": 7.3
+    },
+    {
+      "id": "BAL",
+      "name": "Baltimore Ravens DEF",
+      "pos": "DEF",
+      "team": "BAL",
+      "inj": null,
+      "prac": null,
+      "proj": 9.1
+    },
+    {
+      "id": "11583",
+      "name": "Jonathon Brooks",
+      "pos": "RB",
+      "team": "CAR",
+      "inj": null,
+      "prac": null,
+      "proj": 6.7
+    },
+    {
+      "id": "12490",
+      "name": "Bhayshul Tuten",
+      "pos": "RB",
+      "team": "JAX",
+      "inj": null,
+      "prac": null,
+      "proj": 9.1
+    },
+    {
+      "id": "13279",
+      "name": "Carnell Tate",
+      "pos": "WR",
+      "team": "TEN",
+      "inj": null,
+      "prac": null,
+      "proj": 8.5
+    },
+    {
+      "id": "13337",
+      "name": "Emmett Johnson",
+      "pos": "RB",
+      "team": "KC",
+      "inj": null,
+      "prac": null,
+      "proj": 3.3
+    }
+  ],
+  "suggestions": [
+    {
+      "partner": "Gibbs Me Liberty",
+      "partner_id": "860317606291283968",
+      "partner_owner": "Shore69",
+      "record": "5th",
+      "partner_need": "needs RB",
+      "give": {
+        "id": "7021",
+        "name": "Rico Dowdle",
+        "pos": "RB",
+        "team": "PIT",
+        "inj": null,
+        "prac": null,
+        "proj": 11.1
+      },
+      "give_proj": 11.1,
+      "get": {
+        "id": "9481",
+        "name": "Dalton Kincaid",
+        "pos": "TE",
+        "team": "BUF",
+        "inj": null,
+        "prac": null,
+        "proj": 12.8
+      },
+      "get_proj": 12.8,
+      "note": "Kincaid sits behind LaPorta on their roster; their flex is [Dobbins at 6.1 projected](https://sleeper.com/)."
+    },
+    {
+      "partner": "Pitts and Giggles",
+      "partner_id": "860265672989609984",
+      "partner_owner": "nlanner",
+      "record": "1st",
+      "partner_need": "6 WRs",
+      "give": {
+        "id": "11586",
+        "name": "Blake Corum",
+        "pos": "RB",
+        "team": "LAR",
+        "inj": null,
+        "prac": null,
+        "proj": 7.8
+      },
+      "give_proj": 7.8,
+      "get": {
+        "id": "7569",
+        "name": "Nico Collins",
+        "pos": "WR",
+        "team": "HOU",
+        "inj": "Out",
+        "prac": null,
+        "proj": 14.7
+      },
+      "get_proj": 14.7,
+      "note": "Their sixth WR, in reserve. Ask only if [he's cleared by Friday](https://www.nfl.com/injuries/)."
+    },
+    {
+      "partner": "Achane Magic",
+      "partner_id": "860209887672635392",
+      "partner_owner": "cdelphin",
+      "record": "4th",
+      "give": {
+        "id": "11586",
+        "name": "Blake Corum",
+        "pos": "RB",
+        "team": "LAR",
+        "inj": null,
+        "prac": null,
+        "proj": 7.8
+      },
+      "give_proj": 7.8,
+      "get": {
+        "id": "10222",
+        "name": "Jayden Reed",
+        "pos": "WR",
+        "team": "GB",
+        "inj": null,
+        "prac": null,
+        "proj": 11.6
+      },
+      "get_proj": 11.6,
+      "note": "They start D'Andre Swift at RB2 at 11.6 projected; Jayden Reed sits behind three starting receivers."
+    }
+  ]
+}

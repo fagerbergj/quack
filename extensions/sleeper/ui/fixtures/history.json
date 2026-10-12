@@ -1,0 +1,334 @@
+{
+  "season": "2025",
+  "wins": 6,
+  "losses": 8,
+  "pf": 1636,
+  "pa": 1611,
+  "pf_rank": 6,
+  "pa_rank": 9,
+  "draft_slot": 4,
+  "eff": 88.5,
+  "left_total": 211.7,
+  "close_losses": 2,
+  "moves": 28,
+  "champion": "The Olave Garden",
+  "weeks": [
+    {
+      "week": 1,
+      "started": 112.14,
+      "best": 136.24,
+      "left": 24.1,
+      "opp": 108.86,
+      "won": true
+    },
+    {
+      "week": 2,
+      "started": 122.34,
+      "best": 143.54,
+      "left": 21.2,
+      "opp": 119.8,
+      "won": true
+    },
+    {
+      "week": 3,
+      "started": 100.02,
+      "best": 119.92,
+      "left": 19.9,
+      "opp": 117.32,
+      "won": false
+    },
+    {
+      "week": 4,
+      "started": 137.54,
+      "best": 146.04,
+      "left": 8.5,
+      "opp": 116.72,
+      "won": true
+    },
+    {
+      "week": 5,
+      "started": 128.24,
+      "best": 140.64,
+      "left": 12.4,
+      "opp": 143.58,
+      "won": false
+    },
+    {
+      "week": 6,
+      "started": 92.96,
+      "best": 96.36,
+      "left": 3.4,
+      "opp": 113.96,
+      "won": false
+    },
+    {
+      "week": 7,
+      "started": 106.36,
+      "best": 116.06,
+      "left": 9.7,
+      "opp": 156.14,
+      "won": false
+    },
+    {
+      "week": 8,
+      "started": 163.94,
+      "best": 175.94,
+      "left": 12.0,
+      "opp": 96.96,
+      "won": true
+    },
+    {
+      "week": 9,
+      "started": 120.02,
+      "best": 134.02,
+      "left": 14.0,
+      "opp": 70.02,
+      "won": true
+    },
+    {
+      "week": 10,
+      "started": 115.1,
+      "best": 118.6,
+      "left": 3.5,
+      "opp": 85.24,
+      "won": true
+    },
+    {
+      "week": 11,
+      "started": 91.2,
+      "best": 129.1,
+      "left": 37.9,
+      "opp": 121.4,
+      "won": false
+    },
+    {
+      "week": 12,
+      "started": 126.88,
+      "best": 144.68,
+      "left": 17.8,
+      "opp": 138.82,
+      "won": false
+    },
+    {
+      "week": 13,
+      "started": 85.34,
+      "best": 107.34,
+      "left": 22.0,
+      "opp": 86.56,
+      "won": false
+    },
+    {
+      "week": 14,
+      "started": 134.48,
+      "best": 139.78,
+      "left": 5.3,
+      "opp": 135.94,
+      "won": false
+    }
+  ],
+  "pos_alloc": {
+    "QB": 1,
+    "RB": 4,
+    "WR": 6,
+    "TE": 2,
+    "K": 1,
+    "DEF": 0
+  },
+  "report_card": [
+    {
+      "round": 1,
+      "pick": 4,
+      "player": {
+        "id": "4866",
+        "name": "Saquon Barkley",
+        "pos": "RB"
+      },
+      "drafted_as": "RB3",
+      "finished": "RB14",
+      "pts": 232.3,
+      "verdict": "reach"
+    },
+    {
+      "round": 2,
+      "pick": 17,
+      "player": {
+        "id": "11604",
+        "name": "Brock Bowers",
+        "pos": "TE"
+      },
+      "drafted_as": "TE1",
+      "finished": "TE11",
+      "pts": 176.2,
+      "verdict": "reach"
+    },
+    {
+      "round": 3,
+      "pick": 24,
+      "player": {
+        "id": "3321",
+        "name": "Tyreek Hill",
+        "pos": "WR"
+      },
+      "drafted_as": "WR12",
+      "finished": "WR104",
+      "pts": 53.5,
+      "verdict": "reach"
+    },
+    {
+      "round": 4,
+      "pick": 37,
+      "player": {
+        "id": "9488",
+        "name": "Jaxon Smith-Njigba",
+        "pos": "WR"
+      },
+      "drafted_as": "WR17",
+      "finished": "WR2",
+      "pts": 359.9,
+      "verdict": "steal"
+    },
+    {
+      "round": 5,
+      "pick": 44,
+      "player": {
+        "id": "8155",
+        "name": "Breece Hall",
+        "pos": "RB"
+      },
+      "drafted_as": "RB18",
+      "finished": "RB19",
+      "pts": 207.7,
+      "verdict": "fair"
+    },
+    {
+      "round": 6,
+      "pick": 57,
+      "player": {
+        "id": "9997",
+        "name": "Zay Flowers",
+        "pos": "WR"
+      },
+      "drafted_as": "WR24",
+      "finished": "WR7",
+      "pts": 243.3,
+      "verdict": "steal"
+    },
+    {
+      "round": 7,
+      "pick": 64,
+      "player": {
+        "id": "11563",
+        "name": "Bo Nix",
+        "pos": "QB"
+      },
+      "drafted_as": "QB8",
+      "finished": "QB7",
+      "pts": 315.8,
+      "verdict": "fair"
+    },
+    {
+      "round": 8,
+      "pick": 77,
+      "player": {
+        "id": "11620",
+        "name": "Rome Odunze",
+        "pos": "WR"
+      },
+      "drafted_as": "WR34",
+      "finished": "WR41",
+      "pts": 146.1,
+      "verdict": "fair"
+    },
+    {
+      "round": 9,
+      "pick": 84,
+      "player": {
+        "id": "2449",
+        "name": "Stefon Diggs",
+        "pos": "WR"
+      },
+      "drafted_as": "WR37",
+      "finished": "WR17",
+      "pts": 210.3,
+      "verdict": "steal"
+    },
+    {
+      "round": 10,
+      "pick": 97,
+      "player": {
+        "id": "12512",
+        "name": "Quinshon Judkins",
+        "pos": "RB"
+      },
+      "drafted_as": "RB35",
+      "finished": "RB26",
+      "pts": 169.8,
+      "verdict": "steal"
+    },
+    {
+      "round": 11,
+      "pick": 104,
+      "player": {
+        "id": "12517",
+        "name": "Colston Loveland",
+        "pos": "TE"
+      },
+      "drafted_as": "TE12",
+      "finished": "TE12",
+      "pts": 165.1,
+      "verdict": "fair"
+    },
+    {
+      "round": 12,
+      "pick": 117,
+      "player": {
+        "id": "4037",
+        "name": "Chris Godwin",
+        "pos": "WR"
+      },
+      "drafted_as": "WR48",
+      "finished": "WR78",
+      "pts": 83.0,
+      "verdict": "reach"
+    },
+    {
+      "round": 13,
+      "pick": 124,
+      "player": {
+        "id": "9225",
+        "name": "Tank Bigsby",
+        "pos": "RB"
+      },
+      "drafted_as": "RB41",
+      "finished": "RB68",
+      "pts": 53.8,
+      "verdict": "reach"
+    },
+    {
+      "round": 14,
+      "pick": 137,
+      "player": {
+        "id": "4666",
+        "name": "Younghoe Koo",
+        "pos": "K"
+      },
+      "drafted_as": "K9",
+      "finished": "K39",
+      "pts": 29.0,
+      "verdict": "reach"
+    }
+  ],
+  "summary": null,
+  "cross_season_summary": [
+    {
+      "n": "3 of 20",
+      "text": "first-three-round picks finished at least 8 spots below where they were drafted at their position.",
+      "detail": "Rounds 1-3 carry the season; the late rounds have been fine."
+    },
+    {
+      "n": "198",
+      "text": "points a season left on the bench on average, about 14.1 a week.",
+      "detail": "A tenth of that is a win a season."
+    }
+  ]
+}

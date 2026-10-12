@@ -1,0 +1,53 @@
+{
+  "week": 2,
+  "past": false,
+  "summary": "Substation Supremacy lost 100.66 to 116.00 against Breece\u2019s Pieces. The closest game was Jockstrappers over I Think I\u2019\u2019m Gonna Puka by 7.76; the high score was Brown Tuddies Likely  at 169.66.",
+  "games": [
+    {
+      "home": "Jockstrappers",
+      "away": "I Think I\u2019\u2019m Gonna Puka",
+      "home_pts": 96.86,
+      "away_pts": 104.62,
+      "margin": 7.76,
+      "mine": false,
+      "top_scorers": "Jaxon Smith-Njigba 26.2 \u00b7 David Montgomery 28.9"
+    },
+    {
+      "home": "Pitts and Giggles",
+      "away": "Gibbs Me Liberty",
+      "home_pts": 149.34,
+      "away_pts": 136.82,
+      "margin": 12.52,
+      "mine": false,
+      "top_scorers": "Jonathan Taylor 25.1 \u00b7 Derrick Henry 35.3"
+    },
+    {
+      "home": "Achane Magic",
+      "away": "Brown Tuddies Likely ",
+      "home_pts": 155.66,
+      "away_pts": 169.66,
+      "margin": 14.0,
+      "mine": false,
+      "top_scorers": "D'Andre Swift 32.4 \u00b7 Caleb Williams 37.26"
+    },
+    {
+      "home": "Substation Supremacy",
+      "away": "Breece\u2019s Pieces",
+      "home_pts": 100.66,
+      "away_pts": 116.0,
+      "margin": 15.34,
+      "mine": true,
+      "top_scorers": "Justin Jefferson 31.2 \u00b7 Christian Watson 32.7"
+    },
+    {
+      "home": "Rice Cooker",
+      "away": "Bijan Mustard",
+      "home_pts": 154.16,
+      "away_pts": 106.16,
+      "margin": 48.0,
+      "mine": false,
+      "top_scorers": "Kenneth Walker 34.1 \u00b7 Josh Allen 35.66"
+    }
+  ],
+  "source_note": "Scores: Sleeper matchups week 2, final. Playoffs: 6 of 10 from week 15."
+}

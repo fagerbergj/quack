@@ -7,25 +7,21 @@ import (
 	"testing"
 )
 
-// bundledRubricYAMLs globs every rubric.yaml under agents/ and each plugin's own agents/.
+// bundledRubricYAMLs globs every rubric.yaml under agents/; plugin bundles are checked in their own repos.
 func bundledRubricYAMLs(t *testing.T) []string {
 	t.Helper()
 	matches, err := filepath.Glob("../../agents/*/rubric.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	pluginMatches, err := filepath.Glob("../../.agents/plugins/*/agents/*/rubric.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return append(matches, pluginMatches...)
+	return matches
 }
 
 // TestBundledRubricsLoadAndValidate: an invalid shipped rubric is a startup error, so catch it here.
 func TestBundledRubricsLoadAndValidate(t *testing.T) {
 	matches := bundledRubricYAMLs(t)
-	if len(matches) < 9 {
-		t.Fatalf("found %d rubric.yaml files, want at least 9 (one per converted agent)", len(matches))
+	if len(matches) < 7 {
+		t.Fatalf("found %d rubric.yaml files, want at least 7 (one per converted agent)", len(matches))
 	}
 	for _, path := range matches {
 		t.Run(path, func(t *testing.T) {

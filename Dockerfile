@@ -1,8 +1,5 @@
 # syntax=docker/dockerfile:1
 
-# Release builds keep the default; only `make dev-image` overrides it.
-ARG QUACK_SRC=backend-src
-
 # 1) Build the SPA (the committed src/generated client is used as-is).
 # bookworm (glibc), NOT alpine (musl): the runtime stage copies node out of this
 # stage, and a musl-linked node cannot run on the debian runtime base.
@@ -30,13 +27,15 @@ COPY scripts/mermaid-validate.mjs ./
 # 2) Build the Go server with the SPA embedded.
 # bookworm (glibc), NOT alpine (musl) - same reason as the frontend stage: the
 # runtime copies /usr/local/go from here and must be able to execute it.
-FROM golang:1.26-bookworm AS backend-src
+FROM golang:1.26-bookworm AS backend
 # The runtime ships this GOROOT. Only `go test std` and `go tool dist test` read
 # these; src/cmd stays because go builds tools absent from pkg/tool on demand.
 RUN cd /usr/local/go && rm -rf test api doc \
     && find src \( -name testdata -type d -prune -o -name '*_test.go' \) -exec rm -rf {} +
 WORKDIR /app
 COPY go.mod go.sum ./
+# go.mod replaces the sdk module with this dir, so resolving the graph needs its go.mod.
+COPY extensions/sdk/go.mod extensions/sdk/go.sum ./extensions/sdk/
 # The runtime ships /go/pkg/mod (#936), so it is filled offline from the cache mount.
 # Zips go: go build/test and go mod verify read the extracted tree plus .ziphash.
 RUN --mount=type=cache,target=/root/gomod-dl \
@@ -45,18 +44,12 @@ RUN --mount=type=cache,target=/root/gomod-dl \
     && find /go/pkg/mod/cache/download -name '*.zip' -delete
 # Not build inputs, so editing them leaves the go build cached: the SPA comes
 # from the frontend stage and the runtime COPYs pi-acp/config from the context.
+# Extension plugin/ dirs are fetched at runtime from a plugin/* tag, never embedded.
 COPY --exclude=docs --exclude=frontend --exclude=scripts --exclude=testdata --exclude=tools \
+     --exclude=extensions/*/plugin --exclude=extensions/sleeper/ui/storybook \
      --exclude=Dockerfile --exclude=*.md --exclude=**/*_test.go --exclude=**/testdata . .
 COPY --from=frontend /app/frontend/dist ./internal/serve/web/dist
 
-# `make dev-image` only: --build-context ext=<checkout> replaces this empty stage,
-# and QUACK_SRC=backend-src-ext builds against those modules via a go.work.
-FROM scratch AS ext
-FROM backend-src AS backend-src-ext
-COPY --from=ext --exclude=.git / /ext/
-RUN go work init . $(dirname /ext/*/go.mod)
-
-FROM ${QUACK_SRC} AS backend
 # VERSION stamps main.version (cmd/quack/main.go); cd.yaml passes the release
 # tag, defaults to "dev" so a plain `docker build` / `make build` still works.
 ARG VERSION=dev
@@ -153,10 +146,6 @@ COPY --link config/ /config/
 COPY --link agents/ /agents/
 # Orchestrator skill bundles (SKILL.md directories), read at startup.
 COPY --link skills/ /skills/
-# Agent Plugins roots, resolved against CWD / (config's plugins:): the
-# tracked embedded-dotagents snapshot and first-party manifests under
-# .agents/plugins. Registry-fetched plugins clone under plugins.root instead.
-COPY --link --from=backend /app/.agents/ /.agents/
 # Last: they change on every code edit, so the layers above stay pullable from cache.
 COPY --link --from=backend /quack-sandbox /quack-sandbox
 COPY --link --from=backend /quack /quack

@@ -1,0 +1,28 @@
+{
+  "name": "trade-analyst",
+  "description": "Evaluates trades for a Sleeper fantasy football roster: scores a specific offer from a named partner against both rosters (what each side gives up, what it upgrades, the net projection swing), and scans every other roster in the league for candidates where the other side overpays or a player is surplus to them. Use for \"should I take this trade\", evaluating an offer in a per-partner trade talk, or \"who should I trade with this week\". It reads Sleeper roster/player data directly - it does not give waiver or lineup advice (route those to waiver-scout / lineup-analyst).",
+  "skills": [
+    {
+      "id": "trade_evaluation",
+      "name": "Evaluate a trade offer",
+      "description": "Scores one concrete offer between this roster and a named partner: each player's role on both rosters, the projection swing per side, and a send/counter/decline verdict with the counter to make.",
+      "tags": ["fantasy-football", "sleeper", "trade", "evaluation"],
+      "examples": [
+        "Should I trade my RB2 for their WR1?",
+        "Evaluate this offer: give Chuba Hubbard, get Zay Flowers",
+        "Is it worth adding a flex player to this trade?"
+      ]
+    },
+    {
+      "id": "trade_finder",
+      "name": "Scan the league for trade candidates",
+      "description": "Walks every other roster for players who are surplus to that team and valuable to this one, and pairs each with a fair counter-pick from this roster.",
+      "tags": ["fantasy-football", "sleeper", "trade-finder"],
+      "examples": [
+        "Who should I try to trade with this week?",
+        "Find me a fair deal for my surplus RB"
+      ]
+    }
+  ],
+  "artifact": "trade"
+}

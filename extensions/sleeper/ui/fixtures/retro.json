@@ -1,0 +1,54 @@
+{
+  "week": 2,
+  "started": 100.66,
+  "best": 132.06,
+  "left": 31.4,
+  "opp": 116.0,
+  "won": false,
+  "misses": [
+    {
+      "slot": "RB",
+      "started_name": "Christian McCaffrey",
+      "started_pts": 13.8,
+      "better_name": "Chuba Hubbard",
+      "better_pts": 23.7,
+      "swing": 9.9,
+      "why": "Hubbard was [trending up](https://sleeper.com) after Tepper's early-week practice reps and a soft run-defense matchup - both dated before kickoff.",
+      "knowable": true
+    },
+    {
+      "slot": "RB",
+      "started_name": "Rico Dowdle",
+      "started_pts": 4.1,
+      "better_name": "Bucky Irving",
+      "better_pts": 20.3,
+      "swing": 16.2,
+      "why": "No pre-kickoff signal pointed at Irving over Dowdle; both were healthy full-workload backs. Irving's game script broke well after the whistle.",
+      "knowable": false
+    },
+    {
+      "slot": "FLEX",
+      "started_name": "Jameson Williams",
+      "started_pts": 8.5,
+      "better_name": "Christian McCaffrey",
+      "better_pts": 13.8,
+      "swing": 5.3
+    }
+  ],
+  "waiver_misses": [
+    {
+      "name": "Payne Durham",
+      "pos": "TE",
+      "pts": 12.5,
+      "over_name": "Colston Loveland",
+      "over_pts": 0.0,
+      "knowable": true,
+      "why": "Durham was added by 15% of leagues after Tampa Bay's Wednesday injury report ruled out its starting TE."
+    }
+  ],
+  "lessons": [
+    "Check practice-report RB trends before locking strict-slot starters, not just the FLEX comparison.",
+    "Scan the waiver wire for backup TEs when the starter is questionable Wednesday, not just Sunday morning."
+  ],
+  "summary": "The lineup, not the roster, lost this one: 31.4 points sat on the bench in a 15.34-point loss. Every miss was at running back: McCaffrey and Dowdle started; Hubbard and Irving outscored both."
+}

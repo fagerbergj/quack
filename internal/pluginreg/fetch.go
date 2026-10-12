@@ -54,11 +54,11 @@ func fetch(ctx context.Context, root string, p Plugin, commit func(Plugin) error
 	}
 	defer lockClone(dir)()
 	url := RemoteURL(p.Owner, p.Repo)
-	if err := fetchInto(ctx, dir, url); err != nil {
+	if err := fetchInto(ctx, dir, url, p.Ref); err != nil {
 		p.Error = err.Error()
 		return p, err
 	}
-	sha, err := resolveSHA(ctx, dir, p.Ref)
+	sha, err := gitVerify(ctx, dir, fetchedRef+"^{commit}")
 	if err != nil {
 		p.Error = err.Error()
 		return p, err
@@ -97,20 +97,31 @@ func (r *FSRegistry) Fetch(ctx context.Context, p Plugin) (Plugin, error) {
 	return fetchAndPut(ctx, r.root, r, p)
 }
 
-// fetchInto clones dir if absent or not a git repo, else repoints origin at url (the entry may have moved)
-// and force-fetches branches and tags so a moved tag follows the remote.
-func fetchInto(ctx context.Context, dir, url string) error {
+// fetchedRef holds the one commit the last fetch brought in for the row's ref.
+const fetchedRef = "refs/quack/fetched"
+
+// fetchInto force-fetches only ref's commit, depth 1, into fetchedRef, so a moved tag follows the remote and a row
+// of a large monorepo never pulls its history. Not blob-filtered: the pi-acp shim and skilltoolset read files.
+func fetchInto(ctx context.Context, dir, url, ref string) error {
+	if err := ensureRepo(ctx, dir, url); err != nil {
+		return err
+	}
+	src, err := remoteSource(ctx, url, ref)
+	if err != nil {
+		return err
+	}
+	return gitRun(ctx, dir, "fetch", "--quiet", "--force", "--no-tags", "--depth=1", "origin", "+"+src+":"+fetchedRef)
+}
+
+// ensureRepo makes dir a repo with origin at url: kept and repointed if it is one (the entry may have moved),
+// else created empty.
+func ensureRepo(ctx context.Context, dir, url string) error {
 	if isGitRepo(ctx, dir) {
 		match, err := originMatches(ctx, dir, url)
-		if err != nil {
+		if err != nil || match {
 			return err
 		}
-		if !match {
-			if err := gitRun(ctx, dir, "remote", "set-url", "origin", url); err != nil {
-				return err
-			}
-		}
-		return gitRun(ctx, dir, "fetch", "--quiet", "--force", "--prune", "--tags", "origin", "+refs/heads/*:refs/remotes/origin/*")
+		return gitRun(ctx, dir, "remote", "set-url", "origin", url)
 	}
 	if _, err := os.Stat(dir); err == nil {
 		// A dir with no working .git (e.g. a killed clone) - reclone once
@@ -122,9 +133,23 @@ func fetchInto(ctx context.Context, dir, url string) error {
 			return err
 		}
 	}
-	// Full, not blob-filtered: the pi-acp shim and skilltoolset read files.
-	_, err := runGitRW(ctx, "", []string{dir}, "clone", "--quiet", url, dir)
-	return err
+	if _, err := runGitRW(ctx, "", []string{dir}, "init", "--quiet", dir); err != nil {
+		return err
+	}
+	return gitRun(ctx, dir, "remote", "add", "origin", url)
+}
+
+// remoteSource is what to fetch for ref: the default branch, a full sha as-is, else the branch or tag
+// ls-remote finds, branch first as CheckUpdate resolves it.
+func remoteSource(ctx context.Context, url, ref string) (string, error) {
+	if ref == "" {
+		return "HEAD", nil
+	}
+	if shaPattern.MatchString(ref) {
+		return ref, nil
+	}
+	_, name, err := lsRemoteRef(ctx, url, ref)
+	return name, err
 }
 
 // realParentDir is dir under its parent's real path, the parent created: quack's git refuses a repo path through a
@@ -170,28 +195,6 @@ func originMatches(ctx context.Context, dir, want string) (bool, error) {
 	return strings.TrimSpace(out) == want, nil
 }
 
-// resolveSHA: "" follows the remote default branch (set-head --auto, since the local HEAD symref never
-// updates); a pinned ref tries remote branch, tag, then commit-ish.
-func resolveSHA(ctx context.Context, dir, ref string) (string, error) {
-	if ref == "" {
-		if err := gitRun(ctx, dir, "remote", "set-head", "origin", "--auto"); err != nil {
-			return "", fmt.Errorf("resolve default branch: %w", err)
-		}
-		return gitVerify(ctx, dir, "refs/remotes/origin/HEAD^{commit}")
-	}
-	candidates := []string{
-		"refs/remotes/origin/" + ref + "^{commit}",
-		"refs/tags/" + ref + "^{commit}",
-		ref + "^{commit}",
-	}
-	for _, c := range candidates {
-		if sha, err := gitVerify(ctx, dir, c); err == nil {
-			return sha, nil
-		}
-	}
-	return "", fmt.Errorf("ref %q not found in the clone", ref)
-}
-
 func gitVerify(ctx context.Context, dir, rev string) (string, error) {
 	out, err := gitOutput(ctx, dir, "rev-parse", "--verify", "--quiet", rev)
 	if err != nil {
@@ -213,7 +216,7 @@ func CheckUpdate(ctx context.Context, p Plugin) (behind bool, remoteSHA string, 
 	if p.Ref == "" {
 		remoteSHA, err = lsRemoteHEAD(ctx, url)
 	} else {
-		remoteSHA, err = lsRemoteRef(ctx, url, p.Ref)
+		remoteSHA, _, err = lsRemoteRef(ctx, url, p.Ref)
 	}
 	if err != nil {
 		return false, "", err
@@ -234,35 +237,26 @@ func lsRemoteHEAD(ctx context.Context, url string) (string, error) {
 	return firstField(out), nil
 }
 
-// lsRemoteRef resolves branch, then peeled tag, then tag: resolveSHA's precedence, so CheckUpdate and Fetch
-// agree on a same-named branch+tag pair.
-func lsRemoteRef(ctx context.Context, url, ref string) (string, error) {
+// lsRemoteRef resolves branch, then peeled tag, then tag, returning the sha and the ref to fetch, so CheckUpdate
+// and Fetch agree on a same-named branch+tag pair.
+func lsRemoteRef(ctx context.Context, url, ref string) (sha, name string, err error) {
 	out, err := gitOutput(ctx, "", "ls-remote", url, "refs/heads/"+ref, "refs/tags/"+ref, "refs/tags/"+ref+"^{}")
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	var head, tag, peeledTag string
+	found := map[string]string{}
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) != 2 {
-			continue
-		}
-		sha, refName := fields[0], fields[1]
-		switch refName {
-		case "refs/heads/" + ref:
-			head = sha
-		case "refs/tags/" + ref + "^{}":
-			peeledTag = sha
-		case "refs/tags/" + ref:
-			tag = sha
+		if fields := strings.Fields(line); len(fields) == 2 {
+			found[fields[1]] = fields[0]
 		}
 	}
-	for _, sha := range []string{head, peeledTag, tag} {
-		if sha != "" {
-			return sha, nil
+	head, tag := "refs/heads/"+ref, "refs/tags/"+ref
+	for _, c := range []struct{ listed, fetch string }{{head, head}, {tag + "^{}", tag}, {tag, tag}} {
+		if sha := found[c.listed]; sha != "" {
+			return sha, c.fetch, nil
 		}
 	}
-	return "", fmt.Errorf("ref %q not found on remote", ref)
+	return "", "", fmt.Errorf("ref %q is not a branch or tag on the remote (pin a commit by its full sha)", ref)
 }
 
 func firstField(out string) string {

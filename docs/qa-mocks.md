@@ -1,15 +1,15 @@
 # QA mocks: GitHub and reMarkable without credentials
 
-Exercises the `quack:review`/`plan`/`implement`/`fix` and reMarkable document flows against a QA server with no real GitHub App, no public webhook, and no reMarkable/rmfakecloud account. Both mocks are standalone Go tools in `quack-extensions` (`github/cmd/qa-mock` and `remarkable/cmd/qa-mock`, both on `main`), not part of the `quack` binary - anything that talks to the running server itself goes through `quack api`, per [`docs/cli.md`](cli.md).
+Exercises the `quack:review`/`plan`/`implement`/`fix` and reMarkable document flows against a QA server with no real GitHub App, no public webhook, and no reMarkable/rmfakecloud account. Both mocks are standalone Go tools in this repository (`extensions/github/cmd/qa-mock` and `extensions/remarkable/cmd/qa-mock`), not part of the `quack` binary - anything that talks to the running server itself goes through `quack api`, per [`docs/cli.md`](cli.md).
 
 ## GitHub mock
 
 ```bash
-cd quack-extensions/github
-go run ./cmd/qa-mock serve --fixtures ../../quack/testdata/qa/github --addr :8090
+cd extensions/github
+go run ./cmd/qa-mock serve --fixtures ../../testdata/qa/github --addr :8090
 ```
 
-The GitHub fixtures live in core, at `testdata/qa/github` (this repo) - every `--fixtures`/`--fixture` path below is relative to `quack-extensions/github`, hence the `../../quack/...` prefix. There are no committed reMarkable fixture files; the `--fixtures ../../quack/testdata/qa/remarkable` path below is just where `serve`/`drop` will persist `docs.json` and dropped PDFs the first time you run them - create the directory or let `drop` create it.
+The GitHub fixtures live at `testdata/qa/github` - every `--fixtures`/`--fixture` path below is relative to `extensions/github` (or `extensions/remarkable`), hence the `../../` prefix. There are no committed reMarkable fixture files; the `--fixtures ../../testdata/qa/remarkable` path below is just where `serve`/`drop` will persist `docs.json` and dropped PDFs the first time you run them - create the directory or let `drop` create it.
 
 Point the QA server's `quack.yaml` at it:
 
@@ -29,7 +29,7 @@ Fire a webhook at the running quack server:
 
 ```bash
 go run ./cmd/qa-mock send \
-  --fixture ../../quack/testdata/qa/github/events/pull_request.labeled.quack-review.json \
+  --fixture ../../testdata/qa/github/events/pull_request.labeled.quack-review.json \
   --event pull_request \
   --secret "$QUACK_QA_WEBHOOK_SECRET" \
   --url http://localhost:8080/github/webhook
@@ -40,7 +40,7 @@ go run ./cmd/qa-mock send \
 Check what quack tried to post back to GitHub:
 
 ```bash
-go run ./cmd/qa-mock deliveries --fixtures ../../quack/testdata/qa/github
+go run ./cmd/qa-mock deliveries --fixtures ../../testdata/qa/github
 ```
 
 GET fixtures live at `testdata/qa/github/get/<hash>.json`, keyed by `sha256(METHOD_PATH?QUERY)[:16 hex]` - a miss 404s with a hint instead of a made-up shape. To capture a new one from real GitHub once (e.g. a real PR's `files`/`commits`), run `serve --record <a real installation token>` and hit the mock the same way the extension would; the response is saved and every run after that is offline and credential-free.
@@ -48,8 +48,8 @@ GET fixtures live at `testdata/qa/github/get/<hash>.json`, keyed by `sha256(METH
 ## reMarkable mock
 
 ```bash
-cd quack-extensions/remarkable
-go run ./cmd/qa-mock serve --fixtures ../../quack/testdata/qa/remarkable --addr :8091 \
+cd extensions/remarkable
+go run ./cmd/qa-mock serve --fixtures ../../testdata/qa/remarkable --addr :8091 \
   --email qa@example.com --password qa-password
 ```
 
@@ -64,7 +64,7 @@ extensions:
 Simulate a new handwritten note landing:
 
 ```bash
-go run ./cmd/qa-mock drop --fixtures ../../quack/testdata/qa/remarkable \
+go run ./cmd/qa-mock drop --fixtures ../../testdata/qa/remarkable \
   --name "2-page note" --folder inbox --pdf /path/to/any.pdf
 ```
 

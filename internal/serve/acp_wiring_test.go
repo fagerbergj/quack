@@ -15,7 +15,7 @@ import (
 // on the boot-resolved vetting.Config, not just its scalar grading facts.
 func TestResolveGateCfg_SetsMemoryArtifactAndPlugins(t *testing.T) {
 	ctx := context.Background()
-	bundle, err := agent.LoadBundle(ctx, nil, "../../.agents/plugins/github/agents/code-reviewer")
+	bundle, err := agent.LoadBundle(ctx, nil, githubPluginRoot+"/agents/code-reviewer")
 	if err != nil {
 		t.Fatalf("LoadBundle: %v", err)
 	}
@@ -24,7 +24,7 @@ func TestResolveGateCfg_SetsMemoryArtifactAndPlugins(t *testing.T) {
 	reg := pluginreg.NewFSRegistry(t.TempDir())
 	gateCfgs := newGateConfigs(1)
 
-	if _, err := resolveGateCfg(cfg, nil, vetting.Config{}, "code-reviewer", config.AgentConfig{Bundle: "../../.agents/plugins/github/agents/code-reviewer"},
+	if _, err := resolveGateCfg(cfg, nil, vetting.Config{}, "code-reviewer", config.AgentConfig{Bundle: githubPluginRoot + "/agents/code-reviewer"},
 		true, "## remember", memArt, bundle, gateCfgs, reg); err != nil {
 		t.Fatalf("resolveGateCfg: %v", err)
 	}

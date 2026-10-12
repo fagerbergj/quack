@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quack.example/sleeper/ui/schemas/retro.json",
+  "title": "retro",
+  "description": "Hindsight: started vs best possible lineup for one past week, graded.",
+  "type": "object",
+  "properties": {
+    "week": {
+      "type": "integer"
+    },
+    "started": {
+      "type": "number"
+    },
+    "best": {
+      "type": "number"
+    },
+    "left": {
+      "type": "number"
+    },
+    "opp": {
+      "type": "number"
+    },
+    "won": {
+      "type": "boolean"
+    },
+    "misses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "slot",
+          "started_name",
+          "started_pts",
+          "better_name",
+          "better_pts"
+        ],
+        "properties": {
+          "slot": {
+            "type": "string",
+            "maxLength": 10
+          },
+          "started_name": {
+            "type": "string",
+            "maxLength": 60
+          },
+          "started_pts": {
+            "type": "number"
+          },
+          "better_name": {
+            "type": "string",
+            "maxLength": 60
+          },
+          "better_pts": {
+            "type": "number"
+          },
+          "swing": {
+            "type": "number"
+          },
+          "why": {
+            "type": "string",
+            "maxLength": 280,
+            "description": "The pre-kickoff signal that pointed the other way: injury/practice news, matchup/defense, snap share or target trend, weather, depth chart. Markdown [text](url) links allowed."
+          },
+          "knowable": {
+            "type": "boolean",
+            "description": "True only if that signal existed before kickoff; false means variance, not a bad call."
+          }
+        }
+      }
+    },
+    "waiver_misses": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "pos",
+          "pts",
+          "over_name",
+          "over_pts"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 60
+          },
+          "pos": {
+            "type": "string",
+            "maxLength": 4
+          },
+          "pts": {
+            "type": "number"
+          },
+          "over_name": {
+            "type": "string",
+            "maxLength": 60
+          },
+          "over_pts": {
+            "type": "number"
+          },
+          "knowable": {
+            "type": "boolean",
+            "description": "True only if that signal existed before that week's waiver run; false means hindsight luck."
+          },
+          "why": {
+            "type": "string",
+            "maxLength": 280,
+            "description": "The pre-waiver-run signal, if any. Markdown [text](url) links allowed."
+          }
+        }
+      }
+    },
+    "lessons": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {
+        "type": "string",
+        "maxLength": 160
+      }
+    },
+    "summary": {
+      "type": "string",
+      "maxLength": 400
+    }
+  },
+  "required": [
+    "week",
+    "started",
+    "best",
+    "left"
+  ]
+}

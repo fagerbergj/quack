@@ -1,0 +1,480 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quack.example/sleeper/ui/schemas/lineup.json",
+  "title": "lineup",
+  "description": "Start/sit matchup card: my starters with verdicts, bench, reserve, opponent lineup.",
+  "type": "object",
+  "properties": {
+    "week": {
+      "type": "integer"
+    },
+    "team": {
+      "type": "string",
+      "maxLength": 60,
+      "description": "Fantasy team name (not an NFL team code)."
+    },
+    "team_record": {
+      "type": "string",
+      "maxLength": 20
+    },
+    "opponent": {
+      "type": "string",
+      "maxLength": 60
+    },
+    "opponent_record": {
+      "type": "string",
+      "maxLength": 20
+    },
+    "my_proj": {
+      "type": "number"
+    },
+    "opp_proj": {
+      "type": "number"
+    },
+    "plan": {
+      "type": "string",
+      "maxLength": 48,
+      "description": "Short game-plan chip, e.g. \"Close game \u00b7 favour floors\"."
+    },
+    "summary": {
+      "type": "string",
+      "maxLength": 400,
+      "description": "Card summary, at most two sentences."
+    },
+    "starters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "slot",
+          "player",
+          "proj",
+          "verdict"
+        ],
+        "properties": {
+          "slot": {
+            "type": "string",
+            "maxLength": 10
+          },
+          "player": {
+            "type": "object",
+            "required": [
+              "id",
+              "name"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "pos": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "team": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "inj": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "prac": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "proj": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            }
+          },
+          "proj": {
+            "type": "number"
+          },
+          "floor": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "The agent's own low estimate for this week, from matchup, snap share and team news."
+          },
+          "ceiling": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "The agent's own high estimate for this week. An inverted floor/ceiling pair is ignored by the renderer."
+          },
+          "verdict": {
+            "enum": [
+              "start",
+              "sit"
+            ]
+          },
+          "confidence": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "replaces": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "required": [
+              "id",
+              "name"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "pos": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "team": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "inj": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "prac": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "proj": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "description": "The player this starter replaces in the owner's current Sleeper lineup. Its presence marks the row as a change."
+          },
+          "why": {
+            "type": "string",
+            "maxLength": 400
+          }
+        }
+      }
+    },
+    "bench": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "player",
+          "proj"
+        ],
+        "properties": {
+          "player": {
+            "type": "object",
+            "required": [
+              "id",
+              "name"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "pos": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "team": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "inj": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "prac": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "proj": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            }
+          },
+          "proj": {
+            "type": "number"
+          },
+          "floor": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "ceiling": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "why": {
+            "type": "string",
+            "maxLength": 400
+          }
+        }
+      }
+    },
+    "reserve": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "player"
+        ],
+        "properties": {
+          "player": {
+            "type": "object",
+            "required": [
+              "id",
+              "name"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "pos": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "team": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "inj": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "prac": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "proj": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            }
+          },
+          "why": {
+            "type": "string",
+            "maxLength": 400
+          }
+        }
+      }
+    },
+    "reserve_slots": {
+      "type": "integer"
+    },
+    "bench_slots": {
+      "type": "integer"
+    },
+    "opponent_starters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "slot",
+          "player",
+          "proj"
+        ],
+        "properties": {
+          "slot": {
+            "type": "string",
+            "maxLength": 10
+          },
+          "player": {
+            "type": "object",
+            "required": [
+              "id",
+              "name"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "pos": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "team": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "inj": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "prac": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "proj": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            }
+          },
+          "proj": {
+            "type": "number"
+          },
+          "floor": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "ceiling": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "watch": {
+      "type": "array",
+      "description": "Conditional actions, e.g. start a bench player if a starter's designation worsens by a stated deadline.",
+      "items": {
+        "type": "object",
+        "required": [
+          "player",
+          "text"
+        ],
+        "properties": {
+          "player": {
+            "type": "object",
+            "required": [
+              "id",
+              "name"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "pos": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "team": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "inj": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "prac": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "proj": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            }
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 400
+          }
+        }
+      }
+    },
+    "source_note": {
+      "type": "string",
+      "maxLength": 300
+    }
+  },
+  "required": [
+    "week",
+    "team",
+    "starters"
+  ]
+}

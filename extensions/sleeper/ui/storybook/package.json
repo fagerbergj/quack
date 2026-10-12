@@ -1,0 +1,20 @@
+{
+  "name": "sleeper-ui-storybook",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "storybook": "storybook dev -p 6011",
+    "build-storybook": "storybook build",
+    "render-check": "node render-check.mjs",
+    "validate-schemas": "node validate-schemas.mjs",
+    "security-check": "node security-check.mjs",
+    "pair-check": "node pair-check.mjs"
+  },
+  "devDependencies": {
+    "@storybook/html-vite": "10.6.0",
+    "storybook": "10.6.0",
+    "vite": "8.3.0",
+    "playwright": "1.63.0",
+    "ajv": "8.20.0"
+  }
+}

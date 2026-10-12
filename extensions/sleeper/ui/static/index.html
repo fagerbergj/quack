@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sleeper - quack</title>
+<link rel="stylesheet" href="/assets/ext/v1/kit.css">
+<link rel="stylesheet" href="page.css">
+</head>
+<body class="qk-page">
+<div class="qk-page__inner">
+  <header class="qk-page__header">
+    <div>
+      <h1 id="league-name"></h1>
+      <p id="league-sub"></p>
+      <div class="sl-facts" id="league-facts"></div>
+    </div>
+    <details class="sl-menu" id="menu">
+      <summary aria-label="Run a job" title="Run a job"><svg width="20" height="20" viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true"><path d="M480-160q-33 0-56.5-23.5T400-240q0-33 23.5-56.5T480-320q33 0 56.5 23.5T560-240q0 33-23.5 56.5T480-160Zm0-240q-33 0-56.5-23.5T400-480q0-33 23.5-56.5T480-560q33 0 56.5 23.5T560-480q0 33-23.5 56.5T480-400Zm0-240q-33 0-56.5-23.5T400-720q0-33 23.5-56.5T480-800q33 0 56.5 23.5T560-720q0 33-23.5 56.5T480-640Z"/></svg></summary>
+      <ul class="sl-menu__list" id="menu-list"></ul>
+    </details>
+  </header>
+
+  <!-- renderYears/renderTimeline each emit their own <nav aria-label>, so this
+       stays a plain container - a <nav> here too would nest duplicate landmarks. -->
+  <div id="years"></div>
+  <div id="rail"></div>
+
+  <div id="banner"></div>
+  <div class="sl-grid">
+    <div class="sl-main" id="main"></div>
+    <aside class="sl-side" id="side"></aside>
+  </div>
+</div>
+<script type="module" src="main.js"></script>
+</body>
+</html>

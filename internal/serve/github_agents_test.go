@@ -11,11 +11,10 @@ import (
 	"github.com/fagerbergj/quack/internal/plugin"
 )
 
-// githubPluginRoot: resolved relative to this test's own cwd (internal/serve),
-// not config/quack.yaml's own relative plugins.seed entry.
-const githubPluginRoot = "../../.agents/plugins/github"
+// githubPluginRoot: a fixture shaped like extensions/github/plugin, whose own tests cover the real bundles.
+const githubPluginRoot = "testdata/plugins/github"
 
-// githubCodeAgentNames are the three bundles .agents/plugins/github/plugin.json lists.
+// githubCodeAgentNames are the three bundles the github plugin.json lists.
 var githubCodeAgentNames = []string{"code-implementer", "code-reviewer", "code-explorer"}
 
 func resolveGithubPlugin(t *testing.T) plugin.Plugin {

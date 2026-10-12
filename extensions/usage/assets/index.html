@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Usage</title>
+<script>
+  // Mirrors quack's SPA theme init (localStorage "theme"), before any stylesheet so there's no
+  // flash. kit.css v1 ignores data-theme; this page's fallback styles honor it.
+  (function () {
+    var stored = localStorage.getItem("theme");
+    var dark = stored === "dark" || (!stored && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    document.documentElement.dataset.theme = dark ? "dark" : "light";
+  })();
+</script>
+<style>
+  /* Low-specificity fallbacks: kit.css, loaded after, wins when present; the page reads fine if it
+     404s. Dark values are the same eight dataviz hues re-stepped, not a separate palette. */
+  :root {
+    color-scheme: light;
+    /* One control geometry so the segments, date fields and Apply share a baseline; radius
+       comes from the kit when it loads. */
+    --control-h: 2rem;
+    --control-radius: var(--qk-radius, 0.5rem);
+    --focus-ring: var(--qk-accent, #2a78d6);
+    --surface-1: #fcfcfb;
+    --surface-2: #f0efea;
+    --page-plane: #f9f9f7;
+    --text-primary: #1b1f24;
+    --text-secondary: #52514e;
+    --text-muted: #898781;
+    --gridline: #e1e0d9;
+    --baseline: #c3c2b7;
+    --border: rgba(11, 11, 11, 0.10);
+    --accent: #1b1f24;
+    --accent-ink: #fff;
+    --series-1: #2a78d6;
+    --series-2: #eb6834;
+    --series-3: #1baf7a;
+    --series-4: #eda100;
+    --series-5: #e87ba4;
+    --series-6: #008300;
+    --series-7: #4a3aa7;
+    --series-8: #e34948;
+    --series-other: #898781;
+  }
+  :root[data-theme="dark"] {
+    /* Native widgets follow color-scheme, not our tokens: without this the date popup renders
+       white on the dark page. */
+    color-scheme: dark;
+    --surface-1: #1a1a19;
+    --surface-2: #232322;
+    --page-plane: #0d0d0d;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #898781;
+    --gridline: #2c2c2a;
+    --baseline: #383835;
+    --border: rgba(255, 255, 255, 0.10);
+    --accent: #eee;
+    --accent-ink: #111;
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+    --series-6: #008300;
+    --series-7: #9085e9;
+    --series-8: #e66767;
+    --series-other: #898781;
+  }
+  body {
+    margin: 0;
+    padding: 0 1.5rem 1.5rem;
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: var(--text-primary);
+    background: var(--page-plane);
+  }
+  h1 { font-size: 1.4rem; margin: 0 0 0.75rem; }
+  h2 { font-size: 0.95rem; margin: 0 0 0.75rem; color: var(--text-secondary); }
+  .sticky-bar {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--page-plane);
+    padding-top: 1.5rem;
+    margin-bottom: 1rem;
+  }
+  header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; flex-wrap: wrap; gap: 0.75rem; }
+  .timeframe { display: flex; flex-direction: column; align-items: flex-start; gap: 0.5rem; margin-bottom: 0.9rem; }
+  /* Segmented control: presets + "Custom…" on one track; the custom row below exists only
+     while that segment is chosen. */
+  .segmented {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 2px;
+    padding: 2px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--control-radius);
+  }
+  .segment {
+    display: inline-flex;
+    align-items: center;
+    height: var(--control-h);
+    padding: 0 0.8rem;
+    font: inherit;
+    font-size: 0.8125rem;
+    line-height: 1;
+    color: var(--text-secondary);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: calc(var(--control-radius) - 2px);
+    cursor: pointer;
+  }
+  .segment:hover { background: var(--surface-1); color: var(--text-primary); }
+  .segment[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .segment--custom { margin-left: 4px; border-left: 1px solid var(--border); border-top-left-radius: 0; border-bottom-left-radius: 0; padding-left: 0.85rem; }
+  /* Open-but-not-applied: the row is showing, the range hasn't changed yet.
+     Reads as active without claiming to be the selected range. */
+  .segment--custom[aria-expanded="true"] { background: var(--surface-1); color: var(--text-primary); }
+  .segment--custom[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-left-color: var(--accent); border-radius: calc(var(--control-radius) - 2px); }
+  .custom-range {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.45rem 0.55rem;
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: var(--control-radius);
+  }
+  .custom-range[hidden] { display: none; }
+  .custom-range label {
+    font-size: 0.7rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  .custom-range input[type="datetime-local"] {
+    height: var(--control-h);
+    padding: 0 0.4rem;
+    font: inherit;
+    font-size: 0.8125rem;
+    border: 1px solid var(--border);
+    border-radius: calc(var(--control-radius) - 2px);
+    background: var(--page-plane);
+    color: var(--text-primary);
+  }
+  #range-apply {
+    height: var(--control-h);
+    padding: 0 0.9rem;
+    font: inherit;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--accent-ink);
+    background: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: calc(var(--control-radius) - 2px);
+    cursor: pointer;
+  }
+  .segment:focus-visible, #range-apply:focus-visible, .custom-range input:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 1px;
+  }
+  .range-error { color: #e34948; font-size: 0.8rem; }
+  .range-error:empty { display: none; }
+  .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.75rem; }
+  .kpi-tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 6px; padding: 0.75rem 0.9rem; }
+  .kpi-value { font-size: 1.5rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .kpi-label { color: var(--text-secondary); font-size: 0.78rem; margin-top: 0.15rem; }
+  .panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1rem; }
+  .panel { background: var(--surface-1); border: 1px solid var(--border); border-radius: 6px; padding: 1rem; }
+  .panel-wide { grid-column: 1 / -1; }
+  .panel-row { display: flex; gap: 1rem; flex-wrap: wrap; }
+  .panel-row > div { flex: 1 1 260px; min-width: 0; }
+  .chart-empty { color: var(--text-muted); font-style: italic; padding: 1rem 0; }
+  .chart-error { color: #e34948; padding: 1rem 0; }
+  .chart-sub { color: var(--text-secondary); font-size: 0.78rem; margin-top: 0.4rem; }
+  .stat-tile { font-size: 1.8rem; font-weight: 600; margin-bottom: 0.35rem; font-variant-numeric: tabular-nums; }
+  .stat-sub { color: var(--text-secondary); font-size: 0.8rem; }
+  svg.chart-svg { width: 100%; height: 150px; overflow: visible; display: block; }
+  .chart-legend { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 0.5rem; font-size: 0.78rem; }
+  .legend-item { display: flex; align-items: center; gap: 0.35rem; cursor: pointer; user-select: none; background: none; border: none; padding: 0; font: inherit; color: var(--text-secondary); }
+  .legend-item[aria-pressed="false"] { opacity: 0.4; text-decoration: line-through; }
+  .legend-swatch { width: 0.65rem; height: 0.65rem; border-radius: 2px; flex: none; }
+  .chart-tooltip {
+    position: absolute;
+    pointer-events: none;
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.35rem 0.5rem;
+    font-size: 0.75rem;
+    color: var(--text-primary);
+    box-shadow: 0 2px 8px var(--border);
+    white-space: nowrap;
+    z-index: 5;
+  }
+  .chart-wrap { position: relative; }
+  /* Dimension card: donut beside series; flex-basis wraps the series under the donut on a
+     narrow viewport instead of squeezing both. */
+  .panel-split { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 1rem 1.5rem; }
+  .panel-split > .donut-col { flex: 0 1 210px; min-width: 190px; }
+  .panel-split > .series-col { flex: 4 1 300px; min-width: 0; }
+  .panel-split .chart-sub { margin: 0 0 0.4rem; }
+  .donut-svg { display: block; width: 100%; max-width: 190px; height: auto; margin: 0 auto; }
+  .donut-arc { transition: opacity 0.12s ease, stroke-width 0.12s ease; }
+  .donut-total { font-size: 19px; font-weight: 600; fill: var(--text-primary); font-variant-numeric: tabular-nums; }
+  .donut-caption { font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; fill: var(--text-muted); }
+  .donut-legend { display: flex; flex-direction: column; gap: 0.1rem; margin-top: 0.6rem; }
+  .donut-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    width: 100%;
+    padding: 0.1rem 0;
+    font: inherit;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    text-align: left;
+    background: none;
+    border: none;
+    cursor: pointer;
+  }
+  .donut-legend-item[aria-pressed="false"] { opacity: 0.4; text-decoration: line-through; }
+  .donut-legend-item:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+  .donut-legend-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .donut-legend-value { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+  .donut-legend-pct { width: 3.1rem; text-align: right; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .axis-labels { display: flex; justify-content: space-between; color: var(--text-muted); font-size: 0.7rem; margin-top: 0.15rem; }
+  /* Cache section: one prominent raw-% stat, then by-model/by-agent tables -
+     no colored rates, a low cache rate isn't an error. */
+  .cache-overall { margin-bottom: 1rem; }
+  .cache-overall .stat-tile { font-size: 2.4rem; }
+  .cache-detail { color: var(--text-secondary); font-size: 0.82rem; margin-top: 0.1rem; font-variant-numeric: tabular-nums; }
+  .cache-breakdown-row { display: flex; flex-wrap: wrap; gap: 1rem 1.5rem; margin-bottom: 0.75rem; }
+  .cache-breakdown { flex: 1 1 260px; min-width: 220px; }
+  .cache-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 0.75rem;
+    align-items: baseline;
+    padding: 0.2rem 0;
+    font-size: 0.82rem;
+    border-bottom: 1px solid var(--gridline);
+  }
+  .cache-row:last-child { border-bottom: none; }
+  .cache-row-head {
+    color: var(--text-muted);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-bottom: 1px solid var(--border);
+  }
+  .cache-row-head span:not(:first-child), .cache-row-rate, .cache-row-volume { text-align: right; }
+  .cache-row-label { color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cache-row-rate { font-variant-numeric: tabular-nums; font-weight: 600; min-width: 3.4rem; }
+  .cache-row-volume { font-variant-numeric: tabular-nums; color: var(--text-muted); min-width: 5rem; }
+  .cache-footnote { color: var(--text-muted); font-size: 0.72rem; font-style: italic; margin: 0.5rem 0 0; }
+</style>
+<link rel="stylesheet" href="/assets/ext/v1/kit.css">
+</head>
+<body>
+<div class="usage-app">
+  <div class="sticky-bar">
+    <header>
+      <h1>Usage</h1>
+    </header>
+    <div class="timeframe">
+      <div class="segmented" role="group" aria-label="Time range" id="range-select">
+        <button type="button" class="segment" data-range="1h">1h</button>
+        <button type="button" class="segment" data-range="24h">24h</button>
+        <button type="button" class="segment" data-range="7d">7d</button>
+        <button type="button" class="segment" data-range="30d">30d</button>
+        <button type="button" class="segment segment--custom" id="range-custom" aria-expanded="false" aria-controls="custom-range">Custom…</button>
+      </div>
+      <div class="custom-range" id="custom-range" hidden>
+        <label for="range-from">From</label>
+        <input type="datetime-local" id="range-from">
+        <label for="range-to">To</label>
+        <input type="datetime-local" id="range-to">
+        <button type="button" id="range-apply">Apply</button>
+        <span class="range-error" id="range-error" role="alert"></span>
+      </div>
+    </div>
+    <div class="kpi-row" id="kpi-row">
+      <div class="kpi-tile" data-kpi="calls">
+        <div class="kpi-value">–</div>
+        <div class="kpi-label">Model calls</div>
+      </div>
+      <div class="kpi-tile" data-kpi="latency-p95">
+        <div class="kpi-value">–</div>
+        <div class="kpi-label">p95 latency</div>
+      </div>
+      <div class="kpi-tile" data-kpi="tokens">
+        <div class="kpi-value">–</div>
+        <div class="kpi-label">Tokens</div>
+      </div>
+      <div class="kpi-tile" data-kpi="cost">
+        <div class="kpi-value">–</div>
+        <div class="kpi-label">Cost</div>
+      </div>
+    </div>
+  </div>
+
+  <section class="panels">
+    <div class="panel panel-wide" id="panel-tokens-headline">
+      <h2>Tokens over time (by type)</h2>
+      <div class="chart" data-panel="tokens-headline"></div>
+    </div>
+
+    <div class="panel panel-wide" id="panel-tokens-model">
+      <h2>Tokens by model</h2>
+      <div class="panel-split">
+        <div class="donut-col">
+          <div class="chart-sub">Share of window</div>
+          <div class="donut" data-donut="tokens-model"></div>
+        </div>
+        <div class="series-col">
+          <div class="chart-sub">Over time</div>
+          <div class="chart" data-panel="tokens-model"></div>
+        </div>
+      </div>
+    </div>
+    <div class="panel panel-wide" id="panel-tokens-agent">
+      <h2>Tokens by agent</h2>
+      <div class="panel-split">
+        <div class="donut-col">
+          <div class="chart-sub">Share of window</div>
+          <div class="donut" data-donut="tokens-agent"></div>
+        </div>
+        <div class="series-col">
+          <div class="chart-sub">Over time</div>
+          <div class="chart" data-panel="tokens-agent"></div>
+        </div>
+      </div>
+    </div>
+    <div class="panel panel-wide" id="panel-tokens-source">
+      <h2>Tokens by source</h2>
+      <div class="panel-split">
+        <div class="donut-col">
+          <div class="chart-sub">Share of window</div>
+          <div class="donut" data-donut="tokens-source"></div>
+        </div>
+        <div class="series-col">
+          <div class="chart-sub">Over time</div>
+          <div class="chart" data-panel="tokens-source"></div>
+        </div>
+      </div>
+    </div>
+    <div class="panel panel-wide" id="panel-tokens-user">
+      <h2>Tokens by user</h2>
+      <div class="panel-split">
+        <div class="donut-col">
+          <div class="chart-sub">Share of window</div>
+          <div class="donut" data-donut="tokens-user"></div>
+        </div>
+        <div class="series-col">
+          <div class="chart-sub">Over time</div>
+          <div class="chart" data-panel="tokens-user"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel panel-wide" id="panel-cache">
+      <h2>Cache rate</h2>
+      <div class="cache-overall" data-panel="cache-overall"></div>
+      <div class="cache-breakdown-row">
+        <div class="cache-breakdown">
+          <div class="chart-sub">By model</div>
+          <div class="cache-row cache-row-head" aria-hidden="true">
+            <span>Model</span><span>Rate</span><span>Volume</span>
+          </div>
+          <div class="cache-rows" data-panel="cache-by-model"></div>
+        </div>
+        <div class="cache-breakdown">
+          <div class="chart-sub">By agent</div>
+          <div class="cache-row cache-row-head" aria-hidden="true">
+            <span>Agent</span><span>Rate</span><span>Volume</span>
+          </div>
+          <div class="cache-rows" data-panel="cache-by-agent"></div>
+        </div>
+      </div>
+      <div class="chart" data-panel="cache-savings"></div>
+      <p class="cache-footnote">Code-agent rates are per-round aggregates until quack emits per-call usage.</p>
+    </div>
+
+    <div class="panel panel-wide" id="panel-cost">
+      <h2>Cost</h2>
+      <div class="panel-row">
+        <div>
+          <div class="chart-sub">Per step</div>
+          <div class="chart" data-panel="cost"></div>
+        </div>
+        <div>
+          <div class="chart-sub">Cumulative spend</div>
+          <div class="chart" data-panel="cost-cumulative"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel panel-wide" id="panel-latency">
+      <h2>Model call latency (p50 / p95 / p99)</h2>
+      <div class="chart" data-panel="latency"></div>
+    </div>
+  </section>
+</div>
+<script>
+  window.__USAGE_CONFIG__ = {
+    defaultRangeSeconds: {{.DefaultRangeSeconds}},
+    tempoUrl: {{.TempoURL}}
+  };
+</script>
+<script src="app.js"></script>
+</body>
+</html>

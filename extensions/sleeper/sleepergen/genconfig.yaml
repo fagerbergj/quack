@@ -1,0 +1,7 @@
+# oapi-codegen config for the Sleeper client: client + models only, no
+# server - this extension only ever calls out to api.sleeper.app.
+package: sleepergen
+output: sleepergen/sleeper.gen.go
+generate:
+  client: true
+  models: true

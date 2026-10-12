@@ -27,7 +27,7 @@ type Options struct {
 	REST          *rest.Handler
 	MCP           http.Handler        // optional Streamable-HTTP MCP handler
 	SPA           fs.FS               // optional embedded frontend dist
-	SDKExtensions []SDKExtensionMount // optional quack-extensions SDK modules, mounted at /<name>
+	SDKExtensions []SDKExtensionMount // optional SDK extension modules, mounted at /<name>
 	Auth          *auth.Auth          // optional inbound auth (nil = disabled, open)
 }
 

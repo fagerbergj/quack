@@ -7,7 +7,7 @@ import (
 	"os"
 	"slices"
 
-	extsdk "github.com/fagerbergj/quack-extensions/sdk"
+	extsdk "github.com/fagerbergj/quack/extensions/sdk"
 	"gopkg.in/yaml.v3"
 
 	"github.com/fagerbergj/quack/internal/config"

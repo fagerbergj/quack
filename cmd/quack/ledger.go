@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	extsdk "github.com/fagerbergj/quack-extensions/sdk"
+	extsdk "github.com/fagerbergj/quack/extensions/sdk"
 	"github.com/spf13/cobra"
 
 	"github.com/fagerbergj/quack/internal/cli"

@@ -8,7 +8,6 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"testing"
 
 	"google.golang.org/adk/v2/tool/skilltoolset/skill"
@@ -45,25 +44,7 @@ func checkGolden(t *testing.T, name, got string) {
 	}
 }
 
-// pluginAgentBundleDirs lists every .agents/plugins/<name>/agents/<bundle>/ on disk (plugin bundles are never
-// embedded), the golden walk's second root.
-func pluginAgentBundleDirs(t *testing.T) []string {
-	t.Helper()
-	matches, err := filepath.Glob(filepath.Join("..", "..", ".agents", "plugins", "*", "agents", "*"))
-	if err != nil {
-		t.Fatalf("glob plugin agent bundles: %v", err)
-	}
-	var dirs []string
-	for _, m := range matches {
-		if st, err := os.Stat(m); err == nil && st.IsDir() {
-			dirs = append(dirs, m)
-		}
-	}
-	sort.Strings(dirs)
-	return dirs
-}
-
-// TestGoldenAgentPrompts pins the assembled system prompt of every shipped and plugin agent bundle.
+// TestGoldenAgentPrompts pins the assembled system prompt of every shipped agent bundle; plugin bundles live in their own repos.
 func TestGoldenAgentPrompts(t *testing.T) {
 	des, err := fs.ReadDir(bundledir.SubFS("agents"), ".")
 	if err != nil {
@@ -75,9 +56,6 @@ func TestGoldenAgentPrompts(t *testing.T) {
 		if de.IsDir() {
 			bundles = append(bundles, bundle{path.Join("agents", de.Name()), "agent." + de.Name() + ".txt"})
 		}
-	}
-	for _, dir := range pluginAgentBundleDirs(t) {
-		bundles = append(bundles, bundle{dir, "agent." + filepath.Base(dir) + ".txt"})
 	}
 
 	for _, bd := range bundles {
@@ -100,7 +78,7 @@ func TestGoldenAgentPrompts(t *testing.T) {
 // TestGoldenACPPreamble pins the ACP preamble as serve.buildACPNode assembles it; only this golden covers
 // the skills bullet without the load_skill hint and the workspace layer.
 func TestGoldenACPPreamble(t *testing.T) {
-	const dir = "../../.agents/plugins/github/agents/code-reviewer"
+	const dir = "agents/web-researcher"
 	b, err := LoadBundle(context.Background(), nil, dir)
 	if err != nil {
 		t.Fatal(err)
@@ -113,7 +91,7 @@ func TestGoldenACPPreamble(t *testing.T) {
 	got := promptbuilder.Agent(b.Card.Name, b.Card.Description, skills, true,
 		BehaviourLayer(b.Prompt, mem), promptbuilder.GradingFacts(0.7, 2, true, false),
 		"## Workspace\n\nThe repo is cloned at the cwd.")
-	checkGolden(t, "acp.preamble.code-reviewer.txt", got)
+	checkGolden(t, "acp.preamble.txt", got)
 }
 
 // TestGoldenCompactionPrompt pins the summarizer prompt NativeCompactionConfig builds.

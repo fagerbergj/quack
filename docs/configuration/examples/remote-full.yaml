@@ -66,15 +66,15 @@ orchestrator:
 
 # plugins.seed: explicit because it replaces, not extends, the shipped
 # default (dotagents, ponytail, the compiled-in usage manifest) - see
-# config/quack.yaml's own plugins.seed comment. .agents/plugins/github is
+# config/quack.yaml's own plugins.seed comment. The github plugin is
 # what lets code-implementer/reviewer/explorer below actually seed once
 # extensions.github is enabled.
 plugins:
   seed:
     - github:fagerbergj/dotagents
     - github:DietrichGebert/ponytail@v4.9.0
-    - .agents/plugins/usage
-    - .agents/plugins/github
+    - github:fagerbergj/quack@plugin/usage/v0.5.0#extensions/usage/plugin
+    - github:fagerbergj/quack@plugin/github/v0.22.0#extensions/github/plugin
 
 agents:
   web-researcher:
@@ -88,7 +88,7 @@ agents:
     judge_rounds: 1
     tools: [web_search, web_fetch, summarize, current_date, load_memory, stage_memory, ask_user]
   # code-implementer/reviewer/explorer: override-only - bundle/model/tools/
-  # judge_rounds/context_window come from .agents/plugins/github's own
+  # judge_rounds/context_window come from the github plugin's own
   # agent.yaml, seeded once extensions.github below is enabled.
   code-implementer:
     optional: true
@@ -200,7 +200,7 @@ workspace:
       token: ${QUACK_GITHUB_TOKEN}
 
 # The GitHub App extension: webhook receiver, App-authed git credentials, the
-# label workflow + @quack mentions - and, enabled here, the .agents/plugins/github
+# label workflow + @quack mentions - and, enabled here, the github
 # plugin's code-implementer/reviewer/explorer agents above. See ../../extensions/github.md.
 extensions:
   github:

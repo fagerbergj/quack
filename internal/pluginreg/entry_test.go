@@ -21,6 +21,10 @@ func TestParseEntry(t *testing.T) {
 			Raw: "github:fagerbergj/quack-extensions@main#usage/skills", Source: SourceGitHub,
 			Owner: "fagerbergj", Repo: "quack-extensions", Ref: "main", Path: "usage/skills",
 		}},
+		{"monorepo plugin tag with a slash", "github:fagerbergj/quack@plugin/sleeper/v1.2.3#extensions/sleeper/plugin", Entry{
+			Raw: "github:fagerbergj/quack@plugin/sleeper/v1.2.3#extensions/sleeper/plugin", Source: SourceGitHub,
+			Owner: "fagerbergj", Repo: "quack", Ref: "plugin/sleeper/v1.2.3", Path: "extensions/sleeper/plugin",
+		}},
 		{"pinned to a sha", "github:fagerbergj/dotagents@c886ce1a8474939dc42f7c194f8c57242223ea19", Entry{
 			Raw: "github:fagerbergj/dotagents@c886ce1a8474939dc42f7c194f8c57242223ea19", Source: SourceGitHub,
 			Owner: "fagerbergj", Repo: "dotagents", Ref: "c886ce1a8474939dc42f7c194f8c57242223ea19",
@@ -34,8 +38,8 @@ func TestParseEntry(t *testing.T) {
 		{"local path", ".agents/local/dotagents", Entry{
 			Raw: ".agents/local/dotagents", Source: SourceLocal, Root: ".agents/local/dotagents",
 		}},
-		{"local manifest-only plugin", ".agents/plugins/usage", Entry{
-			Raw: ".agents/plugins/usage", Source: SourceLocal, Root: ".agents/plugins/usage",
+		{"local manifest-only plugin", "plugins/usage", Entry{
+			Raw: "plugins/usage", Source: SourceLocal, Root: "plugins/usage",
 		}},
 	}
 	for _, tc := range cases {
@@ -97,6 +101,7 @@ func TestEntryName(t *testing.T) {
 		{"github:fagerbergj/quack-extensions#sleeper", "sleeper"},
 		{"github:fagerbergj/quack-extensions#github/plugin", "github"},
 		{"github:fagerbergj/quack-extensions#plugin", "quack-extensions"}, // bare "plugin" root falls back to the repo
+		{"github:fagerbergj/quack@plugin/github/v1.0.0#extensions/github/plugin", "github"},
 		{"github:fagerbergj/dotagents@v2#skills", "skills"},
 		{".agents/local/dotagents", "dotagents"},
 	}

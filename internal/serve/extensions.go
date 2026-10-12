@@ -18,7 +18,7 @@ import (
 	"syscall"
 	"time"
 
-	extsdk "github.com/fagerbergj/quack-extensions/sdk"
+	extsdk "github.com/fagerbergj/quack/extensions/sdk"
 	"github.com/google/uuid"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
@@ -48,7 +48,7 @@ import (
 // GitHub-driven ones, mirroring internal/github's runUserID convention.
 const extRunUserID = "ext"
 
-// builtSDKExtension pairs a constructed quack-extensions SDK module with the
+// builtSDKExtension pairs a constructed SDK extension module with the
 // registration name its config and log lines are keyed by.
 type builtSDKExtension struct {
 	name string

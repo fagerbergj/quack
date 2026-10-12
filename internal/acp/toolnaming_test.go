@@ -3,37 +3,13 @@ package acp
 import (
 	"context"
 	"net/http/httptest"
-	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/fagerbergj/quack/internal/agent"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
-
-// forbiddenToolCheckWording: no ACP bundle prompt may tell an agent to check whether its tools exist; a bash
-// probe can't see MCP tools, and the preamble states the offered names as fact.
-var forbiddenToolCheckWording = regexp.MustCompile(`(?i)check your (actual )?tool list|not in your tool list`)
-
-// TestBundlePromptsDoNotAskAgentToCheckToolExistence: an ACP subprocess can't prove an MCP tool absent, so no
-// bundle prompt may invite self-verification; the preamble states the names (mcpToolNames/mcpToolsBlock).
-func TestBundlePromptsDoNotAskAgentToCheckToolExistence(t *testing.T) {
-	for _, bundle := range []string{
-		"../../.agents/plugins/github/agents/code-reviewer",
-		"../../.agents/plugins/github/agents/code-implementer",
-		"../../.agents/plugins/github/agents/code-explorer",
-	} {
-		b, err := agent.LoadBundle(context.Background(), nil, bundle)
-		if err != nil {
-			t.Fatalf("LoadBundle(%q): %v", bundle, err)
-		}
-		if forbiddenToolCheckWording.MatchString(b.Prompt) {
-			t.Errorf("%s/prompt.md: still tells the agent to check its own tool list - the generated preamble should state the fact instead (#688)", bundle)
-		}
-	}
-}
 
 // TestMCPToolNamesMatchTheLiveServer: mcpToolNames names exactly what memoryMCPHandler registers for the
 // same session, so a tool rename can't desync the preamble.

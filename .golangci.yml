@@ -44,6 +44,8 @@ linters:
     paths:
       - (^|/)schema/ # openapi codegen; anchored so foo_schema.go stays gated
       - third_party
+      # oapi-codegen clients (extensions/sleeper/sleepergen): per-operation Parse*Response boilerplate, DO NOT EDIT.
+      - '\.gen\.go$'
     rules:
       # Table-driven test scaffolding (identical t.Run blocks) is
       # intentional structure, triage-dead in Wave 2-F: deduplicating it

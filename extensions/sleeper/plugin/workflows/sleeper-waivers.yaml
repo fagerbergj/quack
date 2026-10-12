@@ -1,0 +1,9 @@
+name: sleeper-waivers
+trigger: "Run the Sleeper waivers job for a league (extensions.sleeper dispatch)"
+agents: [waiver-scout]
+shape: "ONE `waiver-scout` node (terminal - writes the waivers artifact)"
+nodes:
+  - id: waivers
+    agent: waiver-scout
+    task: "Rank this week's best waiver-wire adds for the Sleeper league and team named below, sizing each claim with the sleeper:waivers skill.\n\n{{ask}}"
+    artifact: waivers
