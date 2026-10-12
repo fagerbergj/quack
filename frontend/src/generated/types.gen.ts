@@ -1891,6 +1891,10 @@ export type ListMemoriesErrors = {
      * The memory index is unreachable
      */
     500: ErrorResponse;
+    /**
+     * No vector store is configured, so memory is disabled (not empty)
+     */
+    503: ErrorResponse;
 };
 
 export type ListMemoriesError = ListMemoriesErrors[keyof ListMemoriesErrors];
@@ -1918,6 +1922,10 @@ export type DeleteMemoryErrors = {
      * No such memory
      */
     404: ErrorResponse;
+    /**
+     * No vector store is configured, so memory is disabled (not empty)
+     */
+    503: ErrorResponse;
 };
 
 export type DeleteMemoryError = DeleteMemoryErrors[keyof DeleteMemoryErrors];
@@ -1945,6 +1953,10 @@ export type GetMemoryErrors = {
      * No such memory
      */
     404: ErrorResponse;
+    /**
+     * No vector store is configured, so memory is disabled (not empty)
+     */
+    503: ErrorResponse;
 };
 
 export type GetMemoryError = GetMemoryErrors[keyof GetMemoryErrors];
@@ -1980,6 +1992,10 @@ export type VoteMemoryErrors = {
      * The memory index is unreachable, or the vote ledger entry failed to append
      */
     500: ErrorResponse;
+    /**
+     * No vector store is configured, so memory is disabled (not empty)
+     */
+    503: ErrorResponse;
 };
 
 export type VoteMemoryError = VoteMemoryErrors[keyof VoteMemoryErrors];
@@ -2033,6 +2049,10 @@ export type SweepMemoriesErrors = {
      * The memory index is unreachable
      */
     500: ErrorResponse;
+    /**
+     * No vector store is configured, so memory is disabled (not empty)
+     */
+    503: ErrorResponse;
 };
 
 export type SweepMemoriesError = SweepMemoriesErrors[keyof SweepMemoriesErrors];
@@ -2052,6 +2072,15 @@ export type RescopeMemoriesData = {
     query?: never;
     url: '/api/v1/memories/rescope';
 };
+
+export type RescopeMemoriesErrors = {
+    /**
+     * No vector store is configured, so memory is disabled (not empty)
+     */
+    503: ErrorResponse;
+};
+
+export type RescopeMemoriesError = RescopeMemoriesErrors[keyof RescopeMemoriesErrors];
 
 export type RescopeMemoriesResponses = {
     /**
@@ -2073,6 +2102,15 @@ export type GetMemoryStatsData = {
     };
     url: '/api/v1/memories/stats';
 };
+
+export type GetMemoryStatsErrors = {
+    /**
+     * No vector store is configured, so memory is disabled (not empty)
+     */
+    503: ErrorResponse;
+};
+
+export type GetMemoryStatsError = GetMemoryStatsErrors[keyof GetMemoryStatsErrors];
 
 export type GetMemoryStatsResponses = {
     /**

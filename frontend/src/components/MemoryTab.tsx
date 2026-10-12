@@ -119,7 +119,22 @@ function MemoryTabFooter({ footerRef, rangeStart, rangeEnd, total, canGoPrev, ca
   )
 }
 
-export function MemoryTab({ initialState, initialStats }: MemoryTabProps = {}) {
+// The server answers 503 when no vector store is configured: memory is off, not empty, so the whole tab
+// (search, filters, stats) gives way to a disabled state.
+export function MemoryTab(props: MemoryTabProps = {}) {
+  const [disabled, setDisabled] = useState(false)
+  if (disabled) {
+    return (
+      <div role="status" className="flex flex-col h-full items-center justify-center gap-1 p-6 text-center text-sm text-gray-500 dark:text-gray-400">
+        <p className="font-medium text-gray-700 dark:text-gray-200">Memory is disabled</p>
+        <p>No vector store is configured on this server, so nothing is recalled or remembered.</p>
+      </div>
+    )
+  }
+  return <MemoryTabContent {...props} onDisabled={setDisabled} />
+}
+
+function MemoryTabContent({ initialState, initialStats, onDisabled }: MemoryTabProps & { onDisabled: (d: boolean) => void }) {
   const [bucket, setBucket] = useState('')
   const [q, setQ] = useState('')
   // Debounced 250ms behind `q` (the live input value) so typing doesn't fire a search per keystroke.
@@ -191,12 +206,13 @@ export function MemoryTab({ initialState, initialStats }: MemoryTabProps = {}) {
       })
     } catch (e) {
       if (seq !== requestSeq.current) return
+      if ((e as { status?: number }).status === 503) onDisabled(true)
       // Never fall back to search: a browse view quietly showing a different result set is worse than an error.
       setError(e instanceof Error ? e.message : 'Failed to load memories')
     } finally {
       if (seq === requestSeq.current) setLoading(false)
     }
-  }, [bucket, debouncedQ, pageIndex, pageTokens, includeInvalidated, tier, sort])
+  }, [bucket, debouncedQ, pageIndex, pageTokens, includeInvalidated, tier, sort, onDisabled])
 
   useEffect(() => {
     if (initialState !== undefined) return // story/test seam: static demo state, no live fetch

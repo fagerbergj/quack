@@ -1,6 +1,7 @@
 package rest
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -27,6 +28,19 @@ func (h *Handler) memStores() []*memory.Store {
 		stores = append(stores, h.userMem)
 	}
 	return stores
+}
+
+// memoryDisabledMsg answers every store-backed memory route when no vector store is configured.
+const memoryDisabledMsg = "memory is disabled (no vector store configured)"
+
+// memoryDisabled writes the 503 and reports true when no store is configured, so an unconfigured
+// index never reads as an empty one.
+func (h *Handler) memoryDisabled(w http.ResponseWriter) bool {
+	if len(h.memStores()) > 0 {
+		return false
+	}
+	errMsg(w, http.StatusServiceUnavailable, memoryDisabledMsg)
+	return true
 }
 
 // listMemoriesArgs is the decoded state of one list/search query.
@@ -107,6 +121,9 @@ func (a *listMemoriesArgs) listMemoriesPage(ctx context.Context, stores []*memor
 // ListMemories browses (or, with `q`, searches) every configured memory store. The bucket filter goes to
 // each store as-is; a store not owning that bucket just contributes nothing.
 func (h *Handler) ListMemories(w http.ResponseWriter, r *http.Request, params schema.ListMemoriesParams) {
+	if h.memoryDisabled(w) {
+		return
+	}
 	stores := h.memStores()
 	a := listMemoriesBase(params)
 
@@ -140,6 +157,9 @@ func (h *Handler) ListMemories(w http.ResponseWriter, r *http.Request, params sc
 
 // GetMemory is a direct per-id lookup (findMemoryByID), not a List scan.
 func (h *Handler) GetMemory(w http.ResponseWriter, r *http.Request, memoryID schema.MemoryID) {
+	if h.memoryDisabled(w) {
+		return
+	}
 	_, m, err := findMemoryByID(r.Context(), h.memStores(), memoryID)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, err)
@@ -155,6 +175,9 @@ func (h *Handler) GetMemory(w http.ResponseWriter, r *http.Request, memoryID sch
 // DeleteMemory invalidates one memory (soft delete: the point stays with status=invalidated).
 // 404 if no configured store has that id.
 func (h *Handler) DeleteMemory(w http.ResponseWriter, r *http.Request, memoryID schema.MemoryID) {
+	if h.memoryDisabled(w) {
+		return
+	}
 	var body schema.DeleteMemoryBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
 		errMsg(w, http.StatusBadRequest, "malformed request body")
@@ -298,6 +321,9 @@ func runDedupeSweep(ctx context.Context, stores []namedSweepStore, apply bool) (
 // SweepMemories runs the forgetting-rule sweep on demand against every configured store,
 // via the same Store.ForgetSweep the nightly consolidation job calls.
 func (h *Handler) SweepMemories(w http.ResponseWriter, r *http.Request) {
+	if h.memoryDisabled(w) {
+		return
+	}
 	var body schema.SweepMemoriesBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
 		errMsg(w, http.StatusBadRequest, "malformed request body")
@@ -371,6 +397,9 @@ func sweepReportWire(storeName string, report memory.ForgettingReport) schema.Sw
 // RescopeMemories moves role:* memories whose provenance chat has a GitHub origin into that repo's bucket.
 // Dry run unless the body sets apply:true, which writes and audits the change.
 func (h *Handler) RescopeMemories(w http.ResponseWriter, r *http.Request) {
+	if h.memoryDisabled(w) {
+		return
+	}
 	var body schema.RescopeMemoriesBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
 		errMsg(w, http.StatusBadRequest, "malformed request body")
@@ -433,6 +462,9 @@ const defaultStatsWeeks = 12
 // GetMemoryStats serves weekly recall precision/vote/recall counts plus a per-scope snapshot, computed from
 // the ledger and memory_ops. Weeks with no activity appear zeroed so the series stays continuous.
 func (h *Handler) GetMemoryStats(w http.ResponseWriter, r *http.Request, params schema.GetMemoryStatsParams) {
+	if h.memoryDisabled(w) {
+		return
+	}
 	weeks := defaultStatsWeeks
 	if params.Weeks != nil && *params.Weeks > 0 {
 		weeks = *params.Weeks
@@ -632,6 +664,9 @@ func ownVoteWire(humanVote string) *schema.MemoryOwnVote {
 // VoteMemory casts or clears the human's vote. Fail-closed: the memory.vote ledger entry is appended first,
 // under the memory's provenance chat, else humanVoteChatKey.
 func (h *Handler) VoteMemory(w http.ResponseWriter, r *http.Request, memoryID schema.MemoryID) {
+	if h.memoryDisabled(w) {
+		return
+	}
 	var body schema.VoteMemoryBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		errMsg(w, http.StatusBadRequest, "malformed request body")
@@ -665,22 +700,9 @@ func (h *Handler) VoteMemory(w http.ResponseWriter, r *http.Request, memoryID sc
 		return
 	}
 
-	if h.ledgerStore != nil {
-		chatID := m.ChatID
-		if chatID == "" {
-			chatID = humanVoteChatKey
-		}
-		payload, err := json.Marshal(ledger.MemoryVotePayload{MemoryID: memoryID, Vote: humanLedgerVote(vote), Reason: reason, Actor: string(memory.ActorHuman)})
-		if err != nil {
-			httpError(w, http.StatusInternalServerError, err)
-			return
-		}
-		if _, err := h.ledgerStore.AppendIntent(r.Context(), ledger.Entry{
-			ChatID: chatID, Kind: ledger.KindMemoryVote, At: time.Now().UTC(), Payload: payload,
-		}); err != nil {
-			httpError(w, http.StatusInternalServerError, err)
-			return
-		}
+	if err := h.appendHumanVote(r.Context(), m.ChatID, memoryID, vote, reason); err != nil {
+		httpError(w, http.StatusInternalServerError, err)
+		return
 	}
 
 	if err := st.SetHumanVote(r.Context(), memoryID, vote); err != nil {
@@ -697,6 +719,22 @@ func (h *Handler) VoteMemory(w http.ResponseWriter, r *http.Request, memoryID sc
 		return
 	}
 	writeJSON(w, http.StatusOK, memoriesWire([]memory.Memory{updated})[0])
+}
+
+// appendHumanVote appends the memory.vote ledger entry a human vote must land behind (no-op without a
+// ledger), under the memory's provenance chat or humanVoteChatKey.
+func (h *Handler) appendHumanVote(ctx context.Context, chatID, memoryID, vote, reason string) error {
+	if h.ledgerStore == nil {
+		return nil
+	}
+	payload, err := json.Marshal(ledger.MemoryVotePayload{MemoryID: memoryID, Vote: humanLedgerVote(vote), Reason: reason, Actor: string(memory.ActorHuman)})
+	if err != nil {
+		return err
+	}
+	_, err = h.ledgerStore.AppendIntent(ctx, ledger.Entry{
+		ChatID: cmp.Or(chatID, humanVoteChatKey), Kind: ledger.KindMemoryVote, At: time.Now().UTC(), Payload: payload,
+	})
+	return err
 }
 
 // humanVoteChatKey is the ledger chat id for a human vote on a memory with no provenance chat;

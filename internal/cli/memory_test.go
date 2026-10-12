@@ -69,6 +69,26 @@ func TestRunMemoryListSearchAndIncludeInvalidated(t *testing.T) {
 	}
 }
 
+// A server without a vector store answers 503; the CLI must say memory is off, not "No memories match".
+func TestRunMemoryListReportsDisabledMemory(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		io.WriteString(w, `{"error":"memory is disabled (no vector store configured)"}`)
+	}))
+	defer srv.Close()
+
+	var out bytes.Buffer
+	err := RunMemoryList(context.Background(), &out, srv.URL, "", "", "", "", 0, false, false)
+	if err == nil || err.Error() != "memory is disabled (no vector store configured)" {
+		t.Fatalf("RunMemoryList err = %v, want the server's disabled message", err)
+	}
+	if out.Len() != 0 {
+		t.Errorf("stdout = %q, want nothing", out.String())
+	}
+}
+
 func TestRunMemoryListJSON(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

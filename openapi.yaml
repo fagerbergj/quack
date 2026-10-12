@@ -1040,9 +1040,10 @@ paths:
       description: |
         Without `q`: lists a bucket's entries verbatim, newest first - what
         quack believes, not what it would recall for some query. An
-        unreachable index is a 500; it never silently falls back to search or
-        returns a partial result. With `q`: runs the same embedding search a
-        live run's recall would use, so the tab can answer "what would a run
+        unreachable index is a 500 and an unconfigured one a 503; it never
+        silently falls back to search or returns a partial result. With `q`:
+        runs the same embedding search a live run's recall would use, so the
+        tab can answer "what would a run
         recall for this?" - entries then carry `score`, ordered descending,
         and are never paginated (a top-K search, not a stable page).
       parameters:
@@ -1122,6 +1123,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          $ref: "#/components/responses/MemoryDisabled"
 
   /api/v1/memories/{memory_id}:
     get:
@@ -1147,6 +1150,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          $ref: "#/components/responses/MemoryDisabled"
     delete:
       operationId: deleteMemory
       summary: Invalidate one memory
@@ -1172,6 +1177,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          $ref: "#/components/responses/MemoryDisabled"
 
   /api/v1/memories/{memory_id}/vote:
     post:
@@ -1220,6 +1227,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          $ref: "#/components/responses/MemoryDisabled"
 
   /api/v1/chats/{chat_id}/nodes/{node_id}/memories:
     get:
@@ -1280,6 +1289,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          $ref: "#/components/responses/MemoryDisabled"
 
   /api/v1/memories/rescope:
     post:
@@ -1306,6 +1317,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RescopeReport"
+        "503":
+          $ref: "#/components/responses/MemoryDisabled"
 
   /api/v1/memories/stats:
     get:
@@ -1334,6 +1347,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MemoryStats"
+        "503":
+          $ref: "#/components/responses/MemoryDisabled"
 
   /api/v1/plugins:
     get:
@@ -1526,6 +1541,13 @@ paths:
                 $ref: "#/components/schemas/PluginReloadError"
 
 components:
+  responses:
+    MemoryDisabled:
+      description: No vector store is configured, so memory is disabled (not empty)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
   parameters:
     ChatID:
       name: chat_id

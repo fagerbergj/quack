@@ -86,6 +86,14 @@ describe('MemoryTab', () => {
     expect(host!.textContent).toContain('index unreachable')
   })
 
+  it('shows memory as disabled, not empty or failed, when the server has no vector store', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ error: 'memory is disabled (no vector store configured)' }, 503))
+    await renderAndFlush()
+    expect(host!.textContent).toContain('Memory is disabled')
+    expect(host!.textContent).not.toContain('No memories yet')
+    expect(host!.querySelector('input[type="search"]')).toBeNull()
+  })
+
   it('issues DELETE only after the forget control is confirmed', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ memories: [MEMORY], total: 1 }))
     await renderAndFlush()
