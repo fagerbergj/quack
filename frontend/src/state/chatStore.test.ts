@@ -546,19 +546,28 @@ describe('ChatStore - mid-node steering', () => {
     expect(await sent()).toEqual({ method: 'PUT', path: '/api/v1/chats/c/nodes/a/status', body: JSON.stringify({ status: 'paused', reason: 'shutdown' }) })
   })
 
-  it('a rejected pause notes the server message on the node until clearNodeError', async () => {
+  it('a rejected pause notes the server message on the node until clearNodeError or the node finishes', async () => {
     const sse = `event: dag_plan\ndata: ${JSON.stringify({ plan_id: 'p', nodes: [{ id: 'a', agent: 'r', task: 't', depends_on: [] }], edges: [] })}\n\nevent: node_start\ndata: {"node_id":"a","agent":"r"}\n\n`
-    const open = new ReadableStream({ start(ctrl) { ctrl.enqueue(new TextEncoder().encode(sse)) } })
+    let push!: (s: string) => void
+    const open = new ReadableStream({ start(ctrl) { push = s => ctrl.enqueue(new TextEncoder().encode(s)); push(sse) } })
     fetchMock.mockResolvedValueOnce(new Response(open, { status: 200, headers: { 'Content-Type': 'text/event-stream' } }))
     void store.submit('c', 'go')
     await vi.waitFor(() => expect(store.get('c').live?.dag?.nodeStates['a']?.status).toBe('running'))
+    const nodeA = () => store.get('c').live?.dag?.nodeStates['a']
 
     fetchMock.mockResolvedValueOnce(jsonResponse({ error: 'illegal transition: queued -> paused' }, 409))
     store.pauseNode('c', 'a')
-    await vi.waitFor(() => expect(store.get('c').live?.dag?.nodeStates['a']?.error).toBe('illegal transition: queued -> paused'))
+    await vi.waitFor(() => expect(nodeA()?.error).toBe('illegal transition: queued -> paused'))
     store.clearNodeError('c', 'a')
-    expect(store.get('c').live?.dag?.nodeStates['a']?.error).toBeUndefined()
-    expect(store.get('c').live?.dag?.nodeStates['a']?.status).toBe('running')
+    expect(nodeA()?.error).toBeUndefined()
+    expect(nodeA()?.status).toBe('running')
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ error: 'illegal transition: queued -> paused' }, 409))
+    store.pauseNode('c', 'a')
+    await vi.waitFor(() => expect(nodeA()?.error).toBeDefined())
+    push('event: node_done\ndata: {"node_id":"a"}\n\n')
+    await vi.waitFor(() => expect(nodeA()?.status).toBe('done'))
+    expect(nodeA()?.error).toBeUndefined()
   })
 
   it('startNode POSTs an answer to the start endpoint', async () => {

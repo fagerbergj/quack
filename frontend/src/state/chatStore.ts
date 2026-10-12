@@ -842,7 +842,7 @@ export class ChatStore {
           // Freeze any run still counting - the node is done, so no run is live.
           updateNodeRuns(nodeId, r => freezeOpenRuns(r, finishedAt))
           updateNodeState(nodeId, {
-            status: 'done', finishedAt, outputPreview: preview,
+            status: 'done', finishedAt, outputPreview: preview, error: undefined,
             model: meta.model,
             promptTokens: meta.promptTokens,
             completionTokens: meta.completionTokens,
@@ -878,7 +878,7 @@ export class ChatStore {
           // Mid-node HITL: the node paused to ask the user. Freeze its open runs
           // and mark it waiting; the answer is delivered via startNode(chatId, nodeId, answer).
           updateNodeRuns(nodeId, r => freezeOpenRuns(r, Date.now()))
-          updateNodeState(nodeId, { status: 'needs_input', question: message, pauseReason: 'awaiting_input' })
+          updateNodeState(nodeId, { status: 'needs_input', question: message, pauseReason: 'awaiting_input', error: undefined })
         },
         onNodeSteered: (nodeId, guidance) => {
           // Re-running with new guidance in the same session: status stays 'running', since running->queued is illegal
