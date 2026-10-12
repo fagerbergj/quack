@@ -2,6 +2,7 @@ package dag
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -11,8 +12,9 @@ import (
 )
 
 // runDAGSubset runs retry-set nodes with seeded outputs for the rest; maxActive is a host-resource ceiling.
+// A paused node parks by ending in error; it and its dependents are left for the resume.
 // ponytail: migrate to native graph if ADK grows per-node seeding.
-func runDAGSubset(ctx adkagent.Context, plan Plan, gateNodes map[string]workflow.Node, maxActive int, seeded map[string]string, run map[string]bool) (map[string]string, error) {
+func runDAGSubset(ctx adkagent.Context, plan Plan, gateNodes map[string]workflow.Node, maxActive int, seeded map[string]string, run map[string]bool, paused func(string) bool) (map[string]string, error) {
 	if maxActive < 1 {
 		maxActive = 1
 	}
@@ -30,13 +32,9 @@ func runDAGSubset(ctx adkagent.Context, plan Plan, gateNodes map[string]workflow
 	for k, v := range seeded {
 		outputs[k] = v // reused outputs for nodes not being re-run
 	}
+	held := map[string]bool{}
 	for _, layer := range layers {
-		var todo []string
-		for _, nid := range layer {
-			if run[nid] {
-				todo = append(todo, nid)
-			}
-		}
+		todo := layerTodo(layer, nodeByID, run, held)
 		if len(todo) == 0 {
 			continue
 		}
@@ -68,6 +66,12 @@ func runDAGSubset(ctx adkagent.Context, plan Plan, gateNodes map[string]workflow
 
 				// WithUseSubBranch keeps concurrently re-run nodes' events branch-distinguishable.
 				out, rerr := workflow.RunNode[string](ctx, gateNodes[nid], in, workflow.WithUseSubBranch())
+				if rerr != nil && paused(nid) {
+					mu.Lock()
+					held[nid] = true
+					mu.Unlock()
+					return
+				}
 				if rerr != nil {
 					errs[i] = rerr
 					return
@@ -85,6 +89,19 @@ func runDAGSubset(ctx adkagent.Context, plan Plan, gateNodes map[string]workflow
 		}
 	}
 	return outputs, nil
+}
+
+// layerTodo: layer's nodes to run now; one behind a held (parked) dependency is held in turn.
+func layerTodo(layer []string, nodeByID map[string]Node, run, held map[string]bool) []string {
+	var todo []string
+	for _, nid := range layer {
+		if slices.ContainsFunc(nodeByID[nid].DependsOn, func(d string) bool { return held[d] }) {
+			held[nid] = true
+		} else if run[nid] {
+			todo = append(todo, nid)
+		}
+	}
+	return todo
 }
 
 // retrySet returns nodeID plus every node that transitively depends on it.

@@ -149,10 +149,10 @@ func (s *DagStream) Handle(ev *session.Event) bool {
 	return true
 }
 
-// Paused reports whether any node in this stream parked on a HITL question.
+// Paused reports whether any node in this stream parked, on a HITL question or a pause.
 func (s *DagStream) Paused() bool { return len(s.ds.needsInput) > 0 }
 
-// NeedsInput reports which nodes paused on a HITL question.
+// NeedsInput reports which nodes parked, on a HITL question or a pause; none of them has an output.
 func (s *DagStream) NeedsInput() map[string]bool { return s.ds.needsInput }
 
 // Started reports which run-set nodes reached running. A node behind a paused dependency can be
@@ -349,7 +349,7 @@ func (e *Executor) runSubset(ctx adkagent.Context, plan Plan, chatID string, see
 	if err != nil {
 		return nil, err
 	}
-	return runDAGSubset(ctx, plan, gateNodes, e.maxActive, seeded, run)
+	return runDAGSubset(ctx, plan, gateNodes, e.maxActive, seeded, run, func(id string) bool { return e.controls.pauseReason(chatID, id) != "" })
 }
 
 // resetNativeWorkerSession deletes nodeID's deterministic A2A worker session before a retry.
@@ -592,6 +592,11 @@ func (s *dagStream) handle(ev *session.Event) bool {
 		s.closeRun(node)
 		s.needsInput[node] = true
 		return s.emit(stream.NodeNeedsInput(node, ev.RequestedInput.InterruptID, ev.RequestedInput.Message))
+	}
+	if parked, _ := ev.CustomMetadata[parkedMeta].(bool); parked {
+		s.closeRun(node)
+		s.needsInput[node] = true
+		return s.emit(stream.NodePaused(node))
 	}
 
 	last := lastSeg(ev.NodeInfo.Path)

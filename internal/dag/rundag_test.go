@@ -69,7 +69,7 @@ func TestRunDAG_Layers(t *testing.T) {
 				all[n.ID] = true
 			}
 			var err error
-			out, err = runDAGSubset(ctx, plan, gateNodes, 2, nil, all)
+			out, err = runDAGSubset(ctx, plan, gateNodes, 2, nil, all, func(string) bool { return false })
 			return "done", err
 		}, workflow.NodeConfig{})
 	top, _ := workflowagent.New(workflowagent.Config{Name: "o", Edges: workflow.Chain(workflow.Start, orchestrate)})

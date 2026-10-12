@@ -338,7 +338,10 @@ func (o *Orchestrator) retryNodes(ctx context.Context, userID, chatID, planID st
 			ds.Handle(ev)
 		}
 		ds.Finish()
-		o.settleRetried(ctx, userID, chatID, plan, ds.Started(), nodeOutputs)
+		o.settleRetried(ctx, userID, chatID, plan, ds.Started(), ds.NeedsInput(), nodeOutputs)
+		if ds.Paused() {
+			return
+		}
 		started := ds.Started()
 		outputs, recStopped := o.withRecordedSinks(ctx, userID, chatID, plan, nodeOutputs, func(id string) bool { return started[id] })
 		if answer, _ := o.sinkAnswer(plan, outputs, chatID, recStopped); answer != "" {
@@ -365,7 +368,7 @@ func (o *Orchestrator) continueTargets(ctx context.Context, plan *dag.Plan, chat
 
 // settleRetried records a retry's fresh outputs on the dag_plan record, clearing an earlier stop:
 // otherwise later deliveries mask, and later nodes seed from, the stale stopped draft.
-func (o *Orchestrator) settleRetried(ctx context.Context, userID, chatID string, plan dag.Plan, started map[string]bool, outputs map[string]string) {
+func (o *Orchestrator) settleRetried(ctx context.Context, userID, chatID string, plan dag.Plan, started, parked map[string]bool, outputs map[string]string) {
 	if o.artifacts == nil {
 		return
 	}
@@ -387,7 +390,7 @@ func (o *Orchestrator) settleRetried(ctx context.Context, userID, chatID string,
 		switch {
 		case !started[a.NodeID]:
 		case a.TaskID == "":
-			tools.ApplyAssignmentOutcome(a, out, false, stopped)
+			tools.ApplyAssignmentOutcome(a, out, parked[a.NodeID], stopped)
 			changed = true
 		case strings.TrimSpace(out) != "" && !stopped:
 			a.Result, a.Stopped, changed = out, false, true

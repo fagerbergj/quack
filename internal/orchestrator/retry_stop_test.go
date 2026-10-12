@@ -468,3 +468,68 @@ func TestWithRecordedSinks_StaleRecordGraphResume(t *testing.T) {
 		t.Errorf("graph resume delivered %q, want c alone", got)
 	}
 }
+
+// TestResumeNodes_RepausedNodeStaysResumable: resuming two sinks where one is paused again keeps that
+// one without a task_id (not failed), holds its dependent, and delivers no half answer from the other.
+func TestResumeNodes_RepausedNodeStaysResumable(t *testing.T) {
+	started := make(chan struct{}, 1)
+	block := stopModel(started)
+	var m funcModel = func(ctx context.Context, req *model.LLMRequest) iter.Seq2[*model.LLMResponse, error] {
+		if strings.Contains(stubUserText(req), "TASK-1") {
+			return block(ctx, req)
+		}
+		return replyModel("N3 ANSWER")(ctx, req)
+	}
+	w, err := llmagent.New(llmagent.Config{Name: "w", Model: m, Description: "w", Instruction: "ROLE:w"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions := session.InMemoryService()
+	ex := dag.NewExecutor(sessions, map[string]adkagent.Agent{"w": w}, map[string]model.LLM{"w": m},
+		vetting.NewJudgeFactory(m, nil, nil), func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6} }, nil)
+	orch := New(sessions, nil, func(context.Context) string { return "" }, nil, ex, nil, nil, nil)
+	svc := artifact.InMemoryService()
+	orch.SetArtifacts(svc)
+	plan := dag.Plan{ID: "p", UserMessage: "go", Nodes: []dag.Node{
+		{ID: "n1", AgentName: "w", Task: "TASK-1"}, {ID: "n2", AgentName: "w", Task: "TASK-2", DependsOn: []string{"n1"}},
+		{ID: "n3", AgentName: "w", Task: "TASK-3"},
+	}}
+	planJSON, _ := json.Marshal(plan)
+	ctx := stream.WithTurnID(context.Background(), "turn-1")
+	if _, err := sessions.Create(ctx, &session.CreateRequest{AppName: AppName, UserID: "u", SessionID: "chat",
+		State: map[string]any{tools.ExecPlanKey: string(planJSON)}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := dag.SaveDagPlanRecord(ctx, svc, artifactref.AppName, "u", "chat", "", dag.DagPlanRecord{
+		PlanID: "p", Sinks: []string{"n2", "n3"}, Assignments: []dag.Assignment{
+			{NodeID: "n1", Task: "TASK-1"}, {NodeID: "n2", Task: "TASK-2", DependsOn: []string{"n1"}}, {NodeID: "n3", Task: "TASK-3"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		select {
+		case <-started:
+			orch.PauseNode("chat", "n1", dag.PauseUser)
+		case <-time.After(10 * time.Second):
+		}
+	}()
+	for range orch.ResumeNodes(ctx, "u", "chat", "p", nil, []string{"n1", "n3"}) {
+	}
+	rec, _, _, err := dag.LoadDagPlanRecord(ctx, svc, artifactref.AppName, "u", "chat")
+	if err != nil || len(rec.Assignments) != 3 {
+		t.Fatalf("record = %+v err=%v", rec, err)
+	}
+	if a := rec.Assignments[0]; a.TaskID != "" {
+		t.Errorf("re-paused n1 = %+v; want no task_id, still to resume", a)
+	}
+	if a := rec.Assignments[1]; a.TaskID != "" {
+		t.Errorf("n2 = %+v; want untouched behind its paused dependency", a)
+	}
+	if a := rec.Assignments[2]; a.Result != "N3 ANSWER" {
+		t.Errorf("n3 = %+v; want its fresh result recorded", a)
+	}
+	if got := orch.LatestAnswer(ctx, "u", "chat"); got != "" {
+		t.Errorf("answer = %q; a paused run must not deliver its other sink alone", got)
+	}
+}
