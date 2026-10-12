@@ -512,8 +512,8 @@ func New(sessions session.Service, m model.LLM, sysPrompt func(context.Context) 
 	}
 }
 
-// Run processes message as the orchestrator agent and yields SSE events. source attributes
-// token usage/cost: an extension's registration name, or SourceApp.
+// Run processes message as the orchestrator agent; source attributes token usage/cost (SourceApp or an extension).
+// Like RunBoundPlan, StartNode and retryNodes it yields no stream.Done(): each driver publishes the run's one done.
 func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, message string, attachments []*genai.Part) iter.Seq2[stream.SSEEvent, error] {
 	// An earlier turn's plan rejection must not explain this turn's failures.
 	inference.ClearPlanRejection(sessionID)
