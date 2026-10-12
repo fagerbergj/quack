@@ -29,7 +29,9 @@ type SendResult struct {
 	Status   string `json:"status"`
 	Answer   string `json:"answer,omitempty"`
 	Question string `json:"question,omitempty"`
-	Error    string `json:"error,omitempty"`
+	// Options are a get_user_choice question's choices; empty for a free-text question.
+	Options []string `json:"options,omitempty"`
+	Error   string   `json:"error,omitempty"`
 }
 
 // streamState accumulates a run's outcome from SSE events, shared by send (POST) and follow (GET)
@@ -43,6 +45,7 @@ type streamState struct {
 	cancelled map[string]bool // node_id the user stopped
 	lastNode  string          // last node to finish (terminal completes last)
 	question  string          // set once a pause is observed
+	options   []string        // the question's choices, when it offered any
 }
 
 func newStreamState() *streamState {
@@ -150,7 +153,7 @@ func (s *streamState) onToolCall(data json.RawMessage) {
 		s.orch.Reset()
 	}
 	if q, ok := d.Args["question"].(string); ok && q != "" && d.Name == getUserChoiceTool {
-		s.question = q
+		s.question, s.options = q, stringList(d.Args["options"])
 	}
 }
 
@@ -161,7 +164,7 @@ func (s *streamState) result(chatID string) SendResult {
 		return SendResult{ChatID: chatID, Status: StatusFailed, Error: s.err.Error()}
 	}
 	if s.question != "" {
-		return SendResult{ChatID: chatID, Status: StatusNeedsInput, Question: s.question}
+		return SendResult{ChatID: chatID, Status: StatusNeedsInput, Question: s.question, Options: s.options}
 	}
 	answer := s.sinkSections()
 	if answer == "" {
@@ -229,9 +232,10 @@ func Report(out, errOut io.Writer, chatID string, r SendResult, asJSON bool) int
 	}
 	switch r.Status {
 	case StatusFailed:
-		fmt.Fprintln(errOut, r.Error+dialFailureHint(r.Error))
+		fmt.Fprintln(errOut, "Error: "+r.Error+dialFailureHint(r.Error))
 	case StatusNeedsInput:
 		fmt.Fprintf(out, "question: %s\n", r.Question)
+		printOptions(out, r.Options)
 		fmt.Fprintf(errOut, "answer with: quack chat send %s \"...\"\n", chatID)
 	default:
 		if r.Answer != "" {
@@ -268,7 +272,7 @@ func exitCode(status string) int {
 func RunChatSend(ctx context.Context, out, errOut io.Writer, server, id, content string, attachPaths []string, showEvents, asJSON bool) int {
 	c, err := NewClient(ctx, server)
 	if err != nil {
-		fmt.Fprintln(errOut, err)
+		fmt.Fprintln(errOut, "Error:", err)
 		return 1
 	}
 	var events io.Writer
@@ -284,15 +288,34 @@ func RunChatSend(ctx context.Context, out, errOut io.Writer, server, id, content
 func PrintPrompt(ctx context.Context, out, errOut, events io.Writer, server, prompt string, attachPaths []string, asJSON bool) int {
 	c, err := NewClient(ctx, server)
 	if err != nil {
-		fmt.Fprintln(errOut, err)
+		fmt.Fprintln(errOut, "Error:", err)
 		return 1
 	}
 	chatID, err := c.CreateChat(ctx, "")
 	if err != nil {
-		fmt.Fprintln(errOut, err)
+		fmt.Fprintln(errOut, "Error:", err)
 		return 1
 	}
 	fmt.Fprintf(errOut, "chat: %s\n", chatID)
 	res := send(ctx, c, chatID, prompt, attachPaths, events)
 	return Report(out, errOut, chatID, res, asJSON)
+}
+
+// stringList reads a JSON array of strings (a tool call's decoded args), skipping non-strings.
+func stringList(v any) []string {
+	arr, _ := v.([]any)
+	var out []string
+	for _, e := range arr {
+		if str, ok := e.(string); ok && str != "" {
+			out = append(out, str)
+		}
+	}
+	return out
+}
+
+// printOptions lists a question's choices under its "question:" line, in the order the UI shows them.
+func printOptions(out io.Writer, options []string) {
+	for i, o := range options {
+		fmt.Fprintf(out, "  %d. %s\n", i+1, o)
+	}
 }

@@ -62,6 +62,52 @@ func TestRunChatShow(t *testing.T) {
 	}
 }
 
+// TestRunChatShowArchivedAndChoice: an archived chat says so in text mode (not only in --json), and a
+// pending get_user_choice question lists its options; an answered (non-pending) call is ignored.
+func TestRunChatShowArchivedAndChoice(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	const detail = `{
+	  "id":"c1","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z",
+	  "system_prompt":"","status":"needs_input","archived":true,"pending_question":"Which language?",
+	  "turns":[{"id":"t1","created_at":"2026-01-01T00:00:00Z","input":{"role":"user","content":"x"},
+	    "output":[{"type":"quack:activity","id":"a1","status":"completed","tool_calls":[
+	      {"call_id":"k0","name":"get_user_choice","args":{"question":"Old?","options":["A"]},"result":{"choice":"A"}},
+	      {"call_id":"k1","name":"get_user_choice","args":{"question":"Which language?","options":["Rust","Go"]},"result":{"status":"pending"}}
+	    ]}]}]
+	}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		io.WriteString(w, detail)
+	}))
+	defer srv.Close()
+
+	var out, errOut bytes.Buffer
+	if code := RunChatShow(context.Background(), &out, &errOut, srv.URL, "c1", false, false); code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+	for _, want := range []string{"archived: yes", "question: Which language?\n  1. Rust\n  2. Go\n"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("chat show output missing %q:\n%s", want, out.String())
+		}
+	}
+}
+
+// TestRunChatShowNotFoundPrefixed: a missing chat reads like every other CLI error ("Error: ...").
+func TestRunChatShowNotFoundPrefixed(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	var out, errOut bytes.Buffer
+	if code := RunChatShow(context.Background(), &out, &errOut, srv.URL, "nope", false, false); code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	if got, want := errOut.String(), "Error: chat nope not found\n"; got != want {
+		t.Errorf("stderr = %q, want %q", got, want)
+	}
+}
+
 // chatShowReasoningLeakJSON mixes a reasoning part ahead of output_text; both share a {text,type}
 // shape, so a naive AsOutputTextPart() check would leak the thinking.
 const chatShowReasoningLeakJSON = `{

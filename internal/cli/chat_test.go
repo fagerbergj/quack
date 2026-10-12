@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -613,6 +614,42 @@ func TestRunChatArchive(t *testing.T) {
 	}
 }
 
+// TestRunChatRenameRejectedIsServerMessage: a 400 surfaces the server's reason alone, not "PATCH .../chats/<id>: HTTP 400: ...".
+func TestRunChatRenameRejectedIsServerMessage(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		io.WriteString(w, `{"error":"at least one of title or archived must be provided"}`)
+	}))
+	defer srv.Close()
+	err := RunChatRename(context.Background(), io.Discard, srv.URL, "c1", "")
+	if err == nil || err.Error() != "at least one of title or archived must be provided" {
+		t.Fatalf("err = %v, want only the server's message", err)
+	}
+}
+
+// TestNewClientWithoutServer: with no --server and nothing registered there is no URL to call, so the
+// client says how to name one instead of dialing "" and failing with `unsupported protocol scheme ""`.
+func TestNewClientWithoutServer(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	_, err := NewClient(context.Background(), "")
+	if err == nil || !strings.Contains(err.Error(), "--server") {
+		t.Fatalf("err = %v, want one naming --server", err)
+	}
+}
+
+// TestChatListStatusesMatchValidation: every advertised --status value validates, and queued (not a chat status) does not.
+func TestChatListStatusesMatchValidation(t *testing.T) {
+	for _, s := range ChatStatuses {
+		if err := (chatListFilters{status: s}).validate(); err != nil {
+			t.Errorf("advertised --status %q rejected: %v", s, err)
+		}
+	}
+	if slices.Contains(ChatStatuses, "queued") || (chatListFilters{status: "queued"}).validate() == nil {
+		t.Error("queued is a node status, not a chat status: it must be neither advertised nor accepted")
+	}
+}
+
 func TestRunChatArchiveNotFound(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -648,6 +685,29 @@ func TestRunChatStop(t *testing.T) {
 	}
 	if !cancelled {
 		t.Error("stop should PUT the response status to cancelled")
+	}
+	if !strings.Contains(out.String(), "Stopped the active run on chat c1") {
+		t.Errorf("output = %q, want it to say the active run was stopped", out.String())
+	}
+}
+
+// TestRunChatStopNothingRunning: a stale response id (no live run) says nothing was stopped.
+func TestRunChatStopNothingRunning(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_ = json.NewEncoder(w).Encode(schema.ChatDetail{Status: schema.ChatStatusIdle, Turns: []schema.Turn{{Id: "t1"}}})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	var out bytes.Buffer
+	if err := RunChatStop(context.Background(), &out, srv.URL, "c1", false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "nothing was stopped") {
+		t.Errorf("output = %q, want it to say nothing was stopped", out.String())
 	}
 }
 

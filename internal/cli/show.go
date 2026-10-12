@@ -15,12 +15,12 @@ import (
 func RunChatShow(ctx context.Context, out, errOut io.Writer, server, id string, asJSON, follow bool) int {
 	c, err := NewClient(ctx, server)
 	if err != nil {
-		fmt.Fprintln(errOut, err)
+		fmt.Fprintln(errOut, "Error:", err)
 		return 1
 	}
 	detail, err := c.GetChat(ctx, id)
 	if err != nil {
-		fmt.Fprintln(errOut, notFoundAs(err, id))
+		fmt.Fprintln(errOut, "Error:", notFoundAs(err, id))
 		return 1
 	}
 	if asJSON {
@@ -50,12 +50,16 @@ func printChatSnapshot(out io.Writer, d schema.ChatDetail) {
 	fmt.Fprintf(out, "id:     %s\n", d.Id)
 	fmt.Fprintf(out, "title:  %s\n", chatTitle(d.Title))
 	fmt.Fprintf(out, "status: %s\n", d.Status)
+	if d.Archived != nil && *d.Archived {
+		fmt.Fprintln(out, "archived: yes (read-only; `quack chat unarchive` to continue it)")
+	}
 	if d.GithubUrl != nil && *d.GithubUrl != "" {
 		fmt.Fprintf(out, "github: %s\n", *d.GithubUrl)
 		fmt.Fprintf(out, "ref:    %s\n", githubRefLabel(schema.ChatSummary{GithubUrl: d.GithubUrl, GithubRepo: d.GithubRepo}))
 	}
 	if d.PendingQuestion != nil && *d.PendingQuestion != "" {
 		fmt.Fprintf(out, "question: %s\n", *d.PendingQuestion)
+		printOptions(out, pendingChoiceOptions(d.Turns))
 	}
 	if dagItem, ok := lastTurnDag(d.Turns); ok {
 		fmt.Fprintln(out)
@@ -67,6 +71,26 @@ func printChatSnapshot(out io.Writer, d schema.ChatDetail) {
 			fmt.Fprintln(out, answer)
 		}
 	}
+}
+
+// pendingChoiceOptions: the last turn's unanswered get_user_choice options; the call still holds its
+// {status:"pending"} placeholder until answered (frontend messageParts.ts pendingChoice).
+func pendingChoiceOptions(turns []schema.Turn) []string {
+	if len(turns) == 0 {
+		return nil
+	}
+	for _, it := range turns[len(turns)-1].Output {
+		a, err := it.AsAgentActivityOutputItem()
+		if err != nil || a.Type != schema.QuackActivity {
+			continue
+		}
+		for _, tc := range a.ToolCalls {
+			if tc.Name == getUserChoiceTool && tc.Args != nil && tc.Result != nil && (*tc.Result)["status"] == "pending" {
+				return stringList((*tc.Args)["options"])
+			}
+		}
+	}
+	return nil
 }
 
 // lastTurnDag returns the last turn's quack:dag output item, if any.

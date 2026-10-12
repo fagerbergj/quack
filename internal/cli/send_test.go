@@ -79,6 +79,51 @@ func TestRunChatSendNeedsInput(t *testing.T) {
 	}
 }
 
+// TestRunChatSendChoiceOptions: a get_user_choice question prints its options under the question,
+// as the UI shows them as chips, and --json carries them.
+func TestRunChatSendChoiceOptions(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, `event: agent_tool_call`+"\n"+`data: {"call_id":"k1","name":"get_user_choice","args":{"question":"Which language?","options":["Rust","Go"]}}`+"\n\n")
+		io.WriteString(w, "event: done\ndata: {}\n\n")
+	}))
+	defer srv.Close()
+
+	var out, errOut bytes.Buffer
+	if code := RunChatSend(context.Background(), &out, &errOut, srv.URL, "c1", "hi", nil, false, false); code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+	if got, want := out.String(), "question: Which language?\n  1. Rust\n  2. Go\n"; got != want {
+		t.Errorf("stdout = %q, want %q", got, want)
+	}
+	out.Reset()
+	RunChatSend(context.Background(), &out, &errOut, srv.URL, "c1", "hi", nil, false, true)
+	var res SendResult
+	if err := json.Unmarshal(out.Bytes(), &res); err != nil || strings.Join(res.Options, ",") != "Rust,Go" {
+		t.Errorf("json options = %v (err %v), want [Rust Go]", res.Options, err)
+	}
+}
+
+// TestRunChatSendRejectedPrintsServerMessage: a refused send prints the server's own reason, prefixed
+// like cobra's errors, with no method, URL or HTTP status noise.
+func TestRunChatSendRejectedPrintsServerMessage(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		io.WriteString(w, `{"error":"chat is archived; unarchive it before sending a message"}`)
+	}))
+	defer srv.Close()
+
+	var out, errOut bytes.Buffer
+	if code := RunChatSend(context.Background(), &out, &errOut, srv.URL, "c1", "hi", nil, false, false); code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	if got, want := errOut.String(), "Error: chat is archived; unarchive it before sending a message\n"; got != want {
+		t.Errorf("stderr = %q, want %q", got, want)
+	}
+}
+
 // TestRunChatSendFailed: a stream error is a failure - exit 1, message on
 // stderr, empty stdout (plan test case 6).
 func TestRunChatSendFailed(t *testing.T) {

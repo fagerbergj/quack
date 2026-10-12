@@ -97,14 +97,17 @@ func NewChatListFilters(origin, status, repo, kind, archived string) chatListFil
 	return chatListFilters{origin: origin, status: status, repo: repo, kind: kind, archived: archived}
 }
 
+// ChatStatuses are the schema.ChatStatus values `chat list --status` accepts; its help text reads this list.
+var ChatStatuses = []string{
+	string(schema.ChatStatusIdle), string(schema.ChatStatusRunning), string(schema.ChatStatusNeedsInput), string(schema.ChatStatusFailed),
+}
+
 func (f chatListFilters) validate() error {
 	if f.origin != "" && f.origin != "all" && f.origin != "github" && f.origin != "direct" {
 		return fmt.Errorf("--filter must be one of all, github, direct (got %q)", f.origin)
 	}
-	switch f.status {
-	case "", "idle", "running", "needs_input", "failed":
-	default:
-		return fmt.Errorf("--status must be one of idle, running, needs_input, failed (got %q)", f.status)
+	if f.status != "" && !slices.Contains(ChatStatuses, f.status) {
+		return fmt.Errorf("--status must be one of %s (got %q)", strings.Join(ChatStatuses, ", "), f.status)
 	}
 	switch f.kind {
 	case "", "issue", "pr":
@@ -266,7 +269,7 @@ func RunChatStop(ctx context.Context, out io.Writer, server, id string, asJSON b
 	if err != nil {
 		return err
 	}
-	noneActive := nodeActionResult{ChatID: id, Action: "none", Message: fmt.Sprintf("No active run on chat %s.", id)}
+	noneActive := nodeActionResult{ChatID: id, Action: "none", Message: fmt.Sprintf("No active run on chat %s; nothing was stopped.", id)}
 	detail, err := c.GetChat(ctx, id)
 	if err != nil {
 		return notFoundAs(err, id)
@@ -285,7 +288,7 @@ func RunChatStop(ctx context.Context, out io.Writer, server, id string, asJSON b
 		}
 		return err
 	}
-	return reportAction(out, asJSON, nodeActionResult{ChatID: id, Action: "stopped", Message: fmt.Sprintf("Stopped any active run on chat %s.", id)})
+	return reportAction(out, asJSON, nodeActionResult{ChatID: id, Action: "stopped", Message: fmt.Sprintf("Stopped the active run on chat %s (turn %s).", id, responseID)})
 }
 
 // RunChatRename is `quack chat rename <id> <title>`: PATCH the chat's title.

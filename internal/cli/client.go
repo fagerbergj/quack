@@ -30,7 +30,7 @@ type Client struct {
 	HTTP    *http.Client
 }
 
-// NewClient resolves the server URL (override, then active registry, then localhost). A registered server
+// NewClient resolves the server URL (override, then the active registered server). A registered server
 // with a stored OIDC session gets a Bearer token, refreshed if near expiry; ctx bounds only that refresh.
 func NewClient(ctx context.Context, override string) (*Client, error) {
 	cc, err := LoadClient()
@@ -38,6 +38,9 @@ func NewClient(ctx context.Context, override string) (*Client, error) {
 		return nil, err
 	}
 	url := strings.TrimRight(cc.ActiveURL(override), "/")
+	if url == "" {
+		return nil, errors.New("no quack server to talk to: pass --server <url>, or register one with `quack server add <name> <url>`")
+	}
 	httpClient := &http.Client{Transport: httpx.NewTransport(nil)}
 	if name, ref, ok := cc.findByURL(url); ok && ref.Auth != nil {
 		token, err := ensureFreshToken(ctx, cc, name, ref)
@@ -110,7 +113,7 @@ func (c *Client) UpdateChat(ctx context.Context, id string, title *string, archi
 		return out, wrapNotFound(errBody(bytes.NewReader(respBody)))
 	}
 	if status >= 400 {
-		return out, fmt.Errorf("PATCH .../chats/%s: %s", id, errStatus(status, respBody))
+		return out, httpFailure(status, respBody)
 	}
 	return out, json.Unmarshal(respBody, &out)
 }
@@ -184,7 +187,7 @@ func (c *Client) FetchArtifact(ctx context.Context, chatID, artifactName string,
 		return nil, ErrNotFound
 	}
 	if status >= 400 {
-		return nil, fmt.Errorf("GET .../artifacts/%s: %s", artifactName, errStatus(status, body))
+		return nil, httpFailure(status, body)
 	}
 	return body, nil
 }
@@ -331,7 +334,7 @@ func (c *Client) QueueNodeMessage(ctx context.Context, chatID, nodeID, text stri
 		return out, wrapNotFound(errBody(bytes.NewReader(respBody)))
 	}
 	if status >= 400 {
-		return out, httpFailure(http.MethodPost, ".../queue", status, respBody)
+		return out, httpFailure(status, respBody)
 	}
 	return out, json.Unmarshal(respBody, &out)
 }
@@ -366,7 +369,7 @@ func (c *Client) sendBody(ctx context.Context, method, path string, body any) er
 		return wrapNotFound(errBody(bytes.NewReader(respBody)))
 	}
 	if status >= 400 {
-		return httpFailure(method, path, status, respBody)
+		return httpFailure(status, respBody)
 	}
 	return nil
 }
@@ -411,7 +414,7 @@ func (c *Client) getJSON(ctx context.Context, path string, out any) error {
 		return ErrNotFound
 	}
 	if status >= 400 {
-		return fmt.Errorf("GET %s: %s", path, errStatus(status, body))
+		return httpFailure(status, body)
 	}
 	return json.Unmarshal(body, out)
 }
@@ -427,7 +430,7 @@ func (c *Client) send(ctx context.Context, method, path string) error {
 		return wrapNotFound(errBody(bytes.NewReader(body)))
 	}
 	if status >= 400 {
-		return httpFailure(method, path, status, body)
+		return httpFailure(status, body)
 	}
 	return nil
 }
@@ -438,9 +441,9 @@ type ConflictError struct{ Msg, Current string }
 
 func (e *ConflictError) Error() string { return e.Msg }
 
-// httpFailure is the one place a >=400 response becomes an error, so every
-// command renders a 409 the same way instead of echoing the raw exchange.
-func httpFailure(method, path string, status int, body []byte) error {
+// httpFailure is the one place a >=400 response becomes an error: the server's own
+// message, never the method/URL exchange, and a 409 as a ConflictError.
+func httpFailure(status int, body []byte) error {
 	if status == http.StatusConflict {
 		var te struct {
 			Current string `json:"current"`
@@ -448,20 +451,14 @@ func httpFailure(method, path string, status int, body []byte) error {
 		_ = json.Unmarshal(body, &te)
 		return &ConflictError{Msg: errBody(bytes.NewReader(body)), Current: te.Current}
 	}
-	return fmt.Errorf("%s %s: %s", method, path, errStatus(status, body))
-}
-
-// errStatus renders a 4xx/5xx as "HTTP <status>: <server's reason>" using the
-// server's schema.ErrorResponse body when present, else just the status.
-func errStatus(status int, body []byte) string {
 	if msg := errBody(bytes.NewReader(body)); msg != "" {
-		return fmt.Sprintf("HTTP %d: %s", status, msg)
+		return errors.New(msg)
 	}
-	return fmt.Sprintf("HTTP %d", status)
+	return fmt.Errorf("server answered HTTP %d", status)
 }
 
 // readAll reads r best-effort - "" on any error, since it only ever feeds an
-// already-failed response's body into errStatus for a nicer message.
+// already-failed response's body into httpFailure for a nicer message.
 func readAll(r io.Reader) []byte {
 	b, _ := io.ReadAll(io.LimitReader(r, 4096))
 	return b
@@ -478,7 +475,7 @@ func (c *Client) FetchRecording(ctx context.Context, chatID string) ([]byte, err
 		return nil, ErrNotFound
 	}
 	if status >= 400 {
-		return nil, fmt.Errorf("GET .../recording: %s", errStatus(status, body))
+		return nil, httpFailure(status, body)
 	}
 	return body, nil
 }
@@ -651,7 +648,7 @@ func (c *Client) subscribeSSEOnce(ctx context.Context, chatID, lastID string, on
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("subscribe: %s", errStatus(resp.StatusCode, readAll(resp.Body)))
+		return httpFailure(resp.StatusCode, readAll(resp.Body))
 	}
 	return parseSSE(resp.Body, onEvent)
 }
@@ -673,7 +670,7 @@ func (c *Client) SendMessage(ctx context.Context, chatID, content string, onEven
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("send message: %s", errStatus(resp.StatusCode, readAll(resp.Body)))
+		return httpFailure(resp.StatusCode, readAll(resp.Body))
 	}
 	return parseSSE(resp.Body, onEvent)
 }
@@ -724,7 +721,7 @@ func (c *Client) SendMessageWithFiles(ctx context.Context, chatID, content strin
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("send message: %s", errStatus(resp.StatusCode, readAll(resp.Body)))
+		return httpFailure(resp.StatusCode, readAll(resp.Body))
 	}
 	return parseSSE(resp.Body, onEvent)
 }
@@ -744,7 +741,7 @@ func (c *Client) postJSON(ctx context.Context, path string, v, out any) error {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("POST %s: %s", path, errStatus(resp.StatusCode, readAll(resp.Body)))
+		return httpFailure(resp.StatusCode, readAll(resp.Body))
 	}
 	if out == nil {
 		return nil
