@@ -105,10 +105,13 @@ func TestNodeOverA2A_ReusedAcrossSeparateRunPlanAsGraphInvocations(t *testing.T)
 
 // testNativeWorker mirrors serve's nativeAgent.build: a fresh per-node A2A server, a client
 // scoped to WorkerSessionID(chat, node), and a release that never deletes the session.
-type testNativeWorker struct{ adkagent.Agent }
+type testNativeWorker struct {
+	adkagent.Agent
+	comp quackagent.Compaction
+}
 
 func (w testNativeWorker) ForNode(_ context.Context, nodeKey, _ string, _ artifact.Service, _, _, chatID, nodeID string, sink func(stream.SSEEvent)) (adkagent.Agent, model.LLM, []tool.Tool, ledger.CoordSetter, func(round int, turnID, headSHA, triggerAnnotation string), func(context.Context) artifactsrc.Artifact, func(paused bool), error) {
-	srv, err := quackagent.Serve(w.Agent, testNativeWorkerSessions, nil, nil, quackagent.Compaction{}, nodeID, sink)
+	srv, err := quackagent.Serve(w.Agent, testNativeWorkerSessions, nil, nil, w.comp, nodeID, sink)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, err
 	}

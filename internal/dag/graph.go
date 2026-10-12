@@ -103,6 +103,9 @@ func (e *Executor) buildGateNodes(ctx context.Context, plan Plan, chatID, userID
 		cfg.Schemas = e.schemas
 		cfg.Decisions = e.decisions
 		cfg.RepairSession = func(ctx context.Context) bool { return e.repairNativeWorkerSession(ctx, plan, chatID, node.ID) }
+		if node.Continue {
+			cfg.PriorEvents = e.priorWorkerEvents(ctx, plan, chatID, node.ID)
+		}
 		cfg.RoundCoordsSink = setRoundCoords
 		cfg.RefreshPrompt = refreshPrompt
 		cfg.JudgeArtifactTools = judgeArtifactTools

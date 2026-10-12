@@ -491,7 +491,7 @@ func newGateRun(ctx adkagent.Context, nodeID string, workerNode workflow.Node, w
 		if ownOnly {
 			id = nodeID // event paths carry the plan node id; cfg.NodeID can be a shared workspace scope
 		}
-		act := scanSessionActivity(ctx.Session(), nodeDir, id, ownOnly, cfg.ForeignNodes)
+		act := scanSessionActivity(ctx.Session(), nodeDir, id, ownOnly, cfg.ForeignNodes, cfg.PriorEvents...)
 		augmentFromRepo(probeCtx, &act, cfg)
 		return act
 	}
@@ -2606,9 +2606,9 @@ func activityFromSessionAt(sess session.Session, nodeDir, nodeID string) workerA
 	return scanSessionActivity(sess, nodeDir, nodeID, false, nil)
 }
 
-// scanSessionActivity: ownOnly skips every event another node produced; foreign skips
-// only those plan nodes' events, keeping upstream and orchestrator activity.
-func scanSessionActivity(sess session.Session, nodeDir, nodeID string, ownOnly bool, foreign []string) workerActivity {
+// scanSessionActivity: ownOnly skips every event another node produced; foreign skips only those plan nodes'
+// events, keeping upstream and orchestrator activity. prior (a continued node's interrupted attempt) comes first.
+func scanSessionActivity(sess session.Session, nodeDir, nodeID string, ownOnly bool, foreign []string, prior ...*session.Event) workerActivity {
 	s := &activityScanner{
 		ownOnly:          ownOnly,
 		foreign:          foreign,
@@ -2623,6 +2623,9 @@ func scanSessionActivity(sess session.Session, nodeDir, nodeID string, ownOnly b
 		pendingLegacyURL: map[string]string{},
 		pendingData:      map[string]pendingDataCall{},
 		pendingRead:      map[string]string{},
+	}
+	for _, ev := range prior {
+		s.scanEvent(ev)
 	}
 	if sess == nil {
 		return s.act
