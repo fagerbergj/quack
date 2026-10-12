@@ -121,7 +121,7 @@ func (e *Executor) NewDagStream(ctx context.Context, plan Plan, appName, userID,
 		attemptStartByID[n.ID] = n.AttemptStartedAt
 	}
 	ds := newDagStream(otelobs.TraceIDOf(ctx), cancelKey, agentByID, scopeByID, yield, nodeOutputs, func(nodeID string) gateScore {
-		return e.gateScore(ctx, appName, userID, sessionID, nodeID)
+		return e.gateScore(ctx, appName, userID, sessionID, cancelKey, nodeID)
 	}, func(nodeID string) bool {
 		return e.controls.wasCancelled(cancelKey, nodeID)
 	}, func(nodeID string) PauseReason {
@@ -434,10 +434,11 @@ func (e *Executor) recordGateResult(chatID, nodeID string, score float64, passed
 	e.gateResults.Store(gateResultKey(chatID, nodeID), gateScore{score: score, passed: passed, rounds: rounds, contextID: contextID})
 }
 
-func (e *Executor) gateScore(ctx context.Context, appName, userID, sessionID, nodeID string) gateScore {
+// gateScore: recordGateResult keys by chatID, which a retry's run session (chatID::retry) is not.
+func (e *Executor) gateScore(ctx context.Context, appName, userID, sessionID, chatID, nodeID string) gateScore {
 	var g gateScore
 	// In-process first: state write is a delta not yet appended when node_done is assembled.
-	if v, ok := e.gateResults.Load(gateResultKey(sessionID, nodeID)); ok {
+	if v, ok := e.gateResults.Load(gateResultKey(chatID, nodeID)); ok {
 		if got, ok := v.(gateScore); ok {
 			return got
 		}
