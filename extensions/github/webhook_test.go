@@ -378,8 +378,7 @@ func TestTriggerTaskLineStart(t *testing.T) {
 	}
 }
 
-// Dispatch shapes an sdk.DispatchRequest and stores the pendingRun BEFORE calling Host.Dispatch,
-// since RunEnded can fire as soon as Dispatch returns.
+// Dispatch shapes an sdk.DispatchRequest and stores the pendingRun once Host.Dispatch accepts it.
 func TestDispatchBuildsRequestAndStoresPending(t *testing.T) {
 	posted := make(chan string, 1)
 	srv := stubGitHub(t, posted)
@@ -410,7 +409,7 @@ func TestDispatchBuildsRequestAndStoresPending(t *testing.T) {
 	chatID := globalChatID("github-acme-widgets-7")
 	v, ok := e.pending.Load(chatID)
 	if !ok {
-		t.Fatalf("pending[%q] not stored before Dispatch returned", chatID)
+		t.Fatalf("pending[%q] not stored after Dispatch accepted the run", chatID)
 	}
 	if v.(*pendingRun).isReview {
 		t.Error("a free-form mention must not be marked as a review run")
@@ -3987,6 +3986,7 @@ func TestRunEndedAfterRestartStillFinalizesAndMerges(t *testing.T) {
 		t.Fatalf("status = %d", rec.Code)
 	}
 	fh.waitForDispatch(t, 2*time.Second)
+	ext.Wait() // the row is written once Dispatch returns
 
 	if row, err := st.GetPendingRun(context.Background(), chatID); err != nil || row == nil {
 		t.Fatalf("GetPendingRun = %+v, %v; want the dispatch to have persisted a row", row, err)
@@ -4039,7 +4039,7 @@ func TestRunEndedWithNoPendingDispatchDropsOutcome(t *testing.T) {
 	}
 }
 
-// A Dispatch failure must delete the row SetPendingRun just wrote, like finalize's success-path defers.
+// A failed Dispatch must leave no pending row behind.
 func TestDispatchFailureDeletesPendingRunRow(t *testing.T) {
 	st, err := openStore(t.TempDir())
 	if err != nil {

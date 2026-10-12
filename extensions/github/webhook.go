@@ -774,34 +774,33 @@ func (e *Extension) dispatch(p issueCommentPayload, task string) {
 		Delivery: sdk.DeliveryAuthority{AllowedKinds: sdkDeliveryKinds(allowedKinds)},
 	}
 
-	// Stored BEFORE Dispatch: RunEnded can fire as soon as Dispatch returns.
-	e.pending.Store(chatID, &pendingRun{
+	pr := &pendingRun{
 		sessionID: sessionID, claimedAt: claimedAt, owner: owner, repo: repo, number: number,
 		isPR: isPR, login: login, gh: gh, isPlan: isPlan, isLabelTrigger: p.isLabelTrigger, explain: p.explain,
 		isReview: task == autoReviewTask, dispatched: req, defaultBranch: p.Repository.DefaultBranch, installationID: p.Installation.ID,
-	})
-	// Durable twin of e.pending, so a run resumed after a restart can still be finalized.
-	if err := e.store.SetPendingRun(ctx, PendingRunRow{
+	}
+	row := PendingRunRow{
 		ChatID: chatID, SessionID: sessionID, Owner: owner, Repo: repo, Number: number,
 		IsPR: isPR, Login: login, IsPlan: isPlan, IsLabelTrigger: p.isLabelTrigger,
 		CommentID: p.Comment.ID, DefaultBranch: p.Repository.DefaultBranch,
 		InstallationID: p.Installation.ID, CloneURL: p.Repository.CloneURL,
-	}); err != nil {
-		slog.Warn("github: SetPendingRun failed; a restart before this run ends will drop its outcome",
-			"component", "github", "repo", owner+"/"+repo, "issue", number, "err", err)
 	}
-
-	slog.Info("github run dispatched", "component", "github", "repo", owner+"/"+repo, "issue", number)
-	if err := e.host.Dispatch(ctx, req); err != nil {
-		slog.Error("github: dispatch failed", "component", "github", "repo", owner+"/"+repo, "issue", number, "err", err)
-		e.pending.Delete(chatID)
+	err := e.dispatchAndRecord(ctx, req, pr, row)
+	switch {
+	case errors.Is(err, sdk.ErrRunInFlight):
+		// Not a failure: the chat's live run (a UI turn, a boot resume, a run past its lease) keeps its
+		// record, and this trigger is dropped exactly as claimOrAck drops a duplicate.
+		slog.Info("github: chat already has a live run; dropping this trigger",
+			"component", "github", "sessionID", sessionID, "repo", owner+"/"+repo, "issue", number)
 		clearInflight()
-		// Keep the in-memory and durable records in lockstep; finalize does this on success paths.
-		if derr := e.store.DeletePendingRun(ctx, chatID); derr != nil {
-			slog.Warn("github: DeletePendingRun after failed dispatch", "component", "github", "repo", owner+"/"+repo, "issue", number, "err", derr)
-		}
+		e.ackDuplicate(p, sessionID, owner, repo, number)
+		return
+	case err != nil:
+		slog.Error("github: dispatch failed", "component", "github", "repo", owner+"/"+repo, "issue", number, "err", err)
+		clearInflight()
 		return
 	}
+	slog.Info("github run dispatched", "component", "github", "repo", owner+"/"+repo, "issue", number)
 	if p.explain {
 		e.postExplainLink(ctx, owner, repo, number, login, chatID)
 	}
@@ -903,15 +902,7 @@ func (e *Extension) claimOrAck(p issueCommentPayload, sessionID, owner, repo str
 		slog.Info("deduplicated trigger: a run for this session is still in flight",
 			"component", "github", "sessionID", sessionID, "repo", owner+"/"+repo, "issue", number,
 			"claim_age", age.Round(time.Second), "lease", e.inflightLease())
-		// A comment trigger already got a reaction on its comment; reacting on the issue too would double it.
-		if p.Comment.ID != 0 {
-			e.spawn(func() { e.ackReaction(p) })
-		} else {
-			e.spawn(func() { e.ackIssue(owner, repo, number) })
-		}
-		if p.explain {
-			e.spawn(func() { e.postExplainLinkNow(owner, repo, number, p.Comment.User.Login, globalChatID(sessionID)) })
-		}
+		e.ackDuplicate(p, sessionID, owner, repo, number)
 		return claimedAt, false
 	}
 	if age > 0 {
@@ -920,6 +911,36 @@ func (e *Extension) claimOrAck(p issueCommentPayload, sessionID, owner, repo str
 			"claim_age", age.Round(time.Second), "lease", e.inflightLease())
 	}
 	return claimedAt, true
+}
+
+// ackDuplicate acknowledges a dropped trigger so the requester sees it was seen, not lost.
+func (e *Extension) ackDuplicate(p issueCommentPayload, sessionID, owner, repo string, number int) {
+	// A comment trigger already got a reaction on its comment; reacting on the issue too would double it.
+	if p.Comment.ID != 0 {
+		e.spawn(func() { e.ackReaction(p) })
+	} else {
+		e.spawn(func() { e.ackIssue(owner, repo, number) })
+	}
+	if p.explain {
+		e.spawn(func() { e.postExplainLinkNow(owner, repo, number, p.Comment.User.Login, globalChatID(sessionID)) })
+	}
+}
+
+// dispatchAndRecord records pr only once Dispatch accepts it, holding the chat's pendingMu: a refused
+// trigger must not touch the live run's record, and a RunEnded that beats Dispatch's return waits here.
+func (e *Extension) dispatchAndRecord(ctx context.Context, req sdk.DispatchRequest, pr *pendingRun, row PendingRunRow) error {
+	unlock := e.pendingMu.Lock(row.ChatID)
+	defer unlock()
+	if err := e.host.Dispatch(ctx, req); err != nil {
+		return err
+	}
+	e.pending.Store(row.ChatID, pr)
+	// Durable twin of e.pending, so a run resumed after a restart can still be finalized.
+	if err := e.store.SetPendingRun(ctx, row); err != nil {
+		slog.Warn("github: SetPendingRun failed; a restart before this run ends will drop its outcome",
+			"component", "github", "repo", row.Owner+"/"+row.Repo, "issue", row.Number, "err", err)
+	}
+	return nil
 }
 
 // grantForDispatch computes the run's delivery grant once: the authorship
