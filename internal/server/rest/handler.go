@@ -548,6 +548,9 @@ func (h *Handler) UpdateChat(w http.ResponseWriter, r *http.Request, chatID sche
 }
 
 func (h *Handler) DeleteChat(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
+	if !h.requireChat(w, r, chatID) {
+		return
+	}
 	// Stop the run and wait out its tail (checkpoint, settle, delivery) so nothing writes to a deleted chat.
 	if h.hub.CancelRun(chatID) && !h.waitRunEnded(r.Context(), chatID, deleteStopWait) {
 		errMsg(w, http.StatusConflict, "chat's run is still stopping; retry the delete shortly")
@@ -646,7 +649,12 @@ func (h *Handler) waitRunEnded(ctx context.Context, chatID string, wait time.Dur
 
 // Starts a run and streams it as SSE. Accepts JSON or multipart/form-data (with optional file attachments).
 func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request, chatID schema.ChatID) {
-	if !h.requireChat(w, r, chatID) {
+	c, ok := h.loadChat(w, r, chatID)
+	if !ok {
+		return
+	}
+	if c.Archived {
+		errMsg(w, http.StatusConflict, "chat is archived; unarchive it before sending a message")
 		return
 	}
 	if h.hub.Draining() {
@@ -915,6 +923,9 @@ func (h *Handler) UpdateResponseStatus(w http.ResponseWriter, r *http.Request, c
 // loadPlanNode is the node lifecycle endpoints' prologue: 404 unless nodeID is in the latest plan (a missing
 // DagNode row proves nothing), then read its status (no row = queued). ok=false means a response was written.
 func (h *Handler) loadPlanNode(w http.ResponseWriter, r *http.Request, chatID, nodeID string) (dp *store.DagPlan, dn *store.DagNode, current dag.NodeStatus, ok bool) {
+	if !h.requireChat(w, r, chatID) {
+		return nil, nil, "", false
+	}
 	dp, err := h.store.GetLatestDagPlan(r.Context(), chatID)
 	if err != nil || dp == nil {
 		errMsg(w, http.StatusNotFound, "no plan for this chat")
@@ -1185,6 +1196,19 @@ func (h *Handler) EditNodeTask(w http.ResponseWriter, r *http.Request, chatID sc
 	var body schema.EditNodeTaskBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Task) == "" {
 		errMsg(w, http.StatusBadRequest, "task is required")
+		return
+	}
+	_, _, current, ok := h.loadPlanNode(w, r, chatID, nodeID)
+	if !ok {
+		return
+	}
+	// The row says whether the node ever ran; the live-control check below closes the start race.
+	if current != dag.StatusQueued {
+		writeJSON(w, http.StatusConflict, schema.TransitionError{
+			Error:   fmt.Sprintf("node %s has already started (%s); its prompt is immutable", nodeID, wireStatus(current)),
+			Current: wireStatus(current),
+			Allowed: []schema.NodeStatus{},
+		})
 		return
 	}
 	if !h.orch.SetNodeTaskOverride(chatID, nodeID, body.Task) {
@@ -1651,7 +1675,7 @@ func (h *Handler) loadChat(w http.ResponseWriter, r *http.Request, chatID schema
 		return nil, false
 	}
 	if c == nil {
-		errMsg(w, http.StatusNotFound, "not found")
+		errMsg(w, http.StatusNotFound, fmt.Sprintf("chat %s not found", chatID))
 		return nil, false
 	}
 	return c, true
@@ -1841,14 +1865,6 @@ func errMsg(w http.ResponseWriter, status int, msg string) {
 // requireChat 404s and returns false if chatID names no chat; run before opening an SSE stream
 // so a bad id is a clean 404, not an in-stream error.
 func (h *Handler) requireChat(w http.ResponseWriter, r *http.Request, chatID string) bool {
-	c, err := h.store.GetChat(r.Context(), chatID)
-	if err != nil {
-		httpError(w, http.StatusInternalServerError, err)
-		return false
-	}
-	if c == nil {
-		errMsg(w, http.StatusNotFound, "no such chat")
-		return false
-	}
-	return true
+	_, ok := h.loadChat(w, r, chatID)
+	return ok
 }
