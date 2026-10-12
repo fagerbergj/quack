@@ -2,6 +2,7 @@ package remarkable
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -237,6 +238,29 @@ func TestIngestFailedDownloadDoesNotAbortTheRest(t *testing.T) {
 	}
 	if _, ok := e.st.Documents["doc-b"]; ok {
 		t.Errorf("failed doc-b should not be marked in flight: %+v", e.st.Documents["doc-b"])
+	}
+}
+
+// A document whose chat still runs its last ingest is reported as busy, not as a failure.
+func TestIngestBusyDocumentIsNotAFailure(t *testing.T) {
+	e, fc, fh := newTestExtension(t)
+	fc.setDocs(threeDocs())
+	fh.fn = func(req sdk.DispatchRequest) error {
+		if req.Chat.LocalID == "doc-b" {
+			return fmt.Errorf("chat x %w", sdk.ErrRunInFlight)
+		}
+		return nil
+	}
+
+	rec := postIngest(t, e, "/documents/ingest", url.Values{"doc_id": {"doc-a", "doc-b"}})
+
+	loc := rec.Header().Get("Location")
+	if loc != "/remarkable/documents?busy=1&queued=1" {
+		t.Errorf("Location = %q, want queued=1 busy=1", loc)
+	}
+	u, _ := url.Parse(loc)
+	if got, want := submitNotice(u.Query()), "Queued 1 document(s). 1 already being ingested; not queued again."; got != want {
+		t.Errorf("notice = %q, want %q", got, want)
 	}
 }
 

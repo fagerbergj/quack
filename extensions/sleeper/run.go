@@ -3,6 +3,7 @@ package sleeper
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/fagerbergj/quack/extensions/sdk"
@@ -34,7 +35,28 @@ func (e *extension) isRunning(chatID string) bool {
 // chatID (already cleared, or never dispatched here) is a no-op.
 func (e *extension) RunEnded(chatID string, outcome sdk.RunOutcome) {
 	e.clearRunning(chatID)
+	if leagueID, ok := e.takeNotesRetry(chatID); ok {
+		// Off the run's tail: jobOrigin makes a Sleeper call before the redispatch.
+		go e.dispatchSeasonNotes(context.Background(), leagueID)
+	}
 	e.observeRun(chatID, outcome)
+}
+
+func (e *extension) armNotesRetry(chatID, leagueID string) {
+	e.runningMu.Lock()
+	defer e.runningMu.Unlock()
+	if e.notesRetry == nil {
+		e.notesRetry = make(map[string]string)
+	}
+	e.notesRetry[chatID] = leagueID
+}
+
+func (e *extension) takeNotesRetry(chatID string) (string, bool) {
+	e.runningMu.Lock()
+	defer e.runningMu.Unlock()
+	leagueID, ok := e.notesRetry[chatID]
+	delete(e.notesRetry, chatID)
+	return leagueID, ok
 }
 
 // jobTitles is the sidebar chip's job word for week-stop jobs; other stops use a fixed label.
@@ -98,27 +120,36 @@ func (e *extension) jobOrigin(ctx context.Context, leagueID, stop, job, label st
 func globalChatID(localID string) string { return "ext:sleeper:" + localID }
 
 // dispatchTracked marks running before Dispatch: a run can end (firing RunEnded) before a later mark
-// would land, leaving a phantom Running badge.
+// would land, leaving a phantom Running badge. A busy refusal keeps the mark: the chat's live run is
+// still going, and its RunEnded clears it.
 func (e *extension) dispatchTracked(ctx context.Context, req sdk.DispatchRequest, chatID string) error {
 	e.markRunning(chatID)
-	if err := e.host.Dispatch(ctx, req); err != nil {
+	err := e.host.Dispatch(ctx, req)
+	if err != nil && !errors.Is(err, sdk.ErrRunInFlight) {
 		e.clearRunning(chatID)
-		return err
 	}
-	return nil
+	return err
 }
 
-// dispatchSeasonNotes: a trends run also dispatches season notes into their own chat.
+// dispatchSeasonNotes: a trends run also dispatches season notes into their own chat. If that chat's
+// run is live, the update is redispatched from its RunEnded rather than lost.
 func (e *extension) dispatchSeasonNotes(ctx context.Context, leagueID string) {
 	localID := leagueID + ":season-notes"
+	chatID := globalChatID(localID)
 	origin := e.jobOrigin(ctx, leagueID, "", "season-notes", "Season notes")
 	err := e.dispatchTracked(ctx, sdk.DispatchRequest{
 		Chat: sdk.ChatRef{LocalID: localID, User: e.cfg.DefaultUser, Title: "Sleeper season notes", Origin: origin},
 		Ask:  sdk.Ask{Message: fmt.Sprintf("Update the running season notes for league %s from this week's trends findings.", leagueID)},
 		// Bound to a workflow to skip the planner LLM call.
 		Run: sdk.RunConfig{ReadOnly: true, Workflow: "sleeper-season-notes"},
-	}, globalChatID(localID))
-	if err != nil && e.host.Log != nil {
+	}, chatID)
+	switch {
+	case errors.Is(err, sdk.ErrRunInFlight):
+		e.armNotesRetry(chatID, leagueID)
+		if e.host.Log != nil {
+			e.host.Log.Info("sleeper: season-notes run in flight; redispatching after it ends", "league_id", leagueID)
+		}
+	case err != nil && e.host.Log != nil:
 		e.host.Log.Error("sleeper: season-notes dispatch failed", "league_id", leagueID, "err", err)
 	}
 }

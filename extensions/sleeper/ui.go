@@ -764,6 +764,10 @@ func (e *extension) handleJobs(w http.ResponseWriter, r *http.Request) {
 		Ask:  sdk.Ask{Message: message},
 		Run:  sdk.RunConfig{ReadOnly: true, Workflow: jobWorkflows[req.Job]},
 	}, chatID)
+	if errors.Is(err, sdk.ErrRunInFlight) {
+		e.writeErr(w, http.StatusConflict, err.Error())
+		return
+	}
 	if err != nil {
 		e.writeErr(w, http.StatusInternalServerError, err.Error())
 		return

@@ -2,6 +2,7 @@ package serve
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -51,8 +52,11 @@ func TestExtDispatch_RefusedWhileTheChatsRunIsLive(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if dispatch(context.Background(), req) == nil {
+			switch err := dispatch(context.Background(), req); {
+			case err == nil:
 				accepted.Add(1)
+			case !errors.Is(err, extsdk.ErrRunInFlight):
+				t.Errorf("refused dispatch: %v, want it to wrap sdk.ErrRunInFlight", err)
 			}
 		}()
 	}

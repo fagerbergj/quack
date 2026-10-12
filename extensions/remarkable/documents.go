@@ -2,6 +2,7 @@ package remarkable
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -87,7 +88,7 @@ func (e *extension) handleIngest(w http.ResponseWriter, r *http.Request) {
 		byID[d.ID] = d
 	}
 
-	queued, failed := 0, 0
+	queued, failed, busy := 0, 0, 0
 	for _, id := range ids {
 		d, ok := byID[id]
 		if !ok {
@@ -95,12 +96,16 @@ func (e *extension) handleIngest(w http.ResponseWriter, r *http.Request) {
 			failed++
 			continue
 		}
-		if err := e.ingest(ctx, d); err != nil {
+		switch err := e.ingest(ctx, d); {
+		case errors.Is(err, sdk.ErrRunInFlight):
+			e.host.Log.Info("remarkable: document is already being ingested; not queued again", "doc_id", id)
+			busy++
+		case err != nil:
 			e.host.Log.Error("remarkable: ingest failed", "doc_id", id, "err", err)
 			failed++
-			continue
+		default:
+			queued++
 		}
-		queued++
 	}
 
 	if queued > 0 {
@@ -115,6 +120,9 @@ func (e *extension) handleIngest(w http.ResponseWriter, r *http.Request) {
 	q := url.Values{"queued": {strconv.Itoa(queued)}}
 	if failed > 0 {
 		q.Set("failed", strconv.Itoa(failed))
+	}
+	if busy > 0 {
+		q.Set("busy", strconv.Itoa(busy))
 	}
 	http.Redirect(w, r, documentsPath+"?"+q.Encode(), http.StatusSeeOther)
 }
@@ -201,14 +209,18 @@ func submitNotice(q url.Values) string {
 	}
 	queued, _ := strconv.Atoi(q.Get("queued"))
 	failed, _ := strconv.Atoi(q.Get("failed"))
-	switch {
-	case queued == 0 && failed == 0:
+	busy, _ := strconv.Atoi(q.Get("busy"))
+	if queued == 0 && failed == 0 && busy == 0 {
 		return ""
-	case failed == 0:
-		return fmt.Sprintf("Queued %d document(s).", queued)
-	default:
-		return fmt.Sprintf("Queued %d document(s); %d failed - see the extension log.", queued, failed)
 	}
+	msg := fmt.Sprintf("Queued %d document(s).", queued)
+	if busy > 0 {
+		msg += fmt.Sprintf(" %d already being ingested; not queued again.", busy)
+	}
+	if failed > 0 {
+		msg += fmt.Sprintf(" %d failed - see the extension log.", failed)
+	}
+	return msg
 }
 
 var documentsTmpl = template.Must(template.New("documents").Parse(`<!doctype html>

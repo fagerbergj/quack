@@ -96,6 +96,9 @@ type extension struct {
 	// loses Running badges.
 	runningMu sync.Mutex
 	running   map[string]struct{}
+	// notesRetry maps a season-notes chat id to the league whose update its live run refused.
+	// ponytail: in-memory like running; a restart or shutdown-cut run drops the retry.
+	notesRetry map[string]string
 }
 
 var (
