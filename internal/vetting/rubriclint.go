@@ -43,7 +43,11 @@ func LintRubric(raw []byte, source string) []string {
 	owned := codeOwnedCriteria()
 	byDefinition := map[string]string{}
 	for _, name := range slices.Sorted(maps.Keys(doc.Criteria)) {
-		for _, problem := range lintCriterion(name, doc.Criteria[name], owned, byDefinition) {
+		c, scale := doc.Criteria[name], doc.Scale
+		if c.Scale != nil {
+			scale = *c.Scale
+		}
+		for _, problem := range lintCriterion(name, c, scale, owned, byDefinition) {
 			issues = append(issues, fmt.Sprintf("%s: criterion %q: %s", source, name, problem))
 		}
 	}
@@ -51,7 +55,7 @@ func LintRubric(raw []byte, source string) []string {
 }
 
 // lintCriterion is LintRubric's per-criterion checks; byDefinition collects definitions across calls.
-func lintCriterion(name string, c rubricCriterion, owned map[string]bool, byDefinition map[string]string) []string {
+func lintCriterion(name string, c rubricCriterion, scale rubricScale, owned map[string]bool, byDefinition map[string]string) []string {
 	var problems []string
 	def := strings.Join(strings.Fields(strings.ToLower(c.Definition)), " ")
 	switch {
@@ -69,6 +73,8 @@ func lintCriterion(name string, c rubricCriterion, owned map[string]bool, byDefi
 		problems = append(problems, "a code check owns this name, so the judge's score is dropped; mark it deterministic: true")
 	case !c.Deterministic && len(c.Bands) == 0:
 		problems = append(problems, "no bands, so the judge has no pass bar to score against")
+	case !c.Deterministic && (scale.Min != 0 || scale.Max != judgeScaleMax):
+		problems = append(problems, fmt.Sprintf("judged on scale [%v, %v], but the judge prompt asks for an integer 0-%d", scale.Min, scale.Max, judgeScaleMax))
 	}
 	return problems
 }

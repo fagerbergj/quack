@@ -53,6 +53,7 @@ func TestLintRubricFlagsEachProblem(t *testing.T) {
 		{"judged code-owned name", "  checks_pass:\n    definition: tests pass\n    bands: [{min: 0, max: 3, meaning: any}]\n", "judge's score is dropped"},
 		{"no bands", "  vague:\n    definition: it is good\n", "no bands"},
 		{"duplicate key", "  accurate:\n    definition: again\n", "already defined"},
+		{"judged off the 0-3 scale", "  decimal:\n    definition: graded out of ten\n    scale: {min: 0, max: 10, pass: 7}\n    bands: [{min: 0, max: 10, meaning: any}]\n", "asks for an integer 0-3"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
