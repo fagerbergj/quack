@@ -86,7 +86,8 @@ func TestNodeTransitions(t *testing.T) {
 		{StatusQueued, StatusCancelled},
 		{StatusRunning, StatusCancelled},
 		{StatusPaused, StatusCancelled},
-		{StatusDone, StatusQueued}, // retry
+		{StatusDone, StatusQueued},   // retry
+		{StatusQueued, StatusPaused}, // a running node waiting on admission reads queued
 	}
 	for _, c := range legal {
 		if !CanTransition(c[0], c[1]) {
@@ -98,7 +99,6 @@ func TestNodeTransitions(t *testing.T) {
 		{StatusDone, StatusPaused},
 		{StatusCancelled, StatusRunning},
 		{StatusFailed, StatusDone},
-		{StatusQueued, StatusPaused},
 		{StatusPaused, StatusDone},
 	}
 	for _, c := range illegal {
