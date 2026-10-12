@@ -51,7 +51,7 @@ done <.env.example
 export QUACK_MEDIA_MODEL=${QUACK_MEDIA_MODEL:-qwen3-omni-30b} QUACK_IMAGE_MODEL=${QUACK_IMAGE_MODEL:-qwen3-vl-32b}
 run "$tmp/quack-bin" server validate config/quack.yaml
 
-export QUACK_COMPAT_TMP=$tmp QUACK_COMPAT_GITHUB_KEY=$tmp/github.pem QUACK_COMPAT_SECRET=placeholder
+export QUACK_COMPAT_TMP=$tmp QUACK_COMPAT_GITHUB_KEY=$tmp/github.pem QUACK_COMPAT_SECRET=placeholder QUACK_COMPAT_QUACK_DIR=$(cd "$quack" && pwd)
 run openssl genrsa -out "$QUACK_COMPAT_GITHUB_KEY" 2048
 # The fixture seeds each module's plugin/ from this checkout, the way quack seeds github:...#<module>/plugin.
 step="copy each module's plugin/ into the fixture"

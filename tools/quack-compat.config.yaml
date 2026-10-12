@@ -32,6 +32,19 @@ plugins:
     - ${QUACK_COMPAT_TMP}/plugins/github
     - ${QUACK_COMPAT_TMP}/plugins/sleeper
     - ${QUACK_COMPAT_TMP}/plugins/usage
+    - ${QUACK_COMPAT_TMP}/plugins/remarkable
+
+# Core agents a plugin workflow names (remarkable's document-ingest); bundles come from the quack checkout.
+agents:
+  media-reader:
+    bundle: ${QUACK_COMPAT_QUACK_DIR}/agents/media-reader
+    tools: []
+    provider: default
+    model: m
+  synthesizer:
+    bundle: ${QUACK_COMPAT_QUACK_DIR}/agents/synthesizer
+    provider: default
+    model: m
 
 extensions:
   github:
