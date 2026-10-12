@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/mcptoolset"
@@ -51,8 +52,37 @@ func (t *closableTransport) Connect(ctx context.Context) (mcp.Connection, error)
 	if err != nil {
 		return nil, err
 	}
-	t.conn = conn
-	return conn, nil
+	t.conn = closingConn{conn, t}
+	return t.conn, nil
+}
+
+func (t *closableTransport) isClosed() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.closed
+}
+
+// closingConn names pipe errors after Close: a call racing the session's EOF
+// detection fails with a raw os.ErrClosed, which ADK neither retries nor explains.
+type closingConn struct {
+	mcp.Connection
+	t *closableTransport
+}
+
+func (c closingConn) Read(ctx context.Context) (jsonrpc.Message, error) {
+	msg, err := c.Connection.Read(ctx)
+	return msg, c.named(err)
+}
+
+func (c closingConn) Write(ctx context.Context, msg jsonrpc.Message) error {
+	return c.named(c.Connection.Write(ctx, msg))
+}
+
+func (c closingConn) named(err error) error {
+	if err != nil && c.t.isClosed() {
+		return fmt.Errorf("%w: %w", errTransportClosed, err)
+	}
+	return err
 }
 
 // Close blocks until the child exits (the SDK closes stdin, then SIGTERMs and
