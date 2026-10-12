@@ -93,6 +93,8 @@ interface LiveTurn {
   // The turn's persisted answer: shown once the run ends, since a replayed or retried run streams only the
   // nodes it re-ran. Set (even '') for an existing turn's run, which re-reads it at done.
   answer?: string
+  // The answer shown before a retry, kept on screen until the re-run's sinks stream a new one.
+  previousAnswer?: string
 }
 
 // A follow-up typed while the run streams: held client-side (no endpoint, unlike the per-node queue)
@@ -401,14 +403,19 @@ export class ChatStore {
     return true
   }
 
-  // markNodeError annotates a live DAG node with a transient error note (used
-  // for rejected control actions - the next stream event for the node clears it).
-  private markNodeError(chatId: string, nodeId: string, msg: string): void {
+  // A rejected control action's note on a live node; it stays until clearNodeError or a pause/steer/stop event.
+  private markNodeError(chatId: string, nodeId: string, msg: string | undefined): void {
     const cur = this.get(chatId)
     const dag = cur.live?.dag
     if (!cur.live || !dag?.nodeStates[nodeId]) return
     const nodeStates = { ...dag.nodeStates, [nodeId]: { ...dag.nodeStates[nodeId], error: msg } }
     this.write(chatId, { ...cur, live: { ...cur.live, dag: { ...dag, nodeStates } } })
+  }
+
+  // Dismisses a node's rejected-action note; a failed node's error is its outcome, so it stays.
+  clearNodeError(chatId: string, nodeId: string): void {
+    if (this.get(chatId).live?.dag?.nodeStates[nodeId]?.status === 'failed') return
+    this.markNodeError(chatId, nodeId, undefined)
   }
 
   // rejected reports a control request that failed, noting the server's message on the node;
@@ -445,7 +452,10 @@ export class ChatStore {
       nodeAnswer[id] = ''
       nodeRuns[id] = []
     }
-    this.write(chatId, { ...s, live: { ...s.live!, streaming: true, error: '', answer: '', dag: { ...dag, nodeStates, nodeAnswer, nodeRuns, finishedAt: undefined } } })
+    // startedAt restarts so the header and footer timers time this re-run, not the turn's age.
+    const previousAnswer = liveAnswerText(s.live!) || s.live!.previousAnswer
+    const rerunDag = { ...dag, nodeStates, nodeAnswer, nodeRuns, startedAt: Date.now(), finishedAt: undefined }
+    this.write(chatId, { ...s, live: { ...s.live!, streaming: true, error: '', answer: '', previousAnswer, dag: rerunDag } })
     const generation = this.bumpGeneration(chatId)
     void request().then(r => {
       if (r.response?.ok) return this.subscribeToStream(chatId, generation)
@@ -832,7 +842,7 @@ export class ChatStore {
           // Freeze any run still counting - the node is done, so no run is live.
           updateNodeRuns(nodeId, r => freezeOpenRuns(r, finishedAt))
           updateNodeState(nodeId, {
-            status: 'done', finishedAt, outputPreview: preview,
+            status: 'done', finishedAt, outputPreview: preview, error: undefined,
             model: meta.model,
             promptTokens: meta.promptTokens,
             completionTokens: meta.completionTokens,
@@ -868,7 +878,7 @@ export class ChatStore {
           // Mid-node HITL: the node paused to ask the user. Freeze its open runs
           // and mark it waiting; the answer is delivered via startNode(chatId, nodeId, answer).
           updateNodeRuns(nodeId, r => freezeOpenRuns(r, Date.now()))
-          updateNodeState(nodeId, { status: 'needs_input', question: message, pauseReason: 'awaiting_input' })
+          updateNodeState(nodeId, { status: 'needs_input', question: message, pauseReason: 'awaiting_input', error: undefined })
         },
         onNodeSteered: (nodeId, guidance) => {
           // Re-running with new guidance in the same session: status stays 'running', since running->queued is illegal
@@ -1083,17 +1093,18 @@ export function dagAnswer(dag: DagTurnState): { text: string; stopped: boolean }
   return { text: ids.map(id => `## ${id}\n\n${body(id)}`).join('\n\n'), stopped: allStopped }
 }
 
-// dagTotalTokens sums total_tokens across every node in a DAG - the DAG bubble
-// header's token count.
+// dagTotalTokens sums every node's tokens for the DAG bubble header: node_done's total, else (a running or paused
+// node) its runs' agent_complete totals so far.
 export function dagTotalTokens(dag: DagTurnState): number {
-  return dag.nodes.reduce((sum, n) => sum + (dag.nodeStates[n.id]?.totalTokens ?? 0), 0)
+  const runTokens = (id: string) => (dag.nodeRuns[id] ?? []).reduce((sum, r) => sum + (r.totalTokens ?? 0), 0)
+  return dag.nodes.reduce((sum, n) => sum + (dag.nodeStates[n.id]?.totalTokens ?? runTokens(n.id)), 0)
 }
 
 // liveAnswerText is a live DAG turn's answer: its persisted answer once the run ends, when known,
-// else the sinks' streamed answers.
-export function liveAnswerText(live: { dag?: DagTurnState; answer?: string; streaming: boolean }): string {
+// else the sinks' streamed answers, else (a retry before its sinks stream) the answer it replaces.
+export function liveAnswerText(live: { dag?: DagTurnState; answer?: string; previousAnswer?: string; streaming: boolean }): string {
   if (!live.streaming && live.answer) return live.answer
-  return live.dag ? dagAnswer(live.dag).text : ''
+  return (live.dag ? dagAnswer(live.dag).text : '') || live.previousAnswer || (live.answer ?? '')
 }
 
 // attributedSinks are the sinks an answer came from: the "## id" sections of text when it has them,

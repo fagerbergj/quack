@@ -5,7 +5,7 @@ import { AssistantText, ActivityList, LiveStatusLine, BubbleHeader, Dots, stoppe
 import { QuestionBubble } from '../components/QuestionBubble'
 import { DagView, DagBubbleHeader } from '../components/DagView'
 import { Composer } from '../components/Composer'
-import { ChatList } from '../components/ChatList'
+import { ChatList, UNTITLED_CHAT } from '../components/ChatList'
 import { TurnView, visibleActivity } from '../components/TurnView'
 import { useChatStore, useChatState } from '../state/ChatStoreProvider'
 import { activityFromTurn, dagFromTurn, liveAnswerText, pendingNodeQuestion, dagAnswerAttribution, sessionModels, type DagTurnState, type ChatState } from '../state/chatStore'
@@ -115,7 +115,7 @@ export function EditableChatTitle({ title, editable, onRename }: EditableChatTit
     <h1
       onClick={startEdit}
       title={editable ? 'Click to rename' : undefined}
-      className={`group flex items-center gap-1.5 text-base font-semibold text-gray-900 dark:text-white ${editable ? 'cursor-text' : ''}`}
+      className={`group flex min-w-0 items-center gap-1.5 text-base font-semibold text-gray-900 dark:text-white ${editable ? 'cursor-text' : ''}`}
     >
       {/* One line at every width: the compact header's second line is the run status; title holds the full text. */}
       <span className="truncate" title={title}>{title}</span>
@@ -128,6 +128,21 @@ export function EditableChatTitle({ title, editable, onRename }: EditableChatTit
 
 // Recent completed turns mounted by default; "Show N older messages" raises it by the same amount.
 const RENDERED_TURN_TAIL = 100
+
+// The floating composer grows with queued follow-ups and a multi-line draft, so the scroll pane's bottom padding
+// tracks its measured height; the class's fixed padding covers the first paint and jsdom (no ResizeObserver).
+function useComposerClearance() {
+  const ref = useRef<HTMLDivElement>(null)
+  const [height, setHeight] = useState<number>()
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(() => setHeight(el.offsetHeight))
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  return { ref, style: height == null ? undefined : { paddingBottom: height + 24 } }
+}
 
 // Keeps a live DAG visible without scrolling to the node cards.
 export function ChatHeaderStatus({ status, startedAt }: { status: ChatStatus; startedAt?: number }) {
@@ -173,7 +188,7 @@ function liveTurnDerived(live: NonNullable<ChatState['live']>, liveActive: boole
   return { liveDag, liveTopText, liveDone, liveText, orchActivity, showSpinner, answerAttribution, hasAnswerBubble }
 }
 
-function LiveDagBubble({ dag, liveDone, chatId, orchActivity, onCancelNode, onPauseNode, onQueueNodeMessage, onEditQueuedMessage, onRemoveQueuedMessage, onEditNodeTask, onRetryNode, onResumeNode, onAnswerNodeQuestion }: {
+function LiveDagBubble({ dag, liveDone, chatId, orchActivity, onCancelNode, onPauseNode, onQueueNodeMessage, onEditQueuedMessage, onRemoveQueuedMessage, onEditNodeTask, onRetryNode, onResumeNode, onAnswerNodeQuestion, onDismissNodeError }: {
   dag: DagTurnState
   liveDone: boolean
   chatId?: string
@@ -187,6 +202,7 @@ function LiveDagBubble({ dag, liveDone, chatId, orchActivity, onCancelNode, onPa
   onRetryNode: (nodeId: string, guidance?: string) => void
   onResumeNode: (nodeId: string) => void
   onAnswerNodeQuestion: (nodeId: string, answer: string) => void
+  onDismissNodeError: (nodeId: string) => void
 }) {
   return (
     <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
@@ -199,7 +215,7 @@ function LiveDagBubble({ dag, liveDone, chatId, orchActivity, onCancelNode, onPa
           <div className="p-2 space-y-3">
             {orchActivity.length > 0 && <ActivityList activity={orchActivity} />}
             {/* Start/Stop stay wired post-run: a paused node ends the turn, so this is where Start must work. */}
-            <DagView dag={dag} chatId={chatId} onRetryNode={onRetryNode} onResumeNode={onResumeNode} onCancelNode={onCancelNode} onAnswerNodeQuestion={onAnswerNodeQuestion} />
+            <DagView dag={dag} chatId={chatId} onRetryNode={onRetryNode} onResumeNode={onResumeNode} onCancelNode={onCancelNode} onAnswerNodeQuestion={onAnswerNodeQuestion} onDismissNodeError={onDismissNodeError} />
           </div>
         </details>
       ) : (
@@ -215,6 +231,7 @@ function LiveDagBubble({ dag, liveDone, chatId, orchActivity, onCancelNode, onPa
             onRemoveQueuedMessage={onRemoveQueuedMessage}
             onEditNodeTask={onEditNodeTask}
             onAnswerNodeQuestion={onAnswerNodeQuestion}
+            onDismissNodeError={onDismissNodeError}
           />
         </div>
       )}
@@ -272,7 +289,7 @@ function LiveDagAnswer({ liveText, liveActive, attribution }: { liveText: string
 
 // The user bubble is hidden for a clarification answer and for a webhook-triggered turn, which has no typed
 // message (its synthesized task renders in the DAG bubble).
-function LiveTurnView({ live, surfaces, liveActive, isArchived, activeChatId, liveIsChoiceAnswer, livePriorContents, liveAttachmentsEl, liveAttachmentPreviews, submittingChoice, copied, turnsCount, onChoice, onCopy, onDownload, onCancelNode, onPauseNode, onQueueNodeMessage, onEditQueuedMessage, onRemoveQueuedMessage, onEditNodeTask, onRetryNode, onResumeNode, onAnswerNode }: {
+function LiveTurnView({ live, surfaces, liveActive, isArchived, activeChatId, liveIsChoiceAnswer, livePriorContents, liveAttachmentsEl, liveAttachmentPreviews, submittingChoice, copied, turnsCount, onChoice, onCopy, onDownload, onCancelNode, onPauseNode, onQueueNodeMessage, onEditQueuedMessage, onRemoveQueuedMessage, onEditNodeTask, onRetryNode, onResumeNode, onAnswerNode, onDismissNodeError }: {
   live: NonNullable<ChatState['live']>
   surfaces?: SurfaceRef[]
   liveActive: boolean
@@ -297,6 +314,7 @@ function LiveTurnView({ live, surfaces, liveActive, isArchived, activeChatId, li
   onRetryNode: (nodeId: string, guidance?: string) => void
   onResumeNode: (nodeId: string) => void
   onAnswerNode: (nodeId: string, answer: string) => void
+  onDismissNodeError: (nodeId: string) => void
 }) {
   const d = liveTurnDerived(live, liveActive)
   const { choice, nodeQuestion } = livePendingQuestions(live, d.liveDag, d.liveDone, isArchived)
@@ -329,6 +347,7 @@ function LiveTurnView({ live, surfaces, liveActive, isArchived, activeChatId, li
               onRetryNode={onRetryNode}
               onResumeNode={onResumeNode}
               onAnswerNodeQuestion={onAnswerNode}
+              onDismissNodeError={onDismissNodeError}
             />
           )}
           {nodeQuestion && (
@@ -383,10 +402,10 @@ function LiveTurnView({ live, surfaces, liveActive, isArchived, activeChatId, li
 }
 
 // The sidebar poll can lag the stream, so an 'idle' summary while the turn streams still means running.
-function chatHeaderProps(activeChat: ChatSummary | undefined, activeChatId: string | null, isArchived: boolean, live: NonNullable<ChatState['live']> | undefined) {
+function chatHeaderProps(activeChat: ChatSummary | undefined, activeChatId: string | null, isArchived: boolean, live: NonNullable<ChatState['live']> | undefined, notFound: boolean) {
   return {
-    title: activeChat?.title || (activeChatId ? 'New chat' : 'Chat'),
-    editable: !!activeChatId && !isArchived,
+    title: notFound ? 'Chat not found' : activeChat?.title || (activeChatId ? UNTITLED_CHAT : 'New chat'),
+    editable: !!activeChatId && !isArchived && !notFound,
     status: (activeChat?.status && activeChat.status !== 'idle' ? activeChat.status : 'running') as ChatStatus,
     startedAt: live?.dag?.startedAt ?? live?.runs[0]?.startedAt,
   }
@@ -457,8 +476,32 @@ function ChatHeader({ title, editable, status, startedAt, activeChatId, isArchiv
   )
 }
 
+function isMissingChat(activeChatId: string | null, missingChatId: string | null): boolean {
+  return !!activeChatId && missingChatId === activeChatId
+}
+
 function showEmptyPrompt(activeChatId: string | null, state: ChatState, live: NonNullable<ChatState['live']> | undefined): boolean {
   return !!activeChatId && state.turns.length === 0 && !live && !state.submitting
+}
+
+// A /chat/<id> the server doesn't know gets a not-found note; the Composer stays mounted, so a typed draft carries
+// into the new chat.
+function EmptyChatNote({ notFound, empty, onNewChat }: { notFound: boolean; empty: boolean; onNewChat: () => void }) {
+  if (!notFound) {
+    return empty ? <div className="text-center text-gray-500 dark:text-gray-400 text-sm mt-20">Ask a question</div> : null
+  }
+  return (
+    <div role="status" className="text-center text-sm text-gray-500 dark:text-gray-400 mt-20 space-y-3">
+      <p>This chat doesn't exist or was deleted.</p>
+      <button
+        type="button"
+        onClick={onNewChat}
+        className="min-h-[44px] px-4 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 transition-colors"
+      >
+        Start a new chat
+      </button>
+    </div>
+  )
 }
 
 // Bridges submit to the first stream event; the old `live` still renders above it, so nothing blinks out.
@@ -523,6 +566,11 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
   // Gates the status-triggered re-attach until seed() ran: the poll can mark a chat running before getChat
   // resolves, and an early attach() makes seed() a no-op, dropping history.
   const [seededChatId, setSeededChatId] = useState<string | null>(null)
+  // Set when GET /chats/{id} 404s; only a 404 means not-found, never a network error.
+  const [missingChatId, setMissingChatId] = useState<string | null>(null)
+  const notFound = isMissingChat(activeChatId, missingChatId)
+  // The chat the composer and header act on: none for a not-found one, so a send starts a new chat.
+  const liveChatId = notFound ? null : activeChatId
   // An archived focused chat, kept out of the active-scoped `chats` list.
   const [activeChatDetail, setActiveChatDetail] = useState<ChatSummary | null>(null)
   const activeChat = resolveActiveChat(chats, activeChatId, activeChatDetail)
@@ -549,6 +597,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
     [liveAttachmentPreviews],
   )
   const scrollRef = useRef<HTMLDivElement>(null)
+  const composerClearance = useComposerClearance()
 
   // Keyed on turn count so it fires after the async seed lands; deliberately doesn't follow mid-stream tokens.
   useLayoutEffect(() => {
@@ -625,7 +674,9 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
       if (!detail.archived && (detail.status === 'running' || (lastTurn && dagFromTurn(lastTurn) != null))) {
         store.attach(activeChatId)
       }
-    }).catch(() => {})
+    }).catch((err: unknown) => {
+      if (!cancelled && (err as { status?: number })?.status === 404) setMissingChatId(activeChatId)
+    })
     return () => {
       cancelled = true
       store.detachStream(activeChatId)
@@ -673,11 +724,11 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
     setChats(prev => prev.map(c => c.id === activeChatId ? updated : c))
   }, [activeChatId])
 
-  async function handleNewChat() {
-    const chat = await api.createChat()
-    setChats(prev => [chat, ...prev])
-    setActiveChatId(chat.id)
-    navigate(`/chat/${chat.id}`)
+  // Lazy: the empty /chat route creates the chat on its first send, so clicking New Chat leaves no empty chats behind.
+  function handleNewChat() {
+    setActiveChatId(null)
+    setChatListOpen(false)
+    navigate('/chat')
   }
 
   async function handleDeleteChat(id: string, e: React.MouseEvent) {
@@ -754,6 +805,10 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
     if (activeChatId) store.retryNode(activeChatId, nodeId, guidance)
   }, [activeChatId, store])
 
+  const handleDismissNodeError = useCallback((nodeId: string) => {
+    if (activeChatId) store.clearNodeError(activeChatId, nodeId)
+  }, [activeChatId, store])
+
   // The answer travels as NodeStartBody.content, the same delivery every paused/awaiting_input resume uses.
   const handleAnswerNode = useCallback((nodeId: string, answer: string) => {
     if (!activeChatId) return
@@ -767,7 +822,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
   // A failed chat creation rethrows so the Composer restores the unsent draft. The queue check reads the store,
   // not the render-time `streaming`, since a just-created chat's turn can start before this re-renders.
   const submitMessage = useCallback(async (text: string, files: File[], previews: { url: string; mime: string; name: string }[]) => {
-    let chatId = activeChatId
+    let chatId = liveChatId
     if (!chatId) {
       if (!creatingChatRef.current) {
         creatingChatRef.current = api.createChat()
@@ -794,7 +849,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
     void store.submit(chatId, text, files.length > 0 ? files : undefined, title => {
       setChats(prev => prev.map(c => c.id === chatId ? { ...c, title } : c))
     }).then(() => loadChats().then(data => setChats(data)))
-  }, [activeChatId, store, loadChats])
+  }, [liveChatId, store, loadChats])
 
   const handleRemoveQueued = useCallback((id: string) => {
     if (activeChatId) store.unqueueTurn(activeChatId, id)
@@ -850,7 +905,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
         activeChatId={activeChatId}
         open={chatListOpen}
         onSelect={selectChat}
-        onNewChat={() => { void handleNewChat() }}
+        onNewChat={handleNewChat}
         onDelete={(id, e) => { void handleDeleteChat(id, e) }}
         onCloseMobile={() => setChatListOpen(false)}
         hasMoreChats={activePager.hasMore}
@@ -869,8 +924,8 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
 
       <div className="flex flex-col flex-1 min-w-0">
         <ChatHeader
-          {...chatHeaderProps(activeChat, activeChatId, isArchived, live)}
-          activeChatId={activeChatId}
+          {...chatHeaderProps(activeChat, activeChatId, isArchived, live, notFound)}
+          activeChatId={liveChatId}
           isArchived={isArchived}
           githubLink={githubLink}
           liveActive={liveActive}
@@ -884,12 +939,8 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
         {/* The composer floats over the list; the scroll pane's bottom padding keeps the last message clear. */}
         <div className="relative flex-1 min-h-0">
         {/* Clearance is composer height plus --composer-gap, so the inset grows it instead of counting twice. */}
-        <div ref={scrollRef} className="absolute inset-0 overflow-y-auto overscroll-contain px-6 pt-6 pb-[calc(7rem+var(--composer-gap))] medium:pb-[calc(8rem+var(--composer-gap))] space-y-6">
-          {showEmptyPrompt(activeChatId, state, live) && (
-            <div className="text-center text-gray-500 dark:text-gray-400 text-sm mt-20">
-              Ask a question
-            </div>
-          )}
+        <div ref={scrollRef} style={composerClearance.style} className="absolute inset-0 overflow-y-auto overscroll-contain px-6 pt-6 pb-[calc(7rem+var(--composer-gap))] medium:pb-[calc(8rem+var(--composer-gap))] space-y-6">
+          <EmptyChatNote notFound={notFound} empty={showEmptyPrompt(activeChatId, state, live)} onNewChat={handleNewChat} />
 
           {hiddenTurnCount > 0 && (
             <button
@@ -945,6 +996,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
               onRetryNode={handleRetryNode}
               onResumeNode={handleResumeNode}
               onAnswerNode={handleAnswerNode}
+              onDismissNodeError={handleDismissNodeError}
             />
           )}
 
@@ -968,7 +1020,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
           )}
         </div>
 
-        <div className="absolute inset-x-0 bottom-0">
+        <div ref={composerClearance.ref} className="absolute inset-x-0 bottom-0">
           <Composer
             disabled={isArchived}
             streaming={liveActive}
@@ -977,7 +1029,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
             queue={state.queue}
             onRemoveQueued={handleRemoveQueued}
             archived={isArchived}
-            noChat={!activeChatId}
+            noChat={!liveChatId}
           />
         </div>
         </div>

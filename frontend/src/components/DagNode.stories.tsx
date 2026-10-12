@@ -55,6 +55,14 @@ export const Queued: Story = {
   },
 }
 
+// A rejected control action (a 409 on pause) on a node that keeps running: a dismissible note, not a failure.
+export const RejectedAction: Story = {
+  args: {
+    node: wrNode, state: { status: 'running', startedAt: Date.now() - 42_000, error: 'illegal transition: queued -> paused' },
+    runs: [], answer: '', isFinal: false, onDismissError: () => {},
+  },
+}
+
 export const Running: Story = {
   render: () => (
     <DagNode
@@ -84,6 +92,26 @@ export const DoneWithTokens: Story = {
     answer: 'Best months to visit Dublin: **May–September**, warmest June–August.',
     isFinal: false,
   },
+}
+
+// A half-width card (two researchers side by side) with every header badge: the agent name keeps its floor and
+// the badges wrap beside it.
+export const LongHeaderBadges: Story = {
+  render: () => (
+    <div style={{ maxWidth: 445 }}>
+      <DagNode
+        node={{ ...wrNode, context_window: 131_072 }}
+        state={{
+          status: 'done', startedAt: 0, finishedAt: 170_000, serverDurationMs: 170_000, totalTokens: 135_296, cachedTokens: 99_552,
+          contextTokens: 21_000, model: 'qwen3.8-27b-vllm', steers: ['focus on allocators'], resumedFrom: 'sess-1',
+        }}
+        runs={[workerDone(researchActivity)]}
+        answer="Zig 0.17.0 uses explicit allocators."
+        isFinal={false}
+        chatId="chat-1"
+      />
+    </div>
+  ),
 }
 
 export const DoneWithCachedTokens: Story = {

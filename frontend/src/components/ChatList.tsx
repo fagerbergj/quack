@@ -10,6 +10,9 @@ import { useMediaQuery } from '../hooks/useMediaQuery'
 import { closeOnBackdrop, useDrawer } from '../hooks/useDrawer'
 import { Icon, type IconName } from './Icon'
 
+// A chat with no title yet; the CLI prints the same string.
+export const UNTITLED_CHAT = '(untitled)'
+
 const GITHUB_STATE_TONE = new Map<string, string>([['open', TONE.green], ['closed', TONE.red], ['merged', TONE.purple], ['draft', TONE.yellow]])
 
 export function githubStateBadgeClass(state: string): string {
@@ -267,7 +270,7 @@ function ChatRow({
   function handleDelete(e: React.MouseEvent) {
     e.stopPropagation()
     setMenuOpen(false)
-    if (window.confirm(`Permanently delete "${s.title || 'New chat'}"? This can't be undone.`)) {
+    if (window.confirm(`Permanently delete "${s.title || UNTITLED_CHAT}"? This can't be undone.`)) {
       onDelete(s.id, e)
     }
   }
@@ -277,10 +280,10 @@ function ChatRow({
       className={`group relative flex flex-col px-3 py-2.5 cursor-pointer border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors ${activeChatId === s.id ? 'bg-blue-50 dark:bg-blue-900/30' : ''}`}
       onClick={() => onSelect(s.id)}
     >
-      <span title={s.title || 'New chat'} className="flex items-center pr-11">
+      <span title={s.title || UNTITLED_CHAT} className="flex items-center pr-11">
         <StatusDot status={s.status} className="mr-1.5" variant="chat" />
         <span className={`text-sm truncate block ${activeChatId === s.id ? 'text-blue-700 dark:text-blue-400 font-medium' : 'text-gray-800 dark:text-gray-100'}`}>
-          {s.title || 'New chat'}
+          {s.title || UNTITLED_CHAT}
         </span>
       </span>
       {/* Always rendered so every row reserves the same height and stays aligned. */}

@@ -27,6 +27,7 @@ vi.mock('../api', async importOriginal => {
         updated_at: NOW,
         status: 'idle',
       })),
+      getChat: vi.fn(async (id: string) => ({ id, title: '', system_prompt: '', created_at: NOW, updated_at: NOW, status: 'idle', turns: [] })),
     },
   }
 })
@@ -131,5 +132,72 @@ describe('Chat empty /chat route (audit finding 8)', () => {
     expect(submitSpy).toHaveBeenCalledTimes(2)
     expect(submitSpy.mock.calls[0].slice(0, 2)).toEqual(['new-chat', 'first message'])
     expect(submitSpy.mock.calls[1].slice(0, 2)).toEqual(['new-chat', 'second message'])
+  })
+
+  // Dogfood finding 11: every click used to POST /chats and leave an empty chat behind.
+  it('New Chat creates nothing until the first send, and an untitled chat reads "(untitled)"', async () => {
+    mockMatchMedia()
+    client.setConfig({ baseUrl: 'http://localhost:3000' })
+    window.history.replaceState(null, '', '/chat/old')
+    vi.mocked(api.listChats).mockResolvedValue({ data: [{ id: 'old', title: '', system_prompt: '', created_at: NOW, updated_at: NOW, status: 'idle' }] })
+
+    const store = new ChatStore()
+    const submitSpy = vi.spyOn(store, 'submit').mockResolvedValue(undefined)
+    const mounted = await mountEmptyChat(store)
+    expect(mounted.host.querySelector('h1')?.textContent).toBe('(untitled)')
+
+    const newChat = [...mounted.host.querySelectorAll('button')].find(b => b.textContent === 'New Chat')!
+    await act(async () => { newChat.click() })
+    await act(async () => { newChat.click() })
+    expect(api.createChat).not.toHaveBeenCalled()
+    expect(window.location.pathname).toBe('/chat')
+    expect(mounted.host.querySelector('h1')?.textContent).toBe('New chat')
+
+    await mounted.sendMessage('hello')
+    expect(api.createChat).toHaveBeenCalledTimes(1)
+    expect(submitSpy).toHaveBeenCalledWith('new-chat', 'hello', undefined, expect.any(Function))
+    vi.mocked(api.listChats).mockResolvedValue({ data: [] })
+  })
+
+  // Dogfood finding 12: a bad chat URL showed a working composer, then dropped the message with "no such chat".
+  it('a chat URL that 404s shows not-found, and Start a new chat keeps the typed draft', async () => {
+    mockMatchMedia()
+    client.setConfig({ baseUrl: 'http://localhost:3000' })
+    window.history.replaceState(null, '', '/chat/does-not-exist')
+    vi.mocked(api.getChat).mockRejectedValueOnce(Object.assign(new Error('no such chat'), { status: 404 }))
+
+    const store = new ChatStore()
+    const submitSpy = vi.spyOn(store, 'submit').mockResolvedValue(undefined)
+    const mounted = await mountEmptyChat(store)
+    expect(mounted.host.textContent).toContain("This chat doesn't exist or was deleted.")
+    expect(mounted.host.querySelector('h1')?.textContent).toBe('Chat not found')
+
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(mounted.textarea, 'my draft')
+      mounted.textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    const start = [...mounted.host.querySelectorAll('button')].find(b => b.textContent === 'Start a new chat')!
+    await act(async () => { start.click() })
+    expect(window.location.pathname).toBe('/chat')
+    expect(mounted.textarea.value).toBe('my draft')
+    expect(api.createChat).not.toHaveBeenCalled()
+
+    await mounted.sendMessage('my draft')
+    expect(submitSpy).toHaveBeenCalledWith('new-chat', 'my draft', undefined, expect.any(Function))
+  })
+
+  it('Enter on a not-found chat sends into a new chat, not the missing one', async () => {
+    mockMatchMedia()
+    client.setConfig({ baseUrl: 'http://localhost:3000' })
+    window.history.replaceState(null, '', '/chat/does-not-exist')
+    vi.mocked(api.getChat).mockRejectedValueOnce(Object.assign(new Error('no such chat'), { status: 404 }))
+
+    const store = new ChatStore()
+    const submitSpy = vi.spyOn(store, 'submit').mockResolvedValue(undefined)
+    const mounted = await mountEmptyChat(store)
+    await mounted.sendMessage('hello')
+    expect(api.createChat).toHaveBeenCalledTimes(1)
+    expect(submitSpy).toHaveBeenCalledWith('new-chat', 'hello', undefined, expect.any(Function))
+    expect(window.location.pathname).toBe('/chat/new-chat')
   })
 })

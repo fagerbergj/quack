@@ -546,6 +546,30 @@ describe('ChatStore - mid-node steering', () => {
     expect(await sent()).toEqual({ method: 'PUT', path: '/api/v1/chats/c/nodes/a/status', body: JSON.stringify({ status: 'paused', reason: 'shutdown' }) })
   })
 
+  it('a rejected pause notes the server message on the node until clearNodeError or the node finishes', async () => {
+    const sse = `event: dag_plan\ndata: ${JSON.stringify({ plan_id: 'p', nodes: [{ id: 'a', agent: 'r', task: 't', depends_on: [] }], edges: [] })}\n\nevent: node_start\ndata: {"node_id":"a","agent":"r"}\n\n`
+    let push!: (s: string) => void
+    const open = new ReadableStream({ start(ctrl) { push = s => ctrl.enqueue(new TextEncoder().encode(s)); push(sse) } })
+    fetchMock.mockResolvedValueOnce(new Response(open, { status: 200, headers: { 'Content-Type': 'text/event-stream' } }))
+    void store.submit('c', 'go')
+    await vi.waitFor(() => expect(store.get('c').live?.dag?.nodeStates['a']?.status).toBe('running'))
+    const nodeA = () => store.get('c').live?.dag?.nodeStates['a']
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ error: 'illegal transition: queued -> paused' }, 409))
+    store.pauseNode('c', 'a')
+    await vi.waitFor(() => expect(nodeA()?.error).toBe('illegal transition: queued -> paused'))
+    store.clearNodeError('c', 'a')
+    expect(nodeA()?.error).toBeUndefined()
+    expect(nodeA()?.status).toBe('running')
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ error: 'illegal transition: queued -> paused' }, 409))
+    store.pauseNode('c', 'a')
+    await vi.waitFor(() => expect(nodeA()?.error).toBeDefined())
+    push('event: node_done\ndata: {"node_id":"a"}\n\n')
+    await vi.waitFor(() => expect(nodeA()?.status).toBe('done'))
+    expect(nodeA()?.error).toBeUndefined()
+  })
+
   it('startNode POSTs an answer to the start endpoint', async () => {
     const sse = [
       `event: dag_plan\ndata: ${JSON.stringify({ plan_id: 'p', nodes: [{ id: 'a', agent: 'r', task: 't', depends_on: [] }], edges: [] })}\n\n`,
@@ -631,6 +655,26 @@ describe('ChatStore - mid-node steering', () => {
     // The re-run's progress streams over GET /stream, not the PUT's own body.
     const es = FakeEventSource.last!
     expect(es.url).toBe('/api/v1/chats/c/stream')
+  })
+
+  it('a retry of a turn streamed on this page keeps its answer until the re-run streams a new one', async () => {
+    const sse = [
+      `event: dag_plan\ndata: ${JSON.stringify({ plan_id: 'p', nodes: [{ id: 'a', agent: 'r', task: 't', depends_on: [] }], edges: [] })}\n\n`,
+      `event: agent_start\ndata: {"node_id":"a","run_id":"worker-r0","agent":"r","stage":"worker"}\n\n`,
+      `event: agent_token\ndata: {"node_id":"a","run_id":"worker-r0","text":"OLD"}\n\n`,
+      `event: node_done\ndata: {"node_id":"a"}\n\n`,
+    ].join('')
+    fetchMock.mockResolvedValueOnce(makeStream(sse))
+    await store.submit('c', 'hello')
+    fetchMock.mockResolvedValueOnce(jsonResponse({ status: 'queued' }))
+    store.retryNode('c', 'a')
+    expect(liveAnswerText(store.get('c').live!)).toBe('OLD')
+
+    await vi.waitFor(() => expect(FakeEventSource.last).not.toBeNull())
+    const es = FakeEventSource.last!
+    es.emit('agent_start', '{"node_id":"a","run_id":"worker-r1","agent":"r","stage":"worker"}')
+    es.emit('agent_token', '{"node_id":"a","run_id":"worker-r1","text":"NEW"}')
+    expect(liveAnswerText(store.get('c').live!)).toBe('NEW')
   })
 
   // Timers anchor to the server's start time (epoch ms), not Date.now() at event
@@ -1123,6 +1167,13 @@ describe('answer-bubble attribution helpers', () => {
   it('dagTotalTokens sums total_tokens across every node', () => {
     const d = dag({ a: { status: 'done', totalTokens: 100 }, b: { status: 'done', totalTokens: 50 } })
     expect(dagTotalTokens(d)).toBe(150)
+  })
+
+  // Dogfood finding 16: the header showed only the finished node's tokens, not a paused node's worker rounds.
+  it('dagTotalTokens counts an unfinished node by its runs so far', () => {
+    const run = (runId: string, totalTokens: number) => ({ runId, agent: 'r', stage: 'worker' as const, activity: [], done: true, totalTokens })
+    const d = { ...dag({ a: { status: 'paused' }, b: { status: 'done', totalTokens: 100 } }), nodeRuns: { a: [run('w0', 50), run('w1', 30)], b: [run('w0', 999)] } }
+    expect(dagTotalTokens(d)).toBe(180)
   })
 
   it('dagTotalTokens is 0 when no node reports usage', () => {
@@ -1957,6 +2008,8 @@ describe('ChatStore - a multi-sink turn after a retry keeps its sectioned answer
     store.reattach('c', [retriedTurn])
     const es = FakeEventSource.last!
     expect(store.get('c').live?.id).toBe('t1')
+    // Until the re-run's sink streams, the persisted answer stays up (dogfood finding 7).
+    expect(liveAnswerText(store.get('c').live!)).toBe(sectioned)
     replayRetryOfR1(es)
     await vi.waitFor(() => expect(liveAnswerText(store.get('c').live!)).toBe(updated))
     expect((await sent()).path).toBe('/api/v1/chats/c/responses/t1')
@@ -1993,7 +2046,11 @@ describe('ChatStore - a multi-sink turn after a retry keeps its sectioned answer
       .mockResolvedValueOnce(jsonResponse({ status: 'queued' }))
       .mockResolvedValueOnce(jsonResponse({ ...retriedTurn, output: [retriedTurn.output[0], { type: 'message', id: 't1:msg', status: 'completed', content: [{ type: 'output_text', text: updated }] }] }))
     const before = FakeEventSource.last
+    const retriedAt = Date.now()
     store.retryNode('c', 'r1')
+    // Dogfood finding 7: the old answer stays up until the re-run streams, and the timers start at the retry.
+    expect(liveAnswerText(store.get('c').live!)).toBe(sectioned)
+    expect(store.get('c').live!.dag!.startedAt).toBeGreaterThanOrEqual(retriedAt)
     await vi.waitFor(() => expect(FakeEventSource.last).not.toBe(before))
     const es = FakeEventSource.last!
     es.emit('agent_token', '{"node_id":"r1","run_id":"worker-r0","text":"NEW ONE"}')

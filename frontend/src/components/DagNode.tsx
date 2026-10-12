@@ -563,11 +563,11 @@ function NodeStateChips({ steers, resumedFrom }: { steers?: string[]; resumedFro
   )
 }
 
-// The named state leads the metadata group so below `medium` it wraps onto the muted second line
-// instead of squeezing the agent name off the first.
+// The named state leads the metadata group so below `medium` it wraps onto the muted second line. From `medium`
+// up it shares the row, shrinking and wrapping its own badges so the agent name keeps its floor.
 function NodeMetaRow({ state, node, pauseLabel }: { state: NodeState; node: DagNodeDef; pauseLabel?: string }) {
   return (
-    <div className="empty:hidden flex flex-wrap medium:flex-nowrap items-center gap-x-2 gap-y-0.5 basis-full order-last medium:basis-auto medium:order-none">
+    <div className="empty:hidden min-w-0 flex flex-wrap items-center gap-x-2 gap-y-0.5 basis-full order-last medium:basis-auto medium:order-none medium:justify-end">
       <StatusDot status={state.status} label={pauseLabel} />
       {state.model && (
         <span className="text-[11px] text-gray-500 dark:text-gray-400 font-mono truncate max-w-[120px]" title={state.model}>
@@ -611,13 +611,15 @@ function NodeMetaRow({ state, node, pauseLabel }: { state: NodeState; node: DagN
   )
 }
 
-// A finished node shows the server-measured duration (reconnect-proof); a running one ticks from the server start.
-function NodeElapsed({ state }: { state: NodeState }) {
+// A finished node shows the server-measured duration (reconnect-proof); a running one ticks from its own node_start,
+// holds while paused, and a node still waiting for its first run shows none.
+function NodeElapsed({ state, notStarted }: { state: NodeState; notStarted: boolean }) {
+  if (notStarted) return null
   return (state.finishedAt != null && state.serverDurationMs != null) ? (
     <span className="shrink-0 text-[11px] text-gray-500 dark:text-gray-400 tabular-nums">{fmtMs(state.serverDurationMs)}</span>
   ) : state.startedAt != null ? (
     <span className="shrink-0 text-[11px] text-gray-500 dark:text-gray-400 tabular-nums">
-      <LiveTimer startedAt={state.startedAt} finishedAt={state.finishedAt} />
+      <LiveTimer startedAt={state.startedAt} finishedAt={state.finishedAt} paused={isPausedStatus(state.status)} />
     </span>
   ) : null
 }
@@ -676,14 +678,32 @@ function RunGroupList({ runs, activeIdx }: { runs: AgentRun[]; activeIdx: number
   )
 }
 
-// StatusBanners: the footer state banners under the vetted answer.
-function StatusBanners({ state }: { state: NodeState }) {
+// StatusBanners: the footer state banners under the vetted answer. On a node that hasn't failed, `error` is a
+// rejected control action (a 409 on pause, say), shown until dismissed.
+function StatusBanners({ nodeId, state, onDismissError }: { nodeId: string; state: NodeState; onDismissError?: (nodeId: string) => void }) {
   return (
     <>
       {/* Failed state */}
       {state.status === 'failed' && state.error && (
         <div className="px-4 py-2 text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20">
           {state.error}
+        </div>
+      )}
+
+      {state.status !== 'failed' && state.error && (
+        <div role="alert" className="flex items-center gap-2 px-4 py-1 text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20">
+          <Icon name="warning" className="w-3.5 h-3.5 shrink-0" />
+          <span className="flex-1 min-w-0 break-words">{state.error}</span>
+          {onDismissError && (
+            <button
+              type="button"
+              onClick={() => onDismissError(nodeId)}
+              aria-label="Dismiss"
+              className="shrink-0 w-11 h-11 -my-1 -me-3 flex items-center justify-center rounded-lg hover:bg-red-100 dark:hover:bg-red-900/40"
+            >
+              <Icon name="close" className="w-4 h-4" />
+            </button>
+          )}
         </div>
       )}
 
@@ -766,6 +786,7 @@ interface Props {
   onEditTask?: (nodeId: string, task: string) => void
   onRetry?: (nodeId: string, guidance?: string) => void
   onAnswerQuestion?: (nodeId: string, answer: string) => void
+  onDismissError?: (nodeId: string) => void
 }
 
 // Memoized because DagView re-renders on every SSE event for the whole DAG; callback props are stable
@@ -773,7 +794,7 @@ interface Props {
 export const DagNode = memo(function DagNode({
   node, state, runs, answer, isFinal, chatId,
   onCancel, onPause, onResume, onQueueMessage, onEditQueuedMessage, onRemoveQueuedMessage, onEditTask,
-  onRetry, onAnswerQuestion,
+  onRetry, onAnswerQuestion, onDismissError,
 }: Props) {
   const dispatched = runs.length > 0
   const { notStarted, running } = liveState(state.status, dispatched)
@@ -799,14 +820,14 @@ export const DagNode = memo(function DagNode({
       {/* One line at every width; below `medium` the metadata group wraps onto its own
           muted line (basis-full + order-last) instead of stacking the row. */}
       <div className="flex flex-wrap medium:flex-nowrap items-center gap-x-2 gap-y-1 px-4 py-3 border-b border-gray-100 dark:border-gray-700">
-        <span className="text-xs font-semibold text-gray-700 dark:text-gray-200 min-w-0 flex-1 truncate" title={agentLabel(node.agent)}>
+        <span className="text-xs font-semibold text-gray-700 dark:text-gray-200 min-w-24 flex-1 truncate" title={agentLabel(node.agent)}>
           {agentLabel(node.agent)}
         </span>
         {isAcpAgent(node.agent) && <AcpBadge />}
         <QueuedBadge count={pendingQueueCount} />
         <NodeStateChips steers={state.steers} resumedFrom={state.resumedFrom} />
         <NodeMetaRow state={state} node={node} pauseLabel={pauseLabel} />
-        <NodeElapsed state={state} />
+        <NodeElapsed state={state} notStarted={notStarted} />
         <NodeAnswerButton canAnswer={canAnswer} onClick={() => setPopupOpen(true)} />
         <NodeMenu
           nodeId={node.id}
@@ -870,7 +891,7 @@ export const DagNode = memo(function DagNode({
         <OutcomeRow chatId={chatId} node={node} answer={answer} finished={finished} onOpenArtifacts={() => setArtifactsOpen(true)} />
       )}
 
-      <StatusBanners state={state} />
+      <StatusBanners nodeId={node.id} state={state} onDismissError={onDismissError} />
     </div>
   )
 })
