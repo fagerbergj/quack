@@ -173,7 +173,7 @@ function liveTurnDerived(live: NonNullable<ChatState['live']>, liveActive: boole
   return { liveDag, liveTopText, liveDone, liveText, orchActivity, showSpinner, answerAttribution, hasAnswerBubble }
 }
 
-function LiveDagBubble({ dag, liveDone, chatId, orchActivity, onCancelNode, onPauseNode, onQueueNodeMessage, onEditQueuedMessage, onRemoveQueuedMessage, onEditNodeTask, onRetryNode, onResumeNode, onAnswerNodeQuestion }: {
+function LiveDagBubble({ dag, liveDone, chatId, orchActivity, onCancelNode, onPauseNode, onQueueNodeMessage, onEditQueuedMessage, onRemoveQueuedMessage, onEditNodeTask, onRetryNode, onResumeNode, onAnswerNodeQuestion, onDismissNodeError }: {
   dag: DagTurnState
   liveDone: boolean
   chatId?: string
@@ -187,6 +187,7 @@ function LiveDagBubble({ dag, liveDone, chatId, orchActivity, onCancelNode, onPa
   onRetryNode: (nodeId: string, guidance?: string) => void
   onResumeNode: (nodeId: string) => void
   onAnswerNodeQuestion: (nodeId: string, answer: string) => void
+  onDismissNodeError: (nodeId: string) => void
 }) {
   return (
     <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
@@ -199,7 +200,7 @@ function LiveDagBubble({ dag, liveDone, chatId, orchActivity, onCancelNode, onPa
           <div className="p-2 space-y-3">
             {orchActivity.length > 0 && <ActivityList activity={orchActivity} />}
             {/* Start/Stop stay wired post-run: a paused node ends the turn, so this is where Start must work. */}
-            <DagView dag={dag} chatId={chatId} onRetryNode={onRetryNode} onResumeNode={onResumeNode} onCancelNode={onCancelNode} onAnswerNodeQuestion={onAnswerNodeQuestion} />
+            <DagView dag={dag} chatId={chatId} onRetryNode={onRetryNode} onResumeNode={onResumeNode} onCancelNode={onCancelNode} onAnswerNodeQuestion={onAnswerNodeQuestion} onDismissNodeError={onDismissNodeError} />
           </div>
         </details>
       ) : (
@@ -215,6 +216,7 @@ function LiveDagBubble({ dag, liveDone, chatId, orchActivity, onCancelNode, onPa
             onRemoveQueuedMessage={onRemoveQueuedMessage}
             onEditNodeTask={onEditNodeTask}
             onAnswerNodeQuestion={onAnswerNodeQuestion}
+            onDismissNodeError={onDismissNodeError}
           />
         </div>
       )}
@@ -272,7 +274,7 @@ function LiveDagAnswer({ liveText, liveActive, attribution }: { liveText: string
 
 // The user bubble is hidden for a clarification answer and for a webhook-triggered turn, which has no typed
 // message (its synthesized task renders in the DAG bubble).
-function LiveTurnView({ live, surfaces, liveActive, isArchived, activeChatId, liveIsChoiceAnswer, livePriorContents, liveAttachmentsEl, liveAttachmentPreviews, submittingChoice, copied, turnsCount, onChoice, onCopy, onDownload, onCancelNode, onPauseNode, onQueueNodeMessage, onEditQueuedMessage, onRemoveQueuedMessage, onEditNodeTask, onRetryNode, onResumeNode, onAnswerNode }: {
+function LiveTurnView({ live, surfaces, liveActive, isArchived, activeChatId, liveIsChoiceAnswer, livePriorContents, liveAttachmentsEl, liveAttachmentPreviews, submittingChoice, copied, turnsCount, onChoice, onCopy, onDownload, onCancelNode, onPauseNode, onQueueNodeMessage, onEditQueuedMessage, onRemoveQueuedMessage, onEditNodeTask, onRetryNode, onResumeNode, onAnswerNode, onDismissNodeError }: {
   live: NonNullable<ChatState['live']>
   surfaces?: SurfaceRef[]
   liveActive: boolean
@@ -297,6 +299,7 @@ function LiveTurnView({ live, surfaces, liveActive, isArchived, activeChatId, li
   onRetryNode: (nodeId: string, guidance?: string) => void
   onResumeNode: (nodeId: string) => void
   onAnswerNode: (nodeId: string, answer: string) => void
+  onDismissNodeError: (nodeId: string) => void
 }) {
   const d = liveTurnDerived(live, liveActive)
   const { choice, nodeQuestion } = livePendingQuestions(live, d.liveDag, d.liveDone, isArchived)
@@ -329,6 +332,7 @@ function LiveTurnView({ live, surfaces, liveActive, isArchived, activeChatId, li
               onRetryNode={onRetryNode}
               onResumeNode={onResumeNode}
               onAnswerNodeQuestion={onAnswerNode}
+              onDismissNodeError={onDismissNodeError}
             />
           )}
           {nodeQuestion && (
@@ -754,6 +758,10 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
     if (activeChatId) store.retryNode(activeChatId, nodeId, guidance)
   }, [activeChatId, store])
 
+  const handleDismissNodeError = useCallback((nodeId: string) => {
+    if (activeChatId) store.clearNodeError(activeChatId, nodeId)
+  }, [activeChatId, store])
+
   // The answer travels as NodeStartBody.content, the same delivery every paused/awaiting_input resume uses.
   const handleAnswerNode = useCallback((nodeId: string, answer: string) => {
     if (!activeChatId) return
@@ -945,6 +953,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
               onRetryNode={handleRetryNode}
               onResumeNode={handleResumeNode}
               onAnswerNode={handleAnswerNode}
+              onDismissNodeError={handleDismissNodeError}
             />
           )}
 

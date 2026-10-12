@@ -401,14 +401,19 @@ export class ChatStore {
     return true
   }
 
-  // markNodeError annotates a live DAG node with a transient error note (used
-  // for rejected control actions - the next stream event for the node clears it).
-  private markNodeError(chatId: string, nodeId: string, msg: string): void {
+  // A rejected control action's note on a live node; it stays until clearNodeError or a pause/steer/stop event.
+  private markNodeError(chatId: string, nodeId: string, msg: string | undefined): void {
     const cur = this.get(chatId)
     const dag = cur.live?.dag
     if (!cur.live || !dag?.nodeStates[nodeId]) return
     const nodeStates = { ...dag.nodeStates, [nodeId]: { ...dag.nodeStates[nodeId], error: msg } }
     this.write(chatId, { ...cur, live: { ...cur.live, dag: { ...dag, nodeStates } } })
+  }
+
+  // Dismisses a node's rejected-action note; a failed node's error is its outcome, so it stays.
+  clearNodeError(chatId: string, nodeId: string): void {
+    if (this.get(chatId).live?.dag?.nodeStates[nodeId]?.status === 'failed') return
+    this.markNodeError(chatId, nodeId, undefined)
   }
 
   // rejected reports a control request that failed, noting the server's message on the node;

@@ -546,6 +546,21 @@ describe('ChatStore - mid-node steering', () => {
     expect(await sent()).toEqual({ method: 'PUT', path: '/api/v1/chats/c/nodes/a/status', body: JSON.stringify({ status: 'paused', reason: 'shutdown' }) })
   })
 
+  it('a rejected pause notes the server message on the node until clearNodeError', async () => {
+    const sse = `event: dag_plan\ndata: ${JSON.stringify({ plan_id: 'p', nodes: [{ id: 'a', agent: 'r', task: 't', depends_on: [] }], edges: [] })}\n\nevent: node_start\ndata: {"node_id":"a","agent":"r"}\n\n`
+    const open = new ReadableStream({ start(ctrl) { ctrl.enqueue(new TextEncoder().encode(sse)) } })
+    fetchMock.mockResolvedValueOnce(new Response(open, { status: 200, headers: { 'Content-Type': 'text/event-stream' } }))
+    void store.submit('c', 'go')
+    await vi.waitFor(() => expect(store.get('c').live?.dag?.nodeStates['a']?.status).toBe('running'))
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ error: 'illegal transition: queued -> paused' }, 409))
+    store.pauseNode('c', 'a')
+    await vi.waitFor(() => expect(store.get('c').live?.dag?.nodeStates['a']?.error).toBe('illegal transition: queued -> paused'))
+    store.clearNodeError('c', 'a')
+    expect(store.get('c').live?.dag?.nodeStates['a']?.error).toBeUndefined()
+    expect(store.get('c').live?.dag?.nodeStates['a']?.status).toBe('running')
+  })
+
   it('startNode POSTs an answer to the start endpoint', async () => {
     const sse = [
       `event: dag_plan\ndata: ${JSON.stringify({ plan_id: 'p', nodes: [{ id: 'a', agent: 'r', task: 't', depends_on: [] }], edges: [] })}\n\n`,

@@ -676,14 +676,32 @@ function RunGroupList({ runs, activeIdx }: { runs: AgentRun[]; activeIdx: number
   )
 }
 
-// StatusBanners: the footer state banners under the vetted answer.
-function StatusBanners({ state }: { state: NodeState }) {
+// StatusBanners: the footer state banners under the vetted answer. On a node that hasn't failed, `error` is a
+// rejected control action (a 409 on pause, say), shown until dismissed.
+function StatusBanners({ nodeId, state, onDismissError }: { nodeId: string; state: NodeState; onDismissError?: (nodeId: string) => void }) {
   return (
     <>
       {/* Failed state */}
       {state.status === 'failed' && state.error && (
         <div className="px-4 py-2 text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20">
           {state.error}
+        </div>
+      )}
+
+      {state.status !== 'failed' && state.error && (
+        <div role="alert" className="flex items-center gap-2 px-4 py-1 text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20">
+          <Icon name="warning" className="w-3.5 h-3.5 shrink-0" />
+          <span className="flex-1 min-w-0 break-words">{state.error}</span>
+          {onDismissError && (
+            <button
+              type="button"
+              onClick={() => onDismissError(nodeId)}
+              aria-label="Dismiss"
+              className="shrink-0 w-11 h-11 -my-1 -me-3 flex items-center justify-center rounded-lg hover:bg-red-100 dark:hover:bg-red-900/40"
+            >
+              <Icon name="close" className="w-4 h-4" />
+            </button>
+          )}
         </div>
       )}
 
@@ -766,6 +784,7 @@ interface Props {
   onEditTask?: (nodeId: string, task: string) => void
   onRetry?: (nodeId: string, guidance?: string) => void
   onAnswerQuestion?: (nodeId: string, answer: string) => void
+  onDismissError?: (nodeId: string) => void
 }
 
 // Memoized because DagView re-renders on every SSE event for the whole DAG; callback props are stable
@@ -773,7 +792,7 @@ interface Props {
 export const DagNode = memo(function DagNode({
   node, state, runs, answer, isFinal, chatId,
   onCancel, onPause, onResume, onQueueMessage, onEditQueuedMessage, onRemoveQueuedMessage, onEditTask,
-  onRetry, onAnswerQuestion,
+  onRetry, onAnswerQuestion, onDismissError,
 }: Props) {
   const dispatched = runs.length > 0
   const { notStarted, running } = liveState(state.status, dispatched)
@@ -870,7 +889,7 @@ export const DagNode = memo(function DagNode({
         <OutcomeRow chatId={chatId} node={node} answer={answer} finished={finished} onOpenArtifacts={() => setArtifactsOpen(true)} />
       )}
 
-      <StatusBanners state={state} />
+      <StatusBanners nodeId={node.id} state={state} onDismissError={onDismissError} />
     </div>
   )
 })

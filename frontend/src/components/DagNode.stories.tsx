@@ -55,6 +55,14 @@ export const Queued: Story = {
   },
 }
 
+// A rejected control action (a 409 on pause) on a node that keeps running: a dismissible note, not a failure.
+export const RejectedAction: Story = {
+  args: {
+    node: wrNode, state: { status: 'running', startedAt: Date.now() - 42_000, error: 'illegal transition: queued -> paused' },
+    runs: [], answer: '', isFinal: false, onDismissError: () => {},
+  },
+}
+
 export const Running: Story = {
   render: () => (
     <DagNode

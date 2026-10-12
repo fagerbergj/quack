@@ -309,3 +309,29 @@ describe('DagNode stays live through a mid-run admission re-queue (#1480)', () =
     expect(screen.queryByRole('menuitem', { name: /Pause/ })).toBeNull()
   })
 })
+
+// A 409 on pause/stop lands in state.error without changing status; the card must show it (dogfood finding 3).
+describe('DagNode rejected-action note', () => {
+  it('shows a rejected action on a running node and dismisses it', async () => {
+    const user = userEvent.setup()
+    const onDismissError = vi.fn()
+    render(<DagNode node={node} state={{ status: 'running', error: 'illegal transition: queued -> paused' }} runs={[]} answer="" isFinal={false} onDismissError={onDismissError} />)
+    expect(screen.getByRole('alert').textContent).toContain('illegal transition: queued -> paused')
+    await user.click(screen.getByRole('button', { name: 'Dismiss' }))
+    expect(onDismissError).toHaveBeenCalledWith('r1')
+  })
+
+  it('a failed node keeps its single red banner, with no dismiss', () => {
+    render(<DagNode node={node} state={{ status: 'failed', error: 'boom' }} runs={[]} answer="" isFinal={false} onDismissError={() => {}} />)
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getAllByText('boom')).toHaveLength(1)
+  })
+
+  it('offers no Pause on a paused node', async () => {
+    const user = userEvent.setup()
+    render(<DagNode node={node} state={{ status: 'paused', pauseReason: 'user' }} runs={[]} answer="" isFinal={false} onPause={() => {}} onResume={() => {}} />)
+    await user.click(screen.getByRole('button', { name: 'Node actions' }))
+    expect(await screen.findByRole('menuitem', { name: /Start/ })).toBeTruthy()
+    expect(screen.queryByRole('menuitem', { name: /Pause/ })).toBeNull()
+  })
+})

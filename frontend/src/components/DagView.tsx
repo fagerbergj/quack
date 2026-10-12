@@ -51,6 +51,8 @@ interface Props {
   // Answers a paused node's mid-node question (needs_input), via the same
   // resume path the top-level QuestionBubble uses.
   onAnswerNodeQuestion?: (nodeId: string, answer: string) => void
+  // Clears a node's rejected-action note (a 409 on pause, say).
+  onDismissNodeError?: (nodeId: string) => void
 }
 
 // DagBubbleHeader is the DAG bubble's compact header - its own attribution line,
@@ -68,7 +70,7 @@ export function DagBubbleHeader({ dag }: { dag: DagTurnState }) {
 
 export function DagView({
   dag, chatId, onCancelNode, onPauseNode, onResumeNode, onQueueNodeMessage,
-  onEditQueuedMessage, onRemoveQueuedMessage, onEditNodeTask, onRetryNode, onAnswerNodeQuestion,
+  onEditQueuedMessage, onRemoveQueuedMessage, onEditNodeTask, onRetryNode, onAnswerNodeQuestion, onDismissNodeError,
 }: Props) {
   const nodeMap = Object.fromEntries(dag.nodes.map(n => [n.id, n]))
   const dependsOnMap: Record<string, string[]> = {}
@@ -123,6 +125,7 @@ export function DagView({
                   onEditTask={onEditNodeTask}
                   onRetry={onRetryNode}
                   onAnswerQuestion={onAnswerNodeQuestion}
+                  onDismissError={onDismissNodeError}
                 />
               </div>
             ))}
