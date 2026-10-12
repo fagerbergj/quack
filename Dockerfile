@@ -146,10 +146,6 @@ COPY --link config/ /config/
 COPY --link agents/ /agents/
 # Orchestrator skill bundles (SKILL.md directories), read at startup.
 COPY --link skills/ /skills/
-# Agent Plugins roots, resolved against CWD / (config's plugins:): the
-# tracked embedded-dotagents snapshot and first-party manifests under
-# .agents/plugins. Registry-fetched plugins clone under plugins.root instead.
-COPY --link --from=backend /app/.agents/ /.agents/
 # Last: they change on every code edit, so the layers above stay pullable from cache.
 COPY --link --from=backend /quack-sandbox /quack-sandbox
 COPY --link --from=backend /quack /quack

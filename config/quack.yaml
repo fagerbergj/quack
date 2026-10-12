@@ -157,8 +157,8 @@ agents:
             ]  # NO repo tools: reading source is code-explorer's job (see its card)  # read-only fs + clone, so research can pull a repo apart
     # no skills scoped: it has no repo tools to act on research-git-repos with, and no plan/review/code skills apply to it
   # code-implementer/reviewer/explorer: override-only - bundle, tools, skills,
-  # judge_rounds and context_window come from .agents/plugins/github's own
-  # agent.yaml, seeded only once extensions.github below is configured.
+  # judge_rounds and context_window come from the github plugin's own
+  # agent.yaml (extensions/github/plugin), seeded only once extensions.github below is configured.
   # optional: true so a disabled extension drops these three, not boot.
   code-implementer:
     optional: true
@@ -406,10 +406,13 @@ plugins:
   seed:
     - github:fagerbergj/dotagents           # general-purpose skills
     - github:DietrichGebert/ponytail@v4.9.0 # YAGNI/lazy-senior-dev discipline
-    - .agents/plugins/usage                 # manifest for the compiled-in usage extension
-    # Pinned to the same tag as go.mod's quack-extensions/sleeper; its agents/workflows seed only once extensions.sleeper below is configured.
-    - github:fagerbergj/quack-extensions@sleeper/v0.11.1#sleeper/plugin
-    - .agents/plugins/github                # its code-implementer/reviewer/explorer agents seed only once extensions.github below is configured
+    - github:fagerbergj/quack@plugin/usage/vNEXT#extensions/usage/plugin   # manifest for the compiled-in usage extension
+    # The extension plugins below ship from this repo at plugin/<name>/vX.Y.Z tags (docs/agent-plugins.md), so
+    # a prompt fix is a tag and a ref bump, no image. Each seeds its agents/workflows only once its extensions.<name> is configured.
+    # sleeper's agents name its module's tools: tag it at a commit whose tools this image carries.
+    - github:fagerbergj/quack@plugin/sleeper/vNEXT#extensions/sleeper/plugin
+    - github:fagerbergj/quack@plugin/github/vNEXT#extensions/github/plugin     # code-implementer/reviewer/explorer
+    - github:fagerbergj/quack@plugin/remarkable/vNEXT#extensions/remarkable/plugin # the document-ingest workflow
 
 # workflows: a top-level key (not nested under skills:) that either teaches
 # plan-work's "Common workflows" table a deployment-specific DAG shape, or -
@@ -418,28 +421,9 @@ plugins:
 # See docs/configuration/agents.md#extending-the-workflow-catalog for the
 # schema and an example. Empty by default: the shipped table is unchanged.
 #
-# document-ingest is what extensions.remarkable above dispatches into: one
-# reader node transcribes the attached document, one synthesizer node turns
-# that into a structured summary (synthesizer has no memory tools configured,
-# so it only summarizes - it can't commit facts on its own).
-# workflows:
-#   - name: document-ingest
-#     trigger: "Ingest a new document (e.g. a reMarkable export) into the knowledge base"
-#     agents: [image-reader, synthesizer]
-#     shape: "ONE `image-reader` node (transcribes the attached document) → ONE `synthesizer` node (terminal - writes the structured summary)"
-#     nodes:
-#       - id: transcribe
-#         agent: image-reader
-#         task: "Transcribe this document's full content, preserving structure (headings, lists, sketches described in words).\n\n{{ask}}"
-#         artifact: document   # #1006/#1090: episodic record of this stage's output, preloaded on re-ingest
-#       - id: summarize
-#         agent: synthesizer
-#         depends_on: [transcribe]
-#         task: "Write a structured Markdown summary of the transcribed document above: key facts, decisions, and action items.\n\n{{ask}}"
-#         artifact: document
-#   # rmfakecloud documents arrive as application/pdf; the OpenAI backend
-#   # (internal/inference/openaimodel) doesn't decode inline PDF data yet, so
-#   # this shape is the intended wiring, not yet an end-to-end working one.
+# document-ingest, what extensions.remarkable dispatches into, ships in the
+# remarkable plugin (plugins.seed above). A workflows: entry of the same name
+# here would override it.
 
 # The sleeper-* job shapes come from the sleeper plugin, which seeds them once
 # extensions.sleeper is configured. No workflows: entries ship by default.
@@ -612,7 +596,7 @@ workspace:
 #
 # extensions.github wires the GitHub App extension: a webhook receiver, App-authed
 # git credentials, and the App-mention trigger - and, once this block is present and
-# enabled, the .agents/plugins/github plugin's own code-implementer/code-reviewer/
+# enabled, the github plugin's own code-implementer/code-reviewer/
 # code-explorer agents (docs/agent-plugins.md). It needs client_id and EXACTLY
 # ONE private-key source (inline private_key PEM via ${VAR}, or private_key_path to
 # a mounted .pem). The App's CLIENT SECRET is NOT used (that's OAuth only). Secrets

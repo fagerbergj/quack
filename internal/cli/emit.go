@@ -153,15 +153,16 @@ func EmitServerConfig(a InitAnswers) string {
 	return b.String()
 }
 
-// codingPluginSeed restates the shipped default plugin list plus
-// .agents/plugins/github: plugins.seed replaces the default, not extends it.
+// codingPluginSeed restates the shipped default plugin list plus the
+// github plugin: plugins.seed replaces the default, not extends it.
 var codingPluginSeed = []string{
 	"github:fagerbergj/dotagents", "github:DietrichGebert/ponytail@v4.9.0",
-	".agents/plugins/usage", ".agents/plugins/github",
+	"github:fagerbergj/quack@plugin/usage/vNEXT#extensions/usage/plugin",
+	"github:fagerbergj/quack@plugin/github/vNEXT#extensions/github/plugin",
 }
 
 // emitCodingAgents renders the three coding agents as override-only entries -
-// bundle/tools/skills come from .agents/plugins/github's agent.yaml.
+// bundle/tools/skills come from the github plugin's agent.yaml.
 func emitCodingAgents(b *strings.Builder, a InitAnswers) {
 	model := a.CoderModel
 	if model == "" {
@@ -191,7 +192,7 @@ func emitCodingAgentOverride(b *strings.Builder, name, model string) {
 }
 
 // emitCodingPlugins renders the plugins.seed list Coding needs so
-// .agents/plugins/github actually seeds its three agents.
+// the github plugin actually seeds its three agents.
 func emitCodingPlugins(b *strings.Builder) {
 	b.WriteString("plugins:\n  seed:\n")
 	for _, p := range codingPluginSeed {

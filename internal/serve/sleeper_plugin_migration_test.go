@@ -13,30 +13,30 @@ import (
 )
 
 // sleeperSeed is config/quack.yaml's shape of the sleeper entry, at a fixture tag.
-const sleeperSeed = "github:fagerbergj/quack-extensions@sleeper/v9.9.9#sleeper/plugin"
+const sleeperSeed = "github:fagerbergj/quack@plugin/sleeper/v9.9.9#extensions/sleeper/plugin"
 
 // oldSleeperRow is the row every pre-registry-plugin deployment has on disk.
 var oldSleeperRow = pluginreg.Plugin{Name: "sleeper", Source: pluginreg.SourceLocal, Entry: ".agents/plugins/sleeper"}
 
-// sleeperPluginRemote serves the fixture plugin at quack-extensions' layout
-// (sleeper/plugin) from a local bare repo, tagged sleeper/v9.9.9.
+// sleeperPluginRemote serves the fixture plugin at quack's layout
+// (extensions/sleeper/plugin) from a local bare repo, tagged plugin/sleeper/v9.9.9.
 func sleeperPluginRemote(t *testing.T) {
 	t.Helper()
-	bare := filepath.Join(t.TempDir(), "quack-extensions.git")
+	bare := filepath.Join(t.TempDir(), "quack.git")
 	run(t, "", "init", "--quiet", "--bare", "--initial-branch=main", bare)
 	work := t.TempDir()
-	if err := os.CopyFS(filepath.Join(work, "sleeper", "plugin"), os.DirFS(sleeperPluginRoot)); err != nil {
+	if err := os.CopyFS(filepath.Join(work, "extensions", "sleeper", "plugin"), os.DirFS(sleeperPluginRoot)); err != nil {
 		t.Fatal(err)
 	}
 	run(t, work, "init", "--quiet", "--initial-branch=main")
 	run(t, work, "add", ".")
 	run(t, work, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "--quiet", "-m", "sleeper plugin")
-	run(t, work, "tag", "sleeper/v9.9.9")
-	run(t, work, "push", "--quiet", bare, "main", "sleeper/v9.9.9")
+	run(t, work, "tag", "plugin/sleeper/v9.9.9")
+	run(t, work, "push", "--quiet", bare, "main", "plugin/sleeper/v9.9.9")
 	confineWithFixture(t, bare)
 	prev := pluginreg.RemoteURL
 	pluginreg.RemoteURL = func(owner, repo string) string {
-		if owner == "fagerbergj" && repo == "quack-extensions" {
+		if owner == "fagerbergj" && repo == "quack" {
 			return bare
 		}
 		return filepath.Join(t.TempDir(), "unreachable.git")
@@ -84,13 +84,15 @@ func TestSeedRegistryFollowsChangedEntriesOfRowsItOwns(t *testing.T) {
 				gh("ponytail", "github:DietrichGebert/ponytail@v1", true),
 				gh("widgets", "github:acme/widgets@v1", false),
 				gh("dotagents", "github:fagerbergj/dotagents", false),
+				gh("github", "github:fagerbergj/quack-extensions@github/v0.21.0#github/plugin", true),
 			}
 			for _, p := range rows {
 				if err := reg.Put(ctx, p); err != nil {
 					t.Fatal(err)
 				}
 			}
-			seed := []string{sleeperSeed, "github:DietrichGebert/ponytail@v2", "github:acme/widgets@v2", "github:fagerbergj/dotagents"}
+			monoGitHub := "github:fagerbergj/quack@plugin/github/v1.0.0#extensions/github/plugin"
+			seed := []string{sleeperSeed, "github:DietrichGebert/ponytail@v2", "github:acme/widgets@v2", "github:fagerbergj/dotagents", monoGitHub}
 			if err := seedRegistry(ctx, reg, seed); err != nil {
 				t.Fatal(err)
 			}
@@ -108,10 +110,11 @@ func TestSeedRegistryFollowsChangedEntriesOfRowsItOwns(t *testing.T) {
 					t.Errorf("%s = %+v, want entry %q ref %q seeded %v", name, r, entry, ref, seeded)
 				}
 			}
-			check("sleeper", sleeperSeed, "sleeper/v9.9.9", true)
+			check("sleeper", sleeperSeed, "plugin/sleeper/v9.9.9", true)
 			check("ponytail", "github:DietrichGebert/ponytail@v2", "v2", true)
 			check("widgets", "github:acme/widgets@v1", "v1", false)
 			check("dotagents", "github:fagerbergj/dotagents", "", true)
+			check("github", monoGitHub, "plugin/github/v1.0.0", true) // the quack-extensions row moves into the monorepo
 			if got["ponytail"].SHA != "abc123" {
 				t.Errorf("ponytail sha = %q, want the old clone's sha kept until the fetch moves it", got["ponytail"].SHA)
 			}
@@ -141,8 +144,8 @@ func TestBootMigratesLocalSleeperRowToGithubPlugin(t *testing.T) {
 		t.Fatalf("bootPluginRegistry: %v", err)
 	}
 	row := rows[0]
-	if row.Source != pluginreg.SourceGitHub || row.Ref != "sleeper/v9.9.9" || row.SHA == "" || row.Error != "" {
-		t.Fatalf("sleeper row = %+v, want the github row fetched at sleeper/v9.9.9", row)
+	if row.Source != pluginreg.SourceGitHub || row.Ref != "plugin/sleeper/v9.9.9" || row.SHA == "" || row.Error != "" {
+		t.Fatalf("sleeper row = %+v, want the github row fetched at plugin/sleeper/v9.9.9", row)
 	}
 
 	rep := rig.reload(t)

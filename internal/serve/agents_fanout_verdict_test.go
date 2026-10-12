@@ -6,22 +6,6 @@ import (
 	"testing"
 )
 
-// TestCodeReviewerPromptScopesSliceVerdict: a slice never stages a verdict (the downstream synthesizer
-// owns it), so the prompt must say so - else a slice stages `comment` and fails structured_verdict.
-func TestCodeReviewerPromptScopesSliceVerdict(t *testing.T) {
-	b, err := os.ReadFile("../../.agents/plugins/github/agents/code-reviewer/prompt.md")
-	if err != nil {
-		t.Fatalf("read prompt.md: %v", err)
-	}
-	body := string(b)
-	if !strings.Contains(body, "YOUR SLICE") {
-		t.Fatal("prompt.md should reference the plan-work slice task phrasing")
-	}
-	if !strings.Contains(body, "do NOT call `stage_review`") && !strings.Contains(body, "do not stage an overall verdict") {
-		t.Fatal("prompt.md must tell a slice-scoped reviewer to stage findings only, never a verdict - a downstream synthesizer owns it")
-	}
-}
-
 // TestPlanWorkSkillTellsSliceVerdictScope: the fanned-out reviewer task template must say a slice
 // stages findings only and the terminal synthesizer owns the PR's one verdict.
 func TestPlanWorkSkillTellsSliceVerdictScope(t *testing.T) {

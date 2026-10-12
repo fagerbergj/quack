@@ -48,7 +48,7 @@ import (
 // GitHub-driven ones, mirroring internal/github's runUserID convention.
 const extRunUserID = "ext"
 
-// builtSDKExtension pairs a constructed quack-extensions SDK module with the
+// builtSDKExtension pairs a constructed SDK extension module with the
 // registration name its config and log lines are keyed by.
 type builtSDKExtension struct {
 	name string

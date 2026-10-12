@@ -2,7 +2,7 @@
   "$schema": "https://agent-plugins.org/schemas/1.1.0/plugin.schema.json",
   "name": "sleeper",
   "version": "0.0.0",
-  "description": "Test fixture shaped like quack-extensions' sleeper/plugin: one module-gated agent, skill and workflow.",
+  "description": "Test fixture shaped like extensions/sleeper/plugin: one module-gated agent, skill and workflow.",
   "extensions": {
     "io.github.fagerbergj.quack": {
       "schemaVersion": 1,

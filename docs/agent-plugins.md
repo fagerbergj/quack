@@ -23,7 +23,7 @@ plugins:
   seed:
     - github:fagerbergj/dotagents
     - github:DietrichGebert/ponytail@v4.9.0
-    - .agents/plugins/usage
+    - github:fagerbergj/quack-extensions@usage/vX.Y.Z#usage/plugin
 ```
 
 - `store` - which registry backend holds the rows. Omitted or `""` uses the built-in filesystem backend (`<root>/<name>/entry.json`). Any other value must name a `stores:` entry of kind `sqlite` or `postgres`; that store's URL must not be empty (except under `quack sandbox`'s `LoadForSandbox`, which skips this and every other live-inference-plumbing check). A database-backed store holds rows in a `plugin_rows` table - the clones themselves still live on disk under `root`, exactly as the filesystem backend lays them out.
@@ -230,7 +230,7 @@ A plugin can also ship its own agent roster and DAG shapes, seeded into `config.
 ### Layout
 
 ```text
-.agents/plugins/<name>/
+<plugin root>/
   agents/<bundle>/
     agent-card.json   # required - the same A2A card any bundle carries
     prompt.md          # required
@@ -315,10 +315,10 @@ The dividing line is whether the failure is silent - and, for the plugin registr
 
 Nothing breaks. `sdk.Extension` is unchanged, extension code still arrives through `go.mod`, and an extension with no manifest works exactly as before — the manifest adds a declaration, it does not become the load path.
 
-`usage` is the first extension carrying one, at `.agents/plugins/usage/`. It ships a manifest and nothing else: no skills, no MCP servers, just the namespace block declaring the module and its config requirement. That exercises every new path (namespace parsing, the linked-module check, the config check, and the no-`skills/` fix) against a real extension without touching the extension's code.
+`usage` was the first extension carrying one, now at quack-extensions' `usage/plugin/`. It ships a manifest and nothing else: no skills, no MCP servers, just the namespace block declaring the module and its config requirement. That exercises every new path (namespace parsing, the linked-module check, the config check, and the no-`skills/` fix) against a real extension without touching the extension's code.
 
-`github` is deliberately not converted. It is the largest and most coupled extension — webhooks, GitHub App identity, its own persisted state — and whatever the eventual shape, it should not be the thing proving the shape works.
+Every first-party plugin ships in quack-extensions beside its module, at `<module>/plugin`, and nothing under `.agents/plugins/` ships in the quack image any more. `github/plugin` carries the `code-implementer`, `code-reviewer` and `code-explorer` bundles and `usage/plugin` the usage manifest, seeded as `github:fagerbergj/quack-extensions@github/vX.Y.Z#github/plugin` and `github:fagerbergj/quack-extensions@usage/vX.Y.Z#usage/plugin`. Their agents name no module tools, so their seed refs are not tied to `go.mod`: a prompt or rubric change is a `github/vX.Y.Z` tag plus a seed bump, with no quack release. A deployment still seeding `.agents/plugins/github` or `.agents/plugins/usage` must switch those entries to the `github:` form; the row keeps its name, so the boot replaces the local row and fetches the clone. Until then the local row points at a directory the image no longer ships, the plugin is skipped, and the code agents' `optional: true` overrides are dropped. Offline, an unfetched plugin is absent the same way: the code agents stay out of the roster until a fetch succeeds.
 
-The `usage` and `github` manifests live in this repository under `.agents/plugins/`. Sleeper's plugin ships in quack-extensions beside its module, at `sleeper/plugin`, and is seeded as `github:fagerbergj/quack-extensions@sleeper/vX.Y.Z#sleeper/plugin`; a deployment whose `plugins.seed` lists that entry has its old local `sleeper` row moved to it at boot, and a later ref bump moves the seeded row the same way (see `seed` above). A deployment with its own `plugins.seed` must edit its sleeper entry itself; until then its local row points at a directory the image no longer ships, the plugin is skipped, and its sleeper overrides are dropped. A converted extension is pinned twice - the registry row's ref for the manifest, agents and skills, a `go.mod` version for the code - and one `sleeper/vX.Y.Z` tag releases both. `TestSleeperPluginSeedMatchesGoModPin` fails when `config/quack.yaml` and `go.mod` name different tags, and the linked-module boot check refuses a plugin whose module is missing.
+Sleeper's plugin is seeded as `github:fagerbergj/quack-extensions@sleeper/vX.Y.Z#sleeper/plugin`; a deployment whose `plugins.seed` lists that entry has its old local `sleeper` row moved to it at boot, and a later ref bump moves the seeded row the same way (see `seed` above). A deployment with its own `plugins.seed` must edit its sleeper entry itself; until then its local row points at a directory the image no longer ships, the plugin is skipped, and its sleeper overrides are dropped. A converted extension is pinned twice - the registry row's ref for the manifest, agents and skills, a `go.mod` version for the code - and one `sleeper/vX.Y.Z` tag releases both. `TestSleeperPluginSeedMatchesGoModPin` fails when `config/quack.yaml` and `go.mod` name different tags, and the linked-module boot check refuses a plugin whose module is missing.
 
 Upgrading to a release with the `seeded` flag: every existing row starts unseeded, and boot marks the ones whose entry equals their seed entry. A `github:` row whose entry differs from its seed entry (moved over REST, or a seed edited while the old rule ignored edits) stays operator-owned and logs `plugin row was set over REST; not following plugins.seed` at every boot. Compare `GET /api/v1/plugins` entries with `plugins.seed` once after upgrading, and delete each mismatched row you want config to own; the next boot re-seeds it.

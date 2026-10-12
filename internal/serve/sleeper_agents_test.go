@@ -17,7 +17,7 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// sleeperPluginRoot is a fixture shaped like quack-extensions' sleeper/plugin,
+// sleeperPluginRoot is a fixture shaped like extensions/sleeper/plugin,
 // which ships and tests the real agents; quack only proves the seam here.
 const sleeperPluginRoot = "testdata/plugins/sleeper"
 
