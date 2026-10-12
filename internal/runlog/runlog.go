@@ -348,6 +348,10 @@ func nodeEventRow(st *store.Store, planID string, ev stream.SSEEvent) (n store.D
 		n.NodeID, n.Status = d.NodeID, string(to)
 	case stream.NodeStartData:
 		nodeID, to = d.NodeID, dag.StatusRunning
+		// The event's own start, not now: a continued node's node_start carries its attempt's first start.
+		if d.StartedAtMs > 0 {
+			t = time.UnixMilli(d.StartedAtMs).UTC()
+		}
 		n.NodeID, n.Status, n.StartedAt, n.InstanceID = d.NodeID, string(to), &t, st.InstanceID()
 		n.TraceID, n.TraceIDSet = d.TraceID, true
 	case stream.NodeDoneData:

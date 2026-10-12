@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/fagerbergj/quack/internal/dag"
 )
@@ -93,6 +94,19 @@ func (s *Store) GetNodeState(ctx context.Context, chatID, nodeID string) (status
 		return "", "", "", "", err
 	}
 	return n.Status, n.PauseReason, n.PendingQuestion, n.QueuedMessages, nil
+}
+
+// NodeStartedAt: when nodeID's row last started; zero for no row or a node that never started.
+func (s *Store) NodeStartedAt(ctx context.Context, chatID, nodeID string) time.Time {
+	planID, err := s.planForChat(ctx, chatID)
+	if err != nil {
+		return time.Time{}
+	}
+	n, err := s.GetDagNode(ctx, planID, nodeID)
+	if err != nil || n == nil || n.StartedAt == nil {
+		return time.Time{}
+	}
+	return *n.StartedAt
 }
 
 // ListPausedDagNodes returns every suspended node (paused or legacy needs_input) across all plans.

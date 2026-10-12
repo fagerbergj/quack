@@ -442,8 +442,13 @@ func DagPlan(planID string, nodes []DagNodeDef, edges []DagEdgeDef) SSEEvent {
 
 // Builds a node_start event with StartedAtMs stamped now.
 func NodeStart(nodeID, agent string) SSEEvent {
+	return NodeStartAt(nodeID, agent, time.Now())
+}
+
+// NodeStartAt is NodeStart stamped at, for a continued node that keeps its attempt's first start.
+func NodeStartAt(nodeID, agent string, at time.Time) SSEEvent {
 	return SSEEvent{Name: EventNodeStart, Data: NodeStartData{
-		NodeID: nodeID, Agent: agent, StartedAtMs: time.Now().UnixMilli(),
+		NodeID: nodeID, Agent: agent, StartedAtMs: at.UnixMilli(),
 	}}
 }
 
