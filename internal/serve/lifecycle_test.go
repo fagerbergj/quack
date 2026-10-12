@@ -68,14 +68,14 @@ func nodeStatus(t *testing.T, st *store.Store, nodeID string) store.DagNode {
 }
 
 // TestShutdownPersistsPausedNodes: a drain leaves the done node alone, the running node paused/shutdown
-// on disk, the queued node queued, and the chat not interrupted.
+// on disk, the queued node queued, and the chat marked cut so its run tail leaves the ending to boot's resume.
 func TestShutdownPersistsPausedNodes(t *testing.T) {
 	st, chatID := threeNodeChat(t)
 	hub := stream.NewHub()
 	hub.RegisterRun(chatID, "turn-1", func() {})
 	go func() {
 		time.Sleep(30 * time.Millisecond)
-		hub.UnregisterRun(chatID) // n2 reaches a gate boundary inside the grace window
+		hub.UnregisterRun(chatID) // the paused n2's run ends inside the grace window
 	}()
 
 	DrainActiveRuns(hub, &storePauser{st: st, active: map[string][]string{chatID: {"n2"}}}, 2*time.Second)
@@ -90,8 +90,8 @@ func TestShutdownPersistsPausedNodes(t *testing.T) {
 	if n := nodeStatus(t, st, "n3"); n.Status != string(dag.StatusQueued) {
 		t.Errorf("n3 = %q, want queued", n.Status)
 	}
-	if hub.WasInterrupted(chatID) {
-		t.Error("shutdown marked the chat interrupted; a paused run is resumed by the server itself")
+	if !hub.WasInterrupted(chatID) {
+		t.Error("the drain paused n2 but left the chat unmarked; its tail would deliver a premature RunEnded")
 	}
 }
 

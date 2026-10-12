@@ -676,15 +676,11 @@ func (e *Executor) PauseNode(chatID, nodeID string, reason PauseReason) bool {
 	}
 	c.markPaused(reason, "")
 	e.controls.markPausedSticky(chatID, nodeID, reason)
-	if reason == PauseUser {
-		// ponytail: a shutdown pause stays cooperative; aborting it would end ext runs inside the drain grace
-		// and deliver a premature RunEnded. Make it instant once finishExtRun skips RunEnded while draining.
-		c.mu.Lock()
-		abort := c.interruptLocked()
-		c.mu.Unlock()
-		if abort != nil {
-			abort()
-		}
+	c.mu.Lock()
+	abort := c.interruptLocked()
+	c.mu.Unlock()
+	if abort != nil {
+		abort()
 	}
 	return true
 }

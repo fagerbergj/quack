@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"google.golang.org/adk/v2/tool"
 
+	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/runlog"
 	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/stream"
@@ -195,5 +196,36 @@ func TestHubDrainingRejectsDispatch(t *testing.T) {
 	hub.BeginDraining()
 	if !hub.Draining() {
 		t.Error("hub does not report draining after BeginDraining")
+	}
+}
+
+// fixedPauser reports one live node per chat and pauses it when pausable says so.
+type fixedPauser struct{ pausable map[string]bool }
+
+func (p fixedPauser) ActiveNodes(string) []string { return []string{"n1"} }
+func (fixedPauser) MarkShutdown(string)           {}
+func (p fixedPauser) PauseNode(chatID, _ string, _ dag.PauseReason) bool {
+	return p.pausable[chatID]
+}
+
+// A shutdown pause ends a run inside the grace, so a chat whose node it paused is marked cut and its tail
+// skips RunEnded; a chat with nothing paused keeps a normal ending.
+func TestDrainActiveRuns_MarksAChatWhoseNodeItPausedAsCut(t *testing.T) {
+	hub := stream.NewHub()
+	for _, id := range []string{"paused", "finishing"} {
+		hub.RegisterRun(id, "turn-1", func() {})
+		go func(id string) {
+			time.Sleep(50 * time.Millisecond)
+			hub.UnregisterRun(id) // each run ends inside the grace
+		}(id)
+	}
+
+	DrainActiveRuns(hub, fixedPauser{pausable: map[string]bool{"paused": true}}, 2*time.Second)
+
+	if !hub.WasInterrupted("paused") {
+		t.Error("a chat whose node the drain paused was not marked cut; its tail would deliver RunEnded")
+	}
+	if hub.WasInterrupted("finishing") {
+		t.Error("a chat with nothing paused was marked cut; its normal RunEnded would be skipped")
 	}
 }
