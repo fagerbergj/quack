@@ -133,7 +133,14 @@ func (f *fakeDispatchHost) waitForDispatch(t *testing.T, timeout time.Duration) 
 // stubGitHub serves the REST endpoints dispatch touches (installation, token, comment post);
 // postedComment signals when a comment lands.
 func stubGitHub(t *testing.T, postedComment chan<- string) *httptest.Server {
+	srv, _ := stubGitHubCounting(t, postedComment)
+	return srv
+}
+
+// stubGitHubCounting is stubGitHub that also counts reaction POSTs.
+func stubGitHubCounting(t *testing.T, postedComment chan<- string) (*httptest.Server, *atomic.Int32) {
 	t.Helper()
+	var reactions atomic.Int32
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/installation"):
@@ -141,6 +148,9 @@ func stubGitHub(t *testing.T, postedComment chan<- string) *httptest.Server {
 		case strings.HasSuffix(r.URL.Path, "/access_tokens"):
 			fmt.Fprintf(w, `{"token":"ghs_x","expires_at":%q}`, time.Now().Add(time.Hour).Format(time.RFC3339))
 		case strings.HasSuffix(r.URL.Path, "/reactions"):
+			if r.Method == http.MethodPost {
+				reactions.Add(1)
+			}
 			w.WriteHeader(http.StatusCreated)
 			fmt.Fprint(w, `{"id":1}`)
 		case strings.HasSuffix(r.URL.Path, "/app"):
@@ -167,7 +177,7 @@ func stubGitHub(t *testing.T, postedComment chan<- string) *httptest.Server {
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
-	}))
+	})), &reactions
 }
 
 func isIssueMetaPath(path string) bool {
