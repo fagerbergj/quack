@@ -258,6 +258,9 @@ func assertResumeHeldUntilRunEnds(t *testing.T, resume func(*Handler) int) {
 	if started, _ := h.store.ChatEventsExist(context.Background(), chatID); started {
 		t.Fatal("a second run started while the chat's run was live")
 	}
+	if n, _ := h.store.GetDagNode(context.Background(), planID, nodeID); n == nil || n.PauseReason != string(dag.PauseShutdown) {
+		t.Errorf("held node row = %+v, want pause_reason shutdown so a restart's boot resumes it", n)
+	}
 	h.hub.UnregisterRun(chatID)
 	deadline := time.Now().Add(5 * time.Second)
 	for {
