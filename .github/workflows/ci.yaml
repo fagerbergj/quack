@@ -7,7 +7,44 @@ on:
     branches: ["main"]
 
 jobs:
+  # Path filter for pull requests: a job whose inputs a PR never touched is skipped.
+  # Pushes to main skip the filter and run every job.
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      go: ${{ steps.filter.outputs.go }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      storybook: ${{ steps.filter.outputs.storybook }}
+      image: ${{ steps.filter.outputs.image }}
+    steps:
+      - id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@v3
+        with:
+          predicate-quantifier: every
+          # Go tests read config/, agents/, skills/, testdata and extension plugin dirs,
+          # so everything but the SPA, the storybook and prose counts as Go input.
+          filters: |
+            go:
+              - '**'
+              - '!frontend/**'
+              - '!extensions/sleeper/ui/storybook/**'
+              - '!docs/**'
+              - '!*.md'
+            frontend:
+              - '{frontend/**,openapi.yaml,scripts/coverage-diff.mjs,.github/workflows/ci.yaml}'
+            storybook:
+              - '{extensions/sleeper/ui/**,.github/workflows/ci.yaml}'
+            image:
+              - '**'
+              - '!docs/**'
+              - '!*.md'
+
   go-test:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # local, not auto (#936): catch a dep bump needing a newer toolchain here,
@@ -41,6 +78,8 @@ jobs:
       # job's 20-minute ceiling, so a future hang dumps goroutines (SIGQUIT)
       # instead of the job silently cancelling with no diagnostic output.
       - run: go test -race -coverprofile=cover.out -timeout 12m ./...
+      # extensions/sdk is its own module (outside extension authors depend on it alone), so ./... skips it.
+      - run: go -C extensions/sdk vet ./... && go -C extensions/sdk test -race ./...
       # Changed-line coverage gate: new code ships covered (>=70%).
       - name: coverage gate (changed code only)
         if: github.event_name == 'pull_request'
@@ -66,13 +105,15 @@ jobs:
           fi
 
   go-fmt:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - run: test -z "$(gofmt -l internal cmd)"
+      - run: test -z "$(gofmt -l internal cmd extensions tools)"
 
   docs-check:
     runs-on: ubuntu-latest
@@ -88,6 +129,8 @@ jobs:
       - run: make docs-check
 
   deadcode:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -109,11 +152,11 @@ jobs:
       # patterns are explicit (not ./...) so a vendored JS package that happens to
       # ship Go source (frontend/node_modules/flatted) never gets pulled in.
       # Dependency modules are filtered out (pkg/mod) - this gate polices quack's
-      # own code; an extension module's unused helpers are its repo's problem.
+      # own code, extensions included.
       # Print findings before failing - `test -z "$(...)"` swallows them, so a
       # red build says something is unreachable without ever saying what.
       - run: |
-          out=$($(go env GOPATH)/bin/deadcode -test ./cmd/... ./internal/... . | grep -v '/pkg/mod/' || true)
+          out=$($(go env GOPATH)/bin/deadcode -test ./cmd/... ./internal/... ./extensions/... . | grep -v '/pkg/mod/' || true)
           if [ -n "$out" ]; then
             echo "::error::unreachable code found - delete it or wire it up:"
             echo "$out"
@@ -124,9 +167,10 @@ jobs:
   # new-from-rev) + the comment-run gate (tools/sloplint). Pre-existing
   # slop is tracked by the report-only `make slop` ledger, not CI.
   go-slop:
+    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && needs.changes.outputs.go == 'true'
     steps:
       - uses: actions/checkout@v7
         with:
@@ -151,10 +195,13 @@ jobs:
         run: |
           # --max-same-issues=0: the default cap of 3 per identical message
           # would let a PR ship a 4th unchecked Close of the same kind.
-          $(go env GOPATH)/bin/golangci-lint run --new-from-rev "$SLOP_BASE" --max-same-issues=0 --max-issues-per-linter=0 ./cmd/... ./internal/...
+          $(go env GOPATH)/bin/golangci-lint run --new-from-rev "$SLOP_BASE" --max-same-issues=0 --max-issues-per-linter=0 ./cmd/... ./internal/... ./extensions/...
+          (cd extensions/sdk && $(go env GOPATH)/bin/golangci-lint run --new-from-rev "$SLOP_BASE" --max-same-issues=0 --max-issues-per-linter=0 ./...)
           go run ./tools/sloplint diff "$SLOP_BASE"
 
   frontend-build:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -172,6 +219,8 @@ jobs:
         working-directory: frontend
 
   render-check:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -199,6 +248,8 @@ jobs:
         working-directory: frontend
 
   frontend-test:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -242,6 +293,34 @@ jobs:
             exit "$RC"
           fi
 
+  sleeper-storybook:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.storybook == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: extensions/sleeper/ui/storybook
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: extensions/sleeper/ui/storybook/package-lock.json
+      - run: npm ci
+      - run: npm run validate-schemas
+      - run: npm run security-check
+      - run: npm run pair-check
+      - id: playwright
+        run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+      # No --with-deps, as in render-check.
+      - run: npx playwright install chromium
+      - run: npm run render-check
+
   openapi-lint:
     runs-on: ubuntu-latest
     steps:
@@ -272,6 +351,8 @@ jobs:
   # Build the image (no push) so a broken Dockerfile or go:embed path fails the
   # PR instead of only surfacing at `make docker-up`. gha cache makes reruns fast.
   docker-build:
+    needs: changes
+    if: github.event_name == 'push' || needs.changes.outputs.image == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

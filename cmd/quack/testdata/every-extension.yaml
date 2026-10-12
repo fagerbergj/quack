@@ -1,5 +1,5 @@
-# quack-compat's fixture: every extension enabled with placeholder values, so
-# `quack server validate` runs each Factory. Nothing here is dialed.
+# TestServerValidate_EveryExtensionAndPlugin's fixture: every extension enabled with placeholder
+# values, so `quack server validate` runs each Factory, and every extensions/*/plugin seeded. Nothing here is dialed.
 providers:
   default:
     kind: openai
@@ -12,45 +12,45 @@ models:
   m:
     provider: default
     role: worker
-  # Plugin agents' model_role: researcher resolves here (quack's .env.example, exported by the script).
+  # Plugin agents' model_role: researcher resolves here.
   ${QUACK_RESEARCHER_MODEL}:
     provider: default
     role: worker
 stores:
   default:
     kind: sqlite
-    url: ${QUACK_COMPAT_TMP}/store.db
+    url: ${QUACK_TEST_TMP}/store.db
 session:
   store: default
 workspace:
-  root: ${QUACK_COMPAT_TMP}/workspace
-# quack-compat.sh copies each module's plugin/ to ${QUACK_COMPAT_TMP}/plugins/<module>,
+  root: ${QUACK_TEST_TMP}/workspace
+# The test copies each extensions/<name>/plugin to ${QUACK_TEST_TMP}/plugins/<name>,
 # since a local seed row is named after its directory.
 plugins:
-  root: ${QUACK_COMPAT_TMP}/registry
+  root: ${QUACK_TEST_TMP}/registry
   seed:
-    - ${QUACK_COMPAT_TMP}/plugins/github
-    - ${QUACK_COMPAT_TMP}/plugins/sleeper
-    - ${QUACK_COMPAT_TMP}/plugins/usage
-    - ${QUACK_COMPAT_TMP}/plugins/remarkable
+    - ${QUACK_TEST_TMP}/plugins/github
+    - ${QUACK_TEST_TMP}/plugins/sleeper
+    - ${QUACK_TEST_TMP}/plugins/usage
+    - ${QUACK_TEST_TMP}/plugins/remarkable
 
-# Core agents a plugin workflow names (remarkable's document-ingest); bundles come from the quack checkout.
+# Core agents a plugin workflow names (remarkable's document-ingest).
 agents:
   media-reader:
-    bundle: ${QUACK_COMPAT_QUACK_DIR}/agents/media-reader
+    bundle: ${QUACK_TEST_REPO}/agents/media-reader
     tools: []
     provider: default
     model: m
   synthesizer:
-    bundle: ${QUACK_COMPAT_QUACK_DIR}/agents/synthesizer
+    bundle: ${QUACK_TEST_REPO}/agents/synthesizer
     provider: default
     model: m
 
 extensions:
   github:
     client_id: Iv1.placeholder
-    private_key_path: ${QUACK_COMPAT_GITHUB_KEY}
-    webhook_secret: ${QUACK_COMPAT_SECRET}
+    private_key_path: ${QUACK_TEST_TMP}/github.pem
+    webhook_secret: ${QUACK_TEST_SECRET}
     mention: "/quack"
     allowed_users: [placeholder]
     triggers: [mention, pr_opened, label, issue_plan, issue_implement, merge, ci_fix, explain]
@@ -67,7 +67,7 @@ extensions:
   remarkable:
     base_url: http://127.0.0.1:1
     email: placeholder@example.com
-    password: ${QUACK_COMPAT_SECRET}
+    password: ${QUACK_TEST_SECRET}
   sleeper:
     default_user: placeholder
     default_league: "1"
