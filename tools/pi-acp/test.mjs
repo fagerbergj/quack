@@ -5,7 +5,7 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { createServer } from "node:http";
-import { readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { strict as assert } from "node:assert";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -208,6 +208,51 @@ if (process.env.PI_ACP_REAL && !process.env.ACP_CMD) {
     "real pi: session/load must fail once its session file is gone");
   shim6.stdin.end();
   await new Promise((r) => shim6.on("exit", r));
+
+  // The engine's own tool_call gate, usage split, thinking, steer and cancel, driven by mock-openai.mjs SCRIPTS.
+  const gateCwd = mkdtempSync(join(tmpdir(), "pi-acp-gate-"));
+  mkdirSync(join(gateCwd, "app"));
+  writeFileSync(join(gateCwd, "app", ".env"), "A=1\n");
+  writeFileSync(join(gateCwd, "app", ".env.prod"), "B=2\n");
+  let asks = 0;
+  const g = connectShim(env, () => (++asks === 1 ? "allow" : "reject"));
+  await g.call("initialize", { protocolVersion: 1, clientCapabilities: {} });
+  const gs = await g.call("session/new", { cwd: gateCwd, mcpServers: [] });
+  const say = (text) => g.call("session/prompt", { sessionId: gs.sessionId, prompt: [{ type: "text", text }] });
+  assert.equal((await say("GATE")).stopReason, "end_turn");
+  const outFor = (needle) => {
+    const tc = g.updates.find((u) => u.sessionUpdate === "tool_call" && JSON.stringify(u.rawInput).includes(needle));
+    assert.ok(tc, `no tool_call for ${needle}`);
+    return g.updates.find((u) => u.sessionUpdate === "tool_call_update" && u.toolCallId === tc.toolCallId)?.rawOutput?.output ?? "";
+  };
+  assert.match(outFor("git push"), /denied by policy/, "engine ran git push");
+  assert.match(outFor("git clone"), /denied by policy/, "engine ran git clone without allow_clone");
+  assert.equal(asks, 2, `expected 2 permission asks (the .env reads), got ${asks}`);
+  assert.match(outFor('"app/.env"'), /A=1/, "judge-allowed .env read did not run");
+  assert.match(outFor('"app/.env.prod"'), /denied by quack safety judge/, "judge-denied .env read ran");
+  assert.ok(g.updates.some((u) => u.sessionUpdate === "agent_thought_chunk"), "reasoning_content never surfaced as a thought chunk");
+  const usage = g.updates.filter((u) => u.sessionUpdate === "usage_update").at(-1);
+  assert.deepEqual(usage?._meta, { quack_prompt_tokens: 10, quack_cached_tokens: 4, quack_completion_tokens: 2 }, "usage split wrong");
+
+  const steered = say("STEER");
+  await new Promise((r) => setTimeout(r, 500));
+  await g.call("_quack/steer", { text: "steer-note" });
+  assert.equal((await steered).stopReason, "end_turn");
+  const reqs = await fetch(`${new URL(JSON.parse(env.PI_ACP_CONFIG).endpoint).origin}/requests`).then((r) => r.json());
+  assert.ok(reqs.some((m) => JSON.stringify(m).includes("steer-note")), "steer never reached the model");
+
+  const stalled = say("STALL");
+  await new Promise((r) => setTimeout(r, 500));
+  const t0 = Date.now();
+  g.shim.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId: gs.sessionId } }) + "\n");
+  assert.equal((await stalled).stopReason, "cancelled");
+  const cancelMs = Date.now() - t0;
+  assert.ok(cancelMs < 3000, `cancel took ${cancelMs}ms`);
+  assert.equal((await say("still alive?")).stopReason, "end_turn", "session wedged after cancel");
+  g.shim.stdin.end();
+  await new Promise((r) => g.shim.on("exit", r));
+  rmSync(gateCwd, { recursive: true });
+  console.log(`real engine: gate, usage, thinking, steer ok; cancel settled in ${cancelMs}ms`);
 }
 if (!process.env.PI_ACP_REAL && !process.env.ACP_CMD) {
   // permission bridge: git push blocked locally (no ask), .env reads asked -
@@ -238,7 +283,8 @@ if (!process.env.PI_ACP_REAL && !process.env.ACP_CMD) {
 // OTLP assertions: flush is fire-and-forget on agent_settled, so wait for it.
 if (!process.env.ACP_CMD) {
   for (let i = 0; i < 50 && otlpSpans.length === 0; i++) await new Promise((r) => setTimeout(r, 100));
-  assert.equal(otlpSpans.length, 8, `expected the 8 parity spans, got ${otlpSpans.length}`);
+  // 8 is fake-pi's scripted turn; a real engine's count follows the model's calls.
+  if (!process.env.PI_ACP_REAL) assert.equal(otlpSpans.length, 8, `expected the 8 parity spans, got ${otlpSpans.length}`);
   assert.ok(otlpSpans.every((sp) => sp.traceId === TRACE_ID), "span not under quack's trace id");
   assert.ok(otlpSpans.every((sp) => sp.parentSpanId === PARENT_ID), "span not parented under the round span");
   const gens = otlpSpans.filter((sp) => sp.name.startsWith("chat "));
@@ -260,9 +306,9 @@ if (!process.env.ACP_CMD) {
 }
 console.log("ok -", updates.length, "updates,", mcpCalls.length, "mcp call(s),", otlpSpans.length, "otlp span(s)");
 
-// connectShim: a second shim process, auto-allowing every permission ask -
+// connectShim: a second shim process; decide answers each permission ask (default allow) -
 // fake-pi.mjs's 4 guarded calls fire even with mcpServers: [], and hang without a reply.
-function connectShim(spawnEnv) {
+function connectShim(spawnEnv, decide = () => "allow") {
   const s = spawn(argv[0], argv.slice(1), { env: spawnEnv, stdio: ["pipe", "pipe", "inherit"] });
   const pend = new Map();
   let id = 1;
@@ -272,7 +318,7 @@ function connectShim(spawnEnv) {
     const m = JSON.parse(l);
     if (m.method === "session/update") upd.push(m.params.update);
     else if (m.method === "session/request_permission") {
-      s.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: { outcome: { outcome: "selected", optionId: "allow" } } }) + "\n");
+      s.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: { outcome: { outcome: "selected", optionId: decide() } } }) + "\n");
     } else if (m.id !== undefined && pend.has(m.id)) {
       const { resolve, reject } = pend.get(m.id);
       pend.delete(m.id);
