@@ -721,8 +721,10 @@ paths:
         A single resource-oriented endpoint - the request body names the
         TARGET status. To cancel a node, POST `.../nodes/{node_id}/stop`.
 
-        - `{"status":"paused"}` - suspend a RUNNING node at its next safe
-          point, keeping its accumulated work. Only legal from `running`.
+        - `{"status":"paused"}` - suspend a RUNNING node at once: a worker
+          step in flight is cut off, keeping its accumulated work, and a
+          judge call in flight finishes first. A user pause survives a
+          server restart. Only legal from `running`.
         - `{"status":"running"}` - resume a `paused` node: it carries on in
           its saved session (an ACP node reloads it and is re-sent its task;
           one given guidance re-runs fresh), reusing the plan's other stored

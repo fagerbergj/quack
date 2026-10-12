@@ -236,4 +236,4 @@ func TestRunGatedRefine_StoppedNodeMakesNoMoreCalls(t *testing.T) {
 	}
 }
 
-func (*stopCtrl) SteerInterrupted() bool { return false }
+func (*stopCtrl) RoundInterrupted() bool { return false }

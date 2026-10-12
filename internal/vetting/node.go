@@ -80,9 +80,9 @@ type NodeControl interface {
 	Cancelled() bool
 	Paused() bool
 	TakeQueued() string
-	// SteerInterrupted reports (and clears) that a queued message aborted the running round, so the gate
-	// delivers it now instead of failing the round.
-	SteerInterrupted() bool
+	// RoundInterrupted reports (and clears) that a steer or pause aborted the running worker round, so the
+	// gate parks or delivers the message instead of failing the round.
+	RoundInterrupted() bool
 	// PauseForInput parks the node on a worker question, persisting it
 	// before the pause is acted on (dag.PauseAwaitingInput).
 	PauseForInput(question string)
@@ -574,9 +574,9 @@ type gateExit struct {
 func (g *gateRun) runWorkerOnce(input any, runID, stage, termMsg, failMsg string, extra []any) (string, *gateExit) {
 	g.lastRunID = runID
 	answer, err := runWorkerNodeTraced(g.ctx, g.nodeCtx, g.cfg, g.workerModel, g.workerNode, input, runID, stage, g.promptEmit)
-	// An aborted round can come back empty with no error, so a steer is checked either way.
-	steered := g.steered()
-	if err == nil && !steered {
+	// An aborted round can come back empty with no error, so an interrupt is checked either way.
+	interrupted := g.interrupted()
+	if err == nil && !interrupted {
 		return answer, nil
 	}
 	if lerr, ok := g.repeatFailed(); ok {
@@ -587,8 +587,8 @@ func (g *gateRun) runWorkerOnce(input any, runID, stage, termMsg, failMsg string
 	if g.cancelled() {
 		return "", &gateExit{"", GateResult{}, nil} // round aborted mid-flight by CancelNode, not a real failure
 	}
-	if steered {
-		return "", &gateExit{"", GateResult{}, errSteered}
+	if interrupted {
+		return "", &gateExit{"", GateResult{}, errInterrupted}
 	}
 	// Log before returning (ADK swallows node errors into silent empty completion).
 	g.log.Log(g.ctx, errLevel(g.ctx), failMsg, append(append([]any{}, extra...), "err", err)...)
@@ -608,13 +608,13 @@ const continuePrompt = "Your work on this task was interrupted (the server resta
 	"with your history above. A tool result marked \"interrupted\" never came back: check the current state before repeating " +
 	"that call. Carry on from where you stopped and finish the task."
 
-// steered reports (and clears) that a queued message aborted the round; a stop wins over it.
-func (g *gateRun) steered() bool {
-	return g.ctrl != nil && g.ctrl.SteerInterrupted() && !g.cancelled()
+// interrupted reports (and clears) that a steer or pause aborted the round; a stop wins over it.
+func (g *gateRun) interrupted() bool {
+	return g.ctrl != nil && g.ctrl.RoundInterrupted() && !g.cancelled()
 }
 
-// errSteered: a queued message aborted the worker's round; the gate delivers it and carries on.
-var errSteered = errors.New("vetting: round interrupted by a queued message")
+// errInterrupted: a steer or pause aborted the worker's round; interruptExit parks or delivers the message.
+var errInterrupted = errors.New("vetting: round interrupted")
 
 // steerPrompt: sent to the worker's own session when a steer interrupts it; the history holds the task.
 func steerPrompt(msg string) string {
@@ -638,10 +638,10 @@ func (g *gateRun) draft(sfx string) (string, *gateExit) {
 	return g.continueWorker(sfx, a)
 }
 
-// steerExit delivers the message of a steer-aborted round and reports that the gate carries on. A pause
-// that landed with it wins and turns exit into the park: taking the message would lose it to a parked run.
-func (g *gateRun) steerExit(exit *gateExit) bool {
-	if !errors.Is(exit.err, errSteered) {
+// interruptExit parks a paused node or delivers the steer that aborted its round, reporting whether the gate
+// carries on. A pause wins: taking a message that landed with it would lose it to the parked run.
+func (g *gateRun) interruptExit(exit *gateExit) bool {
+	if !errors.Is(exit.err, errInterrupted) {
 		return false
 	}
 	if g.paused() {
@@ -735,9 +735,9 @@ func (g *gateRun) continueWorker(sfx, answer string) (string, *gateExit) {
 		var err error
 		answer, err = runWorkerNodeTraced(g.ctx, g.nodeCtx, g.cfg, g.workerModel, g.workerNode, buildContinuationPrompt(g.cfg.Task, g.ownActFor(answer), g.cfg.Checks, g.cfg.ReadOnly, hasDeliverTarget, g.cfg.IsReviewer, g.cfg.ExistingPR),
 			runID, "continuation", g.promptEmit)
-		if g.steered() {
+		if g.interrupted() {
 			contSpan.End()
-			return "", &gateExit{"", GateResult{}, errSteered}
+			return "", &gateExit{"", GateResult{}, errInterrupted}
 		}
 		if err != nil {
 			if lerr, ok := g.repeatFailed(); ok {
@@ -919,7 +919,7 @@ func RunGatedRefine(ctx adkagent.Context, nodeID string, workerNode workflow.Nod
 		a, exit := g.draft(sfx)
 		answer = a
 		if exit != nil {
-			if g.steerExit(exit) {
+			if g.interruptExit(exit) {
 				continue
 			}
 			return exit.answer, exit.res, exit.err
@@ -1436,7 +1436,7 @@ func (j *judgeRounds) reviseRound(round int, act workerActivity, v verdict, env 
 	reviseCtx, rspan := startStageSpan(j.nodeCtx, nil, j.cfg, j.nodeID, "revise", stream.StageRevise, reviseRunID, round)
 	revised, rerr := runWorkerNodeTraced(j.ctx, reviseCtx, j.cfg, j.workerModel, j.workerNode, revisePrompt, reviseRunID, "revise", j.promptEmit)
 	rspan.end(stream.AgentCompleteData{RunID: reviseRunID, Stage: stream.StageRevise, Round: round}, rerr)
-	if j.steeredRevision(reviseRunID) {
+	if j.interruptedRevision(reviseRunID) {
 		return false, nil
 	}
 	if rerr != nil {
@@ -1470,11 +1470,15 @@ func (j *judgeRounds) reviseRound(round int, act workerActivity, v verdict, env 
 	return true, nil
 }
 
-// steeredRevision delivers a steer that aborted the revision (an aborted round can return no error). The
-// revision ran in its own fresh session, so recording it as the last run makes the steer re-draft.
-func (j *judgeRounds) steeredRevision(reviseRunID string) bool {
-	if j.ctrl == nil || !j.ctrl.SteerInterrupted() || j.ctrl.Cancelled() {
+// interruptedRevision parks or delivers a steer for a pause or steer that aborted the revision (an aborted round
+// can return no error). The revision ran in its own fresh session, so a steer re-drafts.
+func (j *judgeRounds) interruptedRevision(reviseRunID string) bool {
+	if j.ctrl == nil || !j.ctrl.RoundInterrupted() || j.ctrl.Cancelled() {
 		return false
+	}
+	if j.ctrl.Paused() {
+		j.outcome = &judgeRoundOutcome{paused: true}
+		return true
 	}
 	q := strings.TrimSpace(j.ctrl.TakeQueued())
 	if q == "" {

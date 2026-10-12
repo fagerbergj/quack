@@ -142,3 +142,42 @@ func hasFunctionResponse(contents []*genai.Content) bool {
 	}
 	return false
 }
+
+// A user pause aborts a native worker sitting in a tool at once and parks the node, keeping its worker session
+// for the resume to continue.
+func TestPauseNode_AbortsANativeRoundAndKeepsItsSession(t *testing.T) {
+	testNativeWorkerSessions = session.InMemoryService()
+	started := make(chan struct{}, 1)
+	worker, err := llmagent.New(llmagent.Config{Name: "solo", Model: &steerInterruptStub{}, Description: "solo", Instruction: "ROLE:solo",
+		Tools: []tool.Tool{blockingTool(t, started)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := dag.Plan{ID: "p1", UserMessage: "x", Nodes: []dag.Node{{ID: "n1", AgentName: "solo", Task: "Write the thing.", Rubric: "detailed"}}}
+	ex := dag.NewExecutor(testNativeWorkerSessions, map[string]adkagent.Agent{"solo": testNativeWorker{Agent: worker}}, nil,
+		vetting.NewJudgeFactory(passJudge, nil, nil),
+		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} }, nil)
+
+	go func() {
+		<-started
+		if !ex.PauseNode("chat1", "n1", dag.PauseUser) {
+			t.Error("node n1 was not live when its tool ran")
+		}
+	}()
+	var last string
+	content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "x"}}}
+	start := time.Now()
+	if _, err := ex.RunPlanAsGraph(context.Background(), plan, "quack-test", "u", "chat1", content,
+		func(ev stream.SSEEvent, _ error) bool { last = ev.Name; return true }, map[string]string{}, nil); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	// The blocking tool only gives up after 10s, so a cooperative pause would take that long.
+	if last != stream.EventNodePaused || time.Since(start) > 5*time.Second {
+		t.Fatalf("last event %q after %s, want node_paused with the round cut off", last, time.Since(start))
+	}
+	got, err := testNativeWorkerSessions.Get(context.Background(), &session.GetRequest{AppName: "solo",
+		UserID: quackagent.WorkerSessionUser(quackagent.WorkerSessionID("chat1", "n1")), SessionID: quackagent.WorkerSessionID("chat1", "n1")})
+	if err != nil || got.Session.Events().Len() == 0 {
+		t.Fatalf("worker session was not kept: %v", err)
+	}
+}

@@ -306,7 +306,7 @@ func (c *Client) CancelNode(ctx context.Context, chatID, nodeID string) error {
 	return c.send(ctx, http.MethodPost, "/api/v1/chats/"+chatID+"/nodes/"+nodeID+"/stop")
 }
 
-// PauseNode suspends a running node at its next turn boundary; resume carries on in a native node's saved session.
+// PauseNode suspends a running node at once; resume carries on in a native node's saved session.
 func (c *Client) PauseNode(ctx context.Context, chatID, nodeID string) error {
 	return c.sendBody(ctx, http.MethodPut, "/api/v1/chats/"+chatID+"/nodes/"+nodeID+"/status",
 		schema.NodeStatusUpdateBody{Status: schema.NodeStatusUpdateBodyStatusPaused})

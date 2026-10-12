@@ -5,6 +5,7 @@ import (
 	"errors"
 	"iter"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -26,17 +27,14 @@ const staleResumePlanCeiling = 24 * time.Hour
 // restart, so a boot with many resumable chats doesn't fire them all at once.
 const bootResumeConcurrency = 8
 
-// resumeGuardArchivedOrStale: never resume an archived chat or override a human pause. Plans older than
-// staleResumePlanCeiling are treated as abandoned, except awaiting_input nodes, whose retry would lose the question.
+// resumeGuardArchivedOrStale: never resume an archived chat. Plans older than staleResumePlanCeiling are treated
+// as abandoned, except for nodes waiting on a person: an answer, or a user pause the store holds paused.
 func resumeGuardArchivedOrStale(archived, hasPlan bool, pauseReason dag.PauseReason, planCreatedAt time.Time) (bool, string) {
 	if archived {
 		return false, "chat archived; not resumed"
 	}
-	if pauseReason == dag.PauseUser {
-		return false, "paused by a user; not resumed"
-	}
-	awaitingInput := pauseReason == dag.PauseAwaitingInput
-	if !awaitingInput && hasPlan && time.Since(planCreatedAt) > staleResumePlanCeiling {
+	waiting := pauseReason == dag.PauseAwaitingInput || pauseReason == dag.PauseUser
+	if !waiting && hasPlan && time.Since(planCreatedAt) > staleResumePlanCeiling {
 		return false, "plan older than staleResumePlanCeiling; not resumed"
 	}
 	return true, ""
@@ -72,6 +70,9 @@ func reconcileNodes(ctx context.Context, st *store.Store, jail *workspace.Jail, 
 		slog.Info("resumed paused nodes left by a previous process", "component", "startup",
 			"nodes", n, "chats", len(pausedChats))
 	}
+	if n := len(rep.Held); n > 0 {
+		slog.Info("nodes a user paused stay paused; start them to continue", "component", "startup", "nodes", n)
+	}
 	if n := len(rep.AwaitingInput); n > 0 {
 		slog.Info("chats have nodes awaiting input; answer the question to continue", "component", "startup", "nodes", n)
 	}
@@ -90,7 +91,7 @@ func reconcileNodes(ctx context.Context, st *store.Store, jail *workspace.Jail, 
 // settledChats: chats with a failed node or an interrupted turn and nothing resumed or awaiting an answer.
 func settledChats(rep store.ResumeReport, interrupted []string) []settledRun {
 	live := map[string]bool{}
-	for _, n := range append(rep.Start, rep.AwaitingInput...) {
+	for _, n := range slices.Concat(rep.Start, rep.AwaitingInput, rep.Held) {
 		live[n.ChatID] = true
 	}
 	seen := map[string]bool{}

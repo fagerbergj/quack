@@ -519,8 +519,8 @@ func newNodeStopCmd() *cobra.Command {
 	return c
 }
 
-// newNodePauseCmd: `chat node pause` - suspend a RUNNING node at its next
-// turn boundary, keeping its accumulated work (updateNodeStatus status=paused).
+// newNodePauseCmd: `chat node pause` - suspend a RUNNING node at once,
+// keeping its accumulated work (updateNodeStatus status=paused).
 func newNodePauseCmd() *cobra.Command {
 	return nodeTargetCmd("pause <chat-id> <node-id>", "Suspend a running node, keeping its accumulated work (resumable)", 2, runNodePause)
 }

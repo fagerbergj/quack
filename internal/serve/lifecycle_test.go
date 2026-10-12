@@ -201,9 +201,9 @@ func TestBootLeavesAwaitingInputAlone(t *testing.T) {
 	}
 }
 
-// TestBootRefusesUserPausedNode: a node a human paused (dag.PauseUser) is not auto-resumed on restart;
-// resumeGuardArchivedOrStale sees the real pause reason and refuses it.
-func TestBootRefusesUserPausedNode(t *testing.T) {
+// TestBootHoldsUserPausedNode: a node a human paused stays paused across a restart, neither resumed nor failed,
+// and its chat reads paused, not ended, so no extension hears a RunEnded for it.
+func TestBootHoldsUserPausedNode(t *testing.T) {
 	st, chatID := threeNodeChat(t)
 	ctx := context.Background()
 	if err := st.SetNodeStatusForChat(ctx, chatID, "n2", string(dag.StatusPaused), string(dag.PauseUser), ""); err != nil {
@@ -214,15 +214,14 @@ func TestBootRefusesUserPausedNode(t *testing.T) {
 		return resumeGuardArchivedOrStale(false, true, dag.PauseReason(pauseReason), time.Now())
 	})
 
-	if len(resume.Start) != 0 {
-		t.Errorf("started %+v; a node the user paused must never be auto-resumed by boot", resume.Start)
+	if len(resume.Start) != 0 || len(resume.Settled) != 0 {
+		t.Errorf("Start = %+v, Settled = %v; a node the user paused must be neither resumed nor ended", resume.Start, resume.Settled)
 	}
-	if len(resume.Settled) != 1 || resume.Settled[0] != (settledRun{ChatID: chatID, PlanRan: true}) {
-		t.Errorf("Settled = %v, want [%s]: its run ended at boot, so its extension must hear RunEnded", resume.Settled, chatID)
+	if n2 := nodeStatus(t, st, "n2"); n2.Status != string(dag.StatusPaused) || n2.PauseReason != string(dag.PauseUser) {
+		t.Errorf("n2 = %q/%q, want paused/user", n2.Status, n2.PauseReason)
 	}
-	n2 := nodeStatus(t, st, "n2")
-	if n2.Status != string(dag.StatusFailed) {
-		t.Errorf("n2 = %q, want failed (refused, not silently resumed)", n2.Status)
+	if c, err := st.GetChat(ctx, chatID); err != nil || c.RunStatus != store.RunStatusPaused {
+		t.Errorf("chat = %+v (%v), want run status %q", c, err, store.RunStatusPaused)
 	}
 }
 
