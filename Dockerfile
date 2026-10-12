@@ -21,18 +21,24 @@ RUN npm run build
 FROM node:24-bookworm-slim AS mermaid-validator
 WORKDIR /app/scripts
 COPY scripts/package.json scripts/package-lock.json ./
-RUN --mount=type=cache,target=/root/.npm npm ci --omit=dev
+# Source maps only feed stack-trace rewriting; dropping them saves ~70MB.
+RUN --mount=type=cache,target=/root/.npm npm ci --omit=dev \
+    && find node_modules -type f -name '*.map' -delete
 COPY scripts/mermaid-validate.mjs ./
 
 # 2) Build the Go server with the SPA embedded.
 # bookworm (glibc), NOT alpine (musl) - same reason as the frontend stage: the
 # runtime copies /usr/local/go from here and must be able to execute it.
 FROM golang:1.26-bookworm AS backend-src
+# The runtime ships this GOROOT. Only `go test std` and `go tool dist test` read
+# these; src/cmd stays because go builds tools absent from pkg/tool on demand.
+RUN cd /usr/local/go && rm -rf test api doc \
+    && find src \( -name testdata -type d -prune -o -name '*_test.go' \) -exec rm -rf {} +
 WORKDIR /app
 COPY go.mod go.sum ./
-# Not cache-mounted (#936): a cache mount's writes never land in an image layer,
-# and the runtime stage needs this cache to survive into one - see GOMODCACHE below.
-RUN go mod download
+# Not cache-mounted (#936): the runtime ships this cache, so it must land in a layer.
+# Zips go: go build/test and go mod verify read the extracted tree plus .ziphash.
+RUN go mod download && find /go/pkg/mod/cache/download -name '*.zip' -delete
 COPY . .
 COPY --from=frontend /app/frontend/dist ./internal/serve/web/dist
 
@@ -63,7 +69,12 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 # (node was already in the image for mermaid/frontend).
 FROM node:24-bookworm-slim AS pi
 WORKDIR /opt/pi
-RUN npm install --no-fund --no-audit @earendil-works/pi-coding-agent@1.0.0
+# pi's shrinkwrap pulls esbuild binaries for ~25 platforms (~275MB); keep this
+# one. Source maps only feed stack-trace rewriting.
+RUN npm install --no-fund --no-audit @earendil-works/pi-coding-agent@1.0.0 \
+    && p="$(node -p 'process.platform + "-" + process.arch')" \
+    && find node_modules -path '*/@esbuild/*' -prune ! -name "$p" -exec rm -rf {} + \
+    && find node_modules -type f -name '*.map' -delete
 
 # 3) Minimal runtime. The git tools (internal/tools/git.go) exec the real git
 # binary, which dynamically links against libcurl/libssl/libpcre2/zlib - those
