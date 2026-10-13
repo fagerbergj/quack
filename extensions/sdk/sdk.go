@@ -526,7 +526,7 @@ type AssignmentFreshnessChecker interface {
 type Factory func(host Host, config []byte) (Extension, error)
 
 // BaseConfig is the keys quack reads from every extensions.<name> block before Factory sees the
-// same bytes; "enabled" and "data_dir" are reserved, so extension configs must not redefine them.
+// same bytes; "enabled", "data_dir" and "exec" are reserved, so extension configs must not redefine them.
 type BaseConfig struct {
 	// Enabled defaults to true when the block exists, so a deployment can disable a module
 	// without deleting its config.
@@ -534,4 +534,8 @@ type BaseConfig struct {
 
 	// DataDir overrides Host.DataDir's default (<workspace>/extensions/<name>) when non-empty.
 	DataDir string `yaml:"data_dir"`
+
+	// Exec, when set, is the extension binary quack runs as a supervised child (see package extproc)
+	// instead of calling the compiled-in Factory.
+	Exec string `yaml:"exec"`
 }

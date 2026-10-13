@@ -9,7 +9,7 @@ import (
 
 func TestBaseConfigUnmarshalsReservedKeys(t *testing.T) {
 	var cfg sdk.BaseConfig
-	if err := yaml.Unmarshal([]byte("enabled: false\ndata_dir: /var/lib/quack/ext\n"), &cfg); err != nil {
+	if err := yaml.Unmarshal([]byte("enabled: false\ndata_dir: /var/lib/quack/ext\nexec: /quack-ext-x\n"), &cfg); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if cfg.Enabled == nil || *cfg.Enabled != false {
@@ -17,6 +17,9 @@ func TestBaseConfigUnmarshalsReservedKeys(t *testing.T) {
 	}
 	if cfg.DataDir != "/var/lib/quack/ext" {
 		t.Errorf("DataDir = %q, want /var/lib/quack/ext", cfg.DataDir)
+	}
+	if cfg.Exec != "/quack-ext-x" {
+		t.Errorf("Exec = %q, want /quack-ext-x", cfg.Exec)
 	}
 }
 
