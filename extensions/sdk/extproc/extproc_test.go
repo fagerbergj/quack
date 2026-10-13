@@ -42,12 +42,18 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+// fakeInits are misbehaving children's initialize results, by mode.
+var fakeInits = map[string]string{
+	"badproto": fmt.Sprintf(`{"protocol":%d}`, ProtocolVersion+1),
+	"baddecl":  fmt.Sprintf(`{"protocol":%d,"tools":[{"name":"t","declaration":1}]}`, ProtocolVersion),
+}
+
 func runChild(mode string) int {
-	if mode == "badproto" {
-		// Answers initialize with a protocol the host does not speak, then waits for EOF.
+	if res, ok := fakeInits[mode]; ok {
+		// Answers initialize with res, then waits for EOF.
 		sc := bufio.NewScanner(os.Stdin)
 		sc.Scan()
-		fmt.Printf(`{"jsonrpc":"2.0","id":1,"result":{"protocol":%d}}`+"\n", ProtocolVersion+1)
+		fmt.Printf(`{"jsonrpc":"2.0","id":1,"result":%s}`+"\n", res)
 		for sc.Scan() {
 		}
 		return 0
@@ -90,7 +96,11 @@ func testDispatchRequest(id string) sdk.DispatchRequest {
 	}
 }
 
-func (testExt) Tools() []tool.Tool { return nil }
+func (testExt) Tools() []tool.Tool { return []tool.Tool{echoTool()} }
+
+func (testExt) ArtifactSchemas() map[string]json.RawMessage { return testSchemas }
+
+func (testExt) DecisionPoints() []sdk.DecisionPoint { return testPoints }
 
 func (testExt) UI() sdk.UIDescriptor { return sdk.UIDescriptor{Title: "X", Href: "/x/"} }
 
@@ -139,6 +149,17 @@ func (e testExt) RegisterRoutes(authed, _ chi.Router) {
 		fmt.Fprintln(os.Stderr, strings.Repeat("x", 2<<20))
 		fmt.Fprintln(os.Stderr, "after the big line")
 	})
+	authed.Get("/callbacks", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprintf(w, "read=%t decide=%t", e.host.ReadArtifact != nil, e.host.Decide != nil)
+	})
+	authed.Get("/read", func(w http.ResponseWriter, r *http.Request) {
+		data, ok := e.host.ReadArtifact("ext:x:1", "u", r.URL.Query().Get("name"))
+		_, _ = fmt.Fprintf(w, "%s %t", data, ok)
+	})
+	authed.Get("/decide", func(w http.ResponseWriter, r *http.Request) {
+		d, err := e.host.Decide(r.Context(), sdk.DecideRequest{Point: r.URL.Query().Get("point"), Baseline: "true", State: decideState{Zeta: 1, Alpha: "<a>"}})
+		_, _ = fmt.Fprintf(w, "%+v %v", d, err)
+	})
 	authed.Get("/crash", func(http.ResponseWriter, *http.Request) { os.Exit(3) })
 	authed.Get("/block", func(http.ResponseWriter, *http.Request) {
 		fmt.Fprintln(os.Stderr, "blocking")
@@ -174,8 +195,12 @@ func (s *syncBuf) String() string {
 }
 
 func newProcess(config string, dispatch sdk.DispatchFunc) (*Process, *syncBuf, error) {
+	return newProcessHost(config, sdk.Host{Dispatch: dispatch})
+}
+
+func newProcessHost(config string, host sdk.Host) (*Process, *syncBuf, error) {
 	logs := &syncBuf{}
-	host := sdk.Host{Log: slog.New(slog.NewJSONHandler(logs, nil)).With("component", "ext.x"), DataDir: "/data/x", Dispatch: dispatch}
+	host.Log, host.DataDir = slog.New(slog.NewJSONHandler(logs, nil)).With("component", "ext.x"), "/data/x"
 	p, err := New("x", os.Args[0], host, []byte(config))
 	return p, logs, err
 }
@@ -188,7 +213,12 @@ func startProcess(t *testing.T) (*Process, *httptest.Server, *syncBuf) {
 
 func startProcessWith(t *testing.T, dispatch sdk.DispatchFunc) (*Process, *httptest.Server, *syncBuf) {
 	t.Helper()
-	p, logs, err := newProcess("ok", dispatch)
+	return startProcessHost(t, sdk.Host{Dispatch: dispatch})
+}
+
+func startProcessHost(t *testing.T, host sdk.Host) (*Process, *httptest.Server, *syncBuf) {
+	t.Helper()
+	p, logs, err := newProcessHost("ok", host)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -257,7 +287,7 @@ func TestServeRoundTrip(t *testing.T) {
 		t.Fatalf("http before initialize = %+v, want a not-initialized rpc error", m)
 	}
 	var init initResult
-	_ = json.Unmarshal(roundTrip(2, "initialize", initParams{Protocol: ProtocolVersion, Name: "x"}).Result, &init)
+	_ = json.Unmarshal(roundTrip(2, "initialize", initParams{Protocol: ProtocolVersion, Name: "x", Serves: []string{methodTool}}).Result, &init)
 	if init.Protocol != ProtocolVersion || init.UI == nil || init.UI.Title != "X" {
 		t.Fatalf("initialize = %+v", init)
 	}
@@ -369,6 +399,7 @@ func TestNewFails(t *testing.T) {
 		{"factory rejects config", "fail", "", "bad config"},
 		{"Starter fails", "failstart", "", "start refused"},
 		{"child speaks another protocol", "ok", "badproto", "protocol"},
+		{"child reports an undecodable tool", "ok", "baddecl", "tool t: declaration"},
 		{"child initializes past initTimeout", "slowstart", "", "deadline"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

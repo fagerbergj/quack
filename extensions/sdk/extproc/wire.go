@@ -13,14 +13,17 @@ import (
 // ProtocolVersion is bumped on any incompatible wire change; initialize refuses a mismatch.
 const ProtocolVersion = 2
 
-// Methods: the host calls initialize and http and notifies runEnded; the child calls dispatch;
-// either side notifies cancel for a call it gave up on.
+// Methods: the host calls initialize, http and tool and notifies runEnded; the child calls dispatch,
+// readArtifact and decide; either side notifies cancel for a call it gave up on.
 const (
-	methodInitialize = "initialize"
-	methodHTTP       = "http"
-	methodRunEnded   = "runEnded"
-	methodDispatch   = "dispatch"
-	methodCancel     = "cancel"
+	methodInitialize   = "initialize"
+	methodHTTP         = "http"
+	methodTool         = "tool"
+	methodRunEnded     = "runEnded"
+	methodDispatch     = "dispatch"
+	methodReadArtifact = "readArtifact"
+	methodDecide       = "decide"
+	methodCancel       = "cancel"
 )
 
 // message is a JSON-RPC 2.0 request, notification (ID 0: ids start at 1) or response (no Method).
@@ -63,12 +66,46 @@ type initParams struct {
 	Version   string `json:"version"`
 	PublicURL string `json:"publicURL"`
 	Location  string `json:"location,omitempty"`
+
+	// Serves names the optional methods this host takes part in: it calls tool, answers readArtifact and decide. A protocol 2 host
+	// that predates them sends none: the child leaves those Host funcs nil and refuses to drop its tools.
+	Serves []string `json:"serves,omitempty"`
 }
 
 type initResult struct {
-	Protocol     int               `json:"protocol"`
-	UI           *sdk.UIDescriptor `json:"ui,omitempty"`
-	ObservesRuns bool              `json:"observesRuns,omitempty"`
+	Protocol        int                        `json:"protocol"`
+	UI              *sdk.UIDescriptor          `json:"ui,omitempty"`
+	ObservesRuns    bool                       `json:"observesRuns,omitempty"`
+	Tools           []toolSpec                 `json:"tools,omitempty"`
+	ArtifactSchemas map[string]json.RawMessage `json:"artifactSchemas,omitempty"`
+	DecisionPoints  []sdk.DecisionPoint        `json:"decisionPoints,omitempty"`
+}
+
+// toolSpec is one of the child's tools. Declaration stays raw so the model sees the child's schema bytes;
+// Description travels apart because a long-running tool's declaration appends a note to it.
+type toolSpec struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	LongRunning bool            `json:"longRunning,omitempty"`
+	Declaration json.RawMessage `json:"declaration"`
+}
+
+type toolParams struct {
+	Name     string         `json:"name"`
+	CallID   string         `json:"callID,omitempty"`
+	Args     map[string]any `json:"args"`
+	CallInfo *sdk.CallInfo  `json:"callInfo,omitempty"`
+}
+
+type readArtifactParams struct {
+	ChatID string `json:"chatID"`
+	User   string `json:"user"`
+	Name   string `json:"name"`
+}
+
+type readArtifactResult struct {
+	Data []byte `json:"data,omitempty"`
+	OK   bool   `json:"ok"`
 }
 
 type runEndedParams struct {

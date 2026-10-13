@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"sync/atomic"
 	"time"
 
@@ -64,6 +65,7 @@ type server struct {
 type mounted struct {
 	handler  http.Handler
 	observer sdk.RunObserver
+	tools    map[string]functionTool
 }
 
 func (s *server) handle(ctx context.Context, method string, params json.RawMessage) (any, error) {
@@ -72,6 +74,8 @@ func (s *server) handle(ctx context.Context, method string, params json.RawMessa
 		return s.initialize(params)
 	case methodHTTP:
 		return s.serveHTTP(ctx, params)
+	case methodTool:
+		return s.callTool(ctx, params)
 	case methodRunEnded:
 		return nil, s.runEnded(params)
 	}
@@ -86,19 +90,11 @@ func (s *server) initialize(raw json.RawMessage) (any, error) {
 	if p.Protocol != ProtocolVersion {
 		return nil, fmt.Errorf("protocol %d unsupported, this extension speaks %d", p.Protocol, ProtocolVersion)
 	}
-	host := sdk.Host{
-		Dispatch: func(ctx context.Context, req sdk.DispatchRequest) error {
-			return s.conn.call(ctx, methodDispatch, req, nil)
-		},
-		Log:       s.log,
-		DataDir:   p.DataDir,
-		Version:   p.Version,
-		PublicURL: p.PublicURL,
+	ext, err := s.factory(s.hostFor(p), []byte(p.Config))
+	if err != nil {
+		return nil, err
 	}
-	if p.Location != "" {
-		host.Location, _ = time.LoadLocation(p.Location) // nil on failure: the sdk's "unconfigured" fallback
-	}
-	ext, err := s.factory(host, []byte(p.Config))
+	m, res, err := describe(ext, slices.Contains(p.Serves, methodTool))
 	if err != nil {
 		return nil, err
 	}
@@ -111,15 +107,89 @@ func (s *server) initialize(raw json.RawMessage) (any, error) {
 	// The same shape as quack's own mount, so handlers see the full /<name>/... path they would in-process.
 	root, r := mount(p.Name)
 	ext.RegisterRoutes(r, r)
-	m := &mounted{handler: root}
-	m.observer, _ = ext.(sdk.RunObserver)
+	m.handler = root
 	s.ready.Store(m)
-	res := initResult{Protocol: ProtocolVersion, ObservesRuns: m.observer != nil}
+	return res, nil
+}
+
+// hostFor is the child's sdk.Host: settings from p, and a call into quack for each callback quack serves.
+func (s *server) hostFor(p initParams) sdk.Host {
+	host := sdk.Host{
+		Dispatch: func(ctx context.Context, req sdk.DispatchRequest) error {
+			return s.conn.call(ctx, methodDispatch, req, nil)
+		},
+		Log:       s.log,
+		DataDir:   p.DataDir,
+		Version:   p.Version,
+		PublicURL: p.PublicURL,
+	}
+	if p.Location != "" {
+		host.Location, _ = time.LoadLocation(p.Location) // nil on failure: the sdk's "unconfigured" fallback
+	}
+	if slices.Contains(p.Serves, methodReadArtifact) {
+		host.ReadArtifact = s.readArtifact
+	}
+	if slices.Contains(p.Serves, methodDecide) {
+		host.Decide = func(ctx context.Context, req sdk.DecideRequest) (sdk.Decision, error) {
+			var d sdk.Decision
+			err := s.conn.call(ctx, methodDecide, req, &d)
+			return d, err
+		}
+	}
+	return host
+}
+
+// readArtifact has no ctx to cancel by; a failed call reads as absent, as quack's own read failure does.
+func (s *server) readArtifact(chatID, user, name string) ([]byte, bool) {
+	var res readArtifactResult
+	if err := s.conn.call(s.ctx, methodReadArtifact, readArtifactParams{ChatID: chatID, User: user, Name: name}, &res); err != nil {
+		s.log.Warn("extproc: readArtifact failed", "chat", chatID, "artifact", name, "err", err)
+		return nil, false
+	}
+	return res.Data, res.OK
+}
+
+// describe reports what quack's loader reads off an in-process extension. A host that serves no tool
+// calls predates all of it, so a child that has any refuses rather than run without it.
+func describe(ext sdk.Extension, hostTakesTools bool) (*mounted, initResult, error) {
+	m := &mounted{}
+	res := initResult{Protocol: ProtocolVersion}
+	var err error
+	if m.tools, res.Tools, err = describeTools(ext.Tools()); err != nil {
+		return nil, res, err
+	}
+	if as, ok := ext.(sdk.ArtifactSchemas); ok {
+		res.ArtifactSchemas = as.ArtifactSchemas()
+	}
+	if dp, ok := ext.(sdk.DecisionPoints); ok {
+		res.DecisionPoints = dp.DecisionPoints()
+	}
+	if !hostTakesTools && (len(res.Tools) > 0 || len(res.ArtifactSchemas) > 0 || len(res.DecisionPoints) > 0) {
+		return nil, res, errors.New("this quack takes no tools, artifact schemas or decision points from a child; upgrade it or drop exec")
+	}
+	m.observer, _ = ext.(sdk.RunObserver)
+	res.ObservesRuns = m.observer != nil
 	if ui, ok := ext.(sdk.UI); ok {
 		d := ui.UI()
 		res.UI = &d
 	}
-	return res, nil
+	return m, res, nil
+}
+
+func (s *server) callTool(ctx context.Context, raw json.RawMessage) (any, error) {
+	m := s.ready.Load()
+	if m == nil {
+		return nil, errNotInitialized
+	}
+	var p toolParams
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, err
+	}
+	t, ok := m.tools[p.Name]
+	if !ok {
+		return nil, fmt.Errorf("unknown tool %q", p.Name)
+	}
+	return runTool(ctx, t, p)
 }
 
 func mount(name string) (http.Handler, chi.Router) {

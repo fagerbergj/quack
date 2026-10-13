@@ -17,6 +17,18 @@ func TestFactoryRejectsUnknownKey(t *testing.T) {
 	}
 }
 
+func TestFactoryAcceptsBaseURLAndExec(t *testing.T) {
+	srv := mockServer(t)
+	t.Cleanup(srv.Close)
+	ext, err := factory(sdk.Host{}, []byte("base_url: "+srv.URL+"\nexec: /quack-ext-sleeper\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st, err := ext.(*extension).client.State(context.Background()); err != nil || st.Week != 2 {
+		t.Fatalf("State through base_url = %+v, %v; want the fixture's week 2", st, err)
+	}
+}
+
 func TestFactorySnapshotsValidation(t *testing.T) {
 	for _, tc := range []struct {
 		snapshots string

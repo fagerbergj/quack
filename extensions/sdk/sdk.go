@@ -142,7 +142,8 @@ type Host struct {
 	Location *time.Location
 
 	// ReadArtifact returns the latest bytes of a named input artifact in this chat, ok=false
-	// when absent. user is the chat's ChatRef.User; the host may substitute the stored one.
+	// when absent. user is the chat's ChatRef.User; the host may substitute the stored one. nil when the host
+	// has no artifact store (an older out-of-process host): check before calling.
 	ReadArtifact func(chatID, user, name string) (data []byte, ok bool)
 
 	// WriteArtifact saves a named input artifact and returns its 1-based per-name revision

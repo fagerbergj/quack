@@ -39,15 +39,19 @@ var passEnv = []string{"PATH", "HOME", "TMPDIR", "TZ", "LANG", "SSL_CERT_FILE", 
 var restartMin, restartMax = 100 * time.Millisecond, 30 * time.Second
 
 // Process is an extension running as a supervised child: started by New, restarted with backoff
-// when it exits, stopped by Close. It implements sdk.Extension, sdk.UI and sdk.RunObserver for quack's loader.
+// when it exits, stopped by Close. It implements sdk.Extension, sdk.UI, sdk.RunObserver, sdk.ArtifactSchemas
+// and sdk.DecisionPoints for quack's loader, the last three from what the child reported at initialize.
 type Process struct {
 	name     string
 	path     string
 	params   initParams
 	log      *slog.Logger
+	host     sdk.Host
 	ui       sdk.UIDescriptor
-	dispatch sdk.DispatchFunc
 	observes bool
+	tools    []tool.Tool
+	schemas  map[string]json.RawMessage
+	points   []sdk.DecisionPoint
 
 	mu  sync.Mutex
 	cur *child
@@ -58,19 +62,21 @@ type Process struct {
 }
 
 var (
-	_ sdk.Extension   = (*Process)(nil)
-	_ sdk.UI          = (*Process)(nil)
-	_ sdk.RunObserver = (*Process)(nil)
-	_ io.Closer       = (*Process)(nil)
+	_ sdk.Extension       = (*Process)(nil)
+	_ sdk.UI              = (*Process)(nil)
+	_ sdk.RunObserver     = (*Process)(nil)
+	_ sdk.ArtifactSchemas = (*Process)(nil)
+	_ sdk.DecisionPoints  = (*Process)(nil)
+	_ io.Closer           = (*Process)(nil)
 )
 
 // New starts name's extension from the binary at path and initializes it with host's settings and
 // the raw extensions.<name> block; an error means the child refused or never answered.
 func New(name, path string, host sdk.Host, config []byte) (*Process, error) {
 	p := &Process{
-		name: name, path: path, log: host.Log, dispatch: host.Dispatch,
+		name: name, path: path, log: host.Log, host: host,
 		params: initParams{Protocol: ProtocolVersion, Name: name, Config: string(config),
-			DataDir: host.DataDir, Version: host.Version, PublicURL: host.PublicURL},
+			DataDir: host.DataDir, Version: host.Version, PublicURL: host.PublicURL, Serves: serves(host)},
 		stop: make(chan struct{}), done: make(chan struct{}),
 	}
 	if p.log == nil {
@@ -83,16 +89,38 @@ func New(name, path string, host sdk.Host, config []byte) (*Process, error) {
 	if err != nil {
 		return nil, err
 	}
+	if p.tools, err = remoteTools(p, res.Tools); err != nil {
+		c.stop()
+		return nil, fmt.Errorf("extension %s: %w", name, err)
+	}
 	if res.UI != nil {
 		p.ui = *res.UI
 	}
-	p.observes = res.ObservesRuns
+	p.observes, p.schemas, p.points = res.ObservesRuns, res.ArtifactSchemas, res.DecisionPoints
 	p.cur = c
 	go p.supervise(c)
 	return p, nil
 }
 
-func (p *Process) Tools() []tool.Tool { return nil }
+// serves lists the optional methods host takes part in: it calls tool on the child and answers readArtifact and
+// decide. Dispatch is always on, as before them.
+func serves(host sdk.Host) []string {
+	s := []string{methodTool}
+	if host.ReadArtifact != nil {
+		s = append(s, methodReadArtifact)
+	}
+	if host.Decide != nil {
+		s = append(s, methodDecide)
+	}
+	return s
+}
+
+// Tools are proxies built once from the first child's report; each call goes to whichever child is current.
+func (p *Process) Tools() []tool.Tool { return p.tools }
+
+func (p *Process) ArtifactSchemas() map[string]json.RawMessage { return p.schemas }
+
+func (p *Process) DecisionPoints() []sdk.DecisionPoint { return p.points }
 
 // RunEnded forwards the outcome without waiting on the child; one sent while the child is down is lost.
 func (p *Process) RunEnded(chatID string, outcome sdk.RunOutcome) {
@@ -104,19 +132,46 @@ func (p *Process) RunEnded(chatID string, outcome sdk.RunOutcome) {
 	}
 }
 
-// serveChild answers the child's calls into quack.
+// serveChild answers the child's calls into quack; it asks only for the callbacks initialize offered.
 func (p *Process) serveChild(ctx context.Context, method string, params json.RawMessage) (any, error) {
-	if method != methodDispatch {
-		return nil, &rpcError{Code: codeMethodNotFound, Message: "unknown method " + method}
+	switch {
+	case method == methodDispatch:
+		return nil, p.serveDispatch(ctx, params)
+	case method == methodReadArtifact && p.host.ReadArtifact != nil:
+		return p.serveReadArtifact(params)
+	case method == methodDecide && p.host.Decide != nil:
+		return p.serveDecide(ctx, params)
 	}
-	if p.dispatch == nil {
-		return nil, errors.New("extproc: this host has no Dispatch")
+	return nil, &rpcError{Code: codeMethodNotFound, Message: "unknown method " + method}
+}
+
+func (p *Process) serveDispatch(ctx context.Context, params json.RawMessage) error {
+	if p.host.Dispatch == nil {
+		return errors.New("extproc: this host has no Dispatch")
 	}
 	var req sdk.DispatchRequest
 	if err := json.Unmarshal(params, &req); err != nil {
+		return err
+	}
+	return p.host.Dispatch(ctx, req)
+}
+
+func (p *Process) serveReadArtifact(params json.RawMessage) (any, error) {
+	var a readArtifactParams
+	if err := json.Unmarshal(params, &a); err != nil {
 		return nil, err
 	}
-	return nil, p.dispatch(ctx, req)
+	data, ok := p.host.ReadArtifact(a.ChatID, a.User, a.Name)
+	return readArtifactResult{Data: data, OK: ok}, nil
+}
+
+func (p *Process) serveDecide(ctx context.Context, params json.RawMessage) (any, error) {
+	// Decoding into a non-nil pointer keeps State as the child's bytes, so the handler sees its key order.
+	req := sdk.DecideRequest{State: &json.RawMessage{}}
+	if err := json.Unmarshal(params, &req); err != nil {
+		return nil, err
+	}
+	return p.host.Decide(ctx, req)
 }
 
 // RegisterRoutes forwards everything under /<name>/ behind quack's session auth. Public

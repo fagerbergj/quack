@@ -9,6 +9,7 @@ Setup and configuration guides for humans to use quack. For how the code itself 
 - [`agent-plugins.md`](agent-plugins.md) - the Agent Plugins standard: how a plugin ships skills, MCP servers, and quack extension declarations.
 - [`extensions/github.md`](extensions/github.md) - the GitHub App.
 - [`extensions/remarkable.md`](extensions/remarkable.md) - the reMarkable document-ingest trigger.
+- [`extensions/sleeper.md`](extensions/sleeper.md) - the Sleeper fantasy-football tools, page and weekly jobs.
 - [`extensions/usage.md`](extensions/usage.md) - the in-app Prometheus usage dashboard.
 - [`extensions/ui-kit.md`](extensions/ui-kit.md) - the CSS kit an extension's own HTML pages link to look native to the SPA.
 - [`extensions/dev-loop.md`](extensions/dev-loop.md) - developing an extension under `extensions/`, shipping a plugin change with a `plugin/<name>/vX.Y.Z` tag, and adding a new extension.

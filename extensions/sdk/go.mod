@@ -5,6 +5,7 @@ go 1.26.6
 require (
 	github.com/go-chi/chi/v5 v5.3.2
 	google.golang.org/adk/v2 v2.4.0
+	google.golang.org/genai v1.70.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -34,7 +35,6 @@ require (
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
 	google.golang.org/api v0.295.0 // indirect
-	google.golang.org/genai v1.70.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260819154853-08b0e4226688 // indirect
 	google.golang.org/grpc v1.83.2 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
