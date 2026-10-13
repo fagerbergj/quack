@@ -61,6 +61,7 @@ type KindSpec struct {
 	Class         Class
 	SchemaVersion int
 	JSONSchema    string // the write_<kind> tool's input schema verbatim
+	Description   string // the write_<kind> tool's description; empty falls back to a generic one
 	Validate      func(json.RawMessage) error
 	Identity      IdentityFunc
 	// RequiresHint: Identity fails without a non-empty hint. Callers check it rather than always passing a
@@ -78,6 +79,14 @@ type KindSpec struct {
 
 // Name is the registered kind name (populated on values returned by Kinds()).
 func (k KindSpec) Name() string { return k.name }
+
+// WriteToolDescription is the write_<kind> tool's description on both the ADK and MCP surfaces.
+func (k KindSpec) WriteToolDescription(kind string) string {
+	if k.Description != "" {
+		return k.Description
+	}
+	return fmt.Sprintf("Write a new revision of a %q artifact. The registry validates the body and derives the id.", kind)
+}
 
 var (
 	registryMu sync.RWMutex

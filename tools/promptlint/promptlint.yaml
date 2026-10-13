@@ -28,7 +28,7 @@ overlap:
     - tools: [list_nodes, create_plan, edit_plan, execute]
       reason: the four steps of one plan lifecycle; create_plan and edit_plan share the assignment-shape prose
     - tools: [write_artifact, edit_artifact, write_code_review, write_finding]
-      reason: create vs revise, and generic vs kind-typed writes; write_<kind> descriptions share one template
+      reason: create vs revise, and generic vs kind-typed writes; write_finding and write_code_review name each other because one cites the other
     - tools: [web_fetch, read_artifact, grep_artifacts]
       reason: web_fetch stores a large page as an artifact that read_artifact and grep_artifacts page through
     - tools: [web_search, web_fetch]

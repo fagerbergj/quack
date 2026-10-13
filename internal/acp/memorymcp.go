@@ -297,7 +297,7 @@ func registerWriteKindTool(srv *mcp.Server, c *recordstore.Client, sess vetting.
 	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        writeKindPrefix + kind,
-		Description: fmt.Sprintf("Write a new revision of a %q artifact. The registry validates the body and derives the id.", kind),
+		Description: spec.WriteToolDescription(kind),
 		InputSchema: &schema,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
 		round, turnID, headSHA, trigger := currentRound(sess)
