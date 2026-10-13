@@ -650,8 +650,8 @@ func lostStreamErr(chatID string, last error) error {
 	return err
 }
 
-// postStream sends a POST /responses and streams its events. A body that ends before `done` once the run has
-// started (an id arrived) hands off to the resumable GET stream, as the web UI's runStream does.
+// postStream sends a POST /responses and streams its events. A 200 means the run was accepted, so a body that ends
+// before `done`, even before its first event, hands off to the resumable GET stream, as the web UI's runStream does.
 func (c *Client) postStream(ctx context.Context, chatID string, req *http.Request, onEvent func(SSEEvent) error) error {
 	req.Header.Set("Accept", "text/event-stream")
 	resp, err := c.HTTP.Do(req)
@@ -663,9 +663,10 @@ func (c *Client) postStream(ctx context.Context, chatID string, req *http.Reques
 		return httpFailure(resp.StatusCode, readAll(resp.Body))
 	}
 	var lastID string
-	var sawDone bool
+	var sawDone, sawEvent bool
 	var stop error // onEvent's own error ends the stream; it is no drop to resume
 	err = parseSSE(resp.Body, func(ev SSEEvent) error {
+		sawEvent = true
 		sawDone = sawDone || ev.Name == "done"
 		if ev.ID != "" {
 			lastID = ev.ID
@@ -673,7 +674,8 @@ func (c *Client) postStream(ctx context.Context, chatID string, req *http.Reques
 		stop = onEvent(ev)
 		return stop
 	})
-	if sawDone || stop != nil || lastID == "" || ctx.Err() != nil {
+	// An unnumbered stream that sent events has nothing to resume from; one that sent none restarts from the top.
+	if sawDone || stop != nil || (sawEvent && lastID == "") || ctx.Err() != nil {
 		return err
 	}
 	c.reconnecting()

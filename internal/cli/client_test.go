@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -294,6 +295,7 @@ func TestSendMessageWithFiles(t *testing.T) {
 			}
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "id: 1\nevent: done\ndata: {}\n\n") // a real run always ends with done
 	}))
 	defer srv.Close()
 

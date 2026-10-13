@@ -109,6 +109,33 @@ func TestRunChatSendResumesAfterDrop(t *testing.T) {
 	assertFollowedThrough(t, code, out.String(), errOut.String())
 }
 
+// A POST the server accepted (200) but cut before its first event still follows the run from the start, instead of
+// reporting an empty answer with exit 0.
+func TestRunChatSendFollowsAPostCutBeforeItsFirstEvent(t *testing.T) {
+	t.Setenv("QUACK_HOME", t.TempDir())
+	shortSSEReconnect(t)
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/v1/chats/c1/responses", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK) // accepted, then a graceful stop ends the body with no event
+	})
+	mux.HandleFunc("GET /api/v1/chats/c1/stream", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Last-Event-ID"); got != "" {
+			t.Errorf("Last-Event-ID = %q, want none: nothing was seen yet", got)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		writeSSE(w, 1, "node_start", `{"node_id":"n1"}`)
+		writeSSE(w, 2, "node_done", `{"node_id":"n1","output":"final answer"}`)
+		writeSSE(w, 3, "done", `{}`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	var out, errOut bytes.Buffer
+	code := RunChatSend(context.Background(), &out, &errOut, srv.URL, "c1", "hi", nil, false, false)
+	assertFollowedThrough(t, code, out.String(), errOut.String())
+}
+
 // onEvent's own error stops the stream, per SendMessage's contract; it must not read as a drop to resume.
 func TestSendMessageCallerStopIsNoDrop(t *testing.T) {
 	shortSSEReconnect(t)
