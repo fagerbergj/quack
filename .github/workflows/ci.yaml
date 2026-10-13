@@ -49,6 +49,9 @@ jobs:
               - '{tools/pi-acp/**,Dockerfile,.github/workflows/ci.yaml}'
 
   go-test:
+    permissions:
+      contents: read
+      pull-requests: write   # the coverage gate comments its misses on the PR
     needs: changes
     if: github.event_name == 'push' || needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
@@ -100,6 +103,7 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           SLOP_BASE: ${{ github.event.pull_request.base.sha }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set +e
           OUT=$(go run ./tools/coverdiff diff --profile cover.out "$SLOP_BASE" 2>&1)
@@ -283,6 +287,9 @@ jobs:
         working-directory: frontend
 
   frontend-test:
+    permissions:
+      contents: read
+      pull-requests: write   # the coverage gate comments its misses on the PR
     needs: changes
     if: github.event_name == 'push' || needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
@@ -308,6 +315,7 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           SLOP_BASE: ${{ github.event.pull_request.base.sha }}
+          GH_TOKEN: ${{ github.token }}
         working-directory: frontend
         run: |
           set +e
