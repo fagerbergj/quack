@@ -54,7 +54,7 @@ A recorded item points at one judged round of a recording instead of `task`/`ans
 
 Labels on judge-scored criteria need `"needs_live_model": true`; `--deterministic-only` skips those items, and a live run sends only them to the judge. The loader rejects a judge-scored label on an item without the flag, and a label on a criterion that needs a live workspace (`checks_pass`, `artifact_valid` and the rest of `vetting.EnvironmentOnlyCriteria`).
 
-The seed set covers `cites_sources` (backed and invented links, inline and recorded), `sufficient_length`, `no_tool_call_syntax`, `grounded_in_retrieval` and `specifics_cited` (cited and uncited figures), plus three live items on the web-researcher's `answers_question` and `internally_consistent`.
+The seed set covers `cites_sources` (backed and invented links, inline and recorded), `sufficient_length`, `no_tool_call_syntax`, `grounded_in_retrieval` and `specifics_cited` (cited and uncited figures), plus three live items on the web-researcher's `answers_question` and `internally_consistent`, and seven live `review-*` items on the code-reviewer's `catches_real_issues`, `claims_grounded` and `severity_grounded`: a retry pull request that breaks its own "a POST is sent once" promise, reviewed well and in five known-bad ways (a missed defect, an unreproduced race claim, preference labelled `blocking:`, bare "tests pass" checks, a defect left in `notes`), plus its fixed version approved with no findings.
 
 ### Adding items from real recordings
 

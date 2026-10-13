@@ -1,0 +1,18 @@
+{
+  "id": "review-missed-defect",
+  "note": "Approves with a cosmetic nit while the PR breaks its own \"POST sent once\" promise.",
+  "rubric": "../../extensions/github/plugin/agents/code-reviewer/rubric.yaml",
+  "needs_live_model": true,
+  "task": "Review pull request #42 in example/shop and stage your verdict.\n\nPR title: fix(client): retry transient 5xx with backoff\n\nPR description:\n- Do retries GET requests that get a 502, 503 or 504, up to MaxRetries times, doubling the delay each time.\n- Adds TestDoRetriesTransient covering a 503-then-200 sequence.\n- Never retries a non-idempotent method: a POST is sent exactly once.\n\nNo linked issue. CI: all checks green.\n\nDiff:\n```diff\ndiff --git a/client/retry.go b/client/retry.go\nnew file mode 100644\n--- /dev/null\n+++ b/client/retry.go\n@@ -0,0 +1,24 @@\n+package client\n+\n+import (\n+\t\"net/http\"\n+\t\"time\"\n+)\n+\n+// Do sends req, retrying transient gateway errors with exponential backoff.\n+func (c *Client) Do(req *http.Request) (*http.Response, error) {\n+\tdelay := c.BaseDelay\n+\tfor attempt := 0; ; attempt++ {\n+\t\tresp, err := c.HTTP.Do(req)\n+\t\tif err != nil || !transient(resp.StatusCode) || attempt == c.MaxRetries {\n+\t\t\treturn resp, err\n+\t\t}\n+\t\tresp.Body.Close()\n+\t\ttime.Sleep(delay)\n+\t\tdelay *= 2\n+\t}\n+}\n+\n+func transient(code int) bool {\n+\treturn code == 502 || code == 503 || code == 504\n+}\ndiff --git a/client/retry_test.go b/client/retry_test.go\nnew file mode 100644\n--- /dev/null\n+++ b/client/retry_test.go\n@@ -0,0 +1,22 @@\n+package client\n+\n+import (\n+\t\"net/http\"\n+\t\"net/http/httptest\"\n+\t\"testing\"\n+)\n+\n+func TestDoRetriesTransient(t *testing.T) {\n+\tcodes := []int{503, 200}\n+\tsrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {\n+\t\tw.WriteHeader(codes[0])\n+\t\tcodes = codes[1:]\n+\t}))\n+\tdefer srv.Close()\n+\tc := &Client{HTTP: srv.Client(), MaxRetries: 3}\n+\treq, _ := http.NewRequest(http.MethodGet, srv.URL, nil)\n+\tresp, err := c.Do(req)\n+\tif err != nil || resp.StatusCode != 200 {\n+\t\tt.Fatalf(\"got %v, %v\", resp, err)\n+\t}\n+}\n```",
+  "answer": "Staged the review: approve with one nit.\n\nVERDICT: approve\nTAKEAWAY: Clean, well-tested retry helper; one naming nit.\nFINDINGS:\n- client/retry.go:22: 🧹 **nit:** a switch statement would read more naturally than the chained comparisons in transient.\nVERIFIED:\n- Read the diff; the retry logic matches the description.\n- Tests pass.\n",
+  "labels": {
+    "catches_real_issues": {
+      "pass": false,
+      "reason": "approves while \"a POST is sent exactly once\" is absent and unreported"
+    },
+    "claims_grounded": {
+      "pass": false,
+      "reason": "\"matches the description\" and \"tests pass\" name no command or lines"
+    }
+  }
+}
