@@ -14,13 +14,17 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/genai"
+
+	extsdk "github.com/fagerbergj/quack/extensions/sdk"
+	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/langfuse"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/ledger/bundle"
 	"github.com/fagerbergj/quack/internal/ledgertest"
 	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/vetting"
-	"google.golang.org/genai"
+	"github.com/fagerbergj/quack/internal/workflowcatalog"
 )
 
 func datasetItemFromInput(t *testing.T, id string, input map[string]any) langfuse.DatasetItem {
@@ -306,40 +310,86 @@ func synthesizerRecording(t *testing.T) []byte {
 	)
 }
 
-// TestLiveItemRunner_RunItem drives RunItem against an httptest fake of the quack API and a real Store:
-// the run carries the resolved prompt, the final judge round on the rubric's scale, and the node's cost.
+// fakeExperiment starts the experiment extension on a fake Dispatch that ends every run with status;
+// onRun first gets the dispatched chat id, so a test can seed that chat's rows.
+func fakeExperiment(t *testing.T, status extsdk.RunStatus, onRun func(chatID string)) *[]extsdk.DispatchRequest {
+	t.Helper()
+	var reqs []extsdk.DispatchRequest
+	var ext *experimentExt
+	dispatch := func(_ context.Context, req extsdk.DispatchRequest) error {
+		reqs = append(reqs, req)
+		chatID := "ext:experiment:" + req.Chat.LocalID
+		if onRun != nil {
+			onRun(chatID)
+		}
+		go ext.RunEnded(chatID, extsdk.RunOutcome{Status: status, Error: "boom"})
+		return nil
+	}
+	e, _ := newExperimentExt(extsdk.Host{Dispatch: dispatch}, nil)
+	ext = e.(*experimentExt)
+	if err := ext.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { liveExperiment.Store(nil) })
+	return &reqs
+}
+
+// fakeQuackAPI serves recording for every chat and fails the test on any other call: an
+// experiment item must never create a chat or send a message the orchestrator would plan.
+func fakeQuackAPI(t *testing.T, recording []byte) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/chats/{chat}/recording", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(recording)
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("experiment item reached %s %s; it must run the node directly", r.Method, r.URL.Path)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// EnableExperiment's workflow is a bound shape: one node of the agent whose task is the ask itself, which
+// the bound dispatch runs with no orchestrator or planner turn (TestSDKExtensionDispatch_BoundWorkflowSkipsPlannerLLM).
+func TestEnableExperiment_BindsOneNodeToTheAsk(t *testing.T) {
+	cfg := &config.Config{}
+	EnableExperiment(cfg, "synthesizer")
+	if _, ok := cfg.Extensions.Modules["experiment"]; !ok {
+		t.Fatal("experiment extension not configured")
+	}
+	shape, ok := workflowcatalog.Lookup(workflowcatalog.FromConfig(cfg.Workflows, ""), "experiment-synthesizer")
+	if !ok {
+		t.Fatal("no experiment-synthesizer workflow")
+	}
+	nodes, bound := workflowcatalog.Bind(shape, "the recorded task")
+	if !bound || len(nodes) != 1 || nodes[0].Agent != "synthesizer" || nodes[0].Task != "the recorded task" {
+		t.Fatalf("bound nodes = %+v (bound %v), want one synthesizer node whose task is the ask", nodes, bound)
+	}
+}
+
+// TestLiveItemRunner_RunItem: an item dispatches the agent's bound workflow (never the orchestrator), with
+// delivery denied; the run carries the resolved prompt, the final judge round on the rubric's scale, and the node's cost.
 func TestLiveItemRunner_RunItem(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetChatOrigin(ctx, "c1", "u", ""); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.SaveDagPlan(ctx, "c1", "plan1", "turn1", "{}"); err != nil {
-		t.Fatal(err)
-	}
-	node := store.DagNode{NodeID: "n1", PlanID: "plan1", TraceID: "trace-1", TraceIDSet: true, PromptTokens: 1200,
-		CompletionTokens: 300, CachedTokens: 800, JudgeRounds: 2, DurationMs: 4500, JudgePassed: true}
-	if err := st.UpsertDagNode(ctx, node); err != nil {
-		t.Fatal(err)
-	}
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/chats", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]any{"id": "c1"})
+	reqs := fakeExperiment(t, extsdk.RunDone, func(chatID string) {
+		node := store.DagNode{NodeID: "n1", PlanID: "plan1", TraceID: "trace-1", TraceIDSet: true, PromptTokens: 1200,
+			CompletionTokens: 300, CachedTokens: 800, JudgeRounds: 2, DurationMs: 4500, JudgePassed: true}
+		if err := st.SetChatOrigin(ctx, chatID, "u", ""); err != nil {
+			t.Error(err)
+		}
+		if err := st.SaveDagPlan(ctx, chatID, "plan1", "turn1", "{}"); err != nil {
+			t.Error(err)
+		}
+		if err := st.UpsertDagNode(ctx, node); err != nil {
+			t.Error(err)
+		}
 	})
-	mux.HandleFunc("/api/v1/chats/c1/responses", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		io.WriteString(w, "event: node_done\ndata: {\"node_id\":\"n1\",\"output\":\"orchestrator text\"}\n\n")
-		io.WriteString(w, "event: done\ndata: {}\n\n")
-	})
-	mux.HandleFunc("/api/v1/chats/c1/recording", func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(synthesizerRecording(t))
-	})
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
+	srv := fakeQuackAPI(t, synthesizerRecording(t))
 
 	rubric, err := vetting.LoadRubricScaler(ctx, nil, "agents/synthesizer")
 	if err != nil {
@@ -348,6 +398,14 @@ func TestLiveItemRunner_RunItem(t *testing.T) {
 	run, err := NewLiveItemRunner(srv.URL, st, "synthesizer", rubric).RunItem(ctx, "synthesize this")
 	if err != nil {
 		t.Fatalf("RunItem: %v", err)
+	}
+	if len(*reqs) != 1 {
+		t.Fatalf("dispatches = %d, want 1", len(*reqs))
+	}
+	req := (*reqs)[0]
+	if req.Run.Workflow != "experiment-synthesizer" || req.Ask.Message != "synthesize this" ||
+		req.Delivery.AllowedKinds == nil || len(req.Delivery.AllowedKinds) != 0 {
+		t.Fatalf("dispatch = %+v, want the bound synthesizer workflow on the task with delivery denied", req)
 	}
 	if run.Answer != "the real answer" || run.TraceID != "trace-1" || run.prompt() != "system/synthesizer@4" || !run.Passed {
 		t.Fatalf("answer/trace/prompt/passed = %q/%q/%q/%v", run.Answer, run.TraceID, run.prompt(), run.Passed)
@@ -364,29 +422,16 @@ func TestLiveItemRunner_RunItem(t *testing.T) {
 	}
 }
 
-// TestLiveItemRunner_RunItem_NoNodeRun pins item 8: no matching node run for Agent
-// must be an error, never a run item with the orchestrator's own answer.
+// A run that didn't end done, or a recording with no run for Agent, is an item error, never a run item.
 func TestLiveItemRunner_RunItem_NoNodeRun(t *testing.T) {
-	ctx := context.Background()
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/chats", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]any{"id": "c1"})
-	})
-	mux.HandleFunc("/api/v1/chats/c1/responses", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		io.WriteString(w, "event: agent_token\ndata: {\"text\":\"orchestrator's own answer\"}\n\n")
-		io.WriteString(w, "event: done\ndata: {}\n\n")
-	})
-	mux.HandleFunc("/api/v1/chats/c1/recording", func(w http.ResponseWriter, r *http.Request) {
-		// A recording with no run for "code-reviewer" at all.
-		_, _ = w.Write(recordingBody(t, "c1", "n1", "synthesizer", "x", "y"))
-	})
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-
-	r := NewLiveItemRunner(srv.URL, nil, "code-reviewer", vetting.RubricScaler{})
-	if _, err := r.RunItem(ctx, "review this"); err == nil {
-		t.Fatal("want an error when the agent produced no node run")
+	// A recording with no run for "code-reviewer" at all.
+	srv := fakeQuackAPI(t, recordingBody(t, "c1", "n1", "synthesizer", "x", "y"))
+	for _, status := range []extsdk.RunStatus{extsdk.RunDone, extsdk.RunFailed} {
+		fakeExperiment(t, status, nil)
+		r := NewLiveItemRunner(srv.URL, nil, "code-reviewer", vetting.RubricScaler{})
+		if _, err := r.RunItem(context.Background(), "review this"); err == nil {
+			t.Fatalf("%s: want an error when the agent produced no node run", status)
+		}
 	}
 }
 

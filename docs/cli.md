@@ -90,7 +90,7 @@ Export recorded runs to a Langfuse dataset, then re-run an agent against that da
 | Command | Does |
 | --- | --- |
 | `quack dataset export --dataset <name> (--chat <id> \| --repo <owner/repo> \| --since <date>) [--agent <name>] [--limit N]` | Export gated code-reviewer, synthesizer, web-researcher and trend-scout node runs as Langfuse dataset items (creating the dataset if needed). `--since` alone scans every chat updated since that date, which is how runs in chats with no repo are found; with `--chat` or `--repo` it narrows those. `--agent` keeps only that agent's runs. Idempotent: re-exporting the same node run upserts the same item instead of duplicating it. |
-| `quack experiment run --dataset <name> --agent <name> [--prompt system/<agent>@N] [--run-name <s>] [--limit N] [--json]` | Run `--agent`'s node against every item in `--dataset`, reporting each as a Langfuse dataset run item linked to the node's trace. The trace gets one numeric score per judge criterion of the gate's final round, `gate_passed`, and the `cost.*` scores below; the run's description and metadata name the prompt version the node actually resolved. `--prompt system/<agent>@N` pins the run's resolver to that exact Langfuse version, and an item whose node ran any other prompt is an item error, not a scored run. Exits non-zero when any item errored. |
+| `quack experiment run --dataset <name> --agent <name> [--prompt system/<agent>@N] [--run-name <s>] [--limit N] [--json]` | Run `--agent`'s node alone on every item's recorded task in `--dataset`, reporting each as a Langfuse dataset run item linked to the node's trace. The trace gets one numeric score per judge criterion of the gate's final round, `gate_passed`, and the `cost.*` scores below; the run's description and metadata name the prompt version the node actually resolved. `--prompt system/<agent>@N` pins the run's resolver to that exact Langfuse version, and an item whose node ran any other prompt is an item error, not a scored run. Exits non-zero when any item errored. |
 
 ### Measuring a prompt change
 
@@ -114,7 +114,7 @@ quack experiment run --dataset synth-ab --agent synthesizer --prompt system/synt
 quack experiment run --dataset synth-ab --agent synthesizer --prompt system/synthesizer@2 --run-name synth-v2
 ```
 
-Each item re-runs as a fresh chat on an in-process server built from the local `quack.yaml`, so the orchestrator plans it again and the synthesizer's upstream research is re-run too. Every run item links to the synthesizer node's own trace, and that trace carries these numeric scores:
+Each item runs only the agent's node, on an in-process server built from the local `quack.yaml`: a one-node bound workflow whose task is the item's recorded task, which already carries the upstream nodes' answers. Nothing is planned, no upstream node re-runs, and delivery is denied, so a replayed node never posts or pushes. Every run item links to the node's own trace, and that trace carries these numeric scores:
 
 | Score | What it is |
 | --- | --- |
@@ -129,7 +129,7 @@ Compare the runs on the dataset's runs view in Langfuse, which averages each sco
 
 Before trusting a criterion's difference, measure the judge's noise on it. `quack judge replay <chat> --from-server <url> --repeat 5` re-judges recorded rounds of a dataset item's source chat (the item's `chat_id` metadata) five times over the same answer and reports each criterion's sd and pass/fail agreement; see [Measuring the judge](configuration/judge-measurement.md#judge-consistency). A baseline-to-candidate gap smaller than that spread is judge noise, not a prompt effect. Repeated runs per item and accuracy against golden labels are not part of the default loop; add them for an experiment whose result is a close call.
 
-Code-reviewer and trend-scout are plugin agents whose prompts resolve from their bundle files rather than a `system/<agent>` Langfuse version, so `--prompt` cannot pin them yet and every pinned item reports an error; web-researcher and synthesizer pin as shown.
+Code-reviewer and trend-scout are plugin agents whose prompts resolve from their bundle files rather than a `system/<agent>` Langfuse version, so `--prompt` cannot pin them yet and every pinned item reports an error; web-researcher and synthesizer pin as shown. A replayed node has none of the pages its upstream nodes fetched, so the code-owned page checks (`cites_sources`, `specifics_supported`) score low in both runs alike: compare a synthesizer's judged criteria, not those.
 
 ## Memory
 

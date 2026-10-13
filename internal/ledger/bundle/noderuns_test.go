@@ -55,3 +55,21 @@ func TestNodeRuns_EmptyForRootStreamAndNoMatch(t *testing.T) {
 		t.Fatalf("root stream must never appear in NodeRuns, got %+v", runs)
 	}
 }
+
+// A native node sees its task as ADK renders the gate's message: "run", "For context:", "[quack-gate] said: <task>".
+// The run's Task is the gate-built task alone, so replaying it doesn't nest that framing twice.
+func TestNodeRuns_TaskDropsADKFraming(t *testing.T) {
+	path := writeJSONL(t, []entry{chat(t0(), "n1", "synthesizer", "worker-r0", "m", map[string]any{
+		"gen_ai.input.messages":  `[{"role":"user","parts":[{"text":"run"},{"text":"For context:"},{"text":"[quack-gate] said: BACKGROUND x\n\nYOUR TASK - do this, and ONLY this:\nsynthesize"}]}]`,
+		"gen_ai.output.messages": `{"role":"model","parts":[{"text":"done"}]}`,
+	})})
+	sess, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, run := range sess.NodeRuns(map[string]bool{"synthesizer": true}) {
+		if want := "BACKGROUND x\n\nYOUR TASK - do this, and ONLY this:\nsynthesize"; run.Task != want {
+			t.Fatalf("Task = %q, want the gate-built task %q", run.Task, want)
+		}
+	}
+}

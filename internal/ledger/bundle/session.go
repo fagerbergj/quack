@@ -2,6 +2,7 @@ package bundle
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	"google.golang.org/genai"
@@ -204,7 +205,7 @@ func chatRoundRun(key StreamKey, st *streamState) (roundRun, bool) {
 	}
 	rr := roundRun{key: key, taskAt: st.chat[0].ts}
 	if texts := userTexts(st.chat[0].Input); len(texts) > 0 {
-		rr.task = texts[len(texts)-1]
+		rr.task = gateTask(texts[len(texts)-1])
 	}
 	for i := len(st.chat) - 1; i >= 0; i-- {
 		if st.chat[i].Output == "" {
@@ -221,6 +222,18 @@ func chatRoundRun(key StreamKey, st *streamState) (roundRun, bool) {
 		}
 	}
 	return roundRun{}, false // chat rows present but none carried a usable answer
+}
+
+// gatePromptSaid is how ADK renders the gate's task message (author stream.GatePromptAuthor) to the worker.
+const gatePromptSaid = "[quack-gate] said: "
+
+// gateTask strips ADK's "run" / "For context:" framing off a native round's first input, leaving the
+// task the gate built: the bytes a replay of the node (experiment run) must send again.
+func gateTask(text string) string {
+	if _, task, ok := strings.Cut(text, gatePromptSaid); ok {
+		return task
+	}
+	return text
 }
 
 // acpRoundRun builds a round's task/answer from its invoke_agent stream, since an ACP round emits no llm.call.

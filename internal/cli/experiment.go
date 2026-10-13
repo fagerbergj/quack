@@ -11,9 +11,18 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+	"google.golang.org/adk/v2/tool"
+	"gopkg.in/yaml.v3"
+
+	extsdk "github.com/fagerbergj/quack/extensions/sdk"
 	"github.com/fagerbergj/quack/internal/artifactsrc"
+	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/langfuse"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/ledger/bundle"
@@ -231,22 +240,18 @@ func NewLiveItemRunner(base string, st *store.Store, agent string, rubric vettin
 	return &LiveItemRunner{Base: base, Store: st, Agent: agent, Rubric: rubric}
 }
 
+// RunItem runs Agent's node alone on task through the experiment extension's bound workflow, then reads
+// the node back from the chat's recording.
 func (r *LiveItemRunner) RunItem(ctx context.Context, task string) (itemRun, error) {
-	c := &Client{BaseURL: strings.TrimRight(r.Base, "/"), HTTP: &http.Client{}}
-	chatID, err := c.CreateChat(ctx, "")
-	if err != nil {
-		return itemRun{}, fmt.Errorf("create chat: %w", err)
+	ext := liveExperiment.Load()
+	if ext == nil {
+		return itemRun{}, fmt.Errorf("experiment extension not running (EnableExperiment before boot)")
 	}
-	st := newStreamState()
-	onEvent := func(ev SSEEvent) error { st.handle(ev, nil); return nil }
-	if err := c.SendMessage(ctx, chatID, task, onEvent); err != nil {
+	chatID, err := ext.run(ctx, r.Agent, task)
+	if err != nil {
 		return itemRun{}, err
 	}
-	res := st.result(chatID)
-	if res.Status == StatusFailed {
-		return itemRun{}, fmt.Errorf("%s", res.Error)
-	}
-
+	c := &Client{BaseURL: strings.TrimRight(r.Base, "/"), HTTP: &http.Client{}}
 	body, err := c.FetchRecording(ctx, chatID)
 	if err != nil {
 		return itemRun{}, fmt.Errorf("chat %s: fetch recording: %w", chatID, err)
@@ -261,9 +266,96 @@ func (r *LiveItemRunner) RunItem(ctx context.Context, task string) (itemRun, err
 			return r.itemRunFor(ctx, chatID, sess, key.Node, run), nil
 		}
 	}
-	// A run item with no node run would otherwise report an empty traceId and the
-	// orchestrator's own answer instead of the agent's - report it as an error.
 	return itemRun{}, fmt.Errorf("chat %s: agent %q produced no node run", chatID, r.Agent)
+}
+
+// experimentExtension is the in-process SDK extension `experiment run` dispatches through. Its bound
+// one-node workflow runs the agent's node on the recorded task with no orchestrator or planner turn.
+const experimentExtension = "experiment"
+
+func init() { extsdk.Register(experimentExtension, newExperimentExt) }
+
+// liveExperiment is the booted extension; `experiment run` boots one in-process server per command.
+var liveExperiment atomic.Pointer[experimentExt]
+
+// EnableExperiment configures the in-process server `experiment run` boots: the experiment extension
+// and agent's bound workflow, whose one node's task is the item's recorded task verbatim.
+func EnableExperiment(cfg *config.Config, agent string) {
+	if cfg.Extensions.Modules == nil {
+		cfg.Extensions.Modules = map[string]yaml.Node{}
+	}
+	cfg.Extensions.Modules[experimentExtension] = yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	cfg.Workflows = append(cfg.Workflows, config.WorkflowShape{
+		Name: experimentWorkflow(agent), Trigger: "quack experiment run only", Shape: agent, Agents: []string{agent},
+		Nodes: []config.WorkflowNode{{ID: agent + "-1", Agent: agent, Task: "{{ask}}"}},
+	})
+}
+
+func experimentWorkflow(agent string) string { return "experiment-" + agent }
+
+type experimentExt struct {
+	host  extsdk.Host
+	mu    sync.Mutex
+	ended map[string]chan extsdk.RunOutcome
+}
+
+func newExperimentExt(host extsdk.Host, _ []byte) (extsdk.Extension, error) {
+	return &experimentExt{host: host, ended: map[string]chan extsdk.RunOutcome{}}, nil
+}
+
+func (e *experimentExt) Tools() []tool.Tool             { return nil }
+func (e *experimentExt) RegisterRoutes(_, _ chi.Router) {}
+
+// Start publishes the booted extension; the factory also runs during config validation, so it can't.
+func (e *experimentExt) Start(context.Context) error {
+	liveExperiment.Store(e)
+	return nil
+}
+
+// RunEnded hands a run's final outcome to the item waiting on it; a pause is not an end.
+func (e *experimentExt) RunEnded(chatID string, o extsdk.RunOutcome) {
+	if o.Status == extsdk.RunPaused {
+		return
+	}
+	e.mu.Lock()
+	ch := e.ended[chatID]
+	delete(e.ended, chatID)
+	e.mu.Unlock()
+	if ch != nil {
+		ch <- o
+	}
+}
+
+// run dispatches task to agent's bound workflow and waits for the run to end. Delivery is denied
+// outright, so a replayed reviewer never posts a review and a coder never pushes.
+func (e *experimentExt) run(ctx context.Context, agent, task string) (string, error) {
+	localID := uuid.NewString()
+	chatID := "ext:" + experimentExtension + ":" + localID
+	ch := make(chan extsdk.RunOutcome, 1)
+	e.mu.Lock()
+	e.ended[chatID] = ch
+	e.mu.Unlock()
+	req := extsdk.DispatchRequest{
+		Chat:     extsdk.ChatRef{LocalID: localID, Title: "experiment: " + agent},
+		Ask:      extsdk.Ask{Message: task},
+		Run:      extsdk.RunConfig{Workflow: experimentWorkflow(agent), ReadOnly: true},
+		Delivery: extsdk.DeliveryAuthority{AllowedKinds: []extsdk.DeliveryKind{}},
+	}
+	if err := e.host.Dispatch(ctx, req); err != nil {
+		e.mu.Lock()
+		delete(e.ended, chatID)
+		e.mu.Unlock()
+		return "", fmt.Errorf("dispatch %s: %w", agent, err)
+	}
+	select {
+	case o := <-ch:
+		if o.Status != extsdk.RunDone {
+			return chatID, fmt.Errorf("chat %s: run %s: %s", chatID, o.Status, o.Error)
+		}
+		return chatID, nil
+	case <-ctx.Done():
+		return chatID, ctx.Err()
+	}
 }
 
 // itemRunFor assembles nodeID's run: prompt and judge scores from the recording, tokens and timing from its

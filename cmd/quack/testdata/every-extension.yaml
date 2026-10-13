@@ -62,6 +62,7 @@ extensions:
       merge: "quack:merge"
       partial_fix: "quack:partial-fix"
       fix: "quack:fix"
+  experiment: {}
   noop:
     greeting: hello
   remarkable:

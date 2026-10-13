@@ -189,6 +189,16 @@ func TestBuildTask_KeepsAnswerWhenNoArtifact(t *testing.T) {
 	}
 }
 
+// A node whose task is the whole ask gets that text verbatim, not a BACKGROUND copy of it too:
+// `experiment run` replays a recorded prompt this way and must send exactly those bytes.
+func TestBuildTask_TaskThatIsTheAskIsNotRepeatedAsBackground(t *testing.T) {
+	const recorded = "BACKGROUND - recorded\n\nresearch answers\n\nYOUR TASK - do this, and ONLY this:\nsynthesize"
+	plan := Plan{UserMessage: recorded, Nodes: []Node{{ID: "synthesizer-1", Task: recorded}}}
+	if got := buildTask(context.Background(), plan, plan.Nodes[0], nil, nil, vetting.Config{}); got != recorded {
+		t.Errorf("prompt = %q, want the recorded task verbatim", got)
+	}
+}
+
 // An oversized artifact is capped to the dependent's budget with a marker naming the
 // id, so the node can read_artifact the rest.
 func TestBuildTask_CapTruncatesWithReadArtifactMarker(t *testing.T) {

@@ -83,6 +83,7 @@ func runExperimentRun(cmd *cobra.Command, dataset, agent, prompt, runName string
 	if err != nil {
 		return err
 	}
+	cli.EnableExperiment(cfg, agent)
 	base, stop, err := serve.InProcessWithPromptSource(ctx, cfg, pinSrc)
 	if err != nil {
 		return err
