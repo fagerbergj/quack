@@ -1,5 +1,7 @@
+// @vitest-environment jsdom
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, it, expect, vi } from 'vitest'
+import { cleanup, render, screen } from '@testing-library/react'
 import { VersionBanner } from './VersionBanner'
 import { readServedBuild, skew } from '../state/clientConfig'
 import type { ClientConfig } from '../api'
@@ -69,5 +71,15 @@ describe('VersionBanner', () => {
     expect(html).toContain('role="alertdialog"')
     expect(html).toContain('fixed inset-0')
     expect(html).toContain('Reload')
+  })
+
+  // jsdom can't paint the top layer; a shown modal <dialog> is the mechanism that puts the overlay above open
+  // drawers (also top-layer dialogs) and makes them inert, where a z-indexed div sits beneath them.
+  it('blocks from the top layer, as a shown modal dialog', () => {
+    render(<VersionBanner skew="blocked" />)
+    const overlay = screen.getByRole('alertdialog')
+    expect(overlay).toBeInstanceOf(HTMLDialogElement)
+    expect((overlay as HTMLDialogElement).open).toBe(true)
+    cleanup()
   })
 })

@@ -1,11 +1,12 @@
 import type { Skew } from '../state/clientConfig'
+import { useDrawer } from '../hooks/useDrawer'
 import { Icon } from './Icon'
 
 function ReloadButton({ autoFocus }: { autoFocus?: boolean }) {
   return (
     <button
       type="button"
-      autoFocus={autoFocus}
+      data-autofocus={autoFocus || undefined}
       onClick={() => window.location.reload()}
       className="flex shrink-0 items-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2 min-h-[44px] medium:min-h-0 text-sm text-white hover:bg-blue-700 transition-colors"
     >
@@ -36,10 +37,17 @@ export function VersionBanner({ skew }: { skew: Skew }) {
       </div>
     )
   }
+  return <Blocked />
+}
+
+// A modal <dialog>, not a z-indexed div: open drawers and sheets are top-layer dialogs that no z-index can cover,
+// and showing this one last stacks it above them and makes them inert. closedby/onCancel keep Esc from dismissing it.
+function Blocked() {
+  const ref = useDrawer(true)
   return (
-    <div role="alertdialog" aria-modal="true" aria-labelledby="version-blocked-msg" className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-white/95 dark:bg-gray-900/95 p-6 text-center text-sm text-gray-700 dark:text-gray-300">
+    <dialog ref={ref} role="alertdialog" aria-labelledby="version-blocked-msg" closedby="none" onCancel={e => e.preventDefault()} className="fixed inset-0 m-0 h-dvh w-full max-h-none max-w-none border-0 open:flex flex-col items-center justify-center gap-3 bg-white/95 dark:bg-gray-900/95 p-6 text-center text-sm text-gray-700 dark:text-gray-300">
       <p id="version-blocked-msg">quack was updated and this page no longer works with it - reload to get the new version.</p>
       <ReloadButton autoFocus />
-    </div>
+    </dialog>
   )
 }
