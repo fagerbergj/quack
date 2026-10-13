@@ -29,6 +29,21 @@ A `POST .../responses` body may carry `a2ui_action` (`surface_id`, `name`, `sour
 
 This is what `quack chat` / `quack chat node` / `quack memory` ([`cli.md`](cli.md)) and the [web SPA](ui.md) both ride. `GET /api/v1/config`, `GET /api/v1/extensions`, `GET /api/v1/recordings`, and `GET .../chats/{chat_id}/recording` are SPA-internal (settings/extensions panels, recording browser) and not part of the CLI-facing surface above.
 
+## API compatibility version
+
+`openapi.yaml` carries two integers under `info`: `x-api-version` and `x-api-min-version`. `make generate` copies them into `internal/schema/apiversion.gen.go` and `frontend/src/generated/apiVersion.gen.ts`, and `GET /api/v1/config` reports them as `api_version` and `api_min_version`. The SPA compares the version it was built against with the server's on load and on every SSE reconnect:
+
+- Server `api_min_version` above the SPA's version: the page is covered by a "reload" prompt, because its calls would fail.
+- Server `api_version` different from the SPA's, or the server's build `version` changed since the page loaded: a non-blocking "quack was updated" strip offers a reload.
+
+Bump rule:
+
+- A change that breaks an existing client bumps `x-api-version`: removing or renaming a path, method, parameter, or required response property; adding a required request field or parameter; narrowing a request enum or type; renaming, removing, or reshaping an SSE event in `x-sse-events`.
+- Set `x-api-min-version` to the new `x-api-version` when the server stops accepting the old shape. Leave it lower only while the server still serves older SPAs correctly, for example during a deprecation window.
+- Additive changes (a new path, an optional request field, a new response property) and removing an optional response property bump nothing; clients must already tolerate an absent optional field.
+
+CI's `openapi-lint` job runs `scripts/check-api-compat.sh <base>` on pull requests. It runs `oasdiff breaking` against the base branch's spec and fails when oasdiff reports an error-level change and `x-api-version` did not increase. oasdiff does not read `x-sse-events`, so SSE vocabulary changes need the bump by hand.
+
 ## Streaming
 
 `POST .../responses` and `GET .../stream` both emit `text/event-stream`: `event: <name>` followed by `data: <json>`. The DAG (`dag_plan` + `node_*` events) is the static structure; within a node, the trust gate runs a sequence of agent invocations ("runs") - the worker draft, each judge round, each revision - each delimited by `agent_start`/`agent_complete` and carrying a `run_id` + `stage` (`worker`/`judge`/`revise`).
