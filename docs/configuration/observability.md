@@ -63,6 +63,7 @@ All under the `quack.*` namespace (`internal/otelobs/metrics.go`), meter name `g
 | `quack.judge.score` | Histogram (0–1) | `agent` | The weakest-link score from every judge round, any agent. |
 | `quack.judge.verdict` | Counter | `agent`, `passed` | Pass/fail counts per agent. |
 | `quack.judge.unavailable` | Counter | `agent` | A judge round that errored before producing a verdict — explains a gap in `judge.score`/`judge.verdict` for that agent. |
+| `quack.judge.phase.duration` | Histogram (s) | `agent`, `phase`, `criterion` (on `verify` only: `specifics_supported`) | One judge round's wall time per phase: `prepare`, `deterministic`, `admission`, `verify`, `judge_tools`, `judge_verdict`. The two judge phases sum over every judge session in the round, retries and re-judges included. See [Measuring the judge](judge-measurement.md#judge-round-timing). |
 | `quack.delivery.outcome` | Counter | `outcome` (`delivered`/`draft`/`failed`/`none`) | `none` is the alertable one: a judge-passed work-request that recorded no delivery attempt at all — the phantom-success class this metric exists to catch. |
 | `quack.model.call.duration` | Histogram (s) | `model` | Raw model call latency — swap-sensitive on a shared local backend. |
 | `quack.acp.permission_ask` | Counter | `agent` | ACP subprocess permission asks reaching the safety judge; expected to stay ~0 since every known ask class is answered in config. |

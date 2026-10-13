@@ -1,0 +1,16 @@
+{
+  "id": "recorded-cites-backed",
+  "note": "The cites-backed case as a recorded judge round (recordings/cites-backed.jsonl).",
+  "rubric": "../../agents/web-researcher/rubric.yaml",
+  "recording": {
+    "bundle": "recordings/cites-backed.jsonl",
+    "node": "node-1",
+    "round": 1
+  },
+  "labels": {
+    "cites_sources": {
+      "pass": true,
+      "reason": "the cited page was fetched in the recorded worker round"
+    }
+  }
+}

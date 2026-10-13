@@ -26,6 +26,7 @@ import (
 	"github.com/fagerbergj/quack/internal/cli"
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/serve"
+	"github.com/fagerbergj/quack/internal/vetting"
 	"github.com/fagerbergj/quack/internal/wizard"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
@@ -708,6 +709,9 @@ func newServerValidateCmd() *cobra.Command {
 			if err := cfg.RequireAgentBundlesAndModels(); err != nil {
 				return err
 			}
+			if issues := agentRubricIssues(cfg); len(issues) > 0 {
+				return fmt.Errorf("rubric lint:\n  %s", strings.Join(issues, "\n  "))
+			}
 			res := serverValidateResult{Path: path, Status: "ok", Plugins: seeded, Unresolvable: unresolvable, DroppedOverrides: dropped, StaleBundles: staleAgentBundles(cfg)}
 			if !skipExtensions {
 				exts, err := serve.ValidateExtensions(cfg)
@@ -762,6 +766,18 @@ func staleAgentBundles(cfg *config.Config) []string {
 	}
 	sort.Strings(stale)
 	return stale
+}
+
+// agentRubricIssues lints each configured agent's bundled rubric.yaml; a bundle without one is fine.
+func agentRubricIssues(cfg *config.Config) []string {
+	var issues []string
+	for _, name := range slices.Sorted(maps.Keys(cfg.Agents)) {
+		p := path.Join(cfg.Agents[name].Bundle, "rubric.yaml")
+		if raw, err := bundledir.ReadFile(p); err == nil {
+			issues = append(issues, vetting.LintRubric(raw, p)...)
+		}
+	}
+	return issues
 }
 
 // serverValidateResult is `server validate --json`'s shape; validate only

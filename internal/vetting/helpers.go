@@ -179,6 +179,8 @@ type Config struct {
 	// judgeCheckedPages: the web_pages that tier read this round, which the judge is not shown.
 	judgeEvidence     string
 	judgeCheckedPages map[string]bool
+	// judgeTiming: the current round's phase clock, set by prepareJudge; nil outside the live gate.
+	judgeTiming *JudgeRoundTiming
 }
 
 // HasWorkspaceClone: only ExternalWorker (ACP) nodes have a repo checkout; native nodes never

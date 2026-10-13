@@ -1,0 +1,14 @@
+{
+  "id": "no-retrieval",
+  "note": "A research agent answered from memory.",
+  "rubric": "../../agents/web-researcher/rubric.yaml",
+  "require_retrieval": true,
+  "task": "What is the current population of Lisbon?",
+  "answer": "Lisbon has about 545,000 residents.",
+  "labels": {
+    "grounded_in_retrieval": {
+      "pass": false,
+      "reason": "no web_search or web_fetch this session"
+    }
+  }
+}

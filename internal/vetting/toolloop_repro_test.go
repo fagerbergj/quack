@@ -83,7 +83,7 @@ func (m *toolLoopStub) Name() string { return "stub" }
 func (m *toolLoopStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
 		if stubHasTool(req, submitVerdictTool) { // judge: pass the draft immediately
-			yield(stubCall(submitVerdictTool, map[string]any{"score": 0.9, "feedback": "ok"}), nil)
+			yield(stubCall(submitVerdictTool, map[string]any{"score": 3, "feedback": "ok"}), nil)
 			return
 		}
 		m.workerCalls++

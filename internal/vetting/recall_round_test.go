@@ -67,7 +67,7 @@ func repeatRecallWorker(judgeScore float64) fnLLM {
 	return func(req *model.LLMRequest) (*model.LLMResponse, error) {
 		switch {
 		case stubHasTool(req, submitVerdictTool):
-			return stubCall(submitVerdictTool, map[string]any{"score": judgeScore, "feedback": "ok"}), nil
+			return stubCall(submitVerdictTool, map[string]any{"score": judgeScore * judgeScaleMax, "feedback": "ok"}), nil
 		case countRecallResponses(req) < 3:
 			return stubCall("recall_memory", map[string]any{"query": "repeat"}), nil
 		default:

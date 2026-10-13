@@ -19,7 +19,7 @@ func TestNodeFailed_CarriesRealContextIDEstablishedBeforeFailing(t *testing.T) {
 	// An ACP round that establishes a real session id, then drafts nothing.
 	stub := fnLLM(func(ctx context.Context, req *model.LLMRequest) *model.LLMResponse {
 		if gHasTool(req, "submit_verdict") {
-			return gCall("submit_verdict", map[string]any{"score": 0.9})
+			return gCall("submit_verdict", map[string]any{"score": 3})
 		}
 		if token := vetting.AdvisorTokenFromContext(ctx); token != "" {
 			vetting.SetAdvisorThreadSessionID(token, "acp-real-session-on-failure")

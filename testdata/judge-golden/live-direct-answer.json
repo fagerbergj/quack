@@ -1,0 +1,23 @@
+{
+  "id": "live-direct-answer",
+  "note": "Needs a live judge: a short, cited, correct answer.",
+  "rubric": "../../agents/web-researcher/rubric.yaml",
+  "needs_live_model": true,
+  "task": "What is the capital of Australia?",
+  "answer": "Canberra is the capital of Australia ([government site](https://example.com/canberra)).",
+  "activity": {
+    "fetched": [
+      "https://example.com/canberra"
+    ]
+  },
+  "labels": {
+    "answers_question": {
+      "pass": true,
+      "reason": "names Canberra directly"
+    },
+    "internally_consistent": {
+      "pass": true,
+      "reason": "one claim, no contradiction"
+    }
+  }
+}

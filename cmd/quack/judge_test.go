@@ -11,6 +11,7 @@ import (
 
 	"google.golang.org/genai"
 
+	"github.com/fagerbergj/quack/internal/cli"
 	"github.com/fagerbergj/quack/internal/ledger"
 )
 
@@ -22,7 +23,7 @@ func TestNewJudgeReplayCmd_Flags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("find replay subcommand: %v", err)
 	}
-	for _, name := range []string{"node", "round", "rubric", "from-server", "deterministic-only", "json"} {
+	for _, name := range []string{"node", "round", "rubric", "from-server", "deterministic-only", "repeat", "out", "json"} {
 		if replay.Flags().Lookup(name) == nil {
 			t.Errorf("replay command missing --%s flag", name)
 		}
@@ -39,7 +40,7 @@ func TestRunJudgeReplay_NoConfig(t *testing.T) {
 	}
 	c := newJudgeReplayCmd()
 	c.SetContext(context.Background())
-	if err := runJudgeReplay(c, bundlePath, "", 0, 1, "", "", true, false, false); err == nil || !strings.Contains(err.Error(), "quack init") {
+	if err := runJudgeReplay(c, bundlePath, cli.ReplayOptions{Repeat: 1, DeterministicOnly: true}, "", false, false); err == nil || !strings.Contains(err.Error(), "quack init") {
 		t.Fatal("runJudgeReplay with no quack.yaml: err = nil, want an error naming `quack init`")
 	}
 }
@@ -77,7 +78,7 @@ criteria:
 	bundlePath := writeJudgeFixtureBundle(t)
 	c := newJudgeReplayCmd()
 	c.SetContext(context.Background())
-	if err := runJudgeReplay(c, bundlePath, "", 0, 1, rubricPath, "", true, false, false); err != nil {
+	if err := runJudgeReplay(c, bundlePath, cli.ReplayOptions{Repeat: 1, RubricPath: rubricPath, DeterministicOnly: true}, "", false, false); err != nil {
 		t.Fatalf("runJudgeReplay: %v", err)
 	}
 }
@@ -124,4 +125,53 @@ func writeJudgeFixtureBundle(t *testing.T) string {
 		f.Write([]byte("\n"))
 	}
 	return path
+}
+
+// score-golden --deterministic-only needs no quack.yaml and writes the --json report to --out.
+func TestScoreGolden_DeterministicOnlyWritesReport(t *testing.T) {
+	t.Setenv("QUACK_CONFIG", filepath.Join(t.TempDir(), "missing-quack.yaml"))
+	out := filepath.Join(t.TempDir(), "golden.json")
+	c := newJudgeScoreGoldenCmd()
+	c.SetOut(&strings.Builder{})
+	c.SetArgs([]string{"../../testdata/judge-golden", "--deterministic-only", "--json", "--out", out})
+	if err := c.Execute(); err != nil {
+		t.Fatalf("score-golden: %v", err)
+	}
+	var rep cli.GoldenReport
+	raw, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &rep); err != nil || rep.Live || rep.Overall.Labeled == 0 {
+		t.Fatalf("report = %+v (err %v), want an offline report with scored labels", rep, err)
+	}
+}
+
+// Without --deterministic-only, a missing quack.yaml is an error naming the way out.
+func TestScoreGolden_LiveNeedsAConfiguredJudge(t *testing.T) {
+	t.Setenv("QUACK_CONFIG", filepath.Join(t.TempDir(), "missing-quack.yaml"))
+	c := newJudgeScoreGoldenCmd()
+	c.SetArgs([]string{"../../testdata/judge-golden"})
+	if err := c.Execute(); err == nil || !strings.Contains(err.Error(), "--deterministic-only") {
+		t.Fatalf("err = %v, want one naming --deterministic-only", err)
+	}
+
+	// The shipped config with QUACK_JUDGE_MODEL unset loads but has the judge disabled.
+	dir := t.TempDir()
+	t.Setenv("QUACK_CONFIG", "../../config/quack.yaml")
+	for _, kv := range [][2]string{
+		{"QUACK_LLM_ENDPOINT", "http://localhost:1"}, {"QUACK_LLM_API_KEY", "x"},
+		{"QUACK_ORCH_MODEL", "qwen3.8-27b"}, {"QUACK_RESEARCHER_MODEL", "qwen3.8-27b"},
+		{"QUACK_JUDGE_MODEL", ""}, {"QUACK_EMBED_MODEL", "qwen3.8-27b"},
+		{"QUACK_IMAGE_MODEL", "qwen3-vl-32b"}, {"QUACK_MEDIA_MODEL", "qwen3.8-27b"},
+		{"QUACK_COMPACTION_MODEL", "qwen3.8-27b"}, {"QUACK_DATABASE_URL", "sqlite://" + filepath.Join(dir, "t.db")},
+		{"QUACK_WORKSPACE_ROOT", dir},
+	} {
+		t.Setenv(kv[0], kv[1])
+	}
+	c = newJudgeScoreGoldenCmd()
+	c.SetArgs([]string{"../../testdata/judge-golden"})
+	if err := c.Execute(); err == nil || !strings.Contains(err.Error(), "gates.judge is not configured") {
+		t.Fatalf("err = %v, want the judge-not-configured error", err)
+	}
 }

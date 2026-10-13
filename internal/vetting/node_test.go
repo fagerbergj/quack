@@ -45,9 +45,9 @@ func (m *stubModel) GenerateContent(_ context.Context, req *model.LLMRequest, _ 
 	return func(yield func(*model.LLMResponse, error) bool) {
 		if stubHasTool(req, submitVerdictTool) {
 			m.judgeCalls++
-			score := 0.4
+			score := 1.0
 			if strings.Contains(stubAllText(req), "revised") {
-				score = 0.9
+				score = 3.0
 			}
 			yield(stubCall(submitVerdictTool, map[string]any{"score": score, "feedback": "tighten the claims"}), nil)
 			return
@@ -425,7 +425,7 @@ func (stubPassJudge) Name() string { return "stub-pass-judge" }
 
 func (stubPassJudge) GenerateContent(_ context.Context, _ *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
-		yield(stubCall(submitVerdictTool, map[string]any{"score": 0.95, "feedback": "looks solid"}), nil)
+		yield(stubCall(submitVerdictTool, map[string]any{"score": 3, "feedback": "looks solid"}), nil)
 	}
 }
 

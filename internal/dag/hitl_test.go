@@ -56,7 +56,7 @@ func (*hitlStub) Name() string { return "hitlStub" }
 func (s *hitlStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
 		if gHasTool(req, "submit_verdict") {
-			yield(gCall("submit_verdict", map[string]any{"score": 0.9, "feedback": ""}), nil)
+			yield(gCall("submit_verdict", map[string]any{"score": 3, "feedback": ""}), nil)
 			return
 		}
 		s.mu.Lock()
@@ -164,7 +164,7 @@ func (*chattyAskStub) Name() string { return "chattyAskStub" }
 func (s *chattyAskStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
 		if gHasTool(req, "submit_verdict") {
-			yield(gCall("submit_verdict", map[string]any{"score": 0.9, "feedback": ""}), nil)
+			yield(gCall("submit_verdict", map[string]any{"score": 3, "feedback": ""}), nil)
 			return
 		}
 		if txt := gUserText(req); strings.Contains(txt, "they answered") {
@@ -263,7 +263,7 @@ func (*multiRoundStub) Name() string { return "multiRoundStub" }
 func (s *multiRoundStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
 		if gHasTool(req, "submit_verdict") {
-			yield(gCall("submit_verdict", map[string]any{"score": 0.9, "feedback": ""}), nil)
+			yield(gCall("submit_verdict", map[string]any{"score": 3, "feedback": ""}), nil)
 			return
 		}
 		// Route on which answers are present, not counts: ADK repeats the prompt in a scoped

@@ -3,6 +3,7 @@ package vetting
 import (
 	"context"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"testing"
@@ -322,12 +323,12 @@ func TestParseVerdictMisplacedTopLevel(t *testing.T) {
 
 func TestParseVerdictDuplicatedBlob(t *testing.T) {
 	// Model emitted the JSON object twice (back-to-back); the identical copy parses to the same verdict.
-	blob := `{"score":0.8,"passed":true,"feedback":"ok"}`
+	blob := `{"score":3,"passed":true,"feedback":"ok"}`
 	v, err := parseVerdict(blob+blob, nil)
 	if err != nil {
 		t.Fatalf("parseVerdict(duplicated): %v", err)
 	}
-	if !v.Passed || v.Score != 0.8 {
+	if !v.Passed || v.Score != 1 {
 		t.Errorf("unexpected verdict: %+v", v)
 	}
 }
@@ -401,23 +402,36 @@ func TestParseVerdictNormalizesRawScale(t *testing.T) {
 	}
 }
 
-// normalizeScale must leave a verdict already on the 0–1 axis untouched (some
-// models ignore the integer-scale instruction and answer in fractional 0–1).
-func TestNormalizeScaleLeaves0To1Untouched(t *testing.T) {
-	v := verdict{Score: 0.9, Criteria: map[string]criterionScore{"a": {Score: 0.8}, "b": {Score: 0.5}}}
-	normalizeScale(&v)
-	if v.Score != 0.9 || v.Criteria["a"].Score != 0.8 || v.Criteria["b"].Score != 0.5 {
-		t.Errorf("0–1 verdict was altered: %+v", v)
+// A criterion's raw score is read on its own declared scale. The old value-guessing heuristic read 0.5
+// as 0.5 beside a 0.9 but as 0.167 beside a 1.0, passed 0.9 on a 0-3 rubric, and read 7/10 as 2.33.
+func TestNormalizeScaleReadsTheDeclaredScaleNotTheValues(t *testing.T) {
+	specs := map[string]criterionSpec{
+		"grounded": {Scale: &scaleSpec{Min: 0, Max: 3}},
+		"decimal":  {Scale: &scaleSpec{Min: 0, Max: 10}},
+		"unit":     {Scale: &scaleSpec{Min: 0, Max: 1}},
+	}
+	beside09 := normalizeScale(verdict{Criteria: map[string]criterionScore{"a": {Score: 0.5}, "b": {Score: 0.9}}}, nil)
+	beside10 := normalizeScale(verdict{Criteria: map[string]criterionScore{"a": {Score: 0.5}, "b": {Score: 1}}}, nil)
+	if beside09.Criteria["a"].Score != beside10.Criteria["a"].Score || beside10.Criteria["a"].Score != 0.5/3 {
+		t.Errorf("a=0.5 read as %v beside 0.9 and %v beside 1.0, want 0.5/3 both", beside09.Criteria["a"].Score, beside10.Criteria["a"].Score)
+	}
+	v := normalizeScale(verdict{Criteria: map[string]criterionScore{
+		"grounded": {Score: 0.9}, "decimal": {Score: 7}, "unit": {Score: 1}, "over": {Score: 4},
+	}}, specs)
+	want := map[string]float64{"grounded": 0.3, "decimal": 0.7, "unit": 1, "over": 1}
+	for name, w := range want {
+		if got := v.Criteria[name].Score; math.Abs(got-w) > 1e-9 {
+			t.Errorf("%s = %v, want %v", name, got, w)
+		}
 	}
 }
 
-// All-1 criteria are raw level 1, still divided by judgeScaleMax, not read as normalized 1.0.
-func TestNormalizeScaleAllOnesIsRawNotNormalized(t *testing.T) {
-	v := verdict{Score: 1, Criteria: map[string]criterionScore{"a": {Score: 1}, "b": {Score: 1}}}
-	normalizeScale(&v)
-	want := 1.0 / 3.0
-	if v.Score != want || v.Criteria["a"].Score != want || v.Criteria["b"].Score != want {
-		t.Errorf("all-1 raw verdict not normalized to %v: %+v", want, v)
+// The submit_verdict sink is read again after a memory nudge, so normalizing must not rescale it in place.
+func TestNormalizeScaleLeavesItsInputUnchanged(t *testing.T) {
+	in := verdict{Score: 3, Criteria: map[string]criterionScore{"a": {Score: 3}}}
+	normalizeScale(in, nil)
+	if in.Criteria["a"].Score != 3 {
+		t.Errorf("input criterion rescaled in place: %v", in.Criteria["a"].Score)
 	}
 }
 

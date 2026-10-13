@@ -31,9 +31,9 @@ func (m *actMovedReviseModel) GenerateContent(_ context.Context, req *model.LLMR
 		if stubHasTool(req, submitVerdictTool) {
 			m.judgeCalls++
 			if m.judgeCalls == 1 {
-				yield(stubCall(submitVerdictTool, map[string]any{"score": 0.4, "feedback": "commit the fix"}), nil)
+				yield(stubCall(submitVerdictTool, map[string]any{"score": 1, "feedback": "commit the fix"}), nil)
 			} else {
-				yield(stubCall(submitVerdictTool, map[string]any{"score": 0.9, "feedback": "committed, looks good"}), nil)
+				yield(stubCall(submitVerdictTool, map[string]any{"score": 3, "feedback": "committed, looks good"}), nil)
 			}
 			return
 		}
@@ -86,8 +86,8 @@ func TestReviseActMovedForcesRejudge(t *testing.T) {
 	if stub.judgeCalls != 2 {
 		t.Fatalf("judge calls = %d, want 2 (round 1 fail, revise commits, round 2 must judge the commit)", stub.judgeCalls)
 	}
-	if !res.Passed || res.Score != 0.9 {
-		t.Fatalf("result = %+v, want the round-2 verdict (passed, score 0.9) - not the stale round-1 fail delivered alongside the new commit", res)
+	if !res.Passed || res.Score != 1 {
+		t.Fatalf("result = %+v, want the round-2 verdict (passed, score 1) - not the stale round-1 fail delivered alongside the new commit", res)
 	}
 	if res.Rounds != 2 {
 		t.Fatalf("rounds = %d, want 2", res.Rounds)

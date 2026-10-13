@@ -1201,6 +1201,8 @@ func truncationSeam(cont string) string {
 // prepareJudge: per-round act/memories scan, the always-written episodic
 // revision, the judge span, and the ledger coords.
 func (j *judgeRounds) prepareJudge(round int) (runID string, judgeCtx context.Context, jspan *stageSpan, ledgerCtx context.Context, act workerActivity) {
+	j.cfg.judgeTiming = newJudgeRoundTiming()
+	defer j.cfg.judgeTiming.since(phasePrepare, time.Now())
 	act = j.actFor(j.answer)
 	// recall_memory hits merge in fresh every round; recalls only bumps for ids new to the
 	// dispatch-lifetime received set, so a round's repeat calls count once.
@@ -1246,7 +1248,10 @@ func (j *judgeRounds) prepareJudge(round int) (runID string, judgeCtx context.Co
 // runJudge: deterministic criteria up front, then the judge call itself -
 // skipped on the terminal round when a criterion already fails by weakest-link.
 func (j *judgeRounds) runJudge(round int, runID string, judgeCtx context.Context, ledgerCtx context.Context, act workerActivity) (verdict, map[string]criterionScore, error) {
+	defer j.cfg.judgeTiming.emit(j.cfg.Agent)
+	started := time.Now()
 	det, skip := computeDeterministicCriteria(judgeCtx, j.answer, act, j.cfg, j.nodeID, j.startedAt)
+	j.cfg.judgeTiming.since(phaseDeterministic, started)
 	if skip != "" {
 		j.checksSkipReason = skip
 	}
@@ -1278,12 +1283,17 @@ func (j *judgeRounds) runJudge(round int, runID string, judgeCtx context.Context
 	defer endAbort()
 	if j.cfg.ReleaseWorker != nil && j.cfg.AdmitJudge != nil {
 		j.cfg.ReleaseWorker()
-		if !j.cfg.AdmitJudge(abortCtx) {
+		waited := time.Now()
+		admitted := j.cfg.AdmitJudge(abortCtx)
+		j.cfg.judgeTiming.since(phaseAdmission, waited)
+		if !admitted {
 			j.outcome = &judgeRoundOutcome{err: j.ctx.Err()}
 			return verdict{}, det, nil
 		}
 	}
+	verifying := time.Now()
 	checks := runVerify(abortCtx, j.cfg, j.answer, act, j.verifyMemo)
+	j.cfg.judgeTiming.since(phaseVerify, verifying)
 	if c, ok := specificsSupportedScore(checks); ok {
 		det[specificsSupportedCriterion] = c
 	}
@@ -1368,6 +1378,7 @@ func (j *judgeRounds) recordRoundVerdict(round int, runID string, jspan *stageSp
 	// This SaveStructured call IS the WAL entry for this round's verdict
 	// (recordstore appends artifact.revision before the row).
 	jr := buildJudgeRoundRecord(j.turnID, round, j.res.Passed, j.res.Score, scored, v, det, j.answer)
+	jr.Timing = j.cfg.judgeTiming.rounded()
 	jrID, _, saveErr := saveJudgeRoundRecord(j.nodeCtx, j.cfg, j.nodeID, j.turnID, round, jr)
 	if saveErr != nil && j.cfg.Ledger != nil {
 		// Fail-closed, WAL-scoped only: with no ledger configured this

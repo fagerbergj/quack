@@ -18,7 +18,7 @@ func (stubG) Name() string { return "stubG" }
 func (stubG) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
 		if gHasTool(req, "submit_verdict") {
-			yield(gCall("submit_verdict", map[string]any{"score": 0.9, "feedback": ""}), nil)
+			yield(gCall("submit_verdict", map[string]any{"score": 3, "feedback": ""}), nil)
 			return
 		}
 		sys := gSysText(req)
@@ -112,7 +112,7 @@ func (f fnLLM) GenerateContent(ctx context.Context, req *model.LLMRequest, _ boo
 func fixedLLM(reply string, wait <-chan struct{}) fnLLM {
 	return func(_ context.Context, req *model.LLMRequest) *model.LLMResponse {
 		if gHasTool(req, "submit_verdict") {
-			return gCall("submit_verdict", map[string]any{"score": 0.9, "feedback": ""})
+			return gCall("submit_verdict", map[string]any{"score": 3, "feedback": ""})
 		}
 		if wait != nil {
 			<-wait

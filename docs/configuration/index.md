@@ -41,6 +41,7 @@ Each section gets its own page below:
 - **[Tools](tools.md)** — the builtin tool registry and the `tools:` config section.
 - **[Agents](agents.md)** — bundles, tool bindings, native vs. external ACP agents.
 - **[Trust gate](trust-gate.md)** — deterministic checks, the independent judge, rubrics.
+- **[Measuring the judge](judge-measurement.md)** — rubric lint, judge consistency, the labeled golden set, judge round timing.
 - **[Stores](stores.md)** — postgres, qdrant, and the named-store registry.
 - **[Auth](auth.md)** — inbound OIDC and the gateway's trusted headers.
 - **[Workspace](workspace/index.md)** — the filesystem jail and the OS sandbox.

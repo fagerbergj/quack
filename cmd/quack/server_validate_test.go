@@ -114,6 +114,37 @@ workspace:
 	}
 }
 
+// A configured agent whose rubric.yaml fails the lint fails validate, naming the file and the key.
+func TestServerValidate_RubricLintFails(t *testing.T) {
+	dir := t.TempDir()
+	bundle := filepath.Join(dir, "scout")
+	if err := os.MkdirAll(bundle, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rubric := "scale: {min: 0, max: 3, pass: 2}\ncriteria:\n  accurate:\n    definition: right\n    weight: 2\n    bands: [{min: 0, max: 3, meaning: any}]\n"
+	for name, body := range map[string]string{"agent-card.json": `{"name":"scout"}`, "rubric.yaml": rubric} {
+		if err := os.WriteFile(filepath.Join(bundle, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfgPath := filepath.Join(dir, "quack.yaml")
+	cfg := "providers:\n  default:\n    kind: openai\n    endpoint: http://localhost:1\n    api_key: x\n" +
+		"orchestrator:\n  provider: default\n  model: m\nmodels:\n  m:\n    provider: default\n    role: worker\n" +
+		"agents:\n  scout:\n    bundle: " + bundle + "\n    provider: default\n    model: m\n" +
+		"stores:\n  default:\n    kind: sqlite\n    url: " + filepath.Join(dir, "store.db") + "\n" +
+		"session:\n  store: default\nworkspace:\n  root: " + filepath.Join(dir, "workspace") + "\n"
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := newServerValidateCmd()
+	c.SetOut(&bytes.Buffer{})
+	c.SetArgs([]string{cfgPath, "--skip-extensions"})
+	err := c.Execute()
+	if err == nil || !strings.Contains(err.Error(), "rubric.yaml") || !strings.Contains(err.Error(), "weight") {
+		t.Fatalf("err = %v, want a rubric lint error naming rubric.yaml and the weight key", err)
+	}
+}
+
 // `server validate` on the shipped config in a clean workspace creates no files and touches no network;
 // a github: entry with no local clone is reported unresolvable, never fetched.
 func TestServerValidate_OfflineNoNetworkNoFileWrites(t *testing.T) {

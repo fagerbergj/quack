@@ -21,7 +21,7 @@ import (
 const checksChatID = "chat"
 
 // A node whose configured check fails ends judge_passed=false / score 0 though the judge
-// scores 0.9; a passing check, or no checks, leaves the node unaffected.
+// scores 3 of 3; a passing check, or no checks, leaves the node unaffected.
 func TestRunPlanAsGraphFoldsChecksPass(t *testing.T) {
 	stub := fixedLLM("a code change was made", nil)
 	ag, err := llmagent.New(llmagent.Config{Name: "coder", Model: stub, Description: "coder", Instruction: "ROLE:coder Answer."})
@@ -107,9 +107,9 @@ func TestRunPlanAsGraphFoldsChecksPass(t *testing.T) {
 		t.Fatal("nochecks: no stage:judge agent_complete event")
 	}
 	if !none.Passed {
-		t.Error("nochecks: Passed = false, want true (no checks configured; judge score 0.9 stands)")
+		t.Error("nochecks: Passed = false, want true (no checks configured; judge score 1 stands)")
 	}
-	if none.Score != 0.9 {
-		t.Errorf("nochecks: Score = %v, want 0.9 (untouched by checks_pass)", none.Score)
+	if none.Score != 1 {
+		t.Errorf("nochecks: Score = %v, want 1 (untouched by checks_pass)", none.Score)
 	}
 }

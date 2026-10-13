@@ -1,0 +1,18 @@
+{
+  "id": "empty-answer",
+  "note": "The worker returned nothing.",
+  "rubric": "../../agents/web-researcher/rubric.yaml",
+  "task": "Which year did the Golden Gate Bridge open?",
+  "answer": "",
+  "activity": {
+    "fetched": [
+      "https://example.com/golden-gate-history"
+    ]
+  },
+  "labels": {
+    "sufficient_length": {
+      "pass": false,
+      "reason": "an empty answer"
+    }
+  }
+}

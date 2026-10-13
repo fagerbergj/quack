@@ -36,7 +36,7 @@ func (s *citeStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ b
 		defer s.mu.Unlock()
 		if atHasTool(req, "submit_verdict") {
 			s.judged++
-			yield(atCall("submit_verdict", map[string]any{"score": 0.9, "feedback": ""}), nil)
+			yield(atCall("submit_verdict", map[string]any{"score": 3, "feedback": ""}), nil)
 			return
 		}
 		s.calls++

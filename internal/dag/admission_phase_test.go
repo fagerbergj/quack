@@ -58,7 +58,7 @@ func (s *signalingStub) Name() string { return "signaling-stub" }
 func (s *signalingStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
 		if gHasTool(req, "submit_verdict") {
-			yield(gCall("submit_verdict", map[string]any{"score": 0.9}), nil)
+			yield(gCall("submit_verdict", map[string]any{"score": 3}), nil)
 			return
 		}
 		s.once.Do(func() { close(s.workerStarted) })
@@ -75,7 +75,7 @@ func TestJudgePhaseFreesWorkerSlotForSecondNode(t *testing.T) {
 	cfg := vetting.Config{Threshold: 0.6, JudgeRounds: 1}
 	plan := Plan{ID: "t", UserMessage: "x", Nodes: []Node{{ID: "n1", AgentName: "w1"}, {ID: "n2", AgentName: "w2"}}}
 
-	blocking := &blockingJudgeStub{judging: make(chan struct{}), release: make(chan struct{}), score: 0.9}
+	blocking := &blockingJudgeStub{judging: make(chan struct{}), release: make(chan struct{}), score: 3}
 	ag1, _ := llmagent.New(llmagent.Config{Name: "w1", Model: blocking, Description: "w", Instruction: "ROLE:w Answer."})
 	wn1, _ := vetting.NewWorkerNode(ag1)
 	gn1 := newGatedNode(plan, plan.Nodes[0], wn1, nil, nil, nil, vetting.NewJudgeFactory(blocking, nil, nil), cfg, nil, nil, "", nil, nil, admission, workerSpec, judgeSpec, nil, false)
@@ -135,7 +135,7 @@ func TestJudgePhaseCancelReleasesExactlyOnce(t *testing.T) {
 	cfg := vetting.Config{Threshold: 0.6, JudgeRounds: 1}
 	plan := Plan{ID: "t", UserMessage: "x", Nodes: []Node{{ID: "n1", AgentName: "w1"}}}
 
-	blocking := &blockingJudgeStub{judging: make(chan struct{}), release: make(chan struct{}), score: 0.9}
+	blocking := &blockingJudgeStub{judging: make(chan struct{}), release: make(chan struct{}), score: 3}
 	ag1, _ := llmagent.New(llmagent.Config{Name: "w1", Model: blocking, Description: "w", Instruction: "ROLE:w Answer."})
 	wn1, _ := vetting.NewWorkerNode(ag1)
 	gn1 := newGatedNode(plan, plan.Nodes[0], wn1, nil, nil, nil, vetting.NewJudgeFactory(blocking, nil, nil), cfg, nil, nil, "", nil, nil, admission, workerSpec, judgeSpec, nil, false)

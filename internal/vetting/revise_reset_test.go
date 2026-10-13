@@ -218,10 +218,10 @@ func (m *incompleteOnTaskStub) GenerateContent(_ context.Context, req *model.LLM
 			if m.judgeN == 1 {
 				yield(stubCall(submitVerdictTool, map[string]any{
 					"criteria": map[string]any{
-						"commit_hygiene":    map[string]any{"score": 0.9, "reason": "well-scoped commit, on task"},
-						"task_completeness": map[string]any{"score": 0.3, "reason": "missing .dockerignore"},
+						"commit_hygiene":    map[string]any{"score": 3, "reason": "well-scoped commit, on task"},
+						"task_completeness": map[string]any{"score": 1, "reason": "missing .dockerignore"},
 					},
-					"score": 0.3, "feedback": "add the .dockerignore too",
+					"score": 1, "feedback": "add the .dockerignore too",
 				}), nil)
 				return
 			}

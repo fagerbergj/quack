@@ -42,7 +42,7 @@ func (m *contStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ b
 		switch {
 		case stubHasTool(req, submitVerdictTool):
 			m.judgeCalls++
-			yield(stubCall(submitVerdictTool, map[string]any{"score": 0.9, "feedback": "ok"}), nil)
+			yield(stubCall(submitVerdictTool, map[string]any{"score": 3, "feedback": "ok"}), nil)
 		case !stubHasTool(req, "git_commit"): // tool-less ⇒ the finalize writer
 			m.writerCalls++
 			yield(stubText("WRITER SUMMARY of half-finished work."), nil)
@@ -192,7 +192,7 @@ func (m *alwaysEmptyStub) GenerateContent(_ context.Context, req *model.LLMReque
 		switch {
 		case stubHasTool(req, submitVerdictTool):
 			m.judgeCalls++
-			yield(stubCall(submitVerdictTool, map[string]any{"score": 0.9}), nil)
+			yield(stubCall(submitVerdictTool, map[string]any{"score": 3}), nil)
 		case !stubHasTool(req, "git_commit"):
 			m.writerCalls++
 			yield(stubText("WRITER SUMMARY from the findings."), nil)
@@ -228,7 +228,7 @@ func (m *nonEmptyStub) GenerateContent(_ context.Context, req *model.LLMRequest,
 		switch {
 		case stubHasTool(req, submitVerdictTool):
 			m.judgeCalls++
-			yield(stubCall(submitVerdictTool, map[string]any{"score": 0.9}), nil)
+			yield(stubCall(submitVerdictTool, map[string]any{"score": 3}), nil)
 		case !stubHasTool(req, "git_commit"):
 			m.writerCalls++
 			yield(stubText("WRITER SUMMARY"), nil)

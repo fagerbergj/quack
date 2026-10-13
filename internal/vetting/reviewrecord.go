@@ -412,6 +412,7 @@ type JudgeRoundRecord struct {
 	Criteria []JudgeCriterion   `json:"criteria,omitempty"`
 	Notes    []JudgeNote        `json:"notes,omitempty"`
 	Evidence JudgeRoundEvidence `json:"evidence"`
+	Timing   *JudgeRoundTiming  `json:"timing,omitempty"`
 }
 
 // JudgeCriterion is one named criterion's score+feedback this round.

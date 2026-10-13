@@ -40,7 +40,7 @@ func (m *truncationStubModel) GenerateContent(_ context.Context, req *model.LLMR
 	return func(yield func(*model.LLMResponse, error) bool) {
 		if stubHasTool(req, submitVerdictTool) {
 			m.judgeCalls++
-			yield(stubCall(submitVerdictTool, map[string]any{"score": 0.9, "feedback": "fine"}), nil)
+			yield(stubCall(submitVerdictTool, map[string]any{"score": 3, "feedback": "fine"}), nil)
 			return
 		}
 		i := m.workerCalls

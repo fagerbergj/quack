@@ -198,7 +198,7 @@ func listingJudge(listing *string) fnLLM {
 			for _, p := range c.Parts {
 				if p.FunctionResponse != nil && p.FunctionResponse.Name == "list_artifacts" {
 					*listing, _ = p.FunctionResponse.Response["result"].(string)
-					return stubCall(submitVerdictTool, map[string]any{"score": 0.9, "feedback": ""}), nil
+					return stubCall(submitVerdictTool, map[string]any{"score": 3, "feedback": ""}), nil
 				}
 			}
 		}
@@ -438,7 +438,7 @@ func noVerdictThenSeededJudge(fresh *int32, retry *string) fnLLM {
 			return stubCall("read_file", map[string]any{"path": "game.go"}), nil
 		default:
 			*retry = stubAllText(req)
-			return stubText(`{"score": 0.9, "passed": true, "feedback": ""}`), nil
+			return stubText(`{"score": 3, "passed": true, "feedback": ""}`), nil
 		}
 	}
 }

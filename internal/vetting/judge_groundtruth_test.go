@@ -62,9 +62,9 @@ func newJailedReadTool(t *testing.T, jail *workspace.Jail, userID string) tool.T
 func claimCheckingJudge(path string) fnLLM {
 	return func(req *model.LLMRequest) (*model.LLMResponse, error) {
 		if content, seen := readFileResponseContent(req); seen {
-			score := 0.2
+			score := 0.0
 			if content != "" {
-				score = 0.9
+				score = 3.0
 			}
 			return stubCall(submitVerdictTool, map[string]any{
 				"criteria": map[string]any{"grounded": map[string]any{"score": score, "reason": "checked against the real file"}},
@@ -90,7 +90,7 @@ func TestJudgeReadToolsResolveWorkersRealClone(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "game.go"), []byte("package game\n\nfunc Play() {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// A sibling node's directory, holding an EMPTY game.go: reading it scores 0.2.
+	// A sibling node's directory, holding an EMPTY game.go: reading it scores 0.
 	sibling, err := jail.EnsureDir(userID, chatID, workspace.NodeDir("n2"))
 	if err != nil {
 		t.Fatal(err)
@@ -117,8 +117,8 @@ func TestJudgeReadToolsResolveWorkersRealClone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runJudgeAgent: %v", err)
 	}
-	if v.Score != 0.9 {
-		t.Fatalf("verdict score = %v, want 0.9 (the judge must have read the WORKER's real game.go, not the sibling's empty one or a missing per-user-root file)", v.Score)
+	if v.Score != 1 {
+		t.Fatalf("verdict score = %v, want 1 (the judge must have read the WORKER's real game.go, not the sibling's empty one or a missing per-user-root file)", v.Score)
 	}
 }
 
@@ -153,7 +153,7 @@ func TestJudgeReadToolsResolveViaConfigAdvisorToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runJudgeAgent: %v", err)
 	}
-	if v.Score != 0.9 {
-		t.Fatalf("verdict score = %v, want 0.9 (Config.AdvisorToken alone must scope the judge's fs tools into the node's clone)", v.Score)
+	if v.Score != 1 {
+		t.Fatalf("verdict score = %v, want 1 (Config.AdvisorToken alone must scope the judge's fs tools into the node's clone)", v.Score)
 	}
 }

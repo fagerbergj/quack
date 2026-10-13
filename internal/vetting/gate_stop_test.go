@@ -95,7 +95,7 @@ func (s *scriptStub) GenerateContent(ctx context.Context, req *model.LLMRequest,
 				yield(nil, ctx.Err())
 				return
 			}
-			yield(stubCall(submitVerdictTool, map[string]any{"score": score, "feedback": "revise it"}), nil)
+			yield(stubCall(submitVerdictTool, map[string]any{"score": score * judgeScaleMax, "feedback": "revise it"}), nil)
 			return
 		}
 		s.requests = append(s.requests, requestText(req))
