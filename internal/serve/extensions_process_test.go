@@ -17,13 +17,13 @@ import (
 	"github.com/fagerbergj/quack/internal/server/rest"
 )
 
-// buildUsageChild compiles the real quack-ext-usage binary, as the Dockerfile ships it.
-func buildUsageChild(t *testing.T) string {
+// buildExtChild compiles the real quack-ext-<name> binary, as the Dockerfile ships it.
+func buildExtChild(t *testing.T, name string) string {
 	t.Helper()
-	bin := filepath.Join(t.TempDir(), "quack-ext-usage")
-	cmd := exec.Command("go", "build", "-o", bin, "github.com/fagerbergj/quack/extensions/usage/cmd/quack-ext-usage")
+	bin := filepath.Join(t.TempDir(), "quack-ext-"+name)
+	cmd := exec.Command("go", "build", "-o", bin, "github.com/fagerbergj/quack/extensions/"+name+"/cmd/quack-ext-"+name)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("go build quack-ext-usage: %v\n%s", err, out)
+		t.Fatalf("go build quack-ext-%s: %v\n%s", name, err, out)
 	}
 	return bin
 }
@@ -69,7 +69,7 @@ func TestUsageOutOfProcessMatchesInProcess(t *testing.T) {
 		_, _ = io.WriteString(w, `{"status":"success","path":"`+r.URL.Path+`","query":"`+r.URL.Query().Get("query")+`"}`)
 	}))
 	defer prom.Close()
-	bin := buildUsageChild(t)
+	bin := buildExtChild(t, "usage")
 	block := "usage:\n  prometheus_url: " + prom.URL + "\n  tempo_url: http://tempo:3200\n"
 	paths := []string{"/usage", "/usage/", "/usage/app.js", "/usage/api/query?query=up&evil=1", "/usage/api/query", "/usage/nope"}
 
