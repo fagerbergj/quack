@@ -21,15 +21,14 @@ import (
 	"google.golang.org/adk/v2/tool"
 )
 
-const (
-	initTimeout = 10 * time.Second
-	maxLogLine  = 64 << 10
-)
+const maxLogLine = 64 << 10
 
 // vars so tests can shrink them. maxBody caps request and response bodies (PiG's RPC command limit).
+// initTimeout bounds factory+Start; it matches the longest in-process Start (remarkable's 30s login client).
 var (
-	stopGrace = 5 * time.Second
-	maxBody   = 16 << 20
+	stopGrace   = 5 * time.Second
+	maxBody     = 16 << 20
+	initTimeout = 30 * time.Second
 )
 
 // passEnv is all of quack's environment a child sees: what an outbound HTTP client needs, never secrets.
@@ -39,16 +38,16 @@ var passEnv = []string{"PATH", "HOME", "TMPDIR", "TZ", "LANG", "SSL_CERT_FILE", 
 // The restart backoff's floor and cap; vars so tests can shrink them.
 var restartMin, restartMax = 100 * time.Millisecond, 30 * time.Second
 
-var errExited = errors.New("extension process exited")
-
 // Process is an extension running as a supervised child: started by New, restarted with backoff
-// when it exits, stopped by Close. It implements sdk.Extension and sdk.UI for quack's loader.
+// when it exits, stopped by Close. It implements sdk.Extension, sdk.UI and sdk.RunObserver for quack's loader.
 type Process struct {
-	name   string
-	path   string
-	params initParams
-	log    *slog.Logger
-	ui     sdk.UIDescriptor
+	name     string
+	path     string
+	params   initParams
+	log      *slog.Logger
+	ui       sdk.UIDescriptor
+	dispatch sdk.DispatchFunc
+	observes bool
 
 	mu  sync.Mutex
 	cur *child
@@ -59,16 +58,17 @@ type Process struct {
 }
 
 var (
-	_ sdk.Extension = (*Process)(nil)
-	_ sdk.UI        = (*Process)(nil)
-	_ io.Closer     = (*Process)(nil)
+	_ sdk.Extension   = (*Process)(nil)
+	_ sdk.UI          = (*Process)(nil)
+	_ sdk.RunObserver = (*Process)(nil)
+	_ io.Closer       = (*Process)(nil)
 )
 
 // New starts name's extension from the binary at path and initializes it with host's settings and
 // the raw extensions.<name> block; an error means the child refused or never answered.
 func New(name, path string, host sdk.Host, config []byte) (*Process, error) {
 	p := &Process{
-		name: name, path: path, log: host.Log,
+		name: name, path: path, log: host.Log, dispatch: host.Dispatch,
 		params: initParams{Protocol: ProtocolVersion, Name: name, Config: string(config),
 			DataDir: host.DataDir, Version: host.Version, PublicURL: host.PublicURL},
 		stop: make(chan struct{}), done: make(chan struct{}),
@@ -86,12 +86,38 @@ func New(name, path string, host sdk.Host, config []byte) (*Process, error) {
 	if res.UI != nil {
 		p.ui = *res.UI
 	}
+	p.observes = res.ObservesRuns
 	p.cur = c
 	go p.supervise(c)
 	return p, nil
 }
 
 func (p *Process) Tools() []tool.Tool { return nil }
+
+// RunEnded forwards the outcome without waiting on the child; one sent while the child is down is lost.
+func (p *Process) RunEnded(chatID string, outcome sdk.RunOutcome) {
+	if !p.observes {
+		return
+	}
+	if err := p.current().notify(methodRunEnded, runEndedParams{ChatID: chatID, Outcome: outcome}); err != nil {
+		p.log.Warn("extension process down; RunEnded not delivered", "chat", chatID, "status", outcome.Status, "err", err)
+	}
+}
+
+// serveChild answers the child's calls into quack.
+func (p *Process) serveChild(ctx context.Context, method string, params json.RawMessage) (any, error) {
+	if method != methodDispatch {
+		return nil, &rpcError{Code: codeMethodNotFound, Message: "unknown method " + method}
+	}
+	if p.dispatch == nil {
+		return nil, errors.New("extproc: this host has no Dispatch")
+	}
+	var req sdk.DispatchRequest
+	if err := json.Unmarshal(params, &req); err != nil {
+		return nil, err
+	}
+	return nil, p.dispatch(ctx, req)
+}
 
 // RegisterRoutes forwards everything under /<name>/ behind quack's session auth. Public
 // (webhook) routes are not bridged yet, so an out-of-process extension cannot serve one.
@@ -131,7 +157,7 @@ func (p *Process) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.Del("Authorization")
 	h.Del("Cookie")
 	var res httpResult
-	if err := p.current().call(r.Context(), "http", httpParams{Method: r.Method, URL: r.URL.RequestURI(), Header: h, Body: body}, &res); err != nil {
+	if err := p.current().call(r.Context(), methodHTTP, httpParams{Method: r.Method, URL: r.URL.RequestURI(), Header: h, Body: body}, &res); err != nil {
 		if r.Context().Err() == nil {
 			p.log.Warn("extension request failed", "path", r.URL.Path, "err", err)
 		}
@@ -146,13 +172,13 @@ func (p *Process) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (p *Process) spawn() (*child, initResult, error) {
 	var res initResult
 	start := time.Now()
-	c, err := startChild(p.path, p.log)
+	c, err := startChild(p.path, p.log, p.serveChild)
 	if err != nil {
 		return nil, res, fmt.Errorf("extension %s: start %s: %w", p.name, p.path, err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), initTimeout)
 	defer cancel()
-	err = c.call(ctx, "initialize", p.params, &res)
+	err = c.call(ctx, methodInitialize, p.params, &res)
 	if err == nil && res.Protocol != ProtocolVersion {
 		err = fmt.Errorf("child speaks protocol %d, host %d", res.Protocol, ProtocolVersion)
 	}
@@ -207,22 +233,18 @@ func (p *Process) respawn(backoff time.Duration) (*child, time.Duration, bool) {
 	}
 }
 
-// child is one running process and its in-flight calls.
+// child is one running process and the link to it.
 type child struct {
+	*conn
 	cmd     *exec.Cmd
 	stdin   io.WriteCloser
-	w       *writer
 	started time.Time
-
-	mu      sync.Mutex
-	nextID  int64
-	pending map[int64]chan message
 
 	done chan struct{}
 	err  error // exit status; read only after done
 }
 
-func startChild(path string, log *slog.Logger) (*child, error) {
+func startChild(path string, log *slog.Logger, handle handlerFunc) (*child, error) {
 	cmd := exec.Command(path)
 	cmd.Env = childEnv()
 	stdin, err := cmd.StdinPipe()
@@ -240,8 +262,7 @@ func startChild(path string, log *slog.Logger) (*child, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	c := &child{cmd: cmd, stdin: stdin, w: &writer{enc: json.NewEncoder(stdin)}, started: time.Now(),
-		pending: map[int64]chan message{}, done: make(chan struct{})}
+	c := &child{conn: newConn(stdin, handle, log), cmd: cmd, stdin: stdin, started: time.Now(), done: make(chan struct{})}
 	go c.run(stdout, stderr, log)
 	return c, nil
 }
@@ -260,7 +281,7 @@ func childEnv() []string {
 func (c *child) run(stdout, stderr io.Reader, log *slog.Logger) {
 	var wg sync.WaitGroup
 	wg.Go(func() { forwardLogs(stderr, log) })
-	if err := c.readReplies(stdout); err != nil {
+	if err := c.read(stdout); err != nil {
 		log.Error("extension process broke the protocol; killing it", "err", err)
 		_ = c.cmd.Process.Kill()
 	}
@@ -268,59 +289,6 @@ func (c *child) run(stdout, stderr io.Reader, log *slog.Logger) {
 	wg.Wait()
 	c.err = c.cmd.Wait()
 	close(c.done)
-}
-
-// readReplies hands each reply line to its caller until EOF. A line is capped at a maxBody body's
-// base64 plus headroom, so an oversized reply costs the child its life rather than quack its memory.
-func (c *child) readReplies(stdout io.Reader) error {
-	sc := bufio.NewScanner(stdout)
-	sc.Buffer(make([]byte, 0, 64<<10), 2*maxBody+64<<10)
-	for sc.Scan() {
-		var m message
-		if err := json.Unmarshal(sc.Bytes(), &m); err != nil {
-			return err
-		}
-		c.mu.Lock()
-		ch := c.pending[m.ID]
-		delete(c.pending, m.ID)
-		c.mu.Unlock()
-		if ch != nil {
-			ch <- m
-		}
-	}
-	return sc.Err()
-}
-
-func (c *child) call(ctx context.Context, method string, params, result any) error {
-	raw, err := json.Marshal(params)
-	if err != nil {
-		return err
-	}
-	ch := make(chan message, 1)
-	c.mu.Lock()
-	c.nextID++
-	id := c.nextID
-	c.pending[id] = ch
-	c.mu.Unlock()
-	defer func() {
-		c.mu.Lock()
-		delete(c.pending, id)
-		c.mu.Unlock()
-	}()
-	if err := c.w.send(message{ID: id, Method: method, Params: raw}); err != nil {
-		return fmt.Errorf("%w: %w", errExited, err)
-	}
-	select {
-	case m := <-ch:
-		if m.Error != nil {
-			return m.Error
-		}
-		return json.Unmarshal(m.Result, result)
-	case <-c.done:
-		return errExited
-	case <-ctx.Done():
-		return ctx.Err()
-	}
 }
 
 // stop closes stdin, the child's shutdown signal, and kills it if it outlives the grace period.
