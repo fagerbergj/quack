@@ -584,6 +584,9 @@ func JoinSinkAnswers(sinks []SinkAnswer) string {
 func Errorf(msg string) SSEEvent { return SSEEvent{Name: EventError, Data: ErrorData{Error: msg}} }
 
 // Done builds the terminal done event.
+// RestartNotResumed is the error a chat boot settled failed ends its stream with.
+const RestartNotResumed = "quack restarted and could not resume this run; send the message again to retry"
+
 func Done() SSEEvent { return SSEEvent{Name: EventDone, Data: struct{}{}} }
 
 // Builds a reasoning part the gate yields directly (e.g. judge thinking re-emitted from its isolated run).

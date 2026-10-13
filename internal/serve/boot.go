@@ -14,6 +14,7 @@ import (
 	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/orchestrator"
 	"github.com/fagerbergj/quack/internal/runlog"
+	"github.com/fagerbergj/quack/internal/server/rest"
 	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/workspace"
@@ -134,6 +135,16 @@ func endSettledExtRun(obs extsdk.RunObserver, run settledRun) {
 }
 
 const settledRunError = "quack restarted and could not resume this run; re-trigger it to start over"
+
+// endSettledStreams ends each settled chat's transcript failed, so a client still following it stops instead of
+// reconnecting until it gives up. It runs before the server accepts runs, so no new run's stream can race it.
+func endSettledStreams(ctx context.Context, runs []settledRun, hub *stream.Hub, eventLog *runlog.EventLog) {
+	for _, r := range runs {
+		hub.Reset(r.ChatID)
+		eventLog.Reopen(ctx, hub, r.ChatID)
+		endReopenedStream(ctx, hub, eventLog, r.ChatID, stream.Errorf(stream.RestartNotResumed))
+	}
+}
 
 // syncFinishedNodeRecords repairs recent finished nodes' dag_node records off the boot path;
 // older plans are left alone, as boot never resumes them either.
@@ -295,12 +306,7 @@ func driveBootRun(ctx context.Context, chatID string, orch *orchestrator.Orchest
 		return
 	}
 	if obs != nil {
-		timedOut := errors.Is(runCtx.Err(), context.DeadlineExceeded)
-		cancelled := errors.Is(runCtx.Err(), context.Canceled)
-		out := buildExtRunOutcome(tailCtx, orch, st, userID, chatID, res.PlanID != "", res.NeedsInput, timedOut, cancelled)
-		slog.Info("resume: run ended; outcome delivered to its extension", "component", "startup", "chat", chatID, "status", out.Status)
-		eventLog.EndingRun(hub, chatID, turnID)
-		obs.RunEnded(chatID, out)
+		deliverRunEnded(runCtx, orch, st, obs, userID, chatID, res, func() { eventLog.EndingRun(hub, chatID, turnID) })
 		return
 	}
 	st.StampTerminalOutcome(tailCtx, orchestrator.AppName, userID, chatID, func() (string, bool) {
@@ -308,15 +314,39 @@ func driveBootRun(ctx context.Context, chatID string, orch *orchestrator.Orchest
 	})
 }
 
-// endReopenedStream ends the transcript Reopen replayed for a boot run that never started, so no subscriber
-// waits on it forever. A run already holding the chat owns the stream and closes it itself.
-func endReopenedStream(ctx context.Context, hub *stream.Hub, eventLog *runlog.EventLog, chatID string) {
+// endReopenedStream ends the transcript Reopen replayed for a boot run that never started with evs, then done, so
+// no subscriber waits on it forever. A run already holding the chat owns the stream and closes it itself.
+func endReopenedStream(ctx context.Context, hub *stream.Hub, eventLog *runlog.EventLog, chatID string, evs ...stream.SSEEvent) {
 	noop := func() {}
 	if !hub.RegisterRun(chatID, "", noop) {
 		return
 	}
-	runlog.NewPublisher(ctx, hub, eventLog, chatID).Publish(stream.Done())
+	pub := runlog.NewPublisher(ctx, hub, eventLog, chatID)
+	for _, ev := range evs {
+		pub.Publish(ev)
+	}
+	pub.Publish(stream.Done())
 	eventLog.FinishRun(hub, chatID, "", noop)
+}
+
+// deliverRunEnded hands obs the run's outcome; ending runs first so a dispatch from RunEnded can supersede the run.
+func deliverRunEnded(runCtx context.Context, orch *orchestrator.Orchestrator, st *store.Store, obs extsdk.RunObserver, userID, chatID string, res runlog.DriveResult, ending func()) {
+	timedOut := errors.Is(runCtx.Err(), context.DeadlineExceeded)
+	cancelled := errors.Is(runCtx.Err(), context.Canceled)
+	out := buildExtRunOutcome(runCtx, orch, st, userID, chatID, res, timedOut, cancelled)
+	slog.Info("run ended; outcome delivered to its extension", "component", "extensions", "chat", chatID, "status", out.Status)
+	ending()
+	obs.RunEnded(chatID, out)
+}
+
+// restRunEnded tells the extension that dispatched a chat how a node run the REST API started ended, as boot does
+// for the runs it resumes.
+func restRunEnded(orch *orchestrator.Orchestrator, st *store.Store, exts []builtSDKExtension) rest.RunEndedFunc {
+	return func(runCtx context.Context, chatID string, res runlog.DriveResult, ending func()) {
+		if obs := runObserverFor(chatID, exts); obs != nil {
+			deliverRunEnded(runCtx, orch, st, obs, st.SessionUserForChat(context.WithoutCancel(runCtx), chatID), chatID, res, ending)
+		}
+	}
 }
 
 // runObserverFor returns the extension that dispatched chatID ("ext:<name>:..."), if it observes runs.

@@ -307,6 +307,17 @@ func TestRunEndedClearsInFlightForNamespacedChatID(t *testing.T) {
 	}
 }
 
+func TestRunPausedStaysInFlight(t *testing.T) {
+	e, _, _ := newTestExtension(t)
+	e.st.Documents["doc-a"] = docState{ID: "doc-a", InFlight: true, LastOutcome: "done"}
+
+	e.RunEnded("ext:remarkable:doc-a", sdk.RunOutcome{Status: sdk.RunPaused, NodeID: "ingest"})
+
+	if got := e.st.Documents["doc-a"]; !got.InFlight || got.LastOutcome != "done" {
+		t.Errorf("state after a pause = %+v, want still in flight with the previous outcome", got)
+	}
+}
+
 func TestRunEndedStillAcceptsBareDocumentID(t *testing.T) {
 	e, _, _ := newTestExtension(t)
 	e.st.Documents["doc-a"] = docState{ID: "doc-a", InFlight: true}

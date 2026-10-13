@@ -59,9 +59,12 @@ func (e *extension) RegisterRoutes(authed chi.Router, public chi.Router) {
 	authed.Post("/dispatch", e.handleDispatch)
 }
 
-// RunEnded counts finished runs, so /status proves the whole loop ran back to this callback.
+// RunEnded counts finished runs, so /status proves the whole loop ran back to this callback. A paused run
+// has not finished.
 func (e *extension) RunEnded(chatID string, outcome sdk.RunOutcome) {
-	e.runEnded.Add(1)
+	if outcome.Status != sdk.RunPaused {
+		e.runEnded.Add(1)
+	}
 }
 
 type statusResponse struct {

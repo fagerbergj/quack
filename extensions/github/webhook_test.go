@@ -1689,6 +1689,42 @@ func TestDispatchPostsHITLCommentOnPause(t *testing.T) {
 	}
 }
 
+// A user pause posts nothing and keeps the run's claim and pending record, so the resumed run's RunEnded posts.
+func TestRunPausedPostsNothingUntilTheRunEnds(t *testing.T) {
+	posted := make(chan string, 2)
+	srv := stubGitHub(t, posted)
+	defer srv.Close()
+	ext, fh := newTestExtension(t, srv.URL, nil)
+
+	rec := httptest.NewRecorder()
+	ext.handleWebhook(rec, signedRequest("issue_comment", issueCommentBody("@quack research and advise")))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d; want 202", rec.Code)
+	}
+	fh.waitForDispatch(t, 2*time.Second)
+
+	chatID := globalChatID("github-acme-widgets-7")
+	ext.RunEnded(chatID, sdk.RunOutcome{Status: sdk.RunPaused, PlanRan: true, NodeID: "node-1"})
+	select {
+	case body := <-posted:
+		t.Fatalf("a paused run posted %q", body)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if _, ok := ext.pending.Load(chatID); !ok {
+		t.Fatal("the paused run's pending record was dropped; its resumed outcome could not post")
+	}
+
+	ext.RunEnded(chatID, sdk.RunOutcome{Status: sdk.RunDone, PlanRan: true, Answer: "RESUMED-ANSWER"})
+	select {
+	case body := <-posted:
+		if !strings.Contains(body, "RESUMED-ANSWER") {
+			t.Errorf("posted %q, want the resumed run's answer", body)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the resumed run's outcome was never posted")
+	}
+}
+
 // RunEnded does not nudge a HITL-paused run that already ran a plan.
 func TestDispatchSkipsNudgeOnPause(t *testing.T) {
 	posted := make(chan string, 1)

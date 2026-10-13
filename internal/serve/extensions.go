@@ -1160,7 +1160,7 @@ func finishExtRun(ctx, runCtx context.Context, cancelRun context.CancelFunc, nam
 		}
 	}
 	checkpointCancel()
-	outcome := buildExtRunOutcome(runCtx, orch, st, userID, chatID, res.PlanID != "", res.NeedsInput, timedOut, cancelled)
+	outcome := buildExtRunOutcome(runCtx, orch, st, userID, chatID, res, timedOut, cancelled)
 	eventLog.EndingRun(hub, chatID, turnID)
 	if p := extHolder.Load(); p != nil {
 		if obs, ok := (*p).(extsdk.RunObserver); ok {
@@ -1171,25 +1171,45 @@ func finishExtRun(ctx, runCtx context.Context, cancelRun context.CancelFunc, nam
 
 // buildExtRunOutcome mirrors rest.Handler.stampRunOutcome and builds the RunOutcome RunObserver expects.
 // The caller passes timedOut because this ctx is WithoutCancel of parent and can't see its deadline.
-func buildExtRunOutcome(parent context.Context, orch *orchestrator.Orchestrator, st *store.Store, userID, chatID string, planRan bool, needsInput stream.NodeNeedsInputData, timedOut, cancelled bool) extsdk.RunOutcome {
+func buildExtRunOutcome(parent context.Context, orch *orchestrator.Orchestrator, st *store.Store, userID, chatID string, res runlog.DriveResult, timedOut, cancelled bool) extsdk.RunOutcome {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 10*time.Second)
 	defer cancel()
 	status, question, nodeError, unverified := st.StampTerminalOutcome(ctx, orchestrator.AppName, userID, chatID, func() (string, bool) {
 		return orch.PendingQuestion(ctx, userID, chatID)
 	})
 	answer := strings.TrimSpace(orch.LatestAnswer(ctx, userID, chatID))
-	out := mapExtRunOutcome(status, question, nodeError, answer, planRan, needsInput, timedOut, cancelled)
+	out := mapExtRunOutcome(status, question, nodeError, answer, res.PlanID != "", pausedNodeID(ctx, st, res.PlanID), res.NeedsInput, timedOut, cancelled)
 	out.Unverified = unverified
 	return out
 }
 
-// mapExtRunOutcome classifies without a live store/orch. cancelled wins over status; nodeError is the
-// failed node's error text, "" for a true silent gap.
-func mapExtRunOutcome(status, question, nodeError, answer string, planRan bool, needsInput stream.NodeNeedsInputData, timedOut, cancelled bool) extsdk.RunOutcome {
+// pausedNodeID names a node of planID a pause parked (not a question), so the run resumes later; "" for none.
+func pausedNodeID(ctx context.Context, st *store.Store, planID string) string {
+	if planID == "" {
+		return ""
+	}
+	rows, err := st.GetDagNodes(ctx, planID)
+	if err != nil {
+		slog.Warn("run outcome: node lookup failed; a paused node reads as ended", "component", "store", "plan", planID, "err", err)
+	}
+	for _, n := range rows {
+		if n.Status == string(dag.StatusPaused) && n.PauseReason != string(dag.PauseAwaitingInput) {
+			return n.NodeID
+		}
+	}
+	return ""
+}
+
+// mapExtRunOutcome classifies without a live store/orch. cancelled wins, then a paused node: RunPaused promises a
+// later RunEnded, so no other status may tell the extension to settle. nodeError is "" for a true silent gap.
+func mapExtRunOutcome(status, question, nodeError, answer string, planRan bool, pausedNode string, needsInput stream.NodeNeedsInputData, timedOut, cancelled bool) extsdk.RunOutcome {
 	out := extsdk.RunOutcome{PlanRan: planRan, TimedOut: timedOut, Answer: answer}
 	switch {
 	case cancelled:
 		out.Status = extsdk.RunCancelled
+	case pausedNode != "":
+		out.Status = extsdk.RunPaused
+		out.NodeID = pausedNode
 	case status == store.RunStatusFailed:
 		out.Status = extsdk.RunFailed
 		// nodeError is sanitized or quack's own rejection text, never a raw gateway URL/body/key.

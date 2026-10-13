@@ -87,3 +87,39 @@ func subscribe(t *testing.T, h *Handler, chatID, lastEventID string) string {
 	h.SubscribeChatStream(w, req, chatID)
 	return w.Body.String()
 }
+
+// A follower holding events a hard kill never persisted gets boot's settle failure past its own
+// Last-Event-ID, instead of a log that can never reach it; a chat that didn't fail gets nothing extra.
+func TestSubscribeColdEndsAFollowerAheadOfTheLog(t *testing.T) {
+	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("New sqlite: %v", err)
+	}
+	h := &Handler{store: st, hub: stream.NewHub(), eventLog: runlog.NewEventLog(st)}
+	ctx := context.Background()
+	c, err := st.CreateChat(ctx, "")
+	if err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+	for i, ev := range []stream.SSEEvent{stream.Errorf(stream.RestartNotResumed), stream.Done()} {
+		js, _ := runlog.MarshalEvent(ev)
+		if err := st.InsertChatEvent(ctx, store.ChatEvent{ChatID: c.ID, Seq: int64(i + 1), Event: js}); err != nil {
+			t.Fatalf("seed event %d: %v", i, err)
+		}
+	}
+	if body := subscribe(t, h, c.ID, "7"); body != "" {
+		t.Fatalf("a chat not stamped failed got %q, want nothing", body)
+	}
+	if err := st.StampRunOutcome(ctx, c.ID, store.RunStatusFailed, ""); err != nil {
+		t.Fatalf("stamp: %v", err)
+	}
+	body := subscribe(t, h, c.ID, "7")
+	for _, want := range []string{"id: 8\nevent: error", stream.RestartNotResumed, "id: 9\nevent: done"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("follower ahead of the log missing %q in:\n%s", want, body)
+		}
+	}
+	if body := subscribe(t, h, c.ID, "2"); body != "" {
+		t.Errorf("a caught-up follower got %q, want nothing", body)
+	}
+}

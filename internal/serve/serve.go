@@ -799,6 +799,7 @@ func (b *boot) initOrchestrator(ctx context.Context, st *store.Store, llm model.
 	if err != nil {
 		return nil, err
 	}
+	endSettledStreams(ctx, resume.Settled, runHub, bootEventLog)
 	// Re-enter each resumed node's graph only after the orchestrator exists:
 	// a crash here leaves them paused; the next boot picks them up (reconcile already ran).
 	startResumedNodes(ctx, resume.Start, orch, st, runHub, bootEventLog, sdkExts, bootResumeConcurrency)
@@ -2028,6 +2029,7 @@ func mountHTTP(cfg *config.Config, st *store.Store, orch *orchestrator.Orchestra
 	restPlugins := rest.NewPlugins(pluginReg, cfg.Plugins.Root, cfg.Plugins.Seed, reload.reload, reload.mcpDeclared)
 	restHandler.SetPlugins(restPlugins)
 	restHandler.SetTraceURLTemplate(cfg.Observability.Otel.TraceURLTemplate)
+	restHandler.SetRunEnded(restRunEnded(orch, st, sdkExts))
 
 	return server.New(server.Options{
 		REST:          restHandler,

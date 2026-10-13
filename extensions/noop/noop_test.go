@@ -194,6 +194,7 @@ func TestStatusCountsRunEndedNotDispatchCalls(t *testing.T) {
 	}
 
 	ext.RunEnded("noop-1", sdk.RunOutcome{Status: sdk.RunDone})
+	ext.RunEnded("noop-2", sdk.RunOutcome{Status: sdk.RunPaused})
 	ext.RunEnded("noop-2", sdk.RunOutcome{Status: sdk.RunFailed})
 
 	rec = httptest.NewRecorder()

@@ -326,6 +326,12 @@ func TestDriveResume_ReentryRunsPausedNodeOnly(t *testing.T) {
 // newOneNodeResumeFixture: chatID's plan is one node n1 left paused by a shutdown, over a stub LLM.
 func newOneNodeResumeFixture(t *testing.T, chatID string) (*store.Store, *orchestrator.Orchestrator, dag.Plan) {
 	t.Helper()
+	return newOneNodeFixtureWithModel(t, chatID, &resumeStubLLM{})
+}
+
+// newOneNodeFixtureWithModel is newOneNodeResumeFixture with stub answering the node's worker and judge.
+func newOneNodeFixtureWithModel(t *testing.T, chatID string, stub model.LLM) (*store.Store, *orchestrator.Orchestrator, dag.Plan) {
+	t.Helper()
 	ctx := context.Background()
 	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {
@@ -350,7 +356,6 @@ func newOneNodeResumeFixture(t *testing.T, chatID string) (*store.Store, *orches
 		t.Fatalf("persist pause: %v", err)
 	}
 
-	stub := &resumeStubLLM{}
 	sessions := session.InMemoryService()
 	ag, err := llmagent.New(llmagent.Config{Name: "blk", Model: stub, Description: "blk", Instruction: "ROLE:blk Answer."})
 	if err != nil {

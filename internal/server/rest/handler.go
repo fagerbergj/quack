@@ -80,7 +80,16 @@ type Handler struct {
 	plugins *Plugins
 	// deferredResumes keys chatID+"\x00"+nodeID for a paused node's start held until its chat's run ends.
 	deferredResumes sync.Map
+	// runEnded tells a chat's dispatching extension how a node run started here ended; nil without extensions.
+	runEnded RunEndedFunc
 }
+
+// RunEndedFunc delivers a node run's outcome to the extension that dispatched chatID, if one observes it.
+// It calls ending before RunEnded, so a dispatch from RunEnded can supersede the run.
+type RunEndedFunc func(runCtx context.Context, chatID string, res runlog.DriveResult, ending func())
+
+// SetRunEnded wires the extensions' RunEnded for runs started by resuming or retrying a node.
+func (h *Handler) SetRunEnded(f RunEndedFunc) { h.runEnded = f }
 
 // SetTraceURLTemplate wires otel.trace_url_template for GET /api/v1/config.
 func (h *Handler) SetTraceURLTemplate(t string) { h.traceURLTemplate = t }
@@ -1274,31 +1283,49 @@ func (h *Handler) startNodeAsync(dp *store.DagPlan, chatID, nodeID, message stri
 	if h.orch.NodeIsLive(chatID, nodeID) {
 		return false
 	}
-	runCtx, cancelRun, ok := h.armRun(chatID, dp.RunTurnID())
+	return h.nodeRunAsync(dp, chatID, func(runCtx context.Context) iter.Seq2[stream.SSEEvent, error] {
+		return iterFromStart(runCtx, h.orch, h.sessionUser(runCtx, chatID), chatID, dp.ID, nodeID, message)
+	})
+}
+
+// nodeRunAsync arms the chat for dp's turn and drains run in the background, persisting node state; false means
+// a run already holds the chat.
+func (h *Handler) nodeRunAsync(dp *store.DagPlan, chatID string, run func(runCtx context.Context) iter.Seq2[stream.SSEEvent, error]) bool {
+	turnID := dp.RunTurnID()
+	runCtx, cancelRun, ok := h.armRun(chatID, turnID)
 	if !ok {
 		return false
 	}
 	go func() {
-		defer recoverRun(chatID, dp.RunTurnID())
+		defer recoverRun(chatID, turnID)
 		// FinishRun flushes, cancels, then guarded-retires the run - see its doc.
-		defer h.eventLog.FinishRun(h.hub, chatID, dp.RunTurnID(), cancelRun)
-		defer h.stampRunOutcome(runCtx, chatID)
+		defer h.eventLog.FinishRun(h.hub, chatID, turnID, cancelRun)
+		res := runlog.DriveResult{PlanID: dp.ID} // a HITL start emits no dag_plan
+		defer h.endNodeRun(runCtx, chatID, turnID, &res)
 
 		publish := runlog.NewPublisher(runCtx, h.hub, h.eventLog, chatID).Publish
-		publish(stream.ResponseCreated(dp.RunTurnID()))
-
-		userID := h.sessionUser(runCtx, chatID)
-		for ev, err := range iterFromStart(runCtx, h.orch, userID, chatID, dp.ID, nodeID, message) {
+		publish(stream.ResponseCreated(turnID))
+		for ev, err := range run(runCtx) {
 			if err != nil {
 				publish(stream.Errorf(err.Error()))
 				break
 			}
 			runlog.PersistNodeEvent(h.store, chatID, dp.ID, ev)
+			res.Step(h.store, chatID, turnID, false, ev)
 			publish(ev)
 		}
 		publish(stream.Done())
 	}()
 	return true
+}
+
+// endNodeRun stamps a node run's outcome, then hands it to the extension that dispatched the chat, unless
+// shutdown cut the run.
+func (h *Handler) endNodeRun(runCtx context.Context, chatID, turnID string, res *runlog.DriveResult) {
+	if !h.stampRunOutcome(runCtx, chatID) || h.runEnded == nil {
+		return
+	}
+	h.runEnded(runCtx, chatID, *res, func() { h.eventLog.EndingRun(h.hub, chatID, turnID) })
 }
 
 // iterFromStart adapts Orchestrator.StartNode's yield-callback shape to the
@@ -1329,32 +1356,12 @@ func (h *Handler) retryNodeAsync(dp *store.DagPlan, chatID, nodeID, guidance str
 	if h.orch.NodeIsLive(chatID, nodeID) {
 		return false
 	}
-	runCtx, cancelRun, ok := h.armRun(chatID, dp.RunTurnID())
-	if !ok {
-		return false
-	}
-	nodes, _ := h.store.GetDagNodes(context.Background(), dp.ID)
-	seeded, unreviewed := store.SeedOutputs(nodes)
-	go func() {
-		defer recoverRun(chatID, dp.RunTurnID())
-		// FinishRun flushes, cancels, then guarded-retires the run - see its doc.
-		defer h.eventLog.FinishRun(h.hub, chatID, dp.RunTurnID(), cancelRun)
-		defer h.stampRunOutcome(runCtx, chatID)
-
-		publish := runlog.NewPublisher(runCtx, h.hub, h.eventLog, chatID).Publish
-		publish(stream.ResponseCreated(dp.RunTurnID()))
-
-		for ev, err := range h.orch.RetryNode(dag.WithUnreviewedSeeds(runCtx, unreviewed), h.sessionUser(runCtx, chatID), chatID, dp.ID, seeded, nodeID, guidance) {
-			if err != nil {
-				publish(stream.Errorf(err.Error()))
-				break
-			}
-			runlog.PersistNodeEvent(h.store, chatID, dp.ID, ev) // update the re-run nodes' persisted state
-			publish(ev)
-		}
-		publish(stream.Done())
-	}()
-	return true
+	return h.nodeRunAsync(dp, chatID, func(runCtx context.Context) iter.Seq2[stream.SSEEvent, error] {
+		// Read once the chat is armed, so no other run moves the outputs this seeds from.
+		nodes, _ := h.store.GetDagNodes(context.Background(), dp.ID)
+		seeded, unreviewed := store.SeedOutputs(nodes)
+		return h.orch.RetryNode(dag.WithUnreviewedSeeds(runCtx, unreviewed), h.sessionUser(runCtx, chatID), chatID, dp.ID, seeded, nodeID, guidance)
+	})
 }
 
 // subscribeRaceHook runs between SubscribeChatStream's Active and Subscribe reads; tests override it
@@ -1395,11 +1402,30 @@ func (h *Handler) SubscribeChatStream(w http.ResponseWriter, r *http.Request, ch
 				return
 			}
 		}
+		if len(evs) == 0 && lastSeq > 0 {
+			h.endAheadFollower(r.Context(), sse, string(chatID), lastSeq)
+		}
 		return
 	}
 
 	// Warm path: hub holds the run. Replay buffer (skipping what the client has seen), then tail live.
 	streamHub(r.Context(), sse, replay, live, lastSeq)
+}
+
+// endAheadFollower ends a follower holding events a hard kill never persisted, when boot settled the run failed;
+// without it the client retries past a log that can never reach its Last-Event-ID.
+func (h *Handler) endAheadFollower(ctx context.Context, sse *sseWriter, chatID string, lastSeq int64) {
+	persisted, err := h.store.MaxChatEventSeq(ctx, chatID)
+	if err != nil || lastSeq <= persisted {
+		return
+	}
+	chat, err := h.store.GetChat(ctx, chatID)
+	if err != nil || chat.RunStatus != store.RunStatusFailed {
+		return
+	}
+	if sse.sendID(lastSeq+1, stream.Errorf(stream.RestartNotResumed)) == nil {
+		_ = sse.sendID(lastSeq+2, stream.Done())
+	}
 }
 
 // Forwards one run's events to one client: replay buffer, then live tail. The ONLY place events touch an HTTP connection.
@@ -1810,7 +1836,8 @@ func (h *Handler) settleStoppedPlan(ctx, runCtx context.Context, chatID string) 
 
 // stampRunOutcome persists a finished run's status on the chat row for ListChats; defer it on every run end.
 // Detached from parent so a mid-run cancel can't cancel the stamp; MarkRunActive covers a hard crash.
-func (h *Handler) stampRunOutcome(parent context.Context, chatID string) {
+// False means shutdown cut the run, which boot resumes or settles.
+func (h *Handler) stampRunOutcome(parent context.Context, chatID string) bool {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 10*time.Second)
 	defer cancel()
 	// Shutdown force-cancelled this run: boot resumes or settles it, never a guess from a cut-off turn.
@@ -1820,7 +1847,7 @@ func (h *Handler) stampRunOutcome(parent context.Context, chatID string) {
 		if err := h.store.WriteCheckpoint(ctx, chatID); err != nil {
 			slog.Warn("checkpoint write failed", "component", "rest", "chat", chatID, "err", err)
 		}
-		return
+		return false
 	}
 	h.settleStoppedPlan(ctx, parent, chatID)
 	// DeriveTerminalStatus reads only the last turn, so load just that one, not the whole ADK session.
@@ -1844,6 +1871,7 @@ func (h *Handler) stampRunOutcome(parent context.Context, chatID string) {
 	if err := h.store.WriteCheckpoint(ctx, chatID); err != nil {
 		slog.Warn("checkpoint write failed", "component", "rest", "chat", chatID, "err", err)
 	}
+	return true
 }
 
 func stateVal(s string) *schema.ChatSummaryGithubState {

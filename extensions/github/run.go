@@ -55,6 +55,12 @@ type pendingRun struct {
 // RunEnded correlates a run's outcome back to its pendingRun: a run with no plan gets one nudge
 // re-dispatch, otherwise finalize settles the chat.
 func (e *Extension) RunEnded(chatID string, outcome sdk.RunOutcome) {
+	// Only quack's UI resumes a pause, so a note here is noise; the claim and pending row wait for the real outcome.
+	// ponytail: a pause outliving inflightLease lets a new trigger take the session; hold the claim if that bites.
+	if outcome.Status == sdk.RunPaused {
+		e.host.Log.Info("github: run paused in quack; posting when it resumes and ends", "chat", chatID, "node", outcome.NodeID)
+		return
+	}
 	pr, ok := e.lookupPending(chatID)
 	if !ok {
 		// e.pending is in-memory, so this is the normal path for any run resumed at boot:

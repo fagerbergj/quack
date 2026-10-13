@@ -48,8 +48,11 @@ func (e *extension) isRunning(chatID string) bool {
 }
 
 // RunEnded clears the running badge for any final outcome and observes a done job; an unknown
-// chatID (already cleared, or never dispatched here) is a no-op.
+// chatID (already cleared, or never dispatched here) is a no-op. A paused job stays Running until it ends.
 func (e *extension) RunEnded(chatID string, outcome sdk.RunOutcome) {
+	if outcome.Status == sdk.RunPaused {
+		return
+	}
 	e.clearRunning(chatID)
 	e.setUnverified(chatID, outcome.Unverified)
 	if leagueID, ok := e.takeNotesRetry(chatID); ok {
