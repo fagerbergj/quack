@@ -7,7 +7,8 @@ import { NodePopup, liveState } from './NodePopup'
 import { StatusDot } from './StatusDot'
 import { api, listChatArtifactsShared } from '../api'
 import type { ArtifactSummary } from '../api'
-import type { NodeState, NodeStatus } from '../state/chatStore'
+import { cacheRate, type NodeState, type NodeStatus } from '../state/chatStore'
+import { NodeQualityCheck } from './NodeQualityCheck'
 import { agentLabel, type Activity, type AgentRun } from './messageParts'
 import { previewLine, fmtTokenCount } from './toolFormat'
 import { type DagNodeDef } from '../state/agentStream'
@@ -566,6 +567,7 @@ function NodeStateChips({ steers, resumedFrom }: { steers?: string[]; resumedFro
 // The named state leads the metadata group so below `medium` it wraps onto the muted second line. From `medium`
 // up it shares the row, shrinking and wrapping its own badges so the agent name keeps its floor.
 function NodeMetaRow({ state, node, pauseLabel }: { state: NodeState; node: DagNodeDef; pauseLabel?: string }) {
+  const cachePct = cacheRate({ cached_tokens: state.cachedTokens, input_tokens: state.promptTokens })
   return (
     <div className="empty:hidden min-w-0 flex flex-wrap items-center gap-x-2 gap-y-0.5 basis-full order-last medium:basis-auto medium:order-none medium:justify-end">
       <StatusDot status={state.status} label={pauseLabel} />
@@ -590,8 +592,8 @@ function NodeMetaRow({ state, node, pauseLabel }: { state: NodeState; node: DagN
       {state.totalTokens != null && state.totalTokens > 0 && (
         <span className="text-[11px] text-gray-500 dark:text-gray-400 tabular-nums">
           {state.totalTokens.toLocaleString()} tokens
-          {state.cachedTokens != null && state.cachedTokens > 0 && (
-            <span title={`${state.cachedTokens.toLocaleString()} tokens served from cache`}> ({state.cachedTokens.toLocaleString()} cached)</span>
+          {cachePct != null && (
+            <span title={`${Number(state.cachedTokens).toLocaleString()} of ${Number(state.promptTokens).toLocaleString()} prompt tokens served from cache`}> · {cachePct}% cached</span>
           )}
         </span>
       )}
@@ -885,6 +887,8 @@ export const DagNode = memo(function DagNode({
 
       {/* Consecutive worker runs merge into one feed; a judge-triggered revise keeps its own labeled card. */}
       <RunGroupList runs={runs} activeIdx={activeIdx} />
+
+      <NodeQualityCheck chatId={chatId} nodeId={node.id} startedAt={state.startedAt} finishedAt={state.finishedAt} />
 
       {/* The outcome summary (below the stage cards, for every node). */}
       {!isFinal && (
