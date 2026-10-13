@@ -182,36 +182,35 @@ const (
 )
 
 // CheckCodeReviewCaps: one cap check for stage_review and write_code_review so they can't drift. takeaway == ""
-// skips takeaway checks; no sentence counting, since "e.g."/"vs." would false-positive.
+// skips takeaway checks; no sentence counting, since "e.g."/"vs." would false-positive. It reports every
+// violation at once: one per call cost a full rewrite per field (9 rejected writes in one prod review).
 func CheckCodeReviewCaps(takeaway string, verified, notes []string) error {
+	var errs []error
 	if takeaway != "" {
 		if strings.Contains(takeaway, "\n") {
-			return errors.New("takeaway: must be a single line (no newlines)")
+			errs = append(errs, errors.New("takeaway: must be a single line (no newlines)"))
 		}
 		if n := len([]rune(takeaway)); n > reviewTakeawayMaxLen {
-			return fmt.Errorf("takeaway: %d characters, max %d", n, reviewTakeawayMaxLen)
+			errs = append(errs, fmt.Errorf("takeaway: %d characters, max %d", n, reviewTakeawayMaxLen))
 		}
 	}
-	if err := checkReviewList("verified", verified, reviewVerifiedMaxItems, reviewVerifiedMaxLen, "keep only the checks that matter"); err != nil {
-		return err
-	}
-	if err := checkReviewList("notes", notes, reviewNotesMaxItems, reviewNotesMaxLen, "put line-anchored points in stage_review_comment"); err != nil {
-		return err
-	}
-	return nil
+	errs = append(errs, checkReviewList("verified", verified, reviewVerifiedMaxItems, reviewVerifiedMaxLen, "keep only the checks that matter")...)
+	errs = append(errs, checkReviewList("notes", notes, reviewNotesMaxItems, reviewNotesMaxLen, "put line-anchored points in stage_review_comment")...)
+	return errors.Join(errs...)
 }
 
 // checkReviewList caps one of verified/notes; hint says where content over the cap belongs instead.
-func checkReviewList(field string, items []string, maxItems, maxLen int, hint string) error {
+func checkReviewList(field string, items []string, maxItems, maxLen int, hint string) []error {
+	var errs []error
 	if len(items) > maxItems {
-		return fmt.Errorf("%s: %d items, max %d; %s", field, len(items), maxItems, hint)
+		errs = append(errs, fmt.Errorf("%s: %d items, max %d; %s", field, len(items), maxItems, hint))
 	}
 	for i, it := range items {
 		if n := len([]rune(it)); n > maxLen {
-			return fmt.Errorf("%s: item %d is %d characters, max %d", field, i+1, n, maxLen)
+			errs = append(errs, fmt.Errorf("%s: item %d is %d characters, max %d", field, i+1, n, maxLen))
 		}
 	}
-	return nil
+	return errs
 }
 
 // capRunes trims s to at most max runes with a trailing "…" kept WITHIN max, so its output can
