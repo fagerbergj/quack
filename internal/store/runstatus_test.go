@@ -258,7 +258,7 @@ func TestStampTerminalOutcome_RealSessionAnsweredTurnStaysIdle(t *testing.T) {
 		t.Fatalf("AppendEvent asst: %v", err)
 	}
 
-	status, question, nodeError := st.StampTerminalOutcome(ctx, chatAppName, "local", chatID, func() (string, bool) { return "", false })
+	status, question, nodeError, _ := st.StampTerminalOutcome(ctx, chatAppName, "local", chatID, func() (string, bool) { return "", false })
 	if status != RunStatusIdle || question != "" || nodeError != "" {
 		t.Fatalf("status/question/nodeError = %q/%q/%q, want idle/\"\"/\"\"", status, question, nodeError)
 	}
@@ -288,6 +288,26 @@ func TestSeedOutputs_Classification(t *testing.T) {
 	}
 	if _, ok := seeded["empty"]; ok {
 		t.Error("a node with no output was seeded")
+	}
+}
+
+// TestUnverifiedNote: only an answering (sink) node that delivered after failing its judge is named.
+func TestUnverifiedNote(t *testing.T) {
+	plan := &DagPlan{PlanJSON: `{"nodes":[{"id":"research"},{"id":"waivers"},{"id":"recap"}],"edges":[{"from":"research","to":"waivers"}]}`}
+	tc := TurnContent{Plan: plan, Nodes: []DagNode{
+		{NodeID: "research", Status: "done", Output: "R", JudgeRounds: 2, JudgeFinalScore: 0.1},
+		{NodeID: "waivers", Status: "done", Output: "W", JudgeRounds: 2, JudgeFinalScore: 0.333},
+		{NodeID: "recap", Status: "done", Output: "P", JudgeRounds: 1, JudgeFinalScore: 0.9, JudgePassed: true},
+	}}
+	if got, want := tc.UnverifiedNote(), "not verified (waivers: quality check score 0.33)"; got != want {
+		t.Errorf("UnverifiedNote = %q, want %q", got, want)
+	}
+	tc.Nodes[1].JudgePassed = true
+	if got := tc.UnverifiedNote(); got != "" {
+		t.Errorf("UnverifiedNote = %q with every sink passed, want empty", got)
+	}
+	if got := (TurnContent{}).UnverifiedNote(); got != "" {
+		t.Errorf("UnverifiedNote = %q for a plain turn, want empty", got)
 	}
 }
 

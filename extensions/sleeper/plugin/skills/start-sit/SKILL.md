@@ -28,14 +28,14 @@ baseline player and the evidence that beat it in the row's `why`.
 1. **Availability first.** Pull `injury_status` and `practice_description` via
    `sleeper_player`/`sleeper_roster`. A player carrying any designation is
    resolved before anything else — do not let a good matchup override an
-   unresolved availability question. Load `practice-report-semantics.md` for
+   unresolved availability question. Load `references/practice-report-semantics.md` for
    the Wed/Thu/Fri interpretation and the injury-type play-rate table.
 2. **Check outside news for a close call.** Sleeper's own designation and
    practice fields update on that reporting calendar, so they lag
    beat-writer and practice-report news between snapshots (see
    `sleeper:injury-and-news`). For a Questionable or limited-practice
    starter, or a bench player whose projection sits within the flex
-   tie-break gap (`flex-decisions.md`, under 3 points) of the starter's,
+   tie-break gap (`references/flex-decisions.md`, under 3 points) of the starter's,
    search the open web for what changed and cite it inline as a markdown
    link.
 3. **Locks.** Sleeper locks each slot at that player's own kickoff; a
@@ -83,12 +83,12 @@ baseline player and the evidence that beat it in the row's `why`.
    rostered alternative (e.g. the only K). For those
    close calls, make one `weather` call per distinct game they involve
    whose `game.roof` is `outdoor` (after the Note-column overrides in
-   `stadiums.md`, e.g. SoFi counts as a dome), and reuse it for every
+   `references/stadiums.md`, e.g. SoFi counts as a dome), and reuse it for every
    player in that game. Copy the coordinates for `game.venue` from
-   `stadiums.md` exactly as `latitude`/`longitude` - never estimate or
+   `references/stadiums.md` exactly as `latitude`/`longitude` - never estimate or
    geocode them - and pass `game.kickoff` as is (UTC, not
    `kickoff_local`; a game with no kickoff passes step 3's looked-up time
-   as RFC3339 with its offset), then apply `weather-and-vegas.md`'s
+   as RFC3339 with its offset), then apply `references/weather-and-vegas.md`'s
    working rule to that window. When the forecast moves a call, the row's
    `why` names the numbers (e.g. "27 mph sustained wind at Soldier
    Field"); weather that did not move a call is never mentioned - not in
@@ -96,7 +96,7 @@ baseline player and the evidence that beat it in the row's `why`.
    a `weather` error (e.g. a kickoff
    past its ~15-day horizon) is said, not guessed around.
 6. **FLEX last.** Fill the five dedicated slots first, then rank every
-   remaining RB/WR/TE by the same criteria above. Load `flex-decisions.md`
+   remaining RB/WR/TE by the same criteria above. Load `references/flex-decisions.md`
    for the floor-vs-ceiling tie-break and the PPR-specific WR-lean data.
 7. **Estimate floor and ceiling.** These are not calculated - weigh the
    matchup, the player's recent snap share and usage (`sleeper_player`'s `game_log`), and any
@@ -149,21 +149,21 @@ reasoning instead — do not invent a figure to sound precise.
 
 ## Resources (load only when the case calls for it)
 
-- `output-schema.json` — the extension UI's schema for the `lineup`
+- `references/output-schema.json` — the extension UI's schema for the `lineup`
   artifact. Write the artifact to match it exactly (see the agent prompt's
   Output section for the required-field walkthrough).
-- `practice-report-semantics.md` — DNP/LP/FP definitions, the injury-type
+- `references/practice-report-semantics.md` — DNP/LP/FP definitions, the injury-type
   play-rate breakdown (concussion/knee/hamstring), and why a practice report
   line is not itself an availability signal. Load whenever a starter carries
   any injury designation.
-- `weather-and-vegas.md` — weather multiplier tables, the null-result study,
+- `references/weather-and-vegas.md` — weather multiplier tables, the null-result study,
   and implied-team-total math. Load when the game is outdoors with a
   forecast worth checking, or when a Vegas total/spread is part of the case.
-- `stadiums.md` — coordinates for every venue Sleeper reports,
+- `references/stadiums.md` — coordinates for every venue Sleeper reports,
   international sites included, plus the roofs Sleeper mislabels. Load for
   step 5 whenever a close call involves an outdoor game.
-- `flex-decisions.md` — the FLEX-specific tie-break rules and PPR
+- `references/flex-decisions.md` — the FLEX-specific tie-break rules and PPR
   RB-vs-WR-value data. Load whenever the FLEX slot itself is the open
   question (not a fixed RB/WR/TE slot).
-- `report.md` — the full R1 research report (54KB), every finding with its
+- `references/report.md` — the full R1 research report (54KB), every finding with its
   full context. Load for a hard case, or to revise this skill.

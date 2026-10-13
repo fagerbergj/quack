@@ -104,6 +104,7 @@ function jobEnvelope(job, title) {
     data: a?.data,
     invalid: !!a?.invalid,
     text: a?.text,
+    unverified: a?.unverified,
   }
 }
 

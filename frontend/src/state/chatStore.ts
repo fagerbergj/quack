@@ -22,7 +22,7 @@ import {
 } from '../generated'
 import { api } from '../api'
 import { a2uiActionText, A2UI_SURFACE_KIND } from '../lib/a2ui'
-import { agentLabel } from '../components/messageParts'
+import { agentLabel, pendingChoice } from '../components/messageParts'
 
 export type { NodeStatus, PauseReason, QueuedMessage }
 
@@ -307,9 +307,11 @@ export class ChatStore {
 
   // Called from finishStream, so it fires however the run ended (normal, stopped, or reconnected).
   // One at a time: the auto submit() re-enters finishStream when it completes, draining the rest in order.
+  // A run ending on a question holds the queue: the next message answers it, and text typed before it was asked is not that answer.
   private drainQueue(chatId: string): void {
     const s = this.states.get(chatId)
     if (!s || s.queue.length === 0) return
+    if (s.live && (pendingChoice(s.live.runs ?? []) || (s.live.dag && pendingNodeQuestion(s.live.dag)))) return
     const [next, ...rest] = s.queue
     this.write(chatId, { ...s, queue: rest })
     void this.submit(chatId, next.text, undefined, this.onTitleCallbacks.get(chatId))
@@ -995,6 +997,9 @@ export function dagTurnStateFromItem(item: DagOutputItem): DagTurnState {
       cachedTokens: ns.cached_tokens,
       finishReason: ns.finish_reason,
       serverDurationMs: ns.server_duration_ms,
+      judgeRounds: ns.judge_rounds,
+      judgeFinalScore: ns.judge_final_score,
+      judgePassed: ns.judge_passed,
       pauseReason: ns.pause_reason,
       question: ns.pending_question,
       queue: ns.queued_messages,

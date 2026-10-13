@@ -487,9 +487,11 @@ func (e *extension) handleSeasons(w http.ResponseWriter, r *http.Request) {
 }
 
 type artifactEnvelope struct {
-	Found   bool            `json:"found"`
-	Running bool            `json:"running"`
-	Data    json.RawMessage `json:"data,omitempty"`
+	Found   bool `json:"found"`
+	Running bool `json:"running"`
+	// Unverified is the last run's sdk.RunOutcome.Unverified note, "" when it passed its quality check.
+	Unverified string          `json:"unverified,omitempty"`
+	Data       json.RawMessage `json:"data,omitempty"`
 	// Invalid marks a non-JSON artifact (agent wrote prose); Text carries the raw content and Data is omitted.
 	Invalid bool   `json:"invalid,omitempty"`
 	Text    string `json:"text,omitempty"`
@@ -620,8 +622,12 @@ func (e *extension) handleArtifacts(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	leagueID := cmp.Or(r.URL.Query().Get("league_id"), e.cfg.DefaultLeague)
 	stop := r.URL.Query().Get("stop")
-	if leagueID == "" || stop == "" {
-		e.writeErr(w, http.StatusBadRequest, "league_id and stop are required")
+	if stop == "" {
+		e.writeErr(w, http.StatusBadRequest, "stop is required")
+		return
+	}
+	if leagueID == "" {
+		e.writeErr(w, http.StatusBadRequest, errNoLeague)
 		return
 	}
 	jobs, talksAllowed, err := jobsForStop(stop)
@@ -635,6 +641,7 @@ func (e *extension) handleArtifacts(w http.ResponseWriter, r *http.Request) {
 		chatID := fmt.Sprintf("ext:sleeper:%s:%s:%s", leagueID, stop, job)
 		env := e.readArtifact(chatID, job)
 		env.Running = e.isRunning(chatID)
+		env.Unverified = e.unverifiedNote(chatID)
 		out.Jobs[job] = env
 	}
 	notesChatID := fmt.Sprintf("ext:sleeper:%s:season-notes", leagueID)
@@ -671,6 +678,9 @@ type jobResponse struct {
 	ChatID  string `json:"chat_id"`
 	ChatURL string `json:"chat_url"`
 }
+
+// errNoLeague: league_id may be omitted only when the extension config sets a default league.
+const errNoLeague = "league_id is required: no default league is configured"
 
 func jobIsValid(job string, jobs []string, talksAllowed bool) bool {
 	if job == "trade" {
@@ -729,8 +739,12 @@ func (e *extension) handleJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.LeagueID = cmp.Or(req.LeagueID, e.cfg.DefaultLeague)
-	if req.LeagueID == "" || req.Stop == "" || req.Job == "" {
-		e.writeErr(w, http.StatusBadRequest, "league_id, stop, and job are required")
+	if req.Stop == "" || req.Job == "" {
+		e.writeErr(w, http.StatusBadRequest, "stop and job are required")
+		return
+	}
+	if req.LeagueID == "" {
+		e.writeErr(w, http.StatusBadRequest, errNoLeague)
 		return
 	}
 	jobs, talksAllowed, err := jobsForStop(req.Stop)
@@ -739,7 +753,10 @@ func (e *extension) handleJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !jobIsValid(req.Job, jobs, talksAllowed) {
-		e.writeErr(w, http.StatusBadRequest, fmt.Sprintf("job %q is not valid for stop %q", req.Job, req.Stop))
+		if talksAllowed {
+			jobs = append(jobs, "trade")
+		}
+		e.writeErr(w, http.StatusBadRequest, fmt.Sprintf("job %q is not valid for stop %q; valid: %s", req.Job, req.Stop, strings.Join(jobs, ", ")))
 		return
 	}
 	localID, title, err := localIDFor(req)

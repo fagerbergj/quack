@@ -524,6 +524,16 @@ func TestStragglerFinalizeKeepsTakeoverClaim(t *testing.T) {
 	}
 }
 
+// An answer delivered after failing its quality check is posted under a warning, never as a plain answer.
+func TestShapeAnswerFlagsUnverified(t *testing.T) {
+	e, _ := newTestExtension(t, "http://unused", nil)
+	pr := &pendingRun{owner: "acme", repo: "widgets", number: 7}
+	got := e.shapeAnswer(pr, sdk.RunOutcome{Status: sdk.RunDone, Answer: "3 claims", Unverified: "not verified (waivers: quality check score 0.33)"}, "acme", "widgets", 7)
+	if !strings.HasPrefix(got, "> [!WARNING]\n> This answer is not verified (waivers: quality check score 0.33).") || !strings.HasSuffix(got, "3 claims") {
+		t.Errorf("shapeAnswer = %q, want the unverified warning above the answer", got)
+	}
+}
+
 // A label-triggered run with PlanRan=false gets exactly ONE runNudge follow-up Dispatch;
 // the follow-up's own RunEnded finalizes rather than nudging again.
 func TestRunEndedNudgesOnceThenFinalizes(t *testing.T) {

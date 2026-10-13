@@ -20,7 +20,7 @@ with its source; where none exists, say so instead of inventing one.
 1. **Build the board on tiers, not a rank order.** A tier is a cluster
    of similar projected value bounded by real drop-offs; within a tier,
    preference is a coin flip, and tier width must be uneven. Load
-   `tiers-vs-rankings.md`.
+   `references/tiers-vs-rankings.md`.
 2. **Price against ADP, never draft from it.** ADP is the market's
    consensus price, a timing signal, not a projection. The reach test is
    VONA — if the target will survive to the next pick, reaching is not
@@ -28,22 +28,22 @@ with its source; where none exists, say so instead of inventing one.
    price. `sleeper_draft` already carries each pick's `adp_delta` and
    `adp_verdict` (`value`/`reach`/`fair`) — that verdict *is* the
    steal/reach call for a report card; never recompute it from `pick_no`
-   and `adp`. Load `adp-as-value.md`.
+   and `adp`. Load `references/adp-as-value.md`.
 3. **Time the position, not the round number.** RB/WR/QB/TE/K/DEF each
    have their own 10-team-specific timing evidence — load
-   `roster-construction.md` for the position in question.
+   `references/roster-construction.md` for the position in question.
 4. **Read the run, don't chase it.** Break at the tier cliff, regardless
    of run length; avoid being the end-of-run picker. Load
-   `positional-runs.md`.
+   `references/positional-runs.md`.
 5. **Handcuffs and byes, checked not assumed.** A handcuff earns a pick
    only on the two-condition checklist; QB/TE byes must be unique. Load
-   `handcuffs-and-byes.md`.
+   `references/handcuffs-and-byes.md`.
 6. **Seat the plan to the slot.** Early/middle/late seats carry
-   different wait times and plans — load `slot-plans.md`.
+   different wait times and plans — load `references/slot-plans.md`.
 7. **On the clock: one answer, not a wall of rankings.** Run the
    60-90-second procedure — tier anchor, cliff check, VONA reach test,
    fallen-player check, run override, need-then-value, time-box. Load
-   `on-the-clock-procedure.md` for the full sequence and what the output
+   `references/on-the-clock-procedure.md` for the full sequence and what the output
    must and must never contain.
 
 ## What bad advice looks like
@@ -69,21 +69,21 @@ A judge can check any sentence of the output against these:
 
 ## Resources (load only when the case calls for it)
 
-- `tiers-vs-rankings.md` — tier construction, cliffs, the operational
+- `references/tiers-vs-rankings.md` — tier construction, cliffs, the operational
   rules tiers buy you.
-- `adp-as-value.md` — ADP definition, the VONA reach test, fallen-player
+- `references/adp-as-value.md` — ADP definition, the VONA reach test, fallen-player
   window, format-mismatch failure modes.
-- `roster-construction.md` — positional timing evidence for RB, WR, QB,
+- `references/roster-construction.md` — positional timing evidence for RB, WR, QB,
   TE, K, and DEF in this 10-team PPR format.
-- `positional-runs.md` — run signals, the tier-cliff break rule, the
+- `references/positional-runs.md` — run signals, the tier-cliff break rule, the
   overpayment tax, the mirror-image (fear-reach) error.
-- `handcuffs-and-byes.md` — the two-condition handcuff checklist, the
+- `references/handcuffs-and-byes.md` — the two-condition handcuff checklist, the
   bye-week onesie rule, the Bye Week Scarcity Meter.
-- `slot-plans.md` — early/middle/late seat value and planning shape.
-- `on-the-clock-procedure.md` — the full 60-90-second sequence, what the
+- `references/slot-plans.md` — early/middle/late seat value and planning shape.
+- `references/on-the-clock-procedure.md` — the full 60-90-second sequence, what the
   output must say, and what it must never do.
-- `output-schema.json` — the extension UI's schema for the `draft`
+- `references/output-schema.json` — the extension UI's schema for the `draft`
   artifact. Write the artifact to match it exactly (see the agent
   prompt's Output section).
-- `report.md` — the full R9 research report, every finding with its
+- `references/report.md` — the full R9 research report, every finding with its
   full context. Load for a hard case, or to revise this skill.

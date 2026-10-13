@@ -467,7 +467,7 @@ func chatTitle(t *string) string {
 }
 
 // answerText is AssistantText as the CLI prints it: a stopped node's draft (MessageOutputItem.stopped)
-// is labelled like the UI's badge, never shown as a plain answer.
+// or an answer that failed its quality check is labelled like the UI's badge, never shown as a plain answer.
 func answerText(items []schema.OutputItem) string {
 	text := strings.TrimSpace(AssistantText(items))
 	for _, it := range items {
@@ -478,7 +478,41 @@ func answerText(items []schema.OutputItem) string {
 			return "[Stopped - not reviewed]\n" + text
 		}
 	}
+	if note := unverifiedNote(items); note != "" && text != "" {
+		return "[" + note + "]\n" + text
+	}
 	return text
+}
+
+// unverifiedNote is store.TurnContent.UnverifiedNote read off the turn's quack:dag item: the answering
+// (sink) nodes that delivered after failing their quality check, "" when none did.
+func unverifiedNote(items []schema.OutputItem) string {
+	for _, it := range items {
+		d, err := it.AsDagOutputItem()
+		if err != nil || string(d.Type) != "quack:dag" {
+			continue
+		}
+		hasSuccessor := map[string]bool{}
+		for _, e := range d.Edges {
+			hasSuccessor[e.From] = true
+		}
+		var parts []string
+		for _, n := range d.Nodes {
+			st := d.NodeStates[n.Id]
+			if !hasSuccessor[n.Id] && judgeFailed(st) && deref(st.OutputPreview) != "" {
+				parts = append(parts, fmt.Sprintf("%s: quality check score %.2f", n.Id, deref(st.JudgeFinalScore)))
+			}
+		}
+		if len(parts) > 0 {
+			return "Not verified (" + strings.Join(parts, "; ") + ")"
+		}
+	}
+	return ""
+}
+
+// judgeFailed mirrors store.DagNode.JudgeFailed: the judge ran and never passed the node.
+func judgeFailed(st schema.DagNodeState) bool {
+	return deref(st.JudgeRounds) > 0 && !deref(st.JudgePassed)
 }
 
 // AssistantText concatenates the text of every message output item in a turn,

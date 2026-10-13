@@ -65,6 +65,7 @@ The node sees only its `task` text plus the results of what it `depends_on`, nev
 3. **Research, plan, implement.** An implementer task front-loads understanding: find a sibling feature of the same kind, enumerate every file and wiring point it has, then implement, test, and run the repo's own build, lint and test commands until green. Name the test file the new tests join.
 4. **Carry the user's constraints verbatim.** Method ("write ONE script"), prohibitions ("no new dependencies"), sources ("read their actual implementation"), answer shape ("cite every file"). A paraphrase loses them first, and the node will follow your paraphrase, not the user's words.
 5. **Scope to the present** when the request says recent, latest, or current; the date is in your Environment section.
+6. **Ask, don't assert.** State what the node must find out or do. A fact in the task must come from the user's words or a `depends_on` result; anything you only believe goes in as a question ("is Zig memory-safe by default?"), never as a premise to confirm ("Zig is memory-safe by default"). A worker handed your guess tends to confirm it instead of checking it.
 
 ## Setup, delivery, checks
 

@@ -10,9 +10,9 @@ description: >
 
 # Weekly digest and retro
 
-Source: `report.md` (the R4 research report). Every number below is as
+Source: `references/report.md` (the R4 research report). Every number below is as
 published, with its source; where none exists, say so instead of inventing
-one — see `keep-it-short.md`'s "Named gaps" section.
+one — see `references/keep-it-short.md`'s "Named gaps" section.
 
 ## Which job you're on
 
@@ -25,25 +25,25 @@ what the roster could have scored.
 1. **Use the standard matchup-block shape.** One repeating block per game,
    same field order every week; state the league format ("10 teams, full
    PPR, 6 playoff spots") whenever it affects a claim. Load
-   `recap-structure.md` for the field order and the usage-over-points rule
+   `references/recap-structure.md` for the field order and the usage-over-points rule
    for any forward-looking call.
 2. **Verify every score and every lineup-legality claim against tool data.**
    Never infer game flow ("comeback") from a final score alone; for a
    retro's "should have started X," confirm X was actually eligible for an
-   open slot. See `recap-structure.md`.
+   open slot. See `references/recap-structure.md`.
 3. **If publishing a playoff line or odds figure, use the closed-form
    method and state it.** This agent has no simulator — Pythagorean
    expectation, regression toward .500, and the 6th-largest-projected-win-
-   total cutoff, per `playoff-odds-from-records.md`. Never publish a
+   total cutoff, per `references/playoff-odds-from-records.md`. Never publish a
    probability with no stated method.
 4. **Separate real luck from noise before calling anything "lucky."** A
    close-game record is mostly noise once point margin is known; don't
    build a luck narrative on fewer than ~8 close games. Load
-   `points-against-and-luck.md` for the correlation numbers and the
+   `references/points-against-and-luck.md` for the correlation numbers and the
    all-play luck-gap method.
 5. **Keep it short and concrete.** A league-chat digest runs ~200-500 words
    with depth on 2-3 stories, not six filled-out sections; a retro's
-   `summary` names the single biggest swing. Load `keep-it-short.md` for the
+   `summary` names the single biggest swing. Load `references/keep-it-short.md` for the
    length rules and the failure patterns (filler, fake precision, hedging,
    stat dumps) to check your own draft against.
 
@@ -71,28 +71,28 @@ Grade each miss against what actually happened, and separate a bad
 process (ignored evidence available at the time - a `sleeper_trends`
 add, a `sleeper_transactions` move, or news dated before kickoff or that
 week's waiver run) from bad luck (a reasonable call that didn't pay off,
-`knowable: false`) — see `points-against-and-luck.md` for the
+`knowable: false`) — see `references/points-against-and-luck.md` for the
 variance-vs-skill distinction that separation depends on.
 
 ## Resources (load only when the case calls for it)
 
-- `output-schema-digest.json` — the extension UI's schema for the `digest`
+- `references/output-schema-digest.json` — the extension UI's schema for the `digest`
   artifact. The artifact carries exactly this schema's properties; read
   it before writing.
-- `output-schema-retro.json` — the schema for the `retro` artifact. Same rule.
-- `recap-structure.md` — the matchup-block field order, length-norm
+- `references/output-schema-retro.json` — the schema for the `retro` artifact. Same rule.
+- `references/recap-structure.md` — the matchup-block field order, length-norm
   citations by element, and the usage-over-points rule for forward calls.
   Load for any digest or preview write-up.
-- `playoff-odds-from-records.md` — the closed-form Pythagorean/regression
+- `references/playoff-odds-from-records.md` — the closed-form Pythagorean/regression
   method for a playoff line or probability, with the one dated fantasy
   exponent anchor. Load whenever the job touches playoff odds or the
   playoff line.
-- `points-against-and-luck.md` — which "luck" claims are backed by data
+- `references/points-against-and-luck.md` — which "luck" claims are backed by data
   (Pythagorean overshoot, the luck-gap method) and which are not (raw close-
   game records, raw points against). Load whenever a digest or retro calls
   a result lucky, unlucky, or due for regression.
-- `keep-it-short.md` — the length rules and the concrete failure patterns
+- `references/keep-it-short.md` — the length rules and the concrete failure patterns
   (filler, fake precision, hedging, stat dumps) to self-check a draft
   against before writing the artifact.
-- `report.md` — the full R4 research report (71KB), every finding with its
+- `references/report.md` — the full R4 research report (71KB), every finding with its
   full context. Load for a hard case, or to revise this skill.

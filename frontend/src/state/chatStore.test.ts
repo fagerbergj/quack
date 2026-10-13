@@ -155,15 +155,15 @@ describe('ChatStore.submit - loading indicator gap (regression)', () => {
   })
 })
 
-// A `submit` response whose body stays open until the test calls `close()`, to observe state mid-run.
-function makeHangingStream(): { response: Response; close: () => void } {
+// A `submit` response whose body stays open until the test calls `close()`, which sends `tail` then done.
+function makeHangingStream(tail = ''): { response: Response; close: () => void } {
   const encoder = new TextEncoder()
   let controller!: ReadableStreamDefaultController<Uint8Array>
   const stream = new ReadableStream({ start(ctrl) { controller = ctrl } })
   return {
     response: new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream' } }),
     close: () => {
-      controller.enqueue(encoder.encode('event: done\ndata: {}\n\n'))
+      controller.enqueue(encoder.encode(tail + 'event: done\ndata: {}\n\n'))
       controller.close()
     },
   }
@@ -233,6 +233,59 @@ describe('ChatStore - main-chat message queue', () => {
 
     await vi.waitFor(() => expect(store.get('chat-1').live?.userText).toBe('follow-up-2'))
     expect(store.get('chat-1').queue).toEqual([])
+  })
+
+  // A message typed before the orchestrator asked is not the answer: it waits, and goes out after the answer.
+  it('holds a queued message while the finished run waits on a question, then sends it after the answer', async () => {
+    const hang = makeHangingStream([
+      'event: agent_start',
+      'data: {"run_id":"orchestrator","agent":"orchestrator","stage":"worker"}',
+      '',
+      'event: agent_tool_call',
+      'data: {"run_id":"orchestrator","call_id":"c1","name":"get_user_choice","args":{"question":"Which items?","options":["A","B"]}}',
+      '',
+      'event: agent_tool_result',
+      'data: {"run_id":"orchestrator","call_id":"c1","name":"get_user_choice","result":{"status":"pending"}}',
+      '', '',
+    ].join('\n'))
+    fetchMock.mockResolvedValueOnce(hang.response)
+    const p = store.submit('chat-1', 'Also add each one\'s release date.')
+    store.queueTurn('chat-1', 'I meant Python and Ruby')
+    hang.close()
+    await p
+    await new Promise(r => setTimeout(r, 0))
+
+    expect(pendingChoice(store.get('chat-1').live?.runs ?? [])).not.toBeNull()
+    expect(store.get('chat-1').queue.map(q => q.text)).toEqual(['I meant Python and Ruby'])
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ turns: [] })) // archive GET
+    fetchMock.mockResolvedValueOnce(makeStream(''))              // the answer's run
+    fetchMock.mockResolvedValueOnce(jsonResponse({ turns: [] })) // archive GET
+    fetchMock.mockResolvedValueOnce(makeStream(''))              // the held message's run
+    await store.submit('chat-1', 'A')
+    await vi.waitFor(() => expect(store.get('chat-1').live?.userText).toBe('I meant Python and Ruby'))
+    expect(store.get('chat-1').queue).toEqual([])
+  })
+
+  it('holds a queued message while a node waits on its own question', async () => {
+    const hang = makeHangingStream([
+      'event: dag_plan',
+      'data: {"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}',
+      '',
+      'event: node_needs_input',
+      'data: {"node_id":"a","interrupt_id":"i1","message":"which region?"}',
+      '', '',
+    ].join('\n'))
+    fetchMock.mockResolvedValueOnce(hang.response)
+    const p = store.submit('chat-1', 'research it')
+    store.queueTurn('chat-1', 'unrelated follow-up')
+    hang.close()
+    await p
+    await new Promise(r => setTimeout(r, 0))
+
+    expect(store.get('chat-1').queue.map(q => q.text)).toEqual(['unrelated follow-up'])
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
   it('removes a queued message before it is sent', () => {

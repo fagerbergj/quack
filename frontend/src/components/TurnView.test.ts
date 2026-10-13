@@ -75,5 +75,26 @@ describe('TurnView - stopped answer', () => {
   it('leaves a finished node\'s answer unbadged', () => {
     const out = renderToStaticMarkup(createElement(TurnView, { ...baseProps, turn: turn('Find the Rust 1.0 year', dag('done'), msg('Rust reached 1.0 in 2015')) }))
     expect(out).not.toContain('Stopped')
+    expect(out).not.toContain('not verified')
+  })
+
+  // The persisted node state, not only the live node_done event, carries the failed quality check.
+  it('badges a reloaded node that delivered after failing its quality check', () => {
+    const failed = { ...dag('done'), node_states: { n1: { status: 'done' as const, judge_rounds: 2, judge_passed: false, judge_final_score: 0.33 } } }
+    const out = renderToStaticMarkup(createElement(TurnView, { ...baseProps, turn: turn('Find the Rust 1.0 year', failed, msg('Rust reached 1.0 in 2015')) }))
+    expect(out).toContain('not verified')
+  })
+
+  // The API omits judge_passed when false, so a reloaded failed node reaches the UI with only its rounds and score.
+  it('badges a reloaded failed node whose judge_passed the API omitted', () => {
+    const failed = { ...dag('done'), node_states: { n1: { status: 'done' as const, judge_rounds: 3, judge_final_score: 0.28 } } }
+    const out = renderToStaticMarkup(createElement(TurnView, { ...baseProps, turn: turn('Find the Rust 1.0 year', failed, msg('Rust reached 1.0 in 2015')) }))
+    expect(out).toContain('not verified')
+  })
+
+  it('leaves a node that passed its quality check unbadged', () => {
+    const passed = { ...dag('done'), node_states: { n1: { status: 'done' as const, judge_rounds: 1, judge_passed: true, judge_final_score: 0.9 } } }
+    const out = renderToStaticMarkup(createElement(TurnView, { ...baseProps, turn: turn('Find the Rust 1.0 year', passed, msg('Rust reached 1.0 in 2015')) }))
+    expect(out).not.toContain('not verified')
   })
 })

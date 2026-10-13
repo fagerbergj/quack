@@ -11,7 +11,7 @@ description: >
 
 # Trade evaluation
 
-Source: `report.md` (the R3 v2 research report), plus `research-r3-trades.md`
+Source: `references/report.md` (the R3 v2 research report), plus `research-r3-trades.md`
 (R3 v1) for a small number of supplemental facts each reference marks
 explicitly. Every number below is as published, with its source; where none
 exists, say so instead of inventing one — see "No published number" below.
@@ -23,7 +23,7 @@ TE/FLEX/K/DEF + 5 bench, 6-of-10 playoffs from week 15.
 1. **State the league-size mismatch on any chart number.** Most public trade
    charts are calibrated to 12-team, 1QB, full-PPR. Quoting one for this
    10-team league without noting the mismatch is the single most common
-   failure mode. Load `value-charts-and-limits.md` for what each chart
+   failure mode. Load `references/value-charts-and-limits.md` for what each chart
    family is actually grounded in (consensus rankings, real-trade market
    data, or explicit VOR) and pick one to name.
 2. **Model each partner before pricing.** Read that team's roster
@@ -32,7 +32,7 @@ TE/FLEX/K/DEF + 5 bench, 6-of-10 playoffs from week 15.
    position (`sleeper_standings`) to tell a contender from a rebuilder.
    That model - positional surplus and need, contender or rebuilder - is
    what decides which of your players they'd value and what they'd give up
-   for it, not just chart parity. Load `roster-fit.md`'s mutual-need rule. A
+   for it, not just chart parity. Load `references/roster-fit.md`'s mutual-need rule. A
    finder suggestion states that surplus/need in its `partner_need` field
    (e.g. "needs RB"), not just in the prose `note`.
 3. **Check outside news for every traded player.** Sleeper's own
@@ -43,26 +43,26 @@ TE/FLEX/K/DEF + 5 bench, 6-of-10 playoffs from week 15.
 4. **Price by scarcity, not raw points.** RB is the scarcest starter
    position in this league (~50% of weekly supply started, vs ~25% at
    WR/TE, ~31% at QB) but the FLEX narrows the RB/WR gap versus a
-   no-FLEX league. Load `positional-scarcity-10-team.md` for the numbers
+   no-FLEX league. Load `references/positional-scarcity-10-team.md` for the numbers
    and the 10-team-specific expert read.
 5. **Discount a 2-for-1, and price the forced cut.** Packages do not sum at
    100%; a shallow 10-team start-9 justifies a larger-than-default
-   second-asset discount. Load `consolidation-rules.md` for the published
+   second-asset discount. Load `references/consolidation-rules.md` for the published
    discount figures and when taking two is actually the right move.
 6. **Weigh roster fit and win-now vs. depth.** A 5th RB on an already-deep
    roster earns no scarcity premium (the reversal rule); a contender inside
    the playoff cutline and a team past its window get different published
-   advice. Load `roster-fit.md` for the fit band and the win-now-premium
+   advice. Load `references/roster-fit.md` for the fit band and the win-now-premium
    numbers.
 7. **Check fairness and collusion norms before recommending a lopsided
    deal**, especially with an eliminated team or a playoff rival. Load
-   `fairness-and-vetoes.md` — collusion has no single definition, and a
+   `references/fairness-and-vetoes.md` — collusion has no single definition, and a
    one-sided-but-voluntary trade ("fleecing") is not collusion.
 8. **Write the verdict and the note.** Land on exactly one of send / counter
    / decline (a finder run: a ranked, bounded list of at most three
    candidates), each in one or two short sentences that name the deciding
    line item and, for a suggestion, the partner's need it fills. Load
-   `persuasive-writeup.md` for how to state the fairness band used, write
+   `references/persuasive-writeup.md` for how to state the fairness band used, write
    the lineup before/after, and structure a counter that keeps the spirit
    of the original offer.
 
@@ -86,31 +86,31 @@ under 15-20% playoff odds and under 5 weeks left; trading on 2-4 weeks of
 early-season data as if it were signal; recommending a deal that benefits a
 third team's rival or tanks its playoff hopes; quoting a chart as the
 verdict instead of a negotiation anchor; and counter-spamming with no named
-deficiency. Each pattern is sourced in `report.md` section 3.
+deficiency. Each pattern is sourced in `references/report.md` section 3.
 
 ## Resources (load only when the case calls for it)
 
-- `output-schema-trade.json` — the extension UI's schema for the `trade`
+- `references/output-schema-trade.json` — the extension UI's schema for the `trade`
   artifact (a specific offer). The artifact carries exactly this
   schema's properties; read it before writing.
-- `output-schema-trade-finder.json` — the schema for the `trade-finder`
+- `references/output-schema-trade-finder.json` — the schema for the `trade-finder`
   artifact (a league-wide scan). Same rule.
-- `value-charts-and-limits.md` — what a chart's numbers are grounded in, why
+- `references/value-charts-and-limits.md` — what a chart's numbers are grounded in, why
   charts go stale, and the 12-team-vs-10-team mismatch. Load before citing
   any chart figure.
-- `positional-scarcity-10-team.md` — the supply/start-rate numbers for this
+- `references/positional-scarcity-10-team.md` — the supply/start-rate numbers for this
   league size and the FLEX's dampening effect on RB scarcity. Load when
   scarcity is the deciding factor.
-- `consolidation-rules.md` — the 2-for-1 discount figures and the forced-cut
+- `references/consolidation-rules.md` — the 2-for-1 discount figures and the forced-cut
   math. Load whenever the offer is multi-for-one on either side.
-- `roster-fit.md` — the fit-adjustment band, the reversal rule, and win-now
+- `references/roster-fit.md` — the fit-adjustment band, the reversal rule, and win-now
   vs. depth with the win-now-premium numbers. Load when the call depends on
   standings or roster construction, not just player value.
-- `fairness-and-vetoes.md` — collusion definitions, the fleecing distinction,
+- `references/fairness-and-vetoes.md` — collusion definitions, the fleecing distinction,
   and veto mechanics. Load whenever a suggested deal could look one-sided to
   the league, involves an eliminated team, or a partner asks about vetoing.
-- `persuasive-writeup.md` — how to state a fairness band, write the lineup
+- `references/persuasive-writeup.md` — how to state a fairness band, write the lineup
   before/after, and structure an accept/counter/decline. Load when drafting
   the reply's persuasive case, not just the artifact.
-- `report.md` — the full R3 v2 research report (73KB), every finding with
+- `references/report.md` — the full R3 v2 research report (73KB), every finding with
   its full context. Load for a hard case, or to revise this skill.

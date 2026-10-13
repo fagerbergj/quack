@@ -345,22 +345,6 @@ func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request, chatID schema.
 	writeJSON(w, http.StatusOK, detail)
 }
 
-// sinkNodeIDs are the plan's sinks - nodes no other node depends on - in plan order. Their outputs ARE
-// the turn's answer, mirroring the frontend's sinkNodeIds/liveDagFinalText.
-func sinkNodeIDs(plan stream.DagPlanData) []string {
-	hasSuccessor := make(map[string]bool, len(plan.Edges))
-	for _, e := range plan.Edges {
-		hasSuccessor[e.From] = true
-	}
-	var ids []string
-	for _, n := range plan.Nodes {
-		if !hasSuccessor[n.ID] {
-			ids = append(ids, n.ID)
-		}
-	}
-	return ids
-}
-
 // sinksOutput returns the sinks' full output (or "" when none has any yet): one sink's as is,
 // several as labelled sections. stopped reports the user stopped every one (so it is a draft), at when.
 func sinksOutput(plan stream.DagPlanData, nodes []store.DagNode) (out string, stopped bool, at time.Time) {
@@ -368,7 +352,7 @@ func sinksOutput(plan stream.DagPlanData, nodes []store.DagNode) (out string, st
 	for _, n := range nodes {
 		byID[n.NodeID] = n
 	}
-	ids := sinkNodeIDs(plan)
+	ids := plan.SinkIDs()
 	var sinks []store.DagNode
 	for _, id := range ids {
 		// A multi-sink plan extended across turns has earlier turns' sinks with no content in this one.

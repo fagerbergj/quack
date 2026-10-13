@@ -115,7 +115,7 @@ func printNodeTable(out io.Writer, d schema.DagOutputItem) {
 		st := d.NodeStates[n.Id]
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			n.Id, n.Agent, orDash(string(st.Status)), derefStr(st.Model), formatTokens(st.TotalTokens),
-			formatDurationMs(st.ServerDurationMs), formatScore(st.JudgeFinalScore))
+			formatDurationMs(st.ServerDurationMs), formatScore(st))
 	}
 	_ = tw.Flush()
 }
@@ -151,11 +151,14 @@ func formatDurationMs(ms *int) string {
 	return fmt.Sprintf("%.1fs", float64(*ms)/1000)
 }
 
-func formatScore(f *float64) string {
-	if f == nil {
+func formatScore(st schema.DagNodeState) string {
+	switch {
+	case st.JudgeFinalScore == nil:
 		return "-"
+	case judgeFailed(st):
+		return fmt.Sprintf("%.2f (failed)", *st.JudgeFinalScore)
 	}
-	return fmt.Sprintf("%.2f", *f)
+	return fmt.Sprintf("%.2f", *st.JudgeFinalScore)
 }
 
 // followState is printLine's cross-event bookkeeping, so many updates to the same reasoning block
