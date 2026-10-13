@@ -75,7 +75,7 @@ criteria:
 		t.Setenv(kv[0], kv[1])
 	}
 
-	bundlePath := writeJudgeFixtureBundle(t)
+	bundlePath := writeJudgeFixtureBundle(t, "web-researcher")
 	c := newJudgeReplayCmd()
 	c.SetContext(context.Background())
 	if err := runJudgeReplay(c, bundlePath, cli.ReplayOptions{Repeat: 1, RubricPath: rubricPath, DeterministicOnly: true}, "", false, false); err != nil {
@@ -83,7 +83,35 @@ criteria:
 	}
 }
 
-func writeJudgeFixtureBundle(t *testing.T) string {
+// A plugin-seeded agent's bundled rubric resolves from the plugin's local clone, with no --rubric.
+func TestRunJudgeReplay_PluginAgentBundledRubric(t *testing.T) {
+	dir := t.TempDir()
+	pluginDir := writeAcmeScoutPlugin(t, dir)
+	rubric := "scale: {min: 0, max: 3, pass: 2}\ncriteria:\n  cites_sources:\n    definition: existence check\n" +
+		"    deterministic: true\n    fix: fetch it\n    scale: {min: 0, max: 1, pass: 0.85}\n"
+	if err := os.WriteFile(filepath.Join(pluginDir, "agents", "scout", "rubric.yaml"), []byte(rubric), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := "providers:\n  default:\n    kind: openai\n    endpoint: http://localhost:1\n    api_key: x\n" +
+		"orchestrator:\n  provider: default\n  model: m\nmodels:\n  m:\n    provider: default\n    role: worker\n" +
+		"stores:\n  default:\n    kind: sqlite\n    url: " + filepath.Join(dir, "store.db") + "\n" +
+		"session:\n  store: default\nworkspace:\n  root: " + filepath.Join(dir, "workspace") + "\n" +
+		"plugins:\n  seed:\n    - " + pluginDir + "\n"
+	cfgPath := filepath.Join(dir, "quack.yaml")
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("QUACK_CONFIG", cfgPath)
+	t.Setenv("QUACK_RESEARCHER_MODEL", "m")
+
+	c := newJudgeReplayCmd()
+	c.SetContext(context.Background())
+	if err := runJudgeReplay(c, writeJudgeFixtureBundle(t, "scout"), cli.ReplayOptions{Repeat: 1, DeterministicOnly: true}, "", false, false); err != nil {
+		t.Fatalf("runJudgeReplay: %v", err)
+	}
+}
+
+func writeJudgeFixtureBundle(t *testing.T, agent string) string {
 	t.Helper()
 	now := time.Now()
 	fetchCall := &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{ID: "1", Name: "web_fetch"}}}}
@@ -107,7 +135,7 @@ func writeJudgeFixtureBundle(t *testing.T) string {
 		t.Fatal(err)
 	}
 	entries := []ledger.Entry{
-		{Seq: 1, ChatID: "chat-1", NodeID: "node-1", Agent: "web-researcher", Round: "worker-r0", Kind: ledger.KindLLMCall, At: now, Payload: payload},
+		{Seq: 1, ChatID: "chat-1", NodeID: "node-1", Agent: agent, Round: "worker-r0", Kind: ledger.KindLLMCall, At: now, Payload: payload},
 		{Seq: 2, ChatID: "chat-1", NodeID: "node-1", Round: "judge-r1", Kind: ledger.KindEvalScore, At: now.Add(time.Second), Payload: scorePayload},
 	}
 	path := filepath.Join(t.TempDir(), "entries.jsonl")

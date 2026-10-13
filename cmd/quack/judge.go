@@ -14,6 +14,7 @@ import (
 	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/ledger/bundle"
 	"github.com/fagerbergj/quack/internal/promptbuilder"
+	"github.com/fagerbergj/quack/internal/serve"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
@@ -154,6 +155,14 @@ func runJudgeReplay(cmd *cobra.Command, target string, opts cli.ReplayOptions, s
 		return fmt.Errorf("judge replay: load bundle: %w", err)
 	}
 	cfg, err := config.LoadDeferringAgentCompleteness(cfgPath)
+	if err != nil {
+		return err
+	}
+	// Seed plugin agents from their local clones as `server validate` does, so their bundled rubric resolves.
+	plugins, _, err := serve.ResolveConfiguredPlugins(cfg)
+	if err == nil {
+		_, _, err = serve.SeedPluginAgentsAndShapes(cfg, plugins)
+	}
 	if err != nil {
 		return err
 	}
