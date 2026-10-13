@@ -175,7 +175,8 @@ type scheduleResult struct {
 	Games []scheduleGame `json:"games"`
 }
 
-// Description text shared by every tool that returns games.
+// gameRulesDoc is declared once, on sleeper_player (offered to every plugin agent); the other
+// game-returning tools point at it with seePlayerDoc instead of repeating it.
 const (
 	timeDoc = "kickoff/fetched_at are UTC; show the user kickoff_local/fetched_at_local, already in their " +
 		"zone - never convert UTC yourself. `tz` (IANA name) only overrides that zone; normally omit it. " +
@@ -186,6 +187,8 @@ const (
 	playerGameDoc = "Each player's own NFL game this week is already joined in code: game {game_id, " +
 		"nfl_opponent, is_home, kickoff, kickoff_local, kickoff_tbd, locked, status, roof, venue}, or " +
 		"instead bye=true or no_game_reason. Use it as-is; never take a kickoff or opponent from another game. " + lockDoc
+	gameRulesDoc = playerGameDoc + " " + timeDoc + " These rules hold for every sleeper tool that returns games."
+	seePlayerDoc = "The game, locked, kickoff, `tz` and week fields follow the rules in the sleeper_player description."
 )
 
 func (e *extension) scheduleTool() tool.Tool {
@@ -195,7 +198,7 @@ func (e *extension) scheduleTool() tool.Tool {
 			Description: "Get the NFL schedule for a week (default the current week). Per game: status " +
 				"(pre_game, in_game, complete, canceled, postponed), date (US Eastern calendar date), " +
 				"kickoff, kickoff_local, locked, venue, city, roof (outdoor/dome/retractable_dome). " +
-				lockDoc + " " + timeDoc + " A rostered player's game is already joined by " +
+				seePlayerDoc + " A rostered player's game is already joined by " +
 				"sleeper_roster/sleeper_matchup/sleeper_player.",
 		},
 		func(ctx adkagent.Context, a scheduleArgs) (scheduleResult, error) { return e.getSchedule(ctx, a) },

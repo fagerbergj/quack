@@ -22,9 +22,9 @@ overlap:
   threshold: 0.14
   allow: # an agent may be offered any two tools of one entry
     - tools: [sleeper_matchup, sleeper_player, sleeper_roster, sleeper_schedule]
-      reason: distinct Sleeper endpoints; the 0.59-0.77 scores are the timeDoc/lockDoc/playerGameDoc text each description repeats
-    - tools: [sleeper_league, sleeper_roster, sleeper_standings, sleeper_transactions, sleeper_free_agents, sleeper_trends, sleeper_history]
-      reason: distinct Sleeper endpoints sharing league vocabulary (league_id, week, roster)
+      reason: distinct Sleeper endpoints that each return NFL games; they share game/lock/week words and point at sleeper_player's game rules
+    - tools: [sleeper_league, sleeper_roster, sleeper_matchup, sleeper_standings, sleeper_transactions, sleeper_free_agents, sleeper_trends, sleeper_history, sleeper_draft]
+      reason: distinct Sleeper endpoints sharing league vocabulary (league_id, week, roster, team, the default_league/default_user fallback)
     - tools: [list_nodes, create_plan, edit_plan, execute]
       reason: the four steps of one plan lifecycle; create_plan and edit_plan share the assignment-shape prose
     - tools: [write_artifact, edit_artifact, write_code_review, write_finding]
@@ -35,8 +35,6 @@ overlap:
       reason: search returns URLs and fetch reads one; they share web vocabulary, not a job
     - tools: [recall_memory, stage_memory]
       reason: the read and write halves of one shared task memory
-    - tools: [current_date, sleeper_schedule]
-      reason: both explain the user's time zone; one returns now, the other kickoff times
     - tools: [load_skill, load_skill_resource, load_artifacts]
       reason: ADK's own skilltoolset and loadartifactstool declarations; quack does not write their text
 ignore:

@@ -55,7 +55,7 @@ func (e *extension) playerTool() tool.Tool {
 			Name: "sleeper_player",
 			Description: "Get one player's bio, team, depth chart order, injury/practice status, news " +
 				"timestamp, season stats, and the current NFL week's projection. Look up by `player_id` or " +
-				"`name`. " + playerGameDoc + " " + timeDoc,
+				"`name`. " + gameRulesDoc,
 		},
 		func(ctx adkagent.Context, a playerArgs) (playerResult, error) { return e.getPlayer(ctx, a) },
 	)

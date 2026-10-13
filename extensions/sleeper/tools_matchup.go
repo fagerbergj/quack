@@ -118,8 +118,8 @@ func (e *extension) matchupTool() tool.Tool {
 			Name: "sleeper_matchup",
 			Description: "Get one fantasy week's matchup (default the current NFL week): both lineups " +
 				"with points and projections, and the fantasy opponent's record. `opponent` is the fantasy " +
-				"team; each player's NFL opponent is in their game. " + playerGameDoc + " `user`/`roster_id` " +
-				"picks my side, falling back to default_user. " + timeDoc,
+				"team; each player's NFL opponent is in their own `game`. `user`/`roster_id` " +
+				"picks my side, falling back to default_user. " + seePlayerDoc,
 		},
 		func(ctx adkagent.Context, a matchupArgs) (matchupResult, error) { return e.getMatchup(ctx, a) },
 	)
