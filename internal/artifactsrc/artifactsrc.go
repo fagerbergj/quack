@@ -90,6 +90,8 @@ type Resolver struct {
 	src  Source
 	name string
 	ttl  time.Duration
+	// pins is an experiment's --prompt; unlike src it also overrides a bundle outside agents/.
+	pins Source
 
 	mu    sync.Mutex
 	cache map[string]cached
@@ -110,6 +112,12 @@ func New(srcName string, src Source, ttl time.Duration) *Resolver {
 		srcName = StaticSource
 	}
 	return &Resolver{src: src, name: srcName, ttl: ttl, cache: map[string]cached{}}
+}
+
+// WithPins sets the experiment-only pins a plugin bundle's prompt.md yields to; prod never sets it.
+func (r *Resolver) WithPins(pins Source) *Resolver {
+	r.pins = pins
+	return r
 }
 
 // Resolve returns name's artifact: the Source's version when it has one, else
@@ -150,13 +158,17 @@ func (r *Resolver) fetch(ctx context.Context, name string) (Artifact, error) {
 		slog.Warn("prompt source failed; using the shipped artifact",
 			"component", "artifacts", "store", r.name, "artifact", name, "err", err)
 	case ok:
-		art.Name = name
-		if art.Source == "" {
-			art.Source = r.name
-		}
-		return art, nil
+		return r.stamp(name, art), nil
 	}
 	return Static(name)
+}
+
+func (r *Resolver) stamp(name string, art Artifact) Artifact {
+	art.Name = name
+	if art.Source == "" {
+		art.Source = r.name
+	}
+	return art
 }
 
 // ResolveUsable is Resolve that treats a blank stored body as an accident and falls back to the shipped
@@ -344,6 +356,18 @@ func ReadBundleFile(ctx context.Context, res *Resolver, kind, dir, file string) 
 func ResolveBundleFile(ctx context.Context, res *Resolver, kind, dir, file string) (Artifact, error) {
 	if name := BundleName(kind, dir); name != "" {
 		return res.Resolve(ctx, name)
+	}
+	return res.ResolveUnshipped(ctx, kind, dir, file)
+}
+
+// ResolveUnshipped reads a bundle outside agents/ (a plugin's) off disk, unless pins hold kind/<agent>.
+func (r *Resolver) ResolveUnshipped(ctx context.Context, kind, dir, file string) (Artifact, error) {
+	if r != nil && r.pins != nil {
+		name := kind + "/" + path.Base(dir)
+		art, ok, err := r.pins.Get(ctx, name)
+		if err != nil || ok {
+			return r.stamp(name, art), err
+		}
 	}
 	p := path.Join(dir, file)
 	raw, err := bundledir.ReadFile(p)

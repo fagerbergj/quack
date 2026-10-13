@@ -840,7 +840,7 @@ func (b *boot) initHTTP(ctx context.Context, st *store.Store, orch *orchestrator
 
 func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcile bool, hooks *shutdownHooks, promptOverride artifactsrc.Source) (handler http.Handler, cleanup func(), addr string, err error) {
 	promptSrc, promptSrcName := promptSourceFor(cfg, promptOverride)
-	b := &boot{cfg: cfg, res: artifactsrc.New(promptSrcName, promptSrc, cfg.Prompts.CacheTTLDuration()), admission: buildAdmission(cfg), hooks: hooks}
+	b := &boot{cfg: cfg, res: artifactsrc.New(promptSrcName, promptSrc, cfg.Prompts.CacheTTLDuration()).WithPins(promptOverride), admission: buildAdmission(cfg), hooks: hooks}
 	defer func() {
 		if err != nil {
 			b.runCleanups()

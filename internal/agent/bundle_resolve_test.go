@@ -82,3 +82,33 @@ func TestOutOfTreeBundleHasVersionID(t *testing.T) {
 		t.Errorf("provenance = %q/%q, want static plus a content hash", b.PromptSource, b.PromptVersion)
 	}
 }
+
+type mapSource map[string]artifactsrc.Artifact
+
+func (m mapSource) Get(_ context.Context, name string) (artifactsrc.Artifact, bool, error) {
+	art, ok := m[name]
+	return art, ok, nil
+}
+func (mapSource) Seed(context.Context, string, artifactsrc.Artifact) error { return nil }
+
+// An experiment's pin replaces a plugin bundle's prompt.md for the node; the prompts store never does.
+func TestPluginBundlePromptYieldsOnlyToPins(t *testing.T) {
+	dir := writeBundle(t, `{"name":"code-reviewer"}`, "BUNDLE")
+	name := "system/" + filepath.Base(dir)
+	ctx := context.Background()
+	store := mapSource{name: {Body: "STORE", VersionID: "3"}}
+
+	b, err := LoadBundle(ctx, artifactsrc.New("langfuse", store, time.Minute), dir)
+	if err != nil || b.Prompt != "BUNDLE" {
+		t.Fatalf("unpinned prompt = %q, %v; want the bundle file, never the store", b.Prompt, err)
+	}
+
+	res := artifactsrc.New("langfuse", store, time.Minute).WithPins(mapSource{name: {Body: "PINNED", VersionID: "7"}})
+	if b, err = LoadBundle(ctx, res, dir); err != nil {
+		t.Fatal(err)
+	}
+	got := b.ResolvePrompt(ctx, res)
+	if b.Prompt != "PINNED" || got.Body != "PINNED" || got.Name != name || got.VersionID != "7" || got.Source != "langfuse" {
+		t.Fatalf("pinned prompt = %q, round artifact %+v; want PINNED as %s@7 from langfuse", b.Prompt, got, name)
+	}
+}
