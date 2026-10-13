@@ -73,7 +73,7 @@ func runRemarkable(t *testing.T, block string) (f remarkableFlow, child bool) {
 	var judgeModelRef atomic.Pointer[model.LLM]
 	shapes := shapesRefOf([]workflowcatalog.Shape{{Name: "document-ingest", Trigger: "t", DAGShape: "s"}})
 	cfg := noopModulesConfig(t, t.TempDir(), block)
-	exts, err := buildSDKExtensions(cfg, st, hub, runlog.NewEventLog(st), &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil, shapes, nil)
+	exts, err := buildSDKExtensions(cfg, st, hub, runlog.NewEventLog(st), &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil, shapes, nil, nil)
 	if err != nil || len(exts) != 1 {
 		t.Fatalf("buildSDKExtensions = %d exts, %v", len(exts), err)
 	}

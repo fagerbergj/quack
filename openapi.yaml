@@ -224,6 +224,41 @@ paths:
                 items:
                   $ref: "#/components/schemas/ExtensionInfo"
 
+  /api/v1/extensions/{name}/restart:
+    post:
+      operationId: restartExtension
+      summary: Restart one out-of-process extension on its current binary
+      description: >
+        Re-resolves the extension's `exec` binary (for `exec: release`, the
+        release at the pinned tag of the plugin row named like the extension,
+        checked against that release's SHA256SUMS) and starts a child on it.
+        Once the new child initializes it takes every new call; the old child
+        then stops as on shutdown, finishing in-flight calls within its 5s
+        grace. Other extensions and the server keep running.
+      parameters:
+        - $ref: "#/components/parameters/PluginName"
+      responses:
+        "204":
+          description: The new child is serving
+        "404":
+          description: No enabled extension has this name
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The extension runs in process (its block sets no exec)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: The binary could not be fetched or verified, or the new child failed to start; the old child keeps serving
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/v1/config:
     get:
       operationId: getConfig

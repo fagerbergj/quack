@@ -162,6 +162,12 @@ Browse or invalidate what quack has remembered (memory lifecycle design doc); `f
 
 See [`docs/sandbox-cli.md`](sandbox-cli.md) for the detail.
 
+## Extensions
+
+| Command | Does |
+| --- | --- |
+| `quack extension restart <name>` | Restart one out-of-process extension's child on its re-resolved binary; with `exec: release` that is the release at its plugin row's current pin. The old child finishes in-flight calls; the server and other extensions keep running. See [Releasing an extension without a quack release](extensions/dev-loop.md#releasing-an-extension-without-a-quack-release). |
+
 ## Misc
 
 `quack version` prints the version. `quack git-askpass` is a helper quack invokes for itself during git operations - not something you run directly; it reads the credential from `QUACK_GIT_ASKPASS_USERNAME`/`QUACK_GIT_ASKPASS_TOKEN`, set by the calling process for that one invocation, and answers only a prompt for the host in `QUACK_GIT_ASKPASS_HOST`.

@@ -1262,6 +1262,41 @@ export type ListExtensionsResponses = {
 
 export type ListExtensionsResponse = ListExtensionsResponses[keyof ListExtensionsResponses];
 
+export type RestartExtensionData = {
+    body?: never;
+    path: {
+        name: string;
+    };
+    query?: never;
+    url: '/api/v1/extensions/{name}/restart';
+};
+
+export type RestartExtensionErrors = {
+    /**
+     * No enabled extension has this name
+     */
+    404: ErrorResponse;
+    /**
+     * The extension runs in process (its block sets no exec)
+     */
+    409: ErrorResponse;
+    /**
+     * The binary could not be fetched or verified, or the new child failed to start; the old child keeps serving
+     */
+    502: ErrorResponse;
+};
+
+export type RestartExtensionError = RestartExtensionErrors[keyof RestartExtensionErrors];
+
+export type RestartExtensionResponses = {
+    /**
+     * The new child is serving
+     */
+    204: void;
+};
+
+export type RestartExtensionResponse = RestartExtensionResponses[keyof RestartExtensionResponses];
+
 export type GetConfigData = {
     body?: never;
     path?: never;

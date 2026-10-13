@@ -40,7 +40,7 @@ func TestBuildSDKExtensions_UIDescriptorCaptured(t *testing.T) {
 	var judgeModelRef atomic.Pointer[model.LLM]
 
 	cfg := noopModulesConfig(t, t.TempDir(), "fake-ui-test:\n  enabled: true\n")
-	sdkExts, err := buildSDKExtensions(cfg, st, hub, runlog.NewEventLog(st), &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil, nil, nil)
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, runlog.NewEventLog(st), &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("buildSDKExtensions: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestBuildSDKExtensions_NoUIDescriptor_NameOnly(t *testing.T) {
 	var judgeModelRef atomic.Pointer[model.LLM]
 
 	cfg := noopModulesConfig(t, t.TempDir(), "noop:\n  enabled: true\n")
-	sdkExts, err := buildSDKExtensions(cfg, st, hub, runlog.NewEventLog(st), &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil, nil, nil)
+	sdkExts, err := buildSDKExtensions(cfg, st, hub, runlog.NewEventLog(st), &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("buildSDKExtensions: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestBuildSDKExtensions_HostCarriesVersionAndPublicURL(t *testing.T) {
 	cfg := noopModulesConfig(t, t.TempDir(), "fake-host-capture-test:\n  enabled: true\n")
 	cfg.Server.PublicURL = "https://quack.example.com"
 
-	if _, err := buildSDKExtensions(cfg, st, hub, runlog.NewEventLog(st), &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil, nil, nil); err != nil {
+	if _, err := buildSDKExtensions(cfg, st, hub, runlog.NewEventLog(st), &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil, nil, nil, nil); err != nil {
 		t.Fatalf("buildSDKExtensions: %v", err)
 	}
 	if capturedHostForTest.Version != "0.51.26" {
