@@ -1,5 +1,5 @@
 // Caches GET /api/v1/config - deployment-level values (trace URL template, build and API versions). Fetched on
-// load and again on every SSE reconnect, the moment a redeployed server would show up.
+// load, on every SSE reconnect and when the tab becomes visible: the moments a redeployed server would show up.
 import { useSyncExternalStore } from 'react'
 import { api, type ClientConfig } from '../api'
 import { API_VERSION } from '../generated/apiVersion.gen'
@@ -31,6 +31,10 @@ export function refreshClientConfig(): Promise<void> {
 }
 
 void refreshClientConfig()
+// A tab with no open stream still notices a redeploy when the user comes back to it.
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') void refreshClientConfig() })
+}
 
 function subscribe(l: () => void): () => void {
   listeners.add(l)
