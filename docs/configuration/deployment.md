@@ -32,3 +32,30 @@ On SIGTERM the server pauses every running node at once, cutting off its current
 ## 3. Remote server, full-featured
 
 [`examples/remote-full.yaml`](examples/remote-full.yaml) — the same shape as the repo's own `config/quack.yaml`, with the pieces that ship commented out there turned on: the [GitHub App extension](../extensions/github.md) and OTel actually exporting somewhere. This is the shape for a shared, always-on deployment: `server.topology: external`, pointing at Postgres/qdrant instances that outlive any one `quack` process, the judge always on. See [`docs/configuration/`](index.md) for what every section does.
+
+## Deploying the UI separately
+
+By default the SPA ships inside the quack binary, so every UI change rides a backend release. `ghcr.io/fagerbergj/quack-ui:<tag>` (built from `frontend/Dockerfile`, published on the same tags as `quack`) serves the SPA from nginx on port 8080 and proxies `/api/`, `/health` and the extension prefixes to quack, so the browser still sees one origin. Set `server.ui: none` on quack so it serves only the API, and route your edge proxy to `quack-ui` instead of quack:
+
+```yaml
+services:
+  quack:
+    image: ghcr.io/fagerbergj/quack:0.90.0
+    volumes:
+      - ./quack.yaml:/config/quack.yaml:ro   # server: { ui: none }
+  quack-ui:
+    image: ghcr.io/fagerbergj/quack-ui:0.90.0
+    environment:
+      QUACK_UPSTREAM: http://quack:8080              # no path, no trailing slash
+      QUACK_EXTENSION_PREFIXES: usage|sleeper|github # every enabled extension name, |-separated
+    ports:
+      - "8080:8080"
+    depends_on: [quack]
+    restart: unless-stopped
+```
+
+`QUACK_EXTENSION_PREFIXES` must list every extension enabled in `quack.yaml`, since each mounts at `/<name>/`; a missing one serves the SPA instead of the extension page or webhook. nginx resolves `QUACK_UPSTREAM` per request through the container's DNS, so recreating the quack container needs no `quack-ui` restart. Chat streams are proxied unbuffered with a one-hour read timeout. Hashed `/assets/` files are cached for a year; `index.html` and `version.json` revalidate on every load.
+
+**Rollout.** Deploy the backend first, then the UI. Keep the backend's `x-api-min-version` (openapi.yaml) at or below the `x-api-version` of the live UI, or open tabs hit the blocking reload overlay with no newer UI to reload into. An open tab compares its own build id with `/version.json` on load, on stream reconnect and when it becomes visible, and offers a reload once a new UI is served. A UI built against a newer API than the server shows a notice without a reload button, since reloading would fetch the same UI.
+
+**Rollback.** Pin the previous `quack-ui` tag and recreate the container. When rolling back the backend past an `x-api-version` bump, roll the UI back to a matching tag too; otherwise tabs show the older-server notice and features that need the newer API fail.
