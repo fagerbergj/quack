@@ -210,6 +210,39 @@ func TestRouterServesStaticSPAAssetVerbatim(t *testing.T) {
 	}
 }
 
+// server.ui: none (no SPA) 404s SPA paths without the shell while health and extension routes still answer.
+func TestRouterWithoutSPAServesOnlyAPIAndExtensions(t *testing.T) {
+	h := server.New(server.Options{
+		REST: &rest.Handler{},
+		SDKExtensions: []server.SDKExtensionMount{{
+			Name: "noop",
+			RegisterRoutes: func(_, public chi.Router) {
+				public.Get("/", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+			},
+		}},
+	})
+	for _, tc := range []struct {
+		path string
+		want int
+	}{
+		{"/", http.StatusNotFound},
+		{"/chat/abc", http.StatusNotFound},
+		{"/version.json", http.StatusNotFound},
+		{"/assets/index-4f9a2c1bd8.js", http.StatusNotFound},
+		{"/health", http.StatusOK},
+		{"/noop/", http.StatusOK},
+	} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tc.path, nil))
+		if rec.Code != tc.want {
+			t.Errorf("GET %s = %d, want %d", tc.path, rec.Code, tc.want)
+		}
+		if tc.want == http.StatusNotFound && strings.Contains(rec.Body.String(), "<html") {
+			t.Errorf("GET %s served HTML, want no SPA shell", tc.path)
+		}
+	}
+}
+
 // The SPA bundle and JSON API answers are gzipped for a client that accepts it, while an SSE
 // stream is left alone so each event still flushes as written.
 func TestRouterGzipsAssetsAndJSONButNotSSE(t *testing.T) {
