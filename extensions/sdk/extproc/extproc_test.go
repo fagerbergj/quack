@@ -64,6 +64,7 @@ var startedCtx context.Context
 type testExt struct {
 	host      sdk.Host
 	failStart bool
+	slowStart bool
 }
 
 // runsSeen is every RunEnded this child process received, as runEndedParams JSON.
@@ -96,6 +97,9 @@ func (testExt) UI() sdk.UIDescriptor { return sdk.UIDescriptor{Title: "X", Href:
 func (e testExt) Start(ctx context.Context) error {
 	if e.failStart {
 		return errors.New("start refused")
+	}
+	if e.slowStart {
+		time.Sleep(2 * time.Second)
 	}
 	startedCtx = ctx
 	return nil
@@ -148,7 +152,7 @@ func testFactory(host sdk.Host, raw []byte) (sdk.Extension, error) {
 	}
 	host.Log.Info("factory ran", "data_dir", host.DataDir)
 	host.Log.Warn("factory warned")
-	return testExt{host: host, failStart: string(raw) == "failstart"}, nil
+	return testExt{host: host, failStart: string(raw) == "failstart", slowStart: string(raw) == "slowstart"}, nil
 }
 
 // syncBuf collects the host's JSON log output across goroutines.
@@ -365,8 +369,12 @@ func TestNewFails(t *testing.T) {
 		{"factory rejects config", "fail", "", "bad config"},
 		{"Starter fails", "failstart", "", "start refused"},
 		{"child speaks another protocol", "ok", "badproto", "protocol"},
+		{"child initializes past initTimeout", "slowstart", "", "deadline"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			orig := initTimeout
+			initTimeout = 300 * time.Millisecond
+			t.Cleanup(func() { initTimeout = orig })
 			t.Setenv(modeVar, tc.mode)
 			if _, _, err := newProcess(tc.config, nil); err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("New = %v, want an error containing %q", err, tc.want)

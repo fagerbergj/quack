@@ -21,15 +21,14 @@ import (
 	"google.golang.org/adk/v2/tool"
 )
 
-const (
-	initTimeout = 10 * time.Second
-	maxLogLine  = 64 << 10
-)
+const maxLogLine = 64 << 10
 
 // vars so tests can shrink them. maxBody caps request and response bodies (PiG's RPC command limit).
+// initTimeout bounds factory+Start; it matches the longest in-process Start (remarkable's 30s login client).
 var (
-	stopGrace = 5 * time.Second
-	maxBody   = 16 << 20
+	stopGrace   = 5 * time.Second
+	maxBody     = 16 << 20
+	initTimeout = 30 * time.Second
 )
 
 // passEnv is all of quack's environment a child sees: what an outbound HTTP client needs, never secrets.
