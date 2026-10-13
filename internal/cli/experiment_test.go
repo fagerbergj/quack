@@ -620,6 +620,36 @@ func TestRunExperiment_ScoresTraceAndLinksPrompt(t *testing.T) {
 	}
 }
 
+// Langfuse answers a batch 207 even when events fail. A rejected score fails the run, naming the event and
+// its error, and the item is never linked into the dataset run with scores missing.
+func TestRunExperiment_RejectedScoreFailsLoudly(t *testing.T) {
+	runItems := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/public/dataset-items":
+			writeJSON(w, map[string]any{"data": []map[string]any{{"id": "item1", "input": map[string]any{"task": "x"}}},
+				"meta": map[string]any{"totalPages": 1}})
+		case "/api/public/ingestion":
+			w.WriteHeader(http.StatusMultiStatus)
+			writeJSON(w, map[string]any{"successes": []any{}, "errors": []map[string]any{
+				{"id": "tr1-gate_passed", "status": 400, "message": "invalid score value"}}})
+		case "/api/public/dataset-run-items":
+			runItems++
+			writeJSON(w, map[string]any{"id": "ri"})
+		}
+	}))
+	defer srv.Close()
+
+	_, err := RunExperiment(context.Background(), io.Discard, &stubRunner{traceID: "tr1"}, newTestClient(t, srv),
+		ExperimentOpts{Dataset: "ds", Agent: "synthesizer", RunName: "rig"})
+	if err == nil || !strings.Contains(err.Error(), "tr1-gate_passed") || !strings.Contains(err.Error(), "invalid score value") {
+		t.Fatalf("err = %v, want a failure naming the rejected score and its error", err)
+	}
+	if runItems != 0 {
+		t.Fatalf("run items = %d, want none for an item whose scores were rejected", runItems)
+	}
+}
+
 // A --prompt pin the node never resolved (a static fallback, or no system/<agent> artifact at all)
 // is an item error: scoring it would credit the pinned version with another prompt's results.
 func TestRunExperiment_PinNotRunIsAnItemError(t *testing.T) {
