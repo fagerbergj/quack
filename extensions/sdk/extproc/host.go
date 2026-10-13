@@ -38,20 +38,22 @@ var passEnv = []string{"PATH", "HOME", "TMPDIR", "TZ", "LANG", "SSL_CERT_FILE", 
 // The restart backoff's floor and cap; vars so tests can shrink them.
 var restartMin, restartMax = 100 * time.Millisecond, 30 * time.Second
 
-// Process is an extension running as a supervised child: started by New, restarted with backoff
-// when it exits, stopped by Close. It implements sdk.Extension, sdk.UI, sdk.RunObserver, sdk.ArtifactSchemas
-// and sdk.DecisionPoints for quack's loader, the last three from what the child reported at initialize.
+// Process is an extension running as a supervised child: started by New, restarted with backoff when it exits,
+// stopped by Close. It carries every optional sdk interface; one quack calls into counts only where Implements says so.
 type Process struct {
-	name     string
-	path     string
-	params   initParams
-	log      *slog.Logger
-	host     sdk.Host
-	ui       sdk.UIDescriptor
-	observes bool
-	tools    []tool.Tool
-	schemas  map[string]json.RawMessage
-	points   []sdk.DecisionPoint
+	name         string
+	path         string
+	params       initParams
+	log          *slog.Logger
+	host         sdk.Host
+	calls        map[string]childCall
+	ui           sdk.UIDescriptor
+	observes     bool
+	tools        []tool.Tool
+	schemas      map[string]json.RawMessage
+	points       []sdk.DecisionPoint
+	implements   []string
+	publicRoutes []routeSpec
 
 	mu  sync.Mutex
 	cur *child
@@ -62,21 +64,26 @@ type Process struct {
 }
 
 var (
-	_ sdk.Extension       = (*Process)(nil)
-	_ sdk.UI              = (*Process)(nil)
-	_ sdk.RunObserver     = (*Process)(nil)
-	_ sdk.ArtifactSchemas = (*Process)(nil)
-	_ sdk.DecisionPoints  = (*Process)(nil)
-	_ io.Closer           = (*Process)(nil)
+	_ sdk.Extension                  = (*Process)(nil)
+	_ sdk.UI                         = (*Process)(nil)
+	_ sdk.RunObserver                = (*Process)(nil)
+	_ sdk.ArtifactSchemas            = (*Process)(nil)
+	_ sdk.DecisionPoints             = (*Process)(nil)
+	_ sdk.Deliverer                  = (*Process)(nil)
+	_ sdk.GitCredentialSource        = (*Process)(nil)
+	_ sdk.AssignmentMetaExtension    = (*Process)(nil)
+	_ sdk.AssignmentFreshnessChecker = (*Process)(nil)
+	_ io.Closer                      = (*Process)(nil)
 )
 
 // New starts name's extension from the binary at path and initializes it with host's settings and
 // the raw extensions.<name> block; an error means the child refused or never answered.
 func New(name, path string, host sdk.Host, config []byte) (*Process, error) {
+	calls := hostCalls(host)
 	p := &Process{
-		name: name, path: path, log: host.Log, host: host,
+		name: name, path: path, log: host.Log, host: host, calls: calls,
 		params: initParams{Protocol: ProtocolVersion, Name: name, Config: string(config),
-			DataDir: host.DataDir, Version: host.Version, PublicURL: host.PublicURL, Serves: serves(host)},
+			DataDir: host.DataDir, Version: host.Version, PublicURL: host.PublicURL, Serves: serves(calls)},
 		stop: make(chan struct{}), done: make(chan struct{}),
 	}
 	if p.log == nil {
@@ -97,22 +104,79 @@ func New(name, path string, host sdk.Host, config []byte) (*Process, error) {
 		p.ui = *res.UI
 	}
 	p.observes, p.schemas, p.points = res.ObservesRuns, res.ArtifactSchemas, res.DecisionPoints
+	p.implements, p.publicRoutes = res.Implements, res.PublicRoutes
 	p.cur = c
 	go p.supervise(c)
 	return p, nil
 }
 
-// serves lists the optional methods host takes part in: it calls tool on the child and answers readArtifact and
-// decide. Dispatch is always on, as before them.
-func serves(host sdk.Host) []string {
-	s := []string{methodTool}
-	if host.ReadArtifact != nil {
-		s = append(s, methodReadArtifact)
+// serves lists the optional methods quack takes part in: those it calls on the child, then the Host callbacks
+// it answers. Dispatch is always on, as before them.
+func serves(calls map[string]childCall) []string {
+	return append([]string{methodTool, methodPublicHTTP, methodDeliver, methodGitCredential, methodOnAssignment, methodBeforeAssignment},
+		slices.Sorted(maps.Keys(calls))...)
+}
+
+// childCall answers one of the child's calls into quack.
+type childCall func(ctx context.Context, params json.RawMessage) (any, error)
+
+// answer decodes the child's params into P before f serves them.
+func answer[P any](f func(context.Context, P) (any, error)) childCall {
+	return func(ctx context.Context, raw json.RawMessage) (any, error) {
+		var p P
+		if err := json.Unmarshal(raw, &p); err != nil {
+			return nil, err
+		}
+		return f(ctx, p)
 	}
-	if host.Decide != nil {
-		s = append(s, methodDecide)
+}
+
+// hostCalls are the Host callbacks host has, keyed by the method that carries each: quack answers only these.
+func hostCalls(h sdk.Host) map[string]childCall {
+	c := map[string]childCall{}
+	if h.ReadArtifact != nil {
+		c[methodReadArtifact] = answer(func(_ context.Context, a readArtifactParams) (any, error) {
+			data, ok := h.ReadArtifact(a.ChatID, a.User, a.Name)
+			return readArtifactResult{Data: data, OK: ok}, nil
+		})
 	}
-	return s
+	if h.WriteArtifact != nil {
+		c[methodWriteArtifact] = answer(func(_ context.Context, a writeArtifactParams) (any, error) {
+			rev, changed, err := h.WriteArtifact(a.ChatID, a.User, a.Name, a.MIMEType, a.Data)
+			return writeArtifactResult{Revision: rev, Changed: changed}, err
+		})
+	}
+	if h.ChatUser != nil {
+		c[methodChatUser] = answer(func(_ context.Context, a chatParams) (any, error) {
+			u, ok := h.ChatUser(a.ChatID)
+			return chatUserResult{User: u, OK: ok}, nil
+		})
+	}
+	if h.ArchiveChat != nil {
+		c[methodArchiveChat] = answer(func(_ context.Context, a chatParams) (any, error) { return nil, h.ArchiveChat(a.ChatID) })
+	}
+	if h.InvalidateSetup != nil {
+		c[methodInvalidateSetup] = answer(func(_ context.Context, a chatParams) (any, error) { return nil, h.InvalidateSetup(a.ChatID) })
+	}
+	if h.UpdateChatOrigin != nil {
+		c[methodUpdateChatOrigin] = answer(func(_ context.Context, a updateChatOriginParams) (any, error) {
+			return nil, h.UpdateChatOrigin(a.LocalID, a.Origin)
+		})
+	}
+	if h.Classify != nil {
+		c[methodClassify] = answer(func(ctx context.Context, a classifyParams) (any, error) { return h.Classify(ctx, a.Prompt) })
+	}
+	if h.Decide != nil {
+		c[methodDecide] = func(ctx context.Context, raw json.RawMessage) (any, error) {
+			// Decoding into a non-nil pointer keeps State as the child's bytes, so the handler sees its key order.
+			req := sdk.DecideRequest{State: &json.RawMessage{}}
+			if err := json.Unmarshal(raw, &req); err != nil {
+				return nil, err
+			}
+			return h.Decide(ctx, req)
+		}
+	}
+	return c
 }
 
 // Tools are proxies built once from the first child's report; each call goes to whichever child is current.
@@ -134,13 +198,11 @@ func (p *Process) RunEnded(chatID string, outcome sdk.RunOutcome) {
 
 // serveChild answers the child's calls into quack; it asks only for the callbacks initialize offered.
 func (p *Process) serveChild(ctx context.Context, method string, params json.RawMessage) (any, error) {
-	switch {
-	case method == methodDispatch:
+	if method == methodDispatch {
 		return nil, p.serveDispatch(ctx, params)
-	case method == methodReadArtifact && p.host.ReadArtifact != nil:
-		return p.serveReadArtifact(params)
-	case method == methodDecide && p.host.Decide != nil:
-		return p.serveDecide(ctx, params)
+	}
+	if f, ok := p.calls[method]; ok {
+		return f(ctx, params)
 	}
 	return nil, &rpcError{Code: codeMethodNotFound, Message: "unknown method " + method}
 }
@@ -156,29 +218,65 @@ func (p *Process) serveDispatch(ctx context.Context, params json.RawMessage) err
 	return p.host.Dispatch(ctx, req)
 }
 
-func (p *Process) serveReadArtifact(params json.RawMessage) (any, error) {
-	var a readArtifactParams
-	if err := json.Unmarshal(params, &a); err != nil {
-		return nil, err
-	}
-	data, ok := p.host.ReadArtifact(a.ChatID, a.User, a.Name)
-	return readArtifactResult{Data: data, OK: ok}, nil
-}
-
-func (p *Process) serveDecide(ctx context.Context, params json.RawMessage) (any, error) {
-	// Decoding into a non-nil pointer keeps State as the child's bytes, so the handler sees its key order.
-	req := sdk.DecideRequest{State: &json.RawMessage{}}
-	if err := json.Unmarshal(params, &req); err != nil {
-		return nil, err
-	}
-	return p.host.Decide(ctx, req)
-}
-
-// RegisterRoutes forwards everything under /<name>/ behind quack's session auth. Public
-// (webhook) routes are not bridged yet, so an out-of-process extension cannot serve one.
-func (p *Process) RegisterRoutes(authed, _ chi.Router) {
+// RegisterRoutes forwards everything under /<name>/ behind quack's session auth, except the public routes the
+// child reported: those go on public as the extension mounted them in-process, and verify their own callers.
+func (p *Process) RegisterRoutes(authed, public chi.Router) {
 	authed.Handle("/", p)
 	authed.Handle("/*", p)
+	for _, rt := range p.publicRoutes {
+		public.Method(rt.Method, rt.Pattern, http.HandlerFunc(p.servePublic))
+	}
+}
+
+// Implements reports whether the child answers iface, an sdk interface quack calls into (e.g. "Deliverer").
+func (p *Process) Implements(iface string) bool { return slices.Contains(p.implements, iface) }
+
+// Deliver returns the child's outcomes with its error, as the in-process call does.
+func (p *Process) Deliver(ctx context.Context, dc sdk.DeliveryContext) ([]sdk.DeliveryItemOutcome, error) {
+	var res deliverResult
+	if err := p.current().call(ctx, methodDeliver, dc, &res); err != nil {
+		return nil, err
+	}
+	if res.Error != "" {
+		return res.Outcomes, errors.New(res.Error)
+	}
+	return res.Outcomes, nil
+}
+
+// GitCredential's reply carries a token, so nothing on this path logs it or puts it in an error.
+func (p *Process) GitCredential(ctx context.Context, rawURL string) (*sdk.GitCredential, error) {
+	var c *sdk.GitCredential
+	if err := p.current().call(ctx, methodGitCredential, gitCredentialParams{URL: rawURL}, &c); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// OnAssignment stamps no meta when the child cannot answer, as an in-process hook whose lookup fails does.
+func (p *Process) OnAssignment(ctx context.Context, a sdk.Assignment) map[string]any {
+	var meta map[string]any
+	if err := p.current().call(ctx, methodOnAssignment, assignmentParams{Assignment: a, SessionID: sessionID(ctx)}, &meta); err != nil {
+		p.log.Warn("extension process: OnAssignment failed; stamping no meta", "node", a.NodeID, "err", err)
+		return nil
+	}
+	return meta
+}
+
+// BeforeAssignment fails closed when the child cannot answer: resuming stale work is the worse miss.
+func (p *Process) BeforeAssignment(ctx context.Context, a sdk.Assignment) (bool, string) {
+	var res freshnessResult
+	if err := p.current().call(ctx, methodBeforeAssignment, assignmentParams{Assignment: a}, &res); err != nil {
+		return false, "extension process unavailable: " + err.Error()
+	}
+	return res.Fresh, res.Reason
+}
+
+// sessionID reads the ADK session id off the agent.Context quack passes a hook; "" for any other ctx.
+func sessionID(ctx context.Context) string {
+	if s, ok := ctx.(interface{ SessionID() string }); ok {
+		return s.SessionID()
+	}
+	return ""
 }
 
 func (p *Process) UI() sdk.UIDescriptor { return p.ui }
@@ -196,8 +294,15 @@ func (p *Process) current() *child {
 	return p.cur
 }
 
-// ServeHTTP forwards one request; quack's credentials never reach the child.
-func (p *Process) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+// ServeHTTP forwards one authed request; quack's credentials never reach the child.
+func (p *Process) ServeHTTP(w http.ResponseWriter, r *http.Request) { p.forward(w, r, methodHTTP) }
+
+// servePublic forwards a request to one of the child's public routes, which quack did not authenticate.
+func (p *Process) servePublic(w http.ResponseWriter, r *http.Request) {
+	p.forward(w, r, methodPublicHTTP)
+}
+
+func (p *Process) forward(w http.ResponseWriter, r *http.Request, method string) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, int64(maxBody)))
 	var tooLarge *http.MaxBytesError
 	if errors.As(err, &tooLarge) {
@@ -212,7 +317,7 @@ func (p *Process) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.Del("Authorization")
 	h.Del("Cookie")
 	var res httpResult
-	if err := p.current().call(r.Context(), methodHTTP, httpParams{Method: r.Method, URL: r.URL.RequestURI(), Header: h, Body: body}, &res); err != nil {
+	if err := p.current().call(r.Context(), method, httpParams{Method: r.Method, URL: r.URL.RequestURI(), Header: h, Body: body}, &res); err != nil {
 		if r.Context().Err() == nil {
 			p.log.Warn("extension request failed", "path", r.URL.Path, "err", err)
 		}

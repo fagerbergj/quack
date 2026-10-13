@@ -173,6 +173,9 @@ func testFactory(host sdk.Host, raw []byte) (sdk.Extension, error) {
 	}
 	host.Log.Info("factory ran", "data_dir", host.DataDir)
 	host.Log.Warn("factory warned")
+	if string(raw) == "inverse" {
+		return inverseExt{testExt{host: host}}, nil
+	}
 	return testExt{host: host, failStart: string(raw) == "failstart", slowStart: string(raw) == "slowstart"}, nil
 }
 
@@ -218,7 +221,12 @@ func startProcessWith(t *testing.T, dispatch sdk.DispatchFunc) (*Process, *httpt
 
 func startProcessHost(t *testing.T, host sdk.Host) (*Process, *httptest.Server, *syncBuf) {
 	t.Helper()
-	p, logs, err := newProcessHost("ok", host)
+	return startProcessConfig(t, "ok", host)
+}
+
+func startProcessConfig(t *testing.T, config string, host sdk.Host) (*Process, *httptest.Server, *syncBuf) {
+	t.Helper()
+	p, logs, err := newProcessHost(config, host)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

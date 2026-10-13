@@ -65,7 +65,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 # Extensions as child processes, run when quack.yaml sets extensions.<name>.exec: /quack-ext-<name>.
 RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o / ./extensions/usage/cmd/quack-ext-usage ./extensions/remarkable/cmd/quack-ext-remarkable \
-        ./extensions/sleeper/cmd/quack-ext-sleeper
+        ./extensions/sleeper/cmd/quack-ext-sleeper ./extensions/github/cmd/quack-ext-github
 
 # 2b) The external ACP coding agent: pi, driven through the tools/pi-acp shim.
 # PINNED - the RPC surface is integration-tested per release, so bump
@@ -174,6 +174,7 @@ COPY --link --from=backend /quack-sandbox /quack-sandbox
 COPY --link --from=backend /quack-ext-usage /quack-ext-usage
 COPY --link --from=backend /quack-ext-remarkable /quack-ext-remarkable
 COPY --link --from=backend /quack-ext-sleeper /quack-ext-sleeper
+COPY --link --from=backend /quack-ext-github /quack-ext-github
 COPY --link --from=backend /quack /quack
 ENV QUACK_CONFIG=/config/quack.yaml
 USER nonroot

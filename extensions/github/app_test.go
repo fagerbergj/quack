@@ -55,6 +55,15 @@ func TestAppJWTClaims(t *testing.T) {
 	}
 }
 
+// The key's path is a secret's location: a read failure names the key, never the path.
+func TestLoadPrivateKeyErrorOmitsPath(t *testing.T) {
+	path := t.TempDir() + "/secret-dir/app.pem"
+	_, err := LoadPrivateKey("", path)
+	if err == nil || strings.Contains(err.Error(), "secret-dir") || !strings.Contains(err.Error(), "no such file") {
+		t.Fatalf("LoadPrivateKey = %v, want the cause without the path", err)
+	}
+}
+
 func TestNewAppRejectsBadKey(t *testing.T) {
 	if _, err := NewApp("1", "not a pem"); err == nil {
 		t.Fatal("expected error for a bad private key")

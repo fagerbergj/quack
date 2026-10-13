@@ -13,17 +13,42 @@ import (
 // ProtocolVersion is bumped on any incompatible wire change; initialize refuses a mismatch.
 const ProtocolVersion = 2
 
-// Methods: the host calls initialize, http and tool and notifies runEnded; the child calls dispatch,
-// readArtifact and decide; either side notifies cancel for a call it gave up on.
+// Methods: the host calls initialize, http, publicHTTP, tool and the inverse-interface methods (deliver through
+// beforeAssignment) and notifies runEnded; the child calls dispatch and the Host callbacks (readArtifact through
+// decide); either side notifies cancel for a call it gave up on.
 const (
-	methodInitialize   = "initialize"
-	methodHTTP         = "http"
-	methodTool         = "tool"
-	methodRunEnded     = "runEnded"
-	methodDispatch     = "dispatch"
-	methodReadArtifact = "readArtifact"
-	methodDecide       = "decide"
-	methodCancel       = "cancel"
+	methodInitialize       = "initialize"
+	methodHTTP             = "http"
+	methodPublicHTTP       = "publicHTTP"
+	methodTool             = "tool"
+	methodDeliver          = "deliver"
+	methodGitCredential    = "gitCredential"
+	methodOnAssignment     = "onAssignment"
+	methodBeforeAssignment = "beforeAssignment"
+	methodRunEnded         = "runEnded"
+	methodDispatch         = "dispatch"
+	methodReadArtifact     = "readArtifact"
+	methodWriteArtifact    = "writeArtifact"
+	methodChatUser         = "chatUser"
+	methodArchiveChat      = "archiveChat"
+	methodUpdateChatOrigin = "updateChatOrigin"
+	methodInvalidateSetup  = "invalidateSetup"
+	methodClassify         = "classify"
+	methodDecide           = "decide"
+	methodCancel           = "cancel"
+)
+
+// Callback names an optional sdk.Host func by the method that carries it, for a child to require (see Main).
+type Callback string
+
+const (
+	WriteArtifact    Callback = methodWriteArtifact
+	ChatUser         Callback = methodChatUser
+	ArchiveChat      Callback = methodArchiveChat
+	UpdateChatOrigin Callback = methodUpdateChatOrigin
+	InvalidateSetup  Callback = methodInvalidateSetup
+	Classify         Callback = methodClassify
+	Decide           Callback = methodDecide
 )
 
 // message is a JSON-RPC 2.0 request, notification (ID 0: ids start at 1) or response (no Method).
@@ -45,8 +70,11 @@ func (e *rpcError) Error() string { return e.Message }
 
 // Unwrap keeps errors.Is(err, sdk.ErrRunInFlight) true on the far side of the wire.
 func (e *rpcError) Unwrap() error {
-	if e.Code == codeRunInFlight {
+	switch e.Code {
+	case codeRunInFlight:
 		return sdk.ErrRunInFlight
+	case codeUnknownChat:
+		return sdk.ErrUnknownChat
 	}
 	return nil
 }
@@ -55,6 +83,7 @@ const (
 	codeMethodNotFound = -32601
 	codeServerError    = -32000
 	codeRunInFlight    = -32001
+	codeUnknownChat    = -32002
 )
 
 // initParams carries what the in-process path puts in sdk.Host, plus the raw extensions.<name> block.
@@ -67,8 +96,9 @@ type initParams struct {
 	PublicURL string `json:"publicURL"`
 	Location  string `json:"location,omitempty"`
 
-	// Serves names the optional methods this host takes part in: it calls tool, answers readArtifact and decide. A protocol 2 host
-	// that predates them sends none: the child leaves those Host funcs nil and refuses to drop its tools.
+	// Serves names the optional methods this host takes part in: those it calls (tool, publicHTTP, deliver...) and the Host
+	// callbacks it answers. A host that predates one omits it: the child leaves that Host func nil, and refuses to start
+	// if it needs that callback (Main's needs) or has what the call carries (tools, public routes, a Deliverer...).
 	Serves []string `json:"serves,omitempty"`
 }
 
@@ -79,6 +109,18 @@ type initResult struct {
 	Tools           []toolSpec                 `json:"tools,omitempty"`
 	ArtifactSchemas map[string]json.RawMessage `json:"artifactSchemas,omitempty"`
 	DecisionPoints  []sdk.DecisionPoint        `json:"decisionPoints,omitempty"`
+
+	// Implements names the sdk interfaces quack calls into that the child answers, e.g. "Deliverer".
+	Implements []string `json:"implements,omitempty"`
+
+	// PublicRoutes are what the extension mounted on its public router: quack serves them without session auth.
+	PublicRoutes []routeSpec `json:"publicRoutes,omitempty"`
+}
+
+// routeSpec is one public route; Pattern is relative to /<name>, as chi.Walk reports it.
+type routeSpec struct {
+	Method  string `json:"method"`
+	Pattern string `json:"pattern"`
 }
 
 // toolSpec is one of the child's tools. Declaration stays raw so the model sees the child's schema bytes;
@@ -106,6 +148,59 @@ type readArtifactParams struct {
 type readArtifactResult struct {
 	Data []byte `json:"data,omitempty"`
 	OK   bool   `json:"ok"`
+}
+
+type writeArtifactParams struct {
+	ChatID   string `json:"chatID"`
+	User     string `json:"user"`
+	Name     string `json:"name"`
+	MIMEType string `json:"mimeType"`
+	Data     []byte `json:"data,omitempty"`
+}
+
+type writeArtifactResult struct {
+	Revision int64 `json:"revision"`
+	Changed  bool  `json:"changed"`
+}
+
+// chatParams carries chatUser, archiveChat and invalidateSetup.
+type chatParams struct {
+	ChatID string `json:"chatID"`
+}
+
+type chatUserResult struct {
+	User string `json:"user"`
+	OK   bool   `json:"ok"`
+}
+
+type updateChatOriginParams struct {
+	LocalID string         `json:"localID"`
+	Origin  sdk.ChatOrigin `json:"origin"`
+}
+
+type classifyParams struct {
+	Prompt string `json:"prompt"`
+}
+
+// deliverResult keeps Deliver's outcomes and error together: the in-process call returns both.
+type deliverResult struct {
+	Outcomes []sdk.DeliveryItemOutcome `json:"outcomes"`
+	Error    string                    `json:"error,omitempty"`
+}
+
+type gitCredentialParams struct {
+	URL string `json:"url"`
+}
+
+// assignmentParams carries the agent ctx's session id apart, since github's OnAssignment reads it off ctx.
+type assignmentParams struct {
+	Assignment sdk.Assignment `json:"assignment"`
+	SessionID  string         `json:"sessionID,omitempty"`
+}
+
+type freshnessResult struct {
+	Fresh  bool   `json:"fresh"`
+	Reason string `json:"reason,omitempty"`
 }
 
 type runEndedParams struct {

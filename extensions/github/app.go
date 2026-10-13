@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
 	"net/http"
 	"os"
@@ -119,8 +120,11 @@ func LoadPrivateKey(inline, path string) (string, error) {
 		return inline, nil
 	}
 	b, err := os.ReadFile(path)
+	if pe := (*fs.PathError)(nil); errors.As(err, &pe) {
+		err = pe.Err // keep the key's path out of quack's boot error and log, in or out of process
+	}
 	if err != nil {
-		return "", fmt.Errorf("github: read private_key_path %q: %w", path, err)
+		return "", fmt.Errorf("github: read private_key_path: %w", err)
 	}
 	return string(b), nil
 }

@@ -122,8 +122,11 @@ func toRPCError(err error) *rpcError {
 		return re
 	}
 	code := codeServerError
-	if errors.Is(err, sdk.ErrRunInFlight) {
+	switch {
+	case errors.Is(err, sdk.ErrRunInFlight):
 		code = codeRunInFlight
+	case errors.Is(err, sdk.ErrUnknownChat):
+		code = codeUnknownChat
 	}
 	return &rpcError{Code: code, Message: err.Error()}
 }
