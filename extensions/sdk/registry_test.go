@@ -13,10 +13,15 @@ func stubFactory(sdk.Host, []byte) (sdk.Extension, error) {
 	return nil, nil
 }
 
-// registry state is package-global, so each test picks a unique name.
+// register adds name for this test only: the registry is package-global and outlives a -count run.
+func register(t *testing.T, name string) {
+	t.Helper()
+	sdk.Register(name, stubFactory)
+	t.Cleanup(func() { sdk.Unregister(name) })
+}
 
 func TestRegisterAndRegistered(t *testing.T) {
-	sdk.Register("test-register-and-registered", stubFactory)
+	register(t, "test-register-and-registered")
 
 	got := sdk.Registered()
 	if _, ok := got["test-register-and-registered"]; !ok {
@@ -25,7 +30,7 @@ func TestRegisterAndRegistered(t *testing.T) {
 }
 
 func TestRegisterDuplicatePanics(t *testing.T) {
-	sdk.Register("test-duplicate", stubFactory)
+	register(t, "test-duplicate")
 
 	defer func() {
 		if recover() == nil {
@@ -36,7 +41,7 @@ func TestRegisterDuplicatePanics(t *testing.T) {
 }
 
 func TestRegisteredReturnsCopyNotLiveMap(t *testing.T) {
-	sdk.Register("test-isolation", stubFactory)
+	register(t, "test-isolation")
 
 	snapshot := sdk.Registered()
 	delete(snapshot, "test-isolation")
