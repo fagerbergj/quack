@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"iter"
 	"log/slog"
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -19,6 +21,7 @@ import (
 	"time"
 
 	extsdk "github.com/fagerbergj/quack/extensions/sdk"
+	"github.com/fagerbergj/quack/extensions/sdk/extproc"
 	"github.com/google/uuid"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
@@ -111,6 +114,7 @@ type extensionConfig struct {
 	raw     []byte
 	enabled bool
 	dataDir string
+	exec    string
 }
 
 // loadExtensionConfig checks the name is route-safe, re-marshals the block, and
@@ -127,7 +131,7 @@ func loadExtensionConfig(cfg *config.Config, name string) (extensionConfig, erro
 	if dataDir == "" {
 		dataDir = filepath.Join(cfg.Workspace.Root, "extensions", name)
 	}
-	return extensionConfig{raw: raw, enabled: base.Enabled == nil || *base.Enabled, dataDir: dataDir}, nil
+	return extensionConfig{raw: raw, enabled: base.Enabled == nil || *base.Enabled, dataDir: dataDir, exec: base.Exec}, nil
 }
 
 // ExtensionCheck is ValidateExtensions' per-extension verdict.
@@ -182,6 +186,12 @@ func validateOneExtension(cfg *config.Config, name string, factories map[string]
 	}
 	if err := dirCreatable(ec.dataDir); err != nil {
 		return nil, fmt.Errorf("extensions.%s: data dir: %w", name, err)
+	}
+	// The child runs the same compiled factory, so the in-process call below still checks its config.
+	if ec.exec != "" {
+		if _, err := exec.LookPath(ec.exec); err != nil {
+			return nil, fmt.Errorf("extensions.%s: exec: %w", name, err)
+		}
 	}
 	if err := os.MkdirAll(scratch, 0o755); err != nil {
 		return nil, err
@@ -258,7 +268,7 @@ func buildOneSDKExtension(name string, factory extsdk.Factory, d sdkBuildDeps) (
 		},
 		Decide: d.decisions.host(name),
 	}
-	ext, err := factory(host, ec.raw)
+	ext, err := newExtension(name, factory, host, ec)
 	if err != nil {
 		return builtSDKExtension{}, false, fmt.Errorf("extensions.%s: factory: %w", name, err)
 	}
@@ -272,6 +282,28 @@ func buildOneSDKExtension(name string, factory extsdk.Factory, d sdkBuildDeps) (
 		b.title, b.href, b.icon = dd.Title, dd.Href, dd.Icon
 	}
 	return b, false, nil
+}
+
+// newExtension calls the compiled-in factory, or starts the extension as a supervised child when
+// its block sets exec; Close on the result (an io.Closer) stops that child.
+func newExtension(name string, factory extsdk.Factory, host extsdk.Host, ec extensionConfig) (extsdk.Extension, error) {
+	if ec.exec == "" {
+		return factory(host, ec.raw)
+	}
+	p, err := extproc.New(name, ec.exec, host, ec.raw)
+	if err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+// closeSDKExtensions stops every out-of-process extension's child.
+func closeSDKExtensions(exts []builtSDKExtension) {
+	for _, e := range exts {
+		if c, ok := e.ext.(io.Closer); ok {
+			_ = c.Close()
+		}
+	}
 }
 
 // startSDKExtensions calls Start on every extension implementing sdk.Starter,

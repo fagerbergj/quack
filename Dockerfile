@@ -62,6 +62,9 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 # few MB instead of the full server binary on every spawn.
 RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /quack-sandbox ./cmd/quack-sandbox
+# The usage extension as a child process, run when quack.yaml sets extensions.usage.exec: /quack-ext-usage.
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /quack-ext-usage ./extensions/usage/cmd/quack-ext-usage
 
 # 2b) The external ACP coding agent: pi, driven through the tools/pi-acp shim.
 # PINNED - the RPC surface is integration-tested per release, so bump
@@ -167,6 +170,7 @@ COPY --link agents/ /agents/
 COPY --link skills/ /skills/
 # Last: they change on every code edit, so the layers above stay pullable from cache.
 COPY --link --from=backend /quack-sandbox /quack-sandbox
+COPY --link --from=backend /quack-ext-usage /quack-ext-usage
 COPY --link --from=backend /quack /quack
 ENV QUACK_CONFIG=/config/quack.yaml
 USER nonroot

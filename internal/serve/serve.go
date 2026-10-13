@@ -685,6 +685,8 @@ func (b *boot) initExtensions(ctx context.Context, st *store.Store, runHub *stre
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, err
 	}
+	// A cleanup, not ctx.Done: Run calls it after srv.Shutdown, so proxied requests drain first.
+	b.cleanups = append(b.cleanups, func() { closeSDKExtensions(sdkExts) })
 	if b.decisions, err = decisions.build(b.cfg.Decisions); err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, err
 	}
