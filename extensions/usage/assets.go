@@ -22,6 +22,11 @@ type dashboardData struct {
 }
 
 func (e *extension) handleDashboard(w http.ResponseWriter, r *http.Request) {
+	// Bare "/usage" would resolve the page's relative app.js to the SPA's /app.js fallback.
+	if r.URL.Path == "/"+extensionName {
+		http.Redirect(w, r, r.URL.Path+"/", http.StatusMovedPermanently)
+		return
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = indexTmpl.Execute(w, dashboardData{
 		DefaultRangeSeconds: int64(e.rangeWindow.Seconds()),

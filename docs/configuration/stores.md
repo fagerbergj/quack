@@ -43,7 +43,7 @@ Backs semantic memory / RAG recall. A vector store carries extra fields a relati
 - Forgetting rules are built in, not configurable. The nightly sweep applies them in order, first match wins, no match keeps the memory: unverified, unsupported, and never recalled 30+ days after minting -> invalidate; unverified, recalled 3+ times with zero judge/human support -> invalidate; net score <= -2 -> invalidate; verified but no upvote in 90+ days -> demote (`memory_ops` reason `"support decayed"`; `supported` is left untouched, so the row re-promotes on its next vote or consolidator write); verified -> keep. Run `quack memory sweep --dry-run` to see what they would do.
 - `top_k` / `min_score` - recall defaults (neighbors fetched, minimum cosine similarity for a hit; `0` disables the floor). Overridable per tool.
 
-An empty `url` (i.e. `QUACK_QDRANT_URL` unset) makes memory self-disable - a qdrant-less deployment keeps running, it just never recalls or commits memories.
+An empty `url` (i.e. `QUACK_QDRANT_URL` unset) makes memory self-disable - a qdrant-less deployment keeps running, it just never recalls or commits memories. The memory API routes then answer 503 `memory is disabled (no vector store configured)`, which `quack memory` prints and the UI Memory page shows as a disabled state.
 
 ## `extends`
 

@@ -1717,6 +1717,9 @@ type PluginName = string
 // ResponseID defines model for ResponseID.
 type ResponseID = string
 
+// MemoryDisabled defines model for MemoryDisabled.
+type MemoryDisabled = ErrorResponse
+
 // bearerAuthContextKey is the context key for bearerAuth security scheme
 type bearerAuthContextKey string
 

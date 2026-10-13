@@ -92,22 +92,27 @@ func memoryContents(mems []schema.Memory) []string {
 	return out
 }
 
-// No memory backend configured: listing is empty (not an error), and forgetting anything 404s.
-func TestListMemories_NoStoreConfigured(t *testing.T) {
+// No memory backend configured: every store-backed route says memory is disabled (503) instead
+// of answering an empty list that reads as "nothing remembered yet".
+func TestMemoryRoutes_NoStoreConfiguredAre503(t *testing.T) {
 	h := newTestHandler(t) // taskMem/userMem both nil
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/memories", nil)
-	w := httptest.NewRecorder()
-	h.ListMemories(w, req, schema.ListMemoriesParams{})
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", w.Code)
+	routes := map[string]func(w http.ResponseWriter, r *http.Request){
+		"list":    func(w http.ResponseWriter, r *http.Request) { h.ListMemories(w, r, schema.ListMemoriesParams{}) },
+		"get":     func(w http.ResponseWriter, r *http.Request) { h.GetMemory(w, r, "m1") },
+		"delete":  func(w http.ResponseWriter, r *http.Request) { h.DeleteMemory(w, r, "m1") },
+		"vote":    func(w http.ResponseWriter, r *http.Request) { h.VoteMemory(w, r, "m1") },
+		"sweep":   h.SweepMemories,
+		"rescope": h.RescopeMemories,
+		"stats":   func(w http.ResponseWriter, r *http.Request) { h.GetMemoryStats(w, r, schema.GetMemoryStatsParams{}) },
 	}
-	var got schema.MemoryList
-	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if got.Total != 0 || len(got.Memories) != 0 {
-		t.Fatalf("got %+v, want an empty list", got)
+	for name, route := range routes {
+		w := httptest.NewRecorder()
+		route(w, httptest.NewRequest(http.MethodGet, "/api/v1/memories", strings.NewReader(`{"vote":"up"}`)))
+		var got schema.ErrorResponse
+		_ = json.NewDecoder(w.Body).Decode(&got)
+		if w.Code != http.StatusServiceUnavailable || got.Error != memoryDisabledMsg {
+			t.Errorf("%s: status %d error %q, want 503 %q", name, w.Code, got.Error, memoryDisabledMsg)
+		}
 	}
 }
 

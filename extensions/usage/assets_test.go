@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/go-chi/chi/v5"
 )
 
 func newTestExtension(t *testing.T) *extension {
@@ -58,6 +60,27 @@ func TestDashboardOmitsTempoURLWhenUnconfigured(t *testing.T) {
 
 	if strings.Contains(rec.Body.String(), "http://tempo") {
 		t.Error("dashboard HTML mentions a tempo URL that was never configured")
+	}
+}
+
+// Mounted as quack's router mounts it, bare /usage must land on /usage/ so the relative app.js
+// resolves under the extension rather than to the SPA fallback.
+func TestBareMountPathRedirectsToTrailingSlash(t *testing.T) {
+	sub := chi.NewRouter()
+	newTestExtension(t).RegisterRoutes(sub, chi.NewRouter())
+	r := chi.NewRouter()
+	r.Mount("/"+extensionName, sub)
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/usage", nil))
+	if rec.Code != http.StatusMovedPermanently || rec.Header().Get("Location") != "/usage/" {
+		t.Fatalf("GET /usage = %d Location %q, want 301 to /usage/", rec.Code, rec.Header().Get("Location"))
+	}
+
+	rec = httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/usage/", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `<script src="app.js">`) {
+		t.Fatalf("GET /usage/ = %d, want the dashboard page", rec.Code)
 	}
 }
 
@@ -288,11 +311,11 @@ func TestAppJSCacheBreakdownShowsNAForEmbeddings(t *testing.T) {
 	}
 }
 
-// Latency probes for the histogram's _bucket series before rendering percentiles and names
-// what's missing otherwise.
+// Latency probes for the histogram's _bucket series over the whole range before rendering
+// percentiles; an instant probe went empty minutes after the last call and blanked the tiles.
 func TestAppJSLatencyHasHonestPresenceProbe(t *testing.T) {
-	if !strings.Contains(appJS, "_bucket") {
-		t.Error("app.js missing a histogram _bucket presence probe for the latency panel")
+	if !strings.Contains(appJS, "count(last_over_time(${LATENCY.metric}_bucket[${rangeSeconds}s]))") {
+		t.Error("app.js latency presence probe must look back over the selected range")
 	}
 	if !strings.Contains(appJS, "EMPTY_LATENCY_MSG") {
 		t.Error("app.js missing the named latency empty-state message")
@@ -362,7 +385,7 @@ func TestAppJSSwitchesSparseSeriesToBars(t *testing.T) {
 			t.Errorf("app.js sparse-series handling missing %q", want)
 		}
 	}
-	if !strings.Contains(appJS, "if (s.points.length <= 2) for (const p of s.points) svg.appendChild(dotMarker(") {
+	if !strings.Contains(appJS, "if (run.length <= 2) for (const t of run) svg.appendChild(dotMarker(") {
 		t.Error("app.js dropped the 1-2 point dot-marker fallback the line path still needs (qx#15)")
 	}
 }

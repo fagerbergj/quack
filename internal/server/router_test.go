@@ -1,8 +1,11 @@
 package server_test
 
 import (
+	"compress/gzip"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -204,6 +207,50 @@ func TestRouterServesStaticSPAAssetVerbatim(t *testing.T) {
 	}
 	if cc := rec.Header().Get("Cache-Control"); cc != "public, max-age=31536000, immutable" {
 		t.Errorf("hashed asset Cache-Control = %q, want public, max-age=31536000, immutable", cc)
+	}
+}
+
+// The SPA bundle and JSON API answers are gzipped for a client that accepts it, while an SSE
+// stream is left alone so each event still flushes as written.
+func TestRouterGzipsAssetsAndJSONButNotSSE(t *testing.T) {
+	js := strings.Repeat("console.log('hi');", 200)
+	h := server.New(server.Options{
+		REST: &rest.Handler{},
+		SPA:  fstest.MapFS{"index.html": {Data: []byte("<html/>")}, "assets/index-4f9a2c1bd8.js": {Data: []byte(js)}},
+		SDKExtensions: []server.SDKExtensionMount{{Name: "noop", RegisterRoutes: func(_, public chi.Router) {
+			public.Get("/events", func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = w.Write([]byte("data: x\n\n"))
+			})
+		}}},
+	})
+	get := func(path string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Accept-Encoding", "gzip, br")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	rec := get("/assets/index-4f9a2c1bd8.js")
+	if rec.Header().Get("Content-Encoding") != "gzip" || rec.Header().Get("Vary") != "Accept-Encoding" {
+		t.Fatalf("asset headers = %v, want gzip + Vary: Accept-Encoding", rec.Header())
+	}
+	zr, err := gzip.NewReader(rec.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body, _ := io.ReadAll(zr); string(body) != js {
+		t.Errorf("gunzipped asset = %d bytes, want the %d original bytes", len(body), len(js))
+	}
+
+	if rec := get("/api/v1/config"); rec.Header().Get("Content-Encoding") != "gzip" {
+		t.Errorf("GET /api/v1/config Content-Encoding = %q, want gzip", rec.Header().Get("Content-Encoding"))
+	}
+
+	rec = get("/noop/events")
+	if enc := rec.Header().Get("Content-Encoding"); enc != "" || rec.Body.String() != "data: x\n\n" {
+		t.Errorf("SSE Content-Encoding %q body %q, want an uncompressed stream", enc, rec.Body.String())
 	}
 }
 
