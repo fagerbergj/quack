@@ -325,6 +325,34 @@ func TestEditDirectApply(t *testing.T) {
 	}
 }
 
+// TestEditConflictNamesEveryMiss: a conflict's Reason lists every edit that missed, on both the blob and the
+// structured path, so one retry can fix them all.
+func TestEditConflictNamesEveryMiss(t *testing.T) {
+	ctx := context.Background()
+	c := newTestClient(t)
+	blobID, blobRev, err := c.SaveBlob(ctx, "test.blob", []byte("alpha beta"), "text/plain", "miss", Lineage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	docID, docRev, err := c.SaveStructured(ctx, "test.structured", doc{A: "alpha", C: "beta"}, "miss", Lineage{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ops := []EditOp{{Old: "gamma", New: "x"}, {Old: "alpha", New: "a"}, {Old: "delta", New: "y"}}
+	for id, rev := range map[string]int{blobID: blobRev, docID: docRev} {
+		_, _, err := c.Edit(ctx, id, rev, ops, Lineage{})
+		var conflict *EditConflict
+		if !errors.As(err, &conflict) {
+			t.Fatalf("%s: Edit = %v, want *EditConflict", id, err)
+		}
+		for _, want := range []string{`edits[0]: old-string matched 0 times`, `edits[2]: old-string matched 0 times`} {
+			if !strings.Contains(conflict.Reason, want) {
+				t.Errorf("%s: Reason = %q, want it to include %q", id, conflict.Reason, want)
+			}
+		}
+	}
+}
+
 // TestEditRejectsSystemKind: tryEdit must refuse a System kind - the one
 // place both the native and MCP edit_artifact surfaces route through.
 func TestEditRejectsSystemKind(t *testing.T) {

@@ -2,6 +2,7 @@ package vetting
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -97,5 +98,28 @@ func TestValidateCodeReview(t *testing.T) {
 	}
 	if err := validateCodeReview(raw); err == nil || !strings.Contains(err.Error(), "takeaway") {
 		t.Fatalf("got %v, want a takeaway-cap error surfaced through the record validator", err)
+	}
+}
+
+// TestCodeReviewSchemaDeclaresCaps: write_code_review's schema states each enforced cap, so the model
+// sees it before the call instead of in a rejection.
+func TestCodeReviewSchemaDeclaresCaps(t *testing.T) {
+	var s struct {
+		Properties map[string]struct {
+			Description string `json:"description"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal([]byte(codeReviewJSONSchema), &s); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"takeaway": fmt.Sprintf("max %d characters", reviewTakeawayMaxLen),
+		"verified": fmt.Sprintf("max %d items, each max %d characters", reviewVerifiedMaxItems, reviewVerifiedMaxLen),
+		"notes":    fmt.Sprintf("max %d items, each max %d characters", reviewNotesMaxItems, reviewNotesMaxLen),
+	}
+	for field, limit := range want {
+		if got := s.Properties[field].Description; !strings.Contains(got, limit) {
+			t.Errorf("%s description = %q, want it to state %q", field, got, limit)
+		}
 	}
 }

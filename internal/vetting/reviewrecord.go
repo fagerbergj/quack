@@ -32,16 +32,16 @@ const (
 	kindJudgeRound = "judge_round"
 )
 
-// codeReviewJSONSchema/findingJSONSchema back the generated write_<kind> tools: literal text, not
-// reflected from the Go struct, so the agent-facing schema is reviewed on its own.
+// codeReviewJSONSchema/findingJSONSchema back write_<kind>: literal text, reviewed on its own. Caps sit in
+// "description", not maxLength: schema validation stops at the first error, CheckCodeReviewCaps reports all.
 const codeReviewJSONSchema = `{
   "type": "object",
   "required": ["verdict"],
   "properties": {
     "verdict": {"type": "string", "enum": ["approve", "request_changes", "comment"]},
-    "takeaway": {"type": "string"},
-    "verified": {"type": "array", "items": {"type": "string"}},
-    "notes": {"type": "array", "items": {"type": "string"}},
+    "takeaway": {"type": "string", "description": "one line, max 240 characters"},
+    "verified": {"type": "array", "items": {"type": "string"}, "description": "max 8 items, each max 160 characters"},
+    "notes": {"type": "array", "items": {"type": "string"}, "description": "max 8 items, each max 200 characters"},
     "finding_ids": {"type": "array", "items": {"type": "string"}},
     "dismissed": {"type": "array", "items": {"type": "object", "properties": {
       "path": {"type": "string"}, "line": {"type": "integer"}, "note": {"type": "string"}

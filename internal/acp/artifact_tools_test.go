@@ -332,13 +332,19 @@ func TestEditArtifactMCP_BothSpellingsRejected(t *testing.T) {
 
 	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "edit_artifact", Arguments: map[string]any{
 		"id": id, "base_revision": float64(rev),
-		"edits": []map[string]any{{"old": "world", "oldText": "world", "new": "there"}},
+		"edits": []map[string]any{{"old": "world", "oldText": "world", "new": "there"}, {"old": "hello", "new": "hi", "newText": "hi"}},
 	}})
 	if err != nil {
 		t.Fatalf("CallTool edit_artifact: %v", err)
 	}
 	if !res.IsError {
 		t.Fatalf("old+oldText both set should error, got: %s", toolResultText(t, res))
+	}
+	// Every bad edit is named in one rejection, so one retry fixes them all.
+	for _, want := range []string{"edits[0]: set only one of old/oldText", "edits[1]: set only one of new/newText"} {
+		if got := toolResultText(t, res); !strings.Contains(got, want) {
+			t.Errorf("rejection = %q, want it to include %q", got, want)
+		}
 	}
 	raw, _, ok, err := rc.Latest(ctx, id)
 	if err != nil || !ok || string(raw) != "hello world" {
@@ -434,6 +440,10 @@ func TestEditArtifactMCP_ConflictReturnsCurrent(t *testing.T) {
 	}
 	if content, _ := out["content"].(string); content != "hello world" {
 		t.Fatalf("StructuredContent[content] = %q, want %q", content, "hello world")
+	}
+	// The conflict names the edit that missed, so the retry needn't diff the content to find it.
+	if reason, _ := out["reason"].(string); !strings.Contains(reason, "edits[0]: old-string matched 0 times") || !strings.Contains(text, reason) {
+		t.Fatalf("StructuredContent[reason] = %q (text %q), want edits[0]'s miss in both", reason, text)
 	}
 	raw, _, ok, err := rc.Latest(ctx, id)
 	if err != nil || !ok || string(raw) != "hello world" {

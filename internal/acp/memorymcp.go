@@ -155,6 +155,7 @@ type editConflictResult struct {
 	Conflict bool   `json:"conflict"`
 	Revision int    `json:"revision"`
 	Content  string `json:"content"`
+	Reason   string `json:"reason"`
 }
 
 // editArtifactOp is one search/replace pair. OldText/NewText alias old/new for workers primed on the
@@ -168,12 +169,13 @@ type editArtifactOp struct {
 
 // resolve picks old/new, falling back to the oldText/newText alias. Setting both spellings is rejected:
 // picking one silently risks applying an edit the caller didn't intend.
-func (e editArtifactOp) resolve() (old, new string, err error) {
+func (e editArtifactOp) resolve(i int) (old, new string, err error) {
+	var errs []error
 	if e.Old != "" && e.OldText != "" {
-		return "", "", errors.New("edit_artifact: set only one of old/oldText, not both")
+		errs = append(errs, fmt.Errorf("edit_artifact: edits[%d]: set only one of old/oldText, not both", i))
 	}
 	if e.New != "" && e.NewText != "" {
-		return "", "", errors.New("edit_artifact: set only one of new/newText, not both")
+		errs = append(errs, fmt.Errorf("edit_artifact: edits[%d]: set only one of new/newText, not both", i))
 	}
 	old, new = e.Old, e.New
 	if old == "" {
@@ -182,7 +184,19 @@ func (e editArtifactOp) resolve() (old, new string, err error) {
 	if new == "" {
 		new = e.NewText
 	}
-	return old, new, nil
+	return old, new, errors.Join(errs...)
+}
+
+// resolveEditOps resolves every edit, reporting all bad ones at once so one retry fixes them.
+func resolveEditOps(edits []editArtifactOp) ([]recordstore.EditOp, error) {
+	ops := make([]recordstore.EditOp, len(edits))
+	var errs []error
+	for i, e := range edits {
+		old, new, err := e.resolve(i)
+		errs = append(errs, err)
+		ops[i] = recordstore.EditOp{Old: old, New: new}
+	}
+	return ops, errors.Join(errs...)
 }
 
 // registerEditArtifactTool: optimistic-locking search/replace. A stale base_revision succeeds while every Old
@@ -200,13 +214,9 @@ func registerEditArtifactTool(srv *mcp.Server, c *recordstore.Client, sess vetti
 		if len(args.Edits) == 0 {
 			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "edit_artifact: edits must be non-empty"}}}, nil, nil
 		}
-		ops := make([]recordstore.EditOp, len(args.Edits))
-		for i, e := range args.Edits {
-			old, new, err := e.resolve()
-			if err != nil {
-				return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}}}, nil, nil
-			}
-			ops[i] = recordstore.EditOp{Old: old, New: new}
+		ops, err := resolveEditOps(args.Edits)
+		if err != nil {
+			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}}}, nil, nil
 		}
 		round, turnID, headSHA, trigger := currentRound(sess)
 		lineage := recordstore.Lineage{NodeID: sess.NodeID, Round: round, TurnID: turnID, HeadSHA: headSHA, TriggerAnnotation: trigger, Author: "worker", SavedAt: time.Now().UTC()}
@@ -215,9 +225,9 @@ func registerEditArtifactTool(srv *mcp.Server, c *recordstore.Client, sess vetti
 			var conflict *recordstore.EditConflict
 			if errors.As(err, &conflict) {
 				// A conflict is an actionable outcome (re-read and retry), not a tool failure: success, not IsError.
-				out := editConflictResult{Conflict: true, Revision: conflict.Revision, Content: string(conflict.Content)}
+				out := editConflictResult{Conflict: true, Revision: conflict.Revision, Content: string(conflict.Content), Reason: conflict.Reason}
 				return &mcp.CallToolResult{
-					Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("conflict - re-read and retry.\ncurrent revision: %d\ncurrent content:\n%s", conflict.Revision, string(conflict.Content))}},
+					Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("conflict - re-read and retry.\n%s\ncurrent revision: %d\ncurrent content:\n%s", conflict.Reason, conflict.Revision, string(conflict.Content))}},
 				}, out, nil
 			}
 			if msg, ok := artifactschema.RefusalFromError(err); ok {

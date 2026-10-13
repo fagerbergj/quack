@@ -56,6 +56,35 @@ func TestUpsertNodesUnknownDependsOn(t *testing.T) {
 	}
 }
 
+// TestPlanToolsReportEveryProblem: one rejected create_plan/edit_plan call names every bad assignment and
+// remove id, so the orchestrator fixes them all in one retry.
+func TestPlanToolsReportEveryProblem(t *testing.T) {
+	existing := []dag.DagNodeRecord{{NodeID: "impl-1", Agent: "code-implementer"}}
+	_, _, resolveErr := upsertNodes([]assignmentInput{
+		{Agent: "nope", Task: "x"},
+		{NodeID: "ghost-1", Task: "x"},
+	}, existing, nil, "chat1", nil, []string{"code-implementer"})
+	_, _, depsErr := upsertNodes([]assignmentInput{
+		{NodeID: "impl-1", Task: "x", DependsOn: []string{"ghost-a", "ghost-b"}},
+		{NodeID: "impl-1", Task: "y"},
+	}, existing, nil, "chat1", nil, []string{"code-implementer"})
+	_, removeErr := removeAssignments([]dag.Assignment{{NodeID: "done-1", TaskID: "t1"}}, []string{"ghost-1", "done-1"})
+	for _, tc := range []struct {
+		err   error
+		wants []string
+	}{
+		{resolveErr, []string{`assignments[0].agent: unknown agent "nope"`, `assignments[1].node_id: unknown node id "ghost-1"`}},
+		{depsErr, []string{`unknown node id "ghost-a"`, `unknown node id "ghost-b"`, "assignments[1].node_id"}},
+		{removeErr, []string{`unknown node id "ghost-1"`, `"done-1" already ran`}},
+	} {
+		for _, want := range tc.wants {
+			if tc.err == nil || !strings.Contains(tc.err.Error(), want) {
+				t.Errorf("got %v, want it to include %q", tc.err, want)
+			}
+		}
+	}
+}
+
 // TestUpsertNodesDuplicateNodeIDInOneCall: a node_id repeated in one call is an error, not a
 // silent last-write-wins collapse in mergeAssignments.
 func TestUpsertNodesDuplicateNodeIDInOneCall(t *testing.T) {

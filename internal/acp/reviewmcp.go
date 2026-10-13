@@ -2,6 +2,7 @@ package acp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -89,13 +90,8 @@ func addStageReviewComment(srv *mcp.Server, review *vetting.ReviewStage) {
 		Description: "Stage one inline, line-anchored review comment on the pull request under review. Call once per finding; the gate posts them after your answer passes. Returns the id of the staged comment, for later retraction via unstage_review_comment. Duplicates (same path, line, and body) are rejected with the existing id, not double-staged.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args stageReviewCommentInput) (*mcp.CallToolResult, any, error) {
 		body := strings.TrimSpace(args.Body)
-		if strings.TrimSpace(args.Path) == "" || args.Line <= 0 || body == "" {
-			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "stage_review_comment needs a path, a positive line, and a non-empty body"}}}, nil, nil
-		}
-		// The one choke every reviewer node's findings share - an unlabeled
-		// finding otherwise renders uncounted and never makes Highlights.
-		if !vetting.HasCommentLabel(body) {
-			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "stage_review_comment's body must open with a Conventional Comments label: blocking:, suggestion:, nit:, or question: (e.g. \"blocking: nil deref on the unchecked input\")"}}}, nil, nil
+		if err := checkReviewComment(strings.TrimSpace(args.Path), args.Line, body); err != nil {
+			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}}}, nil, nil
 		}
 		id, dup := review.AddComment(strings.TrimSpace(args.Path), args.Line, body)
 		if dup {
@@ -103,6 +99,26 @@ func addStageReviewComment(srv *mcp.Server, review *vetting.ReviewStage) {
 		}
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("staged as id %s", id)}}}, nil, nil
 	})
+}
+
+// checkReviewComment reports every problem with one stage_review_comment call, so one retry fixes them all.
+func checkReviewComment(path string, line int, body string) error {
+	var errs []error
+	if path == "" {
+		errs = append(errs, errors.New("stage_review_comment: path is required"))
+	}
+	if line <= 0 {
+		errs = append(errs, fmt.Errorf("stage_review_comment: line must be a positive 1-based line number, got %d", line))
+	}
+	// The one choke every reviewer node's findings share - an unlabeled
+	// finding otherwise renders uncounted and never makes Highlights.
+	switch {
+	case body == "":
+		errs = append(errs, errors.New("stage_review_comment: body is required"))
+	case !vetting.HasCommentLabel(body):
+		errs = append(errs, errors.New("stage_review_comment's body must open with a Conventional Comments label: blocking:, suggestion:, nit:, or question: (e.g. \"blocking: nil deref on the unchecked input\")"))
+	}
+	return errors.Join(errs...)
 }
 
 // addListReviewComments: the list_review_comments tool (paginated listing).
@@ -163,14 +179,8 @@ func addStageReview(srv *mcp.Server, review *vetting.ReviewStage) {
 		Description: "Stage the overall review verdict (approve | request_changes | comment), takeaway, verified checks, and notes. Call once, after your inline comments; the gate renders the fixed review format (verdict/scope/highlights are generated, not written) and submits it after your answer passes.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args stageReviewInput) (*mcp.CallToolResult, any, error) {
 		event := strings.ToLower(strings.TrimSpace(args.Event))
-		if event != "approve" && event != "request_changes" && event != "comment" {
-			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "stage_review event must be approve, request_changes, or comment"}}}, nil, nil
-		}
 		takeaway := strings.TrimSpace(args.Takeaway)
-		if takeaway == "" {
-			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "stage_review takeaway is required: one sentence, max 240 characters"}}}, nil, nil
-		}
-		if err := vetting.CheckCodeReviewCaps(takeaway, args.Verified, args.Notes); err != nil {
+		if err := checkStageReview(event, takeaway, args.Verified, args.Notes); err != nil {
 			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}}}, nil, nil
 		}
 		if err := review.SetVerdict(event, takeaway, args.Verified, args.Notes); err != nil {
@@ -178,6 +188,18 @@ func addStageReview(srv *mcp.Server, review *vetting.ReviewStage) {
 		}
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "staged"}}}, nil, nil
 	})
+}
+
+// checkStageReview reports every problem with one stage_review call, so one retry fixes them all.
+func checkStageReview(event, takeaway string, verified, notes []string) error {
+	var errs []error
+	if event != "approve" && event != "request_changes" && event != "comment" {
+		errs = append(errs, errors.New("stage_review event must be approve, request_changes, or comment"))
+	}
+	if takeaway == "" {
+		errs = append(errs, errors.New("stage_review takeaway is required: one sentence, max 240 characters"))
+	}
+	return errors.Join(append(errs, vetting.CheckCodeReviewCaps(takeaway, verified, notes))...)
 }
 
 // stagePRInput: the title + body the implementer authored with the pr-authoring skill, which owns the template.

@@ -457,3 +457,40 @@ func TestPlanOnlyNodeOffersNoStagePRTool(t *testing.T) {
 		}
 	}
 }
+
+// TestReviewMCP_ReportsEveryProblem: one rejected call names every bad field, so one retry fixes them all.
+func TestReviewMCP_ReportsEveryProblem(t *testing.T) {
+	ctx := context.Background()
+	secret := mustMemSecret(t)
+	vetting.RegisterMemSession(secret, vetting.MemSession{Review: &vetting.ReviewStage{}})
+	defer vetting.UnregisterMemSession(secret)
+	ts := httptest.NewServer(memoryMCPHandler())
+	t.Cleanup(func() { ts.Close() })
+	cs := connectMCP(t, ts, secret)
+
+	notes := make([]any, 9)
+	for i := range notes {
+		notes[i] = "note"
+	}
+	for _, tc := range []struct {
+		tool string
+		args map[string]any
+		want []string
+	}{
+		{"stage_review_comment", map[string]any{"path": "", "line": 0, "body": "no label here"},
+			[]string{"path is required", "line must be a positive", "Conventional Comments label"}},
+		{"stage_review", map[string]any{"event": "lgtm", "takeaway": " ", "notes": notes},
+			[]string{"event must be approve", "takeaway is required", "notes: 9 items, max 8"}},
+	} {
+		res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: tc.tool, Arguments: tc.args})
+		if err != nil {
+			t.Fatalf("CallTool %s: %v", tc.tool, err)
+		}
+		got := toolResultText(t, res)
+		for _, w := range tc.want {
+			if !res.IsError || !strings.Contains(got, w) {
+				t.Errorf("%s: got %q, want an error including %q", tc.tool, got, w)
+			}
+		}
+	}
+}

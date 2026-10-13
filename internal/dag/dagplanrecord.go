@@ -118,31 +118,40 @@ func validateDagPlanRecord(raw json.RawMessage) error {
 		ids = append(ids, a.NodeID)
 	}
 	sort.Strings(ids)
+	var errs []error
 	nodes := make([]Node, 0, len(rec.Assignments))
 	for _, a := range rec.Assignments {
-		if err := ValidateTask(a.Task); err != nil {
-			return fmt.Errorf("assignments.%s.%w", a.NodeID, err)
-		}
-		for _, dep := range a.DependsOn {
-			if !known[dep] {
-				return fmt.Errorf("assignments.%s.depends_on: unknown node id %q; this plan's node ids: %s",
-					a.NodeID, dep, strings.Join(ids, ", "))
-			}
-		}
-		if len(a.Checks) > 0 {
-			if err := ValidateChecks(a.Checks); err != nil {
-				return fmt.Errorf("assignments.%s.checks: %w", a.NodeID, err)
-			}
-		}
+		errs = append(errs, checkAssignment(a, known, ids)...)
 		nodes = append(nodes, Node{ID: a.NodeID, DependsOn: a.DependsOn})
 	}
-	if _, err := topoLayers(Plan{Nodes: nodes}); err != nil {
-		return fmt.Errorf("assignments: %w", err)
+	// A cycle check over a plan with unknown ids or other faults would only add noise.
+	if len(errs) == 0 {
+		if _, err := topoLayers(Plan{Nodes: nodes}); err != nil {
+			errs = append(errs, fmt.Errorf("assignments: %w", err))
+		}
 	}
-	if err := validateDelivery(rec.Delivery); err != nil {
-		return err // already prefixed "delivery.kind: " - wrapping again would double it
+	// validateDelivery's error is already prefixed "delivery.kind: " - wrapping again would double it.
+	return errors.Join(append(errs, validateDelivery(rec.Delivery))...)
+}
+
+// checkAssignment returns every problem with one assignment, so a plan's faults are all reported at once.
+func checkAssignment(a Assignment, known map[string]bool, ids []string) []error {
+	var errs []error
+	if err := ValidateTask(a.Task); err != nil {
+		errs = append(errs, fmt.Errorf("assignments.%s.%w", a.NodeID, err))
 	}
-	return nil
+	for _, dep := range a.DependsOn {
+		if !known[dep] {
+			errs = append(errs, fmt.Errorf("assignments.%s.depends_on: unknown node id %q; this plan's node ids: %s",
+				a.NodeID, dep, strings.Join(ids, ", ")))
+		}
+	}
+	if len(a.Checks) > 0 {
+		if err := ValidateChecks(a.Checks); err != nil {
+			errs = append(errs, fmt.Errorf("assignments.%s.checks: %w", a.NodeID, err))
+		}
+	}
+	return errs
 }
 
 // SaveDagPlanRecord writes rec as this chat's next dag_plan revision. nil artifacts = no service
