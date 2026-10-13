@@ -18,11 +18,12 @@ import (
 	"github.com/fagerbergj/quack/internal/orchestrator"
 	"github.com/fagerbergj/quack/internal/pluginreg"
 	"github.com/fagerbergj/quack/internal/pluginreg/pluginregtest"
+	"github.com/fagerbergj/quack/internal/server"
 	"github.com/fagerbergj/quack/internal/server/rest"
 )
 
-// exec: release refuses a binary whose checksum mismatches, runs the pinned one, and a re-pin plus restart runs the
-// new one. Each fake release is a script that marks its version, then execs the real quack-ext-usage.
+// exec: release refuses a mismatched checksum (boot fails; a restart 502s, old child serving), runs the pinned binary,
+// and a re-pin plus restart runs the new one. Each fake release script marks its version, then execs quack-ext-usage.
 func TestExecReleaseRunsThePinnedBinaryAndRestartsOntoANewPin(t *testing.T) {
 	bin, marks := buildExtChild(t, "usage"), t.TempDir()
 	asset := fmt.Sprintf("quack-ext-usage-%s-%s", runtime.GOOS, runtime.GOARCH)
@@ -40,7 +41,7 @@ func TestExecReleaseRunsThePinnedBinaryAndRestartsOntoANewPin(t *testing.T) {
 	pluginreg.ReleaseURL = func(_, _, tag, asset string) string { return srv.URL + "/" + tag + "/" + asset }
 	t.Cleanup(func() { pluginreg.ReleaseURL = old })
 
-	cfg := noopModulesConfig(t, t.TempDir(), "usage:\n  prometheus_url: http://prom:9090\n  exec: release\n")
+	cfg := noopModulesConfig(t, t.TempDir(), "noop: {}\nusage:\n  prometheus_url: http://prom:9090\n  exec: release\n")
 	cfg.Plugins = &config.PluginsConfig{Root: t.TempDir()}
 	reg := pluginreg.NewFSRegistry(cfg.Plugins.Root)
 	pin := func(v string) {
@@ -87,5 +88,23 @@ func TestExecReleaseRunsThePinnedBinaryAndRestartsOntoANewPin(t *testing.T) {
 	}
 	if code := restart("nope"); code != http.StatusNotFound {
 		t.Errorf("restart of an unknown extension = %d, want 404", code)
+	}
+	if code := restart("noop"); code != http.StatusConflict {
+		t.Errorf("restart of an in-process extension = %d, want 409", code)
+	}
+
+	pin("v3")
+	if code := restart("usage"); code != http.StatusBadGateway || ran("v3") {
+		t.Errorf("restart onto a mismatched checksum = %d, v3 ran %t; want 502 and no child", code, ran("v3"))
+	}
+	ts := httptest.NewServer(server.New(server.Options{REST: &rest.Handler{}, SDKExtensions: sdkExtensionMounts(exts)}))
+	defer ts.Close()
+	resp, err := http.Get(ts.URL + "/usage/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("GET /usage/ after a failed restart = %d, want 200 from the v2 child", resp.StatusCode)
 	}
 }

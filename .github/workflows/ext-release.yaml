@@ -30,5 +30,7 @@ jobs:
             CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath -ldflags="-s -w" -o "dist/quack-ext-$name-linux-$arch" "$pkg"
           done
           (cd dist && sha256sum -- * > SHA256SUMS)
-          gh release create "$TAG" dist/* --verify-tag --latest=false --title "$TAG" \
-            --notes "quack-ext-$name binaries for extensions.$name.exec: release"
+          # Idempotent: a re-run replaces the assets instead of failing on the existing release.
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --verify-tag --latest=false \
+            --title "$TAG" --notes "quack-ext-$name binaries for extensions.$name.exec: release"
+          gh release upload "$TAG" dist/* --clobber
