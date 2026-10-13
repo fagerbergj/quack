@@ -578,6 +578,17 @@ func (r *runControls) unregister(chatID, nodeID string) {
 	}
 }
 
+// getMarking is get that also calls mark (if non-nil) for a registered node under r.mu, which unregister waits on.
+func (r *runControls) getMarking(chatID, nodeID string, mark func(string)) *nodeControl {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	c := r.m[chatID][nodeID]
+	if c != nil && mark != nil {
+		mark(chatID)
+	}
+	return c
+}
+
 func (r *runControls) get(chatID, nodeID string) *nodeControl {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -668,15 +679,26 @@ func (e *Executor) PauseNode(chatID, nodeID string, reason PauseReason) bool {
 	if reason == "" {
 		reason = PauseUser
 	}
-	c := e.controls.get(chatID, nodeID)
+	return e.pauseNode(chatID, nodeID, reason, nil)
+}
+
+// PauseNodeForShutdown is a shutdown PauseNode that calls mark(chatID) only while nodeID is still registered,
+// before the pause is visible, so the run cannot end without the mark nor be marked after it ended.
+func (e *Executor) PauseNodeForShutdown(chatID, nodeID string, mark func(chatID string)) bool {
+	return e.pauseNode(chatID, nodeID, PauseShutdown, mark)
+}
+
+func (e *Executor) pauseNode(chatID, nodeID string, reason PauseReason, mark func(string)) bool {
+	c := e.controls.getMarking(chatID, nodeID, mark)
 	if c == nil {
 		return false
 	}
 	if reason == PauseShutdown && c.PauseReason() == PauseUser {
 		return true // relabelled shutdown, boot would resume a node the user paused
 	}
-	c.markPaused(reason, "")
+	// Sticky first: rundag holds a node that bails on the flag only if pauseReason already reports it.
 	e.controls.markPausedSticky(chatID, nodeID, reason)
+	c.markPaused(reason, "")
 	c.mu.Lock()
 	abort := c.interruptLocked()
 	c.mu.Unlock()

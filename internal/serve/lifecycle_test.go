@@ -24,9 +24,10 @@ func (p *storePauser) ActiveNodes(chatID string) []string { return p.active[chat
 
 func (p *storePauser) MarkShutdown(string) {}
 
-func (p *storePauser) PauseNode(chatID, nodeID string, reason dag.PauseReason) bool {
+func (p *storePauser) PauseNodeForShutdown(chatID, nodeID string, mark func(string)) bool {
+	mark(chatID)
 	return p.st.SetNodeStatusForChat(context.Background(), chatID, nodeID,
-		string(dag.StatusPaused), string(reason), "") == nil
+		string(dag.StatusPaused), string(dag.PauseShutdown), "") == nil
 }
 
 // threeNodeChat seeds n1 done, n2 mid-round, n3 queued,

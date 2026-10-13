@@ -651,3 +651,28 @@ func TestCancelNode_RoundAbortIdempotentAndUnregistered(t *testing.T) {
 		t.Fatal("second CancelNode call returned false")
 	}
 }
+
+// A shutdown pause marks the chat only for a node still registered, and before the pause is visible:
+// a node already gone has a run tail that must not read the mark, and a paused one must not end unmarked.
+func TestPauseNodeForShutdown_MarksOnlyALiveNodeBeforePausing(t *testing.T) {
+	ex := &Executor{controls: newRunControls()}
+	var marks int
+	mark := func(chatID string) {
+		marks++
+		// Runs under controls.mu, so read the maps directly.
+		if ex.controls.m[chatID]["n1"] == nil || ex.controls.paused[chatID]["n1"] != "" {
+			t.Error("marked after unregister or after the pause was recorded")
+		}
+	}
+
+	if ex.PauseNodeForShutdown("chat", "n1", mark) || marks != 0 {
+		t.Fatalf("an unregistered node was paused or marked (marks=%d)", marks)
+	}
+	ex.controls.register("chat", "n1")
+	if !ex.PauseNodeForShutdown("chat", "n1", mark) || marks != 1 {
+		t.Fatalf("a live node was not paused and marked once (marks=%d)", marks)
+	}
+	if ex.NodePauseReason("chat", "n1") != PauseShutdown {
+		t.Error("pause reason not recorded")
+	}
+}
