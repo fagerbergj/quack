@@ -1,5 +1,5 @@
-// Package extproc runs an sdk extension as a child of quack: newline-delimited JSON-RPC 2.0 on stdio
-// ("initialize", then "http"), JSON log lines on stderr, and stdin EOF as shutdown.
+// Package extproc runs an sdk extension as a child of quack: newline-delimited JSON-RPC 2.0 on stdio,
+// calls in both directions, JSON log lines on stderr, and stdin EOF as shutdown.
 package extproc
 
 import (
@@ -11,12 +11,22 @@ import (
 )
 
 // ProtocolVersion is bumped on any incompatible wire change; initialize refuses a mismatch.
-const ProtocolVersion = 1
+const ProtocolVersion = 2
 
-// message is a JSON-RPC 2.0 request or response; phase 1 has no notifications.
+// Methods: the host calls initialize and http and notifies runEnded; the child calls dispatch;
+// either side notifies cancel for a call it gave up on.
+const (
+	methodInitialize = "initialize"
+	methodHTTP       = "http"
+	methodRunEnded   = "runEnded"
+	methodDispatch   = "dispatch"
+	methodCancel     = "cancel"
+)
+
+// message is a JSON-RPC 2.0 request, notification (ID 0: ids start at 1) or response (no Method).
 type message struct {
 	JSONRPC string          `json:"jsonrpc"`
-	ID      int64           `json:"id"`
+	ID      int64           `json:"id,omitempty"`
 	Method  string          `json:"method,omitempty"`
 	Params  json.RawMessage `json:"params,omitempty"`
 	Result  json.RawMessage `json:"result,omitempty"`
@@ -30,9 +40,18 @@ type rpcError struct {
 
 func (e *rpcError) Error() string { return e.Message }
 
+// Unwrap keeps errors.Is(err, sdk.ErrRunInFlight) true on the far side of the wire.
+func (e *rpcError) Unwrap() error {
+	if e.Code == codeRunInFlight {
+		return sdk.ErrRunInFlight
+	}
+	return nil
+}
+
 const (
 	codeMethodNotFound = -32601
 	codeServerError    = -32000
+	codeRunInFlight    = -32001
 )
 
 // initParams carries what the in-process path puts in sdk.Host, plus the raw extensions.<name> block.
@@ -47,8 +66,18 @@ type initParams struct {
 }
 
 type initResult struct {
-	Protocol int               `json:"protocol"`
-	UI       *sdk.UIDescriptor `json:"ui,omitempty"`
+	Protocol     int               `json:"protocol"`
+	UI           *sdk.UIDescriptor `json:"ui,omitempty"`
+	ObservesRuns bool              `json:"observesRuns,omitempty"`
+}
+
+type runEndedParams struct {
+	ChatID  string         `json:"chatID"`
+	Outcome sdk.RunOutcome `json:"outcome"`
+}
+
+type cancelParams struct {
+	ID int64 `json:"id"`
 }
 
 // httpParams is one request quack already authenticated; URL is the full request URI (/<name>/...).

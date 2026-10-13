@@ -61,7 +61,33 @@ func runChild(mode string) int {
 // startedCtx is the ctx the last testExt.Start received in this process.
 var startedCtx context.Context
 
-type testExt struct{ failStart bool }
+type testExt struct {
+	host      sdk.Host
+	failStart bool
+}
+
+// runsSeen is every RunEnded this child process received, as runEndedParams JSON.
+var (
+	runsMu   sync.Mutex
+	runsSeen []string
+)
+
+func (testExt) RunEnded(chatID string, outcome sdk.RunOutcome) {
+	b, _ := json.Marshal(runEndedParams{ChatID: chatID, Outcome: outcome})
+	runsMu.Lock()
+	defer runsMu.Unlock()
+	runsSeen = append(runsSeen, string(b))
+}
+
+// testDispatchRequest exercises every field kind the wire must carry: bytes, a duration, nested maps.
+func testDispatchRequest(id string) sdk.DispatchRequest {
+	return sdk.DispatchRequest{
+		Chat: sdk.ChatRef{LocalID: id, Title: "t", Origin: &sdk.ChatOrigin{Extension: "x", Kind: "document",
+			Labels: map[string][]sdk.LabelValue{"folder": {{Value: "A", Display: "A"}}}}},
+		Ask: sdk.Ask{Message: "m", Attachments: []sdk.Attachment{{Name: id + ".pdf", MIME: "application/pdf", Data: []byte{0, 1, 0xff}}}},
+		Run: sdk.RunConfig{Workflow: "w", Timeout: time.Minute},
+	}
+}
 
 func (testExt) Tools() []tool.Tool { return nil }
 
@@ -75,7 +101,21 @@ func (e testExt) Start(ctx context.Context) error {
 	return nil
 }
 
-func (testExt) RegisterRoutes(authed, _ chi.Router) {
+func (e testExt) RegisterRoutes(authed, _ chi.Router) {
+	authed.Get("/dispatch", func(w http.ResponseWriter, r *http.Request) {
+		err := e.host.Dispatch(r.Context(), testDispatchRequest(r.URL.Query().Get("id")))
+		_, _ = fmt.Fprintf(w, "inflight=%t err=%v", errors.Is(err, sdk.ErrRunInFlight), err)
+	})
+	authed.Get("/runs", func(w http.ResponseWriter, _ *http.Request) {
+		runsMu.Lock()
+		defer runsMu.Unlock()
+		_, _ = fmt.Fprint(w, strings.Join(runsSeen, "\n"))
+	})
+	authed.Get("/wait", func(_ http.ResponseWriter, r *http.Request) {
+		fmt.Fprintln(os.Stderr, "waiting")
+		<-r.Context().Done()
+		fmt.Fprintln(os.Stderr, "request cancelled")
+	})
 	authed.Post("/echo", func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		w.Header().Set("X-Path", r.URL.Path)
@@ -108,7 +148,7 @@ func testFactory(host sdk.Host, raw []byte) (sdk.Extension, error) {
 	}
 	host.Log.Info("factory ran", "data_dir", host.DataDir)
 	host.Log.Warn("factory warned")
-	return testExt{failStart: string(raw) == "failstart"}, nil
+	return testExt{host: host, failStart: string(raw) == "failstart"}, nil
 }
 
 // syncBuf collects the host's JSON log output across goroutines.
@@ -129,9 +169,9 @@ func (s *syncBuf) String() string {
 	return s.b.String()
 }
 
-func newProcess(config string) (*Process, *syncBuf, error) {
+func newProcess(config string, dispatch sdk.DispatchFunc) (*Process, *syncBuf, error) {
 	logs := &syncBuf{}
-	host := sdk.Host{Log: slog.New(slog.NewJSONHandler(logs, nil)).With("component", "ext.x"), DataDir: "/data/x"}
+	host := sdk.Host{Log: slog.New(slog.NewJSONHandler(logs, nil)).With("component", "ext.x"), DataDir: "/data/x", Dispatch: dispatch}
 	p, err := New("x", os.Args[0], host, []byte(config))
 	return p, logs, err
 }
@@ -139,7 +179,12 @@ func newProcess(config string) (*Process, *syncBuf, error) {
 // startProcess runs the test binary as extension "x" behind a router mounted like quack's.
 func startProcess(t *testing.T) (*Process, *httptest.Server, *syncBuf) {
 	t.Helper()
-	p, logs, err := newProcess("ok")
+	return startProcessWith(t, nil)
+}
+
+func startProcessWith(t *testing.T, dispatch sdk.DispatchFunc) (*Process, *httptest.Server, *syncBuf) {
+	t.Helper()
+	p, logs, err := newProcess("ok", dispatch)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -323,7 +368,7 @@ func TestNewFails(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv(modeVar, tc.mode)
-			if _, _, err := newProcess(tc.config); err == nil || !strings.Contains(err.Error(), tc.want) {
+			if _, _, err := newProcess(tc.config, nil); err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("New = %v, want an error containing %q", err, tc.want)
 			}
 		})
