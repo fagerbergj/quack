@@ -44,7 +44,7 @@ func waitPosted(t *testing.T, posted <-chan string) string {
 // A trigger refused busy must leave the live run's record alone, so that run's outcome still reaches GitHub.
 func TestBusyDispatchKeepsLiveRunsRecord(t *testing.T) {
 	posted := make(chan string, 4)
-	srv := stubGitHub(t, posted)
+	srv, reactions := stubGitHubCounting(t, posted)
 	defer srv.Close()
 	e, fh := newTestExtension(t, srv.URL, nil)
 	chatID, sessionID, live := seedLiveRun(t, e)
@@ -53,6 +53,11 @@ func TestBusyDispatchKeepsLiveRunsRecord(t *testing.T) {
 	// A review trigger: had its record replaced the live one, the live run would post a no-verdict note.
 	e.dispatch(issueCommentPayloadFor("acme", "widgets", 7, "bob", "/review", srv.URL), autoReviewTask)
 	e.Wait()
+
+	// dispatch itself never acks (handleWebhook does), so the busy branch's ackDuplicate is the only 👀.
+	if got := reactions.Load(); got != 1 {
+		t.Errorf("reaction POSTs = %d; want the busy refusal's single 👀 ack", got)
+	}
 
 	if v, ok := e.pending.Load(chatID); !ok || v.(*pendingRun) != live {
 		t.Fatalf("pending = %v, %v; want the live run's record untouched", v, ok)

@@ -59,7 +59,12 @@ func (s *Store) StampCutRun(ctx context.Context, chatID string) {
 		Joins("JOIN dag_plans ON dag_plans.id = dag_nodes.plan_id").
 		Where("dag_plans.chat_id = ? AND dag_nodes.status IN ?", chatID, []string{string(dag.StatusPaused), string(dag.StatusNeedsInput)}).
 		Count(&n).Error
-	if err != nil || n == 0 {
+	if err != nil {
+		slog.Warn("stamp cut run: suspended-node count failed; leaving the in-flight marker for boot",
+			"component", "store", "chat", chatID, "err", err)
+		return
+	}
+	if n == 0 {
 		return
 	}
 	if err := s.StampRunOutcome(ctx, chatID, RunStatusPaused, ""); err != nil {

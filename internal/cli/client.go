@@ -28,6 +28,8 @@ import (
 type Client struct {
 	BaseURL string
 	HTTP    *http.Client
+	// OnReconnect fires once per outage when a run stream that dropped before `done` starts reconnecting.
+	OnReconnect func()
 }
 
 // NewClient resolves the server URL (override, then the active registered server). A registered server
@@ -540,15 +542,14 @@ func RunAPI(ctx context.Context, out io.Writer, server, method, path string, bod
 type SSEEvent struct {
 	Name string
 	Data json.RawMessage
-	// ID is the SSE `id:` field (the durable-log seq a reconnect resumes past via Last-Event-ID);
-	// only subscribeSSE events carry one.
+	// ID is the SSE `id:` field: the durable-log seq a reconnect resumes past via Last-Event-ID.
 	ID string
 }
 
-// Reconnect backoff for subscribeSSE: capped so a dead server isn't hammered, bounded so a
-// permanently unreachable one eventually surfaces as an error.
+// Reconnect backoff per outage: ~3 minutes outlasts a deploy's restart, as the web UI's budget does; capped so a
+// dead server isn't hammered, bounded so one that stays down surfaces as an error.
 const (
-	maxSSEReconnectAttempts = 6
+	maxSSEReconnectAttempts = 15
 	sseReconnectBaseDelay   = time.Second
 	sseReconnectMaxDelay    = 15 * time.Second
 )
@@ -567,7 +568,7 @@ var sseReconnectDelay = func(attempt int) time.Duration {
 // replays events so far, then tails live. Same channel contract as Stream.
 func (c *Client) Subscribe(ctx context.Context, chatID string) <-chan SSEEvent {
 	return c.streamChan(ctx, func(onEvent func(SSEEvent) error) error {
-		return c.subscribeSSE(ctx, chatID, onEvent)
+		return c.subscribeSSE(ctx, chatID, "", onEvent)
 	})
 }
 
@@ -596,38 +597,89 @@ func (c *Client) streamChan(ctx context.Context, run func(onEvent func(SSEEvent)
 	return ch
 }
 
-// subscribeSSE dispatches the chat stream's events to onEvent until a `done` event or ctx cancel. A drop
-// before `done` is retried with backoff, resuming via Last-Event-ID so `chat show -f` survives breaks.
-func (c *Client) subscribeSSE(ctx context.Context, chatID string, onEvent func(SSEEvent) error) error {
-	var lastID string
+// subscribeSSE dispatches the chat stream's events past lastID to onEvent until a `done` event or ctx cancel.
+// A drop before `done` (a server restart cuts the run without one) reconnects with backoff that each event resets.
+func (c *Client) subscribeSSE(ctx context.Context, chatID, lastID string, onEvent func(SSEEvent) error) error {
 	var lastErr error
-	for attempt := 0; attempt <= maxSSEReconnectAttempts; attempt++ {
-		if attempt > 0 {
-			select {
-			case <-time.After(sseReconnectDelay(attempt - 1)):
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		}
-		sawDone := false
+	announced := lastID != "" // a caller resuming past an id has announced its drop already
+	for fails := 0; ; fails++ {
+		var progressed, sawDone bool
 		err := c.subscribeSSEOnce(ctx, chatID, lastID, func(ev SSEEvent) error {
+			progressed, sawDone = true, sawDone || ev.Name == "done"
 			if ev.ID != "" {
 				lastID = ev.ID
-			}
-			if ev.Name == "done" {
-				sawDone = true
 			}
 			return onEvent(ev)
 		})
 		if sawDone || ctx.Err() != nil {
 			return err
 		}
-		lastErr = err
+		if progressed {
+			fails, announced = 0, false
+		}
+		if err != nil {
+			lastErr = err
+		}
+		if fails == maxSSEReconnectAttempts {
+			return lostStreamErr(chatID, lastErr)
+		}
+		if !announced {
+			c.reconnecting()
+			announced = true
+		}
+		select {
+		case <-time.After(sseReconnectDelay(fails)):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
-	if lastErr != nil {
-		return lastErr
+}
+
+func (c *Client) reconnecting() {
+	if c.OnReconnect != nil {
+		c.OnReconnect()
 	}
-	return fmt.Errorf("subscribe: lost connection to the server after %d attempts", maxSSEReconnectAttempts+1)
+}
+
+func lostStreamErr(chatID string, last error) error {
+	err := fmt.Errorf("lost connection to the server after %d attempts; `quack chat show %s -f` follows the run again",
+		maxSSEReconnectAttempts+1, chatID)
+	if last != nil {
+		return fmt.Errorf("%w: %w", err, last)
+	}
+	return err
+}
+
+// postStream sends a POST /responses and streams its events. A 200 means the run was accepted, so a body that ends
+// before `done`, even before its first event, hands off to the resumable GET stream, as the web UI's runStream does.
+func (c *Client) postStream(ctx context.Context, chatID string, req *http.Request, onEvent func(SSEEvent) error) error {
+	req.Header.Set("Accept", "text/event-stream")
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return c.reachErr(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return httpFailure(resp.StatusCode, readAll(resp.Body))
+	}
+	var lastID string
+	var sawDone, sawEvent bool
+	var stop error // onEvent's own error ends the stream; it is no drop to resume
+	err = parseSSE(resp.Body, func(ev SSEEvent) error {
+		sawEvent = true
+		sawDone = sawDone || ev.Name == "done"
+		if ev.ID != "" {
+			lastID = ev.ID
+		}
+		stop = onEvent(ev)
+		return stop
+	})
+	// An unnumbered stream that sent events has nothing to resume from; one that sent none restarts from the top.
+	if sawDone || stop != nil || (sawEvent && lastID == "") || ctx.Err() != nil {
+		return err
+	}
+	c.reconnecting()
+	return c.subscribeSSE(ctx, chatID, lastID, onEvent)
 }
 
 // subscribeSSEOnce is a single GET of the chat's stream endpoint, resuming
@@ -663,16 +715,7 @@ func (c *Client) SendMessage(ctx context.Context, chatID, content string, onEven
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		return c.reachErr(err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return httpFailure(resp.StatusCode, readAll(resp.Body))
-	}
-	return parseSSE(resp.Body, onEvent)
+	return c.postStream(ctx, chatID, req, onEvent)
 }
 
 // SendMessageWithFiles posts content plus attachments as multipart/form-data and streams the SSE response.
@@ -714,16 +757,7 @@ func (c *Client) SendMessageWithFiles(ctx context.Context, chatID, content strin
 		return err
 	}
 	req.Header.Set("Content-Type", mw.FormDataContentType())
-	req.Header.Set("Accept", "text/event-stream")
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		return c.reachErr(err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return httpFailure(resp.StatusCode, readAll(resp.Body))
-	}
-	return parseSSE(resp.Body, onEvent)
+	return c.postStream(ctx, chatID, req, onEvent)
 }
 
 // postJSON POSTs v as JSON to path and decodes the JSON response into out (nil to

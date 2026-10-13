@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -294,6 +295,7 @@ func TestSendMessageWithFiles(t *testing.T) {
 			}
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "id: 1\nevent: done\ndata: {}\n\n") // a real run always ends with done
 	}))
 	defer srv.Close()
 
@@ -323,9 +325,7 @@ func TestSendMessageWithFiles(t *testing.T) {
 // Last-Event-ID without losing or duplicating events.
 func TestSubscribeSSEReconnectsWithLastEventID(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
-	orig := sseReconnectDelay
-	sseReconnectDelay = func(int) time.Duration { return time.Millisecond }
-	t.Cleanup(func() { sseReconnectDelay = orig })
+	shortSSEReconnect(t)
 
 	var attempts int32
 	mux := http.NewServeMux()
@@ -356,7 +356,7 @@ func TestSubscribeSSEReconnectsWithLastEventID(t *testing.T) {
 
 	c := &Client{BaseURL: srv.URL, HTTP: srv.Client()}
 	var names []string
-	err := c.subscribeSSE(context.Background(), "c1", func(ev SSEEvent) error {
+	err := c.subscribeSSE(context.Background(), "c1", "", func(ev SSEEvent) error {
 		names = append(names, ev.Name)
 		return nil
 	})
@@ -376,9 +376,7 @@ func TestSubscribeSSEReconnectsWithLastEventID(t *testing.T) {
 // doesn't retry forever - it surfaces an error after the bounded attempt cap.
 func TestSubscribeSSEGivesUpAfterRepeatedDrops(t *testing.T) {
 	t.Setenv("QUACK_HOME", t.TempDir())
-	orig := sseReconnectDelay
-	sseReconnectDelay = func(int) time.Duration { return time.Millisecond }
-	t.Cleanup(func() { sseReconnectDelay = orig })
+	shortSSEReconnect(t)
 
 	var attempts int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -390,7 +388,7 @@ func TestSubscribeSSEGivesUpAfterRepeatedDrops(t *testing.T) {
 	defer srv.Close()
 
 	c := &Client{BaseURL: srv.URL, HTTP: srv.Client()}
-	err := c.subscribeSSE(context.Background(), "c1", func(SSEEvent) error { return nil })
+	err := c.subscribeSSE(context.Background(), "c1", "", func(SSEEvent) error { return nil })
 	if err == nil {
 		t.Fatal("subscribeSSE: want an error after repeated drops, got nil")
 	}
