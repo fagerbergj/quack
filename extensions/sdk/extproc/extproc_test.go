@@ -52,7 +52,10 @@ func (testExt) RegisterRoutes(authed, _ chi.Router) {
 	})
 	authed.Get("/pid", func(w http.ResponseWriter, _ *http.Request) { _, _ = fmt.Fprint(w, os.Getpid()) })
 	authed.Get("/crash", func(http.ResponseWriter, *http.Request) { os.Exit(3) })
-	authed.Get("/block", func(http.ResponseWriter, *http.Request) { select {} })
+	authed.Get("/block", func(http.ResponseWriter, *http.Request) {
+		fmt.Fprintln(os.Stderr, "blocking")
+		select {}
+	})
 }
 
 func testFactory(host sdk.Host, raw []byte) (sdk.Extension, error) {
@@ -227,7 +230,7 @@ func TestProcessRestartsAfterCrashWithBackoff(t *testing.T) {
 			_ = resp.Body.Close()
 			blocked <- resp.StatusCode
 		}()
-		time.Sleep(50 * time.Millisecond) // let /block reach the child before it dies
+		waitFor(t, "/block to reach the child", func() bool { return strings.Count(logs.String(), `"line":"blocking"`) > i })
 		if code, _ := get(t, srv.URL+"/x/crash"); code != http.StatusBadGateway {
 			t.Errorf("crash %d: GET /x/crash = %d, want 502", i, code)
 		}
