@@ -4,7 +4,6 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/stream"
 )
 
@@ -17,7 +16,7 @@ const drainPollInterval = 200 * time.Millisecond
 // chat, and how to pause one. *dag.Executor implements it.
 type nodePauser interface {
 	ActiveNodes(chatID string) []string
-	PauseNode(chatID, nodeID string, reason dag.PauseReason) bool
+	PauseNodeForShutdown(chatID, nodeID string, mark func(chatID string)) bool
 	MarkShutdown(chatID string)
 }
 
@@ -63,22 +62,14 @@ func DrainActiveRuns(hub *stream.Hub, ex nodePauser, grace time.Duration) {
 	waitWhileAnyRegistered(hub, settleWindow)
 }
 
-// pauseForShutdown pauses chatID's live nodes, cutting off their worker rounds. The chat is marked interrupted
-// first: its run now ends inside the grace, and its tail must skip RunEnded as boot resumes the nodes.
+// pauseForShutdown pauses chatID's live nodes, cutting off their worker rounds. A pause marks the chat interrupted
+// atomically with finding the node live: its run now ends inside the grace, and its tail must skip RunEnded.
 func pauseForShutdown(hub *stream.Hub, ex nodePauser, chatID string) int {
-	nodes := ex.ActiveNodes(chatID)
-	if len(nodes) == 0 {
-		return 0
-	}
-	hub.MarkInterrupted(chatID)
 	n := 0
-	for _, nodeID := range nodes {
-		if ex.PauseNode(chatID, nodeID, dag.PauseShutdown) {
+	for _, nodeID := range ex.ActiveNodes(chatID) {
+		if ex.PauseNodeForShutdown(chatID, nodeID, hub.MarkInterrupted) {
 			n++
 		}
-	}
-	if n == 0 {
-		hub.WasInterrupted(chatID) // clears the mark: nothing paused, so a run finishing on its own keeps RunEnded
 	}
 	return n
 }

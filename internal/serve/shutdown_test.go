@@ -13,7 +13,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"google.golang.org/adk/v2/tool"
 
-	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/runlog"
 	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/stream"
@@ -222,8 +221,39 @@ type fixedPauser struct{ pausable map[string]bool }
 
 func (p fixedPauser) ActiveNodes(string) []string { return []string{"n1"} }
 func (fixedPauser) MarkShutdown(string)           {}
-func (p fixedPauser) PauseNode(chatID, _ string, _ dag.PauseReason) bool {
+func (p fixedPauser) PauseNodeForShutdown(chatID, _ string, mark func(string)) bool {
+	if p.pausable[chatID] {
+		mark(chatID)
+	}
 	return p.pausable[chatID]
+}
+
+// finishingPauser models a node that ends between ActiveNodes and its pause: the run's tail reads the cut
+// mark (as stampRunOutcome does) and unregisters, then the pause finds no control.
+type finishingPauser struct {
+	hub        *stream.Hub
+	tailSawCut bool
+}
+
+func (*finishingPauser) ActiveNodes(string) []string { return []string{"n1"} }
+func (*finishingPauser) MarkShutdown(string)         {}
+func (p *finishingPauser) PauseNodeForShutdown(chatID, _ string, _ func(string)) bool {
+	p.tailSawCut = p.hub.WasInterrupted(chatID)
+	p.hub.UnregisterRun(chatID)
+	return false
+}
+
+// A run whose last node finishes as the drain reaches it ended on its own: its tail must not read it as cut.
+func TestDrainActiveRuns_NodeFinishingBeforePauseIsNotCut(t *testing.T) {
+	hub := stream.NewHub()
+	hub.RegisterRun("chat", "turn-1", func() {})
+	p := &finishingPauser{hub: hub}
+
+	DrainActiveRuns(hub, p, 2*time.Second)
+
+	if p.tailSawCut {
+		t.Error("a run that finished on its own was read as cut by shutdown; its RunEnded would be skipped")
+	}
 }
 
 // A shutdown pause ends a run inside the grace, so a chat whose node it paused is marked cut and its tail
