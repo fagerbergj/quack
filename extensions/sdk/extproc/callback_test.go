@@ -138,7 +138,7 @@ func TestServeFailsPendingCallsAtEOF(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := host.call(ctx, methodInitialize, initParams{Protocol: ProtocolVersion, Name: "x"}, &initResult{}); err != nil {
+	if err := host.call(ctx, methodInitialize, initParams{Protocol: ProtocolVersion, Name: "x", Serves: []string{methodTool}}, &initResult{}); err != nil {
 		t.Fatal(err)
 	}
 	var res httpResult

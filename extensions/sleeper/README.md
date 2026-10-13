@@ -231,7 +231,7 @@ in DST. A bad `timezone` fails startup, a bad quack zone is ignored with a warni
 and a bad `tz` falls back with a `tz_note`. `time/tzdata` is embedded so zones resolve in images
 without a zone database.
 
-`NewClient(baseURL, httpClient)` takes an explicit base URL so tests (and later, tools) point
-at `cmd/qa-mock` instead of the real API. Sleeper answers an unknown id with HTTP 200 and a
+`NewClient(baseURL, httpClient)` takes an explicit base URL so tests, and a deployment through the
+`base_url` config key, point at `cmd/qa-mock` instead of the real API. Sleeper answers an unknown id with HTTP 200 and a
 literal `null` body rather than a 404; `okJSON` treats that the same as a real not-found error
 instead of returning a zero-valued struct with no error.

@@ -4,6 +4,7 @@ package sleeper
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"fmt"
 	"sync"
@@ -21,11 +22,12 @@ func init() {
 	sdk.Register(extensionName, factory)
 }
 
-// config is the YAML under extensions.sleeper; Enabled/DataDir mirror sdk.BaseConfig's reserved keys so
+// config is the YAML under extensions.sleeper; Enabled/DataDir/Exec mirror sdk.BaseConfig's reserved keys so
 // KnownFields decoding doesn't reject them.
 type config struct {
 	Enabled   *bool  `yaml:"enabled"`
 	DataDir   string `yaml:"data_dir"`
+	Exec      string `yaml:"exec"`
 	Snapshots string `yaml:"snapshots"`
 
 	// DefaultUser is a Sleeper username or user_id; tools fall back to it when a chat names none.
@@ -36,6 +38,9 @@ type config struct {
 
 	// Timezone overrides Host.Location for *_local fields; an IANA name like America/Chicago.
 	Timezone string `yaml:"timezone"`
+
+	// BaseURL replaces the Sleeper API's, e.g. with cmd/qa-mock's address.
+	BaseURL string `yaml:"base_url"`
 }
 
 func factory(host sdk.Host, raw []byte) (sdk.Extension, error) {
@@ -61,7 +66,7 @@ func factory(host sdk.Host, raw []byte) (sdk.Extension, error) {
 		loc = l
 	}
 
-	client, err := NewClient(sleeperBaseURL, nil)
+	client, err := NewClient(cmp.Or(cfg.BaseURL, sleeperBaseURL), nil)
 	if err != nil {
 		return nil, fmt.Errorf("sleeper: new client: %w", err)
 	}
@@ -83,7 +88,7 @@ func hostZone(host sdk.Host) *time.Location {
 	return host.Location
 }
 
-// sleeperBaseURL is the production API; tests point a Client at cmd/qa-mock instead.
+// sleeperBaseURL is the production API; base_url or a test Client points at cmd/qa-mock instead.
 const sleeperBaseURL = "https://api.sleeper.app"
 
 type extension struct {

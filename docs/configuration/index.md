@@ -50,7 +50,7 @@ Each section gets its own page below:
 - **[Decision points](decisions.md)** — intercept points answered by System One decision models: handlers, modes, recording.
 - **[Observability](observability.md)** — the OTel traces and metrics quack emits, and what each one is for.
 
-The GitHub App extension (`extensions.github`) has its own page: [`../extensions/github.md`](../extensions/github.md); the [reMarkable](../extensions/remarkable.md) and [usage dashboard](../extensions/usage.md) extensions get short pages of their own.
+The GitHub App extension (`extensions.github`) has its own page: [`../extensions/github.md`](../extensions/github.md); the [reMarkable](../extensions/remarkable.md), [Sleeper](../extensions/sleeper.md) and [usage dashboard](../extensions/usage.md) extensions get short pages of their own.
 
 ## Context compaction (`session.compaction`)
 
