@@ -12,19 +12,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// codeOwnedCriteria: every criterion name a deterministic check scores, so the only names a rubric
-// may mark `deterministic: true`.
-func codeOwnedCriteria() map[string]bool {
-	out := map[string]bool{"cites_sources": true, specificsCitedCriterion: true, specificsSupportedCriterion: true}
-	for name := range deterministicCriterionSpec {
-		out[name] = true
-	}
-	return out
-}
-
 // IsCodeOwnedCriterion reports whether a deterministic check, not the judge, scores name.
 func IsCodeOwnedCriterion(name string) bool {
-	return codeOwnedCriteria()[name]
+	return slices.Contains(CodeOwnedCriteria(), name)
 }
 
 // LintRubric reports every authoring problem in one rubric.yaml beyond what boot rejects. Unknown keys fail
@@ -40,14 +30,13 @@ func LintRubric(raw []byte, source string) []string {
 	if err := validateRubricDoc(doc); err != nil {
 		issues = append(issues, fmt.Sprintf("%s: %v", source, err))
 	}
-	owned := codeOwnedCriteria()
 	byDefinition := map[string]string{}
 	for _, name := range slices.Sorted(maps.Keys(doc.Criteria)) {
 		c, scale := doc.Criteria[name], doc.Scale
 		if c.Scale != nil {
 			scale = *c.Scale
 		}
-		for _, problem := range lintCriterion(name, c, scale, owned, byDefinition) {
+		for _, problem := range lintCriterion(name, c, scale, byDefinition) {
 			issues = append(issues, fmt.Sprintf("%s: criterion %q: %s", source, name, problem))
 		}
 	}
@@ -55,7 +44,7 @@ func LintRubric(raw []byte, source string) []string {
 }
 
 // lintCriterion is LintRubric's per-criterion checks; byDefinition collects definitions across calls.
-func lintCriterion(name string, c rubricCriterion, scale rubricScale, owned map[string]bool, byDefinition map[string]string) []string {
+func lintCriterion(name string, c rubricCriterion, scale rubricScale, byDefinition map[string]string) []string {
 	var problems []string
 	def := strings.Join(strings.Fields(strings.ToLower(c.Definition)), " ")
 	switch {
@@ -66,10 +55,11 @@ func lintCriterion(name string, c rubricCriterion, scale rubricScale, owned map[
 	default:
 		byDefinition[def] = name
 	}
+	owned := IsCodeOwnedCriterion(name)
 	switch {
-	case c.Deterministic && !owned[name]:
+	case c.Deterministic && !owned:
 		problems = append(problems, "deterministic, but no check scores a criterion of this name")
-	case !c.Deterministic && owned[name]:
+	case !c.Deterministic && owned:
 		problems = append(problems, "a code check owns this name, so the judge's score is dropped; mark it deterministic: true")
 	case !c.Deterministic && len(c.Bands) == 0:
 		problems = append(problems, "no bands, so the judge has no pass bar to score against")
