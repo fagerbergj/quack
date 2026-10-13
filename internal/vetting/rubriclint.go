@@ -56,14 +56,19 @@ func lintCriterion(name string, c rubricCriterion, scale rubricScale, byDefiniti
 		byDefinition[def] = name
 	}
 	owned := IsCodeOwnedCriterion(name)
-	switch {
-	case c.Deterministic && !owned:
-		problems = append(problems, "deterministic, but no check scores a criterion of this name")
-	case !c.Deterministic && owned:
+	if c.Deterministic {
+		if !owned {
+			problems = append(problems, "deterministic, but no check scores a criterion of this name")
+		}
+		return problems
+	}
+	if owned {
 		problems = append(problems, "a code check owns this name, so the judge's score is dropped; mark it deterministic: true")
-	case !c.Deterministic && len(c.Bands) == 0:
+	}
+	if len(c.Bands) == 0 {
 		problems = append(problems, "no bands, so the judge has no pass bar to score against")
-	case !c.Deterministic && (scale.Min != 0 || scale.Max != judgeScaleMax):
+	}
+	if scale.Min != 0 || scale.Max != judgeScaleMax {
 		problems = append(problems, fmt.Sprintf("judged on scale [%v, %v], but the judge prompt asks for an integer 0-%d", scale.Min, scale.Max, judgeScaleMax))
 	}
 	return problems

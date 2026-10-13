@@ -66,6 +66,11 @@ func TestLintRubricFlagsEachProblem(t *testing.T) {
 			}
 		})
 	}
+	// One criterion's problems are all reported, not just the first.
+	both := LintRubric([]byte(lintBase+"  decimal:\n    definition: graded out of ten\n    scale: {min: 0, max: 10, pass: 7}\n"), "r.yaml")
+	if got := strings.Join(both, "\n"); !strings.Contains(got, "no bands") || !strings.Contains(got, "asks for an integer 0-3") {
+		t.Fatalf("issues = %q, want both no bands and the off-scale problem", got)
+	}
 	// Boot's own validation still runs: a pass mark no band holds is reported too.
 	gap := strings.Replace(lintBase, "pass: 2", "pass: 1.5", 1)
 	if issues := LintRubric([]byte(gap), "r.yaml"); len(issues) != 1 || !strings.Contains(issues[0], "does not fall inside any band") {

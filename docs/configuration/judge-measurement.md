@@ -82,7 +82,7 @@ The record also counts `judge_calls` (judge sessions: more than one means a tran
 "timing": {"phase_seconds": {"<phase>": <seconds, to the ms>, ...}, "judge_calls": <n>, "judge_turns": <n>, "tool_calls": <n>}
 ```
 
-Read a slow round as: `judge_calls` above 1 points at the re-judge and retry paths, a high `tool_calls` with most time in `judge_tools` at the read loop (bounded by `gates.judge.max_iterations`, default 14 when unset), and time in `judge_verdict` alone at the model's final generation. The whole round's wall time is the `gate.judge` span's duration in traces.
+Read a slow round as: `judge_calls` above 1 points at the re-judge and retry paths, a high `tool_calls` with most time in `judge_tools` at the read loop (bounded by `gates.judge.max_iterations`, default 6), and time in `judge_verdict` alone at the model's final generation. The whole round's wall time is the `gate.judge` span's duration in traces.
 
 ## Rubric lint
 

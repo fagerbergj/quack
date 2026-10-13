@@ -286,8 +286,8 @@ func rubricConfigFor(ctx context.Context, cfg *config.Config, agentName, rubricO
 		return vetting.Config{}, err
 	}
 	ac, ok := cfg.Agents[agentName]
-	if !ok {
-		return vetting.Config{}, fmt.Errorf("judge replay: agent %q not found in quack.yaml", agentName)
+	if !ok && rubricOverride == "" {
+		return vetting.Config{}, fmt.Errorf("judge replay: agent %q not found in quack.yaml (a plugin-seeded agent?); pass --rubric", agentName)
 	}
 	rr, err := vetting.LoadReplayRubric(ctx, nil, ac.Bundle, rubricOverride)
 	if err != nil {
