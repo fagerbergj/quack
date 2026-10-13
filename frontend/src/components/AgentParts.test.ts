@@ -10,6 +10,7 @@ import {
   freezeOpenRuns,
   ToolBlock,
   ActivityList,
+  BubbleHeader,
   type AgentRun,
 } from './AgentParts'
 import type { Activity, ToolCall } from './messageParts'
@@ -163,5 +164,14 @@ describe('ToolBlock - human-readable row', () => {
     const out = renderToStaticMarkup(createElement(ToolBlock, { tool }))
     expect(out).toContain('title="web_fetch"')
     expect(out).toContain('>fetching https://x.test/a<')
+  })
+})
+
+describe('not verified marker', () => {
+  const u = { nodeId: 'synth', rounds: 3, score: 0.28, startedAt: 1000, finishedAt: 5000 }
+
+  it('sits on the answer header, and yields to the stopped badge', () => {
+    expect(renderToStaticMarkup(createElement(BubbleHeader, { agent: 'synthesizer', unverified: u }))).toContain('not verified')
+    expect(renderToStaticMarkup(createElement(BubbleHeader, { agent: 'synthesizer', unverified: u, stopped: 'draft' }))).not.toContain('not verified')
   })
 })

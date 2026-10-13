@@ -8,7 +8,7 @@ import { Composer } from '../components/Composer'
 import { ChatList, UNTITLED_CHAT } from '../components/ChatList'
 import { TurnView, visibleActivity } from '../components/TurnView'
 import { useChatStore, useChatState } from '../state/ChatStoreProvider'
-import { activityFromTurn, dagFromTurn, liveAnswerText, pendingNodeQuestion, dagAnswerAttribution, sessionModels, type DagTurnState, type ChatState } from '../state/chatStore'
+import { activityFromTurn, dagFromTurn, liveAnswerText, pendingNodeQuestion, dagAnswerAttribution, sessionModels, type DagTurnState, type ChatState, type Attribution } from '../state/chatStore'
 import { UsageSummary, type UsageSummaryProps } from '../components/UsageSummary'
 import { pendingChoice, showLiveSpinner } from '../components/messageParts'
 import { AttachmentPreviews } from '../components/AttachmentUI'
@@ -239,21 +239,22 @@ function LiveDagBubble({ dag, liveDone, chatId, orchActivity, onCancelNode, onPa
   )
 }
 
-function LiveAnswerBubble({ showSpinner, liveDag, liveText, liveTopText, liveActive, orchActivity, answerAttribution }: {
+function LiveAnswerBubble({ showSpinner, liveDag, liveText, liveTopText, liveActive, orchActivity, answerAttribution, chatId }: {
   showSpinner: boolean
   liveDag?: DagTurnState
   liveText: string
   liveTopText: string
   liveActive: boolean
   orchActivity: ReturnType<typeof visibleActivity>
-  answerAttribution: { agent?: string; model?: string; tokens?: number; stopped?: boolean } | undefined
+  answerAttribution: Attribution | undefined
+  chatId: string | null
 }) {
   return (
     <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
       {showSpinner ? (
         <Dots className="h-5" size="w-2 h-2" />
       ) : liveDag ? (
-        <LiveDagAnswer liveText={liveText} liveActive={liveActive} attribution={answerAttribution} />
+        <LiveDagAnswer liveText={liveText} liveActive={liveActive} attribution={answerAttribution} chatId={chatId ?? undefined} />
       ) : (
         // No DAG: orchestrator answered directly (conversational or
         // tool-based research where DAG events don't reach the frontend).
@@ -277,11 +278,11 @@ function LiveAnswerBubble({ showSpinner, liveDag, liveText, liveTopText, liveAct
 
 // LiveDagAnswer is the DAG turn's answer: the terminal node's streamed text, or for a node the
 // user stopped, its draft badged "not reviewed" (or a bare "Stopped" marker without one).
-function LiveDagAnswer({ liveText, liveActive, attribution }: { liveText: string; liveActive: boolean; attribution: { agent?: string; model?: string; tokens?: number; stopped?: boolean } | undefined }) {
+function LiveDagAnswer({ liveText, liveActive, attribution, chatId }: { liveText: string; liveActive: boolean; attribution: Attribution | undefined; chatId?: string }) {
   if (!liveText && !attribution?.stopped) return null
   return (
     <>
-      <BubbleHeader agent={attribution?.agent ?? 'orchestrator'} model={attribution?.model} tokens={attribution?.tokens} stopped={stoppedBadge(attribution?.stopped, liveText)} />
+      <BubbleHeader agent={attribution?.agent ?? 'orchestrator'} model={attribution?.model} tokens={attribution?.tokens} stopped={stoppedBadge(attribution?.stopped, liveText)} unverified={attribution?.unverified} chatId={chatId} />
       {liveText && <AssistantText text={liveText} streaming={liveActive} />}
     </>
   )
@@ -367,6 +368,7 @@ function LiveTurnView({ live, surfaces, liveActive, isArchived, activeChatId, li
               liveActive={liveActive}
               orchActivity={d.orchActivity}
               answerAttribution={d.answerAttribution}
+              chatId={activeChatId}
             />
           )}
           {choice && (

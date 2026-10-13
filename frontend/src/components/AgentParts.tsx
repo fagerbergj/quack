@@ -1,4 +1,4 @@
-import { memo, useMemo, useRef, useState } from 'react'
+import { memo, useId, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
@@ -18,6 +18,7 @@ import { CopyablePre } from './CopyablePre'
 import { MermaidDiagram } from './MermaidDiagram'
 import { isTrailingMermaidFenceOpen, lastSafeSplitOffset } from './mermaidSource'
 import { StatusDot, type DotStatus } from './StatusDot'
+import { failedCriterionLine, pct } from '../lib/judgeRounds'
 
 // Answers carry raw `<details><summary>Sources</summary>` HTML; text is model-authored and web-shaped,
 // so sanitize allows only <details>/<summary> beyond the default schema.
@@ -129,11 +130,58 @@ export function stoppedBadge(stopped: boolean | undefined, text: string | undefi
   return text ? 'draft' : 'bare'
 }
 
+// An answering node that delivered after failing its quality check; its run window finds its judge_round records.
+export interface Unverified {
+  nodeId: string
+  rounds: number
+  score?: number
+  startedAt?: number
+  finishedAt?: number
+}
+
+// A quiet flag on an answer that never passed its quality check. Hover or tap names the criterion that sank its
+// last round, loaded on first interest; without a chatId (a story) it says only what the node state knows.
+function UnverifiedMark({ u, chatId }: { u: Unverified; chatId?: string }) {
+  const [open, setOpen] = useState(false)
+  const [why, setWhy] = useState<string>()
+  const loading = useRef(false)
+  const tipId = useId()
+  const load = () => {
+    if (!chatId || loading.current) return
+    loading.current = true
+    void failedCriterionLine(chatId, u.nodeId, u.startedAt ?? 0, u.finishedAt ?? Infinity).then(setWhy)
+  }
+  return (
+    <>
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-describedby={tipId}
+        onClick={() => { load(); setOpen(o => !o) }}
+        onPointerEnter={load}
+        onFocus={load}
+        onBlur={() => setOpen(false)}
+        className="peer min-h-[44px] -my-3 inline-flex items-center gap-0.5 font-medium text-amber-600 dark:text-amber-400"
+      >
+        <Icon name="warning" className="w-3 h-3" /> not verified
+      </button>
+      <span
+        id={tipId}
+        role="tooltip"
+        className={`${open ? 'block' : 'hidden'} peer-hover:block absolute left-0 right-0 top-full z-10 mt-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 shadow-sm text-gray-600 dark:text-gray-300 [overflow-wrap:anywhere]`}
+      >
+        Failed its quality check after {u.rounds} round{u.rounds === 1 ? '' : 's'}{u.score != null && ` (final score ${pct(u.score)})`}, so this answer is shown unverified.
+        {chatId && <span className="mt-1 line-clamp-4">{why ?? 'Loading the verdict…'}</span>}
+      </span>
+    </>
+  )
+}
+
 // Real usage only, no estimates: model/tokens are omitted until known. Only the live orchestrator card
 // passes `status`; completed turns have no live status.
-export function BubbleHeader({ agent, model, tokens, status, stopped }: { agent: string; model?: string; tokens?: number; status?: DotStatus; stopped?: StoppedBadge }) {
+export function BubbleHeader({ agent, model, tokens, status, stopped, unverified, chatId }: { agent: string; model?: string; tokens?: number; status?: DotStatus; stopped?: StoppedBadge; unverified?: Unverified; chatId?: string }) {
   return (
-    <div className="flex items-center gap-2 mb-2 text-[11px] text-gray-500 dark:text-gray-400">
+    <div className="relative flex items-center gap-2 mb-2 text-[11px] text-gray-500 dark:text-gray-400">
       {status && <StatusDot status={status} />}
       <span className="font-semibold text-gray-500 dark:text-gray-400">{agentLabel(agent)}</span>
       {stopped && (
@@ -144,6 +192,7 @@ export function BubbleHeader({ agent, model, tokens, status, stopped }: { agent:
           <Icon name="warning" className="w-3 h-3" /> {stopped === 'draft' ? 'Stopped - not reviewed' : 'Stopped'}
         </span>
       )}
+      {unverified && !stopped && <UnverifiedMark u={unverified} chatId={chatId} />}
       {model && (
         <span className="font-mono truncate max-w-[160px]" title={model}>{model}</span>
       )}
