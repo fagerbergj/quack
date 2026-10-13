@@ -813,4 +813,23 @@ func TestRunDatasetExport_AgentFilter(t *testing.T) {
 	if _, _, err := RunDatasetExport(ctx, ls, st, lf, ExportOpts{ChatID: chat.ID, Dataset: "my-dataset", Agent: "advisor"}); err == nil {
 		t.Fatal("want an error for an agent dataset export doesn't cover")
 	}
+
+	// The two agents this PR adds must actually export, not just be accepted by --agent.
+	for _, e := range []ledger.Entry{
+		llmCallEntry(chat.ID, "node-3", "web-researcher", "research this", "researched"),
+		llmCallEntry(chat.ID, "node-4", "trend-scout", "scan trends", "scanned"),
+	} {
+		if _, err := ls.AppendIntent(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for agent, node := range map[string]string{"web-researcher": "node-3", "trend-scout": "node-4"} {
+		got, _, err = RunDatasetExport(ctx, ls, st, lf, ExportOpts{ChatID: chat.ID, Dataset: "my-dataset", Agent: agent})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 1 || got[0].Agent != agent || got[0].NodeID != node {
+			t.Fatalf("items = %+v, want only the %s's %s", got, agent, node)
+		}
+	}
 }

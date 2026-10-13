@@ -109,6 +109,7 @@ func acpActivity(received []json.RawMessage) Activity {
 			calls[u.ToolCallID] = true
 			inModel = false
 		case "tool_call_update":
+			calls[u.ToolCallID] = true // ACP lets an update create a call no tool_call frame announced
 			if u.Status == "failed" {
 				failed[u.ToolCallID] = true
 			}

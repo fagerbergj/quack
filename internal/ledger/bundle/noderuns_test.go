@@ -67,7 +67,11 @@ func TestNodeRuns_TaskDropsADKFraming(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, run := range sess.NodeRuns(map[string]bool{"synthesizer": true}) {
+	runs := sess.NodeRuns(map[string]bool{"synthesizer": true})
+	if len(runs) != 1 {
+		t.Fatalf("NodeRuns = %+v, want one synthesizer run", runs)
+	}
+	for _, run := range runs {
 		if want := "BACKGROUND x\n\nYOUR TASK - do this, and ONLY this:\nsynthesize"; run.Task != want {
 			t.Fatalf("Task = %q, want the gate-built task %q", run.Task, want)
 		}

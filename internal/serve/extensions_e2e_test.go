@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"iter"
 	"net/http"
@@ -1017,6 +1018,71 @@ func (m *planToolProbeModel) GenerateContent(_ context.Context, req *model.LLMRe
 // TestSDKExtensionDispatch_BoundWorkflowSkipsPlannerLLM: a shaped catalog entry runs straight through the
 // graph executor without the planner LLM call, and the persisted task has {{ask}} substituted.
 func TestSDKExtensionDispatch_BoundWorkflowSkipsPlannerLLM(t *testing.T) {
+	dispatch, st, orchModel, workerStub := boundDispatchFixture(t)
+
+	const localID = "bound-fixture"
+	const chatID = "ext:noop:" + localID
+	req := extsdk.DispatchRequest{
+		Chat: extsdk.ChatRef{LocalID: localID},
+		Ask:  extsdk.Ask{Message: "scan-0042.pdf"},
+		Run:  extsdk.RunConfig{Workflow: "document-ingest"},
+	}
+	if err := dispatch(context.Background(), req); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	waitRunSettled(t, st, chatID)
+
+	if orchModel.SawPlanTool() {
+		t.Error("orchestrator's own LLM saw the plan tool; a bound workflow dispatch must skip the planner LLM call entirely")
+	}
+	workerStub.mu.Lock()
+	workerCalls := workerStub.workerCalls
+	workerStub.mu.Unlock()
+	if workerCalls == 0 {
+		t.Error("the bound node's own worker agent was never invoked")
+	}
+
+	ctx := context.Background()
+	dp, err := st.GetLatestDagPlan(ctx, chatID)
+	if err != nil || dp == nil {
+		t.Fatalf("GetLatestDagPlan: %v, %v", dp, err)
+	}
+	if !strings.Contains(dp.PlanJSON, "process: scan-0042.pdf") {
+		t.Errorf("persisted plan JSON = %s, want the bound node's task with {{ask}} substituted", dp.PlanJSON)
+	}
+}
+
+// RunConfig.ReadOnly reaches a bound run as it does an unbound one: the plan is plan-only, which the graph
+// turns into read-only nodes with no delivery target and ReadOnly in extension tools' CallInfo.
+func TestSDKExtensionDispatch_BoundWorkflowHonorsReadOnly(t *testing.T) {
+	for _, readOnly := range []bool{true, false} {
+		dispatch, st, _, _ := boundDispatchFixture(t)
+		localID := fmt.Sprintf("bound-readonly-%v", readOnly)
+		req := extsdk.DispatchRequest{
+			Chat: extsdk.ChatRef{LocalID: localID},
+			Ask:  extsdk.Ask{Message: "scan-0042.pdf"},
+			Run:  extsdk.RunConfig{Workflow: "document-ingest", ReadOnly: readOnly},
+		}
+		if err := dispatch(context.Background(), req); err != nil {
+			t.Fatalf("dispatch: %v", err)
+		}
+		chatID := "ext:noop:" + localID
+		waitRunSettled(t, st, chatID)
+		dp, err := st.GetLatestDagPlan(context.Background(), chatID)
+		if err != nil || dp == nil {
+			t.Fatalf("GetLatestDagPlan: %v, %v", dp, err)
+		}
+		plan, ok := st.LoadExecPlan(context.Background(), dp.ID)
+		if !ok || plan.PlanOnly != readOnly {
+			t.Errorf("ReadOnly %v: bound plan loaded %v, PlanOnly = %v", readOnly, ok, plan.PlanOnly)
+		}
+	}
+}
+
+// boundDispatchFixture is a noop extension's Dispatch over a stub orchestrator whose catalog has one
+// bound shape, document-ingest (one worker node, task "process: {{ask}}").
+func boundDispatchFixture(t *testing.T) (extsdk.DispatchFunc, *store.Store, *planToolProbeModel, *extAttachStub) {
+	t.Helper()
 	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
 	if err != nil {
 		t.Fatalf("store.New: %v", err)
@@ -1053,37 +1119,7 @@ func TestSDKExtensionDispatch_BoundWorkflowSkipsPlannerLLM(t *testing.T) {
 		},
 	}}
 	dispatch := newExtDispatch("noop", &orchRef, st, hub, runlog.NewEventLog(st), &extHolder, shapesRefOf(shapes), artifacts)
-
-	const localID = "bound-fixture"
-	const chatID = "ext:noop:" + localID
-	req := extsdk.DispatchRequest{
-		Chat: extsdk.ChatRef{LocalID: localID},
-		Ask:  extsdk.Ask{Message: "scan-0042.pdf"},
-		Run:  extsdk.RunConfig{Workflow: "document-ingest"},
-	}
-	if err := dispatch(context.Background(), req); err != nil {
-		t.Fatalf("dispatch: %v", err)
-	}
-	waitRunSettled(t, st, chatID)
-
-	if orchModel.SawPlanTool() {
-		t.Error("orchestrator's own LLM saw the plan tool; a bound workflow dispatch must skip the planner LLM call entirely")
-	}
-	workerStub.mu.Lock()
-	workerCalls := workerStub.workerCalls
-	workerStub.mu.Unlock()
-	if workerCalls == 0 {
-		t.Error("the bound node's own worker agent was never invoked")
-	}
-
-	ctx := context.Background()
-	dp, err := st.GetLatestDagPlan(ctx, chatID)
-	if err != nil || dp == nil {
-		t.Fatalf("GetLatestDagPlan: %v, %v", dp, err)
-	}
-	if !strings.Contains(dp.PlanJSON, "process: scan-0042.pdf") {
-		t.Errorf("persisted plan JSON = %s, want the bound node's task with {{ask}} substituted", dp.PlanJSON)
-	}
+	return dispatch, st, orchModel, workerStub
 }
 
 // hintProbeModel answers differently if the LLM turn saw composeDispatchMessage's workflow hint.

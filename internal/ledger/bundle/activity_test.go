@@ -51,6 +51,8 @@ func TestNodeActivity_ACP(t *testing.T) {
 		update(`{"sessionUpdate":"tool_call","toolCallId":"c","status":"in_progress"}`),
 		update(`{"sessionUpdate":"tool_call","toolCallId":"c","status":"in_progress"}`),
 		update(`{"sessionUpdate":"tool_call_update","toolCallId":"c","status":"completed"}`),
+		// Create-on-update: a call announced only by its failed update is still a call.
+		update(`{"sessionUpdate":"tool_call_update","toolCallId":"d","status":"failed"}`),
 		update(`{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"LGTM"}}`),
 		`{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}`,
 	}
@@ -59,7 +61,7 @@ func TestNodeActivity_ACP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := sess.NodeActivity("n1", "code-reviewer"), (Activity{ModelTurns: 3, ToolCalls: 3, RejectedToolCalls: 1}); got != want {
+	if got, want := sess.NodeActivity("n1", "code-reviewer"), (Activity{ModelTurns: 3, ToolCalls: 4, RejectedToolCalls: 2}); got != want {
 		t.Fatalf("NodeActivity = %+v, want %+v", got, want)
 	}
 }
