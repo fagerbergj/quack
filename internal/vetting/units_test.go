@@ -1,6 +1,7 @@
 package vetting
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -115,5 +116,36 @@ func TestFindUnits_EmptyReferenceLineAndLinkLabelQuotes(t *testing.T) {
 		if sp.Kind == "quote" {
 			t.Fatalf("a quoted title inside a link label is not a claim: %+v", units[0].Specifics)
 		}
+	}
+}
+
+func TestFindUnits_JSONArtifactYieldsNoPunctuationOrTokenSpecifics(t *testing.T) {
+	note := "Don't read a dropped DEF as a red flag - expect mid-week flips; 5 waivers cleared."
+	cases := []struct {
+		name, text string
+		absent     []string // values that must not be specifics
+		quote      string   // the quoted claim that must still be one
+	}{
+		{"json artifact", "{\n  \"updated\": \"2026-10-12\",\n  \"notes\": [\n    \"" + note + "\"\n  ],\n" +
+			"  \"tweet\": \"1356407594683482112\",\n  \"rank\": \"6\"\n}",
+			[]string{",", ": [", "],", "1356407594683482112", "6", "5"}, strings.ToLower(note)},
+		{"prose quote", "The coach called it \"the best defensive week of the season\" on Monday.",
+			nil, "the best defensive week of the season"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			units := FindUnits(tc.text)
+			if len(units) != 1 {
+				t.Fatalf("units = %d, want 1: %+v", len(units), units)
+			}
+			for _, s := range units[0].Specifics {
+				if slices.Contains(tc.absent, s.Value) {
+					t.Errorf("%s %q extracted from %q", s.Kind, s.Value, tc.text)
+				}
+			}
+			if !hasSpecific(units[0], "quote", tc.quote) {
+				t.Errorf("quote %q missing from %+v", tc.quote, units[0].Specifics)
+			}
+		})
 	}
 }

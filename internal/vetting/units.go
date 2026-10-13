@@ -3,6 +3,7 @@ package vetting
 import (
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 // A Unit is one checkable piece of a deliverable: a sentence, list item or
@@ -37,7 +38,7 @@ var (
 	currencyRe    = regexp.MustCompile(`(?:[$€£]\s?\d[\d,]*(?:\.\d+)?[KMBkmb]?|\d[\d,]*(?:\.\d+)?[KMBkmb]?\s?(?:USD|EUR|GBP))`)
 	dateRe        = regexp.MustCompile(`\b(?:\d{4}-\d{2}-\d{2}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.? \d{1,2}(?:, \d{4})?|\d{1,2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{4})\b`)
 	numberRe      = regexp.MustCompile(`(?:^|[^\w.$€£%-])(-?\d[\d,]*(?:\.\d+)?)(?:[^\w%-]|$)`)
-	quoteRe       = regexp.MustCompile(`"([^"]{4,})"`)
+	quoteRe       = regexp.MustCompile(`"([^"]*)"`) // every pair, however short: a length floor pairs a short string's closing quote with the next opening
 	nonDigitRe    = regexp.MustCompile(`[^\d.]`)
 )
 
@@ -205,6 +206,9 @@ func findSpecifics(text string) []Specific {
 	take := func(kind string, re *regexp.Regexp, group int) {
 		for _, m := range re.FindAllStringSubmatchIndex(taken, -1) {
 			v := strings.TrimSpace(taken[m[2*group]:m[2*group+1]])
+			if kind == "quote" && !quotable(v) {
+				continue
+			}
 			if strings.HasPrefix(v, "-") && m[2*group] > 0 && isDigit(taken[m[2*group]-1]) {
 				v = v[1:] // "15-25%" is a range, not minus 25
 			}
@@ -220,6 +224,11 @@ func findSpecifics(text string) []Specific {
 	// ponytail: no proper-name specifics (Title Case matched headings);
 	// add a real detector if names prove worth checking.
 	return out
+}
+
+// quotable: a quoted claim carries words; a short or letterless span ("6", an ID) is a token, not a quote.
+func quotable(v string) bool {
+	return len(v) >= 4 && strings.IndexFunc(v, unicode.IsLetter) >= 0
 }
 
 func normalizeSpecific(kind, v string) string {
