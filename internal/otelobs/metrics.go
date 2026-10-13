@@ -2,6 +2,7 @@
 package otelobs
 
 import (
+	"cmp"
 	"context"
 	"log/slog"
 	"strings"
@@ -9,7 +10,11 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	oteltrace "go.opentelemetry.io/otel/trace"
+
+	"github.com/fagerbergj/quack/internal/ledger"
 )
 
 // package-level singleton; nil-safe until Init runs.
@@ -21,12 +26,62 @@ func InitMetricsForTesting(meter metric.Meter) error {
 	return initMetrics(meter)
 }
 
+// MetricPoint is one collected data point: its attributes as strings and its value (a histogram's count).
+type MetricPoint struct {
+	Attrs map[string]string
+	Value float64
+}
+
+// PointsForTesting collects reader and returns every data point of the instrument name, for tests that
+// assert on labels; an unrecorded instrument returns none.
+func PointsForTesting(reader *sdkmetric.ManualReader, name string) ([]MetricPoint, error) {
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		return nil, err
+	}
+	var out []MetricPoint
+	for _, sm := range rm.ScopeMetrics {
+		for _, met := range sm.Metrics {
+			if met.Name == name {
+				out = append(out, metricPoints(met.Data)...)
+			}
+		}
+	}
+	return out, nil
+}
+
+func metricPoints(data metricdata.Aggregation) []MetricPoint {
+	var out []MetricPoint
+	add := func(set attribute.Set, v float64) {
+		attrs := map[string]string{}
+		for _, kv := range set.ToSlice() {
+			attrs[string(kv.Key)] = kv.Value.String()
+		}
+		out = append(out, MetricPoint{Attrs: attrs, Value: v})
+	}
+	switch d := data.(type) {
+	case metricdata.Sum[int64]:
+		for _, dp := range d.DataPoints {
+			add(dp.Attributes, float64(dp.Value))
+		}
+	case metricdata.Sum[float64]:
+		for _, dp := range d.DataPoints {
+			add(dp.Attributes, dp.Value)
+		}
+	case metricdata.Histogram[float64]:
+		for _, dp := range d.DataPoints {
+			add(dp.Attributes, float64(dp.Count))
+		}
+	}
+	return out
+}
+
 type metrics struct {
 	runsActive       metric.Int64UpDownCounter
 	nodesActive      metric.Int64UpDownCounter
 	roundDur         metric.Float64Histogram // attrs: agent, model, stage
 	judgeScore       metric.Float64Histogram // attrs: agent
-	judgeVerdict     metric.Int64Counter     // attrs: agent, passed
+	judgeVerdict     metric.Int64Counter     // attrs: agent, passed, first_round
 	judgeUnavailable metric.Int64Counter     // attrs: agent
 	judgePhase       metric.Float64Histogram // attrs: agent, phase, criterion (verify only)
 	delivery         metric.Int64Counter     // attrs: outcome
@@ -36,8 +91,11 @@ type metrics struct {
 	checksSkipped    metric.Int64Counter     // attrs: reason
 	memCommitFail    metric.Int64Counter     // attrs: reason, agent
 	runNoAnswer      metric.Int64Counter
-	tokenUsage       metric.Int64Counter   // attrs: gen_ai.request.model, agent, user, source, gen_ai.token.type
-	cost             metric.Float64Counter // attrs: gen_ai.request.model, agent, user, source; unit USD
+	tokenUsage       metric.Int64Counter   // attrs: gen_ai.request.model, agent, user, source, role, gen_ai.token.type
+	cost             metric.Float64Counter // attrs: gen_ai.request.model, agent, user, source, role; unit USD
+	requests         metric.Int64Counter   // attrs: as cost
+	runDur           metric.Float64Histogram
+	toolCalls        metric.Int64Counter // attrs: agent, role, tool, rejected
 	ledgerUnresolved metric.Int64Gauge
 }
 
@@ -129,6 +187,10 @@ func initMetrics(meter metric.Meter) error {
 		{metricDef{"gen_ai.client.token.usage", "tokens consumed per completed model call, by gen_ai.token.type (input/output/reasoning/cached)", "{token}", nil}, &m2.tokenUsage},
 		{metricDef{"quack.ledger.unresolved_intents", "Ledger intents whose projection is missing and boot recovery could not settle", "", nil}, &m2.ledgerUnresolved},
 		{metricDef{"gen_ai.client.cost", "USD cost per completed model call, computed from config/quack.yaml's optional per-model price table; a model absent from that table emits no cost here", "USD", nil}, &m2.cost},
+		{metricDef{"quack.model.requests", "completed model calls that reported usage (an ACP round counts once), attributed like gen_ai.client.cost - the per-request denominator", "", nil}, &m2.requests},
+		{metricDef{"quack.run.duration", "one orchestrator run's wall time; _count is tasks, the cost-per-task denominator", "s",
+			[]float64{10, 30, 60, 300, 600, 1800, 3600, 7200, 14400}}, &m2.runDur},
+		{metricDef{"quack.tool.calls", "tool calls by tool; rejected=true returned an error to the model (e.g. a write_<kind> schema refusal), costing a recovery request", "", nil}, &m2.toolCalls},
 	}
 	for _, e := range defs {
 		if err := assignInstrument(meter, e.into, e.def); err != nil {
@@ -205,14 +267,15 @@ func RecordRoundDuration(agent, model, stage string, d time.Duration) {
 		metric.WithAttributes(attrAgent(agent), attrModel(model), attrStage(stage)))
 }
 
-// RecordJudgeVerdict records one judge round's weakest-link score and pass/fail.
-func RecordJudgeVerdict(agent string, score float64, passed bool) {
+// RecordJudgeVerdict records one judge round's weakest-link score and pass/fail. firstRound marks one round
+// per judged attempt, so rounds per attempt and first-round pass rate are ratios of this one counter.
+func RecordJudgeVerdict(agent string, score float64, passed, firstRound bool) {
 	if m == nil {
 		return
 	}
 	ctx := context.Background()
 	m.judgeScore.Record(ctx, score, metric.WithAttributes(attrAgent(agent)))
-	m.judgeVerdict.Add(ctx, 1, metric.WithAttributes(attrAgent(agent), attrBool("passed", passed)))
+	m.judgeVerdict.Add(ctx, 1, metric.WithAttributes(attrAgent(agent), attrBool("passed", passed), attrBool("first_round", firstRound)))
 }
 
 // RecordJudgeUnavailable records a judge round that errored before a verdict.
@@ -252,6 +315,24 @@ func RecordDeliveryOutcome(outcome DeliveryOutcome) {
 		return
 	}
 	m.delivery.Add(context.Background(), 1, metric.WithAttributes(attribute.String("outcome", string(outcome))))
+}
+
+// RecordRunDuration records one finished orchestrator run (a task); defer it with the run's start time.
+func RecordRunDuration(start time.Time) {
+	if m == nil {
+		return
+	}
+	m.runDur.Record(context.Background(), time.Since(start).Seconds())
+}
+
+// RecordToolCall counts one tool call, billed like a model call; rejected means it returned an error.
+func RecordToolCall(c ledger.Coords, tool string, rejected bool) {
+	if m == nil {
+		return
+	}
+	u := UsageFor("", c, "")
+	m.toolCalls.Add(context.Background(), 1, metric.WithAttributes(attrAgent(u.Agent), attribute.String("role", u.Role),
+		attribute.String("tool", tool), attrBool("rejected", rejected)))
 }
 
 // RecordModelCallDuration records one model call's wall time.
@@ -320,18 +401,44 @@ func RecordRunNoAnswer() {
 	m.runNoAnswer.Add(context.Background(), 1)
 }
 
-// RecordTokenUsage records one point per non-zero token type; empty attribution is omitted, never faked.
-// input MUST exclude cached tokens (genai's PromptTokenCount includes them) or the series double-count.
-func RecordTokenUsage(model, agent, user, source string, input, output, reasoning, cached int64) {
+// Roles a model call plays; every per-call usage instrument carries one.
+const (
+	RoleWorker       = "worker"
+	RoleJudge        = "judge"
+	RoleOrchestrator = "orchestrator"
+)
+
+// Usage is one model call's bounded attribution: it never holds a chat, turn or node id.
+type Usage struct {
+	Model, Agent, User, Source, Role string
+}
+
+// UsageFor attributes a call from its coords: a judge call bills the agent it judged, and a call outside any
+// node (planning, compaction, memory upkeep) is orchestrator overhead. defaultAgent fills a blank agent.
+func UsageFor(model string, c ledger.Coords, defaultAgent string) Usage {
+	u := Usage{Model: model, Agent: cmp.Or(c.Agent, defaultAgent), User: c.User, Source: c.Source, Role: RoleWorker}
+	switch {
+	case c.Agent == ledger.JudgeAgent:
+		u.Agent, u.Role = cmp.Or(c.JudgedAgent, c.Agent), RoleJudge
+	case c.Node == "":
+		u.Role = RoleOrchestrator
+	}
+	return u
+}
+
+// RecordTokenUsage counts the call as one request and records one point per non-zero token type; empty
+// attribution is omitted, never faked. input MUST exclude cached tokens or the series double-count.
+func RecordTokenUsage(u Usage, input, output, reasoning, cached int64) {
 	if m == nil {
 		return
 	}
 	ctx := context.Background()
+	m.requests.Add(ctx, 1, metric.WithAttributes(genAIUsageAttrs(u, "")...))
 	record := func(tokenType string, n int64) {
 		if n == 0 {
 			return
 		}
-		m.tokenUsage.Add(ctx, n, metric.WithAttributes(genAIUsageAttrs(model, agent, user, source, tokenType)...))
+		m.tokenUsage.Add(ctx, n, metric.WithAttributes(genAIUsageAttrs(u, tokenType)...))
 	}
 	record(GenAITokenTypeInput, input)
 	record(GenAITokenTypeOutput, output)
@@ -341,30 +448,23 @@ func RecordTokenUsage(model, agent, user, source string, input, output, reasonin
 
 // RecordCost records gen_ai.client.cost (USD); call it only when the model has a price, since a real $0
 // call is indistinguishable from unpriced.
-func RecordCost(model, agent, user, source string, usd float64) {
+func RecordCost(u Usage, usd float64) {
 	if m == nil {
 		return
 	}
-	m.cost.Add(context.Background(), usd, metric.WithAttributes(genAIUsageAttrs(model, agent, user, source, "")...))
+	m.cost.Add(context.Background(), usd, metric.WithAttributes(genAIUsageAttrs(u, "")...))
 }
 
 // genAIUsageAttrs omits empty fields. agent stays the bare "agent" label: renaming it breaks dashboards.
-func genAIUsageAttrs(model, agent, user, source, tokenType string) []attribute.KeyValue {
-	attrs := make([]attribute.KeyValue, 0, 5)
-	if model != "" {
-		attrs = append(attrs, attribute.String(GenAIRequestModel, model))
-	}
-	if agent != "" {
-		attrs = append(attrs, attribute.String("agent", agent))
-	}
-	if user != "" {
-		attrs = append(attrs, attrUser(user))
-	}
-	if source != "" {
-		attrs = append(attrs, attrSource(source))
-	}
-	if tokenType != "" {
-		attrs = append(attrs, attribute.String(GenAITokenType, tokenType))
+func genAIUsageAttrs(u Usage, tokenType string) []attribute.KeyValue {
+	attrs := make([]attribute.KeyValue, 0, 6)
+	for _, kv := range []attribute.KeyValue{
+		attribute.String(GenAIRequestModel, u.Model), attribute.String("agent", u.Agent), attrUser(u.User),
+		attrSource(u.Source), attribute.String("role", u.Role), attribute.String(GenAITokenType, tokenType),
+	} {
+		if kv.Value.AsString() != "" {
+			attrs = append(attrs, kv)
+		}
 	}
 	return attrs
 }

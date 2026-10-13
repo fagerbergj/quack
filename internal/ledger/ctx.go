@@ -10,7 +10,10 @@ type Coords struct {
 	ChatID string
 	Node   string
 	Agent  string
-	Round  string
+	// JudgedAgent is the node agent a judge round (Agent == JudgeAgent) judges; metrics bill the
+	// judge's calls to it, while Agent stays the judge's own ledger stream key.
+	JudgedAgent string
+	Round       string
 	// BundleHash: the acting agent's bundle content hash (agent.Bundle.Hash),
 	// stamped alongside Agent - provenance for which prompt version ran.
 	BundleHash string
@@ -35,6 +38,9 @@ type Coords struct {
 	// linkage; consumers must degrade gracefully.
 	SpanContext oteltrace.SpanContext
 }
+
+// JudgeAgent is the Agent coordinate every judge round's calls carry.
+const JudgeAgent = "judge"
 
 type coordsKey struct{}
 
@@ -63,6 +69,9 @@ func FillBlankCoords(ctx, stamp Coords) Coords {
 	}
 	if ctx.Agent == "" {
 		ctx.Agent = stamp.Agent
+	}
+	if ctx.JudgedAgent == "" {
+		ctx.JudgedAgent = stamp.JudgedAgent
 	}
 	if ctx.BundleHash == "" {
 		ctx.BundleHash = stamp.BundleHash
@@ -101,7 +110,7 @@ func FillBlankCoords(ctx, stamp Coords) Coords {
 // IsZero reports whether c is the unset value. SpanContext isn't Go-comparable
 // (its TraceState wraps a slice), so this can't be a plain `== Coords{}`.
 func (c Coords) IsZero() bool {
-	return c.ChatID == "" && c.Node == "" && c.Agent == "" && c.Round == "" &&
+	return c.ChatID == "" && c.Node == "" && c.Agent == "" && c.JudgedAgent == "" && c.Round == "" &&
 		c.BundleHash == "" && c.PromptSource == "" && c.PromptVersionID == "" && c.PromptArtifact == "" &&
 		c.User == "" && c.Source == "" && !c.SpanContext.IsValid()
 }

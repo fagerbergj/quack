@@ -279,6 +279,7 @@ func (o *Orchestrator) retryNodes(ctx context.Context, userID, chatID, planID st
 		defer otelobs.End(span, nil)
 		otelobs.RunStarted()
 		defer otelobs.RunFinished()
+		defer otelobs.RecordRunDuration(time.Now())
 		plan, err := o.planForAll(ctx, userID, chatID, planID, nodeIDs)
 		if err != nil {
 			yield(stream.Errorf("retry: "+err.Error()), nil)
@@ -431,6 +432,7 @@ func (o *Orchestrator) RunBoundPlan(ctx context.Context, userID, sessionID, sour
 		ctx = ledger.WithCoords(ctx, ledger.Coords{ChatID: sessionID, User: userID, Source: source})
 		ctx, span = otelobs.Start(ctx, "run.bound", attribute.String(otelobs.ChatIDKey, sessionID))
 		otelobs.RunStarted()
+		defer otelobs.RecordRunDuration(time.Now())
 		defer func() {
 			otelobs.RunFinished()
 			otelobs.End(span, nil)
@@ -528,6 +530,7 @@ func (o *Orchestrator) Run(ctx context.Context, userID, sessionID, source, messa
 		ctx = ledger.WithCoords(ctx, ledger.Coords{ChatID: sessionID, User: userID, Source: source})
 		ctx, span = otelobs.Start(ctx, "run", attribute.String(otelobs.ChatIDKey, sessionID))
 		otelobs.RunStarted()
+		defer otelobs.RecordRunDuration(time.Now())
 		defer func() {
 			otelobs.RunFinished()
 			otelobs.End(span, nil)

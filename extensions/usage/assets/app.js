@@ -48,7 +48,8 @@ const STORAGE_KEY = "quack.usage.timeframe";
 
 const EMPTY_TOKENS_MSG = "no token data in this range (token metrics need quack v0.30+ to be emitting).";
 const EMPTY_COST_MSG = "no cost data — cost needs a price table (providers.<p>.models.<model>) in quack's config, v0.30+.";
-const EMPTY_LATENCY_MSG = `no data — the ${LATENCY.metric}_bucket histogram isn't present (check the OTel collector's Prometheus naming translation, or quack hasn't made a model call yet).`;
+const EMPTY_TREND_MSG = "no data in this range (role, first_round, quack.tool.calls and quack.run.duration need a quack that emits them).";
+const EMPTY_LATENCY_MSG =`no data — the ${LATENCY.metric}_bucket histogram isn't present (check the OTel collector's Prometheus naming translation, or quack hasn't made a model call yet).`;
 
 // Step heuristic: ~150 points per span, rounded up to a human-legible step.
 
@@ -1094,6 +1095,44 @@ async function loadCostPanel(start, end, step, instantCost) {
   if (instantCost.ok) cumulativeEl.appendChild(totalTile);
 }
 
+// Outcome trends: plain per-step ratios with no targets drawn, so they show direction, not a pass mark.
+// Every query groups by bounded labels only; a ratio divides counters inside one step.
+function trendQueries(step) {
+  const inc = (selector) => `increase(${selector}[${step}s])`;
+  const tokens = (types) => `${METRICS.tokenUsage}{${METRICS.labels.tokenType}=~"${types}"}`;
+  const firstRound = `quack_judge_verdict_total{first_round="true"`;
+  return {
+    "trend-cache-role": `100 * sum by (role) (${inc(tokens("cached"))}) / sum by (role) (${inc(tokens("cached|input"))})`,
+    "trend-first-pass": `100 * sum(${inc(firstRound + ', passed="true"}')}) / sum(${inc(firstRound + "}")})`,
+    "trend-rejected-tools": `sum by (tool) (${inc('quack_tool_calls_total{rejected="true"}')})`,
+    "trend-cost-task": `sum(${inc(`{__name__=~"${METRICS.costNameRegex}"}`)}) / sum(${inc("quack_run_duration_seconds_count")})`,
+  };
+}
+
+const TRENDS = {
+  "trend-cache-role": { label: (m) => m.role || "(unknown)", format: formatPercent },
+  "trend-first-pass": { label: () => "first-round pass", format: formatPercent },
+  "trend-rejected-tools": { label: (m) => m.tool || "(unknown)", format: formatNumber, additive: true },
+  "trend-cost-task": { label: () => "cost / task", format: formatMoney },
+};
+
+async function loadTrendPanels(start, end, step) {
+  const queries = trendQueries(step);
+  await Promise.all(Object.entries(TRENDS).map(async ([name, spec]) => {
+    const el = panelEl(name);
+    const status = promResultOrStatus(await promQueryRange(queries[name], start, end, step));
+    if (!status.ok && !status.empty) return showError(el, status.message);
+    const colorFor = makeColorAssigner();
+    // A step with no denominator divides to Inf or NaN: an absent point, not a spike.
+    const series = (status.series || []).map((s) => {
+      const label = spec.label(s.metric);
+      const points = matrixSeriesPoints(s).filter((p) => Number.isFinite(p.v));
+      return { key: label, label, color: colorFor(label), points };
+    });
+    renderSeriesChart(el, { series, start, end, step, mode: "lines", additive: spec.additive, valueFormat: spec.format, emptyMsg: EMPTY_TREND_MSG });
+  }));
+}
+
 async function loadLatencyPanel(start, end, step, latencyAvailable) {
   const el = panelEl("latency");
   if (!latencyAvailable) {
@@ -1244,6 +1283,7 @@ async function refreshAll(tf) {
     loadCachePanel(win, instantTotals),
     loadCostPanel(start, end, step, instantTotals.cost),
     loadLatencyPanel(start, end, step, latencyAvailable),
+    loadTrendPanels(start, end, step),
     loadKPIRow(rangeSeconds, now, latencyAvailable, instantTotals.tokens, instantTotals.cost),
   ].map((p) => p.catch((err) => console.error("usage: panel load failed", err))));
 }

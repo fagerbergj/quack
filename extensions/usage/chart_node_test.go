@@ -59,23 +59,29 @@ type chartDraw struct {
 	Notes    []string `json:"notes"`
 }
 
-func TestChartDrawsGapsAsGapsAndFlagsStaleData(t *testing.T) {
+// runNodeHarness evaluates harness under node with app.js on stdin and decodes its JSON line into out.
+func runNodeHarness(t *testing.T, harness string, out any) {
+	t.Helper()
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node unavailable in this environment")
 	}
-	cmd := exec.Command("node", "-e", chartHarness)
+	cmd := exec.Command("node", "-e", harness)
 	cmd.Stdin = strings.NewReader(appJS)
 	raw, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("node harness: %v\n%s", err, raw)
 	}
+	if err := json.Unmarshal(raw, out); err != nil {
+		t.Fatalf("decode harness output %q: %v", raw, err)
+	}
+}
+
+func TestChartDrawsGapsAsGapsAndFlagsStaleData(t *testing.T) {
 	var got struct {
 		Stacked, Lines, Current chartDraw
 		Presence                string
 	}
-	if err := json.Unmarshal(raw, &got); err != nil {
-		t.Fatalf("decode harness output %q: %v", raw, err)
-	}
+	runNodeHarness(t, chartHarness, &got)
 	// One band and top line per contiguous run, so the 540..1200 gap is never bridged; the lone
 	// sample after it is marked with a dot.
 	if got.Stacked.Polygon != 2 || got.Stacked.Polyline != 2 || got.Stacked.Circle != 1 {
@@ -92,5 +98,26 @@ func TestChartDrawsGapsAsGapsAndFlagsStaleData(t *testing.T) {
 	}
 	if got.Presence != "count(last_over_time(quack_model_call_duration_seconds_bucket[3600s]))" {
 		t.Errorf("latencyPresenceQuery(3600) = %q, want a range lookback", got.Presence)
+	}
+}
+
+// The outcome trends divide counters within one step and group only by bounded labels.
+func TestTrendQueriesStayPerStepAndBounded(t *testing.T) {
+	var got map[string]string
+	runNodeHarness(t, `const src = require("fs").readFileSync(0, "utf8");
+console.log(JSON.stringify(new Function("document", src + ";return trendQueries;")({ addEventListener() {} })(300)));`, &got)
+	want := map[string]string{
+		"trend-cache-role":     `100 * sum by (role) (increase(gen_ai_client_token_usage_total{gen_ai_token_type=~"cached"}[300s])) / sum by (role) (increase(gen_ai_client_token_usage_total{gen_ai_token_type=~"cached|input"}[300s]))`,
+		"trend-first-pass":     `100 * sum(increase(quack_judge_verdict_total{first_round="true", passed="true"}[300s])) / sum(increase(quack_judge_verdict_total{first_round="true"}[300s]))`,
+		"trend-rejected-tools": `sum by (tool) (increase(quack_tool_calls_total{rejected="true"}[300s]))`,
+		"trend-cost-task":      `sum(increase({__name__=~"gen_ai_client_cost(_USD)?_total"}[300s])) / sum(increase(quack_run_duration_seconds_count[300s]))`,
+	}
+	for name, q := range want {
+		if got[name] != q {
+			t.Errorf("trendQueries(300)[%q] = %q, want %q", name, got[name], q)
+		}
+		if !strings.Contains(indexHTMLSrc, `data-panel="`+name+`"`) {
+			t.Errorf("dashboard HTML has no data-panel=%q mount", name)
+		}
 	}
 }

@@ -14,8 +14,10 @@ import (
 	"google.golang.org/adk/v2/agent/llmagent"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/session"
+	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/tools"
 	"github.com/fagerbergj/quack/internal/vetting"
@@ -42,12 +44,11 @@ func (g *gatedLLM) GenerateContent(_ context.Context, req *model.LLMRequest, _ b
 	}
 }
 
-// retryNodeMetricsHarness wires one worker node behind a gatedLLM, with its
+// retryNodeMetricsHarness wires one worker node (and its judge) behind gate, with its
 // plan already stashed the way RetryNode re-enters it via stashedPlan.
-func retryNodeMetricsHarness(t *testing.T) (o *Orchestrator, gate *gatedLLM, userID, chatID string) {
+func retryNodeMetricsHarness(t *testing.T, gate model.LLM) (o *Orchestrator, userID, chatID string) {
 	t.Helper()
 	userID, chatID = "u1", "chat-1"
-	gate = &gatedLLM{started: make(chan struct{}), hold: make(chan struct{})}
 	worker, err := llmagent.New(llmagent.Config{Name: "w", Model: gate, Description: "w", Instruction: "ROLE:w"})
 	if err != nil {
 		t.Fatalf("worker agent: %v", err)
@@ -63,7 +64,7 @@ func retryNodeMetricsHarness(t *testing.T) (o *Orchestrator, gate *gatedLLM, use
 		State: map[string]any{tools.ExecPlanKey: string(planJSON)}}); err != nil {
 		t.Fatalf("session create: %v", err)
 	}
-	return o, gate, userID, chatID
+	return o, userID, chatID
 }
 
 // runsActiveGauge reads quack.runs.active's current net value off reader.
@@ -106,7 +107,8 @@ func TestRetryNode_CountsTowardRunsActiveGauge(t *testing.T) {
 	otelobs.RunStarted()
 	otelobs.RunFinished()
 
-	o, gate, userID, chatID := retryNodeMetricsHarness(t)
+	gate := &gatedLLM{started: make(chan struct{}), hold: make(chan struct{})}
+	o, userID, chatID := retryNodeMetricsHarness(t, gate)
 	if got := runsActiveGauge(t, reader); got != 0 {
 		t.Fatalf("quack.runs.active = %d before the run, want 0", got)
 	}
@@ -137,4 +139,58 @@ func TestRetryNode_CountsTowardRunsActiveGauge(t *testing.T) {
 	if got := runsActiveGauge(t, reader); got != 0 {
 		t.Fatalf("quack.runs.active = %d after the run finished, want 0", got)
 	}
+}
+
+// A retried node's worker and judge calls both bill its agent, told apart by role, and the retry is one task.
+func TestRetryNode_BillsWorkerAndJudgeToTheNodeAgent(t *testing.T) {
+	reader := metric.NewManualReader()
+	mp := metric.NewMeterProvider(metric.WithReader(reader))
+	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
+	if err := otelobs.InitMetricsForTesting(mp.Meter("test")); err != nil {
+		t.Fatalf("InitMetricsForTesting: %v", err)
+	}
+	m := inference.TracedModelForTesting(funcModel(func(_ context.Context, req *model.LLMRequest) iter.Seq2[*model.LLMResponse, error] {
+		return func(yield func(*model.LLMResponse, error) bool) {
+			r := stubText("done")
+			if stubHasTool(req, "submit_verdict") {
+				r = stubCall("submit_verdict", map[string]any{"score": 3, "feedback": ""})
+			}
+			r.UsageMetadata = &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 10, CandidatesTokenCount: 5}
+			yield(r, nil)
+		}
+	}), "m")
+	o, userID, chatID := retryNodeMetricsHarness(t, m)
+	for _, err := range o.RetryNode(context.Background(), userID, chatID, "", nil, "n1", "") {
+		if err != nil {
+			t.Fatalf("retry: %v", err)
+		}
+	}
+
+	roles := map[string]bool{}
+	for _, p := range metricPointsOf(t, reader, "quack.model.requests") {
+		if p.Attrs["agent"] != "w" {
+			t.Errorf("quack.model.requests point %v bills agent %q, want the node's agent w", p.Attrs, p.Attrs["agent"])
+		}
+		roles[p.Attrs["role"]] = true
+	}
+	if !roles[otelobs.RoleWorker] || !roles[otelobs.RoleJudge] {
+		t.Errorf("quack.model.requests roles = %v, want worker and judge", roles)
+	}
+	runs := metricPointsOf(t, reader, "quack.run.duration")
+	if len(runs) != 1 || runs[0].Value != 1 {
+		t.Errorf("quack.run.duration = %+v, want the retry counted as one task", runs)
+	}
+	verdicts := metricPointsOf(t, reader, "quack.judge.verdict")
+	if len(verdicts) != 1 || verdicts[0].Attrs["first_round"] != "true" {
+		t.Errorf("quack.judge.verdict = %+v, want one first-round verdict", verdicts)
+	}
+}
+
+func metricPointsOf(t *testing.T, reader *metric.ManualReader, name string) []otelobs.MetricPoint {
+	t.Helper()
+	ps, err := otelobs.PointsForTesting(reader, name)
+	if err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	return ps
 }
