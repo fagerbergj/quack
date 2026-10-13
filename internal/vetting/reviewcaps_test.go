@@ -66,6 +66,16 @@ func TestCheckCodeReviewCaps(t *testing.T) {
 			t.Fatalf("got %v, want an error naming verified and the 160 cap", err)
 		}
 	})
+	t.Run("every violation reported in one error", func(t *testing.T) {
+		long := func(n int) string { return strings.Repeat("z", n+1) }
+		err := CheckCodeReviewCaps(long(reviewTakeawayMaxLen), []string{"ok", long(reviewVerifiedMaxLen)},
+			[]string{long(reviewNotesMaxLen), long(reviewNotesMaxLen)})
+		for _, want := range []string{"takeaway: 241 characters", "verified: item 2 is 161", "notes: item 1 is 201", "notes: item 2 is 201"} {
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Errorf("got %v, want it to include %q", err, want)
+			}
+		}
+	})
 }
 
 // TestValidateCodeReview: the Validate hook enforces the same caps for a native
