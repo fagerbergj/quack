@@ -167,3 +167,25 @@ func TestFindUnits_JSONArtifactYieldsNoPunctuationOrTokenSpecifics(t *testing.T)
 		})
 	}
 }
+
+func TestFindSpecifics_CodeLocationsAreCitationsNotFigures(t *testing.T) {
+	cases := []struct{ text, want string }{
+		{"| 1 | unrecovered panic in `runTool` (`tool.go:111`) | ✅ **RESOLVED** |", "number:1"},
+		{"| 2 | `decide.Annotated` Meta split lost over the wire (`host.go:169`) |", "number:2"},
+		{"| 5 | decide params HTML-escaped in transit (`serve.go:133`) |", "number:5"},
+		{"overlay making the child skip `ext.Start` (extensions/sdk/extproc/serve.go:133)", ""},
+		{"the recover lives at tool.go:106-111 now", ""},
+		{"coverage is 76.3% on the diff", "percent:76.3"},
+		{"it served 111 requests", "number:111"},
+		{"a figure in code still counts: `limit = 111`", "number:111"},
+	}
+	for _, c := range cases {
+		var got []string
+		for _, s := range findSpecifics(c.text) {
+			got = append(got, s.Kind+":"+s.Norm)
+		}
+		if strings.Join(got, " ") != c.want {
+			t.Errorf("findSpecifics(%q) = %v, want %q", c.text, got, c.want)
+		}
+	}
+}
