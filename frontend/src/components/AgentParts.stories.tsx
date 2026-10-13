@@ -275,6 +275,21 @@ export const OrchestratorCardDone: Story = {
   ),
 }
 
+// An answer delivered after its last judge round failed: a quiet marker on the answer itself; a tap explains it.
+export const AnswerNotVerified: Story = {
+  render: () => (
+    <div className="max-w-lg rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-3">
+      <BubbleHeader agent="synthesizer" model="qwen3.8-27b-vllm" tokens={48210} unverified={{ nodeId: 'synthesizer-1', rounds: 3, score: 0.28 }} />
+      <AssistantText text="Zig returns errors as values through error unions; Odin uses multiple return values with an `or_return` shorthand." />
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(canvas.getByRole('button', { name: /not verified/ }))
+    await expect(canvas.getByRole('tooltip')).toHaveTextContent('after 3 rounds (final score 28%)')
+  },
+}
+
 export const PreambleVsAnswer: Story = {
   render: () => (
     <div className="max-w-lg rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-3 space-y-2">

@@ -1199,6 +1199,14 @@ describe('answer-bubble attribution helpers', () => {
     expect(dagAnswerAttribution(grown, 'ONE and more')).toMatchObject({ tokens: 3 })
   })
 
+  // The Zig vs Odin synthesizer failed 3 of 3 rounds; the API omits judge_passed when false.
+  it('dagAnswerAttribution flags an answering sink that failed its quality check, and only that', () => {
+    const failed = twoSinks({ r1: { status: 'done', judgeRounds: 3, judgeFinalScore: 0.28, startedAt: 10, finishedAt: 20 }, r2: { status: 'done', judgeRounds: 1, judgePassed: true, finishedAt: 30 } })
+    expect(dagAnswerAttribution(failed, '## r1\n\nONE\n\n## r2\n\nTWO')?.unverified).toEqual({ nodeId: 'r1', rounds: 3, score: 0.28, startedAt: 10, finishedAt: 20 })
+    expect(dagAnswerAttribution(failed, 'TWO')?.unverified).toBeUndefined() // r2 finished last, answered alone and passed
+    expect(dagAnswerAttribution(twoSinks({ r1: { status: 'done' }, r2: { status: 'done' } }))?.unverified).toBeUndefined() // never judged
+  })
+
   it('liveAnswerText shows the persisted answer once the run ends - a retry replay streams only the re-run node', () => {
     const retried = { ...twoSinks({ r1: { status: 'done' } }), nodeAnswer: { r1: 'NEW ONE' } }
     const persisted = '## r1\n\nNEW ONE\n\n## r2\n\nTWO'

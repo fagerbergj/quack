@@ -8,6 +8,7 @@ import {
   completeRun,
   freezeOpenRuns,
   type AgentRun,
+  type Unverified,
 } from '../components/AgentParts'
 import type { Turn, DagOutputItem, MessageOutputItem, NodeStatus, PauseReason, QueuedMessage, Usage, A2UiAction, SendMessageBody } from '../generated'
 import {
@@ -1071,6 +1072,7 @@ export interface Attribution {
   tokens?: number
   // The answering node was stopped, so its text is an unreviewed draft.
   stopped?: boolean
+  unverified?: Unverified
 }
 
 // sinkNodeIds returns the DAG's sinks - nodes with no successor - in plan order; their answers ARE
@@ -1143,11 +1145,15 @@ export function dagAnswerAttribution(dag: DagTurnState, text?: string): Attribut
   const models = [...new Set(states.map(s => s?.model))]
   const tokens = states.some(s => s?.totalTokens != null) ? states.reduce((sum, s) => sum + (s?.totalTokens ?? 0), 0) : undefined
   const agents = [...new Set(nodes.map(n => agentLabel(n.agent)))].join(', ')
+  // The API omits judge_passed when false, so rounds without a pass is the failure.
+  const failed = ids.find(id => (dag.nodeStates[id]?.judgeRounds ?? 0) > 0 && dag.nodeStates[id]?.judgePassed !== true)
+  const fs = failed ? dag.nodeStates[failed] : undefined
   return {
     agent: nodes.length > 1 ? `${nodes.length} nodes (${agents})` : nodes[0].agent,
     model: models.length === 1 ? models[0] : undefined,
     tokens,
     stopped: dagAnswer(dag).stopped || undefined,
+    unverified: failed && fs ? { nodeId: failed, rounds: fs.judgeRounds!, score: fs.judgeFinalScore, startedAt: fs.startedAt, finishedAt: fs.finishedAt } : undefined,
   }
 }
 

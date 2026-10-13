@@ -1,4 +1,5 @@
-import type { ArtifactSummary } from '../api'
+import { api, listChatArtifactsShared, type ArtifactSummary } from '../api'
+import { tryParseJSON } from './json'
 
 export const pct = (score: number) => `${Math.round(score * 100)}%`
 
@@ -55,5 +56,17 @@ export function parseJudgeRound(body: unknown, fallbackRound: number): JudgeRoun
     passed,
     score: typeof b.score === 'number' ? b.score : undefined,
     criteria: criteria.map(c => ({ ...c, failed: !passed && floor != null && c.score === floor })),
+  }
+}
+
+// The "not verified" marker's explanation: the criterion that sank the node's last judge round in its run window.
+export async function failedCriterionLine(chatId: string, nodeId: string, startedAt: number, endAt: number): Promise<string> {
+  try {
+    const rounds = nodeJudgeRounds((await listChatArtifactsShared(chatId)).data ?? [], nodeId, startedAt, endAt)
+    const last = rounds[rounds.length - 1]
+    const c = last && parseJudgeRound(tryParseJSON(await api.getArtifactText(chatId, last.name)), last.round)?.criteria.find(x => x.failed)
+    return c ? `Weakest criterion: ${c.name} at ${pct(c.score ?? 0)}${c.feedback ? `. ${c.feedback}` : ''}` : 'No criterion recorded.'
+  } catch {
+    return "Couldn't load the judge's verdict."
   }
 }

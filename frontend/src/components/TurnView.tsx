@@ -61,10 +61,10 @@ function TurnDagBubble({ dag, activity, chatId }: { dag: DagTurnState; activity:
 
 // TurnAnswerBubble is the completed turn's answer card: the attributed
 // header, the (DAG-less) activity, and the markdown answer.
-function TurnAnswerBubble({ dagState, activity, text, attribution, stopped }: { dagState: DagTurnState | undefined; activity: Activity[]; text: string | undefined; attribution: ReturnType<typeof dagAnswerAttribution> | undefined; stopped: StoppedBadge | undefined }) {
+function TurnAnswerBubble({ dagState, activity, text, attribution, stopped, chatId }: { dagState: DagTurnState | undefined; activity: Activity[]; text: string | undefined; attribution: ReturnType<typeof dagAnswerAttribution> | undefined; stopped: StoppedBadge | undefined; chatId?: string }) {
   return (
     <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
-      <BubbleHeader agent={attribution?.agent ?? 'orchestrator'} model={attribution?.model} tokens={attribution?.tokens} stopped={stopped} />
+      <BubbleHeader agent={attribution?.agent ?? 'orchestrator'} model={attribution?.model} tokens={attribution?.tokens} stopped={stopped} unverified={attribution?.unverified} chatId={chatId} />
       {!dagState && activity.length > 0 && <ActivityList activity={activity} />}
       {text && <AssistantText text={text} />}
     </div>
@@ -132,7 +132,7 @@ export const TurnView = memo(function TurnView({
       <div className="flex justify-start">
         <div className="w-full space-y-3">
           {dagState && <TurnDagBubble dag={dagState} activity={turnActivity} chatId={chatId} />}
-          {hasAnswerContent && <TurnAnswerBubble dagState={dagState} activity={turnActivity} text={text} attribution={attribution} stopped={stopped} />}
+          {hasAnswerContent && <TurnAnswerBubble dagState={dagState} activity={turnActivity} text={text} attribution={attribution} stopped={stopped} chatId={chatId} />}
           {turnChoice && (
             <QuestionBubble
               agent="orchestrator"
