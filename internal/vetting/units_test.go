@@ -135,7 +135,8 @@ func TestFindUnits_JSONArtifactYieldsNoPunctuationOrTokenSpecifics(t *testing.T)
 		items += "    {\n      \"kind\": \"news\",\n      \"text\": \"Update. " + c + "\",\n      \"link\": \"https://x.example/a\"\n    },\n"
 	}
 	items += "    {\n      \"kind\": \"end\"\n    }\n  ]\n}"
-	junk := []string{",", ": [", "],", "},     {", "1356407594683482112", "6", "5"}
+	junk := []string{",", ": [", "],", "},     {", "1356407594683482112", "6", "5",
+		"kind", "link", "text", "items", "notes", "updated", "tweet", "rank"} // JSON keys name fields, they claim nothing
 	cases := []struct {
 		name, text string
 		absent     []string // values that must not be specifics

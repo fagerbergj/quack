@@ -227,7 +227,7 @@ func findSpecifics(text string) []Specific {
 	take := func(kind string, re *regexp.Regexp, group int) {
 		for _, m := range re.FindAllStringSubmatchIndex(taken, -1) {
 			v := strings.TrimSpace(taken[m[2*group]:m[2*group+1]])
-			if kind == "quote" && !quotable(v) {
+			if kind == "quote" && !quotable(v, taken[m[1]:]) {
 				continue
 			}
 			if strings.HasPrefix(v, "-") && m[2*group] > 0 && isDigit(taken[m[2*group]-1]) {
@@ -247,9 +247,10 @@ func findSpecifics(text string) []Specific {
 	return out
 }
 
-// quotable: a quoted claim carries words; a short or letterless span ("6", an ID) is a token, not a quote.
-func quotable(v string) bool {
-	return len(v) >= 4 && strings.IndexFunc(v, unicode.IsLetter) >= 0
+// quotable: a quoted claim carries words; a short or letterless span ("6", an ID) is a token, and a
+// span followed by a colon (after is the text past its closing quote) is a JSON key naming a field.
+func quotable(v, after string) bool {
+	return len(v) >= 4 && strings.IndexFunc(v, unicode.IsLetter) >= 0 && !strings.HasPrefix(strings.TrimLeft(after, " \t\n"), ":")
 }
 
 func normalizeSpecific(kind, v string) string {
