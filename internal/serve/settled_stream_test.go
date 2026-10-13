@@ -104,7 +104,7 @@ func TestFollowerOfASettledChatExitsFailed(t *testing.T) {
 
 	select {
 	case c := <-code:
-		if c != 1 || !strings.Contains(errOut.String(), settledStreamError) || strings.Contains(errOut.String(), "lost connection") {
+		if c != 1 || !strings.Contains(errOut.String(), stream.RestartNotResumed) || strings.Contains(errOut.String(), "lost connection") {
 			t.Errorf("exit %d, stderr %q; want 1 with the settled failure", c, errOut.String())
 		}
 	case <-time.After(30 * time.Second):

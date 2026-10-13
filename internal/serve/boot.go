@@ -142,11 +142,9 @@ func endSettledStreams(ctx context.Context, runs []settledRun, hub *stream.Hub, 
 	for _, r := range runs {
 		hub.Reset(r.ChatID)
 		eventLog.Reopen(ctx, hub, r.ChatID)
-		endReopenedStream(ctx, hub, eventLog, r.ChatID, stream.Errorf(settledStreamError))
+		endReopenedStream(ctx, hub, eventLog, r.ChatID, stream.Errorf(stream.RestartNotResumed))
 	}
 }
-
-const settledStreamError = "quack restarted and could not resume this run; send the message again to retry"
 
 // syncFinishedNodeRecords repairs recent finished nodes' dag_node records off the boot path;
 // older plans are left alone, as boot never resumes them either.

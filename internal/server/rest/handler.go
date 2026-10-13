@@ -1402,11 +1402,30 @@ func (h *Handler) SubscribeChatStream(w http.ResponseWriter, r *http.Request, ch
 				return
 			}
 		}
+		if len(evs) == 0 && lastSeq > 0 {
+			h.endAheadFollower(r.Context(), sse, string(chatID), lastSeq)
+		}
 		return
 	}
 
 	// Warm path: hub holds the run. Replay buffer (skipping what the client has seen), then tail live.
 	streamHub(r.Context(), sse, replay, live, lastSeq)
+}
+
+// endAheadFollower ends a follower holding events a hard kill never persisted, when boot settled the run failed;
+// without it the client retries past a log that can never reach its Last-Event-ID.
+func (h *Handler) endAheadFollower(ctx context.Context, sse *sseWriter, chatID string, lastSeq int64) {
+	persisted, err := h.store.MaxChatEventSeq(ctx, chatID)
+	if err != nil || lastSeq <= persisted {
+		return
+	}
+	chat, err := h.store.GetChat(ctx, chatID)
+	if err != nil || chat.RunStatus != store.RunStatusFailed {
+		return
+	}
+	if sse.sendID(lastSeq+1, stream.Errorf(stream.RestartNotResumed)) == nil {
+		_ = sse.sendID(lastSeq+2, stream.Done())
+	}
 }
 
 // Forwards one run's events to one client: replay buffer, then live tail. The ONLY place events touch an HTTP connection.
