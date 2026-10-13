@@ -125,8 +125,7 @@ Supersedes this doc's §5 `ApplyOutcome`/reinforcement description with the foll
 `verified`, verified while `supported >= 1`, recomputed on every vote - not sticky, epic #1456 P1), `last_upvoted_at`, `recalls`, `last_recalled_at`. `supported` is the judge- or human-supported subset of `upvotes` (a human `up` vote, epic #1255 P4, counts as support exactly like a judge `supported` vote); `reinforcement_count`/`status=reinforced` are unchanged and kept as a mirror - reinforcement still bumps both, but never `supported` or `tier`.
 
 **Usage tracking.** Every recall delivery that routes through `LogRecall`/`LogRecallLedgerOnly` - the
-prefill injection in `vetting/node.go`, `recall_memory` (native workers, the orchestrator,
-and the ACP loopback MCP), and the plan judge's
+prefill injection in `vetting/node.go`, `recall_memory` (native workers, the orchestrator, and the ACP loopback MCP), and the plan judge's
 project-memory injection (source `plan_judge`) - appends a `memory.recall` ledger entry (chat, node,
 round, source, delivered ids+scores) on EVERY call. That per-call ledger trail is the source of truth for
 what a chat retrieved and what `quack memory stats`'s weekly RECALLS counts
