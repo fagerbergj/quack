@@ -3,6 +3,7 @@ package vetting
 import (
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 // A Unit is one checkable piece of a deliverable: a sentence, list item or
@@ -37,7 +38,7 @@ var (
 	currencyRe    = regexp.MustCompile(`(?:[$€£]\s?\d[\d,]*(?:\.\d+)?[KMBkmb]?|\d[\d,]*(?:\.\d+)?[KMBkmb]?\s?(?:USD|EUR|GBP))`)
 	dateRe        = regexp.MustCompile(`\b(?:\d{4}-\d{2}-\d{2}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.? \d{1,2}(?:, \d{4})?|\d{1,2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{4})\b`)
 	numberRe      = regexp.MustCompile(`(?:^|[^\w.$€£%-])(-?\d[\d,]*(?:\.\d+)?)(?:[^\w%-]|$)`)
-	quoteRe       = regexp.MustCompile(`"([^"]{4,})"`)
+	quoteRe       = regexp.MustCompile(`"([^"]*)"`) // every pair, however short: a length floor pairs a short string's closing quote with the next opening
 	nonDigitRe    = regexp.MustCompile(`[^\d.]`)
 )
 
@@ -90,16 +91,37 @@ func blockUnits(lines []string, pi int, refs map[string]string) []Unit {
 
 func sentenceUnits(prose string, pi int, refs map[string]string) []Unit {
 	var out []Unit
-	start := 0
+	var u Unit
+	start, open := 0, false
 	for _, m := range sentenceEndRe.FindAllStringSubmatchIndex(prose, -1) {
 		end := m[3] // just past the terminator
-		out = append(out, newUnit("sentence", prose[start:end], pi, refs))
+		u, open = sentenceUnit(prose[start:end], open, pi, refs)
+		out = append(out, u)
 		start = end
 	}
 	if rest := strings.TrimSpace(prose[start:]); rest != "" {
-		out = append(out, newUnit("sentence", rest, pi, refs))
+		u, _ = sentenceUnit(rest, open, pi, refs)
+		out = append(out, u)
 	}
 	return out
+}
+
+// sentenceUnit takes open (the prose is inside a quoted string where s starts) and reports whether
+// it still is where s ends. A JSON value or long quote spans sentence breaks; requoting the fragment keeps quote pairing aligned.
+func sentenceUnit(s string, open bool, pi int, refs map[string]string) (Unit, bool) {
+	u := newUnit("sentence", s, pi, refs)
+	endsOpen := open != (strings.Count(s, `"`)%2 == 1)
+	if open || endsOpen {
+		lead, trail := "", ""
+		if open {
+			lead = `"`
+		}
+		if endsOpen {
+			trail = `"`
+		}
+		u.Specifics = findSpecifics(lead + withoutLinks(u.Text) + trail)
+	}
+	return u, endsOpen
 }
 
 func newUnit(kind, text string, pi int, refs map[string]string) Unit {
@@ -205,6 +227,9 @@ func findSpecifics(text string) []Specific {
 	take := func(kind string, re *regexp.Regexp, group int) {
 		for _, m := range re.FindAllStringSubmatchIndex(taken, -1) {
 			v := strings.TrimSpace(taken[m[2*group]:m[2*group+1]])
+			if kind == "quote" && !quotable(v, taken[m[1]:]) {
+				continue
+			}
 			if strings.HasPrefix(v, "-") && m[2*group] > 0 && isDigit(taken[m[2*group]-1]) {
 				v = v[1:] // "15-25%" is a range, not minus 25
 			}
@@ -220,6 +245,12 @@ func findSpecifics(text string) []Specific {
 	// ponytail: no proper-name specifics (Title Case matched headings);
 	// add a real detector if names prove worth checking.
 	return out
+}
+
+// quotable: a quoted claim carries words; a short or letterless span ("6", an ID) is a token, and a
+// span followed by a colon (after is the text past its closing quote) is a JSON key naming a field.
+func quotable(v, after string) bool {
+	return len(v) >= 4 && strings.IndexFunc(v, unicode.IsLetter) >= 0 && !strings.HasPrefix(strings.TrimLeft(after, " \t\n"), ":")
 }
 
 func normalizeSpecific(kind, v string) string {
