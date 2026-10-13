@@ -305,6 +305,8 @@ type workerActivity struct {
 	// artifactsWritten: ids written/edited via a native artifact tool this round; feeds the
 	// artifact-read zero-reads discard rule.
 	artifactsWritten []string
+	// artifactWrittenAt: each written id's latest ok reply time; the chat session spans earlier turns.
+	artifactWrittenAt map[string]time.Time
 	// rendered: render_ui surface and quiz key ids - kept out of artifactsWritten so
 	// surface JSON (diff hunks with markdown links) is never scored as cited prose.
 	rendered []string

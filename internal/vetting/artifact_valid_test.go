@@ -3,6 +3,7 @@ package vetting
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -41,7 +42,7 @@ func artifactValidTestConfig(t *testing.T, schemas *artifactschema.Registry) Con
 
 func TestArtifactValidCriterion_AbsentWithoutSchema(t *testing.T) {
 	cfg := artifactValidTestConfig(t, nil) // no extension declared a schema for kindDocument
-	if _, ok := artifactValidCriterion(context.Background(), cfg, artifactValidTestNodeID, time.Time{}); ok {
+	if _, ok := artifactValidCriterion(context.Background(), cfg, artifactValidTestNodeID, time.Time{}, nil); ok {
 		t.Error("artifactValidCriterion applies with no registered schema, want it absent")
 	}
 }
@@ -49,14 +50,14 @@ func TestArtifactValidCriterion_AbsentWithoutSchema(t *testing.T) {
 func TestArtifactValidCriterion_AbsentWithoutDeclaredKind(t *testing.T) {
 	cfg := artifactValidTestConfig(t, nameRequiredArtifactSchema(t, kindDocument))
 	cfg.Artifact = "" // node declares no artifact kind at all
-	if _, ok := artifactValidCriterion(context.Background(), cfg, artifactValidTestNodeID, time.Time{}); ok {
+	if _, ok := artifactValidCriterion(context.Background(), cfg, artifactValidTestNodeID, time.Time{}, nil); ok {
 		t.Error("artifactValidCriterion applies with no declared artifact kind, want it absent")
 	}
 }
 
 func TestArtifactValidCriterion_FailsWhenNothingWritten(t *testing.T) {
 	cfg := artifactValidTestConfig(t, nameRequiredArtifactSchema(t, kindDocument))
-	c, ok := artifactValidCriterion(context.Background(), cfg, artifactValidTestNodeID, time.Time{})
+	c, ok := artifactValidCriterion(context.Background(), cfg, artifactValidTestNodeID, time.Time{}, nil)
 	if !ok {
 		t.Fatal("artifactValidCriterion should apply - kindDocument has a registered schema")
 	}
@@ -75,7 +76,7 @@ func TestArtifactValidCriterion_PassesWhenValid(t *testing.T) {
 		recordstore.Lineage{NodeID: artifactValidTestNodeID}); err != nil {
 		t.Fatalf("SaveBlob (test setup): %v", err)
 	}
-	got, ok := artifactValidCriterion(context.Background(), cfg, artifactValidTestNodeID, time.Time{})
+	got, ok := artifactValidCriterion(context.Background(), cfg, artifactValidTestNodeID, time.Time{}, nil)
 	if !ok {
 		t.Fatal("artifactValidCriterion should apply")
 	}
@@ -94,7 +95,7 @@ func TestArtifactValidCriterion_FailsWithViolationsWhenInvalid(t *testing.T) {
 		recordstore.Lineage{NodeID: artifactValidTestNodeID}); err != nil {
 		t.Fatalf("SaveBlob (test setup): %v", err)
 	}
-	got, ok := artifactValidCriterion(context.Background(), cfg, artifactValidTestNodeID, time.Time{})
+	got, ok := artifactValidCriterion(context.Background(), cfg, artifactValidTestNodeID, time.Time{}, nil)
 	if !ok {
 		t.Fatal("artifactValidCriterion should apply")
 	}
@@ -115,7 +116,7 @@ func TestArtifactValidCriterion_ScopedToThisNode_IgnoresOtherNodesRevision(t *te
 		recordstore.Lineage{NodeID: "old-node"}); err != nil {
 		t.Fatalf("SaveBlob (test setup): %v", err)
 	}
-	got, ok := artifactValidCriterion(context.Background(), cfg, "new-node", time.Time{})
+	got, ok := artifactValidCriterion(context.Background(), cfg, "new-node", time.Time{}, nil)
 	if !ok {
 		t.Fatal("artifactValidCriterion should apply")
 	}
@@ -190,7 +191,7 @@ func TestArtifactValidCriterion_IgnoresAnEarlierRunsRevision(t *testing.T) {
 		recordstore.Lineage{NodeID: artifactValidTestNodeID, SavedAt: runStart.Add(-7 * 24 * time.Hour)}); err != nil {
 		t.Fatalf("SaveBlob (test setup): %v", err)
 	}
-	got, ok := artifactValidCriterion(context.Background(), cfg, artifactValidTestNodeID, runStart)
+	got, ok := artifactValidCriterion(context.Background(), cfg, artifactValidTestNodeID, runStart, nil)
 	if !ok || got.Score != 0 {
 		t.Fatalf("score = %v (applies=%v), want 0: the only revision predates this run", got.Score, ok)
 	}
@@ -198,7 +199,7 @@ func TestArtifactValidCriterion_IgnoresAnEarlierRunsRevision(t *testing.T) {
 		recordstore.Lineage{NodeID: artifactValidTestNodeID, SavedAt: runStart.Add(time.Second)}); err != nil {
 		t.Fatalf("SaveBlob (test setup): %v", err)
 	}
-	if got, _ := artifactValidCriterion(context.Background(), cfg, artifactValidTestNodeID, runStart); got.Score != 1 {
+	if got, _ := artifactValidCriterion(context.Background(), cfg, artifactValidTestNodeID, runStart, nil); got.Score != 1 {
 		t.Fatalf("score = %v, want 1 once this run has written a valid artifact (%s)", got.Score, got.Reason)
 	}
 }
@@ -235,8 +236,56 @@ func TestArtifactValidCriterion_PassesOnAStoreWithoutLineage(t *testing.T) {
 		recordstore.Lineage{NodeID: artifactValidTestNodeID, SavedAt: time.Now().UTC()}); err != nil {
 		t.Fatalf("SaveBlob (test setup): %v", err)
 	}
-	got, ok := artifactValidCriterion(context.Background(), cfg, artifactValidTestNodeID, time.Now().UTC().Add(-time.Minute))
+	got, ok := artifactValidCriterion(context.Background(), cfg, artifactValidTestNodeID, time.Now().UTC().Add(-time.Minute), nil)
 	if !ok || got.Score != 1 {
 		t.Fatalf("score = %v (applies=%v), want 1 on a store that keeps no lineage: %s", got.Score, ok, got.Reason)
+	}
+}
+
+// A round that carries the artifact forward unchanged writes bytes equal to the tip, which the store
+// dedupes into no new revision; this run's ok reply must still count, and still be schema-checked.
+// The chat session also holds last week's ok reply, which must not count.
+func TestArtifactValidCriterion_UnchangedRewriteCountsAsThisRunsWrite(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		content string
+		thisRun bool
+		want    float64
+	}{
+		{"unchanged valid rewrite passes", `{"name":"carried forward"}`, true, 1},
+		{"only last week's write still fails", `{"name":"carried forward"}`, false, 0},
+		{"unchanged invalid tip still fails", `{"other":1}`, true, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := artifactValidTestConfig(t, nameRequiredArtifactSchema(t, kindDocument))
+			cfg.Ledger = newFakeGateLedger() // the tip-equal no-op only applies with a ledger
+			c := recordClient(cfg).WithSchemas(nil)
+			ctx, runStart := context.Background(), time.Now().UTC()
+			id, rev, err := c.SaveBlob(ctx, kindDocument, []byte(tc.content), "application/json", DocumentHint(cfg.ChatID),
+				recordstore.Lineage{NodeID: artifactValidTestNodeID, SavedAt: runStart.Add(-7 * 24 * time.Hour)})
+			if err != nil {
+				t.Fatalf("SaveBlob (last week): %v", err)
+			}
+			_, again, err := c.SaveBlob(ctx, kindDocument, []byte(tc.content), "application/json", DocumentHint(cfg.ChatID),
+				recordstore.Lineage{NodeID: artifactValidTestNodeID, SavedAt: runStart.Add(time.Second)})
+			if err != nil || again != rev {
+				t.Fatalf("identical rewrite: rev %d (err %v), want the deduped tip %d", again, err, rev)
+			}
+			reply := fnResp("1", "write_artifact", map[string]any{"result": fmt.Sprintf("ok: id=%s revision=%d", id, rev)})
+			parts, stamps := []evtPart{reply}, []time.Time{runStart.Add(-7 * 24 * time.Hour)}
+			if tc.thisRun {
+				parts, stamps = append(parts, reply), append(stamps, runStart.Add(time.Second))
+			}
+			sess, i := newTestSession(t, parts...), 0
+			for ev := range sess.Events().All() {
+				ev.Timestamp = stamps[i]
+				i++
+			}
+			act := activityFromSessionAt(sess, "", artifactValidTestNodeID)
+			det, _ := computeDeterministicCriteria(ctx, "answer", act, cfg, artifactValidTestNodeID, runStart)
+			if got := det["artifact_valid"]; got.Score != tc.want {
+				t.Errorf("artifact_valid = %v (%s), want %v", got.Score, got.Reason, tc.want)
+			}
+		})
 	}
 }

@@ -2330,7 +2330,7 @@ func computeDeterministicCriteria(ctx context.Context, answer string, act worker
 		det[name] = c
 	}
 	// Schema validity: absent (not a 1.0 pass) for a node with no registered kind.
-	avc, avcOK := artifactValidCriterion(ctx, cfg, nodeID, since)
+	avc, avcOK := artifactValidCriterion(ctx, cfg, nodeID, since, act.artifactWrittenAt)
 	setIfApplicable(det, "artifact_valid", avc, avcOK)
 	scc, sccOK := specificsCitedCriterionScore(ctx, deliverable, act, cfg, nil)
 	setIfApplicable(det, specificsCitedCriterion, scc, sccOK)
@@ -2376,8 +2376,9 @@ func setIfApplicable(det map[string]criterionScore, name string, c criterionScor
 }
 
 // artifactValidCriterion checks the latest revision nodeID itself wrote (a
-// chat-scoped id can carry other nodes' writes too) against its schema.
-func artifactValidCriterion(ctx context.Context, cfg Config, nodeID string, since time.Time) (criterionScore, bool) {
+// chat-scoped id can carry other nodes' writes too) against its schema. writtenAt
+// maps each id this node's write tools reported ok to the latest such reply's time.
+func artifactValidCriterion(ctx context.Context, cfg Config, nodeID string, since time.Time, writtenAt map[string]time.Time) (criterionScore, bool) {
 	if cfg.Artifact == "" || !cfg.Schemas.Has(cfg.Artifact) {
 		return criterionScore{}, false
 	}
@@ -2399,6 +2400,10 @@ func artifactValidCriterion(ctx context.Context, cfg Config, nodeID string, sinc
 		}
 		return l.NodeID == nodeID && !l.SavedAt.Before(since)
 	})
+	if at, wrote := writtenAt[id]; !ok && wrote && !at.Before(since) {
+		// A write identical to the tip mints no revision, so carried-forward content keeps an earlier lineage.
+		_, content, _, ok = newestRevisionWhere(ctx, c, id, func(recordstore.Lineage) bool { return true })
+	}
 	if !ok {
 		return criterionScore{Score: 0, Reason: fmt.Sprintf(
 			"deterministic: kind %q has a registered schema but this node wrote no artifact this run", cfg.Artifact)}, true
@@ -2653,6 +2658,7 @@ func (s *activityScanner) scanEvent(ev *session.Event) {
 		return
 	}
 	s.otherNode = s.nodeID != "" && ev.NodeInfo != nil && !pathHasNode(ev, s.nodeID)
+	s.evAt = ev.Timestamp
 	if (s.ownOnly && s.otherNode) || slices.ContainsFunc(s.foreign, func(n string) bool { return pathHasNode(ev, n) }) {
 		return
 	}
@@ -2754,6 +2760,7 @@ type activityScanner struct {
 	nodeDir       string
 	nodeID        string          // artifact writes are credited to this node only; "" = any
 	otherNode     bool            // the event being scanned belongs to another node
+	evAt          time.Time       // the event being scanned's timestamp
 	ownOnly       bool            // skip other nodes' events entirely (see gateRun.ownActivity)
 	foreign       []string        // skip these plan nodes' events (Config.ForeignNodes)
 	curCwd        string          // node-relative cwd ("" = node root)
@@ -2956,7 +2963,14 @@ func (s *activityScanner) recordArtifactWrite(resp map[string]any) {
 		result, _ = resp["output"].(string)
 	}
 	m := artifactWriteResultRe.FindStringSubmatch(result)
-	if m == nil || s.artifactSeen[m[1]] {
+	if m == nil {
+		return
+	}
+	if s.act.artifactWrittenAt == nil {
+		s.act.artifactWrittenAt = map[string]time.Time{}
+	}
+	s.act.artifactWrittenAt[m[1]] = s.evAt
+	if s.artifactSeen[m[1]] {
 		return
 	}
 	s.artifactSeen[m[1]] = true
