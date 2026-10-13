@@ -285,12 +285,25 @@ func TestPreloadInjectsBucketedMemory(t *testing.T) {
 		view:        codingView(s, "code-implementer", repoA, "u1"),
 		query:       "add a new game to the collection",
 	}
-	req := &model.LLMRequest{Contents: []*genai.Content{pc.UserContent()}}
+	turn := pc.UserContent()
+	const static = "STATIC SYSTEM PROMPT"
+	req := &model.LLMRequest{
+		Contents: []*genai.Content{turn},
+		Config:   &genai.GenerateContentConfig{SystemInstruction: genai.NewContentFromText(static, genai.RoleUser)},
+	}
 	if err := NewPreload().(oncePreload).ProcessRequest(pc, req); err != nil {
 		t.Fatalf("preload ProcessRequest: %v", err)
 	}
-	si := req.Config.SystemInstruction
-	if si == nil || len(si.Parts) == 0 || !strings.Contains(si.Parts[0].Text, fact) {
-		t.Fatalf("preload did not inject the repo memory into the system instruction: %+v", si)
+	// The recall is per query, so it must trail the user's message: in the system instruction it would end
+	// the prefix every chat's requests share ahead of the tool declarations.
+	if si := req.Config.SystemInstruction; len(si.Parts) != 1 || si.Parts[0].Text != static {
+		t.Fatalf("preload changed the system instruction: %+v", si.Parts)
+	}
+	got := req.Contents[len(req.Contents)-1]
+	if len(req.Contents) != 1 || len(got.Parts) != 2 || got.Parts[0].Text != pc.query || !strings.Contains(got.Parts[1].Text, fact) {
+		t.Fatalf("preload did not append the repo memory after the user's message: %+v", req.Contents)
+	}
+	if len(turn.Parts) != 1 {
+		t.Fatalf("preload mutated the session's own user content: %+v", turn.Parts)
 	}
 }

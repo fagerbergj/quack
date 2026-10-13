@@ -2149,7 +2149,7 @@ func workerInput(prompt string, attachments []*genai.Part) any {
 
 // gatePromptAuthor authors emitPrompt's events. Not "user" (that would split a chat turn and confuse
 // the runner's turn detection), nor an agent's name (remoteagent shows foreign authors as user messages).
-const gatePromptAuthor = "quack-gate"
+const gatePromptAuthor = stream.GatePromptAuthor
 
 // emitPrompt writes the worker's prompt into the session before RunNode: A2A remote workers build their
 // message from session events only. emit completes durably, so there is no ordering race.

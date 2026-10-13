@@ -36,8 +36,8 @@ func TestBoundExcerpt(t *testing.T) {
 	}
 }
 
-// A pathological revise input must not produce an unbounded contents[0]: the prompt stays within its
-// cap with truncation markers, and small inputs pass through verbatim.
+// A pathological revise input must not produce an unbounded contents[0]: beyond the question (verbatim, as
+// the draft already sent it) the prompt stays within its cap with truncation markers.
 func TestBuildRevisionContentBounded(t *testing.T) {
 	huge := func(c byte, n int) string { return strings.Repeat(string(c), n) }
 	question := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: huge('Q', 200_000)}}}
@@ -53,14 +53,14 @@ func TestBuildRevisionContentBounded(t *testing.T) {
 
 	got := contentPlainText(buildRevisionContent("principles", question, answer, env, act, false, nil, nil))
 
-	// Fixed scaffolding (directive + principles + labels) plus the four capped
+	// Fixed scaffolding (directive + principles + labels) plus the three capped
 	// sections plus the markers - comfortably under a documented ceiling.
-	const ceiling = maxOriginalQuestionChars + maxPreviousAnswerChars + maxActivitySectionChars + maxFeedbackChars + 8_000
-	if len(got) > ceiling {
-		t.Fatalf("revise prompt is %d chars, over the %d ceiling - contents[0] would risk overflow", len(got), ceiling)
+	const ceiling = maxPreviousAnswerChars + maxActivitySectionChars + maxFeedbackChars + 8_000
+	if rest := len(got) - len(contentPlainText(question)); rest > ceiling {
+		t.Fatalf("revise prompt adds %d chars to the question, over the %d ceiling - contents[0] would risk overflow", rest, ceiling)
 	}
-	if n := strings.Count(got, "truncated to fit the context window"); n < 4 {
-		t.Fatalf("expected all four oversized sections truncated, saw %d markers", n)
+	if n := strings.Count(got, "truncated to fit the context window"); n < 3 {
+		t.Fatalf("expected all three oversized sections truncated, saw %d markers", n)
 	}
 
 	// Small inputs pass through unmodified.

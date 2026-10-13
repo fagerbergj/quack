@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -64,7 +65,7 @@ func (oncePreload) ProcessRequest(ctx adkagent.Context, req *model.LLMRequest) e
 	if text == "" {
 		return nil
 	}
-	appendInstruction(req, fmt.Sprintf(preloadInstructions, text))
+	appendRecall(req, fmt.Sprintf(preloadInstructions, text))
 	return nil
 }
 
@@ -127,22 +128,16 @@ func extractText(m adkmemory.Entry) string {
 	return b.String()
 }
 
-// appendInstruction replicates ADK's internal utils.AppendInstructions (which we
-// can't import): append the recalled block to the request's system instruction.
-func appendInstruction(r *model.LLMRequest, inst string) {
-	if r.Config == nil {
-		r.Config = &genai.GenerateContentConfig{}
-	}
-	si := r.Config.SystemInstruction
-	if si == nil {
-		r.Config.SystemInstruction = genai.NewContentFromText(inst, genai.RoleUser)
+// appendRecall puts the recalled block after the turn's user message, not in the system instruction:
+// a per-query block there ends the prefix every chat shares ahead of the tool declarations.
+func appendRecall(r *model.LLMRequest, inst string) {
+	if n := len(r.Contents); n > 0 && r.Contents[n-1] != nil && r.Contents[n-1].Role == genai.RoleUser {
+		c := *r.Contents[n-1] // a copy: the content may be the session event's own
+		c.Parts = append(slices.Clip(c.Parts), genai.NewPartFromText(inst))
+		r.Contents[n-1] = &c
 		return
 	}
-	if n := len(si.Parts); n > 0 && si.Parts[n-1].Text != "" {
-		si.Parts[n-1].Text += "\n\n" + inst
-		return
-	}
-	si.Parts = append(si.Parts, genai.NewPartFromText(inst))
+	r.Contents = append(r.Contents, genai.NewContentFromText(inst, genai.RoleUser))
 }
 
 // recallInstructions frames gate-side recall for an external (ACP) worker, as preloadInstructions

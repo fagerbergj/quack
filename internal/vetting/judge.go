@@ -97,19 +97,18 @@ func judgePromptFor(ctx context.Context, cfg Config) (judgePrompt, error) {
 }
 
 // behaviour picks the clauses this judge's tools earn it; artifact_tools is unconditional since every
-// round carries list_artifacts/read_artifact.
+// round carries list_artifacts/read_artifact. Tool-dependent clauses go last so every judge shares a cached prefix.
 func (p judgePrompt) behaviour(hasReadTools, hasSkills bool) string {
-	parts := []string{p.blocks["head"]}
+	parts := []string{p.blocks["head"], p.blocks["artifact_tools"], p.blocks["tail"]}
 	if hasReadTools {
 		parts = append(parts, p.blocks["read_tools"])
 	} else {
 		parts = append(parts, p.blocks["no_tools"])
 	}
-	parts = append(parts, p.blocks["artifact_tools"])
 	if hasSkills {
 		parts = append(parts, p.blocks["skills"])
 	}
-	return strings.Join(append(parts, p.blocks["tail"]), " ")
+	return strings.Join(parts, " ")
 }
 
 // criterionScore: per-criterion assessment, normalised 0.0-1.0.
@@ -1418,9 +1417,9 @@ const reviseReplyRule = "Your reply replaces your previous answer as the one the
 // web_page ids the worker can re-read instead of re-fetching.
 func buildRevisionContent(constitution string, question *genai.Content, answer string, env verdictEnvelope, act workerActivity, citationOnly bool, notes []JudgeNote, pages []string) *genai.Content {
 	var sb strings.Builder
-	// Stable-first: the question, byte-identical to the draft round's, leads so the prefix cache carries
-	// draft -> revise -> revise.
-	sb.WriteString(boundExcerpt(contentPlainText(question), maxOriginalQuestionChars))
+	// Stable-first and unbounded: the question is the draft's own contents[0] (it fit there), so cutting it
+	// here would end the prefix the cache carries draft -> revise -> revise.
+	sb.WriteString(contentPlainText(question))
 	sb.WriteString("\n\n")
 	if citationOnly {
 		// Substance passed and only citation form failed: tell the worker to attach the URLs it already fetched.
@@ -1466,7 +1465,7 @@ func buildRevisionContent(constitution string, question *genai.Content, answer s
 // buildFinalizeContent: asks worker to write final answer when round 0 ended without one.
 func buildFinalizeContent(question *genai.Content, act workerActivity) *genai.Content {
 	var sb strings.Builder
-	// Stable-first: same reasoning as buildRevisionContent.
+	// The writer runs under its own system prompt, so no cached prefix is lost by bounding the question.
 	sb.WriteString(boundExcerpt(contentPlainText(question), maxOriginalQuestionChars))
 	sb.WriteString("\n\n")
 	sb.WriteString("A response of 0 length was received. If you have finished your research, " +

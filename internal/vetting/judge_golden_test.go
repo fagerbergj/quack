@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/fagerbergj/quack/internal/promptbuilder"
@@ -61,5 +62,26 @@ func TestGoldenJudgePrompt(t *testing.T) {
 		{"judge.skills", false, true},
 	} {
 		checkJudgeGolden(t, c.name+".txt", promptbuilder.Judge(mustJudgeBehaviour(t, c.readTools, c.skill)))
+	}
+}
+
+// Every judge's system prompt opens with the same static block, whatever tools it holds: a tool clause
+// ahead of it ended the shared prefix (and the server's prompt cache) about 670 chars in.
+func TestJudgePromptStaticPrefixSharedAcrossTools(t *testing.T) {
+	p, err := resolveJudgePrompt(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("judge prompt: %v", err)
+	}
+	static := strings.Join([]string{p.blocks["head"], p.blocks["artifact_tools"], p.blocks["tail"]}, " ")
+	full := promptbuilder.Judge(p.behaviour(true, true))
+	i := strings.Index(full, static)
+	if i < 0 {
+		t.Fatal("head, artifact_tools and tail are not one contiguous block ahead of the tool clauses")
+	}
+	prefix := full[:i+len(static)]
+	for _, c := range []struct{ readTools, skills bool }{{false, false}, {true, false}, {false, true}} {
+		if got := promptbuilder.Judge(p.behaviour(c.readTools, c.skills)); !strings.HasPrefix(got, prefix) {
+			t.Errorf("readTools=%v skills=%v: prompt diverges from the static prefix at char %d", c.readTools, c.skills, commonPrefixLen(got, prefix))
+		}
 	}
 }

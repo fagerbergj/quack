@@ -335,6 +335,10 @@ func NodeCancelled(nodeID string) SSEEvent {
 // steer, so the A2A client keeps that session instead of opening a fresh one for the new branch.
 const SteerRunPrefix = "worker-steer"
 
+// GatePromptAuthor authors the gate's worker-prompt events; the A2A client starts a worker's message at the
+// latest one, which carries the whole task.
+const GatePromptAuthor = "quack-gate"
+
 // NodeSteeredData: queued messages were delivered and the node carries on with them; a fresh run follows.
 type NodeSteeredData struct {
 	NodeID   string `json:"node_id"`
