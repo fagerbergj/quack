@@ -188,14 +188,15 @@ describe('DagNode - a running node collapses activity to a compact status line (
 })
 
 describe('DagNode - token badge shows cached tokens alongside the total', () => {
-  it('shows the cached count when tokens were served from cache', () => {
+  it('shows the cache hit rate when tokens were served from cache, exact counts in the title', () => {
     const out = html(
-      { status: 'done', startedAt: 0, finishedAt: 1000, totalTokens: 1500, cachedTokens: 400 },
+      { status: 'done', startedAt: 0, finishedAt: 1000, totalTokens: 1500, promptTokens: 1000, cachedTokens: 400 },
       [{ runId: 'w', agent: 'web-researcher', stage: 'worker', done: true, activity: [] }],
       'answer text',
     )
     expect(out).toContain('1,500 tokens')
-    expect(out).toContain('(400 cached)')
+    expect(out).toContain('40% cached')
+    expect(out).toContain('400 of 1,000 prompt tokens served from cache')
   })
 
   it('omits the cached annotation when nothing was cached', () => {
