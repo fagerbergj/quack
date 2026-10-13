@@ -26,4 +26,7 @@ func TestGetConfigVersion(t *testing.T) {
 	if out.Version == nil || *out.Version != "test" {
 		t.Errorf("version = %v, want \"test\"", out.Version)
 	}
+	if out.ApiVersion != schema.APIVersion || out.ApiMinVersion != schema.APIMinVersion || out.ApiMinVersion > out.ApiVersion {
+		t.Errorf("api_version/api_min_version = %d/%d, want %d/%d", out.ApiVersion, out.ApiMinVersion, schema.APIVersion, schema.APIMinVersion)
+	}
 }

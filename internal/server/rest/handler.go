@@ -99,7 +99,7 @@ func (h *Handler) SetPlugins(p *Plugins) { h.plugins = p }
 
 // GetConfig serves read-only, client-visible server config.
 func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
-	cfg := schema.ClientConfig{Version: strPtr(h.quackVersion)}
+	cfg := schema.ClientConfig{Version: strPtr(h.quackVersion), ApiVersion: schema.APIVersion, ApiMinVersion: schema.APIMinVersion}
 	if h.traceURLTemplate != "" {
 		cfg.OtelTraceUrlTemplate = strPtr(h.traceURLTemplate)
 	}

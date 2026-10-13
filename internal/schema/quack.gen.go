@@ -856,6 +856,12 @@ type ChatSummaryGithubState string
 
 // ClientConfig defines model for ClientConfig.
 type ClientConfig struct {
+	// ApiMinVersion The oldest API compatibility version this server still serves (`info.x-api-min-version`). An SPA built against a lower value must reload before it can work.
+	ApiMinVersion int `json:"api_min_version"`
+
+	// ApiVersion This server's API compatibility version (`info.x-api-version`), bumped only on a breaking API change. An SPA built against a different value should reload.
+	ApiVersion int `json:"api_version"`
+
 	// OtelTraceUrlTemplate Raw URL template for a trace deep link, with a literal "{trace_id}" placeholder for the client to substitute - e.g. "https://tracing.example.com/trace/{trace_id}". Absent when otel.trace_url_template is unset (no link should be rendered).
 	OtelTraceUrlTemplate *string `json:"otel_trace_url_template,omitempty"`
 
