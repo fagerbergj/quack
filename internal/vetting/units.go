@@ -91,16 +91,37 @@ func blockUnits(lines []string, pi int, refs map[string]string) []Unit {
 
 func sentenceUnits(prose string, pi int, refs map[string]string) []Unit {
 	var out []Unit
-	start := 0
+	var u Unit
+	start, open := 0, false
 	for _, m := range sentenceEndRe.FindAllStringSubmatchIndex(prose, -1) {
 		end := m[3] // just past the terminator
-		out = append(out, newUnit("sentence", prose[start:end], pi, refs))
+		u, open = sentenceUnit(prose[start:end], open, pi, refs)
+		out = append(out, u)
 		start = end
 	}
 	if rest := strings.TrimSpace(prose[start:]); rest != "" {
-		out = append(out, newUnit("sentence", rest, pi, refs))
+		u, _ = sentenceUnit(rest, open, pi, refs)
+		out = append(out, u)
 	}
 	return out
+}
+
+// sentenceUnit takes open (the prose is inside a quoted string where s starts) and reports whether
+// it still is where s ends. A JSON value or long quote spans sentence breaks; requoting the fragment keeps quote pairing aligned.
+func sentenceUnit(s string, open bool, pi int, refs map[string]string) (Unit, bool) {
+	u := newUnit("sentence", s, pi, refs)
+	endsOpen := open != (strings.Count(s, `"`)%2 == 1)
+	if open || endsOpen {
+		lead, trail := "", ""
+		if open {
+			lead = `"`
+		}
+		if endsOpen {
+			trail = `"`
+		}
+		u.Specifics = findSpecifics(lead + withoutLinks(u.Text) + trail)
+	}
+	return u, endsOpen
 }
 
 func newUnit(kind, text string, pi int, refs map[string]string) Unit {

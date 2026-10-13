@@ -121,30 +121,47 @@ func TestFindUnits_EmptyReferenceLineAndLinkLabelQuotes(t *testing.T) {
 
 func TestFindUnits_JSONArtifactYieldsNoPunctuationOrTokenSpecifics(t *testing.T) {
 	note := "Don't read a dropped DEF as a red flag - expect mid-week flips; 5 waivers cleared."
+	claims := []string{
+		"Week 5 final report: Lamar Jackson OUT (ankle, Tyler Huntley starts); Jayden Daniels returns in a new elbow brace as Mariota is out (knee).",
+		"Kamara questionable (back) but 'likely to play' per SI - Johnson (Pitts and Giggles) target share likely unchanged at home vs MIN.",
+		"Rice Cooker swapped LAR DEF for KC DEF as the Rams' Monday game got underway - a live mid-week streaming flip.",
+		"Bears elevated RB Zavier Scott from the practice squad Saturday with Monangai out - Lambeau RB room is Swift, Johnson, Scott.",
+	}
+	// "text" values with sentence breaks inside them, so some units start and end mid-string
+	items := "{\n  \"updated\": \"2026-10-12\",\n  \"items\": [\n    {\n      \"kind\": \"injury\",\n" +
+		"      \"text\": \"Ashton Jeanty was limited Thursday. Jeanty cleared and played Sunday.\",\n" +
+		"      \"link\": \"https://www.si.com/nfl/raiders/jeanty\",\n      \"id\": \"1356407594683482112\"\n    },\n"
+	for _, c := range claims {
+		items += "    {\n      \"kind\": \"news\",\n      \"text\": \"Update. " + c + "\",\n      \"link\": \"https://x.example/a\"\n    },\n"
+	}
+	items += "    {\n      \"kind\": \"end\"\n    }\n  ]\n}"
+	junk := []string{",", ": [", "],", "},     {", "1356407594683482112", "6", "5"}
 	cases := []struct {
 		name, text string
 		absent     []string // values that must not be specifics
-		quote      string   // the quoted claim that must still be one
+		quotes     []string // quoted claims that must still be specifics
 	}{
 		{"json artifact", "{\n  \"updated\": \"2026-10-12\",\n  \"notes\": [\n    \"" + note + "\"\n  ],\n" +
-			"  \"tweet\": \"1356407594683482112\",\n  \"rank\": \"6\"\n}",
-			[]string{",", ": [", "],", "1356407594683482112", "6", "5"}, strings.ToLower(note)},
+			"  \"tweet\": \"1356407594683482112\",\n  \"rank\": \"6\"\n}", junk, []string{note}},
+		{"json text values split mid-string", items, junk, claims},
 		{"prose quote", "The coach called it \"the best defensive week of the season\" on Monday.",
-			nil, "the best defensive week of the season"},
+			nil, []string{"the best defensive week of the season"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			units := FindUnits(tc.text)
-			if len(units) != 1 {
-				t.Fatalf("units = %d, want 1: %+v", len(units), units)
+			got := Unit{}
+			for _, u := range FindUnits(tc.text) {
+				got.Specifics = append(got.Specifics, u.Specifics...)
 			}
-			for _, s := range units[0].Specifics {
+			for _, s := range got.Specifics {
 				if slices.Contains(tc.absent, s.Value) {
-					t.Errorf("%s %q extracted from %q", s.Kind, s.Value, tc.text)
+					t.Errorf("%s %q extracted", s.Kind, s.Value)
 				}
 			}
-			if !hasSpecific(units[0], "quote", tc.quote) {
-				t.Errorf("quote %q missing from %+v", tc.quote, units[0].Specifics)
+			for _, q := range tc.quotes {
+				if !hasSpecific(got, "quote", strings.ToLower(q)) {
+					t.Errorf("quote %q missing", q)
+				}
 			}
 		})
 	}
