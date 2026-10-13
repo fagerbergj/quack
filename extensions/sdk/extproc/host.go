@@ -102,7 +102,8 @@ func New(name, path string, host sdk.Host, config []byte) (*Process, error) {
 	return p, nil
 }
 
-// serves lists the optional child calls host can answer; Dispatch is always offered, as before them.
+// serves lists the optional methods host takes part in: it calls tool on the child and answers readArtifact and
+// decide. Dispatch is always on, as before them.
 func serves(host sdk.Host) []string {
 	s := []string{methodTool}
 	if host.ReadArtifact != nil {

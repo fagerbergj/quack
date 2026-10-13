@@ -17,6 +17,7 @@ import (
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/functiontool"
+	"google.golang.org/genai"
 )
 
 type echoArgs struct {
@@ -210,5 +211,18 @@ func (plainTool) IsLongRunning() bool { return false }
 func TestDescribeToolsRefusesANonFunctionTool(t *testing.T) {
 	if _, _, err := describeTools([]tool.Tool{plainTool{}}); err == nil || !strings.Contains(err.Error(), `"plain"`) {
 		t.Fatalf("describeTools = %v", err)
+	}
+}
+
+type panicTool struct{ plainTool }
+
+func (panicTool) Declaration() *genai.FunctionDeclaration {
+	return &genai.FunctionDeclaration{Name: "plain"}
+}
+func (panicTool) Run(agent.Context, any) (map[string]any, error) { panic("boom") }
+
+func TestRunToolRecoversAPanicIntoTheCallsError(t *testing.T) {
+	if _, err := runTool(context.Background(), panicTool{}, toolParams{Name: "plain"}); err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("runTool = %v, want the panic as the call's error", err)
 	}
 }

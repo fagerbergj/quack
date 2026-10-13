@@ -67,7 +67,7 @@ type initParams struct {
 	PublicURL string `json:"publicURL"`
 	Location  string `json:"location,omitempty"`
 
-	// Serves names the optional methods this host answers (tool, readArtifact, decide). A protocol 2 host
+	// Serves names the optional methods this host takes part in: it calls tool, answers readArtifact and decide. A protocol 2 host
 	// that predates them sends none: the child leaves those Host funcs nil and refuses to drop its tools.
 	Serves []string `json:"serves,omitempty"`
 }

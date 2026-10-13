@@ -103,7 +103,13 @@ type toolInvocation struct{ agent.StrictContextMock }
 
 func (*toolInvocation) Artifacts() agent.Artifacts { return nil }
 
-func runTool(ctx context.Context, t functionTool, p toolParams) (map[string]any, error) {
+// runTool recovers a panic into this call's error, as ADK's scheduler does in process, so one tool can't kill the child.
+func runTool(ctx context.Context, t functionTool, p toolParams) (res map[string]any, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic in tool %q: %v", p.Name, r)
+		}
+	}()
 	if p.CallInfo != nil {
 		ctx = sdk.WithCallInfo(ctx, *p.CallInfo)
 	}

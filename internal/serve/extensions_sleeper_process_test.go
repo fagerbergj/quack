@@ -85,6 +85,7 @@ func (d *decideRecorder) seen() []string {
 // sleeperFlow is what a user, an agent and the decision handler observe of sleeper.
 type sleeperFlow struct {
 	seasons, runnable, page, artifacts string
+	snapshot                           string   // the Start ticker's first write under DataDir
 	jobs                               []string // POST /sleeper/api/jobs replies
 	chats                              []string // title, origin and turn count per dispatched chat
 	toolDecl, toolResult               string
@@ -110,7 +111,8 @@ func runSleeper(t *testing.T, block string) (f sleeperFlow, child bool) {
 	shapes := shapesRefOf([]workflowcatalog.Shape{{Name: "sleeper-lineup", Trigger: "t", DAGShape: "s"},
 		{Name: "sleeper-trends", Trigger: "t", DAGShape: "s"}, {Name: "sleeper-season-notes", Trigger: "t", DAGShape: "s"}})
 	rec := &decideRecorder{}
-	cfg := noopModulesConfig(t, t.TempDir(), block)
+	root := t.TempDir()
+	cfg := noopModulesConfig(t, root, block)
 	cfg.Decisions = decisionsCfg(rec.serve(t), map[string]config.DecisionPoint{"ext:sleeper/lineup_change": {Enabled: true, Mode: "observe"}})
 	decisions := &extDecisions{}
 	exts, err := buildSDKExtensions(cfg, st, hub, runlog.NewEventLog(st), &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil, shapes, decisions)
@@ -127,6 +129,7 @@ func runSleeper(t *testing.T, block string) (f sleeperFlow, child bool) {
 	ts := httptest.NewServer(server.New(server.Options{REST: &rest.Handler{}, SDKExtensions: sdkExtensionMounts(exts)}))
 	t.Cleanup(ts.Close)
 	_, child = exts[0].ext.(*extproc.Process)
+	f.snapshot = waitSnapshot(t, filepath.Join(root, "extensions", "sleeper", "snapshots", sleeperLeague))
 
 	f.seasons = getBody(t, http.DefaultClient, ts.URL+"/sleeper/api/seasons?league_id="+sleeperLeague)
 	f.runnable = getBody(t, http.DefaultClient, ts.URL+"/sleeper/api/jobs")
@@ -199,7 +202,8 @@ func callSleeperTool(t *testing.T, exts []builtSDKExtension) (decl, result strin
 // RunEnded, ReadArtifact and Decide all cross the process boundary and match the compiled-in extension.
 func TestSleeperOutOfProcessMatchesInProcess(t *testing.T) {
 	bin := buildExtChild(t, "sleeper")
-	block := "sleeper:\n  base_url: " + fakeSleeperAPI(t) + "\n  default_user: " + sleeperUser + "\n  default_league: " + sleeperLeague + "\n"
+	block := "sleeper:\n  base_url: " + fakeSleeperAPI(t) + "\n  default_user: " + sleeperUser + "\n  default_league: " + sleeperLeague +
+		"\n  snapshots: daily\n"
 
 	want, _ := runSleeper(t, block)
 	got, child := runSleeper(t, block+"  exec: "+bin+"\n")
@@ -207,13 +211,13 @@ func TestSleeperOutOfProcessMatchesInProcess(t *testing.T) {
 		t.Fatal("exec did not run sleeper as a child process")
 	}
 
-	if !strings.Contains(want.seasons, sleeperLeague) || !strings.Contains(want.toolResult, `"standings":[{`) ||
+	if !strings.Contains(want.snapshot, `"players":{`) || !strings.Contains(want.seasons, sleeperLeague) || !strings.Contains(want.toolResult, `"standings":[{`) ||
 		!strings.Contains(want.artifacts, `"lineup":{"found":true`) || len(want.decisions) != 2 ||
 		!strings.Contains(want.decisions[0], `"slot":"RB2"`) || !strings.HasPrefix(want.jobs[1], "200 ") {
 		t.Errorf("in-process flow = %+v, want seasons, standings, a found lineup, two lineup decisions and accepted jobs", want)
 	}
 	for _, c := range []struct{ name, got, want string }{
-		{"seasons", got.seasons, want.seasons}, {"runnable jobs", got.runnable, want.runnable}, {"page", got.page, want.page},
+		{"snapshot", got.snapshot, want.snapshot}, {"seasons", got.seasons, want.seasons}, {"runnable jobs", got.runnable, want.runnable}, {"page", got.page, want.page},
 		{"artifacts", got.artifacts, want.artifacts}, {"tool declaration", got.toolDecl, want.toolDecl},
 		{"tool result", got.toolResult, want.toolResult}, {"jobs", strings.Join(got.jobs, "\n"), strings.Join(want.jobs, "\n")},
 		{"chats", strings.Join(got.chats, "\n"), strings.Join(want.chats, "\n")},
@@ -223,4 +227,20 @@ func TestSleeperOutOfProcessMatchesInProcess(t *testing.T) {
 			t.Errorf("%s out of process:\n%s\nin process:\n%s", c.name, c.got, c.want)
 		}
 	}
+}
+
+// waitSnapshot returns the one snapshot Start writes, before any job reads the dir, so trends sees it in both runs.
+func waitSnapshot(t *testing.T, dir string) string {
+	t.Helper()
+	var data []byte
+	waitUntil(t, 5*time.Second, func() bool {
+		files, _ := filepath.Glob(filepath.Join(dir, "*.json"))
+		if len(files) != 1 {
+			return false
+		}
+		var err error
+		data, err = os.ReadFile(files[0])
+		return err == nil
+	})
+	return string(data)
 }
