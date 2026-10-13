@@ -37,6 +37,7 @@ var (
 	percentRe     = regexp.MustCompile(`-?\d[\d,]*(?:\.\d+)?\s?%`)
 	currencyRe    = regexp.MustCompile(`(?:[$€£]\s?\d[\d,]*(?:\.\d+)?[KMBkmb]?|\d[\d,]*(?:\.\d+)?[KMBkmb]?\s?(?:USD|EUR|GBP))`)
 	dateRe        = regexp.MustCompile(`\b(?:\d{4}-\d{2}-\d{2}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.? \d{1,2}(?:, \d{4})?|\d{1,2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{4})\b`)
+	codeRefRe     = regexp.MustCompile(`\w[\w./-]*\.[A-Za-z]\w*:\d+(?:-\d+)?`) // "serve.go:133" cites code, its digits are not a figure
 	numberRe      = regexp.MustCompile(`(?:^|[^\w.$€£%-])(-?\d[\d,]*(?:\.\d+)?)(?:[^\w%-]|$)`)
 	quoteRe       = regexp.MustCompile(`"([^"]*)"`) // every pair, however short: a length floor pairs a short string's closing quote with the next opening
 	nonDigitRe    = regexp.MustCompile(`[^\d.]`)
@@ -241,6 +242,7 @@ func findSpecifics(text string) []Specific {
 	take("percent", percentRe, 0)
 	take("currency", currencyRe, 0)
 	take("quote", quoteRe, 1)
+	taken = codeRefRe.ReplaceAllString(taken, " ")
 	take("number", numberRe, 1)
 	// ponytail: no proper-name specifics (Title Case matched headings);
 	// add a real detector if names prove worth checking.
