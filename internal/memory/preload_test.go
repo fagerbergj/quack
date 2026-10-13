@@ -42,6 +42,15 @@ func TestFirstStep(t *testing.T) {
 	}
 }
 
+// With no trailing user message to ride on, the recall becomes its own user turn at the end.
+func TestAppendRecallWithoutUserTurn(t *testing.T) {
+	req := &model.LLMRequest{Contents: []*genai.Content{genai.NewContentFromText("earlier answer", genai.RoleModel)}}
+	appendRecall(req, "RECALL")
+	if len(req.Contents) != 2 || req.Contents[1].Role != genai.RoleUser || req.Contents[1].Parts[0].Text != "RECALL" {
+		t.Fatalf("contents = %+v, want the recall appended as a user turn", req.Contents)
+	}
+}
+
 // Recall is the gate-side preload twin for external workers: formatted block
 // on a hit, "" on empty/nil - and a nil store must be safe (memory disabled).
 func TestStoreRecall(t *testing.T) {

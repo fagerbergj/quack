@@ -74,6 +74,24 @@ func TestRevisePromptSharedPrefixAcrossRounds(t *testing.T) {
 	t.Logf("draft->revise1 shared prefix = %d bytes", draftShared)
 }
 
+// The draft sent the whole question, so every revise round must open with exactly those bytes: an excerpt
+// cut at a fixed cap ended the prefix the draft's cache could serve partway through an oversized question.
+func TestRevisePromptOpensWithTheDraftQuestionVerbatim(t *testing.T) {
+	task := synthReviewTask()
+	if len(task) <= maxOriginalQuestionChars {
+		t.Fatalf("task is %d chars; it must exceed maxOriginalQuestionChars to exercise truncation", len(task))
+	}
+	question := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: task}}}
+	for round, fix := range []string{"grep it", "read the file at line 412"} {
+		env := verdictEnvelope{Threshold: 0.66, Round: round + 1,
+			JudgeFailures: []failureEntry{{Criterion: criterionSpec{Name: "grounding"}, Shortfall: "unverified", Fix: fix}}}
+		got := contentPlainText(buildRevisionContent("", question, "answer", env, workerActivity{}, false, nil, nil))
+		if !strings.HasPrefix(got, task+"\n\n") {
+			t.Errorf("revise round %d diverges from the draft's question at char %d of %d", round+1, commonPrefixLen(got, task), len(task))
+		}
+	}
+}
+
 // TestBuildRevisionContentSectionsPresent: stable-first ordering drops no section the worker needs.
 func TestBuildRevisionContentSectionsPresent(t *testing.T) {
 	question := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "the original question text"}}}

@@ -358,12 +358,24 @@ func scopeMessage(ctx context.Context, req *a2a.SendMessageRequest, defaultConte
 			break
 		}
 	}
-	req.Message.Parts = collectScopedParts(ic, events, start, len(req.Message.Parts))
+	req.Message.Parts = collectScopedParts(ic, events, promptStart(ic, events, start), len(req.Message.Parts))
 	// A steer continuation stays in the node's own session; its TaskID stays cleared, since the round it
 	// interrupted was cancelled and a cancelled task can't be continued.
 	if req.Message.ContextID == "" && (!crossedBranch || continuesNodeSession(ic.Branch())) {
 		req.Message.ContextID = defaultContextID
 	}
+}
+
+// promptStart moves start to this run's latest gate prompt, which carries the whole task: a part before it (a
+// plan step's "run" trigger) would lead only the draft's message and cost every later round its cached prefix.
+func promptStart(ic adkagent.InvocationContext, events session.Events, start int) int {
+	for i := events.Len() - 1; i > start; i-- {
+		ev := events.At(i)
+		if ev != nil && ev.Author == stream.GatePromptAuthor && ev.InvocationID == ic.InvocationID() && eventBelongsToBranch(ic.Branch(), ev) {
+			return i
+		}
+	}
+	return start
 }
 
 // continuesNodeSession reports a branch whose run is a steer continuation (stream.SteerRunPrefix).
