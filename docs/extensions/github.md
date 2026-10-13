@@ -145,6 +145,7 @@ extensions:
     #   merge: "quack:merge"
     #   partial_fix: "quack:partial-fix"  # suppresses the unconditional Closes #N when applied to an issue
     #   fix: "quack:fix"
+    # exec: /quack-ext-github            # run out of process; see "Out of process" below
 ```
 
 `allowed_users` gates every human-invoked trigger (mention, labels, `/review`, `/explain`) by GitHub login, case-insensitively - seed it or quack won't respond. The automatic `pr_opened` auto-review is exempt (nobody applied it). Bot comments are always ignored, so quack never re-triggers on its own posts.
@@ -163,6 +164,10 @@ The App's client secret is **not** used - quack authenticates as the App by sign
 The installation token doubles as quack's git credential: when a tool clones or pushes a `github.com` URL and no static credential matches, the extension mints a short-lived token for that repo's installation automatically (never written to disk, never in a URL). A static PAT (`workspace.git_credentials`) still works and wins if both are configured.
 
 When `extensions.github` is absent, the extension isn't built at all - no tools, and `/github/webhook` returns `404`.
+
+#### Out of process
+
+`enabled`/`data_dir`/`exec` are the SDK-level keys every extension block accepts (see the [extensions README](../../extensions/README.md#out-of-process)). The image ships this extension as a child-process binary: `exec: /quack-ext-github` runs it out of process, and dropping the key puts it back in. The webhook stays at `/github/webhook`, unauthenticated by quack and signature-checked by the child; its tools, the label and mention triggers and their dispatch, input artifacts, RunEnded, review and PR delivery, the git credential, the assignment meta and freshness checks, origin refreshes, intent classification and decision points all behave as they do compiled in. The child refuses to start against a quack too old to serve any of those, rather than run without it. A child restart drops what the extension keeps in memory while quack's runs continue: dedup claims for triggers already dispatched (re-read from its store at start, as after a quack restart) and the last delivery outcome a run's RunEnded reports. `quack ledger recover` still builds the compiled-in extension.
 
 ### 7. Expose the endpoint
 
@@ -194,6 +199,6 @@ A `401` in GitHub's *Recent Deliveries* (App → *Advanced*) means the `webhook_
 
 - **Signatures are always verified.** `X-Hub-Signature-256` is checked with a constant-time compare against the raw body before anything else happens. This is the trust boundary; there's no bypass.
 - **Least privilege.** Grant only the permissions listed above.
-- **Private-key handling.** Provide it via a file path (ideally a mounted secret) or an env var - never a literal in `quack.yaml` (enforced at load). It's never logged.
-- **Short-lived tokens.** Installation tokens last about an hour; quack caches and refreshes them, and they travel only as per-child-process env vars.
+- **Private-key handling.** Provide it via a file path (ideally a mounted secret) or an env var - never a literal in `quack.yaml` (enforced at load). Neither the key nor its path is logged or put in an error. Out of process, the config block reaches the child on its stdin, never its argv or environment.
+- **Short-lived tokens.** Installation tokens last about an hour; quack caches and refreshes them, and they travel only as per-child-process env vars and, out of process, in the git-credential reply on the child's stdout pipe.
 - **Bot comments are ignored.** Quack never reacts to another bot's comments, including its own - so it can't be made to re-trigger itself.

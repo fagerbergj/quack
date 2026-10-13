@@ -369,7 +369,7 @@ func findFirstExt[T any](exts []builtSDKExtension, ifaceName string, match func(
 	have := false
 	for i := range exts {
 		e := &exts[i]
-		if v, ok := match(e); ok {
+		if v, ok := match(e); ok && childImplements(e.ext, ifaceName) {
 			if have {
 				slog.Warn("multiple extensions implement "+ifaceName+"; keeping the first",
 					"component", "startup", "using", foundName, "ignoring", e.name)
@@ -379,6 +379,13 @@ func findFirstExt[T any](exts []builtSDKExtension, ifaceName string, match func(
 		}
 	}
 	return found, foundName
+}
+
+// childImplements is false for an out-of-process extension whose child does not answer iface: its proxy
+// carries every interface quack calls into.
+func childImplements(ext extsdk.Extension, iface string) bool {
+	p, ok := ext.(*extproc.Process)
+	return !ok || p.Implements(iface)
 }
 
 // findGitCredentialSource returns the first built extension implementing sdk.GitCredentialSource.

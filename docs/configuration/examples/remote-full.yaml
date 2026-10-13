@@ -210,3 +210,4 @@ extensions:
     mention: "@quack"
     allowed_users: [fagerbergj]   # empty denies every human-invoked trigger — seed your own login(s)
     triggers: [mention, pr_opened, label, issue_plan, issue_implement, merge]
+    # exec: /quack-ext-github     # run it as a supervised child process; the image ships the binary
