@@ -19,6 +19,7 @@ jobs:
       storybook: ${{ steps.filter.outputs.storybook }}
       image: ${{ steps.filter.outputs.image }}
       prompts: ${{ steps.filter.outputs.prompts }}
+      pig: ${{ steps.filter.outputs.pig }}
     steps:
       - id: filter
         if: github.event_name == 'pull_request'
@@ -44,6 +45,8 @@ jobs:
               - '!*.md'
             prompts:
               - '{agents/**,config/**,skills/**,.agents/embedded/**,extensions/**,internal/tools/**,internal/vetting/**,tools/promptlint/**,go.mod,.github/workflows/ci.yaml}'
+            pig:
+              - '{tools/pi-acp/**,Dockerfile,.github/workflows/ci.yaml}'
 
   go-test:
     needs: changes
@@ -83,6 +86,11 @@ jobs:
       - run: go test -race -coverprofile=cover.out -timeout 12m ./...
       # extensions/sdk is its own module (outside extension authors depend on it alone), so ./... skips it.
       - run: go -C extensions/sdk vet ./... && go -C extensions/sdk test -race ./...
+      # quackgate, the PIG engine's fused gate, is its own module; its profile joins cover.out for the gate below.
+      - run: |
+          go -C tools/pi-acp/pig/quackgate vet ./...
+          go -C tools/pi-acp/pig/quackgate test -race -coverprofile=cover.out ./...
+          tail -n +2 tools/pi-acp/pig/quackgate/cover.out >> cover.out
       # Changed-line coverage gate: new code ships covered (>=70%).
       - name: coverage gate (changed code only)
         if: github.event_name == 'pull_request'
@@ -200,6 +208,7 @@ jobs:
           # would let a PR ship a 4th unchecked Close of the same kind.
           $(go env GOPATH)/bin/golangci-lint run --new-from-rev "$SLOP_BASE" --max-same-issues=0 --max-issues-per-linter=0 ./cmd/... ./internal/... ./extensions/...
           (cd extensions/sdk && $(go env GOPATH)/bin/golangci-lint run --new-from-rev "$SLOP_BASE" --max-same-issues=0 --max-issues-per-linter=0 ./...)
+          (cd tools/pi-acp/pig/quackgate && $(go env GOPATH)/bin/golangci-lint run --new-from-rev "$SLOP_BASE" --max-same-issues=0 --max-issues-per-linter=0 ./...)
           go run ./tools/sloplint diff "$SLOP_BASE"
 
   # Prompt and tool-definition lint (docs/promptlint.md): token budgets, broken
@@ -396,3 +405,11 @@ jobs:
           docker run --rm --network none \
             -e QUACK_WORKSPACE_ROOT=/tmp/workspace \
             quack:ci sandbox check --agent code-reviewer
+      # The opt-in PIG engine: the shim's real-engine suite (gate, bridge, steer, cancel, resume) against the
+      # image's own pig-quack and mock-openai.mjs. HOME=/tmp because nonroot has no home; quack always sets one.
+      - name: pi-acp real-engine test (pig-quack)
+        if: github.event_name == 'push' || needs.changes.outputs.pig == 'true'
+        run: |
+          docker run --rm --network none -v "$PWD/tools/pi-acp:/pi-acp:ro" -w /tmp \
+            -e HOME=/tmp -e PI_ACP_REAL=1 -e PI_ACP_ENGINE=pig \
+            --entrypoint node quack:ci /pi-acp/test.mjs

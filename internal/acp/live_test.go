@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -45,9 +46,16 @@ func TestLive_PiRound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	env := []string{"PI_ACP_CONFIG=" + string(content)}
+	// SpawnEnv is hermetic: forward an alternate engine (e.g. PIG behind a launcher) and its knobs.
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "PI_ACP_PI_CMD=") || strings.HasPrefix(kv, "PI_ACP_ENGINE=") || strings.HasPrefix(kv, "PIG_") {
+			env = append(env, kv)
+		}
+	}
 	a, err := New("code-implementer", "external coder", Options{
 		Command:      []string{"node", shim},
-		Env:          []string{"PI_ACP_CONFIG=" + string(content)},
+		Env:          env,
 		Home:         t.TempDir(),
 		Jail:         jail,
 		UserID:       "live",

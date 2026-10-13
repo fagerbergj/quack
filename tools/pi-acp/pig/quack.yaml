@@ -1,0 +1,15 @@
+# `pig piglet build quack.yaml --format binary` fuses the quackgate policy gate and MCP bridge into pig-quack,
+# the Node-free engine pi-acp.mjs drives under PI_ACP_ENGINE=pig (Dockerfile stage `piglet`).
+name: quack-agent
+description: "quack ACP coding agent engine: PIG with the quackgate policy gate and MCP bridge fused in"
+# pi's default tool set; a Piglet without `tools` also offers powershell, grep, find and ls.
+tools: [read, bash, edit, write]
+# The shim runs it with --no-extensions: `discovery: extensions: []` alone still loads extensions from the agent
+# dir, and built-in extensions add codemode/tool_search to the model's tools. The fused gate survives the flag.
+extensions:
+  - name: quackgate
+    origins: [local:./quackgate]
+build:
+  targets: [linux/amd64]
+  outputName: pig-quack
+  extensionRealization: fused
