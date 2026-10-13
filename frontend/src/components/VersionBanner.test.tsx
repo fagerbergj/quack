@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, it, expect, vi } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { VersionBanner } from './VersionBanner'
 import { readServedBuild, skew } from '../state/clientConfig'
 import type { ClientConfig } from '../api'
@@ -80,6 +80,7 @@ describe('VersionBanner', () => {
     const overlay = screen.getByRole('alertdialog')
     expect(overlay).toBeInstanceOf(HTMLDialogElement)
     expect((overlay as HTMLDialogElement).open).toBe(true)
+    expect(fireEvent(overlay, new Event('cancel', { cancelable: true }))).toBe(false) // Esc can't dismiss it
     cleanup()
   })
 })
