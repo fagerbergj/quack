@@ -41,7 +41,9 @@ func Main(name string) {
 
 // Serve answers host requests from in on out until in reaches EOF, then drains in-flight requests.
 func Serve(in io.Reader, out io.Writer, factory sdk.Factory, log *slog.Logger) error {
-	s := &server{factory: factory, log: log, w: &writer{enc: json.NewEncoder(out)}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel() // after wg.Wait: a Starter's resources outlive every in-flight request
+	s := &server{ctx: ctx, factory: factory, log: log, w: &writer{enc: json.NewEncoder(out)}}
 	var wg sync.WaitGroup
 	defer wg.Wait()
 	dec := json.NewDecoder(in)
@@ -67,6 +69,7 @@ func Serve(in io.Reader, out io.Writer, factory sdk.Factory, log *slog.Logger) e
 }
 
 type server struct {
+	ctx     context.Context
 	factory sdk.Factory
 	log     *slog.Logger
 	w       *writer
@@ -112,6 +115,12 @@ func (s *server) initialize(raw json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Before the routes, as in-process boot does; s.ctx ends with Serve, as quack's ends with the server.
+	if st, ok := ext.(sdk.Starter); ok {
+		if err := st.Start(s.ctx); err != nil {
+			return nil, fmt.Errorf("start: %w", err)
+		}
+	}
 	// The same shape as quack's own mount, so handlers see the full /<name>/... path they would in-process.
 	r := s.mount(p.Name)
 	ext.RegisterRoutes(r, r)
@@ -153,5 +162,8 @@ func (s *server) handle(m message) (any, error) {
 	}
 	rec := httptest.NewRecorder()
 	s.handler.ServeHTTP(rec, req)
+	if n := rec.Body.Len(); n > maxBody {
+		return nil, fmt.Errorf("response too large: %d bytes, limit %d", n, maxBody)
+	}
 	return httpResult{Status: rec.Code, Header: rec.Header(), Body: rec.Body.Bytes()}, nil
 }

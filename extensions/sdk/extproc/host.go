@@ -23,8 +23,13 @@ import (
 
 const (
 	initTimeout = 10 * time.Second
-	stopGrace   = 5 * time.Second
-	maxBody     = 16 << 20 // PiG's RPC command limit
+	maxLogLine  = 64 << 10
+)
+
+// vars so tests can shrink them. maxBody caps request and response bodies (PiG's RPC command limit).
+var (
+	stopGrace = 5 * time.Second
+	maxBody   = 16 << 20
 )
 
 // passEnv is all of quack's environment a child sees: what an outbound HTTP client needs, never secrets.
@@ -112,9 +117,14 @@ func (p *Process) current() *child {
 
 // ServeHTTP forwards one request; quack's credentials never reach the child.
 func (p *Process) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, int64(maxBody)))
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+		return
+	}
 	if err != nil {
-		http.Error(w, "request body unreadable or too large", http.StatusRequestEntityTooLarge)
+		http.Error(w, "request body unreadable", http.StatusBadGateway)
 		return
 	}
 	h := r.Header.Clone()
@@ -250,11 +260,25 @@ func childEnv() []string {
 func (c *child) run(stdout, stderr io.Reader, log *slog.Logger) {
 	var wg sync.WaitGroup
 	wg.Go(func() { forwardLogs(stderr, log) })
-	dec := json.NewDecoder(stdout)
-	for {
+	if err := c.readReplies(stdout); err != nil {
+		log.Error("extension process broke the protocol; killing it", "err", err)
+		_ = c.cmd.Process.Kill()
+	}
+	_, _ = io.Copy(io.Discard, stdout) // keep a dying child from blocking on a full pipe
+	wg.Wait()
+	c.err = c.cmd.Wait()
+	close(c.done)
+}
+
+// readReplies hands each reply line to its caller until EOF. A line is capped at a maxBody body's
+// base64 plus headroom, so an oversized reply costs the child its life rather than quack its memory.
+func (c *child) readReplies(stdout io.Reader) error {
+	sc := bufio.NewScanner(stdout)
+	sc.Buffer(make([]byte, 0, 64<<10), 2*maxBody+64<<10)
+	for sc.Scan() {
 		var m message
-		if err := dec.Decode(&m); err != nil {
-			break
+		if err := json.Unmarshal(sc.Bytes(), &m); err != nil {
+			return err
 		}
 		c.mu.Lock()
 		ch := c.pending[m.ID]
@@ -264,10 +288,7 @@ func (c *child) run(stdout, stderr io.Reader, log *slog.Logger) {
 			ch <- m
 		}
 	}
-	_, _ = io.Copy(io.Discard, stdout) // after a framing error, keep the child from blocking on a full pipe
-	wg.Wait()
-	c.err = c.cmd.Wait()
-	close(c.done)
+	return sc.Err()
 }
 
 func (c *child) call(ctx context.Context, method string, params, result any) error {
@@ -314,14 +335,19 @@ func (c *child) stop() {
 }
 
 // forwardLogs re-emits the child's JSON log lines through log at their own level; anything else
-// (a panic trace) goes through at Warn.
+// (a panic trace, or a line truncated at maxLogLine) goes through at Warn.
 func forwardLogs(r io.Reader, log *slog.Logger) {
-	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 0, 64<<10), 1<<20)
-	for sc.Scan() {
-		logLine(log, sc.Bytes())
+	br := bufio.NewReaderSize(r, maxLogLine)
+	for {
+		line, more, err := br.ReadLine()
+		if err != nil {
+			return
+		}
+		logLine(log, line)
+		for more && err == nil {
+			_, more, err = br.ReadLine() // drop the rest of an over-long line
+		}
 	}
-	_, _ = io.Copy(io.Discard, r) // an over-long line stops the scanner; keep the pipe drained
 }
 
 func logLine(log *slog.Logger, line []byte) {
