@@ -1233,7 +1233,7 @@ func (j *judgeRounds) prepareJudge(round int) (runID string, judgeCtx context.Co
 	// Ledger coords (via context.WithValue): Node is cfg.NodeID, not nodeID -
 	// it must match the worker recorder's own key for setup/repo-chain plans.
 	judgeArtifacts := gateArtifacts(promptArtifact, promptSource, promptVersion, j.cfg.ConstitutionArtifact, j.cfg.RubricArtifact)
-	judgeCoords := ledger.Coords{ChatID: j.cfg.ChatID, Node: j.cfg.NodeID, Agent: "judge", BundleHash: j.cfg.BundleHash, PromptSource: promptSource, PromptVersionID: promptVersion, PromptArtifact: promptArtifact, Artifacts: judgeArtifacts, Plugins: j.cfg.Plugins, Round: runID, User: j.cfg.User, Source: j.cfg.Source}
+	judgeCoords := ledger.Coords{ChatID: j.cfg.ChatID, Node: j.cfg.NodeID, Agent: ledger.JudgeAgent, JudgedAgent: j.cfg.Agent, BundleHash: j.cfg.BundleHash, PromptSource: promptSource, PromptVersionID: promptVersion, PromptArtifact: promptArtifact, Artifacts: judgeArtifacts, Plugins: j.cfg.Plugins, Round: runID, User: j.cfg.User, Source: j.cfg.Source}
 	ledgerCtx = ledger.WithCoords(j.ctx, judgeCoords)
 	// Same belt-and-suspenders as runWorkerNodeTraced's workerModel stamp.
 	if cs, ok := j.cfg.JudgeModel.(interface{ SetLedgerCoords(ledger.Coords) }); ok {
@@ -1415,7 +1415,7 @@ func (j *judgeRounds) recordRoundVerdict(round int, runID string, jspan *stageSp
 	emitEvaluationResults(ledgerCtx, runID, v)
 	jspan.end(stream.AgentCompleteData{RunID: runID, Stage: stream.StageJudge, Round: round, Score: j.res.Score, Passed: j.res.Passed, Feedback: j.res.Feedback, Envelope: env}, nil)
 	j.log.Info("judge round done", "round", round, "score", v.Score, "passed", j.res.Passed)
-	otelobs.RecordJudgeVerdict(j.cfg.Agent, j.res.Score, j.res.Passed)
+	otelobs.RecordJudgeVerdict(j.cfg.Agent, j.res.Score, j.res.Passed, round == 1)
 	// Debug: per-criterion reasoning for diagnosable gate failures.
 	if len(v.Criteria) > 0 && j.log.Enabled(context.Background(), slog.LevelDebug) {
 		j.log.Debug("judge verdict detail", "round", round, "criteria", formatCriteriaDetail(v.Criteria), "feedback", strings.TrimSpace(v.Feedback))

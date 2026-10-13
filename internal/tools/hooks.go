@@ -137,20 +137,24 @@ func (h *Hooks) after(ctx agent.Context, t tool.Tool, args, result map[string]an
 	if p&HookRepeat != 0 && !refused(err) {
 		h.recordRepeat(ctx, t.Name(), args, result, err)
 	}
+	// Counted whatever the policy: artifact tools (write_<kind>) emit no row here, yet their refusals cost a request.
+	otelobs.RecordToolCall(h.callCoords(ctx), t.Name(), err != nil)
 	if p&HookEmit == 0 {
 		return nil, nil
 	}
 	emitCtx := context.Context(ctx)
 	if p&HookNode != 0 {
-		h.mu.Lock()
-		coords := h.coords
-		h.mu.Unlock()
-		if !coords.IsZero() {
-			emitCtx = ledger.WithCoords(ctx, ledger.FillBlankCoords(ledger.CoordsFromContext(ctx), coords))
-		}
+		emitCtx = ledger.WithCoords(ctx, h.callCoords(ctx))
 	}
 	otelobs.EmitToolCall(emitCtx, toolsScope, t.Name(), args, result, err)
 	return nil, nil
+}
+
+// callCoords is ctx's coords with the stamped ones filling its blanks.
+func (h *Hooks) callCoords(ctx context.Context) ledger.Coords {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return ledger.FillBlankCoords(ledger.CoordsFromContext(ctx), h.coords)
 }
 
 // node is the calling node's (chat, node); ("", "") outside a node or when its thread is not registered.

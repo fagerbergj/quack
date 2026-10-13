@@ -61,7 +61,7 @@ All under the `quack.*` namespace (`internal/otelobs/metrics.go`), meter name `g
 | `quack.nodes.active` | UpDownCounter | — | DAG nodes currently in flight. |
 | `quack.worker.round.duration` | Histogram (s) | `agent`, `model`, `stage` (`worker`/`judge`/`revise`) | Per-round wall time, drawn from the same window as `quack.worker.round`'s span so the two can never disagree. |
 | `quack.judge.score` | Histogram (0–1) | `agent` | The weakest-link score from every judge round, any agent. |
-| `quack.judge.verdict` | Counter | `agent`, `passed` | Pass/fail counts per agent. |
+| `quack.judge.verdict` | Counter | `agent`, `passed`, `first_round` | Pass/fail counts per agent. `first_round` marks one round per judged attempt, so first-round pass rate and rounds per attempt are ratios of this counter. |
 | `quack.judge.unavailable` | Counter | `agent` | A judge round that errored before producing a verdict — explains a gap in `judge.score`/`judge.verdict` for that agent. |
 | `quack.judge.phase.duration` | Histogram (s) | `agent`, `phase`, `criterion` (on `verify` only: `specifics_supported`) | One judge round's wall time per phase: `prepare`, `deterministic`, `admission`, `verify`, `judge_tools`, `judge_verdict`. The two judge phases sum over every judge session in the round, retries and re-judges included. See [Measuring the judge](judge-measurement.md#judge-round-timing). |
 | `quack.delivery.outcome` | Counter | `outcome` (`delivered`/`draft`/`failed`/`none`) | `none` is the alertable one: a judge-passed work-request that recorded no delivery attempt at all — the phantom-success class this metric exists to catch. |
@@ -69,7 +69,13 @@ All under the `quack.*` namespace (`internal/otelobs/metrics.go`), meter name `g
 | `quack.acp.permission_ask` | Counter | `agent` | ACP subprocess permission asks reaching the safety judge; expected to stay ~0 since every known ask class is answered in config. |
 | `quack.memory.recall` | Counter | `hit` | Memory recall attempts, hit vs. miss. |
 | `quack.gate.checks.skipped` | Counter | `reason` | A node whose deterministic checks did NOT run at all (no build/vet/test backstop) — the gate then relied on judge score alone. Query this to find nodes gated on judge alone. |
+| `gen_ai.client.token.usage` / `gen_ai.client.cost` | Counter | `gen_ai.request.model`, `agent`, `user`, `source`, `role`(, `gen_ai.token.type`) | Per-call tokens and USD. A judge call carries the agent it judged and `role=judge`; a call outside any node is `role=orchestrator`; otherwise `worker`. |
+| `quack.model.requests` | Counter | as `gen_ai.client.cost` | One per usage-reporting model call (an ACP round counts once): the per-request denominator. |
+| `quack.run.duration` | Histogram (s) | — | One finished orchestrator run; `_count` is tasks, the cost-per-task denominator. |
+| `quack.tool.calls` | Counter | `agent`, `role`, `tool`, `rejected` | Every quack-native tool call; `rejected=true` returned an error to the model (e.g. a `write_<kind>` schema refusal). |
 | `quack.memory.commit.failures` | Counter | `agent`, `reason` | A fire-and-forget memory commit that errored (consolidation-model timeout, embed/neighbour timeout) — the only queryable signal for the commit goroutine, which never fails a node itself. |
+
+No instrument carries a chat, turn or node id; a test in `internal/otelobs/metrics_test.go` pins the allowed label set.
 
 `quack.delivery.outcome=none`, `quack.gate.checks.skipped`, and `quack.judge.unavailable` are the three "silent gap" signals worth alerting on directly — each exists specifically because quack has shipped a real incident where the corresponding failure mode looked identical to success until someone went looking (a fabricated exploration scoring high, a phantom delivery, a judge round dying without a verdict).
 

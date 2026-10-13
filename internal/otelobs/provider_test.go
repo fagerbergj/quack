@@ -49,7 +49,7 @@ func TestInit_EnabledInstallsGlobalProviders(t *testing.T) {
 	End(span, nil)
 
 	RunStarted()
-	RecordJudgeVerdict("code-implementer", 0.9, true)
+	RecordJudgeVerdict("code-implementer", 0.9, true, true)
 	RecordDeliveryOutcome(DeliveryDelivered)
 	RecordRoundDuration("code-implementer", "qwen3-coder", "worker", 100*time.Millisecond)
 	RunFinished()

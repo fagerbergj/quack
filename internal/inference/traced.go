@@ -122,17 +122,13 @@ func recordUsageMetrics(ctx context.Context, modelName, defaultAgent string, pri
 		return
 	}
 	u := resp.UsageMetadata
-	c := ledger.CoordsFromContext(ctx)
-	agent := c.Agent
-	if agent == "" {
-		agent = defaultAgent
-	}
+	usage := otelobs.UsageFor(modelName, ledger.CoordsFromContext(ctx), defaultAgent)
 	input, cached := splitPromptTokens(u)
 	output := int64(u.CandidatesTokenCount)
 	reasoning := int64(u.ThoughtsTokenCount)
-	otelobs.RecordTokenUsage(modelName, agent, c.User, c.Source, input, output, reasoning, cached)
+	otelobs.RecordTokenUsage(usage, input, output, reasoning, cached)
 	if pricing != nil {
-		otelobs.RecordCost(modelName, agent, c.User, c.Source, callCost(pricing, int64(u.PromptTokenCount), output+reasoning))
+		otelobs.RecordCost(usage, callCost(pricing, int64(u.PromptTokenCount), output+reasoning))
 	}
 }
 
@@ -166,13 +162,9 @@ func (t *tracedModel) recordEmbedUsage(ctx context.Context, u openaimodel.EmbedU
 	if u.PromptTokens == 0 {
 		return
 	}
-	c := ledger.CoordsFromContext(ctx)
-	agent := c.Agent
-	if agent == "" {
-		agent = t.defaultAgent
-	}
-	otelobs.RecordTokenUsage(t.name, agent, c.User, c.Source, u.PromptTokens, 0, 0, 0)
+	usage := otelobs.UsageFor(t.name, ledger.CoordsFromContext(ctx), t.defaultAgent)
+	otelobs.RecordTokenUsage(usage, u.PromptTokens, 0, 0, 0)
 	if t.pricing != nil {
-		otelobs.RecordCost(t.name, agent, c.User, c.Source, callCost(t.pricing, u.PromptTokens, 0))
+		otelobs.RecordCost(usage, callCost(t.pricing, u.PromptTokens, 0))
 	}
 }

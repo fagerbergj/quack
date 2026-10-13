@@ -3,13 +3,17 @@ package otelobs
 import (
 	"context"
 	"errors"
+	"maps"
 	"math"
+	"reflect"
 	"testing"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+
+	"github.com/fagerbergj/quack/internal/ledger"
 )
 
 // newTestMeter installs a ManualReader-backed singleton so Record*/Start*/End* record into THIS reader,
@@ -28,8 +32,8 @@ func newTestMeter(t *testing.T) *metric.ManualReader {
 // Pins every unit-carrying instrument's unit; the Int64Counter case once silently dropped d.unit.
 func TestInstrumentUnits(t *testing.T) {
 	reader := newTestMeter(t)
-	RecordTokenUsage("model-a", "", "", "", 1, 1, 0, 0)
-	RecordCost("model-a", "", "", "", 0.01)
+	RecordTokenUsage(Usage{Model: "model-a"}, 1, 1, 0, 0)
+	RecordCost(Usage{Model: "model-a"}, 0.01)
 	for name, want := range map[string]string{
 		"gen_ai.client.token.usage": "{token}",
 		"gen_ai.client.cost":        "USD",
@@ -178,8 +182,8 @@ func TestNodeGauge_TracksInFlightThenReturnsToZero(t *testing.T) {
 func TestJudgeMetrics_CoverNonExplorerAgents(t *testing.T) {
 	reader := newTestMeter(t)
 
-	RecordJudgeVerdict("web-researcher", 0.82, true)
-	RecordJudgeVerdict("synthesizer", 0.55, false)
+	RecordJudgeVerdict("web-researcher", 0.82, true, true)
+	RecordJudgeVerdict("synthesizer", 0.55, false, true)
 	RecordJudgeUnavailable("code-reviewer")
 
 	scoreAgents := histogramAgents(t, reader, "quack.judge.score")
@@ -295,7 +299,7 @@ func attrString(t *testing.T, set attribute.Set, key string) string {
 func TestRecordTokenUsage_FansOutByTokenType(t *testing.T) {
 	reader := newTestMeter(t)
 
-	RecordTokenUsage("qwen3-coder", "code-implementer", "local", "github", 100, 50, 10, 25)
+	RecordTokenUsage(Usage{Model: "qwen3-coder", Agent: "code-implementer", User: "local", Source: "github"}, 100, 50, 10, 25)
 
 	points := tokenUsagePoints(t, reader)
 	for typ, want := range map[string]int64{
@@ -331,7 +335,7 @@ func TestRecordTokenUsage_FansOutByTokenType(t *testing.T) {
 func TestRecordTokenUsage_ZeroTypeOmitted(t *testing.T) {
 	reader := newTestMeter(t)
 
-	RecordTokenUsage("qwen3-coder", "web-researcher", "local", "app", 100, 50, 0, 0)
+	RecordTokenUsage(Usage{Model: "qwen3-coder", Agent: "web-researcher", User: "local", Source: "app"}, 100, 50, 0, 0)
 
 	points := tokenUsagePoints(t, reader)
 	if _, ok := points[GenAITokenTypeReasoning]; ok {
@@ -346,7 +350,7 @@ func TestRecordTokenUsage_ZeroTypeOmitted(t *testing.T) {
 func TestRecordTokenUsage_AbsentAttributionOmitsAttribute(t *testing.T) {
 	reader := newTestMeter(t)
 
-	RecordTokenUsage("qwen3-coder", "", "", "", 10, 0, 0, 0)
+	RecordTokenUsage(Usage{Model: "qwen3-coder"}, 10, 0, 0, 0)
 
 	points := tokenUsagePoints(t, reader)
 	dp, ok := points[GenAITokenTypeInput]
@@ -364,7 +368,7 @@ func TestRecordTokenUsage_AbsentAttributionOmitsAttribute(t *testing.T) {
 func TestRecordCost_ComputesFromConfiguredPricing(t *testing.T) {
 	reader := newTestMeter(t)
 
-	RecordCost("qwen3-coder", "code-implementer", "local", "github", 1.5)
+	RecordCost(Usage{Model: "qwen3-coder", Agent: "code-implementer", User: "local", Source: "github"}, 1.5)
 
 	h, ok := collect(t, reader, "gen_ai.client.cost").Data.(metricdata.Sum[float64])
 	if !ok {
@@ -388,8 +392,8 @@ func TestRecordCost_ComputesFromConfiguredPricing(t *testing.T) {
 // A 0-1 score on OTel's default buckets lands in one bucket; explicit sub-1.0 boundaries must spread it.
 func TestJudgeScoreHistogram_HasExplicitBuckets(t *testing.T) {
 	reader := newTestMeter(t)
-	RecordJudgeVerdict("web-researcher", 0.3, false)
-	RecordJudgeVerdict("web-researcher", 0.9, true)
+	RecordJudgeVerdict("web-researcher", 0.3, false, true)
+	RecordJudgeVerdict("web-researcher", 0.9, true, false)
 
 	h, ok := collect(t, reader, "quack.judge.score").Data.(metricdata.Histogram[float64])
 	if !ok {
@@ -398,6 +402,99 @@ func TestJudgeScoreHistogram_HasExplicitBuckets(t *testing.T) {
 	for _, dp := range h.DataPoints {
 		if len(dp.Bounds) < 5 || dp.Bounds[len(dp.Bounds)-1] > 1.0 {
 			t.Errorf("quack.judge.score bucket bounds = %v, want explicit sub-1.0 boundaries", dp.Bounds)
+		}
+	}
+}
+
+func TestUsageFor_BillsJudgeToJudgedAgentAndNamesRole(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		c           ledger.Coords
+		def         string
+		agent, role string
+	}{
+		{"worker", ledger.Coords{Node: "n1", Agent: "code-reviewer"}, "", "code-reviewer", RoleWorker},
+		{"judge", ledger.Coords{Node: "n1", Agent: ledger.JudgeAgent, JudgedAgent: "code-reviewer"}, "", "code-reviewer", RoleJudge},
+		{"judge without subject", ledger.Coords{Node: "n1", Agent: ledger.JudgeAgent}, "", ledger.JudgeAgent, RoleJudge},
+		{"outside any node", ledger.Coords{ChatID: "c1"}, "orchestrator", "orchestrator", RoleOrchestrator},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			u := UsageFor("m", tc.c, tc.def)
+			if u.Agent != tc.agent || u.Role != tc.role {
+				t.Errorf("UsageFor = agent %q role %q, want %q %q", u.Agent, u.Role, tc.agent, tc.role)
+			}
+		})
+	}
+}
+
+// recordEveryInstrument drives each instrument once with coords that hold a chat, node and round id.
+func recordEveryInstrument(c ledger.Coords) {
+	u := UsageFor("m", c, "")
+	RecordTokenUsage(u, 1, 1, 1, 1)
+	RecordCost(u, 1)
+	RecordToolCall(c, "write_review", true)
+	RecordJudgeVerdict(u.Agent, 0.5, false, true)
+	RecordJudgeUnavailable(u.Agent)
+	RecordJudgePhase(u.Agent, "verify", "specifics_supported", 1)
+	RecordDeliveryOutcome(DeliveryDelivered)
+	RecordRunDuration(time.Now())
+	RecordRoundDuration(u.Agent, "m", "draft", time.Second)
+	RecordModelCallDuration("m", time.Second)
+	RecordPermissionAsk(u.Agent)
+	RecordMemoryRecall(true)
+	RecordChecksSkipped("no_setup")
+	RecordMemoryCommitFailure(u.Agent, "other")
+	RecordRunNoAnswer()
+	RunStarted()
+	NodeStarted()
+	SetLedgerUnresolvedIntents(0)
+}
+
+// Chat, turn and node ids are unbounded, so no instrument may carry one: every label key must be on the
+// bounded list and no value may echo an id from the coords.
+func TestInstrumentsCarryOnlyBoundedLabels(t *testing.T) {
+	reader := newTestMeter(t)
+	c := ledger.Coords{ChatID: "chat-123", Node: "node-456", Round: "round-789", Agent: ledger.JudgeAgent, JudgedAgent: "code-reviewer", User: "u", Source: "github"}
+	recordEveryInstrument(c)
+
+	bounded := map[string]bool{GenAIRequestModel: true, "agent": true, GenAIAgentName: true, "user": true, "source": true,
+		"role": true, GenAITokenType: true, "stage": true, "passed": true, "first_round": true, "outcome": true,
+		"phase": true, "criterion": true, "hit": true, "reason": true, "tool": true, "rejected": true}
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	for _, met := range rm.ScopeMetrics[0].Metrics {
+		for _, p := range metricPoints(met.Data) {
+			for k, v := range p.Attrs {
+				if !bounded[k] || v == c.ChatID || v == c.Node || v == c.Round {
+					t.Errorf("%s carries label %s=%q: only bounded labels may reach Prometheus", met.Name, k, v)
+				}
+			}
+		}
+	}
+	if seen, want := len(rm.ScopeMetrics[0].Metrics), reflect.TypeOf(metrics{}).NumField(); seen != want {
+		t.Errorf("recordEveryInstrument drove %d instruments, want all %d so none escapes this check", seen, want)
+	}
+}
+
+// The outcome-trend instruments carry exactly the labels the usage page groups by; a request is one per call.
+func TestOutcomeTrendInstrumentsCarryTheirLabels(t *testing.T) {
+	reader := newTestMeter(t)
+	recordEveryInstrument(ledger.Coords{Node: "n1", Agent: ledger.JudgeAgent, JudgedAgent: "code-reviewer", Source: "github"})
+
+	for name, want := range map[string]map[string]string{
+		"quack.model.requests": {GenAIRequestModel: "m", "agent": "code-reviewer", "source": "github", "role": RoleJudge},
+		"quack.judge.verdict":  {GenAIAgentName: "code-reviewer", "passed": "false", "first_round": "true"},
+		"quack.tool.calls":     {GenAIAgentName: "code-reviewer", "role": RoleJudge, "tool": "write_review", "rejected": "true"},
+		"quack.run.duration":   {},
+	} {
+		ps, err := PointsForTesting(reader, name)
+		if err != nil {
+			t.Fatalf("collect: %v", err)
+		}
+		if len(ps) != 1 || ps[0].Value != 1 || !maps.Equal(ps[0].Attrs, want) {
+			t.Errorf("%s = %+v, want one point of 1 with %v", name, ps, want)
 		}
 	}
 }

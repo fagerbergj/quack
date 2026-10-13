@@ -23,12 +23,13 @@ func recordUsage(modelName string, coords ledger.Coords, pricing *config.ModelPr
 	if u.CachedReadTokens != nil {
 		cached = int64(*u.CachedReadTokens)
 	}
-	otelobs.RecordTokenUsage(modelName, coords.Agent, coords.User, coords.Source, input, output, reasoning, cached)
+	usage := otelobs.UsageFor(modelName, coords, "")
+	otelobs.RecordTokenUsage(usage, input, output, reasoning, cached)
 	if pricing != nil {
 		// cached tokens are part of the prompt too and quack has no separate
 		// cached-token price tier (mirrors inference.recordUsageMetrics).
 		promptTotal := input + cached
 		cost := float64(promptTotal)/1e6*pricing.InputPerMTok + float64(output+reasoning)/1e6*pricing.OutputPerMTok
-		otelobs.RecordCost(modelName, coords.Agent, coords.User, coords.Source, cost)
+		otelobs.RecordCost(usage, cost)
 	}
 }
