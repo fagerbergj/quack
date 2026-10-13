@@ -1,0 +1,22 @@
+{
+  "id": "review-good",
+  "note": "A sound review of a PR whose third described behaviour is missing: the gap is a reproduced blocking finding.",
+  "rubric": "../../extensions/github/plugin/agents/code-reviewer/rubric.yaml",
+  "needs_live_model": true,
+  "task": "Review pull request #42 in example/shop and stage your verdict.\n\nPR title: fix(client): retry transient 5xx with backoff\n\nPR description:\n- Do retries GET requests that get a 502, 503 or 504, up to MaxRetries times, doubling the delay each time.\n- Adds TestDoRetriesTransient covering a 503-then-200 sequence.\n- Never retries a non-idempotent method: a POST is sent exactly once.\n\nNo linked issue. CI: all checks green.\n\nDiff:\n```diff\ndiff --git a/client/retry.go b/client/retry.go\nnew file mode 100644\n--- /dev/null\n+++ b/client/retry.go\n@@ -0,0 +1,24 @@\n+package client\n+\n+import (\n+\t\"net/http\"\n+\t\"time\"\n+)\n+\n+// Do sends req, retrying transient gateway errors with exponential backoff.\n+func (c *Client) Do(req *http.Request) (*http.Response, error) {\n+\tdelay := c.BaseDelay\n+\tfor attempt := 0; ; attempt++ {\n+\t\tresp, err := c.HTTP.Do(req)\n+\t\tif err != nil || !transient(resp.StatusCode) || attempt == c.MaxRetries {\n+\t\t\treturn resp, err\n+\t\t}\n+\t\tresp.Body.Close()\n+\t\ttime.Sleep(delay)\n+\t\tdelay *= 2\n+\t}\n+}\n+\n+func transient(code int) bool {\n+\treturn code == 502 || code == 503 || code == 504\n+}\ndiff --git a/client/retry_test.go b/client/retry_test.go\nnew file mode 100644\n--- /dev/null\n+++ b/client/retry_test.go\n@@ -0,0 +1,22 @@\n+package client\n+\n+import (\n+\t\"net/http\"\n+\t\"net/http/httptest\"\n+\t\"testing\"\n+)\n+\n+func TestDoRetriesTransient(t *testing.T) {\n+\tcodes := []int{503, 200}\n+\tsrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {\n+\t\tw.WriteHeader(codes[0])\n+\t\tcodes = codes[1:]\n+\t}))\n+\tdefer srv.Close()\n+\tc := &Client{HTTP: srv.Client(), MaxRetries: 3}\n+\treq, _ := http.NewRequest(http.MethodGet, srv.URL, nil)\n+\tresp, err := c.Do(req)\n+\tif err != nil || resp.StatusCode != 200 {\n+\t\tt.Fatalf(\"got %v, %v\", resp, err)\n+\t}\n+}\n```",
+  "answer": "Staged the review: request changes, one blocking finding.\n\nVERDICT: request_changes\nTAKEAWAY: Retries work for GET, but Do retries POST too, so the PR's \"a POST is sent exactly once\" promise is broken.\nFINDINGS:\n- client/retry.go:13: 🚨 **blocking:** (delivery, defect) Do never reads req.Method, so a POST that gets a 503 is sent again - a duplicated side effect the description rules out. A throwaway test posting to a 503-then-200 server saw 2 requests; gate the retry on `req.Method == http.MethodGet`.\nVERIFIED:\n- `go test ./client` on head: TestDoRetriesTransient passes (503 then 200 returns 200).\n- Throwaway TestPostNotRetried (POST to 503-then-200 server): handler hit 2 times, want 1 - fails on head.\n- Read retry.go:9-20: no method check anywhere in Do; delay is a local, so concurrent calls share no state.\n- Delivery: 2 of 3 PR items met (5xx retry with doubling, the test); \"POST sent once\" unmet - the blocking finding.\n",
+  "labels": {
+    "catches_real_issues": {
+      "pass": true,
+      "reason": "finds the one real defect, the retried POST"
+    },
+    "claims_grounded": {
+      "pass": true,
+      "reason": "every finding and verified item names the lines read or the command run and its result"
+    },
+    "severity_grounded": {
+      "pass": true,
+      "reason": "blocking rests on a reproduced defect and an unmet delivery item"
+    }
+  }
+}

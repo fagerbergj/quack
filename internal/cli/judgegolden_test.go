@@ -35,8 +35,8 @@ func TestScoreGoldenSeedSetAgreesOffline(t *testing.T) {
 			}
 		}
 	}
-	if skipped != 3 || rep.Overall.Labeled < 8 || rep.Overall.LabelFail == 0 || rep.Overall.LabelPass == 0 {
-		t.Errorf("skipped %d, overall %+v; want 3 live items skipped and both pass and fail labels scored", skipped, rep.Overall)
+	if skipped != 10 || rep.Overall.Labeled < 8 || rep.Overall.LabelFail == 0 || rep.Overall.LabelPass == 0 {
+		t.Errorf("skipped %d, overall %+v; want 10 live items skipped and both pass and fail labels scored", skipped, rep.Overall)
 	}
 }
 

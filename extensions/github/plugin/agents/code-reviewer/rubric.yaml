@@ -5,53 +5,58 @@ scale:
 criteria:
   catches_real_issues:
     definition: >
-      The review surfaces the change's actual defects - the correctness, security, and missing-test problems that matter - rather than only cosmetic ones, and presents them as findings for a human deciding whether to merge, not a transcript of the reviewer's own process. It never turns an environment-specific failure into a code-quality concern. Judge against what the change actually contains, not against an imagined ideal review. "The review" is the staged record (stage_review_comment/stage_review, or the structured tail) - reflected here via the staged verdict/takeaway/notes and findings sections - never the chat-visible reply; a one-line reply confirming what was staged is correct, not a gap.
+      The review reports what is wrong with the change: every defect in the diff and every promise the change does not keep - each acceptance item in a linked issue (artifact `linked-issue-<n>`) and each thing the pull request description says the change does - with each one staged as a `blocking:` finding, not left out and not parked in `notes`. It never reports a sandbox or toolchain failure as a code concern. "The review" is the staged record (stage_review_comment/stage_review, or the structured tail) - the staged verdict/takeaway/verified/notes and findings - never the chat-visible reply.
+    guidance: >
+      Build the list yourself before reading the review's: open the diff, the pull request with `read_artifact` and any `linked-issue-<n>`. A promise is a sentence in the description or an acceptance item that says what the change does; a change with no linked issue still promises what its description says. Where the diff adds another instance of an existing pattern (an agent bundle, a handler, a plugin), the parts one sibling carries are promises too. An item the change defers to a linked follow-up is kept.
     steps:
-    - From the diff, identify the genuine problems in the change (bugs, unhandled edge cases, security exposure, new behavior with no test).
-    - Check whether the review found each, or missed a significant one while spending its attention on trivia.
-    - Check `notes` (the review's only free-prose field) for process narration - a "What I ran"/"What I checked" list of commands (`git diff`, `go test`, `gofmt`, `go vet`, install steps) that belongs in `verified` (one structured item per check performed) instead of prose.
-    - "Check every reported test/build failure or \"pre-existing issue\": is it tied to the diff, or is it a sandbox/toolchain/network gap (missing `make`, no network, stale cache) that the PR's own green CI contradicts? A failure that doesn't reproduce in CI and isn't caused by the diff is not a legitimate finding."
+    - "Enumerate first: list every defect you can point to in the diff (file and line, with the input or state that goes wrong) and every promise from the description and linked issue, then apply the steps below to each one. A finding is a defect or an unkept promise the review does not stage as a `blocking:` finding, or a sandbox/toolchain failure the review reports as a code concern. Record each finding with a verbatim quote (or an omission naming exactly what is missing); one you cannot quote or name does not count. Pick the band from the number of findings; none is the top band."
+    - For each promise, find where the diff keeps it or defers it to a linked follow-up. An item that is neither is an unkept promise.
+    - For each defect and unkept promise, check the review stages it as a `blocking:` finding. Mentioned only in `notes`/`verified`/`takeaway`, or labelled `suggestion:`/`nit:`, it counts as not staged.
+    - "Check every reported test/build failure: tied to the diff, or a sandbox/toolchain/network gap (missing `make`, no network, stale cache) the pull request's green CI contradicts?"
     bands:
     - min: 3.0
       max: 3.0
-      meaning: the review catches the change's real, impactful issues (or correctly finds few, because the change is clean); `notes` carries no process narration, and no environmental-only failure is reported as a concern.
+      meaning: 'no finding: every defect and unkept promise is a blocking finding, or the change has none.'
     - min: 2.0
       max: 2.0
-      meaning: it catches the change's real issues, but `notes` carries a "What I ran"/"What I checked" list that belongs in `verified` instead, or one reported failure is questionable but not clearly environmental - the substance is right, the packaging has a cosmetic flaw.
+      meaning: exactly one finding, and it is an unkept promise the review does report, only below `blocking:` or in `notes`.
     - min: 1.0
       max: 1.0
-      meaning: it misses one material issue, or buries a real finding deep among minor points where a reader could miss it.
+      meaning: two or three findings, or one defect or unkept promise the review does not mention at all.
     - min: 0.0
       max: 0.0
-      meaning: it misses the change's central defect, reports only cosmetic findings while a real bug/security/test gap goes unmentioned, or reports a sandbox/environment failure as a code concern on a PR whose CI is green.
+      meaning: four or more findings, or the review approves over the change's central defect or an unkept promise it never mentions, or it reports a sandbox failure as a code concern on a pull request whose CI is green.
     anchors:
     - quote
     - omission
+    require_fix_on_fail: true
   claims_grounded:
     definition: >
-      Every finding the review makes is grounded in code the reviewer actually read - it points at a real file/line/behavior, not an invented defect.
+      Every claim the review makes about the code - each finding and each `verified` item - names its evidence and matches the code: the file and line it read, or the command or test it ran and what that showed. A claim that rests on the pull request description, or asserts behaviour nothing in the review shows was checked, is not grounded.
     guidance: >
-      This is the fabrication check for a review: asserting "this function swallows the error" about code the reviewer never opened is as disqualifying as an invented citation.
+      Reading is evidence: `retry.go:13 has no method check` is grounded when line 13 says so. Running is evidence only when the review names what ran and what it printed. `tests pass`, `CI green`, `logic is correct` and `matches the description` name neither, so each is a finding however true it may be.
     steps:
-    - List the review's substantive findings (each blocking issue, suggestion, and factual claim about the code's behavior).
-    - "For each, check it against the ledger's read/diff samples and, if you can, the file itself: does the cited code actually behave the way the finding says?"
-    - A finding about code contradicted by the file, or asserting behavior in a file the reviewer never read, is fabrication - score 0.
+    - "Enumerate first: list every finding and every `verified` item, then apply the steps below to each one. A finding is a claim that names no file:line read and no command or test run with its result, or a claim the code it cites contradicts. Record each finding with a verbatim quote (or an omission naming exactly what is missing); one you cannot quote or name does not count. Pick the band from the number of findings; none is the top band."
+    - For each claim, check it names the lines it read or the command it ran and what that showed.
+    - For each claim that names lines, open them (or the diff) and check they say what the claim says. A claim about code the reviewer never read, or that the lines contradict, is the worst kind.
+    - For each `blocking:` defect, check it shows how the defect happens - a failing command or test and its output, or the input and the lines it goes wrong at.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: every substantive finding points at code the reviewer actually read, and matches what that code does.
+      meaning: 'no finding: every claim names its evidence and matches the code.'
     - min: 2.0
       max: 2.0
-      meaning: every finding is grounded, but one is phrased more definitively than the read strictly supports (a reasonable inference stated as flat fact rather than hedged) without being wrong.
+      meaning: exactly one finding, and it is a non-blocking claim that names no evidence while nothing contradicts it.
     - min: 1.0
       max: 1.0
-      meaning: one finding rests on an assumption not checked against the file, though nothing it says is actually contradicted by the code.
+      meaning: two or three findings, or one `blocking:` defect that shows no failing run and no traced input.
     - min: 0.0
       max: 0.0
-      meaning: a finding is contradicted by the file it cites, or asserts behavior in a file the reviewer never read.
+      meaning: four or more findings, or a claim the code contradicts, or a claim about a file the review never read.
     anchors:
     - quote
     - omission
+    require_fix_on_fail: true
   constructive_actionable:
     definition: >
       Each finding explains the underlying *why* (risk, principle, or benefit) rather than only asserting "this is wrong", so it's actionable. A finding that proposes a SPECIFIC code change (a rename, an extraction, a different implementation) shows that code in a fenced block with a language tag rather than only describing it in prose. A PURELY OBSERVATIONAL finding - a question, a naming nit with no proposed name - proposes nothing concrete and needs no code block.
@@ -74,56 +79,29 @@ criteria:
     anchors:
     - quote
     - omission
-  delivery_checked:
-    definition: >
-      The review checks the change against what it set out to deliver - each acceptance item in the linked issue (artifact `linked-issue-<n>`) and each thing the pull request description says it does - and against the existing siblings of any pattern it extends. An item the diff neither delivers nor defers to a linked follow-up is reported as a `blocking:` finding, not omitted and not filed as a note.
-    guidance: >
-      Build the list yourself before reading the review's. Open the linked issue and the pull request with `read_artifact`; where the diff adds another instance of an existing pattern (an agent bundle, a handler, a plugin), open one sibling in the repository and list the parts it carries. Then compare. A review can be accurate line by line and still approve half a feature, and this criterion is where that shows. A change with no linked issue whose description claims nothing beyond the diff has nothing to miss: score it 3.
-    steps:
-    - List the delivery items - the acceptance items in each `linked-issue-<n>` artifact and the claims in the pull request description.
-    - For each item, find it in the diff, or find where the change defers it to a linked follow-up. Note every item that is neither.
-    - Where the diff adds an instance of an existing pattern, open a sibling and list the parts the new instance lacks.
-    - Check the review reports each gap you found as a `blocking:` finding, and that `verified` accounts for delivery in one item - unmet and deferred items named, met ones folded into a count (the field is capped at 8 items) - rather than restating the description.
-    bands:
-    - min: 3.0
-      max: 3.0
-      meaning: every delivery item and sibling part is accounted for, and each gap is a blocking finding - or there was nothing to miss.
-    - min: 2.0
-      max: 2.0
-      meaning: every gap is reported as a blocking finding, but `verified` carries no delivery item naming what is unmet or deferred.
-    - min: 1.0
-      max: 1.0
-      meaning: one gap is missing from the findings, or is filed as a note or a suggestion.
-    - min: 0.0
-      max: 0.0
-      meaning: the review approves while an acceptance item or a sibling's part is absent and unreported.
-    anchors:
-    - quote
-    - omission
-    require_fix_on_fail: true
   severity_grounded:
     definition: >
-      Every severity label rests on something objective, and the review says what. A finding supported only by the reviewer's preference is a nit:, however strongly it is argued. blocking: requires one of six anchors: defect (concrete inputs or state produce wrong output, a crash, or data loss - whether the producer is code, a prompt, a schema or a config file), delivery (something the change set out to deliver is absent and not deferred to a linked follow-up, or what it produces does not match what consumes it), security, design (a NAMED principle violated, not "I'd have done it differently"), scope (the change does what its task never asked for), or tests (new behaviour with no test, or a test that passes while what it claims to cover is broken).
+      Every severity label rests on something objective, and the review says what. `blocking:` requires one of six anchors: defect (concrete inputs or state produce wrong output, a crash, or data loss - whether the producer is code, a prompt, a schema or a config file), delivery (something the change set out to deliver is absent and not deferred to a linked follow-up, or what it produces does not match what consumes it), security, design (a NAMED principle violated, not "I'd have done it differently"), scope (the change does what its task never asked for), or tests (new behaviour with no test, or a test that passes while what it claims to cover is broken). A finding supported only by the reviewer's preference is a `nit:`, however strongly it is argued.
     guidance: >
-      Score whether each label is supported, not whether you would have chosen it. Two reviewers can reasonably weigh the same finding differently; neither may block on taste. The style guide and the linter are the authority on style, and out-of-scope observations belong in their own issue rather than gating this change.
+      Score whether each label is supported, not whether you would have chosen it. The style guide and the linter are the authority on style. A review with no findings is still graded: its `notes`, `verified` and `takeaway` are labels too, and a defect described there is a defect filed below `blocking:`.
     steps:
-    - For each `blocking:` finding, name which of the six anchors it claims, then open the code and check the anchor actually holds. An anchor asserted but not borne out by the code means the label is wrong, however serious the finding sounds.
-    - For each `suggestion:`/`nit:`/note, check it is not one of the six mislabelled downward. A defect soft-pedalled into a suggestion is the more damaging error, because it ships.
-    - Read each non-blocking finding's own words. One that says what breaks ("renders as empty rows", "the key the page reads is never written") names wrong output and carries the defect or delivery anchor, whatever kind of file it sits in.
-    - "Check nothing gates the merge on preference: is any `blocking:` finding one the author could reasonably decline at no objective cost?"
+    - "Enumerate first: list every finding with its label, plus every sentence in `notes`, `verified` and `takeaway` that says something breaks, then apply the steps below to each one. A finding is a `blocking:` label whose anchor is unnamed or not borne out by the code, a `blocking:` label resting on preference, or wrong output described under any lower label or in prose. Record each finding with a verbatim quote (or an omission naming exactly what is missing); one you cannot quote or name does not count. Pick the band from the number of findings; none is the top band."
+    - For each `blocking:` finding, name the anchor it claims and check the code bears it out.
+    - Check whether the author could decline any `blocking:` finding at no objective cost.
+    - For each `suggestion:`/`nit:`/`question:` finding and each prose sentence, check whether its own words name wrong output ("renders as empty rows", "a POST is sent twice"). Those carry the defect or delivery anchor and belong under `blocking:`.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: every label carries a supported anchor; nothing blocks on taste.
+      meaning: 'no finding: every label carries a supported anchor and nothing that breaks sits below `blocking:`.'
     - min: 2.0
       max: 2.0
-      meaning: every label is supported, but one anchor is stated tersely (names the category without spelling out why it holds) rather than left unsupported.
+      meaning: exactly one finding, and it is a `blocking:` label whose anchor holds but goes unnamed.
     - min: 1.0
       max: 1.0
-      meaning: one label unsupported, or one defect soft-pedalled below `blocking:`, or one preference treated as blocking.
+      meaning: two or three findings, or one preference labelled `blocking:`, or one defect filed below `blocking:`.
     - min: 0.0
       max: 0.0
-      meaning: labels are preference-driven, or a defect/security finding is labelled below `blocking:` while style gates the merge.
+      meaning: four or more findings, or every `blocking:` label rests on preference, or a defect or security issue the review describes is filed below `blocking:` while the verdict approves.
     anchors:
     - quote
     - omission
@@ -152,28 +130,3 @@ criteria:
     anchors:
     - quote
     - omission
-  verification_over_assertion:
-    definition: >
-      The review verified the change's claims by reading - the diff, the code and tests it touches, CI's result - rather than trusting the description, and ran something only where a claim was too large or surprising for reading to settle.
-    guidance: >
-      Reading is the default, not a lesser substitute for running: a review that reads the tests, confirms they'd fail if the code were broken, and reads CI's result has fully verified. Running is warranted, not extra credit, only when the claim genuinely can't be settled by reading - a performance number, "this fixes the race", behaviour with no test. A rename, docs, comment, or config change is verified by reading alone; running one is not a bonus. Score 3 is not a consolation prize withheld for extra caution: if your own reasoning says every run was warranted and stated, or that reading alone settled the claims, that reasoning describes the top band - score it 3, not lower.
-    steps:
-    - Check whether the review engaged with the change's stated intent and confirmed the diff actually delivers it, by reading the code and tests rather than restating the description.
-    - Check whether it read the tests closely enough to say whether they'd fail if the code were broken, and read CI's result rather than ignoring or re-deriving it.
-    - Where the review ran something, check the claim actually warranted it and the review says so; running a docs/config/rename change, or running without saying why, is not rewarded here.
-    bands:
-    - min: 3.0
-      max: 3.0
-      meaning: the review reads the tests and CI closely enough to confirm the claim, and any run it did was warranted and stated as such.
-    - min: 2.0
-      max: 2.0
-      meaning: the review verified the claim by reading code, tests, and CI, but ran one thing the claim didn't strictly warrant without saying why - extra diligence, not a shortcut.
-    - min: 1.0
-      max: 1.0
-      meaning: it trusted the description on one axis (code or tests or CI) while verifying the others.
-    - min: 0.0
-      max: 0.0
-      meaning: "it trusted the description: accepted the claim, the tests' presence, or CI's result without reading closely enough to confirm any of them."
-    anchors:
-    - quote
-    require_fix_on_fail: true

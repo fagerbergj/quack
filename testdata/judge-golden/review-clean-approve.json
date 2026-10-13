@@ -1,0 +1,22 @@
+{
+  "id": "review-clean-approve",
+  "note": "A clean change (the method check is present) approved with no findings: no finding must not cost a good review.",
+  "rubric": "../../extensions/github/plugin/agents/code-reviewer/rubric.yaml",
+  "needs_live_model": true,
+  "task": "Review pull request #42 in example/shop and stage your verdict.\n\nPR title: fix(client): retry transient 5xx with backoff\n\nPR description:\n- Do retries GET requests that get a 502, 503 or 504, up to MaxRetries times, doubling the delay each time.\n- Adds TestDoRetriesTransient covering a 503-then-200 sequence.\n- Never retries a non-idempotent method: a POST is sent exactly once.\n\nNo linked issue. CI: all checks green.\n\nDiff:\n```diff\ndiff --git a/client/retry.go b/client/retry.go\nnew file mode 100644\n--- /dev/null\n+++ b/client/retry.go\n@@ -0,0 +1,24 @@\n+package client\n+\n+import (\n+\t\"net/http\"\n+\t\"time\"\n+)\n+\n+// Do sends req, retrying transient gateway errors with exponential backoff.\n+func (c *Client) Do(req *http.Request) (*http.Response, error) {\n+\tdelay := c.BaseDelay\n+\tfor attempt := 0; ; attempt++ {\n+\t\tresp, err := c.HTTP.Do(req)\n+\t\tif err != nil || req.Method != http.MethodGet || !transient(resp.StatusCode) || attempt == c.MaxRetries {\n+\t\t\treturn resp, err\n+\t\t}\n+\t\tresp.Body.Close()\n+\t\ttime.Sleep(delay)\n+\t\tdelay *= 2\n+\t}\n+}\n+\n+func transient(code int) bool {\n+\treturn code == 502 || code == 503 || code == 504\n+}\ndiff --git a/client/retry_test.go b/client/retry_test.go\nnew file mode 100644\n--- /dev/null\n+++ b/client/retry_test.go\n@@ -0,0 +1,37 @@\n+package client\n+\n+import (\n+\t\"net/http\"\n+\t\"net/http/httptest\"\n+\t\"testing\"\n+)\n+\n+func TestDoRetriesTransient(t *testing.T) {\n+\tcodes := []int{503, 200}\n+\tsrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {\n+\t\tw.WriteHeader(codes[0])\n+\t\tcodes = codes[1:]\n+\t}))\n+\tdefer srv.Close()\n+\tc := &Client{HTTP: srv.Client(), MaxRetries: 3}\n+\treq, _ := http.NewRequest(http.MethodGet, srv.URL, nil)\n+\tresp, err := c.Do(req)\n+\tif err != nil || resp.StatusCode != 200 {\n+\t\tt.Fatalf(\"got %v, %v\", resp, err)\n+\t}\n+}\n+\n+func TestDoSendsPostOnce(t *testing.T) {\n+\tcalls := 0\n+\tsrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {\n+\t\tcalls++\n+\t\tw.WriteHeader(503)\n+\t}))\n+\tdefer srv.Close()\n+\tc := &Client{HTTP: srv.Client(), MaxRetries: 3}\n+\treq, _ := http.NewRequest(http.MethodPost, srv.URL, nil)\n+\tc.Do(req)\n+\tif calls != 1 {\n+\t\tt.Fatalf(\"POST sent %d times, want 1\", calls)\n+\t}\n+}\n```",
+  "answer": "Staged the review: approve, no findings.\n\nVERDICT: approve\nTAKEAWAY: Retry is limited to GET 502/503/504 with doubling backoff, and the new test pins the 503-then-200 path.\nVERIFIED:\n- `go test ./client` on head: TestDoRetriesTransient and TestDoSendsPostOnce (503 server, POST hit once) pass.\n- Read retry.go:13: the retry condition checks req.Method != http.MethodGet before retrying, so a POST returns after one send.\n- Read retry.go:22-24: transient matches exactly 502, 503 and 504.\n- Delivery: all 3 PR items met (GET retry with doubling, the test, POST sent once via line 13).\n",
+  "labels": {
+    "catches_real_issues": {
+      "pass": true,
+      "reason": "the change is clean; no finding is the right call"
+    },
+    "claims_grounded": {
+      "pass": true,
+      "reason": "each verified item names the command or the lines and what they showed"
+    },
+    "severity_grounded": {
+      "pass": true,
+      "reason": "no defect is described anywhere, so nothing needs a label"
+    }
+  }
+}
