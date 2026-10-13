@@ -689,11 +689,12 @@ type EditOp struct {
 }
 
 // EditConflict is returned when ops don't resolve against the current latest; the caller shows
-// Content/Revision to the agent so it can retry with fresh edits.
+// Content/Revision and Reason (every edit that missed) to the agent so it can retry with fresh edits.
 type EditConflict struct {
 	ID       string
 	Revision int
 	Content  []byte
+	Reason   string
 }
 
 func (e *EditConflict) Error() string {
@@ -704,12 +705,16 @@ func (e *EditConflict) Error() string {
 // rejected (no partial writes).
 func applyEdits(content []byte, ops []EditOp) ([]byte, error) {
 	s := string(content)
-	for _, op := range ops {
-		n := strings.Count(s, op.Old)
-		if n != 1 {
-			return nil, fmt.Errorf("edit old-string matched %d times (want exactly 1): %q", n, op.Old)
+	var misses []error
+	for i, op := range ops {
+		if n := strings.Count(s, op.Old); n != 1 {
+			misses = append(misses, editMatchError(i, n, op.Old))
+			continue
 		}
 		s = strings.Replace(s, op.Old, op.New, 1)
+	}
+	if err := errors.Join(misses...); err != nil {
+		return nil, err
 	}
 	return []byte(s), nil
 }
@@ -779,33 +784,52 @@ func stringLeaves(content []byte) ([]stringLeaf, error) {
 // applyStructuredEdits matches each Old against decoded JSON string values, so a New with a newline, quote or
 // backslash encodes correctly. Only the matched leaf is re-encoded, so key order and spacing are untouched.
 func applyStructuredEdits(content []byte, ops []EditOp) ([]byte, error) {
-	for _, op := range ops {
-		leaves, err := stringLeaves(content)
-		if err != nil {
-			return nil, fmt.Errorf("edit: invalid JSON: %w", err)
+	var misses []error
+	for i, op := range ops {
+		out, n, err := applyStructuredEdit(content, op)
+		switch {
+		case err != nil:
+			return nil, err
+		case n != 1:
+			misses = append(misses, editMatchError(i, n, op.Old))
+		default:
+			content = out
 		}
-		total := 0
-		var match *stringLeaf
-		for i := range leaves {
-			if n := strings.Count(leaves[i].value, op.Old); n > 0 {
-				total += n
-				match = &leaves[i]
-			}
-		}
-		if total != 1 {
-			return nil, fmt.Errorf("edit old-string matched %d times (want exactly 1): %q", total, op.Old)
-		}
-		newValue, err := json.Marshal(strings.Replace(match.value, op.Old, op.New, 1))
-		if err != nil {
-			return nil, fmt.Errorf("edit: encoding replacement: %w", err)
-		}
-		out := make([]byte, 0, len(content)-(match.end-match.start)+len(newValue))
-		out = append(out, content[:match.start]...)
-		out = append(out, newValue...)
-		out = append(out, content[match.end:]...)
-		content = out
+	}
+	if err := errors.Join(misses...); err != nil {
+		return nil, err
 	}
 	return content, nil
+}
+
+// applyStructuredEdit splices op into the one string leaf it matches; n counts matches, and out is nil unless n == 1.
+func applyStructuredEdit(content []byte, op EditOp) (out []byte, n int, err error) {
+	leaves, err := stringLeaves(content)
+	if err != nil {
+		return nil, 0, fmt.Errorf("edit: invalid JSON: %w", err)
+	}
+	var match *stringLeaf
+	for i := range leaves {
+		if c := strings.Count(leaves[i].value, op.Old); c > 0 {
+			n += c
+			match = &leaves[i]
+		}
+	}
+	if n != 1 {
+		return nil, n, nil
+	}
+	newValue, err := json.Marshal(strings.Replace(match.value, op.Old, op.New, 1))
+	if err != nil {
+		return nil, n, fmt.Errorf("edit: encoding replacement: %w", err)
+	}
+	out = make([]byte, 0, len(content)-(match.end-match.start)+len(newValue))
+	out = append(out, content[:match.start]...)
+	out = append(out, newValue...)
+	return append(out, content[match.end:]...), n, nil
+}
+
+func editMatchError(i, n int, old string) error {
+	return fmt.Errorf("edits[%d]: old-string matched %d times (want exactly 1): %q", i, n, old)
 }
 
 // Edit re-applies ops to id's current latest, whatever baseRevision was, and writes N+1; any match failure
@@ -860,7 +884,7 @@ func (c *Client) tryEdit(ctx context.Context, id string, baseRevision int, ops [
 		merged, err = applyEdits(raw, ops)
 	}
 	if err != nil {
-		return 0, nil, &EditConflict{ID: id, Revision: latestRev, Content: raw}
+		return 0, nil, &EditConflict{ID: id, Revision: latestRev, Content: raw, Reason: err.Error()}
 	}
 	if spec.Class == Structured && spec.Validate != nil {
 		if verr := spec.Validate(merged); verr != nil {

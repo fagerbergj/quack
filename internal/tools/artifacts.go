@@ -98,7 +98,8 @@ func NewEditArtifactTool(c *recordstore.Client, nodeID string, coords *RoundCoor
 						Conflict bool   `json:"conflict"`
 						Revision int    `json:"revision"`
 						Content  string `json:"content"`
-					}{Conflict: true, Revision: conflict.Revision, Content: string(conflict.Content)}
+						Reason   string `json:"reason"`
+					}{Conflict: true, Revision: conflict.Revision, Content: string(conflict.Content), Reason: conflict.Reason}
 					b, mErr := json.Marshal(out)
 					if mErr != nil {
 						return "", fmt.Errorf("edit_artifact: marshaling conflict: %w", mErr)

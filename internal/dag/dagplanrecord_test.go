@@ -3,6 +3,7 @@ package dag
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"google.golang.org/adk/v2/artifact"
@@ -59,6 +60,30 @@ func TestSaveDagPlanRecord(t *testing.T) {
 	}
 	if len(summaries) != 1 || summaries[0].ID != id {
 		t.Fatalf("List(dag_plan) = %+v, want exactly [%s]", summaries, id)
+	}
+}
+
+// One rejected plan names every fault, so the model fixes them in one retry instead of one per call.
+func TestValidateDagPlanRecord_ReportsEveryProblem(t *testing.T) {
+	raw, err := json.Marshal(DagPlanRecord{
+		Assignments: []Assignment{{NodeID: "a", DependsOn: []string{"ghost"}}, {NodeID: "b"}},
+		Delivery:    &Delivery{Kind: "bogus"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		err   error
+		wants []string
+	}{
+		{validateDagPlanRecord(raw), []string{"assignments.a.task", `assignments.a.depends_on: unknown node id "ghost"`, "assignments.b.task", `delivery.kind "bogus"`}},
+		{validateChecks([]string{"", "rm -rf /"}, []string{"go test"}), []string{"empty check command", `check "rm -rf /" does not match`}},
+	} {
+		for _, want := range tc.wants {
+			if tc.err == nil || !strings.Contains(tc.err.Error(), want) {
+				t.Errorf("got %v, want it to include %q", tc.err, want)
+			}
+		}
 	}
 }
 

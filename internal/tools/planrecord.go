@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -219,18 +220,21 @@ func upsertNodes(inputs []assignmentInput, existingNodes []dag.DagNodeRecord, no
 
 	nodeIDs := make([]string, len(inputs))
 	st := upsertState{known: known, existingIDs: existingIDs, nodeIsLive: nodeIsLive, chatID: chatID, allowedKinds: allowedKinds, agents: agents}
+	var errs []error
 	for i, in := range inputs {
 		id, err := st.resolveOne(i, in)
-		if err != nil {
-			return nil, nil, err
-		}
+		errs = append(errs, err)
 		nodeIDs[i] = id
+	}
+	if err := errors.Join(errs...); err != nil {
+		return nil, nil, err
 	}
 
 	seenNodeID := make(map[string]int, len(nodeIDs))
 	for i, id := range nodeIDs {
 		if j, dup := seenNodeID[id]; dup {
-			return nil, nil, fmt.Errorf("assignments[%d].node_id: %q is already assignments[%d] in this call - one assignment per node per plan", i, id, j)
+			errs = append(errs, fmt.Errorf("assignments[%d].node_id: %q is already assignments[%d] in this call - one assignment per node per plan", i, id, j))
+			continue
 		}
 		seenNodeID[id] = i
 	}
@@ -238,13 +242,14 @@ func upsertNodes(inputs []assignmentInput, existingNodes []dag.DagNodeRecord, no
 	assignments := make([]dag.Assignment, len(inputs))
 	for i, in := range inputs {
 		dependsOn, err := st.resolveDependsOn(i, in.DependsOn, nodeIDs)
-		if err != nil {
-			return nil, nil, err
-		}
+		errs = append(errs, err)
 		assignments[i] = dag.Assignment{
 			NodeID: nodeIDs[i], Task: in.Task, DependsOn: dependsOn,
 			Checks: in.Checks, Workdir: in.Workdir, Rubric: in.Rubric,
 		}
+	}
+	if err := errors.Join(errs...); err != nil {
+		return nil, nil, err
 	}
 	return assignments, st.minted, nil
 }
@@ -302,17 +307,18 @@ func (st *upsertState) resolveOne(i int, in assignmentInput) (string, error) {
 
 func (st *upsertState) resolveDependsOn(i int, deps []string, nodeIDs []string) ([]string, error) {
 	out := make([]string, len(deps))
+	var errs []error
 	for j, dep := range deps {
 		if idx, ok := resolveNodeIndex(dep, len(nodeIDs)); ok {
 			out[j] = nodeIDs[idx]
 			continue
 		}
 		if _, ok := st.known[dep]; !ok {
-			return nil, fmt.Errorf("assignments[%d].depends_on: unknown node id %q - name an existing node id or this call's own assignment index", i, dep)
+			errs = append(errs, fmt.Errorf("assignments[%d].depends_on: unknown node id %q - name an existing node id or this call's own assignment index", i, dep))
 		}
 		out[j] = dep
 	}
-	return out, nil
+	return out, errors.Join(errs...)
 }
 
 // summarizePlanRecord is for the model's review before execute, never shown to the user.

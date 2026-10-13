@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -178,14 +179,18 @@ func removeAssignments(assignments []dag.Assignment, remove []string) ([]dag.Ass
 	for _, a := range assignments {
 		byID[a.NodeID] = a
 	}
+	var errs []error
 	for _, id := range remove {
 		a, present := byID[id]
-		if !present {
-			return nil, fmt.Errorf("remove: unknown node id %q - not in the current plan", id)
+		switch {
+		case !present:
+			errs = append(errs, fmt.Errorf("remove: unknown node id %q - not in the current plan", id))
+		case a.TaskID != "":
+			errs = append(errs, fmt.Errorf("remove: %q already ran - editing or removing a done assignment is not allowed", id))
 		}
-		if a.TaskID != "" {
-			return nil, fmt.Errorf("remove: %q already ran - editing or removing a done assignment is not allowed", id)
-		}
+	}
+	if err := errors.Join(errs...); err != nil {
+		return nil, err
 	}
 	out := make([]dag.Assignment, 0, len(assignments))
 	for _, a := range assignments {

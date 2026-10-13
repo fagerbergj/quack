@@ -308,12 +308,13 @@ func TestNewEditArtifactTool_ConflictIsStructuredSuccess(t *testing.T) {
 		Conflict bool   `json:"conflict"`
 		Revision int    `json:"revision"`
 		Content  string `json:"content"`
+		Reason   string `json:"reason"`
 	}
 	if jErr := json.Unmarshal([]byte(result), &payload); jErr != nil {
 		t.Fatalf("result %q is not the expected JSON conflict payload: %v", result, jErr)
 	}
-	if !payload.Conflict || payload.Revision != rev || payload.Content != "hello world" {
-		t.Fatalf("payload = %+v, want {Conflict:true Revision:%d Content:hello world}", payload, rev)
+	if !payload.Conflict || payload.Revision != rev || payload.Content != "hello world" || !strings.Contains(payload.Reason, "edits[0]") {
+		t.Fatalf("payload = %+v, want {Conflict:true Revision:%d Content:hello world Reason:<edits[0]'s miss>}", payload, rev)
 	}
 	raw, _, ok, err := rc.Latest(context.Background(), id)
 	if err != nil || !ok || string(raw) != "hello world" {

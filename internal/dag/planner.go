@@ -3,6 +3,7 @@ package dag
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -462,18 +463,19 @@ func validateChecks(checks, checkCommands []string) error {
 	if len(checkCommands) == 0 {
 		return fmt.Errorf("checks are unavailable (workspace.check_commands is empty) - omit `checks`")
 	}
+	var errs []error
 	for _, c := range checks {
 		c = strings.TrimSpace(c)
-		if c == "" {
-			return fmt.Errorf("empty check command")
-		}
+		switch {
+		case c == "":
+			errs = append(errs, fmt.Errorf("empty check command"))
 		// No metachar rejection: checks run shell-less, prefix allowlist is the boundary.
-		if !workspace.MatchesCheckPrefix(c, checkCommands) {
-			return fmt.Errorf("check %q does not match any configured workspace.check_commands prefix (%s)",
-				c, strings.Join(checkCommands, ", "))
+		case !workspace.MatchesCheckPrefix(c, checkCommands):
+			errs = append(errs, fmt.Errorf("check %q does not match any configured workspace.check_commands prefix (%s)",
+				c, strings.Join(checkCommands, ", ")))
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 var deliveryKinds = map[string]bool{"pull_request": true, "review": true, "comment": true}
