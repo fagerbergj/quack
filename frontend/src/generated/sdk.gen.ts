@@ -100,7 +100,7 @@ export const listExtensions = <ThrowOnError extends boolean = false>(options?: O
 /**
  * Read-only, client-visible server config
  *
- * Deployment-level values the SPA needs to render but must not hardcode. Currently just `otel_trace_url_template` (raw `{trace_id}` template, not a pre-rendered URL - see the `trace_id` field on `agent_start`/`node_start`/`dag_plan`/`delivery_result`). Same auth as the rest of /api/v1, no more sensitive than the config file itself.
+ * Deployment-level values the SPA needs to render but must not hardcode: the build version, the API compatibility range the SPA checks itself against, and `otel_trace_url_template` (raw `{trace_id}` template, not a pre-rendered URL - see the `trace_id` field on `agent_start`/`node_start`/`dag_plan`/`delivery_result`). Same auth as the rest of /api/v1, no more sensitive than the config file itself.
  *
  */
 export const getConfig = <ThrowOnError extends boolean = false>(options?: Options<GetConfigData, ThrowOnError>): RequestResult<GetConfigResponses, unknown, ThrowOnError> => (options?.client ?? client).get<GetConfigResponses, unknown, ThrowOnError>({

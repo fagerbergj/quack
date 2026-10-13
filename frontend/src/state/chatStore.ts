@@ -21,6 +21,7 @@ import {
   updateResponseStatus,
 } from '../generated'
 import { api } from '../api'
+import { refreshClientConfig } from './clientConfig'
 import { a2uiActionText, A2UI_SURFACE_KIND } from '../lib/a2ui'
 import { agentLabel, pendingChoice } from '../components/messageParts'
 
@@ -586,6 +587,7 @@ export class ChatStore {
       const timer = setTimeout(() => {
         this.reconnectTimers.delete(chatId)
         if (this.generations.get(chatId) !== generation) return
+        void refreshClientConfig()  // a dropped stream is often a redeploy: re-check version skew
         this.openEventSource(chatId, generation, resumeFromId, attempt + 1)
       }, reconnectDelay(attempt))
       this.reconnectTimers.set(chatId, timer)

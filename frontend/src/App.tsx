@@ -2,6 +2,8 @@ import { Suspense, lazy, useEffect, useState } from 'react'
 import Chat from './pages/Chat'
 import { NavRail } from './components/NavRail'
 import { LazyLoadBoundary } from './components/LazyLoadBoundary'
+import { VersionBanner } from './components/VersionBanner'
+import { useSkew } from './state/clientConfig'
 
 // Chat is the default route and loads eagerly; Memory, Plugins, and the
 // extension iframe host are route-split out of the entry chunk (~19.7 kB gzip).
@@ -22,6 +24,7 @@ export default function App() {
   const route = useRoute()
   const extName = useExtName()
   const vvHeight = useVisualViewportHeight()
+  const skew = useSkew()
 
   // The nav drawer is the only navigation: closed on load, never persisted; each page header's NavToggle flips it.
   const [navOpen, setNavOpen] = useState(false)
@@ -44,6 +47,7 @@ export default function App() {
         onClose={() => setNavOpen(false)}
       />
       <div className="flex-1 min-w-0 h-full flex flex-col overflow-hidden">
+        <VersionBanner skew={skew} />
         {/* key=route: the lazy routes share this slot, so without a key React reuses one LazyLoadBoundary and a
             failure on one route keeps showing on the next. */}
         {route === 'memory'

@@ -2,6 +2,9 @@ openapi: 3.0.3
 info:
   title: Quack
   version: 0.2.0
+  # Bump x-api-version on a breaking change and x-api-min-version once the server drops the old shape (docs/api.md).
+  x-api-version: 1
+  x-api-min-version: 1
   description: |
     Quack's HTTP API, modelled after the OpenResponses specification.
     Each chat turn is a Response containing typed OutputItems. The DAG is a
@@ -227,10 +230,12 @@ paths:
       summary: Read-only, client-visible server config
       description: >
         Deployment-level values the SPA needs to render but must not
-        hardcode. Currently just `otel_trace_url_template` (raw `{trace_id}`
-        template, not a pre-rendered URL - see the `trace_id` field on
-        `agent_start`/`node_start`/`dag_plan`/`delivery_result`). Same auth
-        as the rest of /api/v1, no more sensitive than the config file itself.
+        hardcode: the build version, the API compatibility range the SPA
+        checks itself against, and `otel_trace_url_template` (raw
+        `{trace_id}` template, not a pre-rendered URL - see the `trace_id`
+        field on `agent_start`/`node_start`/`dag_plan`/`delivery_result`).
+        Same auth as the rest of /api/v1, no more sensitive than the config
+        file itself.
       responses:
         "200":
           description: Client config
@@ -2241,7 +2246,20 @@ components:
 
     ClientConfig:
       type: object
+      required: [api_version, api_min_version]
       properties:
+        api_version:
+          type: integer
+          description: >
+            This server's API compatibility version (`info.x-api-version`),
+            bumped only on a breaking API change. An SPA built against a
+            different value should reload.
+        api_min_version:
+          type: integer
+          description: >
+            The oldest API compatibility version this server still serves
+            (`info.x-api-min-version`). An SPA built against a lower value
+            must reload before it can work.
         version:
           type: string
           description: >

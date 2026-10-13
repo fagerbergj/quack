@@ -360,6 +360,17 @@ jobs:
         with:
           node-version: "24"
       - run: npx --yes @redocly/cli@2.54.3 lint openapi.yaml --config redocly.yaml
+      - uses: actions/setup-go@v7
+        if: github.event_name == 'pull_request'
+        with:
+          go-version-file: go.mod
+      - name: breaking API change needs an x-api-version bump
+        if: github.event_name == 'pull_request'
+        env:
+          API_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch --depth=1 origin "$API_BASE"
+          scripts/check-api-compat.sh "$API_BASE"
 
   codegen-drift:
     runs-on: ubuntu-latest
