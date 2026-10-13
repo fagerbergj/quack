@@ -49,6 +49,9 @@ jobs:
               - '{tools/pi-acp/**,Dockerfile,.github/workflows/ci.yaml}'
 
   go-test:
+    permissions:
+      contents: read
+      pull-requests: write   # the coverage gate comments its misses on the PR
     needs: changes
     if: github.event_name == 'push' || needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
@@ -84,8 +87,12 @@ jobs:
       # job's 20-minute ceiling, so a future hang dumps goroutines (SIGQUIT)
       # instead of the job silently cancelling with no diagnostic output.
       - run: go test -race -coverprofile=cover.out -timeout 12m ./...
-      # extensions/sdk is its own module (outside extension authors depend on it alone), so ./... skips it.
-      - run: go -C extensions/sdk vet ./... && go -C extensions/sdk test -race ./...
+      # extensions/sdk is its own module (outside extension authors depend on it alone), so ./... skips it;
+      # its profile joins cover.out for the gate below.
+      - run: |
+          go -C extensions/sdk vet ./...
+          go -C extensions/sdk test -race -coverprofile=cover.out ./...
+          tail -n +2 extensions/sdk/cover.out >> cover.out
       # quackgate, the PIG engine's fused gate, is its own module; its profile joins cover.out for the gate below.
       - run: |
           go -C tools/pi-acp/pig/quackgate vet ./...
@@ -96,6 +103,7 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           SLOP_BASE: ${{ github.event.pull_request.base.sha }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set +e
           OUT=$(go run ./tools/coverdiff diff --profile cover.out "$SLOP_BASE" 2>&1)
@@ -279,6 +287,9 @@ jobs:
         working-directory: frontend
 
   frontend-test:
+    permissions:
+      contents: read
+      pull-requests: write   # the coverage gate comments its misses on the PR
     needs: changes
     if: github.event_name == 'push' || needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
@@ -304,6 +315,7 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           SLOP_BASE: ${{ github.event.pull_request.base.sha }}
+          GH_TOKEN: ${{ github.token }}
         working-directory: frontend
         run: |
           set +e
