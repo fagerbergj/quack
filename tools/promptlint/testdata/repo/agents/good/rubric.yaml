@@ -1,0 +1,9 @@
+scale:
+  min: 0
+  max: 3
+  pass: 2
+criteria:
+  cites_sources:
+    definition: Every claim carries a citation.
+    deterministic: true
+    fix: Cite the source inline.

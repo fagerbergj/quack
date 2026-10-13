@@ -1684,7 +1684,7 @@ func refreshGateCfg(ctx context.Context, res *artifactsrc.Resolver, cfg *config.
 // buildNativeNode builds one native (co-located) configured agent: bundle, memory view, scoped
 // skills, gate grading, and the per-dispatch worker builder.
 func buildNativeNode(name string, ac config.AgentConfig, prov config.ProviderConfig, taskStore *memory.Store, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), builtinSkillSrc skill.Source, cfg *config.Config, res *artifactsrc.Resolver, workspaceCaps workspace.Caps, jail *workspace.Jail, nodeCancelled func(chatID, nodeID string) bool, repeatGuardTripped func(chatID, nodeID, msg string) bool, extToolsByName map[string]tool.Tool, urlCache *tools.URLCache, sessions session.Service, artifacts artifact.Service, ledgerStore ledger.LedgerStore, compactionFor func(ac config.AgentConfig, workerModel model.LLM) agent.Compaction, gateCfg vetting.Config, gateCfgs *gateConfigs, nodeServers *perNodeServers, reg pluginreg.FetchRegistry, admission *dag.Admission) (adkagent.Agent, error) {
-	toolNames := resolveToolNames(ac.Tools, taskStore != nil)
+	toolNames := tools.ResolveNames(ac.Tools, taskStore != nil)
 
 	bundle, err := agent.LoadBundle(context.Background(), res, ac.Bundle)
 	if err != nil {
@@ -2451,29 +2451,4 @@ func dropOptionalAgent(name string, ac config.AgentConfig, err error, dropped ma
 
 func fmtErr(agentName, format string, args ...any) error {
 	return fmt.Errorf("agent %q: "+format, append([]any{agentName}, args...)...)
-}
-
-// resolveToolNames drops builtins whose dependency is off and collapses recall_memory/load_memory (one
-// tool, two names) to whichever is listed first. Artifact tools are per-dispatch.
-func resolveToolNames(configured []string, taskMemAvailable bool) (names []string) {
-	names = make([]string, 0, len(configured))
-	sawMemoryRecall := false
-	for _, t := range configured {
-		if tools.IsNativeArtifactTool(t) {
-			continue
-		}
-		switch t {
-		case "stage_memory":
-			if !taskMemAvailable {
-				continue
-			}
-		case "recall_memory", "load_memory":
-			if !taskMemAvailable || sawMemoryRecall {
-				continue
-			}
-			sawMemoryRecall = true
-		}
-		names = append(names, t)
-	}
-	return names
 }

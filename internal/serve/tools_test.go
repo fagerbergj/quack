@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"reflect"
 	"testing"
 
 	adkagent "google.golang.org/adk/v2/agent"
@@ -21,74 +20,6 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// TestResolveToolNames guards the config-driven gating of runtime-conditional builtins,
-// dropped silently rather than erroring - load_memory is gated exactly like recall_memory.
-func TestResolveToolNames(t *testing.T) {
-	cases := []struct {
-		name             string
-		configured       []string
-		taskMemAvailable bool
-		wantNames        []string
-	}{
-		{
-			name:             "stage_memory present when task memory available",
-			configured:       []string{"stage_memory"},
-			taskMemAvailable: true,
-			wantNames:        []string{"stage_memory"},
-		},
-		{
-			name:             "stage_memory absent when task memory unavailable",
-			configured:       []string{"stage_memory"},
-			taskMemAvailable: false,
-			wantNames:        []string{},
-		},
-		{
-			name:             "load_memory present when task memory available",
-			configured:       []string{"load_memory", "web_search"},
-			taskMemAvailable: true,
-			wantNames:        []string{"load_memory", "web_search"},
-		},
-		{
-			name:             "load_memory absent when task memory unavailable",
-			configured:       []string{"load_memory", "web_search"},
-			taskMemAvailable: false,
-			wantNames:        []string{"web_search"},
-		},
-		{
-			name:             "load_memory then recall_memory collapses to the first",
-			configured:       []string{"load_memory", "recall_memory", "web_search"},
-			taskMemAvailable: true,
-			wantNames:        []string{"load_memory", "web_search"},
-		},
-		{
-			name:             "recall_memory then load_memory collapses to the first",
-			configured:       []string{"recall_memory", "load_memory", "web_search"},
-			taskMemAvailable: true,
-			wantNames:        []string{"recall_memory", "web_search"},
-		},
-		{
-			name:       "unrelated tools always pass through",
-			configured: []string{"web_search", "web_fetch", "summarize", "current_date", "ask_user"},
-			wantNames:  []string{"web_search", "web_fetch", "summarize", "current_date", "ask_user"},
-		},
-		{
-			// Extension tool names aren't special-cased: they resolve later in tools.Build against
-			// Deps.ExtTools, and an agent gets one only by listing it.
-			name:       "extension tool names pass through unchanged",
-			configured: []string{"read_file", "github_add_review_comment"},
-			wantNames:  []string{"read_file", "github_add_review_comment"},
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			gotNames := resolveToolNames(tc.configured, tc.taskMemAvailable)
-			if !reflect.DeepEqual(gotNames, tc.wantNames) {
-				t.Errorf("names = %v, want %v", gotNames, tc.wantNames)
-			}
-		})
-	}
-}
-
 // TestConfigListingBothMemoryToolsBuildsOne: a config naming both load_memory and
 // recall_memory must build exactly one tool, so one call appends exactly one ledger entry.
 func TestConfigListingBothMemoryToolsBuildsOne(t *testing.T) {
@@ -98,7 +29,7 @@ func TestConfigListingBothMemoryToolsBuildsOne(t *testing.T) {
 		t.Fatalf("commit: %v", err)
 	}
 
-	names := resolveToolNames([]string{"load_memory", "recall_memory"}, true)
+	names := tools.ResolveNames([]string{"load_memory", "recall_memory"}, true)
 	lgr := ledgertest.NewMemStore()
 	built, err := tools.Build(names, tools.Deps{Memory: store, Ledger: lgr, MemoryRole: "task"})
 	if err != nil {
@@ -153,7 +84,7 @@ func (c *fakeToolCtx) Branch() string                                       { re
 func (c *fakeToolCtx) ToolConfirmation() *toolconfirmation.ToolConfirmation { return nil }
 
 // TestEmitServerConfigToolsBuild runs the `quack init` wizard's output through startup tool resolution
-// (resolveToolNames + tools.Build), so the wizard can't emit tools that no longer exist.
+// (tools.ResolveNames + tools.Build), so the wizard can't emit tools that no longer exist.
 func TestEmitServerConfigToolsBuild(t *testing.T) {
 	t.Setenv("QUACK_LLM_API_KEY", "k")
 	a := cli.InitAnswers{
@@ -185,7 +116,7 @@ func TestEmitServerConfigToolsBuild(t *testing.T) {
 		if ac.Acp != nil {
 			continue // external worker: brings its own tools, quack builds none
 		}
-		names := resolveToolNames(ac.Tools, true)
+		names := tools.ResolveNames(ac.Tools, true)
 		if _, err := tools.Build(names, deps); err != nil {
 			t.Errorf("agent %q tools %v: %v", name, ac.Tools, err)
 		}

@@ -1,0 +1,3 @@
+overlap:
+  allow:
+    - tools: [a, b]

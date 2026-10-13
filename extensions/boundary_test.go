@@ -75,7 +75,8 @@ func TestCoreImportsExtensionsOnlyToRegister(t *testing.T) {
 	}
 	for _, root := range roots {
 		for file, specs := range imports(t, root) {
-			if strings.HasSuffix(file, "_test.go") {
+			// promptlint measures every extension's real tool definitions; it is a dev tool, never linked into quack.
+			if strings.HasSuffix(file, "_test.go") || strings.HasPrefix(file, "tools/promptlint/") {
 				continue
 			}
 			for path, name := range specs {
