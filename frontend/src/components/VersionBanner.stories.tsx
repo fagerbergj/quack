@@ -9,9 +9,15 @@ export default meta
 
 type Story = StoryObj<typeof VersionBanner>
 
-// The server's API version or build changed under an open tab; the page keeps working.
+// A different SPA build is served than the one in this tab; the page keeps working.
 export const Reload: Story = {
   args: { skew: 'reload' },
+  parameters: { renderCheck: { viewports: ['mobile', 'desktop'] } },
+}
+
+// This SPA speaks a newer API than the server (UI deployed first, or the backend rolled back); no reload offered.
+export const OlderServer: Story = {
+  args: { skew: 'older-server' },
   parameters: { renderCheck: { viewports: ['mobile', 'desktop'] } },
 }
 

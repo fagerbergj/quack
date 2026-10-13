@@ -821,6 +821,8 @@ type ServerConfig struct {
 	// PublicURL is this server's externally reachable base URL, passed to extensions so a posted
 	// comment can link back to its run. Empty = unknown.
 	PublicURL string `yaml:"public_url"`
+	// UI is embedded (default: serve the SPA built into the binary) or none (a separate quack-ui image serves it).
+	UI string `yaml:"ui"`
 }
 
 const (
@@ -830,6 +832,14 @@ const (
 )
 
 func (s ServerConfig) Managed() bool { return s.Topology == TopologyManaged }
+
+const (
+	UIEmbedded = "embedded"
+	UINone     = "none"
+)
+
+// EmbedUI reports whether this server serves the SPA compiled into its binary.
+func (s ServerConfig) EmbedUI() bool { return s.UI != UINone }
 
 var literalTokenRe = regexp.MustCompile(`(?m)^\s*(?:token|private_key|webhook_secret):\s*(.+?)\s*$`)
 
@@ -1380,6 +1390,9 @@ func (c *Config) validateServer() error {
 	case "", TopologyEmbedded, TopologyManaged, TopologyExternal:
 	default:
 		return fmt.Errorf("config: server.topology %q is unknown (use embedded, managed, or external)", c.Server.Topology)
+	}
+	if !slices.Contains([]string{"", UIEmbedded, UINone}, c.Server.UI) {
+		return fmt.Errorf("config: server.ui %q is unknown (use embedded or none)", c.Server.UI)
 	}
 	if u := c.Server.PublicURL; u != "" {
 		if strings.HasSuffix(u, "/") {

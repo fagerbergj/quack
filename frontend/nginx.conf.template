@@ -1,0 +1,45 @@
+# The quack-ui server block. The image's entrypoint renders it with envsubst (QUACK_* and NGINX_LOCAL_RESOLVERS).
+server {
+    listen 8080;
+    root /usr/share/nginx/html;
+
+    # A variable upstream resolves per request, so a recreated quack container's new address is picked up.
+    resolver ${NGINX_LOCAL_RESOLVERS} valid=10s;
+    set $quack ${QUACK_UPSTREAM};
+
+    gzip_static on;
+
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    # SSE: events must flush as written, and quack sends no heartbeats while a run is quiet.
+    proxy_buffering off;
+    proxy_read_timeout 1h;
+    # quack enforces its own request size limits.
+    client_max_body_size 0;
+
+    # Same split as internal/server/router.go: content-hashed Vite assets are immutable, the rest revalidates.
+    location ~ "^/assets/.+-[0-9A-Za-z_]{8,}\.[0-9A-Za-z]+$" {
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        try_files $uri =404;
+    }
+
+    location / {
+        add_header Cache-Control "no-cache";
+        try_files $uri /index.html;
+    }
+
+    location /api/ {
+        proxy_pass $quack;
+    }
+
+    location = /health {
+        proxy_pass $quack;
+    }
+
+    # Each enabled extension is mounted at /<name> (server.New); keep this list in step with quack.yaml.
+    location ~ ^/(${QUACK_EXTENSION_PREFIXES})(/|$) {
+        proxy_pass $quack;
+    }
+}

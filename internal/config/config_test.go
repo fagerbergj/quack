@@ -418,6 +418,29 @@ func TestServerTopology(t *testing.T) {
 	}
 }
 
+// server.ui defaults to the embedded SPA; none turns it off; anything else fails load.
+func TestServerUI(t *testing.T) {
+	for _, tc := range []struct {
+		yaml      string
+		embed     bool
+		wantError bool
+	}{
+		{`server: { addr: ":8080" }`, true, false},
+		{`server: { ui: embedded }`, true, false},
+		{`server: { ui: none }`, false, false},
+		{`server: { ui: nginx }`, false, true},
+	} {
+		c, err := Load(writeTemp(t, baseConfig+tc.yaml))
+		if tc.wantError != (err != nil) {
+			t.Errorf("%q: Load error = %v, want error %v", tc.yaml, err, tc.wantError)
+			continue
+		}
+		if err == nil && c.Server.EmbedUI() != tc.embed {
+			t.Errorf("%q: EmbedUI() = %v, want %v", tc.yaml, c.Server.EmbedUI(), tc.embed)
+		}
+	}
+}
+
 // Valid absolute http(s) URLs round-trip; a trailing slash or non-http(s) scheme is rejected;
 // unset is fine.
 func TestServerPublicURL(t *testing.T) {

@@ -1,33 +1,46 @@
-// Caches GET /api/v1/config - deployment-level values (trace URL template, build and API versions). Fetched on
-// load, on every SSE reconnect and when the tab becomes visible: the moments a redeployed server would show up.
+// Caches GET /api/v1/config (trace URL template, build and API versions) and the served SPA's build id. Both
+// are fetched on load, on every SSE reconnect and when the tab becomes visible: when a redeploy would show up.
 import { useSyncExternalStore } from 'react'
 import { api, type ClientConfig } from '../api'
 import { API_VERSION } from '../generated/apiVersion.gen'
 
 let config: ClientConfig | undefined
-let loadedVersion: string | undefined
+let servedBuild: string | undefined
 const listeners = new Set<() => void>()
 
-// 'reload': a newer (or different) quack is serving, the page still works. 'blocked': the server no longer
-// serves the API this page was built against.
-export type Skew = 'ok' | 'reload' | 'blocked'
+// The id vite stamped into this page's index.html; absent under the vite dev server.
+const ownBuild = typeof document !== 'undefined'
+  ? document.querySelector<HTMLMetaElement>('meta[name="quack-build"]')?.content
+  : undefined
 
-// skew compares the SPA's build-time API version and the build version seen at page load with the server's
-// config. Pure, so it is testable without the fetch.
-export function skew(built: number, cfg: ClientConfig | undefined, firstVersion: string | undefined): Skew {
-  if (!cfg) return 'ok'
-  if (cfg.api_min_version > built) return 'blocked'
-  if (cfg.api_version !== built) return 'reload'
-  // The SPA ships inside the server binary, so a changed build version means a newer SPA is being served.
-  return firstVersion !== undefined && cfg.version !== firstVersion ? 'reload' : 'ok'
+// 'reload': a different SPA is being served and the page still works. 'older-server': this SPA speaks a newer
+// API than the server; reloading would load this same SPA. 'blocked': the server no longer serves our API.
+export type Skew = 'ok' | 'reload' | 'older-server' | 'blocked'
+
+// skew compares the SPA's build-time API version and build id with the server's config and the served build id.
+// Pure, so it is testable without the fetch.
+export function skew(built: number, cfg: ClientConfig | undefined, own: string | undefined, served: string | undefined): Skew {
+  if (cfg && cfg.api_min_version > built) return 'blocked'
+  // Only a different served SPA warrants a reload: a newer API alone still serves ours, so reloading changes nothing.
+  if (own && served && own !== served) return 'reload'
+  return cfg && cfg.api_version < built ? 'older-server' : 'ok'
+}
+
+// readServedBuild fetches the build id next to the served index.html; undefined when there is none (vite dev
+// answers /version.json with index.html).
+export async function readServedBuild(): Promise<string | undefined> {
+  const res = await fetch('/version.json', { cache: 'no-store' })
+  if (!res.ok) return undefined
+  const body = await res.json().catch(() => undefined) as { build?: unknown } | undefined
+  return typeof body?.build === 'string' ? body.build : undefined
 }
 
 export function refreshClientConfig(): Promise<void> {
-  return api.getConfig().then(c => {
-    config = c
-    loadedVersion ??= c.version
+  return Promise.allSettled([api.getConfig(), readServedBuild()]).then(([c, b]) => {
+    if (c.status === 'fulfilled') config = c.value
+    if (b.status === 'fulfilled') servedBuild = b.value
     listeners.forEach(l => l())
-  }).catch(() => {})
+  })
 }
 
 void refreshClientConfig()
@@ -41,7 +54,7 @@ function subscribe(l: () => void): () => void {
   return () => listeners.delete(l)
 }
 
-const readSkew = () => skew(API_VERSION, config, loadedVersion)
+const readSkew = () => skew(API_VERSION, config, ownBuild, servedBuild)
 
 export function useSkew(): Skew {
   return useSyncExternalStore(subscribe, readSkew, () => 'ok')

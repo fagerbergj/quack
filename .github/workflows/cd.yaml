@@ -18,6 +18,12 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # quack-ui is the SPA on nginx (frontend/Dockerfile), published under the same tags for server.ui: none.
+    strategy:
+      matrix:
+        include:
+          - { image: quack, file: Dockerfile, cache: buildkit }
+          - { image: quack-ui, file: frontend/Dockerfile, cache: quack-ui }
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v4
@@ -29,7 +35,7 @@ jobs:
       - uses: docker/metadata-action@v6
         id: meta
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha
@@ -38,6 +44,7 @@ jobs:
       - uses: docker/build-push-action@v7
         with:
           context: .
+          file: ${{ matrix.file }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -49,5 +56,5 @@ jobs:
           # attestations. Trivy scanning / cosign signing are the next step if needed.
           provenance: mode=max
           sbom: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.cache }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.cache }}

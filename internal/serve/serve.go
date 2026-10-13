@@ -2022,9 +2022,9 @@ func assembleOrchestrator(ctx context.Context, cfg *config.Config, res *artifact
 }
 
 func mountHTTP(cfg *config.Config, st *store.Store, orch *orchestrator.Orchestrator, llm model.LLM, jail *workspace.Jail, runHub *stream.Hub, ledgerStore ledger.LedgerStore, taskStore, userStore *memory.Store, artifacts *store.TurnAwareService, sdkExts []builtSDKExtension, authMW *auth.Auth, reload *reloader, pluginReg pluginreg.FetchRegistry) (http.Handler, error) {
-	spa, err := fs.Sub(webDist, "web/dist")
+	spa, err := embeddedSPA(cfg.Server)
 	if err != nil {
-		return nil, fmt.Errorf("embed SPA fs failed: %w", err)
+		return nil, err
 	}
 
 	restHandler := rest.NewHandler(st, orch, llm, jail, runHub, ledgerStore, Version, taskStore, userStore, artifacts, extensionDescriptors(sdkExts))
@@ -2040,6 +2040,18 @@ func mountHTTP(cfg *config.Config, st *store.Store, orch *orchestrator.Orchestra
 		SDKExtensions: sdkExtensionMounts(sdkExts),
 		Auth:          authMW,
 	}), nil
+}
+
+// embeddedSPA is the SPA compiled into the binary, or nil under server.ui: none so the router 404s SPA paths.
+func embeddedSPA(sc config.ServerConfig) (fs.FS, error) {
+	if !sc.EmbedUI() {
+		return nil, nil
+	}
+	spa, err := fs.Sub(webDist, "web/dist")
+	if err != nil {
+		return nil, fmt.Errorf("embed SPA fs failed: %w", err)
+	}
+	return spa, nil
 }
 
 func startWorkspaceGC(ctx context.Context, cfg *config.Config, jail *workspace.Jail, runHub *stream.Hub) error {
