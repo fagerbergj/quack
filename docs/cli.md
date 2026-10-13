@@ -89,8 +89,47 @@ Export recorded runs to a Langfuse dataset, then re-run an agent against that da
 
 | Command | Does |
 | --- | --- |
-| `quack dataset export --dataset <name> (--chat <id> \| --repo <owner/repo>) [--since <date>] [--limit N]` | Export gated code-reviewer/synthesizer node runs as Langfuse dataset items (creating the dataset if needed). Idempotent: re-exporting the same node run upserts the same item instead of duplicating it. |
-| `quack experiment run --dataset <name> --agent <name> [--prompt system/<agent>@N] [--run-name <s>] [--limit N] [--json]` | Run `--agent`'s node against every item in `--dataset`, reporting each as a Langfuse dataset run item. `--prompt system/<agent>@N` pins the run's resolver to that exact Langfuse version (the run's `llm.call` rows record it) and names it in the run description. Exits non-zero when any item errored. |
+| `quack dataset export --dataset <name> (--chat <id> \| --repo <owner/repo> \| --since <date>) [--agent <name>] [--limit N]` | Export gated code-reviewer, synthesizer, web-researcher and trend-scout node runs as Langfuse dataset items (creating the dataset if needed). `--since` alone scans every chat updated since that date, which is how runs in chats with no repo are found; with `--chat` or `--repo` it narrows those. `--agent` keeps only that agent's runs. Idempotent: re-exporting the same node run upserts the same item instead of duplicating it. |
+| `quack experiment run --dataset <name> --agent <name> [--prompt system/<agent>@N] [--run-name <s>] [--limit N] [--json]` | Run `--agent`'s node against every item in `--dataset`, reporting each as a Langfuse dataset run item linked to the node's trace. The trace gets one numeric score per judge criterion of the gate's final round, `gate_passed`, and the `cost.*` scores below; the run's description and metadata name the prompt version the node actually resolved. `--prompt system/<agent>@N` pins the run's resolver to that exact Langfuse version, and an item whose node ran any other prompt is an item error, not a scored run. Exits non-zero when any item errored. |
+
+### Measuring a prompt change
+
+A prompt change is proven by running the same recorded inputs through the current version and the candidate, then comparing the two dataset runs in Langfuse. Datasets and experiments are kept for the high-traffic prompts only: code-reviewer, synthesizer, web-researcher and trend-scout. Give each one a dataset of at least 20 recorded cases that includes known-bad runs (ones the gate failed or sent back for revision), so a regression has something to show up on. The example below measures a synthesizer candidate saved in Langfuse as `system/synthesizer` version 2, against version 1, the one carrying the `production` label. Create the candidate in the Langfuse UI without the label, so live traffic keeps the baseline.
+
+Keep datasets and experiment runs in their own Langfuse project. In the local `quack.yaml` the commands run from, add a second `kind: langfuse` store holding that project's keys and name it in `experiments.store`; prompts still resolve from `prompts.store`, so the pinned versions are production's. A run item links a trace only within its own project, so the local run's traces must go there too: point an `observability.otel.exporters` entry with `signals: [traces]` at `<langfuse url>/api/public/otel` and export `OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic $(printf %s '<experiments public key>:<secret key>' | base64)"`.
+
+```yaml
+stores:
+  langfuse:     { kind: langfuse, url: https://langfuse.example, public_key: pk-prod, secret_key: sk-prod }
+  langfuse-lab: { kind: langfuse, url: https://langfuse.example, public_key: pk-lab, secret_key: sk-lab }
+prompts:     { store: langfuse }      # prompt versions: the production project
+experiments: { store: langfuse-lab }  # datasets, runs and scores: the experiments project
+```
+
+```sh
+# 1. A dataset of recorded synthesizer runs: input is each node's task, expected output its answer
+quack dataset export --dataset synth-ab --agent synthesizer --since 2026-09-01 --limit 30
+# 2. Baseline and candidate over the same items, each pinned to one version
+quack experiment run --dataset synth-ab --agent synthesizer --prompt system/synthesizer@1 --run-name synth-v1
+quack experiment run --dataset synth-ab --agent synthesizer --prompt system/synthesizer@2 --run-name synth-v2
+```
+
+Each item re-runs as a fresh chat on an in-process server built from the local `quack.yaml`, so the orchestrator plans it again and the synthesizer's upstream research is re-run too. Every run item links to the synthesizer node's own trace, and that trace carries these numeric scores:
+
+| Score | What it is |
+| --- | --- |
+| one per rubric criterion (`grounded`, `citation_quality`, `cites_sources`, ...) | The gate's final judged round, on the scale `agents/<agent>/rubric.yaml` declares for that criterion (0-3 for the synthesizer's judged criteria, 0-1 for its code-owned `cites_sources`, `specifics_cited` and `specifics_supported`); the judge's explanation is the score's comment. |
+| `gate_passed` | 1 when the gate passed the node, else 0; averaged over a run, the pass rate. |
+| `cost.input_tokens`, `cost.output_tokens`, `cost.cached_tokens` | The node's worker token totals across its draft and every revision, judge calls excluded. |
+| `cost.model_turns`, `cost.tool_calls`, `cost.rejected_tool_calls` | Model calls the worker made, tool calls it issued, and calls answered with an error (an unknown tool, arguments that failed the schema, a failed read). |
+| `cost.judge_rounds` | Judge rounds the node needed; more than one means the gate sent the draft back for revision. |
+| `cost.wall_time_s` | The node's wall time in seconds, judge rounds included. |
+
+Compare the runs on the dataset's runs view in Langfuse, which averages each score per run, then open the two runs side by side to read individual items. Read quality first: `gate_passed` and each criterion's average should hold or rise. Then cost: with quality equal, fewer tokens, turns, rejected calls and judge rounds make the candidate the better prompt. A rise in `cost.judge_rounds` with an unchanged `gate_passed` means the candidate passes only after more revisions. Because the synthesizer's generations carry the resolved prompt name and version, the prompt's own metrics in Langfuse also split by version.
+
+Before trusting a criterion's difference, measure the judge's noise on it. `quack judge replay <chat> --from-server <url> --repeat 5` re-judges recorded rounds of a dataset item's source chat (the item's `chat_id` metadata) five times over the same answer and reports each criterion's sd and pass/fail agreement; see [Measuring the judge](configuration/judge-measurement.md#judge-consistency). A baseline-to-candidate gap smaller than that spread is judge noise, not a prompt effect. Repeated runs per item and accuracy against golden labels are not part of the default loop; add them for an experiment whose result is a close call.
+
+Code-reviewer and trend-scout are plugin agents whose prompts resolve from their bundle files rather than a `system/<agent>` Langfuse version, so `--prompt` cannot pin them yet and every pinned item reports an error; web-researcher and synthesizer pin as shown.
 
 ## Memory
 

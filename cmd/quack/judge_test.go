@@ -83,8 +83,10 @@ criteria:
 	}
 }
 
-// A plugin-seeded agent's bundled rubric resolves from the plugin's local clone, with no --rubric.
-func TestRunJudgeReplay_PluginAgentBundledRubric(t *testing.T) {
+// writeScoutPluginConfig writes a quack.yaml seeding the acme plugin, whose scout agent bundles a rubric
+// declaring cites_sources on 0-1 under a 0-3 default, and returns its path.
+func writeScoutPluginConfig(t *testing.T) string {
+	t.Helper()
 	dir := t.TempDir()
 	pluginDir := writeAcmeScoutPlugin(t, dir)
 	rubric := "scale: {min: 0, max: 3, pass: 2}\ncriteria:\n  cites_sources:\n    definition: existence check\n" +
@@ -101,9 +103,13 @@ func TestRunJudgeReplay_PluginAgentBundledRubric(t *testing.T) {
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("QUACK_CONFIG", cfgPath)
 	t.Setenv("QUACK_RESEARCHER_MODEL", "m")
+	return cfgPath
+}
 
+// A plugin-seeded agent's bundled rubric resolves from the plugin's local clone, with no --rubric.
+func TestRunJudgeReplay_PluginAgentBundledRubric(t *testing.T) {
+	t.Setenv("QUACK_CONFIG", writeScoutPluginConfig(t))
 	c := newJudgeReplayCmd()
 	c.SetContext(context.Background())
 	if err := runJudgeReplay(c, writeJudgeFixtureBundle(t, "scout"), cli.ReplayOptions{Repeat: 1, DeterministicOnly: true}, "", false, false); err != nil {

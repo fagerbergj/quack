@@ -1526,14 +1526,18 @@ func normalizeScale(v verdict, specs map[string]criterionSpec) verdict {
 	v.Score = toUnitScale(v.Score, scaleSpec{Max: judgeScaleMax})
 	v.Criteria = maps.Clone(v.Criteria) // the submit_verdict sink is read more than once per round
 	for name, c := range v.Criteria {
-		scale := scaleSpec{Max: judgeScaleMax}
-		if spec, ok := specs[name]; ok && spec.Scale != nil && spec.Scale.Max > spec.Scale.Min {
-			scale = *spec.Scale
-		}
-		c.Score = toUnitScale(c.Score, scale)
+		c.Score = toUnitScale(c.Score, criterionScale(specs, name))
 		v.Criteria[name] = c
 	}
 	return v
+}
+
+// criterionScale is name's declared rubric scale, or 0-judgeScaleMax without a valid one.
+func criterionScale(specs map[string]criterionSpec, name string) scaleSpec {
+	if spec, ok := specs[name]; ok && spec.Scale != nil && spec.Scale.Max > spec.Scale.Min {
+		return *spec.Scale
+	}
+	return scaleSpec{Max: judgeScaleMax}
 }
 
 // toUnitScale rescales raw from [s.Min, s.Max] to [0, 1], clamping an off-scale answer.

@@ -17,6 +17,17 @@ type IngestEvent struct {
 	Body      any    `json:"body"`
 }
 
+// NumericScore is a score-create event for traceID; its id is derived from trace and name,
+// so re-sending the same score updates it instead of adding a second one.
+func NumericScore(traceID, name string, value float64, comment, ts string) IngestEvent {
+	id := traceID + "-" + name
+	body := map[string]any{"id": id, "traceId": traceID, "name": name, "value": value, "dataType": "NUMERIC"}
+	if comment != "" {
+		body["comment"] = comment
+	}
+	return IngestEvent{ID: id, Type: "score-create", Timestamp: ts, Body: body}
+}
+
 // Ingest posts events to /api/public/ingestion, the only write path for traces and
 // scores. The API answers 207 with per-event failures, which are returned as an error.
 func (c *Client) Ingest(ctx context.Context, events []IngestEvent) error {

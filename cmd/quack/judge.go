@@ -154,15 +154,7 @@ func runJudgeReplay(cmd *cobra.Command, target string, opts cli.ReplayOptions, s
 	if err != nil {
 		return fmt.Errorf("judge replay: load bundle: %w", err)
 	}
-	cfg, err := config.LoadDeferringAgentCompleteness(cfgPath)
-	if err != nil {
-		return err
-	}
-	// Seed plugin agents from their local clones as `server validate` does, so their bundled rubric resolves.
-	plugins, _, err := serve.ResolveConfiguredPlugins(cfg)
-	if err == nil {
-		_, _, err = serve.SeedPluginAgentsAndShapes(cfg, plugins)
-	}
+	cfg, err := loadSeededConfig(cfgPath)
 	if err != nil {
 		return err
 	}
@@ -200,6 +192,20 @@ func runJudgeReplay(cmd *cobra.Command, target string, opts cli.ReplayOptions, s
 	code := cli.RunJudgeReplay(ctx, cfg, sess, opts, judge, judgeArtifactTools, hasRealArtifactAccess, cmd.OutOrStdout(), asJSON)
 	exitIfNonZero(code)
 	return nil
+}
+
+// loadSeededConfig loads cfgPath with plugin agents seeded from their local clones, as `server validate`
+// does, so a plugin agent's bundled rubric resolves.
+func loadSeededConfig(cfgPath string) (*config.Config, error) {
+	cfg, err := config.LoadDeferringAgentCompleteness(cfgPath)
+	if err != nil {
+		return nil, err
+	}
+	plugins, _, err := serve.ResolveConfiguredPlugins(cfg)
+	if err == nil {
+		_, _, err = serve.SeedPluginAgentsAndShapes(cfg, plugins)
+	}
+	return cfg, err
 }
 
 // judgeArtifactToolsFor gives the judge real REST read access for a chat id,

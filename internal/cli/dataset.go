@@ -18,9 +18,9 @@ import (
 	"github.com/fagerbergj/quack/internal/store"
 )
 
-// datasetAgents: which agents' node runs `dataset export` turns into items -
-// the reviewer/synthesizer roles the issue's evaluators score (#1424).
-var datasetAgents = map[string]bool{"code-reviewer": true, "synthesizer": true}
+// datasetAgents: which agents' node runs `dataset export` turns into items - the
+// high-traffic prompts worth measuring a change against.
+var datasetAgents = map[string]bool{"code-reviewer": true, "synthesizer": true, "web-researcher": true, "trend-scout": true}
 
 // ExportOpts selects which chats/nodes `dataset export` reads.
 type ExportOpts struct {
@@ -29,6 +29,8 @@ type ExportOpts struct {
 	Since   time.Time
 	Dataset string
 	Limit   int
+	// Agent narrows datasetAgents to one, so a dataset holds only the agent its experiment re-runs.
+	Agent string
 }
 
 // ExportItem is one exported dataset item, reported back for the summary table.
@@ -65,6 +67,13 @@ type datasetItemMetadata struct {
 // RunDatasetExport upserts one Langfuse dataset item per gated node run, keyed on (chat, node).
 // excludedBySince is true only when --chat plus --since excluded the named chat entirely.
 func RunDatasetExport(ctx context.Context, ls ledger.LedgerStore, st *store.Store, lf *langfuse.Client, opts ExportOpts) (items []ExportItem, excludedBySince bool, err error) {
+	agents := datasetAgents
+	if opts.Agent != "" {
+		if !datasetAgents[opts.Agent] {
+			return nil, false, fmt.Errorf("dataset export: --agent %s: only code-reviewer, synthesizer, web-researcher and trend-scout runs are exported", opts.Agent)
+		}
+		agents = map[string]bool{opts.Agent: true}
+	}
 	chats, excludedBySince, err := exportChats(ctx, st, opts)
 	if err != nil {
 		return nil, false, err
@@ -79,7 +88,7 @@ func RunDatasetExport(ctx context.Context, ls ledger.LedgerStore, st *store.Stor
 			}
 			return items, excludedBySince, fmt.Errorf("dataset export: chat %q: %w", chat.ID, sessErr)
 		}
-		runs := sess.NodeRuns(datasetAgents)
+		runs := sess.NodeRuns(agents)
 		for _, key := range sortedStreamKeys(runs) {
 			if opts.Limit > 0 && len(items) >= opts.Limit {
 				return items, excludedBySince, nil

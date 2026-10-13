@@ -141,15 +141,12 @@ func decisionTraceEvents(trace, itemID, version string, r schema.DecisionRecord)
 	if out.Top == "" {
 		return events
 	}
-	score := func(name string, v float64) langfuse.IngestEvent {
-		return langfuse.IngestEvent{ID: trace + "-" + name, Type: "score-create", Timestamp: ts,
-			Body: map[string]any{"id": trace + "-" + name, "traceId": trace, "name": name, "value": v, "dataType": "NUMERIC"}}
-	}
 	agrees := 0.0
 	if out.Top == deref(r.Baseline) {
 		agrees = 1
 	}
-	return append(events, score("agrees_with_baseline", agrees), score("top_p", out.TopP))
+	return append(events, langfuse.NumericScore(trace, "agrees_with_baseline", agrees, "", ts),
+		langfuse.NumericScore(trace, "top_p", out.TopP, "", ts))
 }
 
 // RunDecisionsExport is `quack decisions export --langfuse`: fetches decisions from the

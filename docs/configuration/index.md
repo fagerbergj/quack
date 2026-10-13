@@ -15,6 +15,7 @@ providers:      # named inference backends (openai-compatible endpoints)
 models:         # the canonical model registry (windows, admission limits, cost)
 stores:         # named data backends (postgres, qdrant, sqlite, langfuse)
 prompts:        # named prompt artifacts resolved from a langfuse store, static fallback
+experiments:    # the langfuse store datasets and experiment runs write to (default: prompts.store)
 session:        # ADK session/chat persistence + context compaction
 orchestrator:   # the planner's model + tools + skills
 agents:         # per-agent bundle bindings (model, tools, acp)

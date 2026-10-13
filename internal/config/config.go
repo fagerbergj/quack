@@ -47,6 +47,8 @@ type Config struct {
 	// Prompts binds the named prompt artifacts to a store; absent (the
 	// default) resolves every one from the shipped file.
 	Prompts PromptsConfig `yaml:"prompts"`
+	// Experiments names where Langfuse datasets, experiment runs and their scores go; see ExperimentsStore.
+	Experiments ExperimentsConfig `yaml:"experiments"`
 	// Decisions configures intercept points and their decision handlers (decisions.md); absent = all off.
 	Decisions DecisionsConfig `yaml:"decisions"`
 	// Timezone is the user's IANA zone for agent-facing dates and times;
@@ -655,6 +657,20 @@ const (
 	DefaultPromptPinLabel = "production"
 )
 
+// ExperimentsConfig keeps datasets and experiment runs out of the project live traffic traces to.
+type ExperimentsConfig struct {
+	Store string `yaml:"store"`
+}
+
+// ExperimentsStore is the langfuse store datasets and experiment runs write to: experiments.store,
+// else prompts.store. Prompts always resolve from prompts.store, so an experiment pins prod's versions.
+func (c *Config) ExperimentsStore() string {
+	if c.Experiments.Store != "" {
+		return c.Experiments.Store
+	}
+	return c.Prompts.Store
+}
+
 // CacheTTLDuration is how long a resolved artifact is reused; validate has
 // already rejected an unparseable value, so a bad one here means the default.
 func (p PromptsConfig) CacheTTLDuration() time.Duration {
@@ -1089,21 +1105,29 @@ func (c *Config) validatePrompts() error {
 			return fmt.Errorf("config: prompts.cache_ttl must be > 0, got %q", c.Prompts.CacheTTL)
 		}
 	}
-	if c.Prompts.Store == "" {
+	if err := c.validateLangfuseStore("prompts.store", c.Prompts.Store); err != nil {
+		return err
+	}
+	return c.validateLangfuseStore("experiments.store", c.Experiments.Store)
+}
+
+// validateLangfuseStore checks that key's store name, when set, is a fully keyed langfuse store.
+func (c *Config) validateLangfuseStore(key, name string) error {
+	if name == "" {
 		return nil
 	}
-	s, ok := c.Store(c.Prompts.Store)
+	s, ok := c.Store(name)
 	if !ok {
-		return fmt.Errorf("config: prompts.store %q is not defined under stores", c.Prompts.Store)
+		return fmt.Errorf("config: %s %q is not defined under stores", key, name)
 	}
 	if s.Kind != "langfuse" {
-		return fmt.Errorf("config: prompts.store %q must be a langfuse store, got kind %q", c.Prompts.Store, s.Kind)
+		return fmt.Errorf("config: %s %q must be a langfuse store, got kind %q", key, name, s.Kind)
 	}
 	// A half-populated store falls back to static on every name and looks
 	// exactly like Langfuse holding no prompts - reject it at load instead.
 	for _, f := range []struct{ key, val string }{{"url", s.URL}, {"public_key", s.PublicKey}, {"secret_key", s.SecretKey}} {
 		if strings.TrimSpace(f.val) == "" {
-			return fmt.Errorf("config: prompts.store %q has empty %s", c.Prompts.Store, f.key)
+			return fmt.Errorf("config: %s %q has empty %s", key, name, f.key)
 		}
 	}
 	return nil

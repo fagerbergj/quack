@@ -28,6 +28,8 @@ type CreateDatasetRunItemRequest struct {
 	RunName        string `json:"runName"`
 	TraceID        string `json:"traceId,omitempty"`
 	RunDescription string `json:"runDescription,omitempty"`
+	// Metadata is the run's, not the item's: Langfuse overwrites the run's metadata with each call's.
+	Metadata any `json:"metadata,omitempty"`
 }
 
 // DatasetExists reports whether the named dataset exists (false on 404).

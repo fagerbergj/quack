@@ -70,6 +70,28 @@ func TestPromptsValidation(t *testing.T) {
 	}
 }
 
+// experiments.store gets the same langfuse checks as prompts.store, and ExperimentsStore
+// falls back to prompts.store so a single-project setup keeps working.
+func TestExperimentsStore(t *testing.T) {
+	for _, c := range []struct{ name, yaml, want string }{
+		{"unknown store", "\nexperiments: { store: nope }\n", `experiments.store "nope" is not defined`},
+		{"wrong kind", "\nexperiments: { store: main }\n", `experiments.store "main" must be a langfuse store`},
+	} {
+		_, err := Load(writeTemp(t, baseConfig+c.yaml))
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: err = %v, want one containing %q", c.name, err, c.want)
+		}
+	}
+	c := &Config{Prompts: PromptsConfig{Store: "prod"}}
+	if got := c.ExperimentsStore(); got != "prod" {
+		t.Errorf("ExperimentsStore with no experiments.store = %q, want prompts.store", got)
+	}
+	c.Experiments.Store = "lab"
+	if got := c.ExperimentsStore(); got != "lab" {
+		t.Errorf("ExperimentsStore = %q, want experiments.store", got)
+	}
+}
+
 // A half-populated langfuse store would silently serve static prompts for every name,
 // so it must fail the config rather than boot into a no-op.
 func TestPromptsStoreNeedsCredentials(t *testing.T) {
