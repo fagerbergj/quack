@@ -777,3 +777,59 @@ func TestRunDatasetExport_PreStateOriginFallsBackToGithubState(t *testing.T) {
 		t.Fatalf("pre-State merged chat's item must have expectedOutput (fall through to GithubState), got %+v", got)
 	}
 }
+
+// --agent keeps a mixed chat's dataset to the one agent an experiment re-runs; an agent export never covers is an error.
+func TestRunDatasetExport_AgentFilter(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	chat, err := st.CreateChat(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ls := ledgertest.NewMemStore()
+	for _, e := range []ledger.Entry{
+		llmCallEntry(chat.ID, "node-1", "code-reviewer", "review this", "looks good"),
+		llmCallEntry(chat.ID, "node-2", "synthesizer", "combine these", "combined"),
+	} {
+		if _, err := ls.AppendIntent(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fake := newFakeLangfuse(t)
+	srv := fake.server()
+	defer srv.Close()
+	lf := newTestClient(t, srv)
+
+	got, _, err := RunDatasetExport(ctx, ls, st, lf, ExportOpts{ChatID: chat.ID, Dataset: "my-dataset", Agent: "synthesizer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Agent != "synthesizer" || got[0].NodeID != "node-2" {
+		t.Fatalf("items = %+v, want only the synthesizer's node-2", got)
+	}
+	if _, _, err := RunDatasetExport(ctx, ls, st, lf, ExportOpts{ChatID: chat.ID, Dataset: "my-dataset", Agent: "advisor"}); err == nil {
+		t.Fatal("want an error for an agent dataset export doesn't cover")
+	}
+
+	// The two agents this PR adds must actually export, not just be accepted by --agent.
+	for _, e := range []ledger.Entry{
+		llmCallEntry(chat.ID, "node-3", "web-researcher", "research this", "researched"),
+		llmCallEntry(chat.ID, "node-4", "trend-scout", "scan trends", "scanned"),
+	} {
+		if _, err := ls.AppendIntent(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for agent, node := range map[string]string{"web-researcher": "node-3", "trend-scout": "node-4"} {
+		got, _, err = RunDatasetExport(ctx, ls, st, lf, ExportOpts{ChatID: chat.ID, Dataset: "my-dataset", Agent: agent})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 1 || got[0].Agent != agent || got[0].NodeID != node {
+			t.Fatalf("items = %+v, want only the %s's %s", got, agent, node)
+		}
+	}
+}

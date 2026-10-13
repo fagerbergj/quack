@@ -637,6 +637,8 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 				hub.EndRun(chatID, turnID)
 			}
 		}()
+		// Both plan builders read ReadOnly back off ctx: the planner's execute tool and BuildBoundPlan.
+		claimCtx = tools.WithPlanOnly(claimCtx, req.Run.ReadOnly)
 		pinCtx, done, shape, err := pinShape(claimCtx, orch.Pin, name, shapesRef, req.Run.Workflow)
 		if err != nil {
 			return err
@@ -755,8 +757,8 @@ func extAttachmentParts(runCtx context.Context, name string, artifacts *store.Tu
 	return out
 }
 
-// extRunContext: the run-ctx facts the unshaped/hint planner turn reads back -
-// delivery kinds, GitHub setup, node context, context items, plan-only.
+// extRunContext: the run-ctx facts the unshaped/hint planner turn reads back - delivery kinds,
+// GitHub setup, node context, context items. Plan-only is already on ctx (see newExtDispatch).
 func extRunContext(runCtx context.Context, allowedKinds []string, req extsdk.DispatchRequest, effectiveSetup *dag.Setup) context.Context {
 	// The unshaped/hint path reaches the planner's own LLM turn (plan tool),
 	// which reads these facts back off ctx (tools.AllowedDeliveryKindsFromContext etc.).
@@ -772,7 +774,7 @@ func extRunContext(runCtx context.Context, allowedKinds []string, req extsdk.Dis
 	if req.Ask.ContextItems != nil {
 		runCtx = tools.WithContextItems(runCtx, toDagContextItems(req.Ask.ContextItems))
 	}
-	return tools.WithPlanOnly(runCtx, req.Run.ReadOnly)
+	return runCtx
 }
 
 // deliveryKindStrings converts the SDK's typed delivery-kind list to the

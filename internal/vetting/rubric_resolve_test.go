@@ -65,6 +65,31 @@ func TestLoadBundleRubricResolvesAndAbsent(t *testing.T) {
 	}
 }
 
+// A recorded unit score maps back onto its criterion's own rubric scale: the synthesizer's
+// judged criteria are 0-3, cites_sources declares 0-1, and an undeclared criterion is the judge's 0-3.
+func TestRubricScalerInvertsNormalizeScale(t *testing.T) {
+	r, err := LoadRubricScaler(context.Background(), nil, "agents/synthesizer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		criterion  string
+		unit, want float64
+	}{
+		{"citation_quality", 2.0 / 3, 2},
+		{"cites_sources", 0.9, 0.9},
+		{"not_in_rubric", 1, judgeScaleMax},
+	} {
+		if got := r.Score(tc.criterion, tc.unit); got < tc.want-1e-9 || got > tc.want+1e-9 {
+			t.Errorf("Score(%s, %v) = %v, want %v", tc.criterion, tc.unit, got, tc.want)
+		}
+	}
+	raw := verdict{Criteria: map[string]criterionScore{"citation_quality": {Score: 2}}}
+	if got := normalizeScale(raw, r.specs).Criteria["citation_quality"].Score; r.Score("citation_quality", got) != 2 {
+		t.Errorf("Score(normalizeScale(2)) = %v, want 2", r.Score("citation_quality", got))
+	}
+}
+
 // TestLoadBundleRubricSpecsArtifactProvenance: the rubric.yaml artifact is "static" and
 // version-hashed when present, and zero when absent.
 func TestLoadBundleRubricSpecsArtifactProvenance(t *testing.T) {

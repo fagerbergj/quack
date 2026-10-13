@@ -9,19 +9,32 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+	"google.golang.org/adk/v2/tool"
+	"gopkg.in/yaml.v3"
+
+	extsdk "github.com/fagerbergj/quack/extensions/sdk"
+	"github.com/fagerbergj/quack/internal/artifactsrc"
+	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/langfuse"
+	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/ledger/bundle"
 	"github.com/fagerbergj/quack/internal/store"
+	"github.com/fagerbergj/quack/internal/vetting"
 )
 
 // ExperimentOpts selects the dataset/agent/prompt version for `quack experiment run`.
 type ExperimentOpts struct {
 	Dataset string
 	Agent   string
-	Prompt  string // "system/<agent>@N", the pinned version, also recorded on the run item
+	Prompt  string // "system/<agent>@N": the pinned version every item's node must have run
 	RunName string
 	Limit   int
 }
@@ -40,10 +53,46 @@ type experimentItemInput struct {
 	Task string `json:"task"`
 }
 
-// itemRunner runs one item's task and returns the answer and the node's OTel trace id;
-// it's the seam that lets RunExperiment be tested without booting serve.
+// itemRun is one item's node run: the trace RunExperiment links, and what it scores on that trace.
+type itemRun struct {
+	Answer  string
+	TraceID string
+	// Prompt is the system/<agent> artifact the node resolved; zero when its prompt isn't one.
+	Prompt ledger.ArtifactRef
+	// Criteria: the gate's final judged round, each score on its criterion's rubric scale.
+	Criteria []criterionScore
+	Passed   bool
+	Cost     itemCost
+}
+
+type criterionScore struct {
+	Name        string
+	Score       float64
+	Explanation string
+}
+
+// itemCost is the node's spend: equal quality at a lower cost is a better prompt too.
+type itemCost struct {
+	bundle.Activity
+	InputTokens, OutputTokens, CachedTokens int64
+	JudgeRounds                             int
+	WallTime                                time.Duration
+}
+
+// prompt is Prompt as the summary prints it and --prompt pins it: name@version, or "(static)" off disk.
+func (r itemRun) prompt() string {
+	switch {
+	case r.Prompt.Name == "":
+		return ""
+	case r.Prompt.Source == artifactsrc.StaticSource:
+		return r.Prompt.Name + " (static)"
+	}
+	return r.Prompt.Name + "@" + r.Prompt.VersionID
+}
+
+// itemRunner runs one item's task; it's the seam that lets RunExperiment be tested without booting serve.
 type itemRunner interface {
-	RunItem(ctx context.Context, task string) (answer, traceID string, err error)
+	RunItem(ctx context.Context, task string) (itemRun, error)
 }
 
 // RunExperiment runs opts.Agent's node against every item in opts.Dataset outside any live
@@ -97,18 +146,24 @@ func runExperimentItem(ctx context.Context, runner itemRunner, lf *langfuse.Clie
 		return ExperimentResult{}, fmt.Errorf("experiment run: item %s: %w", item.ID, err)
 	}
 	start := time.Now()
-	_, traceID, err := runner.RunItem(ctx, task)
-	duration := time.Since(start)
-	if err != nil {
-		return ExperimentResult{ItemID: item.ID, TraceID: traceID, Prompt: opts.Prompt, Duration: duration, Error: err.Error()}, nil
+	run, err := runner.RunItem(ctx, task)
+	res := ExperimentResult{ItemID: item.ID, TraceID: run.TraceID, Prompt: run.prompt(), Duration: time.Since(start)}
+	switch {
+	case err != nil:
+		res.Error = err.Error()
+	case run.TraceID == "":
+		res.Error = "no trace id recorded for the node run"
+	case opts.Prompt != "" && run.prompt() != opts.Prompt:
+		// A pin the node never resolved (a plugin agent's prompt is a bundle file, say) would compare the wrong version.
+		res.Error = fmt.Sprintf("node ran prompt %q, not the pinned %s", run.prompt(), opts.Prompt)
 	}
-	if traceID == "" {
-		return ExperimentResult{ItemID: item.ID, Prompt: opts.Prompt, Duration: duration, Error: "no trace id recorded for the node run"}, nil
+	if res.Error != "" {
+		return res, nil
 	}
-	if err := recordRunItem(ctx, lf, opts, item.ID, traceID); err != nil {
+	if err := recordRunItem(ctx, lf, opts, item.ID, run); err != nil {
 		return ExperimentResult{}, err
 	}
-	return ExperimentResult{ItemID: item.ID, TraceID: traceID, Prompt: opts.Prompt, Duration: duration}, nil
+	return res, nil
 }
 
 func itemTask(item langfuse.DatasetItem) (string, error) {
@@ -126,12 +181,17 @@ func itemTask(item langfuse.DatasetItem) (string, error) {
 	return in.Task, nil
 }
 
-// recordRunItem puts prompt/agent in RunDescription, which is run-level and idempotent
-// (unlike Metadata); the answer already lives on the trace.
-func recordRunItem(ctx context.Context, lf *langfuse.Client, opts ExperimentOpts, itemID, traceID string) error {
-	desc := fmt.Sprintf("prompt=%s agent=%s", opts.Prompt, opts.Agent)
+// recordRunItem scores the trace before linking it, so a failed link leaves only scores on an unlinked
+// trace. The prompt rides on the run (description and metadata); the answer already lives on the trace.
+func recordRunItem(ctx context.Context, lf *langfuse.Client, opts ExperimentOpts, itemID string, run itemRun) error {
+	if err := lf.Ingest(ctx, itemScores(run, time.Now().UTC().Format(time.RFC3339Nano))); err != nil {
+		return fmt.Errorf("experiment run: item %s: score trace: %w", itemID, err)
+	}
 	req := langfuse.CreateDatasetRunItemRequest{
-		DatasetItemID: itemID, RunName: opts.RunName, TraceID: traceID, RunDescription: desc,
+		DatasetItemID: itemID, RunName: opts.RunName, TraceID: run.TraceID,
+		RunDescription: fmt.Sprintf("prompt=%s agent=%s", run.prompt(), opts.Agent),
+		Metadata: map[string]string{"agent": opts.Agent, "prompt_name": run.Prompt.Name,
+			"prompt_version": run.Prompt.VersionID, "prompt_source": run.Prompt.Source},
 	}
 	if err := lf.CreateDatasetRunItem(ctx, req); err != nil {
 		return fmt.Errorf("experiment run: item %s: create run item: %w", itemID, err)
@@ -139,73 +199,224 @@ func recordRunItem(ctx context.Context, lf *langfuse.Client, opts ExperimentOpts
 	return nil
 }
 
-// LiveItemRunner runs each item as a fresh chat against Base and reads the trace id
-// back from Agent's dag_nodes row.
+// itemScores is every numeric score RunExperiment puts on run's trace: one per judged criterion,
+// gate_passed, and the cost.* signals. Langfuse averages each per dataset run, so two runs compare column by column.
+func itemScores(run itemRun, ts string) []langfuse.IngestEvent {
+	score := func(name string, v float64, comment string) langfuse.IngestEvent {
+		return langfuse.NumericScore(run.TraceID, name, v, comment, ts)
+	}
+	out := make([]langfuse.IngestEvent, 0, len(run.Criteria)+9)
+	for _, c := range run.Criteria {
+		out = append(out, score(c.Name, c.Score, c.Explanation))
+	}
+	passed := 0.0
+	if run.Passed {
+		passed = 1
+	}
+	c := run.Cost
+	return append(out,
+		score("gate_passed", passed, ""),
+		score("cost.input_tokens", float64(c.InputTokens), ""),
+		score("cost.output_tokens", float64(c.OutputTokens), ""),
+		score("cost.cached_tokens", float64(c.CachedTokens), ""),
+		score("cost.model_turns", float64(c.ModelTurns), ""),
+		score("cost.tool_calls", float64(c.ToolCalls), ""),
+		score("cost.rejected_tool_calls", float64(c.RejectedToolCalls), ""),
+		score("cost.judge_rounds", float64(c.JudgeRounds), ""),
+		score("cost.wall_time_s", c.WallTime.Seconds(), ""),
+	)
+}
+
+// LiveItemRunner runs each item as a fresh chat against Base, then reads Agent's node run back from the
+// chat's recording and its dag_nodes row.
 type LiveItemRunner struct {
-	Base  string
-	Store *store.Store
-	Agent string
+	Base   string
+	Store  *store.Store
+	Agent  string
+	Rubric vetting.RubricScaler
 }
 
-func NewLiveItemRunner(base string, st *store.Store, agent string) *LiveItemRunner {
-	return &LiveItemRunner{Base: base, Store: st, Agent: agent}
+func NewLiveItemRunner(base string, st *store.Store, agent string, rubric vetting.RubricScaler) *LiveItemRunner {
+	return &LiveItemRunner{Base: base, Store: st, Agent: agent, Rubric: rubric}
 }
 
-func (r *LiveItemRunner) RunItem(ctx context.Context, task string) (answer, traceID string, err error) {
-	c := &Client{BaseURL: strings.TrimRight(r.Base, "/"), HTTP: &http.Client{}}
-	chatID, err := c.CreateChat(ctx, "")
+// RunItem runs Agent's node alone on task through the experiment extension's bound workflow, then reads
+// the node back from the chat's recording.
+func (r *LiveItemRunner) RunItem(ctx context.Context, task string) (itemRun, error) {
+	ext := liveExperiment.Load()
+	if ext == nil {
+		return itemRun{}, fmt.Errorf("experiment extension not running (EnableExperiment before boot)")
+	}
+	chatID, err := ext.run(ctx, r.Agent, task)
 	if err != nil {
-		return "", "", fmt.Errorf("create chat: %w", err)
+		return itemRun{}, err
 	}
-	st := newStreamState()
-	onEvent := func(ev SSEEvent) error { st.handle(ev, nil); return nil }
-	if err := c.SendMessage(ctx, chatID, task, onEvent); err != nil {
-		return "", "", err
-	}
-	res := st.result(chatID)
-	if res.Status == StatusFailed {
-		return "", "", fmt.Errorf("%s", res.Error)
-	}
-
+	c := &Client{BaseURL: strings.TrimRight(r.Base, "/"), HTTP: &http.Client{}}
 	body, err := c.FetchRecording(ctx, chatID)
 	if err != nil {
-		return "", "", fmt.Errorf("chat %s: fetch recording: %w", chatID, err)
+		return itemRun{}, fmt.Errorf("chat %s: fetch recording: %w", chatID, err)
 	}
 	sess, err := sessionFromBundleBytes(body)
 	if err != nil {
-		return "", "", fmt.Errorf("chat %s: load recording: %w", chatID, err)
+		return itemRun{}, fmt.Errorf("chat %s: load recording: %w", chatID, err)
 	}
 	runs := sess.NodeRuns(map[string]bool{r.Agent: true})
-	var nodeID string
 	for _, key := range sortedStreamKeys(runs) {
 		if run := runs[key]; run.Answer != "" {
-			answer, nodeID = run.Answer, key.Node
-			break
+			return r.itemRunFor(ctx, chatID, sess, key.Node, run), nil
 		}
 	}
-	// A run item with no node run would otherwise report an empty traceId and the
-	// orchestrator's own answer instead of the agent's - report it as an error.
-	if nodeID == "" {
-		return "", "", fmt.Errorf("chat %s: agent %q produced no node run", chatID, r.Agent)
-	}
-	return answer, r.traceIDFor(ctx, chatID, nodeID), nil
+	return itemRun{}, fmt.Errorf("chat %s: agent %q produced no node run", chatID, r.Agent)
 }
 
-// traceIDFor reads dag_nodes.trace_id for nodeID off chatID's latest plan - "" (never an
-// error) when the plan/node/trace isn't there yet, so a run still reports rather than failing.
-func (r *LiveItemRunner) traceIDFor(ctx context.Context, chatID, nodeID string) string {
+// experimentExtension is the in-process SDK extension `experiment run` dispatches through. Its bound
+// one-node workflow runs the agent's node on the recorded task with no orchestrator or planner turn.
+const experimentExtension = "experiment"
+
+func init() { extsdk.Register(experimentExtension, newExperimentExt) }
+
+// liveExperiment is the booted extension; `experiment run` boots one in-process server per command.
+var liveExperiment atomic.Pointer[experimentExt]
+
+// EnableExperiment configures the in-process server `experiment run` boots: the experiment extension
+// and agent's bound workflow, whose one node's task is the item's recorded task verbatim.
+func EnableExperiment(cfg *config.Config, agent string) {
+	if cfg.Extensions.Modules == nil {
+		cfg.Extensions.Modules = map[string]yaml.Node{}
+	}
+	cfg.Extensions.Modules[experimentExtension] = yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	cfg.Workflows = append(cfg.Workflows, config.WorkflowShape{
+		Name: experimentWorkflow(agent), Trigger: "quack experiment run only", Shape: agent, Agents: []string{agent},
+		Nodes: []config.WorkflowNode{{ID: agent + "-1", Agent: agent, Task: "{{ask}}"}},
+	})
+}
+
+func experimentWorkflow(agent string) string { return "experiment-" + agent }
+
+type experimentExt struct {
+	host  extsdk.Host
+	mu    sync.Mutex
+	ended map[string]chan extsdk.RunOutcome
+}
+
+func newExperimentExt(host extsdk.Host, _ []byte) (extsdk.Extension, error) {
+	return &experimentExt{host: host, ended: map[string]chan extsdk.RunOutcome{}}, nil
+}
+
+func (e *experimentExt) Tools() []tool.Tool             { return nil }
+func (e *experimentExt) RegisterRoutes(_, _ chi.Router) {}
+
+// Start publishes the booted extension; the factory also runs during config validation, so it can't.
+func (e *experimentExt) Start(context.Context) error {
+	liveExperiment.Store(e)
+	return nil
+}
+
+// RunEnded hands a run's final outcome to the item waiting on it; a pause is not an end.
+func (e *experimentExt) RunEnded(chatID string, o extsdk.RunOutcome) {
+	if o.Status == extsdk.RunPaused {
+		return
+	}
+	e.mu.Lock()
+	ch := e.ended[chatID]
+	delete(e.ended, chatID)
+	e.mu.Unlock()
+	if ch != nil {
+		ch <- o
+	}
+}
+
+// run dispatches task to agent's bound workflow and waits for the run to end. Delivery is denied
+// outright, so a replayed reviewer never posts a review and a coder never pushes.
+func (e *experimentExt) run(ctx context.Context, agent, task string) (string, error) {
+	localID := uuid.NewString()
+	chatID := "ext:" + experimentExtension + ":" + localID
+	ch := make(chan extsdk.RunOutcome, 1)
+	e.mu.Lock()
+	e.ended[chatID] = ch
+	e.mu.Unlock()
+	req := extsdk.DispatchRequest{
+		Chat:     extsdk.ChatRef{LocalID: localID, Title: "experiment: " + agent},
+		Ask:      extsdk.Ask{Message: task},
+		Run:      extsdk.RunConfig{Workflow: experimentWorkflow(agent), ReadOnly: true},
+		Delivery: extsdk.DeliveryAuthority{AllowedKinds: []extsdk.DeliveryKind{}},
+	}
+	if err := e.host.Dispatch(ctx, req); err != nil {
+		e.mu.Lock()
+		delete(e.ended, chatID)
+		e.mu.Unlock()
+		return "", fmt.Errorf("dispatch %s: %w", agent, err)
+	}
+	select {
+	case o := <-ch:
+		if o.Status != extsdk.RunDone {
+			return chatID, fmt.Errorf("chat %s: run %s: %s", chatID, o.Status, o.Error)
+		}
+		return chatID, nil
+	case <-ctx.Done():
+		return chatID, ctx.Err()
+	}
+}
+
+// itemRunFor assembles nodeID's run: prompt and judge scores from the recording, tokens and timing from its
+// dag_nodes row (the node_done totals); TraceID stays "" until that row exists, so the item reports rather than fails.
+func (r *LiveItemRunner) itemRunFor(ctx context.Context, chatID string, sess *bundle.Session, nodeID string, nr bundle.NodeRun) itemRun {
+	out := itemRun{Answer: nr.Answer, Prompt: systemPrompt(r.Agent, nr.Artifacts), Criteria: r.finalCriteria(sess, nodeID)}
+	out.Cost.Activity = sess.NodeActivity(nodeID, r.Agent)
+	if n := r.nodeRow(ctx, chatID, nodeID); n != nil {
+		out.TraceID, out.Passed = n.TraceID, n.JudgePassed
+		out.Cost.InputTokens, out.Cost.OutputTokens, out.Cost.CachedTokens = int64(n.PromptTokens), int64(n.CompletionTokens), int64(n.CachedTokens)
+		out.Cost.JudgeRounds, out.Cost.WallTime = int(n.JudgeRounds), time.Duration(n.DurationMs)*time.Millisecond
+	}
+	return out
+}
+
+// systemPrompt picks agent's own system prompt out of everything the round resolved.
+func systemPrompt(agent string, refs []ledger.ArtifactRef) ledger.ArtifactRef {
+	for _, a := range refs {
+		if a.Name == "system/"+agent {
+			return a
+		}
+	}
+	return ledger.ArtifactRef{}
+}
+
+// finalCriteria is nodeID's last judged round, the verdict the gate delivered on; earlier rounds were revised
+// away. A re-judge within a round reuses its label, so the later score per criterion wins.
+func (r *LiveItemRunner) finalCriteria(sess *bundle.Session, nodeID string) []criterionScore {
+	round, latest := "", map[string]bundle.EvalScore{}
+	for _, sc := range sess.EvaluationResults() {
+		if sc.Node != nodeID {
+			continue
+		}
+		if sc.Round != round {
+			round, latest = sc.Round, map[string]bundle.EvalScore{}
+		}
+		latest[sc.Criterion] = sc
+	}
+	out := make([]criterionScore, 0, len(latest))
+	for name, sc := range latest {
+		out = append(out, criterionScore{Name: name, Score: r.Rubric.Score(name, sc.Score), Explanation: sc.Explanation})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// nodeRow reads nodeID's dag_nodes row off chatID's latest plan - nil (never an error) when the
+// plan/node isn't there yet, so a run still reports rather than failing.
+func (r *LiveItemRunner) nodeRow(ctx context.Context, chatID, nodeID string) *store.DagNode {
 	if r.Store == nil || nodeID == "" {
-		return ""
+		return nil
 	}
 	plan, err := r.Store.GetLatestDagPlan(ctx, chatID)
 	if err != nil || plan == nil {
-		return ""
+		return nil
 	}
 	node, err := r.Store.GetDagNode(ctx, plan.ID, nodeID)
-	if err != nil || node == nil {
-		return ""
+	if err != nil {
+		return nil
 	}
-	return node.TraceID
+	return node
 }
 
 // sessionFromBundleBytes writes body to a temp file and loads it via bundle.Load, mirroring

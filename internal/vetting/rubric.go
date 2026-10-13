@@ -145,6 +145,21 @@ func LoadBundleRubricSpecs(ctx context.Context, res *artifactsrc.Resolver, bundl
 	return rendered, rubricDocSpecs(doc), rubricDocFixes(doc), art, nil
 }
 
+// RubricScaler maps the gate's recorded 0-1 criterion scores back onto an agent's rubric scales.
+type RubricScaler struct{ specs map[string]criterionSpec }
+
+// LoadRubricScaler reads bundleDir's rubric.yaml; without one every criterion is 0-judgeScaleMax, as the gate scores it.
+func LoadRubricScaler(ctx context.Context, res *artifactsrc.Resolver, bundleDir string) (RubricScaler, error) {
+	_, specs, _, _, err := LoadBundleRubricSpecs(ctx, res, bundleDir)
+	return RubricScaler{specs: specs}, err
+}
+
+// Score is normalizeScale's inverse: a recorded unit score on criterion's own rubric scale.
+func (r RubricScaler) Score(criterion string, unit float64) float64 {
+	s := criterionScale(r.specs, criterion)
+	return s.Min + unit*(s.Max-s.Min)
+}
+
 // ReplayRubric is a rubric.yaml's replay-relevant contents: Rendered for
 // cfg.Rubric, LoadBundleRubricSpecs' specs/fixes, and each mark.
 type ReplayRubric struct {

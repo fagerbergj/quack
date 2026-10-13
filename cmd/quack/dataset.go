@@ -12,7 +12,7 @@ import (
 )
 
 // newDatasetCmd: `quack dataset export` (P5 of #1418/#1424) - turns recorded
-// code-reviewer/synthesizer node runs into Langfuse dataset items for `quack experiment run`.
+// node runs of the high-traffic agents into Langfuse dataset items for `quack experiment run`.
 func newDatasetCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "dataset",
@@ -23,36 +23,36 @@ func newDatasetCmd() *cobra.Command {
 }
 
 func newDatasetExportCmd() *cobra.Command {
-	var chatID, repo, since, dataset string
-	var limit int
+	var opts cli.ExportOpts
+	var since string
 	c := &cobra.Command{
 		Use:   "export",
-		Short: "Export gated code-reviewer/synthesizer runs to a Langfuse dataset, idempotently",
+		Short: "Export gated code-reviewer, synthesizer, web-researcher and trend-scout runs to a Langfuse dataset, idempotently",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runDatasetExport(cmd, chatID, repo, since, dataset, limit)
+			return runDatasetExport(cmd, opts, since)
 		},
 	}
-	c.Flags().StringVar(&chatID, "chat", "", "export a single chat by id")
-	c.Flags().StringVar(&repo, "repo", "", "export every chat for owner/repo")
-	c.Flags().StringVar(&since, "since", "", "only chats updated at or after this date (RFC3339 or YYYY-MM-DD); with --chat, excludes it entirely if it's older")
-	c.Flags().StringVar(&dataset, "dataset", "", "Langfuse dataset name (created if it doesn't exist)")
-	c.Flags().IntVar(&limit, "limit", 0, "stop after exporting this many items (0 = no limit)")
+	c.Flags().StringVar(&opts.ChatID, "chat", "", "export a single chat by id")
+	c.Flags().StringVar(&opts.Repo, "repo", "", "export every chat for owner/repo")
+	c.Flags().StringVar(&since, "since", "", "only chats updated at or after this date (RFC3339 or YYYY-MM-DD); alone, every chat since then; with --chat, excludes it entirely if it's older")
+	c.Flags().StringVar(&opts.Dataset, "dataset", "", "Langfuse dataset name (created if it doesn't exist)")
+	c.Flags().StringVar(&opts.Agent, "agent", "", "export only this agent's runs")
+	c.Flags().IntVar(&opts.Limit, "limit", 0, "stop after exporting this many items (0 = no limit)")
 	_ = c.MarkFlagRequired("dataset")
 	return c
 }
 
-func runDatasetExport(cmd *cobra.Command, chatID, repo, since, dataset string, limit int) error {
-	if chatID == "" && repo == "" {
-		return fmt.Errorf("dataset export: one of --chat or --repo is required")
+func runDatasetExport(cmd *cobra.Command, opts cli.ExportOpts, since string) error {
+	if opts.ChatID == "" && opts.Repo == "" && since == "" {
+		return fmt.Errorf("dataset export: one of --chat, --repo or --since is required")
 	}
-	var sinceT time.Time
 	if since != "" {
 		t, err := parseDateFlag(since)
 		if err != nil {
 			return fmt.Errorf("dataset export: --since: %w", err)
 		}
-		sinceT = t
+		opts.Since = t
 	}
 
 	ls, st, _, err := openLedgerAndStores(cmd)
@@ -69,16 +69,14 @@ func runDatasetExport(cmd *cobra.Command, chatID, repo, since, dataset string, l
 		return err
 	}
 
-	items, excludedBySince, err := cli.RunDatasetExport(cmd.Context(), ls, st, lf, cli.ExportOpts{
-		ChatID: chatID, Repo: repo, Since: sinceT, Dataset: dataset, Limit: limit,
-	})
+	items, excludedBySince, err := cli.RunDatasetExport(cmd.Context(), ls, st, lf, opts)
 	if err != nil {
 		// Item ids are deterministic, so a re-run converges. Cobra prints err itself.
 		fmt.Fprintf(cmd.ErrOrStderr(), "%d item(s) exported before failure\n", len(items))
 		return err
 	}
 	if excludedBySince {
-		_, err = fmt.Fprintf(cmd.OutOrStdout(), "chat %s excluded by --since\n", chatID)
+		_, err = fmt.Fprintf(cmd.OutOrStdout(), "chat %s excluded by --since\n", opts.ChatID)
 		return err
 	}
 	_, err = fmt.Fprint(cmd.OutOrStdout(), cli.FormatExportSummary(items))
@@ -93,11 +91,13 @@ func parseDateFlag(s string) (time.Time, error) {
 	return time.Parse("2006-01-02", s)
 }
 
-// langfuseClientFromConfig uses cfg.Prompts.Store's langfuse credentials, the store `prompts:` resolves against.
+// langfuseClientFromConfig is the client for datasets and experiment runs: experiments.store's
+// credentials, else prompts.store's. Prompt pins resolve separately, from prompts.store.
 func langfuseClientFromConfig(cfg *config.Config) (*langfuse.Client, error) {
-	sc, ok := cfg.Store(cfg.Prompts.Store)
+	name := cfg.ExperimentsStore()
+	sc, ok := cfg.Store(name)
 	if !ok || sc.Kind != "langfuse" {
-		return nil, fmt.Errorf("langfuse is not configured: prompts.store %q is not a langfuse store (needs stores.<name> kind: langfuse with url, public_key, secret_key)", cfg.Prompts.Store)
+		return nil, fmt.Errorf("langfuse is not configured: experiments.store (else prompts.store) %q is not a langfuse store (needs stores.<name> kind: langfuse with url, public_key, secret_key)", name)
 	}
 	return langfuse.New(sc.URL, sc.PublicKey, sc.SecretKey), nil
 }

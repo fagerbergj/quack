@@ -33,6 +33,24 @@ func TestPinnedPromptSource_NameMustMatchAgent(t *testing.T) {
 	}
 }
 
+// A plugin agent's rubric scales resolve from its local clone; an agent nowhere in the config is an error.
+func TestExperimentRubric_PluginAgent(t *testing.T) {
+	cfgPath := writeScoutPluginConfig(t)
+	r, err := experimentRubric(context.Background(), cfgPath, "scout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Score("cites_sources", 0.5); got != 0.5 {
+		t.Errorf("cites_sources = %v, want 0.5 on its declared 0-1 scale", got)
+	}
+	if got := r.Score("grounded", 0.5); got != 1.5 {
+		t.Errorf("grounded = %v, want 1.5 on the default 0-3 scale", got)
+	}
+	if _, err := experimentRubric(context.Background(), cfgPath, "nobody"); err == nil {
+		t.Fatal("want an error for an agent neither quack.yaml nor a plugin defines")
+	}
+}
+
 func TestNewExperimentCmd_Tree(t *testing.T) {
 	c := newExperimentCmd()
 	run, _, err := c.Find([]string{"run"})

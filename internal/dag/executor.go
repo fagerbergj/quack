@@ -957,6 +957,10 @@ func buildTask(ctx context.Context, plan Plan, node Node, upstream map[string]st
 	if background == "" {
 		background = plan.UserMessage
 	}
+	// A bound node whose task is the whole ask (an experiment replaying a recorded prompt) gets it once.
+	if background == node.Task {
+		background = ""
+	}
 	var sb strings.Builder
 	if background != "" {
 		sb.WriteString("BACKGROUND - the user's full request, verbatim. This is CONTEXT ONLY, so you " +

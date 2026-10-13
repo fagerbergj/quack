@@ -13,6 +13,7 @@ import (
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/langfuse"
 	"github.com/fagerbergj/quack/internal/serve"
+	"github.com/fagerbergj/quack/internal/vetting"
 )
 
 func nowStamp() string { return time.Now().UTC().Format("20060102-150405") }
@@ -74,17 +75,22 @@ func runExperimentRun(cmd *cobra.Command, dataset, agent, prompt, runName string
 	}
 
 	ctx := cmd.Context()
+	rubric, err := experimentRubric(ctx, cfgPath, agent)
+	if err != nil {
+		return err
+	}
 	pinSrc, err := pinnedPromptSource(ctx, cfg, agent, prompt)
 	if err != nil {
 		return err
 	}
+	cli.EnableExperiment(cfg, agent)
 	base, stop, err := serve.InProcessWithPromptSource(ctx, cfg, pinSrc)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = stop() }()
 
-	runner := cli.NewLiveItemRunner(base, st, agent)
+	runner := cli.NewLiveItemRunner(base, st, agent, rubric)
 	results, runErr := cli.RunExperiment(ctx, cmd.ErrOrStderr(), runner, lf, cli.ExperimentOpts{
 		Dataset: dataset, Agent: agent, Prompt: prompt, RunName: runName, Limit: limit,
 	})
@@ -115,6 +121,20 @@ func errorCount(results []cli.ExperimentResult) int {
 		}
 	}
 	return n
+}
+
+// experimentRubric loads agent's rubric scales from its own plugin-seeded config load, so a plugin agent
+// resolves without seeding the cfg the in-process server boots from.
+func experimentRubric(ctx context.Context, cfgPath, agent string) (vetting.RubricScaler, error) {
+	cfg, err := loadSeededConfig(cfgPath)
+	if err != nil {
+		return vetting.RubricScaler{}, err
+	}
+	ac, ok := cfg.Agents[agent]
+	if !ok {
+		return vetting.RubricScaler{}, fmt.Errorf("--agent %s: not in quack.yaml or a locally cloned, enabled plugin", agent)
+	}
+	return vetting.LoadRubricScaler(ctx, nil, ac.Bundle)
 }
 
 // pinnedPromptSource resolves --prompt eagerly so a bad pin fails the command instead of
