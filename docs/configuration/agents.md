@@ -33,7 +33,7 @@ agents:
     context_window: 65536
     memory:
       bucket: research
-    tools: [web_search, web_fetch, summarize, current_date, load_memory, stage_memory, ask_user]
+    tools: [web_search, web_fetch, summarize, current_date, recall_memory, stage_memory, ask_user]
 ```
 
 `tools:` is explicit and independent of the card's `skills` — a skill can come from the model, the prompt, or a tool, so listing tools here is a separate, honest declaration of what the agent can actually reach. `skills:` (a different list — built-in skill names, not the card's A2A skills) names which of quack's own skill library entries this agent may `load_skill`; an agent with no `skills:` gets no `load_skill` tools at all.
@@ -105,7 +105,7 @@ Each ACP round's preamble also carries a generated workspace/toolchain block: OS
 
 Because the gate can't watch an external subprocess's internals, it reads the ACP agent's *work* off disk instead: `augmentFromRepo` reads the commits/changed files straight off the clone to synthesize a staged PR, and `augmentFromAnswer` parses a reviewer's `VERDICT:`/`FINDINGS:` tail into a staged review with inline comments.
 
-An ACP agent with a `memory.bucket` set (all three shipped ones have one) also gets `load_memory`/`stage_memory`/`recall_memory` - not because they're named in a `tools:` list (ACP agents have none), but through the same loopback MCP server (`internal/acp/memorymcp.go`) the gate wires up whenever the run is a memory participant. `recall_memory(query, k?)` (epic #1255 P2) queries the agent's own scope on demand mid-run, in addition to the recall already injected into the prompt at the start of the round; every call is logged (a `memory.recall` ledger entry, source `tool`) and its hits join the round's received set, so the judge may vote on them the same way it votes on prefill.
+An ACP agent with a `memory.bucket` set (all three shipped ones have one) also gets `stage_memory`/`recall_memory` - not because they're named in a `tools:` list (ACP agents have none), but through the same loopback MCP server (`internal/acp/memorymcp.go`) the gate wires up whenever the run is a memory participant. `recall_memory(query, k?)` (epic #1255 P2) queries the agent's own scope on demand mid-run, in addition to the recall already injected into the prompt at the start of the round; every call is logged (a `memory.recall` ledger entry, source `tool`) and its hits join the round's received set, so the judge may vote on them the same way it votes on prefill.
 
 ## The orchestrator's tools
 
@@ -131,7 +131,7 @@ This is the orchestrator's own fixed list, not the full builtin tool registry (`
 
 `recall_memory(query, k?)` (epic #1255 P2) is the on-demand twin of the prefill recall every memory-bucketed agent already gets. It's available three ways, all sharing the same contract:
 
-- Native workers and the orchestrator: add `recall_memory` to the agent's `tools:` list (only takes effect when a task-memory store is configured; otherwise it's silently dropped, same as `stage_memory`). `load_memory` is the same tool under a different declared name - listing both collapses to whichever comes first in `tools:`, so a native worker never gets it twice.
+- Native workers and the orchestrator: add `recall_memory` to the agent's `tools:` list (only takes effect when a task-memory store is configured; otherwise it's silently dropped, same as `stage_memory`). `load_memory`, the tool's former name, is still accepted and offered as `recall_memory`, once.
 - ACP workers: automatic whenever the run is a memory participant (`memory.bucket` set) - no `tools:` entry, since ACP agents have none; see the ACP section above.
 
 Scope is the caller's own buckets - the same `repo`/`role`/`user` combination the node's prefill recall already uses for a DAG worker, and the user bucket for the orchestrator (repo/role need a resolved workspace, which doesn't exist before a plan runs). `k` narrows the request but never widens it past the store's configured `top_k`; `min_score` applies identically to prefill and this tool, since both read through the same `Store.recall`. A call whose formatted content would exceed the shared injection byte budget returns fewer hits and says so in its own output, rather than silently truncating.

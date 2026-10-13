@@ -2738,7 +2738,7 @@ func (s *activityScanner) scanResponse(fr *genai.FunctionResponse) {
 		s.recordFetch(legacyURL, fr.Response)
 	case fr.Name == "web_search":
 		recordSearchResults(s.act.seen, fr.Response)
-	case fr.Name == "recall_memory", fr.Name == "load_memory":
+	case fr.Name == "recall_memory":
 		s.act.recalled = append(s.act.recalled, recallMemoryHits(fr.Response)...)
 	case fr.Name == "cd":
 		if s.pendingCd[fr.ID] {
@@ -3041,7 +3041,7 @@ func hasAnswerKey(v any) bool {
 var excludedDataToolNames = map[string]bool{
 	"web_search": true, "web_fetch": true, "summarize": true,
 	"load_skill": true, "load_skill_resource": true,
-	"recall_memory": true, "load_memory": true, "stage_memory": true,
+	"recall_memory": true, "stage_memory": true,
 	"current_date":   true,
 	"list_artifacts": true, "read_artifact": true,
 	"stage_pr": true, "stage_review": true, "stage_comment": true, "unstage": true, "stage_push": true,

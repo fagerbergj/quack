@@ -60,7 +60,6 @@ const mcpServerName = "quackmcp"
 // Tool names shared by registrations and mcpToolNames. They match the native registry names: the shim's
 // "<server>_<tool>" prefix keeps them collision-free, and a worker must read the same name on either surface.
 const (
-	toolLoadMemory    = "load_memory"
 	toolStageMemory   = "stage_memory"
 	toolRecallMemory  = "recall_memory"
 	toolReadArtifact  = "read_artifact"
@@ -298,7 +297,7 @@ func registerWriteKindTool(srv *mcp.Server, c *recordstore.Client, sess vetting.
 	}
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        writeKindPrefix + kind,
-		Description: fmt.Sprintf("Write a new revision of a %q artifact. The registry validates the body and derives the id.", kind),
+		Description: spec.WriteToolDescription(kind),
 		InputSchema: &schema,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
 		round, turnID, headSHA, trigger := currentRound(sess)
@@ -354,10 +353,6 @@ func registerArtifactWriteTools(srv *mcp.Server, sess vetting.MemSession) {
 	}
 }
 
-type loadMemoryInput struct {
-	Query string `json:"query" jsonschema:"what to recall (a topic, not a document)"`
-}
-
 type stageMemoryInput struct {
 	Content string `json:"content" jsonschema:"one durable, atomic fact worth remembering"`
 	Kind    string `json:"kind,omitempty" jsonschema:"which bucket this belongs to: repo, role, or user (default: repo)"`
@@ -380,7 +375,7 @@ func memoryMCPURL() string {
 	memoryMCP.once.Do(func() {
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
-			slog.Warn("acp: memory MCP server failed to start; sessions run without load_memory/stage_memory", "component", "acp", "err", err)
+			slog.Warn("acp: memory MCP server failed to start; sessions run without recall_memory/stage_memory", "component", "acp", "err", err)
 			return
 		}
 		srv := &http.Server{Handler: memoryMCPHandler()}
@@ -404,21 +399,6 @@ func memoryMCPHandler() http.Handler {
 		vetting.MarkMemSessionConnected(secret)
 		slog.Info("acp: loopback MCP session connected", "component", "acp")
 		if sess.Memory != nil {
-			mcp.AddTool(srv, &mcp.Tool{
-				Name:        toolLoadMemory,
-				Description: "Recall relevant notes from shared memory about this repository/task family.",
-			}, func(ctx context.Context, _ *mcp.CallToolRequest, args loadMemoryInput) (*mcp.CallToolResult, any, error) {
-				text, hits := sess.Memory.RecallWithHits(ctx, sess.Scope, args.Query)
-				// Recorded and voted exactly like recall_memory.
-				sess.Memory.LogRecallLedgerOnly(ctx, sess.Ledger, sess.ChatID, sess.NodeID, "tool", hits)
-				if sess.Recalled != nil {
-					sess.Recalled.Add(hits...)
-				}
-				if text == "" {
-					text = "(no relevant memory found)"
-				}
-				return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, nil, nil
-			})
 			mcp.AddTool(srv, &mcp.Tool{
 				Name:        toolStageMemory,
 				Description: "Stage a durable fact learned this run for shared memory. It is written only if this node's work is accepted.",

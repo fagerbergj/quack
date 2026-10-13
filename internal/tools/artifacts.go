@@ -179,7 +179,7 @@ func NewWriteKindTool(c *recordstore.Client, nodeID, kind string, spec recordsto
 	return functiontool.New[map[string]any, string](
 		functiontool.Config{
 			Name:        "write_" + kind,
-			Description: fmt.Sprintf("Write a new revision of a %q artifact. The registry validates the body and derives the id.", kind),
+			Description: spec.WriteToolDescription(kind),
 			InputSchema: &schema,
 		},
 		func(ctx agent.Context, args map[string]any) (string, error) {

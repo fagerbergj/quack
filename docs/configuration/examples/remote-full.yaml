@@ -86,7 +86,7 @@ agents:
     memory:
       bucket: research
     judge_rounds: 1
-    tools: [web_search, web_fetch, summarize, current_date, load_memory, stage_memory, ask_user]
+    tools: [web_search, web_fetch, summarize, current_date, recall_memory, stage_memory, ask_user]
   # code-implementer/reviewer/explorer: override-only - bundle/model/tools/
   # judge_rounds/context_window come from the github plugin's own
   # agent.yaml, seeded once extensions.github below is enabled.

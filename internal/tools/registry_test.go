@@ -7,7 +7,7 @@ import (
 )
 
 // TestResolveNames guards the config-driven gating of runtime-conditional builtins,
-// dropped silently rather than erroring - load_memory is gated exactly like recall_memory.
+// dropped silently rather than erroring; load_memory is read as recall_memory.
 func TestResolveNames(t *testing.T) {
 	cases := []struct {
 		name             string
@@ -28,26 +28,20 @@ func TestResolveNames(t *testing.T) {
 			wantNames:        []string{},
 		},
 		{
-			name:             "load_memory present when task memory available",
+			name:             "load_memory resolves to recall_memory",
 			configured:       []string{"load_memory", "web_search"},
 			taskMemAvailable: true,
-			wantNames:        []string{"load_memory", "web_search"},
+			wantNames:        []string{"recall_memory", "web_search"},
 		},
 		{
-			name:             "load_memory absent when task memory unavailable",
-			configured:       []string{"load_memory", "web_search"},
+			name:             "recall_memory absent when task memory unavailable",
+			configured:       []string{"recall_memory", "web_search"},
 			taskMemAvailable: false,
 			wantNames:        []string{"web_search"},
 		},
 		{
-			name:             "load_memory then recall_memory collapses to the first",
+			name:             "load_memory and recall_memory together offer recall_memory once",
 			configured:       []string{"load_memory", "recall_memory", "web_search"},
-			taskMemAvailable: true,
-			wantNames:        []string{"load_memory", "web_search"},
-		},
-		{
-			name:             "recall_memory then load_memory collapses to the first",
-			configured:       []string{"recall_memory", "load_memory", "web_search"},
 			taskMemAvailable: true,
 			wantNames:        []string{"recall_memory", "web_search"},
 		},

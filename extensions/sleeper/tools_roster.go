@@ -57,9 +57,9 @@ func (e *extension) rosterTool() tool.Tool {
 		functiontool.Config{
 			Name: "sleeper_roster",
 			Description: "Get a roster for the current NFL week: starters by slot, bench, reserve/taxi, " +
-				"record, fpts, waiver position, FAAB used/left. " + playerGameDoc + " `league_id` falls " +
+				"record, fpts, waiver position, FAAB used/left. `league_id` falls " +
 				"back to default_league; `user` or `roster_id` picks the team, falling back to default_user. " +
-				"Reserve (IR) and taxi players carry no game. " + timeDoc,
+				"Each player carries their own `game`; reserve (IR) and taxi players carry none. " + seePlayerDoc,
 		},
 		func(ctx adkagent.Context, a rosterArgs) (rosterResult, error) { return e.getRoster(ctx, a) },
 	)

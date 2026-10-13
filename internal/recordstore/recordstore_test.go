@@ -1009,3 +1009,13 @@ func containsAll(s string, subs ...string) bool {
 	}
 	return true
 }
+
+// TestWriteToolDescription: a kind's own description wins; without one the tool still says what it writes.
+func TestWriteToolDescription(t *testing.T) {
+	if got := (KindSpec{Description: "Record one finding."}).WriteToolDescription("finding"); got != "Record one finding." {
+		t.Errorf("own description = %q", got)
+	}
+	if got := (KindSpec{}).WriteToolDescription("lineup"); !strings.Contains(got, `"lineup" artifact`) {
+		t.Errorf("fallback = %q, want it to name the kind", got)
+	}
+}

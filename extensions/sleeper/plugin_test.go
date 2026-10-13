@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -61,6 +62,19 @@ func TestPluginAgentToolsExist(t *testing.T) {
 			if !registered[name] && !quackBuiltinTools[name] {
 				t.Errorf("%s: tool %q is neither a sleeper extension tool nor an allowlisted quack builtin", a.name, name)
 			}
+		}
+	}
+}
+
+// TestGameToolsComeWithSleeperPlayer: only sleeper_player's description carries the game, lock and
+// time rules the other game-returning tools point at, so an agent offered one must be offered it too.
+func TestGameToolsComeWithSleeperPlayer(t *testing.T) {
+	for _, a := range loadPluginAgents(t) {
+		gameTool := slices.ContainsFunc(a.Tools, func(n string) bool {
+			return n == "sleeper_roster" || n == "sleeper_matchup" || n == "sleeper_schedule"
+		})
+		if gameTool && !slices.Contains(a.Tools, "sleeper_player") {
+			t.Errorf("%s: offers a game-returning tool without sleeper_player, which documents its game fields", a.name)
 		}
 	}
 }

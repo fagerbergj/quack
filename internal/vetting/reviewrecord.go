@@ -68,7 +68,11 @@ func init() {
 	recordstore.Register(kindCodeReview, recordstore.KindSpec{
 		Class:      recordstore.Structured,
 		JSONSchema: codeReviewJSONSchema,
-		Validate:   validateCodeReview,
+		Description: "Record this PR's review verdict, once, after every finding is written; a later call replaces it. " +
+			"`takeaway` is one line; `finding_ids` cites the finding artifacts it rests on (ids from write_finding, " +
+			"or list_artifacts kind finding when another node wrote them), `dismissed` the candidates you ruled " +
+			"out, `clean` the files reviewed with nothing to report.",
+		Validate: validateCodeReview,
 		// Instance = the hint verbatim: the subject's external identity
 		// (e.g. "pr:123"), the same value regardless of round or node.
 		Identity:      func(_ []byte, hint string) (string, error) { return requireHint(hint) },
@@ -76,8 +80,11 @@ func init() {
 		AgentWritable: true,
 	})
 	recordstore.Register(kindFinding, recordstore.KindSpec{
-		Class:         recordstore.Structured,
-		JSONSchema:    findingJSONSchema,
+		Class:      recordstore.Structured,
+		JSONSchema: findingJSONSchema,
+		Description: "Record one review finding, once per defect. Its id derives from path, title and snippet, " +
+			"so the same defect described the same way keeps its id across reviewers and rounds; cite it in " +
+			"write_code_review's finding_ids.",
 		Validate:      validateFinding,
 		Identity:      findingIdentity,
 		AgentWritable: true,
