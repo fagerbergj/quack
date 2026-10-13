@@ -33,7 +33,7 @@ overlap:
       reason: web_fetch stores a large page as an artifact that read_artifact and grep_artifacts page through
     - tools: [web_search, web_fetch]
       reason: search returns URLs and fetch reads one; they share web vocabulary, not a job
-    - tools: [load_memory, recall_memory, stage_memory]
+    - tools: [recall_memory, stage_memory]
       reason: the read and write halves of one shared task memory
     - tools: [current_date, sleeper_schedule]
       reason: both explain the user's time zone; one returns now, the other kickoff times

@@ -207,8 +207,7 @@ func TestRealCatalogFlagsKnownOverlaps(t *testing.T) {
 		byName[d.Name] = d
 	}
 	for _, p := range [][2]string{
-		{"ask_user", "get_user_choice"}, {"stage_memory", "commit_memory"},
-		{"recall_memory", "load_memory"}, {"read_file", "read_artifact"},
+		{"ask_user", "get_user_choice"}, {"stage_memory", "commit_memory"}, {"read_file", "read_artifact"},
 	} {
 		a, aok := byName[p[0]]
 		b, bok := byName[p[1]]

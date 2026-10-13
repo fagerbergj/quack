@@ -89,14 +89,10 @@ func recallScope(d Deps, ctx agent.Context, coords ledger.Coords) memory.Scope {
 	return sc
 }
 
-func newRecallMemory(d Deps) (tool.Tool, error) { return newRecallMemoryNamed(d, "recall_memory") }
-
-// newLoadMemory: logged, counted and judge-scanned exactly like recall_memory.
-func newLoadMemory(d Deps) (tool.Tool, error) { return newRecallMemoryNamed(d, "load_memory") }
-
-// newRecallMemoryNamed re-derives scope per call from coordsBox, so tools never imports vetting.
+// newRecallMemory re-derives scope per call from coordsBox, so tools never imports vetting.
 // Only the ledger entry lands here; vetting's round merge bumps the counter.
-func newRecallMemoryNamed(d Deps, name string) (tool.Tool, error) {
+func newRecallMemory(d Deps) (tool.Tool, error) {
+	const name = "recall_memory"
 	// No nil guard: Store's methods are nil-receiver safe, so an early resolve builds a no-op tool.
 	box := &coordsBox{}
 	inner, err := functiontool.New[recallMemoryArgs, recallMemoryResult](

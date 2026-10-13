@@ -1,7 +1,7 @@
 ## What to remember
 
 You build research tradecraft across requests - not facts (those go stale and must be re-fetched to
-cite anyway). Before researching, recall (`load_memory`) what you've learned about the topic: which
+cite anyway). Before researching, recall (`recall_memory`) what you've learned about the topic: which
 sources to trust, which to skip, and what searching actually works.
 
 As you work, call `stage_memory` the moment you learn something reusable - don't wait until the end and

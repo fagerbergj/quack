@@ -126,9 +126,9 @@ func connectMCP(t *testing.T, ts *httptest.Server, path string) *mcp.ClientSessi
 	return cs
 }
 
-// TestMemoryMCP_LoadMemory_ScopedRecall: load_memory resolves only the registered node's buckets,
+// TestMemoryMCP_RecallMemory_ScopedRecall: recall_memory resolves only the registered node's buckets,
 // never one named by the tool call (scope from registration, not args).
-func TestMemoryMCP_LoadMemory_ScopedRecall(t *testing.T) {
+func TestMemoryMCP_RecallMemory_ScopedRecall(t *testing.T) {
 	ctx := context.Background()
 	store, err := memory.OpenSQLite(ctx, t.TempDir()+"/mem.db", fakeMCPEmbedder{}, verbatimConsolidator{}, "test_mcp_load", "task", 5, 0)
 	if err != nil {
@@ -151,16 +151,16 @@ func TestMemoryMCP_LoadMemory_ScopedRecall(t *testing.T) {
 	t.Cleanup(func() { ts.Close() })
 	cs := connectMCP(t, ts, secret)
 
-	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "load_memory", Arguments: map[string]any{"query": "test commands"}})
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "recall_memory", Arguments: map[string]any{"query": "test commands"}})
 	if err != nil {
-		t.Fatalf("CallTool load_memory: %v", err)
+		t.Fatalf("CallTool recall_memory: %v", err)
 	}
 	text := toolResultText(t, res)
 	if !strings.Contains(text, "go test") {
-		t.Fatalf("load_memory result missing the in-scope memory: %q", text)
+		t.Fatalf("recall_memory result missing the in-scope memory: %q", text)
 	}
 	if strings.Contains(text, "npm test") {
-		t.Fatalf("load_memory leaked an out-of-scope memory: %q", text)
+		t.Fatalf("recall_memory leaked an out-of-scope memory: %q", text)
 	}
 }
 
@@ -242,9 +242,9 @@ func TestMemoryMCP_CrossNodeIsolation(t *testing.T) {
 
 	// 1) Node A's client, using its OWN real secret, must see only its own bucket.
 	csA := connectMCP(t, ts, secretA)
-	res, err := csA.CallTool(ctx, &mcp.CallToolParams{Name: "load_memory", Arguments: map[string]any{"query": "build note"}})
+	res, err := csA.CallTool(ctx, &mcp.CallToolParams{Name: "recall_memory", Arguments: map[string]any{"query": "build note"}})
 	if err != nil {
-		t.Fatalf("CallTool load_memory (A, own secret): %v", err)
+		t.Fatalf("CallTool recall_memory (A, own secret): %v", err)
 	}
 	text := toolResultText(t, res)
 	if !strings.Contains(text, "node A's secret") {
@@ -258,8 +258,8 @@ func TestMemoryMCP_CrossNodeIsolation(t *testing.T) {
 	// so the call fails with a protocol error.
 	for _, guess := range []string{tokenA, tokenB, planID + "/node-b", "node-b", ""} {
 		csGuess := connectMCP(t, ts, guess)
-		if _, err := csGuess.CallTool(ctx, &mcp.CallToolParams{Name: "load_memory", Arguments: map[string]any{"query": "build note"}}); err == nil {
-			t.Fatalf("guessed path %q must NOT expose load_memory, but the call succeeded", guess)
+		if _, err := csGuess.CallTool(ctx, &mcp.CallToolParams{Name: "recall_memory", Arguments: map[string]any{"query": "build note"}}); err == nil {
+			t.Fatalf("guessed path %q must NOT expose recall_memory, but the call succeeded", guess)
 		}
 	}
 
@@ -355,75 +355,6 @@ func TestMemoryMCP_RecallMemory_JoinsReceivedSetAndVotes(t *testing.T) {
 	mems, _, err = store.List(ctx, []string{"repo:acme/recall-repo"}, 0, 10, true, "")
 	if err != nil || mems[0].Recalls != 0 {
 		t.Fatalf("point recalls bumped by the tool call directly, want deferred to the round merge: %v mems=%+v", err, mems)
-	}
-}
-
-// TestMemoryMCP_LoadMemory_LogsAndJoinsReceivedSet: load_memory logs through recall_memory's ledger path
-// and lands in the session's Recalled set, so it is judge-visible and counted once per node round.
-func TestMemoryMCP_LoadMemory_LogsAndJoinsReceivedSet(t *testing.T) {
-	ctx := context.Background()
-	store, err := memory.OpenSQLite(ctx, t.TempDir()+"/mem.db", fakeMCPEmbedder{}, verbatimConsolidator{}, "test_mcp_load_recorded", "task", 5, 0)
-	if err != nil {
-		t.Fatalf("OpenSQLite: %v", err)
-	}
-	sc := memory.Scope{Repo: "acme/load-repo"}
-	if _, err := store.Commit(ctx, sc, "seed", memory.Provenance{}, nil, "run go vet before every commit"); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-	mems, _, err := store.List(ctx, []string{"repo:acme/load-repo"}, 0, 10, true, "")
-	if err != nil || len(mems) != 1 {
-		t.Fatalf("List: %v mems=%+v", err, mems)
-	}
-	wantID := mems[0].ID
-
-	lgr := ledgertest.NewMemStore()
-	recalled := &vetting.RecallStage{}
-	secret := mustMemSecret(t)
-	vetting.RegisterMemSession(secret, vetting.MemSession{
-		Memory: store, Scope: sc, Recalled: recalled,
-		Ledger: lgr, ChatID: "chat-load", NodeID: "node-load",
-	})
-	defer vetting.UnregisterMemSession(secret)
-
-	ts := httptest.NewServer(memoryMCPHandler())
-	t.Cleanup(func() { ts.Close() })
-	cs := connectMCP(t, ts, secret)
-
-	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "load_memory", Arguments: map[string]any{"query": "commit checks"}})
-	if err != nil {
-		t.Fatalf("CallTool load_memory: %v", err)
-	}
-	text := toolResultText(t, res)
-	if !strings.Contains(text, "go vet") {
-		t.Fatalf("load_memory result missing the seeded memory: %q", text)
-	}
-
-	// 1) One memory.recall ledger entry, source "tool".
-	entries, err := lgr.ReadEntries(ctx, "chat-load", 0)
-	if err != nil {
-		t.Fatalf("ReadEntries: %v", err)
-	}
-	var recallEntries []ledger.Entry
-	for _, e := range entries {
-		if e.Kind == ledger.KindMemoryRecall {
-			recallEntries = append(recallEntries, e)
-		}
-	}
-	if len(recallEntries) != 1 {
-		t.Fatalf("memory.recall ledger entries = %d, want exactly 1", len(recallEntries))
-	}
-	var payload ledger.MemoryRecallPayload
-	if err := json.Unmarshal(recallEntries[0].Payload, &payload); err != nil {
-		t.Fatalf("unmarshal payload: %v", err)
-	}
-	if payload.Source != "tool" || len(payload.Entries) != 1 || payload.Entries[0].ID != wantID {
-		t.Fatalf("memory.recall payload = %+v, want source=tool entries=[%s]", payload, wantID)
-	}
-
-	// 2) Joins the session's received set, judge-visible via mergeMemoryHits.
-	snap := recalled.Snapshot()
-	if len(snap) != 1 || snap[0].ID != wantID {
-		t.Fatalf("RecallStage snapshot = %+v, want exactly the seeded memory", snap)
 	}
 }
 

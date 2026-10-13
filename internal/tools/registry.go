@@ -44,9 +44,9 @@ type Deps struct {
 	// guard's hard stop, nil leaves only the soft refusal.
 	RepeatGuardTripped func(chatID, nodeID, msg string) bool
 	ExtTools           map[string]tool.Tool
-	Memory             *memory.Store      // recall_memory/load_memory (nil = not offered - see ResolveNames)
-	MemoryRole         string             // recall_memory/load_memory's role bucket; empty falls back to repo then user
-	Ledger             ledger.LedgerStore // recall_memory/load_memory's memory.recall ledger entries
+	Memory             *memory.Store      // recall_memory (nil = not offered - see ResolveNames)
+	MemoryRole         string             // recall_memory's role bucket; empty falls back to repo then user
+	Ledger             ledger.LedgerStore // recall_memory's memory.recall ledger entries
 	// RecordStore/NodeID/Coords back web_fetch's large-page storage and
 	// grep_artifacts; nil RecordStore degrades both (no chat context).
 	RecordStore *recordstore.Client
@@ -69,7 +69,6 @@ var registry = map[string]constructor{
 	"current_date":   newCurrentDate,
 	"stage_memory":   newStageMemory,
 	"recall_memory":  newRecallMemory,
-	"load_memory":    newLoadMemory,
 	"ask_user":       func(Deps) (tool.Tool, error) { return NewAskUserTool() },
 	"read_file":      newReadFile,
 	"list_dir":       newListDir,
@@ -84,8 +83,8 @@ var registry = map[string]constructor{
 // BuiltinNames lists the registry's tool names, sorted; tools/promptlint measures each one's declaration.
 func BuiltinNames() []string { return slices.Sorted(maps.Keys(registry)) }
 
-// ResolveNames drops builtins whose dependency is off and collapses recall_memory/load_memory (one
-// tool, two names) to whichever is listed first. Artifact tools are per-dispatch.
+// ResolveNames drops builtins whose dependency is off and reads load_memory, the tool's former name
+// that deployed configs still list, as recall_memory, offered once. Artifact tools are per-dispatch.
 func ResolveNames(configured []string, taskMemAvailable bool) (names []string) {
 	names = make([]string, 0, len(configured))
 	sawMemoryRecall := false
@@ -103,6 +102,7 @@ func ResolveNames(configured []string, taskMemAvailable bool) (names []string) {
 				continue
 			}
 			sawMemoryRecall = true
+			t = "recall_memory"
 		}
 		names = append(names, t)
 	}

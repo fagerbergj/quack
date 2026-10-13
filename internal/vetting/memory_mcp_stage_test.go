@@ -199,7 +199,7 @@ func TestRunGatedRefine_ACPRecalledMemory_CountsOnceDespiteRepeatCalls(t *testin
 		t.Fatalf("NewMemSecret: %v", err)
 	}
 	recalled := &RecallStage{}
-	// Three loopback recall_memory/load_memory calls for the same memory in one round.
+	// Three loopback recall_memory calls for the same memory in one round.
 	for i := 0; i < 3; i++ {
 		recalled.Add(memory.Delivered{ID: wantID, Content: "run go vet before committing"})
 	}
