@@ -136,6 +136,18 @@ func endSettledExtRun(obs extsdk.RunObserver, run settledRun) {
 
 const settledRunError = "quack restarted and could not resume this run; re-trigger it to start over"
 
+// endSettledStreams ends each settled chat's transcript failed, so a client still following it stops instead of
+// reconnecting until it gives up. It runs before the server accepts runs, so no new run's stream can race it.
+func endSettledStreams(ctx context.Context, runs []settledRun, hub *stream.Hub, eventLog *runlog.EventLog) {
+	for _, r := range runs {
+		hub.Reset(r.ChatID)
+		eventLog.Reopen(ctx, hub, r.ChatID)
+		endReopenedStream(ctx, hub, eventLog, r.ChatID, stream.Errorf(settledStreamError))
+	}
+}
+
+const settledStreamError = "quack restarted and could not resume this run; send the message again to retry"
+
 // syncFinishedNodeRecords repairs recent finished nodes' dag_node records off the boot path;
 // older plans are left alone, as boot never resumes them either.
 func syncFinishedNodeRecords(ctx context.Context, st *store.Store) {
@@ -304,14 +316,18 @@ func driveBootRun(ctx context.Context, chatID string, orch *orchestrator.Orchest
 	})
 }
 
-// endReopenedStream ends the transcript Reopen replayed for a boot run that never started, so no subscriber
-// waits on it forever. A run already holding the chat owns the stream and closes it itself.
-func endReopenedStream(ctx context.Context, hub *stream.Hub, eventLog *runlog.EventLog, chatID string) {
+// endReopenedStream ends the transcript Reopen replayed for a boot run that never started with evs, then done, so
+// no subscriber waits on it forever. A run already holding the chat owns the stream and closes it itself.
+func endReopenedStream(ctx context.Context, hub *stream.Hub, eventLog *runlog.EventLog, chatID string, evs ...stream.SSEEvent) {
 	noop := func() {}
 	if !hub.RegisterRun(chatID, "", noop) {
 		return
 	}
-	runlog.NewPublisher(ctx, hub, eventLog, chatID).Publish(stream.Done())
+	pub := runlog.NewPublisher(ctx, hub, eventLog, chatID)
+	for _, ev := range evs {
+		pub.Publish(ev)
+	}
+	pub.Publish(stream.Done())
 	eventLog.FinishRun(hub, chatID, "", noop)
 }
 

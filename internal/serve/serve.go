@@ -799,6 +799,7 @@ func (b *boot) initOrchestrator(ctx context.Context, st *store.Store, llm model.
 	if err != nil {
 		return nil, err
 	}
+	endSettledStreams(ctx, resume.Settled, runHub, bootEventLog)
 	// Re-enter each resumed node's graph only after the orchestrator exists:
 	// a crash here leaves them paused; the next boot picks them up (reconcile already ran).
 	startResumedNodes(ctx, resume.Start, orch, st, runHub, bootEventLog, sdkExts, bootResumeConcurrency)
