@@ -94,6 +94,17 @@ export const DoneWithTokens: Story = {
   },
 }
 
+// Failed tool calls count on the closed summary, so a rate-limited search shows without opening the feed.
+export const DoneWithFailedTools: Story = {
+  args: {
+    ...DoneWithTokens.args,
+    runs: [workerDone([
+      { kind: 'tool', tool: { callId: 'f1', name: 'web_search', args: { query: 'Dublin weather' }, result: { error: 'web_search unavailable: Too Many Requests' }, done: true } },
+      ...researchActivity,
+    ])],
+  },
+}
+
 // A half-width card (two researchers side by side) with every header badge: the agent name keeps its floor and
 // the badges wrap beside it.
 export const LongHeaderBadges: Story = {

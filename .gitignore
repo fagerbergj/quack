@@ -3,6 +3,7 @@ node_modules
 frontend/dist
 frontend/render-check/
 frontend/.vitest-attachments/
+frontend/.vitest/
 frontend/src/__screenshots__/
 /quack
 /quack-sandbox
