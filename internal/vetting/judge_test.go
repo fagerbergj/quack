@@ -1367,6 +1367,25 @@ func TestSubmitVerdict_NearMissPayloads(t *testing.T) {
 			t.Fatal("want validation error for array criteria")
 		}
 	})
+
+	// Judges send criteria as a JSON string; the callback decodes it before Run validates.
+	t.Run("stringified criteria", func(t *testing.T) {
+		var sink verdict
+		submit, err := newSubmitVerdictTool(&sink, nil)
+		if err != nil {
+			t.Fatalf("newSubmitVerdictTool: %v", err)
+		}
+		args := map[string]any{"score": 3.0, "criteria": `{"grounded": {"score": 3, "reason": "ok"}}`}
+		if _, err := decodeStringifiedVerdict(nil, submit, args); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := runVerdictTool(t, submit, args); err != nil {
+			t.Fatalf("Run rejected decoded criteria: %v", err)
+		}
+		if sink.Criteria["grounded"].Score != 3 {
+			t.Fatalf("criterion lost: %+v", sink.Criteria)
+		}
+	})
 }
 
 // TestInferAnchorKind pins the inference table, ambiguity included.
