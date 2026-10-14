@@ -254,7 +254,9 @@ func appendNodeEvent(ctx context.Context, cfg Config, nodeID, turnID, kind strin
 		Turn        string `json:"turn"`
 		Round       int    `json:"round"`
 		ResumedFrom string `json:"resumed_from,omitempty"`
-	}{NodeID: nodeID, Turn: turnID, Round: rounds, ResumedFrom: cfg.ResumedFrom})
+		// Continued: a paused or interrupted attempt carrying on, which stamps no resumed_from.
+		Continued bool `json:"continued,omitempty"`
+	}{NodeID: nodeID, Turn: turnID, Round: rounds, ResumedFrom: cfg.ResumedFrom, Continued: !cfg.AttemptStartedAt.IsZero()})
 	if err != nil {
 		return
 	}

@@ -2,6 +2,7 @@ package bundle
 
 import (
 	"encoding/json"
+	"sort"
 	"strings"
 	"time"
 
@@ -15,9 +16,11 @@ type StreamKey struct {
 	Node  string
 	Agent string
 	Round string
+	// Turn is set only on NodeRuns keys: a recurring job reruns one node id under the same round ids every turn.
+	Turn string
 }
 
-func (k StreamKey) String() string { return k.Node + "/" + k.Agent + "/" + k.Round }
+func (k StreamKey) String() string { return k.Node + "/" + k.Agent + "/" + k.Round + "/" + k.Turn }
 
 // chatEntry is one recorded llm.call entry.
 type chatEntry struct {
@@ -64,6 +67,14 @@ type Session struct {
 
 	// Recorded judge verdicts (collected outside per-stream sequences).
 	evalScores []EvalScore
+
+	// turnStarts: each node's fresh node.started entries, oldest first - the turn boundaries NodeRuns splits on.
+	turnStarts map[string][]turnStart
+}
+
+type turnStart struct {
+	at   time.Time
+	turn string
 }
 
 func (s *Session) state(key StreamKey) *streamState {
@@ -80,6 +91,8 @@ func (s *Session) state(key StreamKey) *streamState {
 func (s *Session) ingest(e ledger.Entry) {
 	key := StreamKey{Node: e.NodeID, Agent: e.Agent, Round: e.Round}
 	switch e.Kind {
+	case ledger.KindNodeStarted:
+		s.addTurnStart(e)
 	case ledger.KindEvalScore:
 		var p ledger.EvalScorePayload
 		if json.Unmarshal(e.Payload, &p) != nil {
@@ -121,6 +134,56 @@ func (s *Session) finalize() {
 		sortByTime(st.agents, func(e invokeAgentEntry) time.Time { return e.ts })
 	}
 	sortByTime(s.evalScores, func(e EvalScore) time.Time { return e.Timestamp })
+	for _, starts := range s.turnStarts {
+		sortByTime(starts, func(e turnStart) time.Time { return e.at })
+	}
+}
+
+// addTurnStart records a fresh node.started as a turn boundary. A resumed or continued start opens no
+// turn, so its rounds fold into the run they carry on: the original task and the final answer.
+func (s *Session) addTurnStart(e ledger.Entry) {
+	var p struct {
+		ResumedFrom string `json:"resumed_from"`
+		Continued   bool   `json:"continued"`
+	}
+	if json.Unmarshal(e.Payload, &p) == nil && (p.ResumedFrom != "" || p.Continued) {
+		return
+	}
+	if s.turnStarts == nil {
+		s.turnStarts = map[string][]turnStart{}
+	}
+	s.turnStarts[e.NodeID] = append(s.turnStarts[e.NodeID], turnStart{at: e.At, turn: e.TurnID})
+}
+
+// turnAt is the turn of node's latest fresh start at or before ts; "" before any, or with none recorded.
+func (s *Session) turnAt(node string, ts time.Time) string {
+	starts := s.turnStarts[node]
+	i := sort.Search(len(starts), func(i int) bool { return starts[i].at.After(ts) })
+	if i == 0 {
+		return ""
+	}
+	return starts[i-1].turn
+}
+
+// byTurn splits node's stream st by the turn each entry was recorded in, keeping their time order.
+func (s *Session) byTurn(node string, st *streamState) map[string]*streamState {
+	out := map[string]*streamState{}
+	part := func(ts time.Time) *streamState {
+		turn := s.turnAt(node, ts)
+		if out[turn] == nil {
+			out[turn] = &streamState{}
+		}
+		return out[turn]
+	}
+	for _, c := range st.chat {
+		p := part(c.ts)
+		p.chat = append(p.chat, c)
+	}
+	for _, a := range st.agents {
+		p := part(a.ts)
+		p.agents = append(p.agents, a)
+	}
+	return out
 }
 
 // rootStream is the top-level orchestrator/planner conversation (zero-value StreamKey).
@@ -163,18 +226,25 @@ type roundRun struct {
 	plugins       []ledger.PluginRef
 }
 
-// NodeRuns returns one NodeRun per non-root node whose Agent is in agents: task from its earliest round
-// (never a synthetic revise prompt), answer from its latest.
+// NodeRuns returns one NodeRun per non-root node and turn whose Agent is in agents: task from its earliest
+// round (never a synthetic revise prompt), answer from its latest.
 func (s *Session) NodeRuns(agents map[string]bool) map[StreamKey]NodeRun {
-	byNode := map[string][]roundRun{}
-	for key, st := range s.streams {
+	byNode := map[[2]string][]roundRun{}
+	for key, whole := range s.streams {
 		if key.Node == "" || !agents[key.Agent] {
 			continue
 		}
-		if rr, ok := chatRoundRun(key, st); ok {
-			byNode[key.Node] = append(byNode[key.Node], rr)
-		} else if rr, ok := acpRoundRun(key, st); ok {
-			byNode[key.Node] = append(byNode[key.Node], rr)
+		for turn, st := range s.byTurn(key.Node, whole) {
+			k := key
+			k.Turn = turn
+			rr, ok := chatRoundRun(k, st)
+			if !ok {
+				rr, ok = acpRoundRun(k, st)
+			}
+			if ok {
+				nt := [2]string{k.Node, turn}
+				byNode[nt] = append(byNode[nt], rr)
+			}
 		}
 	}
 

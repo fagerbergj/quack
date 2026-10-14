@@ -27,19 +27,21 @@ type Manifest struct {
 // observation entries (never ran, recording off, or hard-deleted).
 var ErrNoRecording = errors.New("ledger: no recording for this chat")
 
-// ReadObservations returns chatID's observation entries in seq order.
+// ReadObservations returns chatID's observation entries in seq order, plus its node.started entries:
+// their turn ids tell a recurring job's runs of one node apart.
 func ReadObservations(ctx context.Context, store LedgerStore, chatID string) ([]Entry, error) {
 	all, err := store.ReadEntries(ctx, chatID, 0)
 	if err != nil {
 		return nil, err
 	}
-	out := all[:0]
+	out, observed := all[:0], false
 	for _, e := range all {
-		if IsObservation(e.Kind) {
+		if IsObservation(e.Kind) || e.Kind == KindNodeStarted {
 			out = append(out, e)
+			observed = observed || IsObservation(e.Kind)
 		}
 	}
-	if len(out) == 0 {
+	if !observed {
 		return nil, ErrNoRecording
 	}
 	return out, nil

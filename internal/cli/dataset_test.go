@@ -833,3 +833,129 @@ func TestRunDatasetExport_AgentFilter(t *testing.T) {
 		}
 	}
 }
+
+// A sleeper job reruns one node id under the same round ids every turn: each turn is its own item.
+func TestRunDatasetExport_RecurringNodeExportsOneItemPerTurn(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	chatID := "ext:sleeper:1:6:trends"
+	setChatOrigin(t, st, chatID, "", "", "")
+	ls := ledgertest.NewMemStore()
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i, turn := range []string{"t1", "t2", "t3"} {
+		at := base.Add(time.Duration(i) * time.Hour)
+		started := ledger.Entry{ChatID: chatID, TurnID: turn, NodeID: "trends", Kind: ledger.KindNodeStarted, At: at}
+		call := llmCallRoundEntry(chatID, "trends", "trend-scout", "worker-r0", at.Add(time.Second), "scout "+turn, "trends "+turn)
+		for _, e := range []ledger.Entry{started, call} {
+			if _, err := ls.AppendIntent(ctx, e); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	fake := newFakeLangfuse(t)
+	srv := fake.server()
+	defer srv.Close()
+	lf := newTestClient(t, srv)
+
+	opts := ExportOpts{ChatID: chatID, Dataset: "my-dataset"}
+	first, _, err := RunDatasetExport(ctx, ls, st, lf, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, _, err := RunDatasetExport(ctx, ls, st, lf, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 3 || len(fake.items) != 3 {
+		t.Fatalf("want 3 items (one per turn) upserted twice, got %d exported, %d distinct", len(first), len(fake.items))
+	}
+	for i := range first {
+		if second[i].ItemID != first[i].ItemID {
+			t.Fatalf("re-export item %d id %s, want %s", i, second[i].ItemID, first[i].ItemID)
+		}
+	}
+	opts.Limit = 1
+	newest, _, err := RunDatasetExport(ctx, ls, st, lf, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta, _ := fake.items[newest[0].ItemID]["metadata"].(map[string]any)
+	if meta["turn_id"] != "t3" {
+		t.Fatalf("--limit 1 exported turn %v, want the newest, t3", meta["turn_id"])
+	}
+}
+
+// A resumed (or paused-then-continued) run opens a second node.started under a new turn; it folds into the
+// run it carries on, so the item keeps the original task rather than the continue prompt.
+func TestRunDatasetExport_ResumedRunFoldsIntoItsTurn(t *testing.T) {
+	for _, resumed := range []string{`{"resumed_from":"ctx-1"}`, `{"continued":true}`} {
+		ctx := context.Background()
+		st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		chatID := "ext:sleeper:1:6:trends"
+		setChatOrigin(t, st, chatID, "", "", "")
+		ls := ledgertest.NewMemStore()
+		base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+		for _, e := range []ledger.Entry{
+			{ChatID: chatID, TurnID: "t1", NodeID: "trends", Kind: ledger.KindNodeStarted, At: base},
+			llmCallRoundEntry(chatID, "trends", "trend-scout", "worker-r0", base.Add(time.Second), "scout the league", "partial"),
+			{ChatID: chatID, TurnID: "t2", NodeID: "trends", Kind: ledger.KindNodeStarted, At: base.Add(time.Hour), Payload: json.RawMessage(resumed)},
+			llmCallRoundEntry(chatID, "trends", "trend-scout", "worker-continue", base.Add(time.Hour+time.Second), "continue", "final trends"),
+		} {
+			if _, err := ls.AppendIntent(ctx, e); err != nil {
+				t.Fatal(err)
+			}
+		}
+		fake := newFakeLangfuse(t)
+		srv := fake.server()
+		got, _, err := RunDatasetExport(ctx, ls, st, newTestClient(t, srv), ExportOpts{ChatID: chatID, Dataset: "my-dataset"})
+		srv.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("%s: want the resumed run folded into one item, got %d", resumed, len(got))
+		}
+		input, _ := fake.items[got[0].ItemID]["input"].(map[string]any)
+		if input["task"] != "scout the league" {
+			t.Fatalf("%s: task = %v, want the original task", resumed, input["task"])
+		}
+	}
+}
+
+// `quack experiment run` replays items in ext:experiment: chats; --since must not export them back.
+func TestRunDatasetExport_SinceSkipsExperimentChats(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	live, err := st.CreateChat(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay := "ext:experiment:4f1c"
+	setChatOrigin(t, st, replay, "", "", "")
+	ls := ledgertest.NewMemStore()
+	for _, id := range []string{live.ID, replay} {
+		if _, err := ls.AppendIntent(ctx, llmCallEntry(id, "node-1", "synthesizer", "summarize", "summary")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var items map[string]map[string]any
+	srv := datasetExistsServer(t, &items)
+	defer srv.Close()
+
+	got, _, err := RunDatasetExport(ctx, ls, st, newTestClient(t, srv), ExportOpts{Since: time.Now().Add(-time.Hour), Dataset: "my-dataset"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ChatID != live.ID {
+		t.Fatalf("want only the real chat's item, got %+v", got)
+	}
+}
