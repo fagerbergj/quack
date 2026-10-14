@@ -145,6 +145,8 @@ type gitBinding struct {
 	cwd         string
 	chatID      string
 	nodeDir     string
+	// headSHA: the commit SetupClone pins an existing-head checkout to; "" is the branch tip.
+	headSHA string
 }
 
 // resolve: cwd-, node- and chat-aware Jail.Resolve for git tool paths.

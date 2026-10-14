@@ -47,7 +47,7 @@ func TestOrchestratorPinsAreBalanced(t *testing.T) {
 	drain(o.RetryNode(bg, "u", "no-plan", "", nil, "n1", ""))
 	drain(o.RunBoundPlan(bg, "u", "bound", SourceApp, dag.Plan{ID: "p", Nodes: []dag.Node{{ID: "n", AgentName: "ghost", Task: "t"}}}))
 	o.StartNode(bg, "u", "no-plan", "", "n1", "", func(stream.SSEEvent, error) bool { return true })
-	if _, err := o.BuildBoundPlan(bg, []dag.RawNode{{ID: "n", Agent: "ghost", Task: "t"}}, "m", nil, nil); err == nil {
+	if _, err := o.BuildBoundPlan(bg, []dag.RawNode{{ID: "n", Agent: "ghost", Task: "t"}}, nil, "m", nil, nil); err == nil {
 		t.Fatal("BuildBoundPlan accepted an unknown agent")
 	}
 

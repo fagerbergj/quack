@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -15,12 +16,15 @@ import (
 
 // SetupClone runs once before any node. checkSetup bootstraps the clone quack-side before any sandboxed
 // worker starts; the gate's rerun is a no-op via workspace.RunCheckSetup's cache.
-func SetupClone(ctx context.Context, jail *workspace.Jail, userID, chatID, dir, repoURL, baseRef, workBranch string, checkoutExistingHead bool, caps workspace.Caps, credentials []GitCredential, tokenSource GitTokenSource, checkSetup []string) (string, error) {
+func SetupClone(ctx context.Context, jail *workspace.Jail, userID, chatID, dir, repoURL, baseRef, workBranch, headSHA string, checkoutExistingHead bool, caps workspace.Caps, credentials []GitCredential, tokenSource GitTokenSource, checkSetup []string) (string, error) {
 	if _, err := validateCloneURL(repoURL); err != nil {
 		return "", err
 	}
+	if headSHA != "" && !fullSHA.MatchString(headSHA) {
+		return "", fmt.Errorf("setup: head_sha %q is not a full commit sha", headSHA)
+	}
 	b := gitBinding{userID: userID, jail: jail, caps: caps, credentials: credentials, tokenSource: tokenSource}
-	b.chatID = chatID
+	b.chatID, b.headSHA = chatID, headSHA
 	target, err := setupCloneAndBranch(ctx, b, dir, repoURL, baseRef, workBranch, checkoutExistingHead)
 	if err != nil {
 		return "", err
@@ -164,10 +168,22 @@ func isShallowRepo(ctx context.Context, dir string, caps workspace.Caps) bool {
 	return err == nil && strings.TrimSpace(out) == "true"
 }
 
+// fullSHA is a SHA-1 or SHA-256 object id: the only head pin a fetch refspec may carry.
+var fullSHA = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
+
 // trackingRefspec: an explicit-URL fetch updates no remote-tracking ref on its own, unlike a fetch of "origin".
 // The "+" lets a rebased, force-pushed branch replace the stale tracking ref a reused clone holds.
 func trackingRefspec(ref string) string {
 	return "+refs/heads/" + ref + ":refs/remotes/origin/" + ref
+}
+
+// headRefspec fetches a pinned head by sha, not branch: a replayed review's branch may have moved on or
+// been deleted since.
+func headRefspec(workBranch, headSHA string) string {
+	if headSHA == "" {
+		return trackingRefspec(workBranch)
+	}
+	return "+" + headSHA + ":refs/remotes/origin/" + workBranch
 }
 
 // runSetupCheckout never forces past a refused checkout (a reused tree may hold a dirty index);
@@ -184,7 +200,7 @@ func runSetupCheckout(ctx context.Context, b gitBinding, target, repoURL, baseRe
 				return fmt.Errorf("setup: unshallow base history for review: %w", err)
 			}
 		}
-		if _, _, err := runGit(ctx, target, []string{"fetch", "--quiet", repoURL, trackingRefspec(workBranch)}, b.caps, auth); err != nil {
+		if _, _, err := runGit(ctx, target, []string{"fetch", "--quiet", repoURL, headRefspec(workBranch, b.headSHA)}, b.caps, auth); err != nil {
 			return fmt.Errorf("setup: fetch review head %q: %w", workBranch, err)
 		}
 		if _, _, err := runGit(ctx, target, []string{"checkout", "--quiet", "-B", workBranch, "origin/" + workBranch}, b.caps, nil); err != nil {

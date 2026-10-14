@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -15,6 +16,7 @@ import (
 	"github.com/fagerbergj/quack/internal/langfuse"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/ledger/bundle"
+	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/store"
 )
 
@@ -40,6 +42,7 @@ type ExportItem struct {
 	NodeID     string
 	Agent      string
 	NoExpected bool // true when the item was exported with no expectedOutput (chat unmerged or no answer)
+	Clone      bool // true when the item carries a pinned clone (input.setup) for its replay
 }
 
 // datasetItemInput is a dataset item's `input` field: the node's task plus
@@ -47,6 +50,8 @@ type ExportItem struct {
 type datasetItemInput struct {
 	Task    string `json:"task"`
 	DiffRef string `json:"diff_ref,omitempty"`
+	// Setup is the clone a replay checks out first: a reviewed PR's head, pinned to the commit the run saw.
+	Setup *extsdk.Setup `json:"setup,omitempty"`
 }
 
 type datasetItemMetadata struct {
@@ -100,7 +105,11 @@ func RunDatasetExport(ctx context.Context, ls ledger.LedgerStore, st *store.Stor
 				}
 				ensured = true
 			}
-			item, err := exportItem(ctx, lf, opts.Dataset, chat, key, runs[key])
+			setup, err := replaySetup(ctx, ls, chat, key)
+			if err != nil {
+				return items, excludedBySince, fmt.Errorf("dataset export: chat %q: %w", chat.ID, err)
+			}
+			item, err := exportItem(ctx, lf, opts.Dataset, chat, key, runs[key], setup)
 			if err != nil {
 				return items, excludedBySince, err
 			}
@@ -186,9 +195,35 @@ func exportItemID(dataset, chatID, nodeID, turnID string) string {
 	return "quack-" + hex.EncodeToString(sum[:])[:32]
 }
 
-func exportItem(ctx context.Context, lf *langfuse.Client, dataset string, chat store.Chat, key bundle.StreamKey, run bundle.NodeRun) (ExportItem, error) {
+// replaySetup is the PR head clone key's run reviewed: the chat's dispatched setup, pinned to the head its
+// node started on (its revisions' lineage). nil for a chat with no PR head or a run that recorded none.
+func replaySetup(ctx context.Context, ls ledger.LedgerStore, chat store.Chat, key bundle.StreamKey) (*extsdk.Setup, error) {
+	var origin struct {
+		Setup *extsdk.Setup `json:"quackSetup"`
+	}
+	if json.Unmarshal([]byte(chat.Origin), &origin) != nil || origin.Setup == nil || origin.Setup.ExistingHeadRef == "" {
+		return nil, nil
+	}
+	revs, err := ledger.ReadByKinds(ctx, ls, chat.ID, 0, []string{ledger.KindArtifactRevision})
+	if err != nil {
+		return nil, err
+	}
+	for _, e := range revs {
+		var p struct {
+			Lineage recordstore.Lineage `json:"lineage"`
+		}
+		if e.NodeID == key.Node && e.TurnID == key.Turn && json.Unmarshal(e.Payload, &p) == nil && p.Lineage.HeadSHA != "" {
+			s := *origin.Setup
+			s.HeadSHA = p.Lineage.HeadSHA
+			return &s, nil
+		}
+	}
+	return nil, nil
+}
+
+func exportItem(ctx context.Context, lf *langfuse.Client, dataset string, chat store.Chat, key bundle.StreamKey, run bundle.NodeRun, setup *extsdk.Setup) (ExportItem, error) {
 	repo, href, state := chat.GitHub()
-	input := datasetItemInput{Task: run.Task, DiffRef: href}
+	input := datasetItemInput{Task: run.Task, DiffRef: href, Setup: setup}
 	var expected any
 	if state == string(extsdk.SubjectMerged) && run.Answer != "" {
 		expected = run.Answer
@@ -206,7 +241,7 @@ func exportItem(ctx context.Context, lf *langfuse.Client, dataset string, chat s
 	if err := lf.CreateDatasetItem(ctx, req); err != nil {
 		return ExportItem{}, fmt.Errorf("dataset export: create item for chat %q node %q: %w", chat.ID, key.Node, err)
 	}
-	return ExportItem{ItemID: id, ChatID: chat.ID, NodeID: key.Node, Agent: key.Agent, NoExpected: expected == nil}, nil
+	return ExportItem{ItemID: id, ChatID: chat.ID, NodeID: key.Node, Agent: key.Agent, NoExpected: expected == nil, Clone: setup != nil}, nil
 }
 
 // ensureDataset creates the named Langfuse dataset if it doesn't already exist -
@@ -229,13 +264,16 @@ func ensureDataset(ctx context.Context, lf *langfuse.Client, name string) error 
 func FormatExportSummary(items []ExportItem) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%-40s %-24s %-16s %s\n", "ITEM ID", "CHAT", "NODE", "AGENT")
-	noExpected := 0
+	noExpected, clones := 0, 0
 	for _, it := range items {
 		fmt.Fprintf(&b, "%-40s %-24s %-16s %s\n", it.ItemID, it.ChatID, it.NodeID, it.Agent)
 		if it.NoExpected {
 			noExpected++
 		}
+		if it.Clone {
+			clones++
+		}
 	}
-	fmt.Fprintf(&b, "%d item(s) exported (%d without expected output)\n", len(items), noExpected)
+	fmt.Fprintf(&b, "%d item(s) exported (%d without expected output, %d with a replay clone)\n", len(items), noExpected, clones)
 	return b.String()
 }

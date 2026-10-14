@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -108,7 +109,7 @@ func TestSetupCloneAndBranchFailsOnEmptyWorkBranch(t *testing.T) {
 
 func TestSetupCloneRejectsNonHTTPS(t *testing.T) {
 	b := newTestGitBinding(t)
-	if _, err := SetupClone(context.Background(), b.jail, b.userID, "", "repo", "file:///tmp/repo", "main", "quack/work", false, b.caps, nil, nil, nil); err == nil {
+	if _, err := SetupClone(context.Background(), b.jail, b.userID, "", "repo", "file:///tmp/repo", "main", "quack/work", "", false, b.caps, nil, nil, nil); err == nil {
 		t.Error("expected SetupClone to reject a non-https repo URL")
 	}
 }
@@ -572,6 +573,46 @@ func TestSetupCloneAndBranchReviewChecksOutRealHeadCommits(t *testing.T) {
 	}
 	if !strings.Contains(diffOut, "pr.txt") {
 		t.Errorf("git diff main...HEAD = %q, want it to show the PR's pr.txt change", diffOut)
+	}
+}
+
+// A replay pins the review head to the commit the original run saw: the branch has since moved on and been
+// deleted, leaving the commit reachable only from a PR ref, as GitHub keeps it.
+func TestSetupCloneAndBranchReviewPinsHeadSHA(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	addBranchFixture(t, bare, "pr/head")
+	out, err := exec.Command("git", "--git-dir", bare, "rev-parse", "pr/head").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewed := strings.TrimSpace(string(out))
+	rawGit(t, bare, "update-ref", "refs/pull/1/head", reviewed)
+	rawGit(t, bare, "branch", "-D", "pr/head")
+	b := newTestGitBinding(t)
+	b.headSHA = reviewed
+
+	target, err := setupCloneAndBranch(context.Background(), b, "n1/repo", "file://"+bare, "main", "pr/head", true)
+	if err != nil {
+		t.Fatalf("setupCloneAndBranch (pinned review): %v", err)
+	}
+	if got := strings.TrimSpace(runGitT(t, target, "rev-parse", "HEAD")); got != reviewed {
+		t.Errorf("HEAD = %s, want the pinned commit %s", got, reviewed)
+	}
+	if got := strings.TrimSpace(runGitT(t, target, "rev-parse", "--abbrev-ref", "HEAD")); got != "pr/head" {
+		t.Errorf("checked-out branch = %q, want pr/head", got)
+	}
+	if !strings.Contains(runGitT(t, target, "diff", "main...HEAD"), "pr.txt") {
+		t.Error("git diff main...HEAD lacks the PR's pr.txt change")
+	}
+}
+
+func TestSetupCloneRejectsNonSHAHead(t *testing.T) {
+	b := newTestGitBinding(t)
+	for _, sha := range []string{"main", "--upload-pack=x", strings.Repeat("a", 39)} {
+		if _, err := SetupClone(context.Background(), b.jail, b.userID, "", "repo", "https://github.com/acme/widget.git", "main", "pr/head", sha, true, b.caps, nil, nil, nil); err == nil || !strings.Contains(err.Error(), "head_sha") {
+			t.Errorf("head %q: err = %v, want a head_sha rejection before any git runs", sha, err)
+		}
 	}
 }
 

@@ -411,11 +411,11 @@ func (o *Orchestrator) Pin(ctx context.Context) (context.Context, func()) { retu
 
 // BuildBoundPlan builds a Plan from a workflow-catalog-bound node list: no plan judge, no review
 // fanout, no orchestrator LLM turn. allowedKinds nil means unrestricted; plan-only comes off ctx, as the
-// execute tool stamps it on a planned run.
-func (o *Orchestrator) BuildBoundPlan(ctx context.Context, nodes []dag.RawNode, message string, attachments []*genai.Part, allowedKinds []string) (*dag.Plan, error) {
+// execute tool stamps it on a planned run. setup (nil for none) is the dispatch's clone.
+func (o *Orchestrator) BuildBoundPlan(ctx context.Context, nodes []dag.RawNode, setup *dag.Setup, message string, attachments []*genai.Part, allowedKinds []string) (*dag.Plan, error) {
 	ctx, done := o.executor.Pin(ctx)
 	defer done()
-	plan, err := o.planner.BuildBound(ctx, nodes, nil, nil, message, attachments, allowedKinds)
+	plan, err := o.planner.BuildBound(ctx, nodes, setup, nil, message, attachments, allowedKinds)
 	if plan != nil {
 		plan.PlanOnly = tools.PlanOnlyFromContext(ctx)
 	}

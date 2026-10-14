@@ -43,6 +43,8 @@ type Setup struct {
 	Repo       string `json:"repo"`
 	BaseRef    string `json:"base_ref"`
 	WorkBranch string `json:"work_branch"`
+	// HeadSHA: the commit a CheckoutExistingHead checkout pins WorkBranch to; "" is the branch tip.
+	HeadSHA string `json:"head_sha,omitempty"`
 
 	CheckoutExistingHead bool `json:"-"`
 
