@@ -1016,8 +1016,6 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
             </div>
           )}
 
-          <ReconnectingBanner reconnecting={!!state.reconnecting} error={error} />
-
           {(error || createChatError) && (
             <div className="rounded-md bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 px-4 py-3 text-sm text-red-700 dark:text-red-400">
               {error || createChatError}
@@ -1026,6 +1024,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
         </div>
 
         <div ref={composerClearance.ref} className="absolute inset-x-0 bottom-0">
+          <ReconnectingBanner reconnecting={!!state.reconnecting} error={error} />
           <Composer
             disabled={isArchived}
             streaming={liveActive}
