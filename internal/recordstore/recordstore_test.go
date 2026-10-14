@@ -122,6 +122,42 @@ func TestKindOf(t *testing.T) {
 	}
 }
 
+func TestResolveID(t *testing.T) {
+	ids := []string{"trends:doc:33db", "web_page:323f", "text:a", "text:b", "text:c", "text:d", "text:e", "text:f"}
+	for _, tc := range []struct{ given, want, errHas string }{
+		{"doc:33db", "trends:doc:33db", ""},
+		{"33db", "trends:doc:33db", ""},
+		{"323f", "web_page:323f", ""},
+		{"trends", "trends:doc:33db", ""},
+		{"text", "", "matches 6 ids, pass one in full: text:a, text:b, text:c, text:d, text:e"},
+		{"nope", "", "nope: not found"},
+		{"", "", ": not found"},
+	} {
+		got, err := ResolveID(tc.given, ids)
+		if got != tc.want || (tc.errHas == "") != (err == nil) || (err != nil && !strings.Contains(err.Error(), tc.errHas)) {
+			t.Errorf("ResolveID(%q) = %q, %v; want %q, error containing %q", tc.given, got, err, tc.want, tc.errHas)
+		}
+	}
+}
+
+// TestClientResolve: Resolve matches only the listed ids keep admits.
+func TestClientResolve(t *testing.T) {
+	ctx := context.Background()
+	c := New(artifact.InMemoryService(), "app", "u1", "s1")
+	for _, hint := range []string{"doc:a", "doc:b"} {
+		if _, _, err := c.SaveBlob(ctx, "test.blob", []byte(hint), "text/plain", hint, Lineage{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := c.Resolve(ctx, "test.blob", nil); err == nil {
+		t.Error("Resolve(kind with two ids) = nil error, want ambiguous")
+	}
+	onlyA := func(it ArtifactSummary) bool { return strings.HasSuffix(it.ID, ":a") }
+	if got, err := c.Resolve(ctx, "test.blob", onlyA); err != nil || got != "test.blob:doc:a" {
+		t.Errorf("Resolve(kind, keep a) = %q, %v; want test.blob:doc:a", got, err)
+	}
+}
+
 func TestSaveStructuredRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	c := newTestClient(t)
