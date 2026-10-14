@@ -27,7 +27,7 @@ import { a2uiActionText, A2UI_SURFACE_KIND } from '../lib/a2ui'
 import { agentLabel, pendingChoice } from '../components/messageParts'
 
 // An absent or unknown live reason keeps the pre-field fallback: "user".
-export function toPauseReason(r?: string): PauseReason {
+function toPauseReason(r?: string): PauseReason {
   return r === 'shutdown' || r === 'awaiting_input' ? r : 'user'
 }
 
