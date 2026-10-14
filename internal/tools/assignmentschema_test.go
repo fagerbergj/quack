@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -119,6 +120,48 @@ func TestCreatePlanRejectsMisspelledTopLevelKey(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("want an error for a misspelled top-level key, not silent acceptance")
+	}
+}
+
+// Prod create_plan (2026-10-13) sent depends_on [0, 1] as JSON numbers: the description defines a
+// same-call sibling by its 0-based position, so a number names it as plainly as "0".
+func TestCreatePlanAcceptsIntegerDependsOn(t *testing.T) {
+	rt, _ := newCreatePlanForTest(t, []dag.AgentInfo{{Name: "code-reviewer"}, {Name: "synthesizer"}}, nil)
+	res, err := rt.Run(planToolCtx{newFakeCtx()}, map[string]any{
+		"assignments": []any{
+			map[string]any{"agent": "code-reviewer", "task": "review correctness"},
+			map[string]any{"agent": "code-reviewer", "task": "review tests"},
+			map[string]any{"agent": "synthesizer", "task": "merge the reviews", "depends_on": []any{0, 1}},
+		},
+		"delivery": map[string]any{"kind": "review"},
+	})
+	if err != nil {
+		t.Fatalf("create_plan: %v", err)
+	}
+	synth := res["assignments"].([]any)[2].(map[string]any)
+	if got := synth["depends_on"]; !reflect.DeepEqual(got, []any{"code-reviewer-1", "code-reviewer-2"}) {
+		t.Errorf("depends_on = %v, want both reviewers' minted ids", got)
+	}
+}
+
+// Prod create_plan calls (2026-10-12..14) sent null for keys they meant as unset, even one the
+// assignment schema lacks; the hooks drop those nulls, while a null required key still fails.
+func TestCreatePlanHooksDropRefusedNulls(t *testing.T) {
+	rt, _ := newCreatePlanForTest(t, []dag.AgentInfo{{Name: "code-reviewer"}}, nil)
+	g := hook(NewHooks(Deps{}, 0), 0, rt)
+	_, err := g.Run(planToolCtx{newFakeCtx()}, map[string]any{
+		"assignments": []any{map[string]any{"agent": "code-reviewer", "task": "review PR #1706",
+			"delivery": nil, "workdir": nil, "rubric": nil}},
+		"delivery": map[string]any{"kind": "review"},
+	})
+	if err != nil {
+		t.Fatalf("create_plan with null optionals: %v", err)
+	}
+	_, err = g.Run(planToolCtx{newFakeCtx()}, map[string]any{
+		"assignments": []any{map[string]any{"agent": "code-reviewer", "task": nil}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "task") {
+		t.Errorf("null required task: err = %v, want a schema error naming task", err)
 	}
 }
 

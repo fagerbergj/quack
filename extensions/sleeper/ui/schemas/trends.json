@@ -35,12 +35,15 @@
           "player": {
             "type": "object",
             "required": [
-              "id",
               "name"
             ],
             "properties": {
               "id": {
-                "type": "string"
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Sleeper player id; null for a player Sleeper's data does not resolve."
               },
               "name": {
                 "type": "string"
@@ -79,7 +82,7 @@
           },
           "text": {
             "type": "string",
-            "maxLength": 400
+            "maxLength": 1000
           },
           "link": {
             "type": "string",
@@ -90,7 +93,7 @@
     },
     "source_note": {
       "type": "string",
-      "maxLength": 300
+      "maxLength": 1000
     }
   },
   "required": [

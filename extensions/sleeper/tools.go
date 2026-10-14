@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 	_ "time/tzdata" // the `tz` argument must resolve even in an image without /usr/share/zoneinfo
+	"unicode"
 
 	"github.com/fagerbergj/quack/extensions/sleeper/sleepergen"
 )
@@ -151,9 +152,12 @@ func rosterIDForUser(rosters []sleepergen.Roster, users []sleepergen.LeagueUser,
 			return r.RosterId, true
 		}
 	}
-	needle := strings.ToLower(userOrName)
+	needle := nameKey(userOrName)
+	if needle == "" {
+		return 0, false
+	}
 	for _, u := range users {
-		if strings.ToLower(u.DisplayName) != needle && strings.ToLower(teamName(u)) != needle {
+		if nameKey(u.DisplayName) != needle && nameKey(teamName(u)) != needle {
 			continue
 		}
 		for _, r := range rosters {
@@ -163,6 +167,17 @@ func rosterIDForUser(rosters []sleepergen.Roster, users []sleepergen.LeagueUser,
 		}
 	}
 	return 0, false
+}
+
+// nameKey keeps only lowercased letters and digits: Sleeper names carry curly or doubled
+// apostrophes and emoji a caller retyping the name drops ("Breece’s Pieces" vs "Breece's Pieces").
+func nameKey(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return unicode.ToLower(r)
+		}
+		return -1
+	}, s)
 }
 
 // teamName prefers the user's league team_name over their display name.

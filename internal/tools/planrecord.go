@@ -118,13 +118,28 @@ func refuseStopped(ctx context.Context, inputs []assignmentInput) error {
 
 // assignmentInput: NodeID reuses an existing node, Agent hires a new one.
 type assignmentInput struct {
-	NodeID    string   `json:"node_id,omitempty"`
-	Agent     string   `json:"agent,omitempty"`
-	Task      string   `json:"task"`
-	DependsOn []string `json:"depends_on,omitempty"`
-	Checks    []string `json:"checks,omitempty"`
-	Workdir   string   `json:"workdir,omitempty"`
-	Rubric    string   `json:"rubric,omitempty"`
+	NodeID    string    `json:"node_id,omitempty"`
+	Agent     string    `json:"agent,omitempty"`
+	Task      string    `json:"task"`
+	DependsOn dependsOn `json:"depends_on,omitempty"`
+	Checks    []string  `json:"checks,omitempty"`
+	Workdir   string    `json:"workdir,omitempty"`
+	Rubric    string    `json:"rubric,omitempty"`
+}
+
+// dependsOn also takes a sibling's 0-based index as a JSON number: the description calls it a position.
+type dependsOn []string
+
+func (d *dependsOn) UnmarshalJSON(b []byte) error {
+	var raw []any
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	*d = make(dependsOn, len(raw))
+	for i, v := range raw {
+		(*d)[i] = fmt.Sprint(v)
+	}
+	return nil
 }
 
 // assignmentInputSchema constrains assignments[].agent to the current roster. With githubSetup it only
@@ -145,6 +160,9 @@ func assignmentInputSchema[T any](githubSetup *dag.Setup, names []string) (*json
 	agentProp.Enum = make([]any, len(names))
 	for i, n := range names {
 		agentProp.Enum[i] = n
+	}
+	if deps := assignments.Items.Properties["depends_on"]; deps != nil && deps.Items != nil {
+		deps.Items.Type, deps.Items.Types = "", []string{"string", "integer"}
 	}
 	if githubSetup != nil {
 		if setupProp, ok := schema.Properties["setup"]; ok {

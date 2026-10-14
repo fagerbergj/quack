@@ -29,13 +29,13 @@ func NewCreatePlanTool(c *recordstore.Client, nodeID string, githubSetup *dag.Se
 		return nil, fmt.Errorf("create_plan: %w", err)
 	}
 	setupDesc := " Every plan whose deliverable touches GitHub declares `setup` " +
-		"({repo, base_ref, work_branch} - the branch the work happens on) and `delivery` ({kind: " +
+		"({repo, base_ref, work_branch} - the branch the work happens on) and a top-level `delivery` ({kind: " +
 		"\"pull_request\"|\"review\"|\"comment\"}); the harness runs both AFTER the trust gate, deterministically " +
 		"- a node never pushes, opens a PR, or posts a review itself. Put the real repo/PR in a node's `task` " +
 		"text, never a guessed one."
 	if githubSetup != nil {
 		setupDesc = fmt.Sprintf(" This dispatch already came with its own repo/base_ref (a GitHub trigger) - "+
-			"this run clones %s@%s regardless, so `setup` isn't offered here; declare `delivery` ({kind: "+
+			"this run clones %s@%s regardless, so `setup` isn't offered here; declare a top-level `delivery` ({kind: "+
 			"\"pull_request\"|\"review\"|\"comment\"}) if the deliverable touches GitHub. Put the real PR/issue "+
 			"context in a node's `task` text.", githubSetup.Repo, githubSetup.BaseRef)
 	}

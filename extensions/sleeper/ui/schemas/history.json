@@ -177,7 +177,7 @@
         "string",
         "null"
       ],
-      "maxLength": 400
+      "maxLength": 1000
     },
     "cross_season_summary": {
       "type": [
@@ -193,11 +193,11 @@
           },
           "text": {
             "type": "string",
-            "maxLength": 400
+            "maxLength": 1000
           },
           "detail": {
             "type": "string",
-            "maxLength": 400
+            "maxLength": 1000
           }
         }
       }

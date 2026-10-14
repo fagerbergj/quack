@@ -159,7 +159,7 @@
           },
           "why": {
             "type": "string",
-            "maxLength": 400
+            "maxLength": 1000
           }
         }
       }
@@ -388,7 +388,7 @@
           },
           "note": {
             "type": "string",
-            "maxLength": 400
+            "maxLength": 1000
           }
         }
       }

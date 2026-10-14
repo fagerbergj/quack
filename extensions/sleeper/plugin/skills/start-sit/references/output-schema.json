@@ -38,7 +38,7 @@
     },
     "summary": {
       "type": "string",
-      "maxLength": 400,
+      "maxLength": 1000,
       "description": "Card summary, at most two sentences."
     },
     "starters": {
@@ -181,7 +181,7 @@
           },
           "why": {
             "type": "string",
-            "maxLength": 400
+            "maxLength": 1000
           }
         }
       }
@@ -257,7 +257,7 @@
           },
           "why": {
             "type": "string",
-            "maxLength": 400
+            "maxLength": 1000
           }
         }
       }
@@ -317,7 +317,7 @@
           },
           "why": {
             "type": "string",
-            "maxLength": 400
+            "maxLength": 1000
           }
         }
       }
@@ -462,14 +462,14 @@
           },
           "text": {
             "type": "string",
-            "maxLength": 400
+            "maxLength": 1000
           }
         }
       }
     },
     "source_note": {
       "type": "string",
-      "maxLength": 300
+      "maxLength": 1000
     }
   },
   "required": [

@@ -10,7 +10,7 @@
     },
     "summary": {
       "type": "string",
-      "maxLength": 400
+      "maxLength": 1000
     },
     "waiver_type": {
       "type": "string",
@@ -111,7 +111,7 @@
           },
           "why": {
             "type": "string",
-            "maxLength": 400
+            "maxLength": 1000
           }
         }
       }
@@ -172,14 +172,14 @@
           },
           "why": {
             "type": "string",
-            "maxLength": 400
+            "maxLength": 1000
           }
         }
       }
     },
     "source_note": {
       "type": "string",
-      "maxLength": 300
+      "maxLength": 1000
     }
   },
   "required": [

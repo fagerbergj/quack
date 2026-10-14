@@ -58,7 +58,7 @@
           },
           "why": {
             "type": "string",
-            "maxLength": 280,
+            "maxLength": 1000,
             "description": "The pre-kickoff signal that pointed the other way: injury/practice news, matchup/defense, snap share or target trend, weather, depth chart. Markdown [text](url) links allowed."
           },
           "knowable": {
@@ -105,7 +105,7 @@
           },
           "why": {
             "type": "string",
-            "maxLength": 280,
+            "maxLength": 1000,
             "description": "The pre-waiver-run signal, if any. Markdown [text](url) links allowed."
           }
         }
@@ -121,7 +121,7 @@
     },
     "summary": {
       "type": "string",
-      "maxLength": 400
+      "maxLength": 1000
     }
   },
   "required": [
