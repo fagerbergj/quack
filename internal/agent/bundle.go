@@ -112,17 +112,12 @@ func (b *Bundle) ResolvePrompt(ctx context.Context, res *artifactsrc.Resolver) a
 }
 
 // resolveBundle resolves one sourceable bundle file, keeping the artifact for provenance.
-// A bundle outside agents/ has no name to resolve, so its bytes are hashed the same way.
+// A bundle outside agents/ reads its file, hashed the same way, unless an experiment pins it.
 func resolveBundle(ctx context.Context, res *artifactsrc.Resolver, kind, dir, file string) (artifactsrc.Artifact, error) {
 	if name := artifactsrc.BundleName(kind, dir); name != "" {
 		return res.ResolveUsable(ctx, name)
 	}
-	p := path.Join(dir, file)
-	raw, err := bundledir.ReadFile(p)
-	if err != nil {
-		return artifactsrc.Artifact{}, err
-	}
-	return artifactsrc.FileArtifact(p, raw), nil
+	return res.ResolveUnshipped(ctx, kind, dir, file)
 }
 
 // LoadBundleMemory resolves the bundle's optional memory.md ("" when absent). The returned Artifact is

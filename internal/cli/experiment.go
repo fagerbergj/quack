@@ -154,7 +154,7 @@ func runExperimentItem(ctx context.Context, runner itemRunner, lf *langfuse.Clie
 	case run.TraceID == "":
 		res.Error = "no trace id recorded for the node run"
 	case opts.Prompt != "" && run.prompt() != opts.Prompt:
-		// A pin the node never resolved (a plugin agent's prompt is a bundle file, say) would compare the wrong version.
+		// A pin the node never resolved (its prompt came from somewhere else) would compare the wrong version.
 		res.Error = fmt.Sprintf("node ran prompt %q, not the pinned %s", run.prompt(), opts.Prompt)
 	}
 	if res.Error != "" {

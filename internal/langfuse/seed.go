@@ -30,13 +30,7 @@ func (c *Client) Seed(ctx context.Context, name, staticBody, staticHash string) 
 		return "", fmt.Errorf("langfuse: seed %q: %w", name, err)
 	}
 	if !found {
-		if _, err := c.CreatePrompt(ctx, CreatePromptRequest{
-			Name:          name,
-			Body:          staticBody,
-			Config:        map[string]any{},
-			Tags:          []string{SeedTag},
-			CommitMessage: seedCommitPrefix + staticHash,
-		}); err != nil {
+		if _, err := c.Push(ctx, name, staticBody, staticHash, []string{SeedTag}); err != nil {
 			return "", fmt.Errorf("langfuse: seed %q: create: %w", name, err)
 		}
 		return Created, nil
@@ -51,16 +45,18 @@ func (c *Client) Seed(ctx context.Context, name, staticBody, staticHash string) 
 		return Unchanged, nil
 	}
 
-	if _, err := c.CreatePrompt(ctx, CreatePromptRequest{
-		Name:          name,
-		Body:          staticBody,
-		Config:        map[string]any{},
-		Tags:          unionTag(p.Tags, SeedTag),
-		CommitMessage: seedCommitPrefix + staticHash,
-	}); err != nil {
+	if _, err := c.Push(ctx, name, staticBody, staticHash, unionTag(p.Tags, SeedTag)); err != nil {
 		return "", fmt.Errorf("langfuse: seed %q: create: %w", name, err)
 	}
 	return Updated, nil
+}
+
+// Push creates name's next version from a shipped body, unlabelled and committed as a seed so Seed
+// recognises it later.
+func (c *Client) Push(ctx context.Context, name, body, hash string, tags []string) (Prompt, error) {
+	return c.CreatePrompt(ctx, CreatePromptRequest{
+		Name: name, Body: body, Config: map[string]any{}, Tags: tags, CommitMessage: seedCommitPrefix + hash,
+	})
 }
 
 // unionTag keeps operator tags: every POST replaces a prompt's whole tag set.
