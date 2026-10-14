@@ -65,7 +65,7 @@ export function MermaidError({ code, error }: { code: string; error: string }) {
 
 export function MermaidPending() {
   return (
-    <div className="not-prose py-2 text-[11px] text-gray-500 dark:text-gray-400" role="status">
+    <div className="not-prose py-2 text-[11px] text-gray-500 dark:text-gray-400" role="status" data-mermaid-pending>
       Rendering diagram…
     </div>
   )
