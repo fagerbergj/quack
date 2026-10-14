@@ -381,6 +381,24 @@ describe('ChatStore - mid-node steering', () => {
     const dag = store.get('c').live?.dag
     expect(dag?.nodeStates['a']?.status).toBe('paused')
     expect(dag?.nodeAnswer['a']).toBe('partial draft')
+    expect(dag?.nodeStates['a']?.pauseReason).toBe('user') // no reason on the event: the pre-field fallback
+  })
+
+  it('node_paused carries a shutdown reason live, so a deploy never reads "paused by you"', async () => {
+    const sse = [
+      'event: dag_plan',
+      'data: {"plan_id":"p","nodes":[{"id":"a","agent":"researcher","task":"t","depends_on":[]}],"edges":[]}',
+      '',
+      'event: node_start',
+      'data: {"node_id":"a","agent":"researcher"}',
+      '',
+      'event: node_paused',
+      'data: {"node_id":"a","reason":"shutdown"}',
+      '',
+    ].join('\n')
+    fetchMock.mockResolvedValueOnce(makeStream(sse))
+    await store.submit('c', 'go')
+    expect(store.get('c').live?.dag?.nodeStates['a']?.pauseReason).toBe('shutdown')
   })
 
   it('node_needs_input marks the node waiting with its question', async () => {

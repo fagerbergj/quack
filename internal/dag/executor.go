@@ -203,7 +203,7 @@ func (s *DagStream) settle(stopped bool, runErr error) {
 func (s *DagStream) emitFinishTerminal(n Node, stopped bool, runErr error) {
 	delivered := s.ds.deliveredOf != nil && s.ds.deliveredOf(n.ID)
 	if !delivered && s.ds.pauseReasonOf != nil && s.ds.pauseReasonOf(n.ID) != "" {
-		s.yield(stream.NodePaused(n.ID), nil)
+		s.yield(stream.NodePaused(n.ID, string(s.ds.pauseReasonOf(n.ID))), nil)
 		return
 	}
 	empty := strings.TrimSpace(s.ds.outputs[n.ID]) == ""
@@ -616,7 +616,7 @@ func (s *dagStream) handle(ev *session.Event) bool {
 	if parked, _ := ev.CustomMetadata[parkedMeta].(bool); parked {
 		s.closeRun(node)
 		s.needsInput[node] = true
-		return s.emit(stream.NodePaused(node))
+		return s.emit(stream.NodePaused(node, s.pauseReason(node)))
 	}
 
 	last := lastSeg(ev.NodeInfo.Path)
@@ -1101,6 +1101,14 @@ func steerGen(runID string) int {
 	return n
 }
 
+// pauseReason is "" when the stream has no pause lookup (tests, or a node paused before it was wired).
+func (s *dagStream) pauseReason(node string) string {
+	if s.pauseReasonOf == nil {
+		return ""
+	}
+	return string(s.pauseReasonOf(node))
+}
+
 // terminalSpec: the finished node's terminal event, by priority - delivery, live pause, cancel,
 // delivered answer, shutdown pause, then failure.
 func (s *dagStream) terminalSpec(node, out string, pauseReason PauseReason) stream.SSEEvent {
@@ -1110,7 +1118,7 @@ func (s *dagStream) terminalSpec(node, out string, pauseReason PauseReason) stre
 		return stream.NodeDone(node, s.nodeDoneData(node))
 	case pauseReason != "" && pauseReason != PauseShutdown:
 		// Live user/HITL pause caught before commitDelivery ran, so the draft was never delivered.
-		return stream.NodePaused(node)
+		return stream.NodePaused(node, string(pauseReason))
 	case s.cancelled != nil && s.cancelled(node):
 		return s.cancelledEvent(node)
 	case out != "":
@@ -1118,7 +1126,7 @@ func (s *dagStream) terminalSpec(node, out string, pauseReason PauseReason) stre
 		// serve.DrainActiveRuns pauses exactly this population on SIGTERM.
 		return stream.NodeDone(node, s.nodeDoneData(node))
 	case pauseReason == PauseShutdown:
-		return stream.NodePaused(node)
+		return stream.NodePaused(node, string(pauseReason))
 	default:
 		ev := stream.NodeFailed(node, emptyNodeError(s.chatID, s.scope(node), s.agentByID[node]))
 		return stream.WithContextID(ev, s.contextOf(node))

@@ -472,7 +472,7 @@ func TestPersistNodeEventLatePauseKeepsCancelled(t *testing.T) {
 		t.Fatal(err)
 	}
 	PersistNodeEvent(st, c.ID, "p1", stream.SSEEvent{Name: stream.EventNodeCancelled, Data: stream.NodeCancelledData{NodeID: "n1"}})
-	PersistNodeEvent(st, c.ID, "p1", stream.NodePaused("n1"))
+	PersistNodeEvent(st, c.ID, "p1", stream.NodePaused("n1", "user"))
 	if n, err := st.GetDagNode(ctx, "p1", "n1"); err != nil || n == nil || n.Status != string(dag.StatusCancelled) || n.FinishedAt == nil {
 		t.Fatalf("row = %+v err=%v, want cancelled with finished_at kept", n, err)
 	}

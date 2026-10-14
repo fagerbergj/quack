@@ -353,11 +353,13 @@ func NodeSteered(nodeID, guidance string) SSEEvent {
 // `node_paused` event payload: node suspended by the user, keeping accumulated work. Resumable.
 type NodePausedData struct {
 	NodeID string `json:"node_id"`
+	// Reason: user, shutdown or awaiting_input, so a client labels a live pause without a reload.
+	Reason string `json:"reason,omitempty"`
 }
 
 // NodePaused builds a node_paused event.
-func NodePaused(nodeID string) SSEEvent {
-	return SSEEvent{Name: EventNodePaused, Data: NodePausedData{NodeID: nodeID}}
+func NodePaused(nodeID, reason string) SSEEvent {
+	return SSEEvent{Name: EventNodePaused, Data: NodePausedData{NodeID: nodeID, Reason: reason}}
 }
 
 // DeliveryResultData is one staged item's outcome as the delivering extension observed it, never the worker's.

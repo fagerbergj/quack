@@ -26,6 +26,11 @@ import { refreshClientConfig } from './clientConfig'
 import { a2uiActionText, A2UI_SURFACE_KIND } from '../lib/a2ui'
 import { agentLabel, pendingChoice } from '../components/messageParts'
 
+// An absent or unknown live reason keeps the pre-field fallback: "user".
+export function toPauseReason(r?: string): PauseReason {
+  return r === 'shutdown' || r === 'awaiting_input' ? r : 'user'
+}
+
 export type { NodeStatus, PauseReason, QueuedMessage }
 
 // Unclamped server start: a finished duration is server_finish - server_start on one clock, so skew never enters.
@@ -877,11 +882,11 @@ export class ChatStore {
           updateNodeRuns(nodeId, r => freezeOpenRuns(r, finishedAt))
           updateNodeState(nodeId, { status: 'cancelled', finishedAt, error: undefined })
         },
-        onNodePaused: nodeId => {
-          // Suspended, resumable, and not terminal for allDone. The event carries no reason, so "user" holds until
-          // the next reload reads the persisted pause_reason.
+        onNodePaused: (nodeId, reason) => {
+          // Suspended, resumable, and not terminal for allDone. A server older than the event's reason field
+          // sends none, so "user" holds until the next reload reads the persisted pause_reason.
           updateNodeRuns(nodeId, r => freezeOpenRuns(r, Date.now()))
-          updateNodeState(nodeId, { status: 'paused', error: undefined, pauseReason: 'user' })
+          updateNodeState(nodeId, { status: 'paused', error: undefined, pauseReason: toPauseReason(reason) })
         },
         onNodeNeedsInput: (nodeId, _interruptId, message) => {
           // Mid-node HITL: the node paused to ask the user. Freeze its open runs
