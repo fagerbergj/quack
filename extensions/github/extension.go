@@ -277,6 +277,8 @@ func (e *Extension) Start(ctx context.Context) error {
 	for sessionID, at := range claims {
 		e.inflight.LoadOrStore(sessionID, at)
 	}
+	// Not spawn: Wait runs at shutdown before this ctx ends, and must not block on a ticker.
+	go e.redeliverLoop(ctx)
 	return nil
 }
 
