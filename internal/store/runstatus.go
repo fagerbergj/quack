@@ -41,12 +41,12 @@ func (s *Store) MarkRunActive(ctx context.Context, chatID, turnID string) error 
 // StampRunOutcome records a run's terminal status on the chat row, clears the in-flight marker and bumps
 // updated_at.
 func (s *Store) StampRunOutcome(ctx context.Context, chatID, status, pendingQuestion string) error {
-	return s.db.WithContext(ctx).Model(&Chat{}).Where("id = ?", chatID).Updates(map[string]any{
+	return s.endRun(ctx, chatID, map[string]any{
 		"run_status":       status,
 		"pending_question": pendingQuestion,
 		"active_turn_id":   "",
 		"updated_at":       time.Now().UTC(),
-	}).Error
+	})
 }
 
 // StampCutRun is the tail of a run shutdown force-cancelled. With a suspended node it stamps the chat paused for
@@ -279,11 +279,20 @@ func (s *Store) SettleInterrupted(ctx context.Context, chatID string) {
 // stampRunStatusKeepingQuestion is StampRunOutcome minus the pending_question
 // write - see ScanOrphanedRuns.
 func (s *Store) stampRunStatusKeepingQuestion(ctx context.Context, chatID, status string) error {
-	return s.db.WithContext(ctx).Model(&Chat{}).Where("id = ?", chatID).Updates(map[string]any{
+	return s.endRun(ctx, chatID, map[string]any{
 		"run_status":     status,
 		"active_turn_id": "",
 		"updated_at":     time.Now().UTC(),
-	}).Error
+	})
+}
+
+// endRun writes a settled run's chat fields, then drops the chat's kept dispatch requests: only an in-flight
+// turn can be resent, and the run holding the chat is the one settling.
+func (s *Store) endRun(ctx context.Context, chatID string, fields map[string]any) error {
+	if err := s.db.WithContext(ctx).Model(&Chat{}).Where("id = ?", chatID).Updates(fields).Error; err != nil {
+		return err
+	}
+	return s.db.WithContext(ctx).Model(&ChatTurn{}).Where("chat_id = ? AND dispatch <> ?", chatID, "").Update("dispatch", "").Error
 }
 
 // chatsWithPausedNodes indexes the chats that currently own a suspended node.

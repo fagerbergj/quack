@@ -122,3 +122,24 @@ func TestBootResendsAnExtensionTurnCutBeforeAnyNode(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 	}
 }
+
+// A finished extension turn drops its kept dispatch: only an in-flight turn can be resent.
+func TestFinishedExtensionTurnDropsItsDispatch(t *testing.T) {
+	ctx, chatID := context.Background(), "ext:noop:done-1"
+	st, orch, hub, artifacts, _ := newExtTestStack(t)
+	var orchRef atomic.Pointer[orchestrator.Orchestrator]
+	orchRef.Store(orch)
+	var asExt extsdk.Extension = &noopExtWithRunObserver{outcomes: make(chan extsdk.RunOutcome, 1)}
+	var extHolder atomic.Pointer[extsdk.Extension]
+	extHolder.Store(&asExt)
+	req := extsdk.DispatchRequest{Chat: extsdk.ChatRef{LocalID: "done-1"}, Ask: extsdk.Ask{Message: "review it"}}
+	if err := newExtDispatch("noop", &orchRef, st, hub, runlog.NewEventLog(st), &extHolder, nil, artifacts)(ctx, req); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	waitRunEnded(t, hub, chatID)
+
+	turns, err := st.ListTurns(ctx, chatID)
+	if err != nil || len(turns) != 1 || turns[0].Dispatch != "" {
+		t.Fatalf("turns = %+v (%v), want one turn with its dispatch cleared", turns, err)
+	}
+}

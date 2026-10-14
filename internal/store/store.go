@@ -101,7 +101,7 @@ type ChatTurn struct {
 	// which would otherwise strand every earlier turn with no content to render.
 	UserText string `json:"-"`
 	// Dispatch is the extension request (JSON) that started the turn, kept so boot can send it again
-	// if a restart cuts the turn before any node ran. Empty for a REST turn.
+	// if a restart cuts the turn before any node ran. Empty for a REST turn, and cleared once the run settles.
 	Dispatch string `json:"-"`
 }
 
