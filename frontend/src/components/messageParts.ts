@@ -168,7 +168,7 @@ function mapRun(runs: AgentRun[], runId: string, fn: (run: AgentRun) => AgentRun
 }
 
 // `tool` is the latest tool call even when the tail has gone back to thinking.
-// Finished calls the per-row ✕ marks failed; an in-flight call has no result yet and never counts.
+// Finished calls whose row shows the failure icon; an in-flight call has no result yet and never counts.
 export function failedToolCount(activity: Activity[]): number {
   return activity.filter(a => a.kind === 'tool' && a.tool.done && toolFailed(a.tool.result)).length
 }
