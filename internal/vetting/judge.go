@@ -296,10 +296,16 @@ func decodeStringifiedVerdict(_ adkagent.Context, t tool.Tool, args map[string]a
 		return nil, nil
 	}
 	for _, k := range []string{"criteria", "findings", "memories"} {
-		if s, ok := args[k].(string); ok {
+		s, ok := args[k].(string)
+		if !ok {
+			continue
+		}
+		// Judges also drop a stringified value's final closer; restoring it saves the rejected turn.
+		for _, closer := range []string{"", "}", "]"} {
 			var v any
-			if json.Unmarshal([]byte(s), &v) == nil {
+			if json.Unmarshal([]byte(s+closer), &v) == nil {
 				args[k] = v
+				break
 			}
 		}
 	}
