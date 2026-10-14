@@ -71,6 +71,10 @@ async function waitForRenderSettled(root: Element): Promise<void> {
     img.addEventListener('load', () => res(), { once: true })
     img.addEventListener('error', () => res(), { once: true })
   }))))
+  // mermaid.render builds its svg off-tree, so no mutation in root marks the wait; poll for the placeholder to go.
+  for (const end = Date.now() + 5000; root.querySelector('[data-mermaid-pending]') && Date.now() < end;) {
+    await new Promise(r => setTimeout(r, 50))
+  }
   await waitForSettled(root)
 }
 

@@ -9,6 +9,8 @@ import { playwright } from '@vitest/browser-playwright'
 // stacking-context bugs, and horizontal overflow (#1192).
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // Pre-bundled up front: discovered mid-run, Vite reloads the page and the cold run fails the diagram stories.
+  optimizeDeps: { include: ['react-dom/client'] },
   test: {
     include: ['src/render-check.browser.test.tsx'],
     browser: {
