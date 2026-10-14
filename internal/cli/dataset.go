@@ -54,6 +54,7 @@ type datasetItemMetadata struct {
 	Agent           string `json:"agent"`
 	ChatID          string `json:"chat_id"`
 	NodeID          string `json:"node_id"`
+	TurnID          string `json:"turn_id,omitempty"`
 	PromptArtifact  string `json:"prompt_artifact,omitempty"`
 	PromptSource    string `json:"prompt_source,omitempty"`
 	PromptVersionID string `json:"prompt_version_id,omitempty"`
@@ -64,7 +65,7 @@ type datasetItemMetadata struct {
 	Plugins   []ledger.PluginRef   `json:"plugins,omitempty"`
 }
 
-// RunDatasetExport upserts one Langfuse dataset item per gated node run, keyed on (chat, node).
+// RunDatasetExport upserts one Langfuse dataset item per gated node run, keyed on (chat, node, turn).
 // excludedBySince is true only when --chat plus --since excluded the named chat entirely.
 func RunDatasetExport(ctx context.Context, ls ledger.LedgerStore, st *store.Store, lf *langfuse.Client, opts ExportOpts) (items []ExportItem, excludedBySince bool, err error) {
 	agents := datasetAgents
@@ -140,6 +141,10 @@ func exportChats(ctx context.Context, st *store.Store, opts ExportOpts) (chats [
 			return nil, false, fmt.Errorf("dataset export: list chats: %w", err)
 		}
 		for _, c := range page {
+			// Experiment replays re-run dataset items; exporting them would feed a dataset its own outputs.
+			if strings.HasPrefix(c.ID, "ext:"+experimentExtension+":") {
+				continue
+			}
 			if repo, _, _ := c.GitHub(); opts.Repo != "" && repo != opts.Repo {
 				continue
 			}
@@ -176,8 +181,8 @@ func exportSingleChat(ctx context.Context, st *store.Store, opts ExportOpts) (ch
 
 // exportItemID hashes the dataset name in too: Langfuse item ids are project-scoped and
 // can't be reused across datasets.
-func exportItemID(dataset, chatID, nodeID string) string {
-	sum := sha256.Sum256([]byte(dataset + "/" + chatID + "/" + nodeID))
+func exportItemID(dataset, chatID, nodeID, turnID string) string {
+	sum := sha256.Sum256([]byte(dataset + "/" + chatID + "/" + nodeID + "/" + turnID))
 	return "quack-" + hex.EncodeToString(sum[:])[:32]
 }
 
@@ -189,12 +194,12 @@ func exportItem(ctx context.Context, lf *langfuse.Client, dataset string, chat s
 		expected = run.Answer
 	}
 	meta := datasetItemMetadata{
-		Repo: repo, Agent: key.Agent, ChatID: chat.ID, NodeID: key.Node,
+		Repo: repo, Agent: key.Agent, ChatID: chat.ID, NodeID: key.Node, TurnID: key.Turn,
 		PromptArtifact: "system/" + key.Agent, PromptSource: run.PromptSource,
 		PromptVersionID: run.PromptVersionID, QuackVersion: run.QuackVersion,
 		Artifacts: run.Artifacts, Plugins: run.Plugins,
 	}
-	id := exportItemID(dataset, chat.ID, key.Node)
+	id := exportItemID(dataset, chat.ID, key.Node, key.Turn)
 	req := langfuse.CreateDatasetItemRequest{
 		DatasetName: dataset, ID: id, Input: input, ExpectedOutput: expected, Metadata: meta,
 	}

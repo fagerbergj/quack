@@ -2,6 +2,7 @@ package bundle
 
 import (
 	"encoding/json"
+	"sort"
 	"strings"
 	"time"
 
@@ -15,9 +16,11 @@ type StreamKey struct {
 	Node  string
 	Agent string
 	Round string
+	// Turn is set only on NodeRuns keys: a recurring job reruns one node id under the same round ids every turn.
+	Turn string
 }
 
-func (k StreamKey) String() string { return k.Node + "/" + k.Agent + "/" + k.Round }
+func (k StreamKey) String() string { return k.Node + "/" + k.Agent + "/" + k.Round + "/" + k.Turn }
 
 // chatEntry is one recorded llm.call entry.
 type chatEntry struct {
@@ -64,6 +67,14 @@ type Session struct {
 
 	// Recorded judge verdicts (collected outside per-stream sequences).
 	evalScores []EvalScore
+
+	// turnStarts: every node.started, oldest first - the turn boundaries NodeRuns splits streams on.
+	turnStarts []turnStart
+}
+
+type turnStart struct {
+	at   time.Time
+	turn string
 }
 
 func (s *Session) state(key StreamKey) *streamState {
@@ -80,6 +91,8 @@ func (s *Session) state(key StreamKey) *streamState {
 func (s *Session) ingest(e ledger.Entry) {
 	key := StreamKey{Node: e.NodeID, Agent: e.Agent, Round: e.Round}
 	switch e.Kind {
+	case ledger.KindNodeStarted:
+		s.turnStarts = append(s.turnStarts, turnStart{at: e.At, turn: e.TurnID})
 	case ledger.KindEvalScore:
 		var p ledger.EvalScorePayload
 		if json.Unmarshal(e.Payload, &p) != nil {
@@ -121,6 +134,37 @@ func (s *Session) finalize() {
 		sortByTime(st.agents, func(e invokeAgentEntry) time.Time { return e.ts })
 	}
 	sortByTime(s.evalScores, func(e EvalScore) time.Time { return e.Timestamp })
+	sortByTime(s.turnStarts, func(e turnStart) time.Time { return e.at })
+}
+
+// turnAt is the turn of the latest node start at or before ts; "" before any, or with none recorded.
+func (s *Session) turnAt(ts time.Time) string {
+	i := sort.Search(len(s.turnStarts), func(i int) bool { return s.turnStarts[i].at.After(ts) })
+	if i == 0 {
+		return ""
+	}
+	return s.turnStarts[i-1].turn
+}
+
+// byTurn splits st's entries by the turn each was recorded in, keeping their time order.
+func (s *Session) byTurn(st *streamState) map[string]*streamState {
+	out := map[string]*streamState{}
+	part := func(ts time.Time) *streamState {
+		turn := s.turnAt(ts)
+		if out[turn] == nil {
+			out[turn] = &streamState{}
+		}
+		return out[turn]
+	}
+	for _, c := range st.chat {
+		p := part(c.ts)
+		p.chat = append(p.chat, c)
+	}
+	for _, a := range st.agents {
+		p := part(a.ts)
+		p.agents = append(p.agents, a)
+	}
+	return out
 }
 
 // rootStream is the top-level orchestrator/planner conversation (zero-value StreamKey).
@@ -163,18 +207,25 @@ type roundRun struct {
 	plugins       []ledger.PluginRef
 }
 
-// NodeRuns returns one NodeRun per non-root node whose Agent is in agents: task from its earliest round
-// (never a synthetic revise prompt), answer from its latest.
+// NodeRuns returns one NodeRun per non-root node and turn whose Agent is in agents: task from its earliest
+// round (never a synthetic revise prompt), answer from its latest.
 func (s *Session) NodeRuns(agents map[string]bool) map[StreamKey]NodeRun {
-	byNode := map[string][]roundRun{}
-	for key, st := range s.streams {
+	byNode := map[[2]string][]roundRun{}
+	for key, whole := range s.streams {
 		if key.Node == "" || !agents[key.Agent] {
 			continue
 		}
-		if rr, ok := chatRoundRun(key, st); ok {
-			byNode[key.Node] = append(byNode[key.Node], rr)
-		} else if rr, ok := acpRoundRun(key, st); ok {
-			byNode[key.Node] = append(byNode[key.Node], rr)
+		for turn, st := range s.byTurn(whole) {
+			k := key
+			k.Turn = turn
+			rr, ok := chatRoundRun(k, st)
+			if !ok {
+				rr, ok = acpRoundRun(k, st)
+			}
+			if ok {
+				nt := [2]string{k.Node, turn}
+				byNode[nt] = append(byNode[nt], rr)
+			}
 		}
 	}
 
