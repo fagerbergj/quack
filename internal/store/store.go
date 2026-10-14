@@ -100,6 +100,9 @@ type ChatTurn struct {
 	// UserText is the turn's own copy of the user's message: a ResetHistory dispatch deletes the whole session,
 	// which would otherwise strand every earlier turn with no content to render.
 	UserText string `json:"-"`
+	// Dispatch is the extension request (JSON) that started the turn, kept so boot can send it again
+	// if a restart cuts the turn before any node ran. Empty for a REST turn, and cleared once the run settles.
+	Dispatch string `json:"-"`
 }
 
 // DagPlan stores the JSON-encoded DAG plan for a chat turn (re-display on reload).
@@ -963,6 +966,11 @@ func (s *Store) SetTurnUsage(ctx context.Context, chatID, turnID, model string, 
 			"total_tokens":      u.TotalTokens,
 			"cached_tokens":     u.CachedTokens,
 		}).Error
+}
+
+// SetTurnDispatch keeps the extension request that started turnID (see ChatTurn.Dispatch).
+func (s *Store) SetTurnDispatch(ctx context.Context, chatID, turnID, dispatch string) error {
+	return s.db.WithContext(ctx).Model(&ChatTurn{}).Where("id = ? AND chat_id = ?", turnID, chatID).Update("dispatch", dispatch).Error
 }
 
 // ListTurns returns all turns for a chat ordered by sequence.
