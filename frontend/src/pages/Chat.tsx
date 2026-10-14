@@ -17,6 +17,7 @@ import { TriggerMessage } from '../components/TriggerEnvelope'
 import { ChatMenu } from '../components/ChatMenu'
 import { NavToggle } from '../components/NavToggle'
 import { Icon } from '../components/Icon'
+import { ReconnectingBanner } from '../components/ReconnectingBanner'
 import { StatusDot } from '../components/StatusDot'
 import { LiveTimer } from '../utils/timer'
 import type { ChatStatus, Turn } from '../generated'
@@ -1023,6 +1024,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
         </div>
 
         <div ref={composerClearance.ref} className="absolute inset-x-0 bottom-0">
+          <ReconnectingBanner reconnecting={!!state.reconnecting} error={error} />
           <Composer
             disabled={isArchived}
             streaming={liveActive}

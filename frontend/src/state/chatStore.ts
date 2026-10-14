@@ -112,6 +112,8 @@ export interface ChatState {
   // The turn currently streaming (or most recently completed, until next submit)
   live?: LiveTurn
   error: string
+  // The live stream dropped and a reconnect is pending; cleared when the connection reopens or the run ends.
+  reconnecting?: boolean
   // True between submit and the first stream event, so the UI can show a
   // loading indicator instantly instead of waiting on the archive round-trip.
   submitting?: boolean
@@ -585,6 +587,7 @@ export class ChatStore {
         this.finishStream(chatId, generation)
         return
       }
+      this.setReconnecting(chatId, true)
       const timer = setTimeout(() => {
         this.reconnectTimers.delete(chatId)
         if (this.generations.get(chatId) !== generation) return
@@ -610,11 +613,18 @@ export class ChatStore {
       return false
     }
     close = attachAgentEventSource(es, handlers, shouldDispatch)
+    es.onopen = () => this.setReconnecting(chatId, false)
     es.onerror = () => {
       if (sawDone) return  // teardownStream already ran from onDone
       reconnect(latestId)
     }
     this.eventSources.set(chatId, close)
+  }
+
+  // Writes only on a change, so a healthy stream's events never pay for a store write.
+  private setReconnecting(chatId: string, on: boolean): void {
+    const s = this.states.get(chatId)
+    if (s && !!s.reconnecting !== on) this.write(chatId, { ...s, reconnecting: on })
   }
 
   // Ends an attached run on `done`; generation keeps a stale teardown from clobbering a newer run.
@@ -921,7 +931,7 @@ export class ChatStore {
     if (this.generations.get(chatId) !== generation) return
     const s = this.states.get(chatId)
     if (!s?.live) return
-    this.write(chatId, { ...s, live: { ...s.live, streaming: false } })
+    this.write(chatId, { ...s, reconnecting: false, live: { ...s.live, streaming: false } })
     if (s.live.dag && s.live.answer !== undefined && s.live.id) void this.refetchAnswer(chatId, s.live.id)
     this.drainQueue(chatId)
   }
