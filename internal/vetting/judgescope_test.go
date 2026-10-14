@@ -167,6 +167,31 @@ func TestJudgeArtifactTools_ScopeAndCheckedPages(t *testing.T) {
 	}
 }
 
+// TestJudgeArtifactTools_PartialIDNeverRevealsHidden: a partial id resolves only among the
+// artifacts the round's list_artifacts shows; a sibling's or a checked page's stays not found.
+func TestJudgeArtifactTools_PartialIDNeverRevealsHidden(t *testing.T) {
+	rc, sibID, upID, pageURL := seedScopedChat(t)
+	tools, err := NewJudgeArtifactTools(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := tools[1].(runnableTool)
+	view := newJudgeView(Config{ForeignNodes: []string{"web-researcher-2"}, judgeCheckedPages: map[string]bool{pageID(t, pageURL): true}}, workerActivity{fetched: map[string]struct{}{pageURL: {}}})
+	ctx := &judgeToolCtx{StrictContextMock: adkagent.NewStrictContextMock(withJudgeView(context.Background(), view))}
+	_, upTail, _ := strings.Cut(upID, ":")
+	out, err := read.Run(ctx, map[string]any{"id": upTail})
+	if body, _ := out["result"].(string); err != nil || body != recordstore.ResolvedIDPrefix+upID+"\n\nupstream notes" {
+		t.Errorf("read(%q) = %q, %v; want the upstream artifact under its full id", upTail, body, err)
+	}
+	_, sibTail, _ := strings.Cut(sibID, ":")
+	_, pageTail, _ := strings.Cut(pageID(t, pageURL), ":")
+	for _, id := range []string{sibTail, pageTail, "web_page"} {
+		if _, err := read.Run(ctx, map[string]any{"id": id}); err == nil || !strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), sibID) {
+			t.Errorf("read(%q): err = %v, want not found without revealing a hidden id", id, err)
+		}
+	}
+}
+
 // TestJudgeArtifactTools_InputsStayReadable: bytes inputs (pr-tutor's diff hunks, code-reviewer's
 // PR files) read whole and repeatedly whether or not the round's pages were checked.
 func TestJudgeArtifactTools_InputsStayReadable(t *testing.T) {

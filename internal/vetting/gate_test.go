@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/fagerbergj/quack/internal/recordstore"
 )
 
 func TestRecordSearchResults(t *testing.T) {
@@ -502,6 +504,17 @@ func TestArtifactReadsThatAreNotRetrieval(t *testing.T) {
 		if activityFromSessionAt(newTestSession(t, parts...), "", "").retrieved() {
 			t.Errorf("%s counted as retrieval", name)
 		}
+	}
+}
+
+// TestPartialIDReadCreditsResolvedPage: a read by partial id credits the full id its result names.
+func TestPartialIDReadCreditsResolvedPage(t *testing.T) {
+	act := activityFromSessionAt(newTestSession(t,
+		fnCall("r1", "read_artifact", map[string]any{"id": "323fe3f670d8"}),
+		fnResp("r1", "read_artifact", map[string]any{"result": recordstore.ResolvedIDPrefix + "web_page:323fe3f670d8\n\npage"}),
+	), "", "")
+	if !slices.Equal(act.sourceReads, []string{"web_page:323fe3f670d8"}) {
+		t.Errorf("sourceReads = %v, want the resolved page id", act.sourceReads)
 	}
 }
 

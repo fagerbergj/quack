@@ -11,6 +11,7 @@ import (
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/functiontool"
 
+	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/schema"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
@@ -45,16 +46,42 @@ func RESTArtifactTools(c *Client, chatID string) ([]tool.Tool, error) {
 		},
 		func(ctx agent.Context, a restReadArtifactArgs) (string, error) {
 			body, err := c.FetchArtifact(ctx, chatID, a.ID, a.Revision)
+			resolved := ""
+			if errors.Is(err, ErrNotFound) {
+				if a.ID, err = resolveRESTArtifact(ctx, c, chatID, a.ID); err == nil {
+					resolved = recordstore.ResolvedIDPrefix + a.ID + "\n\n"
+					body, err = c.FetchArtifact(ctx, chatID, a.ID, a.Revision)
+				}
+			}
 			if err != nil {
 				return "", fmt.Errorf("read_artifact: %w", err)
 			}
-			return vetting.BoundJudgeArtifactRead(ctx, a.ID, body, "", a.Offset, a.Lines)
+			out, err := vetting.BoundJudgeArtifactRead(ctx, a.ID, body, "", a.Offset, a.Lines)
+			if err != nil {
+				return "", err
+			}
+			return resolved + out, nil
 		},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("judge replay: read_artifact: %w", err)
 	}
 	return []tool.Tool{list, read}, nil
+}
+
+// resolveRESTArtifact maps a partial id to its one match among the names list_artifacts shows.
+func resolveRESTArtifact(ctx context.Context, c *Client, chatID, given string) (string, error) {
+	items, err := c.ListChatArtifacts(ctx, chatID)
+	if err != nil {
+		return "", err
+	}
+	var names []string
+	for _, it := range items {
+		if !vetting.JudgeHidesArtifact(ctx, it.Name) {
+			names = append(names, it.Name)
+		}
+	}
+	return recordstore.ResolveID(given, names)
 }
 
 // StubArtifactTools builds list_artifacts/read_artifact that both answer "no

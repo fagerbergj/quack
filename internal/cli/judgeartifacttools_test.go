@@ -2,6 +2,7 @@ package cli
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -46,5 +47,20 @@ func TestFormatArtifactSummaries(t *testing.T) {
 	filtered := formatArtifactSummaries(items, "doc")
 	if strings.Contains(filtered, "kind=text") || !strings.Contains(filtered, "kind=doc") {
 		t.Errorf("formatArtifactSummaries(kind=doc) = %q, want only the doc row", filtered)
+	}
+}
+
+// TestResolveRESTArtifact: replay resolves a partial id against the chat's listed names.
+func TestResolveRESTArtifact(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[{"name":"trends:doc:33db"},{"name":"web_page:323f"},{"name":"web_page:9a0b"}]}`))
+	}))
+	defer srv.Close()
+	c := &Client{BaseURL: srv.URL, HTTP: srv.Client()}
+	if id, err := resolveRESTArtifact(t.Context(), c, "chat-1", "33db"); err != nil || id != "trends:doc:33db" {
+		t.Errorf("resolve(33db) = %q, %v; want trends:doc:33db", id, err)
+	}
+	if _, err := resolveRESTArtifact(t.Context(), c, "chat-1", "web_page"); err == nil || !strings.Contains(err.Error(), "web_page:9a0b") {
+		t.Errorf("resolve(web_page) err = %v, want an ambiguity naming both pages", err)
 	}
 }

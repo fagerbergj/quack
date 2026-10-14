@@ -1036,6 +1036,7 @@ func (s *judgeRoundState) recordRead(fr *genai.FunctionResponse) {
 		args, _ = json.Marshal(fc.Args)
 		id, _ = fc.Args["id"].(string)
 	}
+	id = readArtifactID(id, fr.Response)
 	body, ok := fr.Response["result"].(string)
 	if !ok {
 		raw, _ := json.Marshal(fr.Response)
