@@ -498,7 +498,12 @@ func (s *Store) SetArtifactService(svc artifact.Service) { s.artifacts = svc }
 func (s *Store) Artifacts() artifact.Service { return s.artifacts }
 
 // New opens the persistence store, runs migrations, and returns it.
-func New(kind, url string) (*Store, error) {
+func New(kind, url string) (*Store, error) { return open(kind, url, true) }
+
+// Open is New without migrations, for read-only callers that must not alter a schema another version owns.
+func Open(kind, url string) (*Store, error) { return open(kind, url, false) }
+
+func open(kind, url string, migrate bool) (*Store, error) {
 	dialector, err := dialectorFor(kind, url)
 	if err != nil {
 		return nil, err
@@ -508,25 +513,29 @@ func New(kind, url string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{db: db}
-	if err := db.AutoMigrate(&Chat{}, &ChatTurn{}, &DagPlan{}, &DagNode{}, &ChatEvent{}, &MemoryOp{}, &ProjectionWatermark{}, &Checkpoint{}, &DagExecPlan{}); err != nil {
-		return nil, err
-	}
 	sessions, err := database.NewSessionService(dialector(), gormCfg)
 	if err != nil {
 		return nil, err
 	}
-	if err := database.AutoMigrate(sessions); err != nil {
-		return nil, err
+	s := &Store{db: db, Sessions: sessions, instanceID: uuid.NewString()}
+	if migrate {
+		if err := s.migrate(); err != nil {
+			return nil, err
+		}
+	}
+	return s, nil
+}
+
+func (s *Store) migrate() error {
+	if err := s.db.AutoMigrate(&Chat{}, &ChatTurn{}, &DagPlan{}, &DagNode{}, &ChatEvent{}, &MemoryOp{}, &ProjectionWatermark{}, &Checkpoint{}, &DagExecPlan{}); err != nil {
+		return err
+	}
+	if err := database.AutoMigrate(s.Sessions); err != nil {
+		return err
 	}
 	// The ADK events PK leads with id, so Sessions.Get's WHERE on the other three columns walks the whole index.
 	// Additive, idempotent.
-	if err := db.Exec("CREATE INDEX IF NOT EXISTS idx_events_session_lookup ON events (app_name, user_id, session_id, timestamp)").Error; err != nil {
-		return nil, err
-	}
-	s.Sessions = sessions
-	s.instanceID = uuid.NewString()
-	return s, nil
+	return s.db.Exec("CREATE INDEX IF NOT EXISTS idx_events_session_lookup ON events (app_name, user_id, session_id, timestamp)").Error
 }
 
 // DB exposes the underlying *gorm.DB for a caller owning its own schema on this database (pluginreg's DB

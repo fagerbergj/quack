@@ -1,6 +1,6 @@
 # CLI
 
-`quack` is a one-binary CLI and server. There is no TUI: `-p`, `chat send`, and `chat show` are the interface, and their pause/failure exit codes (`0` answered, `1` failed, `2` paused on a question) make them pipeable and scriptable. Every command also runs against a running server over HTTP + SSE (`--server`, or the active one from `quack server add`/`use`) - there's nothing local-only about it except `server run` itself. With neither, the CLI boots a server in-process from `$QUACK_CONFIG` or `./quack.yaml` for that one command; when that config's session store is postgres (likely shared with a running server), it says so on stderr, since a second engine is then working on the same database.
+`quack` is a one-binary CLI and server. There is no TUI: `-p`, `chat send`, and `chat show` are the interface, and their pause/failure exit codes (`0` answered, `1` failed, `2` paused on a question) make them pipeable and scriptable. Every command also runs against a running server over HTTP + SSE (`--server`, or the active one from `quack server add`/`use`) - there's nothing local-only about it except `server run` itself. With neither, the CLI (except `ledger list` and `ledger export`) boots a server in-process from `$QUACK_CONFIG` or `./quack.yaml` for that one command; when that config's session store is postgres (likely shared with a running server), it says so on stderr, since a second engine is then working on the same database.
 
 Every command has its own `--help`; this page is the map. An unknown subcommand (`quack chat lst`) exits 1 with a suggestion. Errors print the server's own message after `Error:` on stderr, without the request's method, URL or HTTP status.
 
@@ -73,7 +73,7 @@ Runs can be recorded to the ledger and re-driven later - the basis for regressio
 
 | Command | Does |
 | --- | --- |
-| `quack ledger list` / `export <chat-id>` | List chats with a recording on the server; download one as a bundle for `eval` or a fixture. |
+| `quack ledger list` / `export <chat-id>` | List chats with a recording on the server; download one as a bundle for `eval` or a fixture. Both need `--server` or an active server and never boot one in-process. |
 | `quack ledger show <chat-id> [--from-seq N]` | Print a chat's raw ledger entries (server-side, from the local quack.yaml's stores). `show`, `recover` and `rebuild` (like `dataset export` and `experiment run`) never talk to a server, so they refuse `--server` rather than ignore it; `ledger export --server <url>` fetches a recording from a server. |
 | `quack ledger recover [chat-id] [--dry-run] [--json]` | Settle intents whose projection write is missing (the same pass the server runs at boot); `--dry-run` reports only. |
 | `quack ledger rebuild <chat-id> [--dry-run] [--json]` | Reconcile a chat's artifact metadata and SSE table against the ledger fold. |

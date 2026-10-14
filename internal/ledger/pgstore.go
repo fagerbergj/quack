@@ -154,8 +154,8 @@ func ensureParentRevisionIndex(db *gorm.DB) error {
 }
 
 // NewPGStoreFromURL opens its own Postgres connection at url (same database as internal/store), using
-// pgdial.Open for the shared dial retry.
-func NewPGStoreFromURL(url string) (*PGStore, error) {
+// pgdial.Open for the shared dial retry. migrate=false skips NewPGStore's DDL, for read-only callers.
+func NewPGStoreFromURL(url string, migrate bool) (*PGStore, error) {
 	gormCfg := &gorm.Config{Logger: logger.New(
 		slog.NewLogLogger(slog.Default().Handler(), slog.LevelWarn),
 		logger.Config{SlowThreshold: 200 * time.Millisecond, LogLevel: logger.Warn, IgnoreRecordNotFoundError: true},
@@ -167,6 +167,9 @@ func NewPGStoreFromURL(url string) (*PGStore, error) {
 	db, err := gorm.Open(dialector, gormCfg)
 	if err != nil {
 		return nil, fmt.Errorf("ledger: open postgres store: %w", err)
+	}
+	if !migrate {
+		return &PGStore{db: db}, nil
 	}
 	return NewPGStore(db)
 }

@@ -1078,13 +1078,9 @@ func defaultConfigPath() string {
 // as-is (no-op stop); otherwise the duck starts in-process on a loopback port and stop tears it down.
 func resolveTarget(cmd *cobra.Command) (string, func(), error) {
 	noop := func() {}
-	override, _ := cmd.Flags().GetString("server")
-	cc, err := cli.LoadClient()
-	if err != nil {
-		return "", noop, err
-	}
-	if url := cc.ActiveURL(override); url != "" {
-		return url, noop, nil // remote
+	url, err := activeServer(cmd)
+	if err != nil || url != "" {
+		return url, noop, err // remote
 	}
 	path := defaultConfigPath()
 	if _, err := os.Stat(path); err != nil {
@@ -1102,6 +1098,29 @@ func resolveTarget(cmd *cobra.Command) (string, func(), error) {
 		return "", noop, err
 	}
 	return base, func() { _ = stop() }, nil
+}
+
+// activeServer is --server, else the registered active server's URL, else "".
+func activeServer(cmd *cobra.Command) (string, error) {
+	override, _ := cmd.Flags().GetString("server")
+	cc, err := cli.LoadClient()
+	if err != nil {
+		return "", err
+	}
+	return cc.ActiveURL(override), nil
+}
+
+// withServer is withTarget without the in-process fallback, for read-only commands: an in-process boot
+// runs the engine's boot-time writes against the configured stores.
+func withServer(cmd *cobra.Command, fn func(target string) error) error {
+	url, err := activeServer(cmd)
+	if err != nil {
+		return err
+	}
+	if url == "" {
+		return fmt.Errorf("`%s` needs a running server and never boots one in-process; pass --server <url> or register one with `quack server add`", cmd.CommandPath())
+	}
+	return fn(url)
 }
 
 // sharedDBNotice warns that an in-process boot opens a postgres session store a running server may share

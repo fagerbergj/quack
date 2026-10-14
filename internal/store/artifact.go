@@ -93,17 +93,21 @@ func NewRowArtifactService(db *gorm.DB) (artifact.Service, error) {
 }
 
 // NewLargeObjectArtifactService stores payload bytes as Postgres large objects. db must be postgres.
-func NewLargeObjectArtifactService(db *gorm.DB) (artifact.Service, error) {
+// migrate=false skips the schema migration, for read-only callers.
+func NewLargeObjectArtifactService(db *gorm.DB, migrate bool) (artifact.Service, error) {
 	sqlDB, err := db.DB()
 	if err != nil {
 		return nil, fmt.Errorf("store: artifact service sql.DB: %w", err)
+	}
+	if !migrate {
+		return &gormArtifactService{db: db, blobs: &loBlobBackend{sqlDB: sqlDB}}, nil
 	}
 	return newGormArtifactService(db, &loBlobBackend{sqlDB: sqlDB})
 }
 
 // NewArtifactService opens a dedicated Postgres connection at url (a postgres DSN, enforced by config)
 // and returns the large-object-backed artifact.Service.
-func NewArtifactService(url string) (artifact.Service, error) {
+func NewArtifactService(url string, migrate bool) (artifact.Service, error) {
 	dialector, err := pgdial.Open(url)
 	if err != nil {
 		return nil, fmt.Errorf("store: parse artifact store url: %w", err)
@@ -113,7 +117,7 @@ func NewArtifactService(url string) (artifact.Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("store: open artifact store: %w", err)
 	}
-	return NewLargeObjectArtifactService(db)
+	return NewLargeObjectArtifactService(db, migrate)
 }
 
 // RowArtifactService returns a row-backed artifact.Service sharing this

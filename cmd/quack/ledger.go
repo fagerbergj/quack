@@ -15,7 +15,7 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// newLedgerCmd: `quack ledger list|export|show|rebuild|recover`. list/export talk to a running server;
+// newLedgerCmd: `quack ledger list|export|show|rebuild|recover`. list/export need a running server;
 // show/rebuild/recover open the stores a local quack.yaml would boot against, for direct store access.
 func newLedgerCmd() *cobra.Command {
 	c := &cobra.Command{
@@ -35,7 +35,7 @@ func newLedgerRecoverCmd() *cobra.Command {
 		Short: "Settle intents whose projection write is missing (a crashed delivery or artifact save)",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ls, st, artifacts, err := openLedgerAndStores(cmd)
+			ls, st, artifacts, err := openLedgerAndStores(cmd, !dryRun)
 			if err != nil {
 				return err
 			}
@@ -91,7 +91,7 @@ func newLedgerListCmd() *cobra.Command {
 		Short: "List chats with a recording on the server",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return withTarget(cmd, func(t string) error {
+			return withServer(cmd, func(t string) error {
 				return cli.RunLedgerList(cmd.Context(), cmd.OutOrStdout(), t, asJSON)
 			})
 		},
@@ -112,7 +112,7 @@ func newLedgerExportCmd() *cobra.Command {
 			"current ledger_version load; older OTel-attribute bundles are unsupported.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return withTarget(cmd, func(t string) error {
+			return withServer(cmd, func(t string) error {
 				return cli.RunLedgerExport(cmd.Context(), cmd.OutOrStdout(), t, args[0], output)
 			})
 		},
@@ -128,7 +128,7 @@ func newLedgerShowCmd() *cobra.Command {
 		Short: "Print a chat's raw ledger entries (one JSON object per line)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ls, _, _, err := openLedgerAndStores(cmd)
+			ls, _, _, err := openLedgerAndStores(cmd, false)
 			if err != nil {
 				return err
 			}
@@ -155,7 +155,7 @@ func newLedgerRebuildCmd() *cobra.Command {
 			"writes are not transactional against a concurrently running run.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ls, st, artifacts, err := openLedgerAndStores(cmd)
+			ls, st, artifacts, err := openLedgerAndStores(cmd, !dryRun)
 			if err != nil {
 				return err
 			}
@@ -185,7 +185,8 @@ func newLedgerRebuildCmd() *cobra.Command {
 
 // openLedgerAndStores builds the ledger store, session store and artifact service from the local quack.yaml
 // as serve.Run does, minus the HTTP server and orchestrator. It refuses --server rather than ignore it.
-func openLedgerAndStores(cmd *cobra.Command) (ls ledger.LedgerStore, st *store.Store, artifacts *store.TurnAwareService, err error) {
+// migrate=false opens without schema migrations, so a read never alters a schema another version owns.
+func openLedgerAndStores(cmd *cobra.Command, migrate bool) (ls ledger.LedgerStore, st *store.Store, artifacts *store.TurnAwareService, err error) {
 	cfgPath := defaultConfigPath()
 	if server, _ := cmd.Flags().GetString("server"); server != "" {
 		return nil, nil, nil, fmt.Errorf("`%s` reads the stores in the local %s directly and never talks to a server, so --server does not apply; drop it (to pull a chat's recording from a server, use `quack ledger export <chat-id> --server <url>`)", cmd.CommandPath(), cfgPath)
@@ -199,7 +200,7 @@ func openLedgerAndStores(cmd *cobra.Command) (ls ledger.LedgerStore, st *store.S
 		return nil, nil, nil, err
 	}
 
-	ls = serve.LedgerStoreFromConfig(cfg)
+	ls = serve.LedgerStoreFromConfig(cfg, migrate)
 	if ls == nil {
 		return nil, nil, nil, fmt.Errorf("ledger: no recording store configured (observability.recording.store in %s)", cfgPath)
 	}
@@ -208,12 +209,16 @@ func openLedgerAndStores(cmd *cobra.Command) (ls ledger.LedgerStore, st *store.S
 	if !ok {
 		return nil, nil, nil, fmt.Errorf("session store %q not found in stores registry", cfg.Session.Store)
 	}
-	st, err = store.New(sessionStore.Kind, sessionStore.URL)
+	openStore := store.Open
+	if migrate {
+		openStore = store.New
+	}
+	st, err = openStore(sessionStore.Kind, sessionStore.URL)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("store open failed: %w", err)
 	}
 
-	artifactSvc, err := serve.BuildArtifactService(cfg)
+	artifactSvc, err := serve.BuildArtifactService(cfg, migrate)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("artifact service init failed: %w", err)
 	}
