@@ -150,7 +150,7 @@ export interface AgentStreamHandlers {
   onNodeCancelled?: (nodeId: string, finishedAtMs?: number) => void
   // The node was suspended by the user (PUT node status {"status":"paused"}) -
   // keeps its accumulated work; resumable via {"status":"running"}.
-  onNodePaused?: (nodeId: string) => void
+  onNodePaused?: (nodeId: string, reason?: string) => void
   // One staged item's delivery outcome, the phantom-success signal; chatStore reads only its trace id so far.
   onDeliveryResult?: (d: DeliveryResultPayload) => void
   onNodeSteered?: (nodeId: string, guidance: string) => void
@@ -333,7 +333,10 @@ function handleNodeCancelled(parsed: unknown, handlers: AgentStreamHandlers): vo
 }
 
 function handleNodePaused(parsed: unknown, handlers: AgentStreamHandlers): void {
-  if (hasStringField(parsed, 'node_id')) handlers.onNodePaused?.(parsed.node_id)
+  if (hasStringField(parsed, 'node_id')) {
+    const reason = (parsed as { reason?: unknown }).reason
+    handlers.onNodePaused?.(parsed.node_id, typeof reason === 'string' ? reason : undefined)
+  }
 }
 
 function handleNodeSteered(parsed: unknown, handlers: AgentStreamHandlers): void {

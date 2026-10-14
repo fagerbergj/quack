@@ -270,7 +270,7 @@ export const diffArtifactRevisions = <ThrowOnError extends boolean = false>(opti
  * `node_done` ({"node_id","finished_at_ms",...metadata}),
  * `node_failed` ({"node_id","error","finished_at_ms"}), `node_cancelled`
  * ({"node_id","finished_at_ms"}), and
- * `node_paused` ({"node_id"}) track node lifecycle. `node_steered`
+ * `node_paused` ({"node_id","reason"}; reason is user, shutdown or awaiting_input) track node lifecycle. `node_steered`
  * ({"node_id","guidance"}) fires when a node's queued message(s) are
  * delivered and the node carries on with them, in its own session where
  * it can (a native node's interrupted first round) or by re-running with

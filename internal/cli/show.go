@@ -176,51 +176,13 @@ func newFollowState() *followState {
 // printLine renders one SSE event as a terse trace line for `chat show -f`. Orchestrator answer text isn't
 // streamed: preamble before a tool call can't be un-printed, so the final answer prints once via Report.
 func (f *followState) printLine(out io.Writer, ev SSEEvent) {
+	if line, ok := nodeLifecycleLine(ev.Name, ev.Data); ok {
+		if line != "" {
+			fmt.Fprintln(out, line)
+		}
+		return
+	}
 	switch ev.Name {
-	case "node_start":
-		var d struct {
-			NodeID string `json:"node_id"`
-		}
-		if json.Unmarshal(ev.Data, &d) == nil {
-			fmt.Fprintf(out, "node %s running\n", d.NodeID)
-		}
-	case "node_done":
-		var d struct {
-			NodeID string `json:"node_id"`
-		}
-		if json.Unmarshal(ev.Data, &d) == nil {
-			fmt.Fprintf(out, "node %s done\n", d.NodeID)
-		}
-	case "node_failed":
-		var d struct {
-			NodeID string `json:"node_id"`
-			Error  string `json:"error"`
-		}
-		if json.Unmarshal(ev.Data, &d) == nil {
-			fmt.Fprintf(out, "node %s failed: %s\n", d.NodeID, d.Error)
-		}
-	case "node_needs_input":
-		var d struct {
-			NodeID  string `json:"node_id"`
-			Message string `json:"message"`
-		}
-		if json.Unmarshal(ev.Data, &d) == nil {
-			fmt.Fprintf(out, "node %s needs_input: %s\n", d.NodeID, d.Message)
-		}
-	case "node_cancelled":
-		var d struct {
-			NodeID string `json:"node_id"`
-		}
-		if json.Unmarshal(ev.Data, &d) == nil {
-			fmt.Fprintf(out, "node %s cancelled\n", d.NodeID)
-		}
-	case "node_paused":
-		var d struct {
-			NodeID string `json:"node_id"`
-		}
-		if json.Unmarshal(ev.Data, &d) == nil {
-			fmt.Fprintf(out, "node %s paused\n", d.NodeID)
-		}
 	case "agent_thinking":
 		var d struct {
 			NodeID string `json:"node_id"`
@@ -251,6 +213,40 @@ func (f *followState) printLine(out io.Writer, ev SSEEvent) {
 			fmt.Fprintf(out, "%s  → %s\n", followPrefix(d.NodeID), summarizeToolResult(d.Name, d.Result))
 		}
 	}
+}
+
+// nodeLifecycleVerbs maps each node_* lifecycle event to the word `chat show -f` prints for it.
+var nodeLifecycleVerbs = map[string]string{
+	"node_start": "running", "node_done": "done", "node_failed": "failed",
+	"node_needs_input": "needs_input", "node_cancelled": "cancelled", "node_paused": "paused",
+}
+
+// nodeLifecycleLine formats a node_* lifecycle event; ok is false for any other event, and line is "" for
+// one whose data doesn't decode.
+func nodeLifecycleLine(name string, data json.RawMessage) (line string, ok bool) {
+	verb, ok := nodeLifecycleVerbs[name]
+	if !ok {
+		return "", false
+	}
+	var d struct {
+		NodeID  string `json:"node_id"`
+		Error   string `json:"error"`
+		Message string `json:"message"`
+		Reason  string `json:"reason"`
+	}
+	if json.Unmarshal(data, &d) != nil {
+		return "", true
+	}
+	line = fmt.Sprintf("node %s %s", d.NodeID, verb)
+	switch {
+	case name == "node_failed":
+		line += ": " + d.Error
+	case name == "node_needs_input":
+		line += ": " + d.Message
+	case d.Reason != "":
+		line += " (" + d.Reason + ")"
+	}
+	return line, true
 }
 
 // followPrefix labels a node-scoped trace line ("node n1: tool: …"); a

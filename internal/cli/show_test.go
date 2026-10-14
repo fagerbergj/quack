@@ -435,3 +435,17 @@ func TestStreamStateMultiSinkAnswer(t *testing.T) {
 		t.Errorf("one sink: %q", got)
 	}
 }
+
+// TestFollowPrintsPauseReason: a shutdown pause reads as one, and an older server's reasonless event still prints.
+func TestFollowPrintsPauseReason(t *testing.T) {
+	for data, want := range map[string]string{
+		`{"node_id":"n1","reason":"shutdown"}`: "node n1 paused (shutdown)\n",
+		`{"node_id":"n1"}`:                     "node n1 paused\n",
+	} {
+		var b strings.Builder
+		newFollowState().printLine(&b, SSEEvent{Name: "node_paused", Data: json.RawMessage(data)})
+		if b.String() != want {
+			t.Errorf("%s: got %q, want %q", data, b.String(), want)
+		}
+	}
+}

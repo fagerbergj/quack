@@ -422,6 +422,37 @@ func TestExecute_PauseNodeStopsBeforeJudge(t *testing.T) {
 	if got := nodeEnd(events, "n1"); got != stream.EventNodePaused {
 		t.Errorf("n1 ended as %q; want node_paused", got)
 	}
+	if got := pausedReason(events, "n1"); got != string(PauseUser) {
+		t.Errorf("node_paused reason = %q; want %q", got, PauseUser)
+	}
+}
+
+// A shutdown-drain pause says so live: without the reason the UI labels a deploy "paused by you".
+func TestExecute_ShutdownPauseCarriesReason(t *testing.T) {
+	stub := &coopStub{started: make(chan struct{}, 1), unblock: make(chan struct{})}
+	ex, plan := newCoopExecutor(t, stub, 1)
+
+	go func() {
+		<-stub.started
+		if !ex.PauseNode("chat", "n1", PauseShutdown) {
+			t.Error("PauseNode returned false for a LIVE node")
+		}
+		close(stub.unblock)
+	}()
+	events, _ := runPlanSSE(t, ex, plan, "chat")
+	if got := pausedReason(events, "n1"); got != string(PauseShutdown) {
+		t.Errorf("node_paused reason = %q; want %q", got, PauseShutdown)
+	}
+}
+
+// pausedReason is the reason on nodeID's node_paused event, "" if none was emitted.
+func pausedReason(events []stream.SSEEvent, nodeID string) string {
+	for _, ev := range events {
+		if d, ok := ev.Data.(stream.NodePausedData); ok && d.NodeID == nodeID {
+			return d.Reason
+		}
+	}
+	return ""
 }
 
 // CancelNode reports whether it reached a live node; NodeCancelled exposes the same fact.
