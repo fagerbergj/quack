@@ -40,7 +40,8 @@ type stubRunner struct {
 	run     itemRun
 }
 
-func (r *stubRunner) RunItem(_ context.Context, task string) (itemRun, error) {
+func (r *stubRunner) RunItem(_ context.Context, in experimentItemInput) (itemRun, error) {
+	task := in.Task
 	if task == r.errOn {
 		return itemRun{}, fmt.Errorf("boom")
 	}
@@ -395,7 +396,8 @@ func TestLiveItemRunner_RunItem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, err := NewLiveItemRunner(srv.URL, st, "synthesizer", rubric).RunItem(ctx, "synthesize this")
+	setup := &extsdk.Setup{Repo: "https://github.com/acme/widget.git", BaseRef: "main", ExistingHeadRef: "feat/x", HeadSHA: strings.Repeat("a", 40)}
+	run, err := NewLiveItemRunner(srv.URL, st, "synthesizer", rubric).RunItem(ctx, experimentItemInput{Task: "synthesize this", Setup: setup})
 	if err != nil {
 		t.Fatalf("RunItem: %v", err)
 	}
@@ -403,9 +405,9 @@ func TestLiveItemRunner_RunItem(t *testing.T) {
 		t.Fatalf("dispatches = %d, want 1", len(*reqs))
 	}
 	req := (*reqs)[0]
-	if req.Run.Workflow != "experiment-synthesizer" || req.Ask.Message != "synthesize this" ||
+	if req.Run.Workflow != "experiment-synthesizer" || req.Ask.Message != "synthesize this" || req.Run.Setup != setup ||
 		req.Delivery.AllowedKinds == nil || len(req.Delivery.AllowedKinds) != 0 {
-		t.Fatalf("dispatch = %+v, want the bound synthesizer workflow on the task with delivery denied", req)
+		t.Fatalf("dispatch = %+v, want the bound synthesizer workflow on the task in the item's clone, delivery denied", req)
 	}
 	if run.Answer != "the real answer" || run.TraceID != "trace-1" || run.prompt() != "system/synthesizer@4" || !run.Passed {
 		t.Fatalf("answer/trace/prompt/passed = %q/%q/%q/%v", run.Answer, run.TraceID, run.prompt(), run.Passed)
@@ -429,7 +431,7 @@ func TestLiveItemRunner_RunItem_NoNodeRun(t *testing.T) {
 	for _, status := range []extsdk.RunStatus{extsdk.RunDone, extsdk.RunFailed} {
 		fakeExperiment(t, status, nil)
 		r := NewLiveItemRunner(srv.URL, nil, "code-reviewer", vetting.RubricScaler{})
-		if _, err := r.RunItem(context.Background(), "review this"); err == nil {
+		if _, err := r.RunItem(context.Background(), experimentItemInput{Task: "review this"}); err == nil {
 			t.Fatalf("%s: want an error when the agent produced no node run", status)
 		}
 	}
@@ -501,17 +503,23 @@ func TestFormatExperimentSummary(t *testing.T) {
 	}
 }
 
-func TestItemTask(t *testing.T) {
-	item := datasetItemFromInput(t, "item1", map[string]any{"task": "do the thing"})
-	task, err := itemTask(item)
+// An item reads back exactly the task and clone dataset export wrote, through Langfuse's JSON.
+func TestItemInput(t *testing.T) {
+	setup := &extsdk.Setup{Repo: "https://github.com/acme/widget.git", BaseRef: "main", ExistingHeadRef: "feat/x", HeadSHA: strings.Repeat("b", 40)}
+	b, _ := json.Marshal(datasetItemInput{Task: "do the thing", DiffRef: "https://github.com/acme/widget/pull/1", Setup: setup})
+	var input map[string]any
+	if err := json.Unmarshal(b, &input); err != nil {
+		t.Fatal(err)
+	}
+	in, err := itemInput(datasetItemFromInput(t, "item1", input))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if task != "do the thing" {
-		t.Fatalf("task = %q", task)
+	if in.Task != "do the thing" || in.Setup == nil || *in.Setup != *setup {
+		t.Fatalf("input = %+v (setup %+v), want the exported task and setup", in, in.Setup)
 	}
 
-	if _, err := itemTask(datasetItemFromInput(t, "item1", map[string]any{})); err == nil {
+	if _, err := itemInput(datasetItemFromInput(t, "item1", map[string]any{})); err == nil {
 		t.Fatal("want error for missing task field")
 	}
 }

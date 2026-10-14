@@ -1079,6 +1079,33 @@ func TestSDKExtensionDispatch_BoundWorkflowHonorsReadOnly(t *testing.T) {
 	}
 }
 
+// A bound dispatch's Setup becomes its plan's clone, head pin included, as an unbound run's does
+// (`quack experiment run` replays a code-reviewer on the PR head it reviewed).
+func TestSDKExtensionDispatch_BoundWorkflowCarriesSetup(t *testing.T) {
+	dispatch, st, _, _ := boundDispatchFixture(t)
+	sha := strings.Repeat("c", 40)
+	req := extsdk.DispatchRequest{
+		Chat: extsdk.ChatRef{LocalID: "bound-setup"},
+		Ask:  extsdk.Ask{Message: "scan-0042.pdf"},
+		Run: extsdk.RunConfig{Workflow: "document-ingest", Setup: &extsdk.Setup{
+			Repo: "https://github.com/acme/widget.git", BaseRef: "main", WorkBranch: "quack/issue-1", ExistingHeadRef: "feat/x", HeadSHA: sha}},
+	}
+	if err := dispatch(context.Background(), req); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	const chatID = "ext:noop:bound-setup"
+	waitRunSettled(t, st, chatID)
+	dp, err := st.GetLatestDagPlan(context.Background(), chatID)
+	if err != nil || dp == nil {
+		t.Fatalf("GetLatestDagPlan: %v, %v", dp, err)
+	}
+	plan, ok := st.LoadExecPlan(context.Background(), dp.ID)
+	want := dag.Setup{Repo: "https://github.com/acme/widget.git", BaseRef: "main", WorkBranch: "feat/x", HeadSHA: sha}
+	if !ok || plan.Setup == nil || *plan.Setup != want {
+		t.Fatalf("bound plan setup = %+v (loaded %v), want %+v", plan.Setup, ok, want)
+	}
+}
+
 // boundDispatchFixture is a noop extension's Dispatch over a stub orchestrator whose catalog has one
 // bound shape, document-ingest (one worker node, task "process: {{ask}}").
 func boundDispatchFixture(t *testing.T) (extsdk.DispatchFunc, *store.Store, *planToolProbeModel, *extAttachStub) {

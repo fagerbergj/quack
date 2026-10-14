@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -885,6 +886,72 @@ func TestRunDatasetExport_RecurringNodeExportsOneItemPerTurn(t *testing.T) {
 	meta, _ := fake.items[newest[0].ItemID]["metadata"].(map[string]any)
 	if meta["turn_id"] != "t3" {
 		t.Fatalf("--limit 1 exported turn %v, want the newest, t3", meta["turn_id"])
+	}
+	if input, _ := fake.items[newest[0].ItemID]["input"].(map[string]any); input["setup"] != nil {
+		t.Fatalf("a trend-scout item carries setup %v; it replays with no clone", input["setup"])
+	}
+}
+
+// Each turn of a PR review exports the dispatched clone pinned to the head that turn's node started on, read
+// from its revisions' lineage, so a replay reviews the code the original run saw.
+func TestRunDatasetExport_ReviewerItemCarriesPinnedClone(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	chatID := "ext:github:github-acme-widget-1"
+	setup := extsdk.Setup{Repo: "https://github.com/acme/widget.git", BaseRef: "main", WorkBranch: "quack/issue-1", ExistingHeadRef: "feat/x"}
+	origin, _ := json.Marshal(struct {
+		extsdk.ChatOrigin
+		Setup extsdk.Setup `json:"quackSetup"`
+	}{extsdk.ChatOrigin{Extension: "github", Href: "https://github.com/acme/widget/pull/1"}, setup})
+	if err := st.SetChatOrigin(ctx, chatID, "u", string(origin)); err != nil {
+		t.Fatal(err)
+	}
+	ls := ledgertest.NewMemStore()
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	heads := map[string]string{"t1": strings.Repeat("1", 40), "t2": strings.Repeat("2", 40)}
+	for i, turn := range []string{"t1", "t2"} {
+		at := base.Add(time.Duration(i) * time.Hour)
+		rev := fmt.Sprintf(`{"id":"review_record:%s","revision":1,"lineage":{"node_id":"review","head_sha":%q}}`, turn, heads[turn])
+		for _, e := range []ledger.Entry{
+			{ChatID: chatID, TurnID: turn, NodeID: "review", Kind: ledger.KindNodeStarted, At: at},
+			{ChatID: chatID, TurnID: turn, NodeID: "review", Kind: ledger.KindArtifactRevision, Key: "review_record:" + turn, At: at.Add(time.Second), Payload: json.RawMessage(rev)},
+			llmCallRoundEntry(chatID, "review", "code-reviewer", "worker-r0", at.Add(2*time.Second), "review "+turn, "verdict "+turn),
+		} {
+			if _, err := ls.AppendIntent(ctx, e); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	fake := newFakeLangfuse(t)
+	srv := fake.server()
+	defer srv.Close()
+
+	items, _, err := RunDatasetExport(ctx, ls, st, newTestClient(t, srv), ExportOpts{ChatID: chatID, Dataset: "my-dataset"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("want one item per review turn, got %+v", items)
+	}
+	if s := FormatExportSummary(items); !strings.Contains(s, "2 with a replay clone") {
+		t.Fatalf("summary %q must count the items carrying a clone", s)
+	}
+	for _, it := range items {
+		body := fake.items[it.ItemID]
+		turn := body["metadata"].(map[string]any)["turn_id"].(string)
+		b, _ := json.Marshal(body["input"])
+		var in experimentItemInput
+		if err := json.Unmarshal(b, &in); err != nil {
+			t.Fatal(err)
+		}
+		want := setup
+		want.HeadSHA = heads[turn]
+		if in.Task != "review "+turn || in.Setup == nil || *in.Setup != want {
+			t.Fatalf("turn %s input = %s, want task %q in %+v", turn, b, "review "+turn, want)
+		}
 	}
 }
 

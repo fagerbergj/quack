@@ -2120,7 +2120,7 @@ func nodeMemoryScope(jail *workspace.Jail, token string) func(context.Context) m
 // setupCloneFunc returns the dag.SetupFn that clones a chat repo for a new node.
 func setupCloneFunc(cfg *config.Config, jail *workspace.Jail, workspaceCaps workspace.Caps, gitCredentials []tools.GitCredential, gitTokenSource tools.GitTokenSource) dag.SetupFunc {
 	return func(ctx context.Context, _, chatID, dir string, setup dag.Setup) error {
-		_, err := tools.SetupClone(ctx, jail, localUserID, chatID, dir, setup.Repo, setup.BaseRef, setup.WorkBranch, setup.CheckoutExistingHead, workspaceCaps, gitCredentials, gitTokenSource, cfg.Workspace.CheckSetup)
+		_, err := tools.SetupClone(ctx, jail, localUserID, chatID, dir, setup.Repo, setup.BaseRef, setup.WorkBranch, setup.HeadSHA, setup.CheckoutExistingHead, workspaceCaps, gitCredentials, gitTokenSource, cfg.Workspace.CheckSetup)
 		return err
 	}
 }

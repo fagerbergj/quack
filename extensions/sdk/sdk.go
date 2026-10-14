@@ -347,6 +347,10 @@ type Setup struct {
 	// ExistingHeadRef names a branch already on Repo to check out as-is instead of creating
 	// WorkBranch from BaseRef (e.g. a PR's head branch). It overrides WorkBranch.
 	ExistingHeadRef string
+
+	// HeadSHA pins the ExistingHeadRef checkout to this commit, so a replay reviews the code a past run
+	// saw even after the branch moved or was deleted; "" checks out the branch tip.
+	HeadSHA string
 }
 
 // DeliveryKind is quack's closed vocabulary of deliverable items; typed so a mismatch

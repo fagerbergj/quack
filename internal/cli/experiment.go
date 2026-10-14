@@ -48,9 +48,10 @@ type ExperimentResult struct {
 	Error    string
 }
 
-// experimentItemInput mirrors dataset export's datasetItemInput - only Task is read back.
+// experimentItemInput mirrors dataset export's datasetItemInput - only Task and Setup are read back.
 type experimentItemInput struct {
-	Task string `json:"task"`
+	Task  string        `json:"task"`
+	Setup *extsdk.Setup `json:"setup,omitempty"`
 }
 
 // itemRun is one item's node run: the trace RunExperiment links, and what it scores on that trace.
@@ -90,9 +91,9 @@ func (r itemRun) prompt() string {
 	return r.Prompt.Name + "@" + r.Prompt.VersionID
 }
 
-// itemRunner runs one item's task; it's the seam that lets RunExperiment be tested without booting serve.
+// itemRunner runs one item's input; it's the seam that lets RunExperiment be tested without booting serve.
 type itemRunner interface {
-	RunItem(ctx context.Context, task string) (itemRun, error)
+	RunItem(ctx context.Context, in experimentItemInput) (itemRun, error)
 }
 
 // RunExperiment runs opts.Agent's node against every item in opts.Dataset outside any live
@@ -141,12 +142,12 @@ func listDatasetItems(ctx context.Context, lf *langfuse.Client, dataset string, 
 }
 
 func runExperimentItem(ctx context.Context, runner itemRunner, lf *langfuse.Client, item langfuse.DatasetItem, opts ExperimentOpts) (ExperimentResult, error) {
-	task, err := itemTask(item)
+	in, err := itemInput(item)
 	if err != nil {
 		return ExperimentResult{}, fmt.Errorf("experiment run: item %s: %w", item.ID, err)
 	}
 	start := time.Now()
-	run, err := runner.RunItem(ctx, task)
+	run, err := runner.RunItem(ctx, in)
 	res := ExperimentResult{ItemID: item.ID, TraceID: run.TraceID, Prompt: run.prompt(), Duration: time.Since(start)}
 	switch {
 	case err != nil:
@@ -166,19 +167,19 @@ func runExperimentItem(ctx context.Context, runner itemRunner, lf *langfuse.Clie
 	return res, nil
 }
 
-func itemTask(item langfuse.DatasetItem) (string, error) {
+func itemInput(item langfuse.DatasetItem) (experimentItemInput, error) {
+	var in experimentItemInput
 	b, err := json.Marshal(item.Input)
 	if err != nil {
-		return "", err
+		return in, err
 	}
-	var in experimentItemInput
 	if err := json.Unmarshal(b, &in); err != nil {
-		return "", err
+		return in, err
 	}
 	if in.Task == "" {
-		return "", fmt.Errorf("item %s: input has no task field", item.ID)
+		return in, fmt.Errorf("item %s: input has no task field", item.ID)
 	}
-	return in.Task, nil
+	return in, nil
 }
 
 // recordRunItem scores the trace before linking it, so a failed link leaves only scores on an unlinked
@@ -240,14 +241,14 @@ func NewLiveItemRunner(base string, st *store.Store, agent string, rubric vettin
 	return &LiveItemRunner{Base: base, Store: st, Agent: agent, Rubric: rubric}
 }
 
-// RunItem runs Agent's node alone on task through the experiment extension's bound workflow, then reads
-// the node back from the chat's recording.
-func (r *LiveItemRunner) RunItem(ctx context.Context, task string) (itemRun, error) {
+// RunItem runs Agent's node alone on in's task, in in.Setup's clone if any, through the experiment
+// extension's bound workflow, then reads the node back from the chat's recording.
+func (r *LiveItemRunner) RunItem(ctx context.Context, in experimentItemInput) (itemRun, error) {
 	ext := liveExperiment.Load()
 	if ext == nil {
 		return itemRun{}, fmt.Errorf("experiment extension not running (EnableExperiment before boot)")
 	}
-	chatID, err := ext.run(ctx, r.Agent, task)
+	chatID, err := ext.run(ctx, r.Agent, in)
 	if err != nil {
 		return itemRun{}, err
 	}
@@ -326,9 +327,9 @@ func (e *experimentExt) RunEnded(chatID string, o extsdk.RunOutcome) {
 	}
 }
 
-// run dispatches task to agent's bound workflow and waits for the run to end. Delivery is denied
+// run dispatches in to agent's bound workflow and waits for the run to end. Delivery is denied
 // outright, so a replayed reviewer never posts a review and a coder never pushes.
-func (e *experimentExt) run(ctx context.Context, agent, task string) (string, error) {
+func (e *experimentExt) run(ctx context.Context, agent string, in experimentItemInput) (string, error) {
 	localID := uuid.NewString()
 	chatID := "ext:" + experimentExtension + ":" + localID
 	ch := make(chan extsdk.RunOutcome, 1)
@@ -337,8 +338,8 @@ func (e *experimentExt) run(ctx context.Context, agent, task string) (string, er
 	e.mu.Unlock()
 	req := extsdk.DispatchRequest{
 		Chat:     extsdk.ChatRef{LocalID: localID, Title: "experiment: " + agent},
-		Ask:      extsdk.Ask{Message: task},
-		Run:      extsdk.RunConfig{Workflow: experimentWorkflow(agent), ReadOnly: true},
+		Ask:      extsdk.Ask{Message: in.Task},
+		Run:      extsdk.RunConfig{Workflow: experimentWorkflow(agent), ReadOnly: true, Setup: in.Setup},
 		Delivery: extsdk.DeliveryAuthority{AllowedKinds: []extsdk.DeliveryKind{}},
 	}
 	if err := e.host.Dispatch(ctx, req); err != nil {

@@ -725,7 +725,7 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 		// A bound shape (Nodes non-empty) skips the planner LLM call entirely: build the
 		// Plan now, synchronously, so a malformed binding is a hard dispatch error.
 		if nodes, bound := workflowcatalog.Bind(shape, req.Ask.Message); bound {
-			plan, err := orch.BuildBoundPlan(pinCtx, nodes, req.Ask.Message, attachments, allowedKinds)
+			plan, err := orch.BuildBoundPlan(pinCtx, nodes, effectiveSetup, req.Ask.Message, attachments, allowedKinds)
 			if err != nil {
 				return fmt.Errorf("extensions.%s: workflow %q bound plan: %w", name, req.Run.Workflow, err)
 			}
@@ -923,7 +923,7 @@ func mergeExtOrigin(existingOriginJSON string, newOrigin *extsdk.ChatOrigin, new
 
 // toDagSetup adapts the SDK's Setup; ExistingHeadRef overrides WorkBranch for the checkout.
 func toDagSetup(s extsdk.Setup) dag.Setup {
-	out := dag.Setup{Repo: s.Repo, BaseRef: s.BaseRef, WorkBranch: s.WorkBranch}
+	out := dag.Setup{Repo: s.Repo, BaseRef: s.BaseRef, WorkBranch: s.WorkBranch, HeadSHA: s.HeadSHA}
 	if s.ExistingHeadRef != "" {
 		out.WorkBranch = s.ExistingHeadRef
 		out.CheckoutExistingHead = true
