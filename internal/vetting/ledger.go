@@ -165,7 +165,7 @@ func trimDataToolEntries(entries []string, budget int) ([]string, int) {
 // maxSeenURLs caps the search-result URL list; a round rarely sees more than a few dozen.
 const maxSeenURLs = 200
 
-// buildSearchSeenSection: URLs the round's web_search calls returned, so a rubric's "seen in
+// buildSearchSeenSection: URLs the session's web_search calls returned, so a rubric's "seen in
 // search" backing is checkable. Empty when no search returned a result.
 func buildSearchSeenSection(act workerActivity) string {
 	if len(act.seen) == 0 {
@@ -173,7 +173,7 @@ func buildSearchSeenSection(act workerActivity) string {
 	}
 	urls := slices.Sorted(maps.Keys(act.seen))
 	var sb strings.Builder
-	sb.WriteString("URLs the worker saw in web_search results this round (a citation of one of these was seen in search, " +
+	sb.WriteString("URLs the worker saw in web_search results this session (a citation of one of these was seen in search, " +
 		"even if never fetched):\n")
 	if len(urls) > maxSeenURLs {
 		fmt.Fprintf(&sb, "  (… %d more omitted)\n", len(urls)-maxSeenURLs)
