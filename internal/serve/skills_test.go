@@ -348,3 +348,22 @@ func TestPluginSkillsLoadWithResources(t *testing.T) {
 		rc.Close()
 	}
 }
+
+// TestInlinePlanWork: plan-work's body replaces its listing; a load failure falls back to listing it.
+func TestInlinePlanWork(t *testing.T) {
+	ctx := context.Background()
+	src := skill.Source(newSwappableSkillSource(newSkillSource(nil)))
+	pw, err := skillsource.Resolve(ctx, src, "plan-work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fm := &skill.Frontmatter{Name: "format-markdown"}
+	skills, beh := inlinePlanWork(ctx, src, fm, pw, "B")
+	if len(skills) != 1 || !strings.HasPrefix(beh, "B\n\n") || !strings.Contains(beh, "## Common workflows") {
+		t.Fatalf("inlined: skills=%d behaviour=%.200q", len(skills), beh)
+	}
+	skills, beh = inlinePlanWork(ctx, src, fm, &skill.Frontmatter{Name: "no-such-skill"}, "B")
+	if len(skills) != 2 || beh != "B" {
+		t.Fatalf("fallback: skills=%d behaviour=%q", len(skills), beh)
+	}
+}
