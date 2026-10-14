@@ -1,3 +1,5 @@
+import { toolFailed } from './toolFormat'
+
 // Each node runs a sequence of agent "runs" delimited by agent_start/agent_complete. Everything keys on
 // run_id and tools pair by call_id, never open-container heuristics. No JSX, so it stays trivially testable.
 
@@ -166,6 +168,11 @@ function mapRun(runs: AgentRun[], runId: string, fn: (run: AgentRun) => AgentRun
 }
 
 // `tool` is the latest tool call even when the tail has gone back to thinking.
+// Finished calls the per-row ✕ marks failed; an in-flight call has no result yet and never counts.
+export function failedToolCount(activity: Activity[]): number {
+  return activity.filter(a => a.kind === 'tool' && a.tool.done && toolFailed(a.tool.result)).length
+}
+
 export interface LiveStatus {
   thinking: boolean
   tool?: ToolCall

@@ -9,8 +9,8 @@ import { api, listChatArtifactsShared } from '../api'
 import type { ArtifactSummary } from '../api'
 import { cacheRate, type NodeState, type NodeStatus } from '../state/chatStore'
 import { NodeQualityCheck } from './NodeQualityCheck'
-import { agentLabel, type Activity, type AgentRun } from './messageParts'
-import { previewLine, fmtTokenCount, toolFailed } from './toolFormat'
+import { agentLabel, failedToolCount, type Activity, type AgentRun } from './messageParts'
+import { previewLine, fmtTokenCount } from './toolFormat'
 import { type DagNodeDef } from '../state/agentStream'
 import { fmtMs, LiveTimer } from '../utils/timer'
 import { traceUrl } from '../state/clientConfig'
@@ -321,10 +321,9 @@ const WorkerCard = memo(function WorkerCard({ runs, running }: { runs: AgentRun[
   const durationMs = running ? undefined : runs.reduce((sum, r) => sum + (r.durationMs ?? 0), 0)
   const timerRun: AgentRun = { ...runs[runs.length - 1], startedAt, durationMs, model, done: !running }
   // Count only tool calls: a thinking trace isn't a step, and pure reasoning shows no count, not "0 tool calls".
-  const tools = activity.filter((a): a is Extract<Activity, { kind: 'tool' }> => a.kind === 'tool')
-  const toolCount = tools.length
+  const toolCount = activity.filter(a => a.kind === 'tool').length
   // Failures surface on the closed summary; otherwise they hide behind "N earlier".
-  const failedCount = tools.filter(a => a.tool.done && toolFailed(a.tool.result)).length
+  const failedCount = failedToolCount(activity)
   return (
     <div className="border-t border-gray-100 dark:border-gray-700">
       <details open={running} className="not-prose">

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { showLiveSpinner, startRun, appendRunToolCall, fillRunToolResult, appendRunCompaction, type AgentRun } from './messageParts'
+import { failedToolCount, showLiveSpinner, startRun, appendRunToolCall, fillRunToolResult, appendRunCompaction, type AgentRun } from './messageParts'
 
 describe('showLiveSpinner', () => {
   it('shows dots while streaming before anything visible arrives', () => {
@@ -70,5 +70,17 @@ describe('appendRunCompaction', () => {
   it('is a no-op when no run matches the run_id', () => {
     const runs: AgentRun[] = startRun([], { runId: 'worker-r0', agent: 'web-researcher', stage: 'worker' })
     expect(appendRunCompaction(runs, 'worker-r1', { kind: 'compaction' })).toBe(runs)
+  })
+})
+
+describe('failedToolCount', () => {
+  it('counts finished failed tool calls only', () => {
+    const tool = (callId: string, done: boolean, result?: unknown) => ({ kind: 'tool' as const, tool: { callId, name: 'web_search', args: {}, result, done } })
+    expect(failedToolCount([
+      tool('a', true, { error: 'Too Many Requests' }),
+      tool('b', true, { results: [] }),
+      tool('c', false),
+      { kind: 'thinking', text: 'error' },
+    ])).toBe(1)
   })
 })
