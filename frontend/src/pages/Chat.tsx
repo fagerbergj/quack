@@ -17,6 +17,7 @@ import { TriggerMessage } from '../components/TriggerEnvelope'
 import { ChatMenu } from '../components/ChatMenu'
 import { NavToggle } from '../components/NavToggle'
 import { Icon } from '../components/Icon'
+import { ReconnectingBanner } from '../components/ReconnectingBanner'
 import { StatusDot } from '../components/StatusDot'
 import { LiveTimer } from '../utils/timer'
 import type { ChatStatus, Turn } from '../generated'
@@ -1014,6 +1015,8 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
               </div>
             </div>
           )}
+
+          <ReconnectingBanner reconnecting={!!state.reconnecting} error={error} />
 
           {(error || createChatError) && (
             <div className="rounded-md bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 px-4 py-3 text-sm text-red-700 dark:text-red-400">

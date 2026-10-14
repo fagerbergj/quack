@@ -1312,6 +1312,7 @@ class FakeEventSource {
   static last: FakeEventSource | null = null
   url: string
   onerror: (() => void) | null = null
+  onopen: (() => void) | null = null
   closed = false
   private listeners: Record<string, ((e: MessageEvent) => void)[]> = {}
   constructor(url: string) { this.url = url; FakeEventSource.last = this }
@@ -1452,6 +1453,7 @@ describe('ChatStore - reconnect on a dropped stream (#383)', () => {
       es1.onerror?.()
       expect(es1.closed).toBe(true)
       expect(store.get('c').live?.streaming).toBe(true)
+      expect(store.get('c').reconnecting).toBe(true) // the UI shows "reconnecting", not a frozen run
 
       // Bounded backoff, not an immediate hammer: no reconnect until the delay elapses.
       expect(FakeEventSource.last).toBe(es1)
@@ -1462,6 +1464,9 @@ describe('ChatStore - reconnect on a dropped stream (#383)', () => {
       const es2 = FakeEventSource.last!
       expect(es2).not.toBe(es1)
       expect(es2.url).toBe('/api/v1/chats/c/stream?last_event_id=2') // resumes past the last event actually seen
+      expect(store.get('c').reconnecting).toBe(true) // still pending until the new connection opens
+      es2.onopen?.()
+      expect(store.get('c').reconnecting).toBe(false)
 
       // The node's prior state (from es1) is untouched - resuming replays only
       // what's new, so nothing already applied is lost or re-applied.
