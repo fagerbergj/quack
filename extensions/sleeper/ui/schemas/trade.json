@@ -159,7 +159,8 @@
           },
           "why": {
             "type": "string",
-            "maxLength": 1000
+            "maxLength": 350,
+            "description": "One or two short sentences (at most 350 characters): the deciding line item, not commentary."
           }
         }
       }
@@ -388,7 +389,8 @@
           },
           "note": {
             "type": "string",
-            "maxLength": 1000
+            "maxLength": 350,
+            "description": "One or two short sentences (at most 350 characters): the deciding line item, not commentary."
           }
         }
       }
