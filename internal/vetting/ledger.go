@@ -3,6 +3,7 @@ package vetting
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 )
@@ -159,6 +160,31 @@ func trimDataToolEntries(entries []string, budget int) ([]string, int) {
 	}
 	slices.Reverse(kept)
 	return kept, omitted
+}
+
+// maxSeenURLs caps the search-result URL list; a round rarely sees more than a few dozen.
+const maxSeenURLs = 200
+
+// buildSearchSeenSection: URLs the session's web_search calls returned, so a rubric's "seen in
+// search" backing is checkable. Empty when no search returned a result.
+func buildSearchSeenSection(act workerActivity) string {
+	if len(act.seen) == 0 {
+		return ""
+	}
+	urls := slices.Sorted(maps.Keys(act.seen))
+	var sb strings.Builder
+	sb.WriteString("URLs the worker saw in web_search results this session (a citation of one of these was seen in search, " +
+		"even if never fetched):\n")
+	if len(urls) > maxSeenURLs {
+		fmt.Fprintf(&sb, "  (… %d more omitted)\n", len(urls)-maxSeenURLs)
+		urls = urls[:maxSeenURLs]
+	}
+	for _, u := range urls {
+		sb.WriteString("  • ")
+		sb.WriteString(u)
+		sb.WriteString("\n")
+	}
+	return sb.String()
 }
 
 // buildWorkspaceSection: renders workspace ledger for prompt (judge and revise). Empty when no ops.
