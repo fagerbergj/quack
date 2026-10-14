@@ -1,0 +1,36 @@
+name: ext-release
+
+# A plugin/<name>/vX.Y.Z tag publishes quack-ext-<name> for linux amd64/arm64 plus SHA256SUMS on that tag's
+# release, which extensions.<name>.exec: release runs (docs/extensions/dev-loop.md).
+on:
+  push:
+    tags: ["plugin/*/v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Build and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          name=$(echo "$TAG" | cut -d/ -f2)
+          pkg=./extensions/$name/cmd/quack-ext-$name
+          if [ ! -d "$pkg" ]; then echo "no $pkg; nothing to publish"; exit 0; fi
+          mkdir dist
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath -ldflags="-s -w" -o "dist/quack-ext-$name-linux-$arch" "$pkg"
+          done
+          (cd dist && sha256sum -- * > SHA256SUMS)
+          # Idempotent: a re-run replaces the assets instead of failing on the existing release.
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --verify-tag --latest=false \
+            --title "$TAG" --notes "quack-ext-$name binaries for extensions.$name.exec: release"
+          gh release upload "$TAG" dist/* --clobber

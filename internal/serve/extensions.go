@@ -35,10 +35,12 @@ import (
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/orchestrator"
 	"github.com/fagerbergj/quack/internal/otelobs"
+	"github.com/fagerbergj/quack/internal/pluginreg"
 	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/runlog"
 	"github.com/fagerbergj/quack/internal/schema"
 	"github.com/fagerbergj/quack/internal/server"
+	"github.com/fagerbergj/quack/internal/server/rest"
 	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/stream"
 	"github.com/fagerbergj/quack/internal/tools"
@@ -79,17 +81,18 @@ type sdkBuildDeps struct {
 	taskMem       *memory.Store
 	userMem       *memory.Store
 	ledgerStore   ledger.LedgerStore
+	reg           pluginreg.Registry // pins exec: release binaries; nil refuses them
 }
 
 // buildSDKExtensions mounts every configured extension in name order (enabled:false stays dormant).
 // orchRef/judgeModelRef are read lazily inside the Dispatch/Classify closures.
-func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, orchRef *atomic.Pointer[orchestrator.Orchestrator], artifacts *store.TurnAwareService, jail *workspace.Jail, judgeModelRef *atomic.Pointer[model.LLM], taskMem, userMem *memory.Store, ledgerStore ledger.LedgerStore, shapesRef *atomic.Pointer[[]workflowcatalog.Shape], decisions *extDecisions) ([]builtSDKExtension, error) {
+func buildSDKExtensions(cfg *config.Config, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, orchRef *atomic.Pointer[orchestrator.Orchestrator], artifacts *store.TurnAwareService, jail *workspace.Jail, judgeModelRef *atomic.Pointer[model.LLM], taskMem, userMem *memory.Store, ledgerStore ledger.LedgerStore, shapesRef *atomic.Pointer[[]workflowcatalog.Shape], decisions *extDecisions, reg pluginreg.Registry) ([]builtSDKExtension, error) {
 	if decisions == nil {
 		decisions = &extDecisions{}
 	}
 	d := sdkBuildDeps{cfg: cfg, factories: extsdk.Registered(), shapesRef: shapesRef,
 		orchRef: orchRef, st: st, hub: hub, eventLog: eventLog, artifacts: artifacts, judgeModelRef: judgeModelRef,
-		decisions: decisions, taskMem: taskMem, userMem: userMem, ledgerStore: ledgerStore}
+		decisions: decisions, taskMem: taskMem, userMem: userMem, ledgerStore: ledgerStore, reg: reg}
 	built := make([]builtSDKExtension, 0, len(cfg.Extensions.Modules))
 	for _, name := range slices.Sorted(maps.Keys(cfg.Extensions.Modules)) {
 		factory, ok := d.factories[name]
@@ -188,7 +191,7 @@ func validateOneExtension(cfg *config.Config, name string, factories map[string]
 		return nil, fmt.Errorf("extensions.%s: data dir: %w", name, err)
 	}
 	// The child runs the same compiled factory, so the in-process call below still checks its config.
-	if ec.exec != "" {
+	if ec.exec != "" && ec.exec != execRelease {
 		if _, err := exec.LookPath(ec.exec); err != nil {
 			return nil, fmt.Errorf("extensions.%s: exec: %w", name, err)
 		}
@@ -268,6 +271,9 @@ func buildOneSDKExtension(name string, factory extsdk.Factory, d sdkBuildDeps) (
 		},
 		Decide: d.decisions.host(name),
 	}
+	if ec.exec, err = extensionBinary(context.Background(), d.cfg, d.reg, name, ec.exec); err != nil {
+		return builtSDKExtension{}, false, fmt.Errorf("extensions.%s: exec: %w", name, err)
+	}
 	ext, err := newExtension(name, factory, host, ec)
 	if err != nil {
 		return builtSDKExtension{}, false, fmt.Errorf("extensions.%s: factory: %w", name, err)
@@ -295,6 +301,53 @@ func newExtension(name string, factory extsdk.Factory, host extsdk.Host, ec exte
 		return nil, err
 	}
 	return p, nil
+}
+
+// execRelease as an exec value runs the binary published with the pinned release of the plugin row named like
+// the extension (pluginreg.ReleaseBinary), so a plugin tag ships the extension without a quack image.
+const execRelease = "release"
+
+// extensionBinary is the binary exec names; for exec: release it re-reads the plugin row, so a changed pin applies.
+func extensionBinary(ctx context.Context, cfg *config.Config, reg pluginreg.Registry, name, execPath string) (string, error) {
+	if execPath != execRelease {
+		return execPath, nil
+	}
+	if reg == nil {
+		return "", errors.New("exec: release needs the plugin registry")
+	}
+	rows, err := reg.List(ctx)
+	if err != nil {
+		return "", err
+	}
+	i := slices.IndexFunc(rows, func(r pluginreg.Plugin) bool { return r.Name == name })
+	if i < 0 {
+		return "", fmt.Errorf("no plugin named %q is registered to pin the release", name)
+	}
+	return pluginreg.ReleaseBinary(ctx, cfg.Plugins.Root, rows[i])
+}
+
+// extensionRestarter restarts only name's child, on its re-resolved binary; the old child keeps serving on error.
+func extensionRestarter(cfg *config.Config, reg pluginreg.Registry, exts []builtSDKExtension) func(context.Context, string) error {
+	return func(ctx context.Context, name string) error {
+		i := slices.IndexFunc(exts, func(e builtSDKExtension) bool { return e.name == name })
+		if i < 0 {
+			return rest.ErrExtensionNotFound
+		}
+		p, ok := exts[i].ext.(*extproc.Process)
+		if !ok {
+			return rest.ErrExtensionInProcess
+		}
+		ec, err := loadExtensionConfig(cfg, name)
+		if err != nil {
+			return err
+		}
+		bin, err := extensionBinary(ctx, cfg, reg, name, ec.exec)
+		if err != nil {
+			return err
+		}
+		slog.Info("restarting extension process", "component", "ext."+name, "exec", bin)
+		return p.Restart(bin)
+	}
 }
 
 // closeSDKExtensions stops every out-of-process extension's child.

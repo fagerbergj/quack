@@ -677,11 +677,11 @@ func (b *boot) initMemory(ctx context.Context, st *store.Store, artifacts artifa
 }
 
 // builds the SDK extensions, their tools, and the ledger recovery path
-func (b *boot) initExtensions(ctx context.Context, st *store.Store, runHub *stream.Hub, bootEventLog *runlog.EventLog, orchRef *atomic.Pointer[orchestrator.Orchestrator], artifacts *store.TurnAwareService, jail *workspace.Jail, judgeModelRef *atomic.Pointer[model.LLM], taskStore, userStore *memory.Store, ledgerStore ledger.LedgerStore, shapesRef *atomic.Pointer[[]workflowcatalog.Shape]) ([]builtSDKExtension, []extTool, tools.GitTokenSource, vetting.DeliverFunc, tools.AssignmentFreshnessFunc, tools.AssignmentMetaFunc, *artifactschema.Registry, error) {
+func (b *boot) initExtensions(ctx context.Context, reg pluginreg.Registry, st *store.Store, runHub *stream.Hub, bootEventLog *runlog.EventLog, orchRef *atomic.Pointer[orchestrator.Orchestrator], artifacts *store.TurnAwareService, jail *workspace.Jail, judgeModelRef *atomic.Pointer[model.LLM], taskStore, userStore *memory.Store, ledgerStore ledger.LedgerStore, shapesRef *atomic.Pointer[[]workflowcatalog.Shape]) ([]builtSDKExtension, []extTool, tools.GitTokenSource, vetting.DeliverFunc, tools.AssignmentFreshnessFunc, tools.AssignmentMetaFunc, *artifactschema.Registry, error) {
 	// Built after taskStore/userStore so UpdateChatOrigin's memory-outcome mapping closes over the
 	// concrete stores.
 	decisions := &extDecisions{}
-	sdkExts, err := buildSDKExtensions(b.cfg, st, runHub, bootEventLog, orchRef, artifacts, jail, judgeModelRef, taskStore, userStore, ledgerStore, shapesRef, decisions)
+	sdkExts, err := buildSDKExtensions(b.cfg, st, runHub, bootEventLog, orchRef, artifacts, jail, judgeModelRef, taskStore, userStore, ledgerStore, shapesRef, decisions, reg)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, err
 	}
@@ -909,7 +909,7 @@ func buildFromConfig(ctx context.Context, cfg *config.Config, port int, reconcil
 	if err != nil {
 		return nil, nil, "", err
 	}
-	sdkExts, sdkTools, gitTokenSource, deliver, assignmentFreshness, assignmentMeta, artifactSchemas, err := b.initExtensions(ctx, st, runHub, bootEventLog, &orchRef, artifacts, jail, &judgeModelRef, taskStore, userStore, ledgerStore, &shapesRef)
+	sdkExts, sdkTools, gitTokenSource, deliver, assignmentFreshness, assignmentMeta, artifactSchemas, err := b.initExtensions(ctx, reg, st, runHub, bootEventLog, &orchRef, artifacts, jail, &judgeModelRef, taskStore, userStore, ledgerStore, &shapesRef)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -2032,6 +2032,7 @@ func mountHTTP(cfg *config.Config, st *store.Store, orch *orchestrator.Orchestra
 	restHandler.SetPlugins(restPlugins)
 	restHandler.SetTraceURLTemplate(cfg.Observability.Otel.TraceURLTemplate)
 	restHandler.SetRunEnded(restRunEnded(orch, st, sdkExts))
+	restHandler.SetExtensionRestarter(extensionRestarter(cfg, pluginReg, sdkExts))
 
 	return server.New(server.Options{
 		REST:          restHandler,

@@ -51,7 +51,7 @@ Each section gets its own page below:
 - **[Decision points](decisions.md)** — intercept points answered by System One decision models: handlers, modes, recording.
 - **[Observability](observability.md)** — the OTel traces and metrics quack emits, and what each one is for.
 
-The GitHub App extension (`extensions.github`) has its own page: [`../extensions/github.md`](../extensions/github.md); the [reMarkable](../extensions/remarkable.md), [Sleeper](../extensions/sleeper.md) and [usage dashboard](../extensions/usage.md) extensions get short pages of their own. Every `extensions.<name>` block also takes `enabled`, `data_dir` and `exec`; `exec: /quack-ext-<name>` runs that extension as a supervised child process, and the image ships the binary for each of the four (see [the extensions README](../../extensions/README.md#out-of-process)).
+The GitHub App extension (`extensions.github`) has its own page: [`../extensions/github.md`](../extensions/github.md); the [reMarkable](../extensions/remarkable.md), [Sleeper](../extensions/sleeper.md) and [usage dashboard](../extensions/usage.md) extensions get short pages of their own. Every `extensions.<name>` block also takes `enabled`, `data_dir` and `exec`; `exec: /quack-ext-<name>` runs that extension as a supervised child process, and the image ships the binary for each of the four (see [the extensions README](../../extensions/README.md#out-of-process)). `exec: release` runs the binary published with the extension's pinned plugin release instead (see [Releasing an extension without a quack release](../extensions/dev-loop.md#releasing-an-extension-without-a-quack-release)).
 
 ## Context compaction (`session.compaction`)
 

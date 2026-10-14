@@ -98,7 +98,7 @@ func newRootCmd() *cobra.Command {
 	root.Flags().StringSlice("attach", nil, "with -p: attach file(s) - image/audio - to the prompt (repeatable)")
 	root.Flags().Bool("json", false, "with -p: print one JSON result object instead of plain text (same exit codes)")
 
-	root.AddCommand(newInitCmd(), newChatCmd(), newServerCmd(), newAPICmd(), newVersionCmd(), newGitAskpassCmd(), newEvalCmd(), newSandboxCmd(), newMemoryCmd(), newLedgerCmd(), newDecisionsCmd(), newDatasetCmd(), newExperimentCmd(), newPromptCmd(), newJudgeCmd())
+	root.AddCommand(newInitCmd(), newChatCmd(), newServerCmd(), newAPICmd(), newVersionCmd(), newGitAskpassCmd(), newEvalCmd(), newSandboxCmd(), newMemoryCmd(), newLedgerCmd(), newDecisionsCmd(), newDatasetCmd(), newExperimentCmd(), newPromptCmd(), newJudgeCmd(), newExtensionCmd())
 	rejectUnknownSubcommands(root)
 	return root
 }
@@ -415,6 +415,16 @@ func newChatDeleteCmd() *cobra.Command {
 // asJSONFlag registers a standard --json flag bound to dst.
 func asJSONFlag(c *cobra.Command, dst *bool) {
 	c.Flags().BoolVar(dst, "json", false, "output raw JSON")
+}
+
+// newExtensionCmd: manage the server's out-of-process extensions.
+func newExtensionCmd() *cobra.Command {
+	c := &cobra.Command{Use: "extension", Short: "Manage out-of-process extensions"}
+	c.AddCommand(targetCmd("restart <name>", "Restart one extension's child on its current binary or release pin", cobra.ExactArgs(1), nil,
+		func(ctx context.Context, out io.Writer, t string, args []string) error {
+			return cli.RunExtensionRestart(ctx, out, t, args[0])
+		}))
+	return c
 }
 
 // newMemoryCmd: browse and invalidate the server's memory store.

@@ -205,7 +205,7 @@ func runGithub(t *testing.T, block string) (f githubFlow, child bool) {
 	cfg.Decisions = decisionsCfg(rec.serve(t), map[string]config.DecisionPoint{
 		"ext:github/review.verdict": {Enabled: true, Mode: "observe"}, "ext:github/finding.blocking": {Enabled: true, Mode: "observe"}})
 	decisions := &extDecisions{}
-	exts, err := buildSDKExtensions(cfg, st, hub, runlog.NewEventLog(st), &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil, nil, decisions)
+	exts, err := buildSDKExtensions(cfg, st, hub, runlog.NewEventLog(st), &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil, nil, decisions, nil)
 	if err != nil || len(exts) != 1 {
 		t.Fatalf("buildSDKExtensions = %d exts, %v", len(exts), err)
 	}

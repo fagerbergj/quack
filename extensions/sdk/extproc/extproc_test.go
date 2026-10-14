@@ -161,6 +161,11 @@ func (e testExt) RegisterRoutes(authed, _ chi.Router) {
 		_, _ = fmt.Fprintf(w, "%+v %v", d, err)
 	})
 	authed.Get("/crash", func(http.ResponseWriter, *http.Request) { os.Exit(3) })
+	authed.Get("/slow", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprintln(os.Stderr, "slow")
+		time.Sleep(300 * time.Millisecond)
+		_, _ = fmt.Fprint(w, "done")
+	})
 	authed.Get("/block", func(http.ResponseWriter, *http.Request) {
 		fmt.Fprintln(os.Stderr, "blocking")
 		select {}
@@ -468,6 +473,53 @@ func TestProcessRestartsAfterCrashWithBackoff(t *testing.T) {
 	got = append(got, crash(t, srv, logs))
 	if want := []time.Duration{restartMin, 2 * restartMin, restartMin}; fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Errorf("restart backoffs = %v, want %v (double, then reset after outliving restartMax)", got, want)
+	}
+}
+
+// Restart replaces one Process's child, drains the old child's in-flight request, leaves another Process's
+// child running, and keeps the current child when the new binary cannot start.
+func TestRestartReplacesOnlyThatChild(t *testing.T) {
+	p, srv, logs := startProcess(t)
+	_, other, _ := startProcess(t)
+	pid, otherPid := pidOf(t, srv), pidOf(t, other)
+
+	slow := make(chan string, 1)
+	go func() {
+		resp, err := http.Get(srv.URL + "/x/slow")
+		if err != nil {
+			slow <- err.Error()
+			return
+		}
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		slow <- fmt.Sprint(resp.StatusCode, " ", string(body))
+	}()
+	waitFor(t, "/slow to reach the child", func() bool { return strings.Contains(logs.String(), `"line":"slow"`) })
+	if err := p.Restart(os.Args[0]); err != nil {
+		t.Fatalf("Restart: %v", err)
+	}
+	if got := <-slow; got != "200 done" {
+		t.Errorf("in-flight request across Restart = %q, want 200 done", got)
+	}
+	newPid := pidOf(t, srv)
+	if newPid == pid {
+		t.Error("Restart kept the old child")
+	}
+	if err := syscall.Kill(pid, 0); !errors.Is(err, syscall.ESRCH) {
+		t.Errorf("old child %d still exists after Restart (kill -0: %v)", pid, err)
+	}
+	if got := pidOf(t, other); got != otherPid {
+		t.Errorf("the other extension's child changed from %d to %d", otherPid, got)
+	}
+	if err := p.Restart("/nonexistent/quack-ext-x"); err == nil {
+		t.Error("Restart onto a missing binary succeeded")
+	}
+	time.Sleep(200 * time.Millisecond) // room for a wrong crash-respawn to show
+	if got := pidOf(t, srv); got != newPid {
+		t.Errorf("child changed from %d to %d after a failed Restart", newPid, got)
+	}
+	if strings.Contains(logs.String(), "exited; restarting") {
+		t.Errorf("the supervisor treated Restart's stop as a crash:\n%s", logs.String())
 	}
 }
 

@@ -115,7 +115,7 @@ func runSleeper(t *testing.T, block string) (f sleeperFlow, child bool) {
 	cfg := noopModulesConfig(t, root, block)
 	cfg.Decisions = decisionsCfg(rec.serve(t), map[string]config.DecisionPoint{"ext:sleeper/lineup_change": {Enabled: true, Mode: "observe"}})
 	decisions := &extDecisions{}
-	exts, err := buildSDKExtensions(cfg, st, hub, runlog.NewEventLog(st), &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil, shapes, decisions)
+	exts, err := buildSDKExtensions(cfg, st, hub, runlog.NewEventLog(st), &orchRef, artifacts, jail, &judgeModelRef, nil, nil, nil, shapes, decisions, nil)
 	if err != nil || len(exts) != 1 {
 		t.Fatalf("buildSDKExtensions = %d exts, %v", len(exts), err)
 	}

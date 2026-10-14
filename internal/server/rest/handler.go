@@ -82,6 +82,8 @@ type Handler struct {
 	deferredResumes sync.Map
 	// runEnded tells a chat's dispatching extension how a node run started here ended; nil without extensions.
 	runEnded RunEndedFunc
+	// restartExtension backs POST /api/v1/extensions/{name}/restart; nil 404s every name.
+	restartExtension func(ctx context.Context, name string) error
 }
 
 // RunEndedFunc delivers a node run's outcome to the extension that dispatched chatID, if one observes it.
@@ -442,6 +444,35 @@ func (h *Handler) ListExtensions(w http.ResponseWriter, r *http.Request) {
 		out = []schema.ExtensionInfo{}
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// ErrExtensionNotFound and ErrExtensionInProcess are a restarter's 404 and 409; any other error is a 502.
+var (
+	ErrExtensionNotFound  = errors.New("no enabled extension has this name")
+	ErrExtensionInProcess = errors.New("extension runs in process (its block sets no exec); restart quack instead")
+)
+
+// SetExtensionRestarter wires POST /api/v1/extensions/{name}/restart.
+func (h *Handler) SetExtensionRestarter(f func(ctx context.Context, name string) error) {
+	h.restartExtension = f
+}
+
+// RestartExtension restarts one out-of-process extension's child on its re-resolved binary.
+func (h *Handler) RestartExtension(w http.ResponseWriter, r *http.Request, name schema.PluginName) {
+	err := ErrExtensionNotFound
+	if h.restartExtension != nil {
+		err = h.restartExtension(r.Context(), name)
+	}
+	switch {
+	case err == nil:
+		w.WriteHeader(http.StatusNoContent)
+	case errors.Is(err, ErrExtensionNotFound):
+		httpError(w, http.StatusNotFound, err)
+	case errors.Is(err, ErrExtensionInProcess):
+		httpError(w, http.StatusConflict, err)
+	default:
+		httpError(w, http.StatusBadGateway, err)
+	}
 }
 
 // Lists chats the ledger has entries for (backs `quack ledger list`).

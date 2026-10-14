@@ -57,6 +57,9 @@ type Process struct {
 
 	mu  sync.Mutex
 	cur *child
+	// spawnMu orders a crash respawn, Restart and the final stop, so none replaces a child another
+	// started unseen; it guards path.
+	spawnMu sync.Mutex
 
 	stop      chan struct{}
 	done      chan struct{}
@@ -92,7 +95,7 @@ func New(name, path string, host sdk.Host, config []byte) (*Process, error) {
 	if host.Location != nil {
 		p.params.Location = host.Location.String()
 	}
-	c, res, err := p.spawn()
+	c, res, err := p.spawn(path)
 	if err != nil {
 		return nil, err
 	}
@@ -329,12 +332,41 @@ func (p *Process) forward(w http.ResponseWriter, r *http.Request, method string)
 	_, _ = w.Write(res.Body)
 }
 
-func (p *Process) spawn() (*child, initResult, error) {
+// Restart swaps in a child running path once it initializes, then stops the old one as Close does (its in-flight
+// calls drain until stopGrace); on error the current child keeps serving. The first child's surface stays.
+func (p *Process) Restart(path string) error {
+	p.spawnMu.Lock()
+	select {
+	case <-p.stop:
+		p.spawnMu.Unlock()
+		return fmt.Errorf("extension %s: closed", p.name)
+	default:
+	}
+	c, _, err := p.spawn(path)
+	if err != nil {
+		p.spawnMu.Unlock()
+		return err
+	}
+	p.path = path
+	old := p.swap(c)
+	p.spawnMu.Unlock()
+	old.stop()
+	return nil
+}
+
+func (p *Process) swap(c *child) (old *child) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	old, p.cur = p.cur, c
+	return old
+}
+
+func (p *Process) spawn(path string) (*child, initResult, error) {
 	var res initResult
 	start := time.Now()
-	c, err := startChild(p.path, p.log, p.serveChild)
+	c, err := startChild(path, p.log, p.serveChild)
 	if err != nil {
-		return nil, res, fmt.Errorf("extension %s: start %s: %w", p.name, p.path, err)
+		return nil, res, fmt.Errorf("extension %s: start %s: %w", p.name, path, err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), initTimeout)
 	defer cancel()
@@ -354,27 +386,36 @@ func (p *Process) spawn() (*child, initResult, error) {
 // and resets once a child outlives the cap.
 func (p *Process) supervise(c *child) {
 	defer close(p.done)
+	defer func() {
+		p.spawnMu.Lock()
+		defer p.spawnMu.Unlock()
+		p.current().stop()
+	}()
 	backoff := restartMin
 	for {
 		select {
 		case <-p.stop:
-			c.stop()
 			return
 		case <-c.done:
+		}
+		if cur := p.current(); cur != c {
+			c = cur // Restart replaced it
+			continue
 		}
 		if time.Since(c.started) > restartMax {
 			backoff = restartMin
 		}
 		p.log.Warn("extension process exited; restarting", "err", c.err, "backoff", backoff)
 		var ok bool
-		if c, backoff, ok = p.respawn(backoff); !ok {
+		if c, backoff, ok = p.respawn(c, backoff); !ok {
 			return
 		}
 	}
 }
 
-// respawn retries spawn with growing backoff; ok is false when Close interrupted it.
-func (p *Process) respawn(backoff time.Duration) (*child, time.Duration, bool) {
+// respawn retries spawn with growing backoff until it replaces dead, or Restart already has; ok is false when
+// Close interrupted it.
+func (p *Process) respawn(dead *child, backoff time.Duration) (*child, time.Duration, bool) {
 	for {
 		select {
 		case <-p.stop:
@@ -382,11 +423,16 @@ func (p *Process) respawn(backoff time.Duration) (*child, time.Duration, bool) {
 		case <-time.After(backoff):
 		}
 		backoff = min(backoff*2, restartMax)
-		c, _, err := p.spawn()
+		p.spawnMu.Lock()
+		c := p.current()
+		var err error
+		if c == dead {
+			if c, _, err = p.spawn(p.path); err == nil {
+				p.swap(c)
+			}
+		}
+		p.spawnMu.Unlock()
 		if err == nil {
-			p.mu.Lock()
-			p.cur = c
-			p.mu.Unlock()
 			return c, backoff, true
 		}
 		p.log.Error("extension process restart failed", "err", err)

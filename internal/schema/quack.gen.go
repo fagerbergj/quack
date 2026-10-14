@@ -2147,6 +2147,9 @@ type ServerInterface interface {
 	// List enabled extensions for SPA nav
 	// (GET /api/v1/extensions)
 	ListExtensions(w http.ResponseWriter, r *http.Request)
+	// Restart one out-of-process extension on its current binary
+	// (POST /api/v1/extensions/{name}/restart)
+	RestartExtension(w http.ResponseWriter, r *http.Request, name PluginName)
 	// Browse or search quack's semantic memory
 	// (GET /api/v1/memories)
 	ListMemories(w http.ResponseWriter, r *http.Request, params ListMemoriesParams)
@@ -2348,6 +2351,12 @@ func (_ Unimplemented) ListDecisions(w http.ResponseWriter, r *http.Request, par
 // List enabled extensions for SPA nav
 // (GET /api/v1/extensions)
 func (_ Unimplemented) ListExtensions(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Restart one out-of-process extension on its current binary
+// (POST /api/v1/extensions/{name}/restart)
+func (_ Unimplemented) RestartExtension(w http.ResponseWriter, r *http.Request, name PluginName) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -3576,6 +3585,40 @@ func (siw *ServerInterfaceWrapper) ListExtensions(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// RestartExtension operation middleware
+func (siw *ServerInterfaceWrapper) RestartExtension(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "name" -------------
+	var name PluginName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", chi.URLParam(r, "name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	ctx = context.WithValue(ctx, TrustedHeaderScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RestartExtension(w, r, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListMemories operation middleware
 func (siw *ServerInterfaceWrapper) ListMemories(w http.ResponseWriter, r *http.Request) {
 
@@ -4283,6 +4326,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/extensions", wrapper.ListExtensions)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/v1/extensions/{name}/restart", wrapper.RestartExtension)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/v1/memories", wrapper.ListMemories)

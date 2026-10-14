@@ -40,7 +40,7 @@ func serveUsage(t *testing.T, block string, paths []string) (map[string]usageRep
 	var orchRef atomic.Pointer[orchestrator.Orchestrator]
 	var judgeModelRef atomic.Pointer[model.LLM]
 	cfg := noopModulesConfig(t, t.TempDir(), block)
-	exts, err := buildSDKExtensions(cfg, nil, nil, nil, &orchRef, nil, nil, &judgeModelRef, nil, nil, nil, nil, nil)
+	exts, err := buildSDKExtensions(cfg, nil, nil, nil, &orchRef, nil, nil, &judgeModelRef, nil, nil, nil, nil, nil, nil)
 	if err != nil || len(exts) != 1 {
 		t.Fatalf("buildSDKExtensions = %d exts, %v", len(exts), err)
 	}
