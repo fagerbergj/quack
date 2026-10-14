@@ -299,3 +299,55 @@ func TestResetCloneToNodeBase_NoopsWithoutABase(t *testing.T) {
 		})
 	}
 }
+
+// A reviewer works in a linked worktree, whose .git is a pointer file. The probes must read it, and a worktree
+// node probes the clone it tracks, which exists before the worktree and holds the branch's base.
+func TestProbesReadALinkedWorktree(t *testing.T) {
+	cfg := probeRepo(t, true)
+	caps := workspace.DefaultCaps()
+	parent, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.SetupCloneDir(cfg.NodeID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.SetupCloneDir("rev1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("git", "-C", parent, "worktree", "add", "-q", "-b", workspace.WorktreeBranch("rev1"), wt, "HEAD").CombinedOutput(); err != nil {
+		t.Fatalf("worktree add: %v\n%s", err, out)
+	}
+	head := gitLine(parent, caps, "rev-parse", "HEAD")
+	base, err := baseCommit(parent, caps)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg.NodeID = "rev1"
+	if got := cloneHeadSHA(cfg); got != head {
+		t.Fatalf("cloneHeadSHA in a linked worktree = %q, want HEAD %q", got, head)
+	}
+
+	cfg.NodeID, cfg.WorktreeParent, cfg.IsReviewer = "rev2", "n1", true // rev2's worktree isn't cut yet
+	cfg.NodeBaseSHA = cloneHeadSHA(cfg)
+	if cfg.NodeBaseSHA != head {
+		t.Fatalf("node-start head before the worktree exists = %q, want the parent's HEAD %q", cfg.NodeBaseSHA, head)
+	}
+	if s := resolveReviewScope(cfg); !s.ok || s.head != head || s.fileCount != 1 {
+		t.Fatalf("review scope = %+v, want head %s and the branch's one file", s, head)
+	}
+	if got := buildReviewDiffSection(cfg); !strings.Contains(got, "x.go") {
+		t.Fatalf("review diff missing the branch's change:\n%s", got)
+	}
+
+	// Writable but a worktree node: neither the commit probe nor a reset may act on the shared clone.
+	act := workerActivity{}
+	augmentFromRepo(context.Background(), &act, cfg)
+	if act.committed {
+		t.Fatal("a worktree node was credited with the shared clone's commits")
+	}
+	cfg.NodeBaseSHA = base
+	resetCloneToNodeBase(cfg, lowCommitHygiene())
+	if got := gitLine(parent, caps, "rev-parse", "HEAD"); got != head {
+		t.Fatalf("a worktree node's reset moved the shared clone from %s to %s", head, got)
+	}
+}

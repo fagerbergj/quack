@@ -172,6 +172,7 @@ func nodeGateConfig(ctx context.Context, plan Plan, node Node, worker adkagent.A
 	cfg.Checks = node.Checks
 	cfg.Workdir = node.Workdir
 	cfg.NodeID = workspaceNodeID(plan, node)
+	cfg.WorktreeParent = worktreeParentID(plan, node)
 	cfg.ForeignNodes = foreignNodes(plan, node.ID)
 	cfg.Agent = node.AgentName
 	cfg.AllowedDeliveryKinds = plan.AllowedDeliveryKinds
@@ -263,7 +264,7 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 			task := vetting.AdvisorTask{
 				Task: effectiveNode.Task, Rubric: node.Rubric, NodeID: node.ID,
 				WorkspaceNodeID: workspaceNodeID(plan, node),
-				WorktreeParent:  worktreeParentID(plan, node),
+				WorktreeParent:  cfg.WorktreeParent,
 				ReadOnly:        cfg.ReadOnly,
 				InvocationID:    ctx.InvocationID(),
 				ChatID:          chatID, // real chat scope; the ADK session id below is a retry-only alias

@@ -4,7 +4,6 @@ package vetting
 
 import (
 	"fmt"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -381,30 +380,16 @@ type reviewScope struct {
 	ok        bool
 }
 
-// resolveReviewScope resolves the clone like diffSince (cfg.NodeBaseSHA, else the reflog's oldest HEAD).
+// resolveReviewScope resolves the clone and range exactly as diffSince does (cloneRange).
 // Zero value when there's no clone or its base/head can't be resolved.
 func resolveReviewScope(cfg Config) reviewScope {
-	if cfg.Setup == nil || cfg.Workspace == nil {
-		return reviewScope{}
-	}
-	dir, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.SetupCloneDir(cfg.NodeID))
-	if err != nil || !isDir(filepath.Join(dir, ".git")) {
-		return reviewScope{}
-	}
-	caps := checksCaps(cfg)
-	base := cfg.NodeBaseSHA
-	if base == "" {
-		if base, err = baseCommit(dir, caps); err != nil {
-			return reviewScope{}
-		}
-	}
-	head := gitLine(dir, caps, "rev-parse", "HEAD")
-	if head == "" {
+	dir, caps, base, head, ok := cloneRange(cfg)
+	if !ok {
 		return reviewScope{}
 	}
 	return reviewScope{
 		dir: dir, caps: caps, head: head, ok: true,
-		fileCount: len(gitLines(dir, caps, "diff", "--name-only", base, head)),
+		fileCount: len(gitLines(dir, caps, "diff", "--name-only", base+"..."+head)),
 	}
 }
 
