@@ -1923,6 +1923,17 @@ func buildAgentInfos(ctx context.Context, cfg *config.Config, res *artifactsrc.R
 	return agentInfos, mediaAgents, rosterSB.String(), bundleHashes
 }
 
+// inlinePlanWork puts plan-work's body in the orchestrator prompt: loading it was one extra model call per
+// planning turn. A load failure falls back to listing the skill so load_skill still reaches it.
+func inlinePlanWork(ctx context.Context, src skill.Source, fmFm, planWorkFm *skill.Frontmatter, behaviour string) ([]*skill.Frontmatter, string) {
+	body, err := src.LoadInstructions(ctx, planWorkFm.Name)
+	if err != nil {
+		slog.Warn("plan-work inline failed; listing it as a skill", "component", "orchestrator", "err", err)
+		return []*skill.Frontmatter{fmFm, planWorkFm}, behaviour
+	}
+	return []*skill.Frontmatter{fmFm}, behaviour + "\n\nThe plan-work skill follows, already loaded (never load_skill it):\n\n" + strings.TrimSpace(body)
+}
+
 func assembleOrchestrator(ctx context.Context, cfg *config.Config, res *artifactsrc.Resolver, st *store.Store, llm model.LLM, roster *dag.Roster, judgeFactory vetting.JudgeFactory, planJudge vetting.PlanJudge, decisions *decide.Decider, taskStore, userStore *memory.Store, artifacts artifact.Service, ledgerStore ledger.LedgerStore, assignmentFreshness tools.AssignmentFreshnessFunc, assignmentMeta tools.AssignmentMetaFunc, newScopedSkillTS func(names []string) (*skilltoolset.SkillToolset, error), skillSrc skill.Source, orchRef *atomic.Pointer[orchestrator.Orchestrator], executorRef *atomic.Pointer[dag.Executor], hooks *shutdownHooks, setupFn dag.SetupFunc, admission *dag.Admission, artifactSchemas *artifactschema.Registry) (*orchestrator.Orchestrator, error) {
 	orchBundle, err := agent.LoadBundle(ctx, res, "agents/orchestrator")
 	if err != nil {
@@ -1959,7 +1970,8 @@ func assembleOrchestrator(ctx context.Context, cfg *config.Config, res *artifact
 	orchSysPrompt := promptbuilder.CacheByDay(func(ctx context.Context) string {
 		return strconv.FormatUint(executor.RosterFor(ctx).Gen, 10)
 	}, func(ctx context.Context) string {
-		return promptbuilder.Orchestrator(executor.RosterFor(ctx).Text, []*skill.Frontmatter{fmFm, planWorkFm}, orchBehaviour)
+		skills, behaviour := inlinePlanWork(ctx, skillSrc, fmFm, planWorkFm, orchBehaviour)
+		return promptbuilder.Orchestrator(executor.RosterFor(ctx).Text, skills, behaviour)
 	})
 	executor.SetMaxActive(cfg.Dag.MaxActiveNodes)
 	executor.SetAdmission(admission, judgeSpec(cfg))
