@@ -69,11 +69,19 @@ func TestRedeliverFailedPostsAttempts(t *testing.T) {
 		t.Fatal(err)
 	}
 	app.SetAPIBase(srv.URL)
-	n, err := app.RedeliverFailed(context.Background(), time.Now().Add(-redeliverWindow))
+	sent := map[string]int{}
+	n, err := app.RedeliverFailed(context.Background(), time.Now().Add(-redeliverWindow), sent)
 	if err != nil || n != 1 {
 		t.Fatalf("RedeliverFailed = %d, %v; want 1, nil", n, err)
 	}
 	if want := []string{"/app/hook/deliveries/41/attempts"}; !slices.Equal(posted, want) {
 		t.Fatalf("posted %v, want %v", posted, want)
+	}
+	// The fake keeps listing the same failure: the in-process count stops it at the cap.
+	for range maxRedeliveries {
+		_, _ = app.RedeliverFailed(context.Background(), time.Now().Add(-redeliverWindow), sent)
+	}
+	if len(posted) != maxRedeliveries {
+		t.Fatalf("posted %d attempts for one GUID, want the cap %d", len(posted), maxRedeliveries)
 	}
 }

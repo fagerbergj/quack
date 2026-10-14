@@ -28,9 +28,9 @@ type hookDelivery struct {
 	Action      string    `json:"action"`
 }
 
-// neverReached: an edge failure (no connection, or a gateway with quack down), so quack never processed it
-// and a redelivery cannot double-apply it.
-func neverReached(code int) bool { return code == 0 || code == 502 || code == 503 || code == 504 }
+// neverReached: no connection, or a gateway that found quack down (502/503), so quack never processed it.
+// A 504 is excluded: a slow quack may have received and acted on it, and the handler has no delivery dedup.
+func neverReached(code int) bool { return code == 0 || code == 502 || code == 503 }
 
 // failedDeliveries returns, oldest first, each event (GUID) inside the window whose latest attempt never
 // reached quack, with no attempt that did, and fewer than maxRedeliveries retries so far.
@@ -57,9 +57,10 @@ func failedDeliveries(ds []hookDelivery, since time.Time) []hookDelivery {
 	return out
 }
 
-// RedeliverFailed re-sends recent deliveries that never reached quack and returns how many it re-sent.
+// RedeliverFailed re-sends recent deliveries that never reached quack and returns how many it re-sent. sent
+// counts this process's retries per GUID, so the cap holds when earlier attempts fall off the newest-100 page.
 // ponytail: reads only the newest 100 deliveries; paginate if a 30-minute window ever holds more.
-func (a *App) RedeliverFailed(ctx context.Context, since time.Time) (int, error) {
+func (a *App) RedeliverFailed(ctx context.Context, since time.Time, sent map[string]int) (int, error) {
 	jwtStr, err := a.appJWT()
 	if err != nil {
 		return 0, err
@@ -70,10 +71,14 @@ func (a *App) RedeliverFailed(ctx context.Context, since time.Time) (int, error)
 	}
 	n := 0
 	for _, d := range failedDeliveries(ds, since) {
+		if sent[d.GUID] >= maxRedeliveries {
+			continue
+		}
 		path := fmt.Sprintf("/app/hook/deliveries/%d/attempts", d.ID)
 		if err := a.doJSON(ctx, http.MethodPost, path, "Bearer "+jwtStr, nil, nil); err != nil {
 			return n, err
 		}
+		sent[d.GUID]++
 		n++
 		select {
 		case <-ctx.Done():
@@ -88,13 +93,14 @@ func (a *App) RedeliverFailed(ctx context.Context, since time.Time) (int, error)
 func (e *Extension) redeliverLoop(ctx context.Context) {
 	t := time.NewTicker(redeliverEvery)
 	defer t.Stop()
+	sent := map[string]int{} // ponytail: grows by one entry per redelivered GUID for the process's life
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
 		}
-		n, err := e.app.RedeliverFailed(ctx, time.Now().Add(-redeliverWindow))
+		n, err := e.app.RedeliverFailed(ctx, time.Now().Add(-redeliverWindow), sent)
 		switch {
 		case err != nil && ctx.Err() == nil:
 			e.host.Log.Warn("github: webhook redelivery sweep failed", "redelivered", n, "err", err)
