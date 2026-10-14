@@ -225,6 +225,21 @@ func TestBuildJudgePromptCarriesLedger(t *testing.T) {
 	}
 }
 
+// A rubric that accepts "seen in search" backing needs the result URLs, not just the queries.
+func TestBuildJudgePromptListsSearchResultURLs(t *testing.T) {
+	act := workerActivity{seen: map[string]string{}}
+	recordSearchResults(act.seen, map[string]any{"queries": []any{map[string]any{
+		"results": []any{map[string]any{"url": "https://apnews.com/article/x", "snippet": "close to returning"}},
+	}}})
+	got := buildJudgePrompt("", "rubric", "", "", questionContent("q"), "a", "", act, "")
+	if !strings.Contains(got, "web_search results") || !strings.Contains(got, "https://apnews.com/article/x") {
+		t.Errorf("judge prompt missing the seen URL:\n%s", got)
+	}
+	if strings.Contains(buildJudgePrompt("", "rubric", "", "", questionContent("q"), "a", "", workerActivity{}, ""), "web_search results") {
+		t.Error("no search results should add no section")
+	}
+}
+
 // A data-agent tool's call/result must reach the judge, or it scores on internal consistency alone.
 func TestDataToolCallReachesJudgePrompt(t *testing.T) {
 	sess := newTestSession(t,

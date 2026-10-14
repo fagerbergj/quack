@@ -384,6 +384,10 @@ func buildJudgePrompt(constitution, rubric, nodeTask, upstreamAnswers string, qu
 		sb.WriteString("\n\n")
 		sb.WriteString(ws)
 	}
+	if seen := buildSearchSeenSection(act); seen != "" {
+		sb.WriteString("\n\n")
+		sb.WriteString(seen)
+	}
 	if dt := buildDataToolsSection(act); dt != "" {
 		sb.WriteString("\n\n")
 		sb.WriteString(dt)
