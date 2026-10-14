@@ -160,4 +160,6 @@ func TestConstructiveActionableRubricScoresCodeBlocks(t *testing.T) {
 	if !strings.Contains(s, "NO code block") && !strings.Contains(s, "no code block") {
 		t.Error("constructive_actionable does not say observational findings need no code block")
 	}
+	// A missing block alone forced a whole revision round in 19 of 136 prod rounds; it costs a band, never the criterion.
+	requireAll(t, "constructive_actionable", s, "never fails this criterion on its own")
 }
