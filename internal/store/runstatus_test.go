@@ -51,7 +51,7 @@ func TestScanOrphanedRuns_SettlesInterruptedOnce(t *testing.T) {
 	}
 	dag.SetAgentRoster(nil) // boot runs before any roster exists
 
-	_, ids, _, err := st.ScanOrphanedRuns(ctx)
+	_, ids, _, _, err := st.ScanOrphanedRuns(ctx)
 	if err != nil || len(ids) != 1 || ids[0] != "chat-crashed" {
 		t.Fatalf("first boot ids = %v err=%v, want [chat-crashed]", ids, err)
 	}
@@ -64,7 +64,7 @@ func TestScanOrphanedRuns_SettlesInterruptedOnce(t *testing.T) {
 	if json.Unmarshal(raw, &rec) != nil || rec.Status != dag.StatusFailed {
 		t.Errorf("dag_node record = %+v, want failed", rec)
 	}
-	if _, ids, _, err = st.ScanOrphanedRuns(ctx); err != nil || len(ids) != 0 {
+	if _, ids, _, _, err = st.ScanOrphanedRuns(ctx); err != nil || len(ids) != 0 {
 		t.Errorf("second boot ids = %v err=%v, want none", ids, err)
 	}
 }
@@ -229,7 +229,7 @@ func TestScanOrphanedRuns_LeavesHealthyChatsAlone(t *testing.T) {
 		}
 	}
 
-	_, ids, _, err := st.ScanOrphanedRuns(ctx)
+	_, ids, _, _, err := st.ScanOrphanedRuns(ctx)
 	if err != nil {
 		t.Fatalf("ScanOrphanedRuns: %v", err)
 	}
@@ -339,7 +339,7 @@ func TestStampCutRun(t *testing.T) {
 	if c, _ := st.GetChat(ctx, "c2"); c.RunStatus == RunStatusPaused || c.ActiveTurnID != "t1" {
 		t.Errorf("c2 = %q/%q, want the marker kept and no paused stamp", c.RunStatus, c.ActiveTurnID)
 	}
-	paused, settled, _, err := st.ScanOrphanedRuns(ctx)
+	paused, settled, _, _, err := st.ScanOrphanedRuns(ctx)
 	if err != nil || len(paused) != 1 || paused[0] != "c1" || len(settled) != 1 || settled[0] != "c2" {
 		t.Fatalf("paused=%v settled=%v err=%v, want [c1] and [c2]", paused, settled, err)
 	}
@@ -405,7 +405,7 @@ func TestScanOrphanedRuns_SettlesPausedWithNothingSuspended(t *testing.T) {
 	if err := st.UpsertDagNode(ctx, DagNode{PlanID: "p1", NodeID: "n1", Status: string(dag.StatusFailed)}); err != nil {
 		t.Fatal(err)
 	}
-	_, settled, _, err := st.ScanOrphanedRuns(ctx)
+	_, settled, _, _, err := st.ScanOrphanedRuns(ctx)
 	if err != nil || len(settled) != 1 || settled[0] != "c1" {
 		t.Fatalf("settled = %v err=%v, want [c1]", settled, err)
 	}

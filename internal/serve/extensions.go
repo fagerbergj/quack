@@ -54,8 +54,9 @@ const extRunUserID = "ext"
 // builtSDKExtension pairs a constructed SDK extension module with the
 // registration name its config and log lines are keyed by.
 type builtSDKExtension struct {
-	name string
-	ext  extsdk.Extension
+	name     string
+	ext      extsdk.Extension
+	dispatch extsdk.DispatchFunc // its Host.Dispatch, for boot to resend a cut turn
 	// From the module's optional sdk.UI descriptor; all empty when it has no UI (nav lists it name-only).
 	title string
 	href  string
@@ -276,7 +277,7 @@ func buildOneSDKExtension(name string, factory extsdk.Factory, d sdkBuildDeps) (
 		return builtSDKExtension{}, false, err
 	}
 	extHolder.Store(&ext)
-	b := builtSDKExtension{name: name, ext: ext}
+	b := builtSDKExtension{name: name, ext: ext, dispatch: host.Dispatch}
 	if ui, ok := ext.(extsdk.UI); ok {
 		dd := ui.UI()
 		b.title, b.href, b.icon = dd.Title, dd.Href, dd.Icon
@@ -661,9 +662,7 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 		if err != nil {
 			return err
 		}
-		if err := st.SaveTurn(runCtx, chatID, turnID, req.Ask.Message); err != nil {
-			slog.Warn("extension dispatch: save turn failed", "component", "ext."+name, "chat", chatID, "err", err)
-		}
+		saveExtTurn(runCtx, name, st, chatID, turnID, req)
 		attachments := extAttachmentParts(runCtx, name, artifacts, userID, chatID, turnID, req.Ask.Attachments)
 
 		// Reset before the caller's ack so a subscriber never reads the previous dispatch's events.
@@ -696,6 +695,19 @@ func newExtDispatch(name string, orchRef *atomic.Pointer[orchestrator.Orchestrat
 		_ = st.MarkRunActive(driveCtx, chatID, turnID)
 		go driveExtensionRun(driveCtx, driveCtx, cancelRun, name, orch, st, hub, eventLog, extHolder, userID, chatID, turnID, composed, attachments)
 		return nil
+	}
+}
+
+// saveExtTurn saves the dispatch's turn with req, which boot sends again if a restart cuts the turn before any
+// node ran. A request with attachments isn't kept, as their bytes would ride every turn read.
+func saveExtTurn(ctx context.Context, name string, st *store.Store, chatID, turnID string, req extsdk.DispatchRequest) {
+	err := st.SaveTurn(ctx, chatID, turnID, req.Ask.Message)
+	if err == nil && len(req.Ask.Attachments) == 0 {
+		js, _ := json.Marshal(req) // plain data: it can't fail
+		err = st.SetTurnDispatch(ctx, chatID, turnID, string(js))
+	}
+	if err != nil {
+		slog.Warn("extension dispatch: save turn failed", "component", "ext."+name, "chat", chatID, "err", err)
 	}
 }
 

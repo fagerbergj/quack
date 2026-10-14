@@ -107,7 +107,7 @@ func TestDriveExtensionRunEvents_InterruptedSkipsRunEnded(t *testing.T) {
 	if c.RunStatus == store.RunStatusPaused || c.ActiveTurnID != "turn-1" {
 		t.Errorf("RunStatus, ActiveTurnID = %q, %q, want not paused and turn-1 kept for boot", c.RunStatus, c.ActiveTurnID)
 	}
-	if _, settled, _, err := st.ScanOrphanedRuns(context.Background()); err != nil || len(settled) != 1 || settled[0] != chatID {
+	if _, settled, _, _, err := st.ScanOrphanedRuns(context.Background()); err != nil || len(settled) != 1 || settled[0] != chatID {
 		t.Errorf("boot scan settled %v (%v), want [%s]", settled, err, chatID)
 	}
 }

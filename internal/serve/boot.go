@@ -2,6 +2,7 @@ package serve
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"iter"
 	"log/slog"
@@ -44,8 +45,9 @@ func resumeGuardArchivedOrStale(archived, hasPlan bool, pauseReason dag.PauseRea
 // bootResume is what the reconcile left for the started server: nodes to re-enter, and chats it ended instead.
 type bootResume struct {
 	Start   []store.ResumableNode
-	Settled []settledRun // left mid-run, now failed with nothing to resume
-	Finish  []string     // chats cut after every node was done, owed only their delivery
+	Settled []settledRun     // left mid-run, now failed with nothing to resume
+	Finish  []string         // chats cut after every node was done, owed only their delivery
+	Resend  []store.ChatTurn // turns cut before any node ran, to send again
 }
 
 // settledRun: PlanRan is false for a turn interrupted before it planned, so no node row exists.
@@ -64,7 +66,7 @@ func reconcileNodes(ctx context.Context, st *store.Store, jail *workspace.Jail, 
 	}
 	// After the reconcile: a hard-kill orphan is `paused` by now, so the chat
 	// scan sees it and stamps the chat paused instead of interrupted.
-	pausedChats, interrupted, finishable, err := st.ScanOrphanedRuns(ctx)
+	pausedChats, interrupted, finishable, resend, err := st.ScanOrphanedRuns(ctx)
 	if err != nil {
 		slog.Error("scan orphaned runs", "component", "store", "err", err)
 	}
@@ -87,7 +89,11 @@ func reconcileNodes(ctx context.Context, st *store.Store, jail *workspace.Jail, 
 			"component", "startup", "chat", id)
 		removeStaleCloneDir(jail, id)
 	}
-	return bootResume{Start: rep.Start, Settled: settledChats(rep, interrupted), Finish: finishable}
+	for _, t := range resend {
+		slog.Info("chat cut before any node ran; sending its turn again", "component", "startup", "chat", t.ChatID)
+		removeStaleCloneDir(jail, t.ChatID)
+	}
+	return bootResume{Start: rep.Start, Settled: settledChats(rep, interrupted), Finish: finishable, Resend: resend}
 }
 
 // settledChats: chats with a failed node or an interrupted turn and nothing resumed or awaiting an answer.
@@ -267,8 +273,50 @@ func finishCutRun(ctx context.Context, chatID string, orch *orchestrator.Orchest
 	})
 }
 
-// driveBootRun runs body as the chat's run on its latest plan's turn, then the run tail: done, the turn stamp,
-// and RunEnded to obs (or the terminal outcome stamp).
+// resendCutTurns sends each turn a restart cut before any node ran again, as its user or extension would; one it
+// can't send settles failed as before. It runs after the extensions start, as RunEnded needs their claims.
+func resendCutTurns(ctx context.Context, turns []store.ChatTurn, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, exts []builtSDKExtension) {
+	for _, t := range turns {
+		err := resendCutTurn(ctx, t, orch, st, hub, eventLog, exts)
+		if err == nil || errors.Is(err, extsdk.ErrRunInFlight) { // a newer dispatch holds the chat and ends it
+			continue
+		}
+		slog.Warn("chat left mid-run could not be sent again; marked failed - resend the message to retry",
+			"component", "startup", "chat", t.ChatID, "err", err)
+		st.SettleInterrupted(ctx, t.ChatID)
+		settled := []settledRun{{ChatID: t.ChatID}}
+		endSettledStreams(ctx, settled, hub, eventLog)
+		endSettledExtRuns(settled, exts)
+	}
+}
+
+// resendCutTurn re-dispatches an extension's turn through its extension (as a new turn), else re-runs the
+// turn's text. Nothing outside quack happened yet: deliveries are node-only, and RunEnded never fired.
+func resendCutTurn(ctx context.Context, t store.ChatTurn, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, exts []builtSDKExtension) error {
+	if t.Dispatch == "" {
+		hub.Reset(t.ChatID)
+		eventLog.Reopen(ctx, hub, t.ChatID)
+		go driveBootTurn(ctx, t.ChatID, t.ID, orch, st, hub, eventLog, nil, func(runCtx context.Context, userID string, pub *runlog.Publisher) runlog.DriveResult {
+			return runlog.Drive(t.ID, st, pub, orch.Run(runCtx, userID, t.ChatID, orchestrator.SourceApp, t.UserText, nil), func(err error) {
+				slog.Warn("resent turn run error", "component", "startup", "chat", t.ChatID, "err", err)
+			})
+		})
+		return nil
+	}
+	var req extsdk.DispatchRequest
+	if err := json.Unmarshal([]byte(t.Dispatch), &req); err != nil {
+		return err
+	}
+	name, _, _ := strings.Cut(strings.TrimPrefix(t.ChatID, "ext:"), ":")
+	for _, e := range exts {
+		if e.name == name {
+			return e.dispatch(ctx, req)
+		}
+	}
+	return errors.New("its extension is not running")
+}
+
+// driveBootRun is driveBootTurn on the chat's latest plan's turn.
 func driveBootRun(ctx context.Context, chatID string, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, obs extsdk.RunObserver,
 	body func(runCtx context.Context, plan *store.DagPlan, userID string, pub *runlog.Publisher) runlog.DriveResult) {
 	plan, err := st.GetLatestDagPlan(ctx, chatID)
@@ -278,8 +326,16 @@ func driveBootRun(ctx context.Context, chatID string, orch *orchestrator.Orchest
 		endReopenedStream(ctx, hub, eventLog, chatID)
 		return
 	}
+	driveBootTurn(ctx, chatID, plan.RunTurnID(), orch, st, hub, eventLog, obs, func(runCtx context.Context, userID string, pub *runlog.Publisher) runlog.DriveResult {
+		return body(runCtx, plan, userID, pub)
+	})
+}
+
+// driveBootTurn runs body as the chat's run on turnID, then the run tail: done, the turn stamp, and RunEnded to
+// obs (or the terminal outcome stamp).
+func driveBootTurn(ctx context.Context, chatID, turnID string, orch *orchestrator.Orchestrator, st *store.Store, hub *stream.Hub, eventLog *runlog.EventLog, obs extsdk.RunObserver,
+	body func(runCtx context.Context, userID string, pub *runlog.Publisher) runlog.DriveResult) {
 	userID := st.SessionUserForChat(ctx, chatID)
-	turnID := plan.RunTurnID()
 	runCtx, cancelRun := context.WithTimeout(context.WithoutCancel(ctx), 24*time.Hour)
 	runCtx = stream.WithTurnID(runCtx, turnID)
 	if !hub.RegisterRun(chatID, turnID, cancelRun) {
@@ -294,7 +350,7 @@ func driveBootRun(ctx context.Context, chatID string, orch *orchestrator.Orchest
 
 	pub := runlog.NewPublisher(runCtx, hub, eventLog, chatID)
 	pub.Publish(stream.ResponseCreated(turnID))
-	res := body(runCtx, plan, userID, pub)
+	res := body(runCtx, userID, pub)
 	pub.Publish(stream.Done())
 	// A cancel lands on runCtx too, which would fail every write below and leave the chat
 	// showing as running forever, so the tail runs on a detached, bounded context.

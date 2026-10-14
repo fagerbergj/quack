@@ -129,7 +129,7 @@ func TestScanOrphanedRuns_KeepsPendingQuestion(t *testing.T) {
 		t.Fatalf("UpsertDagNode: %v", err)
 	}
 
-	paused, interrupted, _, err := st.ScanOrphanedRuns(ctx)
+	paused, interrupted, _, _, err := st.ScanOrphanedRuns(ctx)
 	if err != nil {
 		t.Fatalf("ScanOrphanedRuns: %v", err)
 	}
@@ -290,7 +290,7 @@ func TestScanOrphanedRuns_FinishableOnlyWhenEveryNodeIsDone(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		_, _, finishable, err := st.ScanOrphanedRuns(ctx)
+		_, _, finishable, _, err := st.ScanOrphanedRuns(ctx)
 		if err != nil || (len(finishable) == 1) != tc.finishable {
 			t.Errorf("%s: finishable = %v (%v), want finishable %v", tc.name, finishable, err, tc.finishable)
 		}

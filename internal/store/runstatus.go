@@ -176,17 +176,18 @@ func (tc TurnContent) UnverifiedNote() string {
 }
 
 // ScanOrphanedRuns reconciles chats a killed process left mid-run: paused if a node is suspended, left active
-// for boot to finish if every node of its plan is done, else stamped failed once (settleInterrupted).
-func (s *Store) ScanOrphanedRuns(ctx context.Context) (paused, noResumableNode, finishable []string, err error) {
+// for boot to finish if every node of its plan is done or to send again if none ran (resend), else stamped
+// failed once (SettleInterrupted).
+func (s *Store) ScanOrphanedRuns(ctx context.Context) (paused, noResumableNode, finishable []string, resend []ChatTurn, err error) {
 	var chats []Chat
 	if err := s.db.WithContext(ctx).
 		Where("active_turn_id <> ? OR run_status = ?", "", RunStatusPaused).
 		Find(&chats).Error; err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	suspended, err := s.chatsWithPausedNodes(ctx)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	for _, c := range chats {
 		if suspended[c.ID] {
@@ -196,17 +197,46 @@ func (s *Store) ScanOrphanedRuns(ctx context.Context) (paused, noResumableNode, 
 			}
 			continue
 		}
+		t, unran := s.unranTurn(ctx, c)
 		switch {
+		case unran:
+			resend = append(resend, t)
+			// The cut turn's draft plan never ran; the resend plans afresh.
+			if err := dag.CancelUnstartedDagNodeRecords(ctx, s.artifacts, chatAppName, s.SessionUserForChat(ctx, c.ID), c.ID); err != nil {
+				slog.Warn("scan orphaned runs: draft dag_node records not settled", "component", "store", "chat", c.ID, "err", err)
+			}
 		case c.ActiveTurnID != "" && s.planAllDone(ctx, c):
 			finishable = append(finishable, c.ID)
 		// Paused with nothing suspended: its nodes were failed unresumable, or an older tail stamped a cut
 		// orchestrator-only turn paused. Either way nothing will resume it.
 		case c.ActiveTurnID != "" || c.RunStatus == RunStatusPaused:
 			noResumableNode = append(noResumableNode, c.ID)
-			s.settleInterrupted(ctx, c.ID)
+			s.SettleInterrupted(ctx, c.ID)
 		}
 	}
-	return paused, noResumableNode, finishable, nil
+	return paused, noResumableNode, finishable, resend, nil
+}
+
+// unranTurn returns c's active turn when no node ran under it and its input is kept. An extension's chat needs the
+// kept dispatch: its text alone drops the dispatch's grant, read-only flag and node context.
+func (s *Store) unranTurn(ctx context.Context, c Chat) (ChatTurn, bool) {
+	var t ChatTurn
+	if c.ActiveTurnID == "" || s.db.WithContext(ctx).Where("id = ? AND chat_id = ?", c.ActiveTurnID, c.ID).First(&t).Error != nil {
+		return t, false
+	}
+	if t.Dispatch == "" && (strings.HasPrefix(c.ID, "ext:") || t.UserText == "") {
+		return t, false
+	}
+	p, err := s.GetLatestDagPlan(ctx, c.ID)
+	if err != nil {
+		return t, false
+	}
+	if p == nil || p.RunTurnID() != c.ActiveTurnID {
+		return t, true
+	}
+	var rows int64
+	err = s.db.WithContext(ctx).Model(&DagNode{}).Where("plan_id = ?", p.ID).Count(&rows).Error
+	return t, err == nil && rows == 0
 }
 
 // planAllDone: c's active turn ran its latest plan and every node of it has a done row this instance owns, so
@@ -235,9 +265,9 @@ func (s *Store) planAllDone(ctx context.Context, c Chat) bool {
 	return allDone(ids, status)
 }
 
-// settleInterrupted stamps a crashed run with nothing to resume failed (clearing ActiveTurnID,
+// SettleInterrupted stamps a crashed run with nothing to resume failed (clearing ActiveTurnID,
 // so the next boot doesn't report it again) and fails its still-open dag_node records.
-func (s *Store) settleInterrupted(ctx context.Context, chatID string) {
+func (s *Store) SettleInterrupted(ctx context.Context, chatID string) {
 	if err := s.stampRunStatusKeepingQuestion(ctx, chatID, RunStatusFailed); err != nil {
 		slog.Warn("scan orphaned runs: interrupted stamp failed", "component", "store", "chat", chatID, "err", err)
 	}
