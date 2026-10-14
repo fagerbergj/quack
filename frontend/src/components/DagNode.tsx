@@ -9,7 +9,7 @@ import { api, listChatArtifactsShared } from '../api'
 import type { ArtifactSummary } from '../api'
 import { cacheRate, type NodeState, type NodeStatus } from '../state/chatStore'
 import { NodeQualityCheck } from './NodeQualityCheck'
-import { agentLabel, type Activity, type AgentRun } from './messageParts'
+import { agentLabel, failedToolCount, type Activity, type AgentRun } from './messageParts'
 import { previewLine, fmtTokenCount } from './toolFormat'
 import { type DagNodeDef } from '../state/agentStream'
 import { fmtMs, LiveTimer } from '../utils/timer'
@@ -322,6 +322,8 @@ const WorkerCard = memo(function WorkerCard({ runs, running }: { runs: AgentRun[
   const timerRun: AgentRun = { ...runs[runs.length - 1], startedAt, durationMs, model, done: !running }
   // Count only tool calls: a thinking trace isn't a step, and pure reasoning shows no count, not "0 tool calls".
   const toolCount = activity.filter(a => a.kind === 'tool').length
+  // Failures surface on the closed summary; otherwise they hide behind "N earlier".
+  const failedCount = failedToolCount(activity)
   return (
     <div className="border-t border-gray-100 dark:border-gray-700">
       <details open={running} className="not-prose">
@@ -330,6 +332,11 @@ const WorkerCard = memo(function WorkerCard({ runs, running }: { runs: AgentRun[
           {toolCount > 0 && (
             <span className="text-xs text-gray-500 dark:text-gray-400">
               {`${toolCount} tool call${toolCount === 1 ? '' : 's'}`}
+            </span>
+          )}
+          {failedCount > 0 && (
+            <span className="text-xs text-red-600 dark:text-red-400 flex items-center gap-0.5">
+              <Icon name="close" className="w-3 h-3" />{`${failedCount} failed`}
             </span>
           )}
           <RunModel run={timerRun} />
