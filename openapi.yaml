@@ -2862,6 +2862,12 @@ components:
           description: Subset of input_tokens served from the model's prompt cache.
         total_tokens:
           type: integer
+        cost_usd:
+          type: number
+          format: double
+          description: >
+            ChatDetail.usage only: cloud-equivalent USD summed over the chat's priced model calls
+            (configured model costs). Omitted when no call was priced or recording is off.
 
     # -------------------------------------------------------------------------
     # Output items - discriminated by `type`

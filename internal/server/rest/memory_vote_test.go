@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -256,3 +257,35 @@ func TestVoteMemory_FindsMemoryPastFirstListPage(t *testing.T) {
 		t.Fatalf("status = %d body=%s, want 200 (memory past the first List page must still be found)", rec.Code, rec.Body.String())
 	}
 }
+
+type costLedgerStore struct {
+	fakeLedgerStore
+	usd    float64
+	priced bool
+	err    error
+}
+
+func (c *costLedgerStore) ChatCostUSD(context.Context, string) (float64, bool, error) {
+	return c.usd, c.priced, c.err
+}
+
+// TestChatCostUSD: only a priced sum becomes a cost; unpriced, unsupported and failed reads stay nil, never $0.
+func TestChatCostUSD(t *testing.T) {
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		store ledger.LedgerStore
+		want  *float64
+	}{
+		"no CostReader": {&fakeLedgerStore{}, nil},
+		"priced":        {&costLedgerStore{usd: 0.42, priced: true}, ptrTo(0.42)},
+		"unpriced":      {&costLedgerStore{}, nil},
+		"read error":    {&costLedgerStore{err: errors.New("boom")}, nil},
+	} {
+		got := (&Handler{ledgerStore: tc.store}).chatCostUSD(ctx, "c")
+		if (got == nil) != (tc.want == nil) || (got != nil && *got != *tc.want) {
+			t.Errorf("%s: got %v, want %v", name, got, tc.want)
+		}
+	}
+}
+
+func ptrTo[T any](v T) *T { return &v }

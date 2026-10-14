@@ -1683,11 +1683,14 @@ type UpdateChatBody struct {
 // Usage Token usage; the same schema is populated two different ways depending on where it appears. On Turn.usage it is SPARSE: a field is omitted entirely when its value is zero (or unknown for that turn), and reasoning folds into output_tokens rather than getting its own field. On ChatDetail.usage it is a chat-wide aggregate (every turn + every DAG node) and is ALWAYS FULLY POPULATED - every field is present, a genuine zero included, never omitted.
 type Usage struct {
 	// CachedTokens Subset of input_tokens served from the model's prompt cache.
-	CachedTokens    *int `json:"cached_tokens,omitempty"`
-	InputTokens     *int `json:"input_tokens,omitempty"`
-	OutputTokens    *int `json:"output_tokens,omitempty"`
-	ReasoningTokens *int `json:"reasoning_tokens,omitempty"`
-	TotalTokens     *int `json:"total_tokens,omitempty"`
+	CachedTokens *int `json:"cached_tokens,omitempty"`
+
+	// CostUsd ChatDetail.usage only: cloud-equivalent USD summed over the chat's priced model calls (configured model costs). Omitted when no call was priced or recording is off.
+	CostUsd         *float64 `json:"cost_usd,omitempty"`
+	InputTokens     *int     `json:"input_tokens,omitempty"`
+	OutputTokens    *int     `json:"output_tokens,omitempty"`
+	ReasoningTokens *int     `json:"reasoning_tokens,omitempty"`
+	TotalTokens     *int     `json:"total_tokens,omitempty"`
 }
 
 // VoteMemoryBody defines model for VoteMemoryBody.

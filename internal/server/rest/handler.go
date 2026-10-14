@@ -350,6 +350,7 @@ func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request, chatID schema.
 	if usage.TotalTokens > 0 {
 		detail.TotalTokens = intPtr(int(usage.TotalTokens))
 	}
+	detail.Usage.CostUsd = h.chatCostUSD(r.Context(), chatID)
 	for _, tc := range turns {
 		detail.Turns = append(detail.Turns, buildTurn(tc))
 	}
@@ -410,6 +411,24 @@ func sinkSectionsOutput(sinks []store.DagNode) (out string, stopped bool, at tim
 		}
 	}
 	return stream.JoinSinkAnswers(parts), stopped, at
+}
+
+// chatCostUSD is nil when no call was priced, or the ledger can't sum in place: a missing cost
+// must not read as $0.
+func (h *Handler) chatCostUSD(ctx context.Context, chatID string) *float64 {
+	cr, ok := h.ledgerStore.(ledger.CostReader)
+	if !ok {
+		return nil
+	}
+	usd, priced, err := cr.ChatCostUSD(ctx, chatID)
+	if err != nil {
+		slog.Warn("chat cost unavailable", "component", "rest", "chat", chatID, "err", err)
+		return nil
+	}
+	if !priced {
+		return nil
+	}
+	return &usd
 }
 
 // usageAggregateToSchema populates every field: the chat-wide total is meaningfully zero, not absent.
