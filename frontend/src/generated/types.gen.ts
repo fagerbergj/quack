@@ -941,6 +941,11 @@ export type Usage = {
      */
     cached_tokens?: number;
     total_tokens?: number;
+    /**
+     * ChatDetail.usage only: cloud-equivalent USD summed over the chat's priced model calls (configured model costs). Omitted when no call was priced or recording is off.
+     *
+     */
+    cost_usd?: number;
 };
 
 export type OutputItem = ({

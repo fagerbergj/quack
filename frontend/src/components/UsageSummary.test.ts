@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { UsageSummary } from './UsageSummary'
+import { UsageSummary, fmtCost } from './UsageSummary'
 import type { Usage } from '../generated'
 
 // <details> keeps the breakdown in the DOM, so static markup proves it renders without a click.
@@ -61,5 +61,22 @@ describe('UsageSummary - session token total and breakdown', () => {
     expect(out).toContain('Reasoning')
     expect(out).toContain('Cached')
     expect(out.match(/>0</g)?.length).toBe(4)
+  })
+})
+
+describe('UsageSummary - cost', () => {
+  it('shows the chat cost beside the token total and in the breakdown', () => {
+    const out = html(['m'], { input_tokens: 10, output_tokens: 5, reasoning_tokens: 0, cached_tokens: 0, total_tokens: 15, cost_usd: 0.4234 })
+    expect(out).toContain('15 tokens · $0.42')
+    expect(out).toContain('Cost')
+  })
+  it('omits cost when no call was priced', () => {
+    const out = html(['m'], { input_tokens: 10, output_tokens: 5, reasoning_tokens: 0, cached_tokens: 0, total_tokens: 15 })
+    expect(out).not.toContain('$')
+  })
+  it('never rounds a priced chat down to $0.00', () => {
+    expect(fmtCost(0.004)).toBe('<$0.01')
+    expect(fmtCost(0)).toBe('$0.00')
+    expect(fmtCost(12.346)).toBe('$12.35')
   })
 })

@@ -194,6 +194,31 @@ func TestPGStoreReadEntriesFiltered(t *testing.T) {
 	}
 }
 
+// TestPGStoreChatCostUSD: sums priced llm.calls only; a chat with no priced call reports priced=false.
+func TestPGStoreChatCostUSD(t *testing.T) {
+	t.Parallel()
+	store := newTestPGStore(t)
+	ctx := context.Background()
+	var _ CostReader = store
+	for i, e := range []struct{ chat, kind, payload string }{
+		{"chat-cost", KindLLMCall, `{"cost_usd":0.25}`},
+		{"chat-cost", KindLLMCall, `{"cost_usd":0.5}`},
+		{"chat-cost", KindLLMCall, `{}`},
+		{"chat-cost", KindNodeDone, `{"cost_usd":9}`},
+		{"chat-unpriced", KindLLMCall, `{}`},
+	} {
+		if _, err := store.AppendIntent(ctx, Entry{ChatID: e.chat, Kind: e.kind, Key: fmt.Sprintf("c%d", i), Payload: json.RawMessage(e.payload)}); err != nil {
+			t.Fatalf("AppendIntent %d: %v", i, err)
+		}
+	}
+	if usd, priced, err := store.ChatCostUSD(ctx, "chat-cost"); err != nil || !priced || usd != 0.75 {
+		t.Fatalf("chat-cost = %v, %v, %v; want 0.75, true, nil", usd, priced, err)
+	}
+	if usd, priced, err := store.ChatCostUSD(ctx, "chat-unpriced"); err != nil || priced || usd != 0 {
+		t.Fatalf("chat-unpriced = %v, %v, %v; want 0, false, nil", usd, priced, err)
+	}
+}
+
 // TestPGStoreReadEntriesFilteredSince: the cross-chat query returns exactly what List() + per-chat
 // ReadByKinds + a Go-side time filter would.
 func TestPGStoreReadEntriesFilteredSince(t *testing.T) {

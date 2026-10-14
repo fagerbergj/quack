@@ -65,6 +65,11 @@ type FilteredReader interface {
 	ReadEntriesFiltered(ctx context.Context, chatID string, fromSeq int64, kinds []string) ([]Entry, error)
 }
 
+// CostReader sums a chat's priced llm.call costs in the database; priced is false when no call carried one.
+type CostReader interface {
+	ChatCostUSD(ctx context.Context, chatID string) (usd float64, priced bool, err error)
+}
+
 // CrossChatFilteredReader is a LedgerStore that can filter by kind and `at >= since` across every chat in
 // one query.
 type CrossChatFilteredReader interface {

@@ -41,6 +41,16 @@ export const HighCacheRate: Story = {
   ),
 }
 
+// A priced chat: the cloud-equivalent cost sits beside the token total and in the breakdown.
+export const WithCost: Story = {
+  render: () => (
+    <UsageSummary
+      models={['qwen3.8-27b-vllm']}
+      usage={{ input_tokens: 120000, output_tokens: 9000, reasoning_tokens: 21000, cached_tokens: 410000, total_tokens: 150000, cost_usd: 1.37 }}
+    />
+  ),
+}
+
 // A fresh chat with no run yet: renders nothing.
 export const Empty: Story = {
   render: () => <UsageSummary models={[]} />,

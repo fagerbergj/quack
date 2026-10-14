@@ -292,6 +292,20 @@ func (s *PGStore) ReadEntriesFiltered(ctx context.Context, chatID string, fromSe
 	return pgRowsToEntries(rows), nil
 }
 
+// ChatCostUSD sums in SQL: llm.call payloads carry the whole prompt, too heavy to decode for one total.
+func (s *PGStore) ChatCostUSD(ctx context.Context, chatID string) (float64, bool, error) {
+	var r struct {
+		USD float64
+		N   int64
+	}
+	if err := s.db.WithContext(ctx).Table("ledger_entries").
+		Select("COALESCE(SUM((payload->>'cost_usd')::float8),0) AS usd, COUNT(payload->>'cost_usd') AS n").
+		Where("chat_id = ? AND kind = ?", chatID, KindLLMCall).Scan(&r).Error; err != nil {
+		return 0, false, fmt.Errorf("ledger: cost for chat %q: %w", chatID, err)
+	}
+	return r.USD, r.N > 0, nil
+}
+
 // ReadEntriesFilteredSince runs ReadAllByKindsSince's cross-chat read as one `kind IN (?) AND at >= ?` scan
 // instead of one query per chat.
 func (s *PGStore) ReadEntriesFilteredSince(ctx context.Context, kinds []string, since time.Time) ([]Entry, error) {
