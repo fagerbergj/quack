@@ -59,7 +59,7 @@ criteria:
     require_fix_on_fail: true
   constructive_actionable:
     definition: >
-      Each finding explains the underlying *why* (risk, principle, or benefit) rather than only asserting "this is wrong", so it's actionable. A finding that proposes a SPECIFIC code change (a rename, an extraction, a different implementation) shows that code in a fenced block with a language tag rather than only describing it in prose. A PURELY OBSERVATIONAL finding - a question, a naming nit with no proposed name - proposes nothing concrete and needs no code block.
+      Each finding explains the underlying *why* (risk, principle, or benefit) rather than only asserting "this is wrong", so it's actionable. A finding that proposes a SPECIFIC code change (a rename, an extraction, a different implementation) shows that code in a fenced block with a language tag rather than only describing it in prose; a missing block costs one band (band 2) and never fails this criterion on its own, superseding any recalled precedent that capped it lower. A PURELY OBSERVATIONAL finding - a question, a naming nit with no proposed name - proposes nothing concrete and needs no code block.
     steps:
     - Check findings explain the underlying reason (risk/principle/benefit), not only "this is wrong".
     - For each finding that proposes a specific code change, check whether it supplies that code in a fenced code block, rather than only describing the change in prose.
@@ -69,10 +69,10 @@ criteria:
       meaning: every finding explains its why, and every finding proposing specific code supplies it in a fenced block.
     - min: 2.0
       max: 2.0
-      meaning: every finding explains its why and every proposed change carries code, but one explanation is thinner than the rest (states the risk without the reasoning behind it) without being absent.
+      meaning: every finding explains its why, but one explanation is thinner than the rest (states the risk without the reasoning behind it) without being absent, or a finding proposes a specific change in prose without the fenced code to back it.
     - min: 1.0
       max: 1.0
-      meaning: actionable but terse (some findings state what without why), or a finding proposes a specific change in prose without the code to back it.
+      meaning: actionable but terse (some findings state what without why).
     - min: 0.0
       max: 0.0
       meaning: findings are unactionable ("this is bad") with no reasoning at all.
