@@ -41,8 +41,8 @@ Sleeper field name, or the reporter/outlet and URL for web news), `kind`
 sentence, about 140 characters; the UI renders it inline in the timeline,
 not a wall of text. Include
 `player` (`{id, name, ...}`) only when the item is about one specific
-rostered player - omit the field entirely for a league-wide or non-player
-item, never invent an id to fill it. **When a Sleeper field and a web
+player - `id` null when Sleeper's data does not resolve him, never an
+invented one; omit the field for a league-wide or non-player item. **When a Sleeper field and a web
 report conflict on the same fact, Sleeper wins** - state the conflict and
 which one you followed. Never cite a news item without a URL you actually
 fetched or a search result you actually saw this session.

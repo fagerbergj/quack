@@ -125,7 +125,7 @@
         },
         "note": {
           "type": "string",
-          "maxLength": 400
+          "maxLength": 1000
         }
       }
     },
@@ -143,7 +143,7 @@
           },
           "note": {
             "type": "string",
-            "maxLength": 400
+            "maxLength": 1000
           }
         }
       }
@@ -248,7 +248,7 @@
         "string",
         "null"
       ],
-      "maxLength": 400
+      "maxLength": 1000
     }
   },
   "required": [

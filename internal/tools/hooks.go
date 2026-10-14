@@ -4,11 +4,15 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"reflect"
+	"slices"
 	"sync"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
 	"google.golang.org/adk/v2/tool"
+	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
@@ -103,9 +107,16 @@ func refused(err error) bool {
 	return errors.As(err, &r)
 }
 
-// before refuses a cancelled node's call (calls without node scope, or whose thread is gone, never are),
-// then runs the repeat check.
+// before drops nulls the tool's schema refuses, refuses a cancelled node's call (calls without node scope,
+// or whose thread is gone, never are), then runs the repeat check.
 func (h *Hooks) before(ctx agent.Context, t tool.Tool, args map[string]any) (map[string]any, error) {
+	if d, ok := t.(interface {
+		Declaration() *genai.FunctionDeclaration
+	}); ok {
+		if s, ok := d.Declaration().ParametersJsonSchema.(*jsonschema.Schema); ok {
+			dropRefusedNulls(args, s)
+		}
+	}
 	p := h.policyOf(t.Name())
 	if p&HookNode != 0 && h.cancelled != nil {
 		if chatID, nodeID := h.scope.node(ctx); nodeID != "" && h.cancelled(chatID, nodeID) {
@@ -118,6 +129,51 @@ func (h *Hooks) before(ctx agent.Context, t tool.Tool, args map[string]any) (map
 		return nil, h.checkRepeat(ctx, t.Name(), args)
 	}
 	return nil, nil
+}
+
+// dropRefusedNulls deletes, in place, each null at an optional key whose schema refuses null: models
+// send null to mean "not set", and the tool reads an absent key the same way.
+func dropRefusedNulls(args map[string]any, s *jsonschema.Schema) {
+	for k, v := range args {
+		p, ok := s.Properties[k]
+		if !ok {
+			p = s.AdditionalProperties
+		}
+		if v == nil && !slices.Contains(s.Required, k) && refusesNull(p) {
+			delete(args, k)
+			continue
+		}
+		dropNestedNulls(v, p)
+	}
+}
+
+func dropNestedNulls(v any, s *jsonschema.Schema) {
+	if s == nil {
+		return
+	}
+	switch v := v.(type) {
+	case map[string]any:
+		dropRefusedNulls(v, s)
+	case []any:
+		for _, x := range v {
+			dropNestedNulls(x, s.Items)
+		}
+	}
+}
+
+// refusesNull is true for a typed schema without "null" and for the false schema
+// (an unknown key under additionalProperties: false); nil and untyped schemas accept null.
+func refusesNull(s *jsonschema.Schema) bool {
+	switch {
+	case s == nil:
+		return false
+	case s.Not != nil && reflect.ValueOf(*s.Not).IsZero():
+		return true
+	case s.Type != "":
+		return s.Type != "null"
+	default:
+		return len(s.Types) > 0 && !slices.Contains(s.Types, "null")
+	}
 }
 
 // onError respells workspace host paths in a tool's own error into the model's namespace.

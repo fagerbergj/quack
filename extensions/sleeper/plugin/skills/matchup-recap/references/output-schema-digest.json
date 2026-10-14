@@ -13,7 +13,7 @@
     },
     "summary": {
       "type": "string",
-      "maxLength": 400,
+      "maxLength": 1000,
       "description": "One headline paragraph."
     },
     "games": {
@@ -57,7 +57,7 @@
     },
     "source_note": {
       "type": "string",
-      "maxLength": 300
+      "maxLength": 1000
     }
   },
   "required": [

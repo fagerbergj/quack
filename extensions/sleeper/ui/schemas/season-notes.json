@@ -12,7 +12,7 @@
       "type": "array",
       "items": {
         "type": "string",
-        "maxLength": 400
+        "maxLength": 1000
       }
     }
   },
