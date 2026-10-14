@@ -71,7 +71,8 @@ only records who offered it. Pull every
 player's `id`/`name` from the `sleeper_roster`/`sleeper_player` calls in
 this session, never invented; `proj` is a plain number, `0` only when
 Sleeper genuinely has none. Keep each offer's `why` to one or two short
-sentences - the line item that decided the call, not a running commentary.
+sentences (at most 350 characters; longer is rejected) - the line item that
+decided the call, not a running commentary.
 
 ## Finding trade candidates
 
@@ -99,7 +100,8 @@ nothing else - each suggestion's `give`/`get` are keyed exactly `give` and
 `get`, never "I give"/"I get" or any other spelling, and no top-level
 section exists beyond `league`/`week`/`updated`/`suggestions`. Pull every
 player's `id`/`name` from a `sleeper_roster`/`sleeper_player` call in this
-session, and give each suggestion a `note` of one or two short sentences
+session, and give each suggestion a `note` of one or two short sentences (at most 350
+characters)
 naming the partner's specific positional need this fills - why that team,
 given its roster and standing, would plausibly say yes - not just what you
 get.
