@@ -31,6 +31,29 @@ func TestNew_EventsSessionIndex_IdempotentAcrossBoots(t *testing.T) {
 	_ = st1
 }
 
+// Open and NewArtifactService(url, false) serve read-only CLIs, so neither may create a table.
+func TestOpen_RunsNoMigrations(t *testing.T) {
+	st, err := Open("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	var tables int64
+	if err := st.db.Raw("SELECT count(*) FROM sqlite_master WHERE type='table'").Scan(&tables).Error; err != nil {
+		t.Fatal(err)
+	}
+	if tables != 0 {
+		t.Errorf("Open created %d table(s), want 0", tables)
+	}
+
+	svc, err := NewArtifactService(pgtest.DSN(t), false)
+	if err != nil {
+		t.Fatalf("NewArtifactService: %v", err)
+	}
+	if svc.(*gormArtifactService).db.Migrator().HasTable(&Artifact{}) {
+		t.Error("NewArtifactService(url, false) created the artifacts table")
+	}
+}
+
 // The two-boot check against real Postgres, whose index/AutoMigrate failure modes differ from sqlite.
 // Skips without Docker.
 func TestNew_Migrations_IdempotentAcrossBoots_Postgres(t *testing.T) {

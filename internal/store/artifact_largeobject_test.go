@@ -20,7 +20,7 @@ func newTestPostgresLargeObjectService(t *testing.T) artifact.Service {
 	if err != nil {
 		t.Fatalf("gorm.Open: %v", err)
 	}
-	svc, err := NewLargeObjectArtifactService(db)
+	svc, err := NewLargeObjectArtifactService(db, true)
 	if err != nil {
 		t.Fatalf("NewLargeObjectArtifactService: %v", err)
 	}

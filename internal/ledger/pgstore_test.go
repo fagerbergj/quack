@@ -36,6 +36,18 @@ func newTestPGStore(t *testing.T) *PGStore {
 	return store
 }
 
+// NewPGStoreFromURL(url, false) serves read-only CLIs, so it must not create the ledger's tables.
+func TestNewPGStoreFromURL_NoMigrate(t *testing.T) {
+	t.Parallel()
+	s, err := NewPGStoreFromURL(pgtest.DSN(t), false)
+	if err != nil {
+		t.Fatalf("NewPGStoreFromURL: %v", err)
+	}
+	if s.db.Migrator().HasTable(&pgEntry{}) {
+		t.Error("NewPGStoreFromURL(url, false) created ledger_entries")
+	}
+}
+
 // TestPGStoreNewMigrate_AddsChatKeyIndexToExistingTable covers the production path of adding
 // idx_ledger_chat_key to an existing table, which fresh-container tests never exercise.
 func TestPGStoreNewMigrate_AddsChatKeyIndexToExistingTable(t *testing.T) {

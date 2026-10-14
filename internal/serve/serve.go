@@ -294,7 +294,7 @@ func (s *swappableSkillSource) ListResources(ctx context.Context, name, subpath 
 
 // LedgerStoreFromConfig resolves the ledger (WAL) backend from stores; config
 // validation already guarantees a named store is Postgres.
-func LedgerStoreFromConfig(cfg *config.Config) ledger.LedgerStore {
+func LedgerStoreFromConfig(cfg *config.Config, migrate bool) ledger.LedgerStore {
 	name := cfg.Observability.Recording.Store
 	if name == "" {
 		return nil
@@ -303,7 +303,7 @@ func LedgerStoreFromConfig(cfg *config.Config) ledger.LedgerStore {
 	if !ok {
 		return nil
 	}
-	store, err := ledger.NewPGStoreFromURL(s.URL)
+	store, err := ledger.NewPGStoreFromURL(s.URL, migrate)
 	if err != nil {
 		slog.Warn("ledger store init failed; no WAL and no recording for this run", "component", "startup", "err", err)
 		return nil
@@ -321,7 +321,7 @@ func setDefaultAgent(m any, name string) {
 
 // BuildArtifactService resolves cfg.Artifacts: in-memory by default, or the
 // durable Postgres large-object backend for a named store.
-func BuildArtifactService(cfg *config.Config) (artifact.Service, error) {
+func BuildArtifactService(cfg *config.Config, migrate bool) (artifact.Service, error) {
 	if cfg.Artifacts.Store == "" {
 		return artifact.InMemoryService(), nil
 	}
@@ -329,7 +329,7 @@ func BuildArtifactService(cfg *config.Config) (artifact.Service, error) {
 	if !ok {
 		return nil, fmt.Errorf("artifacts store %q not found in stores registry", cfg.Artifacts.Store)
 	}
-	return store.NewArtifactService(as.URL)
+	return store.NewArtifactService(as.URL, migrate)
 }
 
 // warnIfEpisodicRecordsWontSurvive: artifacts.store defaults to in-memory, so `artifact:` records die on
@@ -484,7 +484,7 @@ func (b *boot) initAuthAndObservability(ctx context.Context) (*auth.Auth, ledger
 	if err != nil {
 		return nil, nil, fmt.Errorf("auth init failed: %w", err)
 	}
-	ledgerStore := LedgerStoreFromConfig(b.cfg)
+	ledgerStore := LedgerStoreFromConfig(b.cfg, true)
 	if err := b.initObservability(ctx, ledgerStore); err != nil {
 		return nil, nil, err
 	}
@@ -541,7 +541,7 @@ func (b *boot) initStorage(ctx context.Context, reconcile bool, jail *workspace.
 	if err != nil {
 		return nil, bootResume{}, nil, fmt.Errorf("store open failed: %w", err)
 	}
-	artifactSvc, err := BuildArtifactService(b.cfg)
+	artifactSvc, err := BuildArtifactService(b.cfg, true)
 	if err != nil {
 		return nil, bootResume{}, nil, fmt.Errorf("artifact service init failed: %w", err)
 	}

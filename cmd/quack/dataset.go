@@ -55,7 +55,7 @@ func runDatasetExport(cmd *cobra.Command, opts cli.ExportOpts, since string) err
 		opts.Since = t
 	}
 
-	ls, st, _, err := openLedgerAndStores(cmd)
+	ls, st, _, err := openLedgerAndStores(cmd, false)
 	if err != nil {
 		return err
 	}
