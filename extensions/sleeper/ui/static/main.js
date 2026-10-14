@@ -265,7 +265,7 @@ function selectedTalkPartner() {
   return { id: el.value, name: el.selectedOptions[0]?.textContent || el.value }
 }
 
-async function runJob(job, partner, partnerName) {
+async function runJob(job, partner, partnerName, terms = {}) {
   $('menu').removeAttribute('open')
   const args = {}
   if (job === 'trade') {
@@ -279,8 +279,9 @@ async function runJob(job, partner, partnerName) {
     if (partnerName) args.partner_name = partnerName
     // The compose form's two multi-selects (mine/partner's roster), when present
     // for the talk being acted on - so the analyst gets the actual offer, not just who.
-    const give = selectedValues('give')
-    const get = selectedValues('get')
+    // A suggestion's Start talk carries its own terms; otherwise read the compose form's selects.
+    const give = terms.give ? [terms.give] : selectedValues('give')
+    const get = terms.get ? [terms.get] : selectedValues('get')
     if (give.length) args.give = give.join(',')
     if (get.length) args.get = get.join(',')
   } else if (partner) {
@@ -348,7 +349,7 @@ document.addEventListener('click', e => {
   const st = e.target.closest('[data-stop]')
   if (st) { switchStop(st.dataset.stop); return }
   const rb = e.target.closest('[data-run]')
-  if (rb) { runJob(rb.dataset.run, rb.dataset.partner, rb.dataset.partnerName); return }
+  if (rb) { runJob(rb.dataset.run, rb.dataset.partner, rb.dataset.partnerName, { give: rb.dataset.give, get: rb.dataset.get }); return }
   if (!e.target.closest('#menu')) $('menu').removeAttribute('open')
 })
 document.addEventListener('change', e => {

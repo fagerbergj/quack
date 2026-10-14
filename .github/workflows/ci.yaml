@@ -354,6 +354,7 @@ jobs:
       - run: npm run validate-schemas
       - run: npm run security-check
       - run: npm run pair-check
+      - run: npm run talk-check
       - id: playwright
         run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v6
