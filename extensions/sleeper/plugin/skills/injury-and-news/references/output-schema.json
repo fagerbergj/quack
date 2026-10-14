@@ -85,7 +85,10 @@
             "maxLength": 1000
           },
           "link": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "maxLength": 500
           }
         }
