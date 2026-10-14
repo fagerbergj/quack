@@ -888,6 +888,46 @@ func TestRunDatasetExport_RecurringNodeExportsOneItemPerTurn(t *testing.T) {
 	}
 }
 
+// A resumed (or paused-then-continued) run opens a second node.started under a new turn; it folds into the
+// run it carries on, so the item keeps the original task rather than the continue prompt.
+func TestRunDatasetExport_ResumedRunFoldsIntoItsTurn(t *testing.T) {
+	for _, resumed := range []string{`{"resumed_from":"ctx-1"}`, `{"continued":true}`} {
+		ctx := context.Background()
+		st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		chatID := "ext:sleeper:1:6:trends"
+		setChatOrigin(t, st, chatID, "", "", "")
+		ls := ledgertest.NewMemStore()
+		base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+		for _, e := range []ledger.Entry{
+			{ChatID: chatID, TurnID: "t1", NodeID: "trends", Kind: ledger.KindNodeStarted, At: base},
+			llmCallRoundEntry(chatID, "trends", "trend-scout", "worker-r0", base.Add(time.Second), "scout the league", "partial"),
+			{ChatID: chatID, TurnID: "t2", NodeID: "trends", Kind: ledger.KindNodeStarted, At: base.Add(time.Hour), Payload: json.RawMessage(resumed)},
+			llmCallRoundEntry(chatID, "trends", "trend-scout", "worker-continue", base.Add(time.Hour+time.Second), "continue", "final trends"),
+		} {
+			if _, err := ls.AppendIntent(ctx, e); err != nil {
+				t.Fatal(err)
+			}
+		}
+		fake := newFakeLangfuse(t)
+		srv := fake.server()
+		got, _, err := RunDatasetExport(ctx, ls, st, newTestClient(t, srv), ExportOpts{ChatID: chatID, Dataset: "my-dataset"})
+		srv.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("%s: want the resumed run folded into one item, got %d", resumed, len(got))
+		}
+		input, _ := fake.items[got[0].ItemID]["input"].(map[string]any)
+		if input["task"] != "scout the league" {
+			t.Fatalf("%s: task = %v, want the original task", resumed, input["task"])
+		}
+	}
+}
+
 // `quack experiment run` replays items in ext:experiment: chats; --since must not export them back.
 func TestRunDatasetExport_SinceSkipsExperimentChats(t *testing.T) {
 	ctx := context.Background()

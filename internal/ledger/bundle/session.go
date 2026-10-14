@@ -68,8 +68,8 @@ type Session struct {
 	// Recorded judge verdicts (collected outside per-stream sequences).
 	evalScores []EvalScore
 
-	// turnStarts: every node.started, oldest first - the turn boundaries NodeRuns splits streams on.
-	turnStarts []turnStart
+	// turnStarts: each node's fresh node.started entries, oldest first - the turn boundaries NodeRuns splits on.
+	turnStarts map[string][]turnStart
 }
 
 type turnStart struct {
@@ -92,7 +92,7 @@ func (s *Session) ingest(e ledger.Entry) {
 	key := StreamKey{Node: e.NodeID, Agent: e.Agent, Round: e.Round}
 	switch e.Kind {
 	case ledger.KindNodeStarted:
-		s.turnStarts = append(s.turnStarts, turnStart{at: e.At, turn: e.TurnID})
+		s.addTurnStart(e)
 	case ledger.KindEvalScore:
 		var p ledger.EvalScorePayload
 		if json.Unmarshal(e.Payload, &p) != nil {
@@ -134,23 +134,42 @@ func (s *Session) finalize() {
 		sortByTime(st.agents, func(e invokeAgentEntry) time.Time { return e.ts })
 	}
 	sortByTime(s.evalScores, func(e EvalScore) time.Time { return e.Timestamp })
-	sortByTime(s.turnStarts, func(e turnStart) time.Time { return e.at })
+	for _, starts := range s.turnStarts {
+		sortByTime(starts, func(e turnStart) time.Time { return e.at })
+	}
 }
 
-// turnAt is the turn of the latest node start at or before ts; "" before any, or with none recorded.
-func (s *Session) turnAt(ts time.Time) string {
-	i := sort.Search(len(s.turnStarts), func(i int) bool { return s.turnStarts[i].at.After(ts) })
+// addTurnStart records a fresh node.started as a turn boundary. A resumed or continued start opens no
+// turn, so its rounds fold into the run they carry on: the original task and the final answer.
+func (s *Session) addTurnStart(e ledger.Entry) {
+	var p struct {
+		ResumedFrom string `json:"resumed_from"`
+		Continued   bool   `json:"continued"`
+	}
+	if json.Unmarshal(e.Payload, &p) == nil && (p.ResumedFrom != "" || p.Continued) {
+		return
+	}
+	if s.turnStarts == nil {
+		s.turnStarts = map[string][]turnStart{}
+	}
+	s.turnStarts[e.NodeID] = append(s.turnStarts[e.NodeID], turnStart{at: e.At, turn: e.TurnID})
+}
+
+// turnAt is the turn of node's latest fresh start at or before ts; "" before any, or with none recorded.
+func (s *Session) turnAt(node string, ts time.Time) string {
+	starts := s.turnStarts[node]
+	i := sort.Search(len(starts), func(i int) bool { return starts[i].at.After(ts) })
 	if i == 0 {
 		return ""
 	}
-	return s.turnStarts[i-1].turn
+	return starts[i-1].turn
 }
 
-// byTurn splits st's entries by the turn each was recorded in, keeping their time order.
-func (s *Session) byTurn(st *streamState) map[string]*streamState {
+// byTurn splits node's stream st by the turn each entry was recorded in, keeping their time order.
+func (s *Session) byTurn(node string, st *streamState) map[string]*streamState {
 	out := map[string]*streamState{}
 	part := func(ts time.Time) *streamState {
-		turn := s.turnAt(ts)
+		turn := s.turnAt(node, ts)
 		if out[turn] == nil {
 			out[turn] = &streamState{}
 		}
@@ -215,7 +234,7 @@ func (s *Session) NodeRuns(agents map[string]bool) map[StreamKey]NodeRun {
 		if key.Node == "" || !agents[key.Agent] {
 			continue
 		}
-		for turn, st := range s.byTurn(whole) {
+		for turn, st := range s.byTurn(key.Node, whole) {
 			k := key
 			k.Turn = turn
 			rr, ok := chatRoundRun(k, st)

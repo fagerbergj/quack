@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
@@ -338,5 +339,14 @@ func TestGatedNodeJudgeRoundAppendFailureStopsOnPassingRound(t *testing.T) {
 	// Draft + one revise = 2 worker calls; a round-3 revise would make it 3.
 	if stub.workerCalls != 2 {
 		t.Fatalf("worker calls = %d, want 2 (no revise round after the WAL-forced failure)", stub.workerCalls)
+	}
+}
+
+// A continued attempt's node.started says so: dataset export folds it into the run it carries on.
+func TestNodeStartedMarksContinuedAttempt(t *testing.T) {
+	fl := newFakeGateLedger()
+	appendNodeEvent(context.Background(), Config{ChatID: "c", Ledger: fl, AttemptStartedAt: time.Now()}, "n", "t2", ledger.KindNodeStarted, 0)
+	if len(fl.entries) != 1 || !strings.Contains(string(fl.entries[0].Payload), `"continued":true`) {
+		t.Fatalf("node.started = %+v, want a continued:true payload", fl.entries)
 	}
 }
