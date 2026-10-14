@@ -46,12 +46,13 @@ func runFakeAgent(mode string) {
 		runDeafFakeAgent()
 		return
 	}
-	ag := &fakeAgent{mode: mode}
+	ag := &fakeAgent{mode: mode, connSet: make(chan struct{})}
 	if mode == "steer" || mode == "idle-probe" {
 		ag.steerCh = make(chan string, 1)
 	}
 	conn := sdk.NewAgentSideConnection(ag, os.Stdout, os.Stdin)
 	ag.conn = conn
+	close(ag.connSet)
 	<-conn.Done()
 }
 
@@ -90,6 +91,9 @@ func runDeafFakeAgent() {
 type fakeAgent struct {
 	mode string
 	conn *sdk.AgentSideConnection
+	// connSet closes once conn is assigned: the SDK serves stdin from inside NewAgentSideConnection,
+	// so a fast Prompt can otherwise reach a nil conn.
+	connSet chan struct{}
 	// steerCh: mode "steer" blocks Prompt on this until steer text arrives.
 	steerCh chan string
 	// rounds counts Prompt calls this process served; only a pinned, reused process sees it exceed 1,
@@ -140,6 +144,7 @@ func (f *fakeAgent) LoadSession(ctx context.Context, req sdk.LoadSessionRequest)
 }
 
 func (f *fakeAgent) Prompt(ctx context.Context, p sdk.PromptRequest) (sdk.PromptResponse, error) {
+	<-f.connSet
 	send := func(u sdk.SessionUpdate) {
 		_ = f.conn.SessionUpdate(ctx, sdk.SessionNotification{SessionId: p.SessionId, Update: u})
 	}
