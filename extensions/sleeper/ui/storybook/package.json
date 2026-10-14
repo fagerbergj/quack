@@ -8,7 +8,8 @@
     "render-check": "node render-check.mjs",
     "validate-schemas": "node validate-schemas.mjs",
     "security-check": "node security-check.mjs",
-    "pair-check": "node pair-check.mjs"
+    "pair-check": "node pair-check.mjs",
+    "talk-check": "node talk-check.mjs"
   },
   "devDependencies": {
     "@storybook/html-vite": "10.6.0",

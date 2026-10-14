@@ -330,7 +330,8 @@ function runAttrs(runnable) {
 // One suggestion row: partner + record/place + partner_need chip, GIVE/GET
 // lines with projections, a Start-talk button; note sits behind the expand.
 function tradeFinderRow(f, runnable) {
-  const startBtn = `<button class="qk-btn" data-run="trade" data-partner="${esc(f.partner_id || f.partner)}" data-partner-name="${esc(f.partner)}"${runAttrs(runnable)}><span class="ms" aria-hidden="true">forum</span>Start talk</button>`
+  // The suggestion's own give/get ride along, so the talk evaluates this offer instead of modelling one.
+  const startBtn = `<button class="qk-btn" data-run="trade" data-partner="${esc(f.partner_id || f.partner)}" data-partner-name="${esc(f.partner)}" data-give="${esc(f.give?.id || '')}" data-get="${esc(f.get?.id || '')}"${runAttrs(runnable)}><span class="ms" aria-hidden="true">forum</span>Start talk</button>`
   const partnerLine = `<div class="sl-partner"><b>${esc(f.partner)}</b>${f.record ? `<span class="sl-meta">${esc(f.record)}</span>` : ''}${f.partner_need ? `<span class="qk-chip">${esc(f.partner_need)}</span>` : ''}${startBtn}</div>`
   const giveLine = `<div class="sl-line"><span class="sl-dir sl-dir--out">GIVE</span><span class="sl-who">${esc(f.give.name)}</span><span class="sl-meta">${esc(f.give.pos || '')}</span>${injBadge(f.give)}<span class="sl-pts num sl-keep">${num(f.give_proj)}</span></div>`
   const getLine = `<div class="sl-line"><span class="sl-dir sl-dir--in">GET</span><span class="sl-who">${esc(f.get.name)}</span><span class="sl-meta">${esc(f.get.pos || '')}</span>${injBadge(f.get)}<span class="sl-pts num">${num(f.get_proj)}</span></div>`
