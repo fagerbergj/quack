@@ -3,6 +3,7 @@ package serve
 import (
 	"context"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"strings"
@@ -97,15 +98,42 @@ func (x *extDecisions) host(plugin string) func(context.Context, extsdk.DecideRe
 				ctx = ledger.WithCoords(ctx, ledger.Coords{ChatID: req.ChatID})
 			}
 		}
-		r := x.decider.DecideWith(ctx, p, req.State, req.Baseline)
+		p, state, err := callEvidence(p, req)
+		if err != nil {
+			return extsdk.Decision{}, err
+		}
+		r := x.decider.DecideWith(ctx, p, state, req.Baseline)
 		if r.Err != nil {
 			return extsdk.Decision{}, r.Err
 		}
 		return extsdk.Decision{
-			Top: r.Top, TopP: r.TopP, Probabilities: r.Answers,
-			Outcome: string(r.Outcome), Act: r.Act(), Restrict: r.Restricts(),
+			Top: r.Top, TopP: r.TopP, Probabilities: r.Answers, Outcome: string(r.Outcome),
+			Confident: r.Confident, Act: r.Act(), Restrict: r.Restricts(),
 		}, nil
 	}
+}
+
+// callEvidence fills a criteria-less choice Primary with req.Options and wraps req.Images around the state.
+func callEvidence(p decide.Point, req extsdk.DecideRequest) (decide.Point, any, error) {
+	var state any = req.State
+	if len(req.Images) > 0 {
+		state = decide.WithImages{State: req.State, Images: req.Images}
+	}
+	if len(req.Options) == 0 {
+		return p, state, nil
+	}
+	q := p.Questions[p.Primary]
+	if q.Type != "choice" || q.Criteria != nil {
+		return p, nil, fmt.Errorf("decide: %s: Options need a choice primary declared without criteria", p.ID)
+	}
+	opts := make(map[string]any, len(req.Options))
+	for _, o := range req.Options {
+		opts[o] = nil
+	}
+	q.Criteria = opts
+	p.Questions = maps.Clone(p.Questions)
+	p.Questions[p.Primary] = q
+	return p, state, nil
 }
 
 // inlineMatches: a request may still carry the point's definition, but only the declared one.
