@@ -53,6 +53,8 @@ type experimentItemInput struct {
 	Task      string            `json:"task"`
 	Setup     *extsdk.Setup     `json:"setup,omitempty"`
 	Artifacts map[string]string `json:"artifacts,omitempty"`
+	// SkippedArtifacts: inputs the export left out for size; the run item names them so a comparison can exclude it.
+	SkippedArtifacts []string `json:"skipped_artifacts,omitempty"`
 }
 
 // itemRun is one item's node run: the trace RunExperiment links, and what it scores on that trace.
@@ -162,7 +164,7 @@ func runExperimentItem(ctx context.Context, runner itemRunner, lf *langfuse.Clie
 	if res.Error != "" {
 		return res, nil
 	}
-	if err := recordRunItem(ctx, lf, opts, item.ID, run); err != nil {
+	if err := recordRunItem(ctx, lf, opts, item.ID, run, in.SkippedArtifacts); err != nil {
 		return ExperimentResult{}, err
 	}
 	return res, nil
@@ -185,15 +187,18 @@ func itemInput(item langfuse.DatasetItem) (experimentItemInput, error) {
 
 // recordRunItem scores the trace before linking it, so a failed link leaves only scores on an unlinked
 // trace. The prompt rides on the run (description and metadata); the answer already lives on the trace.
-func recordRunItem(ctx context.Context, lf *langfuse.Client, opts ExperimentOpts, itemID string, run itemRun) error {
+func recordRunItem(ctx context.Context, lf *langfuse.Client, opts ExperimentOpts, itemID string, run itemRun, skipped []string) error {
 	if err := lf.Ingest(ctx, itemScores(run, time.Now().UTC().Format(time.RFC3339Nano))); err != nil {
 		return fmt.Errorf("experiment run: item %s: score trace: %w", itemID, err)
 	}
+	meta := map[string]string{"agent": opts.Agent, "prompt_name": run.Prompt.Name,
+		"prompt_version": run.Prompt.VersionID, "prompt_source": run.Prompt.Source}
+	if len(skipped) > 0 {
+		meta["skipped_artifacts"] = strings.Join(skipped, ",")
+	}
 	req := langfuse.CreateDatasetRunItemRequest{
 		DatasetItemID: itemID, RunName: opts.RunName, TraceID: run.TraceID,
-		RunDescription: fmt.Sprintf("prompt=%s agent=%s", run.prompt(), opts.Agent),
-		Metadata: map[string]string{"agent": opts.Agent, "prompt_name": run.Prompt.Name,
-			"prompt_version": run.Prompt.VersionID, "prompt_source": run.Prompt.Source},
+		RunDescription: fmt.Sprintf("prompt=%s agent=%s", run.prompt(), opts.Agent), Metadata: meta,
 	}
 	if err := lf.CreateDatasetRunItem(ctx, req); err != nil {
 		return fmt.Errorf("experiment run: item %s: create run item: %w", itemID, err)

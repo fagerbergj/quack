@@ -959,7 +959,8 @@ func TestRunDatasetExport_ReviewerItemCarriesPinnedClone(t *testing.T) {
 }
 
 // TestRunDatasetExport_ItemCarriesManifestArtifacts: a replay runs in a fresh chat, so the item carries each input
-// artifact its task's <artifacts> manifest lists, at the listed revision; one gone from the chat is left out.
+// artifact its task's <artifacts> manifest lists, at the listed revision; one gone from the chat is left out, and
+// one that would push the item past Langfuse's request limit is left out whole and named.
 func TestRunDatasetExport_ItemCarriesManifestArtifacts(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
@@ -981,7 +982,11 @@ func TestRunDatasetExport_ItemCarriesManifestArtifacts(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if _, _, err := rc.SaveBlob(ctx, "bytes", []byte(`"`+strings.Repeat("f", itemBudget)+`"`), "application/json", "files", recordstore.Lineage{}); err != nil {
+		t.Fatal(err)
+	}
 	task := "review\n<artifacts>\n  <artifact id=\"bytes:issue\" revision=\"1\" status=\"new\">1 object</artifact>\n" +
+		"  <artifact id=\"bytes:files\" revision=\"1\" status=\"new\">3000 files</artifact>\n" +
 		"  <artifact id=\"bytes:gone\" revision=\"1\" status=\"new\">1 object</artifact>\n</artifacts>\n"
 	ls := ledgertest.NewMemStore()
 	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -1006,8 +1011,11 @@ func TestRunDatasetExport_ItemCarriesManifestArtifacts(t *testing.T) {
 	if err := json.Unmarshal(b, &in); err != nil {
 		t.Fatal(err)
 	}
-	if len(in.Artifacts) != 1 || !strings.Contains(in.Artifacts["issue"], "as listed") {
-		t.Fatalf("item artifacts = %v, want only issue at revision 1", in.Artifacts)
+	if len(in.Artifacts) != 1 || !strings.Contains(in.Artifacts["issue"], "as listed") || fmt.Sprint(in.SkippedArtifacts) != "[files]" {
+		t.Fatalf("item artifacts = %v, skipped %v; want only issue at revision 1, files skipped", in.Artifacts, in.SkippedArtifacts)
+	}
+	if body, _ := json.Marshal(fake.items[items[0].ItemID]); len(body) > itemBudget {
+		t.Fatalf("item body is %d bytes, over the %d budget", len(body), itemBudget)
 	}
 }
 

@@ -661,6 +661,18 @@ func TestRunExperiment_ScoresTraceAndLinksPrompt(t *testing.T) {
 	}
 }
 
+// A replay missing inputs the export left out for size names them on its run item, so a comparison can exclude it.
+func TestRecordRunItem_NamesSkippedArtifacts(t *testing.T) {
+	srv, _, runItems := fakeExperimentLangfuse(t)
+	if err := recordRunItem(context.Background(), newTestClient(t, srv), ExperimentOpts{Agent: "code-reviewer"}, "item1",
+		itemRun{TraceID: "tr1"}, []string{"commits", "files"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(*runItems) != 1 || (*runItems)[0]["metadata"].(map[string]any)["skipped_artifacts"] != "commits,files" {
+		t.Fatalf("run items = %+v, want metadata skipped_artifacts=commits,files", *runItems)
+	}
+}
+
 // Langfuse answers a batch 207 even when events fail. A rejected score fails the run, naming the event and
 // its error, and the item is never linked into the dataset run with scores missing.
 func TestRunExperiment_RejectedScoreFailsLoudly(t *testing.T) {
