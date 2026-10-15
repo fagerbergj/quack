@@ -246,11 +246,14 @@ func TestExtDecidePassesOptionsAndImages(t *testing.T) {
 	if err := x.declare("browser", ext); err != nil {
 		t.Fatal(err)
 	}
-	if err := x.declare("github", declaringExt{points: []extsdk.DecisionPoint{intentPoint}}); err != nil {
+	fixedChoice := extsdk.DecisionPoint{Name: "label", Primary: "kind",
+		Questions: map[string]extsdk.DecisionQuestion{"kind": {Type: "choice", Instructions: "which?", Criteria: map[string]string{"a": "A", "b": "B"}}}}
+	if err := x.declare("github", declaringExt{points: []extsdk.DecisionPoint{intentPoint, fixedChoice}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := x.build(decisionsCfg(srv.URL, map[string]config.DecisionPoint{
 		"ext:browser/element.choose": {Enabled: true, Mode: "observe"}, "ext:github/intent": {Enabled: true, Mode: "observe"},
+		"ext:github/label": {Enabled: true, Mode: "observe"},
 	})); err != nil {
 		t.Fatal(err)
 	}
@@ -272,5 +275,8 @@ func TestExtDecidePassesOptionsAndImages(t *testing.T) {
 	}
 	if _, err := x.host("github")(ctx, extsdk.DecideRequest{Point: "intent", Options: []string{"a"}}); err == nil {
 		t.Error("options on a noul primary: want an error")
+	}
+	if _, err := x.host("github")(ctx, extsdk.DecideRequest{Point: "label", Options: []string{"c"}}); err == nil {
+		t.Error("options on a choice declared with its own criteria: want an error")
 	}
 }

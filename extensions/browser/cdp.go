@@ -37,6 +37,7 @@ func (b *cdpBrowser) NewTab(ctx context.Context) (Tab, error) {
 		SessionID string `json:"sessionId"`
 	}
 	if err := c.call(ctx, "", "Target.attachToTarget", map[string]any{"targetId": t.TargetID, "flatten": true}, &s); err != nil {
+		_ = c.call(context.WithoutCancel(ctx), "", "Target.closeTarget", map[string]any{"targetId": t.TargetID}, nil)
 		return nil, err
 	}
 	tab := &cdpTab{c: c, target: t.TargetID, session: s.SessionID}
@@ -54,7 +55,7 @@ func (b *cdpBrowser) dial(ctx context.Context) (*cdpConn, error) {
 	if b.conn != nil && b.conn.alive() {
 		return b.conn, nil
 	}
-	ws, _, err := websocket.Dial(ctx, b.url, nil)
+	ws, _, err := websocket.Dial(ctx, b.url, nil) //nolint:bodyclose // Dial owns resp.Body: nil on success, drained and NopCloser'd on error
 	if err != nil {
 		return nil, fmt.Errorf("connect to cdp_url: %w", err)
 	}
