@@ -379,7 +379,7 @@ func startSDKExtensions(ctx context.Context, exts []builtSDKExtension) error {
 func sdkExtensionMounts(exts []builtSDKExtension) []server.SDKExtensionMount {
 	out := make([]server.SDKExtensionMount, 0, len(exts))
 	for _, e := range exts {
-		out = append(out, server.SDKExtensionMount{Name: e.name, RegisterRoutes: e.ext.RegisterRoutes})
+		out = append(out, server.SDKExtensionMount{Name: e.name, RegisterRoutes: e.ext.RegisterRoutes, UIHref: e.href})
 	}
 	return out
 }

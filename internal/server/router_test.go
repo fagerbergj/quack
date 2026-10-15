@@ -303,3 +303,39 @@ func TestRouterUnknownAPIPathIsJSON404RegardlessOfAuth(t *testing.T) {
 		t.Errorf("status = %d, want 404", rec.Code)
 	}
 }
+
+// A browser opening an extension's UI page directly lands in the app shell; the shell's iframe, a
+// script fetch, or any other path of the extension is served as before.
+func TestRouterOpensExtensionUIInShell(t *testing.T) {
+	h := server.New(server.Options{
+		REST: &rest.Handler{},
+		SDKExtensions: []server.SDKExtensionMount{{
+			Name:   "sleeper",
+			UIHref: "/sleeper/",
+			RegisterRoutes: func(_, public chi.Router) {
+				public.Get("/*", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+			},
+		}},
+	})
+	for _, tc := range []struct {
+		path, dest string
+		want       int
+		location   string
+	}{
+		{"/sleeper/?league_id=7&stop=6", "document", http.StatusFound, "/ext/sleeper?league_id=7&stop=6"},
+		{"/sleeper", "document", http.StatusFound, "/ext/sleeper"},
+		{"/sleeper/?league_id=7", "iframe", http.StatusOK, ""},
+		{"/sleeper/", "", http.StatusOK, ""},
+		{"/sleeper/main.js", "document", http.StatusOK, ""},
+	} {
+		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+		if tc.dest != "" {
+			req.Header.Set("Sec-Fetch-Dest", tc.dest)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != tc.want || rec.Header().Get("Location") != tc.location {
+			t.Errorf("GET %s (dest %q) = %d %q, want %d %q", tc.path, tc.dest, rec.Code, rec.Header().Get("Location"), tc.want, tc.location)
+		}
+	}
+}

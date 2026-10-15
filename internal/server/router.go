@@ -36,6 +36,7 @@ type Options struct {
 type SDKExtensionMount struct {
 	Name           string
 	RegisterRoutes func(authed, public chi.Router)
+	UIHref         string // the UI descriptor's entry page; "" = no UI
 }
 
 // New builds the HTTP handler.
@@ -62,6 +63,9 @@ func New(opts Options) http.Handler {
 	// a duplicate-mount conflict. Bare names are safe because ValidateExtensionName rejects reserved ones.
 	for _, m := range opts.SDKExtensions {
 		combined := chi.NewRouter()
+		if m.UIHref != "" {
+			combined.Use(openInShell(m.Name, m.UIHref))
+		}
 		authed := combined.With(requireAuthExceptHealth(opts.Auth))
 		m.RegisterRoutes(authed, combined)
 		r.Mount("/"+m.Name, combined)
@@ -82,6 +86,25 @@ func New(opts Options) http.Handler {
 		http.NotFound(w, req)
 	})
 	return r
+}
+
+// openInShell sends a browser's top-level load of an extension's UI entry page to /ext/<name>, query kept,
+// so it opens inside the app shell with its nav; the shell's own iframe load is Sec-Fetch-Dest: iframe.
+func openInShell(name, href string) func(http.Handler) http.Handler {
+	entry := strings.TrimSuffix(strings.SplitN(href, "?", 2)[0], "/")
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet || r.Header.Get("Sec-Fetch-Dest") != "document" || strings.TrimSuffix(r.URL.Path, "/") != entry {
+				next.ServeHTTP(w, r)
+				return
+			}
+			target := "/ext/" + name
+			if r.URL.RawQuery != "" {
+				target += "?" + r.URL.RawQuery
+			}
+			http.Redirect(w, r, target, http.StatusFound)
+		})
+	}
 }
 
 // slog-based request logger (controlled by QUACK_LOG_LEVEL, unlike chi's stderr logger).
