@@ -3001,12 +3001,15 @@ func isSourceArtifactID(id string) bool {
 	return false
 }
 
-// readArtifactID: the id a read_artifact call read - the full one its result names when it resolved a partial id.
+// readArtifactID: the id a read_artifact call read. The result's first line names it only if ResolveID
+// maps argID to it; that check rejects the exact id and anything else page content could forge.
 func readArtifactID(argID string, resp map[string]any) string {
 	result, _ := resp["result"].(string)
-	if rest, found := strings.CutPrefix(result, recordstore.ResolvedIDPrefix); found {
-		id, _, _ := strings.Cut(rest, "\n")
-		return id
+	first, _, _ := strings.Cut(result, "\n")
+	if full, found := strings.CutPrefix(first, recordstore.ResolvedIDPrefix); found {
+		if id, err := recordstore.ResolveID(argID, []string{full}); err == nil {
+			return id
+		}
 	}
 	return argID
 }
