@@ -54,6 +54,16 @@ describe('ExtensionHost', () => {
     )
   })
 
+  it("carries the page's query into the iframe, replacing the descriptor's", () => {
+    window.history.replaceState(null, '', '/ext/sleeper?league_id=7&stop=6')
+    try {
+      mount({ name: 'sleeper', initialExtensions: [{ name: 'sleeper', href: '/sleeper/?tab=main' }] })
+      expect(host!.querySelector('iframe')!.getAttribute('src')).toBe('/sleeper/?league_id=7&stop=6')
+    } finally {
+      window.history.replaceState(null, '', '/')
+    }
+  })
+
   it('shows a not-found message for a name with no matching href-bearing extension', () => {
     mount({ name: 'missing', initialExtensions: [{ name: 'usage', href: '/usage' }] })
     expect(host!.querySelector('iframe')).toBeNull()

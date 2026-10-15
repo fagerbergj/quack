@@ -67,11 +67,16 @@ export default function ExtensionHost({ name: nameOverride, initialExtensions, n
     )
   }
 
+  // The server redirects a direct load of the extension's page here with its query (e.g. a delivered
+  // /sleeper/?league_id=…), so the query, when present, replaces the descriptor's.
+  const search = window.location.search
+  const src = search ? ext.href.split('?')[0] + search : ext.href
+
   return (
     <>
       {header}
       <iframe
-        src={ext.href}
+        src={src}
         title={ext.title ?? ext.name}
         // allow-top-navigation-by-user-activation: lets a click link out to a
         // real SPA route (e.g. remarkable's doc -> chat), but never the extension itself.
