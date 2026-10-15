@@ -205,6 +205,12 @@ type DecideRequest struct {
 	State    any    // the evidence the handler reads
 	Baseline string // the extension's own answer to Primary, in its option space
 
+	// Images are data URLs (data:image/jpeg;base64,...) sent beside State; the ledger records State only.
+	Images []string
+
+	// Options are this call's answers to a "choice" Primary declared without Criteria, e.g. a page's elements.
+	Options []string
+
 	// ChatID is the chat the decision belongs to, for ledger attribution; the
 	// host accepts only the plugin's own ext:<plugin>: chats. Empty = ctx's chat.
 	ChatID string
@@ -221,6 +227,7 @@ type Decision struct {
 	TopP          float64
 	Probabilities map[string]map[string]float64
 	Outcome       string // "observe", "act", "fallback", or "restrict"
+	Confident     bool   // TopP reached the point's act_at, in every mode
 	Act           bool   // mode and confidence say to use Top in place of Baseline
 	Restrict      bool   // a guard says to narrow, never widen
 }

@@ -222,3 +222,61 @@ func TestExtDecideAttributesTheRequestChat(t *testing.T) {
 		t.Errorf("no ChatID: %d entries under the ctx's chat, want 1", len(got))
 	}
 }
+
+// TestExtDecidePassesOptionsAndImages: a criteria-less choice takes each call's options, images reach the
+// handler beside the state, and the ledger records the state without them.
+func TestExtDecidePassesOptionsAndImages(t *testing.T) {
+	mem := ledgertest.NewMemStore()
+	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(ledger.NewExporter(mem))))
+	t.Cleanup(otelobs.SetLoggerProviderForTesting(lp))
+	var sent struct {
+		Questions map[string]decide.Question `json:"questions"`
+		Images    []string                   `json:"images"`
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&sent)
+		_ = json.NewEncoder(w).Encode(map[string]any{"answers": map[string]any{"element": map[string]any{"probabilities": map[string]float64{"[1] link": 0.05, "[2] button": 0.95}}}})
+	}))
+	defer srv.Close()
+	ext, err := extsdk.Registered()["browser"](extsdk.Host{}, []byte("cdp_url: ws://127.0.0.1:1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	x := &extDecisions{}
+	if err := x.declare("browser", ext); err != nil {
+		t.Fatal(err)
+	}
+	fixedChoice := extsdk.DecisionPoint{Name: "label", Primary: "kind",
+		Questions: map[string]extsdk.DecisionQuestion{"kind": {Type: "choice", Instructions: "which?", Criteria: map[string]string{"a": "A", "b": "B"}}}}
+	if err := x.declare("github", declaringExt{points: []extsdk.DecisionPoint{intentPoint, fixedChoice}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := x.build(decisionsCfg(srv.URL, map[string]config.DecisionPoint{
+		"ext:browser/element.choose": {Enabled: true, Mode: "observe"}, "ext:github/intent": {Enabled: true, Mode: "observe"},
+		"ext:github/label": {Enabled: true, Mode: "observe"},
+	})); err != nil {
+		t.Fatal(err)
+	}
+	ctx := ledger.WithCoords(context.Background(), ledger.Coords{ChatID: "chat-1"})
+	d, err := x.host("browser")(ctx, extsdk.DecideRequest{Point: "element.choose", State: map[string]string{"goal": "sign in"},
+		Options: []string{"[1] link", "[2] button"}, Images: []string{"data:image/jpeg;base64,AAAA"}})
+	if err != nil || d.Top != "[2] button" || !d.Confident || d.Act {
+		t.Fatalf("decision = %+v %v, want a confident observe-only [2] button", d, err)
+	}
+	if c, _ := sent.Questions["element"].Criteria.(map[string]any); len(c) != 2 || len(sent.Images) != 1 {
+		t.Errorf("sent criteria %v images %d, want both options and the image", sent.Questions["element"].Criteria, len(sent.Images))
+	}
+	got, err := mem.ReadEntries(context.Background(), "chat-1", 0)
+	if err != nil || len(got) != 1 {
+		t.Fatalf("ledger entries: %d %v", len(got), err)
+	}
+	if b, _ := json.Marshal(got[0]); strings.Contains(string(b), "base64") || !strings.Contains(string(b), "sign in") {
+		t.Errorf("ledger entry %s, want the state without the image", b)
+	}
+	if _, err := x.host("github")(ctx, extsdk.DecideRequest{Point: "intent", Options: []string{"a"}}); err == nil {
+		t.Error("options on a noul primary: want an error")
+	}
+	if _, err := x.host("github")(ctx, extsdk.DecideRequest{Point: "label", Options: []string{"c"}}); err == nil {
+		t.Error("options on a choice declared with its own criteria: want an error")
+	}
+}

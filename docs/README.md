@@ -7,6 +7,7 @@ Setup and configuration guides for humans to use quack. For how the code itself 
 - [`api.md`](api.md) - the REST/MCP/A2A surface and streaming.
 - [`configuration/`](configuration/) - models, prompts, agents, the trust gate, stores, auth, workspace sandboxing, deployment shapes, observability.
 - [`agent-plugins.md`](agent-plugins.md) - the Agent Plugins standard: how a plugin ships skills, MCP servers, and quack extension declarations.
+- [`extensions/browser.md`](extensions/browser.md) - agent tools that drive a Chromium over CDP, with an element-choice decision point.
 - [`extensions/github.md`](extensions/github.md) - the GitHub App.
 - [`extensions/remarkable.md`](extensions/remarkable.md) - the reMarkable document-ingest trigger.
 - [`extensions/sleeper.md`](extensions/sleeper.md) - the Sleeper fantasy-football tools, page and weekly jobs.

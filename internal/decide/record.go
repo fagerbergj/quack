@@ -59,7 +59,11 @@ func payload(r Result, baseline string) ledger.DecisionPayload {
 	if r.Err != nil {
 		p.Error = r.Err.Error()
 	}
-	p.State, _ = json.Marshal(r.state)
+	state := r.state
+	if w, ok := state.(WithImages); ok { // base64 screenshots would bloat every ledger row
+		state = w.State
+	}
+	p.State, _ = json.Marshal(state)
 	if r.meta != nil {
 		p.Meta, _ = json.Marshal(r.meta)
 	}
