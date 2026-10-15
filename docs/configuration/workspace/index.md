@@ -10,7 +10,7 @@ workspace:
   max_results: 200
   max_list_entries: 500
   timeout_seconds: 60          # per run_command tool call
-  check_timeout_seconds: 600   # per gate check command (e.g. a full test suite) and per git/check_setup command of a run's clone; default 600
+  check_timeout_seconds: 600   # per gate check command (e.g. a full test suite) and per git/check_setup command of every chat's clone and node worktree, experiments or not; default 600
   sandbox: bwrap
   check_commands: ["go build", "go vet", "go test", "npm run", "npm test", "npx tsc", "make"]
 ```

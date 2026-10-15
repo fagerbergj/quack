@@ -1425,7 +1425,7 @@ func buildACPNode(name string, ac config.AgentConfig, prov config.ProviderConfig
 				return "", fmt.Errorf("acp worktree: resolve parent clone: %w", err)
 			}
 			return tools.SetupWorktree(ctx, jail, userID, chatID, parentDir, workspace.NodeDir(nodeID),
-				workspace.WorktreeBranch(nodeID), workspaceCaps, cfg.Workspace.CheckSetup)
+				workspace.WorktreeBranch(nodeID), setupCaps(cfg, workspaceCaps), cfg.Workspace.CheckSetup)
 		},
 	})
 	if err != nil {
@@ -2151,9 +2151,15 @@ func SweepExperimentWorkspaces(jail *workspace.Jail, olderThan time.Duration) (r
 	return removed
 }
 
+// setupCaps bounds every chat's clone, node worktree and check_setup by check_timeout_seconds: none is one tool call,
+// and the 60 s tool bound kills a healthy one once setups share the host (concurrent reviews, an experiment's items).
+func setupCaps(cfg *config.Config, caps workspace.Caps) workspace.Caps {
+	caps.Timeout = time.Duration(cfg.Workspace.CheckTimeoutSeconds) * time.Second
+	return caps
+}
+
 func setupCloneFunc(cfg *config.Config, jail *workspace.Jail, workspaceCaps workspace.Caps, gitCredentials []tools.GitCredential, gitTokenSource tools.GitTokenSource) dag.SetupFunc {
-	// Clone and check_setup aren't one tool call: the tool bound (60s) kills a healthy one once many setups share the host.
-	workspaceCaps.Timeout = time.Duration(cfg.Workspace.CheckTimeoutSeconds) * time.Second
+	workspaceCaps = setupCaps(cfg, workspaceCaps)
 	return func(ctx context.Context, _, chatID, dir string, setup dag.Setup) error {
 		_, err := tools.SetupClone(ctx, jail, localUserID, chatID, dir, setup.Repo, setup.BaseRef, setup.WorkBranch, setup.HeadSHA, setup.CheckoutExistingHead, workspaceCaps, gitCredentials, gitTokenSource, cfg.Workspace.CheckSetup)
 		return err
