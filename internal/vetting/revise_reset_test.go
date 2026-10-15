@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
@@ -144,13 +143,10 @@ func runStrayCommitGate(t *testing.T, stub model.LLM, cfg Config) {
 		t.Fatalf("runner: %v", err)
 	}
 	task := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Add a CD workflow publishing to GHCR."}}}
-	deadline := time.Now().Add(10 * time.Second)
+	// No wall-clock bound: a run makes ~25 reaper-wrapped git spawns, each a -race binary start; -timeout catches a hang.
 	for _, rerr := range r.Run(t.Context(), "u", "s", task, adkagent.RunConfig{}) {
 		if rerr != nil {
 			t.Fatalf("run: %v", rerr)
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("gate run did not finish in time")
 		}
 	}
 }
