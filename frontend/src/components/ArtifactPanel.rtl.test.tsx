@@ -202,6 +202,12 @@ describe('ArtifactPanel as a result view (#1178)', () => {
     expect(container.querySelectorAll('select')).toHaveLength(0)
   })
 
+  it('shows a failed artifact fetch as an error line, not an empty panel', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch') }))
+    render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan the fix" nodeArtifactKind="text" onClose={() => {}} />)
+    expect((await screen.findByText(/Request failed/)).className).toContain('text-red-700')
+  })
+
   // focusArtifactId shows the tapped row's artifact without reintroducing an id-based picker.
   it('focusArtifactId shows the tapped artifact as primary, not the default pick', async () => {
     stubThreeArtifactsFixture()

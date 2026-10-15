@@ -204,6 +204,16 @@ describe('DagNode compact header', () => {
     expect(document.activeElement).toBe(kebab)
   })
 
+  it('Stop cancels the node and closes the menu', async () => {
+    const user = userEvent.setup()
+    const onCancel = vi.fn()
+    render(<DagNode node={node} state={running} runs={[]} answer="" isFinal={false} onCancel={onCancel} />)
+    await user.click(screen.getByRole('button', { name: 'Node actions' }))
+    await user.click(screen.getByRole('menuitem', { name: 'Stop' }))
+    expect(onCancel).toHaveBeenCalledWith('r1')
+    expect(screen.queryByRole('menu')).toBeNull()
+  })
+
   // The card clips to its rounded corners at rest; while the menu is open it
   // must not, or a short card cuts the menu off after the first item.
   it('the card lifts its overflow clip while the menu is open', () => {
