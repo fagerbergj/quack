@@ -300,6 +300,19 @@ describe('DagNode stays live through a mid-run admission re-queue (#1480)', () =
     expect(screen.queryByRole('menuitem', { name: /Edit prompt/ })).toBeNull()
   })
 
+  it('a capacity wait reads as waiting (model + reason in a status region), and running once admitted', () => {
+    const capacityWait = { model: 'qwen3.8-27b', reason: '1 of 1 sessions busy', since: Date.now() - 3000 }
+    const { rerender } = render(<DagNode node={node} state={{ status: 'queued', capacityWait }} runs={openRun} answer="" isFinal={false} />)
+    const wait = screen.getAllByRole('status').find(el => el.textContent?.includes('waiting for capacity'))
+    expect(wait?.textContent).toContain('qwen3.8-27b')
+    expect(wait?.textContent).toContain('1 of 1 sessions busy')
+    expect(screen.queryByText('running')).toBeNull()
+
+    rerender(<ChatStoreProvider><DagNode node={node} state={{ status: 'running' }} runs={openRun} answer="" isFinal={false} /></ChatStoreProvider>)
+    expect(screen.queryByText('waiting for capacity')).toBeNull()
+    expect(screen.getByText('running')).toBeTruthy()
+  })
+
   it('a genuinely never-dispatched queued node (no runs) still offers Start and edit prompt', async () => {
     const user = userEvent.setup()
     render(<DagNode node={node} state={{ status: 'queued' }} runs={[]} answer="" isFinal={false} onResume={() => {}} onEditTask={() => {}} />)

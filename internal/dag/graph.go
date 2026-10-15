@@ -305,14 +305,14 @@ func newGatedNode(plan Plan, node Node, workerNode workflow.Node, workerModel mo
 func setupAdmission(ctx context.Context, nodeID string, cfg *vetting.Config, admission *Admission, spec, judgeSpec AdmissionSpec, perCall bool) (func(), error) {
 	yield, hasYield := stream.YieldFromContext(ctx)
 	// admit wraps one Admit call so every wait, not just the first, persists queued and then running.
-	waited := false
-	onQueued := func() {}
-	if hasYield {
-		onQueued = func() { waited = true; yield(stream.NodeQueued(nodeID)) }
-	}
 	admit := func(actx context.Context, s AdmissionSpec) bool {
-		waited = false
-		ok := admission.Admit(actx, s, onQueued)
+		waited := false
+		ok := admission.Admit(actx, s, func() {
+			waited = true
+			if hasYield {
+				yield(admission.QueuedEvent(nodeID, s))
+			}
+		})
 		if ok && waited && hasYield {
 			yield(stream.NodeAdmitted(nodeID))
 		}

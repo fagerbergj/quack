@@ -260,8 +260,12 @@ export const diffArtifactRevisions = <ThrowOnError extends boolean = false>(opti
  *
  * DAG events: `dag_plan` ({"plan_id","nodes","edges","trace_id"})
  * signals a quack:dag output item has been added; `node_queued`
- * ({"node_id"}) fires when a node blocks waiting for an admission slot -
- * at first dispatch, and again at every worker/judge slot swap mid-run -
+ * ({"node_id"}) fires when a node is queued for dispatch, and
+ * ({"node_id","model","reason","queued_at_ms"}) when it blocks waiting
+ * for an admission slot on `model` - `reason` names the full limit
+ * (e.g. "1 of 1 sessions busy") and `queued_at_ms` is the server
+ * wall-clock (epoch ms) the wait began - at first dispatch, and again
+ * at every worker/judge slot swap mid-run -
  * and `node_admitted` ({"node_id"}) fires when that wait ends, putting
  * the node back to running without a second `node_start`; `node_start`
  * ({"node_id","agent","trace_id",

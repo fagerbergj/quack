@@ -55,6 +55,18 @@ export const Queued: Story = {
   },
 }
 
+// Mid-run, blocked on the model's admission slot: the wait names the model, the full limit and its own timer.
+export const WaitingForCapacity: Story = {
+  args: {
+    node: wrNode,
+    state: {
+      status: 'queued', startedAt: Date.now() - 95_000,
+      capacityWait: { model: 'qwen3.8-27b', reason: '1 of 1 sessions busy', since: Date.now() - 42_000 },
+    },
+    runs: [workerDone(researchActivity)], answer: '', isFinal: false, onCancel: () => {}, onPause: () => {},
+  },
+}
+
 // A rejected control action (a 409 on pause) on a node that keeps running: a dismissible note, not a failure.
 export const RejectedAction: Story = {
   args: {

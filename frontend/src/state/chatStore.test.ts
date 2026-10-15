@@ -851,12 +851,20 @@ describe('ChatStore - node_admitted resumes a node re-queued mid-run (#1480)', (
     await vi.waitFor(() => expect(store.get('c').live?.dag?.nodeStates['a']?.status).toBe('running'))
 
     // Worker slot released for the judge call, which blocks on admission.
-    send('event: node_queued\ndata: {"node_id":"a"}\n\n')
+    send('event: node_queued\ndata: {"node_id":"a","model":"qwen3.8-27b","reason":"1 of 1 sessions busy","queued_at_ms":1700000000000}\n\n')
     await vi.waitFor(() => expect(store.get('c').live?.dag?.nodeStates['a']?.status).toBe('queued'))
+    expect(store.get('c').live?.dag?.nodeStates['a']?.capacityWait)
+      .toEqual({ model: 'qwen3.8-27b', reason: '1 of 1 sessions busy', since: 1700000000000 })
 
-    // Judge admitted - back to running without a second node_start.
+    // Judge admitted - back to running without a second node_start, and the wait clears.
     send('event: node_admitted\ndata: {"node_id":"a"}\n\n')
     await vi.waitFor(() => expect(store.get('c').live?.dag?.nodeStates['a']?.status).toBe('running'))
+    expect(store.get('c').live?.dag?.nodeStates['a']?.capacityWait).toBeUndefined()
+
+    // A plain dispatch queue (no model) is not a capacity wait.
+    send('event: node_queued\ndata: {"node_id":"a"}\n\n')
+    await vi.waitFor(() => expect(store.get('c').live?.dag?.nodeStates['a']?.status).toBe('queued'))
+    expect(store.get('c').live?.dag?.nodeStates['a']?.capacityWait).toBeUndefined()
 
     send('event: node_done\ndata: {"node_id":"a"}\n\n')
     send('event: done\ndata: {}\n\n')

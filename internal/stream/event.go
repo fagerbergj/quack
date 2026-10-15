@@ -245,12 +245,21 @@ func (p DagPlanData) SinkIDs() []string {
 // `node_queued` event payload.
 type NodeQueuedData struct {
 	NodeID string `json:"node_id"`
+	// Set only for an admission wait, never a plain dispatch queue: the awaited model, why it is full, and since when.
+	Model      string `json:"model,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+	QueuedAtMs int64  `json:"queued_at_ms,omitempty"`
 }
 
 // NodeQueued builds a node_queued event, emitted at admission-attempt time so
 // a node waiting on capacity reads as "waiting", not hung.
 func NodeQueued(nodeID string) SSEEvent {
 	return SSEEvent{Name: EventNodeQueued, Data: NodeQueuedData{NodeID: nodeID}}
+}
+
+// NodeAwaitingCapacity builds the node_queued event for a node blocked on an admission slot for model.
+func NodeAwaitingCapacity(nodeID, model, reason string) SSEEvent {
+	return SSEEvent{Name: EventNodeQueued, Data: NodeQueuedData{NodeID: nodeID, Model: model, Reason: reason, QueuedAtMs: time.Now().UnixMilli()}}
 }
 
 // `node_admitted` event payload.
