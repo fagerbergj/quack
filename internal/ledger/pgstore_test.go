@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -195,9 +195,9 @@ func TestPGStoreReadEntriesFiltered(t *testing.T) {
 	}
 }
 
-// TestPGStoreChatCostsUSD: sums priced llm.calls per node, judge rounds included; a chat or node with no
-// priced call is absent.
-func TestPGStoreChatCostsUSD(t *testing.T) {
+// TestPGStoreChatCallCostsUSD: lists priced llm.calls in seq order, judge rounds included; unpriced calls and
+// other kinds are absent.
+func TestPGStoreChatCallCostsUSD(t *testing.T) {
 	t.Parallel()
 	store := newTestPGStore(t)
 	ctx := context.Background()
@@ -214,11 +214,22 @@ func TestPGStoreChatCostsUSD(t *testing.T) {
 			t.Fatalf("AppendIntent %d: %v", i, err)
 		}
 	}
-	got, err := store.ChatCostsUSD(ctx, "chat-cost")
-	if want := map[string]float64{"": 0.25, "n1": 0.625}; err != nil || !maps.Equal(got, want) {
-		t.Fatalf("chat-cost = %v, %v; want %v, nil", got, err, want)
+	got, err := store.ChatCallCostsUSD(ctx, "chat-cost")
+	if err != nil {
+		t.Fatalf("chat-cost: %v", err)
 	}
-	if got, err := store.ChatCostsUSD(ctx, "chat-unpriced"); err != nil || len(got) != 0 {
+	var gotNodes []string
+	var gotUSD []float64
+	for _, c := range got {
+		if c.At.IsZero() {
+			t.Errorf("call %+v has no time", c)
+		}
+		gotNodes, gotUSD = append(gotNodes, c.NodeID), append(gotUSD, c.USD)
+	}
+	if !slices.Equal(gotNodes, []string{"", "n1", "n1"}) || !slices.Equal(gotUSD, []float64{0.25, 0.5, 0.125}) {
+		t.Fatalf("chat-cost = %v %v; want [\"\" n1 n1] [0.25 0.5 0.125]", gotNodes, gotUSD)
+	}
+	if got, err := store.ChatCallCostsUSD(ctx, "chat-unpriced"); err != nil || len(got) != 0 {
 		t.Fatalf("chat-unpriced = %v, %v; want empty, nil", got, err)
 	}
 }

@@ -65,10 +65,17 @@ type FilteredReader interface {
 	ReadEntriesFiltered(ctx context.Context, chatID string, fromSeq int64, kinds []string) ([]Entry, error)
 }
 
-// CostReader sums a chat's priced llm.call costs in the database by node id ("" for calls outside any node);
-// a node with no priced call is absent, so an empty map means nothing was priced.
+// CallCost is one priced llm.call: its node id ("" outside any node) and when it was recorded.
+type CallCost struct {
+	NodeID string
+	At     time.Time
+	USD    float64
+}
+
+// CostReader lists a chat's priced llm.call costs from the database; empty means nothing was priced.
+// Calls carry no turn id, so a caller splits a node id reused across turns by At.
 type CostReader interface {
-	ChatCostsUSD(ctx context.Context, chatID string) (map[string]float64, error)
+	ChatCallCostsUSD(ctx context.Context, chatID string) ([]CallCost, error)
 }
 
 // CrossChatFilteredReader is a LedgerStore that can filter by kind and `at >= since` across every chat in

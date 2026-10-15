@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -262,12 +263,12 @@ func TestVoteMemory_FindsMemoryPastFirstListPage(t *testing.T) {
 
 type costLedgerStore struct {
 	fakeLedgerStore
-	costs map[string]float64
+	calls []ledger.CallCost
 	err   error
 }
 
-func (c *costLedgerStore) ChatCostsUSD(context.Context, string) (map[string]float64, error) {
-	return c.costs, c.err
+func (c *costLedgerStore) ChatCallCostsUSD(context.Context, string) ([]ledger.CallCost, error) {
+	return c.calls, c.err
 }
 
 // TestChatCostUSD: only a priced sum becomes a cost; unpriced, unsupported and failed reads stay nil, never $0.
@@ -278,14 +279,32 @@ func TestChatCostUSD(t *testing.T) {
 		want  *float64
 	}{
 		"no CostReader": {&fakeLedgerStore{}, nil},
-		"priced":        {&costLedgerStore{costs: map[string]float64{"": 0.25, "n1": 0.125}}, ptrTo(0.375)},
-		"unpriced":      {&costLedgerStore{costs: map[string]float64{}}, nil},
+		"priced":        {&costLedgerStore{calls: []ledger.CallCost{{USD: 0.25}, {NodeID: "n1", USD: 0.125}}}, ptrTo(0.375)},
+		"unpriced":      {&costLedgerStore{calls: []ledger.CallCost{}}, nil},
 		"read error":    {&costLedgerStore{err: errors.New("boom")}, nil},
 	} {
-		got := costTotal((&Handler{ledgerStore: tc.store}).chatCostsUSD(ctx, "c"))
+		got := costTotal((&Handler{ledgerStore: tc.store}).chatCallCosts(ctx, "c"))
 		if (got == nil) != (tc.want == nil) || (got != nil && *got != *tc.want) {
 			t.Errorf("%s: got %v, want %v", name, got, tc.want)
 		}
+	}
+}
+
+// TestTurnNodeCosts: a node id reused by a later turn is billed only for its own turn's calls, judge
+// calls included; an open window takes everything from its start.
+func TestTurnNodeCosts(t *testing.T) {
+	t0 := time.Date(2026, 10, 15, 9, 0, 0, 0, time.UTC)
+	calls := []ledger.CallCost{
+		{NodeID: "trends", At: t0.Add(time.Minute), USD: 1},
+		{NodeID: "trends", At: t0.Add(2 * time.Minute), USD: 0.5}, // judge round
+		{NodeID: "", At: t0.Add(3 * time.Minute), USD: 0.25},
+		{NodeID: "trends", At: t0.Add(time.Hour + time.Minute), USD: 2},
+	}
+	if got, want := turnNodeCosts(calls, t0, t0.Add(time.Hour)), map[string]float64{"trends": 1.5, "": 0.25}; !maps.Equal(got, want) {
+		t.Errorf("first turn = %v, want %v", got, want)
+	}
+	if got, want := turnNodeCosts(calls, t0.Add(time.Hour), time.Time{}), map[string]float64{"trends": 2}; !maps.Equal(got, want) {
+		t.Errorf("last turn = %v, want %v", got, want)
 	}
 }
 

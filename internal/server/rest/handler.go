@@ -350,10 +350,14 @@ func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request, chatID schema.
 	if usage.TotalTokens > 0 {
 		detail.TotalTokens = intPtr(int(usage.TotalTokens))
 	}
-	costs := h.chatCostsUSD(r.Context(), chatID)
-	detail.Usage.CostUsd = costTotal(costs)
-	for _, tc := range turns {
-		detail.Turns = append(detail.Turns, buildTurn(tc, costs))
+	calls := h.chatCallCosts(r.Context(), chatID)
+	detail.Usage.CostUsd = costTotal(calls)
+	for i, tc := range turns {
+		var next time.Time
+		if i+1 < len(turns) {
+			next = turns[i+1].CreatedAt
+		}
+		detail.Turns = append(detail.Turns, buildTurn(tc, turnNodeCosts(calls, tc.CreatedAt, next)))
 	}
 	writeJSON(w, http.StatusOK, detail)
 }
@@ -414,30 +418,43 @@ func sinkSectionsOutput(sinks []store.DagNode) (out string, stopped bool, at tim
 	return stream.JoinSinkAnswers(parts), stopped, at
 }
 
-// chatCostsUSD is nil when the ledger can't sum in place or the read fails: a missing cost must not read as $0.
-func (h *Handler) chatCostsUSD(ctx context.Context, chatID string) map[string]float64 {
+// chatCallCosts is nil when the ledger can't read costs in place or the read fails: a missing cost must not read as $0.
+func (h *Handler) chatCallCosts(ctx context.Context, chatID string) []ledger.CallCost {
 	cr, ok := h.ledgerStore.(ledger.CostReader)
 	if !ok {
 		return nil
 	}
-	costs, err := cr.ChatCostsUSD(ctx, chatID)
+	calls, err := cr.ChatCallCostsUSD(ctx, chatID)
 	if err != nil {
 		slog.Warn("chat cost unavailable", "component", "rest", "chat", chatID, "err", err)
 		return nil
 	}
-	return costs
+	return calls
 }
 
 // costTotal is nil when no call was priced.
-func costTotal(costs map[string]float64) *float64 {
-	if len(costs) == 0 {
+func costTotal(calls []ledger.CallCost) *float64 {
+	if len(calls) == 0 {
 		return nil
 	}
 	var usd float64
-	for _, c := range costs {
-		usd += c
+	for _, c := range calls {
+		usd += c.USD
 	}
 	return &usd
+}
+
+// turnNodeCosts sums each node id's calls recorded in [from, to), to zero meaning open. Calls carry no turn id and
+// node ids recur across turns (web-researcher-1, an extension's daily job), so a chat-wide sum per id overcounts.
+func turnNodeCosts(calls []ledger.CallCost, from, to time.Time) map[string]float64 {
+	out := map[string]float64{}
+	for _, c := range calls {
+		if c.At.Before(from) || (!to.IsZero() && !c.At.Before(to)) {
+			continue
+		}
+		out[c.NodeID] += c.USD
+	}
+	return out
 }
 
 // usageAggregateToSchema populates every field: the chat-wide total is meaningfully zero, not absent.
