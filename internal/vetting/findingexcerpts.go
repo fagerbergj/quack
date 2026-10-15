@@ -105,7 +105,7 @@ func sourceExcerptsSection(dir string, cites []sourceCite) (string, int) {
 	if err != nil {
 		return "", 0
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }() // read-only handle; a close error loses nothing
 	files := map[string]citeFile{}
 	var sb strings.Builder
 	n, skipped := 0, 0
