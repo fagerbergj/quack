@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -117,4 +118,22 @@ func (a *Agent) emitLLMCall(ctx context.Context, u *genai.GenerateContentRespons
 		attrs = append(attrs, attribute.Float64(otelobs.GenAIUsageCost, callCost(a.opts.Pricing, prompt, output)))
 	}
 	otelobs.EmitLog(ctx, acpScope, "", attrs...)
+}
+
+// recordTool records one finished ACP tool call (a pairSpec) as tools.Hooks.after records a native one: a
+// tool.call ledger row on the round's stream plus the tool-call counter. Other specs are a no-op.
+func (a *Agent) recordTool(ctx context.Context, coords ledger.Coords, spec eventSpec) {
+	if len(spec.parts) != 2 || spec.parts[0].FunctionCall == nil || spec.parts[1].FunctionResponse == nil {
+		return
+	}
+	call, resp := spec.parts[0].FunctionCall, spec.parts[1].FunctionResponse.Response
+	var result any = resp
+	var err error
+	if msg, failed := resp["error"].(string); failed {
+		result, err = nil, errors.New(msg)
+	}
+	otelobs.RecordToolCall(coords, call.Name, err != nil)
+	c := ledger.CoordsFromContext(ctx)
+	c.Agent = a.name // the stream emitInvokeAgent and emitLLMCall write to
+	otelobs.EmitToolCall(ledger.WithCoords(ctx, c), acpScope, call.Name, call.Args, result, err)
 }

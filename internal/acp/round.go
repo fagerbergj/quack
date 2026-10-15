@@ -156,10 +156,12 @@ func (a *Agent) roundLoop(al *roundLoopArgs) (bool, error) {
 	resetIdle := func() { al.idleTimer.Reset(a.opts.IdleTimeout) }
 	metricCoords := ledger.FillBlankCoords(ledger.CoordsFromContext(al.ctx), al.coords)
 	relay := func(u sdk.SessionUpdate) bool {
-		al.turns.observe(u)
-		for _, spec := range al.tr.translate(u) {
-			// al.ctx: the same coords as emitInvokeAgent, so the llm.call lands on the round's ledger stream.
+		specs := al.tr.translate(u)
+		al.turns.observe(u, specs)
+		for _, spec := range specs {
+			// al.ctx: the same coords as emitInvokeAgent, so llm.call and tool.call land on the round's ledger stream.
 			a.recordCall(al.ctx, metricCoords, spec.usage)
+			a.recordTool(al.ctx, metricCoords, spec)
 			if !al.emit(spec) {
 				return false
 			}

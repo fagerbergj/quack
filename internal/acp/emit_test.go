@@ -4,13 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 
 	"go.opentelemetry.io/otel/attribute"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
+	"github.com/fagerbergj/quack/internal/artifactsrc"
 	"github.com/fagerbergj/quack/internal/ledger"
+	"github.com/fagerbergj/quack/internal/ledgertest"
 	"github.com/fagerbergj/quack/internal/otelobs"
+	"github.com/fagerbergj/quack/internal/workspace"
 )
 
 func TestTeeBufferLinesSkipsBlankAndInvalidJSON(t *testing.T) {
@@ -160,3 +165,63 @@ func (c *captureExporter) Export(_ context.Context, records []sdklog.Record) err
 }
 func (c *captureExporter) Shutdown(context.Context) error   { return nil }
 func (c *captureExporter) ForceFlush(context.Context) error { return nil }
+
+// TestRound_EachToolCallIsAToolCall: every finished ACP tool call becomes one tool.call row on the round's stream
+// and one quack.tool.calls count, a failure carrying its error; its span names the cause and keeps the arguments.
+func TestRound_EachToolCallIsAToolCall(t *testing.T) {
+	store := ledgertest.NewMemStore()
+	t.Cleanup(otelobs.SetLoggerProviderForTesting(sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(ledger.NewExporter(store))))))
+	exp := withTestTracer(t)
+	reader := newUsageTestMeter(t)
+	withContentCapture(t, false)
+	a := testAgent(t, "tool-fail")
+	ctx := ledger.WithCoords(context.Background(), ledger.Coords{ChatID: "c1", Node: "code-reviewer-1", Round: "worker-r0"})
+	if err := a.round(ctx, t.TempDir(), "", workspace.Caps{}, "review", artifactsrc.Artifact{}, "", "", "", "", func(eventSpec) bool { return true }); err != nil {
+		t.Fatalf("round: %v", err)
+	}
+
+	const reason = "notes: item 1 is 221 characters, max 200"
+	entries, _ := store.ReadEntries(context.Background(), "c1", 0)
+	var rows []ledger.ToolCallPayload
+	for _, e := range entries {
+		if e.Kind != ledger.KindToolCall {
+			continue
+		}
+		if e.NodeID != "code-reviewer-1" || e.Round != "worker-r0" || e.Agent != "code-implementer" {
+			t.Errorf("tool.call on %s/%s/%s, want code-reviewer-1/code-implementer/worker-r0", e.NodeID, e.Agent, e.Round)
+		}
+		var p ledger.ToolCallPayload
+		if err := json.Unmarshal(e.Payload, &p); err != nil {
+			t.Fatal(err)
+		}
+		rows = append(rows, p)
+	}
+	want := []ledger.ToolCallPayload{
+		{Name: "stage_review", Type: "function", Args: `{"event":"approve"}`, Error: reason},
+		{Name: "run_command", Type: "function", Args: `{"command":"ls"}`, Result: `{"exit_code":0,"output":"go.mod"}`},
+	}
+	if !reflect.DeepEqual(rows, want) {
+		t.Errorf("tool.call rows = %+v\nwant %+v", rows, want)
+	}
+
+	span := spanByName(t, exp, "quack.acp.tool.stage_review")
+	if got := span.Status.Description; got != "acp: tool call failed: "+reason {
+		t.Errorf("span status = %q, want the tool's own error", got)
+	}
+	if got := attrsOf(span)[otelobs.GenAIToolCallArguments]; got != `{"event":"approve"}` {
+		t.Errorf("span arguments = %q, want the call's input even with content capture off", got)
+	}
+
+	met, ok := collectMetric(t, reader, "quack.tool.calls")
+	if !ok {
+		t.Fatal("quack.tool.calls never recorded")
+	}
+	counts := map[string]int64{}
+	for _, dp := range met.Data.(metricdata.Sum[int64]).DataPoints {
+		r, _ := dp.Attributes.Value("rejected")
+		counts[attrVal(dp.Attributes, "tool")+"/"+r.String()] += dp.Value
+	}
+	if wantCounts := map[string]int64{"stage_review/true": 1, "run_command/false": 1}; !reflect.DeepEqual(counts, wantCounts) {
+		t.Errorf("quack.tool.calls = %v, want %v", counts, wantCounts)
+	}
+}
