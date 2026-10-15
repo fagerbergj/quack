@@ -107,11 +107,11 @@ func classifyReviewFindings(ctx context.Context, c *recordstore.Client, firstDel
 			// Carried over: referenced by id, not re-posted, but still anchored so GitHub keeps it live.
 			carriedIDs = append(carriedIDs, fid)
 			comments = append(comments, ReviewComment{Path: f.Path, Line: f.LineHint, FindingID: fid, Severity: f.Severity,
-				Body: fmt.Sprintf("(carried over, unchanged since a previous review - %s) %s: %s", fid, f.Title, f.Rationale)})
+				Body: fmt.Sprintf("(carried over, unchanged since a previous review - %s) %s: %s", fid, f.Title, f.Rationale) + f.ProposedChange.Fence()})
 			highlights = append(highlights, ReviewComment{Path: f.Path, Line: f.LineHint, FindingID: fid, Body: highlightBody(f)})
 		default:
 			newIDs = append(newIDs, fid)
-			comments = append(comments, ReviewComment{Path: f.Path, Line: f.LineHint, FindingID: fid, Severity: f.Severity, Body: f.Title + ": " + f.Rationale})
+			comments = append(comments, ReviewComment{Path: f.Path, Line: f.LineHint, FindingID: fid, Severity: f.Severity, Body: f.Title + ": " + f.Rationale + f.ProposedChange.Fence()})
 			highlights = append(highlights, ReviewComment{Path: f.Path, Line: f.LineHint, FindingID: fid, Body: highlightBody(f)})
 		}
 	}
