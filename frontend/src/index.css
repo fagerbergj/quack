@@ -96,3 +96,14 @@ body {
 .dark .chat-list-scroll::-webkit-scrollbar-thumb {
   background-color: var(--color-gray-500);
 }
+
+/* Typography's prose wraps inline code in literal backticks; a tinted chip marks it as code instead.
+   Unlayered, so it beats the plugin's layered rule. */
+.prose :where(code):not(:where(pre code))::before,
+.prose :where(code):not(:where(pre code))::after { content: none; }
+.prose :where(code):not(:where(pre code)) {
+  padding: 0.1em 0.35em;
+  border-radius: 0.25rem;
+  background: light-dark(var(--color-gray-100), var(--color-gray-700));
+  font-weight: 500;
+}
