@@ -18,7 +18,37 @@ func newDatasetCmd() *cobra.Command {
 		Use:   "dataset",
 		Short: "Export recorded node runs to a Langfuse dataset",
 	}
-	c.AddCommand(newDatasetExportCmd())
+	c.AddCommand(newDatasetExportCmd(), newDatasetSeedCmd())
+	return c
+}
+
+func newDatasetSeedCmd() *cobra.Command {
+	var opts cli.SeedOpts
+	c := &cobra.Command{
+		Use:   "seed",
+		Short: "Copy a code-reviewer dataset with one known defect planted in each PR, for recall scoring",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cfg, err := config.LoadDeferringAgentCompleteness(defaultConfigPath())
+			if err != nil {
+				return err
+			}
+			lf, err := langfuseClientFromConfig(cfg)
+			if err != nil {
+				return err
+			}
+			items, err := cli.RunDatasetSeed(cmd.Context(), lf, opts)
+			fmt.Fprint(cmd.OutOrStdout(), cli.FormatSeedSummary(items))
+			return err
+		},
+	}
+	c.Flags().StringVar(&opts.Source, "from", "", "source Langfuse dataset (exported code-reviewer items)")
+	c.Flags().StringVar(&opts.Target, "dataset", "", "Langfuse dataset to write the seeded items to (created if it doesn't exist)")
+	c.Flags().StringVar(&opts.Mirror, "mirror", "", "bare mirror of the items' repository; cloned from the first item's repo when absent")
+	c.Flags().IntVar(&opts.Limit, "limit", 0, "read at most this many source items (0 = no limit)")
+	for _, f := range []string{"from", "dataset", "mirror"} {
+		_ = c.MarkFlagRequired(f)
+	}
 	return c
 }
 

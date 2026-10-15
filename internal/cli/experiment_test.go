@@ -25,6 +25,7 @@ import (
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/ledger/bundle"
 	"github.com/fagerbergj/quack/internal/ledgertest"
+	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/vetting"
 	"github.com/fagerbergj/quack/internal/workflowcatalog"
@@ -590,6 +591,66 @@ func TestItemInput(t *testing.T) {
 	if _, err := itemInput(datasetItemFromInput(t, "item1", map[string]any{})); err == nil {
 		t.Fatal("want error for missing task field")
 	}
+	seeded := langfuse.DatasetItem{ID: "s1", Input: input, Metadata: map[string]any{"seeded": map[string]any{"path": "a.go", "line": 4, "operator": "flip_eq"}}}
+	if in, err := itemInput(seeded); err != nil || in.Seeded == nil || *in.Seeded != (seededDefect{Path: "a.go", Line: 4, Operator: "flip_eq"}) {
+		t.Fatalf("seeded input = %+v, %v; want metadata.seeded carried", in.Seeded, err)
+	}
+}
+
+// A seeded item's trace also scores whether a final review comment landed on the planted defect, and how many
+// comments there were; an unseeded item's doesn't.
+func TestItemScores_Seeded(t *testing.T) {
+	run := itemRun{TraceID: "tr1", Comments: []vetting.ReviewComment{{Path: "b.go", Line: 4}, {Path: "a.go", Line: 6}}}
+	scores := func(seeded *seededDefect) map[string]float64 {
+		out := map[string]float64{}
+		for _, e := range itemScores(run, seeded, "ts") {
+			b, _ := json.Marshal(e.Body)
+			var s struct {
+				Name  string
+				Value float64
+			}
+			_ = json.Unmarshal(b, &s)
+			out[s.Name] = s.Value
+		}
+		return out
+	}
+	got := scores(&seededDefect{Path: "a.go", Line: 4, Operator: "flip_eq"})
+	if got["seeded_hit"] != 1 || got["review_comments"] != 2 {
+		t.Fatalf("seeded scores = %v, want seeded_hit 1 and review_comments 2", got)
+	}
+	if _, ok := scores(nil)["seeded_hit"]; ok {
+		t.Fatal("an unseeded item scored seeded_hit")
+	}
+}
+
+// reviewComments reads the final code_review record's live findings back from the chat's artifacts.
+func TestReviewComments(t *testing.T) {
+	chat := "ext:experiment:c1"
+	id, _ := recordstore.IdentityFor("code_review", nil, vetting.SubjectHint(chat))
+	arts := map[string]any{
+		id:          vetting.CodeReviewRecord{Verdict: "request_changes", FindingIDs: []string{"finding:1", "finding:2"}},
+		"finding:1": vetting.FindingRecord{Path: "a.go", LineHint: 4, Title: "x"},
+		"finding:2": vetting.FindingRecord{Path: "b.go", LineHint: 9, Title: "y"},
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/chats/{chat}/artifacts/{name}", func(w http.ResponseWriter, r *http.Request) {
+		if a, ok := arts[r.PathValue("name")]; ok && r.PathValue("chat") == chat {
+			writeJSON(w, a)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	c := &Client{BaseURL: srv.URL, HTTP: srv.Client()}
+
+	got, err := reviewComments(context.Background(), c, chat)
+	if want := []vetting.ReviewComment{{Path: "a.go", Line: 4}, {Path: "b.go", Line: 9}}; err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("reviewComments = %+v, %v; want %+v", got, err, want)
+	}
+	if got, err := reviewComments(context.Background(), c, "ext:experiment:none"); err != nil || len(got) != 0 {
+		t.Fatalf("no review saved: %+v, %v; want none", got, err)
+	}
 }
 
 // A node run whose trace id never landed must surface as an item error, not a run
@@ -705,7 +766,7 @@ func TestRunExperiment_ScoresTraceAndLinksPrompt(t *testing.T) {
 func TestRecordRunItem_NamesSkippedArtifacts(t *testing.T) {
 	srv, _, runItems := fakeExperimentLangfuse(t)
 	if err := recordRunItem(context.Background(), newTestClient(t, srv), ExperimentOpts{Agent: "code-reviewer"}, "item1",
-		itemRun{TraceID: "tr1"}, []string{"commits", "files"}); err != nil {
+		itemRun{TraceID: "tr1"}, experimentItemInput{SkippedArtifacts: []string{"commits", "files"}}); err != nil {
 		t.Fatal(err)
 	}
 	if len(*runItems) != 1 || (*runItems)[0]["metadata"].(map[string]any)["skipped_artifacts"] != "commits,files" {

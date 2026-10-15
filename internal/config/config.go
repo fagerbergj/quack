@@ -417,7 +417,9 @@ type WorkspaceConfig struct {
 	ExecPath            []string              `yaml:"exec_path"`
 	Env                 map[string]string     `yaml:"env"`
 	GitCredentials      []GitCredentialConfig `yaml:"git_credentials"`
-	Sandbox             string                `yaml:"sandbox"`
+	// FileRepos: absolute paths of local repos a setup clone may read over file://; empty keeps clones https-only.
+	FileRepos []string `yaml:"file_repos"`
+	Sandbox   string   `yaml:"sandbox"`
 	// BuildDirs (see defaultBuildDirs) stay RW even on a ReadOnly node when .gitignore ignores them.
 	BuildDirs []string          `yaml:"build_dirs"`
 	Limits    WorkspaceLimits   `yaml:"limits"`
@@ -1539,6 +1541,11 @@ func (w *WorkspaceConfig) applySandboxDefaults() error {
 	}
 	if w.Sandbox != "bwrap" && w.Sandbox != "landlock" && w.Sandbox != "none" {
 		return fmt.Errorf("config: workspace.sandbox is %q (want bwrap, landlock, or none)", w.Sandbox)
+	}
+	for _, p := range w.FileRepos {
+		if !filepath.IsAbs(p) || filepath.Clean(p) != p || p == "/" {
+			return fmt.Errorf("config: workspace.file_repos entry %q must be a clean absolute path below /", p)
+		}
 	}
 	return nil
 }

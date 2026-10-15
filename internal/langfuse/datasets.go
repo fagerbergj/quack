@@ -11,8 +11,9 @@ import (
 
 // DatasetItem is the part of a Langfuse dataset item quack reads.
 type DatasetItem struct {
-	ID    string `json:"id"`
-	Input any    `json:"input"`
+	ID       string `json:"id"`
+	Input    any    `json:"input"`
+	Metadata any    `json:"metadata,omitempty"`
 }
 
 type CreateDatasetItemRequest struct {
