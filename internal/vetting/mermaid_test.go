@@ -211,11 +211,9 @@ func TestMermaidError(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			// A validator that crashed under load has no verdict; skipping
-			// keeps that from reading as "this diagram is invalid".
-			msg, ok := mermaidVerdict(c.body)
-			if !ok {
-				t.Skip("mermaid validator produced no verdict in this environment")
+			msg, err := mermaidVerdict(c.body)
+			if err != nil {
+				t.Fatalf("mermaidVerdict(%q): no verdict: %v", c.body, err)
 			}
 			if got := msg != ""; got != c.invalid {
 				t.Errorf("mermaidError(%q) invalid = %v, want %v", c.body, got, c.invalid)
@@ -244,9 +242,9 @@ func TestMermaidValidate_BrokenValidatorIsNotAnInvalidDiagram(t *testing.T) {
 			mermaidValidatorPath = path
 			defer func() { mermaidValidatorPath = old }()
 
-			msg, ok := mermaidVerdict("flowchart TD\nA[Start] --> B[Finish]")
-			if ok {
-				t.Errorf("ok = true, want false: a broken validator has no verdict")
+			msg, err := mermaidVerdict("flowchart TD\nA[Start] --> B[Finish]")
+			if err == nil {
+				t.Errorf("err = nil, want an error: a broken validator has no verdict")
 			}
 			if msg != "" {
 				t.Errorf("msg = %q, want \"\": a broken validator must not mark a diagram invalid", msg)
@@ -259,27 +257,23 @@ func TestMermaidValidate_BrokenValidatorIsNotAnInvalidDiagram(t *testing.T) {
 func TestCheckMermaid_ValidDiagramPasses(t *testing.T) {
 	t.Parallel()
 	requireMermaidValidator(t)
-	ok, line, col, msg := CheckMermaid("flowchart TD\n    A[Start] --> B[Finish]")
-	if !ok || line != 0 || col != 0 || msg != "" {
-		t.Fatalf("CheckMermaid(valid) = (%v, %d, %d, %q), want (true, 0, 0, \"\")", ok, line, col, msg)
+	if got := CheckMermaid("flowchart TD\n    A[Start] --> B[Finish]"); got != "ok" {
+		t.Fatalf("CheckMermaid(valid) = %q, want \"ok\"", got)
 	}
 }
 
 // TestCheckMermaid_InvalidDiagramReportsLocation covers the tool's failure path:
-// ok=false plus a located line/column pulled out of the same message the gate shows.
+// a located line/column pulled out of the same message the gate shows.
 func TestCheckMermaid_InvalidDiagramReportsLocation(t *testing.T) {
 	t.Parallel()
 	requireMermaidValidator(t)
-	ok, line, col, msg := CheckMermaid(`flowchart TD
+	got := CheckMermaid(`flowchart TD
     G[Node (parens)] --> H[End]`)
-	if ok {
-		t.Fatal("want ok=false - unquoted parens inside a label")
+	if !strings.HasPrefix(got, "invalid (line 2, column ") {
+		t.Fatalf("CheckMermaid = %q, want a located invalid verdict (unquoted parens inside a label)", got)
 	}
-	if line == 0 || col == 0 {
-		t.Fatalf("line/col = %d/%d, want both located", line, col)
-	}
-	if !strings.Contains(msg, "parse error") {
-		t.Fatalf("msg = %q, want it to carry the parse error", msg)
+	if !strings.Contains(got, "parse error") {
+		t.Fatalf("CheckMermaid = %q, want it to carry the parse error", got)
 	}
 }
 
@@ -288,12 +282,12 @@ func TestCheckMermaid_SharesValidatorWithGate(t *testing.T) {
 	t.Parallel()
 	requireMermaidValidator(t)
 	body := "A[Start] --> B[Finish]" // no diagram-type declaration: invalid
-	toolOK, _, _, _ := CheckMermaid(body)
+	toolReply := CheckMermaid(body)
 	_, gateFlagged := mermaidCriterion("", workerActivity{stagedDelivery: map[string]StagedDelivery{
 		"pr": {Kind: "pull_request", Body: "```mermaid\n" + body + "\n```"},
 	}})
-	if toolOK {
-		t.Fatal("want the tool to flag this diagram invalid")
+	if !strings.HasPrefix(toolReply, "invalid") {
+		t.Fatalf("tool reply = %q, want it to flag this diagram invalid", toolReply)
 	}
 	if !gateFlagged {
 		t.Fatal("want the gate to also flag this diagram invalid")
@@ -476,24 +470,27 @@ func TestFindInvalidMermaid_CollapsedSubgraphPasses(t *testing.T) {
 	}
 }
 
-// A validator that outruns its deadline must not report a valid diagram as invalid. Not parallel:
-// it rebinds mermaidValidatorPath and mermaidValidateTimeout.
-func TestMermaidValidate_TimeoutIsNotAnInvalidDiagram(t *testing.T) {
+// A validator that outruns its deadline has no verdict: the tool says "not validated" (never "ok"),
+// and the gate does not fail the node. Not parallel: it rebinds mermaidValidatorPath and the timeout.
+func TestMermaidValidate_TimeoutIsNotValidated(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node unavailable in this environment")
 	}
 
 	script := filepath.Join(t.TempDir(), "hang.mjs")
-	if err := os.WriteFile(script, []byte("setTimeout(()=>{}, 10000);\n"), 0o644); err != nil {
+	if err := os.WriteFile(script, []byte("setInterval(()=>{}, 1000);\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	oldPath, oldTimeout := mermaidValidatorPath, mermaidValidateTimeout
+	oldPath, oldTimeout := mermaidValidatorPath, MermaidValidateTimeout
 	mermaidValidatorPath = script
-	mermaidValidateTimeout = 200 * time.Millisecond
-	defer func() { mermaidValidatorPath, mermaidValidateTimeout = oldPath, oldTimeout }()
+	MermaidValidateTimeout = 200 * time.Millisecond
+	defer func() { mermaidValidatorPath, MermaidValidateTimeout = oldPath, oldTimeout }()
 
-	// CommandContext's kill arrives as an *exec.ExitError with empty output.
-	if got := mermaidError("A --> B"); got != "" {
-		t.Fatalf("mermaidError = %q, want \"\" (a timeout must not mark a valid diagram invalid)", got)
+	body := "A[Start] --> B[Finish]" // invalid if checked: no diagram-type declaration
+	if got := CheckMermaid(body); !strings.HasPrefix(got, "not validated: the validator timed out") {
+		t.Fatalf("CheckMermaid = %q, want a \"not validated\" timeout reply", got)
+	}
+	if c, flagged := mermaidCriterion("```mermaid\n"+body+"\n```", workerActivity{}); flagged {
+		t.Fatalf("mermaidCriterion flagged %+v; a timeout must not fail the node", c)
 	}
 }
