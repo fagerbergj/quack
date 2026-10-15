@@ -55,7 +55,7 @@ func runDatasetExport(cmd *cobra.Command, opts cli.ExportOpts, since string) err
 		opts.Since = t
 	}
 
-	ls, st, artifacts, err := openLedgerAndStores(cmd, false)
+	export, err := datasetExporter(cmd, opts)
 	if err != nil {
 		return err
 	}
@@ -69,8 +69,7 @@ func runDatasetExport(cmd *cobra.Command, opts cli.ExportOpts, since string) err
 		return err
 	}
 
-	opts.Artifacts = artifacts
-	items, excludedBySince, err := cli.RunDatasetExport(cmd.Context(), ls, st, lf, opts)
+	items, excludedBySince, err := export(lf)
 	if err != nil {
 		// Item ids are deterministic, so a re-run converges. Cobra prints err itself.
 		fmt.Fprintf(cmd.ErrOrStderr(), "%d item(s) exported before failure\n", len(items))
@@ -82,6 +81,28 @@ func runDatasetExport(cmd *cobra.Command, opts cli.ExportOpts, since string) err
 	}
 	_, err = fmt.Fprint(cmd.OutOrStdout(), cli.FormatExportSummary(items))
 	return err
+}
+
+// datasetExporter reads from --server's API when it is set, else the local config's stores; it never
+// falls back to the active registered server, so a bare export stays local.
+func datasetExporter(cmd *cobra.Command, opts cli.ExportOpts) (func(*langfuse.Client) ([]cli.ExportItem, bool, error), error) {
+	if server, _ := cmd.Flags().GetString("server"); server != "" {
+		c, err := cli.NewClient(cmd.Context(), server)
+		if err != nil {
+			return nil, err
+		}
+		return func(lf *langfuse.Client) ([]cli.ExportItem, bool, error) {
+			return cli.RunRemoteDatasetExport(cmd.Context(), c, lf, opts)
+		}, nil
+	}
+	ls, st, artifacts, err := openLedgerAndStores(cmd, false)
+	if err != nil {
+		return nil, err
+	}
+	opts.Artifacts = artifacts
+	return func(lf *langfuse.Client) ([]cli.ExportItem, bool, error) {
+		return cli.RunDatasetExport(cmd.Context(), ls, st, lf, opts)
+	}, nil
 }
 
 // parseDateFlag accepts either RFC3339 or a bare YYYY-MM-DD date (midnight UTC).

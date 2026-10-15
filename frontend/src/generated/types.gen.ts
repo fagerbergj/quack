@@ -57,6 +57,23 @@ export type ChatOrigin = {
     };
 };
 
+/**
+ * The clone the chat's latest extension dispatch ran in, which `quack dataset export --server` pins a replay to. Absent for a chat dispatched with no clone.
+ *
+ */
+export type ChatSetup = {
+    /**
+     * Clone URL.
+     */
+    repo?: string;
+    base_ref?: string;
+    work_branch?: string;
+    /**
+     * A branch checked out as-is instead of creating work_branch, e.g. a PR's head.
+     */
+    existing_head_ref?: string;
+};
+
 export type ChatSummary = {
     id: string;
     title?: string;
@@ -95,6 +112,7 @@ export type ChatSummary = {
 export type ChatDetail = ChatSummary & {
     turns: Array<Turn>;
     usage: Usage;
+    setup?: ChatSetup;
 };
 
 export type ChatList = {

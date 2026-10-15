@@ -26,6 +26,7 @@ import (
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/ledger/bundle"
 	"github.com/fagerbergj/quack/internal/recordstore"
+	"github.com/fagerbergj/quack/internal/schema"
 	"github.com/fagerbergj/quack/internal/store"
 )
 
@@ -88,9 +89,26 @@ type datasetItemMetadata struct {
 	Plugins   []ledger.PluginRef   `json:"plugins,omitempty"`
 }
 
+// exportSource is where `dataset export` reads chats, recordings, replay setups and input artifacts.
+type exportSource interface {
+	chats(ctx context.Context, opts ExportOpts) (chats []store.Chat, excludedBySince bool, err error)
+	session(ctx context.Context, chatID string) (*bundle.Session, error) // ledger.ErrNoRecording when none
+	setup(ctx context.Context, chat store.Chat, key bundle.StreamKey) (*extsdk.Setup, error)
+	artifact(ctx context.Context, chat store.Chat, name string, rev int) (data []byte, ok bool, err error)
+}
+
 // RunDatasetExport upserts one Langfuse dataset item per gated node run, keyed on (chat, node, turn).
 // excludedBySince is true only when --chat plus --since excluded the named chat entirely.
 func RunDatasetExport(ctx context.Context, ls ledger.LedgerStore, st *store.Store, lf *langfuse.Client, opts ExportOpts) (items []ExportItem, excludedBySince bool, err error) {
+	return runDatasetExport(ctx, localSource{ls: ls, st: st, svc: opts.Artifacts}, lf, opts)
+}
+
+// RunRemoteDatasetExport is RunDatasetExport reading from a quack server's API instead of the local stores.
+func RunRemoteDatasetExport(ctx context.Context, c *Client, lf *langfuse.Client, opts ExportOpts) (items []ExportItem, excludedBySince bool, err error) {
+	return runDatasetExport(ctx, remoteSource{c: c}, lf, opts)
+}
+
+func runDatasetExport(ctx context.Context, src exportSource, lf *langfuse.Client, opts ExportOpts) (items []ExportItem, excludedBySince bool, err error) {
 	agents := datasetAgents
 	if opts.Agent != "" {
 		if !datasetAgents[opts.Agent] {
@@ -98,14 +116,14 @@ func RunDatasetExport(ctx context.Context, ls ledger.LedgerStore, st *store.Stor
 		}
 		agents = map[string]bool{opts.Agent: true}
 	}
-	chats, excludedBySince, err := exportChats(ctx, st, opts)
+	chats, excludedBySince, err := src.chats(ctx, opts)
 	if err != nil {
 		return nil, false, err
 	}
 
 	ensured := false
 	for _, chat := range chats {
-		sess, sessErr := bundle.FromStore(ctx, ls, chat.ID)
+		sess, sessErr := src.session(ctx, chat.ID)
 		if sessErr != nil {
 			if errors.Is(sessErr, ledger.ErrNoRecording) {
 				continue
@@ -123,11 +141,11 @@ func RunDatasetExport(ctx context.Context, ls ledger.LedgerStore, st *store.Stor
 				}
 				ensured = true
 			}
-			setup, err := replaySetup(ctx, ls, chat, key)
+			setup, err := src.setup(ctx, chat, key)
 			if err != nil {
 				return items, excludedBySince, fmt.Errorf("dataset export: chat %q: %w", chat.ID, err)
 			}
-			inputs, err := inputArtifacts(ctx, opts.Artifacts, chat, runs[key].Task)
+			inputs, err := inputArtifacts(ctx, src, chat, runs[key].Task)
 			if err != nil {
 				return items, excludedBySince, fmt.Errorf("dataset export: chat %q: %w", chat.ID, err)
 			}
@@ -172,17 +190,9 @@ func exportChats(ctx context.Context, st *store.Store, opts ExportOpts) (chats [
 			return nil, false, fmt.Errorf("dataset export: list chats: %w", err)
 		}
 		for _, c := range page {
-			// Experiment replays re-run dataset items; exporting them would feed a dataset its own outputs.
-			if strings.HasPrefix(c.ID, "ext:"+experimentExtension+":") {
-				continue
+			if exportable(c, opts) {
+				out = append(out, c)
 			}
-			if repo, _, _ := c.GitHub(); opts.Repo != "" && repo != opts.Repo {
-				continue
-			}
-			if !opts.Since.IsZero() && c.UpdatedAt.Before(opts.Since) {
-				continue
-			}
-			out = append(out, c)
 		}
 		if next == "" || len(page) == 0 {
 			return out, false, nil
@@ -204,10 +214,24 @@ func exportSingleChat(ctx context.Context, st *store.Store, opts ExportOpts) (ch
 	if c == nil {
 		return nil, false, fmt.Errorf("dataset export: chat %q not found", opts.ChatID)
 	}
+	return oneChat(*c, opts)
+}
+
+// oneChat is --chat's result: c, or excludedBySince when --since rules it out entirely.
+func oneChat(c store.Chat, opts ExportOpts) (chats []store.Chat, excludedBySince bool, err error) {
 	if !opts.Since.IsZero() && c.UpdatedAt.Before(opts.Since) {
 		return nil, true, nil
 	}
-	return []store.Chat{*c}, false, nil
+	return []store.Chat{c}, false, nil
+}
+
+// exportable is c within --repo and --since. Experiment replays re-run dataset items, so exporting
+// one would feed a dataset its own outputs.
+func exportable(c store.Chat, opts ExportOpts) bool {
+	repo, _, _ := c.GitHub()
+	return !strings.HasPrefix(c.ID, "ext:"+experimentExtension+":") &&
+		(opts.Repo == "" || repo == opts.Repo) &&
+		(opts.Since.IsZero() || !c.UpdatedAt.Before(opts.Since))
 }
 
 // exportItemID hashes the dataset name in too: Langfuse item ids are project-scoped and
@@ -230,17 +254,30 @@ func replaySetup(ctx context.Context, ls ledger.LedgerStore, chat store.Chat, ke
 	if err != nil {
 		return nil, err
 	}
+	heads := make([]headRev, 0, len(revs))
 	for _, e := range revs {
 		var p struct {
 			Lineage recordstore.Lineage `json:"lineage"`
 		}
-		if e.NodeID == key.Node && e.TurnID == key.Turn && json.Unmarshal(e.Payload, &p) == nil && p.Lineage.HeadSHA != "" {
-			s := *origin.Setup
-			s.HeadSHA = p.Lineage.HeadSHA
-			return &s, nil
+		if json.Unmarshal(e.Payload, &p) == nil {
+			heads = append(heads, headRev{node: e.NodeID, turn: e.TurnID, sha: p.Lineage.HeadSHA})
 		}
 	}
-	return nil, nil
+	return pinnedSetup(*origin.Setup, heads, key), nil
+}
+
+// headRev is one artifact revision's authoring node and turn, and the head commit it saw.
+type headRev struct{ node, turn, sha string }
+
+// pinnedSetup is base pinned to the head of key's first revision (in save order) that recorded one; nil if none did.
+func pinnedSetup(base extsdk.Setup, revs []headRev, key bundle.StreamKey) *extsdk.Setup {
+	for _, r := range revs {
+		if r.node == key.Node && r.turn == key.Turn && r.sha != "" {
+			base.HeadSHA = r.sha
+			return &base
+		}
+	}
+	return nil
 }
 
 // manifestEntryRe matches one input artifact in the <artifacts> manifest extensions/github renders into a task.
@@ -248,15 +285,11 @@ var manifestEntryRe = regexp.MustCompile(`<artifact id="bytes:([^"]+)" revision=
 
 // inputArtifacts reads each input artifact task's manifest lists, at its listed revision, from chat; one that
 // no longer exists is left out.
-func inputArtifacts(ctx context.Context, svc artifact.Service, chat store.Chat, task string) (map[string]string, error) {
-	if svc == nil {
-		return nil, nil
-	}
-	c := recordstore.New(svc, artifactref.AppName, store.SessionUserFor(chat), chat.ID)
+func inputArtifacts(ctx context.Context, src exportSource, chat store.Chat, task string) (map[string]string, error) {
 	out := map[string]string{}
 	for _, m := range manifestEntryRe.FindAllStringSubmatch(task, -1) {
 		rev, _ := strconv.Atoi(m[2]) // \d+ always parses
-		data, ok, err := c.LoadVersion(ctx, "bytes:"+m[1], rev)
+		data, ok, err := src.artifact(ctx, chat, m[1], rev)
 		if err != nil {
 			return nil, err
 		}
@@ -265,6 +298,109 @@ func inputArtifacts(ctx context.Context, svc artifact.Service, chat store.Chat, 
 		}
 	}
 	return out, nil
+}
+
+// localSource reads the local config's stores directly.
+type localSource struct {
+	ls  ledger.LedgerStore
+	st  *store.Store
+	svc artifact.Service // nil exports no input artifacts
+}
+
+func (s localSource) chats(ctx context.Context, opts ExportOpts) ([]store.Chat, bool, error) {
+	return exportChats(ctx, s.st, opts)
+}
+
+func (s localSource) session(ctx context.Context, chatID string) (*bundle.Session, error) {
+	return bundle.FromStore(ctx, s.ls, chatID)
+}
+
+func (s localSource) setup(ctx context.Context, chat store.Chat, key bundle.StreamKey) (*extsdk.Setup, error) {
+	return replaySetup(ctx, s.ls, chat, key)
+}
+
+func (s localSource) artifact(ctx context.Context, chat store.Chat, name string, rev int) ([]byte, bool, error) {
+	if s.svc == nil {
+		return nil, false, nil
+	}
+	return recordstore.New(s.svc, artifactref.AppName, store.SessionUserFor(chat), chat.ID).LoadVersion(ctx, "bytes:"+name, rev)
+}
+
+// remoteSource reads a quack server's API: the chat list, each chat's recording bundle, and its artifacts.
+type remoteSource struct{ c *Client }
+
+func (s remoteSource) chats(ctx context.Context, opts ExportOpts) ([]store.Chat, bool, error) {
+	if opts.ChatID != "" {
+		d, err := s.c.GetChat(ctx, opts.ChatID)
+		if errors.Is(err, ErrNotFound) {
+			return nil, false, fmt.Errorf("dataset export: chat %q not found", opts.ChatID)
+		}
+		if err != nil {
+			return nil, false, fmt.Errorf("dataset export: get chat %q: %w", opts.ChatID, err)
+		}
+		return oneChat(remoteChat(d.Id, d.UpdatedAt, d.GithubRepo, d.GithubUrl, (*string)(d.GithubState)), opts)
+	}
+	all, err := s.c.ListChats(ctx, []string{"active", "archived"})
+	if err != nil {
+		return nil, false, fmt.Errorf("dataset export: list chats: %w", err)
+	}
+	var out []store.Chat
+	for _, cs := range all {
+		if c := remoteChat(cs.Id, cs.UpdatedAt, cs.GithubRepo, cs.GithubUrl, (*string)(cs.GithubState)); exportable(c, opts) {
+			out = append(out, c)
+		}
+	}
+	return out, false, nil
+}
+
+// remoteChat is an API chat as the row the export reads. The server fills github_* from its own
+// Chat.GitHub(), so the legacy columns GitHub() falls back to reproduce it exactly.
+func remoteChat(id string, updatedAt time.Time, repo, href, state *string) store.Chat {
+	return store.Chat{ID: id, UpdatedAt: updatedAt, GithubRepo: deref(repo), GithubURL: deref(href), GithubState: deref(state)}
+}
+
+func (s remoteSource) session(ctx context.Context, chatID string) (*bundle.Session, error) {
+	body, err := s.c.FetchRecording(ctx, chatID)
+	if errors.Is(err, ErrNotFound) {
+		return nil, ledger.ErrNoRecording
+	}
+	if err != nil {
+		return nil, err
+	}
+	return sessionFromBundleBytes(body)
+}
+
+// setup is replaySetup over the API: ChatDetail.setup for the clone, artifact revision lineage for its head.
+func (s remoteSource) setup(ctx context.Context, chat store.Chat, key bundle.StreamKey) (*extsdk.Setup, error) {
+	d, err := s.c.GetChat(ctx, chat.ID)
+	if err != nil || d.Setup == nil || deref(d.Setup.ExistingHeadRef) == "" {
+		return nil, err
+	}
+	arts, err := s.c.ListChatArtifacts(ctx, chat.ID)
+	if err != nil {
+		return nil, err
+	}
+	var revs []schema.ArtifactRevisionInfo
+	for _, a := range arts {
+		revs = append(revs, a.Revisions...)
+	}
+	// The ledger reads revisions in save order; created_at is the API's closest stand-in.
+	slices.SortStableFunc(revs, func(a, b schema.ArtifactRevisionInfo) int { return deref(a.CreatedAt).Compare(deref(b.CreatedAt)) })
+	heads := make([]headRev, len(revs))
+	for i, r := range revs {
+		l := deref(r.Lineage)
+		heads[i] = headRev{node: deref(l.NodeId), turn: deref(r.TurnId), sha: deref(l.HeadSha)}
+	}
+	base := extsdk.Setup{Repo: deref(d.Setup.Repo), BaseRef: deref(d.Setup.BaseRef), WorkBranch: deref(d.Setup.WorkBranch), ExistingHeadRef: deref(d.Setup.ExistingHeadRef)}
+	return pinnedSetup(base, heads, key), nil
+}
+
+func (s remoteSource) artifact(ctx context.Context, chat store.Chat, name string, rev int) ([]byte, bool, error) {
+	data, err := s.c.FetchArtifact(ctx, chat.ID, "bytes:"+name, rev)
+	if errors.Is(err, ErrNotFound) {
+		return nil, false, nil
+	}
+	return data, err == nil, err
 }
 
 // fitArtifacts inlines inputs smallest-first while req stays within itemBudget. One that doesn't fit is left out
