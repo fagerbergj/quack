@@ -7,7 +7,7 @@ Load `sleeper:start-sit` before deciding anything. It gives you the decision
 procedure (availability first, then locks, then bounded matchup/game-script/
 weather adjustments, then the FLEX), the published thresholds with their
 sources, and what to say when no published number exists. Load its
-resources (`practice-report-semantics`, `weather-and-vegas`, `stadiums`,
+resources (`practice-report-semantics`, `weather-and-vegas`,
 `flex-decisions`) only when the case in front of you calls for them - do not
 load every resource for every call.
 
@@ -25,7 +25,8 @@ sits within the flex tie-break gap (`flex-decisions.md`) of the starter's -
 use `web_search` and `web_fetch` to check recent news and cite what you find
 inline as a markdown link; `summarize` condenses a long fetched page before
 you quote it. For a close call in an outdoor game, `weather` gives the
-forecast for the game window - one call per game, per the skill's step 5.
+forecast for the game window - one call per game, per the skill's step 5,
+which also says which rows to mark `close: true`.
 
 Every player those tools return carries their own `game` (opponent,
 kickoff, lock state, venue, roof), joined in code: read lock times and opponents

@@ -236,49 +236,64 @@ criteria:
     anchors:
     - quote
     - omission
-  weather_checked_for_outdoor_close_calls:
+  weather_checked:
     definition: >
-      Every close call in an outdoor game checks that game's forecast with
-      the `weather` tool and applies it only at the skill's extremes, as a
-      tiebreaker; a call the forecast moved says so in its `why` with the
-      forecast numbers. Outdoor means the player's `game.roof` is
-      `outdoor` after the Note-column overrides in `stadiums.md` (SoFi
-      counts as a dome, Wembley as outdoor).
+      Every player the artifact marks `close` whose game is unlocked and
+      outdoor has a `weather` call for that game's coordinates and kickoff,
+      or an errored one the answer acknowledges.
     guidance: >
-      A close call where either player's game is locked, or whose slot has
-      no rostered alternative (e.g. the only K), is exempt, as is a game
-      already played or beyond the forecast horizon, and a
-      `weather` call that errored or came back out of range counts as
-      checked when the answer acknowledges it. If no close call involves an
-      outdoor game, score 3 - there is nothing to check. One call per game
-      covers every player in it.
+      Fully computed by deterministic code from the artifact's `close` rows,
+      each player's `game` in the session's sleeper tool results, and the
+      session's `weather` calls. `weather_moves_only_at_extremes` covers how
+      a forecast is used.
     steps:
-    - List every close call (as in outside_news_for_close_calls) and its
-      game; keep the outdoor, non-exempt ones (both players' games unlocked,
-      a real alternative, not past the horizon).
-    - For each such game, check a `weather` call in this session covers its
-      venue and kickoff (or errored and the answer says so).
-    - Check each `weather` call used `stadiums.md`'s coordinates for that
-      venue (or, for a venue missing there, coordinates a `web_search`
-      returned, as `stadiums.md` allows), and none was made for a non-close
-      call, a locked game, or an exempt close call.
-    - Read the artifact and the chat reply. Check any call that cites weather
-      matches the tool's numbers, that
-      weather below the skill's extremes did not flip a call, and that
-      weather is never mentioned for a call it did not move.
+    - List the unlocked outdoor games of the rows marked `close`.
+    - Score the share with a matching `weather` call.
+    bands:
+    - min: 1.0
+      max: 1.0
+      meaning: every unlocked outdoor close-call game has a weather call.
+    - min: 0.0
+      max: 0.99
+      meaning: a close-call game named in the reason has no weather call.
+    deterministic: true
+    fix: >
+      Call `weather` with each named game's `game.latitude`/`game.longitude`
+      and `game.kickoff`, or say in the answer that its weather call failed.
+    scale:
+      min: 0
+      max: 1
+      pass: 1
+  weather_moves_only_at_extremes:
+    definition: >
+      Weather moves a start/sit call only at the skill's extremes
+      (≥20-25 mph sustained wind, heavy precipitation, <30°F), a call it
+      moved states the forecast numbers in its `why`, and weather that moved
+      no call is never mentioned.
+    guidance: >
+      Whether each close call's game was checked is the code-owned
+      `weather_checked`; do not re-derive it. Saying a `weather` call failed
+      is not a forecast mention. If neither the artifact nor the reply
+      mentions weather, score 3.
+    steps:
+    - Quote every weather or forecast mention in the artifact's `why`,
+      `summary` and `watch` fields and in the chat reply.
+    - For each, check it moved a call and states the forecast numbers.
+    - Check those numbers match a `weather` tool result this session and
+      reach one of the skill's extremes.
     bands:
     - min: 3.0
       max: 3.0
-      meaning: every outdoor close-call game is checked, and weather moves a call only at the skill's extremes, stated with its numbers.
+      meaning: every weather mention moved a call at the skill's extremes and states numbers matching a weather result, or weather is never mentioned.
     - min: 2.0
       max: 2.0
-      meaning: every outdoor close-call game is checked, but a call weather moved lacks the forecast numbers, or weather was checked for a non-close call, a locked game, or an exempt close call.
+      meaning: a call weather moved lacks the forecast numbers.
     - min: 1.0
       max: 1.0
-      meaning: exactly one outdoor close-call game is unchecked, mild weather tipped a call, or a forecast is mentioned (including "no adjustment needed") for a call it did not move.
+      meaning: weather below the skill's extremes tipped a call, or a forecast is mentioned (including "no adjustment needed") for a call it did not move.
     - min: 0.0
       max: 0.0
-      meaning: two or more outdoor close-call games are unchecked, or a cited forecast matches no weather tool result.
+      meaning: a cited forecast matches no weather tool result.
     anchors:
     - quote
     - omission

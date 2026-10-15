@@ -80,16 +80,18 @@ baseline player and the evidence that beat it in the row's `why`.
    step 2's close calls in unlocked games get a weather check - never a
    locked or in-progress game, a close call exempt because either
    player's game is locked, a clear projection gap, or a slot with no
-   rostered alternative (e.g. the only K). For those
-   close calls, make one `weather` call per distinct game they involve
-   whose `game.roof` is `outdoor` (after the Note-column overrides in
-   `references/stadiums.md`, e.g. SoFi counts as a dome), and reuse it for every
-   player in that game. Copy the coordinates for `game.venue` from
-   `references/stadiums.md` exactly as `latitude`/`longitude` - never estimate or
-   geocode them - and pass `game.kickoff` as is (UTC, not
-   `kickoff_local`; a game with no kickoff passes step 3's looked-up time
-   as RFC3339 with its offset), then apply `references/weather-and-vegas.md`'s
-   working rule to that window. When the forecast moves a call, the row's
+   rostered alternative (e.g. the only K). Mark both players of each such
+   close call `close: true` on their `starters`/`bench` row; code checks
+   that every marked player's unlocked outdoor game has a `weather` call.
+   Make one `weather` call per distinct game they involve whose
+   `game.roof` is `outdoor` (code already corrects the roofs Sleeper
+   mislabels, e.g. SoFi is a dome), and reuse it for every player in that
+   game. Pass `game.latitude`/`game.longitude` and `game.kickoff` as is
+   (UTC, not `kickoff_local`; a game with no kickoff passes step 3's
+   looked-up time as RFC3339 with its offset). A game with no coordinates
+   is a venue code does not know: `web_search` its coordinates, never
+   geocode a city ("Santa Clara" resolves to Cuba). Then apply
+   `references/weather-and-vegas.md`'s working rule to that window. When the forecast moves a call, the row's
    `why` names the numbers (e.g. "27 mph sustained wind at Soldier
    Field"); weather that did not move a call is never mentioned - not in
    `why`, `summary`, or the chat reply, not even as "no adjustment" - and
@@ -159,9 +161,6 @@ reasoning instead — do not invent a figure to sound precise.
 - `references/weather-and-vegas.md` — weather multiplier tables, the null-result study,
   and implied-team-total math. Load when the game is outdoors with a
   forecast worth checking, or when a Vegas total/spread is part of the case.
-- `references/stadiums.md` — coordinates for every venue Sleeper reports,
-  international sites included, plus the roofs Sleeper mislabels. Load for
-  step 5 whenever a close call involves an outdoor game.
 - `references/flex-decisions.md` — the FLEX-specific tie-break rules and PPR
   RB-vs-WR-value data. Load whenever the FLEX slot itself is the open
   question (not a fixed RB/WR/TE slot).

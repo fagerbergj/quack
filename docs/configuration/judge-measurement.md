@@ -92,7 +92,7 @@ Every `rubric.yaml` under `agents/`, `extensions/*/plugin/agents/` and `config/`
 - Every criterion has a non-empty `definition`, and no two criteria share one.
 - Every judged criterion has `bands`, so the judge has a pass bar to score against.
 - Every judged criterion is on the 0-3 scale, the integer scale the judge prompt asks for. Each score is read on its criterion's declared scale, so a judged criterion declared on 0-10 would have the judge's 0-3 answer read as a fraction of 10.
-- A `deterministic: true` criterion names a check code actually runs (`cites_sources`, `specifics_cited`, `specifics_supported`, `checks_pass`, `sufficient_length` and the rest of `deterministicCriterionSpec`).
+- A `deterministic: true` criterion names a check code actually runs (`cites_sources`, `specifics_cited`, `specifics_supported`, `weather_checked`, `checks_pass`, `sufficient_length` and the rest of `deterministicCriterionSpec`).
 - A judged criterion does not reuse one of those names; code overwrites the judge's score for it.
 
 Duplicate criterion names are a YAML parse error.
