@@ -70,3 +70,104 @@ func TestCDPBlocksDisallowedDocuments(t *testing.T) {
 		t.Errorf("answers %v, want example.com continued and evil.com failed", got)
 	}
 }
+
+// scriptedCDP answers the methods a tab's lifecycle sends with canned results and records each method called.
+func scriptedCDP(calls chan<- string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ws, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = ws.CloseNow() }()
+		ctx := r.Context()
+		for {
+			_, b, err := ws.Read(ctx)
+			if err != nil {
+				return
+			}
+			var m cdpMessage
+			_ = json.Unmarshal(b, &m)
+			calls <- m.Method
+			_ = ws.Write(ctx, websocket.MessageText, fmt.Appendf(nil, `{"id":%d,"result":%s}`, m.ID, scriptedResult(m)))
+		}
+	}
+}
+
+func scriptedResult(m cdpMessage) string {
+	var p struct {
+		URL        string `json:"url"`
+		Expression string `json:"expression"`
+	}
+	_ = json.Unmarshal(m.Params, &p)
+	value := func(v string) string { return `{"result":{"value":` + v + `}}` }
+	switch {
+	case m.Method == "Target.createTarget":
+		return `{"targetId":"t1"}`
+	case m.Method == "Target.attachToTarget":
+		return `{"sessionId":"s1"}`
+	case m.Method == "Page.navigate" && strings.Contains(p.URL, "broken"):
+		return `{"errorText":"net::ERR_NAME_NOT_RESOLVED"}`
+	case m.Method == "Page.captureScreenshot":
+		return `{"data":"/9j/"}`
+	case p.Expression == "document.readyState":
+		return value(`"complete"`)
+	case p.Expression == "location.href":
+		return value(`"https://example.com/"`)
+	case strings.Contains(p.Expression, `[9,"click"`):
+		return value(`{"error":"element 9 is gone"}`)
+	case strings.Contains(p.Expression, ")(...["):
+		return value(`{"x":10,"y":20}`)
+	case m.Method == "Runtime.evaluate":
+		return value(`{"title":"Home","url":"https://example.com/","elements":[{"role":"link","name":"Home"}]}`)
+	}
+	return "{}"
+}
+
+// TestCDPTabLifecycle drives one tab through navigate, observe, act and close against a scripted endpoint.
+func TestCDPTabLifecycle(t *testing.T) {
+	calls := make(chan string, 64)
+	srv := httptest.NewServer(scriptedCDP(calls))
+	defer srv.Close()
+	b := &cdpBrowser{url: "ws" + strings.TrimPrefix(srv.URL, "http"), allowed: func(string) bool { return true }}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	tab, err := b.NewTab(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tab.Navigate(ctx, "https://example.com/"); err != nil {
+		t.Fatalf("Navigate: %v", err)
+	}
+	if err := tab.Navigate(ctx, "https://broken.example/"); err == nil || !strings.Contains(err.Error(), "ERR_NAME_NOT_RESOLVED") {
+		t.Errorf("Navigate to a failing URL = %v, want its errorText", err)
+	}
+	if u, err := tab.URL(ctx); err != nil || u != "https://example.com/" {
+		t.Errorf("URL = %q, %v", u, err)
+	}
+	s, err := tab.Snapshot(ctx)
+	if err != nil || s.Title != "Home" || len(s.Elements) != 1 || len(s.JPEG) == 0 {
+		t.Fatalf("Snapshot = %+v, %v", s, err)
+	}
+	if err := tab.Act(ctx, 1, "click", ""); err != nil {
+		t.Errorf("click: %v", err)
+	}
+	if err := tab.Act(ctx, 1, "type", "hello"); err != nil {
+		t.Errorf("type: %v", err)
+	}
+	if err := tab.Act(ctx, 9, "click", ""); err == nil || !strings.Contains(err.Error(), "gone") {
+		t.Errorf("act on a gone element = %v, want the page script's error", err)
+	}
+	if err := tab.Close(ctx); err != nil {
+		t.Errorf("Close: %v", err)
+	}
+	close(calls)
+	seen := map[string]bool{}
+	for c := range calls {
+		seen[c] = true
+	}
+	for _, want := range []string{"Page.navigate", "Page.captureScreenshot", "Input.dispatchMouseEvent", "Input.insertText", "Target.closeTarget"} {
+		if !seen[want] {
+			t.Errorf("never sent %s", want)
+		}
+	}
+}
