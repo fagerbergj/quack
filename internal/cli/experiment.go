@@ -3,12 +3,15 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -17,6 +20,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/adk/v2/tool"
 	"gopkg.in/yaml.v3"
 
@@ -37,6 +41,8 @@ type ExperimentOpts struct {
 	Prompt  string // "system/<agent>@N": the pinned version every item's node must have run
 	RunName string
 	Limit   int
+	// Concurrency caps items in flight; 0 runs every item at once.
+	Concurrency int
 }
 
 // ExperimentResult is one dataset item's run, printed in the summary table.
@@ -67,6 +73,8 @@ type itemRun struct {
 	Criteria []criterionScore
 	Passed   bool
 	Cost     itemCost
+	// WorkerModel/JudgeModel: what the node and its judge actually called, so arms on different models stay apart.
+	WorkerModel, JudgeModel string
 }
 
 type criterionScore struct {
@@ -107,17 +115,37 @@ func RunExperiment(ctx context.Context, errOut io.Writer, runner itemRunner, lf 
 		return nil, err
 	}
 
-	var results []ExperimentResult
-	for _, item := range items {
-		res, err := runExperimentItem(ctx, runner, lf, item, opts)
-		if err != nil {
-			// Print what already completed - a hard error here otherwise drops
-			// it from the summary table/--as-json even though it ran.
-			fmt.Fprint(errOut, FormatExperimentSummary(results))
-			return results, err
+	// A slot is taken before the failed check, so a hard error starts no further item; in-flight ones still report.
+	results := make([]ExperimentResult, len(items))
+	slots := make(chan struct{}, max(cmp.Or(opts.Concurrency, len(items)), 1))
+	var mu sync.Mutex
+	var failed atomic.Bool
+	var g errgroup.Group
+	for i, item := range items {
+		slots <- struct{}{}
+		if failed.Load() {
+			break
 		}
-		results = append(results, res)
-		fmt.Fprintf(errOut, "item %s: trace=%s prompt=%s duration=%s\n", res.ItemID, res.TraceID, res.Prompt, res.Duration)
+		g.Go(func() error {
+			defer func() { <-slots }()
+			res, err := runExperimentItem(ctx, runner, lf, item, opts)
+			if err != nil {
+				failed.Store(true)
+				return err
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			results[i] = res
+			fmt.Fprintf(errOut, "item %s: trace=%s prompt=%s duration=%s\n", res.ItemID, res.TraceID, res.Prompt, res.Duration)
+			return nil
+		})
+	}
+	err = g.Wait()
+	results = slices.DeleteFunc(results, func(r ExperimentResult) bool { return r.ItemID == "" }) // a zero slot never ran
+	if err != nil {
+		// Print what already completed - a hard error otherwise drops it from the summary table/--as-json.
+		fmt.Fprint(errOut, FormatExperimentSummary(results))
+		return results, err
 	}
 	return results, nil
 }
@@ -192,13 +220,15 @@ func recordRunItem(ctx context.Context, lf *langfuse.Client, opts ExperimentOpts
 		return fmt.Errorf("experiment run: item %s: score trace: %w", itemID, err)
 	}
 	meta := map[string]string{"agent": opts.Agent, "prompt_name": run.Prompt.Name,
-		"prompt_version": run.Prompt.VersionID, "prompt_source": run.Prompt.Source}
+		"prompt_version": run.Prompt.VersionID, "prompt_source": run.Prompt.Source,
+		"worker_model": run.WorkerModel, "judge_model": run.JudgeModel}
 	if len(skipped) > 0 {
 		meta["skipped_artifacts"] = strings.Join(skipped, ",")
 	}
 	req := langfuse.CreateDatasetRunItemRequest{
 		DatasetItemID: itemID, RunName: opts.RunName, TraceID: run.TraceID,
-		RunDescription: fmt.Sprintf("prompt=%s agent=%s", run.prompt(), opts.Agent), Metadata: meta,
+		RunDescription: fmt.Sprintf("prompt=%s agent=%s model=%s judge=%s", run.prompt(), opts.Agent, run.WorkerModel, run.JudgeModel),
+		Metadata:       meta,
 	}
 	if err := lf.CreateDatasetRunItem(ctx, req); err != nil {
 		return fmt.Errorf("experiment run: item %s: create run item: %w", itemID, err)
@@ -241,6 +271,8 @@ type LiveItemRunner struct {
 	Store  *store.Store
 	Agent  string
 	Rubric vetting.RubricScaler
+	// Cleanup removes an item's chat workspace once the item is read back, whatever its outcome; nil keeps it.
+	Cleanup func(chatID string)
 }
 
 func NewLiveItemRunner(base string, st *store.Store, agent string, rubric vetting.RubricScaler) *LiveItemRunner {
@@ -255,11 +287,17 @@ func (r *LiveItemRunner) RunItem(ctx context.Context, in experimentItemInput) (i
 		return itemRun{}, fmt.Errorf("experiment extension not running (EnableExperiment before boot)")
 	}
 	chatID, err := ext.run(ctx, r.Agent, in)
+	if chatID != "" && r.Cleanup != nil {
+		defer r.Cleanup(chatID)
+	}
 	if err != nil {
 		return itemRun{}, err
 	}
 	c := &Client{BaseURL: strings.TrimRight(r.Base, "/"), HTTP: &http.Client{}}
 	body, err := c.FetchRecording(ctx, chatID)
+	if errors.Is(err, ErrNotFound) {
+		return itemRun{}, fmt.Errorf("chat %s: no recording: the run ended before any model call, e.g. its clone or setup failed (see the log)", chatID)
+	}
 	if err != nil {
 		return itemRun{}, fmt.Errorf("chat %s: fetch recording: %w", chatID, err)
 	}
@@ -282,6 +320,10 @@ const experimentExtension = "experiment"
 
 func init() { extsdk.Register(experimentExtension, newExperimentExt) }
 
+// experimentItemTimeout surfaces a hung item; nothing else in an item's path is a wall-clock wait, since a
+// run's start under load (clone, check_setup, admission) can take minutes. Items take 2-20 min.
+const experimentItemTimeout = 2 * time.Hour
+
 // liveExperiment is the booted extension; `experiment run` boots one in-process server per command.
 var liveExperiment atomic.Pointer[experimentExt]
 
@@ -296,6 +338,41 @@ func EnableExperiment(cfg *config.Config, agent string) {
 		Name: experimentWorkflow(agent), Trigger: "quack experiment run only", Shape: agent, Agents: []string{agent},
 		Nodes: []config.WorkflowNode{{ID: agent + "-1", Agent: agent, Task: "{{ask}}"}},
 	})
+}
+
+// OverrideModels rebinds agent's worker to worker and the gate judge to judge, each "<provider>/<model>"
+// ("" keeps quack.yaml's), for this run only; boot prices and admits them from their models: entries.
+func OverrideModels(cfg *config.Config, agent, worker, judge string) error {
+	if worker != "" {
+		ac := cfg.Agents[agent]
+		if err := overrideModel(cfg, worker, &ac.Provider, &ac.Model); err != nil {
+			return fmt.Errorf("--model %w", err)
+		}
+		if cfg.Agents == nil {
+			cfg.Agents = map[string]config.AgentConfig{}
+		}
+		cfg.Agents[agent] = ac
+	}
+	if err := overrideModel(cfg, judge, &cfg.Gates.Judge.Provider, &cfg.Gates.Judge.Model); err != nil {
+		return fmt.Errorf("--judge-model %w", err)
+	}
+	return nil
+}
+
+// overrideModel splits ref at its first slash, so an OpenRouter id like openai/gpt-6-luna keeps its own.
+func overrideModel(cfg *config.Config, ref string, provider, model *string) error {
+	if ref == "" {
+		return nil
+	}
+	p, m, _ := strings.Cut(ref, "/")
+	if _, ok := cfg.Providers[p]; !ok || m == "" {
+		return fmt.Errorf("%q: want <provider>/<model> with a provider defined under providers", ref)
+	}
+	if mc, ok := cfg.Models[m]; !ok || mc.Provider != p {
+		return fmt.Errorf("%q: model %q must be defined under models with provider: %s", ref, m, p)
+	}
+	*provider, *model = p, m
+	return nil
 }
 
 func experimentWorkflow(agent string) string { return "experiment-" + agent }
@@ -349,7 +426,7 @@ func (e *experimentExt) run(ctx context.Context, agent string, in experimentItem
 			mime = "application/json"
 		}
 		if _, _, err := e.host.WriteArtifact(chatID, experimentUser, name, mime, data); err != nil {
-			return "", fmt.Errorf("write input artifact %s: %w", name, err)
+			return chatID, fmt.Errorf("write input artifact %s: %w", name, err) // chatID: the runner still cleans up after it
 		}
 	}
 	ch := make(chan extsdk.RunOutcome, 1)
@@ -359,7 +436,7 @@ func (e *experimentExt) run(ctx context.Context, agent string, in experimentItem
 	req := extsdk.DispatchRequest{
 		Chat:     extsdk.ChatRef{LocalID: localID, User: experimentUser, Title: "experiment: " + agent},
 		Ask:      extsdk.Ask{Message: in.Task},
-		Run:      extsdk.RunConfig{Workflow: experimentWorkflow(agent), ReadOnly: true, Setup: in.Setup},
+		Run:      extsdk.RunConfig{Workflow: experimentWorkflow(agent), ReadOnly: true, Setup: in.Setup, Timeout: experimentItemTimeout},
 		Delivery: extsdk.DeliveryAuthority{AllowedKinds: []extsdk.DeliveryKind{}},
 	}
 	if err := e.host.Dispatch(ctx, req); err != nil {
@@ -370,6 +447,9 @@ func (e *experimentExt) run(ctx context.Context, agent string, in experimentItem
 	}
 	select {
 	case o := <-ch:
+		if o.TimedOut {
+			return chatID, fmt.Errorf("chat %s: run timed out after %s", chatID, experimentItemTimeout)
+		}
 		if o.Status != extsdk.RunDone {
 			return chatID, fmt.Errorf("chat %s: run %s: %s", chatID, o.Status, o.Error)
 		}
@@ -384,8 +464,9 @@ func (e *experimentExt) run(ctx context.Context, agent string, in experimentItem
 func (r *LiveItemRunner) itemRunFor(ctx context.Context, chatID string, sess *bundle.Session, nodeID string, nr bundle.NodeRun) itemRun {
 	out := itemRun{Answer: nr.Answer, Prompt: systemPrompt(r.Agent, nr.Artifacts), Criteria: r.finalCriteria(sess, nodeID)}
 	out.Cost.Activity = sess.NodeActivity(nodeID, r.Agent)
+	out.JudgeModel = sess.LastModel(nodeID, ledger.JudgeAgent)
 	if n := r.nodeRow(ctx, chatID, nodeID); n != nil {
-		out.TraceID, out.Passed = n.TraceID, n.JudgePassed
+		out.TraceID, out.Passed, out.WorkerModel = n.TraceID, n.JudgePassed, n.Model
 		out.Cost.InputTokens, out.Cost.OutputTokens, out.Cost.CachedTokens = int64(n.PromptTokens), int64(n.CompletionTokens), int64(n.CachedTokens)
 		out.Cost.JudgeRounds, out.Cost.WallTime = int(n.JudgeRounds), time.Duration(n.DurationMs)*time.Millisecond
 	}

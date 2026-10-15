@@ -413,3 +413,45 @@ func TestScanOrphanedRuns_SettlesPausedWithNothingSuspended(t *testing.T) {
 		t.Errorf("RunStatus = %q, want failed", c.RunStatus)
 	}
 }
+
+// A server booting on the DB an `experiment run` process shares must leave that process's live chats alone:
+// settling one wiped its clone and failed the item mid-setup. A plain chat in the same state is still settled.
+func TestScanOrphanedRuns_LeavesExperimentChatsAlone(t *testing.T) {
+	st := newRunStatusTestStore(t)
+	ctx := context.Background()
+	for _, chatID := range []string{ExperimentChatPrefix + "a", "chat-plain"} {
+		if err := st.SetChatOrigin(ctx, chatID, "u1", ""); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.MarkRunActive(ctx, chatID, "turn-1"); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.SaveDagPlan(ctx, chatID, "plan-"+chatID, "turn-1", "{}"); err != nil {
+			t.Fatal(err)
+		}
+		// A long-dead peer's running node: past staleNodeCeiling, so this boot owns it unless it's an experiment's.
+		old := time.Now().UTC().Add(-2 * staleNodeCeiling)
+		if err := st.db.Create(&DagNode{PlanID: "plan-" + chatID, NodeID: "n1", Status: string(dag.StatusRunning), InstanceID: "peer", UpdatedAt: &old}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	rep, err := st.ResumePausedDagNodes(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, settled, _, _, err := st.ScanOrphanedRuns(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Start) != 1 || rep.Start[0].ChatID != "chat-plain" {
+		t.Errorf("resumed %+v, want only chat-plain's node", rep.Start)
+	}
+	for _, id := range settled {
+		if id != "chat-plain" {
+			t.Errorf("settled %s, want only chat-plain", id)
+		}
+	}
+	if c, err := st.GetChat(ctx, ExperimentChatPrefix+"a"); err != nil || c.ActiveTurnID != "turn-1" {
+		t.Fatalf("experiment chat = %+v err=%v, want its run still active", c, err)
+	}
+}

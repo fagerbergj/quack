@@ -1274,6 +1274,9 @@ func (s *Store) ResumePausedDagNodes(ctx context.Context, resumable func(chatID,
 			rep.Failed = append(rep.Failed, s.FailUnresumable(ctx, "", n, "plan row is gone"))
 			continue
 		}
+		if strings.HasPrefix(chatID, ExperimentChatPrefix) {
+			continue
+		}
 		// Never resume into a chat deleted by raw SQL (bypassing the cascade), or the run writes a phantom's events.
 		live, ok := chatLive[chatID]
 		if !ok {

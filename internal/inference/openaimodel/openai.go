@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	openai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -39,12 +40,22 @@ type OpenAIModel struct {
 	DefaultEffort string
 }
 
-func NewOpenAIModel(modelName, endpoint, apiKey, defaultEffort string) *OpenAIModel {
-	client := openai.NewClient(
+// Model-call retries: ~1 min of backoff on 5xx/429 rides out a hosted upstream's burst (OpenRouter pinned to one
+// provider returns 502s for seconds); the old ~6s (httpx's default nested in openai-go's) gave up. Var for tests.
+var (
+	modelCallAttempts  = uint(16)
+	modelCallBaseDelay = time.Second
+)
+
+// NewOpenAIModel: extra options apply to every request (providers.<p>.extra_body rides them).
+func NewOpenAIModel(modelName, endpoint, apiKey, defaultEffort string, extra ...option.RequestOption) *OpenAIModel {
+	retrying := httpx.NewTransport(nil, httpx.WithMaxAttempts(modelCallAttempts), httpx.WithBaseDelay(modelCallBaseDelay))
+	client := openai.NewClient(append([]option.RequestOption{
 		option.WithBaseURL(endpoint),
 		option.WithAPIKey(apiKey),
-		option.WithHTTPClient(&http.Client{Transport: httpx.NewTransport(nil)}),
-	)
+		option.WithHTTPClient(&http.Client{Transport: retrying}),
+		option.WithMaxRetries(0), // httpx owns the schedule; openai-go's own retries would nest inside it
+	}, extra...)...)
 	return &OpenAIModel{
 		client:        client,
 		ModelName:     modelName,

@@ -28,20 +28,28 @@ func (e *Exporter) Export(ctx context.Context, records []sdklog.Record) error {
 	if e == nil || e.store == nil {
 		return nil
 	}
-	// Detached: a stopped run's last llm.call/agent.invoke records arrive on its cancelled ctx.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
-	defer cancel()
 	for _, r := range records {
 		entry, ok := entryFromRecord(r)
 		if !ok {
 			continue
 		}
-		if _, err := e.store.AppendIntent(ctx, entry); err != nil {
-			// Off the hot path (SimpleProcessor after the call completed); all we owe the run is this warning.
-			e.log.Warn("append failed; this event was not recorded", "chat", entry.ChatID, "kind", entry.Kind, "err", err)
+		if err := e.append(ctx, entry); err != nil {
+			e.log.Error("append failed; this event was not recorded", "chat", entry.ChatID, "kind", entry.Kind, "err", err)
 		}
 	}
 	return nil
+}
+
+// appendTimeout bounds one record's write. It runs synchronously after the model call, so a slow DB
+// slows the run rather than dropping its record; 3s dropped multi-MB agent.invoke rows on a loaded Postgres.
+const appendTimeout = 30 * time.Second
+
+// append is detached from ctx: a stopped run's last llm.call/agent.invoke records arrive on its cancelled ctx.
+func (e *Exporter) append(ctx context.Context, entry Entry) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), appendTimeout)
+	defer cancel()
+	_, err := e.store.AppendIntent(ctx, entry)
+	return err
 }
 
 func (e *Exporter) Shutdown(context.Context) error   { return nil }

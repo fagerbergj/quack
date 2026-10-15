@@ -578,6 +578,9 @@ type ProviderConfig struct {
 	Kind     string `yaml:"kind"`
 	Endpoint string `yaml:"endpoint"`
 	APIKey   string `yaml:"api_key"`
+	// ExtraBody is set on every request's top-level JSON body (e.g. OpenRouter's provider routing);
+	// an ACP agent's pi receives only its "provider" key.
+	ExtraBody map[string]any `yaml:"extra_body"`
 	// Limits caps how many distinct models per role may be resident at once (dag.Admission).
 	// Absent = no cap.
 	Limits *ProviderLimits `yaml:"limits"`

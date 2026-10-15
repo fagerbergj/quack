@@ -12,7 +12,7 @@ import (
 // whose dependencies are all done. No paused ancestor's retry reaches them, so without this the run fails.
 func (s *Store) addQueuedFrontier(ctx context.Context, resumable func(chatID, pauseReason string) (bool, string), rep *ResumeReport) {
 	var chats []Chat
-	if err := s.db.WithContext(ctx).Where("active_turn_id <> ?", "").Find(&chats).Error; err != nil {
+	if err := s.db.WithContext(ctx).Where("active_turn_id <> ? AND id NOT LIKE ?", "", ExperimentChatPrefix+"%").Find(&chats).Error; err != nil {
 		slog.Warn("resume queued nodes: chat scan failed", "component", "store", "err", err)
 		return
 	}

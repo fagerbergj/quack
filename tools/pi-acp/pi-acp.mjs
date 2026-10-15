@@ -19,7 +19,7 @@ const cfg = process.env.PI_ACP_CONFIG
   ? JSON.parse(process.env.PI_ACP_CONFIG)
   : {};
 const prov = cfg.model
-  ? { baseUrl: cfg.endpoint, apiKey: cfg.api_key || "unused", model: cfg.model, contextWindow: cfg.context_window, maxTokens: cfg.max_output_tokens }
+  ? { baseUrl: cfg.endpoint, apiKey: cfg.api_key || "unused", model: cfg.model, contextWindow: cfg.context_window, maxTokens: cfg.max_output_tokens, routing: cfg.openrouter_routing }
   : null;
 
 // PI_ACP_STATE_DIR (quack: Jail.ACPStateDir) keeps pi's session files out of
@@ -65,7 +65,8 @@ function ensurePiDir(sessionId) {
           baseUrl: prov.baseUrl,
           api: "openai-completions",
           apiKey: prov.apiKey,
-          compat: { supportsDeveloperRole: false, supportsReasoningEffort: false },
+          // openRouterRouting: pi sends it as the request's `provider` field (OpenRouter upstream pinning).
+          compat: { supportsDeveloperRole: false, supportsReasoningEffort: false, ...(prov.routing && { openRouterRouting: prov.routing }) },
           models: [modelEntry],
         },
       },

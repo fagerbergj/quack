@@ -4,7 +4,6 @@ import (
 	"archive/zip"
 	"context"
 	"encoding/json"
-	"google.golang.org/genai"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +13,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	otellog "go.opentelemetry.io/otel/log"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
+	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/ledgertest"
@@ -447,5 +447,42 @@ func TestPartsTextSkipsThoughtParts(t *testing.T) {
 	parts := []*genai.Part{{Text: "planning: pad the report", Thought: true}, {Text: "# Report\nfindings"}}
 	if got := partsText(parts); got != "# Report\nfindings" {
 		t.Fatalf("partsText = %q, want the non-thought text only", got)
+	}
+}
+
+// An ACP node's invocations share one stream. A later answerless one (an empty continuation, a post-judge
+// stage round) must not blank the answer, and when no invocation answered, a native continuation's answer wins.
+func TestNodeRuns_AnswerlessLaterInvocationsKeepTheAnswer(t *testing.T) {
+	prompt := func(text string) []string {
+		return []string{`{"jsonrpc":"2.0","id":1,"method":"session/prompt","params":{"prompt":[{"type":"text","text":"` + text + `"}]}}`}
+	}
+	say := func(text string) []string {
+		return []string{`{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"` + text + `"}}}}`}
+	}
+	toolOnly := []string{`{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call","toolCallId":"t1"}}}`}
+	at := func(s int) time.Time { return t0().Add(time.Duration(s) * time.Second) }
+	path := writeJSONL(t, []entry{
+		invokeAgent(at(1), "node-a", "code-reviewer", "", prompt("review this diff"), say("VERDICT: approve")),
+		invokeAgent(at(2), "node-a", "code-reviewer", "", prompt("stage the review"), toolOnly),
+		invokeAgent(at(1), "node-b", "code-reviewer", "", prompt("review that diff"), toolOnly),
+		chat(at(3), "node-b", "code-reviewer", "worker-cont4", "m", map[string]any{
+			"gen_ai.input.messages":  `[{"role":"user","parts":[{"text":"finish the review"}]}]`,
+			"gen_ai.output.messages": `{"role":"model","parts":[{"text":"VERDICT: request changes"}]}`,
+		}),
+		invokeAgent(at(4), "node-b", "code-reviewer", "", prompt("stage the review"), toolOnly),
+	})
+	sess, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]NodeRun{}
+	for k, run := range sess.NodeRuns(map[string]bool{"code-reviewer": true}) {
+		got[k.Node] = run
+	}
+	if a := got["node-a"]; a.Answer != "VERDICT: approve" || a.Task != "review this diff" {
+		t.Errorf("node-a = %q / %q, want the first invocation's task and answer", a.Task, a.Answer)
+	}
+	if b := got["node-b"]; b.Answer != "VERDICT: request changes" {
+		t.Errorf("node-b answer = %q, want the native continuation's", b.Answer)
 	}
 }

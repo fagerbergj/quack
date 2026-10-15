@@ -255,6 +255,8 @@ type pinnedProc struct {
 	h         *procHandle
 	sessID    sdk.SessionId
 	toolNames []string
+	// preamble: the provenance of the preamble this session was opened with, still in effect on every reused round.
+	preamble []ledger.ArtifactRef
 }
 
 // pinned: advisorToken -> the node's pinned process, shared across Agents and concurrent nodes
@@ -283,22 +285,29 @@ func closePinnedProc(pp *pinnedProc) {
 	pp.h.close(nil)
 }
 
-// roundArtifacts: this round's resolved-artifact provenance - the environment block always,
-// the preamble (with memory.md) only when sentPreamble.
-func (a *Agent) roundArtifacts(ctx context.Context, envArt artifactsrc.Artifact, sentPreamble bool) []ledger.ArtifactRef {
-	var artifacts []ledger.ArtifactRef
-	if envArt.Name != "" {
-		artifacts = append(artifacts, ledger.ArtifactRef{Name: envArt.Name, Source: envArt.Source, VersionID: envArt.VersionID})
-	}
+// roundArtifacts: the environment block plus the preamble this round's session runs under. A reused round
+// sends none but runs under the one its session opened with (inherited), so it keeps that provenance.
+func (a *Agent) roundArtifacts(ctx context.Context, envArt artifactsrc.Artifact, sentPreamble bool, inherited []ledger.ArtifactRef) (all, preamble []ledger.ArtifactRef) {
+	preamble = inherited
 	if sentPreamble {
-		if a.opts.PreambleArtifact != nil {
-			if art := a.opts.PreambleArtifact(ctx); art.Name != "" {
-				artifacts = append(artifacts, ledger.ArtifactRef{Name: art.Name, Source: art.Source, VersionID: art.VersionID})
-			}
+		preamble = a.preambleArtifacts(ctx)
+	}
+	if envArt.Name != "" {
+		all = append(all, ledger.ArtifactRef{Name: envArt.Name, Source: envArt.Source, VersionID: envArt.VersionID})
+	}
+	return append(all, preamble...), preamble
+}
+
+// preambleArtifacts: the provenance of the preamble (with memory.md) a round just sent.
+func (a *Agent) preambleArtifacts(ctx context.Context) []ledger.ArtifactRef {
+	var artifacts []ledger.ArtifactRef
+	if a.opts.PreambleArtifact != nil {
+		if art := a.opts.PreambleArtifact(ctx); art.Name != "" {
+			artifacts = append(artifacts, ledger.ArtifactRef{Name: art.Name, Source: art.Source, VersionID: art.VersionID})
 		}
-		if mem := a.opts.MemoryArtifact; mem.Name != "" {
-			artifacts = append(artifacts, ledger.ArtifactRef{Name: mem.Name, Source: mem.Source, VersionID: mem.VersionID})
-		}
+	}
+	if mem := a.opts.MemoryArtifact; mem.Name != "" {
+		artifacts = append(artifacts, ledger.ArtifactRef{Name: mem.Name, Source: mem.Source, VersionID: mem.VersionID})
 	}
 	return artifacts
 }
@@ -329,12 +338,13 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 	var h *procHandle
 	var sessID sdk.SessionId
 	var toolNames []string
+	var preamble []ledger.ArtifactRef
 	fromPinned := false
 	resumed := false
 	if advisorToken != "" {
 		if v, ok := pinned.Load(advisorToken); ok {
 			pp := v.(*pinnedProc)
-			h, sessID, toolNames = pp.h, pp.sessID, pp.toolNames
+			h, sessID, toolNames, preamble = pp.h, pp.sessID, pp.toolNames, pp.preamble
 			fromPinned = true
 		}
 	}
@@ -354,7 +364,7 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 	var pinOK bool
 	defer func() {
 		if pinOK && advisorToken != "" {
-			pinned.Store(advisorToken, &pinnedProc{h: h, sessID: sessID, toolNames: toolNames})
+			pinned.Store(advisorToken, &pinnedProc{h: h, sessID: sessID, toolNames: toolNames, preamble: preamble})
 			return
 		}
 		if advisorToken != "" {
@@ -396,7 +406,7 @@ func (a *Agent) round(ctx context.Context, cwd, memSecret string, caps workspace
 
 	outbound, sentPreamble, unregSteer := a.steerHooks(ctx, h, outbound, steerChatID, steerNodeID, fromPinned)
 	defer unregSteer()
-	artifacts = a.roundArtifacts(ctx, envArt, sentPreamble)
+	artifacts, preamble = a.roundArtifacts(ctx, envArt, sentPreamble, preamble)
 
 	finalPrompt := mcpToolsBlock(toolNames) + "\n\n" + outbound
 

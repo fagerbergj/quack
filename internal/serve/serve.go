@@ -2119,7 +2119,41 @@ func nodeMemoryScope(jail *workspace.Jail, token string) func(context.Context) m
 }
 
 // setupCloneFunc returns the dag.SetupFn that clones a chat repo for a new node.
+// RemoveChatWorkspace deletes chat's clone scope and per-node dirs, as chat delete does; chat is a chat id or
+// its workspace dir name.
+func RemoveChatWorkspace(jail *workspace.Jail, chat string) error {
+	return errors.Join(jail.RemoveChatScope(localUserID, chat), jail.RemoveNodeDirs(localUserID, chat))
+}
+
+// experimentDirPrefix is workspace.ChatDirName's rewrite of store.ExperimentChatPrefix.
+const experimentDirPrefix = "ext-experiment-"
+
+// SweepExperimentWorkspaces removes experiment chats' workspaces created over olderThan ago, which a killed
+// `experiment run` leaves behind. An item times out after 2h, so a live one in any process never qualifies.
+func SweepExperimentWorkspaces(jail *workspace.Jail, olderThan time.Duration) (removed int) {
+	root, err := jail.UserRoot(localUserID)
+	if err != nil {
+		return 0
+	}
+	entries, _ := os.ReadDir(root)
+	cutoff := time.Now().Add(-olderThan)
+	for _, e := range entries {
+		info, err := e.Info()
+		if err != nil || !e.IsDir() || !strings.HasPrefix(e.Name(), experimentDirPrefix) || info.ModTime().After(cutoff) {
+			continue
+		}
+		if err := RemoveChatWorkspace(jail, e.Name()); err != nil {
+			slog.Warn("stale experiment workspace not removed", "component", "serve", "dir", e.Name(), "err", err)
+			continue
+		}
+		removed++
+	}
+	return removed
+}
+
 func setupCloneFunc(cfg *config.Config, jail *workspace.Jail, workspaceCaps workspace.Caps, gitCredentials []tools.GitCredential, gitTokenSource tools.GitTokenSource) dag.SetupFunc {
+	// Clone and check_setup aren't one tool call: the tool bound (60s) kills a healthy one once many setups share the host.
+	workspaceCaps.Timeout = time.Duration(cfg.Workspace.CheckTimeoutSeconds) * time.Second
 	return func(ctx context.Context, _, chatID, dir string, setup dag.Setup) error {
 		_, err := tools.SetupClone(ctx, jail, localUserID, chatID, dir, setup.Repo, setup.BaseRef, setup.WorkBranch, setup.HeadSHA, setup.CheckoutExistingHead, workspaceCaps, gitCredentials, gitTokenSource, cfg.Workspace.CheckSetup)
 		return err
@@ -2253,6 +2287,10 @@ func piACPEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths []st
 	}
 	if len(skillPaths) > 0 {
 		cfg["skill_paths"] = skillPaths
+	}
+	// pi takes no arbitrary body fields; OpenRouter routing is the one extra_body key it can send.
+	if r, ok := prov.ExtraBody["provider"]; ok {
+		cfg["openrouter_routing"] = r
 	}
 	if ac.Acp != nil && ac.Acp.AllowClone && ac.Acp.ReadOnly {
 		if workspace.EnforcesBoundary(sandbox) {

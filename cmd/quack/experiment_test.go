@@ -10,16 +10,20 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/fagerbergj/quack/internal/cli"
 	"github.com/fagerbergj/quack/internal/config"
+	"github.com/fagerbergj/quack/internal/store"
+	"github.com/fagerbergj/quack/internal/workspace"
 )
 
 func TestRunExperimentRun_MissingConfigDegrades(t *testing.T) {
 	t.Setenv("QUACK_CONFIG", t.TempDir()+"/does-not-exist.yaml")
 	cmd := &cobra.Command{}
-	if err := runExperimentRun(cmd, "my-dataset", "code-reviewer", "", "", 0, false); err == nil {
+	if err := runExperimentRun(cmd, cli.ExperimentOpts{Dataset: "my-dataset", Agent: "code-reviewer"}, "", "", false, false); err == nil {
 		t.Fatal("want an error when there is no local quack.yaml")
 	}
 }
@@ -109,5 +113,72 @@ func TestRunPromptPush_UnlabelledVersionFromBundle(t *testing.T) {
 	}
 	if out.String() != "system/scout@4\n" {
 		t.Fatalf("out = %q, want the new version to pin", out.String())
+	}
+}
+
+func TestParseConcurrency(t *testing.T) {
+	for in, want := range map[string]int{"1": 1, "20": 20, "0": 0, "all": 0} {
+		if got, err := parseConcurrency(in); err != nil || got != want {
+			t.Errorf("parseConcurrency(%q) = %d, %v; want %d", in, got, err, want)
+		}
+	}
+	for _, bad := range []string{"-1", "many", ""} {
+		if _, err := parseConcurrency(bad); err == nil {
+			t.Errorf("parseConcurrency(%q): want an error", bad)
+		}
+	}
+}
+
+// A bad --model or --prompt fails before any server boots.
+func TestBootExperiment_BadFlagsFailBeforeBoot(t *testing.T) {
+	cfg := &config.Config{Providers: map[string]config.ProviderConfig{"default": {}}}
+	for _, o := range []cli.ExperimentOpts{{Agent: "code-reviewer"}, {Agent: "code-reviewer", Prompt: "system/other@1"}} {
+		if _, _, err := bootExperiment(context.Background(), cfg, o, "default/unregistered", ""); err == nil {
+			t.Errorf("%+v: want an error", o)
+		}
+	}
+}
+
+// An item's clone scope and per-node dirs are gone once its cleanup runs; the startup sweep takes only experiment
+// workspaces past staleExperimentAge, never a fresh one (another arm's live item) or a non-experiment chat's.
+func TestExperimentCleanup_RemovesItemAndStaleWorkspaces(t *testing.T) {
+	root := t.TempDir()
+	cfg := &config.Config{Workspace: config.WorkspaceConfig{Root: root}}
+	user := filepath.Join(root, "local")
+	mkChat := func(chatID string, age time.Duration) []string {
+		dir := workspace.ChatDirName(chatID)
+		paths := []string{filepath.Join(user, dir), filepath.Join(user, ".quack-home", "acp-state", dir+"__n1"), filepath.Join(user, ".quack-home", "tmp", dir+"__n1")}
+		for _, p := range paths {
+			if err := os.MkdirAll(filepath.Join(p, "node_modules"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		old := time.Now().Add(-age)
+		if err := os.Chtimes(paths[0], old, old); err != nil {
+			t.Fatal(err)
+		}
+		return paths
+	}
+	stale := mkChat(store.ExperimentChatPrefix+"stale", 7*time.Hour)
+	live := mkChat(store.ExperimentChatPrefix+"live", time.Hour)
+	plain := mkChat("chat-plain", 30*24*time.Hour)
+	item := mkChat(store.ExperimentChatPrefix+"item", 0)
+
+	if experimentCleanup(&cobra.Command{}, cfg, true) != nil {
+		t.Fatal("--keep-workspaces must keep every workspace")
+	}
+	cleanup := experimentCleanup(&cobra.Command{}, cfg, false)
+	cleanup(store.ExperimentChatPrefix + "item")
+
+	exists := func(p string) bool { _, err := os.Stat(p); return err == nil }
+	for _, p := range append(stale, item...) {
+		if exists(p) {
+			t.Errorf("%s survived, want it removed", p)
+		}
+	}
+	for _, p := range append(live, plain...) {
+		if !exists(p) {
+			t.Errorf("%s was removed, want it kept", p)
+		}
 	}
 }

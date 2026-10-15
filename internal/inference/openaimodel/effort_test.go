@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
@@ -79,5 +81,40 @@ func TestGenerate_ExplicitThinkingConfigWinsOverDefaultEffort(t *testing.T) {
 	}
 	if *captured != "high" {
 		t.Errorf("reasoning_effort = %q, want %q (explicit ThinkingConfig should win)", *captured, "high")
+	}
+}
+
+// A 502 burst (OpenRouter with fallbacks off) is retried on one backoff schedule: a recovering upstream is
+// reached, and a dead one gets exactly modelCallAttempts tries, never openai-go's retries nested inside httpx's.
+func TestGenerate_RetriesGatewayBurst(t *testing.T) {
+	defer func(d time.Duration) { modelCallBaseDelay = d }(modelCallBaseDelay)
+	modelCallBaseDelay = time.Millisecond
+	for _, failFirst := range []int32{3, 1000} {
+		var calls atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if calls.Add(1) <= failFirst {
+				w.WriteHeader(http.StatusBadGateway)
+				_, _ = w.Write([]byte(`{"message":"Provider returned error","code":502}`))
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(stubChatResp))
+		}))
+		m := NewOpenAIModel("m", srv.URL, "k", "")
+		req := &model.LLMRequest{Contents: []*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "hi"}}}}}
+		var gotErr error
+		for _, err := range m.GenerateContent(context.Background(), req, false) {
+			if err != nil {
+				gotErr = err
+			}
+		}
+		srv.Close()
+		want, wantErr := failFirst+1, false
+		if failFirst >= int32(modelCallAttempts) {
+			want, wantErr = int32(modelCallAttempts), true
+		}
+		if n := calls.Load(); n != want || (gotErr != nil) != wantErr {
+			t.Errorf("failFirst %d: calls = %d, err = %v; want %d calls, error %v", failFirst, n, gotErr, want, wantErr)
+		}
 	}
 }

@@ -1,9 +1,12 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"math"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -11,9 +14,11 @@ import (
 	"github.com/fagerbergj/quack/internal/artifactsrc"
 	"github.com/fagerbergj/quack/internal/cli"
 	"github.com/fagerbergj/quack/internal/config"
+	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/langfuse"
 	"github.com/fagerbergj/quack/internal/serve"
 	"github.com/fagerbergj/quack/internal/vetting"
+	"github.com/fagerbergj/quack/internal/workspace"
 )
 
 func nowStamp() string { return time.Now().UTC().Format("20060102-150405") }
@@ -30,31 +35,40 @@ func newExperimentCmd() *cobra.Command {
 }
 
 func newExperimentRunCmd() *cobra.Command {
-	var dataset, agent, prompt, runName string
-	var limit int
-	var asJSON bool
+	var o cli.ExperimentOpts
+	var concurrency, model, judgeModel string
+	var asJSON, keepWorkspaces bool
 	c := &cobra.Command{
 		Use:   "run",
 		Short: "Run --agent's node against every item in --dataset, reporting a Langfuse dataset run",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runExperimentRun(cmd, dataset, agent, prompt, runName, limit, asJSON)
+			n, err := parseConcurrency(concurrency)
+			if err != nil {
+				return err
+			}
+			o.Concurrency = n
+			return runExperimentRun(cmd, o, model, judgeModel, keepWorkspaces, asJSON)
 		},
 	}
-	c.Flags().StringVar(&dataset, "dataset", "", "Langfuse dataset name")
-	c.Flags().StringVar(&agent, "agent", "", "agent name to run each item against")
-	c.Flags().StringVar(&prompt, "prompt", "", "system/<agent>@N - pin the run's prompt to that exact Langfuse version")
-	c.Flags().StringVar(&runName, "run-name", "", "Langfuse dataset run name (default: <agent>-<timestamp>)")
-	c.Flags().IntVar(&limit, "limit", 0, "run at most this many items (0 = no limit)")
+	c.Flags().StringVar(&o.Dataset, "dataset", "", "Langfuse dataset name")
+	c.Flags().StringVar(&o.Agent, "agent", "", "agent name to run each item against")
+	c.Flags().StringVar(&o.Prompt, "prompt", "", "system/<agent>@N - pin the run's prompt to that exact Langfuse version")
+	c.Flags().StringVar(&o.RunName, "run-name", "", "Langfuse dataset run name (default: <agent>-<timestamp>)")
+	c.Flags().IntVar(&o.Limit, "limit", 0, "run at most this many items (0 = no limit)")
+	c.Flags().StringVar(&concurrency, "concurrency", "1", `run up to this many items at once; 0 or "all" runs every item at once`)
+	c.Flags().StringVar(&model, "model", "", "<provider>/<model> - run --agent's worker on this models: entry instead")
+	c.Flags().StringVar(&judgeModel, "judge-model", "", "<provider>/<model> - judge on this models: entry instead of gates.judge's")
+	c.Flags().BoolVar(&keepWorkspaces, "keep-workspaces", false, "leave each item's clone and node dirs on disk, and skip the stale sweep (debugging)")
 	asJSONFlag(c, &asJSON)
 	_ = c.MarkFlagRequired("dataset")
 	_ = c.MarkFlagRequired("agent")
 	return c
 }
 
-func runExperimentRun(cmd *cobra.Command, dataset, agent, prompt, runName string, limit int, asJSON bool) error {
-	if runName == "" {
-		runName = agent + "-" + nowStamp()
+func runExperimentRun(cmd *cobra.Command, o cli.ExperimentOpts, model, judgeModel string, keepWorkspaces, asJSON bool) error {
+	if o.RunName == "" {
+		o.RunName = o.Agent + "-" + nowStamp()
 	}
 	cfgPath := defaultConfigPath()
 	if _, err := os.Stat(cfgPath); err != nil {
@@ -75,25 +89,20 @@ func runExperimentRun(cmd *cobra.Command, dataset, agent, prompt, runName string
 	}
 
 	ctx := cmd.Context()
-	rubric, err := experimentRubric(ctx, cfgPath, agent)
+	rubric, err := experimentRubric(ctx, cfgPath, o.Agent)
 	if err != nil {
 		return err
 	}
-	pinSrc, err := pinnedPromptSource(ctx, cfg, agent, prompt)
-	if err != nil {
-		return err
-	}
-	cli.EnableExperiment(cfg, agent)
-	base, stop, err := serve.InProcessWithPromptSource(ctx, cfg, pinSrc)
+	cleanup := experimentCleanup(cmd, cfg, keepWorkspaces)
+	base, stop, err := bootExperiment(ctx, cfg, o, model, judgeModel)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = stop() }()
 
-	runner := cli.NewLiveItemRunner(base, st, agent, rubric)
-	results, runErr := cli.RunExperiment(ctx, cmd.ErrOrStderr(), runner, lf, cli.ExperimentOpts{
-		Dataset: dataset, Agent: agent, Prompt: prompt, RunName: runName, Limit: limit,
-	})
+	runner := cli.NewLiveItemRunner(base, st, o.Agent, rubric)
+	runner.Cleanup = cleanup
+	results, runErr := cli.RunExperiment(ctx, cmd.ErrOrStderr(), runner, lf, o)
 	// Emit partial results even when runErr != nil, matching the text summary RunExperiment already printed.
 	if asJSON {
 		if err := cli.WriteJSON(cmd.OutOrStdout(), results); err != nil {
@@ -111,6 +120,57 @@ func runExperimentRun(cmd *cobra.Command, dataset, agent, prompt, runName string
 		return fmt.Errorf("experiment run: %d item(s) errored", n)
 	}
 	return nil
+}
+
+// parseConcurrency reads --concurrency: a count, or "all" (0) for every item at once.
+func parseConcurrency(s string) (int, error) {
+	if s == "all" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf(`--concurrency %q: want a count >= 0 or "all"`, s)
+	}
+	return n, nil
+}
+
+// bootExperiment boots the in-process server with --prompt's pin, the model overrides, and room to clone
+// every in-flight item at once.
+func bootExperiment(ctx context.Context, cfg *config.Config, o cli.ExperimentOpts, model, judgeModel string) (string, func() error, error) {
+	pinSrc, err := pinnedPromptSource(ctx, cfg, o.Agent, o.Prompt)
+	if err != nil {
+		return "", nil, err
+	}
+	if err := cli.OverrideModels(cfg, o.Agent, model, judgeModel); err != nil {
+		return "", nil, err
+	}
+	cli.EnableExperiment(cfg, o.Agent)
+	dag.SetProvisionSlots(cmp.Or(o.Concurrency, math.MaxInt32)) // zero-size slots: a huge bound costs nothing
+	return serve.InProcessWithPromptSource(ctx, cfg, pinSrc)
+}
+
+// staleExperimentAge: past the 2h item timeout with room to spare, so no live item in any process qualifies.
+const staleExperimentAge = 6 * time.Hour
+
+// experimentCleanup sweeps the workspaces a killed run left and returns the per-item removal; nil keeps them
+// (--keep-workspaces, or no usable workspace root). Each item's clone would otherwise stay on disk for good.
+func experimentCleanup(cmd *cobra.Command, cfg *config.Config, keep bool) func(chatID string) {
+	if keep {
+		return nil
+	}
+	jail, err := workspace.NewJail(cfg.Workspace.Root)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "experiment workspaces will not be cleaned up: %v\n", err)
+		return nil
+	}
+	if n := serve.SweepExperimentWorkspaces(jail, staleExperimentAge); n > 0 {
+		fmt.Fprintf(cmd.ErrOrStderr(), "removed %d stale experiment workspace(s)\n", n)
+	}
+	return func(chatID string) {
+		if err := serve.RemoveChatWorkspace(jail, chatID); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "chat %s: workspace not removed: %v\n", chatID, err)
+		}
+	}
 }
 
 func errorCount(results []cli.ExperimentResult) int {
