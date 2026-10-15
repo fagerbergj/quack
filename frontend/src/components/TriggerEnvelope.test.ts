@@ -370,7 +370,7 @@ ${CHECKS_ENVELOPE.split('\n').slice(2).join('\n')}`
     expect(details.textContent).toContain('build')
     expect(details.textContent).toContain('failure')
     // The failing check's danger styling, not shared by the passing/pending rows.
-    expect(details.innerHTML).toMatch(/text-red-500[^"]*"[^>]*>build/)
+    expect(details.innerHTML).toMatch(/text-red-700[^"]*"[^>]*>build/)
   })
 
   it('a deleted comment is visibly distinguishable from a live one once its section is opened', () => {

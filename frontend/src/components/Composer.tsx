@@ -74,7 +74,7 @@ function QueuedMessages({ queue, compact, onRemoveQueued }: {
                     onClick={() => onRemoveQueued(item.id)}
                     aria-label="Remove queued message"
                     title="Remove"
-                    className="min-h-[44px] -my-2 inline-flex items-center hover:text-red-500 dark:hover:text-red-400 transition-opacity normal-case"
+                    className="min-h-[44px] -my-2 inline-flex items-center hover:text-red-700 dark:hover:text-red-400 transition-opacity normal-case"
                   >
                     remove
                   </button>
@@ -101,7 +101,7 @@ function QueuedMessages({ queue, compact, onRemoveQueued }: {
                   onClick={() => onRemoveQueued(item.id)}
                   aria-label="Remove queued message"
                   title="Remove"
-                  className="min-h-[44px] -my-2 inline-flex items-center opacity-0 group-hover:opacity-100 hover:text-red-500 dark:hover:text-red-400 transition-opacity normal-case"
+                  className="min-h-[44px] -my-2 inline-flex items-center opacity-0 group-hover:opacity-100 hover:text-red-700 dark:hover:text-red-400 transition-opacity normal-case"
                 >
                   remove
                 </button>

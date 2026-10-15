@@ -355,7 +355,7 @@ function PluginRow({ plugin: p, update, busy, onUpdate, onRemove }: {
           {update?.error && (
             <details className="group min-w-0">
               <summary
-                className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400 cursor-pointer"
+                className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-400 cursor-pointer"
                 title={`Update check failed: ${update.error}`}
               >
                 <Icon name="warning" className="w-3.5 h-3.5 shrink-0" />

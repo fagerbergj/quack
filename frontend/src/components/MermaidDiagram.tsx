@@ -55,7 +55,7 @@ export function useMermaidSvg(code: string): { svg: string | null; error: string
 export function MermaidError({ code, error }: { code: string; error: string }) {
   return (
     <div className="not-prose">
-      <div className="mb-1 flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400" title={error}>
+      <div className="mb-1 flex items-center gap-1 text-[11px] text-amber-700 dark:text-amber-400" title={error}>
         <Icon name="warning" className="w-3.5 h-3.5" /> Diagram failed to render - showing source
       </div>
       <CopyablePre><code className="language-mermaid">{code}</code></CopyablePre>
