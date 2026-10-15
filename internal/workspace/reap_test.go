@@ -212,21 +212,7 @@ func TestStopChildEscalatesPastStuckReaper(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(buf, nil)))
 	t.Cleanup(func() { slog.SetDefault(restore) })
 
-	dir := t.TempDir()
-	// Args[1] == ReapArg marks it as a wrapper; sh runs the file of that name, which ignores the stop.
-	if err := os.WriteFile(filepath.Join(dir, ReapArg), []byte("trap '' USR2\necho x > ready\nexec sleep 30\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cmd := &exec.Cmd{Path: "/bin/sh", Args: []string{"sh", ReapArg}, Dir: dir,
-		SysProcAttr: &syscall.SysProcAttr{Setpgid: true}}
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
-		if b, _ := os.ReadFile(filepath.Join(dir, "ready")); len(b) > 0 {
-			break
-		}
-	}
+	cmd := startFakeReaper(t, "trap '' USR2\necho x > ready\nexec sleep 30\n")
 	if err := StopChild(cmd); err != nil {
 		t.Fatalf("StopChild: %v", err)
 	}
@@ -240,6 +226,43 @@ func TestStopChildEscalatesPastStuckReaper(t *testing.T) {
 			t.Fatalf("escalation not logged: %s", buf.String())
 		}
 	}
+}
+
+// TestStopChildResendsDroppedStop: a real wrapper's Go runtime drops the stop signal until
+// ReapMain's signal.Notify runs; the stop must land on a resend, not wait out reapGrace.
+func TestStopChildResendsDroppedStop(t *testing.T) {
+	old := reapGrace
+	reapGrace = time.Minute
+	t.Cleanup(func() { reapGrace = old })
+	cmd := startFakeReaper(t, "trap '' USR2\necho x > ready\nsleep 0.5\ntrap - USR2\nexec sleep 5\n")
+	if err := StopChild(cmd); err != nil {
+		t.Fatalf("StopChild: %v", err)
+	}
+	_ = cmd.Wait()
+	if ws := cmd.ProcessState.Sys().(syscall.WaitStatus); !ws.Signaled() || ws.Signal() != reapStopSignal {
+		t.Fatalf("wrapper ended %v, want %v from a resent stop", cmd.ProcessState, reapStopSignal)
+	}
+}
+
+// startFakeReaper starts script as a stand-in wrapper: Args[1] == ReapArg marks it as one, and sh
+// runs the file of that name. It returns once the script has written ready.
+func startFakeReaper(t *testing.T, script string) *exec.Cmd {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ReapArg), []byte(script), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := &exec.Cmd{Path: "/bin/sh", Args: []string{"sh", ReapArg}, Dir: dir,
+		SysProcAttr: &syscall.SysProcAttr{Setpgid: true}}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if b, _ := os.ReadFile(filepath.Join(dir, "ready")); len(b) > 0 {
+			break
+		}
+	}
+	return cmd
 }
 
 // lockedBuffer is a bytes.Buffer safe for a logging goroutine and the test to share.

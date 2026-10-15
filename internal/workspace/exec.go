@@ -259,6 +259,9 @@ var reapGrace = 8 * time.Second
 // SIGHUP/SIGQUIT to its target instead so a graceful signal stays graceful.
 const reapStopSignal = syscall.SIGUSR2
 
+// reapResend: a __reap wrapper's Go runtime drops reapStopSignal until ReapMain's signal.Notify runs.
+const reapResend = 20 * time.Millisecond
+
 // StopChild tears down a child built from WrapArgv/childArgv argv. A __reap wrapper gets
 // reapStopSignal and kills every descendant itself; otherwise (or if it overruns) killGroup.
 func StopChild(cmd *exec.Cmd) error {
@@ -269,17 +272,27 @@ func StopChild(cmd *exec.Cmd) error {
 	if len(cmd.Args) < 2 || cmd.Args[1] != ReapArg {
 		return killGroup(p)
 	}
-	grace := reapGrace
-	time.AfterFunc(grace, func() {
-		if p.Signal(syscall.Signal(0)) != nil {
+	go escalateReaper(p, reapGrace)
+	return p.Signal(reapStopSignal)
+}
+
+// escalateReaper repeats reapStopSignal until p is reaped, and killGroups it once grace runs out.
+func escalateReaper(p *os.Process, grace time.Duration) {
+	deadline := time.Now().Add(grace)
+	tick := time.NewTicker(reapResend)
+	defer tick.Stop()
+	for range tick.C {
+		if p.Signal(reapStopSignal) != nil {
 			return // exited and reaped
 		}
-		if killGroup(p) == nil {
-			slog.Error("sandbox reaper still running after its stop signal; SIGKILLed it and its process group, descendants outside the group may survive",
-				"component", "workspace", "pid", p.Pid, "grace", grace)
+		if time.Now().After(deadline) {
+			break
 		}
-	})
-	return p.Signal(reapStopSignal)
+	}
+	if killGroup(p) == nil {
+		slog.Error("sandbox reaper still running after its stop signal; SIGKILLed it and its process group, descendants outside the group may survive",
+			"component", "workspace", "pid", p.Pid, "grace", grace)
+	}
 }
 
 // killGroup SIGKILLs p's process group, or p alone when it leads no group (no Setpgid).
@@ -371,6 +384,9 @@ func RunPipeline(ctx context.Context, dir string, stages [][]string, caps Caps) 
 		return ExecResult{}, err
 	}
 	if err := startPipelineCmds(cmds, stages); err != nil {
+		if cctx.Err() == context.DeadlineExceeded { // a stage's Start refused the expired deadline
+			return ExecResult{ExitCode: -1, TimedOut: true}, fmt.Errorf("workspace: pipeline timed out after %s", timeout)
+		}
 		return ExecResult{}, err
 	}
 	exitCode, failNotes, err := waitPipelineCmds(cctx, cmds, stages, caps)
