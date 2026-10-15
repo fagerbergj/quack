@@ -297,3 +297,17 @@ func TestCommentLabel_Variants(t *testing.T) {
 		}
 	}
 }
+
+// The label field leads the staged body and wins over a label the body already opened with.
+func TestWithCommentLabel(t *testing.T) {
+	for _, tc := range []struct{ label, body, want string }{
+		{"blocking", "nil deref on the empty path", "🚨 **blocking:** nil deref on the empty path"},
+		{"Nit", "nit: rename x", "🔧 **nit:** rename x"},
+		{"nit", "🚨 **blocking:** rename x", "🔧 **nit:** rename x"},
+		{"", "question: why?", "question: why?"},
+	} {
+		if got := WithCommentLabel(tc.label, tc.body); got != tc.want {
+			t.Errorf("WithCommentLabel(%q, %q) = %q, want %q", tc.label, tc.body, got, tc.want)
+		}
+	}
+}
