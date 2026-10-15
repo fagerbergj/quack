@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
   activityFromTurn, isTurnInProgress, ChatStore,
-  sinkNodeIds, dagAnswer, liveAnswerText, dagTotalTokens, dagAnswerAttribution, turnUsageTotal, plainReplyAttribution, pendingNodeQuestion,
+  sinkNodeIds, dagAnswer, liveAnswerText, dagTotalTokens, dagTotalCost, dagTurnStateFromItem, dagAnswerAttribution, turnUsageTotal, plainReplyAttribution, pendingNodeQuestion,
   type DagTurnState,
 } from './chatStore'
 import { pendingChoice } from '../components/messageParts'
@@ -1257,6 +1257,21 @@ describe('answer-bubble attribution helpers', () => {
 
   it('dagTotalTokens is 0 when no node reports usage', () => {
     expect(dagTotalTokens(dag({}))).toBe(0)
+  })
+
+  it('dagTotalCost sums priced nodes and is undefined, not $0, when none was priced', () => {
+    expect(dagTotalCost(dag({ a: { status: 'done', costUsd: 0.25 }, b: { status: 'done' } }))).toBe(0.25)
+    expect(dagTotalCost(dag({ a: { status: 'done' } }))).toBeUndefined()
+  })
+
+  it('dagTurnStateFromItem carries a node cost and leaves an unpriced one unset', () => {
+    const s = dagTurnStateFromItem({
+      id: 'p', type: 'quack:dag', status: 'completed', plan_id: 'p', edges: [],
+      nodes: [{ id: 'a', agent: 'x', task: 't', depends_on: [] }, { id: 'b', agent: 'x', task: 't', depends_on: [] }],
+      node_states: { a: { status: 'done', cost_usd: 0.42 }, b: { status: 'done' } },
+    })
+    expect(s.nodeStates.a.costUsd).toBe(0.42)
+    expect(s.nodeStates.b.costUsd).toBeUndefined()
   })
 
   it("dagAnswerAttribution credits the terminal node's agent + its own model/tokens", () => {

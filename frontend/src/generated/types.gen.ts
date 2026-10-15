@@ -1060,6 +1060,11 @@ export type DagNodeState = {
      * Subset of prompt_tokens served from the model's prompt cache.
      */
     cached_tokens?: number;
+    /**
+     * Cloud-equivalent USD summed over the node's priced model calls in this chat, judge rounds included. Omitted when none was priced or the ledger can't sum costs.
+     *
+     */
+    cost_usd?: number;
     server_duration_ms?: number;
     judge_rounds?: number;
     judge_final_score?: number;

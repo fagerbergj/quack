@@ -133,3 +133,17 @@ export const FullyDone: Story = {
     },
   },
 }
+
+// Priced nodes show their cost; r2 ran on an unpriced model, so it shows none and the footer sums the other two.
+export const FullyDoneWithCost: Story = {
+  args: {
+    dag: {
+      ...FullyDone.args!.dag!,
+      nodeStates: {
+        ...FullyDone.args!.dag!.nodeStates,
+        r1: { ...FullyDone.args!.dag!.nodeStates.r1, costUsd: 0.31 },
+        synth: { ...FullyDone.args!.dag!.nodeStates.synth, costUsd: 0.004 },
+      },
+    },
+  },
+}

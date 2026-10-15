@@ -292,18 +292,23 @@ func (s *PGStore) ReadEntriesFiltered(ctx context.Context, chatID string, fromSe
 	return pgRowsToEntries(rows), nil
 }
 
-// ChatCostUSD sums in SQL: llm.call payloads carry the whole prompt, too heavy to decode for one total.
-func (s *PGStore) ChatCostUSD(ctx context.Context, chatID string) (float64, bool, error) {
-	var r struct {
-		USD float64
-		N   int64
+// ChatCostsUSD sums in SQL: llm.call payloads carry the whole prompt, too heavy to decode for one total.
+func (s *PGStore) ChatCostsUSD(ctx context.Context, chatID string) (map[string]float64, error) {
+	var rows []struct {
+		NodeID string
+		USD    float64
 	}
 	if err := s.db.WithContext(ctx).Table("ledger_entries").
-		Select("COALESCE(SUM((payload->>'cost_usd')::float8),0) AS usd, COUNT(payload->>'cost_usd') AS n").
-		Where("chat_id = ? AND kind = ?", chatID, KindLLMCall).Scan(&r).Error; err != nil {
-		return 0, false, fmt.Errorf("ledger: cost for chat %q: %w", chatID, err)
+		Select("COALESCE(node_id,'') AS node_id, SUM((payload->>'cost_usd')::float8) AS usd").
+		Where("chat_id = ? AND kind = ? AND payload->>'cost_usd' IS NOT NULL", chatID, KindLLMCall).
+		Group("node_id").Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("ledger: cost for chat %q: %w", chatID, err)
 	}
-	return r.USD, r.N > 0, nil
+	costs := make(map[string]float64, len(rows))
+	for _, r := range rows {
+		costs[r.NodeID] += r.USD
+	}
+	return costs, nil
 }
 
 // ReadEntriesFilteredSince runs ReadAllByKindsSince's cross-chat read as one `kind IN (?) AND at >= ?` scan
