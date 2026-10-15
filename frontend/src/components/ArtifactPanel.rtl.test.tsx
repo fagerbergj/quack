@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
-import { act, cleanup, render as rtlRender, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render as rtlRender, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactElement } from 'react'
 import { ArtifactPanel, ReviewView, JudgeRoundView, PlanView } from './ArtifactPanel'
@@ -206,6 +206,39 @@ describe('ArtifactPanel as a result view (#1178)', () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch') }))
     render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan the fix" nodeArtifactKind="text" onClose={() => {}} />)
     expect((await screen.findByText(/Request failed/)).className).toContain('text-red-700')
+  })
+
+  it("shows only this run's judge rounds for a node id reused across turns", async () => {
+    const at = (hhmm: string) => `2026-09-04T${hhmm}:00Z`
+    const round = (n: number, passed: boolean) => JSON.stringify({ round: n, passed, score: passed ? 0.9 : 0.3, scored: [], notes: [] })
+    const judge = (name: string, n: number, saved: string) =>
+      ({ name, kind: 'judge_round', class: 'structured', latest_revision: 1, lineage: { node_id: 'trends', round: n, author: 'judge', saved_at: at(saved) }, revisions: [] })
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = decodeURIComponent(input instanceof Request ? input.url : String(input))
+      if (url.includes('/artifacts/text:trends/revisions')) {
+        return jsonResponse({ data: [{ revision: 1, mime_type: 'text/markdown', size: 9, kind: 'text', class: 'blob', lineage: { node_id: 'trends', round: 1, author: 'worker', saved_at: at('10:01') } }] })
+      }
+      if (url.includes('/artifacts/text:trends')) return textResponse('# Trends\n')
+      if (url.includes('/artifacts/judge_round:e-old-trends-1')) return textResponse(round(1, true))
+      if (url.includes('/artifacts/judge_round:e-new-trends-1')) return textResponse(round(1, false))
+      if (url.includes('/artifacts/judge_round:e-new-trends-2')) return textResponse(round(2, true))
+      if (url.endsWith('/artifacts')) {
+        return jsonResponse({
+          data: [
+            { name: 'text:trends', kind: 'text', class: 'blob', latest_revision: 1, lineage: { node_id: 'trends', round: 1, author: 'worker', saved_at: at('10:01') }, revisions: [] },
+            judge('judge_round:e-old-trends-1', 1, '09:00'),
+            judge('judge_round:e-new-trends-1', 1, '10:02'),
+            judge('judge_round:e-new-trends-2', 2, '10:04'),
+          ],
+        })
+      }
+      return new Response(JSON.stringify({ error: 'not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } })
+    }))
+    render(<ArtifactPanel chatId="chat-1" nodeId="trends" nodeAgent="Trend scout" nodeTask="t" nodeArtifactKind="text"
+      runStartedAt={Date.parse(at('10:00'))} runFinishedAt={Date.parse(at('10:05'))} onClose={() => {}} />)
+    expect(await screen.findByRole('button', { name: 'Round 1, failed, score 30%' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Round 2, passed, score 90%' })).toBeTruthy()
+    expect(within(screen.getByRole('group', { name: 'Judge rounds' })).getAllByRole('button')).toHaveLength(2)
   })
 
   // focusArtifactId shows the tapped row's artifact without reintroducing an id-based picker.
