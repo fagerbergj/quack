@@ -114,6 +114,33 @@ func TestSetupCloneRejectsNonHTTPS(t *testing.T) {
 	}
 }
 
+// workspace.file_repos opts a lab into file:// clones of exactly those repos, pinned head and all, as a seeded replay needs.
+func TestSetupCloneAcceptsFileReposOptIn(t *testing.T) {
+	requireGit(t)
+	bare := newBareRepoFixture(t)
+	out, err := exec.Command("git", "-C", bare, "rev-parse", "main").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := strings.TrimSpace(string(out))
+	b := newTestGitBinding(t)
+	// Confined where the kernel allows, so the file_repos read grant is what lets the clone through.
+	workspace.FileRepos = []string{bare}
+	workspace.ConfineGit(true)
+	t.Cleanup(func() { workspace.FileRepos = nil; workspace.ConfineGit(false) })
+
+	if _, err := SetupClone(context.Background(), b.jail, b.userID, "", "elsewhere", "file://"+t.TempDir(), "main", "feat", "", false, b.caps, nil, nil, nil); err == nil {
+		t.Error("expected a file:// repo outside workspace.file_repos to be rejected")
+	}
+	target, err := SetupClone(context.Background(), b.jail, b.userID, "", "repo", "file://"+bare, "main", "feat", head, true, b.caps, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("SetupClone: %v", err)
+	}
+	if got := strings.TrimSpace(runGitT(t, target, "rev-parse", "HEAD")); got != head {
+		t.Errorf("HEAD = %s, want the pinned %s", got, head)
+	}
+}
+
 // TestSetupCloneRunsCheckSetup: the shared clone is bootstrapped right after checkout. Composes
 // setupCloneAndBranch + RunCheckSetup as SetupClone does, since SetupClone accepts only https.
 func TestSetupCloneRunsCheckSetup(t *testing.T) {

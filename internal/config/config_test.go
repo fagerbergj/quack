@@ -1019,6 +1019,23 @@ workspace:
 	}
 }
 
+// file_repos is off by default; an entry must be a clean absolute path, since it widens what quack's git may read.
+func TestWorkspaceFileRepos(t *testing.T) {
+	c, err := Load(writeTemp(t, baseConfig))
+	if err != nil || len(c.Workspace.FileRepos) != 0 {
+		t.Fatalf("default file_repos = %v, %v; want none", c.Workspace.FileRepos, err)
+	}
+	c, err = Load(writeTemp(t, baseConfig+"\nworkspace:\n  file_repos: [/lab/mirrors]\n"))
+	if err != nil || len(c.Workspace.FileRepos) != 1 || c.Workspace.FileRepos[0] != "/lab/mirrors" {
+		t.Fatalf("file_repos = %v, %v", c.Workspace.FileRepos, err)
+	}
+	for _, bad := range []string{"lab/mirrors", "/lab/../etc", "/"} {
+		if _, err := Load(writeTemp(t, baseConfig+"\nworkspace:\n  file_repos: [\""+bad+"\"]\n")); err == nil {
+			t.Errorf("file_repos %q: want a config error", bad)
+		}
+	}
+}
+
 // `none` is the explicit opt-out, limits round-trip, and any other value is a startup error
 // rather than a typo that silently means "no sandbox".
 func TestWorkspaceSandboxOverrides(t *testing.T) {

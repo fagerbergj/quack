@@ -27,6 +27,20 @@ var ErrNotQuackRepo = errors.New("not a repository quack created")
 // GitProtocol is the only transport quack's own git calls may use; tests widen it to "file" for local fixtures.
 var GitProtocol = "https"
 
+// FileRepos are local repos quack's own git may also read over file:// (workspace.file_repos, a lab opt-in).
+var FileRepos []string
+
+// FileRepoAllowed: p is one of FileRepos or lies inside one.
+func FileRepoAllowed(p string) bool {
+	p = filepath.Clean(p)
+	for _, r := range FileRepos {
+		if p == r || strings.HasPrefix(p, r+"/") {
+			return true
+		}
+	}
+	return false
+}
+
 // gitConfigKeep is every repo-config key quack's own git honours. Repo url.<base>.insteadOf, remote.<url>.url and
 // filter/merge drivers redirect or run code and no -c counter-rule outranks them, so everything else is dropped.
 var gitConfigKeep = regexp.MustCompile(`^(core\.(repositoryformatversion|filemode|bare|logallrefupdates|ignorecase|precomposeunicode|symlinks)|extensions\.(objectformat|refstorage)|remote\.origin\.(url|fetch)|branch\..+\.(remote|merge)|user\.(name|email))$`)
@@ -44,6 +58,9 @@ func GitSafeArgs() []string {
 	args := []string{"-c", "protocol.allow=never"}
 	for _, p := range []string{"file", "git", "ssh", "ext", "fd", "http", "ftp", "ftps"} {
 		args = append(args, "-c", "protocol."+p+".allow=never")
+	}
+	if len(FileRepos) > 0 {
+		args = append(args, "-c", "protocol.file.allow=always")
 	}
 	return append(args,
 		"-c", "protocol."+GitProtocol+".allow=always",
@@ -165,7 +182,7 @@ func newGitGrants(bin, home string, env, rw []string) (*gitGrants, error) {
 	if p, err := exec.LookPath(bin); err == nil {
 		bin = p
 	}
-	g := &gitGrants{bin: bin, ro: []string{"/usr", "/bin", "/lib", "/lib64", "/sbin", "/etc", "/etc/resolv.conf", "/dev/urandom", bin}}
+	g := &gitGrants{bin: bin, ro: append([]string{"/usr", "/bin", "/lib", "/lib64", "/sbin", "/etc", "/etc/resolv.conf", "/dev/urandom", bin}, FileRepos...)}
 	err := g.grantRW(home, false)
 	for _, p := range append([]string{"/dev/null"}, GitFixtureDirs...) {
 		err = errors.Join(err, g.grantRW(p, false))

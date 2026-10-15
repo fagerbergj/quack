@@ -515,6 +515,7 @@ func (b *boot) initObservability(ctx context.Context, ledgerStore ledger.LedgerS
 
 // creates the workspace jail; managed servers also bring up their store containers
 func (b *boot) initWorkspace(ctx context.Context) (*workspace.Jail, error) {
+	workspace.FileRepos = b.cfg.Workspace.FileRepos
 	workspace.ConfineGit(true) // before the plugin registry's boot fetch, the first git quack runs
 	jail, err := workspace.NewJail(b.cfg.Workspace.Root)
 	if err != nil {

@@ -274,14 +274,17 @@ func runGitIn(ctx context.Context, clone, dir string, argv []string, caps worksp
 	return out, errOut, nil
 }
 
-// validateCloneURL: enforces https-only, rejects URLs with inline credentials.
+// validateCloneURL: enforces https (or file:// under workspace.file_repos), rejects URLs with inline credentials.
 func validateCloneURL(raw string) (*url.URL, error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
 		return nil, fmt.Errorf("git_clone: invalid url: %w", err)
 	}
+	if u.Scheme == "file" && u.Host == "" && workspace.FileRepoAllowed(u.Path) {
+		return u, nil
+	}
 	if u.Scheme != "https" {
-		return nil, fmt.Errorf("git_clone: only https:// URLs are allowed (got %q)", u.Scheme)
+		return nil, fmt.Errorf("git_clone: only https:// URLs, or file:// ones under workspace.file_repos, are allowed (got %q)", u.Scheme)
 	}
 	if u.User != nil {
 		return nil, fmt.Errorf("git_clone: credentials in the URL are rejected; configure workspace.git_credentials for private repos instead")

@@ -91,6 +91,15 @@ workspace:
 
 Quack's own git calls (setup clone, fetch and checkout, worktree ops, the gate's push) ignore git configuration an agent can write. Each runs with an empty per-call `HOME`, no system or global config, and hooks, fsmonitor, credential helpers, ssh, gpg signing and gc all off. Before any call inside an existing clone, quack strips that clone's repository config down to core settings, `remote.origin.url`/`fetch`, branch tracking and `user.name`/`email` - which drops filter and merge drivers, `url.<base>.insteadOf` and `remote.<url>.url` rewrites that a `-c` override cannot outrank. Each call names its repository explicitly (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`) rather than letting git discover it from the working tree, and refuses to run unless that repository is the clone quack created - its own `.git` directory, or `.git/worktrees/<name>` for a linked worktree whose `commondir` leads back - with no object alternates. A clone or worktree directory reached through a symlink is never followed: setup removes the link with a warning and clones afresh. Workspace GC prunes a worktree only from a clone inside the workspace root. Fetches and pushes use the repository URL itself rather than a named remote, and the credential helper answers only prompts for that URL's host. These calls drop `SSH_ASKPASS` and every `GIT_*` variable except `GIT_SSL_CAINFO` and `GIT_SSL_CAPATH` from `workspace.env`. Whenever the kernel supports Landlock, whatever `sandbox` says, each of these calls also runs under Landlock with write access only to its own clone (plus the new clone or worktree directory it creates, refused if any part of its path is a symlink) and its per-call `HOME`, so a symlink or object alternate inside `.git` that leads outside the clone is denied by the kernel. Without Landlock, quack warns at startup that its own git runs unconfined.
 
+## `file_repos`
+
+```yaml
+workspace:
+  file_repos: [/lab/mirrors]   # default none: setup clones are https:// only
+```
+
+`file_repos` lets a setup clone read a local repository over `file://`, for a lab config that replays seeded items (`quack dataset seed`, see [cli.md](../../cli.md#datasets-and-experiments)). A `file://` URL is accepted only when its path is one of these entries or lies inside one; each entry must be a clean absolute path. Quack's own git then also allows the `file` protocol and, when it runs under Landlock, may read these directories. List the directory holding the seed mirror, since each seeded item's repository borrows the mirror's objects. Leave it unset on a production server.
+
 `git_push` (the one outward-facing, non-undoable git operation) is gate-owned delivery, not a top-level toggle - there is no `workspace.git_push` field. A push can never force-push (unexpressible - no argv path ever adds `--force`) and refuses `main`/`master`.
 
 ## `gc`: the workspace reaper

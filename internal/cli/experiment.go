@@ -13,6 +13,7 @@ import (
 	"os"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -30,6 +31,7 @@ import (
 	"github.com/fagerbergj/quack/internal/langfuse"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/ledger/bundle"
+	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/store"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
@@ -61,6 +63,8 @@ type experimentItemInput struct {
 	Artifacts map[string]string `json:"artifacts,omitempty"`
 	// SkippedArtifacts: inputs the export left out for size; the run item names them so a comparison can exclude it.
 	SkippedArtifacts []string `json:"skipped_artifacts,omitempty"`
+	// Seeded is the defect `dataset seed` planted (the item's metadata.seeded); nil for an unseeded item.
+	Seeded *seededDefect `json:"-"`
 }
 
 // itemRun is one item's node run: the trace RunExperiment links, and what it scores on that trace.
@@ -75,6 +79,8 @@ type itemRun struct {
 	Cost     itemCost
 	// WorkerModel/JudgeModel: what the node and its judge actually called, so arms on different models stay apart.
 	WorkerModel, JudgeModel string
+	// Comments: the review's final inline findings, read only for a seeded item.
+	Comments []vetting.ReviewComment
 }
 
 type criterionScore struct {
@@ -192,7 +198,7 @@ func runExperimentItem(ctx context.Context, runner itemRunner, lf *langfuse.Clie
 	if res.Error != "" {
 		return res, nil
 	}
-	if err := recordRunItem(ctx, lf, opts, item.ID, run, in.SkippedArtifacts); err != nil {
+	if err := recordRunItem(ctx, lf, opts, item.ID, run, in); err != nil {
 		return ExperimentResult{}, err
 	}
 	return res, nil
@@ -200,13 +206,16 @@ func runExperimentItem(ctx context.Context, runner itemRunner, lf *langfuse.Clie
 
 func itemInput(item langfuse.DatasetItem) (experimentItemInput, error) {
 	var in experimentItemInput
-	b, err := json.Marshal(item.Input)
-	if err != nil {
+	var meta struct {
+		Seeded *seededDefect `json:"seeded"`
+	}
+	if err := remarshal(item.Input, &in); err != nil {
 		return in, err
 	}
-	if err := json.Unmarshal(b, &in); err != nil {
+	if err := remarshal(item.Metadata, &meta); err != nil {
 		return in, err
 	}
+	in.Seeded = meta.Seeded
 	if in.Task == "" {
 		return in, fmt.Errorf("item %s: input has no task field", item.ID)
 	}
@@ -215,8 +224,9 @@ func itemInput(item langfuse.DatasetItem) (experimentItemInput, error) {
 
 // recordRunItem scores the trace before linking it, so a failed link leaves only scores on an unlinked
 // trace. The prompt rides on the run (description and metadata); the answer already lives on the trace.
-func recordRunItem(ctx context.Context, lf *langfuse.Client, opts ExperimentOpts, itemID string, run itemRun, skipped []string) error {
-	if err := lf.Ingest(ctx, itemScores(run, time.Now().UTC().Format(time.RFC3339Nano))); err != nil {
+func recordRunItem(ctx context.Context, lf *langfuse.Client, opts ExperimentOpts, itemID string, run itemRun, in experimentItemInput) error {
+	skipped := in.SkippedArtifacts
+	if err := lf.Ingest(ctx, itemScores(run, in.Seeded, time.Now().UTC().Format(time.RFC3339Nano))); err != nil {
 		return fmt.Errorf("experiment run: item %s: score trace: %w", itemID, err)
 	}
 	meta := map[string]string{"agent": opts.Agent, "prompt_name": run.Prompt.Name,
@@ -237,14 +247,19 @@ func recordRunItem(ctx context.Context, lf *langfuse.Client, opts ExperimentOpts
 }
 
 // itemScores is every numeric score RunExperiment puts on run's trace: one per judged criterion,
-// gate_passed, and the cost.* signals. Langfuse averages each per dataset run, so two runs compare column by column.
-func itemScores(run itemRun, ts string) []langfuse.IngestEvent {
+// gate_passed, the cost.* signals, and for a seeded item seeded_hit and review_comments. Langfuse averages each
+// per dataset run, so two runs compare column by column.
+func itemScores(run itemRun, seeded *seededDefect, ts string) []langfuse.IngestEvent {
 	score := func(name string, v float64, comment string) langfuse.IngestEvent {
 		return langfuse.NumericScore(run.TraceID, name, v, comment, ts)
 	}
-	out := make([]langfuse.IngestEvent, 0, len(run.Criteria)+9)
+	out := make([]langfuse.IngestEvent, 0, len(run.Criteria)+11)
 	for _, c := range run.Criteria {
 		out = append(out, score(c.Name, c.Score, c.Explanation))
+	}
+	if seeded != nil {
+		out = append(out, score("seeded_hit", seededHit(*seeded, run.Comments), seeded.Operator+" at "+seeded.Path+":"+strconv.Itoa(seeded.Line)),
+			score("review_comments", float64(len(run.Comments)), ""))
 	}
 	passed := 0.0
 	if run.Passed {
@@ -262,6 +277,55 @@ func itemScores(run itemRun, ts string) []langfuse.IngestEvent {
 		score("cost.judge_rounds", float64(c.JudgeRounds), ""),
 		score("cost.wall_time_s", c.WallTime.Seconds(), ""),
 	)
+}
+
+// seededHitWindow: lines either side of the planted line a comment may anchor to and still count, since a reviewer
+// often anchors a finding on the statement it guards or the line after a deleted block.
+const seededHitWindow = 3
+
+// seededHit is 1 when any comment lands on d's file within seededHitWindow lines of it, else 0.
+func seededHit(d seededDefect, comments []vetting.ReviewComment) float64 {
+	for _, c := range comments {
+		if c.Path == d.Path && c.Line >= d.Line-seededHitWindow && c.Line <= d.Line+seededHitWindow {
+			return 1
+		}
+	}
+	return 0
+}
+
+// reviewComments reads the chat's final code_review record and its findings: the gate saves the node's staged
+// comments there every round, so the latest revision holds what the review would have posted. None when no review was saved.
+func reviewComments(ctx context.Context, c *Client, chatID string) ([]vetting.ReviewComment, error) {
+	id, err := recordstore.IdentityFor("code_review", nil, vetting.SubjectHint(chatID))
+	if err != nil {
+		return nil, err
+	}
+	var rec vetting.CodeReviewRecord
+	if err := fetchRecord(ctx, c, chatID, id, &rec); errors.Is(err, ErrNotFound) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	out := make([]vetting.ReviewComment, 0, len(rec.FindingIDs))
+	for _, fid := range rec.FindingIDs {
+		var f vetting.FindingRecord
+		if err := fetchRecord(ctx, c, chatID, fid, &f); err != nil {
+			return nil, err
+		}
+		out = append(out, vetting.ReviewComment{Path: f.Path, Line: f.LineHint})
+	}
+	return out, nil
+}
+
+func fetchRecord(ctx context.Context, c *Client, chatID, id string, v any) error {
+	b, err := c.FetchArtifact(ctx, chatID, id, 0)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(b, v); err != nil {
+		return fmt.Errorf("%s: %w", id, err)
+	}
+	return nil
 }
 
 // LiveItemRunner runs each item as a fresh chat against Base, then reads Agent's node run back from the
@@ -308,7 +372,13 @@ func (r *LiveItemRunner) RunItem(ctx context.Context, in experimentItemInput) (i
 	runs := sess.NodeRuns(map[string]bool{r.Agent: true})
 	for _, key := range sortedStreamKeys(runs) {
 		if run := runs[key]; run.Answer != "" {
-			return r.itemRunFor(ctx, chatID, sess, key.Node, run), nil
+			out := r.itemRunFor(ctx, chatID, sess, key.Node, run)
+			if in.Seeded != nil {
+				if out.Comments, err = reviewComments(ctx, c, chatID); err != nil {
+					return itemRun{}, fmt.Errorf("chat %s: read review comments: %w", chatID, err)
+				}
+			}
+			return out, nil
 		}
 	}
 	return itemRun{}, fmt.Errorf("chat %s: agent %q produced no node run", chatID, r.Agent)
