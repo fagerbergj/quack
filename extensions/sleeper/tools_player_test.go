@@ -23,9 +23,10 @@ func TestGetPlayerByID(t *testing.T) {
 		t.Error("expected fetched_at to be set")
 	}
 	g := got.Game
-	if g == nil || g.GameID != "202610229" || g.NFLOpponent != "LV" || !g.IsHome || g.Roof != "outdoor" || g.Venue != "SoFi Stadium" ||
+	if g == nil || g.GameID != "202610229" || g.NFLOpponent != "LV" || !g.IsHome || g.Roof != "dome" || g.Venue != "SoFi Stadium" ||
+		g.Latitude != 33.95 || g.Longitude != -118.34 ||
 		g.Kickoff != "2026-09-20T20:05:00Z" || g.KickoffLocal != "Sun Sep 20 3:05 PM CDT" {
-		t.Errorf("game = %+v, want week-2 LV @ LAC at SoFi, 3:05 PM CDT", g)
+		t.Errorf("game = %+v, want week-2 LV @ LAC at SoFi (a dome), 3:05 PM CDT", g)
 	}
 }
 

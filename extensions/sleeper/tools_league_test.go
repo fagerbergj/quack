@@ -73,7 +73,8 @@ func TestGetSchedule(t *testing.T) {
 	// The fixture's schedule status is a stale "pre_game"; locked must follow the kickoff instead.
 	g := got.Games[0]
 	want := scheduleGame{GameID: "202610201", Home: "ARI", Away: "SEA", Date: "2026-09-20", Status: "pre_game",
-		Kickoff: "2026-09-20T20:25:00Z", KickoffLocal: "Sun Sep 20 3:25 PM CDT", Venue: "State Farm Stadium", City: "Glendale", Roof: "retractable_dome"}
+		Kickoff: "2026-09-20T20:25:00Z", KickoffLocal: "Sun Sep 20 3:25 PM CDT", Venue: "State Farm Stadium", City: "Glendale", Roof: "retractable_dome",
+		Latitude: 33.53, Longitude: -112.26}
 	if g.Locked == nil || !*g.Locked {
 		t.Errorf("games[0].locked = %v, want true", g.Locked)
 	}
@@ -141,6 +142,23 @@ func TestWithKickoff(t *testing.T) {
 				t.Errorf("nil stadium produced venue %q roof %q", got.Venue, got.Roof)
 			}
 		})
+	}
+}
+
+func TestWithVenue(t *testing.T) {
+	tests := []struct {
+		venue, roof, wantRoof string
+		wantLat, wantLon      float64
+	}{
+		{"Wembley Stadium", "retractable_dome", "outdoor", 51.56, -0.28},
+		{"Soldier Field", "outdoor", "outdoor", 41.86, -87.62},
+		{"Unknown Park", "outdoor", "outdoor", 0, 0},
+	}
+	for _, tc := range tests {
+		g := withVenue(scheduleGame{}, tc.venue, "", tc.roof)
+		if g.Roof != tc.wantRoof || g.Latitude != tc.wantLat || g.Longitude != tc.wantLon {
+			t.Errorf("%s: roof/lat/lon = %q/%v/%v, want %q/%v/%v", tc.venue, g.Roof, g.Latitude, g.Longitude, tc.wantRoof, tc.wantLat, tc.wantLon)
+		}
 	}
 }
 

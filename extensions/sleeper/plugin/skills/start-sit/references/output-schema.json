@@ -179,6 +179,10 @@
             },
             "description": "The player this starter replaces in the owner's current Sleeper lineup. Its presence marks the row as a change."
           },
+          "close": {
+            "type": "boolean",
+            "description": "True for each player in an open close call (start-sit step 2, both players' games unlocked, a rostered alternative). Code checks that each such player's outdoor game has a weather call."
+          },
           "why": {
             "type": "string",
             "maxLength": 1000
@@ -254,6 +258,10 @@
               "number",
               "null"
             ]
+          },
+          "close": {
+            "type": "boolean",
+            "description": "True for each player in an open close call (start-sit step 2, both players' games unlocked, a rostered alternative). Code checks that each such player's outdoor game has a weather call."
           },
           "why": {
             "type": "string",

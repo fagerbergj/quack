@@ -2347,6 +2347,8 @@ func computeDeterministicCriteria(ctx context.Context, answer string, act worker
 	setIfApplicable(det, "artifact_valid", avc, avcOK)
 	scc, sccOK := specificsCitedCriterionScore(ctx, deliverable, act, cfg, nil)
 	setIfApplicable(det, specificsCitedCriterion, scc, sccOK)
+	wc, wcOK := weatherCheckedCriterionScore(ctx, deliverable, act, cfg)
+	setIfApplicable(det, weatherCheckedCriterion, wc, wcOK)
 	return det, checksSkipReason
 }
 
@@ -2441,7 +2443,7 @@ func codeOwnedCriterion(name string, specs map[string]criterionSpec) bool {
 // CodeOwnedCriteria names every criterion code computes; a rubric's deterministic: true outside this set
 // is never scored. tools/promptlint checks rubrics against it.
 func CodeOwnedCriteria() []string {
-	names := []string{"cites_sources", specificsCitedCriterion, specificsSupportedCriterion}
+	names := []string{"cites_sources", specificsCitedCriterion, specificsSupportedCriterion, weatherCheckedCriterion}
 	for n := range deterministicCriterionSpec {
 		names = append(names, n)
 	}
@@ -3082,4 +3084,5 @@ func (s *activityScanner) recordDataTool(name string, args, resp map[string]any)
 	respJSON, _ := json.Marshal(resp)
 	entry := fmt.Sprintf("%s(%s) -> %s", name, argsJSON, respJSON)
 	s.act.dataTools = append(s.act.dataTools, boundExcerpt(entry, dataToolEntryCap))
+	s.act.dataCalls = append(s.act.dataCalls, dataCall{name: name, args: args, resp: resp})
 }

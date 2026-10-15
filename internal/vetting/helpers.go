@@ -306,6 +306,8 @@ type workerActivity struct {
 	// dataTools: rendered "tool(args) -> result" entries for calls with no
 	// other judge-visible path (e.g. sleeper_matchup) - oldest first.
 	dataTools []string
+	// dataCalls: the same calls unrendered and uncapped, for code-owned checks that read their fields.
+	dataCalls []dataCall
 
 	// artifactsWritten: ids written/edited via a native artifact tool this round; feeds the
 	// artifact-read zero-reads discard rule.

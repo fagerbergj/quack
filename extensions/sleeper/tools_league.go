@@ -1,6 +1,7 @@
 package sleeper
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"time"
@@ -156,18 +157,20 @@ type scheduleArgs struct {
 }
 
 type scheduleGame struct {
-	GameID       string `json:"game_id"`
-	Home         string `json:"home"`
-	Away         string `json:"away"`
-	Date         string `json:"date,omitempty"`
-	Kickoff      string `json:"kickoff,omitempty"`
-	KickoffLocal string `json:"kickoff_local,omitempty"`
-	KickoffTBD   bool   `json:"kickoff_tbd,omitempty"`
-	Locked       *bool  `json:"locked,omitempty"`
-	Status       string `json:"status,omitempty"`
-	Venue        string `json:"venue,omitempty"`
-	City         string `json:"city,omitempty"`
-	Roof         string `json:"roof,omitempty"`
+	GameID       string  `json:"game_id"`
+	Home         string  `json:"home"`
+	Away         string  `json:"away"`
+	Date         string  `json:"date,omitempty"`
+	Kickoff      string  `json:"kickoff,omitempty"`
+	KickoffLocal string  `json:"kickoff_local,omitempty"`
+	KickoffTBD   bool    `json:"kickoff_tbd,omitempty"`
+	Locked       *bool   `json:"locked,omitempty"`
+	Status       string  `json:"status,omitempty"`
+	Venue        string  `json:"venue,omitempty"`
+	City         string  `json:"city,omitempty"`
+	Roof         string  `json:"roof,omitempty"`
+	Latitude     float64 `json:"latitude,omitempty"`
+	Longitude    float64 `json:"longitude,omitempty"`
 }
 
 type scheduleResult struct {
@@ -185,7 +188,8 @@ const (
 		"= unknown, treat as possibly locked. Give kickoff times only for locked=false games. kickoff_tbd: " +
 		"flex game, time not set yet. Canceled/postponed games carry no kickoff."
 	playerGameDoc = "Each player's own NFL game this week is already joined in code: game {game_id, " +
-		"nfl_opponent, is_home, kickoff, kickoff_local, kickoff_tbd, locked, status, roof, venue}, or " +
+		"nfl_opponent, is_home, kickoff, kickoff_local, kickoff_tbd, locked, status, roof, venue, latitude, " +
+		"longitude}, or " +
 		"instead bye=true or no_game_reason. Use it as-is; never take a kickoff or opponent from another game. " + lockDoc
 	gameRulesDoc = playerGameDoc + " " + timeDoc + " These rules hold for every sleeper tool that returns games."
 	seePlayerDoc = "The game, locked, kickoff, `tz` and week fields follow the rules in the sleeper_player description."
@@ -197,7 +201,8 @@ func (e *extension) scheduleTool() tool.Tool {
 			Name: "sleeper_schedule",
 			Description: "Get the NFL schedule for a week (default the current week). Per game: status " +
 				"(pre_game, in_game, complete, canceled, postponed), date (US Eastern calendar date), " +
-				"kickoff, kickoff_local, locked, venue, city, roof (outdoor/dome/retractable_dome). " +
+				"kickoff, kickoff_local, locked, venue, city, roof (outdoor/dome/retractable_dome), and the venue's " +
+				"latitude/longitude (absent for a venue the extension does not know). " +
 				seePlayerDoc + " A rostered player's game is already joined by " +
 				"sleeper_roster/sleeper_matchup/sleeper_player.",
 		},
@@ -311,16 +316,18 @@ type gameInfo struct {
 
 // playerGame is the per-player slice of a scheduleGame; city/date stay in sleeper_schedule.
 type playerGame struct {
-	GameID       string `json:"game_id"`
-	NFLOpponent  string `json:"nfl_opponent"`
-	IsHome       bool   `json:"is_home"`
-	Kickoff      string `json:"kickoff,omitempty"`
-	KickoffLocal string `json:"kickoff_local,omitempty"`
-	KickoffTBD   bool   `json:"kickoff_tbd,omitempty"`
-	Locked       *bool  `json:"locked,omitempty"`
-	Status       string `json:"status,omitempty"`
-	Roof         string `json:"roof,omitempty"`
-	Venue        string `json:"venue,omitempty"`
+	GameID       string  `json:"game_id"`
+	NFLOpponent  string  `json:"nfl_opponent"`
+	IsHome       bool    `json:"is_home"`
+	Kickoff      string  `json:"kickoff,omitempty"`
+	KickoffLocal string  `json:"kickoff_local,omitempty"`
+	KickoffTBD   bool    `json:"kickoff_tbd,omitempty"`
+	Locked       *bool   `json:"locked,omitempty"`
+	Status       string  `json:"status,omitempty"`
+	Roof         string  `json:"roof,omitempty"`
+	Venue        string  `json:"venue,omitempty"`
+	Latitude     float64 `json:"latitude,omitempty"`
+	Longitude    float64 `json:"longitude,omitempty"`
 }
 
 func (sl slate) gameFor(dump map[string]sleepergen.Player, playerID string) gameInfo {
@@ -347,7 +354,8 @@ func (sl slate) gameFor(dump map[string]sleepergen.Player, playerID string) game
 		return gameInfo{NoGameReason: fmt.Sprintf("%s's game this week is %s", team, g.Status)}
 	}
 	pg := playerGame{GameID: g.GameID, NFLOpponent: g.Home, IsHome: g.Home == team, Kickoff: g.Kickoff,
-		KickoffLocal: g.KickoffLocal, KickoffTBD: g.KickoffTBD, Locked: g.Locked, Status: g.Status, Roof: g.Roof, Venue: g.Venue}
+		KickoffLocal: g.KickoffLocal, KickoffTBD: g.KickoffTBD, Locked: g.Locked, Status: g.Status, Roof: g.Roof, Venue: g.Venue,
+		Latitude: g.Latitude, Longitude: g.Longitude}
 	if pg.IsHome {
 		pg.NFLOpponent = g.Away
 	}
@@ -369,6 +377,16 @@ func nflTeam(dump map[string]sleepergen.Player, playerID string) string {
 	return ""
 }
 
+// withVenue adds the venue's coordinates and corrects a roof Sleeper mislabels; an unknown venue gets neither.
+func withVenue(g scheduleGame, venue, city, roof string) scheduleGame {
+	g.Venue, g.City, g.Roof = venue, city, roof
+	if st, ok := stadiums[venue]; ok {
+		g.Latitude, g.Longitude = st.lat, st.lon
+		g.Roof = cmp.Or(st.roof, roof)
+	}
+	return g
+}
+
 // withKickoff joins on game_id, never on teams, so a missing score leaves
 // kickoff empty rather than borrowing another game's time.
 func withKickoff(g scheduleGame, s *sleepergen.GameScore, c clock) scheduleGame {
@@ -380,7 +398,7 @@ func withKickoff(g scheduleGame, s *sleepergen.GameScore, c clock) scheduleGame 
 		return g
 	}
 	if sd := s.Metadata.StadiumDetails; sd != nil {
-		g.Venue, g.City, g.Roof = strVal(sd.Name), strVal(sd.City), strVal(sd.Type)
+		g = withVenue(g, strVal(sd.Name), strVal(sd.City), strVal(sd.Type))
 	}
 	switch strVal(s.Metadata.Status) {
 	case "flex-schedule":
