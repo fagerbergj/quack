@@ -1,6 +1,9 @@
 package vetting
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestAugmentFromReviewStage_ToolStagedWins: a tool-staged review (via advisor token → MemSession.Review)
 // lands in act.stagedDelivery["review"], and the answer-tail fallback does NOT overwrite it.
@@ -10,7 +13,7 @@ func TestAugmentFromReviewStage_ToolStagedWins(t *testing.T) {
 		t.Fatalf("NewMemSecret: %v", err)
 	}
 	review := &ReviewStage{}
-	review.AddComment("internal/foo.go", 12, "blocking: nil deref on the empty path")
+	review.AddComment("internal/foo.go", 12, "nit: name the empty-path case")
 	review.SetVerdict("approve", "one nit, nothing blocking", nil, nil, nil, nil)
 	RegisterMemSession(secret, MemSession{Review: review})
 	defer UnregisterMemSession(secret)
@@ -164,5 +167,33 @@ func TestReviewStage_AddCommentDedupes(t *testing.T) {
 	}
 	if id3 == id1 {
 		t.Fatal("a distinct finding must get its own id")
+	}
+}
+
+// approve must tell the same story as the staged labels: blocking means request_changes, an open
+// question means comment; nits and suggestions still allow approve.
+func TestReviewStage_ApproveRefusedOverOpenLabels(t *testing.T) {
+	for name, tc := range map[string]struct {
+		bodies  []string
+		wantErr string
+	}{
+		"clean":          {nil, ""},
+		"nit only":       {[]string{"nit: rename x"}, ""},
+		"question":       {[]string{"nit: rename x", "question: is nil possible here?"}, "staged question:"},
+		"blocking first": {[]string{"question: why?", "blocking: nil deref"}, "staged blocking:"},
+	} {
+		review := &ReviewStage{}
+		for i, b := range tc.bodies {
+			review.AddComment("a.go", i+1, b)
+		}
+		err := review.SetVerdict("approve", "ok", nil, nil, nil, nil)
+		if tc.wantErr == "" && err != nil || tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
+			t.Errorf("%s: SetVerdict(approve) = %v, want error containing %q", name, err, tc.wantErr)
+		}
+		if tc.wantErr != "" {
+			if err := review.SetVerdict("comment", "ok", nil, nil, nil, nil); err != nil {
+				t.Errorf("%s: comment refused: %v", name, err)
+			}
+		}
 	}
 }
