@@ -35,11 +35,15 @@ Write the dated timeline as an artifact with `write_artifact` (`kind:
 is every round's deliverable, even a round where a season note is the only
 real news - write `{"items": []}` rather than skip the artifact, so the
 call never falls back to saving your reply as this round's `trends`
-content. When there is real news, each item needs `time`, `source` (a
-Sleeper field name, or the reporter/outlet and URL for web news), `kind`
+content. When there is real news, each item needs `time` (at most 40
+characters, e.g. `2026-10-13 (Tue)`), `source` (at most 60 characters: a
+Sleeper field name, or the original reporter and outlet for web news, e.g.
+`Rapoport via NBC Sports` - an aggregator alone is not a source), `kind`
 (exactly `injury`, `waiver`, `news`, or `note`), and `text` - one short
 sentence, about 140 characters; the UI renders it inline in the timeline,
-not a wall of text. Include
+not a wall of text. A web item's URL goes in `link`, not in `source`. To
+change the timeline after writing it, `write_artifact` the whole corrected
+JSON again; a text edit inside JSON easily breaks it. Include
 `player` (`{id, name, ...}`) only when the item is about one specific
 player - `id` null when Sleeper's data does not resolve him, never an
 invented one; omit the field for a league-wide or non-player item. **When a Sleeper field and a web
