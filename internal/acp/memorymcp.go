@@ -38,16 +38,9 @@ type checkMermaidInput struct {
 func registerCheckMermaidTool(srv *mcp.Server) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolCheckMermaid,
-		Description: "Validate one mermaid diagram's source before including it in your final answer. Returns \"ok\" or a parse error with line/column. Call this on every mermaid diagram before submitting.",
+		Description: vetting.CheckMermaidDescription,
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args checkMermaidInput) (*mcp.CallToolResult, any, error) {
-		ok, line, col, msg := vetting.CheckMermaid(args.Diagram)
-		if ok {
-			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "ok"}}}, nil, nil
-		}
-		text := "invalid: " + msg
-		if line > 0 {
-			text = fmt.Sprintf("invalid (line %d, column %d): %s", line, col, msg)
-		}
+		text := vetting.CheckMermaid(args.Diagram)
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, nil, nil
 	})
 }

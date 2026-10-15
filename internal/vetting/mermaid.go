@@ -4,6 +4,7 @@ package vetting
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -11,7 +12,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -119,24 +119,24 @@ var warnMermaidValidatorUnavailable = sync.OnceFunc(func() {
 		"component", "vetting")
 })
 
-// mermaidError validates body via mermaid.js; "" means valid or no validator available.
+// mermaidError validates body via mermaid.js; "" means valid or no verdict, so the gate fails open.
 func mermaidError(body string) string {
 	msg, _ := mermaidVerdict(body)
 	return msg
 }
 
-// mermaidVerdict reports the validator's verdict on body. ok=false means no
-// verdict was obtained (node missing, timed out, crashed) - never "invalid".
-func mermaidVerdict(body string) (msg string, ok bool) {
+// mermaidVerdict reports the validator's verdict on body. A non-nil error means no verdict was
+// obtained (node missing, timed out, crashed): neither valid nor invalid.
+func mermaidVerdict(body string) (string, error) {
 	if _, err := exec.LookPath("node"); err != nil {
 		warnMermaidValidatorUnavailable()
-		return "", false
+		return "", errors.New("node is not installed")
 	}
 	if !pathExists(mermaidValidatorPath) {
 		warnMermaidValidatorUnavailable()
-		return "", false
+		return "", errors.New("the validator script is missing")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), mermaidValidateTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), MermaidValidateTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "node", mermaidValidatorPath)
 	cmd.Stdin = strings.NewReader(body)
@@ -144,7 +144,7 @@ func mermaidVerdict(body string) (msg string, ok bool) {
 	// A kill on timeout arrives as an ExitError; a slow box must not report a valid diagram as broken.
 	if ctx.Err() != nil {
 		warnMermaidValidatorTimeout()
-		return "", false
+		return "", fmt.Errorf("the validator timed out after %s", MermaidValidateTimeout)
 	}
 	var res struct {
 		OK    bool   `json:"ok"`
@@ -154,17 +154,17 @@ func mermaidVerdict(body string) (msg string, ok bool) {
 	// unparseable output means a broken validator, never an invalid diagram.
 	if err != nil || json.Unmarshal(out, &res) != nil {
 		warnMermaidValidatorBroken(err, out)
-		return "", false
+		return "", errors.New("the validator crashed")
 	}
 	if !res.OK {
-		return translateMermaidError(res.Error), true
+		return translateMermaidError(res.Error), nil
 	}
-	return "", true
+	return "", nil
 }
 
-// mermaidValidateTimeout is generous because the validator loads mermaid's full parser and a
-// timeout looks like an invalid diagram to the caller. A var so tests can shorten it.
-var mermaidValidateTimeout = 60 * time.Second
+// MermaidValidateTimeout bounds one validator run. Each run cold-starts node and loads jsdom plus
+// mermaid (~1.5s idle, past 60s on a saturated host). Exported so tests can lift it.
+var MermaidValidateTimeout = 60 * time.Second
 
 var warnBrokenOnce sync.Once
 
@@ -176,8 +176,8 @@ func warnMermaidValidatorBroken(err error, out []byte) {
 }
 
 func warnMermaidValidatorTimeout() {
-	slog.Warn("mermaid validation timed out; skipping the check for this diagram",
-		"component", "vetting", "timeout", mermaidValidateTimeout)
+	slog.Warn("mermaid validation timed out; this diagram was not validated and the gate let it through",
+		"component", "vetting", "timeout", MermaidValidateTimeout)
 }
 
 // translateMermaidError keeps jison's line/column and excerpt, drops the Expecting list, and names
@@ -232,18 +232,26 @@ func unrecognizedMermaidError(raw string) string {
 // unrecognizedMermaidError's "diagram line N, column C:" prefix.
 var mermaidLocatedRe = regexp.MustCompile(`^parse error: diagram line (\d+), column (\d+):`)
 
-// CheckMermaid runs the same validator as the delivery gate, so a worker's pre-check matches the gate.
-// line/column are 1-based, 0 when unknown.
-func CheckMermaid(source string) (ok bool, line, column int, message string) {
-	msg := mermaidError(source)
+// CheckMermaidDescription is the check_mermaid tool description shared by the native and ACP surfaces.
+const CheckMermaidDescription = "Validate one mermaid diagram's source before including it in your final answer. " +
+	"Returns \"ok\", a parse error with line/column, or \"not validated\" when the validator gave no verdict. " +
+	"Call this on every mermaid diagram before submitting."
+
+// CheckMermaid is the check_mermaid tool's reply from the delivery gate's own validator: "ok",
+// "invalid ..." (line/column when known), or "not validated: ..." when no verdict came back.
+func CheckMermaid(source string) string {
+	msg, err := mermaidVerdict(source)
+	if err != nil {
+		return "not validated: " + err.Error() + ". The syntax is unchecked, not passed: " +
+			"call check_mermaid again, and check the syntax by hand if it keeps failing."
+	}
 	if msg == "" {
-		return true, 0, 0, ""
+		return "ok"
 	}
 	if m := mermaidLocatedRe.FindStringSubmatch(msg); m != nil {
-		line, _ = strconv.Atoi(m[1])
-		column, _ = strconv.Atoi(m[2])
+		return fmt.Sprintf("invalid (line %s, column %s): %s", m[1], m[2], msg)
 	}
-	return false, line, column, msg
+	return "invalid: " + msg
 }
 
 func mermaidCriterion(answer string, act workerActivity) (criterionScore, bool) {
