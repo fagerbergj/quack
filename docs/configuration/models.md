@@ -47,6 +47,7 @@ models:
     cost:
       input_per_mtok: 0.60    # USD per million tokens, for gen_ai.client.cost / Langfuse
       output_per_mtok: 3.60
+      cached_input_per_mtok: 0.06   # optional; prompt tokens served from the provider's cache. Unset bills them at input_per_mtok
     effort: low               # optional; low/medium/high default reasoning_effort, unless a call sets its own (e.g. gates.judge.thinking_level)
 ```
 

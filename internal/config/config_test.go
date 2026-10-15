@@ -2513,3 +2513,24 @@ func TestResolveBinding(t *testing.T) {
 		}
 	})
 }
+
+// Cost bills cached prompt tokens at the cached rate when set, else at the input rate, and never
+// bills a negative fresh share when a usage report claims more cached than prompt tokens.
+func TestModelPricingCost(t *testing.T) {
+	cached := 0.5
+	flat := ModelPricing{InputPerMTok: 2, OutputPerMTok: 4}
+	tiered := ModelPricing{InputPerMTok: 2, OutputPerMTok: 4, CachedInputPerMTok: &cached}
+	for name, tc := range map[string]struct {
+		p                         ModelPricing
+		prompt, cachedN, complete int64
+		want                      float64
+	}{
+		"unset rate bills cached as input": {flat, 2_000_000, 500_000, 1_000_000, 8},
+		"cached rate":                      {tiered, 2_000_000, 500_000, 1_000_000, 7.25},
+		"cached exceeds prompt":            {tiered, 100_000, 300_000, 0, 0.15},
+	} {
+		if got := tc.p.Cost(tc.prompt, tc.cachedN, tc.complete); got != tc.want {
+			t.Errorf("%s: Cost = %v, want %v", name, got, tc.want)
+		}
+	}
+}

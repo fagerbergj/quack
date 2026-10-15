@@ -128,13 +128,8 @@ func recordUsageMetrics(ctx context.Context, modelName, defaultAgent string, pri
 	reasoning := int64(u.ThoughtsTokenCount)
 	otelobs.RecordTokenUsage(usage, input, output, reasoning, cached)
 	if pricing != nil {
-		otelobs.RecordCost(usage, callCost(pricing, int64(u.PromptTokenCount), output+reasoning))
+		otelobs.RecordCost(usage, pricing.Cost(int64(u.PromptTokenCount), cached, output+reasoning))
 	}
-}
-
-// callCost prices one call. No cached-token tier exists, so the whole prompt bills at the input rate.
-func callCost(p *config.ModelPricing, prompt, completion int64) float64 {
-	return float64(prompt)/1e6*p.InputPerMTok + float64(completion)/1e6*p.OutputPerMTok
 }
 
 // Embed shares GenerateContent's duration histogram (the embed model's name keeps its own series)
@@ -165,6 +160,6 @@ func (t *tracedModel) recordEmbedUsage(ctx context.Context, u openaimodel.EmbedU
 	usage := otelobs.UsageFor(t.name, ledger.CoordsFromContext(ctx), t.defaultAgent)
 	otelobs.RecordTokenUsage(usage, u.PromptTokens, 0, 0, 0)
 	if t.pricing != nil {
-		otelobs.RecordCost(usage, callCost(t.pricing, u.PromptTokens, 0))
+		otelobs.RecordCost(usage, t.pricing.Cost(u.PromptTokens, 0, 0))
 	}
 }

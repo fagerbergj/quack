@@ -413,6 +413,21 @@ func TestTracedModel_Cost_ComputedFromConfiguredPricing(t *testing.T) {
 	}
 }
 
+// A cached-input rate bills the cached share of the prompt at that rate instead of the input rate.
+func TestTracedModel_Cost_CachedInputRate(t *testing.T) {
+	reader := newUsageTestMeter(t)
+	cachedRate := 0.5
+	pricing := &config.ModelPricing{InputPerMTok: 2, OutputPerMTok: 4, CachedInputPerMTok: &cachedRate}
+	tm := &tracedModel{LLM: &stubModel{name: "m", resps: []*model.LLMResponse{usageResp(2_000_000, 500_000, 1_000_000, 0)}}, name: "m", pricing: pricing}
+	for range tm.GenerateContent(context.Background(), &model.LLMRequest{}, true) {
+	}
+	dp, ok := costPoint(t, reader)
+	// 1.5M uncached * $2 + 0.5M cached * $0.5 + 1M output * $4 = $7.25.
+	if !ok || dp.Value != 7.25 {
+		t.Errorf("gen_ai.client.cost = %v (recorded %v), want 7.25", dp.Value, ok)
+	}
+}
+
 // TestTracedModel_NoPricing_NoCostMetric guards "never guess a price": a
 // model absent from config's price table gets token usage but no cost.
 func TestTracedModel_NoPricing_NoCostMetric(t *testing.T) {

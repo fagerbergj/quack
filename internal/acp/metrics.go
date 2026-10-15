@@ -29,7 +29,7 @@ func recordUsage(modelName string, coords ledger.Coords, pricing *config.ModelPr
 	usage := otelobs.UsageFor(modelName, coords, "")
 	otelobs.RecordTokenUsage(usage, input, output, reasoning, cached)
 	if pricing != nil {
-		otelobs.RecordCost(usage, callCost(pricing, input+cached, output+reasoning))
+		otelobs.RecordCost(usage, pricing.Cost(input+cached, cached, output+reasoning))
 	}
 }
 
@@ -43,9 +43,4 @@ func (a *Agent) recordCall(ctx context.Context, coords ledger.Coords, u *genai.G
 	cached := int(u.CachedContentTokenCount)
 	recordUsage(a.opts.ModelName, coords, a.opts.Pricing, &sdk.Usage{
 		InputTokens: max(int(u.PromptTokenCount)-cached, 0), OutputTokens: int(u.CandidatesTokenCount), CachedReadTokens: &cached})
-}
-
-// callCost prices prompt (cached included) and completion tokens; quack has no separate cached-token tier.
-func callCost(p *config.ModelPricing, prompt, completion int64) float64 {
-	return float64(prompt)/1e6*p.InputPerMTok + float64(completion)/1e6*p.OutputPerMTok
 }
