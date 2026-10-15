@@ -49,14 +49,7 @@ func TestRound_EmitsArtifactsAndPlugins(t *testing.T) {
 		t.Fatalf("round: %v", err)
 	}
 
-	if len(capExp.records) != 1 {
-		t.Fatalf("got %d records, want 1", len(capExp.records))
-	}
-	attrs := map[string]attribute.Value{}
-	capExp.records[0].WalkAttributes(func(kv attribute.KeyValue) bool {
-		attrs[string(kv.Key)] = kv.Value
-		return true
-	})
+	attrs := invokeAttrs(t, capExp.records)
 	var artifacts []ledger.ArtifactRef
 	if err := json.Unmarshal([]byte(attrs["quack.artifacts"].AsString()), &artifacts); err != nil {
 		t.Fatalf("quack.artifacts unmarshal: %v (raw %s)", err, attrs["quack.artifacts"].AsString())
@@ -108,11 +101,7 @@ func TestRound_OmitsPreambleArtifactsWhenNoPreambleSent(t *testing.T) {
 		t.Fatalf("round: %v", err)
 	}
 
-	attrs := map[string]attribute.Value{}
-	capExp.records[0].WalkAttributes(func(kv attribute.KeyValue) bool {
-		attrs[string(kv.Key)] = kv.Value
-		return true
-	})
+	attrs := invokeAttrs(t, capExp.records)
 	var artifacts []ledger.ArtifactRef
 	if err := json.Unmarshal([]byte(attrs["quack.artifacts"].AsString()), &artifacts); err != nil {
 		t.Fatalf("quack.artifacts unmarshal: %v (raw %s)", err, attrs["quack.artifacts"].AsString())
@@ -121,4 +110,21 @@ func TestRound_OmitsPreambleArtifactsWhenNoPreambleSent(t *testing.T) {
 	if len(artifacts) != 1 || artifacts[0] != want[0] {
 		t.Errorf("quack.artifacts = %+v, want %+v (no preamble sent, so no preamble/memory artifact)", artifacts, want)
 	}
+}
+
+// invokeAttrs is the round's one invoke_agent record; its tool.call records ride the same logger.
+func invokeAttrs(t *testing.T, records []sdklog.Record) map[string]attribute.Value {
+	t.Helper()
+	var out []map[string]attribute.Value
+	for _, r := range records {
+		attrs := map[string]attribute.Value{}
+		r.WalkAttributes(func(kv attribute.KeyValue) bool { attrs[string(kv.Key)] = kv.Value; return true })
+		if attrs[otelobs.GenAIOperationName].AsString() == otelobs.GenAIOperationInvokeAgent {
+			out = append(out, attrs)
+		}
+	}
+	if len(out) != 1 {
+		t.Fatalf("got %d invoke_agent records, want 1", len(out))
+	}
+	return out[0]
 }

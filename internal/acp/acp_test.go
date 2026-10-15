@@ -188,6 +188,17 @@ func (f *fakeAgent) Prompt(ctx context.Context, p sdk.PromptRequest) (sdk.Prompt
 	case "usage-none":
 		send(sdk.UpdateAgentMessageText("done"))
 		return sdk.PromptResponse{StopReason: sdk.StopReasonEndTurn}, nil
+	case "tool-fail":
+		// pi-acp's shape for a rejected quack MCP call, then a command that succeeds.
+		send(sdk.SessionUpdate{ToolCall: &sdk.SessionUpdateToolCall{ToolCallId: "t1", Kind: sdk.ToolKindOther,
+			Title: "quackmcp_stage_review", Status: sdk.ToolCallStatusPending, RawInput: map[string]any{"event": "approve"},
+			Meta: map[string]any{mcpMetaKey: "stage_review"}}})
+		send(sdk.UpdateToolCall("t1", sdk.WithUpdateStatus(sdk.ToolCallStatusFailed),
+			sdk.WithUpdateContent([]sdk.ToolCallContent{sdk.ToolContent(sdk.TextBlock("notes: item 1 is 221 characters, max 200"))})))
+		send(sdk.StartToolCall("t2", "ls", sdk.WithStartKind(sdk.ToolKindExecute), sdk.WithStartRawInput(map[string]any{"command": "ls"})))
+		send(sdk.UpdateToolCall("t2", sdk.WithUpdateStatus(sdk.ToolCallStatusCompleted), sdk.WithUpdateRawOutput(map[string]any{"exit": 0, "output": "go.mod"})))
+		send(sdk.UpdateAgentMessageText("done"))
+		return sdk.PromptResponse{StopReason: sdk.StopReasonEndTurn}, nil
 	case "steer":
 		// Blocks until the extension delivers a forwarded message mid-round.
 		text := <-f.steerCh

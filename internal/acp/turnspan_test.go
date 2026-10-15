@@ -107,8 +107,8 @@ func TestTurnSpans_UnfinishedToolCallStillExports(t *testing.T) {
 	exp := withTestTracer(t)
 	turns := newTurnSpans(context.Background(), "code-reviewer")
 
-	turns.observe(sdk.StartToolCall("t1", "go test ./...", sdk.WithStartKind(sdk.ToolKindExecute)))
-	turns.observe(sdk.UpdateAgentThoughtText("still thinking")) // no span of its own
+	turns.observe(sdk.StartToolCall("t1", "go test ./...", sdk.WithStartKind(sdk.ToolKindExecute)), nil)
+	turns.observe(sdk.UpdateAgentThoughtText("still thinking"), nil) // no span of its own
 	if n := len(exp.GetSpans()); n != 0 {
 		t.Fatalf("%d spans ended already, want 0 while the tool call is in flight", n)
 	}
@@ -136,10 +136,10 @@ func TestTurnSpans_ToolCallDetailAttributes(t *testing.T) {
 
 	turns.observe(sdk.StartToolCall("t1", "go test ./...",
 		sdk.WithStartKind(sdk.ToolKindExecute),
-		sdk.WithStartRawInput(map[string]any{"command": "go test ./..."})))
+		sdk.WithStartRawInput(map[string]any{"command": "go test ./..."})), nil)
 	turns.observe(sdk.UpdateToolCall("t1",
 		sdk.WithUpdateStatus(sdk.ToolCallStatusCompleted),
-		sdk.WithUpdateRawOutput(map[string]any{"output": "ok\tquack\t0.1s"})))
+		sdk.WithUpdateRawOutput(map[string]any{"output": "ok\tquack\t0.1s"})), nil)
 
 	attrs := attrsOf(spanByName(t, exp, "quack.acp.tool.execute"))
 	if got := attrs[otelobs.GenAIToolCallArguments]; got != `{"command":"go test ./..."}` {
@@ -150,24 +150,25 @@ func TestTurnSpans_ToolCallDetailAttributes(t *testing.T) {
 	}
 }
 
-// TestTurnSpans_ToolCallDetailAbsentByDefault: with capture off (the deploy default), arguments/output never
-// reach the span even though it records; ACP does most of the tool calling.
-func TestTurnSpans_ToolCallDetailAbsentByDefault(t *testing.T) {
+// TestTurnSpans_ToolCallResultAbsentByDefault: with capture off (the deploy default), output never reaches the
+// span even though it records; arguments do, as on native execute_tool spans.
+func TestTurnSpans_ToolCallResultAbsentByDefault(t *testing.T) {
 	exp := withTestTracer(t)
 	turns := newTurnSpans(context.Background(), "code-reviewer")
 
 	turns.observe(sdk.StartToolCall("t1", "go test ./...",
 		sdk.WithStartKind(sdk.ToolKindExecute),
-		sdk.WithStartRawInput(map[string]any{"command": "go test ./..."})))
+		sdk.WithStartRawInput(map[string]any{"command": "go test ./..."})), nil)
 	turns.observe(sdk.UpdateToolCall("t1",
 		sdk.WithUpdateStatus(sdk.ToolCallStatusCompleted),
-		sdk.WithUpdateRawOutput(map[string]any{"output": "ok\tquack\t0.1s"})))
+		sdk.WithUpdateRawOutput(map[string]any{"output": "ok\tquack\t0.1s"})), nil)
 
 	attrs := attrsOf(spanByName(t, exp, "quack.acp.tool.execute"))
-	for _, k := range []string{otelobs.GenAIToolCallArguments, otelobs.GenAIToolCallResult} {
-		if v, ok := attrs[k]; ok {
-			t.Errorf("attribute %q = %q present with content capture off, want absent", k, v)
-		}
+	if v, ok := attrs[otelobs.GenAIToolCallResult]; ok {
+		t.Errorf("result = %q present with content capture off, want absent", v)
+	}
+	if got := attrs[otelobs.GenAIToolCallArguments]; got != `{"command":"go test ./..."}` {
+		t.Errorf("arguments = %q, want the rawInput JSON", got)
 	}
 }
 
@@ -181,10 +182,10 @@ func TestTurnSpans_ContentFallbackAndTruncation(t *testing.T) {
 	big := strings.Repeat("x", attrCap+100)
 	turns.observe(sdk.StartToolCall("t1", "cat big.log",
 		sdk.WithStartKind(sdk.ToolKindExecute),
-		sdk.WithStartRawInput(map[string]any{"command": big})))
+		sdk.WithStartRawInput(map[string]any{"command": big})), nil)
 	turns.observe(sdk.UpdateToolCall("t1",
 		sdk.WithUpdateStatus(sdk.ToolCallStatusCompleted),
-		sdk.WithUpdateContent([]sdk.ToolCallContent{sdk.ToolContent(sdk.TextBlock(big))})))
+		sdk.WithUpdateContent([]sdk.ToolCallContent{sdk.ToolContent(sdk.TextBlock(big))})), nil)
 
 	attrs := attrsOf(spanByName(t, exp, "quack.acp.tool.execute"))
 	for _, k := range []string{otelobs.GenAIToolCallArguments, otelobs.GenAIToolCallResult} {
@@ -207,7 +208,7 @@ func TestTurnSpans_MCPCallNeverSpanNamedOther(t *testing.T) {
 	turns.observe(sdk.SessionUpdate{ToolCall: &sdk.SessionUpdateToolCall{
 		ToolCallId: "t1", Kind: sdk.ToolKindOther, Title: "quackmcp_write_code_review",
 		Status: sdk.ToolCallStatusCompleted,
-	}})
+	}}, nil)
 
 	spanByName(t, exp, "quack.acp.tool.write_code_review")
 	for _, s := range exp.GetSpans() {
@@ -225,7 +226,7 @@ func TestTurnSpans_UnresolvedKindSpanStaysBounded(t *testing.T) {
 
 	turns.observe(sdk.StartToolCall("t1", "Loaded skill: review-code-a-very-long-dynamic-title-with-an-id-1304",
 		sdk.WithStartKind(sdk.ToolKindOther),
-		sdk.WithStartStatus(sdk.ToolCallStatusCompleted)))
+		sdk.WithStartStatus(sdk.ToolCallStatusCompleted)), nil)
 
 	span := spanByName(t, exp, "quack.acp.tool.other")
 	if got := attrsOf(span)["tool_title"]; got != "Loaded skill: review-code-a-very-long-dynamic-title-with-an-id-1304" {

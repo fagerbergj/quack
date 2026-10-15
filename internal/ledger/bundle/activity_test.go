@@ -56,9 +56,12 @@ func TestNodeActivity_ACP(t *testing.T) {
 		update(`{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"LGTM"}}`),
 		`{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}`,
 	}
-	// The round's per-call usage rows (acp emitLLMCall) carry no content, so they add no turns.
+	// The round's per-call usage rows (acp emitLLMCall) carry no content, so they add no turns, and its
+	// tool.call rows (acp recordTool) repeat calls the frames already count.
 	usageRow := chat(t0(), "n1", "code-reviewer", "", "m", map[string]any{"gen_ai.usage.output_tokens": 7})
-	path := writeJSONL(t, []entry{invokeAgent(t0(), "n1", "code-reviewer", "", nil, received), usageRow, usageRow})
+	toolRow := entry{ts: t0(), attrs: map[string]any{"gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": "stage_review",
+		"quack.node": "n1", "gen_ai.agent.name": "code-reviewer", "error.type": "notes: item 1 is 221 characters, max 200"}}
+	path := writeJSONL(t, []entry{invokeAgent(t0(), "n1", "code-reviewer", "", nil, received), usageRow, usageRow, toolRow})
 	sess, err := Load(path)
 	if err != nil {
 		t.Fatal(err)

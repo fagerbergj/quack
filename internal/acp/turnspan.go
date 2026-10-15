@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 
 	sdk "github.com/coder/acp-go-sdk"
@@ -30,22 +31,22 @@ func newTurnSpans(promptCtx context.Context, agent string) *turnSpans {
 	return &turnSpans{ctx: promptCtx, agent: agent, open: map[string]oteltrace.Span{}}
 }
 
-// observe starts or ends a tool-call span for u. Called only from round's
-// update loop, one goroutine, so the map needs no lock.
-func (t *turnSpans) observe(u sdk.SessionUpdate) {
+// observe starts or ends a tool-call span for u; specs are u's translation, whose response names a failure's
+// cause. Called only from round's update loop, one goroutine, so the map needs no lock.
+func (t *turnSpans) observe(u sdk.SessionUpdate, specs []eventSpec) {
 	switch {
 	case u.ToolCall != nil:
 		c := u.ToolCall
 		t.start(string(c.ToolCallId), c.Kind, c.Title, c.RawInput, c.Meta)
 		t.record(string(c.ToolCallId), nil, c.RawOutput, c.Content)
 		if terminalStatus(c.Status) {
-			t.finish(string(c.ToolCallId), c.Status)
+			t.finish(string(c.ToolCallId), c.Status, specs)
 		}
 	case u.ToolCallUpdate != nil:
 		up := u.ToolCallUpdate
 		t.record(string(up.ToolCallId), up.RawInput, up.RawOutput, up.Content)
 		if up.Status != nil && terminalStatus(*up.Status) {
-			t.finish(string(up.ToolCallId), *up.Status)
+			t.finish(string(up.ToolCallId), *up.Status, specs)
 		}
 	}
 }
@@ -66,18 +67,18 @@ func jsonAttr(v any) (string, bool) {
 	return bound(string(b), attrCap), true
 }
 
-// record stamps tool input/output onto an open span as they arrive.
-// Later updates overwrite - the terminal update carries the final values.
+// record stamps tool input/output onto an open span as they arrive; later updates overwrite. Arguments
+// ride ungated, as on ADK's native execute_tool spans, so a failed call shows what it was asked.
 func (t *turnSpans) record(id string, rawInput, rawOutput any, content []sdk.ToolCallContent) {
 	span, ok := t.open[id]
-	if !ok {
+	if !ok || !span.IsRecording() {
 		return
-	}
-	if !span.IsRecording() || !otelobs.CaptureContentEnabled() {
-		return // opt-in only - tool args/output are message content (observability.otel.capture_content)
 	}
 	if v, ok := jsonAttr(rawInput); ok {
 		span.SetAttributes(attribute.String(otelobs.GenAIToolCallArguments, v))
+	}
+	if !otelobs.CaptureContentEnabled() {
+		return // opt-in only - tool output is message content (observability.otel.capture_content)
 	}
 	if v, ok := jsonAttr(rawOutput); ok {
 		span.SetAttributes(attribute.String(otelobs.GenAIToolCallResult, v))
@@ -123,16 +124,14 @@ func (t *turnSpans) start(id string, kind sdk.ToolKind, title string, rawInput a
 		attribute.String(otelobs.GenAIToolCallID, id),
 		attribute.String("tool_title", title), // human label from ACP's ToolCall.Title, distinct from the tool name
 	}
-	if otelobs.CaptureContentEnabled() {
-		if v, ok := jsonAttr(rawInput); ok {
-			attrs = append(attrs, attribute.String(otelobs.GenAIToolCallArguments, v))
-		}
+	if v, ok := jsonAttr(rawInput); ok {
+		attrs = append(attrs, attribute.String(otelobs.GenAIToolCallArguments, v))
 	}
 	_, span := otelobs.Start(t.ctx, "acp.tool."+name, attrs...)
 	t.open[id] = span
 }
 
-func (t *turnSpans) finish(id string, status sdk.ToolCallStatus) {
+func (t *turnSpans) finish(id string, status sdk.ToolCallStatus, specs []eventSpec) {
 	span, ok := t.open[id]
 	if !ok {
 		return // create-on-update: no start seen, so no span to close
@@ -140,9 +139,22 @@ func (t *turnSpans) finish(id string, status sdk.ToolCallStatus) {
 	delete(t.open, id)
 	var err error
 	if status == sdk.ToolCallStatusFailed {
-		err = errors.New("acp: tool call failed")
+		err = fmt.Errorf("acp: tool call failed: %s", toolError(specs, id))
 	}
 	otelobs.End(span, err)
+}
+
+// toolError is call id's error text in specs, already bounded by toolResponse; "" when none carries it.
+func toolError(specs []eventSpec, id string) string {
+	for _, s := range specs {
+		for _, p := range s.parts {
+			if r := p.FunctionResponse; r != nil && r.ID == id {
+				msg, _ := r.Response["error"].(string)
+				return msg
+			}
+		}
+	}
+	return ""
 }
 
 // closeAll ends every span still open. Safe to call twice.
