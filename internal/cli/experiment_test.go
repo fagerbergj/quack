@@ -1023,3 +1023,20 @@ func TestExperimentChatPrefixMatchesStore(t *testing.T) {
 		t.Fatalf("experiment chats are %q, store skips %q", got, store.ExperimentChatPrefix)
 	}
 }
+
+// A run whose last act was a tool call has a task but no closing answer; it still ran and was judged, so it
+// counts. An answered run wins over it, and nothing at all is still an error.
+func TestPickNodeRun(t *testing.T) {
+	answerless := bundle.StreamKey{Node: "code-reviewer-1", Agent: "code-reviewer"}
+	answered := bundle.StreamKey{Node: "code-reviewer-2", Agent: "code-reviewer"}
+	if key, _, ok := pickNodeRun(map[bundle.StreamKey]bundle.NodeRun{answerless: {Task: "review"}}); !ok || key != answerless {
+		t.Fatalf("answerless run = %v, %v; want it picked", key, ok)
+	}
+	runs := map[bundle.StreamKey]bundle.NodeRun{answerless: {Task: "review"}, answered: {Task: "review", Answer: "Staged."}}
+	if key, _, _ := pickNodeRun(runs); key != answered {
+		t.Fatalf("picked %v, want the answered run", key)
+	}
+	if _, _, ok := pickNodeRun(map[bundle.StreamKey]bundle.NodeRun{answerless: {}}); ok {
+		t.Fatal("a run with neither task nor answer must not count")
+	}
+}

@@ -313,7 +313,10 @@ func acpRoundRun(key StreamKey, st *streamState) (roundRun, bool) {
 		return roundRun{}, false
 	}
 	task, _ := acpTaskAndAnswer(st.agents[0])
-	rr := roundRun{key: key, task: task, taskAt: st.agents[0].ts}
+	// Provenance defaults to the last invocation: a round that ended on a tool call answers nothing but still
+	// resolved its prompt, and an experiment's prompt pin reads it from here.
+	last := st.agents[len(st.agents)-1]
+	rr := roundRun{key: key, task: task, taskAt: st.agents[0].ts, artifacts: last.artifacts, plugins: last.plugins}
 	// The latest invocation that answered: a later answerless one (an empty continuation, a post-judge stage
 	// round) must not blank it, and its zero answerAt never outranks another stream's answer in NodeRuns.
 	for i := len(st.agents) - 1; i >= 0; i-- {
