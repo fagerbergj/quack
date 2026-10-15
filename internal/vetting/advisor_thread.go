@@ -211,11 +211,37 @@ func (s *ReviewStage) SetVerdict(event, takeaway string, verified, notes []strin
 		return fmt.Errorf("approve cannot be staged while sibling reviewer nodes are running; " +
 			"this node's verdict is not delivered - finish your reply without one")
 	}
+	if event == "approve" {
+		switch s.openLabel() {
+		case "blocking":
+			return fmt.Errorf("approve contradicts a staged blocking: comment - stage request_changes, " +
+				"or unstage_review_comment the finding if it no longer holds")
+		case "question":
+			return fmt.Errorf("approve contradicts a staged question: comment, which leaves the verdict at comment - " +
+				"stage comment, or unstage_review_comment the question if the code answered it")
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.event, s.takeaway, s.verified, s.notes, s.set = event, takeaway, verified, notes, true
 	s.dismiss, s.clean = dismissed, clean
 	return nil
+}
+
+// openLabel: the staged label an approve contradicts, blocking before question; "" when none.
+func (s *ReviewStage) openLabel() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	found := ""
+	for _, c := range s.comments {
+		switch label, _ := commentLabel(c.Body); label {
+		case "blocking":
+			return label
+		case "question":
+			found = label
+		}
+	}
+	return found
 }
 
 func (s *ReviewStage) Snapshot() (StagedDelivery, bool) {
