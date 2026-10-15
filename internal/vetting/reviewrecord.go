@@ -17,6 +17,8 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/google/jsonschema-go/jsonschema"
+
 	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/workspace"
@@ -32,8 +34,8 @@ const (
 	kindJudgeRound = "judge_round"
 )
 
-// codeReviewJSONSchema/findingJSONSchema back write_<kind>: literal text, reviewed on its own. Caps sit in
-// "description", not maxLength: schema validation stops at the first error, CheckCodeReviewCaps reports all.
+// codeReviewJSONSchema/findingJSONSchema back write_<kind>: literal text, reviewed on its own. code_review's caps are
+// added by DeclareCodeReviewCaps; both write surfaces run validateCodeReview before the schema check so all are reported.
 const codeReviewJSONSchema = `{
   "type": "object",
   "required": ["verdict"],
@@ -67,9 +69,9 @@ const findingJSONSchema = `{
 func init() {
 	recordstore.Register(kindCodeReview, recordstore.KindSpec{
 		Class:      recordstore.Structured,
-		JSONSchema: codeReviewJSONSchema,
+		JSONSchema: cappedCodeReviewSchema(),
 		Description: "Record this PR's review verdict, once, after every finding is written; a later call replaces it. " +
-			"`takeaway` is one line; `finding_ids` cites the finding artifacts it rests on (ids from write_finding, " +
+			CodeReviewCapsText + "; `finding_ids` cites the finding artifacts it rests on (ids from write_finding, " +
 			"or list_artifacts kind finding when another node wrote them), `dismissed` the candidates you ruled " +
 			"out, `clean` the files reviewed with nothing to report.",
 		Validate: validateCodeReview,
@@ -180,6 +182,33 @@ const (
 	reviewNotesMaxItems    = 8
 	reviewNotesMaxLen      = 200
 )
+
+// CodeReviewCapsText states the caps in stage_review's and write_code_review's descriptions.
+var CodeReviewCapsText = fmt.Sprintf("`takeaway` is one line of at most %d characters; `verified` takes up to %d items of at most %d "+
+	"characters each, `notes` up to %d of at most %d", reviewTakeawayMaxLen, reviewVerifiedMaxItems, reviewVerifiedMaxLen, reviewNotesMaxItems, reviewNotesMaxLen)
+
+// DeclareCodeReviewCaps writes CheckCodeReviewCaps' limits into s's takeaway/verified/notes properties.
+func DeclareCodeReviewCaps(s *jsonschema.Schema) {
+	t := s.Properties["takeaway"]
+	t.MaxLength, t.Pattern = jsonschema.Ptr(reviewTakeawayMaxLen), `^[^\n]*$`
+	for field, caps := range map[string][2]int{"verified": {reviewVerifiedMaxItems, reviewVerifiedMaxLen}, "notes": {reviewNotesMaxItems, reviewNotesMaxLen}} {
+		p := s.Properties[field]
+		p.MaxItems, p.Items.MaxLength = jsonschema.Ptr(caps[0]), jsonschema.Ptr(caps[1])
+	}
+}
+
+func cappedCodeReviewSchema() string {
+	var s jsonschema.Schema
+	if err := json.Unmarshal([]byte(codeReviewJSONSchema), &s); err != nil {
+		panic("vetting: code_review schema: " + err.Error())
+	}
+	DeclareCodeReviewCaps(&s)
+	b, err := json.Marshal(&s)
+	if err != nil {
+		panic("vetting: code_review schema: " + err.Error())
+	}
+	return string(b)
+}
 
 // CheckCodeReviewCaps: one cap check for stage_review and write_code_review so they can't drift. takeaway == ""
 // skips takeaway checks; no sentence counting, since "e.g."/"vs." would false-positive. It reports every
@@ -906,9 +935,11 @@ func saveCodeReviewRound(ctx context.Context, cfg Config, nodeID, turnID string,
 		r := ParseAnswerReviewSections(answer)
 		event, findings, dismissedComments, clean = r.Event, r.Findings, r.Dismissed, r.Clean
 	} else {
-		event = staged.Event
+		event, clean = staged.Event, staged.Clean
 		findings = extractReviewFindings(answer, staged)
-		// Tool-staged review: only live findings are known; dismissed/clean stay empty.
+		for _, d := range staged.Dismissed {
+			dismissedComments = append(dismissedComments, ReviewComment{Path: d.Path, Line: d.Line, Body: d.Note})
+		}
 	}
 
 	savedAt := time.Now().UTC()

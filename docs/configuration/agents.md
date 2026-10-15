@@ -107,6 +107,8 @@ Because the gate can't watch an external subprocess's internals, it reads the AC
 
 An ACP agent with a `memory.bucket` set (all three shipped ones have one) also gets `stage_memory`/`recall_memory` - not because they're named in a `tools:` list (ACP agents have none), but through the same loopback MCP server (`internal/acp/memorymcp.go`) the gate wires up whenever the run is a memory participant. `recall_memory(query, k?)` (epic #1255 P2) queries the agent's own scope on demand mid-run, in addition to the recall already injected into the prompt at the start of the round; every call is logged (a `memory.recall` ledger entry, source `tool`) and its hits join the round's received set, so the judge may vote on them the same way it votes on prefill.
 
+A review node gets `stage_review_comment`, `list_review_comments`, `unstage_review_comment` and, unless it reviews one slice of a fan-out, `stage_review` on the same server. `stage_review` carries the verdict, takeaway, verified checks, notes, dismissed candidates and clean files, and the gate writes the node's `code_review` record from it, so a review node is never offered `write_code_review`. Its input schema declares every length and item cap, and a call over several of them gets one error naming each one.
+
 ## The orchestrator's tools
 
 The orchestrator stays light on tools — it needs only:

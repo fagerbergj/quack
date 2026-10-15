@@ -12,6 +12,7 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/artifactref"
+	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
@@ -44,6 +45,30 @@ func TestReadArtifactMCP_ReadsOwnChatArtifact(t *testing.T) {
 	}
 	if text := toolResultText(t, res); !strings.Contains(text, "hello from chat a") {
 		t.Fatalf("read_artifact result = %q, want content of notes.txt", text)
+	}
+}
+
+// TestReadArtifactMCP_ReadsManifestID: the id a task's <artifacts> manifest lists (bytes:<name>, saved the way
+// serve saves an extension's input artifact) is the name read_artifact takes.
+func TestReadArtifactMCP_ReadsManifestID(t *testing.T) {
+	ctx := context.Background()
+	svc := artifact.InMemoryService()
+	if _, _, err := recordstore.New(svc, "quack", "u1", "chat-a").SaveBlob(ctx, "bytes", []byte(`{"number": 7}`), "application/json", "issue", recordstore.Lineage{}); err != nil {
+		t.Fatalf("SaveBlob: %v", err)
+	}
+	secret := mustMemSecret(t)
+	vetting.RegisterMemSession(secret, vetting.MemSession{Artifacts: svc, AppName: "quack", UserID: "u1", ChatID: "chat-a"})
+	defer vetting.UnregisterMemSession(secret)
+	ts := httptest.NewServer(memoryMCPHandler())
+	t.Cleanup(ts.Close)
+	cs := connectMCP(t, ts, secret)
+
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "read_artifact", Arguments: map[string]any{"name": "bytes:issue"}})
+	if err != nil {
+		t.Fatalf("CallTool read_artifact: %v", err)
+	}
+	if text := toolResultText(t, res); res.IsError || !strings.Contains(text, `"number": 7`) {
+		t.Fatalf("read_artifact bytes:issue = %q, want the saved issue", text)
 	}
 }
 
