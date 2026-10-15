@@ -343,7 +343,7 @@ func TestBuildTurnUsage(t *testing.T) {
 		Model:            "gpt-oss-120b",
 	}
 
-	turn := buildTurn(tc)
+	turn := buildTurn(tc, nil)
 
 	if turn.Usage == nil {
 		t.Fatal("Usage = nil, want populated")
@@ -364,7 +364,7 @@ func TestBuildTurnUsage(t *testing.T) {
 func TestBuildTurnUsageNilWhenAbsent(t *testing.T) {
 	tc := store.TurnContent{ID: "t2", CreatedAt: time.Now(), UserText: "research X", AsstText: "The vetted answer."}
 
-	turn := buildTurn(tc)
+	turn := buildTurn(tc, nil)
 
 	if turn.Usage != nil {
 		t.Errorf("Usage = %+v, want nil", turn.Usage)
@@ -390,7 +390,7 @@ func TestBuildTurnDAGAnswerBubble(t *testing.T) {
 		},
 	}
 
-	turn := buildTurn(tc)
+	turn := buildTurn(tc, nil)
 
 	var msg schema.MessageOutputItem
 	found := false
@@ -428,7 +428,7 @@ func TestBuildTurnDAGCarriesArtifact(t *testing.T) {
 		},
 	}
 
-	turn := buildTurn(tc)
+	turn := buildTurn(tc, nil)
 
 	var dagItem schema.DagOutputItem
 	found := false
@@ -461,7 +461,7 @@ func TestBuildTurnDAGCarriesArtifact(t *testing.T) {
 // orchestrator's own AsstText - sinksOutput only applies to DAG turns.
 func TestBuildTurnPlainReplyKeepsNarration(t *testing.T) {
 	tc := store.TurnContent{ID: "t2", CreatedAt: time.Now(), UserText: "hi", AsstText: "direct reply"}
-	turn := buildTurn(tc)
+	turn := buildTurn(tc, nil)
 	msg, err := turn.Output[0].AsMessageOutputItem()
 	if err != nil || len(msg.Content) == 0 {
 		t.Fatalf("no message output item: %v", err)
@@ -805,7 +805,7 @@ func TestBuildTurnStoppedTerminalNode(t *testing.T) {
 				ID: "t1", CreatedAt: time.Now(), UserText: "q", AsstText: "orchestrator narration", AsstThink: "orchestrator thinking",
 				Plan:  &store.DagPlan{ID: "p1", TurnID: "t1", PlanJSON: planJSON},
 				Nodes: []store.DagNode{{NodeID: "r", Status: "cancelled", Output: tc.draft}},
-			})
+			}, nil)
 			var msg *schema.MessageOutputItem
 			for _, o := range turn.Output {
 				if m, err := o.AsMessageOutputItem(); err == nil && m.Type == "message" {
@@ -838,7 +838,7 @@ func TestBuildTurnUsesDeliveredAnswer(t *testing.T) {
 		ID: "t3", CreatedAt: time.Now(), UserText: "follow up", AsstText: "narration. WR5 ANSWER", Answer: "WR5 ANSWER",
 		Plan:  &store.DagPlan{ID: "p1", TurnID: "t3", PlanJSON: planJSON},
 		Nodes: []store.DagNode{{NodeID: "synth", Status: "done", Output: "turn-1 table"}, {NodeID: "wr5", Status: "done", Output: "WR5 ANSWER"}},
-	})
+	}, nil)
 	for _, o := range turn.Output {
 		if m, err := o.AsMessageOutputItem(); err == nil && m.Type == "message" && len(m.Content) > 0 {
 			if tp, _ := m.Content[0].AsOutputTextPart(); tp.Text != "WR5 ANSWER" {

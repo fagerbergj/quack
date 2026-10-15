@@ -63,6 +63,8 @@ export interface NodeState {
   judgeRounds?: number
   judgeFinalScore?: number
   judgePassed?: boolean
+  // Priced model calls' cloud-equivalent USD, judge rounds included; set only from the persisted node state.
+  costUsd?: number
   // OTel trace id for this node's run; render via clientConfig.traceUrl(). ""/absent when otel is disabled.
   traceId?: string
   // Set when this dispatch reused an existing node id (node_start's
@@ -1018,6 +1020,7 @@ export function dagTurnStateFromItem(item: DagOutputItem): DagTurnState {
       judgeRounds: ns.judge_rounds,
       judgeFinalScore: ns.judge_final_score,
       judgePassed: ns.judge_passed,
+      costUsd: ns.cost_usd,
       pauseReason: ns.pause_reason,
       question: ns.pending_question,
       queue: ns.queued_messages,
@@ -1126,6 +1129,12 @@ export function dagAnswer(dag: DagTurnState): { text: string; stopped: boolean }
 export function dagTotalTokens(dag: DagTurnState): number {
   const runTokens = (id: string) => (dag.nodeRuns[id] ?? []).reduce((sum, r) => sum + (r.totalTokens ?? 0), 0)
   return dag.nodes.reduce((sum, n) => sum + (dag.nodeStates[n.id]?.totalTokens ?? runTokens(n.id)), 0)
+}
+
+// dagTotalCost sums the priced nodes' costs; undefined when none was priced, so an unpriced plan never reads $0.
+export function dagTotalCost(dag: DagTurnState): number | undefined {
+  const priced = dag.nodes.flatMap(n => dag.nodeStates[n.id]?.costUsd ?? [])
+  return priced.length ? priced.reduce((a, b) => a + b, 0) : undefined
 }
 
 // liveAnswerText is a live DAG turn's answer: its persisted answer once the run ends, when known,

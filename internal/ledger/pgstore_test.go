@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"sync"
 	"testing"
 	"time"
@@ -194,28 +195,31 @@ func TestPGStoreReadEntriesFiltered(t *testing.T) {
 	}
 }
 
-// TestPGStoreChatCostUSD: sums priced llm.calls only; a chat with no priced call reports priced=false.
-func TestPGStoreChatCostUSD(t *testing.T) {
+// TestPGStoreChatCostsUSD: sums priced llm.calls per node, judge rounds included; a chat or node with no
+// priced call is absent.
+func TestPGStoreChatCostsUSD(t *testing.T) {
 	t.Parallel()
 	store := newTestPGStore(t)
 	ctx := context.Background()
 	var _ CostReader = store
-	for i, e := range []struct{ chat, kind, payload string }{
-		{"chat-cost", KindLLMCall, `{"cost_usd":0.25}`},
-		{"chat-cost", KindLLMCall, `{"cost_usd":0.5}`},
-		{"chat-cost", KindLLMCall, `{}`},
-		{"chat-cost", KindNodeDone, `{"cost_usd":9}`},
-		{"chat-unpriced", KindLLMCall, `{}`},
+	for i, e := range []struct{ chat, node, round, kind, payload string }{
+		{"chat-cost", "", "", KindLLMCall, `{"cost_usd":0.25}`},
+		{"chat-cost", "n1", "worker-r0", KindLLMCall, `{"cost_usd":0.5}`},
+		{"chat-cost", "n1", "judge-r0", KindLLMCall, `{"cost_usd":0.125}`},
+		{"chat-cost", "n2", "", KindLLMCall, `{}`},
+		{"chat-cost", "n1", "", KindNodeDone, `{"cost_usd":9}`},
+		{"chat-unpriced", "n1", "", KindLLMCall, `{}`},
 	} {
-		if _, err := store.AppendIntent(ctx, Entry{ChatID: e.chat, Kind: e.kind, Key: fmt.Sprintf("c%d", i), Payload: json.RawMessage(e.payload)}); err != nil {
+		if _, err := store.AppendIntent(ctx, Entry{ChatID: e.chat, NodeID: e.node, Round: e.round, Kind: e.kind, Key: fmt.Sprintf("c%d", i), Payload: json.RawMessage(e.payload)}); err != nil {
 			t.Fatalf("AppendIntent %d: %v", i, err)
 		}
 	}
-	if usd, priced, err := store.ChatCostUSD(ctx, "chat-cost"); err != nil || !priced || usd != 0.75 {
-		t.Fatalf("chat-cost = %v, %v, %v; want 0.75, true, nil", usd, priced, err)
+	got, err := store.ChatCostsUSD(ctx, "chat-cost")
+	if want := map[string]float64{"": 0.25, "n1": 0.625}; err != nil || !maps.Equal(got, want) {
+		t.Fatalf("chat-cost = %v, %v; want %v, nil", got, err, want)
 	}
-	if usd, priced, err := store.ChatCostUSD(ctx, "chat-unpriced"); err != nil || priced || usd != 0 {
-		t.Fatalf("chat-unpriced = %v, %v, %v; want 0, false, nil", usd, priced, err)
+	if got, err := store.ChatCostsUSD(ctx, "chat-unpriced"); err != nil || len(got) != 0 {
+		t.Fatalf("chat-unpriced = %v, %v; want empty, nil", got, err)
 	}
 }
 

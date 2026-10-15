@@ -1007,7 +1007,7 @@ func TestNeedsInputPersistsAcrossReload(t *testing.T) {
 	if len(turns) != 1 {
 		t.Fatalf("got %d turns, want 1", len(turns))
 	}
-	turn := buildTurn(turns[0])
+	turn := buildTurn(turns[0], nil)
 
 	var dagItem *schema.DagOutputItem
 	for _, item := range turn.Output {

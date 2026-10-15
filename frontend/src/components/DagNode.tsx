@@ -16,6 +16,7 @@ import { fmtMs, LiveTimer } from '../utils/timer'
 import { traceUrl } from '../state/clientConfig'
 import { Icon } from './Icon'
 import { Sheet } from './Sheet'
+import { fmtCost } from './UsageSummary'
 import { tryParseJSON } from '../lib/json'
 
 // Retry (→ queued) is legal from done, failed, or cancelled - see dag.CanTransition.
@@ -599,6 +600,9 @@ function NodeMetaRow({ state, node, pauseLabel }: { state: NodeState; node: DagN
       {state.totalTokens != null && state.totalTokens > 0 && (
         <span className="text-[11px] text-gray-500 dark:text-gray-400 tabular-nums">
           {state.totalTokens.toLocaleString()} tokens
+          {state.costUsd != null && (
+            <span title="Cloud-equivalent price of this node's model calls, quality checks included"> · {fmtCost(state.costUsd)}</span>
+          )}
           {cachePct != null && (
             <span title={`${Number(state.cachedTokens).toLocaleString()} of ${Number(state.promptTokens).toLocaleString()} prompt tokens served from cache`}> · {cachePct}% cached</span>
           )}

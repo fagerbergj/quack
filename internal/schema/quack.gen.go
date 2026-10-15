@@ -908,16 +908,19 @@ type DagNodeDef struct {
 // DagNodeState defines model for DagNodeState.
 type DagNodeState struct {
 	// CachedTokens Subset of prompt_tokens served from the model's prompt cache.
-	CachedTokens     *int     `json:"cached_tokens,omitempty"`
-	CompletionTokens *int     `json:"completion_tokens,omitempty"`
-	Error            *string  `json:"error,omitempty"`
-	FinishReason     *string  `json:"finish_reason,omitempty"`
-	FinishedAtMs     *int     `json:"finished_at_ms,omitempty"`
-	JudgeFinalScore  *float64 `json:"judge_final_score,omitempty"`
-	JudgePassed      *bool    `json:"judge_passed,omitempty"`
-	JudgeRounds      *int     `json:"judge_rounds,omitempty"`
-	Model            *string  `json:"model,omitempty"`
-	OutputPreview    *string  `json:"output_preview,omitempty"`
+	CachedTokens     *int `json:"cached_tokens,omitempty"`
+	CompletionTokens *int `json:"completion_tokens,omitempty"`
+
+	// CostUsd Cloud-equivalent USD summed over the node's priced model calls in this chat, judge rounds included. Omitted when none was priced or the ledger can't sum costs.
+	CostUsd         *float64 `json:"cost_usd,omitempty"`
+	Error           *string  `json:"error,omitempty"`
+	FinishReason    *string  `json:"finish_reason,omitempty"`
+	FinishedAtMs    *int     `json:"finished_at_ms,omitempty"`
+	JudgeFinalScore *float64 `json:"judge_final_score,omitempty"`
+	JudgePassed     *bool    `json:"judge_passed,omitempty"`
+	JudgeRounds     *int     `json:"judge_rounds,omitempty"`
+	Model           *string  `json:"model,omitempty"`
+	OutputPreview   *string  `json:"output_preview,omitempty"`
 
 	// PauseReason Why a node sits in the `paused` status.
 	PauseReason *PauseReason `json:"pause_reason,omitempty"`

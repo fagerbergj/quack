@@ -3083,6 +3083,12 @@ components:
         cached_tokens:
           type: integer
           description: Subset of prompt_tokens served from the model's prompt cache.
+        cost_usd:
+          type: number
+          format: double
+          description: >
+            Cloud-equivalent USD summed over the node's priced model calls in this chat, judge
+            rounds included. Omitted when none was priced or the ledger can't sum costs.
         server_duration_ms:
           type: integer
         judge_rounds:

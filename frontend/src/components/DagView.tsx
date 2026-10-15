@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react'
 import { DagNode } from './DagNode'
-import { sinkNodeIds, dagTotalTokens, type DagTurnState, type NodeState } from '../state/chatStore'
+import { sinkNodeIds, dagTotalTokens, dagTotalCost, type DagTurnState, type NodeState } from '../state/chatStore'
+import { fmtCost } from './UsageSummary'
 import type { AgentRun } from './messageParts'
 import { LiveTimer } from '../utils/timer'
 
@@ -59,11 +60,12 @@ interface Props {
 // separate from the answer bubble's (which credits the terminal node instead).
 export function DagBubbleHeader({ dag }: { dag: DagTurnState }) {
   const tokens = dagTotalTokens(dag)
+  const cost = dagTotalCost(dag)
   return (
     <div className="flex items-center gap-2 mb-2 text-[11px] text-gray-500 dark:text-gray-400">
       <span className="font-semibold text-gray-500 dark:text-gray-400">Plan</span>
       <span>· {dag.nodes.length} node{dag.nodes.length === 1 ? '' : 's'}</span>
-      {tokens > 0 && <span className="tabular-nums">· {tokens.toLocaleString()} tokens</span>}
+      {tokens > 0 && <span className="tabular-nums">· {tokens.toLocaleString()} tokens{cost != null && ` · ${fmtCost(cost)}`}</span>}
     </div>
   )
 }
@@ -88,6 +90,7 @@ export function DagView({
     dag.nodeAnswer[id] ?? ''
 
   const totalTokens = dagTotalTokens(dag)
+  const totalCost = dagTotalCost(dag)
 
   const [copied, setCopied] = useState(false)
   const copyDag = useCallback(() => {
@@ -147,7 +150,7 @@ export function DagView({
         </button>
         {totalTokens > 0 && (
           <span className="text-[11px] text-gray-500 dark:text-gray-400 tabular-nums">
-            {totalTokens.toLocaleString()} tokens
+            {totalTokens.toLocaleString()} tokens{totalCost != null && ` · ${fmtCost(totalCost)}`}
           </span>
         )}
         {dag.startedAt != null && (

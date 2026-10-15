@@ -350,9 +350,10 @@ func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request, chatID schema.
 	if usage.TotalTokens > 0 {
 		detail.TotalTokens = intPtr(int(usage.TotalTokens))
 	}
-	detail.Usage.CostUsd = h.chatCostUSD(r.Context(), chatID)
+	costs := h.chatCostsUSD(r.Context(), chatID)
+	detail.Usage.CostUsd = costTotal(costs)
 	for _, tc := range turns {
-		detail.Turns = append(detail.Turns, buildTurn(tc))
+		detail.Turns = append(detail.Turns, buildTurn(tc, costs))
 	}
 	writeJSON(w, http.StatusOK, detail)
 }
@@ -413,20 +414,28 @@ func sinkSectionsOutput(sinks []store.DagNode) (out string, stopped bool, at tim
 	return stream.JoinSinkAnswers(parts), stopped, at
 }
 
-// chatCostUSD is nil when no call was priced, or the ledger can't sum in place: a missing cost
-// must not read as $0.
-func (h *Handler) chatCostUSD(ctx context.Context, chatID string) *float64 {
+// chatCostsUSD is nil when the ledger can't sum in place or the read fails: a missing cost must not read as $0.
+func (h *Handler) chatCostsUSD(ctx context.Context, chatID string) map[string]float64 {
 	cr, ok := h.ledgerStore.(ledger.CostReader)
 	if !ok {
 		return nil
 	}
-	usd, priced, err := cr.ChatCostUSD(ctx, chatID)
+	costs, err := cr.ChatCostsUSD(ctx, chatID)
 	if err != nil {
 		slog.Warn("chat cost unavailable", "component", "rest", "chat", chatID, "err", err)
 		return nil
 	}
-	if !priced {
+	return costs
+}
+
+// costTotal is nil when no call was priced.
+func costTotal(costs map[string]float64) *float64 {
+	if len(costs) == 0 {
 		return nil
+	}
+	var usd float64
+	for _, c := range costs {
+		usd += c
 	}
 	return &usd
 }
@@ -452,7 +461,7 @@ func (h *Handler) GetResponse(w http.ResponseWriter, r *http.Request, chatID sch
 		errMsg(w, http.StatusNotFound, "not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, buildTurn(*tc))
+	writeJSON(w, http.StatusOK, buildTurn(*tc, nil))
 }
 
 // ListExtensions lists every enabled SDK extension for the SPA nav -
@@ -1523,7 +1532,8 @@ func lastEventID(r *http.Request) int64 {
 
 // buildDagItem: the DAG output item for a planned turn - the plan shape plus
 // per-node states, and the aggregate status (in_progress while any node is not terminal).
-func buildDagItem(tc store.TurnContent, planData stream.DagPlanData) *schema.OutputItem {
+// nodeCosts maps node id to its priced cost (see ledger.CostReader); nil leaves every node's cost unset.
+func buildDagItem(tc store.TurnContent, planData stream.DagPlanData, nodeCosts map[string]float64) *schema.OutputItem {
 	nodes := make([]schema.DagNodeDef, len(planData.Nodes))
 	for i, n := range planData.Nodes {
 		nodes[i] = schema.DagNodeDef{Id: n.ID, Agent: n.Agent, Task: n.Task, DependsOn: n.DependsOn, ContextWindow: intPtr(n.ContextWindow), Artifact: strPtr(n.Artifact)}
@@ -1534,7 +1544,11 @@ func buildDagItem(tc store.TurnContent, planData stream.DagPlanData) *schema.Out
 	}
 	nodeStates := make(map[string]schema.DagNodeState, len(tc.Nodes))
 	for _, n := range tc.Nodes {
-		nodeStates[n.NodeID] = dagNodeState(n)
+		ns := dagNodeState(n)
+		if usd, ok := nodeCosts[n.NodeID]; ok {
+			ns.CostUsd = &usd
+		}
+		nodeStates[n.NodeID] = ns
 	}
 	// Completed if all nodes are done/failed/cancelled, in_progress otherwise.
 	dagStatus := schema.Completed
@@ -1617,7 +1631,7 @@ func answerBubble(tc store.TurnContent, planData stream.DagPlanData, planOK bool
 	return tc.AsstText, tc.AsstThink, false
 }
 
-func buildTurn(tc store.TurnContent) schema.Turn {
+func buildTurn(tc store.TurnContent, nodeCosts map[string]float64) schema.Turn {
 	// planData is the turn's DAG shape; unmarshaled once for both the DAG
 	// output item and the answer bubble's text below.
 	var planData stream.DagPlanData
@@ -1650,7 +1664,7 @@ func buildTurn(tc store.TurnContent) schema.Turn {
 
 	dagItem := func() *schema.OutputItem {
 		if planOK {
-			return buildDagItem(tc, planData)
+			return buildDagItem(tc, planData, nodeCosts)
 		}
 		return nil
 	}()

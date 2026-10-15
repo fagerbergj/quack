@@ -135,6 +135,15 @@ export const DoneWithCachedTokens: Story = {
   },
 }
 
+// A priced node: its cost, judge rounds included, sits between the token total and the cache rate.
+export const DoneWithCost: Story = {
+  args: {
+    ...DoneWithCachedTokens.args,
+    state: { ...DoneWithCachedTokens.args!.state!, costUsd: 0.4234, judgeRounds: 1, judgePassed: true },
+    runs: [workerDone(researchActivity), judgeRun(1, 0.88, true, '')],
+  },
+}
+
 export const FinalNodeDone: Story = {
   args: {
     node: synthNode,

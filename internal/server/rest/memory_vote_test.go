@@ -10,10 +10,12 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/memory"
 	"github.com/fagerbergj/quack/internal/schema"
+	"github.com/fagerbergj/quack/internal/store"
 )
 
 // fakeLedgerStore is an in-memory ledger.LedgerStore that actually stores entries,
@@ -260,13 +262,12 @@ func TestVoteMemory_FindsMemoryPastFirstListPage(t *testing.T) {
 
 type costLedgerStore struct {
 	fakeLedgerStore
-	usd    float64
-	priced bool
-	err    error
+	costs map[string]float64
+	err   error
 }
 
-func (c *costLedgerStore) ChatCostUSD(context.Context, string) (float64, bool, error) {
-	return c.usd, c.priced, c.err
+func (c *costLedgerStore) ChatCostsUSD(context.Context, string) (map[string]float64, error) {
+	return c.costs, c.err
 }
 
 // TestChatCostUSD: only a priced sum becomes a cost; unpriced, unsupported and failed reads stay nil, never $0.
@@ -277,15 +278,36 @@ func TestChatCostUSD(t *testing.T) {
 		want  *float64
 	}{
 		"no CostReader": {&fakeLedgerStore{}, nil},
-		"priced":        {&costLedgerStore{usd: 0.42, priced: true}, ptrTo(0.42)},
-		"unpriced":      {&costLedgerStore{}, nil},
+		"priced":        {&costLedgerStore{costs: map[string]float64{"": 0.25, "n1": 0.125}}, ptrTo(0.375)},
+		"unpriced":      {&costLedgerStore{costs: map[string]float64{}}, nil},
 		"read error":    {&costLedgerStore{err: errors.New("boom")}, nil},
 	} {
-		got := (&Handler{ledgerStore: tc.store}).chatCostUSD(ctx, "c")
+		got := costTotal((&Handler{ledgerStore: tc.store}).chatCostsUSD(ctx, "c"))
 		if (got == nil) != (tc.want == nil) || (got != nil && *got != *tc.want) {
 			t.Errorf("%s: got %v, want %v", name, got, tc.want)
 		}
 	}
+}
+
+// TestBuildTurnNodeCost: a priced node carries its cost; an unpriced one omits it rather than read $0.
+func TestBuildTurnNodeCost(t *testing.T) {
+	turn := buildTurn(store.TurnContent{
+		ID: "t1", CreatedAt: time.Now(),
+		Plan:  &store.DagPlan{ID: "p1", TurnID: "t1", PlanJSON: `{"nodes":[{"id":"a","agent":"x","task":"t","depends_on":[]},{"id":"b","agent":"x","task":"t","depends_on":[]}],"edges":[]}`},
+		Nodes: []store.DagNode{{NodeID: "a", Status: "done"}, {NodeID: "b", Status: "done"}},
+	}, map[string]float64{"a": 0.42, "": 1})
+	for _, o := range turn.Output {
+		if d, err := o.AsDagOutputItem(); err == nil && d.Type == "quack:dag" {
+			if c := d.NodeStates["a"].CostUsd; c == nil || *c != 0.42 {
+				t.Errorf("a cost = %v, want 0.42", c)
+			}
+			if c := d.NodeStates["b"].CostUsd; c != nil {
+				t.Errorf("b cost = %v, want omitted", *c)
+			}
+			return
+		}
+	}
+	t.Fatal("no dag item")
 }
 
 func ptrTo[T any](v T) *T { return &v }
