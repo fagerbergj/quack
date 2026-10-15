@@ -624,7 +624,8 @@ func (p *ModelPricing) Cost(prompt, cached, completion int64) float64 {
 	if p.CachedInputPerMTok != nil {
 		cachedRate = *p.CachedInputPerMTok
 	}
-	return (float64(prompt-cached)*p.InputPerMTok + float64(cached)*cachedRate + float64(completion)*p.OutputPerMTok) / 1e6
+	fresh := max(prompt-cached, 0) // a malformed report (cached > prompt) clamps like splitPromptTokens
+	return (float64(fresh)*p.InputPerMTok + float64(cached)*cachedRate + float64(completion)*p.OutputPerMTok) / 1e6
 }
 
 // checkModelRegistered errors on an unregistered non-agent model reference: ModelCost is a silent

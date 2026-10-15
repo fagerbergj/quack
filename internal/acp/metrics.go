@@ -44,4 +44,3 @@ func (a *Agent) recordCall(ctx context.Context, coords ledger.Coords, u *genai.G
 	recordUsage(a.opts.ModelName, coords, a.opts.Pricing, &sdk.Usage{
 		InputTokens: max(int(u.PromptTokenCount)-cached, 0), OutputTokens: int(u.CandidatesTokenCount), CachedReadTokens: &cached})
 }
-
