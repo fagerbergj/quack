@@ -179,7 +179,7 @@ function UnverifiedMark({ u, chatId }: { u: Unverified; chatId?: string }) {
 
 // Real usage only, no estimates: model/tokens are omitted until known. Only the live orchestrator card
 // passes `status`; completed turns have no live status.
-export function BubbleHeader({ agent, model, tokens, status, stopped, unverified, chatId }: { agent: string; model?: string; tokens?: number; status?: DotStatus; stopped?: StoppedBadge; unverified?: Unverified; chatId?: string }) {
+export function BubbleHeader({ agent, model, tokens, status, stopped, unverified, pending, chatId }: { agent: string; model?: string; tokens?: number; status?: DotStatus; stopped?: StoppedBadge; unverified?: Unverified; pending?: boolean; chatId?: string }) {
   return (
     <div className="relative flex items-center gap-2 mb-2 text-[11px] text-gray-500 dark:text-gray-400">
       {status && <StatusDot status={status} />}
@@ -193,6 +193,11 @@ export function BubbleHeader({ agent, model, tokens, status, stopped, unverified
         </span>
       )}
       {unverified && !stopped && <UnverifiedMark u={unverified} chatId={chatId} />}
+      {pending && !stopped && !unverified && (
+        <span role="status" className="inline-flex items-center gap-0.5 font-medium text-blue-700 dark:text-blue-400" title="The quality check hasn't ruled on this answer yet">
+          <Icon name="hourglass_empty" className="w-3 h-3" /> Draft · checking
+        </span>
+      )}
       {model && (
         <span className="font-mono truncate max-w-[160px]" title={model}>{model}</span>
       )}

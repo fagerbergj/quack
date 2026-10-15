@@ -1225,6 +1225,14 @@ describe('answer-bubble attribution helpers', () => {
     expect(dagAnswerAttribution(grown, 'ONE and more')).toMatchObject({ tokens: 3 })
   })
 
+  // A running sink's streamed text hasn't been judged yet; once every answering sink is done it's final.
+  it('dagAnswerAttribution marks a still-running answering sink as pending', () => {
+    const running = { ...twoSinks({ r1: { status: 'done' }, r2: { status: 'running' } }), nodeAnswer: { r1: 'ONE', r2: 'DRAFT' } }
+    expect(dagAnswerAttribution(running)?.pending).toBe(true)
+    const done = { ...twoSinks({ r1: { status: 'done' }, r2: { status: 'done' } }), nodeAnswer: { r1: 'ONE', r2: 'TWO' } }
+    expect(dagAnswerAttribution(done)?.pending).toBeUndefined()
+  })
+
   // The Zig vs Odin synthesizer failed 3 of 3 rounds; the API omits judge_passed when false.
   it('dagAnswerAttribution flags an answering sink that failed its quality check, and only that', () => {
     const failed = twoSinks({ r1: { status: 'done', judgeRounds: 3, judgeFinalScore: 0.28, startedAt: 10, finishedAt: 20 }, r2: { status: 'done', judgeRounds: 1, judgePassed: true, finishedAt: 30 } })
@@ -1297,7 +1305,7 @@ describe('answer-bubble attribution helpers', () => {
 
   it('dagAnswerAttribution omits model/tokens when the terminal node has none yet', () => {
     const d = dag({ b: { status: 'running' } })
-    expect(dagAnswerAttribution(d)).toEqual({ agent: 'synthesizer', model: undefined, tokens: undefined })
+    expect(dagAnswerAttribution(d)).toEqual({ agent: 'synthesizer', model: undefined, tokens: undefined, pending: true })
   })
 
   it('turnUsageTotal sums input+output tokens from a persisted Turn', () => {

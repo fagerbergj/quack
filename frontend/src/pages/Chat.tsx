@@ -283,7 +283,7 @@ function LiveDagAnswer({ liveText, liveActive, attribution, chatId }: { liveText
   if (!liveText && !attribution?.stopped) return null
   return (
     <>
-      <BubbleHeader agent={attribution?.agent ?? 'orchestrator'} model={attribution?.model} tokens={attribution?.tokens} stopped={stoppedBadge(attribution?.stopped, liveText)} unverified={attribution?.unverified} chatId={chatId} />
+      <BubbleHeader agent={attribution?.agent ?? 'orchestrator'} model={attribution?.model} tokens={attribution?.tokens} stopped={stoppedBadge(attribution?.stopped, liveText)} unverified={attribution?.unverified} pending={attribution?.pending} chatId={chatId} />
       {liveText && <AssistantText text={liveText} streaming={liveActive} />}
     </>
   )
