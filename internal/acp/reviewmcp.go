@@ -27,8 +27,8 @@ const (
 
 // stageReviewCommentInput is stage_review_comment's input: one inline finding.
 type stageReviewCommentInput struct {
-	Path string `json:"path" jsonschema:"repo-relative path of the file the comment anchors to"`
-	Line int    `json:"line" jsonschema:"1-based line number in that file"`
+	Path  string `json:"path" jsonschema:"repo-relative path of the file the comment anchors to"`
+	Line  int    `json:"line" jsonschema:"1-based line number in that file"`
 	Label string `json:"label,omitempty" jsonschema:"the finding's Conventional Comments label: blocking, suggestion, nit, or question"`
 	Body  string `json:"body" jsonschema:"the inline finding at that line, without its label"`
 
