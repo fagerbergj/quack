@@ -614,6 +614,17 @@ type ModelLimits struct {
 type ModelPricing struct {
 	InputPerMTok  float64 `yaml:"input_per_mtok"`
 	OutputPerMTok float64 `yaml:"output_per_mtok"`
+	// CachedInputPerMTok prices prompt tokens served from the provider's cache; nil bills them at InputPerMTok.
+	CachedInputPerMTok *float64 `yaml:"cached_input_per_mtok"`
+}
+
+// Cost prices one call: prompt counts cached tokens too, and those bill at the cached rate.
+func (p *ModelPricing) Cost(prompt, cached, completion int64) float64 {
+	cachedRate := p.InputPerMTok
+	if p.CachedInputPerMTok != nil {
+		cachedRate = *p.CachedInputPerMTok
+	}
+	return (float64(prompt-cached)*p.InputPerMTok + float64(cached)*cachedRate + float64(completion)*p.OutputPerMTok) / 1e6
 }
 
 // checkModelRegistered errors on an unregistered non-agent model reference: ModelCost is a silent

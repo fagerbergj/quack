@@ -115,7 +115,7 @@ func (a *Agent) emitLLMCall(ctx context.Context, u *genai.GenerateContentRespons
 		attribute.Int64(otelobs.GenAIUsageOutputTokens, output),
 	}
 	if a.opts.Pricing != nil {
-		attrs = append(attrs, attribute.Float64(otelobs.GenAIUsageCost, callCost(a.opts.Pricing, prompt, output)))
+		attrs = append(attrs, attribute.Float64(otelobs.GenAIUsageCost, a.opts.Pricing.Cost(prompt, cached, output)))
 	}
 	otelobs.EmitLog(ctx, acpScope, "", attrs...)
 }
