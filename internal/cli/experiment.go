@@ -369,19 +369,34 @@ func (r *LiveItemRunner) RunItem(ctx context.Context, in experimentItemInput) (i
 	if err != nil {
 		return itemRun{}, fmt.Errorf("chat %s: load recording: %w", chatID, err)
 	}
-	runs := sess.NodeRuns(map[string]bool{r.Agent: true})
-	for _, key := range sortedStreamKeys(runs) {
-		if run := runs[key]; run.Answer != "" {
-			out := r.itemRunFor(ctx, chatID, sess, key.Node, run)
-			if in.Seeded != nil {
-				if out.Comments, err = reviewComments(ctx, c, chatID); err != nil {
-					return itemRun{}, fmt.Errorf("chat %s: read review comments: %w", chatID, err)
-				}
-			}
-			return out, nil
+	key, run, ok := pickNodeRun(sess.NodeRuns(map[string]bool{r.Agent: true}))
+	if !ok {
+		return itemRun{}, fmt.Errorf("chat %s: agent %q produced no node run", chatID, r.Agent)
+	}
+	out := r.itemRunFor(ctx, chatID, sess, key.Node, run)
+	if in.Seeded != nil {
+		if out.Comments, err = reviewComments(ctx, c, chatID); err != nil {
+			return itemRun{}, fmt.Errorf("chat %s: read review comments: %w", chatID, err)
 		}
 	}
-	return itemRun{}, fmt.Errorf("chat %s: agent %q produced no node run", chatID, r.Agent)
+	return out, nil
+}
+
+// pickNodeRun prefers a run that answered, else one that ran at all: an ACP reviewer whose last act is the
+// stage_review tool call delivers no closing text, yet staged and was judged like any other.
+func pickNodeRun(runs map[bundle.StreamKey]bundle.NodeRun) (bundle.StreamKey, bundle.NodeRun, bool) {
+	keys := sortedStreamKeys(runs)
+	for _, key := range keys {
+		if runs[key].Answer != "" {
+			return key, runs[key], true
+		}
+	}
+	for _, key := range keys {
+		if runs[key].Task != "" {
+			return key, runs[key], true
+		}
+	}
+	return bundle.StreamKey{}, bundle.NodeRun{}, false
 }
 
 // experimentExtension is the in-process SDK extension `experiment run` dispatches through. Its bound
