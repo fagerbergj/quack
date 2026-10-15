@@ -57,18 +57,17 @@ criteria:
       a cited claim whose citation is not in the claim's sentence or the one before it, whose named outlet
       differs from the linked URL's host, or whose quoted words do not appear in that source's text shown
       in the session. Record each finding with a verbatim quote (or an omission naming exactly what is
-      missing); one you cannot quote or name does not count. Pick the band from the number of findings;
-      none is the top band.
+      missing); one you cannot quote or name does not count. Pick the band from the most serious finding,
+      never from how many there are; none is the top band.
     - List every cited claim.
     - >-
-      For each, check the citation sits in the claim's sentence or the one before it, not only in a references
-      block.
+      For each claim that is not a figure, percentage, price or date, check the citation sits in the claim's sentence or the one before it, not only in a references
+      block. Note whether a verdict, recommendation or conclusion rests on the claim.
     - For each, check the outlet named in the text matches the host of the linked URL.
     - >-
-      For each quoted passage, check the words appear in that source's text as shown in the session; if
-      the session shows no text for that source, it is not a finding. A cited page that was never fetched
-      is scored by code under `cites_sources` and is not a finding here. A weak or tangential source is
-      a note, not a finding.
+      For each quoted passage attributed to a source other than a fetched web page (a code path, an upstream
+      finding), check the words appear in that source's text as shown in the session; if the session shows no text for that source, it is not a finding.
+      A weak or tangential source is a note, not a finding.
     bands:
     - min: 3.0
       max: 3.0
@@ -76,25 +75,27 @@ criteria:
     - min: 2.0
       max: 2.0
       meaning: >-
-        exactly one finding, and it is a placement finding: the citation exists elsewhere in the answer
-        but not at the claim.
+        only placement findings, each on a secondary claim: the citation exists elsewhere in the answer
+        but not at a claim no verdict, recommendation or conclusion rests on.
     - min: 1.0
       max: 1.0
       meaning: >-
-        two or three findings, or one finding that is a named outlet that does not match the linked page,
-        or quoted words the session's source text does not contain.
+        a claim a verdict, recommendation or conclusion rests on has its citation elsewhere, or a named
+        outlet does not match the linked page, or quoted words the session's source text does not contain.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or a quote is contradicted by the session's source text, or citations exist
-        only in a references block with none at claims.
+        a quote is contradicted by the session's source text, or citations exist only in a references
+        block with none at claims.
     anchors:
     - quote
     - omission
     guidance: >
-      Three checkable questions per cited claim: placement, outlet-host match, and quoted words present
-      in the shown source text. Existence of the fetch is `cites_sources` (code); presence of a citation
-      at all is `grounded`.
+      Code owns the countable parts: whether a cited page was fetched is `cites_sources`, whether a figure,
+      percentage, price or date has a citation near it is `specifics_cited`, and whether a quote or figure
+      matches the fetched web page it cites is `specifics_supported`. None of those is a finding here.
+      Band by the worst finding, not the number of findings: three misplaced citations on secondary
+      claims score the same as one.
   clean_output:
     definition: >
       The response is formatted for the reader it is addressed to: it begins directly with the answer
@@ -180,36 +181,45 @@ criteria:
       specific (name, number, claim, URL) must trace back to the research it received - not to training-data
       knowledge.
     guidance: >
-      Two checkable questions per specific: does the answer contradict it, and (when uncited) is it in
-      the received research. Do **NOT** flag a specific because it is unfamiliar or postdates your training.
+      Two checkable questions per specific: does the answer contradict it, and (when uncited and load-bearing)
+      is it in the received research. Do **NOT** flag a specific because it is unfamiliar or postdates your
+      training. Figures, percentages, prices and dates that are uncited and absent from the research are
+      counted by code as `specifics_cited`, not here. Band by the worst finding, not the number of findings:
+      one defect split into several findings lands where one would. A summary count that disagrees with
+      the itemized list it summarizes is a secondary finding unless the verdict depends on it (a count of
+      zero blocking findings beside a blocking finding).
     steps:
     - >-
       Enumerate first: list every item the steps below cover, then apply them to each one. A finding is
       a specific (name, number, price, date, quote) that another passage of the answer contradicts, or
-      that appears nowhere in the research the synthesizer received. Record each finding with a verbatim
-      quote (or an omission naming exactly what is missing); one you cannot quote or name does not count.
-      Pick the band from the number of findings; none is the top band.
+      a load-bearing name, quote or claim that appears nowhere in the research the synthesizer received.
+      Record each finding with a verbatim quote (or an omission naming exactly what is missing); one you
+      cannot quote or name does not count. Pick the band from the most serious finding, never from how many
+      there are; none is the top band.
     - List every specific that appears more than once, or that a later passage restates or derives from.
     - For each, check the passages agree; quote both when they do not.
     - >-
-      For a specific with no citation, check it appears in the research inputs; quote the specific when
-      it does not. Whether a specific has a citation next to it is scored by code as `specifics_cited`
-      and is not a finding here.
+      For an uncited name, quote or claim that a verdict, recommendation or conclusion rests on, check it
+      appears in the research inputs; quote it when it does not.
     bands:
     - min: 3.0
       max: 3.0
       meaning: 'no finding: every item passes the steps above.'
     - min: 2.0
       max: 2.0
-      meaning: exactly one finding, and it is a secondary detail, not a headline figure or a conclusion.
+      meaning: >-
+        every finding is a secondary detail (a summary count, a side figure, a supporting example), and
+        nothing a verdict, recommendation or conclusion rests on is contradicted or untraced.
     - min: 1.0
       max: 1.0
-      meaning: two or three findings, or one finding that is a headline figure or a conclusion.
+      meaning: >-
+        a specific that a conclusion or recommendation rests on is contradicted by another passage, or
+        appears nowhere in the research.
     - min: 0.0
       max: 0.0
       meaning: >-
-        four or more findings, or the main conclusion rests on a specific the answer itself contradicts
-        or the research never contained.
+        the answer's verdict or main recommendation is contradicted by its own body, or rests on a specific
+        the research never contained.
     anchors:
     - quote
     - omission
