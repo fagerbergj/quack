@@ -200,4 +200,20 @@ describe('Chat empty /chat route (audit finding 8)', () => {
     expect(submitSpy).toHaveBeenCalledWith('new-chat', 'hello', undefined, expect.any(Function))
     expect(window.location.pathname).toBe('/chat/new-chat')
   })
+
+  it('says "Loading chat…", not "Ask a question", until an existing chat\'s history arrives', async () => {
+    mockMatchMedia()
+    client.setConfig({ baseUrl: 'http://localhost:3000' })
+    window.history.replaceState(null, '', '/chat/long-chat')
+    let resolve!: (v: Awaited<ReturnType<typeof api.getChat>>) => void
+    vi.mocked(api.getChat).mockImplementationOnce(() => new Promise(r => { resolve = r }))
+
+    const { host } = await mountEmptyChat(new ChatStore())
+    expect(host.querySelector('[role=status]')?.textContent).toBe('Loading chat…')
+    expect(host.textContent).not.toContain('Ask a question')
+
+    await act(async () => { resolve({ id: 'long-chat', title: '', system_prompt: '', created_at: NOW, updated_at: NOW, status: 'idle', turns: [], usage: {} }) })
+    expect(host.textContent).not.toContain('Loading chat…')
+    expect(host.textContent).toContain('Ask a question')
+  })
 })

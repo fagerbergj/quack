@@ -487,9 +487,17 @@ function showEmptyPrompt(activeChatId: string | null, state: ChatState, live: No
   return !!activeChatId && state.turns.length === 0 && !live && !state.submitting
 }
 
+// A long chat's GET takes seconds; until it settles an empty turn list means "not here yet", not "empty".
+function chatPending(activeChatId: string | null, loadedChatId: string | null, state: ChatState): boolean {
+  return !!activeChatId && loadedChatId !== activeChatId && state.turns.length === 0 && !state.live && !state.submitting
+}
+
 // A /chat/<id> the server doesn't know gets a not-found note; the Composer stays mounted, so a typed draft carries
 // into the new chat.
-function EmptyChatNote({ notFound, empty, onNewChat }: { notFound: boolean; empty: boolean; onNewChat: () => void }) {
+function EmptyChatNote({ notFound, empty, loading, onNewChat }: { notFound: boolean; empty: boolean; loading: boolean; onNewChat: () => void }) {
+  if (loading) {
+    return <div role="status" className="text-center text-gray-500 dark:text-gray-400 text-sm mt-20">Loading chat…</div>
+  }
   if (!notFound) {
     return empty ? <div className="text-center text-gray-500 dark:text-gray-400 text-sm mt-20">Ask a question</div> : null
   }
@@ -569,6 +577,8 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
   // Gates the status-triggered re-attach until seed() ran: the poll can mark a chat running before getChat
   // resolves, and an early attach() makes seed() a no-op, dropping history.
   const [seededChatId, setSeededChatId] = useState<string | null>(null)
+  // The chat whose GET /chats/{id} settled, either way: a failed load falls back to the empty prompt, never a stuck spinner.
+  const [loadedChatId, setLoadedChatId] = useState<string | null>(null)
   // Set when GET /chats/{id} 404s; only a 404 means not-found, never a network error.
   const [missingChatId, setMissingChatId] = useState<string | null>(null)
   const notFound = isMissingChat(activeChatId, missingChatId)
@@ -671,6 +681,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
       }
       store.seed(activeChatId, detail.turns, detail.usage)
       setSeededChatId(activeChatId)
+      setLoadedChatId(activeChatId)
       // A finished DAG turn attaches too: replaying chat_events is the only record of judge/revise sub-run cards,
       // which node_states doesn't break down per run.
       const lastTurn = detail.turns[detail.turns.length - 1]
@@ -678,7 +689,9 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
         store.attach(activeChatId)
       }
     }).catch((err: unknown) => {
-      if (!cancelled && (err as { status?: number })?.status === 404) setMissingChatId(activeChatId)
+      if (cancelled) return
+      setLoadedChatId(activeChatId)
+      if ((err as { status?: number })?.status === 404) setMissingChatId(activeChatId)
     })
     return () => {
       cancelled = true
@@ -943,7 +956,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
         <div className="relative flex-1 min-h-0">
         {/* Clearance is composer height plus --composer-gap, so the inset grows it instead of counting twice. */}
         <div ref={scrollRef} style={composerClearance.style} className="absolute inset-0 overflow-y-auto overscroll-contain px-6 pt-6 pb-[calc(7rem+var(--composer-gap))] medium:pb-[calc(8rem+var(--composer-gap))] space-y-6">
-          <EmptyChatNote notFound={notFound} empty={showEmptyPrompt(activeChatId, state, live)} onNewChat={handleNewChat} />
+          <EmptyChatNote notFound={notFound} empty={showEmptyPrompt(activeChatId, state, live)} loading={chatPending(activeChatId, loadedChatId, state)} onNewChat={handleNewChat} />
 
           {hiddenTurnCount > 0 && (
             <button
