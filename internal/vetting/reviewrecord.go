@@ -371,11 +371,8 @@ func extractReviewFindings(answer string, staged StagedDelivery) []ReviewComment
 // fileLineAtForCfg reads one line of path as of cfg.NodeBaseSHA; "" on any failure, so the finding hash
 // degrades rather than blocking the write.
 func fileLineAtForCfg(cfg Config, path string, line int) string {
-	if cfg.Workspace == nil || cfg.NodeBaseSHA == "" {
-		return ""
-	}
-	dir, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.SetupCloneDir(cfg.NodeID))
-	if err != nil {
+	dir, ok := probeClone(cfg)
+	if !ok || cfg.NodeBaseSHA == "" {
 		return ""
 	}
 	return fileLineAt(dir, checksCaps(cfg), cfg.NodeBaseSHA, path, line)
@@ -1087,8 +1084,8 @@ func BuildReviewPreload(ctx context.Context, cfg Config, nodeID string) string {
 	if !ok {
 		return ""
 	}
-	dir, derr := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.SetupCloneDir(cfg.NodeID))
-	if derr != nil {
+	dir, ok := probeClone(cfg)
+	if !ok {
 		return ""
 	}
 	caps := checksCaps(cfg)

@@ -2,10 +2,10 @@
 package vetting
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
-	"path/filepath"
 	"strings"
 	"sync"
 
@@ -32,15 +32,12 @@ type gitProbeResult struct {
 
 // augmentFromRepo folds the clone's git state into session-derived activity.
 func augmentFromRepo(ctx context.Context, act *workerActivity, cfg Config) {
-	// Read-only reviewers/explorers don't commit; staging a PR would reset the reviewed branch.
-	if cfg.ReadOnly {
+	// Read-only and worktree nodes never commit to the probed clone; staging a PR would reset the reviewed branch.
+	if cfg.ReadOnly || cfg.WorktreeParent != "" || act.committed {
 		return
 	}
-	if cfg.Setup == nil || cfg.Workspace == nil || act.committed {
-		return
-	}
-	dir, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.SetupCloneDir(cfg.NodeID))
-	if err != nil || !isDir(filepath.Join(dir, ".git")) {
+	dir, ok := probeClone(cfg)
+	if !ok {
 		return
 	}
 
@@ -140,24 +137,8 @@ const diffTruncatedMarker = "\n… (diff truncated)\n"
 
 // diffSince returns the base...HEAD diff off the clone (base = reflog oldest), truncated. "" on failure.
 func diffSince(cfg Config) (diff, base, head string) {
-	if cfg.Setup == nil || cfg.Workspace == nil {
-		return "", "", ""
-	}
-	dir, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.SetupCloneDir(cfg.NodeID))
-	if err != nil || !isDir(filepath.Join(dir, ".git")) {
-		return "", "", ""
-	}
-	caps := checksCaps(cfg)
-	// This node's own starting point when we have it; the reflog base otherwise.
-	b := cfg.NodeBaseSHA
-	if b == "" {
-		var err error
-		if b, err = baseCommit(dir, caps); err != nil {
-			return "", "", ""
-		}
-	}
-	h := gitLine(dir, caps, "rev-parse", "HEAD")
-	if h == "" {
+	dir, caps, b, h, ok := cloneRange(cfg)
+	if !ok {
 		return "", "", ""
 	}
 	res, err := workspace.RunArgv(context.Background(), dir, []string{"git", "diff", b + "..." + h}, caps)
@@ -245,14 +226,39 @@ func shortSHA(sha string, n int) string { return sha[:min(n, len(sha))] }
 // cloneHeadSHA is the clone's HEAD now, stamped once per node so diffSince scopes to this node's work.
 // "" when there is no clone yet.
 func cloneHeadSHA(cfg Config) string {
-	if cfg.Setup == nil || cfg.Workspace == nil {
-		return ""
-	}
-	dir, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.SetupCloneDir(cfg.NodeID))
-	if err != nil || !isDir(filepath.Join(dir, ".git")) {
+	dir, ok := probeClone(cfg)
+	if !ok {
 		return ""
 	}
 	return gitLine(dir, checksCaps(cfg), "rev-parse", "HEAD")
+}
+
+// probeClone is the clone the gate's git probes read; ok=false until it exists. A linked worktree's .git is
+// a pointer file, so this tests existence, not a directory.
+func probeClone(cfg Config) (string, bool) {
+	if cfg.Setup == nil || cfg.Workspace == nil {
+		return "", false
+	}
+	dir, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.SetupCloneDir(cmp.Or(cfg.WorktreeParent, cfg.NodeID)))
+	return dir, err == nil && pathExists(dir, ".git")
+}
+
+// cloneRange is the probe clone and the base...head its diff covers. A reviewer commits nothing, so its
+// start head is the head under review and the base is the branch's (reflog oldest).
+func cloneRange(cfg Config) (dir string, caps workspace.Caps, base, head string, ok bool) {
+	if dir, ok = probeClone(cfg); !ok {
+		return "", caps, "", "", false
+	}
+	caps = checksCaps(cfg)
+	base = cfg.NodeBaseSHA
+	if base == "" || cfg.IsReviewer {
+		var err error
+		if base, err = baseCommit(dir, caps); err != nil {
+			return "", caps, "", "", false
+		}
+	}
+	head = gitLine(dir, caps, "rev-parse", "HEAD")
+	return dir, caps, base, head, head != ""
 }
 
 // commitHygieneOffTaskCeiling: commit_hygiene below this (normalised) means a commit swept in off-task
@@ -266,11 +272,12 @@ func resetCloneToNodeBase(cfg Config, v verdict) {
 	if !ok || cs.Score >= commitHygieneOffTaskCeiling {
 		return
 	}
-	if cfg.ReadOnly || cfg.Setup == nil || cfg.Workspace == nil || cfg.NodeBaseSHA == "" {
+	// A worktree node probes the shared clone, so a reset here would rewind the writer's branch.
+	if cfg.ReadOnly || cfg.WorktreeParent != "" || cfg.NodeBaseSHA == "" {
 		return
 	}
-	dir, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.SetupCloneDir(cfg.NodeID))
-	if err != nil || !isDir(filepath.Join(dir, ".git")) {
+	dir, ok := probeClone(cfg)
+	if !ok {
 		return
 	}
 	caps := checksCaps(cfg)

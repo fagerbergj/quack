@@ -36,6 +36,9 @@ func judgeSessionID(chatID, fallback string) string {
 
 // Config carries per-agent trust-gate settings for RunGatedRefine and the judge.
 type Config struct {
+	// WorktreeParent: the setup clone a worktree node's tree tracks. The gate probes it: the worktree
+	// appears only at the node's first round, and the node never commits to the clone.
+	WorktreeParent string
 	// NodeBaseSHA is the clone's HEAD when THIS node started: chained nodes share one clone, so the
 	// reflog base would include siblings' commits. Empty falls back to the reflog base.
 	NodeBaseSHA          string
