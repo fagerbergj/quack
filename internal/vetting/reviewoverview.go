@@ -114,6 +114,24 @@ func commentLabel(body string) (label, why string) {
 	return label, firstSentence(remainder)
 }
 
+// CommentLabels are the Conventional Comments labels a staged finding opens with, strongest first.
+var CommentLabels = []string{"blocking", "suggestion", "nit", "question"}
+
+var labelEmoji = map[string]string{"blocking": "🚨", "suggestion": "💡", "nit": "🔧", "question": "❓"}
+
+// WithCommentLabel puts label, decorated as reviews render it, in front of body, replacing any label body
+// opened with; "" leaves body as is.
+func WithCommentLabel(label, body string) string {
+	label = strings.ToLower(label)
+	if label == "" {
+		return body
+	}
+	if m := commentLabelRe.FindStringIndex(body); m != nil {
+		body = strings.TrimSpace(body[m[1]:])
+	}
+	return strings.TrimSpace(labelEmoji[label] + " **" + label + ":** " + body)
+}
+
 // HasCommentLabel reports whether body opens with a Conventional Comments
 // label - an unlabeled finding never counts toward the verdict or Highlights.
 func HasCommentLabel(body string) bool {

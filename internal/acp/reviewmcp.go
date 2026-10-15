@@ -27,9 +27,10 @@ const (
 
 // stageReviewCommentInput is stage_review_comment's input: one inline finding.
 type stageReviewCommentInput struct {
-	Path string `json:"path" jsonschema:"repo-relative path of the file the comment anchors to"`
-	Line int    `json:"line" jsonschema:"1-based line number in that file"`
-	Body string `json:"body" jsonschema:"the inline finding at that line"`
+	Path  string `json:"path" jsonschema:"repo-relative path of the file the comment anchors to"`
+	Line  int    `json:"line" jsonschema:"1-based line number in that file"`
+	Label string `json:"label,omitempty" jsonschema:"the finding's Conventional Comments label: blocking, suggestion, nit, or question"`
+	Body  string `json:"body" jsonschema:"the inline finding at that line, without its label"`
 
 	ProposedChange *vetting.ProposedChange `json:"proposed_change,omitempty" jsonschema:"the replacement code for a finding that proposes a specific change; omit for a question or observation"`
 }
@@ -76,6 +77,9 @@ var stageReviewCommentSchema = func() *jsonschema.Schema {
 		panic("acp: stage_review_comment schema: " + err.Error())
 	}
 	vetting.DeclareProposedChangeCaps(s.Properties["proposed_change"])
+	for _, l := range vetting.CommentLabels {
+		s.Properties["label"].Enum = append(s.Properties["label"].Enum, l)
+	}
 	return s
 }()
 
@@ -116,7 +120,7 @@ func addStageReviewComment(srv *mcp.Server, review *vetting.ReviewStage) {
 		Description: "Stage one inline, line-anchored review comment on the pull request under review. Call once per finding; the gate posts them after your answer passes. Returns the id of the staged comment, for later retraction via unstage_review_comment. Duplicates (same path, line, and body) are rejected with the existing id, not double-staged.",
 		InputSchema: stageReviewCommentSchema,
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args stageReviewCommentInput) (*mcp.CallToolResult, any, error) {
-		body := strings.TrimSpace(args.Body)
+		body := vetting.WithCommentLabel(strings.TrimSpace(args.Label), strings.TrimSpace(args.Body))
 		if err := checkReviewComment(strings.TrimSpace(args.Path), args.Line, body, args.ProposedChange); err != nil {
 			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}}}, nil, nil
 		}
@@ -143,7 +147,7 @@ func checkReviewComment(path string, line int, body string, change *vetting.Prop
 	case body == "":
 		errs = append(errs, errors.New("stage_review_comment: body is required"))
 	case !vetting.HasCommentLabel(body):
-		errs = append(errs, errors.New("stage_review_comment's body must open with a Conventional Comments label: blocking:, suggestion:, nit:, or question: (e.g. \"blocking: nil deref on the unchecked input\")"))
+		errs = append(errs, errors.New("stage_review_comment: label is required - pass label: blocking, suggestion, nit, or question"))
 	}
 	return errors.Join(errs...)
 }

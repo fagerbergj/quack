@@ -386,7 +386,7 @@ func precheck(tool string, raw json.RawMessage) error {
 	case toolStageReviewComment:
 		var in stageReviewCommentInput
 		if json.Unmarshal(raw, &in) == nil {
-			return checkReviewComment(strings.TrimSpace(in.Path), in.Line, strings.TrimSpace(in.Body), in.ProposedChange)
+			return checkReviewComment(strings.TrimSpace(in.Path), in.Line, vetting.WithCommentLabel(strings.TrimSpace(in.Label), strings.TrimSpace(in.Body)), in.ProposedChange)
 		}
 	}
 	return nil

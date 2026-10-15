@@ -102,7 +102,7 @@ func TestReviewMCP_StageReviewCommentRequiresLabel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CallTool stage_review_comment (unlabeled): %v", err)
 	}
-	if !res.IsError || !strings.Contains(toolResultText(t, res), "Conventional Comments label") {
+	if !res.IsError || !strings.Contains(toolResultText(t, res), "label is required") {
 		t.Fatalf("an unlabeled body must be rejected naming the requirement, got %+v", res)
 	}
 	if _, ok := review.Snapshot(); ok {
@@ -175,7 +175,7 @@ func TestReviewMCP_StageReviewCommentProposedChange(t *testing.T) {
 		t.Fatalf("CallTool stage_review_comment: %v", err)
 	}
 	msg := toolResultText(t, res)
-	for _, want := range []string{"path is required", "Conventional Comments label", "proposed_change.code is empty", "short language tag"} {
+	for _, want := range []string{"path is required", "label is required", "proposed_change.code is empty", "short language tag"} {
 		if !res.IsError || !strings.Contains(msg, want) {
 			t.Fatalf("one rejection must list every problem; missing %q in %q", want, msg)
 		}
@@ -549,7 +549,7 @@ func TestReviewMCP_ReportsEveryProblem(t *testing.T) {
 		want []string
 	}{
 		{"stage_review_comment", map[string]any{"path": "", "line": 0, "body": "no label here"},
-			[]string{"path is required", "line must be a positive", "Conventional Comments label"}},
+			[]string{"path is required", "line must be a positive", "label is required"}},
 		{"stage_review", map[string]any{"event": "lgtm", "takeaway": " ", "notes": notes},
 			[]string{"event must be approve", "takeaway is required", "notes: 9 items, max 8"}},
 	} {
@@ -664,4 +664,14 @@ func toolInputSchema(t *testing.T, cs *mcp.ClientSession, name string) *jsonsche
 	}
 	t.Fatalf("no %s tool", name)
 	return nil
+}
+
+// label is its own enum field: a body without one stages as "<label>: <body>", and the schema lists the four labels.
+func TestStageReviewComment_LabelField(t *testing.T) {
+	if got := stageReviewCommentSchema.Properties["label"].Enum; len(got) != 4 || got[0] != "blocking" {
+		t.Fatalf("label enum = %v, want the four Conventional Comments labels", got)
+	}
+	if err := checkReviewComment("a.go", 3, vetting.WithCommentLabel("question", "is nil possible here?"), nil); err != nil {
+		t.Fatalf("a labeled field with an unlabeled body must pass: %v", err)
+	}
 }
