@@ -65,6 +65,13 @@ func (c judgeReadCounters) carry(prior judgeReadCounters) {
 	}
 }
 
+// credit counts n reads quack made into the prompt as the judge's own, so it need not repeat them to pass.
+func (c judgeReadCounters) credit(n int) {
+	if c.repo != nil {
+		c.repo.n.Add(int64(n))
+	}
+}
+
 // judgePriorReadsChars bounds the prior-attempt reads seeded into a retry's prompt.
 const judgePriorReadsChars = 32_000
 

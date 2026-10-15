@@ -38,7 +38,7 @@ criteria:
     steps:
     - "Enumerate first: list every finding and every `verified` item, then apply the steps below to each one. A finding is a claim that names no file:line read and no command or test run with its result, or a claim the code it cites contradicts. Record each finding with a verbatim quote (or an omission naming exactly what is missing); one you cannot quote or name does not count. Pick the band from the number of findings; none is the top band."
     - For each claim, check it names the lines it read or the command it ran and what that showed.
-    - For each claim that names lines, open them (or the diff) and check they say what the claim says. A claim about code the reviewer never read, or that the lines contradict, is the worst kind.
+    - For each claim that names lines, read them in the quack-fetched source excerpts (or the diff, or open the file) and check they say what the claim says. A claim about code the reviewer never read, or that the lines contradict, is the worst kind.
     - For each `blocking:` defect, check it shows how the defect happens - a failing command or test and its output, or the input and the lines it goes wrong at.
     bands:
     - min: 3.0
