@@ -345,6 +345,23 @@ func TestNodeRuns_ACPArtifactsAndPlugins(t *testing.T) {
 	}
 }
 
+// A round that ended on its tool call has no answer, but keeps the prompt it resolved.
+func TestNodeRuns_ACPAnswerlessKeepsProvenance(t *testing.T) {
+	sent := []string{`{"jsonrpc":"2.0","id":1,"method":"session/prompt","params":{"prompt":[{"type":"text","text":"review this diff"}]}}`}
+	received := []string{`{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call","toolCallId":"t1"}}}`}
+	e := invokeAgent(t0(), "node-a", "code-reviewer", "worker-r0", sent, received)
+	e.attrs["quack.artifacts"] = `[{"name":"system/code-reviewer","source":"langfuse","version_id":"7"}]`
+	sess, err := Load(writeJSONL(t, []entry{e}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	for _, run := range sess.NodeRuns(map[string]bool{"code-reviewer": true}) {
+		if run.Answer != "" || len(run.Artifacts) != 1 || run.Artifacts[0].VersionID != "7" {
+			t.Errorf("run = answer %q artifacts %+v, want no answer and system/code-reviewer@7", run.Answer, run.Artifacts)
+		}
+	}
+}
+
 // TestNodeRuns_ACPAnswerResetsOnToolCall: the answer is only the text after the last tool call, mirroring
 // translate.go's reset.
 func TestNodeRuns_ACPAnswerResetsOnToolCall(t *testing.T) {
