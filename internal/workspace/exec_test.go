@@ -351,20 +351,32 @@ func TestRunPipelineStderrCombined(t *testing.T) {
 	}
 }
 
+// TestRunPipelineTimeoutKillsWholePipeline: the deadline kills the sleeping stage; a long reapGrace
+// keeps StopChild's group-kill fallback from passing for it.
 func TestRunPipelineTimeoutKillsWholePipeline(t *testing.T) {
+	old := reapGrace
+	reapGrace = time.Minute
+	t.Cleanup(func() { reapGrace = old })
 	caps := DefaultCaps()
-	caps.Timeout = 100 * time.Millisecond
-	start := time.Now()
+	caps.Timeout = 500 * time.Millisecond
 	res, err := RunPipeline(context.Background(), t.TempDir(),
 		[][]string{{"sleep", "5"}, {"cat"}}, caps)
-	if err == nil {
-		t.Fatal("RunPipeline: want a timeout error")
+	if err == nil || !res.TimedOut {
+		t.Fatalf("RunPipeline: err=%v TimedOut=%v, want a timeout", err, res.TimedOut)
 	}
-	if !res.TimedOut {
-		t.Error("TimedOut = false, want true")
+	if !strings.Contains(res.Output, "stage 1 of 2 (sleep 5) exited -1") {
+		t.Errorf("Output = %q, want the sleep stage killed rather than finished", res.Output)
 	}
-	if elapsed := time.Since(start); elapsed > 3*time.Second {
-		t.Errorf("pipeline took %s to die; the deadline should kill every stage", elapsed)
+}
+
+// TestRunPipelineExpiredDeadlineTimesOut: a deadline that expires before a stage starts is a
+// timeout, as RunArgv reports it, not a start failure.
+func TestRunPipelineExpiredDeadlineTimesOut(t *testing.T) {
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now())
+	defer cancel()
+	res, err := RunPipeline(ctx, t.TempDir(), [][]string{{"echo", "x"}, {"cat"}}, DefaultCaps())
+	if err == nil || !res.TimedOut {
+		t.Fatalf("RunPipeline: err=%v TimedOut=%v, want a timeout", err, res.TimedOut)
 	}
 }
 
