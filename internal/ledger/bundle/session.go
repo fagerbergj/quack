@@ -102,7 +102,8 @@ func (s *Session) ingest(e ledger.Entry) {
 			Criterion: p.Criterion, Score: p.Score, Explanation: p.Explanation, Timestamp: e.At})
 	case ledger.KindLLMCall:
 		ce := chatEntry{ts: e.At}
-		if json.Unmarshal(e.Payload, &ce.LLMCallPayload) != nil {
+		// An ACP call's row carries usage only; its round's content is read from the agent.invoke stream.
+		if json.Unmarshal(e.Payload, &ce.LLMCallPayload) != nil || ce.Input == "" && ce.Output == "" {
 			return
 		}
 		st := s.state(key)
@@ -306,7 +307,7 @@ func gateTask(text string) string {
 	return text
 }
 
-// acpRoundRun builds a round's task/answer from its invoke_agent stream, since an ACP round emits no llm.call.
+// acpRoundRun builds a round's task/answer from its invoke_agent stream: an ACP round's llm.call rows carry usage only.
 func acpRoundRun(key StreamKey, st *streamState) (roundRun, bool) {
 	if len(st.agents) == 0 {
 		return roundRun{}, false

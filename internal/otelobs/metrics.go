@@ -187,7 +187,7 @@ func initMetrics(meter metric.Meter) error {
 		{metricDef{"gen_ai.client.token.usage", "tokens consumed per completed model call, by gen_ai.token.type (input/output/reasoning/cached)", "{token}", nil}, &m2.tokenUsage},
 		{metricDef{"quack.ledger.unresolved_intents", "Ledger intents whose projection is missing and boot recovery could not settle", "", nil}, &m2.ledgerUnresolved},
 		{metricDef{"gen_ai.client.cost", "USD cost per completed model call, computed from config/quack.yaml's optional per-model price table; a model absent from that table emits no cost here", "USD", nil}, &m2.cost},
-		{metricDef{"quack.model.requests", "completed model calls that reported usage (an ACP round counts once), attributed like gen_ai.client.cost - the per-request denominator", "", nil}, &m2.requests},
+		{metricDef{"quack.model.requests", "completed model calls that reported usage (an ACP agent without per-call usage counts once per round), attributed like gen_ai.client.cost - the per-request denominator", "", nil}, &m2.requests},
 		{metricDef{"quack.run.duration", "one orchestrator run's wall time; _count is tasks, the cost-per-task denominator", "s",
 			[]float64{10, 30, 60, 300, 600, 1800, 3600, 7200, 14400}}, &m2.runDur},
 		{metricDef{"quack.tool.calls", "tool calls by tool; rejected=true returned an error to the model (e.g. a write_<kind> schema refusal), costing a recovery request", "", nil}, &m2.toolCalls},

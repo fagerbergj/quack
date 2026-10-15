@@ -29,7 +29,7 @@ type translator struct {
 	cwd       string
 	answer    strings.Builder
 	pending   map[string]pendingTool
-	usage     *genai.GenerateContentResponseUsageMetadata
+	sawUsage  bool // a usage_update arrived: the agent reports per call
 	thinking  strings.Builder
 	thinkOpen time.Time // zero when no batch is open
 }
@@ -79,34 +79,9 @@ func (t *translator) translate(u sdk.SessionUpdate) []eventSpec {
 			out = append(out, eventSpec{partial: true, parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{ID: id, Name: name, Args: args}}}})
 		}
 	case u.ToolCallUpdate != nil:
-		up := u.ToolCallUpdate
-		id := string(up.ToolCallId)
-		p := t.pending[id] // zero value on create-on-update (spec-sanctioned agent behaviour)
-		if up.Kind != nil {
-			p.kind = *up.Kind
+		if spec, ok := t.toolCallUpdate(u.ToolCallUpdate); ok {
+			out = append(out, spec)
 		}
-		if up.Title != nil {
-			p.title = *up.Title
-		}
-		if up.RawInput != nil {
-			p.rawInput = up.RawInput
-		}
-		if len(up.Content) > 0 {
-			p.content = up.Content
-		}
-		if len(up.Locations) > 0 {
-			p.loc = up.Locations
-		}
-		if len(up.Meta) > 0 {
-			p.meta = up.Meta
-		}
-		if up.Status == nil || !terminalStatus(*up.Status) {
-			t.pending[id] = p
-			return out
-		}
-		delete(t.pending, id)
-		name, args := t.mapToolCall(p)
-		out = append(out, t.pairSpec(id, name, args, p, *up.Status == sdk.ToolCallStatusFailed, up.RawOutput))
 	case u.UsageUpdate != nil:
 		um := &genai.GenerateContentResponseUsageMetadata{TotalTokenCount: int32(u.UsageUpdate.Used)}
 		// ACP's usage_update has no prompt/cached/completion split, so pi-acp
@@ -114,9 +89,43 @@ func (t *translator) translate(u sdk.SessionUpdate) []eventSpec {
 		um.PromptTokenCount = usageMetaInt(u.UsageUpdate.Meta, quackPromptTokensMetaKey)
 		um.CachedContentTokenCount = usageMetaInt(u.UsageUpdate.Meta, quackCachedTokensMetaKey)
 		um.CandidatesTokenCount = usageMetaInt(u.UsageUpdate.Meta, quackCompletionTokensMetaKey)
-		t.usage = um
+		// pi-acp sends one usage_update per finished model call, so each rides its own event like a
+		// native call's: the node sums them, and its context size is the last call's prompt.
+		out = append(out, eventSpec{partial: true, usage: um})
+		t.sawUsage = true
 	}
 	return out
+}
+
+// toolCallUpdate merges one update into its pending call; ok when the call reached a terminal status.
+func (t *translator) toolCallUpdate(up *sdk.SessionToolCallUpdate) (eventSpec, bool) {
+	id := string(up.ToolCallId)
+	p := t.pending[id] // zero value on create-on-update (spec-sanctioned agent behaviour)
+	if up.Kind != nil {
+		p.kind = *up.Kind
+	}
+	if up.Title != nil {
+		p.title = *up.Title
+	}
+	if up.RawInput != nil {
+		p.rawInput = up.RawInput
+	}
+	if len(up.Content) > 0 {
+		p.content = up.Content
+	}
+	if len(up.Locations) > 0 {
+		p.loc = up.Locations
+	}
+	if len(up.Meta) > 0 {
+		p.meta = up.Meta
+	}
+	if up.Status == nil || !terminalStatus(*up.Status) {
+		t.pending[id] = p
+		return eventSpec{}, false
+	}
+	delete(t.pending, id)
+	name, args := t.mapToolCall(p)
+	return t.pairSpec(id, name, args, p, *up.Status == sdk.ToolCallStatusFailed, up.RawOutput), true
 }
 
 // _meta keys pi-acp sets on usage_update, mirroring pi's own Usage shape
@@ -168,7 +177,7 @@ func (t *translator) flushThought() (eventSpec, bool) {
 // finalSpec is the round's durable answer event: agent message text since the last tool call
 // (what RunNode[string] returns); earlier narration is reset at each ToolCall.
 func finalSpec(t *translator) eventSpec {
-	return eventSpec{parts: []*genai.Part{{Text: t.answer.String()}}, usage: t.usage}
+	return eventSpec{parts: []*genai.Part{{Text: t.answer.String()}}}
 }
 
 func terminalStatus(s sdk.ToolCallStatus) bool {

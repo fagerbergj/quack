@@ -289,12 +289,14 @@ if (!process.env.PI_ACP_REAL && !process.env.ACP_CMD) {
   const tu = updates.find((u) => u.sessionUpdate === "tool_call_update");
   assert.equal(tu.status, "completed");
   assert.equal(tu.rawOutput.output, "hi\n");
-  const usageUpdate = updates.find((u) => u.sessionUpdate === "usage_update" && u.used === 99);
-  assert.ok(usageUpdate, "no usage_update with used === 99");
+  // One usage_update per model call (fake-pi makes two), each carrying that call's final usage.
+  const usages = updates.filter((u) => u.sessionUpdate === "usage_update");
+  assert.deepEqual(usages.map((u) => u.used), [42, 99], "want one usage_update per model call");
+  const usageUpdate = usages[1];
   // input(10) + cacheRead(6) + cacheWrite(3): prompt_tokens must be the full total, cached a subset of it.
   assert.equal(usageUpdate._meta?.quack_prompt_tokens, 19, "prompt tokens must include cacheRead+cacheWrite");
   assert.equal(usageUpdate._meta?.quack_cached_tokens, 6, "cached tokens missing from usage_update _meta");
-  assert.equal(usageUpdate._meta?.quack_completion_tokens, 1, "completion tokens missing from usage_update _meta");
+  assert.equal(usageUpdate._meta?.quack_completion_tokens, 2, "completion tokens missing from usage_update _meta");
   assert.ok(usageUpdate._meta.quack_cached_tokens <= usageUpdate._meta.quack_prompt_tokens, "cached must not exceed prompt");
 }
 // OTLP assertions: flush is fire-and-forget on agent_settled, so wait for it.
