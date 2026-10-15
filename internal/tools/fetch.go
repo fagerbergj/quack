@@ -585,9 +585,14 @@ func fetchFallback(target, text, rendered string, derr, rerr error, hadRenderer 
 	}
 }
 
+// stripBadBytes drops invalid UTF-8 and NUL, which Postgres rejects in text and jsonb.
+func stripBadBytes(s string) string {
+	return strings.ReplaceAll(strings.ToValidUTF8(s, ""), "\x00", "")
+}
+
 // sanitizeFetched: strips bad bytes, rejects binary content (Postgres rejects invalid UTF-8/NUL).
 func sanitizeFetched(target, s string) (string, error) {
-	clean := strings.ReplaceAll(strings.ToValidUTF8(s, ""), "\x00", "")
+	clean := stripBadBytes(s)
 	if len(s) > 512 && len(clean) < len(s)*9/10 {
 		return "", fmt.Errorf("web_fetch: %s returned binary (non-text) content - it cannot be read as a page; try a different source", target)
 	}

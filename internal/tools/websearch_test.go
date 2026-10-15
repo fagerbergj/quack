@@ -182,3 +182,12 @@ func TestWebSearchTool_EmptyAndTooManyQueriesError(t *testing.T) {
 		t.Error("a batch over maxBatchQueries should error")
 	}
 }
+
+// A snippet an index captured from a raw gzip page carries NUL and invalid UTF-8; Postgres rejects the
+// session event holding it, so every backend's title and snippet come back clean.
+func TestDedupByURL_StripsBytesPostgresRejects(t *testing.T) {
+	got := dedupByURL([]SearchResult{{Title: "LKML\x00", URL: "https://lkml.org/x", Snippet: "\x1f\x8b\x08\x00\xff\xfeok"}}, map[string]bool{})
+	if len(got) != 1 || got[0].Title != "LKML" || got[0].Snippet != "\x1f\x08ok" {
+		t.Fatalf("dedupByURL = %q, want NUL and invalid UTF-8 stripped", got)
+	}
+}
