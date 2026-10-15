@@ -2717,9 +2717,8 @@ func (s *activityScanner) scanCall(fc *genai.FunctionCall) {
 	case "cd":
 		s.pendingCd[fc.ID] = true
 	case "read_artifact":
-		if id, _ := fc.Args["id"].(string); isSourceArtifactID(id) {
-			s.pendingRead[fc.ID] = id
-		}
+		id, _ := fc.Args["id"].(string)
+		s.pendingRead[fc.ID] = id
 	default:
 		if isWorkspaceTool(fc.Name) {
 			s.pendingWs[fc.ID] = fc.Args
@@ -2786,7 +2785,7 @@ type activityScanner struct {
 	// a pre-upgrade session's response has no "url" of its own to key off.
 	pendingLegacyURL map[string]string
 	pendingData      map[string]pendingDataCall
-	pendingRead      map[string]string // read_artifact call id -> source artifact id
+	pendingRead      map[string]string // read_artifact call id -> requested artifact id
 }
 
 // pendingDataCall: an in-flight data-tool call awaiting its response.
@@ -3002,11 +3001,25 @@ func isSourceArtifactID(id string) bool {
 	return false
 }
 
+// readArtifactID: the id a read_artifact call read. The result's first line names it only if ResolveID
+// maps argID to it; that check rejects the exact id and anything else page content could forge.
+func readArtifactID(argID string, resp map[string]any) string {
+	result, _ := resp["result"].(string)
+	first, _, _ := strings.Cut(result, "\n")
+	if full, found := strings.CutPrefix(first, recordstore.ResolvedIDPrefix); found {
+		if id, err := recordstore.ResolveID(argID, []string{full}); err == nil {
+			return id
+		}
+	}
+	return argID
+}
+
 // recordSourceRead credits a successful read of a source artifact to this node.
 func (s *activityScanner) recordSourceRead(fr *genai.FunctionResponse) {
 	id, ok := s.pendingRead[fr.ID]
 	delete(s.pendingRead, fr.ID)
-	if ok && !s.otherNode && fr.Response["error"] == nil {
+	id = readArtifactID(id, fr.Response)
+	if ok && isSourceArtifactID(id) && !s.otherNode && fr.Response["error"] == nil {
 		s.act.sourceReads = append(s.act.sourceReads, id)
 	}
 }

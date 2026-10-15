@@ -3,6 +3,7 @@
 package tools
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -237,15 +238,13 @@ func NewReadArtifactTool(c *recordstore.Client) (tool.Tool, error) {
 				"text artifact instead.", fetchReturnMaxBytes),
 		},
 		func(ctx agent.Context, a readArtifactArgs) (string, error) {
-			var data []byte
-			var mime string
-			var lineage recordstore.Lineage
-			var ok bool
-			var err error
-			if a.Revision > 0 {
-				data, ok, err = c.LoadVersion(ctx, a.ID, a.Revision)
-			} else {
-				data, mime, lineage, _, ok, err = c.LatestWithMeta(ctx, a.ID)
+			data, mime, lineage, ok, err := loadArtifact(ctx, c, a)
+			resolved := ""
+			if err == nil && !ok {
+				if a.ID, err = c.Resolve(ctx, a.ID, nil); err == nil {
+					resolved = recordstore.ResolvedIDPrefix + a.ID + "\n\n"
+					data, mime, lineage, ok, err = loadArtifact(ctx, c, a)
+				}
 			}
 			if err != nil {
 				return "", fmt.Errorf("read_artifact: %w", err)
@@ -258,9 +257,19 @@ func NewReadArtifactTool(c *recordstore.Client) (tool.Tool, error) {
 			if prov != "" {
 				prov += "\n\n"
 			}
-			return prov + shapeReadArtifact(data, mime, a), nil
+			return resolved + prov + shapeReadArtifact(data, mime, a), nil
 		},
 	)
+}
+
+// loadArtifact loads a's revision, or the latest with its mime and lineage.
+func loadArtifact(ctx context.Context, c *recordstore.Client, a readArtifactArgs) (data []byte, mime string, lineage recordstore.Lineage, ok bool, err error) {
+	if a.Revision > 0 {
+		data, ok, err = c.LoadVersion(ctx, a.ID, a.Revision)
+		return data, "", lineage, ok, err
+	}
+	data, mime, lineage, _, ok, err = c.LatestWithMeta(ctx, a.ID)
+	return data, mime, lineage, ok, err
 }
 
 // shapeReadArtifact: windowed, too-large refusal, or whole (base64 if binary).

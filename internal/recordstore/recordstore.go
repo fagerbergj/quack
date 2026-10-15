@@ -681,6 +681,42 @@ func (c *Client) List(ctx context.Context, kindFilter string) ([]ArtifactSummary
 	return out, nil
 }
 
+// ResolvedIDPrefix opens a read whose id was resolved from a partial one, so the model learns the full id.
+const ResolvedIDPrefix = "resolved id: "
+
+// Resolve maps a partial id to the one listed id (keep-filtered; nil keeps all) that ResolveID matches.
+func (c *Client) Resolve(ctx context.Context, given string, keep func(ArtifactSummary) bool) (string, error) {
+	items, err := c.List(ctx, "")
+	if err != nil {
+		return "", err
+	}
+	ids := make([]string, 0, len(items))
+	for _, it := range items {
+		if keep == nil || keep(it) {
+			ids = append(ids, it.ID)
+		}
+	}
+	return ResolveID(given, ids)
+}
+
+// ResolveID returns the one id ending in ":"+given or of kind given. Several matches or none
+// is a not-found error, naming up to a few of the matches.
+func ResolveID(given string, ids []string) (string, error) {
+	var matches []string
+	for _, id := range ids {
+		if given != "" && (strings.HasSuffix(id, idSep+given) || KindOf(id) == given) {
+			matches = append(matches, id)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("%s: not found", given)
+	case 1:
+		return matches[0], nil
+	}
+	return "", fmt.Errorf("%s: not found; it matches %d ids, pass one in full: %s", given, len(matches), strings.Join(matches[:min(5, len(matches))], ", "))
+}
+
 // EditOp is one search/replace pair for Edit; Old must match the target
 // content exactly once.
 type EditOp struct {

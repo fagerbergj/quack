@@ -101,6 +101,11 @@ func (s *judgeView) writtenInScope(ctx context.Context, c *recordstore.Client, i
 // reading its own prior verdict/delivery decisions as "evidence" is circular.
 var judgeHiddenKinds = map[string]bool{kindJudgeRound: true, kindDeliveryRecord: true}
 
+// lists: the judge's list_artifacts shows it.
+func (s *judgeView) lists(ctx context.Context, c *recordstore.Client, it recordstore.ArtifactSummary) bool {
+	return !judgeHiddenKinds[it.Kind] && s.visible(ctx, c, it.ID, it.NodeID)
+}
+
 // NewJudgeArtifactTools builds list_artifacts + read_artifact over c (no
 // edit/write). Duplicated from internal/tools: tools imports vetting, so the reverse import would cycle.
 func NewJudgeArtifactTools(c *recordstore.Client) ([]tool.Tool, error) {
@@ -133,7 +138,7 @@ func newJudgeListArtifactsTool(c *recordstore.Client) (tool.Tool, error) {
 			view := judgeViewFrom(ctx)
 			var b strings.Builder
 			for _, it := range items {
-				if judgeHiddenKinds[it.Kind] || !view.visible(ctx, c, it.ID, it.NodeID) {
+				if !view.lists(ctx, c, it) {
 					continue
 				}
 				fmt.Fprintf(&b, "%s\trevision=%d\tkind=%s\tnode=%s\n", it.ID, it.Revision, it.Kind, it.NodeID)
@@ -169,13 +174,21 @@ func newJudgeReadArtifactTool(c *recordstore.Client) (tool.Tool, error) {
 				return "", errPageChecked(a.ID)
 			}
 			data, mime, author, ok, err := loadJudgeArtifact(ctx, c, a)
+			resolved := ""
+			if err == nil && !ok {
+				// Resolve only among what list_artifacts shows, so a partial id never reveals a hidden one.
+				if a.ID, err = c.Resolve(ctx, a.ID, func(it recordstore.ArtifactSummary) bool { return view.lists(ctx, c, it) }); err == nil {
+					resolved = recordstore.ResolvedIDPrefix + a.ID + "\n\n"
+					data, mime, author, ok, err = loadJudgeArtifact(ctx, c, a)
+				}
+			}
 			if err != nil {
 				return "", fmt.Errorf("read_artifact: %w", err)
 			}
 			if !ok || !view.visible(ctx, c, a.ID, author) {
 				return "", fmt.Errorf("read_artifact: %s: not found", a.ID)
 			}
-			return shapeJudgeReadArtifact(data, mime, a, judgeArtifactReadCap), nil
+			return resolved + shapeJudgeReadArtifact(data, mime, a, judgeArtifactReadCap), nil
 		},
 	)
 }
