@@ -3,10 +3,12 @@ package acp
 import (
 	"context"
 	"iter"
+	"math"
 	"os"
 	"testing"
 
 	"go.opentelemetry.io/otel/attribute"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"google.golang.org/adk/v2/model"
@@ -281,5 +283,56 @@ func TestNoDoubleCounting_NativeAndACPEmitIndependently(t *testing.T) {
 	}
 	if got := byAgentInput["web-researcher"]; got != 200 {
 		t.Errorf("native call (web-researcher) input tokens = %d, want 200 - the ACP round's 100 must not have blended in", got)
+	}
+}
+
+// TestRound_EachModelCallIsAnLLMCall: every per-call usage_update becomes one llm.call ledger event with the
+// round's coords, cached split out and priced, and one usage event the node sums; the answer event adds none.
+func TestRound_EachModelCallIsAnLLMCall(t *testing.T) {
+	capExp := &captureExporter{}
+	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(capExp)))
+	t.Cleanup(otelobs.SetLoggerProviderForTesting(lp))
+	a := usageTestAgent(t, "usage-calls", &config.ModelPricing{InputPerMTok: 1, OutputPerMTok: 10})
+	ctx := ledger.WithCoords(context.Background(), ledger.Coords{ChatID: "c1", Node: "code-reviewer-1", Round: "worker-r0"})
+
+	var prompt, cached, completion int32
+	err := a.round(ctx, t.TempDir(), "", workspace.Caps{}, "review", artifactsrc.Artifact{}, "", "", "", "", func(s eventSpec) bool {
+		if s.usage != nil {
+			prompt, cached, completion = prompt+s.usage.PromptTokenCount, cached+s.usage.CachedContentTokenCount, completion+s.usage.CandidatesTokenCount
+		}
+		return true
+	})
+	if err != nil {
+		t.Fatalf("round: %v", err)
+	}
+	if prompt != 2500 || cached != 2000 || completion != 100 {
+		t.Errorf("node usage = prompt %d cached %d completion %d, want 2500/2000/100", prompt, cached, completion)
+	}
+
+	var calls []map[string]attribute.Value
+	for _, r := range capExp.records {
+		attrs := map[string]attribute.Value{}
+		r.WalkAttributes(func(kv attribute.KeyValue) bool { attrs[string(kv.Key)] = kv.Value; return true })
+		if attrs[otelobs.GenAIOperationName].AsString() == otelobs.GenAIOperationChat {
+			calls = append(calls, attrs)
+		}
+	}
+	if len(calls) != 2 {
+		t.Fatalf("got %d llm.call events, want 2 (one per model call)", len(calls))
+	}
+	c := calls[1]
+	for k, want := range map[string]string{otelobs.GenAIAgentName: "code-implementer", otelobs.GenAIRequestModel: "qwen3-coder",
+		otelobs.GenAIConversationID: "c1", "quack.node": "code-reviewer-1", "quack.round": "worker-r0"} {
+		if got := c[k].AsString(); got != want {
+			t.Errorf("%s = %q, want %q", k, got, want)
+		}
+	}
+	for k, want := range map[string]int64{otelobs.GenAIUsageInputTokens: 300, otelobs.GenAIUsageCachedTokens: 1200, otelobs.GenAIUsageOutputTokens: 60} {
+		if got := c[k].AsInt64(); got != want {
+			t.Errorf("%s = %d, want %d", k, got, want)
+		}
+	}
+	if got, want := c[otelobs.GenAIUsageCost].AsFloat64(), (1500*1+60*10)/1e6; math.Abs(got-want) > 1e-12 {
+		t.Errorf("cost = %v, want %v", got, want)
 	}
 }

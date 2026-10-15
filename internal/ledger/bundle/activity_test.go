@@ -56,7 +56,9 @@ func TestNodeActivity_ACP(t *testing.T) {
 		update(`{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"LGTM"}}`),
 		`{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}`,
 	}
-	path := writeJSONL(t, []entry{invokeAgent(t0(), "n1", "code-reviewer", "", nil, received)})
+	// The round's per-call usage rows (acp emitLLMCall) carry no content, so they add no turns.
+	usageRow := chat(t0(), "n1", "code-reviewer", "", "m", map[string]any{"gen_ai.usage.output_tokens": 7})
+	path := writeJSONL(t, []entry{invokeAgent(t0(), "n1", "code-reviewer", "", nil, received), usageRow, usageRow})
 	sess, err := Load(path)
 	if err != nil {
 		t.Fatal(err)

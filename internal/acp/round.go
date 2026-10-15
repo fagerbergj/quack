@@ -155,6 +155,7 @@ func (a *Agent) roundLoop(al *roundLoopArgs) (bool, error) {
 	relay := func(u sdk.SessionUpdate) bool {
 		al.turns.observe(u)
 		for _, spec := range al.tr.translate(u) {
+			a.emitLLMCall(al.ctx, spec.usage) // same coords as emitInvokeAgent, so both land on one ledger stream
 			if !al.emit(spec) {
 				return false
 			}

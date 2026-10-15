@@ -29,7 +29,6 @@ type translator struct {
 	cwd       string
 	answer    strings.Builder
 	pending   map[string]pendingTool
-	usage     *genai.GenerateContentResponseUsageMetadata
 	thinking  strings.Builder
 	thinkOpen time.Time // zero when no batch is open
 }
@@ -114,7 +113,9 @@ func (t *translator) translate(u sdk.SessionUpdate) []eventSpec {
 		um.PromptTokenCount = usageMetaInt(u.UsageUpdate.Meta, quackPromptTokensMetaKey)
 		um.CachedContentTokenCount = usageMetaInt(u.UsageUpdate.Meta, quackCachedTokensMetaKey)
 		um.CandidatesTokenCount = usageMetaInt(u.UsageUpdate.Meta, quackCompletionTokensMetaKey)
-		t.usage = um
+		// pi-acp sends one usage_update per finished model call, so each rides its own event like a
+		// native call's: the node sums them, and its context size is the last call's prompt.
+		out = append(out, eventSpec{partial: true, usage: um})
 	}
 	return out
 }
@@ -168,7 +169,7 @@ func (t *translator) flushThought() (eventSpec, bool) {
 // finalSpec is the round's durable answer event: agent message text since the last tool call
 // (what RunNode[string] returns); earlier narration is reset at each ToolCall.
 func finalSpec(t *translator) eventSpec {
-	return eventSpec{parts: []*genai.Part{{Text: t.answer.String()}}, usage: t.usage}
+	return eventSpec{parts: []*genai.Part{{Text: t.answer.String()}}}
 }
 
 func terminalStatus(s sdk.ToolCallStatus) bool {

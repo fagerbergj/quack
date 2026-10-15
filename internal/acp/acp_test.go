@@ -176,6 +176,14 @@ func (f *fakeAgent) Prompt(ctx context.Context, p sdk.PromptRequest) (sdk.Prompt
 		return sdk.PromptResponse{StopReason: sdk.StopReasonEndTurn, Usage: &sdk.Usage{
 			InputTokens: 100, OutputTokens: 50, CachedReadTokens: &cached, ThoughtTokens: &thoughts,
 		}}, nil
+	case "usage-calls":
+		// pi-acp's shape: one usage_update per finished model call, pi's split in _meta.
+		for _, c := range [][3]float64{{1000, 800, 40}, {1500, 1200, 60}} {
+			send(sdk.SessionUpdate{UsageUpdate: &sdk.SessionUsageUpdate{Used: int(c[0] + c[2]), Meta: map[string]any{
+				"quack_prompt_tokens": c[0], "quack_cached_tokens": c[1], "quack_completion_tokens": c[2]}}})
+		}
+		send(sdk.UpdateAgentMessageText("done"))
+		return sdk.PromptResponse{StopReason: sdk.StopReasonEndTurn}, nil
 	case "usage-none":
 		send(sdk.UpdateAgentMessageText("done"))
 		return sdk.PromptResponse{StopReason: sdk.StopReasonEndTurn}, nil

@@ -234,58 +234,56 @@ func TestTranslate_UnknownVariantsSkipped(t *testing.T) {
 	}
 }
 
-func TestTranslate_UsageRidesFinalEvent(t *testing.T) {
+// TestTranslate_UsageRidesItsOwnEvent: each usage_update (one per model call) is its own event, so the
+// node sums every call; the final answer event carries none, or the last call would count twice.
+func TestTranslate_UsageRidesItsOwnEvent(t *testing.T) {
 	tr := newTranslator("/work")
-	tr.translate(sdk.SessionUpdate{UsageUpdate: &sdk.SessionUsageUpdate{Used: 1234, Size: 65536}})
-	tr.translate(sdk.UpdateAgentMessageText("done"))
-	final := finalSpec(tr)
-	if final.usage == nil || final.usage.TotalTokenCount != 1234 {
-		t.Fatalf("usage lost: %+v", final.usage)
+	var usages []int32
+	for _, used := range []int{1000, 1234} {
+		for _, spec := range tr.translate(sdk.SessionUpdate{UsageUpdate: &sdk.SessionUsageUpdate{Used: used, Size: 65536}}) {
+			if spec.usage == nil || !spec.partial || len(spec.parts) != 0 {
+				t.Fatalf("usage spec = %+v, want a partial, part-less usage event", spec)
+			}
+			usages = append(usages, spec.usage.TotalTokenCount)
+		}
 	}
+	tr.translate(sdk.UpdateAgentMessageText("done"))
+	if len(usages) != 2 || usages[0] != 1000 || usages[1] != 1234 {
+		t.Fatalf("usage events = %v, want [1000 1234]", usages)
+	}
+	if final := finalSpec(tr); final.usage != nil {
+		t.Fatalf("final event carries usage %+v; it would double count the last call", final.usage)
+	}
+}
+
+func usageSpec(t *testing.T, meta map[string]any) eventSpec {
+	t.Helper()
+	specs := newTranslator("/work").translate(sdk.SessionUpdate{UsageUpdate: &sdk.SessionUsageUpdate{Used: 1234, Size: 65536, Meta: meta}})
+	if len(specs) != 1 || specs[0].usage == nil {
+		t.Fatalf("specs = %+v, want one usage event", specs)
+	}
+	return specs[0]
 }
 
 // TestTranslate_UsageMetaCarriesCachedTokens: usage_update's _meta breakdown
 // must reach PromptTokenCount/CachedContentTokenCount/CandidatesTokenCount.
 func TestTranslate_UsageMetaCarriesCachedTokens(t *testing.T) {
-	tr := newTranslator("/work")
-	tr.translate(sdk.SessionUpdate{UsageUpdate: &sdk.SessionUsageUpdate{
-		Used: 1234, Size: 65536,
-		Meta: map[string]any{
-			"quack_prompt_tokens":     float64(900),
-			"quack_cached_tokens":     float64(600),
-			"quack_completion_tokens": float64(300),
-		},
-	}})
-	tr.translate(sdk.UpdateAgentMessageText("done"))
-	final := finalSpec(tr)
-	if final.usage == nil {
-		t.Fatal("usage lost")
-	}
-	if final.usage.PromptTokenCount != 900 {
-		t.Errorf("PromptTokenCount = %d, want 900", final.usage.PromptTokenCount)
-	}
-	if final.usage.CachedContentTokenCount != 600 {
-		t.Errorf("CachedContentTokenCount = %d, want 600", final.usage.CachedContentTokenCount)
-	}
-	if final.usage.CandidatesTokenCount != 300 {
-		t.Errorf("CandidatesTokenCount = %d, want 300", final.usage.CandidatesTokenCount)
-	}
-	// The shim must send cached as a subset of prompt (OpenAI-style), not pi's
-	// own non-overlapping input/cacheRead split - see pi-acp.mjs's usage_update.
-	if final.usage.CachedContentTokenCount > final.usage.PromptTokenCount {
-		t.Errorf("cached (%d) exceeds prompt (%d)", final.usage.CachedContentTokenCount, final.usage.PromptTokenCount)
+	u := usageSpec(t, map[string]any{
+		"quack_prompt_tokens":     float64(900),
+		"quack_cached_tokens":     float64(600),
+		"quack_completion_tokens": float64(300),
+	}).usage
+	if u.PromptTokenCount != 900 || u.CachedContentTokenCount != 600 || u.CandidatesTokenCount != 300 {
+		t.Errorf("usage = %+v, want prompt 900, cached 600, completion 300", u)
 	}
 }
 
 // TestTranslate_UsageNoMetaStaysZero: an agent that never sets _meta (or a
 // non-pi ACP agent) must not panic and must report zero, not garbage.
 func TestTranslate_UsageNoMetaStaysZero(t *testing.T) {
-	tr := newTranslator("/work")
-	tr.translate(sdk.SessionUpdate{UsageUpdate: &sdk.SessionUsageUpdate{Used: 1234, Size: 65536}})
-	tr.translate(sdk.UpdateAgentMessageText("done"))
-	final := finalSpec(tr)
-	if final.usage.PromptTokenCount != 0 || final.usage.CachedContentTokenCount != 0 || final.usage.CandidatesTokenCount != 0 {
-		t.Fatalf("expected zero breakdown with no _meta, got %+v", final.usage)
+	u := usageSpec(t, nil).usage
+	if u.PromptTokenCount != 0 || u.CachedContentTokenCount != 0 || u.CandidatesTokenCount != 0 {
+		t.Fatalf("expected zero breakdown with no _meta, got %+v", u)
 	}
 }
 

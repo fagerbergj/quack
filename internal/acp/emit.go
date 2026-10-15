@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"go.opentelemetry.io/otel/attribute"
+	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
@@ -92,6 +93,28 @@ func emitInvokeAgent(ctx context.Context, agentName string, sent, received *teeB
 	}
 	if roundErr != nil {
 		attrs = append(attrs, attribute.String(otelobs.ErrorType, roundErr.Error()))
+	}
+	otelobs.EmitLog(ctx, acpScope, "", attrs...)
+}
+
+// emitLLMCall records one ACP model call as an llm.call ledger event, the shape inference.emitChatEvent gives a
+// native call: the agent calls its endpoint directly, so quack's inference layer never sees it. nil u is a no-op.
+func (a *Agent) emitLLMCall(ctx context.Context, u *genai.GenerateContentResponseUsageMetadata) {
+	if u == nil || !otelobs.LoggingEnabled(acpScope) {
+		return
+	}
+	cached, prompt, output := int64(u.CachedContentTokenCount), int64(u.PromptTokenCount), int64(u.CandidatesTokenCount)
+	attrs := []attribute.KeyValue{
+		attribute.String(otelobs.GenAIOperationName, otelobs.GenAIOperationChat),
+		attribute.String(otelobs.GenAIProviderName, otelobs.GenAIProviderOpenAI),
+		attribute.String(otelobs.GenAIRequestModel, a.opts.ModelName),
+		attribute.String(otelobs.GenAIAgentName, a.name),
+		attribute.Int64(otelobs.GenAIUsageInputTokens, max(prompt-cached, 0)), // excludes cached, as natively
+		attribute.Int64(otelobs.GenAIUsageCachedTokens, cached),
+		attribute.Int64(otelobs.GenAIUsageOutputTokens, output),
+	}
+	if a.opts.Pricing != nil {
+		attrs = append(attrs, attribute.Float64(otelobs.GenAIUsageCost, callCost(a.opts.Pricing, prompt, output)))
 	}
 	otelobs.EmitLog(ctx, acpScope, "", attrs...)
 }

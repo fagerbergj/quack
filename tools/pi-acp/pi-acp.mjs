@@ -238,6 +238,19 @@ function onPiEvent(ev) {
       if (ev.message?.role === "assistant") {
         otel.genEnd(ev.message, lastUsage);
         lastStop = { pi_stop_reason: ev.message.stopReason, ...(ev.message.errorMessage ? { pi_error: ev.message.errorMessage } : {}) };
+        // One usage_update per finished model call: quack records each as an llm.call and sums them per node.
+        const u = ev.message.usage;
+        if (u?.totalTokens)
+          // ACP has no prompt/cached/completion split. pi's own `input` excludes
+          // cacheRead/cacheWrite; quack's prompt_tokens must include them (cached is a subset).
+          notify({
+            sessionUpdate: "usage_update", used: u.totalTokens, size: 0,
+            _meta: {
+              quack_prompt_tokens: u.input + (u.cacheRead || 0) + (u.cacheWrite || 0),
+              quack_cached_tokens: u.cacheRead || 0,
+              quack_completion_tokens: u.output,
+            },
+          });
       }
       break;
     case "message_update": {
@@ -248,17 +261,6 @@ function onPiEvent(ev) {
         notify({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: e.delta } });
       else if (e.type === "thinking_delta")
         notify({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: e.delta } });
-      if (ev.usage?.totalTokens)
-        // ACP has no prompt/cached/completion split. pi's own `input` excludes
-        // cacheRead/cacheWrite; quack's prompt_tokens must include them (cached is a subset).
-        notify({
-          sessionUpdate: "usage_update", used: ev.usage.totalTokens, size: 0,
-          _meta: {
-            quack_prompt_tokens: ev.usage.input + ev.usage.cacheRead + (ev.usage.cacheWrite || 0),
-            quack_cached_tokens: ev.usage.cacheRead,
-            quack_completion_tokens: ev.usage.output,
-          },
-        });
       break;
     }
     case "tool_execution_start": {
