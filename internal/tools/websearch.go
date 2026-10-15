@@ -89,6 +89,8 @@ func runSearches(tc agent.Context, searcher WebSearcher, queries []string) (sear
 	return searchResponse{Queries: out}, nil
 }
 
+// dedupByURL also strips bytes Postgres can't store from every backend's title and snippet: one NUL in a
+// snippet (a gzip page an index captured raw) fails the whole session event that carries the results.
 func dedupByURL(results []SearchResult, seen map[string]bool) []SearchResult {
 	out := make([]SearchResult, 0, len(results))
 	for _, r := range results {
@@ -96,6 +98,7 @@ func dedupByURL(results []SearchResult, seen map[string]bool) []SearchResult {
 			continue
 		}
 		seen[r.URL] = true
+		r.Title, r.Snippet = stripBadBytes(r.Title), stripBadBytes(r.Snippet)
 		out = append(out, r)
 	}
 	return out
