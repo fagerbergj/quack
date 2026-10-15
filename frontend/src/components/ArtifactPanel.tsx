@@ -1,3 +1,4 @@
+import { nodeJudgeRounds } from '../lib/judgeRounds'
 import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DependencyList, ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
@@ -308,12 +309,16 @@ interface Props {
   // A focus hint, not a picker: makes the tapped artifact the shown primary.
   // Ignored when it names no artifact on this node, so the default selection applies.
   focusArtifactId?: string
+  // The node's run window (NodeState.startedAt/finishedAt): scopes judge rounds to this run, since a recurring
+  // node id (an extension's daily job) gathers every turn's rounds. Absent = all of the node's rounds.
+  runStartedAt?: number
+  runFinishedAt?: number
   onClose: () => void
 }
 
 // A result view, not a picker: the node's primary output under its own name, judge rounds as a chip timeline,
 // a revision bar with one diff toggle, a secondary list, and provenance in a collapsed Details disclosure.
-export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, nodeAnswer, nodeArtifactKind, focusArtifactId, onClose }: Props) {
+export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, nodeAnswer, nodeArtifactKind, focusArtifactId, runStartedAt, runFinishedAt, onClose }: Props) {
   const [summaries, setSummaries] = useState<ArtifactSummary[]>([])
   const [error, setError] = useState<string | null>(null)
   // The monospace line list is the fallback view (judge-note highlights need its stable line index);
@@ -332,10 +337,12 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
 
   // Membership is by the latest revision's lineage.node_id, so an artifact revised by a later node moves to that
   // node's panel. Per-revision lineage would fix it but costs a revisions fetch per artifact on open.
-  const nodeArtifacts = useMemo(
-    () => summaries.filter(s => belongsToNode(s, nodeId) && !isBookkeeping(s)),
-    [summaries, nodeId],
-  )
+  const nodeArtifacts = useMemo(() => {
+    const own = summaries.filter(s => belongsToNode(s, nodeId) && !isBookkeeping(s))
+    if (runStartedAt == null) return own
+    const thisRun = new Set(nodeJudgeRounds(own, nodeId, runStartedAt, runFinishedAt ?? Infinity).map(r => r.name))
+    return own.filter(s => s.kind !== 'judge_round' || thisRun.has(s.name))
+  }, [summaries, nodeId, runStartedAt, runFinishedAt])
 
   // The panel's one and only shown artifact: computed, not chosen. A fresh
   // in-panel tap (focusedOverride) beats the caller's own focusArtifactId, same as any newer focus beats a stale hint.

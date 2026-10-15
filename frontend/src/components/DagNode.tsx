@@ -682,6 +682,8 @@ function SidePanels({ chatId, node, state, answer, artifactsOpen, memoriesOpen, 
           nodeError={state.status === 'failed' && state.error ? state.error : undefined}
           nodeAnswer={answer}
           nodeArtifactKind={node.artifact ?? undefined}
+          runStartedAt={state.startedAt}
+          runFinishedAt={state.finishedAt}
           onClose={onCloseArtifacts}
         />
       )}
