@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -421,6 +422,38 @@ func TestLiveItemRunner_RunItem(t *testing.T) {
 		InputTokens: 1200, OutputTokens: 300, CachedTokens: 800, JudgeRounds: 2, WallTime: 4500 * time.Millisecond}
 	if run.Cost != wantCost {
 		t.Fatalf("cost = %+v, want %+v", run.Cost, wantCost)
+	}
+}
+
+// TestExperimentRun_WritesInputArtifactsFirst: the replayed task's <artifacts> manifest names bytes:issue, so the
+// fresh chat must hold it, under the run's own user, before the node can read_artifact it.
+func TestExperimentRun_WritesInputArtifactsFirst(t *testing.T) {
+	var writes []string
+	var ext *experimentExt
+	host := extsdk.Host{
+		WriteArtifact: func(chatID, user, name, mime string, data []byte) (int64, bool, error) {
+			writes = append(writes, strings.Join([]string{chatID, user, name, mime, string(data)}, "|"))
+			if name == "bad" {
+				return 0, false, errors.New("disk full")
+			}
+			return 1, true, nil
+		},
+		Dispatch: func(_ context.Context, req extsdk.DispatchRequest) error {
+			chatID := "ext:experiment:" + req.Chat.LocalID
+			if len(writes) != 1 || !strings.HasPrefix(writes[0], chatID+"|experiment|issue|application/json|") || req.Chat.User != "experiment" {
+				t.Errorf("dispatch as %q after writes %v, want issue written to %s for the same user first", req.Chat.User, writes, chatID)
+			}
+			go ext.RunEnded(chatID, extsdk.RunOutcome{Status: extsdk.RunDone})
+			return nil
+		},
+	}
+	e, _ := newExperimentExt(host, nil)
+	ext = e.(*experimentExt)
+	if _, err := ext.run(context.Background(), "code-reviewer", experimentItemInput{Task: "review", Artifacts: map[string]string{"issue": `{"number":7}`}}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if _, err := ext.run(context.Background(), "code-reviewer", experimentItemInput{Task: "review", Artifacts: map[string]string{"bad": "x"}}); err == nil || !strings.Contains(err.Error(), "disk full") {
+		t.Fatalf("run with a failed artifact write = %v, want that error, not a run missing its inputs", err)
 	}
 }
 

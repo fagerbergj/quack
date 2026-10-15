@@ -55,7 +55,7 @@ func runDatasetExport(cmd *cobra.Command, opts cli.ExportOpts, since string) err
 		opts.Since = t
 	}
 
-	ls, st, _, err := openLedgerAndStores(cmd, false)
+	ls, st, artifacts, err := openLedgerAndStores(cmd, false)
 	if err != nil {
 		return err
 	}
@@ -69,6 +69,7 @@ func runDatasetExport(cmd *cobra.Command, opts cli.ExportOpts, since string) err
 		return err
 	}
 
+	opts.Artifacts = artifacts
 	items, excludedBySince, err := cli.RunDatasetExport(cmd.Context(), ls, st, lf, opts)
 	if err != nil {
 		// Item ids are deterministic, so a re-run converges. Cobra prints err itself.

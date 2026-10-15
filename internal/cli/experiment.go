@@ -48,10 +48,11 @@ type ExperimentResult struct {
 	Error    string
 }
 
-// experimentItemInput mirrors dataset export's datasetItemInput - only Task and Setup are read back.
+// experimentItemInput mirrors dataset export's datasetItemInput - only Task, Setup and Artifacts are read back.
 type experimentItemInput struct {
-	Task  string        `json:"task"`
-	Setup *extsdk.Setup `json:"setup,omitempty"`
+	Task      string            `json:"task"`
+	Setup     *extsdk.Setup     `json:"setup,omitempty"`
+	Artifacts map[string]string `json:"artifacts,omitempty"`
 }
 
 // itemRun is one item's node run: the trace RunExperiment links, and what it scores on that trace.
@@ -294,6 +295,9 @@ func EnableExperiment(cfg *config.Config, agent string) {
 
 func experimentWorkflow(agent string) string { return "experiment-" + agent }
 
+// experimentUser owns a replay chat, so its input artifacts land where the run reads them.
+const experimentUser = "experiment"
+
 type experimentExt struct {
 	host  extsdk.Host
 	mu    sync.Mutex
@@ -332,12 +336,23 @@ func (e *experimentExt) RunEnded(chatID string, o extsdk.RunOutcome) {
 func (e *experimentExt) run(ctx context.Context, agent string, in experimentItemInput) (string, error) {
 	localID := uuid.NewString()
 	chatID := "ext:" + experimentExtension + ":" + localID
+	// The task's <artifacts> manifest names these; without them every read_artifact of one is not-found.
+	for name, content := range in.Artifacts {
+		data := []byte(content)
+		mime := "text/plain"
+		if json.Valid(data) {
+			mime = "application/json"
+		}
+		if _, _, err := e.host.WriteArtifact(chatID, experimentUser, name, mime, data); err != nil {
+			return "", fmt.Errorf("write input artifact %s: %w", name, err)
+		}
+	}
 	ch := make(chan extsdk.RunOutcome, 1)
 	e.mu.Lock()
 	e.ended[chatID] = ch
 	e.mu.Unlock()
 	req := extsdk.DispatchRequest{
-		Chat:     extsdk.ChatRef{LocalID: localID, Title: "experiment: " + agent},
+		Chat:     extsdk.ChatRef{LocalID: localID, User: experimentUser, Title: "experiment: " + agent},
 		Ask:      extsdk.Ask{Message: in.Task},
 		Run:      extsdk.RunConfig{Workflow: experimentWorkflow(agent), ReadOnly: true, Setup: in.Setup},
 		Delivery: extsdk.DeliveryAuthority{AllowedKinds: []extsdk.DeliveryKind{}},

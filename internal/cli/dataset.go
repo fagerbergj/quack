@@ -7,12 +7,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
+	"google.golang.org/adk/v2/artifact"
+
 	extsdk "github.com/fagerbergj/quack/extensions/sdk"
 
+	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/langfuse"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/ledger/bundle"
@@ -33,6 +38,8 @@ type ExportOpts struct {
 	Limit   int
 	// Agent narrows datasetAgents to one, so a dataset holds only the agent its experiment re-runs.
 	Agent string
+	// Artifacts reads the input artifacts each task's <artifacts> manifest lists; nil exports none.
+	Artifacts artifact.Service
 }
 
 // ExportItem is one exported dataset item, reported back for the summary table.
@@ -52,6 +59,8 @@ type datasetItemInput struct {
 	DiffRef string `json:"diff_ref,omitempty"`
 	// Setup is the clone a replay checks out first: a reviewed PR's head, pinned to the commit the run saw.
 	Setup *extsdk.Setup `json:"setup,omitempty"`
+	// Artifacts: each bytes:<name> the task's manifest lists, by name, so the replay's fresh chat can serve it.
+	Artifacts map[string]string `json:"artifacts,omitempty"`
 }
 
 type datasetItemMetadata struct {
@@ -109,7 +118,11 @@ func RunDatasetExport(ctx context.Context, ls ledger.LedgerStore, st *store.Stor
 			if err != nil {
 				return items, excludedBySince, fmt.Errorf("dataset export: chat %q: %w", chat.ID, err)
 			}
-			item, err := exportItem(ctx, lf, opts.Dataset, chat, key, runs[key], setup)
+			inputs, err := inputArtifacts(ctx, opts.Artifacts, chat, runs[key].Task)
+			if err != nil {
+				return items, excludedBySince, fmt.Errorf("dataset export: chat %q: %w", chat.ID, err)
+			}
+			item, err := exportItem(ctx, lf, opts.Dataset, chat, key, runs[key], setup, inputs)
 			if err != nil {
 				return items, excludedBySince, err
 			}
@@ -221,9 +234,33 @@ func replaySetup(ctx context.Context, ls ledger.LedgerStore, chat store.Chat, ke
 	return nil, nil
 }
 
-func exportItem(ctx context.Context, lf *langfuse.Client, dataset string, chat store.Chat, key bundle.StreamKey, run bundle.NodeRun, setup *extsdk.Setup) (ExportItem, error) {
+// manifestEntryRe matches one input artifact in the <artifacts> manifest extensions/github renders into a task.
+var manifestEntryRe = regexp.MustCompile(`<artifact id="bytes:([^"]+)" revision="(\d+)"`)
+
+// inputArtifacts reads each input artifact task's manifest lists, at its listed revision, from chat; one that
+// no longer exists is left out.
+func inputArtifacts(ctx context.Context, svc artifact.Service, chat store.Chat, task string) (map[string]string, error) {
+	if svc == nil {
+		return nil, nil
+	}
+	c := recordstore.New(svc, artifactref.AppName, store.SessionUserFor(chat), chat.ID)
+	out := map[string]string{}
+	for _, m := range manifestEntryRe.FindAllStringSubmatch(task, -1) {
+		rev, _ := strconv.Atoi(m[2]) // \d+ always parses
+		data, ok, err := c.LoadVersion(ctx, "bytes:"+m[1], rev)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			out[m[1]] = string(data)
+		}
+	}
+	return out, nil
+}
+
+func exportItem(ctx context.Context, lf *langfuse.Client, dataset string, chat store.Chat, key bundle.StreamKey, run bundle.NodeRun, setup *extsdk.Setup, inputs map[string]string) (ExportItem, error) {
 	repo, href, state := chat.GitHub()
-	input := datasetItemInput{Task: run.Task, DiffRef: href, Setup: setup}
+	input := datasetItemInput{Task: run.Task, DiffRef: href, Setup: setup, Artifacts: inputs}
 	var expected any
 	if state == string(extsdk.SubjectMerged) && run.Answer != "" {
 		expected = run.Answer

@@ -11,13 +11,16 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/genai"
 
 	extsdk "github.com/fagerbergj/quack/extensions/sdk"
 
+	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/langfuse"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/ledgertest"
+	"github.com/fagerbergj/quack/internal/recordstore"
 	"github.com/fagerbergj/quack/internal/store"
 )
 
@@ -952,6 +955,59 @@ func TestRunDatasetExport_ReviewerItemCarriesPinnedClone(t *testing.T) {
 		if in.Task != "review "+turn || in.Setup == nil || *in.Setup != want {
 			t.Fatalf("turn %s input = %s, want task %q in %+v", turn, b, "review "+turn, want)
 		}
+	}
+}
+
+// TestRunDatasetExport_ItemCarriesManifestArtifacts: a replay runs in a fresh chat, so the item carries each input
+// artifact its task's <artifacts> manifest lists, at the listed revision; one gone from the chat is left out.
+func TestRunDatasetExport_ItemCarriesManifestArtifacts(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	chatID := "ext:github:github-acme-widget-1"
+	if err := st.SetChatOrigin(ctx, chatID, "u", ""); err != nil {
+		t.Fatal(err)
+	}
+	chat, err := st.GetChat(ctx, chatID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := artifact.InMemoryService()
+	rc := recordstore.New(svc, artifactref.AppName, store.SessionUserFor(*chat), chatID)
+	for _, body := range []string{`{"title":"as listed"}`, `{"title":"edited later"}`} {
+		if _, _, err := rc.SaveBlob(ctx, "bytes", []byte(body), "application/json", "issue", recordstore.Lineage{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	task := "review\n<artifacts>\n  <artifact id=\"bytes:issue\" revision=\"1\" status=\"new\">1 object</artifact>\n" +
+		"  <artifact id=\"bytes:gone\" revision=\"1\" status=\"new\">1 object</artifact>\n</artifacts>\n"
+	ls := ledgertest.NewMemStore()
+	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, e := range []ledger.Entry{
+		{ChatID: chatID, TurnID: "t1", NodeID: "review", Kind: ledger.KindNodeStarted, At: at},
+		llmCallRoundEntry(chatID, "review", "code-reviewer", "worker-r0", at.Add(time.Second), task, "verdict"),
+	} {
+		if _, err := ls.AppendIntent(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fake := newFakeLangfuse(t)
+	srv := fake.server()
+	defer srv.Close()
+
+	items, _, err := RunDatasetExport(ctx, ls, st, newTestClient(t, srv), ExportOpts{ChatID: chatID, Dataset: "my-dataset", Artifacts: svc})
+	if err != nil || len(items) != 1 {
+		t.Fatalf("items = %+v, err = %v; want one", items, err)
+	}
+	b, _ := json.Marshal(fake.items[items[0].ItemID]["input"])
+	var in experimentItemInput
+	if err := json.Unmarshal(b, &in); err != nil {
+		t.Fatal(err)
+	}
+	if len(in.Artifacts) != 1 || !strings.Contains(in.Artifacts["issue"], "as listed") {
+		t.Fatalf("item artifacts = %v, want only issue at revision 1", in.Artifacts)
 	}
 }
 
