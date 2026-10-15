@@ -485,13 +485,15 @@ const (
 )
 
 // changedFilesCoverage: how many changed files the judge prompt carried, so a verdict over a capped subset
-// reads differently. Zero value means not applicable (reviewers diff the clone directly).
+// reads differently. Zero Scored/Total means not applicable (reviewers diff the clone directly).
 type changedFilesCoverage struct {
 	Scored int
 	Total  int
 	// Capped is set only when maxChangedFiles/changedFilesBudget cut the loop, not when a single file
 	// failed to read; only the cap is truncation.
 	Capped bool
+	// Excerpts: quack-fetched source excerpts the prompt carried, credited as repo reads.
+	Excerpts int
 }
 
 // applyChangedFilesCoverage records coverage on the verdict and notes the feedback only when something was cut.
@@ -512,7 +514,8 @@ func applyChangedFilesCoverage(v verdict, cov changedFilesCoverage) verdict {
 // changedFilesSection: review nodes use clone diff; implement nodes use full content + diff.
 func changedFilesSection(cfg Config, act workerActivity) (string, changedFilesCoverage) {
 	if cfg.IsReviewer {
-		return reviewVerdictLine(act) + stagedFindingsSection(act) + buildReviewDiffSection(cfg), changedFilesCoverage{}
+		excerpts, n := reviewExcerptsSection(cfg, act)
+		return reviewVerdictLine(act) + stagedFindingsSection(act) + excerpts + buildReviewDiffSection(cfg), changedFilesCoverage{Excerpts: n}
 	}
 	written, coverage := buildChangedFilesSection(act, cfg.Workspace, cfg.WorkspaceUserID, cfg.ChatID)
 	diff := buildImplementDiffSection(cfg)
@@ -668,6 +671,7 @@ func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, questi
 
 	var counters judgeReadCounters
 	v, counters, err = judgeAttemptLoop(ctx, factory, cfg, question, fitted, changedFiles, known, fittedPrompt, act, received, emit)
+	counters.credit(coverage.Excerpts)
 
 	if errors.Is(err, ErrJudgeNoVerdict) && ctx.Err() == nil {
 		v, err = retryNoVerdict(ctx, factory, cfg, question, fitted, changedFiles, known, act, received, emit, counters, errors.Is(err, ErrJudgeOutputCapped))
