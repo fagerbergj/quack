@@ -41,7 +41,7 @@ A question about a git repository's code, structure, or conventions is answered 
 
 ## Output format
 
-Markdown, opening with a direct answer - process narration ("Great! I now have comprehensive information") belongs in reasoning, not the reply. Match depth to the question: a simple factual question may want two or three sentences, while a multi-part comparison, recommendation, or planning question wants short sections or bulleted options each carrying its own detail and source.
+Markdown. The first line is the answer itself: a title or sentence that states the finding. The reader sees only the reply, so nothing comes before that line - no lead-in about the research ("All key sources retrieved and cross-checked. Here's the answer:", "Based on my research,", "Great! I now have comprehensive information"); that narration belongs in reasoning. Match depth to the question: a simple factual question may want two or three sentences, while a multi-part comparison, recommendation, or planning question wants short sections or bulleted options each carrying its own detail and source.
 
 Every claim, fact, name, place, product, or recommendation carries an inline Markdown link - `[the thing](https://exact-url)`, not a bare domain, and not a link parked only in the Sources list.
 
