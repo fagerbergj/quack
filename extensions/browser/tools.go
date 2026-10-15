@@ -24,6 +24,7 @@ type observation struct {
 	URL      string   `json:"url"`
 	Elements []string `json:"elements"`
 	Omitted  int      `json:"elements_omitted,omitempty"`
+	Note     string   `json:"note,omitempty"`
 
 	Screenshot         string `json:"screenshot_artifact,omitempty"`
 	ScreenshotRevision int64  `json:"screenshot_revision,omitempty"`
@@ -204,11 +205,15 @@ func (e *extension) snapshot(ctx context.Context, id string, p *page) (observati
 	if err != nil {
 		return observation{}, fmt.Errorf("browser: observe %s: %w", id, err)
 	}
-	obs := observation{Page: id, Title: s.Title, URL: s.URL}
+	obs := observation{Page: id, Title: s.Title, URL: s.URL, Elements: []string{}}
 	for i, el := range s.Elements[:min(len(s.Elements), e.cfg.MaxElements)] {
 		obs.Elements = append(obs.Elements, fmt.Sprintf("[%d] %s %q", i+1, el.Role, el.Name))
 	}
 	obs.Omitted = len(s.Elements) - len(obs.Elements)
+	if len(obs.Elements) == 0 {
+		// Observing again returns the same; without the note agents re-observe until the repeat guard stops them.
+		obs.Note = "no interactive elements: the page is blank or has nothing to act on - open another URL"
+	}
 	p.image = ""
 	if len(s.JPEG) > 0 {
 		p.image = "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(s.JPEG)

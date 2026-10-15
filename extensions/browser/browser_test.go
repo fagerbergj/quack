@@ -143,6 +143,22 @@ func TestObserveNumbersElementsAndStoresTheScreenshot(t *testing.T) {
 	}
 }
 
+// A blank page observes as an empty list with a note, never null, so an agent moves on instead of re-observing.
+func TestObserveBlankPageSaysSo(t *testing.T) {
+	e, b := newExt(t, sdk.Host{}, "allowed_hosts: [example.com]")
+	if _, err := e.open(chat("c"), openArgs{URL: "https://example.com/"}); err != nil {
+		t.Fatal(err)
+	}
+	b.tabs[0].snap.Elements = nil
+	obs, err := e.observe(chat("c"), pageArgs{Page: "p1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if obs.Elements == nil || len(obs.Elements) != 0 || !strings.Contains(obs.Note, "blank") {
+		t.Errorf("blank observation = elements %#v note %q, want [] and a blank-page note", obs.Elements, obs.Note)
+	}
+}
+
 func TestActOnlyOnTheLatestObservation(t *testing.T) {
 	e, b := newExt(t, sdk.Host{}, "allowed_hosts: [example.com]\nmax_elements: 2")
 	ctx := chat("c")
