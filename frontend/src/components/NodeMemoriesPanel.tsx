@@ -20,7 +20,7 @@ const VOTE_ICON: Record<string, IconName> = {
 }
 
 const VOTE_COLOR: Record<string, string> = {
-  supported: 'text-green-600 dark:text-green-400',
+  supported: 'text-green-700 dark:text-green-400',
   contradicted: 'text-red-600 dark:text-red-400',
   not_relevant: 'text-gray-500 dark:text-gray-400',
 }

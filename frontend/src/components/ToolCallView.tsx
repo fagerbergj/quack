@@ -205,7 +205,7 @@ function RunCommandView({ tool }: { tool: ToolCall }) {
           <span className="text-gray-500 dark:text-gray-400 select-none">$ </span>{command}
         </code>
         {exit != null && (
-          <span className={`text-[11px] font-medium ${exit === 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
+          <span className={`text-[11px] font-medium ${exit === 0 ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'}`}>
             exit {exit}
           </span>
         )}
@@ -223,7 +223,7 @@ function GitCommitView({ tool }: { tool: ToolCall }) {
   return (
     <div className="space-y-1">
       <div className="flex items-center gap-2 text-[11px]">
-        {sha && <code className="font-mono text-amber-600 dark:text-amber-400">{sha.slice(0, 7)}</code>}
+        {sha && <code className="font-mono text-amber-700 dark:text-amber-400">{sha.slice(0, 7)}</code>}
         {files != null && <span className="text-gray-500 dark:text-gray-400">{files} file{files === 1 ? '' : 's'} changed</span>}
       </div>
       <div className="text-[11px] text-gray-700 dark:text-gray-200 whitespace-pre-wrap font-mono bg-gray-50 dark:bg-gray-900 rounded p-2">{message}</div>
@@ -259,7 +259,7 @@ function GitLogView({ tool }: { tool: ToolCall }) {
       <ul className="bg-gray-50 dark:bg-gray-900 rounded p-2 space-y-1 text-[11px]">
         {commits.map((c, i) => (
           <li key={i} className="flex gap-2">
-            <code className="font-mono text-amber-600 dark:text-amber-400 shrink-0">{(str(c, 'sha') ?? '').slice(0, 7)}</code>
+            <code className="font-mono text-amber-700 dark:text-amber-400 shrink-0">{(str(c, 'sha') ?? '').slice(0, 7)}</code>
             <span className="text-gray-700 dark:text-gray-200 truncate">{str(c, 'subject')}</span>
             <span className="ml-auto shrink-0 text-gray-500 dark:text-gray-400">{str(c, 'author')}</span>
           </li>
@@ -332,7 +332,7 @@ function GrepView({ tool }: { tool: ToolCall }) {
         <ul className="bg-gray-50 dark:bg-gray-900 rounded p-2 text-[11px] font-mono space-y-0.5">
           {matches.map((m, i) => (
             <li key={i} className="flex gap-2 text-gray-700 dark:text-gray-200">
-              <span className="text-amber-600 dark:text-amber-400 shrink-0">{str(m, 'path')}:{num(m, 'line')}</span>
+              <span className="text-amber-700 dark:text-amber-400 shrink-0">{str(m, 'path')}:{num(m, 'line')}</span>
               <span className="truncate">{str(m, 'text')}</span>
             </li>
           ))}
@@ -466,7 +466,7 @@ function GetUserChoiceView({ tool }: { tool: ToolCall }) {
           )
         })}
       </ul>
-      {status === 'pending' && <div className="text-[11px] text-amber-600 dark:text-amber-400 italic">awaiting your answer…</div>}
+      {status === 'pending' && <div className="text-[11px] text-amber-700 dark:text-amber-400 italic">awaiting your answer…</div>}
     </div>
   )
 }
@@ -499,7 +499,7 @@ function GitStatusView({ tool }: { tool: ToolCall }) {
     <div className="text-[11px] flex items-center gap-2">
       {branch && <code className="font-mono text-gray-700 dark:text-gray-200">{branch}</code>}
       {clean != null && (
-        <span className={clean ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400'}>
+        <span className={clean ? 'text-green-700 dark:text-green-400' : 'text-amber-700 dark:text-amber-400'}>
           {clean ? 'clean' : 'dirty'}
         </span>
       )}
@@ -519,7 +519,7 @@ function GitPushView({ tool }: { tool: ToolCall }) {
   return (
     <div className="text-[11px] flex items-center gap-2">
       {branch && <code className="font-mono text-gray-700 dark:text-gray-200">{branch}</code>}
-      {sha && <code className="font-mono text-amber-600 dark:text-amber-400">{sha.slice(0, 7)}</code>}
+      {sha && <code className="font-mono text-amber-700 dark:text-amber-400">{sha.slice(0, 7)}</code>}
     </div>
   )
 }

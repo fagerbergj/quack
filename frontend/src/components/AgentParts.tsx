@@ -161,7 +161,7 @@ function UnverifiedMark({ u, chatId }: { u: Unverified; chatId?: string }) {
         onPointerEnter={load}
         onFocus={load}
         onBlur={() => setOpen(false)}
-        className="peer min-h-[44px] -my-3 inline-flex items-center gap-0.5 font-medium text-amber-600 dark:text-amber-400"
+        className="peer min-h-[44px] -my-3 inline-flex items-center gap-0.5 font-medium text-amber-700 dark:text-amber-400"
       >
         <Icon name="warning" className="w-3 h-3" /> not verified
       </button>
@@ -186,7 +186,7 @@ export function BubbleHeader({ agent, model, tokens, status, stopped, unverified
       <span className="font-semibold text-gray-500 dark:text-gray-400">{agentLabel(agent)}</span>
       {stopped && (
         <span
-          className="inline-flex items-center gap-0.5 font-medium text-amber-600 dark:text-amber-400"
+          className="inline-flex items-center gap-0.5 font-medium text-amber-700 dark:text-amber-400"
           title="This agent was stopped before it finished, so this draft never passed the quality check"
         >
           <Icon name="warning" className="w-3 h-3" /> {stopped === 'draft' ? 'Stopped - not reviewed' : 'Stopped'}
@@ -329,8 +329,8 @@ export function ToolBlock({ tool }: { tool: ToolCall }) {
 function ToolStatusIcon({ tool }: { tool: ToolCall }) {
   if (!tool.done) return <Dots variant="compact" size="w-1 h-1" />
   return toolFailed(tool.result)
-    ? <Icon name="close" className="w-3 h-3 text-red-500 dark:text-red-400 shrink-0" />
-    : <Icon name="check" className="w-3 h-3 text-green-600 dark:text-green-400 shrink-0" />
+    ? <Icon name="close" className="w-3 h-3 text-red-700 dark:text-red-400 shrink-0" />
+    : <Icon name="check" className="w-3 h-3 text-green-700 dark:text-green-400 shrink-0" />
 }
 
 // 'chat' keeps three bounce dots on purpose; 'compact' is one pulse dot for high-multiplicity spots where

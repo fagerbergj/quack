@@ -126,7 +126,7 @@ function KebabMenu({ memory, onForget }: { memory: Memory; onForget: (id: string
       </button>
       {open && (
         <div role="menu" className="absolute z-50 right-0 mt-1 w-40 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg py-1 text-xs">
-          {error && <p className="px-3 py-1 text-red-500 dark:text-red-400">{error}</p>}
+          {error && <p className="px-3 py-1 text-red-700 dark:text-red-400">{error}</p>}
           {confirming ? (
             <div className="flex items-center gap-1.5 px-2 py-1">
               <button

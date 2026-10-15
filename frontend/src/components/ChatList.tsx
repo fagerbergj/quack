@@ -202,7 +202,7 @@ function ChatRowMenu({ s, menuRef, btnRef, menuOpen, onToggle, archived, onArchi
               onClick={onDelete}
               aria-label="Delete chat permanently"
               title="Delete chat permanently"
-              className="w-full flex items-center gap-1.5 text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 text-xs font-medium text-red-500 dark:text-red-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+              className="w-full flex items-center gap-1.5 text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 text-xs font-medium text-red-700 dark:text-red-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
             >
               <Icon name="delete" className="w-3.5 h-3.5" /> Delete
             </button>

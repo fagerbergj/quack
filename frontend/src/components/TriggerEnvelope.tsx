@@ -243,8 +243,8 @@ function ChangedFilesSection({ block }: { block: Extract<EnvelopeBlock, { kind: 
               <li key={i} className="flex items-center gap-2">
                 <span className="truncate text-gray-700 dark:text-gray-200">{f.filename}</span>
                 <span className="ml-auto shrink-0 tabular-nums space-x-1.5">
-                  {f.additions != null && <span className="text-green-600 dark:text-green-400">+{f.additions}</span>}
-                  {f.deletions != null && <span className="text-red-500 dark:text-red-400">-{f.deletions}</span>}
+                  {f.additions != null && <span className="text-green-700 dark:text-green-400">+{f.additions}</span>}
+                  {f.deletions != null && <span className="text-red-700 dark:text-red-400">-{f.deletions}</span>}
                 </span>
               </li>
             ))}
@@ -270,10 +270,10 @@ function ChecksSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'check
               const failing = failingCheck(c)
               return (
                 <li key={i} className="flex items-center gap-2">
-                  <span className={`truncate ${failing ? 'text-red-500 dark:text-red-400' : 'text-gray-700 dark:text-gray-200'}`}>
+                  <span className={`truncate ${failing ? 'text-red-700 dark:text-red-400' : 'text-gray-700 dark:text-gray-200'}`}>
                     {c.name}
                   </span>
-                  <span className={`ml-auto shrink-0 ${failing ? 'text-red-500 dark:text-red-400 font-semibold' : 'text-gray-500 dark:text-gray-400'}`}>
+                  <span className={`ml-auto shrink-0 ${failing ? 'text-red-700 dark:text-red-400 font-semibold' : 'text-gray-500 dark:text-gray-400'}`}>
                     {c.status}{c.conclusion ? ` ${c.conclusion}` : ''}
                   </span>
                 </li>

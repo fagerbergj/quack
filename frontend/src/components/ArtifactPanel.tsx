@@ -1236,7 +1236,7 @@ function TimelineBlock({ chips, activeRoundId, onActivate }: {
 // The fetch-error line above the output - a content/diff failure shares it.
 function ErrorLine({ error }: { error: string | null }) {
   if (!error) return null
-  return <p className="text-xs text-red-500 dark:text-red-400">{error}</p>
+  return <p className="text-xs text-red-700 dark:text-red-400">{error}</p>
 }
 
 // The focused artifact's title, at the h2's own weight, with the

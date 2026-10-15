@@ -152,7 +152,7 @@ function NodeMenuItems({ nodeId, running, terminal, startable, cancellable, hasS
         </button>
       )}
       {cancellable && onCancel && (
-        <button role="menuitem" onClick={() => { onCancel(nodeId); close() }} className="w-full text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 flex items-center gap-1.5 text-red-500 dark:text-red-400 hover:bg-gray-50 dark:hover:bg-gray-700">
+        <button role="menuitem" onClick={() => { onCancel(nodeId); close() }} className="w-full text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 flex items-center gap-1.5 text-red-700 dark:text-red-400 hover:bg-gray-50 dark:hover:bg-gray-700">
           <Icon name="stop" className="w-3.5 h-3.5" /> Stop
         </button>
       )}
@@ -244,7 +244,7 @@ function ContextMeter({ used, limit }: { used: number; limit: number }) {
     : pct >= CONTEXT_WARN_PCT ? 'bg-amber-500 dark:bg-amber-400'
     : 'bg-gray-400 dark:bg-gray-500'
   const textColor = pct >= CONTEXT_DANGER_PCT ? 'text-red-600 dark:text-red-400'
-    : pct >= CONTEXT_WARN_PCT ? 'text-amber-600 dark:text-amber-400'
+    : pct >= CONTEXT_WARN_PCT ? 'text-amber-700 dark:text-amber-400'
     : 'text-gray-500 dark:text-gray-400'
   return (
     <span
@@ -453,7 +453,7 @@ const JudgeCard = memo(function JudgeCard({ run, running }: { run: AgentRun; run
               the threshold lives in the title. */}
           {run.score != null && (
             <span
-              className={`inline-flex items-center gap-0.5 text-[11px] font-medium ${run.passed ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}
+              className={`inline-flex items-center gap-0.5 text-[11px] font-medium ${run.passed ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'}`}
               title={`${run.passed ? 'Passed' : 'Failed'}: ${(run.score * 100).toFixed(0)}%${run.threshold != null ? ` (needs ${(run.threshold * 100).toFixed(0)}%)` : ''}`}
             >
               <Icon name={run.passed ? 'check' : 'close'} className="w-3 h-3" /> {(run.score * 100).toFixed(0)}%
@@ -554,7 +554,7 @@ function NodeStateChips({ steers, resumedFrom }: { steers?: string[]; resumedFro
     <>
       {steers && steers.length > 0 && (
         <span
-          className="shrink-0 inline-flex items-center gap-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400"
+          className="shrink-0 inline-flex items-center gap-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-400"
           title={`Queued message(s) delivered:\n${steers.join('\n')}`}
         >
           <Icon name="mail" className="w-3 h-3" /> steered{steers.length > 1 ? ` ×${steers.length}` : ''}
@@ -607,13 +607,13 @@ function NodeMetaRow({ state, node, pauseLabel }: { state: NodeState; node: DagN
         </span>
       )}
       {state.finishReason === 'MAX_TOKENS' && (
-        <span className="text-[11px] font-medium text-amber-600 dark:text-amber-400" title="Response was truncated at the token limit">
+        <span className="text-[11px] font-medium text-amber-700 dark:text-amber-400" title="Response was truncated at the token limit">
           truncated
         </span>
       )}
       {state.judgeRounds != null && state.judgeRounds > 0 && state.judgePassed !== true && (
         <span
-          className="inline-flex items-center gap-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400"
+          className="inline-flex items-center gap-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-400"
           title={`The quality check rejected this output after ${state.judgeRounds} round${state.judgeRounds === 1 ? '' : 's'}${state.judgeFinalScore != null ? ` (final score ${(state.judgeFinalScore * 100).toFixed(0)}%)` : ''} - shown without a passing check`}
         >
           <Icon name="warning" className="w-3 h-3" /> not verified
