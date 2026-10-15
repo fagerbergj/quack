@@ -121,6 +121,74 @@ func TestReviewMCP_StageReviewCommentRequiresLabel(t *testing.T) {
 	}
 }
 
+// TestReviewMCP_StageReviewCommentProposedChange: proposed_change appends a plain go fence to the staged body,
+// its absence leaves the body as written, and empty code is rejected without staging.
+func TestReviewMCP_StageReviewCommentProposedChange(t *testing.T) {
+	ctx := context.Background()
+	secret := mustMemSecret(t)
+	review := &vetting.ReviewStage{}
+	vetting.RegisterMemSession(secret, vetting.MemSession{Review: review})
+	defer vetting.UnregisterMemSession(secret)
+
+	ts := httptest.NewServer(memoryMCPHandler())
+	t.Cleanup(func() { ts.Close() })
+	cs := connectMCP(t, ts, secret)
+	stage := func(line int, change map[string]any) *mcp.CallToolResult {
+		t.Helper()
+		args := map[string]any{"path": "a.go", "line": line, "body": "💡 **suggestion:** return the error"}
+		if change != nil {
+			args["proposed_change"] = change
+		}
+		res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "stage_review_comment", Arguments: args})
+		if err != nil {
+			t.Fatalf("CallTool stage_review_comment: %v", err)
+		}
+		return res
+	}
+
+	if res := stage(3, map[string]any{"language": "go", "code": "return err"}); res.IsError {
+		t.Fatalf("a valid proposed_change must be accepted: %s", toolResultText(t, res))
+	}
+	if res := stage(4, nil); res.IsError {
+		t.Fatalf("a comment without proposed_change must be accepted: %s", toolResultText(t, res))
+	}
+	res := stage(5, map[string]any{"language": "go", "code": ""})
+	if !res.IsError || !strings.Contains(toolResultText(t, res), "proposed_change.code is empty") {
+		t.Fatalf("empty code must be rejected naming the field, got %+v", res)
+	}
+
+	got := review.ListComments()
+	if len(got) != 2 {
+		t.Fatalf("want 2 staged comments (the empty-code one rejected), got %+v", got)
+	}
+	if want := "💡 **suggestion:** return the error\n\n```go\nreturn err\n```"; got[0].Body != want {
+		t.Fatalf("with proposed_change: body = %q, want %q", got[0].Body, want)
+	}
+	if want := "💡 **suggestion:** return the error"; got[1].Body != want {
+		t.Fatalf("without proposed_change: body = %q, want %q", got[1].Body, want)
+	}
+
+	// The declared pattern/minLength would stop the SDK at its first hit; the precheck lists every problem.
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "stage_review_comment", Arguments: map[string]any{
+		"path": "", "line": 3, "body": "looks off", "proposed_change": map[string]any{"language": "go lang", "code": ""}}})
+	if err != nil {
+		t.Fatalf("CallTool stage_review_comment: %v", err)
+	}
+	msg := toolResultText(t, res)
+	for _, want := range []string{"path is required", "Conventional Comments label", "proposed_change.code is empty", "short language tag"} {
+		if !res.IsError || !strings.Contains(msg, want) {
+			t.Fatalf("one rejection must list every problem; missing %q in %q", want, msg)
+		}
+	}
+}
+
+func TestStageReviewCommentSchemaDeclaresProposedChangeRules(t *testing.T) {
+	pc := stageReviewCommentSchema.Properties["proposed_change"]
+	if pc.Properties["language"].Pattern == "" || pc.Properties["code"].MinLength == nil || *pc.Properties["code"].MinLength != 1 {
+		t.Fatalf("proposed_change schema lacks the declared rules: %+v", pc.Properties)
+	}
+}
+
 // TestReviewMCP_StageReviewEnforcesCaps: the tool rejects a missing takeaway and over-cap notes with the
 // same caps native write_code_review enforces (CheckCodeReviewCaps), so the surfaces can't drift.
 func TestReviewMCP_StageReviewEnforcesCaps(t *testing.T) {

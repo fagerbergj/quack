@@ -377,11 +377,19 @@ func precheck(tool string, raw json.RawMessage) error {
 		}
 		return nil
 	}
-	var in stageReviewInput
-	if tool != toolStageReview || json.Unmarshal(raw, &in) != nil {
-		return nil
+	switch tool {
+	case toolStageReview:
+		var in stageReviewInput
+		if json.Unmarshal(raw, &in) == nil {
+			return checkStageReview(strings.ToLower(strings.TrimSpace(in.Event)), strings.TrimSpace(in.Takeaway), in.Verified, in.Notes)
+		}
+	case toolStageReviewComment:
+		var in stageReviewCommentInput
+		if json.Unmarshal(raw, &in) == nil {
+			return checkReviewComment(strings.TrimSpace(in.Path), in.Line, strings.TrimSpace(in.Body), in.ProposedChange)
+		}
 	}
-	return checkStageReview(strings.ToLower(strings.TrimSpace(in.Event)), strings.TrimSpace(in.Takeaway), in.Verified, in.Notes)
+	return nil
 }
 
 type stageMemoryInput struct {

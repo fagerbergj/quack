@@ -62,7 +62,11 @@ const findingJSONSchema = `{
     "title": {"type": "string"},
     "rationale": {"type": "string"},
     "severity": {"type": "string"},
-    "state": {"type": "string", "enum": ["new", "unchanged", "resolved"]}
+    "state": {"type": "string", "enum": ["new", "unchanged", "resolved"]},
+    "proposed_change": {"type": "object", "required": ["language", "code"],
+      "description": "the replacement code for a finding that proposes a specific change; omit for a question or observation",
+      "properties": {"language": {"type": "string", "pattern": "` + proposedLanguagePattern + `", "description": "short language tag, e.g. go or yaml"},
+        "code": {"type": "string", "minLength": 1}}}
   }
 }`
 
@@ -150,10 +154,11 @@ func validateFinding(raw json.RawMessage) error {
 	if err := json.Unmarshal(raw, &f); err != nil {
 		return err
 	}
+	var errs []error
 	if f.Path == "" {
-		return errors.New("finding: path is required")
+		errs = append(errs, errors.New("finding: path is required"))
 	}
-	return nil
+	return errors.Join(append(errs, f.ProposedChange.Check())...)
 }
 
 // CodeReviewRecord: the "code_review" kind's body. Findings are their own artifacts, referenced by hash id;
@@ -308,6 +313,8 @@ type FindingRecord struct {
 	Rationale string `json:"rationale,omitempty"`
 	Severity  string `json:"severity,omitempty"`
 	State     string `json:"state"` // new | unchanged | resolved
+
+	ProposedChange *ProposedChange `json:"proposed_change,omitempty"`
 }
 
 // findingIdentity adapts Sonar's line hash: path + normalized title + normalized flagged line, never line

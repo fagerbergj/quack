@@ -30,6 +30,8 @@ type stageReviewCommentInput struct {
 	Path string `json:"path" jsonschema:"repo-relative path of the file the comment anchors to"`
 	Line int    `json:"line" jsonschema:"1-based line number in that file"`
 	Body string `json:"body" jsonschema:"the inline finding at that line"`
+
+	ProposedChange *vetting.ProposedChange `json:"proposed_change,omitempty" jsonschema:"the replacement code for a finding that proposes a specific change; omit for a question or observation"`
 }
 
 // listReviewCommentsInput: plain limit/offset pagination to bound the response.
@@ -64,6 +66,16 @@ var stageReviewSchema = func() *jsonschema.Schema {
 		panic("acp: stage_review schema: " + err.Error())
 	}
 	vetting.DeclareCodeReviewCaps(s)
+	return s
+}()
+
+// stageReviewCommentSchema is stageReviewCommentInput's inferred schema plus ProposedChange.Check's rules.
+var stageReviewCommentSchema = func() *jsonschema.Schema {
+	s, err := jsonschema.For[stageReviewCommentInput](nil)
+	if err != nil {
+		panic("acp: stage_review_comment schema: " + err.Error())
+	}
+	vetting.DeclareProposedChangeCaps(s.Properties["proposed_change"])
 	return s
 }()
 
@@ -102,12 +114,13 @@ func addStageReviewComment(srv *mcp.Server, review *vetting.ReviewStage) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolStageReviewComment,
 		Description: "Stage one inline, line-anchored review comment on the pull request under review. Call once per finding; the gate posts them after your answer passes. Returns the id of the staged comment, for later retraction via unstage_review_comment. Duplicates (same path, line, and body) are rejected with the existing id, not double-staged.",
+		InputSchema: stageReviewCommentSchema,
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args stageReviewCommentInput) (*mcp.CallToolResult, any, error) {
 		body := strings.TrimSpace(args.Body)
-		if err := checkReviewComment(strings.TrimSpace(args.Path), args.Line, body); err != nil {
+		if err := checkReviewComment(strings.TrimSpace(args.Path), args.Line, body, args.ProposedChange); err != nil {
 			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}}}, nil, nil
 		}
-		id, dup := review.AddComment(strings.TrimSpace(args.Path), args.Line, body)
+		id, dup := review.AddComment(strings.TrimSpace(args.Path), args.Line, body+args.ProposedChange.Fence())
 		if dup {
 			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("duplicate of %s; not staged", id)}}}, nil, nil
 		}
@@ -116,8 +129,8 @@ func addStageReviewComment(srv *mcp.Server, review *vetting.ReviewStage) {
 }
 
 // checkReviewComment reports every problem with one stage_review_comment call, so one retry fixes them all.
-func checkReviewComment(path string, line int, body string) error {
-	var errs []error
+func checkReviewComment(path string, line int, body string, change *vetting.ProposedChange) error {
+	errs := []error{change.Check()}
 	if path == "" {
 		errs = append(errs, errors.New("stage_review_comment: path is required"))
 	}
