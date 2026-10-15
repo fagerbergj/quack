@@ -474,6 +474,24 @@ func TestExperimentRun_WritesInputArtifactsFirst(t *testing.T) {
 	}
 }
 
+func TestExperimentRun_StripsRecordedEnvironment(t *testing.T) {
+	reqs := fakeExperiment(t, extsdk.RunDone, nil)
+	recorded := "review #7\n\n<environment_context>\ncwd: /workspace/local/ext-github-x/code-reviewer-1\n</environment_context>\n"
+	for _, tc := range []struct{ task, want string }{
+		{recorded, "review #7"},
+		{"review #7", "review #7"},
+		// A block quoted mid-task, not trailing, isn't the recording's own.
+		{"see <environment_context>\ncwd: /a\n</environment_context> above, then review", "see <environment_context>\ncwd: /a\n</environment_context> above, then review"},
+	} {
+		if _, err := liveExperiment.Load().run(context.Background(), "code-reviewer", experimentItemInput{Task: tc.task}); err != nil {
+			t.Fatalf("run: %v", err)
+		}
+		if got := (*reqs)[len(*reqs)-1].Ask.Message; got != tc.want {
+			t.Errorf("dispatched task %q, want %q", got, tc.want)
+		}
+	}
+}
+
 // A run that didn't end done, or a recording with no run for Agent, is an item error, never a run item.
 func TestLiveItemRunner_RunItem_NoNodeRun(t *testing.T) {
 	// A recording with no run for "code-reviewer" at all.
