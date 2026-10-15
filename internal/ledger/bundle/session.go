@@ -312,12 +312,18 @@ func acpRoundRun(key StreamKey, st *streamState) (roundRun, bool) {
 	if len(st.agents) == 0 {
 		return roundRun{}, false
 	}
-	ae := st.agents[len(st.agents)-1]
-	task, answer := acpTaskAndAnswer(ae)
-	if task == "" && answer == "" {
-		return roundRun{}, false
+	task, _ := acpTaskAndAnswer(st.agents[0])
+	rr := roundRun{key: key, task: task, taskAt: st.agents[0].ts}
+	// The latest invocation that answered: a later answerless one (an empty continuation, a post-judge stage
+	// round) must not blank it, and its zero answerAt never outranks another stream's answer in NodeRuns.
+	for i := len(st.agents) - 1; i >= 0; i-- {
+		if _, answer := acpTaskAndAnswer(st.agents[i]); answer != "" {
+			ae := st.agents[i]
+			rr.answer, rr.answerAt, rr.artifacts, rr.plugins = answer, ae.ts, ae.artifacts, ae.plugins
+			break
+		}
 	}
-	return roundRun{key: key, task: task, taskAt: ae.ts, answer: answer, answerAt: ae.ts, artifacts: ae.artifacts, plugins: ae.plugins}, true
+	return rr, rr.task != "" || rr.answer != ""
 }
 
 // acpFrame is the JSON-RPC envelope shared by every ACP wire message.
@@ -457,6 +463,24 @@ func (s *Session) FinalAnswer() (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// LastModel is the request model of agent's latest llm.call on node, "" when none was kept: an ACP
+// round's usage-only rows are dropped, so its model comes off the node's dag_nodes row instead.
+func (s *Session) LastModel(node, agent string) string {
+	var at time.Time
+	model := ""
+	for key, st := range s.streams {
+		if key.Node != node || key.Agent != agent {
+			continue
+		}
+		for _, ce := range st.chat {
+			if ce.RequestModel != "" && !ce.ts.Before(at) {
+				at, model = ce.ts, ce.RequestModel
+			}
+		}
+	}
+	return model
 }
 
 // EvaluationResults returns every recorded evaluation event, oldest first.

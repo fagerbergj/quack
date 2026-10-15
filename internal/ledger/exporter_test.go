@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 	otellog "go.opentelemetry.io/otel/log"
@@ -271,5 +272,27 @@ func TestExporterMapsDecision(t *testing.T) {
 	}
 	if p.Point != "plan.accept" || p.SkippedStep != nil || p.Top != "false" || p.TopP != 0.97 || p.Baseline != "true" || string(p.State) != `{"plan":"p","token":"[REDACTED]"}` {
 		t.Errorf("payload = %+v state = %s", p, p.State)
+	}
+}
+
+// deadlineStore records how long each append was given.
+type deadlineStore struct {
+	*ledgertest.MemStore
+	left *time.Duration
+}
+
+func (s deadlineStore) AppendIntent(ctx context.Context, e ledger.Entry) (int64, error) {
+	if d, ok := ctx.Deadline(); ok {
+		*s.left = time.Until(d)
+	}
+	return s.MemStore.AppendIntent(ctx, e)
+}
+
+// A slow DB must slow a record's write, not drop it: a few seconds dropped multi-MB agent.invoke rows under load.
+func TestExporterGivesEachAppendALongBound(t *testing.T) {
+	var left time.Duration
+	emitVia(t, deadlineStore{ledgertest.NewMemStore(), &left}, attribute.String("gen_ai.conversation.id", "c"), attribute.String("gen_ai.operation.name", "chat"))
+	if left < 20*time.Second {
+		t.Fatalf("append bound = %s, want tens of seconds", left)
 	}
 }

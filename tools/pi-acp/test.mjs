@@ -38,6 +38,7 @@ if (!env.PI_ACP_CONFIG)
   env.PI_ACP_CONFIG = JSON.stringify({
     endpoint: "http://127.0.0.1:1/v1", api_key: "unused", model: "stub",
     context_window: 65536, max_output_tokens: 32768, skill_paths: ["/opt/quack/skills"],
+    openrouter_routing: { order: ["Together"], allow_fallbacks: false },
   });
 
 // Stub OTLP collector: records every span POSTed to /v1/traces.
@@ -148,6 +149,9 @@ if (!process.env.ACP_CMD) {
   const models = JSON.parse(readFileSync(join(piDir, "models.json"), "utf8"));
   assert.equal(models.providers.quack.models[0].contextWindow, 65536, "contextWindow not plumbed from config's context_window");
   assert.equal(models.providers.quack.models[0].maxTokens, 32768, "maxTokens not plumbed from config's max_output_tokens");
+  const wantRouting = JSON.parse(env.PI_ACP_CONFIG).openrouter_routing;
+  if (wantRouting)
+    assert.deepEqual(models.providers.quack.compat.openRouterRouting, wantRouting, "openRouterRouting not plumbed from config's openrouter_routing");
 }
 
 const prompt = process.env.PI_ACP_REAL
@@ -439,6 +443,7 @@ if (!process.env.ACP_CMD && !process.env.PI_ACP_REAL) {
   const models2 = JSON.parse(readFileSync(join(tmpdir(), "pi-acp-" + sess2.sessionId, "models.json"), "utf8"));
   assert.ok(!("contextWindow" in models2.providers.quack.models[0]), "contextWindow written when unset");
   assert.ok(!("maxTokens" in models2.providers.quack.models[0]), "maxTokens written when unset");
+  assert.ok(!("openRouterRouting" in models2.providers.quack.compat), "openRouterRouting written when unset");
   await call2("session/prompt", { sessionId: sess2.sessionId, prompt: [{ type: "text", text: "clone" }] });
   const clone = upd2.find((u) => u.sessionUpdate === "tool_call_update" && u.toolCallId === "call_g4");
   assert.equal(clone?.status, "completed", "allow_clone did not lift the git clone deny");

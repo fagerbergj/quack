@@ -83,6 +83,9 @@ const provisionSlots = 8
 
 var provisionSem = make(chan struct{}, provisionSlots)
 
+// SetProvisionSlots resizes the bound before any Provision runs: `experiment run` clones every in-flight item at once.
+func SetProvisionSlots(n int) { provisionSem = make(chan struct{}, max(n, 1)) }
+
 // Provision clones and checks out plan.Setup once, eagerly from the execute tool, so a clone failure is a
 // tool-call error the orchestrator can revise from, not a run abort. Idempotent via Setup.Provisioned.
 func (e *Executor) Provision(ctx context.Context, userID, chatID string, plan *Plan) (err error) {

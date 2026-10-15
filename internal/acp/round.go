@@ -31,7 +31,7 @@ func (a *Agent) registerRoundAbort(steerChatID, steerNodeID string, abortCancel 
 }
 
 // steerHooks: live-steer registration and the preamble prepend, skipped for a pinned
-// process. sentPreamble is the exact condition roundArtifacts gates provenance on.
+// process. sentPreamble is the exact condition a round records a fresh preamble's provenance on.
 func (a *Agent) steerHooks(ctx context.Context, h *procHandle, outbound, steerChatID, steerNodeID string, fromPinned bool) (out string, sentPreamble bool, unreg func()) {
 	unreg = func() {}
 	// CallExtension (acked), not NotifyExtension: until the deferred Unregister the connection stays open, so a notify

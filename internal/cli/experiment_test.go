@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -240,14 +242,16 @@ func TestRunExperiment_HardErrorReportsCompletedItems(t *testing.T) {
 	defer srv.Close()
 	lf := newTestClient(t, srv)
 
-	var errOut bytes.Buffer
-	_, err := RunExperiment(context.Background(), &errOut, &stubRunner{traceID: "t1"}, lf,
-		ExperimentOpts{Dataset: "my-dataset", RunName: "run1"})
-	if err == nil {
-		t.Fatal("want an error when creating item 2's run item fails")
-	}
-	if !bytes.Contains(errOut.Bytes(), []byte("item1")) {
-		t.Fatalf("completed item 1 must reach the partial summary on errOut, got %q", errOut.String())
+	for _, concurrency := range []int{1, 2, 0} { // 0: every item at once
+		var errOut bytes.Buffer
+		res, err := RunExperiment(context.Background(), &errOut, &stubRunner{traceID: "t1"}, lf,
+			ExperimentOpts{Dataset: "my-dataset", RunName: "run1", Concurrency: concurrency})
+		if err == nil {
+			t.Fatalf("concurrency %d: want an error when creating item 2's run item fails", concurrency)
+		}
+		if len(res) != 1 || res[0].ItemID != "item1" || !bytes.Contains(errOut.Bytes(), []byte("1 item(s) run")) {
+			t.Fatalf("concurrency %d: completed item 1 must reach the results and partial summary, got %+v %q", concurrency, res, errOut.String())
+		}
 	}
 }
 
@@ -317,9 +321,12 @@ func synthesizerRecording(t *testing.T) []byte {
 func fakeExperiment(t *testing.T, status extsdk.RunStatus, onRun func(chatID string)) *[]extsdk.DispatchRequest {
 	t.Helper()
 	var reqs []extsdk.DispatchRequest
+	var mu sync.Mutex
 	var ext *experimentExt
 	dispatch := func(_ context.Context, req extsdk.DispatchRequest) error {
+		mu.Lock()
 		reqs = append(reqs, req)
+		mu.Unlock()
 		chatID := "ext:experiment:" + req.Chat.LocalID
 		if onRun != nil {
 			onRun(chatID)
@@ -398,9 +405,15 @@ func TestLiveItemRunner_RunItem(t *testing.T) {
 		t.Fatal(err)
 	}
 	setup := &extsdk.Setup{Repo: "https://github.com/acme/widget.git", BaseRef: "main", ExistingHeadRef: "feat/x", HeadSHA: strings.Repeat("a", 40)}
-	run, err := NewLiveItemRunner(srv.URL, st, "synthesizer", rubric).RunItem(ctx, experimentItemInput{Task: "synthesize this", Setup: setup})
+	runner := NewLiveItemRunner(srv.URL, st, "synthesizer", rubric)
+	var cleaned []string
+	runner.Cleanup = func(chatID string) { cleaned = append(cleaned, chatID) }
+	run, err := runner.RunItem(ctx, experimentItemInput{Task: "synthesize this", Setup: setup})
 	if err != nil {
 		t.Fatalf("RunItem: %v", err)
+	}
+	if len(cleaned) != 1 || cleaned[0] != "ext:experiment:"+(*reqs)[0].Chat.LocalID {
+		t.Fatalf("cleaned = %v, want the item's own chat workspace removed once it was read back", cleaned)
 	}
 	if len(*reqs) != 1 {
 		t.Fatalf("dispatches = %d, want 1", len(*reqs))
@@ -452,8 +465,12 @@ func TestExperimentRun_WritesInputArtifactsFirst(t *testing.T) {
 	if _, err := ext.run(context.Background(), "code-reviewer", experimentItemInput{Task: "review", Artifacts: map[string]string{"issue": `{"number":7}`}}); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if _, err := ext.run(context.Background(), "code-reviewer", experimentItemInput{Task: "review", Artifacts: map[string]string{"bad": "x"}}); err == nil || !strings.Contains(err.Error(), "disk full") {
+	chatID, err := ext.run(context.Background(), "code-reviewer", experimentItemInput{Task: "review", Artifacts: map[string]string{"bad": "x"}})
+	if err == nil || !strings.Contains(err.Error(), "disk full") {
 		t.Fatalf("run with a failed artifact write = %v, want that error, not a run missing its inputs", err)
+	}
+	if !strings.HasPrefix(chatID, store.ExperimentChatPrefix) {
+		t.Fatalf("chat id = %q, want the replay chat's, so the runner still cleans up after it", chatID)
 	}
 }
 
@@ -588,7 +605,10 @@ func TestRunExperiment_EmptyTraceIDIsAnError(t *testing.T) {
 func fakeExperimentLangfuse(t *testing.T, tasks ...string) (*httptest.Server, *[]map[string]any, *[]map[string]any) {
 	t.Helper()
 	var events, runItems []map[string]any
+	var mu sync.Mutex
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
 		switch r.URL.Path {
 		case "/api/public/dataset-items":
 			var data []map[string]any
@@ -619,6 +639,7 @@ func fakeExperimentLangfuse(t *testing.T, tasks ...string) (*httptest.Server, *[
 func TestRunExperiment_ScoresTraceAndLinksPrompt(t *testing.T) {
 	srv, events, runItems := fakeExperimentLangfuse(t, "synthesize this")
 	run := itemRun{
+		WorkerModel: "openai/gpt-6-luna", JudgeModel: "gemma4-26b-a4b",
 		Prompt:   ledger.ArtifactRef{Name: "system/synthesizer", Source: "langfuse", VersionID: "4"},
 		Criteria: []criterionScore{{"citation_quality", 2, "one late cite"}, {"cites_sources", 0.9, ""}},
 		Passed:   true,
@@ -654,9 +675,10 @@ func TestRunExperiment_ScoresTraceAndLinksPrompt(t *testing.T) {
 		t.Fatalf("run items = %+v, want one", *runItems)
 	}
 	ri := (*runItems)[0]
-	wantMeta := map[string]any{"agent": "synthesizer", "prompt_name": "system/synthesizer", "prompt_version": "4", "prompt_source": "langfuse"}
+	wantMeta := map[string]any{"agent": "synthesizer", "prompt_name": "system/synthesizer", "prompt_version": "4", "prompt_source": "langfuse",
+		"worker_model": "openai/gpt-6-luna", "judge_model": "gemma4-26b-a4b"}
 	if ri["traceId"] != "tr1" || ri["runName"] != "baseline" || !reflect.DeepEqual(ri["metadata"], wantMeta) ||
-		ri["runDescription"] != "prompt=system/synthesizer@4 agent=synthesizer" {
+		ri["runDescription"] != "prompt=system/synthesizer@4 agent=synthesizer model=openai/gpt-6-luna judge=gemma4-26b-a4b" {
 		t.Fatalf("run item = %+v", ri)
 	}
 }
@@ -722,5 +744,203 @@ func TestRunExperiment_PinNotRunIsAnItemError(t *testing.T) {
 				t.Fatalf("results=%+v events=%d runItems=%d, want an item error and nothing sent", res, len(*events), len(*runItems))
 			}
 		})
+	}
+}
+
+// --concurrency N runs N items at once through the live runner and its extension, yet every item still
+// becomes a run item, the summary keeps dataset order, and each records the models it ran on.
+func TestRunExperiment_ConcurrentItems(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const n, concurrency = 6, 3
+	var arrived atomic.Int32
+	allIn := make(chan struct{})
+	fakeExperiment(t, extsdk.RunDone, func(chatID string) {
+		node := store.DagNode{NodeID: "n1", PlanID: chatID, TraceID: "trace-" + chatID, TraceIDSet: true, Model: "openai/gpt-6-luna"}
+		if err := st.SetChatOrigin(ctx, chatID, "u", ""); err != nil {
+			t.Error(err)
+		}
+		if err := st.SaveDagPlan(ctx, chatID, chatID, "turn1", "{}"); err != nil {
+			t.Error(err)
+		}
+		if err := st.UpsertDagNode(ctx, node); err != nil {
+			t.Error(err)
+		}
+		if arrived.Add(1) == concurrency {
+			close(allIn)
+		}
+		select { // a sequential run would never get a second item in flight
+		case <-allIn:
+		case <-time.After(30 * time.Second):
+			t.Error("items never ran concurrently")
+		}
+	})
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	judgeCall := workerCall("judge-r1", t0, genai.NewContentFromText("{}", genai.RoleModel), nil)
+	judgeCall.Agent, judgeCall.Payload = ledger.JudgeAgent, []byte(`{"request_model":"judge-m","input":"[]","output":"{}"}`)
+	srv := fakeQuackAPI(t, recordingOf(t, "c1",
+		workerCall("worker-r0", t0, genai.NewContentFromText("answer", genai.RoleModel), nil), judgeCall))
+
+	tasks := make([]string, n)
+	for i := range tasks {
+		tasks[i] = fmt.Sprintf("task %d", i)
+	}
+	lfSrv, _, runItems := fakeExperimentLangfuse(t, tasks...)
+	runner := NewLiveItemRunner(srv.URL, st, "synthesizer", vetting.RubricScaler{})
+	results, err := RunExperiment(ctx, io.Discard, runner, newTestClient(t, lfSrv),
+		ExperimentOpts{Dataset: "ds", Agent: "synthesizer", RunName: "par", Concurrency: concurrency})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != n || len(*runItems) != n {
+		t.Fatalf("results=%d runItems=%d, want %d of each", len(results), len(*runItems), n)
+	}
+	for i, r := range results {
+		if r.ItemID != fmt.Sprintf("item%d", i+1) || r.Error != "" {
+			t.Fatalf("result %d = %+v, want item%d in dataset order without error", i, r, i+1)
+		}
+	}
+	for _, ri := range *runItems {
+		meta := ri["metadata"].(map[string]any)
+		if meta["worker_model"] != "openai/gpt-6-luna" || meta["judge_model"] != "judge-m" {
+			t.Fatalf("run item metadata = %+v, want the node's and judge's models", meta)
+		}
+	}
+}
+
+// A model ref splits at its first slash only, and must name a models: entry under that provider.
+func TestOverrideModels(t *testing.T) {
+	cfg := &config.Config{
+		Providers: map[string]config.ProviderConfig{"openrouter": {}, "default": {}},
+		Models:    map[string]config.ModelConfig{"openai/gpt-6-luna": {Provider: "openrouter"}, "qwen": {Provider: "default"}},
+		Agents:    map[string]config.AgentConfig{"code-reviewer": {Bundle: "b", Provider: "default", Model: "qwen"}},
+		Gates:     config.GatesConfig{Judge: config.JudgeConfig{Provider: "default", Model: "qwen"}},
+	}
+	if err := OverrideModels(cfg, "code-reviewer", "openrouter/openai/gpt-6-luna", "openrouter/openai/gpt-6-luna"); err != nil {
+		t.Fatal(err)
+	}
+	ac, j := cfg.Agents["code-reviewer"], cfg.Gates.Judge
+	if ac.Bundle != "b" || ac.Provider != "openrouter" || ac.Model != "openai/gpt-6-luna" || j.Provider != "openrouter" || j.Model != "openai/gpt-6-luna" {
+		t.Fatalf("agent=%+v judge=%+v, want both on openrouter/openai/gpt-6-luna", ac, j)
+	}
+	for _, bad := range []string{"openai/gpt-6-luna", "default/openai/gpt-6-luna", "openrouter/unregistered", "openrouter"} {
+		if err := OverrideModels(cfg, "code-reviewer", bad, ""); err == nil {
+			t.Errorf("--model %s: want an error", bad)
+		}
+		if err := OverrideModels(cfg, "code-reviewer", "", bad); err == nil {
+			t.Errorf("--judge-model %s: want an error", bad)
+		}
+	}
+}
+
+// Every item in flight at once, their runs ending late and out of order: nothing in the item path waits on a
+// wall clock but the per-item bound each dispatch carries, so every item still reports in dataset order.
+func TestRunExperiment_SlowStartsAllReport(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.New("sqlite", filepath.Join(t.TempDir(), "quack.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const n = 6
+	var started atomic.Int32
+	var timeouts sync.Map
+	var ext *experimentExt
+	dispatch := func(_ context.Context, req extsdk.DispatchRequest) error {
+		chatID := store.ExperimentChatPrefix + req.Chat.LocalID
+		timeouts.Store(chatID, req.Run.Timeout)
+		node := store.DagNode{NodeID: "n1", PlanID: chatID, TraceID: "trace-" + chatID, TraceIDSet: true}
+		if err := st.SetChatOrigin(ctx, chatID, "u", ""); err != nil {
+			t.Error(err)
+		}
+		if err := st.SaveDagPlan(ctx, chatID, chatID, "turn1", "{}"); err != nil {
+			t.Error(err)
+		}
+		if err := st.UpsertDagNode(ctx, node); err != nil {
+			t.Error(err)
+		}
+		delay := time.Duration(n-started.Add(1)) * 40 * time.Millisecond // the first dispatched ends last
+		go func() {
+			time.Sleep(delay)
+			ext.RunEnded(chatID, extsdk.RunOutcome{Status: extsdk.RunDone})
+		}()
+		return nil
+	}
+	e, _ := newExperimentExt(extsdk.Host{Dispatch: dispatch}, nil)
+	ext = e.(*experimentExt)
+	if err := ext.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { liveExperiment.Store(nil) })
+	srv := fakeQuackAPI(t, recordingBody(t, "c1", "n1", "synthesizer", "x", "answer"))
+	tasks := make([]string, n)
+	for i := range tasks {
+		tasks[i] = fmt.Sprintf("task %d", i)
+	}
+	lfSrv, _, runItems := fakeExperimentLangfuse(t, tasks...)
+
+	results, err := RunExperiment(ctx, io.Discard, NewLiveItemRunner(srv.URL, st, "synthesizer", vetting.RubricScaler{}),
+		newTestClient(t, lfSrv), ExperimentOpts{Dataset: "ds", Agent: "synthesizer", RunName: "slow", Concurrency: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != n || len(*runItems) != n {
+		t.Fatalf("results=%d runItems=%d, want %d of each", len(results), len(*runItems), n)
+	}
+	for i, r := range results {
+		if r.ItemID != fmt.Sprintf("item%d", i+1) || r.Error != "" {
+			t.Fatalf("result %d = %+v, want item%d without error", i, r, i+1)
+		}
+	}
+	timeouts.Range(func(k, v any) bool {
+		if v != experimentItemTimeout {
+			t.Errorf("chat %v dispatched with timeout %v, want %v", k, v, experimentItemTimeout)
+		}
+		return true
+	})
+}
+
+// A run cut by its per-item bound is an item error naming the timeout, and a run that ended before any model
+// call (no recording) says so rather than a bare not-found.
+func TestLiveItemRunner_TimedOutAndNoRecording(t *testing.T) {
+	var ext *experimentExt
+	timedOut := true
+	dispatch := func(_ context.Context, req extsdk.DispatchRequest) error {
+		o := extsdk.RunOutcome{Status: extsdk.RunDone, TimedOut: timedOut}
+		go ext.RunEnded(store.ExperimentChatPrefix+req.Chat.LocalID, o)
+		return nil
+	}
+	e, _ := newExperimentExt(extsdk.Host{Dispatch: dispatch}, nil)
+	ext = e.(*experimentExt)
+	if err := ext.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { liveExperiment.Store(nil) })
+	srv := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(srv.Close)
+	r := NewLiveItemRunner(srv.URL, nil, "code-reviewer", vetting.RubricScaler{})
+	cleaned := 0
+	r.Cleanup = func(string) { cleaned++ }
+	defer func() {
+		if cleaned != 2 {
+			t.Errorf("workspace cleanups = %d, want one per item even when it errors", cleaned)
+		}
+	}()
+
+	if _, err := r.RunItem(context.Background(), experimentItemInput{Task: "x"}); err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("err = %v, want a timed-out item error", err)
+	}
+	timedOut = false
+	if _, err := r.RunItem(context.Background(), experimentItemInput{Task: "x"}); err == nil || !strings.Contains(err.Error(), "before any model call") {
+		t.Fatalf("err = %v, want the no-recording item error", err)
+	}
+}
+
+// The prefix the store's boot reconcile skips is the one experiment chats are named with.
+func TestExperimentChatPrefixMatchesStore(t *testing.T) {
+	if got := "ext:" + experimentExtension + ":"; got != store.ExperimentChatPrefix {
+		t.Fatalf("experiment chats are %q, store skips %q", got, store.ExperimentChatPrefix)
 	}
 }

@@ -2,6 +2,7 @@ package serve
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -42,7 +43,9 @@ func TestPiACPEnvContextWindow(t *testing.T) {
 // TestPiACPEnvFlatShape pins the payload's field set to exactly what the
 // pi-acp shim reads - a stray extra key here is one pi silently ignores.
 func TestPiACPEnvFlatShape(t *testing.T) {
-	env := piACPEnv(config.ProviderConfig{Endpoint: "http://x/v1", APIKey: "k"},
+	routing := map[string]any{"order": []any{"Together"}, "allow_fallbacks": false}
+	prov := config.ProviderConfig{Endpoint: "http://x/v1", APIKey: "k", ExtraBody: map[string]any{"provider": routing, "transforms": []any{}}}
+	env := piACPEnv(prov,
 		config.AgentConfig{Model: "m", ContextWindow: 65536, Acp: &config.AcpAgentConfig{ReadOnly: true, AllowClone: true}},
 		[]string{"/skills"}, workspace.SandboxBwrap)
 	if len(env) != 1 || !strings.HasPrefix(env[0], "PI_ACP_CONFIG=") {
@@ -55,14 +58,14 @@ func TestPiACPEnvFlatShape(t *testing.T) {
 	}
 	want := map[string]bool{
 		"endpoint": true, "api_key": true, "model": true,
-		"context_window": true, "max_output_tokens": true, "skill_paths": true, "allow_clone": true,
+		"context_window": true, "max_output_tokens": true, "skill_paths": true, "allow_clone": true, "openrouter_routing": true,
 	}
 	for k := range cfg {
 		if !want[k] {
 			t.Errorf("unexpected field %q in PI_ACP_CONFIG: %v", k, cfg)
 		}
 	}
-	if cfg["endpoint"] != "http://x/v1" || cfg["api_key"] != "k" || cfg["model"] != "m" {
+	if cfg["endpoint"] != "http://x/v1" || cfg["api_key"] != "k" || cfg["model"] != "m" || !reflect.DeepEqual(cfg["openrouter_routing"], routing) {
 		t.Errorf("unexpected values: %+v", cfg)
 	}
 }

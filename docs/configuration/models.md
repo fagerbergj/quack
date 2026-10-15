@@ -19,6 +19,18 @@ providers:
 
 `limits.active` caps how many DISTINCT models per role may be resident at once (issue #1007, enforced by `dag.Admission`); a role omitted from `active` is unbounded, and a provider without a `limits:` block accepts any number of resident models.
 
+`extra_body` (optional) is a map set on the top-level JSON body of every chat and embedding request to the provider, for fields the OpenAI API lacks, such as OpenRouter's provider routing. An ACP agent's pi takes no arbitrary body fields, so it receives only the `provider` key, which pi sends as OpenRouter routing; any other key reaches native agents and the judge only.
+
+```yaml
+providers:
+  openrouter:
+    kind: openai
+    endpoint: https://openrouter.ai/api/v1
+    api_key: ${OPENROUTER_API_KEY}
+    extra_body:
+      provider: { order: [Together], allow_fallbacks: false }   # pin every call to one upstream
+```
+
 ## Models registry
 
 `models:` is the canonical model registry, a sibling of `providers:` and `agents:`, keyed by the RESOLVED model name (e.g. `QUACK_CODER_MODEL`'s actual value, not the env var) - that's the name `inference.NewModel` is called with:

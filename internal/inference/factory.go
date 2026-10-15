@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/openai/openai-go/v3/option"
 	"google.golang.org/adk/v2/artifact"
 	"google.golang.org/adk/v2/model"
 
@@ -17,7 +18,11 @@ import (
 func NewModel(p config.ProviderConfig, modelName string, artifacts artifact.Service, cost *config.ModelPricing, effort string) (model.LLM, error) {
 	switch p.Kind {
 	case "openai":
-		live := &hydratingModel{LLM: openaimodel.NewOpenAIModel(modelName, p.Endpoint, p.APIKey, effort), artifacts: artifacts}
+		var extra []option.RequestOption
+		for k, v := range p.ExtraBody {
+			extra = append(extra, option.WithJSONSet(k, v))
+		}
+		live := &hydratingModel{LLM: openaimodel.NewOpenAIModel(modelName, p.Endpoint, p.APIKey, effort, extra...), artifacts: artifacts}
 		tm := &tracedModel{LLM: live, name: modelName}
 		tm.pricing = cost
 		return tm, nil

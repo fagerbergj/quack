@@ -175,6 +175,10 @@ func (tc TurnContent) UnverifiedNote() string {
 	return "not verified (" + strings.Join(parts, "; ") + ")"
 }
 
+// ExperimentChatPrefix marks chats only a `quack experiment run` process drives, from an in-process server that
+// never reconciles. A server booting on the same DB must not settle, resend or wipe the clone of one mid-run.
+const ExperimentChatPrefix = "ext:experiment:"
+
 // ScanOrphanedRuns reconciles chats a killed process left mid-run: paused if a node is suspended, left active
 // for boot to finish if every node of its plan is done or to send again if none ran (resend), else stamped
 // failed once (SettleInterrupted).
@@ -182,6 +186,7 @@ func (s *Store) ScanOrphanedRuns(ctx context.Context) (paused, noResumableNode, 
 	var chats []Chat
 	if err := s.db.WithContext(ctx).
 		Where("active_turn_id <> ? OR run_status = ?", "", RunStatusPaused).
+		Where("id NOT LIKE ?", ExperimentChatPrefix+"%").
 		Find(&chats).Error; err != nil {
 		return nil, nil, nil, nil, err
 	}

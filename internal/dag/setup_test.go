@@ -588,3 +588,16 @@ func TestOverrideExistingPRHeadStillGuardsRealReview(t *testing.T) {
 		t.Fatal("a review-only plan with no head ref must error, not fetch an invented ref")
 	}
 }
+
+// Not parallel: it swaps the package-wide bound every Provision reads.
+func TestSetProvisionSlots(t *testing.T) {
+	defer func(old chan struct{}) { provisionSem = old }(provisionSem)
+	SetProvisionSlots(1 << 30) // zero-size elements: a huge bound allocates nothing
+	if cap(provisionSem) != 1<<30 {
+		t.Fatalf("cap = %d, want %d", cap(provisionSem), 1<<30)
+	}
+	SetProvisionSlots(0)
+	if cap(provisionSem) != 1 {
+		t.Fatalf("cap = %d, want a floor of 1", cap(provisionSem))
+	}
+}

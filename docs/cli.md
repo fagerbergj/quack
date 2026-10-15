@@ -90,7 +90,7 @@ Export recorded runs to a Langfuse dataset, then re-run an agent against that da
 | Command | Does |
 | --- | --- |
 | `quack dataset export --dataset <name> (--chat <id> \| --repo <owner/repo> \| --since <date>) [--agent <name>] [--limit N]` | Export gated code-reviewer, synthesizer, web-researcher and trend-scout node runs as Langfuse dataset items (creating the dataset if needed). `--since` alone scans every chat updated since that date, which is how runs in chats with no repo are found; with `--chat` or `--repo` it narrows those. `--agent` keeps only that agent's runs. Each turn's run of a node is its own item, so a recurring job's chat yields one per turn; `--since` and `--repo` scans skip `ext:experiment:` replay chats. A pull request review's item also carries `input.setup`: the repository, base branch and head branch it was dispatched with, and the head commit its node started on; the summary counts the items exported with one. An item whose task lists input artifacts (its `<artifacts>` block) carries each one's content at the listed revision in `input.artifacts`, and `experiment run` writes them into the replay's chat before the node starts. An item stays under 4 MB, inside Langfuse's 4.5 MB request limit: artifacts go in smallest first, and one that doesn't fit is left out whole, never truncated, named in `input.skipped_artifacts` and logged with its size. The replay's run item then carries `skipped_artifacts` in its metadata, so a comparison can exclude a run that missed inputs. Idempotent: re-exporting the same node run upserts the same item instead of duplicating it. |
-| `quack experiment run --dataset <name> --agent <name> [--prompt system/<agent>@N] [--run-name <s>] [--limit N] [--json]` | Run `--agent`'s node alone on every item's recorded task in `--dataset`, reporting each as a Langfuse dataset run item linked to the node's trace. The trace gets one numeric score per judge criterion of the gate's final round, `gate_passed`, and the `cost.*` scores below; the run's description and metadata name the prompt version the node actually resolved. `--prompt system/<agent>@N` pins the run's resolver to that exact Langfuse version, a plugin agent's bundle prompt included, and an item whose node ran any other prompt is an item error, not a scored run. Exits non-zero when any item errored. |
+| `quack experiment run --dataset <name> --agent <name> [--prompt system/<agent>@N] [--run-name <s>] [--limit N] [--concurrency N] [--model <provider>/<model>] [--judge-model <provider>/<model>] [--keep-workspaces] [--json]` | Run `--agent`'s node alone on every item's recorded task in `--dataset`, reporting each as a Langfuse dataset run item linked to the node's trace. The trace gets one numeric score per judge criterion of the gate's final round, `gate_passed`, and the `cost.*` scores below; the run's description and metadata name the prompt version the node actually resolved and the worker and judge models it actually called (`worker_model`, `judge_model`). `--prompt system/<agent>@N` pins the run's resolver to that exact Langfuse version, a plugin agent's bundle prompt included, and an item whose node ran any other prompt is an item error, not a scored run. `--concurrency N` (default 1) runs up to N items at once, and `all` or `0` runs every item at once; the summary stays in dataset order. `--model` and `--judge-model` rebind the agent's worker and the gate judge for this run only; see [Screening on a hosted model](#screening-on-a-hosted-model). Each item's workspace (its clone and per-node dirs) is deleted once the item is read back, whatever its outcome, and startup deletes `ext-experiment-*` workspaces over six hours old that a killed run left; `--keep-workspaces` keeps them all for debugging. Exits non-zero when any item errored. |
 | `quack prompt push <agent>` | Upload `<agent>`'s bundle `prompt.md` to `prompts.store` as a new `system/<agent>` version without the `production` label, and print `system/<agent>@N` to pin as an experiment's baseline. |
 
 ### Measuring a prompt change
@@ -133,6 +133,43 @@ A Langfuse v4 deployment in `events_only` mode answers the v1 read endpoints (`/
 Before trusting a criterion's difference, measure the judge's noise on it. `quack judge replay <chat> --from-server <url> --repeat 5` re-judges recorded rounds of a dataset item's source chat (the item's `chat_id` metadata) five times over the same answer and reports each criterion's sd and pass/fail agreement; see [Measuring the judge](configuration/judge-measurement.md#judge-consistency). A baseline-to-candidate gap smaller than that spread is judge noise, not a prompt effect. Repeated runs per item and accuracy against golden labels are not part of the default loop; add them for an experiment whose result is a close call.
 
 Once a candidate wins, promote it by hand: copy its text from Langfuse into the agent's bundle `prompt.md` (`agents/<agent>/` or, for a plugin agent, `extensions/<plugin>/plugin/agents/<agent>/`) in a PR whose description cites the baseline and candidate run names, `synth-v1` and `synth-v2` above.
+
+### Screening on a hosted model
+
+A code-reviewer item takes about 15 minutes on a local model, so screen candidates on a cheap hosted model with every item in parallel, then confirm the winner on the production model with a plain run. `--model <provider>/<model>` points the agent's worker, an ACP agent's pi included, at a `models:` entry; `--judge-model` does the same for `gates.judge`, which also serves the ACP permission judge. The ref splits at its first slash, so `openrouter/deepseek/deepseek-v4.1-flash` is provider `openrouter`, model `deepseek/deepseek-v4.1-flash`, and the model must be registered under that provider. Add both to the local `quack.yaml`; `extra_body.provider` pins every call, pi's included, to one OpenRouter upstream (see [Providers](configuration/models.md#providers)):
+
+```yaml
+providers:
+  openrouter:
+    kind: openai
+    endpoint: https://openrouter.ai/api/v1
+    api_key: ${OPENROUTER_API_KEY}
+    extra_body:
+      provider: { order: [Together], allow_fallbacks: false }
+models:
+  deepseek/deepseek-v4.1-flash:
+    provider: openrouter
+    cost:                  # USD per million tokens: set the pinned upstream's actual rate
+      input_per_mtok: 0.0152
+      output_per_mtok: 0.60
+```
+
+Launch the baseline and candidate arms together, each with every item in flight:
+
+```sh
+M=openrouter/deepseek/deepseek-v4.1-flash
+quack experiment run --dataset code-reviewer-ab --agent code-reviewer --prompt system/code-reviewer@1 \
+  --run-name cr-v1-flash --concurrency all --model $M --judge-model $M &
+quack experiment run --dataset code-reviewer-ab --agent code-reviewer --prompt system/code-reviewer@2 \
+  --run-name cr-v2-flash --concurrency all --model $M --judge-model $M &
+wait
+```
+
+`--concurrency all` (or `0`) starts every item at once and lifts the run's clone bound to match. Nothing else in quack caps a run on a provider without `limits:`: admission (`dag.Admission`, worker and judge alike) queues only on a model's `limits:` and a provider's `limits.active`, so the llm-swap provider's caps still hold for its own models and never touch these calls. OpenRouter's own rate limits still apply. Every native model call, the judge's included, retries a 5xx or 429 with backoff for about a minute, so a pinned upstream's 502 burst doesn't fail the item.
+
+The run is self-contained: its in-process server drives every item, and nothing waits on a wall clock except a per-item bound of two hours that surfaces a hung item. It may share a live server's database and workspace volume, because a server booting on that database skips `ext:experiment:` chats instead of settling them, sending their turns again or deleting their clones. A run's clone and `check_setup` are bounded by `workspace.check_timeout_seconds`, not the 60-second tool-call bound. If an `experiment run` process dies, its chats stay marked active, and no server ever resumes them; the next run deletes their workspaces once they are six hours old, well past the two-hour item bound, so another arm's live items are never touched.
+
+`cost_usd` on each call is priced from the model's `cost:` entry, not the cost OpenRouter reports back, because pi drops that figure; a model without `cost:` records tokens but no cost. Quack has no cached-input tier, so cached tokens bill at `input_per_mtok`. Settings tied to the model rather than the run stay as `quack.yaml` sets them: the agent's `context_window` (it must fit the model's `context_window` when one is declared), `gates.judge.thinking_level`, and the model's `effort`. Recall still embeds on the `default` provider's embedder. A Langfuse prompt version whose config binds `model:` still wins: `system/<agent>` over `--model` for a native agent, and `system/judge` over `--judge-model`. The run's `worker_model` and `judge_model` metadata show which model each actually called.
 
 Code-reviewer and trend-scout are plugin agents: production always serves their bundle `prompt.md`, and only an experiment's `--prompt` replaces it. An item with `input.setup` first clones that repository and checks out the head branch at the recorded commit, fetched by its sha, so the replay reviews the code the original review saw even after the branch moved on or was deleted. Items exported before head commits were recorded have no `input.setup` and replay with no clone, so re-export them. code-reviewer exists only when `extensions.github` is configured in the local `quack.yaml`; with no GitHub App, use the credential-free block in [QA mocks](qa-mocks.md#github-mock) with the mock running, since the extension asks it for each clone's token. A public repository clones anonymously, as git sends a token only when the host asks for one; a private one needs the App's installation or a `workspace.git_credentials` token for its host. A replayed node has none of the pages its upstream nodes fetched, so the code-owned page checks (`cites_sources`, `specifics_supported`) score low in both runs alike: compare a synthesizer's judged criteria, not those.
 
