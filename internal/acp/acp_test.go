@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -866,17 +865,23 @@ func TestRound_IdleTimeout(t *testing.T) {
 // fakeIdleTimer puts round()'s idle watchdog under test control, so reset and fire are exact transitions.
 type fakeIdleTimer struct {
 	ch     chan time.Time
-	resets int32 // atomic
+	resets chan struct{} // one send per Reset; buffered past the test's two so Reset never blocks
 }
 
-func newFakeIdleTimer() *fakeIdleTimer { return &fakeIdleTimer{ch: make(chan time.Time, 1)} }
+func newFakeIdleTimer() *fakeIdleTimer {
+	return &fakeIdleTimer{ch: make(chan time.Time, 1), resets: make(chan struct{}, 16)}
+}
 
 func (f *fakeIdleTimer) C() <-chan time.Time { return f.ch }
 func (f *fakeIdleTimer) Stop() bool          { return true }
 func (f *fakeIdleTimer) Reset(time.Duration) bool {
-	atomic.AddInt32(&f.resets, 1)
+	f.resets <- struct{}{}
 	return true
 }
+
+// hangGuard bounds event waits only against a real hang: spawning the race-built fake agent and
+// its handshake took over 2s at load ~70, so a tight bound measures the host, not round().
+const hangGuard = 30 * time.Second
 
 // TestRound_IdleTimeoutResetsOnActivityThenFiresOnSilence: activity comes only from test nudges over
 // the steer RPC and the fake timer fires by hand, so there are no timing margins at either end.
@@ -885,8 +890,8 @@ func TestRound_IdleTimeoutResetsOnActivityThenFiresOnSilence(t *testing.T) {
 	timer := newFakeIdleTimer()
 	a.newIdleTimer = func(time.Duration) idleTimer { return timer }
 
-	var forward atomic.Pointer[func(string) bool]
-	a.opts.RegisterLiveSteer = func(chatID, nodeID string, fwd func(string) bool) { forward.Store(&fwd) }
+	forward := make(chan func(string) bool, 1)
+	a.opts.RegisterLiveSteer = func(chatID, nodeID string, fwd func(string) bool) { forward <- fwd }
 	a.opts.UnregisterLiveSteer = func(string, string) {}
 
 	var specs []eventSpec
@@ -898,30 +903,22 @@ func TestRound_IdleTimeoutResetsOnActivityThenFiresOnSilence(t *testing.T) {
 		})
 	}()
 
-	waitForForward := func() func(string) bool {
-		t.Helper()
-		deadline := time.Now().Add(2 * time.Second)
-		for time.Now().Before(deadline) {
-			if p := forward.Load(); p != nil {
-				return *p
-			}
-			time.Sleep(time.Millisecond)
-		}
+	var fwd func(string) bool
+	select {
+	case fwd = <-forward:
+	case err := <-result:
+		t.Fatalf("round returned before registering the live-steer hook: %v", err)
+	case <-time.After(hangGuard):
 		t.Fatal("RegisterLiveSteer never fired - round() did not register the live-steer hook")
-		return nil
 	}
-	fwd := waitForForward()
 
-	waitForResets := func(n int32) {
+	waitForReset := func(n int) {
 		t.Helper()
-		deadline := time.Now().Add(2 * time.Second)
-		for time.Now().Before(deadline) {
-			if atomic.LoadInt32(&timer.resets) >= n {
-				return
-			}
-			time.Sleep(time.Millisecond)
+		select {
+		case <-timer.resets:
+		case <-time.After(hangGuard):
+			t.Fatalf("idle timer was not reset after activity %d", n)
 		}
-		t.Fatalf("idle timer was not reset %d time(s) after activity", n)
 	}
 
 	// Two rounds of real activity, each driven over the actual host->agent
@@ -929,11 +926,11 @@ func TestRound_IdleTimeoutResetsOnActivityThenFiresOnSilence(t *testing.T) {
 	if !fwd("nudge 1") {
 		t.Fatal("steer forward 1 failed")
 	}
-	waitForResets(1)
+	waitForReset(1)
 	if !fwd("nudge 2") {
 		t.Fatal("steer forward 2 failed")
 	}
-	waitForResets(2)
+	waitForReset(2)
 
 	// No third nudge is coming - the round must still be running (an upper
 	// bound only: this can never mask a false pass, only a slow failure).
@@ -951,7 +948,7 @@ func TestRound_IdleTimeoutResetsOnActivityThenFiresOnSilence(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "wedged") {
 			t.Fatalf("want a wedged idle-timeout error, got %v", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(hangGuard): // gracefulCancel alone may spend cancelGrace (5s) before the kill
 		t.Fatal("round did not return after the idle timer fired")
 	}
 	if len(specs) != 2 || specs[0].parts[0].Text != "ping" || specs[1].parts[0].Text != "ping" {
