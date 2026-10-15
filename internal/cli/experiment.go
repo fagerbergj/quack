@@ -435,7 +435,7 @@ func (e *experimentExt) run(ctx context.Context, agent string, in experimentItem
 	e.mu.Unlock()
 	req := extsdk.DispatchRequest{
 		Chat:     extsdk.ChatRef{LocalID: localID, User: experimentUser, Title: "experiment: " + agent},
-		Ask:      extsdk.Ask{Message: in.Task},
+		Ask:      extsdk.Ask{Message: stripRecordedEnvironment(in.Task)},
 		Run:      extsdk.RunConfig{Workflow: experimentWorkflow(agent), ReadOnly: true, Setup: in.Setup, Timeout: experimentItemTimeout},
 		Delivery: extsdk.DeliveryAuthority{AllowedKinds: []extsdk.DeliveryKind{}},
 	}
@@ -457,6 +457,16 @@ func (e *experimentExt) run(ctx context.Context, agent string, in experimentItem
 	case <-ctx.Done():
 		return chatID, ctx.Err()
 	}
+}
+
+// stripRecordedEnvironment drops the recording's trailing <environment_context>: it names the recorded
+// run's cwd, which doesn't exist here, and the replay's ACP round appends its own.
+func stripRecordedEnvironment(task string) string {
+	i := strings.LastIndex(task, "<environment_context>")
+	if i < 0 || !strings.HasSuffix(strings.TrimSpace(task), "</environment_context>") {
+		return task
+	}
+	return strings.TrimRight(task[:i], "\n")
 }
 
 // itemRunFor assembles nodeID's run: prompt and judge scores from the recording, tokens and timing from its
