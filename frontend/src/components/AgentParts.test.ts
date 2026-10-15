@@ -175,3 +175,12 @@ describe('not verified marker', () => {
     expect(renderToStaticMarkup(createElement(BubbleHeader, { agent: 'synthesizer', unverified: u, stopped: 'draft' }))).not.toContain('not verified')
   })
 })
+
+describe('draft marker', () => {
+  it('marks an answer whose quality check has not ruled, and yields to stopped or not verified', () => {
+    expect(renderToStaticMarkup(createElement(BubbleHeader, { agent: 'synthesizer', pending: true }))).toContain('Draft · checking')
+    expect(renderToStaticMarkup(createElement(BubbleHeader, { agent: 'synthesizer', pending: true, stopped: 'draft' }))).not.toContain('Draft · checking')
+    expect(renderToStaticMarkup(createElement(BubbleHeader, { agent: 'synthesizer', pending: true, unverified: { nodeId: 's', rounds: 1 } }))).not.toContain('Draft · checking')
+    expect(renderToStaticMarkup(createElement(BubbleHeader, { agent: 'synthesizer' }))).not.toContain('Draft · checking')
+  })
+})

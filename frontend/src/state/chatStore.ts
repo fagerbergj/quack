@@ -1093,6 +1093,8 @@ export interface Attribution {
   // The answering node was stopped, so its text is an unreviewed draft.
   stopped?: boolean
   unverified?: Unverified
+  // An answering node hasn't finished, so its quality check hasn't ruled and the text is still a draft.
+  pending?: boolean
 }
 
 // sinkNodeIds returns the DAG's sinks - nodes with no successor - in plan order; their answers ARE
@@ -1180,8 +1182,11 @@ export function dagAnswerAttribution(dag: DagTurnState, text?: string): Attribut
     tokens,
     stopped: dagAnswer(dag).stopped || undefined,
     unverified: failed && fs ? { nodeId: failed, rounds: fs.judgeRounds!, score: fs.judgeFinalScore, startedAt: fs.startedAt, finishedAt: fs.finishedAt } : undefined,
+    pending: states.some(s => s != null && !isTerminalNodeStatus(s.status)) || undefined,
   }
 }
+
+const isTerminalNodeStatus = (s: NodeStatus) => s === 'done' || s === 'failed' || s === 'cancelled'
 
 // Total input + output tokens, or undefined when unrecorded (a DAG-only turn's tokens show per node) or zero.
 export function turnUsageTotal(turn: Turn): number | undefined {
