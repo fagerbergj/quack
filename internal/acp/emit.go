@@ -98,9 +98,9 @@ func emitInvokeAgent(ctx context.Context, agentName string, sent, received *teeB
 }
 
 // emitLLMCall records one ACP model call as an llm.call ledger event, the shape inference.emitChatEvent gives a
-// native call: the agent calls its endpoint directly, so quack's inference layer never sees it. nil u is a no-op.
+// native call: the agent calls its endpoint directly, so quack's inference layer never sees it.
 func (a *Agent) emitLLMCall(ctx context.Context, u *genai.GenerateContentResponseUsageMetadata) {
-	if u == nil || !otelobs.LoggingEnabled(acpScope) {
+	if !otelobs.LoggingEnabled(acpScope) {
 		return
 	}
 	cached, prompt, output := int64(u.CachedContentTokenCount), int64(u.PromptTokenCount), int64(u.CandidatesTokenCount)

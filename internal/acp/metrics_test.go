@@ -336,3 +336,36 @@ func TestRound_EachModelCallIsAnLLMCall(t *testing.T) {
 		t.Errorf("cost = %v, want %v", got, want)
 	}
 }
+
+// TestRound_EachModelCallRecordsMetrics: per-call usage reaches gen_ai.client.token.usage, quack.model.requests
+// and gen_ai.client.cost with native attributes, and the round's PromptResponse.Usage is not added on top.
+func TestRound_EachModelCallRecordsMetrics(t *testing.T) {
+	reader := newUsageTestMeter(t)
+	a := usageTestAgent(t, "usage-calls", &config.ModelPricing{InputPerMTok: 1, OutputPerMTok: 10})
+	a.SetLedgerCoords(ledger.Coords{Agent: "code-reviewer", User: "local", Source: "github"})
+	ctx := ledger.WithCoords(context.Background(), ledger.Coords{ChatID: "c1", Node: "code-reviewer-1"})
+
+	if err := a.round(ctx, t.TempDir(), "", workspace.Caps{}, "review", artifactsrc.Artifact{}, "", "", "", "", func(eventSpec) bool { return true }); err != nil {
+		t.Fatalf("round: %v", err)
+	}
+	points := tokenUsagePoints(t, reader)
+	for typ, want := range map[string]int64{otelobs.GenAITokenTypeInput: 500, otelobs.GenAITokenTypeCached: 2000, otelobs.GenAITokenTypeOutput: 100} {
+		dp, ok := points[typ]
+		if !ok || dp.Value != want {
+			t.Errorf("token_type=%q = %d (present %v), want %d summed over both calls only", typ, dp.Value, ok, want)
+			continue
+		}
+		for k, v := range map[string]string{otelobs.GenAIRequestModel: "qwen3-coder", "agent": "code-reviewer", "user": "local", "source": "github", "role": otelobs.RoleWorker} {
+			if got := attrVal(dp.Attributes, k); got != v {
+				t.Errorf("token_type=%q %s = %q, want %q", typ, k, got, v)
+			}
+		}
+	}
+	if met, ok := collectMetric(t, reader, "quack.model.requests"); !ok || met.Data.(metricdata.Sum[int64]).DataPoints[0].Value != 2 {
+		t.Errorf("quack.model.requests = %+v, want 2 (one per model call)", met.Data)
+	}
+	dp, ok := costPoint(t, reader)
+	if want := (2500*1 + 100*10) / 1e6; !ok || math.Abs(dp.Value-want) > 1e-12 {
+		t.Errorf("gen_ai.client.cost = %v (present %v), want %v", dp.Value, ok, want)
+	}
+}

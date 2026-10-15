@@ -70,7 +70,7 @@ All under the `quack.*` namespace (`internal/otelobs/metrics.go`), meter name `g
 | `quack.memory.recall` | Counter | `hit` | Memory recall attempts, hit vs. miss. |
 | `quack.gate.checks.skipped` | Counter | `reason` | A node whose deterministic checks did NOT run at all (no build/vet/test backstop) — the gate then relied on judge score alone. Query this to find nodes gated on judge alone. |
 | `gen_ai.client.token.usage` / `gen_ai.client.cost` | Counter | `gen_ai.request.model`, `agent`, `user`, `source`, `role`(, `gen_ai.token.type`) | Per-call tokens and USD. A judge call carries the agent it judged and `role=judge`; a call outside any node is `role=orchestrator`; otherwise `worker`. |
-| `quack.model.requests` | Counter | as `gen_ai.client.cost` | One per usage-reporting model call (an ACP round counts once): the per-request denominator. |
+| `quack.model.requests` | Counter | as `gen_ai.client.cost` | One per usage-reporting model call (pi-acp reports each call; an ACP agent that reports only a round total counts once per round): the per-request denominator. |
 | `quack.run.duration` | Histogram (s) | — | One finished orchestrator run; `_count` is tasks, the cost-per-task denominator. |
 | `quack.tool.calls` | Counter | `agent`, `role`, `tool`, `rejected` | Every quack-native tool call; `rejected=true` returned an error to the model (e.g. a `write_<kind>` schema refusal). |
 | `quack.memory.commit.failures` | Counter | `agent`, `reason` | A fire-and-forget memory commit that errored (consolidation-model timeout, embed/neighbour timeout) — the only queryable signal for the commit goroutine, which never fails a node itself. |

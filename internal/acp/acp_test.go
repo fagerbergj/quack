@@ -183,7 +183,8 @@ func (f *fakeAgent) Prompt(ctx context.Context, p sdk.PromptRequest) (sdk.Prompt
 				"quack_prompt_tokens": c[0], "quack_cached_tokens": c[1], "quack_completion_tokens": c[2]}}})
 		}
 		send(sdk.UpdateAgentMessageText("done"))
-		return sdk.PromptResponse{StopReason: sdk.StopReasonEndTurn}, nil
+		// A round total on top of the per-call updates must not be recorded again.
+		return sdk.PromptResponse{StopReason: sdk.StopReasonEndTurn, Usage: &sdk.Usage{InputTokens: 9999, OutputTokens: 9999}}, nil
 	case "usage-none":
 		send(sdk.UpdateAgentMessageText("done"))
 		return sdk.PromptResponse{StopReason: sdk.StopReasonEndTurn}, nil

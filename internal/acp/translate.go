@@ -29,6 +29,7 @@ type translator struct {
 	cwd       string
 	answer    strings.Builder
 	pending   map[string]pendingTool
+	sawUsage  bool // a usage_update arrived: the agent reports per call
 	thinking  strings.Builder
 	thinkOpen time.Time // zero when no batch is open
 }
@@ -116,6 +117,7 @@ func (t *translator) translate(u sdk.SessionUpdate) []eventSpec {
 		// pi-acp sends one usage_update per finished model call, so each rides its own event like a
 		// native call's: the node sums them, and its context size is the last call's prompt.
 		out = append(out, eventSpec{partial: true, usage: um})
+		t.sawUsage = true
 	}
 	return out
 }

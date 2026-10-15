@@ -117,7 +117,9 @@ func (a *Agent) handlePromptDone(d promptDone, h *procHandle, tr *translator, en
 		endPrompt(d.err)
 		return false, fmt.Errorf("acp: prompt: %w%s", d.err, h.stderrTail())
 	}
-	recordUsage(a.opts.ModelName, ledger.FillBlankCoords(ledger.CoordsFromContext(ctx), coords), a.opts.Pricing, d.resp.Usage)
+	if !tr.sawUsage { // per-call usage already recorded every call; the round total would count them twice
+		recordUsage(a.opts.ModelName, ledger.FillBlankCoords(ledger.CoordsFromContext(ctx), coords), a.opts.Pricing, d.resp.Usage)
+	}
 	if d.resp.StopReason == sdk.StopReasonRefusal {
 		refusalErr := errors.New("acp: agent refused the prompt")
 		endPrompt(refusalErr)
@@ -152,10 +154,12 @@ type roundLoopArgs struct {
 // a cancel/interrupt stops the round, or the agent wedges (idle). Returns whether the round pinned cleanly.
 func (a *Agent) roundLoop(al *roundLoopArgs) (bool, error) {
 	resetIdle := func() { al.idleTimer.Reset(a.opts.IdleTimeout) }
+	metricCoords := ledger.FillBlankCoords(ledger.CoordsFromContext(al.ctx), al.coords)
 	relay := func(u sdk.SessionUpdate) bool {
 		al.turns.observe(u)
 		for _, spec := range al.tr.translate(u) {
-			a.emitLLMCall(al.ctx, spec.usage) // same coords as emitInvokeAgent, so both land on one ledger stream
+			// al.ctx: the same coords as emitInvokeAgent, so the llm.call lands on the round's ledger stream.
+			a.recordCall(al.ctx, metricCoords, spec.usage)
 			if !al.emit(spec) {
 				return false
 			}
