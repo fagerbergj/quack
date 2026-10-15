@@ -572,13 +572,35 @@ function NodeStateChips({ steers, resumedFrom }: { steers?: string[]; resumedFro
   )
 }
 
+// A capacity wait replaces the status dot. The ticking timer sits outside the live region so a screen
+// reader announces the wait once, not every 100ms.
+function NodeStatusLabel({ state, pauseLabel }: { state: NodeState; pauseLabel?: string }) {
+  const wait = state.status === 'queued' ? state.capacityWait : undefined
+  if (!wait) return <StatusDot status={state.status} label={pauseLabel} />
+  return (
+    <span className="min-w-0 inline-flex flex-wrap items-center gap-x-1.5 text-[11px] text-gray-500 dark:text-gray-400">
+      <span role="status" className="min-w-0 inline-flex flex-wrap items-center gap-x-1.5">
+        <span className="inline-flex items-center gap-1 font-medium">
+          <Icon name="hourglass_empty" className="w-3 h-3 shrink-0 text-amber-600 dark:text-amber-400" />
+          waiting for capacity
+        </span>
+        <span className="font-mono truncate max-w-[160px]" title={wait.model}>{wait.model}</span>
+        {wait.reason && <span>· {wait.reason}</span>}
+      </span>
+      <span className="tabular-nums" title="Time spent waiting for this model">
+        · waited <LiveTimer startedAt={wait.since} />
+      </span>
+    </span>
+  )
+}
+
 // The named state leads the metadata group so below `medium` it wraps onto the muted second line. From `medium`
 // up it shares the row, shrinking and wrapping its own badges so the agent name keeps its floor.
 function NodeMetaRow({ state, node, pauseLabel }: { state: NodeState; node: DagNodeDef; pauseLabel?: string }) {
   const cachePct = cacheRate({ cached_tokens: state.cachedTokens, input_tokens: state.promptTokens })
   return (
     <div className="empty:hidden min-w-0 flex flex-wrap items-center gap-x-2 gap-y-0.5 basis-full order-last medium:basis-auto medium:order-none medium:justify-end">
-      <StatusDot status={state.status} label={pauseLabel} />
+      <NodeStatusLabel state={state} pauseLabel={pauseLabel} />
       {state.model && (
         <span className="text-[11px] text-gray-500 dark:text-gray-400 font-mono truncate max-w-[120px]" title={state.model}>
           {state.model}

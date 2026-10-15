@@ -1476,8 +1476,9 @@ func (b *nativeNodeBuilder) buildWorker(prompts *artifactsrc.Pinned, rc *records
 	if b.admission != nil && nodeID != "" {
 		// sink may only be nil when nodeID == "" (the startup proto path, which
 		// skips the wrap), so the closures below are always on a live sink.
-		wrapped = dag.NewAdmittingLLM(wm, b.admission, admissionSpecFor(b.cfg)(b.name),
-			func() { sink(stream.NodeQueued(nodeID)) }, func() { sink(stream.NodeAdmitted(nodeID)) })
+		spec := admissionSpecFor(b.cfg)(b.name)
+		wrapped = dag.NewAdmittingLLM(wm, b.admission, spec,
+			func() { sink(b.admission.QueuedEvent(nodeID, spec)) }, func() { sink(stream.NodeAdmitted(nodeID)) })
 	}
 	deps := tools.Deps{
 		WebSearch:          tools.Backend{Kind: b.cfg.Tools["web_search"].Kind, URL: b.cfg.Tools["web_search"].URL, Key: b.cfg.Tools["web_search"].APIKey()},

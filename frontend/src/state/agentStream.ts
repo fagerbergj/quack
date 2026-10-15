@@ -119,6 +119,13 @@ export interface ArtifactJudgeRoundPayload {
   scored: ArtifactScoredRef[]
 }
 
+// A node blocked on model capacity (node_queued with a model); since is the server's epoch ms.
+export interface CapacityWait {
+  model: string
+  reason: string
+  since: number
+}
+
 export interface AgentStreamHandlers {
   // Agent-run lifecycle + typed activity (flat; each carries node_id + run_id).
   onAgentStart?: (d: AgentStartPayload) => void
@@ -135,7 +142,8 @@ export interface AgentStreamHandlers {
   onResponseCreated?: (responseId: string) => void
   // DAG lifecycle
   onDagPlan?: (plan: DagPlanPayload) => void
-  onNodeQueued?: (nodeId: string) => void
+  // wait is set only when the node blocks on an admission slot, not when it is merely queued for dispatch.
+  onNodeQueued?: (nodeId: string, wait?: CapacityWait) => void
   // A node that had fired node_queued resumed running (a mid-run
   // worker/judge slot swap, not the node's first dispatch - that's node_start).
   onNodeAdmitted?: (nodeId: string) => void
@@ -272,7 +280,12 @@ function handleDagPlan(parsed: unknown, handlers: AgentStreamHandlers): void {
 }
 
 function handleNodeQueued(parsed: unknown, handlers: AgentStreamHandlers): void {
-  if (hasStringField(parsed, 'node_id')) handlers.onNodeQueued?.(parsed.node_id)
+  const p = parsed as { node_id?: string; model?: string; reason?: string; queued_at_ms?: number }
+  if (typeof p.node_id !== 'string') return
+  const wait = typeof p.model === 'string' && p.model
+    ? { model: p.model, reason: typeof p.reason === 'string' ? p.reason : '', since: typeof p.queued_at_ms === 'number' ? p.queued_at_ms : Date.now() }
+    : undefined
+  handlers.onNodeQueued?.(p.node_id, wait)
 }
 
 function handleNodeAdmitted(parsed: unknown, handlers: AgentStreamHandlers): void {

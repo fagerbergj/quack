@@ -2,8 +2,11 @@ package dag
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
+
+	"github.com/fagerbergj/quack/internal/stream"
 )
 
 // DefaultAgingThreshold: how long the oldest blocked node waits before backfill stops admitting past it.
@@ -158,6 +161,26 @@ func (a *Admission) Usage(spec AdmissionSpec) (used, limit int, ok bool) {
 	defer a.mu.Unlock()
 	limit, ok = a.sessionsLimit[spec.Model]
 	return a.sessionsUsed[spec.Model], limit, ok
+}
+
+// QueuedEvent is the node_queued event for nodeID blocked on spec, naming the dimension that is full.
+func (a *Admission) QueuedEvent(nodeID string, spec AdmissionSpec) stream.SSEEvent {
+	return stream.NodeAwaitingCapacity(nodeID, spec.Model, a.waitReason(spec))
+}
+
+func (a *Admission) waitReason(spec AdmissionSpec) string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if limit, ok := a.sessionsLimit[spec.Model]; ok && a.sessionsUsed[spec.Model]+1 > limit {
+		return fmt.Sprintf("%d of %d sessions busy", a.sessionsUsed[spec.Model], limit)
+	}
+	if limit, ok := a.kvLimit[spec.Model]; ok && spec.KVTokens > 0 && a.kvUsed[spec.Model]+spec.KVTokens > limit {
+		return fmt.Sprintf("%d of %d context tokens reserved", a.kvUsed[spec.Model], limit)
+	}
+	if limit, ok := a.activeLimit[spec.residencyKey()]; ok && !a.fits(spec) {
+		return fmt.Sprintf("%d of %d models loaded on %s", len(a.residents[spec.residencyKey()]), limit, spec.Provider)
+	}
+	return "behind an earlier request"
 }
 
 // Release returns spec's reserved capacity and wakes any blocked waiters.

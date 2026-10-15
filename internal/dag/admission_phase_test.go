@@ -318,6 +318,7 @@ func TestSetupAdmissionReQueuesOnMidRunWait(t *testing.T) {
 	var mu sync.Mutex
 	status := StatusRunning // simulates a node already past its first admission
 	var events []string
+	var queued stream.NodeQueuedData
 	ctx := stream.WithYield(context.Background(), func(ev stream.SSEEvent) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -326,6 +327,7 @@ func TestSetupAdmissionReQueuesOnMidRunWait(t *testing.T) {
 		switch ev.Name {
 		case stream.EventNodeQueued:
 			to = StatusQueued
+			queued, _ = ev.Data.(stream.NodeQueuedData)
 		case stream.EventNodeAdmitted:
 			to = StatusRunning
 		default:
@@ -373,5 +375,31 @@ func TestSetupAdmissionReQueuesOnMidRunWait(t *testing.T) {
 	}
 	if len(events) != 2 || events[0] != stream.EventNodeQueued || events[1] != stream.EventNodeAdmitted {
 		t.Errorf("events = %v, want [%s %s]", events, stream.EventNodeQueued, stream.EventNodeAdmitted)
+	}
+	if queued.Model != "w" || queued.Reason != "1 of 1 sessions busy" || queued.QueuedAtMs <= 0 {
+		t.Errorf("node_queued = %+v, want model w, reason %q and a queued_at_ms", queued, "1 of 1 sessions busy")
+	}
+}
+
+// Each full dimension names itself in the wait reason the UI shows.
+func TestQueuedEventReason(t *testing.T) {
+	a := NewAdmission(map[string]int{"s": 1}, map[string]int{"k": 100}, map[string]int{"p\x00worker": 1}, 0)
+	a.Admit(context.Background(), AdmissionSpec{Model: "s"}, nil)
+	a.Admit(context.Background(), AdmissionSpec{Model: "k", KVTokens: 80}, nil)
+	a.Admit(context.Background(), AdmissionSpec{Model: "m1", Provider: "p", Role: "worker"}, nil)
+	for _, tc := range []struct {
+		spec AdmissionSpec
+		want string
+	}{
+		{AdmissionSpec{Model: "s"}, "1 of 1 sessions busy"},
+		{AdmissionSpec{Model: "k", KVTokens: 40}, "80 of 100 context tokens reserved"},
+		{AdmissionSpec{Model: "m2", Provider: "p", Role: "worker"}, "1 of 1 models loaded on p"},
+		{AdmissionSpec{Model: "free"}, "behind an earlier request"},
+	} {
+		ev := a.QueuedEvent("n", tc.spec)
+		d, _ := ev.Data.(stream.NodeQueuedData)
+		if ev.Name != stream.EventNodeQueued || d.NodeID != "n" || d.Model != tc.spec.Model || d.Reason != tc.want {
+			t.Errorf("QueuedEvent(%+v) = %s %+v, want reason %q", tc.spec, ev.Name, d, tc.want)
+		}
 	}
 }

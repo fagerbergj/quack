@@ -1,4 +1,4 @@
-import { readAgentStream, attachAgentEventSource, type AgentStreamHandlers, type DagNodeDef, type DagEdgeDef, type NodeDoneMeta, type Stage, type ArtifactRevisionPayload, type ArtifactJudgeRoundPayload } from './agentStream'
+import { readAgentStream, attachAgentEventSource, type AgentStreamHandlers, type CapacityWait, type DagNodeDef, type DagEdgeDef, type NodeDoneMeta, type Stage, type ArtifactRevisionPayload, type ArtifactJudgeRoundPayload } from './agentStream'
 import {
   startRun,
   appendRunThinking,
@@ -71,6 +71,8 @@ export interface NodeState {
   // resumed_from) - the prior context it continues on. Absent for a fresh node.
   resumedFrom?: string
   steers?: string[]   // guidance folded in when a queued message was delivered, in order
+  // Set while status === 'queued' because the node waits on a model's admission slot; node_admitted clears it.
+  capacityWait?: CapacityWait
   // Optimistic local copy of the node's message queue; no SSE event syncs it.
   // Cleared on node_steered, when the queue was drained and delivered.
   queue?: QueuedMessage[]
@@ -854,10 +856,10 @@ export class ChatStore {
             live: { ...s.live, dag, text: grown ? s.live.text : '', runs: purgeSeededRuns ? [] : s.live.runs },
           })
         },
-        onNodeQueued: nodeId => updateNodeState(nodeId, { status: 'queued' }),
+        onNodeQueued: (nodeId, capacityWait) => updateNodeState(nodeId, { status: 'queued', capacityWait }),
         // A mid-run worker/judge swap re-admits without a fresh node_start
         // (that fires once, at first dispatch) - flip back to running here.
-        onNodeAdmitted: nodeId => updateNodeState(nodeId, { status: 'running' }),
+        onNodeAdmitted: nodeId => updateNodeState(nodeId, { status: 'running', capacityWait: undefined }),
         // Anchor timers to the server's start time (epoch ms) so a reconnect/replay
         // shows true elapsed time instead of restarting from the replay moment.
         onNodeStart: (nodeId, _agent, startedAtMs, traceId, resumedFrom) => updateNodeState(nodeId, { status: 'running', startedAt: anchorTime(startedAtMs), traceId, resumedFrom }),
