@@ -53,3 +53,15 @@ type wireLabelValue struct {
 	Display string `json:"display,omitempty"`
 	Href    string `json:"href,omitempty"`
 }
+
+// chatSetup decodes the quackSetup a dispatch stamps on a chat's Origin JSON; nil when it has none.
+func chatSetup(originJSON string) *schema.ChatSetup {
+	var o struct {
+		Setup *extsdk.Setup `json:"quackSetup"`
+	}
+	if json.Unmarshal([]byte(originJSON), &o) != nil || o.Setup == nil {
+		return nil
+	}
+	s := o.Setup
+	return &schema.ChatSetup{Repo: strPtr(s.Repo), BaseRef: strPtr(s.BaseRef), WorkBranch: strPtr(s.WorkBranch), ExistingHeadRef: strPtr(s.ExistingHeadRef)}
+}

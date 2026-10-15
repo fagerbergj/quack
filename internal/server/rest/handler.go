@@ -344,6 +344,7 @@ func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request, chatID schema.
 		GithubState:     detailStateVal(ghState),
 		Archived:        boolPtr(c.Archived),
 		Origin:          chatOrigin(c.Origin),
+		Setup:           chatSetup(c.Origin),
 		Turns:           make([]schema.Turn, 0, len(turns)),
 		Usage:           usageAggregateToSchema(usage),
 	}

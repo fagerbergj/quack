@@ -1705,6 +1705,24 @@ components:
                   type: string
                   description: Optional link-out for this value.
 
+    ChatSetup:
+      type: object
+      description: >
+        The clone the chat's latest extension dispatch ran in, which
+        `quack dataset export --server` pins a replay to. Absent for a chat
+        dispatched with no clone.
+      properties:
+        repo:
+          type: string
+          description: Clone URL.
+        base_ref:
+          type: string
+        work_branch:
+          type: string
+        existing_head_ref:
+          type: string
+          description: A branch checked out as-is instead of creating work_branch, e.g. a PR's head.
+
     ChatSummary:
       type: object
       required: [id, system_prompt, created_at, updated_at, status]
@@ -1761,6 +1779,8 @@ components:
             # Chat-wide token aggregate, summing every turn and DAG node.
             usage:
               $ref: "#/components/schemas/Usage"
+            setup:
+              $ref: "#/components/schemas/ChatSetup"
 
     ChatList:
       type: object

@@ -761,6 +761,9 @@ type ChatDetail struct {
 	// PendingQuestion The unanswered question blocking the chat, present only when status is `needs_input`.
 	PendingQuestion *string `json:"pending_question,omitempty"`
 
+	// Setup The clone the chat's latest extension dispatch ran in, which `quack dataset export --server` pins a replay to. Absent for a chat dispatched with no clone.
+	Setup *ChatSetup `json:"setup,omitempty"`
+
 	// Status A chat's derived state: `running` while a turn is actively streaming or its latest plan has a node in flight, `needs_input` when the last turn paused on an unanswered question (a mid-node ask or a top-level clarification), `failed` when the last turn's DAG has a failed node and no answer text followed, else `idle`.
 	Status       ChatStatus `json:"status"`
 	SystemPrompt string     `json:"system_prompt"`
@@ -814,6 +817,18 @@ type ChatOrigin struct {
 		// Value Raw value; what matching/counting keys on.
 		Value string `json:"value"`
 	} `json:"labels,omitempty"`
+}
+
+// ChatSetup The clone the chat's latest extension dispatch ran in, which `quack dataset export --server` pins a replay to. Absent for a chat dispatched with no clone.
+type ChatSetup struct {
+	BaseRef *string `json:"base_ref,omitempty"`
+
+	// ExistingHeadRef A branch checked out as-is instead of creating work_branch, e.g. a PR's head.
+	ExistingHeadRef *string `json:"existing_head_ref,omitempty"`
+
+	// Repo Clone URL.
+	Repo       *string `json:"repo,omitempty"`
+	WorkBranch *string `json:"work_branch,omitempty"`
 }
 
 // ChatStatus A chat's derived state: `running` while a turn is actively streaming or its latest plan has a node in flight, `needs_input` when the last turn paused on an unanswered question (a mid-node ask or a top-level clarification), `failed` when the last turn's DAG has a failed node and no answer text followed, else `idle`.

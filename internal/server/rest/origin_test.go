@@ -138,3 +138,25 @@ func TestGetChat_SurfacesOriginAndGithubFields(t *testing.T) {
 		t.Errorf("Origin = %+v, want label=Meeting notes", detail.Origin)
 	}
 }
+
+// TestGetChat_SurfacesSetup: the dispatch's quackSetup reaches ChatDetail, so `dataset export --server` can pin a replay clone.
+func TestGetChat_SurfacesSetup(t *testing.T) {
+	h := newTestHandler(t)
+	chatID := mustCreateChat(t, h)
+	b, _ := json.Marshal(struct {
+		extsdk.ChatOrigin
+		Setup extsdk.Setup `json:"quackSetup"`
+	}{extsdk.ChatOrigin{Extension: "github", Label: "acme/widget#1"}, extsdk.Setup{Repo: "https://github.com/acme/widget.git", BaseRef: "main", ExistingHeadRef: "feat/x"}})
+	if err := h.store.SetChatOrigin(context.Background(), chatID, "", string(b)); err != nil {
+		t.Fatalf("SetChatOrigin: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	h.GetChat(rec, httptest.NewRequest(http.MethodGet, "/api/v1/chats/"+chatID, nil), chatID)
+	var detail schema.ChatDetail
+	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("decode: %v (status %d)", err, rec.Code)
+	}
+	if s := detail.Setup; s == nil || *s.Repo != "https://github.com/acme/widget.git" || *s.BaseRef != "main" || *s.ExistingHeadRef != "feat/x" || s.WorkBranch != nil {
+		t.Fatalf("Setup = %+v, want the stamped quackSetup", detail.Setup)
+	}
+}
