@@ -3,9 +3,11 @@ package tools
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"reflect"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -16,6 +18,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
+	"github.com/fagerbergj/quack/internal/recordstore"
 )
 
 const toolsScope = "quack.tools"
@@ -115,6 +118,12 @@ func (h *Hooks) before(ctx agent.Context, t tool.Tool, args map[string]any) (map
 	}); ok {
 		if s, ok := d.Declaration().ParametersJsonSchema.(*jsonschema.Schema); ok {
 			dropRefusedNulls(args, s)
+		}
+	}
+	// The kind's own check reports every problem; the schema check ADK runs next stops at the first.
+	if kind, ok := strings.CutPrefix(t.Name(), "write_"); ok {
+		if err := recordstore.ValidateArgs(kind, args); err != nil {
+			return nil, fmt.Errorf("%s: %w", t.Name(), err)
 		}
 	}
 	p := h.policyOf(t.Name())

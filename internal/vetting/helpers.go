@@ -217,6 +217,9 @@ type StagedDelivery struct {
 	Takeaway string
 	Verified []string
 	Notes    []string
+	// Dismissed/Clean (Kind "review" only): code_review record fields stage_review carries; never delivered.
+	Dismissed []DismissedEntry
+	Clean     []string
 }
 
 // ReviewComment: one inline, line-anchored review finding.

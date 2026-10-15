@@ -141,6 +141,8 @@ type ReviewStage struct {
 	takeaway string
 	verified []string
 	notes    []string
+	dismiss  []DismissedEntry
+	clean    []string
 	set      bool
 	comments []StagedReviewComment
 	seq      map[string]int // "path:line" → highest #n; stale ids error rather than resolving to wrong comment
@@ -204,7 +206,7 @@ func (s *ReviewStage) RemoveComment(id string) (ok bool) {
 
 // SetVerdict refuses "approve" while sibling reviewers still run (request_changes only tightens).
 // The refusal never says "wait": models read that as an instruction and sleep-poll.
-func (s *ReviewStage) SetVerdict(event, takeaway string, verified, notes []string) error {
+func (s *ReviewStage) SetVerdict(event, takeaway string, verified, notes []string, dismissed []DismissedEntry, clean []string) error {
 	if event == "approve" && s.fanout != nil && s.fanout.SiblingsPending() {
 		return fmt.Errorf("approve cannot be staged while sibling reviewer nodes are running; " +
 			"this node's verdict is not delivered - finish your reply without one")
@@ -212,6 +214,7 @@ func (s *ReviewStage) SetVerdict(event, takeaway string, verified, notes []strin
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.event, s.takeaway, s.verified, s.notes, s.set = event, takeaway, verified, notes, true
+	s.dismiss, s.clean = dismissed, clean
 	return nil
 }
 
@@ -233,13 +236,15 @@ func (s *ReviewStage) Snapshot() (StagedDelivery, bool) {
 	// since-last-review sections are omitted since that info isn't available here.
 	body := renderReviewOverview(reviewOverviewInput{Verdict: event, Takeaway: s.takeaway, Verified: s.verified, Notes: s.notes, Comments: comments})
 	return StagedDelivery{
-		Kind:     "review",
-		Event:    event,
-		Body:     body,
-		Comments: comments,
-		Takeaway: s.takeaway,
-		Verified: s.verified,
-		Notes:    s.notes,
+		Kind:      "review",
+		Event:     event,
+		Body:      body,
+		Comments:  comments,
+		Takeaway:  s.takeaway,
+		Verified:  s.verified,
+		Notes:     s.notes,
+		Dismissed: s.dismiss,
+		Clean:     s.clean,
 	}, true
 }
 

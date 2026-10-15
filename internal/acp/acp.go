@@ -471,7 +471,7 @@ func mcpToolNames(sess vetting.MemSession, offered bool) []string {
 				continue // mirrors registerArtifactWriteTools' own skip: gate-only kind
 			}
 			// Mirrors registerArtifactWriteTools' own skip.
-			if spec.Name() == "code_review" && sess.Review != nil && sess.Review.IsNonDeliveringSlice() {
+			if spec.Name() == "code_review" && sess.Review != nil {
 				continue
 			}
 			add(writeKindPrefix + spec.Name())

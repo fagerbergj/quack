@@ -83,7 +83,7 @@ func currentRound(sess vetting.MemSession) (round int, turnID, headSHA, triggerA
 }
 
 type readArtifactInput struct {
-	Name     string `json:"name" jsonschema:"artifact filename to read"`
+	Name     string `json:"name" jsonschema:"artifact id, as list_artifacts or the task's <artifacts> list gives it"`
 	Revision int64  `json:"revision,omitempty" jsonschema:"specific revision; omit for the latest"`
 }
 
@@ -92,7 +92,7 @@ type readArtifactInput struct {
 func registerReadArtifactTool(srv *mcp.Server, svc artifact.Service, appName, userID, chatID string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolReadArtifact,
-		Description: "Read an artifact previously saved to this chat by name. Text content is returned inline; binary content is base64-encoded.",
+		Description: "Read an artifact saved to this chat by its id (from list_artifacts or the task's <artifacts> list). Text content is returned inline; binary content is base64-encoded.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, args readArtifactInput) (*mcp.CallToolResult, any, error) {
 		resp, err := svc.Load(ctx, &artifact.LoadRequest{AppName: appName, UserID: userID, SessionID: chatID, FileName: args.Name, Version: args.Revision})
 		if err != nil {
@@ -354,13 +354,41 @@ func registerArtifactWriteTools(srv *mcp.Server, sess vetting.MemSession) {
 		if !spec.AgentWritable {
 			continue // gate-only kind (judge_round, delivery_record) - never a worker tool
 		}
-		// A slice reviewer feeding a synthesizer never owns the delivered verdict; withholding
-		// write_code_review keeps the tool list the fact its prompt tells it to trust.
-		if spec.Name() == "code_review" && sess.Review != nil && sess.Review.IsNonDeliveringSlice() {
+		// A review node's code_review is the gate's write from stage_review (a slice never owns one): a second tool
+		// taking the same fields had the worker send the same over-cap text twice.
+		if spec.Name() == "code_review" && sess.Review != nil {
 			continue
 		}
 		registerWriteKindTool(srv, c, sess, spec.Name(), spec)
 	}
+}
+
+// precheckCalls runs a call's own every-problem check ahead of the SDK's schema validation, which stops at
+// the first maxLength or maxItems it trips.
+func precheckCalls(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+		if call, ok := req.(*mcp.CallToolRequest); ok {
+			if err := precheck(call.Params.Name, call.Params.Arguments); err != nil {
+				return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}}}, nil
+			}
+		}
+		return next(ctx, method, req)
+	}
+}
+
+// precheck is nil for input it can't decode, leaving the SDK to report that.
+func precheck(tool string, raw json.RawMessage) error {
+	if kind, ok := strings.CutPrefix(tool, writeKindPrefix); ok {
+		if err := recordstore.ValidateArgs(kind, raw); err != nil {
+			return fmt.Errorf("%s: %w", tool, err)
+		}
+		return nil
+	}
+	var in stageReviewInput
+	if tool != toolStageReview || json.Unmarshal(raw, &in) != nil {
+		return nil
+	}
+	return checkStageReview(strings.ToLower(strings.TrimSpace(in.Event)), strings.TrimSpace(in.Takeaway), in.Verified, in.Notes)
 }
 
 type stageMemoryInput struct {
@@ -400,6 +428,7 @@ func memoryMCPHandler() http.Handler {
 	return mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
 		secret := strings.Trim(r.URL.Path, "/")
 		srv := mcp.NewServer(&mcp.Implementation{Name: mcpServerName, Version: "0.1.0"}, nil)
+		srv.AddReceivingMiddleware(precheckCalls)
 		registerCheckMermaidTool(srv) // stateless, offered even to an unknown/expired session
 		sess, ok := vetting.LookupMemSession(secret)
 		if !ok {

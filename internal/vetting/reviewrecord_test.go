@@ -156,6 +156,42 @@ CLEAN:
 	}
 }
 
+// TestCodeReviewRoundWrite_StagedDismissedAndClean: a review node has no write_code_review, so the record the gate
+// writes from stage_review must keep the dismissed/clean entries it staged.
+func TestCodeReviewRoundWrite_StagedDismissedAndClean(t *testing.T) {
+	cfg := reviewerCfgWithArtifacts(t, newMetaAwareInMemory(), true)
+	review := NewReviewStage(nil)
+	if err := review.SetVerdict("approve", "Clean change.", []string{"ran go test"}, nil,
+		[]DismissedEntry{{Path: "c.go", Line: 3, Note: "guarded by the caller"}}, []string{"d.go"}); err != nil {
+		t.Fatal(err)
+	}
+	staged, _ := review.Snapshot()
+	saveCodeReviewRound(context.Background(), cfg, cfg.NodeID, "", 1, "Staged: approve.", staged, newEpisodicRoundState())
+
+	raw, _, ok, err := recordClient(cfg).Latest(context.Background(), codeReviewID(cfg))
+	if err != nil || !ok {
+		t.Fatalf("Latest: ok=%v err=%v", ok, err)
+	}
+	var rec CodeReviewRecord
+	if err := json.Unmarshal(raw, &rec); err != nil {
+		t.Fatal(err)
+	}
+	want := []DismissedEntry{{Path: "c.go", Line: 3, Note: "guarded by the caller"}}
+	if rec.Verdict != "approve" || fmt.Sprint(rec.Dismissed) != fmt.Sprint(want) || fmt.Sprint(rec.Clean) != "[d.go]" {
+		t.Fatalf("record = %+v, want approve with dismissed %v and clean [d.go]", rec, want)
+	}
+}
+
+// TestCodeReviewKindSchema_DeclaresCaps: write_code_review's schema states every cap validateCodeReview enforces.
+func TestCodeReviewKindSchema_DeclaresCaps(t *testing.T) {
+	spec, _ := recordstore.SpecFor(kindCodeReview)
+	for _, want := range []string{`"maxLength":240`, `"maxItems":8`, `"maxLength":160`, `"maxLength":200`, `"pattern":"^[^\\n]*$"`} {
+		if !strings.Contains(spec.JSONSchema, want) {
+			t.Errorf("code_review schema lacks %s: %s", want, spec.JSONSchema)
+		}
+	}
+}
+
 // TestSaveCodeReviewRound_ToolWriteSkipsTailFallback: when write_code_review already wrote round 1's record, the gate
 // adopts it instead of parsing the tail. st starts fresh, so detection must go through toolWritten, not a baseline.
 func TestSaveCodeReviewRound_ToolWriteSkipsTailFallback(t *testing.T) {

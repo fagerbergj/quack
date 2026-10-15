@@ -2,11 +2,14 @@ package acp
 
 import (
 	"context"
+	"encoding/json"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"google.golang.org/adk/v2/artifact"
 
 	"github.com/fagerbergj/quack/internal/vetting"
 )
@@ -493,4 +496,104 @@ func TestReviewMCP_ReportsEveryProblem(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestReviewMCP_CapsDeclaredAndEveryViolationReported: the schema the worker reads states each cap, and one
+// rejection still lists every over-cap item, though the SDK's own schema check stops at the first.
+func TestReviewMCP_CapsDeclaredAndEveryViolationReported(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		tool string
+		sess vetting.MemSession
+		args map[string]any
+	}{
+		{"stage_review", vetting.MemSession{Review: &vetting.ReviewStage{}}, map[string]any{"event": "approve", "takeaway": "Fine."}},
+		{"write_code_review", vetting.MemSession{Artifacts: artifact.InMemoryService(), AppName: "quack", UserID: "u1", ChatID: "chat-a"},
+			map[string]any{"verdict": "approve", "takeaway": "Fine."}},
+	} {
+		t.Run(tc.tool, func(t *testing.T) {
+			secret := mustMemSecret(t)
+			vetting.RegisterMemSession(secret, tc.sess)
+			defer vetting.UnregisterMemSession(secret)
+			ts := httptest.NewServer(memoryMCPHandler())
+			t.Cleanup(ts.Close)
+			cs := connectMCP(t, ts, secret)
+
+			p := toolInputSchema(t, cs, tc.tool).Properties
+			if *p["takeaway"].MaxLength != 240 || *p["verified"].MaxItems != 8 || *p["verified"].Items.MaxLength != 160 || *p["notes"].Items.MaxLength != 200 {
+				t.Fatalf("%s schema does not declare the caps: %+v", tc.tool, p)
+			}
+			tc.args["verified"] = []any{strings.Repeat("v", 162), strings.Repeat("v", 170)}
+			tc.args["notes"] = []any{strings.Repeat("n", 221)}
+			res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: tc.tool, Arguments: tc.args})
+			if err != nil {
+				t.Fatalf("CallTool: %v", err)
+			}
+			got := toolResultText(t, res)
+			for _, want := range []string{"verified: item 1 is 162 characters", "verified: item 2 is 170 characters", "notes: item 1 is 221 characters"} {
+				if !res.IsError || !strings.Contains(got, want) {
+					t.Errorf("got %q, want one rejection including %q", got, want)
+				}
+			}
+		})
+	}
+}
+
+// TestReviewMCP_ReviewNodeHasOneVerdictTool: a delivering review node records its verdict through stage_review
+// alone, so the same over-cap text can't be rejected twice by a second tool taking the same fields.
+func TestReviewMCP_ReviewNodeHasOneVerdictTool(t *testing.T) {
+	review := vetting.NewReviewStage(nil)
+	sess := vetting.MemSession{Review: review, Artifacts: artifactStub{}, AppName: "quack", UserID: "u1", ChatID: "chat-a"}
+	secret := mustMemSecret(t)
+	vetting.RegisterMemSession(secret, sess)
+	defer vetting.UnregisterMemSession(secret)
+	ts := httptest.NewServer(memoryMCPHandler())
+	t.Cleanup(ts.Close)
+	cs := connectMCP(t, ts, secret)
+
+	tools, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	got := map[string]bool{}
+	for _, tl := range tools.Tools {
+		got[tl.Name] = true
+	}
+	names := mcpToolNames(sess, true)
+	if !got["stage_review"] || got["write_code_review"] || hasToolName(names, "write_code_review") {
+		t.Fatalf("review node must offer stage_review and not write_code_review; registered %v, announced %v", got, names)
+	}
+
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "stage_review", Arguments: map[string]any{
+		"event": "approve", "takeaway": "Fine.",
+		"dismissed": []any{map[string]any{"path": "a.go", "line": 3, "note": "guarded upstream"}}, "clean": []any{"b.go"},
+	}})
+	if err != nil || res.IsError {
+		t.Fatalf("stage_review: err=%v res=%v", err, res)
+	}
+	staged, _ := review.Snapshot()
+	if len(staged.Dismissed) != 1 || staged.Dismissed[0].Path != "a.go" || len(staged.Clean) != 1 {
+		t.Fatalf("staged dismissed/clean = %+v / %v, want the call's", staged.Dismissed, staged.Clean)
+	}
+}
+
+func toolInputSchema(t *testing.T, cs *mcp.ClientSession, name string) *jsonschema.Schema {
+	t.Helper()
+	res, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	for _, tl := range res.Tools {
+		if tl.Name != name {
+			continue
+		}
+		var s jsonschema.Schema
+		b, _ := json.Marshal(tl.InputSchema)
+		if err := json.Unmarshal(b, &s); err != nil {
+			t.Fatal(err)
+		}
+		return &s
+	}
+	t.Fatalf("no %s tool", name)
+	return nil
 }

@@ -322,6 +322,27 @@ func TestNewEditArtifactTool_ConflictIsStructuredSuccess(t *testing.T) {
 	}
 }
 
+// TestWriteCodeReview_HookReportsEveryCapViolation: ADK's schema check stops at the first maxLength, so the hook's
+// kind check must run first and list every over-cap item in one rejection.
+func TestWriteCodeReview_HookReportsEveryCapViolation(t *testing.T) {
+	spec, err := findKindSpec(t, "code_review")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat-a")
+	tl, err := NewWriteKindTool(rc, "n1", "code_review", spec, &RoundCoords{}, vetting.SubjectHint("chat-a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = hook(NewHooks(Deps{}, 0), 0, tl).Run(newArtifactsToolCtx(), map[string]any{"verdict": "approve",
+		"verified": []any{strings.Repeat("v", 162), strings.Repeat("v", 170)}, "notes": []any{strings.Repeat("n", 221)}})
+	for _, want := range []string{"verified: item 1 is 162 characters", "verified: item 2 is 170 characters", "notes: item 1 is 221 characters"} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v, want one rejection including %q", err, want)
+		}
+	}
+}
+
 // TestNewWriteKindTool_WriteCodeReviewUsesSessionHint: write_code_review succeeds with the session-derived
 // hint, minting exactly the id from requireHint + vetting.SubjectHint.
 func TestNewWriteKindTool_WriteCodeReviewUsesSessionHint(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -424,6 +425,38 @@ func TestLiveItemRunner_RunItem(t *testing.T) {
 	}
 }
 
+// TestExperimentRun_WritesInputArtifactsFirst: the replayed task's <artifacts> manifest names bytes:issue, so the
+// fresh chat must hold it, under the run's own user, before the node can read_artifact it.
+func TestExperimentRun_WritesInputArtifactsFirst(t *testing.T) {
+	var writes []string
+	var ext *experimentExt
+	host := extsdk.Host{
+		WriteArtifact: func(chatID, user, name, mime string, data []byte) (int64, bool, error) {
+			writes = append(writes, strings.Join([]string{chatID, user, name, mime, string(data)}, "|"))
+			if name == "bad" {
+				return 0, false, errors.New("disk full")
+			}
+			return 1, true, nil
+		},
+		Dispatch: func(_ context.Context, req extsdk.DispatchRequest) error {
+			chatID := "ext:experiment:" + req.Chat.LocalID
+			if len(writes) != 1 || !strings.HasPrefix(writes[0], chatID+"|experiment|issue|application/json|") || req.Chat.User != "experiment" {
+				t.Errorf("dispatch as %q after writes %v, want issue written to %s for the same user first", req.Chat.User, writes, chatID)
+			}
+			go ext.RunEnded(chatID, extsdk.RunOutcome{Status: extsdk.RunDone})
+			return nil
+		},
+	}
+	e, _ := newExperimentExt(host, nil)
+	ext = e.(*experimentExt)
+	if _, err := ext.run(context.Background(), "code-reviewer", experimentItemInput{Task: "review", Artifacts: map[string]string{"issue": `{"number":7}`}}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if _, err := ext.run(context.Background(), "code-reviewer", experimentItemInput{Task: "review", Artifacts: map[string]string{"bad": "x"}}); err == nil || !strings.Contains(err.Error(), "disk full") {
+		t.Fatalf("run with a failed artifact write = %v, want that error, not a run missing its inputs", err)
+	}
+}
+
 // A run that didn't end done, or a recording with no run for Agent, is an item error, never a run item.
 func TestLiveItemRunner_RunItem_NoNodeRun(t *testing.T) {
 	// A recording with no run for "code-reviewer" at all.
@@ -625,6 +658,18 @@ func TestRunExperiment_ScoresTraceAndLinksPrompt(t *testing.T) {
 	if ri["traceId"] != "tr1" || ri["runName"] != "baseline" || !reflect.DeepEqual(ri["metadata"], wantMeta) ||
 		ri["runDescription"] != "prompt=system/synthesizer@4 agent=synthesizer" {
 		t.Fatalf("run item = %+v", ri)
+	}
+}
+
+// A replay missing inputs the export left out for size names them on its run item, so a comparison can exclude it.
+func TestRecordRunItem_NamesSkippedArtifacts(t *testing.T) {
+	srv, _, runItems := fakeExperimentLangfuse(t)
+	if err := recordRunItem(context.Background(), newTestClient(t, srv), ExperimentOpts{Agent: "code-reviewer"}, "item1",
+		itemRun{TraceID: "tr1"}, []string{"commits", "files"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(*runItems) != 1 || (*runItems)[0]["metadata"].(map[string]any)["skipped_artifacts"] != "commits,files" {
+		t.Fatalf("run items = %+v, want metadata skipped_artifacts=commits,files", *runItems)
 	}
 }
 

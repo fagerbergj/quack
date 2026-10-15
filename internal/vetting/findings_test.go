@@ -200,7 +200,7 @@ func (m *reviewGateStub) GenerateContent(_ context.Context, req *model.LLMReques
 func TestRunGatedRefine_JudgeNeverMutatesStagedReview(t *testing.T) {
 	review := &ReviewStage{}
 	review.AddComment("internal/foo.go", 5, "blocking: nil deref on the unchecked input")
-	review.SetVerdict("request_changes", "one blocking issue found", nil, nil)
+	review.SetVerdict("request_changes", "one blocking issue found", nil, nil, nil, nil)
 	staged := func() []ReviewComment {
 		sd, _ := review.Snapshot()
 		return sd.Comments

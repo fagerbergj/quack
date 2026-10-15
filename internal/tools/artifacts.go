@@ -218,7 +218,7 @@ func NewWriteKindTools(c *recordstore.Client, nodeID string, coords *RoundCoords
 	return out, nil
 }
 
-// readArtifactArgs is id-addressed (from list_artifacts), unlike the MCP's filename-addressed variant.
+// readArtifactArgs is id-addressed (from list_artifacts); the MCP variant's name is the same id.
 type readArtifactArgs struct {
 	ID       string `json:"id"`
 	Revision int    `json:"revision,omitempty"`

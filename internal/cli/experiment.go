@@ -48,10 +48,13 @@ type ExperimentResult struct {
 	Error    string
 }
 
-// experimentItemInput mirrors dataset export's datasetItemInput - only Task and Setup are read back.
+// experimentItemInput mirrors dataset export's datasetItemInput - only Task, Setup and Artifacts are read back.
 type experimentItemInput struct {
-	Task  string        `json:"task"`
-	Setup *extsdk.Setup `json:"setup,omitempty"`
+	Task      string            `json:"task"`
+	Setup     *extsdk.Setup     `json:"setup,omitempty"`
+	Artifacts map[string]string `json:"artifacts,omitempty"`
+	// SkippedArtifacts: inputs the export left out for size; the run item names them so a comparison can exclude it.
+	SkippedArtifacts []string `json:"skipped_artifacts,omitempty"`
 }
 
 // itemRun is one item's node run: the trace RunExperiment links, and what it scores on that trace.
@@ -161,7 +164,7 @@ func runExperimentItem(ctx context.Context, runner itemRunner, lf *langfuse.Clie
 	if res.Error != "" {
 		return res, nil
 	}
-	if err := recordRunItem(ctx, lf, opts, item.ID, run); err != nil {
+	if err := recordRunItem(ctx, lf, opts, item.ID, run, in.SkippedArtifacts); err != nil {
 		return ExperimentResult{}, err
 	}
 	return res, nil
@@ -184,15 +187,18 @@ func itemInput(item langfuse.DatasetItem) (experimentItemInput, error) {
 
 // recordRunItem scores the trace before linking it, so a failed link leaves only scores on an unlinked
 // trace. The prompt rides on the run (description and metadata); the answer already lives on the trace.
-func recordRunItem(ctx context.Context, lf *langfuse.Client, opts ExperimentOpts, itemID string, run itemRun) error {
+func recordRunItem(ctx context.Context, lf *langfuse.Client, opts ExperimentOpts, itemID string, run itemRun, skipped []string) error {
 	if err := lf.Ingest(ctx, itemScores(run, time.Now().UTC().Format(time.RFC3339Nano))); err != nil {
 		return fmt.Errorf("experiment run: item %s: score trace: %w", itemID, err)
 	}
+	meta := map[string]string{"agent": opts.Agent, "prompt_name": run.Prompt.Name,
+		"prompt_version": run.Prompt.VersionID, "prompt_source": run.Prompt.Source}
+	if len(skipped) > 0 {
+		meta["skipped_artifacts"] = strings.Join(skipped, ",")
+	}
 	req := langfuse.CreateDatasetRunItemRequest{
 		DatasetItemID: itemID, RunName: opts.RunName, TraceID: run.TraceID,
-		RunDescription: fmt.Sprintf("prompt=%s agent=%s", run.prompt(), opts.Agent),
-		Metadata: map[string]string{"agent": opts.Agent, "prompt_name": run.Prompt.Name,
-			"prompt_version": run.Prompt.VersionID, "prompt_source": run.Prompt.Source},
+		RunDescription: fmt.Sprintf("prompt=%s agent=%s", run.prompt(), opts.Agent), Metadata: meta,
 	}
 	if err := lf.CreateDatasetRunItem(ctx, req); err != nil {
 		return fmt.Errorf("experiment run: item %s: create run item: %w", itemID, err)
@@ -294,6 +300,9 @@ func EnableExperiment(cfg *config.Config, agent string) {
 
 func experimentWorkflow(agent string) string { return "experiment-" + agent }
 
+// experimentUser owns a replay chat, so its input artifacts land where the run reads them.
+const experimentUser = "experiment"
+
 type experimentExt struct {
 	host  extsdk.Host
 	mu    sync.Mutex
@@ -332,12 +341,23 @@ func (e *experimentExt) RunEnded(chatID string, o extsdk.RunOutcome) {
 func (e *experimentExt) run(ctx context.Context, agent string, in experimentItemInput) (string, error) {
 	localID := uuid.NewString()
 	chatID := "ext:" + experimentExtension + ":" + localID
+	// The task's <artifacts> manifest names these; without them every read_artifact of one is not-found.
+	for name, content := range in.Artifacts {
+		data := []byte(content)
+		mime := "text/plain"
+		if json.Valid(data) {
+			mime = "application/json"
+		}
+		if _, _, err := e.host.WriteArtifact(chatID, experimentUser, name, mime, data); err != nil {
+			return "", fmt.Errorf("write input artifact %s: %w", name, err)
+		}
+	}
 	ch := make(chan extsdk.RunOutcome, 1)
 	e.mu.Lock()
 	e.ended[chatID] = ch
 	e.mu.Unlock()
 	req := extsdk.DispatchRequest{
-		Chat:     extsdk.ChatRef{LocalID: localID, Title: "experiment: " + agent},
+		Chat:     extsdk.ChatRef{LocalID: localID, User: experimentUser, Title: "experiment: " + agent},
 		Ask:      extsdk.Ask{Message: in.Task},
 		Run:      extsdk.RunConfig{Workflow: experimentWorkflow(agent), ReadOnly: true, Setup: in.Setup},
 		Delivery: extsdk.DeliveryAuthority{AllowedKinds: []extsdk.DeliveryKind{}},

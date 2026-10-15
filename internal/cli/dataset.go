@@ -1,18 +1,27 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"maps"
+	"regexp"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
+	"google.golang.org/adk/v2/artifact"
+
 	extsdk "github.com/fagerbergj/quack/extensions/sdk"
 
+	"github.com/fagerbergj/quack/internal/artifactref"
 	"github.com/fagerbergj/quack/internal/langfuse"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/ledger/bundle"
@@ -33,6 +42,8 @@ type ExportOpts struct {
 	Limit   int
 	// Agent narrows datasetAgents to one, so a dataset holds only the agent its experiment re-runs.
 	Agent string
+	// Artifacts reads the input artifacts each task's <artifacts> manifest lists; nil exports none.
+	Artifacts artifact.Service
 }
 
 // ExportItem is one exported dataset item, reported back for the summary table.
@@ -52,7 +63,14 @@ type datasetItemInput struct {
 	DiffRef string `json:"diff_ref,omitempty"`
 	// Setup is the clone a replay checks out first: a reviewed PR's head, pinned to the commit the run saw.
 	Setup *extsdk.Setup `json:"setup,omitempty"`
+	// Artifacts: each bytes:<name> the task's manifest lists, by name, so the replay's fresh chat can serve it.
+	Artifacts map[string]string `json:"artifacts,omitempty"`
+	// SkippedArtifacts: listed artifacts left out whole because the item would pass itemBudget.
+	SkippedArtifacts []string `json:"skipped_artifacts,omitempty"`
 }
+
+// itemBudget caps an item's serialized body under Langfuse's 4.5 MB request limit (a 5 MB POST gets a 413).
+const itemBudget = 4 << 20
 
 type datasetItemMetadata struct {
 	Repo            string `json:"repo,omitempty"`
@@ -109,7 +127,11 @@ func RunDatasetExport(ctx context.Context, ls ledger.LedgerStore, st *store.Stor
 			if err != nil {
 				return items, excludedBySince, fmt.Errorf("dataset export: chat %q: %w", chat.ID, err)
 			}
-			item, err := exportItem(ctx, lf, opts.Dataset, chat, key, runs[key], setup)
+			inputs, err := inputArtifacts(ctx, opts.Artifacts, chat, runs[key].Task)
+			if err != nil {
+				return items, excludedBySince, fmt.Errorf("dataset export: chat %q: %w", chat.ID, err)
+			}
+			item, err := exportItem(ctx, lf, opts.Dataset, chat, key, runs[key], setup, inputs)
 			if err != nil {
 				return items, excludedBySince, err
 			}
@@ -221,7 +243,50 @@ func replaySetup(ctx context.Context, ls ledger.LedgerStore, chat store.Chat, ke
 	return nil, nil
 }
 
-func exportItem(ctx context.Context, lf *langfuse.Client, dataset string, chat store.Chat, key bundle.StreamKey, run bundle.NodeRun, setup *extsdk.Setup) (ExportItem, error) {
+// manifestEntryRe matches one input artifact in the <artifacts> manifest extensions/github renders into a task.
+var manifestEntryRe = regexp.MustCompile(`<artifact id="bytes:([^"]+)" revision="(\d+)"`)
+
+// inputArtifacts reads each input artifact task's manifest lists, at its listed revision, from chat; one that
+// no longer exists is left out.
+func inputArtifacts(ctx context.Context, svc artifact.Service, chat store.Chat, task string) (map[string]string, error) {
+	if svc == nil {
+		return nil, nil
+	}
+	c := recordstore.New(svc, artifactref.AppName, store.SessionUserFor(chat), chat.ID)
+	out := map[string]string{}
+	for _, m := range manifestEntryRe.FindAllStringSubmatch(task, -1) {
+		rev, _ := strconv.Atoi(m[2]) // \d+ always parses
+		data, ok, err := c.LoadVersion(ctx, "bytes:"+m[1], rev)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			out[m[1]] = string(data)
+		}
+	}
+	return out, nil
+}
+
+// fitArtifacts inlines inputs smallest-first while req stays within itemBudget. One that doesn't fit is left out
+// whole and named in SkippedArtifacts: a truncated JSON array misleads a replay more than a missing one.
+func fitArtifacts(req *langfuse.CreateDatasetItemRequest, input *datasetItemInput, inputs map[string]string, chatID string) {
+	input.Artifacts = map[string]string{}
+	bySize := func(a, b string) int {
+		return cmp.Or(cmp.Compare(len(inputs[a]), len(inputs[b])), strings.Compare(a, b))
+	}
+	for _, name := range slices.SortedFunc(maps.Keys(inputs), bySize) {
+		input.Artifacts[name] = inputs[name]
+		if b, err := json.Marshal(req); err == nil && len(b) <= itemBudget {
+			continue
+		}
+		delete(input.Artifacts, name)
+		input.SkippedArtifacts = append(input.SkippedArtifacts, name)
+		slog.Warn("dataset export: input artifact left out, the item would pass its size budget", "component", "dataset",
+			"chat", chatID, "artifact", name, "bytes", len(inputs[name]), "budget", itemBudget)
+	}
+}
+
+func exportItem(ctx context.Context, lf *langfuse.Client, dataset string, chat store.Chat, key bundle.StreamKey, run bundle.NodeRun, setup *extsdk.Setup, inputs map[string]string) (ExportItem, error) {
 	repo, href, state := chat.GitHub()
 	input := datasetItemInput{Task: run.Task, DiffRef: href, Setup: setup}
 	var expected any
@@ -236,8 +301,9 @@ func exportItem(ctx context.Context, lf *langfuse.Client, dataset string, chat s
 	}
 	id := exportItemID(dataset, chat.ID, key.Node, key.Turn)
 	req := langfuse.CreateDatasetItemRequest{
-		DatasetName: dataset, ID: id, Input: input, ExpectedOutput: expected, Metadata: meta,
+		DatasetName: dataset, ID: id, Input: &input, ExpectedOutput: expected, Metadata: meta,
 	}
+	fitArtifacts(&req, &input, inputs, chat.ID)
 	if err := lf.CreateDatasetItem(ctx, req); err != nil {
 		return ExportItem{}, fmt.Errorf("dataset export: create item for chat %q node %q: %w", chat.ID, key.Node, err)
 	}

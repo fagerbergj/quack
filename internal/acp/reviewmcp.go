@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/fagerbergj/quack/internal/vetting"
@@ -51,7 +52,20 @@ type stageReviewInput struct {
 	Takeaway string   `json:"takeaway" jsonschema:"one sentence, max 240 characters - the fifteen-second takeaway, never a restatement of findings already staged inline"`
 	Verified []string `json:"verified,omitempty" jsonschema:"what you actually checked, max 8 items, each max 160 characters - may start an item with 'not verified:'"`
 	Notes    []string `json:"notes,omitempty" jsonschema:"free prose with no line to anchor to (architecture, praise, follow-ups, unresolved questions), max 8 items, each max 200 characters"`
+	// Dismissed/Clean feed only the durable code_review record, so a re-review doesn't re-litigate them.
+	Dismissed []vetting.DismissedEntry `json:"dismissed,omitempty" jsonschema:"candidates you considered and ruled out: path, line, and a note saying why"`
+	Clean     []string                 `json:"clean,omitempty" jsonschema:"files you reviewed and found nothing to report in"`
 }
+
+// stageReviewSchema is stageReviewInput's inferred schema plus the caps CheckCodeReviewCaps enforces.
+var stageReviewSchema = func() *jsonschema.Schema {
+	s, err := jsonschema.For[stageReviewInput](nil)
+	if err != nil {
+		panic("acp: stage_review schema: " + err.Error())
+	}
+	vetting.DeclareCodeReviewCaps(s)
+	return s
+}()
 
 // defaultListLimit and listExcerptLen bound list_review_comments: an excerpt is enough to recognize a staged
 // finding and grab its id (unstage_review_comment takes the id, not the body).
@@ -175,15 +189,19 @@ func addUnstageReviewComment(srv *mcp.Server, review *vetting.ReviewStage) {
 // validation, then the gate's SetVerdict).
 func addStageReview(srv *mcp.Server, review *vetting.ReviewStage) {
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        toolStageReview,
-		Description: "Stage the overall review verdict (approve | request_changes | comment), takeaway, verified checks, and notes. Call once, after your inline comments; the gate renders the fixed review format (verdict/scope/highlights are generated, not written) and submits it after your answer passes.",
+		Name: toolStageReview,
+		Description: "Stage the overall review verdict (approve | request_changes | comment), takeaway, verified checks, notes, and the " +
+			"dismissed candidates and clean files the code_review record keeps for re-reviews. Call it after your inline comments; calling it " +
+			"again replaces the staged review. The gate renders the fixed review format (verdict/scope/highlights are generated, not written), records it as " +
+			"this PR's code_review, and submits it after your answer passes. " + vetting.CodeReviewCapsText + ".",
+		InputSchema: stageReviewSchema,
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args stageReviewInput) (*mcp.CallToolResult, any, error) {
 		event := strings.ToLower(strings.TrimSpace(args.Event))
 		takeaway := strings.TrimSpace(args.Takeaway)
 		if err := checkStageReview(event, takeaway, args.Verified, args.Notes); err != nil {
 			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}}}, nil, nil
 		}
-		if err := review.SetVerdict(event, takeaway, args.Verified, args.Notes); err != nil {
+		if err := review.SetVerdict(event, takeaway, args.Verified, args.Notes, args.Dismissed, args.Clean); err != nil {
 			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}}}, nil, nil
 		}
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "staged"}}}, nil, nil

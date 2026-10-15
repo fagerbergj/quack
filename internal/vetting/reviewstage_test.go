@@ -11,7 +11,7 @@ func TestAugmentFromReviewStage_ToolStagedWins(t *testing.T) {
 	}
 	review := &ReviewStage{}
 	review.AddComment("internal/foo.go", 12, "blocking: nil deref on the empty path")
-	review.SetVerdict("approve", "one nit, nothing blocking", nil, nil)
+	review.SetVerdict("approve", "one nit, nothing blocking", nil, nil, nil, nil)
 	RegisterMemSession(secret, MemSession{Review: review})
 	defer UnregisterMemSession(secret)
 

@@ -127,6 +127,20 @@ func SpecFor(kind string) (spec KindSpec, ok bool) {
 	return spec, ok
 }
 
+// ValidateArgs runs kind's Validate on a write_<kind> call's args ahead of the tool's JSON Schema check, which
+// stops at its first error; nil for an unknown kind, one with no Validate, or args that don't marshal.
+func ValidateArgs(kind string, args any) error {
+	spec, ok := SpecFor(kind)
+	if !ok || spec.Validate == nil {
+		return nil
+	}
+	raw, err := json.Marshal(args)
+	if err != nil {
+		return nil
+	}
+	return spec.Validate(raw)
+}
+
 func lookupKind(kind string) (KindSpec, error) {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
