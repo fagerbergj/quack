@@ -42,12 +42,15 @@ if (!env.PI_ACP_CONFIG)
 
 // Stub OTLP collector: records every span POSTed to /v1/traces.
 const otlpSpans = [];
+let spansIn;
+const spansPosted = new Promise((r) => (spansIn = r));
 const otlpSrv = createServer((req, res) => {
   let body = "";
   req.on("data", (c) => (body += c));
   req.on("end", () => {
     for (const rs of JSON.parse(body).resourceSpans || [])
       for (const ss of rs.scopeSpans || []) otlpSpans.push(...ss.spans);
+    spansIn();
     res.writeHead(200, { "content-type": "application/json" });
     res.end("{}");
   });
@@ -301,7 +304,7 @@ if (!process.env.PI_ACP_REAL && !process.env.ACP_CMD) {
 }
 // OTLP assertions: flush is fire-and-forget on agent_settled, so wait for it.
 if (!process.env.ACP_CMD) {
-  for (let i = 0; i < 50 && otlpSpans.length === 0; i++) await new Promise((r) => setTimeout(r, 100));
+  await Promise.race([spansPosted, new Promise((_, rej) => setTimeout(rej, 30000, new Error("no OTLP spans within 30s")).unref())]);
   // 8 is fake-pi's scripted turn; a real engine's count follows the model's calls.
   if (!process.env.PI_ACP_REAL) assert.equal(otlpSpans.length, 8, `expected the 8 parity spans, got ${otlpSpans.length}`);
   assert.ok(otlpSpans.every((sp) => sp.traceId === TRACE_ID), "span not under quack's trace id");
@@ -397,7 +400,8 @@ if (!process.env.ACP_CMD && !process.env.PI_ACP_REAL) {
 
 // PI_ACP_ENGINE=pig against fake-pi: PIG's flags and env, no .ts gate, and no session until the gate reports in.
 if (!process.env.PI_ACP_REAL && !process.env.ACP_CMD) {
-  const pigEnv = { ...env, PI_ACP_ENGINE: "pig", PI_ACP_GATE_READY_MS: "1000" };
+  // A reporting gate waits on its /ready ping under the shim's 20s default; only the silent one below gets a short bound.
+  const pigEnv = { ...env, PI_ACP_ENGINE: "pig" };
   const mcp = [{ type: "sse", name: "quackmcp", url: mcpUrl, headers: [] }];
   const p = connectShim(pigEnv);
   await p.call("initialize", { protocolVersion: 1, clientCapabilities: {} });
@@ -411,7 +415,7 @@ if (!process.env.PI_ACP_REAL && !process.env.ACP_CMD) {
   p.shim.stdin.end();
   await new Promise((r) => p.shim.on("exit", r));
 
-  const q = connectShim({ ...pigEnv, FAKE_PI_SILENT_GATE: "1" });
+  const q = connectShim({ ...pigEnv, FAKE_PI_SILENT_GATE: "1", PI_ACP_GATE_READY_MS: "1000" });
   await q.call("initialize", { protocolVersion: 1, clientCapabilities: {} });
   await assert.rejects(q.call("session/new", { cwd: process.cwd(), mcpServers: mcp }), /quackgate did not report in/, "ungated engine got a session");
   await assert.rejects(q.call("session/prompt", { sessionId: "x", prompt: [{ type: "text", text: "hi" }] }), /no live session/);
