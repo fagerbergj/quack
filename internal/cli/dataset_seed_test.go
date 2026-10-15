@@ -3,12 +3,15 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -28,6 +31,21 @@ func TestLineMutations(t *testing.T) {
 		"\treturn fmt.Errorf(\"x: %w\", err)": nil,
 		"\ts := \"a == b\" // x != y":         nil,
 		"\tch <- v; x := y << 2":              nil,
+		"\tok := a && b":                      {{"and_or", "\tok := a || b"}},
+		"\treturn a || f(\"x && y\")":         {{"and_or", "\treturn a && f(\"x && y\")"}},
+		"\tx := s[i+1:]":                      {{"off_by_one", "\tx := s[i:]"}},
+		"\tn := f(x) - 1 // last":             {{"off_by_one", "\tn := f(x) // last"}},
+		"\tfor i := 0; i < len(xs); i++ {":    {{"boundary", "\tfor i := 0; i <= len(xs); i++ {"}, {"off_by_one", "\tfor i := 0; i < len(xs)-1; i++ {"}},
+		"\ty := b[:len(b)]":                   {{"off_by_one", "\ty := b[:len(b)-1]"}},
+		"\tm := x - 1*k; n := -1; f(-1)":      nil,
+		"\th := len(b) / 2; c := cap(len(b))": nil,
+		"\tz := len(b) == 0 || b[len(b)-k:]":  {{"flip_eq", "\tz := len(b) != 0 || b[len(b)-k:]"}, {"and_or", "\tz := len(b) == 0 && b[len(b)-k:]"}},
+		"\tq := r.len(x) < 2":                 {{"boundary", "\tq := r.len(x) <= 2"}},
+		"\tdefer mu.Unlock()":                 {{"drop_defer", ""}},
+		"\tdefer resp.Body.Close() // free":   {{"drop_defer", ""}},
+		"\tdefer cancel()":                    nil,
+		"\tdefer os.RemoveAll(dir)":           nil,
+		"\t// defer mu.Unlock()":              nil,
 	} {
 		var got []mut
 		for _, m := range lineMutations(text) {
@@ -86,6 +104,35 @@ func TestMutationCandidates(t *testing.T) {
 	}
 }
 
+// A subtle operator anywhere in the PR wins the pick; the old ones only seed a PR without one, drop_err_guard last.
+func TestPickDefect(t *testing.T) {
+	added := []addedLine{
+		{"a.go", 1, "\tif a == b {"}, {"a.go", 2, "\tif err != nil {"}, {"a.go", 3, "\t}"},
+		{"a.go", 4, "\tdefer mu.Unlock()"}, {"a.go", 5, "\tok := a && !b"}, {"c_test.go", 1, "\tx := s[i+1]"},
+	}
+	for _, tc := range []struct {
+		cands []seededDefect
+		want  []string
+	}{
+		{mutationCandidates(added), []string{"and_or", "drop_defer"}},
+		{mutationCandidates(added[:3]), []string{"flip_eq"}},
+		{[]seededDefect{{Operator: "drop_err_guard"}}, []string{"drop_err_guard"}},
+	} {
+		seen := map[string]bool{}
+		for i := range 64 {
+			id := fmt.Sprint("item-", i)
+			d := pickDefect(tc.cands, id)
+			if d != pickDefect(tc.cands, id) {
+				t.Fatalf("pick for %s is not deterministic", id)
+			}
+			seen[d.Operator] = true
+		}
+		if got := slices.Sorted(maps.Keys(seen)); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("picked operators = %v, want %v", got, tc.want)
+		}
+	}
+}
+
 func TestApplyDefect(t *testing.T) {
 	src := "package a\n\nfunc f() error {\n\terr := g()\n\tif err != nil {\n\t\treturn err\n\t}\n\treturn nil\n}\n"
 	got, err := applyDefect(src, seededDefect{Path: "a.go", Line: 6, Original: "\t\treturn err", Mutated: "\t\treturn nil"})
@@ -95,6 +142,10 @@ func TestApplyDefect(t *testing.T) {
 	got, err = applyDefect(src, seededDefect{Path: "a.go", Line: 5, Original: "\tif err != nil {", end: 7})
 	if err != nil || got != "package a\n\nfunc f() error {\n\terr := g()\n\treturn nil\n}\n" {
 		t.Fatalf("guard deletion = %q, %v", got, err)
+	}
+	got, err = applyDefect(src, seededDefect{Path: "a.go", Line: 4, Original: "\terr := g()"})
+	if err != nil || got != strings.Replace(src, "\terr := g()\n", "", 1) {
+		t.Fatalf("one-line deletion = %q, %v", got, err)
 	}
 	if _, err := applyDefect(src, seededDefect{Path: "a.go", Line: 4, Original: "\tother"}); err == nil {
 		t.Fatal("want an error when the line no longer reads as the diff said")

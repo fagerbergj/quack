@@ -43,7 +43,7 @@ type seededDefect struct {
 	Operator string `json:"operator"`
 	Original string `json:"original"`
 	Mutated  string `json:"mutated"`
-	end      int    // drop_err_guard's closing-brace line; 0 for a one-line rewrite
+	end      int    // drop_err_guard's closing-brace line; 0 for a one-line rewrite or deletion
 }
 
 // RunDatasetSeed writes one seeded item to opts.Target per opts.Source item it can mutate. Each seeded PR is
@@ -148,9 +148,7 @@ func plantDefect(mirror, itemID, upstream, head, base string) (planted, error) {
 	if len(cands) == 0 {
 		return planted{}, errors.New("no mutable Go line among the PR's added lines")
 	}
-	h := fnv.New64a()
-	_, _ = h.Write([]byte(itemID))
-	d := cands[h.Sum64()%uint64(len(cands))]
+	d := pickDefect(cands, itemID)
 	content, err := applyDefect(g.run("", "cat-file", "blob", head+":"+d.Path), d)
 	if err != nil {
 		return planted{}, err
@@ -294,44 +292,144 @@ func mutationCandidates(added []addedLine) []seededDefect {
 	return out
 }
 
-// flips: each comparison's mutant; == and != swap meaning, the others move a boundary by one.
-var flips = map[token.Token]string{token.EQL: "!=", token.NEQ: "==", token.LSS: "<=", token.LEQ: "<", token.GTR: ">=", token.GEQ: ">"}
+// opTier ranks operators by how readily a reviewer catches them: unlisted subtle ones 0, drop_err_guard (which
+// go build catches) last. A pick draws only from the lowest tier the PR offers.
+var opTier = map[string]int{"flip_eq": 1, "boundary": 1, "drop_not": 1, "return_nil": 1, "drop_err_guard": 2}
 
-// lineMutations scans text as Go tokens, so an operator inside a string or comment is never mutated.
+// pickDefect is itemID's candidate within the subtlest tier present, chosen by hash so a re-seed repeats it.
+func pickDefect(cands []seededDefect, itemID string) seededDefect {
+	best := slices.MinFunc(cands, func(a, b seededDefect) int { return opTier[a.Operator] - opTier[b.Operator] })
+	pool := slices.DeleteFunc(slices.Clone(cands), func(d seededDefect) bool { return opTier[d.Operator] != opTier[best.Operator] })
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(itemID))
+	return pool[h.Sum64()%uint64(len(pool))]
+}
+
+// flips: each one-token operator's mutant; == and != swap meaning, && and || swap logic, the rest move a boundary.
+var flips = map[token.Token][2]string{
+	token.EQL: {"flip_eq", "!="}, token.NEQ: {"flip_eq", "=="}, token.LAND: {"and_or", "||"}, token.LOR: {"and_or", "&&"},
+	token.LSS: {"boundary", "<="}, token.LEQ: {"boundary", "<"}, token.GTR: {"boundary", ">="}, token.GEQ: {"boundary", ">"},
+}
+
+// lineMutations is every mutant of one line; a deletion (drop_defer) has an empty Mutated.
 func lineMutations(text string) []seededDefect {
+	ts := scanLine(text)
+	var out []seededDefect
+	for i, t := range ts {
+		if f, ok := flips[t.tok]; ok {
+			out = append(out, seededDefect{Operator: f[0], Mutated: text[:t.off] + f[1] + text[t.off+len(t.tok.String()):]})
+		}
+		if t.tok == token.NOT {
+			out = append(out, seededDefect{Operator: "drop_not", Mutated: text[:t.off] + text[t.off+1:]})
+		}
+		if m := cmp.Or(dropOne(text, ts, i), lenMinusOne(text, ts, i)); m != "" {
+			out = append(out, seededDefect{Operator: "off_by_one", Mutated: m})
+		}
+	}
+	if n := len(ts); n > 0 && ts[0].tok == token.RETURN && ts[n-1].tok == token.IDENT && ts[n-1].lit == "err" {
+		out = append(out, seededDefect{Operator: "return_nil", Mutated: text[:ts[n-1].off] + "nil" + text[ts[n-1].off+3:]})
+	}
+	if deferRelease(ts) {
+		out = append(out, seededDefect{Operator: "drop_defer"})
+	}
+	return out
+}
+
+// lineTok is one Go token of a line: its byte offset, kind and literal.
+type lineTok struct {
+	off int
+	tok token.Token
+	lit string
+}
+
+// scanLine scans text as Go tokens, so an operator inside a string or comment is never mutated. The semicolon
+// the scanner inserts at the line's end is dropped.
+func scanLine(text string) []lineTok {
 	var s scanner.Scanner
 	fset := token.NewFileSet()
 	file := fset.AddFile("", fset.Base(), len(text))
 	s.Init(file, []byte(text), nil, 0)
-	var out []seededDefect
-	first, last, lastOff, lastLit := token.ILLEGAL, token.ILLEGAL, 0, ""
+	var out []lineTok
 	for {
 		pos, tok, lit := s.Scan()
 		if tok == token.EOF {
-			break
-		}
-		off := file.Offset(pos)
-		switch {
-		case flips[tok] != "":
-			op := "boundary"
-			if tok == token.EQL || tok == token.NEQ {
-				op = "flip_eq"
-			}
-			out = append(out, seededDefect{Operator: op, Mutated: text[:off] + flips[tok] + text[off+len(tok.String()):]})
-		case tok == token.NOT:
-			out = append(out, seededDefect{Operator: "drop_not", Mutated: text[:off] + text[off+1:]})
-		}
-		if first == token.ILLEGAL {
-			first = tok
+			return out
 		}
 		if tok != token.SEMICOLON || lit == ";" {
-			last, lastOff, lastLit = tok, off, lit
+			out = append(out, lineTok{file.Offset(pos), tok, lit})
 		}
 	}
-	if first == token.RETURN && last == token.IDENT && lastLit == "err" {
-		out = append(out, seededDefect{Operator: "return_nil", Mutated: text[:lastOff] + "nil" + text[lastOff+3:]})
+}
+
+// operandEnd marks tokens that can end a binary operator's left operand, so a `- 1` after one is not unary.
+var operandEnd = map[token.Token]bool{token.IDENT: true, token.RPAREN: true, token.RBRACK: true}
+
+// tighter reports ts[k] as a binary operator binding tighter than + and -, which an added or dropped 1 would split.
+func tighter(ts []lineTok, k int) bool {
+	return k < len(ts) && ts[k].tok.Precedence() > token.ADD.Precedence()
+}
+
+// dropOne drops a binary `+ 1` or `- 1` at ts[i] (`a[i+1]` -> `a[i]`); "" when ts[i] starts none.
+func dropOne(text string, ts []lineTok, i int) string {
+	t := ts[i]
+	if (t.tok != token.ADD && t.tok != token.SUB) || i == 0 || i+1 >= len(ts) || !operandEnd[ts[i-1].tok] ||
+		ts[i+1].tok != token.INT || ts[i+1].lit != "1" || tighter(ts, i+2) {
+		return ""
 	}
-	return out
+	return strings.TrimRight(text[:t.off], " \t") + text[ts[i+1].off+1:]
+}
+
+// lenMinusOne appends -1 to a len(...) at ts[i] that bounds an index, a slice or a loop; "" otherwise.
+func lenMinusOne(text string, ts []lineTok, i int) string {
+	if ts[i].lit != "len" || i+1 >= len(ts) || ts[i+1].tok != token.LPAREN || (i > 0 && ts[i-1].tok == token.PERIOD) {
+		return ""
+	}
+	j, depth := i+1, 0
+	for ; j < len(ts); j++ {
+		switch ts[j].tok {
+		case token.LPAREN:
+			depth++
+		case token.RPAREN:
+			depth--
+		}
+		if depth == 0 {
+			break
+		}
+	}
+	if j == len(ts) || tighter(ts, j+1) || !boundsLen(tokAt(ts, i-1), tokAt(ts, j+1)) {
+		return ""
+	}
+	return text[:ts[j].off+1] + "-1" + text[ts[j].off+1:]
+}
+
+// boundsLen reports a len(...) between prev and next as a whole index or slice bound, or a loop's `i < len(x)`;
+// `len(x) == 0` and the like are left alone, as their mutant reads as planted.
+func boundsLen(prev, next token.Token) bool {
+	slice := (prev == token.LBRACK || prev == token.COLON) && (next == token.RBRACK || next == token.COLON)
+	return slice || prev == token.LSS || prev == token.LEQ
+}
+
+// tokAt is ts[k]'s kind, ILLEGAL off either end.
+func tokAt(ts []lineTok, k int) token.Token {
+	if k < 0 || k >= len(ts) {
+		return token.ILLEGAL
+	}
+	return ts[k].tok
+}
+
+// deferRelease reports a `defer x.Close()` line, a zero-arg method call: deleting it leaks or deadlocks yet
+// compiles. A bare `defer cancel()` is left alone, since dropping it leaves cancel unused and fails the build.
+func deferRelease(ts []lineTok) bool {
+	n := len(ts)
+	if n < 6 || n%2 != 0 || ts[0].tok != token.DEFER || ts[n-2].tok != token.LPAREN || ts[n-1].tok != token.RPAREN {
+		return false
+	}
+	for k := 1; k < n-2; k++ {
+		if ts[k].tok != [2]token.Token{token.IDENT, token.PERIOD}[(k-1)%2] {
+			return false
+		}
+	}
+	return true
 }
 
 // guardEnd is the closing-brace line of an `if err != nil {` block at added[i] that the PR added whole; 0 otherwise.
@@ -349,8 +447,8 @@ func guardEnd(added []addedLine, i int) int {
 	return 0
 }
 
-// applyDefect rewrites (or, for drop_err_guard, deletes) d's lines in content, refusing a line that no longer
-// reads as the diff said.
+// applyDefect rewrites d's line in content, or deletes lines Line..end when d has no Mutated, refusing a line
+// that no longer reads as the diff said.
 func applyDefect(content string, d seededDefect) (string, error) {
 	lines := strings.SplitAfter(content, "\n")
 	end := max(d.end, d.Line)
@@ -358,7 +456,7 @@ func applyDefect(content string, d seededDefect) (string, error) {
 		return "", fmt.Errorf("%s:%d no longer reads %q", d.Path, d.Line, d.Original)
 	}
 	var repl []string
-	if d.end == 0 {
+	if d.Mutated != "" {
 		repl = []string{d.Mutated + lines[d.Line-1][len(d.Original):]}
 	}
 	return strings.Join(slices.Concat(lines[:d.Line-1], repl, lines[end:]), ""), nil
