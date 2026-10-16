@@ -201,6 +201,9 @@ func checksCaps(cfg Config) workspace.Caps {
 	if cfg.CheckTimeout > 0 {
 		caps.Timeout = cfg.CheckTimeout
 	}
+	if cfg.Workspace == nil { // judge replay --clone probes a checkout outside any jail
+		return caps
+	}
 	root, err := cfg.Workspace.Resolve(cfg.WorkspaceUserID, cfg.ChatID, workspace.NodeDir(cfg.NodeID))
 	if err != nil {
 		return caps

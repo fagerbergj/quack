@@ -66,6 +66,16 @@ func NewHooks(d Deps, fallback HookPolicy) *Hooks {
 	return h
 }
 
+// JudgeReadTools builds the read-only tools a judge checks a worker's files with, hooked on h.
+func JudgeReadTools(d Deps, h *Hooks) ([]tool.Tool, error) {
+	ts, err := Build([]string{"read_file", "list_dir", "glob", "grep"}, d)
+	if err != nil {
+		return nil, err
+	}
+	h.Set(HookBuilt, ts...)
+	return ts, nil
+}
+
 // Set assigns p to ts by name; call it before the agent runs.
 func (h *Hooks) Set(p HookPolicy, ts ...tool.Tool) {
 	for _, t := range ts {
