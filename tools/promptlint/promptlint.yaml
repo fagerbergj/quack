@@ -35,8 +35,8 @@ overlap:
       reason: search returns URLs and fetch reads one; they share web vocabulary, not a job
     - tools: [recall_memory, stage_memory]
       reason: the read and write halves of one shared task memory
-    - tools: [load_skill, load_skill_resource, load_artifacts]
-      reason: ADK's own skilltoolset and loadartifactstool declarations; quack does not write their text
+    - tools: [load_skill, load_skill_resource]
+      reason: ADK's own skilltoolset declarations; quack does not write their text
 ignore:
   - rule: missing_resource
     subject: .agents/embedded/dotagents/skills/agent-skill-authoring/SKILL.md
@@ -44,4 +44,4 @@ ignore:
     reason: an example path in the skill's prose; the snapshot is synced from the dotagents registry
 external_skills: [ponytail] # registry-fetched plugins with no in-tree copy: a miss warns instead of failing
 # Mirrors internal/orchestrator/run.go; promptlint adds every write_<kind> and quack.yaml's orchestrator.tools.
-orchestrator_tools: [list_nodes, create_plan, edit_plan, execute, get_user_choice, list_artifacts, edit_artifact, write_artifact]
+orchestrator_tools: [list_nodes, create_plan, edit_plan, execute, get_user_choice, list_artifacts, read_artifact, edit_artifact, write_artifact]

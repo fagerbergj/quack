@@ -101,7 +101,7 @@ func (o *Orchestrator) SetNodeSessionReaper(fn func(ctx context.Context, chatID 
 	o.nodeSessions = fn
 }
 
-// SetArtifacts wires an artifact.Service into the orchestrator's runner and its load_artifacts tool.
+// SetArtifacts wires an artifact.Service into the orchestrator's runner and its artifact tools.
 func (o *Orchestrator) SetArtifacts(svc artifact.Service) { o.artifacts = svc }
 
 // SetLedger wires the WAL's fail-closed AppendIntent into the orchestrator's write tools, so a
@@ -115,8 +115,8 @@ func (o *Orchestrator) SetSchemas(reg *artifactschema.Registry) { o.schemas = re
 // SetRenderUI offers render_ui (A2UI surfaces) on the orchestrator's own turns.
 func (o *Orchestrator) SetRenderUI(on bool) { o.renderUI = on }
 
-// failSoftListArtifacts degrades List errors to "no artifacts": load_artifacts lists on every
-// request, and a transient store outage must not fail the whole turn.
+// failSoftListArtifacts degrades the runner's List errors to "no artifacts": a transient store
+// outage must not fail the whole turn.
 type failSoftListArtifacts struct{ artifact.Service }
 
 func (s failSoftListArtifacts) List(ctx context.Context, req *artifact.ListRequest) (*artifact.ListResponse, error) {
@@ -131,8 +131,8 @@ func (s failSoftListArtifacts) List(ctx context.Context, req *artifact.ListReque
 	return resp, nil
 }
 
-// Load degrades any failure to a text part: ADK's loadartifactstool loads every name in one
-// errgroup, so one error would cancel its siblings and fail the turn.
+// Load degrades any failure to a text part (ADK's {artifact.name} instruction templating loads
+// through it), so one missing artifact can't fail the turn.
 func (s failSoftListArtifacts) Load(ctx context.Context, req *artifact.LoadRequest) (*artifact.LoadResponse, error) {
 	resp, err := s.Service.Load(ctx, req)
 	if err != nil {
@@ -141,7 +141,7 @@ func (s failSoftListArtifacts) Load(ctx context.Context, req *artifact.LoadReque
 	}
 	if resp != nil && resp.Part != nil && resp.Part.InlineData != nil {
 		if n := len(resp.Part.InlineData.Data); n > artifactref.InlineMaxBytes {
-			err := fmt.Errorf("%d bytes, exceeds the %d byte load_artifacts limit", n, artifactref.InlineMaxBytes)
+			err := fmt.Errorf("%d bytes, exceeds the %d byte artifact load limit", n, artifactref.InlineMaxBytes)
 			slog.Warn("orchestrator: artifact Load oversize; reporting unavailable instead of failing the turn", "artifact", req.FileName, "err", err)
 			return unavailableArtifactResponse(req.FileName, err), nil
 		}

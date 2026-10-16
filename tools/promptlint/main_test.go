@@ -35,7 +35,6 @@ func fixtureTools() []toolDef {
 		d("read_artifact", "Open one by id."),
 		d("write_artifact", "Persist a document."),
 		d("edit_artifact", "Patch a document by search and replace."),
-		d("load_artifacts", "Attach session files."),
 		d("list_skills", "Catalog of playbooks."),
 		d("load_skill", "Instructions by name."),
 		d("load_skill_resource", "A bundled file."),
@@ -100,7 +99,7 @@ func TestFindings(t *testing.T) {
 func TestAgentSurfaces(t *testing.T) {
 	rep := fixtureRun(nil)
 	want := map[string][]string{
-		"orchestrator": {"list_artifacts", "write_artifact", "load_artifacts", "list_skills", "load_skill", "load_skill_resource"},
+		"orchestrator": {"list_artifacts", "write_artifact", "read_artifact", "list_skills", "load_skill", "load_skill_resource"},
 		"good":         {"alpha_tool", "list_artifacts", "read_artifact", "write_artifact", "edit_artifact"},
 		"plug":         {"alpha_tool", "ask_x", "ask_z", "list_artifacts", "read_artifact", "list_skills", "load_skill", "load_skill_resource"},
 		"coder":        nil,

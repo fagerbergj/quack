@@ -1991,7 +1991,7 @@ func assembleOrchestrator(ctx context.Context, cfg *config.Config, res *artifact
 	// Hard backstop under ADK's own compaction - see BudgetedLLM's doc for why.
 	orchLLM = dag.NewBudgetedLLM(orchLLM, cfg.Orchestrator.ContextWindow)
 	orch := orchestrator.New(st.Sessions, orchLLM, orchSysPrompt, planner, executor, orchSkillTS, userStore, taskStore)
-	// Unconditional: dag_plan persistence must not depend on load_artifacts being in orchestrator.tools.
+	// Unconditional: dag_plan persistence and the orchestrator's artifact tools need no orchestrator.tools entry.
 	orch.SetArtifacts(artifacts)
 	orch.SetDecisions(decisions)
 	orch.SetNodeSessionReaper(st.ReapNodeSessions)

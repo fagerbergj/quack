@@ -17,7 +17,6 @@ import (
 	"google.golang.org/adk/v2/runner"
 	"google.golang.org/adk/v2/session"
 	"google.golang.org/adk/v2/tool"
-	"google.golang.org/adk/v2/tool/loadartifactstool"
 	"google.golang.org/adk/v2/workflow"
 	"google.golang.org/genai"
 
@@ -132,7 +131,6 @@ func (s *orchRun) buildMemoryArtifactTools(githubSetup *dag.Setup) string {
 		s.toolList = append(s.toolList, recallTool)
 	}
 	if s.o.artifacts != nil {
-		s.toolList = append(s.toolList, loadartifactstool.New())
 		s.artifacts = failSoftListArtifacts{s.o.artifacts}
 		rc := recordstore.New(s.o.artifacts, artifactref.AppName, s.userID, s.sessionID)
 		if s.o.ledgerStore != nil {
@@ -155,7 +153,13 @@ func (s *orchRun) buildMemoryArtifactTools(githubSetup *dag.Setup) string {
 		if err != nil {
 			return "orchestrator: write_artifact tool: " + err.Error()
 		}
-		s.toolList = append(s.toolList, listTool, editTool, writeTool)
+		// read_artifact, not ADK's load_artifacts: that tool lists every artifact in the system instruction (each
+		// new artifact broke the prompt cache there) and attaches content to one request only, so it was re-loaded.
+		readTool, err := tools.NewReadArtifactTool(rc)
+		if err != nil {
+			return "orchestrator: read_artifact tool: " + err.Error()
+		}
+		s.toolList = append(s.toolList, listTool, readTool, editTool, writeTool)
 		writeKindTools, err := tools.NewWriteKindTools(rc, orchestratorName, &tools.RoundCoords{}, vetting.SubjectHint(s.sessionID))
 		if err != nil {
 			return "orchestrator: write_<kind> tools: " + err.Error()
