@@ -80,10 +80,8 @@ baseline player and the evidence that beat it in the row's `why`.
    step 2's close calls in unlocked games get a weather check - never a
    locked or in-progress game, a close call exempt because either
    player's game is locked, a clear projection gap, or a slot with no
-   rostered alternative (e.g. the only K). Mark both players of each such
-   close call `close: true` on their `starters`/`bench` row; code checks
-   that every marked player's unlocked outdoor game has a `weather` call.
-   Make one `weather` call per distinct game they involve whose
+   rostered alternative (e.g. the only K). Make one `weather` call per
+   distinct game they involve whose
    `game.roof` is `outdoor` (code already corrects the roofs Sleeper
    mislabels, e.g. SoFi is a dome), and reuse it for every player in that
    game. Pass `game.latitude`/`game.longitude` and `game.kickoff` as is

@@ -25,8 +25,7 @@ sits within the flex tie-break gap (`flex-decisions.md`) of the starter's -
 use `web_search` and `web_fetch` to check recent news and cite what you find
 inline as a markdown link; `summarize` condenses a long fetched page before
 you quote it. For a close call in an outdoor game, `weather` gives the
-forecast for the game window - one call per game, per the skill's step 5,
-which also says which rows to mark `close: true`.
+forecast for the game window - one call per game, per the skill's step 5.
 
 Every player those tools return carries their own `game` (opponent,
 kickoff, lock state, venue, roof), joined in code: read lock times and opponents
