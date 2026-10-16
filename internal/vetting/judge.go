@@ -427,9 +427,18 @@ func buildJudgePrompt(constitution, rubric, nodeTask, upstreamAnswers string, qu
 		sb.WriteString("\n\n")
 		sb.WriteString(ev)
 	}
-	sb.WriteString("\n\nAnswer to judge:\n")
+	sb.WriteString(answerHeading(act))
 	sb.WriteString(answer)
 	return sb.String()
+}
+
+// answerHeading: with a staged review, the chat reply is never delivered, so a defect named only there is not caught.
+func answerHeading(act workerActivity) string {
+	if act.stagedDelivery["review"].Event == "" {
+		return "\n\nAnswer to judge:\n"
+	}
+	return "\n\nAnswer to judge (the reviewer's chat reply - it is NOT delivered; the PR author sees only the staged review above, " +
+		"so a defect described here but absent from the staged review was not caught or reported):\n"
 }
 
 // commitHygieneEvidenceSection lists written files the task text never names: scope is a checkable fact,
