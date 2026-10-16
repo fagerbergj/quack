@@ -47,15 +47,6 @@ agents:
     model: m
 
 extensions:
-  android:
-    adb_addr: 127.0.0.1:1
-    serial: emulator-5554
-    allowed_packages: [com.android.settings]
-    max_elements: 40
-  browser:
-    cdp_url: ws://127.0.0.1:1
-    allowed_hosts: [example.com]
-    max_elements: 40
   github:
     client_id: Iv1.placeholder
     private_key_path: ${QUACK_TEST_TMP}/github.pem

@@ -3,8 +3,6 @@ package serve
 // Blank-imports every first-party extension module so it registers with the SDK; compiled but
 // unconfigured modules stay dormant.
 import (
-	_ "github.com/fagerbergj/quack/extensions/android"
-	_ "github.com/fagerbergj/quack/extensions/browser"
 	_ "github.com/fagerbergj/quack/extensions/github"
 	_ "github.com/fagerbergj/quack/extensions/noop"
 	_ "github.com/fagerbergj/quack/extensions/remarkable"
