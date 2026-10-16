@@ -89,6 +89,8 @@ The [Sleeper extension](../../extensions/sleeper/README.md#decision-points) decl
 
 The [browser extension](../extensions/browser.md#decision-point) declares `ext:browser/element.choose` (observe only), asked when an agent calls `browser_choose`. Its `element` choice question declares no options: each call sends the page's numbered elements as the options and the page's screenshot as an image beside the state. An extension may send `Options` only for a choice primary declared without criteria. `Images` are data URLs sent as the request's top-level `images`; the ledger records the state without them. It has no baseline.
 
+The [android extension](../extensions/android.md#decision-point) declares `ext:android/element.choose` the same way, asked when an agent calls `android_choose`: the screen's numbered elements are the options, its screenshot is the image, and the state is the goal plus the foreground package and activity.
+
 Points are built once at boot, so changing `decisions:` needs a restart.
 
 ## Recording
