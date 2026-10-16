@@ -109,10 +109,7 @@ func (s *Session) ingest(e ledger.Entry) {
 		s.evalScores = append(s.evalScores, EvalScore{Node: e.NodeID, Round: e.Round, ResponseID: p.ResponseID,
 			Criterion: p.Criterion, Score: p.Score, Explanation: p.Explanation, Timestamp: e.At})
 	case ledger.KindToolCall:
-		tc := ToolCall{Node: e.NodeID, At: e.At}
-		if json.Unmarshal(e.Payload, &tc.ToolCallPayload) == nil {
-			s.toolCalls = append(s.toolCalls, tc)
-		}
+		s.addToolCall(e)
 	case ledger.KindLLMCall:
 		ce := chatEntry{ts: e.At}
 		// An ACP call's row carries usage only; its round's content is read from the agent.invoke stream.
@@ -138,6 +135,13 @@ func (s *Session) ingest(e ledger.Entry) {
 		}
 		st := s.state(key)
 		st.agents = append(st.agents, ae)
+	}
+}
+
+func (s *Session) addToolCall(e ledger.Entry) {
+	tc := ToolCall{Node: e.NodeID, At: e.At}
+	if json.Unmarshal(e.Payload, &tc.ToolCallPayload) == nil {
+		s.toolCalls = append(s.toolCalls, tc)
 	}
 }
 

@@ -236,6 +236,9 @@ func cloneHeadSHA(cfg Config) string {
 // probeClone is the clone the gate's git probes read; ok=false until it exists. A linked worktree's .git is
 // a pointer file, so this tests existence, not a directory.
 func probeClone(cfg Config) (string, bool) {
+	if cfg.CloneDir != "" {
+		return cfg.CloneDir, pathExists(cfg.CloneDir, ".git")
+	}
 	if cfg.Setup == nil || cfg.Workspace == nil {
 		return "", false
 	}

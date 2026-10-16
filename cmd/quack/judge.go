@@ -92,7 +92,7 @@ func goldenJudge(ctx context.Context) (vetting.Config, vetting.JudgeFactory, []t
 	}
 	judge, err := cli.BuildReplayJudge(cfg, func(p config.ProviderConfig, m string) (model.LLM, error) {
 		return inference.NewModel(p, m, nil, cfg.ModelCost(m), cfg.ModelEffort(m))
-	})
+	}, "")
 	if err == nil && judge == nil {
 		err = fmt.Errorf("score-golden: gates.judge is not configured in %s; pass --deterministic-only", cfgPath)
 	}
@@ -104,7 +104,7 @@ func goldenJudge(ctx context.Context) (vetting.Config, vetting.JudgeFactory, []t
 }
 
 func newJudgeReplayCmd() *cobra.Command {
-	var node, rubricPath, sourceServer, outPath string
+	var node, rubricPath, sourceServer, outPath, clone string
 	var round, repeat int
 	var deterministicOnly, asJSON, verify bool
 	c := &cobra.Command{
@@ -122,6 +122,12 @@ func newJudgeReplayCmd() *cobra.Command {
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts := cli.ReplayOptions{Node: node, Round: round, RubricPath: rubricPath, DeterministicOnly: deterministicOnly, Repeat: repeat, ReportPath: outPath}
+			if clone != "" {
+				var err error
+				if opts.Clone, err = cli.ResolveReplayClone(clone); err != nil {
+					return err
+				}
+			}
 			return runJudgeReplay(cmd, args[0], opts, sourceServer, verify, asJSON)
 		},
 	}
@@ -133,6 +139,7 @@ func newJudgeReplayCmd() *cobra.Command {
 	c.Flags().IntVar(&repeat, "repeat", 1, "judge each round N times and report every judge-scored criterion's spread (mean, sd, pass rate, agreement) plus an overall consistency summary")
 	c.Flags().StringVar(&outPath, "out", "", "also write the JSON report to this file, to store and diff against a later run")
 	c.Flags().BoolVar(&verify, "verify", false, "run the shadow verify tier: the judge model reads each located specific's evidence window and answers with a quote code checks (model calls; works with --deterministic-only)")
+	c.Flags().StringVar(&clone, "clone", "", "git checkout of the reviewed head (cloned from the base branch, then checked out at the head) - the judge gets its diff, finding excerpts and read tools, as live; one clone serves every judged node")
 	asJSONFlag(c, &asJSON)
 	return c
 }
@@ -166,7 +173,7 @@ func runJudgeReplay(cmd *cobra.Command, target string, opts cli.ReplayOptions, s
 	if !opts.DeterministicOnly {
 		judge, err = cli.BuildReplayJudge(cfg, func(p config.ProviderConfig, m string) (model.LLM, error) {
 			return inference.NewModel(p, m, nil, cfg.ModelCost(m), cfg.ModelEffort(m))
-		})
+		}, opts.Clone)
 		if err != nil {
 			return err
 		}

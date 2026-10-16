@@ -7,6 +7,8 @@ import (
 	"io"
 	"math"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
@@ -20,7 +22,9 @@ import (
 	"github.com/fagerbergj/quack/internal/acp"
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/ledger/bundle"
+	"github.com/fagerbergj/quack/internal/tools"
 	"github.com/fagerbergj/quack/internal/vetting"
+	"github.com/fagerbergj/quack/internal/workspace"
 )
 
 // ReplayOptions is `quack judge replay`'s filters and mode.
@@ -33,6 +37,7 @@ type ReplayOptions struct {
 	Pages             vetting.PageLoader // stored web pages for the shadow locate tier; nil skips it
 	Verifier          *vetting.Verifier  // the shadow verify tier over located specifics; nil skips it
 	ReportPath        string             // also write the JSON report here; "" = stdout only
+	Clone             string             // ResolveReplayClone'd checkout of the reviewed head, for every round; "" = none
 }
 
 // ReplayReport is `quack judge replay --json`'s whole output: sorted, rounded and timestamp-free so two
@@ -316,9 +321,9 @@ func rubricConfigFor(ctx context.Context, cfg *config.Config, agentName, rubricO
 	return base, nil
 }
 
-// BuildReplayJudge builds the local quack.yaml's configured judge model as a
-// JudgeFactory with no read/skill tools. nil, nil when no judge is configured.
-func BuildReplayJudge(cfg *config.Config, newModel func(config.ProviderConfig, string) (model.LLM, error)) (vetting.JudgeFactory, error) {
+// BuildReplayJudge builds the local quack.yaml's configured judge model as a JudgeFactory with no skill tools,
+// and live's read tools over clone when set. nil, nil when no judge is configured.
+func BuildReplayJudge(cfg *config.Config, newModel func(config.ProviderConfig, string) (model.LLM, error), clone string) (vetting.JudgeFactory, error) {
 	if !cfg.Gates.JudgeEnabled() {
 		return nil, nil
 	}
@@ -330,7 +335,37 @@ func BuildReplayJudge(cfg *config.Config, newModel func(config.ProviderConfig, s
 	if err != nil {
 		return nil, fmt.Errorf("judge replay: gates.judge: model: %w", err)
 	}
-	return vetting.NewJudgeFactory(judge, nil, nil), nil
+	if clone == "" {
+		return vetting.NewJudgeFactory(judge, nil, nil), nil
+	}
+	// An unscoped fs call resolves to <root>/<user>/<path>, so this jail confines the judge to clone.
+	jail, err := workspace.NewJail(filepath.Dir(clone))
+	if err != nil {
+		return nil, fmt.Errorf("judge replay: --clone: %w", err)
+	}
+	deps := tools.Deps{Workspace: jail, WorkspaceUserID: filepath.Base(clone)}
+	hooks := tools.NewHooks(deps, 0)
+	readTools, err := tools.JudgeReadTools(deps, hooks)
+	if err != nil {
+		return nil, fmt.Errorf("judge replay: --clone read tools: %w", err)
+	}
+	return vetting.NewJudgeFactory(judge, readTools, nil, hooks.Wire), nil
+}
+
+// ResolveReplayClone returns dir's absolute, symlink-free path when it is the top of a git work tree.
+func ResolveReplayClone(dir string) (string, error) {
+	abs, err := filepath.Abs(dir)
+	if err == nil {
+		abs, err = filepath.EvalSymlinks(abs)
+	}
+	if err != nil {
+		return "", fmt.Errorf("judge replay: --clone %s: %w", dir, err)
+	}
+	out, err := exec.Command("git", "-C", abs, "rev-parse", "--show-toplevel").Output()
+	if err != nil || strings.TrimSpace(string(out)) != abs {
+		return "", fmt.Errorf("judge replay: --clone %s is not the top of a git work tree", dir)
+	}
+	return abs, nil
 }
 
 // BuildReplayVerifier builds the configured judge model as the tool-less verify
@@ -446,6 +481,7 @@ func replayOneRound(ctx context.Context, cfg *config.Config, sess *bundle.Sessio
 		}
 		cfgCache[jr.agent] = gc
 	}
+	gc.CloneDir = opts.Clone
 	rc := vetting.ReplayCase{NodeID: jr.node, Task: task, Answer: answer, WorkerTurns: turns, NodeTurns: activityTurnsBefore(sess, jr.at, jr.node),
 		Pages: opts.Pages, Verifier: opts.Verifier, Review: reviewStageBefore(sess, jr.node, jr.at)}
 

@@ -72,6 +72,8 @@ type Config struct {
 	RequireRetrieval bool // zero retrieval = ungrounded
 	ReadOnly         bool // no delivery tools - completion is review/exploration
 	IsReviewer       bool // stamped from node agent, never from task wording
+	// CloneDir: a prepared checkout the git probes read instead of the Setup clone; set only by judge replay --clone.
+	CloneDir string
 	// ReviewFanout: non-nil only in a plan with >1 reviewer node. Each stages into it and the
 	// last to finish delivers the merged, worst-of-verdict review exactly once.
 	ReviewFanout *ReviewFanout

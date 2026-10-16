@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"iter"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -474,7 +476,7 @@ func TestBuildReplayJudgeDisabledReturnsNil(t *testing.T) {
 	judge, err := BuildReplayJudge(&config.Config{}, func(config.ProviderConfig, string) (model.LLM, error) {
 		t.Fatal("newModel called though gates.judge is disabled")
 		return nil, nil
-	})
+	}, "")
 	if err != nil || judge != nil {
 		t.Errorf("BuildReplayJudge with no judge configured = (%v, %v), want (nil, nil)", judge, err)
 	}
@@ -482,7 +484,7 @@ func TestBuildReplayJudgeDisabledReturnsNil(t *testing.T) {
 
 func TestBuildReplayJudgeUnknownProvider(t *testing.T) {
 	cfg := &config.Config{Gates: config.GatesConfig{Judge: config.JudgeConfig{Model: "m", MaxRounds: 1, Provider: "missing"}}}
-	if _, err := BuildReplayJudge(cfg, func(config.ProviderConfig, string) (model.LLM, error) { return nil, nil }); err == nil {
+	if _, err := BuildReplayJudge(cfg, func(config.ProviderConfig, string) (model.LLM, error) { return nil, nil }, ""); err == nil {
 		t.Fatal("BuildReplayJudge with an unknown provider: err = nil, want an error")
 	}
 }
@@ -808,5 +810,110 @@ func TestRunJudgeReplayRebuildsACPReviewStage(t *testing.T) {
 		case "behaviour_verified":
 			t.Errorf("behaviour_verified = %+v, want it absent: an ACP round's commands are not in the recording", c)
 		}
+	}
+}
+
+// reviewedClone builds a checkout the way live setup does: cloned at the base branch, then checked out at a head
+// that adds a defect line, so HEAD's reflog starts at the base.
+func reviewedClone(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	write := func(body string) {
+		if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git("init", "-q", "-b", "main")
+	write("package a\n\nfunc F(p *int) int { return 0 }\n")
+	git("add", "a.go")
+	git("commit", "-q", "-m", "base")
+	git("checkout", "-q", "-b", "feature")
+	write("package a\n\nfunc F(p *int) int { return *p + defectMarker }\n")
+	git("commit", "-q", "-am", "head")
+	clone, err := ResolveReplayClone(dir)
+	if err != nil {
+		t.Fatalf("ResolveReplayClone: %v", err)
+	}
+	return clone
+}
+
+// readingJudge reads a.go when offered read_file, then submits; it records each prompt, the tools offered and what it read.
+type readingJudge struct {
+	prompts, offered []string
+	read             string
+}
+
+func (j *readingJudge) Name() string { return "reading-judge" }
+
+func (j *readingJudge) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+	j.prompts = append(j.prompts, requestText(req))
+	j.offered = j.offered[:0]
+	for name := range req.Tools {
+		j.offered = append(j.offered, name)
+	}
+	call := &genai.FunctionCall{Name: "submit_verdict", Args: map[string]any{"score": 3, "feedback": ""}}
+	_, canRead := req.Tools["read_file"]
+	for _, c := range req.Contents {
+		for _, p := range c.Parts {
+			if p != nil && p.FunctionResponse != nil && p.FunctionResponse.Name == "read_file" {
+				b, _ := json.Marshal(p.FunctionResponse.Response)
+				j.read, canRead = string(b), false
+			}
+		}
+	}
+	if canRead {
+		call = &genai.FunctionCall{ID: "r1", Name: "read_file", Args: map[string]any{"path": "a.go"}}
+	}
+	return func(yield func(*model.LLMResponse, error) bool) {
+		yield(&model.LLMResponse{Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{FunctionCall: call}}},
+			FinishReason: genai.FinishReasonStop, TurnComplete: true}, nil)
+	}
+}
+
+// --clone hands the replayed reviewer judge live's diff, finding excerpts and read tools; without it, none.
+func TestRunJudgeReplayCloneGivesTheJudgeTheReviewedCode(t *testing.T) {
+	clone := reviewedClone(t)
+	sess, err := bundle.Load(buildACPReviewerBundle(t))
+	if err != nil {
+		t.Fatalf("load bundle: %v", err)
+	}
+	cfg := fixtureConfig()
+	cfg.Agents["code-reviewer"] = config.AgentConfig{Bundle: "agents/code-reviewer"}
+	cfg.Providers = map[string]config.ProviderConfig{"p": {}}
+	cfg.Gates.Judge.Provider, cfg.Gates.Judge.Model, cfg.Gates.Judge.MaxRounds = "p", "m", 1
+	for _, withClone := range []string{clone, ""} {
+		j := &readingJudge{}
+		judge, err := BuildReplayJudge(cfg, func(config.ProviderConfig, string) (model.LLM, error) { return j, nil }, withClone)
+		if err != nil {
+			t.Fatalf("BuildReplayJudge(%q): %v", withClone, err)
+		}
+		opts := ReplayOptions{RubricPath: rubricFile(t, "existence check", 0.85), Clone: withClone}
+		var buf bytes.Buffer
+		if code := RunJudgeReplay(context.Background(), cfg, sess, opts, judge, nil, false, &buf, true); code != 0 || len(j.prompts) == 0 {
+			t.Fatalf("clone=%q: exit = %d, judge calls = %d: %s", withClone, code, len(j.prompts), buf.String())
+		}
+		p := j.prompts[0]
+		hasDiff := strings.Contains(p, "DIFF UNDER REVIEW") && strings.Contains(p, "+func F(p *int) int { return *p + defectMarker }")
+		hasExcerpt := strings.Contains(p, "QUACK-FETCHED SOURCE EXCERPTS - quack read")
+		readCode := strings.Contains(j.read, "defectMarker")
+		if want := withClone != ""; hasDiff != want || hasExcerpt != want || readCode != want || slices.Contains(j.offered, "grep") != want {
+			t.Errorf("clone=%q: diff=%v excerpt=%v read=%v tools=%v, want all %v\n%s", withClone, hasDiff, hasExcerpt, readCode, j.offered, want, p)
+		}
+	}
+}
+
+func TestResolveReplayCloneRefusesANonRepo(t *testing.T) {
+	if _, err := ResolveReplayClone(t.TempDir()); err == nil {
+		t.Fatal("ResolveReplayClone on a plain dir: err = nil, want a refusal")
+	}
+	if _, err := ResolveReplayClone(filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Fatal("ResolveReplayClone on a missing dir: err = nil, want a refusal")
 	}
 }

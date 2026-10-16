@@ -1216,11 +1216,10 @@ func buildGateJudge(cfg *config.Config, res *artifactsrc.Resolver, jail *workspa
 			// One instance for every judge round, so the read tools' repeat state spans rounds.
 			judgeHooks := tools.NewHooks(readDeps, 0)
 			if jail != nil {
-				judgeReadTools, err = tools.Build([]string{"read_file", "list_dir", "glob", "grep"}, readDeps)
+				judgeReadTools, err = tools.JudgeReadTools(readDeps, judgeHooks)
 				if err != nil {
 					return vetting.Config{}, nil, nil, nil, nil, fmt.Errorf("gates.judge: read tools: %w", err)
 				}
-				judgeHooks.Set(tools.HookBuilt, judgeReadTools...)
 			}
 			// Skills unhooked: judgeSessionID is per chat, so shared repeat state would refuse a chat's 3rd
 			// load_skill(rubric) round; the judge breaks in-round loops itself.
