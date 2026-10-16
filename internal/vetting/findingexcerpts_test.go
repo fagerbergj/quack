@@ -126,8 +126,8 @@ func TestJudgeInput_ReviewRoundCarriesExcerpts(t *testing.T) {
 	})
 	factory := NewJudgeFactory(judge, []tool.Tool{newSpyReadTool(t, "package x", new(int32))}, nil)
 	q := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: "Review the pull request"}}}
-	if _, err := runJudgePass(t.Context(), factory, cfg, q, "approved", act, nil, nil, func(*genai.Part) bool { return true }); err != nil {
-		t.Fatalf("runJudgePass: %v", err)
+	if _, err := runJudgeAgent(t.Context(), factory, cfg, q, "approved", act, nil, nil, func(*genai.Part) bool { return true }); err != nil {
+		t.Fatalf("runJudgeAgent: %v", err)
 	}
 	if !strings.Contains(first, "QUACK-FETCHED SOURCE EXCERPTS") || !strings.Contains(first, ">     1  package x") {
 		t.Fatalf("judge input lacks the excerpt:\n%s", first)
