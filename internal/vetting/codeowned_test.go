@@ -18,7 +18,7 @@ func TestCodeOwnedCriteriaMatchesCodeOwnedCriterion(t *testing.T) {
 		}
 	}
 	for _, n := range names {
-		if n == specificsCitedCriterion || n == specificsSupportedCriterion || n == weatherCheckedCriterion {
+		if n == specificsCitedCriterion || n == specificsSupportedCriterion {
 			continue // owned only once a rubric declares it
 		}
 		if !codeOwnedCriterion(n, nil) {

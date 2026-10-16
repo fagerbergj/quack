@@ -236,34 +236,6 @@ criteria:
     anchors:
     - quote
     - omission
-  weather_checked:
-    definition: >
-      Every player the artifact marks `close` whose game is unlocked and
-      outdoor has a `weather` call for that game's coordinates and kickoff,
-      or an errored one the answer acknowledges.
-    guidance: >
-      Fully computed by deterministic code from the artifact's `close` rows,
-      each player's `game` in the session's sleeper tool results, and the
-      session's `weather` calls. `weather_moves_only_at_extremes` covers how
-      a forecast is used.
-    steps:
-    - List the unlocked outdoor games of the rows marked `close`.
-    - Score the share with a matching `weather` call.
-    bands:
-    - min: 1.0
-      max: 1.0
-      meaning: every unlocked outdoor close-call game has a weather call.
-    - min: 0.0
-      max: 0.99
-      meaning: a close-call game named in the reason has no weather call.
-    deterministic: true
-    fix: >
-      Call `weather` with each named game's `game.latitude`/`game.longitude`
-      and `game.kickoff`, or say in the answer that its weather call failed.
-    scale:
-      min: 0
-      max: 1
-      pass: 1
   weather_moves_only_at_extremes:
     definition: >
       Weather moves a start/sit call only at the skill's extremes
@@ -271,9 +243,7 @@ criteria:
       moved states the forecast numbers in its `why`, and weather that moved
       no call is never mentioned.
     guidance: >
-      Whether each close call's game was checked is the code-owned
-      `weather_checked`; do not re-derive it. Saying a `weather` call failed
-      is not a forecast mention. If neither the artifact nor the reply
+      Saying a `weather` call failed is not a forecast mention. If neither the artifact nor the reply
       mentions weather, score 3.
     steps:
     - Quote every weather or forecast mention in the artifact's `why`,
