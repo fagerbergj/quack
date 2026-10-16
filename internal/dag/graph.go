@@ -176,7 +176,7 @@ func nodeGateConfig(ctx context.Context, plan Plan, node Node, worker adkagent.A
 	cfg.ForeignNodes = foreignNodes(plan, node.ID)
 	cfg.Agent = node.AgentName
 	cfg.AllowedDeliveryKinds = plan.AllowedDeliveryKinds
-	cfg.IsReviewer = node.AgentName == reviewerAgent
+	cfg.IsReviewer = IsReviewerAgent(node.AgentName)
 	// >1 reviewer node: review delivery is run-scoped (vetting.ReviewFanout). A single synthesizer node
 	// owns the consolidated review: reviewers stage into the fan-in and its answer becomes the review body.
 	if n := reviewerNodeCount(plan); n > 1 {

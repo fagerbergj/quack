@@ -239,23 +239,26 @@ func stageReviewHandler(review *vetting.ReviewStage) mcp.ToolHandlerFor[stageRev
 }
 
 // ReplayReviewCall applies one recorded review-tool call to review through the live handler, which refuses
-// it as it would live; other tool names and undecodable args are ignored. Schema checks already ran live.
-func ReplayReviewCall(review *vetting.ReviewStage, name, args string) {
+// it as it would live; other tool names are ignored. false: the args did not decode and the call was dropped.
+func ReplayReviewCall(review *vetting.ReviewStage, name, args string) bool {
 	switch name {
 	case toolStageReviewComment:
-		replayCall(args, stageReviewCommentHandler(review))
+		return replayCall(args, stageReviewCommentHandler(review))
 	case toolUnstageReviewComment:
-		replayCall(args, unstageReviewCommentHandler(review))
+		return replayCall(args, unstageReviewCommentHandler(review))
 	case toolStageReview:
-		replayCall(args, stageReviewHandler(review))
+		return replayCall(args, stageReviewHandler(review))
 	}
+	return true
 }
 
-func replayCall[In any](args string, h mcp.ToolHandlerFor[In, any]) {
+func replayCall[In any](args string, h mcp.ToolHandlerFor[In, any]) bool {
 	var in In
-	if json.Unmarshal([]byte(args), &in) == nil {
-		_, _, _ = h(context.Background(), nil, in)
+	if json.Unmarshal([]byte(args), &in) != nil {
+		return false
 	}
+	_, _, _ = h(context.Background(), nil, in)
+	return true
 }
 
 // checkStageReview reports every problem with one stage_review call, so one retry fixes them all.

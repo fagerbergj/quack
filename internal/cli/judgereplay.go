@@ -21,6 +21,7 @@ import (
 
 	"github.com/fagerbergj/quack/internal/acp"
 	"github.com/fagerbergj/quack/internal/config"
+	"github.com/fagerbergj/quack/internal/dag"
 	"github.com/fagerbergj/quack/internal/ledger/bundle"
 	"github.com/fagerbergj/quack/internal/tools"
 	"github.com/fagerbergj/quack/internal/vetting"
@@ -37,7 +38,7 @@ type ReplayOptions struct {
 	Pages             vetting.PageLoader // stored web pages for the shadow locate tier; nil skips it
 	Verifier          *vetting.Verifier  // the shadow verify tier over located specifics; nil skips it
 	ReportPath        string             // also write the JSON report here; "" = stdout only
-	Clone             string             // ResolveReplayClone'd checkout of the reviewed head, for every round; "" = none
+	Clone             string             // ResolveReplayClone'd checkout of the reviewed head, for reviewer rounds only; "" = none
 }
 
 // ReplayReport is `quack judge replay --json`'s whole output: sorted, rounded and timestamp-free so two
@@ -104,6 +105,9 @@ type ReplayRoundReport struct {
 	ArtifactsWritten []string `json:"artifacts_written,omitempty"`
 	// Units: the shadow locate tier's rows, one per specific; only with stored page access.
 	Units []UnitRow `json:"units,omitempty"`
+	// DroppedReviewCalls: recorded review MCP calls whose args did not decode (e.g. cut at the 8KB attr cap),
+	// so the replayed stage may lack what live staged.
+	DroppedReviewCalls int `json:"dropped_review_calls,omitempty"`
 	// Spread: the whole round's pass/fail (every criterion at or above threshold) across --repeat passes.
 	Spread *ReplaySpread `json:"spread,omitempty"`
 }
@@ -256,18 +260,29 @@ func activityTurnsBefore(sess *bundle.Session, judgeAt time.Time, node string) [
 }
 
 // reviewStageBefore replays node's review MCP calls at or before judgeAt through the live handlers; a call the
-// recording marks failed was refused live and is skipped.
-func reviewStageBefore(sess *bundle.Session, node string, judgeAt time.Time) *vetting.ReviewStage {
-	stage := vetting.NewReviewStage(nil)
+// recording marks failed was refused live and is skipped. dropped counts calls whose args did not decode.
+func reviewStageBefore(sess *bundle.Session, node string, judgeAt time.Time) (stage *vetting.ReviewStage, dropped int) {
+	stage = vetting.NewReviewStage(nil)
 	for _, c := range sess.ToolCalls(node) {
 		if c.At.After(judgeAt) {
 			break
 		}
-		if c.Error == "" {
-			acp.ReplayReviewCall(stage, c.Name, c.Args)
+		if c.Error == "" && !acp.ReplayReviewCall(stage, c.Name, c.Args) {
+			dropped++
 		}
 	}
-	return stage
+	return stage, dropped
+}
+
+// reviewerNodes counts the recording's reviewer nodes; live gives more than one a fan-out (nodeGateConfig).
+func reviewerNodes(sess *bundle.Session) int {
+	seen := map[string]bool{}
+	for _, k := range sess.Streams() {
+		if dag.IsReviewerAgent(k.Agent) {
+			seen[k.Node] = true
+		}
+	}
+	return len(seen)
 }
 
 // workerTurnsFor rebuilds jr's gate inputs: the node's earliest-round task,
@@ -317,6 +332,7 @@ func rubricConfigFor(ctx context.Context, cfg *config.Config, agentName, rubricO
 	base.Rubric = rr.Rendered
 	base.RubricSpecs, base.RubricFixes, base.RubricPassMarks = rr.Specs, rr.Fixes, rr.PassMarks
 	base.ReadOnly, base.RequireRetrieval = vetting.AgentToolPolicy(ac.Tools, ac.Acp)
+	base.ExternalWorker, base.IsReviewer = ac.Acp != nil, dag.IsReviewerAgent(agentName) // as perAgentGateCfg and nodeGateConfig
 	base.JudgeArtifactTools = judgeArtifactTools
 	return base, nil
 }
@@ -481,9 +497,13 @@ func replayOneRound(ctx context.Context, cfg *config.Config, sess *bundle.Sessio
 		}
 		cfgCache[jr.agent] = gc
 	}
-	gc.CloneDir = opts.Clone
+	if gc.IsReviewer {
+		gc.CloneDir = opts.Clone // only a reviewer's live judge saw a diff it did not produce
+	}
 	rc := vetting.ReplayCase{NodeID: jr.node, Task: task, Answer: answer, WorkerTurns: turns, NodeTurns: activityTurnsBefore(sess, jr.at, jr.node),
-		Pages: opts.Pages, Verifier: opts.Verifier, Review: reviewStageBefore(sess, jr.node, jr.at)}
+		Pages: opts.Pages, Verifier: opts.Verifier}
+	rc.Review, rep.DroppedReviewCalls = reviewStageBefore(sess, jr.node, jr.at)
+	rc.ReviewFanout = reviewerNodes(sess) > 1
 
 	jf := judge
 	if opts.DeterministicOnly {
@@ -721,6 +741,9 @@ func renderReplayReports(out io.Writer, report ReplayReport) {
 		}
 		if r.Note != "" {
 			fmt.Fprintf(out, "  note: %s\n", r.Note)
+		}
+		if r.DroppedReviewCalls > 0 {
+			fmt.Fprintf(out, "  dropped: %d recorded review call(s) with undecodable args; the replayed stage may diverge from live's\n", r.DroppedReviewCalls)
 		}
 		renderUnits(out, r.Units)
 		for _, c := range r.Criteria {
