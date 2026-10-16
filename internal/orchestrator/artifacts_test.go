@@ -117,7 +117,7 @@ func TestFailSoftListArtifacts_LoadBounded(t *testing.T) {
 	}
 }
 
-// A not-found Load must not error either, for the same errgroup reason.
+// A not-found Load must not error either, so one missing artifact can't fail the turn.
 func TestFailSoftListArtifacts_LoadMissingDegradesToText(t *testing.T) {
 	ctx := context.Background()
 	wrapped := failSoftListArtifacts{artifact.InMemoryService()}
