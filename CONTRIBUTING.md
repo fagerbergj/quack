@@ -30,7 +30,6 @@ Run what CI enforces (see AGENTS.md for the full never/always list):
 
 ```bash
 make test
-npm --prefix scripts ci       # first, or mermaid validation coverage skips
 make vet && make fmt
 cd frontend && npm test && npx tsc --noEmit && npx eslint src/
 ```

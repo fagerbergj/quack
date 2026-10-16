@@ -1,4 +1,4 @@
-// Deterministic checks on the answer's shape, folded in like mermaidCriterion: a judge scoring content
+// Deterministic checks on the answer's shape, folded in like the other deterministic criteria: a judge scoring content
 // never notices that the text isn't even a well-formed answer.
 package vetting
 
@@ -26,8 +26,7 @@ func toolCallSyntaxCriterion(answer string, act workerActivity) (criterionScore,
 	return criterionScore{}, false
 }
 
-// deliveryTexts: the answer plus every staged delivery body about to ship, the set mermaidCriterion
-// also scans.
+// deliveryTexts: the answer plus every staged delivery body about to ship, the set the shape checks scan.
 func deliveryTexts(answer string, act workerActivity) []string {
 	texts := make([]string, 0, len(act.stagedDelivery)+1)
 	texts = append(texts, answer)

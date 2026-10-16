@@ -12,18 +12,6 @@ RUN --mount=type=cache,target=/root/.npm npm ci
 COPY --exclude=**/*.test.ts --exclude=**/*.test.tsx --exclude=**/*.stories.tsx frontend/ ./
 RUN npm run build
 
-# 1b) Mermaid validator deps (#574): mermaid.parse() run for real, not the Go
-# reimplementation it replaces (internal/vetting/mermaid.go). npm install
-# only - no bundler - the image already carries the Go toolchain, node, and
-# pi, so ~180MB of node_modules here is not a meaningful addition.
-FROM node:24-bookworm-slim AS mermaid-validator
-WORKDIR /app/scripts
-COPY scripts/package.json scripts/package-lock.json ./
-# Source maps only feed stack-trace rewriting; dropping them saves ~70MB.
-RUN --mount=type=cache,target=/root/.npm npm ci --omit=dev \
-    && find node_modules -type f -name '*.map' -delete
-COPY scripts/mermaid-validate.mjs ./
-
 # 2) Build the Go server with the SPA embedded.
 # bookworm (glibc), NOT alpine (musl) - same reason as the frontend stage: the
 # runtime copies /usr/local/go from here and must be able to execute it.
@@ -156,10 +144,6 @@ COPY --link --from=pi /opt/pi/node_modules /usr/local/lib/pi/node_modules
 COPY --link tools/pi-acp/pi-acp.mjs tools/pi-acp/mcp-client.mjs tools/pi-acp/otel.mjs /usr/local/lib/pi-acp/
 # The shim's PI_ACP_ENGINE=pig default; under /usr so the jail sees it.
 COPY --link --from=piglet /pig-quack /usr/local/bin/pig-quack
-# The mermaid validator (internal/vetting/mermaid.go, #574): `node
-# scripts/mermaid-validate.mjs` resolves against CWD / here, exactly like
-# every path below - same relative path the source tree uses in dev.
-COPY --link --from=mermaid-validator /app/scripts /scripts
 # The config directory: quack.yaml plus files it references by relative path
 # (CWD is /), e.g. the trust gate's rubric at config/constitution.md.
 COPY --link config/ /config/

@@ -122,7 +122,7 @@ agents:
     model: ${QUACK_RESEARCHER_MODEL}
     context_window: 131072
     judge_rounds: 1
-    tools: [web_fetch, grep_artifacts, check_mermaid, render_ui]
+    tools: [web_fetch, grep_artifacts, render_ui]
   synthesizer:
     bundle: agents/synthesizer
     skills: [format-markdown, present-coding-plan]

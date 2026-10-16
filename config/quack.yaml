@@ -205,7 +205,7 @@ agents:
     judge_rounds: 1             # a failed round re-renders the same surface_id; one revision is enough
     # web_fetch reads the PR from api.github.com and the .diff URL (public repos only);
     # read_artifact comes with every native node, for windows of a long stored diff.
-    tools: [web_fetch, grep_artifacts, check_mermaid, render_ui]
+    tools: [web_fetch, grep_artifacts, render_ui]
   synthesizer:
     bundle: agents/synthesizer
     # pr-authoring: when a run's answer IS a PR body (run-level synthesis of the atomic
@@ -216,7 +216,7 @@ agents:
     context_window: 131072      # 6-node synthesis measured 47,341 prompt tokens (~7.9k/upstream node); 65536 was too tight for a 10-node plan
     judge_rounds: 1             # just combines already-vetted upstream node outputs; re-revising is low value
     # write_code_review: a review fan-out's merged verdict prefers the synthesizer's own record.
-    tools: [check_mermaid, write_code_review]
+    tools: [write_code_review]
   media-reader:
     bundle: agents/media-reader
     skills: [format-markdown]

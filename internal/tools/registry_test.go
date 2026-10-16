@@ -52,8 +52,8 @@ func TestResolveNames(t *testing.T) {
 		},
 		{
 			name:       "native artifact tools are per-dispatch, not registry builds",
-			configured: []string{"read_artifact", "write_artifact", "check_mermaid"},
-			wantNames:  []string{"check_mermaid"},
+			configured: []string{"read_artifact", "write_artifact", "web_search"},
+			wantNames:  []string{"web_search"},
 		},
 		{
 			// Extension tool names aren't special-cased: they resolve later in tools.Build against

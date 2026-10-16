@@ -39,7 +39,7 @@ The reader wants layers and areas of responsibility, not a bag of boxes. A `Diag
 - `detail` is 1-3 sentences of markdown on every node, edge and layer description: what it does, what the PR changed, naming the file and function from a hunk you read. A reader who clicks it should learn something the label does not say.
 - Ids are unique across layers, nodes and edges together. `direction` defaults to TB, which stacks layers top to bottom.
 
-If the user later asks for a sequence diagram or another mermaid kind, replace the `flow` component with a `Mermaid` one under the same id and check it with `check_mermaid` first.
+If the user later asks for a sequence diagram or another mermaid kind, replace the `flow` component with a `Mermaid` one under the same id.
 
 ## The Risk tab
 
@@ -105,7 +105,7 @@ A result starting `VALIDATION_FAILED:` names the first problem: fix it and call 
 
 ## Updating a surface you rendered
 
-A later task may ask for one change to a surface you rendered (a redrawn diagram, another file, a corrected risk row, more questions). Make exactly that change and nothing else: call `render_ui` with the same `surface_id` and only the components the change adds or alters; they replace existing ones by id, and new ids are appended. Nothing is ever deleted: a new component must be listed in its parent's children in the same call (send that parent too), and an id once shown must stay in its parent's children. Send no `data_model` or `answer_key` unless the change adds questions. Check a changed Mermaid diagram with `check_mermaid` first; a changed Diagram needs no check, since `render_ui` validates it.
+A later task may ask for one change to a surface you rendered (a redrawn diagram, another file, a corrected risk row, more questions). Make exactly that change and nothing else: call `render_ui` with the same `surface_id` and only the components the change adds or alters; they replace existing ones by id, and new ids are appended. Nothing is ever deleted: a new component must be listed in its parent's children in the same call (send that parent too), and an id once shown must stay in its parent's children. Send no `data_model` or `answer_key` unless the change adds questions. `render_ui` validates the changed component.
 
 A question is graded once the surface holds its `qN_result` Text or the submit label reads "Score: ...". Never change a graded question, its options, its result or the score. When the task asks for new or harder questions after grading, either add new ids after the last one (q5, q6, ...): their ChoicePickers, the quiz Column with them inserted before the submit Button, `data_model` lists for every question, and `answer_key` entries for the new ids; or, when the task asks to retake the quiz, reset it in one call under the same ids: new ChoicePicker content for q1..qN, each `qN_result` Text set to an empty string (it stays in the Column), the submit label back to "Check my answers", and the full `data_model` and `answer_key`.
 

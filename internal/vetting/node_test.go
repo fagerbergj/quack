@@ -397,23 +397,13 @@ func TestRunGatedRefine_StampsJudgeModelWithRoundCoords(t *testing.T) {
 // overall and never touches the judge's own criteria scores.
 func TestMergeDeterministic_WeakestLinkUnchanged(t *testing.T) {
 	v := verdict{Criteria: map[string]criterionScore{"accuracy": {Score: 0.95}, "clarity": {Score: 0.9}}, Score: 0.9}
-	det := map[string]criterionScore{"mermaid_valid": {Score: 0, Reason: "deterministic: invalid mermaid diagram at line 12: parse error"}}
+	det := map[string]criterionScore{"no_tool_call_syntax": {Score: 0, Reason: "deterministic: leaked tool-call fragment"}}
 	got := mergeDeterministic(v, det, Config{})
 	if got.Score != 0 {
 		t.Fatalf("score = %v, want 0 (weakest-link on the deterministic failure)", got.Score)
 	}
 	if got.Criteria["accuracy"].Score != 0.95 || got.Criteria["clarity"].Score != 0.9 {
 		t.Errorf("judge criteria altered by the merge: %+v", got.Criteria)
-	}
-}
-
-// The fix text for a mermaid_valid failure must point at check_mermaid: models follow an
-// instruction in the error they're reacting to far more reliably than an upfront prompt nudge.
-func TestMergeDeterministic_MermaidFixMentionsCheckTool(t *testing.T) {
-	det := map[string]criterionScore{"mermaid_valid": {Score: 0, Reason: "deterministic: invalid mermaid diagram at line 12: parse error"}}
-	got := mergeDeterministic(verdict{}, det, Config{})
-	if !strings.Contains(got.Criteria["mermaid_valid"].Fix, "check_mermaid") {
-		t.Fatalf("mermaid_valid Fix = %q, want it to mention check_mermaid", got.Criteria["mermaid_valid"].Fix)
 	}
 }
 
