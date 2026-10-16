@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { collapsedActivity, failedToolCount, showLiveSpinner, startRun, appendRunToolCall, fillRunToolResult, appendRunCompaction, type AgentRun } from './messageParts'
+import { failedToolCount, showLiveSpinner, startRun, appendRunToolCall, fillRunToolResult, appendRunCompaction, type AgentRun } from './messageParts'
 
 describe('showLiveSpinner', () => {
   it('shows dots while streaming before anything visible arrives', () => {
@@ -82,16 +82,5 @@ describe('failedToolCount', () => {
       tool('c', false),
       { kind: 'thinking', text: 'error' },
     ])).toBe(1)
-  })
-})
-
-describe('collapsedActivity', () => {
-  const tool = (callId: string, result: unknown) => ({ kind: 'tool' as const, tool: { callId, name: 'bash', args: {}, result, done: true } })
-  it('keeps an earlier failed call visible alongside the recent tail', () => {
-    const activity = [tool('a', { ok: 1 }), tool('b', { error: 'rg: not found' }), tool('c', { ok: 1 }), tool('d', { ok: 1 }), tool('e', { ok: 1 })]
-    expect(collapsedActivity(activity, 2)).toEqual({ shown: [1, 3, 4], hidden: 2 })
-  })
-  it('hides nothing when the list fits', () => {
-    expect(collapsedActivity([tool('a', { error: 'x' })], 3)).toEqual({ shown: [0], hidden: 0 })
   })
 })

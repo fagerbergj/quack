@@ -9,7 +9,7 @@ import type { ComponentPropsWithoutRef } from 'react'
 import type { Element } from 'hast'
 import type { Activity, ToolCall } from './messageParts'
 import { Icon } from './Icon'
-import { agentLabel, collapsedActivity, liveStatusLine } from './messageParts'
+import { agentLabel, liveStatusLine } from './messageParts'
 import { previewLine, toolFailed, toolActionLine, fmtTokenCount } from './toolFormat'
 import { escapeUnmatchedBackticks } from '../lib/backticks'
 import { Expandable } from './Expandable'
@@ -211,8 +211,8 @@ export function BubbleHeader({ agent, model, tokens, status, stopped, unverified
 // Keys index into the append-only list so streaming reconciliation stays stable.
 export function ActivityList({ activity }: { activity: Activity[] }) {
   const [showAll, setShowAll] = useState(false)
-  const { shown, hidden } = collapsedActivity(activity, RECENT)
-  const indexes = showAll ? activity.map((_, i) => i) : shown
+  const hidden = Math.max(0, activity.length - RECENT)
+  const start = showAll ? 0 : hidden
   return (
     <>
       {hidden > 0 && (
@@ -223,12 +223,11 @@ export function ActivityList({ activity }: { activity: Activity[] }) {
           {showAll ? '▾ show less' : `⋯ ${hidden} earlier`}
         </button>
       )}
-      {indexes.map(i => {
-        const a = activity[i]
+      {activity.slice(start).map((a, i) => {
         switch (a.kind) {
-          case 'thinking': return <ThinkBlock key={i} text={a.text} />
-          case 'compaction': return <CompactionBlock key={i} {...a} />
-          default: return <ToolBlock key={i} tool={a.tool} />
+          case 'thinking': return <ThinkBlock key={start + i} text={a.text} />
+          case 'compaction': return <CompactionBlock key={start + i} {...a} />
+          default: return <ToolBlock key={start + i} tool={a.tool} />
         }
       })}
     </>
