@@ -344,10 +344,8 @@ func NodeCancelled(nodeID string) SSEEvent {
 // steer, so the A2A client keeps that session instead of opening a fresh one for the new branch.
 const SteerRunPrefix = "worker-steer"
 
-// GatePromptAuthor authors the gate's worker-prompt events; the A2A client starts a worker's message at the
-// latest one, which carries the whole task.
-// Not "user" (that would split a chat turn and confuse the runner's turn detection), nor an agent's name
-// (remoteagent shows foreign authors as user messages).
+// GatePromptAuthor authors the gate's worker-prompt events, where the A2A client starts a worker's message. Not
+// "user" (that splits a chat turn) nor an agent's name (remoteagent shows foreign authors as user messages).
 const GatePromptAuthor = "quack-gate"
 
 // NodeSteeredData: queued messages were delivered and the node carries on with them; a fresh run follows.
