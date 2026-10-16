@@ -22,6 +22,7 @@ A run whose node the user pauses ends with `sdk.RunPaused`, which is not final: 
 
 ```text
 sdk/         github.com/fagerbergj/quack/extensions/sdk (own module) - the Extension API
+android/     agent tools that drive an Android emulator over the adb host protocol
 browser/     agent tools that drive a Chromium over CDP
 github/      GitHub App integration and its code-agent plugin
 noop/        proves the loop end to end (quack's e2e test fixture)
