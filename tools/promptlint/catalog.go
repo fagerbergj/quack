@@ -20,8 +20,6 @@ import (
 	"github.com/fagerbergj/quack/internal/tools"
 	"github.com/fagerbergj/quack/internal/workspace"
 
-	_ "github.com/fagerbergj/quack/extensions/android"
-	_ "github.com/fagerbergj/quack/extensions/browser"
 	_ "github.com/fagerbergj/quack/extensions/noop"
 	_ "github.com/fagerbergj/quack/extensions/remarkable"
 	_ "github.com/fagerbergj/quack/extensions/sleeper"
@@ -43,8 +41,6 @@ const skillToolset = "skilltoolset"
 // github, whose factory parses a real private key.
 var (
 	extConfigs = map[string]string{
-		"android":    "adb_addr: stub:5037\n",
-		"browser":    "cdp_url: ws://stub\n",
 		"remarkable": "base_url: http://stub\nemail: a\npassword: b\n",
 		"usage":      "prometheus_url: http://stub\n",
 	}

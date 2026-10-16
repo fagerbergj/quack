@@ -238,12 +238,10 @@ func TestExtDecidePassesOptionsAndImages(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"answers": map[string]any{"element": map[string]any{"probabilities": map[string]float64{"[1] link": 0.05, "[2] button": 0.95}}}})
 	}))
 	defer srv.Close()
-	ext, err := extsdk.Registered()["browser"](extsdk.Host{}, []byte("cdp_url: ws://127.0.0.1:1"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	elementChoose := extsdk.DecisionPoint{Name: "element.choose", Primary: "element",
+		Questions: map[string]extsdk.DecisionQuestion{"element": {Type: "choice", Instructions: "which element next?"}}}
 	x := &extDecisions{}
-	if err := x.declare("browser", ext); err != nil {
+	if err := x.declare("picker", declaringExt{points: []extsdk.DecisionPoint{elementChoose}}); err != nil {
 		t.Fatal(err)
 	}
 	fixedChoice := extsdk.DecisionPoint{Name: "label", Primary: "kind",
@@ -252,13 +250,13 @@ func TestExtDecidePassesOptionsAndImages(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := x.build(decisionsCfg(srv.URL, map[string]config.DecisionPoint{
-		"ext:browser/element.choose": {Enabled: true, Mode: "observe"}, "ext:github/intent": {Enabled: true, Mode: "observe"},
+		"ext:picker/element.choose": {Enabled: true, Mode: "observe"}, "ext:github/intent": {Enabled: true, Mode: "observe"},
 		"ext:github/label": {Enabled: true, Mode: "observe"},
 	})); err != nil {
 		t.Fatal(err)
 	}
 	ctx := ledger.WithCoords(context.Background(), ledger.Coords{ChatID: "chat-1"})
-	d, err := x.host("browser")(ctx, extsdk.DecideRequest{Point: "element.choose", State: map[string]string{"goal": "sign in"},
+	d, err := x.host("picker")(ctx, extsdk.DecideRequest{Point: "element.choose", State: map[string]string{"goal": "sign in"},
 		Options: []string{"[1] link", "[2] button"}, Images: []string{"data:image/jpeg;base64,AAAA"}})
 	if err != nil || d.Top != "[2] button" || !d.Confident || d.Act {
 		t.Fatalf("decision = %+v %v, want a confident observe-only [2] button", d, err)
