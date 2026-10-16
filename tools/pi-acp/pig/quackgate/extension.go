@@ -210,6 +210,23 @@ func (m *mcpClient) call(name string, params map[string]any) (any, error) {
 	return sdk.ToolResult{Content: txt.String(), IsError: isErr}, nil
 }
 
+// toolCallHandler is the tool_call verdict; a nil cfg refuses every call.
+func toolCallHandler(cfg *bridgeCfg) sdk.EventFunc {
+	if cfg == nil {
+		return func(sdk.Context, map[string]any) (any, error) {
+			return map[string]any{"block": true, "reason": "quackgate has no config: tool calls are refused"}, nil
+		}
+	}
+	return func(_ sdk.Context, data map[string]any) (any, error) {
+		name, _ := data["toolName"].(string)
+		input, _ := data["input"].(map[string]any)
+		if v := gate(cfg, name, input); v != nil {
+			return v, nil
+		}
+		return nil, nil
+	}
+}
+
 // Extension is the factory pig-quack fuses in. Without a valid config it blocks every tool call and never
 // reports ready, so the shim refuses the session too.
 func Extension() *sdk.Extension {
@@ -217,19 +234,11 @@ func Extension() *sdk.Extension {
 	cfg, err := loadCfg(os.Getenv("PIG_CODING_AGENT_DIR"))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "quackgate: no usable quackmcp.json, blocking every tool call:", err)
-		e.OnEvent(sdk.EventToolCall, func(sdk.Context, map[string]any) (any, error) {
-			return map[string]any{"block": true, "reason": "quackgate has no config: tool calls are refused"}, nil
-		})
+	}
+	e.OnEvent(sdk.EventToolCall, toolCallHandler(cfg))
+	if cfg == nil {
 		return e
 	}
-	e.OnEvent(sdk.EventToolCall, func(_ sdk.Context, data map[string]any) (any, error) {
-		name, _ := data["toolName"].(string)
-		input, _ := data["input"].(map[string]any)
-		if v := gate(cfg, name, input); v != nil {
-			return v, nil
-		}
-		return nil, nil
-	})
 	// session_start, not the factory: the ping then proves the engine dispatches events to this extension.
 	e.OnEvent(sdk.EventSessionStart, func(sdk.Context, map[string]any) (any, error) {
 		reportReady(cfg)

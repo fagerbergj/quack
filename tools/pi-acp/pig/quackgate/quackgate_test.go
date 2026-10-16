@@ -14,37 +14,51 @@ import (
 )
 
 func TestCheckPolicy(t *testing.T) {
+	bash := func(cmd string) map[string]any { return map[string]any{"command": cmd} }
+	path := func(p string) map[string]any { return map[string]any{"path": p} }
 	for _, tc := range []struct {
-		tool, arg  string
+		tool       string
+		input      map[string]any
 		allowClone bool
 		block, ask bool
 	}{
-		{"bash", "git push origin main", true, true, false},
-		{"bash", "git push", false, true, false},
-		{"bash", "\u00a0git push\u3000origin", false, true, false},
-		{"bash", "git push\ufefforigin", false, true, false},
-		{"bash", "git pushy", false, false, false},
-		{"bash", "git -C . push", false, false, false},
-		{"bash", "git clone https://x/y", false, true, false},
-		{"bash", "git clone https://x/y", true, false, false},
-		{"bash", "gh repo clone x/y", false, true, false},
-		{"bash", "gh repo clone x/y", true, false, false},
-		{"bash", "git cloned", false, false, false},
-		{"bash", "git status", false, false, false},
-		{"edit", "git push", false, false, false},
-		{"read", "app/.env", false, false, true},
-		{"read", "app/.env.prod", false, false, true},
-		{"read", ".environment", false, false, false},
-		{"read", "app/.envrc", false, false, false},
-		{"write", ".env", false, false, false},
+		{"bash", bash("git push origin main"), true, true, false},
+		{"bash", bash("git push"), false, true, false},
+		{"bash", bash("  git push origin"), false, true, false},
+		{"bash", bash("git push\torigin"), false, true, false},
+		{"bash", bash("git push\vorigin"), false, true, false},
+		{"bash", bash("\u00a0git push\u3000origin"), false, true, false},
+		{"bash", bash("git push\ufefforigin"), false, true, false},
+		{"bash", bash("\ufeffgit push"), false, true, false},
+		// NEL is not JavaScript whitespace, so it does not separate the command.
+		{"bash", bash("git push\u0085origin"), false, false, false},
+		{"bash", bash("git pushy"), false, false, false},
+		// The deny matches a leading command only: these get past it by design.
+		{"bash", bash("git -C . push"), false, false, false},
+		{"bash", bash("cd x && git push"), false, false, false},
+		{"bash", bash("echo git push"), false, false, false},
+		{"bash", bash("git clone https://x/y"), false, true, false},
+		{"bash", bash("git clone https://x/y"), true, false, false},
+		{"bash", bash("gh repo clone x/y"), false, true, false},
+		{"bash", bash("gh repo clone x/y"), true, false, false},
+		{"bash", bash("git cloned"), false, false, false},
+		{"bash", bash(""), false, false, false},
+		{"bash", map[string]any{}, false, false, false},
+		{"edit", bash("git push"), false, false, false},
+		{"read", path(".env"), false, false, true},
+		{"read", path("app/.env"), false, false, true},
+		{"read", path("app/.env.prod"), false, false, true},
+		{"read", path("/abs/x.env"), false, false, true},
+		{"read", path("a.env.b.c"), false, false, true},
+		{"read", path(".env/x"), false, false, false},
+		{"read", path(".environment"), false, false, false},
+		{"read", path("app/.envrc"), false, false, false},
+		{"read", path(""), false, false, false},
+		{"write", path(".env"), false, false, false},
 	} {
-		key := map[string]string{"bash": "command", "edit": "command"}[tc.tool]
-		if key == "" {
-			key = "path"
-		}
-		block, ask := checkPolicy(tc.tool, map[string]any{key: tc.arg}, tc.allowClone)
+		block, ask := checkPolicy(tc.tool, tc.input, tc.allowClone)
 		if (block != "") != tc.block || (ask != "") != tc.ask {
-			t.Errorf("%s %q allowClone=%v: block=%q ask=%q", tc.tool, tc.arg, tc.allowClone, block, ask)
+			t.Errorf("%s %q allowClone=%v: block=%q ask=%q", tc.tool, tc.input, tc.allowClone, block, ask)
 		}
 	}
 }
@@ -105,6 +119,10 @@ func TestLoadCfgFailsClosed(t *testing.T) {
 		if Extension().Name() != "quackgate" {
 			t.Error("factory name")
 		}
+	}
+	v, _ := toolCallHandler(nil)(sdk.Context{}, map[string]any{"toolName": "read", "input": map[string]any{"path": "main.go"}})
+	if v.(map[string]any)["block"] != true {
+		t.Errorf("unconfigured gate allowed a plain read: %v", v)
 	}
 }
 
