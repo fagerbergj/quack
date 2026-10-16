@@ -155,3 +155,37 @@ func TestRunPlanAsGraph_LedgerCoordsReachModelAndTool(t *testing.T) {
 		t.Errorf("execute_tool gen_ai.agent.name = %q, want %q", got, "w")
 	}
 }
+
+// lcStampedAgent stands in for an ACP worker: it takes coords via SetLedgerCoords instead of a model.
+type lcStampedAgent struct {
+	adkagent.Agent
+	got *ledger.Coords
+}
+
+func (a lcStampedAgent) SetLedgerCoords(c ledger.Coords) { *a.got = c }
+
+// The worker itself is stamped with the node's agent, user and source, not the round-abort wrapper
+// around it, which has no SetLedgerCoords and dropped the stamp.
+func TestRunPlanAsGraph_StampsTheUnwrappedWorker(t *testing.T) {
+	m := inference.TracedModelForTesting(dateToolLLM("noted"), "stamp-model")
+	inner, err := llmagent.New(llmagent.Config{Name: "w", Model: m, Description: "w", Instruction: "ROLE:w Answer."})
+	if err != nil {
+		t.Fatalf("llmagent.New: %v", err)
+	}
+	var got ledger.Coords
+	ex := dag.NewExecutor(session.InMemoryService(),
+		map[string]adkagent.Agent{"w": lcStampedAgent{Agent: inner, got: &got}},
+		map[string]model.LLM{"w": m},
+		vetting.NewJudgeFactory(m, nil, nil),
+		func(context.Context, string) vetting.Config { return vetting.Config{Threshold: 0.6, JudgeRounds: 1} },
+		nil)
+	plan := dag.Plan{ID: "t", UserMessage: "hi", Nodes: []dag.Node{{ID: "n1", AgentName: "w", Task: "answer"}}}
+	ctx := stream.WithYield(context.Background(), func(stream.SSEEvent) {})
+	content := &genai.Content{Role: "user", Parts: []*genai.Part{{Text: plan.UserMessage}}}
+	if _, err := ex.RunPlanAsGraph(ctx, plan, "quack", "u", "stamp-chat", content, func(stream.SSEEvent, error) bool { return true }, map[string]string{}, nil); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if got.Agent != "w" || got.Node != "n1" || got.User != "u" {
+		t.Errorf("worker stamped %+v, want agent w, node n1, user u", got)
+	}
+}

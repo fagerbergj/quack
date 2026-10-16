@@ -86,15 +86,15 @@ func (e *Executor) buildGateNodes(ctx context.Context, plan Plan, chatID, userID
 			// node's model calls (tool phases overlap).
 			perCall = true
 		}
-		worker, err := withRoundAbort(worker, controls, chatID, node.ID, vetting.AdvisorThreadToken(plan.ID, node.ID))
+		wrapped, err := withRoundAbort(worker, controls, chatID, node.ID, vetting.AdvisorThreadToken(plan.ID, node.ID))
 		if err != nil {
 			return nil, fmt.Errorf("dag: node %q: round-abort wrap: %w", node.ID, err)
 		}
-		workerNode, err := vetting.NewWorkerNode(worker)
+		workerNode, err := vetting.NewWorkerNode(wrapped)
 		if err != nil {
 			return nil, err
 		}
-		cfg := nodeGateConfig(ctx, plan, node, worker, roster.CfgFor, chatID, source)
+		cfg := nodeGateConfig(ctx, plan, node, wrapped, roster.CfgFor, chatID, source)
 		cfg.Artifacts = artifacts
 		// buildTask's dependency-artifact lookup scopes recordstore reads by this.
 		cfg.User = userID
@@ -109,6 +109,7 @@ func (e *Executor) buildGateNodes(ctx context.Context, plan Plan, chatID, userID
 		cfg.RoundCoordsSink = setRoundCoords
 		cfg.RefreshPrompt = refreshPrompt
 		cfg.JudgeArtifactTools = judgeArtifactTools
+		// The unwrapped worker: withRoundAbort's wrapper has no SetLedgerCoords, so a stamp on it is dropped.
 		nodesByID[node.ID] = newGatedNode(plan, node, workerNode, workerModel, worker, stamps, e.judge, cfg, roster.Media, controls, chatID, recordGate, release, e.admission, spec, e.judgeSpec, refreshSetup, perCall)
 	}
 	return nodesByID, nil
