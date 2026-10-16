@@ -22,7 +22,7 @@ The user message is one line: `[a2ui_action] {"surface_id": "...", "name": "..."
 
 ### `submit_quiz`
 
-1. `load_artifacts` both `a2ui_surface:<surface_id>` and `quiz_key:<surface_id>` for the action's `surface_id`. Grade from the stored key only: the server shuffled the options when the quiz was rendered, so any letters seen earlier in this chat are stale.
+1. `read_artifact` both `a2ui_surface:<surface_id>` and `quiz_key:<surface_id>` for the action's `surface_id`. Grade from the stored key only: the server shuffled the options when the quiz was rendered, so any letters seen earlier in this chat are stale.
 2. Each key entry is `{"answer": <current option value>, "label": <correct option label>, "why"}`. For each question `qN` in the key, the user's pick is `context.answers.qN`, a list. It is correct when it holds exactly the keyed `answer`; an empty list is unanswered and counts as incorrect.
 3. Make exactly one `render_ui` call, never several in parallel, with the action's `surface_id` and only these components:
    - One Text per question, id `qN_result`: "Correct" or "Incorrect", then " - the answer is " + the key's `label` + ": " + the key's `why`.

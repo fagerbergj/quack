@@ -11,7 +11,6 @@ import (
 
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/tool"
-	"google.golang.org/adk/v2/tool/loadartifactstool"
 	"google.golang.org/adk/v2/tool/skilltoolset"
 	"google.golang.org/adk/v2/tool/skilltoolset/skill"
 	"google.golang.org/genai"
@@ -104,7 +103,6 @@ func coreTools() ([]tool.Tool, error) {
 		},
 		tools.NewGetUserChoiceTool,
 		func() (tool.Tool, error) { return tools.NewCommitMemoryTool(nil, "", "", "") },
-		func() (tool.Tool, error) { return loadartifactstool.New(), nil },
 	}
 	for _, c := range ctors {
 		t, err := c()

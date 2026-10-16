@@ -77,8 +77,8 @@ func (s *onceFailingListService) List(ctx context.Context, req *artifact.ListReq
 	return s.Service.List(ctx, req)
 }
 
-// load_artifacts degrades an oversized artifact to a text notice capped at InlineMaxBytes, with
-// no error: one failed Load in loadartifactstool's errgroup would cancel its siblings.
+// Load degrades an oversized artifact to a text notice capped at InlineMaxBytes, with
+// no error, so one oversized artifact can't fail the turn.
 func TestFailSoftListArtifacts_LoadBounded(t *testing.T) {
 	ctx := context.Background()
 	svc := artifact.InMemoryService()
@@ -130,54 +130,54 @@ func TestFailSoftListArtifacts_LoadMissingDegradesToText(t *testing.T) {
 	}
 }
 
-// loadArtifactsStub: first call requests load_artifacts, second call replies
-// with whatever text the tool's result carried back on the request.
-type loadArtifactsStub struct {
-	mu    sync.Mutex
-	calls int
+// readArtifactStub: first call reads notes.txt, second replies with the tool result it saw; it also records
+// whether any request's system instruction listed the session's artifacts.
+type readArtifactStub struct {
+	mu         sync.Mutex
+	calls      int
+	listedInSI bool
 }
 
-func (*loadArtifactsStub) Name() string { return "loadArtifactsStub" }
+func (*readArtifactStub) Name() string { return "readArtifactStub" }
 
-// lastRequestText flattens everything the load_artifacts tool appended to the
-// request (loadIndividualArtifact puts the loaded bytes in InlineData, not Text).
-func lastRequestText(req *model.LLMRequest) string {
-	var sb strings.Builder
-	for _, c := range req.Contents {
-		for _, p := range c.Parts {
-			sb.WriteString(p.Text)
-			if p.InlineData != nil {
-				sb.Write(p.InlineData.Data)
-			}
-		}
-	}
-	return sb.String()
-}
-
-func (s *loadArtifactsStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
+func (s *readArtifactStub) GenerateContent(_ context.Context, req *model.LLMRequest, _ bool) iter.Seq2[*model.LLMResponse, error] {
 	return func(yield func(*model.LLMResponse, error) bool) {
 		s.mu.Lock()
 		s.calls++
 		n := s.calls
+		if req.Config != nil && req.Config.SystemInstruction != nil {
+			for _, p := range req.Config.SystemInstruction.Parts {
+				s.listedInSI = s.listedInSI || strings.Contains(p.Text, "notes.txt")
+			}
+		}
 		s.mu.Unlock()
 		if n == 1 {
 			yield(&model.LLMResponse{
 				Content: &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{
-					FunctionCall: &genai.FunctionCall{Name: "load_artifacts", Args: map[string]any{"artifact_names": []any{"notes.txt"}}},
+					FunctionCall: &genai.FunctionCall{Name: "read_artifact", Args: map[string]any{"id": "notes.txt"}},
 				}}},
 				FinishReason: genai.FinishReasonStop, TurnComplete: true,
 			}, nil)
 			return
 		}
+		var seen strings.Builder
+		for _, c := range req.Contents {
+			for _, p := range c.Parts {
+				if p.FunctionResponse != nil {
+					fmt.Fprint(&seen, p.FunctionResponse.Response)
+				}
+			}
+		}
 		yield(&model.LLMResponse{
-			Content:      &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: "saw: " + lastRequestText(req)}}},
+			Content:      &genai.Content{Role: genai.RoleModel, Parts: []*genai.Part{{Text: "saw: " + seen.String()}}},
 			FinishReason: genai.FinishReasonStop, TurnComplete: true,
 		}, nil)
 	}
 }
 
-// Once SetArtifacts is wired, Run can list and load a session artifact through load_artifacts.
-func TestOrchestratorRun_LoadArtifactsTool(t *testing.T) {
+// Once SetArtifacts is wired, Run reads a session artifact through read_artifact, whose content lands in the
+// cacheable history, and no request lists the session's artifacts in the system instruction.
+func TestOrchestratorRun_ReadArtifactTool(t *testing.T) {
 	ctx := context.Background()
 	svc := artifact.InMemoryService()
 	const userID, chatID = "u1", "c1"
@@ -189,28 +189,28 @@ func TestOrchestratorRun_LoadArtifactsTool(t *testing.T) {
 	}
 
 	sessions := session.InMemoryService()
-	o := New(sessions, &loadArtifactsStub{}, func(context.Context) string { return "you are the orchestrator" }, dag.NewPlanner(nil, nil, nil), dag.NewExecutor(sessions, nil, nil, nil, nil, nil), nil, nil, nil)
+	stub := &readArtifactStub{}
+	o := New(sessions, stub, func(context.Context) string { return "you are the orchestrator" }, dag.NewPlanner(nil, nil, nil), dag.NewExecutor(sessions, nil, nil, nil, nil, nil), nil, nil, nil)
 	o.SetArtifacts(svc)
 
 	var texts []string
-	for ev, err := range o.Run(ctx, userID, chatID, SourceApp, "please load notes.txt", nil) {
+	for ev, err := range o.Run(ctx, userID, chatID, SourceApp, "please read notes.txt", nil) {
 		if err != nil {
 			t.Fatalf("Run: %v", err)
 		}
-		switch d := ev.Data.(type) {
-		case stream.AgentTokenData:
+		if d, ok := ev.Data.(stream.AgentTokenData); ok {
 			texts = append(texts, d.Text)
-		case stream.AgentToolResultData:
-			texts = append(texts, fmt.Sprint(d.Result))
 		}
 	}
-	joined := strings.Join(texts, " ")
-	if !strings.Contains(joined, "hello artifact content") {
-		t.Fatalf("orchestrator run output = %q, want it to contain the loaded artifact's content", joined)
+	if joined := strings.Join(texts, " "); !strings.Contains(joined, "hello artifact content") {
+		t.Fatalf("orchestrator run output = %q, want it to contain the read artifact's content", joined)
+	}
+	if stub.listedInSI {
+		t.Fatal("a system instruction listed the session's artifacts; a new artifact would break the prompt cache there")
 	}
 }
 
-// With no artifact service, load_artifacts is not offered and Run must not panic.
+// With no artifact service, the artifact tools are not offered and Run must not panic.
 func TestOrchestratorRun_NoArtifactService_ToolAbsentNoPanic(t *testing.T) {
 	ctx := context.Background()
 	sessions := session.InMemoryService()
@@ -224,4 +224,18 @@ func TestOrchestratorRun_NoArtifactService_ToolAbsentNoPanic(t *testing.T) {
 		}
 		_ = ev
 	}
+}
+
+// lastRequestText flattens a request's text and inline bytes.
+func lastRequestText(req *model.LLMRequest) string {
+	var sb strings.Builder
+	for _, c := range req.Contents {
+		for _, p := range c.Parts {
+			sb.WriteString(p.Text)
+			if p.InlineData != nil {
+				sb.Write(p.InlineData.Data)
+			}
+		}
+	}
+	return sb.String()
 }

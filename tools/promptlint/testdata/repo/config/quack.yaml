@@ -1,6 +1,6 @@
 orchestrator:
   skills: [good-skill]
-  tools: [load_artifacts]
+  tools: [read_artifact]
 agents:
   good:
     bundle: agents/good
