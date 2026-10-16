@@ -2,10 +2,6 @@
   "name": "quack-scripts",
   "private": true,
   "type": "module",
-  "dependencies": {
-    "jsdom": "^29.1.1",
-    "mermaid": "^11.17.1"
-  },
   "devDependencies": {
     "markdownlint-cli2": "^0.23.2"
   }

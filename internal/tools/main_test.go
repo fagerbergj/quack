@@ -3,9 +3,7 @@ package tools
 import (
 	"os"
 	"testing"
-	"time"
 
-	"github.com/fagerbergj/quack/internal/vetting"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
@@ -13,7 +11,5 @@ import (
 func TestMain(m *testing.M) {
 	workspace.RunSandboxExecIfInvoked()
 	workspace.GitProtocol = "file" // fixtures are local bare repos
-	// A per-run deadline would only measure host load; go test -timeout bounds a real hang.
-	vetting.MermaidValidateTimeout = time.Hour
 	os.Exit(m.Run())
 }

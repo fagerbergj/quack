@@ -717,13 +717,13 @@ func excerptAt(s string, i int) string {
 // section names every below-threshold criterion, sorted, and skips a passing one.
 func TestJudgeKnownFailuresSection_FormatsFailingCriteriaSorted(t *testing.T) {
 	det := map[string]criterionScore{
-		"mermaid_valid":     {Score: 0, Reason: "deterministic: invalid mermaid diagram at line 12: parse error"},
-		"sufficient_length": {Score: 0, Reason: "deterministic: 0 chars"},
-		"checks_pass":       {Score: 1, Reason: "deterministic: all checks passed"}, // passing - must not appear
+		"no_tool_call_syntax": {Score: 0, Reason: "deterministic: leaked tool-call fragment"},
+		"sufficient_length":   {Score: 0, Reason: "deterministic: 0 chars"},
+		"checks_pass":         {Score: 1, Reason: "deterministic: all checks passed"}, // passing - must not appear
 	}
 	got := judgeKnownFailuresSection(det, 0.7)
-	if !strings.Contains(got, "mermaid_valid") || !strings.Contains(got, "invalid mermaid diagram") {
-		t.Errorf("missing the mermaid_valid failure: %q", got)
+	if !strings.Contains(got, "no_tool_call_syntax") || !strings.Contains(got, "leaked tool-call fragment") {
+		t.Errorf("missing the no_tool_call_syntax failure: %q", got)
 	}
 	if !strings.Contains(got, "sufficient_length") {
 		t.Errorf("missing the sufficient_length failure: %q", got)
@@ -731,7 +731,7 @@ func TestJudgeKnownFailuresSection_FormatsFailingCriteriaSorted(t *testing.T) {
 	if strings.Contains(got, "checks_pass") {
 		t.Errorf("a passing criterion must not appear in the known-failures section: %q", got)
 	}
-	if strings.Index(got, "mermaid_valid") > strings.Index(got, "sufficient_length") {
+	if strings.Index(got, "no_tool_call_syntax") > strings.Index(got, "sufficient_length") {
 		t.Errorf("criteria should be listed alphabetically: %q", got)
 	}
 }

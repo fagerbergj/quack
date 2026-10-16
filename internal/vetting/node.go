@@ -2322,10 +2322,6 @@ func computeDeterministicCriteria(ctx context.Context, answer string, act worker
 	if c, ok := vacuousTestsCriterion(cfg); ok {
 		det["no_vacuous_tests"] = c
 	}
-	// Mermaid validity: checked against answer and staged delivery bodies. Added only on failure.
-	if c, ok := mermaidCriterion(answer, act); ok {
-		det["mermaid_valid"] = c
-	}
 	// Answer-shape check: leaked or malformed tool-call fragment in deliverable.
 	if c, ok := toolCallSyntaxCriterion(answer, act); ok {
 		det["no_tool_call_syntax"] = c
@@ -2456,7 +2452,6 @@ var deterministicCriterionSpec = map[string]struct {
 	"grounded_in_retrieval":        {"Claims must trace to retrieval performed this session (web fetch/search or file reads), not model memory.", "Research the task and cite what you retrieve; call ask_user if blocked on information only the user has."},
 	"checks_pass":                  {"The node's configured or derived build/test checks must exit zero.", "Fix the failing check(s) named in the failure output."},
 	"no_vacuous_tests":             {"An added test file must exercise a real production identifier, not assert trivially.", "Rewrite the test to call/assert against actual production code."},
-	"mermaid_valid":                {"Mermaid diagrams in the deliverable must be syntactically valid.", "Fix the invalid mermaid diagram(s) named in the failure - iterate with the check_mermaid tool until it reports ok, then resubmit."},
 	"no_tool_call_syntax":          {"The deliverable must not contain a leaked or malformed tool-call fragment.", "Remove the leaked tool-call fragment from the answer."},
 	"no_dangling_deliverable_path": {"A deliverable must not point to a file that exists only in this run's discarded working directory.", "State the result in the answer text itself, or commit the file so it survives the run."},
 	"delivery_complete":            {"The task's delivery step (commit/push/PR) must actually show in the session ledger.", "Complete the delivery step the task asked for - commit, push, or open the PR."},

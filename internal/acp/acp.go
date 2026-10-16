@@ -466,7 +466,6 @@ func mcpToolNames(sess vetting.MemSession, offered bool) []string {
 	}
 	var names []string
 	add := func(tool string) { names = append(names, mcpServerName+"_"+tool) }
-	add(toolCheckMermaid) // stateless, always offered
 	if sess.Memory != nil {
 		add(toolStageMemory)
 		add(toolRecallMemory)

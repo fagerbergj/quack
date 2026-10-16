@@ -74,7 +74,6 @@ var registry = map[string]constructor{
 	"list_dir":       newListDir,
 	"glob":           newGlob,
 	"grep":           newGrep,
-	"check_mermaid":  newCheckMermaid,
 	"render_ui":      newRenderUI,
 	"grep_artifacts": newGrepArtifacts,
 	"weather":        newWeather,

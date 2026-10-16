@@ -25,26 +25,6 @@ import (
 	"github.com/fagerbergj/quack/internal/vetting"
 )
 
-// toolCheckMermaid: stateless, offered to every session regardless of
-// Memory/Review/PRStage - see mcpToolNames.
-const toolCheckMermaid = "check_mermaid"
-
-type checkMermaidInput struct {
-	Diagram string `json:"diagram" jsonschema:"one mermaid diagram's source, without the surrounding fence"`
-}
-
-// registerCheckMermaidTool validates a diagram against the same parser the
-// delivery gate runs (vetting.CheckMermaid) - pass-tool == pass-gate.
-func registerCheckMermaidTool(srv *mcp.Server) {
-	mcp.AddTool(srv, &mcp.Tool{
-		Name:        toolCheckMermaid,
-		Description: vetting.CheckMermaidDescription,
-	}, func(_ context.Context, _ *mcp.CallToolRequest, args checkMermaidInput) (*mcp.CallToolResult, any, error) {
-		text := vetting.CheckMermaid(args.Diagram)
-		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, nil, nil
-	})
-}
-
 // Memory MCP surface: per-run loopback server scoped by unguessable per-node secret.
 
 // mcpServerName: loopback server name; the pi-acp shim prefixes tools with "<name>_".
@@ -430,7 +410,6 @@ func memoryMCPHandler() http.Handler {
 		secret := strings.Trim(r.URL.Path, "/")
 		srv := mcp.NewServer(&mcp.Implementation{Name: mcpServerName, Version: "0.1.0"}, nil)
 		srv.AddReceivingMiddleware(precheckCalls)
-		registerCheckMermaidTool(srv) // stateless, offered even to an unknown/expired session
 		sess, ok := vetting.LookupMemSession(secret)
 		if !ok {
 			slog.Warn("acp: loopback MCP request for unknown/expired session", "component", "acp")
