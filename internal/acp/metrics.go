@@ -33,6 +33,12 @@ func recordUsage(modelName string, coords ledger.Coords, pricing *config.ModelPr
 	}
 }
 
+// usageCoords: ctx coords, blanks filled from the shared stamp, then the agent's own name, since an external
+// worker's ctx can reach the round without the node's agent.
+func (a *Agent) usageCoords(ctx context.Context, stamp ledger.Coords) ledger.Coords {
+	return ledger.FillBlankCoords(ledger.FillBlankCoords(ledger.CoordsFromContext(ctx), stamp), ledger.Coords{Agent: a.name})
+}
+
 // recordCall records one ACP model call (a usage event from translate) the way a native call is recorded:
 // an llm.call on ctx's ledger stream plus token/cost metrics attributed by coords. nil u is a no-op.
 func (a *Agent) recordCall(ctx context.Context, coords ledger.Coords, u *genai.GenerateContentResponseUsageMetadata) {

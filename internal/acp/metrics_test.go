@@ -236,10 +236,14 @@ func TestRound_NoCoords_AttributionOmitted(t *testing.T) {
 	if !ok {
 		t.Fatal("no data point for token_type=input")
 	}
-	for _, key := range []string{"agent", "user", "source"} {
+	for _, key := range []string{"user", "source"} {
 		if _, ok := dp.Attributes.Value(attribute.Key(key)); ok {
 			t.Errorf("attribute %q set with no coords stamped, want it omitted", key)
 		}
+	}
+	// The agent is known without coords: it is this agent, as its llm.call rows say.
+	if got := attrVal(dp.Attributes, "agent"); got != a.name {
+		t.Errorf("agent = %q, want %q", got, a.name)
 	}
 }
 
