@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fagerbergj/quack/internal/stream"
+
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/agent/llmagent"
 	"google.golang.org/adk/v2/agent/workflowagent"
@@ -138,7 +140,7 @@ func runContGate(t *testing.T, stub model.LLM, cfg Config, task string) (string,
 		if ev == nil {
 			continue
 		}
-		if ev.Author == gatePromptAuthor && ev.Content != nil {
+		if ev.Author == stream.GatePromptAuthor && ev.Content != nil {
 			prompts = append(prompts, contentPlainText(ev.Content))
 		}
 		if s, ok := ev.Output.(string); ok && strings.TrimSpace(s) != "" {

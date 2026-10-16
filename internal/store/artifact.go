@@ -70,7 +70,7 @@ type artifactBlobBackend interface {
 }
 
 // gormArtifactService is a GORM-backed artifact.Service. Version numbering, latest-by-default Load and
-// delete-nonexistent-is-ok mirror ADK's own services: load_artifacts depends on it.
+// delete-nonexistent-is-ok mirror ADK's own services.
 type gormArtifactService struct {
 	db    *gorm.DB
 	blobs artifactBlobBackend

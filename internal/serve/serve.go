@@ -2118,7 +2118,6 @@ func nodeMemoryScope(jail *workspace.Jail, token string) func(context.Context) m
 	}
 }
 
-// setupCloneFunc returns the dag.SetupFn that clones a chat repo for a new node.
 // RemoveChatWorkspace deletes chat's clone scope and per-node dirs, as chat delete does; chat is a chat id or
 // its workspace dir name.
 func RemoveChatWorkspace(jail *workspace.Jail, chat string) error {
@@ -2158,6 +2157,7 @@ func setupCaps(cfg *config.Config, caps workspace.Caps) workspace.Caps {
 	return caps
 }
 
+// setupCloneFunc returns the dag.SetupFn that clones a chat repo for a new node.
 func setupCloneFunc(cfg *config.Config, jail *workspace.Jail, workspaceCaps workspace.Caps, gitCredentials []tools.GitCredential, gitTokenSource tools.GitTokenSource) dag.SetupFunc {
 	workspaceCaps = setupCaps(cfg, workspaceCaps)
 	return func(ctx context.Context, _, chatID, dir string, setup dag.Setup) error {
