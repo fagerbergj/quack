@@ -48,14 +48,24 @@ func decodeCallArgs(req *model.LLMRequest, name string, args map[string]any) {
 				if !ok || p == nil || !structured(p) {
 					continue
 				}
-				var decoded any
-				if json.Unmarshal([]byte(str), &decoded) == nil {
+				if decoded, ok := decodeString(str); ok {
 					args[k] = decoded
 				}
 			}
 			return
 		}
 	}
+}
+
+// decodeString: ponytail: the trailing closer compensates for a dropped final "}" seen on 12% of prod judge
+// verdicts; delete once the cause (model or tool parser) is fixed.
+func decodeString(s string) (v any, ok bool) {
+	for _, closer := range []string{"", "}", "]"} {
+		if json.Unmarshal([]byte(s+closer), &v) == nil {
+			return v, true
+		}
+	}
+	return nil, false
 }
 
 func structured(s *jsonschema.Schema) bool {

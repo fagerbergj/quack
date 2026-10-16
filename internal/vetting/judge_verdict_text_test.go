@@ -60,13 +60,12 @@ func TestParseVerdict_QuotedPassAfterRealFailKeepsTheFail(t *testing.T) {
 
 func TestParseVerdict_FailsClosedWithoutAVerdict(t *testing.T) {
 	for name, raw := range map[string]string{
-		"only quoted artifact JSON":         judgeReasoningProse,
-		"quoted judge_round record":         judgeRoundRecord,
-		"rubric echo":                       `{"criteria":["grounded","cites"]}`,
-		"criteria outside the rubric":       `{"score": 3, "criteria": {"style": {"score": 3}}, "feedback": ""}`,
-		"verdict missing its closing brace": `{"score": 3, "criteria": {"quiz_grounded": {"score": 3}}, "feedback": "ok"`,
-		"unterminated nesting":              strings.Repeat(`{"a":`, 20000),
-		"nesting with trailing garbage":     strings.Repeat(`{"a":`, 20000) + "x",
+		"only quoted artifact JSON":     judgeReasoningProse,
+		"quoted judge_round record":     judgeRoundRecord,
+		"rubric echo":                   `{"criteria":["grounded","cites"]}`,
+		"criteria outside the rubric":   `{"score": 3, "criteria": {"style": {"score": 3}}, "feedback": ""}`,
+		"unterminated nesting":          strings.Repeat(`{"a":`, 20000),
+		"nesting with trailing garbage": strings.Repeat(`{"a":`, 20000) + "x",
 	} {
 		start := time.Now()
 		if v, err := parseVerdict(raw, tutorRubric); err == nil {

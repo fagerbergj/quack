@@ -40,9 +40,11 @@ func TestDecodeStringArgs(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("args = %v, want %v", got, want)
 	}
-	// A truncated string is left for schema validation to reject; it is not repaired.
-	if got := run(call("submit", map[string]any{"criteria": `{"a": 1`})); got["criteria"] != `{"a": 1` {
-		t.Errorf("truncated criteria = %v, want it left as the string", got["criteria"])
+	if got := run(call("submit", map[string]any{"criteria": `{"a": 1`})); !reflect.DeepEqual(got["criteria"], map[string]any{"a": float64(1)}) {
+		t.Errorf("criteria missing its outer brace = %v, want the dropped closer restored", got["criteria"])
+	}
+	if got := run(call("submit", map[string]any{"criteria": `{"a": `})); got["criteria"] != `{"a": ` {
+		t.Errorf("unrepairable criteria = %v, want it left as the string", got["criteria"])
 	}
 	if got := run(call("other", map[string]any{"criteria": `{"a": 1}`})); got["criteria"] != `{"a": 1}` {
 		t.Errorf("undeclared tool args = %v, want untouched", got)

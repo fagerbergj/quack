@@ -1752,7 +1752,11 @@ func lastVerdictObject(s string, specs map[string]criterionSpec) (rawVerdict, bo
 	for i := strings.IndexByte(s, '{'); i >= 0; {
 		keys, skip, err := objectAt(s[i:])
 		if errors.Is(err, io.ErrUnexpectedEOF) {
-			// The object at i runs to the end of s, so nothing after it is top-level.
+			// The object at i runs to the end of s, so nothing after it is top-level; a dropped
+			// closing brace is repaired only when no complete verdict came before it.
+			if !found {
+				return repairTailVerdict(s[i:], specs)
+			}
 			break
 		}
 		if rv, ok := toVerdict(s[i:i+skip], keys, err, specs); ok {
@@ -1765,6 +1769,17 @@ func lastVerdictObject(s string, specs map[string]criterionSpec) (rawVerdict, bo
 		i += skip + j
 	}
 	return last, found
+}
+
+// repairTailVerdict closes an object a model left one or two braces short at the end of its text.
+func repairTailVerdict(s string, specs map[string]criterionSpec) (rawVerdict, bool) {
+	for _, suffix := range []string{"}", "}}"} {
+		keys, skip, err := objectAt(s + suffix)
+		if rv, ok := toVerdict((s + suffix)[:skip], keys, err, specs); ok {
+			return rv, true
+		}
+	}
+	return rawVerdict{}, false
 }
 
 // objectAt decodes the JSON object at the start of s; skip is how far the scan may jump - past a

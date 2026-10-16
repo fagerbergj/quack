@@ -291,6 +291,36 @@ func TestParseVerdictToleratesFencedJSON(t *testing.T) {
 	}
 }
 
+func TestParseVerdictMisplacedTopLevel(t *testing.T) {
+	// Reproduces the exact failure seen in prod: the model nested score/passed/feedback
+	// inside criteria and omitted the outer closing brace.
+	malformed := `{"criteria":{"grounded":{"reason":"good","score":0.9},"no_fabrication":{"reason":"ok","score":1.0},"answers_question":{"reason":"yes","score":1.0},"internally_consistent":{"reason":"fine","score":0.9},"cites_sources":{"reason":"none","score":0.0},"score":0.76,"passed":true,"feedback":"add citations"}`
+
+	v, err := parseVerdict(malformed, nil)
+	if err != nil {
+		t.Fatalf("parseVerdict(misplaced): %v", err)
+	}
+	// cites_sources=0 is the lowest criterion → overall score is that minimum (0.0)
+	if v.Score != 0 {
+		t.Errorf("score = %.2f, want 0 (lowest criterion: cites_sources=0)", v.Score)
+	}
+	// Feedback recovered from misplaced entry
+	if v.Feedback != "add citations" {
+		t.Errorf("feedback = %q, want recovered from criteria", v.Feedback)
+	}
+	// The 5 real criteria should be present; score/passed/feedback should not
+	for _, want := range []string{"grounded", "no_fabrication", "answers_question", "internally_consistent", "cites_sources"} {
+		if _, ok := v.Criteria[want]; !ok {
+			t.Errorf("criteria missing %q", want)
+		}
+	}
+	for _, bad := range []string{"score", "passed", "feedback"} {
+		if _, ok := v.Criteria[bad]; ok {
+			t.Errorf("criteria should not contain %q", bad)
+		}
+	}
+}
+
 func TestParseVerdictDuplicatedBlob(t *testing.T) {
 	// Model emitted the JSON object twice (back-to-back); the identical copy parses to the same verdict.
 	blob := `{"score":3,"passed":true,"feedback":"ok"}`
