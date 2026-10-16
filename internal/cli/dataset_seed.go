@@ -107,8 +107,11 @@ func seedItem(mirror, target string, item langfuse.DatasetItem) (langfuse.Create
 	in.Setup = &setup
 	in.Task = strings.ReplaceAll(in.Task, head, p.seeded)
 	for name, body := range in.Artifacts {
-		if name == "files" {
+		switch name {
+		case "files":
 			body = reseedFiles(body, p.defect.Path, p.patch)
+		case "commits":
+			body = reseedCommits(body, head)
 		}
 		in.Artifacts[name] = strings.ReplaceAll(body, head, p.seeded)
 	}
@@ -153,7 +156,7 @@ func plantDefect(mirror, itemID, upstream, head, base string) (planted, error) {
 	if err != nil {
 		return planted{}, err
 	}
-	seeded := commitDefect(g, head, d.Path, content)
+	seeded := commitDefect(g, head, mb, d.Path, content)
 	// Mirror refs keep the planted objects reachable: the item repos only borrow them.
 	g.run("", "update-ref", "refs/seeded/"+itemID+"/head", seeded)
 	g.run("", "update-ref", "refs/seeded/"+itemID+"/base", mb)
@@ -179,12 +182,13 @@ func ensureMirror(mirror, upstream string, shas ...string) error {
 	return g.err
 }
 
-// commitDefect rewrites head in place, same parents, author, dates and message, with path's content swapped:
-// the PR's history shows no extra commit, and a re-seed reproduces the same sha.
-func commitDefect(g *mirrorGit, head, path, content string) string {
-	f := strings.SplitN(g.run("", "log", "-1", "--format=%an%x00%ae%x00%aI%x00%cn%x00%ce%x00%cI%x00%P%x00%B", head), "\x00", 8)
+// commitDefect squashes the PR onto base as one commit with head's author, dates and message and path's content
+// swapped: a planted line in a commit that never touched it would read as an unexplained change, which reviewers
+// spotted instead of the defect. A re-seed reproduces the same sha.
+func commitDefect(g *mirrorGit, head, base, path, content string) string {
+	f := strings.SplitN(g.run("", "log", "-1", "--format=%an%x00%ae%x00%aI%x00%cn%x00%ce%x00%cI%x00%B", head), "\x00", 7)
 	tmp, err := os.MkdirTemp("", "quack-seed-")
-	if err != nil || len(f) < 8 {
+	if err != nil || len(f) < 7 {
 		g.err = cmp.Or(g.err, err, errors.New("unreadable head commit"))
 		return ""
 	}
@@ -193,13 +197,10 @@ func commitDefect(g *mirrorGit, head, path, content string) string {
 	idx := &mirrorGit{dir: g.dir, env: []string{"GIT_INDEX_FILE=" + filepath.Join(tmp, "index")}, err: g.err}
 	idx.run("", "read-tree", head)
 	idx.run("", "update-index", "--cacheinfo", "100644,"+blob+","+path)
-	args := []string{"commit-tree", "--no-gpg-sign", strings.TrimSpace(idx.run("", "write-tree"))}
-	for _, p := range strings.Fields(f[6]) {
-		args = append(args, "-p", p)
-	}
+	args := []string{"commit-tree", "--no-gpg-sign", strings.TrimSpace(idx.run("", "write-tree")), "-p", base}
 	idx.env = append(idx.env, "GIT_AUTHOR_NAME="+f[0], "GIT_AUTHOR_EMAIL="+f[1], "GIT_AUTHOR_DATE="+f[2],
 		"GIT_COMMITTER_NAME="+f[3], "GIT_COMMITTER_EMAIL="+f[4], "GIT_COMMITTER_DATE="+f[5])
-	seeded := strings.TrimSpace(idx.run(f[7], args...))
+	seeded := strings.TrimSpace(idx.run(f[6], args...))
 	g.err = idx.err
 	return seeded
 }
@@ -460,6 +461,21 @@ func applyDefect(content string, d seededDefect) (string, error) {
 		repl = []string{d.Mutated + lines[d.Line-1][len(d.Original):]}
 	}
 	return strings.Join(slices.Concat(lines[:d.Line-1], repl, lines[end:]), ""), nil
+}
+
+// reseedCommits keeps only the head entry of the PR's commits artifact (GitHub's list), as the seeded PR is
+// squashed into that one commit; the caller then swaps its sha for the seeded one.
+func reseedCommits(commits, head string) string {
+	var list []map[string]any
+	if json.Unmarshal([]byte(commits), &list) != nil {
+		return commits
+	}
+	list = slices.DeleteFunc(list, func(c map[string]any) bool { return c["sha"] != head })
+	b, err := json.Marshal(list)
+	if err != nil {
+		return commits
+	}
+	return string(b)
 }
 
 // reseedFiles swaps path's patch in the PR's files artifact (GitHub's list) for the seeded one and recounts it.

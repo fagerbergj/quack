@@ -298,3 +298,57 @@ func TestRunDatasetSeed_SkipsUnseedable(t *testing.T) {
 		t.Fatalf("res = %+v, err = %v, created = %v", res, err, created)
 	}
 }
+
+// A defect on a line an earlier PR commit added must not show up as an unexplained change in a later commit:
+// the seeded PR is one commit on its base, and the commits artifact lists only it.
+func TestRunDatasetSeed_SquashesThePR(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	dir := t.TempDir()
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gitT(t, dir, "init", "--quiet", "--initial-branch=main")
+	write("a.go", "package a\n")
+	gitT(t, dir, "add", "-A")
+	gitT(t, dir, "commit", "--quiet", "-m", "base")
+	base := gitT(t, dir, "rev-parse", "HEAD")
+	gitT(t, dir, "checkout", "--quiet", "-b", "feat/x")
+	write("a.go", "package a\n\nfunc f(n int) bool {\n\treturn n == 0\n}\n")
+	gitT(t, dir, "commit", "--quiet", "-am", "add f")
+	first := gitT(t, dir, "rev-parse", "HEAD")
+	write("b.go", "package a\n")
+	gitT(t, dir, "add", "-A")
+	gitT(t, dir, "commit", "--quiet", "-m", "add b")
+	head := gitT(t, dir, "rev-parse", "HEAD")
+	commits, _ := json.Marshal([]map[string]any{{"sha": first}, {"sha": head}})
+	item := map[string]any{"id": "src-sq", "input": map[string]any{
+		"task":      "review " + head,
+		"setup":     map[string]any{"Repo": "file://" + dir, "BaseRef": "main", "ExistingHeadRef": "feat/x", "HeadSHA": head},
+		"artifacts": map[string]any{"pull": `{"base":{"sha":"` + base + `"}}`, "files": "[]", "commits": string(commits)},
+	}}
+	srv, created := seedLangfuse(t, item)
+	mirror := filepath.Join(t.TempDir(), "m.git")
+	res, err := RunDatasetSeed(context.Background(), newTestClient(t, srv), SeedOpts{Source: "src", Target: "seeded", Mirror: mirror})
+	if err != nil || len(res) != 1 || res[0].Skipped != "" {
+		t.Fatalf("RunDatasetSeed = %+v, %v", res, err)
+	}
+	var got struct{ Input datasetItemInput }
+	if err := remarshal(created[res[0].ItemID], &got); err != nil {
+		t.Fatal(err)
+	}
+	seeded, repo := got.Input.Setup.HeadSHA, filepath.Join(filepath.Dir(mirror), "items", "src-sq.git")
+	if n := gitT(t, repo, "rev-list", "--count", "main.."+seeded); n != "1" {
+		t.Fatalf("seeded PR has %s commits over its base, want 1", n)
+	}
+	if gitT(t, repo, "log", "-1", "--format=%s", seeded) != "add b" || !strings.Contains(gitT(t, repo, "show", seeded), "+\treturn n != 0") {
+		t.Fatal("the one commit must carry head's message and the whole PR with the defect")
+	}
+	var list []map[string]any
+	_ = json.Unmarshal([]byte(got.Input.Artifacts["commits"]), &list)
+	if len(list) != 1 || list[0]["sha"] != seeded {
+		t.Fatalf("commits artifact = %v, want only the seeded commit", list)
+	}
+}
