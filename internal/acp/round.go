@@ -119,7 +119,7 @@ func (a *Agent) handlePromptDone(d promptDone, h *procHandle, tr *translator, en
 		return false, fmt.Errorf("acp: prompt: %w%s", d.err, h.stderrTail())
 	}
 	if !tr.sawUsage { // per-call usage already recorded every call; the round total would count them twice
-		recordUsage(a.opts.ModelName, ledger.FillBlankCoords(ledger.CoordsFromContext(ctx), coords), a.opts.Pricing, d.resp.Usage)
+		recordUsage(a.opts.ModelName, a.usageCoords(ctx, coords), a.opts.Pricing, d.resp.Usage)
 	}
 	if d.resp.StopReason == sdk.StopReasonRefusal {
 		refusalErr := errors.New("acp: agent refused the prompt")
@@ -155,7 +155,7 @@ type roundLoopArgs struct {
 // a cancel/interrupt stops the round, or the agent wedges (idle). Returns whether the round pinned cleanly.
 func (a *Agent) roundLoop(al *roundLoopArgs) (bool, error) {
 	resetIdle := func() { al.idleTimer.Reset(a.opts.IdleTimeout) }
-	metricCoords := ledger.FillBlankCoords(ledger.CoordsFromContext(al.ctx), al.coords)
+	metricCoords := a.usageCoords(al.ctx, al.coords)
 	relay := func(u sdk.SessionUpdate) bool {
 		specs := al.tr.translate(u)
 		al.turns.observe(u, specs)
