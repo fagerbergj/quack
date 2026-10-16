@@ -54,6 +54,17 @@ func (t *JudgeRoundTiming) addJudgeSession(start time.Time, st *judgeRoundState)
 	t.ToolCalls += st.toolCalls
 }
 
+// addCounts adds o's judge sessions, turns and tool calls to t. o ran concurrently with t, so its
+// phase seconds overlap t's wall time and are not added.
+func (t *JudgeRoundTiming) addCounts(o *JudgeRoundTiming) {
+	if t == nil || o == nil {
+		return
+	}
+	t.JudgeCalls += o.JudgeCalls
+	t.JudgeTurns += o.JudgeTurns
+	t.ToolCalls += o.ToolCalls
+}
+
 // emit records every measured phase as quack.judge.phase.duration; verify is the specifics_supported check.
 func (t *JudgeRoundTiming) emit(agent string) {
 	if t == nil {

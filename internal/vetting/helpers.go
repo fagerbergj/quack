@@ -186,6 +186,8 @@ type Config struct {
 	judgeCheckedPages map[string]bool
 	// judgeTiming: the current round's phase clock, set by prepareJudge; nil outside the live gate.
 	judgeTiming *JudgeRoundTiming
+	// judgeSessionSuffix sets a concurrent second-opinion judge's session apart from the first's.
+	judgeSessionSuffix string
 }
 
 // HasWorkspaceClone: only ExternalWorker (ACP) nodes have a repo checkout; native nodes never
