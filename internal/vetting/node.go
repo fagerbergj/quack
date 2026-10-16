@@ -2149,10 +2149,6 @@ func workerInput(prompt string, attachments []*genai.Part) any {
 	return &genai.Content{Role: "user", Parts: append([]*genai.Part{{Text: prompt}}, attachments...)}
 }
 
-// gatePromptAuthor authors emitPrompt's events. Not "user" (that would split a chat turn and confuse
-// the runner's turn detection), nor an agent's name (remoteagent shows foreign authors as user messages).
-const gatePromptAuthor = stream.GatePromptAuthor
-
 // emitPrompt writes the worker's prompt into the session before RunNode: A2A remote workers build their
 // message from session events only. emit completes durably, so there is no ordering race.
 func emitPrompt(ctx adkagent.Context, emit func(*session.Event) error, input any) {
@@ -2160,7 +2156,7 @@ func emitPrompt(ctx adkagent.Context, emit func(*session.Event) error, input any
 		return
 	}
 	ev := session.NewEvent(ctx, ctx.InvocationID())
-	ev.Author = gatePromptAuthor
+	ev.Author = stream.GatePromptAuthor
 	ev.Branch = ctx.Branch()
 	switch v := input.(type) {
 	case string:

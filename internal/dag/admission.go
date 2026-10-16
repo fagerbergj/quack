@@ -171,14 +171,13 @@ func (a *Admission) QueuedEvent(nodeID string, spec AdmissionSpec) stream.SSEEve
 func (a *Admission) waitReason(spec AdmissionSpec) string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if limit, ok := a.sessionsLimit[spec.Model]; ok && a.sessionsUsed[spec.Model]+1 > limit {
-		return fmt.Sprintf("%d of %d sessions busy", a.sessionsUsed[spec.Model], limit)
-	}
-	if limit, ok := a.kvLimit[spec.Model]; ok && spec.KVTokens > 0 && a.kvUsed[spec.Model]+spec.KVTokens > limit {
-		return fmt.Sprintf("%d of %d context tokens reserved", a.kvUsed[spec.Model], limit)
-	}
-	if limit, ok := a.activeLimit[spec.residencyKey()]; ok && !a.fits(spec) {
-		return fmt.Sprintf("%d of %d models loaded on %s", len(a.residents[spec.residencyKey()]), limit, spec.Provider)
+	switch a.blocking(spec) {
+	case blockSessions:
+		return fmt.Sprintf("%d of %d sessions busy", a.sessionsUsed[spec.Model], a.sessionsLimit[spec.Model])
+	case blockKV:
+		return fmt.Sprintf("%d of %d context tokens reserved", a.kvUsed[spec.Model], a.kvLimit[spec.Model])
+	case blockResidency:
+		return fmt.Sprintf("%d of %d models loaded on %s", len(a.residents[spec.residencyKey()]), a.activeLimit[spec.residencyKey()], spec.Provider)
 	}
 	return "behind an earlier request"
 }
@@ -208,15 +207,25 @@ func (a *Admission) Release(spec AdmissionSpec) {
 	a.cond.Broadcast()
 }
 
-// fits/reserve need mu held; fits never mutates, so Admit's check-then-commit stays atomic across dimensions.
-func (a *Admission) fits(spec AdmissionSpec) bool {
+type blockedBy int
+
+const (
+	blockNone blockedBy = iota
+	blockSessions
+	blockKV
+	blockResidency
+)
+
+// blocking names the first limit spec would exceed. It and reserve need mu held; it never mutates, so
+// Admit's check-then-commit stays atomic across dimensions.
+func (a *Admission) blocking(spec AdmissionSpec) blockedBy {
 	if spec.Model != "" {
 		if limit, ok := a.sessionsLimit[spec.Model]; ok && a.sessionsUsed[spec.Model]+1 > limit {
-			return false
+			return blockSessions
 		}
 		if spec.KVTokens > 0 {
 			if limit, ok := a.kvLimit[spec.Model]; ok && a.kvUsed[spec.Model]+spec.KVTokens > limit {
-				return false
+				return blockKV
 			}
 		}
 	}
@@ -225,12 +234,14 @@ func (a *Admission) fits(spec AdmissionSpec) bool {
 		if limit, ok := a.activeLimit[key]; ok {
 			m := a.residents[key]
 			if _, resident := m[spec.Model]; !resident && len(m) >= limit {
-				return false // admitting would require evicting a model another live node uses
+				return blockResidency // admitting would require evicting a model another live node uses
 			}
 		}
 	}
-	return true
+	return blockNone
 }
+
+func (a *Admission) fits(spec AdmissionSpec) bool { return a.blocking(spec) == blockNone }
 
 func (a *Admission) reserve(spec AdmissionSpec) {
 	if spec.Model != "" {
