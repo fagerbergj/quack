@@ -95,6 +95,9 @@ func TestChangedFilesSection_CarriesStagedVerdict(t *testing.T) {
 			if !strings.Contains(prompt, want) {
 				t.Fatalf("judge prompt missing %q:\n%s", want, prompt)
 			}
+			if !strings.Contains(prompt, "chat reply - it is NOT delivered") {
+				t.Fatalf("a staged review's chat reply must be labelled undelivered:\n%s", prompt)
+			}
 		})
 	}
 
@@ -106,6 +109,9 @@ func TestChangedFilesSection_CarriesStagedVerdict(t *testing.T) {
 		got, _ := changedFilesSection(cfg, workerActivity{})
 		if strings.Contains(got, "Staged review verdict:") {
 			t.Fatalf("must not fabricate a verdict line when none is staged:\n%s", got)
+		}
+		if p := buildJudgePrompt("", "rubric", "", "", questionContent("review this"), "ans", got, workerActivity{}, ""); !strings.HasSuffix(p, "Answer to judge:\nans") {
+			t.Fatalf("an unstaged answer keeps the plain heading:\n%s", p)
 		}
 	})
 }
