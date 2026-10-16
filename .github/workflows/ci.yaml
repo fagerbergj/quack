@@ -23,7 +23,7 @@ jobs:
     steps:
       - id: filter
         if: github.event_name == 'pull_request'
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@v4
         with:
           predicate-quantifier: every
           # Go tests read config/, agents/, skills/, testdata and extension plugin dirs,
