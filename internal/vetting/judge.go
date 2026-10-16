@@ -665,57 +665,9 @@ func isTransientJudgeErr(err error) bool {
 	return false
 }
 
-// catchesRealIssuesCriterion: the one criterion an approving review gets a second judge opinion on.
-const catchesRealIssuesCriterion = "catches_real_issues"
-
-// runJudgeAgent judges the round once, or twice concurrently when a reviewer stages an approval.
-func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, answer string, act workerActivity, det map[string]criterionScore, received []memory.Delivered, emit func(*genai.Part) bool) (verdict, error) {
-	if !cfg.IsReviewer || act.stagedDelivery["review"].Event != "approve" {
-		return runJudgePass(ctx, factory, cfg, question, answer, act, det, received, emit)
-	}
-	second := cfg
-	if cfg.judgeTiming != nil {
-		second.judgeTiming = newJudgeRoundTiming() // its own clock: a JudgeRoundTiming is not safe to share
-	}
-	second.judgeSessionSuffix = "-second-opinion" // the read tools' repeat guard is keyed by session
-	var v2 verdict
-	var err2 error
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		v2, err2 = runJudgePass(ctx, factory, second, question, answer, act, det, received, func(*genai.Part) bool { return true })
-	}()
-	v, err := runJudgePass(ctx, factory, cfg, question, answer, act, det, received, emit)
-	<-done
-	cfg.judgeTiming.addCounts(second.judgeTiming)
-	if err != nil {
-		return v, err
-	}
-	if err2 != nil {
-		slog.Warn("second-opinion judge failed; using the first pass alone",
-			"component", "vetting", "agent", cfg.Agent, "node", cfg.NodeID, "err", err2)
-		return v, nil
-	}
-	return lowerCatchesRealIssues(cfg, v, v2), nil
-}
-
-// lowerCatchesRealIssues gives v the second opinion's catches_real_issues when it scored lower. Only
-// this criterion: a second opinion on every criterion added false fails on correct approvals.
-func lowerCatchesRealIssues(cfg Config, v, v2 verdict) verdict {
-	c1, ok1 := v.Criteria[catchesRealIssuesCriterion]
-	c2, ok2 := v2.Criteria[catchesRealIssuesCriterion]
-	lowered := ok1 && ok2 && !c2.Unscored && c2.Score < c1.Score
-	slog.Info("second-opinion judge ran on an approving review", "component", "vetting", "agent", cfg.Agent,
-		"node", cfg.NodeID, "first", c1.Score, "second", c2.Score, "lowered", lowered)
-	if lowered {
-		v.Criteria[catchesRealIssuesCriterion] = c2
-	}
-	return v
-}
-
-// runJudgePass budgets the prompt, retries transient faults, then one harder-clamped retry.
+// runJudgeAgent budgets the prompt, retries transient faults, then one harder-clamped retry.
 // Named returns let the deferred coverage stamp cover every exit.
-func runJudgePass(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, answer string, act workerActivity, det map[string]criterionScore, received []memory.Delivered, emit func(*genai.Part) bool) (v verdict, err error) {
+func runJudgeAgent(ctx context.Context, factory JudgeFactory, cfg Config, question *genai.Content, answer string, act workerActivity, det map[string]criterionScore, received []memory.Delivered, emit func(*genai.Part) bool) (v verdict, err error) {
 	changedFiles, coverage := changedFilesSection(cfg, act)
 	// Memories before known failures is readability only; the whole blob stays in the volatile tail.
 	known := joinSections(receivedMemoriesSection(received)+judgeKnownFailuresSection(det, cfg.Threshold), cfg.judgeEvidence)
@@ -985,7 +937,7 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	// its artifact tools read their per-round visibility and source-read budget from it.
 	st.runCtx, st.cancel = context.WithCancel(withJudgeView(WithAdvisorToken(ctx, cfg.AdvisorToken), newJudgeView(cfg, act)))
 	defer st.cancel()
-	st.sessionID = judgeSessionID(cfg.ChatID, "verdict") + cfg.judgeSessionSuffix
+	st.sessionID = judgeSessionID(cfg.ChatID, "verdict")
 
 	content := judgePromptContent(cfg, prebuilt, answer, changedFiles, knownFailures, act, question)
 	v, ok, err := st.firstVerdict(content, receivedIDs)
