@@ -49,6 +49,13 @@ type EvalScore struct {
 	Timestamp   time.Time
 }
 
+// ToolCall is one recorded tool.call row.
+type ToolCall struct {
+	Node string
+	At   time.Time
+	ledger.ToolCallPayload
+}
+
 // streamState is one StreamKey's recorded activity.
 type streamState struct {
 	chat   []chatEntry
@@ -67,6 +74,7 @@ type Session struct {
 
 	// Recorded judge verdicts (collected outside per-stream sequences).
 	evalScores []EvalScore
+	toolCalls  []ToolCall
 
 	// turnStarts: each node's fresh node.started entries, oldest first - the turn boundaries NodeRuns splits on.
 	turnStarts map[string][]turnStart
@@ -86,8 +94,8 @@ func (s *Session) state(key StreamKey) *streamState {
 	return st
 }
 
-// ingest files one observation entry into its stream by kind. Intent kinds
-// and tool calls carry nothing NodeRuns/UserTurns/EvaluationResults need and are dropped.
+// ingest files one observation entry into its stream by kind; intent kinds are dropped.
+// Tool calls are kept aside, for judge replay's review-stage rebuild.
 func (s *Session) ingest(e ledger.Entry) {
 	key := StreamKey{Node: e.NodeID, Agent: e.Agent, Round: e.Round}
 	switch e.Kind {
@@ -100,6 +108,11 @@ func (s *Session) ingest(e ledger.Entry) {
 		}
 		s.evalScores = append(s.evalScores, EvalScore{Node: e.NodeID, Round: e.Round, ResponseID: p.ResponseID,
 			Criterion: p.Criterion, Score: p.Score, Explanation: p.Explanation, Timestamp: e.At})
+	case ledger.KindToolCall:
+		tc := ToolCall{Node: e.NodeID, At: e.At}
+		if json.Unmarshal(e.Payload, &tc.ToolCallPayload) == nil {
+			s.toolCalls = append(s.toolCalls, tc)
+		}
 	case ledger.KindLLMCall:
 		ce := chatEntry{ts: e.At}
 		// An ACP call's row carries usage only; its round's content is read from the agent.invoke stream.
@@ -135,6 +148,7 @@ func (s *Session) finalize() {
 		sortByTime(st.agents, func(e invokeAgentEntry) time.Time { return e.ts })
 	}
 	sortByTime(s.evalScores, func(e EvalScore) time.Time { return e.Timestamp })
+	sortByTime(s.toolCalls, func(e ToolCall) time.Time { return e.At })
 	for _, starts := range s.turnStarts {
 		sortByTime(starts, func(e turnStart) time.Time { return e.at })
 	}
@@ -490,6 +504,17 @@ func (s *Session) LastModel(node, agent string) string {
 func (s *Session) EvaluationResults() []EvalScore {
 	out := make([]EvalScore, len(s.evalScores))
 	copy(out, s.evalScores)
+	return out
+}
+
+// ToolCalls returns node's recorded tool calls, oldest first.
+func (s *Session) ToolCalls(node string) []ToolCall {
+	var out []ToolCall
+	for _, tc := range s.toolCalls {
+		if tc.Node == node {
+			out = append(out, tc)
+		}
+	}
 	return out
 }
 

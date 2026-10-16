@@ -741,3 +741,72 @@ func TestClipNeverSplitsARune(t *testing.T) {
 		}
 	}
 }
+
+// buildACPReviewerBundle records an ACP reviewer round: its llm.call rows carry no content, so its review
+// lives only in tool.call rows - one refused, one unstaged, one after the judge round.
+func buildACPReviewerBundle(t *testing.T) string {
+	t.Helper()
+	now := time.Now()
+	sent := mustJSON(t, []any{map[string]any{"method": "session/prompt", "params": map[string]any{"prompt": []any{map[string]any{"type": "text", "text": "Review PR 7."}}}}})
+	received := mustJSON(t, []any{map[string]any{"method": "session/update", "params": map[string]any{"update": map[string]any{
+		"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": "Review staged."}}}}})
+	entry := func(seq int64, at time.Duration, kind string, p any) ledger.Entry {
+		return ledger.Entry{Seq: seq, ChatID: "chat-1", NodeID: "rev-1", Agent: "code-reviewer", Round: "worker-r0", Kind: kind, At: now.Add(at), Payload: mustPayload(t, p)}
+	}
+	call := func(seq int64, at time.Duration, name string, args map[string]any, errText string) ledger.Entry {
+		return entry(seq, at, ledger.KindToolCall, ledger.ToolCallPayload{Name: name, Args: mustJSON(t, args), Error: errText})
+	}
+	judged := entry(9, 10*time.Second, ledger.KindEvalScore, ledger.EvalScorePayload{Criterion: "review_posted", Score: 1})
+	judged.Agent, judged.Round = "", "judge-r1"
+	return writeEntries(t, []ledger.Entry{
+		entry(1, time.Second, ledger.KindAgentInvoke, ledger.AgentInvokePayload{Sent: sent, Received: received}),
+		entry(2, time.Second, ledger.KindLLMCall, ledger.LLMCallPayload{}),
+		call(3, 2*time.Second, "stage_review_comment", map[string]any{"path": "a.go", "line": 3, "label": "blocking", "body": "nil deref on empty input"}, ""),
+		call(4, 3*time.Second, "stage_review_comment", map[string]any{"path": "b.go", "line": 9, "label": "nit", "body": "rename this"}, ""),
+		call(5, 4*time.Second, "unstage_review_comment", map[string]any{"id": "b.go:9#1"}, ""),
+		call(6, 5*time.Second, "stage_review_comment", map[string]any{"path": "c.go", "line": 1, "label": "nit", "body": "refused live"}, "refused"),
+		call(7, 6*time.Second, "stage_review", map[string]any{"event": "approve", "takeaway": "Looks fine."}, ""),
+		call(8, 7*time.Second, "stage_review", map[string]any{"event": "request_changes", "takeaway": "One blocking nil deref."}, ""),
+		judged,
+		call(10, 20*time.Second, "stage_review_comment", map[string]any{"path": "late.go", "line": 1, "label": "nit", "body": "after the judge"}, ""),
+	})
+}
+
+// An ACP reviewer's staged review reaches the replayed judge as live sees it, rebuilt from tool.call rows.
+func TestRunJudgeReplayRebuildsACPReviewStage(t *testing.T) {
+	sess, err := bundle.Load(buildACPReviewerBundle(t))
+	if err != nil {
+		t.Fatalf("load bundle: %v", err)
+	}
+	cfg := fixtureConfig()
+	cfg.Agents["code-reviewer"] = config.AgentConfig{Bundle: "agents/code-reviewer"}
+	calls := 0
+	var prompts []string
+	judge := vetting.NewJudgeFactory(sequenceJudgeVerdict{scores: []int{3}, calls: &calls, prompts: &prompts}, nil, nil)
+	var buf bytes.Buffer
+	code := RunJudgeReplay(context.Background(), cfg, sess, ReplayOptions{RubricPath: rubricFile(t, "existence check", 0.85)}, judge, nil, false, &buf, true)
+	if code != 0 || len(prompts) != 1 {
+		t.Fatalf("exit = %d, judge calls = %d; want 0 and 1: %s", code, len(prompts), buf.String())
+	}
+	p := prompts[0]
+	for _, want := range []string{"Staged review verdict: request_changes", "a.go:3 - ", "nil deref on empty input", "One blocking nil deref."} {
+		if !strings.Contains(p, want) {
+			t.Errorf("judge prompt lacks %q:\n%s", want, p)
+		}
+	}
+	for _, gone := range []string{"rename this", "refused live", "after the judge"} {
+		if strings.Contains(p, gone) {
+			t.Errorf("judge prompt carries %q (unstaged, refused, or after the judge round)", gone)
+		}
+	}
+	for _, c := range decodeReports(t, &buf)[0].Criteria {
+		switch c.Name {
+		case "review_posted":
+			if !c.HasReplayed || c.ReplayedScore != 1 || c.Flipped {
+				t.Errorf("review_posted = %+v, want replayed 1 with no flip", c)
+			}
+		case "behaviour_verified":
+			t.Errorf("behaviour_verified = %+v, want it absent: an ACP round's commands are not in the recording", c)
+		}
+	}
+}

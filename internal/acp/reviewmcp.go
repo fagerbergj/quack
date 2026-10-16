@@ -2,6 +2,7 @@ package acp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -119,7 +120,11 @@ func addStageReviewComment(srv *mcp.Server, review *vetting.ReviewStage) {
 		Name:        toolStageReviewComment,
 		Description: "Stage one inline, line-anchored review comment on the pull request under review. Call once per finding; the gate posts them after your answer passes. Returns the id of the staged comment, for later retraction via unstage_review_comment. Duplicates (same path, line, and body) are rejected with the existing id, not double-staged.",
 		InputSchema: stageReviewCommentSchema,
-	}, func(_ context.Context, _ *mcp.CallToolRequest, args stageReviewCommentInput) (*mcp.CallToolResult, any, error) {
+	}, stageReviewCommentHandler(review))
+}
+
+func stageReviewCommentHandler(review *vetting.ReviewStage) mcp.ToolHandlerFor[stageReviewCommentInput, any] {
+	return func(_ context.Context, _ *mcp.CallToolRequest, args stageReviewCommentInput) (*mcp.CallToolResult, any, error) {
 		body := vetting.WithCommentLabel(strings.TrimSpace(args.Label), strings.TrimSpace(args.Body))
 		if err := checkReviewComment(strings.TrimSpace(args.Path), args.Line, body, args.ProposedChange); err != nil {
 			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}}}, nil, nil
@@ -129,7 +134,7 @@ func addStageReviewComment(srv *mcp.Server, review *vetting.ReviewStage) {
 			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("duplicate of %s; not staged", id)}}}, nil, nil
 		}
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("staged as id %s", id)}}}, nil, nil
-	})
+	}
 }
 
 // checkReviewComment reports every problem with one stage_review_comment call, so one retry fixes them all.
@@ -193,13 +198,17 @@ func addUnstageReviewComment(srv *mcp.Server, review *vetting.ReviewStage) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        toolUnstageReviewComment,
 		Description: "Retract a previously staged inline comment by id (from stage_review_comment or list_review_comments) - e.g. after re-reading the file and deciding the finding doesn't hold, or because it duplicates one already staged. An unknown id is an error, not a silent no-op.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, args unstageReviewCommentInput) (*mcp.CallToolResult, any, error) {
+	}, unstageReviewCommentHandler(review))
+}
+
+func unstageReviewCommentHandler(review *vetting.ReviewStage) mcp.ToolHandlerFor[unstageReviewCommentInput, any] {
+	return func(_ context.Context, _ *mcp.CallToolRequest, args unstageReviewCommentInput) (*mcp.CallToolResult, any, error) {
 		id := strings.TrimSpace(args.ID)
 		if id == "" || !review.RemoveComment(id) {
 			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("no staged comment with id %q", id)}}}, nil, nil
 		}
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("unstaged %s", id)}}}, nil, nil
-	})
+	}
 }
 
 // addStageReview: the stage_review tool (verdict/takeaway/verified/notes
@@ -212,7 +221,11 @@ func addStageReview(srv *mcp.Server, review *vetting.ReviewStage) {
 			"again replaces the staged review. The gate renders the fixed review format (verdict/scope/highlights are generated, not written), records it as " +
 			"this PR's code_review, and submits it after your answer passes. " + vetting.CodeReviewCapsText + ".",
 		InputSchema: stageReviewSchema,
-	}, func(_ context.Context, _ *mcp.CallToolRequest, args stageReviewInput) (*mcp.CallToolResult, any, error) {
+	}, stageReviewHandler(review))
+}
+
+func stageReviewHandler(review *vetting.ReviewStage) mcp.ToolHandlerFor[stageReviewInput, any] {
+	return func(_ context.Context, _ *mcp.CallToolRequest, args stageReviewInput) (*mcp.CallToolResult, any, error) {
 		event := strings.ToLower(strings.TrimSpace(args.Event))
 		takeaway := strings.TrimSpace(args.Takeaway)
 		if err := checkStageReview(event, takeaway, args.Verified, args.Notes); err != nil {
@@ -222,7 +235,27 @@ func addStageReview(srv *mcp.Server, review *vetting.ReviewStage) {
 			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}}}, nil, nil
 		}
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "staged"}}}, nil, nil
-	})
+	}
+}
+
+// ReplayReviewCall applies one recorded review-tool call to review through the live handler, which refuses
+// it as it would live; other tool names and undecodable args are ignored. Schema checks already ran live.
+func ReplayReviewCall(review *vetting.ReviewStage, name, args string) {
+	switch name {
+	case toolStageReviewComment:
+		replayCall(args, stageReviewCommentHandler(review))
+	case toolUnstageReviewComment:
+		replayCall(args, unstageReviewCommentHandler(review))
+	case toolStageReview:
+		replayCall(args, stageReviewHandler(review))
+	}
+}
+
+func replayCall[In any](args string, h mcp.ToolHandlerFor[In, any]) {
+	var in In
+	if json.Unmarshal([]byte(args), &in) == nil {
+		_, _, _ = h(context.Background(), nil, in)
+	}
 }
 
 // checkStageReview reports every problem with one stage_review call, so one retry fixes them all.

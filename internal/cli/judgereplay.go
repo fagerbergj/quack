@@ -17,6 +17,7 @@ import (
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/tool"
 
+	"github.com/fagerbergj/quack/internal/acp"
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/ledger/bundle"
 	"github.com/fagerbergj/quack/internal/vetting"
@@ -249,6 +250,21 @@ func activityTurnsBefore(sess *bundle.Session, judgeAt time.Time, node string) [
 	return out
 }
 
+// reviewStageBefore replays node's review MCP calls at or before judgeAt through the live handlers; a call the
+// recording marks failed was refused live and is skipped.
+func reviewStageBefore(sess *bundle.Session, node string, judgeAt time.Time) *vetting.ReviewStage {
+	stage := vetting.NewReviewStage(nil)
+	for _, c := range sess.ToolCalls(node) {
+		if c.At.After(judgeAt) {
+			break
+		}
+		if c.Error == "" {
+			acp.ReplayReviewCall(stage, c.Name, c.Args)
+		}
+	}
+	return stage
+}
+
 // workerTurnsFor rebuilds jr's gate inputs: the node's earliest-round task,
 // its latest-before-jr.at answer, and the whole session's activity turns.
 func workerTurnsFor(sess *bundle.Session, jr judgedRound) (task, answer string, turns []vetting.RawTurn, ok bool) {
@@ -430,7 +446,8 @@ func replayOneRound(ctx context.Context, cfg *config.Config, sess *bundle.Sessio
 		}
 		cfgCache[jr.agent] = gc
 	}
-	rc := vetting.ReplayCase{NodeID: jr.node, Task: task, Answer: answer, WorkerTurns: turns, NodeTurns: activityTurnsBefore(sess, jr.at, jr.node), Pages: opts.Pages, Verifier: opts.Verifier}
+	rc := vetting.ReplayCase{NodeID: jr.node, Task: task, Answer: answer, WorkerTurns: turns, NodeTurns: activityTurnsBefore(sess, jr.at, jr.node),
+		Pages: opts.Pages, Verifier: opts.Verifier, Review: reviewStageBefore(sess, jr.node, jr.at)}
 
 	jf := judge
 	if opts.DeterministicOnly {

@@ -114,18 +114,25 @@ func augmentFromReviewStage(act *workerActivity, advisorToken string) {
 	if !ok || t.MemSecret == "" {
 		return
 	}
-	ms, ok := LookupMemSession(t.MemSecret)
-	if !ok || ms.Review == nil {
-		return
+	if ms, ok := LookupMemSession(t.MemSecret); ok {
+		foldReviewStage(act, ms.Review)
 	}
-	sd, ok := ms.Review.Snapshot()
+}
+
+// foldReviewStage sets act's staged review from review's snapshot; false when nothing is staged.
+func foldReviewStage(act *workerActivity, review *ReviewStage) bool {
+	if review == nil {
+		return false
+	}
+	sd, ok := review.Snapshot()
 	if !ok {
-		return
+		return false
 	}
 	if act.stagedDelivery == nil {
 		act.stagedDelivery = map[string]StagedDelivery{}
 	}
 	act.stagedDelivery["review"] = sd
+	return true
 }
 
 // augmentFromPRStage folds a stage_pr/stage_push PR over augmentFromRepo's fallback, keeping its branch.

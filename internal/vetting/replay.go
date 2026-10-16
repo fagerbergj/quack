@@ -26,6 +26,8 @@ type ReplayCase struct {
 	NodeTurns            []RawTurn  // this node's own turns; nil = credit every artifact write in WorkerTurns
 	Pages                PageLoader // stored web pages, for the shadow locate tier; nil skips it
 	Verifier             *Verifier  // the shadow verify tier over located specifics; nil skips it
+	// Review: the ACP reviewer's review MCP stage rebuilt from its tool.call rows; nil for any other node.
+	Review *ReviewStage
 }
 
 // ReplayCriterion is one criterion's freshly computed score. RubricMark is its
@@ -61,6 +63,10 @@ func ReplayRound(ctx context.Context, cfg Config, judge JudgeFactory, rc ReplayC
 	if err != nil {
 		return ReplayRoundResult{}, err
 	}
+	// Only a reviewer node gets a review stage live, so a staged one marks the round's node as one.
+	if foldReviewStage(&act, rc.Review) {
+		cfg.IsReviewer = true
+	}
 	augmentFromAnswer(&act, cfg, rc.Answer)
 	res := ReplayRoundResult{Threshold: cfg.Threshold, ArtifactsWritten: act.artifactsWritten}
 	if rc.Pages != nil {
@@ -72,6 +78,8 @@ func ReplayRound(ctx context.Context, cfg Config, judge JudgeFactory, rc ReplayC
 	}
 
 	det, _ := computeDeterministicCriteria(ctx, rc.Answer, act, cfg, rc.NodeID, time.Time{})
+	// An ACP round's run_command calls never reach the rebuilt session, so its reviewer check would fail spuriously.
+	delete(det, "behaviour_verified")
 	if declaresCodeOwned(cfg, specificsSupportedCriterion) { // as live: the verify tier runs first and feeds the judge
 		cfg.judgeEvidence, cfg.judgeCheckedPages = judgeEvidenceSection(res.Units), checkedPages(res.Units)
 		if c, ok := specificsSupportedScore(res.Units); ok {
