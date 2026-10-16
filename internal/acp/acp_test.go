@@ -199,6 +199,26 @@ func (f *fakeAgent) Prompt(ctx context.Context, p sdk.PromptRequest) (sdk.Prompt
 		send(sdk.UpdateToolCall("t2", sdk.WithUpdateStatus(sdk.ToolCallStatusCompleted), sdk.WithUpdateRawOutput(map[string]any{"exit": 0, "output": "go.mod"})))
 		send(sdk.UpdateAgentMessageText("done"))
 		return sdk.PromptResponse{StopReason: sdk.StopReasonEndTurn}, nil
+	case "tool-slow", "tool-stuck", "tool-done-hang":
+		// A silent command: opens a call declaring a timeout, then goes quiet.
+		timeout := 3
+		if f.mode == "tool-stuck" {
+			timeout = 1
+		}
+		send(sdk.StartToolCall("t1", "go test ./...", sdk.WithStartKind(sdk.ToolKindExecute),
+			sdk.WithStartRawInput(map[string]any{"command": "go test ./...", "timeout": timeout})))
+		if f.mode == "tool-stuck" {
+			<-ctx.Done()
+			return sdk.PromptResponse{StopReason: sdk.StopReasonCancelled}, nil
+		}
+		time.Sleep(600 * time.Millisecond)
+		send(sdk.UpdateToolCall("t1", sdk.WithUpdateStatus(sdk.ToolCallStatusCompleted)))
+		if f.mode == "tool-done-hang" {
+			<-ctx.Done()
+			return sdk.PromptResponse{StopReason: sdk.StopReasonCancelled}, nil
+		}
+		send(sdk.UpdateAgentMessageText("done"))
+		return sdk.PromptResponse{StopReason: sdk.StopReasonEndTurn}, nil
 	case "steer":
 		// Blocks until the extension delivers a forwarded message mid-round.
 		text := <-f.steerCh
@@ -860,6 +880,45 @@ func TestRound_IdleTimeout(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("round did not return - idle timeout regression, would otherwise hang on the caller's outer context")
+	}
+}
+
+// runIdleRound runs one round in mode with a 150ms IdleTimeout and returns its error and duration.
+func runIdleRound(t *testing.T, mode string) (error, time.Duration) {
+	t.Helper()
+	oldGrace := cancelGrace
+	cancelGrace = 200 * time.Millisecond
+	t.Cleanup(func() { cancelGrace = oldGrace })
+	a := testAgent(t, mode)
+	a.opts.IdleTimeout = 150 * time.Millisecond
+	t0 := time.Now()
+	err := a.round(context.Background(), t.TempDir(), "", workspace.Caps{}, "go", artifactsrc.Artifact{}, "", "", "", "", func(eventSpec) bool { return true })
+	return err, time.Since(t0)
+}
+
+// A command silent past IdleTimeout but inside its declared timeout is running, not wedged.
+func TestRound_OpenToolCallOutlivesIdleTimeout(t *testing.T) {
+	if err, _ := runIdleRound(t, "tool-slow"); err != nil {
+		t.Fatalf("silent open tool call wedged the round: %v", err)
+	}
+}
+
+// Once the call completes, silence is wedged again at the plain IdleTimeout.
+func TestRound_SilenceAfterToolCallStillWedges(t *testing.T) {
+	err, _ := runIdleRound(t, "tool-done-hang")
+	if !errors.Is(err, inference.ErrAgentSilent) {
+		t.Fatalf("want ErrAgentSilent, got %v", err)
+	}
+}
+
+// An open call past its declared timeout plus grace is wedged: the window is bounded, not infinite.
+func TestRound_OpenToolCallPastItsTimeoutWedges(t *testing.T) {
+	err, d := runIdleRound(t, "tool-stuck")
+	if !errors.Is(err, inference.ErrAgentSilent) {
+		t.Fatalf("want ErrAgentSilent, got %v", err)
+	}
+	if d < time.Second {
+		t.Fatalf("wedged after %v, before the declared 1s timeout", d)
 	}
 }
 
