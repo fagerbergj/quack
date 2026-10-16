@@ -173,6 +173,17 @@ export function failedToolCount(activity: Activity[]): number {
   return activity.filter(a => a.kind === 'tool' && a.tool.done && toolFailed(a.tool.result)).length
 }
 
+// Collapsed, a list shows its last `recent` items plus every earlier failed tool call, so "N failed" is never
+// a count of rows hidden behind "N earlier". Returns indexes in order and how many stay hidden.
+export function collapsedActivity(activity: Activity[], recent: number): { shown: number[]; hidden: number } {
+  const cut = Math.max(0, activity.length - recent)
+  const shown: number[] = []
+  activity.forEach((a, i) => {
+    if (i >= cut || (a.kind === 'tool' && a.tool.done && toolFailed(a.tool.result))) shown.push(i)
+  })
+  return { shown, hidden: activity.length - shown.length }
+}
+
 export interface LiveStatus {
   thinking: boolean
   tool?: ToolCall
