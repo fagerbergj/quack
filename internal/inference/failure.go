@@ -1,12 +1,14 @@
 package inference
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -175,6 +177,10 @@ func LastStoreFailure(chatID string) (reason string, ok bool) { return storeFail
 
 var statusRe = regexp.MustCompile(`status (\d{3})`)
 
+// ErrAgentSilent marks an agent process that went quiet past its idle timeout and was killed as wedged.
+// Its text is a marker too: ADK's sub-scheduler re-wraps a child's error with %v, dropping the chain.
+var ErrAgentSilent = errors.New("quack: agent went silent")
+
 // SanitizeGatewayError reduces a generate() error to a status class safe to post publicly: err.Error()
 // carries the endpoint URL and raw body, and a 401 can echo the API key. transient: 5xx/408/429.
 func SanitizeGatewayError(err error) (summary string, transient bool) {
@@ -183,7 +189,7 @@ func SanitizeGatewayError(err error) (summary string, transient bool) {
 	}
 	m := statusRe.FindStringSubmatch(err.Error())
 	if m == nil {
-		return "model call failed (non-HTTP error)", false
+		return nonHTTPSummary(err), false
 	}
 	code, _ := strconv.Atoi(m[1])
 	transient = code == http.StatusTooManyRequests || code == http.StatusRequestTimeout || code >= 500
@@ -191,4 +197,19 @@ func SanitizeGatewayError(err error) (summary string, transient bool) {
 		return fmt.Sprintf("model gateway returned %d %s", code, text), transient
 	}
 	return fmt.Sprintf("model gateway returned status %d", code), transient
+}
+
+// nonHTTPSummary names a statusless failure's cause from its chain or a fixed marker in its text;
+// the summary is constant, so nothing from the error text is echoed.
+func nonHTTPSummary(err error) string {
+	text := err.Error()
+	switch {
+	case errors.Is(err, ErrAgentSilent) || strings.Contains(text, ErrAgentSilent.Error()):
+		return "agent went silent past its idle timeout and was stopped"
+	case errors.Is(err, context.DeadlineExceeded) || strings.Contains(text, context.DeadlineExceeded.Error()):
+		return "model call timed out"
+	case IsDialFailure(err) || strings.Contains(text, "connection refused") || strings.Contains(text, "no such host"):
+		return "model gateway unreachable (connection error)"
+	}
+	return "model call failed (non-HTTP error)"
 }
