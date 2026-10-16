@@ -1,6 +1,7 @@
 package inference
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -175,6 +176,9 @@ func LastStoreFailure(chatID string) (reason string, ok bool) { return storeFail
 
 var statusRe = regexp.MustCompile(`status (\d{3})`)
 
+// ErrAgentSilent marks an agent process that went quiet past its idle timeout and was killed as wedged.
+var ErrAgentSilent = errors.New("agent went silent")
+
 // SanitizeGatewayError reduces a generate() error to a status class safe to post publicly: err.Error()
 // carries the endpoint URL and raw body, and a 401 can echo the API key. transient: 5xx/408/429.
 func SanitizeGatewayError(err error) (summary string, transient bool) {
@@ -183,7 +187,7 @@ func SanitizeGatewayError(err error) (summary string, transient bool) {
 	}
 	m := statusRe.FindStringSubmatch(err.Error())
 	if m == nil {
-		return "model call failed (non-HTTP error)", false
+		return nonHTTPSummary(err), false
 	}
 	code, _ := strconv.Atoi(m[1])
 	transient = code == http.StatusTooManyRequests || code == http.StatusRequestTimeout || code >= 500
@@ -191,4 +195,17 @@ func SanitizeGatewayError(err error) (summary string, transient bool) {
 		return fmt.Sprintf("model gateway returned %d %s", code, text), transient
 	}
 	return fmt.Sprintf("model gateway returned status %d", code), transient
+}
+
+// nonHTTPSummary names the cause of a statusless failure from its error chain, never its text.
+func nonHTTPSummary(err error) string {
+	switch {
+	case errors.Is(err, ErrAgentSilent):
+		return "agent went silent past its idle timeout and was stopped"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "model call timed out"
+	case IsDialFailure(err):
+		return "model gateway unreachable (connection error)"
+	}
+	return "model call failed (non-HTTP error)"
 }

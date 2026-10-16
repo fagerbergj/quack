@@ -21,6 +21,7 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/fagerbergj/quack/internal/artifactsrc"
+	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/vetting"
 	"github.com/fagerbergj/quack/internal/workspace"
 )
@@ -854,7 +855,7 @@ func TestRound_IdleTimeout(t *testing.T) {
 
 	select {
 	case err := <-result:
-		if err == nil || !strings.Contains(err.Error(), "wedged") {
+		if !errors.Is(err, inference.ErrAgentSilent) || !strings.Contains(err.Error(), "wedged") {
 			t.Fatalf("want a wedged idle-timeout error, got %v", err)
 		}
 	case <-time.After(5 * time.Second):

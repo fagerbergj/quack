@@ -1,6 +1,7 @@
 package inference
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -158,5 +159,19 @@ func TestIsDialFailure(t *testing.T) {
 				t.Errorf("IsDialFailure(%v) = %v, want %v", tc.err, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestSanitizeGatewayError_NamesNonHTTPCauses(t *testing.T) {
+	cases := map[string]error{
+		"agent went silent past its idle timeout and was stopped": fmt.Errorf("acp: no activity for 10m0s - treating the ACP agent as wedged (%w)", ErrAgentSilent),
+		"model call timed out":                         fmt.Errorf("generate: %w", context.DeadlineExceeded),
+		"model gateway unreachable (connection error)": &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED},
+		"model call failed (non-HTTP error)":           errors.New("something else"),
+	}
+	for want, err := range cases {
+		if got, transient := SanitizeGatewayError(err); got != want || transient {
+			t.Errorf("SanitizeGatewayError(%v) = %q, %v; want %q, false", err, got, transient, want)
+		}
 	}
 }

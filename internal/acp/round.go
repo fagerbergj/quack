@@ -13,6 +13,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	oteltrace "go.opentelemetry.io/otel/trace"
 
+	"github.com/fagerbergj/quack/internal/inference"
 	"github.com/fagerbergj/quack/internal/ledger"
 	"github.com/fagerbergj/quack/internal/otelobs"
 	"github.com/fagerbergj/quack/internal/vetting"
@@ -188,7 +189,7 @@ func (a *Agent) roundLoop(al *roundLoopArgs) (bool, error) {
 			return false, al.abortCtx.Err()
 		case <-al.idleTimer.C():
 			a.gracefulCancel(al.h, al.sessID, al.done)
-			return false, fmt.Errorf("acp: no activity for %s - treating the ACP agent as wedged%s", a.opts.IdleTimeout, al.h.stderrTail())
+			return false, fmt.Errorf("acp: no activity for %s - treating the ACP agent as wedged (%w)%s", a.opts.IdleTimeout, inference.ErrAgentSilent, al.h.stderrTail())
 		}
 	}
 }
