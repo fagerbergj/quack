@@ -139,32 +139,13 @@ func (s *orchRun) buildMemoryArtifactTools(githubSetup *dag.Setup) string {
 		if s.o.schemas != nil {
 			rc = rc.WithSchemas(s.o.schemas)
 		}
-		listTool, err := tools.NewListArtifactsTool(rc)
-		if err != nil {
-			return "orchestrator: list_artifacts tool: " + err.Error()
-		}
-		editTool, err := tools.NewEditArtifactTool(rc, orchestratorName, &tools.RoundCoords{})
-		if err != nil {
-			return "orchestrator: edit_artifact tool: " + err.Error()
-		}
-		// Split like BuildNativeArtifactTools: write_artifact needs DocumentHint,
-		// write_<kind> (code_review) needs SubjectHint - one shared hint mismatches one of the two.
-		writeTool, err := tools.NewWriteArtifactTool(rc, orchestratorName, &tools.RoundCoords{}, vetting.DocumentHint(s.sessionID))
-		if err != nil {
-			return "orchestrator: write_artifact tool: " + err.Error()
-		}
 		// read_artifact, not ADK's load_artifacts: that tool lists every artifact in the system instruction (each
 		// new artifact broke the prompt cache there) and attaches content to one request only, so it was re-loaded.
-		readTool, err := tools.NewReadArtifactTool(rc)
+		artifactTools, err := tools.BuildNativeArtifactTools(rc, orchestratorName, nil, vetting.DocumentHint(s.sessionID), vetting.SubjectHint(s.sessionID))
 		if err != nil {
-			return "orchestrator: read_artifact tool: " + err.Error()
+			return "orchestrator: artifact tools: " + err.Error()
 		}
-		s.toolList = append(s.toolList, listTool, readTool, editTool, writeTool)
-		writeKindTools, err := tools.NewWriteKindTools(rc, orchestratorName, &tools.RoundCoords{}, vetting.SubjectHint(s.sessionID))
-		if err != nil {
-			return "orchestrator: write_<kind> tools: " + err.Error()
-		}
-		s.toolList = append(s.toolList, writeKindTools...)
+		s.toolList = append(s.toolList, artifactTools...)
 		if s.o.renderUI {
 			renderTool, err := tools.NewRenderUITool(rc, orchestratorName, nil)
 			if err != nil {
