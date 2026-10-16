@@ -9,7 +9,7 @@ import type { ComponentPropsWithoutRef } from 'react'
 import type { Element } from 'hast'
 import type { Activity, ToolCall } from './messageParts'
 import { Icon } from './Icon'
-import { agentLabel, liveStatusLine } from './messageParts'
+import { agentLabel, collapsedActivity, liveStatusLine } from './messageParts'
 import { previewLine, toolFailed, toolActionLine, fmtTokenCount } from './toolFormat'
 import { escapeUnmatchedBackticks } from '../lib/backticks'
 import { Expandable } from './Expandable'
@@ -211,8 +211,8 @@ export function BubbleHeader({ agent, model, tokens, status, stopped, unverified
 // Keys index into the append-only list so streaming reconciliation stays stable.
 export function ActivityList({ activity }: { activity: Activity[] }) {
   const [showAll, setShowAll] = useState(false)
-  const hidden = Math.max(0, activity.length - RECENT)
-  const start = showAll ? 0 : hidden
+  const { shown, hidden } = collapsedActivity(activity, RECENT)
+  const indexes = showAll ? activity.map((_, i) => i) : shown
   return (
     <>
       {hidden > 0 && (
@@ -223,11 +223,12 @@ export function ActivityList({ activity }: { activity: Activity[] }) {
           {showAll ? '▾ show less' : `⋯ ${hidden} earlier`}
         </button>
       )}
-      {activity.slice(start).map((a, i) => {
+      {indexes.map(i => {
+        const a = activity[i]
         switch (a.kind) {
-          case 'thinking': return <ThinkBlock key={start + i} text={a.text} />
-          case 'compaction': return <CompactionBlock key={start + i} {...a} />
-          default: return <ToolBlock key={start + i} tool={a.tool} />
+          case 'thinking': return <ThinkBlock key={i} text={a.text} />
+          case 'compaction': return <CompactionBlock key={i} {...a} />
+          default: return <ToolBlock key={i} tool={a.tool} />
         }
       })}
     </>
@@ -334,8 +335,8 @@ export function ToolBlock({ tool }: { tool: ToolCall }) {
 function ToolStatusIcon({ tool }: { tool: ToolCall }) {
   if (!tool.done) return <Dots variant="compact" size="w-1 h-1" />
   return toolFailed(tool.result)
-    ? <Icon name="close" className="w-3 h-3 text-red-700 dark:text-red-400 shrink-0" />
-    : <Icon name="check" className="w-3 h-3 text-green-700 dark:text-green-400 shrink-0" />
+    ? <Icon name="close" label="failed" className="w-3 h-3 text-red-700 dark:text-red-400 shrink-0" />
+    : <Icon name="check" label="succeeded" className="w-3 h-3 text-green-700 dark:text-green-400 shrink-0" />
 }
 
 // 'chat' keeps three bounce dots on purpose; 'compact' is one pulse dot for high-multiplicity spots where

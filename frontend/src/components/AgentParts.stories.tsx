@@ -42,6 +42,20 @@ export const ToolFailed: Story = {
   },
 }
 
+// Collapsed, an early failure stays visible beside the last three calls instead of hiding behind "N earlier".
+export const EarlierFailureStaysVisible: Story = {
+  args: {
+    activity: [
+      { kind: 'tool', tool: { callId: 'e1', name: 'run_command', args: { command: 'git diff --stat' }, result: { output: '2 files' }, done: true } },
+      { kind: 'tool', tool: { callId: 'e2', name: 'run_command', args: { command: 'rg -n stagedDelivery' }, result: { error: 'rg: command not found' }, done: true } },
+      { kind: 'tool', tool: { callId: 'e3', name: 'read_file', args: { path: 'judge.go' }, result: { output: 'package vetting' }, done: true } },
+      { kind: 'tool', tool: { callId: 'e4', name: 'read_file', args: { path: 'reviewdiff_test.go' }, result: { output: 'package vetting' }, done: true } },
+      { kind: 'tool', tool: { callId: 'e5', name: 'run_command', args: { command: 'go test ./internal/vetting/' }, result: { output: 'ok' }, done: true } },
+      { kind: 'tool', tool: { callId: 'e6', name: 'stage_review', args: {}, result: { ok: true }, done: true } },
+    ],
+  },
+}
+
 // An ACP file edit maps to edit_file and gets the same before/after diff as a native edit.
 // A new file (no prior content) shows every line as added.
 export const AcpEditFileDiff: Story = {
