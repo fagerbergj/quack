@@ -163,7 +163,7 @@ func newJudgeReadArtifactTool(c *recordstore.Client) (tool.Tool, error) {
 	return functiontool.New[judgeReadArtifactArgs, string](
 		functiontool.Config{
 			Name: "read_artifact",
-			Description: "Read an artifact by id (from list_artifacts). Text content is returned inline; binary " +
+			Description: "Read an artifact by id, passed exactly as list_artifacts returned it. Text content is returned inline; binary " +
 				"content is base64-encoded. Omit revision for the latest, or pass one to read exactly what the " +
 				"worker wrote/edited at that point. Pass offset (a 1-based line number) and/or lines to window a " +
 				"large text artifact instead of the whole thing.",
@@ -174,21 +174,15 @@ func newJudgeReadArtifactTool(c *recordstore.Client) (tool.Tool, error) {
 				return "", errPageChecked(a.ID)
 			}
 			data, mime, author, ok, err := loadJudgeArtifact(ctx, c, a)
-			resolved := ""
-			if err == nil && !ok {
-				// Resolve only among what list_artifacts shows, so a partial id never reveals a hidden one.
-				if a.ID, err = c.Resolve(ctx, a.ID, func(it recordstore.ArtifactSummary) bool { return view.lists(ctx, c, it) }); err == nil {
-					resolved = recordstore.ResolvedIDPrefix + a.ID + "\n\n"
-					data, mime, author, ok, err = loadJudgeArtifact(ctx, c, a)
-				}
-			}
 			if err != nil {
 				return "", fmt.Errorf("read_artifact: %w", err)
 			}
 			if !ok || !view.visible(ctx, c, a.ID, author) {
-				return "", fmt.Errorf("read_artifact: %s: not found", a.ID)
+				// Only what list_artifacts shows, so a miss never reveals a hidden id.
+				ids, _ := c.IDs(ctx, func(it recordstore.ArtifactSummary) bool { return view.lists(ctx, c, it) })
+				return "", fmt.Errorf("read_artifact: %w", recordstore.NotFoundError(a.ID, ids))
 			}
-			return resolved + shapeJudgeReadArtifact(data, mime, a, judgeArtifactReadCap), nil
+			return shapeJudgeReadArtifact(data, mime, a, judgeArtifactReadCap), nil
 		},
 	)
 }

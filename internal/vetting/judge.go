@@ -182,7 +182,7 @@ func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool, skillsets []to
 			Toolsets:              skillsets,
 			GenerateContentConfig: judgeGenConfig(maxOutputTokens, thinkingLevel),
 			BeforeModelCallbacks:  []llmagent.BeforeModelCallback{forcedVerdictCallback(maxIters, forced, receivedIDs)},
-			BeforeToolCallbacks:   []llmagent.BeforeToolCallback{decodeStringifiedVerdict, countRepo, countArtifacts},
+			BeforeToolCallbacks:   []llmagent.BeforeToolCallback{countRepo, countArtifacts},
 		}
 		for _, w := range wire {
 			w(&cfg)
@@ -287,29 +287,6 @@ func repeatsLastToolCall(contents []*genai.Content) bool {
 	a, aerr := json.Marshal(last.Args)
 	b, berr := json.Marshal(prev.Args)
 	return aerr == nil && berr == nil && string(a) == string(b)
-}
-
-// decodeStringifiedVerdict: judges often send submit_verdict's nested fields as a JSON string, which the
-// schema rejects at the cost of a judge turn; decode them in place before Run validates.
-func decodeStringifiedVerdict(_ adkagent.Context, t tool.Tool, args map[string]any) (map[string]any, error) {
-	if t.Name() != submitVerdictTool {
-		return nil, nil
-	}
-	for _, k := range []string{"criteria", "findings", "memories"} {
-		s, ok := args[k].(string)
-		if !ok {
-			continue
-		}
-		// Judges also drop a stringified value's final closer; restoring it saves the rejected turn.
-		for _, closer := range []string{"", "}", "]"} {
-			var v any
-			if json.Unmarshal([]byte(s+closer), &v) == nil {
-				args[k] = v
-				break
-			}
-		}
-	}
-	return nil, nil
 }
 
 // verdictArgs: submit_verdict schema. Only score is required.
@@ -1055,7 +1032,6 @@ func (s *judgeRoundState) recordRead(fr *genai.FunctionResponse) {
 		args, _ = json.Marshal(fc.Args)
 		id, _ = fc.Args["id"].(string)
 	}
-	id = readArtifactID(id, fr.Response)
 	body, ok := fr.Response["result"].(string)
 	if !ok {
 		raw, _ := json.Marshal(fr.Response)

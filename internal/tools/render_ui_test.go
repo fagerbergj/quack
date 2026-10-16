@@ -69,12 +69,7 @@ func TestRenderUI_UpsertQuizKeyAndEvents(t *testing.T) {
 		}
 	})
 
-	// First call: components/data_model arrive stringified, as some models send them.
 	args := renderUIFixture(t)
-	for _, k := range []string{"components", "data_model"} {
-		b, _ := json.Marshal(args[k])
-		args[k] = string(b)
-	}
 	var res renderUIResult
 	if err := json.Unmarshal([]byte(runRenderUI(t, rt, ctx, args)), &res); err != nil {
 		t.Fatal(err)

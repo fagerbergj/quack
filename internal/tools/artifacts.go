@@ -232,32 +232,26 @@ func NewReadArtifactTool(c *recordstore.Client) (tool.Tool, error) {
 	return functiontool.New[readArtifactArgs, string](
 		functiontool.Config{
 			Name: "read_artifact",
-			Description: fmt.Sprintf("Read an artifact by id (from list_artifacts). Text content is returned inline "+
+			Description: fmt.Sprintf("Read an artifact by id, passed exactly as list_artifacts returned it. Text content is returned inline "+
 				"(a web_page or bytes artifact up to its first %d bytes); binary content is base64-encoded. Omit revision "+
 				"for the latest. Pass offset (a 1-based line number) and/or lines (window size) to read a window of a large "+
 				"text artifact instead.", fetchReturnMaxBytes),
 		},
 		func(ctx agent.Context, a readArtifactArgs) (string, error) {
 			data, mime, lineage, ok, err := loadArtifact(ctx, c, a)
-			resolved := ""
-			if err == nil && !ok {
-				if a.ID, err = c.Resolve(ctx, a.ID, nil); err == nil {
-					resolved = recordstore.ResolvedIDPrefix + a.ID + "\n\n"
-					data, mime, lineage, ok, err = loadArtifact(ctx, c, a)
-				}
-			}
 			if err != nil {
 				return "", fmt.Errorf("read_artifact: %w", err)
 			}
 			if !ok {
-				return "", fmt.Errorf("read_artifact: %s: not found", a.ID)
+				ids, _ := c.IDs(ctx, nil)
+				return "", fmt.Errorf("read_artifact: %w", recordstore.NotFoundError(a.ID, ids))
 			}
 			// prov sits outside the counted lines an offset/grep hit indexes.
 			prov := provenanceHeader(lineage, data)
 			if prov != "" {
 				prov += "\n\n"
 			}
-			return resolved + prov + shapeReadArtifact(data, mime, a), nil
+			return prov + shapeReadArtifact(data, mime, a), nil
 		},
 	)
 }

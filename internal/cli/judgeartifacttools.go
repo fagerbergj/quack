@@ -41,17 +41,13 @@ func RESTArtifactTools(c *Client, chatID string) ([]tool.Tool, error) {
 	read, err := functiontool.New[restReadArtifactArgs, string](
 		functiontool.Config{
 			Name: "read_artifact",
-			Description: "Read an artifact by id (from list_artifacts). Omit revision for the latest. " +
+			Description: "Read an artifact by id, passed exactly as list_artifacts returned it. Omit revision for the latest. " +
 				"Pass offset (a 1-based line number) and/or lines to window a large text artifact.",
 		},
 		func(ctx agent.Context, a restReadArtifactArgs) (string, error) {
 			body, err := c.FetchArtifact(ctx, chatID, a.ID, a.Revision)
-			resolved := ""
 			if errors.Is(err, ErrNotFound) {
-				if a.ID, err = resolveRESTArtifact(ctx, c, chatID, a.ID); err == nil {
-					resolved = recordstore.ResolvedIDPrefix + a.ID + "\n\n"
-					body, err = c.FetchArtifact(ctx, chatID, a.ID, a.Revision)
-				}
+				return "", fmt.Errorf("read_artifact: %w", recordstore.NotFoundError(a.ID, listedArtifactIDs(ctx, c, chatID)))
 			}
 			if err != nil {
 				return "", fmt.Errorf("read_artifact: %w", err)
@@ -60,7 +56,7 @@ func RESTArtifactTools(c *Client, chatID string) ([]tool.Tool, error) {
 			if err != nil {
 				return "", err
 			}
-			return resolved + out, nil
+			return out, nil
 		},
 	)
 	if err != nil {
@@ -69,19 +65,16 @@ func RESTArtifactTools(c *Client, chatID string) ([]tool.Tool, error) {
 	return []tool.Tool{list, read}, nil
 }
 
-// resolveRESTArtifact maps a partial id to its one match among the names list_artifacts shows.
-func resolveRESTArtifact(ctx context.Context, c *Client, chatID, given string) (string, error) {
-	items, err := c.ListChatArtifacts(ctx, chatID)
-	if err != nil {
-		return "", err
-	}
-	var names []string
+// listedArtifactIDs: the ids list_artifacts shows for the chat (none when the list call fails).
+func listedArtifactIDs(ctx context.Context, c *Client, chatID string) []string {
+	items, _ := c.ListChatArtifacts(ctx, chatID)
+	var ids []string
 	for _, it := range items {
 		if !vetting.JudgeHidesArtifact(ctx, it.Name) {
-			names = append(names, it.Name)
+			ids = append(ids, it.Name)
 		}
 	}
-	return recordstore.ResolveID(given, names)
+	return ids
 }
 
 // StubArtifactTools builds list_artifacts/read_artifact that both answer "no

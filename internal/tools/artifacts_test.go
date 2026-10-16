@@ -755,51 +755,26 @@ func TestReadArtifactTool_ProvenanceHeader(t *testing.T) {
 	}
 }
 
-// TestReadArtifactTool_ResolvesPartialID: an id missing its leading segments, or a kind
-// with one artifact, reads that artifact and names its full id; an ambiguous one lists candidates.
-func TestReadArtifactTool_ResolvesPartialID(t *testing.T) {
+// TestReadArtifactTool_MissListsIDs: a read of an unknown or partial id fails with the chat's full ids.
+func TestReadArtifactTool_MissListsIDs(t *testing.T) {
 	ctx := context.Background()
 	rc := recordstore.New(artifact.InMemoryService(), "quack", "u1", "chat-a")
 	docID, _, err := rc.SaveBlob(ctx, "text", []byte("draft one"), "text/plain", "doc:33db7226", recordstore.Lineage{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err = rc.SaveBlob(ctx, "text", []byte("draft two"), "text/plain", "doc:33db7226", recordstore.Lineage{}); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err = rc.SaveBlob(ctx, "text", []byte("other"), "text/plain", "other", recordstore.Lineage{}); err != nil {
-		t.Fatal(err)
-	}
-	pageID := storeWebPageArtifact(t, rc, "https://ex.com/one", "page body")
 	tl, err := NewReadArtifactTool(rc)
 	if err != nil {
 		t.Fatal(err)
 	}
 	rt := tl.(runnableTool)
-	_, docTail, _ := strings.Cut(docID, ":")
-	_, pageTail, _ := strings.Cut(pageID, ":")
-	for _, tc := range []struct {
-		args       map[string]any
-		wantID     string
-		wantInBody string
-	}{
-		{map[string]any{"id": docTail}, docID, "draft two"},
-		{map[string]any{"id": "33db7226"}, docID, "draft two"},
-		{map[string]any{"id": "33db7226", "revision": 1}, docID, "draft one"},
-		{map[string]any{"id": pageTail}, pageID, "page body"},
-		{map[string]any{"id": "web_page"}, pageID, "page body"},
-	} {
-		out, err := rt.Run(newArtifactsToolCtx(), tc.args)
-		result, _ := out["result"].(string)
-		if err != nil || !strings.HasPrefix(result, recordstore.ResolvedIDPrefix+tc.wantID+"\n") || !strings.Contains(result, tc.wantInBody) {
-			t.Errorf("read_artifact(%v) = %q, %v; want %s resolved with %q", tc.args, result, err, tc.wantID, tc.wantInBody)
+	for _, id := range []string{"33db7226", "nope"} {
+		if _, err := rt.Run(newArtifactsToolCtx(), map[string]any{"id": id}); err == nil || !strings.Contains(err.Error(), "not found") || !strings.Contains(err.Error(), docID) {
+			t.Errorf("read_artifact(%q): err = %v, want not found listing %s", id, err, docID)
 		}
 	}
-	if _, err := rt.Run(newArtifactsToolCtx(), map[string]any{"id": "text"}); err == nil || !strings.Contains(err.Error(), "not found") || !strings.Contains(err.Error(), docID) {
-		t.Errorf("ambiguous kind read: err = %v, want not found listing %s", err, docID)
-	}
-	if _, err := rt.Run(newArtifactsToolCtx(), map[string]any{"id": "nope"}); err == nil || err.Error() != "read_artifact: nope: not found" {
-		t.Errorf("unmatched read: err = %v, want today's not found", err)
+	if out, err := rt.Run(newArtifactsToolCtx(), map[string]any{"id": docID}); err != nil || !strings.Contains(out["result"].(string), "draft one") {
+		t.Errorf("read_artifact(full id) = %v, %v", out, err)
 	}
 }
 
