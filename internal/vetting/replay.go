@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/fagerbergj/quack/internal/stream"
 	"sort"
+	"strings"
 	"time"
 
 	"google.golang.org/adk/v2/session"
@@ -28,6 +29,8 @@ type ReplayCase struct {
 	Verifier             *Verifier  // the shadow verify tier over located specifics; nil skips it
 	// Review: the ACP reviewer's review MCP stage rebuilt from its tool.call rows; nil for any other node.
 	Review *ReviewStage
+	// ReviewFanout: the recording holds several reviewer nodes, so a slice's live review may be its bare answer.
+	ReviewFanout bool
 }
 
 // ReplayCriterion is one criterion's freshly computed score. RubricMark is its
@@ -63,10 +66,7 @@ func ReplayRound(ctx context.Context, cfg Config, judge JudgeFactory, rc ReplayC
 	if err != nil {
 		return ReplayRoundResult{}, err
 	}
-	// Only a reviewer node gets a review stage live, so a staged one marks the round's node as one.
-	if foldReviewStage(&act, rc.Review) {
-		cfg.IsReviewer = true
-	}
+	staged := foldReviewStage(&act, rc.Review)
 	augmentFromAnswer(&act, cfg, rc.Answer)
 	res := ReplayRoundResult{Threshold: cfg.Threshold, ArtifactsWritten: act.artifactsWritten}
 	if rc.Pages != nil {
@@ -80,6 +80,9 @@ func ReplayRound(ctx context.Context, cfg Config, judge JudgeFactory, rc ReplayC
 	det, _ := computeDeterministicCriteria(ctx, rc.Answer, act, cfg, rc.NodeID, time.Time{})
 	// An ACP round's run_command calls never reach the rebuilt session, so its reviewer check would fail spuriously.
 	delete(det, "behaviour_verified")
+	if !staged && reviewTailUnknown(cfg, rc) {
+		delete(det, "review_posted")
+	}
 	if declaresCodeOwned(cfg, specificsSupportedCriterion) { // as live: the verify tier runs first and feeds the judge
 		cfg.judgeEvidence, cfg.judgeCheckedPages = judgeEvidenceSection(res.Units), checkedPages(res.Units)
 		if c, ok := specificsSupportedScore(res.Units); ok {
@@ -120,6 +123,15 @@ func ReplayRound(ctx context.Context, cfg Config, judge JudgeFactory, rc ReplayC
 		})
 	}
 	return res, nil
+}
+
+// reviewTailUnknown: an ACP reviewer that staged nothing still scores review_posted live when augmentFromAnswer
+// stages its answer, which needs the plan's Setup (a VERDICT tail) or a synthesizer fan-out (any answer).
+func reviewTailUnknown(cfg Config, rc ReplayCase) bool {
+	if !cfg.IsReviewer || !cfg.ExternalWorker || !cfg.ReadOnly || strings.TrimSpace(rc.Answer) == "" {
+		return false
+	}
+	return rc.ReviewFanout || ParseAnswerReviewSections(rc.Answer).OK
 }
 
 // RebuildActivityArtifacts rebuilds rc's worker activity and returns only the

@@ -744,34 +744,179 @@ func TestClipNeverSplitsARune(t *testing.T) {
 	}
 }
 
-// buildACPReviewerBundle records an ACP reviewer round: its llm.call rows carry no content, so its review
-// lives only in tool.call rows - one refused, one unstaged, one after the judge round.
-func buildACPReviewerBundle(t *testing.T) string {
+// recordedCall is one tool.call row, at seconds after the round starts; the judge round lands at 10s.
+type recordedCall struct {
+	at                  int
+	name, args, errText string
+}
+
+// buildReviewerBundle records an ACP reviewer round that answered answer: its llm.call rows carry no content,
+// so its review lives only in calls' tool.call rows. The judge round recorded review_posted as posted.
+func buildReviewerBundle(t *testing.T, answer string, posted float64, calls ...recordedCall) string {
 	t.Helper()
 	now := time.Now()
 	sent := mustJSON(t, []any{map[string]any{"method": "session/prompt", "params": map[string]any{"prompt": []any{map[string]any{"type": "text", "text": "Review PR 7."}}}}})
 	received := mustJSON(t, []any{map[string]any{"method": "session/update", "params": map[string]any{"update": map[string]any{
-		"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": "Review staged."}}}}})
+		"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": answer}}}}})
 	entry := func(seq int64, at time.Duration, kind string, p any) ledger.Entry {
 		return ledger.Entry{Seq: seq, ChatID: "chat-1", NodeID: "rev-1", Agent: "code-reviewer", Round: "worker-r0", Kind: kind, At: now.Add(at), Payload: mustPayload(t, p)}
 	}
-	call := func(seq int64, at time.Duration, name string, args map[string]any, errText string) ledger.Entry {
-		return entry(seq, at, ledger.KindToolCall, ledger.ToolCallPayload{Name: name, Args: mustJSON(t, args), Error: errText})
-	}
-	judged := entry(9, 10*time.Second, ledger.KindEvalScore, ledger.EvalScorePayload{Criterion: "review_posted", Score: 1})
+	judged := entry(3, 10*time.Second, ledger.KindEvalScore, ledger.EvalScorePayload{Criterion: "review_posted", Score: posted})
 	judged.Agent, judged.Round = "", "judge-r1"
-	return writeEntries(t, []ledger.Entry{
+	entries := []ledger.Entry{
 		entry(1, time.Second, ledger.KindAgentInvoke, ledger.AgentInvokePayload{Sent: sent, Received: received}),
 		entry(2, time.Second, ledger.KindLLMCall, ledger.LLMCallPayload{}),
-		call(3, 2*time.Second, "stage_review_comment", map[string]any{"path": "a.go", "line": 3, "label": "blocking", "body": "nil deref on empty input"}, ""),
-		call(4, 3*time.Second, "stage_review_comment", map[string]any{"path": "b.go", "line": 9, "label": "nit", "body": "rename this"}, ""),
-		call(5, 4*time.Second, "unstage_review_comment", map[string]any{"id": "b.go:9#1"}, ""),
-		call(6, 5*time.Second, "stage_review_comment", map[string]any{"path": "c.go", "line": 1, "label": "nit", "body": "refused live"}, "refused"),
-		call(7, 6*time.Second, "stage_review", map[string]any{"event": "approve", "takeaway": "Looks fine."}, ""),
-		call(8, 7*time.Second, "stage_review", map[string]any{"event": "request_changes", "takeaway": "One blocking nil deref."}, ""),
 		judged,
-		call(10, 20*time.Second, "stage_review_comment", map[string]any{"path": "late.go", "line": 1, "label": "nit", "body": "after the judge"}, ""),
-	})
+	}
+	for i, c := range calls {
+		entries = append(entries, entry(int64(4+i), time.Duration(c.at)*time.Second, ledger.KindToolCall, ledger.ToolCallPayload{Name: c.name, Args: c.args, Error: c.errText}))
+	}
+	return writeEntries(t, entries)
+}
+
+// buildACPReviewerBundle records a staged review whose tool.call rows include one refused, one unstaged,
+// and one after the judge round.
+func buildACPReviewerBundle(t *testing.T) string {
+	t.Helper()
+	call := func(at int, name string, args map[string]any, errText string) recordedCall {
+		return recordedCall{at: at, name: name, args: mustJSON(t, args), errText: errText}
+	}
+	return buildReviewerBundle(t, "Review staged.", 1,
+		call(2, "stage_review_comment", map[string]any{"path": "a.go", "line": 3, "label": "blocking", "body": "nil deref on empty input"}, ""),
+		call(3, "stage_review_comment", map[string]any{"path": "b.go", "line": 9, "label": "nit", "body": "rename this"}, ""),
+		call(4, "unstage_review_comment", map[string]any{"id": "b.go:9#1"}, ""),
+		call(5, "stage_review_comment", map[string]any{"path": "c.go", "line": 1, "label": "nit", "body": "refused live"}, "refused"),
+		call(6, "stage_review", map[string]any{"event": "approve", "takeaway": "Looks fine."}, ""),
+		call(7, "stage_review", map[string]any{"event": "request_changes", "takeaway": "One blocking nil deref."}, ""),
+		call(20, "stage_review_comment", map[string]any{"path": "late.go", "line": 1, "label": "nit", "body": "after the judge"}, ""),
+	)
+}
+
+// acpReviewerConfig configures code-reviewer as a read-only ACP agent, as live runs it.
+func acpReviewerConfig() *config.Config {
+	cfg := fixtureConfig()
+	cfg.Agents["code-reviewer"] = config.AgentConfig{Bundle: "agents/code-reviewer", Acp: &config.AcpAgentConfig{ReadOnly: true}}
+	return cfg
+}
+
+// replayedCriterion runs a deterministic-only replay of path and returns its single round and that round's name criterion.
+func replayedCriterion(t *testing.T, cfg *config.Config, path, name string) (ReplayRoundReport, *ReplayCriterionReport) {
+	t.Helper()
+	sess, err := bundle.Load(path)
+	if err != nil {
+		t.Fatalf("load bundle: %v", err)
+	}
+	var buf bytes.Buffer
+	opts := ReplayOptions{RubricPath: rubricFile(t, "existence check", 0.85), DeterministicOnly: true}
+	if code := RunJudgeReplay(context.Background(), cfg, sess, opts, nil, nil, false, &buf, true); code != 0 {
+		t.Fatalf("exit = %d: %s", code, buf.String())
+	}
+	r := decodeReports(t, &buf)[0]
+	for i := range r.Criteria {
+		if r.Criteria[i].Name == name {
+			return r, &r.Criteria[i]
+		}
+	}
+	return r, nil
+}
+
+// An ACP reviewer that staged nothing is still a reviewer (stamped from its agent, as live does), so review_posted
+// replays 0 - unless live's answer-tail fallback could have staged the answer, which needs plan facts replay lacks.
+func TestRunJudgeReplayReviewerThatStagedNothing(t *testing.T) {
+	for _, tc := range []struct {
+		name, answer string
+		fanout       bool
+		replayed     bool
+	}{
+		{name: "no verdict tail", answer: "Looked around; nothing to stage.", replayed: true},
+		{name: "verdict tail", answer: "Fine.\n\nVERDICT: approve\nTAKEAWAY: Fine."},
+		{name: "fan-out slice", answer: "Looked around; nothing to stage.", fanout: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := buildReviewerBundle(t, tc.answer, 0)
+			if tc.fanout {
+				path = withSecondReviewer(t, path)
+			}
+			_, c := replayedCriterion(t, acpReviewerConfig(), path, "review_posted")
+			if c == nil || c.Flipped || c.HasReplayed != tc.replayed || c.ReplayedScore != 0 {
+				t.Errorf("review_posted = %+v, want replayed=%v at 0 with no flip", c, tc.replayed)
+			}
+		})
+	}
+}
+
+// withSecondReviewer appends another code-reviewer node's worker turn to the recording at path.
+func withSecondReviewer(t *testing.T, path string) string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := ledger.Entry{Seq: 99, ChatID: "chat-1", NodeID: "rev-2", Agent: "code-reviewer", Round: "worker-r0", Kind: ledger.KindLLMCall,
+		At: time.Now(), Payload: mustPayload(t, ledger.LLMCallPayload{Input: "[]", Output: mustJSON(t, content(genai.RoleModel, &genai.Part{Text: "slice"}))})}
+	line := mustJSON(t, e) + "\n"
+	if err := os.WriteFile(path, append(raw, line...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// A recorded call whose args were cut mid-JSON (the 8KB attr cap) is dropped from the stage and counted.
+func TestRunJudgeReplayCountsDroppedReviewCalls(t *testing.T) {
+	path := buildReviewerBundle(t, "Review staged.", 1,
+		recordedCall{at: 2, name: "stage_review_comment", args: `{"path":"a.go","line":3,"label":"blocking","body":"nil deref"}`},
+		recordedCall{at: 3, name: "stage_review_comment", args: `{"path":"b.go","line":4,"body":"cut off`},
+	)
+	r, c := replayedCriterion(t, acpReviewerConfig(), path, "review_posted")
+	if r.DroppedReviewCalls != 1 || c == nil || c.ReplayedScore != 1 {
+		t.Errorf("dropped = %d, review_posted = %+v; want 1 dropped and the decodable call still staged", r.DroppedReviewCalls, c)
+	}
+	var buf bytes.Buffer
+	renderReplayReports(&buf, ReplayReport{Rounds: []ReplayRoundReport{r}})
+	if !strings.Contains(buf.String(), "dropped: 1 recorded review call(s)") {
+		t.Errorf("text report lacks the dropped count:\n%s", buf.String())
+	}
+}
+
+// A refused approve with no later stage_review leaves no approve verdict: the staged blocking comment holds it at comment.
+func TestRunJudgeReplayRefusedApproveStagesNoVerdict(t *testing.T) {
+	path := buildReviewerBundle(t, "Review staged.", 1,
+		recordedCall{at: 2, name: "stage_review_comment", args: `{"path":"a.go","line":3,"label":"blocking","body":"nil deref"}`},
+		recordedCall{at: 3, name: "stage_review", args: `{"event":"approve","takeaway":"Looks fine."}`},
+	)
+	sess, err := bundle.Load(path)
+	if err != nil {
+		t.Fatalf("load bundle: %v", err)
+	}
+	calls := 0
+	var prompts []string
+	judge := vetting.NewJudgeFactory(sequenceJudgeVerdict{scores: []int{3}, calls: &calls, prompts: &prompts}, nil, nil)
+	var buf bytes.Buffer
+	if code := RunJudgeReplay(context.Background(), acpReviewerConfig(), sess, ReplayOptions{RubricPath: rubricFile(t, "existence check", 0.85)}, judge, nil, false, &buf, true); len(prompts) != 1 {
+		t.Fatalf("exit = %d, judge calls = %d; want 1: %s", code, len(prompts), buf.String())
+	}
+	if p := prompts[0]; strings.Contains(p, "Staged review verdict: approve") || !strings.Contains(p, "Staged review verdict: comment") {
+		t.Errorf("judge prompt must show the refused approve's fallback comment verdict, not approve:\n%s", p)
+	}
+}
+
+// --clone reaches only a reviewer round's judge: a non-reviewer's live judge never saw that checkout's diff.
+func TestRunJudgeReplayCloneSkipsNonReviewerRounds(t *testing.T) {
+	sess, err := bundle.Load(buildFixtureBundle(t, "worker-r0", map[string]float64{"cites_sources": 1.0}))
+	if err != nil {
+		t.Fatalf("load bundle: %v", err)
+	}
+	calls := 0
+	var prompts []string
+	judge := vetting.NewJudgeFactory(sequenceJudgeVerdict{scores: []int{3}, calls: &calls, prompts: &prompts}, nil, nil)
+	opts := ReplayOptions{RubricPath: rubricFile(t, "existence check", 0.85), Clone: reviewedClone(t)}
+	var buf bytes.Buffer
+	if code := RunJudgeReplay(context.Background(), fixtureConfig(), sess, opts, judge, nil, false, &buf, true); len(prompts) != 1 {
+		t.Fatalf("exit = %d, judge calls = %d; want 1: %s", code, len(prompts), buf.String())
+	}
+	if strings.Contains(prompts[0], "DIFF THIS NODE PRODUCED") || strings.Contains(prompts[0], "defectMarker") {
+		t.Errorf("non-reviewer judge prompt carries the --clone diff:\n%s", prompts[0])
+	}
 }
 
 // An ACP reviewer's staged review reaches the replayed judge as live sees it, rebuilt from tool.call rows.

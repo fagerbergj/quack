@@ -41,6 +41,9 @@ const (
 )
 const explorerAgent = "code-explorer"
 
+// IsReviewerAgent reports whether agent's nodes are stamped vetting.Config.IsReviewer, so judge replay matches live.
+func IsReviewerAgent(agent string) bool { return agent == reviewerAgent }
+
 // agentDeliveryKind maps an agent whose work IS a delivery mechanism to the only Delivery.Kind it can
 // reach GitHub through. Hardcoded names: nothing machine-readable declares this.
 var agentDeliveryKind = map[string]string{
