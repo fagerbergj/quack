@@ -163,15 +163,22 @@ func TestIsDialFailure(t *testing.T) {
 }
 
 func TestSanitizeGatewayError_NamesNonHTTPCauses(t *testing.T) {
-	cases := map[string]error{
-		"agent went silent past its idle timeout and was stopped": fmt.Errorf("acp: no activity for 10m0s - treating the ACP agent as wedged (%w)", ErrAgentSilent),
-		"model call timed out":                         fmt.Errorf("generate: %w", context.DeadlineExceeded),
-		"model gateway unreachable (connection error)": &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED},
-		"model call failed (non-HTTP error)":           errors.New("something else"),
+	silent := fmt.Errorf("acp: no activity for 10m0s - treating the ACP agent as wedged (%w)", ErrAgentSilent)
+	cases := []struct {
+		err  error
+		want string
+	}{
+		{silent, "agent went silent past its idle timeout and was stopped"},
+		// ADK's sub-scheduler wraps a child's error with %v, so only the text survives.
+		{errors.New("node failed: " + silent.Error()), "agent went silent past its idle timeout and was stopped"},
+		{fmt.Errorf("generate: %w", context.DeadlineExceeded), "model call timed out"},
+		{errors.New("node failed: " + context.DeadlineExceeded.Error()), "model call timed out"},
+		{&net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}, "model gateway unreachable (connection error)"},
+		{errors.New("something else"), "model call failed (non-HTTP error)"},
 	}
-	for want, err := range cases {
-		if got, transient := SanitizeGatewayError(err); got != want || transient {
-			t.Errorf("SanitizeGatewayError(%v) = %q, %v; want %q, false", err, got, transient, want)
+	for _, c := range cases {
+		if got, transient := SanitizeGatewayError(c.err); got != c.want || transient {
+			t.Errorf("SanitizeGatewayError(%v) = %q, %v; want %q, false", c.err, got, transient, c.want)
 		}
 	}
 }
