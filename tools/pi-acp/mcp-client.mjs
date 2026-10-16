@@ -1,5 +1,4 @@
-// Minimal MCP streamable-HTTP client (plain fetch, no SDK). Used by the shim
-// (tools/list at session start) and by the generated pi extension (tools/call).
+// Minimal MCP streamable-HTTP client (plain fetch, no SDK): the shim's tools/list at session start.
 let nextId = 1;
 
 function parseBody(text, contentType) {
@@ -53,21 +52,4 @@ export class McpClient {
   toolsCall(name, args) {
     return this.rpc("tools/call", { name, arguments: args || {} });
   }
-}
-
-// Permission policy: DENY matches only a leading command, a nudge not a boundary - quack strips git credentials (proc.go spawnEnv).
-// Hard denies never leave the process; "ask" escalates to quack's safety judge via the shim's loopback endpoint.
-const DENY = [/^git push(\s|$)/];
-// allowClone (PI_ACP_CONFIG allow_clone): quack sets it only for a read-only agent under an enforced sandbox.
-const CLONE = [/^git clone(\s|$)/, /^gh repo clone(\s|$)/];
-const ENV_FILE = /(^|\/)[^/]*\.env(\.[^/]*)?$/;
-
-export function checkPolicy(toolName, input = {}, { allowClone = false } = {}) {
-  if (toolName === "bash") {
-    const cmd = (input.command || "").trim();
-    const deny = allowClone ? DENY : DENY.concat(CLONE);
-    if (deny.some((re) => re.test(cmd))) return { block: `denied by policy: ${cmd.split(" ").slice(0, 3).join(" ")} (delivery is gate-owned)` };
-  }
-  if (toolName === "read" && ENV_FILE.test(input.path || "")) return { ask: `read ${input.path}` };
-  return null;
 }

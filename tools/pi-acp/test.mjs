@@ -10,14 +10,6 @@ import { strict as assert } from "node:assert";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { checkPolicy } from "./mcp-client.mjs";
-
-// clone is denied unless PI_ACP_CONFIG's allow_clone lifts it; push is denied either way.
-for (const cmd of ["git clone --depth 1 https://x/y", "gh repo clone x/y"]) {
-  assert.ok(checkPolicy("bash", { command: cmd })?.block, `${cmd} not denied by default`);
-  assert.equal(checkPolicy("bash", { command: cmd }, { allowClone: true }), null, `${cmd} denied despite allowClone`);
-}
-assert.ok(checkPolicy("bash", { command: "git push origin main" }, { allowClone: true })?.block, "allowClone lifted the push deny");
 
 const here = dirname(fileURLToPath(import.meta.url));
 const env = { ...process.env };
@@ -142,9 +134,7 @@ if (!process.env.ACP_CMD) {
   const bridge = JSON.parse(readFileSync(join(piDir, "extensions", "quackmcp.json"), "utf8"));
   assert.equal(bridge.prefix, "quackmcp");
   assert.equal(bridge.tools[0].name, "stage_review");
-  // pig-quack carries the gate fused in; pi loads the generated extension.
-  if (env.PI_ACP_ENGINE === "pig") assert.throws(() => readFileSync(join(piDir, "extensions", "quackmcp.ts")), /ENOENT/);
-  else readFileSync(join(piDir, "extensions", "quackmcp.ts"));
+  assert.equal(bridge.allowClone, false, "allow_clone set without PI_ACP_CONFIG asking");
 
   const models = JSON.parse(readFileSync(join(piDir, "models.json"), "utf8"));
   assert.equal(models.providers.quack.models[0].contextWindow, 65536, "contextWindow not plumbed from config's context_window");
@@ -279,16 +269,12 @@ if (process.env.PI_ACP_REAL && !process.env.ACP_CMD) {
   console.log(`real engine: gate, usage, thinking, steer ok; cancel settled in ${cancelMs}ms`);
 }
 if (!process.env.PI_ACP_REAL && !process.env.ACP_CMD) {
-  // permission bridge: git push blocked locally (no ask), .env reads asked -
-  // one allowed, one denied.
+  // permission bridge: the gate's two .env asks reach quack as ACP asks, one allowed, one denied.
   const end = (id) => updates.find((u) => u.sessionUpdate === "tool_call_update" && u.toolCallId === id);
-  assert.equal(end("call_g1").status, "failed", "git push not blocked");
-  assert.ok(!permAsks.some((p) => JSON.stringify(p).includes("git push")), "config-deny went through an ACP round-trip");
   assert.equal(permAsks.length, 2, `expected 2 permission asks, got ${permAsks.length}`);
   assert.equal(permAsks[0].toolCall.rawInput.path, "app/.env");
-  assert.equal(end("call_g2").status, "completed", ".env read not allowed after judge approval");
-  assert.equal(end("call_g3").status, "failed", "denied .env read not refused");
-  assert.equal(end("call_g4").status, "failed", "git clone not blocked without allow_clone");
+  assert.equal(end("call_g1").status, "completed", ".env read not allowed after judge approval");
+  assert.equal(end("call_g2").status, "failed", "denied .env read not refused");
   assert.ok(kinds.includes("agent_thought_chunk"));
   const tc = updates.find((u) => u.sessionUpdate === "tool_call");
   assert.equal(tc.kind, "execute");
@@ -309,8 +295,8 @@ if (!process.env.PI_ACP_REAL && !process.env.ACP_CMD) {
 // OTLP assertions: flush is fire-and-forget on agent_settled, so wait for it.
 if (!process.env.ACP_CMD) {
   await Promise.race([spansPosted, new Promise((_, rej) => setTimeout(rej, 30000, new Error("no OTLP spans within 30s")).unref())]);
-  // 8 is fake-pi's scripted turn; a real engine's count follows the model's calls.
-  if (!process.env.PI_ACP_REAL) assert.equal(otlpSpans.length, 8, `expected the 8 parity spans, got ${otlpSpans.length}`);
+  // 6 is fake-pi's scripted turn; a real engine's count follows the model's calls.
+  if (!process.env.PI_ACP_REAL) assert.equal(otlpSpans.length, 6, `expected the 6 parity spans, got ${otlpSpans.length}`);
   assert.ok(otlpSpans.every((sp) => sp.traceId === TRACE_ID), "span not under quack's trace id");
   assert.ok(otlpSpans.every((sp) => sp.parentSpanId === PARENT_ID), "span not parented under the round span");
   const gens = otlpSpans.filter((sp) => sp.name.startsWith("chat "));
@@ -324,8 +310,8 @@ if (!process.env.ACP_CMD) {
     assert.ok(av(gens[0], "quack.thinking").stringValue.includes("hmm"));
     const toolSpans = otlpSpans.filter((sp) => sp.name.startsWith("execute_tool "));
     assert.ok(toolSpans.some((sp) => sp.name.includes("quackmcp_")), "no quackmcp tool span");
-    const pushSpan = toolSpans.find((sp) => av(sp, "gen_ai.tool.call.arguments")?.stringValue.includes("git push"));
-    assert.equal(pushSpan.status.code, 2, "blocked git push span not marked error");
+    const deniedSpan = toolSpans.find((sp) => av(sp, "gen_ai.tool.call.arguments")?.stringValue.includes(".env.prod"));
+    assert.equal(deniedSpan.status.code, 2, "denied .env read span not marked error");
     assert.ok(toolSpans.every((sp) => av(sp, "tool_call_id")?.stringValue), "tool span missing tool_call_id");
     assert.ok(toolSpans.every((sp) => av(sp, "gen_ai.tool.call.result")?.stringValue.length <= 8192 + "…[truncated]".length), "tool result attr exceeds the 8KB cap");
   }
@@ -402,24 +388,22 @@ if (!process.env.ACP_CMD && !process.env.PI_ACP_REAL) {
   await new Promise((r) => shim4.on("exit", r));
 }
 
-// PI_ACP_ENGINE=pig against fake-pi: PIG's flags and env, no .ts gate, and no session until the gate reports in.
+// PIG's flags and env, and no session until the gate reports in.
 if (!process.env.PI_ACP_REAL && !process.env.ACP_CMD) {
-  // A reporting gate waits on its /ready ping under the shim's 20s default; only the silent one below gets a short bound.
-  const pigEnv = { ...env, PI_ACP_ENGINE: "pig" };
   const mcp = [{ type: "sse", name: "quackmcp", url: mcpUrl, headers: [] }];
-  const p = connectShim(pigEnv);
+  const p = connectShim(env);
   await p.call("initialize", { protocolVersion: 1, clientCapabilities: {} });
   const ps = await p.call("session/new", { cwd: process.cwd(), mcpServers: mcp });
   const pDir = join(tmpdir(), "pi-acp-" + ps.sessionId);
-  assert.throws(() => readFileSync(join(pDir, "extensions", "quackmcp.ts")), /ENOENT/, "pig mode wrote the Node gate");
   const launch = JSON.parse(readFileSync(join(pDir, "fake-pi-launch.json"), "utf8"));
-  assert.ok(launch.argv.includes("--no-extensions"), "pig mode must disable extension discovery");
+  assert.ok(launch.argv.includes("--no-extensions"), "PIG must run without extension discovery");
   assert.equal(launch.argv[launch.argv.indexOf("--tools") + 1], "read,bash,edit,write,quackmcp_stage_review,quackmcp_stage_review_comment");
-  assert.equal(launch.offline, "1", "pig mode must run offline");
+  assert.equal(launch.offline, "1", "PIG must run offline");
   p.shim.stdin.end();
   await new Promise((r) => p.shim.on("exit", r));
 
-  const q = connectShim({ ...pigEnv, FAKE_PI_SILENT_GATE: "1", PI_ACP_GATE_READY_MS: "1000" });
+  // Waits out the shim's full 20s gate bound.
+  const q = connectShim({ ...env, FAKE_PI_SILENT_GATE: "1" });
   await q.call("initialize", { protocolVersion: 1, clientCapabilities: {} });
   await assert.rejects(q.call("session/new", { cwd: process.cwd(), mcpServers: mcp }), /quackgate did not report in/, "ungated engine got a session");
   await assert.rejects(q.call("session/prompt", { sessionId: "x", prompt: [{ type: "text", text: "hi" }] }), /no live session/);
@@ -437,15 +421,14 @@ if (!process.env.ACP_CMD && !process.env.PI_ACP_REAL) {
   const noLimitEnv = { ...env, PI_ACP_CONFIG: JSON.stringify({
     endpoint: "http://127.0.0.1:1/v1", api_key: "unused", model: "stub", allow_clone: true,
   }) };
-  const { shim: shim2, call: call2, updates: upd2 } = connectShim(noLimitEnv);
+  const { shim: shim2, call: call2 } = connectShim(noLimitEnv);
   await call2("initialize", { protocolVersion: 1, clientCapabilities: {} });
   const sess2 = await call2("session/new", { cwd: process.cwd(), mcpServers: [] });
   const models2 = JSON.parse(readFileSync(join(tmpdir(), "pi-acp-" + sess2.sessionId, "models.json"), "utf8"));
   assert.ok(!("contextWindow" in models2.providers.quack.models[0]), "contextWindow written when unset");
   assert.ok(!("maxTokens" in models2.providers.quack.models[0]), "maxTokens written when unset");
   assert.ok(!("openRouterRouting" in models2.providers.quack.compat), "openRouterRouting written when unset");
-  await call2("session/prompt", { sessionId: sess2.sessionId, prompt: [{ type: "text", text: "clone" }] });
-  const clone = upd2.find((u) => u.sessionUpdate === "tool_call_update" && u.toolCallId === "call_g4");
-  assert.equal(clone?.status, "completed", "allow_clone did not lift the git clone deny");
+  const bridge2 = JSON.parse(readFileSync(join(tmpdir(), "pi-acp-" + sess2.sessionId, "extensions", "quackmcp.json"), "utf8"));
+  assert.equal(bridge2.allowClone, true, "allow_clone never reached quackgate's config");
   shim2.stdin.end();
 }

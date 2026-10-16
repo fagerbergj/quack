@@ -4,9 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -15,83 +13,38 @@ import (
 	sdk "github.com/MichaelKinsy/PiG/extensions/sdk"
 )
 
-type policyCase struct {
-	Tool       string         `json:"tool"`
-	Input      map[string]any `json:"input"`
-	AllowClone bool           `json:"allowClone"`
-}
-
-type verdict struct {
-	Block string `json:"block,omitempty"`
-	Ask   string `json:"ask,omitempty"`
-}
-
-var policyCases = func() []policyCase {
-	bash := func(cmd string, allowClone bool) policyCase {
-		return policyCase{"bash", map[string]any{"command": cmd}, allowClone}
-	}
-	read := func(tool, path string) policyCase { return policyCase{tool, map[string]any{"path": path}, false} }
-	var cs []policyCase
-	for _, cmd := range []string{
-		"git push origin main", "git push", "  git push origin", "git push  origin main", "git push\torigin",
-		"git push\vorigin", "git push\u00a0origin", "git push\u3000origin", "git push\ufefforigin", "git push\u0085origin",
-		"\u00a0git push", "\ufeffgit push", "git pushy", "git -C . push", "cd x && git push", "echo git push",
-		"git clone --depth 1 https://x/y", "git clone", "gh repo clone x/y", "gh repo clone", "git cloned", "echo hi", "",
-	} {
-		cs = append(cs, bash(cmd, false), bash(cmd, true))
-	}
-	cs = append(cs, policyCase{"bash", map[string]any{}, false}, policyCase{"edit", map[string]any{"command": "git push"}, false})
-	for _, p := range []string{".env", "app/.env", "app/.env.prod", "/abs/x.env", "a.env.b.c", ".environment", "env", "app/.envrc", ".env/x", ""} {
-		cs = append(cs, read("read", p), read("write", p))
-	}
-	return cs
-}()
-
-// TestCheckPolicyParity runs every case through mcp-client.mjs checkPolicy (the TS gate's) and the Go port.
-func TestCheckPolicyParity(t *testing.T) {
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node not on PATH")
-	}
-	mod, _ := filepath.Abs("../../mcp-client.mjs")
-	script := `import { checkPolicy } from ` + strconv.Quote((&url.URL{Scheme: "file", Path: mod}).String()) + `;
-let s = ""; for await (const c of process.stdin) s += c;
-process.stdout.write(JSON.stringify(JSON.parse(s).map((c) => checkPolicy(c.tool, c.input, { allowClone: c.allowClone }) ?? {})));`
-	in, _ := json.Marshal(policyCases)
-	cmd := exec.Command(node, "--input-type=module", "-e", script)
-	cmd.Stdin = strings.NewReader(string(in))
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("node checkPolicy: %v", err)
-	}
-	var js []verdict
-	if err := json.Unmarshal(out, &js); err != nil || len(js) != len(policyCases) {
-		t.Fatalf("node output %s: %v", out, err)
-	}
-	for i, c := range policyCases {
-		block, ask := checkPolicy(c.Tool, c.Input, c.AllowClone)
-		if got := (verdict{block, ask}); got != js[i] {
-			t.Errorf("%s %q allowClone=%v: go %+v, js %+v", c.Tool, c.Input, c.AllowClone, got, js[i])
-		}
-	}
-}
-
-func TestCheckPolicyDeniesDelivery(t *testing.T) {
+func TestCheckPolicy(t *testing.T) {
 	for _, tc := range []struct {
-		cmd        string
+		tool, arg  string
 		allowClone bool
-		denied     bool
+		block, ask bool
 	}{
-		{"git push origin main", true, true},
-		{"git clone https://x/y", false, true},
-		{"git clone https://x/y", true, false},
-		{"gh repo clone x/y", false, true},
-		{"gh repo clone x/y", true, false},
-		{"git status", false, false},
+		{"bash", "git push origin main", true, true, false},
+		{"bash", "git push", false, true, false},
+		{"bash", "\u00a0git push\u3000origin", false, true, false},
+		{"bash", "git push\ufefforigin", false, true, false},
+		{"bash", "git pushy", false, false, false},
+		{"bash", "git -C . push", false, false, false},
+		{"bash", "git clone https://x/y", false, true, false},
+		{"bash", "git clone https://x/y", true, false, false},
+		{"bash", "gh repo clone x/y", false, true, false},
+		{"bash", "gh repo clone x/y", true, false, false},
+		{"bash", "git cloned", false, false, false},
+		{"bash", "git status", false, false, false},
+		{"edit", "git push", false, false, false},
+		{"read", "app/.env", false, false, true},
+		{"read", "app/.env.prod", false, false, true},
+		{"read", ".environment", false, false, false},
+		{"read", "app/.envrc", false, false, false},
+		{"write", ".env", false, false, false},
 	} {
-		block, _ := checkPolicy("bash", map[string]any{"command": tc.cmd}, tc.allowClone)
-		if (block != "") != tc.denied {
-			t.Errorf("%q allowClone=%v: block=%q", tc.cmd, tc.allowClone, block)
+		key := map[string]string{"bash": "command", "edit": "command"}[tc.tool]
+		if key == "" {
+			key = "path"
+		}
+		block, ask := checkPolicy(tc.tool, map[string]any{key: tc.arg}, tc.allowClone)
+		if (block != "") != tc.block || (ask != "") != tc.ask {
+			t.Errorf("%s %q allowClone=%v: block=%q ask=%q", tc.tool, tc.arg, tc.allowClone, block, ask)
 		}
 	}
 }

@@ -58,7 +58,7 @@ quack runs two different kinds of worker:
 
 **Native (llmagent) agents** — `web-researcher`, `synthesizer`, `pr-tutor`, `media-reader`, `image-reader`, and the orchestrator itself — run in-process as ADK `llmagent`s, using the `tools:` list above.
 
-**ACP agents** — `code-implementer`, `code-reviewer`, `code-explorer` — are EXTERNAL subprocesses speaking the [Agent Client Protocol](https://agentclientprotocol.com) (the `tools/pi-acp` shim driving pi, by default). Their bundles ship in the GitHub extension's plugin (`extensions/github/plugin/`, see [Plugin agents](#plugin-agents) above), so a deployment's own entry is override-only - `bundle:`, `model` (via `model_role: coder`), `tools:`, `skills:`, `judge_rounds` and `context_window` all come from the plugin's `agent.yaml`; the entry just adds the `acp:` block and `memory:` bucket the plugin schema doesn't carry:
+**ACP agents** — `code-implementer`, `code-reviewer`, `code-explorer` — are EXTERNAL subprocesses speaking the [Agent Client Protocol](https://agentclientprotocol.com) (the `tools/pi-acp` shim driving the PIG engine, see [The engine](#the-engine)). Their bundles ship in the GitHub extension's plugin (`extensions/github/plugin/`, see [Plugin agents](#plugin-agents) above), so a deployment's own entry is override-only - `bundle:`, `model` (via `model_role: coder`), `tools:`, `skills:`, `judge_rounds` and `context_window` all come from the plugin's `agent.yaml`; the entry just adds the `acp:` block and `memory:` bucket the plugin schema doesn't carry:
 
 ```yaml
 code-implementer:
@@ -75,31 +75,20 @@ The three agents only seed once `extensions.github` is configured and enabled (t
 
 - `command` — the subprocess argv.
 - `env` — extra subprocess environment, overriding quack's generated defaults.
-- `mcp_servers` — MCP server URLs; currently has no effect on the ACP subprocess. The pi-acp shim doesn't read it - the only MCP servers that reach pi are quack's own, wired through ACP's `session/new` `mcpServers` (`internal/acp`), not this config.
+- `mcp_servers` — MCP server URLs; currently has no effect on the ACP subprocess. The pi-acp shim doesn't read it - the only MCP servers that reach the engine are quack's own, wired through ACP's `session/new` `mcpServers` (`internal/acp`), not this config.
 - `read_only` — set on `code-reviewer` and `code-explorer`: the agent never commits or pushes, so the gate skips the commit/push delivery demand and instead reads its verdict out of its final answer.
-- `allow_clone` — set on `code-explorer` only: lifts the pi-acp shim's `git clone`/`gh repo clone` deny so it can shallow-clone a third-party repo into `$TMPDIR` and read it locally. Requires `read_only` (config validation rejects it otherwise) and a `bwrap` or `landlock` sandbox, which keeps the work tree read-only apart from its granted build dirs; under `sandbox: none` quack logs a warning and the deny stays. The shim's deny matches only a leading `git clone`/`git push` command, so it is a nudge, not a boundary: `git -C . push` or `cd x && git push` get past it. The real boundary for push is that the subprocess has no git credentials (`GIT_ASKPASS`/`GIT_SSH_COMMAND` point at `/bin/false`), so it can push only to a local remote.
+- `allow_clone` — set on `code-explorer` only: lifts the engine's policy gate's `git clone`/`gh repo clone` deny so it can shallow-clone a third-party repo into `$TMPDIR` and read it locally. Requires `read_only` (config validation rejects it otherwise) and a `bwrap` or `landlock` sandbox, which keeps the work tree read-only apart from its granted build dirs; under `sandbox: none` quack logs a warning and the deny stays. The gate's deny matches only a leading `git clone`/`git push` command, so it is a nudge, not a boundary: `git -C . push` or `cd x && git push` get past it. The real boundary for push is that the subprocess has no git credentials (`GIT_ASKPASS`/`GIT_SSH_COMMAND` point at `/bin/false`), so it can push only to a local remote.
 
-An ACP agent has **no quack tools at all** — it brings its own (pi's built-in edit/read/shell tools), with the model bound via a generated `PI_ACP_CONFIG` (parsed by the `pi-acp.mjs` shim: endpoint, model, context/output limits, skill paths, `allow_clone`). The subprocess cannot push to a real remote: it has no git credentials, and the shim also refuses a plain `git push` (delivery is gate-owned; see [trust-gate.md](trust-gate.md)). quack's skill library is injected via that same env's skill paths, so the same `skills/` content (e.g. the ponytail coding-discipline skills) is available to an ACP worker without it needing quack tool access to read it.
+An ACP agent has **no quack tools at all** — it brings its own (the engine's built-in `read`/`bash`/`edit`/`write` tools), with the model bound via a generated `PI_ACP_CONFIG` (parsed by the `pi-acp.mjs` shim: endpoint, model, context/output limits, skill paths, `allow_clone`). The subprocess cannot push to a real remote: it has no git credentials, and the engine's gate also refuses a plain `git push` (delivery is gate-owned; see [trust-gate.md](trust-gate.md)). quack's skill library is injected via that same env's skill paths, so the same `skills/` content (e.g. the ponytail coding-discipline skills) is available to an ACP worker without it needing quack tool access to read it.
 
-### The PIG engine (opt-in)
+### The engine
 
-pi stays the default engine until the QA rig has proven the alternative. The image also ships `/usr/local/bin/pig-quack`: [PIG](https://github.com/MichaelKinsy/PiG) v0.4.1, a Go port of pi, with the shim's policy gate and MCP bridge (`tools/pi-acp/pig/quackgate`) fused in. To run one ACP agent on it, set one variable in that agent's `acp.env`:
+The shim drives `/usr/local/bin/pig-quack`: [PIG](https://github.com/MichaelKinsy/PiG) v0.4.1, a Go port of pi, with quack's policy gate and MCP bridge (`tools/pi-acp/pig/quackgate`) fused in. It is one static binary with no Node. `PI_ACP_PI_CMD` overrides the binary path.
 
-```yaml
-code-reviewer:
-  acp:
-    command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
-    env:
-      PI_ACP_ENGINE: pig
-```
-
-Unset, or any other value, keeps pi. `PI_ACP_PI_CMD` still overrides the binary path. What changes under `pig`:
-
-- The engine is one static binary with no Node, at about 70MB peak RSS per session against pi's 147MB. The shim itself still runs on Node.
-- The gate is Go code compiled into the engine, not a generated `quackmcp.ts`; the shim writes no `.ts` file. `checkPolicy` matches `mcp-client.mjs` case for case (`quackgate_test.go` runs both on one table).
-- The shim holds `session/new` and `session/load` until the gate reports in from the engine's `session_start` event, and fails the call after 20s (`PI_ACP_GATE_READY_MS`). A gate with a missing or unreadable `quackmcp.json` refuses every tool call and never reports in.
+- The gate is Go code compiled into the engine. The shim writes the bridge's config (`extensions/quackmcp.json`: the MCP URL, its tools, the loopback port for permission asks, `allow_clone`) and the engine's `quackgate` reads it.
+- The shim holds `session/new` and `session/load` until the gate reports in from the engine's `session_start` event, and fails the call after 20s. A gate with a missing or unreadable `quackmcp.json` refuses every tool call and never reports in.
 - The engine runs with `--no-extensions`, `PI_OFFLINE=1`, and `--tools` set to pi's four built-ins (`read`, `bash`, `edit`, `write`) plus the bridged quack tools. Without the limit PIG would also offer `grep`, `find`, `ls`, `powershell`, `codemode` and `tool_search`.
-- PIG reads `PIG_CODING_AGENT_DIR`, which the shim sets beside `PI_CODING_AGENT_DIR`. Session files keep pi's format, so a round started on one engine resumes on the other.
+- PIG reads `PIG_CODING_AGENT_DIR` for its config and keeps pi's session format, so a session started by pi before the switch still resumes.
 
 Each ACP round's preamble also carries a generated workspace/toolchain block: OS, sandbox mode, available toolchains, the `check_commands` allowlist, and the address-space limit, rendered from the resolved workspace caps at startup. Each toolchain line is probed, not just read from config — an unverifiable toolchain gets no line at all, so the agent reports it couldn't verify something instead of trusting a tool that isn't actually reachable.
 

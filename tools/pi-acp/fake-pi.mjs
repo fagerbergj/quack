@@ -1,11 +1,10 @@
 #!/usr/bin/env node
-// Scripted stand-in for `pi --mode rpc`: replays one canned turn per prompt.
-// If the shim generated a quackmcp bridge, calls the first bridged tool and
-// runs guarded calls through the SAME policy path the real extension uses.
+// Scripted stand-in for pig-quack's `--mode rpc`: replays one canned turn per prompt,
+// calls the first bridged tool, and asks the shim's /perm endpoint the way quackgate does.
 import { createInterface } from "node:readline";
 import { readFileSync, writeFileSync, mkdirSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
-import { McpClient, checkPolicy } from "./mcp-client.mjs";
+import { McpClient } from "./mcp-client.mjs";
 
 const out = (o) => process.stdout.write(JSON.stringify(o) + "\n");
 
@@ -34,11 +33,9 @@ function recordTurn() {
   appendFileSync(join(fakeSessionDir, fakeSessionId + ".turns"), "1\n");
 }
 
-// Under PI_ACP_ENGINE=pig, stand in for pig-quack: record the launch and report the fused gate in.
-if (process.env.PIG_CODING_AGENT_DIR) {
-  writeFileSync(join(process.env.PIG_CODING_AGENT_DIR, "fake-pi-launch.json"), JSON.stringify({ argv: process.argv.slice(2), offline: process.env.PI_OFFLINE }));
-  if (!process.env.FAKE_PI_SILENT_GATE) fetch(`http://127.0.0.1:${extCfg().permPort}/ready`, { method: "POST" });
-}
+// Record the launch and report the fused gate in, as quackgate's session_start handler does.
+writeFileSync(join(process.env.PIG_CODING_AGENT_DIR, "fake-pi-launch.json"), JSON.stringify({ argv: process.argv.slice(2), offline: process.env.PI_OFFLINE }));
+if (!process.env.FAKE_PI_SILENT_GATE) fetch(`http://127.0.0.1:${extCfg().permPort}/ready`, { method: "POST" });
 
 function extCfg() {
   try {
@@ -59,23 +56,17 @@ async function bridgedCall(cfg) {
   out({ type: "tool_execution_end", toolCallId: "call_mcp", toolName: name, result: r, isError: !!r.isError });
 }
 
-// One tool call through the extension's guard: checkPolicy, then the shim's
-// perm endpoint for asks. Emits the tool events pi would.
+// One tool call the gate escalates: the shim's perm endpoint decides it. Emits the tool events pi would.
 let seq = 0;
 async function guardedCall(cfg, toolName, args) {
   const id = "call_g" + ++seq;
   out({ type: "tool_execution_start", toolCallId: id, toolName, args });
-  const v = checkPolicy(toolName, args, cfg);
-  let blocked = null;
-  if (v?.block) blocked = v.block;
-  else if (v?.ask) {
-    const r = await fetch(`http://127.0.0.1:${cfg.permPort}/perm`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ toolName, title: v.ask, input: args }),
-    }).then((x) => x.json());
-    if (!r.allow) blocked = "denied by quack safety judge";
-  }
+  const r = await fetch(`http://127.0.0.1:${cfg.permPort}/perm`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ toolName, title: "read " + args.path, input: args }),
+  }).then((x) => x.json());
+  const blocked = r.allow ? null : "denied by quack safety judge";
   out({
     type: "tool_execution_end", toolCallId: id, toolName,
     result: { content: [{ type: "text", text: blocked ?? "ok" }] }, isError: !!blocked,
@@ -103,10 +94,8 @@ createInterface({ input: process.stdin }).on("line", async (l) => {
   const cfg = extCfg();
   await bridgedCall(cfg);
   if (cfg?.permPort) {
-    await guardedCall(cfg, "bash", { command: "git push origin main" }); // config-deny, no round-trip
-    await guardedCall(cfg, "read", { path: "app/.env" });                // ask -> allow
-    await guardedCall(cfg, "read", { path: "app/.env.prod" });           // ask -> deny
-    await guardedCall(cfg, "bash", { command: "git clone --depth 1 https://example.invalid/x.git" }); // denied unless allowClone
+    await guardedCall(cfg, "read", { path: "app/.env" });      // ask -> allow
+    await guardedCall(cfg, "read", { path: "app/.env.prod" }); // ask -> deny
   }
   out({ type: "message_start", message: { role: "assistant" } });
   out({ type: "message_update", usage: { input: 10, output: 1, cacheRead: 6, cacheWrite: 3, totalTokens: 99 }, assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "done: hi" } });
