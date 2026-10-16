@@ -68,7 +68,6 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "24"
-      - run: node tools/pi-acp/test.mjs
       - run: go vet ./...
       # One pass, under the race detector: it is a superset of the plain run and the
       # concurrency regression guards (#1016, #1032) pass vacuously without it.
@@ -419,10 +418,10 @@ jobs:
           docker run --rm --network none \
             -e QUACK_WORKSPACE_ROOT=/tmp/workspace \
             quack:ci sandbox check --agent code-reviewer
-      # The shim's real-engine suite (gate, bridge, steer, cancel, resume) against the image's own pig-quack
+      # The real-engine suite (gate, bridge, steer, cancel, resume) against the image's own quack-acp, pig-quack
       # and mock-openai.mjs. HOME=/tmp because nonroot has no home; quack always sets one.
-      - name: pi-acp real-engine test (pig-quack)
+      - name: quack-acp real-engine test (pig-quack)
         run: |
           docker run --rm --network none -v "$PWD/tools/pi-acp:/pi-acp:ro" -w /tmp \
-            -e HOME=/tmp -e PI_ACP_REAL=1 \
+            -e HOME=/tmp \
             --entrypoint node quack:ci /pi-acp/test.mjs

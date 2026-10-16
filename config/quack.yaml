@@ -164,12 +164,12 @@ agents:
     optional: true
     memory:
       bucket: coding   # gate-side recall + answer-mined commit (vetting memoryRecall / memory.Commit)
-    # The worker is an EXTERNAL coding agent over ACP (internal/acp): the pi-acp shim
+    # The worker is an EXTERNAL coding agent over ACP (internal/acp): quack-acp
     # drives PIG from PI_ACP_CONFIG (endpoint, model, context/output limits, skill
     # paths). git push stays denied inside the subprocess, so delivery stays gate-owned;
     # the gate reads commits off the clone itself (vetting.augmentFromRepo). No quack tools, no memory.
     acp:
-      command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
+      command: ["/usr/local/bin/quack-acp"]
       mcp_servers:
         - https://mcp.context7.com/mcp
   code-reviewer:
@@ -181,7 +181,7 @@ agents:
     # VERDICT/FINDINGS tail into a staged review with inline comments
     # (vetting.augmentFromAnswer) and posts it exactly once, gate-owned.
     acp:
-      command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
+      command: ["/usr/local/bin/quack-acp"]
       read_only: true
   code-explorer:
     optional: true
@@ -191,7 +191,7 @@ agents:
     # allow_clone, shallow-clones third-party repos into $TMPDIR to read those too.
     # Never commits. Judged by its bundle rubric (exploration quality), not web citations.
     acp:
-      command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
+      command: ["/usr/local/bin/quack-acp"]
       mcp_servers:
         - https://mcp.context7.com/mcp
       read_only: true
@@ -522,7 +522,7 @@ workspace:
   #   - /home/user/sdk/go1.25.0            # a GOROOT outside /usr: bind the whole SDK
 
   # env: extra environment for the SAME children exec_path targets, PLUS the
-  # ACP coding-agent subprocess (the pi-acp shim) - the half exec_path doesn't cover:
+  # ACP coding-agent subprocess (quack-acp) - the half exec_path doesn't cover:
   # a toolchain that must be FOUND, not just be on PATH (JAVA_HOME for
   # Gradle, ANDROID_HOME/ANDROID_SDK_ROOT for AGP, a GOROOT outside /usr).
   # Deployment-wide; a matching key in an agent's own `acp: {env: ...}` wins

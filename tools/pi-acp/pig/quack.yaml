@@ -1,5 +1,5 @@
 # `pig piglet build quack.yaml --format binary` fuses the quackgate policy gate and MCP bridge into pig-quack,
-# the engine pi-acp.mjs drives (Dockerfile stage `piglet`).
+# the engine cmd/quack-acp drives (Dockerfile stage `piglet`).
 name: quack-agent
 description: "quack ACP coding agent engine: PIG with the quackgate policy gate and MCP bridge fused in"
 # pi's default tool set; a Piglet without `tools` also offers powershell, grep, find and ls.

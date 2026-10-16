@@ -51,8 +51,7 @@ func (t *turnSpans) observe(u sdk.SessionUpdate, specs []eventSpec) {
 	}
 }
 
-// attrCap bounds gen_ai.tool.call.* attribute values; matches the pi-acp
-// shim's 8KB truncation convention (tools/pi-acp/otel.mjs).
+// attrCap bounds gen_ai.tool.call.* attribute values.
 const attrCap = 8192
 
 // jsonAttr renders v for a span attribute; false when there is nothing to record.

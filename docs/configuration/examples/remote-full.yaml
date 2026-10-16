@@ -95,7 +95,7 @@ agents:
     memory:
       bucket: coding
     acp:
-      command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
+      command: ["/usr/local/bin/quack-acp"]
       mcp_servers:
         - https://mcp.context7.com/mcp
   code-reviewer:
@@ -103,14 +103,14 @@ agents:
     memory:
       bucket: coding
     acp:
-      command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
+      command: ["/usr/local/bin/quack-acp"]
       read_only: true
   code-explorer:
     optional: true
     memory:
       bucket: coding
     acp:
-      command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
+      command: ["/usr/local/bin/quack-acp"]
       mcp_servers:
         - https://mcp.context7.com/mcp
       read_only: true

@@ -4,7 +4,7 @@ The runtime image ships **Go and Node only** — enough for the trust gate's det
 
 ## How `exec_path` and `env` work
 
-`exec_path` puts directories on the `PATH` every `run_command`/check/git child sees — and, under `sandbox: bwrap`, into the child's *filesystem*. `env` hands those same children, plus the ACP coding-agent subprocess (the `pi-acp` shim), extra environment variables. Toolchains routinely need both: `PATH` alone finds `javac`, but Gradle also needs `JAVA_HOME`, and the Android Gradle Plugin needs `ANDROID_HOME` — a directory to look things up *in*, not a command to run.
+`exec_path` puts directories on the `PATH` every `run_command`/check/git child sees — and, under `sandbox: bwrap`, into the child's *filesystem*. `env` hands those same children, plus the ACP coding-agent subprocess (`quack-acp`), extra environment variables. Toolchains routinely need both: `PATH` alone finds `javac`, but Gradle also needs `JAVA_HOME`, and the Android Gradle Plugin needs `ANDROID_HOME` — a directory to look things up *in*, not a command to run.
 
 **Precedence.** `workspace.env` is deployment-wide. An agent's own `acp: {env: ...}` (see [agents.md](../agents.md)) is more specific and wins on a shared key — e.g. one code-implementer pinned to a different JDK than the deployment default. `PATH` and `HOME` are reserved in `workspace.env`: they have dedicated knobs (`exec_path`, and the jail's isolated per-user home), and setting them here is a startup error rather than a silent override.
 

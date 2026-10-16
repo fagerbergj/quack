@@ -169,7 +169,7 @@ func emitCodingAgents(b *strings.Builder, a InitAnswers) {
 		model = a.MainModel
 	}
 	acp := func(readOnly bool) {
-		b.WriteString("    acp:\n      command: [node, /usr/local/lib/pi-acp/pi-acp.mjs]   # needs node + the pi-acp shim (tools/pi-acp/ in the repo, /usr/local/lib/pi-acp/ in the image)\n")
+		b.WriteString("    acp:\n      command: [/usr/local/bin/quack-acp]   # drives /usr/local/bin/pig-quack; both ship in the image\n")
 		if readOnly {
 			b.WriteString("      read_only: true\n")
 		}

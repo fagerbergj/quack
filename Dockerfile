@@ -31,7 +31,7 @@ RUN --mount=type=cache,target=/root/gomod-dl \
     && GOPROXY=file:///root/gomod-dl/cache/download go mod download \
     && find /go/pkg/mod/cache/download -name '*.zip' -delete
 # Not build inputs, so editing them leaves the go build cached: the SPA comes
-# from the frontend stage and the runtime COPYs pi-acp/config from the context.
+# from the frontend stage and the runtime COPYs config from the context.
 # Extension plugin/ dirs are fetched at runtime from a plugin/* tag, never embedded.
 COPY --exclude=docs --exclude=frontend --exclude=scripts --exclude=testdata --exclude=tools \
      --exclude=extensions/*/plugin --exclude=extensions/sleeper/ui/storybook \
@@ -50,13 +50,16 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 # few MB instead of the full server binary on every spawn.
 RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /quack-sandbox ./cmd/quack-sandbox
+# The ACP agent quack spawns for its coding agents, a few MB rather than the server, like quack-sandbox.
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /quack-acp ./cmd/quack-acp
 # Extensions as child processes, run when quack.yaml sets extensions.<name>.exec: /quack-ext-<name>.
 RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o / ./extensions/usage/cmd/quack-ext-usage ./extensions/remarkable/cmd/quack-ext-remarkable \
         ./extensions/sleeper/cmd/quack-ext-sleeper ./extensions/github/cmd/quack-ext-github
 
 # 2b) The ACP coding agent's engine: PIG with tools/pi-acp/pig/quackgate fused in, one static ~64MB binary.
-# PINNED: bump all three values together and rerun the shim's real-engine test.
+# PINNED: bump all three values together and rerun tools/pi-acp/test.mjs, the real-engine suite.
 FROM golang:1.26-bookworm AS piglet
 # The release's SHA256SUMS entry for the linux-amd64 tarball (the image is amd64-only, see cd.yaml).
 ADD --checksum=sha256:3b4de3587cbfb617def483ec62dddcf35827acc3436b1454cc5694c22dcdaf3f \
@@ -122,9 +125,7 @@ COPY --link --from=frontend /usr/local/bin/node /usr/local/bin/node
 COPY --link --from=frontend /usr/local/lib/node_modules /usr/local/lib/node_modules
 # Under /usr (not /opt): the bwrap jail ro-binds /usr whole; /opt is invisible
 # to worker subprocesses (EACCES at spawn).
-# The ACP coding agent (agents.<name>.acp: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
-# - resolved via the server's PATH) and the engine it drives.
-COPY --link tools/pi-acp/pi-acp.mjs tools/pi-acp/mcp-client.mjs tools/pi-acp/otel.mjs /usr/local/lib/pi-acp/
+# The engine quack-acp drives; quack-acp itself is copied last with the other Go binaries.
 COPY --link --from=piglet /pig-quack /usr/local/bin/pig-quack
 # The config directory: quack.yaml plus files it references by relative path
 # (CWD is /), e.g. the trust gate's rubric at config/constitution.md.
@@ -137,6 +138,8 @@ COPY --link agents/ /agents/
 COPY --link skills/ /skills/
 # Last: they change on every code edit, so the layers above stay pullable from cache.
 COPY --link --from=backend /quack-sandbox /quack-sandbox
+# Under /usr so the jail can exec it (agents.<name>.acp.command).
+COPY --link --from=backend /quack-acp /usr/local/bin/quack-acp
 COPY --link --from=backend /quack-ext-usage /quack-ext-usage
 COPY --link --from=backend /quack-ext-remarkable /quack-ext-remarkable
 COPY --link --from=backend /quack-ext-sleeper /quack-ext-sleeper

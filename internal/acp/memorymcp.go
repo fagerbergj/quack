@@ -27,7 +27,7 @@ import (
 
 // Memory MCP surface: per-run loopback server scoped by unguessable per-node secret.
 
-// mcpServerName: loopback server name; the pi-acp shim prefixes tools with "<name>_".
+// mcpServerName: loopback server name; the ACP shim prefixes tools with "<name>_".
 const mcpServerName = "quackmcp"
 
 // Tool names shared by registrations and mcpToolNames. They match the native registry names: the shim's

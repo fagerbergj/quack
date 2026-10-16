@@ -13,11 +13,11 @@ import (
 	"github.com/fagerbergj/quack/internal/workspace"
 )
 
-// TestLive_PiRound drives one real pi-acp round against a live OpenAI-compatible endpoint; a hand-run smoke test:
-// QUACK_ACP_LIVE=1 QUACK_LLM_ENDPOINT=<url>/v1 QUACK_CODER_MODEL=<model> go test ./internal/acp -run TestLive_PiRound -v
+// TestLive_PiRound drives one real quack-acp round against a live OpenAI-compatible endpoint; a hand-run smoke test:
+// QUACK_ACP_LIVE=1 QUACK_LLM_ENDPOINT=<url>/v1 QUACK_CODER_MODEL=<model> PI_ACP_PI_CMD=<pig-quack> go test ./internal/acp -run TestLive_PiRound -v
 func TestLive_PiRound(t *testing.T) {
 	if os.Getenv("QUACK_ACP_LIVE") == "" {
-		t.Skip("live test: set QUACK_ACP_LIVE=1 (needs node, pi, and a live endpoint on PATH)")
+		t.Skip("live test: set QUACK_ACP_LIVE=1 (needs pig-quack and a live endpoint)")
 	}
 	endpoint, model := os.Getenv("QUACK_LLM_ENDPOINT"), os.Getenv("QUACK_CODER_MODEL")
 	if endpoint == "" || model == "" {
@@ -38,23 +38,20 @@ func TestLive_PiRound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	shim, err := filepath.Abs("../../tools/pi-acp/pi-acp.mjs")
-	if err != nil {
-		t.Fatal(err)
-	}
+	shim := buildShim(t)
 	jail, err := workspace.NewJail(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	env := []string{"PI_ACP_CONFIG=" + string(content)}
-	// SpawnEnv is hermetic: forward an alternate engine (e.g. PIG behind a launcher) and its knobs.
+	// SpawnEnv is hermetic: forward the engine's path and its knobs.
 	for _, kv := range os.Environ() {
-		if strings.HasPrefix(kv, "PI_ACP_PI_CMD=") || strings.HasPrefix(kv, "PI_ACP_ENGINE=") || strings.HasPrefix(kv, "PIG_") {
+		if strings.HasPrefix(kv, "PI_ACP_PI_CMD=") || strings.HasPrefix(kv, "PIG_") {
 			env = append(env, kv)
 		}
 	}
 	a, err := New("code-implementer", "external coder", Options{
-		Command:      []string{"node", shim},
+		Command:      []string{shim},
 		Env:          env,
 		Home:         t.TempDir(),
 		Jail:         jail,

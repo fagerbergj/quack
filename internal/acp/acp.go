@@ -30,7 +30,7 @@ import (
 
 // Options configures one external ACP agent.
 type Options struct {
-	Command []string // argv to spawn, e.g. the pi-acp shim: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
+	Command []string // argv to spawn, e.g. ["/usr/local/bin/quack-acp"]
 	Env     []string
 	Caps    workspace.Caps
 	// SkillPaths is read at every spawn, for both the sandbox's ExtraRO grant and PI_ACP_CONFIG's skill_paths,

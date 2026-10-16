@@ -139,7 +139,7 @@ Once a candidate wins, promote it by hand: copy its text from Langfuse into the 
 
 ### Screening on a hosted model
 
-A code-reviewer item takes about 15 minutes on a local model, so screen candidates on a cheap hosted model with every item in parallel, then confirm the winner on the production model with a plain run. `--model <provider>/<model>` points the agent's worker, an ACP agent's pi included, at a `models:` entry; `--judge-model` does the same for `gates.judge`, which also serves the ACP permission judge. The ref splits at its first slash, so `openrouter/deepseek/deepseek-v4.1-flash` is provider `openrouter`, model `deepseek/deepseek-v4.1-flash`, and the model must be registered under that provider. Add both to the local `quack.yaml`; `extra_body.provider` pins every call, pi's included, to one OpenRouter upstream (see [Providers](configuration/models.md#providers)):
+A code-reviewer item takes about 15 minutes on a local model, so screen candidates on a cheap hosted model with every item in parallel, then confirm the winner on the production model with a plain run. `--model <provider>/<model>` points the agent's worker, an ACP agent's PIG engine included, at a `models:` entry; `--judge-model` does the same for `gates.judge`, which also serves the ACP permission judge. The ref splits at its first slash, so `openrouter/deepseek/deepseek-v4.1-flash` is provider `openrouter`, model `deepseek/deepseek-v4.1-flash`, and the model must be registered under that provider. Add both to the local `quack.yaml`; `extra_body.provider` pins every call, PIG's included, to one OpenRouter upstream (see [Providers](configuration/models.md#providers)):
 
 ```yaml
 providers:

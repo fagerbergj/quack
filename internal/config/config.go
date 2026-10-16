@@ -547,7 +547,7 @@ type AcpAgentConfig struct {
 	Env        map[string]string `yaml:"env"`
 	McpServers []string          `yaml:"mcp_servers"`
 	ReadOnly   bool              `yaml:"read_only"`
-	// AllowClone lifts the pi-acp shim's git clone deny for code-explorer (reads third-party
+	// AllowClone lifts quackgate's git clone deny for code-explorer (reads third-party
 	// repos the gate never provisions); requires ReadOnly and a boundary-enforcing sandbox.
 	AllowClone bool `yaml:"allow_clone"`
 }

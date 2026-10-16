@@ -1,58 +1,30 @@
 #!/usr/bin/env node
-// Drives the shim exactly like quack's internal/acp round does:
-// initialize -> session/new (with a fake quackmcp MCP server) -> session/prompt,
-// asserting the update stream and that a bridged quackmcp_* call lands.
+// Real-engine suite: drives quack-acp and the pig-quack under it exactly like quack's internal/acp round does,
+// against mock-openai.mjs and a fake quackmcp server. CI runs it inside the built image.
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { createServer } from "node:http";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { strict as assert } from "node:assert";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const env = { ...process.env };
-if (!process.env.PI_ACP_REAL) env.PI_ACP_PI_CMD = join(here, "fake-pi.mjs");
-// A real engine with no endpoint given gets mock-openai.mjs, so `PI_ACP_REAL=1 node test.mjs` is one command.
-if (process.env.PI_ACP_REAL && !env.PI_ACP_CONFIG) {
-  const mock = spawn(process.execPath, [join(here, "mock-openai.mjs")], { env: { ...process.env, PORT: "0" }, stdio: ["ignore", "ignore", "pipe"] });
-  const port = await new Promise((resolve, reject) => {
-    mock.on("exit", (code) => reject(new Error(`mock-openai exited (${code})`)));
-    createInterface({ input: mock.stderr }).on("line", (l) => { const m = /on :(\d+)/.exec(l); if (m) resolve(m[1]); });
-  });
-  mock.unref();
-  mock.stderr.destroy();
-  process.on("exit", () => mock.kill());
-  env.PI_ACP_CONFIG = JSON.stringify({ endpoint: `http://127.0.0.1:${port}/v1`, api_key: "unused", model: "stub", context_window: 65536, max_output_tokens: 32768 });
-}
-if (!env.PI_ACP_CONFIG)
-  env.PI_ACP_CONFIG = JSON.stringify({
-    endpoint: "http://127.0.0.1:1/v1", api_key: "unused", model: "stub",
-    context_window: 65536, max_output_tokens: 32768, skill_paths: ["/opt/quack/skills"],
-    openrouter_routing: { order: ["Together"], allow_fallbacks: false },
-  });
+const shimCmd = process.env.QUACK_ACP || "/usr/local/bin/quack-acp";
 
-// Stub OTLP collector: records every span POSTed to /v1/traces.
-const otlpSpans = [];
-let spansIn;
-const spansPosted = new Promise((r) => (spansIn = r));
-const otlpSrv = createServer((req, res) => {
-  let body = "";
-  req.on("data", (c) => (body += c));
-  req.on("end", () => {
-    for (const rs of JSON.parse(body).resourceSpans || [])
-      for (const ss of rs.scopeSpans || []) otlpSpans.push(...ss.spans);
-    spansIn();
-    res.writeHead(200, { "content-type": "application/json" });
-    res.end("{}");
-  });
+const mock = spawn(process.execPath, [join(here, "mock-openai.mjs")], { env: { ...process.env, PORT: "0" }, stdio: ["ignore", "ignore", "pipe"] });
+const port = await new Promise((resolve, reject) => {
+  mock.on("exit", (code) => reject(new Error(`mock-openai exited (${code})`)));
+  createInterface({ input: mock.stderr }).on("line", (l) => { const m = /on :(\d+)/.exec(l); if (m) resolve(m[1]); });
 });
-await new Promise((r) => otlpSrv.listen(0, "127.0.0.1", r));
-const TRACE_ID = "0af7651916cd43dd8448eb211c80319c";
-const PARENT_ID = "b7ad6b7169203331";
-env.OTEL_EXPORTER_OTLP_ENDPOINT = `http://127.0.0.1:${otlpSrv.address().port}`;
-env.TRACEPARENT = `00-${TRACE_ID}-${PARENT_ID}-01`;
+mock.unref();
+mock.stderr.destroy();
+process.on("exit", () => mock.kill());
+const model = `http://127.0.0.1:${port}`;
+const config = { endpoint: `${model}/v1`, api_key: "unused", model: "stub", context_window: 65536, max_output_tokens: 32768 };
+const env = { ...process.env, PI_ACP_CONFIG: JSON.stringify(config) };
+const get = (path) => fetch(model + path).then((r) => r.json());
 
 // Fake quackmcp: minimal MCP streamable-HTTP server, records tools/call.
 const mcpCalls = [];
@@ -64,6 +36,8 @@ const mcpSrv = createServer((req, res) => {
   let body = "";
   req.on("data", (c) => (body += c));
   req.on("end", () => {
+    // A client's GET stream or DELETE on close: this server keeps no session to stream or end.
+    if (req.method !== "POST") return res.writeHead(405).end();
     const m = JSON.parse(body);
     const send = (result) => {
       res.writeHead(200, { "content-type": "application/json", "mcp-session-id": "s1" });
@@ -71,7 +45,7 @@ const mcpSrv = createServer((req, res) => {
     };
     if (m.method === "initialize")
       send({ protocolVersion: "2025-03-26", capabilities: { tools: {} }, serverInfo: { name: "quackmcp", version: "0" } });
-    else if (m.id === undefined) { res.writeHead(202); res.end(); }
+    else if (m.id === undefined) res.writeHead(202).end();
     else if (m.method === "tools/list") send({ tools: fakeTools });
     else if (m.method === "tools/call") {
       mcpCalls.push(m.params);
@@ -80,255 +54,18 @@ const mcpSrv = createServer((req, res) => {
   });
 });
 await new Promise((r) => mcpSrv.listen(0, "127.0.0.1", r));
-const mcpUrl = `http://127.0.0.1:${mcpSrv.address().port}/secret123`;
+const mcp = [{ type: "sse", name: "quackmcp", url: `http://127.0.0.1:${mcpSrv.address().port}/secret123`, headers: [] }];
 
-// ACP_CMD overrides the target, e.g. a rival ACP agent's argv for a comparison run.
-const argv = process.env.ACP_CMD ? process.env.ACP_CMD.split(" ") : ["node", join(here, "pi-acp.mjs")];
-const shim = spawn(argv[0], argv.slice(1), { env, stdio: ["pipe", "pipe", "inherit"] });
-const pending = new Map();
-const updates = [];
-let nextId = 1;
-
-// quack's clientHandler side of permission asks: allow first, deny the rest.
-const permAsks = [];
-createInterface({ input: shim.stdout }).on("line", (l) => {
-  const m = JSON.parse(l);
-  if (m.method === "session/update") updates.push(m.params.update);
-  else if (m.method === "session/request_permission") {
-    permAsks.push(m.params);
-    const optionId = permAsks.length === 1 ? "allow" : "reject";
-    shim.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: { outcome: { outcome: "selected", optionId } } }) + "\n");
-  } else if (m.id !== undefined) {
-    const { resolve, reject } = pending.get(m.id);
-    m.error ? reject(new Error(m.error.message)) : resolve(m.result);
-  }
-});
-
-function call(method, params) {
-  const id = nextId++;
-  shim.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
-  return new Promise((resolve, reject) => pending.set(id, { resolve, reject }));
-}
-
-const init = await call("initialize", { protocolVersion: 1, clientCapabilities: {} });
-assert.equal(init.protocolVersion, 1);
-if (!process.env.ACP_CMD) assert.equal(init.agentCapabilities.mcpCapabilities.http, true);
-
-const sess = await call("session/new", {
-  cwd: process.cwd(),
-  mcpServers: [{ type: "sse", name: "quackmcp", url: mcpUrl, headers: [] }],
-});
-assert.ok(sess.sessionId);
-// piDir is deterministic (keyed by session id) so session/load can
-// find it again from a fresh shim process - no need to scan tmpdir by mtime.
-const piDir = join(tmpdir(), "pi-acp-" + sess.sessionId);
-
-if (!process.env.ACP_CMD) {
-  // the shim materialized skills + bridge into the pi config dir
-  assert.ok(statSync(piDir).isDirectory(), "no pi config dir for this session id");
-  const wantSkills = JSON.parse(env.PI_ACP_CONFIG).skill_paths;
-  if (wantSkills) {
-    const settings = JSON.parse(readFileSync(join(piDir, "settings.json"), "utf8"));
-    assert.deepEqual(settings.skills, wantSkills);
-  }
-  const bridge = JSON.parse(readFileSync(join(piDir, "extensions", "quackmcp.json"), "utf8"));
-  assert.equal(bridge.prefix, "quackmcp");
-  assert.equal(bridge.tools[0].name, "stage_review");
-  assert.equal(bridge.allowClone, false, "allow_clone set without PI_ACP_CONFIG asking");
-
-  const models = JSON.parse(readFileSync(join(piDir, "models.json"), "utf8"));
-  assert.equal(models.providers.quack.models[0].contextWindow, 65536, "contextWindow not plumbed from config's context_window");
-  assert.equal(models.providers.quack.models[0].maxTokens, 32768, "maxTokens not plumbed from config's max_output_tokens");
-  const wantRouting = JSON.parse(env.PI_ACP_CONFIG).openrouter_routing;
-  if (wantRouting)
-    assert.deepEqual(models.providers.quack.compat.openRouterRouting, wantRouting, "openRouterRouting not plumbed from config's openrouter_routing");
-}
-
-const prompt = process.env.PI_ACP_REAL
-  ? "Call the quackmcp_stage_review tool with verdict approve, then reply done."
-  : "do the thing";
-const promptPromise = call("session/prompt", {
-  sessionId: sess.sessionId,
-  prompt: [{ type: "text", text: prompt }],
-});
-if (!process.env.ACP_CMD && !process.env.PI_ACP_REAL) {
-  // #998: a steer sent mid-prompt must reach the live round, not error or wait.
-  shim.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "_quack/steer", params: { text: "focus on X" } }) + "\n");
-}
-const resp = await promptPromise;
-assert.equal(resp.stopReason, "end_turn");
-if (!process.env.ACP_CMD && !process.env.PI_ACP_REAL) {
-  assert.equal(resp._meta?.pi_stop_reason, "stop", "the last assistant stopReason must ride the prompt response");
-  const silent = await call("session/prompt", { sessionId: sess.sessionId, prompt: [{ type: "text", text: "settle-silently" }] });
-  assert.equal(silent._meta?.pi_stop_reason, "none", "a settle with no model call must say so, not look like a clean stop");
-  const steered = updates.find((u) => u.sessionUpdate === "agent_message_chunk" && u.content?.text?.includes("[steered: focus on X]"));
-  assert.ok(steered, "mid-round steer never reached the live session");
-}
-
-const kinds = updates.map((u) => u.sessionUpdate);
-assert.ok(kinds.includes("agent_message_chunk"), `no message chunk in ${kinds}`);
-if (!process.env.ACP_CMD) {
-  // the bridged tool call must have landed on the fake MCP server
-  assert.equal(mcpCalls.length, 1, `expected 1 mcp call, got ${JSON.stringify(mcpCalls)}`);
-  assert.equal(mcpCalls[0].name, "stage_review");
-  const btc = updates.find((u) => u.sessionUpdate === "tool_call" && u.title.startsWith("quackmcp_"));
-  assert.ok(btc, "no quackmcp_* tool_call update relayed to quack");
-  // the relay must be able to recover the real tool name from _meta, not
-  // just the kind "other" (#1278) - never bash/read/... and never "other".
-  assert.equal(btc._meta?.quack_mcp_tool, "stage_review", "MCP identity missing from _meta");
-  assert.notEqual(btc.kind, "other", "MCP tool call still falls through to kind \"other\"");
-  assert.ok(kinds.includes("usage_update"), "usage_update missing - quack metrics would go dark");
-}
-if (process.env.PI_ACP_REAL && !process.env.ACP_CMD) {
-  // Real end-to-end resume proof: round 2 on a FRESH shim process must carry
-  // round 1's turn into the model's prefix (mock-openai.mjs's GET /requests).
-  const base = new URL(JSON.parse(env.PI_ACP_CONFIG).endpoint);
-  const before = await fetch(`${base.origin}/requests`).then((r) => r.json());
-  const { shim: shim2, call: call2 } = connectShim(env);
-  await call2("initialize", { protocolVersion: 1, clientCapabilities: {} });
-  await call2("session/load", {
-    sessionId: sess.sessionId, cwd: process.cwd(),
-    mcpServers: [{ type: "sse", name: "quackmcp", url: mcpUrl, headers: [] }],
-  });
-  const resp2 = await call2("session/prompt", { sessionId: sess.sessionId, prompt: [{ type: "text", text: "What did you just do?" }] });
-  assert.equal(resp2.stopReason, "end_turn");
-  const after = await fetch(`${base.origin}/requests`).then((r) => r.json());
-  assert.ok(after.length > before.length, "round 2 never reached the model");
-  const prefix = JSON.stringify(after[after.length - 1]);
-  assert.ok(prefix.includes("Call the quackmcp_stage_review tool"),
-    "round 2's prefix is missing round 1's turn - session/load did not resume");
-  shim2.stdin.end();
-  await new Promise((r) => shim2.on("exit", r));
-
-  // Same deletion proof as the fake-pi block below, against real pi.
-  const { shim: shim5, call: call5 } = connectShim(env);
-  await call5("initialize", { protocolVersion: 1, clientCapabilities: {} });
-  const sess5 = await call5("session/new", { cwd: process.cwd(), mcpServers: [] });
-  await call5("session/prompt", { sessionId: sess5.sessionId, prompt: [{ type: "text", text: "hi" }] });
-  shim5.stdin.end();
-  await new Promise((r) => shim5.on("exit", r));
-
-  const sessionsDir5 = join(tmpdir(), "pi-acp-" + sess5.sessionId, "pi-sessions");
-  for (const f of readdirSync(sessionsDir5)) rmSync(join(sessionsDir5, f));
-
-  const { shim: shim6, call: call6 } = connectShim(env);
-  await call6("initialize", { protocolVersion: 1, clientCapabilities: {} });
-  await assert.rejects(
-    call6("session/load", { sessionId: sess5.sessionId, cwd: process.cwd(), mcpServers: [] }),
-    /no persisted session/,
-    "real pi: session/load must fail once its session file is gone");
-  shim6.stdin.end();
-  await new Promise((r) => shim6.on("exit", r));
-
-  // The engine's own tool_call gate, usage split, thinking, steer and cancel, driven by mock-openai.mjs SCRIPTS.
-  const gateCwd = mkdtempSync(join(tmpdir(), "pi-acp-gate-"));
-  mkdirSync(join(gateCwd, "app"));
-  writeFileSync(join(gateCwd, "app", ".env"), "A=1\n");
-  writeFileSync(join(gateCwd, "app", ".env.prod"), "B=2\n");
-  let asks = 0;
-  const g = connectShim(env, () => (++asks === 1 ? "allow" : "reject"));
-  await g.call("initialize", { protocolVersion: 1, clientCapabilities: {} });
-  const gs = await g.call("session/new", { cwd: gateCwd, mcpServers: [] });
-  const say = (text) => g.call("session/prompt", { sessionId: gs.sessionId, prompt: [{ type: "text", text }] });
-  assert.equal((await say("GATE")).stopReason, "end_turn");
-  const outFor = (needle) => {
-    const tc = g.updates.find((u) => u.sessionUpdate === "tool_call" && JSON.stringify(u.rawInput).includes(needle));
-    assert.ok(tc, `no tool_call for ${needle}`);
-    return g.updates.find((u) => u.sessionUpdate === "tool_call_update" && u.toolCallId === tc.toolCallId)?.rawOutput?.output ?? "";
-  };
-  assert.match(outFor("git push"), /denied by policy/, "engine ran git push");
-  assert.match(outFor("git clone"), /denied by policy/, "engine ran git clone without allow_clone");
-  assert.equal(asks, 2, `expected 2 permission asks (the .env reads), got ${asks}`);
-  assert.match(outFor('"app/.env"'), /A=1/, "judge-allowed .env read did not run");
-  assert.match(outFor('"app/.env.prod"'), /denied by quack safety judge/, "judge-denied .env read ran");
-  assert.ok(g.updates.some((u) => u.sessionUpdate === "agent_thought_chunk"), "reasoning_content never surfaced as a thought chunk");
-  const usage = g.updates.filter((u) => u.sessionUpdate === "usage_update").at(-1);
-  assert.deepEqual(usage?._meta, { quack_prompt_tokens: 10, quack_cached_tokens: 4, quack_completion_tokens: 2 }, "usage split wrong");
-
-  const steered = say("STEER");
-  await new Promise((r) => setTimeout(r, 500));
-  await g.call("_quack/steer", { text: "steer-note" });
-  assert.equal((await steered).stopReason, "end_turn");
-  const reqs = await fetch(`${new URL(JSON.parse(env.PI_ACP_CONFIG).endpoint).origin}/requests`).then((r) => r.json());
-  assert.ok(reqs.some((m) => JSON.stringify(m).includes("steer-note")), "steer never reached the model");
-  // pi's four built-ins plus the bridge, on every engine: PIG offers more unless the shim limits it.
-  const bodies = await fetch(`${new URL(JSON.parse(env.PI_ACP_CONFIG).endpoint).origin}/bodies`).then((r) => r.json());
-  assert.deepEqual(bodies[0].tools.toSorted(), ["bash", "edit", "quackmcp_stage_review", "quackmcp_stage_review_comment", "read", "write"], "model offered the wrong tools");
-
-  const stalled = say("STALL");
-  await new Promise((r) => setTimeout(r, 500));
-  const t0 = Date.now();
-  g.shim.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId: gs.sessionId } }) + "\n");
-  assert.equal((await stalled).stopReason, "cancelled");
-  const cancelMs = Date.now() - t0;
-  assert.ok(cancelMs < 3000, `cancel took ${cancelMs}ms`);
-  assert.equal((await say("still alive?")).stopReason, "end_turn", "session wedged after cancel");
-  g.shim.stdin.end();
-  await new Promise((r) => g.shim.on("exit", r));
-  rmSync(gateCwd, { recursive: true });
-  console.log(`real engine: gate, usage, thinking, steer ok; cancel settled in ${cancelMs}ms`);
-}
-if (!process.env.PI_ACP_REAL && !process.env.ACP_CMD) {
-  // permission bridge: the gate's two .env asks reach quack as ACP asks, one allowed, one denied.
-  const end = (id) => updates.find((u) => u.sessionUpdate === "tool_call_update" && u.toolCallId === id);
-  assert.equal(permAsks.length, 2, `expected 2 permission asks, got ${permAsks.length}`);
-  assert.equal(permAsks[0].toolCall.rawInput.path, "app/.env");
-  assert.equal(end("call_g1").status, "completed", ".env read not allowed after judge approval");
-  assert.equal(end("call_g2").status, "failed", "denied .env read not refused");
-  assert.ok(kinds.includes("agent_thought_chunk"));
-  const tc = updates.find((u) => u.sessionUpdate === "tool_call");
-  assert.equal(tc.kind, "execute");
-  assert.equal(tc.rawInput.command, "echo hi");
-  const tu = updates.find((u) => u.sessionUpdate === "tool_call_update");
-  assert.equal(tu.status, "completed");
-  assert.equal(tu.rawOutput.output, "hi\n");
-  // One usage_update per model call (fake-pi makes two), each carrying that call's final usage.
-  const usages = updates.filter((u) => u.sessionUpdate === "usage_update");
-  assert.deepEqual(usages.map((u) => u.used), [42, 99], "want one usage_update per model call");
-  const usageUpdate = usages[1];
-  // input(10) + cacheRead(6) + cacheWrite(3): prompt_tokens must be the full total, cached a subset of it.
-  assert.equal(usageUpdate._meta?.quack_prompt_tokens, 19, "prompt tokens must include cacheRead+cacheWrite");
-  assert.equal(usageUpdate._meta?.quack_cached_tokens, 6, "cached tokens missing from usage_update _meta");
-  assert.equal(usageUpdate._meta?.quack_completion_tokens, 2, "completion tokens missing from usage_update _meta");
-  assert.ok(usageUpdate._meta.quack_cached_tokens <= usageUpdate._meta.quack_prompt_tokens, "cached must not exceed prompt");
-}
-// OTLP assertions: flush is fire-and-forget on agent_settled, so wait for it.
-if (!process.env.ACP_CMD) {
-  await Promise.race([spansPosted, new Promise((_, rej) => setTimeout(rej, 30000, new Error("no OTLP spans within 30s")).unref())]);
-  // 6 is fake-pi's scripted turn; a real engine's count follows the model's calls.
-  if (!process.env.PI_ACP_REAL) assert.equal(otlpSpans.length, 6, `expected the 6 parity spans, got ${otlpSpans.length}`);
-  assert.ok(otlpSpans.every((sp) => sp.traceId === TRACE_ID), "span not under quack's trace id");
-  assert.ok(otlpSpans.every((sp) => sp.parentSpanId === PARENT_ID), "span not parented under the round span");
-  const gens = otlpSpans.filter((sp) => sp.name.startsWith("chat "));
-  const av = (sp, k) => sp.attributes.find((a) => a.key === k)?.value;
-  if (process.env.PI_ACP_REAL) {
-    assert.ok(gens.length >= 1, "no generation span posted from real pi");
-  } else {
-    assert.equal(gens.length, 2, `generation count != LLM calls: ${gens.map((g) => g.name)}`);
-    assert.equal(av(gens[1], "gen_ai.usage.input_tokens").intValue, "10");
-    assert.equal(av(gens[1], "gen_ai.usage.output_tokens").intValue, "2");
-    assert.ok(av(gens[0], "quack.thinking").stringValue.includes("hmm"));
-    const toolSpans = otlpSpans.filter((sp) => sp.name.startsWith("execute_tool "));
-    assert.ok(toolSpans.some((sp) => sp.name.includes("quackmcp_")), "no quackmcp tool span");
-    const deniedSpan = toolSpans.find((sp) => av(sp, "gen_ai.tool.call.arguments")?.stringValue.includes(".env.prod"));
-    assert.equal(deniedSpan.status.code, 2, "denied .env read span not marked error");
-    assert.ok(toolSpans.every((sp) => av(sp, "tool_call_id")?.stringValue), "tool span missing tool_call_id");
-    assert.ok(toolSpans.every((sp) => av(sp, "gen_ai.tool.call.result")?.stringValue.length <= 8192 + "…[truncated]".length), "tool result attr exceeds the 8KB cap");
-  }
-}
-console.log("ok -", updates.length, "updates,", mcpCalls.length, "mcp call(s),", otlpSpans.length, "otlp span(s)");
-
-// connectShim: a second shim process; decide answers each permission ask (default allow) -
-// fake-pi.mjs's 4 guarded calls fire even with mcpServers: [], and hang without a reply.
-function connectShim(spawnEnv, decide = () => "allow") {
-  const s = spawn(argv[0], argv.slice(1), { env: spawnEnv, stdio: ["pipe", "pipe", "inherit"] });
+// connectShim: one shim process; decide answers each permission ask.
+function connectShim(decide = () => "allow") {
+  const s = spawn(shimCmd, [], { env, stdio: ["pipe", "pipe", "inherit"] });
   const pend = new Map();
   let id = 1;
-  const upd = [];
+  const updates = [];
   createInterface({ input: s.stdout }).on("line", (l) => {
     if (!l.trim()) return;
     const m = JSON.parse(l);
-    if (m.method === "session/update") upd.push(m.params.update);
+    if (m.method === "session/update") updates.push(m.params.update);
     else if (m.method === "session/request_permission") {
       s.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: { outcome: { outcome: "selected", optionId: decide() } } }) + "\n");
     } else if (m.id !== undefined && pend.has(m.id)) {
@@ -337,98 +74,108 @@ function connectShim(spawnEnv, decide = () => "allow") {
       m.error ? reject(new Error(m.error.message)) : resolve(m.result);
     }
   });
-  const call2 = (method, params) => {
+  const call = (method, params) => {
     const rid = id++;
     s.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: rid, method, params }) + "\n");
     return new Promise((resolve, reject) => pend.set(rid, { resolve, reject }));
   };
-  return { shim: s, call: call2, updates: upd };
+  const end = async () => {
+    s.stdin.end();
+    await new Promise((r) => s.on("exit", r));
+  };
+  return { shim: s, call, updates, end };
 }
 
-// session/load on a FRESH shim process must resume, not start blank - proven
-// via fake-pi.mjs's per-prompt turn counter surviving into a second process.
-if (!process.env.ACP_CMD && !process.env.PI_ACP_REAL) {
-  const turnsFile = join(piDir, "pi-sessions", sess.sessionId + ".turns");
-  assert.equal(readFileSync(turnsFile, "utf8").trim().split("\n").length, 1, "round 1 did not record a turn");
+// Round 1: the bridged MCP tool lands, with its identity and usage relayed.
+const a = connectShim();
+const init = await a.call("initialize", { protocolVersion: 1, clientCapabilities: {} });
+assert.equal(init.protocolVersion, 1);
+assert.equal(init.agentCapabilities.mcpCapabilities.http, true);
+assert.equal(init.agentCapabilities.loadSession, true, "shim must advertise loadSession for resume to fire");
+const sess = await a.call("session/new", { cwd: process.cwd(), mcpServers: mcp });
+const piDir = join(tmpdir(), "pi-acp-" + sess.sessionId);
+const models = JSON.parse(readFileSync(join(piDir, "models.json"), "utf8"));
+assert.equal(models.providers.quack.models[0].contextWindow, 65536, "contextWindow not plumbed from config's context_window");
+const resp = await a.call("session/prompt", { sessionId: sess.sessionId, prompt: [{ type: "text", text: "Call the quackmcp_stage_review tool with verdict approve, then reply done." }] });
+assert.equal(resp.stopReason, "end_turn");
+assert.equal(resp._meta?.pi_stop_reason, "stop", "the last assistant stopReason must ride the prompt response");
+const kinds = a.updates.map((u) => u.sessionUpdate);
+assert.ok(kinds.includes("agent_message_chunk"), `no message chunk in ${kinds}`);
+assert.ok(kinds.includes("usage_update"), "usage_update missing - quack metrics would go dark");
+assert.equal(mcpCalls.length, 1, `expected 1 mcp call, got ${JSON.stringify(mcpCalls)}`);
+assert.equal(mcpCalls[0].name, "stage_review");
+const btc = a.updates.find((u) => u.sessionUpdate === "tool_call" && u.title.startsWith("quackmcp_"));
+assert.equal(btc?._meta?.quack_mcp_tool, "stage_review", "MCP identity missing from _meta");
+assert.notEqual(btc.kind, "other", "MCP tool call still falls through to kind \"other\"");
+await a.end();
 
-  const { shim: shim2, call: call2 } = connectShim(env);
-  const init2 = await call2("initialize", { protocolVersion: 1, clientCapabilities: {} });
-  assert.equal(init2.agentCapabilities.loadSession, true, "shim must advertise loadSession for resume to fire");
-  await call2("session/load", { sessionId: sess.sessionId, cwd: process.cwd(), mcpServers: [] });
-  const resp2 = await call2("session/prompt", { sessionId: sess.sessionId, prompt: [{ type: "text", text: "again" }] });
-  assert.equal(resp2.stopReason, "end_turn");
-  assert.equal(readFileSync(turnsFile, "utf8").trim().split("\n").length, 2,
-    "session/load spawned pi against a different session id/dir than session/new used - resume broken");
-  shim2.stdin.end();
-  // Fire-and-forget otel flush on stdin "end" - wait for real exit or it
-  // races otlpSrv.close() below.
-  await new Promise((r) => shim2.on("exit", r));
-}
+// Round 2 on a FRESH shim process must carry round 1's turn into the model's prefix.
+const before = await get("/requests");
+const b = connectShim();
+await b.call("initialize", { protocolVersion: 1, clientCapabilities: {} });
+await b.call("session/load", { sessionId: sess.sessionId, cwd: process.cwd(), mcpServers: mcp });
+assert.equal((await b.call("session/prompt", { sessionId: sess.sessionId, prompt: [{ type: "text", text: "What did you just do?" }] })).stopReason, "end_turn");
+const after = await get("/requests");
+assert.ok(after.length > before.length, "round 2 never reached the model");
+assert.ok(JSON.stringify(after.at(-1)).includes("Call the quackmcp_stage_review tool"), "round 2's prefix is missing round 1's turn - session/load did not resume");
+await b.end();
 
-// A missing/deleted session file must fail session/load deterministically -
-// never let pi silently start a blank session that quack records as resumed.
-if (!process.env.ACP_CMD && !process.env.PI_ACP_REAL) {
-  const { shim: shim3, call: call3 } = connectShim(env);
-  await call3("initialize", { protocolVersion: 1, clientCapabilities: {} });
-  const sess3 = await call3("session/new", { cwd: process.cwd(), mcpServers: [] });
-  await call3("session/prompt", { sessionId: sess3.sessionId, prompt: [{ type: "text", text: "hi" }] });
-  shim3.stdin.end();
-  await new Promise((r) => shim3.on("exit", r));
+// A deleted session file must fail session/load, never silently start blank.
+const c = connectShim();
+await c.call("initialize", { protocolVersion: 1, clientCapabilities: {} });
+const sess2 = await c.call("session/new", { cwd: process.cwd(), mcpServers: [] });
+await c.call("session/prompt", { sessionId: sess2.sessionId, prompt: [{ type: "text", text: "hi" }] });
+await c.end();
+const sessionsDir = join(tmpdir(), "pi-acp-" + sess2.sessionId, "pi-sessions");
+for (const f of readdirSync(sessionsDir)) rmSync(join(sessionsDir, f));
+const d = connectShim();
+await d.call("initialize", { protocolVersion: 1, clientCapabilities: {} });
+await assert.rejects(d.call("session/load", { sessionId: sess2.sessionId, cwd: process.cwd(), mcpServers: [] }), /no persisted session/);
+await d.end();
 
-  const sessionsDir = join(tmpdir(), "pi-acp-" + sess3.sessionId, "pi-sessions");
-  for (const f of readdirSync(sessionsDir)) rmSync(join(sessionsDir, f));
+// The engine's own tool_call gate, usage split, thinking, steer and cancel, driven by mock-openai.mjs SCRIPTS.
+const gateCwd = mkdtempSync(join(tmpdir(), "pi-acp-gate-"));
+mkdirSync(join(gateCwd, "app"));
+writeFileSync(join(gateCwd, "app", ".env"), "A=1\n");
+writeFileSync(join(gateCwd, "app", ".env.prod"), "B=2\n");
+let asks = 0;
+const g = connectShim(() => (++asks === 1 ? "allow" : "reject"));
+await g.call("initialize", { protocolVersion: 1, clientCapabilities: {} });
+const gs = await g.call("session/new", { cwd: gateCwd, mcpServers: [] });
+const say = (text) => g.call("session/prompt", { sessionId: gs.sessionId, prompt: [{ type: "text", text }] });
+assert.equal((await say("GATE")).stopReason, "end_turn");
+const outFor = (needle) => {
+  const tc = g.updates.find((u) => u.sessionUpdate === "tool_call" && JSON.stringify(u.rawInput).includes(needle));
+  assert.ok(tc, `no tool_call for ${needle}`);
+  return g.updates.find((u) => u.sessionUpdate === "tool_call_update" && u.toolCallId === tc.toolCallId)?.rawOutput?.output ?? "";
+};
+assert.match(outFor("git push"), /denied by policy/, "engine ran git push");
+assert.match(outFor("git clone"), /denied by policy/, "engine ran git clone without allow_clone");
+assert.equal(asks, 2, `expected 2 permission asks (the .env reads), got ${asks}`);
+assert.match(outFor('"app/.env"'), /A=1/, "judge-allowed .env read did not run");
+assert.match(outFor('"app/.env.prod"'), /denied by quack safety judge/, "judge-denied .env read ran");
+assert.ok(g.updates.some((u) => u.sessionUpdate === "agent_thought_chunk"), "reasoning_content never surfaced as a thought chunk");
+const usage = g.updates.filter((u) => u.sessionUpdate === "usage_update").at(-1);
+assert.deepEqual(usage?._meta, { quack_prompt_tokens: 10, quack_cached_tokens: 4, quack_completion_tokens: 2 }, "usage split wrong");
 
-  const { shim: shim4, call: call4 } = connectShim(env);
-  await call4("initialize", { protocolVersion: 1, clientCapabilities: {} });
-  await assert.rejects(
-    call4("session/load", { sessionId: sess3.sessionId, cwd: process.cwd(), mcpServers: [] }),
-    /no persisted session/,
-    "session/load must fail, not silently start blank, once its session file is gone");
-  shim4.stdin.end();
-  await new Promise((r) => shim4.on("exit", r));
-}
+const steered = say("STEER");
+await new Promise((r) => setTimeout(r, 500));
+await g.call("_quack/steer", { text: "steer-note" });
+assert.equal((await steered).stopReason, "end_turn");
+assert.ok((await get("/requests")).some((m) => JSON.stringify(m).includes("steer-note")), "steer never reached the model");
+// pi's four built-ins plus the bridge: PIG offers more unless the shim limits it.
+const tools = (await get("/bodies")).find((x) => x.tools.includes("quackmcp_stage_review")).tools;
+assert.deepEqual(tools.toSorted(), ["bash", "edit", "quackmcp_stage_review", "quackmcp_stage_review_comment", "read", "write"], "model offered the wrong tools");
 
-// PIG's flags and env, and no session until the gate reports in.
-if (!process.env.PI_ACP_REAL && !process.env.ACP_CMD) {
-  const mcp = [{ type: "sse", name: "quackmcp", url: mcpUrl, headers: [] }];
-  const p = connectShim(env);
-  await p.call("initialize", { protocolVersion: 1, clientCapabilities: {} });
-  const ps = await p.call("session/new", { cwd: process.cwd(), mcpServers: mcp });
-  const pDir = join(tmpdir(), "pi-acp-" + ps.sessionId);
-  const launch = JSON.parse(readFileSync(join(pDir, "fake-pi-launch.json"), "utf8"));
-  assert.ok(launch.argv.includes("--no-extensions"), "PIG must run without extension discovery");
-  assert.equal(launch.argv[launch.argv.indexOf("--tools") + 1], "read,bash,edit,write,quackmcp_stage_review,quackmcp_stage_review_comment");
-  assert.equal(launch.offline, "1", "PIG must run offline");
-  p.shim.stdin.end();
-  await new Promise((r) => p.shim.on("exit", r));
-
-  // Waits out the shim's full 20s gate bound.
-  const q = connectShim({ ...env, FAKE_PI_SILENT_GATE: "1" });
-  await q.call("initialize", { protocolVersion: 1, clientCapabilities: {} });
-  await assert.rejects(q.call("session/new", { cwd: process.cwd(), mcpServers: mcp }), /quackgate did not report in/, "ungated engine got a session");
-  await assert.rejects(q.call("session/prompt", { sessionId: "x", prompt: [{ type: "text", text: "hi" }] }), /no live session/);
-  q.shim.stdin.end();
-  await new Promise((r) => q.shim.on("exit", r));
-}
-
-shim.stdin.end();
+const stalled = say("STALL");
+await new Promise((r) => setTimeout(r, 500));
+const t0 = Date.now();
+g.shim.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId: gs.sessionId } }) + "\n");
+assert.equal((await stalled).stopReason, "cancelled");
+const cancelMs = Date.now() - t0;
+assert.ok(cancelMs < 3000, `cancel took ${cancelMs}ms`);
+assert.equal((await say("still alive?")).stopReason, "end_turn", "session wedged after cancel");
+await g.end();
+rmSync(gateCwd, { recursive: true });
 mcpSrv.close();
-otlpSrv.close();
-
-// no limit.context configured -> omit contextWindow rather than write 0, so
-// pi keeps its own default instead of tripping provider-composer's reject. Also carries allow_clone through to the bridge.
-if (!process.env.ACP_CMD && !process.env.PI_ACP_REAL) {
-  const noLimitEnv = { ...env, PI_ACP_CONFIG: JSON.stringify({
-    endpoint: "http://127.0.0.1:1/v1", api_key: "unused", model: "stub", allow_clone: true,
-  }) };
-  const { shim: shim2, call: call2 } = connectShim(noLimitEnv);
-  await call2("initialize", { protocolVersion: 1, clientCapabilities: {} });
-  const sess2 = await call2("session/new", { cwd: process.cwd(), mcpServers: [] });
-  const models2 = JSON.parse(readFileSync(join(tmpdir(), "pi-acp-" + sess2.sessionId, "models.json"), "utf8"));
-  assert.ok(!("contextWindow" in models2.providers.quack.models[0]), "contextWindow written when unset");
-  assert.ok(!("maxTokens" in models2.providers.quack.models[0]), "maxTokens written when unset");
-  assert.ok(!("openRouterRouting" in models2.providers.quack.compat), "openRouterRouting written when unset");
-  const bridge2 = JSON.parse(readFileSync(join(tmpdir(), "pi-acp-" + sess2.sessionId, "extensions", "quackmcp.json"), "utf8"));
-  assert.equal(bridge2.allowClone, true, "allow_clone never reached quackgate's config");
-  shim2.stdin.end();
-}
+console.log(`ok - real engine: bridge, resume, gate, usage, thinking, steer ok; cancel settled in ${cancelMs}ms`);

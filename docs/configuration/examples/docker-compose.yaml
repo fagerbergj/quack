@@ -85,7 +85,7 @@ agents:
       bucket: coding
     judge_rounds: 1
     acp:
-      command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
+      command: ["/usr/local/bin/quack-acp"]
   code-reviewer:
     optional: true
     model: qwen3.8-27b
@@ -93,7 +93,7 @@ agents:
       bucket: coding
     judge_rounds: 1
     acp:
-      command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
+      command: ["/usr/local/bin/quack-acp"]
       read_only: true
   code-explorer:
     optional: true
@@ -102,7 +102,7 @@ agents:
       bucket: coding
     judge_rounds: 2
     acp:
-      command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
+      command: ["/usr/local/bin/quack-acp"]
       read_only: true
   synthesizer:
     bundle: agents/synthesizer

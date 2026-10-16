@@ -31,7 +31,7 @@ A fresh clone builds and boots with nothing vendored: `embed.go` embeds a tracke
    - **Embedding** - semantic memory; None disables memory.
    - **Vision** / **Audio** - the image-reader / media-reader agents.
 4. **Optional features** (multi-select) - web search, web fetch, coding agents.
-   - Picking "Coding agents" adds two more questions: a coder model and the workspace sandbox mode (`bwrap` or `none`). The coding agents run as external [PIG](https://github.com/MichaelKinsy/PiG) processes over ACP (through the `tools/pi-acp` shim), so `node`, the shim and `pig-quack` have to be on the server's PATH.
+   - Picking "Coding agents" adds two more questions: a coder model and the workspace sandbox mode (`bwrap` or `none`). The coding agents run as external [PIG](https://github.com/MichaelKinsy/PiG) processes over ACP (through the `quack-acp` shim), so `quack-acp` and `pig-quack` have to be on the server's PATH; the image ships both under `/usr/local/bin`.
 5. **Stores** - session storage (sqlite by default), plus a memory store if you set an embedding model, and search/fetch backends for whichever features you picked. Defaults are sane; enter accepts them.
 6. **Review** - a summary of every answer above, then confirm to write `quack.yaml`.
 
