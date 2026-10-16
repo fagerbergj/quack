@@ -182,7 +182,7 @@ func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool, skillsets []to
 			Toolsets:              skillsets,
 			GenerateContentConfig: judgeGenConfig(maxOutputTokens, thinkingLevel),
 			BeforeModelCallbacks:  []llmagent.BeforeModelCallback{forcedVerdictCallback(maxIters, forced, receivedIDs)},
-			BeforeToolCallbacks:   []llmagent.BeforeToolCallback{decodeStringifiedVerdict, countRepo, countArtifacts},
+			BeforeToolCallbacks:   []llmagent.BeforeToolCallback{countRepo, countArtifacts},
 		}
 		for _, w := range wire {
 			w(&cfg)
@@ -287,29 +287,6 @@ func repeatsLastToolCall(contents []*genai.Content) bool {
 	a, aerr := json.Marshal(last.Args)
 	b, berr := json.Marshal(prev.Args)
 	return aerr == nil && berr == nil && string(a) == string(b)
-}
-
-// decodeStringifiedVerdict: judges often send submit_verdict's nested fields as a JSON string, which the
-// schema rejects at the cost of a judge turn; decode them in place before Run validates.
-func decodeStringifiedVerdict(_ adkagent.Context, t tool.Tool, args map[string]any) (map[string]any, error) {
-	if t.Name() != submitVerdictTool {
-		return nil, nil
-	}
-	for _, k := range []string{"criteria", "findings", "memories"} {
-		s, ok := args[k].(string)
-		if !ok {
-			continue
-		}
-		// Judges also drop a stringified value's final closer; restoring it saves the rejected turn.
-		for _, closer := range []string{"", "}", "]"} {
-			var v any
-			if json.Unmarshal([]byte(s+closer), &v) == nil {
-				args[k] = v
-				break
-			}
-		}
-	}
-	return nil, nil
 }
 
 // verdictArgs: submit_verdict schema. Only score is required.
@@ -1055,7 +1032,6 @@ func (s *judgeRoundState) recordRead(fr *genai.FunctionResponse) {
 		args, _ = json.Marshal(fc.Args)
 		id, _ = fc.Args["id"].(string)
 	}
-	id = readArtifactID(id, fr.Response)
 	body, ok := fr.Response["result"].(string)
 	if !ok {
 		raw, _ := json.Marshal(fr.Response)
@@ -1776,11 +1752,7 @@ func lastVerdictObject(s string, specs map[string]criterionSpec) (rawVerdict, bo
 	for i := strings.IndexByte(s, '{'); i >= 0; {
 		keys, skip, err := objectAt(s[i:])
 		if errors.Is(err, io.ErrUnexpectedEOF) {
-			// The object at i runs to the end of s, so nothing after it is top-level; a dropped
-			// closing brace is repaired only when no complete verdict came before it.
-			if !found {
-				return repairTailVerdict(s[i:], specs)
-			}
+			// The object at i runs to the end of s, so nothing after it is top-level.
 			break
 		}
 		if rv, ok := toVerdict(s[i:i+skip], keys, err, specs); ok {
@@ -1793,17 +1765,6 @@ func lastVerdictObject(s string, specs map[string]criterionSpec) (rawVerdict, bo
 		i += skip + j
 	}
 	return last, found
-}
-
-// repairTailVerdict closes an object a model left one or two braces short at the end of its text.
-func repairTailVerdict(s string, specs map[string]criterionSpec) (rawVerdict, bool) {
-	for _, suffix := range []string{"}", "}}"} {
-		keys, skip, err := objectAt(s + suffix)
-		if rv, ok := toVerdict((s + suffix)[:skip], keys, err, specs); ok {
-			return rv, true
-		}
-	}
-	return rawVerdict{}, false
 }
 
 // objectAt decodes the JSON object at the start of s; skip is how far the scan may jump - past a

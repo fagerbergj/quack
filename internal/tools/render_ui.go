@@ -6,12 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"google.golang.org/adk/v2/agent"
-	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/tool"
 	"google.golang.org/adk/v2/tool/functiontool"
 
@@ -51,7 +49,7 @@ func renderUITool(c *recordstore.Client, nodeID string, coords *RoundCoords, sin
 		return nil, err
 	}
 	schema.Properties["components"].Types, schema.Properties["components"].Type = nil, "array"
-	t, err := functiontool.New[renderUIArgs, string](
+	return functiontool.New[renderUIArgs, string](
 		functiontool.Config{
 			Name: "render_ui",
 			Description: "Render or update an A2UI v0.9.1 surface in the user's chat. Never write A2UI envelope messages; " +
@@ -74,10 +72,6 @@ func renderUITool(c *recordstore.Client, nodeID string, coords *RoundCoords, sin
 			return renderUI(ctx, c, lineage, emit, a)
 		},
 	)
-	if err != nil {
-		return nil, err
-	}
-	return &decodeStringArgs{runnableTool: t.(runnableTool), keys: []string{"components", "data_model", "answer_key"}}, nil
 }
 
 func renderUI(ctx agent.Context, c *recordstore.Client, lineage recordstore.Lineage, sink func(stream.SSEEvent), a renderUIArgs) (string, error) {
@@ -137,31 +131,4 @@ func emitRevision(sink func(stream.SSEEvent), id string, rev int, kind string, l
 	if sink != nil {
 		sink(stream.SSEEvent{Name: stream.EventArtifactRevision, Data: stream.ArtifactRevisionData{ID: id, Revision: rev, Kind: kind, NodeID: l.NodeID, Round: l.Round}})
 	}
-}
-
-// decodeStringArgs JSON-decodes string values under keys before the inner
-// tool's schema check: models sometimes send a nested argument stringified.
-type decodeStringArgs struct {
-	runnableTool
-	keys []string
-}
-
-func (d *decodeStringArgs) ProcessRequest(ctx agent.Context, req *model.LLMRequest) error {
-	return rebindToolMap(d.runnableTool, d, ctx, req)
-}
-
-func (d *decodeStringArgs) Run(ctx agent.Context, args any) (map[string]any, error) {
-	if m, ok := args.(map[string]any); ok {
-		m = maps.Clone(m)
-		for _, k := range d.keys {
-			if s, ok := m[k].(string); ok {
-				var v any
-				if json.Unmarshal([]byte(s), &v) == nil {
-					m[k] = v
-				}
-			}
-		}
-		args = m
-	}
-	return d.runnableTool.Run(ctx, args)
 }

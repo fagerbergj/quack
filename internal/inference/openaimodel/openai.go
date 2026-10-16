@@ -167,9 +167,9 @@ func (o *OpenAIModel) EmbedWithUsage(ctx context.Context, texts []string) ([][]f
 
 func (o *OpenAIModel) GenerateContent(ctx context.Context, req *model.LLMRequest, stream bool) iter.Seq2[*model.LLMResponse, error] {
 	if stream {
-		return o.generateStream(ctx, req)
+		return decodeStringArgs(req, o.generateStream(ctx, req))
 	}
-	return o.generate(ctx, req)
+	return decodeStringArgs(req, o.generate(ctx, req))
 }
 
 // applyDefaultEffort mutates req in place so the ledger, which reads the same req later,

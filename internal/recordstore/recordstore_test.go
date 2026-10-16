@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -122,26 +123,22 @@ func TestKindOf(t *testing.T) {
 	}
 }
 
-func TestResolveID(t *testing.T) {
-	ids := []string{"trends:doc:33db", "web_page:323f", "text:a", "text:b", "text:c", "text:d", "text:e", "text:f"}
-	for _, tc := range []struct{ given, want, errHas string }{
-		{"doc:33db", "trends:doc:33db", ""},
-		{"33db", "trends:doc:33db", ""},
-		{"323f", "web_page:323f", ""},
-		{"trends", "trends:doc:33db", ""},
-		{"text", "", "matches 6 ids, pass one in full: text:a, text:b, text:c, text:d, text:e"},
-		{"nope", "", "nope: not found"},
-		{"", "", ": not found"},
-	} {
-		got, err := ResolveID(tc.given, ids)
-		if got != tc.want || (tc.errHas == "") != (err == nil) || (err != nil && !strings.Contains(err.Error(), tc.errHas)) {
-			t.Errorf("ResolveID(%q) = %q, %v; want %q, error containing %q", tc.given, got, err, tc.want, tc.errHas)
-		}
+func TestNotFoundError(t *testing.T) {
+	var ids []string
+	for i := range 12 {
+		ids = append(ids, fmt.Sprintf("text:%02d", i))
+	}
+	err := NotFoundError("zz", ids)
+	if want := "text:00, text:01, text:02, text:03, text:04, text:05, text:06, text:07, text:08, text:09 (2 more"; !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), "text:10") {
+		t.Errorf("NotFoundError = %q, want the first 10 ids and %q", err, want)
+	}
+	if got := NotFoundError("zz", nil).Error(); got != "zz: not found" {
+		t.Errorf("NotFoundError(no ids) = %q", got)
 	}
 }
 
-// TestClientResolve: Resolve matches only the listed ids keep admits.
-func TestClientResolve(t *testing.T) {
+// TestClientIDs: IDs lists only what keep admits.
+func TestClientIDs(t *testing.T) {
 	ctx := context.Background()
 	c := New(artifact.InMemoryService(), "app", "u1", "s1")
 	for _, hint := range []string{"doc:a", "doc:b"} {
@@ -149,12 +146,12 @@ func TestClientResolve(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := c.Resolve(ctx, "test.blob", nil); err == nil {
-		t.Error("Resolve(kind with two ids) = nil error, want ambiguous")
+	if got, err := c.IDs(ctx, nil); err != nil || len(got) != 2 {
+		t.Errorf("IDs(nil) = %v, %v; want both ids", got, err)
 	}
 	onlyA := func(it ArtifactSummary) bool { return strings.HasSuffix(it.ID, ":a") }
-	if got, err := c.Resolve(ctx, "test.blob", onlyA); err != nil || got != "test.blob:doc:a" {
-		t.Errorf("Resolve(kind, keep a) = %q, %v; want test.blob:doc:a", got, err)
+	if got, err := c.IDs(ctx, onlyA); err != nil || len(got) != 1 || got[0] != "test.blob:doc:a" {
+		t.Errorf("IDs(keep a) = %v, %v; want test.blob:doc:a", got, err)
 	}
 }
 
