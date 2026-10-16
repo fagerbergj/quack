@@ -94,6 +94,14 @@ func TestGate(t *testing.T) {
 	if v := gate(&bridgeCfg{PermPort: 1}, "read", envRead); v["block"] != true {
 		t.Errorf("unreachable judge must refuse: %v", v)
 	}
+	// The handler pig-quack calls routes through gate: a configured gate blocks git push, passes a plain read.
+	h := toolCallHandler(allowCfg)
+	if v, _ := h(sdk.Context{}, map[string]any{"toolName": "bash", "input": map[string]any{"command": "git push"}}); v.(map[string]any)["block"] != true {
+		t.Errorf("handler let git push through: %v", v)
+	}
+	if v, _ := h(sdk.Context{}, map[string]any{"toolName": "read", "input": map[string]any{"path": "main.go"}}); v != nil {
+		t.Errorf("handler blocked a plain read: %v", v)
+	}
 	reportReady(allowCfg)
 	if (*hits)[len(*hits)-1] != "/ready" {
 		t.Errorf("ready ping hit %v", *hits)
