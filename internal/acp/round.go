@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	sdk "github.com/coder/acp-go-sdk"
 	"go.opentelemetry.io/otel/attribute"
@@ -154,9 +155,10 @@ type roundLoopArgs struct {
 // roundLoop: relay wire updates and steer traffic until the Prompt RPC lands,
 // a cancel/interrupt stops the round, or the agent wedges (idle). Returns whether the round pinned cleanly.
 func (a *Agent) roundLoop(al *roundLoopArgs) (bool, error) {
-	resetIdle := func() { al.idleTimer.Reset(a.opts.IdleTimeout) }
+	calls := openCalls{}
 	metricCoords := a.usageCoords(al.ctx, al.coords)
 	relay := func(u sdk.SessionUpdate) bool {
+		calls.observe(u)
 		specs := al.tr.translate(u)
 		al.turns.observe(u, specs)
 		for _, spec := range specs {
@@ -172,10 +174,10 @@ func (a *Agent) roundLoop(al *roundLoopArgs) (bool, error) {
 	for {
 		select {
 		case <-al.h.notify:
-			resetIdle()
 			if !a.relayDrain(al.h, relay) {
 				return false, nil
 			}
+			al.idleTimer.Reset(calls.window(a.opts.IdleTimeout))
 		case d := <-al.done:
 			if !a.relayDrain(al.h, relay) {
 				return false, nil
@@ -192,6 +194,52 @@ func (a *Agent) roundLoop(al *roundLoopArgs) (bool, error) {
 			return false, fmt.Errorf("acp: no activity for %s - treating the ACP agent as wedged (%w)%s", a.opts.IdleTimeout, inference.ErrAgentSilent, al.h.stderrTail())
 		}
 	}
+}
+
+// openToolCeiling bounds the silence allowed while a tool call without a declared timeout is open.
+// ponytail: fixed 60m ceiling, make it per-tool if a tool legitimately runs longer.
+const openToolCeiling = time.Hour
+
+// openCalls tracks tool calls the agent has started and not finished, by toolCallId, each with the
+// longest silence it may cause. A running command streams nothing, so it is not a wedged agent.
+type openCalls map[string]time.Duration
+
+func (o openCalls) observe(u sdk.SessionUpdate) {
+	switch {
+	case u.ToolCall != nil && !terminalStatus(u.ToolCall.Status):
+		o[string(u.ToolCall.ToolCallId)] = declaredTimeout(u.ToolCall.RawInput)
+	case u.ToolCall != nil:
+		delete(o, string(u.ToolCall.ToolCallId))
+	case u.ToolCallUpdate != nil:
+		id := string(u.ToolCallUpdate.ToolCallId)
+		if st := u.ToolCallUpdate.Status; st != nil && terminalStatus(*st) {
+			delete(o, id)
+		} else if _, ok := o[id]; ok && u.ToolCallUpdate.RawInput != nil {
+			o[id] = declaredTimeout(u.ToolCallUpdate.RawInput)
+		}
+	}
+}
+
+// window is the silence allowed before the agent counts as wedged: idle when no call is open,
+// else the longest open call's timeout plus idle as grace.
+func (o openCalls) window(idle time.Duration) time.Duration {
+	var longest time.Duration
+	for _, d := range o {
+		longest = max(longest, d)
+	}
+	if len(o) == 0 {
+		return idle
+	}
+	return longest + idle
+}
+
+// declaredTimeout reads a numeric rawInput.timeout in seconds, else the ceiling.
+func declaredTimeout(raw any) time.Duration {
+	m, _ := raw.(map[string]any)
+	if secs, ok := m["timeout"].(float64); ok && secs > 0 {
+		return min(time.Duration(secs*float64(time.Second)), openToolCeiling)
+	}
+	return openToolCeiling
 }
 
 // sessionIDFile, in the node's ACP state dir, names the session a resumed node reloads.
