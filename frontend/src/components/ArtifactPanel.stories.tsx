@@ -131,7 +131,7 @@ function chatReviewLegacyRoute(url: string): Response | null {
 const tradeFinder = {
   league: '1356407594683482112', week: 6, updated: '2026-10-13T23:12:00Z',
   suggestions: [
-    { partner: 'Achane Magic', record: '3-2', partner_need: 'needs RB (slot empty)', give: { name: 'Chuba Hubbard', pos: 'RB', proj: 16.16 }, get: { name: 'Patrick Mahomes', pos: 'QB', proj: 19.26 }, note: 'Their RB slot is empty; Mahomes fills the Burrow-bye QB hole (net +3.1).' },
+    { partner: 'Achane Magic', record: '3-2', partner_need: 'needs RB (slot empty)', give: { id: '7594', name: 'Chuba Hubbard', pos: 'RB', team: 'CAR', proj: 16.16 }, get: { id: '4046', name: 'Patrick Mahomes', pos: 'QB', team: 'KC', proj: 19.26 }, note: 'Their RB slot is empty; Mahomes fills the Burrow-bye QB hole (net +3.1).' },
     { partner: "Breece's Pieces", record: '1-4', partner_need: 'RB-stacked, needs TE2', give: { name: 'Chuba Hubbard', pos: 'RB', proj: 16.16 }, get: { name: 'Travis Kelce', pos: 'TE', proj: 12.29 }, note: 'A 5th RB earns no scarcity premium; Kelce upgrades TE1-only.' },
   ],
 }
