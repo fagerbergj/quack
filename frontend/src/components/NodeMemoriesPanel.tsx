@@ -58,7 +58,7 @@ function NodeMemoryRow({ memory, onVote }: { memory: NodeMemory; onVote: (id: st
         <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
           <SourceBadge source={memory.source} />
           {memory.tier && (
-            <span className="${CHIP} bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400">
+            <span className={`${CHIP} bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400`}>
               {memory.tier}
             </span>
           )}

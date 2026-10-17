@@ -60,7 +60,7 @@ function TierBadge({ memory }: { memory: Memory }) {
 // Vote-based tier, rendered only for 'verified': 'unverified' would duplicate TierBadge's default label.
 function VoteTierBadge({ tier }: { tier: 'unverified' | 'verified' }) {
   return (
-    <span className="${CHIP} bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400">
+    <span className={`${CHIP} bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400`}>
       {tier}
     </span>
   )
