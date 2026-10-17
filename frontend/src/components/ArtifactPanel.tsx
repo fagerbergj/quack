@@ -583,7 +583,8 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
 
   const parsedJson = useMemo(() => (content != null ? structuredBody(content, primary?.class) : undefined), [content, primary?.class])
   const isStructured = primary?.class === 'structured' || parsedJson !== undefined
-  const displayText = content == null ? null : parsedJson !== undefined ? JSON.stringify(parsedJson, null, 2) : content
+  // Raw keeps a blob's saved bytes: a re-stringify re-indents it and rounds integers past 2^53.
+  const displayText = content == null ? null : primary?.class === 'structured' && parsedJson !== undefined ? JSON.stringify(parsedJson, null, 2) : content
   const lines = useMemo(() => (displayText != null ? displayText.split('\n') : []), [displayText])
   const { byLine, unanchored } = useMemo(() => anchorNotes(lines, notes), [lines, notes])
 
@@ -712,8 +713,6 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
   )
 }
 
-// Pretty-prints structured JSON and returns a blob unchanged; both render as a line list
-// so judge-note highlighting has a stable line number to anchor on.
 // Gives every row a DISTINCT accessible name: two artifacts that title
 // identically get an ordinal appended (not the revision - colliding titles usually share one too).
 function dedupedTitles(items: ArtifactSummary[], bodies: Record<string, unknown>): string[] {
@@ -920,7 +919,6 @@ function ArtifactMarkdown({ text, byLine, activeNote, onSelectNote }: {
   )
 }
 
-// Colors a JSON leaf by type with the same palette DiffView/JudgeCard use, so values read the same app-wide.
 // snake_case and camelCase keys read as words: partner_need -> "Partner need".
 export function fieldLabel(key: string): string {
   const words = key.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ').trim().toLowerCase()
@@ -944,6 +942,7 @@ function JsonValue({ v }: { v: unknown }) {
   }
   if (isRecord(v)) {
     const entries = Object.entries(v)
+    if (entries.length === 0) return <span className="text-gray-500 dark:text-gray-400">none</span>
     if (entries.length > 4 || entries.some(([, x]) => x !== null && typeof x === 'object')) return <JsonFields data={v} />
     // A small flat object (a player: name, pos, proj) stays on one line.
     return (

@@ -250,6 +250,8 @@ describe('structuredBody', () => {
     expect(structuredBody('42', 'blob')).toBeUndefined()
     expect(structuredBody('42', 'structured')).toBe(42)
     expect(structuredBody('not json', 'structured')).toBeUndefined()
+    expect(structuredBody('null', 'blob')).toBeUndefined()
+    expect(structuredBody('{}', 'blob')).toEqual({})
   })
 })
 
@@ -258,5 +260,7 @@ describe('fieldLabel', () => {
     expect(fieldLabel('partner_need')).toBe('Partner need')
     expect(fieldLabel('giveProj')).toBe('Give proj')
     expect(fieldLabel('week')).toBe('Week')
+    expect(fieldLabel('kebab-case')).toBe('Kebab case')
+    expect(fieldLabel('TEAM_ID_2')).toBe('Team id 2')
   })
 })
