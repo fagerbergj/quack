@@ -329,6 +329,14 @@ describe('TriggerMessage', () => {
 
 // renderToStaticMarkup never runs a click; these mount into jsdom and click <summary>, so what's
 // asserted is the native <details> `open` toggle the browser uses to show/hide the content.
+// Raw event keys read as words (#1799): a reverted fieldLabel would show "head_sha".
+describe('TriggerMessage event fields', () => {
+  it('labels top-level event keys as words', () => {
+    const el = render(createElement(TriggerMessage, { content: '<event name="push">{"head_sha":"9c8d7e6","ref":"main"}</event>' })).container
+    expect([...el.querySelectorAll('dt')].map(d => d.textContent)).toEqual(['Head sha', 'Ref'])
+  })
+})
+
 describe('TriggerMessage interaction (real DOM, not string assertions)', () => {
   function mount(content: string, extra?: { chatId?: string }) {
     return render(createElement(TriggerMessage, { content, ...extra })).container
