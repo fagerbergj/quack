@@ -177,3 +177,10 @@ describe('render_ui view', () => {
     expect(out).not.toContain('SECRET-WHY')
   })
 })
+
+describe('ToolCallView - git_branch', () => {
+  it('shows the current branch once done, the requested name while running', () => {
+    expect(html({ callId: 'b1', name: 'git_branch', done: true, args: { name: 'fix/x' }, result: { current: 'fix/x-2' } })).toContain('fix/x-2')
+    expect(html({ callId: 'b2', name: 'git_branch', done: false, args: { name: 'fix/x' } })).toContain('fix/x')
+  })
+})

@@ -283,6 +283,19 @@ describe('DagNode retry controls (done + retry + steered)', () => {
     }
   })
 
+  it('retry with guidance sends the guidance, and cancel sends nothing', async () => {
+    const user = userEvent.setup()
+    const onRetry = vi.fn()
+    render(<DagNode node={node} state={doneWithSteer} runs={[]} answer="the answer" isFinal={false} onRetry={onRetry} />)
+    await user.click(screen.getByRole('button', { name: /retry with guidance/ }))
+    await user.click(screen.getByRole('button', { name: 'cancel' }))
+    expect(onRetry).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: /retry with guidance/ }))
+    await user.type(screen.getByPlaceholderText(/Retry with guidance/), 'Use 2025 data.')
+    await user.click(screen.getByRole('button', { name: 'retry' }))
+    expect(onRetry).toHaveBeenCalledWith('r1', 'Use 2025 data.')
+  })
+
   it('carries no arrow or emoji glyph anywhere in the card', () => {
     const { container } = render(<DagNode node={node} state={doneWithSteer} runs={[]} answer="the answer" isFinal={false} onRetry={() => {}} />)
     expect(container.textContent ?? '').not.toMatch(/[\u2190-\u21FF\u2300-\u23FF\u25A0-\u25FF\u2B00-\u2BFF]/)
