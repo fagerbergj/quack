@@ -48,6 +48,24 @@ export const IssuePlan: Story = {
   },
 }
 
+// A PR description with its own markdown headings: they render title-small under the card's title, not prose h2.
+export const DescriptionWithHeadings: Story = {
+  args: {
+    content: `<permissions>review, comment</permissions>
+<deliverable>a review with inline comments and a verdict</deliverable>
+<pull_request number="1803">
+  <title>fix(ui): on a phone the memory vote rail stacks</title>
+  <description>On prod at 412px, /memory squeezed each memory into a narrow column.
+
+## Change
+Below medium, VoteControl stacks vertically.
+
+## Evidence
+Storybook at 412px and 1280px.</description>
+</pull_request>`,
+  },
+}
+
 // Header uses the backend's failing/pending/passing summary; failing checks read in the danger token.
 export const ChecksMixedStatuses: Story = {
   args: {
