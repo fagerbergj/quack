@@ -202,6 +202,12 @@ describe('ArtifactPanel as a result view (#1178)', () => {
     expect(container.querySelectorAll('select')).toHaveLength(0)
   })
 
+  it('names a nodeless panel (a trigger card\'s run input) by its context, not a dangling "node "', () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch') }))
+    render(<ArtifactPanel chatId="chat-1" nodeId="" nodeAgent="Context" nodeTask="" focusArtifactId="bytes:files" onClose={() => {}} />)
+    expect(screen.getByRole('dialog', { name: 'Artifacts: Context' })).toBeTruthy()
+  })
+
   it('shows a failed artifact fetch as an error line, not an empty panel', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch') }))
     render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan the fix" nodeArtifactKind="text" onClose={() => {}} />)
