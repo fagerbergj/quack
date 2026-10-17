@@ -58,7 +58,7 @@ quack runs two different kinds of worker:
 
 **Native (llmagent) agents** — `web-researcher`, `synthesizer`, `pr-tutor`, `media-reader`, `image-reader`, and the orchestrator itself — run in-process as ADK `llmagent`s, using the `tools:` list above.
 
-**ACP agents** — `code-implementer`, `code-reviewer`, `code-explorer` — are EXTERNAL subprocesses speaking the [Agent Client Protocol](https://agentclientprotocol.com) (the `tools/pi-acp` shim driving the PIG engine, see [The engine](#the-engine)). Their bundles ship in the GitHub extension's plugin (`extensions/github/plugin/`, see [Plugin agents](#plugin-agents) above), so a deployment's own entry is override-only - `bundle:`, `model` (via `model_role: coder`), `tools:`, `skills:`, `judge_rounds` and `context_window` all come from the plugin's `agent.yaml`; the entry just adds the `acp:` block and `memory:` bucket the plugin schema doesn't carry:
+**ACP agents** — `code-implementer`, `code-reviewer`, `code-explorer` — are EXTERNAL subprocesses speaking the [Agent Client Protocol](https://agentclientprotocol.com) (the `quack-acp` shim driving the PIG engine, see [The engine](#the-engine)). Their bundles ship in the GitHub extension's plugin (`extensions/github/plugin/`, see [Plugin agents](#plugin-agents) above), so a deployment's own entry is override-only - `bundle:`, `model` (via `model_role: coder`), `tools:`, `skills:`, `judge_rounds` and `context_window` all come from the plugin's `agent.yaml`; the entry just adds the `acp:` block and `memory:` bucket the plugin schema doesn't carry:
 
 ```yaml
 code-implementer:
@@ -66,7 +66,7 @@ code-implementer:
   memory:
     bucket: coding
   acp:
-    command: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
+    command: ["/usr/local/bin/quack-acp"]
     mcp_servers:
       - https://mcp.context7.com/mcp
 ```
@@ -75,15 +75,15 @@ The three agents only seed once `extensions.github` is configured and enabled (t
 
 - `command` — the subprocess argv.
 - `env` — extra subprocess environment, overriding quack's generated defaults.
-- `mcp_servers` — MCP server URLs; currently has no effect on the ACP subprocess. The pi-acp shim doesn't read it - the only MCP servers that reach the engine are quack's own, wired through ACP's `session/new` `mcpServers` (`internal/acp`), not this config.
+- `mcp_servers` — MCP server URLs; currently has no effect on the ACP subprocess. The shim doesn't read it - the only MCP servers that reach the engine are quack's own, wired through ACP's `session/new` `mcpServers` (`internal/acp`), not this config.
 - `read_only` — set on `code-reviewer` and `code-explorer`: the agent never commits or pushes, so the gate skips the commit/push delivery demand and instead reads its verdict out of its final answer.
 - `allow_clone` — set on `code-explorer` only: lifts the engine's policy gate's `git clone`/`gh repo clone` deny so it can shallow-clone a third-party repo into `$TMPDIR` and read it locally. Requires `read_only` (config validation rejects it otherwise) and a `bwrap` or `landlock` sandbox, which keeps the work tree read-only apart from its granted build dirs; under `sandbox: none` quack logs a warning and the deny stays. The gate's deny matches only a leading `git clone`/`git push` command, so it is a nudge, not a boundary: `git -C . push` or `cd x && git push` get past it. The real boundary for push is that the subprocess has no git credentials (`GIT_ASKPASS`/`GIT_SSH_COMMAND` point at `/bin/false`), so it can push only to a local remote.
 
-An ACP agent has **no quack tools at all** — it brings its own (the engine's built-in `read`/`bash`/`edit`/`write` tools), with the model bound via a generated `PI_ACP_CONFIG` (parsed by the `pi-acp.mjs` shim: endpoint, model, context/output limits, skill paths, `allow_clone`). The subprocess cannot push to a real remote: it has no git credentials, and the engine's gate also refuses a plain `git push` (delivery is gate-owned; see [trust-gate.md](trust-gate.md)). quack's skill library is injected via that same env's skill paths, so the same `skills/` content (e.g. the ponytail coding-discipline skills) is available to an ACP worker without it needing quack tool access to read it.
+An ACP agent has **no quack tools at all** — it brings its own (the engine's built-in `read`/`bash`/`edit`/`write` tools), with the model bound via a generated `PI_ACP_CONFIG` (parsed by the `quack-acp` shim: endpoint, model, context/output limits, skill paths, `allow_clone`). The subprocess cannot push to a real remote: it has no git credentials, and the engine's gate also refuses a plain `git push` (delivery is gate-owned; see [trust-gate.md](trust-gate.md)). quack's skill library is injected via that same env's skill paths, so the same `skills/` content (e.g. the ponytail coding-discipline skills) is available to an ACP worker without it needing quack tool access to read it.
 
 ### The engine
 
-The shim drives `/usr/local/bin/pig-quack`: [PIG](https://github.com/MichaelKinsy/PiG) v0.4.1, a Go port of pi, with quack's policy gate and MCP bridge (`tools/pi-acp/pig/quackgate`) fused in. It is one static binary with no Node. `PI_ACP_PI_CMD` overrides the binary path.
+`/usr/local/bin/quack-acp` (`cmd/quack-acp`) is a small Go binary that speaks ACP to quack and drives `/usr/local/bin/pig-quack`: [PIG](https://github.com/MichaelKinsy/PiG) v0.4.1, a Go port of pi, with quack's policy gate and MCP bridge (`tools/pi-acp/pig/quackgate`) fused in. Neither needs Node. `PI_ACP_PI_CMD` overrides the engine's path. Each round's tool calls and per-call usage are recorded by quack itself (tool-call spans plus `tool.call` and `llm.call` ledger entries, see [observability](observability.md)); the shim exports no spans of its own.
 
 - The gate is Go code compiled into the engine. The shim writes the bridge's config (`extensions/quackmcp.json`: the MCP URL, its tools, the loopback port for permission asks, `allow_clone`) and the engine's `quackgate` reads it.
 - The shim holds `session/new` and `session/load` until the gate reports in from the engine's `session_start` event, and fails the call after 20s. A gate with a missing or unreadable `quackmcp.json` refuses every tool call and never reports in.

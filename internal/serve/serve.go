@@ -2273,8 +2273,8 @@ func acpChildEnv(workspaceEnv, agentEnv map[string]string) []string {
 	return env
 }
 
-// piACPEnv generates PI_ACP_CONFIG: only the fields the pi-acp shim reads (tools/pi-acp/pi-acp.mjs).
-// allow_clone lifts checkPolicy's clone deny only where the sandbox OS-enforces the read-only work tree.
+// piACPEnv generates PI_ACP_CONFIG: only the fields the ACP shim reads (cmd/quack-acp).
+// allow_clone lifts quackgate's clone deny only where the sandbox OS-enforces the read-only work tree.
 func piACPEnv(prov config.ProviderConfig, ac config.AgentConfig, skillPaths []string, sandbox workspace.SandboxMode) []string {
 	type m = map[string]any
 	apiKey := prov.APIKey

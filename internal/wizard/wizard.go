@@ -335,7 +335,7 @@ func featuresGroup(feats *[]string) *huh.Group {
 			Options(
 				huh.NewOption("Web search", "search"),
 				huh.NewOption("Web fetch", "fetch"),
-				huh.NewOption("Coding agents (workspace + sandbox; needs node + the pi-acp shim)", "coding"),
+				huh.NewOption("Coding agents (workspace + sandbox; needs quack-acp + pig-quack)", "coding"),
 			).
 			Value(feats),
 	).Title("Features").Description("Toggle the tool backends to configure")

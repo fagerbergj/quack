@@ -264,31 +264,32 @@ func TestSpawnEnvOperatorOverridesJavaToolOptions(t *testing.T) {
 	}
 }
 
+// buildShim compiles the real quack-acp binary, as the Dockerfile ships it.
+func buildShim(t *testing.T) string {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "quack-acp")
+	if out, err := exec.Command("go", "build", "-o", bin, "github.com/fagerbergj/quack/cmd/quack-acp").CombinedOutput(); err != nil {
+		t.Fatalf("go build quack-acp: %v\n%s", err, out)
+	}
+	return bin
+}
+
 // TestWrappedArgvBwrapAcpHandshake: a real initialize round trip through wrappedArgv + spawnEnv proves bwrap
-// doesn't break the protocol. Skips loudly without bwrap or node.
+// doesn't break the protocol. Skips loudly without bwrap.
 func TestWrappedArgvBwrapAcpHandshake(t *testing.T) {
 	if _, err := workspace.ResolveSandbox(workspace.SandboxBwrap); err != nil {
 		t.Skipf("SKIPPING ACP sandbox test: bubblewrap is not usable here (%v)", err)
 	}
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skipf("SKIPPING ACP sandbox test: node is not on PATH (%v)", err)
-	}
-	shim, err := filepath.Abs("../../tools/pi-acp/pi-acp.mjs")
-	if err != nil {
-		t.Fatal(err)
-	}
+	shim := buildShim(t)
 
 	cwd, home := t.TempDir(), t.TempDir()
 	caps := workspace.Caps{
 		Sandbox: workspace.SandboxBwrap, WorkRoot: cwd, HomeDir: home,
 		ScratchDir: filepath.Join(home, "tmp", "handshake"), ReadOnly: true,
-		// In the image node lives under /usr (already in the sandbox's system
-		// view); a dev host keeps it elsewhere, which is exactly what exec_path/ExtraPath is for.
-		ExtraPath: []string{filepath.Dir(node)},
 	}
+	// The image ships the shim under /usr, already in the sandbox's view; a test build needs its dir granted.
 	shimDir := filepath.Dir(shim)
-	a := &Agent{opts: Options{Command: []string{node, shim}, SkillPaths: func() []string { return []string{shimDir} }, Caps: caps, Home: home}}
+	a := &Agent{opts: Options{Command: []string{shim}, SkillPaths: func() []string { return []string{shimDir} }, Caps: caps, Home: home}}
 
 	argv := a.wrappedArgv(cwd, caps)
 	cmd := exec.Command(argv[0], argv[1:]...)
@@ -307,7 +308,7 @@ func TestWrappedArgvBwrapAcpHandshake(t *testing.T) {
 	cmd.Stderr = &stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
-		t.Fatalf("spawn wrapped pi-acp: %v", err)
+		t.Fatalf("spawn wrapped quack-acp: %v", err)
 	}
 	t.Cleanup(func() { _ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) })
 
