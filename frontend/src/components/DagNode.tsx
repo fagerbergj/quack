@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import { AssistantText, ActivityList, LiveStatusLine, AcpBadge, isAcpAgent } from './AgentParts'
-import { ArtifactPanel, isBookkeeping, selectPrimaryOutput, artifactTitle } from './ArtifactPanel'
+import { ArtifactPanel, isBookkeeping, selectPrimaryOutput, artifactTitle, structuredBody } from './ArtifactPanel'
 import { NodeMemoriesPanel } from './NodeMemoriesPanel'
 import { CopyButton } from './CopyButton'
 import { NodePopup, liveState } from './NodePopup'
@@ -17,7 +17,6 @@ import { traceUrl } from '../state/clientConfig'
 import { Icon } from './Icon'
 import { Sheet } from './Sheet'
 import { fmtCost } from './UsageSummary'
-import { tryParseJSON } from '../lib/json'
 
 // Retry (→ queued) is legal from done, failed, or cancelled - see dag.CanTransition.
 const isTerminal = (s: NodeStatus) => s === 'done' || s === 'failed' || s === 'cancelled'
@@ -369,10 +368,9 @@ function groupWorkerRuns(runs: AgentRun[], activeIdx: number): RunGroup[] {
   return groups
 }
 
-// Parses a fetched revision the same way the panel does: JSON for a
-// structured kind, raw text for a blob.
+// Parses a fetched revision the same way the panel does.
 function bodyFor(text: string, klass: string | undefined): unknown {
-  return klass === 'structured' ? tryParseJSON(text) ?? text : text
+  return structuredBody(text, klass) ?? text
 }
 
 // Additive only: the answer keeps rendering at the foot regardless -
