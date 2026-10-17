@@ -19,7 +19,6 @@ jobs:
       storybook: ${{ steps.filter.outputs.storybook }}
       image: ${{ steps.filter.outputs.image }}
       prompts: ${{ steps.filter.outputs.prompts }}
-      pig: ${{ steps.filter.outputs.pig }}
     steps:
       - id: filter
         if: github.event_name == 'pull_request'
@@ -45,8 +44,6 @@ jobs:
               - '!*.md'
             prompts:
               - '{agents/**,config/**,skills/**,.agents/embedded/**,extensions/**,internal/tools/**,internal/vetting/**,tools/promptlint/**,go.mod,.github/workflows/ci.yaml}'
-            pig:
-              - '{tools/pi-acp/**,Dockerfile,.github/workflows/ci.yaml}'
 
   go-test:
     permissions:
@@ -86,7 +83,7 @@ jobs:
           go -C extensions/sdk vet ./...
           go -C extensions/sdk test -race -coverprofile=cover.out ./...
           tail -n +2 extensions/sdk/cover.out >> cover.out
-      # quackgate, the PIG engine's fused gate, is its own module; its profile joins cover.out for the gate below.
+      # quackgate, the ACP engine's fused gate, is its own module; its profile joins cover.out for the gate below.
       - run: |
           go -C tools/pi-acp/pig/quackgate vet ./...
           go -C tools/pi-acp/pig/quackgate test -race -coverprofile=cover.out ./...
@@ -422,11 +419,10 @@ jobs:
           docker run --rm --network none \
             -e QUACK_WORKSPACE_ROOT=/tmp/workspace \
             quack:ci sandbox check --agent code-reviewer
-      # The opt-in PIG engine: the shim's real-engine suite (gate, bridge, steer, cancel, resume) against the
-      # image's own pig-quack and mock-openai.mjs. HOME=/tmp because nonroot has no home; quack always sets one.
+      # The shim's real-engine suite (gate, bridge, steer, cancel, resume) against the image's own pig-quack
+      # and mock-openai.mjs. HOME=/tmp because nonroot has no home; quack always sets one.
       - name: pi-acp real-engine test (pig-quack)
-        if: github.event_name == 'push' || needs.changes.outputs.pig == 'true'
         run: |
           docker run --rm --network none -v "$PWD/tools/pi-acp:/pi-acp:ro" -w /tmp \
-            -e HOME=/tmp -e PI_ACP_REAL=1 -e PI_ACP_ENGINE=pig \
+            -e HOME=/tmp -e PI_ACP_REAL=1 \
             --entrypoint node quack:ci /pi-acp/test.mjs

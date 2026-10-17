@@ -4,9 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -15,83 +13,52 @@ import (
 	sdk "github.com/MichaelKinsy/PiG/extensions/sdk"
 )
 
-type policyCase struct {
-	Tool       string         `json:"tool"`
-	Input      map[string]any `json:"input"`
-	AllowClone bool           `json:"allowClone"`
-}
-
-type verdict struct {
-	Block string `json:"block,omitempty"`
-	Ask   string `json:"ask,omitempty"`
-}
-
-var policyCases = func() []policyCase {
-	bash := func(cmd string, allowClone bool) policyCase {
-		return policyCase{"bash", map[string]any{"command": cmd}, allowClone}
-	}
-	read := func(tool, path string) policyCase { return policyCase{tool, map[string]any{"path": path}, false} }
-	var cs []policyCase
-	for _, cmd := range []string{
-		"git push origin main", "git push", "  git push origin", "git push  origin main", "git push\torigin",
-		"git push\vorigin", "git push\u00a0origin", "git push\u3000origin", "git push\ufefforigin", "git push\u0085origin",
-		"\u00a0git push", "\ufeffgit push", "git pushy", "git -C . push", "cd x && git push", "echo git push",
-		"git clone --depth 1 https://x/y", "git clone", "gh repo clone x/y", "gh repo clone", "git cloned", "echo hi", "",
-	} {
-		cs = append(cs, bash(cmd, false), bash(cmd, true))
-	}
-	cs = append(cs, policyCase{"bash", map[string]any{}, false}, policyCase{"edit", map[string]any{"command": "git push"}, false})
-	for _, p := range []string{".env", "app/.env", "app/.env.prod", "/abs/x.env", "a.env.b.c", ".environment", "env", "app/.envrc", ".env/x", ""} {
-		cs = append(cs, read("read", p), read("write", p))
-	}
-	return cs
-}()
-
-// TestCheckPolicyParity runs every case through mcp-client.mjs checkPolicy (the TS gate's) and the Go port.
-func TestCheckPolicyParity(t *testing.T) {
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node not on PATH")
-	}
-	mod, _ := filepath.Abs("../../mcp-client.mjs")
-	script := `import { checkPolicy } from ` + strconv.Quote((&url.URL{Scheme: "file", Path: mod}).String()) + `;
-let s = ""; for await (const c of process.stdin) s += c;
-process.stdout.write(JSON.stringify(JSON.parse(s).map((c) => checkPolicy(c.tool, c.input, { allowClone: c.allowClone }) ?? {})));`
-	in, _ := json.Marshal(policyCases)
-	cmd := exec.Command(node, "--input-type=module", "-e", script)
-	cmd.Stdin = strings.NewReader(string(in))
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("node checkPolicy: %v", err)
-	}
-	var js []verdict
-	if err := json.Unmarshal(out, &js); err != nil || len(js) != len(policyCases) {
-		t.Fatalf("node output %s: %v", out, err)
-	}
-	for i, c := range policyCases {
-		block, ask := checkPolicy(c.Tool, c.Input, c.AllowClone)
-		if got := (verdict{block, ask}); got != js[i] {
-			t.Errorf("%s %q allowClone=%v: go %+v, js %+v", c.Tool, c.Input, c.AllowClone, got, js[i])
-		}
-	}
-}
-
-func TestCheckPolicyDeniesDelivery(t *testing.T) {
+func TestCheckPolicy(t *testing.T) {
+	bash := func(cmd string) map[string]any { return map[string]any{"command": cmd} }
+	path := func(p string) map[string]any { return map[string]any{"path": p} }
 	for _, tc := range []struct {
-		cmd        string
+		tool       string
+		input      map[string]any
 		allowClone bool
-		denied     bool
+		block, ask bool
 	}{
-		{"git push origin main", true, true},
-		{"git clone https://x/y", false, true},
-		{"git clone https://x/y", true, false},
-		{"gh repo clone x/y", false, true},
-		{"gh repo clone x/y", true, false},
-		{"git status", false, false},
+		{"bash", bash("git push origin main"), true, true, false},
+		{"bash", bash("git push"), false, true, false},
+		{"bash", bash("  git push origin"), false, true, false},
+		{"bash", bash("git push\torigin"), false, true, false},
+		{"bash", bash("git push\vorigin"), false, true, false},
+		{"bash", bash("\u00a0git push\u3000origin"), false, true, false},
+		{"bash", bash("git push\ufefforigin"), false, true, false},
+		{"bash", bash("\ufeffgit push"), false, true, false},
+		// NEL is not JavaScript whitespace, so it does not separate the command.
+		{"bash", bash("git push\u0085origin"), false, false, false},
+		{"bash", bash("git pushy"), false, false, false},
+		// The deny matches a leading command only: these get past it by design.
+		{"bash", bash("git -C . push"), false, false, false},
+		{"bash", bash("cd x && git push"), false, false, false},
+		{"bash", bash("echo git push"), false, false, false},
+		{"bash", bash("git clone https://x/y"), false, true, false},
+		{"bash", bash("git clone https://x/y"), true, false, false},
+		{"bash", bash("gh repo clone x/y"), false, true, false},
+		{"bash", bash("gh repo clone x/y"), true, false, false},
+		{"bash", bash("git cloned"), false, false, false},
+		{"bash", bash(""), false, false, false},
+		{"bash", map[string]any{}, false, false, false},
+		{"edit", bash("git push"), false, false, false},
+		{"read", path(".env"), false, false, true},
+		{"read", path("app/.env"), false, false, true},
+		{"read", path("app/.env.prod"), false, false, true},
+		{"read", path("/abs/x.env"), false, false, true},
+		{"read", path("a.env.b.c"), false, false, true},
+		{"read", path(".env/x"), false, false, false},
+		{"read", path(".environment"), false, false, false},
+		{"read", path("app/.envrc"), false, false, false},
+		{"read", path(""), false, false, false},
+		{"write", path(".env"), false, false, false},
 	} {
-		block, _ := checkPolicy("bash", map[string]any{"command": tc.cmd}, tc.allowClone)
-		if (block != "") != tc.denied {
-			t.Errorf("%q allowClone=%v: block=%q", tc.cmd, tc.allowClone, block)
+		block, ask := checkPolicy(tc.tool, tc.input, tc.allowClone)
+		if (block != "") != tc.block || (ask != "") != tc.ask {
+			t.Errorf("%s %q allowClone=%v: block=%q ask=%q", tc.tool, tc.input, tc.allowClone, block, ask)
 		}
 	}
 }
@@ -127,6 +94,14 @@ func TestGate(t *testing.T) {
 	if v := gate(&bridgeCfg{PermPort: 1}, "read", envRead); v["block"] != true {
 		t.Errorf("unreachable judge must refuse: %v", v)
 	}
+	// The handler pig-quack calls routes through gate: a configured gate blocks git push, passes a plain read.
+	h := toolCallHandler(allowCfg)
+	if v, _ := h(sdk.Context{}, map[string]any{"toolName": "bash", "input": map[string]any{"command": "git push"}}); v.(map[string]any)["block"] != true {
+		t.Errorf("handler let git push through: %v", v)
+	}
+	if v, _ := h(sdk.Context{}, map[string]any{"toolName": "read", "input": map[string]any{"path": "main.go"}}); v != nil {
+		t.Errorf("handler blocked a plain read: %v", v)
+	}
 	reportReady(allowCfg)
 	if (*hits)[len(*hits)-1] != "/ready" {
 		t.Errorf("ready ping hit %v", *hits)
@@ -152,6 +127,10 @@ func TestLoadCfgFailsClosed(t *testing.T) {
 		if Extension().Name() != "quackgate" {
 			t.Error("factory name")
 		}
+	}
+	v, _ := toolCallHandler(nil)(sdk.Context{}, map[string]any{"toolName": "read", "input": map[string]any{"path": "main.go"}})
+	if v.(map[string]any)["block"] != true {
+		t.Errorf("unconfigured gate allowed a plain read: %v", v)
 	}
 }
 

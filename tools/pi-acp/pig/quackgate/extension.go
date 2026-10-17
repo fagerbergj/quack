@@ -1,5 +1,5 @@
-// Package quackgate ports pi-acp.mjs's generated quackmcp.ts (tool_call gate + quackmcp_* bridge) to PIG's
-// Go SDK. PIG builds it into the pig-quack Piglet (../quack.yaml); `go test` here covers the gate logic.
+// Package quackgate is quack's tool_call policy gate and quackmcp_* bridge on PIG's Go SDK. PIG builds it into
+// the pig-quack Piglet (../quack.yaml); `go test` here covers the gate logic.
 package quackgate
 
 import (
@@ -30,7 +30,7 @@ type bridgeCfg struct {
 	} `json:"tools"`
 }
 
-// jsSpace is JavaScript's \s, so the patterns below match exactly what mcp-client.mjs's do.
+// jsSpace is JavaScript's \s: unlike Go's \s it takes Unicode spaces, so "git push\u00a0origin" still matches.
 const jsSpace = `[\s\v\pZ\x{feff}]`
 
 var (
@@ -40,7 +40,8 @@ var (
 	jsTrim  = regexp.MustCompile(`^` + jsSpace + `+|` + jsSpace + `+$`)
 )
 
-// checkPolicy mirrors tools/pi-acp/mcp-client.mjs checkPolicy: block, ask, or both "" for allow.
+// checkPolicy returns block, ask, or both "" for allow. The deny matches only a leading command, a nudge not a
+// boundary: quack strips the child's git credentials. An ask escalates to quack's safety judge via the shim.
 func checkPolicy(tool string, input map[string]any, allowClone bool) (block, ask string) {
 	if tool == "bash" {
 		cmd, _ := input["command"].(string)
@@ -124,7 +125,7 @@ func reportReady(cfg *bridgeCfg) {
 	}
 }
 
-// mcpClient is the minimal streamable-HTTP client mcp-client.mjs implements.
+// mcpClient is a minimal streamable-HTTP MCP client.
 type mcpClient struct {
 	url, session string
 	once         sync.Once
@@ -161,7 +162,7 @@ func (m *mcpClient) rpc(method string, params any, notify bool) (map[string]any,
 	return decodeRPC(method, raw, res.Header.Get("content-type"))
 }
 
-// decodeRPC takes the first data: line of an SSE body, like mcp-client.mjs parseBody.
+// decodeRPC takes the first data: line of an SSE body.
 func decodeRPC(method string, raw []byte, contentType string) (map[string]any, error) {
 	if strings.Contains(contentType, "text/event-stream") {
 		for l := range strings.SplitSeq(string(raw), "\n") {
@@ -209,6 +210,23 @@ func (m *mcpClient) call(name string, params map[string]any) (any, error) {
 	return sdk.ToolResult{Content: txt.String(), IsError: isErr}, nil
 }
 
+// toolCallHandler is the tool_call verdict; a nil cfg refuses every call.
+func toolCallHandler(cfg *bridgeCfg) sdk.EventFunc {
+	if cfg == nil {
+		return func(sdk.Context, map[string]any) (any, error) {
+			return map[string]any{"block": true, "reason": "quackgate has no config: tool calls are refused"}, nil
+		}
+	}
+	return func(_ sdk.Context, data map[string]any) (any, error) {
+		name, _ := data["toolName"].(string)
+		input, _ := data["input"].(map[string]any)
+		if v := gate(cfg, name, input); v != nil {
+			return v, nil
+		}
+		return nil, nil
+	}
+}
+
 // Extension is the factory pig-quack fuses in. Without a valid config it blocks every tool call and never
 // reports ready, so the shim refuses the session too.
 func Extension() *sdk.Extension {
@@ -216,19 +234,11 @@ func Extension() *sdk.Extension {
 	cfg, err := loadCfg(os.Getenv("PIG_CODING_AGENT_DIR"))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "quackgate: no usable quackmcp.json, blocking every tool call:", err)
-		e.OnEvent(sdk.EventToolCall, func(sdk.Context, map[string]any) (any, error) {
-			return map[string]any{"block": true, "reason": "quackgate has no config: tool calls are refused"}, nil
-		})
+	}
+	e.OnEvent(sdk.EventToolCall, toolCallHandler(cfg))
+	if cfg == nil {
 		return e
 	}
-	e.OnEvent(sdk.EventToolCall, func(_ sdk.Context, data map[string]any) (any, error) {
-		name, _ := data["toolName"].(string)
-		input, _ := data["input"].(map[string]any)
-		if v := gate(cfg, name, input); v != nil {
-			return v, nil
-		}
-		return nil, nil
-	})
 	// session_start, not the factory: the ping then proves the engine dispatches events to this extension.
 	e.OnEvent(sdk.EventSessionStart, func(sdk.Context, map[string]any) (any, error) {
 		reportReady(cfg)

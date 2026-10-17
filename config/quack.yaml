@@ -165,7 +165,7 @@ agents:
     memory:
       bucket: coding   # gate-side recall + answer-mined commit (vetting memoryRecall / memory.Commit)
     # The worker is an EXTERNAL coding agent over ACP (internal/acp): the pi-acp shim
-    # drives pi from PI_ACP_CONFIG (endpoint, model, context/output limits, skill
+    # drives PIG from PI_ACP_CONFIG (endpoint, model, context/output limits, skill
     # paths). git push stays denied inside the subprocess, so delivery stays gate-owned;
     # the gate reads commits off the clone itself (vetting.augmentFromRepo). No quack tools, no memory.
     acp:

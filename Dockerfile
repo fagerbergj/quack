@@ -55,21 +55,8 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o / ./extensions/usage/cmd/quack-ext-usage ./extensions/remarkable/cmd/quack-ext-remarkable \
         ./extensions/sleeper/cmd/quack-ext-sleeper ./extensions/github/cmd/quack-ext-github
 
-# 2b) The external ACP coding agent: pi, driven through the tools/pi-acp shim.
-# PINNED - the RPC surface is integration-tested per release, so bump
-# deliberately. ~145MB node_modules vs the 170MB single-binary agent it replaced
-# (node was already in the image for mermaid/frontend).
-FROM node:24-bookworm-slim AS pi
-WORKDIR /opt/pi
-# pi's shrinkwrap pulls esbuild binaries for ~25 platforms (~275MB); keep this
-# one. Source maps only feed stack-trace rewriting.
-RUN npm install --no-fund --no-audit @earendil-works/pi-coding-agent@1.0.0 \
-    && p="$(node -p 'process.platform + "-" + process.arch')" \
-    && find node_modules -path '*/@esbuild/*' -prune ! -name "$p" -exec rm -rf {} + \
-    && find node_modules -type f -name '*.map' -delete
-
-# 2c) The opt-in PIG engine (PI_ACP_ENGINE=pig): PIG with tools/pi-acp/pig/quackgate fused in, one static
-# ~64MB Node-free binary. PINNED like pi: bump all three values together and rerun the shim's real-engine test.
+# 2b) The ACP coding agent's engine: PIG with tools/pi-acp/pig/quackgate fused in, one static ~64MB binary.
+# PINNED: bump all three values together and rerun the shim's real-engine test.
 FROM golang:1.26-bookworm AS piglet
 # The release's SHA256SUMS entry for the linux-amd64 tarball (the image is amd64-only, see cd.yaml).
 ADD --checksum=sha256:3b4de3587cbfb617def483ec62dddcf35827acc3436b1454cc5694c22dcdaf3f \
@@ -114,8 +101,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Symlinks dangle until the COPYs land. No RUN follows the COPYs, and --link
 # caches each COPY on its own content, so a change re-copies only its layer.
 RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
-    && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
-    && ln -s /usr/local/lib/pi/node_modules/.bin/pi /usr/local/bin/pi
+    && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 ENV PATH=/usr/local/go/bin:$PATH
 WORKDIR /
 # Build toolchains for the coding agents (#283): the code-implementer must be
@@ -137,12 +123,8 @@ COPY --link --from=frontend /usr/local/lib/node_modules /usr/local/lib/node_modu
 # Under /usr (not /opt): the bwrap jail ro-binds /usr whole; /opt is invisible
 # to worker subprocesses (EACCES at spawn).
 # The ACP coding agent (agents.<name>.acp: ["node", "/usr/local/lib/pi-acp/pi-acp.mjs"]
-# - resolved via the server's PATH). The shim writes pi's per-round config
-# (models.json/settings.json/extensions) into TMPDIR; session state is off
-# (--no-session).
-COPY --link --from=pi /opt/pi/node_modules /usr/local/lib/pi/node_modules
+# - resolved via the server's PATH) and the engine it drives.
 COPY --link tools/pi-acp/pi-acp.mjs tools/pi-acp/mcp-client.mjs tools/pi-acp/otel.mjs /usr/local/lib/pi-acp/
-# The shim's PI_ACP_ENGINE=pig default; under /usr so the jail sees it.
 COPY --link --from=piglet /pig-quack /usr/local/bin/pig-quack
 # The config directory: quack.yaml plus files it references by relative path
 # (CWD is /), e.g. the trust gate's rubric at config/constitution.md.
@@ -163,6 +145,6 @@ COPY --link --from=backend /quack /quack
 ENV QUACK_CONFIG=/config/quack.yaml
 USER nonroot
 EXPOSE 8080
-# tini reaps children orphaned onto PID 1 (pi, sh, git from agent sandboxes);
+# tini reaps children orphaned onto PID 1 (pig-quack, sh, git from agent sandboxes);
 # a wait(-1) loop inside quack would race os/exec.Cmd.Wait for exit statuses.
 ENTRYPOINT ["/usr/bin/tini", "--", "/quack"]
