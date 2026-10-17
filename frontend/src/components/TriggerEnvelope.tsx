@@ -160,10 +160,10 @@ function formatTimestamp(iso: string): string {
 function AskSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'ask' }> }) {
   return (
     <div>
-      <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100">
+      <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-100">
         {block.number && <span className="text-gray-500 dark:text-gray-400 font-normal mr-1">#{block.number}</span>}
         {block.title || '(untitled)'}
-      </h3>
+      </h2>
       {block.description && (
         <Expandable maxHeight={140} fade="from-white dark:from-gray-800">
           <AssistantText text={block.description} />
