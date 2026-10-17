@@ -6,7 +6,7 @@ import { QuestionBubble } from '../components/QuestionBubble'
 import { DagView, DagBubbleHeader } from '../components/DagView'
 import { Composer } from '../components/Composer'
 import { ChatList, UNTITLED_CHAT } from '../components/ChatList'
-import { TurnView, visibleActivity } from '../components/TurnView'
+import { TurnView, visibleActivity, StepsRow } from '../components/TurnView'
 import { useChatStore, useChatState } from '../state/ChatStoreProvider'
 import { activityFromTurn, dagFromTurn, liveAnswerText, pendingNodeQuestion, dagAnswerAttribution, sessionModels, type DagTurnState, type ChatState, type Attribution } from '../state/chatStore'
 import { UsageSummary, type UsageSummaryProps } from '../components/UsageSummary'
@@ -209,16 +209,11 @@ function LiveDagBubble({ dag, liveDone, chatId, orchActivity, onCancelNode, onPa
     <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
       <DagBubbleHeader dag={dag} />
       {liveDone ? (
-        <details className="rounded-lg border border-gray-200 dark:border-gray-700">
-          <summary className="cursor-pointer select-none px-3 py-2 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
-            Steps
-          </summary>
-          <div className="p-2 space-y-3">
-            {orchActivity.length > 0 && <ActivityList activity={orchActivity} />}
-            {/* Start/Stop stay wired post-run: a paused node ends the turn, so this is where Start must work. */}
-            <DagView dag={dag} chatId={chatId} onRetryNode={onRetryNode} onResumeNode={onResumeNode} onCancelNode={onCancelNode} onAnswerNodeQuestion={onAnswerNodeQuestion} onDismissNodeError={onDismissNodeError} />
-          </div>
-        </details>
+        <StepsRow>
+          {orchActivity.length > 0 && <ActivityList activity={orchActivity} />}
+          {/* Start/Stop stay wired post-run: a paused node ends the turn, so this is where Start must work. */}
+          <DagView dag={dag} chatId={chatId} onRetryNode={onRetryNode} onResumeNode={onResumeNode} onCancelNode={onCancelNode} onAnswerNodeQuestion={onAnswerNodeQuestion} onDismissNodeError={onDismissNodeError} />
+        </StepsRow>
       ) : (
         <div className="space-y-3">
           {orchActivity.length > 0 && <LiveStatusLine activity={orchActivity} />}
