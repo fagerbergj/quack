@@ -6,6 +6,7 @@ import { ArtifactPanel } from './ArtifactPanel'
 import { api } from '../api'
 import { Icon } from './Icon'
 import { parseA2uiActionText } from '../lib/a2ui'
+import { CHIP } from '../lib/colorHash'
 import {
   parseEnvelope,
   commentsSummaryLabel,
@@ -131,11 +132,12 @@ function InfoLine({ label, text }: { label: string; text: string }) {
 // Native <details>, the same disclosure used across the chat UI; bodies are height-locked separately with Expandable.
 function CollapsibleSection({ summary, children }: { summary: ReactNode; children: ReactNode }) {
   return (
-    <details className="rounded-lg border border-gray-200 dark:border-gray-700 not-prose">
-      <summary className="cursor-pointer select-none px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-gray-100">
+    // Full-bleed divided rows (an M3 list inside the card), not an outlined box per section; -mx-5/px-5 match the card's padding.
+    <details className="-mx-5 px-5 !mb-0 border-t first:border-t-0 border-gray-200 dark:border-gray-700 not-prose">
+      <summary className="cursor-pointer select-none py-3.5 medium:py-2.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-gray-100">
         {summary}
       </summary>
-      <div className="px-3 pb-2.5 pt-1">{children}</div>
+      <div className="pb-3">{children}</div>
     </details>
   )
 }
@@ -178,7 +180,7 @@ function StatusBadge({ status }: { status: string }) {
   const deleted = status === 'deleted'
   return (
     <span
-      className={`px-1 rounded text-2xs font-medium uppercase tracking-wide ${
+      className={`${CHIP} ${
         deleted
           ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
           : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
@@ -368,7 +370,7 @@ function ArtifactStatusChip({ status }: { status: string }) {
       : status === 'updated'
         ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
         : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400'
-  return <span className={`px-1 rounded text-2xs font-medium uppercase tracking-wide shrink-0 ${cls}`}>{status}</span>
+  return <span className={`${CHIP} ${cls}`}>{status}</span>
 }
 
 function ArtifactsSection({

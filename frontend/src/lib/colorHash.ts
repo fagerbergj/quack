@@ -16,6 +16,9 @@ const PALETTE = [
   'bg-pink-100 text-pink-700 dark:bg-pink-900/40 dark:text-pink-300',
 ] as const
 
+// The one badge shape (M3 label-small, 4dp corners, 24px tall so a linked chip meets the WCAG 2.2 target); pair with a tone.
+export const CHIP = 'inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-1 text-2xs font-semibold'
+
 // Fixed tones for a named state rather than a hashed label; pair each with text or an icon.
 export const TONE = {
   green: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400',

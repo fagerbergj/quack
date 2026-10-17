@@ -1,5 +1,6 @@
 import type { Usage } from '../generated'
 import { cacheRate } from '../state/chatStore'
+import { CHIP, TONE } from '../lib/colorHash'
 
 export interface UsageSummaryProps {
   // The current/most-recent turn's model chip(s) - see chatStore.sessionModels.
@@ -22,7 +23,7 @@ export function UsageSummary({ models, usage }: UsageSummaryProps) {
       {models.map(m => (
         <span
           key={m}
-          className="font-mono px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 dark:text-gray-300 truncate max-w-[140px]"
+          className={`${CHIP} ${TONE.gray} font-mono truncate max-w-[140px]`}
           title={m}
         >
           {m}

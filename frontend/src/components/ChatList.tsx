@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ChatSummary } from '../api'
 import { isGithubChat, parseGithubRef, type GithubRef } from '../lib/github'
 import { computeFacets, filterChats, parseFilterState, serializeFilterState, type SelectedFacets } from '../lib/chatFilters'
-import { paletteClasses, TONE } from '../lib/colorHash'
+import { paletteClasses, TONE, CHIP } from '../lib/colorHash'
 import { FilterPanel } from './FilterPanel'
 import { StatusDot } from './StatusDot'
 import { navigate, useSearch } from '../router'
@@ -82,7 +82,7 @@ function ChatBadges({ s, githubRef }: { s: ChatSummary; githubRef: GithubRef | u
           rel="noopener noreferrer"
           onClick={e => e.stopPropagation()}
           title={ref.repo}
-          className={`flex-shrink-0 max-w-[7rem] truncate text-2xs font-semibold tracking-wide px-1 py-1 rounded hover:underline ${paletteClasses(ref.repo)}`}
+          className={`${CHIP} max-w-[7rem] truncate hover:underline ${paletteClasses(ref.repo)}`}
         >
           {ref.repo.slice(ref.repo.indexOf('/') + 1)}
         </a>
@@ -94,14 +94,14 @@ function ChatBadges({ s, githubRef }: { s: ChatSummary; githubRef: GithubRef | u
           rel="noopener noreferrer"
           onClick={e => e.stopPropagation()}
           title={ref.kind === 'pr' ? `Pull request #${ref.number}` : `Issue #${ref.number}`}
-          className={`flex-shrink-0 text-2xs font-semibold tracking-wide px-1 py-1 rounded ${TONE.gray} hover:text-blue-600 dark:hover:text-blue-400 hover:underline`}
+          className={`${CHIP} ${TONE.gray} hover:text-blue-600 dark:hover:text-blue-400 hover:underline`}
         >
           {ref.kind === 'pr' ? 'PR' : 'Issue'} #{ref.number}
         </a>
       )}
       {s.github_state && (
         <span
-          className={`flex-shrink-0 inline-flex items-center gap-0.5 text-2xs font-semibold tracking-wide px-1 py-1 rounded ${githubStateBadgeClass(s.github_state)}`}
+          className={`${CHIP} ${githubStateBadgeClass(s.github_state)}`}
           title={s.github_state}
         >
           {githubStateIcon(s.github_state) && <Icon name={githubStateIcon(s.github_state)!} className="w-2.5 h-2.5" />}
@@ -118,21 +118,21 @@ function ChatBadges({ s, githubRef }: { s: ChatSummary; githubRef: GithubRef | u
               rel="noopener noreferrer"
               onClick={e => e.stopPropagation()}
               title={s.origin.label}
-              className={`flex-shrink-0 max-w-[7rem] truncate text-2xs font-semibold tracking-wide px-1 py-1 rounded hover:underline ${paletteClasses(s.origin.extension)}`}
+              className={`${CHIP} max-w-[7rem] truncate hover:underline ${paletteClasses(s.origin.extension)}`}
             >
               {s.origin.label}
             </a>
           ) : (
             <span
               title={s.origin.label}
-              className={`flex-shrink-0 max-w-[7rem] truncate text-2xs font-semibold tracking-wide px-1 py-1 rounded ${paletteClasses(s.origin.extension)}`}
+              className={`${CHIP} max-w-[7rem] truncate ${paletteClasses(s.origin.extension)}`}
             >
               {s.origin.label}
             </span>
           )}
           {s.origin.badge && (
             <span
-              className={`flex-shrink-0 text-2xs font-semibold tracking-wide px-1 py-1 rounded ${originBadgeClass(s.origin.badge)}`}
+              className={`${CHIP} ${originBadgeClass(s.origin.badge)}`}
               title={s.origin.badge}
             >
               {s.origin.badge}
