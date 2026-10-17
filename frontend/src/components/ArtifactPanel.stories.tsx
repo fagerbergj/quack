@@ -127,6 +127,23 @@ function chatReviewLegacyRoute(url: string): Response | null {
   return jsonResponse({ data: [] })
 }
 
+// A tool-saved JSON deliverable (sleeper's trade-finder): class blob, mime application/json.
+const tradeFinder = {
+  league: '1356407594683482112', week: 6, updated: '2026-10-13T23:12:00Z',
+  suggestions: [
+    { partner: 'Achane Magic', record: '3-2', partner_need: 'needs RB (slot empty)', give: { name: 'Chuba Hubbard', pos: 'RB', proj: 16.16 }, get: { name: 'Patrick Mahomes', pos: 'QB', proj: 19.26 }, note: 'Their RB slot is empty; Mahomes fills the Burrow-bye QB hole (net +3.1).' },
+    { partner: "Breece's Pieces", record: '1-4', partner_need: 'RB-stacked, needs TE2', give: { name: 'Chuba Hubbard', pos: 'RB', proj: 16.16 }, get: { name: 'Travis Kelce', pos: 'TE', proj: 12.29 }, note: 'A 5th RB earns no scarcity premium; Kelce upgrades TE1-only.' },
+  ],
+}
+function chatJsonBlobRoute(url: string): Response | null {
+  if (!url.includes('/chats/chat-json-blob/')) return null
+  const lineage = { node_id: 'trade-1', author: 'worker' }
+  if (url.endsWith('/artifacts')) {
+    return jsonResponse({ data: [{ name: 'trade-finder:doc:6', kind: 'trade-finder', class: 'blob', latest_revision: 1, lineage, revisions: [] }] })
+  }
+  return artifactRoute(url, 'trade-finder:doc:6', jsonResponse({ data: [{ revision: 1, mime_type: 'application/json', size: 900, kind: 'trade-finder', class: 'blob', lineage }] }), textResponse(JSON.stringify(tradeFinder)))
+}
+
 // Stubs global.fetch with schema-shaped responses routed on chat id: chat-1 (finished review node),
 // chat-failed (failed node, no artifacts), chat-more (many secondary artifacts).
 function chatMoreRoute(url: string): Response | null {
@@ -300,6 +317,7 @@ window.fetch = async (input: RequestInfo | URL) => {
     chatJudgeOnlyRoute(url) ??
     chatReviewer1466Route(url) ??
     chatMoreRoute(url) ??
+    chatJsonBlobRoute(url) ??
     chatOneRoute(url) ??
     jsonResponse({ data: [] })
   )
@@ -484,4 +502,21 @@ export const NoArtifactWithJudgeRounds: Story = {
     nodeTask: 'Write the spec',
     onClose: () => {},
   },
+}
+
+// A JSON blob reads as labelled fields and one card per suggestion, titled by its kind, not its first line "{".
+export const JsonBlobDeliverable: Story = {
+  args: {
+    chatId: 'chat-json-blob',
+    nodeId: 'trade-1',
+    nodeAgent: 'trade-analyst',
+    nodeTask: 'Find trades',
+    nodeArtifactKind: 'trade-finder',
+    onClose: () => {},
+  },
+}
+
+export const JsonBlobDeliverableMobile: Story = {
+  ...JsonBlobDeliverable,
+  decorators: WithResultMobile.decorators,
 }

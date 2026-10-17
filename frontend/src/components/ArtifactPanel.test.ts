@@ -7,6 +7,8 @@ import {
   isBookkeeping,
   artifactTitle,
   firstLine,
+  structuredBody,
+  fieldLabel,
 } from './ArtifactPanel'
 import type { ArtifactSummary, ArtifactRevisionInfo } from '../api'
 
@@ -239,5 +241,28 @@ describe('firstLine', () => {
 
   it('returns null for text with no non-blank line', () => {
     expect(firstLine('\n  \n')).toBeNull()
+  })
+})
+
+describe('structuredBody', () => {
+  it('parses a JSON blob as data, keeps markdown and scalars as text', () => {
+    expect(structuredBody('{"week": 6}', 'blob')).toEqual({ week: 6 })
+    expect(structuredBody('[1, 2]', 'blob')).toEqual([1, 2])
+    expect(structuredBody('# Notes\n\ntext', 'blob')).toBeUndefined()
+    expect(structuredBody('42', 'blob')).toBeUndefined()
+    expect(structuredBody('42', 'structured')).toBe(42)
+    expect(structuredBody('not json', 'structured')).toBeUndefined()
+    expect(structuredBody('null', 'blob')).toBeUndefined()
+    expect(structuredBody('{}', 'blob')).toEqual({})
+  })
+})
+
+describe('fieldLabel', () => {
+  it('turns snake and camel keys into words', () => {
+    expect(fieldLabel('partner_need')).toBe('Partner need')
+    expect(fieldLabel('giveProj')).toBe('Give proj')
+    expect(fieldLabel('week')).toBe('Week')
+    expect(fieldLabel('kebab-case')).toBe('Kebab case')
+    expect(fieldLabel('TEAM_ID_2')).toBe('Team id 2')
   })
 })

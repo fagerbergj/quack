@@ -264,10 +264,17 @@ function diffBlockReason(curInfo: ArtifactRevisionInfo | null, prevInfo: Artifac
   return diffBlocked
 }
 
-// The JSON parse itself stays memoized at the call site.
-function displayState(content: string | null, primary: ArtifactSummary | null) {
-  const klass = primary == null ? undefined : primary.class
-  return { displayText: content != null ? prettyText(content, klass) : null, isStructured: klass === 'structured' }
+// A blob counts as structured when it parses to an object or array: tools save JSON deliverables
+// (sleeper's lineup, trade-finder) as application/json blobs, and as markdown they read as one wall of text.
+// Raw keeps a blob's saved bytes: a re-stringify re-indents it and rounds integers past 2^53.
+function rawText(content: string | null, klass: string | undefined, parsed: unknown): string | null {
+  if (content == null) return null
+  return klass === 'structured' && parsed !== undefined ? JSON.stringify(parsed, null, 2) : content
+}
+
+export function structuredBody(content: string, klass: string | undefined): unknown {
+  const v = tryParseJSON(content)
+  return klass === 'structured' || (v !== null && typeof v === 'object') ? v : undefined
 }
 
 // The trigger row's jump handler, only when that round is one of this node's chips;
@@ -581,10 +588,11 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
     // covers a tap that lands before the revision list has arrived.
   }
 
-  const { displayText, isStructured } = displayState(content, primary)
+  const parsedJson = useMemo(() => (content != null ? structuredBody(content, primary?.class) : undefined), [content, primary?.class])
+  const isStructured = primary?.class === 'structured' || parsedJson !== undefined
+  const displayText = rawText(content, primary?.class, parsedJson)
   const lines = useMemo(() => (displayText != null ? displayText.split('\n') : []), [displayText])
   const { byLine, unanchored } = useMemo(() => anchorNotes(lines, notes), [lines, notes])
-  const parsedJson = useMemo(() => (isStructured && content != null ? tryParseJSON(content) : undefined), [isStructured, content])
 
   // A review's finding_ids, resolved to their titles/bodies in the order
   // the review itself lists them. Only computed when the primary IS a review; harmless (and cheap) otherwise.
@@ -709,17 +717,6 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
       </div>
     </dialog>
   )
-}
-
-// Pretty-prints structured JSON and returns a blob unchanged; both render as a line list
-// so judge-note highlighting has a stable line number to anchor on.
-function prettyText(raw: string, klass?: string): string {
-  if (klass !== 'structured') return raw
-  try {
-    return JSON.stringify(JSON.parse(raw), null, 2)
-  } catch {
-    return raw
-  }
 }
 
 // Gives every row a DISTINCT accessible name: two artifacts that title
@@ -928,52 +925,55 @@ function ArtifactMarkdown({ text, byLine, activeNote, onSelectNote }: {
   )
 }
 
-// Colors a JSON leaf by type with the same palette DiffView/JudgeCard use, so values read the same app-wide.
-function typedValue(v: unknown) {
-  if (v === null) return <span className="text-gray-500 dark:text-gray-400 italic">null</span>
-  if (typeof v === 'string') return <span className="text-green-700 dark:text-green-400 break-words">"{v}"</span>
-  if (typeof v === 'number') return <span className="text-blue-600 dark:text-blue-400">{v}</span>
-  if (typeof v === 'boolean') return <span className="text-purple-600 dark:text-purple-400">{String(v)}</span>
-  return <span className="text-gray-800 dark:text-gray-100 break-words">{JSON.stringify(v)}</span>
+// snake_case and camelCase keys read as words: partner_need -> "Partner need".
+export function fieldLabel(key: string): string {
+  const words = key.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ').trim().toLowerCase()
+  return words.charAt(0).toUpperCase() + words.slice(1)
 }
 
-// A nested container gets its own native <details>, so no per-node JS state.
-function JsonNode({ k, v }: { k?: string; v: unknown }) {
-  const isContainer = v !== null && typeof v === 'object'
-  if (!isContainer) {
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return v !== null && typeof v === 'object' && !Array.isArray(v)
+}
+
+function JsonValue({ v }: { v: unknown }) {
+  if (v === null || v === '') return <span className="text-gray-500 dark:text-gray-400">-</span>
+  if (Array.isArray(v)) {
+    if (v.length === 0) return <span className="text-gray-500 dark:text-gray-400">none</span>
+    if (v.every(x => !isRecord(x) && !Array.isArray(x))) return <span className="break-words">{v.map(String).join(', ')}</span>
     return (
-      <div className="py-0.5 text-xs">
-        {k != null && <span className="text-gray-500 dark:text-gray-400">{k}: </span>}
-        {typedValue(v)}
-      </div>
+      <ol className="space-y-2">
+        {v.map((item, i) => <li key={i} className="rounded-lg border border-gray-200 dark:border-gray-700 p-3"><JsonValue v={item} /></li>)}
+      </ol>
     )
   }
-  const isArray = Array.isArray(v)
-  const entries: [string, unknown][] = isArray
-    ? (v as unknown[]).map((item, i) => [String(i), item])
-    : Object.entries(v as Record<string, unknown>)
-  return (
-    <details open className="text-xs">
-      <summary className="cursor-pointer select-none py-0.5">
-        {k != null && <span className="text-gray-500 dark:text-gray-400">{k}: </span>}
-        <span className="text-gray-500 dark:text-gray-400">
-          {isArray ? `Array(${entries.length})` : `Object{${entries.length}}`}
-        </span>
-      </summary>
-      <div className="ml-3 pl-2 border-l border-gray-200 dark:border-gray-700">
-        {entries.length === 0 && <div className="py-0.5 text-gray-500 dark:text-gray-400 italic">empty</div>}
-        {entries.map(([ck, cv]) => <JsonNode key={ck} k={ck} v={cv} />)}
-      </div>
-    </details>
-  )
+  if (isRecord(v)) {
+    const entries = Object.entries(v)
+    if (entries.length === 0) return <span className="text-gray-500 dark:text-gray-400">none</span>
+    if (entries.length > 4 || entries.some(([, x]) => x !== null && typeof x === 'object')) return <JsonFields data={v} />
+    // A small flat object (a player: name, pos, proj) stays on one line.
+    return (
+      <span className="flex flex-wrap gap-x-3 gap-y-1">
+        {entries.map(([k, x]) => <span key={k}><span className="text-xs text-gray-500 dark:text-gray-400">{fieldLabel(k)}</span> <JsonValue v={x} /></span>)}
+      </span>
+    )
+  }
+  if (typeof v === 'boolean') return <span>{v ? 'yes' : 'no'}</span>
+  return <span className={`break-words ${typeof v === 'number' ? 'tabular-nums' : ''}`}>{String(v)}</span>
 }
 
-// The fallback tree for an unknown structured kind; Raw (ArtifactLines) still covers every kind.
-function JsonView({ data }: { data: unknown }) {
+// Label-over-value on compact width, a two-column field list from `medium` up.
+function JsonFields({ data }: { data: Record<string, unknown> }) {
   return (
-    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 overflow-x-auto">
-      <JsonNode v={data} />
-    </div>
+    <dl className="grid grid-cols-1 medium:grid-cols-[minmax(6rem,max-content)_1fr] gap-x-4 gap-y-1 medium:gap-y-2 text-sm text-gray-800 dark:text-gray-100">
+      {Object.entries(data).map(([k, v]) => (
+        <div key={k} className="contents">
+          <dt className="pt-1 medium:pt-0 text-xs font-medium text-gray-500 dark:text-gray-400 medium:leading-5">{fieldLabel(k)}</dt>
+          <dd className="min-w-0">
+            <JsonValue v={v} />
+          </dd>
+        </div>
+      ))}
+    </dl>
   )
 }
 
@@ -1167,7 +1167,8 @@ function ArtifactView({ content, displayText, lines, rawView, isStructured, pars
   if (!isStructured) return <ArtifactMarkdown text={content ?? ''} byLine={byLine} activeNote={activeNote} onSelectNote={onSelectNote} />
   if (parsedJson === undefined) return <ArtifactLines lines={lines} byLine={byLine} activeNote={activeNote} onSelectNote={onSelectNote} />
   const typed = typedView(kind, parsedJson, reviewFindings ?? [], surface)
-  return typed ?? <JsonView data={parsedJson} />
+  // A kind with no typed view falls back to labelled fields; Raw still shows the exact JSON.
+  return typed ?? <JsonValue v={parsedJson} />
 }
 
 // One tapped judge note's callout under the rendered output.
@@ -1508,7 +1509,6 @@ function fmtAbsoluteShort(iso: string): string {
   return new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
-// Same visual language as JsonNode's leaves, so metadata reads as the JSON tree's styling, not a second table.
 function MetaRow({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="py-0.5 text-xs flex gap-1">
