@@ -17,6 +17,7 @@ import { traceUrl } from '../state/clientConfig'
 import { Icon } from './Icon'
 import { Sheet } from './Sheet'
 import { fmtCost } from './UsageSummary'
+import { CHIP } from '../lib/colorHash'
 
 // Retry (→ queued) is legal from done, failed, or cancelled - see dag.CanTransition.
 const isTerminal = (s: NodeStatus) => s === 'done' || s === 'failed' || s === 'cancelled'
@@ -188,7 +189,7 @@ function QueuedBadge({ count }: { count: number }) {
   if (count === 0) return null
   return (
     <span
-      className="text-2xs font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400 inline-flex items-center gap-0.5"
+      className={`${CHIP} bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400`}
       title={`${count} parked message${count === 1 ? '' : 's'} - delivers when the current round ends`}
     >
       <Icon name="mail" className="w-3 h-3" /> {count}

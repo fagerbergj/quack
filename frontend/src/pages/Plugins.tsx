@@ -3,6 +3,7 @@ import { api, type Plugin, type PluginUpdate, type PluginReloadReport } from '..
 import { NavToggle } from '../components/NavToggle'
 import { Icon } from '../components/Icon'
 import { relativeTime } from '../lib/relativeTime'
+import { CHIP, TONE } from '../lib/colorHash'
 
 export interface PluginsProps {
   navOpen: boolean
@@ -334,9 +335,9 @@ function PluginRow({ plugin: p, update, busy, onUpdate, onRemove }: {
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="font-medium text-sm truncate">{p.name}</span>
-          <span className="text-xs rounded-full px-2 py-0.5 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300">{p.source}</span>
+          <span className={`${CHIP} ${TONE.gray}`}>{p.source}</span>
           {behind && (
-            <span className="text-xs rounded-full px-2 py-0.5 bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300">
+            <span className={`${CHIP} bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300`}>
               update available
             </span>
           )}

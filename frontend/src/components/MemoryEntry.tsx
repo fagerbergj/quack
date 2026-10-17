@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import type { Memory, VoteDirection } from '../api'
-import { paletteClasses, TONE } from '../lib/colorHash'
+import { paletteClasses, TONE, CHIP } from '../lib/colorHash'
 import { relativeTime } from '../lib/relativeTime'
 import { Icon } from './Icon'
 import { VoteControl } from './VoteControl'
@@ -50,7 +50,7 @@ function TierBadge({ memory }: { memory: Memory }) {
   return (
     <span
       title={memory.invalidation_reason ?? memoryTierLabel(memory)}
-      className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-2xs font-medium ${memoryTierBadgeClass(tier)}`}
+      className={`${CHIP} ${memoryTierBadgeClass(tier)}`}
     >
       {memoryTierLabel(memory)}
     </span>
@@ -60,7 +60,7 @@ function TierBadge({ memory }: { memory: Memory }) {
 // Vote-based tier, rendered only for 'verified': 'unverified' would duplicate TierBadge's default label.
 function VoteTierBadge({ tier }: { tier: 'unverified' | 'verified' }) {
   return (
-    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-2xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400">
+    <span className="${CHIP} bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400">
       {tier}
     </span>
   )
@@ -71,7 +71,7 @@ function VoteTierBadge({ tier }: { tier: 'unverified' | 'verified' }) {
 function Pill({ label, seed, neutral }: { label: string; seed: string; neutral?: boolean }) {
   const cls = neutral ? TONE.gray : paletteClasses(seed)
   return (
-    <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-2xs font-medium ${cls}`}>
+    <span className={`${CHIP} ${cls}`}>
       {label}
     </span>
   )
@@ -192,7 +192,7 @@ function MetaRow({ memory }: { memory: Memory }) {
       {(memory.absorbed_ids?.length ?? 0) > 0 && (
         <span
           title={`Absorbed: ${memory.absorbed_ids!.join(', ')}`}
-          className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-2xs font-medium ${TONE.purple}`}
+          className={`${CHIP} ${TONE.purple}`}
         >
           merged ×{memory.absorbed_ids!.length}
         </span>
