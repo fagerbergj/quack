@@ -84,8 +84,8 @@ describe('ToolCallView - fallback', () => {
     })
     // formatted args + result labels, pretty JSON (indented) - never a bare dump.
     // Quotes are HTML-escaped in static markup (&quot;).
-    expect(out).toContain('args')
-    expect(out).toContain('result')
+    expect(out).toContain('Args')
+    expect(out).toContain('Result')
     expect(out).toContain('&quot;region&quot;: &quot;eu&quot;')
   })
 

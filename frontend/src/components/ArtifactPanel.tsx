@@ -16,7 +16,7 @@ import { escapeUnmatchedBackticks } from '../lib/backticks'
 import { useChatStore } from '../state/ChatStoreProvider'
 import { Icon } from './Icon'
 import { AssistantText, mdSchema } from './AgentParts'
-import { tryParseJSON } from '../lib/json'
+import { tryParseJSON, fieldLabel } from '../lib/json'
 import { A2uiSurfaceBox } from './A2uiArtifact'
 import { A2UI_SURFACE_KIND, QUIZ_KEY_KIND, surfacePersistKey, type SurfaceContent } from '../lib/a2ui'
 import { CHIP } from '../lib/colorHash'
@@ -748,7 +748,7 @@ function SecondaryList({ items, bodies, excludeNames, onSelect }: {
   const titles = dedupedTitles(shown, bodies)
   return (
     <div>
-      <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Also on this node</span>
+      <span className="text-sm font-semibold text-gray-700 dark:text-gray-200">Also on this node</span>
       <div className="mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg divide-y divide-gray-100 dark:divide-gray-700">
         {shown.map((a, i) => (
           <button
@@ -926,12 +926,6 @@ function ArtifactMarkdown({ text, byLine, activeNote, onSelectNote }: {
   )
 }
 
-// snake_case and camelCase keys read as words: partner_need -> "Partner need".
-export function fieldLabel(key: string): string {
-  const words = key.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ').trim().toLowerCase()
-  return words.charAt(0).toUpperCase() + words.slice(1)
-}
-
 function isRecord(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === 'object' && !Array.isArray(v)
 }
@@ -1044,7 +1038,7 @@ export function ReviewView({ data, findings }: { data: CodeReviewBody; findings:
       <MetaList label="Notes" items={data.notes} />
       {findings.length > 0 && (
         <div className="space-y-1.5">
-          <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+          <span className="text-sm font-semibold text-gray-700 dark:text-gray-200">
             Findings ({findingSeverityCounts(findings)})
           </span>
           {findings.map(f => f.body
@@ -1056,7 +1050,7 @@ export function ReviewView({ data, findings }: { data: CodeReviewBody; findings:
       )}
       {data.rendered && (
         <details className="border-t border-gray-100 dark:border-gray-700 pt-2">
-          <summary className="cursor-pointer select-none text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+          <summary className="cursor-pointer select-none text-sm font-semibold text-gray-700 dark:text-gray-200">
             Full review
           </summary>
           <div className="mt-2 -mx-3">
@@ -1072,7 +1066,7 @@ function MetaList({ label, items }: { label: string; items: string[] | undefined
   if (!items || items.length === 0) return null
   return (
     <div>
-      <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">{label}</span>
+      <span className="text-sm font-semibold text-gray-700 dark:text-gray-200">{label}</span>
       <ul className="mt-0.5 list-disc list-inside space-y-0.5 text-gray-600 dark:text-gray-300">
         {items.map((it, i) => <li key={i}>{it}</li>)}
       </ul>
@@ -1106,7 +1100,7 @@ export function JudgeRoundView({ data }: { data: JudgeRoundContent }) {
       )}
       {data.evidence?.probes && data.evidence.probes.length > 0 && (
         <div>
-          <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Probes</span>
+          <span className="text-sm font-semibold text-gray-700 dark:text-gray-200">Probes</span>
           <ul className="mt-0.5 space-y-0.5 text-gray-600 dark:text-gray-300">
             {data.evidence.probes.map((p, i) => <li key={i}>{p.name}: {p.result}</li>)}
           </ul>
@@ -1340,7 +1334,7 @@ function UnanchoredNotes({ notes }: { notes: JudgeNote[] }) {
   if (notes.length === 0) return null
   return (
     <div>
-      <span className="text-2xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+      <span className="text-sm font-semibold text-gray-700 dark:text-gray-200">
         Unanchored notes
       </span>
       <ul className="mt-1 space-y-1">
@@ -1373,7 +1367,7 @@ function DetailsSection({ curInfo, open, onOpenChange, nodeTask, primary, revisi
       onToggle={e => onOpenChange(e.currentTarget.open)}
       className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg"
     >
-      <summary className="cursor-pointer select-none px-3 py-2 text-2xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+      <summary className="cursor-pointer select-none px-3 py-2 text-sm font-semibold text-gray-700 dark:text-gray-200">
         Details
       </summary>
       {open && (

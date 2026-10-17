@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { AssistantText } from './AgentParts'
 import { Expandable } from './Expandable'
 import { ArtifactPanel } from './ArtifactPanel'
+import { fieldLabel } from '../lib/json'
 import { api } from '../api'
 import { Icon } from './Icon'
 import { parseA2uiActionText } from '../lib/a2ui'
@@ -312,7 +313,7 @@ function EventSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'event'
         <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1.5 mb-2 not-prose">
           {fields.map(([k, v]) => (
             <div key={k} className="min-w-0">
-              <dt className="text-2xs uppercase tracking-wide text-gray-500 dark:text-gray-400">{k}</dt>
+              <dt className="text-2xs text-gray-500 dark:text-gray-400">{fieldLabel(k)}</dt>
               <dd className="text-2xs font-mono text-gray-700 dark:text-gray-200 truncate" title={v}>{v}</dd>
             </div>
           ))}

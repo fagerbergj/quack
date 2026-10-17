@@ -130,7 +130,7 @@ function QueueSection({ nodeId, queue, onEditQueuedMessage, onRemoveQueuedMessag
   if (queue.length === 0) return null
   return (
     <div>
-      <span className="text-2xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+      <span className="text-2xs font-semibold text-gray-500 dark:text-gray-400">
         Queued messages
       </span>
       <p className="text-2xs text-gray-500 dark:text-gray-400 mt-0.5 mb-2">

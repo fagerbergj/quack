@@ -55,7 +55,7 @@ function PathHeader({ path, note }: { path: string; note?: ReactNode }) {
 }
 
 function Label({ children }: { children: ReactNode }) {
-  return <div className="text-2xs uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-0.5">{children}</div>
+  return <div className="text-2xs text-gray-500 dark:text-gray-400 mb-0.5">{children}</div>
 }
 
 // Code is a monospace block on the code surface; long content gets height-locked.
@@ -132,7 +132,7 @@ function FormattedValue({ value }: { value: unknown }) {
 function ResultJSON({ result }: { result: unknown }) {
   return (
     <div>
-      <Label>result</Label>
+      <Label>Result</Label>
       <FormattedValue value={result} />
     </div>
   )
@@ -540,7 +540,7 @@ function GenericView({ tool }: { tool: ToolCall }) {
   return (
     <div className="space-y-2">
       <div>
-        <Label>args</Label>
+        <Label>Args</Label>
         <FormattedValue value={tool.args} />
       </div>
       {tool.done && <ResultJSON result={tool.result} />}

@@ -8,8 +8,8 @@ import {
   artifactTitle,
   firstLine,
   structuredBody,
-  fieldLabel,
 } from './ArtifactPanel'
+import { fieldLabel } from '../lib/json'
 import type { ArtifactSummary, ArtifactRevisionInfo } from '../api'
 
 const lines = [
