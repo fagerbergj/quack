@@ -963,7 +963,7 @@ function JsonValue({ v }: { v: unknown }) {
 }
 
 // The top level is always a field list; only nested small objects go inline.
-function JsonRoot({ v }: { v: unknown }) {
+export function JsonRoot({ v }: { v: unknown }) {
   return isRecord(v) && Object.keys(v).length > 0 ? <JsonFields data={v} /> : <JsonValue v={v} />
 }
 
