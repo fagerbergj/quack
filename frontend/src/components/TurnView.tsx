@@ -1,4 +1,4 @@
-import { memo, useMemo } from 'react'
+import { memo, useMemo, type ReactNode } from 'react'
 import { AssistantText, ActivityList, BubbleHeader, stoppedBadge, type StoppedBadge } from './AgentParts'
 import { QuestionBubble } from './QuestionBubble'
 import { DagView, DagBubbleHeader } from './DagView'
@@ -40,22 +40,29 @@ export interface TurnViewProps {
   onDownload: (text: string, idx: number) => void
 }
 
+// A plan card's collapsed Steps, live or finished: a full-bleed divided row (the trigger card's section shape),
+// not a box in the card. -mx-5/-mb-4 match the card's px-5 py-4.
+export function StepsRow({ children }: { children: ReactNode }) {
+  return (
+    <details className="-mx-5 px-5 mt-3 -mb-4 border-t border-gray-200 dark:border-gray-700">
+      <summary className="cursor-pointer select-none py-3.5 medium:py-3 text-xs font-medium text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-gray-100">
+        Steps
+      </summary>
+      <div className="pb-4 space-y-3">{children}</div>
+    </details>
+  )
+}
+
 // TurnDagBubble is the completed turn's DAG card - the collapsed "Steps"
 // details (activity + graph), as opposed to the live turn's running view.
 function TurnDagBubble({ dag, activity, chatId }: { dag: DagTurnState; activity: Activity[]; chatId?: string }) {
   return (
     <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
       <DagBubbleHeader dag={dag} />
-      {/* A full-bleed divided row, the same shape as the trigger card's sections, not a box in the card. */}
-      <details className="-mx-5 px-5 mt-3 -mb-4 border-t border-gray-200 dark:border-gray-700">
-        <summary className="cursor-pointer select-none py-3.5 medium:py-3 text-xs font-medium text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-gray-100">
-          Steps
-        </summary>
-        <div className="pb-4 space-y-3">
-          {activity.length > 0 && <ActivityList activity={activity} />}
-          <DagView dag={dag} chatId={chatId} />
-        </div>
-      </details>
+      <StepsRow>
+        {activity.length > 0 && <ActivityList activity={activity} />}
+        <DagView dag={dag} chatId={chatId} />
+      </StepsRow>
     </div>
   )
 }
