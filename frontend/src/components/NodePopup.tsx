@@ -52,8 +52,8 @@ function QueuedMessageRow({ msg, onEdit, onRemove }: {
           }}
           className="flex-1 min-w-0 text-base px-2 py-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-gray-400"
         />
-        <button onClick={() => { onEdit?.(text); setEditing(false) }} className="text-[11px] font-medium text-gray-600 dark:text-gray-300 hover:underline">save</button>
-        <button onClick={() => { setText(msg.text); setEditing(false) }} className="text-[11px] text-gray-500 dark:text-gray-400 hover:underline">cancel</button>
+        <button onClick={() => { onEdit?.(text); setEditing(false) }} className="text-2xs font-medium text-gray-600 dark:text-gray-300 hover:underline">save</button>
+        <button onClick={() => { setText(msg.text); setEditing(false) }} className="text-2xs text-gray-500 dark:text-gray-400 hover:underline">cancel</button>
       </li>
     )
   }
@@ -62,7 +62,7 @@ function QueuedMessageRow({ msg, onEdit, onRemove }: {
       <span className="flex-1 min-w-0">{msg.text}</span>
       <span
         title="Parks until the current round ends - not delivered mid-turn for this node"
-        className="shrink-0 text-[11px] font-medium text-amber-700 dark:text-amber-400"
+        className="shrink-0 text-2xs font-medium text-amber-700 dark:text-amber-400"
       >
         parked
       </span>
@@ -105,11 +105,11 @@ function PromptBlock({ nodeId, agent, task, notStarted, onEditTask }: {
           <div className="flex items-center gap-2">
             <button
               onClick={() => { onEditTask?.(nodeId, taskText); setEditingTask(false) }}
-              className="text-[11px] font-medium text-indigo-700 dark:text-indigo-400 hover:underline"
+              className="text-2xs font-medium text-indigo-700 dark:text-indigo-400 hover:underline"
             >
               save
             </button>
-            <button onClick={() => setEditingTask(false)} className="text-[11px] text-gray-500 dark:text-gray-400 hover:underline">cancel</button>
+            <button onClick={() => setEditingTask(false)} className="text-2xs text-gray-500 dark:text-gray-400 hover:underline">cancel</button>
           </div>
         </div>
       ) : (
@@ -130,10 +130,10 @@ function QueueSection({ nodeId, queue, onEditQueuedMessage, onRemoveQueuedMessag
   if (queue.length === 0) return null
   return (
     <div>
-      <span className="text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+      <span className="text-2xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
         Queued messages
       </span>
-      <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5 mb-2">
+      <p className="text-2xs text-gray-500 dark:text-gray-400 mt-0.5 mb-2">
         Delivered into the live round when possible; "parked" ones wait for the node's next turn boundary.
       </p>
       <ul className="space-y-1.5">
@@ -267,7 +267,7 @@ export function NodePopup({
         <InputRow answering={answering} value={inputText} onChange={setInputText} onSubmit={submitInput} />
       )}
       {answering && !onAnswerQuestion && (
-        <p className="text-[11px] text-gray-500 dark:text-gray-400 italic">
+        <p className="text-2xs text-gray-500 dark:text-gray-400 italic">
           Answering from here isn't wired up yet - reply in the main chat.
         </p>
       )}

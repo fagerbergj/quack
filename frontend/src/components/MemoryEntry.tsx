@@ -50,7 +50,7 @@ function TierBadge({ memory }: { memory: Memory }) {
   return (
     <span
       title={memory.invalidation_reason ?? memoryTierLabel(memory)}
-      className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-medium ${memoryTierBadgeClass(tier)}`}
+      className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-2xs font-medium ${memoryTierBadgeClass(tier)}`}
     >
       {memoryTierLabel(memory)}
     </span>
@@ -60,7 +60,7 @@ function TierBadge({ memory }: { memory: Memory }) {
 // Vote-based tier, rendered only for 'verified': 'unverified' would duplicate TierBadge's default label.
 function VoteTierBadge({ tier }: { tier: 'unverified' | 'verified' }) {
   return (
-    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400">
+    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-2xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400">
       {tier}
     </span>
   )
@@ -71,7 +71,7 @@ function VoteTierBadge({ tier }: { tier: 'unverified' | 'verified' }) {
 function Pill({ label, seed, neutral }: { label: string; seed: string; neutral?: boolean }) {
   const cls = neutral ? TONE.gray : paletteClasses(seed)
   return (
-    <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-medium ${cls}`}>
+    <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-2xs font-medium ${cls}`}>
       {label}
     </span>
   )
@@ -177,22 +177,22 @@ function MetaRow({ memory }: { memory: Memory }) {
       {memory.kind && <Pill label={memory.kind} seed={memory.kind} />}
       <TierBadge memory={memory} />
       {voteTier === 'verified' && <VoteTierBadge tier={voteTier} />}
-      <span title={mintedTimeText} className="text-[11px] text-gray-500 dark:text-gray-400">{mintedTimeRelative}</span>
+      <span title={mintedTimeText} className="text-2xs text-gray-500 dark:text-gray-400">{mintedTimeRelative}</span>
       {memory.score != null && (
-        <span className="text-[11px] text-gray-500 dark:text-gray-400">score {memory.score.toFixed(2)}</span>
+        <span className="text-2xs text-gray-500 dark:text-gray-400">score {memory.score.toFixed(2)}</span>
       )}
       {lastUpvoted && (
-        <span className="text-[11px] text-gray-500 dark:text-gray-400">last upvoted {lastUpvoted}</span>
+        <span className="text-2xs text-gray-500 dark:text-gray-400">last upvoted {lastUpvoted}</span>
       )}
       {(memory.recalls ?? 0) > 0 && (
-        <span className="text-[11px] text-gray-500 dark:text-gray-400">
+        <span className="text-2xs text-gray-500 dark:text-gray-400">
           recalled {memory.recalls}× {lastRecalled ? `(last ${lastRecalled})` : ''}
         </span>
       )}
       {(memory.absorbed_ids?.length ?? 0) > 0 && (
         <span
           title={`Absorbed: ${memory.absorbed_ids!.join(', ')}`}
-          className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-medium ${TONE.purple}`}
+          className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-2xs font-medium ${TONE.purple}`}
         >
           merged ×{memory.absorbed_ids!.length}
         </span>
@@ -211,7 +211,7 @@ export const MemoryEntry = memo(function MemoryEntry({ memory, onForget, onVote 
         {memory.status === 'invalidated' && memory.invalidation_reason && (
           <p
             title={memory.invalidation_reason}
-            className="text-[11px] text-gray-500 dark:text-gray-400 mt-1 truncate"
+            className="text-2xs text-gray-500 dark:text-gray-400 mt-1 truncate"
           >
             {memory.invalidation_reason}
           </p>

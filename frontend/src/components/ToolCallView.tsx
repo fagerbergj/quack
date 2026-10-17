@@ -48,21 +48,21 @@ export function ToolCallView({ tool }: { tool: ToolCall }) {
 function PathHeader({ path, note }: { path: string; note?: ReactNode }) {
   return (
     <div className="flex items-center gap-2 mb-1">
-      <code className="font-mono text-[11px] text-gray-700 dark:text-gray-200 break-all">{path}</code>
-      {note != null && <span className="text-[11px] text-gray-500 dark:text-gray-400">{note}</span>}
+      <code className="font-mono text-2xs text-gray-700 dark:text-gray-200 break-all">{path}</code>
+      {note != null && <span className="text-2xs text-gray-500 dark:text-gray-400">{note}</span>}
     </div>
   )
 }
 
 function Label({ children }: { children: ReactNode }) {
-  return <div className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-0.5">{children}</div>
+  return <div className="text-2xs uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-0.5">{children}</div>
 }
 
 // Code is a monospace block on the code surface; long content gets height-locked.
 function Code({ text, cap = 200 }: { text: string; cap?: number }) {
   return (
     <Expandable maxHeight={cap} fade="from-gray-50 dark:from-gray-900">
-      <pre className="bg-gray-50 dark:bg-gray-900 rounded p-2 overflow-x-auto whitespace-pre-wrap font-mono text-[11px] text-gray-700 dark:text-gray-200">{text}</pre>
+      <pre className="bg-gray-50 dark:bg-gray-900 rounded p-2 overflow-x-auto whitespace-pre-wrap font-mono text-2xs text-gray-700 dark:text-gray-200">{text}</pre>
     </Expandable>
   )
 }
@@ -72,7 +72,7 @@ function Code({ text, cap = 200 }: { text: string; cap?: number }) {
 function DiffView({ lines, cap = 280 }: { lines: DiffLine[]; cap?: number }) {
   return (
     <Expandable maxHeight={cap} fade="from-gray-50 dark:from-gray-900">
-      <div className="bg-gray-50 dark:bg-gray-900 rounded overflow-x-auto font-mono text-[11px] leading-relaxed">
+      <div className="bg-gray-50 dark:bg-gray-900 rounded overflow-x-auto font-mono text-2xs leading-relaxed">
         {lines.map((l, i) => (
           <div key={i} className={lineClass(l.type)}>
             <span className="select-none inline-block w-3 text-center opacity-60">{marker(l.type)}</span>
@@ -106,9 +106,9 @@ function isFlatRecord(v: unknown): v is Record<string, unknown> {
 // The fallback's preferred shape, e.g. an ACP tool call whose args are just `{title: "..."}`.
 function KeyValueBlock({ data }: { data: Record<string, unknown> }) {
   const entries = Object.entries(data).filter(([, v]) => v !== undefined && v !== '')
-  if (entries.length === 0) return <span className="text-[11px] text-gray-500 dark:text-gray-400">(empty)</span>
+  if (entries.length === 0) return <span className="text-2xs text-gray-500 dark:text-gray-400">(empty)</span>
   return (
-    <div className="bg-gray-50 dark:bg-gray-900 rounded p-2 text-[11px] space-y-0.5">
+    <div className="bg-gray-50 dark:bg-gray-900 rounded p-2 text-2xs space-y-0.5">
       {entries.map(([k, v]) => (
         <div key={k} className="flex gap-2">
           <span className="text-gray-500 dark:text-gray-400 shrink-0">{k}</span>
@@ -188,7 +188,7 @@ function ReadFileView({ tool }: { tool: ToolCall }) {
       <PathHeader path={path} note={window} />
       {content != null
         ? <Code text={truncated ? content + '\n…(truncated)' : content} cap={200} />
-        : !tool.done && <span className="text-[11px] text-gray-500 dark:text-gray-400">reading…</span>}
+        : !tool.done && <span className="text-2xs text-gray-500 dark:text-gray-400">reading…</span>}
     </div>
   )
 }
@@ -201,11 +201,11 @@ function RunCommandView({ tool }: { tool: ToolCall }) {
   return (
     <div className="space-y-1">
       <div className="flex items-center gap-2">
-        <code className="font-mono text-[11px] text-gray-700 dark:text-gray-200 break-all">
+        <code className="font-mono text-2xs text-gray-700 dark:text-gray-200 break-all">
           <span className="text-gray-500 dark:text-gray-400 select-none">$ </span>{command}
         </code>
         {exit != null && (
-          <span className={`text-[11px] font-medium ${exit === 0 ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'}`}>
+          <span className={`text-2xs font-medium ${exit === 0 ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'}`}>
             exit {exit}
           </span>
         )}
@@ -222,11 +222,11 @@ function GitCommitView({ tool }: { tool: ToolCall }) {
   const files = tool.done ? num(tool.result, 'files_changed') : undefined
   return (
     <div className="space-y-1">
-      <div className="flex items-center gap-2 text-[11px]">
+      <div className="flex items-center gap-2 text-2xs">
         {sha && <code className="font-mono text-amber-700 dark:text-amber-400">{sha.slice(0, 7)}</code>}
         {files != null && <span className="text-gray-500 dark:text-gray-400">{files} file{files === 1 ? '' : 's'} changed</span>}
       </div>
-      <div className="text-[11px] text-gray-700 dark:text-gray-200 whitespace-pre-wrap font-mono bg-gray-50 dark:bg-gray-900 rounded p-2">{message}</div>
+      <div className="text-2xs text-gray-700 dark:text-gray-200 whitespace-pre-wrap font-mono bg-gray-50 dark:bg-gray-900 rounded p-2">{message}</div>
     </div>
   )
 }
@@ -243,7 +243,7 @@ function GitDiffView({ tool }: { tool: ToolCall }) {
       {target && <PathHeader path={target} note={truncated ? 'truncated' : undefined} />}
       {diff != null && diff !== ''
         ? <DiffView lines={parseUnifiedDiff(diff)} />
-        : tool.done && <span className="text-[11px] text-gray-500 dark:text-gray-400">no changes</span>}
+        : tool.done && <span className="text-2xs text-gray-500 dark:text-gray-400">no changes</span>}
     </div>
   )
 }
@@ -256,7 +256,7 @@ function GitLogView({ tool }: { tool: ToolCall }) {
   if (!Array.isArray(commits)) return <GenericView tool={tool} />
   return (
     <Expandable maxHeight={220} fade="from-gray-50 dark:from-gray-900">
-      <ul className="bg-gray-50 dark:bg-gray-900 rounded p-2 space-y-1 text-[11px]">
+      <ul className="bg-gray-50 dark:bg-gray-900 rounded p-2 space-y-1 text-2xs">
         {commits.map((c, i) => (
           <li key={i} className="flex gap-2">
             <code className="font-mono text-amber-700 dark:text-amber-400 shrink-0">{(str(c, 'sha') ?? '').slice(0, 7)}</code>
@@ -283,7 +283,7 @@ function ListDirView({ tool }: { tool: ToolCall }) {
     <div className="space-y-1">
       <PathHeader path={path} note={truncated ? 'truncated' : undefined} />
       <Expandable maxHeight={220} fade="from-gray-50 dark:from-gray-900">
-        <ul className="bg-gray-50 dark:bg-gray-900 rounded p-2 text-[11px] font-mono">
+        <ul className="bg-gray-50 dark:bg-gray-900 rounded p-2 text-2xs font-mono">
           {entries.map((e, i) => (
             <li key={i} className="text-gray-700 dark:text-gray-200 truncate">
               <span className="text-gray-500 dark:text-gray-400 mr-1 inline-flex align-middle">{bool(e, 'dir') ? <Icon name="folder" className="w-3 h-3" /> : ' '}</span>
@@ -308,7 +308,7 @@ function GlobView({ tool }: { tool: ToolCall }) {
     <div className="space-y-1">
       <PathHeader path={pattern} note={truncated ? 'truncated' : undefined} />
       <Expandable maxHeight={220} fade="from-gray-50 dark:from-gray-900">
-        <ul className="bg-gray-50 dark:bg-gray-900 rounded p-2 text-[11px] font-mono">
+        <ul className="bg-gray-50 dark:bg-gray-900 rounded p-2 text-2xs font-mono">
           {paths.map((p, i) => <li key={i} className="text-gray-700 dark:text-gray-200 truncate">{String(p)}</li>)}
         </ul>
       </Expandable>
@@ -329,7 +329,7 @@ function GrepView({ tool }: { tool: ToolCall }) {
     <div className="space-y-1">
       <PathHeader path={pattern} note={<>{glob && <span className="mr-1">{glob}</span>}{truncated && 'truncated'}</>} />
       <Expandable maxHeight={220} fade="from-gray-50 dark:from-gray-900">
-        <ul className="bg-gray-50 dark:bg-gray-900 rounded p-2 text-[11px] font-mono space-y-0.5">
+        <ul className="bg-gray-50 dark:bg-gray-900 rounded p-2 text-2xs font-mono space-y-0.5">
           {matches.map((m, i) => (
             <li key={i} className="flex gap-2 text-gray-700 dark:text-gray-200">
               <span className="text-amber-700 dark:text-amber-400 shrink-0">{str(m, 'path')}:{num(m, 'line')}</span>
@@ -355,7 +355,7 @@ function WebSearchView({ tool }: { tool: ToolCall }) {
         <Expandable maxHeight={260} fade="from-gray-50 dark:from-gray-900">
           <ul className="space-y-1.5">
             {results.map((r, i) => (
-              <li key={i} className="bg-gray-50 dark:bg-gray-900 rounded p-2 text-[11px]">
+              <li key={i} className="bg-gray-50 dark:bg-gray-900 rounded p-2 text-2xs">
                 <div className="text-gray-700 dark:text-gray-200 font-medium truncate">{str(r, 'title')}</div>
                 <div className="text-blue-600 dark:text-blue-400 truncate">{str(r, 'url')}</div>
                 {str(r, 'snippet') && <div className="text-gray-500 dark:text-gray-400 mt-0.5">{str(r, 'snippet')}</div>}
@@ -363,7 +363,7 @@ function WebSearchView({ tool }: { tool: ToolCall }) {
             ))}
           </ul>
         </Expandable>
-      ) : !tool.done && <span className="text-[11px] text-gray-500 dark:text-gray-400">searching…</span>}
+      ) : !tool.done && <span className="text-2xs text-gray-500 dark:text-gray-400">searching…</span>}
     </div>
   )
 }
@@ -380,7 +380,7 @@ function WebFetchView({ tool }: { tool: ToolCall }) {
       <PathHeader path={url} note={note} />
       {text != null
         ? <Code text={text} cap={220} />
-        : !tool.done && <span className="text-[11px] text-gray-500 dark:text-gray-400">fetching…</span>}
+        : !tool.done && <span className="text-2xs text-gray-500 dark:text-gray-400">fetching…</span>}
     </div>
   )
 }
@@ -395,8 +395,8 @@ function StageMemoryView({ tool }: { tool: ToolCall }) {
   return (
     <div className="space-y-1">
       <PathHeader path={[bucket, kind].filter(Boolean).join(' · ') || 'memory'} />
-      <div className="text-[11px] text-gray-700 dark:text-gray-200 bg-gray-50 dark:bg-gray-900 rounded p-2 whitespace-pre-wrap">{content}</div>
-      {status && <div className="text-[11px] text-gray-500 dark:text-gray-400 italic">{status}</div>}
+      <div className="text-2xs text-gray-700 dark:text-gray-200 bg-gray-50 dark:bg-gray-900 rounded p-2 whitespace-pre-wrap">{content}</div>
+      {status && <div className="text-2xs text-gray-500 dark:text-gray-400 italic">{status}</div>}
     </div>
   )
 }
@@ -435,7 +435,7 @@ function LoadMemoryView({ tool }: { tool: ToolCall }) {
             {memories.map((m, i) => {
               const text = memoryText(m)
               return text ? (
-                <li key={i} className="bg-gray-50 dark:bg-gray-900 rounded p-2 text-[11px] text-gray-700 dark:text-gray-200">{text}</li>
+                <li key={i} className="bg-gray-50 dark:bg-gray-900 rounded p-2 text-2xs text-gray-700 dark:text-gray-200">{text}</li>
               ) : null
             })}
           </ul>
@@ -454,19 +454,19 @@ function GetUserChoiceView({ tool }: { tool: ToolCall }) {
   const choice = tool.done ? str(tool.result, 'choice') : undefined
   return (
     <div className="space-y-1">
-      <div className="text-[11px] text-gray-700 dark:text-gray-200 font-medium">{question}</div>
+      <div className="text-2xs text-gray-700 dark:text-gray-200 font-medium">{question}</div>
       <ul className="space-y-0.5">
         {options.map((o, i) => {
           const opt = String(o)
           const chosen = choice != null && opt === choice
           return (
-            <li key={i} className={`text-[11px] rounded px-2 py-1 ${chosen ? 'bg-green-50 dark:bg-green-900/30 text-green-800 dark:text-green-300 font-medium' : 'bg-gray-50 dark:bg-gray-900 text-gray-600 dark:text-gray-300'}`}>
+            <li key={i} className={`text-2xs rounded px-2 py-1 ${chosen ? 'bg-green-50 dark:bg-green-900/30 text-green-800 dark:text-green-300 font-medium' : 'bg-gray-50 dark:bg-gray-900 text-gray-600 dark:text-gray-300'}`}>
               {chosen && <Icon name="check" className="inline w-3 h-3 mr-1 align-[-1px]" />}{opt}
             </li>
           )
         })}
       </ul>
-      {status === 'pending' && <div className="text-[11px] text-amber-700 dark:text-amber-400 italic">awaiting your answer…</div>}
+      {status === 'pending' && <div className="text-2xs text-amber-700 dark:text-amber-400 italic">awaiting your answer…</div>}
     </div>
   )
 }
@@ -477,8 +477,8 @@ function AskUserView({ tool }: { tool: ToolCall }) {
   const status = tool.done ? str(tool.result, 'status') : undefined
   return (
     <div className="space-y-1">
-      <div className="text-[11px] text-gray-700 dark:text-gray-200 font-medium">{question}</div>
-      {status && <div className="text-[11px] text-gray-500 dark:text-gray-400 italic">{status}</div>}
+      <div className="text-2xs text-gray-700 dark:text-gray-200 font-medium">{question}</div>
+      {status && <div className="text-2xs text-gray-500 dark:text-gray-400 italic">{status}</div>}
     </div>
   )
 }
@@ -496,7 +496,7 @@ function GitStatusView({ tool }: { tool: ToolCall }) {
   const branch = tool.done ? str(tool.result, 'branch') : undefined
   const clean = tool.done ? bool(tool.result, 'clean') : undefined
   return (
-    <div className="text-[11px] flex items-center gap-2">
+    <div className="text-2xs flex items-center gap-2">
       {branch && <code className="font-mono text-gray-700 dark:text-gray-200">{branch}</code>}
       {clean != null && (
         <span className={clean ? 'text-green-700 dark:text-green-400' : 'text-amber-700 dark:text-amber-400'}>
@@ -510,14 +510,14 @@ function GitStatusView({ tool }: { tool: ToolCall }) {
 function GitBranchView({ tool }: { tool: ToolCall }) {
   const name = str(tool.args, 'name')
   const current = tool.done ? str(tool.result, 'current') : undefined
-  return <code className="font-mono text-[11px] text-gray-700 dark:text-gray-200">{current ?? name ?? ''}</code>
+  return <code className="font-mono text-2xs text-gray-700 dark:text-gray-200">{current ?? name ?? ''}</code>
 }
 
 function GitPushView({ tool }: { tool: ToolCall }) {
   const branch = tool.done ? str(tool.result, 'branch') : undefined
   const sha = tool.done ? str(tool.result, 'sha') : undefined
   return (
-    <div className="text-[11px] flex items-center gap-2">
+    <div className="text-2xs flex items-center gap-2">
       {branch && <code className="font-mono text-gray-700 dark:text-gray-200">{branch}</code>}
       {sha && <code className="font-mono text-amber-700 dark:text-amber-400">{sha.slice(0, 7)}</code>}
     </div>

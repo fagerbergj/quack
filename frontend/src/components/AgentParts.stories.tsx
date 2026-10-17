@@ -293,9 +293,9 @@ export const AnswerNotVerified: Story = {
 export const PreambleVsAnswer: Story = {
   render: () => (
     <div className="max-w-lg rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-3 space-y-2">
-      <div className="text-[10px] uppercase tracking-wide text-gray-400 dark:text-gray-500">activity (reasoning + tool calls)</div>
+      <div className="text-2xs uppercase tracking-wide text-gray-400 dark:text-gray-500">activity (reasoning + tool calls)</div>
       <ActivityList activity={preambleActivity} />
-      <div className="text-[10px] uppercase tracking-wide text-gray-400 dark:text-gray-500 pt-2 border-t border-gray-100 dark:border-gray-700">
+      <div className="text-2xs uppercase tracking-wide text-gray-400 dark:text-gray-500 pt-2 border-t border-gray-100 dark:border-gray-700">
         answer - narration before the tool call above never lands here
       </div>
       <AssistantText text="The configured timeout is 30 seconds." />

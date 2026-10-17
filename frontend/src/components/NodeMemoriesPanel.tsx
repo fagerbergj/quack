@@ -31,7 +31,7 @@ function JudgeVoteIcon({ vote, reason }: { vote: string; reason?: string }) {
   return (
     <span
       title={reason ? `${vote}: ${reason}` : vote}
-      className={`inline-flex items-center gap-1 text-[11px] ${VOTE_COLOR[vote]}`}
+      className={`inline-flex items-center gap-1 text-2xs ${VOTE_COLOR[vote]}`}
     >
       <Icon name={icon} className="w-3.5 h-3.5" label={vote} />
       {vote.replace('_', ' ')}
@@ -42,7 +42,7 @@ function JudgeVoteIcon({ vote, reason }: { vote: string; reason?: string }) {
 // prefill (injected before the worker started) vs tool (a recall_memory call mid-round).
 function SourceBadge({ source }: { source: string }) {
   return (
-    <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-medium ${TONE.gray}`}>
+    <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-2xs font-medium ${TONE.gray}`}>
       {source}
     </span>
   )
@@ -58,12 +58,12 @@ function NodeMemoryRow({ memory, onVote }: { memory: NodeMemory; onVote: (id: st
         <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
           <SourceBadge source={memory.source} />
           {memory.tier && (
-            <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[11px] font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400">
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-2xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400">
               {memory.tier}
             </span>
           )}
           {memory.score != null && (
-            <span className="text-[11px] text-gray-500 dark:text-gray-400">score {memory.score.toFixed(2)}</span>
+            <span className="text-2xs text-gray-500 dark:text-gray-400">score {memory.score.toFixed(2)}</span>
           )}
           {memory.vote && <JudgeVoteIcon vote={memory.vote} reason={memory.reason} />}
         </div>

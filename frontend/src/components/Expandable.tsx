@@ -49,7 +49,7 @@ export function Expandable({
           type="button"
           onClick={() => setExpanded(e => !e)}
           aria-expanded={expanded}
-          className="min-h-[44px] -my-2 inline-flex items-center text-[11px] font-medium text-blue-600 dark:text-blue-400 hover:underline focus:outline-none focus:underline"
+          className="min-h-[44px] -my-2 inline-flex items-center text-2xs font-medium text-blue-600 dark:text-blue-400 hover:underline focus:outline-none focus:underline"
         >
           {expanded ? 'Show less' : 'Show more'}
         </button>

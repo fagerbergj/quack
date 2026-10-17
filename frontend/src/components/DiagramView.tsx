@@ -93,7 +93,7 @@ function paint(reg: Map<string, Target>, host: HTMLElement, sel: Sel | null, spe
 
 function ChangeBadge({ change }: { change: Change }) {
   const s = CHANGE_STYLE[change]
-  return <span className="rounded px-1.5 py-0.5 text-[11px] font-medium" style={{ background: s.fill, color: s.text, border: `1px solid ${s.stroke}` }}>{s.label}</span>
+  return <span className="rounded px-1.5 py-0.5 text-2xs font-medium" style={{ background: s.fill, color: s.text, border: `1px solid ${s.stroke}` }}>{s.label}</span>
 }
 
 function Legend() {
@@ -113,7 +113,7 @@ interface Info { title: string; detail: string; badges: ReactNode }
 
 const Pill = ({ children }: { children: ReactNode }) => <span className="text-xs text-gray-500 dark:text-gray-400">{children}</span>
 
-const TYPE_PILL = 'rounded bg-gray-100 px-1.5 py-0.5 text-[11px] dark:bg-gray-700'
+const TYPE_PILL = 'rounded bg-gray-100 px-1.5 py-0.5 text-2xs dark:bg-gray-700'
 
 function describeNode(spec: DiagramSpec, n: DiagramNode): Info {
   const badges = <>

@@ -28,7 +28,7 @@ function A2uiActionPill({ name, surfaceId, context }: { name: string; surfaceId:
           <span>Submitted: <span className="font-medium text-gray-900 dark:text-gray-100">{name}</span> on {surfaceId}</span>
           <Icon name="expand_more" className="w-3.5 h-3.5 shrink-0" />
         </summary>
-        <pre className="mt-1 overflow-x-auto rounded-lg bg-gray-100 dark:bg-gray-800 p-2 font-mono text-[11px]">{JSON.stringify(context ?? {}, null, 2)}</pre>
+        <pre className="mt-1 overflow-x-auto rounded-lg bg-gray-100 dark:bg-gray-800 p-2 font-mono text-2xs">{JSON.stringify(context ?? {}, null, 2)}</pre>
       </details>
     </div>
   )
@@ -142,10 +142,10 @@ function CollapsibleSection({ summary, children }: { summary: ReactNode; childre
 
 // A body that didn't parse as expected shows as raw text, never dropped.
 function RawFallback({ text }: { text: string }) {
-  if (!text) return <span className="text-[11px] text-gray-500 dark:text-gray-400 italic">(empty)</span>
+  if (!text) return <span className="text-2xs text-gray-500 dark:text-gray-400 italic">(empty)</span>
   return (
     <Expandable maxHeight={240} fade="from-gray-50 dark:from-gray-900">
-      <pre className="bg-gray-50 dark:bg-gray-900 rounded p-2 overflow-x-auto whitespace-pre-wrap font-mono text-[11px] text-gray-700 dark:text-gray-200">{text}</pre>
+      <pre className="bg-gray-50 dark:bg-gray-900 rounded p-2 overflow-x-auto whitespace-pre-wrap font-mono text-2xs text-gray-700 dark:text-gray-200">{text}</pre>
     </Expandable>
   )
 }
@@ -178,7 +178,7 @@ function StatusBadge({ status }: { status: string }) {
   const deleted = status === 'deleted'
   return (
     <span
-      className={`px-1 rounded text-[11px] font-medium uppercase tracking-wide ${
+      className={`px-1 rounded text-2xs font-medium uppercase tracking-wide ${
         deleted
           ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
           : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
@@ -191,7 +191,7 @@ function StatusBadge({ status }: { status: string }) {
 
 function IncompleteHistoryNotice() {
   return (
-    <div className="mb-2 rounded border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 px-2 py-1 text-[11px] text-amber-800 dark:text-amber-300">
+    <div className="mb-2 rounded border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 px-2 py-1 text-2xs text-amber-800 dark:text-amber-300">
       Incomplete history - this client never saw the earlier comments, so the list below starts partway through the conversation.
     </div>
   )
@@ -214,7 +214,7 @@ function CommentsSection({ block, priorContents }: { block: Extract<EnvelopeBloc
                     key={c.id ?? i}
                     className={`border-l-2 pl-3 ${c.quackStatus === 'deleted' ? 'border-red-300 dark:border-red-800' : 'border-gray-200 dark:border-gray-700'}`}
                   >
-                    <div className="flex items-center gap-2 text-[11px] text-gray-500 dark:text-gray-400 mb-0.5">
+                    <div className="flex items-center gap-2 text-2xs text-gray-500 dark:text-gray-400 mb-0.5">
                       {c.author && <span className="font-medium text-gray-600 dark:text-gray-300">{c.author}</span>}
                       {c.createdAt && <span>{formatTimestamp(c.createdAt)}</span>}
                       {c.quackStatus && c.quackStatus !== 'new' && <StatusBadge status={c.quackStatus} />}
@@ -226,7 +226,7 @@ function CommentsSection({ block, priorContents }: { block: Extract<EnvelopeBloc
                 ))}
               </ul>
             </Expandable>
-          ) : <span className="text-[11px] text-gray-500 dark:text-gray-400 italic">no comments</span>}
+          ) : <span className="text-2xs text-gray-500 dark:text-gray-400 italic">no comments</span>}
         </>
       ) : <RawFallback text={block.raw} />}
     </CollapsibleSection>
@@ -238,7 +238,7 @@ function ChangedFilesSection({ block }: { block: Extract<EnvelopeBlock, { kind: 
     <CollapsibleSection summary={changedFilesSummaryLabel(block)}>
       {block.files ? (
         <Expandable maxHeight={320} fade="from-white dark:from-gray-800">
-          <ul className="space-y-0.5 text-[11px] font-mono">
+          <ul className="space-y-0.5 text-2xs font-mono">
             {block.files.map((f, i) => (
               <li key={i} className="flex items-center gap-2">
                 <span className="truncate text-gray-700 dark:text-gray-200">{f.filename}</span>
@@ -265,7 +265,7 @@ function ChecksSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'check
     <CollapsibleSection summary={checksSummaryLabel(block)}>
       {block.checks ? (
         <Expandable maxHeight={320} fade="from-white dark:from-gray-800">
-          <ul className="space-y-0.5 text-[11px] font-mono">
+          <ul className="space-y-0.5 text-2xs font-mono">
             {block.checks.map((c, i) => {
               const failing = failingCheck(c)
               return (
@@ -310,8 +310,8 @@ function EventSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'event'
         <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1.5 mb-2 not-prose">
           {fields.map(([k, v]) => (
             <div key={k} className="min-w-0">
-              <dt className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">{k}</dt>
-              <dd className="text-[11px] font-mono text-gray-700 dark:text-gray-200 truncate" title={v}>{v}</dd>
+              <dt className="text-2xs uppercase tracking-wide text-gray-500 dark:text-gray-400">{k}</dt>
+              <dd className="text-2xs font-mono text-gray-700 dark:text-gray-200 truncate" title={v}>{v}</dd>
             </div>
           ))}
         </dl>
@@ -328,9 +328,9 @@ function ContextSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'cont
   return (
     <CollapsibleSection summary={`${n} file${n === 1 ? '' : 's'}`}>
       {n === 0 ? (
-        <span className="text-[11px] text-gray-500 dark:text-gray-400 italic">no context files</span>
+        <span className="text-2xs text-gray-500 dark:text-gray-400 italic">no context files</span>
       ) : (
-        <ul className="space-y-0.5 text-[11px] font-mono">
+        <ul className="space-y-0.5 text-2xs font-mono">
           {block.files.map((f, i) => (
             <li key={i} className="flex gap-2">
               <span className="text-gray-700 dark:text-gray-200 shrink-0">{f.name}</span>
@@ -368,7 +368,7 @@ function ArtifactStatusChip({ status }: { status: string }) {
       : status === 'updated'
         ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
         : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400'
-  return <span className={`px-1 rounded text-[11px] font-medium uppercase tracking-wide shrink-0 ${cls}`}>{status}</span>
+  return <span className={`px-1 rounded text-2xs font-medium uppercase tracking-wide shrink-0 ${cls}`}>{status}</span>
 }
 
 function ArtifactsSection({
@@ -405,7 +405,7 @@ function ArtifactsSection({
                 type="button"
                 disabled={!chatId}
                 onClick={() => openRow(row)}
-                className="w-full flex items-start gap-2 px-1.5 py-1 rounded text-left text-[11px] hover:bg-gray-100 dark:hover:bg-gray-700/60 disabled:hover:bg-transparent disabled:cursor-default"
+                className="w-full flex items-start gap-2 px-1.5 py-1 rounded text-left text-2xs hover:bg-gray-100 dark:hover:bg-gray-700/60 disabled:hover:bg-transparent disabled:cursor-default"
               >
                 <ArtifactIcon kindPrefix={row.kindPrefix} />
                 <span className="flex-1 min-w-0 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">

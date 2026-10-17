@@ -62,14 +62,14 @@ export function MemoryTimeline({ memories, onForget, onVote, now, grouped = true
       {groups.map((g, i) => (
         <div key={g.label ? `${g.label}-${g.memories[0]?.id}` : `flat-${i}`}>
           {g.label && (
-            <div className="pl-3 medium:pl-[4.75rem] pr-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+            <div className="pl-3 medium:pl-[4.75rem] pr-3 py-1 text-2xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
               {g.label}
             </div>
           )}
           {g.memories.map(m => (
             <div key={m.id} className="flex">
               {/* Gutter collapses below `medium`: the row's relative-time chip already carries the date. */}
-              <div className="hidden medium:block w-14 shrink-0 pt-3 pl-3 text-right text-[11px] text-gray-500 dark:text-gray-400 tabular-nums">
+              <div className="hidden medium:block w-14 shrink-0 pt-3 pl-3 text-right text-2xs text-gray-500 dark:text-gray-400 tabular-nums">
                 {shortDate(m.timestamp)}
               </div>
               <div className="hidden medium:flex relative shrink-0 w-4 justify-center">

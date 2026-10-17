@@ -749,7 +749,7 @@ function SecondaryList({ items, bodies, excludeNames, onSelect }: {
   const titles = dedupedTitles(shown, bodies)
   return (
     <div>
-      <span className="text-[13px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Also on this node</span>
+      <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Also on this node</span>
       <div className="mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg divide-y divide-gray-100 dark:divide-gray-700">
         {shown.map((a, i) => (
           <button
@@ -794,7 +794,7 @@ function ArtifactLines({ lines, byLine, activeNote, onSelectNote }: {
                   type="button"
                   aria-label={`Judge note on line ${i + 1}${notes.length > 1 ? ` (${ni + 1} of ${notes.length})` : ''}: ${n.text}`}
                   onClick={() => onSelectNote(n)}
-                  className={`ml-1.5 inline-flex h-4 w-4 items-center justify-center rounded-full text-[11px] leading-none cursor-pointer ${
+                  className={`ml-1.5 inline-flex h-4 w-4 items-center justify-center rounded-full text-2xs leading-none cursor-pointer ${
                     n === activeNote
                       ? 'bg-amber-400 dark:bg-amber-600 text-amber-950 dark:text-amber-50'
                       : 'bg-amber-200 dark:bg-amber-800 text-amber-800 dark:text-amber-200 hover:bg-amber-300 dark:hover:bg-amber-700'
@@ -895,7 +895,7 @@ function ArtifactMarkdown({ text, byLine, activeNote, onSelectNote }: {
               type="button"
               aria-label={`Judge note on line ${line}${notes.length > 1 ? ` (${ni + 1} of ${notes.length})` : ''}: ${n.text}`}
               onClick={() => onSelectNote(n)}
-              className={`not-prose ml-1.5 inline-flex h-4 w-4 items-center justify-center rounded-full text-[11px] leading-none cursor-pointer align-middle ${
+              className={`not-prose ml-1.5 inline-flex h-4 w-4 items-center justify-center rounded-full text-2xs leading-none cursor-pointer align-middle ${
                 n === activeNote
                   ? 'bg-amber-400 dark:bg-amber-600 text-amber-950 dark:text-amber-50'
                   : 'bg-amber-200 dark:bg-amber-800 text-amber-800 dark:text-amber-200 hover:bg-amber-300 dark:hover:bg-amber-700'
@@ -987,7 +987,7 @@ const SEVERITY_CHIP: Record<string, string> = {
 }
 function severityChip(word: string | undefined) {
   if (!word) return null
-  return <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[13px] font-medium ${SEVERITY_CHIP[word] ?? 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200'}`}>{word}</span>
+  return <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${SEVERITY_CHIP[word] ?? 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200'}`}>{word}</span>
 }
 
 // hideHeader skips the chip/path/title row: TitleHeading already shows all
@@ -999,12 +999,12 @@ function FindingView({ data, hideHeader }: { data: FindingBody; hideHeader?: boo
       {!hideHeader && (
         <div className="flex flex-wrap items-center gap-1.5">
           {severityChip(data.severity)}
-          {loc && <span className="font-mono text-[13px] text-gray-500 dark:text-gray-400">{loc}</span>}
+          {loc && <span className="font-mono text-xs text-gray-500 dark:text-gray-400">{loc}</span>}
         </div>
       )}
       {!hideHeader && data.title && <p className="font-medium text-gray-800 dark:text-gray-100">{data.title}</p>}
       {data.rationale && <p className="text-gray-600 dark:text-gray-300">{data.rationale}</p>}
-      {data.snippet && <pre className="font-mono text-[13px] leading-5 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 overflow-x-auto whitespace-pre-wrap break-words">{data.snippet}</pre>}
+      {data.snippet && <pre className="font-mono text-xs leading-5 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 overflow-x-auto whitespace-pre-wrap break-words">{data.snippet}</pre>}
     </div>
   )
 }
@@ -1037,7 +1037,7 @@ export function ReviewView({ data, findings }: { data: CodeReviewBody; findings:
       <MetaList label="Notes" items={data.notes} />
       {findings.length > 0 && (
         <div className="space-y-1.5">
-          <span className="text-[13px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+          <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
             Findings ({findingSeverityCounts(findings)})
           </span>
           {findings.map(f => f.body
@@ -1049,7 +1049,7 @@ export function ReviewView({ data, findings }: { data: CodeReviewBody; findings:
       )}
       {data.rendered && (
         <details className="border-t border-gray-100 dark:border-gray-700 pt-2">
-          <summary className="cursor-pointer select-none text-[13px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+          <summary className="cursor-pointer select-none text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
             Full review
           </summary>
           <div className="mt-2 -mx-3">
@@ -1065,7 +1065,7 @@ function MetaList({ label, items }: { label: string; items: string[] | undefined
   if (!items || items.length === 0) return null
   return (
     <div>
-      <span className="text-[13px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">{label}</span>
+      <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">{label}</span>
       <ul className="mt-0.5 list-disc list-inside space-y-0.5 text-gray-600 dark:text-gray-300">
         {items.map((it, i) => <li key={i}>{it}</li>)}
       </ul>
@@ -1082,7 +1082,7 @@ export function JudgeRoundView({ data }: { data: JudgeRoundContent }) {
         <span className={`inline-flex items-center gap-1 font-medium ${data.passed ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'}`}>
           <Icon name={data.passed ? 'check' : 'close'} className="w-3.5 h-3.5" /> {data.passed ? 'passed' : 'failed'}
         </span>
-        {data.score != null && <span className="text-gray-500 dark:text-gray-400 tabular-nums text-[13px]">{data.score.toFixed(2)}</span>}
+        {data.score != null && <span className="text-gray-500 dark:text-gray-400 tabular-nums text-xs">{data.score.toFixed(2)}</span>}
       </div>
       {data.criteria && data.criteria.length > 0 && (
         <table className="w-full text-left">
@@ -1099,7 +1099,7 @@ export function JudgeRoundView({ data }: { data: JudgeRoundContent }) {
       )}
       {data.evidence?.probes && data.evidence.probes.length > 0 && (
         <div>
-          <span className="text-[13px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Probes</span>
+          <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Probes</span>
           <ul className="mt-0.5 space-y-0.5 text-gray-600 dark:text-gray-300">
             {data.evidence.probes.map((p, i) => <li key={i}>{p.name}: {p.result}</li>)}
           </ul>
@@ -1114,7 +1114,7 @@ export function JudgeRoundView({ data }: { data: JudgeRoundContent }) {
 export function PlanView({ data }: { data: PlanBody }) {
   return (
     <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2.5 space-y-1.5 text-sm leading-6">
-      {data.status && <p className="text-[13px] text-gray-500 dark:text-gray-400">status: {data.status}</p>}
+      {data.status && <p className="text-xs text-gray-500 dark:text-gray-400">status: {data.status}</p>}
       {(data.assignments ?? []).map((a, i) => (
         <div key={i} className="border-t border-gray-100 dark:border-gray-700 first:border-t-0 pt-1.5">
           <p className="font-medium text-gray-800 dark:text-gray-100">{a.node_id}</p>
@@ -1332,7 +1332,7 @@ function UnanchoredNotes({ notes }: { notes: JudgeNote[] }) {
   if (notes.length === 0) return null
   return (
     <div>
-      <span className="text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+      <span className="text-2xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
         Unanchored notes
       </span>
       <ul className="mt-1 space-y-1">
@@ -1365,7 +1365,7 @@ function DetailsSection({ curInfo, open, onOpenChange, nodeTask, primary, revisi
       onToggle={e => onOpenChange(e.currentTarget.open)}
       className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg"
     >
-      <summary className="cursor-pointer select-none px-3 py-2 text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+      <summary className="cursor-pointer select-none px-3 py-2 text-2xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
         Details
       </summary>
       {open && (

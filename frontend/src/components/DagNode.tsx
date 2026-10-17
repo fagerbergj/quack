@@ -189,7 +189,7 @@ function QueuedBadge({ count }: { count: number }) {
   if (count === 0) return null
   return (
     <span
-      className="text-[11px] font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400 inline-flex items-center gap-0.5"
+      className="text-2xs font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400 inline-flex items-center gap-0.5"
       title={`${count} parked message${count === 1 ? '' : 's'} - delivers when the current round ends`}
     >
       <Icon name="mail" className="w-3 h-3" /> {count}
@@ -213,11 +213,11 @@ export function pausedStatusLabel(status: NodeStatus, reason: NodeState['pauseRe
 function RunTimer({ run }: { run: AgentRun }) {
   if (run.done) {
     return run.durationMs != null
-      ? <span className="text-[11px] text-gray-500 dark:text-gray-400 tabular-nums ml-auto">{fmtMs(run.durationMs)}</span>
+      ? <span className="text-2xs text-gray-500 dark:text-gray-400 tabular-nums ml-auto">{fmtMs(run.durationMs)}</span>
       : null
   }
   return run.startedAt != null
-    ? <span className="text-[11px] text-gray-500 dark:text-gray-400 tabular-nums ml-auto"><LiveTimer startedAt={run.startedAt} /></span>
+    ? <span className="text-2xs text-gray-500 dark:text-gray-400 tabular-nums ml-auto"><LiveTimer startedAt={run.startedAt} /></span>
     : null
 }
 
@@ -225,7 +225,7 @@ function RunTimer({ run }: { run: AgentRun }) {
 function RunModel({ run }: { run: AgentRun }) {
   if (!run.model) return null
   return (
-    <span className="text-[11px] text-gray-500 dark:text-gray-400 font-mono truncate max-w-[100px]" title={run.model}>
+    <span className="text-2xs text-gray-500 dark:text-gray-400 font-mono truncate max-w-[100px]" title={run.model}>
       {run.model}
     </span>
   )
@@ -254,7 +254,7 @@ function ContextMeter({ used, limit }: { used: number; limit: number }) {
       <span className="w-8 h-1 rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden">
         <span className={`block h-full rounded-full ${barColor}`} style={{ width: `${pct}%` }} />
       </span>
-      <span className={`text-[11px] tabular-nums ${textColor}`}>{fmtTokenCount(used)}/{fmtTokenCount(limit)}</span>
+      <span className={`text-2xs tabular-nums ${textColor}`}>{fmtTokenCount(used)}/{fmtTokenCount(limit)}</span>
     </span>
   )
 }
@@ -274,7 +274,7 @@ function ContentPopup({ title, text, onClose }: { title: string; text: string; o
         </button>
       </div>
       <div className="group/verdict relative bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
-        <span className="block mb-2 text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">{title}</span>
+        <span className="block mb-2 text-2xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">{title}</span>
         {/* A named group because the popup nests inside DagNode's own `.group` card:
             only this block's hover/focus reveals the copy button. */}
         <span className="absolute top-4 right-5 opacity-0 group-hover/verdict:opacity-100 group-focus-within/verdict:opacity-100 transition-opacity">
@@ -288,7 +288,7 @@ function ContentPopup({ title, text, onClose }: { title: string; text: string; o
 
 // A one-line "label + truncated preview" that opens the full content in a ContentPopup instead of
 // expanding inline: a verdict or vetted answer reads better full-size than height-locked in the card.
-function CollapsedPreview({ label, text, popupTitle, className = 'py-1 text-[11px]', labelClass = 'italic shrink-0', max }: {
+function CollapsedPreview({ label, text, popupTitle, className = 'py-1 text-2xs', labelClass = 'italic shrink-0', max }: {
   label: string; text: string; popupTitle: string; className?: string; labelClass?: string; max?: number
 }) {
   const [open, setOpen] = useState(false)
@@ -433,10 +433,10 @@ const JudgeCard = memo(function JudgeCard({ run, running }: { run: AgentRun; run
   if (failureHeading) {
     return (
       <div className="border-t border-gray-100 dark:border-gray-700 px-4 py-2 bg-yellow-50 dark:bg-yellow-900/15">
-        <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-yellow-700 dark:text-yellow-400 uppercase tracking-wide">
+        <span className="inline-flex items-center gap-1 text-2xs font-semibold text-yellow-700 dark:text-yellow-400 uppercase tracking-wide">
           <Icon name="warning" className="w-3 h-3" /> {failureHeading} · round {run.round}
         </span>
-        <div className="text-[11px] text-yellow-700 dark:text-yellow-400/90 mt-0.5">
+        <div className="text-2xs text-yellow-700 dark:text-yellow-400/90 mt-0.5">
           Answer shown without a quality check - {run.reason}
         </div>
       </div>
@@ -446,14 +446,14 @@ const JudgeCard = memo(function JudgeCard({ run, running }: { run: AgentRun; run
     <div className="border-t border-gray-100 dark:border-gray-700">
       <details open={running} className="not-prose">
         <summary className="cursor-pointer select-none px-4 py-2 flex items-center gap-2">
-          <span className="text-[11px] font-semibold text-purple-600 dark:text-purple-400 uppercase tracking-wide">
+          <span className="text-2xs font-semibold text-purple-600 dark:text-purple-400 uppercase tracking-wide">
             Judge · round {run.round}
           </span>
           {/* The pass bar renders only when the server sent it (older events carry no envelope);
               the threshold lives in the title. */}
           {run.score != null && (
             <span
-              className={`inline-flex items-center gap-0.5 text-[11px] font-medium ${run.passed ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'}`}
+              className={`inline-flex items-center gap-0.5 text-2xs font-medium ${run.passed ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'}`}
               title={`${run.passed ? 'Passed' : 'Failed'}: ${(run.score * 100).toFixed(0)}%${run.threshold != null ? ` (needs ${(run.threshold * 100).toFixed(0)}%)` : ''}`}
             >
               <Icon name={run.passed ? 'check' : 'close'} className="w-3 h-3" /> {(run.score * 100).toFixed(0)}%
@@ -484,7 +484,7 @@ const RevisionCard = memo(function RevisionCard({ run, running }: { run: AgentRu
     <div className="border-t border-gray-100 dark:border-gray-700">
       <details open={running} className="not-prose">
         <summary className="cursor-pointer select-none px-4 py-2 flex items-center gap-2">
-          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wide">
+          <span className="inline-flex items-center gap-1 text-2xs font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wide">
             <Icon name="edit" className="w-3 h-3" /> Revised · round {run.round}
           </span>
           <RunModel run={run} />
@@ -528,19 +528,19 @@ function RetryControl({ nodeId, onRetry }: {
           placeholder="Retry with guidance (optional) - re-runs this node + downstream…"
           className="flex-1 min-w-0 text-xs px-2 py-1 rounded border border-indigo-300 dark:border-indigo-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-indigo-400"
         />
-        <button onClick={send} className="text-[11px] font-medium text-indigo-700 dark:text-indigo-400 hover:underline">retry</button>
-        <button onClick={() => { setGuiding(false); setText('') }} className="text-[11px] text-gray-500 dark:text-gray-400 hover:underline">cancel</button>
+        <button onClick={send} className="text-2xs font-medium text-indigo-700 dark:text-indigo-400 hover:underline">retry</button>
+        <button onClick={() => { setGuiding(false); setText('') }} className="text-2xs text-gray-500 dark:text-gray-400 hover:underline">cancel</button>
       </div>
     )
   }
   return (
     <div className="flex items-center gap-3 px-4 py-1.5 border-b border-gray-100 dark:border-gray-700">
       <button onClick={() => onRetry(nodeId)} title="Re-run this node and everything downstream of it (reuses the rest)"
-        className="inline-flex items-center gap-1 min-h-[44px] medium:min-h-0 text-[11px] font-medium text-indigo-600 dark:text-indigo-400 hover:underline">
+        className="inline-flex items-center gap-1 min-h-[44px] medium:min-h-0 text-2xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline">
         <Icon name="refresh" className="w-3 h-3" /> retry
       </button>
       <button onClick={() => setGuiding(true)} title="Re-run this node with new guidance"
-        className="inline-flex items-center gap-1 min-h-[44px] medium:min-h-0 text-[11px] font-medium text-indigo-600 dark:text-indigo-400 hover:underline">
+        className="inline-flex items-center gap-1 min-h-[44px] medium:min-h-0 text-2xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline">
         <Icon name="refresh" className="w-3 h-3" /> retry with guidance…
       </button>
     </div>
@@ -554,7 +554,7 @@ function NodeStateChips({ steers, resumedFrom }: { steers?: string[]; resumedFro
     <>
       {steers && steers.length > 0 && (
         <span
-          className="shrink-0 inline-flex items-center gap-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-400"
+          className="shrink-0 inline-flex items-center gap-0.5 text-2xs font-medium text-amber-700 dark:text-amber-400"
           title={`Queued message(s) delivered:\n${steers.join('\n')}`}
         >
           <Icon name="mail" className="w-3 h-3" /> steered{steers.length > 1 ? ` ×${steers.length}` : ''}
@@ -562,7 +562,7 @@ function NodeStateChips({ steers, resumedFrom }: { steers?: string[]; resumedFro
       )}
       {resumedFrom && (
         <span
-          className="shrink-0 inline-flex items-center gap-0.5 text-[11px] font-medium text-gray-500 dark:text-gray-400"
+          className="shrink-0 inline-flex items-center gap-0.5 text-2xs font-medium text-gray-500 dark:text-gray-400"
           title={`This node picked up where it left off, on its own prior session (${resumedFrom})`}
         >
           <Icon name="history" className="w-3 h-3" /> continues
@@ -578,7 +578,7 @@ function NodeStatusLabel({ state, pauseLabel }: { state: NodeState; pauseLabel?:
   const wait = state.status === 'queued' ? state.capacityWait : undefined
   if (!wait) return <StatusDot status={state.status} label={pauseLabel} />
   return (
-    <span className="min-w-0 inline-flex flex-wrap items-center gap-x-1.5 text-[11px] text-gray-500 dark:text-gray-400">
+    <span className="min-w-0 inline-flex flex-wrap items-center gap-x-1.5 text-2xs text-gray-500 dark:text-gray-400">
       <span role="status" className="min-w-0 inline-flex flex-wrap items-center gap-x-1.5">
         <span className="inline-flex items-center gap-1 font-medium">
           <Icon name="hourglass_empty" className="w-3 h-3 shrink-0 text-amber-600 dark:text-amber-400" />
@@ -602,25 +602,25 @@ function NodeMetaRow({ state, node, pauseLabel }: { state: NodeState; node: DagN
     <div className="empty:hidden min-w-0 flex flex-wrap items-center gap-x-2 gap-y-0.5 basis-full order-last medium:basis-auto medium:order-none medium:justify-end">
       <NodeStatusLabel state={state} pauseLabel={pauseLabel} />
       {state.model && (
-        <span className="text-[11px] text-gray-500 dark:text-gray-400 font-mono truncate max-w-[120px]" title={state.model}>
+        <span className="text-2xs text-gray-500 dark:text-gray-400 font-mono truncate max-w-[120px]" title={state.model}>
           {state.model}
         </span>
       )}
       {state.finishReason === 'MAX_TOKENS' && (
-        <span className="text-[11px] font-medium text-amber-700 dark:text-amber-400" title="Response was truncated at the token limit">
+        <span className="text-2xs font-medium text-amber-700 dark:text-amber-400" title="Response was truncated at the token limit">
           truncated
         </span>
       )}
       {state.judgeRounds != null && state.judgeRounds > 0 && state.judgePassed !== true && (
         <span
-          className="inline-flex items-center gap-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-400"
+          className="inline-flex items-center gap-0.5 text-2xs font-medium text-amber-700 dark:text-amber-400"
           title={`The quality check rejected this output after ${state.judgeRounds} round${state.judgeRounds === 1 ? '' : 's'}${state.judgeFinalScore != null ? ` (final score ${(state.judgeFinalScore * 100).toFixed(0)}%)` : ''} - shown without a passing check`}
         >
           <Icon name="warning" className="w-3 h-3" /> not verified
         </span>
       )}
       {state.totalTokens != null && state.totalTokens > 0 && (
-        <span className="text-[11px] text-gray-500 dark:text-gray-400 tabular-nums">
+        <span className="text-2xs text-gray-500 dark:text-gray-400 tabular-nums">
           {state.totalTokens.toLocaleString()} tokens
           {state.costUsd != null && (
             <span title="Cloud-equivalent price of this node's model calls, quality checks included"> · {fmtCost(state.costUsd)}</span>
@@ -635,7 +635,7 @@ function NodeMetaRow({ state, node, pauseLabel }: { state: NodeState; node: DagN
           href={traceUrl(state.traceId)}
           target="_blank"
           rel="noreferrer"
-          className="text-[11px] text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 underline"
+          className="text-2xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 underline"
           title="Open this run's trace in the tracing backend (whole run, not just this node)"
         >
           run trace
@@ -651,9 +651,9 @@ function NodeMetaRow({ state, node, pauseLabel }: { state: NodeState; node: DagN
 function NodeElapsed({ state, notStarted }: { state: NodeState; notStarted: boolean }) {
   if (notStarted) return null
   return (state.finishedAt != null && state.serverDurationMs != null) ? (
-    <span className="shrink-0 text-[11px] text-gray-500 dark:text-gray-400 tabular-nums">{fmtMs(state.serverDurationMs)}</span>
+    <span className="shrink-0 text-2xs text-gray-500 dark:text-gray-400 tabular-nums">{fmtMs(state.serverDurationMs)}</span>
   ) : state.startedAt != null ? (
-    <span className="shrink-0 text-[11px] text-gray-500 dark:text-gray-400 tabular-nums">
+    <span className="shrink-0 text-2xs text-gray-500 dark:text-gray-400 tabular-nums">
       <LiveTimer startedAt={state.startedAt} finishedAt={state.finishedAt} paused={isPausedStatus(state.status)} />
     </span>
   ) : null
