@@ -133,7 +133,7 @@ function InfoLine({ label, text }: { label: string; text: string }) {
 function CollapsibleSection({ summary, children }: { summary: ReactNode; children: ReactNode }) {
   return (
     // Full-bleed divided rows (an M3 list inside the card), not an outlined box per section; -mx-5/px-5 match the card's padding.
-    <details className="-mx-5 px-5 !mb-0 border-t border-gray-200 dark:border-gray-700 not-prose">
+    <details className="-mx-5 px-5 !mb-0 border-t first:border-t-0 border-gray-200 dark:border-gray-700 not-prose">
       <summary className="cursor-pointer select-none py-3.5 medium:py-2.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-gray-100">
         {summary}
       </summary>
