@@ -3,7 +3,7 @@ import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
 import { act, cleanup, render as rtlRender, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactElement } from 'react'
-import { ArtifactPanel, ReviewView, JudgeRoundView, PlanView } from './ArtifactPanel'
+import { ArtifactPanel, ReviewView, JudgeRoundView, PlanView, JsonRoot } from './ArtifactPanel'
 import { client } from '../generated/client.gen'
 import { ChatStoreProvider } from '../state/ChatStoreProvider'
 import { ChatStore } from '../state/chatStore'
@@ -816,4 +816,23 @@ describe('A2UI artifacts in the panel', () => {
     await user.click(reveal)
     expect(await screen.findByText(/the secret reason/)).toBeTruthy()
   }, 30000)
+})
+
+// The fallback for a kind with no typed view (#1792, #1798).
+describe('JsonRoot', () => {
+  const player = { id: '7594', name: 'Chuba Hubbard', pos: 'RB', team: 'CAR', proj: 16.16 }
+
+  it('keeps a small top-level record a field list, one <dt> per key', () => {
+    const { container } = rtlRender(<JsonRoot v={{ outcome: 'delivered', pr: 1 }} />)
+    expect([...container.querySelectorAll('dt')].map(d => d.textContent)).toEqual(['Outcome', 'Pr'])
+  })
+
+  it('puts a nested object of up to six flat fields on one line, and lists a seventh-field one', () => {
+    const { container } = rtlRender(<JsonRoot v={{ give: player, get: { ...player, bye: 7, age: 26 } }} />)
+    expect([...container.querySelectorAll('dt')].map(d => d.textContent)).toEqual(['Give', 'Get', 'Id', 'Name', 'Pos', 'Team', 'Proj', 'Bye', 'Age'])
+  })
+
+  it('reads an empty object as none, not a blank', () => {
+    expect(rtlRender(<JsonRoot v={{}} />).container.textContent).toBe('none')
+  })
 })

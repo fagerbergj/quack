@@ -950,8 +950,8 @@ function JsonValue({ v }: { v: unknown }) {
   if (isRecord(v)) {
     const entries = Object.entries(v)
     if (entries.length === 0) return <span className="text-gray-500 dark:text-gray-400">none</span>
-    if (entries.length > 4 || entries.some(([, x]) => x !== null && typeof x === 'object')) return <JsonFields data={v} />
-    // A small flat object (a player: name, pos, proj) stays on one line.
+    if (entries.length > 6 || entries.some(([, x]) => x !== null && typeof x === 'object')) return <JsonFields data={v} />
+    // A small nested object (a player: id, name, pos, team, proj) stays on one line.
     return (
       <span className="flex flex-wrap gap-x-3 gap-y-1">
         {entries.map(([k, x]) => <span key={k}><span className="text-xs text-gray-500 dark:text-gray-400">{fieldLabel(k)}</span> <JsonValue v={x} /></span>)}
@@ -960,6 +960,11 @@ function JsonValue({ v }: { v: unknown }) {
   }
   if (typeof v === 'boolean') return <span>{v ? 'yes' : 'no'}</span>
   return <span className={`break-words ${typeof v === 'number' ? 'tabular-nums' : ''}`}>{String(v)}</span>
+}
+
+// The top level is always a field list; only nested small objects go inline.
+export function JsonRoot({ v }: { v: unknown }) {
+  return isRecord(v) && Object.keys(v).length > 0 ? <JsonFields data={v} /> : <JsonValue v={v} />
 }
 
 // Label-over-value on compact width, a two-column field list from `medium` up.
@@ -1169,7 +1174,7 @@ function ArtifactView({ content, displayText, lines, rawView, isStructured, pars
   if (parsedJson === undefined) return <ArtifactLines lines={lines} byLine={byLine} activeNote={activeNote} onSelectNote={onSelectNote} />
   const typed = typedView(kind, parsedJson, reviewFindings ?? [], surface)
   // A kind with no typed view falls back to labelled fields; Raw still shows the exact JSON.
-  return typed ?? <JsonValue v={parsedJson} />
+  return typed ?? <JsonRoot v={parsedJson} />
 }
 
 // One tapped judge note's callout under the rendered output.
