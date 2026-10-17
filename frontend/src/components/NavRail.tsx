@@ -90,7 +90,7 @@ export function NavRail({ route, activeExtension, initialExtensions, versionOver
       </div>
       {version && (
         <div className="shrink-0 px-3 py-1.5">
-          <span className="text-[11px] text-gray-500 dark:text-gray-400" title={version}>
+          <span className="text-2xs text-gray-500 dark:text-gray-400" title={version}>
             {displayVersion(version)}
           </span>
         </div>

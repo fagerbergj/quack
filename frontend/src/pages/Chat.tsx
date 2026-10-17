@@ -450,7 +450,7 @@ function ChatHeader({ title, editable, status, startedAt, activeChatId, isArchiv
           {isArchived && (
             <span
               title="This chat is archived and read-only. Restore it from the Archived section to continue."
-              className={`flex-shrink-0 text-[11px] font-semibold tracking-wide px-1.5 py-0.5 rounded ${TONE.gray}`}
+              className={`flex-shrink-0 text-2xs font-semibold tracking-wide px-1.5 py-0.5 rounded ${TONE.gray}`}
             >
               Archived
             </span>

@@ -25,7 +25,7 @@ export function JudgeRoundBreakdown({ detail }: { detail: JudgeRoundDetail }) {
         {detail.criteria.map(c => (
           <li key={c.name}>
             <details>
-              <summary className="list-none cursor-pointer min-h-[32px] flex items-center gap-2 text-[11px] rounded hover:bg-gray-50 dark:hover:bg-gray-700/40">
+              <summary className="list-none cursor-pointer min-h-[32px] flex items-center gap-2 text-2xs rounded hover:bg-gray-50 dark:hover:bg-gray-700/40">
                 <span className={`min-w-0 flex-1 truncate font-mono ${c.failed ? 'text-red-700 dark:text-red-400 font-semibold' : 'text-gray-600 dark:text-gray-300'}`} title={c.name}>
                   {c.failed && <Icon name="close" className="w-3 h-3 inline -mt-0.5 mr-0.5" />}{c.name}
                 </span>
@@ -38,7 +38,7 @@ export function JudgeRoundBreakdown({ detail }: { detail: JudgeRoundDetail }) {
                 <span className="w-9 shrink-0 text-right tabular-nums text-gray-600 dark:text-gray-300">{c.score != null ? pct(c.score) : '-'}</span>
               </summary>
               {c.feedback && (
-                <p className="pb-1 text-[11px] text-gray-500 dark:text-gray-400 whitespace-pre-wrap [overflow-wrap:anywhere]">{c.feedback}</p>
+                <p className="pb-1 text-2xs text-gray-500 dark:text-gray-400 whitespace-pre-wrap [overflow-wrap:anywhere]">{c.feedback}</p>
               )}
             </details>
           </li>
@@ -87,16 +87,16 @@ export function NodeQualityCheck({ chatId, nodeId, startedAt, finishedAt }: {
       className="border-t border-gray-100 dark:border-gray-700"
       onToggle={e => { if (e.currentTarget.open) load() }}
     >
-      <summary className="cursor-pointer select-none min-h-[44px] px-4 flex items-center gap-2 text-[11px] text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/40">
+      <summary className="cursor-pointer select-none min-h-[44px] px-4 flex items-center gap-2 text-2xs text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/40">
         <span className="font-semibold uppercase tracking-wide">Quality check</span>
         <span className="tabular-nums text-gray-500 dark:text-gray-400">{refs.length} round{refs.length === 1 ? '' : 's'}</span>
         <span className="ml-auto text-gray-500 dark:text-gray-400">per-criterion scores</span>
       </summary>
       <div className="px-4 pb-3 space-y-3">
         {failed ? (
-          <p className="text-[11px] text-red-700 dark:text-red-400">Couldn't load the judge rounds.</p>
+          <p className="text-2xs text-red-700 dark:text-red-400">Couldn't load the judge rounds.</p>
         ) : details == null ? (
-          <p role="status" className="text-[11px] text-gray-500 dark:text-gray-400">Loading judge rounds…</p>
+          <p role="status" className="text-2xs text-gray-500 dark:text-gray-400">Loading judge rounds…</p>
         ) : (
           details.map(d => <JudgeRoundBreakdown key={d.round} detail={d} />)
         )}

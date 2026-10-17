@@ -57,7 +57,7 @@ export function VoteControl({ score, ownVote, onVote, disabled }: VoteControlPro
       >
         <Icon name="arrow_downward" className="w-3.5 h-3.5" />
       </button>
-      {error && <span role="status" className="text-[11px] text-red-700 dark:text-red-400 ml-1">Vote failed</span>}
+      {error && <span role="status" className="text-2xs text-red-700 dark:text-red-400 ml-1">Vote failed</span>}
     </div>
   )
 }

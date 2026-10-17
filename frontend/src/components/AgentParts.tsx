@@ -181,7 +181,7 @@ function UnverifiedMark({ u, chatId }: { u: Unverified; chatId?: string }) {
 // passes `status`; completed turns have no live status.
 export function BubbleHeader({ agent, model, tokens, status, stopped, unverified, pending, chatId }: { agent: string; model?: string; tokens?: number; status?: DotStatus; stopped?: StoppedBadge; unverified?: Unverified; pending?: boolean; chatId?: string }) {
   return (
-    <div className="relative flex items-center gap-2 mb-2 text-[11px] text-gray-500 dark:text-gray-400">
+    <div className="relative flex items-center gap-2 mb-2 text-2xs text-gray-500 dark:text-gray-400">
       {status && <StatusDot status={status} />}
       <span className="font-semibold text-gray-500 dark:text-gray-400">{agentLabel(agent)}</span>
       {stopped && (
@@ -218,7 +218,7 @@ export function ActivityList({ activity }: { activity: Activity[] }) {
       {hidden > 0 && (
         <button
           onClick={() => setShowAll(s => !s)}
-          className="min-h-[44px] -my-2 inline-flex items-center text-[11px] text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+          className="min-h-[44px] -my-2 inline-flex items-center text-2xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
         >
           {showAll ? '▾ show less' : `⋯ ${hidden} earlier`}
         </button>
@@ -240,7 +240,7 @@ export function LiveStatusLine({ activity }: { activity: Activity[] }) {
   const { thinking, tool, compacted } = liveStatusLine(activity)
   if (!thinking && !tool && !compacted) return null
   return (
-    <div className="flex items-center gap-1.5 min-w-0 py-0.5 text-[11px] text-gray-500 dark:text-gray-400 not-prose">
+    <div className="flex items-center gap-1.5 min-w-0 py-0.5 text-2xs text-gray-500 dark:text-gray-400 not-prose">
       <Dots variant="compact" size="w-1 h-1" />
       {thinking && <span className="italic shrink-0">thinking</span>}
       {compacted && <span className="italic shrink-0">compacted</span>}
@@ -266,7 +266,7 @@ function ThoughtIcon() {
 function ThinkBlock({ text }: { text: string }) {
   return (
     <details className="group my-0.5 not-prose">
-      <summary className="cursor-pointer select-none flex items-center gap-1.5 py-1 text-[11px] text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+      <summary className="cursor-pointer select-none flex items-center gap-1.5 py-1 text-2xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
         <ThoughtIcon />
         <span className="italic shrink-0">Thought</span>
         <span className="truncate text-gray-500 dark:text-gray-400 group-open:hidden">{previewLine(text)}</span>
@@ -286,7 +286,7 @@ function CompactionBlock({ summaryInputTokens, summaryOutputTokens }: { summaryI
   const hasTokens = !!summaryInputTokens || !!summaryOutputTokens
   return (
     <div
-      className="flex items-center gap-1.5 my-0.5 py-0.5 text-[11px] text-gray-500 dark:text-gray-400 not-prose"
+      className="flex items-center gap-1.5 my-0.5 py-0.5 text-2xs text-gray-500 dark:text-gray-400 not-prose"
       aria-label={hasTokens ? `Context compacted, summarizer spent ${summaryInputTokens ?? 0} in / ${summaryOutputTokens ?? 0} out tokens` : 'Context compacted'}
     >
       <span aria-hidden>↯</span>
@@ -304,7 +304,7 @@ export function AcpBadge() {
   return (
     <span
       title="Run by an external ACP agent - rendered best-effort"
-      className="shrink-0 text-[11px] font-semibold tracking-wide px-1 py-0.5 rounded bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-300"
+      className="shrink-0 text-2xs font-semibold tracking-wide px-1 py-0.5 rounded bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-300"
     >
       ACP
     </span>
@@ -318,7 +318,7 @@ export function ToolBlock({ tool }: { tool: ToolCall }) {
   return (
     <div className="relative my-0.5 not-prose">
       <details className="group">
-        <summary className="cursor-pointer select-none flex items-center gap-1.5 py-1 text-[11px]">
+        <summary className="cursor-pointer select-none flex items-center gap-1.5 py-1 text-2xs">
           <ToolStatusIcon tool={tool} />
           <span className="text-gray-600 dark:text-gray-300 truncate" title={label}>{toolActionLine(label, tool.args)}</span>
         </summary>

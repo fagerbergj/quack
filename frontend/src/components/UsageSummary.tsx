@@ -18,7 +18,7 @@ export function UsageSummary({ models, usage }: UsageSummaryProps) {
   const cost = usage?.cost_usd
 
   return (
-    <div className="flex items-center gap-1.5 text-[11px] text-gray-500 dark:text-gray-400 flex-shrink-0">
+    <div className="flex items-center gap-1.5 text-2xs text-gray-500 dark:text-gray-400 flex-shrink-0">
       {models.map(m => (
         <span
           key={m}
