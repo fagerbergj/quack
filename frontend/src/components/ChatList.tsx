@@ -180,7 +180,7 @@ function ChatRowMenu({ s, menuRef, btnRef, menuOpen, onToggle, archived, onArchi
               onClick={e => { e.stopPropagation(); onToggle(); onArchive?.(s.id) }}
               aria-label="Archive chat"
               title="Archive chat"
-              className="w-full flex items-center gap-1.5 text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+              className="w-full flex items-center gap-2 text-left px-3 py-2 min-h-[44px] medium:min-h-0 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
             >
               <Icon name="archive" className="w-3.5 h-3.5" /> Archive
             </button>
@@ -191,7 +191,7 @@ function ChatRowMenu({ s, menuRef, btnRef, menuOpen, onToggle, archived, onArchi
               onClick={e => { e.stopPropagation(); onToggle(); onUnarchive(s.id) }}
               aria-label="Unarchive chat"
               title="Unarchive chat"
-              className="w-full flex items-center gap-1.5 text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-blue-50 dark:hover:bg-blue-900/40 hover:text-blue-700 dark:hover:text-blue-400 transition-colors"
+              className="w-full flex items-center gap-2 text-left px-3 py-2 min-h-[44px] medium:min-h-0 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-blue-50 dark:hover:bg-blue-900/40 hover:text-blue-700 dark:hover:text-blue-400 transition-colors"
             >
               <Icon name="history" className="w-3.5 h-3.5" /> Restore
             </button>
@@ -202,7 +202,7 @@ function ChatRowMenu({ s, menuRef, btnRef, menuOpen, onToggle, archived, onArchi
               onClick={onDelete}
               aria-label="Delete chat permanently"
               title="Delete chat permanently"
-              className="w-full flex items-center gap-1.5 text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 text-xs font-medium text-red-700 dark:text-red-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+              className="w-full flex items-center gap-2 text-left px-3 py-2 min-h-[44px] medium:min-h-0 text-xs font-medium text-red-700 dark:text-red-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
             >
               <Icon name="delete" className="w-3.5 h-3.5" /> Delete
             </button>
@@ -277,11 +277,11 @@ function ChatRow({
 
   return (
     <div
-      className={`group relative flex flex-col px-3 py-2.5 cursor-pointer border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors ${activeChatId === s.id ? 'bg-blue-50 dark:bg-blue-900/30' : ''}`}
+      className={`group relative flex flex-col px-3 py-3 cursor-pointer border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors ${activeChatId === s.id ? 'bg-blue-50 dark:bg-blue-900/30' : ''}`}
       onClick={() => onSelect(s.id)}
     >
       <span title={s.title || UNTITLED_CHAT} className="flex items-center pr-11">
-        <StatusDot status={s.status} className="mr-1.5" variant="chat" />
+        <StatusDot status={s.status} className="mr-2" variant="chat" />
         <span className={`text-sm truncate block ${activeChatId === s.id ? 'text-blue-700 dark:text-blue-400 font-medium' : 'text-gray-800 dark:text-gray-100'}`}>
           {s.title || UNTITLED_CHAT}
         </span>
@@ -338,7 +338,7 @@ function ArchivedSection({ archived, loaded, expanded, onToggle, activeChatId, o
     <div>
       <button
         onClick={onToggle}
-        className="w-full flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors border-t border-gray-200 dark:border-gray-700"
+        className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors border-t border-gray-200 dark:border-gray-700"
         aria-expanded={expanded}
       >
         <span aria-hidden="true" className={`transition-transform inline-block ${expanded ? 'rotate-90' : ''}`}>›</span>
@@ -422,20 +422,20 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
         </button>
         <button
           onClick={onCloseMobile}
-          className="medium:hidden text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 p-1.5 rounded transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center"
+          className="medium:hidden text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 p-2 rounded transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center"
           aria-label="Close chat list"
         >
           <Icon name="close" className="w-4 h-4" />
         </button>
       </div>
-      <div className="p-2 border-b border-gray-200 dark:border-gray-700 flex items-center gap-1.5">
+      <div className="p-2 border-b border-gray-200 dark:border-gray-700 flex items-center gap-2">
         <input
           type="search"
           value={q}
           onChange={e => setFilterState({ q: e.target.value })}
           placeholder="Search chats…"
           aria-label="Search chats"
-          className="flex-1 min-w-0 rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
+          className="flex-1 min-w-0 rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
         />
         <FilterPanel
           facets={facets}

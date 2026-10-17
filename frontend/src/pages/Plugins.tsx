@@ -126,7 +126,7 @@ export default function Plugins({ navOpen, onToggleNav, initialPlugins, initialU
           onClick={handleReload}
           disabled={busy.has('reload')}
           title="Rebuild agents, workflows and MCP servers from the registered plugins"
-          className="flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 min-h-[44px] text-sm font-medium text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          className="flex items-center justify-center gap-2 rounded-md px-3 py-2 min-h-[44px] text-sm font-medium text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
           <Icon name="restart_alt" className="w-4 h-4" />
           Reload
@@ -134,7 +134,7 @@ export default function Plugins({ navOpen, onToggleNav, initialPlugins, initialU
         <button
           onClick={handleUpdateAll}
           disabled={!anyBehind || busy.has('*')}
-          className="flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 min-h-[44px] text-sm font-medium text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          className="flex items-center justify-center gap-2 rounded-md px-3 py-2 min-h-[44px] text-sm font-medium text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
           <Icon name="refresh" className="w-4 h-4" />
           Update all
@@ -166,7 +166,7 @@ export default function Plugins({ navOpen, onToggleNav, initialPlugins, initialU
 
 function ErrorBanner({ message }: { message: string }) {
   return (
-    <div className="m-3 rounded-md bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 px-4 py-3 text-sm text-red-700 dark:text-red-400 flex items-center gap-1.5">
+    <div className="m-3 rounded-md bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 px-4 py-3 text-sm text-red-700 dark:text-red-400 flex items-center gap-2">
       <Icon name="warning" className="w-4 h-4 shrink-0" />
       <span>{message}</span>
     </div>
@@ -196,7 +196,7 @@ function AddPluginForm({ onSettled }: { onSettled: (x: unknown, ok: boolean) => 
   }
 
   return (
-    <form onSubmit={e => void handleAdd(e)} className="flex flex-col gap-1.5 px-4 py-3 sm:px-6 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+    <form onSubmit={e => void handleAdd(e)} className="flex flex-col gap-2 px-4 py-3 sm:px-6 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
       <div className="flex items-center gap-2">
         <input
           type="text"
@@ -204,12 +204,12 @@ function AddPluginForm({ onSettled }: { onSettled: (x: unknown, ok: boolean) => 
           onChange={e => setEntry(e.target.value)}
           placeholder="github:owner/repo[@ref][#path]"
           aria-label="Plugin entry"
-          className="flex-1 min-w-0 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-3 py-1.5 text-sm placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="flex-1 min-w-0 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-3 py-2 text-sm placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
         <button
           type="submit"
           disabled={adding || !entry.trim()}
-          className="flex items-center justify-center rounded-md px-3 py-1.5 min-h-[44px] medium:min-h-0 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          className="flex items-center justify-center rounded-md px-3 py-2 min-h-[44px] medium:min-h-0 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
           Add
         </button>
@@ -270,7 +270,7 @@ function ReloadReportPanel({ result: { reload: r, aborted }, onDismiss }: { resu
       {r.failures.length > 0 && (
         <ul className="flex flex-col gap-1 pb-1 text-xs text-amber-700 dark:text-amber-400">
           {r.failures.map((f, i) => (
-            <li key={i} className="flex items-start gap-1.5">
+            <li key={i} className="flex items-start gap-2">
               <Icon name="warning" className="w-3.5 h-3.5 shrink-0 mt-0.5" />
               <span className="min-w-0 break-words whitespace-pre-line">
                 <span className="font-medium">{failureSource(f)}</span> ({f.stage}): <span className="font-mono">{f.error}</span>
@@ -368,7 +368,7 @@ function PluginRow({ plugin: p, update, busy, onUpdate, onRemove }: {
           )}
         </div>
         {p.error && (
-          <div className="mt-1 flex items-start gap-1.5 text-xs text-red-600 dark:text-red-400">
+          <div className="mt-1 flex items-start gap-2 text-xs text-red-600 dark:text-red-400">
             <Icon name="warning" className="w-3.5 h-3.5 shrink-0 mt-0.5" />
             <span className="min-w-0 break-words whitespace-pre-line font-mono">{p.error}</span>
           </div>

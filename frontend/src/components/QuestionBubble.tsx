@@ -33,7 +33,7 @@ export function QuestionBubble({
   if (answered != null) {
     return (
       <div className="mt-3 rounded-xl border border-gray-200 dark:border-gray-700 border-l-4 bg-gray-50 dark:bg-gray-800/40 px-4 py-3">
-        <div className="flex items-center gap-1.5 text-xs font-medium text-green-700 dark:text-green-400">
+        <div className="flex items-center gap-2 text-xs font-medium text-green-700 dark:text-green-400">
           <Icon name="check" className="w-3.5 h-3.5" />
           Answered · {agentLabel(agent)}
         </div>
@@ -51,7 +51,7 @@ export function QuestionBubble({
       role="group"
       aria-label={`${agentLabel(agent)} needs your input`}
     >
-      <div className="flex items-center gap-1.5 text-xs font-medium text-blue-700 dark:text-blue-300">
+      <div className="flex items-center gap-2 text-xs font-medium text-blue-700 dark:text-blue-300">
         <Icon name="help" className="w-3.5 h-3.5" />
         {agentLabel(agent)} needs your input
       </div>
@@ -62,7 +62,7 @@ export function QuestionBubble({
         {options.length > 0 ? 'Pick an option, or type your own answer.' : 'Type your answer below.'}
       </p>
       {options.length > 0 && (
-        <div className="mt-2.5 flex flex-wrap gap-2">
+        <div className="mt-3 flex flex-wrap gap-2">
           {options.map((opt, i) => (
             <button
               key={i}
@@ -76,7 +76,7 @@ export function QuestionBubble({
           ))}
         </div>
       )}
-      <form onSubmit={submitFreeform} className="mt-2.5 flex gap-2 items-end">
+      <form onSubmit={submitFreeform} className="mt-3 flex gap-2 items-end">
         <textarea
           value={freeform}
           rows={2}

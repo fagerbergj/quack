@@ -353,7 +353,7 @@ function WebSearchView({ tool }: { tool: ToolCall }) {
       <PathHeader path={`"${query}"`} />
       {Array.isArray(results) ? (
         <Expandable maxHeight={260} fade="from-gray-50 dark:from-gray-900">
-          <ul className="space-y-1.5">
+          <ul className="space-y-2">
             {results.map((r, i) => (
               <li key={i} className="bg-gray-50 dark:bg-gray-900 rounded p-2 text-2xs">
                 <div className="text-gray-700 dark:text-gray-200 font-medium truncate">{str(r, 'title')}</div>

@@ -116,7 +116,7 @@ export function EditableChatTitle({ title, editable, onRename }: EditableChatTit
     <h1
       onClick={startEdit}
       title={editable ? 'Click to rename' : undefined}
-      className={`group flex min-w-0 items-center gap-1.5 text-base font-semibold text-gray-900 dark:text-white ${editable ? 'cursor-text' : ''}`}
+      className={`group flex min-w-0 items-center gap-2 text-base font-semibold text-gray-900 dark:text-white ${editable ? 'cursor-text' : ''}`}
     >
       {/* One line at every width: the compact header's second line is the run status; title holds the full text. */}
       <span className="truncate" title={title}>{title}</span>
@@ -148,7 +148,7 @@ function useComposerClearance() {
 // Keeps a live DAG visible without scrolling to the node cards.
 export function ChatHeaderStatus({ status, startedAt }: { status: ChatStatus; startedAt?: number }) {
   return (
-    <span className="flex-shrink-0 inline-flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+    <span className="flex-shrink-0 inline-flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
       <StatusDot status={status} variant="chat" />
       {startedAt != null && <span className="tabular-nums"><LiveTimer startedAt={startedAt} /></span>}
     </span>
@@ -382,7 +382,7 @@ function LiveTurnView({ live, surfaces, liveActive, isArchived, activeChatId, li
             />
           )}
           {d.liveText && (!liveActive) && (
-            <div className="flex items-center gap-3 mt-1.5 px-1">
+            <div className="flex items-center gap-3 mt-2 px-1">
               <button
                 onClick={() => onCopy(copyKey, d.liveText)}
                 className="min-h-[44px] -my-2 inline-flex items-center text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
@@ -441,7 +441,7 @@ function ChatHeader({ title, editable, status, startedAt, activeChatId, isArchiv
         <NavToggle open={navOpen} onToggle={onToggleNav} />
         {/* min-w-0 lets the title shrink to its flex-1 share instead of overflowing the row, so `truncate`
             clips to as much as fits, never to a few characters. */}
-        <div className="min-w-0 flex-1 flex items-center gap-1.5">
+        <div className="min-w-0 flex-1 flex items-center gap-2">
           <EditableChatTitle
             title={title}
             editable={editable}

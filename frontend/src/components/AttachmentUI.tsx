@@ -55,9 +55,9 @@ export function AttachmentPreviews({ previews }: { previews: AttachmentPreview[]
   const images = previews.filter(p => p.mime.startsWith('image/'))
   const others = previews.filter(p => !p.mime.startsWith('image/'))
   return (
-    <div className="mb-2 space-y-1.5">
+    <div className="mb-2 space-y-2">
       {images.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
+        <div className="flex flex-wrap gap-2">
           {images.map((p, i) => (
             <ImageThumbnail key={i} src={p.url} alt={p.name} />
           ))}

@@ -56,7 +56,7 @@ function QueuedMessages({ queue, compact, onRemoveQueued }: {
     // A row per queued bubble would blow the compact height budget. <details> stays open across queue
     // additions without re-rendering; remove is always visible because touch has no hover.
     <details className="mb-3">
-      <summary className="list-none w-fit cursor-pointer select-none px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-gray-100 rounded-full ring-1 ring-gray-300 dark:ring-gray-600 bg-white dark:bg-gray-700">
+      <summary className="list-none w-fit cursor-pointer select-none px-3 py-2 text-xs font-medium text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-gray-100 rounded-full ring-1 ring-gray-300 dark:ring-gray-600 bg-white dark:bg-gray-700">
         {`${queue.length} queued`}
       </summary>
       <div className="flex flex-col gap-2 mt-2">

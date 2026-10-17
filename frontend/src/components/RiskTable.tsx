@@ -20,8 +20,8 @@ export function RiskTable({ rows, basis }: { rows: RiskRow[]; basis?: 'diff-only
               <span className={`${CHIP} ${TONE.gray}`}>{r.type}</span>
               <span className={`${CHIP} border ${RISK_STYLE[r.risk]}`}>{r.risk} risk</span>
             </div>
-            <p className="mt-1.5 text-sm text-gray-800 dark:text-gray-200">{r.reason}</p>
-            <dl className="mt-1.5 space-y-0.5 text-xs text-gray-600 dark:text-gray-300">
+            <p className="mt-2 text-sm text-gray-800 dark:text-gray-200">{r.reason}</p>
+            <dl className="mt-2 space-y-0.5 text-xs text-gray-600 dark:text-gray-300">
               <div><dt className="inline font-medium">Blast radius: </dt><dd className="inline">{r.blast}</dd></div>
               {r.tests && <div><dt className="inline font-medium">Tests: </dt><dd className="inline">{r.tests}</dd></div>}
             </dl>

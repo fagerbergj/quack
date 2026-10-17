@@ -26,7 +26,7 @@ export class LazyLoadBoundary extends Component<Props, State> {
           <button
             type="button"
             onClick={() => window.location.reload()}
-            className="flex items-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700 transition-colors"
+            className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700 transition-colors"
           >
             <Icon name="refresh" className="w-4 h-4" />
             Reload

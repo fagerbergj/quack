@@ -25,7 +25,7 @@ function A2uiActionPill({ name, surfaceId, context }: { name: string; surfaceId:
   return (
     <div className="flex justify-end mb-3">
       <details className="max-w-full min-w-0 text-xs text-gray-600 dark:text-gray-300">
-        <summary className="ml-auto flex w-fit max-w-full cursor-pointer list-none items-center gap-1.5 rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-1 break-all">
+        <summary className="ml-auto flex w-fit max-w-full cursor-pointer list-none items-center gap-2 rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-1 break-all">
           <Icon name="check_circle" className="w-3.5 h-3.5 shrink-0 text-blue-600 dark:text-blue-400" />
           <span>Submitted: <span className="font-medium text-gray-900 dark:text-gray-100">{name}</span> on {surfaceId}</span>
           <Icon name="expand_more" className="w-3.5 h-3.5 shrink-0" />
@@ -59,7 +59,7 @@ export const TriggerMessage = memo(function TriggerMessage({
   if (blocks) {
     return (
       <div className="flex justify-end mb-3">
-        <div className="max-w-3xl w-full ml-auto bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tr-sm px-5 py-4 space-y-2.5">
+        <div className="max-w-3xl w-full ml-auto bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tr-sm px-5 py-4 space-y-3">
           {blocks.map((b, i) => (
             <EnvelopeBlockView
               key={i}
@@ -135,7 +135,7 @@ function CollapsibleSection({ summary, children }: { summary: ReactNode; childre
   return (
     // Full-bleed divided rows (an M3 list inside the card), not an outlined box per section; -mx-5/px-5 match the card's padding.
     <details className="-mx-5 px-5 !mb-0 border-t first:border-t-0 border-gray-200 dark:border-gray-700 not-prose">
-      <summary className="cursor-pointer select-none py-3.5 medium:py-2.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-gray-100">
+      <summary className="cursor-pointer select-none py-3.5 medium:py-3 text-xs font-medium text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-gray-100">
         {summary}
       </summary>
       <div className="pb-3">{children}</div>
@@ -245,7 +245,7 @@ function ChangedFilesSection({ block }: { block: Extract<EnvelopeBlock, { kind: 
             {block.files.map((f, i) => (
               <li key={i} className="flex items-center gap-2">
                 <span className="truncate text-gray-700 dark:text-gray-200">{f.filename}</span>
-                <span className="ml-auto shrink-0 tabular-nums space-x-1.5">
+                <span className="ml-auto shrink-0 tabular-nums space-x-2">
                   {f.additions != null && <span className="text-green-700 dark:text-green-400">+{f.additions}</span>}
                   {f.deletions != null && <span className="text-red-700 dark:text-red-400">-{f.deletions}</span>}
                 </span>
@@ -310,7 +310,7 @@ function EventSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'event'
   return (
     <CollapsibleSection summary={<code className="font-mono">{block.name ?? 'event'}</code>}>
       {fields.length > 0 && (
-        <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1.5 mb-2 not-prose">
+        <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2 mb-2 not-prose">
           {fields.map(([k, v]) => (
             <div key={k} className="min-w-0">
               <dt className="text-2xs text-gray-500 dark:text-gray-400">{fieldLabel(k)}</dt>
@@ -408,10 +408,10 @@ function ArtifactsSection({
                 type="button"
                 disabled={!chatId}
                 onClick={() => openRow(row)}
-                className="w-full flex items-start gap-2 px-1.5 py-1 rounded text-left text-2xs hover:bg-gray-100 dark:hover:bg-gray-700/60 disabled:hover:bg-transparent disabled:cursor-default"
+                className="w-full flex items-start gap-2 px-2 py-1 rounded text-left text-2xs hover:bg-gray-100 dark:hover:bg-gray-700/60 disabled:hover:bg-transparent disabled:cursor-default"
               >
                 <ArtifactIcon kindPrefix={row.kindPrefix} />
-                <span className="flex-1 min-w-0 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                <span className="flex-1 min-w-0 flex flex-wrap items-center gap-x-2 gap-y-0.5">
                   <span className="font-mono text-gray-700 dark:text-gray-200 break-all">{row.name}</span>
                   {row.revision != null && <span className="text-gray-500 dark:text-gray-400">rev {row.revision}</span>}
                   {row.status && <ArtifactStatusChip status={row.status} />}

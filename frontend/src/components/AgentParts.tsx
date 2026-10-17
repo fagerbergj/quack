@@ -241,7 +241,7 @@ export function LiveStatusLine({ activity }: { activity: Activity[] }) {
   const { thinking, tool, compacted } = liveStatusLine(activity)
   if (!thinking && !tool && !compacted) return null
   return (
-    <div className="flex items-center gap-1.5 min-w-0 py-0.5 text-2xs text-gray-500 dark:text-gray-400 not-prose">
+    <div className="flex items-center gap-2 min-w-0 py-0.5 text-2xs text-gray-500 dark:text-gray-400 not-prose">
       <Dots variant="compact" size="w-1 h-1" />
       {thinking && <span className="italic shrink-0">thinking</span>}
       {compacted && <span className="italic shrink-0">compacted</span>}
@@ -267,12 +267,12 @@ function ThoughtIcon() {
 function ThinkBlock({ text }: { text: string }) {
   return (
     <details className="group my-0.5 not-prose">
-      <summary className="cursor-pointer select-none flex items-center gap-1.5 py-1 text-2xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+      <summary className="cursor-pointer select-none flex items-center gap-2 py-1 text-2xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
         <ThoughtIcon />
         <span className="italic shrink-0">Thought</span>
         <span className="truncate text-gray-500 dark:text-gray-400 group-open:hidden">{previewLine(text)}</span>
       </summary>
-      <div className="ml-[7px] pl-2.5 pr-2 py-1 border-l border-gray-200 dark:border-gray-700 text-xs text-gray-500 dark:text-gray-400">
+      <div className="ml-[7px] pl-3 pr-2 py-1 border-l border-gray-200 dark:border-gray-700 text-xs text-gray-500 dark:text-gray-400">
         <Expandable maxHeight={200} fade="from-white dark:from-gray-800">
           <div className="whitespace-pre-wrap font-mono">{text}</div>
         </Expandable>
@@ -287,7 +287,7 @@ function CompactionBlock({ summaryInputTokens, summaryOutputTokens }: { summaryI
   const hasTokens = !!summaryInputTokens || !!summaryOutputTokens
   return (
     <div
-      className="flex items-center gap-1.5 my-0.5 py-0.5 text-2xs text-gray-500 dark:text-gray-400 not-prose"
+      className="flex items-center gap-2 my-0.5 py-0.5 text-2xs text-gray-500 dark:text-gray-400 not-prose"
       aria-label={hasTokens ? `Context compacted, summarizer spent ${summaryInputTokens ?? 0} in / ${summaryOutputTokens ?? 0} out tokens` : 'Context compacted'}
     >
       <span aria-hidden>↯</span>
@@ -319,11 +319,11 @@ export function ToolBlock({ tool }: { tool: ToolCall }) {
   return (
     <div className="relative my-0.5 not-prose">
       <details className="group">
-        <summary className="cursor-pointer select-none flex items-center gap-1.5 py-1 text-2xs">
+        <summary className="cursor-pointer select-none flex items-center gap-2 py-1 text-2xs">
           <ToolStatusIcon tool={tool} />
           <span className="text-gray-600 dark:text-gray-300 truncate" title={label}>{toolActionLine(label, tool.args)}</span>
         </summary>
-        <div className="ml-[7px] pl-2.5 pr-2 py-1 border-l border-gray-200 dark:border-gray-700 text-xs">
+        <div className="ml-[7px] pl-3 pr-2 py-1 border-l border-gray-200 dark:border-gray-700 text-xs">
           <ToolCallView tool={tool} />
         </div>
       </details>

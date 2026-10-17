@@ -8,7 +8,7 @@ function ReloadButton({ autoFocus }: { autoFocus?: boolean }) {
       type="button"
       data-autofocus={autoFocus || undefined}
       onClick={() => window.location.reload()}
-      className="flex shrink-0 items-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2 min-h-[44px] medium:min-h-0 text-sm text-white hover:bg-blue-700 transition-colors"
+      className="flex shrink-0 items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 min-h-[44px] medium:min-h-0 text-sm text-white hover:bg-blue-700 transition-colors"
     >
       <Icon name="refresh" className="w-4 h-4" />
       Reload

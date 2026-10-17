@@ -34,7 +34,7 @@ export function ChatMenu({ chatId, usage }: { chatId: string; usage?: UsageSumma
         <Sheet id={sheetId} anchored="right" role="menu" aria-label="Chat actions" onClose={() => setOpen(false)} className="medium:w-44 medium:rounded-lg medium:border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 pt-1 medium:pb-1 text-sm medium:text-xs">
           {/* Shown only where the header's `hidden medium:flex` UsageSummary (Chat.tsx) is hidden. */}
           {usage && (usage.models.length > 0 || (usage.usage?.total_tokens ?? 0) > 0) && (
-            <div className="px-3 py-1.5 border-b border-gray-100 dark:border-gray-700 medium:hidden">
+            <div className="px-3 py-2 border-b border-gray-100 dark:border-gray-700 medium:hidden">
               <UsageSummary {...usage} />
             </div>
           )}
@@ -43,7 +43,7 @@ export function ChatMenu({ chatId, usage }: { chatId: string; usage?: UsageSumma
             href={`/api/v1/chats/${chatId}/recording`}
             onClick={() => setOpen(false)}
             title="Download this chat's full recording (every streamed event)"
-            className="flex items-center gap-1.5 min-h-[44px] medium:min-h-0 px-3 py-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
+            className="flex items-center gap-2 min-h-[44px] medium:min-h-0 px-3 py-2 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
           >
             <Icon name="download" className="w-3.5 h-3.5" /> Download Logs
           </a>
@@ -55,7 +55,7 @@ export function ChatMenu({ chatId, usage }: { chatId: string; usage?: UsageSumma
                 role="menuitemradio"
                 aria-checked={theme === opt.value}
                 onClick={() => setTheme(opt.value)}
-                className="flex items-center gap-1.5 w-full min-h-[44px] medium:min-h-0 px-3 py-1.5 text-left text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
+                className="flex items-center gap-2 w-full min-h-[44px] medium:min-h-0 px-3 py-2 text-left text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
               >
                 <span aria-hidden="true" className="w-3 inline-flex">{theme === opt.value ? <Icon name="check" className="w-3 h-3" /> : ''}</span> {opt.label}
               </button>
