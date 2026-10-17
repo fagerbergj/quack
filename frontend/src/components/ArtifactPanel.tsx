@@ -620,7 +620,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
   return (
     <dialog
       ref={dialogRef}
-      aria-label={`Artifacts for node ${nodeId}`}
+      aria-label={nodeId ? `Artifacts for node ${nodeId}` : `Artifacts: ${nodeAgent}`}
       onClose={onClose}
       onClick={e => { if (e.target === dialogRef.current) dialogRef.current?.close() }}
       // Below `medium`: the same bottom-sheet shell as Sheet/NodePopup; a viewport-sized centred card at medium+,
