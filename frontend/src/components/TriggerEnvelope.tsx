@@ -169,7 +169,10 @@ function AskSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'ask' }> 
       </h2>
       {block.description && (
         <Expandable maxHeight={140} fade="from-white dark:from-gray-800">
-          <AssistantText text={block.description} />
+          {/* A description's own headings sit under the card's title, so they render title-small, not prose's 20-24px. */}
+          <div className="[&_:is(h1,h2,h3,h4)]:text-sm [&_:is(h1,h2,h3,h4)]:font-semibold [&_:is(h1,h2,h3,h4)]:mt-3 [&_:is(h1,h2,h3,h4)]:mb-1">
+            <AssistantText text={block.description} />
+          </div>
         </Expandable>
       )}
     </div>
