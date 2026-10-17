@@ -48,7 +48,7 @@ function TurnDagBubble({ dag, activity, chatId }: { dag: DagTurnState; activity:
       <DagBubbleHeader dag={dag} />
       {/* A full-bleed divided row, the same shape as the trigger card's sections, not a box in the card. */}
       <details className="-mx-5 px-5 mt-3 -mb-4 border-t border-gray-200 dark:border-gray-700">
-        <summary className="cursor-pointer select-none py-3.5 medium:py-2.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-gray-100">
+        <summary className="cursor-pointer select-none py-3.5 medium:py-3 text-xs font-medium text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-gray-100">
           Steps
         </summary>
         <div className="pb-4 space-y-3">
@@ -76,7 +76,7 @@ function TurnAnswerBubble({ dagState, activity, text, attribution, stopped, chat
 // text - the live turn renders the same markup inline in Chat.tsx.
 function CopyDownloadRow({ text, copyKey, isCopied, onCopy, onDownload, idx }: { text: string; copyKey: string; isCopied: boolean; onCopy: (key: string, text: string) => void; onDownload: (text: string, idx: number) => void; idx: number }) {
   return (
-    <div className="flex items-center gap-3 mt-1.5 px-1">
+    <div className="flex items-center gap-3 mt-2 px-1">
       <button
         onClick={() => onCopy(copyKey, text)}
         className="min-h-[44px] -my-2 inline-flex items-center text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"

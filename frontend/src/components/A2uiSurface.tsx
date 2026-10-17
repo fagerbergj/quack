@@ -141,10 +141,10 @@ const ChoicePicker = createComponentImplementation(ChoicePickerApi, ({ props }) 
     props.setValue(single ? [v] : values.includes(v) ? values.filter(x => x !== v) : [...values, v])
   return (
     <fieldset className="min-w-0">
-      {props.label && <legend className="mb-1.5 text-sm font-medium text-gray-900 dark:text-gray-100">{props.label}</legend>}
+      {props.label && <legend className="mb-2 text-sm font-medium text-gray-900 dark:text-gray-100">{props.label}</legend>}
       <div className="space-y-0.5">
         {(props.options ?? []).map(o => (
-          <label key={o.value} className="flex items-start gap-2 rounded-lg px-2 py-1.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700/50 cursor-pointer">
+          <label key={o.value} className="flex items-start gap-2 rounded-lg px-2 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700/50 cursor-pointer">
             <input
               type={single ? 'radio' : 'checkbox'}
               name={single ? group : undefined}

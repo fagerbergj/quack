@@ -52,10 +52,10 @@ function SourceBadge({ source }: { source: string }) {
 // own vote. It sits at the row's end, matching the memory page, so the text gets full width.
 function NodeMemoryRow({ memory, onVote }: { memory: NodeMemory; onVote: (id: string, vote: VoteDirection) => Promise<void> }) {
   return (
-    <div className="px-3 py-2.5 border-b border-gray-100 dark:border-gray-700 flex items-start gap-2">
+    <div className="px-3 py-3 border-b border-gray-100 dark:border-gray-700 flex items-start gap-2">
       <div className="flex-1 min-w-0">
         {memory.content && <p className="text-sm text-gray-800 dark:text-gray-100 whitespace-pre-wrap break-words">{memory.content}</p>}
-        <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+        <div className="flex flex-wrap items-center gap-2 mt-2">
           <SourceBadge source={memory.source} />
           {memory.tier && (
             <span className={`${CHIP} bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400`}>

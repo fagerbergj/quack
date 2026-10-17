@@ -100,7 +100,7 @@ function PromptBlock({ nodeId, agent, task, notStarted, onEditTask }: {
             value={taskText}
             onChange={e => setTaskText(e.target.value)}
             rows={6}
-            className="w-full text-base px-2 py-1.5 rounded border border-indigo-300 dark:border-indigo-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+            className="w-full text-base px-2 py-2 rounded border border-indigo-300 dark:border-indigo-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-indigo-400"
           />
           <div className="flex items-center gap-2">
             <button
@@ -136,7 +136,7 @@ function QueueSection({ nodeId, queue, onEditQueuedMessage, onRemoveQueuedMessag
       <p className="text-2xs text-gray-500 dark:text-gray-400 mt-0.5 mb-2">
         Delivered into the live round when possible; "parked" ones wait for the node's next turn boundary.
       </p>
-      <ul className="space-y-1.5">
+      <ul className="space-y-2">
         {queue.map(m => (
           <QueuedMessageRow
             key={m.id}
@@ -169,7 +169,7 @@ function InputRow({ answering, value, onChange, onSubmit }: {
           if (e.key === 'Enter' && value.trim()) { e.preventDefault(); onSubmit() }
         }}
         placeholder={answering ? 'Type your answer…' : 'Queue a message for this node…'}
-        className={`flex-1 min-w-0 text-base px-2 py-1.5 rounded border bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 ${
+        className={`flex-1 min-w-0 text-base px-2 py-2 rounded border bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 ${
           answering
             ? 'border-blue-300 dark:border-blue-700 focus:ring-blue-400'
             : 'border-gray-300 dark:border-gray-600 focus:ring-gray-400'
@@ -180,7 +180,7 @@ function InputRow({ answering, value, onChange, onSubmit }: {
         disabled={!value.trim()}
         aria-label={answering ? 'Send answer' : 'Queue message'}
         title={answering ? 'Send answer' : 'Queue message'}
-        className={`px-3 py-1.5 rounded-lg text-white text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors ${
+        className={`px-3 py-2 rounded-lg text-white text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors ${
           answering ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-700 hover:bg-gray-600 dark:bg-gray-600 dark:hover:bg-gray-500'
         }`}
       >
@@ -248,7 +248,7 @@ export function NodePopup({
           answered (or read-only, if no resume wiring was passed) below. */}
       {answering && (
         <div className="bg-white dark:bg-gray-800 border border-blue-300 dark:border-blue-700 border-l-4 rounded-2xl rounded-tl-sm px-5 py-4">
-          <div className="flex items-center gap-1.5 text-xs font-medium text-blue-700 dark:text-blue-300 mb-1">
+          <div className="flex items-center gap-2 text-xs font-medium text-blue-700 dark:text-blue-300 mb-1">
             <Icon name="help" className="w-3.5 h-3.5" />
             <BubbleHeader agent={node.agent} />
           </div>

@@ -633,11 +633,11 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
       >
         {/* Header: the node's own name, never an artifact id or raw prompt; >=44px targets.
             line-clamp-2 is a hard ceiling so a long label can't push the header past 2 lines. */}
-        <header className="shrink-0 flex items-start gap-1 px-4 py-1.5 border-b border-gray-200 dark:border-gray-700">
+        <header className="shrink-0 flex items-start gap-1 px-4 py-2 border-b border-gray-200 dark:border-gray-700">
           <h2 className="flex-1 min-w-0 py-2 text-sm font-semibold text-gray-800 dark:text-gray-100 break-words line-clamp-2">
             {nodeAgent}
           </h2>
-          <div className="flex items-center gap-1 shrink-0 py-1.5">
+          <div className="flex items-center gap-1 shrink-0 py-2">
             {!empty && <HeaderToggles rawView={rawView} onToggleRaw={() => setRawView(r => !r)} diffActive={diffActive} displayText={displayText} />}
             <button
               onClick={refresh}
@@ -793,7 +793,7 @@ function ArtifactLines({ lines, byLine, activeNote, onSelectNote }: {
                   type="button"
                   aria-label={`Judge note on line ${i + 1}${notes.length > 1 ? ` (${ni + 1} of ${notes.length})` : ''}: ${n.text}`}
                   onClick={() => onSelectNote(n)}
-                  className={`ml-1.5 inline-flex h-4 w-4 items-center justify-center rounded-full text-2xs leading-none cursor-pointer ${
+                  className={`ml-2 inline-flex h-4 w-4 items-center justify-center rounded-full text-2xs leading-none cursor-pointer ${
                     n === activeNote
                       ? 'bg-amber-400 dark:bg-amber-600 text-amber-950 dark:text-amber-50'
                       : 'bg-amber-200 dark:bg-amber-800 text-amber-800 dark:text-amber-200 hover:bg-amber-300 dark:hover:bg-amber-700'
@@ -843,8 +843,8 @@ const BLOCK_TAGS = ['p', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'td', 'th', '
 // Headings are sized explicitly: this tree sits under DagView's not-prose ancestor, and Tailwind Typography
 // drops .prose styling for every descendant of one, even a nested .prose.
 const HEADING_CLASS: Record<string, string> = {
-  h1: 'text-base font-bold mt-3 mb-1.5',
-  h2: 'text-sm font-bold mt-3 mb-1.5',
+  h1: 'text-base font-bold mt-3 mb-2',
+  h2: 'text-sm font-bold mt-3 mb-2',
   h3: 'text-sm font-semibold mt-2 mb-1',
   h4: 'text-xs font-semibold mt-2 mb-1',
   h5: 'text-xs font-semibold mt-2 mb-1',
@@ -894,7 +894,7 @@ function ArtifactMarkdown({ text, byLine, activeNote, onSelectNote }: {
               type="button"
               aria-label={`Judge note on line ${line}${notes.length > 1 ? ` (${ni + 1} of ${notes.length})` : ''}: ${n.text}`}
               onClick={() => onSelectNote(n)}
-              className={`not-prose ml-1.5 inline-flex h-4 w-4 items-center justify-center rounded-full text-2xs leading-none cursor-pointer align-middle ${
+              className={`not-prose ml-2 inline-flex h-4 w-4 items-center justify-center rounded-full text-2xs leading-none cursor-pointer align-middle ${
                 n === activeNote
                   ? 'bg-amber-400 dark:bg-amber-600 text-amber-950 dark:text-amber-50'
                   : 'bg-amber-200 dark:bg-amber-800 text-amber-800 dark:text-amber-200 hover:bg-amber-300 dark:hover:bg-amber-700'
@@ -996,9 +996,9 @@ function severityChip(word: string | undefined) {
 function FindingView({ data, hideHeader }: { data: FindingBody; hideHeader?: boolean }) {
   const loc = findingLoc(data)
   return (
-    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2.5 space-y-1.5 text-sm leading-6">
+    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-3 space-y-2 text-sm leading-6">
       {!hideHeader && (
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-2">
           {severityChip(data.severity)}
           {loc && <span className="font-mono text-xs text-gray-500 dark:text-gray-400">{loc}</span>}
         </div>
@@ -1032,12 +1032,12 @@ function findingSeverityCounts(findings: { body: FindingBody | undefined }[]): s
 export function ReviewView({ data, findings }: { data: CodeReviewBody; findings: { id: string; body: FindingBody | undefined }[] }) {
   const emptyByLine = useMemo(() => new Map<number, JudgeNote[]>(), [])
   return (
-    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2.5 space-y-3 text-sm leading-6">
+    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-3 space-y-3 text-sm leading-6">
       {(data.takeaway ?? data.summary) && <p className="text-gray-700 dark:text-gray-200">{data.takeaway ?? data.summary}</p>}
       <MetaList label="Verified" items={data.verified} />
       <MetaList label="Notes" items={data.notes} />
       {findings.length > 0 && (
-        <div className="space-y-1.5">
+        <div className="space-y-2">
           <span className="text-sm font-semibold text-gray-700 dark:text-gray-200">
             Findings ({findingSeverityCounts(findings)})
           </span>
@@ -1078,8 +1078,8 @@ function MetaList({ label, items }: { label: string; items: string[] | undefined
 // Per-criterion scores are a raw 0-3, not a fraction.
 export function JudgeRoundView({ data }: { data: JudgeRoundContent }) {
   return (
-    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2.5 space-y-2 text-sm leading-6">
-      <div className="flex flex-wrap items-center gap-1.5">
+    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-3 space-y-2 text-sm leading-6">
+      <div className="flex flex-wrap items-center gap-2">
         <span className={`inline-flex items-center gap-1 font-medium ${data.passed ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'}`}>
           <Icon name={data.passed ? 'check' : 'close'} className="w-3.5 h-3.5" /> {data.passed ? 'passed' : 'failed'}
         </span>
@@ -1090,9 +1090,9 @@ export function JudgeRoundView({ data }: { data: JudgeRoundContent }) {
           <tbody>
             {data.criteria.map((c, i) => (
               <tr key={i} className="border-t border-gray-100 dark:border-gray-700 first:border-t-0">
-                <td className="py-1.5 pr-2 font-medium text-gray-700 dark:text-gray-200 align-top whitespace-nowrap">{c.name}</td>
-                <td className="py-1.5 pr-2 text-gray-500 dark:text-gray-400 align-top tabular-nums">{typeof c.score === 'number' ? +c.score.toFixed(2) : c.score}</td>
-                <td className="py-1.5 text-gray-600 dark:text-gray-300 align-top">{c.feedback}</td>
+                <td className="py-2 pr-2 font-medium text-gray-700 dark:text-gray-200 align-top whitespace-nowrap">{c.name}</td>
+                <td className="py-2 pr-2 text-gray-500 dark:text-gray-400 align-top tabular-nums">{typeof c.score === 'number' ? +c.score.toFixed(2) : c.score}</td>
+                <td className="py-2 text-gray-600 dark:text-gray-300 align-top">{c.feedback}</td>
               </tr>
             ))}
           </tbody>
@@ -1114,10 +1114,10 @@ export function JudgeRoundView({ data }: { data: JudgeRoundContent }) {
 // node dag_plan's lineage ever names) opens on this.
 export function PlanView({ data }: { data: PlanBody }) {
   return (
-    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2.5 space-y-1.5 text-sm leading-6">
+    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-3 space-y-2 text-sm leading-6">
       {data.status && <p className="text-xs text-gray-500 dark:text-gray-400">status: {data.status}</p>}
       {(data.assignments ?? []).map((a, i) => (
-        <div key={i} className="border-t border-gray-100 dark:border-gray-700 first:border-t-0 pt-1.5">
+        <div key={i} className="border-t border-gray-100 dark:border-gray-700 first:border-t-0 pt-2">
           <p className="font-medium text-gray-800 dark:text-gray-100">{a.node_id}</p>
           {a.task && <p className="text-gray-600 dark:text-gray-300 line-clamp-3 whitespace-pre-wrap">{a.task}</p>}
         </div>
@@ -1233,7 +1233,7 @@ function TimelineBlock({ chips, activeRoundId, onActivate }: {
     <div
       role="group"
       aria-label="Judge rounds"
-      className="shrink-0 flex items-center gap-1.5 overflow-x-auto px-4 py-1.5 border-b border-gray-200 dark:border-gray-700"
+      className="shrink-0 flex items-center gap-2 overflow-x-auto px-4 py-2 border-b border-gray-200 dark:border-gray-700"
     >
       {chips.map(({ id, b }) => (
         <RoundChip key={id} id={id} round={b.round} passed={b.passed} score={b.score} active={activeRoundId === id} onActivate={() => onActivate(id)} />
@@ -1255,7 +1255,7 @@ function TitleHeading({ primary, body, reviewFindings }: {
   body: unknown
   reviewFindings: { id: string; body: FindingBody | undefined }[]
 }) {
-  const headingClass = 'flex flex-wrap items-baseline gap-1.5 text-sm font-semibold text-gray-800 dark:text-gray-100 break-words'
+  const headingClass = 'flex flex-wrap items-baseline gap-2 text-sm font-semibold text-gray-800 dark:text-gray-100 break-words'
   if (primary.kind === 'code_review') {
     const r = (body ?? {}) as CodeReviewBody
     return (
@@ -1402,7 +1402,7 @@ function RevisionBar({ currentRev, count, revIdx, diffActive, diffDisabledReason
 }) {
   if (count <= 1) return null
   return (
-    <div className="flex items-center gap-1.5 flex-wrap text-xs">
+    <div className="flex items-center gap-2 flex-wrap text-xs">
       <span aria-live="polite" className="text-gray-600 dark:text-gray-300 tabular-nums">
         Revision {currentRev ?? '–'} of {count}
       </span>

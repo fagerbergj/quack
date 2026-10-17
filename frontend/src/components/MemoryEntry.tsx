@@ -128,7 +128,7 @@ function KebabMenu({ memory, onForget }: { memory: Memory; onForget: (id: string
         <div role="menu" className="absolute z-50 right-0 mt-1 w-40 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg py-1 text-xs">
           {error && <p className="px-3 py-1 text-red-700 dark:text-red-400">{error}</p>}
           {confirming ? (
-            <div className="flex items-center gap-1.5 px-2 py-1">
+            <div className="flex items-center gap-2 px-2 py-1">
               <button
                 onClick={() => { void handleConfirm() }}
                 disabled={forgetting}
@@ -148,7 +148,7 @@ function KebabMenu({ memory, onForget }: { memory: Memory; onForget: (id: string
             <button
               role="menuitem"
               onClick={() => setConfirming(true)}
-              className="w-full flex items-center gap-1.5 text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700"
+              className="w-full flex items-center gap-2 text-left px-3 py-2 min-h-[44px] medium:min-h-0 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700"
             >
               <Icon name="delete" className="w-3.5 h-3.5" /> Forget
             </button>
@@ -171,7 +171,7 @@ function MetaRow({ memory }: { memory: Memory }) {
   const mintedTimeRelative = relativeTime(memory.timestamp) ?? mintedTimeText
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+    <div className="flex flex-wrap items-center gap-2 mt-2">
       <Pill label={memory.bucket} seed={memory.bucket} />
       <Pill label={memory.author} seed={memory.author} neutral />
       {memory.kind && <Pill label={memory.kind} seed={memory.kind} />}
@@ -204,7 +204,7 @@ function MetaRow({ memory }: { memory: Memory }) {
 // memo: a vote changes one row of 20, so without it every row re-renders on any sibling's vote.
 export const MemoryEntry = memo(function MemoryEntry({ memory, onForget, onVote }: MemoryEntryProps) {
   return (
-    <div className="px-3 py-2.5 border-b border-gray-100 dark:border-gray-700 flex items-start gap-2">
+    <div className="px-3 py-3 border-b border-gray-100 dark:border-gray-700 flex items-start gap-2">
       <div className="flex-1 min-w-0">
         <p className="text-sm text-gray-800 dark:text-gray-100 whitespace-pre-wrap break-words">{memory.content}</p>
         <MetaRow memory={memory} />

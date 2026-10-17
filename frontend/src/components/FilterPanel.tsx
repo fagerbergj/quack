@@ -56,7 +56,7 @@ export function FilterPanel({ facets, selected, onToggle, onClear }: FilterPanel
 
       {open && (
         <Sheet id={sheetId} anchored="left" aria-label="Filter chats" onClose={() => setOpen(false)} className="medium:w-56 medium:rounded-lg medium:border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-2 medium:pb-2 text-sm medium:text-xs">
-          <div className="flex items-center justify-between px-1 pb-1.5 mb-1 border-b border-gray-100 dark:border-gray-700">
+          <div className="flex items-center justify-between px-1 pb-2 mb-1 border-b border-gray-100 dark:border-gray-700">
             <span className="font-semibold text-gray-700 dark:text-gray-200">Filters</span>
             {count > 0 && (
               <button onClick={onClear} className="min-h-[24px] inline-flex items-center text-2xs text-blue-600 dark:text-blue-400 hover:underline">

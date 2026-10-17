@@ -19,7 +19,7 @@ export function UsageSummary({ models, usage }: UsageSummaryProps) {
   const cost = usage?.cost_usd
 
   return (
-    <div className="flex items-center gap-1.5 text-2xs text-gray-500 dark:text-gray-400 flex-shrink-0">
+    <div className="flex items-center gap-2 text-2xs text-gray-500 dark:text-gray-400 flex-shrink-0">
       {models.map(m => (
         <span
           key={m}
@@ -37,7 +37,7 @@ export function UsageSummary({ models, usage }: UsageSummaryProps) {
           >
             {total.toLocaleString()} tokens{cost != null && ` · ${fmtCost(cost)}`}
           </summary>
-          <div className="absolute right-0 z-20 mt-1 w-52 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg p-2.5 space-y-1 text-gray-600 dark:text-gray-300">
+          <div className="absolute right-0 z-20 mt-1 w-52 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg p-3 space-y-1 text-gray-600 dark:text-gray-300">
             <UsageRow label="Input" value={usage?.input_tokens} />
             <UsageRow label="Output" value={usage?.output_tokens} />
             <UsageRow label="Reasoning" value={usage?.reasoning_tokens} />

@@ -142,41 +142,41 @@ function NodeMenuItems({ nodeId, running, terminal, startable, cancellable, hasS
   return (
     <div role="menu" className="absolute z-20 right-0 mt-1 w-48 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg py-1 text-xs">
       {running && onPause && (
-        <button role="menuitem" onClick={() => { onPause(nodeId); close() }} className="w-full text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 flex items-center gap-1.5 text-blue-600 dark:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-700">
+        <button role="menuitem" onClick={() => { onPause(nodeId); close() }} className="w-full text-left px-3 py-2 min-h-[44px] medium:min-h-0 flex items-center gap-2 text-blue-600 dark:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-700">
           <Icon name="pause" className="w-3.5 h-3.5" /> Pause
         </button>
       )}
       {startable && onResume && (
-        <button role="menuitem" onClick={() => { onResume(nodeId); close() }} className="w-full text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 flex items-center gap-1.5 text-blue-600 dark:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-700">
+        <button role="menuitem" onClick={() => { onResume(nodeId); close() }} className="w-full text-left px-3 py-2 min-h-[44px] medium:min-h-0 flex items-center gap-2 text-blue-600 dark:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-700">
           <Icon name="play_arrow" className="w-3.5 h-3.5" /> Start
         </button>
       )}
       {cancellable && onCancel && (
-        <button role="menuitem" onClick={() => { onCancel(nodeId); close() }} className="w-full text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 flex items-center gap-1.5 text-red-700 dark:text-red-400 hover:bg-gray-50 dark:hover:bg-gray-700">
+        <button role="menuitem" onClick={() => { onCancel(nodeId); close() }} className="w-full text-left px-3 py-2 min-h-[44px] medium:min-h-0 flex items-center gap-2 text-red-700 dark:text-red-400 hover:bg-gray-50 dark:hover:bg-gray-700">
           <Icon name="stop" className="w-3.5 h-3.5" /> Stop
         </button>
       )}
       {hasSecondary && <div className="my-1 border-t border-gray-100 dark:border-gray-700" />}
       {canQueue && (
-        <button role="menuitem" onClick={() => { onOpenPopup(); close() }} className="w-full text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+        <button role="menuitem" onClick={() => { onOpenPopup(); close() }} className="w-full text-left px-3 py-2 min-h-[44px] medium:min-h-0 flex items-center gap-2 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
           <Icon name="mail" className="w-3.5 h-3.5" /> Queue a message…
         </button>
       )}
       {canEdit && (
-        <button role="menuitem" onClick={() => { onOpenPopup(); close() }} className="w-full text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+        <button role="menuitem" onClick={() => { onOpenPopup(); close() }} className="w-full text-left px-3 py-2 min-h-[44px] medium:min-h-0 flex items-center gap-2 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
           <Icon name="edit" className="w-3.5 h-3.5" /> Edit prompt
         </button>
       )}
       {onOpenArtifacts && (
         <>
           {!terminal && <div className="my-1 border-t border-gray-100 dark:border-gray-700" />}
-          <button role="menuitem" onClick={() => { onOpenArtifacts(); close() }} className="w-full text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+          <button role="menuitem" onClick={() => { onOpenArtifacts(); close() }} className="w-full text-left px-3 py-2 min-h-[44px] medium:min-h-0 flex items-center gap-2 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
             <Icon name="archive" className="w-3.5 h-3.5" /> Artifacts
           </button>
         </>
       )}
       {onOpenMemories && (
-        <button role="menuitem" onClick={() => { onOpenMemories(); close() }} className="w-full text-left px-3 py-1.5 min-h-[44px] medium:min-h-0 flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+        <button role="menuitem" onClick={() => { onOpenMemories(); close() }} className="w-full text-left px-3 py-2 min-h-[44px] medium:min-h-0 flex items-center gap-2 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
           <Icon name="memory" className="w-3.5 h-3.5" /> Memories
         </button>
       )}
@@ -298,7 +298,7 @@ function CollapsedPreview({ label, text, popupTitle, className = 'py-1 text-2xs'
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className={`w-full flex items-center gap-1.5 ${className} text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-left`}
+        className={`w-full flex items-center gap-2 ${className} text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-left`}
       >
         <span className={labelClass}>{label}</span>
         <span className="truncate text-gray-500 dark:text-gray-400">{previewLine(text, max)}</span>
@@ -411,7 +411,7 @@ function NodeArtifactSummary({ chatId, nodeId, nodeArtifactKind, finished, onOpe
     <button
       type="button"
       onClick={onOpen}
-      className="w-full flex items-center gap-1.5 px-4 py-2 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 border-t border-gray-100 dark:border-gray-700 text-left"
+      className="w-full flex items-center gap-2 px-4 py-2 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 border-t border-gray-100 dark:border-gray-700 text-left"
     >
       <Icon name="archive" className="w-3.5 h-3.5 shrink-0" />
       <span className="truncate">{artifactTitle(primary, body)}</span>
@@ -533,7 +533,7 @@ function RetryControl({ nodeId, onRetry }: {
     )
   }
   return (
-    <div className="flex items-center gap-3 px-4 py-1.5 border-b border-gray-100 dark:border-gray-700">
+    <div className="flex items-center gap-3 px-4 py-2 border-b border-gray-100 dark:border-gray-700">
       <button onClick={() => onRetry(nodeId)} title="Re-run this node and everything downstream of it (reuses the rest)"
         className="inline-flex items-center gap-1 min-h-[44px] medium:min-h-0 text-2xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline">
         <Icon name="refresh" className="w-3 h-3" /> retry
@@ -577,8 +577,8 @@ function NodeStatusLabel({ state, pauseLabel }: { state: NodeState; pauseLabel?:
   const wait = state.status === 'queued' ? state.capacityWait : undefined
   if (!wait) return <StatusDot status={state.status} label={pauseLabel} />
   return (
-    <span className="min-w-0 inline-flex flex-wrap items-center gap-x-1.5 text-2xs text-gray-500 dark:text-gray-400">
-      <span role="status" className="min-w-0 inline-flex flex-wrap items-center gap-x-1.5">
+    <span className="min-w-0 inline-flex flex-wrap items-center gap-x-2 text-2xs text-gray-500 dark:text-gray-400">
+      <span role="status" className="min-w-0 inline-flex flex-wrap items-center gap-x-2">
         <span className="inline-flex items-center gap-1 font-medium">
           <Icon name="hourglass_empty" className="w-3 h-3 shrink-0 text-amber-600 dark:text-amber-400" />
           waiting for capacity

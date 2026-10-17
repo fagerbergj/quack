@@ -93,14 +93,14 @@ function paint(reg: Map<string, Target>, host: HTMLElement, sel: Sel | null, spe
 
 function ChangeBadge({ change }: { change: Change }) {
   const s = CHANGE_STYLE[change]
-  return <span className="rounded px-1.5 py-0.5 text-2xs font-medium" style={{ background: s.fill, color: s.text, border: `1px solid ${s.stroke}` }}>{s.label}</span>
+  return <span className="rounded px-2 py-0.5 text-2xs font-medium" style={{ background: s.fill, color: s.text, border: `1px solid ${s.stroke}` }}>{s.label}</span>
 }
 
 function Legend() {
   return (
     <ul aria-label="Legend" className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-600 dark:text-gray-300">
       {(Object.keys(CHANGE_STYLE) as Change[]).map(c => (
-        <li key={c} className="flex items-center gap-1.5">
+        <li key={c} className="flex items-center gap-2">
           <span aria-hidden className={`inline-block h-3 w-4 rounded-sm border ${c === 'removed' ? 'border-dashed' : ''}`} style={{ background: CHANGE_STYLE[c].fill, borderColor: CHANGE_STYLE[c].stroke }} />
           {CHANGE_STYLE[c].label}{CHANGE_STYLE[c].mark && <span className="font-mono text-gray-400">({CHANGE_STYLE[c].mark})</span>}
         </li>
@@ -113,7 +113,7 @@ interface Info { title: string; detail: string; badges: ReactNode }
 
 const Pill = ({ children }: { children: ReactNode }) => <span className="text-xs text-gray-500 dark:text-gray-400">{children}</span>
 
-const TYPE_PILL = 'rounded bg-gray-100 px-1.5 py-0.5 text-2xs dark:bg-gray-700'
+const TYPE_PILL = 'rounded bg-gray-100 px-2 py-0.5 text-2xs dark:bg-gray-700'
 
 function describeNode(spec: DiagramSpec, n: DiagramNode): Info {
   const badges = <>
