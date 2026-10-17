@@ -274,7 +274,7 @@ function ContentPopup({ title, text, onClose }: { title: string; text: string; o
         </button>
       </div>
       <div className="group/verdict relative bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
-        <span className="block mb-2 text-2xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">{title}</span>
+        <span className="block mb-2 text-2xs font-semibold text-gray-500 dark:text-gray-400">{title}</span>
         {/* A named group because the popup nests inside DagNode's own `.group` card:
             only this block's hover/focus reveals the copy button. */}
         <span className="absolute top-4 right-5 opacity-0 group-hover/verdict:opacity-100 group-focus-within/verdict:opacity-100 transition-opacity">
@@ -432,7 +432,7 @@ const JudgeCard = memo(function JudgeCard({ run, running }: { run: AgentRun; run
   if (failureHeading) {
     return (
       <div className="border-t border-gray-100 dark:border-gray-700 px-4 py-2 bg-yellow-50 dark:bg-yellow-900/15">
-        <span className="inline-flex items-center gap-1 text-2xs font-semibold text-yellow-700 dark:text-yellow-400 uppercase tracking-wide">
+        <span className="inline-flex items-center gap-1 text-2xs font-semibold text-yellow-700 dark:text-yellow-400">
           <Icon name="warning" className="w-3 h-3" /> {failureHeading} · round {run.round}
         </span>
         <div className="text-2xs text-yellow-700 dark:text-yellow-400/90 mt-0.5">
@@ -445,7 +445,7 @@ const JudgeCard = memo(function JudgeCard({ run, running }: { run: AgentRun; run
     <div className="border-t border-gray-100 dark:border-gray-700">
       <details open={running} className="not-prose">
         <summary className="cursor-pointer select-none px-4 py-2 flex items-center gap-2">
-          <span className="text-2xs font-semibold text-purple-600 dark:text-purple-400 uppercase tracking-wide">
+          <span className="text-2xs font-semibold text-purple-600 dark:text-purple-400">
             Judge · round {run.round}
           </span>
           {/* The pass bar renders only when the server sent it (older events carry no envelope);
@@ -483,7 +483,7 @@ const RevisionCard = memo(function RevisionCard({ run, running }: { run: AgentRu
     <div className="border-t border-gray-100 dark:border-gray-700">
       <details open={running} className="not-prose">
         <summary className="cursor-pointer select-none px-4 py-2 flex items-center gap-2">
-          <span className="inline-flex items-center gap-1 text-2xs font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wide">
+          <span className="inline-flex items-center gap-1 text-2xs font-semibold text-blue-600 dark:text-blue-400">
             <Icon name="edit" className="w-3 h-3" /> Revised · round {run.round}
           </span>
           <RunModel run={run} />

@@ -88,7 +88,7 @@ export function NodeQualityCheck({ chatId, nodeId, startedAt, finishedAt }: {
       onToggle={e => { if (e.currentTarget.open) load() }}
     >
       <summary className="cursor-pointer select-none min-h-[44px] px-4 flex items-center gap-2 text-2xs text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/40">
-        <span className="font-semibold uppercase tracking-wide">Quality check</span>
+        <span className="font-semibold">Quality check</span>
         <span className="tabular-nums text-gray-500 dark:text-gray-400">{refs.length} round{refs.length === 1 ? '' : 's'}</span>
         <span className="ml-auto text-gray-500 dark:text-gray-400">per-criterion scores</span>
       </summary>

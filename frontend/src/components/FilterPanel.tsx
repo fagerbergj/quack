@@ -70,7 +70,7 @@ export function FilterPanel({ facets, selected, onToggle, onClear }: FilterPanel
           <div className="medium:max-h-80 medium:overflow-y-auto">
             {facets.map(f => (
               <div key={f.key} className="mb-2 last:mb-0">
-                <div className="px-1 py-0.5 text-2xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                <div className="px-1 py-0.5 text-2xs font-semibold text-gray-500 dark:text-gray-400">
                   {f.label}
                 </div>
                 {f.options.map(o => {
