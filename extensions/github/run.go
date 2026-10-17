@@ -225,7 +225,7 @@ func (e *Extension) finalize(chatID string, pr *pendingRun, outcome sdk.RunOutco
 func (e *Extension) settleDelivery(chatID string, pr *pendingRun) bool {
 	// A push that left the head unchanged is not delivered work: GitHub shows no trace of the run,
 	// so the answer is the only place its analysis survives.
-	d, ok := takeDeliveryDetail(chatID)
+	d, ok := e.app.takeDeliveryDetail(chatID)
 	if !ok {
 		return false
 	}

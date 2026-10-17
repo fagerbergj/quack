@@ -72,7 +72,7 @@ func TestDeliverPullRequestUpdatesExistingInsteadOfDuplicate(t *testing.T) {
 	if patchedBody["title"] != "Add widget" || patchedBody["body"] != "does the thing" {
 		t.Errorf("existing PR was not updated with the staged title/body; patch body = %+v", patchedBody)
 	}
-	d, ok := takeDeliveryDetail("chat-1")
+	d, ok := app.takeDeliveryDetail("chat-1")
 	if !ok || d.err != nil || d.prNumber != 42 {
 		t.Errorf("recorded outcome = %+v, ok=%v; want the VERIFIED existing pr_number 42, no error", d, ok)
 	}
@@ -320,7 +320,7 @@ func TestDeliverVerifiesPushAgainstGitHub(t *testing.T) {
 		if prOpened {
 			t.Error("a PR was opened despite failed push verification - must fail closed, never claim delivery")
 		}
-		d, ok := takeDeliveryDetail("chat-push-fail")
+		d, ok := app.takeDeliveryDetail("chat-push-fail")
 		if !ok || d.err == nil {
 			t.Errorf("recorded outcome = %+v, ok=%v; want a recorded failure", d, ok)
 		}
@@ -350,7 +350,7 @@ func TestDeliverVerifiesPushAgainstGitHub(t *testing.T) {
 		if !prOpened {
 			t.Error("expected a PR to be opened once the push was verified against GitHub")
 		}
-		d, ok := takeDeliveryDetail("chat-push-ok")
+		d, ok := app.takeDeliveryDetail("chat-push-ok")
 		if !ok || d.err != nil || d.pushedSHA != fullSHA || d.prNumber != 9 {
 			t.Errorf("recorded outcome = %+v, ok=%v; want the verified pushed SHA + pr_number", d, ok)
 		}
@@ -386,7 +386,7 @@ func TestDeliverVerifiesPushAgainstGitHub(t *testing.T) {
 		if atomic.LoadInt32(&prOpened) != 1 {
 			t.Error("expected the PR to be opened once the racy verification finally landed")
 		}
-		d, ok := takeDeliveryDetail("chat-push-race")
+		d, ok := app.takeDeliveryDetail("chat-push-race")
 		if !ok || d.err != nil || d.prNumber != 10 {
 			t.Errorf("recorded outcome = %+v, ok=%v; want a successful delivery despite the transient 404s", d, ok)
 		}

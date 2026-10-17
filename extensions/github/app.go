@@ -28,6 +28,9 @@ const tokenSkew = 60 * time.Second
 
 // App authenticates as a GitHub App and caches per-installation tokens.
 type App struct {
+	// deliveries: each run's last Deliver outcome by global chatID, read-and-cleared by RunEnded. Per
+	// instance, so a Deliver no run ends never leaks into another extension's RunEnded.
+	deliveries      sync.Map
 	issuer          string
 	key             *rsa.PrivateKey
 	apiBase         string
