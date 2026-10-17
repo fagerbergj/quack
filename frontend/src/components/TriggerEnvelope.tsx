@@ -380,7 +380,7 @@ function ArtifactsSection({
   chatId?: string
   onOpenArtifact: (nodeId: string, artifactId: string) => void
 }) {
-  // The panel opens by node id, so a tap looks up the owning node on demand; the block is usually never opened.
+  // The panel opens by node id, so a tap looks up the owning node on demand (blank for dispatch's run input).
   const [pending, setPending] = useState<string | null>(null)
   const openRow = (row: ArtifactRow) => {
     if (!chatId || pending) return
@@ -388,7 +388,7 @@ function ArtifactsSection({
     api.listChatArtifacts(chatId)
       .then(l => {
         const match = l.data?.find(a => a.name === row.id)
-        if (match?.lineage?.node_id) onOpenArtifact(match.lineage.node_id, row.id)
+        if (match) onOpenArtifact(match.lineage?.node_id ?? '', row.id)
       })
       .catch(() => {})
       .finally(() => setPending(null))
