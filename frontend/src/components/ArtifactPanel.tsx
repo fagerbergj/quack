@@ -266,6 +266,12 @@ function diffBlockReason(curInfo: ArtifactRevisionInfo | null, prevInfo: Artifac
 
 // A blob counts as structured when it parses to an object or array: tools save JSON deliverables
 // (sleeper's lineup, trade-finder) as application/json blobs, and as markdown they read as one wall of text.
+// Raw keeps a blob's saved bytes: a re-stringify re-indents it and rounds integers past 2^53.
+function rawText(content: string | null, klass: string | undefined, parsed: unknown): string | null {
+  if (content == null) return null
+  return klass === 'structured' && parsed !== undefined ? JSON.stringify(parsed, null, 2) : content
+}
+
 export function structuredBody(content: string, klass: string | undefined): unknown {
   const v = tryParseJSON(content)
   return klass === 'structured' || (v !== null && typeof v === 'object') ? v : undefined
@@ -583,8 +589,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
 
   const parsedJson = useMemo(() => (content != null ? structuredBody(content, primary?.class) : undefined), [content, primary?.class])
   const isStructured = primary?.class === 'structured' || parsedJson !== undefined
-  // Raw keeps a blob's saved bytes: a re-stringify re-indents it and rounds integers past 2^53.
-  const displayText = content == null ? null : primary?.class === 'structured' && parsedJson !== undefined ? JSON.stringify(parsedJson, null, 2) : content
+  const displayText = rawText(content, primary?.class, parsedJson)
   const lines = useMemo(() => (displayText != null ? displayText.split('\n') : []), [displayText])
   const { byLine, unanchored } = useMemo(() => anchorNotes(lines, notes), [lines, notes])
 
