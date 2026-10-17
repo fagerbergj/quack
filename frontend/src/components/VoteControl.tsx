@@ -33,7 +33,8 @@ export function VoteControl({ score, ownVote, onVote, disabled }: VoteControlPro
   const idleClass = 'text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'
 
   return (
-    <div className="inline-flex items-center gap-0.5" role="group" aria-label="Vote on this memory">
+    // Stacked on compact width so the row-end rail (#1266) stays 88px wide with the kebab, leaving the text room.
+    <div className="inline-flex flex-col medium:flex-row items-center gap-0.5" role="group" aria-label="Vote on this memory">
       <button
         type="button"
         onClick={() => { void handleClick('up') }}
