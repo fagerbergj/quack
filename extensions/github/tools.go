@@ -11,7 +11,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/tool"
@@ -20,21 +19,17 @@ import (
 	"github.com/fagerbergj/quack/extensions/sdk"
 )
 
-// deliveryResults records each run's last Deliver outcome by global chatID; process-local,
-// read-and-cleared once by RunEnded.
-var deliveryResults sync.Map // chatID → deliveryOutcome
-
 // recordDelivery includes the verified GitHub state (PR number/url, pushed SHA).
-func recordDelivery(chatID string, o deliveryOutcome) {
+func (a *App) recordDelivery(chatID string, o deliveryOutcome) {
 	if chatID == "" {
 		return
 	}
-	deliveryResults.Store(chatID, o)
+	a.deliveries.Store(chatID, o)
 }
 
 // takeDeliveryDetail returns and clears the last delivery outcome for chatID.
-func takeDeliveryDetail(chatID string) (deliveryOutcome, bool) {
-	v, ok := deliveryResults.LoadAndDelete(chatID)
+func (a *App) takeDeliveryDetail(chatID string) (deliveryOutcome, bool) {
+	v, ok := a.deliveries.LoadAndDelete(chatID)
 	if !ok {
 		return deliveryOutcome{}, false
 	}
@@ -662,7 +657,7 @@ func (a *App) Deliver(ctx context.Context, dc sdk.DeliveryContext) (outcomes []s
 	detail := deliveryOutcome{branch: dc.Branch}
 	defer func() {
 		detail.err = err
-		recordDelivery(dc.ChatID, detail)
+		a.recordDelivery(dc.ChatID, detail)
 	}()
 	if len(dc.Items) == 0 {
 		return nil, nil

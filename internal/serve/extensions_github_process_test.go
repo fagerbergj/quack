@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -250,7 +251,11 @@ func runGithub(t *testing.T, block string) (f githubFlow, child bool) {
 	})
 	c, _ := st.GetChat(context.Background(), ghChat)
 	f.chat += "\nafter close: " + c.Origin
+	// Observe-mode decisions post from a goroutine after Deliver returns, in no fixed order: wait for the
+	// review verdict and the one blocking finding, then sort so the two runs compare.
+	waitUntil(t, 10*time.Second, func() bool { return len(rec.seen()) >= 2 })
 	f.decisions = rec.seen()
+	sort.Strings(f.decisions)
 	return f, child
 }
 

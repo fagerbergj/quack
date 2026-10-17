@@ -645,7 +645,7 @@ func TestFinalizeSkipsSummaryWhenDeliveryVerified(t *testing.T) {
 	pr := &pendingRun{sessionID: sessionID, owner: "acme", repo: "widgets", number: 7, login: "alice"}
 	e.pending.Store(chatID, pr)
 	claimInflightFor(t, e, chatID, sessionID)
-	recordDelivery(chatID, deliveryOutcome{prNumber: 42, prURL: "https://github.com/acme/widgets/pull/42"})
+	e.app.recordDelivery(chatID, deliveryOutcome{prNumber: 42, prURL: "https://github.com/acme/widgets/pull/42"})
 
 	e.RunEnded(chatID, sdk.RunOutcome{Status: sdk.RunDone, PlanRan: true, Answer: "I opened a PR"})
 
@@ -758,7 +758,7 @@ func TestFinalizePostsAnswerWhenPushLeftHeadUnchanged(t *testing.T) {
 	}
 	e.pending.Store(chatID, pr)
 	claimInflightFor(t, e, chatID, sessionID)
-	recordDelivery(chatID, deliveryOutcome{prNumber: 42, prURL: "https://github.com/acme/widgets/pull/42", pushedSHA: "sha-before"})
+	e.app.recordDelivery(chatID, deliveryOutcome{prNumber: 42, prURL: "https://github.com/acme/widgets/pull/42", pushedSHA: "sha-before"})
 
 	e.RunEnded(chatID, sdk.RunOutcome{Status: sdk.RunDone, PlanRan: true, Answer: "nothing needed fixing - CI was flaky, re-run it"})
 
@@ -787,7 +787,7 @@ func TestFinalizeSkipsSummaryWhenPushActuallyMovedHead(t *testing.T) {
 	}
 	e.pending.Store(chatID, pr)
 	claimInflightFor(t, e, chatID, sessionID)
-	recordDelivery(chatID, deliveryOutcome{prNumber: 42, prURL: "https://github.com/acme/widgets/pull/42", pushedSHA: "sha-after-fix"})
+	e.app.recordDelivery(chatID, deliveryOutcome{prNumber: 42, prURL: "https://github.com/acme/widgets/pull/42", pushedSHA: "sha-after-fix"})
 
 	e.RunEnded(chatID, sdk.RunOutcome{Status: sdk.RunDone, PlanRan: true, Answer: "fixed the failing test"})
 
@@ -1527,7 +1527,7 @@ func TestHandleWebhookSubmittedReviewSkipsSummaryComment(t *testing.T) {
 	fh.waitForDispatch(t, 2*time.Second)
 
 	chatID := globalChatID("github-acme-widgets-7")
-	recordDelivery(chatID, deliveryOutcome{reviewDelivered: true})
+	ext.app.recordDelivery(chatID, deliveryOutcome{reviewDelivered: true})
 	ext.RunEnded(chatID, sdk.RunOutcome{Status: sdk.RunDone, PlanRan: true, Answer: "I reviewed it."})
 
 	select {
@@ -1553,7 +1553,7 @@ func TestHandleWebhookFailedDeliveryStillComments(t *testing.T) {
 	fh.waitForDispatch(t, 2*time.Second)
 
 	chatID := globalChatID("github-acme-widgets-7")
-	recordDelivery(chatID, deliveryOutcome{err: fmt.Errorf("github_pull_request: branch not pushed"), branch: "quack/issue-66"})
+	ext.app.recordDelivery(chatID, deliveryOutcome{err: fmt.Errorf("github_pull_request: branch not pushed"), branch: "quack/issue-66"})
 	ext.RunEnded(chatID, sdk.RunOutcome{Status: sdk.RunDone, PlanRan: true, Answer: "partial progress"})
 
 	select {
@@ -2614,7 +2614,7 @@ func TestReviewBaselineDecoupledFromGeneralSnapshot(t *testing.T) {
 		req := fh.waitForDispatch(t, 2*time.Second)
 		chatID := globalChatID("github-acme-widgets-7")
 		if reviewDelivered {
-			recordDelivery(chatID, deliveryOutcome{reviewDelivered: true})
+			ext.app.recordDelivery(chatID, deliveryOutcome{reviewDelivered: true})
 		}
 		ext.RunEnded(chatID, sdk.RunOutcome{Status: sdk.RunDone, PlanRan: true, Answer: "handled"})
 		return req.Ask.Message
@@ -3489,7 +3489,7 @@ func TestFinalizeReReviewsOnHeadModified(t *testing.T) {
 			if err := e.store.SetMergeIntent(context.Background(), chatID, "alice"); err != nil {
 				t.Fatalf("SetMergeIntent: %v", err)
 			}
-			recordDelivery(chatID, deliveryOutcome{reviewDelivered: true})
+			e.app.recordDelivery(chatID, deliveryOutcome{reviewDelivered: true})
 
 			e.RunEnded(chatID, sdk.RunOutcome{Status: sdk.RunDone, PlanRan: true})
 
@@ -3551,7 +3551,7 @@ func TestTryMergeStandingIntentEmptySnapshotMergesOnMatchingHead(t *testing.T) {
 	if err := e.store.SetMergeIntent(context.Background(), chatID, "alice"); err != nil {
 		t.Fatalf("SetMergeIntent: %v", err)
 	}
-	recordDelivery(chatID, deliveryOutcome{reviewDelivered: true})
+	e.app.recordDelivery(chatID, deliveryOutcome{reviewDelivered: true})
 
 	e.RunEnded(chatID, sdk.RunOutcome{Status: sdk.RunDone, PlanRan: true})
 
@@ -3942,7 +3942,7 @@ func TestHandleWebhookMergeLabelReviewLandsConsumesIntent(t *testing.T) {
 	// The review lands as an approval, then the review run's RunEnded records its delivery.
 	setReviews(`[{"id":11,"state":"APPROVED","user":{"login":"quack[bot]"},"submitted_at":"2026-01-01T00:00:00Z"}]`)
 	chatID := globalChatID("github-acme-widgets-7")
-	recordDelivery(chatID, deliveryOutcome{reviewDelivered: true})
+	ext.app.recordDelivery(chatID, deliveryOutcome{reviewDelivered: true})
 	ext.RunEnded(chatID, sdk.RunOutcome{Status: sdk.RunDone, PlanRan: true, Answer: "reviewed"})
 
 	select {
@@ -3993,7 +3993,7 @@ func TestHandleWebhookMergeLabelRestartSurvival(t *testing.T) {
 		t.Fatalf("status = %d", rec.Code)
 	}
 	fh.waitForDispatch(t, 2*time.Second)
-	recordDelivery(chatID, deliveryOutcome{reviewDelivered: true})
+	ext.app.recordDelivery(chatID, deliveryOutcome{reviewDelivered: true})
 	ext.RunEnded(chatID, sdk.RunOutcome{Status: sdk.RunDone, PlanRan: true, Answer: "reviewed"})
 
 	select {
@@ -4051,7 +4051,7 @@ func TestRunEndedAfterRestartStillFinalizesAndMerges(t *testing.T) {
 	// Simulate a quack restart: a brand new Extension, with an empty
 	// e.pending, over the same durable store.
 	restarted, _ := newTestExtensionWithStore(t, srv.URL, []string{"mention"}, st)
-	recordDelivery(chatID, deliveryOutcome{reviewDelivered: true})
+	restarted.app.recordDelivery(chatID, deliveryOutcome{reviewDelivered: true})
 	restarted.RunEnded(chatID, sdk.RunOutcome{Status: sdk.RunDone, PlanRan: true, Answer: "reviewed"})
 
 	select {
