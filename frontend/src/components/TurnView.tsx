@@ -46,11 +46,12 @@ function TurnDagBubble({ dag, activity, chatId }: { dag: DagTurnState; activity:
   return (
     <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
       <DagBubbleHeader dag={dag} />
-      <details className="rounded-lg border border-gray-200 dark:border-gray-700">
-        <summary className="cursor-pointer select-none px-3 py-2 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+      {/* A full-bleed divided row, the same shape as the trigger card's sections, not a box in the card. */}
+      <details className="-mx-5 px-5 mt-3 -mb-4 border-t border-gray-200 dark:border-gray-700">
+        <summary className="cursor-pointer select-none py-3.5 medium:py-2.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-gray-100">
           Steps
         </summary>
-        <div className="p-2 space-y-3">
+        <div className="pb-4 space-y-3">
           {activity.length > 0 && <ActivityList activity={activity} />}
           <DagView dag={dag} chatId={chatId} />
         </div>

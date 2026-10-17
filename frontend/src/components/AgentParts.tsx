@@ -19,6 +19,7 @@ import { MermaidDiagram } from './MermaidDiagram'
 import { isTrailingMermaidFenceOpen, lastSafeSplitOffset } from './mermaidSource'
 import { StatusDot, type DotStatus } from './StatusDot'
 import { failedCriterionLine, pct } from '../lib/judgeRounds'
+import { CHIP } from '../lib/colorHash'
 
 // Answers carry raw `<details><summary>Sources</summary>` HTML; text is model-authored and web-shaped,
 // so sanitize allows only <details>/<summary> beyond the default schema.
@@ -304,7 +305,7 @@ export function AcpBadge() {
   return (
     <span
       title="Run by an external ACP agent - rendered best-effort"
-      className="shrink-0 text-2xs font-semibold tracking-wide px-1 py-0.5 rounded bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-300"
+      className={`${CHIP} bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-300`}
     >
       ACP
     </span>

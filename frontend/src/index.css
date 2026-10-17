@@ -39,7 +39,7 @@
   --color-blue-950: #1a1f45;
 
   /* Material 3 type and shape scales. xs/sm/base already match M3 label-medium (12/16), body-medium (14/20)
-     and body-large (16/24); 2xs is label-small. Radii: rounded=4 xs, rounded-lg=8 small, xl=12 medium, 2xl=16 large. */
+     and body-large (16/24); 2xs is label-small. Radii: rounded and rounded-sm 4 (xs), md and lg 8 (small), xl 12, 2xl 16, 3xl 28. */
   --text-2xs: 0.6875rem;
   --text-2xs--line-height: 1rem;
   --radius-sm: 0.25rem;

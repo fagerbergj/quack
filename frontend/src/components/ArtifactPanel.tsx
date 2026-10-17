@@ -19,6 +19,7 @@ import { AssistantText, mdSchema } from './AgentParts'
 import { tryParseJSON } from '../lib/json'
 import { A2uiSurfaceBox } from './A2uiArtifact'
 import { A2UI_SURFACE_KIND, QUIZ_KEY_KIND, surfacePersistKey, type SurfaceContent } from '../lib/a2ui'
+import { CHIP } from '../lib/colorHash'
 
 // JudgeRoundContent is the JSON body of a `judge_round` artifact, the only place a note's line anchor lives.
 // Parsed client-side: it is an artifact body, not a REST response, so it is not in the generated schema.
@@ -988,7 +989,7 @@ const SEVERITY_CHIP: Record<string, string> = {
 }
 function severityChip(word: string | undefined) {
   if (!word) return null
-  return <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${SEVERITY_CHIP[word] ?? 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200'}`}>{word}</span>
+  return <span className={`${CHIP} ${SEVERITY_CHIP[word] ?? 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200'}`}>{word}</span>
 }
 
 // hideHeader skips the chip/path/title row: TitleHeading already shows all
