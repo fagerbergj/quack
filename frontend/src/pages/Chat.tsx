@@ -24,7 +24,7 @@ import type { ChatStatus, Turn } from '../generated'
 import { useTurnArtifacts } from '../hooks/useTurnArtifacts'
 import type { SurfaceRef } from '../lib/a2ui'
 import { TurnSurfaces } from '../components/A2uiArtifact'
-import { TONE } from '../lib/colorHash'
+import { TONE, CHIP } from '../lib/colorHash'
 
 // Never shortens the list: the poll must not truncate a sidebar paged past the page cap. Safe because `page` is
 // exactly the current top N by updated_at, so nothing left in `existing` can outrank it.
@@ -426,7 +426,7 @@ function ChatHeader({ title, editable, status, startedAt, activeChatId, isArchiv
   onToggleChatList: () => void
 } & ReturnType<typeof chatHeaderProps>) {
   return (
-    <div className="flex items-center justify-between px-4 py-3 sm:px-6 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+    <div className="flex items-center justify-between gap-3 px-4 py-3 sm:px-6 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
       <div className="flex items-center gap-2 min-w-0 flex-1">
         {/* A chat glyph, not a hamburger: two abstract menu icons beside the nav toggle were indistinguishable. */}
         <button
@@ -450,7 +450,7 @@ function ChatHeader({ title, editable, status, startedAt, activeChatId, isArchiv
           {isArchived && (
             <span
               title="This chat is archived and read-only. Restore it from the Archived section to continue."
-              className={`flex-shrink-0 text-2xs font-semibold tracking-wide px-1.5 py-0.5 rounded ${TONE.gray}`}
+              className={`${CHIP} ${TONE.gray}`}
             >
               Archived
             </span>

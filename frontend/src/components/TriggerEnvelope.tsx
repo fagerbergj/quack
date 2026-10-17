@@ -6,6 +6,7 @@ import { ArtifactPanel } from './ArtifactPanel'
 import { api } from '../api'
 import { Icon } from './Icon'
 import { parseA2uiActionText } from '../lib/a2ui'
+import { CHIP } from '../lib/colorHash'
 import {
   parseEnvelope,
   commentsSummaryLabel,
@@ -178,7 +179,7 @@ function StatusBadge({ status }: { status: string }) {
   const deleted = status === 'deleted'
   return (
     <span
-      className={`px-1 rounded text-2xs font-medium uppercase tracking-wide ${
+      className={`${CHIP} ${
         deleted
           ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
           : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
@@ -368,7 +369,7 @@ function ArtifactStatusChip({ status }: { status: string }) {
       : status === 'updated'
         ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
         : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400'
-  return <span className={`px-1 rounded text-2xs font-medium uppercase tracking-wide shrink-0 ${cls}`}>{status}</span>
+  return <span className={`${CHIP} ${cls}`}>{status}</span>
 }
 
 function ArtifactsSection({
