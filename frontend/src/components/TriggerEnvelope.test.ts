@@ -413,6 +413,22 @@ ${CHECKS_ENVELOPE.split('\n').slice(2).join('\n')}`
     expect(artifactPanelProps).toHaveBeenCalledWith(expect.objectContaining({ chatId: 'chat-1', nodeId: 'ctx-node-1', focusArtifactId: 'bytes:comments' }))
   })
 
+  it('opens a row dispatch saved with no owning node (the prod shape: lineage.node_id is blank)', async () => {
+    listChatArtifacts.mockResolvedValue({ data: [{ name: 'bytes:files', kind: 'bytes', lineage: { node_id: '', author: 'dispatch' } }] })
+    const el = mount(`<permissions>join_pr_conversation</permissions>
+<deliverable>a review</deliverable>
+<artifacts><artifact id="bytes:files" revision="1" status="new">2 items</artifact></artifacts>`, { chatId: 'chat-1' })
+    const details = [...el.querySelectorAll('details')].find(d => d.textContent?.includes('artifact'))!
+    act(() => details.querySelector('summary')!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
+    const row = [...el.querySelectorAll('button')].find(b => b.textContent?.includes('files'))!
+    await act(async () => {
+      row.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(artifactPanelProps).toHaveBeenCalledWith(expect.objectContaining({ nodeId: '', focusArtifactId: 'bytes:files' }))
+  })
+
   it('a row with no chatId is disabled and never opens the panel', () => {
     const el = mount(`<permissions>join_pr_conversation</permissions>
 <deliverable>a review</deliverable>

@@ -138,11 +138,11 @@ function kindRank(a: ArtifactSummary, nodeArtifactKind?: string): number {
 // The node's result, computed via kindRank. judge_round is excluded from ranked candidates,
 // but an explicit focus (a secondary-list tap) can still land on one.
 export function selectPrimaryOutput(artifacts: ArtifactSummary[], nodeArtifactKind?: string, focusArtifactId?: string): ArtifactSummary | null {
-  const eligible = artifacts.filter(a => !isBookkeeping(a))
   // A focus hint naming one of this node's artifacts wins outright: "show what was tapped" beats kind rank
   // and newest-wins. An in-panel secondary tap reuses this same mechanism.
-  const focused = focusArtifactId ? eligible.find(a => a.name === focusArtifactId) : undefined
+  const focused = focusArtifactId ? artifacts.find(a => a.name === focusArtifactId) : undefined
   if (focused) return focused
+  const eligible = artifacts.filter(a => !isBookkeeping(a))
   const candidates = eligible.filter(a => a.kind !== 'judge_round')
   if (candidates.length === 0) return null
   return candidates.reduce((best, a) => (compareOutput(a, best, nodeArtifactKind) > 0 ? a : best))
@@ -338,11 +338,12 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
   // Membership is by the latest revision's lineage.node_id, so an artifact revised by a later node moves to that
   // node's panel. Per-revision lineage would fix it but costs a revisions fetch per artifact on open.
   const nodeArtifacts = useMemo(() => {
-    const own = summaries.filter(s => belongsToNode(s, nodeId) && !isBookkeeping(s))
+    // The caller's focus is shown even when it's run input with no node (a trigger card's bytes:* row).
+    const own = summaries.filter(s => s.name === focusArtifactId || (belongsToNode(s, nodeId) && !isBookkeeping(s)))
     if (runStartedAt == null) return own
     const thisRun = new Set(nodeJudgeRounds(own, nodeId, runStartedAt, runFinishedAt ?? Infinity).map(r => r.name))
     return own.filter(s => s.kind !== 'judge_round' || thisRun.has(s.name))
-  }, [summaries, nodeId, runStartedAt, runFinishedAt])
+  }, [summaries, nodeId, focusArtifactId, runStartedAt, runFinishedAt])
 
   // The panel's one and only shown artifact: computed, not chosen. A fresh
   // in-panel tap (focusedOverride) beats the caller's own focusArtifactId, same as any newer focus beats a stale hint.

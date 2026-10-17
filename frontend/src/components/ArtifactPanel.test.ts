@@ -135,6 +135,8 @@ describe('selectPrimaryOutput', () => {
     expect(selectPrimaryOutput([dagNode, dagPlan, bytes, finding])?.name).toBe('finding:a')
     expect(selectPrimaryOutput([dagNode, bytes])).toBeNull()
     expect(selectPrimaryOutput([dagNode, dagPlan, bytes])?.name).toBe('dag_plan:main')
+    // Unless it was tapped: a trigger card's run-input row opens on that blob.
+    expect(selectPrimaryOutput([dagNode, bytes, finding], undefined, 'bytes:issue')?.name).toBe('bytes:issue')
   })
 
   it('ranks code_review above the declared kind, a blob, and a finding, regardless of revision', () => {
