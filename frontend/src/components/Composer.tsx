@@ -24,7 +24,7 @@ const NARROW_QUERY = '(max-width: 639px)'
 // The placeholders' parenthetical is meaningless on touch and wraps into a
 // second line the fixed-height input clips, so it's dropped when narrow.
 function placeholderFor(streaming: boolean, narrow: boolean, archived: boolean, noChat: boolean): string {
-  if (archived) return 'Archived chats are read-only - restore to continue'
+  if (archived) return 'Archived - restore it to reply'
   if (noChat) return 'Ask a question'
   if (streaming) return narrow ? 'Type a follow-up…' : 'Type a follow-up… (queues until the current response finishes)'
   return narrow ? 'Ask something…' : 'Ask something… (Enter to send, Shift+Enter for newline)'

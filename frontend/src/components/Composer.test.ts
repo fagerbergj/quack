@@ -84,7 +84,7 @@ describe('Composer archived placeholder', () => {
   it('shows the read-only placeholder instead of the generic disabled one', () => {
     mount()
     const ta = host!.querySelector('textarea')!
-    expect(ta.placeholder).toBe('Archived chats are read-only - restore to continue')
+    expect(ta.placeholder).toBe('Archived - restore it to reply')
   })
 
   it('disables the textarea', () => {

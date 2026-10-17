@@ -14,7 +14,7 @@ describe('GitHubLink', () => {
     expect(link.getAttribute('href')).toBe(URL)
     expect(link.getAttribute('target')).toBe('_blank')
     expect(link.getAttribute('rel')).toBe('noopener noreferrer')
-    expect(screen.getByText('acme/widgets')).toBeTruthy()
+    expect(screen.getByText('acme/widgets').className).toContain('hidden medium:inline')
   })
 
   it('falls back to a generic label and no repo span without a repo', () => {
