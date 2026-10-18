@@ -86,7 +86,7 @@ describe('App nav drawer', () => {
   })
 
   it('renders exactly one main landmark on every route', async () => {
-    for (const path of ['/chat', '/memory', '/plugins']) {
+    for (const path of ['/chat', '/memory', '/plugins', '/ext/usage']) {
       renderAt(path)
       expect(await screen.findAllByRole('main')).toHaveLength(1)
       cleanup()
