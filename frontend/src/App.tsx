@@ -46,7 +46,8 @@ export default function App() {
         open={navOpen}
         onClose={() => setNavOpen(false)}
       />
-      <div className="flex-1 min-w-0 h-full flex flex-col overflow-hidden">
+      {/* One main landmark for every route, so a screen reader can jump past the nav drawer. */}
+      <main className="flex-1 min-w-0 h-full flex flex-col overflow-hidden">
         <VersionBanner skew={skew} />
         {/* key=route: the lazy routes share this slot, so without a key React reuses one LazyLoadBoundary and a
             failure on one route keeps showing on the next. */}
@@ -57,7 +58,7 @@ export default function App() {
             : route === 'ext'
               ? <LazyLoadBoundary key={route}><Suspense fallback={routeFallback}><ExtensionHost navOpen={navOpen} onToggleNav={() => setNavOpen(o => !o)} /></Suspense></LazyLoadBoundary>
               : <Chat navOpen={navOpen} onToggleNav={() => setNavOpen(o => !o)} />}
-      </div>
+      </main>
     </div>
   )
 }

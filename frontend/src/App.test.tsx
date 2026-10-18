@@ -85,6 +85,14 @@ describe('App nav drawer', () => {
     await waitFor(() => expect(document.querySelector('iframe')).toBeTruthy())
   })
 
+  it('renders exactly one main landmark on every route', async () => {
+    for (const path of ['/chat', '/memory', '/plugins']) {
+      renderAt(path)
+      expect(await screen.findAllByRole('main')).toHaveLength(1)
+      cleanup()
+    }
+  })
+
   // With the rail's column gone, the chat-list toggle is the only hamburger button.
   it('has exactly one hamburger toggle in the DOM - the chat-list one', () => {
     renderAt('/chat')
