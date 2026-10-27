@@ -32,7 +32,7 @@ type lineupSlot struct {
 	Points     float32   `json:"points"`
 	Projection *float32  `json:"projection,omitempty"`
 	Recent     []weekPts `json:"recent,omitempty"`
-	RecentAvg  float32   `json:"recent_avg,omitempty"`
+	RecentAvg  *float32  `json:"recent_avg,omitempty"`
 	gameInfo
 }
 
@@ -106,7 +106,7 @@ type side struct {
 	FreeAgentHits    []freeAgentHit         `json:"free_agent_hits,omitempty"`
 	BestByProjection []bestByProjectionSlot `json:"best_by_projection,omitempty"`
 	RecentScores     []teamWeek             `json:"recent_scores,omitempty"`
-	RecentAvg        float32                `json:"recent_avg,omitempty"`
+	RecentAvg        *float32               `json:"recent_avg,omitempty"`
 }
 
 type matchupResult struct {
@@ -181,7 +181,7 @@ func (e *extension) getMatchup(ctx context.Context, a matchupArgs) (matchupResul
 		return matchupResult{}, err
 	}
 	if proj == nil && !weekIsComplete(week, league, state) {
-		e.addRecentForm(ctx, leagueID, season, week, &result.Me, &result.Opponent)
+		e.addRecentForm(ctx, leagueID, season, lastFinishedWeek(week, state.Week), &result.Me, &result.Opponent)
 	}
 	return result, nil
 }

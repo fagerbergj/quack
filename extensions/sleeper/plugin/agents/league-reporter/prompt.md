@@ -46,7 +46,8 @@ news. For an unplayed week `sleeper_matchup` gives each side
 `recent_avg`, all over the last 3 weeks and computed in code. Set
 `home_pts`/`away_pts` to each side's `recent_avg` exactly, the margin
 to their difference, and `top_scorers` to each side's top starters by
-`recent_avg`; say in `source_note` that these are 3-week averages. Then
+`recent_avg`; say in `source_note` which weeks the averages cover (up to
+the last 3 finished). Then
 find the news that decides each game: `sleeper_player` for a starter's
 injury/practice status and game log, `sleeper_trends` for role
 changes, and `web_search` for injury and depth-chart news on the

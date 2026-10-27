@@ -39,10 +39,10 @@ type teamWeek struct {
 	Result    string  `json:"result"`
 }
 
-// addRecentForm gives a preview each side's last recentWeeks results and each starter's recent points,
-// averaged in code so the digest copies numbers instead of summing them.
-func (e *extension) addRecentForm(ctx context.Context, leagueID, season string, week int, sides ...*side) {
-	for w := week - 1; w >= 1 && w >= week-recentWeeks; w-- {
+// addRecentForm gives a preview each side's recentWeeks results through latest, the last week with final
+// scores, and each starter's points, averaged in code so the digest copies numbers instead of summing them.
+func (e *extension) addRecentForm(ctx context.Context, leagueID, season string, latest int, sides ...*side) {
+	for w := latest; w >= 1 && w > latest-recentWeeks; w-- {
 		matchups, err := e.client.Matchups(ctx, leagueID, w)
 		if err != nil {
 			e.logWarn("sleeper: recent matchups fetch failed", "league_id", leagueID, "week", w, "error", err)
@@ -51,6 +51,7 @@ func (e *extension) addRecentForm(ctx context.Context, leagueID, season string, 
 		stats, err := e.client.WeekStats(ctx, season, w)
 		if err != nil {
 			e.logWarn("sleeper: recent stats fetch failed", "season", season, "week", w, "error", err)
+			continue
 		}
 		for _, s := range sides {
 			addWeekForm(s, w, matchups, stats)
@@ -80,13 +81,18 @@ func addWeekForm(s *side, w int, matchups []sleepergen.Matchup, stats map[string
 	}
 }
 
-func avgPoints[T any](rows []T, pts func(T) float32) float32 {
+// lastFinishedWeek is the newest week before week with final scores: a future-week preview skips the live week.
+func lastFinishedWeek(week, liveWeek int) int { return min(week, liveWeek) - 1 }
+
+// avgPoints is nil with no rows, so a true 0.0 average stays distinct from no data.
+func avgPoints[T any](rows []T, pts func(T) float32) *float32 {
 	if len(rows) == 0 {
-		return 0
+		return nil
 	}
 	var sum float32
 	for _, r := range rows {
 		sum += pts(r)
 	}
-	return round2(sum / float32(len(rows)))
+	avg := round2(sum / float32(len(rows)))
+	return &avg
 }

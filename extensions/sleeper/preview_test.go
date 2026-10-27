@@ -55,7 +55,7 @@ func TestGetMatchupDigestPreviewHidesProjections(t *testing.T) {
 		if len(sd.RecentScores) != 1 || sd.RecentScores[0].Week != 1 || sd.RecentScores[0].Points != m.Points {
 			t.Errorf("roster %d recent_scores = %+v, want week 1 at %v", sd.RosterID, sd.RecentScores, m.Points)
 		}
-		if sd.RecentAvg != round2(m.Points) {
+		if sd.RecentAvg == nil || *sd.RecentAvg != round2(m.Points) {
 			t.Errorf("roster %d recent_avg = %v, want %v", sd.RosterID, sd.RecentAvg, round2(m.Points))
 		}
 	}
@@ -76,11 +76,23 @@ func TestAddWeekFormJoinsStartersAndResult(t *testing.T) {
 	if len(s.RecentScores) != 2 || s.RecentScores[0] != want {
 		t.Errorf("recent_scores = %+v, want 2 weeks starting %+v", s.RecentScores, want)
 	}
-	if got := avgPoints(s.Starters[0].Recent, func(p weekPts) float32 { return p.PtsPPR }); got != 15.5 {
+	if got := avgPoints(s.Starters[0].Recent, func(p weekPts) float32 { return p.PtsPPR }); got == nil || *got != 15.5 {
 		t.Errorf("starter a avg = %v, want 15.5", got)
+	}
+	if got := avgPoints(s.Starters[1].Recent, func(p weekPts) float32 { return p.PtsPPR }); got != nil {
+		t.Errorf("starter b avg = %v, want nil with no weeks", *got)
 	}
 	if s.Starters[1].Recent != nil {
 		t.Errorf("starter b recent = %+v, want none (no stats row)", s.Starters[1].Recent)
+	}
+}
+
+func TestLastFinishedWeek(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct{ week, live, want int }{{8, 8, 7}, {9, 8, 7}, {12, 8, 7}, {1, 1, 0}} {
+		if got := lastFinishedWeek(c.week, c.live); got != c.want {
+			t.Errorf("lastFinishedWeek(%d, live %d) = %d, want %d", c.week, c.live, got, c.want)
+		}
 	}
 }
 
