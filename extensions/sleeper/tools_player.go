@@ -36,6 +36,8 @@ type playerResult struct {
 	SeasonStats         map[string]float32 `json:"season_stats,omitempty"`
 	WeekProjection      *float32           `json:"week_projection,omitempty"`
 	GameLog             []gameLogWeek      `json:"game_log,omitempty"`
+	Ahead               []teammate         `json:"ahead,omitempty"`
+	TeamInjuries        []teammate         `json:"team_injuries,omitempty"`
 	gameInfo
 }
 
@@ -54,7 +56,8 @@ func (e *extension) playerTool() tool.Tool {
 		functiontool.Config{
 			Name: "sleeper_player",
 			Description: "Get one player's bio, team, depth chart order, injury/practice status, news " +
-				"timestamp, season stats, and the current NFL week's projection. Look up by `player_id` or " +
+				"timestamp, season stats, and the current NFL week's projection; `ahead` and `team_injuries` as in " +
+				"sleeper_roster. Look up by `player_id` or " +
 				"`name`. " + gameRulesDoc,
 		},
 		func(ctx adkagent.Context, a playerArgs) (playerResult, error) { return e.getPlayer(ctx, a) },
@@ -93,6 +96,11 @@ func (e *extension) getPlayer(ctx context.Context, a playerArgs) (playerResult, 
 		PracticeDescription: strVal(p.PracticeDescription), NewsUpdated: intVal(p.NewsUpdated),
 		SeasonStats: stats, WeekProjection: projectionOf(proj, p.PlayerId), GameLog: gameLog,
 		gameInfo: sl.gameFor(map[string]sleepergen.Player{p.PlayerId: p}, p.PlayerId),
+	}
+	if dump, err := e.client.PlayersDump(ctx); err == nil {
+		td := newTeamDepth(dump)
+		res.Ahead = td.envOf(p).Ahead
+		res.TeamInjuries = td.injuries([]string{res.Team})[res.Team]
 	}
 	res.callContext = cc
 	return res, nil

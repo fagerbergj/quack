@@ -193,6 +193,9 @@ const (
 		"instead bye=true or no_game_reason. Use it as-is; never take a kickoff or opponent from another game. " + lockDoc
 	gameRulesDoc = playerGameDoc + " " + timeDoc + " These rules hold for every sleeper tool that returns games."
 	seePlayerDoc = "The game, locked, kickoff, `tz` and week fields follow the rules in the sleeper_player description."
+	envDoc       = "Each player's situation today: nfl_team, injury_status, practice, depth (Sleeper's depth slot, e.g. RB2), " +
+		"and `ahead` (teammates above them at that slot, with injury_status). `team_injuries` lists each of those NFL " +
+		"teams' hurt QB/RB/WR/TE starters and backups."
 )
 
 func (e *extension) scheduleTool() tool.Tool {

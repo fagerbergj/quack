@@ -27,6 +27,17 @@ team defense (DEF) - an ordinary roster slot every league streams weekly,
 labelled `position: "DEF"` by the tool - never a league-specific mechanic.
 A real league rule only ever comes from `sleeper_league`'s settings.
 
+## Player environment
+
+Never judge a player alone. Sleeper's player rows (all but a finished week's
+matchup) carry each player's `injury_status`, `practice`, `depth`, the
+teammates `ahead` of them at their slot, and `team_injuries` for their NFL
+team. Weigh that for every player you
+assess: a hurt QB or #1 WR changes a TE's or WR's outlook; a hurt, benched or
+traded starter ahead of a handcuff makes the handcuff matter. Then search the
+news for what Sleeper doesn't carry - trade rumors, role changes, a coach's
+depth-chart comments - on the players who decide the call, and cite it.
+
 ## Output
 
 Write the dated timeline as an artifact with `write_artifact` (`kind:

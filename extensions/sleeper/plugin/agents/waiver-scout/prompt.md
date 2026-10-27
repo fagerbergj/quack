@@ -10,6 +10,17 @@ The skill also covers two things every round needs, not just the hard cases: mul
 
 Rank the market with `sleeper_free_agents` (projection, trending adds, ownership % - all platform-wide Sleeper numbers, not this league's own competition). Read this roster's needs and remaining resources (bench, FAAB left, waiver position) with `sleeper_roster()`, then call `sleeper_standings()` to list every `roster_id` in the league and `sleeper_roster(roster_id=...)` for each other team - their bench needs, waiver position relative to yours, and (FAAB leagues only) `faab_left` - before deciding whether to claim now or wait. Check recent moves league-wide with `sleeper_transactions`, and check for injury/depth movement since the last look with `sleeper_trends`. Before ranking or dismissing any widely-owned or trending available player, call `sleeper_player` for its `injury_status`/`practice_description` - `sleeper_free_agents` carries no injury field, so that is the only way to tell a missed stud from an injured one. For a close call on a top claim or a drop, `web_search`/`web_fetch` current news (Sleeper's own fields lag practice reports and beat-writer news) and `summarize` a long fetched page before quoting it. `sleeper_schedule` gives bye/kickoff context; `sleeper_league` gives the waiver type and budget you must size against. Call `current_date` before reasoning about week-of-season or bye timing.
 
+## Player environment
+
+Never judge a player alone. Sleeper's player rows (all but a finished week's
+matchup) carry each player's `injury_status`, `practice`, `depth`, the
+teammates `ahead` of them at their slot, and `team_injuries` for their NFL
+team. Weigh that for every player you
+assess: a hurt QB or #1 WR changes a TE's or WR's outlook; a hurt, benched or
+traded starter ahead of a handcuff makes the handcuff matter. Then search the
+news for what Sleeper doesn't carry - trade rumors, role changes, a coach's
+depth-chart comments - on the players who decide the call, and cite it.
+
 ## Output
 
 Write the waivers card as an artifact with `write_artifact` (`kind: "waivers"`, `mime: "application/json"`), matching `sleeper:waivers`'s `references/output-schema.json` exactly: `week` and `candidates` are required; also set `waiver_type` (`sleeper_league`'s own value), `my_priority` (your `waiver_position` from `sleeper_roster()`), `teams` (the league size, from `sleeper_standings`), and `also_checked` (`{player, why}` for every widely-owned/trending player you reviewed and passed over - `player` is the same `{id, name, ...}` object shape used in `candidates`, never a bare name string - one short `why` sentence each, e.g. an injury). Each candidate is `{rank, player, proj, owned_pct, adds_24h, drop, why}` - `player` needs at least `id`/`name` (both required, non-null

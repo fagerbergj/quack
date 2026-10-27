@@ -145,16 +145,17 @@ type freeAgent struct {
 	PlayerID     string  `json:"player_id"`
 	Name         string  `json:"name"`
 	Position     string  `json:"position"`
-	Team         string  `json:"team"`
 	Projection   float32 `json:"projection"`
 	TrendingAdds int     `json:"trending_adds"`
 	OwnedPct     float32 `json:"owned_pct"`
+	playerEnv
 }
 
 type freeAgentsResult struct {
-	LeagueID   string      `json:"league_id"`
-	FreeAgents []freeAgent `json:"free_agents"`
-	FetchedAt  string      `json:"fetched_at"`
+	LeagueID     string                `json:"league_id"`
+	FreeAgents   []freeAgent           `json:"free_agents"`
+	TeamInjuries map[string][]teammate `json:"team_injuries,omitempty"`
+	FetchedAt    string                `json:"fetched_at"`
 }
 
 const defaultFreeAgentLimit = 20
@@ -165,7 +166,8 @@ func (e *extension) freeAgentsTool() tool.Tool {
 		functiontool.Config{
 			Name: "sleeper_free_agents",
 			Description: "Rank unrostered players by this week's projection, with trending-add counts and " +
-				"research ownership percentage. `position` filters (e.g. \"RB\"); `limit` caps the list (default 20).",
+				"research ownership percentage. `position` filters (e.g. \"RB\"); `limit` caps the list (default 20). " +
+				"Each player and `team_injuries` carry the situation fields described in sleeper_roster.",
 		},
 		func(ctx adkagent.Context, a freeAgentsArgs) (freeAgentsResult, error) { return e.getFreeAgents(ctx, a) },
 	)
@@ -213,7 +215,13 @@ func (e *extension) getFreeAgents(ctx context.Context, a freeAgentsArgs) (freeAg
 	if len(agents) > limit {
 		agents = agents[:limit]
 	}
-	return freeAgentsResult{LeagueID: leagueID, FreeAgents: agents, FetchedAt: nowRFC3339()}, nil
+	td := newTeamDepth(dump)
+	envs := make([]playerEnv, len(agents))
+	for i := range agents {
+		agents[i].playerEnv = td.envOf(dump[agents[i].PlayerID])
+		envs[i] = agents[i].playerEnv
+	}
+	return freeAgentsResult{LeagueID: leagueID, FreeAgents: agents, TeamInjuries: td.injuries(teamsOf(envs...)), FetchedAt: nowRFC3339()}, nil
 }
 
 func rostered(rosters []sleepergen.Roster) map[string]bool {
@@ -251,7 +259,7 @@ func rankFreeAgents(rostered map[string]bool, dump map[string]sleepergen.Player,
 		}
 		p := dump[pid]
 		out[i] = freeAgent{
-			PlayerID: pid, Name: playerName(dump, pid), Position: strVal(p.Position), Team: strVal(p.Team),
+			PlayerID: pid, Name: playerName(dump, pid), Position: strVal(p.Position),
 			Projection: proj[pid]["pts_ppr"], TrendingAdds: trending[pid], OwnedPct: owned,
 		}
 	}

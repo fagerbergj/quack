@@ -62,7 +62,28 @@ func (e *extension) addRecentForm(ctx context.Context, leagueID, season string, 
 		for i := range s.Starters {
 			s.Starters[i].RecentAvg = avgPoints(s.Starters[i].Recent, func(p weekPts) float32 { return p.PtsPPR })
 		}
+		s.LineupAvg = lineupAvg(s.Starters)
 	}
+}
+
+// lineupAvg sums the starters' recent averages, a starter on bye or ruled out counting 0; nil with no averages.
+func lineupAvg(starters []lineupSlot) *float32 {
+	var sum float32
+	found := false
+	for _, st := range starters {
+		if st.RecentAvg == nil {
+			continue
+		}
+		found = true
+		if !st.Bye && !excludedInjuryStatus(&st.Injury) {
+			sum += *st.RecentAvg
+		}
+	}
+	if !found {
+		return nil
+	}
+	sum = round2(sum)
+	return &sum
 }
 
 func addWeekForm(s *side, w int, matchups []sleepergen.Matchup, stats map[string]sleepergen.StatMap) {
