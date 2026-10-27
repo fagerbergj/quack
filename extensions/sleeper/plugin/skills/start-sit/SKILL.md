@@ -20,7 +20,7 @@ constraint - every dedicated slot's incumbent is compared against the whole
 bench at that position each run, not just a contingency named in a prior
 round. `sleeper_matchup`'s `me` side carries a code-computed
 `best_by_projection` baseline (the best legal lineup by projection, per
-slot, Out/IR/Doubtful excluded); a starter that differs from it names the
+slot, Out/IR/Doubtful/Sus excluded); a starter that differs from it names the
 baseline player and the evidence that beat it in the row's `why`.
 
 ## Decision procedure (run in this order per slot)

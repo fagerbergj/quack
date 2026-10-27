@@ -30,6 +30,7 @@ type playerResult struct {
 	Position            string             `json:"position,omitempty"`
 	Team                string             `json:"team,omitempty"`
 	DepthChartOrder     int                `json:"depth_chart_order,omitempty"`
+	Depth               string             `json:"depth,omitempty"`
 	InjuryStatus        string             `json:"injury_status,omitempty"`
 	PracticeDescription string             `json:"practice_description,omitempty"`
 	NewsUpdated         int                `json:"news_updated,omitempty"`
@@ -92,7 +93,7 @@ func (e *extension) getPlayer(ctx context.Context, a playerArgs) (playerResult, 
 	}
 	res := playerResult{
 		PlayerID: p.PlayerId, Name: playerNameOf(p), Position: strVal(p.Position), Team: strVal(p.Team),
-		DepthChartOrder: intVal(p.DepthChartOrder), InjuryStatus: strVal(p.InjuryStatus),
+		DepthChartOrder: intVal(p.DepthChartOrder), Depth: depthLabel(p), InjuryStatus: strVal(p.InjuryStatus),
 		PracticeDescription: strVal(p.PracticeDescription), NewsUpdated: intVal(p.NewsUpdated),
 		SeasonStats: stats, WeekProjection: projectionOf(proj, p.PlayerId), GameLog: gameLog,
 		gameInfo: sl.gameFor(map[string]sleepergen.Player{p.PlayerId: p}, p.PlayerId),

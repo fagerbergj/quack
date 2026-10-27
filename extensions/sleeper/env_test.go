@@ -52,10 +52,13 @@ func TestLineupAvgZeroesByeAndRuledOut(t *testing.T) {
 		{RecentAvg: &eight, gameInfo: gameInfo{Bye: true}},
 		{RecentAvg: &six, playerEnv: playerEnv{Injury: "Out"}},
 		{RecentAvg: &four, playerEnv: playerEnv{Injury: "Questionable"}},
+		{RecentAvg: &six, playerEnv: playerEnv{Injury: "Sus"}},
+		{RecentAvg: &six, playerEnv: playerEnv{Injury: "IR"}},
+		{RecentAvg: &six, playerEnv: playerEnv{Injury: "Doubtful"}},
 		{},
 	}
 	if got := lineupAvg(starters); got == nil || *got != 14 {
-		t.Errorf("lineupAvg = %v, want 14 (bye and Out count 0, Questionable counts)", got)
+		t.Errorf("lineupAvg = %v, want 14 (bye, Out, Sus, IR and Doubtful count 0, Questionable counts)", got)
 	}
 	if lineupAvg([]lineupSlot{{}}) != nil {
 		t.Error("lineupAvg with no recent averages, want nil")

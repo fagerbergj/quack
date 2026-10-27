@@ -37,7 +37,7 @@ never recommend a swap that benches or brings in a locked player.
 `sleeper_matchup`'s `me` side also carries `best_by_projection`, a
 code-computed baseline: the best legal lineup by projection for this week,
 one entry per numbered slot (QB, RB1, RB2, WR1, WR2, TE, FLEX, K, DEF) with
-name/pos/projection, Out/IR/Doubtful excluded and Questionable included.
+name/pos/projection, Out/IR/Doubtful/Sus excluded and Questionable included.
 
 ## Player environment
 
