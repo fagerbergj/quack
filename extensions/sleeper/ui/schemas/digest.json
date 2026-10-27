@@ -36,10 +36,12 @@
             "maxLength": 60
           },
           "home_pts": {
-            "type": "number"
+            "type": "number",
+            "description": "Actual points for a recap; the team's 3-week recent_avg for a preview, never a projection."
           },
           "away_pts": {
-            "type": "number"
+            "type": "number",
+            "description": "Actual points for a recap; the team's 3-week recent_avg for a preview, never a projection."
           },
           "margin": {
             "type": "number"

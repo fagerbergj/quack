@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.1.0/plugin.schema.json",
   "name": "sleeper",
-  "version": "0.12.1",
+  "version": "0.19.0",
   "description": "Fantasy-football decision skills and the Sleeper extension's job agents: lineup, waivers, injury and news, trades, league digest/retro, season review, and draft.",
   "license": "MIT",
   "repository": "https://github.com/fagerbergj/quack",

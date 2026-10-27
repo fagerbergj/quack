@@ -148,7 +148,7 @@ func TestBenchPlayers(t *testing.T) {
 	if len(bench) != 1 {
 		t.Fatalf("bench = %+v, want exactly RB2 (starters and the \"0\" placeholder excluded)", bench)
 	}
-	if bench[0].Pos != "RB" || bench[0].Points != 7 || bench[0].Projection != 9.5 {
+	if bench[0].Pos != "RB" || bench[0].Points != 7 || bench[0].Projection == nil || *bench[0].Projection != 9.5 {
 		t.Errorf("bench[0] = %+v, want RB2's pos/points/projection", bench[0])
 	}
 }

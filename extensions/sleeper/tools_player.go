@@ -34,7 +34,7 @@ type playerResult struct {
 	PracticeDescription string             `json:"practice_description,omitempty"`
 	NewsUpdated         int                `json:"news_updated,omitempty"`
 	SeasonStats         map[string]float32 `json:"season_stats,omitempty"`
-	WeekProjection      float32            `json:"week_projection"`
+	WeekProjection      *float32           `json:"week_projection,omitempty"`
 	GameLog             []gameLogWeek      `json:"game_log,omitempty"`
 	gameInfo
 }
@@ -73,7 +73,7 @@ func (e *extension) getPlayer(ctx context.Context, a playerArgs) (playerResult, 
 		return playerResult{}, err
 	}
 	week := state.Week
-	proj, err := e.client.WeekProjections(ctx, season, week)
+	proj, err := e.weekProjections(ctx, season, week)
 	if err != nil {
 		return playerResult{}, fmt.Errorf("sleeper_player: projections: %w", err)
 	}
@@ -91,7 +91,7 @@ func (e *extension) getPlayer(ctx context.Context, a playerArgs) (playerResult, 
 		PlayerID: p.PlayerId, Name: playerNameOf(p), Position: strVal(p.Position), Team: strVal(p.Team),
 		DepthChartOrder: intVal(p.DepthChartOrder), InjuryStatus: strVal(p.InjuryStatus),
 		PracticeDescription: strVal(p.PracticeDescription), NewsUpdated: intVal(p.NewsUpdated),
-		SeasonStats: stats, WeekProjection: proj[p.PlayerId]["pts_ppr"], GameLog: gameLog,
+		SeasonStats: stats, WeekProjection: projectionOf(proj, p.PlayerId), GameLog: gameLog,
 		gameInfo: sl.gameFor(map[string]sleepergen.Player{p.PlayerId: p}, p.PlayerId),
 	}
 	res.callContext = cc

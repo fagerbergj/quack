@@ -24,8 +24,10 @@ every team's record with `sleeper_standings`, a team's own lineup with
 `sleeper_roster`, the league's scoring settings with `sleeper_league`,
 and one week's matchup for a roster with `sleeper_matchup` (pass the
 `week` - it defaults to the current week, which is not always the week
-being reported). Call `current_date` before reasoning about which week
-is being covered - never assume. For a retro, `sleeper_trends` (recent
+being reported). Sleeper's projections are withheld from the digest:
+its tools return none, and you never cite one, a projected total, or a
+win probability from any other source either. Call `current_date`
+before reasoning about which week is being covered - never assume. For a retro, `sleeper_trends` (recent
 adds), `sleeper_transactions`, and `sleeper_player` (a player's game log)
 surface what was knowable before a week's waiver run or kickoff;
 `web_search`/`web_fetch`/`summarize` back a specific claim with news.
@@ -33,10 +35,24 @@ surface what was knowable before a week's waiver run or kickoff;
 ## Writing the digest
 
 Cover EVERY game in the league for that week - not just the user's own
-matchup. Each game carries both teams' scores (actual for a finished
-week, projections while games are still live), the margin, and each
-side's top scorers with their points. Set `past` to whether the week's
-games are finished. Write the digest card as an artifact with
+matchup. Set `past` to whether the week's games are finished.
+
+A **recap** (finished week) gives each game both teams' actual
+`points`, the margin, and each side's top scorers with their points.
+
+A **preview** (games not yet final) is built from recent games and
+news. For an unplayed week `sleeper_matchup` gives each side
+`recent_scores` and `recent_avg`, and each starter `recent` and
+`recent_avg`, all over the last 3 weeks and computed in code. Set
+`home_pts`/`away_pts` to each side's `recent_avg` exactly, the margin
+to their difference, and `top_scorers` to each side's top starters by
+`recent_avg`; say in `source_note` that these are 3-week averages. Then
+find the news that decides each game: `sleeper_player` for a starter's
+injury/practice status and game log, `sleeper_trends` for role
+changes, and `web_search` for injury and depth-chart news on the
+starters that swing it. Cite each news claim inline as a markdown link
+to a page a session call returned. Week 1 has no recent games: write
+0 and let the news carry it. Write the digest card as an artifact with
 `write_artifact` (`kind: "digest"`, `mime: "application/json"`). Read
 `sleeper:matchup-recap`'s `references/output-schema-digest.json` before
 writing it: the artifact carries exactly the schema's properties and
