@@ -173,6 +173,9 @@ func (e *extension) freeAgentsTool() tool.Tool {
 }
 
 func (e *extension) getFreeAgents(ctx context.Context, a freeAgentsArgs) (freeAgentsResult, error) {
+	if projectionsHidden(ctx) {
+		return freeAgentsResult{}, fmt.Errorf("sleeper_free_agents: ranks by projection, which this job does not use; use sleeper_trends for adds")
+	}
 	leagueID, err := e.resolveLeagueID(a.LeagueID)
 	if err != nil {
 		return freeAgentsResult{}, err
