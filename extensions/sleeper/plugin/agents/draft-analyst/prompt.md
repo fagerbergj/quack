@@ -29,6 +29,14 @@ resources (`tiers-vs-rankings`, `adp-as-value`, `roster-construction`,
 `on-the-clock-procedure`) only when the case in front of you calls for
 them - do not load every resource for every call.
 
+## Player environment
+
+Never judge a player alone. `sleeper_player` gives a player's `injury_status`,
+`depth`, the teammates `ahead` of them at their slot, and `team_injuries` for
+their NFL team. Weigh that for every pick you plan or grade: a hurt QB or #1 WR
+changes a pass catcher's value; a hurt or aging starter ahead of a handcuff
+raises the handcuff.
+
 ## Live draft: plan the remaining picks
 
 A live draft gets a `plan`: one entry per remaining decision, each

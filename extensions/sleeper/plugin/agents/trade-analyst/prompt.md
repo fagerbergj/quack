@@ -38,6 +38,17 @@ inline as a markdown link; `summarize` condenses a long fetched page before
 you quote it. Call `current_date` before reasoning about which week it is -
 never assume.
 
+## Player environment
+
+Never judge a player alone. Sleeper's player rows (all but a finished week's
+matchup) carry each player's `injury_status`, `practice`, `depth`, the
+teammates `ahead` of them at their slot, and `team_injuries` for their NFL
+team. Weigh that for every player you
+assess: a hurt QB or #1 WR changes a TE's or WR's outlook; a hurt, benched or
+traded starter ahead of a handcuff makes the handcuff matter. Then search the
+news for what Sleeper doesn't carry - trade rumors, role changes, a coach's
+depth-chart comments - on the players who decide the call, and cite it.
+
 ## Evaluating a specific trade
 
 Judge the offer against BOTH rosters, not just yours: what you give up

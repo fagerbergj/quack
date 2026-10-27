@@ -34,6 +34,7 @@ type lineupSlot struct {
 	Recent     []weekPts `json:"recent,omitempty"`
 	RecentAvg  *float32  `json:"recent_avg,omitempty"`
 	gameInfo
+	playerEnv
 }
 
 // benchPlayer is a rostered non-starter from a completed week's matchup.
@@ -107,13 +108,15 @@ type side struct {
 	BestByProjection []bestByProjectionSlot `json:"best_by_projection,omitempty"`
 	RecentScores     []teamWeek             `json:"recent_scores,omitempty"`
 	RecentAvg        *float32               `json:"recent_avg,omitempty"`
+	LineupAvg        *float32               `json:"lineup_avg,omitempty"`
 }
 
 type matchupResult struct {
 	callContext
-	MatchupID int  `json:"matchup_id"`
-	Me        side `json:"me"`
-	Opponent  side `json:"opponent"`
+	MatchupID    int                   `json:"matchup_id"`
+	Me           side                  `json:"me"`
+	Opponent     side                  `json:"opponent"`
+	TeamInjuries map[string][]teammate `json:"team_injuries,omitempty"`
 }
 
 func (e *extension) matchupTool() tool.Tool {
@@ -122,7 +125,9 @@ func (e *extension) matchupTool() tool.Tool {
 			Name: "sleeper_matchup",
 			Description: "Get one fantasy week's matchup (default the current NFL week): both lineups " +
 				"with points and projections, and the fantasy opponent's record. For an unplayed week without " +
-				"projections, each side carries recent_scores/recent_avg and each starter recent/recent_avg (last 3 weeks). `opponent` is the fantasy " +
+				"projections, each side carries recent_scores/recent_avg, each starter recent/recent_avg (last 3 weeks), and lineup_avg: " +
+				"the starters' recent_avg summed, a starter on bye or Out/IR/Doubtful/Sus counting 0. An unplayed week's starters " +
+				"carry the situation fields described in sleeper_roster. `opponent` is the fantasy " +
 				"team; each player's NFL opponent is in their own `game`. `user`/`roster_id` " +
 				"picks my side, falling back to default_user. " + seePlayerDoc,
 		},
@@ -180,7 +185,11 @@ func (e *extension) getMatchup(ctx context.Context, a matchupArgs) (matchupResul
 	if err := e.addWeekFields(ctx, &result.Me, league, state, season, week, mine, matchups, dump, proj, sl); err != nil {
 		return matchupResult{}, err
 	}
-	if proj == nil && !weekIsComplete(week, league, state) {
+	if weekIsComplete(week, league, state) {
+		return result, nil
+	}
+	result.TeamInjuries = addEnv(dump, &result.Me, &result.Opponent)
+	if proj == nil {
 		e.addRecentForm(ctx, leagueID, season, lastFinishedWeek(week, state.Week), &result.Me, &result.Opponent)
 	}
 	return result, nil
@@ -327,7 +336,7 @@ func excludedInjuryStatus(status *string) bool {
 		return false
 	}
 	switch *status {
-	case "Out", "IR", "Doubtful":
+	case "Out", "IR", "Doubtful", "Sus":
 		return true
 	}
 	return false

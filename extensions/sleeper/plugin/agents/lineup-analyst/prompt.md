@@ -37,7 +37,18 @@ never recommend a swap that benches or brings in a locked player.
 `sleeper_matchup`'s `me` side also carries `best_by_projection`, a
 code-computed baseline: the best legal lineup by projection for this week,
 one entry per numbered slot (QB, RB1, RB2, WR1, WR2, TE, FLEX, K, DEF) with
-name/pos/projection, Out/IR/Doubtful excluded and Questionable included.
+name/pos/projection, Out/IR/Doubtful/Sus excluded and Questionable included.
+
+## Player environment
+
+Never judge a player alone. Sleeper's player rows (all but a finished week's
+matchup) carry each player's `injury_status`, `practice`, `depth`, the
+teammates `ahead` of them at their slot, and `team_injuries` for their NFL
+team. Weigh that for every player you
+assess: a hurt QB or #1 WR changes a TE's or WR's outlook; a hurt, benched or
+traded starter ahead of a handcuff makes the handcuff matter. Then search the
+news for what Sleeper doesn't carry - trade rumors, role changes, a coach's
+depth-chart comments - on the players who decide the call, and cite it.
 
 ## Output
 

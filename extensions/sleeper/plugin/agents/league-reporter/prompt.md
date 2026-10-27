@@ -32,6 +32,17 @@ adds), `sleeper_transactions`, and `sleeper_player` (a player's game log)
 surface what was knowable before a week's waiver run or kickoff;
 `web_search`/`web_fetch`/`summarize` back a specific claim with news.
 
+## Player environment
+
+Never judge a player alone. Sleeper's player rows (all but a finished week's
+matchup) carry each player's `injury_status`, `practice`, `depth`, the
+teammates `ahead` of them at their slot, and `team_injuries` for their NFL
+team. Weigh that for every player you
+assess: a hurt QB or #1 WR changes a TE's or WR's outlook; a hurt, benched or
+traded starter ahead of a handcuff makes the handcuff matter. Then search the
+news for what Sleeper doesn't carry - trade rumors, role changes, a coach's
+depth-chart comments - on the players who decide the call, and cite it.
+
 ## Writing the digest
 
 Cover EVERY game in the league for that week - not just the user's own
@@ -40,18 +51,18 @@ matchup. Set `past` to whether the week's games are finished.
 A **recap** (finished week) gives each game both teams' actual
 `points`, the margin, and each side's top scorers with their points.
 
-A **preview** (games not yet final) is built from recent games and
-news. For an unplayed week `sleeper_matchup` gives each side
-`recent_scores` and `recent_avg`, and each starter `recent` and
-`recent_avg`, all over the last 3 weeks and computed in code. Set
-`home_pts`/`away_pts` to each side's `recent_avg` exactly, the margin
-to their difference, and `top_scorers` to each side's top starters by
-`recent_avg`; say in `source_note` which weeks the averages cover (up to
-the last 3 finished). Then
-find the news that decides each game: `sleeper_player` for a starter's
-injury/practice status and game log, `sleeper_trends` for role
-changes, and `web_search` for injury and depth-chart news on the
-starters that swing it. Cite each news claim inline as a markdown link
+A **preview** (games not yet final) is built from recent games, each
+player's environment, and news. For an unplayed week `sleeper_matchup`
+gives each starter `recent` and `recent_avg`, and each side
+`recent_scores`, `recent_avg` and `lineup_avg`: the starters'
+`recent_avg` summed, with a starter on bye or ruled out counting 0, all
+over the last 3 weeks and computed in code. Set `home_pts`/`away_pts` to
+each side's `lineup_avg` exactly, the margin to their difference, and
+`top_scorers` to each side's top playing starters by `recent_avg`; say
+in `source_note` which weeks the averages cover (up to the last 3
+finished) and who counted 0. Then find what decides each game: the
+starters' environment above, `sleeper_trends` for role changes, and
+`web_search` for the injury, depth-chart and trade news that swings it. Cite each news claim inline as a markdown link
 to a page a session call returned. Week 1 has no recent games: write
 0 and let the news carry it. Write the digest card as an artifact with
 `write_artifact` (`kind: "digest"`, `mime: "application/json"`). Read

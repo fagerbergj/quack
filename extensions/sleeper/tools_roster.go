@@ -26,6 +26,7 @@ type slotPlayer struct {
 	PlayerID string `json:"player_id"`
 	Name     string `json:"name"`
 	gameInfo
+	playerEnv
 }
 
 type rosterArgs struct {
@@ -37,19 +38,20 @@ type rosterArgs struct {
 
 type rosterResult struct {
 	callContext
-	RosterID  int          `json:"roster_id"`
-	Team      string       `json:"team"`
-	Starters  []slotPlayer `json:"starters"`
-	Bench     []slotPlayer `json:"bench"`
-	Reserve   []playerRef  `json:"reserve,omitempty"`
-	Taxi      []playerRef  `json:"taxi,omitempty"`
-	Wins      int          `json:"wins"`
-	Losses    int          `json:"losses"`
-	Ties      int          `json:"ties"`
-	Fpts      float64      `json:"fpts"`
-	WaiverPos int          `json:"waiver_position"`
-	FaabUsed  int          `json:"faab_used"`
-	FaabLeft  int          `json:"faab_left"`
+	RosterID     int                   `json:"roster_id"`
+	Team         string                `json:"team"`
+	Starters     []slotPlayer          `json:"starters"`
+	Bench        []slotPlayer          `json:"bench"`
+	Reserve      []playerRef           `json:"reserve,omitempty"`
+	Taxi         []playerRef           `json:"taxi,omitempty"`
+	Wins         int                   `json:"wins"`
+	Losses       int                   `json:"losses"`
+	Ties         int                   `json:"ties"`
+	Fpts         float64               `json:"fpts"`
+	WaiverPos    int                   `json:"waiver_position"`
+	FaabUsed     int                   `json:"faab_used"`
+	FaabLeft     int                   `json:"faab_left"`
+	TeamInjuries map[string][]teammate `json:"team_injuries,omitempty"`
 }
 
 func (e *extension) rosterTool() tool.Tool {
@@ -59,7 +61,7 @@ func (e *extension) rosterTool() tool.Tool {
 			Description: "Get a roster for the current NFL week: starters by slot, bench, reserve/taxi, " +
 				"record, fpts, waiver position, FAAB used/left. `league_id` falls " +
 				"back to default_league; `user` or `roster_id` picks the team, falling back to default_user. " +
-				"Each player carries their own `game`; reserve (IR) and taxi players carry none. " + seePlayerDoc,
+				"Each player carries their own `game`; reserve (IR) and taxi players carry none. " + envDoc + " " + seePlayerDoc,
 		},
 		func(ctx adkagent.Context, a rosterArgs) (rosterResult, error) { return e.getRoster(ctx, a) },
 	)
@@ -118,6 +120,7 @@ func (e *extension) leagueRostersUsers(ctx context.Context, leagueID string) (*s
 
 func buildRosterResult(league *sleepergen.League, r sleepergen.Roster, dump map[string]sleepergen.Player, sl slate, names map[int]string) rosterResult {
 	starterSlots := nonBenchSlots(league.RosterPositions)
+	td := newTeamDepth(dump)
 	starters := make([]slotPlayer, 0, len(r.Starters))
 	onField := map[string]bool{}
 	for i, pid := range r.Starters {
@@ -126,7 +129,7 @@ func buildRosterResult(league *sleepergen.League, r sleepergen.Roster, dump map[
 			slot = starterSlots[i]
 		}
 		onField[pid] = true
-		starters = append(starters, slotPlayer{Slot: slot, PlayerID: pid, Name: playerName(dump, pid), gameInfo: sl.gameFor(dump, pid)})
+		starters = append(starters, slotPlayer{Slot: slot, PlayerID: pid, Name: playerName(dump, pid), gameInfo: sl.gameFor(dump, pid), playerEnv: td.envOf(dump[pid])})
 	}
 	reserveSet, taxiSet := toSet(r.Reserve), toSet(r.Taxi)
 	var bench []slotPlayer
@@ -142,18 +145,29 @@ func buildRosterResult(league *sleepergen.League, r sleepergen.Roster, dump map[
 		case taxiSet[pid]:
 			taxi = append(taxi, ref)
 		default:
-			bench = append(bench, slotPlayer{PlayerID: pid, Name: ref.Name, gameInfo: sl.gameFor(dump, pid)})
+			bench = append(bench, slotPlayer{PlayerID: pid, Name: ref.Name, gameInfo: sl.gameFor(dump, pid), playerEnv: td.envOf(dump[pid])})
 		}
 	}
 	return rosterResult{
 		RosterID: r.RosterId, Team: names[r.RosterId],
 		Starters: starters, Bench: bench, Reserve: reserve, Taxi: taxi,
-		Wins: r.Settings["wins"], Losses: r.Settings["losses"], Ties: r.Settings["ties"],
+		TeamInjuries: td.injuries(slotTeams(starters, bench)),
+		Wins:         r.Settings["wins"], Losses: r.Settings["losses"], Ties: r.Settings["ties"],
 		Fpts:      pointsField(r.Settings, "fpts"),
 		WaiverPos: r.Settings["waiver_position"],
 		FaabUsed:  r.Settings["waiver_budget_used"],
 		FaabLeft:  league.Settings["waiver_budget"] - r.Settings["waiver_budget_used"],
 	}
+}
+
+func slotTeams(groups ...[]slotPlayer) []string {
+	var envs []playerEnv
+	for _, g := range groups {
+		for _, p := range g {
+			envs = append(envs, p.playerEnv)
+		}
+	}
+	return teamsOf(envs...)
 }
 
 // nonBenchSlots strips BN/IR/TAXI, leaving starter slots in the order Roster.Starters is indexed by.

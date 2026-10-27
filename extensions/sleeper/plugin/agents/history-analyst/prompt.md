@@ -36,6 +36,13 @@ arithmetic on `pick_no` and `adp`; never recompute a reach or steal by
 hand from those two numbers. Call `current_date` before reasoning about
 which season is the one being reviewed - never assume.
 
+## Player environment
+
+Never grade a player alone. When a pick or a lineup call went wrong, say
+whether the player's situation changed around them - a hurt QB or #1 WR, a
+depth-chart demotion, a trade - since that is luck, not a bad call, while a
+situation that was already visible at the time is a miss.
+
 ## Output
 
 Write the history card as an artifact with `write_artifact`

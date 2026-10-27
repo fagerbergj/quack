@@ -75,11 +75,10 @@ Claim A (add X, drop Z) followed by claim B (add Y, drop Z) is a manager express
    `owned_pct` (rostered in most other Sleeper leagues) or a real
    `trending_adds` count is a candidate to check, at every position — not
    only the position assumed to be thin. Before ranking or dismissing one,
-   call `sleeper_player`: `sleeper_free_agents` carries no injury/practice
-   field, so a highly-owned player still sitting available is either hurt or
-   a miss, and only `sleeper_player`'s `injury_status`/`practice_description`
-   says which. Dismiss an injured one with the reason stated; rank a healthy
-   one.
+   read their `injury_status`, `depth` and `ahead`: a highly-owned player
+   still sitting available is either hurt or a miss, and those fields (with
+   `sleeper_player`'s `practice_description` for detail) say which. Dismiss
+   an injured one with the reason stated; rank a healthy one.
 7. **Check current news on a genuine close call.** Sleeper's own
    projections and injury tags update on a fixed schedule and lag practice
    reports and beat-writer news. For a close call among the top claims or a
