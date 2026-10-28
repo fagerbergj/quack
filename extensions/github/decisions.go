@@ -98,6 +98,8 @@ var decisionPoints = []sdk.DecisionPoint{
 		Questions: severityQuestions, Primary: "severity", Restrictive: []string{"blocking"}, Modes: []string{"observe"}},
 	{Name: "finding.blocking", Description: "whether one review finding should block the merge",
 		Questions: blockingQuestions, Primary: "blocking", Restrictive: []string{"true"}, Modes: []string{"observe"}},
+	{Name: "finding.raise", Description: "whether a non-blocking review finding should be raised to blocking before the review posts",
+		Questions: blockingQuestions, Primary: "blocking", Restrictive: []string{"true"}, Modes: []string{"guard"}},
 	{Name: "review.verdict", Description: "the verdict of a whole review",
 		Questions: verdictQuestions, Primary: "verdict", Restrictive: []string{"comment", "request_changes"}, Modes: []string{"observe"}},
 	{Name: "intent", Description: "whether a comment asks quack to write to the repository, and which deliverable it asks for",
@@ -106,8 +108,8 @@ var decisionPoints = []sdk.DecisionPoint{
 		Questions: flakyQuestions, Primary: "flaky", Modes: []string{"observe"}},
 }
 
-// DecisionPoints declares the review, intent and CI points, observe only: the host records the
-// answers and they never change what this extension posts.
+// DecisionPoints declares the review, intent and CI points, observe only, and finding.raise, guard
+// only: the one point whose answer changes a posted review, and only toward blocking.
 func (e *Extension) DecisionPoints() []sdk.DecisionPoint { return decisionPoints }
 
 type intentState struct {
@@ -246,19 +248,10 @@ func (a *App) decideReview(ctx context.Context, owner, repo string, number int, 
 			continue
 		}
 		seen[c] = true
-		label, text := splitLabel(c.Body)
-		// The host's classification wins; the body label is the fallback for hand-written comments.
-		if sev := strings.ToLower(strings.TrimSpace(c.Severity)); severityQuestions["severity"].Criteria.(map[string]string)[sev] != "" {
-			label = sev
-		}
-		st := findingState{Path: c.Path, Line: c.Line, Finding: truncate(text, findingCap)}
-		if p, err := resolvePath(positions, c.Path); err == nil {
-			h := hunkAt(positions[p].patch, c.Line)
-			st.Hunk = truncate(h, hunkCap)
-			if h != "" && !seenHunk[p+h] {
-				seenHunk[p+h] = true
-				hunks = append(hunks, p+"\n"+h)
-			}
+		label, text, st, hunk := findingOf(positions, c)
+		if hunk != "" && !seenHunk[hunk] {
+			seenHunk[hunk] = true
+			hunks = append(hunks, hunk)
 		}
 		if label != "" {
 			a.ask(ctx, sdk.DecideRequest{Point: "finding.severity", State: st, Baseline: label})
@@ -277,6 +270,109 @@ func (a *App) decideReview(ctx context.Context, owner, repo string, number int, 
 		st.Title, st.Body = strings.TrimSpace(m.Title), strings.TrimSpace(m.Body)
 	}
 	a.ask(ctx, sdk.DecideRequest{Point: "review.verdict", State: fitVerdict(st, hunks), Baseline: verdict})
+}
+
+// findingOf is c's label (the host's Severity first, then the body's), its text without labels, its
+// state, and the "path\nhunk" it anchors to ("" when outside the diff).
+func findingOf(positions map[string]diffPositions, c sdk.ReviewComment) (label, text string, st findingState, hunk string) {
+	label, text = splitLabel(c.Body)
+	if sev := strings.ToLower(strings.TrimSpace(c.Severity)); severityQuestions["severity"].Criteria.(map[string]string)[sev] != "" {
+		label = sev
+	}
+	st = findingState{Path: c.Path, Line: c.Line, Finding: truncate(text, findingCap)}
+	if p, err := resolvePath(positions, c.Path); err == nil {
+		if h := hunkAt(positions[p].patch, c.Line); h != "" {
+			st.Hunk, hunk = truncate(h, hunkCap), p+"\n"+h
+		}
+	}
+	return label, text, st, hunk
+}
+
+// guardBudget bounds a review's whole wait on finding.raise; findings past it post as labeled.
+var guardBudget = 60 * time.Second
+
+// raisedFinding is a finding finding.raise moved to blocking, with the model's probability.
+type raisedFinding struct {
+	sdk.ReviewComment
+	p float64
+}
+
+// guardFindings asks finding.raise about each distinct non-blocking finding before the review posts.
+// The point is guard-only, so an answer means guard mode; the first error (disabled or down) stops asking.
+func (a *App) guardFindings(ctx context.Context, owner, repo string, number int, comments []sdk.ReviewComment) []raisedFinding {
+	if a.decide == nil || len(comments) == 0 {
+		return nil
+	}
+	deadline := time.Now().Add(guardBudget)
+	var positions map[string]diffPositions
+	var raised []raisedFinding
+	seen := map[sdk.ReviewComment]bool{}
+	for _, c := range comments {
+		if seen[c] || time.Now().After(deadline) {
+			continue
+		}
+		seen[c] = true
+		if positions == nil {
+			pctx, cancel := context.WithTimeout(ctx, decideTimeout)
+			positions, _ = a.commentablePositions(pctx, owner, repo, number)
+			cancel()
+		}
+		label, _, st, _ := findingOf(positions, c)
+		if label == "blocking" {
+			continue
+		}
+		dctx, cancel := context.WithTimeout(ctx, decideTimeout)
+		d, err := a.decide(dctx, sdk.DecideRequest{Point: "finding.raise", State: st, Baseline: "false"})
+		cancel()
+		if err != nil {
+			slog.Debug("github: no finding.raise decision", "component", "github", "err", err)
+			return raised
+		}
+		if d.Restrict {
+			raised = append(raised, raisedFinding{c, d.TopP})
+		}
+	}
+	return raised
+}
+
+// raiseFindings relabels the raised comments blocking; with any raised, an approve becomes request_changes
+// (in event's own case, VERDICT tail too) and the body opens with what moved.
+func raiseFindings(event, body string, comments []sdk.ReviewComment, raised []raisedFinding) (string, string, []sdk.ReviewComment) {
+	if len(raised) == 0 {
+		return event, body, comments
+	}
+	p := map[sdk.ReviewComment]float64{}
+	var where []string
+	for _, r := range raised {
+		p[r.ReviewComment] = r.p
+		where = append(where, fmt.Sprintf("`%s:%d` (p=%.2f)", r.Path, r.Line, r.p))
+	}
+	out := make([]sdk.ReviewComment, len(comments))
+	for i, c := range comments {
+		if prob, ok := p[c]; ok {
+			c.Severity, c.Body = "blocking", blockingBody(c.Body, prob)
+		}
+		out[i] = c
+	}
+	moved := ""
+	if strings.EqualFold(event, "approve") {
+		event = map[bool]string{true: "REQUEST_CHANGES", false: "request_changes"}[event == "APPROVE"]
+		body = verdictRe.ReplaceAllString(body, "VERDICT: request_changes")
+		moved = " The verdict moved from approve to request changes."
+	}
+	banner := fmt.Sprintf("> [!CAUTION]\n> quack's decision model rates %d finding(s) this review left non-blocking as blocking: %s.%s\n\n",
+		len(raised), strings.Join(where, ", "), moved)
+	return event, banner + body, out
+}
+
+// blockingBody swaps a finding's leading label (after any carried-over prefix) for a raised blocking one.
+func blockingBody(body string, p float64) string {
+	prefix := carriedOverRe.FindString(body)
+	rest := strings.TrimPrefix(body, prefix)
+	if loc := reviewLabelRe.FindStringIndex(rest); loc != nil {
+		rest = rest[loc[1]:]
+	}
+	return prefix + fmt.Sprintf("**blocking** (raised by quack's decision model, p=%.2f): ", p) + strings.TrimSpace(rest)
 }
 
 // observeIntent asks the intent point for a free-text comment trigger, off the

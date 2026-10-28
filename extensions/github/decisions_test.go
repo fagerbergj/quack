@@ -71,6 +71,7 @@ type recorder struct {
 	answer     func(ctx context.Context) error
 	last       string
 	want, seen int
+	raise      func(context.Context, sdk.DecideRequest) (sdk.Decision, error) // nil: finding.raise is disabled
 }
 
 func newRecorder(answer func(ctx context.Context) error) *recorder {
@@ -83,6 +84,12 @@ func (r *recorder) until(point string, n int) *recorder {
 }
 
 func (r *recorder) decide(ctx context.Context, req sdk.DecideRequest) (sdk.Decision, error) {
+	if req.Point == "finding.raise" {
+		if r.raise == nil {
+			return sdk.Decision{}, errors.New("decide: disabled")
+		}
+		return r.raise(ctx, req)
+	}
 	_, hasDeadline := ctx.Deadline()
 	r.mu.Lock()
 	r.reqs = append(r.reqs, req)
@@ -323,6 +330,7 @@ func TestDecisionPointsDeclareTheAskedPoints(t *testing.T) {
 	wants := map[string]want{
 		"finding.severity": {"severity", "blocking"},
 		"finding.blocking": {"blocking", "true"},
+		"finding.raise":    {"blocking", "true"},
 		"review.verdict":   {"verdict", "comment,request_changes"},
 		"intent":           {"write", "false"},
 		"ci.flaky":         {"flaky", ""},
@@ -333,8 +341,9 @@ func TestDecisionPointsDeclareTheAskedPoints(t *testing.T) {
 	}
 	for _, p := range points {
 		w, ok := wants[p.Name]
-		if !ok || p.Primary != w.primary || strings.Join(p.Restrictive, ",") != w.restrictive || strings.Join(p.Modes, ",") != "observe" {
-			t.Errorf("%s = primary %q restrictive %v modes %v; want %+v, observe only", p.Name, p.Primary, p.Restrictive, p.Modes, w)
+		mode := map[bool]string{true: "guard", false: "observe"}[p.Name == "finding.raise"]
+		if !ok || p.Primary != w.primary || strings.Join(p.Restrictive, ",") != w.restrictive || strings.Join(p.Modes, ",") != mode {
+			t.Errorf("%s = primary %q restrictive %v modes %v; want %+v, %s only", p.Name, p.Primary, p.Restrictive, p.Modes, w, mode)
 		}
 		if _, ok := p.Questions[p.Primary]; !ok {
 			t.Errorf("%s: primary %q is not among its questions", p.Name, p.Primary)
@@ -594,4 +603,130 @@ func TestHungCIFlakyDecideIsBounded(t *testing.T) {
 	rec := newRecorder(func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }).until("ci.flaky", 1)
 	ciDispatch(t, "workflow_run", rec.decide)
 	rec.wait(t)
+}
+
+// postedReview is the event, body and inline comment bodies of a posted review.
+func postedReview(t *testing.T, raw []byte) (string, string, []string) {
+	t.Helper()
+	var r struct {
+		Event    string `json:"event"`
+		Body     string `json:"body"`
+		Comments []struct {
+			Body string `json:"body"`
+		} `json:"comments"`
+	}
+	if err := json.Unmarshal(raw, &r); err != nil {
+		t.Fatalf("posted review: %v: %s", err, raw)
+	}
+	var bodies []string
+	for _, c := range r.Comments {
+		bodies = append(bodies, c.Body)
+	}
+	return r.Event, r.Body, bodies
+}
+
+func approveDelivery() sdk.DeliveryContext {
+	dc := decisionsDelivery("APPROVE")
+	dc.Items[0].Body = "**Verdict: approve** · 1 nit\n\nLooks good.\n\nVERDICT: approve"
+	dc.Items[0].Comments = []sdk.ReviewComment{
+		{Path: "main.go", Line: 42, Body: "**suggestion:** /health is unreachable behind the catch-all"},
+		{Path: "./main.go", Line: 43, Body: "(carried over, unchanged since a previous review - f2) nit: rename newer"},
+	}
+	return dc
+}
+
+func TestFindingRaiseRelabelsAndFlipsApprove(t *testing.T) {
+	var posted []byte
+	app := decisionsApp(t, "alice", &posted)
+	rec := newRecorder(nil)
+	var asked []findingState
+	rec.raise = func(_ context.Context, req sdk.DecideRequest) (sdk.Decision, error) {
+		st := req.State.(findingState)
+		asked = append(asked, st)
+		return sdk.Decision{Top: "true", TopP: 0.95, Outcome: "pass", Restrict: st.Line == 42}, nil
+	}
+	app.decide = rec.decide
+	if _, err := app.Deliver(context.Background(), approveDelivery()); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	rec.wait(t)
+	event, body, comments := postedReview(t, posted)
+	if len(asked) != 2 || asked[0].Finding != "/health is unreachable behind the catch-all" || asked[0].Hunk == "" {
+		t.Errorf("finding.raise states = %+v; want both non-blocking findings, label-free, with their hunks", asked)
+	}
+	if event != "REQUEST_CHANGES" || !strings.HasPrefix(body, "> [!CAUTION]") || !strings.Contains(body, "`main.go:42` (p=0.95)") ||
+		!strings.Contains(body, "VERDICT: request_changes") || strings.Contains(body, "VERDICT: approve") {
+		t.Errorf("event %s, body %q; want request changes, a caution banner naming main.go:42 and the VERDICT tail moved", event, body)
+	}
+	if len(comments) != 2 || comments[0] != "**blocking** (raised by quack's decision model, p=0.95): /health is unreachable behind the catch-all" ||
+		!strings.HasPrefix(comments[1], "(carried over") || strings.Contains(comments[1], "raised") {
+		t.Errorf("comments = %q; want only the raised one relabelled, its old label gone", comments)
+	}
+}
+
+func TestFindingRaiseNeverLowersOrAsksBlocking(t *testing.T) {
+	var plain, guarded []byte
+	if _, err := decisionsApp(t, "alice", &plain).Deliver(context.Background(), decisionsDelivery("REQUEST_CHANGES")); err != nil {
+		t.Fatal(err)
+	}
+	app := decisionsApp(t, "alice", &guarded)
+	rec := newRecorder(nil)
+	var asked int
+	rec.raise = func(context.Context, sdk.DecideRequest) (sdk.Decision, error) {
+		asked++
+		return sdk.Decision{Top: "false", TopP: 0.99, Outcome: "pass"}, nil
+	}
+	app.decide = rec.decide
+	if _, err := app.Deliver(context.Background(), decisionsDelivery("REQUEST_CHANGES")); err != nil {
+		t.Fatal(err)
+	}
+	rec.wait(t)
+	if asked != 2 || string(plain) != string(guarded) {
+		t.Errorf("asked %d (want the 2 non-blocking findings, not the blocking one); a confident false changed the review:\n%s\n%s", asked, plain, guarded)
+	}
+}
+
+func TestFindingRaiseFailsOpenOnFirstError(t *testing.T) {
+	old := decideTimeout
+	decideTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { decideTimeout = old })
+	var posted []byte
+	app := decisionsApp(t, "alice", &posted)
+	rec := newRecorder(nil)
+	var asked int
+	rec.raise = func(ctx context.Context, _ sdk.DecideRequest) (sdk.Decision, error) {
+		asked++
+		<-ctx.Done()
+		return sdk.Decision{}, ctx.Err()
+	}
+	app.decide = rec.decide
+	if _, err := app.Deliver(context.Background(), approveDelivery()); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	rec.wait(t)
+	if event, _, _ := postedReview(t, posted); asked != 1 || event != "APPROVE" {
+		t.Errorf("asked %d, posted %s; want one bounded try, then the review posted as staged", asked, event)
+	}
+}
+
+func TestFindingRaiseOnOwnPRMovesTheStatedVerdict(t *testing.T) {
+	var posted []byte
+	app := decisionsApp(t, "quack[bot]", &posted)
+	rec := newRecorder(nil)
+	rec.raise = func(context.Context, sdk.DecideRequest) (sdk.Decision, error) {
+		return sdk.Decision{Top: "true", TopP: 0.93, Outcome: "pass", Restrict: true}, nil
+	}
+	app.decide = rec.decide
+	if _, err := app.Deliver(context.Background(), approveDelivery()); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	reqs := rec.wait(t)
+	event, body, _ := postedReview(t, posted)
+	if event != "COMMENT" || !strings.Contains(body, "Verdict: request_changes.") || !strings.Contains(body, "review:request_changes") ||
+		!strings.Contains(body, "[!CAUTION]") {
+		t.Errorf("own-PR review %s %q; want a COMMENT stating request_changes, with the banner", event, body)
+	}
+	if last := reqs[len(reqs)-1]; last.Baseline != "approve" {
+		t.Errorf("review.verdict baseline = %q; want the staged approve", last.Baseline)
+	}
 }

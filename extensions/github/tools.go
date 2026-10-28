@@ -871,11 +871,12 @@ func (a *App) deliverReview(ctx context.Context, owner, repo string, dc sdk.Deli
 		return deliveryItemResult{}, fmt.Errorf("github: delivery: staged review event %q is not one of approve/request_changes/comment", item.Event)
 	}
 	a.collapsePriorReviews(ctx, owner, repo, dc.IssueNumber) // superseded prior attempts
+	posted, body, comments := raiseFindings(event, item.Body, item.Comments, a.guardFindings(ctx, owner, repo, dc.IssueNumber, item.Comments))
 	// Validate inline findings before submit — one bad anchor 422s the whole review.
-	inline, unanchored := a.validComments(ctx, owner, repo, dc.IssueNumber, item.Comments)
+	inline, unanchored := a.validComments(ctx, owner, repo, dc.IssueNumber, comments)
 	a.observeReview(ctx, owner, repo, dc.IssueNumber, event, item.Comments)
-	body := item.Body + renderUnanchoredFindings(unanchored) + deliveryKeyMarker(dc.IdempotencyKey)
-	res, err := a.submitReview(ctx, submitReviewArgs{Owner: owner, Repo: repo, PullNumber: dc.IssueNumber, Body: gateCaveat(dc, body), Event: event, Comments: inline, ChatID: dc.ChatID})
+	body += renderUnanchoredFindings(unanchored) + deliveryKeyMarker(dc.IdempotencyKey)
+	res, err := a.submitReview(ctx, submitReviewArgs{Owner: owner, Repo: repo, PullNumber: dc.IssueNumber, Body: gateCaveat(dc, body), Event: posted, Comments: inline, ChatID: dc.ChatID})
 	if err != nil {
 		return deliveryItemResult{}, fmt.Errorf("github: delivery: submit review: %w", err)
 	}
@@ -886,11 +887,12 @@ func (a *App) deliverReview(ctx context.Context, owner, repo string, dc sdk.Deli
 // deliverSelfReview posts the own-PR fallback: a COMMENT-event review carrying the verdict as
 // text, since GitHub 422s a self-review verdict.
 func (a *App) deliverSelfReview(ctx context.Context, owner, repo string, dc sdk.DeliveryContext, item sdk.StagedDelivery) (deliveryItemResult, error) {
-	verdict := strings.ToLower(strings.TrimSpace(item.Event))
-	if !reviewEvents[strings.ToUpper(verdict)] {
-		verdict = "comment"
+	staged := strings.ToLower(strings.TrimSpace(item.Event))
+	if !reviewEvents[strings.ToUpper(staged)] {
+		staged = "comment"
 	}
-	body := fmt.Sprintf("_Own PR: GitHub allows no self-review verdict. Verdict: %s. A maintainer decides._\n\n", verdict) + StripVerdictTail(item.Body)
+	verdict, reviewBody, comments := raiseFindings(staged, StripVerdictTail(item.Body), item.Comments, a.guardFindings(ctx, owner, repo, dc.IssueNumber, item.Comments))
+	body := fmt.Sprintf("_Own PR: GitHub allows no self-review verdict. Verdict: %s. A maintainer decides._\n\n", verdict) + reviewBody
 	body += "\n\n" + deliveryMarker("review:"+verdict) + deliveryKeyMarker(dc.IdempotencyKey)
 	// Head at delivery time, not necessarily the one reviewed (DeliveryContext has no reviewed head);
 	// the synchronize re-review is the backstop.
@@ -898,9 +900,9 @@ func (a *App) deliverSelfReview(ctx context.Context, owner, repo string, dc sdk.
 		body += "\n" + deliveryMarker("head:"+m.HeadSHA)
 	}
 	a.collapsePriorReviews(ctx, owner, repo, dc.IssueNumber) // superseded prior attempts
-	inline, unanchored := a.validComments(ctx, owner, repo, dc.IssueNumber, item.Comments)
+	inline, unanchored := a.validComments(ctx, owner, repo, dc.IssueNumber, comments)
 	body += renderUnanchoredFindings(unanchored)
-	a.observeReview(ctx, owner, repo, dc.IssueNumber, verdict, item.Comments)
+	a.observeReview(ctx, owner, repo, dc.IssueNumber, staged, item.Comments)
 	res, err := a.submitReview(ctx, submitReviewArgs{Owner: owner, Repo: repo, PullNumber: dc.IssueNumber, Body: gateCaveat(dc, body), Event: "COMMENT", Comments: inline, ChatID: dc.ChatID})
 	if err != nil {
 		return deliveryItemResult{}, fmt.Errorf("github: delivery: self-review: %w", err)
