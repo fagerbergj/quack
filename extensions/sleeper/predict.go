@@ -3,11 +3,13 @@ package sleeper
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	adkagent "google.golang.org/adk/v2/agent"
 	"google.golang.org/adk/v2/tool"
@@ -267,6 +269,16 @@ const (
 	maxNewsBytes      = 1000
 )
 
+// predictBudget bounds one call's whole wait on the model; with the first outage stopping the asking, a hung
+// model costs one timeout, not one per player.
+var predictBudget = 2 * time.Minute
+
+// errObserveMode and errNoAnswer are per-player outcomes; any other model error stops the call's asking.
+var (
+	errObserveMode = errors.New("decision model is in observe mode")
+	errNoAnswer    = errors.New("decision model gave no answer")
+)
+
 const predictDoc = "Predict this week's PPR range for up to 20 players: a decision model reads each player's last 3 games, " +
 	"situation, opponent and your `news` notes (cite sources), and code scores its stat ranges with the league's settings. " +
 	"Returns low/median/high (10th/50th/90th percentile; a Questionable player's sit-out chance included) and per-stat " +
@@ -288,6 +300,7 @@ type predictInputs struct {
 	recent    map[int]map[string]sleepergen.StatMap
 	games     []sleepergen.Game
 	byTeamPos map[string][]string
+	halted    string // set by the first outage; later players get it as their note
 }
 
 func (e *extension) predict(ctx context.Context, a predictArgs) (predictResult, error) {
@@ -300,8 +313,10 @@ func (e *extension) predict(ctx context.Context, a predictArgs) (predictResult, 
 	}
 	res := predictResult{callContext: cc}
 	byID := map[string]*prediction{}
+	bctx, cancel := context.WithTimeout(ctx, predictBudget)
+	defer cancel()
 	for _, t := range a.Players {
-		res.Players = append(res.Players, e.predictOne(ctx, in, t))
+		res.Players = append(res.Players, e.predictOne(bctx, &in, t))
 	}
 	for i := range res.Players {
 		byID[res.Players[i].PlayerID] = &res.Players[i]
@@ -357,7 +372,7 @@ func (e *extension) predictInputs(ctx context.Context, leagueArg string) (predic
 	return in, cc, nil
 }
 
-func (e *extension) predictOne(ctx context.Context, in predictInputs, t predictTarget) prediction {
+func (e *extension) predictOne(ctx context.Context, in *predictInputs, t predictTarget) prediction {
 	p, ok := in.dump[t.PlayerID]
 	pos := strVal(p.Position)
 	pred := prediction{PlayerID: t.PlayerID, Name: playerNameOf(p), Pos: pos}
@@ -379,10 +394,16 @@ func (e *extension) predictOne(ctx context.Context, in predictInputs, t predictT
 	case g.Game == nil:
 		pred.Note = "no game joined: " + g.NoGameReason
 		return pred
+	case in.halted != "":
+		pred.Note = in.halted
+		return pred
 	}
-	d, err := e.askLine(ctx, line, in.keys, e.predictState(in, t, p, g))
+	d, err := e.askLine(ctx, line, in.keys, e.predictState(*in, t, p, g))
 	if err != nil {
 		pred.Note = err.Error()
+		if !errors.Is(err, errObserveMode) && !errors.Is(err, errNoAnswer) {
+			in.halted = pred.Note
+		}
 		return pred
 	}
 	pred.fill(d, in.scoring, play)
@@ -401,12 +422,12 @@ func (e *extension) askLine(ctx context.Context, line string, keys decisionKeys,
 	case err != nil:
 		return nil, fmt.Errorf("decision model unavailable: %w", err)
 	case d.Outcome == "observe":
-		return nil, fmt.Errorf("decision model is in observe mode")
+		return nil, errObserveMode
 	}
 	var dists []statDist
 	for _, q := range statLines[line] {
 		if d.Probabilities[q.stat] == nil {
-			return nil, fmt.Errorf("decision model gave no %s answer", q.stat)
+			return nil, fmt.Errorf("%w for %s", errNoAnswer, q.stat)
 		}
 		dists = append(dists, statDist{q, d.Probabilities[q.stat]})
 	}

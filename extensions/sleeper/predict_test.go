@@ -3,6 +3,7 @@ package sleeper
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"sync"
 	"testing"
@@ -65,6 +66,16 @@ func TestPointsGridRange(t *testing.T) {
 	}
 	if p := pOutscores(grid, make([]float64, gridN)); p != 1 {
 		t.Errorf("P(range > zero) = %v, want 1", p)
+	}
+}
+
+func TestPointsAtScoresThePositionsReceptionBonus(t *testing.T) {
+	t.Parallel()
+	scoring := map[string]float32{"rec": 1, "bonus_rec_te": 0.5}
+	te, _ := pointsAt([]statDist{{receptions, levels(0, 0, 1)}}, scoring, "TE", 0.5)
+	wr, _ := pointsAt([]statDist{{receptions, levels(0, 0, 1)}}, scoring, "WR", 0.5)
+	if te != 7.5 || wr != 5 {
+		t.Errorf("5 catches score TE %v, WR %v; want 7.5 with the TE premium and 5 without", te, wr)
 	}
 }
 
@@ -144,5 +155,20 @@ func TestPredictObserveModeGivesNoNumbers(t *testing.T) {
 	}
 	if p := res.Players[0]; p.Low != nil || p.Note == "" || len(d.reqs) != 1 {
 		t.Errorf("observe-mode prediction = %+v after %d calls, want the call recorded but no numbers", p, len(d.reqs))
+	}
+}
+
+func TestPredictStopsAskingAfterAnOutage(t *testing.T) {
+	calls := 0
+	e, _ := newTestExtension(t, sdk.Host{Decide: func(context.Context, sdk.DecideRequest) (sdk.Decision, error) {
+		calls++
+		return sdk.Decision{}, errors.New("decide: status 503")
+	}}, config{DefaultLeague: testLeague})
+	res, err := e.predict(context.Background(), predictArgs{Players: []predictTarget{{PlayerID: "10227"}, {PlayerID: "10218"}}})
+	if err != nil {
+		t.Fatalf("predict: %v", err)
+	}
+	if calls != 1 || res.Players[1].Note != res.Players[0].Note || res.Players[1].Low != nil {
+		t.Errorf("%d calls, notes %q / %q; want one call, then the same outage note without asking", calls, res.Players[0].Note, res.Players[1].Note)
 	}
 }
