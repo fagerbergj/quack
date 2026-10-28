@@ -228,15 +228,24 @@ func hunkAt(patch string, line int) string {
 
 // observeReview asks the review's shadow questions off the posting path, so a
 // slow or failing handler can never delay or fail the review.
-func (a *App) observeReview(ctx context.Context, owner, repo string, number int, verdict string, comments []sdk.ReviewComment) {
+func (a *App) observeReview(ctx context.Context, chatID, owner, repo string, number int, verdict string, comments []sdk.ReviewComment) {
 	if a.decide == nil {
 		return
 	}
-	go a.decideReview(context.WithoutCancel(ctx), owner, repo, number, verdict, comments)
+	go a.decideReview(context.WithoutCancel(ctx), decisionChat(chatID), owner, repo, number, verdict, comments)
+}
+
+// decisionChat is the ledger chat for a review's asks. An out-of-process call carries no run context to the
+// host, so a request without ChatID is answered but recorded nowhere.
+func decisionChat(chatID string) string {
+	if chatID == "" || strings.HasPrefix(chatID, "ext:") {
+		return chatID
+	}
+	return globalChatID(chatID)
 }
 
 // decideReview runs the calls one at a time: a burst per finding can exhaust the handler's GPU batch.
-func (a *App) decideReview(ctx context.Context, owner, repo string, number int, verdict string, comments []sdk.ReviewComment) {
+func (a *App) decideReview(ctx context.Context, chatID, owner, repo string, number int, verdict string, comments []sdk.ReviewComment) {
 	pctx, cancel := context.WithTimeout(ctx, decideTimeout)
 	positions, _ := a.commentablePositions(pctx, owner, repo, number)
 	cancel()
@@ -254,9 +263,9 @@ func (a *App) decideReview(ctx context.Context, owner, repo string, number int, 
 			hunks = append(hunks, hunk)
 		}
 		if label != "" {
-			a.ask(ctx, sdk.DecideRequest{Point: "finding.severity", State: st, Baseline: label})
+			a.ask(ctx, sdk.DecideRequest{Point: "finding.severity", State: st, Baseline: label, ChatID: chatID})
 		}
-		a.ask(ctx, sdk.DecideRequest{Point: "finding.blocking", State: st, Baseline: strconv.FormatBool(label == "blocking")})
+		a.ask(ctx, sdk.DecideRequest{Point: "finding.blocking", State: st, Baseline: strconv.FormatBool(label == "blocking"), ChatID: chatID})
 		findings = append(findings, verdictFinding{Path: c.Path, Line: c.Line, Finding: text})
 	}
 	verdict = strings.ToLower(strings.TrimSpace(verdict))
@@ -269,7 +278,7 @@ func (a *App) decideReview(ctx context.Context, owner, repo string, number int, 
 	if m, err := a.pullMeta(mctx, owner, repo, number); err == nil {
 		st.Title, st.Body = strings.TrimSpace(m.Title), strings.TrimSpace(m.Body)
 	}
-	a.ask(ctx, sdk.DecideRequest{Point: "review.verdict", State: fitVerdict(st, hunks), Baseline: verdict})
+	a.ask(ctx, sdk.DecideRequest{Point: "review.verdict", State: fitVerdict(st, hunks), Baseline: verdict, ChatID: chatID})
 }
 
 // findingOf is c's label (the host's Severity first, then the body's), its text without labels, its
@@ -299,7 +308,7 @@ type raisedFinding struct {
 
 // guardFindings asks finding.raise about each distinct non-blocking finding before the review posts.
 // The point is guard-only, so an answer means guard mode; the first error (disabled or down) stops asking.
-func (a *App) guardFindings(ctx context.Context, owner, repo string, number int, comments []sdk.ReviewComment) []raisedFinding {
+func (a *App) guardFindings(ctx context.Context, chatID, owner, repo string, number int, comments []sdk.ReviewComment) []raisedFinding {
 	if a.decide == nil || len(comments) == 0 {
 		return nil
 	}
@@ -322,7 +331,7 @@ func (a *App) guardFindings(ctx context.Context, owner, repo string, number int,
 			continue
 		}
 		dctx, cancel := context.WithTimeout(ctx, decideTimeout)
-		d, err := a.decide(dctx, sdk.DecideRequest{Point: "finding.raise", State: st, Baseline: "false"})
+		d, err := a.decide(dctx, sdk.DecideRequest{Point: "finding.raise", State: st, Baseline: "false", ChatID: decisionChat(chatID)})
 		cancel()
 		if err != nil {
 			slog.Debug("github: no finding.raise decision", "component", "github", "err", err)
