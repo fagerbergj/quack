@@ -88,6 +88,8 @@ The [Sleeper extension](../../extensions/sleeper/README.md#decision-points) decl
 | `ext:sleeper/waiver_priority` | `observe` | `priority` (score, primary): five levels, fifth claim or later (`0`) to first claim (`4`) | none | `5 - min(rank, 5)`, asked per ranked add when two or more are ranked. |
 | `ext:sleeper/trade_accept` | `observe` | `accept` (noul, primary): should this trade happen exactly as written? | none | `true` when the analyst's verdict is `send`, `false` for `decline` or `counter`. |
 
+Its three stat-line points, `ext:sleeper/qb_line`, `ext:sleeper/rb_line` and `ext:sleeper/receiver_line` (modes `observe`, `decide`; no baseline), are asked by the lineup analyst's `sleeper_predict` tool, once per player, with score questions over that position's stat bands. In `decide` the tool turns the answers into the player's low/median/high points under the league's scoring and uses them whatever their top probability; in `observe` it records them and the agent estimates its own range. See the [Sleeper README](../../extensions/sleeper/README.md#stat-line-points-sleeper_predict).
+
 A choice primary declared without criteria takes each call's `Options` as its options; an extension may send `Options` only for such a primary. `Images` are data URLs sent as the request's top-level `images`; the ledger records the state without them.
 
 Points are built once at boot, so changing `decisions:` needs a restart.

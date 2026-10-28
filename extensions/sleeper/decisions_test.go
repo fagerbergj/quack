@@ -369,11 +369,15 @@ func TestDecisionPointsDeclared(t *testing.T) {
 	names := map[string]bool{}
 	for _, p := range (&extension{}).DecisionPoints() {
 		names[p.Name] = true
-		if _, ok := p.Questions[p.Primary]; !ok || len(p.Modes) != 1 || p.Modes[0] != "observe" {
-			t.Errorf("point %s: primary %q undeclared or modes %v not observe-only", p.Name, p.Primary, p.Modes)
+		want := []string{"observe"}
+		if _, line := statLines[p.Name]; line {
+			want = []string{"observe", "decide"}
+		}
+		if _, ok := p.Questions[p.Primary]; !ok || !slices.Equal(p.Modes, want) {
+			t.Errorf("point %s: primary %q undeclared or modes %v, want %v", p.Name, p.Primary, p.Modes, want)
 		}
 	}
-	for _, n := range []string{"lineup_change", "waiver_pickup", "waiver_priority", "trade_accept"} {
+	for _, n := range []string{"lineup_change", "waiver_pickup", "waiver_priority", "trade_accept", "qb_line", "rb_line", "receiver_line"} {
 		if !names[n] {
 			t.Errorf("point %s not declared", n)
 		}

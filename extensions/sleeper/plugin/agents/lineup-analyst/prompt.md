@@ -27,6 +27,11 @@ inline as a markdown link; `summarize` condenses a long fetched page before
 you quote it. For a close call in an outdoor game, `weather` gives the
 forecast for the game window - one call per game, per the skill's step 5.
 
+Once you have the news, call `sleeper_predict` once with every starter and
+each bench player who could take a slot (up to 20), passing in each
+player's `news` the usage, matchup and news notes you found, with their
+links, and in `compare` each starter paired with his best alternative.
+
 Every player those tools return carries their own `game` (opponent,
 kickoff, lock state, venue, roof), joined in code: read lock times and opponents
 from it exactly as `sleeper:start-sit` step 3 (Locks) says - never from
@@ -66,11 +71,13 @@ required, non-null - pull them from the same `sleeper_roster`/
 recommended player outscores the best alternative**. Leave `confidence`
 null when a slot has no real alternative (nobody else rostered at that
 position/slot) - never invent a number to fill the field. `floor` and
-`ceiling` are your own week-specific low/high PPR estimates for that
-slot's starter, not a calculation - built from the matchup, the player's
-recent snap share and usage (`sleeper_player`'s `game_log`), and team news, each with its
-source linked inline in that row's `why`; an inverted pair is ignored by the
-renderer, so never set `floor` above `ceiling`. `bench` rows carry the same
+`ceiling` are the player's `sleeper_predict` `low`/`high`, and `confidence`
+is the pair's `p_a_outscores_b` times 100. Start the player that pair
+favors unless a lock, or news you did not pass in, overrules it - say which
+in `why`. Only for a player it answers with a `note` instead, estimate the
+pair yourself from the matchup, recent usage (`sleeper_player`'s
+`game_log`) and team news, linked in `why`; never set `floor` above
+`ceiling`. `bench` rows carry the same
 `floor`/`ceiling` for any player worth comparing against a starter. `replaces`
 names the player currently in that slot per `sleeper_roster`/`sleeper_matchup`
 when your call changes it - the starter this row displaces - and is left
