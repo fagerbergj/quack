@@ -411,7 +411,7 @@ plugins:
     # a prompt fix is a tag and a ref bump, no image. Each seeds its agents/workflows only once its extensions.<name> is configured.
     # sleeper's agents name its module's tools: tag it at a commit whose tools this image carries.
     - github:fagerbergj/quack@plugin/sleeper/v0.21.0#extensions/sleeper/plugin
-    - github:fagerbergj/quack@plugin/github/v0.23.0#extensions/github/plugin     # code-implementer/reviewer/explorer
+    - github:fagerbergj/quack@plugin/github/v0.33.0#extensions/github/plugin     # code-implementer/reviewer/explorer
     - github:fagerbergj/quack@plugin/remarkable/v0.1.0#extensions/remarkable/plugin # the document-ingest workflow
 
 # workflows: a top-level key (not nested under skills:) that either teaches
