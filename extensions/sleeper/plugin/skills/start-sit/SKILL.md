@@ -98,16 +98,17 @@ baseline player and the evidence that beat it in the row's `why`.
 6. **FLEX last.** Fill the five dedicated slots first, then rank every
    remaining RB/WR/TE by the same criteria above. Load `references/flex-decisions.md`
    for the floor-vs-ceiling tie-break and the PPR-specific WR-lean data.
-7. **Estimate floor and ceiling.** These are not calculated - weigh the
-   matchup, the player's recent snap share and usage (`sleeper_player`'s `game_log`), and any
-   team news into a low/high PPR estimate for the week, and link that
-   evidence's source inline in the row's `why`. An inverted pair (floor
-   above ceiling) is ignored by the renderer, so check the order before
-   writing it.
+7. **Predict the range.** `sleeper_predict` turns a decision model's
+   stat ranges (from recent usage, situation, opponent and the news you
+   pass it) into each player's low/median/high PPR under this league's
+   scoring. Floor and ceiling are its `low`/`high`. Only for a player it
+   answers with a `note`, estimate them from the matchup, recent snap share
+   and usage (`sleeper_player`'s `game_log`) and team news, linking that
+   evidence in `why`, and check floor is not above ceiling.
 8. **Write the verdict.** Every starter gets `start` or `sit` plus the
-   `why`; the UI's `confidence` number is the chance the recommended player
-   outscores the best alternative — leave it null when there is no real
-   alternative (see agent prompt).
+   `why`; `confidence` is `p_a_outscores_b` × 100 against the best
+   alternative, your own estimate only without one, and null when there is
+   no real alternative (see agent prompt).
 
 ## Thresholds table (source-dated; do not restate without the URL)
 

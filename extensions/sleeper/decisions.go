@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -43,9 +44,10 @@ var decisionPoints = []sdk.DecisionPoint{
 		Primary: "accept", Modes: []string{"observe"}},
 }
 
-// DecisionPoints declares the weekly fantasy points, observe only: the host
-// records the answers and they never change an artifact or a dispatch.
-func (e *extension) DecisionPoints() []sdk.DecisionPoint { return decisionPoints }
+// DecisionPoints declares the weekly shadow points, observe only, and sleeper_predict's stat-line points.
+func (e *extension) DecisionPoints() []sdk.DecisionPoint {
+	return slices.Concat(decisionPoints, predictPoints)
+}
 
 // artPlayer is the player object every job artifact schema shares.
 type artPlayer struct {

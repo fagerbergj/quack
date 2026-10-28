@@ -128,6 +128,7 @@ func (e *extension) Tools() []tool.Tool {
 		e.transactionsTool(),
 		e.freeAgentsTool(),
 		e.playerTool(),
+		e.predictTool(),
 		e.scheduleTool(),
 		e.trendsTool(),
 		e.draftTool(),

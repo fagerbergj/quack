@@ -70,7 +70,7 @@ func TestUIDescriptor(t *testing.T) {
 }
 
 // wantToolCount is every sleeper_* tool this slice registers.
-const wantToolCount = 12
+const wantToolCount = 13
 
 // TestFactoryIsSideEffectFree calls factory with a zero-value Host - factory
 // (and building the tool list) must never invoke any of its nil fields.

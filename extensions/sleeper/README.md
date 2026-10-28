@@ -115,6 +115,29 @@ the artifact names another; a trade uses the live NFL week) and
 - `trade_accept`: `partner_id`, `offer_index`, `give[].id`, `get[].id`; score rest-of-season
   points from `week` on.
 
+### Stat-line points (`sleeper_predict`)
+
+`predict.go` declares three more points, `qb_line`, `rb_line` and `receiver_line`, that the lineup analyst's
+`sleeper_predict` tool asks while it runs: one request per QB/RB/WR/TE, with one score question per stat
+(passing, rushing and receiving yards in bands, TDs, interceptions, receptions, fumbles lost). The state is the
+player's own situation (`playerEnv`, his team's injured starters), his last three games' stat lines and snap
+share, the opponent's average PPR allowed to his position over those weeks, and the agent's `news` notes; it
+carries `chat_id`, `league_id`, `season`, `week` and `player.id` for scoring against the week's real stat line.
+
+Code reads each stat's 10th/50th/90th percentile from the level probabilities, uniform within a yardage band,
+and scores the line with the league's `scoring_settings`. That linear sum reproduced Sleeper's `players_points`
+for all 852 rostered offensive player-weeks of the owner's league through week 7. Stats move together (a good
+game is good throughout), and a stat the league scores negatively runs the other way. A Questionable player's
+range mixes in his 29.3% sit-out chance as zero points; Out/IR/Doubtful/Sus and byes are zero without a call.
+`p_a_outscores_b` treats the two players as independent. K and DEF score in buckets these questions don't
+model, so they get a note and the agent estimates them itself.
+
+The tool uses the answers only when the point runs in `decide` mode. In `observe` it still asks and quack
+records the decision, but the agent gets a note and writes its own range, so the model can shadow first. The
+host's `act_at` does not gate it: the whole distribution is used, not one confident answer. Enable them as
+`"ext:sleeper/qb_line": {enabled: true, handler: <handler>, mode: decide, timeout: 20s}` (and `rb_line`,
+`receiver_line`).
+
 A re-run of a job re-asks every row of its latest artifact, so the scorer keeps one decision per
 key (the latest). Enable them in quack's `decisions.points` as
 `"ext:sleeper/<name>": {enabled: true, handler: <handler>, mode: observe}`.

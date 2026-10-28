@@ -109,14 +109,14 @@
               "number",
               "null"
             ],
-            "description": "The agent's own low estimate for this week, from matchup, snap share and team news."
+            "description": "sleeper_predict's low (10th-percentile PPR) for this week, else the agent's own estimate from matchup, usage and team news."
           },
           "ceiling": {
             "type": [
               "number",
               "null"
             ],
-            "description": "The agent's own high estimate for this week. An inverted floor/ceiling pair is ignored by the renderer."
+            "description": "sleeper_predict's high (90th-percentile PPR), else the agent's own estimate. An inverted floor/ceiling pair is ignored by the renderer."
           },
           "verdict": {
             "enum": [
