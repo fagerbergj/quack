@@ -150,6 +150,9 @@ func TestReviewDecisionPoints(t *testing.T) {
 	}
 	for i, w := range wants {
 		r := reqs[i]
+		if r.ChatID != "ext:github:github-acme-widgets-7" {
+			t.Errorf("call %d ChatID = %q; an out-of-process ask without it is answered but never recorded", i, r.ChatID)
+		}
 		if r.Point != w.point || r.Baseline != w.baseline || r.Questions != nil || r.Primary != "" || r.Restrictive != nil {
 			t.Errorf("call %d = %+v; want a slim %+v", i, r, w)
 		}
@@ -643,6 +646,9 @@ func TestFindingRaiseRelabelsAndFlipsApprove(t *testing.T) {
 	rec.raise = func(_ context.Context, req sdk.DecideRequest) (sdk.Decision, error) {
 		st := req.State.(findingState)
 		asked = append(asked, st)
+		if req.ChatID != "ext:github:github-acme-widgets-7" {
+			t.Errorf("finding.raise ChatID = %q; want the review's chat so the guard's answer is recorded", req.ChatID)
+		}
 		return sdk.Decision{Top: "true", TopP: 0.95, Outcome: "pass", Restrict: st.Line == 42}, nil
 	}
 	app.decide = rec.decide

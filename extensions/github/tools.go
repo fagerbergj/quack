@@ -871,10 +871,10 @@ func (a *App) deliverReview(ctx context.Context, owner, repo string, dc sdk.Deli
 		return deliveryItemResult{}, fmt.Errorf("github: delivery: staged review event %q is not one of approve/request_changes/comment", item.Event)
 	}
 	a.collapsePriorReviews(ctx, owner, repo, dc.IssueNumber) // superseded prior attempts
-	posted, body, comments := raiseFindings(event, item.Body, item.Comments, a.guardFindings(ctx, owner, repo, dc.IssueNumber, item.Comments))
+	posted, body, comments := raiseFindings(event, item.Body, item.Comments, a.guardFindings(ctx, dc.ChatID, owner, repo, dc.IssueNumber, item.Comments))
 	// Validate inline findings before submit — one bad anchor 422s the whole review.
 	inline, unanchored := a.validComments(ctx, owner, repo, dc.IssueNumber, comments)
-	a.observeReview(ctx, owner, repo, dc.IssueNumber, event, item.Comments)
+	a.observeReview(ctx, dc.ChatID, owner, repo, dc.IssueNumber, event, item.Comments)
 	body += renderUnanchoredFindings(unanchored) + deliveryKeyMarker(dc.IdempotencyKey)
 	res, err := a.submitReview(ctx, submitReviewArgs{Owner: owner, Repo: repo, PullNumber: dc.IssueNumber, Body: gateCaveat(dc, body), Event: posted, Comments: inline, ChatID: dc.ChatID})
 	if err != nil {
@@ -891,7 +891,7 @@ func (a *App) deliverSelfReview(ctx context.Context, owner, repo string, dc sdk.
 	if !reviewEvents[strings.ToUpper(staged)] {
 		staged = "comment"
 	}
-	verdict, reviewBody, comments := raiseFindings(staged, StripVerdictTail(item.Body), item.Comments, a.guardFindings(ctx, owner, repo, dc.IssueNumber, item.Comments))
+	verdict, reviewBody, comments := raiseFindings(staged, StripVerdictTail(item.Body), item.Comments, a.guardFindings(ctx, dc.ChatID, owner, repo, dc.IssueNumber, item.Comments))
 	body := fmt.Sprintf("_Own PR: GitHub allows no self-review verdict. Verdict: %s. A maintainer decides._\n\n", verdict) + reviewBody
 	body += "\n\n" + deliveryMarker("review:"+verdict) + deliveryKeyMarker(dc.IdempotencyKey)
 	// Head at delivery time, not necessarily the one reviewed (DeliveryContext has no reviewed head);
@@ -902,7 +902,7 @@ func (a *App) deliverSelfReview(ctx context.Context, owner, repo string, dc sdk.
 	a.collapsePriorReviews(ctx, owner, repo, dc.IssueNumber) // superseded prior attempts
 	inline, unanchored := a.validComments(ctx, owner, repo, dc.IssueNumber, comments)
 	body += renderUnanchoredFindings(unanchored)
-	a.observeReview(ctx, owner, repo, dc.IssueNumber, staged, item.Comments)
+	a.observeReview(ctx, dc.ChatID, owner, repo, dc.IssueNumber, staged, item.Comments)
 	res, err := a.submitReview(ctx, submitReviewArgs{Owner: owner, Repo: repo, PullNumber: dc.IssueNumber, Body: gateCaveat(dc, body), Event: "COMMENT", Comments: inline, ChatID: dc.ChatID})
 	if err != nil {
 		return deliveryItemResult{}, fmt.Errorf("github: delivery: self-review: %w", err)
