@@ -267,17 +267,14 @@ const (
 	maxNewsBytes      = 1000
 )
 
+const predictDoc = "Predict this week's PPR range for up to 20 players: a decision model reads each player's last 3 games, " +
+	"situation, opponent and your `news` notes (cite sources), and code scores its stat ranges with the league's settings. " +
+	"Returns low/median/high (10th/50th/90th percentile; a Questionable player's sit-out chance included) and per-stat " +
+	"[low,median,high]; `compare` pairs get p_a_outscores_b. A `note` instead of numbers means no prediction: estimate it yourself."
+
 func (e *extension) predictTool() tool.Tool {
-	t, _ := functiontool.New[predictArgs, predictResult](
-		functiontool.Config{
-			Name: "sleeper_predict",
-			Description: "Predict this week's PPR range for up to 20 players: a decision model reads each player's last 3 games, " +
-				"situation, opponent and your `news` notes (cite sources), and code scores its stat ranges with the league's settings. " +
-				"Returns low/median/high (10th/50th/90th percentile; a Questionable player's sit-out chance included) and per-stat " +
-				"[low,median,high]; `compare` pairs get p_a_outscores_b. A `note` instead of numbers means no prediction: estimate it yourself.",
-		},
-		func(ctx adkagent.Context, a predictArgs) (predictResult, error) { return e.predict(ctx, a) },
-	)
+	run := func(ctx adkagent.Context, a predictArgs) (predictResult, error) { return e.predict(ctx, a) }
+	t, _ := functiontool.New[predictArgs, predictResult](functiontool.Config{Name: "sleeper_predict", Description: predictDoc}, run)
 	return t
 }
 
@@ -402,7 +399,7 @@ func (e *extension) askLine(ctx context.Context, line string, keys decisionKeys,
 	d, err := e.host.Decide(ctx, sdk.DecideRequest{Point: line, State: state, ChatID: keys.ChatID})
 	switch {
 	case err != nil:
-		return nil, fmt.Errorf("decision model unavailable: %v", err)
+		return nil, fmt.Errorf("decision model unavailable: %w", err)
 	case d.Outcome == "observe":
 		return nil, fmt.Errorf("decision model is in observe mode")
 	}
