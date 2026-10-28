@@ -135,8 +135,10 @@ model, so they get a note and the agent estimates them itself.
 The tool uses the answers only when the point runs in `decide` mode. In `observe` it still asks and quack
 records the decision, but the agent gets a note and writes its own range, so the model can shadow first. The
 host's `act_at` does not gate it: the whole distribution is used, not one confident answer. Enable them as
-`"ext:sleeper/qb_line": {enabled: true, handler: <handler>, mode: decide, timeout: 20s}` (and `rb_line`,
-`receiver_line`).
+`"ext:sleeper/qb_line": {enabled: true, handler: <handler>, mode: observe, timeout: 20s}` (and `rb_line`,
+`receiver_line`). Keep them in `observe` until a backtest beats Sleeper's own projection: on 2026 weeks 5-7
+(210 starters, no news) Clef's ranges picked the higher scorer of same-position pairs 59% of the time against
+the projection's 63%, ran 2-3 points high for RBs and WRs, and held 73% of actual scores inside p10-p90.
 
 A re-run of a job re-asks every row of its latest artifact, so the scorer keeps one decision per
 key (the latest). Enable them in quack's `decisions.points` as
