@@ -90,7 +90,7 @@ type Config struct {
 	// Schemas: boot-collected extsdk.ArtifactSchemas registry; nil = no
 	// extension declared a schema, so no recordstore write here is checked.
 	Schemas *artifactschema.Registry
-	// Decisions: the enabled decision points (answer.accept, research.source); nil disables them.
+	// Decisions: the enabled decision points (answer.accept, research.source, judge.criteria); nil disables them.
 	Decisions *decide.Decider
 	// Artifact: episodic record name written on gate pass ("" for none). IsReviewer nodes write
 	// "review" regardless; this names only the extra record.

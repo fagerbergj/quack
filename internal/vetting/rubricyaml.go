@@ -178,11 +178,7 @@ func renderRubricMarkdown(doc rubricDoc) string {
 		}
 		if len(c.Bands) > 0 {
 			sb.WriteString("\n**Scoring bands.**\n")
-			bands := append([]bandSpec(nil), c.Bands...)
-			sort.Slice(bands, func(i, j int) bool { return bands[i].Min > bands[j].Min }) // highest first
-			for _, b := range bands {
-				fmt.Fprintf(&sb, "- **%s** - %s\n", formatBandRange(b), b.Meaning)
-			}
+			sb.WriteString(bandsText(c.Bands))
 		}
 	}
 	if doc.Notes != "" {
@@ -193,6 +189,17 @@ func renderRubricMarkdown(doc rubricDoc) string {
 		sb.WriteString("\n")
 	}
 	return strings.TrimSpace(sb.String())
+}
+
+// bandsText lists bands highest first, one "- **range** - meaning" line each.
+func bandsText(bands []bandSpec) string {
+	bands = append([]bandSpec(nil), bands...)
+	sort.Slice(bands, func(i, j int) bool { return bands[i].Min > bands[j].Min })
+	var sb strings.Builder
+	for _, b := range bands {
+		fmt.Fprintf(&sb, "- **%s** - %s\n", formatBandRange(b), b.Meaning)
+	}
+	return sb.String()
 }
 
 // formatBandRange: "7–10" for an integer band, "0.75–1.00" for a fractional

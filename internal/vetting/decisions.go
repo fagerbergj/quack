@@ -74,12 +74,12 @@ func clipList(items []string, n int) []string {
 	return items
 }
 
-// researchLane admits one research.source call across all nodes: each queued request at a one-slot
+// bulkLane admits one research.source or judge.criteria call across all nodes: each queued request at a one-slot
 // server eats every other point's timeout. ponytail: one global lane; a per-handler queue if more bulk points appear.
-var researchLane = make(chan struct{}, 1)
+var bulkLane = make(chan struct{}, 1)
 
 // observeSources asks research.source about each page a web-researcher fetched, once its answer is final.
-// It only spawns a goroutine, which asks one page at a time through researchLane.
+// It only spawns a goroutine, which asks one page at a time through bulkLane.
 func (g *gateRun) observeSources(answer string, act workerActivity) {
 	if g.cfg.Agent != researchSourceAgentName || len(act.fetched) == 0 || !g.cfg.Decisions.Enabled(researchSource.ID) {
 		return
@@ -116,9 +116,9 @@ func observePages(ctx context.Context, d *decide.Decider, load PageLoader, reque
 			Title: decide.Clip(firstLine(string(data)), researchTitleMax), URL: decide.Clip(u, researchURLMax)}
 		st.Text = decide.ClipEnds(string(data), d.FillBytes(researchSource.ID, researchTextMin, st.Request, st.NodeTask, st.Title, st.URL))
 		state := decide.Annotated{State: st, Meta: map[string]any{"artifact": id, "page": i + 1, "pages": len(urls), "skipped": skipped}}
-		researchLane <- struct{}{}
+		bulkLane <- struct{}{}
 		<-d.Observe(ctx, researchSource.Point, state)(strconv.FormatBool(citesPage))
-		<-researchLane
+		<-bulkLane
 	}
 }
 
