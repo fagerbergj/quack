@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { NodePopup } from './NodePopup'
 import type { DagNodeDef } from '../state/agentStream'
@@ -15,28 +15,26 @@ describe('NodePopup compact sheet', () => {
   it('close is a 44px target', () => {
     render(<NodePopup node={node} state={{ status: 'done' }} onClose={() => {}} />)
     const close = screen.getByRole('button', { name: 'Close' })
-    expect(close.className).toContain('h-11')
-    expect(close.className).toContain('w-11')
+    expect(close.className).toContain('size-11')
   })
 
-  it('returns focus to the control that opened it when it closes', () => {
+  it('returns focus to the control that opened it when it closes', async () => {
     const opener = document.createElement('button')
     document.body.appendChild(opener)
     opener.focus()
     const { unmount } = render(<NodePopup node={node} state={{ status: 'done' }} onClose={() => {}} />)
     unmount()
-    expect(document.activeElement).toBe(opener)
+    await waitFor(() => expect(document.activeElement).toBe(opener))
     opener.remove()
   })
 
   it('docks to the bottom edge below medium and centers above it', () => {
     render(<NodePopup node={node} state={{ status: 'done' }} onClose={() => {}} />)
     const dialog = screen.getByRole('dialog', { name: 'Node web-researcher' })
-    expect(dialog.className).toContain('mt-auto')
-    expect(dialog.className).toContain('medium:m-auto')
-    const panel = dialog.firstElementChild!
-    expect(panel.className).toContain('rounded-t-2xl')
-    expect(panel.className).toContain('medium:rounded-2xl')
+    expect(dialog.className).toContain('bottom-0')
+    expect(dialog.className).toContain('medium:top-1/2')
+    expect(dialog.className).toContain('rounded-t-2xl')
+    expect(dialog.className).toContain('medium:rounded-2xl')
   })
 })
 

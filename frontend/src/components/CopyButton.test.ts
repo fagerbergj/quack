@@ -46,7 +46,7 @@ describe('CopyButton', () => {
   it('is a 44px target at compact width', () => {
     host = render(createElement(CopyButton, { text: 'x' })).container
     const cls = host.querySelector('button')!.className
-    expect(cls).toContain('min-h-[44px]')
-    expect(cls).toContain('medium:min-h-0')
+    expect(cls).toContain('size-11')
+    expect(cls).toContain('medium:size-7')
   })
 })

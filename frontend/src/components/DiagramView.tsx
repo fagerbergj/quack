@@ -1,5 +1,7 @@
 import { useLayoutEffect, useMemo, useRef, useState, type FocusEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { AssistantText } from './AgentParts'
+import { Button } from './ui/button'
+import { Card } from './ui/card'
 import { MermaidError, MermaidPending, useMermaidSvg } from './MermaidDiagram'
 import {
   CHANGE_STYLE, buildMermaid, involved, selKey,
@@ -154,8 +156,8 @@ function Panel({ spec, sel, onClear, onExplain }: { spec: DiagramSpec; sel: Sel 
       {badges && <div className="flex flex-wrap items-center gap-2">{badges}</div>}
       <AssistantText text={detail} />
       <div className="flex gap-2">
-        {onExplain && <button type="button" onClick={() => onExplain(sel)} className="min-h-[44px] rounded-lg border border-gray-300 px-3 text-sm hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-700">Explain more</button>}
-        <button type="button" onClick={onClear} className="min-h-[44px] rounded-lg border border-transparent px-3 text-sm text-blue-600 hover:underline dark:text-blue-400">Clear</button>
+        {onExplain && <Button variant="outline" onClick={() => onExplain(sel)}>Explain more</Button>}
+        <Button variant="link" onClick={onClear}>Clear</Button>
       </div>
     </div>
   )
@@ -198,9 +200,9 @@ export function DiagramView({ spec, onExplain }: { spec: DiagramSpec; onExplain?
         <div ref={host} onClick={e => pick(e.target as Element)} data-testid="diagram-svg" className="overflow-x-auto" dangerouslySetInnerHTML={{ __html: svg }} />
         <Legend />
       </div>
-      <div aria-live="polite" className="min-w-0 rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+      <Card aria-live="polite" className="min-w-0 rounded-lg p-3">
         <Panel spec={spec} sel={sel} onClear={() => setSel(null)} onExplain={onExplain} />
-      </div>
+      </Card>
     </div>
   )
 }

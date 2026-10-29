@@ -1,6 +1,8 @@
 import { memo, useMemo, type ReactNode } from 'react'
 import { AssistantText, ActivityList, BubbleHeader, stoppedBadge, type StoppedBadge } from './AgentParts'
 import { QuestionBubble } from './QuestionBubble'
+import { Card } from './ui/card'
+import { Button } from './ui/button'
 import { DagView, DagBubbleHeader } from './DagView'
 import { TriggerMessage } from './TriggerEnvelope'
 import { AttachmentPreviews, type AttachmentPreview } from './AttachmentUI'
@@ -57,13 +59,13 @@ export function StepsRow({ children }: { children: ReactNode }) {
 // details (activity + graph), as opposed to the live turn's running view.
 function TurnDagBubble({ dag, activity, chatId }: { dag: DagTurnState; activity: Activity[]; chatId?: string }) {
   return (
-    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
+    <Card className="rounded-2xl rounded-tl-sm px-5 py-4">
       <DagBubbleHeader dag={dag} />
       <StepsRow>
         {activity.length > 0 && <ActivityList activity={activity} />}
         <DagView dag={dag} chatId={chatId} />
       </StepsRow>
-    </div>
+    </Card>
   )
 }
 
@@ -71,11 +73,11 @@ function TurnDagBubble({ dag, activity, chatId }: { dag: DagTurnState; activity:
 // header, the (DAG-less) activity, and the markdown answer.
 function TurnAnswerBubble({ dagState, activity, text, attribution, stopped, chatId }: { dagState: DagTurnState | undefined; activity: Activity[]; text: string | undefined; attribution: ReturnType<typeof dagAnswerAttribution> | undefined; stopped: StoppedBadge | undefined; chatId?: string }) {
   return (
-    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
+    <Card className="rounded-2xl rounded-tl-sm px-5 py-4">
       <BubbleHeader agent={attribution?.agent ?? 'orchestrator'} model={attribution?.model} tokens={attribution?.tokens} stopped={stopped} unverified={attribution?.unverified} chatId={chatId} />
       {!dagState && activity.length > 0 && <ActivityList activity={activity} />}
       {text && <AssistantText text={text} />}
-    </div>
+    </Card>
   )
 }
 
@@ -84,18 +86,12 @@ function TurnAnswerBubble({ dagState, activity, text, attribution, stopped, chat
 function CopyDownloadRow({ text, copyKey, isCopied, onCopy, onDownload, idx }: { text: string; copyKey: string; isCopied: boolean; onCopy: (key: string, text: string) => void; onDownload: (text: string, idx: number) => void; idx: number }) {
   return (
     <div className="flex items-center gap-3 mt-2 px-1">
-      <button
-        onClick={() => onCopy(copyKey, text)}
-        className="min-h-[44px] -my-2 inline-flex items-center text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-      >
+      <Button variant="ghost" size="inline" onClick={() => onCopy(copyKey, text)} className="-my-2 px-1">
         {isCopied ? 'Copied!' : 'Copy'}
-      </button>
-      <button
-        onClick={() => onDownload(text, idx)}
-        className="min-h-[44px] -my-2 inline-flex items-center text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-      >
+      </Button>
+      <Button variant="ghost" size="inline" onClick={() => onDownload(text, idx)} className="-my-2 px-1">
         Download
-      </button>
+      </Button>
     </div>
   )
 }

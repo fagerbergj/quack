@@ -89,7 +89,7 @@ describe('DagNode outcome row (answer + artifact summary both render)', () => {
     const answerButton = screen.getByRole('button', { name: /Reviewed and approved the change\./ })
     expect(answerButton).toBeTruthy()
     await user.click(answerButton)
-    expect(await screen.findByText('Answer')).toBeTruthy()
+    expect(await screen.findByRole('dialog', { name: 'Answer' })).toBeTruthy()
   })
 })
 
@@ -165,10 +165,9 @@ describe('DagNode compact header', () => {
     render(<DagNode node={node} state={running} runs={[]} answer="" isFinal={false} onCancel={() => {}} onPause={() => {}} />)
     const kebab = screen.getByRole('button', { name: 'Node actions' })
     expect(kebab.className).not.toContain('opacity-0')
-    expect(kebab.className).toContain('h-11')
-    expect(kebab.className).toContain('w-11')
-    const header = kebab.parentElement!.parentElement!
-    expect(header.lastElementChild).toBe(kebab.parentElement)
+    expect(kebab.className).toContain('size-11')
+    const header = kebab.parentElement!
+    expect(header.lastElementChild).toBe(kebab)
     expect(within(header).getByText('running')).toBeTruthy()
     expect(within(header).getByText('Web researcher')).toBeTruthy()
   })
@@ -185,7 +184,7 @@ describe('DagNode compact header', () => {
     render(<DagNode node={node} state={running} runs={[]} answer="" isFinal={false} onCancel={() => {}} onPause={() => {}} />)
     const kebab = screen.getByRole('button', { name: 'Node actions' })
     await user.click(kebab)
-    await user.tab()
+    await user.keyboard('{ArrowDown}')
     expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Pause' }))
     await user.keyboard('{Escape}')
     expect(screen.queryByRole('menu')).toBeNull()
@@ -214,13 +213,14 @@ describe('DagNode compact header', () => {
     expect(screen.queryByRole('menu')).toBeNull()
   })
 
-  // The card clips to its rounded corners at rest; while the menu is open it
-  // must not, or a short card cuts the menu off after the first item.
-  it('the card lifts its overflow clip while the menu is open', () => {
+  // The card clips to its rounded corners; the menu renders in a portal, so a short card cannot cut it off.
+  it('the open menu is not clipped by the card', async () => {
+    const user = userEvent.setup()
     const { container } = render(<DagNode node={node} state={running} runs={[]} answer="" isFinal={false} onPause={() => {}} />)
     const card = container.querySelector('.rounded-xl')!
     expect(card.className).toContain('overflow-hidden')
-    expect(card.className).toContain('has-[[aria-expanded=true]]:overflow-visible')
+    await user.click(screen.getByRole('button', { name: 'Node actions' }))
+    expect(card.contains(await screen.findByRole('menu'))).toBe(false)
   })
 
   it('menu verbs carry an icon and no emoji glyph', async () => {
@@ -243,8 +243,8 @@ describe('DagNode compact header', () => {
     const items = await screen.findAllByRole('menuitem')
     expect(items.length).toBeGreaterThanOrEqual(3)
     for (const item of items) {
-      expect(item.className).toContain('min-h-[44px]')
-      expect(item.className).toContain('medium:min-h-0')
+      expect(item.className).toContain('min-h-11')
+      expect(item.className).toContain('medium:min-h-8')
     }
   })
 })
@@ -278,8 +278,8 @@ describe('DagNode retry controls (done + retry + steered)', () => {
     const retry = screen.getByRole('button', { name: 'retry' })
     const retryWithGuidance = screen.getByRole('button', { name: /retry with guidance/ })
     for (const btn of [retry, retryWithGuidance]) {
-      expect(btn.className).toContain('min-h-[44px]')
-      expect(btn.className).toContain('medium:min-h-0')
+      expect(btn.className).toContain('min-h-11')
+      expect(btn.className).toContain('medium:min-h-6')
     }
   })
 

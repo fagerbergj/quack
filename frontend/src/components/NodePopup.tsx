@@ -1,7 +1,11 @@
 import { useState } from 'react'
 import { AssistantText, BubbleHeader } from './AgentParts'
 import { Icon } from './Icon'
-import { Sheet } from './Sheet'
+import { Button } from './ui/button'
+import { Card } from './ui/card'
+import { Dialog, DialogClose, DialogContent } from './ui/dialog'
+import { Input, Textarea } from './ui/input'
+import { Tooltip } from './ui/tooltip'
 import { type DagNodeDef } from '../state/agentStream'
 import type { NodeState, QueuedMessage } from '../state/chatStore'
 
@@ -42,18 +46,18 @@ function QueuedMessageRow({ msg, onEdit, onRemove }: {
   if (editing) {
     return (
       <li className="flex items-center gap-2">
-        <input
+        <Input
           autoFocus
           value={text}
           onChange={e => setText(e.target.value)}
           onKeyDown={e => {
             if (e.key === 'Enter') { e.preventDefault(); onEdit?.(text); setEditing(false) }
-            if (e.key === 'Escape') { setText(msg.text); setEditing(false) }
+            if (e.key === 'Escape') { e.stopPropagation(); setText(msg.text); setEditing(false) }
           }}
-          className="flex-1 min-w-0 text-base px-2 py-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-gray-400"
+          className="flex-1"
         />
-        <button onClick={() => { onEdit?.(text); setEditing(false) }} className="text-2xs font-medium text-gray-600 dark:text-gray-300 hover:underline">save</button>
-        <button onClick={() => { setText(msg.text); setEditing(false) }} className="text-2xs text-gray-500 dark:text-gray-400 hover:underline">cancel</button>
+        <Button variant="link" size="inline" onClick={() => { onEdit?.(text); setEditing(false) }}>save</Button>
+        <Button variant="link" size="inline" className="text-muted-foreground" onClick={() => { setText(msg.text); setEditing(false) }}>cancel</Button>
       </li>
     )
   }
@@ -66,8 +70,16 @@ function QueuedMessageRow({ msg, onEdit, onRemove }: {
       >
         parked
       </span>
-      {onEdit && <button onClick={() => setEditing(true)} aria-label="Edit" title="Edit" className="min-w-[24px] min-h-[24px] inline-flex items-center justify-center text-gray-500 hover:text-gray-600 dark:text-gray-400 dark:hover:text-gray-300"><Icon name="edit" className="w-3.5 h-3.5" /></button>}
-      {onRemove && <button onClick={onRemove} aria-label="Remove" title="Remove" className="min-w-[24px] min-h-[24px] inline-flex items-center justify-center text-gray-500 hover:text-red-700 dark:text-gray-400 dark:hover:text-red-400"><Icon name="close" className="w-3.5 h-3.5" /></button>}
+      {onEdit && (
+        <Tooltip content="Edit">
+          <Button variant="ghost" size="icon" onClick={() => setEditing(true)} aria-label="Edit" className="size-6 medium:size-6"><Icon name="edit" className="w-3.5 h-3.5" /></Button>
+        </Tooltip>
+      )}
+      {onRemove && (
+        <Tooltip content="Remove">
+          <Button variant="ghost" size="icon" onClick={onRemove} aria-label="Remove" className="size-6 medium:size-6 hover:text-destructive"><Icon name="close" className="w-3.5 h-3.5" /></Button>
+        </Tooltip>
+      )}
     </li>
   )
 }
@@ -88,28 +100,24 @@ function PromptBlock({ nodeId, agent, task, notStarted, onEditTask }: {
       <div className="flex items-center justify-between">
         <BubbleHeader agent={agent} />
         {notStarted && onEditTask && !editingTask && (
-          <button onClick={() => { setTaskText(task); setEditingTask(true) }} aria-label="Edit prompt" title="Edit prompt" className="shrink-0 min-w-[24px] min-h-[24px] inline-flex items-center justify-center text-gray-500 hover:text-gray-600 dark:text-gray-400 dark:hover:text-gray-300">
-            <Icon name="edit" className="w-3.5 h-3.5" />
-          </button>
+          <Tooltip content="Edit prompt">
+            <Button variant="ghost" size="icon" onClick={() => { setTaskText(task); setEditingTask(true) }} aria-label="Edit prompt" className="size-6 medium:size-6">
+              <Icon name="edit" className="w-3.5 h-3.5" />
+            </Button>
+          </Tooltip>
         )}
       </div>
       {editingTask ? (
         <div className="space-y-2">
-          <textarea
+          <Textarea
             autoFocus
             value={taskText}
             onChange={e => setTaskText(e.target.value)}
             rows={6}
-            className="w-full text-base px-2 py-2 rounded border border-indigo-300 dark:border-indigo-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-indigo-400"
           />
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => { onEditTask?.(nodeId, taskText); setEditingTask(false) }}
-              className="text-2xs font-medium text-indigo-700 dark:text-indigo-400 hover:underline"
-            >
-              save
-            </button>
-            <button onClick={() => setEditingTask(false)} className="text-2xs text-gray-500 dark:text-gray-400 hover:underline">cancel</button>
+            <Button variant="link" size="inline" onClick={() => { onEditTask?.(nodeId, taskText); setEditingTask(false) }}>save</Button>
+            <Button variant="link" size="inline" className="text-muted-foreground" onClick={() => setEditingTask(false)}>cancel</Button>
           </div>
         </div>
       ) : (
@@ -160,7 +168,7 @@ function InputRow({ answering, value, onChange, onSubmit }: {
 }) {
   return (
     <div className="flex items-center gap-2">
-      <input
+      <Input
         autoFocus={answering}
         data-autofocus={answering || undefined}
         value={value}
@@ -169,23 +177,19 @@ function InputRow({ answering, value, onChange, onSubmit }: {
           if (e.key === 'Enter' && value.trim()) { e.preventDefault(); onSubmit() }
         }}
         placeholder={answering ? 'Type your answer…' : 'Queue a message for this node…'}
-        className={`flex-1 min-w-0 text-base px-2 py-2 rounded border bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 ${
-          answering
-            ? 'border-blue-300 dark:border-blue-700 focus:ring-blue-400'
-            : 'border-gray-300 dark:border-gray-600 focus:ring-gray-400'
-        }`}
+        className={answering ? 'flex-1 border-primary' : 'flex-1'}
       />
-      <button
-        onClick={onSubmit}
-        disabled={!value.trim()}
-        aria-label={answering ? 'Send answer' : 'Queue message'}
-        title={answering ? 'Send answer' : 'Queue message'}
-        className={`px-3 py-2 rounded-lg text-white text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors ${
-          answering ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-700 hover:bg-gray-600 dark:bg-gray-600 dark:hover:bg-gray-500'
-        }`}
-      >
-        <Icon name="send" className="w-4 h-4" />
-      </button>
+      <Tooltip content={answering ? 'Send answer' : 'Queue message'}>
+        <Button
+          variant={answering ? 'default' : 'secondary'}
+          size="icon"
+          onClick={onSubmit}
+          disabled={!value.trim()}
+          aria-label={answering ? 'Send answer' : 'Queue message'}
+        >
+          <Icon name="send" className="w-4 h-4" />
+        </Button>
+      </Tooltip>
     </div>
   )
 }
@@ -227,33 +231,32 @@ export function NodePopup({
   }
 
   return (
-    <Sheet onClose={onClose} aria-label={`Node ${node.agent}`} className="relative medium:max-h-[85dvh] medium:rounded-2xl bg-gray-50 dark:bg-gray-900 px-5 medium:pb-6 pt-2 space-y-2">
+    <Dialog open onOpenChange={o => { if (!o) onClose() }}>
+     <DialogContent title={`Node ${node.agent}`} className="gap-2 overflow-y-auto px-5 pt-2 medium:pb-6">
       {/* Close on its own row so it never overlaps the content bubbles. */}
       <div className="flex justify-end -mb-2">
-        <button
-          onClick={onClose}
-          aria-label="Close"
-          className="flex h-11 w-11 -me-3 items-center justify-center rounded-lg text-gray-500 hover:text-gray-600 hover:bg-gray-200/70 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-700/70 transition-colors"
-        >
-          <Icon name="close" className="w-5 h-5" />
-        </button>
+        <DialogClose asChild>
+          <Button variant="ghost" size="icon" aria-label="Close" className="-me-3">
+            <Icon name="close" className="w-5 h-5" />
+          </Button>
+        </DialogClose>
       </div>
 
       {/* Prompt - the same bubble treatment as an assistant turn in chat. */}
-      <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
+      <Card className="rounded-2xl rounded-tl-sm px-5 py-4">
         <PromptBlock nodeId={node.id} agent={node.agent} task={node.task} notStarted={nodeNotStarted} onEditTask={onEditTask} />
-      </div>
+      </Card>
 
       {/* Pending mid-node question - rendered as its own chat-style bubble,
           answered (or read-only, if no resume wiring was passed) below. */}
       {answering && (
-        <div className="bg-white dark:bg-gray-800 border border-blue-300 dark:border-blue-700 border-l-4 rounded-2xl rounded-tl-sm px-5 py-4">
+        <Card className="border-l-4 border-primary rounded-2xl rounded-tl-sm px-5 py-4">
           <div className="flex items-center gap-2 text-xs font-medium text-blue-700 dark:text-blue-300 mb-1">
             <Icon name="help" className="w-3.5 h-3.5" />
             <BubbleHeader agent={node.agent} />
           </div>
           <AssistantText text={state.question ?? ''} />
-        </div>
+        </Card>
       )}
 
       {/* Message queue, only while running - plain history, immutable once delivered. */}
@@ -271,6 +274,7 @@ export function NodePopup({
           Answering from here isn't wired up yet - reply in the main chat.
         </p>
       )}
-    </Sheet>
+     </DialogContent>
+    </Dialog>
   )
 }

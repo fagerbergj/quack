@@ -41,23 +41,22 @@ describe('ChatMenu usage row', () => {
     expect(screen.queryByText(/tokens$/)).toBeNull()
   })
 
-  // Light dismiss skips the popover's invoker, so a second trigger click closes rather than reopens.
-  it('the trigger invokes the popover and a second click closes it', async () => {
+  it('the trigger opens the menu, and Escape closes it and returns focus to the trigger', async () => {
     const user = userEvent.setup()
     render(<ChatMenu chatId="c1" />)
     const btn = screen.getByRole('button', { name: 'Chat actions' })
     await user.click(btn)
-    expect(btn.getAttribute('popovertarget')).toBe(screen.getByRole('dialog', { name: 'Chat actions' }).id)
-    expect(btn.getAttribute('popovertargetaction')).toBe('show')
-    await user.click(btn)
-    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(btn.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByRole('menu')).toBeTruthy()
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(document.activeElement).toBe(btn)
   })
 
   it('the trigger button meets the 44px touch-target floor', () => {
     render(<ChatMenu chatId="c1" />)
     const btn = screen.getByRole('button', { name: 'Chat actions' })
-    expect(btn.className).toContain('min-w-[44px]')
-    expect(btn.className).toContain('min-h-[44px]')
+    expect(btn.className).toContain('size-11')
   })
 
   // Same 44px floor as the trigger, on every item inside the menu.
@@ -70,8 +69,8 @@ describe('ChatMenu usage row', () => {
       ...screen.getAllByRole('menuitemradio'),
     ]
     for (const item of items) {
-      expect(item.className).toContain('min-h-[44px]')
-      expect(item.className).toContain('medium:min-h-0')
+      expect(item.className).toContain('min-h-11')
+      expect(item.className).toContain('medium:min-h-8')
     }
   })
 

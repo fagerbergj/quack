@@ -20,6 +20,7 @@ import { isTrailingMermaidFenceOpen, lastSafeSplitOffset } from './mermaidSource
 import { StatusDot, type DotStatus } from './StatusDot'
 import { failedCriterionLine, pct } from '../lib/judgeRounds'
 import { Badge } from './ui/badge'
+import { Button } from './ui/button'
 
 // Answers carry raw `<details><summary>Sources</summary>` HTML; text is model-authored and web-shaped,
 // so sanitize allows only <details>/<summary> beyond the default schema.
@@ -154,22 +155,23 @@ function UnverifiedMark({ u, chatId }: { u: Unverified; chatId?: string }) {
   }
   return (
     <>
-      <button
-        type="button"
+      <Button
+        variant="link"
+        size="inline"
         aria-expanded={open}
         aria-describedby={tipId}
         onClick={() => { load(); setOpen(o => !o) }}
         onPointerEnter={load}
         onFocus={load}
         onBlur={() => setOpen(false)}
-        className="peer min-h-[44px] -my-3 inline-flex items-center gap-0.5 font-medium text-amber-700 dark:text-amber-400"
+        className="peer -my-3 gap-0.5 text-2xs text-amber-700 dark:text-amber-400"
       >
         <Icon name="warning" className="w-3 h-3" /> not verified
-      </button>
+      </Button>
       <span
         id={tipId}
         role="tooltip"
-        className={`${open ? 'block' : 'hidden'} peer-hover:block absolute left-0 right-0 top-full z-10 mt-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 shadow-sm text-gray-600 dark:text-gray-300 [overflow-wrap:anywhere]`}
+        className={`${open ? 'block' : 'hidden'} peer-hover:block absolute left-0 right-0 top-full z-10 mt-1 rounded-lg border border-border bg-popover px-3 py-2 shadow-overlay text-muted-foreground [overflow-wrap:anywhere]`}
       >
         Failed its quality check after {u.rounds} round{u.rounds === 1 ? '' : 's'}{u.score != null && ` (final score ${pct(u.score)})`}, so this answer is shown unverified.
         {chatId && <span className="mt-1 line-clamp-4">{why ?? 'Loading the verdict…'}</span>}
@@ -217,12 +219,9 @@ export function ActivityList({ activity }: { activity: Activity[] }) {
   return (
     <>
       {hidden > 0 && (
-        <button
-          onClick={() => setShowAll(s => !s)}
-          className="min-h-[44px] -my-2 inline-flex items-center text-2xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-        >
+        <Button variant="ghost" size="inline" onClick={() => setShowAll(s => !s)} className="-my-2 px-1 text-2xs">
           {showAll ? '▾ show less' : `⋯ ${hidden} earlier`}
-        </button>
+        </Button>
       )}
       {activity.slice(start).map((a, i) => {
         switch (a.kind) {
@@ -273,7 +272,7 @@ function ThinkBlock({ text }: { text: string }) {
         <span className="truncate text-gray-500 dark:text-gray-400 group-open:hidden">{previewLine(text)}</span>
       </summary>
       <div className="ml-[7px] pl-3 pr-2 py-1 border-l border-gray-200 dark:border-gray-700 text-xs text-gray-500 dark:text-gray-400">
-        <Expandable maxHeight={200} fade="from-white dark:from-gray-800">
+        <Expandable maxHeight={200} fade="from-card">
           <div className="whitespace-pre-wrap font-mono">{text}</div>
         </Expandable>
       </div>

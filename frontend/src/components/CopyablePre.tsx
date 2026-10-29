@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import type { ComponentPropsWithoutRef } from 'react'
+import { Button } from './ui/button'
 
 // rehype-highlight runs after sanitize, so hljs markup is intact here. Also the fallback for a mermaid
 // block that's invalid or still streaming.
@@ -13,14 +14,15 @@ export function CopyablePre({ children, ...props }: ComponentPropsWithoutRef<'pr
   }
   return (
     <div className="relative group not-prose">
-      <button
-        type="button"
+      <Button
+        variant="outline"
+        size="sm"
         onClick={copy}
         aria-label="Copy code"
-        className="absolute right-2 top-2 z-10 min-h-[44px] min-w-[44px] inline-flex items-center justify-center rounded border border-gray-600 bg-gray-800/80 px-2 text-2xs text-gray-300 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity hover:bg-gray-700"
+        className="absolute right-2 top-2 z-10 min-w-11 border-gray-600 bg-gray-800/80 px-2 text-2xs text-gray-300 opacity-0 transition-opacity hover:bg-gray-700 hover:text-gray-100 group-hover:opacity-100 focus-visible:opacity-100"
       >
         {copied ? 'Copied' : 'Copy'}
-      </button>
+      </Button>
       <pre ref={ref} {...props}>{children}</pre>
     </div>
   )

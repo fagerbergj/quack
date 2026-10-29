@@ -1,5 +1,6 @@
 import { Component, type ReactNode } from 'react'
 import { Icon } from './Icon'
+import { Button } from './ui/button'
 
 interface Props { children: ReactNode; fallback?: ReactNode }
 interface State { failed: boolean }
@@ -23,14 +24,10 @@ export class LazyLoadBoundary extends Component<Props, State> {
       return (
         <div className="flex-1 flex flex-col items-center justify-center gap-3 p-6 text-center text-sm text-gray-500 dark:text-gray-400">
           <p>This page couldn&apos;t load. Check your connection and try again.</p>
-          <button
-            type="button"
-            onClick={() => window.location.reload()}
-            className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700 transition-colors"
-          >
+          <Button onClick={() => window.location.reload()}>
             <Icon name="refresh" className="w-4 h-4" />
             Reload
-          </button>
+          </Button>
         </div>
       )
     }

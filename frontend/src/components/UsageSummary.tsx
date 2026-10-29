@@ -1,6 +1,9 @@
 import type { Usage } from '../generated'
 import { cacheRate } from '../state/chatStore'
 import { Badge } from './ui/badge'
+import { Button } from './ui/button'
+import { Popover, PopoverContent, PopoverTrigger } from './ui/popover'
+import { Separator } from './ui/separator'
 
 export interface UsageSummaryProps {
   // The current/most-recent turn's model chip(s) - see chatStore.sessionModels.
@@ -10,7 +13,7 @@ export interface UsageSummaryProps {
   usage?: Usage
 }
 
-// Expands via native <details> (no JS state) to the token split and cache-hit rate.
+// Expands in a popover to the token split and cache-hit rate.
 // Renders nothing for a chat with no run yet.
 export function UsageSummary({ models, usage }: UsageSummaryProps) {
   const total = usage?.total_tokens ?? 0
@@ -19,19 +22,18 @@ export function UsageSummary({ models, usage }: UsageSummaryProps) {
   const cost = usage?.cost_usd
 
   return (
-    <div className="flex items-center gap-2 text-2xs text-gray-500 dark:text-gray-400 flex-shrink-0">
+    <div className="flex items-center gap-2 text-2xs text-muted-foreground flex-shrink-0">
       {models.map(m => (
         <Badge key={m} className="font-mono truncate max-w-[140px]" title={m}>{m}</Badge>
       ))}
       {total > 0 && (
-        <details className="relative">
-          <summary
-            className="list-none cursor-pointer tabular-nums hover:text-gray-600 dark:hover:text-gray-300 select-none"
-            title="Session token usage - click to expand"
-          >
-            {total.toLocaleString()} tokens{cost != null && ` · ${fmtCost(cost)}`}
-          </summary>
-          <div className="absolute right-0 z-20 mt-1 w-52 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg p-3 space-y-1 text-gray-600 dark:text-gray-300">
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button variant="link" size="inline" className="tabular-nums text-2xs text-muted-foreground hover:text-foreground hover:no-underline" title="Session token usage - click to expand">
+              {total.toLocaleString()} tokens{cost != null && ` · ${fmtCost(cost)}`}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-52 space-y-1 p-3 text-foreground">
             <UsageRow label="Input" value={usage?.input_tokens} />
             <UsageRow label="Output" value={usage?.output_tokens} />
             <UsageRow label="Reasoning" value={usage?.reasoning_tokens} />
@@ -43,13 +45,16 @@ export function UsageSummary({ models, usage }: UsageSummaryProps) {
               </div>
             )}
             {rate != null && (
-              <div className="pt-1 mt-1 border-t border-gray-100 dark:border-gray-700 flex items-center justify-between">
-                <span>Cache rate</span>
-                <span className="tabular-nums">{rate}%</span>
-              </div>
+              <>
+                <Separator className="my-1" />
+                <div className="flex items-center justify-between">
+                  <span>Cache rate</span>
+                  <span className="tabular-nums">{rate}%</span>
+                </div>
+              </>
             )}
-          </div>
-        </details>
+          </PopoverContent>
+        </Popover>
       )}
     </div>
   )

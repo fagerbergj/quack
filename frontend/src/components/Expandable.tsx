@@ -1,12 +1,13 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
+import { Button } from './ui/button'
 
 // Overflow is measured on the never-clamped content box: measuring the clamped box feeds the decision back
 // into itself and ping-pongs into React's max-update-depth guard. One ResizeObserver covers growth and rewrap.
 export function Expandable({
   children,
   maxHeight = 240,
-  fade = 'from-white dark:from-gray-800',
+  fade = 'from-card',
   className = '',
 }: {
   children: ReactNode
@@ -45,14 +46,9 @@ export function Expandable({
         )}
       </div>
       {overflows && (
-        <button
-          type="button"
-          onClick={() => setExpanded(e => !e)}
-          aria-expanded={expanded}
-          className="min-h-[44px] -my-2 inline-flex items-center text-2xs font-medium text-blue-600 dark:text-blue-400 hover:underline focus:outline-none focus:underline"
-        >
+        <Button variant="link" size="inline" onClick={() => setExpanded(e => !e)} aria-expanded={expanded} className="-my-2 text-2xs">
           {expanded ? 'Show less' : 'Show more'}
-        </button>
+        </Button>
       )}
     </div>
   )

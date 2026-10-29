@@ -176,7 +176,7 @@ describe('ArtifactPanel as a result view (#1178)', () => {
   // One tap, no picker step.
   it("opens directly onto the node's rendered result with the judge-round timeline", async () => {
     stubPlanFixture()
-    const { container } = render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan the fix" nodeArtifactKind="text" onClose={() => {}} />)
+    render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan the fix" nodeArtifactKind="text" onClose={() => {}} />)
 
     // The <h2> is the agent label, never an artifact id or the raw task prompt.
     const heading = await screen.findByRole('heading', { level: 2, name: 'Planner' })
@@ -195,11 +195,11 @@ describe('ArtifactPanel as a result view (#1178)', () => {
 
     // The sheet: bottom-docked below medium, one scrolling region, and no
     // native <select> anywhere in the panel (the picker is gone).
-    const dialog = container.querySelector('dialog')
-    expect(dialog?.className).toMatch(/mt-auto/)
+    const dialog = screen.getByRole('dialog')
+    expect(dialog?.className).toMatch(/bottom-0/)
     expect(dialog?.className).toMatch(/rounded-t-2xl/)
     expect(dialog?.className).toMatch(/medium:rounded-2xl/)
-    expect(container.querySelectorAll('select')).toHaveLength(0)
+    expect(document.body.querySelectorAll('select')).toHaveLength(0)
   })
 
   it('names a nodeless panel (a trigger card\'s run input) by its context, not a dangling "node "', () => {
@@ -356,15 +356,15 @@ describe('ArtifactPanel as a result view (#1178)', () => {
   it('degrades the diff toggle to a disabled state with its own reason on a 413', async () => {
     const user = userEvent.setup()
     stubLargeFixture()
-    const { container } = render(<ArtifactPanel chatId="chat-1" nodeId="writer-1" nodeAgent="Writer" nodeTask="Write the doc" onClose={() => {}} />)
+    render(<ArtifactPanel chatId="chat-1" nodeId="writer-1" nodeAgent="Writer" nodeTask="Write the doc" onClose={() => {}} />)
     await screen.findByText('Revision 2 of 2')
 
     await user.click(screen.getByRole('button', { name: 'Diff' }))
     await waitFor(() => expect(screen.getByRole('button', { name: 'Diff' })).toHaveProperty('disabled', true))
     expect(screen.getByText('Too large to diff (256 KB limit)')).toBeTruthy()
     // The server's message (with the id in it) must not be rendered.
-    expect(container.textContent ?? '').not.toContain('text:big')
-    expect(container.textContent ?? '').not.toContain('262144')
+    expect(document.body.textContent ?? '').not.toContain('text:big')
+    expect(document.body.textContent ?? '').not.toContain('262144')
   })
 
   // (a/7) Secondary artifacts are a plain titled list, no per-item bars -
@@ -473,22 +473,22 @@ describe('ArtifactPanel as a result view (#1178)', () => {
         vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: narrow, media: 'x', addEventListener: () => {}, removeEventListener: () => {} })))
         stubPlanFixture()
         if (theme === 'dark') document.documentElement.classList.add('dark')
-        const { container } = render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan the fix" nodeArtifactKind="text" onClose={() => {}} />)
+        render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan the fix" nodeArtifactKind="text" onClose={() => {}} />)
         await screen.findByRole('heading', { level: 1, name: 'Plan v2' })
         await screen.findByRole('button', { name: 'Round 2, passed, score 81%' })
 
-        const detailsEl = [...container.querySelectorAll('details')].find(d => d.querySelector('summary')?.textContent?.trim() === 'Details') as HTMLDetailsElement
+        const detailsEl = [...document.body.querySelectorAll('details')].find(d => d.querySelector('summary')?.textContent?.trim() === 'Details') as HTMLDetailsElement
         // Collapsed by default in both themes, and rendered lazily: a
         // closed disclosure carries no id-shaped text in the DOM at all.
         expect(detailsEl).toBeTruthy()
         expect(detailsEl.hasAttribute('open')).toBe(false)
-        expect(container.textContent ?? '').not.toMatch(ID_PATTERN)
+        expect(document.body.textContent ?? '').not.toMatch(ID_PATTERN)
 
         // Opening Details is the only place the id, kind, class, lineage
         // and the REST link appear.
         await user.click(screen.getByText('Details'))
         expect(detailsEl).toHaveProperty('open', true)
-        const open = container.textContent ?? ''
+        const open = document.body.textContent ?? ''
         expect(open).toContain('text:plan')
         expect(open).toContain('kind:text')
         expect(open).toContain('blob')
@@ -621,10 +621,10 @@ describe('ArtifactPanel live SSE updates (#1114)', () => {
   it('preserves scroll position across a live revision refresh', async () => {
     stubLiveFixture()
     const store = seededStore()
-    const { container } = render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan" nodeArtifactKind="text" onClose={() => {}} />, store)
+    render(<ArtifactPanel chatId="chat-1" nodeId="planner-1" nodeAgent="Planner" nodeTask="Plan" nodeArtifactKind="text" onClose={() => {}} />, store)
     await screen.findByRole('heading', { level: 1, name: 'Plan v1' })
 
-    const scrollEl = container.querySelector('.overflow-y-auto') as HTMLDivElement
+    const scrollEl = document.body.querySelector('[role=dialog] .overflow-y-auto') as HTMLDivElement
     Object.defineProperty(scrollEl, 'scrollTop', { value: 42, writable: true })
 
     planRevisions.push({ revision: 2, mime_type: 'text/markdown', size: PLAN_V2.length, kind: 'text', class: 'blob', lineage: { node_id: 'planner-1', round: 2, author: 'worker' } })

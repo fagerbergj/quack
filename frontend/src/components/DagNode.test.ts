@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { createElement } from 'react'
-import { act, cleanup, render } from '@testing-library/react'
+import { act, cleanup, fireEvent, render } from '@testing-library/react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { DagNode, pausedStatusLabel } from './DagNode'
 import type { DagNodeDef } from '../state/agentStream'
@@ -146,7 +146,8 @@ describe('DagNode - judge verdict popup copy button (#426)', () => {
       .find(b => b.textContent?.includes('Mostly solid'))!
     act(() => { previewButton.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
 
-    const copyButton = Array.from(host.querySelectorAll('button'))
+    // The popup is a Radix dialog in a portal on <body>, not inside the card.
+    const copyButton = Array.from(document.body.querySelectorAll('button'))
       .find(b => b.getAttribute('aria-label')?.startsWith('Copy judge verdict'))!
     act(() => { copyButton.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
 
@@ -221,8 +222,9 @@ describe('DagNode - verb enablement per status (#962)', () => {
     })).container
     const toggle = Array.from(host.querySelectorAll('button')).find(b => b.getAttribute('aria-label') === 'Node actions')
     if (!toggle) return [] // no menu at all - terminal status
-    act(() => { toggle.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
-    return Array.from(host.querySelectorAll('[role="menuitem"]')).map(b => b.textContent ?? '')
+    // Radix opens its menu on pointerdown or Enter; the menu renders in a portal on <body>.
+    act(() => { fireEvent.keyDown(toggle, { key: 'Enter' }) })
+    return Array.from(document.body.querySelectorAll('[role="menuitem"]')).map(b => b.textContent ?? '')
   }
 
   it('queued: Start + Stop, no Pause', () => {

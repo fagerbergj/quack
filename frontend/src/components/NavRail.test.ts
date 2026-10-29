@@ -20,8 +20,6 @@ function jsonResponse(body: unknown, status = 200): Response {
 // the stale navRailCollapsed key is neither read nor written.
 
 describe('NavRail', () => {
-  let host: HTMLElement | undefined
-
   beforeEach(() => {
     localStorage.clear()
   })
@@ -33,29 +31,29 @@ describe('NavRail', () => {
   // open defaults to true so the content tests exercise the drawer body;
   // onClose is a no-op in these unit tests (closing is the App's job).
   function mount(props: Partial<Parameters<typeof NavRail>[0]> = {}) {
-    host = render(createElement(NavRail, { route: 'chat', open: true, onClose: () => {}, ...props })).container
+    render(createElement(NavRail, { route: 'chat', open: true, onClose: () => {}, ...props }))
   }
 
   it('shows text labels for both Chats and Memory by default', () => {
     mount()
-    expect(host!.textContent).toContain('Chats')
-    expect(host!.textContent).toContain('Memory')
+    expect(document.body.textContent).toContain('Chats')
+    expect(document.body.textContent).toContain('Memory')
   })
 
   // A stale navRailCollapsed value is neither read (the drawer stays closed) nor rewritten by rendering.
   it('ignores a stale navRailCollapsed localStorage value - neither read nor written', () => {
     localStorage.setItem('navRailCollapsed', '1')
     mount({ open: false })
-    expect(host!.textContent).toBe('') // closed renders zero DOM
-    expect(host!.querySelector('nav')).toBeNull()
+    expect(document.body.textContent).toBe('') // closed renders zero DOM
+    expect(document.body.querySelector('nav')).toBeNull()
     expect(document.querySelector('[role="dialog"]')).toBeNull()
     expect(localStorage.getItem('navRailCollapsed')).toBe('1') // untouched, never rewritten
   })
 
   it('marks the active route via aria-current', () => {
     mount({ route: 'memory' })
-    const memoryBtn = Array.from(host!.querySelectorAll('button')).find(b => b.getAttribute('aria-label') === 'Memory')!
-    const chatsBtn = Array.from(host!.querySelectorAll('button')).find(b => b.getAttribute('aria-label') === 'Chats')!
+    const memoryBtn = Array.from(document.body.querySelectorAll('button')).find(b => b.getAttribute('aria-label') === 'Memory')!
+    const chatsBtn = Array.from(document.body.querySelectorAll('button')).find(b => b.getAttribute('aria-label') === 'Chats')!
     expect(memoryBtn.getAttribute('aria-current')).toBe('page')
     expect(chatsBtn.getAttribute('aria-current')).toBeNull()
   })
@@ -63,8 +61,8 @@ describe('NavRail', () => {
   // Extension entries navigate client-side to /ext/:name; a real <a href> would leave the SPA.
   it('renders an extension with a UI descriptor as a client-side /ext/:name nav button', () => {
     mount({ initialExtensions: [{ name: 'remarkable', title: 'reMarkable', href: '/remarkable/review' }] })
-    expect(host!.querySelector('a')).toBeNull()
-    const btn = Array.from(host!.querySelectorAll('button')).find(b => b.getAttribute('aria-label') === 'reMarkable')
+    expect(document.body.querySelector('a')).toBeNull()
+    const btn = Array.from(document.body.querySelectorAll('button')).find(b => b.getAttribute('aria-label') === 'reMarkable')
     expect(btn).toBeTruthy()
     expect(btn!.textContent).toContain('reMarkable')
     act(() => { btn!.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
@@ -74,22 +72,22 @@ describe('NavRail', () => {
   // A UI-less extension has nowhere to navigate, so it must not render at all, not even inert.
   it('renders nothing for a UI-less extension (no href)', () => {
     mount({ initialExtensions: [{ name: 'noop' }] })
-    expect(host!.textContent).not.toContain('noop')
-    expect(host!.querySelector('a')).toBeNull()
-    expect(Array.from(host!.querySelectorAll('button')).some(b => b.getAttribute('aria-label') === 'noop')).toBe(false)
+    expect(document.body.textContent).not.toContain('noop')
+    expect(document.body.querySelector('a')).toBeNull()
+    expect(Array.from(document.body.querySelectorAll('button')).some(b => b.getAttribute('aria-label') === 'noop')).toBe(false)
   })
 
   it('renders no extensions section when the only extension has no href', () => {
     mount({ initialExtensions: [{ name: 'github' }] })
     // The extensions divider is the only border-gray-100 element in the drawer
     // panel - absent means no section rendered.
-    expect(host!.querySelector('.border-gray-100')).toBeNull()
+    expect(document.body.querySelector('.border-gray-100')).toBeNull()
   })
 
   it('renders only the href-bearing extension out of a mixed list', () => {
     mount({ initialExtensions: [{ name: 'github' }, { name: 'usage', title: 'Usage', href: '/usage' }] })
-    expect(host!.textContent).not.toContain('github')
-    const usageBtn = Array.from(host!.querySelectorAll('button')).find(b => b.getAttribute('aria-label') === 'Usage')
+    expect(document.body.textContent).not.toContain('github')
+    const usageBtn = Array.from(document.body.querySelectorAll('button')).find(b => b.getAttribute('aria-label') === 'Usage')
     expect(usageBtn).toBeTruthy()
   })
 
@@ -103,9 +101,9 @@ describe('NavRail', () => {
         { name: 'remarkable', title: 'reMarkable', href: '/remarkable/review', icon: '📊' } as ExtensionInfo,
       ],
     })
-    const usageBtn = Array.from(host!.querySelectorAll('button')).find(b => b.getAttribute('aria-label') === 'Usage')!
-    const customBtn = Array.from(host!.querySelectorAll('button')).find(b => b.getAttribute('aria-label') === 'Custom')!
-    const remarkableBtn = Array.from(host!.querySelectorAll('button')).find(b => b.getAttribute('aria-label') === 'reMarkable')!
+    const usageBtn = Array.from(document.body.querySelectorAll('button')).find(b => b.getAttribute('aria-label') === 'Usage')!
+    const customBtn = Array.from(document.body.querySelectorAll('button')).find(b => b.getAttribute('aria-label') === 'Custom')!
+    const remarkableBtn = Array.from(document.body.querySelectorAll('button')).find(b => b.getAttribute('aria-label') === 'reMarkable')!
     expect(usageBtn.querySelector('svg')).toBeTruthy() // Material "memory" icon
     expect(customBtn.innerHTML).toContain('<svg viewBox="0 0 24 24">') // inline SVG passthrough
     expect(remarkableBtn.textContent).not.toContain('📊') // emoji no longer rendered as-is
@@ -124,7 +122,7 @@ describe('NavRail', () => {
           { name: 'nope2', title: 'Nope2', href: '/nope2', icon: 'not-a-real-icon' } as ExtensionInfo,
         ],
       })
-      const nopeBtn = Array.from(host!.querySelectorAll('button')).find(b => b.getAttribute('aria-label') === 'Nope')!
+      const nopeBtn = Array.from(document.body.querySelectorAll('button')).find(b => b.getAttribute('aria-label') === 'Nope')!
       expect(nopeBtn.querySelector('svg')).toBeTruthy() // still renders the fallback glyph, never nothing
       expect(warn).toHaveBeenCalledTimes(1) // once per unknown name, not once per render
       expect(warn.mock.calls[0][0]).toContain('not-a-real-icon')
@@ -135,7 +133,7 @@ describe('NavRail', () => {
 
   it('renders no extensions section when the list is empty', () => {
     mount({ initialExtensions: [] })
-    expect(host!.querySelector('a')).toBeNull()
+    expect(document.body.querySelector('a')).toBeNull()
   })
 
   // The footer normalizes whatever the server sends into exactly one "v" prefix, "dev" untouched.
@@ -147,7 +145,7 @@ describe('NavRail', () => {
 
   it('renders the version footer at the bottom, muted, without an icon', () => {
     mount({ versionOverride: '0.51.26' })
-    const footer = Array.from(host!.querySelectorAll('span')).find(s => s.textContent === 'v0.51.26')!
+    const footer = Array.from(document.body.querySelectorAll('span')).find(s => s.textContent === 'v0.51.26')!
     expect(footer).toBeTruthy()
     expect(footer.getAttribute('title')).toBe('0.51.26')
     expect(footer.querySelector('svg')).toBeNull()
@@ -155,7 +153,7 @@ describe('NavRail', () => {
 
   it('renders no version footer when the version is unknown', () => {
     mount({ versionOverride: undefined })
-    const versionSpan = Array.from(host!.querySelectorAll('span')).find(s => /^v?\d+\.\d+\.\d+$/.test(s.textContent ?? '') || s.textContent === 'dev')
+    const versionSpan = Array.from(document.body.querySelectorAll('span')).find(s => /^v?\d+\.\d+\.\d+$/.test(s.textContent ?? '') || s.textContent === 'dev')
     expect(versionSpan).toBeUndefined()
   })
 
@@ -170,7 +168,7 @@ describe('NavRail', () => {
       expect(fetchMock).toHaveBeenCalledTimes(1)
       const request = fetchMock.mock.calls[0][0] as Request
       expect(request.url).toContain('/api/v1/extensions')
-      expect(Array.from(host!.querySelectorAll('button')).some(b => b.getAttribute('aria-label') === 'reMarkable')).toBe(true)
+      expect(Array.from(document.body.querySelectorAll('button')).some(b => b.getAttribute('aria-label') === 'reMarkable')).toBe(true)
     } finally {
       vi.unstubAllGlobals()
     }

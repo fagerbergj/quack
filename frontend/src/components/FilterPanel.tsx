@@ -1,6 +1,8 @@
 import { Icon } from './Icon'
-import { useId, useState } from 'react'
-import { Sheet } from './Sheet'
+import { cn } from '../lib/utils'
+import { Button } from './ui/button'
+import { Popover, PopoverContent, PopoverTrigger } from './ui/popover'
+import { Separator } from './ui/separator'
 
 interface FacetOption {
   value: string
@@ -26,51 +28,42 @@ function activeFilterCount(selected: Record<string, string[]>): number {
   return Object.values(selected).reduce((n, vs) => n + vs.length, 0)
 }
 
-// Owns only its open/closed state; the selection lives in the parent so it can be mirrored to the URL.
+// The popover owns its open state; the selection lives in the parent so it can be mirrored to the URL.
 export function FilterPanel({ facets, selected, onToggle, onClear }: FilterPanelProps) {
-  const [open, setOpen] = useState(false)
-  const sheetId = useId()
   const count = activeFilterCount(selected)
 
   return (
-    <div className="relative">
-      <button
-        onClick={() => setOpen(o => !o)}
-        popoverTarget={sheetId}
-        popoverTargetAction="show"
-        aria-label="Filter chats"
-        aria-expanded={open}
-        className={`relative flex items-center justify-center rounded-lg border min-w-[44px] min-h-[44px] transition-colors ${
-          count > 0
-            ? 'border-blue-500 text-blue-600 dark:text-blue-400'
-            : 'border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
-        }`}
-      >
-        <Icon name="filter_alt" className="w-4 h-4" />
-        {count > 0 && (
-          <span className="absolute -top-1.5 -right-1.5 min-w-[15px] h-[15px] px-1 rounded-full bg-blue-600 text-white text-2xs font-semibold flex items-center justify-center">
-            {count}
-          </span>
-        )}
-      </button>
-
-      {open && (
-        <Sheet id={sheetId} anchored="left" aria-label="Filter chats" onClose={() => setOpen(false)} className="medium:w-56 medium:rounded-lg medium:border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-2 medium:pb-2 text-sm medium:text-xs">
-          <div className="flex items-center justify-between px-1 pb-2 mb-1 border-b border-gray-100 dark:border-gray-700">
-            <span className="font-semibold text-gray-700 dark:text-gray-200">Filters</span>
-            {count > 0 && (
-              <button onClick={onClear} className="min-h-[24px] inline-flex items-center text-2xs text-blue-600 dark:text-blue-400 hover:underline">
-                Clear all
-              </button>
-            )}
-          </div>
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          size="icon"
+          aria-label="Filter chats"
+          className={cn('relative size-11 medium:size-11', count > 0 && 'border-primary text-primary')}
+        >
+          <Icon name="filter_alt" className="w-4 h-4" />
+          {count > 0 && (
+            <span className="absolute -top-1.5 -right-1.5 min-w-[15px] h-[15px] px-1 rounded-full bg-primary text-primary-foreground text-2xs font-semibold flex items-center justify-center">
+              {count}
+            </span>
+          )}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent aria-label="Filter chats" className="medium:w-56">
+        <div className="flex items-center justify-between px-1 pb-2">
+          <span className="font-semibold text-foreground">Filters</span>
+          {count > 0 && (
+            <Button variant="link" size="inline" onClick={onClear}>Clear all</Button>
+          )}
+        </div>
+        <Separator className="mb-1" />
           {facets.length === 0 && (
-            <div className="px-1 py-2 text-gray-500 dark:text-gray-400">No filters available</div>
+            <div className="px-1 py-2 text-muted-foreground">No filters available</div>
           )}
           <div className="medium:max-h-80 medium:overflow-y-auto">
             {facets.map(f => (
               <div key={f.key} className="mb-2 last:mb-0">
-                <div className="px-1 py-0.5 text-2xs font-semibold text-gray-500 dark:text-gray-400">
+                <div className="px-1 py-0.5 text-2xs font-semibold text-muted-foreground">
                   {f.label}
                 </div>
                 {f.options.map(o => {
@@ -78,7 +71,7 @@ export function FilterPanel({ facets, selected, onToggle, onClear }: FilterPanel
                   return (
                     <label
                       key={o.value}
-                      className="flex items-center gap-2 min-h-[44px] medium:min-h-0 px-1 py-1 rounded cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700"
+                      className="flex items-center gap-2 min-h-[44px] medium:min-h-0 px-1 py-1 rounded cursor-pointer hover:bg-accent"
                     >
                       <input
                         type="checkbox"
@@ -86,16 +79,15 @@ export function FilterPanel({ facets, selected, onToggle, onClear }: FilterPanel
                         onChange={() => onToggle(f.key, o.value)}
                         className="accent-blue-600"
                       />
-                      <span className="flex-1 text-gray-700 dark:text-gray-200 truncate">{o.label}</span>
-                      {o.count != null && <span className="text-gray-500 dark:text-gray-400">{o.count}</span>}
+                      <span className="flex-1 text-foreground truncate">{o.label}</span>
+                      {o.count != null && <span className="text-muted-foreground">{o.count}</span>}
                     </label>
                   )
                 })}
               </div>
             ))}
           </div>
-        </Sheet>
-      )}
-    </div>
+      </PopoverContent>
+    </Popover>
   )
 }

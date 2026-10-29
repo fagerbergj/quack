@@ -1,7 +1,10 @@
-import { memo, useEffect, useRef, useState } from 'react'
+import { memo, useState } from 'react'
 import type { Memory, VoteDirection } from '../api'
 import { paletteTone } from '../lib/colorHash'
 import { Badge, type BadgeTone } from './ui/badge'
+import { Button } from './ui/button'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './ui/dropdown-menu'
+import { Tooltip } from './ui/tooltip'
 import { relativeTime } from '../lib/relativeTime'
 import { Icon } from './Icon'
 import { VoteControl } from './VoteControl'
@@ -75,19 +78,6 @@ function KebabMenu({ memory, onForget }: { memory: Memory; onForget: (id: string
   const [confirming, setConfirming] = useState(false)
   const [forgetting, setForgetting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!open) return
-    const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) { setOpen(false); setConfirming(false) } }
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { setOpen(false); setConfirming(false) } }
-    document.addEventListener('mousedown', onDown)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onDown)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [open])
 
   async function handleConfirm() {
     setForgetting(true)
@@ -104,49 +94,33 @@ function KebabMenu({ memory, onForget }: { memory: Memory; onForget: (id: string
   }
 
   return (
-    <div ref={ref} className="relative">
-      <button
-        onClick={() => setOpen(o => !o)}
-        aria-label="Memory actions"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        title="More actions"
-        className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-      >
-        <Icon name="more_vert" className="w-4 h-4" />
-      </button>
-      {open && (
-        <div role="menu" className="absolute z-50 right-0 mt-1 w-40 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg py-1 text-xs">
-          {error && <p className="px-3 py-1 text-red-700 dark:text-red-400">{error}</p>}
-          {confirming ? (
-            <div className="flex items-center gap-2 px-2 py-1">
-              <button
-                onClick={() => { void handleConfirm() }}
-                disabled={forgetting}
-                className="text-xs px-2 py-1 rounded bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 transition-colors"
-              >
-                {forgetting ? 'Forgetting…' : 'Confirm'}
-              </button>
-              <button
-                onClick={() => setConfirming(false)}
-                disabled={forgetting}
-                className="text-xs px-2 py-1 rounded border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-              >
-                Cancel
-              </button>
-            </div>
-          ) : (
-            <button
-              role="menuitem"
-              onClick={() => setConfirming(true)}
-              className="w-full flex items-center gap-2 text-left px-3 py-2 min-h-[44px] medium:min-h-0 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700"
-            >
-              <Icon name="delete" className="w-3.5 h-3.5" /> Forget
-            </button>
-          )}
-        </div>
-      )}
-    </div>
+    <DropdownMenu open={open} onOpenChange={o => { setOpen(o); if (!o) setConfirming(false) }}>
+      <Tooltip content="More actions">
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon" aria-label="Memory actions">
+            <Icon name="more_vert" className="w-4 h-4" />
+          </Button>
+        </DropdownMenuTrigger>
+      </Tooltip>
+      <DropdownMenuContent className="w-40">
+        {error && <p className="px-3 py-1 text-red-700 dark:text-red-400">{error}</p>}
+        {confirming ? (
+          <div className="flex items-center gap-2 px-2 py-1">
+            <Button variant="destructive" size="sm" onClick={() => { void handleConfirm() }} disabled={forgetting}>
+              {forgetting ? 'Forgetting…' : 'Confirm'}
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => setConfirming(false)} disabled={forgetting}>
+              Cancel
+            </Button>
+          </div>
+        ) : (
+          // Stays open: Forget arms an inline Confirm rather than acting.
+          <DropdownMenuItem onSelect={e => { e.preventDefault(); setConfirming(true) }}>
+            <Icon name="delete" className="w-3.5 h-3.5" /> Forget
+          </DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 

@@ -12,13 +12,12 @@ const memory: Memory = {
   vote_score: 3, upvotes: 3, downvotes: 0, tier: 'verified',
 }
 
-// The w-7 h-7 glyph is under the 44px touch target; min-w/min-h grows the hit area, not the glyph.
+// The glyph is under the 44px touch target; the icon Button size grows the hit area, not the glyph.
 describe('MemoryEntry kebab menu touch target (#1137)', () => {
   it('kebab trigger is a 44x44 tap area', () => {
     render(<MemoryEntry memory={memory} onForget={async () => {}} onVote={async () => {}} />)
     const btn = screen.getByRole('button', { name: 'Memory actions' })
-    expect(btn.className).toContain('min-w-[44px]')
-    expect(btn.className).toContain('min-h-[44px]')
+    expect(btn.className).toContain('size-11')
   })
 
   it('Forget lives in the kebab menu, not a top-level action button', () => {

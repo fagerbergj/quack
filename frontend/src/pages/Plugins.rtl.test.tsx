@@ -40,14 +40,13 @@ describe('Plugins touch targets', () => {
     renderRow({ name: 'dotagents', entry: 'github:fagerbergj/dotagents', source: 'github' })
     for (const name of ['Update dotagents', 'Remove dotagents']) {
       const cls = screen.getByRole('button', { name }).className
-      expect(cls).toContain('w-11')
-      expect(cls).toContain('h-11')
+      expect(cls).toContain('size-11')
     }
   })
 
   it('keeps the Add button at the 44px floor', () => {
     render(<Plugins navOpen={false} onToggleNav={() => {}} initialPlugins={[]} initialUpdates={[]} />)
-    expect(screen.getByRole('button', { name: 'Add' }).className).toContain('min-h-[44px]')
+    expect(screen.getByRole('button', { name: 'Add' }).className).toContain('h-11')
   })
 })
 

@@ -130,8 +130,8 @@ describe('App nav drawer', () => {
     const user = userEvent.setup()
     renderAt('/chat')
     await user.click(screen.getByRole('button', { name: 'Toggle navigation' }))
-    // A click targeting the <dialog> itself is a ::backdrop click.
-    await user.click(await screen.findByRole('dialog', { name: 'Main navigation' }))
+    await screen.findByRole('dialog', { name: 'Main navigation' })
+    await user.click(document.querySelector('[data-slot="overlay"]')!)
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Main navigation' })).toBeNull())
   })
 })

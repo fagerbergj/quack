@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ChatList } from './ChatList'
 
@@ -30,15 +30,15 @@ function baseProps(onCloseMobile: () => void) {
   }
 }
 
-// The mobile drawer is a native modal <dialog>; Esc, the focus trap and focus restore are the browser's.
+// The mobile drawer is a Radix modal Sheet; Esc, the focus trap and focus restore come from Radix.
 describe('ChatList mobile drawer a11y', () => {
   it('a backdrop tap closes it', async () => {
     mockCompact(true)
     const onCloseMobile = vi.fn()
     render(<ChatList {...baseProps(onCloseMobile)} open={true} />)
-    fireEvent.click(await screen.findByRole('dialog', { name: 'Chat list' }))
+    await screen.findByRole('dialog', { name: 'Chat list' })
+    await userEvent.setup().click(document.querySelector('[data-slot="overlay"]')!)
     expect(onCloseMobile).toHaveBeenCalled()
-    expect(screen.queryByRole('dialog')).toBeNull()
   })
 
   it('is not a dialog when closed or above the compact width', () => {
@@ -58,7 +58,7 @@ describe('ChatList "Load more" touch target (#1201)', () => {
   it('active-list Load more has a >=44px min-height', () => {
     render(<ChatList {...baseProps(() => {})} open={false} hasMoreChats onLoadMoreChats={() => {}} />)
     const btn = screen.getByText('Load more').closest('button')!
-    expect(btn.className).toContain('min-h-[44px]')
+    expect(btn.className).toContain('h-11')
   })
 })
 
@@ -71,8 +71,7 @@ describe('ChatList kebab touch target (#1137)', () => {
   it('an active row\'s kebab is a 44x44 tap area', () => {
     render(<ChatList {...baseProps(() => {})} open={false} chats={[chat]} />)
     const btn = screen.getByRole('button', { name: 'Chat actions' })
-    expect(btn.className).toContain('min-w-[44px]')
-    expect(btn.className).toContain('min-h-[44px]')
+    expect(btn.className).toContain('size-11')
   })
 
   it('an archived row\'s kebab is also a 44x44 tap area', async () => {
@@ -80,8 +79,7 @@ describe('ChatList kebab touch target (#1137)', () => {
     render(<ChatList {...baseProps(() => {})} open={false} archivedChats={[chat]} onUnarchive={() => {}} />)
     await user.click(screen.getByRole('button', { name: /Archived/ }))
     const btn = screen.getByRole('button', { name: 'Chat actions' })
-    expect(btn.className).toContain('min-w-[44px]')
-    expect(btn.className).toContain('min-h-[44px]')
+    expect(btn.className).toContain('size-11')
   })
 })
 
@@ -125,7 +123,7 @@ describe('ChatList row kebab (#1319)', () => {
 
     await user.click(screen.getByRole('menuitem', { name: 'Delete chat permanently' }))
     expect(confirmSpy).toHaveBeenCalledOnce()
-    expect(onDelete).toHaveBeenCalledWith('c2', expect.anything())
+    expect(onDelete).toHaveBeenCalledWith('c2')
 
     confirmSpy.mockRestore()
   })
@@ -158,7 +156,7 @@ describe('ChatList row kebab items are 44px at compact width', () => {
     const user = userEvent.setup()
     render(<ChatList {...baseProps(() => {})} open={false} chats={[activeChat]} onArchive={() => {}} />)
     await user.click(screen.getByRole('button', { name: 'Chat actions' }))
-    expect(screen.getByRole('menuitem', { name: 'Archive chat' }).className).toContain('min-h-[44px]')
+    expect(screen.getByRole('menuitem', { name: 'Archive chat' }).className).toContain('min-h-11')
   })
 
   it('archived row: Restore and Delete items', async () => {
@@ -167,7 +165,7 @@ describe('ChatList row kebab items are 44px at compact width', () => {
     await user.click(screen.getByRole('button', { name: /Archived/ }))
     await user.click(screen.getByRole('button', { name: 'Chat actions' }))
     for (const name of ['Unarchive chat', 'Delete chat permanently']) {
-      expect(screen.getByRole('menuitem', { name }).className).toContain('min-h-[44px]')
+      expect(screen.getByRole('menuitem', { name }).className).toContain('min-h-11')
     }
   })
 })
