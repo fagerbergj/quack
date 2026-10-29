@@ -19,7 +19,7 @@ import { AssistantText, mdSchema } from './AgentParts'
 import { tryParseJSON, fieldLabel } from '../lib/json'
 import { A2uiSurfaceBox } from './A2uiArtifact'
 import { A2UI_SURFACE_KIND, QUIZ_KEY_KIND, surfacePersistKey, type SurfaceContent } from '../lib/a2ui'
-import { CHIP } from '../lib/colorHash'
+import { Badge, type BadgeTone } from './ui/badge'
 
 // JudgeRoundContent is the JSON body of a `judge_round` artifact, the only place a note's line anchor lives.
 // Parsed client-side: it is an artifact body, not a REST response, so it is not in the generated schema.
@@ -977,18 +977,16 @@ function JsonFields({ data }: { data: Record<string, unknown> }) {
   )
 }
 
-// bg+text pairs, never a bare color-600 on white (amber-600 alone is ~3.2:1,
-// under the 4.5:1 AA floor here); dark pairs mirror this file's own amber-100/900 note highlight.
-const SEVERITY_CHIP: Record<string, string> = {
-  blocking: 'bg-red-50 text-red-800 dark:bg-red-900/30 dark:text-red-300',
-  request_changes: 'bg-red-50 text-red-800 dark:bg-red-900/30 dark:text-red-300',
-  suggestion: 'bg-amber-50 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
-  nit: 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200',
-  approve: 'bg-green-50 text-green-800 dark:bg-green-900/30 dark:text-green-300',
+const SEVERITY_TONE: Record<string, BadgeTone> = {
+  blocking: 'red',
+  request_changes: 'red',
+  suggestion: 'amber',
+  nit: 'gray',
+  approve: 'green',
 }
 function severityChip(word: string | undefined) {
   if (!word) return null
-  return <span className={`${CHIP} ${SEVERITY_CHIP[word] ?? 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200'}`}>{word}</span>
+  return <Badge tone={SEVERITY_TONE[word] ?? 'gray'}>{word}</Badge>
 }
 
 // hideHeader skips the chip/path/title row: TitleHeading already shows all

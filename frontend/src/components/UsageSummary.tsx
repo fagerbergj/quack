@@ -1,6 +1,6 @@
 import type { Usage } from '../generated'
 import { cacheRate } from '../state/chatStore'
-import { CHIP, TONE } from '../lib/colorHash'
+import { Badge } from './ui/badge'
 
 export interface UsageSummaryProps {
   // The current/most-recent turn's model chip(s) - see chatStore.sessionModels.
@@ -21,13 +21,7 @@ export function UsageSummary({ models, usage }: UsageSummaryProps) {
   return (
     <div className="flex items-center gap-2 text-2xs text-gray-500 dark:text-gray-400 flex-shrink-0">
       {models.map(m => (
-        <span
-          key={m}
-          className={`${CHIP} ${TONE.gray} font-mono truncate max-w-[140px]`}
-          title={m}
-        >
-          {m}
-        </span>
+        <Badge key={m} className="font-mono truncate max-w-[140px]" title={m}>{m}</Badge>
       ))}
       {total > 0 && (
         <details className="relative">

@@ -24,7 +24,7 @@ import type { ChatStatus, Turn } from '../generated'
 import { useTurnArtifacts } from '../hooks/useTurnArtifacts'
 import type { SurfaceRef } from '../lib/a2ui'
 import { TurnSurfaces } from '../components/A2uiArtifact'
-import { TONE, CHIP } from '../lib/colorHash'
+import { Badge } from '../components/ui/badge'
 
 // Never shortens the list: the poll must not truncate a sidebar paged past the page cap. Safe because `page` is
 // exactly the current top N by updated_at, so nothing left in `existing` can outrank it.
@@ -443,12 +443,9 @@ function ChatHeader({ title, editable, status, startedAt, activeChatId, isArchiv
             onRename={onRename}
           />
           {isArchived && (
-            <span
-              title="This chat is archived and read-only. Restore it from the Archived section to continue."
-              className={`${CHIP} ${TONE.gray}`}
-            >
+            <Badge title="This chat is archived and read-only. Restore it from the Archived section to continue.">
               Archived
-            </span>
+            </Badge>
           )}
           {githubLink && <GitHubLink url={githubLink.url} repo={githubLink.repo} className="flex-shrink-0" />}
           {liveActive && (

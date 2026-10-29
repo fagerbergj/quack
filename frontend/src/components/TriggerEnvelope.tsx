@@ -7,7 +7,7 @@ import { fieldLabel } from '../lib/json'
 import { api } from '../api'
 import { Icon } from './Icon'
 import { parseA2uiActionText } from '../lib/a2ui'
-import { CHIP } from '../lib/colorHash'
+import { Badge } from './ui/badge'
 import {
   parseEnvelope,
   commentsSummaryLabel,
@@ -183,15 +183,7 @@ function AskSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'ask' }> 
 function StatusBadge({ status }: { status: string }) {
   const deleted = status === 'deleted'
   return (
-    <span
-      className={`${CHIP} ${
-        deleted
-          ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
-          : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
-      }`}
-    >
-      {status}
-    </span>
+    <Badge tone={deleted ? 'red' : 'amber'}>{status}</Badge>
   )
 }
 
@@ -368,13 +360,7 @@ function ArtifactIcon({ kindPrefix }: { kindPrefix: string }) {
 
 // Reuses the churn colours: green new, amber updated (as StatusBadge's edited), gray otherwise.
 function ArtifactStatusChip({ status }: { status: string }) {
-  const cls =
-    status === 'new'
-      ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300'
-      : status === 'updated'
-        ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
-        : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400'
-  return <span className={`${CHIP} ${cls}`}>{status}</span>
+  return <Badge tone={status === 'new' ? 'green' : status === 'updated' ? 'amber' : 'gray'}>{status}</Badge>
 }
 
 function ArtifactsSection({

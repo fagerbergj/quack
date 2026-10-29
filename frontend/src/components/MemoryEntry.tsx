@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import type { Memory, VoteDirection } from '../api'
-import { paletteClasses, TONE, CHIP } from '../lib/colorHash'
+import { paletteTone } from '../lib/colorHash'
+import { Badge, type BadgeTone } from './ui/badge'
 import { relativeTime } from '../lib/relativeTime'
 import { Icon } from './Icon'
 import { VoteControl } from './VoteControl'
@@ -40,41 +41,31 @@ export function memoryTierLabel(memory: Pick<Memory, 'status' | 'reinforcement_c
 }
 
 // Unverified and unrecognized tiers stay neutral: never a colour that claims an unverified tier.
-export function memoryTierBadgeClass(tier: MemoryTier): string {
-  return tier === 'reinforced' ? TONE.green : tier === 'invalidated' ? TONE.red : TONE.gray
+export function memoryTierTone(tier: MemoryTier): BadgeTone {
+  return tier === 'reinforced' ? 'green' : tier === 'invalidated' ? 'red' : 'gray'
 }
 
 // Title mirrors the label, or the invalidation reason when present, so hover reveals it without the extra line.
 function TierBadge({ memory }: { memory: Memory }) {
   const tier = memoryTier(memory)
   return (
-    <span
-      title={memory.invalidation_reason ?? memoryTierLabel(memory)}
-      className={`${CHIP} ${memoryTierBadgeClass(tier)}`}
-    >
+    <Badge tone={memoryTierTone(tier)} title={memory.invalidation_reason ?? memoryTierLabel(memory)}>
       {memoryTierLabel(memory)}
-    </span>
+    </Badge>
   )
 }
 
 // Vote-based tier, rendered only for 'verified': 'unverified' would duplicate TierBadge's default label.
 function VoteTierBadge({ tier }: { tier: 'unverified' | 'verified' }) {
   return (
-    <span className={`${CHIP} bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400`}>
-      {tier}
-    </span>
+    <Badge tone="blue">{tier}</Badge>
   )
 }
 
 // Colour is hashed from the label and never the only signal. `neutral` opts out because a provenance node id
 // can hash to red, which reads as an error.
 function Pill({ label, seed, neutral }: { label: string; seed: string; neutral?: boolean }) {
-  const cls = neutral ? TONE.gray : paletteClasses(seed)
-  return (
-    <span className={`${CHIP} ${cls}`}>
-      {label}
-    </span>
-  )
+  return <Badge tone={neutral ? 'gray' : paletteTone(seed)}>{label}</Badge>
 }
 
 // Rows carry no full-text action buttons. Forget has its own confirm step so a misclick in the menu
@@ -190,12 +181,9 @@ function MetaRow({ memory }: { memory: Memory }) {
         </span>
       )}
       {(memory.absorbed_ids?.length ?? 0) > 0 && (
-        <span
-          title={`Absorbed: ${memory.absorbed_ids!.join(', ')}`}
-          className={`${CHIP} ${TONE.purple}`}
-        >
+        <Badge tone="purple" title={`Absorbed: ${memory.absorbed_ids!.join(', ')}`}>
           merged ×{memory.absorbed_ids!.length}
-        </span>
+        </Badge>
       )}
     </div>
   )

@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ChatSummary } from '../api'
 import { isGithubChat, parseGithubRef, type GithubRef } from '../lib/github'
 import { computeFacets, filterChats, parseFilterState, serializeFilterState, type SelectedFacets } from '../lib/chatFilters'
-import { paletteClasses, TONE, CHIP } from '../lib/colorHash'
+import { paletteTone } from '../lib/colorHash'
+import { Badge, type BadgeTone } from './ui/badge'
 import { FilterPanel } from './FilterPanel'
 import { StatusDot } from './StatusDot'
 import { navigate, useSearch } from '../router'
@@ -13,16 +14,16 @@ import { Icon, type IconName } from './Icon'
 // A chat with no title yet; the CLI prints the same string.
 export const UNTITLED_CHAT = '(untitled)'
 
-const GITHUB_STATE_TONE = new Map<string, string>([['open', TONE.green], ['closed', TONE.red], ['merged', TONE.purple], ['draft', TONE.yellow]])
+const GITHUB_STATE_TONE = new Map<string, BadgeTone>([['open', 'green'], ['closed', 'red'], ['merged', 'purple'], ['draft', 'yellow']])
 
-export function githubStateBadgeClass(state: string): string {
-  return GITHUB_STATE_TONE.get(state) ?? ''
+export function githubStateTone(state: string): BadgeTone {
+  return GITHUB_STATE_TONE.get(state) ?? 'gray'
 }
 
 // GitHub's colours for an origin badge, but never for 'draft': an extension's own badge
 // vocabulary (a doc's "draft" revision label) must not be guessed at, so it stays neutral.
-export function originBadgeClass(badge: string): string {
-  return (badge !== 'draft' && GITHUB_STATE_TONE.get(badge)) || TONE.gray
+export function originBadgeTone(badge: string): BadgeTone {
+  return (badge !== 'draft' && GITHUB_STATE_TONE.get(badge)) || 'gray'
 }
 
 // Icon plus colour convey the state, never colour alone (WCAG 1.4.1).
@@ -76,67 +77,59 @@ function ChatBadges({ s, githubRef }: { s: ChatSummary; githubRef: GithubRef | u
   return (
     <>
       {isGithubChat(s) && ref && (
-        <a
-          href={`https://github.com/${ref.repo}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={e => e.stopPropagation()}
-          title={ref.repo}
-          className={`${CHIP} max-w-[7rem] truncate hover:underline ${paletteClasses(ref.repo)}`}
-        >
-          {ref.repo.slice(ref.repo.indexOf('/') + 1)}
-        </a>
+        <Badge asChild tone={paletteTone(ref.repo)} className="max-w-[7rem] truncate hover:underline">
+          <a
+            href={`https://github.com/${ref.repo}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={e => e.stopPropagation()}
+            title={ref.repo}
+          >
+            {ref.repo.slice(ref.repo.indexOf('/') + 1)}
+          </a>
+        </Badge>
       )}
       {ref && s.github_url && (
-        <a
-          href={s.github_url}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={e => e.stopPropagation()}
-          title={ref.kind === 'pr' ? `Pull request #${ref.number}` : `Issue #${ref.number}`}
-          className={`${CHIP} ${TONE.gray} hover:text-blue-600 dark:hover:text-blue-400 hover:underline`}
-        >
-          {ref.kind === 'pr' ? 'PR' : 'Issue'} #{ref.number}
-        </a>
+        <Badge asChild className="hover:text-primary hover:underline">
+          <a
+            href={s.github_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={e => e.stopPropagation()}
+            title={ref.kind === 'pr' ? `Pull request #${ref.number}` : `Issue #${ref.number}`}
+          >
+            {ref.kind === 'pr' ? 'PR' : 'Issue'} #{ref.number}
+          </a>
+        </Badge>
       )}
       {s.github_state && (
-        <span
-          className={`${CHIP} ${githubStateBadgeClass(s.github_state)}`}
-          title={s.github_state}
-        >
+        <Badge tone={githubStateTone(s.github_state)} title={s.github_state}>
           {githubStateIcon(s.github_state) && <Icon name={githubStateIcon(s.github_state)!} className="w-2.5 h-2.5" />}
           {GITHUB_STATE_TONE.has(s.github_state) && s.github_state}
-        </span>
+        </Badge>
       )}
       {/* Extension-dispatched chats. GitHub's origin repeats the repo/PR/state badges above, so it is skipped. */}
       {s.origin && !(isGithubChat(s) && ref) && (
         <>
           {s.origin.href ? (
-            <a
-              href={s.origin.href}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={e => e.stopPropagation()}
-              title={s.origin.label}
-              className={`${CHIP} max-w-[7rem] truncate hover:underline ${paletteClasses(s.origin.extension)}`}
-            >
-              {s.origin.label}
-            </a>
+            <Badge asChild tone={paletteTone(s.origin.extension)} className="max-w-[7rem] truncate hover:underline">
+              <a
+                href={s.origin.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={e => e.stopPropagation()}
+                title={s.origin.label}
+              >
+                {s.origin.label}
+              </a>
+            </Badge>
           ) : (
-            <span
-              title={s.origin.label}
-              className={`${CHIP} max-w-[7rem] truncate ${paletteClasses(s.origin.extension)}`}
-            >
+            <Badge tone={paletteTone(s.origin.extension)} className="max-w-[7rem] truncate" title={s.origin.label}>
               {s.origin.label}
-            </span>
+            </Badge>
           )}
           {s.origin.badge && (
-            <span
-              className={`${CHIP} ${originBadgeClass(s.origin.badge)}`}
-              title={s.origin.badge}
-            >
-              {s.origin.badge}
-            </span>
+            <Badge tone={originBadgeTone(s.origin.badge)} title={s.origin.badge}>{s.origin.badge}</Badge>
           )}
         </>
       )}

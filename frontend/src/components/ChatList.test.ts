@@ -5,7 +5,7 @@ import { act, cleanup, render } from '@testing-library/react'
 
 import { filterChats } from '../lib/chatFilters'
 import { isGithubChat } from '../lib/github'
-import { ChatList, githubStateBadgeClass, githubStateIcon, originBadgeClass } from './ChatList'
+import { ChatList, githubStateTone, githubStateIcon, originBadgeTone } from './ChatList'
 import type { ChatSummary } from '../api'
 
 afterEach(cleanup)
@@ -118,11 +118,11 @@ describe('origin chip', () => {
 
   // Any other extension-defined badge stays neutral rather than guessing at unknown semantics.
   it('colors the badge chip for open/merged/closed like GitHub, and leaves anything else neutral', () => {
-    expect(originBadgeClass('open')).toContain('green')
-    expect(originBadgeClass('merged')).toContain('purple')
-    expect(originBadgeClass('closed')).toContain('red')
-    expect(originBadgeClass('draft')).toBe('bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300')
-    expect(originBadgeClass('some-extension-value')).toBe('bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300')
+    expect(originBadgeTone('open')).toBe('green')
+    expect(originBadgeTone('merged')).toBe('purple')
+    expect(originBadgeTone('closed')).toBe('red')
+    expect(originBadgeTone('draft')).toBe('gray')
+    expect(originBadgeTone('some-extension-value')).toBe('gray')
   })
 
   it('applies the open/merged/closed color class to the rendered badge chip', () => {
@@ -187,23 +187,23 @@ describe('ChatList "Load more" affordance', () => {
 
 describe('github_state badge', () => {
   it.each([
-    { state: 'open', icon: 'dot', cls: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400' },
-    { state: 'closed', icon: 'close', cls: 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400' },
-    { state: 'merged', icon: 'check', cls: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400' },
-    { state: 'draft', icon: 'edit', cls: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-500' },
-  ])('renders correct class and icon for state="$state"', ({ state, icon, cls }) => {
-    expect(githubStateBadgeClass(state)).toBe(cls)
+    { state: 'open', icon: 'dot', tone: 'green' },
+    { state: 'closed', icon: 'close', tone: 'red' },
+    { state: 'merged', icon: 'check', tone: 'purple' },
+    { state: 'draft', icon: 'edit', tone: 'yellow' },
+  ])('renders correct tone and icon for state="$state"', ({ state, icon, tone }) => {
+    expect(githubStateTone(state)).toBe(tone)
     expect(githubStateIcon(state)).toBe(icon)
   })
 
   it.each([
-    { input: 'open', expected: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400' },
-    { input: 'closed', expected: 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400' },
-    { input: 'merged', expected: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400' },
-    { input: 'draft', expected: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-500' },
-    { input: '', expected: '' },
-  ])('githubStateBadgeClass("$input") returns classes or empty', ({ input, expected }) => {
-    expect(githubStateBadgeClass(input)).toBe(expected)
+    { input: 'open', expected: 'green' },
+    { input: 'closed', expected: 'red' },
+    { input: 'merged', expected: 'purple' },
+    { input: 'draft', expected: 'yellow' },
+    { input: '', expected: 'gray' },
+  ])('githubStateTone("$input") returns a tone, gray when unknown', ({ input, expected }) => {
+    expect(githubStateTone(input)).toBe(expected)
   })
 
   let host: HTMLElement | undefined

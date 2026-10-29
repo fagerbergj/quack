@@ -1,5 +1,8 @@
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, it, expect } from 'vitest'
-import { hashString, paletteClasses } from './colorHash'
+import { hashString, paletteTone } from './colorHash'
+import { Badge } from '../components/ui/badge'
 
 describe('hashString', () => {
   it('is deterministic', () => {
@@ -11,14 +14,15 @@ describe('hashString', () => {
   })
 })
 
-describe('paletteClasses', () => {
+describe('paletteTone', () => {
   it('returns the same classes for the same seed every time (#746 item 10/13)', () => {
-    const a = paletteClasses('fagerbergj/quack')
-    const b = paletteClasses('fagerbergj/quack')
+    const a = paletteTone('fagerbergj/quack')
+    const b = paletteTone('fagerbergj/quack')
     expect(a).toBe(b)
   })
 
-  it('always pairs a background with a text colour', () => {
-    expect(paletteClasses('repo:NightsOut')).toMatch(/^bg-\S+ text-\S+ dark:bg-\S+ dark:text-\S+$/)
+  it('always names a Badge tone, so a hashed label gets a background with a text colour', () => {
+    const tone = paletteTone('repo:NightsOut')
+    expect(renderToStaticMarkup(createElement(Badge, { tone }, 'x'))).toMatch(/bg-\S+ text-\S+/)
   })
 })

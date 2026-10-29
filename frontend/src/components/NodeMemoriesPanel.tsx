@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, type NodeMemory, type VoteDirection } from '../api'
 import { Icon, type IconName } from './Icon'
 import { VoteControl } from './VoteControl'
-import { TONE, CHIP } from '../lib/colorHash'
+import { Badge } from './ui/badge'
 
 export interface NodeMemoriesPanelProps {
   chatId: string
@@ -42,9 +42,7 @@ function JudgeVoteIcon({ vote, reason }: { vote: string; reason?: string }) {
 // prefill (injected before the worker started) vs tool (a recall_memory call mid-round).
 function SourceBadge({ source }: { source: string }) {
   return (
-    <span className={`${CHIP} ${TONE.gray}`}>
-      {source}
-    </span>
+    <Badge>{source}</Badge>
   )
 }
 
@@ -58,9 +56,7 @@ function NodeMemoryRow({ memory, onVote }: { memory: NodeMemory; onVote: (id: st
         <div className="flex flex-wrap items-center gap-2 mt-2">
           <SourceBadge source={memory.source} />
           {memory.tier && (
-            <span className={`${CHIP} bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400`}>
-              {memory.tier}
-            </span>
+            <Badge tone="blue">{memory.tier}</Badge>
           )}
           {memory.score != null && (
             <span className="text-2xs text-gray-500 dark:text-gray-400">score {memory.score.toFixed(2)}</span>
