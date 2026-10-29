@@ -115,7 +115,9 @@ func (p judgePrompt) behaviour(hasReadTools, hasSkills bool) string {
 type criterionScore struct {
 	// Reason: deterministic criteria write their diagnosis here, and a judge may too;
 	// aggregateVerdict copies it into Shortfall when Shortfall is empty.
-	Reason    string      `json:"reason,omitempty"`
+	Reason string `json:"reason,omitempty"`
+	// Checked: the judge's facts for this criterion (what it checked and found), never a grade; wire name "evidence".
+	Checked   string      `json:"evidence,omitempty"`
 	Shortfall string      `json:"shortfall,omitempty"` // diagnosis - what fell short
 	Fix       string      `json:"fix,omitempty"`       // remedy
 	Anchor    *anchorSpec `json:"anchor,omitempty"`    // where in the answer, if locatable
@@ -227,7 +229,7 @@ func judgeThinkingConfig(level string) *genai.ThinkingConfig {
 // which runJudgeRound's parseVerdict fallback picks up.
 const judgeForceCloseInstruction = "\n\nSTOP - you are out of tool budget for this round; no tools, including submit_verdict, are available on this turn. " +
 	"Using ONLY what you have already read and verified above, output your verdict now as a single JSON object and nothing else (no code fence, no other text): " +
-	`{"score": <0-3 overall fallback>, "criteria": {"<criterion name>": {"reason": "<why>", "score": <0-3>}, ...}, "feedback": "<concise, actionable - empty if it passes>"}` +
+	`{"score": <0-3 overall fallback>, "criteria": {"<criterion name>": {"evidence": "<what you checked and found>", "reason": "<why>", "score": <0-3>}, ...}, "feedback": "<concise, actionable - empty if it passes>"}` +
 	" Score every criterion the rubric named, from what you have already verified."
 
 // forceClose: forced once tools are disabled or stripped (callers must not then demand a tool call),
