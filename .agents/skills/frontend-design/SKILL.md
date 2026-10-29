@@ -2,10 +2,9 @@
 name: frontend-design
 description: |
   Design decisions and gotchas for the quack chat frontend (React 19 + Vite + Tailwind v4 +
-  react-markdown, no component library). Covers: inventory-before-building, re-render isolation
+  react-markdown, shadcn-style components on Radix in components/ui). Covers: inventory-before-building, re-render isolation
   for streaming chat (extract input/list, memoize turns) instead of virtualization, optimistic-first
-  store writes so loading indicators show instantly, global theming via Tailwind v4 `@theme` scale
-  overrides, markdown code-block highlight + copy through the rehype pipeline, native-CSS-first inputs,
+  store writes so loading indicators show instantly, the components/ui primitives and when to add one, semantic tokens in `@theme`, markdown code-block highlight + copy through the rehype pipeline, native-CSS-first inputs,
   accessibility, stories-vs-tests placement, and mobile-first responsive design (Material 3 breakpoints,
   off-canvas nav, 44px touch targets, dialogs-as-sheets on compact width).
   Use when restyling/extending the chat UI under frontend/src (pages/Chat.tsx, components/, state/),
@@ -37,7 +36,19 @@ How to make changes to quack's chat frontend that fit its grain: lean stack, str
 
 ## The stack (constraints)
 
-**React 19 + Vite + Tailwind CSS 4 + TanStack Query + react-markdown.** All components are custom Tailwind - **no shadcn / Radix / Mantine**, no virtualization lib, no Zustand/Jotai. State is in `frontend/src/state/`: `chatStore.ts` is a plain `Map`-backed store with a `subscribe` seam; `agentStream.ts` parses the SSE event vocabulary. **Match this** - do not add a component or state library for a single widget. Reach for the laziest rung that holds (native CSS → existing dep → a few lines) before a new dependency.
+**React 19 + Vite + Tailwind CSS 4 + Radix primitives + TanStack Query + react-markdown.** UI primitives follow shadcn/ui conventions: the component source is copied into `frontend/src/components/ui/` (not installed as a library), built on `@radix-ui/react-*` packages, `class-variance-authority` for variants, and `cn()` (`lib/utils.ts`, clsx + tailwind-merge) for class merging. There is no virtualization lib and no Zustand/Jotai. State is in `frontend/src/state/`: `chatStore.ts` is a plain `Map`-backed store with a `subscribe` seam; `agentStream.ts` parses the SSE event vocabulary. **Match this** - do not add a state library for a single widget, and reach for the laziest rung that holds (native CSS, then an existing primitive, then a few lines) before a new dependency.
+
+### The primitives (`components/ui/`)
+
+Button (variants default/secondary/outline/ghost/link/destructive; sizes default/sm/icon/inline), Badge (the one chip shape, `tone` per hue; replaced the old CHIP constant), Card (`default` bordered surface, `flat` nested well), Input/Textarea, Dialog (bottom sheet below `medium`, centred above; `placement="blocking"` for the version wall), Sheet (left edge drawer), DropdownMenu, Popover, Tooltip, Separator. Rules:
+
+- **Use a primitive before hand-rolling.** A new `<button>`, chip, card surface, field, menu, popover or dialog goes through these; do not restyle them per screen with raw `gray-*` pairs.
+- **Add a primitive only when two call sites need it and Radix has the behaviour** (focus trap, roving focus, collision handling). Copy the shadcn component, adapt it to the tokens below, export only what is used (knip fails on unused exports), and add `<name>.stories.tsx` (check-stories enforces one per file).
+- **Pin Radix versions exactly** in `package.json`; add only the `@radix-ui/react-*` package the new primitive wraps.
+- **Never leave a native `<dialog>`/popover-API element.** Radix content portals into `<body>` at z-50 (dialogs, sheets), z-60 (menus, popovers, tooltips) and z-70 (the blocking wall); a native top-layer dialog would cover all of them. Dialogs get an accessible name through `DialogContent`'s `title` prop (rendered sr-only) and keep their own visible headings.
+- **Radix does not return focus without a Trigger.** `DialogContent`/`SheetContent` record and restore the opener themselves (`useOpenerFocus`); keep that when changing them.
+- **`cn()` knows `text-2xs`.** tailwind-merge reads an unknown `text-*` as a colour and drops the real one, so custom font sizes are registered in `lib/utils.ts`.
+- **Tests:** Radix menus open on `pointerdown` (userEvent, or a dispatched `pointerdown` with `button: 0`), content renders in a portal (query `document.body`/`screen`, not the render container), overlays carry `data-slot="overlay"`, and `vitest.setup.ts` stubs ResizeObserver/pointer-capture for jsdom.
 
 ## Core principles
 
@@ -47,7 +58,7 @@ How to make changes to quack's chat frontend that fit its grain: lean stack, str
 
 2. **Optimistic-first store writes.** In `chatStore.submit`, write the optimistic state (live turn, or a `submitting` flag) **before** any awaited fetch, never after - otherwise the spinner waits on a round-trip. Keep previously-rendered content visible across the archive fetch so nothing blinks out. → recipe in references.
 
-3. **Global theming via Tailwind v4 `@theme`.** Override the built-in color scale once in `index.css` to recolor every existing utility - no per-component edits. This is the lazy lever for an *existing* app already using raw `gray-…`/`blue-…` classes; semantic tokens (`--color-bg-default`…) are the textbook answer but require rewriting every component, so only reach for them greenfield or when divergence grows. Universal rules regardless: **no pure-black dark background** (tinted near-black); **desaturate accents ~10–20% and use off-white, not pure white, text in dark mode**; **verify WCAG AA** (4.5:1 body, 3:1 large/UI) - don't eyeball muted greys. → recipe + contrast-check script in references.
+3. **Theming lives in `index.css`.** Two layers: the `@theme` gray/blue scale overrides retone every raw `gray-…`/`blue-…` utility at once (screens not yet migrated), and the semantic tokens (`--background`, `--foreground`, `--card`, `--popover`, `--muted`, `--muted-foreground`, `--accent`, `--primary`, `--destructive`, `--border`, `--input`, `--ring`, `--scrim`, `--elevation-overlay`) on `:root`/`.dark`, exposed to Tailwind through `@theme inline` as `bg-card`, `text-muted-foreground`, `border-border`, `ring-ring`, `shadow-overlay`. New and migrated code uses the semantic names, which flip with `.dark` so no `dark:` pair is needed. Shape scale: `rounded-sm` (4) badges, `rounded-md` (8) controls, `rounded-xl` (12) surfaces and overlays. Elevation: surfaces are flat with a hairline border; only floating layers (menus, popovers, dialogs, the composer) take `shadow-overlay`. Universal rules regardless: **no pure-black dark background** (tinted near-black); **desaturate accents ~10–20% and use off-white, not pure white, text in dark mode**; **verify WCAG AA** (4.5:1 body, 3:1 large/UI) - don't eyeball muted greys. → recipe + contrast-check script in references.
 
 4. **Markdown code blocks: work *with* the rehype pipeline.** Highlighting and the copy button go through `react-markdown` plugin ordering + a `components` override, not a parallel renderer.
 
