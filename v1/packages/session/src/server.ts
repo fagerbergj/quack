@@ -40,28 +40,37 @@ function parseInvocation(body: unknown): Invocation | string {
   return { input, requestId, wait };
 }
 
+type Route = (session: Session, req: IncomingMessage, match: RegExpExecArray) => Promise<[number, unknown]>;
+
+const ctx = BACKGROUND_CONTEXT;
+
+async function invoke(session: Session, req: IncomingMessage): Promise<[number, unknown]> {
+  const inv = parseInvocation(await readJson(req));
+  if (typeof inv === 'string') return [400, { error: inv }];
+  return [inv.wait ? 200 : 202, await session.submit(inv.input, inv.requestId, inv.wait)];
+}
+
+async function decide(session: Session, req: IncomingMessage, match: RegExpExecArray): Promise<[number, unknown]> {
+  const verdict = parseVerdict(await readJson(req));
+  if (typeof verdict === 'string') return [400, { error: verdict }];
+  const ok = await resolveApproval(session.root, decodeURIComponent(match[1]), verdict, ctx);
+  return ok ? [200, { resolved: true }] : [409, { error: 'unknown or already decided' }];
+}
+
 // The container contract (RUN-3): GET /ping and POST /invocations, plus the approvals this session waits on; /ws follows.
+const ROUTES: Array<[string, RegExp, Route]> = [
+  ['GET', /^\/ping$/, async (s) => [200, { status: s.busy() ? 'HealthyBusy' : 'Healthy' }]],
+  ['POST', /^\/invocations$/, invoke],
+  ['GET', /^\/approvals$/, async (s) => [200, { approvals: await pendingApprovals(s.root, ctx) }]],
+  ['POST', /^\/approvals\/([^/]+)$/, decide],
+];
+
 export function createSessionServer(session: Session) {
   return createServer(async (req, res) => {
     try {
-      if (req.method === 'GET' && req.url === '/ping') {
-        return send(res, 200, { status: session.busy() ? 'HealthyBusy' : 'Healthy' });
-      }
-      if (req.method === 'POST' && req.url === '/invocations') {
-        const inv = parseInvocation(await readJson(req));
-        if (typeof inv === 'string') return send(res, 400, { error: inv });
-        const result = await session.submit(inv.input, inv.requestId, inv.wait);
-        return send(res, inv.wait ? 200 : 202, result);
-      }
-      if (req.method === 'GET' && req.url === '/approvals') {
-        return send(res, 200, { approvals: await pendingApprovals(session.root, BACKGROUND_CONTEXT) });
-      }
-      const approval = req.method === 'POST' ? /^\/approvals\/([^/]+)$/.exec(req.url ?? '') : null;
-      if (approval) {
-        const verdict = parseVerdict(await readJson(req));
-        if (typeof verdict === 'string') return send(res, 400, { error: verdict });
-        const ok = await resolveApproval(session.root, decodeURIComponent(approval[1]), verdict, BACKGROUND_CONTEXT);
-        return send(res, ok ? 200 : 409, ok ? { resolved: true } : { error: 'unknown or already decided' });
+      for (const [method, pattern, route] of ROUTES) {
+        const match = req.method === method ? pattern.exec(req.url ?? '') : null;
+        if (match) return send(res, ...(await route(session, req, match)));
       }
       send(res, 404, { error: 'not found' });
     } catch (err) {

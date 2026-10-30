@@ -9,8 +9,9 @@
     "node": ">=26.13"
   },
   "scripts": {
-    "test": "node --test --test-force-exit --test-timeout=30000 'packages/*/test/*.test.ts'",
-    "typecheck": "tsc -p tsconfig.json"
+    "test": "node --test --test-force-exit --test-timeout=30000 'packages/*/test/*.test.ts' 'tools/*.test.ts'",
+    "typecheck": "tsc -p tsconfig.json",
+    "sloplint": "node tools/sloplint.ts"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
