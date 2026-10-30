@@ -42,7 +42,7 @@ const review: ArtifactKind = { kind: 'github.review', path: 'artifacts/review.md
 async function evidence(_api: unknown, sealed: { content: string }): Promise<Evidence> {
   const findings = sealed.content.split('\n').filter((l) => /^- (blocking|nit):/.test(l))
     .map((line, i) => ({ id: `f${i + 1}`, blocking: line.startsWith('- blocking:'), state: { unit: `f${i + 1}`, finding: line } }));
-  return { review: { id: 'review', state: { unit: 'review', review: sealed.content } }, findings };
+  return { review: [{ id: 'review', state: { unit: 'review', review: sealed.content } }], finding: findings, blocking: findings.filter((f) => f.blocking) };
 }
 
 const hasVerdict = (a: string) => /## Verdict/.test(a);

@@ -1,11 +1,10 @@
 import type { JsonObject } from '@earendil-works/pi-durable';
 
-/** What a model check is asked about: the whole artifact, every finding, or only blocking findings. */
-export type Scope = 'review' | 'finding' | 'blocking';
-
 /** A focused piece of evidence a check is judged on; small enough for a decision model where possible. */
 export type Unit = { id: string; state: JsonObject };
-export type Evidence = { review: Unit; findings: Array<Unit & { blocking: boolean }> };
+
+/** Evidence units by scope name; the domain defines its scopes (e.g. the review alone, the review with its diff, each finding). */
+export type Evidence = Record<string, Unit[]>;
 
 export type CodeResult = { met: number; detail?: string };
 
@@ -14,7 +13,8 @@ export type CodeResult = { met: number; detail?: string };
 export type Check = {
   id: string;
   weight: number | 'gate';
-  scope?: Scope;
+  /** The evidence scope a model check is judged on, once per unit; defaults to 'review'. */
+  scope?: string;
   question?: string;
   code?: (artifact: string, evidence: Evidence) => CodeResult;
 };
@@ -35,10 +35,8 @@ export type CheckResult = {
 
 export type Score = { score: number; gatesFailed: string[]; passed: boolean };
 
-export function unitsFor(scope: Scope | undefined, evidence: Evidence): Unit[] {
-  if (scope === 'finding') return evidence.findings;
-  if (scope === 'blocking') return evidence.findings.filter((f) => f.blocking);
-  return [evidence.review];
+export function unitsFor(scope: string | undefined, evidence: Evidence): Unit[] {
+  return evidence[scope ?? 'review'] ?? [];
 }
 
 // Earned points over possible points; checks that apply to no unit count toward neither.
