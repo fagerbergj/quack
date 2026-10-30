@@ -35,6 +35,7 @@ Keep: gated, structured delivery; one core with extensions layered on it; review
 - **A13 Telemetry.** pi-durable's OpenTelemetry schema as-is, plus quack spans for decisions, approvals and artifact seals, exported over OTLP directly to Langfuse and Prometheus (no collector).
 - **A14 Models.** Providers come from pi-ai, with llm-swap configured as an OpenAI-compatible provider. Cloud-equivalent prices come from a config table mapping each local model to a reference hosted price.
 - **A15 Searchable artifacts.** The index stores the content of sealed artifacts with full-text search, so an extension finds other sessions' artifacts (past research reports, reMarkable transcripts) through core, without its own store or a call into another extension.
+- **A16 Pi packages for commodity tools** (2026-10-30). pi coding-agent extensions use a different API from pi-durable, so the quack SDK gets a small adapter that loads their tool-providing subset (`registerTool`, `tool_call`, `tool_result`); UI-only packages do not apply. Commodity tools come from pi packages through it: web search and fetch (`pi-web-access`), external MCP servers (`pi-mcp-adapter`, SUR-6), code navigation (`pi-lsp`, G2). Quack writes its own tools only for external writes and anything tied to gates, artifacts or decision points. Adapted tools run behind the same hooks (provenance capture, gates), egress proxy and key injection; read-only ones can be marked replay-safe; each swap is benchmarked like any change.
 
 
 ## Decisions
