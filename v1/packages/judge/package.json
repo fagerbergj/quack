@@ -1,0 +1,14 @@
+{
+  "name": "@quack/judge",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@quack/sdk": "*"
+  },
+  "devDependencies": {
+    "@quack/session": "*"
+  }
+}

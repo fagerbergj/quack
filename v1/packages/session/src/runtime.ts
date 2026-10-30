@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { contentText, type MutableModels } from '@earendil-works/pi-ai';
-import { AssistantEntry, createRegistry, Harness, type Extension } from '@earendil-works/pi-durable';
+import { AssistantEntry, createRegistry, Harness, watchEvents, type Extension } from '@earendil-works/pi-durable';
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { mkdir } from 'node:fs/promises';
@@ -11,6 +11,8 @@ const ctx = BACKGROUND_CONTEXT;
 export type AgentSpec = {
   model: { provider: string; modelId: string };
   extensions?: Extension[];
+  /** Model turns a run may take before it is aborted (HAR-10). */
+  maxTurns?: number;
 };
 
 export type SubmitResult =
@@ -30,6 +32,7 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
   const harness = await Harness.open(storage, { models: opts.models, registry, env }, ctx);
   const root = await harness.root(ctx, { agent: { model: opts.agent.model } });
   harness.resume();
+  const watchdog = opts.agent.maxTurns ? await turnLimit(harness, root, opts.agent.maxTurns) : undefined;
 
   async function answerText(entryId: unknown): Promise<string> {
     const entry = await root.commit((tx) => tx.entry(AssistantEntry, entryId as never), ctx);
@@ -50,8 +53,24 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
       if (record.status === 'unanswered') return { submissionId, status: 'unanswered', reason: String(record.reason), detail: record.detail === undefined ? undefined : String(record.detail) };
       return { submissionId, status: record.status };
     },
-    close: () => harness.close(ctx),
+    close: async () => {
+      await watchdog?.stop();
+      await harness.close(ctx);
+    },
   };
+}
+
+// Counts the current run's turns from the session's own events and aborts the run past the limit; abort leaves it consistent.
+async function turnLimit(harness: Harness, root: Awaited<ReturnType<Harness['root']>>, maxTurns: number) {
+  const events = await watchEvents(harness, root.id, ctx);
+  let turns = 0;
+  events.start(async (batch) => {
+    for (const e of batch) {
+      if (e.type === 'run_start') turns = 0;
+      if (e.type === 'turn_start' && ++turns > maxTurns) void root.abort(ctx);
+    }
+  });
+  return events;
 }
 
 export type Session = Awaited<ReturnType<typeof openSession>>;

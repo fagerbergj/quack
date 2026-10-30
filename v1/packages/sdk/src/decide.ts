@@ -101,3 +101,12 @@ export function modelResolver(provider: string, modelId: string): Resolver {
     },
   };
 }
+
+/** The agent's own model asked with only the question and evidence: an independent view, as a checker should have. */
+export const agentModel: Resolver = {
+  id: 'agent-model',
+  async resolve(point, api, ctx) {
+    const ref = (await api.agent(ctx)).model;
+    return ref ? modelResolver(ref.provider, ref.modelId).resolve(point, api, ctx) : undefined;
+  },
+};
