@@ -117,6 +117,22 @@ type ReplayRoundReport struct {
 	Spread *ReplaySpread `json:"spread,omitempty"`
 	// Judge: the first judge pass's wall time and generated tokens; absent when the judge did not run.
 	Judge *vetting.ReplayJudgeCost `json:"judge,omitempty"`
+	// Passes: with --repeat, every pass's judge cost and judge-scored criteria, first pass included.
+	Passes []ReplayPass `json:"passes,omitempty"`
+}
+
+// ReplayPass is one judge pass of a --repeat run.
+type ReplayPass struct {
+	Judge    *vetting.ReplayJudgeCost `json:"judge,omitempty"`
+	Criteria []ReplayPassCriterion    `json:"criteria"`
+}
+
+// ReplayPassCriterion is a judge-scored criterion's score, evidence and point answer in one pass.
+type ReplayPassCriterion struct {
+	Name     string                     `json:"name"`
+	Score    float64                    `json:"score"`
+	Evidence string                     `json:"evidence,omitempty"`
+	Point    *vetting.ReplayPointAnswer `json:"point,omitempty"`
 }
 
 // UnitRow is one specific's locate result, as the design's failed-round table shows it.
@@ -551,7 +567,7 @@ func replayOneRound(ctx context.Context, cfg *config.Config, sess *bundle.Sessio
 	rep.Judge = roundedCost(res.Judge)
 	rep.Criteria = compareCriteria(res, recordedFor(sess, jr), jf != nil)
 	var incomplete bool
-	rep.Spread, rep.Note, incomplete = noteRepeatSpread(ctx, gc, jf, rc, res, opts.Repeat, rep.Criteria, rep.Note)
+	rep.Spread, rep.Passes, rep.Note, incomplete = noteRepeatSpread(ctx, gc, jf, rc, res, opts.Repeat, rep.Criteria, rep.Note)
 	for _, c := range rep.Criteria {
 		if c.Flipped {
 			rep.Flipped = true
@@ -568,32 +584,33 @@ func replayOneRound(ctx context.Context, cfg *config.Config, sess *bundle.Sessio
 
 // noteRepeatSpread runs the --repeat measurement when it applies and folds a failed pass into the
 // round note, keeping replayOneRound's own branching flat.
-func noteRepeatSpread(ctx context.Context, gc vetting.Config, jf vetting.JudgeFactory, rc vetting.ReplayCase, res vetting.ReplayRoundResult, repeat int, crit []ReplayCriterionReport, note string) (*ReplaySpread, string, bool) {
+func noteRepeatSpread(ctx context.Context, gc vetting.Config, jf vetting.JudgeFactory, rc vetting.ReplayCase, res vetting.ReplayRoundResult, repeat int, crit []ReplayCriterionReport, note string) (*ReplaySpread, []ReplayPass, string, bool) {
 	if jf == nil || repeat < 2 {
-		return nil, note, false
+		return nil, nil, note, false
 	}
-	round, err := addRepeatSpread(ctx, gc, jf, rc, res, repeat, crit)
+	round, passes, err := addRepeatSpread(ctx, gc, jf, rc, res, repeat, crit)
 	if err != nil {
-		return nil, strings.TrimSpace(note + " repeat: " + err.Error()), true
+		return nil, nil, strings.TrimSpace(note + " repeat: " + err.Error()), true
 	}
-	return round, note, false
+	return round, passes, note, false
 }
 
 // addRepeatSpread judges the round repeat-1 more times, fills each judge-scored criterion's Spread (the
 // judge's own noise on a fixed answer, which no single verdict shows) and returns the round's own.
-func addRepeatSpread(ctx context.Context, gc vetting.Config, jf vetting.JudgeFactory, rc vetting.ReplayCase, first vetting.ReplayRoundResult, repeat int, crit []ReplayCriterionReport) (*ReplaySpread, error) {
+func addRepeatSpread(ctx context.Context, gc vetting.Config, jf vetting.JudgeFactory, rc vetting.ReplayCase, first vetting.ReplayRoundResult, repeat int, crit []ReplayCriterionReport) (*ReplaySpread, []ReplayPass, error) {
 	samples := map[string][]float64{}
 	for _, c := range first.Criteria {
 		if !c.Deterministic {
 			samples[c.Name] = append(samples[c.Name], c.Score)
 		}
 	}
-	roundPassed := []float64{passedAll(first)}
+	roundPassed, passes := []float64{passedAll(first)}, []ReplayPass{passOf(first)}
 	for i := 1; i < repeat; i++ {
 		res, err := vetting.ReplayRound(ctx, gc, jf, rc)
 		if err != nil {
-			return nil, fmt.Errorf("pass %d: %w", i+1, err)
+			return nil, nil, fmt.Errorf("pass %d: %w", i+1, err)
 		}
+		passes = append(passes, passOf(res))
 		roundPassed = append(roundPassed, passedAll(res))
 		for _, c := range res.Criteria {
 			if _, ok := samples[c.Name]; ok {
@@ -608,7 +625,18 @@ func addRepeatSpread(ctx context.Context, gc vetting.Config, jf vetting.JudgeFac
 	}
 	round := spreadOf(roundPassed, 1)
 	round.Samples = nil // 0/1 pass flags; PassRate and Agreement carry them
-	return round, nil
+	return round, passes, nil
+}
+
+// passOf is one pass's judge cost and judge-scored criteria, so every --repeat pass is in the report.
+func passOf(res vetting.ReplayRoundResult) ReplayPass {
+	p := ReplayPass{Judge: roundedCost(res.Judge)}
+	for _, c := range res.Criteria {
+		if !c.Deterministic {
+			p.Criteria = append(p.Criteria, ReplayPassCriterion{Name: c.Name, Score: c.Score, Evidence: c.Evidence, Point: c.Point})
+		}
+	}
+	return p
 }
 
 // passedAll is 1 when every criterion of res clears its threshold (the gate's weakest-link pass), else 0.
