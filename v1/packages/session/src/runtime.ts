@@ -2,7 +2,9 @@ import { join } from 'node:path';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { contentText, type MutableModels } from '@earendil-works/pi-ai';
 import { AssistantEntry, createRegistry, Harness, type Extension } from '@earendil-works/pi-durable';
+import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
+import { mkdir } from 'node:fs/promises';
 
 const ctx = BACKGROUND_CONTEXT;
 
@@ -21,7 +23,11 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
   const registry = createRegistry();
   for (const ext of opts.agent.extensions ?? []) registry.install(ext);
   const storage = await openNodeSqliteStorage(join(opts.dir, 'session.sqlite'));
-  const harness = await Harness.open(storage, { models: opts.models, registry }, ctx);
+  // The session's workspace lives beside its log on the same volume, so both move and expire together (RUN-2).
+  const workspace = join(opts.dir, 'workspace');
+  await mkdir(workspace, { recursive: true });
+  const env = ({ cwd }: { cwd?: string }) => new NodeExecutionEnv({ cwd: cwd ?? workspace });
+  const harness = await Harness.open(storage, { models: opts.models, registry, env }, ctx);
   const root = await harness.root(ctx, { agent: { model: opts.agent.model } });
   harness.resume();
 
@@ -33,6 +39,7 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
 
   return {
     harness,
+    workspace,
     root,
     busy: () => harness.wake().active,
     async submit(input: string, requestId?: string, wait = false, whenBusy?: 'steer' | 'followUp'): Promise<SubmitResult> {
