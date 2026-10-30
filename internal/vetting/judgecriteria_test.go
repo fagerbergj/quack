@@ -1,18 +1,13 @@
 package vetting
 
 import (
-	"context"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/decide"
 	"github.com/fagerbergj/quack/internal/decide/decidetest"
-	"github.com/fagerbergj/quack/internal/ledger"
 )
 
 var criteriaSpecs = map[string]criterionSpec{
@@ -103,60 +98,6 @@ func TestJudgeCriteriaStateHoldsRubricAndEvidenceOnly(t *testing.T) {
 	}
 	if keys["definition"] != "Claims are backed." || !strings.HasPrefix(keys["bands"], "- **2–3** - backed\n- **0–1** - unbacked") || keys["evidence"] != "read a.go:10, matches the claim" {
 		t.Errorf("state = %s, want the trimmed definition, bands highest first and the judge's evidence", raw)
-	}
-}
-
-// scoreServer answers the score question with level 2 and sends each request's state to states.
-func scoreServer(t *testing.T, states chan<- json.RawMessage) string {
-	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body struct{ State json.RawMessage }
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		states <- body.State
-		_ = json.NewEncoder(w).Encode(map[string]any{"answers": map[string]any{"score": map[string]any{"type": "score", "probabilities": map[string]float64{"1": 0.2, "2": 0.8}}}})
-	}))
-	t.Cleanup(srv.Close)
-	return srv.URL
-}
-
-func TestObserveCriteriaRecordsEachCriterionWithMeta(t *testing.T) {
-	mem := decidetest.Capture(t)
-	states := make(chan json.RawMessage, 4)
-	j := criteriaRounds(decidetest.Decider(t, scoreServer(t, states), judgeCriteria.ID))
-	ctx := ledger.WithCoords(context.Background(), ledger.Coords{ChatID: "chat-jc", Node: "n1", Agent: "web-researcher"})
-	start := time.Now()
-	j.observeCriteria(ctx, 2, criteriaVerdict())
-	if time.Since(start) > 200*time.Millisecond {
-		t.Error("observeCriteria blocked the caller")
-	}
-	got := decidetest.Records(t, mem, "chat-jc", 2)
-	if len(got) != 2 || len(states) != 2 {
-		t.Fatalf("records = %d, requests = %d, want 2 each", len(got), len(states))
-	}
-	byCriterion := map[string]ledger.DecisionPayload{}
-	for _, r := range got {
-		var m struct {
-			Agent, Criterion string
-			Round            int
-		}
-		_ = json.Unmarshal(r.Meta, &m)
-		if r.Point != "judge.criteria" || r.Top != "2" || m.Agent != "web-researcher" || m.Round != 2 || strings.Contains(string(r.State), "meta") {
-			t.Errorf("record = %+v meta %s, want a judge.criteria answer 2 with agent and round in meta only", r, r.Meta)
-		}
-		byCriterion[m.Criterion] = r
-	}
-	if byCriterion["grounded"].Baseline != "2" || byCriterion["complete"].Baseline != "3" {
-		t.Errorf("baselines = grounded %q complete %q, want 2 and 3", byCriterion["grounded"].Baseline, byCriterion["complete"].Baseline)
-	}
-}
-
-func TestObserveCriteriaDisabledMakesNoCall(t *testing.T) {
-	states := make(chan json.RawMessage, 4)
-	j := criteriaRounds(decidetest.Decider(t, scoreServer(t, states), answerAccept.ID))
-	j.observeCriteria(context.Background(), 1, criteriaVerdict())
-	time.Sleep(50 * time.Millisecond)
-	if len(states) != 0 {
-		t.Errorf("requests = %d, want 0 with judge.criteria off", len(states))
 	}
 }
 

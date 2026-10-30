@@ -5,9 +5,11 @@ import (
 	"log/slog"
 	"maps"
 	"math"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/decide"
@@ -55,27 +57,49 @@ func askable(c criterionScore, spec criterionSpec) bool {
 		spec.Scale != nil && *spec.Scale == (scaleSpec{Max: judgeScaleMax})
 }
 
+// gradeWords marks evidence that states a grade, which a grader would echo instead of grading.
+var gradeWords = regexp.MustCompile(`(?i)\b(pass(es|ed)?|fail(s|ed)?|meets?|band|scores?|scored|grade[sd]?|rubric)\b`)
+
+// judgeCriteriaBuilds counts state builds, so tests can see the disabled point do no work.
+var judgeCriteriaBuilds atomic.Int64
+
+// levelOf is the judge's integer level for a unit score. Floor, not Round: the gate fails a 1.5 (0.5 unit
+// is under any threshold that fails 2), so it must not read as the passing level 2.
+func levelOf(unit float64) int { return int(math.Floor(unit*judgeScaleMax + 1e-9)) }
+
+// logger is the round's logger, or the default one for a bare judgeRounds.
+func (j *judgeRounds) logger() *slog.Logger {
+	if j.log != nil {
+		return j.log
+	}
+	return slog.Default()
+}
+
 // judgeCriteriaAsks builds one ask per askable criterion in name order. A criterion without evidence or a
-// rubric spec is skipped and not recorded, so the report's n counts graded criteria only.
+// rubric spec, or one the gate dropped from this node's verdict, is skipped and not recorded, so the
+// report's n counts graded criteria only.
 func (j *judgeRounds) judgeCriteriaAsks(round int, v verdict) []criterionAsk {
+	judgeCriteriaBuilds.Add(1)
 	task := decide.Clip(j.cfg.Task, judgeCriteriaTaskMax)
 	var asks []criterionAsk
 	for _, name := range slices.Sorted(maps.Keys(v.Criteria)) {
 		c, spec := v.Criteria[name], j.cfg.RubricSpecs[name]
-		if !askable(c, spec) {
-			slog.Debug("judge.criteria skipped criterion", "component", "vetting", "criterion", name, "round", round)
+		if !askable(c, spec) || (name == "structured_verdict" && isNonDeliveringSlice(j.cfg)) {
+			j.logger().Debug("judge.criteria skipped criterion", "component", "vetting", "criterion", name, "round", round)
 			continue
 		}
 		st := judgeCriteriaState{NodeTask: task, Criterion: name, Definition: strings.TrimSpace(spec.Definition), Bands: bandsText(spec.Bands)}
 		st.Evidence = decide.Clip(strings.TrimSpace(c.Checked), j.cfg.Decisions.FillBytes(judgeCriteria.ID, judgeCriteriaEvidenceMin, st.NodeTask, st.Definition, st.Bands))
-		meta := map[string]any{"agent": j.cfg.Agent, "criterion": name, "round": round}
-		asks = append(asks, criterionAsk{state: decide.Annotated{State: st, Meta: meta}, baseline: strconv.Itoa(int(math.Round(c.Score * judgeScaleMax)))})
+		meta := map[string]any{"agent": j.cfg.Agent, "criterion": name, "round": round, "grade_words": gradeWords.MatchString(st.Evidence)}
+		asks = append(asks, criterionAsk{state: decide.Annotated{State: st, Meta: meta}, baseline: strconv.Itoa(levelOf(c.Score))})
 	}
 	return asks
 }
 
 // observeCriteria asks judge.criteria about each judged criterion after the round's verdict, on its own
-// goroutine and through bulkLane, so a one-slot Clef never has more than one of these ahead of plan.accept.
+// goroutine. Asks take bulkLane, so a one-slot Clef never has more than one of them queued ahead of plan.accept
+// (a round holds up to a dozen asks, about 0.9 s each, 5-12 s of Clef per judge round). Enabling the point in
+// prod is a capacity decision alongside research.source, which shares the lane.
 func (j *judgeRounds) observeCriteria(ctx context.Context, round int, v verdict) {
 	if !j.cfg.Decisions.Enabled(judgeCriteria.ID) {
 		return

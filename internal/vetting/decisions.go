@@ -75,7 +75,8 @@ func clipList(items []string, n int) []string {
 }
 
 // bulkLane admits one research.source or judge.criteria call across all nodes: each queued request at a one-slot
-// server eats every other point's timeout. ponytail: one global lane; a per-handler queue if more bulk points appear.
+// server eats every other point's timeout. judge.criteria alone holds it 5-12 s per judge round, so both points
+// on at once compete for Clef; shortcut: one global lane, a per-handler queue if a third bulk point appears.
 var bulkLane = make(chan struct{}, 1)
 
 // observeSources asks research.source about each page a web-researcher fetched, once its answer is final.
