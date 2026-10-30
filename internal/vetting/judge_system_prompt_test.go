@@ -11,7 +11,7 @@ import (
 func TestSubmitVerdictDeclarationRoundInvariant(t *testing.T) {
 	var sink verdict
 	decl := func(ids []string) string {
-		st, err := newSubmitVerdictTool(&sink, ids)
+		st, err := newSubmitVerdictTool(&sink, ids, false)
 		if err != nil {
 			t.Fatal(err)
 		}

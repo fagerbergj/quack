@@ -1,0 +1,158 @@
+{
+ "type": "object",
+ "properties": {
+  "score": {
+   "type": "number"
+  },
+  "criteria": {
+   "type": "object",
+   "additionalProperties": {
+    "type": "object",
+    "properties": {
+     "reason": {
+      "type": [
+       "null",
+       "string"
+      ]
+     },
+     "shortfall": {
+      "type": [
+       "null",
+       "string"
+      ]
+     },
+     "fix": {
+      "type": [
+       "null",
+       "string"
+      ]
+     },
+     "anchor": {
+      "type": [
+       "null",
+       "object"
+      ],
+      "properties": {
+       "kind": {
+        "type": [
+         "null",
+         "string"
+        ]
+       },
+       "text": {
+        "type": [
+         "null",
+         "string"
+        ]
+       },
+       "path": {
+        "type": [
+         "null",
+         "string"
+        ]
+       },
+       "line": {
+        "type": "integer"
+       },
+       "expected": {
+        "type": [
+         "null",
+         "string"
+        ]
+       }
+      },
+      "additionalProperties": false
+     },
+     "score": {
+      "type": "number"
+     }
+    },
+    "required": [
+     "score"
+    ],
+    "additionalProperties": false
+   }
+  },
+  "feedback": {
+   "type": [
+    "null",
+    "string"
+   ]
+  },
+  "findings": {
+   "type": [
+    "null",
+    "array"
+   ],
+   "items": {
+    "type": "object",
+    "properties": {
+     "index": {
+      "type": "integer",
+      "description": "the finding's 1-based position in the numbered list you were given"
+     },
+     "path": {
+      "type": [
+       "null",
+       "string"
+      ]
+     },
+     "line": {
+      "type": "integer"
+     },
+     "status": {
+      "type": "string",
+      "description": "verified (the code backs this claim), unsupported (you could not confirm it either way), or contradicted (the code shows the opposite of the claim)"
+     },
+     "why": {
+      "type": [
+       "null",
+       "string"
+      ],
+      "description": "one or two sentences citing what you actually found when you checked"
+     }
+    },
+    "required": [
+     "index",
+     "status"
+    ],
+    "additionalProperties": false
+   }
+  },
+  "memories": {
+   "type": [
+    "null",
+    "array"
+   ],
+   "items": {
+    "type": "object",
+    "properties": {
+     "id": {
+      "type": "string",
+      "description": "the recalled memory's id, copied verbatim from the RECALLED MEMORIES block"
+     },
+     "vote": {
+      "type": "string",
+      "description": "supported (the delivered work backs this memory), contradicted (the work shows the opposite), or not_relevant (this memory had nothing to do with the task)"
+     },
+     "reason": {
+      "type": [
+       "null",
+       "string"
+      ],
+      "description": "one sentence citing what in the answer supports the vote"
+     }
+    },
+    "required": [
+     "id",
+     "vote"
+    ],
+    "additionalProperties": false
+   }
+  }
+ },
+ "required": [
+  "score"
+ ],
+ "additionalProperties": false
+}
