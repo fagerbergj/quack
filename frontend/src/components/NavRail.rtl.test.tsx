@@ -66,7 +66,9 @@ describe('NavRail drawer', () => {
     const user = userEvent.setup()
     render(<Harness />)
     await user.click(screen.getByRole('button', { name: 'Toggle navigation' }))
-    await screen.findByRole('dialog', { name: 'Main navigation' })
+    const drawer = await screen.findByRole('dialog', { name: 'Main navigation' })
+    // jsdom matches :focus-visible on any focus, so the container holding focus is what guards the tooltip.
+    expect(document.activeElement).toBe(drawer)
     expect(screen.queryByRole('tooltip')).toBeNull()
     await user.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())

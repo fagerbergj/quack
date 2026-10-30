@@ -29,8 +29,8 @@ function RememberOpener({ into }: { into: RefObject<HTMLElement | null> }) {
   return null
 }
 
-// Radix returns focus only to a Dialog.Trigger, but these dialogs open from app state. `remember` must be the
-// first child of the content (its layout effect runs before any autoFocus); closing then refocuses the opener.
+// Radix returns focus only to a Dialog.Trigger, but these dialogs open from app state; `remember`'s layout effect
+// captures the opener before Radix's own open auto-focus (useEffect + setTimeout), and closing refocuses it.
 export function useOpenerFocus(onCloseAutoFocus?: (e: Event) => void): { remember: ReactNode; onCloseAutoFocus: (e: Event) => void } {
   const opener = useRef<HTMLElement | null>(null)
   return {

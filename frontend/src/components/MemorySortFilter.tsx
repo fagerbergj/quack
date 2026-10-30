@@ -46,6 +46,7 @@ export function MemorySortFilter({ sort, onSortChange, bucket, buckets, onBucket
             <Button
               variant="outline"
               size="icon"
+              aria-haspopup="dialog"
               aria-label="Sort and filter memories"
               className={cn('size-11 medium:size-11', active && 'border-primary text-primary')}
             >
