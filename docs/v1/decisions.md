@@ -90,6 +90,9 @@ Keep: gated, structured delivery; one core with extensions layered on it; review
 - **D48 Dynamic agents** (amends DEP-1, D27). Agents are versioned definitions loaded from fixtures bundled in extensions, from files, or created and forked in the UI, all shown in one agents screen. Definition versions are immutable and diffable; a session keeps the version it started on. Extension code is pinned through the runtime image version a definition names.
 - **D49 Reviewable as versioned config** (amends NFR-SEC-4). Every agent change is a diffable version in the audit record, definitions export to and import from files, and egress or gate changes made in the UI are flagged in the audit.
 - **D50 Draft and promoted agents** (amends D10, OBS-5). Draft agents are usable by the operator directly (UI, MCP, A2A) without a benchmark. Only promoted agents can be bound to unattended triggers (webhooks, schedules), and promotion requires the benchmark (EV2).
+- **D51 Build GitHub first** (2026-10-30, amends the PRD release plan order). Artifacts, a minimal judge, agent definitions and the GitHub extension are built before research so v1 can dogfood on its own pull requests; research stays first by value (D2).
+- **D52 Switch outright** (2026-10-30, amends the PRD release plan). Once the v1 GitHub extension works, the existing GitHub App points at v1 and v0's reviewer retires; there is no side-by-side period.
+- **D53 Benchmark the first reviewer** (2026-10-30, a bootstrap exception to EV2's 20 cases). Before D52's switch, the v1 reviewer replays 10 recent pull requests v0 reviewed, deliveries blocked, and its findings and cost are compared with v0's; it is promoted and switched in only if it holds up. EV2's 20-case bar stays for later promotions.
 
 ## Research extension
 
