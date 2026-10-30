@@ -5,6 +5,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Dialog, DialogContent } from './dialog'
 import { Sheet, SheetContent } from './sheet'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './dropdown-menu'
 
 afterEach(cleanup)
 
@@ -35,4 +36,28 @@ describe.each([['Dialog', false], ['Sheet', true]])('%s', (_name, sheet) => {
     expect(screen.queryByRole('dialog')).toBeNull()
     await waitFor(() => expect(document.activeElement).toBe(opener))
   })
+})
+
+// Safari and macOS Firefox don't focus a clicked button, so the dialog opens with <body> focused.
+it('does not move focus to an earlier menu trigger when the opener was never focused', async () => {
+  const user = userEvent.setup()
+  render(
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger>Menu</DropdownMenuTrigger>
+        <DropdownMenuContent><DropdownMenuItem>Item</DropdownMenuItem></DropdownMenuContent>
+      </DropdownMenu>
+      <Harness />
+    </>,
+  )
+  await user.click(screen.getByRole('button', { name: 'Menu' }))
+  await user.keyboard('{Escape}')
+  ;(document.activeElement as HTMLElement).blur()
+  const opener = screen.getByRole('button', { name: 'Open' })
+  opener.addEventListener('mousedown', e => e.preventDefault(), { once: true })
+  await user.click(opener)
+  expect(screen.getByRole('dialog')).toBeTruthy()
+  await user.keyboard('{Escape}')
+  expect(screen.queryByRole('dialog')).toBeNull()
+  expect(document.activeElement).not.toBe(screen.getByRole('button', { name: 'Menu' }))
 })

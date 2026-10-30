@@ -22,14 +22,15 @@ const contentVariants = cva('fixed flex flex-col bg-background text-foreground o
 function RememberOpener({ into }: { into: RefObject<HTMLElement | null> }) {
   useLayoutEffect(() => {
     const el = document.activeElement
-    into.current = el instanceof HTMLElement && el !== document.body ? el : null
+    if (!(el instanceof HTMLElement) || el === document.body) into.current = null
+    // A menu item unmounts with its menu, so the opener is that menu's trigger, read while the menu is still open.
+    else into.current = el.closest('[role="menu"]') ? lastMenuTrigger() : el
   }, [into])
   return null
 }
 
 // Radix returns focus only to a Dialog.Trigger, but these dialogs open from app state. `remember` must be the
 // first child of the content (its layout effect runs before any autoFocus); closing then refocuses the opener.
-// A menu item that opened the dialog unmounts with its menu, so a gone opener falls back to that menu's trigger.
 export function useOpenerFocus(onCloseAutoFocus?: (e: Event) => void): { remember: ReactNode; onCloseAutoFocus: (e: Event) => void } {
   const opener = useRef<HTMLElement | null>(null)
   return {
@@ -38,8 +39,7 @@ export function useOpenerFocus(onCloseAutoFocus?: (e: Event) => void): { remembe
       onCloseAutoFocus?.(e)
       if (e.defaultPrevented) return
       e.preventDefault()
-      const target = opener.current?.isConnected ? opener.current : lastMenuTrigger()
-      target?.focus()
+      if (opener.current?.isConnected) opener.current.focus()
     },
   }
 }
