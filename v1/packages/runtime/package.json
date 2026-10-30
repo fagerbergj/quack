@@ -1,0 +1,11 @@
+{
+  "name": "@quack/runtime",
+  "private": true,
+  "type": "module",
+  "scripts": { "start": "node src/main.ts" },
+  "dependencies": {
+    "@quack/judge": "*",
+    "@quack/sdk": "*",
+    "@quack/session": "*"
+  }
+}
