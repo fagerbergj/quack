@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { nextFrame, runEnded } from '../../session/test/ws-helpers.ts';
 import { createDistributor, processDriver } from '../src/index.ts';
 
 const dirs: string[] = [];
@@ -93,4 +94,21 @@ test('a session that keeps crashing stops auto-restarting until the next request
 test('a malformed session key is a client error', async () => {
   const { base } = await startDistributor(60_000);
   assert.equal((await fetch(`${base}/sessions/%ZZ/invocations`, { method: 'POST', body: '{}' })).status, 400);
+});
+
+test('proxies the live stream and keeps a watched session from idling out', async () => {
+  const { driver, base } = await startDistributor(200);
+  const key = 'github:fagerbergj/quack#1827';
+  const ws = new WebSocket(`${base.replace('http', 'ws')}/sessions/${encodeURIComponent(key)}/ws`);
+  assert.equal((await nextFrame(ws, () => true)).type, 'snapshot');
+
+  const ended = nextFrame(ws, runEnded);
+  ws.send(JSON.stringify({ type: 'input', input: 'hi', requestId: 'w-1' }));
+  assert.match(JSON.stringify((await ended).events), /echo: hi/);
+
+  // Several idle sweeps pass while the viewer is connected; the session must still be running.
+  await new Promise((r) => setTimeout(r, 1_000));
+  assert.deepEqual(driver.running(), [key]);
+  ws.close();
+  await until(() => driver.running().length === 0);
 });
