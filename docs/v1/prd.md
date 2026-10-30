@@ -98,13 +98,14 @@ Everything else (cache hit rates, tool rejections, revision counts, cost) is a d
 
 ## Release plan
 
-1. **Core and the web UI's four jobs**, with approvals, judge and eval, proven on the research extension. v0 keeps running.
-2. **GitHub**, benchmarked against v0's reviews on the same PRs before v0 stops reviewing.
-3. **Sleeper**, with workflows and schedules.
-4. **reMarkable**, then memory and plans.
-5. **v0 switched off**, and its database archived read-only.
+1. **Core with the judge, approvals and eval, proven on the GitHub extension**, so v1 reviews its own pull requests as early as possible (D51). v0 keeps running.
+2. **GitHub switch.** The v1 reviewer replays 10 recent pull requests that v0 reviewed, with deliveries blocked, and must hold up against v0's reviews (D53). Then the GitHub App points at v1 and v0's reviewer retires, with no side-by-side period (D52).
+3. **Research**, still first by value (D2), and the web UI's four jobs.
+4. **Sleeper**, with workflows and schedules.
+5. **reMarkable**, then memory and plans.
+6. **v0 switched off**, and its database archived read-only.
 
-Each step ships only when its benchmark passes (D10).
+Each step ships only when its benchmark passes (D10). The first reviewer's 10-case benchmark is a bootstrap exception (D53); EV2's 20-case bar holds for later promotions.
 
 ## Open questions
 
