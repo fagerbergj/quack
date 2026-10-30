@@ -64,7 +64,7 @@ criteria:
 
 // replayJudged replays the fixture round with a judge that follows the schema it is shown; offered says
 // whether that schema carried the evidence field.
-func replayJudged(t *testing.T, cfg *config.Config) (rep ReplayRoundReport, offered bool) {
+func replayJudged(t *testing.T, cfg *config.Config) (rep ReplayRoundReport, offered, judgeCriteria bool) {
 	t.Helper()
 	sess, err := bundle.Load(buildFixtureBundle(t, "worker-r0", map[string]float64{"cites_sources": 1.0}))
 	if err != nil {
@@ -73,7 +73,8 @@ func replayJudged(t *testing.T, cfg *config.Config) (rep ReplayRoundReport, offe
 	judge := vetting.NewJudgeFactory(evidenceModel{&offered}, nil, nil)
 	var buf bytes.Buffer
 	RunJudgeReplay(context.Background(), cfg, sess, ReplayOptions{RubricPath: judgedRubric(t)}, judge, nil, false, &buf, true)
-	return decodeReports(t, &buf)[0], offered
+	report := decodeReport(t, buf.Bytes())
+	return report.Rounds[0], offered, report.JudgeCriteria
 }
 
 func criterionNamed(t *testing.T, rep ReplayRoundReport, name string) ReplayCriterionReport {
@@ -112,7 +113,7 @@ func TestRunJudgeReplayJudgeCriteriaOnArm(t *testing.T) {
 
 	off := fixtureConfig()
 	off.Decisions = decisionsFor(url, false)
-	offRep, offOffered := replayJudged(t, off)
+	offRep, offOffered, offOn := replayJudged(t, off)
 	oc := criterionNamed(t, offRep, "answers_question")
 	if offOffered || oc.Evidence != "" || oc.Point != nil || calls.Load() != 0 {
 		t.Errorf("off arm: evidence offered %v, evidence %q, point %+v, clef calls %d; want the judge unchanged and no ask", offOffered, oc.Evidence, oc.Point, calls.Load())
@@ -123,7 +124,10 @@ func TestRunJudgeReplayJudgeCriteriaOnArm(t *testing.T) {
 
 	on := fixtureConfig()
 	on.Decisions = decisionsFor(url, true)
-	onRep, onOffered := replayJudged(t, on)
+	onRep, onOffered, onOn := replayJudged(t, on)
+	if offOn || !onOn {
+		t.Errorf("report judge_criteria: off arm %v, on arm %v; want false and true", offOn, onOn)
+	}
 	c := criterionNamed(t, onRep, "answers_question")
 	if !onOffered || c.Evidence != "the answer cites one page" {
 		t.Errorf("on arm: evidence offered %v, evidence %q; want the schema field offered and the evidence reported", onOffered, c.Evidence)

@@ -62,6 +62,9 @@ func TestReplayRoundJudgeCriteriaOnArm(t *testing.T) {
 	if c.Evidence != "read a.go:10, it matches the claim" || c.Point == nil || c.Point.Top != "2" || c.Point.Probabilities["2"] != 0.8 || c.Point.GradeWords || c.Point.Error != "" {
 		t.Errorf("criterion = %+v point %+v, want the evidence and the point's answer 2 (p 0.8)", c, c.Point)
 	}
+	if !res.JudgeCriteria {
+		t.Error("JudgeCriteria = false on a run that offered the evidence field")
+	}
 	if res.Judge == nil || res.Judge.OutputTokens != 42 || res.Judge.ThoughtTokens != 7 || res.Judge.Seconds <= 0 {
 		t.Errorf("judge cost = %+v, want 42 output, 7 thought tokens and a wall time", res.Judge)
 	}
@@ -82,10 +85,29 @@ func TestReplayRoundJudgeCriteriaOffArm(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := res.Criteria[0]
-	if offered || c.Evidence != "" || c.Point != nil || len(srv.states) != 0 {
+	if res.JudgeCriteria || offered || c.Evidence != "" || c.Point != nil || len(srv.states) != 0 {
 		t.Errorf("offered = %v evidence %q point %+v requests %d, want the judge unchanged and no ask", offered, c.Evidence, c.Point, len(srv.states))
 	}
 	if res.Judge == nil || res.Judge.OutputTokens != 42 {
 		t.Errorf("judge cost = %+v, want it measured on the off arm too", res.Judge)
+	}
+}
+
+// TestReplayRoundJudgeCriteriaNeedsThePromptBlock: the point enabled against a system/judge without the
+// evidence block is not the on arm, and the result says so.
+func TestReplayRoundJudgeCriteriaNeedsThePromptBlock(t *testing.T) {
+	srv := newScoreSrv(t, nil, 0)
+	var offered bool
+	cfg := replayGroundedCfg()
+	cfg.Decisions = decidetest.Decider(t, srv.URL, judgeCriteria.ID)
+	cfg.judgePrompt = shippedJudgePrompt(t)
+	delete(cfg.judgePrompt.blocks, "evidence")
+
+	res, err := ReplayRound(context.Background(), cfg, NewJudgeFactory(evidenceJudge{&offered}, nil, nil), ReplayCase{NodeID: "n1", Task: "t", Answer: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.JudgeCriteria || offered {
+		t.Errorf("JudgeCriteria = %v, evidence offered = %v; want neither without the prompt block", res.JudgeCriteria, offered)
 	}
 }

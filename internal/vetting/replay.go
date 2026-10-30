@@ -72,7 +72,9 @@ type ReplayRoundResult struct {
 	Threshold        float64
 	ArtifactsWritten []string
 	Units            []UnitCheck      // shadow locate tier over the answer's units; empty without rc.Pages
-	Judge            *ReplayJudgeCost // nil when the judge did not run
+	Judge            *ReplayJudgeCost // nil when the judge did not run; set even when it failed
+	// JudgeCriteria: the judge was asked for evidence, i.e. judge.criteria is enabled and the resolved system/judge has the block.
+	JudgeCriteria bool
 }
 
 // ReplayRound re-scores rc under cfg's rubric via the live gate's own functions -
@@ -123,14 +125,10 @@ func ReplayRound(ctx context.Context, cfg Config, judge JudgeFactory, rc ReplayC
 
 	v := verdict{}
 	if judge != nil {
-		question := &genai.Content{Role: genai.RoleUser, Parts: []*genai.Part{{Text: rc.Task}}}
-		timing, started := newJudgeRoundTiming(), time.Now()
-		cfg.judgeTiming = timing
-		v, err = runJudgeAgent(ctx, judge, cfg, question, rc.Answer, act, judgeDet, nil, func(*genai.Part) bool { return true })
+		v, res.Judge, res.JudgeCriteria, err = replayJudge(ctx, judge, cfg, rc, act, judgeDet)
 		if err != nil {
 			return res, fmt.Errorf("vetting: replay judge round: %w", err)
 		}
-		res.Judge = &ReplayJudgeCost{Seconds: time.Since(started).Seconds(), OutputTokens: timing.outTokens, ThoughtTokens: timing.thoughtTokens}
 	}
 	v = mergeDeterministic(v, det, cfg)
 	v = applyRubricSpecs(v, cfg.RubricSpecs)
@@ -150,6 +148,19 @@ func ReplayRound(ctx context.Context, cfg Config, judge JudgeFactory, rc ReplayC
 		})
 	}
 	return res, nil
+}
+
+// replayJudge runs the judge and reports what it cost, even when it fails. evidence says whether the
+// round asked for per-criterion evidence, which needs the resolved system/judge to carry the block.
+func replayJudge(ctx context.Context, judge JudgeFactory, cfg Config, rc ReplayCase, act workerActivity, det map[string]criterionScore) (v verdict, cost *ReplayJudgeCost, evidence bool, err error) {
+	question := &genai.Content{Role: genai.RoleUser, Parts: []*genai.Part{{Text: rc.Task}}}
+	timing, started := newJudgeRoundTiming(), time.Now()
+	cfg.judgeTiming = timing
+	if p, perr := judgePromptFor(ctx, cfg); perr == nil {
+		evidence = p.withEvidence(cfg.Decisions.Enabled(judgeCriteria.ID)).evidence
+	}
+	v, err = runJudgeAgent(ctx, judge, cfg, question, rc.Answer, act, det, nil, func(*genai.Part) bool { return true })
+	return v, &ReplayJudgeCost{Seconds: time.Since(started).Seconds(), OutputTokens: timing.outTokens, ThoughtTokens: timing.thoughtTokens}, evidence, err
 }
 
 // askJudgeCriteria is live's observeCriteria run inline: judge.criteria's answer per askable criterion,

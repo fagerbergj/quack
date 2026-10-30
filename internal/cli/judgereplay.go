@@ -45,9 +45,12 @@ type ReplayOptions struct {
 // ReplayReport is `quack judge replay --json`'s whole output: sorted, rounded and timestamp-free so two
 // runs over one recording diff cleanly. Consistency is set only when --repeat measured something.
 type ReplayReport struct {
-	Repeat      int                 `json:"repeat"`
-	Consistency *ReplayConsistency  `json:"consistency,omitempty"`
-	Rounds      []ReplayRoundReport `json:"rounds"`
+	Repeat int `json:"repeat"`
+	// JudgeCriteria: some round's judge was asked for evidence, i.e. the "on" arm really ran (the point is enabled
+	// and the resolved system/judge carries the evidence block). False on an on-arm config means the prompt lacks it.
+	JudgeCriteria bool                `json:"judge_criteria"`
+	Consistency   *ReplayConsistency  `json:"consistency,omitempty"`
+	Rounds        []ReplayRoundReport `json:"rounds"`
 }
 
 // ReplayConsistency summarises every --repeat measurement in the report. Agreement is the fraction of
@@ -116,15 +119,17 @@ type ReplayRoundReport struct {
 	// Spread: the whole round's pass/fail (every criterion at or above threshold) across --repeat passes.
 	Spread *ReplaySpread `json:"spread,omitempty"`
 	// Judge: the first judge pass's wall time and generated tokens; absent when the judge did not run.
-	Judge *vetting.ReplayJudgeCost `json:"judge,omitempty"`
+	Judge         *vetting.ReplayJudgeCost `json:"judge,omitempty"`
+	judgeCriteria bool                     // the judge was asked for evidence this round; feeds ReplayReport.JudgeCriteria
 	// Passes: with --repeat, every pass's judge cost and judge-scored criteria, first pass included.
 	Passes []ReplayPass `json:"passes,omitempty"`
 }
 
 // ReplayPass is one judge pass of a --repeat run.
 type ReplayPass struct {
-	Judge    *vetting.ReplayJudgeCost `json:"judge,omitempty"`
-	Criteria []ReplayPassCriterion    `json:"criteria"`
+	Judge    *vetting.ReplayJudgeCost `json:"judge,omitempty"` // set even when the pass failed: what it spent
+	Criteria []ReplayPassCriterion    `json:"criteria,omitempty"`
+	Error    string                   `json:"error,omitempty"`
 }
 
 // ReplayPassCriterion is a judge-scored criterion's score, evidence and point answer in one pass.
@@ -462,7 +467,8 @@ func RunJudgeReplay(ctx context.Context, cfg *config.Config, sess *bundle.Sessio
 		// stderr progress: a --repeat run over many rounds is otherwise silent until the end
 		fmt.Fprintf(os.Stderr, "replayed %d/%d %s %s exit=%d\n", i+1, len(rounds), rep.Node, rep.Round, code)
 	}
-	report := ReplayReport{Repeat: max(opts.Repeat, 1), Consistency: consistencyOf(reports), Rounds: reports}
+	report := ReplayReport{Repeat: max(opts.Repeat, 1), Consistency: consistencyOf(reports), Rounds: reports,
+		JudgeCriteria: slices.ContainsFunc(reports, func(r ReplayRoundReport) bool { return r.judgeCriteria })}
 	if asJSON {
 		_ = WriteJSON(out, report)
 	} else {
@@ -558,13 +564,13 @@ func replayOneRound(ctx context.Context, cfg *config.Config, sess *bundle.Sessio
 		}
 	}
 	res, err := vetting.ReplayRound(ctx, gc, jf, rc)
+	rep.Judge, rep.judgeCriteria = roundedCost(res.Judge), res.JudgeCriteria
 	if err != nil {
 		rep.Skipped = err.Error()
 		return rep, 1
 	}
 	rep.ArtifactsWritten = res.ArtifactsWritten
 	rep.Units = unitRows(res.Units)
-	rep.Judge = roundedCost(res.Judge)
 	rep.Criteria = compareCriteria(res, recordedFor(sess, jr), jf != nil)
 	var incomplete bool
 	rep.Spread, rep.Passes, rep.Note, incomplete = noteRepeatSpread(ctx, gc, jf, rc, res, opts.Repeat, rep.Criteria, rep.Note)
@@ -590,7 +596,7 @@ func noteRepeatSpread(ctx context.Context, gc vetting.Config, jf vetting.JudgeFa
 	}
 	round, passes, err := addRepeatSpread(ctx, gc, jf, rc, res, repeat, crit)
 	if err != nil {
-		return nil, nil, strings.TrimSpace(note + " repeat: " + err.Error()), true
+		return nil, passes, strings.TrimSpace(note + " repeat: " + err.Error()), true
 	}
 	return round, passes, note, false
 }
@@ -608,7 +614,8 @@ func addRepeatSpread(ctx context.Context, gc vetting.Config, jf vetting.JudgeFac
 	for i := 1; i < repeat; i++ {
 		res, err := vetting.ReplayRound(ctx, gc, jf, rc)
 		if err != nil {
-			return nil, nil, fmt.Errorf("pass %d: %w", i+1, err)
+			passes = append(passes, ReplayPass{Judge: roundedCost(res.Judge), Error: err.Error()})
+			return nil, passes, fmt.Errorf("pass %d: %w", i+1, err)
 		}
 		passes = append(passes, passOf(res))
 		roundPassed = append(roundPassed, passedAll(res))
