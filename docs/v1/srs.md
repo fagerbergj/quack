@@ -54,10 +54,12 @@ Areas follow the layers in [cloud-agent-layers.svg](cloud-agent-layers.svg). The
 
 | ID | Level | Requirement | Trace |
 | --- | --- | --- | --- |
-| DEP-1 | MUST | Deploy an agent from one versioned artifact and one manifest declaring its model, agent roles, pinned extension and knowledge versions, egress allowlist, gated actions, turn limit, checker revision limit and retention. | P, D24, D27, J1 |
-| DEP-2 | MUST | Let one agent be changed and redeployed without redeploying any other. | P |
-| DEP-3 | MUST | Start new sessions on an agent's new pins while running sessions finish on the versions they started with. | D27 |
+| DEP-1 | MUST | Define an agent as a versioned definition declaring its model, agent roles and prompts, selected extensions, skill and rubric versions, runtime image version, isolation runtime class, egress allowlist, gated actions and approval chains, turn limit, checker revision limit and retention. | P, D24, D27, D48, J1 |
+| DEP-2 | MUST | Let one agent be changed without changing or redeploying any other. | P, D48 |
+| DEP-3 | MUST | Start new sessions on an agent's newest definition version while running sessions finish on the version they started with. | D27, D48 |
 | DEP-4 | MUST | Give each agent its own identity and no ambient credentials. | P |
+| DEP-5 | MUST | Load agent definitions from fixtures bundled in extensions, from files, and from the UI, where the operator can create, fork and edit them. Every edit creates an immutable version; a session keeps the version it started on. | D48 |
+| DEP-6 | MUST | Mark each agent draft or promoted. Only promoted agents can be bound to unattended triggers, and promotion requires the agent's benchmark. | D50 |
 
 ### 2.4 Runtime
 
@@ -121,7 +123,7 @@ Areas follow the layers in [cloud-agent-layers.svg](cloud-agent-layers.svg). The
 | ART-2 | MUST | Validate writes to declared artifact paths and report every schema problem at once. | D42 |
 | ART-3 | MUST | Seal an artifact when it goes to a checker or is delivered: snapshot it into the session log as an immutable version, and attach every check verdict to that version. | D42, UI-7 |
 | ART-4 | MUST | Deliver a sealed version by reference, so the delivered content is exactly the checked content. | D42 |
-| ART-5 | MUST | Keep sealed versions after the workspace is deleted, and index them across sessions by kind, session and time. | D42, R7, D10 |
+| ART-5 | MUST | Keep sealed versions after the workspace is deleted, and index them across sessions by kind, session and time, with full-text search over their content. | D42, R7, D10, A15 |
 | ART-6 | MUST | Render kinds without a renderer as Markdown or JSON. Humans do not edit artifacts; they steer. | D42, D43 |
 
 ### 2.9 Model access
@@ -150,7 +152,7 @@ Areas follow the layers in [cloud-agent-layers.svg](cloud-agent-layers.svg). The
 | OBS-2 | MUST | Price local model usage at cloud-equivalent rates, and attribute cost per session, run, agent and model. | P, D29 |
 | OBS-3 | MUST | Show live cost and status to the session's participants. | P, D31 |
 | OBS-4 | MUST | Record every run so it can be replayed against another model, prompt or extension version. | D10 |
-| OBS-5 | MUST | Block an agent's change (model, extension pin, knowledge pin) from reaching prod until its benchmark has run on the candidate. | D10, D27 |
+| OBS-5 | MUST | Require a passing benchmark before an agent is promoted, and before a new definition version of a promoted agent serves its unattended triggers. | D10, D27, D50 |
 | OBS-6 | SHOULD | Continue a trace across a restart. | P |
 
 ### 2.12 Web UI
@@ -160,7 +162,7 @@ Areas follow the layers in [cloud-agent-layers.svg](cloud-agent-layers.svg). The
 | UI-1 | MUST | Start and follow work: start a session, watch it live, steer, queue, abort. | D30 |
 | UI-2 | MUST | Provide one approvals inbox across sessions. | D30 |
 | UI-3 | MUST | List artifacts across sessions and show each as a finished, readable thing with its versions and check status, separate from the transcript. | D30, D42 |
-| UI-4 | MUST | Let the operator see agents and pins, run and compare benchmarks, see cost, and list, inspect, retry, abort and delete sessions. | D30, P |
+| UI-4 | MUST | Let the operator see, create, fork, edit, diff and promote agents, run and compare benchmarks, see cost, and list, inspect, retry, abort and delete sessions. | D30, P |
 | UI-5 | MUST | Host extension pages (e.g. the Sleeper page) in the same shell and visual language. | S2 |
 | UI-6 | MUST | Install as a PWA and send web push when an approval waits, an artifact is ready, or a session is parked. | D22 |
 | UI-7 | MUST | Answer "why N rounds, which check failed, what it cost, which calls were rejected" within one screen of a session. | D30 |
@@ -194,10 +196,10 @@ Areas follow the layers in [cloud-agent-layers.svg](cloud-agent-layers.svg). The
 
 | ID | Level | Requirement | Trace |
 | --- | --- | --- | --- |
-| NFR-SEC-1 | MUST | Sessions share no kernel, memory, filesystem or credentials. Agent processes run as non-root. | P |
+| NFR-SEC-1 | MUST | Sessions share no memory, filesystem or credentials, and agent code never reaches the host kernel directly: each session runs in a microVM by default or, if its agent chooses, under a user-space kernel. Agent processes run as non-root. | P, A7 |
 | NFR-SEC-2 | MUST | Egress is deny-by-default, with a reviewed per-agent allowlist, enforced in the home deployment. | P, D25 |
 | NFR-SEC-3 | MUST | Credentials are injected at run time, short-lived and scoped, and never baked into images or written to disk. | P |
-| NFR-SEC-4 | MUST | Gated actions, egress allowlists, permitted models and limits are configured per agent and reviewable as code. | P |
+| NFR-SEC-4 | MUST | Gated actions, egress allowlists, permitted models and limits are configured per agent and reviewable as versioned config: every change is a diffable version in the audit record, definitions export to and import from files, and egress or gate changes made in the UI are flagged. | P, D49 |
 | NFR-SEC-5 | MUST | Session state is encrypted at rest and in transit and deletable on request. | P |
 | NFR-SEC-6 | MUST | Trace attributes carry identifiers and metadata only by default; prompt and output content is opt-in. | P |
 

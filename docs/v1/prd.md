@@ -35,7 +35,7 @@ Teams, per-team budgets and acting as a delegated user identity are out of v1 (D
 2. **A small core that everything extends.** The judge, memory, planning, workflows, schedules and every workload are extensions on one versioned contract; core has no domain or rubric knowledge (D14–D17, D21, D27).
 3. **Durable sessions.** A crash, redeploy or days of idleness never loses committed work or repeats completed steps (platform requirements, kept by D1).
 4. **Fast enough to use.** p90 per session, including checker time: code review 10 minutes, research report 8, one checker round 3 (D9, D46).
-5. **Measured changes.** Every agent has a benchmark built from real sessions, and no model, prompt or extension change ships without beating or matching it (D10, D27).
+5. **Measured changes.** Agents are easy to create and try as drafts, but only an agent that passes a benchmark built from real sessions is promoted to run unattended, and a promoted agent's changes must match or beat it (D10, D48, D50).
 6. **A calm UI built around jobs.** Four jobs: start and follow work, approve, read artifacts, operate (D30).
 7. **Cloud-shaped from day one.** It runs on one home server, but sessions are isolated units behind a container contract, so another host or AgentCore needs no agent or extension code change (D1, D4).
 
@@ -65,7 +65,7 @@ Reports, reviews and Sleeper suggestions are artifacts: finished products, liste
 
 ### 4. Operate
 
-The operator sees agents and their pinned extension and prompt versions, runs and compares benchmarks, sees per-session cost at cloud-equivalent prices, and handles sessions that are parked after crash loops or failed. The CLI does the same for scripts (D23, D29, D30).
+The operator browses agents (fixtures shipped by extensions, files, and their own), creates and forks them in the UI, diffs versions and promotes them once benchmarked; runs and compares benchmarks, sees per-session cost at cloud-equivalent prices, and handles sessions that are parked after crash loops or failed. The CLI does the same for scripts (D23, D29, D30, D48, D50).
 
 ## Launch workloads
 

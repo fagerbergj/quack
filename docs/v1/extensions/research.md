@@ -22,7 +22,7 @@ Status: draft, 2026-10-30. Priority 1 of the launch workloads (D2). Core terms a
 | RES-4 | MUST | When the checker's revision limit or the session's limits are reached with checks still failing, deliver the report with each failure marked inline and a "not fully checked" banner. | R3, J1 |
 | RES-5 | MUST | Keep the session open after delivery. The agent decides each follow-up's shape: by default a direct, checked answer in the session; a follow-up that changes the findings produces a new report version. | R4 |
 | RES-6 | MUST | Provide a report reading view with sources and check status, Markdown and PDF export, and send-to-reMarkable as a gated action. | R6, RM3 |
-| RES-7 | MUST | Keep an index of past reports (service half) that later research sessions can search and cite. | R7, A2 |
+| RES-7 | MUST | Search and cite past reports and reMarkable transcripts through core's artifact index. | R7, A15 |
 
 ## Uses from core
 
