@@ -93,6 +93,10 @@ Keep: gated, structured delivery; one core with extensions layered on it; review
 - **D51 Build GitHub first** (2026-10-30, amends the PRD release plan order). Artifacts, a minimal judge, agent definitions and the GitHub extension are built before research so v1 can dogfood on its own pull requests; research stays first by value (D2).
 - **D52 Switch outright** (2026-10-30, amends the PRD release plan). Once the v1 GitHub extension works, the existing GitHub App points at v1 and v0's reviewer retires; there is no side-by-side period.
 - **D53 Benchmark the first reviewer** (2026-10-30, a bootstrap exception to EV2's 20 cases). Before D52's switch, the v1 reviewer replays 10 recent pull requests v0 reviewed, deliveries blocked, and its findings and cost are compared with v0's; it is promoted and switched in only if it holds up. EV2's 20-case bar stays for later promotions.
+- **D54 Weighted rubrics with more than three levels** (2026-10-30). The v1 reviewer's rubric is weighted and finer-grained than v0's 0-3 scale; its form follows current LLM-as-a-judge practice (to be researched), ported from v0's five criteria after audit (D11).
+- **D55 Reviewer prompt rewritten for v1.** v0's review doctrine, rewritten for v1's mechanics and much shorter; the 10-PR benchmark (D53) is its evidence.
+- **D56 GitHub auth as in v0.** The v1 GitHub extension authenticates the way v0's does (App JWT, installation tokens, the same credential path into the session), rather than a new shortcut.
+- **D57 Blast radius before the switch.** G2's blast-radius evidence, through the pi-lsp adapter (A16), ships before the GitHub switch so the benchmark measures it.
 
 ## Research extension
 
