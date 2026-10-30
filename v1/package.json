@@ -9,7 +9,7 @@
     "node": ">=26.13"
   },
   "scripts": {
-    "test": "node --test 'packages/*/test/*.test.ts'",
+    "test": "node --test --test-force-exit --test-timeout=30000 'packages/*/test/*.test.ts'",
     "typecheck": "tsc -p tsconfig.json"
   },
   "devDependencies": {
