@@ -96,10 +96,8 @@ func (j *judgeRounds) judgeCriteriaAsks(round int, v verdict) []criterionAsk {
 	return asks
 }
 
-// observeCriteria asks judge.criteria about each judged criterion after the round's verdict, on its own
-// goroutine. Asks take bulkLane, so a one-slot Clef never has more than one of them queued ahead of plan.accept
-// (a round holds up to a dozen asks, about 0.9 s each, 5-12 s of Clef per judge round). Enabling the point in
-// prod is a capacity decision alongside research.source, which shares the lane.
+// observeCriteria asks about each judged criterion on its own goroutine, one at a time through bulkLane so
+// plan.accept never waits behind more than one. A round is 5-12 asks, 5-12 s of Clef: size it with research.source.
 func (j *judgeRounds) observeCriteria(ctx context.Context, round int, v verdict) {
 	if !j.cfg.Decisions.Enabled(judgeCriteria.ID) {
 		return
