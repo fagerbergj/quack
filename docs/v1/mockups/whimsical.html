@@ -1,0 +1,1149 @@
+<title>Quack Pond Mockups</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Caveat:wght@600;700&family=Fredoka:wght@500;600;700&display=swap">
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.1.11"></script>
+<style type="text/tailwindcss">
+/* Layout: labelled left rail; Sessions is a two-pane workspace (list + selected session). Palette: mallard duck (green head, wing-patch blue, bill ochre, green-grey neutrals). */
+:root { color-scheme: light dark; }
+:root[data-theme='light'] { color-scheme: light; }
+:root[data-theme='dark'] { color-scheme: dark; }
+@theme {
+  --color-canvas: light-dark(#fcfdfc, #0b0f0e);
+  --color-surface: light-dark(#ffffff, #121816);
+  --color-soft: light-dark(#f3f6f4, #182120);
+  --color-line: light-dark(#e4e9e6, #222c29);
+  --color-line-strong: light-dark(#d3dbd7, #2f3a36);
+  --color-ink: light-dark(#0f1513, #e8eeeb);
+  --color-ink-2: light-dark(#36413c, #bfc9c4);
+  --color-muted: light-dark(#66726d, #8a9590);
+  --color-on-ink: light-dark(#ffffff, #0f1513);
+  /* Mallard head green is the brand mark; accent-ink is its readable text form. */
+  --color-accent: #1f7a63;
+  --color-accent-ink: light-dark(#17614f, #6fd1b0);
+  /* Bill ochre, as a tint. */
+  --color-warm: light-dark(#fbf2dc, #2a2414);
+  /* Wing-patch blue-violet marks running and selected states. */
+  --color-info: light-dark(#3446a0, #b4bdff);
+  --color-info-bg: light-dark(#ecefff, #1e2347);
+  --color-success: light-dark(#2f6e1c, #97d77a);
+  --color-success-bg: light-dark(#ecf6e4, #18260f);
+  --color-warning: light-dark(#8a5a00, #e8b85a);
+  --color-warning-bg: light-dark(#fbf2dc, #2a2414);
+  --color-danger: light-dark(#b42318, #ff8f85);
+  --color-danger-bg: light-dark(#fdecec, #2e1616);
+  --color-danger-line: light-dark(#f5c2c0, #6b2a26);
+  --color-link: light-dark(#2f5fb3, #8fb3ff);
+  --color-link-bg: light-dark(#eaf1ff, #16233c);
+  --color-shade: light-dark(rgb(15 21 19 / 0.18), rgb(0 0 0 / 0.55));
+  --color-shade-soft: light-dark(rgb(15 21 19 / 0.05), rgb(255 255 255 / 0.06));
+  --shadow-card: 0 1px 2px var(--color-shade-soft);
+  --shadow-thumb: 0 1px 2px var(--color-shade);
+  --shadow-lift: 0 8px 24px -10px var(--color-shade);
+  --shadow-float: 0 8px 24px -14px var(--color-shade);
+  --shadow-ring: 0 0 0 4px var(--color-shade-soft);
+  --shadow-glow: 0 0 0 4px rgb(31 122 99 / 0.12);
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+html { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, 'SF Pro Text', 'Segoe UI', Inter, sans-serif;
+  font-synthesis: none; letter-spacing: -0.005em;
+  background: var(--color-canvas); color: var(--color-ink);
+}
+body::before {
+  content: ''; position: fixed; inset: 0 0 auto 0; height: 360px; z-index: -1; pointer-events: none;
+  background: radial-gradient(60% 100% at 15% 0%, rgb(31 122 99 / 0.06), transparent 70%),
+              radial-gradient(50% 90% at 85% 0%, rgb(52 70 160 / 0.05), transparent 70%);
+}
+h1, h2, h3 { text-wrap: balance; }
+h1, h2, h3, .wordmark { font-family: 'Fredoka', ui-rounded, 'SF Pro Rounded', system-ui, sans-serif; letter-spacing: -0.005em; font-weight: 600; }
+@keyframes bob { 0%, 100% { transform: translateY(0) rotate(-2deg); } 50% { transform: translateY(-4px) rotate(2deg); } }
+.bob { animation: bob 2.8s ease-in-out infinite; transform-origin: 50% 80%; }
+.ducklings svg { animation: bob 1.4s ease-in-out infinite; }
+.ducklings svg:nth-child(2) { animation-delay: 0.2s; }
+.ducklings svg:nth-child(3) { animation-delay: 0.4s; }
+@keyframes ripple { 0% { transform: scale(1); opacity: 0.55; } 100% { transform: scale(2.8); opacity: 0; } }
+.live-dot { position: relative; animation: none; }
+.live-dot::after { content: ''; position: absolute; inset: 0; border-radius: 9999px; background: inherit; animation: ripple 1.8s ease-out infinite; }
+@keyframes drift { to { background-position-x: 40px; } }
+@keyframes drift-back { to { background-position-x: -40px; } }
+@keyframes swim { 0% { left: -18%; } 100% { left: 104%; } }
+@keyframes sway { 0%, 100% { transform: rotate(-3deg); } 50% { transform: rotate(3deg); } }
+@keyframes pop { 0%, 100% { transform: scale(0.6); opacity: 0; } 15%, 70% { transform: scale(1); opacity: 1; } }
+.pond { background: linear-gradient(180deg, var(--color-surface) 0%, color-mix(in oklab, var(--color-accent) 9%, var(--color-surface)) 62%, color-mix(in oklab, #3d8fb5 18%, var(--color-surface)) 100%); }
+.waves { height: 14px; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='14' viewBox='0 0 40 14'%3E%3Cpath d='M0 7 Q10 1 20 7 T40 7 V14 H0Z' fill='%233d8fb5' fill-opacity='0.22'/%3E%3C/svg%3E") repeat-x; animation: drift 6s linear infinite; }
+.waves.back { opacity: 0.6; animation: drift-back 9s linear infinite; transform: translateY(5px); }
+.swimmer { position: absolute; bottom: 14px; animation: swim 26s linear infinite; transform: scaleX(-1); }
+.swimmer > svg { animation: bob 1.6s ease-in-out infinite; }
+.reed { transform-origin: bottom center; animation: sway 4s ease-in-out infinite; }
+.hand { font-family: 'Caveat', 'Comic Neue', cursive; font-weight: 700; }
+.quack-bubble { animation: none; opacity: 0; transform: scale(0.6); transition: all 0.2s; }
+.logo-link:hover .quack-bubble, .logo-link:focus-visible .quack-bubble { opacity: 1; transform: scale(1); }
+.feet { height: 14px; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='44' height='14' viewBox='0 0 44 14'%3E%3Cpath d='M6 2 L9 8 L12 2 Q9 5 6 2Z M3 4 L9 12 L15 4' fill='%23e3a92b' fill-opacity='0.55'/%3E%3Cpath d='M28 6 L31 12 L34 6 Q31 9 28 6Z' fill='%23e3a92b' fill-opacity='0.35'/%3E%3C/svg%3E") repeat-x; }
+.rubber { animation: bob 2.2s ease-in-out infinite; }
+.wave { background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='8' viewBox='0 0 40 8'%3E%3Cpath d='M0 4 Q10 0 20 4 T40 4' fill='none' stroke='%231f7a63' stroke-opacity='0.35' stroke-width='1.6'/%3E%3C/svg%3E") repeat-x center; height: 8px; }
+.md > * { margin: 0 0 0.7em; }
+.md > *:last-child { margin-bottom: 0; }
+.md ul { list-style: disc; padding-left: 1.25em; }
+.md li + li { margin-top: 0.25em; }
+.md h3 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; margin-top: 1.2em; }
+.md code { font-family: var(--font-mono); font-size: 0.88em; background: var(--color-soft); border-radius: 4px; padding: 0.1em 0.3em; }
+.md strong { font-weight: 600; }
+.cite { font-family: var(--font-mono); font-size: 10.5px; font-weight: 600; color: var(--color-link); vertical-align: 2px; margin-left: 1px; }
+.flag { background: var(--color-warning-bg); box-shadow: 0 0 0 2px var(--color-warning-bg); border-radius: 3px; }
+del.diff { background: var(--color-danger-bg); color: var(--color-danger); text-decoration: line-through; border-radius: 3px; }
+ins.diff { background: var(--color-success-bg); color: var(--color-success); text-decoration: none; border-radius: 3px; }
+@keyframes blink { 0%, 80%, 100% { opacity: 0.25; } 40% { opacity: 1; } }
+.typing span { animation: blink 1.2s infinite both; }
+.typing span:nth-child(2) { animation-delay: 0.15s; }
+.typing span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.live-dot { animation: pulse-dot 1.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
+.navlink[aria-current="page"] { background: var(--color-soft); color: var(--color-ink); font-weight: 600; box-shadow: inset 2px 0 0 var(--color-accent); }
+.tablink[aria-current="page"] { color: var(--color-accent-ink); }
+.row[aria-current="true"] { background: var(--color-soft); box-shadow: inset 2px 0 0 var(--color-accent); }
+.select-box { display: none; }
+[data-selecting="true"] .select-box { display: inline-block; }
+@media (max-width: 1023px) {
+  [data-view="session"] .ws-list, [data-view="new"] .ws-list { display: none; }
+  [data-view="sessions"] .ws-main { display: none; }
+}
+</style>
+
+<!-- Desktop rail -->
+<aside class="fixed inset-y-0 left-0 z-30 hidden w-[224px] flex-col border-r border-line bg-canvas/90 backdrop-blur-md lg:flex">
+  <a href="#sessions" title="quack!" class="logo-link relative flex items-center gap-2.5 px-5 pb-3 pt-5 text-[19px] text-ink no-underline wordmark"><span class="quack-bubble hand absolute left-[54px] top-[-2px] rounded-full rounded-bl-none bg-warm px-2 text-[15px] text-warning">quack!</span>
+    <svg width="30" height="30" viewBox="0 0 96 96" aria-hidden="true" class="bob"><rect width="96" height="96" rx="26" fill="#1f7a63"/><ellipse cx="52" cy="62" rx="26" ry="14" fill="#fff"/><circle cx="38" cy="40" r="14" fill="#fff"/><path d="M26 37 L9 42 L26 47 Z" fill="#e3a92b"/><circle cx="34" cy="36" r="2.6" fill="#0f1513"/><path d="M70 56 Q80 52 78 62" fill="#fff"/></svg>
+    quack
+  </a>
+  <div class="px-3 pb-3">
+    <button type="button" data-cmdk class="flex h-[34px] w-full cursor-pointer items-center gap-2 rounded-full border border-line bg-soft px-2.5 text-[13px] text-muted hover:border-line-strong hover:text-ink"><span data-icon="search"></span>Search or jump<kbd class="ml-auto rounded border border-line bg-surface px-1.5 font-mono text-[11px]">⌘K</kbd></button>
+  </div>
+  <nav aria-label="Main" class="flex flex-1 flex-col gap-5 overflow-y-auto px-3 pb-4 text-[13.5px]">
+    <div class="flex flex-col gap-0.5">
+      <a class="navlink flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-ink-2 no-underline hover:bg-soft hover:text-ink" href="#sessions" data-route="sessions session new"><span data-icon="activity"></span>Sessions<span class="ml-auto flex items-center gap-1 text-[12px] text-muted"><span class="live-dot h-1.5 w-1.5 rounded-full bg-info"></span>2</span></a>
+      <a class="navlink flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-ink-2 no-underline hover:bg-soft hover:text-ink" href="#inbox" data-route="inbox approval"><span data-icon="inbox"></span>Inbox<span class="ml-auto rounded-full bg-warning-bg px-1.5 text-[11px] font-semibold leading-[18px] text-warning">4</span></a>
+      <a class="navlink flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-ink-2 no-underline hover:bg-soft hover:text-ink" href="#artifacts" data-route="artifacts report review"><span data-icon="file"></span>Artifacts</a>
+    </div>
+    <div class="flex flex-col gap-0.5">
+      <p class="m-0 px-2.5 pb-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Apps</p>
+      <a class="navlink flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-ink-2 no-underline hover:bg-soft hover:text-ink" href="#sleeper" data-route="sleeper"><span data-icon="trophy"></span>Sleeper<span class="ml-auto text-[12px] text-warning">3 to do</span></a>
+      <a class="navlink flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-ink-2 no-underline hover:bg-soft hover:text-ink" href="#remarkable" data-route="remarkable"><span data-icon="pen"></span>reMarkable</a>
+      <a class="navlink flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-ink-2 no-underline hover:bg-soft hover:text-ink" href="#memory" data-route="memory"><span data-icon="bookmark"></span>Memory</a>
+    </div>
+    <div class="flex flex-col gap-0.5">
+      <p class="m-0 px-2.5 pb-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Operate</p>
+      <a class="navlink flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-ink-2 no-underline hover:bg-soft hover:text-ink" href="#agents" data-route="agents agent"><span data-icon="bot"></span>Agents</a>
+      <a class="navlink flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-ink-2 no-underline hover:bg-soft hover:text-ink" href="#evals" data-route="evals"><span data-icon="flask"></span>Evals</a>
+      <a class="navlink flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-ink-2 no-underline hover:bg-soft hover:text-ink" href="#schedules" data-route="schedules"><span data-icon="clock"></span>Schedules</a>
+    </div>
+  </nav>
+  <div class="flex items-center gap-2.5 border-t border-line px-5 py-3 text-[13px] text-ink-2">
+    <span aria-hidden="true" class="grid h-[28px] w-[28px] place-items-center rounded-full bg-info-bg text-[11px] font-semibold text-info">JF</span>
+    <span class="truncate text-[12px] text-muted">Sample data</span>
+    <button type="button" id="theme-toggle" class="ml-auto cursor-pointer rounded-lg px-2 py-1 text-xs font-medium text-muted hover:bg-soft hover:text-ink" title="Switch light or dark">Day / night</button>
+  </div>
+</aside>
+
+<!-- Phone top bar -->
+<header class="sticky top-0 z-20 flex items-center gap-2.5 border-b border-line bg-canvas/85 px-4 py-2.5 backdrop-blur-md lg:hidden">
+  <svg width="24" height="24" viewBox="0 0 96 96" aria-hidden="true"><rect width="96" height="96" rx="26" fill="#1f7a63"/><ellipse cx="52" cy="62" rx="26" ry="14" fill="#fff"/><circle cx="38" cy="40" r="14" fill="#fff"/><path d="M26 37 L9 42 L26 47 Z" fill="#e3a92b"/><circle cx="34" cy="36" r="2.6" fill="#0f1513"/><path d="M70 56 Q80 52 78 62" fill="#fff"/></svg>
+  <span id="phone-title" class="text-[15px] font-semibold tracking-[-0.015em]">Sessions</span>
+  <button type="button" data-cmdk class="ml-auto grid h-8 w-8 cursor-pointer place-items-center rounded-lg text-muted hover:bg-soft hover:text-ink" aria-label="Search or jump"><span data-icon="search"></span></button>
+</header>
+
+<main class="min-h-screen pb-24 lg:pb-10 lg:pl-[224px]">
+
+<!-- ============ SESSIONS WORKSPACE (list + selected session or new) ============ -->
+<section data-screen="sessions session new" id="workspace" data-view="sessions" data-selecting="false" hidden class="grid grid-cols-1 lg:h-dvh lg:grid-cols-[330px_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)]">
+
+  <!-- Session list -->
+  <section aria-label="Sessions" class="ws-list flex min-h-0 flex-col border-line lg:border-r">
+    <div class="flex flex-col gap-2.5 border-b border-line px-4 py-3">
+      <div class="flex items-center gap-2">
+        <h1 class="m-0 text-[17px] font-semibold tracking-[-0.015em]">Sessions</h1>
+        <button type="button" id="filter-toggle" class="ml-auto cursor-pointer rounded-lg px-2 py-1 text-xs font-medium text-muted hover:bg-soft hover:text-ink" aria-expanded="false" aria-controls="filters">Filter</button>
+        <button type="button" id="select-toggle" class=" cursor-pointer rounded-lg px-2 py-1 text-xs font-medium text-muted hover:bg-soft hover:text-ink">Select</button>
+        <a href="#new" aria-label="New session" class="inline-flex h-[30px] items-center gap-1.5 rounded-full bg-ink px-3 text-[12.5px] font-semibold text-on-ink no-underline hover:bg-ink-2"><span data-icon="plus"></span>New</a>
+      </div>
+      <label for="s-search" class="sr-only">Search sessions</label>
+      <input id="s-search" class="h-[34px] w-full rounded-full border border-line bg-soft px-3 text-[13px] outline-none transition focus:border-line-strong focus:bg-surface focus:shadow-ring" placeholder="Search titles, repos, agents" />
+      <div id="filters" hidden class="flex gap-2">
+        <label for="s-agent" class="sr-only">Agent</label>
+        <select id="s-agent" class="h-[30px] min-w-0 flex-1 cursor-pointer rounded-full border border-line bg-soft px-2 text-[12.5px] outline-none"><option>All agents</option><option>Researcher</option><option>Reviewer</option><option>Implementer</option><option>Sleeper jobs</option></select>
+        <label for="s-trigger" class="sr-only">Started by</label>
+        <select id="s-trigger" class="h-[30px] min-w-0 flex-1 cursor-pointer rounded-full border border-line bg-soft px-2 text-[12.5px] outline-none"><option>Any start</option><option>You</option><option>GitHub</option><option>Schedule</option><option>reMarkable</option></select>
+      </div>
+    </div>
+    <div id="bulk-bar" hidden class="flex items-center gap-2 border-b border-line bg-info-bg px-4 py-2 text-[12.5px] text-info">
+      <span class="font-semibold">2 selected</span>
+      <button type="button" class="ml-auto cursor-pointer rounded-lg border border-line bg-surface px-2.5 py-1 text-xs font-medium text-ink-2 hover:text-ink">Abort</button>
+      <button type="button" class="cursor-pointer rounded-lg border border-line bg-surface px-2.5 py-1 text-xs font-medium text-ink-2 hover:border-danger-line hover:text-danger">Delete</button>
+    </div>
+    <div class="flex-1 overflow-y-auto pb-4">
+      <p class="m-0 flex items-baseline gap-1.5 px-4 pb-1.5 pt-4 text-[13px] font-semibold text-ink">Needs you <span class="font-medium text-muted">2</span></p>
+      <a href="#approval" class="row mx-2 flex items-start gap-2.5 rounded-xl bg-warm/60 px-3 py-2.5 text-ink no-underline hover:bg-soft/70">
+        <input type="checkbox" class="select-box mt-1 accent-[var(--color-accent)]" aria-label="Select" />
+        <svg class="mt-0.5 flex-none" width="18" height="16" viewBox="0 0 18 16" aria-hidden="true"><circle cx="6" cy="9" r="5" fill="#1f7a63"/><path d="M10 8 L15 9.5 L10 11Z" fill="#e3a92b"/><circle cx="6.5" cy="7.5" r="1" fill="#fff"/><rect x="13.5" y="0" width="2.4" height="5" rx="1.2" fill="#c27d00"/><circle cx="14.7" cy="6.6" r="1.2" fill="#c27d00"/></svg>
+        <span class="flex min-w-0 flex-1 flex-col gap-0.5"><span class="truncate text-[13.5px] font-medium">quack#1826 · judge replay cost</span><span class="truncate text-[12px] text-ink-2">Approve posting the review</span></span>
+        <span class="whitespace-nowrap text-[11.5px] tabular-nums text-muted">12m</span>
+      </a>
+      <a href="#inbox" class="row mx-2 mt-1 flex items-start gap-2.5 rounded-xl bg-warm/60 px-3 py-2.5 text-ink no-underline hover:bg-soft/70">
+        <input type="checkbox" class="select-box mt-1 accent-[var(--color-accent)]" aria-label="Select" />
+        <svg class="mt-0.5 flex-none" width="18" height="16" viewBox="0 0 18 16" aria-hidden="true"><circle cx="6" cy="9" r="5" fill="#1f7a63"/><path d="M10 8 L15 9.5 L10 11Z" fill="#e3a92b"/><circle cx="6.5" cy="7.5" r="1" fill="#fff"/><rect x="13.5" y="0" width="2.4" height="5" rx="1.2" fill="#c27d00"/><circle cx="14.7" cy="6.6" r="1.2" fill="#c27d00"/></svg>
+        <span class="flex min-w-0 flex-1 flex-col gap-0.5"><span class="truncate text-[13.5px] font-medium">Quack v1 sandbox ideas</span><span class="truncate text-[12px] text-ink-2">Start the research it found?</span></span>
+        <span class="whitespace-nowrap text-[11.5px] tabular-nums text-muted">3h</span>
+      </a>
+      <p class="m-0 flex items-baseline gap-1.5 px-4 pb-1.5 pt-5 text-[13px] font-semibold text-ink">Running <span class="font-medium text-muted">2</span></p>
+      <a href="#session" class="row flex items-start gap-2.5 px-4 py-2.5 text-ink no-underline hover:bg-soft/70" data-row="session">
+        <input type="checkbox" class="select-box mt-1 accent-[var(--color-accent)]" aria-label="Select" checked />
+        <span class="live-dot mt-1.5 h-2 w-2 flex-none rounded-full bg-info"></span>
+        <span class="flex min-w-0 flex-1 flex-col gap-0.5"><span class="truncate text-[13.5px] font-medium">Speculative decoding for Qwen3 on 4×3090</span><span class="truncate text-[12px] text-ink-2">Researcher · revising 1 of 2</span><span class="relative mt-1.5 block h-3" aria-hidden="true"><span class="waves absolute inset-x-0 bottom-0 !h-[8px] rounded-full"></span><span class="rubber absolute bottom-0" style="left:calc(70% - 8px)"><svg width="16" height="12" viewBox="0 0 18 14" style="transform:scaleX(-1)"><ellipse cx="10" cy="9" rx="7" ry="4.5" fill="#fdfcf7" stroke="#2f3a36" stroke-opacity=".3"/><circle cx="5.5" cy="5" r="3.5" fill="#1f7a63"/><path d="M2.4 4.3 L0 5.2 L2.4 6.2 Z" fill="#e3a92b"/></svg></span></span></span>
+        <span class="whitespace-nowrap text-[11.5px] tabular-nums text-muted">4:12</span>
+      </a>
+      <a href="#sleeper" class="row flex items-start gap-2.5 px-4 py-2.5 text-ink no-underline hover:bg-soft/70">
+        <input type="checkbox" class="select-box mt-1 accent-[var(--color-accent)]" aria-label="Select" checked />
+        <span class="live-dot mt-1.5 h-2 w-2 flex-none rounded-full bg-info"></span>
+        <span class="flex min-w-0 flex-1 flex-col gap-0.5"><span class="truncate text-[13.5px] font-medium">Week 2 waivers</span><span class="truncate text-[12px] text-ink-2">Sleeper workflow · step 3 of 5</span><span class="relative mt-1.5 block h-3" aria-hidden="true"><span class="waves absolute inset-x-0 bottom-0 !h-[8px] rounded-full"></span><span class="rubber absolute bottom-0" style="left:calc(58% - 8px)"><svg width="16" height="12" viewBox="0 0 18 14" style="transform:scaleX(-1)"><ellipse cx="10" cy="9" rx="7" ry="4.5" fill="#fdfcf7" stroke="#2f3a36" stroke-opacity=".3"/><circle cx="5.5" cy="5" r="3.5" fill="#1f7a63"/><path d="M2.4 4.3 L0 5.2 L2.4 6.2 Z" fill="#e3a92b"/></svg></span></span></span>
+        <span class="whitespace-nowrap text-[11.5px] tabular-nums text-muted">0:48</span>
+      </a>
+      <p class="m-0 px-4 pb-1.5 pt-5 text-[13px] font-semibold text-ink">Recent</p>
+      <a href="#session" class="row flex items-start gap-2.5 px-4 py-2.5 text-ink no-underline hover:bg-soft/70">
+        <input type="checkbox" class="select-box mt-1 accent-[var(--color-accent)]" aria-label="Select" />
+        <span class="mt-1.5 h-2 w-2 flex-none rounded-full bg-danger"></span>
+        <span class="flex min-w-0 flex-1 flex-col gap-0.5"><span class="truncate text-[13.5px] font-medium">quack#1819 · fix replay flake</span><span class="truncate text-[12px] text-danger">Parked: go test ran out of memory 5×</span></span>
+        <button type="button" class="cursor-pointer rounded-lg border border-line bg-surface px-2 py-0.5 text-[11px] font-medium text-ink-2 hover:text-ink">Retry</button>
+      </a>
+      <a href="#report" class="row flex items-start gap-2.5 px-4 py-2.5 text-ink no-underline hover:bg-soft/70">
+        <input type="checkbox" class="select-box mt-1 accent-[var(--color-accent)]" aria-label="Select" />
+        <span class="mt-1.5 h-2 w-2 flex-none rounded-full bg-success"></span>
+        <span class="flex min-w-0 flex-1 flex-col gap-0.5"><span class="truncate text-[13.5px] font-medium">What changed in pi-durable 1.4</span><span class="truncate text-[12px] text-ink-2">Report v3 delivered · 6 of 6</span></span>
+        <span class="whitespace-nowrap text-[11.5px] tabular-nums text-muted">Oct 29</span>
+      </a>
+      <a href="#sleeper" class="row flex items-start gap-2.5 px-4 py-2.5 text-ink no-underline hover:bg-soft/70">
+        <input type="checkbox" class="select-box mt-1 accent-[var(--color-accent)]" aria-label="Select" />
+        <span class="mt-1.5 h-2 w-2 flex-none rounded-full bg-success"></span>
+        <span class="flex min-w-0 flex-1 flex-col gap-0.5"><span class="truncate text-[13.5px] font-medium">Week 2 lineup</span><span class="truncate text-[12px] text-ink-2">Sleeper · 2 changes suggested</span></span>
+        <span class="whitespace-nowrap text-[11.5px] tabular-nums text-muted">Tue</span>
+      </a>
+      <a href="#review" class="row flex items-start gap-2.5 px-4 py-2.5 text-ink no-underline hover:bg-soft/70">
+        <input type="checkbox" class="select-box mt-1 accent-[var(--color-accent)]" aria-label="Select" />
+        <span class="mt-1.5 h-2 w-2 flex-none rounded-full bg-success"></span>
+        <span class="flex min-w-0 flex-1 flex-col gap-0.5"><span class="truncate text-[13.5px] font-medium">quack#1824 · judge replay criteria</span><span class="truncate text-[12px] text-ink-2">Review posted · approved</span></span>
+        <span class="whitespace-nowrap text-[11.5px] tabular-nums text-muted">Mon</span>
+      </a>
+    </div>
+  </section>
+
+  <!-- Main pane -->
+  <div class="ws-main flex min-h-0 min-w-0 flex-col">
+
+    <!-- New session -->
+    <div data-sub="new sessions" class="mx-auto flex w-full max-w-[720px] flex-col gap-8 px-4 py-8 sm:px-8 lg:py-16">
+      <a href="#sessions" class="text-[13px] text-muted no-underline hover:text-ink lg:hidden">← Sessions</a>
+      <div class="flex flex-col gap-5">
+        <div class="pond relative overflow-hidden rounded-[28px] border border-line px-6 pb-20 pt-7">
+          <h2 class="relative z-10 m-0 text-[34px] leading-[1.1]">What should quack work on?</h2>
+          <p class="relative z-10 m-0 mt-2 text-[14px] text-ink-2">2 need you · 2 running</p>
+          <div aria-hidden="true" class="pointer-events-none absolute inset-x-0 bottom-0 h-[70px]">
+            <svg class="reed absolute bottom-3 left-4" width="30" height="58" viewBox="0 0 30 58"><path d="M8 58 Q6 30 9 6" stroke="#3f7d4f" stroke-width="2.5" fill="none"/><rect x="6.5" y="2" width="5" height="16" rx="2.5" fill="#7a4a32"/><path d="M18 58 Q20 34 17 16" stroke="#4f9461" stroke-width="2" fill="none"/><path d="M24 58 Q26 44 29 36" stroke="#4f9461" stroke-width="2" fill="none"/></svg>
+            <svg class="reed absolute bottom-3 right-6" style="animation-delay:-1.5s" width="26" height="50" viewBox="0 0 30 58"><path d="M8 58 Q6 30 9 6" stroke="#3f7d4f" stroke-width="2.5" fill="none"/><rect x="6.5" y="2" width="5" height="16" rx="2.5" fill="#7a4a32"/><path d="M18 58 Q20 34 17 16" stroke="#4f9461" stroke-width="2" fill="none"/></svg>
+            <span class="absolute bottom-[10px] left-[22%]"><svg width="44" height="20" viewBox="0 0 40 20"><ellipse cx="20" cy="10" rx="19" ry="8" fill="#3f9b6e" fill-opacity=".75"/><path d="M20 10 L36 4 L37 9Z" fill="var(--color-surface)"/></svg></span>
+            <span class="absolute bottom-[16px] left-[63%]"><svg width="32" height="15" viewBox="0 0 40 20"><ellipse cx="20" cy="10" rx="19" ry="8" fill="#3f9b6e" fill-opacity=".75"/><path d="M20 10 L36 4 L37 9Z" fill="var(--color-surface)"/></svg></span>
+            <div class="swimmer flex items-end gap-1"><svg width="46" height="34" viewBox="0 0 64 48"><ellipse cx="34" cy="32" rx="22" ry="11" fill="#fdfcf7" stroke="#2f3a36" stroke-opacity=".25"/><circle cx="20" cy="18" r="10" fill="#1f7a63"/><rect x="11" y="25" width="18" height="3" rx="1.5" fill="#fff"/><path d="M12 15 L1 19 L12 22 Z" fill="#e3a92b"/><circle cx="17" cy="15" r="1.8" fill="#fff"/><path d="M50 28 Q60 24 58 34" fill="#fdfcf7"/></svg><span class="mb-1 flex gap-1"><svg width="20" height="16" viewBox="0 0 18 14"><ellipse cx="10" cy="9" rx="7" ry="4.5" fill="#e9c46a"/><circle cx="5.5" cy="5" r="3.5" fill="#e9c46a"/><path d="M2.4 4.3 L0 5.2 L2.4 6.2 Z" fill="#d08a1d"/><circle cx="4.4" cy="4.2" r="0.8" fill="#0f1513"/></svg><svg width="20" height="16" viewBox="0 0 18 14"><ellipse cx="10" cy="9" rx="7" ry="4.5" fill="#e9c46a"/><circle cx="5.5" cy="5" r="3.5" fill="#e9c46a"/><path d="M2.4 4.3 L0 5.2 L2.4 6.2 Z" fill="#d08a1d"/><circle cx="4.4" cy="4.2" r="0.8" fill="#0f1513"/></svg><svg width="20" height="16" viewBox="0 0 18 14"><ellipse cx="10" cy="9" rx="7" ry="4.5" fill="#e9c46a"/><circle cx="5.5" cy="5" r="3.5" fill="#e9c46a"/><path d="M2.4 4.3 L0 5.2 L2.4 6.2 Z" fill="#d08a1d"/><circle cx="4.4" cy="4.2" r="0.8" fill="#0f1513"/></svg></span></div>
+            <div class="waves back absolute inset-x-0 bottom-0"></div>
+            <div class="waves absolute inset-x-0 bottom-0"></div>
+          </div>
+        </div>
+        <div class="relative">
+          <span aria-hidden="true" class="hand absolute -top-9 left-2 z-10 flex items-end gap-1 text-[20px] text-accent-ink">start here<svg width="34" height="26" viewBox="0 0 34 26"><path d="M2 4 Q20 2 26 20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/><path d="M20 17 L26 21 L28 14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg></span>
+        <form class="rounded-[22px] border border-line-strong bg-surface shadow-float transition focus-within:border-ink-2/40 focus-within:shadow-ring" onsubmit="event.preventDefault(); location.hash='session'">
+          <div class="flex items-end gap-1.5 p-3">
+            <button type="button" class="grid h-10 w-10 flex-none cursor-pointer place-items-center rounded-xl text-muted hover:bg-soft hover:text-ink" aria-label="Attach file"><span data-icon="paperclip"></span></button>
+            <label for="new-input" class="sr-only">Question or task</label>
+            <textarea id="new-input" rows="3" class="max-h-[220px] min-h-[40px] flex-1 resize-none bg-transparent px-1 py-2 text-[15.5px] leading-relaxed outline-none placeholder:text-muted" placeholder="Ask a question, paste a PR or issue URL, or describe a task"></textarea>
+            <button class="grid h-10 w-10 flex-none cursor-pointer place-items-center rounded-xl bg-ink text-on-ink hover:bg-ink-2" aria-label="Start"><span data-icon="arrow-up"></span></button>
+          </div>
+          <div class="flex flex-wrap items-center gap-2 border-t border-line px-3.5 py-2">
+            <label for="agent-pick" class="text-[12px] text-muted">Agent</label>
+            <select id="agent-pick" class="h-[28px] cursor-pointer rounded-lg border-0 bg-transparent px-1 text-[13px] font-medium text-ink outline-none hover:bg-soft"><option>Researcher</option><option>Reviewer</option><option>Implementer</option><option>rust-reviewer (draft)</option></select>
+            <span class="ml-auto text-[12px] text-muted">Checked before anything leaves</span>
+          </div>
+        </form>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <a href="#session" class="rounded-full border border-line bg-surface px-3.5 py-1.5 text-[13px] text-ink-2 no-underline transition hover:border-line-strong hover:text-ink">Compare Kata and gVisor for build-heavy sandboxes</a>
+          <a href="#session" class="rounded-full border border-line bg-surface px-3.5 py-1.5 text-[13px] text-ink-2 no-underline transition hover:border-line-strong hover:text-ink">Review a pull request</a>
+          <a href="#sleeper" class="rounded-full border border-line bg-surface px-3.5 py-1.5 text-[13px] text-ink-2 no-underline transition hover:border-line-strong hover:text-ink">Check this week's lineup</a>
+          <a href="#remarkable" class="rounded-full border border-line bg-surface px-3.5 py-1.5 text-[13px] text-ink-2 no-underline transition hover:border-line-strong hover:text-ink">Ingest my notes</a>
+        </div>
+      </div>
+      <div class="flex flex-col gap-3">
+        <div class="flex items-baseline gap-2"><h3 class="m-0 text-sm font-semibold tracking-[-0.01em]">Waiting on you</h3><span class="text-[13px] text-muted">2</span><a href="#inbox" class="ml-auto text-[13px] text-link no-underline hover:underline">Inbox</a></div>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <a href="#approval" class="flex items-start gap-3 rounded-[22px] border border-line bg-surface p-4 text-ink no-underline transition hover:-translate-y-px hover:border-line-strong hover:shadow-lift">
+            <span class="mt-0.5 grid h-8 w-8 flex-none place-items-center rounded-lg bg-warm text-warning"><span data-icon="git"></span></span>
+            <span class="flex min-w-0 flex-col gap-1"><span class="text-[14.5px] font-semibold tracking-[-0.01em]">Post review to quack#1826</span><span class="text-[13px] text-muted">The judge was unsure about one finding</span></span>
+          </a>
+          <a href="#inbox" class="flex items-start gap-3 rounded-[22px] border border-line bg-surface p-4 text-ink no-underline transition hover:-translate-y-px hover:border-line-strong hover:shadow-lift">
+            <span class="mt-0.5 grid h-8 w-8 flex-none place-items-center rounded-lg bg-warm text-warning"><span data-icon="pen"></span></span>
+            <span class="flex min-w-0 flex-col gap-1"><span class="text-[14.5px] font-semibold tracking-[-0.01em]">Start research from your notes?</span><span class="text-[13px] text-muted">"Kata vs gVisor build times" · Quack v1 sandbox ideas</span></span>
+          </a>
+        </div>
+      </div>
+      <div class="feet w-full" aria-hidden="true"></div>
+      <p class="m-0 text-[13px] text-muted">Next up: Sleeper lineup refresh Thu 18:00 ET · <a href="#schedules" class="text-link no-underline hover:underline">Schedules</a></p>
+    </div>
+
+    <!-- Selected session -->
+    <div data-sub="session" hidden class="flex min-h-0 flex-1 flex-col">
+      <div class="border-b border-line bg-canvas/70">
+        <div class="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 sm:px-5">
+          <a href="#sessions" class="text-[13px] text-muted no-underline hover:text-ink lg:hidden">← Sessions</a>
+          <h2 class="m-0 min-w-0 flex-1 truncate text-[16px] font-semibold tracking-[-0.015em]" title="Speculative decoding for Qwen3 on 4×3090">Speculative decoding for Qwen3 on 4×3090</h2>
+          <span class="flex items-center gap-1.5 rounded-full bg-info-bg px-2 py-0.5 text-[11px] font-semibold text-info"><span class="live-dot h-1.5 w-1.5 rounded-full bg-info"></span>Revising · 1 of 2</span>
+          <span class="text-[12.5px] tabular-nums text-muted" title="Cloud-equivalent cost">$0.41 · 182k tok · 4:12</span>
+          <span class="flex -space-x-1.5" aria-label="2 people here">
+            <span class="grid h-[26px] w-[26px] place-items-center rounded-full border-2 border-canvas bg-info-bg text-[10px] font-semibold text-info" title="JF · owner, driver">JF</span>
+            <span class="grid h-[26px] w-[26px] place-items-center rounded-full border-2 border-canvas bg-success-bg text-[10px] font-semibold text-success" title="Guest · observer">MK</span>
+          </span>
+          <button type="button" id="find-toggle" class="grid h-[32px] w-[32px] cursor-pointer place-items-center rounded-full border border-line bg-surface text-ink-2 hover:text-ink" aria-label="Search this session"><span data-icon="search"></span></button>
+          <details class="relative">
+            <summary class="grid h-[32px] w-[32px] cursor-pointer list-none place-items-center rounded-full border border-line bg-surface text-ink-2 hover:text-ink [&::-webkit-details-marker]:hidden" aria-label="More actions"><span data-icon="dots"></span></summary>
+            <div class="absolute right-0 top-[38px] z-20 flex w-[240px] flex-col rounded-xl border border-line bg-surface p-1.5 text-[13px] shadow-lift">
+              <button type="button" class="cursor-pointer rounded-lg px-2.5 py-2 text-left text-ink hover:bg-soft">Fork from latest message</button>
+              <button type="button" class="cursor-pointer rounded-lg px-2.5 py-2 text-left text-ink hover:bg-soft">Re-run with another agent…</button>
+              <button type="button" class="cursor-pointer rounded-lg px-2.5 py-2 text-left text-ink hover:bg-soft">Hand off driving to…</button>
+              <button type="button" class="cursor-pointer rounded-lg px-2.5 py-2 text-left text-ink hover:bg-soft">Copy session link</button>
+              <hr class="my-1 border-line" />
+              <button type="button" class="cursor-pointer rounded-lg px-2.5 py-2 text-left text-danger hover:bg-danger-bg">Abort run</button>
+            </div>
+          </details>
+        </div>
+        <div id="find-bar" hidden class="flex items-center gap-2 border-t border-line px-4 py-2 sm:px-5">
+          <label for="find" class="sr-only">Find in session</label>
+          <input id="find" value="TP=4" class="h-[30px] flex-1 rounded-full border border-line bg-soft px-2.5 text-[13px] outline-none focus:border-line-strong focus:bg-surface" />
+          <span class="text-[12px] tabular-nums text-muted">2 of 3</span>
+          <button type="button" class="cursor-pointer rounded-lg border border-line bg-surface px-2 py-0.5 text-xs text-ink-2">↑</button>
+          <button type="button" class="cursor-pointer rounded-lg border border-line bg-surface px-2 py-0.5 text-xs text-ink-2">↓</button>
+        </div>
+      </div>
+      <div class="grid min-h-0 w-full flex-1 grid-cols-1 xl:grid-cols-[minmax(360px,1fr)_minmax(0,1.1fr)] xl:grid-rows-[minmax(0,1fr)]">
+        <section aria-label="Conversation" class="flex min-h-[60vh] flex-col border-line xl:min-h-0 xl:border-r">
+          <div class="flex flex-1 flex-col gap-4 overflow-y-auto px-4 py-5 sm:px-5" aria-live="polite">
+            <div class="self-end max-w-[85%] rounded-[22px] rounded-br-md bg-ink px-3.5 py-2.5 text-[14.5px] leading-relaxed text-on-ink">Which inference servers support speculative decoding for Qwen3 on 4×3090, and what speedups are reported?</div>
+            <details class="rounded-xl border border-line bg-surface px-3.5 py-2.5 text-[13px]">
+              <summary class="flex cursor-pointer list-none items-center gap-2 [&::-webkit-details-marker]:hidden"><span class="rounded-md bg-info-bg px-1.5 py-0.5 text-[10px] font-bold text-info">DECISION</span><span class="text-ink-2">Ask clarifying questions first?</span><span class="ml-auto font-medium text-ink">No</span></summary>
+              <p class="m-0 mt-2 text-ink-2">The question names the model, hardware and metric. Proceeding with two assumptions, listed at the top of the report.</p>
+            </details>
+            <details class="rounded-xl border border-line bg-surface px-3.5 py-2.5 text-[13px]">
+              <summary class="flex cursor-pointer list-none items-center gap-2 [&::-webkit-details-marker]:hidden"><span class="font-mono text-[12px] text-ink">codemode</span><span class="min-w-0 truncate text-muted">14 calls · web_search ×4, web_fetch ×9, paper_search ×1</span><span class="ml-auto whitespace-nowrap tabular-nums text-muted">41 s</span></summary>
+              <pre class="m-0 mt-2 overflow-x-auto rounded-lg bg-soft p-2.5 font-mono text-[12px] leading-relaxed text-ink-2">const hits = await Promise.all(queries.map(q =&gt; tools.web_search({ q })))
+const pages = await Promise.all(top(hits, 9).map(u =&gt; tools.web_fetch({ url: u })))
+print(summarize(pages))</pre>
+            </details>
+            <div class="flex items-center gap-1.5 text-xs font-medium text-muted"><span class="grid h-4 w-4 place-items-center rounded-full bg-soft text-[10px] text-accent-ink">✓</span>Report v1 sealed · checked in 2 min 10 s</div>
+            <div class="rounded-xl border border-danger-line bg-danger-bg/60 px-3.5 py-2.5 text-[13px]">
+              <p class="m-0 font-semibold text-danger">Judge: 5 of 6 checks passed</p>
+              <p class="m-0 mt-1 text-ink-2"><span class="font-mono text-[12px]">citations_support_claims</span>: source S7 doesn't mention tensor parallelism, but the report cites it for the <mark class="rounded bg-warning-bg px-0.5 text-ink">TP=4</mark> figure.</p>
+              <p class="m-0 mt-1 text-[12px] text-muted">Sent back with feedback · revision 1 of 2</p>
+            </div>
+            <div class="md max-w-[95%] text-[14.5px] leading-relaxed text-ink"><p>Replacing the TP=4 figure with the number from S9, which measured it on 4×3090. Re-reading S9's methodology section to confirm the batch size.</p></div>
+            <div class="ducklings flex items-end gap-1.5 text-[12px] text-muted" aria-label="Working"><svg width="30" height="22" viewBox="0 0 64 48"><ellipse cx="34" cy="32" rx="22" ry="11" fill="#fdfcf7" stroke="#2f3a36" stroke-opacity=".25"/><circle cx="20" cy="18" r="10" fill="#1f7a63"/><rect x="11" y="25" width="18" height="3" rx="1.5" fill="#fff"/><path d="M12 15 L1 19 L12 22 Z" fill="#e3a92b"/><circle cx="17" cy="15" r="1.8" fill="#fff"/><path d="M50 28 Q60 24 58 34" fill="#fdfcf7"/></svg><svg width="18" height="14" viewBox="0 0 18 14"><ellipse cx="10" cy="9" rx="7" ry="4.5" fill="#e9c46a"/><circle cx="5.5" cy="5" r="3.5" fill="#e9c46a"/><path d="M2.4 4.3 L0 5.2 L2.4 6.2 Z" fill="#d08a1d"/><circle cx="4.4" cy="4.2" r="0.8" fill="#0f1513"/></svg><svg width="18" height="14" viewBox="0 0 18 14"><ellipse cx="10" cy="9" rx="7" ry="4.5" fill="#e9c46a"/><circle cx="5.5" cy="5" r="3.5" fill="#e9c46a"/><path d="M2.4 4.3 L0 5.2 L2.4 6.2 Z" fill="#d08a1d"/><circle cx="4.4" cy="4.2" r="0.8" fill="#0f1513"/></svg><svg width="18" height="14" viewBox="0 0 18 14"><ellipse cx="10" cy="9" rx="7" ry="4.5" fill="#e9c46a"/><circle cx="5.5" cy="5" r="3.5" fill="#e9c46a"/><path d="M2.4 4.3 L0 5.2 L2.4 6.2 Z" fill="#d08a1d"/><circle cx="4.4" cy="4.2" r="0.8" fill="#0f1513"/></svg><span class="ml-1">working…</span></div>
+          </div>
+          <div class="border-t border-line bg-canvas/70 p-3 sm:p-4">
+            <form class="rounded-[22px] border border-line-strong bg-surface shadow-float transition focus-within:border-ink-2/40 focus-within:shadow-ring" onsubmit="event.preventDefault()">
+              <div class="flex items-center gap-2 border-b border-line px-3 py-1.5">
+                <div role="group" aria-label="When to deliver" class="inline-flex rounded-full border border-line bg-soft p-[3px]">
+                  <button type="button" aria-pressed="true" class="h-[26px] cursor-pointer rounded-full border-0 bg-surface px-2.5 text-xs font-semibold text-ink shadow-thumb">Steer now</button>
+                  <button type="button" aria-pressed="false" class="h-[26px] cursor-pointer rounded-full border-0 bg-transparent px-2.5 text-xs font-semibold text-muted hover:text-ink">Queue next</button>
+                </div>
+                <span class="ml-auto text-[12px] text-muted">You're driving · 1 queued</span>
+              </div>
+              <div class="flex items-end gap-1.5 p-2.5">
+                <label for="steer" class="sr-only">Message</label>
+                <textarea id="steer" rows="1" class="max-h-[220px] min-h-[40px] flex-1 resize-none bg-transparent px-1 py-2 text-[15px] leading-relaxed outline-none placeholder:text-muted" placeholder="Steer this run…"></textarea>
+                <button class="grid h-10 w-10 flex-none cursor-pointer place-items-center rounded-xl bg-ink text-on-ink hover:bg-ink-2" aria-label="Send"><span data-icon="arrow-up"></span></button>
+              </div>
+            </form>
+          </div>
+        </section>
+        <section aria-label="Work" class="flex min-h-0 min-w-0 flex-col bg-soft/50">
+          <div class="flex flex-wrap items-center gap-3 border-b border-line px-4 py-2.5 sm:px-5">
+            <div role="tablist" aria-label="Session detail" class="inline-flex flex-wrap rounded-full border border-line bg-soft p-[3px]">
+              <button role="tab" aria-selected="true" data-tab="s-report" class="h-[28px] cursor-pointer rounded-full border-0 bg-surface px-2.5 text-[12.5px] font-medium text-ink shadow-thumb">Report</button>
+              <button role="tab" aria-selected="false" data-tab="s-checks" class="h-[28px] cursor-pointer rounded-full border-0 bg-transparent px-2.5 text-[12.5px] font-medium text-muted hover:text-ink">Checks</button>
+              <button role="tab" aria-selected="false" data-tab="s-files" class="h-[28px] cursor-pointer rounded-full border-0 bg-transparent px-2.5 text-[12.5px] font-medium text-muted hover:text-ink">Files</button>
+              <button role="tab" aria-selected="false" data-tab="s-term" class="h-[28px] cursor-pointer rounded-full border-0 bg-transparent px-2.5 text-[12.5px] font-medium text-muted hover:text-ink">Terminal</button>
+              <button role="tab" aria-selected="false" data-tab="s-run" class="h-[28px] cursor-pointer rounded-full border-0 bg-transparent px-2.5 text-[12.5px] font-medium text-muted hover:text-ink">Run</button>
+              <button role="tab" aria-selected="false" data-tab="s-people" class="h-[28px] cursor-pointer rounded-full border-0 bg-transparent px-2.5 text-[12.5px] font-medium text-muted hover:text-ink">People</button>
+            </div>
+          </div>
+          <div class="flex-1 overflow-y-auto px-4 py-4 sm:px-5">
+            <div data-panel="s-report" class="rounded-[22px] border border-line bg-surface p-5 shadow-card">
+              <div class="mb-3 flex flex-wrap items-center gap-2">
+                <span class="rounded-md bg-soft px-2 py-0.5 font-mono text-xs text-ink-2">research.report</span>
+                <div role="group" aria-label="View" class="inline-flex rounded-full border border-line bg-soft p-[2px]">
+                  <button type="button" aria-pressed="false" data-diff="off" class="h-[24px] cursor-pointer rounded-full border-0 bg-transparent px-2 text-[11.5px] font-semibold text-muted hover:text-ink">Draft v2</button>
+                  <button type="button" aria-pressed="true" data-diff="on" class="h-[24px] cursor-pointer rounded-full border-0 bg-surface px-2 text-[11.5px] font-semibold text-ink shadow-thumb">Changes since v1</button>
+                </div>
+                <a href="#report" class="ml-auto text-[12.5px] text-link no-underline hover:underline">Open in reader</a>
+              </div>
+              <div class="md text-sm leading-relaxed text-ink-2">
+                <h3 class="!mt-0 text-ink">Short answer</h3>
+                <p>vLLM and SGLang both run Qwen3 with a draft model or EAGLE-style heads at tensor parallel 4. The best reported single-stream gain on four 24 GB cards is about <del class="diff">2.3×<span class="cite">S7</span></del> <ins class="diff">1.9×<span class="cite">S9</span></ins>, falling to 1.3× once batch size passes 8<span class="cite">S9</span>. llama.cpp supports draft models but not tensor parallelism across four GPUs<span class="cite">S3</span>.</p>
+              </div>
+            </div>
+            <div data-panel="s-checks" hidden class="rounded-[22px] border border-line bg-surface p-5 shadow-card">
+              <p class="m-0 mb-3 text-sm font-semibold">Report v1 · research rubric v4</p>
+              <div class="overflow-x-auto"><table class="w-full border-collapse text-[13px]">
+                <thead><tr><th class="border-b border-line pb-1.5 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Criterion</th><th class="border-b border-line pb-1.5 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Checked by</th><th class="border-b border-line pb-1.5 text-right text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Result</th></tr></thead>
+                <tbody>
+                  <tr><td class="border-b border-line py-2 pr-3 font-mono text-[12px]">sources_fetched</td><td class="border-b border-line py-2 pr-3 text-muted">Code</td><td class="border-b border-line py-2 text-right"><span class="rounded-full bg-success-bg px-2 py-0.5 text-[11px] font-semibold text-success">Pass</span></td></tr>
+                  <tr><td class="border-b border-line py-2 pr-3 font-mono text-[12px]">citations_support_claims</td><td class="border-b border-line py-2 pr-3 text-muted">Judge model</td><td class="border-b border-line py-2 text-right"><span class="rounded-full bg-danger-bg px-2 py-0.5 text-[11px] font-semibold text-danger">Fail</span></td></tr>
+                  <tr><td class="border-b border-line py-2 pr-3 font-mono text-[12px]">no_uncited_specifics</td><td class="border-b border-line py-2 pr-3 text-muted">Judge model</td><td class="border-b border-line py-2 text-right"><span class="rounded-full bg-success-bg px-2 py-0.5 text-[11px] font-semibold text-success">Pass</span></td></tr>
+                  <tr><td class="border-b border-line py-2 pr-3 font-mono text-[12px]">answers_the_question</td><td class="border-b border-line py-2 pr-3 text-muted">Judge model</td><td class="border-b border-line py-2 text-right"><span class="rounded-full bg-success-bg px-2 py-0.5 text-[11px] font-semibold text-success">Pass</span></td></tr>
+                  <tr><td class="border-b border-line py-2 pr-3 font-mono text-[12px]">claims_dated</td><td class="border-b border-line py-2 pr-3 text-muted">Code</td><td class="border-b border-line py-2 text-right"><span class="rounded-full bg-success-bg px-2 py-0.5 text-[11px] font-semibold text-success">Pass</span></td></tr>
+                  <tr><td class="py-2 pr-3 font-mono text-[12px]">assumptions_stated</td><td class="py-2 pr-3 text-muted">Code</td><td class="py-2 text-right"><span class="rounded-full bg-success-bg px-2 py-0.5 text-[11px] font-semibold text-success">Pass</span></td></tr>
+                </tbody></table></div>
+            </div>
+            <div data-panel="s-files" hidden class="grid gap-3 rounded-[22px] border border-line bg-surface p-4 shadow-card sm:grid-cols-[180px_minmax(0,1fr)]">
+              <ul class="m-0 flex list-none flex-col gap-0.5 p-0 font-mono text-[12.5px]">
+                <li class="px-2 py-1 text-muted">workspace/</li>
+                <li class="rounded-md bg-soft px-2 py-1 pl-4 text-ink">artifacts/report.md <span class="font-sans text-[10.5px] text-accent-ink">artifact</span></li>
+                <li class="px-2 py-1 pl-4 text-ink-2">notes/sources.json</li>
+                <li class="px-2 py-1 pl-4 text-ink-2">fetch/s9-bench.md</li>
+                <li class="px-2 py-1 pl-4 text-ink-2">fetch/s7-blog.md</li>
+              </ul>
+              <pre class="m-0 min-w-0 overflow-x-auto rounded-lg bg-soft p-3 font-mono text-[12px] leading-relaxed text-ink-2"># Speculative decoding for Qwen3 on 4×3090
+
+## Assumptions
+- "Qwen3" means the dense 27B and 32B checkpoints.
+- Speedup means single-stream decode tokens/s.
+
+## Short answer
+vLLM and SGLang both run Qwen3 with a draft model…</pre>
+            </div>
+            <div data-panel="s-term" hidden class="rounded-[22px] border border-line bg-surface p-4 shadow-card">
+              <pre class="m-0 overflow-x-auto rounded-lg bg-ink p-3 font-mono text-[12px] leading-relaxed text-on-ink">$ grep -n "tensor" fetch/s9-bench.md
+42: All runs use tensor parallel 4 on 4× RTX 3090 (24 GB), NVLink off.
+57: | TP | draft | batch | tok/s | speedup |
+58: | 4  | 0.6B  | 1     | 61.2  | 1.9×    |
+$ grep -c "tensor" fetch/s7-blog.md
+0</pre>
+              <p class="m-0 mt-2 text-[12px] text-muted">Commands the agent ran, newest last · read-only view</p>
+            </div>
+            <div data-panel="s-run" hidden class="rounded-[22px] border border-line bg-surface p-5 shadow-card">
+              <ul class="m-0 flex list-none flex-col gap-3 p-0 text-[13px]">
+                <li class="flex items-center gap-3"><span class="h-2 w-2 flex-none rounded-full bg-success"></span><span class="text-ink">Started microVM, loaded agent v3</span><span class="ml-auto tabular-nums text-muted">2.1 s</span></li>
+                <li class="flex items-center gap-3"><span class="h-2 w-2 flex-none rounded-full bg-success"></span><span class="text-ink">Clarify decision</span><span class="ml-auto tabular-nums text-muted">1.8 s · $0.00</span></li>
+                <li class="flex items-center gap-3"><span class="h-2 w-2 flex-none rounded-full bg-success"></span><span class="text-ink">Research · 3 turns, 14 tool calls</span><span class="ml-auto tabular-nums text-muted">1:52 · $0.19</span></li>
+                <li class="flex items-center gap-3"><span class="h-2 w-2 flex-none rounded-full bg-danger"></span><span class="text-ink">Check v1 · 5 of 6</span><span class="ml-auto tabular-nums text-muted">2:10 · $0.14</span></li>
+                <li class="flex items-center gap-3"><span class="live-dot h-2 w-2 flex-none rounded-full bg-info"></span><span class="text-ink">Revision 1</span><span class="ml-auto tabular-nums text-muted">0:08 · $0.08</span></li>
+              </ul>
+              <p class="m-0 mt-4 border-t border-line pt-3 text-[12px] text-muted">Cache hit 91% · 0 rejected tool calls · cost at cloud-equivalent rates</p>
+            </div>
+            <div data-panel="s-people" hidden class="rounded-[22px] border border-line bg-surface p-5 shadow-card">
+              <ul class="m-0 flex list-none flex-col gap-3 p-0 text-[13px]">
+                <li class="flex items-center gap-3"><span class="grid h-7 w-7 place-items-center rounded-full bg-info-bg text-[10px] font-semibold text-info">JF</span><span>You</span><span class="ml-auto flex gap-1"><span class="rounded-md bg-soft px-2 py-0.5 text-xs text-ink-2">Owner</span><span class="rounded-md bg-soft px-2 py-0.5 text-xs text-ink-2">Driver</span></span></li>
+                <li class="flex items-center gap-3"><span class="grid h-7 w-7 place-items-center rounded-full bg-success-bg text-[10px] font-semibold text-success">MK</span><span>Guest</span><span class="ml-auto rounded-md bg-soft px-2 py-0.5 text-xs text-ink-2">Observer</span></li>
+                <li class="flex items-center gap-3"><span class="grid h-7 w-7 place-items-center rounded-full bg-soft text-muted"><span data-icon="check"></span></span><span>Judge</span><span class="ml-auto rounded-md bg-soft px-2 py-0.5 text-xs text-ink-2">Checker</span></li>
+              </ul>
+              <div class="mt-4 flex gap-2"><button type="button" class="cursor-pointer rounded-lg border border-line bg-surface px-2.5 py-1 text-xs font-medium text-ink-2 hover:text-ink">Invite someone</button><button type="button" class="cursor-pointer rounded-lg border border-line bg-surface px-2.5 py-1 text-xs font-medium text-ink-2 hover:text-ink">Hand off driving</button></div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ INBOX ============ -->
+<section data-screen="inbox" hidden class="mx-auto w-full max-w-[960px] px-4 pt-8 pb-10 sm:px-6">
+  <div class="mb-4 flex flex-wrap items-center gap-3">
+    <h1 class="m-0 text-[22px] font-bold tracking-[-0.02em]">Inbox</h1>
+    <span class="text-[13px] text-muted">4 actions are waiting for your approval</span>
+    <div role="group" aria-label="Show" class="ml-auto inline-flex rounded-full border border-line bg-soft p-[3px]">
+      <button type="button" aria-pressed="true" class="h-[30px] cursor-pointer rounded-full border-0 bg-surface px-3 text-[13px] font-medium text-ink shadow-thumb">Waiting</button>
+      <button type="button" aria-pressed="false" class="h-[30px] cursor-pointer rounded-full border-0 bg-transparent px-3 text-[13px] font-medium text-muted hover:text-ink">Resolved</button>
+    </div>
+  </div>
+  <div class="mb-3 flex flex-wrap items-center gap-2">
+    <label for="ib-kind" class="sr-only">Kind</label>
+    <select id="ib-kind" class="h-[32px] cursor-pointer rounded-full border border-line bg-soft px-2.5 text-[13px] outline-none"><option>All kinds</option><option>GitHub posts</option><option>Memories</option><option>Proposed work</option><option>Uploads</option></select>
+    <label for="ib-agent" class="sr-only">Agent</label>
+    <select id="ib-agent" class="h-[32px] cursor-pointer rounded-full border border-line bg-soft px-2.5 text-[13px] outline-none"><option>All agents</option><option>Reviewer</option><option>Implementer</option><option>Researcher</option></select>
+    <div class="flex w-full items-center gap-2 rounded-full bg-info-bg px-3 py-1.5 text-[13px] text-info sm:ml-auto sm:w-auto">
+      <span class="font-semibold">2 selected</span>
+      <button type="button" class="cursor-pointer rounded-lg bg-ink px-2.5 py-1 text-xs font-semibold text-on-ink hover:bg-ink-2">Approve 2</button>
+      <button type="button" class="cursor-pointer rounded-lg border border-line bg-surface px-2.5 py-1 text-xs font-medium text-ink-2 hover:border-danger-line hover:text-danger">Reject…</button>
+    </div>
+  </div>
+  <ul class="m-0 flex list-none flex-col divide-y divide-line rounded-[22px] border border-line bg-surface p-0 shadow-card">
+    <li class="flex items-start gap-3 px-4 py-4 sm:px-5">
+      <input type="checkbox" class="mt-2 accent-[var(--color-accent)]" aria-label="Select" />
+      <span class="mt-0.5 grid h-8 w-8 flex-none place-items-center rounded-lg bg-warm text-warning"><span data-icon="git"></span></span>
+      <a href="#approval" class="flex min-w-0 flex-1 flex-col gap-1 text-ink no-underline">
+        <span class="text-[14.5px] font-semibold tracking-[-0.01em] hover:underline">Post review to fagerbergj/quack#1826</span>
+        <span class="text-[13px] text-ink-2">Judge passed 5 of 6 checks and was unsure about one finding, so it passed the decision to you.</span>
+        <span class="flex flex-wrap gap-1.5 pt-0.5"><span class="rounded-md bg-soft px-2 py-0.5 text-xs text-ink-2">Reviewer v7</span><span class="rounded-md bg-soft px-2 py-0.5 font-mono text-xs text-ink-2">github.review v2</span></span>
+      </a>
+      <span class="flex flex-col items-end gap-2"><span class="tabular-nums whitespace-nowrap text-[13px] text-muted">12 min</span><a href="#approval" class="rounded-lg border border-line bg-surface px-2.5 py-1 text-xs font-medium text-ink-2 no-underline hover:text-ink">Review</a></span>
+    </li>
+    <li class="flex items-start gap-3 bg-info-bg/40 px-4 py-4 sm:px-5">
+      <input type="checkbox" checked class="mt-2 accent-[var(--color-accent)]" aria-label="Select" />
+      <span class="mt-0.5 grid h-8 w-8 flex-none place-items-center rounded-lg bg-soft text-ink-2"><span data-icon="bookmark"></span></span>
+      <span class="flex min-w-0 flex-1 flex-col gap-1">
+        <span class="text-[14.5px] font-semibold tracking-[-0.01em]">Store a memory: "quack-v1 uses pnpm workspaces"</span>
+        <span class="text-[13px] text-ink-2">Memories always need your approval. Scope: repo fagerbergj/quack.</span>
+        <span class="flex flex-wrap gap-1.5 pt-0.5"><span class="rounded-md bg-soft px-2 py-0.5 text-xs text-ink-2">Implementer v4</span></span>
+      </span>
+      <span class="flex flex-col items-end gap-2"><span class="tabular-nums whitespace-nowrap text-[13px] text-muted">1 h</span><span class="flex gap-1"><button type="button" class="cursor-pointer rounded-lg bg-ink px-2.5 py-1 text-xs font-semibold text-on-ink">Approve</button><button type="button" class="cursor-pointer rounded-lg border border-line bg-surface px-2.5 py-1 text-xs font-medium text-ink-2 hover:text-danger">Reject</button></span></span>
+    </li>
+    <li class="flex items-start gap-3 bg-info-bg/40 px-4 py-4 sm:px-5">
+      <input type="checkbox" checked class="mt-2 accent-[var(--color-accent)]" aria-label="Select" />
+      <span class="mt-0.5 grid h-8 w-8 flex-none place-items-center rounded-lg bg-soft text-ink-2"><span data-icon="pen"></span></span>
+      <span class="flex min-w-0 flex-1 flex-col gap-1">
+        <span class="text-[14.5px] font-semibold tracking-[-0.01em]">Start research: "Kata vs gVisor build times"</span>
+        <span class="text-[13px] text-ink-2">Found as a question in your note "Quack v1 sandbox ideas", page 3.</span>
+        <span class="flex flex-wrap gap-1.5 pt-0.5"><span class="rounded-md bg-soft px-2 py-0.5 text-xs text-ink-2">reMarkable ingest</span></span>
+      </span>
+      <span class="flex flex-col items-end gap-2"><span class="tabular-nums whitespace-nowrap text-[13px] text-muted">3 h</span><span class="flex gap-1"><button type="button" class="cursor-pointer rounded-lg bg-ink px-2.5 py-1 text-xs font-semibold text-on-ink">Approve</button><button type="button" class="cursor-pointer rounded-lg border border-line bg-surface px-2.5 py-1 text-xs font-medium text-ink-2 hover:text-danger">Reject</button></span></span>
+    </li>
+    <li class="flex items-start gap-3 px-4 py-4 sm:px-5">
+      <input type="checkbox" class="mt-2 accent-[var(--color-accent)]" aria-label="Select" />
+      <span class="mt-0.5 grid h-8 w-8 flex-none place-items-center rounded-lg bg-soft text-ink-2"><span data-icon="upload"></span></span>
+      <span class="flex min-w-0 flex-1 flex-col gap-1">
+        <span class="text-[14.5px] font-semibold tracking-[-0.01em]">Send "pi-durable 1.4 changes" to your reMarkable</span>
+        <span class="text-[13px] text-ink-2">Your rule: uploads to the tablet ask first.</span>
+        <span class="flex flex-wrap gap-1.5 pt-0.5"><span class="rounded-md bg-soft px-2 py-0.5 text-xs text-ink-2">Researcher v3</span><span class="rounded-md bg-soft px-2 py-0.5 font-mono text-xs text-ink-2">research.report v3</span></span>
+      </span>
+      <span class="flex flex-col items-end gap-2"><span class="tabular-nums whitespace-nowrap text-[13px] text-muted">1 d</span><span class="flex gap-1"><button type="button" class="cursor-pointer rounded-lg bg-ink px-2.5 py-1 text-xs font-semibold text-on-ink">Approve</button><button type="button" class="cursor-pointer rounded-lg border border-line bg-surface px-2.5 py-1 text-xs font-medium text-ink-2 hover:text-danger">Reject</button></span></span>
+    </li>
+  </ul>
+  <p class="m-0 mt-3 text-[12px] text-muted">Actions that show their full content inline can be approved here. Reviews and pushes open first so you see exactly what will be sent.</p>
+</section>
+
+<!-- ============ APPROVAL DETAIL ============ -->
+<section data-screen="approval" hidden class="mx-auto w-full max-w-[1100px] px-4 pt-6 pb-10 sm:px-6">
+  <a href="#inbox" class="text-[13px] text-muted no-underline hover:text-ink">← Inbox</a>
+  <div class="mt-3 mb-6 flex flex-wrap items-center gap-3">
+    <h1 class="m-0 text-[22px] font-bold tracking-[-0.02em]">Post review to fagerbergj/quack#1826</h1>
+    <span class="rounded-full bg-warning-bg px-2 py-0.5 text-[11px] font-semibold text-warning">Waiting on you · 12 min</span>
+  </div>
+  <div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
+    <div class="flex min-w-0 flex-col gap-5">
+      <div class="rounded-[22px] border border-line bg-surface p-5 shadow-card">
+        <p class="m-0 mb-3 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">What will happen</p>
+        <dl class="m-0 grid grid-cols-[110px_minmax(0,1fr)] gap-x-4 gap-y-2 text-[13px]">
+          <dt class="text-muted">Action</dt><dd class="m-0 font-mono text-[12.5px]">github_post_review</dd>
+          <dt class="text-muted">Target</dt><dd class="m-0">fagerbergj/quack pull request #1826</dd>
+          <dt class="text-muted">Acting as</dt><dd class="m-0">quack-bot (GitHub App installation)</dd>
+          <dt class="text-muted">Content</dt><dd class="m-0">Review v2, exactly as shown below · verdict <strong class="font-semibold">Changes requested</strong></dd>
+        </dl>
+      </div>
+      <div class="rounded-[22px] border border-line bg-surface p-5 shadow-card">
+        <div class="mb-3 flex items-center gap-2"><span class="rounded-md bg-soft px-2 py-0.5 font-mono text-xs text-ink-2">github.review v2</span><a href="#review" class="ml-auto text-[13px] text-link no-underline hover:underline">Open in reader</a></div>
+        <div class="md text-sm leading-relaxed text-ink-2">
+          <p><strong class="text-ink">Summary.</strong> Replay now reports per-criterion cost, but the new column double-counts cached tokens when a round is resumed.</p>
+          <ul>
+            <li><span class="rounded-md bg-danger-bg px-1.5 py-0.5 text-[10px] font-bold text-danger">BLOCKING</span> <code>internal/eval/replay.go:214</code> adds <code>cached_input</code> to <code>input</code>, which already includes it after #1771.</li>
+            <li class="flag"><span class="rounded-md bg-warning-bg px-1.5 py-0.5 text-[10px] font-bold text-warning">MINOR</span> <code>internal/cli/eval.go:88</code> the <code>--json</code> output drops the criterion name for skipped criteria.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    <div class="flex min-w-0 flex-col gap-5">
+      <div class="rounded-[22px] border border-line bg-surface p-5 shadow-card">
+        <p class="m-0 mb-3 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Approval path</p>
+        <ol class="m-0 flex list-none flex-col gap-3 p-0 text-[13px]">
+          <li class="flex gap-2.5"><span class="mt-1 h-2 w-2 flex-none rounded-full bg-success"></span><span><span class="font-medium text-ink">Judge</span><span class="text-ink-2"> · 5 of 6 checks passed</span></span></li>
+          <li class="flex gap-2.5"><span class="mt-1 h-2 w-2 flex-none rounded-full bg-warning"></span><span><span class="font-medium text-ink">Judge</span><span class="text-ink-2"> · unsure whether the minor finding is real (confidence 0.54), passed it on</span></span></li>
+          <li class="flex gap-2.5"><span class="live-dot mt-1 h-2 w-2 flex-none rounded-full bg-info"></span><span><span class="font-medium text-ink">You</span><span class="text-ink-2"> · approver</span></span></li>
+        </ol>
+      </div>
+      <form class="flex flex-col gap-3 rounded-[22px] border border-line-strong bg-surface p-5 shadow-float" onsubmit="event.preventDefault()">
+        <label for="reason" class="text-[13px] font-medium text-ink">Reason (sent to the agent if you reject)</label>
+        <textarea id="reason" rows="3" class="w-full resize-none rounded-full border border-line bg-soft px-3 py-2 text-sm outline-none transition focus:border-line-strong focus:bg-surface focus:shadow-ring" placeholder="The minor finding is wrong: --json keeps names since #1810."></textarea>
+        <div class="flex gap-2">
+          <button class="h-[34px] flex-1 cursor-pointer rounded-full bg-ink px-3.5 text-[13px] font-semibold text-on-ink transition hover:bg-ink-2">Approve and post</button>
+          <button type="button" class="h-[34px] cursor-pointer rounded-full border border-line bg-surface px-3 text-[13px] font-medium text-ink-2 transition hover:border-danger-line hover:text-danger">Reject</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</section>
+
+<!-- ============ ARTIFACTS ============ -->
+<section data-screen="artifacts" hidden class="mx-auto w-full max-w-[1100px] px-4 pt-8 pb-10 sm:px-6">
+  <div class="mb-5 flex flex-wrap items-center gap-3">
+    <h1 class="m-0 text-[22px] font-bold tracking-[-0.02em]">Artifacts</h1>
+    <div class="w-full sm:ml-auto sm:w-[320px]"><label for="art-search" class="sr-only">Search artifacts</label><input id="art-search" class="h-[38px] w-full rounded-full border border-line bg-soft px-3 text-sm outline-none transition focus:border-line-strong focus:bg-surface focus:shadow-ring" placeholder="Search reports, reviews, transcripts" /></div>
+  </div>
+  <div role="group" aria-label="Kind" class="mb-5 inline-flex flex-wrap rounded-full border border-line bg-soft p-[3px]">
+    <button type="button" aria-pressed="true" class="h-[30px] cursor-pointer rounded-full border-0 bg-surface px-3 text-[13px] font-medium text-ink shadow-thumb">All</button>
+    <button type="button" aria-pressed="false" class="h-[30px] cursor-pointer rounded-full border-0 bg-transparent px-3 text-[13px] font-medium text-muted hover:text-ink">Reports</button>
+    <button type="button" aria-pressed="false" class="h-[30px] cursor-pointer rounded-full border-0 bg-transparent px-3 text-[13px] font-medium text-muted hover:text-ink">Reviews</button>
+    <button type="button" aria-pressed="false" class="h-[30px] cursor-pointer rounded-full border-0 bg-transparent px-3 text-[13px] font-medium text-muted hover:text-ink">Sleeper</button>
+    <button type="button" aria-pressed="false" class="h-[30px] cursor-pointer rounded-full border-0 bg-transparent px-3 text-[13px] font-medium text-muted hover:text-ink">Notes</button>
+  </div>
+  <div class="grid grid-cols-[repeat(auto-fill,minmax(min(320px,100%),1fr))] gap-4">
+    <a href="#report" class="flex flex-col gap-3 rounded-[22px] border border-line bg-surface p-5 text-ink no-underline transition duration-150 hover:-translate-y-px hover:border-line-strong hover:shadow-lift">
+      <div class="flex items-center gap-2"><span class="rounded-md bg-soft px-2 py-0.5 text-xs text-ink-2">Report</span><span class="ml-auto rounded-full bg-success-bg px-2 py-0.5 text-[11px] font-semibold text-success">6 of 6</span></div>
+      <p class="m-0 text-[15px] leading-snug font-semibold tracking-[-0.015em]">What changed in pi-durable 1.4</p>
+      <p class="m-0 text-[13px] leading-relaxed text-ink-2 line-clamp-2">Storage prefixes, the Cloudflare host, request-id dedupe after restart, and the codemode journal format.</p>
+      <div class="mt-auto flex items-center justify-between text-[13px] text-muted"><span>v3 · 11 sources</span><span class="tabular-nums">Oct 29</span></div>
+    </a>
+    <a href="#review" class="flex flex-col gap-3 rounded-[22px] border border-line bg-surface p-5 text-ink no-underline transition duration-150 hover:-translate-y-px hover:border-line-strong hover:shadow-lift">
+      <div class="flex items-center gap-2"><span class="rounded-md bg-soft px-2 py-0.5 text-xs text-ink-2">Review</span><span class="ml-auto rounded-full bg-warning-bg px-2 py-0.5 text-[11px] font-semibold text-warning">Waiting on you</span></div>
+      <p class="m-0 text-[15px] leading-snug font-semibold tracking-[-0.015em]">quack#1826 · judge replay cost per criterion</p>
+      <p class="m-0 text-[13px] leading-relaxed text-ink-2 line-clamp-2">1 blocking, 1 minor. Changes requested.</p>
+      <div class="mt-auto flex items-center justify-between text-[13px] text-muted"><span>v2 · 5 of 6</span><span class="tabular-nums">12 min</span></div>
+    </a>
+    <a href="#sleeper" class="flex flex-col gap-3 rounded-[22px] border border-line bg-surface p-5 text-ink no-underline transition duration-150 hover:-translate-y-px hover:border-line-strong hover:shadow-lift">
+      <div class="flex items-center gap-2"><span class="rounded-md bg-soft px-2 py-0.5 text-xs text-ink-2">Sleeper</span><span class="ml-auto rounded-full bg-success-bg px-2 py-0.5 text-[11px] font-semibold text-success">5 of 5</span></div>
+      <p class="m-0 text-[15px] leading-snug font-semibold tracking-[-0.015em]">Week 9 lineup</p>
+      <p class="m-0 text-[13px] leading-relaxed text-ink-2 line-clamp-2">Two changes from your current lineup, one close call at flex.</p>
+      <div class="mt-auto flex items-center justify-between text-[13px] text-muted"><span>v1 · 4 cards</span><span class="tabular-nums">Thu 18:04</span></div>
+    </a>
+    <a href="#remarkable" class="flex flex-col gap-3 rounded-[22px] border border-line bg-surface p-5 text-ink no-underline transition duration-150 hover:-translate-y-px hover:border-line-strong hover:shadow-lift">
+      <div class="flex items-center gap-2"><span class="rounded-md bg-soft px-2 py-0.5 text-xs text-ink-2">Note</span><span class="ml-auto rounded-full bg-success-bg px-2 py-0.5 text-[11px] font-semibold text-success">3 of 3</span></div>
+      <p class="m-0 text-[15px] leading-snug font-semibold tracking-[-0.015em]">Quack v1 sandbox ideas</p>
+      <p class="m-0 text-[13px] leading-relaxed text-ink-2 line-clamp-2">4 pages · project notes · 1 question proposed as research.</p>
+      <div class="mt-auto flex items-center justify-between text-[13px] text-muted"><span>v1 · transcript</span><span class="tabular-nums">Oct 30</span></div>
+    </a>
+  </div>
+</section>
+
+<!-- ============ REPORT READER ============ -->
+<section data-screen="report" hidden class="mx-auto w-full max-w-[1180px] px-4 pt-6 pb-10 sm:px-6">
+  <div class="flex flex-wrap items-center gap-3">
+    <a href="#artifacts" class="text-[13px] text-muted no-underline hover:text-ink">← Artifacts</a>
+    <div class="ml-auto flex flex-wrap items-center gap-2">
+      <label for="ver" class="sr-only">Version</label>
+      <select id="ver" class="h-[34px] cursor-pointer rounded-full border border-line bg-soft px-2.5 text-[13px] outline-none"><option>v3 · 6 of 6 checks</option><option>v2 · 5 of 6 checks</option><option>v1 · 4 of 6 checks</option></select>
+      <div class="inline-flex h-[34px] items-center overflow-hidden rounded-full bg-ink text-[13px] font-semibold text-on-ink"><span class="px-3">Export</span><button type="button" class="h-full cursor-pointer border-0 border-l border-on-ink/20 bg-transparent px-3 text-on-ink uppercase hover:bg-ink-2">MD</button><button type="button" class="h-full cursor-pointer border-0 border-l border-on-ink/20 bg-transparent px-3 text-on-ink uppercase hover:bg-ink-2">PDF</button></div>
+      <button type="button" class="h-[34px] cursor-pointer rounded-full border border-line bg-surface px-3 text-[13px] font-medium text-ink-2 transition hover:text-ink" title="Uploads to the tablet ask for approval">Send to reMarkable</button>
+    </div>
+  </div>
+  <div class="mt-6 grid gap-8 lg:grid-cols-[minmax(0,1fr)_320px]">
+    <article class="min-w-0">
+      <p class="m-0 mb-2 text-xs font-semibold uppercase tracking-[0.08em] text-accent-ink">Research report</p>
+      <h1 class="m-0 text-[30px] leading-[1.15] font-bold tracking-[-0.025em]">What changed in pi-durable 1.4</h1>
+      <p class="m-0 mt-3 flex flex-wrap items-center gap-2 text-[13px] text-muted"><span class="rounded-full bg-success-bg px-2 py-0.5 text-[11px] font-semibold text-success">Passed 6 of 6 checks</span>v3 · 11 sources · Researcher v3 · Oct 29</p>
+      <div class="mt-6 max-w-[68ch] rounded-xl bg-soft px-4 py-3 text-[13.5px] text-ink-2"><span class="font-semibold text-ink">Assumptions.</span> Compared against 1.2.0, the version Collie's SDK was last tested on. Only changes visible in the public API and README count.</div>
+      <div class="md mt-6 max-w-[68ch] text-[15px] leading-[1.7] text-ink-2">
+        <p><strong class="text-ink">Short answer.</strong> 1.4 makes recovery more predictable and storage easier to share. Three changes matter for quack: SQLite tables can be namespaced with a prefix<span class="cite">S1</span>, a duplicate request id now returns the original submission even after a restart<span class="cite">S1</span><span class="cite">S4</span>, and code mode journals each script's results so a resumed script never repeats a finished call<span class="cite">S2</span>.</p>
+        <h3 class="text-ink">Storage</h3>
+        <p>The SQLite adapters accept <code>{ prefix: "pi_" }</code>, which renders prefixed table and index names into every statement<span class="cite">S1</span>. Changing the prefix later does not migrate data<span class="cite">S1</span>.</p>
+        <h3 class="text-ink">Recovery</h3>
+        <p>Tasks that crash their process are counted and parked after <code>restartLimit</code> restarts, five by default<span class="cite">S1</span>. A parked task shows in the task graph with reason <code>restart_limit</code> and can be retried by id<span class="cite">S1</span>.</p>
+      </div>
+    </article>
+    <aside class="min-w-0">
+      <p class="m-0 mb-3 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Sources</p>
+      <ol class="m-0 flex list-none flex-col gap-3 p-0 text-[13px]">
+        <li class="flex gap-2.5"><span class="cite mt-0.5 !ml-0">S1</span><span class="min-w-0"><span class="block truncate text-ink" title="@earendil-works/pi-durable README">@earendil-works/pi-durable README</span><span class="text-muted">npm · v1.4.0 · fetched Oct 29 14:02</span></span></li>
+        <li class="flex gap-2.5"><span class="cite mt-0.5 !ml-0">S2</span><span class="min-w-0"><span class="block truncate text-ink">pi-durable CHANGELOG</span><span class="text-muted">npm · dated Oct 24 · fetched 14:02</span></span></li>
+        <li class="flex gap-2.5"><span class="cite mt-0.5 !ml-0">S3</span><span class="min-w-0"><span class="block truncate text-ink">packages/durable/docs/spec.md</span><span class="text-muted">github.com · fetched 14:03</span></span></li>
+        <li class="flex gap-2.5"><span class="cite mt-0.5 !ml-0">S4</span><span class="min-w-0"><span class="block truncate text-ink">Collie durable SDK docs</span><span class="text-muted">local docs · v1.24.3 · fetched 14:03</span></span></li>
+      </ol>
+      <p class="m-0 mt-4 text-[12px] text-muted">Every source was fetched in this session. 7 more fetched but not cited.</p>
+    </aside>
+  </div>
+</section>
+
+<!-- ============ REVIEW READER ============ -->
+<section data-screen="review" hidden class="mx-auto w-full max-w-[900px] px-4 pt-6 pb-10 sm:px-6">
+  <a href="#artifacts" class="text-[13px] text-muted no-underline hover:text-ink">← Artifacts</a>
+  <p class="m-0 mt-5 mb-2 text-xs font-semibold uppercase tracking-[0.08em] text-accent-ink">Pull request review</p>
+  <h1 class="m-0 text-[26px] leading-[1.2] font-bold tracking-[-0.025em]">fagerbergj/quack#1826</h1>
+  <p class="m-0 mt-3 flex flex-wrap items-center gap-2 text-[13px] text-muted"><span class="rounded-full bg-warning-bg px-2 py-0.5 text-[11px] font-semibold text-warning">5 of 6 checks · waiting on you</span>v2 · Reviewer v7 · Changes requested</p>
+  <ul class="m-0 mt-6 flex list-none flex-col divide-y divide-line rounded-[22px] border border-line bg-surface p-0 shadow-card">
+    <li class="flex flex-col gap-2 px-5 py-4"><div class="flex flex-wrap items-center gap-2"><span class="rounded-md bg-danger-bg px-1.5 py-0.5 text-[10px] font-bold text-danger">BLOCKING</span><code class="font-mono text-[12.5px] text-ink">internal/eval/replay.go:214</code><span class="ml-auto rounded-full bg-success-bg px-2 py-0.5 text-[11px] font-semibold text-success">Verified</span></div><p class="m-0 text-sm leading-relaxed text-ink-2">Adds <code class="font-mono text-[12.5px]">cached_input</code> to <code class="font-mono text-[12.5px]">input</code>, which already includes it since #1771, so resumed rounds report about double the real cost.</p></li>
+    <li class="flex flex-col gap-2 px-5 py-4"><div class="flex flex-wrap items-center gap-2"><span class="rounded-md bg-warning-bg px-1.5 py-0.5 text-[10px] font-bold text-warning">MINOR</span><code class="font-mono text-[12.5px] text-ink">internal/cli/eval.go:88</code><span class="ml-auto rounded-full bg-warning-bg px-2 py-0.5 text-[11px] font-semibold text-warning">Judge unsure</span></div><p class="m-0 text-sm leading-relaxed text-ink-2">The <code class="font-mono text-[12.5px]">--json</code> output drops the criterion name for skipped criteria.</p></li>
+  </ul>
+</section>
+
+<!-- ============ AGENTS ============ -->
+<section data-screen="agents" hidden class="mx-auto w-full max-w-[1100px] px-4 pt-8 pb-10 sm:px-6">
+  <div class="mb-5 flex flex-wrap items-center gap-3">
+    <h1 class="m-0 text-[22px] font-bold tracking-[-0.02em]">Agents</h1>
+    <span class="text-[13px] text-muted">From extensions, files and you</span>
+    <a href="#agent" class="ml-auto inline-flex h-[34px] items-center rounded-full bg-ink px-3.5 text-[13px] font-semibold text-on-ink no-underline transition hover:bg-ink-2">New agent</a>
+  </div>
+  <div class="grid grid-cols-[repeat(auto-fill,minmax(min(320px,100%),1fr))] gap-4">
+    <a href="#agent" class="flex flex-col gap-3 rounded-[22px] border border-line bg-surface p-5 text-ink no-underline transition hover:-translate-y-px hover:border-line-strong hover:shadow-lift">
+      <div class="flex items-center gap-2"><span class="text-[15.5px] font-semibold tracking-[-0.015em]">Reviewer</span><span class="text-[13px] text-muted">v7</span><span class="ml-auto rounded-full bg-success-bg px-2 py-0.5 text-[11px] font-semibold text-success">Promoted</span></div>
+      <p class="m-0 text-[13px] text-ink-2">Reviews pull requests on the label or <code class="font-mono text-[12px]">/review</code>.</p>
+      <div class="mt-auto flex flex-wrap gap-1.5"><span class="rounded-md bg-soft px-2 py-0.5 text-xs text-ink-2">GitHub extension</span><span class="rounded-md bg-soft px-2 py-0.5 font-mono text-xs text-ink-2">qwen3.8-27b</span><span class="rounded-md bg-soft px-2 py-0.5 text-xs text-ink-2">Kata</span></div>
+    </a>
+    <a href="#agent" class="flex flex-col gap-3 rounded-[22px] border border-line bg-surface p-5 text-ink no-underline transition hover:-translate-y-px hover:border-line-strong hover:shadow-lift">
+      <div class="flex items-center gap-2"><span class="text-[15.5px] font-semibold tracking-[-0.015em]">Researcher</span><span class="text-[13px] text-muted">v3</span><span class="ml-auto rounded-full bg-success-bg px-2 py-0.5 text-[11px] font-semibold text-success">Promoted</span></div>
+      <p class="m-0 text-[13px] text-ink-2">Answers questions with checked, sourced reports.</p>
+      <div class="mt-auto flex flex-wrap gap-1.5"><span class="rounded-md bg-soft px-2 py-0.5 text-xs text-ink-2">Research extension</span><span class="rounded-md bg-soft px-2 py-0.5 font-mono text-xs text-ink-2">qwen3.8-27b</span><span class="rounded-md bg-soft px-2 py-0.5 text-xs text-ink-2">gVisor</span></div>
+    </a>
+    <a href="#agent" class="flex flex-col gap-3 rounded-[22px] border border-accent/40 bg-surface p-5 text-ink no-underline shadow-glow transition hover:-translate-y-px">
+      <div class="flex items-center gap-2"><span class="text-[15.5px] font-semibold tracking-[-0.015em]">rust-reviewer</span><span class="text-[13px] text-muted">v2</span><span class="ml-auto rounded-full bg-soft px-2 py-0.5 text-[11px] font-semibold text-muted">Draft</span></div>
+      <p class="m-0 text-[13px] text-ink-2">Forked from Reviewer v7 with clippy rules and a Rust rubric.</p>
+      <div class="mt-auto flex flex-wrap gap-1.5"><span class="rounded-md bg-info-bg px-2 py-0.5 text-[11px] font-medium text-info">Yours</span><span class="rounded-md bg-soft px-2 py-0.5 text-xs text-ink-2">Benchmark 9 of 20 cases</span></div>
+    </a>
+    <a href="#agent" class="flex flex-col gap-3 rounded-[22px] border border-line bg-surface p-5 text-ink no-underline transition hover:-translate-y-px hover:border-line-strong hover:shadow-lift">
+      <div class="flex items-center gap-2"><span class="text-[15.5px] font-semibold tracking-[-0.015em]">Lineup</span><span class="text-[13px] text-muted">v5</span><span class="ml-auto rounded-full bg-success-bg px-2 py-0.5 text-[11px] font-semibold text-success">Promoted</span></div>
+      <p class="m-0 text-[13px] text-ink-2">Weekly start and sit workflow, close calls decided by Clef.</p>
+      <div class="mt-auto flex flex-wrap gap-1.5"><span class="rounded-md bg-soft px-2 py-0.5 text-xs text-ink-2">Sleeper extension</span><span class="rounded-md bg-soft px-2 py-0.5 text-xs text-ink-2">Scheduled</span></div>
+    </a>
+  </div>
+</section>
+
+<!-- ============ AGENT EDITOR ============ -->
+<section data-screen="agent" hidden class="mx-auto w-full max-w-[1180px] px-4 pt-6 pb-10 sm:px-6">
+  <a href="#agents" class="text-[13px] text-muted no-underline hover:text-ink">← Agents</a>
+  <div class="mt-3 mb-6 flex flex-wrap items-center gap-3">
+    <h1 class="m-0 text-[22px] font-bold tracking-[-0.02em]">rust-reviewer</h1>
+    <span class="rounded-full bg-soft px-2 py-0.5 text-[11px] font-semibold text-muted">Draft · v2</span>
+    <div class="ml-auto flex gap-2">
+      <button type="button" class="h-[34px] cursor-pointer rounded-full border border-line bg-surface px-3 text-[13px] font-medium text-ink-2 hover:text-ink">Export file</button>
+      <button type="button" disabled class="h-[34px] cursor-not-allowed rounded-full bg-line-strong px-3.5 text-[13px] font-semibold text-muted" title="Needs a benchmark with at least 20 real cases">Promote</button>
+    </div>
+  </div>
+  <div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+    <form class="flex min-w-0 flex-col gap-5" onsubmit="event.preventDefault()">
+      <fieldset class="m-0 flex flex-col gap-3 rounded-[22px] border border-line bg-surface p-5 shadow-card">
+        <legend class="sr-only">Model and role</legend>
+        <p class="m-0 text-sm font-semibold tracking-[-0.01em]">Model and role</p>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <label class="flex flex-col gap-1.5 text-[13px] text-ink-2" for="m-model">Model<select id="m-model" class="h-[34px] rounded-full border border-line bg-soft px-2.5 text-[13px] outline-none"><option>qwen3.8-27b (llm-swap)</option><option>Clef (llm-swap)</option></select></label>
+          <label class="flex flex-col gap-1.5 text-[13px] text-ink-2" for="m-fallback">Hosted fallback<select id="m-fallback" class="h-[34px] rounded-full border border-line bg-soft px-2.5 text-[13px] outline-none"><option>Off</option><option>deepseek-v4.1-flash (OpenRouter)</option></select></label>
+        </div>
+        <label class="flex flex-col gap-1.5 text-[13px] text-ink-2" for="m-prompt">Reviewer prompt <span class="text-muted">· knowledge, changes need no deploy</span>
+          <textarea id="m-prompt" rows="4" class="w-full resize-y rounded-full border border-line bg-soft px-3 py-2 font-mono text-[12.5px] leading-relaxed outline-none focus:border-line-strong focus:bg-surface">Review Rust changes. Run cargo clippy -- -D warnings before judging style.
+Treat unsafe blocks without a SAFETY comment as blocking.</textarea></label>
+      </fieldset>
+      <fieldset class="m-0 flex flex-col gap-3 rounded-[22px] border border-line bg-surface p-5 shadow-card">
+        <legend class="sr-only">Actions that need approval</legend>
+        <p class="m-0 text-sm font-semibold tracking-[-0.01em]">Actions that need approval</p>
+        <div class="overflow-x-auto"><table class="w-full border-collapse text-[13px]">
+          <tbody>
+            <tr><td class="border-b border-line py-2 pr-3 font-mono text-[12px]">github_post_review</td><td class="border-b border-line py-2"><span class="flex flex-wrap items-center gap-1.5"><span class="rounded-md bg-soft px-2 py-0.5 text-xs text-ink-2">Judge</span><span class="text-muted">→</span><span class="rounded-md bg-soft px-2 py-0.5 text-xs text-ink-2">You, if unsure</span></span></td></tr>
+            <tr><td class="border-b border-line py-2 pr-3 font-mono text-[12px]">git_push</td><td class="border-b border-line py-2"><span class="rounded-md bg-soft px-2 py-0.5 text-xs text-ink-2">You</span></td></tr>
+            <tr><td class="py-2 pr-3 font-mono text-[12px]">github_comment</td><td class="py-2 text-muted">No approval · audited</td></tr>
+          </tbody></table></div>
+      </fieldset>
+      <fieldset class="m-0 flex flex-col gap-3 rounded-[22px] border border-line bg-surface p-5 shadow-card">
+        <legend class="sr-only">Sandbox</legend>
+        <p class="m-0 text-sm font-semibold tracking-[-0.01em]">Sandbox</p>
+        <div role="group" aria-label="Isolation" class="inline-flex w-fit rounded-full border border-line bg-soft p-[3px]">
+          <button type="button" aria-pressed="true" class="h-[30px] cursor-pointer rounded-full border-0 bg-surface px-3 text-[13px] font-medium text-ink shadow-thumb">microVM</button>
+          <button type="button" aria-pressed="false" class="h-[30px] cursor-pointer rounded-full border-0 bg-transparent px-3 text-[13px] font-medium text-muted hover:text-ink">gVisor</button>
+        </div>
+        <p class="m-0 text-[13px] text-ink-2">Allowed hosts</p>
+        <div class="flex flex-wrap gap-1.5"><span class="rounded-md bg-soft px-2 py-0.5 font-mono text-xs text-ink-2">github.com</span><span class="rounded-md bg-soft px-2 py-0.5 font-mono text-xs text-ink-2">crates.io</span><span class="rounded-md bg-soft px-2 py-0.5 font-mono text-xs text-ink-2">static.crates.io</span><span class="rounded-md bg-warning-bg px-2 py-0.5 font-mono text-xs text-warning" title="Added in this version, flagged in the audit">index.crates.io · new</span></div>
+        <div class="grid gap-3 sm:grid-cols-3">
+          <label class="flex flex-col gap-1.5 text-[13px] text-ink-2" for="m-turns">Turn limit<input id="m-turns" value="40" class="h-[34px] rounded-full border border-line bg-soft px-2.5 text-[13px] tabular-nums outline-none" /></label>
+          <label class="flex flex-col gap-1.5 text-[13px] text-ink-2" for="m-rev">Revisions<input id="m-rev" value="2" class="h-[34px] rounded-full border border-line bg-soft px-2.5 text-[13px] tabular-nums outline-none" /></label>
+          <label class="flex flex-col gap-1.5 text-[13px] text-ink-2" for="m-ret">Keep idle sessions<input id="m-ret" value="30 days" class="h-[34px] rounded-full border border-line bg-soft px-2.5 text-[13px] outline-none" /></label>
+        </div>
+      </fieldset>
+    </form>
+    <aside class="flex min-w-0 flex-col gap-5">
+      <div class="rounded-[22px] border border-line bg-surface p-5 shadow-card">
+        <p class="m-0 mb-3 text-sm font-semibold tracking-[-0.01em]">Changes in v2</p>
+        <pre class="m-0 overflow-x-auto rounded-lg bg-soft p-3 font-mono text-[12px] leading-relaxed text-ink-2"><span class="text-danger">- turns: 30</span>
+<span class="text-success">+ turns: 40</span>
+<span class="text-success">+ egress: index.crates.io</span>
+<span class="text-success">+ prompt: "Treat unsafe blocks…"</span></pre>
+        <p class="m-0 mt-3 text-[12px] text-muted">v1 forked from Reviewer v7 · Oct 30</p>
+      </div>
+      <div class="rounded-[22px] border border-line bg-surface p-5 shadow-card">
+        <p class="m-0 mb-2 text-sm font-semibold tracking-[-0.01em]">Before it can run unattended</p>
+        <p class="m-0 text-[13px] text-ink-2">Promotion needs a benchmark of at least 20 real reviews. You have 9.</p>
+        <div class="mt-3 h-1.5 overflow-hidden rounded-full bg-soft" role="progressbar" aria-valuemin="0" aria-valuemax="20" aria-valuenow="9" aria-label="Benchmark cases"><div class="h-full w-[45%] rounded-full bg-ink"></div></div>
+        <a href="#evals" class="mt-3 inline-block text-[13px] text-link no-underline hover:underline">Open evals</a>
+      </div>
+    </aside>
+  </div>
+</section>
+
+<!-- ============ EVALS ============ -->
+<section data-screen="evals" hidden class="mx-auto w-full max-w-[1100px] px-4 pt-8 pb-10 sm:px-6">
+  <div class="mb-5 flex flex-wrap items-center gap-3">
+    <h1 class="m-0 text-[22px] font-bold tracking-[-0.02em]">Evals</h1>
+    <span class="text-[13px] text-muted">Datasets and experiments live in Langfuse</span>
+  </div>
+  <div class="mb-6 rounded-[22px] border border-accent/40 bg-surface p-5 shadow-glow">
+    <div class="mb-4 flex flex-wrap items-center gap-2">
+      <p class="m-0 text-[15.5px] font-semibold tracking-[-0.015em]">Reviewer v8 candidate vs v7</p>
+      <span class="rounded-full bg-success-bg px-2 py-0.5 text-[11px] font-semibold text-success">Wins on quality and cost</span>
+      <button type="button" class="ml-auto h-[34px] cursor-pointer rounded-full bg-ink px-3.5 text-[13px] font-semibold text-on-ink hover:bg-ink-2">Promote v8</button>
+    </div>
+    <div class="grid grid-cols-2 gap-4 sm:grid-cols-4">
+      <div><p class="m-0 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Passed checks</p><p class="m-0 mt-1 text-[22px] font-semibold tabular-nums tracking-[-0.02em]">95%</p><p class="m-0 text-[12px] tabular-nums text-success">+2 pts vs 93%</p></div>
+      <div><p class="m-0 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Cost per review</p><p class="m-0 mt-1 text-[22px] font-semibold tabular-nums tracking-[-0.02em]">$0.38</p><p class="m-0 text-[12px] tabular-nums text-success">−27% vs $0.52</p></div>
+      <div><p class="m-0 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Turns</p><p class="m-0 mt-1 text-[22px] font-semibold tabular-nums tracking-[-0.02em]">14.1</p><p class="m-0 text-[12px] tabular-nums text-success">−4.2</p></div>
+      <div><p class="m-0 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">p90 time</p><p class="m-0 mt-1 text-[22px] font-semibold tabular-nums tracking-[-0.02em]">9.2 min</p><p class="m-0 text-[12px] tabular-nums text-success">Under the 10 min target</p></div>
+    </div>
+    <p class="m-0 mt-4 text-[12px] text-muted">40 real reviews, 6 known-bad · replayed with deliveries blocked · cost at cloud-equivalent rates</p>
+  </div>
+  <div class="overflow-x-auto rounded-[22px] border border-line bg-surface px-5 py-3 shadow-card">
+    <table class="w-full min-w-[600px] border-collapse text-[13px]">
+      <thead><tr><th class="border-b border-line pb-1.5 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Agent</th><th class="border-b border-line pb-1.5 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Benchmark</th><th class="border-b border-line pb-1.5 text-right text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Cases</th><th class="border-b border-line pb-1.5 text-right text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Last run</th></tr></thead>
+      <tbody>
+        <tr><td class="border-b border-line py-2.5 pr-3">Reviewer</td><td class="border-b border-line py-2.5 pr-3 font-mono text-[12.5px] text-ink-2">reviewer-bench</td><td class="border-b border-line py-2.5 pr-3 text-right tabular-nums">40</td><td class="border-b border-line py-2.5 text-right tabular-nums text-muted">today</td></tr>
+        <tr><td class="border-b border-line py-2.5 pr-3">Researcher</td><td class="border-b border-line py-2.5 pr-3 font-mono text-[12.5px] text-ink-2">research-bench</td><td class="border-b border-line py-2.5 pr-3 text-right tabular-nums">30</td><td class="border-b border-line py-2.5 text-right tabular-nums text-muted">Oct 28</td></tr>
+        <tr><td class="py-2.5 pr-3">rust-reviewer</td><td class="py-2.5 pr-3 font-mono text-[12.5px] text-ink-2">rust-reviewer-bench</td><td class="py-2.5 pr-3 text-right tabular-nums text-warning">9 of 20</td><td class="py-2.5 text-right tabular-nums text-muted">never</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============ SCHEDULES ============ -->
+<section data-screen="schedules" hidden class="mx-auto w-full max-w-[1100px] px-4 pt-8 pb-10 sm:px-6">
+  <h1 class="m-0 mb-5 text-[22px] font-bold tracking-[-0.02em]">Schedules</h1>
+  <div class="overflow-x-auto rounded-[22px] border border-line bg-surface px-5 py-3 shadow-card">
+    <table class="w-full min-w-[720px] border-collapse text-[13px]">
+      <thead><tr><th class="border-b border-line pb-1.5 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Job</th><th class="border-b border-line pb-1.5 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">When (ET)</th><th class="border-b border-line pb-1.5 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Useful until</th><th class="border-b border-line pb-1.5 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Last run</th><th class="border-b border-line pb-1.5 text-right text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Next</th></tr></thead>
+      <tbody>
+        <tr><td class="border-b border-line py-2.5 pr-3">Sleeper · Lineup</td><td class="border-b border-line py-2.5 pr-3 text-ink-2">Thu 18:00, Sun 10:00</td><td class="border-b border-line py-2.5 pr-3 text-ink-2">1 h before first kickoff</td><td class="border-b border-line py-2.5 pr-3"><span class="rounded-full bg-success-bg px-2 py-0.5 text-[11px] font-semibold text-success">Delivered</span></td><td class="border-b border-line py-2.5 text-right tabular-nums text-muted">Sun 10:00</td></tr>
+        <tr><td class="border-b border-line py-2.5 pr-3">Sleeper · Waivers</td><td class="border-b border-line py-2.5 pr-3 text-ink-2">Tue 20:00</td><td class="border-b border-line py-2.5 pr-3 text-ink-2">1 h before waivers process</td><td class="border-b border-line py-2.5 pr-3"><span class="rounded-full bg-success-bg px-2 py-0.5 text-[11px] font-semibold text-success">Delivered</span></td><td class="border-b border-line py-2.5 text-right tabular-nums text-muted">Tue 20:00</td></tr>
+        <tr class="bg-warm/60"><td class="border-b border-line py-2.5 pr-3">Sleeper · Player trends</td><td class="border-b border-line py-2.5 pr-3 text-ink-2">Daily 06:00</td><td class="border-b border-line py-2.5 pr-3 text-ink-2">Next run</td><td class="border-b border-line py-2.5 pr-3"><span class="rounded-full bg-warning-bg px-2 py-0.5 text-[11px] font-semibold text-warning" title="quack was down 05:40 to 07:10; the run was still useful, so it ran once at 07:10">Ran late · 07:10</span></td><td class="border-b border-line py-2.5 text-right tabular-nums text-muted">06:00</td></tr>
+        <tr><td class="py-2.5 pr-3">Sleeper · League report</td><td class="py-2.5 pr-3 text-ink-2">Tue 09:00</td><td class="py-2.5 pr-3 text-ink-2">Tue 23:59</td><td class="py-2.5 pr-3"><span class="rounded-full bg-soft px-2 py-0.5 text-[11px] font-semibold text-muted" title="Missed while quack was down and no longer useful">Skipped · missed</span></td><td class="py-2.5 text-right tabular-nums text-muted">Tue 09:00</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============ REMARKABLE ============ -->
+<section data-screen="remarkable" hidden class="mx-auto w-full max-w-[1100px] px-4 pt-8 pb-10 sm:px-6">
+  <div class="mb-5 flex flex-wrap items-center gap-3">
+    <h1 class="m-0 text-[22px] font-bold tracking-[-0.02em]">reMarkable</h1>
+    <span class="text-[13px] text-muted">Pick notes to transcribe and file</span>
+    <button type="button" class="ml-auto h-[34px] cursor-pointer rounded-full bg-ink px-3.5 text-[13px] font-semibold text-on-ink hover:bg-ink-2">Ingest 2 notes</button>
+  </div>
+  <div class="mb-6 flex items-center gap-3 rounded-xl bg-info-bg px-4 py-3 text-[13px] text-info"><span class="live-dot h-2 w-2 flex-none rounded-full bg-info"></span>Ingesting 3 notes · 1 done · you'll get a notification when all three are done</div>
+  <div class="grid grid-cols-[repeat(auto-fill,minmax(min(200px,100%),1fr))] gap-4">
+    <label for="rm1" class="flex cursor-pointer flex-col gap-2 rounded-[22px] border border-accent/40 bg-surface p-3 shadow-glow">
+      <span class="relative block aspect-[3/4] max-w-full rounded-lg border border-line bg-soft"><span class="absolute inset-x-4 top-5 h-px bg-line-strong"></span><span class="absolute inset-x-4 top-9 h-px bg-line-strong"></span><span class="absolute left-4 right-10 top-13 h-px bg-line-strong"></span><input id="rm1" type="checkbox" checked class="absolute right-2 top-2 h-4 w-4 accent-[var(--color-accent)]" /></span>
+      <span class="truncate text-[13.5px] font-medium">Week 9 lineup thoughts</span><span class="text-[12px] text-muted">2 pages · edited 1 h ago</span>
+    </label>
+    <label for="rm2" class="flex cursor-pointer flex-col gap-2 rounded-[22px] border border-accent/40 bg-surface p-3 shadow-glow">
+      <span class="relative block aspect-[3/4] max-w-full rounded-lg border border-line bg-soft"><span class="absolute inset-x-4 top-5 h-px bg-line-strong"></span><span class="absolute left-4 right-8 top-9 h-px bg-line-strong"></span><input id="rm2" type="checkbox" checked class="absolute right-2 top-2 h-4 w-4 accent-[var(--color-accent)]" /></span>
+      <span class="truncate text-[13.5px] font-medium">Eval replay ideas</span><span class="text-[12px] text-muted">3 pages · edited yesterday</span>
+    </label>
+    <label for="rm3" class="flex cursor-pointer flex-col gap-2 rounded-[22px] border border-line bg-surface p-3">
+      <span class="relative block aspect-[3/4] max-w-full rounded-lg border border-line bg-soft"><span class="absolute inset-x-4 top-5 h-px bg-line-strong"></span><input id="rm3" type="checkbox" class="absolute right-2 top-2 h-4 w-4 accent-[var(--color-accent)]" /></span>
+      <span class="truncate text-[13.5px] font-medium">Quack v1 sandbox ideas</span><span class="flex items-center gap-1.5 text-[12px] text-success">Ingested · v1</span>
+    </label>
+    <label for="rm4" class="flex cursor-pointer flex-col gap-2 rounded-[22px] border border-line bg-surface p-3">
+      <span class="relative block aspect-[3/4] max-w-full rounded-lg border border-line bg-soft"><input id="rm4" type="checkbox" class="absolute right-2 top-2 h-4 w-4 accent-[var(--color-accent)]" /></span>
+      <span class="truncate text-[13.5px] font-medium">Untitled notebook</span><span class="text-[12px] text-muted">being edited · wait until done</span>
+    </label>
+  </div>
+</section>
+
+<!-- ============ MEMORY ============ -->
+<section data-screen="memory" hidden class="mx-auto w-full max-w-[960px] px-4 pt-8 pb-10 sm:px-6">
+  <div class="mb-5 flex flex-wrap items-center gap-3">
+    <h1 class="m-0 text-[22px] font-bold tracking-[-0.02em]">Memory</h1>
+    <span class="text-[13px] text-muted">Only what you approved</span>
+  </div>
+  <div class="mb-6 rounded-xl bg-soft px-4 py-3 text-[13px] text-ink-2">On for Reviewer and Researcher, where it beat their benchmarks. Off for Lineup, where it didn't.</div>
+  <div class="mb-3 flex items-baseline gap-2"><h2 class="m-0 text-sm font-semibold tracking-[-0.01em]">Waiting for approval</h2><span class="text-[13px] font-medium text-muted">1</span></div>
+  <div class="mb-8 flex flex-wrap items-center gap-3 rounded-[22px] border border-accent/40 bg-surface p-4 shadow-glow">
+    <span class="min-w-0 flex-1 text-[14px]">quack-v1 uses pnpm workspaces</span>
+    <span class="rounded-md bg-soft px-2 py-0.5 font-mono text-xs text-ink-2">repo:fagerbergj/quack</span>
+    <button type="button" class="cursor-pointer rounded-lg bg-ink px-2.5 py-1 text-xs font-semibold text-on-ink">Approve</button>
+    <button type="button" class="cursor-pointer rounded-lg border border-line bg-surface px-2.5 py-1 text-xs font-medium text-ink-2 hover:text-danger">Reject</button>
+  </div>
+  <div class="mb-3 flex items-baseline gap-2"><h2 class="m-0 text-sm font-semibold tracking-[-0.01em]">Approved</h2><span class="text-[13px] font-medium text-muted">3</span></div>
+  <ul class="m-0 flex list-none flex-col divide-y divide-line rounded-[22px] border border-line bg-surface p-0 shadow-card">
+    <li class="group flex flex-wrap items-center gap-3 px-5 py-3.5"><span class="min-w-0 flex-1 text-[14px]">Report times in Eastern time</span><span class="rounded-md bg-soft px-2 py-0.5 text-xs text-ink-2">Global · pinned</span><button type="button" class="cursor-pointer rounded-lg px-2 py-1 text-xs font-medium text-muted opacity-0 transition hover:bg-soft hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100">Edit</button></li>
+    <li class="group flex flex-wrap items-center gap-3 px-5 py-3.5"><span class="min-w-0 flex-1 text-[14px]">League scoring is 0.5 PPR with a superflex slot</span><span class="rounded-md bg-soft px-2 py-0.5 font-mono text-xs text-ink-2">league:sleeper</span><button type="button" class="cursor-pointer rounded-lg px-2 py-1 text-xs font-medium text-muted opacity-0 transition hover:bg-soft hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100">Edit</button></li>
+    <li class="group flex flex-wrap items-center gap-3 px-5 py-3.5"><span class="min-w-0 flex-1 text-[14px]">Never move a prod role to a hosted model</span><span class="rounded-md bg-soft px-2 py-0.5 text-xs text-ink-2">Global · pinned</span><button type="button" class="cursor-pointer rounded-lg px-2 py-1 text-xs font-medium text-muted opacity-0 transition hover:bg-soft hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100">Edit</button></li>
+  </ul>
+</section>
+
+
+<!-- ============ SLEEPER ============ -->
+<section data-screen="sleeper" hidden class="mx-auto w-full max-w-[1240px] px-4 pt-6 pb-10 sm:px-6">
+  <div class="flex flex-wrap items-end gap-x-4 gap-y-2">
+    <div class="min-w-0">
+      <h1 class="m-0 text-[22px] font-bold tracking-[-0.02em]">Roger is a Clown</h1>
+      <p class="m-0 mt-1 text-[13px] text-ink-2">Substation Supremacy · 0–1 · 2026 season, week 2 in progress</p>
+    </div>
+    <div aria-hidden="true" class="flex items-end gap-1"><svg class="rubber" width="40" height="34" viewBox="0 0 64 48"><ellipse cx="34" cy="32" rx="22" ry="11" fill="#f2c94c"/><circle cx="22" cy="18" r="11" fill="#f2c94c"/><path d="M13 16 L1 19 L13 23 Z" fill="#e07b1a"/><circle cx="19" cy="15" r="1.8" fill="#0f1513"/><path d="M48 26 Q58 20 58 32" fill="#f2c94c"/></svg></div>
+    <div class="flex flex-wrap gap-1.5 sm:ml-auto"><span class="rounded-md bg-soft px-2 py-0.5 text-xs text-ink-2">10 teams</span><span class="rounded-md bg-soft px-2 py-0.5 text-xs text-ink-2">PPR</span><span class="rounded-md bg-soft px-2 py-0.5 text-xs text-ink-2">Rolling waivers</span><span class="rounded-md bg-soft px-2 py-0.5 text-xs text-ink-2">6 make playoffs</span></div>
+  </div>
+
+  <!-- This week: what to do next -->
+  <section aria-labelledby="todo" class="mt-5 rounded-[22px] border border-line bg-surface p-4 shadow-card">
+    <div class="mb-3 flex items-center gap-2"><h2 id="todo" class="m-0 text-[16px]">To do this week</h2><span class="text-[13px] text-muted">3</span></div>
+    <div class="grid gap-3 md:grid-cols-3">
+      <div class="flex flex-col gap-2 rounded-xl bg-warm/70 p-3.5">
+        <p class="m-0 text-[11px] font-semibold uppercase tracking-[0.06em] text-warning">Lineup · locks Thu 20:15 ET</p>
+        <p class="m-0 text-[14px] font-medium text-ink">Make 2 changes: start Hubbard and Irving</p>
+        <button type="button" data-goto-tab="sl-lineup" class="mt-auto w-fit cursor-pointer rounded-lg bg-ink px-2.5 py-1 text-xs font-semibold text-on-ink">Review lineup</button>
+      </div>
+      <div class="flex flex-col gap-2 rounded-xl bg-soft p-3.5">
+        <p class="m-0 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Waivers · process Wed 03:00 ET</p>
+        <p class="m-0 text-[14px] font-medium text-ink">3 claims ready, you pick 6th of 10</p>
+        <button type="button" data-goto-tab="sl-waivers" class="mt-auto w-fit cursor-pointer rounded-lg border border-line bg-surface px-2.5 py-1 text-xs font-medium text-ink-2 hover:text-ink">Review claims</button>
+      </div>
+      <div class="flex flex-col gap-2 rounded-xl bg-soft p-3.5">
+        <p class="m-0 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Trade · Gibbs Me Liberty</p>
+        <p class="m-0 text-[14px] font-medium text-ink">They countered your Dowdle offer</p>
+        <button type="button" data-goto-tab="sl-trades" class="mt-auto w-fit cursor-pointer rounded-lg border border-line bg-surface px-2.5 py-1 text-xs font-medium text-ink-2 hover:text-ink">Open talk</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Week rail and jobs -->
+  <div class="mt-4 flex flex-wrap items-center gap-3">
+    <nav aria-label="Week" class="flex min-w-0 flex-1 gap-1 overflow-x-auto pb-1 text-[12.5px]">
+      <a href="#sleeper" class="rounded-lg px-2.5 py-1 text-muted no-underline hover:bg-soft">Draft</a>
+      <a href="#sleeper" class="rounded-lg px-2.5 py-1 text-muted no-underline hover:bg-soft">1</a>
+      <a href="#sleeper" aria-current="page" class="rounded-lg bg-ink px-2.5 py-1 font-semibold text-on-ink no-underline">2 · now</a>
+      <a href="#sleeper" class="rounded-lg px-2.5 py-1 text-muted no-underline hover:bg-soft">3</a>
+      <a href="#sleeper" class="rounded-lg px-2.5 py-1 text-muted no-underline hover:bg-soft">4</a>
+      <a href="#sleeper" class="rounded-lg px-2.5 py-1 text-muted no-underline hover:bg-soft">5</a>
+      <a href="#sleeper" class="rounded-lg px-2.5 py-1 text-muted no-underline hover:bg-soft">6</a>
+      <span class="px-1 py-1 text-muted">…</span>
+      <a href="#sleeper" class="rounded-lg px-2.5 py-1 text-muted no-underline hover:bg-soft">14</a>
+      <a href="#sleeper" class="rounded-lg px-2.5 py-1 text-muted no-underline hover:bg-soft">Playoffs</a>
+    </nav>
+    <label for="sl-season" class="sr-only">Season</label>
+    <select id="sl-season" class="h-[30px] cursor-pointer rounded-full border border-line bg-soft px-2 text-[12.5px] outline-none"><option>2026 · 0–1</option><option>2025 · 6–8</option><option>2024 · 6–8</option></select>
+  </div>
+
+  <div class="mt-4 grid gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
+    <div class="min-w-0">
+      <div class="mb-4 flex flex-wrap items-center gap-3">
+        <div role="tablist" aria-label="Sleeper sections" class="inline-flex flex-wrap rounded-full border border-line bg-soft p-[3px]">
+          <button role="tab" aria-selected="true" data-tab="sl-lineup" class="h-[30px] cursor-pointer rounded-full border-0 bg-surface px-3 text-[13px] font-medium text-ink shadow-thumb">Lineup</button>
+          <button role="tab" aria-selected="false" data-tab="sl-waivers" class="h-[30px] cursor-pointer rounded-full border-0 bg-transparent px-3 text-[13px] font-medium text-muted hover:text-ink">Waivers 3</button>
+          <button role="tab" aria-selected="false" data-tab="sl-trades" class="h-[30px] cursor-pointer rounded-full border-0 bg-transparent px-3 text-[13px] font-medium text-muted hover:text-ink">Trades 1</button>
+          <button role="tab" aria-selected="false" data-tab="sl-preview" class="h-[30px] cursor-pointer rounded-full border-0 bg-transparent px-3 text-[13px] font-medium text-muted hover:text-ink">Preview</button>
+          <button role="tab" aria-selected="false" data-tab="sl-trends" class="h-[30px] cursor-pointer rounded-full border-0 bg-transparent px-3 text-[13px] font-medium text-muted hover:text-ink">Trends</button>
+        </div>
+      </div>
+
+      <div data-panel="sl-lineup" class="rounded-[22px] border border-line bg-surface shadow-card">
+        <div class="flex flex-wrap items-center gap-2 border-b border-line px-5 py-3">
+          <p class="m-0 text-sm font-semibold">Start / sit</p>
+          <span class="rounded-md bg-soft px-2 py-0.5 text-xs text-ink-2">Close game · favour floors</span>
+          <span class="ml-auto text-[12px] text-muted">Checked · ran Tue 18:04</span>
+          <button type="button" class="cursor-pointer rounded-lg border border-line bg-surface px-2.5 py-1 text-xs font-medium text-ink-2 hover:text-ink">Run again</button>
+          <a href="#session" class="rounded-lg px-2 py-1 text-xs font-medium text-link no-underline hover:bg-soft">Ask about it</a>
+        </div>
+        <div class="grid grid-cols-[1fr_auto_1fr] items-center gap-3 border-b border-line px-5 py-4">
+          <div><p class="m-0 text-[13px] text-muted">You · 0–1</p><p class="m-0 text-[24px] font-semibold tabular-nums tracking-[-0.02em]">120.7</p><p class="m-0 text-[12px] tabular-nums text-muted">range 98–143</p></div>
+          <div class="rounded-xl bg-soft px-3 py-2 text-center"><p class="m-0 text-[18px] font-semibold tabular-nums">55%</p><p class="m-0 text-[10.5px] font-semibold uppercase tracking-[0.06em] text-muted">to win</p></div>
+          <div class="text-right"><p class="m-0 text-[13px] text-muted">Rice Cooker · 1–0</p><p class="m-0 text-[24px] font-semibold tabular-nums tracking-[-0.02em]">117.7</p><p class="m-0 text-[12px] tabular-nums text-muted">range 98–141</p></div>
+        </div>
+        <div class="overflow-x-auto px-5 py-2">
+          <table class="w-full min-w-[560px] border-collapse text-[13px]">
+            <thead><tr><th class="w-[52px] border-b border-line py-1.5 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Slot</th><th class="border-b border-line py-1.5 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">You · floor to ceiling</th><th class="w-[56px] border-b border-line py-1.5 text-right text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Proj</th><th class="w-[130px] border-b border-line py-1.5 text-right text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Them</th></tr></thead>
+            <tbody>
+              <tr><td class="border-b border-line py-2 font-mono text-[11.5px] text-muted">QB</td><td class="border-b border-line py-2 pr-3"><span class="font-medium">Joe Burrow</span><span class="relative mt-1 block h-1.5 rounded-full bg-soft"><span class="absolute inset-y-0 left-[22%] right-[30%] rounded-full bg-info-bg"></span><span class="absolute top-[-2px] h-[10px] w-[2px] bg-info" style="left:46%"></span></span></td><td class="border-b border-line py-2 pr-4 text-right font-semibold tabular-nums">18.2</td><td class="border-b border-line py-2 text-right tabular-nums text-ink-2">T. Shough 18.5</td></tr>
+              <tr><td class="border-b border-line py-2 font-mono text-[11.5px] text-muted">RB1</td><td class="border-b border-line py-2 pr-3"><span class="font-medium">Christian McCaffrey</span><span class="relative mt-1 block h-1.5 rounded-full bg-soft"><span class="absolute inset-y-0 left-[26%] right-[22%] rounded-full bg-info-bg"></span><span class="absolute top-[-2px] h-[10px] w-[2px] bg-info" style="left:52%"></span></span></td><td class="border-b border-line py-2 pr-4 text-right font-semibold tabular-nums">20.7</td><td class="border-b border-line py-2 text-right tabular-nums text-ink-2">B. Robinson 19.8</td></tr>
+              <tr class="bg-success-bg/60"><td class="border-b border-line py-2 font-mono text-[11.5px] text-success">RB2</td><td class="border-b border-line py-2 pr-3"><span class="font-medium">Chuba Hubbard</span> <span class="rounded-md bg-success-bg px-1.5 py-0.5 text-[10px] font-bold text-success">START</span><span class="relative mt-1 block h-1.5 rounded-full bg-soft"><span class="absolute inset-y-0 left-[16%] right-[48%] rounded-full bg-info-bg"></span><span class="absolute top-[-2px] h-[10px] w-[2px] bg-info" style="left:34%"></span></span></td><td class="border-b border-line py-2 pr-4 text-right font-semibold tabular-nums">14.1</td><td class="border-b border-line py-2 text-right tabular-nums text-ink-2">K. Walker 13.2</td></tr>
+              <tr><td class="border-b border-line py-2 font-mono text-[11.5px] text-muted">WR1</td><td class="border-b border-line py-2 pr-3"><span class="font-medium">Justin Jefferson</span><span class="relative mt-1 block h-1.5 rounded-full bg-soft"><span class="absolute inset-y-0 left-[20%] right-[30%] rounded-full bg-info-bg"></span><span class="absolute top-[-2px] h-[10px] w-[2px] bg-info" style="left:42%"></span></span></td><td class="border-b border-line py-2 pr-4 text-right font-semibold tabular-nums">16.7</td><td class="border-b border-line py-2 text-right tabular-nums text-ink-2">P. Nacua 17.9</td></tr>
+              <tr><td class="border-b border-line py-2 font-mono text-[11.5px] text-muted">WR2</td><td class="border-b border-line py-2 pr-3"><span class="font-medium">Malik Nabers</span> <span class="rounded-md bg-warning-bg px-1.5 py-0.5 text-[10px] font-bold text-warning">QUESTIONABLE</span><span class="relative mt-1 block h-1.5 rounded-full bg-soft"><span class="absolute inset-y-0 left-[8%] right-[40%] rounded-full bg-info-bg"></span><span class="absolute top-[-2px] h-[10px] w-[2px] bg-info" style="left:32%"></span></span></td><td class="border-b border-line py-2 pr-4 text-right font-semibold tabular-nums">13.5</td><td class="border-b border-line py-2 text-right tabular-nums text-ink-2">G. Wilson 12.1</td></tr>
+              <tr class="bg-success-bg/60"><td class="py-2 font-mono text-[11.5px] text-success">FLEX</td><td class="py-2 pr-3"><span class="font-medium">Bucky Irving</span> <span class="rounded-md bg-success-bg px-1.5 py-0.5 text-[10px] font-bold text-success">START</span><span class="relative mt-1 block h-1.5 rounded-full bg-soft"><span class="absolute inset-y-0 left-[14%] right-[52%] rounded-full bg-info-bg"></span><span class="absolute top-[-2px] h-[10px] w-[2px] bg-info" style="left:30%"></span></span></td><td class="py-2 pr-4 text-right font-semibold tabular-nums">13.3</td><td class="py-2 text-right tabular-nums text-ink-2">J. Addison 11.4</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="mx-5 mb-4 rounded-xl bg-warm px-3.5 py-2.5 text-[13px] text-ink-2"><strong class="font-semibold text-warning">Watch Malik Nabers.</strong> If he's listed Doubtful at Friday 16:00 ET, start Devaughn Vele (6–17) at WR2.</div>
+        <details class="border-t border-line px-5 py-3 text-[13px]"><summary class="cursor-pointer text-ink-2">Bench · 5 · TE, K and DEF unchanged</summary></details>
+      </div>
+
+      <div data-panel="sl-waivers" hidden class="rounded-[22px] border border-line bg-surface shadow-card">
+        <div class="flex flex-wrap items-center gap-2 border-b border-line px-5 py-3"><p class="m-0 text-sm font-semibold">Waiver claims</p><span class="text-[12px] text-muted">Rolling · you're 6th of 10 · submit in this order</span><span class="ml-auto flex items-center gap-1.5 text-[12px] text-info"><span class="live-dot h-1.5 w-1.5 rounded-full bg-info"></span>Refreshing · step 3 of 5</span></div>
+        <ol class="m-0 flex list-none flex-col divide-y divide-line p-0 text-[13px]">
+          <li class="flex items-center gap-3 px-5 py-3"><span class="w-4 font-semibold tabular-nums text-muted">1</span><span class="flex flex-col gap-1"><span><span class="rounded-md bg-success-bg px-1.5 py-0.5 text-[10px] font-bold text-success">ADD</span> <span class="font-medium">Jonah Coleman</span> <span class="text-muted">RB · DEN</span></span><span><span class="rounded-md bg-danger-bg px-1.5 py-0.5 text-[10px] font-bold text-danger">DROP</span> Rico Dowdle (Q)</span></span><span class="ml-auto font-semibold tabular-nums">7.1</span></li>
+          <li class="flex items-center gap-3 px-5 py-3"><span class="w-4 font-semibold tabular-nums text-muted">2</span><span class="flex flex-col gap-1"><span><span class="rounded-md bg-success-bg px-1.5 py-0.5 text-[10px] font-bold text-success">ADD</span> <span class="font-medium">George Kittle</span> <span class="text-muted">TE · SF</span></span><span><span class="rounded-md bg-danger-bg px-1.5 py-0.5 text-[10px] font-bold text-danger">DROP</span> Blake Corum</span></span><span class="ml-auto font-semibold tabular-nums">12.2</span></li>
+          <li class="flex items-center gap-3 px-5 py-3"><span class="w-4 font-semibold tabular-nums text-muted">3</span><span class="flex flex-col gap-1"><span><span class="rounded-md bg-success-bg px-1.5 py-0.5 text-[10px] font-bold text-success">ADD</span> <span class="font-medium">Dalton Schultz</span> <span class="text-muted">TE · HOU</span></span><span class="text-muted">Drop Corum if claim 2 fails</span></span><span class="ml-auto font-semibold tabular-nums">10.4</span></li>
+        </ol>
+      </div>
+
+      <div data-panel="sl-trades" hidden class="rounded-[22px] border border-line bg-surface shadow-card">
+        <div class="flex flex-wrap items-center gap-2 border-b border-line px-5 py-3"><p class="m-0 text-sm font-semibold">Trade talk · Gibbs Me Liberty</p><span class="rounded-full bg-warning-bg px-2 py-0.5 text-[11px] font-semibold text-warning">Their move answered</span><button type="button" class="ml-auto cursor-pointer rounded-lg border border-line bg-surface px-2.5 py-1 text-xs font-medium text-ink-2 hover:text-ink">New talk</button></div>
+        <div class="flex flex-col gap-3 p-5 text-[13px]">
+          <div class="grid grid-cols-[90px_minmax(0,1fr)_minmax(0,1fr)] gap-3 rounded-xl border border-line p-3"><span class="font-medium">You · Tue</span><span><span class="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Give</span><br>Rico Dowdle RB 11.1</span><span><span class="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Get</span><br>Dalton Kincaid TE 12.8</span></div>
+          <div class="grid grid-cols-[90px_minmax(0,1fr)_minmax(0,1fr)] gap-3 rounded-xl border border-warning/40 bg-warm/50 p-3"><span class="font-medium">Them · today</span><span><span class="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Give</span><br>Rico Dowdle, Blake Corum</span><span><span class="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Get</span><br>Dalton Kincaid</span></div>
+          <p class="m-0 rounded-xl bg-soft px-3.5 py-2.5 text-ink-2"><span class="rounded-md bg-warning-bg px-1.5 py-0.5 text-[10px] font-bold text-warning">COUNTER</span> Re-send Dowdle alone: they need RB depth, but not at the cost of your only McCaffrey handcuff.</p>
+          <div class="flex gap-2"><button type="button" class="cursor-pointer rounded-lg bg-ink px-2.5 py-1 text-xs font-semibold text-on-ink">Send counter</button><a href="#session" class="rounded-lg border border-line bg-surface px-2.5 py-1 text-xs font-medium text-ink-2 no-underline hover:text-ink">Discuss in session</a></div>
+        </div>
+      </div>
+
+      <div data-panel="sl-preview" hidden class="rounded-[22px] border border-line bg-surface p-5 text-[13.5px] leading-relaxed text-ink-2 shadow-card">Week 2 preview: the closest game is Jockstrappers vs I Think I'm Gonna Puka. Your matchup with Rice Cooker is the 3rd closest.</div>
+      <div data-panel="sl-trends" hidden class="rounded-[22px] border border-line bg-surface p-5 text-[13.5px] leading-relaxed text-ink-2 shadow-card">Joe Burrow listed Questionable; watch Friday's designation. Waiver heat: Devin Singletary added in 525,015 leagues in 24 h.</div>
+    </div>
+
+    <aside class="flex min-w-0 flex-col gap-4">
+      <div class="rounded-[22px] border border-line bg-surface p-4 shadow-card">
+        <div class="mb-2 flex items-center"><p class="m-0 text-sm font-semibold">Standings</p><span class="ml-auto text-[12px] text-muted">6 make the playoffs</span></div>
+        <ol class="m-0 flex list-none flex-col p-0 text-[13px]">
+          <li class="flex gap-2 py-1"><span class="w-4 tabular-nums text-muted">1</span><span class="truncate">Brown Tuddies Likely</span><span class="ml-auto tabular-nums text-ink-2">1–0</span></li>
+          <li class="flex gap-2 py-1"><span class="w-4 tabular-nums text-muted">2</span><span class="truncate">Rice Cooker</span><span class="ml-auto tabular-nums text-ink-2">1–0</span></li>
+          <li class="flex gap-2 py-1"><span class="w-4 tabular-nums text-muted">3</span><span class="truncate">Pitts and Giggles</span><span class="ml-auto tabular-nums text-ink-2">1–0</span></li>
+          <li class="flex gap-2 border-b border-dashed border-line-strong py-1 pb-1.5"><span class="w-4 tabular-nums text-muted">6</span><span class="truncate">Achane Magic</span><span class="ml-auto tabular-nums text-ink-2">0–1</span></li>
+          <li class="mt-1 flex gap-2 rounded-md bg-soft px-1 py-1"><span class="w-4 tabular-nums text-muted">9</span><span class="truncate font-medium">Substation Supremacy</span><span class="ml-auto tabular-nums text-ink-2">0–1</span></li>
+        </ol>
+      </div>
+      <div class="rounded-[22px] border border-line bg-surface p-4 shadow-card">
+        <p class="m-0 mb-2 text-sm font-semibold">Jobs</p>
+        <ul class="m-0 flex list-none flex-col gap-1.5 p-0 text-[13px]">
+          <li class="flex items-center gap-2"><span class="h-1.5 w-1.5 rounded-full bg-success"></span>Lineup<span class="ml-auto text-[12px] text-muted">Tue · next Thu 18:00</span></li>
+          <li class="flex items-center gap-2"><span class="live-dot h-1.5 w-1.5 rounded-full bg-info"></span>Waivers<span class="ml-auto text-[12px] text-info">running</span></li>
+          <li class="flex items-center gap-2"><span class="h-1.5 w-1.5 rounded-full bg-success"></span>Trade finder<span class="ml-auto text-[12px] text-muted">Mon</span></li>
+          <li class="flex items-center gap-2"><span class="h-1.5 w-1.5 rounded-full bg-success"></span>Preview, trends<span class="ml-auto text-[12px] text-muted">Tue</span></li>
+        </ul>
+        <button type="button" class="mt-3 w-full cursor-pointer rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs font-medium text-ink-2 hover:text-ink">Run a job now…</button>
+      </div>
+    </aside>
+  </div>
+</section>
+
+</main>
+
+<!-- Phone bottom tabs -->
+<nav aria-label="Main" class="fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-line bg-canvas/90 pb-[env(safe-area-inset-bottom,0px)] backdrop-blur-md lg:hidden">
+  <a class="tablink flex flex-col items-center gap-0.5 py-2 text-[11px] font-medium text-muted no-underline" href="#sessions" data-route="sessions session new"><span data-icon="activity"></span>Sessions</a>
+  <a class="tablink relative flex flex-col items-center gap-0.5 py-2 text-[11px] font-medium text-muted no-underline" href="#inbox" data-route="inbox approval"><span data-icon="inbox"></span>Inbox<span class="absolute right-[calc(50%-18px)] top-1 rounded-full bg-warning-bg px-1 text-[10px] font-semibold leading-[15px] text-warning">4</span></a>
+  <a class="tablink flex flex-col items-center gap-0.5 py-2 text-[11px] font-medium text-muted no-underline" href="#artifacts" data-route="artifacts report review"><span data-icon="file"></span>Artifacts</a>
+  <button type="button" id="more-btn" class="tablink flex cursor-pointer flex-col items-center gap-0.5 border-0 bg-transparent py-2 text-[11px] font-medium text-muted" data-route="sleeper remarkable memory agents agent evals schedules" aria-expanded="false" aria-controls="more-sheet"><span data-icon="grid"></span>More</button>
+</nav>
+<div id="more-sheet" hidden class="fixed inset-x-0 bottom-[62px] z-30 mx-3 rounded-[22px] border border-line bg-surface p-2 shadow-lift lg:hidden">
+  <a href="#sleeper" class="flex items-center gap-3 rounded-lg px-3 py-2.5 text-[14px] text-ink no-underline hover:bg-soft"><span data-icon="trophy"></span>Sleeper<span class="ml-auto text-[12px] text-warning">3 to do</span></a>
+  <a href="#remarkable" class="flex items-center gap-3 rounded-lg px-3 py-2.5 text-[14px] text-ink no-underline hover:bg-soft"><span data-icon="pen"></span>reMarkable</a>
+  <a href="#memory" class="flex items-center gap-3 rounded-lg px-3 py-2.5 text-[14px] text-ink no-underline hover:bg-soft"><span data-icon="bookmark"></span>Memory</a>
+  <a href="#agents" class="flex items-center gap-3 rounded-lg px-3 py-2.5 text-[14px] text-ink no-underline hover:bg-soft"><span data-icon="bot"></span>Agents</a>
+  <a href="#evals" class="flex items-center gap-3 rounded-lg px-3 py-2.5 text-[14px] text-ink no-underline hover:bg-soft"><span data-icon="flask"></span>Evals</a>
+  <a href="#schedules" class="flex items-center gap-3 rounded-lg px-3 py-2.5 text-[14px] text-ink no-underline hover:bg-soft"><span data-icon="clock"></span>Schedules</a>
+</div>
+
+<button type="button" data-cmdk class="fixed bottom-6 right-6 z-30 hidden cursor-pointer flex-col items-center gap-0.5 border-0 bg-transparent lg:flex" aria-label="Search or jump (Cmd-K)" title="Search or jump (⌘K)">
+  <svg class="rubber drop-shadow-[0_6px_10px_rgb(0_0_0/0.18)]" width="46" height="38" viewBox="0 0 64 48"><ellipse cx="34" cy="32" rx="22" ry="12" fill="#f2c94c"/><circle cx="22" cy="17" r="11" fill="#f2c94c"/><path d="M13 15 L1 18 L13 22 Z" fill="#e07b1a"/><circle cx="19" cy="14" r="1.8" fill="#0f1513"/><path d="M48 26 Q58 20 58 32" fill="#f2c94c"/></svg>
+  </button>
+
+<!-- Command palette -->
+<div id="cmdk" hidden class="fixed inset-0 z-50 flex items-start justify-center bg-ink/25 px-4 pt-[12vh] backdrop-blur-[2px]">
+  <div role="dialog" aria-modal="true" aria-label="Search or jump" class="w-full max-w-[560px] overflow-hidden rounded-[22px] border border-line-strong bg-surface shadow-lift">
+    <div class="flex items-center gap-2 border-b border-line px-4"><span data-icon="search" class="text-muted"></span><label for="cmdk-input" class="sr-only">Search</label><input id="cmdk-input" value="wai" class="h-[48px] flex-1 bg-transparent text-[15px] outline-none" /><kbd class="rounded border border-line px-1.5 font-mono text-[11px] text-muted">Esc</kbd></div>
+    <div class="max-h-[50vh] overflow-y-auto p-2 text-[13.5px]">
+      <p class="m-0 px-2.5 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Actions</p>
+      <a href="#sleeper" data-close class="flex items-center gap-3 rounded-lg bg-soft px-2.5 py-2 text-ink no-underline"><span data-icon="play"></span>Run Sleeper waivers now<kbd class="ml-auto font-mono text-[11px] text-muted">↵</kbd></a>
+      <a href="#inbox" data-close class="flex items-center gap-3 rounded-lg px-2.5 py-2 text-ink no-underline hover:bg-soft"><span data-icon="inbox"></span>Show items waiting on you</a>
+      <p class="m-0 px-2.5 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Sessions</p>
+      <a href="#sleeper" data-close class="flex items-center gap-3 rounded-lg px-2.5 py-2 text-ink no-underline hover:bg-soft"><span class="live-dot h-2 w-2 rounded-full bg-info"></span>Week 2 waivers<span class="ml-auto text-[12px] text-muted">running</span></a>
+      <a href="#sleeper" data-close class="flex items-center gap-3 rounded-lg px-2.5 py-2 text-ink no-underline hover:bg-soft"><span class="h-2 w-2 rounded-full bg-success"></span>Week 1 waivers<span class="ml-auto text-[12px] text-muted">Oct 21</span></a>
+      <p class="m-0 px-2.5 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">Go to</p>
+      <a href="#sleeper" data-close class="flex items-center gap-3 rounded-lg px-2.5 py-2 text-ink no-underline hover:bg-soft"><span data-icon="trophy"></span>Sleeper › Waivers tab</a>
+    </div>
+  </div>
+</div>
+
+<script>
+const ICONS = {
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  activity: '<path d="M3 12h4l3 8 4-16 3 8h4"/>',
+  inbox: '<path d="M3 13h5l2 3h4l2-3h5"/><path d="M5 5h14l2 8v6H3v-6z"/>',
+  file: '<path d="M14 3H6v18h12V7z"/><path d="M14 3v4h4M9 13h6M9 17h6"/>',
+  trophy: '<path d="M8 4h8v5a4 4 0 0 1-8 0zM12 13v4M8 21h8M16 6h3v2a3 3 0 0 1-3 3M8 6H5v2a3 3 0 0 0 3 3"/>',
+  pen: '<path d="M4 20l4-1 11-11-3-3L5 16z"/><path d="M14 6l3 3"/>',
+  bookmark: '<path d="M6 3h12v18l-6-4-6 4z"/>',
+  bot: '<rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 4v4M9 13h.01M15 13h.01"/>',
+  flask: '<path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 2 3h10a2 2 0 0 0 2-3l-5-9V3"/>',
+  clock: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>',
+  git: '<circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="9" r="2"/><path d="M6 8v8M18 11a6 6 0 0 1-6 6H8"/>',
+  upload: '<path d="M12 16V4M7 9l5-5 5 5M4 20h16"/>',
+  paperclip: '<path d="M20 11l-8 8a5 5 0 0 1-7-7l8-8a3 3 0 0 1 5 4l-8 8a1 1 0 0 1-2-2l7-7"/>',
+  'arrow-up': '<path d="M12 19V5M6 11l6-6 6 6"/>',
+  check: '<path d="M5 12l5 5 9-10"/>',
+  search: '<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/>',
+  dots: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
+  play: '<path d="M7 5l12 7-12 7z"/>',
+  grid: '<rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/>'
+};
+document.querySelectorAll('[data-icon]').forEach(el => {
+  el.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[el.dataset.icon] || ''}</svg>`;
+  el.classList.add('inline-flex', 'flex-none');
+});
+
+const TITLES = { sessions: 'Sessions', session: 'Session', new: 'New session', inbox: 'Inbox', approval: 'Approval', artifacts: 'Artifacts', report: 'Report', review: 'Review', agents: 'Agents', agent: 'Agent', evals: 'Evals', schedules: 'Schedules', sleeper: 'Sleeper', remarkable: 'reMarkable', memory: 'Memory' };
+const ws = document.getElementById('workspace');
+const sheet = document.getElementById('more-sheet');
+const moreBtn = document.getElementById('more-btn');
+function show() {
+  const name = TITLES[location.hash.slice(1)] ? location.hash.slice(1) : 'sessions';
+  document.querySelectorAll('[data-screen]').forEach(s => { s.hidden = !s.dataset.screen.split(' ').includes(name); });
+  if (ws.dataset.screen.split(' ').includes(name)) {
+    ws.dataset.view = name;
+    ws.querySelectorAll('[data-sub]').forEach(p => { p.hidden = !p.dataset.sub.split(' ').includes(name); });
+    ws.querySelectorAll('[data-row]').forEach(r => r.setAttribute('aria-current', String(name === 'session')));
+  }
+  document.querySelectorAll('[data-route]').forEach(a => {
+    if (a.dataset.route.split(' ').includes(name)) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+  });
+  document.getElementById('phone-title').textContent = TITLES[name];
+  sheet.hidden = true; moreBtn.setAttribute('aria-expanded', 'false');
+  window.scrollTo(0, 0);
+}
+addEventListener('hashchange', show);
+show();
+moreBtn.addEventListener('click', () => { sheet.hidden = !sheet.hidden; moreBtn.setAttribute('aria-expanded', String(!sheet.hidden)); });
+
+function swap(btn, on) {
+  btn.className = btn.className.replace(on ? /bg-transparent text-muted/ : /bg-surface text-ink shadow-thumb/, on ? 'bg-surface text-ink shadow-thumb' : 'bg-transparent text-muted');
+}
+function selectTab(list, tab) {
+  list.querySelectorAll('[role="tab"]').forEach(t => {
+    const on = t === tab;
+    t.setAttribute('aria-selected', String(on)); swap(t, on);
+    const panel = document.querySelector(`[data-panel="${t.dataset.tab}"]`); if (panel) panel.hidden = !on;
+  });
+}
+document.querySelectorAll('[role="tablist"]').forEach(list => list.addEventListener('click', e => {
+  const tab = e.target.closest('[role="tab"]'); if (tab) selectTab(list, tab);
+}));
+document.querySelectorAll('[data-goto-tab]').forEach(b => b.addEventListener('click', () => {
+  const tab = document.querySelector(`[role="tab"][data-tab="${b.dataset.gotoTab}"]`);
+  selectTab(tab.closest('[role="tablist"]'), tab); tab.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}));
+document.querySelectorAll('[role="group"]').forEach(group => group.addEventListener('click', e => {
+  const b = e.target.closest('button[aria-pressed]'); if (!b) return;
+  group.querySelectorAll('button[aria-pressed]').forEach(x => { x.setAttribute('aria-pressed', String(x === b)); swap(x, x === b); });
+  if (b.dataset.diff) document.querySelectorAll('del.diff').forEach(d => { d.hidden = b.dataset.diff === 'off'; });
+}));
+
+const filterToggle = document.getElementById('filter-toggle');
+filterToggle.addEventListener('click', () => { const f = document.getElementById('filters'); f.hidden = !f.hidden; filterToggle.setAttribute('aria-expanded', String(!f.hidden)); });
+const selectToggle = document.getElementById('select-toggle');
+selectToggle.addEventListener('click', e => {
+  e.preventDefault();
+  const on = ws.dataset.selecting !== 'true';
+  ws.dataset.selecting = String(on);
+  document.getElementById('bulk-bar').hidden = !on;
+  selectToggle.textContent = on ? 'Done' : 'Select';
+});
+document.getElementById('find-toggle').addEventListener('click', () => {
+  const bar = document.getElementById('find-bar'); bar.hidden = !bar.hidden; if (!bar.hidden) document.getElementById('find').focus();
+});
+
+const cmdk = document.getElementById('cmdk');
+function openCmdk() { cmdk.hidden = false; document.getElementById('cmdk-input').focus(); }
+document.querySelectorAll('[data-cmdk]').forEach(b => b.addEventListener('click', openCmdk));
+cmdk.addEventListener('click', e => { if (e.target === cmdk || e.target.closest('[data-close]')) cmdk.hidden = true; });
+addEventListener('keydown', e => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); cmdk.hidden ? openCmdk() : (cmdk.hidden = true); }
+  if (e.key === 'Escape') cmdk.hidden = true;
+});
+
+document.getElementById('theme-toggle').addEventListener('click', () => {
+  const root = document.documentElement;
+  const dark = root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+  root.dataset.theme = dark ? 'light' : 'dark';
+});
+</script>
