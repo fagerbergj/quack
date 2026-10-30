@@ -77,6 +77,24 @@ async function postReview(req: IncomingMessage, res: ServerResponse, app: Github
   send(res, 201, { id: json?.id, url: json?.html_url });
 }
 
+// Issues a description says it closes ("closes #12", "fixes #3"): the promises a review checks.
+const CLOSES = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi;
+
+/** What a review needs to know about a pull request, read with the app's token on the session's behalf. */
+async function pullRequest(res: ServerResponse, app: GithubApp, owner: string, repo: string, number: number) {
+  const pr = (await app.asInstallation(owner, repo, 'GET', `/repos/${owner}/${repo}/pulls/${number}`)).json;
+  if (!pr) return send(res, 404, { error: 'no such pull request' });
+  const checks = (await app.asInstallation(owner, repo, 'GET', `/repos/${owner}/${repo}/commits/${pr.head.sha}/check-runs?per_page=100`)).json;
+  const closes = [...new Set([...String(pr.body ?? '').matchAll(CLOSES)].map((m) => Number(m[1])))];
+  const issues = await Promise.all(closes.map((n) => app.asInstallation(owner, repo, 'GET', `/repos/${owner}/${repo}/issues/${n}`).then((r) => r.json)));
+  send(res, 200, {
+    owner, repo, number, title: pr.title, body: pr.body ?? '', author: pr.user?.login,
+    headSha: pr.head.sha, headRef: pr.head.ref, baseRef: pr.base.ref,
+    checks: (checks?.check_runs ?? []).map((c: any) => ({ name: c.name, status: c.status, conclusion: c.conclusion })),
+    linkedIssues: issues.filter(Boolean).map((i: any) => ({ number: i.number, title: i.title, body: i.body ?? '' })),
+  });
+}
+
 export function createGithubService(app: GithubApp, config: ServiceConfig) {
   return createServer(async (req, res) => {
     try {
@@ -85,6 +103,8 @@ export function createGithubService(app: GithubApp, config: ServiceConfig) {
       if (!authorized(req, config.serviceToken)) return send(res, 401, { error: 'unauthorized' });
       if (req.method === 'GET' && path === '/git-credential') return await gitCredential(req, res, app);
       if (req.method === 'POST' && path === '/reviews') return await postReview(req, res, app);
+      const pull = /^\/pulls\/([^/]+)\/([^/]+)\/(\d+)$/.exec(path);
+      if (req.method === 'GET' && pull) return await pullRequest(res, app, pull[1], pull[2], Number(pull[3]));
       send(res, 404, { error: 'not found' });
     } catch (err) {
       const bad = err instanceof SyntaxError || (err as Error).message === 'body too large';

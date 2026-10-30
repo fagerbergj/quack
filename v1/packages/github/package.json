@@ -2,6 +2,17 @@
   "name": "@quack/github",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
-  "scripts": { "start": "node src/main.ts" }
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "node src/main.ts"
+  },
+  "dependencies": {
+    "@quack/sdk": "*",
+    "@quack/judge": "*"
+  },
+  "devDependencies": {
+    "@quack/session": "*"
+  }
 }
