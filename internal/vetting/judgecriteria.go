@@ -15,9 +15,12 @@ import (
 	"github.com/fagerbergj/quack/internal/decide"
 )
 
+// JudgeCriteriaPoint is the point's id, which judge replay reads from the local decisions config.
+const JudgeCriteriaPoint = "judge.criteria"
+
 // judgeCriteria observes a System One grade of each judged criterion from the judge's evidence alone;
 // the LLM judge's own score still gates.
-var judgeCriteria = decide.Register(decide.Point{ID: "judge.criteria", Primary: "score", Replaces: "criterion_score",
+var judgeCriteria = decide.Register(decide.Point{ID: JudgeCriteriaPoint, Primary: "score", Replaces: "criterion_score",
 	Modes: []string{config.DecisionModeObserve},
 	Questions: map[string]decide.Question{"score": {Type: "score", Criteria: judgeLevels(),
 		Instructions: "Using only the evidence, which scoring band does the answer reach for this criterion? Pick that band's integer score."}}},

@@ -22,6 +22,7 @@ import (
 	"github.com/fagerbergj/quack/internal/acp"
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/decide"
 	"github.com/fagerbergj/quack/internal/ledger/bundle"
 	"github.com/fagerbergj/quack/internal/tools"
 	"github.com/fagerbergj/quack/internal/vetting"
@@ -87,6 +88,10 @@ type ReplayCriterionReport struct {
 	Deterministic  bool    `json:"deterministic"`
 	Reason         string  `json:"reason,omitempty"`
 	Flipped        bool    `json:"flipped"`
+	// Evidence/Point: the judge's per-criterion facts and judge.criteria's answer from them; both only
+	// while that point is enabled in the local quack.yaml.
+	Evidence string                     `json:"evidence,omitempty"`
+	Point    *vetting.ReplayPointAnswer `json:"point,omitempty"`
 	// Spread: this judge-scored criterion's replayed scores across --repeat passes.
 	Spread *ReplaySpread `json:"spread,omitempty"`
 }
@@ -110,6 +115,8 @@ type ReplayRoundReport struct {
 	DroppedReviewCalls int `json:"dropped_review_calls,omitempty"`
 	// Spread: the whole round's pass/fail (every criterion at or above threshold) across --repeat passes.
 	Spread *ReplaySpread `json:"spread,omitempty"`
+	// Judge: the first judge pass's wall time and generated tokens; absent when the judge did not run.
+	Judge *vetting.ReplayJudgeCost `json:"judge,omitempty"`
 }
 
 // UnitRow is one specific's locate result, as the design's failed-round table shows it.
@@ -334,7 +341,24 @@ func rubricConfigFor(ctx context.Context, cfg *config.Config, agentName, rubricO
 	base.ReadOnly, base.RequireRetrieval = vetting.AgentToolPolicy(ac.Tools, ac.Acp)
 	base.ExternalWorker, base.IsReviewer = ac.Acp != nil, dag.IsReviewerAgent(agentName) // as perAgentGateCfg and nodeGateConfig
 	base.JudgeArtifactTools = judgeArtifactTools
+	if base.Decisions, err = replayDecider(cfg.Decisions); err != nil {
+		return vetting.Config{}, err
+	}
 	return base, nil
+}
+
+// replayDecider builds only judge.criteria from the local quack.yaml's decisions, so replay is "on" exactly
+// when that file enables it, and no other point (or extension point replay has no extension for) can fail it.
+func replayDecider(d config.DecisionsConfig) (*decide.Decider, error) {
+	p, ok := d.Points[vetting.JudgeCriteriaPoint]
+	if !ok {
+		return nil, nil
+	}
+	dec, err := decide.New(config.DecisionsConfig{Handlers: d.Handlers, Points: map[string]config.DecisionPoint{vetting.JudgeCriteriaPoint: p}})
+	if err != nil {
+		return nil, fmt.Errorf("judge replay: %w", err)
+	}
+	return dec, nil
 }
 
 // BuildReplayJudge builds the local quack.yaml's configured judge model as a JudgeFactory with no skill tools,
@@ -524,6 +548,7 @@ func replayOneRound(ctx context.Context, cfg *config.Config, sess *bundle.Sessio
 	}
 	rep.ArtifactsWritten = res.ArtifactsWritten
 	rep.Units = unitRows(res.Units)
+	rep.Judge = roundedCost(res.Judge)
 	rep.Criteria = compareCriteria(res, recordedFor(sess, jr), jf != nil)
 	var incomplete bool
 	rep.Spread, rep.Note, incomplete = noteRepeatSpread(ctx, gc, jf, rc, res, opts.Repeat, rep.Criteria, rep.Note)
@@ -635,6 +660,15 @@ func stddev(xs []float64) float64 {
 	return math.Sqrt(v / float64(len(xs)))
 }
 
+func roundedCost(c *vetting.ReplayJudgeCost) *vetting.ReplayJudgeCost {
+	if c == nil {
+		return nil
+	}
+	out := *c
+	out.Seconds = round4(c.Seconds)
+	return &out
+}
+
 func unitRows(checks []vetting.UnitCheck) []UnitRow {
 	rows := make([]UnitRow, 0, len(checks))
 	for _, c := range checks {
@@ -705,7 +739,7 @@ func compareCriteria(res vetting.ReplayRoundResult, recorded map[string]float64,
 		out = append(out, ReplayCriterionReport{
 			Name: c.Name, HasRecorded: hasRec, RecordedScore: rec, HasReplayed: true, ReplayedScore: c.Score,
 			RubricMark: c.RubricMark, Threshold: res.Threshold, RecordedPassed: recPass, ReplayedPassed: replPass,
-			Deterministic: c.Deterministic, Reason: reason, Flipped: flipped,
+			Deterministic: c.Deterministic, Reason: reason, Flipped: flipped, Evidence: c.Evidence, Point: c.Point,
 		})
 	}
 	extra := make([]string, 0)

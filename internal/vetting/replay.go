@@ -41,6 +41,28 @@ type ReplayCriterion struct {
 	RubricMark    float64
 	Deterministic bool
 	Reason        string
+	// Evidence: the judge's facts for this criterion; only asked while judge.criteria is on.
+	Evidence string
+	// Point: judge.criteria's answer from Evidence; nil when the point is off or skipped the criterion.
+	Point *ReplayPointAnswer
+}
+
+// ReplayPointAnswer is judge.criteria's answer for one criterion: Top is its level, Probabilities
+// the full distribution, GradeWords the record's meta flag. Error set means the handler gave no answer.
+type ReplayPointAnswer struct {
+	Top           string             `json:"top,omitempty"`
+	TopP          float64            `json:"top_p,omitempty"`
+	Probabilities map[string]float64 `json:"probabilities,omitempty"`
+	GradeWords    bool               `json:"grade_words"`
+	Error         string             `json:"error,omitempty"`
+}
+
+// ReplayJudgeCost is what the judge call cost: wall seconds across its retries and nudges, and the
+// tokens it generated (output is the answer, thoughts the reasoning).
+type ReplayJudgeCost struct {
+	Seconds       float64 `json:"seconds"`
+	OutputTokens  int     `json:"output_tokens"`
+	ThoughtTokens int     `json:"thought_tokens"`
 }
 
 // ReplayRoundResult is one round's replayed criteria plus Threshold, the
@@ -49,7 +71,8 @@ type ReplayRoundResult struct {
 	Criteria         []ReplayCriterion
 	Threshold        float64
 	ArtifactsWritten []string
-	Units            []UnitCheck // shadow locate tier over the answer's units; empty without rc.Pages
+	Units            []UnitCheck      // shadow locate tier over the answer's units; empty without rc.Pages
+	Judge            *ReplayJudgeCost // nil when the judge did not run
 }
 
 // ReplayRound re-scores rc under cfg's rubric via the live gate's own functions -
@@ -101,13 +124,17 @@ func ReplayRound(ctx context.Context, cfg Config, judge JudgeFactory, rc ReplayC
 	v := verdict{}
 	if judge != nil {
 		question := &genai.Content{Role: genai.RoleUser, Parts: []*genai.Part{{Text: rc.Task}}}
+		timing, started := newJudgeRoundTiming(), time.Now()
+		cfg.judgeTiming = timing
 		v, err = runJudgeAgent(ctx, judge, cfg, question, rc.Answer, act, judgeDet, nil, func(*genai.Part) bool { return true })
 		if err != nil {
 			return res, fmt.Errorf("vetting: replay judge round: %w", err)
 		}
+		res.Judge = &ReplayJudgeCost{Seconds: time.Since(started).Seconds(), OutputTokens: timing.outTokens, ThoughtTokens: timing.thoughtTokens}
 	}
 	v = mergeDeterministic(v, det, cfg)
 	v = applyRubricSpecs(v, cfg.RubricSpecs)
+	points := askJudgeCriteria(ctx, cfg, v)
 
 	names := make([]string, 0, len(v.Criteria))
 	for name := range v.Criteria {
@@ -119,10 +146,29 @@ func ReplayRound(ctx context.Context, cfg Config, judge JudgeFactory, rc ReplayC
 		c := v.Criteria[name]
 		res.Criteria = append(res.Criteria, ReplayCriterion{
 			Name: name, Score: c.Score, RubricMark: cfg.RubricPassMarks[name],
-			Deterministic: c.Deterministic, Reason: criterionText(c),
+			Deterministic: c.Deterministic, Reason: criterionText(c), Evidence: c.Checked, Point: points[name],
 		})
 	}
 	return res, nil
+}
+
+// askJudgeCriteria is live's observeCriteria run inline: judge.criteria's answer per askable criterion,
+// by name, awaited so the report can carry it. nil with the point off.
+func askJudgeCriteria(ctx context.Context, cfg Config, v verdict) map[string]*ReplayPointAnswer {
+	if !cfg.Decisions.Enabled(judgeCriteria.ID) {
+		return nil
+	}
+	out := map[string]*ReplayPointAnswer{}
+	for _, a := range (&judgeRounds{cfg: cfg}).judgeCriteriaAsks(0, v) {
+		r, settle := cfg.Decisions.Await(ctx, judgeCriteria.Point, a.state)
+		<-settle(a.baseline)
+		ans := &ReplayPointAnswer{Top: r.Top, TopP: r.TopP, Probabilities: r.Answers["score"], GradeWords: a.state.Meta.(map[string]any)["grade_words"] == true}
+		if r.Err != nil {
+			ans.Error = r.Err.Error()
+		}
+		out[a.state.State.(judgeCriteriaState).Criterion] = ans
+	}
+	return out
 }
 
 // reviewTailUnknown: an ACP reviewer that staged nothing still scores review_posted live when augmentFromAnswer

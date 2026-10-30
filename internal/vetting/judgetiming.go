@@ -24,6 +24,8 @@ type JudgeRoundTiming struct {
 	JudgeCalls   int                `json:"judge_calls"`
 	JudgeTurns   int                `json:"judge_turns"`
 	ToolCalls    int                `json:"tool_calls"`
+	// outTokens/thoughtTokens: judge replay's cost readout; unexported, so the stored record is unchanged.
+	outTokens, thoughtTokens int
 }
 
 func newJudgeRoundTiming() *JudgeRoundTiming {
@@ -52,6 +54,8 @@ func (t *JudgeRoundTiming) addJudgeSession(start time.Time, st *judgeRoundState)
 	t.JudgeCalls++
 	t.JudgeTurns += st.turns
 	t.ToolCalls += st.toolCalls
+	t.outTokens += st.outTokens
+	t.thoughtTokens += st.thoughtTokens
 }
 
 // emit records every measured phase as quack.judge.phase.duration; verify is the specifics_supported check.
