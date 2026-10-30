@@ -2,6 +2,9 @@ import { useLayoutEffect, useRef, useState } from 'react'
 import { AttachmentStrip, type AttachmentItem } from './AttachmentUI'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import { Icon } from './Icon'
+import { Button } from './ui/button'
+import { Textarea } from './ui/input'
+import { Tooltip } from './ui/tooltip'
 import type { QueuedTurn } from '../state/chatStore'
 
 interface AttachmentPreview {
@@ -69,15 +72,16 @@ function QueuedMessages({ queue, compact, onRemoveQueued }: {
               <div className="flex items-center justify-end gap-2 mt-0.5 pr-1 text-2xs text-gray-500 dark:text-gray-400">
                 <span>Queued</span>
                 {onRemoveQueued && (
-                  <button
-                    type="button"
+                  <Button
+                    variant="ghost"
+                    size="inline"
                     onClick={() => onRemoveQueued(item.id)}
                     aria-label="Remove queued message"
                     title="Remove"
-                    className="min-h-[44px] -my-2 inline-flex items-center hover:text-red-700 dark:hover:text-red-400 transition-opacity normal-case"
+                    className="-my-2 text-2xs normal-case hover:bg-transparent hover:text-destructive"
                   >
                     remove
-                  </button>
+                  </Button>
                 )}
               </div>
             </div>
@@ -96,15 +100,16 @@ function QueuedMessages({ queue, compact, onRemoveQueued }: {
             <div className="flex items-center justify-end gap-2 mt-0.5 pr-1 text-2xs text-gray-500 dark:text-gray-400">
               <span>Queued</span>
               {onRemoveQueued && (
-                <button
-                  type="button"
+                <Button
+                  variant="ghost"
+                  size="inline"
                   onClick={() => onRemoveQueued(item.id)}
                   aria-label="Remove queued message"
                   title="Remove"
-                  className="min-h-[44px] -my-2 inline-flex items-center opacity-0 group-hover:opacity-100 hover:text-red-700 dark:hover:text-red-400 transition-opacity normal-case"
+                  className="-my-2 text-2xs opacity-0 group-hover:opacity-100 focus-visible:opacity-100 normal-case hover:bg-transparent hover:text-destructive transition-opacity"
                 >
                   remove
-                </button>
+                </Button>
               )}
             </div>
           </div>
@@ -177,8 +182,8 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
         />
         {/* Ring (box-shadow), not border, so the compact 44px row doesn't grow 2px. */}
         <div className={compact
-          ? 'flex items-center gap-2 rounded-full ring-1 ring-gray-300 dark:ring-gray-600 bg-white dark:bg-gray-800 shadow-lg'
-          : 'flex gap-2 items-end rounded-3xl ring-1 ring-gray-200 dark:ring-gray-700 bg-white dark:bg-gray-800 shadow-lg p-2'}>
+          ? 'flex items-center gap-2 rounded-full ring-1 ring-border bg-card shadow-overlay'
+          : 'flex gap-2 items-end rounded-3xl ring-1 ring-border bg-card shadow-overlay p-2'}>
           <input
             ref={fileInputRef}
             type="file"
@@ -196,27 +201,27 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
               e.target.value = ''
             }}
           />
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={streaming || disabled}
-            className={compact
-              ? 'h-11 w-11 flex-shrink-0 flex items-center justify-center rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors'
-              : 'h-11 w-11 flex-shrink-0 flex items-center justify-center rounded-xl text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors'}
-            aria-label="Attach file"
-            title="Attach image or audio"
-          >
-            <Icon name="attach" className="w-5 h-5" />
-          </button>
-          <textarea
+          <Tooltip content="Attach image or audio">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={streaming || disabled}
+              className={compact ? 'size-11 medium:size-11 rounded-full' : 'size-11 medium:size-11 rounded-xl'}
+              aria-label="Attach file"
+            >
+              <Icon name="attach" className="w-5 h-5" />
+            </Button>
+          </Tooltip>
+          <Textarea
             ref={textareaRef}
             id="composer-input"
             name="message"
             // placeholder:truncate stops any placeholder wrapping into a clipped second line, e.g. mid-stream
             // when Stop and Queue also compete for the row.
             className={compact
-              ? 'flex-1 min-w-0 bg-transparent px-4 py-2 text-base focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none max-h-32 disabled:opacity-50 dark:text-gray-100 dark:placeholder-gray-400 placeholder:truncate'
-              : 'flex-1 min-w-0 bg-transparent px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 rounded-xl resize-none max-h-48 disabled:opacity-50 dark:text-gray-100 dark:placeholder-gray-400 placeholder:truncate'}
+              ? 'flex-1 min-h-0 border-0 bg-transparent px-4 py-2 resize-none max-h-32 placeholder:truncate'
+              : 'flex-1 min-h-0 border-0 bg-transparent px-4 py-3 resize-none max-h-48 placeholder:truncate'}
             rows={1}
             placeholder={placeholderFor(streaming, narrow, archived, noChat)}
             value={input}
@@ -226,27 +231,25 @@ export function Composer({ disabled, streaming, onSubmit, onStop, queue, onRemov
           />
           {/* Red fill: while a run is live, stopping it is the primary action. */}
           {streaming && (
-            <button
-              type="button"
+            <Button
+              variant="destructive"
+              size="icon"
               onClick={onStop}
               aria-label="Stop"
-              className={compact
-                ? 'h-11 w-11 flex-shrink-0 flex items-center justify-center rounded-full bg-red-600 text-white hover:bg-red-700 transition-colors'
-                : 'h-11 w-11 flex-shrink-0 flex items-center justify-center rounded-xl bg-red-600 text-white hover:bg-red-700 transition-colors'}
+              className={compact ? 'size-11 medium:size-11 rounded-full' : 'size-11 medium:size-11 rounded-xl'}
             >
               <StopIcon />
-            </button>
+            </Button>
           )}
-          <button
+          <Button
             type="submit"
+            size="icon"
             disabled={(!input.trim() && attachments.length === 0) || disabled}
             aria-label={streaming ? 'Queue' : 'Send'}
-            className={compact
-              ? 'h-11 w-11 flex-shrink-0 flex items-center justify-center rounded-full bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors'
-              : 'h-11 w-11 flex-shrink-0 flex items-center justify-center rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors'}
+            className={compact ? 'size-11 medium:size-11 rounded-full' : 'size-11 medium:size-11 rounded-xl'}
           >
             <Icon name="send" className="w-5 h-5" />
-          </button>
+          </Button>
         </div>
       </form>
     </div>

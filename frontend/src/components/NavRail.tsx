@@ -1,7 +1,10 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { navigate, type Route } from '../router'
 import { api, type ExtensionInfo } from '../api'
-import { closeOnBackdrop, useDrawer } from '../hooks/useDrawer'
+import { Button } from './ui/button'
+import { Separator } from './ui/separator'
+import { Sheet, SheetContent } from './ui/sheet'
+import { Tooltip } from './ui/tooltip'
 import { serverVersion } from '../state/clientConfig'
 import { Icon, ICON_NAMES, type IconName } from './Icon'
 
@@ -29,7 +32,7 @@ export interface NavRailProps {
 }
 
 // Off-canvas drawer at every width. Closes on item selection, backdrop tap, the close button or Esc;
-// a native modal <dialog> via useDrawer.
+// a modal Sheet, so focus is trapped and restored to the toggle.
 export function NavRail({ route, activeExtension, initialExtensions, versionOverride, open, onClose }: NavRailProps) {
   const [extensions, setExtensions] = useState<ExtensionInfo[]>(initialExtensions ?? [])
   const version = versionOverride ?? serverVersion()
@@ -53,49 +56,42 @@ export function NavRail({ route, activeExtension, initialExtensions, versionOver
   // An extension with no UI descriptor has nowhere to navigate, so it is dropped rather than shown inert.
   const linkedExtensions = extensions.filter(ext => !!ext.href)
 
-  const dialogRef = useDrawer(open)
-
-  if (!open) return null
-
   return (
-    <dialog
-      ref={dialogRef}
-      aria-label="Main navigation"
-      onClose={onClose}
-      onClick={closeOnBackdrop}
-      className="m-0 h-dvh max-h-none w-64 max-w-[85vw] p-0 open:flex flex-col bg-white dark:bg-gray-800 border-0 border-r border-gray-200 dark:border-gray-700 shadow-lg backdrop:bg-black/50"
-    >
-      <div className="flex items-center justify-between p-2 border-b border-gray-200 dark:border-gray-700">
-        <span className="px-2 text-sm font-semibold text-gray-700 dark:text-gray-200">Navigation</span>
-        <button
-          onClick={onClose}
-          aria-label="Close navigation"
-          title="Close navigation"
-          className="flex items-center justify-center w-11 h-11 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-        >
-          <Icon name="close" className="w-4 h-4" />
-        </button>
-      </div>
-      <div className="flex-1 py-2 px-2 space-y-1 overflow-y-auto">
-        <NavItem icon={<Icon name="chat" className="w-4 h-4" />} label="Chats" active={route === 'chat'} onClick={() => { navigate('/chat'); onClose() }} />
-        <NavItem icon={<Icon name="lightbulb" className="w-4 h-4" />} label="Memory" active={route === 'memory'} onClick={() => { navigate('/memory'); onClose() }} />
-        <NavItem icon={<Icon name="extension" className="w-4 h-4" />} label="Plugins" active={route === 'plugins'} onClick={() => { navigate('/plugins'); onClose() }} />
-        {linkedExtensions.length > 0 && (
-          <div className="pt-1 mt-1 border-t border-gray-100 dark:border-gray-700 space-y-1">
-            {linkedExtensions.map(ext => (
-              <ExtensionNavItem key={ext.name} ext={ext} active={activeExtension === ext.name} onNavigate={onClose} />
-            ))}
+    <Sheet open={open} onOpenChange={o => { if (!o) onClose() }}>
+      <SheetContent title="Main navigation">
+        <div className="flex items-center justify-between p-2">
+          <span className="px-2 text-sm font-semibold text-foreground">Navigation</span>
+          <Tooltip content="Close navigation">
+            <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close navigation" className="size-11 medium:size-11">
+              <Icon name="close" className="w-4 h-4" />
+            </Button>
+          </Tooltip>
+        </div>
+        <Separator />
+        <div className="flex-1 py-2 px-2 space-y-1 overflow-y-auto">
+          <NavItem icon={<Icon name="chat" className="w-4 h-4" />} label="Chats" active={route === 'chat'} onClick={() => { navigate('/chat'); onClose() }} />
+          <NavItem icon={<Icon name="lightbulb" className="w-4 h-4" />} label="Memory" active={route === 'memory'} onClick={() => { navigate('/memory'); onClose() }} />
+          <NavItem icon={<Icon name="extension" className="w-4 h-4" />} label="Plugins" active={route === 'plugins'} onClick={() => { navigate('/plugins'); onClose() }} />
+          {linkedExtensions.length > 0 && (
+            <>
+              <Separator className="my-1" />
+              <div className="space-y-1">
+                {linkedExtensions.map(ext => (
+                  <ExtensionNavItem key={ext.name} ext={ext} active={activeExtension === ext.name} onNavigate={onClose} />
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+        {version && (
+          <div className="shrink-0 px-3 py-2">
+            <span className="text-2xs text-muted-foreground" title={version}>
+              {displayVersion(version)}
+            </span>
           </div>
         )}
-      </div>
-      {version && (
-        <div className="shrink-0 px-3 py-2">
-          <span className="text-2xs text-gray-500 dark:text-gray-400" title={version}>
-            {displayVersion(version)}
-          </span>
-        </div>
-      )}
-    </dialog>
+      </SheetContent>
+    </Sheet>
   )
 }
 
@@ -108,19 +104,16 @@ function NavItem({
   onClick: () => void
 }) {
   return (
-    <button
+    <Button
+      variant={active ? 'secondary' : 'ghost'}
       onClick={onClick}
       aria-current={active ? 'page' : undefined}
       aria-label={label}
-      className={`w-full flex items-center gap-3 rounded-lg px-3 py-2 min-h-[44px] text-sm transition-colors ${
-        active
-          ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 font-medium'
-          : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
-      }`}
+      className={`w-full justify-start gap-3 px-3 ${active ? 'text-foreground' : ''}`}
     >
       <span aria-hidden="true" className="shrink-0 leading-none flex items-center">{icon}</span>
       <span className="truncate">{label}</span>
-    </button>
+    </Button>
   )
 }
 
@@ -148,19 +141,16 @@ function extensionIcon(ext: ExtensionInfo): ReactNode {
 function ExtensionNavItem({ ext, active, onNavigate }: { ext: ExtensionInfo; active: boolean; onNavigate?: () => void }) {
   const label = ext.title ?? ext.name
   return (
-    <button
+    <Button
+      variant={active ? 'secondary' : 'ghost'}
       onClick={() => { navigate(`/ext/${encodeURIComponent(ext.name)}`); onNavigate?.() }}
       aria-current={active ? 'page' : undefined}
       aria-label={label}
       title={label}
-      className={`w-full flex items-center gap-3 rounded-lg px-3 py-2 min-h-[44px] text-sm transition-colors ${
-        active
-          ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 font-medium'
-          : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
-      }`}
+      className={`w-full justify-start gap-3 px-3 ${active ? 'text-foreground' : ''}`}
     >
       <span aria-hidden="true" className="text-base shrink-0 leading-none">{extensionIcon(ext)}</span>
       <span className="truncate">{label}</span>
-    </button>
+    </Button>
   )
 }

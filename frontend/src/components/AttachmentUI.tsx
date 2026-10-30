@@ -1,12 +1,14 @@
-import { useRef } from 'react'
+import { useState } from 'react'
 import { Icon } from './Icon'
+import { Button } from './ui/button'
+import { Dialog, DialogClose, DialogContent } from './ui/dialog'
 
 export type AttachmentItem = { file: File; url: string }
 
 export type AttachmentPreview = { url: string; mime: string; name: string }
 
 // The one place an attached image renders, shared by the composer's staged strip and the message bubble
-// so both behave the same; click opens full size in a native <dialog>.
+// so both behave the same; click opens full size in a dialog.
 function ImageThumbnail({
   src, alt, className = 'h-16 w-16',
 }: {
@@ -14,38 +16,32 @@ function ImageThumbnail({
   alt: string
   className?: string
 }) {
-  const dialogRef = useRef<HTMLDialogElement>(null)
+  const [open, setOpen] = useState(false)
   return (
-    <>
-      <button
-        type="button"
-        onClick={() => dialogRef.current?.showModal()}
+    <Dialog open={open} onOpenChange={setOpen}>
+      {/* size="none": a thumbnail's box comes from the caller, not a button size. */}
+      <Button
+        variant="outline"
+        size="none"
+        onClick={() => setOpen(true)}
         aria-label={`View ${alt} full size`}
         title={alt}
-        className={`block rounded-lg overflow-hidden border border-gray-300 dark:border-gray-600 ${className}`}
+        className={`block overflow-hidden p-0 ${className}`}
       >
         <img src={src} alt={alt} className="h-full w-full object-cover" />
-      </button>
-      {/* Native <dialog>: full-viewport backdrop and Esc/backdrop-click close for free. */}
-      <dialog
-        ref={dialogRef}
-        aria-label={alt}
-        className="max-w-[92vw] max-h-[92dvh] bg-transparent p-0 backdrop:bg-black/70"
-        onClick={e => { if (e.target === dialogRef.current) dialogRef.current?.close() }}
+      </Button>
+      <DialogContent
+        title={alt}
+        className="inset-auto left-1/2 top-1/2 w-auto max-w-[92vw] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-transparent pb-0 shadow-none medium:max-w-[92vw]"
       >
-        <div className="relative">
-          <img src={src} alt={alt} className="max-w-[92vw] max-h-[92dvh] object-contain" />
-          <button
-            type="button"
-            onClick={() => dialogRef.current?.close()}
-            aria-label="Close"
-            className="absolute top-2 right-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-full bg-black/60 text-white text-xl"
-          >
+        <img src={src} alt={alt} className="max-w-[92vw] max-h-[92dvh] object-contain" />
+        <DialogClose asChild>
+          <Button variant="ghost" size="icon" aria-label="Close" className="absolute right-2 top-2 rounded-full bg-black/60 text-xl text-white hover:bg-black/80 hover:text-white">
             ×
-          </button>
-        </div>
-      </dialog>
-    </>
+          </Button>
+        </DialogClose>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -99,14 +95,15 @@ export function AttachmentStrip({
               {a.file.name}
             </div>
           )}
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="none"
             onClick={() => onRemove(i)}
-            className="absolute -top-1.5 -right-1.5 hidden group-hover:flex items-center justify-center w-5 h-5 rounded-full bg-gray-700 text-white text-xs"
+            className="absolute -top-1.5 -right-1.5 hidden size-5 rounded-full bg-gray-700 text-xs text-white hover:bg-gray-600 group-hover:flex"
             aria-label="Remove attachment"
           >
             ×
-          </button>
+          </Button>
         </div>
       ))}
     </div>

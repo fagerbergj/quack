@@ -70,7 +70,7 @@ describe('anchorNotes', () => {
 })
 
 // Fixture helpers: the panel's selection/labeling logic is pure, so it
-// gets its own tests without a DOM (frontend-design: node-env, logic-only).
+// gets its own tests without a DOM.
 const summary = (over: Partial<ArtifactSummary>): ArtifactSummary => ({
   name: 'text:plan',
   kind: 'text',

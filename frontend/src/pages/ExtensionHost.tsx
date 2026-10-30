@@ -1,3 +1,4 @@
+import { Button } from '../components/ui/button'
 import { useEffect, useState } from 'react'
 import { api, type ExtensionInfo } from '../api'
 import { navigate, useExtName } from '../router'
@@ -35,7 +36,7 @@ export default function ExtensionHost({ name: nameOverride, initialExtensions, n
 
   // A one-button bar keeps the drawer reachable; omitted outside the app shell (no nav props).
   const header = navOpen !== undefined && onToggleNav !== undefined ? (
-    <div className="flex-shrink-0 flex items-center gap-2 px-2 py-1 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+    <div className="flex-shrink-0 flex items-center gap-2 px-2 py-1 border-b border-border bg-card">
       <NavToggle open={navOpen} onToggle={onToggleNav} />
     </div>
   ) : null
@@ -59,9 +60,9 @@ export default function ExtensionHost({ name: nameOverride, initialExtensions, n
         {header}
         <div className="flex-1 flex flex-col items-center justify-center gap-4 text-sm text-gray-500 dark:text-gray-400">
           Extension not found
-          <a href="/chat" onClick={e => { e.preventDefault(); navigate('/chat') }} className="min-h-[44px] inline-flex items-center px-4 rounded-lg text-blue-600 dark:text-blue-400 hover:underline">
-            Back to chats
-          </a>
+          <Button asChild variant="link">
+            <a href="/chat" onClick={e => { e.preventDefault(); navigate('/chat') }}>Back to chats</a>
+          </Button>
         </div>
       </>
     )

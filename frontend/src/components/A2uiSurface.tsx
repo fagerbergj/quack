@@ -1,3 +1,4 @@
+import { Button as UiButton } from './ui/button'
 import { createContext, createElement, useContext, useId, useLayoutEffect, useMemo, useState, type KeyboardEvent } from 'react'
 import { z } from 'zod'
 import { A2uiSurface, basicCatalog, createComponentImplementation, type ReactComponentImplementation } from '@a2ui/react/v0_9'
@@ -102,24 +103,21 @@ const Text = createComponentImplementation(TextApi, ({ props }) => {
   return createElement(variant, { className: `${HEADING[variant]} text-gray-900 dark:text-gray-100` }, text)
 })
 
-const BUTTON_VARIANT: Record<string, string> = {
-  primary: 'border-transparent bg-blue-600 text-white hover:bg-blue-700',
-  default: 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 hover:bg-gray-50 dark:hover:bg-gray-700',
-  borderless: 'border-transparent text-blue-600 dark:text-blue-400 hover:underline',
-}
+const BUTTON_VARIANT = { primary: 'default', default: 'outline', borderless: 'link' } as const
 
 const Button = createComponentImplementation(ButtonApi, ({ props, buildChild }) => {
   const busy = useContext(Busy)
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-      <button
-        type="button"
+      <UiButton
+        variant={BUTTON_VARIANT[(props.variant ?? 'default') as keyof typeof BUTTON_VARIANT] ?? 'outline'}
         onClick={props.action}
         disabled={busy || props.isValid === false}
-        className={`min-h-[44px] rounded-lg border px-4 text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${BUTTON_VARIANT[props.variant ?? 'default']}`}
+        // Agent-written labels can be long: wrap them instead of overflowing a fixed-height pill.
+        className="h-auto min-h-11 whitespace-normal py-2 text-left"
       >
         <InButton.Provider value>{props.child ? buildChild(props.child) : null}</InButton.Provider>
-      </button>
+      </UiButton>
       {busy && <span className="text-xs text-gray-500 dark:text-gray-400">Wait for the current reply to finish</span>}
     </div>
   )

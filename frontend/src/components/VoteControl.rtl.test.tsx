@@ -39,8 +39,7 @@ describe('VoteControl', () => {
     render(<VoteControl score={0} onVote={async () => {}} />)
     for (const name of ['Upvote', 'Downvote']) {
       const btn = screen.getByRole('button', { name })
-      expect(btn.className).toContain('min-w-[44px]')
-      expect(btn.className).toContain('min-h-[44px]')
+      expect(btn.className).toContain('size-11')
     }
   })
 })

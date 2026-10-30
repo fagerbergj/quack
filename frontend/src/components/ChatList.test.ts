@@ -5,7 +5,7 @@ import { act, cleanup, render } from '@testing-library/react'
 
 import { filterChats } from '../lib/chatFilters'
 import { isGithubChat } from '../lib/github'
-import { ChatList, githubStateBadgeClass, githubStateIcon, originBadgeClass } from './ChatList'
+import { ChatList, githubStateTone, githubStateIcon, originBadgeTone } from './ChatList'
 import type { ChatSummary } from '../api'
 
 afterEach(cleanup)
@@ -118,11 +118,11 @@ describe('origin chip', () => {
 
   // Any other extension-defined badge stays neutral rather than guessing at unknown semantics.
   it('colors the badge chip for open/merged/closed like GitHub, and leaves anything else neutral', () => {
-    expect(originBadgeClass('open')).toContain('green')
-    expect(originBadgeClass('merged')).toContain('purple')
-    expect(originBadgeClass('closed')).toContain('red')
-    expect(originBadgeClass('draft')).toBe('bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300')
-    expect(originBadgeClass('some-extension-value')).toBe('bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-300')
+    expect(originBadgeTone('open')).toBe('green')
+    expect(originBadgeTone('merged')).toBe('purple')
+    expect(originBadgeTone('closed')).toBe('red')
+    expect(originBadgeTone('draft')).toBe('gray')
+    expect(originBadgeTone('some-extension-value')).toBe('gray')
   })
 
   it('applies the open/merged/closed color class to the rendered badge chip', () => {
@@ -187,23 +187,23 @@ describe('ChatList "Load more" affordance', () => {
 
 describe('github_state badge', () => {
   it.each([
-    { state: 'open', icon: 'dot', cls: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400' },
-    { state: 'closed', icon: 'close', cls: 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400' },
-    { state: 'merged', icon: 'check', cls: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400' },
-    { state: 'draft', icon: 'edit', cls: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-500' },
-  ])('renders correct class and icon for state="$state"', ({ state, icon, cls }) => {
-    expect(githubStateBadgeClass(state)).toBe(cls)
+    { state: 'open', icon: 'dot', tone: 'green' },
+    { state: 'closed', icon: 'close', tone: 'red' },
+    { state: 'merged', icon: 'check', tone: 'purple' },
+    { state: 'draft', icon: 'edit', tone: 'yellow' },
+  ])('renders correct tone and icon for state="$state"', ({ state, icon, tone }) => {
+    expect(githubStateTone(state)).toBe(tone)
     expect(githubStateIcon(state)).toBe(icon)
   })
 
   it.each([
-    { input: 'open', expected: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400' },
-    { input: 'closed', expected: 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400' },
-    { input: 'merged', expected: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400' },
-    { input: 'draft', expected: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-500' },
-    { input: '', expected: '' },
-  ])('githubStateBadgeClass("$input") returns classes or empty', ({ input, expected }) => {
-    expect(githubStateBadgeClass(input)).toBe(expected)
+    { input: 'open', expected: 'green' },
+    { input: 'closed', expected: 'red' },
+    { input: 'merged', expected: 'purple' },
+    { input: 'draft', expected: 'yellow' },
+    { input: '', expected: 'gray' },
+  ])('githubStateTone("$input") returns a tone, gray when unknown', ({ input, expected }) => {
+    expect(githubStateTone(input)).toBe(expected)
   })
 
   let host: HTMLElement | undefined
@@ -281,13 +281,18 @@ describe('ChatRow kebab menu (archive vs. hard delete)', () => {
     act(() => { el!.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
   }
 
+  // Radix opens a menu on pointerdown (primary button), not click.
+  function open(el: Element | null | undefined) {
+    act(() => { el!.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 })) })
+  }
+
   it('on an active row, the kebab menu archives and does NOT delete', () => {
     const onArchive = vi.fn()
     const onDelete = vi.fn()
     renderList([chat({ id: 'a1', title: 'Active chat' })], { onArchive, onDelete })
 
-    click(host!.querySelector('button[aria-label="Chat actions"]'))
-    const archiveItem = host!.querySelector('[role="menuitem"][aria-label="Archive chat"]')
+    open(host!.querySelector('button[aria-label="Chat actions"]'))
+    const archiveItem = document.querySelector('[role="menuitem"][aria-label="Archive chat"]')
     expect(archiveItem).toBeTruthy()
     click(archiveItem)
 
@@ -303,14 +308,14 @@ describe('ChatRow kebab menu (archive vs. hard delete)', () => {
     renderList([], { onDelete, archivedChats: [chat({ id: 'a2', title: 'Archived chat', archived: true })] })
     expandArchived()
 
-    expect(host!.querySelector('button[aria-label="Delete chat permanently"]')).toBeNull() // menu closed
-    click(host!.querySelector('button[aria-label="Chat actions"]'))
-    const trash = host!.querySelector('[role="menuitem"][aria-label="Delete chat permanently"]')
+    expect(document.querySelector('button[aria-label="Delete chat permanently"]')).toBeNull() // menu closed
+    open(host!.querySelector('button[aria-label="Chat actions"]'))
+    const trash = document.querySelector('[role="menuitem"][aria-label="Delete chat permanently"]')
     expect(trash).toBeTruthy()
     click(trash)
 
     expect(window.confirm).toHaveBeenCalledOnce()
-    expect(onDelete).toHaveBeenCalledWith('a2', expect.anything())
+    expect(onDelete).toHaveBeenCalledWith('a2')
   })
 
   it('on an archived row, does nothing if the confirmation is dismissed', () => {
@@ -319,8 +324,8 @@ describe('ChatRow kebab menu (archive vs. hard delete)', () => {
     renderList([], { onDelete, archivedChats: [chat({ id: 'a3', archived: true })] })
     expandArchived()
 
-    click(host!.querySelector('button[aria-label="Chat actions"]'))
-    click(host!.querySelector('[role="menuitem"][aria-label="Delete chat permanently"]'))
+    open(host!.querySelector('button[aria-label="Chat actions"]'))
+    click(document.querySelector('[role="menuitem"][aria-label="Delete chat permanently"]'))
 
     expect(onDelete).not.toHaveBeenCalled()
   })
@@ -334,7 +339,7 @@ describe('ChatRow kebab menu (archive vs. hard delete)', () => {
 
     expect(host!.querySelectorAll('button[aria-label="Chat actions"]').length).toBe(2)
     expect(host!.querySelector('button[aria-label="Archive chat"]')).toBeNull() // hidden until opened
-    expect(host!.querySelector('button[aria-label="Delete chat permanently"]')).toBeNull()
+    expect(document.querySelector('button[aria-label="Delete chat permanently"]')).toBeNull()
   })
 
   it('an archived row exposes Restore through its kebab menu', () => {
@@ -344,10 +349,10 @@ describe('ChatRow kebab menu (archive vs. hard delete)', () => {
 
     const kebab = host!.querySelector('button[aria-label="Chat actions"]')
     expect(kebab).toBeTruthy()
-    expect(host!.querySelector('[role="menuitem"][aria-label="Unarchive chat"]')).toBeNull() // menu closed
+    expect(document.querySelector('[role="menuitem"][aria-label="Unarchive chat"]')).toBeNull() // menu closed
 
-    click(kebab)
-    const restore = host!.querySelector('[role="menuitem"][aria-label="Unarchive chat"]')
+    open(kebab)
+    const restore = document.querySelector('[role="menuitem"][aria-label="Unarchive chat"]')
     expect(restore).toBeTruthy()
     click(restore)
 
@@ -357,26 +362,28 @@ describe('ChatRow kebab menu (archive vs. hard delete)', () => {
   it('closes the kebab menu after Restore is clicked', () => {
     renderList([], { onUnarchive: vi.fn(), archivedChats: [chat({ id: 'a8', archived: true })] })
     expandArchived()
-    click(host!.querySelector('button[aria-label="Chat actions"]'))
-    click(host!.querySelector('[role="menuitem"][aria-label="Unarchive chat"]'))
+    open(host!.querySelector('button[aria-label="Chat actions"]'))
+    click(document.querySelector('[role="menuitem"][aria-label="Unarchive chat"]'))
 
-    expect(host!.querySelector('[role="menuitem"][aria-label="Unarchive chat"]')).toBeNull()
+    expect(document.querySelector('[role="menuitem"][aria-label="Unarchive chat"]')).toBeNull()
   })
 
-  it('closes the kebab menu on an outside click', () => {
+  it('closes the kebab menu on an outside click', async () => {
     renderList([], { onUnarchive: vi.fn(), archivedChats: [chat({ id: 'a9', archived: true })] })
     expandArchived()
-    click(host!.querySelector('button[aria-label="Chat actions"]'))
-    expect(host!.querySelector('[role="menuitem"][aria-label="Unarchive chat"]')).toBeTruthy()
+    open(host!.querySelector('button[aria-label="Chat actions"]'))
+    expect(document.querySelector('[role="menuitem"][aria-label="Unarchive chat"]')).toBeTruthy()
 
-    act(() => { document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })) })
-    expect(host!.querySelector('[role="menuitem"][aria-label="Unarchive chat"]')).toBeNull()
+    // Radix arms its outside-pointer listener on the next tick.
+    await act(async () => { await new Promise(r => setTimeout(r, 0)) })
+    act(() => { document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 })) })
+    expect(document.querySelector('[role="menuitem"][aria-label="Unarchive chat"]')).toBeNull()
   })
 
   it('an active row\'s kebab has no Restore control', () => {
     renderList([chat({ id: 'a7' })])
-    click(host!.querySelector('button[aria-label="Chat actions"]'))
-    expect(host!.querySelector('[role="menuitem"][aria-label="Unarchive chat"]')).toBeNull()
+    open(host!.querySelector('button[aria-label="Chat actions"]'))
+    expect(document.querySelector('[role="menuitem"][aria-label="Unarchive chat"]')).toBeNull()
   })
 
   // Always visible, not hover-revealed: touch has no hover.
@@ -389,8 +396,8 @@ describe('ChatRow kebab menu (archive vs. hard delete)', () => {
     expect(kebab?.textContent?.trim()).toBe('')
     expect(kebab?.className).not.toEqual(expect.stringContaining('opacity-0'))
     expect(kebab?.parentElement?.className).toEqual(expect.stringContaining('absolute')) // the wrapper, not the button, is positioned
-    click(kebab)
-    for (const item of host!.querySelectorAll('[role="menuitem"]')) expect(item.querySelector('svg')).not.toBeNull()
+    open(kebab)
+    for (const item of document.querySelectorAll('[role="menuitem"]')) expect(item.querySelector('svg')).not.toBeNull()
   })
 })
 

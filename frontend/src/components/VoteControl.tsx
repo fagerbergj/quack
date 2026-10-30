@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import type { VoteDirection } from '../api'
 import { Icon } from './Icon'
+import { Button } from './ui/button'
+import { Tooltip } from './ui/tooltip'
 
 export interface VoteControlProps {
   score: number
@@ -29,35 +31,38 @@ export function VoteControl({ score, ownVote, onVote, disabled }: VoteControlPro
     }
   }
 
-  const activeClass = 'text-blue-600 dark:text-blue-400'
-  const idleClass = 'text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'
+  const activeClass = 'text-primary dark:text-blue-400'
 
   return (
     // Stacked on compact width so the row-end rail (#1266) stays 88px wide with the kebab, leaving the text room.
     <div className="inline-flex flex-col medium:flex-row items-center gap-0.5" role="group" aria-label="Vote on this memory">
-      <button
-        type="button"
-        onClick={() => { void handleClick('up') }}
-        disabled={pending || disabled}
-        aria-pressed={ownVote === 'up'}
-        aria-label="Upvote"
-        title="This memory helped"
-        className={`min-w-[44px] min-h-[44px] flex items-center justify-center rounded transition-colors disabled:opacity-50 ${ownVote === 'up' ? activeClass : idleClass}`}
-      >
-        <Icon name="arrow_upward" className="w-3.5 h-3.5" />
-      </button>
-      <span className="min-w-[1.5em] text-center text-xs font-medium tabular-nums text-gray-600 dark:text-gray-300">{score}</span>
-      <button
-        type="button"
-        onClick={() => { void handleClick('down') }}
-        disabled={pending || disabled}
-        aria-pressed={ownVote === 'down'}
-        aria-label="Downvote"
-        title="This memory was wrong"
-        className={`min-w-[44px] min-h-[44px] flex items-center justify-center rounded transition-colors disabled:opacity-50 ${ownVote === 'down' ? activeClass : idleClass}`}
-      >
-        <Icon name="arrow_downward" className="w-3.5 h-3.5" />
-      </button>
+      <Tooltip content="This memory helped">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => { void handleClick('up') }}
+          disabled={pending || disabled}
+          aria-pressed={ownVote === 'up'}
+          aria-label="Upvote"
+          className={`size-11 medium:size-11 ${ownVote === 'up' ? activeClass : ''}`}
+        >
+          <Icon name="arrow_upward" className="w-3.5 h-3.5" />
+        </Button>
+      </Tooltip>
+      <span className="min-w-[1.5em] text-center text-xs font-medium tabular-nums text-foreground">{score}</span>
+      <Tooltip content="This memory was wrong">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => { void handleClick('down') }}
+          disabled={pending || disabled}
+          aria-pressed={ownVote === 'down'}
+          aria-label="Downvote"
+          className={`size-11 medium:size-11 ${ownVote === 'down' ? activeClass : ''}`}
+        >
+          <Icon name="arrow_downward" className="w-3.5 h-3.5" />
+        </Button>
+      </Tooltip>
       {error && <span role="status" className="text-2xs text-red-700 dark:text-red-400 ml-1">Vote failed</span>}
     </div>
   )

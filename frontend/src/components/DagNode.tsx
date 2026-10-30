@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 import { AssistantText, ActivityList, LiveStatusLine, AcpBadge, isAcpAgent } from './AgentParts'
 import { ArtifactPanel, isBookkeeping, selectPrimaryOutput, artifactTitle, structuredBody } from './ArtifactPanel'
 import { NodeMemoriesPanel } from './NodeMemoriesPanel'
@@ -15,9 +15,18 @@ import { type DagNodeDef } from '../state/agentStream'
 import { fmtMs, LiveTimer } from '../utils/timer'
 import { traceUrl } from '../state/clientConfig'
 import { Icon } from './Icon'
-import { Sheet } from './Sheet'
+import { cn } from '../lib/utils'
 import { fmtCost } from './UsageSummary'
-import { CHIP } from '../lib/colorHash'
+import { Badge } from './ui/badge'
+import { Button } from './ui/button'
+import { Card } from './ui/card'
+import { Dialog, DialogContent } from './ui/dialog'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from './ui/dropdown-menu'
+import { Input } from './ui/input'
+
+// A full-width, left-aligned text row styled as a Button with size="none" (the 44px phone floor is dropped: these sit
+// inside a dense card).
+const ROW = 'w-full min-w-0 justify-start gap-2 rounded-none text-left font-normal'
 
 // Retry (→ queued) is legal from done, failed, or cancelled - see dag.CanTransition.
 const isTerminal = (s: NodeStatus) => s === 'done' || s === 'failed' || s === 'cancelled'
@@ -57,48 +66,23 @@ function NodeMenu({
   // Same gating as onOpenArtifacts: a terminal node's received memories are still worth reviewing.
   onOpenMemories?: () => void
 }) {
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-  const btnRef = useRef<HTMLButtonElement>(null)
-  // The items unmount on close, so without an explicit return a keyboard or
-  // screen-reader user is dropped on <body> (APG menu button pattern).
-  const close = () => { setOpen(false); btnRef.current?.focus() }
-
-  useEffect(() => {
-    if (!open) return
-    const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close() }
-    document.addEventListener('mousedown', onDown)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onDown)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [open])
-
   const terminal = isTerminal(status)
   // Viewing outputs usually happens after a node finishes, so hide the menu only when it would be empty.
   if (terminal && !onOpenArtifacts && !onOpenMemories) return null
   const { startable, cancellable, hasSecondary } = menuFlags(status, live, notStarted, canQueue, canEdit)
 
   return (
-    <div ref={ref} className="relative shrink-0">
-      {/* Always visible (touch has no hover) and a 44px target; negative margins
-          overlap the header padding so the row stays one line high. */}
-      <button
-        ref={btnRef}
-        onClick={() => setOpen(o => !o)}
-        aria-label="Node actions"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        className="w-11 h-11 -my-3 -me-3 flex items-center justify-center rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-      >
-        <Icon name="more_vert" className="w-5 h-5" />
-      </button>
-      {open && (
+    <DropdownMenu>
+      {/* Always visible (touch has no hover); negative margins overlap the header padding so the row stays one line high. */}
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon" aria-label="Node actions" className="-my-3 -me-3">
+          <Icon name="more_vert" className="w-5 h-5" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent className="w-48">
         <NodeMenuItems
           nodeId={nodeId}
-          running={live}
+          live={live}
           terminal={terminal}
           startable={startable}
           cancellable={cancellable}
@@ -111,20 +95,18 @@ function NodeMenu({
           onOpenPopup={onOpenPopup}
           onOpenArtifacts={onOpenArtifacts}
           onOpenMemories={onOpenMemories}
-          close={close}
         />
-      )}
-    </div>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
-// NodeMenu's open state: the per-status items (pause/start/stop, queue a
-// message, edit prompt, artifacts, memories), each a 44px menu row.
-function NodeMenuItems({ nodeId, running, terminal, startable, cancellable, hasSecondary, canQueue, canEdit,
-  onPause, onResume, onCancel, onOpenPopup, onOpenArtifacts, onOpenMemories, close,
+// NodeMenu's items: the per-status verbs (pause/start/stop, queue a message, edit prompt, artifacts, memories).
+function NodeMenuItems({ nodeId, live, terminal, startable, cancellable, hasSecondary, canQueue, canEdit,
+  onPause, onResume, onCancel, onOpenPopup, onOpenArtifacts, onOpenMemories,
 }: {
   nodeId: string
-  running: boolean
+  live: boolean
   terminal: boolean
   startable: boolean
   cancellable: boolean
@@ -137,50 +119,49 @@ function NodeMenuItems({ nodeId, running, terminal, startable, cancellable, hasS
   onOpenPopup: () => void
   onOpenArtifacts?: () => void
   onOpenMemories?: () => void
-  close: () => void
 }) {
   return (
-    <div role="menu" className="absolute z-20 right-0 mt-1 w-48 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg py-1 text-xs">
-      {running && onPause && (
-        <button role="menuitem" onClick={() => { onPause(nodeId); close() }} className="w-full text-left px-3 py-2 min-h-[44px] medium:min-h-0 flex items-center gap-2 text-blue-600 dark:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-700">
+    <>
+      {live && onPause && (
+        <DropdownMenuItem className="text-primary" onSelect={() => onPause(nodeId)}>
           <Icon name="pause" className="w-3.5 h-3.5" /> Pause
-        </button>
+        </DropdownMenuItem>
       )}
       {startable && onResume && (
-        <button role="menuitem" onClick={() => { onResume(nodeId); close() }} className="w-full text-left px-3 py-2 min-h-[44px] medium:min-h-0 flex items-center gap-2 text-blue-600 dark:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-700">
+        <DropdownMenuItem className="text-primary" onSelect={() => onResume(nodeId)}>
           <Icon name="play_arrow" className="w-3.5 h-3.5" /> Start
-        </button>
+        </DropdownMenuItem>
       )}
       {cancellable && onCancel && (
-        <button role="menuitem" onClick={() => { onCancel(nodeId); close() }} className="w-full text-left px-3 py-2 min-h-[44px] medium:min-h-0 flex items-center gap-2 text-red-700 dark:text-red-400 hover:bg-gray-50 dark:hover:bg-gray-700">
+        <DropdownMenuItem destructive onSelect={() => onCancel(nodeId)}>
           <Icon name="stop" className="w-3.5 h-3.5" /> Stop
-        </button>
+        </DropdownMenuItem>
       )}
-      {hasSecondary && <div className="my-1 border-t border-gray-100 dark:border-gray-700" />}
+      {hasSecondary && <DropdownMenuSeparator />}
       {canQueue && (
-        <button role="menuitem" onClick={() => { onOpenPopup(); close() }} className="w-full text-left px-3 py-2 min-h-[44px] medium:min-h-0 flex items-center gap-2 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+        <DropdownMenuItem onSelect={onOpenPopup}>
           <Icon name="mail" className="w-3.5 h-3.5" /> Queue a message…
-        </button>
+        </DropdownMenuItem>
       )}
       {canEdit && (
-        <button role="menuitem" onClick={() => { onOpenPopup(); close() }} className="w-full text-left px-3 py-2 min-h-[44px] medium:min-h-0 flex items-center gap-2 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+        <DropdownMenuItem onSelect={onOpenPopup}>
           <Icon name="edit" className="w-3.5 h-3.5" /> Edit prompt
-        </button>
+        </DropdownMenuItem>
       )}
       {onOpenArtifacts && (
         <>
-          {!terminal && <div className="my-1 border-t border-gray-100 dark:border-gray-700" />}
-          <button role="menuitem" onClick={() => { onOpenArtifacts(); close() }} className="w-full text-left px-3 py-2 min-h-[44px] medium:min-h-0 flex items-center gap-2 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+          {!terminal && <DropdownMenuSeparator />}
+          <DropdownMenuItem onSelect={onOpenArtifacts}>
             <Icon name="archive" className="w-3.5 h-3.5" /> Artifacts
-          </button>
+          </DropdownMenuItem>
         </>
       )}
       {onOpenMemories && (
-        <button role="menuitem" onClick={() => { onOpenMemories(); close() }} className="w-full text-left px-3 py-2 min-h-[44px] medium:min-h-0 flex items-center gap-2 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">
+        <DropdownMenuItem onSelect={onOpenMemories}>
           <Icon name="memory" className="w-3.5 h-3.5" /> Memories
-        </button>
+        </DropdownMenuItem>
       )}
-    </div>
+    </>
   )
 }
 
@@ -188,12 +169,9 @@ function NodeMenuItems({ nodeId, running, terminal, startable, cancellable, hasS
 function QueuedBadge({ count }: { count: number }) {
   if (count === 0) return null
   return (
-    <span
-      className={`${CHIP} bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400`}
-      title={`${count} parked message${count === 1 ? '' : 's'} - delivers when the current round ends`}
-    >
+    <Badge tone="amber" title={`${count} parked message${count === 1 ? '' : 's'} - delivers when the current round ends`}>
       <Icon name="mail" className="w-3 h-3" /> {count}
-    </span>
+    </Badge>
   )
 }
 
@@ -263,26 +241,24 @@ function ContextMeter({ used, limit }: { used: number; limit: number }) {
 // light overlay, a close button on its own row, Escape/outside-click to close, a chat-style bubble.
 function ContentPopup({ title, text, onClose }: { title: string; text: string; onClose: () => void }) {
   return (
-    <Sheet onClose={onClose} aria-label={title} className="relative medium:max-h-[85dvh] medium:rounded-2xl bg-gray-50 dark:bg-gray-900 px-5 medium:pb-6 pt-2 space-y-2">
-      <div className="flex justify-end -mb-2">
-        <button
-          onClick={onClose}
-          aria-label="Close"
-          className="flex h-11 w-11 -me-3 items-center justify-center rounded-lg text-gray-500 hover:text-gray-600 hover:bg-gray-200/70 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-700/70 transition-colors"
-        >
-          <Icon name="close" className="w-5 h-5" />
-        </button>
-      </div>
-      <div className="group/verdict relative bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
-        <span className="block mb-2 text-2xs font-semibold text-gray-500 dark:text-gray-400">{title}</span>
-        {/* A named group because the popup nests inside DagNode's own `.group` card:
-            only this block's hover/focus reveals the copy button. */}
-        <span className="absolute top-4 right-5 opacity-0 group-hover/verdict:opacity-100 group-focus-within/verdict:opacity-100 transition-opacity">
-          <CopyButton text={text} label={`Copy ${title.toLowerCase()}`} />
-        </span>
-        <AssistantText text={text} />
-      </div>
-    </Sheet>
+    <Dialog open onOpenChange={o => { if (!o) onClose() }}>
+      <DialogContent title={title} className="gap-2 overflow-y-auto px-5 pt-2 medium:pb-6">
+        <div className="flex shrink-0 justify-end -mb-2">
+          <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close" className="-me-3">
+            <Icon name="close" className="w-5 h-5" />
+          </Button>
+        </div>
+        <Card className="group/verdict relative shrink-0 rounded-2xl rounded-tl-sm px-5 py-4">
+          <span className="block mb-2 text-2xs font-semibold text-gray-500 dark:text-gray-400">{title}</span>
+          {/* A named group because the popup nests inside DagNode's own `.group` card:
+              only this block's hover/focus reveals the copy button. */}
+          <span className="absolute top-4 right-5 opacity-0 group-hover/verdict:opacity-100 group-focus-within/verdict:opacity-100 transition-opacity">
+            <CopyButton text={text} label={`Copy ${title.toLowerCase()}`} />
+          </span>
+          <AssistantText text={text} />
+        </Card>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -295,14 +271,10 @@ function CollapsedPreview({ label, text, popupTitle, className = 'py-1 text-2xs'
   if (!text) return null
   return (
     <>
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className={`w-full flex items-center gap-2 ${className} text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-left`}
-      >
+      <Button variant="ghost" size="none" onClick={() => setOpen(true)} className={cn(ROW, className)}>
         <span className={labelClass}>{label}</span>
-        <span className="truncate text-gray-500 dark:text-gray-400">{previewLine(text, max)}</span>
-      </button>
+        <span className="truncate">{previewLine(text, max)}</span>
+      </Button>
       {open && <ContentPopup title={popupTitle} text={text} onClose={() => setOpen(false)} />}
     </>
   )
@@ -408,14 +380,10 @@ function NodeArtifactSummary({ chatId, nodeId, nodeArtifactKind, finished, onOpe
 
   if (!primary) return null
   return (
-    <button
-      type="button"
-      onClick={onOpen}
-      className="w-full flex items-center gap-2 px-4 py-2 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 border-t border-gray-100 dark:border-gray-700 text-left"
-    >
+    <Button variant="ghost" size="none" onClick={onOpen} className={cn(ROW, 'px-4 py-2 text-xs border-t border-gray-100 dark:border-gray-700')}>
       <Icon name="archive" className="w-3.5 h-3.5 shrink-0" />
       <span className="truncate">{artifactTitle(primary, body)}</span>
-    </button>
+    </Button>
   )
 }
 
@@ -516,7 +484,7 @@ function RetryControl({ nodeId, onRetry }: {
   if (guiding) {
     return (
       <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-100 dark:border-gray-700 bg-indigo-50/50 dark:bg-indigo-900/10">
-        <input
+        <Input
           autoFocus
           value={text}
           onChange={e => setText(e.target.value)}
@@ -525,23 +493,21 @@ function RetryControl({ nodeId, onRetry }: {
             if (e.key === 'Escape') { setGuiding(false); setText('') }
           }}
           placeholder="Retry with guidance (optional) - re-runs this node + downstream…"
-          className="flex-1 min-w-0 text-xs px-2 py-1 rounded border border-indigo-300 dark:border-indigo-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+          className="flex-1"
         />
-        <button onClick={send} className="text-2xs font-medium text-indigo-700 dark:text-indigo-400 hover:underline">retry</button>
-        <button onClick={() => { setGuiding(false); setText('') }} className="text-2xs text-gray-500 dark:text-gray-400 hover:underline">cancel</button>
+        <Button variant="link" size="inline" onClick={send} className="text-2xs font-medium text-indigo-700 dark:text-indigo-400">retry</Button>
+        <Button variant="link" size="inline" onClick={() => { setGuiding(false); setText('') }} className="text-2xs text-muted-foreground">cancel</Button>
       </div>
     )
   }
   return (
     <div className="flex items-center gap-3 px-4 py-2 border-b border-gray-100 dark:border-gray-700">
-      <button onClick={() => onRetry(nodeId)} title="Re-run this node and everything downstream of it (reuses the rest)"
-        className="inline-flex items-center gap-1 min-h-[44px] medium:min-h-0 text-2xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline">
+      <Button variant="link" size="inline" onClick={() => onRetry(nodeId)} title="Re-run this node and everything downstream of it (reuses the rest)" className="gap-1 text-2xs font-medium text-indigo-600 dark:text-indigo-400">
         <Icon name="refresh" className="w-3 h-3" /> retry
-      </button>
-      <button onClick={() => setGuiding(true)} title="Re-run this node with new guidance"
-        className="inline-flex items-center gap-1 min-h-[44px] medium:min-h-0 text-2xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline">
+      </Button>
+      <Button variant="link" size="inline" onClick={() => setGuiding(true)} title="Re-run this node with new guidance" className="gap-1 text-2xs font-medium text-indigo-600 dark:text-indigo-400">
         <Icon name="refresh" className="w-3 h-3" /> retry with guidance…
-      </button>
+      </Button>
     </div>
   )
 }
@@ -731,14 +697,15 @@ function StatusBanners({ nodeId, state, onDismissError }: { nodeId: string; stat
           <Icon name="warning" className="w-3.5 h-3.5 shrink-0" />
           <span className="flex-1 min-w-0 break-words">{state.error}</span>
           {onDismissError && (
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="icon"
               onClick={() => onDismissError(nodeId)}
               aria-label="Dismiss"
-              className="shrink-0 w-11 h-11 -my-1 -me-3 flex items-center justify-center rounded-lg hover:bg-red-100 dark:hover:bg-red-900/40"
+              className="-my-1 -me-3 text-current hover:bg-red-100 hover:text-current dark:hover:bg-red-900/40"
             >
               <Icon name="close" className="w-4 h-4" />
-            </button>
+            </Button>
           )}
         </div>
       )}
@@ -758,13 +725,9 @@ function StatusBanners({ nodeId, state, onDismissError }: { nodeId: string; stat
 function NodeAnswerButton({ canAnswer, onClick }: { canAnswer: boolean; onClick: () => void }) {
   if (!canAnswer) return null
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="shrink-0 h-11 -my-3 px-3 inline-flex items-center gap-1 rounded-lg bg-amber-600 text-white text-xs font-medium hover:bg-amber-700 transition-colors"
-    >
+    <Button size="sm" onClick={onClick} className="-my-3 gap-1 bg-amber-600 hover:bg-amber-700">
       <Icon name="help" className="w-3.5 h-3.5" /> Answer
-    </button>
+    </Button>
   )
 }
 
@@ -845,14 +808,8 @@ export const DagNode = memo(function DagNode({
   const pauseLabel = isPaused ? pausedStatusLabel(state.status, state.pauseReason) : undefined
   const canAnswer = (state.status === 'needs_input' || state.pauseReason === 'awaiting_input') && !!onAnswerQuestion
 
-  // overflow-hidden clips the rounded corners but also clipped the kebab menu to a short card,
-  // so it lifts while the menu is open.
   return (
-    <div className={`rounded-xl border shadow-sm overflow-hidden has-[[aria-expanded=true]]:overflow-visible ${
-      isFinal
-        ? 'border-indigo-200 dark:border-indigo-800 bg-white dark:bg-gray-800'
-        : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800'
-    }`}>
+    <Card className={cn('overflow-hidden', isFinal && 'border-indigo-200 dark:border-indigo-800')}>
       {/* One line at every width; below `medium` the metadata group wraps onto its own
           muted line (basis-full + order-last) instead of stacking the row. */}
       <div className="flex flex-wrap medium:flex-nowrap items-center gap-x-2 gap-y-1 px-4 py-3 border-b border-gray-100 dark:border-gray-700">
@@ -883,13 +840,15 @@ export const DagNode = memo(function DagNode({
 
       {/* Opens the popup: the full prompt as a chat-native turn plus, on a live turn, the message
           queue, prompt editor and pending-question answer. */}
-      <button
+      <Button
+        variant="ghost"
+        size="none"
         onClick={() => setPopupOpen(true)}
-        className="w-full text-left px-4 py-2 text-xs text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/40 truncate"
+        className={cn(ROW, 'px-4 py-2 text-xs border-b border-gray-100 dark:border-gray-700')}
         title="View prompt and controls"
       >
-        {node.task}
-      </button>
+        <span className="truncate">{node.task}</span>
+      </Button>
       {popupOpen && (
         <NodePopup
           node={node}
@@ -930,6 +889,6 @@ export const DagNode = memo(function DagNode({
       )}
 
       <StatusBanners nodeId={node.id} state={state} onDismissError={onDismissError} />
-    </div>
+    </Card>
   )
 })

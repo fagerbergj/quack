@@ -1,7 +1,10 @@
 import { Icon } from './Icon'
-import { useId, useState } from 'react'
 import type { MemoryListSort, MemoryScopeStats } from '../api'
-import { Sheet } from './Sheet'
+import { cn } from '../lib/utils'
+import { Button } from './ui/button'
+import { Popover, PopoverContent, PopoverTrigger } from './ui/popover'
+import { Separator } from './ui/separator'
+import { Tooltip } from './ui/tooltip'
 
 export type MemorySort = MemoryListSort
 
@@ -33,34 +36,28 @@ export interface MemorySortFilterProps {
 // Same disclosure idiom as the chat sidebar's FilterPanel: icon button to popover, closed on backdrop click
 // or Escape, so the filters take no toolbar width until opened.
 export function MemorySortFilter({ sort, onSortChange, bucket, buckets, onBucketChange, tier, onTierChange, scopes }: MemorySortFilterProps) {
-  const [open, setOpen] = useState(false)
-  const sheetId = useId()
   const active = sort !== 'newest' || bucket !== '' || tier !== ''
 
   return (
-    <div className="relative flex-shrink-0">
-      <button
-        onClick={() => setOpen(o => !o)}
-        popoverTarget={sheetId}
-        popoverTargetAction="show"
-        aria-label="Sort and filter memories"
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        title="Sort and filter"
-        className={`flex items-center justify-center min-w-[44px] min-h-[44px] rounded-lg border transition-colors ${
-          active
-            ? 'border-blue-500 text-blue-600 dark:text-blue-400'
-            : 'border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
-        }`}
-      >
-        <Icon name="tune" className="w-4 h-4" />
-      </button>
-
-      {open && (
-        <Sheet id={sheetId} anchored="right" aria-label="Sort and filter memories" onClose={() => setOpen(false)} className="medium:w-56 medium:rounded-lg medium:border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-2 medium:pb-2 text-sm medium:text-xs">
-          <div className="px-1 py-0.5 text-2xs font-semibold text-gray-500 dark:text-gray-400">Sort</div>
+    <div className="flex-shrink-0">
+      <Popover>
+        <Tooltip content="Sort and filter">
+          <PopoverTrigger asChild>
+            <Button
+              variant="outline"
+              size="icon"
+              aria-haspopup="dialog"
+              aria-label="Sort and filter memories"
+              className={cn('size-11 medium:size-11', active && 'border-primary text-primary')}
+            >
+              <Icon name="tune" className="w-4 h-4" />
+            </Button>
+          </PopoverTrigger>
+        </Tooltip>
+        <PopoverContent align="end" aria-label="Sort and filter memories" className="medium:w-56">
+          <div className="px-1 py-0.5 text-2xs font-semibold text-muted-foreground">Sort</div>
           {SORT_OPTIONS.map(({ value, label }) => (
-            <label key={value} className="flex items-center gap-2 min-h-[44px] medium:min-h-0 px-1 py-1 rounded cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700">
+            <label key={value} className="flex items-center gap-2 min-h-[44px] medium:min-h-0 px-1 py-1 rounded cursor-pointer hover:bg-accent">
               <input
                 type="radio"
                 name="memory-sort"
@@ -68,30 +65,30 @@ export function MemorySortFilter({ sort, onSortChange, bucket, buckets, onBucket
                 onChange={() => onSortChange(value)}
                 className="accent-blue-600"
               />
-              <span className="text-gray-700 dark:text-gray-200">{label}</span>
+              <span className="text-foreground">{label}</span>
             </label>
           ))}
-          <div className="mt-2 mb-1 border-t border-gray-100 dark:border-gray-700" />
-          <label className="block px-1 py-0.5 text-2xs font-semibold text-gray-500 dark:text-gray-400">
+          <Separator className="mt-2 mb-1" />
+          <label className="block px-1 py-0.5 text-2xs font-semibold text-muted-foreground">
             Bucket
           </label>
           <select
             value={bucket}
             onChange={e => onBucketChange(e.target.value)}
             aria-label="Bucket filter"
-            className="w-full mt-0.5 min-h-[44px] medium:min-h-0 rounded border border-gray-300 dark:border-gray-600 px-2 py-1 text-xs bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full mt-0.5 min-h-[44px] medium:min-h-0 rounded border border-gray-300 dark:border-gray-600 px-2 py-1 text-xs bg-white dark:bg-gray-700 text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             <option value="">All buckets</option>
             {buckets.map(b => <option key={b} value={b}>{b}</option>)}
           </select>
-          <label className="block px-1 py-0.5 mt-2 text-2xs font-semibold text-gray-500 dark:text-gray-400">
+          <label className="block px-1 py-0.5 mt-2 text-2xs font-semibold text-muted-foreground">
             Tier
           </label>
           <select
             value={tier}
             onChange={e => onTierChange(e.target.value as MemoryTierFilter)}
             aria-label="Tier filter"
-            className="w-full mt-0.5 min-h-[44px] medium:min-h-0 rounded border border-gray-300 dark:border-gray-600 px-2 py-1 text-xs bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full mt-0.5 min-h-[44px] medium:min-h-0 rounded border border-gray-300 dark:border-gray-600 px-2 py-1 text-xs bg-white dark:bg-gray-700 text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             <option value="">All tiers</option>
             <option value="unverified">Unverified</option>
@@ -99,19 +96,19 @@ export function MemorySortFilter({ sort, onSortChange, bucket, buckets, onBucket
           </select>
           {scopes && scopes.length > 0 && (
             <>
-              <div className="mt-2 mb-1 border-t border-gray-100 dark:border-gray-700" />
-              <div className="px-1 py-0.5 text-2xs font-semibold text-gray-500 dark:text-gray-400">
+              <Separator className="mt-2 mb-1" />
+              <div className="px-1 py-0.5 text-2xs font-semibold text-muted-foreground">
                 Live / invalidated
               </div>
               <ul className="max-h-40 overflow-y-auto">
                 {scopes.map(s => (
-                  <li key={s.scope} className="px-1 py-0.5 text-gray-600 dark:text-gray-300">
+                  <li key={s.scope} className="px-1 py-0.5 text-foreground">
                     <div className="flex items-center justify-between gap-2">
                       <span className="truncate">{s.scope}</span>
-                      <span className="flex-shrink-0 tabular-nums text-gray-500 dark:text-gray-400">{s.live} / {s.invalidated}</span>
+                      <span className="flex-shrink-0 tabular-nums text-muted-foreground">{s.live} / {s.invalidated}</span>
                     </div>
                     <div
-                      className="flex flex-wrap gap-x-2 gap-y-1 text-2xs tabular-nums text-gray-500 dark:text-gray-400"
+                      className="flex flex-wrap gap-x-2 gap-y-1 text-2xs tabular-nums text-muted-foreground"
                       title="Of the live points: never recalled, no up/down votes cast, verified with no real judge/human support"
                     >
                       <span>{s.never_recalled} never recalled</span>
@@ -123,8 +120,8 @@ export function MemorySortFilter({ sort, onSortChange, bucket, buckets, onBucket
               </ul>
             </>
           )}
-        </Sheet>
-      )}
+        </PopoverContent>
+      </Popover>
     </div>
   )
 }

@@ -119,7 +119,7 @@ export const ConfirmingForget: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
     await userEvent.click(canvas.getByRole('button', { name: 'Memory actions' }))
-    await userEvent.click(canvas.getByRole('menuitem', { name: 'Forget' }))
+    await userEvent.click(await within(document.body).findByRole('menuitem', { name: 'Forget' }))
   },
 }
 
@@ -134,7 +134,8 @@ export const ForgetFailed: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
     await userEvent.click(canvas.getByRole('button', { name: 'Memory actions' }))
-    await userEvent.click(canvas.getByRole('menuitem', { name: 'Forget' }))
-    await userEvent.click(canvas.getByRole('button', { name: 'Confirm' }))
+    const menu = within(document.body)
+    await userEvent.click(await menu.findByRole('menuitem', { name: 'Forget' }))
+    await userEvent.click(await menu.findByRole('button', { name: 'Confirm' }))
   },
 }

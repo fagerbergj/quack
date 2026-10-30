@@ -493,7 +493,7 @@ export const JudgeVerdictPopup: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
     await userEvent.click(canvas.getByText(/Mostly solid/))
-    await canvas.findByRole('dialog')
+    await within(document.body).findByRole('dialog')
   },
 }
 
@@ -526,7 +526,7 @@ export const AnswerPopup: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
     await userEvent.click(canvas.getByText('answer'))
-    await canvas.findByRole('dialog')
+    await within(document.body).findByRole('dialog')
   },
 }
 

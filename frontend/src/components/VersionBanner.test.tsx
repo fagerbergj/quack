@@ -67,20 +67,21 @@ describe('VersionBanner', () => {
   })
 
   it('blocks the page when the server no longer serves this build', () => {
-    const html = renderToStaticMarkup(<VersionBanner skew="blocked" />)
-    expect(html).toContain('role="alertdialog"')
-    expect(html).toContain('fixed inset-0')
-    expect(html).toContain('Reload')
-  })
-
-  // jsdom can't paint the top layer; a shown modal <dialog> is the mechanism that puts the overlay above open
-  // drawers (also top-layer dialogs) and makes them inert, where a z-indexed div sits beneath them.
-  it('blocks from the top layer, as a shown modal dialog', () => {
     render(<VersionBanner skew="blocked" />)
     const overlay = screen.getByRole('alertdialog')
-    expect(overlay).toBeInstanceOf(HTMLDialogElement)
-    expect((overlay as HTMLDialogElement).open).toBe(true)
-    expect(fireEvent(overlay, new Event('cancel', { cancelable: true }))).toBe(false) // Esc can't dismiss it
+    expect(overlay.className).toContain('inset-0')
+    expect(overlay.textContent).toContain('Reload')
+    cleanup()
+  })
+
+  // A modal Radix dialog makes the app behind it inert; the blocking placement sits at z-70, above every
+  // other layer, and with no onOpenChange neither Esc nor an outside click can dismiss it.
+  it('blocks as a modal that Esc cannot dismiss', () => {
+    render(<VersionBanner skew="blocked" />)
+    const overlay = screen.getByRole('alertdialog')
+    expect(overlay.className).toContain('z-70')
+    fireEvent.keyDown(overlay, { key: 'Escape' })
+    expect(screen.getByRole('alertdialog')).toBe(overlay)
     cleanup()
   })
 })

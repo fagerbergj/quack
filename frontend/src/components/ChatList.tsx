@@ -1,28 +1,33 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { ChatSummary } from '../api'
 import { isGithubChat, parseGithubRef, type GithubRef } from '../lib/github'
 import { computeFacets, filterChats, parseFilterState, serializeFilterState, type SelectedFacets } from '../lib/chatFilters'
-import { paletteClasses, TONE, CHIP } from '../lib/colorHash'
+import { paletteTone } from '../lib/colorHash'
+import { Badge, type BadgeTone } from './ui/badge'
 import { FilterPanel } from './FilterPanel'
 import { StatusDot } from './StatusDot'
 import { navigate, useSearch } from '../router'
 import { useMediaQuery } from '../hooks/useMediaQuery'
-import { closeOnBackdrop, useDrawer } from '../hooks/useDrawer'
+import { Button } from './ui/button'
+import { Input } from './ui/input'
+import { Sheet, SheetContent } from './ui/sheet'
+import { Tooltip } from './ui/tooltip'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './ui/dropdown-menu'
 import { Icon, type IconName } from './Icon'
 
 // A chat with no title yet; the CLI prints the same string.
 export const UNTITLED_CHAT = '(untitled)'
 
-const GITHUB_STATE_TONE = new Map<string, string>([['open', TONE.green], ['closed', TONE.red], ['merged', TONE.purple], ['draft', TONE.yellow]])
+const GITHUB_STATE_TONE = new Map<string, BadgeTone>([['open', 'green'], ['closed', 'red'], ['merged', 'purple'], ['draft', 'yellow']])
 
-export function githubStateBadgeClass(state: string): string {
-  return GITHUB_STATE_TONE.get(state) ?? ''
+export function githubStateTone(state: string): BadgeTone {
+  return GITHUB_STATE_TONE.get(state) ?? 'gray'
 }
 
 // GitHub's colours for an origin badge, but never for 'draft': an extension's own badge
 // vocabulary (a doc's "draft" revision label) must not be guessed at, so it stays neutral.
-export function originBadgeClass(badge: string): string {
-  return (badge !== 'draft' && GITHUB_STATE_TONE.get(badge)) || TONE.gray
+export function originBadgeTone(badge: string): BadgeTone {
+  return (badge !== 'draft' && GITHUB_STATE_TONE.get(badge)) || 'gray'
 }
 
 // Icon plus colour convey the state, never colour alone (WCAG 1.4.1).
@@ -55,7 +60,7 @@ export interface ChatListProps {
   open: boolean
   onSelect: (id: string) => void
   onNewChat: () => void
-  onDelete: (id: string, e: React.MouseEvent) => void
+  onDelete: (id: string) => void
   onCloseMobile: () => void
   hasMoreChats?: boolean
   onLoadMoreChats?: () => void
@@ -76,67 +81,59 @@ function ChatBadges({ s, githubRef }: { s: ChatSummary; githubRef: GithubRef | u
   return (
     <>
       {isGithubChat(s) && ref && (
-        <a
-          href={`https://github.com/${ref.repo}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={e => e.stopPropagation()}
-          title={ref.repo}
-          className={`${CHIP} max-w-[7rem] truncate hover:underline ${paletteClasses(ref.repo)}`}
-        >
-          {ref.repo.slice(ref.repo.indexOf('/') + 1)}
-        </a>
+        <Badge asChild tone={paletteTone(ref.repo)} className="max-w-[7rem] truncate hover:underline">
+          <a
+            href={`https://github.com/${ref.repo}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={e => e.stopPropagation()}
+            title={ref.repo}
+          >
+            {ref.repo.slice(ref.repo.indexOf('/') + 1)}
+          </a>
+        </Badge>
       )}
       {ref && s.github_url && (
-        <a
-          href={s.github_url}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={e => e.stopPropagation()}
-          title={ref.kind === 'pr' ? `Pull request #${ref.number}` : `Issue #${ref.number}`}
-          className={`${CHIP} ${TONE.gray} hover:text-blue-600 dark:hover:text-blue-400 hover:underline`}
-        >
-          {ref.kind === 'pr' ? 'PR' : 'Issue'} #{ref.number}
-        </a>
+        <Badge asChild className="hover:text-primary hover:underline">
+          <a
+            href={s.github_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={e => e.stopPropagation()}
+            title={ref.kind === 'pr' ? `Pull request #${ref.number}` : `Issue #${ref.number}`}
+          >
+            {ref.kind === 'pr' ? 'PR' : 'Issue'} #{ref.number}
+          </a>
+        </Badge>
       )}
       {s.github_state && (
-        <span
-          className={`${CHIP} ${githubStateBadgeClass(s.github_state)}`}
-          title={s.github_state}
-        >
+        <Badge tone={githubStateTone(s.github_state)} title={s.github_state}>
           {githubStateIcon(s.github_state) && <Icon name={githubStateIcon(s.github_state)!} className="w-2.5 h-2.5" />}
           {GITHUB_STATE_TONE.has(s.github_state) && s.github_state}
-        </span>
+        </Badge>
       )}
       {/* Extension-dispatched chats. GitHub's origin repeats the repo/PR/state badges above, so it is skipped. */}
       {s.origin && !(isGithubChat(s) && ref) && (
         <>
           {s.origin.href ? (
-            <a
-              href={s.origin.href}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={e => e.stopPropagation()}
-              title={s.origin.label}
-              className={`${CHIP} max-w-[7rem] truncate hover:underline ${paletteClasses(s.origin.extension)}`}
-            >
-              {s.origin.label}
-            </a>
+            <Badge asChild tone={paletteTone(s.origin.extension)} className="max-w-[7rem] truncate hover:underline">
+              <a
+                href={s.origin.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={e => e.stopPropagation()}
+                title={s.origin.label}
+              >
+                {s.origin.label}
+              </a>
+            </Badge>
           ) : (
-            <span
-              title={s.origin.label}
-              className={`${CHIP} max-w-[7rem] truncate ${paletteClasses(s.origin.extension)}`}
-            >
+            <Badge tone={paletteTone(s.origin.extension)} className="max-w-[7rem] truncate" title={s.origin.label}>
               {s.origin.label}
-            </span>
+            </Badge>
           )}
           {s.origin.badge && (
-            <span
-              className={`${CHIP} ${originBadgeClass(s.origin.badge)}`}
-              title={s.origin.badge}
-            >
-              {s.origin.badge}
-            </span>
+            <Badge tone={originBadgeTone(s.origin.badge)} title={s.origin.badge}>{s.origin.badge}</Badge>
           )}
         </>
       )}
@@ -145,70 +142,41 @@ function ChatBadges({ s, githubRef }: { s: ChatSummary; githubRef: GithubRef | u
 }
 
 // Absolutely positioned, not in flow, so it never grows the row's height. Always visible: touch has no hover.
-function ChatRowMenu({ s, menuRef, btnRef, menuOpen, onToggle, archived, onArchive, onUnarchive, onDelete }: {
-  s: ChatSummary
-  menuRef: React.RefObject<HTMLDivElement | null>
-  btnRef: React.RefObject<HTMLButtonElement | null>
-  menuOpen: boolean
-  onToggle: () => void
+// The wrapper stops clicks, including ones bubbling out of the portalled menu, from selecting the row.
+function ChatRowMenu({ archived, onArchive, onUnarchive, onDelete }: {
   archived?: boolean
-  onArchive?: (chatId: string) => void
-  onUnarchive?: (chatId: string) => void
-  onDelete: (e: React.MouseEvent) => void
+  onArchive?: () => void
+  onUnarchive?: () => void
+  onDelete: () => void
 }) {
   return (
-    <div ref={menuRef} className="absolute right-0 top-0">
-      <button
-        ref={btnRef}
-        onClick={e => { e.stopPropagation(); onToggle() }}
-        aria-label="Chat actions"
-        aria-haspopup="menu"
-        aria-expanded={menuOpen}
-        title="Chat actions"
-        className="inline-flex items-center justify-center min-w-[44px] min-h-[44px] rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-      >
-        <Icon name="more_vert" className="w-5 h-5" />
-      </button>
-      {menuOpen && (
-        <div
-          role="menu"
-          className="absolute right-0 top-full mt-1 z-10 min-w-[8rem] rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg py-1"
-        >
+    <div className="absolute right-0 top-0" onClick={e => e.stopPropagation()}>
+      <DropdownMenu>
+        <Tooltip content="Chat actions">
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon" aria-label="Chat actions" className="size-11 medium:size-11">
+              <Icon name="more_vert" className="w-5 h-5" />
+            </Button>
+          </DropdownMenuTrigger>
+        </Tooltip>
+        <DropdownMenuContent>
           {!archived && (
-            <button
-              role="menuitem"
-              onClick={e => { e.stopPropagation(); onToggle(); onArchive?.(s.id) }}
-              aria-label="Archive chat"
-              title="Archive chat"
-              className="w-full flex items-center gap-2 text-left px-3 py-2 min-h-[44px] medium:min-h-0 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-            >
+            <DropdownMenuItem aria-label="Archive chat" onSelect={onArchive}>
               <Icon name="archive" className="w-3.5 h-3.5" /> Archive
-            </button>
+            </DropdownMenuItem>
           )}
           {archived && onUnarchive && (
-            <button
-              role="menuitem"
-              onClick={e => { e.stopPropagation(); onToggle(); onUnarchive(s.id) }}
-              aria-label="Unarchive chat"
-              title="Unarchive chat"
-              className="w-full flex items-center gap-2 text-left px-3 py-2 min-h-[44px] medium:min-h-0 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-blue-50 dark:hover:bg-blue-900/40 hover:text-blue-700 dark:hover:text-blue-400 transition-colors"
-            >
+            <DropdownMenuItem aria-label="Unarchive chat" onSelect={onUnarchive}>
               <Icon name="history" className="w-3.5 h-3.5" /> Restore
-            </button>
+            </DropdownMenuItem>
           )}
           {archived && (
-            <button
-              role="menuitem"
-              onClick={onDelete}
-              aria-label="Delete chat permanently"
-              title="Delete chat permanently"
-              className="w-full flex items-center gap-2 text-left px-3 py-2 min-h-[44px] medium:min-h-0 text-xs font-medium text-red-700 dark:text-red-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-            >
+            <DropdownMenuItem destructive aria-label="Delete chat permanently" onSelect={onDelete}>
               <Icon name="delete" className="w-3.5 h-3.5" /> Delete
-            </button>
+            </DropdownMenuItem>
           )}
-        </div>
-      )}
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   )
 }
@@ -226,52 +194,16 @@ function ChatRow({
   s: ChatSummary
   activeChatId: string | null
   onSelect: (id: string) => void
-  onDelete: (id: string, e: React.MouseEvent) => void
+  onDelete: (id: string) => void
   archived?: boolean
   onArchive?: (chatId: string) => void
   onUnarchive?: (chatId: string) => void
 }) {
   const ref = parseGithubRef(s)
-  const [menuOpen, setMenuOpen] = useState(false)
-  const menuRef = useRef<HTMLDivElement>(null)
-  const btnRef = useRef<HTMLButtonElement>(null)
-  // The menu unmounts on close; without an explicit return, keyboard users land on <body> (APG menu button).
-  const close = () => { setMenuOpen(false); btnRef.current?.focus() }
-
-  useEffect(() => {
-    if (!menuOpen) return
-    function onDocMouseDown(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false)
-    }
-    function onDocKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape') { close(); return }
-      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
-      const items = Array.from(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])
-      if (items.length === 0) return
-      e.preventDefault()
-      const idx = items.indexOf(document.activeElement as HTMLElement)
-      const next = e.key === 'ArrowDown' ? (idx + 1) % items.length : (idx - 1 + items.length) % items.length
-      items[next]?.focus()
-    }
-    document.addEventListener('mousedown', onDocMouseDown)
-    document.addEventListener('keydown', onDocKeyDown)
-    return () => {
-      document.removeEventListener('mousedown', onDocMouseDown)
-      document.removeEventListener('keydown', onDocKeyDown)
-    }
-  }, [menuOpen])
-
-  useEffect(() => {
-    if (!menuOpen) return
-    menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus()
-  }, [menuOpen])
-
   // Only the irreversible path needs a confirm.
-  function handleDelete(e: React.MouseEvent) {
-    e.stopPropagation()
-    setMenuOpen(false)
+  function handleDelete() {
     if (window.confirm(`Permanently delete "${s.title || UNTITLED_CHAT}"? This can't be undone.`)) {
-      onDelete(s.id, e)
+      onDelete(s.id)
     }
   }
 
@@ -292,14 +224,9 @@ function ChatRow({
       </div>
       <span className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{relativeDate(s.updated_at)}</span>
       <ChatRowMenu
-        s={s}
-        menuRef={menuRef}
-        btnRef={btnRef}
-        menuOpen={menuOpen}
-        onToggle={() => setMenuOpen(o => !o)}
         archived={archived}
-        onArchive={onArchive}
-        onUnarchive={onUnarchive}
+        onArchive={onArchive && (() => onArchive(s.id))}
+        onUnarchive={onUnarchive && (() => onUnarchive(s.id))}
         onDelete={handleDelete}
       />
     </div>
@@ -328,7 +255,7 @@ function ArchivedSection({ archived, loaded, expanded, onToggle, activeChatId, o
   onToggle: () => void
   activeChatId: string | null
   onSelect: (id: string) => void
-  onDelete: (id: string, e: React.MouseEvent) => void
+  onDelete: (id: string) => void
   onUnarchive?: (chatId: string) => void
   hasMore?: boolean
   loading?: boolean
@@ -336,14 +263,16 @@ function ArchivedSection({ archived, loaded, expanded, onToggle, activeChatId, o
 }) {
   return (
     <div>
-      <button
+      <Button
+        variant="ghost"
+        size="sm"
         onClick={onToggle}
-        className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors border-t border-gray-200 dark:border-gray-700"
+        className="w-full justify-start gap-2 rounded-none border-t border-border px-3"
         aria-expanded={expanded}
       >
         <span aria-hidden="true" className={`transition-transform inline-block ${expanded ? 'rotate-90' : ''}`}>›</span>
         Archived{loaded ? ` (${archived.length})` : ''}
-      </button>
+      </Button>
       {expanded && (
         <>
           {archived.length === 0 && (
@@ -353,14 +282,16 @@ function ArchivedSection({ archived, loaded, expanded, onToggle, activeChatId, o
             <ChatRow key={s.id} s={s} activeChatId={activeChatId} onSelect={onSelect} onDelete={onDelete} onUnarchive={onUnarchive} archived />
           ))}
           {hasMore && (
-            <button
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={onLoadMore}
               disabled={loading}
               aria-label="Load more archived chats"
-              className="w-full min-h-[44px] text-xs text-center text-blue-600 dark:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors"
+              className="w-full rounded-none text-primary"
             >
               {loading ? 'Loading…' : 'Load more'}
-            </button>
+            </Button>
           )}
         </>
       )}
@@ -407,35 +338,25 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
   // archivedChats is already server-scoped to status=archived; only search/facets apply here.
   const archived = filterChats(archivedChats ?? [], filterState)
 
-  // Below `medium` (600px) the list is an off-canvas modal <dialog>; above it, a static sidebar.
+  // Below `medium` (600px) the list is an off-canvas modal Sheet; above it, a static sidebar.
   const offCanvas = useMediaQuery('(max-width: 599px)')
-  const dialogRef = useDrawer(open && offCanvas)
 
   const body = (
     <>
       <div className="p-3 border-b border-gray-200 dark:border-gray-700 flex items-center gap-2">
-        <button
-          onClick={onNewChat}
-          className="flex-1 text-sm px-3 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors font-medium"
-        >
-          New Chat
-        </button>
-        <button
-          onClick={onCloseMobile}
-          className="medium:hidden text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 p-2 rounded transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center"
-          aria-label="Close chat list"
-        >
+        <Button onClick={onNewChat} className="flex-1">New Chat</Button>
+        <Button variant="ghost" size="icon" onClick={onCloseMobile} className="medium:hidden" aria-label="Close chat list">
           <Icon name="close" className="w-4 h-4" />
-        </button>
+        </Button>
       </div>
       <div className="p-2 border-b border-gray-200 dark:border-gray-700 flex items-center gap-2">
-        <input
+        <Input
           type="search"
           value={q}
           onChange={e => setFilterState({ q: e.target.value })}
           placeholder="Search chats…"
           aria-label="Search chats"
-          className="flex-1 min-w-0 rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
+          className="flex-1"
         />
         <FilterPanel
           facets={facets}
@@ -469,29 +390,24 @@ export function ChatList({ chats, activeChatId, open, onSelect, onNewChat, onDel
         />
 
         {hasMoreChats && (
-          <button
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={onLoadMoreChats}
             disabled={loadingMoreChats}
-            className="w-full min-h-[44px] text-xs text-center text-blue-600 dark:text-blue-400 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors"
+            className="w-full rounded-none text-primary"
           >
             {loadingMoreChats ? 'Loading…' : 'Load more'}
-          </button>
+          </Button>
         )}
       </div>
     </>
   )
-  const surface = 'h-dvh w-[250px] flex-col border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800'
   return offCanvas ? (
-    <dialog
-      ref={dialogRef}
-      aria-label="Chat list"
-      onClose={onCloseMobile}
-      onClick={closeOnBackdrop}
-      className={`${surface} m-0 max-h-none max-w-[85vw] p-0 border-0 border-r open:flex backdrop:bg-black/50 transition-transform duration-200 starting:-translate-x-full`}
-    >
-      {body}
-    </dialog>
+    <Sheet open={open} onOpenChange={o => { if (!o) onCloseMobile() }}>
+      <SheetContent title="Chat list" className="w-[250px]">{body}</SheetContent>
+    </Sheet>
   ) : (
-    <div className={`${surface} flex flex-shrink-0`}>{body}</div>
+    <div className="flex h-dvh w-[250px] flex-shrink-0 flex-col border-r border-border bg-card">{body}</div>
   )
 }

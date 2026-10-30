@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { api, type NodeMemory, type VoteDirection } from '../api'
 import { Icon, type IconName } from './Icon'
 import { VoteControl } from './VoteControl'
-import { TONE, CHIP } from '../lib/colorHash'
+import { Badge } from './ui/badge'
+import { Button } from './ui/button'
+import { Dialog, DialogClose, DialogContent } from './ui/dialog'
 
 export interface NodeMemoriesPanelProps {
   chatId: string
@@ -42,9 +44,7 @@ function JudgeVoteIcon({ vote, reason }: { vote: string; reason?: string }) {
 // prefill (injected before the worker started) vs tool (a recall_memory call mid-round).
 function SourceBadge({ source }: { source: string }) {
   return (
-    <span className={`${CHIP} ${TONE.gray}`}>
-      {source}
-    </span>
+    <Badge>{source}</Badge>
   )
 }
 
@@ -58,9 +58,7 @@ function NodeMemoryRow({ memory, onVote }: { memory: NodeMemory; onVote: (id: st
         <div className="flex flex-wrap items-center gap-2 mt-2">
           <SourceBadge source={memory.source} />
           {memory.tier && (
-            <span className={`${CHIP} bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400`}>
-              {memory.tier}
-            </span>
+            <Badge tone="blue">{memory.tier}</Badge>
           )}
           {memory.score != null && (
             <span className="text-2xs text-gray-500 dark:text-gray-400">score {memory.score.toFixed(2)}</span>
@@ -106,28 +104,16 @@ export function NodeMemoriesPanel({ chatId, nodeId, judgeRounds, onClose }: Node
     }
   }
 
-  // Native <dialog> + showModal(): Esc closes, focus is trapped, and the browser restores it to the opener.
-  const dialogRef = useRef<HTMLDialogElement>(null)
-  useEffect(() => { dialogRef.current?.showModal() }, [])
-
   return (
-    <dialog
-      ref={dialogRef}
-      aria-label="Memories received by this node"
-      onClose={onClose}
-      onClick={e => { if (e.target === dialogRef.current) dialogRef.current?.close() }}
-      className="m-auto w-full max-w-lg max-h-[80dvh] p-0 border-0 rounded-lg bg-transparent backdrop:bg-black/40"
-    >
-      <div className="flex flex-col max-h-[80dvh] rounded-lg bg-white dark:bg-gray-800 shadow-xl">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+    <Dialog open onOpenChange={o => { if (!o) onClose() }}>
+      <DialogContent title="Memories received by this node" className="max-h-[80dvh] medium:max-h-[80dvh] medium:max-w-lg">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border">
           <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-100">Memories</h2>
-          <button
-            onClick={() => dialogRef.current?.close()}
-            aria-label="Close"
-            className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-          >
-            <Icon name="close" className="w-4 h-4" />
-          </button>
+          <DialogClose asChild>
+            <Button variant="ghost" size="icon" aria-label="Close" className="medium:size-11">
+              <Icon name="close" className="w-4 h-4" />
+            </Button>
+          </DialogClose>
         </div>
         <div className="flex-1 overflow-y-auto">
           {loading && <div className="text-center text-gray-500 dark:text-gray-400 text-sm py-10">Loading…</div>}
@@ -141,7 +127,7 @@ export function NodeMemoriesPanel({ chatId, nodeId, judgeRounds, onClose }: Node
           )}
           {!loading && !error && memories.map(m => <NodeMemoryRow key={m.id} memory={m} onVote={handleVote} />)}
         </div>
-      </div>
-    </dialog>
+      </DialogContent>
+    </Dialog>
   )
 }

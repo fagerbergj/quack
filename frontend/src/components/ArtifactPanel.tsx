@@ -19,7 +19,12 @@ import { AssistantText, mdSchema } from './AgentParts'
 import { tryParseJSON, fieldLabel } from '../lib/json'
 import { A2uiSurfaceBox } from './A2uiArtifact'
 import { A2UI_SURFACE_KIND, QUIZ_KEY_KIND, surfacePersistKey, type SurfaceContent } from '../lib/a2ui'
-import { CHIP } from '../lib/colorHash'
+import { Badge, type BadgeTone } from './ui/badge'
+import { Button } from './ui/button'
+import { Card } from './ui/card'
+import { Dialog, DialogClose, DialogContent } from './ui/dialog'
+import { Tooltip } from './ui/tooltip'
+import { cn } from '../lib/utils'
 
 // JudgeRoundContent is the JSON body of a `judge_round` artifact, the only place a note's line anchor lives.
 // Parsed client-side: it is an artifact body, not a REST response, so it is not in the generated schema.
@@ -607,29 +612,17 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
 
   const onTrigger = triggerActivation(curInfo, judgeBodies, activateRound)
 
-  // Native <dialog> + showModal() closes on Esc, traps focus and restores it to the opener. The native 'close'
-  // event (onClose) is the only path that unmounts us, so the restore finishes before React removes the dialog.
-  const dialogRef = useRef<HTMLDialogElement>(null)
-  useEffect(() => {
-    dialogRef.current?.showModal()
-  }, [])
-
   const empty = primary == null
   // See DetailsSection: the raw id must not render until the disclosure opens.
   const [detailsOpen, setDetailsOpen] = useState(false)
 
   return (
-    <dialog
-      ref={dialogRef}
-      aria-label={nodeId ? `Artifacts for node ${nodeId}` : `Artifacts: ${nodeAgent}`}
-      onClose={onClose}
-      onClick={e => { if (e.target === dialogRef.current) dialogRef.current?.close() }}
-      // Below `medium`: the same bottom-sheet shell as Sheet/NodePopup; a viewport-sized centred card at medium+,
-      // since a review with several findings is not a small-dialog payload.
-      className="m-0 mt-auto w-screen max-w-[100vw] h-[90dvh] medium:m-auto medium:w-full medium:max-w-5xl medium:h-[88vh] max-h-[100vh] medium:max-h-[88vh] p-0 border-0 rounded-t-2xl medium:rounded-2xl bg-transparent backdrop:bg-black/40"
-    >
-      <div
-        className="relative flex flex-col w-full h-full overflow-hidden rounded-t-2xl medium:rounded-2xl bg-gray-50 dark:bg-gray-900 shadow-xl pb-[calc(0.75rem+var(--composer-gap))] medium:pb-0"
+    <Dialog open onOpenChange={o => { if (!o) onClose() }}>
+      {/* Below `medium` a bottom sheet; a viewport-sized centred card at medium+, since a review with several
+          findings is not a small-dialog payload. */}
+      <DialogContent
+        title={nodeId ? `Artifacts for node ${nodeId}` : `Artifacts: ${nodeAgent}`}
+        className="h-[90dvh] overflow-hidden medium:h-[88vh] medium:max-h-[88vh] medium:max-w-5xl"
       >
         {/* Header: the node's own name, never an artifact id or raw prompt; >=44px targets.
             line-clamp-2 is a hard ceiling so a long label can't push the header past 2 lines. */}
@@ -639,21 +632,16 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
           </h2>
           <div className="flex items-center gap-1 shrink-0 py-2">
             {!empty && <HeaderToggles rawView={rawView} onToggleRaw={() => setRawView(r => !r)} diffActive={diffActive} displayText={displayText} />}
-            <button
-              onClick={refresh}
-              aria-label="Refresh artifacts"
-              title="Refresh artifacts"
-              className="flex h-11 w-11 items-center justify-center rounded-lg text-gray-500 hover:text-gray-600 hover:bg-gray-200/70 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-700/70 transition-colors"
-            >
-              <Icon name="refresh" className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => dialogRef.current?.close()}
-              aria-label="Close"
-              className="flex h-11 w-11 items-center justify-center rounded-lg text-gray-500 hover:text-gray-600 hover:bg-gray-200/70 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-700/70 transition-colors"
-            >
-              <Icon name="close" className="w-4 h-4" />
-            </button>
+            <Tooltip content="Refresh artifacts">
+              <Button variant="ghost" size="icon" onClick={refresh} aria-label="Refresh artifacts" className="medium:size-11">
+                <Icon name="refresh" className="w-4 h-4" />
+              </Button>
+            </Tooltip>
+            <DialogClose asChild>
+              <Button variant="ghost" size="icon" aria-label="Close" className="medium:size-11">
+                <Icon name="close" className="w-4 h-4" />
+              </Button>
+            </DialogClose>
           </div>
         </header>
 
@@ -715,8 +703,8 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
           <UnanchoredNotes notes={unanchored} />
           <SecondaryList items={secondaryItems} bodies={secondaryBodies} excludeNames={reviewFindingNames} onSelect={setFocusedOverride} />
         </div>
-      </div>
-    </dialog>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -749,19 +737,41 @@ function SecondaryList({ items, bodies, excludeNames, onSelect }: {
   return (
     <div>
       <span className="text-sm font-semibold text-gray-700 dark:text-gray-200">Also on this node</span>
-      <div className="mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg divide-y divide-gray-100 dark:divide-gray-700">
+      <Card className="mt-1 divide-y divide-border overflow-hidden rounded-lg">
         {shown.map((a, i) => (
-          <button
+          <Button
             key={a.name}
-            type="button"
+            variant="ghost"
+            size="inline"
             onClick={() => onSelect(a.name)}
-            className="w-full text-left px-3 py-2 min-h-[44px] medium:min-h-0 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/50"
+            className="h-auto w-full justify-start whitespace-normal rounded-none px-3 py-2 text-left text-sm font-normal text-foreground"
           >
             {titles[i]}
-          </button>
+          </Button>
         ))}
-      </div>
+      </Card>
     </div>
+  )
+}
+
+// A numbered dot after a line a judge note anchors to; deliberately a marker, not a 44px target, so it sits in the text.
+function NoteMarker({ label, active, onClick, index, className }: { label: string; active: boolean; onClick: () => void; index: number; className?: string }) {
+  return (
+    <Button
+      variant="ghost"
+      size="inline"
+      aria-label={label}
+      onClick={onClick}
+      className={cn(
+        'ml-2 size-4 min-h-0 gap-0 rounded-full p-0 text-2xs leading-none medium:min-h-0',
+        active
+          ? 'bg-amber-400 dark:bg-amber-600 text-amber-950 dark:text-amber-50 hover:bg-amber-400 dark:hover:bg-amber-600'
+          : 'bg-amber-200 dark:bg-amber-800 text-amber-800 dark:text-amber-200 hover:bg-amber-300 dark:hover:bg-amber-700',
+        className,
+      )}
+    >
+      {index}
+    </Button>
   )
 }
 
@@ -774,7 +784,7 @@ function ArtifactLines({ lines, byLine, activeNote, onSelectNote }: {
   onSelectNote: (n: JudgeNote) => void
 }) {
   return (
-    <pre className="text-xs font-mono bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg overflow-x-auto">
+    <Card asChild className="rounded-lg"><pre className="text-xs font-mono overflow-x-auto">
       <code>
         {lines.map((line, i) => {
           const notes = byLine.get(i) ?? []
@@ -788,25 +798,19 @@ function ArtifactLines({ lines, byLine, activeNote, onSelectNote }: {
               {/* One button per note, not per line, so each note on a shared line is
                   its own reachable, individually announced control. */}
               {notes.map((n, ni) => (
-                <button
+                <NoteMarker
                   key={ni}
-                  type="button"
-                  aria-label={`Judge note on line ${i + 1}${notes.length > 1 ? ` (${ni + 1} of ${notes.length})` : ''}: ${n.text}`}
+                  label={`Judge note on line ${i + 1}${notes.length > 1 ? ` (${ni + 1} of ${notes.length})` : ''}: ${n.text}`}
+                  active={n === activeNote}
                   onClick={() => onSelectNote(n)}
-                  className={`ml-2 inline-flex h-4 w-4 items-center justify-center rounded-full text-2xs leading-none cursor-pointer ${
-                    n === activeNote
-                      ? 'bg-amber-400 dark:bg-amber-600 text-amber-950 dark:text-amber-50'
-                      : 'bg-amber-200 dark:bg-amber-800 text-amber-800 dark:text-amber-200 hover:bg-amber-300 dark:hover:bg-amber-700'
-                  }`}
-                >
-                  {ni + 1}
-                </button>
+                  index={ni + 1}
+                />
               ))}
             </div>
           )
         })}
       </code>
-    </pre>
+    </pre></Card>
   )
 }
 
@@ -815,7 +819,7 @@ function ArtifactLines({ lines, byLine, activeNote, onSelectNote }: {
 export function DiffView({ text }: { text: string }) {
   const lines = text.split('\n')
   return (
-    <pre className="text-xs font-mono bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg overflow-x-auto">
+    <Card asChild className="rounded-lg"><pre className="text-xs font-mono overflow-x-auto">
       <code>
         {lines.map((line, i) => {
           const color = line.startsWith('+') && !line.startsWith('+++')
@@ -832,7 +836,7 @@ export function DiffView({ text }: { text: string }) {
           )
         })}
       </code>
-    </pre>
+    </pre></Card>
   )
 }
 
@@ -889,19 +893,14 @@ function ArtifactMarkdown({ text, byLine, activeNote, onSelectNote }: {
           },
           children,
           notes?.map((n, ni) => (
-            <button
+            <NoteMarker
               key={ni}
-              type="button"
-              aria-label={`Judge note on line ${line}${notes.length > 1 ? ` (${ni + 1} of ${notes.length})` : ''}: ${n.text}`}
+              label={`Judge note on line ${line}${notes.length > 1 ? ` (${ni + 1} of ${notes.length})` : ''}: ${n.text}`}
+              active={n === activeNote}
               onClick={() => onSelectNote(n)}
-              className={`not-prose ml-2 inline-flex h-4 w-4 items-center justify-center rounded-full text-2xs leading-none cursor-pointer align-middle ${
-                n === activeNote
-                  ? 'bg-amber-400 dark:bg-amber-600 text-amber-950 dark:text-amber-50'
-                  : 'bg-amber-200 dark:bg-amber-800 text-amber-800 dark:text-amber-200 hover:bg-amber-300 dark:hover:bg-amber-700'
-              }`}
-            >
-              {ni + 1}
-            </button>
+              index={ni + 1}
+              className="not-prose align-middle"
+            />
           )),
         )
       }
@@ -916,13 +915,13 @@ function ArtifactMarkdown({ text, byLine, activeNote, onSelectNote }: {
   const fixed = useMemo(() => escapeUnmatchedBackticks(text), [text])
 
   return (
-    <div className="prose prose-sm dark:prose-invert max-w-none break-words bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-4 py-3">
+    <Card className="prose prose-sm dark:prose-invert max-w-none break-words rounded-lg px-4 py-3">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeRaw, [rehypeSanitize, mdSchema], rehypeHighlightSubset]}
         components={components}
       >{fixed}</ReactMarkdown>
-    </div>
+    </Card>
   )
 }
 
@@ -977,18 +976,16 @@ function JsonFields({ data }: { data: Record<string, unknown> }) {
   )
 }
 
-// bg+text pairs, never a bare color-600 on white (amber-600 alone is ~3.2:1,
-// under the 4.5:1 AA floor here); dark pairs mirror this file's own amber-100/900 note highlight.
-const SEVERITY_CHIP: Record<string, string> = {
-  blocking: 'bg-red-50 text-red-800 dark:bg-red-900/30 dark:text-red-300',
-  request_changes: 'bg-red-50 text-red-800 dark:bg-red-900/30 dark:text-red-300',
-  suggestion: 'bg-amber-50 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
-  nit: 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200',
-  approve: 'bg-green-50 text-green-800 dark:bg-green-900/30 dark:text-green-300',
+const SEVERITY_TONE: Record<string, BadgeTone> = {
+  blocking: 'red',
+  request_changes: 'red',
+  suggestion: 'amber',
+  nit: 'gray',
+  approve: 'green',
 }
 function severityChip(word: string | undefined) {
   if (!word) return null
-  return <span className={`${CHIP} ${SEVERITY_CHIP[word] ?? 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200'}`}>{word}</span>
+  return <Badge tone={SEVERITY_TONE[word] ?? 'gray'}>{word}</Badge>
 }
 
 // hideHeader skips the chip/path/title row: TitleHeading already shows all
@@ -996,7 +993,7 @@ function severityChip(word: string | undefined) {
 function FindingView({ data, hideHeader }: { data: FindingBody; hideHeader?: boolean }) {
   const loc = findingLoc(data)
   return (
-    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-3 space-y-2 text-sm leading-6">
+    <Card className="rounded-lg px-3 py-3 space-y-2 text-sm leading-6">
       {!hideHeader && (
         <div className="flex flex-wrap items-center gap-2">
           {severityChip(data.severity)}
@@ -1006,7 +1003,7 @@ function FindingView({ data, hideHeader }: { data: FindingBody; hideHeader?: boo
       {!hideHeader && data.title && <p className="font-medium text-gray-800 dark:text-gray-100">{data.title}</p>}
       {data.rationale && <p className="text-gray-600 dark:text-gray-300">{data.rationale}</p>}
       {data.snippet && <pre className="font-mono text-xs leading-5 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 overflow-x-auto whitespace-pre-wrap break-words">{data.snippet}</pre>}
-    </div>
+    </Card>
   )
 }
 
@@ -1032,7 +1029,7 @@ function findingSeverityCounts(findings: { body: FindingBody | undefined }[]): s
 export function ReviewView({ data, findings }: { data: CodeReviewBody; findings: { id: string; body: FindingBody | undefined }[] }) {
   const emptyByLine = useMemo(() => new Map<number, JudgeNote[]>(), [])
   return (
-    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-3 space-y-3 text-sm leading-6">
+    <Card className="rounded-lg px-3 py-3 space-y-3 text-sm leading-6">
       {(data.takeaway ?? data.summary) && <p className="text-gray-700 dark:text-gray-200">{data.takeaway ?? data.summary}</p>}
       <MetaList label="Verified" items={data.verified} />
       <MetaList label="Notes" items={data.notes} />
@@ -1058,7 +1055,7 @@ export function ReviewView({ data, findings }: { data: CodeReviewBody; findings:
           </div>
         </details>
       )}
-    </div>
+    </Card>
   )
 }
 
@@ -1078,7 +1075,7 @@ function MetaList({ label, items }: { label: string; items: string[] | undefined
 // Per-criterion scores are a raw 0-3, not a fraction.
 export function JudgeRoundView({ data }: { data: JudgeRoundContent }) {
   return (
-    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-3 space-y-2 text-sm leading-6">
+    <Card className="rounded-lg px-3 py-3 space-y-2 text-sm leading-6">
       <div className="flex flex-wrap items-center gap-2">
         <span className={`inline-flex items-center gap-1 font-medium ${data.passed ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'}`}>
           <Icon name={data.passed ? 'check' : 'close'} className="w-3.5 h-3.5" /> {data.passed ? 'passed' : 'failed'}
@@ -1106,7 +1103,7 @@ export function JudgeRoundView({ data }: { data: JudgeRoundContent }) {
           </ul>
         </div>
       )}
-    </div>
+    </Card>
   )
 }
 
@@ -1114,7 +1111,7 @@ export function JudgeRoundView({ data }: { data: JudgeRoundContent }) {
 // node dag_plan's lineage ever names) opens on this.
 export function PlanView({ data }: { data: PlanBody }) {
   return (
-    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-3 space-y-2 text-sm leading-6">
+    <Card className="rounded-lg px-3 py-3 space-y-2 text-sm leading-6">
       {data.status && <p className="text-xs text-gray-500 dark:text-gray-400">status: {data.status}</p>}
       {(data.assignments ?? []).map((a, i) => (
         <div key={i} className="border-t border-gray-100 dark:border-gray-700 first:border-t-0 pt-2">
@@ -1122,7 +1119,7 @@ export function PlanView({ data }: { data: PlanBody }) {
           {a.task && <p className="text-gray-600 dark:text-gray-300 line-clamp-3 whitespace-pre-wrap">{a.task}</p>}
         </div>
       ))}
-    </div>
+    </Card>
   )
 }
 
@@ -1194,17 +1191,14 @@ function RoundChip({ id, round, passed, score, active, onActivate }: {
 }) {
   const verdict = passed == null ? 'no verdict' : passed ? 'passed' : 'failed'
   return (
-    <button
+    <Button
       key={id}
-      type="button"
+      variant="outline"
+      size="sm"
       aria-pressed={active}
       aria-label={`Round ${round}, ${verdict}${score != null ? `, score ${Math.round(score * 100)}%` : ''}`}
       onClick={onActivate}
-      className={`shrink-0 inline-flex items-center gap-1 h-11 medium:h-8 px-3 rounded-full border text-xs transition-colors ${
-        active
-          ? 'border-blue-400 dark:border-blue-500 bg-blue-50 dark:bg-blue-900/30'
-          : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700'
-      }`}
+      className={cn('gap-1 rounded-full font-normal', active && 'border-primary bg-primary/10 hover:bg-primary/10')}
     >
       <span className="font-medium text-gray-700 dark:text-gray-200">Round {round}</span>
       <span aria-hidden="true" className="text-gray-500 dark:text-gray-400">·</span>
@@ -1217,7 +1211,7 @@ function RoundChip({ id, round, passed, score, active, onActivate }: {
           <span className="text-gray-600 dark:text-gray-300 tabular-nums">{Math.round(score * 100)}%</span>
         </>
       )}
-    </button>
+    </Button>
   )
 }
 
@@ -1319,13 +1313,9 @@ function Spoiler({ children }: { children: ReactNode }) {
   const [shown, setShown] = useState(false)
   if (shown) return children
   return (
-    <button
-      type="button"
-      onClick={() => setShown(true)}
-      className="min-h-[44px] rounded-lg border border-dashed border-gray-300 dark:border-gray-600 px-4 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
-    >
+    <Button variant="outline" onClick={() => setShown(true)} className="border-dashed font-normal">
       Show answers (spoiler)
-    </button>
+    </Button>
   )
 }
 
@@ -1363,10 +1353,8 @@ function DetailsSection({ curInfo, open, onOpenChange, nodeTask, primary, revisi
 }) {
   if (curInfo == null) return null
   return (
-    <details
-      onToggle={e => onOpenChange(e.currentTarget.open)}
-      className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg"
-    >
+    <Card asChild className="rounded-lg">
+    <details onToggle={e => onOpenChange(e.currentTarget.open)}>
       <summary className="cursor-pointer select-none px-3 py-2 text-sm font-semibold text-gray-700 dark:text-gray-200">
         Details
       </summary>
@@ -1385,6 +1373,7 @@ function DetailsSection({ curInfo, open, onOpenChange, nodeTask, primary, revisi
         </div>
       )}
     </details>
+    </Card>
   )
 }
 
@@ -1406,31 +1395,15 @@ function RevisionBar({ currentRev, count, revIdx, diffActive, diffDisabledReason
       <span aria-live="polite" className="text-gray-600 dark:text-gray-300 tabular-nums">
         Revision {currentRev ?? '–'} of {count}
       </span>
-      <button
-        onClick={onPrev}
-        aria-label="Previous revision"
-        disabled={revIdx == null || revIdx <= 0}
-        className="inline-flex h-11 medium:h-8 px-3 items-center rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 disabled:opacity-40 disabled:cursor-default"
-      >
+      <Button variant="outline" size="sm" onClick={onPrev} aria-label="Previous revision" disabled={revIdx == null || revIdx <= 0}>
         ← Prev
-      </button>
-      <button
-        onClick={onNext}
-        aria-label="Next revision"
-        disabled={revIdx == null || revIdx >= count - 1}
-        className="inline-flex h-11 medium:h-8 px-3 items-center rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 disabled:opacity-40 disabled:cursor-default"
-      >
+      </Button>
+      <Button variant="outline" size="sm" onClick={onNext} aria-label="Next revision" disabled={revIdx == null || revIdx >= count - 1}>
         Next →
-      </button>
-      <button
-        onClick={onToggleDiff}
-        aria-pressed={diffActive}
-        disabled={diffDisabledReason != null}
-        title={diffDisabledReason ?? undefined}
-        className="inline-flex h-11 medium:h-8 px-3 items-center rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 disabled:opacity-40 disabled:cursor-default"
-      >
+      </Button>
+      <Button variant="outline" size="sm" onClick={onToggleDiff} aria-pressed={diffActive} disabled={diffDisabledReason != null} title={diffDisabledReason ?? undefined}>
         Diff
-      </button>
+      </Button>
       {diffDisabledReason != null && (
         <span className="text-gray-500 dark:text-gray-400">{diffDisabledReason}</span>
       )}
@@ -1448,14 +1421,9 @@ function HeaderToggles({ rawView, onToggleRaw, diffActive, displayText }: {
 }) {
   return (
     <>
-      <button
-        onClick={onToggleRaw}
-        aria-pressed={rawView && !diffActive}
-        disabled={diffActive}
-        className="inline-flex h-11 px-3 items-center rounded-lg text-xs text-gray-500 hover:text-gray-600 hover:bg-gray-200/70 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-700/70 disabled:opacity-40 disabled:cursor-default transition-colors"
-      >
+      <Button variant="ghost" size="sm" onClick={onToggleRaw} aria-pressed={rawView && !diffActive} disabled={diffActive}>
         Raw
-      </button>
+      </Button>
       {displayText != null && <CopyButton text={displayText} label="Copy artifact text" />}
     </>
   )
@@ -1476,9 +1444,9 @@ function EmptyState({ nodeError, nodeAnswer }: { nodeError?: string; nodeAnswer?
     return (
       <div className="space-y-2">
         <p className="text-xs text-gray-500 dark:text-gray-400">This node wrote no artifact - its answer:</p>
-        <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg px-4 py-3">
+        <Card className="rounded-lg px-4 py-3">
           <AssistantText text={nodeAnswer} />
-        </div>
+        </Card>
       </div>
     )
   }
@@ -1528,13 +1496,9 @@ function LineageRows({ l, onTrigger }: { l: NonNullable<ArtifactRevisionInfo['li
       {l.trigger_annotation && (
         <MetaRow label="trigger">
           {onTrigger ? (
-            <button
-              type="button"
-              onClick={onTrigger}
-              className="text-blue-600 dark:text-blue-400 hover:underline break-words text-left"
-            >
+            <Button variant="link" size="inline" onClick={onTrigger} className="h-auto justify-start whitespace-normal break-words p-0 text-left text-[length:inherit] font-normal">
               {l.trigger_annotation}
-            </button>
+            </Button>
           ) : (
             l.trigger_annotation
           )}

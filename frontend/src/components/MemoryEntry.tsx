@@ -1,6 +1,10 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import type { Memory, VoteDirection } from '../api'
-import { paletteClasses, TONE, CHIP } from '../lib/colorHash'
+import { paletteTone } from '../lib/colorHash'
+import { Badge, type BadgeTone } from './ui/badge'
+import { Button } from './ui/button'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './ui/dropdown-menu'
+import { Tooltip } from './ui/tooltip'
 import { relativeTime } from '../lib/relativeTime'
 import { Icon } from './Icon'
 import { VoteControl } from './VoteControl'
@@ -40,41 +44,31 @@ export function memoryTierLabel(memory: Pick<Memory, 'status' | 'reinforcement_c
 }
 
 // Unverified and unrecognized tiers stay neutral: never a colour that claims an unverified tier.
-export function memoryTierBadgeClass(tier: MemoryTier): string {
-  return tier === 'reinforced' ? TONE.green : tier === 'invalidated' ? TONE.red : TONE.gray
+export function memoryTierTone(tier: MemoryTier): BadgeTone {
+  return tier === 'reinforced' ? 'green' : tier === 'invalidated' ? 'red' : 'gray'
 }
 
 // Title mirrors the label, or the invalidation reason when present, so hover reveals it without the extra line.
 function TierBadge({ memory }: { memory: Memory }) {
   const tier = memoryTier(memory)
   return (
-    <span
-      title={memory.invalidation_reason ?? memoryTierLabel(memory)}
-      className={`${CHIP} ${memoryTierBadgeClass(tier)}`}
-    >
+    <Badge tone={memoryTierTone(tier)} title={memory.invalidation_reason ?? memoryTierLabel(memory)}>
       {memoryTierLabel(memory)}
-    </span>
+    </Badge>
   )
 }
 
 // Vote-based tier, rendered only for 'verified': 'unverified' would duplicate TierBadge's default label.
 function VoteTierBadge({ tier }: { tier: 'unverified' | 'verified' }) {
   return (
-    <span className={`${CHIP} bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400`}>
-      {tier}
-    </span>
+    <Badge tone="blue">{tier}</Badge>
   )
 }
 
 // Colour is hashed from the label and never the only signal. `neutral` opts out because a provenance node id
 // can hash to red, which reads as an error.
 function Pill({ label, seed, neutral }: { label: string; seed: string; neutral?: boolean }) {
-  const cls = neutral ? TONE.gray : paletteClasses(seed)
-  return (
-    <span className={`${CHIP} ${cls}`}>
-      {label}
-    </span>
-  )
+  return <Badge tone={neutral ? 'gray' : paletteTone(seed)}>{label}</Badge>
 }
 
 // Rows carry no full-text action buttons. Forget has its own confirm step so a misclick in the menu
@@ -84,19 +78,15 @@ function KebabMenu({ memory, onForget }: { memory: Memory; onForget: (id: string
   const [confirming, setConfirming] = useState(false)
   const [forgetting, setForgetting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const ref = useRef<HTMLDivElement>(null)
+  const confirmRef = useRef<HTMLDivElement>(null)
+  const forgetRef = useRef<HTMLDivElement>(null)
+  const armed = useRef(false)
 
+  // The swapped-in item has no focus of its own: Confirm takes it on arming, Forget gets it back on cancel.
   useEffect(() => {
-    if (!open) return
-    const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) { setOpen(false); setConfirming(false) } }
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { setOpen(false); setConfirming(false) } }
-    document.addEventListener('mousedown', onDown)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onDown)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [open])
+    if (confirming) { armed.current = true; confirmRef.current?.focus() }
+    else if (armed.current) { armed.current = false; forgetRef.current?.focus() }
+  }, [confirming])
 
   async function handleConfirm() {
     setForgetting(true)
@@ -113,49 +103,34 @@ function KebabMenu({ memory, onForget }: { memory: Memory; onForget: (id: string
   }
 
   return (
-    <div ref={ref} className="relative">
-      <button
-        onClick={() => setOpen(o => !o)}
-        aria-label="Memory actions"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        title="More actions"
-        className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-      >
-        <Icon name="more_vert" className="w-4 h-4" />
-      </button>
-      {open && (
-        <div role="menu" className="absolute z-50 right-0 mt-1 w-40 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg py-1 text-xs">
-          {error && <p className="px-3 py-1 text-red-700 dark:text-red-400">{error}</p>}
-          {confirming ? (
-            <div className="flex items-center gap-2 px-2 py-1">
-              <button
-                onClick={() => { void handleConfirm() }}
-                disabled={forgetting}
-                className="text-xs px-2 py-1 rounded bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 transition-colors"
-              >
-                {forgetting ? 'Forgetting…' : 'Confirm'}
-              </button>
-              <button
-                onClick={() => setConfirming(false)}
-                disabled={forgetting}
-                className="text-xs px-2 py-1 rounded border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-              >
-                Cancel
-              </button>
-            </div>
-          ) : (
-            <button
-              role="menuitem"
-              onClick={() => setConfirming(true)}
-              className="w-full flex items-center gap-2 text-left px-3 py-2 min-h-[44px] medium:min-h-0 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700"
-            >
-              <Icon name="delete" className="w-3.5 h-3.5" /> Forget
-            </button>
-          )}
-        </div>
-      )}
-    </div>
+    <DropdownMenu open={open} onOpenChange={o => { setOpen(o); if (!o) setConfirming(false) }}>
+      <Tooltip content="More actions">
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon" aria-label="Memory actions">
+            <Icon name="more_vert" className="w-4 h-4" />
+          </Button>
+        </DropdownMenuTrigger>
+      </Tooltip>
+      <DropdownMenuContent className="w-40">
+        {error && <p className="px-3 py-1 text-red-700 dark:text-red-400">{error}</p>}
+        {confirming ? (
+          // Items, not bare buttons: Radix's roving focus is the only way keyboard users move inside a menu.
+          <>
+            <DropdownMenuItem ref={confirmRef} destructive disabled={forgetting} onSelect={e => { e.preventDefault(); void handleConfirm() }}>
+              {forgetting ? 'Forgetting…' : 'Confirm'}
+            </DropdownMenuItem>
+            <DropdownMenuItem disabled={forgetting} onSelect={e => { e.preventDefault(); setConfirming(false) }}>
+              Cancel
+            </DropdownMenuItem>
+          </>
+        ) : (
+          // Stays open: Forget arms an inline Confirm rather than acting.
+          <DropdownMenuItem ref={forgetRef} onSelect={e => { e.preventDefault(); setConfirming(true) }}>
+            <Icon name="delete" className="w-3.5 h-3.5" /> Forget
+          </DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
@@ -190,12 +165,9 @@ function MetaRow({ memory }: { memory: Memory }) {
         </span>
       )}
       {(memory.absorbed_ids?.length ?? 0) > 0 && (
-        <span
-          title={`Absorbed: ${memory.absorbed_ids!.join(', ')}`}
-          className={`${CHIP} ${TONE.purple}`}
-        >
+        <Badge tone="purple" title={`Absorbed: ${memory.absorbed_ids!.join(', ')}`}>
           merged ×{memory.absorbed_ids!.length}
-        </span>
+        </Badge>
       )}
     </div>
   )

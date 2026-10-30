@@ -1,11 +1,7 @@
 import type { RiskRow } from './A2uiSurface'
-import { CHIP, TONE } from '../lib/colorHash'
+import { Badge, type BadgeTone } from './ui/badge'
 
-const RISK_STYLE: Record<RiskRow['risk'], string> = {
-  low: 'bg-green-100 text-green-900 border-green-600 dark:bg-green-900/40 dark:text-green-200',
-  medium: 'bg-amber-100 text-amber-900 border-amber-600 dark:bg-amber-900/40 dark:text-amber-200',
-  high: 'bg-red-100 text-red-900 border-red-600 dark:bg-red-900/40 dark:text-red-200',
-}
+const RISK_TONE: Record<RiskRow['risk'], BadgeTone> = { low: 'green', medium: 'amber', high: 'red' }
 
 // One card per change rather than a table: five columns of prose do not fit a chat column.
 export function RiskTable({ rows, basis }: { rows: RiskRow[]; basis?: 'diff-only' | 'repo' }) {
@@ -17,8 +13,8 @@ export function RiskTable({ rows, basis }: { rows: RiskRow[]; basis?: 'diff-only
           <li key={i} className="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
             <div className="flex flex-wrap items-center gap-2">
               <span className="min-w-0 break-all font-mono text-xs text-gray-900 dark:text-gray-100">{r.change}</span>
-              <span className={`${CHIP} ${TONE.gray}`}>{r.type}</span>
-              <span className={`${CHIP} border ${RISK_STYLE[r.risk]}`}>{r.risk} risk</span>
+              <Badge>{r.type}</Badge>
+              <Badge tone={RISK_TONE[r.risk]}>{r.risk} risk</Badge>
             </div>
             <p className="mt-2 text-sm text-gray-800 dark:text-gray-200">{r.reason}</p>
             <dl className="mt-2 space-y-0.5 text-xs text-gray-600 dark:text-gray-300">

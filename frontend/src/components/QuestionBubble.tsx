@@ -1,6 +1,9 @@
 import { useState } from 'react'
 import { agentLabel } from './messageParts'
 import { Icon } from './Icon'
+import { Button } from './ui/button'
+import { Card } from './ui/card'
+import { Textarea } from './ui/input'
 
 // Serves both get_user_choice clarifications and a paused node's HITL question. The answer goes out as
 // the next chat message, which the backend resumes as the tool response or the node's input.
@@ -32,7 +35,7 @@ export function QuestionBubble({
   // Resolved: the user has answered. Show the question + chosen answer, no inputs.
   if (answered != null) {
     return (
-      <div className="mt-3 rounded-xl border border-gray-200 dark:border-gray-700 border-l-4 bg-gray-50 dark:bg-gray-800/40 px-4 py-3">
+      <Card className="mt-3 border-l-4 px-4 py-3">
         <div className="flex items-center gap-2 text-xs font-medium text-green-700 dark:text-green-400">
           <Icon name="check" className="w-3.5 h-3.5" />
           Answered · {agentLabel(agent)}
@@ -41,13 +44,13 @@ export function QuestionBubble({
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{question}</p>
         )}
         <p className="mt-0.5 text-sm text-gray-800 dark:text-gray-100">{answered}</p>
-      </div>
+      </Card>
     )
   }
 
   return (
-    <div
-      className="mt-3 rounded-xl border border-blue-300 dark:border-blue-700 border-l-4 bg-blue-50/60 dark:bg-blue-950/30 px-4 py-3"
+    <Card
+      className="mt-3 border-l-4 border-primary px-4 py-3"
       role="group"
       aria-label={`${agentLabel(agent)} needs your input`}
     >
@@ -64,20 +67,20 @@ export function QuestionBubble({
       {options.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-2">
           {options.map((opt, i) => (
-            <button
+            <Button
               key={i}
-              type="button"
+              variant="outline"
               disabled={disabled}
               onClick={() => onSelect(opt)}
-              className="max-w-full px-3 py-2 rounded-xl border border-blue-300 dark:border-blue-700 bg-white dark:bg-gray-800 text-sm text-left text-blue-700 dark:text-blue-300 whitespace-normal break-words hover:bg-blue-100 dark:hover:bg-blue-950/60 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="h-auto min-h-11 max-w-full justify-start whitespace-normal break-words py-2 text-left"
             >
               {opt}
-            </button>
+            </Button>
           ))}
         </div>
       )}
       <form onSubmit={submitFreeform} className="mt-3 flex gap-2 items-end">
-        <textarea
+        <Textarea
           value={freeform}
           rows={2}
           disabled={disabled}
@@ -85,16 +88,10 @@ export function QuestionBubble({
           onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) submitFreeform(e) }}
           placeholder="Type your answer… (Enter to send, Shift+Enter for newline)"
           aria-label="Type your answer"
-          className="flex-1 rounded-xl border border-blue-300 dark:border-blue-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 dark:text-gray-100 dark:placeholder-gray-400"
+          className="flex-1 resize-none"
         />
-        <button
-          type="submit"
-          disabled={disabled || !freeform.trim()}
-          className="px-3 py-2 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-        >
-          Send
-        </button>
+        <Button type="submit" disabled={disabled || !freeform.trim()}>Send</Button>
       </form>
-    </div>
+    </Card>
   )
 }

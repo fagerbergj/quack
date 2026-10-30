@@ -3,7 +3,12 @@ import { api, type Plugin, type PluginUpdate, type PluginReloadReport } from '..
 import { NavToggle } from '../components/NavToggle'
 import { Icon } from '../components/Icon'
 import { relativeTime } from '../lib/relativeTime'
-import { CHIP, TONE } from '../lib/colorHash'
+import { Badge } from '../components/ui/badge'
+import { Button } from '../components/ui/button'
+import { Card } from '../components/ui/card'
+import { Input } from '../components/ui/input'
+import { Separator } from '../components/ui/separator'
+import { Tooltip } from '../components/ui/tooltip'
 
 export interface PluginsProps {
   navOpen: boolean
@@ -118,27 +123,23 @@ export default function Plugins({ navOpen, onToggleNav, initialPlugins, initialU
   const anyBehind = [...updates.values()].some(u => u.behind)
 
   return (
-    <div className="flex flex-col h-full bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white">
-      <div className="flex items-center gap-3 px-4 py-3 sm:px-6 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+    <div className="flex flex-col h-full bg-background text-foreground">
+      <div className="flex items-center gap-3 px-4 py-3 sm:px-6 border-b border-border bg-card">
         <NavToggle open={navOpen} onToggle={onToggleNav} />
-        <h1 className="text-base font-semibold text-gray-900 dark:text-white flex-1">Plugins</h1>
-        <button
+        <h1 className="text-base font-semibold flex-1">Plugins</h1>
+        <Button
+          variant="secondary"
           onClick={handleReload}
           disabled={busy.has('reload')}
           title="Rebuild agents, workflows and MCP servers from the registered plugins"
-          className="flex items-center justify-center gap-2 rounded-md px-3 py-2 min-h-[44px] text-sm font-medium text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
           <Icon name="restart_alt" className="w-4 h-4" />
           Reload
-        </button>
-        <button
-          onClick={handleUpdateAll}
-          disabled={!anyBehind || busy.has('*')}
-          className="flex items-center justify-center gap-2 rounded-md px-3 py-2 min-h-[44px] text-sm font-medium text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-        >
+        </Button>
+        <Button variant="secondary" onClick={handleUpdateAll} disabled={!anyBehind || busy.has('*')}>
           <Icon name="refresh" className="w-4 h-4" />
           Update all
-        </button>
+        </Button>
       </div>
 
       <AddPluginForm onSettled={settle} />
@@ -196,23 +197,17 @@ function AddPluginForm({ onSettled }: { onSettled: (x: unknown, ok: boolean) => 
   }
 
   return (
-    <form onSubmit={e => void handleAdd(e)} className="flex flex-col gap-2 px-4 py-3 sm:px-6 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+    <form onSubmit={e => void handleAdd(e)} className="flex flex-col gap-2 px-4 py-3 sm:px-6 border-b border-border bg-card">
       <div className="flex items-center gap-2">
-        <input
+        <Input
           type="text"
           value={entry}
           onChange={e => setEntry(e.target.value)}
           placeholder="github:owner/repo[@ref][#path]"
           aria-label="Plugin entry"
-          className="flex-1 min-w-0 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-3 py-2 text-sm placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="flex-1"
         />
-        <button
-          type="submit"
-          disabled={adding || !entry.trim()}
-          className="flex items-center justify-center rounded-md px-3 py-2 min-h-[44px] medium:min-h-0 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-        >
-          Add
-        </button>
+        <Button type="submit" disabled={adding || !entry.trim()}>Add</Button>
       </div>
       {addError && <ErrorBanner message={addError} />}
     </form>
@@ -236,50 +231,46 @@ function ReloadReportPanel({ result: { reload: r, aborted }, onDismiss }: { resu
     ['MCP servers reused', r.mcp_servers.reused],
     ['MCP servers stopped', r.mcp_servers.stopped],
   ] as const).filter(([, names]) => names.length > 0)
-  const tone = aborted
-    ? 'bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800'
-    : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700'
+  const tone = aborted ? 'bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800' : ''
 
   return (
-    <section aria-label="Reload report" className={`m-3 rounded-md border px-4 py-2 text-sm ${tone}`}>
-      <div className="flex items-center gap-2">
-        <h2 className="flex-1 font-medium">
-          {aborted ? `Reload aborted - still serving generation ${r.generation}` : `Reloaded - generation ${r.generation}`}
-        </h2>
-        <button
-          onClick={onDismiss}
-          aria-label="Dismiss reload report"
-          className="flex items-center justify-center w-11 h-11 -mr-3 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-        >
-          <Icon name="close" className="w-4 h-4" />
-        </button>
-      </div>
-      {groups.length === 0 && r.failures.length === 0 && (
-        <p className="pb-1 text-xs text-gray-500 dark:text-gray-400">No changes</p>
-      )}
-      {groups.length > 0 && (
-        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 pb-1 text-xs">
-          {groups.map(([label, names]) => (
-            <Fragment key={label}>
-              <dt className="text-gray-500 dark:text-gray-400">{label}</dt>
-              <dd className="min-w-0 break-words">{names.join(', ')}</dd>
-            </Fragment>
-          ))}
-        </dl>
-      )}
-      {r.failures.length > 0 && (
-        <ul className="flex flex-col gap-1 pb-1 text-xs text-amber-700 dark:text-amber-400">
-          {r.failures.map((f, i) => (
-            <li key={i} className="flex items-start gap-2">
-              <Icon name="warning" className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-              <span className="min-w-0 break-words whitespace-pre-line">
-                <span className="font-medium">{failureSource(f)}</span> ({f.stage}): <span className="font-mono">{f.error}</span>
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
+    <Card asChild className={`m-3 rounded-lg px-4 py-2 text-sm ${tone}`}>
+      <section aria-label="Reload report">
+        <div className="flex items-center gap-2">
+          <h2 className="flex-1 font-medium">
+            {aborted ? `Reload aborted - still serving generation ${r.generation}` : `Reloaded - generation ${r.generation}`}
+          </h2>
+          <Button variant="ghost" size="icon" onClick={onDismiss} aria-label="Dismiss reload report" className="size-11 medium:size-11 -mr-3">
+            <Icon name="close" className="w-4 h-4" />
+          </Button>
+        </div>
+        {groups.length === 0 && r.failures.length === 0 && (
+          <p className="pb-1 text-xs text-gray-500 dark:text-gray-400">No changes</p>
+        )}
+        {groups.length > 0 && (
+          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 pb-1 text-xs">
+            {groups.map(([label, names]) => (
+              <Fragment key={label}>
+                <dt className="text-gray-500 dark:text-gray-400">{label}</dt>
+                <dd className="min-w-0 break-words">{names.join(', ')}</dd>
+              </Fragment>
+            ))}
+          </dl>
+        )}
+        {r.failures.length > 0 && (
+          <ul className="flex flex-col gap-1 pb-1 text-xs text-amber-700 dark:text-amber-400">
+            {r.failures.map((f, i) => (
+              <li key={i} className="flex items-start gap-2">
+                <Icon name="warning" className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                <span className="min-w-0 break-words whitespace-pre-line">
+                  <span className="font-medium">{failureSource(f)}</span> ({f.stage}): <span className="font-mono">{f.error}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </Card>
   )
 }
 
@@ -302,16 +293,18 @@ function PluginsBody({ loading, loadError, plugins, updates, busy, onUpdate, onR
     return <div className="text-center text-gray-500 dark:text-gray-400 text-sm py-10">No plugins registered</div>
   }
   return (
-    <ul className="divide-y divide-gray-200 dark:divide-gray-700">
-      {plugins.map(p => (
-        <PluginRow
-          key={p.name}
-          plugin={p}
-          update={updates.get(p.name)}
-          busy={busy.has(p.name)}
-          onUpdate={() => onUpdate(p.name)}
-          onRemove={() => onRemove(p.name)}
-        />
+    <ul>
+      {plugins.map((p, i) => (
+        <Fragment key={p.name}>
+          {i > 0 && <li role="presentation"><Separator /></li>}
+          <PluginRow
+            plugin={p}
+            update={updates.get(p.name)}
+            busy={busy.has(p.name)}
+            onUpdate={() => onUpdate(p.name)}
+            onRemove={() => onRemove(p.name)}
+          />
+        </Fragment>
       ))}
     </ul>
   )
@@ -335,11 +328,9 @@ function PluginRow({ plugin: p, update, busy, onUpdate, onRemove }: {
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="font-medium text-sm truncate">{p.name}</span>
-          <span className={`${CHIP} ${TONE.gray}`}>{p.source}</span>
+          <Badge>{p.source}</Badge>
           {behind && (
-            <span className={`${CHIP} bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300`}>
-              update available
-            </span>
+            <Badge tone="amber">update available</Badge>
           )}
         </div>
         <div className="mt-0.5 text-xs text-gray-500 dark:text-gray-400 flex items-center gap-2 flex-wrap">
@@ -376,26 +367,18 @@ function PluginRow({ plugin: p, update, busy, onUpdate, onRemove }: {
       </div>
       <div className="flex items-center gap-1 shrink-0">
         {p.source === 'github' && (
-          <button
-            onClick={onUpdate}
-            disabled={busy}
-            title="Update"
-            aria-label={`Update ${p.name}`}
-            className="flex items-center justify-center w-11 h-11 rounded-lg text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40 transition-colors"
-          >
-            <Icon name="refresh" className="w-4 h-4" />
-          </button>
+          <Tooltip content="Update">
+            <Button variant="ghost" size="icon" onClick={onUpdate} disabled={busy} aria-label={`Update ${p.name}`} className="size-11 medium:size-11">
+              <Icon name="refresh" className="w-4 h-4" />
+            </Button>
+          </Tooltip>
         )}
         {removable && (
-          <button
-            onClick={onRemove}
-            disabled={busy}
-            title="Remove"
-            aria-label={`Remove ${p.name}`}
-            className="flex items-center justify-center w-11 h-11 rounded-lg text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40 transition-colors"
-          >
-            <Icon name="delete" className="w-4 h-4" />
-          </button>
+          <Tooltip content="Remove">
+            <Button variant="ghost" size="icon" onClick={onRemove} disabled={busy} aria-label={`Remove ${p.name}`} className="size-11 medium:size-11 hover:text-destructive">
+              <Icon name="delete" className="w-4 h-4" />
+            </Button>
+          </Tooltip>
         )}
       </div>
     </li>

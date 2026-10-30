@@ -25,8 +25,7 @@ describe('Composer compact pill', () => {
     mockMatchMedia(true)
     render(<Composer disabled={false} streaming={false} onSubmit={() => {}} onStop={() => {}} />)
     const send = screen.getByRole('button', { name: 'Send' })
-    expect(send.className).toContain('h-11')
-    expect(send.className).toContain('w-11')
+    expect(send.className).toContain('size-11')
     expect(send.getAttribute('aria-label')).toBe('Send')
     // No letters in the visible content, so the accessible name can only come from aria-label.
     expect(send.textContent ?? '').not.toMatch(/\p{L}/u)
@@ -46,13 +45,11 @@ describe('Composer compact pill', () => {
     mockMatchMedia(true)
     render(<Composer disabled={false} streaming={true} onSubmit={() => {}} onStop={() => {}} />)
     const stop = screen.getByRole('button', { name: 'Stop' })
-    expect(stop.className).toContain('h-11')
-    expect(stop.className).toContain('w-11')
+    expect(stop.className).toContain('size-11')
     expect(stop.className).toContain('rounded-full')
     // Follow-up queueing must stay reachable on mobile.
     const queue = screen.getByRole('button', { name: 'Queue' })
-    expect(queue.className).toContain('h-11')
-    expect(queue.className).toContain('w-11')
+    expect(queue.className).toContain('size-11')
   })
 
   it('the compact row uses no physical left/right utilities under dir=rtl', () => {

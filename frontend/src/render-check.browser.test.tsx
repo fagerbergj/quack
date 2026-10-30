@@ -133,10 +133,11 @@ describe.each(Object.entries(storyModules))('%s', (path, mod) => {
             await waitForRenderSettled(container)
           }
 
-          const strayComment = findStrayCommentText(container)
+          // document.body, not the container: Radix dialogs and menus portal out of it.
+          const strayComment = findStrayCommentText(document.body)
           expect(strayComment, `stray comment-like text node: ${strayComment}`).toBeUndefined()
 
-          const coveredDialog = findCoveredDialog(container)
+          const coveredDialog = findCoveredDialog(document.body)
           expect(coveredDialog, coveredDialog).toBeUndefined()
 
           const frame = container.firstElementChild as HTMLElement

@@ -24,7 +24,11 @@ import type { ChatStatus, Turn } from '../generated'
 import { useTurnArtifacts } from '../hooks/useTurnArtifacts'
 import type { SurfaceRef } from '../lib/a2ui'
 import { TurnSurfaces } from '../components/A2uiArtifact'
-import { TONE, CHIP } from '../lib/colorHash'
+import { Badge } from '../components/ui/badge'
+import { Button } from '../components/ui/button'
+import { Card } from '../components/ui/card'
+import { Input } from '../components/ui/input'
+import { Tooltip } from '../components/ui/tooltip'
 
 // Never shortens the list: the poll must not truncate a sidebar paged past the page cap. Safe because `page` is
 // exactly the current top N by updated_at, so nothing left in `existing` can outrank it.
@@ -96,7 +100,7 @@ export function EditableChatTitle({ title, editable, onRename }: EditableChatTit
 
   if (editing) {
     return (
-      <input
+      <Input
         ref={inputRef}
         autoFocus
         value={draft}
@@ -107,7 +111,7 @@ export function EditableChatTitle({ title, editable, onRename }: EditableChatTit
           if (e.key === 'Escape') setEditing(false)
         }}
         aria-label="Chat title"
-        className="text-base font-semibold text-gray-900 dark:text-white bg-transparent border-b border-blue-500 focus:outline-none min-w-0 flex-1"
+        className="h-9 flex-1 font-semibold medium:text-base"
       />
     )
   }
@@ -206,7 +210,7 @@ function LiveDagBubble({ dag, liveDone, chatId, orchActivity, onCancelNode, onPa
   onDismissNodeError: (nodeId: string) => void
 }) {
   return (
-    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
+    <Card className="rounded-2xl rounded-tl-sm px-5 py-4">
       <DagBubbleHeader dag={dag} />
       {liveDone ? (
         <StepsRow>
@@ -231,7 +235,7 @@ function LiveDagBubble({ dag, liveDone, chatId, orchActivity, onCancelNode, onPa
           />
         </div>
       )}
-    </div>
+    </Card>
   )
 }
 
@@ -246,7 +250,7 @@ function LiveAnswerBubble({ showSpinner, liveDag, liveText, liveTopText, liveAct
   chatId: string | null
 }) {
   return (
-    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4">
+    <Card className="rounded-2xl rounded-tl-sm px-5 py-4">
       {showSpinner ? (
         <Dots className="h-5" size="w-2 h-2" />
       ) : liveDag ? (
@@ -268,7 +272,7 @@ function LiveAnswerBubble({ showSpinner, liveDag, liveText, liveTopText, liveAct
           {liveTopText && <AssistantText text={liveTopText} streaming={liveActive} />}
         </div>
       )}
-    </div>
+    </Card>
   )
 }
 
@@ -378,18 +382,12 @@ function LiveTurnView({ live, surfaces, liveActive, isArchived, activeChatId, li
           )}
           {d.liveText && (!liveActive) && (
             <div className="flex items-center gap-3 mt-2 px-1">
-              <button
-                onClick={() => onCopy(copyKey, d.liveText)}
-                className="min-h-[44px] -my-2 inline-flex items-center text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-              >
+              <Button variant="ghost" size="inline" onClick={() => onCopy(copyKey, d.liveText)} className="-my-2 hover:bg-transparent">
                 {copied === copyKey ? 'Copied!' : 'Copy'}
-              </button>
-              <button
-                onClick={() => onDownload(d.liveText, turnsCount)}
-                className="min-h-[44px] -my-2 inline-flex items-center text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-              >
+              </Button>
+              <Button variant="ghost" size="inline" onClick={() => onDownload(d.liveText, turnsCount)} className="-my-2 hover:bg-transparent">
                 Download
-              </button>
+              </Button>
             </div>
           )}
         </div>
@@ -421,17 +419,14 @@ function ChatHeader({ title, editable, status, startedAt, activeChatId, isArchiv
   onToggleChatList: () => void
 } & ReturnType<typeof chatHeaderProps>) {
   return (
-    <div className="flex items-center justify-between gap-3 px-4 py-3 sm:px-6 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+    <div className="flex items-center justify-between gap-3 px-4 py-3 sm:px-6 border-b border-border bg-card">
       <div className="flex items-center gap-2 min-w-0 flex-1">
         {/* A chat glyph, not a hamburger: two abstract menu icons beside the nav toggle were indistinguishable. */}
-        <button
-          onClick={onToggleChatList}
-          className="medium:hidden flex-shrink-0 w-11 h-11 flex items-center justify-center rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-          aria-label="Toggle chat list"
-          title="Chats"
-        >
-          <Icon name="chat" className="w-5 h-5" />
-        </button>
+        <Tooltip content="Chats">
+          <Button variant="ghost" size="icon" onClick={onToggleChatList} className="medium:hidden" aria-label="Toggle chat list">
+            <Icon name="chat" className="w-5 h-5" />
+          </Button>
+        </Tooltip>
         {/* Visible at all widths, unlike the medium:hidden chat-list button. */}
         <NavToggle open={navOpen} onToggle={onToggleNav} />
         {/* min-w-0 lets the title shrink to its flex-1 share instead of overflowing the row, so `truncate`
@@ -443,12 +438,9 @@ function ChatHeader({ title, editable, status, startedAt, activeChatId, isArchiv
             onRename={onRename}
           />
           {isArchived && (
-            <span
-              title="This chat is archived and read-only. Restore it from the Archived section to continue."
-              className={`${CHIP} ${TONE.gray}`}
-            >
+            <Badge title="This chat is archived and read-only. Restore it from the Archived section to continue.">
               Archived
-            </span>
+            </Badge>
           )}
           {githubLink && <GitHubLink url={githubLink.url} repo={githubLink.repo} className="flex-shrink-0" />}
           {liveActive && (
@@ -499,13 +491,7 @@ function EmptyChatNote({ notFound, empty, loading, onNewChat }: { notFound: bool
   return (
     <div role="status" className="text-center text-sm text-gray-500 dark:text-gray-400 mt-20 space-y-3">
       <p>This chat doesn't exist or was deleted.</p>
-      <button
-        type="button"
-        onClick={onNewChat}
-        className="min-h-[44px] px-4 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 transition-colors"
-      >
-        Start a new chat
-      </button>
+      <Button onClick={onNewChat}>Start a new chat</Button>
     </div>
   )
 }
@@ -742,8 +728,7 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
     navigate('/chat')
   }
 
-  async function handleDeleteChat(id: string, e: React.MouseEvent) {
-    e.stopPropagation()
+  async function handleDeleteChat(id: string) {
     store.stop(id)
     await api.deleteChat(id)
     store.clear(id)
@@ -910,14 +895,14 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
 
   return (
     // The app owns all scrolling; without overflow-hidden an over-tall child scrolls the page past the composer.
-    <div className="flex h-full overflow-hidden bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white">
+    <div className="flex h-full overflow-hidden bg-background text-foreground">
       <ChatList
         chats={chats}
         activeChatId={activeChatId}
         open={chatListOpen}
         onSelect={selectChat}
         onNewChat={handleNewChat}
-        onDelete={(id, e) => { void handleDeleteChat(id, e) }}
+        onDelete={id => { void handleDeleteChat(id) }}
         onCloseMobile={() => setChatListOpen(false)}
         hasMoreChats={activePager.hasMore}
         onLoadMoreChats={() => { void activePager.loadMore() }}
@@ -954,12 +939,9 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
           <EmptyChatNote notFound={notFound} empty={showEmptyPrompt(activeChatId, state, live)} loading={chatPending(activeChatId, loadedChatId, state)} onNewChat={handleNewChat} />
 
           {hiddenTurnCount > 0 && (
-            <button
-              onClick={() => setVisibleTurnCount(c => c + RENDERED_TURN_TAIL)}
-              className="w-full min-h-[44px] text-xs text-center text-blue-600 dark:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
-            >
+            <Button variant="ghost" size="sm" onClick={() => setVisibleTurnCount(c => c + RENDERED_TURN_TAIL)} className="w-full text-primary">
               Show {Math.min(hiddenTurnCount, RENDERED_TURN_TAIL)} older messages
-            </button>
+            </Button>
           )}
 
           {mountedTurnViews.map(({ turn, idx, choiceAnswer, isChoiceAnswer, priorContents, imageAttachments, surfaces }) => (
@@ -1016,9 +998,9 @@ export default function Chat({ navOpen, onToggleNav }: ChatProps) {
               <TriggerMessage content={state.pendingUserText!} />
               <div className="flex justify-start">
                 <div className="w-auto">
-                  <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tl-sm px-5 py-4" role="status" aria-label="Thinking">
+                  <Card className="rounded-2xl rounded-tl-sm px-5 py-4" role="status" aria-label="Thinking">
                     <Dots className="h-5" size="w-2 h-2" />
-                  </div>
+                  </Card>
                 </div>
               </div>
             </div>

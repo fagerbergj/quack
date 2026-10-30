@@ -8,8 +8,6 @@ afterEach(cleanup)
 
 // Download Logs lives in the overflow menu as a plain link to the recording endpoint.
 describe('ChatMenu', () => {
-  let host: HTMLElement | undefined
-
   beforeEach(() => {
     // jsdom has no matchMedia; ChatMenu's theme picker (useTheme) calls it on mount.
     vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
@@ -25,22 +23,22 @@ describe('ChatMenu', () => {
   })
 
   function mount() {
-    host = render(createElement(ChatMenu, { chatId: 'chat-1' })).container
+    render(createElement(ChatMenu, { chatId: 'chat-1' }))
   }
 
-  it('hides the menu until the ⋯ trigger is clicked', () => {
+  it('hides the menu until the ⋯ trigger is pressed', () => {
     mount()
-    expect(host!.textContent).not.toContain('Download Logs')
-    const trigger = host!.querySelector('button[aria-label="Chat actions"]')!
-    act(() => trigger.dispatchEvent(new MouseEvent('click', { bubbles: true })))
-    expect(host!.textContent).toContain('Download Logs')
+    expect(document.body.textContent).not.toContain('Download Logs')
+    const trigger = document.body.querySelector('button[aria-label="Chat actions"]')!
+    act(() => { trigger.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 })) })
+    expect(document.body.textContent).toContain('Download Logs')
   })
 
   it('the Download Logs entry is a plain link to the recording endpoint, unchanged except label/placement', () => {
     mount()
-    const trigger = host!.querySelector('button[aria-label="Chat actions"]')!
-    act(() => trigger.dispatchEvent(new MouseEvent('click', { bubbles: true })))
-    const link = host!.querySelector('a[role="menuitem"]') as HTMLAnchorElement
+    const trigger = document.body.querySelector('button[aria-label="Chat actions"]')!
+    act(() => { trigger.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 })) })
+    const link = document.body.querySelector('a[role="menuitem"]') as HTMLAnchorElement
     expect(link.getAttribute('href')).toBe('/api/v1/chats/chat-1/recording')
   })
 })

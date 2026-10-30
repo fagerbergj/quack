@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react'
 import { DagNode } from './DagNode'
 import { sinkNodeIds, dagTotalTokens, dagTotalCost, type DagTurnState, type NodeState } from '../state/chatStore'
 import { fmtCost } from './UsageSummary'
+import { Button } from './ui/button'
 import type { AgentRun } from './messageParts'
 import { LiveTimer } from '../utils/timer'
 
@@ -141,13 +142,9 @@ export function DagView({
         </div>
       ))}
       <div className="flex justify-end items-center gap-3">
-        <button
-          onClick={copyDag}
-          className="min-h-[44px] -my-2 inline-flex items-center text-2xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-          title="Copy DAG as JSON"
-        >
+        <Button variant="ghost" size="inline" onClick={copyDag} className="-my-2 px-1 text-2xs" title="Copy DAG as JSON">
           {copied ? 'copied!' : 'copy json'}
-        </button>
+        </Button>
         {totalTokens > 0 && (
           <span className="text-2xs text-gray-500 dark:text-gray-400 tabular-nums">
             {totalTokens.toLocaleString()} tokens{totalCost != null && ` · ${fmtCost(totalCost)}`}

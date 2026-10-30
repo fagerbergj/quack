@@ -12,18 +12,47 @@ const memory: Memory = {
   vote_score: 3, upvotes: 3, downvotes: 0, tier: 'verified',
 }
 
-// The w-7 h-7 glyph is under the 44px touch target; min-w/min-h grows the hit area, not the glyph.
+// The glyph is under the 44px touch target; the icon Button size grows the hit area, not the glyph.
 describe('MemoryEntry kebab menu touch target (#1137)', () => {
   it('kebab trigger is a 44x44 tap area', () => {
     render(<MemoryEntry memory={memory} onForget={async () => {}} onVote={async () => {}} />)
     const btn = screen.getByRole('button', { name: 'Memory actions' })
-    expect(btn.className).toContain('min-w-[44px]')
-    expect(btn.className).toContain('min-h-[44px]')
+    expect(btn.className).toContain('size-11')
   })
 
   it('Forget lives in the kebab menu, not a top-level action button', () => {
     render(<MemoryEntry memory={memory} onForget={async () => {}} onVote={async () => {}} />)
     expect(screen.queryByRole('button', { name: /Forget/ })).toBeNull()
+  })
+})
+
+// Radix menus move focus by roving tabindex only, so Confirm and Cancel must be items, not buttons.
+describe('MemoryEntry Forget confirmation by keyboard', () => {
+  async function armForget(onForget: () => Promise<void>) {
+    const user = userEvent.setup()
+    render(<MemoryEntry memory={memory} onForget={onForget} onVote={async () => {}} />)
+    screen.getByRole('button', { name: 'Memory actions' }).focus()
+    await user.keyboard('{Enter}')
+    await user.keyboard('{Enter}') // Forget
+    return user
+  }
+
+  it('arming Forget focuses Confirm, and Enter forgets', async () => {
+    const onForget = vi.fn(async () => {})
+    const user = await armForget(onForget)
+    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Confirm' }))
+    await user.keyboard('{Enter}')
+    expect(onForget).toHaveBeenCalledWith('m1')
+  })
+
+  it('ArrowDown reaches Cancel, which forgets nothing and returns focus to Forget', async () => {
+    const onForget = vi.fn(async () => {})
+    const user = await armForget(onForget)
+    await user.keyboard('{ArrowDown}')
+    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Cancel' }))
+    await user.keyboard('{Enter}')
+    expect(onForget).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: /Forget/ }))
   })
 })
 

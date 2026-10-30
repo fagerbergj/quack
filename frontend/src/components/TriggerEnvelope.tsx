@@ -7,7 +7,9 @@ import { fieldLabel } from '../lib/json'
 import { api } from '../api'
 import { Icon } from './Icon'
 import { parseA2uiActionText } from '../lib/a2ui'
-import { CHIP } from '../lib/colorHash'
+import { Badge } from './ui/badge'
+import { Button } from './ui/button'
+import { Card } from './ui/card'
 import {
   parseEnvelope,
   commentsSummaryLabel,
@@ -25,12 +27,14 @@ function A2uiActionPill({ name, surfaceId, context }: { name: string; surfaceId:
   return (
     <div className="flex justify-end mb-3">
       <details className="max-w-full min-w-0 text-xs text-gray-600 dark:text-gray-300">
-        <summary className="ml-auto flex w-fit max-w-full cursor-pointer list-none items-center gap-2 rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-1 break-all">
+        <Card asChild className="rounded-full">
+        <summary className="ml-auto flex w-fit max-w-full cursor-pointer list-none items-center gap-2 px-3 py-1 break-all">
           <Icon name="check_circle" className="w-3.5 h-3.5 shrink-0 text-blue-600 dark:text-blue-400" />
           <span>Submitted: <span className="font-medium text-gray-900 dark:text-gray-100">{name}</span> on {surfaceId}</span>
           <Icon name="expand_more" className="w-3.5 h-3.5 shrink-0" />
         </summary>
-        <pre className="mt-1 overflow-x-auto rounded-lg bg-gray-100 dark:bg-gray-800 p-2 font-mono text-2xs">{JSON.stringify(context ?? {}, null, 2)}</pre>
+        </Card>
+        <Card asChild variant="flat"><pre className="mt-1 overflow-x-auto p-2 font-mono text-2xs">{JSON.stringify(context ?? {}, null, 2)}</pre></Card>
       </details>
     </div>
   )
@@ -59,7 +63,7 @@ export const TriggerMessage = memo(function TriggerMessage({
   if (blocks) {
     return (
       <div className="flex justify-end mb-3">
-        <div className="max-w-3xl w-full ml-auto bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl rounded-tr-sm px-5 py-4 space-y-3">
+        <Card className="max-w-3xl w-full ml-auto rounded-2xl rounded-tr-sm px-5 py-4 space-y-3">
           {blocks.map((b, i) => (
             <EnvelopeBlockView
               key={i}
@@ -69,7 +73,7 @@ export const TriggerMessage = memo(function TriggerMessage({
               onOpenArtifact={(nodeId, artifactId) => setOpenArtifact({ nodeId, artifactId })}
             />
           ))}
-        </div>
+        </Card>
         {chatId && openArtifact && (
           <ArtifactPanel
             chatId={chatId}
@@ -147,8 +151,8 @@ function CollapsibleSection({ summary, children }: { summary: ReactNode; childre
 function RawFallback({ text }: { text: string }) {
   if (!text) return <span className="text-2xs text-gray-500 dark:text-gray-400 italic">(empty)</span>
   return (
-    <Expandable maxHeight={240} fade="from-gray-50 dark:from-gray-900">
-      <pre className="bg-gray-50 dark:bg-gray-900 rounded p-2 overflow-x-auto whitespace-pre-wrap font-mono text-2xs text-gray-700 dark:text-gray-200">{text}</pre>
+    <Expandable maxHeight={240} fade="from-muted">
+      <Card asChild variant="flat"><pre className="p-2 overflow-x-auto whitespace-pre-wrap font-mono text-2xs">{text}</pre></Card>
     </Expandable>
   )
 }
@@ -168,7 +172,7 @@ function AskSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'ask' }> 
         {block.title || '(untitled)'}
       </h2>
       {block.description && (
-        <Expandable maxHeight={140} fade="from-white dark:from-gray-800">
+        <Expandable maxHeight={140} fade="from-card">
           {/* A description's own headings sit under the card's title, so they render title-small, not prose's 20-24px. */}
           <div className="[&_:is(h1,h2,h3,h4)]:text-sm [&_:is(h1,h2,h3,h4)]:font-semibold [&_:is(h1,h2,h3,h4)]:mt-3 [&_:is(h1,h2,h3,h4)]:mb-1">
             <AssistantText text={block.description} />
@@ -183,15 +187,7 @@ function AskSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'ask' }> 
 function StatusBadge({ status }: { status: string }) {
   const deleted = status === 'deleted'
   return (
-    <span
-      className={`${CHIP} ${
-        deleted
-          ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
-          : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
-      }`}
-    >
-      {status}
-    </span>
+    <Badge tone={deleted ? 'red' : 'amber'}>{status}</Badge>
   )
 }
 
@@ -213,7 +209,7 @@ function CommentsSection({ block, priorContents }: { block: Extract<EnvelopeBloc
         <>
           {!acc.complete && <IncompleteHistoryNotice />}
           {acc.comments.length > 0 ? (
-            <Expandable maxHeight={360} fade="from-white dark:from-gray-800">
+            <Expandable maxHeight={360} fade="from-card">
               <ul className="space-y-3">
                 {acc.comments.map((c, i) => (
                   <li
@@ -243,7 +239,7 @@ function ChangedFilesSection({ block }: { block: Extract<EnvelopeBlock, { kind: 
   return (
     <CollapsibleSection summary={changedFilesSummaryLabel(block)}>
       {block.files ? (
-        <Expandable maxHeight={320} fade="from-white dark:from-gray-800">
+        <Expandable maxHeight={320} fade="from-card">
           <ul className="space-y-0.5 text-2xs font-mono">
             {block.files.map((f, i) => (
               <li key={i} className="flex items-center gap-2">
@@ -270,7 +266,7 @@ function ChecksSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'check
   return (
     <CollapsibleSection summary={checksSummaryLabel(block)}>
       {block.checks ? (
-        <Expandable maxHeight={320} fade="from-white dark:from-gray-800">
+        <Expandable maxHeight={320} fade="from-card">
           <ul className="space-y-0.5 text-2xs font-mono">
             {block.checks.map((c, i) => {
               const failing = failingCheck(c)
@@ -322,7 +318,7 @@ function EventSection({ block }: { block: Extract<EnvelopeBlock, { kind: 'event'
           ))}
         </dl>
       )}
-      <Expandable maxHeight={320} fade="from-white dark:from-gray-800">
+      <Expandable maxHeight={320} fade="from-card">
         <AssistantText text={'```json\n' + body + '\n```'} />
       </Expandable>
     </CollapsibleSection>
@@ -368,13 +364,7 @@ function ArtifactIcon({ kindPrefix }: { kindPrefix: string }) {
 
 // Reuses the churn colours: green new, amber updated (as StatusBadge's edited), gray otherwise.
 function ArtifactStatusChip({ status }: { status: string }) {
-  const cls =
-    status === 'new'
-      ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300'
-      : status === 'updated'
-        ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
-        : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400'
-  return <span className={`${CHIP} ${cls}`}>{status}</span>
+  return <Badge tone={status === 'new' ? 'green' : status === 'updated' ? 'amber' : 'gray'}>{status}</Badge>
 }
 
 function ArtifactsSection({
@@ -407,11 +397,12 @@ function ArtifactsSection({
         <ul className="space-y-1">
           {block.items.map((row, i) => (
             <li key={i}>
-              <button
-                type="button"
+              <Button
+                variant="ghost"
+                size="inline"
                 disabled={!chatId}
                 onClick={() => openRow(row)}
-                className="w-full flex items-start gap-2 px-2 py-1 rounded text-left text-2xs hover:bg-gray-100 dark:hover:bg-gray-700/60 disabled:hover:bg-transparent disabled:cursor-default"
+                className="h-auto w-full items-start justify-start gap-2 whitespace-normal px-2 py-1 text-left text-2xs font-normal disabled:pointer-events-auto disabled:cursor-default disabled:opacity-100 disabled:hover:bg-transparent"
               >
                 <ArtifactIcon kindPrefix={row.kindPrefix} />
                 <span className="flex-1 min-w-0 flex flex-wrap items-center gap-x-2 gap-y-0.5">
@@ -420,7 +411,7 @@ function ArtifactsSection({
                   {row.status && <ArtifactStatusChip status={row.status} />}
                   <span className="text-gray-500 dark:text-gray-400 break-words basis-full sm:basis-auto">{row.summary}</span>
                 </span>
-              </button>
+              </Button>
             </li>
           ))}
         </ul>

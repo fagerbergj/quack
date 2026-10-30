@@ -20,25 +20,27 @@ describe('AttachmentPreviews', () => {
     render(<AttachmentPreviews previews={[{ url: 'blob:1', mime: 'image/png', name: 'cat.png' }]} />)
     await user.click(screen.getByRole('button', { name: 'View cat.png full size' }))
 
-    const dialog = document.querySelector('dialog')!
-    expect(dialog.hasAttribute('open')).toBe(true)
+    expect(screen.getByRole('dialog', { name: 'cat.png' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: 'Close' }))
-    expect(dialog.hasAttribute('open')).toBe(false)
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 
-  it('a backdrop click closes the dialog; clicking the image itself does not', async () => {
+  it('a backdrop click or Esc closes the dialog; clicking the image itself does not', async () => {
     const user = userEvent.setup()
     render(<AttachmentPreviews previews={[{ url: 'blob:1', mime: 'image/png', name: 'cat.png' }]} />)
     await user.click(screen.getByRole('button', { name: 'View cat.png full size' }))
-    const dialog = document.querySelector('dialog')!
+    const dialog = screen.getByRole('dialog', { name: 'cat.png' })
 
-    // Clicking the full-size image (a child of the dialog) must not close it.
     await user.click(within(dialog).getByRole('img', { name: 'cat.png' }))
-    expect(dialog.hasAttribute('open')).toBe(true)
+    expect(screen.getByRole('dialog')).toBeTruthy()
 
-    // Clicking the dialog's own backdrop area (the <dialog> element itself) closes it.
-    await user.click(dialog)
-    expect(dialog.hasAttribute('open')).toBe(false)
+    // The overlay is the dialog's previous sibling in the portal.
+    await user.click(dialog.previousElementSibling!)
+    expect(screen.queryByRole('dialog')).toBeNull()
+
+    await user.click(screen.getByRole('button', { name: 'View cat.png full size' }))
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 
   it('renders a text chip (no <img>) for a non-image attachment', () => {

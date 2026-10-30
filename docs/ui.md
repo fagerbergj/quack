@@ -23,4 +23,4 @@ The SPA authenticates the same way any REST client does - see [`docs/api.md`](ap
 
 ## Contributing to it
 
-State lives in `frontend/src/state/` (`chatStore.ts`, `agentStream.ts` parsing the SSE stream, `ChatStoreProvider.tsx`). Components under `frontend/src/components/` are co-located with Storybook stories and vitest tests. The `frontend-design` skill covers the re-render-isolation and streaming-chat patterns this UI relies on - load it before restyling or extending anything under `frontend/src/`.
+State lives in `frontend/src/state/` (`chatStore.ts`, `agentStream.ts` parsing the SSE stream, `ChatStoreProvider.tsx`). Components under `frontend/src/components/` are co-located with Storybook stories and vitest tests. Shared primitives (Button, Badge, Card, Dialog, DropdownMenu and the rest) live in `frontend/src/components/ui/` on Radix; use them instead of hand-rolling a control.

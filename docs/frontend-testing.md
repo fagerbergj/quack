@@ -13,8 +13,8 @@ It exists because #1192 shipped two PRs that passed every other gate check yet w
 
 For each story x viewport x theme combination, `render-check` asserts:
 
-1. **No stray comment-shaped text node.** Walks every text node (`TreeWalker`) outside `<pre>`/`<code>`/font-mono containers (which legitimately render `//`-prefixed data - grep matches, diffs) and fails if one starts with `//` or `/*`.
-2. **No covered dialog.** Every `[role="dialog"]`/`[open]` element must be the actual top hit (`document.elementFromPoint`) at its own center - catches the #1189 stacking-context class of bug.
+1. **No stray comment-shaped text node.** Walks every text node of `document.body` (Radix dialogs and menus portal out of the story container) (`TreeWalker`) outside `<pre>`/`<code>`/font-mono containers (which legitimately render `//`-prefixed data - grep matches, diffs) and fails if one starts with `//` or `/*`.
+2. **No covered dialog.** Every `[role="dialog"]`/`[open]` element in `document.body` must be the actual top hit (`document.elementFromPoint`) at its own center - catches the #1189 stacking-context class of bug.
 3. **No horizontal overflow.** Each story renders inside a fixed-size frame matching its viewport; the frame's `scrollWidth` must not exceed its `clientWidth`.
 4. **No `console.error` during render.**
 

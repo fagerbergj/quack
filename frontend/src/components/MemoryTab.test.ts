@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { createElement } from 'react'
-import { act, cleanup, render } from '@testing-library/react'
+import { act, cleanup, fireEvent, render } from '@testing-library/react'
 import { MemoryTab } from './MemoryTab'
 import { api } from '../api'
 import { client } from '../generated/client.gen'
@@ -61,6 +61,13 @@ describe('MemoryTab', () => {
     return found
   }
 
+  // Confirm and Cancel are menu items so keyboard users can reach them; the menu renders in a portal.
+  function menuItem(name: string): HTMLElement {
+    const found = Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(b => b.textContent === name)
+    if (!found) throw new Error(`menu item ${name} not found`)
+    return found
+  }
+
   it('renders the list returned by GET /api/v1/memories', async () => {
     fetchMock.mockResolvedValue(jsonResponse({ memories: [MEMORY], total: 1 }))
     await renderAndFlush()
@@ -99,12 +106,13 @@ describe('MemoryTab', () => {
     await renderAndFlush()
 
     const kebabButton = findButton(host!, b => (b.getAttribute('aria-label') ?? '') === 'Memory actions')
-    act(() => kebabButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
-    const forgetButton = findButton(host!, b => b.textContent?.trim() === 'Forget')
+    // Radix opens on pointerdown or Enter, and renders the menu in a portal on <body>.
+    act(() => { fireEvent.keyDown(kebabButton, { key: 'Enter' }) })
+    const forgetButton = document.body.querySelector<HTMLElement>('[role="menuitem"]')!
     act(() => forgetButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
 
     // Confirm/Cancel is now showing; the GET was the only request so far.
-    const confirmButton = findButton(host!, b => b.textContent === 'Confirm')
+    const confirmButton = menuItem('Confirm')
     expect(fetchMock).toHaveBeenCalledTimes(1)
 
     fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }))
@@ -125,10 +133,11 @@ describe('MemoryTab', () => {
     await renderAndFlush()
 
     const kebabButton = findButton(host!, b => (b.getAttribute('aria-label') ?? '') === 'Memory actions')
-    act(() => kebabButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
-    const forgetButton = findButton(host!, b => b.textContent?.trim() === 'Forget')
+    // Radix opens on pointerdown or Enter, and renders the menu in a portal on <body>.
+    act(() => { fireEvent.keyDown(kebabButton, { key: 'Enter' }) })
+    const forgetButton = document.body.querySelector<HTMLElement>('[role="menuitem"]')!
     act(() => forgetButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
-    const cancelButton = findButton(host!, b => b.textContent === 'Cancel')
+    const cancelButton = menuItem('Cancel')
     act(() => cancelButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
 
     expect(fetchMock).toHaveBeenCalledTimes(1) // just the initial GET

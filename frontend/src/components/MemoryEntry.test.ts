@@ -2,7 +2,7 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { createElement } from 'react'
 import { cleanup, render } from '@testing-library/react'
-import { MemoryEntry, memoryTier, memoryTierLabel, memoryTierBadgeClass } from './MemoryEntry'
+import { MemoryEntry, memoryTier, memoryTierLabel, memoryTierTone } from './MemoryEntry'
 import type { Memory } from '../api'
 
 afterEach(cleanup)
@@ -52,18 +52,15 @@ describe('memoryTierLabel', () => {
   })
 })
 
-describe('memoryTierBadgeClass', () => {
-  it('maps each tier to a distinct, dark-theme-aware color', () => {
-    expect(memoryTierBadgeClass('reinforced')).toContain('green')
-    expect(memoryTierBadgeClass('invalidated')).toContain('red')
-    expect(memoryTierBadgeClass('unverified')).toContain('gray')
-    for (const tier of ['reinforced', 'invalidated', 'unverified'] as const) {
-      expect(memoryTierBadgeClass(tier)).toMatch(/dark:/)
-    }
+describe('memoryTierTone', () => {
+  it('maps each tier to a distinct tone', () => {
+    expect(memoryTierTone('reinforced')).toBe('green')
+    expect(memoryTierTone('invalidated')).toBe('red')
+    expect(memoryTierTone('unverified')).toBe('gray')
   })
 
   it('renders unknown the same neutral gray as unverified - never a color implying a tier we verified', () => {
-    expect(memoryTierBadgeClass('unknown')).toContain('gray')
+    expect(memoryTierTone('unknown')).toBe('gray')
   })
 })
 

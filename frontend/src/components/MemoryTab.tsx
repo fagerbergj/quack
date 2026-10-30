@@ -1,3 +1,5 @@
+import { Button } from './ui/button'
+import { Input } from './ui/input'
 import { useState, useEffect, useCallback, useMemo, useLayoutEffect, useRef, type Ref } from 'react'
 import { api, type Memory, type VoteDirection, type MemoryWeekStats, type MemoryScopeStats } from '../api'
 import { MemoryTimeline } from './MemoryTimeline'
@@ -100,20 +102,8 @@ function MemoryTabFooter({ footerRef, rangeStart, rangeEnd, total, canGoPrev, ca
     <div ref={footerRef} className="p-3 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
       <span>{rangeStart}–{rangeEnd} of {total}</span>
       <div className="flex gap-2">
-        <button
-          onClick={onPrevPage}
-          disabled={!canGoPrev}
-          className="px-2 py-1 rounded border border-gray-300 dark:border-gray-600 disabled:opacity-40 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-        >
-          Prev
-        </button>
-        <button
-          onClick={onNextPage}
-          disabled={!canGoNext}
-          className="px-2 py-1 rounded border border-gray-300 dark:border-gray-600 disabled:opacity-40 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-        >
-          Next
-        </button>
+        <Button variant="outline" size="sm" onClick={onPrevPage} disabled={!canGoPrev}>Prev</Button>
+        <Button variant="outline" size="sm" onClick={onNextPage} disabled={!canGoNext}>Next</Button>
       </div>
     </div>
   )
@@ -307,13 +297,13 @@ function MemoryTabContent({ initialState, initialStats, onDisabled }: MemoryTabP
       <div className="p-3 border-b border-gray-200 dark:border-gray-700 flex flex-wrap items-center gap-2">
         {/* Own line below `medium` so the placeholder (the only explanation
             of memory search) isn't clipped at 390px. */}
-        <input
+        <Input
           type="search"
           value={q}
           onChange={e => setQ(e.target.value)}
-          placeholder="Search — what would a run recall for this?"
+          placeholder="Search — what would a run recall?"
           aria-label="Search memories"
-          className="grow basis-full medium:basis-0 min-w-0 rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
+          className="grow basis-full medium:basis-0"
         />
         <label className="flex-shrink-0 min-h-[44px] -my-2 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 cursor-pointer select-none whitespace-nowrap">
           <input

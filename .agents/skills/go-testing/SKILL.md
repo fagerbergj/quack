@@ -10,7 +10,7 @@ description: |
   golden files), and a CI matrix (go test -race -coverprofile, unit-vs-integration gating).
   Use when writing or reviewing any *_test.go in the quack Go backend (internal/, cmd/) or the Bubble Tea
   TUI (internal/tui/) - picking a test shape, mocking a dependency, testing an HTTP handler/middleware,
-  or wiring CI. Do NOT use for frontend (vitest/MSW - see frontend-design) or non-Go code.
+  or wiring CI. Do NOT use for frontend (vitest/MSW - see react-testing) or non-Go code.
 license: MIT
 metadata:
   author: jason
@@ -32,7 +32,7 @@ Test Go with the standard library first. `go test` is the only runner; `testing`
 
 ## When NOT to Use
 
-- Frontend tests - vitest + MSW, see `frontend-design`.
+- Frontend tests - vitest + MSW, see `react-testing`.
 - Non-Go code.
 
 ## The decisions

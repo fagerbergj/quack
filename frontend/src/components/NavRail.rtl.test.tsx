@@ -58,15 +58,28 @@ describe('NavRail drawer', () => {
 
     await user.click(screen.getByRole('button', { name: 'Close navigation' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-    expect(document.activeElement).toBe(trigger)
+    await waitFor(() => expect(document.activeElement).toBe(trigger))
+  })
+
+  // The drawer takes focus itself, so a tooltip on its first control cannot open and swallow the first Escape.
+  it('closes on a single Escape', async () => {
+    const user = userEvent.setup()
+    render(<Harness />)
+    await user.click(screen.getByRole('button', { name: 'Toggle navigation' }))
+    const drawer = await screen.findByRole('dialog', { name: 'Main navigation' })
+    // jsdom matches :focus-visible on any focus, so the container holding focus is what guards the tooltip.
+    expect(document.activeElement).toBe(drawer)
+    expect(screen.queryByRole('tooltip')).toBeNull()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   })
 
   it('closes on a backdrop tap', async () => {
     const user = userEvent.setup()
     render(<Harness />)
     await user.click(screen.getByRole('button', { name: 'Toggle navigation' }))
-    // A click targeting the <dialog> itself is a ::backdrop click.
-    await user.click(await screen.findByRole('dialog', { name: 'Main navigation' }))
+    await screen.findByRole('dialog', { name: 'Main navigation' })
+    await user.click(document.querySelector('[data-slot="overlay"]')!)
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   })
 
