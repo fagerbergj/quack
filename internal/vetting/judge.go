@@ -1048,7 +1048,9 @@ type judgeRoundState struct {
 	repeats       repeatLoopDetector
 	lastFinish    genai.FinishReason
 	lastOutTokens int32
-	aborted       bool
+	// outTokens/thoughtTokens: generated tokens summed over this session's finished model turns.
+	outTokens, thoughtTokens int
+	aborted                  bool
 	// parseFrom: accum offset past the last truncated turn, whose text may hold only a draft verdict.
 	parseFrom int
 	calls     map[string]*genai.FunctionCall // by call id, to pair a read's args with its result
@@ -1162,6 +1164,10 @@ func (s *judgeRoundState) observeEvent(ev *session.Event) error {
 	}
 	if ev.TurnComplete {
 		s.turns++
+		if u := ev.UsageMetadata; u != nil { // usage rides the turn's final event only; partials carry none
+			s.outTokens += int(u.CandidatesTokenCount)
+			s.thoughtTokens += int(u.ThoughtsTokenCount)
+		}
 	}
 	return nil
 }

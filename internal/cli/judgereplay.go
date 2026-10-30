@@ -22,6 +22,7 @@ import (
 	"github.com/fagerbergj/quack/internal/acp"
 	"github.com/fagerbergj/quack/internal/config"
 	"github.com/fagerbergj/quack/internal/dag"
+	"github.com/fagerbergj/quack/internal/decide"
 	"github.com/fagerbergj/quack/internal/ledger/bundle"
 	"github.com/fagerbergj/quack/internal/tools"
 	"github.com/fagerbergj/quack/internal/vetting"
@@ -44,9 +45,12 @@ type ReplayOptions struct {
 // ReplayReport is `quack judge replay --json`'s whole output: sorted, rounded and timestamp-free so two
 // runs over one recording diff cleanly. Consistency is set only when --repeat measured something.
 type ReplayReport struct {
-	Repeat      int                 `json:"repeat"`
-	Consistency *ReplayConsistency  `json:"consistency,omitempty"`
-	Rounds      []ReplayRoundReport `json:"rounds"`
+	Repeat int `json:"repeat"`
+	// JudgeCriteria: some round's judge was asked for evidence, i.e. the "on" arm really ran (the point is enabled
+	// and the resolved system/judge carries the evidence block). False on an on-arm config means the prompt lacks it.
+	JudgeCriteria bool                `json:"judge_criteria"`
+	Consistency   *ReplayConsistency  `json:"consistency,omitempty"`
+	Rounds        []ReplayRoundReport `json:"rounds"`
 }
 
 // ReplayConsistency summarises every --repeat measurement in the report. Agreement is the fraction of
@@ -87,6 +91,10 @@ type ReplayCriterionReport struct {
 	Deterministic  bool    `json:"deterministic"`
 	Reason         string  `json:"reason,omitempty"`
 	Flipped        bool    `json:"flipped"`
+	// Evidence/Point: the judge's per-criterion facts and judge.criteria's answer from them; both only
+	// while that point is enabled in the local quack.yaml.
+	Evidence string                     `json:"evidence,omitempty"`
+	Point    *vetting.ReplayPointAnswer `json:"point,omitempty"`
 	// Spread: this judge-scored criterion's replayed scores across --repeat passes.
 	Spread *ReplaySpread `json:"spread,omitempty"`
 }
@@ -110,6 +118,26 @@ type ReplayRoundReport struct {
 	DroppedReviewCalls int `json:"dropped_review_calls,omitempty"`
 	// Spread: the whole round's pass/fail (every criterion at or above threshold) across --repeat passes.
 	Spread *ReplaySpread `json:"spread,omitempty"`
+	// Judge: the first judge pass's wall time and generated tokens; absent when the judge did not run.
+	Judge         *vetting.ReplayJudgeCost `json:"judge,omitempty"`
+	judgeCriteria bool                     // the judge was asked for evidence this round; feeds ReplayReport.JudgeCriteria
+	// Passes: with --repeat, every pass's judge cost and judge-scored criteria, first pass included.
+	Passes []ReplayPass `json:"passes,omitempty"`
+}
+
+// ReplayPass is one judge pass of a --repeat run.
+type ReplayPass struct {
+	Judge    *vetting.ReplayJudgeCost `json:"judge,omitempty"` // set even when the pass failed: what it spent
+	Criteria []ReplayPassCriterion    `json:"criteria,omitempty"`
+	Error    string                   `json:"error,omitempty"`
+}
+
+// ReplayPassCriterion is a judge-scored criterion's score, evidence and point answer in one pass.
+type ReplayPassCriterion struct {
+	Name     string                     `json:"name"`
+	Score    float64                    `json:"score"`
+	Evidence string                     `json:"evidence,omitempty"`
+	Point    *vetting.ReplayPointAnswer `json:"point,omitempty"`
 }
 
 // UnitRow is one specific's locate result, as the design's failed-round table shows it.
@@ -334,7 +362,24 @@ func rubricConfigFor(ctx context.Context, cfg *config.Config, agentName, rubricO
 	base.ReadOnly, base.RequireRetrieval = vetting.AgentToolPolicy(ac.Tools, ac.Acp)
 	base.ExternalWorker, base.IsReviewer = ac.Acp != nil, dag.IsReviewerAgent(agentName) // as perAgentGateCfg and nodeGateConfig
 	base.JudgeArtifactTools = judgeArtifactTools
+	if base.Decisions, err = replayDecider(cfg.Decisions); err != nil {
+		return vetting.Config{}, err
+	}
 	return base, nil
+}
+
+// replayDecider builds only judge.criteria from the local quack.yaml's decisions, so replay is "on" exactly
+// when that file enables it, and no other point (or extension point replay has no extension for) can fail it.
+func replayDecider(d config.DecisionsConfig) (*decide.Decider, error) {
+	p, ok := d.Points[vetting.JudgeCriteriaPoint]
+	if !ok {
+		return nil, nil
+	}
+	dec, err := decide.New(config.DecisionsConfig{Handlers: d.Handlers, Points: map[string]config.DecisionPoint{vetting.JudgeCriteriaPoint: p}})
+	if err != nil {
+		return nil, fmt.Errorf("judge replay: %w", err)
+	}
+	return dec, nil
 }
 
 // BuildReplayJudge builds the local quack.yaml's configured judge model as a JudgeFactory with no skill tools,
@@ -422,7 +467,8 @@ func RunJudgeReplay(ctx context.Context, cfg *config.Config, sess *bundle.Sessio
 		// stderr progress: a --repeat run over many rounds is otherwise silent until the end
 		fmt.Fprintf(os.Stderr, "replayed %d/%d %s %s exit=%d\n", i+1, len(rounds), rep.Node, rep.Round, code)
 	}
-	report := ReplayReport{Repeat: max(opts.Repeat, 1), Consistency: consistencyOf(reports), Rounds: reports}
+	report := ReplayReport{Repeat: max(opts.Repeat, 1), Consistency: consistencyOf(reports), Rounds: reports,
+		JudgeCriteria: slices.ContainsFunc(reports, func(r ReplayRoundReport) bool { return r.judgeCriteria })}
 	if asJSON {
 		_ = WriteJSON(out, report)
 	} else {
@@ -518,6 +564,7 @@ func replayOneRound(ctx context.Context, cfg *config.Config, sess *bundle.Sessio
 		}
 	}
 	res, err := vetting.ReplayRound(ctx, gc, jf, rc)
+	rep.Judge, rep.judgeCriteria = roundedCost(res.Judge), res.JudgeCriteria
 	if err != nil {
 		rep.Skipped = err.Error()
 		return rep, 1
@@ -526,7 +573,7 @@ func replayOneRound(ctx context.Context, cfg *config.Config, sess *bundle.Sessio
 	rep.Units = unitRows(res.Units)
 	rep.Criteria = compareCriteria(res, recordedFor(sess, jr), jf != nil)
 	var incomplete bool
-	rep.Spread, rep.Note, incomplete = noteRepeatSpread(ctx, gc, jf, rc, res, opts.Repeat, rep.Criteria, rep.Note)
+	rep.Spread, rep.Passes, rep.Note, incomplete = noteRepeatSpread(ctx, gc, jf, rc, res, opts.Repeat, rep.Criteria, rep.Note)
 	for _, c := range rep.Criteria {
 		if c.Flipped {
 			rep.Flipped = true
@@ -543,32 +590,34 @@ func replayOneRound(ctx context.Context, cfg *config.Config, sess *bundle.Sessio
 
 // noteRepeatSpread runs the --repeat measurement when it applies and folds a failed pass into the
 // round note, keeping replayOneRound's own branching flat.
-func noteRepeatSpread(ctx context.Context, gc vetting.Config, jf vetting.JudgeFactory, rc vetting.ReplayCase, res vetting.ReplayRoundResult, repeat int, crit []ReplayCriterionReport, note string) (*ReplaySpread, string, bool) {
+func noteRepeatSpread(ctx context.Context, gc vetting.Config, jf vetting.JudgeFactory, rc vetting.ReplayCase, res vetting.ReplayRoundResult, repeat int, crit []ReplayCriterionReport, note string) (*ReplaySpread, []ReplayPass, string, bool) {
 	if jf == nil || repeat < 2 {
-		return nil, note, false
+		return nil, nil, note, false
 	}
-	round, err := addRepeatSpread(ctx, gc, jf, rc, res, repeat, crit)
+	round, passes, err := addRepeatSpread(ctx, gc, jf, rc, res, repeat, crit)
 	if err != nil {
-		return nil, strings.TrimSpace(note + " repeat: " + err.Error()), true
+		return nil, passes, strings.TrimSpace(note + " repeat: " + err.Error()), true
 	}
-	return round, note, false
+	return round, passes, note, false
 }
 
 // addRepeatSpread judges the round repeat-1 more times, fills each judge-scored criterion's Spread (the
 // judge's own noise on a fixed answer, which no single verdict shows) and returns the round's own.
-func addRepeatSpread(ctx context.Context, gc vetting.Config, jf vetting.JudgeFactory, rc vetting.ReplayCase, first vetting.ReplayRoundResult, repeat int, crit []ReplayCriterionReport) (*ReplaySpread, error) {
+func addRepeatSpread(ctx context.Context, gc vetting.Config, jf vetting.JudgeFactory, rc vetting.ReplayCase, first vetting.ReplayRoundResult, repeat int, crit []ReplayCriterionReport) (*ReplaySpread, []ReplayPass, error) {
 	samples := map[string][]float64{}
 	for _, c := range first.Criteria {
 		if !c.Deterministic {
 			samples[c.Name] = append(samples[c.Name], c.Score)
 		}
 	}
-	roundPassed := []float64{passedAll(first)}
+	roundPassed, passes := []float64{passedAll(first)}, []ReplayPass{passOf(first)}
 	for i := 1; i < repeat; i++ {
 		res, err := vetting.ReplayRound(ctx, gc, jf, rc)
 		if err != nil {
-			return nil, fmt.Errorf("pass %d: %w", i+1, err)
+			passes = append(passes, ReplayPass{Judge: roundedCost(res.Judge), Error: err.Error()})
+			return nil, passes, fmt.Errorf("pass %d: %w", i+1, err)
 		}
+		passes = append(passes, passOf(res))
 		roundPassed = append(roundPassed, passedAll(res))
 		for _, c := range res.Criteria {
 			if _, ok := samples[c.Name]; ok {
@@ -583,7 +632,18 @@ func addRepeatSpread(ctx context.Context, gc vetting.Config, jf vetting.JudgeFac
 	}
 	round := spreadOf(roundPassed, 1)
 	round.Samples = nil // 0/1 pass flags; PassRate and Agreement carry them
-	return round, nil
+	return round, passes, nil
+}
+
+// passOf is one pass's judge cost and judge-scored criteria, so every --repeat pass is in the report.
+func passOf(res vetting.ReplayRoundResult) ReplayPass {
+	p := ReplayPass{Judge: roundedCost(res.Judge)}
+	for _, c := range res.Criteria {
+		if !c.Deterministic {
+			p.Criteria = append(p.Criteria, ReplayPassCriterion{Name: c.Name, Score: c.Score, Evidence: c.Evidence, Point: c.Point})
+		}
+	}
+	return p
 }
 
 // passedAll is 1 when every criterion of res clears its threshold (the gate's weakest-link pass), else 0.
@@ -633,6 +693,15 @@ func stddev(xs []float64) float64 {
 		v += (x - m) * (x - m)
 	}
 	return math.Sqrt(v / float64(len(xs)))
+}
+
+func roundedCost(c *vetting.ReplayJudgeCost) *vetting.ReplayJudgeCost {
+	if c == nil {
+		return nil
+	}
+	out := *c
+	out.Seconds = round4(c.Seconds)
+	return &out
 }
 
 func unitRows(checks []vetting.UnitCheck) []UnitRow {
@@ -705,7 +774,7 @@ func compareCriteria(res vetting.ReplayRoundResult, recorded map[string]float64,
 		out = append(out, ReplayCriterionReport{
 			Name: c.Name, HasRecorded: hasRec, RecordedScore: rec, HasReplayed: true, ReplayedScore: c.Score,
 			RubricMark: c.RubricMark, Threshold: res.Threshold, RecordedPassed: recPass, ReplayedPassed: replPass,
-			Deterministic: c.Deterministic, Reason: reason, Flipped: flipped,
+			Deterministic: c.Deterministic, Reason: reason, Flipped: flipped, Evidence: c.Evidence, Point: c.Point,
 		})
 	}
 	extra := make([]string, 0)
