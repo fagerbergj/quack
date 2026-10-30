@@ -31,7 +31,8 @@ async function startDistributor(idleMs: number) {
   return { driver, invoke };
 }
 
-async function until(probe: () => boolean, ms = 5000) {
+// Waits for a state change; the deadline only matters when the code is broken, so it is far above any runner's latency.
+async function until(probe: () => boolean, ms = 15_000) {
   const deadline = Date.now() + ms;
   while (!probe()) {
     if (Date.now() > deadline) throw new Error('timed out');

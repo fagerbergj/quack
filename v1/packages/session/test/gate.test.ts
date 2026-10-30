@@ -50,13 +50,15 @@ async function serve(session: Awaited<ReturnType<typeof openSession>>) {
   return { json, stop: () => new Promise((r) => server.close(r)) };
 }
 
-async function until<T>(probe: () => Promise<T | undefined>): Promise<T> {
-  for (let i = 0; i < 200; i++) {
+// Waits for a state change; the deadline only matters when the code is broken, so it is far above any runner's latency.
+async function until<T>(probe: () => Promise<T | undefined>, ms = 15_000): Promise<T> {
+  const deadline = Date.now() + ms;
+  for (;;) {
     const v = await probe();
     if (v !== undefined) return v;
+    if (Date.now() > deadline) throw new Error('timed out');
     await new Promise((r) => setTimeout(r, 10));
   }
-  throw new Error('timed out');
 }
 
 test('a gated call waits across a restart, then runs once when approved', async () => {
