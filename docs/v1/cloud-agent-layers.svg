@@ -1,0 +1,149 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 1154" width="1280" height="1154" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+<title>Cloud agent platform layers</title>
+<rect width="1280" height="1154" fill="#ffffff"/>
+<text x="640.0" y="42" font-size="22" font-weight="bold" fill="#111827" text-anchor="middle">Cloud agent platform layers</text>
+<rect x="260" y="70" width="760" height="132" rx="10" fill="#f8fafc" stroke="#334155" stroke-width="1.5"/>
+<text x="276" y="95" font-size="16" font-weight="bold" fill="#334155" text-anchor="start">0 · Surfaces &amp; triggers</text>
+<text x="276" y="114" font-size="12" font-weight="normal" fill="#4b5563" text-anchor="start" font-style="italic">Who engages the agent</text>
+<rect x="276" y="128" width="70" height="26" rx="13" fill="#ffffff" stroke="#334155" stroke-width="1"/>
+<text x="311.0" y="145" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">ServeUp</text>
+<rect x="354" y="128" width="104" height="26" rx="13" fill="#ffffff" stroke="#334155" stroke-width="1"/>
+<text x="406.0" y="145" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Toast Studio</text>
+<rect x="466" y="128" width="104" height="26" rx="13" fill="#ffffff" stroke="#334155" stroke-width="1"/>
+<text x="518.0" y="145" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Chat (Slack)</text>
+<rect x="578" y="128" width="284" height="26" rx="13" fill="#ffffff" stroke="#334155" stroke-width="1"/>
+<text x="720.0" y="145" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Webhooks (Sentry, FireHydrant, GitHub)</text>
+<rect x="870" y="128" width="84" height="26" rx="13" fill="#ffffff" stroke="#334155" stroke-width="1"/>
+<text x="912.0" y="145" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Schedules</text>
+<rect x="276" y="162" width="139" height="26" rx="13" fill="#ffffff" stroke="#334155" stroke-width="1"/>
+<text x="345.5" y="179" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">MCP / A2A clients</text>
+<rect x="260" y="216" width="760" height="98" rx="10" fill="#f5f3ff" stroke="#5b21b6" stroke-width="1.5"/>
+<text x="276" y="241" font-size="16" font-weight="bold" fill="#5b21b6" text-anchor="start">1 · Dispatch</text>
+<text x="276" y="260" font-size="12" font-weight="normal" fill="#4b5563" text-anchor="start" font-style="italic">Request time: which session handles this, and is it running?</text>
+<rect x="276" y="274" width="180" height="26" rx="13" fill="#ffffff" stroke="#5b21b6" stroke-width="1"/>
+<text x="366.0" y="291" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Event → agent + session</text>
+<rect x="464" y="274" width="235" height="26" rx="13" fill="#ffffff" stroke="#5b21b6" stroke-width="1"/>
+<text x="581.5" y="291" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Create / resume / stop sessions</text>
+<rect x="707" y="274" width="235" height="26" rx="13" fill="#ffffff" stroke="#5b21b6" stroke-width="1"/>
+<text x="824.5" y="291" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Route requests to their session</text>
+<rect x="260" y="328" width="760" height="132" rx="10" fill="#eff6ff" stroke="#1e40af" stroke-width="1.5"/>
+<text x="276" y="353" font-size="16" font-weight="bold" fill="#1e40af" text-anchor="start">2 · Deployment</text>
+<text x="276" y="372" font-size="12" font-weight="normal" fill="#4b5563" text-anchor="start" font-style="italic">Build and deploy time: what infrastructure hosts runtimes</text>
+<rect x="276" y="386" width="187" height="26" rx="13" fill="#ffffff" stroke="#1e40af" stroke-width="1"/>
+<text x="369.5" y="403" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Versioned agent artifact</text>
+<rect x="471" y="386" width="187" height="26" rx="13" fill="#ffffff" stroke="#1e40af" stroke-width="1"/>
+<text x="564.5" y="403" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Declarative agent config</text>
+<rect x="666" y="386" width="139" height="26" rx="13" fill="#ffffff" stroke="#1e40af" stroke-width="1"/>
+<text x="735.5" y="403" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Compute + network</text>
+<rect x="813" y="386" width="139" height="26" rx="13" fill="#ffffff" stroke="#1e40af" stroke-width="1"/>
+<text x="882.5" y="403" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Workload identity</text>
+<rect x="276" y="420" width="132" height="26" rx="13" fill="#ffffff" stroke="#1e40af" stroke-width="1"/>
+<text x="342.0" y="437" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Egress allowlist</text>
+<rect x="260" y="474" width="760" height="454" rx="10" fill="#ecfeff" stroke="#155e75" stroke-width="1.5"/>
+<text x="276" y="499" font-size="16" font-weight="bold" fill="#155e75" text-anchor="start">3 · Runtime</text>
+<text x="276" y="518" font-size="12" font-weight="normal" fill="#4b5563" text-anchor="start" font-style="italic">One per session: what the agent actually runs in</text>
+<rect x="276" y="532" width="242" height="26" rx="13" fill="#ffffff" stroke="#155e75" stroke-width="1"/>
+<text x="397.0" y="549" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Isolated per-session environment</text>
+<rect x="526" y="532" width="153" height="26" rx="13" fill="#ffffff" stroke="#155e75" stroke-width="1"/>
+<text x="602.5" y="549" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Shell + dev tooling</text>
+<rect x="687" y="532" width="160" height="26" rx="13" fill="#ffffff" stroke="#155e75" stroke-width="1"/>
+<text x="767.0" y="549" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Persistent workspace</text>
+<rect x="276" y="566" width="160" height="26" rx="13" fill="#ffffff" stroke="#155e75" stroke-width="1"/>
+<text x="356.0" y="583" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Health + busy status</text>
+<rect x="276" y="604" width="728" height="310" rx="10" fill="#fffbeb" stroke="#92400e" stroke-width="1.5"/>
+<text x="292" y="629" font-size="16" font-weight="bold" fill="#92400e" text-anchor="start">4 · Harness</text>
+<text x="292" y="648" font-size="12" font-weight="normal" fill="#4b5563" text-anchor="start" font-style="italic">Calls model providers, keeps durable sessions, runs tools</text>
+<rect x="292" y="662" width="139" height="26" rx="13" fill="#ffffff" stroke="#92400e" stroke-width="1"/>
+<text x="361.5" y="679" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Durable event log</text>
+<rect x="439" y="662" width="187" height="26" rx="13" fill="#ffffff" stroke="#92400e" stroke-width="1"/>
+<text x="532.5" y="679" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Sessions &amp; conversations</text>
+<rect x="634" y="662" width="166" height="26" rx="13" fill="#ffffff" stroke="#92400e" stroke-width="1"/>
+<text x="717.0" y="679" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Model calls &amp; retries</text>
+<rect x="808" y="662" width="118" height="26" rx="13" fill="#ffffff" stroke="#92400e" stroke-width="1"/>
+<text x="867.0" y="679" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Tool execution</text>
+<rect x="292" y="696" width="146" height="26" rx="13" fill="#ffffff" stroke="#92400e" stroke-width="1"/>
+<text x="365.0" y="713" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Context compaction</text>
+<rect x="446" y="696" width="180" height="26" rx="13" fill="#ffffff" stroke="#92400e" stroke-width="1"/>
+<text x="536.0" y="713" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Live view (multiplayer)</text>
+<rect x="634" y="696" width="194" height="26" rx="13" fill="#ffffff" stroke="#92400e" stroke-width="1"/>
+<text x="731.0" y="713" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Steer / follow-up / abort</text>
+<rect x="292" y="734" width="696" height="166" rx="10" fill="#fff7ed" stroke="#c2410c" stroke-width="1.5"/>
+<text x="308" y="759" font-size="16" font-weight="bold" fill="#c2410c" text-anchor="start">5 · Extensions</text>
+<text x="308" y="778" font-size="12" font-weight="normal" fill="#4b5563" text-anchor="start" font-style="italic">Agent and app logic plugged into the harness: where use cases differ</text>
+<rect x="308" y="792" width="249" height="26" rx="13" fill="#ffffff" stroke="#c2410c" stroke-width="1"/>
+<text x="432.5" y="809" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Domain knowledge: prompt + skills</text>
+<rect x="565" y="792" width="194" height="26" rx="13" fill="#ffffff" stroke="#c2410c" stroke-width="1"/>
+<text x="662.0" y="809" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Prompt &amp; skill management</text>
+<rect x="767" y="792" width="194" height="26" rx="13" fill="#ffffff" stroke="#c2410c" stroke-width="1"/>
+<text x="864.0" y="809" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Roles, handoff, approvals</text>
+<rect x="308" y="826" width="201" height="26" rx="13" fill="#ffffff" stroke="#c2410c" stroke-width="1"/>
+<text x="408.5" y="843" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Connections as participant</text>
+<rect x="517" y="826" width="153" height="26" rx="13" fill="#ffffff" stroke="#c2410c" stroke-width="1"/>
+<text x="593.5" y="843" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Artifact publishing</text>
+<rect x="308" y="860" width="304" height="26" rx="13" fill="#ffffff" stroke="#c2410c" stroke-width="1"/>
+<text x="460.0" y="877" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Coding tools: read / write / edit / shell</text>
+<rect x="620" y="860" width="118" height="26" rx="13" fill="#ffffff" stroke="#c2410c" stroke-width="1"/>
+<text x="679.0" y="877" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Use-case tools</text>
+<rect x="746" y="860" width="160" height="26" rx="13" fill="#ffffff" stroke="#c2410c" stroke-width="1"/>
+<text x="826.0" y="877" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Custom state + hooks</text>
+<rect x="260" y="972" width="372" height="132" rx="10" fill="#fefce8" stroke="#854d0e" stroke-width="1.5"/>
+<text x="276" y="997" font-size="16" font-weight="bold" fill="#854d0e" text-anchor="start">6 · Model access</text>
+<text x="276" y="1016" font-size="12" font-weight="normal" fill="#4b5563" text-anchor="start" font-style="italic">Auth, budget, routing</text>
+<rect x="276" y="1030" width="111" height="26" rx="13" fill="#ffffff" stroke="#854d0e" stroke-width="1"/>
+<text x="331.5" y="1047" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Model gateway</text>
+<rect x="395" y="1030" width="146" height="26" rx="13" fill="#ffffff" stroke="#854d0e" stroke-width="1"/>
+<text x="468.0" y="1047" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Multiple providers</text>
+<rect x="276" y="1064" width="166" height="26" rx="13" fill="#ffffff" stroke="#854d0e" stroke-width="1"/>
+<text x="359.0" y="1081" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Per-task model choice</text>
+<rect x="648" y="972" width="372" height="132" rx="10" fill="#f1f5f9" stroke="#475569" stroke-width="1.5"/>
+<text x="664" y="997" font-size="16" font-weight="bold" fill="#475569" text-anchor="start">External systems</text>
+<text x="664" y="1016" font-size="12" font-weight="normal" fill="#4b5563" text-anchor="start" font-style="italic">Reached by extensions, as the participant</text>
+<rect x="664" y="1030" width="118" height="26" rx="13" fill="#ffffff" stroke="#475569" stroke-width="1"/>
+<text x="723.0" y="1047" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Source control</text>
+<rect x="790" y="1030" width="77" height="26" rx="13" fill="#ffffff" stroke="#475569" stroke-width="1"/>
+<text x="828.5" y="1047" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">App APIs</text>
+<rect x="664" y="1064" width="132" height="26" rx="13" fill="#ffffff" stroke="#475569" stroke-width="1"/>
+<text x="730.0" y="1081" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Ticketing / chat</text>
+<rect x="804" y="1064" width="118" height="26" rx="13" fill="#ffffff" stroke="#475569" stroke-width="1"/>
+<text x="863.0" y="1081" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Object storage</text>
+<defs><marker id="a" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#6b7280"/></marker></defs>
+<line x1="446.0" y1="914" x2="446.0" y2="970" stroke="#6b7280" stroke-width="2" marker-end="url(#a)"/>
+<line x1="834.0" y1="900" x2="834.0" y2="970" stroke="#6b7280" stroke-width="2" marker-end="url(#a)"/>
+<rect x="30" y="70" width="210" height="1034" rx="10" fill="#fdf2f8" stroke="#9d174d" stroke-width="1.5"/>
+<text x="135" y="98" font-size="15" font-weight="bold" fill="#9d174d" text-anchor="middle">Identity &amp; governance</text>
+<text x="135" y="116" font-size="12" font-weight="normal" fill="#4b5563" text-anchor="middle" font-style="italic">spans every layer</text>
+<rect x="44" y="136" width="182" height="26" rx="13" fill="#ffffff" stroke="#9d174d" stroke-width="1"/>
+<text x="135" y="153" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Participant identity</text>
+<rect x="44" y="172" width="182" height="26" rx="13" fill="#ffffff" stroke="#9d174d" stroke-width="1"/>
+<text x="135" y="189" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">App-provided roles</text>
+<rect x="44" y="208" width="182" height="26" rx="13" fill="#ffffff" stroke="#9d174d" stroke-width="1"/>
+<text x="135" y="225" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Delegated connections</text>
+<rect x="44" y="244" width="182" height="26" rx="13" fill="#ffffff" stroke="#9d174d" stroke-width="1"/>
+<text x="135" y="261" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Act as run&#x27;s starter</text>
+<rect x="44" y="280" width="182" height="26" rx="13" fill="#ffffff" stroke="#9d174d" stroke-width="1"/>
+<text x="135" y="297" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Approval gates</text>
+<rect x="44" y="316" width="182" height="26" rx="13" fill="#ffffff" stroke="#9d174d" stroke-width="1"/>
+<text x="135" y="333" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Audit record</text>
+<rect x="44" y="352" width="182" height="26" rx="13" fill="#ffffff" stroke="#9d174d" stroke-width="1"/>
+<text x="135" y="369" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Egress policy</text>
+<rect x="1040" y="70" width="210" height="1034" rx="10" fill="#f0fdf4" stroke="#166534" stroke-width="1.5"/>
+<text x="1145" y="98" font-size="15" font-weight="bold" fill="#166534" text-anchor="middle">Observability &amp; evaluation</text>
+<text x="1145" y="116" font-size="12" font-weight="normal" fill="#4b5563" text-anchor="middle" font-style="italic">spans every layer</text>
+<rect x="1054" y="136" width="182" height="26" rx="13" fill="#ffffff" stroke="#166534" stroke-width="1"/>
+<text x="1145" y="153" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Traces</text>
+<rect x="1054" y="172" width="182" height="26" rx="13" fill="#ffffff" stroke="#166534" stroke-width="1"/>
+<text x="1145" y="189" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Model cost per request</text>
+<rect x="1054" y="208" width="182" height="26" rx="13" fill="#ffffff" stroke="#166534" stroke-width="1"/>
+<text x="1145" y="225" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Cost per session, agent, team</text>
+<rect x="1054" y="244" width="182" height="26" rx="13" fill="#ffffff" stroke="#166534" stroke-width="1"/>
+<text x="1145" y="261" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Prompt versions per request</text>
+<rect x="1054" y="280" width="182" height="26" rx="13" fill="#ffffff" stroke="#166534" stroke-width="1"/>
+<text x="1145" y="297" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Metrics &amp; alerts</text>
+<rect x="1054" y="316" width="182" height="26" rx="13" fill="#ffffff" stroke="#166534" stroke-width="1"/>
+<text x="1145" y="333" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Benchmarks</text>
+<rect x="1054" y="352" width="182" height="26" rx="13" fill="#ffffff" stroke="#166534" stroke-width="1"/>
+<text x="1145" y="369" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Model &amp; prompt gating</text>
+<rect x="1054" y="388" width="182" height="26" rx="13" fill="#ffffff" stroke="#166534" stroke-width="1"/>
+<text x="1145" y="405" font-size="11.5" font-weight="normal" fill="#1f2937" text-anchor="middle">Budgets</text>
+<text x="640.0" y="1136" font-size="12" fill="#4b5563" text-anchor="middle">Nesting shows what runs inside what: each session's runtime runs the harness, and extensions plug into the harness.</text>
+</svg>
