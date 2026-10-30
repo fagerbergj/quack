@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
-import { agentSpec, buildModels, parseDefinition, parseDeployment, type Catalog } from '../src/index.ts';
+import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
+import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
+import { agentSpec, buildModels, loadAgent, openSession, parseDefinition, parseDeployment, type Catalog } from '../src/index.ts';
 
 const deployment = {
   providers: { local: { baseUrl: 'http://127.0.0.1:11436/v1', apiKeyEnv: 'QUACK_LOCAL_KEY', models: { 'qwen3.8-27b': { contextWindow: 262144, maxTokens: 16384, reasoning: true } } } },
@@ -33,4 +38,29 @@ test('reports every problem in a definition at once, naming the available extens
     (err: Error) =>
       [/name must be/, /version must be/, /model local\/llama is not configured/, /maxTurns must be/, /unknown extension sleeper; available: coding, github/].every((r) => r.test(err.message)),
   );
+});
+
+test('a definition loads its prompt file, and a reopened session takes the new prompt and model', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'quack-def-'));
+  try {
+    const path = join(dir, 'agent.json');
+    await writeFile(path, JSON.stringify({ name: 'reviewer', version: 1, model: 'local/qwen3.8-27b', prompt: 'prompt.md', extensions: {} }));
+    await writeFile(join(dir, 'prompt.md'), 'Review v1.');
+    assert.equal(loadAgent(path, parseDeployment(deployment), catalog).instructions, 'Review v1.');
+
+    const faux = fauxProvider({ models: [{ id: 'a' }, { id: 'b' }] });
+    faux.setResponses([fauxAssistantMessage('ok')]);
+    const models = createModels();
+    models.setProvider(faux.provider);
+    const sessionDir = join(dir, 'session');
+    const first = await openSession({ dir: sessionDir, models, agent: { model: { provider: faux.provider.id, modelId: 'a' }, instructions: 'Review v1.' } });
+    await first.close();
+    const second = await openSession({ dir: sessionDir, models, agent: { model: { provider: faux.provider.id, modelId: 'b' }, instructions: 'Review v2.' } });
+    const agent = await second.root.agent(BACKGROUND_CONTEXT);
+    assert.equal(agent.instructions, 'Review v2.');
+    assert.equal(agent.model?.modelId, 'b');
+    await second.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

@@ -13,6 +13,7 @@ export type AgentSpec = {
   extensions?: Extension[];
   /** Model turns a run may take before it is aborted (HAR-10). */
   maxTurns?: number;
+  instructions?: string;
 };
 
 export type SubmitResult =
@@ -30,7 +31,12 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
   await mkdir(workspace, { recursive: true });
   const env = ({ cwd }: { cwd?: string }) => new NodeExecutionEnv({ cwd: cwd ?? workspace });
   const harness = await Harness.open(storage, { models: opts.models, registry, env }, ctx);
-  const root = await harness.root(ctx, { agent: { model: opts.agent.model } });
+  const agent = { model: opts.agent.model, instructions: opts.agent.instructions };
+  const root = await harness.root(ctx, { agent });
+  // A session reopened under a newer definition takes its model and instructions; its history stays.
+  const current = await root.agent(ctx);
+  const stale = current.instructions !== agent.instructions || current.model?.provider !== agent.model.provider || current.model?.modelId !== agent.model.modelId;
+  if (stale) await root.configure({ model: agent.model, instructions: agent.instructions ?? null }, ctx);
   harness.resume();
   const watchdog = opts.agent.maxTurns ? await turnLimit(harness, root, opts.agent.maxTurns) : undefined;
 

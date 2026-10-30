@@ -15,11 +15,14 @@ function blockingNamesAnchor(artifact: string): CodeResult {
   return share(blocking.length - missing.length, blocking.length, `no anchor named in ${missing.join(', ')}`);
 }
 
-function verdictMatchesLabels(artifact: string): CodeResult {
+const CI_FAILED = /=(failure|timed_out|cancelled|action_required)\b/;
+
+function verdictMatchesLabels(artifact: string, ev: Evidence): CodeResult {
   const r = parseReview(artifact);
-  const expected = r.findings.some((f) => f.label === 'blocking') ? 'request_changes' : r.findings.some((f) => f.label === 'question') ? 'comment' : 'approve';
-  // `comment` is also right when the review says verification it could not finish; that case is the takeaway check's to weigh.
-  const ok = r.verdict === expected || (r.verdict === 'comment' && expected === 'approve' && /could not|unable to|not verified/i.test(r.sections.verified ?? ''));
+  // Without a blocking finding, `comment` is right for an open question, a failing check, or verification left unfinished.
+  const unsettled = r.findings.some((f) => f.label === 'question') || CI_FAILED.test(String(ev.change?.[0]?.state.ci ?? '')) || /could not|unable to|not verified/i.test(r.sections.verified ?? '');
+  const expected = r.findings.some((f) => f.label === 'blocking') ? 'request_changes' : unsettled ? 'comment' : 'approve';
+  const ok = r.verdict === expected;
   return { met: ok ? 1 : 0, detail: ok ? undefined : `the findings call for ${expected}, the verdict says ${r.verdict ?? 'nothing'}` };
 }
 

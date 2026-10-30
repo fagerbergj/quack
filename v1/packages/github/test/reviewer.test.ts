@@ -2,11 +2,10 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { after, test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { createModels, createProvider, envApiKeyAuth, fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
-import { typesafeSystemOneApi } from '@earendil-works/pi-ai/api/typesafe-system-one.lazy';
+import { fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { Artifacts } from '@quack/sdk';
-import { openSession } from '@quack/session';
+import { buildModels, openSession, parseDeployment } from '@quack/session';
 import { githubSessionExtensions } from '../src/index.ts';
 import { cleanup, fakeService, listen, remotes, tmp } from './fixtures.ts';
 
@@ -55,10 +54,8 @@ test('a reviewer run checks out the PR, has its review judged, and posts exactly
     step(call('post_review', { version: 1 })),
     step(fauxAssistantMessage('Posted.')),
   ]);
-  const models = createModels();
+  const models = buildModels(parseDeployment({ providers: { clef: { baseUrl: clefUrl, api: 'systemone', apiKeyEnv: 'QUACK_CLEF_KEY', models: { clef: { contextWindow: 8192 } } } } }));
   models.setProvider(faux.provider);
-  const clef = { id: 'clef', name: 'clef', type: 'classifier', api: 'typesafe-system-one', provider: 'clef', baseUrl: clefUrl, input: ['text'], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 8192 };
-  models.setProvider(createProvider({ id: 'clef', baseUrl: clefUrl, auth: { apiKey: envApiKeyAuth('clef', ['QUACK_CLEF_KEY']) }, models: [clef] as never, classifiers: { 'typesafe-system-one': typesafeSystemOneApi() } }));
   const m = faux.getModel();
   const extensions = [CodingTools, ...githubSessionExtensions({ serviceUrl: service.url, serviceToken: 'svc', gitBaseUrl: base, classifier: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 } })];
   const session = await openSession({ dir: await tmp(), models, agent: { model: { provider: m.provider, modelId: m.id }, extensions } });

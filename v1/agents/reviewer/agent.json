@@ -1,0 +1,11 @@
+{
+  "name": "reviewer",
+  "version": 1,
+  "model": "local/qwen3.8-27b",
+  "maxTurns": 80,
+  "prompt": "prompt.md",
+  "extensions": {
+    "coding": {},
+    "github": { "maxRevisions": 2, "classifier": { "provider": "clef", "modelId": "clef", "maxInputTokens": 8192 } }
+  }
+}
