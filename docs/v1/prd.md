@@ -1,6 +1,6 @@
 # Quack v1 PRD
 
-Status: draft for review, 2026-10-30. Every requirement traces to [decisions.md](decisions.md) (`D*` core, `R*`/`G*`/`S*`/`RM*`/`MEM*`/`J*`/`EV*` per extension). Normative detail is in the [SRS](srs.md); each extension has its own short document under [extensions/](extensions/).
+Status: draft for review, 2026-10-30. Every requirement traces to [decisions.md](decisions.md) (`D*` core, `R*`/`G*`/`S*`/`RM*`/`MEM*`/`J*`/`EV*` per extension), to the operator's platform requirements (`P`), or, for rows that pin architecture, to an `A*` entry. Normative detail is in the [SRS](srs.md); each extension has its own short document under [extensions/](extensions/).
 
 ## Summary
 
@@ -90,7 +90,6 @@ Platform extensions that the workloads use: [approvals](extensions/approvals.md)
 | External effects missing from the audit record | none | D26, D41 |
 | Domain or rubric code in core | none | D3, D26 |
 | Time to answer "why did this take N rounds, what failed, what did it cost" | one screen or one command | D30 |
-
 | Judge agreement with itself under replay | at least 95% of rounds, 98% of criteria | D45 |
 | Judge changes on golden sets | no added false passes, false fails or slowdown | D45 |
 | Saturated rubric criteria | none at maximum on more than 90% of real rounds | D45 |

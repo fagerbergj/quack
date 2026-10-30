@@ -23,6 +23,7 @@ Status: draft, 2026-10-30. Priority 2 of the launch workloads (D2). Core terms a
 | GH-5 | MUST | Support four jobs: PR review, implement from an issue (open a PR), fix failing CI or review findings on a PR (push commits), answer questions in PR and issue threads. | G4 |
 | GH-6 | MUST | Make every write to GitHub (review, comment, push, pull request) a gated action checked by the judge extension against an audited rubric for its job. | D3, D11 |
 | GH-7 | MUST | Act with short-lived installation tokens injected at run time. | NFR-SEC-3 |
+| GH-8 | MUST NOT | Recover missed webhook deliveries automatically; `/review` recovers a miss by hand. | G6 |
 
 ## Uses from core
 

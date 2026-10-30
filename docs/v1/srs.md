@@ -1,6 +1,6 @@
 # Quack v1 SRS
 
-Status: draft for review, 2026-10-30. This is the normative requirements set for quack's core. The product case is in the [PRD](prd.md); each extension's requirements are in [extensions/](extensions/). Requirement levels follow RFC 2119. The trace column cites [decisions.md](decisions.md) (`D*`) or the operator's platform requirements (`P`), which this document adapts to a single operator (D1).
+Status: draft for review, 2026-10-30. This is the normative requirements set for quack's core. The product case is in the [PRD](prd.md); each extension's requirements are in [extensions/](extensions/). Requirement levels follow RFC 2119. The trace column cites [decisions.md](decisions.md) (`D*`) or the operator's platform requirements (`P`), which this document adapts to a single operator (D1). Those requirements are not published; every `P` row restates the requirement it adapts in full, so the row is the record.
 
 Areas follow the layers in [cloud-agent-layers.svg](cloud-agent-layers.svg). The SRS states what core must do; it does not choose how. Process topology, language and storage engines are for the architecture RFC.
 
