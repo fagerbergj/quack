@@ -2,11 +2,11 @@
 name: frontend-design
 description: |
   Design decisions and gotchas for the quack chat frontend (React 19 + Vite + Tailwind v4 +
-  react-markdown, shadcn-style components on Radix in components/ui). Covers: inventory-before-building, re-render isolation
-  for streaming chat (extract input/list, memoize turns) instead of virtualization, optimistic-first
-  store writes so loading indicators show instantly, the components/ui primitives and when to add one, semantic tokens in `@theme`, markdown code-block highlight + copy through the rehype pipeline, native-CSS-first inputs,
-  accessibility, stories-vs-tests placement, and mobile-first responsive design (Material 3 breakpoints,
-  off-canvas nav, 44px touch targets, dialogs-as-sheets on compact width).
+  react-markdown, shadcn-style components on Radix in components/ui). Covers: inventory-before-building,
+  re-render isolation for streaming chat instead of virtualization, optimistic-first store writes,
+  the components/ui primitives and when to add one, semantic tokens in `@theme`, markdown code-block
+  highlight + copy, accessibility, stories-vs-tests placement, and mobile-first responsive design
+  (Material 3 breakpoints, off-canvas nav, 44px touch targets, dialogs-as-sheets on compact width).
   Use when restyling/extending the chat UI under frontend/src (pages/Chat.tsx, components/, state/),
   fixing typing lag or render jank, fixing a mobile/responsive/small-viewport layout defect, adding a
   chat feature, or deciding build-vs-reuse for a UI request.
