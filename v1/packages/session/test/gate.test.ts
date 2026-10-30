@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { createServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, Type } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { gated } from '@quack/sdk';
@@ -118,5 +121,37 @@ test('a rejection reaches the model and the tool never runs', async () => {
   assert.deepEqual(posted, []);
   assert.match(sawRejection, /Rejected by jf: finding 2 is wrong/);
   await http.stop();
+  await session.close();
+});
+
+const freePort = () => new Promise<number>((r) => { const s = createServer().listen(0, () => { const { port } = s.address() as AddressInfo; s.close(() => r(port)); }); });
+
+test('an approved action killed mid-execution is reported on restart, never re-run', async () => {
+  posted.length = 0;
+  const dir = await mkdtemp(join(tmpdir(), 'quack-gate-'));
+  dirs.push(dir);
+  const effects = join(dir, 'side-effects');
+  const port = await freePort();
+  const base = `http://127.0.0.1:${port}`;
+  const child = spawn(process.execPath, [fileURLToPath(new URL('./fixtures/gated-session.ts', import.meta.url))], { env: { ...process.env, PORT: String(port), QUACK_SESSION_DIR: dir, SIDE_EFFECTS: effects }, stdio: 'inherit' });
+  const exited = new Promise((r) => child.once('exit', r));
+  try {
+    await until(() => fetch(`${base}/ping`).then(() => true, () => undefined));
+    await fetch(`${base}/invocations`, { method: 'POST', body: JSON.stringify({ input: 'Approve this PR', requestId: 'run-3' }) });
+    const [item] = await until(async () => { const l = (await (await fetch(`${base}/approvals`)).json()).approvals; return l.length ? l : undefined; });
+    await fetch(`${base}/approvals/${item.id}`, { method: 'POST', body: JSON.stringify({ decision: 'approve', by: 'jf' }) });
+    await until(() => readFile(effects, 'utf8').then((t) => (t ? t : undefined), () => undefined));
+  } finally {
+    child.kill('SIGKILL');
+    await exited;
+  }
+
+  let sawResult = '';
+  const session = await openSession({ dir, ...agentWith((context) => { sawResult = JSON.stringify(context.messages.at(-1)); return fauxAssistantMessage('Noted.'); }) });
+  const done = await session.submit('Approve this PR', 'run-3', true);
+  assert.equal(done.status, 'done');
+  assert.match(sawResult, /post_comment was interrupted after approval and was not re-run/);
+  assert.equal(await readFile(effects, 'utf8'), 'LGTM\n', 'the side effect happened once');
+  assert.deepEqual(posted, [], 'the restarted session did not run the tool');
   await session.close();
 });

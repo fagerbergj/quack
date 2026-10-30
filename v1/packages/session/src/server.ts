@@ -53,7 +53,13 @@ async function invoke(session: Session, req: IncomingMessage): Promise<[number, 
 async function decide(session: Session, req: IncomingMessage, match: RegExpExecArray): Promise<[number, unknown]> {
   const verdict = parseVerdict(await readJson(req));
   if (typeof verdict === 'string') return [400, { error: verdict }];
-  const ok = await resolveApproval(session.root, decodeURIComponent(match[1]), verdict, ctx);
+  let id: string;
+  try {
+    id = decodeURIComponent(match[1]);
+  } catch {
+    return [400, { error: 'malformed approval id' }];
+  }
+  const ok = await resolveApproval(session.root, id, verdict, ctx);
   return ok ? [200, { resolved: true }] : [409, { error: 'unknown or already decided' }];
 }
 

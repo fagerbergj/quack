@@ -28,7 +28,7 @@ async function startDistributor(idleMs: number) {
   });
   const invoke = (key: string, body: unknown) =>
     fetch(`${base}/sessions/${encodeURIComponent(key)}/invocations`, { method: 'POST', body: JSON.stringify(body) }).then(async (r) => ({ status: r.status, body: await r.json() }));
-  return { driver, invoke };
+  return { driver, invoke, base };
 }
 
 // Waits for a state change; the deadline only matters when the code is broken, so it is far above any runner's latency.
@@ -57,12 +57,13 @@ test('routes each session key to its own process', async () => {
 test('a killed session process restarts with its history', async () => {
   const { driver, invoke } = await startDistributor(60_000);
   const key = 'github:fagerbergj/quack#1826';
-  await invoke(key, { input: 'review it', requestId: 'a', wait: true });
+  const first = await invoke(key, { input: 'review it', requestId: 'a', wait: true });
   const before = driver.pid(key)!;
   process.kill(before, 'SIGKILL');
   await until(() => driver.pid(key) !== undefined && driver.pid(key) !== before);
   const retried = await invoke(key, { input: 'review it', requestId: 'a', wait: true });
   assert.equal(retried.body.answer, 'echo: review it');
+  assert.equal(retried.body.submissionId, first.body.submissionId, 'the retry found the first run in the restored log');
 });
 
 test('idle sessions release their process and wake on the next request', async () => {
@@ -71,4 +72,25 @@ test('idle sessions release their process and wake on the next request', async (
   await until(() => driver.running().length === 0);
   const woke = await invoke('research:spec-decoding', { input: 'again', wait: true });
   assert.equal(woke.body.answer, 'echo: again');
+});
+
+test('a session that keeps crashing stops auto-restarting until the next request', async () => {
+  const { driver, invoke } = await startDistributor(60_000);
+  const key = 'research:crashy';
+  await invoke(key, { input: 'first', wait: true });
+  for (let i = 0; i < 4; i++) {
+    const pid = driver.pid(key);
+    if (pid === undefined) break;
+    process.kill(pid, 'SIGKILL');
+    await until(() => driver.pid(key) !== pid);
+    if (i < 3) await until(() => driver.pid(key) !== undefined);
+  }
+  assert.equal(driver.pid(key), undefined, 'the fourth crash in a minute is not restarted');
+  const woke = await invoke(key, { input: 'again', wait: true });
+  assert.equal(woke.body.answer, 'echo: again');
+});
+
+test('a malformed session key is a client error', async () => {
+  const { base } = await startDistributor(60_000);
+  assert.equal((await fetch(`${base}/sessions/%ZZ/invocations`, { method: 'POST', body: '{}' })).status, 400);
 });

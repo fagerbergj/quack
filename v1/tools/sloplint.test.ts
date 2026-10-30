@@ -12,7 +12,7 @@ test('flags a function over CC 15 only when its body is touched', () => {
 });
 
 test('counts && || ?? and ternaries but not nested functions', () => {
-  const src = `function f(a: any) {\n  const g = () => { if (a) {} if (a) {} };\n${branches(12)}\n  return a && a || a ?? (a ? 1 : 2);\n}\n`;
+  const src = `function f(a: any) {\n  const g = () => { if (a) {} if (a) {} };\n${branches(12)}\n  return (a && a || a) ?? (a ? 1 : 2);\n}\n`;
   assert.match(lintSource('a.ts', src, 'all')[0].message, /f CC 17/);
 });
 

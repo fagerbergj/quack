@@ -15,6 +15,14 @@ async function readBody(req: IncomingMessage): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
+function safeDecode(s: string): string | undefined {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return undefined;
+  }
+}
+
 function send(res: ServerResponse, status: number, body: unknown) {
   res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
 }
@@ -22,15 +30,21 @@ function send(res: ServerResponse, status: number, body: unknown) {
 // Routes /sessions/<url-encoded key>/<path> to the one process that owns that session (DSP-1..4). Holds no domain logic.
 export function createDistributor(driver: HostDriver, opts: { idleMs?: number } = {}) {
   const lastUse = new Map<string, number>();
+  const stopping = new Map<string, Promise<void>>();
   const idleMs = opts.idleMs ?? 10 * 60_000;
+  const idle = (key: string) => Date.now() - (lastUse.get(key) ?? 0) >= idleMs;
 
   const sweep = setInterval(async () => {
     for (const key of driver.running()) {
-      if (Date.now() - (lastUse.get(key) ?? 0) < idleMs) continue;
+      if (!idle(key)) continue;
       try {
         const url = await driver.ensure(key);
         const { status } = (await (await fetch(`${url}/ping`)).json()) as { status: string };
-        if (status === 'Healthy') await driver.stop(key);
+        // Re-checked after the ping, and requests wait out a stop in flight, so none reaches a dying process.
+        if (status !== 'Healthy' || !idle(key)) continue;
+        const stop = driver.stop(key).finally(() => stopping.delete(key));
+        stopping.set(key, stop);
+        await stop;
       } catch {
         // a session that cannot answer /ping is left for the next sweep
       }
@@ -43,9 +57,10 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number } 
       if (req.method === 'GET' && req.url === '/sessions') return send(res, 200, { running: driver.running() });
       const match = /^\/sessions\/([^/]+)(\/.*)$/.exec(req.url ?? '');
       if (!match) return send(res, 404, { error: 'not found' });
-      const key = decodeURIComponent(match[1]);
-      if (!KEY.test(key)) return send(res, 400, { error: 'invalid session key' });
+      const key = safeDecode(match[1]);
+      if (!key || !KEY.test(key)) return send(res, 400, { error: 'invalid session key' });
       lastUse.set(key, Date.now());
+      await stopping.get(key);
       const url = await driver.ensure(key);
       const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : new Uint8Array(await readBody(req));
       const upstream = await fetch(url + match[2], { method: req.method, body, headers: { 'content-type': 'application/json' } });
