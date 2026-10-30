@@ -1042,6 +1042,7 @@ func runJudgeRounds(g *gateRun, question *genai.Content, answer, sfx string) (ou
 		stop, env, jr := j.recordRoundVerdict(round, runID, jspan, ledgerCtx, v, det, act)
 		// env, not j.res: a failed WAL save flips j.res.Passed after the verdict.
 		settle(strconv.FormatBool(env.Passed))
+		j.observeCriteria(ledgerCtx, round, v)
 		if stop {
 			break
 		}

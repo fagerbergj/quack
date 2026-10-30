@@ -1298,7 +1298,7 @@ func runVerdictTool(t *testing.T, tl tool.Tool, args map[string]any) (map[string
 func TestSubmitVerdict_NearMissPayloads(t *testing.T) {
 	t.Run("anchor missing kind", func(t *testing.T) {
 		var sink verdict
-		submit, err := newSubmitVerdictTool(&sink, nil)
+		submit, err := newSubmitVerdictTool(&sink, nil, false)
 		if err != nil {
 			t.Fatalf("newSubmitVerdictTool: %v", err)
 		}
@@ -1332,7 +1332,7 @@ func TestSubmitVerdict_NearMissPayloads(t *testing.T) {
 
 	t.Run("null shortfall and fix", func(t *testing.T) {
 		var sink verdict
-		submit, err := newSubmitVerdictTool(&sink, nil)
+		submit, err := newSubmitVerdictTool(&sink, nil, false)
 		if err != nil {
 			t.Fatalf("newSubmitVerdictTool: %v", err)
 		}
@@ -1359,7 +1359,7 @@ func TestSubmitVerdict_NearMissPayloads(t *testing.T) {
 	// Run's error text is the tool result ADK returns, so the in-round retry sees why it was rejected.
 	t.Run("still rejects wrong-typed criteria", func(t *testing.T) {
 		var sink verdict
-		submit, err := newSubmitVerdictTool(&sink, nil)
+		submit, err := newSubmitVerdictTool(&sink, nil, false)
 		if err != nil {
 			t.Fatalf("newSubmitVerdictTool: %v", err)
 		}

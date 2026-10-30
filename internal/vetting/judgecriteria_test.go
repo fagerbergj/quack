@@ -1,0 +1,114 @@
+package vetting
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+
+	"github.com/fagerbergj/quack/internal/config"
+	"github.com/fagerbergj/quack/internal/decide"
+	"github.com/fagerbergj/quack/internal/decide/decidetest"
+)
+
+var criteriaSpecs = map[string]criterionSpec{
+	"grounded": {Name: "grounded", Definition: " Claims are backed. ", Scale: &scaleSpec{Max: 3},
+		Bands: []bandSpec{{Min: 0, Max: 1, Meaning: "unbacked"}, {Min: 2, Max: 3, Meaning: "backed"}}},
+	"complete": {Name: "complete", Definition: "Nothing is missing.", Scale: &scaleSpec{Max: 3}, Bands: []bandSpec{{Min: 0, Max: 3, Meaning: "any"}}},
+	"owned":    {Name: "owned", Definition: "Code owns it.", Scale: &scaleSpec{Max: 3}, Deterministic: true, Bands: []bandSpec{{Min: 0, Max: 3, Meaning: "any"}}},
+	"binary":   {Name: "binary", Definition: "A 0-1 criterion.", Scale: &scaleSpec{Max: 1}, Bands: []bandSpec{{Min: 0, Max: 1, Meaning: "any"}}},
+}
+
+func criteriaVerdict() verdict {
+	return verdict{Criteria: map[string]criterionScore{
+		"grounded": {Score: 2.0 / 3, Checked: "read a.go:10, matches the claim", Shortfall: "SHORTFALL-TEXT", Fix: "FIX-TEXT"},
+		"complete": {Score: 1, Checked: "all three asks answered"},
+		"owned":    {Score: 1, Checked: "ignored, code-owned", Deterministic: true},
+		"binary":   {Score: 1, Checked: "ignored, 0-1 scale"},
+		"noproof":  {Score: 1, Checked: "ignored, no rubric spec"},
+	}, Feedback: "FEEDBACK-TEXT", Passed: true, Score: 0.66}
+}
+
+func criteriaRounds(d *decide.Decider) *judgeRounds {
+	return &judgeRounds{cfg: Config{Agent: "web-researcher", Task: "Find the capital.", RubricSpecs: criteriaSpecs, Decisions: d}}
+}
+
+func TestJudgeCriteriaPointIsObserveOnly(t *testing.T) {
+	if len(judgeCriteria.Questions) != 1 || judgeCriteria.Primary != "score" || len(judgeCriteria.Questions["score"].Criteria.([]string)) != judgeScaleMax+1 {
+		t.Fatalf("point = %+v, want one score question with levels 0..%d", judgeCriteria.Point, judgeScaleMax)
+	}
+	cfg := func(mode string) config.DecisionsConfig {
+		return config.DecisionsConfig{Handlers: map[string]config.DecisionHandler{"clef": {URL: decidetest.Down}},
+			Points: map[string]config.DecisionPoint{"judge.criteria": {Enabled: true, Handler: "clef", Mode: mode, ActAt: 0.9, Fail: config.DecisionFailOpen}}}
+	}
+	if _, err := decide.New(cfg(config.DecisionModeObserve)); err != nil {
+		t.Errorf("observe: %v", err)
+	}
+	for _, mode := range []string{config.DecisionModeGuard, config.DecisionModeDecide} {
+		if _, err := decide.New(cfg(mode)); err == nil {
+			t.Errorf("%s: want a boot error, the caller implements observe only", mode)
+		}
+	}
+}
+
+func TestJudgeCriteriaAsksOncePerGradedCriterion(t *testing.T) {
+	asks := criteriaRounds(nil).judgeCriteriaAsks(2, criteriaVerdict())
+	if len(asks) != 2 {
+		t.Fatalf("asks = %d, want grounded and complete only (code-owned, off-scale, spec-less and empty-evidence skipped)", len(asks))
+	}
+	want := []struct{ name, baseline string }{{"complete", "3"}, {"grounded", "2"}}
+	for i, a := range asks {
+		st := a.state.State.(judgeCriteriaState)
+		if st.Criterion != want[i].name || a.baseline != want[i].baseline {
+			t.Errorf("ask %d = %s baseline %s, want %s baseline %s", i, st.Criterion, a.baseline, want[i].name, want[i].baseline)
+		}
+	}
+}
+
+func TestJudgeCriteriaSkipsEmptyEvidence(t *testing.T) {
+	v := criteriaVerdict()
+	for _, name := range []string{"complete", "grounded"} {
+		c := v.Criteria[name]
+		c.Checked = "  \n"
+		v.Criteria[name] = c
+	}
+	if asks := criteriaRounds(nil).judgeCriteriaAsks(1, v); len(asks) != 0 {
+		t.Errorf("asks = %d, want none when the judge gave no evidence", len(asks))
+	}
+}
+
+func TestJudgeCriteriaStateHoldsRubricAndEvidenceOnly(t *testing.T) {
+	ask := criteriaRounds(nil).judgeCriteriaAsks(1, criteriaVerdict())[1]
+	raw, err := json.Marshal(ask.state.State)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys map[string]string
+	if err := json.Unmarshal(raw, &keys); err != nil {
+		t.Fatal(err)
+	}
+	for k := range keys {
+		if !strings.Contains("node_task criterion definition bands evidence", k) {
+			t.Errorf("state key %q is outside the rubric and evidence", k)
+		}
+	}
+	for _, leak := range []string{"SHORTFALL-TEXT", "FIX-TEXT", "FEEDBACK-TEXT", "score", "passed"} {
+		if strings.Contains(string(raw), leak) {
+			t.Errorf("state leaks %q: %s", leak, raw)
+		}
+	}
+	if keys["definition"] != "Claims are backed." || !strings.HasPrefix(keys["bands"], "- **2–3** - backed\n- **0–1** - unbacked") || keys["evidence"] != "read a.go:10, matches the claim" {
+		t.Errorf("state = %s, want the trimmed definition, bands highest first and the judge's evidence", raw)
+	}
+}
+
+// TestSubmittedEvidenceSurvivesNormalisation: the judge's "evidence" key reaches the verdict that observeCriteria reads.
+func TestSubmittedEvidenceSurvivesNormalisation(t *testing.T) {
+	var args verdictArgs
+	if err := json.Unmarshal([]byte(`{"score":2,"criteria":{"grounded":{"evidence":"read a.go:10","score":2}}}`), &args); err != nil {
+		t.Fatal(err)
+	}
+	v := aggregateVerdict(normalizeScale(verdict{Score: args.Score, Criteria: args.Criteria}, criteriaSpecs))
+	if c := v.Criteria["grounded"]; c.Checked != "read a.go:10" || c.Score < 0.66 || c.Score > 0.67 {
+		t.Errorf("criterion = %+v, want its evidence kept and score 2/3", c)
+	}
+}

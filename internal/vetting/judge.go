@@ -59,6 +59,18 @@ var judgeBlocks = []string{"head", "no_tools", "read_tools", "artifact_tools", "
 type judgePrompt struct {
 	art    artifactsrc.Artifact
 	blocks map[string]string
+	// evidence: this round asks for per-criterion evidence (judge.criteria is on and the prompt has the block);
+	// off, the prompt, schema and force-close text are byte-identical to a build without the feature.
+	evidence bool
+}
+
+// optionalJudgeBlocks render when a version defines them and stay absent otherwise, unlike judgeBlocks.
+var optionalJudgeBlocks = []string{"evidence"}
+
+// withEvidence returns p asking for evidence when on and the stored version carries the block.
+func (p judgePrompt) withEvidence(on bool) judgePrompt {
+	p.evidence = on && p.blocks["evidence"] != ""
+	return p
 }
 
 // judgeTemplates caches the parsed system/judge per version across rounds.
@@ -79,12 +91,29 @@ func resolveJudgePrompt(ctx context.Context, res *artifactsrc.Resolver) (judgePr
 				return fmt.Errorf("block %q is empty", b)
 			}
 		}
-		return nil
+		return renderOptionalBlocks(t, blocks)
 	})
 	if err != nil {
 		return judgePrompt{}, fmt.Errorf("vetting: system/judge: %w", err)
 	}
 	return judgePrompt{art: art, blocks: blocks}, nil
+}
+
+// renderOptionalBlocks renders the optional blocks a version defines; an undefined or empty one stays out of blocks.
+func renderOptionalBlocks(t *template.Template, blocks map[string]string) error {
+	for _, b := range optionalJudgeBlocks {
+		if t.Lookup(b) == nil {
+			continue
+		}
+		var sb strings.Builder
+		if err := t.ExecuteTemplate(&sb, b, nil); err != nil {
+			return fmt.Errorf("block %q: %w", b, err)
+		}
+		if s := strings.TrimSpace(sb.String()); s != "" {
+			blocks[b] = s
+		}
+	}
+	return nil
 }
 
 // judgePromptFor resolves system/judge for callers that build no ledger coords (plan judge, tests);
@@ -108,6 +137,9 @@ func (p judgePrompt) behaviour(hasReadTools, hasSkills bool) string {
 	if hasSkills {
 		parts = append(parts, p.blocks["skills"])
 	}
+	if p.evidence {
+		parts = append(parts, p.blocks["evidence"])
+	}
 	return strings.Join(parts, " ")
 }
 
@@ -120,6 +152,9 @@ type criterionScore struct {
 	Fix       string      `json:"fix,omitempty"`       // remedy
 	Anchor    *anchorSpec `json:"anchor,omitempty"`    // where in the answer, if locatable
 	Score     float64     `json:"score"`
+	// Checked: the judge's facts for this criterion (what it checked and found), never a grade; wire name "evidence",
+	// in the tool schema only while judge.criteria is on.
+	Checked string `json:"evidence,omitempty"`
 	// Deterministic marks a code-owned criterion (set by mergeDeterministic); json:"-" keeps it out of
 	// the judge's tool schema and output.
 	Deterministic bool `json:"-"`
@@ -157,7 +192,7 @@ func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool, skillsets []to
 	hasReadTools, hasSkills := len(readTools) > 0, len(skillsets) > 0
 	return func(prompt judgePrompt, sink *verdict, forced *forceClose, maxIters, maxOutputTokens int, thinkingLevel string, receivedIDs []string, artifactTools []tool.Tool) (adkagent.Agent, judgeReadCounters, error) {
 		behaviour, version := prompt.behaviour(hasReadTools, hasSkills), prompt.art.VersionID
-		submit, err := newSubmitVerdictTool(sink, receivedIDs)
+		submit, err := newSubmitVerdictTool(sink, receivedIDs, prompt.evidence)
 		if err != nil {
 			return nil, judgeReadCounters{}, err
 		}
@@ -181,7 +216,7 @@ func NewJudgeFactory(judgeModel model.LLM, readTools []tool.Tool, skillsets []to
 			Tools:                 judgeTools,
 			Toolsets:              skillsets,
 			GenerateContentConfig: judgeGenConfig(maxOutputTokens, thinkingLevel),
-			BeforeModelCallbacks:  []llmagent.BeforeModelCallback{forcedVerdictCallback(maxIters, forced, receivedIDs)},
+			BeforeModelCallbacks:  []llmagent.BeforeModelCallback{forcedVerdictCallback(maxIters, forced, receivedIDs, prompt.evidence)},
 			BeforeToolCallbacks:   []llmagent.BeforeToolCallback{countRepo, countArtifacts},
 		}
 		for _, w := range wire {
@@ -230,18 +265,26 @@ const judgeForceCloseInstruction = "\n\nSTOP - you are out of tool budget for th
 	`{"score": <0-3 overall fallback>, "criteria": {"<criterion name>": {"reason": "<why>", "score": <0-3>}, ...}, "feedback": "<concise, actionable - empty if it passes>"}` +
 	" Score every criterion the rubric named, from what you have already verified."
 
+// forceCloseInstruction is judgeForceCloseInstruction, naming the evidence key too when the round asks for it.
+func forceCloseInstruction(evidence bool) string {
+	if !evidence {
+		return judgeForceCloseInstruction
+	}
+	return strings.Replace(judgeForceCloseInstruction, `"score": <0-3>}`, `"score": <0-3>, "evidence": "<what you checked and found>"}`, 1)
+}
+
 // forceClose: forced once tools are disabled or stripped (callers must not then demand a tool call),
 // stripped once they were removed from the request.
 type forceClose struct{ forced, stripped bool }
 
 // forcedVerdictCallback sets tool_choice none on the last allowed turn, keeping the prefix cache; a stutter
 // or a second forced turn strips the tools instead, since a parser may drop the call none refused.
-func forcedVerdictCallback(maxIters int, forced *forceClose, receivedIDs []string) llmagent.BeforeModelCallback {
+func forcedVerdictCallback(maxIters int, forced *forceClose, receivedIDs []string, evidence bool) llmagent.BeforeModelCallback {
 	if forced == nil {
 		forced = &forceClose{}
 	}
 	turn := 0
-	instruction := judgeForceCloseInstruction
+	instruction := forceCloseInstruction(evidence)
 	if len(receivedIDs) > 0 {
 		// Appended to the user message, not the system prompt, so the prefix cache survives.
 		instruction += ` Also include a "memories" array voting on every RECALLED MEMORIES id listed above (each {"id": ..., "vote": "supported"|"contradicted"|"not_relevant", "reason": "..."}).`
@@ -300,12 +343,16 @@ type verdictArgs struct {
 
 // lenientVerdictSchema lets every optional string property also accept null: judges send
 // `"shortfall": null`, strict validation rejected the whole verdict, and null unmarshals to "" anyway.
-func lenientVerdictSchema() (*jsonschema.Schema, error) {
+// A criterion's evidence property is offered only when evidence is true (judge.criteria on).
+func lenientVerdictSchema(evidence bool) (*jsonschema.Schema, error) {
 	s, err := jsonschema.For[verdictArgs](nil)
 	if err != nil {
 		return nil, err
 	}
 	allowNullOptionalStrings(s)
+	if c := s.Properties["criteria"]; !evidence && c != nil && c.AdditionalProperties != nil {
+		delete(c.AdditionalProperties.Properties, "evidence")
+	}
 	return s, nil
 }
 
@@ -331,8 +378,8 @@ func allowNullOptionalStrings(s *jsonschema.Schema) {
 }
 
 // newSubmitVerdictTool: builds structured-termination tool (mirrors ADK exitlooptool).
-func newSubmitVerdictTool(sink *verdict, receivedIDs []string) (tool.Tool, error) {
-	schema, err := lenientVerdictSchema()
+func newSubmitVerdictTool(sink *verdict, receivedIDs []string, evidence bool) (tool.Tool, error) {
+	schema, err := lenientVerdictSchema(evidence)
 	if err != nil {
 		return nil, err
 	}
@@ -894,6 +941,7 @@ func runJudgeRound(ctx context.Context, factory JudgeFactory, cfg Config, questi
 	if err != nil {
 		return verdict{}, judgeReadCounters{}, err
 	}
+	prompt = prompt.withEvidence(cfg.Decisions.Enabled(judgeCriteria.ID))
 	// closed is set by forcedVerdictCallback the instant it disables or strips tools.
 	judgeAgent, counters, err := factory(prompt, &st.sink, &st.closed, maxIters, cfg.JudgeMaxOutputTokens, cfg.JudgeThinkingLevel, receivedIDs, cfg.JudgeArtifactTools)
 	if err != nil {

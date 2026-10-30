@@ -15,7 +15,7 @@ import (
 // TestSubmitVerdictWire_StringifiedArgsDecode: submit_verdict's real schema drives the adapter's decoder,
 // so a criteria string missing its final brace and a stringified findings array arrive as object and array.
 func TestSubmitVerdictWire_StringifiedArgsDecode(t *testing.T) {
-	submit, err := newSubmitVerdictTool(&verdict{}, nil)
+	submit, err := newSubmitVerdictTool(&verdict{}, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
