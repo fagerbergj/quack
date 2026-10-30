@@ -21,6 +21,8 @@ const buttonVariants = cva(
         default: 'h-11 px-4 text-sm medium:h-9',
         sm: 'h-11 px-3 text-xs medium:h-8',
         icon: 'size-11 medium:size-9',
+        // The caller sizes it (thumbnails, dense rows); no height, padding or text size.
+        none: '',
         inline: 'min-h-11 text-xs medium:min-h-6',
       },
     },

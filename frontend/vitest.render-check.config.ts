@@ -10,7 +10,19 @@ import { playwright } from '@vitest/browser-playwright'
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   // Pre-bundled up front: discovered mid-run, Vite reloads the page and the cold run fails the diagram stories.
-  optimizeDeps: { include: ['react-dom/client'] },
+  optimizeDeps: {
+    include: [
+      'react-dom/client',
+      '@radix-ui/react-dialog',
+      '@radix-ui/react-dropdown-menu',
+      '@radix-ui/react-popover',
+      '@radix-ui/react-slot',
+      '@radix-ui/react-tooltip',
+      'class-variance-authority',
+      'clsx',
+      'tailwind-merge',
+    ],
+  },
   test: {
     include: ['src/render-check.browser.test.tsx'],
     browser: {

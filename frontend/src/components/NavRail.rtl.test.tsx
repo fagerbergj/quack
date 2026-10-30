@@ -61,6 +61,17 @@ describe('NavRail drawer', () => {
     await waitFor(() => expect(document.activeElement).toBe(trigger))
   })
 
+  // The drawer takes focus itself, so a tooltip on its first control cannot open and swallow the first Escape.
+  it('closes on a single Escape', async () => {
+    const user = userEvent.setup()
+    render(<Harness />)
+    await user.click(screen.getByRole('button', { name: 'Toggle navigation' }))
+    await screen.findByRole('dialog', { name: 'Main navigation' })
+    expect(screen.queryByRole('tooltip')).toBeNull()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+
   it('closes on a backdrop tap', async () => {
     const user = userEvent.setup()
     render(<Harness />)

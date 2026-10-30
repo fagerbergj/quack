@@ -52,8 +52,9 @@ function QueuedMessageRow({ msg, onEdit, onRemove }: {
           onChange={e => setText(e.target.value)}
           onKeyDown={e => {
             if (e.key === 'Enter') { e.preventDefault(); onEdit?.(text); setEditing(false) }
-            if (e.key === 'Escape') { e.stopPropagation(); setText(msg.text); setEditing(false) }
+            if (e.key === 'Escape') { setText(msg.text); setEditing(false) }
           }}
+          data-editing
           className="flex-1"
         />
         <Button variant="link" size="inline" onClick={() => { onEdit?.(text); setEditing(false) }}>save</Button>
@@ -232,7 +233,12 @@ export function NodePopup({
 
   return (
     <Dialog open onOpenChange={o => { if (!o) onClose() }}>
-     <DialogContent title={`Node ${node.agent}`} className="gap-2 overflow-y-auto px-5 pt-2 medium:pb-6">
+     <DialogContent
+      title={`Node ${node.agent}`}
+      className="gap-2 overflow-y-auto px-5 pt-2 medium:pb-6"
+      // Escape inside the queued-message editor cancels the edit (its own handler), not the whole popup.
+      onEscapeKeyDown={e => { if (e.target instanceof HTMLElement && e.target.hasAttribute('data-editing')) e.preventDefault() }}
+     >
       {/* Close on its own row so it never overlaps the content bubbles. */}
       <div className="flex justify-end -mb-2">
         <DialogClose asChild>

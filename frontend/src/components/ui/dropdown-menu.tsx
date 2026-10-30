@@ -3,7 +3,23 @@ import * as MenuPrimitive from '@radix-ui/react-dropdown-menu'
 import { cn } from '../../lib/utils'
 
 export const DropdownMenu = MenuPrimitive.Root
-export const DropdownMenuTrigger = MenuPrimitive.Trigger
+
+// The last trigger that opened a menu: a dialog opened from one of its items returns focus here, since the item
+// is unmounted by then (see useOpenerFocus).
+let lastTrigger: HTMLElement | null = null
+export function lastMenuTrigger(): HTMLElement | null {
+  return lastTrigger?.isConnected ? lastTrigger : null
+}
+
+export function DropdownMenuTrigger({ onPointerDown, onKeyDown, ...props }: ComponentProps<typeof MenuPrimitive.Trigger>) {
+  return (
+    <MenuPrimitive.Trigger
+      onPointerDown={e => { lastTrigger = e.currentTarget; onPointerDown?.(e) }}
+      onKeyDown={e => { lastTrigger = e.currentTarget; onKeyDown?.(e) }}
+      {...props}
+    />
+  )
+}
 export const DropdownMenuRadioGroup = MenuPrimitive.RadioGroup
 
 // z-60 keeps it above a Dialog (z-50) it may be opened from. Items are 44px on compact, denser from `medium`.

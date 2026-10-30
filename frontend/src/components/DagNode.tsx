@@ -24,8 +24,9 @@ import { Dialog, DialogContent } from './ui/dialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from './ui/dropdown-menu'
 import { Input } from './ui/input'
 
-// A full-width, left-aligned text row styled as a Button (the 44px phone floor is dropped: these sit inside a dense card).
-const ROW = 'w-full min-w-0 justify-start gap-2 h-auto min-h-0 rounded-none text-left font-normal'
+// A full-width, left-aligned text row styled as a Button with size="none" (the 44px phone floor is dropped: these sit
+// inside a dense card).
+const ROW = 'w-full min-w-0 justify-start gap-2 rounded-none text-left font-normal'
 
 // Retry (→ queued) is legal from done, failed, or cancelled - see dag.CanTransition.
 const isTerminal = (s: NodeStatus) => s === 'done' || s === 'failed' || s === 'cancelled'
@@ -270,7 +271,7 @@ function CollapsedPreview({ label, text, popupTitle, className = 'py-1 text-2xs'
   if (!text) return null
   return (
     <>
-      <Button variant="ghost" onClick={() => setOpen(true)} className={cn(ROW, className)}>
+      <Button variant="ghost" size="none" onClick={() => setOpen(true)} className={cn(ROW, className)}>
         <span className={labelClass}>{label}</span>
         <span className="truncate">{previewLine(text, max)}</span>
       </Button>
@@ -379,7 +380,7 @@ function NodeArtifactSummary({ chatId, nodeId, nodeArtifactKind, finished, onOpe
 
   if (!primary) return null
   return (
-    <Button variant="ghost" onClick={onOpen} className={cn(ROW, 'px-4 py-2 text-xs border-t border-gray-100 dark:border-gray-700')}>
+    <Button variant="ghost" size="none" onClick={onOpen} className={cn(ROW, 'px-4 py-2 text-xs border-t border-gray-100 dark:border-gray-700')}>
       <Icon name="archive" className="w-3.5 h-3.5 shrink-0" />
       <span className="truncate">{artifactTitle(primary, body)}</span>
     </Button>
@@ -494,17 +495,17 @@ function RetryControl({ nodeId, onRetry }: {
           placeholder="Retry with guidance (optional) - re-runs this node + downstream…"
           className="flex-1"
         />
-        <Button variant="link" size="inline" onClick={send} className="text-2xs">retry</Button>
+        <Button variant="link" size="inline" onClick={send} className="text-2xs font-medium text-indigo-700 dark:text-indigo-400">retry</Button>
         <Button variant="link" size="inline" onClick={() => { setGuiding(false); setText('') }} className="text-2xs text-muted-foreground">cancel</Button>
       </div>
     )
   }
   return (
     <div className="flex items-center gap-3 px-4 py-2 border-b border-gray-100 dark:border-gray-700">
-      <Button variant="link" size="inline" onClick={() => onRetry(nodeId)} title="Re-run this node and everything downstream of it (reuses the rest)" className="gap-1 text-2xs">
+      <Button variant="link" size="inline" onClick={() => onRetry(nodeId)} title="Re-run this node and everything downstream of it (reuses the rest)" className="gap-1 text-2xs font-medium text-indigo-600 dark:text-indigo-400">
         <Icon name="refresh" className="w-3 h-3" /> retry
       </Button>
-      <Button variant="link" size="inline" onClick={() => setGuiding(true)} title="Re-run this node with new guidance" className="gap-1 text-2xs">
+      <Button variant="link" size="inline" onClick={() => setGuiding(true)} title="Re-run this node with new guidance" className="gap-1 text-2xs font-medium text-indigo-600 dark:text-indigo-400">
         <Icon name="refresh" className="w-3 h-3" /> retry with guidance…
       </Button>
     </div>
@@ -724,7 +725,7 @@ function StatusBanners({ nodeId, state, onDismissError }: { nodeId: string; stat
 function NodeAnswerButton({ canAnswer, onClick }: { canAnswer: boolean; onClick: () => void }) {
   if (!canAnswer) return null
   return (
-    <Button size="sm" onClick={onClick} className="-my-3 gap-1">
+    <Button size="sm" onClick={onClick} className="-my-3 gap-1 bg-amber-600 hover:bg-amber-700">
       <Icon name="help" className="w-3.5 h-3.5" /> Answer
     </Button>
   )
@@ -841,6 +842,7 @@ export const DagNode = memo(function DagNode({
           queue, prompt editor and pending-question answer. */}
       <Button
         variant="ghost"
+        size="none"
         onClick={() => setPopupOpen(true)}
         className={cn(ROW, 'px-4 py-2 text-xs border-b border-gray-100 dark:border-gray-700')}
         title="View prompt and controls"

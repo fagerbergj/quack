@@ -622,7 +622,7 @@ export function ArtifactPanel({ chatId, nodeId, nodeAgent, nodeTask, nodeError, 
           findings is not a small-dialog payload. */}
       <DialogContent
         title={nodeId ? `Artifacts for node ${nodeId}` : `Artifacts: ${nodeAgent}`}
-        className="relative h-[90dvh] overflow-hidden p-0 medium:h-[88vh] medium:max-h-[88vh] medium:max-w-5xl"
+        className="h-[90dvh] overflow-hidden p-0 medium:h-[88vh] medium:max-h-[88vh] medium:max-w-5xl"
       >
         {/* Header: the node's own name, never an artifact id or raw prompt; >=44px targets.
             line-clamp-2 is a hard ceiling so a long label can't push the header past 2 lines. */}

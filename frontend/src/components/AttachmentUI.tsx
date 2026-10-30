@@ -19,10 +19,10 @@ function ImageThumbnail({
   const [open, setOpen] = useState(false)
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      {/* size={null}: a thumbnail's box comes from the caller, not a button size. */}
+      {/* size="none": a thumbnail's box comes from the caller, not a button size. */}
       <Button
         variant="outline"
-        size={null}
+        size="none"
         onClick={() => setOpen(true)}
         aria-label={`View ${alt} full size`}
         title={alt}
@@ -97,9 +97,9 @@ export function AttachmentStrip({
           )}
           <Button
             variant="secondary"
-            size={null}
+            size="none"
             onClick={() => onRemove(i)}
-            className="absolute -top-1.5 -right-1.5 hidden size-5 rounded-full bg-gray-700 text-xs text-white hover:bg-gray-600 focus-visible:flex group-hover:flex"
+            className="absolute -top-1.5 -right-1.5 hidden size-5 rounded-full bg-gray-700 text-xs text-white hover:bg-gray-600 group-hover:flex"
             aria-label="Remove attachment"
           >
             ×

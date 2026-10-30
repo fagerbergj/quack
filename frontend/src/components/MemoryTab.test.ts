@@ -61,6 +61,13 @@ describe('MemoryTab', () => {
     return found
   }
 
+  // Confirm and Cancel are menu items so keyboard users can reach them; the menu renders in a portal.
+  function menuItem(name: string): HTMLElement {
+    const found = Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(b => b.textContent === name)
+    if (!found) throw new Error(`menu item ${name} not found`)
+    return found
+  }
+
   it('renders the list returned by GET /api/v1/memories', async () => {
     fetchMock.mockResolvedValue(jsonResponse({ memories: [MEMORY], total: 1 }))
     await renderAndFlush()
@@ -105,7 +112,7 @@ describe('MemoryTab', () => {
     act(() => forgetButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
 
     // Confirm/Cancel is now showing; the GET was the only request so far.
-    const confirmButton = findButton(document.body, b => b.textContent === 'Confirm')
+    const confirmButton = menuItem('Confirm')
     expect(fetchMock).toHaveBeenCalledTimes(1)
 
     fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }))
@@ -130,7 +137,7 @@ describe('MemoryTab', () => {
     act(() => { fireEvent.keyDown(kebabButton, { key: 'Enter' }) })
     const forgetButton = document.body.querySelector<HTMLElement>('[role="menuitem"]')!
     act(() => forgetButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
-    const cancelButton = findButton(document.body, b => b.textContent === 'Cancel')
+    const cancelButton = menuItem('Cancel')
     act(() => cancelButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
 
     expect(fetchMock).toHaveBeenCalledTimes(1) // just the initial GET

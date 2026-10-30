@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, type ComponentProps, type ReactNode, type RefO
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { cva, type VariantProps } from 'class-variance-authority'
 import { cn } from '../../lib/utils'
+import { lastMenuTrigger } from './dropdown-menu'
 
 export const Dialog = DialogPrimitive.Root
 export const DialogClose = DialogPrimitive.Close
@@ -20,13 +21,15 @@ const contentVariants = cva('fixed flex flex-col bg-background text-foreground o
 
 function RememberOpener({ into }: { into: RefObject<HTMLElement | null> }) {
   useLayoutEffect(() => {
-    into.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const el = document.activeElement
+    into.current = el instanceof HTMLElement && el !== document.body ? el : null
   }, [into])
   return null
 }
 
 // Radix returns focus only to a Dialog.Trigger, but these dialogs open from app state. `remember` must be the
 // first child of the content (its layout effect runs before any autoFocus); closing then refocuses the opener.
+// A menu item that opened the dialog unmounts with its menu, so a gone opener falls back to that menu's trigger.
 export function useOpenerFocus(onCloseAutoFocus?: (e: Event) => void): { remember: ReactNode; onCloseAutoFocus: (e: Event) => void } {
   const opener = useRef<HTMLElement | null>(null)
   return {
@@ -35,7 +38,8 @@ export function useOpenerFocus(onCloseAutoFocus?: (e: Event) => void): { remembe
       onCloseAutoFocus?.(e)
       if (e.defaultPrevented) return
       e.preventDefault()
-      opener.current?.focus()
+      const target = opener.current?.isConnected ? opener.current : lastMenuTrigger()
+      target?.focus()
     },
   }
 }
@@ -55,9 +59,11 @@ export function DialogContent({ className, children, title, placement, onOpenAut
         onOpenAutoFocus={e => {
           onOpenAutoFocus?.(e)
           if (e.defaultPrevented) return
-          // A field marked data-autofocus wins over Radix's first-tabbable default.
-          const target = e.currentTarget instanceof HTMLElement ? e.currentTarget.querySelector<HTMLElement>('[data-autofocus]') : null
-          if (target) { e.preventDefault(); target.focus() }
+          // A field marked data-autofocus wins; otherwise focus the dialog itself, not its first control, so a
+          // tooltip-wrapped button is not announced and a single Escape closes.
+          const root = e.currentTarget instanceof HTMLElement ? e.currentTarget : null
+          e.preventDefault()
+          ;(root?.querySelector<HTMLElement>('[data-autofocus]') ?? root)?.focus()
         }}
         className={cn(contentVariants({ placement }), className)}
         {...props}

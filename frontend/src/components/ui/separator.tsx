@@ -1,13 +1,12 @@
 import type { ComponentProps } from 'react'
-import * as SeparatorPrimitive from '@radix-ui/react-separator'
 import { cn } from '../../lib/utils'
 
-// Decorative by default (no role): a hairline between groups, not a landmark.
-export function Separator({ className, orientation = 'horizontal', decorative = true, ...props }: ComponentProps<typeof SeparatorPrimitive.Root>) {
+// A hairline between groups: decorative, so screen readers skip it.
+export function Separator({ className, orientation = 'horizontal', ...props }: ComponentProps<'div'> & { orientation?: 'horizontal' | 'vertical' }) {
   return (
-    <SeparatorPrimitive.Root
-      decorative={decorative}
-      orientation={orientation}
+    <div
+      aria-hidden="true"
+      data-orientation={orientation}
       className={cn('shrink-0 bg-border', orientation === 'horizontal' ? 'h-px w-full' : 'h-full w-px', className)}
       {...props}
     />

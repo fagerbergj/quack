@@ -1,4 +1,4 @@
-import { memo, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import type { Memory, VoteDirection } from '../api'
 import { paletteTone } from '../lib/colorHash'
 import { Badge, type BadgeTone } from './ui/badge'
@@ -78,6 +78,15 @@ function KebabMenu({ memory, onForget }: { memory: Memory; onForget: (id: string
   const [confirming, setConfirming] = useState(false)
   const [forgetting, setForgetting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const confirmRef = useRef<HTMLDivElement>(null)
+  const forgetRef = useRef<HTMLDivElement>(null)
+  const armed = useRef(false)
+
+  // The swapped-in item has no focus of its own: Confirm takes it on arming, Forget gets it back on cancel.
+  useEffect(() => {
+    if (confirming) { armed.current = true; confirmRef.current?.focus() }
+    else if (armed.current) { armed.current = false; forgetRef.current?.focus() }
+  }, [confirming])
 
   async function handleConfirm() {
     setForgetting(true)
@@ -105,17 +114,18 @@ function KebabMenu({ memory, onForget }: { memory: Memory; onForget: (id: string
       <DropdownMenuContent className="w-40">
         {error && <p className="px-3 py-1 text-red-700 dark:text-red-400">{error}</p>}
         {confirming ? (
-          <div className="flex items-center gap-2 px-2 py-1">
-            <Button variant="destructive" size="sm" onClick={() => { void handleConfirm() }} disabled={forgetting}>
+          // Items, not bare buttons: Radix's roving focus is the only way keyboard users move inside a menu.
+          <>
+            <DropdownMenuItem ref={confirmRef} destructive disabled={forgetting} onSelect={e => { e.preventDefault(); void handleConfirm() }}>
               {forgetting ? 'Forgetting…' : 'Confirm'}
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => setConfirming(false)} disabled={forgetting}>
+            </DropdownMenuItem>
+            <DropdownMenuItem disabled={forgetting} onSelect={e => { e.preventDefault(); setConfirming(false) }}>
               Cancel
-            </Button>
-          </div>
+            </DropdownMenuItem>
+          </>
         ) : (
           // Stays open: Forget arms an inline Confirm rather than acting.
-          <DropdownMenuItem onSelect={e => { e.preventDefault(); setConfirming(true) }}>
+          <DropdownMenuItem ref={forgetRef} onSelect={e => { e.preventDefault(); setConfirming(true) }}>
             <Icon name="delete" className="w-3.5 h-3.5" /> Forget
           </DropdownMenuItem>
         )}

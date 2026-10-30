@@ -235,41 +235,41 @@ function ReloadReportPanel({ result: { reload: r, aborted }, onDismiss }: { resu
 
   return (
     <Card asChild className={`m-3 rounded-lg px-4 py-2 text-sm ${tone}`}>
-    <section aria-label="Reload report">
-      <div className="flex items-center gap-2">
-        <h2 className="flex-1 font-medium">
-          {aborted ? `Reload aborted - still serving generation ${r.generation}` : `Reloaded - generation ${r.generation}`}
-        </h2>
-        <Button variant="ghost" size="icon" onClick={onDismiss} aria-label="Dismiss reload report" className="size-11 medium:size-11 -mr-3">
-          <Icon name="close" className="w-4 h-4" />
-        </Button>
-      </div>
-      {groups.length === 0 && r.failures.length === 0 && (
-        <p className="pb-1 text-xs text-gray-500 dark:text-gray-400">No changes</p>
-      )}
-      {groups.length > 0 && (
-        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 pb-1 text-xs">
-          {groups.map(([label, names]) => (
-            <Fragment key={label}>
-              <dt className="text-gray-500 dark:text-gray-400">{label}</dt>
-              <dd className="min-w-0 break-words">{names.join(', ')}</dd>
-            </Fragment>
-          ))}
-        </dl>
-      )}
-      {r.failures.length > 0 && (
-        <ul className="flex flex-col gap-1 pb-1 text-xs text-amber-700 dark:text-amber-400">
-          {r.failures.map((f, i) => (
-            <li key={i} className="flex items-start gap-2">
-              <Icon name="warning" className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-              <span className="min-w-0 break-words whitespace-pre-line">
-                <span className="font-medium">{failureSource(f)}</span> ({f.stage}): <span className="font-mono">{f.error}</span>
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
+      <section aria-label="Reload report">
+        <div className="flex items-center gap-2">
+          <h2 className="flex-1 font-medium">
+            {aborted ? `Reload aborted - still serving generation ${r.generation}` : `Reloaded - generation ${r.generation}`}
+          </h2>
+          <Button variant="ghost" size="icon" onClick={onDismiss} aria-label="Dismiss reload report" className="size-11 medium:size-11 -mr-3">
+            <Icon name="close" className="w-4 h-4" />
+          </Button>
+        </div>
+        {groups.length === 0 && r.failures.length === 0 && (
+          <p className="pb-1 text-xs text-gray-500 dark:text-gray-400">No changes</p>
+        )}
+        {groups.length > 0 && (
+          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 pb-1 text-xs">
+            {groups.map(([label, names]) => (
+              <Fragment key={label}>
+                <dt className="text-gray-500 dark:text-gray-400">{label}</dt>
+                <dd className="min-w-0 break-words">{names.join(', ')}</dd>
+              </Fragment>
+            ))}
+          </dl>
+        )}
+        {r.failures.length > 0 && (
+          <ul className="flex flex-col gap-1 pb-1 text-xs text-amber-700 dark:text-amber-400">
+            {r.failures.map((f, i) => (
+              <li key={i} className="flex items-start gap-2">
+                <Icon name="warning" className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                <span className="min-w-0 break-words whitespace-pre-line">
+                  <span className="font-medium">{failureSource(f)}</span> ({f.stage}): <span className="font-mono">{f.error}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
     </Card>
   )
 }

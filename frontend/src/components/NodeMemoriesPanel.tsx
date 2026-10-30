@@ -106,7 +106,7 @@ export function NodeMemoriesPanel({ chatId, nodeId, judgeRounds, onClose }: Node
 
   return (
     <Dialog open onOpenChange={o => { if (!o) onClose() }}>
-      <DialogContent title="Memories received by this node" className="max-h-[80dvh] medium:max-w-lg">
+      <DialogContent title="Memories received by this node" className="max-h-[80dvh] medium:max-h-[80dvh] medium:max-w-lg">
         <div className="flex items-center justify-between px-4 py-3 border-b border-border">
           <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-100">Memories</h2>
           <DialogClose asChild>

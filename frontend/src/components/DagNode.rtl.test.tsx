@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
-import { act, cleanup, render as rtlRender, screen, within } from '@testing-library/react'
+import { act, cleanup, render as rtlRender, screen, waitFor, within } from '@testing-library/react'
 import type { ReactElement } from 'react'
 import userEvent from '@testing-library/user-event'
 import { DagNode } from './DagNode'
@@ -48,6 +48,22 @@ describe('DagNode artifacts menu item (#1114)', () => {
     await user.click(item)
 
     expect(await screen.findByRole('dialog', { name: /Artifacts for node r1/ })).toBeTruthy()
+  })
+
+  // The menu item that opened the panel unmounts with the menu, so focus must come back to the kebab, not <body>.
+  it('returns focus to the kebab when the panel it opened from the menu is closed', async () => {
+    const user = userEvent.setup()
+    render(<DagNode node={node} state={{ status: 'running' }} runs={[]} answer="" isFinal={false} chatId="chat-1" />)
+    const kebab = screen.getByRole('button', { name: 'Node actions' })
+    kebab.focus()
+    await user.keyboard('{Enter}')
+    await user.keyboard('{ArrowDown}{ArrowDown}{ArrowDown}')
+    await user.click(await screen.findByRole('menuitem', { name: /Artifacts/ }))
+    await screen.findByRole('dialog', { name: /Artifacts for node r1/ })
+
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await waitFor(() => expect(document.activeElement).toBe(kebab))
   })
 
   it('still offers Artifacts on a finished (terminal) node - outputs matter most after a node completes', async () => {

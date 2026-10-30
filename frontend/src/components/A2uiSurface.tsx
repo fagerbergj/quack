@@ -113,6 +113,8 @@ const Button = createComponentImplementation(ButtonApi, ({ props, buildChild }) 
         variant={BUTTON_VARIANT[(props.variant ?? 'default') as keyof typeof BUTTON_VARIANT] ?? 'outline'}
         onClick={props.action}
         disabled={busy || props.isValid === false}
+        // Agent-written labels can be long: wrap them instead of overflowing a fixed-height pill.
+        className="h-auto min-h-11 whitespace-normal py-2 text-left"
       >
         <InButton.Provider value>{props.child ? buildChild(props.child) : null}</InButton.Provider>
       </UiButton>

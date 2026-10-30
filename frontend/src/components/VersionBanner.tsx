@@ -41,8 +41,8 @@ export function VersionBanner({ skew }: { skew: Skew }) {
 function Blocked() {
   return (
     <Dialog open>
-      <DialogContent title="Reload required" placement="blocking" role="alertdialog">
-        <p>quack was updated and this page no longer works with it - reload to get the new version.</p>
+      <DialogContent title="Reload required" placement="blocking" role="alertdialog" aria-describedby="version-blocked-msg">
+        <p id="version-blocked-msg">quack was updated and this page no longer works with it - reload to get the new version.</p>
         <ReloadButton autoFocus />
       </DialogContent>
     </Dialog>

@@ -26,6 +26,36 @@ describe('MemoryEntry kebab menu touch target (#1137)', () => {
   })
 })
 
+// Radix menus move focus by roving tabindex only, so Confirm and Cancel must be items, not buttons.
+describe('MemoryEntry Forget confirmation by keyboard', () => {
+  async function armForget(onForget: () => Promise<void>) {
+    const user = userEvent.setup()
+    render(<MemoryEntry memory={memory} onForget={onForget} onVote={async () => {}} />)
+    screen.getByRole('button', { name: 'Memory actions' }).focus()
+    await user.keyboard('{Enter}')
+    await user.keyboard('{Enter}') // Forget
+    return user
+  }
+
+  it('arming Forget focuses Confirm, and Enter forgets', async () => {
+    const onForget = vi.fn(async () => {})
+    const user = await armForget(onForget)
+    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Confirm' }))
+    await user.keyboard('{Enter}')
+    expect(onForget).toHaveBeenCalledWith('m1')
+  })
+
+  it('ArrowDown reaches Cancel, which forgets nothing and returns focus to Forget', async () => {
+    const onForget = vi.fn(async () => {})
+    const user = await armForget(onForget)
+    await user.keyboard('{ArrowDown}')
+    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Cancel' }))
+    await user.keyboard('{Enter}')
+    expect(onForget).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: /Forget/ }))
+  })
+})
+
 // The vote control calls onVote and updates the score optimistically; clicking the active arrow again
 // toggles the vote off.
 describe('MemoryEntry vote control', () => {

@@ -301,7 +301,7 @@ function MemoryTabContent({ initialState, initialStats, onDisabled }: MemoryTabP
           type="search"
           value={q}
           onChange={e => setQ(e.target.value)}
-          placeholder="Search — what would a run recall for this?"
+          placeholder="Search — what would a run recall?"
           aria-label="Search memories"
           className="grow basis-full medium:basis-0"
         />

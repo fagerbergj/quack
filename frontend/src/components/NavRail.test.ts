@@ -79,9 +79,11 @@ describe('NavRail', () => {
 
   it('renders no extensions section when the only extension has no href', () => {
     mount({ initialExtensions: [{ name: 'github' }] })
-    // The extensions divider is the only border-gray-100 element in the drawer
-    // panel - absent means no section rendered.
-    expect(document.body.querySelector('.border-gray-100')).toBeNull()
+    // The extensions section is a Separator plus its buttons; with none linked, only the Chats/Memory/Plugins
+    // buttons and the header's divider remain.
+    const buttons = Array.from(document.body.querySelectorAll('button')).map(b => b.getAttribute('aria-label'))
+    expect(buttons).toEqual(['Close navigation', 'Chats', 'Memory', 'Plugins'])
+    expect(document.body.querySelectorAll('[data-orientation="horizontal"]')).toHaveLength(1)
   })
 
   it('renders only the href-bearing extension out of a mixed list', () => {

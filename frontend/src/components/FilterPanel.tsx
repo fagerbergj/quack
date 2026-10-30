@@ -57,36 +57,36 @@ export function FilterPanel({ facets, selected, onToggle, onClear }: FilterPanel
           )}
         </div>
         <Separator className="mb-1" />
-          {facets.length === 0 && (
-            <div className="px-1 py-2 text-muted-foreground">No filters available</div>
-          )}
-          <div className="medium:max-h-80 medium:overflow-y-auto">
-            {facets.map(f => (
-              <div key={f.key} className="mb-2 last:mb-0">
-                <div className="px-1 py-0.5 text-2xs font-semibold text-muted-foreground">
-                  {f.label}
-                </div>
-                {f.options.map(o => {
-                  const on = (selected[f.key] ?? []).includes(o.value)
-                  return (
-                    <label
-                      key={o.value}
-                      className="flex items-center gap-2 min-h-[44px] medium:min-h-0 px-1 py-1 rounded cursor-pointer hover:bg-accent"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={on}
-                        onChange={() => onToggle(f.key, o.value)}
-                        className="accent-blue-600"
-                      />
-                      <span className="flex-1 text-foreground truncate">{o.label}</span>
-                      {o.count != null && <span className="text-muted-foreground">{o.count}</span>}
-                    </label>
-                  )
-                })}
+        {facets.length === 0 && (
+          <div className="px-1 py-2 text-muted-foreground">No filters available</div>
+        )}
+        <div className="medium:max-h-80 medium:overflow-y-auto">
+          {facets.map(f => (
+            <div key={f.key} className="mb-2 last:mb-0">
+              <div className="px-1 py-0.5 text-2xs font-semibold text-muted-foreground">
+                {f.label}
               </div>
-            ))}
-          </div>
+              {f.options.map(o => {
+                const on = (selected[f.key] ?? []).includes(o.value)
+                return (
+                  <label
+                    key={o.value}
+                    className="flex items-center gap-2 min-h-[44px] medium:min-h-0 px-1 py-1 rounded cursor-pointer hover:bg-accent"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={on}
+                      onChange={() => onToggle(f.key, o.value)}
+                      className="accent-blue-600"
+                    />
+                    <span className="flex-1 text-foreground truncate">{o.label}</span>
+                    {o.count != null && <span className="text-muted-foreground">{o.count}</span>}
+                  </label>
+                )
+              })}
+            </div>
+          ))}
+        </div>
       </PopoverContent>
     </Popover>
   )

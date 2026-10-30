@@ -196,6 +196,8 @@ describe('ArtifactPanel as a result view (#1178)', () => {
     // The sheet: bottom-docked below medium, one scrolling region, and no
     // native <select> anywhere in the panel (the picker is gone).
     const dialog = screen.getByRole('dialog')
+    // A dropped `fixed` (tailwind-merge removes it when a position utility is added) leaves the portal in flow.
+    expect(dialog?.className).toMatch(/\bfixed\b/)
     expect(dialog?.className).toMatch(/bottom-0/)
     expect(dialog?.className).toMatch(/rounded-t-2xl/)
     expect(dialog?.className).toMatch(/medium:rounded-2xl/)

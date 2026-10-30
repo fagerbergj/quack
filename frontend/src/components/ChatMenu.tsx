@@ -30,7 +30,7 @@ export function ChatMenu({ chatId, usage }: { chatId: string; usage?: UsageSumma
           {usage && (usage.models.length > 0 || (usage.usage?.total_tokens ?? 0) > 0) && (
             <>
               <div className="px-3 py-2 medium:hidden">
-                <UsageSummary {...usage} />
+                <UsageSummary {...usage} inline />
               </div>
               <DropdownMenuSeparator className="medium:hidden" />
             </>
