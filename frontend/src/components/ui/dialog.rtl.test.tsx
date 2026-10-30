@@ -59,5 +59,5 @@ it('does not move focus to an earlier menu trigger when the opener was never foc
   expect(screen.getByRole('dialog')).toBeTruthy()
   await user.keyboard('{Escape}')
   expect(screen.queryByRole('dialog')).toBeNull()
-  expect(document.activeElement).not.toBe(screen.getByRole('button', { name: 'Menu' }))
+  expect(document.activeElement).toBe(document.body)
 })
