@@ -3,8 +3,7 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { playwright } from '@vitest/browser-playwright'
 
-// Separate config from the default `npm test` (node-env, logic-only per
-// frontend-design skill) - this one drives a real Chromium via Playwright to
+// Separate config from the default `npm test` (node-env, logic-only) - this one drives a real Chromium via Playwright to
 // catch what tsc/eslint/vitest/build cannot: stray JSX text nodes, dialog
 // stacking-context bugs, and horizontal overflow (#1192).
 export default defineConfig({

@@ -8,7 +8,7 @@ description: |
   paths), and the hard rules that keep print mode / api pipeable and the models unit-testable. Use when
   adding to, reviewing, or debugging anything under `cmd/quack/`, `internal/tui/`, or `internal/cli/` -
   a new screen, a command, an SSE-driven view, the init wizard, or a TUI test. Do NOT use for the React
-  chat UI (that's frontend-design), the SSE event vocabulary on the server, or openapi.yaml.
+  chat UI under frontend/, the SSE event vocabulary on the server, or openapi.yaml.
 license: MIT
 metadata:
   author: jason
@@ -30,7 +30,7 @@ How quack's terminal client is built and why. One multi-call `quack` binary (cob
 
 ## When NOT to Use
 
-- The **React chat UI** (`frontend/`) - use `frontend-design`. Same SSE vocabulary, different surface.
+- The **React chat UI** (`frontend/`). Same SSE vocabulary, different surface.
 - The **server-side SSE event types**, REST handlers, or `openapi.yaml` - wrong layer.
 - Agent `prompt.md` / behaviour - wrong layer.
 
