@@ -9,10 +9,8 @@ export type Evidence = { review: Unit; findings: Array<Unit & { blocking: boolea
 
 export type CodeResult = { met: number; detail?: string };
 
-/**
- * One atomic check. A gate must be met in every unit it applies to; a positive weight earns its share of the met units;
- * a negative weight is a pitfall that subtracts its share where present (D54).
- */
+// One atomic check (D54): a gate holds in every unit it applies to; a positive weight earns its share of met units;
+// a negative weight is a pitfall that subtracts its share where present.
 export type Check = {
   id: string;
   weight: number | 'gate';
