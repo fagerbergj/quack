@@ -30,10 +30,8 @@ async function readWorkspace(api: ToolExecutionApi, path: string, ctx: Context):
   return read.value;
 }
 
-/**
- * Seals the artifact's current file as an immutable version in the log (ART-3); an unchanged file returns its existing version.
- * Throws with every schema problem when the file does not validate.
- */
+// Seals the file as an immutable version in the log (ART-3); an unchanged file keeps its version.
+// Throws with every schema problem when the file does not validate.
 export async function seal(api: ToolExecutionApi, kind: ArtifactKind, ctx: Context): Promise<SealedArtifact> {
   const content = await readWorkspace(api, kind.path, ctx);
   const problems = kind.validate?.(content) ?? [];
@@ -41,7 +39,9 @@ export async function seal(api: ToolExecutionApi, kind: ArtifactKind, ctx: Conte
   const hash = createHash('sha256').update(content).digest('hex');
   return api.commit(async (tx) => {
     const doc = await tx.doc(Artifacts, api.conversationId);
-    const entry = (doc.kinds[kind.kind] ??= { versions: [] });
+    // Read back through the draft: `??=` yields the plain object assigned, and mutations to it are lost.
+    doc.kinds[kind.kind] ??= { versions: [] };
+    const entry = doc.kinds[kind.kind];
     const last = entry.versions.at(-1);
     if (last?.hash === hash) return plain(last);
     const sealed: SealedArtifact = { kind: kind.kind, version: entry.versions.length + 1, hash, content, sealedAt: api.now(), verdict: null };

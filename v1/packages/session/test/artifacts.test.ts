@@ -32,6 +32,7 @@ const submit = defineTool({
 
 test('writes are validated early, and sealing snapshots the file into the log', async () => {
   const seen: string[] = [];
+  let sealedAfterFirst = -1;
   const lastResult = (context: { messages: unknown[] }) => seen.push(JSON.stringify(context.messages.at(-1)));
   const good = '# Review\n\nLooks right.\n\n## Verdict\n\nApprove.\n';
   const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
@@ -40,13 +41,19 @@ test('writes are validated early, and sealing snapshots the file into the log', 
     (c) => (lastResult(c), fauxAssistantMessage(fauxToolCall('submit_review', {}), { stopReason: 'toolUse' })),
     (c) => (lastResult(c), fauxAssistantMessage(fauxToolCall('write', { path: 'artifacts/review.md', content: good }), { stopReason: 'toolUse' })),
     (c) => (lastResult(c), fauxAssistantMessage(fauxToolCall('submit_review', {}), { stopReason: 'toolUse' })),
-    (c) => (lastResult(c), fauxAssistantMessage(fauxToolCall('submit_review', {}), { stopReason: 'toolUse' })),
+    async (c) => {
+      lastResult(c);
+      const doc = await session.harness.snapshot(Artifacts, session.root.id, BACKGROUND_CONTEXT);
+      sealedAfterFirst = doc!.kinds['github.review'].versions.length;
+      return fauxAssistantMessage(fauxToolCall('submit_review', {}), { stopReason: 'toolUse' });
+    },
     (c) => (lastResult(c), fauxAssistantMessage('Submitted.')),
   ]);
   const models = createModels();
   models.setProvider(faux.provider);
   const m = faux.getModel();
-  const session = await openSession({
+  let session: Awaited<ReturnType<typeof openSession>>;
+  session = await openSession({
     dir,
     models,
     agent: { model: { provider: m.provider, modelId: m.id }, extensions: [CodingTools, artifactsExtension([review]), defineExtension({ name: 'gh', tools: [submit] })] },
@@ -60,6 +67,7 @@ test('writes are validated early, and sealing snapshots the file into the log', 
   assert.match(seen[1], /does not match github\.review/, 'sealing refuses an invalid file');
   assert.doesNotMatch(seen[2], /does not yet match/, 'a valid write is quiet');
   assert.match(seen[3], /sealed github\.review v1/);
+  assert.equal(sealedAfterFirst, 1, 'the first successful seal is in the log');
   assert.match(seen[4], /sealed github\.review v1/, 'an unchanged file keeps its version');
 
   const doc = await session.harness.snapshot(Artifacts, session.root.id, BACKGROUND_CONTEXT);
