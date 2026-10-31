@@ -124,3 +124,4 @@ test('a unit over the decision model cap skips it and every check escalates', as
   assert.ok(versions[0].checks.filter((c: any) => c.resolvers['agent-model']).length >= 2);
   assert.equal(versions[0].passed, true);
 });
+

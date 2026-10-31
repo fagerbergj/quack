@@ -29,13 +29,14 @@ function verdictMatchesLabels(artifact: string, ev: Evidence): CodeResult {
 // v0's five code-reviewer criteria, audited into weighted atomic checks (D11, D54). Scopes come from reviewEvidence.
 export const reviewerRubric: Rubric = {
   name: 'github.reviewer',
-  version: 1,
+  version: 2,
   threshold: 0.8,
   criteria: [
     { id: 'catches_real_issues', checks: [
       { id: 'no_silent_approval', weight: 'gate', scope: 'change', question: 'If the verdict is approve, is it free of any defect in the diff, or unkept promise from the description or linked issue, that the review never mentions?' },
-      { id: 'reports_every_defect', weight: 4, scope: 'change', question: 'Is every defect you can point to in the diff (a file, a line, and the input or state that goes wrong) reported as a blocking finding?' },
-      { id: 'promises_handled', weight: 3, scope: 'change', question: 'Is every promise in the description or linked issues either kept by the diff, deferred to a linked follow-up, or reported as a blocking delivery finding?' },
+      // Blocking means it goes wrong once merged; these checks must not demand a blocker for a true issue that does not.
+      { id: 'reports_every_defect', weight: 4, scope: 'change', question: 'Is every problem in the diff that goes wrong once this change is merged as it stands (wrong output, a crash, data loss, a security hole) reported as a blocking finding? Problems that only cost time or calls, or only matter if the code changes later, need not be blocking.' },
+      { id: 'promises_handled', weight: 3, scope: 'change', question: 'Is every behaviour the description or linked issues say this change delivers either present in the diff, deferred to a linked follow-up, or reported as a blocking delivery finding? A loosely worded sentence about a behaviour the diff does deliver is not an unkept promise.' },
       { id: 'sibling_parts', weight: 2, scope: 'change', question: 'Where the diff adds another instance of an existing pattern, does the review report the parts its siblings carry that this one lacks (or are there none missing)?' },
       { id: 'toolchain_as_defect', weight: -4, scope: 'change', question: 'Does the review report a sandbox, toolchain or network failure as a code defect while the CI checks are green?' },
     ] },
@@ -56,6 +57,7 @@ export const reviewerRubric: Rubric = {
       { id: 'blocking_names_anchor', weight: 'gate', code: blockingNamesAnchor },
       { id: 'anchor_borne_out', weight: 3, scope: 'blocking', question: 'Does the cited code bear out the anchor this blocking finding names (a defect producing wrong output, missing delivery, a security issue, a named design principle, out-of-scope work, or missing or broken tests)?' },
       { id: 'preference_only', weight: -3, scope: 'blocking', question: 'Does this blocking finding rest only on preference, so the author could decline it at no objective cost?' },
+      { id: 'blocks_without_consequence', weight: -4, scope: 'blocking', question: 'Does this blocking finding fail to name something that goes wrong, or a promised behaviour that is missing, once this change is merged as it stands, resting instead on a possible future change, an extra cost, comment or doc wording, or a test that could be stronger?' },
       { id: 'wrong_output_below_blocking', weight: -2, scope: 'lower', question: 'Does this finding, though not labelled blocking, describe wrong output, a crash or data loss?' },
     ] },
     { id: 'structured_verdict', checks: [

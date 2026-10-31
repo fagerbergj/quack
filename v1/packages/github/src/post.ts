@@ -1,6 +1,6 @@
 import { Type } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool, type Extension } from '@earendil-works/pi-durable';
-import { feedback, judge, type CheckResult, type ClassifierRef } from '@quack/judge';
+import { feedback, judge, type CheckResult, type ClassifierRef, type ModelRef } from '@quack/judge';
 import { artifactsExtension, sealedVersion } from '@quack/sdk';
 import { checkoutTool, PullRequestDoc, type SessionConfig } from './checkout.ts';
 import { parseReview, reviewEvidence, reviewKind } from './review.ts';
@@ -32,13 +32,13 @@ export function postReviewTool(config: SessionConfig) {
   });
 }
 
-export type GithubSessionConfig = SessionConfig & { maxRevisions?: number; classifier?: ClassifierRef };
+export type GithubSessionConfig = SessionConfig & { maxRevisions?: number; classifier?: ClassifierRef; judgeModel?: ModelRef };
 
 /** The GitHub extension's session half: checkout, the review artifact, its judge, and the gated post. */
 export function githubSessionExtensions(config: GithubSessionConfig): Extension[] {
   return [
     defineExtension({ name: 'github', tools: [checkoutTool(config), postReviewTool(config)] }),
     artifactsExtension([reviewKind]),
-    judge({ kind: reviewKind, rubric: reviewerRubric, evidence: reviewEvidence(config.repoDir), maxRevisions: config.maxRevisions ?? 2, classifier: config.classifier, toolName: 'submit_review' }),
+    judge({ kind: reviewKind, rubric: reviewerRubric, evidence: reviewEvidence(config.repoDir), maxRevisions: config.maxRevisions ?? 2, classifier: config.classifier, judgeModel: config.judgeModel, toolName: 'submit_review' }),
   ];
 }

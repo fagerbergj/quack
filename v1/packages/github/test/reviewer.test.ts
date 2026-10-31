@@ -11,7 +11,7 @@ import { cleanup, fakeService, listen, remotes, tmp } from './fixtures.ts';
 
 after(cleanup);
 
-const PITFALLS = /toolchain_as_defect|contradicted|no_reason_given|preference_only|wrong_output_below_blocking/;
+const PITFALLS = /toolchain_as_defect|contradicted|no_reason_given|preference_only|blocks_without_consequence|wrong_output_below_blocking/;
 const clefUnits: string[] = [];
 async function fakeClef() {
   return `${await listen(
@@ -63,7 +63,7 @@ test('a reviewer run checks out the PR, has its review judged, and posts exactly
   const done = await session.submit('Review pull request acme/widgets#7', 'gh-1', true);
   assert.equal(done.status === 'done' && done.answer, 'Posted.');
   assert.match(seen[1], /is not sealed; call submit_review first/, 'nothing posts before it is checked');
-  assert.match(seen[3], /github\.review v1: 100% \(github\.reviewer@1\), passed/);
+  assert.match(seen[3], /github\.review v1: 100% \(github\.reviewer@2\), passed/);
 
   assert.equal(service.posted.length, 1);
   assert.deepEqual(service.posted[0], { owner: 'acme', repo: 'widgets', number: 7, commitId: head, event: 'APPROVE', body: review });

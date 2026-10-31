@@ -65,6 +65,7 @@ test('blocking findings must name an anchor, and findings must cite lines that e
 test('the rubric scopes match the evidence the reviewer builds', () => {
   const scopes = new Set(reviewerRubric.criteria.flatMap((c) => c.checks.filter((k) => k.question).map((k) => k.scope ?? 'review')));
   assert.deepEqual([...scopes].sort(), ['blocking', 'change', 'finding', 'lower', 'review']);
+  assert.ok(reviewerRubric.criteria.flatMap((c) => c.checks).some((k) => k.id === 'blocks_without_consequence' && k.weight === -4));
   const possible = reviewerRubric.criteria.flatMap((c) => c.checks).reduce((n, k) => n + (typeof k.weight === 'number' && k.weight > 0 ? k.weight : 0), 0);
   assert.equal(possible, 27);
 });
