@@ -86,7 +86,9 @@ test('statement-like inline quotes are collected for checking; identifiers, shor
   assert.deepEqual(quotedCode(text), [['teamWeek{Week: w, Points: 0, Result: "-"}'], ['className="${CHIP} bg-blue-100']]);
   const gate = code('claims_grounded', 'quotes_exist');
   assert.equal(gate('', { finding: [{ id: 'finding-1', state: {}, misquotes: [] }] } as never).met, 1);
-  const failed = gate('', { finding: [{ id: 'finding-1', state: {}, misquotes: [] }, { id: 'finding-2', state: {}, misquotes: ['Points: 0'] }] } as never);
+  const failed = gate('', { finding: [{ id: 'finding-1', state: {}, misquotes: [] }, { id: 'finding-2', state: {}, misquotes: ['Points: 0', 'x := y'] }] } as never);
   assert.equal(failed.met, 0.5);
-  assert.match(failed.detail!, /finding-2 quotes code that is not in the repository: `Points: 0`/);
+  assert.match(failed.detail!, /finding-2 quotes code that is not in the repository: `Points: 0`, `x := y`/);
+  assert.match(failed.detail!, /command output or logs go in a fenced block/);
+  assert.deepEqual(quotedCode('it fails:\n```text\npanic: runtime error: x == nil {\n```'), [], 'quoted output in a fence is not checked');
 });
