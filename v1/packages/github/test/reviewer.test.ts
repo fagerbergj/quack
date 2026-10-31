@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { after, test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
+import { fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseStep } from '@earendil-works/pi-ai';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { Artifacts } from '@quack/sdk';
 import { buildModels, openSession, parseDeployment } from '@quack/session';
@@ -36,36 +36,43 @@ approve
 - read app.ts:1 on the PR head: \`export const a = 2;\`
 `;
 
-test('a reviewer run checks out the PR, has its review judged, and posts exactly the checked version', async () => {
+async function reviewRun(responses: (seen: string[]) => FauxResponseStep[]) {
   process.env.QUACK_CLEF_KEY = 'none';
   const { base, head } = await remotes();
   const service = await fakeService(head);
   const clefUrl = await fakeClef();
-
   const seen: string[] = [];
-  const step = (msg: ReturnType<typeof fauxAssistantMessage>) => (c: { messages: unknown[] }) => (seen.push(JSON.stringify(c.messages.at(-1))), msg);
-  const call = (name: string, args: Record<string, unknown>) => fauxAssistantMessage(fauxToolCall(name, args as never), { stopReason: 'toolUse' });
   const faux = fauxProvider({ models: [{ id: 'worker' }] });
-  faux.setResponses([
-    call('checkout_pr', { repository: 'acme/widgets', number: 7 }),
-    step(call('post_review', { version: 1 })),
-    step(call('write', { path: 'artifacts/review.md', content: review })),
-    step(call('submit_review', {})),
-    step(fauxAssistantMessage('Reviewed.')),
-    step(call('post_review', { version: 1 })),
-    step(call('post_review', { version: 1 })),
-    step(fauxAssistantMessage('Posted.')),
-  ]);
+  faux.setResponses(responses(seen));
   const models = buildModels(parseDeployment({ providers: { clef: { baseUrl: clefUrl, api: 'systemone', apiKeyEnv: 'QUACK_CLEF_KEY', models: { clef: { contextWindow: 8192 } } } } }));
   models.setProvider(faux.provider);
   const m = faux.getModel();
   const extensions = [CodingTools, ...githubSessionExtensions({ serviceUrl: service.url, serviceToken: 'svc', gitBaseUrl: base, classifier: { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 } })];
   const session = await openSession({ dir: await tmp(), models, agent: { model: { provider: m.provider, modelId: m.id }, extensions } });
-
   const done = await session.submit('Review pull request acme/widgets#7', 'gh-1', true);
+  return { done, seen, service, head, session };
+}
+
+const call = (name: string, args: Record<string, unknown>) => fauxAssistantMessage(fauxToolCall(name, args as never), { stopReason: 'toolUse' });
+const recorder = (seen: string[]) => (msg: ReturnType<typeof fauxAssistantMessage>) => (c: { messages: unknown[] }) => (seen.push(JSON.stringify(c.messages.at(-1))), msg);
+
+test('a reviewer run checks out the PR, has its review judged, and posts exactly the checked version', async () => {
+  const { done, seen, service, head, session } = await reviewRun((seen) => {
+    const step = recorder(seen);
+    return [
+      call('checkout_pr', { repository: 'acme/widgets', number: 7 }),
+      step(call('post_review', { version: 1 })),
+      step(call('write', { path: 'artifacts/review.md', content: review })),
+      step(call('submit_review', {})),
+      step(fauxAssistantMessage('Reviewed.')),
+      step(call('post_review', { version: 1 })),
+      step(call('post_review', { version: 1 })),
+      step(fauxAssistantMessage('Posted.')),
+    ];
+  });
   assert.equal(done.status === 'done' && done.answer, 'Posted.');
   assert.match(seen[1], /is not sealed; call submit_review first/, 'nothing posts before it is checked');
-  assert.match(seen[3], /github\.review v1: 100% \(github\.reviewer@2\), passed/);
+  assert.match(seen[3], /github\.review v1: 100% \(github\.reviewer@3\), passed/);
   assert.match(seen[4], /Review v1 is cleared to post but has not been posted/, 'finishing before posting is refused');
   assert.match(seen[6], /review v1 was already posted; nothing was sent again/);
 
@@ -79,5 +86,26 @@ test('a reviewer run checks out the PR, has its review judged, and posts exactly
   assert.deepEqual([...resolvers].sort(), ['clef', 'code']);
   assert.ok(clefUnits.includes('review+description+ci+linkedIssues+diff'), 'the change unit carries the diff and PR context');
   assert.ok(clefUnits.includes('finding+citedCode'), 'each finding is judged with its cited code');
+  await session.close();
+});
+
+test('a review that quotes code the repository does not have is sent back before it can post', async () => {
+  const misquoted = review.replace('a named constant would say why the value is 2.', 'it still says `export const a = 3;`, which is the old value.');
+  const { done, seen, service, session } = await reviewRun((seen) => {
+    const step = recorder(seen);
+    return [
+      call('checkout_pr', { repository: 'acme/widgets', number: 7 }),
+      step(call('write', { path: 'artifacts/review.md', content: misquoted })),
+      step(call('submit_review', {})),
+      step(call('write', { path: 'artifacts/review.md', content: review })),
+      step(call('submit_review', {})),
+      step(call('post_review', { version: 2 })),
+      step(fauxAssistantMessage('Posted.')),
+    ];
+  });
+  assert.equal(done.status === 'done' && done.answer, 'Posted.');
+  assert.match(seen[2], /gate claims_grounded\.quotes_exist[^"]*finding-1 quotes code that is not in the repository: `export const a = 3;`/);
+  assert.equal(service.posted.length, 1);
+  assert.equal(service.posted[0].body, review, 'only the corrected version went out');
   await session.close();
 });

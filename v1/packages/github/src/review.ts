@@ -56,21 +56,47 @@ const EXCERPT_LINES = 20;
 const MAX_DIFF_CHARS = 120_000;
 
 async function excerpt(api: ToolExecutionApi, repoDir: string, f: Finding, ctx: Context) {
-  if (!f.path || !f.line) return { exists: false, excerpt: '' };
+  if (!f.path || !f.line) return { exists: false, excerpt: '', file: '' };
   const read = await api.env!.readTextFile(`${repoDir}/${f.path}`, ctx);
-  if (!read.ok) return { exists: false, excerpt: '' };
+  if (!read.ok) return { exists: false, excerpt: '', file: '' };
   const lines = read.value.split('\n');
-  if (f.line < 1 || f.line > lines.length) return { exists: false, excerpt: '' };
+  if (f.line < 1 || f.line > lines.length) return { exists: false, excerpt: '', file: read.value };
   const from = Math.max(1, f.line - EXCERPT_LINES);
   const text = lines.slice(from - 1, f.line + EXCERPT_LINES).map((l, i) => `${from + i}: ${l}`).join('\n');
-  return { exists: true, excerpt: text };
+  return { exists: true, excerpt: text, file: read.value };
 }
 
 async function diffOf(api: ToolExecutionApi, repoDir: string, baseRef: string, ctx: Context): Promise<string> {
   let out = '';
   const r = await api.env!.exec(['git', '-C', repoDir, 'diff', `origin/${baseRef}...HEAD`], { onOutput: (t) => { out += t; } }, ctx);
-  if (!r.ok) return '(diff unavailable)';
-  return out.length > MAX_DIFF_CHARS ? `${out.slice(0, MAX_DIFF_CHARS)}\n… diff truncated at ${MAX_DIFF_CHARS} characters` : out;
+  return r.ok ? out : '';
+}
+
+const truncated = (diff: string) => (diff.length > MAX_DIFF_CHARS ? `${diff.slice(0, MAX_DIFF_CHARS)}\n… diff truncated at ${MAX_DIFF_CHARS} characters` : diff);
+const STATEMENT = /[{]|:=|\s=\s|==|=>|\breturn\b/;
+const squash = (s: string) => s.replace(/\s+/g, ' ').trim();
+
+/** Inline code a finding's prose quotes as existing code: statement-like spans, split at elisions; fenced proposals excluded. */
+export function quotedCode(text: string): string[][] {
+  const prose = text.replace(/```[\s\S]*?```/g, '');
+  return [...prose.matchAll(/`([^`\n]+)`/g)]
+    .map((m) => m[1])
+    .filter((s) => s.length >= 12 && STATEMENT.test(s))
+    .map((s) => s.split(/\.\.\.|…/).map(squash).filter((p) => p.length >= 6));
+}
+
+// A quote must exist somewhere: the cited file, the change (old or new side), or anywhere else in the repository.
+async function misquotes(api: ToolExecutionApi, repoDir: string, f: Finding, file: string, diff: string, ctx: Context): Promise<string[]> {
+  const haystack = squash(file) + '\n' + squash(diff.split('\n').map((l) => l.replace(/^[+\- ]/, '')).join('\n'));
+  const missing: string[] = [];
+  for (const parts of quotedCode(f.text)) {
+    for (const p of parts) {
+      if (haystack.includes(p)) continue;
+      const r = await api.env!.exec(['git', '-C', repoDir, 'grep', '-q', '-F', '-e', p, 'HEAD', '--'], {}, ctx);
+      if (!(r.ok && r.value.exitCode === 0)) missing.push(p);
+    }
+  }
+  return missing;
 }
 
 // Evidence scopes: the review alone (small), the review with its change (large), and each finding with its cited code.
@@ -80,11 +106,14 @@ export function reviewEvidence(repoDir = 'repo') {
     const pr = (await api.snapshot(PullRequestDoc, api.conversationId, ctx))?.pr;
     const change = pr
       ? { description: `${pr.title}\n\n${pr.body}`, ci: pr.checks.map((c) => `${c.name}=${c.conclusion ?? c.status}`).join(', '), linkedIssues: pr.linkedIssues.map((i) => `#${i.number} ${i.title}\n${i.body}`).join('\n\n'), diff: await diffOf(api, repoDir, pr.baseRef, ctx) }
-      : { description: '(unknown)', ci: '(unknown)', linkedIssues: '', diff: '(no checkout)' };
-    const findings: Array<Unit & { blocking: boolean; cited: boolean }> = [];
+      : { description: '(unknown)', ci: '(unknown)', linkedIssues: '', diff: '' };
+    const diff = change.diff;
+    change.diff = pr ? truncated(diff) || '(diff unavailable)' : '(no checkout)';
+    const findings: Array<Unit & { blocking: boolean; cited: boolean; misquotes: string[] }> = [];
     for (const f of r.findings) {
       const e = await excerpt(api, repoDir, f, ctx);
-      findings.push({ id: `finding-${f.index}`, blocking: f.label === 'blocking', cited: e.exists, state: { finding: `${f.label}${f.anchor ? ` (${f.anchor})` : ''}: ${f.path ?? '?'}:${f.line ?? '?'} ${f.text}`, citedCode: e.excerpt || '(the cited lines do not exist)' } });
+      const wrong = pr ? await misquotes(api, repoDir, f, e.file, diff, ctx) : [];
+      findings.push({ id: `finding-${f.index}`, blocking: f.label === 'blocking', cited: e.exists, misquotes: wrong, state: { finding: `${f.label}${f.anchor ? ` (${f.anchor})` : ''}: ${f.path ?? '?'}:${f.line ?? '?'} ${f.text}`, citedCode: e.excerpt || '(the cited lines do not exist)' } });
     }
     return {
       review: [{ id: 'review', state: { review: sealed.content } }],
