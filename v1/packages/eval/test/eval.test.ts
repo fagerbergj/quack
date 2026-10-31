@@ -10,7 +10,7 @@ import { defineDoc, defineExtension, defineTool } from '@earendil-works/pi-durab
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { artifactsExtension, attachVerdict, seal, type ArtifactKind } from '@quack/sdk';
 import { openSession } from '@quack/session';
-import { itemFrom, langfuse, publish, readSession, type ReplayResult } from '../src/index.ts';
+import { itemFrom, langfuse, publish, readSession, replay, type ReplayResult } from '../src/index.ts';
 
 const dirs: string[] = [];
 after(() => Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true }))));
@@ -113,4 +113,12 @@ test('a replay is published as a trace with its scores and linked into the run',
 test('an ingestion that partly fails is an error, not a silent gap in the experiment', async () => {
   const { client } = await fakeLangfuse(() => [207, { successes: [], errors: [{ id: 'x-trace', status: 400, message: 'bad body' }] }]);
   await assert.rejects(publish(client, 'run', result), /langfuse ingest: 1 of 10 events failed; first x-trace: 400 bad body/);
+});
+
+test('a runtime that exits at startup ends the replay at once with its error, not at the deadline', async () => {
+  const started = Date.now();
+  const r = await replay({ id: 'x', input: { inputs: ['go'], pins: {} } }, { deployment: '/nonexistent/deployment.json', agent: '/nonexistent/agent.json' }, {});
+  assert.match(r.error ?? '', /^runtime exited with 1: .*nonexistent\/deployment\.json/);
+  assert.ok(Date.now() - started < 15_000, `took ${Date.now() - started} ms`);
+  assert.deepEqual(r.record.outcome, { status: 'pending' });
 });

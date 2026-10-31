@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -25,8 +25,10 @@ async function freePort(): Promise<number> {
 }
 
 // Polls with one request id: dedupe answers with the run's status, so no request has to outlive a long review.
-async function untilSettled(url: string, input: string, deadline: number) {
+// A runtime that exits (a bad config path, a crash) ends the wait at once instead of at the deadline.
+async function untilSettled(url: string, input: string, deadline: number, child: ChildProcess) {
   for (;;) {
+    if (child.exitCode !== null) throw new Error(`runtime exited with ${child.exitCode}`);
     try {
       const r = (await (await fetch(`${url}/invocations`, { method: 'POST', body: JSON.stringify({ input, requestId: 'eval-1' }) })).json()) as { status: string };
       if (r.status === 'done' || r.status === 'unanswered') return;
@@ -37,6 +39,12 @@ async function untilSettled(url: string, input: string, deadline: number) {
     await new Promise((res) => setTimeout(res, 2_000));
   }
 }
+
+// Node ends a crash dump with its version line, so the error line itself is the one that says what went wrong.
+const crashLine = (stderr: string) => {
+  const lines = stderr.trim().split('\n');
+  return lines.find((l) => /^\w*Error\b/.test(l)) ?? lines.at(-1);
+};
 
 /** Replays one item in a fresh session on the candidate definition; nothing it does is delivered (EVL-2). */
 export async function replay(item: DatasetItem, candidate: Candidate, services: EvalServices, timeoutMs = 30 * 60_000): Promise<ReplayResult> {
@@ -54,9 +62,9 @@ export async function replay(item: DatasetItem, candidate: Candidate, services: 
   let error: string | undefined;
   try {
     // Only the first input replays: later turns were the operator's answers to what the recorded run said.
-    await untilSettled(`http://127.0.0.1:${port}`, inputs[0] ?? '', started + timeoutMs);
+    await untilSettled(`http://127.0.0.1:${port}`, inputs[0] ?? '', started + timeoutMs, child);
   } catch (err) {
-    error = `${(err as Error).message}${stderr ? `: ${stderr.trim().split('\n').at(-1)}` : ''}`;
+    error = `${(err as Error).message}${stderr ? `: ${crashLine(stderr)}` : ''}`;
   } finally {
     if (child.exitCode === null) {
       const exited = new Promise((r) => child.once('exit', r));

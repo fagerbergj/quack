@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import type { ConversationId, JsonObject } from '@earendil-works/pi-durable';
@@ -33,28 +34,44 @@ async function* pages<T>(scan: (cursor: unknown) => Promise<{ items: readonly T[
   } while (cursor);
 }
 
+type Storage = Awaited<ReturnType<typeof openNodeSqliteStorage>>;
+type Submission = { status: string; answer?: unknown; reason?: string };
+
+async function readTranscript(storage: Storage, record: SessionRecord, last: Submission | undefined) {
+  for await (const e of pages((c) => storage.scanEntries({ conversationId: ROOT, order: 'ascending' }, 200, c as never, ctx))) {
+    const m = e.model?.[0] as { role?: string; content?: unknown; usage?: Usage } | undefined;
+    if (e.kind === 'pi.user') record.inputs.push(text(m?.content));
+    if (e.kind !== 'pi.assistant') continue;
+    if (last?.status === 'done' && e.id === last.answer) record.outcome = { status: 'done', answer: text(m?.content) };
+    record.turns++;
+    for (const k of ['input', 'output', 'cacheRead'] as const) record.usage[k] += m?.usage?.[k] ?? 0;
+  }
+}
+
+async function readDocs(storage: Storage, record: SessionRecord) {
+  for await (const d of pages((c) => storage.scanDocuments({ scope: { kind: 'conversation', conversationId: ROOT }, at: 'current' }, 50, c as never, ctx))) {
+    const value = (await storage.document(d.id, 'current', ctx))?.value;
+    if (!value) continue;
+    if (d.kind === 'quack.artifacts') {
+      for (const [kind, { versions }] of Object.entries((value as { kinds: Record<string, { versions: SealedArtifact[] }> }).kinds)) record.artifacts[kind] = versions;
+    } else record.docs[d.kind] = value;
+  }
+}
+
+const empty = (): SessionRecord => ({ inputs: [], outcome: { status: 'pending' }, turns: 0, usage: { input: 0, output: 0, cacheRead: 0 }, artifacts: {}, docs: {} });
+
 export async function readSession(dir: string): Promise<SessionRecord> {
-  const storage = await openNodeSqliteStorage(join(dir, 'session.sqlite'));
+  // A session whose runtime never started has no log; opening one would create an empty database instead.
+  const file = join(dir, 'session.sqlite');
+  if (!existsSync(file)) return empty();
+  const storage = await openNodeSqliteStorage(file);
   try {
-    let last: { status: string; answer?: unknown; reason?: string } | undefined;
+    let last: Submission | undefined;
     for await (const s of pages((c) => storage.scanSubmissions({ conversationId: ROOT }, 50, c as never, ctx))) if (s.type === 'input') last = s;
-    const record: SessionRecord = { inputs: [], outcome: { status: 'pending' }, turns: 0, usage: { input: 0, output: 0, cacheRead: 0 }, artifacts: {}, docs: {} };
-    for await (const e of pages((c) => storage.scanEntries({ conversationId: ROOT, order: 'ascending' }, 200, c as never, ctx))) {
-      const m = e.model?.[0] as { role?: string; content?: unknown; usage?: Usage } | undefined;
-      if (e.kind === 'pi.user') record.inputs.push(text(m?.content));
-      if (e.kind !== 'pi.assistant') continue;
-      if (last?.status === 'done' && e.id === last.answer) record.outcome = { status: 'done', answer: text(m?.content) };
-      record.turns++;
-      for (const k of ['input', 'output', 'cacheRead'] as const) record.usage[k] += m?.usage?.[k] ?? 0;
-    }
+    const record = empty();
+    await readTranscript(storage, record, last);
     if (last?.status === 'unanswered') record.outcome = { status: 'unanswered', reason: last.reason ?? '' };
-    for await (const d of pages((c) => storage.scanDocuments({ scope: { kind: 'conversation', conversationId: ROOT }, at: 'current' }, 50, c as never, ctx))) {
-      const value = (await storage.document(d.id, 'current', ctx))?.value;
-      if (!value) continue;
-      if (d.kind === 'quack.artifacts') {
-        for (const [kind, { versions }] of Object.entries((value as { kinds: Record<string, { versions: SealedArtifact[] }> }).kinds)) record.artifacts[kind] = versions;
-      } else record.docs[d.kind] = value;
-    }
+    await readDocs(storage, record);
     return record;
   } finally {
     await storage.close(ctx);

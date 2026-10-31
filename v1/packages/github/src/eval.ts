@@ -16,7 +16,10 @@ export async function evalService(pin: { pr: PullRequestRecord }) {
     const { pr } = pin;
     if (req.method === 'GET' && req.url === `/pulls/${pr.owner}/${pr.repo}/${pr.number}`) return send(200, pr);
     if (req.method === 'POST' && req.url === '/reviews') {
-      captured.push(JSON.parse(raw));
+      const r = JSON.parse(raw);
+      // Only a review of the pinned PR at its pinned head counts as captured; anything else would score a delivery that could not happen.
+      if (r.owner !== pr.owner || r.repo !== pr.repo || r.number !== pr.number || r.commitId !== pr.headSha) return send(404, { error: 'not the pinned pull request' });
+      captured.push(r);
       return send(201, { url: '(eval: not delivered)' });
     }
     send(404, { error: 'not available in eval' });

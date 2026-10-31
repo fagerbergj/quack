@@ -1,6 +1,5 @@
-// Usage:
-//   node packages/eval/src/main.ts dataset <dataset> <agent> <good|bad|-> <session-dir>...
-//   node packages/eval/src/main.ts run <dataset> <run-name> <deployment.json> <agent.json> [item-id...]
+// Usage: main.ts dataset <dataset> <agent> <good|bad|-> <session-dir>...
+//        main.ts run <dataset> <run-name> <deployment.json> <agent.json> [item-id...]
 import { resolve } from 'node:path';
 import { evalService } from '@quack/github';
 import { itemFrom, type Label } from './dataset.ts';
