@@ -1,7 +1,7 @@
 import { Type } from '@earendil-works/pi-ai';
-import { defineExtension, defineTool, type Extension } from '@earendil-works/pi-durable';
+import { defineExtension, defineTool, GenerationTask, hook, type Extension } from '@earendil-works/pi-durable';
 import { feedback, judge, type CheckResult, type ClassifierRef, type ModelRef } from '@quack/judge';
-import { artifactsExtension, sealedVersion } from '@quack/sdk';
+import { Artifacts, artifactsExtension, sealedVersion } from '@quack/sdk';
 import { checkoutTool, PullRequestDoc, type SessionConfig } from './checkout.ts';
 import { parseReview, reviewEvidence, reviewKind } from './review.ts';
 import { reviewerRubric } from './rubric.ts';
@@ -37,10 +37,21 @@ export function postReviewTool(config: SessionConfig) {
 
 export type GithubSessionConfig = SessionConfig & { maxRevisions?: number; classifier?: ClassifierRef; judgeModel?: ModelRef };
 
+// A run may not finish while its latest review is cleared to go out but has not been posted (R3): delivery is the point.
+const postBeforeFinishing = hook(GenerationTask, {
+  async onYield(_answer, api, ctx) {
+    const last = (await api.snapshot(Artifacts, api.conversationId, ctx))?.kinds[reviewKind.kind]?.versions.at(-1);
+    const v = last?.verdict as { passed?: boolean; limitReached?: boolean } | null | undefined;
+    if (!last || !(v?.passed || v?.limitReached)) return undefined;
+    const posted = (await api.snapshot(PullRequestDoc, api.conversationId, ctx))?.posted ?? [];
+    return posted.includes(last.version) ? undefined : { continue: `Review v${last.version} is cleared to post but has not been posted. Call post_review with version ${last.version}.` };
+  },
+});
+
 /** The GitHub extension's session half: checkout, the review artifact, its judge, and the gated post. */
 export function githubSessionExtensions(config: GithubSessionConfig): Extension[] {
   return [
-    defineExtension({ name: 'github', tools: [checkoutTool(config), postReviewTool(config)] }),
+    defineExtension({ name: 'github', tools: [checkoutTool(config), postReviewTool(config)], hooks: [postBeforeFinishing] }),
     artifactsExtension([reviewKind]),
     judge({ kind: reviewKind, rubric: reviewerRubric, evidence: reviewEvidence(config.repoDir), maxRevisions: config.maxRevisions ?? 2, classifier: config.classifier, judgeModel: config.judgeModel, toolName: 'submit_review' }),
   ];
