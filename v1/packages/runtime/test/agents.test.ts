@@ -1,0 +1,21 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
+import { loadAgent, parseDeployment } from '@quack/session';
+import { catalog } from '../src/catalog.ts';
+
+const deployment = parseDeployment({
+  providers: {
+    local: { baseUrl: 'http://127.0.0.1:11436/v1', models: { 'qwen3.8-27b': { contextWindow: 262144, maxTokens: 16384 } } },
+    clef: { baseUrl: 'http://127.0.0.1:11436/upstream/clef/v1', api: 'systemone', models: { clef: { contextWindow: 8192 } } },
+  },
+});
+
+test('the shipped reviewer definition loads with its prompt, the GitHub tools and the language servers', async () => {
+  process.env.QUACK_GH_SERVICE_URL = 'http://127.0.0.1:8090';
+  process.env.QUACK_GH_SERVICE_TOKEN = 'x';
+  const agent = await loadAgent(fileURLToPath(new URL('../../../agents/reviewer/agent.json', import.meta.url)), deployment, catalog);
+  assert.match(agent.instructions!, /^You review one pull request/);
+  const tools = agent.extensions!.flatMap((e) => (e.tools ?? []).map((t) => t.name));
+  for (const name of ['checkout_pr', 'post_review', 'submit_review', 'bash', 'write', 'lsp_references', 'lsp_symbols']) assert.ok(tools.includes(name), `${name} in ${tools.join(', ')}`);
+});

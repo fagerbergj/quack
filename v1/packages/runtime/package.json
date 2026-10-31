@@ -2,10 +2,15 @@
   "name": "@quack/runtime",
   "private": true,
   "type": "module",
-  "scripts": { "start": "node src/main.ts" },
+  "scripts": {
+    "start": "node src/main.ts"
+  },
   "dependencies": {
+    "@earendil-works/pi-tui": "1.4.0",
+    "@quack/github": "*",
     "@quack/judge": "*",
     "@quack/sdk": "*",
-    "@quack/session": "*"
+    "@quack/session": "*",
+    "pi-lsp": "0.1.7"
   }
 }

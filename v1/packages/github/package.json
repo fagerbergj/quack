@@ -1,0 +1,20 @@
+{
+  "name": "@quack/github",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "node src/main.ts"
+  },
+  "dependencies": {
+    "@quack/judge": "*",
+    "@quack/sdk": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-tui": "1.4.0",
+    "@quack/session": "*",
+    "pi-lsp": "0.1.7"
+  }
+}
