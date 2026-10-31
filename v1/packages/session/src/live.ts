@@ -5,7 +5,8 @@ import { watchEvents } from '@earendil-works/pi-durable';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { Session } from './runtime.ts';
 
-// The same budget as an HTTP invocation body; maxPayload leaves room for the JSON around the input.
+// The same budget as an HTTP invocation body. JSON escapes grow a character up to six (\u0000), so maxPayload allows
+// for that and every in-budget input reaches the polite length check.
 const MAX_INPUT = 1 << 20;
 
 type ClientInput = { type: 'input'; input: string; requestId?: string; whenBusy?: 'steer' | 'followUp' };
@@ -46,7 +47,7 @@ async function stream(session: Session, ws: WebSocket) {
 }
 
 export function liveUpgrade(session: Session) {
-  const wss = new WebSocketServer({ noServer: true, maxPayload: 2 * MAX_INPUT });
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 6 * MAX_INPUT + 1024 });
   return (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     if (req.url !== '/ws') return socket.destroy();
     wss.handleUpgrade(req, socket, head, (ws) => void stream(session, ws).catch(() => ws.close(1011)));
