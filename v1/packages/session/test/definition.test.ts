@@ -49,16 +49,20 @@ test('a definition loads its prompt file, and a reopened session takes the new p
     assert.equal((await loadAgent(path, parseDeployment(deployment), catalog)).instructions, 'Review v1.');
 
     const faux = fauxProvider({ models: [{ id: 'a' }, { id: 'b' }] });
-    faux.setResponses([fauxAssistantMessage('ok')]);
+    let secondSaw = '';
+    faux.setResponses([fauxAssistantMessage('ok'), (c) => { secondSaw = JSON.stringify(c.messages); return fauxAssistantMessage('again'); }]);
     const models = createModels();
     models.setProvider(faux.provider);
     const sessionDir = join(dir, 'session');
     const first = await openSession({ dir: sessionDir, models, agent: { model: { provider: faux.provider.id, modelId: 'a' }, instructions: 'Review v1.' } });
+    await first.submit('first question', 'h-1', true);
     await first.close();
     const second = await openSession({ dir: sessionDir, models, agent: { model: { provider: faux.provider.id, modelId: 'b' }, instructions: 'Review v2.' } });
     const agent = await second.root.agent(BACKGROUND_CONTEXT);
     assert.equal(agent.instructions, 'Review v2.');
     assert.equal(agent.model?.modelId, 'b');
+    await second.submit('second question', 'h-2', true);
+    assert.match(secondSaw, /first question/, 'the reopened session keeps its history');
     await second.close();
   } finally {
     await rm(dir, { recursive: true, force: true });

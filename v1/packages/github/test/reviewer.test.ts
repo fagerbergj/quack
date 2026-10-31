@@ -52,6 +52,7 @@ test('a reviewer run checks out the PR, has its review judged, and posts exactly
     step(call('write', { path: 'artifacts/review.md', content: review })),
     step(call('submit_review', {})),
     step(call('post_review', { version: 1 })),
+    step(call('post_review', { version: 1 })),
     step(fauxAssistantMessage('Posted.')),
   ]);
   const models = buildModels(parseDeployment({ providers: { clef: { baseUrl: clefUrl, api: 'systemone', apiKeyEnv: 'QUACK_CLEF_KEY', models: { clef: { contextWindow: 8192 } } } } }));
@@ -64,6 +65,7 @@ test('a reviewer run checks out the PR, has its review judged, and posts exactly
   assert.equal(done.status === 'done' && done.answer, 'Posted.');
   assert.match(seen[1], /is not sealed; call submit_review first/, 'nothing posts before it is checked');
   assert.match(seen[3], /github\.review v1: 100% \(github\.reviewer@2\), passed/);
+  assert.match(seen[5], /review v1 was already posted; nothing was sent again/);
 
   assert.equal(service.posted.length, 1);
   assert.deepEqual(service.posted[0], { owner: 'acme', repo: 'widgets', number: 7, commitId: head, event: 'APPROVE', body: review });

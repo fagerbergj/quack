@@ -80,11 +80,24 @@ async function postReview(req: IncomingMessage, res: ServerResponse, app: Github
 // Issues a description says it closes ("closes #12", "fixes #3"): the promises a review checks.
 const CLOSES = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi;
 
+const MAX_CHECK_PAGES = 10;
+
+// Every check run, page by page: a failing check past the first page must still reach the verdict gate.
+async function checkRuns(app: GithubApp, owner: string, repo: string, sha: string): Promise<any[]> {
+  const runs: any[] = [];
+  for (let page = 1; page <= MAX_CHECK_PAGES; page++) {
+    const batch = (await app.asInstallation(owner, repo, 'GET', `/repos/${owner}/${repo}/commits/${sha}/check-runs?per_page=100&page=${page}`)).json?.check_runs ?? [];
+    runs.push(...batch);
+    if (batch.length < 100) return runs;
+  }
+  throw new Error(`more than ${MAX_CHECK_PAGES * 100} check runs on ${sha}; refusing to review against a partial CI result`);
+}
+
 /** What a review needs to know about a pull request, read with the app's token on the session's behalf. */
 async function pullRequest(res: ServerResponse, app: GithubApp, owner: string, repo: string, number: number) {
   const pr = (await app.asInstallation(owner, repo, 'GET', `/repos/${owner}/${repo}/pulls/${number}`)).json;
   if (!pr) return send(res, 404, { error: 'no such pull request' });
-  const checks = (await app.asInstallation(owner, repo, 'GET', `/repos/${owner}/${repo}/commits/${pr.head.sha}/check-runs?per_page=100`)).json;
+  const checks = { check_runs: await checkRuns(app, owner, repo, pr.head.sha) };
   const closes = [...new Set([...String(pr.body ?? '').matchAll(CLOSES)].map((m) => Number(m[1])))];
   const issues = await Promise.all(closes.map((n) => app.asInstallation(owner, repo, 'GET', `/repos/${owner}/${repo}/issues/${n}`).then((r) => r.json)));
   send(res, 200, {

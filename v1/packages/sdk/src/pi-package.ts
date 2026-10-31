@@ -18,9 +18,17 @@ type PiFactory = (pi: unknown) => void | Promise<void>;
 // Pi coding-agent sessions show UI; a quack session has none, so every UI call answers "nothing chosen" (A16).
 const noUi = new Proxy({}, { get: () => async () => undefined });
 
-/** The pi ExtensionAPI subset tool packages use: registerTool is real, everything UI-shaped is a no-op. */
+const shutdownHandlers: Array<() => unknown> = [];
+
+/** Runs the session_shutdown handlers loaded packages registered, such as pi-lsp stopping its language servers. */
+export async function piShutdown(): Promise<void> {
+  await Promise.allSettled(shutdownHandlers.splice(0).map((h) => h()));
+}
+
+/** The pi ExtensionAPI subset tool packages use: registerTool and session_shutdown are real; anything else is a no-op. */
 function fakeApi(tools: PiTool[]) {
-  const api = { registerTool: (t: PiTool) => void tools.push(t), on: () => {}, events: { on: () => {}, emit: () => {} } };
+  const on = (event: string, handler: () => unknown) => { if (event === 'session_shutdown') shutdownHandlers.push(handler); };
+  const api = { registerTool: (t: PiTool) => void tools.push(t), on, ui: noUi, events: { on: () => {}, emit: () => {} } };
   return new Proxy(api, { get: (target, key) => (key in target ? target[key as keyof typeof target] : () => {}) });
 }
 
@@ -52,7 +60,12 @@ function adapt(tool: PiTool, replaySafe: boolean) {
 /** The entry points a pi package declares in its package.json `pi.extensions`. */
 function entries(pkg: string, from: string): string[] {
   const require = createRequire(from);
-  const manifest = require.resolve(`${pkg}/package.json`);
+  let manifest: string;
+  try {
+    manifest = require.resolve(`${pkg}/package.json`);
+  } catch (err) {
+    throw new Error(`pi package ${pkg}: ${(err as Error).message}`);
+  }
   const declared = (JSON.parse(readFileSync(manifest, 'utf8')).pi?.extensions ?? []) as string[];
   if (!declared.length) throw new Error(`${pkg} declares no pi.extensions`);
   return declared.map((e) => join(dirname(manifest), e));

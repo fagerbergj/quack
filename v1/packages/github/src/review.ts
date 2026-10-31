@@ -9,10 +9,11 @@ export const ANCHORS = ['defect', 'delivery', 'security', 'design', 'scope', 'te
 export const VERDICTS = ['approve', 'comment', 'request_changes'] as const;
 
 export type Finding = { index: number; label: string; anchor?: string; path?: string; line?: number; text: string };
-export type ParsedReview = { sections: Record<string, string>; verdict?: string; findings: Finding[] };
+export type ParsedReview = { sections: Record<string, string>; verdict?: string; findings: Finding[]; unparsed: string[] };
 
-const FINDING = /^- (\w+)(?: \((\w+)\))?:\s*(.*)$/;
-const CITATION = /^`?([\w./@+-]+\.\w+|[\w./@+-]*\/[\w.@+-]+):(\d+)(?:-\d+)?`?\s*[—–-]?\s*(.*)$/s;
+const FINDING = /^- (\w+)(?:\s*\((\w+)\))?:\s*(.*)$/;
+// A repo-relative path of one or more segments, so Dockerfile:12 and go.mod:3 cite as well as src/a.ts:1.
+const CITATION = /^`?((?:\.{1,2}\/)?[\w.@+-]+(?:\/[\w.@+-]+)*):(\d+)(?:-\d+)?`?\s*[—–-]?\s*(.*)$/s;
 
 /** Splits a review into its `## ` sections and parses its findings; tolerant, so the validator can name what is wrong. */
 export function parseReview(text: string): ParsedReview {
@@ -24,16 +25,18 @@ export function parseReview(text: string): ParsedReview {
     else if (current) sections[current] = `${sections[current] ?? ''}${line}\n`;
   }
   const findings: Finding[] = [];
+  const unparsed: string[] = [];
   for (const line of (sections.findings ?? '').split('\n')) {
     const m = FINDING.exec(line);
-    if (m) {
+    if (!m && line.startsWith('- ')) unparsed.push(line);
+    else if (m) {
       const cite = CITATION.exec(m[3]);
       findings.push({ index: findings.length + 1, label: m[1], anchor: m[2], path: cite?.[1], line: cite ? Number(cite[2]) : undefined, text: cite?.[3] ?? m[3] });
     } else if (findings.length && line.trim()) {
       findings.at(-1)!.text += `\n${line}`;
     }
   }
-  return { sections, verdict: sections.verdict?.trim().split(/\s/)[0]?.toLowerCase(), findings };
+  return { sections, verdict: sections.verdict?.trim().split(/\s/)[0]?.toLowerCase(), findings, unparsed };
 }
 
 /** Structure problems, all at once (ART-2); content problems are the judge's to find. */
@@ -42,6 +45,8 @@ export function validateReview(text: string): string[] {
   const problems = ['takeaway', 'verdict', 'findings'].filter((s) => !(s in r.sections)).map((s) => `missing a "## ${s[0].toUpperCase()}${s.slice(1)}" section`);
   if ('verdict' in r.sections && !VERDICTS.includes(r.verdict as never)) problems.push(`the verdict must be one of ${VERDICTS.join(', ')}`);
   for (const f of r.findings) if (!LABELS.includes(f.label as never)) problems.push(`finding ${f.index}: label must be one of ${LABELS.join(', ')}`);
+  // A finding line the parser cannot read would be invisible to every gate, so it is a structure problem, not a skip.
+  for (const line of r.unparsed) problems.push(`not a finding line ("- label (anchor): path:line — text"): ${line.slice(0, 80)}`);
   return problems;
 }
 

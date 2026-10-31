@@ -20,13 +20,16 @@ export function postReviewTool(config: SessionConfig) {
       if (!sealed) return error(`review v${args.version} is not sealed; call submit_review first`);
       const v = sealed.verdict as { passed?: boolean; limitReached?: boolean; checks?: CheckResult[] } | null;
       if (!v || !(v.passed || v.limitReached)) return error(`review v${args.version} has not passed its checks; revise and call submit_review`);
-      const pr = (await api.snapshot(PullRequestDoc, api.conversationId, ctx))?.pr;
+      const doc = await api.snapshot(PullRequestDoc, api.conversationId, ctx);
+      const pr = doc?.pr;
       if (!pr) return error('no pull request is checked out; call checkout_pr first');
+      if (doc?.posted?.includes(args.version)) return error(`review v${args.version} was already posted; nothing was sent again`);
       const marks = v.limitReached ? `\n\n---\n**Not fully checked:** the revision limit was reached. Checks that did not pass:\n${feedback(v.checks ?? []).map((l) => `- ${l}`).join('\n')}\n` : '';
       const body = { owner: pr.owner, repo: pr.repo, number: pr.number, commitId: pr.headSha, event: EVENT[parseReview(sealed.content).verdict ?? ''], body: sealed.content + marks };
       const res = await fetch(`${config.serviceUrl}/reviews`, { method: 'POST', body: JSON.stringify(body), headers: { authorization: `Bearer ${config.serviceToken}` } });
       if (!res.ok) return error(`posting failed: ${res.status} ${(await res.text()).slice(0, 300)}`);
       const posted = (await res.json()) as { url?: string };
+      await api.commit(async (tx) => { const d = await tx.doc(PullRequestDoc, api.conversationId); d.posted = [...(d.posted ?? []), args.version]; }, ctx);
       return { output: [{ type: 'text', text: `Posted review v${args.version} as ${body.event}: ${posted.url ?? ''}` }] };
     },
   });

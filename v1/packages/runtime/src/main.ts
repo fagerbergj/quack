@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { buildModels, createSessionServer, loadAgent, openSession, parseDeployment } from '@quack/session';
+import { piShutdown } from '@quack/sdk';
 import { catalog } from './catalog.ts';
 
 function env(name: string, fallback?: string): string {
@@ -23,5 +24,5 @@ const server = createSessionServer(session);
 server.listen(Number(env('PORT', '8080')));
 
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
-  process.on(signal, () => server.close(() => void session.close().then(() => process.exit(0))));
+  process.on(signal, () => server.close(() => void session.close().then(piShutdown).then(() => process.exit(0))));
 }

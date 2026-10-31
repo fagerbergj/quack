@@ -32,6 +32,11 @@ const github = await listen(
     if (req.url === '/repos/acme/widgets/installation') return jwtValid(auth) ? reply(200, { id: 42 }) : reply(401, {});
     if (req.url === '/repos/acme/private/installation') return reply(404, { message: 'Not Found' });
     if (req.url === '/app/installations/42/access_tokens') return jwtValid(auth) ? reply(201, { token: 'ghs_test', expires_at: new Date(Date.now() + 3600_000).toISOString() }) : reply(401, {});
+    if (req.url === '/repos/acme/widgets/pulls/7' && auth === 'token ghs_test') return reply(200, { number: 7, title: 't', body: 'Fixes #3', user: { login: 'dev' }, head: { sha: 'abc123', ref: 'fix' }, base: { ref: 'main' } });
+    if (req.url === '/repos/acme/widgets/issues/3') return reply(200, { number: 3, title: 'bug', body: 'b' });
+    const page = /^\/repos\/acme\/widgets\/commits\/abc123\/check-runs\?per_page=100&page=(\d+)$/.exec(req.url!);
+    // 150 check runs: the only failing one is on the second page.
+    if (page) return reply(200, { check_runs: Array.from({ length: page[1] === '1' ? 100 : 50 }, (_, i) => ({ name: `c${page[1]}-${i}`, status: 'completed', conclusion: page[1] === '2' && i === 49 ? 'failure' : 'success' })) });
     if (req.url === '/repos/acme/widgets/pulls/7/reviews') return auth === 'token ghs_test' ? reply(200, { id: 9, html_url: 'https://github.com/acme/widgets/pull/7#review-9' }) : reply(401, {});
     reply(404, {});
   }),
@@ -107,4 +112,12 @@ test('owner and repo parse only from github.com URLs', () => {
   assert.deepEqual(ownerRepo('https://github.com/acme/widgets.git'), { owner: 'acme', repo: 'widgets' });
   assert.equal(ownerRepo('https://evil.com/acme/widgets'), undefined);
   assert.equal(ownerRepo('not a url'), undefined);
+});
+
+test('a pull request record carries every check run, past the first page', async () => {
+  const res = await fetch(`${service}/pulls/acme/widgets/7`, { headers: { authorization: 'Bearer svc-secret' } });
+  const pr = await res.json();
+  assert.equal(pr.checks.length, 150);
+  assert.deepEqual(pr.checks.filter((c: any) => c.conclusion === 'failure').map((c: any) => c.name), ['c2-49']);
+  assert.deepEqual(pr.linkedIssues.map((i: any) => i.number), [3]);
 });
