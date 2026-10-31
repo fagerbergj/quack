@@ -1,7 +1,7 @@
 // sloplint for TypeScript: comment runs and cyclomatic complexity on diff-touched code, mirroring the Go tool.
 // Usage: node tools/sloplint.ts diff <git-ref> | repo
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import ts from 'typescript';
 
@@ -112,7 +112,8 @@ function run(mode: string, ref: string | undefined): number {
     : changedRanges(execFileSync('git', ['diff', '-U0', `${ref}...HEAD`, '--', 'v1'], { cwd: root, encoding: 'utf8', maxBuffer: 1 << 28 }));
   let count = 0;
   for (const [rel, rs] of files) {
-    if (!linted(rel)) continue;
+    // A file the diff names but the working tree no longer has (moved or deleted) has nothing left to lint.
+    if (!linted(rel) || !existsSync(join(root, rel))) continue;
     for (const f of lintSource(rel, readFileSync(join(root, rel), 'utf8'), rs)) {
       console.log(`${relative(process.cwd(), join(root, rel))}:${f.line}: ${f.message}`);
       count++;
