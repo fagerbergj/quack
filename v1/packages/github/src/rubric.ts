@@ -9,6 +9,13 @@ function citesExistingLines(_artifact: string, ev: Evidence): CodeResult {
   return share(findings.length - missing.length, findings.length, `no existing path:line cited in ${missing.join(', ')}`);
 }
 
+// A classifier judges whether a finding sounds right, not whether its quoted code exists; that is a string search.
+function quotesExist(_artifact: string, ev: Evidence): CodeResult {
+  const findings = (ev.finding ?? []) as Array<{ id: string; misquotes?: string[] }>;
+  const wrong = findings.filter((f) => f.misquotes?.length);
+  return share(findings.length - wrong.length, findings.length, wrong.map((f) => `${f.id} quotes code that is not in the repository: \`${f.misquotes![0]}\``).join('; '));
+}
+
 function blockingNamesAnchor(artifact: string): CodeResult {
   const blocking = parseReview(artifact).findings.filter((f) => f.label === 'blocking');
   const missing = blocking.filter((f) => !f.anchor).map((f) => `finding-${f.index}`);
@@ -31,7 +38,7 @@ function verdictMatchesLabels(artifact: string, ev: Evidence): CodeResult {
 // v0's five code-reviewer criteria, audited into weighted atomic checks (D11, D54). Scopes come from reviewEvidence.
 export const reviewerRubric: Rubric = {
   name: 'github.reviewer',
-  version: 2,
+  version: 3,
   threshold: 0.8,
   criteria: [
     { id: 'catches_real_issues', checks: [
@@ -44,6 +51,7 @@ export const reviewerRubric: Rubric = {
     ] },
     { id: 'claims_grounded', checks: [
       { id: 'cites_existing_lines', weight: 'gate', code: citesExistingLines },
+      { id: 'quotes_exist', weight: 'gate', code: quotesExist },
       { id: 'matches_cited_code', weight: 3, scope: 'finding', question: 'Does the cited code show what this finding says about it?' },
       { id: 'shows_how', weight: 2, scope: 'blocking', question: 'Does this blocking finding show how the problem happens: a failing command and its output, or the input and the line where it goes wrong?' },
       { id: 'verified_names_evidence', weight: 2, scope: 'review', question: 'Does every item under Verified name what was read or run and what it showed, rather than only asserting that tests pass or the logic is correct?' },
