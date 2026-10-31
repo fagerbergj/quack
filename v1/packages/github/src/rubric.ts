@@ -13,7 +13,9 @@ function citesExistingLines(_artifact: string, ev: Evidence): CodeResult {
 function quotesExist(_artifact: string, ev: Evidence): CodeResult {
   const findings = (ev.finding ?? []) as Array<{ id: string; misquotes?: string[] }>;
   const wrong = findings.filter((f) => f.misquotes?.length);
-  return share(findings.length - wrong.length, findings.length, wrong.map((f) => `${f.id} quotes code that is not in the repository: \`${f.misquotes![0]}\``).join('; '));
+  // Every missing quote at once, so one revision fixes them all; output quoted inline reads as code, so say where it goes.
+  const listed = wrong.map((f) => `${f.id} quotes code that is not in the repository: ${f.misquotes!.slice(0, 3).map((q) => `\`${q}\``).join(', ')}`).join('; ');
+  return share(findings.length - wrong.length, findings.length, `${listed}. Quote the code as it is; command output or logs go in a fenced block, which this check skips.`);
 }
 
 function blockingNamesAnchor(artifact: string): CodeResult {
