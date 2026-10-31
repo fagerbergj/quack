@@ -5,3 +5,4 @@ export { checkoutTool, PullRequestDoc, type PullRequestRecord, type SessionConfi
 export { githubSessionExtensions, postReviewTool, type GithubSessionConfig } from './post.ts';
 export { parseReview, reviewEvidence, reviewKind, validateReview, type Finding, type ParsedReview } from './review.ts';
 export { reviewerRubric } from './rubric.ts';
+export { evalService } from './eval.ts';
