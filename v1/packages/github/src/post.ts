@@ -24,12 +24,13 @@ export function postReviewTool(config: SessionConfig) {
       const pr = doc?.pr;
       if (!pr) return error('no pull request is checked out; call checkout_pr first');
       if (doc?.posted?.includes(args.version)) return error(`review v${args.version} was already posted; nothing was sent again`);
+      if (doc?.postedThisCheckout) return error(`review v${doc.postedThisCheckout} was already posted for this checkout; a run posts one review, so v${args.version} was not sent`);
       const marks = v.limitReached ? `\n\n---\n**Not fully checked:** the revision limit was reached. Checks that did not pass:\n${feedback(v.checks ?? []).map((l) => `- ${l}`).join('\n')}\n` : '';
       const body = { owner: pr.owner, repo: pr.repo, number: pr.number, commitId: pr.headSha, event: EVENT[parseReview(sealed.content).verdict ?? ''], body: sealed.content + marks };
       const res = await fetch(`${config.serviceUrl}/reviews`, { method: 'POST', body: JSON.stringify(body), headers: { authorization: `Bearer ${config.serviceToken}` } });
       if (!res.ok) return error(`posting failed: ${res.status} ${(await res.text()).slice(0, 300)}`);
       const posted = (await res.json()) as { url?: string };
-      await api.commit(async (tx) => { const d = await tx.doc(PullRequestDoc, api.conversationId); d.posted = [...(d.posted ?? []), args.version]; }, ctx);
+      await api.commit(async (tx) => { const d = await tx.doc(PullRequestDoc, api.conversationId); d.posted = [...(d.posted ?? []), args.version]; d.postedThisCheckout = args.version; }, ctx);
       return { output: [{ type: 'text', text: `Posted review v${args.version} as ${body.event}: ${posted.url ?? ''}` }] };
     },
   });
@@ -43,8 +44,8 @@ const postBeforeFinishing = hook(GenerationTask, {
     const last = (await api.snapshot(Artifacts, api.conversationId, ctx))?.kinds[reviewKind.kind]?.versions.at(-1);
     const v = last?.verdict as { passed?: boolean; limitReached?: boolean } | null | undefined;
     if (!last || !(v?.passed || v?.limitReached)) return undefined;
-    const posted = (await api.snapshot(PullRequestDoc, api.conversationId, ctx))?.posted ?? [];
-    return posted.includes(last.version) ? undefined : { continue: `Review v${last.version} is cleared to post but has not been posted. Call post_review with version ${last.version}.` };
+    const doc = await api.snapshot(PullRequestDoc, api.conversationId, ctx);
+    return doc?.postedThisCheckout || doc?.posted?.includes(last.version) ? undefined : { continue: `Review v${last.version} is cleared to post but has not been posted. Call post_review with version ${last.version}.` };
   },
 });
 
