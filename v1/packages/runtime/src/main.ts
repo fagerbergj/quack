@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { agentSpec, buildModels, createSessionServer, openSession, parseDefinition, parseDeployment } from '@quack/session';
+import { buildModels, createSessionServer, loadAgent, openSession, parseDeployment } from '@quack/session';
+import { piShutdown } from '@quack/sdk';
 import { catalog } from './catalog.ts';
 
 function env(name: string, fallback?: string): string {
@@ -16,12 +17,12 @@ function readJson(path: string) {
   }
 }
 const deployment = parseDeployment(readJson(env('QUACK_CONFIG')));
-const definition = parseDefinition(readJson(env('QUACK_AGENT')), deployment, catalog);
+const agent = await loadAgent(env('QUACK_AGENT'), deployment, catalog);
 
-const session = await openSession({ dir: env('QUACK_SESSION_DIR'), models: buildModels(deployment), agent: agentSpec(definition, catalog) });
+const session = await openSession({ dir: env('QUACK_SESSION_DIR'), models: buildModels(deployment), agent });
 const server = createSessionServer(session);
 server.listen(Number(env('PORT', '8080')));
 
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
-  process.on(signal, () => server.close(() => void session.close().then(() => process.exit(0))));
+  process.on(signal, () => server.close(() => void session.close().then(piShutdown).then(() => process.exit(0))));
 }

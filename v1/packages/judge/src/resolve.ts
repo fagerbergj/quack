@@ -1,7 +1,7 @@
 import type { Context } from '@earendil-works/chord/context';
 import type { ClassifierModel, ClassifierQuestion } from '@earendil-works/pi-ai';
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
-import { agentModel, decide } from '@quack/sdk';
+import { agentModel, decide, modelResolver } from '@quack/sdk';
 import type { Check, Unit } from './rubric.ts';
 
 /** A decision model such as Clef, reached through pi-ai's classifier API. */
@@ -28,15 +28,19 @@ async function classify(api: ToolExecutionApi, ref: ClassifierRef, unit: Unit, c
   }
 }
 
-async function escalate(api: ToolExecutionApi, memo: string, unit: Unit, check: Check, ctx: Context): Promise<Answer> {
+/** Where uncertain checks go: a named judge model, or the agent's own model when none is set. */
+export type ModelRef = { provider: string; modelId: string };
+
+async function escalate(api: ToolExecutionApi, judgeModel: ModelRef | undefined, memo: string, unit: Unit, check: Check, ctx: Context): Promise<Answer> {
   const point = { name: `${memo}:${unit.id}:${check.id}`, question: check.question!, options: ['yes', 'no'], evidence: JSON.stringify(unit.state, null, 1) };
-  const d = await decide(api, point, [agentModel], ctx);
+  const resolver = judgeModel ? { ...modelResolver(judgeModel.provider, judgeModel.modelId), id: 'judge-model' } : agentModel;
+  const d = await decide(api, point, [resolver], ctx);
   if (!d) return { met: null, resolver: 'none', note: 'no resolver could decide' };
   return { met: d.choice === 'yes', resolver: d.resolver, note: d.choice === 'yes' ? undefined : d.reason };
 }
 
 // One decision-model request per unit; confident answers stand, the rest escalate one check at a time (D16).
-export async function answerUnit(api: ToolExecutionApi, ref: ClassifierRef | undefined, memo: string, unit: Unit, checks: Check[], ctx: Context): Promise<Record<string, Answer>> {
+export async function answerUnit(api: ToolExecutionApi, ref: ClassifierRef | undefined, judgeModel: ModelRef | undefined, memo: string, unit: Unit, checks: Check[], ctx: Context): Promise<Record<string, Answer>> {
   const key = `${memo}:${unit.id}:classifier`;
   const stored = await api.memo<Record<string, number> | null>(key, ctx);
   const probabilities = stored !== undefined ? stored : await api.memo(key, (ref ? await classify(api, ref, unit, checks, ctx) : undefined) ?? null, ctx);
@@ -45,7 +49,7 @@ export async function answerUnit(api: ToolExecutionApi, ref: ClassifierRef | und
   for (const check of checks) {
     const p = probabilities?.[check.id];
     if (p !== undefined && (p >= act || 1 - p >= act)) answers[check.id] = { met: p >= act, resolver: ref!.modelId };
-    else answers[check.id] = await escalate(api, memo, unit, check, ctx);
+    else answers[check.id] = await escalate(api, judgeModel, memo, unit, check, ctx);
   }
   return answers;
 }

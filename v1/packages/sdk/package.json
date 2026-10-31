@@ -2,10 +2,13 @@
   "name": "@quack/sdk",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "dependencies": {
     "@earendil-works/chord": "1.4.0",
     "@earendil-works/pi-ai": "1.4.0",
-    "@earendil-works/pi-durable": "1.4.0"
+    "@earendil-works/pi-durable": "1.4.0",
+    "jiti": "2.7.0"
   }
 }
