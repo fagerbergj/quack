@@ -66,7 +66,8 @@ export async function replay(item: DatasetItem, candidate: Candidate, services: 
   } catch (err) {
     error = `${(err as Error).message}${stderr ? `: ${crashLine(stderr)}` : ''}`;
   } finally {
-    if (child.exitCode === null) {
+    // A child killed by a signal has a null exitCode too; waiting on its exit event then would never return.
+    if (child.exitCode === null && child.signalCode === null) {
       const exited = new Promise((r) => child.once('exit', r));
       child.kill('SIGTERM');
       await exited;
