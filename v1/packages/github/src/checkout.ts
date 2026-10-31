@@ -1,4 +1,4 @@
-import { chmodSync } from 'node:fs';
+
 import { fileURLToPath } from 'node:url';
 import type { Context } from '@earendil-works/chord/context';
 import { Type } from '@earendil-works/pi-ai';
@@ -20,7 +20,6 @@ export const PullRequestDoc = defineDoc<{ pr: PullRequestRecord | null; posted?:
 });
 
 const ASKPASS = fileURLToPath(new URL('./askpass.mjs', import.meta.url));
-chmodSync(ASKPASS, 0o755);
 const CONVENTIONS = ['AGENTS.md', 'CLAUDE.md'];
 
 async function git(api: ToolExecutionApi, args: string[], config: SessionConfig, remote: string, ctx: Context) {
