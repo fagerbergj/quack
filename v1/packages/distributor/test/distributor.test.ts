@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { nextFrame, runEnded } from '../../session/test/ws-helpers.ts';
 import { createDistributor, processDriver } from '../src/index.ts';
 
 const dirs: string[] = [];
@@ -93,4 +94,33 @@ test('a session that keeps crashing stops auto-restarting until the next request
 test('a malformed session key is a client error', async () => {
   const { base } = await startDistributor(60_000);
   assert.equal((await fetch(`${base}/sessions/%ZZ/invocations`, { method: 'POST', body: '{}' })).status, 400);
+});
+
+test('proxies the live stream and keeps a watched session from idling out', async () => {
+  const { driver, base } = await startDistributor(200);
+  const key = 'github:fagerbergj/quack#1827';
+  const ws = new WebSocket(`${base.replace('http', 'ws')}/sessions/${encodeURIComponent(key)}/ws`);
+  assert.equal((await nextFrame(ws, () => true)).type, 'snapshot');
+
+  const ended = nextFrame(ws, runEnded);
+  ws.send(JSON.stringify({ type: 'input', input: 'hi', requestId: 'w-1' }));
+  assert.match(JSON.stringify((await ended).events), /echo: hi/);
+
+  // Several idle sweeps pass while the viewer is connected; the session must still be running.
+  await new Promise((r) => setTimeout(r, 1_000));
+  assert.deepEqual(driver.running(), [key]);
+  ws.close();
+  await until(() => driver.running().length === 0);
+});
+
+test('a viewer whose session cannot start is disconnected, and the distributor keeps serving', async () => {
+  const broken = { ensure: async () => { throw new Error('no capacity'); }, stop: async () => {}, running: () => [], pid: () => undefined };
+  const server = createDistributor(broken, { idleMs: 60_000 }).listen(0);
+  await new Promise((r) => server.once('listening', r));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const ws = new WebSocket(`${base.replace('http', 'ws')}/sessions/research%3Ax/ws`);
+  const closed = await new Promise<string>((r) => { ws.onerror = () => r('error'); ws.onopen = () => r('open'); });
+  assert.equal(closed, 'error');
+  assert.equal((await fetch(`${base}/sessions`)).status, 200);
+  await new Promise((r) => server.close(r));
 });

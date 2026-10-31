@@ -35,8 +35,8 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
     harness,
     root,
     busy: () => harness.wake().active,
-    async submit(input: string, requestId?: string, wait = false): Promise<SubmitResult> {
-      const submission = await root.submit({ type: 'input', content: input, requestId }, ctx);
+    async submit(input: string, requestId?: string, wait = false, whenBusy?: 'steer' | 'followUp'): Promise<SubmitResult> {
+      const submission = await root.submit({ type: 'input', content: input, requestId, whenBusy }, ctx);
       const record = wait ? await submission.wait(ctx) : await submission.status(ctx);
       const submissionId = String(record.id);
       if (record.status === 'done') return { submissionId, status: 'done', answer: await answerText(record.answer) };

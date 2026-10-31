@@ -1,4 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { connect } from 'node:net';
+import type { Duplex } from 'node:stream';
 import type { HostDriver } from './process-driver.ts';
 
 const KEY = /^[A-Za-z0-9:/#._@-]{1,200}$/;
@@ -28,11 +30,33 @@ function send(res: ServerResponse, status: number, body: unknown) {
 }
 
 // Routes /sessions/<url-encoded key>/<path> to the one process that owns that session (DSP-1..4). Holds no domain logic.
+function sessionPath(url: string | undefined): { key: string; path: string } | undefined {
+  const match = /^\/sessions\/([^/]+)(\/.*)$/.exec(url ?? '');
+  if (!match) return undefined;
+  const key = safeDecode(match[1]);
+  return key && KEY.test(key) ? { key, path: match[2] } : undefined;
+}
+
+// Splices a WebSocket upgrade onto the owning session's /ws; the session process speaks the protocol.
+async function proxyUpgrade(target: string, req: IncomingMessage, path: string, client: Duplex, head: Buffer) {
+  const { hostname, port } = new URL(target);
+  const upstream = connect(Number(port), hostname);
+  await new Promise((resolve, reject) => upstream.once('connect', resolve).once('error', reject));
+  const headers = req.rawHeaders.reduce((acc, v, i) => acc + (i % 2 ? `${v}\r\n` : `${v}: `), '');
+  upstream.write(`GET ${path} HTTP/1.1\r\n${headers}\r\n`);
+  if (head.length) upstream.write(head);
+  upstream.pipe(client).pipe(upstream);
+  const end = () => { upstream.destroy(); client.destroy(); };
+  upstream.on('error', end).on('close', end);
+  client.on('error', end).on('close', end);
+}
+
 export function createDistributor(driver: HostDriver, opts: { idleMs?: number } = {}) {
   const lastUse = new Map<string, number>();
   const stopping = new Map<string, Promise<void>>();
+  const viewers = new Map<string, number>();
   const idleMs = opts.idleMs ?? 10 * 60_000;
-  const idle = (key: string) => Date.now() - (lastUse.get(key) ?? 0) >= idleMs;
+  const idle = (key: string) => !viewers.get(key) && Date.now() - (lastUse.get(key) ?? 0) >= idleMs;
 
   const sweep = setInterval(async () => {
     for (const key of driver.running()) {
@@ -55,21 +79,33 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number } 
   const server = createServer(async (req, res) => {
     try {
       if (req.method === 'GET' && req.url === '/sessions') return send(res, 200, { running: driver.running() });
-      const match = /^\/sessions\/([^/]+)(\/.*)$/.exec(req.url ?? '');
-      if (!match) return send(res, 404, { error: 'not found' });
-      const key = safeDecode(match[1]);
-      if (!key || !KEY.test(key)) return send(res, 400, { error: 'invalid session key' });
+      if (!/^\/sessions\/[^/]+\//.test(req.url ?? '')) return send(res, 404, { error: 'not found' });
+      const target = sessionPath(req.url);
+      if (!target) return send(res, 400, { error: 'invalid session key' });
+      const { key, path } = target;
       lastUse.set(key, Date.now());
       await stopping.get(key);
       const url = await driver.ensure(key);
       const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : new Uint8Array(await readBody(req));
-      const upstream = await fetch(url + match[2], { method: req.method, body, headers: { 'content-type': 'application/json' } });
+      const upstream = await fetch(url + path, { method: req.method, body, headers: { 'content-type': 'application/json' } });
       lastUse.set(key, Date.now());
       res.writeHead(upstream.status, { 'content-type': upstream.headers.get('content-type') ?? 'application/json' });
       res.end(Buffer.from(await upstream.arrayBuffer()));
     } catch (err) {
       const bad = err instanceof Error && err.message === 'body too large';
       send(res, bad ? 400 : 502, { error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+  server.on('upgrade', async (req, socket, head) => {
+    const target = sessionPath(req.url);
+    if (!target || target.path !== '/ws') return socket.destroy();
+    viewers.set(target.key, (viewers.get(target.key) ?? 0) + 1);
+    socket.once('close', () => { viewers.set(target.key, (viewers.get(target.key) ?? 1) - 1); lastUse.set(target.key, Date.now()); });
+    try {
+      await stopping.get(target.key);
+      await proxyUpgrade(await driver.ensure(target.key), req, '/ws', socket, head);
+    } catch {
+      socket.destroy();
     }
   });
   server.on('close', () => clearInterval(sweep));
