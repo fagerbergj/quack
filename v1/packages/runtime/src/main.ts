@@ -8,7 +8,13 @@ function env(name: string, fallback?: string): string {
   return value;
 }
 
-const readJson = (path: string) => JSON.parse(readFileSync(path, 'utf8'));
+function readJson(path: string) {
+  try {
+    return JSON.parse(readFileSync(path, 'utf8'));
+  } catch (err) {
+    throw new Error(`reading ${path}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
 const deployment = parseDeployment(readJson(env('QUACK_CONFIG')));
 const definition = parseDefinition(readJson(env('QUACK_AGENT')), deployment, catalog);
 

@@ -56,11 +56,17 @@ type Tx = Parameters<Parameters<ToolExecutionApi['commit']>[0]>[0];
 
 // The entry just before the newest assistant message: the in-flight tool round would leave unanswered tool calls in a fork.
 async function completeTranscriptEnd(tx: Tx, conversationId: ToolExecutionApi['conversationId']) {
-  const page = await tx.scanEntries({ conversationId, order: 'descending' }, 64);
-  const lastAssistant = page.items.findIndex((e) => e.kind === 'pi.assistant');
-  const at = page.items[lastAssistant + 1];
-  if (lastAssistant < 0 || !at) throw new Error('no complete transcript to fork');
-  return at.id;
+  let seen = false;
+  let cursor: Parameters<Tx['scanEntries']>[2];
+  do {
+    const page = await tx.scanEntries({ conversationId, order: 'descending' }, 64, cursor);
+    for (const e of page.items) {
+      if (seen) return e.id;
+      seen = e.kind === 'pi.assistant';
+    }
+    cursor = page.next;
+  } while (cursor);
+  return undefined;
 }
 
 // Default resolver (D18): the session's own model on a fork of the live transcript, tools off, so it sees everything and reuses the cache.
@@ -72,10 +78,13 @@ export const sessionModel: Resolver = {
     if (!forkId) {
       const created = await api.commit(async (tx) => {
         const at = await completeTranscriptEnd(tx, api.conversationId);
+        if (at === undefined) return undefined;
         const fork = await tx.forkConversation(api.conversationId, at, { ownership: { kind: 'task', taskId: api.taskId } });
         await configure(tx, fork.id, { tools: [] });
         return Number(fork.id);
       }, ctx);
+      // No complete transcript yet (nothing the model said to fork from): escalate to the next resolver.
+      if (created === undefined) return undefined;
       forkId = await api.memo<number>(forkKey, created, ctx);
     }
     const fork = await api.conversation(forkId as never, ctx);

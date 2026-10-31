@@ -25,6 +25,6 @@ test('a run that keeps calling tools is aborted at the turn limit', async () => 
   });
   const result = await session.submit('Keep pinging.', 'loop-1', true);
   assert.equal(result.status, 'unanswered');
-  assert.ok(calls <= 3, `ran ${calls} tool calls`);
+  assert.equal(calls, 3, `ran ${calls} tool calls for maxTurns=3`);
   await session.close();
 });

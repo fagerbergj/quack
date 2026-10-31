@@ -44,7 +44,7 @@ export async function answerUnit(api: ToolExecutionApi, ref: ClassifierRef | und
   const answers: Record<string, Answer> = {};
   for (const check of checks) {
     const p = probabilities?.[check.id];
-    if (p !== undefined && (p >= act || p <= 1 - act)) answers[check.id] = { met: p >= act, resolver: ref!.modelId };
+    if (p !== undefined && (p >= act || 1 - p >= act)) answers[check.id] = { met: p >= act, resolver: ref!.modelId };
     else answers[check.id] = await escalate(api, memo, unit, check, ctx);
   }
   return answers;

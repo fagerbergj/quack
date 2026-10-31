@@ -87,8 +87,8 @@ const yes = fauxAssistantMessage('{"choice": "yes", "confidence": 0.9, "reason":
 test('Clef answers confident checks, an uncertain one escalates, and a failed gate sends the version back', async () => {
   process.env.QUACK_CLEF_KEY = 'none';
   clefCalls.length = 0;
-  // Clef is unsure whether f2 says why (0.5); everything else it answers confidently.
-  const baseUrl = await fakeClef((q, unit) => (q.endsWith('says_why') && unit === 'f2' ? 0.5 : q.endsWith('preference_only') ? 0.05 : 0.95));
+  // Clef is unsure whether f2 says why (0.5); everything else it answers confidently, preference_only at exactly the 0.2 edge.
+  const baseUrl = await fakeClef((q, unit) => (q.endsWith('says_why') && unit === 'f2' ? 0.5 : q.endsWith('preference_only') ? 0.2 : 0.95));
   const good = '## Takeaway\nFix the off-by-one.\n## Verdict\nrequest_changes\n## Findings\n- blocking: src/x.ts:12 off by one\n- nit: src/y.ts:3 rename\n';
   const { done, versions } = await run(baseUrl, 8192, [
     tool('write', { path: 'artifacts/review.md', content: good.replace('## Verdict\nrequest_changes\n', '') }),
@@ -109,7 +109,9 @@ test('Clef answers confident checks, an uncertain one escalates, and a failed ga
   const says = v2.checks.find((c: any) => c.id === 'says_why');
   assert.deepEqual(says.resolvers, { clef: 1, 'agent-model': 1 }, 'f1 by Clef, f2 escalated');
   assert.equal(says.met, 1);
-  assert.equal(v2.checks.find((c: any) => c.id === 'preference_only').units, 1, 'only the blocking finding');
+  const preference = v2.checks.find((c: any) => c.id === 'preference_only');
+  assert.equal(preference.units, 1, 'only the blocking finding');
+  assert.deepEqual(preference.resolvers, { clef: 1 }, 'p = 0.2 is taken as given, not escalated');
   assert.ok(clefCalls.some((c) => c.unit === 'f1' && c.questions.length === 2), 'one request per unit, all its checks together');
 });
 

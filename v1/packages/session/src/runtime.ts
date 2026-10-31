@@ -66,7 +66,8 @@ async function turnLimit(harness: Harness, root: Awaited<ReturnType<Harness['roo
   let turns = 0;
   events.start(async (batch) => {
     for (const e of batch) {
-      if (e.type === 'run_start') turns = 0;
+      // An overflowed watch re-syncs with a snapshot and drops turn events, so a snapshot restarts the count too.
+      if (e.type === 'run_start' || e.type === 'snapshot') turns = 0;
       if (e.type === 'turn_start' && ++turns > maxTurns) void root.abort(ctx);
     }
   });
