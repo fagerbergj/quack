@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import type { Langfuse } from './langfuse.ts';
 import type { ReplayResult } from './replay.ts';
 
@@ -34,11 +34,13 @@ export function scoresOf(r: ReplayResult, blocks?: Blocks): Record<string, numbe
 
 /** Records one replay as a trace with scores, linked into the run as a Langfuse experiment (EV1). */
 export async function publish(lf: Langfuse, runName: string, r: ReplayResult, blocks?: Blocks) {
-  const traceId = randomUUID();
+  // OTLP trace ids are 16 random bytes in hex.
+  const traceId = randomBytes(16).toString('hex');
   const scores = scoresOf(r, blocks);
   const output = { outcome: r.record.outcome, artifacts: Object.fromEntries(Object.entries(r.record.artifacts).map(([k, v]) => [k, v.at(-1)?.content ?? null])), captured: r.captured, error: r.error ?? null };
+  const endMs = Date.now();
+  await lf.trace({ traceId, name: `eval ${runName}`, input: r.item.input, output, startMs: endMs - r.seconds * 1000, endMs });
   await lf.ingest([
-    { id: `${traceId}-trace`, type: 'trace-create', body: { id: traceId, name: `eval ${runName}`, input: r.item.input, output, metadata: { datasetItemId: r.item.id } } },
     ...Object.entries(scores).map(([name, value]) => ({ id: `${traceId}-${name}`, type: 'score-create', body: { id: `${traceId}-${name}`, traceId, name, value, dataType: 'NUMERIC' } })),
   ]);
   await lf.linkRun({ runName, datasetItemId: r.item.id, traceId });
