@@ -109,3 +109,33 @@ test('a review that quotes code the repository does not have is sent back before
   assert.equal(service.posted[0].body, review, 'only the corrected version went out');
   await session.close();
 });
+
+test('a run that revises after posting sends one review, and may finish without posting the revision', async () => {
+  const revised = review.replace('approve.', 'approve, with one nit.');
+  const { done, seen, service, session } = await reviewRun((seen) => {
+    const step = recorder(seen);
+    return [
+      call('checkout_pr', { repository: 'acme/widgets', number: 7 }),
+      step(call('write', { path: 'artifacts/review.md', content: review })),
+      step(call('submit_review', {})),
+      step(call('post_review', { version: 1 })),
+      step(call('write', { path: 'artifacts/review.md', content: revised })),
+      step(call('submit_review', {})),
+      step(call('post_review', { version: 2 })),
+      step(fauxAssistantMessage('Posted.')),
+      call('checkout_pr', { repository: 'acme/widgets', number: 7 }),
+      call('post_review', { version: 2 }),
+      fauxAssistantMessage('Re-reviewed.'),
+    ];
+  });
+  assert.equal(done.status === 'done' && done.answer, 'Posted.', 'the unposted v2 does not hold the run open');
+  assert.match(seen[6], /review v1 was already posted for this checkout; a run posts one review, so v2 was not sent/);
+  assert.equal(service.posted.length, 1);
+  assert.equal(service.posted[0].body, review);
+
+  const again = await session.submit('/review', 'gh-2', true);
+  assert.equal(again.status === 'done' && again.answer, 'Re-reviewed.');
+  assert.equal(service.posted.length, 2, 'a later run checks out afresh and may post');
+  assert.equal(service.posted[1].body, revised);
+  await session.close();
+});

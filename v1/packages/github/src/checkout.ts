@@ -14,8 +14,8 @@ export type PullRequestRecord = {
   linkedIssues: Array<{ number: number; title: string; body: string }>;
 };
 
-/** posted: versions of the review already sent, so none goes out twice. */
-export const PullRequestDoc = defineDoc<{ pr: PullRequestRecord | null; posted?: number[] }>({
+/** posted: versions of the review already sent, so none goes out twice; postedThisCheckout: the one a run sent. */
+export const PullRequestDoc = defineDoc<{ pr: PullRequestRecord | null; posted?: number[]; postedThisCheckout?: number }>({
   kind: 'github.pr', version: 1, scope: 'conversation', history: 'latest', fork: 'current', initial: () => ({ pr: null }), checkpointWhen: () => false,
 });
 
@@ -64,7 +64,11 @@ export function checkoutTool(config: SessionConfig) {
       if (!cloned) await git(api, ['clone', '--filter=blob:none', '--no-checkout', remote, dir], config, remote, ctx);
       await git(api, ['-C', dir, 'fetch', 'origin', pr.baseRef, `pull/${pr.number}/head`], config, remote, ctx);
       await git(api, ['-C', dir, 'checkout', '--detach', pr.headSha], config, remote, ctx);
-      await api.commit(async (tx) => { (await tx.doc(PullRequestDoc, api.conversationId)).pr = JSON.parse(JSON.stringify(pr)); }, ctx);
+      await api.commit(async (tx) => {
+        const d = await tx.doc(PullRequestDoc, api.conversationId);
+        d.pr = JSON.parse(JSON.stringify(pr));
+        delete d.postedThisCheckout;
+      }, ctx);
       const stat = await git(api, ['-C', dir, 'diff', '--stat', `origin/${pr.baseRef}...${pr.headSha}`], config, remote, ctx);
       const hunks = await git(api, ['-C', dir, 'diff', '-U0', `origin/${pr.baseRef}...${pr.headSha}`], config, remote, ctx);
       const text = [
