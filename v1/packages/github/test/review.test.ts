@@ -45,7 +45,8 @@ test('the verdict must match the findings labels', () => {
   assert.equal(verdict(questionOnly, {}).met, 1);
   assert.equal(verdict(questionOnly.replace('comment', 'approve'), {}).met, 0);
   const clean = '## Takeaway\nx\n## Verdict\ncomment\n## Findings\n## Verified\n- could not run the tests offline\n';
-  assert.equal(verdict(clean, {}).met, 1, 'comment is right when verification could not finish');
+  assert.equal(verdict(clean, {}).met, 1, 'comment is allowed when verification could not finish');
+  assert.equal(verdict(clean.replace('comment', 'approve'), {}).met, 1, 'and approve is still right beside it');
   const green = '## Takeaway\nx\n## Verdict\napprove\n## Findings\n';
   const ci = (s: string) => ({ change: [{ id: 'change', state: { ci: s } }] });
   assert.equal(verdict(green, ci('go-test=success')).met, 1);

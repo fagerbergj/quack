@@ -19,10 +19,12 @@ const CI_FAILED = /=(failure|timed_out|cancelled|action_required)\b/;
 
 function verdictMatchesLabels(artifact: string, ev: Evidence): CodeResult {
   const r = parseReview(artifact);
-  // Without a blocking finding, `comment` is right for an open question, a failing check, or verification left unfinished.
-  const unsettled = r.findings.some((f) => f.label === 'question') || CI_FAILED.test(String(ev.change?.[0]?.state.ci ?? '')) || /could not|unable to|not verified/i.test(r.sections.verified ?? '');
+  // Without a blocking finding, an open question or a failing check calls for `comment`. A disclosed gap in verification
+  // allows `comment` but does not demand it: "could not run -race here" beside green CI is still an approve.
+  const unsettled = r.findings.some((f) => f.label === 'question') || CI_FAILED.test(String(ev.change?.[0]?.state.ci ?? ''));
   const expected = r.findings.some((f) => f.label === 'blocking') ? 'request_changes' : unsettled ? 'comment' : 'approve';
-  const ok = r.verdict === expected;
+  const gapDisclosed = /could not|unable to|not verified/i.test(r.sections.verified ?? '');
+  const ok = r.verdict === expected || (expected === 'approve' && r.verdict === 'comment' && gapDisclosed);
   return { met: ok ? 1 : 0, detail: ok ? undefined : `the findings call for ${expected}, the verdict says ${r.verdict ?? 'nothing'}` };
 }
 
