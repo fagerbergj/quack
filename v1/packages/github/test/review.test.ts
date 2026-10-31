@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parseReview, reviewerRubric, validateReview } from '../src/index.ts';
+import { quotedCode } from '../src/review.ts';
 
 const review = `## Takeaway
 Fix the double-counted cache tokens before merging.
@@ -78,4 +79,14 @@ test('an anchor without its space still parses, a cited root file counts, and an
   assert.deepEqual(prose.findings.map((f) => [f.path, f.line]), [[undefined, undefined], ['go.mod', 3], ['./x/y.go', 4]]);
   const problems = validateReview('## Takeaway\nx\n## Verdict\napprove\n## Findings\n- blocker src/b.ts:2 nope\n');
   assert.deepEqual(problems, ['not a finding line ("- label (anchor): path:line — text"): - blocker src/b.ts:2 nope']);
+});
+
+test('statement-like inline quotes are collected for checking; identifiers, short spans and fenced proposals are not', () => {
+  const text = "`opponent()` finds none, so `addWeekForm` appends `teamWeek{Week: w, Points: 0, Result: \"-\"}`; see `className=\"${CHIP} bg-blue-100 ...\"`.\n```go\nx := teamWeek{Points: 1}\n```";
+  assert.deepEqual(quotedCode(text), [['teamWeek{Week: w, Points: 0, Result: "-"}'], ['className="${CHIP} bg-blue-100']]);
+  const gate = code('claims_grounded', 'quotes_exist');
+  assert.equal(gate('', { finding: [{ id: 'finding-1', state: {}, misquotes: [] }] } as never).met, 1);
+  const failed = gate('', { finding: [{ id: 'finding-1', state: {}, misquotes: [] }, { id: 'finding-2', state: {}, misquotes: ['Points: 0'] }] } as never);
+  assert.equal(failed.met, 0.5);
+  assert.match(failed.detail!, /finding-2 quotes code that is not in the repository: `Points: 0`/);
 });
