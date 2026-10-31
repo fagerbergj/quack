@@ -12,8 +12,8 @@ export type Finding = { index: number; label: string; anchor?: string; path?: st
 export type ParsedReview = { sections: Record<string, string>; verdict?: string; findings: Finding[]; unparsed: string[] };
 
 const FINDING = /^- (\w+)(?:\s*\((\w+)\))?:\s*(.*)$/;
-// A repo-relative path of one or more segments, so Dockerfile:12 and go.mod:3 cite as well as src/a.ts:1.
-const CITATION = /^`?((?:\.{1,2}\/)?[\w.@+-]+(?:\/[\w.@+-]+)*):(\d+)(?:-\d+)?`?\s*[—–-]?\s*(.*)$/s;
+// A path with a directory or an extension, or a capitalized root file (Dockerfile, Makefile), so `node:18` is not one.
+const CITATION = /^`?((?:\.{1,2}\/)?[\w.@+-]*\/[\w.@/+-]+|[\w@+-][\w@+-]*\.[\w.@+-]+|[A-Z][\w-]*):(\d+)(?:-\d+)?`?\s*[—–-]?\s*(.*)$/s;
 
 /** Splits a review into its `## ` sections and parses its findings; tolerant, so the validator can name what is wrong. */
 export function parseReview(text: string): ParsedReview {

@@ -33,6 +33,9 @@ const github = await listen(
     if (req.url === '/repos/acme/private/installation') return reply(404, { message: 'Not Found' });
     if (req.url === '/app/installations/42/access_tokens') return jwtValid(auth) ? reply(201, { token: 'ghs_test', expires_at: new Date(Date.now() + 3600_000).toISOString() }) : reply(401, {});
     if (req.url === '/repos/acme/widgets/pulls/7' && auth === 'token ghs_test') return reply(200, { number: 7, title: 't', body: 'Fixes #3', user: { login: 'dev' }, head: { sha: 'abc123', ref: 'fix' }, base: { ref: 'main' } });
+    if (req.url === '/repos/acme/widgets/pulls/8' && auth === 'token ghs_test') return reply(200, { number: 8, title: 't', body: '', user: { login: 'dev' }, head: { sha: 'full111', ref: 'big' }, base: { ref: 'main' } });
+    // Every page full: a commit whose check runs never end.
+    if (req.url?.startsWith('/repos/acme/widgets/commits/full111/check-runs')) return reply(200, { check_runs: Array.from({ length: 100 }, (_, i) => ({ name: `c${i}`, status: 'completed', conclusion: 'success' })) });
     if (req.url === '/repos/acme/widgets/issues/3') return reply(200, { number: 3, title: 'bug', body: 'b' });
     const page = /^\/repos\/acme\/widgets\/commits\/abc123\/check-runs\?per_page=100&page=(\d+)$/.exec(req.url!);
     // 150 check runs: the only failing one is on the second page.
@@ -120,4 +123,10 @@ test('a pull request record carries every check run, past the first page', async
   assert.equal(pr.checks.length, 150);
   assert.deepEqual(pr.checks.filter((c: any) => c.conclusion === 'failure').map((c: any) => c.name), ['c2-49']);
   assert.deepEqual(pr.linkedIssues.map((i: any) => i.number), [3]);
+});
+
+test('a commit with more check runs than the service reads is refused, not reviewed against part of its CI', async () => {
+  const res = await fetch(`${service}/pulls/acme/widgets/8`, { headers: { authorization: 'Bearer svc-secret' } });
+  assert.equal(res.status, 502);
+  assert.match((await res.json()).error, /more than 1000 check runs on full111/);
 });
