@@ -15,7 +15,7 @@ function v0First(n: string) {
   const reviews = JSON.parse(execFileSync('gh', ['api', `/repos/${repo}/pulls/${n}/reviews`], { encoding: 'utf8', maxBuffer: 64 << 20 })) as any[];
   const first = reviews.find((r) => r.user.login.startsWith('quack-jason'));
   if (!first) throw new Error(`#${n} has no v0 review`);
-  return { state: first.state as string, commit: first.commit_id as string, body: first.body as string };
+  return { state: first.state as string, commit: first.commit_id as string, at: first.submitted_at as string, body: first.body as string };
 }
 
 async function ping(url: string, deadline: number) {
@@ -38,9 +38,9 @@ async function untilSettled(url: string, n: string, deadline: number): Promise<u
   }
 }
 
-const pins: Record<string, string> = {};
+const pins: Record<string, { head: string; at: string }> = {};
 const v0 = Object.fromEntries(prs.map((n) => [n, v0First(n)]));
-for (const n of prs) pins[`${repo}#${n}`] = v0[n].commit;
+for (const n of prs) pins[`${repo}#${n}`] = { head: v0[n].commit, at: v0[n].at };
 mkdirSync(outDir, { recursive: true });
 const posted = resolve(outDir, 'posted.jsonl');
 const service = stubService(pins, posted).listen(0);
