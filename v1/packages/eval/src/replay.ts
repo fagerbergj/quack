@@ -28,7 +28,7 @@ async function freePort(): Promise<number> {
 // A runtime that exits (a bad config path, a crash) ends the wait at once instead of at the deadline.
 async function untilSettled(url: string, input: string, deadline: number, child: ChildProcess) {
   for (;;) {
-    if (child.exitCode !== null) throw new Error(`runtime exited with ${child.exitCode}`);
+    if (child.exitCode !== null || child.signalCode) throw new Error(`runtime exited with ${child.exitCode ?? child.signalCode}`);
     try {
       const r = (await (await fetch(`${url}/invocations`, { method: 'POST', body: JSON.stringify({ input, requestId: 'eval-1' }) })).json()) as { status: string };
       if (r.status === 'done' || r.status === 'unanswered') return;
@@ -66,7 +66,8 @@ export async function replay(item: DatasetItem, candidate: Candidate, services: 
   } catch (err) {
     error = `${(err as Error).message}${stderr ? `: ${crashLine(stderr)}` : ''}`;
   } finally {
-    if (child.exitCode === null) {
+    // A child killed by a signal has a null exitCode too; waiting on its exit event then would never return.
+    if (child.exitCode === null && child.signalCode === null) {
       const exited = new Promise((r) => child.once('exit', r));
       child.kill('SIGTERM');
       await exited;
