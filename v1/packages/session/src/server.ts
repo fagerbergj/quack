@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { pendingApprovals, resolveApproval } from '@quack/sdk';
+import { liveUpgrade } from './live.ts';
 import type { Session } from './runtime.ts';
 
 const MAX_BODY = 1 << 20;
@@ -63,7 +64,7 @@ async function decide(session: Session, req: IncomingMessage, match: RegExpExecA
   return ok ? [200, { resolved: true }] : [409, { error: 'unknown or already decided' }];
 }
 
-// The container contract (RUN-3): GET /ping and POST /invocations, plus the approvals this session waits on; /ws follows.
+// The container contract (RUN-3): GET /ping, POST /invocations and /ws, plus the approvals this session waits on.
 const ROUTES: Array<[string, RegExp, Route]> = [
   ['GET', /^\/ping$/, async (s) => [200, { status: s.busy() ? 'HealthyBusy' : 'Healthy' }]],
   ['POST', /^\/invocations$/, invoke],
@@ -72,7 +73,7 @@ const ROUTES: Array<[string, RegExp, Route]> = [
 ];
 
 export function createSessionServer(session: Session) {
-  return createServer(async (req, res) => {
+  const server = createServer(async (req, res) => {
     try {
       for (const [method, pattern, route] of ROUTES) {
         const match = req.method === method ? pattern.exec(req.url ?? '') : null;
@@ -84,4 +85,6 @@ export function createSessionServer(session: Session) {
       send(res, bad ? 400 : 500, { error: err instanceof Error ? err.message : String(err) });
     }
   });
+  server.on('upgrade', liveUpgrade(session));
+  return server;
 }
