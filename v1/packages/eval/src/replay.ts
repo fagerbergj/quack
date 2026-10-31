@@ -28,7 +28,7 @@ async function freePort(): Promise<number> {
 // A runtime that exits (a bad config path, a crash) ends the wait at once instead of at the deadline.
 async function untilSettled(url: string, input: string, deadline: number, child: ChildProcess) {
   for (;;) {
-    if (child.exitCode !== null) throw new Error(`runtime exited with ${child.exitCode}`);
+    if (child.exitCode !== null || child.signalCode) throw new Error(`runtime exited with ${child.exitCode ?? child.signalCode}`);
     try {
       const r = (await (await fetch(`${url}/invocations`, { method: 'POST', body: JSON.stringify({ input, requestId: 'eval-1' }) })).json()) as { status: string };
       if (r.status === 'done' || r.status === 'unanswered') return;

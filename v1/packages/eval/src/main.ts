@@ -24,7 +24,10 @@ if (command === 'dataset' && dataset && rest.length >= 3) {
   const [agent, label, ...dirs] = rest;
   await lf.ensureDataset(dataset);
   for (const dir of dirs) {
-    const item = itemFrom(await readSession(dir), { agent, label: label === '-' ? undefined : (label as Label) });
+    const record = await readSession(dir);
+    // A wrong path reads as an empty session; it must not become a benchmark case.
+    if (!record.inputs.length) throw new Error(`${dir} has no recorded session`);
+    const item = itemFrom(record, { agent, label: label === '-' ? undefined : (label as Label) });
     await lf.upsertItem(dataset, item);
     console.log(`${item.id} ${label} ${dir}`);
   }
