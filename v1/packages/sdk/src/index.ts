@@ -2,3 +2,4 @@ export { Approvals, gated, pendingApprovals, resolveApproval, type Approval, typ
 export { agentModel, decide, modelResolver, parseDecision, prompt, sessionModel, type Decision, type DecisionPoint, type Resolver } from './decide.ts';
 export { Artifacts, artifactsExtension, attachVerdict, seal, sealedVersion, type ArtifactKind, type SealedArtifact } from './artifacts.ts';
 export { piPackage } from './pi-package.ts';
+export { FINAL_TURNS, inFinalTurns, RunBudget } from './budget.ts';
