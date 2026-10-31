@@ -11,7 +11,10 @@ const CLOSES = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi;
 function bodyAt(owner: string, repo: string, n: string, at: string, current: string): string {
   const query = `query{repository(owner:"${owner}",name:"${repo}"){pullRequest(number:${n}){userContentEdits(first:100){nodes{editedAt diff}}}}}`;
   const edits = JSON.parse(execFileSync('gh', ['api', 'graphql', '-f', `query=${query}`], { encoding: 'utf8' })).data.repository.pullRequest.userContentEdits.nodes as Array<{ editedAt: string; diff: string }>;
-  return edits.find((e) => e.editedAt <= at)?.diff ?? current;
+  const asOf = edits.find((e) => e.editedAt <= at);
+  // GitHub lists the original description as the oldest edit, so an edited PR always has one at or before its review.
+  if (!asOf && edits.length) throw new Error(`#${n}: no description edit at or before ${at}; refusing to serve the current one`);
+  return asOf?.diff ?? current;
 }
 
 /** pins maps "owner/repo#n" to the head to review and when it was reviewed; out is where posted reviews are appended. */
