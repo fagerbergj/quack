@@ -10,7 +10,7 @@ import { defineDoc, defineExtension, defineTool } from '@earendil-works/pi-durab
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { artifactsExtension, attachVerdict, seal, type ArtifactKind } from '@quack/sdk';
 import { openSession } from '@quack/session';
-import { itemFrom, langfuse, publish, readSession, replay, type ReplayResult } from '../src/index.ts';
+import { itemFrom, langfuse, publish, readSession, replay, scoresOf, type ReplayResult } from '../src/index.ts';
 
 const dirs: string[] = [];
 after(() => Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true }))));
@@ -128,4 +128,15 @@ test('a runtime killed by a signal also ends the replay at once', async () => {
   const r = await replay({ id: 'x', input: { inputs: ['go'], pins: {} } }, { deployment: '/dev/null', agent: '/dev/null', env: { NODE_OPTIONS: '--import=data:text/javascript,process.kill(process.pid,9)' } }, {});
   assert.match(r.error ?? '', /^runtime exited with SIGKILL/);
   assert.ok(Date.now() - started < 15_000, `took ${Date.now() - started} ms`);
+  assert.deepEqual(r.record.outcome, { status: 'pending' });
+});
+
+test('a labelled case scores whether the replay blocked it, so a passing review that misses a known defect still counts as a miss', () => {
+  const withLabel = (label: string, content: string): ReplayResult => ({ ...result, item: { ...result.item, metadata: { label } }, record: { ...result.record, artifacts: { 'github.review': [{ ...result.record.artifacts['github.review'][1], content }] } } });
+  const blocks = (f: Record<string, string>) => f['github.review'].includes('request_changes');
+  assert.equal(scoresOf(withLabel('bad', 'request_changes'), blocks).caught, 1);
+  assert.equal(scoresOf(withLabel('bad', 'approve'), blocks).caught, 0);
+  assert.equal(scoresOf(withLabel('good', 'request_changes'), blocks).false_block, 1);
+  assert.equal(scoresOf(withLabel('good', 'approve'), blocks).false_block, 0);
+  assert.equal('caught' in scoresOf(result, blocks), false, 'an unlabelled case has no catch score');
 });

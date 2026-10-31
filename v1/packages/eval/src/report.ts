@@ -2,8 +2,19 @@ import { randomUUID } from 'node:crypto';
 import type { Langfuse } from './langfuse.ts';
 import type { ReplayResult } from './replay.ts';
 
+/** Whether an agent's final artifacts block what they judged; undefined when they hold no verdict. */
+export type Blocks = (finals: Record<string, string>) => boolean | undefined;
+
+// EV2's known-bad cases count only if a replay blocks them, and known-good ones only if it does not; the checker can pass a review that misses the defect.
+function labelScores(r: ReplayResult, blocks?: Blocks): Record<string, number> {
+  const label = (r.item.metadata as { label?: string } | undefined)?.label;
+  const blocked = blocks?.(Object.fromEntries(Object.entries(r.record.artifacts).map(([k, v]) => [k, v.at(-1)!.content])));
+  if (blocked === undefined || !label) return {};
+  return label === 'bad' ? { caught: blocked ? 1 : 0 } : { false_block: blocked ? 1 : 0 };
+}
+
 /** The numbers a replay is judged by (EVL-2): checker verdicts, cost in tokens, turns, revisions and wall time. */
-export function scoresOf(r: ReplayResult): Record<string, number> {
+export function scoresOf(r: ReplayResult, blocks?: Blocks): Record<string, number> {
   const finals = Object.values(r.record.artifacts).map((v) => v.at(-1)!);
   const verdicts = finals.map((f) => (f.verdict ?? {}) as { score?: number; passed?: boolean });
   return {
@@ -17,13 +28,14 @@ export function scoresOf(r: ReplayResult): Record<string, number> {
     output_tokens: r.record.usage.output,
     delivered: r.captured.length,
     answered: r.record.outcome.status === 'done' && !r.error ? 1 : 0,
+    ...labelScores(r, blocks),
   };
 }
 
 /** Records one replay as a trace with scores, linked into the run as a Langfuse experiment (EV1). */
-export async function publish(lf: Langfuse, runName: string, r: ReplayResult) {
+export async function publish(lf: Langfuse, runName: string, r: ReplayResult, blocks?: Blocks) {
   const traceId = randomUUID();
-  const scores = scoresOf(r);
+  const scores = scoresOf(r, blocks);
   const output = { outcome: r.record.outcome, artifacts: Object.fromEntries(Object.entries(r.record.artifacts).map(([k, v]) => [k, v.at(-1)?.content ?? null])), captured: r.captured, error: r.error ?? null };
   await lf.ingest([
     { id: `${traceId}-trace`, type: 'trace-create', body: { id: traceId, name: `eval ${runName}`, input: r.item.input, output, metadata: { datasetItemId: r.item.id } } },

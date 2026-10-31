@@ -1,14 +1,15 @@
 // Usage: main.ts dataset <dataset> <agent> <good|bad|-> <session-dir>...
 //        main.ts run <dataset> <run-name> <deployment.json> <agent.json> [item-id...]
 import { resolve } from 'node:path';
-import { evalService } from '@quack/github';
+import { evalService, parseReview } from '@quack/github';
 import { itemFrom, type Label } from './dataset.ts';
 import { langfuse } from './langfuse.ts';
 import { readSession } from './record.ts';
 import { replay, type EvalServices } from './replay.ts';
-import { publish } from './report.ts';
+import { publish, type Blocks } from './report.ts';
 
 const services: EvalServices = { 'github.pr': (pin) => evalService(pin as never) };
+const blocks: Blocks = (finals) => (finals['github.review'] === undefined ? undefined : parseReview(finals['github.review']).verdict === 'request_changes');
 const MIN_CASES = 20;
 
 function env(name: string): string {
@@ -38,7 +39,7 @@ if (command === 'dataset' && dataset && rest.length >= 3) {
   if (!only.length && items.length < MIN_CASES) console.log(`note: ${dataset} has ${items.length} items; a promotion needs ${MIN_CASES} (EV2)`);
   for (const item of items) {
     const r = await replay(item, { deployment: resolve(deployment), agent: resolve(agent) }, services);
-    console.log(`${item.id} ${JSON.stringify(await publish(lf, runName, r))}${r.error ? ` error: ${r.error}` : ''}`);
+    console.log(`${item.id} ${JSON.stringify(await publish(lf, runName, r, blocks))}${r.error ? ` error: ${r.error}` : ''}`);
   }
 } else {
   throw new Error('usage: main.ts dataset <dataset> <agent> <good|bad|-> <session-dir>... | run <dataset> <run-name> <deployment.json> <agent.json> [item-id...]');
