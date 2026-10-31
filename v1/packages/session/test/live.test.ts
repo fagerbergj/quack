@@ -39,3 +39,34 @@ test('streams a snapshot, then the run, and accepts input over the socket', asyn
   await new Promise((r) => server.close(r));
   await session.close();
 });
+
+test('a failed submit is an error frame, and the session keeps streaming', async () => {
+  const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
+  faux.setResponses([fauxAssistantMessage('still here')]);
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const m = faux.getModel();
+  const session = await openSession({ dir: await mkdtemp(join(tmpdir(), 'quack-live-')), models, agent: { model: { provider: m.provider, modelId: m.id } } });
+  const server = createSessionServer(session).listen(0);
+  await new Promise((r) => server.once('listening', r));
+  const ws = new WebSocket(`ws://127.0.0.1:${(server.address() as AddressInfo).port}/ws`);
+  await nextFrame(ws, () => true);
+
+  const submit = session.submit;
+  session.submit = async () => { throw new Error('storage unavailable'); };
+  const failed = nextFrame(ws, (f) => f.type === 'error');
+  ws.send(JSON.stringify({ type: 'input', input: 'hello' }));
+  assert.equal((await failed).error, 'storage unavailable');
+
+  session.submit = submit;
+  const tooLong = nextFrame(ws, (f) => f.type === 'error');
+  ws.send(JSON.stringify({ type: 'input', input: 'x'.repeat((1 << 20) + 1) }));
+  assert.equal((await tooLong).error, 'input is too long');
+
+  const ended = nextFrame(ws, runEnded);
+  ws.send(JSON.stringify({ type: 'input', input: 'are you there?', requestId: 'live-2' }));
+  assert.match(JSON.stringify((await ended).events), /still here/);
+  ws.close();
+  await new Promise((r) => server.close(r));
+  await session.close();
+});

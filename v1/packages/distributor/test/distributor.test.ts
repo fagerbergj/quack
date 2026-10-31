@@ -112,3 +112,15 @@ test('proxies the live stream and keeps a watched session from idling out', asyn
   ws.close();
   await until(() => driver.running().length === 0);
 });
+
+test('a viewer whose session cannot start is disconnected, and the distributor keeps serving', async () => {
+  const broken = { ensure: async () => { throw new Error('no capacity'); }, stop: async () => {}, running: () => [], pid: () => undefined };
+  const server = createDistributor(broken, { idleMs: 60_000 }).listen(0);
+  await new Promise((r) => server.once('listening', r));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const ws = new WebSocket(`${base.replace('http', 'ws')}/sessions/research%3Ax/ws`);
+  const closed = await new Promise<string>((r) => { ws.onerror = () => r('error'); ws.onopen = () => r('open'); });
+  assert.equal(closed, 'error');
+  assert.equal((await fetch(`${base}/sessions`)).status, 200);
+  await new Promise((r) => server.close(r));
+});
