@@ -12,10 +12,10 @@ const deployment = {
 };
 const catalog: Catalog = { coding: () => [], github: (config) => [{ name: `github:${JSON.stringify(config)}` } as never] };
 
-test('loads a valid deployment and definition into models and an agent spec', () => {
+test('loads a valid deployment and definition into models and an agent spec', async () => {
   const d = parseDeployment(deployment);
   const def = parseDefinition({ name: 'reviewer', version: 3, model: 'local/qwen3.8-27b', maxTurns: 60, extensions: { coding: {}, github: { label: 'quack:review' } } }, d, catalog);
-  const spec = agentSpec(def, catalog);
+  const spec = await agentSpec(def, catalog);
   assert.deepEqual(spec.model, { provider: 'local', modelId: 'qwen3.8-27b' });
   assert.equal(spec.maxTurns, 60);
   assert.deepEqual(spec.extensions!.map((e) => e.name), ['github:{"label":"quack:review"}']);
@@ -46,7 +46,7 @@ test('a definition loads its prompt file, and a reopened session takes the new p
     const path = join(dir, 'agent.json');
     await writeFile(path, JSON.stringify({ name: 'reviewer', version: 1, model: 'local/qwen3.8-27b', prompt: 'prompt.md', extensions: {} }));
     await writeFile(join(dir, 'prompt.md'), 'Review v1.');
-    assert.equal(loadAgent(path, parseDeployment(deployment), catalog).instructions, 'Review v1.');
+    assert.equal((await loadAgent(path, parseDeployment(deployment), catalog)).instructions, 'Review v1.');
 
     const faux = fauxProvider({ models: [{ id: 'a' }, { id: 'b' }] });
     faux.setResponses([fauxAssistantMessage('ok')]);

@@ -6,9 +6,11 @@
     "start": "node src/main.ts"
   },
   "dependencies": {
+    "@earendil-works/pi-tui": "1.4.0",
+    "@quack/github": "*",
     "@quack/judge": "*",
     "@quack/sdk": "*",
     "@quack/session": "*",
-    "@quack/github": "*"
+    "pi-lsp": "0.1.7"
   }
 }

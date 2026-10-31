@@ -16,7 +16,7 @@ function readJson(path: string) {
   }
 }
 const deployment = parseDeployment(readJson(env('QUACK_CONFIG')));
-const agent = loadAgent(env('QUACK_AGENT'), deployment, catalog);
+const agent = await loadAgent(env('QUACK_AGENT'), deployment, catalog);
 
 const session = await openSession({ dir: env('QUACK_SESSION_DIR'), models: buildModels(deployment), agent });
 const server = createSessionServer(session);

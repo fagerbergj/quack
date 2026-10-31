@@ -1,5 +1,9 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { githubSessionExtensions, type GithubSessionConfig } from '@quack/github';
+import { piPackage } from '@quack/sdk';
 import type { Catalog } from '@quack/session';
 
 function required(name: string): string {
@@ -8,9 +12,21 @@ function required(name: string): string {
   return value;
 }
 
+// pi-lsp reads its servers from $PI_AGENT_DIR/lsp.json; a reviewed repo's own .pi/lsp.json is refused without a UI to trust it.
+function lspConfig(config: unknown) {
+  const dir = join(tmpdir(), `quack-pi-${process.pid}`);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'lsp.json'), JSON.stringify({ version: 1, servers: (config as { servers?: unknown[] })?.servers ?? [] }));
+  process.env.PI_AGENT_DIR = dir;
+}
+
 // Extensions this runtime image carries, by the name agent definitions select them with (A8).
 export const catalog: Catalog = {
   coding: () => [CodingTools],
   // The service secret comes from the environment, never the definition file (D56).
   github: (config) => githubSessionExtensions({ ...(config as Partial<GithubSessionConfig>), serviceUrl: required('QUACK_GH_SERVICE_URL'), serviceToken: required('QUACK_GH_SERVICE_TOKEN') }),
+  lsp: async (config) => {
+    lspConfig(config);
+    return [await piPackage('pi-lsp', { from: import.meta.url, replaySafe: ['lsp_diagnostics', 'lsp_hover', 'lsp_definition', 'lsp_references', 'lsp_symbols'] })];
+  },
 };

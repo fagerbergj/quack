@@ -6,6 +6,60 @@
   "prompt": "prompt.md",
   "extensions": {
     "coding": {},
-    "github": { "maxRevisions": 2, "classifier": { "provider": "clef", "modelId": "clef", "maxInputTokens": 8192 } }
+    "github": {
+      "maxRevisions": 2,
+      "classifier": {
+        "provider": "clef",
+        "modelId": "clef",
+        "maxInputTokens": 8192
+      }
+    },
+    "lsp": {
+      "servers": [
+        {
+          "id": "gopls",
+          "include": [
+            "**/*.go"
+          ],
+          "rootMarkers": [
+            "go.mod"
+          ],
+          "bin": "gopls",
+          "args": [],
+          "cwd": "{root}",
+          "languageIdByExtension": {
+            ".go": "go"
+          },
+          "startupTimeoutMs": 60000
+        },
+        {
+          "id": "typescript",
+          "include": [
+            "**/*.ts",
+            "**/*.tsx",
+            "**/*.js",
+            "**/*.jsx",
+            "**/*.mts"
+          ],
+          "rootMarkers": [
+            "tsconfig.json",
+            "package.json"
+          ],
+          "bin": "typescript-language-server",
+          "args": [
+            "--stdio"
+          ],
+          "cwd": "{root}",
+          "languageIdByExtension": {
+            ".ts": "typescript",
+            ".tsx": "typescriptreact",
+            ".js": "javascript",
+            ".jsx": "javascriptreact",
+            ".mts": "typescript"
+          },
+          "startupTimeoutMs": 60000
+        }
+      ]
+    }
   }
 }

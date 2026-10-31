@@ -9,10 +9,12 @@
     "start": "node src/main.ts"
   },
   "dependencies": {
-    "@quack/sdk": "*",
-    "@quack/judge": "*"
+    "@quack/judge": "*",
+    "@quack/sdk": "*"
   },
   "devDependencies": {
-    "@quack/session": "*"
+    "@earendil-works/pi-tui": "1.4.0",
+    "@quack/session": "*",
+    "pi-lsp": "0.1.7"
   }
 }

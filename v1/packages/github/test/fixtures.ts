@@ -1,9 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 const dirs: string[] = [];
 const servers: Server[] = [];
@@ -15,21 +15,29 @@ export const tmp = async () => { const d = await mkdtemp(join(tmpdir(), 'quack-g
 const gitEnv = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
 export const sh = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8', env: gitEnv }).trim();
 
-/** A local "github.com": bare acme/widgets.git with main and refs/pull/7/head, where the PR changes app.ts line 1. */
-export async function remotes() {
-  const base = await tmp();
+const DEFAULT_BASE = { 'AGENTS.md': '# Conventions\nComments stay at two lines.\n', 'app.ts': 'export const a = 1;\n' };
+const DEFAULT_HEAD = { 'app.ts': 'export const a = 2;\n' };
+
+/** A local "github.com": bare acme/widgets.git with main and refs/pull/7/head; by default the PR changes app.ts line 1. */
+export async function remotes(base: Record<string, string> = DEFAULT_BASE, change: Record<string, string> = DEFAULT_HEAD) {
+  const root = await tmp();
   const work = await tmp();
+  const write = async (files: Record<string, string>) => {
+    for (const [path, text] of Object.entries(files)) {
+      await mkdir(dirname(join(work, path)), { recursive: true });
+      await writeFile(join(work, path), text);
+    }
+  };
   sh(work, 'init', '-q', '-b', 'main');
-  await writeFile(join(work, 'AGENTS.md'), '# Conventions\nComments stay at two lines.\n');
-  await writeFile(join(work, 'app.ts'), 'export const a = 1;\n');
+  await write(base);
   sh(work, 'add', '.');
   sh(work, 'commit', '-qm', 'base');
-  await writeFile(join(work, 'app.ts'), 'export const a = 2;\n');
+  await write(change);
   sh(work, 'commit', '-qam', 'change');
   const head = sh(work, 'rev-parse', 'HEAD');
-  sh(base, 'init', '-q', '--bare', 'acme/widgets.git');
-  sh(work, 'push', '-q', join(base, 'acme/widgets.git'), 'HEAD~1:refs/heads/main', `${head}:refs/pull/7/head`);
-  return { base: `file://${base}`, head };
+  sh(root, 'init', '-q', '--bare', 'acme/widgets.git');
+  sh(work, 'push', '-q', join(root, 'acme/widgets.git'), 'HEAD~1:refs/heads/main', `${head}:refs/pull/7/head`);
+  return { base: `file://${root}`, head };
 }
 
 export async function listen(server: Server) {

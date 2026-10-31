@@ -17,7 +17,7 @@ export type DeploymentConfig = { providers: Record<string, ProviderConfig> };
 export type AgentDefinition = { name: string; version: number; model: string; maxTurns?: number; prompt?: string; extensions: Record<string, unknown> };
 
 /** Extensions compiled into the runtime image, by name (A8); each turns its config into installed extensions. */
-export type Catalog = Record<string, (config: unknown) => Extension[]>;
+export type Catalog = Record<string, (config: unknown) => Extension[] | Promise<Extension[]>>;
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const positive = (v: unknown) => typeof v === 'number' && Number.isInteger(v) && v > 0;
@@ -85,17 +85,17 @@ export function buildModels(deployment: DeploymentConfig): MutableModels {
   return models;
 }
 
-export function agentSpec(def: AgentDefinition, catalog: Catalog): AgentSpec {
+export async function agentSpec(def: AgentDefinition, catalog: Catalog): Promise<AgentSpec> {
   const slash = def.model.indexOf('/');
   return {
     model: { provider: def.model.slice(0, slash), modelId: def.model.slice(slash + 1) },
     maxTurns: def.maxTurns,
-    extensions: Object.entries(def.extensions).flatMap(([name, config]) => catalog[name](config)),
+    extensions: (await Promise.all(Object.entries(def.extensions).map(([name, config]) => catalog[name](config)))).flat(),
   };
 }
 
 /** Reads an agent definition file and the prompt file it names (resolved beside it) into an agent spec. */
-export function loadAgent(path: string, deployment: DeploymentConfig, catalog: Catalog): AgentSpec {
+export async function loadAgent(path: string, deployment: DeploymentConfig, catalog: Catalog): Promise<AgentSpec> {
   let raw: unknown;
   try {
     raw = JSON.parse(readFileSync(path, 'utf8'));
@@ -104,5 +104,5 @@ export function loadAgent(path: string, deployment: DeploymentConfig, catalog: C
   }
   const def = parseDefinition(raw, deployment, catalog);
   const instructions = def.prompt ? readFileSync(resolve(dirname(path), def.prompt), 'utf8') : undefined;
-  return { ...agentSpec(def, catalog), instructions };
+  return { ...(await agentSpec(def, catalog)), instructions };
 }

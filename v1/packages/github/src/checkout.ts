@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import type { Context } from '@earendil-works/chord/context';
 import { Type } from '@earendil-works/pi-ai';
 import { defineDoc, defineTool, type ToolExecutionApi } from '@earendil-works/pi-durable';
+import { blastRadius } from './blast.ts';
 
 export type SessionConfig = { serviceUrl: string; serviceToken: string; repoDir?: string; /** Where repositories are cloned from; tests use a local directory. */ gitBaseUrl?: string };
 
@@ -64,6 +65,7 @@ export function checkoutTool(config: SessionConfig) {
       await git(api, ['-C', dir, 'checkout', '--detach', pr.headSha], config, remote, ctx);
       await api.commit(async (tx) => { (await tx.doc(PullRequestDoc, api.conversationId)).pr = JSON.parse(JSON.stringify(pr)); }, ctx);
       const stat = await git(api, ['-C', dir, 'diff', '--stat', `origin/${pr.baseRef}...${pr.headSha}`], config, remote, ctx);
+      const hunks = await git(api, ['-C', dir, 'diff', '-U0', `origin/${pr.baseRef}...${pr.headSha}`], config, remote, ctx);
       const text = [
         `${owner}/${repo}#${pr.number} by ${pr.author}: ${pr.title}`,
         `Checked out ${pr.headSha} in ./${dir}; diff against origin/${pr.baseRef}: git -C ${dir} diff origin/${pr.baseRef}...HEAD`,
@@ -72,7 +74,8 @@ export function checkoutTool(config: SessionConfig) {
         ...pr.linkedIssues.map((i) => `Linked issue #${i.number}: ${i.title}\n${i.body}`),
         `Changed files:\n${stat}`,
         await conventions(api, dir, ctx),
-      ].join('\n\n');
+        await blastRadius(api, dir, hunks, ctx),
+      ].filter(Boolean).join('\n\n');
       return { output: [{ type: 'text', text }] };
     },
   });
