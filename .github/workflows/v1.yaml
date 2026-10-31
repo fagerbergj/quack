@@ -1,0 +1,29 @@
+name: v1
+
+on:
+  push:
+    branches: ["v1"]
+  pull_request:
+    branches: ["v1"]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: v1
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: v1/.node-version
+          cache: npm
+          cache-dependency-path: v1/package-lock.json
+      - run: npm ci
+      - run: npx tsc -p tsconfig.json
+      - run: npm test
+      # Gates only lines this change touches, as the Go sloplint does for v0.
+      - if: github.event_name == 'pull_request'
+        run: npm run sloplint -- diff origin/${{ github.base_ref }}
