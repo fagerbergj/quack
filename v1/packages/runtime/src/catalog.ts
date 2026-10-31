@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
@@ -17,6 +17,7 @@ function lspConfig(config: unknown) {
   const dir = mkdtempSync(join(tmpdir(), 'quack-pi-'));
   writeFileSync(join(dir, 'lsp.json'), JSON.stringify({ version: 1, servers: (config as { servers?: unknown[] })?.servers ?? [] }));
   process.env.PI_AGENT_DIR = dir;
+  process.once('exit', () => rmSync(dir, { recursive: true, force: true }));
 }
 
 // Extensions this runtime image carries, by the name agent definitions select them with (A8).
