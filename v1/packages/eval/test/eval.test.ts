@@ -103,16 +103,20 @@ test('a replay is published as a trace with its scores and linked into the run',
   const { calls, client } = await fakeLangfuse();
   const scores = await publish(client, 'candidate-a', result);
   assert.deepEqual(scores, { checker_score: 0.95, passed: 1, revisions: 2, turns: 7, seconds: 42, input_tokens: 1000, output_tokens: 20, delivered: 1, answered: 1 });
-  const [ingest, link] = calls;
-  const trace = ingest.body.batch.find((e: any) => e.type === 'trace-create');
-  assert.equal(trace.body.output.artifacts['github.review'], 'v2', 'the final version is the output');
-  assert.deepEqual(ingest.body.batch.filter((e: any) => e.type === 'score-create').map((e: any) => [e.body.name, e.body.value, e.body.traceId === trace.body.id]).slice(0, 2), [['checker_score', 0.95, true], ['passed', 1, true]]);
-  assert.deepEqual(link.body, { runName: 'candidate-a', datasetItemId: 'item-1', traceId: trace.body.id });
+  const [otel, ingest, link] = calls;
+  assert.equal(otel.path, '/api/public/otel/v1/traces', 'the trace goes over OpenTelemetry, the only trace path Langfuse v4 events_only accepts');
+  const span = otel.body.resourceSpans[0].scopeSpans[0].spans[0];
+  assert.match(span.traceId, /^[0-9a-f]{32}$/);
+  const attrs = Object.fromEntries(span.attributes.map((a: any) => [a.key, a.value.stringValue]));
+  assert.equal(JSON.parse(attrs['langfuse.trace.output']).artifacts['github.review'], 'v2', 'the final version is the output');
+  assert.equal(ingest.body.batch.some((e: any) => e.type === 'trace-create'), false);
+  assert.deepEqual(ingest.body.batch.map((e: any) => [e.body.name, e.body.value, e.body.traceId === span.traceId]).slice(0, 2), [['checker_score', 0.95, true], ['passed', 1, true]]);
+  assert.deepEqual(link.body, { runName: 'candidate-a', datasetItemId: 'item-1', traceId: span.traceId });
 });
 
 test('an ingestion that partly fails is an error, not a silent gap in the experiment', async () => {
-  const { client } = await fakeLangfuse(() => [207, { successes: [], errors: [{ id: 'x-trace', status: 400, message: 'bad body' }] }]);
-  await assert.rejects(publish(client, 'run', result), /langfuse ingest: 1 of 10 events failed; first x-trace: 400 bad body/);
+  const { client } = await fakeLangfuse((_m, path) => (path === '/api/public/ingestion' ? [207, { successes: [], errors: [{ id: 'x-passed', status: 400, message: 'bad body' }] }] : undefined));
+  await assert.rejects(publish(client, 'run', result), /langfuse ingest: 1 of 9 events failed; first x-passed: 400 bad body/);
 });
 
 test('a runtime that exits at startup ends the replay at once with its error, not at the deadline', async () => {
