@@ -108,7 +108,8 @@ test('a replay is published as a trace with its scores and linked into the run',
   const span = otel.body.resourceSpans[0].scopeSpans[0].spans[0];
   assert.match(span.traceId, /^[0-9a-f]{32}$/);
   const attrs = Object.fromEntries(span.attributes.map((a: any) => [a.key, a.value.stringValue]));
-  assert.equal(JSON.parse(attrs['langfuse.trace.output']).artifacts['github.review'], 'v2', 'the final version is the output');
+  assert.equal(attrs['langfuse.trace.name'], 'eval candidate-a');
+  assert.equal(JSON.parse(attrs['langfuse.observation.output']).artifacts['github.review'], 'v2', 'the final version is the output');
   assert.equal(ingest.body.batch.some((e: any) => e.type === 'trace-create'), false);
   assert.deepEqual(ingest.body.batch.map((e: any) => [e.body.name, e.body.value, e.body.traceId === span.traceId]).slice(0, 2), [['checker_score', 0.95, true], ['passed', 1, true]]);
   assert.deepEqual(link.body, { runName: 'candidate-a', datasetItemId: 'item-1', traceId: span.traceId });
