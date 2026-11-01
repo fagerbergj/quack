@@ -371,6 +371,22 @@ test('a session sleeping an hour is stopped by the sweep and restarted at its wa
   assert.equal(fleet.wakes.has('research:nap'), false, 'the record is cleared once woken');
 });
 
+test('reading approvals neither keeps a running session warm nor starts a stopped one', async () => {
+  const fleet = await fakeFleet(() => ({ status: 'Healthy', waitingOnHuman: false, wake: {} }));
+  const server = fleet.start().listen(0);
+  await new Promise((r) => server.once('listening', r));
+  const sessions = `http://127.0.0.1:${(server.address() as AddressInfo).port}/sessions/research%3Anap`;
+  await fetch(`${sessions}/ping`);
+  fleet.advance(500_000);
+  assert.equal((await fetch(`${sessions}/approvals`)).status, 200);
+  fleet.advance(150_000);
+  await server.sweep();
+  assert.deepEqual(fleet.log, ['start research:nap', 'stop research:nap'], 'the poll did not reset the idle clock');
+  const idle = await (await fetch(`${sessions}/approvals`)).json();
+  assert.deepEqual(idle, { approvals: [] });
+  assert.deepEqual(fleet.log, ['start research:nap', 'stop research:nap'], 'a stopped session stays stopped');
+});
+
 test('a restarted distributor rebuilds wake timers from the recorded times', async () => {
   const fleet = await fakeFleet(() => ({ status: 'Healthy', wake: {} }));
   fleet.wakes.set('research:nap', fleet.now() + HOUR);

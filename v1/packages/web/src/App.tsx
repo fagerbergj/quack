@@ -48,7 +48,8 @@ function Placeholder({ title }: { title: string }) {
 }
 
 export function App() {
-  const hash = useHash();
+  const raw = useHash();
+  const hash = raw !== '#/' && raw.endsWith('/') ? raw.slice(0, -1) : raw;
   const session = parseHash(hash);
   const nav = navRoute(hash);
   const title = !session && PLACEHOLDERS[nav];

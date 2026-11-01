@@ -121,6 +121,16 @@ export function processDriver(opts: { command: string[]; dataDir: string; agents
   const starting = new Map<string, Promise<string>>();
   const crashes = new Map<string, number[]>();
 
+  // The first user message never changes once written, so a found title is read once per session directory.
+  const titles = new Map<string, string>();
+  function cachedTitle(dir: string): string | undefined {
+    const known = titles.get(dir);
+    if (known !== undefined) return known;
+    const found = firstInput(dir);
+    if (found !== undefined) titles.set(dir, found);
+    return found;
+  }
+
   const sessionDir = (key: string) => join(opts.dataDir, sessionDirName(key));
 
   // Each agent.json is read fresh, so a new session binds to the newest definition; bind() then snapshots it for that session (DEP-3).
@@ -232,7 +242,7 @@ export function processDriver(opts: { command: string[]; dataDir: string; agents
       if (key === undefined) return undefined;
       const agent = (await readText(join(opts.dataDir, d, 'agent'))) ?? '';
       const version = (await readJson(join(opts.dataDir, d, SNAPSHOT, 'agent.json')).catch(() => null))?.version;
-      const title = firstInput(join(opts.dataDir, d));
+      const title = cachedTitle(join(opts.dataDir, d));
       return { key, agent, ...(typeof version === 'number' && { version }), ...(title && { title }), running: children.has(key), at: await lastActivity(join(opts.dataDir, d)) };
     }));
     return all.filter((s) => s !== undefined).sort((a, b) => b.at - a.at).map(({ at, ...s }) => ({ ...s, lastActivity: new Date(at).toISOString() }));

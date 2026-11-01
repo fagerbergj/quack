@@ -108,7 +108,7 @@ test('selecting a session opens it in the main pane and marks its row', async ()
   expect(screen.getByRole('link', { name: /Fix the flake/ })).toHaveAttribute('aria-current', 'true');
 });
 
-test('starting a session opens a ui: key with the chosen agent and sends the typed first message', async () => {
+test('starting a session opens a ui: key with the chosen agent and seeds the session composer with the typed first message', async () => {
   routes['GET /agents'] = { agents: [{ name: 'coder', version: 1 }, { name: 'reviewer', version: 2 }] };
   render(<App />);
   await userEvent.selectOptions(await screen.findByRole('combobox', { name: 'Agent' }), 'reviewer 2');
@@ -116,7 +116,10 @@ test('starting a session opens a ui: key with the chosen agent and sends the typ
   expect(screen.getByRole('textbox', { name: 'Question or task' })).toHaveValue('Review a pull request');
   await userEvent.click(screen.getByRole('button', { name: 'Start' }));
   await waitFor(() => expect(FakeSocket.all[0]?.url).toMatch(/\/sessions\/ui%3Auuid-1\/ws\?agent=reviewer$/));
+  expect(await screen.findByRole('textbox', { name: 'Message' })).toHaveValue('Review a pull request');
+  expect(FakeSocket.all[0].sent).toEqual([]);
   FakeSocket.all[0].open();
+  await userEvent.click(screen.getByRole('button', { name: 'Send' }));
   expect(FakeSocket.all[0].sent).toEqual([{ type: 'input', input: 'Review a pull request' }]);
 });
 
@@ -438,4 +441,22 @@ test('the Work drawer opens from the status line, shows report then checks, trap
   await userEvent.keyboard('{Escape}');
   expect(screen.queryByRole('dialog')).toBeNull();
   expect(open).toHaveFocus();
+});
+
+test('a malformed socket frame is skipped and later frames still apply', async () => {
+  const ws = await openSession();
+  ws.frame(snapshot());
+  act(() => ws.onmessage?.({ data: '{not json' }));
+  ws.frame({ type: 'events', events: [{ type: 'run_start', inputs: [] }] });
+  expect(screen.getByRole('status')).toHaveTextContent('Running');
+});
+
+test('a trailing slash on #/new/ shows the landing page on phone and desktop alike', async () => {
+  for (const desktop of [false, true]) {
+    stubViewport(desktop);
+    location.hash = '#/new/';
+    const { unmount } = render(<App />);
+    expect(await screen.findByRole('heading', { name: 'What should quack work on?' })).toBeInTheDocument();
+    unmount();
+  }
 });

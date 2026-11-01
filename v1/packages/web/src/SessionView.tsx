@@ -27,11 +27,6 @@ function useSocket(key: string, agent: string | undefined) {
       sock.onopen = () => {
         attempt = 0;
         setState('open');
-        const first = pendingInput.get(key);
-        if (first !== undefined) {
-          pendingInput.delete(key);
-          sock.send(JSON.stringify({ type: 'input', input: first }));
-        }
       };
       // Every connect starts with a full snapshot that replaces the view, so a reconnect cannot duplicate lines.
       sock.onclose = () => {
@@ -40,7 +35,12 @@ function useSocket(key: string, agent: string | undefined) {
         timer = setTimeout(connect, Math.min(1000 * 2 ** attempt++, 30_000));
       };
       sock.onmessage = (ev) => {
-        const frame = JSON.parse(String(ev.data)) as Frame;
+        let frame: Frame;
+        try {
+          frame = JSON.parse(String(ev.data)) as Frame;
+        } catch {
+          return; // one malformed frame must not stop the ones after it
+        }
         if (frame.type === 'snapshot') setView(snapshotView(frame));
         else if (frame.type === 'events') {
           setView((v) => applyEvents(v, frame.events));
@@ -70,8 +70,8 @@ function useSocket(key: string, agent: string | undefined) {
 const seg = (on: boolean) =>
   `h-11 lg:h-[26px] cursor-pointer rounded-full border-0 px-2.5 text-xs font-semibold ${on ? 'bg-surface text-ink shadow-thumb' : 'bg-transparent text-muted hover:text-ink'}`;
 
-function Composer({ busy, disabled, send }: { busy: boolean; disabled: boolean; send: (i: string, w?: 'steer' | 'followUp') => boolean }) {
-  const [input, setInput] = useState('');
+function Composer({ busy, disabled, send, initial }: { busy: boolean; disabled: boolean; send: (i: string, w?: 'steer' | 'followUp') => boolean; initial: string }) {
+  const [input, setInput] = useState(initial);
   const [mode, setMode] = useState<'steer' | 'followUp'>('steer');
   const submit = (e: SubmitEvent) => {
     e.preventDefault();
@@ -111,6 +111,9 @@ function StatusChip({ text, running }: { text: string; running: boolean }) {
 
 export function SessionView({ sessionKey, agent, title }: { sessionKey: string; agent?: string; title: string }) {
   const { view, state, error, setError, approvalTick, send } = useSocket(sessionKey, agent);
+  // The landing composer's text seeds this composer, so a failed connect leaves it visible to resend.
+  const [initial] = useState(() => pendingInput.get(sessionKey) ?? '');
+  useEffect(() => void pendingInput.delete(sessionKey), [sessionKey]);
   const abort = () => abortRun(sessionKey).catch((e: Error) => setError(e.message));
   const { items, error: artifactsError } = useArtifacts(sessionKey, approvalTick);
   const [work, setWork] = useState<SealedArtifact | null>(null);
@@ -142,7 +145,7 @@ export function SessionView({ sessionKey, agent, title }: { sessionKey: string; 
       </div>
       <div className="border-t border-line bg-canvas/90 p-3 backdrop-blur-md sm:p-4">
         <div className="mx-auto max-w-[760px]">
-          <Composer busy={view.running} disabled={state !== 'open'} send={send} />
+          <Composer busy={view.running} disabled={state !== 'open'} send={send} initial={initial} />
         </div>
       </div>
       {work && <Work artifact={work} onClose={() => setWork(null)} />}

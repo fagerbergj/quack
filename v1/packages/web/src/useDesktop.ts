@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 const QUERY = '(min-width: 1024px)';
 
 // True from lg up, where the session list lives in the sidebar. Without matchMedia (tests) it is the phone layout.
 export function useDesktop(): boolean {
-  const mq = typeof matchMedia === 'function' ? matchMedia(QUERY) : undefined;
+  const mq = useMemo(() => (typeof matchMedia === 'function' ? matchMedia(QUERY) : undefined), []);
   const [on, setOn] = useState(mq?.matches ?? false);
   useEffect(() => {
     if (!mq) return;
