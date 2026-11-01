@@ -607,22 +607,32 @@ test('Sleeper leads with the week strip and renders a passed lineup card', async
   await openSleeper([sealed(lineup(), { passed: true, gatesFailed: [], score: 1, checks: [] })]);
   const strip = await screen.findByRole('region', { name: 'This week' });
   expect(within(strip).getByText(/Lineup · week 8 · locks Sun/)).toBeInTheDocument();
-  expect(within(strip).getByText('v1 · checked')).toBeInTheDocument();
+  expect(within(strip).getByText('checked')).toBeInTheDocument();
+  expect(within(screen.getByRole('article', { name: 'Week 8 lineup' })).getByText('v1 · checked')).toBeInTheDocument();
   const card = screen.getByRole('article', { name: 'Week 8 lineup' });
   expect(within(card).getByText('Allen')).toBeInTheDocument();
   expect(within(card).getByText('START')).toBeInTheDocument();
   expect(within(card).getByText('Why Allen')).toBeInTheDocument();
   expect(within(card).getByText(/replaces Concepcion/)).toBeInTheDocument();
-  expect(within(card).getByRole('link', { name: 'Concepcion: Practice report' })).toHaveAttribute('href', 'https://nfl.com/x');
+  const news = within(card).getByText('News (1)').closest('details')!;
+  expect(within(news).getByRole('link', { name: /Practice report/ })).toHaveAttribute('href', 'https://nfl.com/x');
+  expect(news).toHaveTextContent('nfl.com · 2026-10-30');
   expect(within(card).getByRole('link', { name: 'Ask about this card' })).toHaveAttribute('href', `#/s/${encodeURIComponent(KEY)}`);
 });
 
 test('a failed lineup card names its failing checks', async () => {
-  const failed = { passed: false, gatesFailed: [], score: 0.4, checks: [{ criterion: 'gates', id: 'summary_names_changes', met: 0, notes: [] }] };
+  const failed = { passed: false, gatesFailed: [], score: 0.4, checks: [{ criterion: 'gates', id: 'summary_names_changes', met: 0, notes: ['Summary says nothing about the swap'] }] };
   await openSleeper([sealed(lineup(), null, 1), sealed(lineup(), failed, 2)]);
   const card = await screen.findByRole('article', { name: 'Week 8 lineup' });
   expect(within(card).getByText('v2 · checks failed')).toBeInTheDocument();
-  expect(within(card).getByText('Failing: gates.summary_names_changes')).toBeInTheDocument();
+  const check = within(card).getByText('Summary names changes');
+  expect(check).toHaveAttribute('title', 'gates.summary_names_changes');
+  expect(check.closest('details')).toHaveTextContent('Summary says nothing about the swap');
+});
+
+test('a card with no changes shows the calm banner, not the change summary', async () => {
+  await openSleeper([sealed(lineup({ summary: 'No changes.', starters: [row('Jefferson')] }), null)]);
+  expect(await screen.findAllByText('No changes: your lineup stands')).toHaveLength(2);
 });
 
 test('an unchecked card is labelled not checked', async () => {
