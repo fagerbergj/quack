@@ -59,7 +59,7 @@ Areas follow the layers in [decisions A3](decisions.md). The SRS states what cor
 | DEP-3 | MUST | Start new sessions on an agent's newest definition version while running sessions finish on the version they started with. | D27, D48 |
 | DEP-4 | MUST | Give each agent its own identity and no ambient credentials. | P |
 | DEP-5 | MUST | Load agent definitions from fixtures bundled in extensions, from files, and from the UI, where the operator can create, fork and edit them. Every edit creates an immutable version; a session keeps the version it started on. | D48 |
-| DEP-6 | MUST | Mark each agent draft or promoted. Only promoted agents can be bound to unattended triggers, and promotion requires the agent's benchmark. | D50 |
+| DEP-6 | MUST | Mark each agent draft or promoted. Only promoted agents can be bound to unattended triggers, and promotion requires the agent's benchmark. | D50, D59 |
 
 ### 2.4 Runtime
 
