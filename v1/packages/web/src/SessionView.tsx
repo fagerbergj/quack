@@ -1,5 +1,5 @@
 import type { AgentEvent, SnapshotEvent } from '@earendil-works/pi-durable';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { socketUrl } from './api.ts';
 import { Approvals } from './Approvals.tsx';
 import { Transcript } from './Transcript.tsx';
@@ -29,20 +29,24 @@ function useSocket(key: string, agent: string | undefined) {
     return () => sock.close();
   }, [key, agent]);
   const send = (input: string, whenBusy?: 'steer' | 'followUp') => {
+    if (ws.current?.readyState !== WebSocket.OPEN) {
+      setError('Disconnected: reload to reconnect. Your message was not sent.');
+      return false;
+    }
     setError('');
-    ws.current?.send(JSON.stringify({ type: 'input', input, whenBusy }));
+    ws.current.send(JSON.stringify({ type: 'input', input, whenBusy }));
+    return true;
   };
   return { view, state, error, approvalTick, send };
 }
 
-function Composer({ busy, disabled, send }: { busy: boolean; disabled: boolean; send: (i: string, w?: 'steer' | 'followUp') => void }) {
+function Composer({ busy, disabled, send }: { busy: boolean; disabled: boolean; send: (i: string, w?: 'steer' | 'followUp') => boolean }) {
   const [input, setInput] = useState('');
   const [mode, setMode] = useState<'steer' | 'followUp'>('steer');
-  const submit = (e: React.FormEvent) => {
+  const submit = (e: FormEvent) => {
     e.preventDefault();
     if (!input.trim()) return;
-    send(input, busy ? mode : undefined);
-    setInput('');
+    if (send(input, busy ? mode : undefined)) setInput('');
   };
   return (
     <form onSubmit={submit}>

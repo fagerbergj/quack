@@ -6,6 +6,8 @@ import { App } from './App.tsx';
 class FakeSocket {
   static all: FakeSocket[] = [];
   sent: unknown[] = [];
+  readyState = 1;
+  static OPEN = 1;
   onopen?: () => void;
   onclose?: () => void;
   onmessage?: (e: { data: string }) => void;
@@ -143,4 +145,37 @@ test('an approval that appears mid-run shows up when tool activity arrives', asy
   routes['GET /sessions/ui%3Au1/approvals'] = { approvals: [{ id: 'b', tool: 'push', args: {}, requestedAt: 1 }] };
   ws.frame({ type: 'events', events: [{ type: 'tool_execution_start', toolCallId: 't', toolName: 'push', args: {} }] });
   expect(await screen.findByRole('button', { name: 'Reject push' })).toBeInTheDocument();
+});
+
+test('a malformed escape in the hash shows the sessions list instead of crashing', async () => {
+  routes['GET /sessions'] = { sessions: [] };
+  routes['GET /agents'] = { agents: [] };
+  location.hash = '#/s/%zz';
+  render(<App />);
+  expect(await screen.findByRole('heading', { name: 'Sessions' })).toBeInTheDocument();
+});
+
+test('an assistant entry with only an errorMessage renders the error', async () => {
+  const ws = await openSession();
+  const err = entry('e9', [{ ...assistant([]), stopReason: 'error', errorMessage: 'Provider is not configured' }]);
+  ws.frame(snapshot({ entries: [err] }));
+  expect(screen.getByRole('article', { name: 'Assistant' })).toHaveTextContent('Error: Provider is not configured');
+});
+
+test('a send on a closed socket keeps the input and says so', async () => {
+  routes['GET /sessions/ui%3Au1/approvals'] = { approvals: [] };
+  const ws = await openSession();
+  ws.frame(snapshot());
+  ws.readyState = 3;
+  await userEvent.type(screen.getByRole('textbox', { name: 'Message' }), 'lost?');
+  await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+  expect(ws.sent).toEqual([]);
+  expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('lost?');
+  expect(screen.getByRole('alert')).toHaveTextContent('Disconnected');
+});
+
+test('each list fetch reports its own failure', async () => {
+  render(<App />);
+  expect(await screen.findByText(/Sessions: /)).toBeInTheDocument();
+  expect(screen.getByText(/Agents: /)).toBeInTheDocument();
 });

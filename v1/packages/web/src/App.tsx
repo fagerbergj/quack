@@ -1,11 +1,20 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { listAgents, listSessions, type AgentSummary, type SessionSummary } from './api.ts';
 import { SessionView } from './SessionView.tsx';
 
 // shortcut: hash routing keeps the build static, so any file server can host it; move to a router with auth.
+function safeDecode(s: string): string | undefined {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return undefined;
+  }
+}
+
 function parseHash(hash: string): { key: string; agent?: string } | undefined {
   const m = /^#\/s\/([^?]+)(?:\?agent=(.*))?$/.exec(hash);
-  return m ? { key: decodeURIComponent(m[1]), agent: m[2] ? decodeURIComponent(m[2]) : undefined } : undefined;
+  const key = m && safeDecode(m[1]);
+  return m && key ? { key, agent: m[2] ? safeDecode(m[2]) : undefined } : undefined;
 }
 
 function useHash() {
@@ -21,7 +30,7 @@ function useHash() {
 function NewSession({ agents }: { agents: AgentSummary[] }) {
   const [agent, setAgent] = useState('');
   const chosen = agent || agents[0]?.name || '';
-  const start = (e: React.FormEvent) => {
+  const start = (e: FormEvent) => {
     e.preventDefault();
     location.hash = `#/s/${encodeURIComponent(`ui:${crypto.randomUUID()}`)}?agent=${encodeURIComponent(chosen)}`;
   };
@@ -43,15 +52,17 @@ function NewSession({ agents }: { agents: AgentSummary[] }) {
 function Home() {
   const [sessions, setSessions] = useState<SessionSummary[]>();
   const [agents, setAgents] = useState<AgentSummary[]>([]);
-  const [error, setError] = useState('');
+  const [sessionsError, setSessionsError] = useState('');
+  const [agentsError, setAgentsError] = useState('');
   useEffect(() => {
-    listSessions().then(setSessions, (e: Error) => setError(e.message));
-    listAgents().then(setAgents, (e: Error) => setError(e.message));
+    listSessions().then(setSessions, (e: Error) => setSessionsError(e.message));
+    listAgents().then(setAgents, (e: Error) => setAgentsError(e.message));
   }, []);
   return (
     <>
       <h1>Sessions</h1>
-      {error && <p role="alert">{error}</p>}
+      {sessionsError && <p role="alert">{`Sessions: ${sessionsError}`}</p>}
+      {agentsError && <p role="alert">{`Agents: ${agentsError}`}</p>}
       <NewSession agents={agents} />
       {sessions?.length === 0 && <p>No sessions yet.</p>}
       <ul>
