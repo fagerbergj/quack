@@ -397,3 +397,22 @@ test('assistant text renders as markdown with a table, highlighted code and cita
   expect(within(reply).getByText('3 calls · web_search ×1, web_fetch ×2')).toBeInTheDocument();
   expect(within(reply).getAllByText('4 s')).toHaveLength(1);
 });
+
+test('the Work pane shows the newest sealed version as a report and its checks as a tab', async () => {
+  routes['GET /sessions/ui%3Au1/artifacts'] = {
+    artifacts: [
+      { kind: 'research.report', version: 1, hash: 'h1', content: '# Old', sealedAt: 1, verdict: null },
+      { kind: 'research.report', version: 2, hash: 'h2', content: '## Short answer\n\nGain is 1.9x [S9].', sealedAt: 2, verdict: { passed: false, gatesFailed: [], score: 0.5, checks: [{ criterion: 'citations', id: 'support', met: 0, notes: ['S7 does not mention TP'] }, { criterion: 'dated', id: 'claims', met: 1, notes: [] }] } },
+    ],
+  };
+  const ws = await openSession();
+  ws.frame(snapshot());
+  const work = await screen.findByRole('region', { name: 'Work' });
+  expect(within(work).getByRole('heading', { name: 'Short answer' })).toBeInTheDocument();
+  expect(work).toHaveTextContent('v2');
+  await userEvent.click(within(work).getByRole('tab', { name: 'Checks' }));
+  expect(work).toHaveTextContent('citations.support');
+  expect(work).toHaveTextContent('S7 does not mention TP');
+  expect(within(work).getByText('Fail')).toBeInTheDocument();
+  expect(within(work).getByText('Pass')).toBeInTheDocument();
+});

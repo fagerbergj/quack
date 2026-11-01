@@ -28,13 +28,18 @@ function Item({ a }: { a: SealedArtifact }) {
 }
 
 // `refresh` changes whenever the session saw tool activity, which is when a version can be sealed or checked.
-export function Artifacts({ sessionKey, refresh }: { sessionKey: string; refresh: number }) {
+export function useArtifacts(sessionKey: string, refresh: number) {
   const [items, setItems] = useState<SealedArtifact[]>([]);
   const [error, setError] = useState('');
   useEffect(() => void listArtifacts(sessionKey).then(setItems, (e: Error) => setError(e.message)), [sessionKey, refresh]);
+  return { items, error };
+}
+
+// Inline below xl; from xl up the Work pane shows the newest version instead.
+export function Artifacts({ items, error }: { items: SealedArtifact[]; error: string }) {
   if (!items.length && !error) return null;
   return (
-    <section aria-labelledby="artifacts-h" className="flex flex-col gap-2">
+    <section aria-labelledby="artifacts-h" className="flex flex-col gap-2 xl:hidden">
       <h2 id="artifacts-h" className="sr-only">Artifacts</h2>
       {error && <p role="alert" className="m-0 text-[13px] text-danger">{error}</p>}
       <ul className="m-0 flex list-none flex-col gap-2 p-0 text-[13px]">

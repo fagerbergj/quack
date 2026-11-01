@@ -76,9 +76,9 @@ function ResultRow({ r, body }: { r: ToolResultMessage; body: string }) {
 
 function Thinking({ text: t }: { text: string }) {
   return (
-    <details className={meta}>
-      <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">Thinking</summary>
-      <p className="mt-1 whitespace-pre-wrap">{t}</p>
+    <details className="text-[12px] text-muted">
+      <summary className="inline-flex min-h-6 cursor-pointer list-none items-center rounded-md bg-soft px-2 [&::-webkit-details-marker]:hidden">Thinking</summary>
+      <p className="mt-1 mb-0 whitespace-pre-wrap">{t}</p>
     </details>
   );
 }
