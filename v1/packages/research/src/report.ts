@@ -30,7 +30,7 @@ function citesFetchedSources(artifact: string, ev: Evidence): CodeResult {
   const fetched = new Set((ev.sources?.[0]?.state.ids ?? []) as string[]);
   const cited = citedIds(artifact);
   const unfetched = cited.filter((id) => !fetched.has(id));
-  return { met: cited.length ? (cited.length - unfetched.length) / cited.length : 0, detail: cited.length ? `cites ${unfetched.join(', ')}, which this session never fetched; fetch the page with web_fetch or drop the claim` : 'cites no source' };
+  return { met: cited.length ? (cited.length - unfetched.length) / cited.length : 0, detail: unfetched.length ? `cites ${unfetched.join(', ')}, which this session never fetched; fetch the page with web_fetch or drop the claim` : cited.length ? undefined : 'cites no source' };
 }
 
 // Claim-support checks against the fetched text come with the sources store that keeps it; today the gate is provenance only.

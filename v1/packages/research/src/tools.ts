@@ -8,8 +8,6 @@ import { safeGet } from './net.ts';
 export type ResearchConfig = {
   /** Exa's API origin; tests point it at a fake server. */
   exaUrl?: string;
-  /** Lets fetches reach private hosts; for tests against local fake servers only. */
-  allowPrivate?: boolean;
   maxFetchBytes?: number;
   maxRevisions?: number;
   classifier?: ClassifierRef;
@@ -57,7 +55,7 @@ async function toText(body: Buffer, contentType: string): Promise<string> {
   throw new Error(`cannot read ${contentType || 'an unknown content type'}; only HTML, PDF and text are supported`);
 }
 
-export function webFetchTool(config: ResearchConfig) {
+export function webFetchTool(config: ResearchConfig, isPublic?: (ip: string) => boolean) {
   return defineTool({
     name: 'web_fetch',
     description: `Fetch a public web page or PDF and return its text (first ${MAX_CHARS} characters). The result starts with a source id such as [s1]; cite that id in the report. Private and local addresses are refused.`,
@@ -66,7 +64,7 @@ export function webFetchTool(config: ResearchConfig) {
       let text: string;
       let record: Omit<SourceRecord, 'id'>;
       try {
-        const got = await safeGet(args.url, { maxBytes: config.maxFetchBytes ?? 5_000_000, timeoutMs: 20_000, allowPrivate: config.allowPrivate });
+        const got = await safeGet(args.url, { maxBytes: config.maxFetchBytes ?? 5_000_000, timeoutMs: 20_000, isPublic });
         if (got.status >= 400) return error(`${got.url} answered ${got.status}`);
         text = await toText(got.body, got.contentType);
         record = { url: got.url, fetchedAt: api.now(), hash: createHash('sha256').update(got.body).digest('hex') };
