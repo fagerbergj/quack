@@ -7,7 +7,7 @@ faux.setResponses(
   Array.from({ length: 50 }, () => (context: { messages: Array<{ content: unknown }> }) => {
     const content = context.messages.at(-1)?.content;
     const text = typeof content === 'string' ? content : (content as Array<{ text?: string }>).map((c) => c.text ?? '').join('');
-    return fauxAssistantMessage(`echo: ${text}`);
+    return fauxAssistantMessage(text === 'whoami' ? `agent: ${process.env.QUACK_AGENT}` : `echo: ${text}`);
   }) as never,
 );
 const models = createModels();
