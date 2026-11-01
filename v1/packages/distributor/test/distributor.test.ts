@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { connect, type AddressInfo } from 'node:net';
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
@@ -45,7 +45,7 @@ async function startDistributor(idleMs: number, agents: { agentsDir?: string; de
   const invoke = (key: string, body: unknown, agent?: string) =>
     fetch(`${base}/sessions/${encodeURIComponent(key)}/invocations${agent ? `?agent=${agent}` : ''}`, { method: 'POST', body: JSON.stringify(body) }).then(async (r) => ({ status: r.status, body: await r.json() }));
   const ranAs = (key: string) => `agent: ${join(dataDir, sessionDirName(key), 'agent-def', 'agent.json')}`;
-  return { driver, invoke, base, ranAs };
+  return { driver, invoke, base, ranAs, dataDir };
 }
 
 // Waits for a state change; the deadline only matters when the code is broken, so it is far above any runner's latency.
@@ -154,6 +154,19 @@ test('each session runs on the agent that created it, and the registry and index
   const { sessions } = (await (await fetch(`${base}/sessions`)).json()) as { sessions: Array<{ key: string; agent: string; running: boolean; lastActivity: string }> };
   assert.deepEqual(sessions.map((s) => [s.key, s.agent, s.running]).sort(), [['github:a#1', 'reviewer', true], ['research:b', 'research', false]]);
   assert.ok(sessions.every((s) => !Number.isNaN(Date.parse(s.lastActivity))));
+});
+
+test('lastActivity comes from the session log, so file mtimes from a restart do not move it', async () => {
+  const { invoke, base, driver, dataDir } = await startDistributor(60_000);
+  await invoke('act:1', { input: 'hi', wait: true });
+  await driver.stop('act:1');
+  const read = async () => ((await (await fetch(`${base}/sessions`)).json()) as { sessions: Array<{ lastActivity: string }> }).sessions[0]!.lastActivity;
+  const before = await read();
+  const future = new Date('2099-01-01T00:00:00Z');
+  const dir = join(dataDir, sessionDirName('act:1'));
+  await Promise.all(['session.sqlite', 'session-key'].map((f) => utimes(join(dir, f), future, future)));
+  assert.equal(await read(), before);
+  assert.ok(Date.parse(before) < future.getTime());
 });
 
 test('a session keeps its agent: a different one is 409, an unknown one 404', async () => {
