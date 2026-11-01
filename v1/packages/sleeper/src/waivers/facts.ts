@@ -5,8 +5,8 @@ import { fits, lineupSlots } from '../lineup/slots.ts';
 
 export type WaiverType = 'rolling' | 'reverse_standings' | 'faab';
 export type WPlayer = { id: string; name: string; pos: string; team: string | null; inj: string | null; proj: number; bye: number | null };
-/** `owned` is Sleeper's platform-wide ownership percent and `adds` its 24-hour add count: scarcity signals, not value. */
-export type FreeAgent = WPlayer & { owned: number | null; adds: number };
+/** `owned` is Sleeper's platform-wide ownership percent and `adds` its 24-hour add count, null when the player is not on the trending list: scarcity signals, not value. */
+export type FreeAgent = WPlayer & { owned: number | null; adds: number | null };
 export type Mine = WPlayer & { role: 'starter' | 'bench' | 'ir' };
 export type Bye = { week: number; pos: string; out: number };
 /** One league-competition row: what the team lacks, what it can spend and where a bye leaves it short. */
@@ -100,10 +100,10 @@ function freeAgents(dump: Json, taken: Set<string>, positions: string[], wp: (id
   for (const [id, p] of Object.entries<Json>(dump)) {
     if (taken.has(id) || p.active === false || !positions.includes(p.position)) continue;
     const w = wp(id);
-    if (w.team) free[id] = { ...w, owned: research[id]?.owned ?? null, adds: trending.get(id) ?? 0 };
+    if (w.team) free[id] = { ...w, owned: research[id]?.owned ?? null, adds: trending.get(id) ?? null };
   }
   const all = Object.values(free).sort((a, b) => b.proj - a.proj || a.id.localeCompare(b.id));
-  const widely = all.filter((p) => (p.owned ?? 0) >= WIDE_OWNED || p.adds > 0).map((p) => p.id);
+  const widely = all.filter((p) => (p.owned ?? 0) >= WIDE_OWNED || (p.adds ?? 0) > 0).map((p) => p.id);
   const buckets = Object.fromEntries(positions.map((pos) => {
     const top = all.filter((p) => p.pos === pos).slice(0, TOP_PER_POS).map((p) => p.id);
     return [pos, [...new Set([...top, ...widely.filter((id) => free[id].pos === pos)])].sort((a, b) => free[b].proj - free[a].proj || a.localeCompare(b))];

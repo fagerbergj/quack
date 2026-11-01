@@ -91,6 +91,8 @@ test('the card carries the tools figures, the league currency and the claim orde
   assert.deepEqual(rolling.candidates.map((c) => [c.rank, c.player.id, c.proj, c.owned_pct, c.adds_24h, c.drop.player.id, c.drop.role]), [[1, '300', 12.4, 61.2, 4200, '103', 'bench'], [2, '302', 11.1, 12, 150, '110', 'bench']]);
   assert.deepEqual(rolling.candidates[0].size, { kind: 'priority', position: 2, of: 3 });
   assert.deepEqual(rolling.also_checked.map((a) => a.player.id), ['303']);
+  const unlisted = buildWaiversCard(await factsOf(), { ...rollingDecision, claims: [{ add: '301', drop: '103', why: 'Ron Reserve is the next back up.' }] }).candidates[0];
+  assert.ok(!('adds_24h' in unlisted), 'a player off the trending list has no add count');
   const bid = (await card(faab)).card;
   assert.deepEqual(bid.candidates.map((c) => c.size), [{ kind: 'faab', bid: 18, left: 70, pct: 26 }, { kind: 'faab', bid: 5, left: 70, pct: 7 }]);
 });
@@ -258,6 +260,12 @@ test('the run starts 12 hours before processing and is due an hour ahead of it; 
   const run = waiversRun(AT, REAL)!;
   assert.deepEqual([new Date(run.at).toISOString(), new Date(run.deadline).toISOString()], ['2026-11-10T20:00:00.000Z', '2026-11-11T07:00:00.000Z']);
   assert.equal(waiversRun(AT, {}), null);
+  // The real league's daily mask is an int of unknown encoding: no run rather than a guessed one.
+  assert.equal(waiversRun(AT, { daily_waivers: 1, daily_waivers_hour: 20, daily_waivers_days: 1152 }), null);
+  assert.equal(waiversRun(AT, { daily_waivers: 1, daily_waivers_hour: 20, daily_waivers_days: 1111111 }), null);
+  // Registered late, the run starts now and still ends before the deadline.
+  const late = waiversRun(Date.parse('2026-11-11T02:00:00Z'), REAL)!;
+  assert.deepEqual([new Date(late.at).toISOString(), new Date(late.deadline).toISOString()], ['2026-11-11T02:00:00.000Z', '2026-11-11T07:00:00.000Z']);
   assert.equal(waiversRun(AT, undefined), null);
   assert.equal(waiversKey('L1', 9), 'sleeper:L1:9:waivers');
 });
@@ -276,6 +284,16 @@ test('the schedules service lists the waivers run with its session key and deadl
     assert.partialDeepStrictEqual(listed[0], { id: 'sleeper/waivers/L1/9', agent: 'sleeper-waivers', times: ['2026-11-10T20:00:00.000Z'], deadline: '2026-11-11T07:00:00.000Z', sessionKey: 'sleeper:L1:9:waivers', input: JSON.stringify(INPUT) });
     const noDay = { ...base, '/v1/league/L1': { ...base['/v1/league/L1'], settings: { waiver_type: 0 } } };
     assert.deepEqual(await registerWaiversSchedules({ url, token: 's' }, clientOf(noDay), 'L1', 'mallard', now), []);
+    const unknown = { ...base, '/v1/league/L1': { ...base['/v1/league/L1'], settings: { waiver_type: 0, daily_waivers: 1, daily_waivers_hour: 20, daily_waivers_days: 1152 } } };
+    const logged: unknown[] = [];
+    const orig = console.error;
+    console.error = (m: unknown) => void logged.push(m);
+    try {
+      assert.deepEqual(await registerWaiversSchedules({ url, token: 's' }, clientOf(unknown), 'L1', 'mallard', now), []);
+    } finally {
+      console.error = orig;
+    }
+    assert.match(String(logged[0]), /league L1.*1152/);
   } finally {
     schedules.stop();
   }

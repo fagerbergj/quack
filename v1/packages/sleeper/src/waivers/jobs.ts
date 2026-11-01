@@ -17,11 +17,14 @@ const PT = 'America/Los_Angeles';
 /** Sleeper counts weekdays from Monday = 0. */
 const mondayIndex = (weekday: string) => (WEEKDAYS.indexOf(weekday) + 6) % 7;
 
-// Verified on a real league: weekly waivers run at 00:00 Pacific on `waiver_day_of_week`, ignoring `daily_waivers_hour`.
-// Daily mode (shortcut: `daily_waivers_days` read as seven 0/1 digits, Monday first; unverified) runs at that hour, Pacific.
+const validMask = (v: unknown) => typeof v === 'string' && /^[01]{7}$/.test(v);
+
+// Weekly waivers run at 00:00 Pacific on `waiver_day_of_week` (verified on a real league). Daily mode needs `daily_waivers_days`
+// as a 7-char 0/1 string, Monday first; the real league sends an int of unknown encoding, so anything else fails closed.
 function processingSlots(s: WaiverSettings): { days: number[]; hour: number } | null {
   if (s.daily_waivers === 1) {
-    const days = String(s.daily_waivers_days ?? '1111111').padStart(7, '0').split('').flatMap((c, i) => (c === '1' ? [i] : []));
+    if (!validMask(s.daily_waivers_days)) return null;
+    const days = (s.daily_waivers_days as string).split('').flatMap((c, i) => (c === '1' ? [i] : []));
     return days.length ? { days, hour: s.daily_waivers_hour ?? 0 } : null;
   }
   return typeof s.waiver_day_of_week === 'number' ? { days: [s.waiver_day_of_week], hour: 0 } : null;
@@ -45,7 +48,8 @@ export function waiversRun(now: number, settings: WaiverSettings | undefined) {
   const processing = settings && nextProcessing(now, settings);
   if (!processing) return null;
   const deadline = processing - MARGIN_MS;
-  return deadline > now ? { at: processing - LEAD_MS, deadline, processing } : null;
+  // A late registration still fires, before the deadline.
+  return deadline > now ? { at: Math.max(processing - LEAD_MS, now), deadline, processing } : null;
 }
 
 const inputOf = (i: LineupInput) => JSON.stringify(i);
@@ -54,7 +58,9 @@ const inputOf = (i: LineupInput) => JSON.stringify(i);
 export async function registerWaiversSchedules(config: ScheduleConfig, client: SleeperClient, league: string, owner: string, now: () => number = Date.now): Promise<string[]> {
   const state = await client.state();
   if (state.season_type !== 'regular') return [];
-  const run = waiversRun(now(), (await client.league(league)).settings);
+  const settings = (await client.league(league)).settings;
+  const run = waiversRun(now(), settings);
+  if (settings?.daily_waivers === 1 && !validMask(settings.daily_waivers_days)) console.error(`sleeper: league ${league} has daily waivers with daily_waivers_days ${JSON.stringify(settings.daily_waivers_days)}, which is not understood; no waivers run is scheduled`);
   if (!run) return [];
   const id = `sleeper/waivers/${league}/${state.week}`;
   const res = await (config.fetch ?? fetch)(`${config.url}/schedules`, {

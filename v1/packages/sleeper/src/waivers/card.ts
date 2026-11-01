@@ -9,7 +9,7 @@ export type Candidate = {
   player: PlayerRef;
   proj: number;
   owned_pct: number | null;
-  adds_24h: number;
+  adds_24h?: number;
   bye: number | null;
   drop: { player: PlayerRef; role: Mine['role'] };
   size: Size;
@@ -54,7 +54,7 @@ export function buildWaiversCard(f: WaiverFacts, d: WaiverDecision): WaiversCard
     if (!add) throw new Error(`the model claimed ${c.add}, who is not a free agent`);
     if (!drop) throw new Error(`the model dropped ${c.drop}, who is not on the roster`);
     const news = [add, drop].flatMap((p) => (f.news[p.id] ?? []).map((n) => ({ ...n, player: p.name })));
-    return { rank: i + 1, player: ref(add), proj: add.proj, owned_pct: add.owned, adds_24h: add.adds, bye: add.bye, drop: { player: ref(drop), role: drop.role }, size: sizeOf(f, c.bid, c.add), why: c.why, news };
+    return { rank: i + 1, player: ref(add), proj: add.proj, owned_pct: add.owned, ...(add.adds === null ? {} : { adds_24h: add.adds }), bye: add.bye, drop: { player: ref(drop), role: drop.role }, size: sizeOf(f, c.bid, c.add), why: c.why, news };
   });
   const seen = new Set(adds);
   const also_checked = d.passed.filter((p) => f.free[p.playerId] && !seen.has(p.playerId)).map((p) => ({ player: ref(f.free[p.playerId]), why: p.why }));
