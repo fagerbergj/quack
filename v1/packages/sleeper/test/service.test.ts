@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { test } from 'node:test';
-import { NotFound, createSleeperClient, createSleeperService, leagueDate, registerSnapshotSchedule } from '../src/index.ts';
+import { NotFound, createSleeperClient, createSleeperService, leagueDate, registerSnapshotSchedule, registerUntilDone } from '../src/index.ts';
 
 const fixtures = JSON.parse(readFileSync(new URL('./fixtures/league.json', import.meta.url), 'utf8')) as Record<string, unknown>;
 
@@ -111,6 +111,21 @@ test('a null body is not found and is never cached', async () => {
   await assert.rejects(client.league('nope'), NotFound);
   await assert.rejects(client.league('nope'), NotFound);
   assert.equal(api.calls.length, 2);
+});
+
+test('registration retries with backoff until the schedules service is up, then registers once', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  let attempts = 0;
+  const posted: string[] = [];
+  const doFetch = (async (_url: string, init: RequestInit) => {
+    if (++attempts < 3) throw new Error('connection refused');
+    posted.push(JSON.parse(init.body as string).id);
+    return new Response('{}', { status: 201 });
+  }) as unknown as typeof fetch;
+  const delays: number[] = [];
+  await registerUntilDone({ url: 'http://schedules', token: 's', fetch: doFetch }, 'L1', async (ms) => void delays.push(ms));
+  assert.deepEqual(delays, [1000, 2000]);
+  assert.deepEqual(posted, ['sleeper/snapshot/L1']);
 });
 
 test('the snapshot job registers in New York time', async () => {
