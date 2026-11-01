@@ -11,9 +11,12 @@ export type Answer = { met: boolean | null; resolver: string; note?: string };
 
 const BYTES_PER_TOKEN = 4;
 
+// A question about something the artifact never does is vacuous: a gate or earned check holds, a pitfall does not occur.
+export const asked = (c: Check): string => `${c.question} If what this asks about does not arise in the evidence, answer ${c.weight !== 'gate' && c.weight < 0 ? 'no' : 'yes'}.`;
+
 async function classify(api: ToolExecutionApi, ref: ClassifierRef, unit: Unit, checks: Check[], ctx: Context): Promise<Record<string, number> | undefined> {
   const questions: Record<string, ClassifierQuestion> = Object.fromEntries(
-    checks.map((c) => [c.id, { type: 'bool', instructions: c.question!, criteria: { true: 'Yes, this holds.', false: 'No, it does not hold.' } }]),
+    checks.map((c) => [c.id, { type: 'bool', instructions: asked(c), criteria: { true: 'Yes, this holds.', false: 'No, it does not hold.' } }]),
   );
   // The decision model has a hard input cap; over it, every question escalates instead of being truncated.
   if (JSON.stringify({ state: unit.state, questions }).length / BYTES_PER_TOKEN > ref.maxInputTokens) return undefined;
@@ -32,7 +35,7 @@ async function classify(api: ToolExecutionApi, ref: ClassifierRef, unit: Unit, c
 export type ModelRef = { provider: string; modelId: string };
 
 async function escalate(api: ToolExecutionApi, judgeModel: ModelRef | undefined, memo: string, unit: Unit, check: Check, ctx: Context): Promise<Answer> {
-  const point = { name: `${memo}:${unit.id}:${check.id}`, question: check.question!, options: ['yes', 'no'], evidence: JSON.stringify(unit.state, null, 1) };
+  const point = { name: `${memo}:${unit.id}:${check.id}`, question: asked(check), options: ['yes', 'no'], evidence: JSON.stringify(unit.state, null, 1) };
   const resolver = judgeModel ? { ...modelResolver(judgeModel.provider, judgeModel.modelId), id: 'judge-model' } : agentModel;
   const d = await decide(api, point, [resolver], ctx);
   if (!d) return { met: null, resolver: 'none', note: 'no resolver could decide' };
