@@ -587,6 +587,8 @@ test('a double-click on Approve posts once', async () => {
   fetchMock.mockImplementationOnce(() => new Promise<Response>(() => {}));
   await userEvent.dblClick(approve);
   expect(fetchMock.mock.calls.filter(([, i]) => i?.method === 'POST')).toHaveLength(1);
+});
+
 const KEY = 'sleeper:L1:8:lineup';
 const player = (name: string, over: object = {}) => ({ id: name, name, pos: 'WR', team: 'DET', inj: null, ...over });
 const row = (name: string, over: object = {}) => ({ slot: 'WR1', player: player(name), proj: 12.34, action: 'keep', locked: false, replaces: null, game: { opponent: 'MIN', home: true, kickoff: '2026-11-01T18:00:00.000Z', locked: false, status: 'pre_game' }, why: `Why ${name}`, news: [], ...over });
@@ -640,6 +642,13 @@ test('a failed verdict with no failing check shows the judge tally', async () =>
   await openSleeper([sealed(lineup(), { passed: false, gatesFailed: [], score: 0.7, checks })]);
   const card = await screen.findByRole('article', { name: 'Week 8 lineup' });
   expect(within(card).getByText('Judge: 2 of 2 checks passed')).toBeInTheDocument();
+});
+
+test('a failing check with no judge note says so', async () => {
+  const failed = { passed: false, gatesFailed: [], score: 0.4, checks: [{ criterion: 'gates', id: 'summary_names_changes', met: 0, notes: [] }] };
+  await openSleeper([sealed(lineup(), failed)]);
+  const card = await screen.findByRole('article', { name: 'Week 8 lineup' });
+  expect(within(card).getByText('Summary names changes').closest('details')).toHaveTextContent('No note from the judge.');
 });
 
 test('an unchecked card is labelled not checked', async () => {

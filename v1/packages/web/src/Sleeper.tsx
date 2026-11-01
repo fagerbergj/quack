@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { StatusIcon } from './Artifacts.tsx';
 import { listArtifacts, runLineup, sleeperLeague, type SealedArtifact } from './api.ts';
 import type { Row } from './sessions.ts';
 
@@ -46,12 +47,11 @@ const missed = (a: SealedArtifact) => (a.verdict?.checks ?? []).filter((c) => c.
 // `brief` is the strip's one-word status; the card carries the full verdict.
 export function Verdict({ artifact, brief }: { artifact: SealedArtifact; brief?: boolean }) {
   const v = artifact.verdict;
-  const [glyph, tone] = !v ? ['•', 'bg-soft text-muted'] : v.passed ? ['✓', 'bg-success-bg text-success'] : ['✗', 'bg-danger-bg text-danger'];
   const failed = brief ? [] : missed(artifact);
   return (
     <div className="flex min-w-0 flex-col gap-1.5 text-[12px]">
       <div className="flex items-center gap-2">
-        <span aria-hidden="true" className={`grid h-4 w-4 flex-none place-items-center rounded-full text-[10px] ${tone}`}>{glyph}</span>
+        <StatusIcon verdict={v} />
         <span className="font-medium text-ink-2">{brief ? verdictOf(artifact) : `v${artifact.version} · ${verdictOf(artifact)}`}</span>
       </div>
       {!brief && v && !v.passed && failed.length === 0 && <p className="m-0 font-mono text-ink-2">{`Judge: ${v.checks.filter((c) => (c.met ?? 0) >= 1).length} of ${v.checks.filter((c) => c.met !== null).length} checks passed`}</p>}

@@ -4,7 +4,7 @@ import { listArtifacts, type SealedArtifact } from './api.ts';
 // Checks that did not fully hold; a score under the threshold can fail a version with none listed.
 export const failing = (a: SealedArtifact) => (a.verdict?.checks ?? []).filter((c) => c.met !== null && c.met < 1).map((c) => `${c.criterion}.${c.id}`);
 
-function StatusIcon({ verdict }: { verdict: SealedArtifact['verdict'] }) {
+export function StatusIcon({ verdict }: { verdict: SealedArtifact['verdict'] }) {
   const [glyph, tone] = !verdict ? ['•', 'bg-soft text-muted'] : verdict.passed ? ['✓', 'bg-success-bg text-success'] : ['✗', 'bg-danger-bg text-danger'];
   return <span aria-hidden="true" className={`grid h-4 w-4 flex-none place-items-center rounded-full text-[10px] ${tone}`}>{glyph}</span>;
 }
