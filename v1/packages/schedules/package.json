@@ -1,0 +1,14 @@
+{
+  "name": "@quack/schedules",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "node src/main.ts"
+  },
+  "dependencies": {
+    "cron-parser": "5.10.2"
+  }
+}
