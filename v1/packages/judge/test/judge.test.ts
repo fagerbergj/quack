@@ -12,6 +12,7 @@ import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { Artifacts, artifactsExtension, type ArtifactKind } from '@quack/sdk';
 import { openSession } from '@quack/session';
 import { judge, type Evidence, type Rubric } from '../src/index.ts';
+import { asked } from '../src/resolve.ts';
 
 const dirs: string[] = [];
 const servers: Array<() => void> = [];
@@ -21,13 +22,13 @@ after(async () => {
 });
 
 // A stand-in for Clef speaking its real wire format; probability decides per question and unit.
-const clefCalls: Array<{ unit: string; questions: string[] }> = [];
+const clefCalls: Array<{ unit: string; questions: string[]; instructions: Record<string, string> }> = [];
 async function fakeClef(probability: (question: string, unit: string) => number) {
   const server = createServer(async (req, res) => {
     let body = '';
     for await (const chunk of req) body += chunk;
     const { state, questions } = JSON.parse(body);
-    clefCalls.push({ unit: state.unit, questions: Object.keys(questions) });
+    clefCalls.push({ unit: state.unit, questions: Object.keys(questions), instructions: Object.fromEntries(Object.entries<{ instructions: string }>(questions).map(([q, v]) => [q, v.instructions])) });
     const answers = Object.fromEntries(Object.keys(questions).map((q) => [q, { type: 'noul', noul: probability(q, state.unit) }]));
     res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ answers, usage: { input_tokens: 100, output_tokens: 0 } }));
   }).listen(0);
@@ -123,4 +124,26 @@ test('a unit over the decision model cap skips it and every check escalates', as
   assert.equal(clefCalls.length, 0);
   assert.ok(versions[0].checks.filter((c: any) => c.resolvers['agent-model']).length >= 2);
   assert.equal(versions[0].passed, true);
+});
+
+const BLOCKING = '## Takeaway\nFix the off-by-one.\n## Verdict\nrequest_changes\n## Findings\n- blocking: src/x.ts:12 off by one\n- nit: src/y.ts:3 rename\n';
+const vacuous = (polarity: string) => new RegExp(`does not arise in the evidence, answer ${polarity}\\.$`);
+
+test('a question that does not arise is told to the decision model as yes for positive checks and no for pitfalls', async () => {
+  clefCalls.length = 0;
+  const baseUrl = await fakeClef(() => 0.95);
+  await run(baseUrl, 8192, [tool('write', { path: 'artifacts/review.md', content: BLOCKING }), tool('submit_review', {}), fauxAssistantMessage('Done.')]);
+  const told = Object.assign({}, ...clefCalls.map((c) => c.instructions));
+  assert.match(told['structured_verdict.takeaway_actionable'], vacuous('yes'));
+  assert.match(told['severity_grounded.preference_only'], vacuous('no'));
+});
+
+test('the escalation resolver is told the same, and a gate counts as positive', async () => {
+  const seen: string[] = [];
+  const reply = (context: unknown) => { seen.push(JSON.stringify(context)); return yes; };
+  await run(undefined, 8192, [tool('write', { path: 'artifacts/review.md', content: BLOCKING }), tool('submit_review', {}), reply, reply, reply, reply, fauxAssistantMessage('Done.')]);
+  const prompt = (q: string) => seen.find((s) => s.includes(q))!;
+  assert.match(prompt('Is the takeaway one sentence'), /answer yes\./);
+  assert.match(prompt('rest only on preference'), /answer no\./);
+  assert.equal(asked({ id: 'g', weight: 'gate', question: 'Q?' }), 'Q? If what this asks about does not arise in the evidence, answer yes.');
 });
