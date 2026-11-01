@@ -108,6 +108,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
   const stopping = new Map<string, Promise<void>>();
   const holds = new Map<string, number>();
   const wakeTimers = new Map<string, () => void>();
+  let draining = false;
   const idleMs = opts.idleMs ?? 10 * 60_000;
   const idle = (key: string) => !holds.get(key) && now() - (lastUse.get(key) ?? 0) >= idleMs;
   const hold = (key: string, by: number) => holds.set(key, (holds.get(key) ?? 0) + by);
@@ -120,7 +121,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
   function arm(key: string, at: number | undefined) {
     wakeTimers.get(key)?.();
     wakeTimers.delete(key);
-    if (at === undefined) return;
+    if (at === undefined || draining) return;
     wakeTimers.set(key, setTimer(() => {
       wakeTimers.delete(key);
       if (now() < at) return arm(key, at);
@@ -172,11 +173,13 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
     sweepStop = setTimer(() => { void maintain(sweepOnce).then(scheduleSweep); }, Math.max(50, Math.min(idleMs, 30_000)));
   }
   scheduleSweep();
-  void driver.wakes().then((all) => all.forEach(({ key, at }) => arm(key, at)), () => {});
+  void maintain(() => driver.wakes().then((all) => all.forEach(({ key, at }) => arm(key, at)), () => {}));
 
-  // Stops every running session, keeping each one's wake time for the next distributor.
+  // Stops every running session, keeping each one's wake time for the next distributor; active work wakes at once, so a deploy does not strand it.
   async function drain() {
-    await Promise.all(driver.running().map(async (key) => stopSession(key, await ping(key).then((p) => p.wake?.at, () => undefined))));
+    draining = true;
+    const wakeFor = (p: Ping) => (p.status === 'HealthyBusy' ? now() : p.wake?.at);
+    await Promise.all(driver.running().map(async (key) => stopSession(key, await ping(key).then(wakeFor, () => undefined))));
   }
 
   const server = createServer(async (req, res) => {

@@ -363,6 +363,24 @@ test('a restarted distributor rebuilds wake timers from the recorded times', asy
   assert.deepEqual(fleet.log, ['start research:nap']);
 });
 
+test('a drain records active sessions as due now, so the next distributor resumes them without a request', async () => {
+  const fleet = await fakeFleet(() => ({ status: 'HealthyBusy', waitingOnHuman: false, wake: {} }));
+  const old = fleet.start();
+  await fleet.driver.ensure('github:a#7');
+  await old.drain();
+  assert.deepEqual(fleet.driver.running(), []);
+  assert.equal(fleet.wakes.get('github:a#7'), fleet.now());
+  fleet.advance(10 * HOUR);
+  await old.sweep();
+  assert.deepEqual(fleet.driver.running(), [], 'a draining distributor does not restart what it just stopped');
+
+  const next = fleet.start();
+  await next.sweep();
+  fleet.advance(0);
+  await next.sweep();
+  assert.deepEqual(fleet.driver.running(), ['github:a#7']);
+});
+
 test('active work is never stopped', async () => {
   const fleet = await fakeFleet(() => ({ status: 'HealthyBusy', waitingOnHuman: false, wake: {} }));
   const server = fleet.start();
