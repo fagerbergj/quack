@@ -5,6 +5,7 @@ import type { StartConfig } from './jobs.ts';
 import { startLineup } from './lineup/jobs.ts';
 import { startFinder, startTrade, tradeParams } from './trades/jobs.ts';
 import { startTrends } from './trends/jobs.ts';
+import { historyParams, startHistory } from './history/jobs.ts';
 import { startWaivers } from './waivers/jobs.ts';
 import { takeSnapshot } from './snapshot.ts';
 import { openStore } from './store.ts';
@@ -49,6 +50,8 @@ export function createSleeperService(config: ServiceConfig) {
     if (job) return startOnDemand({ lineup: startLineup, waivers: startWaivers, trends: startTrends }[job[2] as 'lineup'], method, safeDecode(job[1]), url.searchParams.get('week'));
     const trade = /^\/leagues\/([^/]+)\/jobs\/(trade-finder|trade)$/.exec(path);
     if (trade) return startOnDemand(trade[2] === 'trade' ? startTrade : startFinder, method, safeDecode(trade[1]), url.searchParams.get('week'), trade[2] === 'trade' ? tradeParams(url.searchParams) : {});
+    const history = /^\/leagues\/([^/]+)\/jobs\/history$/.exec(path);
+    if (history) return startOnDemand(startHistory, method, safeDecode(history[1]), url.searchParams.get('week'), historyParams(url.searchParams));
     const m = /^\/leagues\/([^/]+)\/snapshots(\/latest|\/\d{4}-\d{2}-\d{2})?$/.exec(path);
     if (!m) return [404, { error: 'not found' }];
     const league = safeDecode(m[1]);

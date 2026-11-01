@@ -1,0 +1,753 @@
+{
+ "/v1/state/nfl": {
+  "week": 3,
+  "season": "2026",
+  "season_type": "regular",
+  "display_week": 3
+ },
+ "/v1/players/nfl": {
+  "1": {
+   "first_name": "Quinn",
+   "last_name": "Quill",
+   "position": "QB",
+   "team": "KC",
+   "active": true
+  },
+  "2": {
+   "first_name": "Rob",
+   "last_name": "Rowe",
+   "position": "RB",
+   "team": "KC",
+   "active": true
+  },
+  "3": {
+   "first_name": "Dan",
+   "last_name": "Dash",
+   "position": "RB",
+   "team": "KC",
+   "active": true
+  },
+  "4": {
+   "first_name": "Will",
+   "last_name": "Wing",
+   "position": "WR",
+   "team": "KC",
+   "active": true
+  },
+  "5": {
+   "first_name": "Wes",
+   "last_name": "West",
+   "position": "WR",
+   "team": "KC",
+   "active": true
+  },
+  "6": {
+   "first_name": "Walt",
+   "last_name": "Wade",
+   "position": "WR",
+   "team": "KC",
+   "active": true
+  }
+ },
+ "/v1/league/H2": {
+  "league_id": "H2",
+  "previous_league_id": "H1",
+  "season": "2026",
+  "status": "in_season",
+  "draft_id": "D2",
+  "scoring_settings": {
+   "rec": 1
+  },
+  "roster_positions": [
+   "QB",
+   "RB",
+   "WR",
+   "WR",
+   "FLEX",
+   "BN",
+   "BN"
+  ],
+  "settings": {
+   "playoff_week_start": 15
+  }
+ },
+ "/v1/league/H1": {
+  "league_id": "H1",
+  "previous_league_id": "0",
+  "season": "2025",
+  "status": "complete",
+  "draft_id": "D1",
+  "scoring_settings": {
+   "rec": 1
+  },
+  "roster_positions": [
+   "QB",
+   "RB",
+   "WR",
+   "WR",
+   "FLEX",
+   "BN",
+   "BN"
+  ],
+  "settings": {
+   "playoff_week_start": 4
+  }
+ },
+ "/v1/league/H1/users": [
+  {
+   "user_id": "u1",
+   "display_name": "mallard",
+   "metadata": {
+    "team_name": "Mallard Mayhem"
+   }
+  },
+  {
+   "user_id": "u2",
+   "display_name": "teal",
+   "metadata": {}
+  },
+  {
+   "user_id": "u3",
+   "display_name": "pintail",
+   "metadata": {
+    "team_name": "Pintail Pride"
+   }
+  },
+  {
+   "user_id": "u4",
+   "display_name": "gadwall",
+   "metadata": {}
+  }
+ ],
+ "/v1/league/H2/users": [
+  {
+   "user_id": "u1",
+   "display_name": "mallard",
+   "metadata": {
+    "team_name": "Mallard Mayhem"
+   }
+  },
+  {
+   "user_id": "u2",
+   "display_name": "teal",
+   "metadata": {}
+  },
+  {
+   "user_id": "u3",
+   "display_name": "pintail",
+   "metadata": {
+    "team_name": "Pintail Pride"
+   }
+  },
+  {
+   "user_id": "u4",
+   "display_name": "gadwall",
+   "metadata": {}
+  }
+ ],
+ "/v1/league/H1/rosters": [
+  {
+   "roster_id": 1,
+   "owner_id": "u1",
+   "settings": {
+    "wins": 2,
+    "losses": 1,
+    "ties": 0,
+    "fpts": 177,
+    "fpts_decimal": 0,
+    "ppts": 198,
+    "ppts_decimal": 0,
+    "fpts_against": 158,
+    "fpts_against_decimal": 0
+   }
+  },
+  {
+   "roster_id": 2,
+   "owner_id": "u2",
+   "settings": {
+    "wins": 3,
+    "losses": 0,
+    "ties": 0,
+    "fpts": 220,
+    "fpts_decimal": 0,
+    "ppts": 230,
+    "ppts_decimal": 0,
+    "fpts_against": 100,
+    "fpts_against_decimal": 0
+   }
+  },
+  {
+   "roster_id": 3,
+   "owner_id": "u3",
+   "settings": {
+    "wins": 1,
+    "losses": 2,
+    "ties": 0,
+    "fpts": 150,
+    "fpts_decimal": 0,
+    "ppts": 190,
+    "ppts_decimal": 0,
+    "fpts_against": 190,
+    "fpts_against_decimal": 0
+   }
+  },
+  {
+   "roster_id": 4,
+   "owner_id": "u4",
+   "settings": {
+    "wins": 0,
+    "losses": 3,
+    "ties": 0,
+    "fpts": 130,
+    "fpts_decimal": 0,
+    "ppts": 160,
+    "ppts_decimal": 0,
+    "fpts_against": 210,
+    "fpts_against_decimal": 0
+   }
+  }
+ ],
+ "/v1/league/H2/rosters": [
+  {
+   "roster_id": 1,
+   "owner_id": "u1",
+   "settings": {
+    "wins": 1,
+    "losses": 1,
+    "ties": 0,
+    "fpts": 160,
+    "fpts_decimal": 0,
+    "ppts": 175,
+    "ppts_decimal": 0,
+    "fpts_against": 155,
+    "fpts_against_decimal": 0
+   }
+  },
+  {
+   "roster_id": 2,
+   "owner_id": "u2",
+   "settings": {
+    "wins": 1,
+    "losses": 0,
+    "ties": 0,
+    "fpts": 100,
+    "fpts_decimal": 0,
+    "ppts": 110,
+    "ppts_decimal": 0,
+    "fpts_against": 70,
+    "fpts_against_decimal": 0
+   }
+  },
+  {
+   "roster_id": 3,
+   "owner_id": "u3",
+   "settings": {
+    "wins": 0,
+    "losses": 1,
+    "ties": 0,
+    "fpts": 95,
+    "fpts_decimal": 0,
+    "ppts": 100,
+    "ppts_decimal": 0,
+    "fpts_against": 90,
+    "fpts_against_decimal": 0
+   }
+  },
+  {
+   "roster_id": 4,
+   "owner_id": "u4",
+   "settings": {
+    "wins": 0,
+    "losses": 0,
+    "ties": 0,
+    "fpts": 0,
+    "fpts_decimal": 0,
+    "ppts": 0,
+    "ppts_decimal": 0,
+    "fpts_against": 0,
+    "fpts_against_decimal": 0
+   }
+  }
+ ],
+ "/v1/league/H1/winners_bracket": [
+  {
+   "r": 1,
+   "m": 1,
+   "t1": 1,
+   "t2": 2,
+   "w": 2,
+   "l": 1,
+   "p": null
+  },
+  {
+   "r": 2,
+   "m": 2,
+   "t1": 2,
+   "t2": 3,
+   "w": 2,
+   "l": 3,
+   "p": 1
+  }
+ ],
+ "/v1/league/H2/winners_bracket": [],
+ "/v1/league/H1/matchups/1": [
+  {
+   "roster_id": 1,
+   "matchup_id": 1,
+   "points": 64.0,
+   "starters": [
+    "1",
+    "2",
+    "4",
+    "5",
+    "3"
+   ],
+   "players": [
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6"
+   ],
+   "players_points": {
+    "1": 20.0,
+    "2": 15.0,
+    "3": 8.0,
+    "4": 12.0,
+    "5": 9.0,
+    "6": 14.0
+   }
+  },
+  {
+   "roster_id": 2,
+   "matchup_id": 1,
+   "points": 68.0,
+   "starters": [],
+   "players": [],
+   "players_points": {}
+  },
+  {
+   "roster_id": 3,
+   "matchup_id": 2,
+   "points": 55.0,
+   "starters": [],
+   "players": [],
+   "players_points": {}
+  },
+  {
+   "roster_id": 4,
+   "matchup_id": 2,
+   "points": 50.0,
+   "starters": [],
+   "players": [],
+   "players_points": {}
+  }
+ ],
+ "/v1/league/H1/matchups/2": [
+  {
+   "roster_id": 1,
+   "matchup_id": 2,
+   "points": 55.0,
+   "starters": [
+    "1",
+    "3",
+    "5",
+    "6",
+    "4"
+   ],
+   "players": [
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6"
+   ],
+   "players_points": {
+    "1": 18.0,
+    "2": 10.0,
+    "3": 11.0,
+    "4": 7.0,
+    "5": 13.0,
+    "6": 6.0
+   }
+  },
+  {
+   "roster_id": 3,
+   "matchup_id": 2,
+   "points": 50.0,
+   "starters": [],
+   "players": [],
+   "players_points": {}
+  },
+  {
+   "roster_id": 2,
+   "matchup_id": 1,
+   "points": 70.0,
+   "starters": [],
+   "players": [],
+   "players_points": {}
+  },
+  {
+   "roster_id": 4,
+   "matchup_id": 1,
+   "points": 30.0,
+   "starters": [],
+   "players": [],
+   "players_points": {}
+  }
+ ],
+ "/v1/league/H1/matchups/3": [
+  {
+   "roster_id": 1,
+   "matchup_id": 1,
+   "points": 58.0,
+   "starters": [
+    "1",
+    "2",
+    "4",
+    "5",
+    "3"
+   ],
+   "players": [
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6"
+   ],
+   "players_points": {
+    "1": 22.0,
+    "2": 9.0,
+    "3": 12.0,
+    "4": 10.0,
+    "5": 5.0,
+    "6": 16.0
+   }
+  },
+  {
+   "roster_id": 2,
+   "matchup_id": 1,
+   "points": 40.0,
+   "starters": [],
+   "players": [],
+   "players_points": {}
+  },
+  {
+   "roster_id": 3,
+   "matchup_id": 2,
+   "points": 45.0,
+   "starters": [],
+   "players": [],
+   "players_points": {}
+  },
+  {
+   "roster_id": 4,
+   "matchup_id": 2,
+   "points": 40.0,
+   "starters": [],
+   "players": [],
+   "players_points": {}
+  }
+ ],
+ "/v1/league/H1/matchups/4": [
+  {
+   "roster_id": 1,
+   "matchup_id": 2,
+   "points": 60.0,
+   "starters": [
+    "1",
+    "2",
+    "4",
+    "5",
+    "3"
+   ],
+   "players": [
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6"
+   ],
+   "players_points": {
+    "1": 20.0,
+    "2": 10.0,
+    "3": 10.0,
+    "4": 10.0,
+    "5": 10.0,
+    "6": 10.0
+   }
+  },
+  {
+   "roster_id": 2,
+   "matchup_id": 2,
+   "points": 99.0,
+   "starters": [],
+   "players": [],
+   "players_points": {}
+  }
+ ],
+ "/v1/league/H2/matchups/1": [
+  {
+   "roster_id": 1,
+   "matchup_id": 1,
+   "points": 64.0,
+   "starters": [
+    "1",
+    "2",
+    "4",
+    "5",
+    "3"
+   ],
+   "players": [
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6"
+   ],
+   "players_points": {
+    "1": 20.0,
+    "2": 15.0,
+    "3": 8.0,
+    "4": 12.0,
+    "5": 9.0,
+    "6": 14.0
+   }
+  },
+  {
+   "roster_id": 2,
+   "matchup_id": 1,
+   "points": 60.0,
+   "starters": [],
+   "players": [],
+   "players_points": {}
+  }
+ ],
+ "/v1/league/H2/matchups/2": [
+  {
+   "roster_id": 1,
+   "matchup_id": 2,
+   "points": 55.0,
+   "starters": [
+    "1",
+    "3",
+    "5",
+    "6",
+    "4"
+   ],
+   "players": [
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6"
+   ],
+   "players_points": {
+    "1": 18.0,
+    "2": 10.0,
+    "3": 11.0,
+    "4": 7.0,
+    "5": 13.0,
+    "6": 6.0
+   }
+  },
+  {
+   "roster_id": 3,
+   "matchup_id": 2,
+   "points": 59.0,
+   "starters": [],
+   "players": [],
+   "players_points": {}
+  }
+ ],
+ "/v1/draft/D1/picks": [
+  {
+   "round": 1,
+   "pick_no": 1,
+   "roster_id": 1,
+   "player_id": "10",
+   "metadata": {
+    "first_name": "P10",
+    "last_name": "RB",
+    "position": "RB",
+    "team": "KC"
+   }
+  },
+  {
+   "round": 1,
+   "pick_no": 2,
+   "roster_id": 4,
+   "player_id": "11",
+   "metadata": {
+    "first_name": "P11",
+    "last_name": "RB",
+    "position": "RB",
+    "team": "KC"
+   }
+  },
+  {
+   "round": 1,
+   "pick_no": 3,
+   "roster_id": 2,
+   "player_id": "12",
+   "metadata": {
+    "first_name": "P12",
+    "last_name": "RB",
+    "position": "RB",
+    "team": "KC"
+   }
+  },
+  {
+   "round": 1,
+   "pick_no": 4,
+   "roster_id": 1,
+   "player_id": "13",
+   "metadata": {
+    "first_name": "P13",
+    "last_name": "WR",
+    "position": "WR",
+    "team": "KC"
+   }
+  },
+  {
+   "round": 2,
+   "pick_no": 5,
+   "roster_id": 4,
+   "player_id": "14",
+   "metadata": {
+    "first_name": "P14",
+    "last_name": "WR",
+    "position": "WR",
+    "team": "KC"
+   }
+  },
+  {
+   "round": 2,
+   "pick_no": 6,
+   "roster_id": 2,
+   "player_id": "15",
+   "metadata": {
+    "first_name": "P15",
+    "last_name": "WR",
+    "position": "WR",
+    "team": "KC"
+   }
+  },
+  {
+   "round": 2,
+   "pick_no": 7,
+   "roster_id": 3,
+   "player_id": "16",
+   "metadata": {
+    "first_name": "P16",
+    "last_name": "WR",
+    "position": "WR",
+    "team": "KC"
+   }
+  },
+  {
+   "round": 2,
+   "pick_no": 8,
+   "roster_id": 4,
+   "player_id": "17",
+   "metadata": {
+    "first_name": "P17",
+    "last_name": "WR",
+    "position": "WR",
+    "team": "KC"
+   }
+  },
+  {
+   "round": 3,
+   "pick_no": 9,
+   "roster_id": 2,
+   "player_id": "18",
+   "metadata": {
+    "first_name": "P18",
+    "last_name": "WR",
+    "position": "WR",
+    "team": "KC"
+   }
+  },
+  {
+   "round": 3,
+   "pick_no": 10,
+   "roster_id": 1,
+   "player_id": "19",
+   "metadata": {
+    "first_name": "P19",
+    "last_name": "WR",
+    "position": "WR",
+    "team": "KC"
+   }
+  },
+  {
+   "round": 3,
+   "pick_no": 11,
+   "roster_id": 4,
+   "player_id": "20",
+   "metadata": {
+    "first_name": "P20",
+    "last_name": "QB",
+    "position": "QB",
+    "team": "KC"
+   }
+  },
+  {
+   "round": 3,
+   "pick_no": 12,
+   "roster_id": 2,
+   "player_id": "21",
+   "metadata": {
+    "first_name": "P21",
+    "last_name": "TE",
+    "position": "TE",
+    "team": "KC"
+   }
+  }
+ ],
+ "/v1/stats/nfl/regular/2025": {
+  "10": {
+   "pts_ppr": 190
+  },
+  "11": {
+   "pts_ppr": 200
+  },
+  "12": {
+   "pts_ppr": 100
+  },
+  "13": {
+   "pts_ppr": 90
+  },
+  "14": {
+   "pts_ppr": 200
+  },
+  "15": {
+   "pts_ppr": 180
+  },
+  "16": {
+   "pts_ppr": 160
+  },
+  "17": {
+   "pts_ppr": 150
+  },
+  "18": {
+   "pts_ppr": 140
+  },
+  "19": {
+   "pts_ppr": 220
+  },
+  "20": {
+   "pts_ppr": 300
+  },
+  "21": {
+   "pts_ppr": 100
+  }
+ }
+}
