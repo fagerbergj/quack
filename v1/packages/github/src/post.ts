@@ -1,7 +1,7 @@
 import { Type } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool, GenerationTask, hook, type Extension } from '@earendil-works/pi-durable';
 import { feedback, judge, type CheckResult, type ClassifierRef, type ModelRef } from '@quack/judge';
-import { Artifacts, artifactsExtension, sealedVersion } from '@quack/sdk';
+import { Artifacts, artifactsExtension, attachLink, sealedVersion } from '@quack/sdk';
 import { checkoutTool, fetchRecord, PullRequestDoc, type SessionConfig } from './checkout.ts';
 import { parseReview, reviewEvidence, reviewKind } from './review.ts';
 import { reviewerRubric } from './rubric.ts';
@@ -34,6 +34,7 @@ export function postReviewTool(config: SessionConfig) {
       if (!res.ok) return error(`posting failed: ${res.status} ${(await res.text()).slice(0, 300)}`);
       const posted = (await res.json()) as { url?: string };
       await api.commit(async (tx) => { const d = await tx.doc(PullRequestDoc, api.conversationId); d.posted = [...(d.posted ?? []), args.version]; d.postedThisCheckout = args.version; }, ctx);
+      if (posted.url) await attachLink(api, reviewKind.kind, args.version, { label: 'Posted', url: posted.url }, ctx);
       return { output: [{ type: 'text', text: `Posted review v${args.version} as ${body.event}${posted.url ? `: ${posted.url}` : ''}` }] };
     },
   });

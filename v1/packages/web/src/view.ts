@@ -51,10 +51,3 @@ const POSTED = /^Posted review v(\d+) as \w+: (https:\/\/\S+)$/;
 
 /** The URL post_review reports, from its result text. */
 export const postedUrl = (text: string) => POSTED.exec(text.trim())?.[2];
-
-/** Review version -> posted URL, read off the post_review results in the entries. */
-export const postedVersions = (entries: View['entries']) =>
-  new Map(entries.flatMap((e) => (e.model ?? []).flatMap((m) => {
-    const hit = m.role === 'toolResult' && !m.isError ? POSTED.exec(m.content.map((c) => (c.type === 'text' ? c.text : '')).join('').trim()) : null;
-    return hit ? [[Number(hit[1]), hit[2]!] as const] : [];
-  })));

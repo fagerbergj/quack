@@ -15,7 +15,7 @@ const label = (kind: string) => {
 };
 
 // Sealed, checked, posted: one muted status line each. The drawer's Checks tab holds the detail.
-function Item({ a, onOpen, url }: { a: SealedArtifact; onOpen: (a: SealedArtifact) => void; url?: string }) {
+function Item({ a, onOpen }: { a: SealedArtifact; onOpen: (a: SealedArtifact) => void }) {
   const n = failing(a).length;
   const status = !a.verdict ? 'not checked' : a.verdict.passed ? 'checks passed' : `${n || ''} ${n === 1 ? 'check' : 'checks'} failed`.trim();
   const link = 'flex min-h-11 cursor-pointer items-center border-0 bg-transparent p-0 text-[13px] text-link no-underline hover:underline lg:min-h-0';
@@ -24,7 +24,7 @@ function Item({ a, onOpen, url }: { a: SealedArtifact; onOpen: (a: SealedArtifac
       <StatusIcon verdict={a.verdict} />
       <span className="min-w-0 truncate">{`${label(a.kind)} v${a.version} sealed · ${status}`}</span>
       <button type="button" aria-label={`Open ${a.kind} v${a.version}`} onClick={() => onOpen(a)} className={link}>Open</button>
-      {url && <a href={url} target="_blank" rel="noopener noreferrer" className={link}>Posted ↗</a>}
+      {a.links?.map((l) => <a key={l.url} href={l.url} target="_blank" rel="noopener noreferrer" className={link}>{`${l.label} ↗`}</a>)}
     </li>
   );
 }
@@ -37,7 +37,7 @@ export function useArtifacts(sessionKey: string, refresh: number) {
   return { items, error };
 }
 
-export function Artifacts({ items, error, onOpen, posted }: { items: SealedArtifact[]; error: string; onOpen: (a: SealedArtifact) => void; posted?: Map<number, string> }) {
+export function Artifacts({ items, error, onOpen }: { items: SealedArtifact[]; error: string; onOpen: (a: SealedArtifact) => void }) {
   const [all, setAll] = useState(false);
   if (!items.length && !error) return null;
   // Only the newest version of each kind shows; earlier ones stay a toggle away.
@@ -50,7 +50,7 @@ export function Artifacts({ items, error, onOpen, posted }: { items: SealedArtif
       <h2 id="artifacts-h" className="sr-only">Artifacts</h2>
       {error && <p role="alert" className="m-0 text-[13px] text-danger">{error}</p>}
       <ul className="m-0 flex list-none flex-col gap-2 p-0 text-[13px]">
-        {shown.map((a) => <Item key={`${a.kind}:${a.version}`} a={a} onOpen={onOpen} url={a.kind === 'github.review' ? posted?.get(a.version) : undefined} />)}
+        {shown.map((a) => <Item key={`${a.kind}:${a.version}`} a={a} onOpen={onOpen} />)}
       </ul>
       {(hidden > 0 || all) && (
         <button type="button" onClick={() => setAll(!all)} className="min-h-11 cursor-pointer self-start border-0 bg-transparent p-0 text-[13px] text-muted hover:text-ink lg:min-h-0">

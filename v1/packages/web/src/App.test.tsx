@@ -269,8 +269,7 @@ test('user messages render markdown inside the bubble', async () => {
   expect(link).toHaveAttribute('rel', expect.stringContaining('noreferrer'));
 });
 
-test('markdown tool output renders with a toggle to raw; a posted review links out from its row and the artifact line', async () => {
-  routes['GET /sessions/ui%3Au1/artifacts'] = { artifacts: [{ kind: 'github.review', version: 1, hash: 'h', content: 'x', sealedAt: 1, verdict: { passed: true, gatesFailed: [], score: 1, checks: [] } }] };
+test('markdown tool output renders with a toggle to raw; a posted review links out from its tool row', async () => {
   const ws = await openSession();
   const call = (id: string, name: string) => ({ type: 'toolCall', id, name, arguments: { version: 1 } });
   const res = (id: string, name: string, text: string) => entry(`r${id}`, [{ role: 'toolResult', toolCallId: id, toolName: name, content: [{ type: 'text', text }], isError: false, timestamp: 2 }]);
@@ -285,9 +284,25 @@ test('markdown tool output renders with a toggle to raw; a posted review links o
   expect(within(submit).getByRole('heading', { name: 'Takeaway' })).toBeInTheDocument();
   await userEvent.click(within(submit).getByRole('button', { name: 'Raw' }));
   expect(submit.querySelectorAll('pre')[1]).toHaveTextContent('## Takeaway');
-  const links = screen.getAllByRole('link', { name: 'Posted ↗' });
-  expect(links).toHaveLength(2);
-  links.forEach((l) => expect(l).toHaveAttribute('href', 'https://github.com/o/r/pull/1#pullrequestreview-9'));
+  // The tool row's link comes from the result; the artifact line's comes from the artifact, below.
+  expect(within(screen.getByText('post_review').closest('details')!).getByRole('link', { name: 'Posted ↗' })).toHaveAttribute('href', 'https://github.com/o/r/pull/1#pullrequestreview-9');
+});
+
+test('an artifact line renders the links stored with the version, with no stream entries to read', async () => {
+  routes['GET /sessions/ui%3Au1/artifacts'] = { artifacts: [{ kind: 'github.review', version: 1, hash: 'h', content: 'x', sealedAt: 1, verdict: { passed: true, gatesFailed: [], score: 1, checks: [] }, links: [{ label: 'Posted', url: 'https://github.com/o/r/pull/1#pullrequestreview-9' }] }] };
+  const ws = await openSession();
+  ws.frame(snapshot());
+  const link = await screen.findByRole('link', { name: 'Posted ↗' });
+  expect(link).toHaveAttribute('href', 'https://github.com/o/r/pull/1#pullrequestreview-9');
+  expect(link).toHaveAttribute('rel', expect.stringContaining('noreferrer'));
+});
+
+test('the header shows the token total and Waiting on you for a pending approval', async () => {
+  routes['GET /sessions/ui%3Au1/approvals'] = { approvals: [{ id: 'a', tool: 'bash', args: {}, requestedAt: 1 }] };
+  const ws = await openSession();
+  ws.frame(snapshot({ usage: { models: { 'p/m': { input: 1200, output: 300 } }, tools: {} } }));
+  expect(await screen.findByRole('status')).toHaveTextContent('Waiting on you');
+  expect(screen.getByText('2k tokens')).toBeInTheDocument();
 });
 
 test('a GitHub session header links to the pull request', async () => {

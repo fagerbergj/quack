@@ -17,9 +17,11 @@ export const Outbox = defineDoc<OutboxDoc>({
 
 const verdictOf = (v: { verdict: unknown }) => (v.verdict ? { passed: (v.verdict as { passed?: boolean }).passed === true } : null);
 
+const linksOf = (v: SealedArtifact) => v.links ?? [];
+
 function artifactFacts(artifacts: { kinds: Record<string, { versions: SealedArtifact[] }> } | undefined): Fact[] {
   return Object.entries(artifacts?.kinds ?? {}).flatMap(([kind, { versions }]) =>
-    versions.map((v): Fact => ({ id: `artifact:${kind}:${v.version}`, kind: 'artifact', rev: v.verdict ? 2 : 1, at: v.sealedAt, data: { kind, version: v.version, hash: v.hash, verdict: verdictOf(v) } })));
+    versions.map((v): Fact => ({ id: `artifact:${kind}:${v.version}`, kind: 'artifact', rev: (v.verdict ? 2 : 1) + linksOf(v).length, at: v.sealedAt, data: { kind, version: v.version, hash: v.hash, verdict: verdictOf(v), links: linksOf(v) } })));
 }
 
 function approvalFacts(approvals: { items: Record<string, Approval> } | undefined): Fact[] {

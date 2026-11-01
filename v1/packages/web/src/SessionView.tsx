@@ -9,7 +9,7 @@ import { useVisualViewportHeight } from './useVisualViewportHeight.ts';
 import { githubUrl, pendingInput } from './sessions.ts';
 import type { SessionTitle } from './kinds.ts';
 import { Transcript, Working } from './Transcript.tsx';
-import { applyEvents, emptyView, postedVersions, snapshotView, touchesApprovals, type View } from './view.ts';
+import { applyEvents, emptyView, snapshotView, touchesApprovals, type View } from './view.ts';
 
 type Frame = SnapshotEvent | { type: 'events'; events: AgentEvent[] } | { type: 'error'; error: string } | { type: 'accepted' };
 
@@ -214,7 +214,7 @@ export function SessionView({ sessionKey, agent, name }: { sessionKey: string; a
         <div className="flex min-w-0 flex-col gap-5 [overflow-wrap:anywhere] [&_pre]:max-w-full [&_pre]:overflow-x-auto">
           {error && <p role="alert" className="m-0 rounded-xl border border-danger-line bg-danger-bg/60 px-3.5 py-2.5 text-[13px] text-danger">{error}</p>}
           <Transcript view={view} />
-          <Artifacts items={items} error={artifactsError} onOpen={setWork} posted={postedVersions(view.entries)} />
+          <Artifacts items={items} error={artifactsError} onOpen={setWork} />
           <Approvals sessionKey={sessionKey} refresh={approvalTick} onCount={setApprovals} />
           <SessionDecisions sessionKey={sessionKey} onCount={setQuestions} />
           {waiting > 0 ? <Working label="Waiting for you" /> : tone === 'run' && <Working label="Working" />}
