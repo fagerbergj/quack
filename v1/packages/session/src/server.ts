@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { pendingApprovals, resolveApproval } from '@quack/sdk';
+import { Artifacts, pendingApprovals, resolveApproval } from '@quack/sdk';
 import { liveUpgrade } from './live.ts';
 import type { Session } from './runtime.ts';
 
@@ -64,11 +64,24 @@ async function decide(session: Session, req: IncomingMessage, match: RegExpExecA
   return ok ? [200, { resolved: true }] : [409, { error: 'unknown or already decided' }];
 }
 
-// The container contract (RUN-3): GET /ping, POST /invocations and /ws, plus the approvals this session waits on.
+// Every sealed version of every kind, with its checker's verdict, oldest first within a kind.
+async function artifacts(session: Session): Promise<[number, unknown]> {
+  const doc = await session.harness.snapshot(Artifacts, session.root.id, ctx);
+  return [200, { artifacts: Object.values(doc?.kinds ?? {}).flatMap((k) => k.versions) }];
+}
+
+async function abort(session: Session): Promise<[number, unknown]> {
+  await session.root.abort(ctx);
+  return [200, { aborted: true }];
+}
+
+// The container contract (RUN-3): GET /ping, POST /invocations and /ws, plus the approvals, artifacts and abort of this session.
 const ROUTES: Array<[string, RegExp, Route]> = [
   ['GET', /^\/ping$/, async (s) => [200, { status: s.busy() ? 'HealthyBusy' : 'Healthy' }]],
   ['POST', /^\/invocations$/, invoke],
   ['GET', /^\/approvals$/, async (s) => [200, { approvals: await pendingApprovals(s.root, ctx) }]],
+  ['GET', /^\/artifacts$/, artifacts],
+  ['POST', /^\/abort$/, abort],
   ['POST', /^\/approvals\/([^/]+)$/, decide],
 ];
 

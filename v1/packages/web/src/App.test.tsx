@@ -41,7 +41,7 @@ const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
 
 beforeEach(() => {
   FakeSocket.all = [];
-  routes = {};
+  routes = { 'GET /sessions/ui%3Au1/artifacts': { artifacts: [] }, 'GET /sessions/ui%3Au1/approvals': { approvals: [] } };
   fetchMock.mockClear();
   vi.stubGlobal('WebSocket', FakeSocket);
   vi.stubGlobal('fetch', fetchMock);
@@ -178,4 +178,77 @@ test('each list fetch reports its own failure', async () => {
   render(<App />);
   expect(await screen.findByText(/Sessions: /)).toBeInTheDocument();
   expect(screen.getByText(/Agents: /)).toBeInTheDocument();
+});
+
+test('Abort shows only while a run is in progress and posts to the abort route', async () => {
+  routes['POST /sessions/ui%3Au1/abort'] = { aborted: true };
+  const ws = await openSession();
+  ws.frame(snapshot());
+  expect(screen.queryByRole('button', { name: 'Abort' })).toBeNull();
+  ws.frame({ type: 'events', events: [{ type: 'run_start', inputs: [] }] });
+  await userEvent.click(screen.getByRole('button', { name: 'Abort' }));
+  expect(fetchMock).toHaveBeenCalledWith('/sessions/ui%3Au1/abort', { method: 'POST' });
+  ws.frame({ type: 'events', events: [{ type: 'run_end', inputs: [] }] });
+  expect(screen.queryByRole('button', { name: 'Abort' })).toBeNull();
+});
+
+test('a failed abort is reported', async () => {
+  const ws = await openSession();
+  ws.frame(snapshot({ run: {} }));
+  await userEvent.click(screen.getByRole('button', { name: 'Abort' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('not found');
+});
+
+test('a dropped socket reconnects with backoff and the new snapshot replaces the transcript', () => {
+  vi.useFakeTimers();
+  try {
+    location.hash = '#/s/ui%3Au1';
+    render(<App />);
+    const first = FakeSocket.all[0];
+    first.open();
+    first.frame(snapshot({ entries: [entry('e1', [{ role: 'user', content: 'hi', timestamp: 1 }])] }));
+    act(() => first.onclose?.());
+    expect(screen.getByRole('status')).toHaveTextContent('Reconnecting');
+
+    act(() => void vi.advanceTimersByTime(999));
+    expect(FakeSocket.all).toHaveLength(1);
+    act(() => void vi.advanceTimersByTime(1));
+    expect(FakeSocket.all).toHaveLength(2);
+
+    // The second attempt fails too, so the delay doubles.
+    act(() => FakeSocket.all[1].onclose?.());
+    act(() => void vi.advanceTimersByTime(1999));
+    expect(FakeSocket.all).toHaveLength(2);
+    act(() => void vi.advanceTimersByTime(1));
+    expect(FakeSocket.all).toHaveLength(3);
+
+    const third = FakeSocket.all[2];
+    third.open();
+    third.frame(snapshot({ entries: [entry('e1', [{ role: 'user', content: 'hi', timestamp: 1 }]), entry('e2', [assistant([{ type: 'text', text: 'there' }])])] }));
+    expect(screen.getByRole('status')).toHaveTextContent('Idle');
+    expect(screen.getAllByRole('article', { name: 'You' })).toHaveLength(1);
+    expect(screen.getAllByRole('article', { name: 'Assistant' })).toHaveLength(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test('lists artifacts with their check status and failing criteria', async () => {
+  const check = (criterion: string, id: string, met: number | null) => ({ criterion, id, met, notes: [] });
+  routes['GET /sessions/ui%3Au1/artifacts'] = {
+    artifacts: [
+      { kind: 'github.review', version: 1, hash: 'h1', content: 'draft one', sealedAt: 1, verdict: { passed: false, gatesFailed: ['cites.lines'], score: 0.4, checks: [check('cites', 'lines', 0), check('tone', 'polite', 1), check('misc', 'na', null)] } },
+      { kind: 'github.review', version: 2, hash: 'h2', content: 'final review', sealedAt: 2, verdict: { passed: true, gatesFailed: [], score: 1, checks: [check('cites', 'lines', 1)] } },
+    ],
+  };
+  const ws = await openSession();
+  ws.frame(snapshot());
+  const section = await screen.findByRole('region', { name: 'Artifacts' });
+  const items = within(section).getAllByRole('listitem');
+  expect(items[0]).toHaveTextContent('github.review v1: failed');
+  expect(items[0]).toHaveTextContent('Failing: cites.lines');
+  expect(items[0]).toHaveTextContent('draft one');
+  expect(items[1]).toHaveTextContent('github.review v2: passed');
+  expect(items[1]).not.toHaveTextContent('Failing');
+  expect(items[1]).toHaveTextContent('final review');
 });
