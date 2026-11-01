@@ -6,3 +6,4 @@ export { githubSessionExtensions, postReviewTool, type GithubSessionConfig } fro
 export { parseReview, reviewEvidence, reviewKind, validateReview, type Finding, type ParsedReview } from './review.ts';
 export { reviewerRubric } from './rubric.ts';
 export { evalService } from './eval.ts';
+export { fileStore, redeliverFailed, startRedelivery } from './redeliver.ts';

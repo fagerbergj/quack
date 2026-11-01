@@ -1,5 +1,7 @@
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { githubApp } from './app.ts';
+import { startRedelivery } from './redeliver.ts';
 import { assertPromoted, createGithubService } from './service.ts';
 
 function env(name: string, fallback?: string): string {
@@ -18,4 +20,5 @@ const service = createGithubService(app, {
   agent: env('QUACK_GH_AGENT', 'reviewer'),
 });
 service.listen(Number(env('PORT', '8090')));
-for (const signal of ['SIGTERM', 'SIGINT'] as const) process.on(signal, () => service.close(() => process.exit(0)));
+const stopRedelivery = startRedelivery(app, join(process.env.QUACK_DATA_DIR ?? '.', 'github-redeliver.json'));
+for (const signal of ['SIGTERM', 'SIGINT'] as const) process.on(signal, () => { stopRedelivery(); service.close(() => process.exit(0)); });
