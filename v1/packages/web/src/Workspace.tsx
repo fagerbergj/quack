@@ -1,14 +1,18 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { listAgents, listApprovals, listSessions, type AgentSummary } from './api.ts';
+import { indexApprovals, listAgents, listApprovals, listSessions, type Approval, type AgentSummary } from './api.ts';
 import { Landing } from './Landing.tsx';
 import { group, titleOf, type Row } from './sessions.ts';
 import { SessionView } from './SessionView.tsx';
 
 const REFRESH_MS = 15_000;
 
-// Approvals are asked of running sessions only: a request to an idle one would start its process.
+// The index knows pending approvals of idle sessions too. Without it, only running sessions are asked: a request to an idle one would start its process.
 async function loadRows(): Promise<Row[]> {
-  const sessions = await listSessions();
+  const [sessions, indexed] = await Promise.all([listSessions(), indexApprovals()]);
+  if (indexed) {
+    const by = Map.groupBy(indexed, (a) => a.session);
+    return sessions.map((s) => ({ ...s, approvals: (by.get(s.key) ?? []).map((a): Approval => ({ id: a.id, tool: a.tool, args: undefined, requestedAt: a.at })) }));
+  }
   return Promise.all(sessions.map(async (s) => ({ ...s, approvals: s.running ? await listApprovals(s.key).catch(() => []) : [] })));
 }
 
@@ -18,6 +22,7 @@ export function useWorkspaceData(selected: string | undefined) {
   const [error, setError] = useState('');
   const [agentsError, setAgentsError] = useState('');
   const [now, setNow] = useState(Date.now());
+  const [tick, setTick] = useState(0);
   useEffect(() => {
     let live = true;
     const refresh = () => loadRows().then((r) => live && (setRows(r), setNow(Date.now()), setError('')), (e: Error) => live && setError(e.message));
@@ -27,9 +32,9 @@ export function useWorkspaceData(selected: string | undefined) {
       live = false;
       clearInterval(timer);
     };
-  }, [selected]);
+  }, [selected, tick]);
   useEffect(() => void listAgents().then(setAgents, (e: Error) => setAgentsError(e.message)), []);
-  return { rows, agents, agentsError, error, now };
+  return { rows, agents, agentsError, error, now, reload: () => setTick((t) => t + 1) };
 }
 
 export type WorkspaceData = ReturnType<typeof useWorkspaceData>;
