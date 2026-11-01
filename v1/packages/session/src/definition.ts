@@ -11,7 +11,7 @@ type ModelLimits = { contextWindow: number; maxTokens?: number; reasoning?: bool
 type ProviderConfig = { baseUrl: string; api?: 'openai-completions' | 'systemone'; apiKeyEnv?: string; models: Record<string, ModelLimits> };
 
 /** Per deployment: the OpenAI-compatible providers sessions may use (D28). */
-export type DeploymentConfig = { providers: Record<string, ProviderConfig> };
+export type DeploymentConfig = { providers: Record<string, ProviderConfig>; timeZone?: string };
 
 /** Per agent (D48): its model as provider/model, its turn limit, a prompt file beside it, and the extensions it selects by name with their config. */
 export type AgentDefinition = { name: string; version: number; model: string; maxTurns?: number; prompt?: string; extensions: Record<string, unknown> };
@@ -37,11 +37,20 @@ function limitProblems(at: string, l: unknown, classifier: boolean): string[] {
   return ok ? [] : [`${at} needs positive integer contextWindow${classifier ? '' : ' and maxTokens'}`];
 }
 
+function validZone(z: unknown): boolean {
+  try {
+    return typeof z === 'string' && !!new Intl.DateTimeFormat('en', { timeZone: z });
+  } catch {
+    return false;
+  }
+}
+
 /** Validates the deployment config, reporting every problem at once. */
 export function parseDeployment(raw: unknown): DeploymentConfig {
   const problems = !isObject(raw) || !isObject(raw.providers)
     ? ['config must have a providers object']
     : Object.entries(raw.providers).flatMap(([id, p]) => providerProblems(id, p));
+  if (isObject(raw) && raw.timeZone !== undefined && !validZone(raw.timeZone)) problems.push('timeZone must be an IANA zone such as America/New_York');
   if (problems.length) throw new Error(`invalid deployment config:\n- ${problems.join('\n- ')}`);
   return raw as DeploymentConfig;
 }
