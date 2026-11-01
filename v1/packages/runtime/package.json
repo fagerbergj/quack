@@ -12,6 +12,7 @@
     "@quack/research": "*",
     "@quack/sdk": "*",
     "@quack/session": "*",
+    "@quack/workflows": "*",
     "pi-lsp": "0.1.7"
   }
 }
