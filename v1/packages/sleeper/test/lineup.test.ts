@@ -255,6 +255,24 @@ test('the schedules service lists the week with the lineup session key and deadl
   }
 });
 
+test('a lineup registered after its Wednesday run time but before the deadline still fires, once', async () => {
+  const fired: string[] = [];
+  let at = Date.parse('2026-11-05T12:00:00Z');
+  const fake = (async (u: string) => (fired.push(decodeURIComponent(u)), new Response('{}'))) as unknown as typeof fetch;
+  const schedules = createSchedulesService({ serviceToken: 's', distributorUrl: 'http://d', dbPath: ':memory:', now: () => new Date(at), fetch: fake });
+  await new Promise<void>((r) => schedules.listen(0, r));
+  const url = `http://127.0.0.1:${(schedules.address() as AddressInfo).port}`;
+  try {
+    await registerLineupSchedules({ url, token: 's' }, client(), 'L1', 'mallard');
+    await schedules.tick();
+    await registerLineupSchedules({ url, token: 's' }, client(), 'L1', 'mallard');
+    await schedules.tick();
+    assert.deepEqual(fired, ['http://d/sessions/sleeper:L1:9:lineup/invocations?agent=sleeper-lineup']);
+  } finally {
+    schedules.stop();
+  }
+});
+
 test('the lineup job starts on demand under the week session key, each click its own submission', async () => {
   const calls: Array<{ url: string; body: { input: string; requestId: string } }> = [];
   const fake = (async (u: string, init: { body: string }) => (calls.push({ url: u, body: JSON.parse(init.body) }), new Response('{}', { status: 202 }))) as unknown as typeof fetch;
