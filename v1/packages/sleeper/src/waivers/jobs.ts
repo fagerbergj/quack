@@ -62,7 +62,8 @@ export async function registerWaiversSchedules(config: ScheduleConfig, client: S
   const run = waiversRun(now(), settings);
   if (settings?.daily_waivers === 1 && !validMask(settings.daily_waivers_days)) console.error(`sleeper: league ${league} has daily waivers with daily_waivers_days ${JSON.stringify(settings.daily_waivers_days)}, which is not understood; no waivers run is scheduled`);
   if (!run) return [];
-  const id = `sleeper/waivers/${league}/${state.week}`;
+  // Keyed by the processing date, not the week, so a re-registration after the NFL week turns replaces the entry rather than adding a stale one.
+  const id = `sleeper/waivers/${league}/${etDate(run.processing, PT)}`;
   const res = await (config.fetch ?? fetch)(`${config.url}/schedules`, {
     method: 'POST',
     headers: { authorization: `Bearer ${config.token}` },

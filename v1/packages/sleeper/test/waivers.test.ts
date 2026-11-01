@@ -278,10 +278,10 @@ test('the schedules service lists the waivers run with its session key and deadl
     const now = () => AT;
     await registerWaiversSchedules({ url, token: 's' }, clientOf(base), 'L1', 'mallard', now);
     const ids = await registerWaiversSchedules({ url, token: 's' }, clientOf(base), 'L1', 'mallard', now);
-    assert.deepEqual(ids, ['sleeper/waivers/L1/9']);
+    assert.deepEqual(ids, ['sleeper/waivers/L1/2026-11-11']);
     const { schedules: listed } = await (await fetch(`${url}/schedules`, { headers: { authorization: 'Bearer s' } })).json();
     assert.equal(listed.length, 1);
-    assert.partialDeepStrictEqual(listed[0], { id: 'sleeper/waivers/L1/9', agent: 'sleeper-waivers', times: ['2026-11-10T20:00:00.000Z'], deadline: '2026-11-11T07:00:00.000Z', sessionKey: 'sleeper:L1:9:waivers', input: JSON.stringify(INPUT) });
+    assert.partialDeepStrictEqual(listed[0], { id: 'sleeper/waivers/L1/2026-11-11', agent: 'sleeper-waivers', times: ['2026-11-10T20:00:00.000Z'], deadline: '2026-11-11T07:00:00.000Z', sessionKey: 'sleeper:L1:9:waivers', input: JSON.stringify(INPUT) });
     const noDay = { ...base, '/v1/league/L1': { ...base['/v1/league/L1'], settings: { waiver_type: 0 } } };
     assert.deepEqual(await registerWaiversSchedules({ url, token: 's' }, clientOf(noDay), 'L1', 'mallard', now), []);
     const unknown = { ...base, '/v1/league/L1': { ...base['/v1/league/L1'], settings: { waiver_type: 0, daily_waivers: 1, daily_waivers_hour: 20, daily_waivers_days: 1152 } } };
@@ -318,5 +318,21 @@ test('the waivers job starts on demand under the week session key, beside the li
     assert.equal((await post('/leagues/L1/jobs/waivers', 'GET')).status, 405);
   } finally {
     service.stop();
+  }
+});
+
+test('re-registering after the NFL week rolls over leaves exactly one waivers entry, under the new week', async () => {
+  const schedules = createSchedulesService({ serviceToken: 's', distributorUrl: 'http://unused', dbPath: ':memory:' });
+  await new Promise<void>((r) => schedules.listen(0, r));
+  const url = `http://127.0.0.1:${(schedules.address() as AddressInfo).port}`;
+  try {
+    const week10 = { ...base, '/v1/state/nfl': { ...base['/v1/state/nfl'], week: 10 } };
+    await registerWaiversSchedules({ url, token: 's' }, clientOf(base), 'L1', 'mallard', () => AT);
+    await registerWaiversSchedules({ url, token: 's' }, clientOf(week10), 'L1', 'mallard', () => AT + 6 * 3_600_000);
+    const { schedules: listed } = await (await fetch(`${url}/schedules`, { headers: { authorization: 'Bearer s' } })).json();
+    assert.equal(listed.length, 1);
+    assert.equal(listed[0].sessionKey, 'sleeper:L1:10:waivers');
+  } finally {
+    schedules.stop();
   }
 });
