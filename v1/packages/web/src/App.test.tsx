@@ -187,7 +187,7 @@ test('Abort shows only while a run is in progress and posts to the abort route',
   expect(screen.queryByRole('button', { name: 'Abort' })).toBeNull();
   ws.frame({ type: 'events', events: [{ type: 'run_start', inputs: [] }] });
   await userEvent.click(screen.getByRole('button', { name: 'Abort' }));
-  expect(fetchMock).toHaveBeenCalledWith('/sessions/ui%3Au1/abort', { method: 'POST' });
+  expect(fetchMock).toHaveBeenCalledWith('sessions/ui%3Au1/abort', { method: 'POST' });
   ws.frame({ type: 'events', events: [{ type: 'run_end', inputs: [] }] });
   expect(screen.queryByRole('button', { name: 'Abort' })).toBeNull();
 });
