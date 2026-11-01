@@ -132,9 +132,9 @@ test('a decision step waits for a person across a restart and resumes on the ans
   await running;
 
   const b = await open(dir, build());
-  assert.equal(await answerDecision(b.root, 'pick', 'Maybe', 'jf', ctx), false, 'only a listed option answers');
-  assert.equal(await answerDecision(b.root, 'pick', 'Pollard', 'jf', ctx), true);
-  assert.equal(await answerDecision(b.root, 'pick', 'Stevenson', 'jf', ctx), false, 'the first answer stands');
+  assert.equal(await answerDecision(b.root, 'pick', 'Maybe', 'jf', ctx), 'bad-choice', 'only a listed option answers');
+  assert.equal(await answerDecision(b.root, 'pick', 'Pollard', 'jf', ctx), 'ok');
+  assert.equal(await answerDecision(b.root, 'pick', 'Stevenson', 'jf', ctx), 'answered', 'the first answer stands');
   const outcome = await runWorkflow(b.harness, b.root, build(), null);
   assert.equal(outcome.status === 'completed' && (outcome.result as { announce: string }).announce, 'start Pollard');
   await b.close();

@@ -1,6 +1,6 @@
-import type { Approval, SessionSummary } from './api.ts';
+import type { Approval, Decision, SessionSummary } from './api.ts';
 
-export type Row = SessionSummary & { approvals: Approval[] };
+export type Row = SessionSummary & { approvals: Approval[]; decisions: Decision[] };
 export type Groups = { needs: Row[]; running: Row[]; recent: Row[] };
 export type Filters = { text: string; agent: string; start: string };
 
@@ -27,13 +27,14 @@ export function matches(s: SessionSummary, f: Filters): boolean {
 }
 
 export function group(rows: Row[]): Groups {
-  const needs = rows.filter((r) => r.approvals.length > 0);
-  const rest = rows.filter((r) => r.approvals.length === 0);
+  const needs = rows.filter((r) => r.approvals.length + r.decisions.length > 0);
+  const rest = rows.filter((r) => r.approvals.length + r.decisions.length === 0);
   return { needs, running: rest.filter((r) => r.running), recent: rest.filter((r) => !r.running) };
 }
 
 export function statusLine(r: Row): string {
   if (r.approvals.length) return `Approve ${r.approvals[0]!.tool}${r.approvals.length > 1 ? ` +${r.approvals.length - 1} more` : ''}`;
+  if (r.decisions.length) return `Answer: ${r.decisions[0]!.question}`;
   return `${r.agent} · ${r.running ? 'running' : 'idle'}`;
 }
 

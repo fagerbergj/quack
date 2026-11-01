@@ -1,9 +1,10 @@
 import type { Context } from '@earendil-works/chord/context';
 import { defineDoc, type Conversation, type Harness, type JsonObject, type UsageState } from '@earendil-works/pi-durable';
+import { WorkflowDoc, type StepRecord } from '@quack/workflows';
 import { Approvals, Artifacts, type Approval, type SealedArtifact } from '@quack/sdk';
 
 /** One thing the index records about a session. `rev` only grows, so an older copy never overwrites a newer one. */
-export type Fact = { id: string; kind: 'session' | 'artifact' | 'approval' | 'cost' | 'status'; rev: number; at: number; data: JsonObject };
+export type Fact = { id: string; kind: 'session' | 'artifact' | 'approval' | 'decision' | 'cost' | 'status'; rev: number; at: number; data: JsonObject };
 export type SessionMeta = { key: string; agent: string; version: number | null };
 
 type OutboxDoc = { acked: Record<string, number>; status: { state: 'idle' | 'running'; seq: number; at: number } };
@@ -28,6 +29,18 @@ function approvalFacts(approvals: { items: Record<string, Approval> } | undefine
   });
 }
 
+// The ask time orders the revisions, so a later run's question replaces an earlier run's of the same step.
+function decisionFacts(steps: Readonly<StepRecord[]> | undefined): Fact[] {
+  return (steps ?? []).filter((s) => s.ask).map((s): Fact => {
+    const { question, options, evidence, at } = s.ask!;
+    const state = s.answer ? 'answered' : s.status === 'waiting' ? 'pending' : 'closed';
+    return {
+      id: `decision:${s.name}`, kind: 'decision', rev: (at ?? 0) * 2 + (state === 'pending' ? 1 : 2), at: at ?? 0,
+      data: { step: s.name, question, options, evidence: evidence ?? null, state, choice: s.answer?.choice ?? null, by: s.answer?.by ?? null },
+    };
+  });
+}
+
 function costFact(usage: Readonly<UsageState>, now: number): Fact[] {
   const total = [...Object.values(usage.models), ...Object.values(usage.tools)].reduce((sum, u) => sum + ((u as { cost?: { total?: number } }).cost?.total ?? 0), 0);
   // Micro-dollars as the revision: it moves only when the spend does, so an idle session sends nothing.
@@ -36,13 +49,13 @@ function costFact(usage: Readonly<UsageState>, now: number): Fact[] {
 
 // harness.usage totals every conversation, so decision forks and subagents count. Derived from the log's current documents, so a replay of the log yields the same facts as live publishing.
 export async function collectFacts(harness: Harness, root: Conversation, meta: SessionMeta, now: number, ctx: Context): Promise<Fact[]> {
-  const [artifacts, approvals, outbox] = await Promise.all([
-    harness.snapshot(Artifacts, root.id, ctx), harness.snapshot(Approvals, root.id, ctx), harness.snapshot(Outbox, root.id, ctx),
+  const [artifacts, approvals, workflow, outbox] = await Promise.all([
+    harness.snapshot(Artifacts, root.id, ctx), harness.snapshot(Approvals, root.id, ctx), harness.snapshot(WorkflowDoc, root.id, ctx), harness.snapshot(Outbox, root.id, ctx),
   ]);
   const status = outbox?.status;
   return [
     { id: 'session', kind: 'session', rev: 1, at: 0, data: { agent: meta.agent, version: meta.version } },
-    ...artifactFacts(artifacts), ...approvalFacts(approvals), ...costFact(await harness.usage(ctx), now),
+    ...artifactFacts(artifacts), ...approvalFacts(approvals), ...decisionFacts(workflow?.steps), ...costFact(await harness.usage(ctx), now),
     ...(status?.seq ? [{ id: 'status', kind: 'status' as const, rev: status.seq, at: status.at, data: { state: status.state } }] : []),
   ];
 }

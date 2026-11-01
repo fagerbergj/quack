@@ -28,7 +28,14 @@ async function indexRead<T>(path: string, field: string): Promise<T[] | undefine
   const res = await fetch(path).catch(() => undefined);
   return res?.ok ? ((await res.json()) as Record<string, T[]>)[field] : undefined;
 }
-export const indexApprovals = () => indexRead<IndexApproval>('index/approvals?state=pending', 'approvals');
+/** A question a workflow escalated to a person; `askedAt` is 0 on records that predate the timestamp. */
+export type Decision = { step: string; question: string; options: string[]; evidence: string | null; askedAt: number };
+export type IndexDecision = Omit<Decision, 'askedAt'> & { session: string; at: number };
+export const indexDecisions = () => indexRead<IndexDecision>('index/decisions?state=pending', 'decisions');
+export const listDecisions = async (key: string) => (await json<{ decisions: Decision[] }>(await fetch(`${base(key)}/decisions`))).decisions;
+export const answerDecision = async (key: string, step: string, choice: string) =>
+  void (await json(await fetch(`${base(key)}/decisions/${encodeURIComponent(step)}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ choice, by: 'web' }) })));
+export const indexApprovals =() => indexRead<IndexApproval>('index/approvals?state=pending', 'approvals');
 export const indexArtifacts = () => indexRead<IndexArtifact>('index/artifacts', 'artifacts');
 
 // shortcut: no auth (tailnet only) and the approver is a fixed name, until identity lands.

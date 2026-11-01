@@ -6,7 +6,7 @@ const ctx = BACKGROUND_CONTEXT;
 const SEND_TIMEOUT_MS = 10_000;
 const STOP_WAIT_MS = 5_000;
 
-export type PublisherOptions = { url: string; token: string; meta: SessionMeta; retryMs?: number; now?: () => number };
+export type PublisherOptions = { url: string; token: string; meta: SessionMeta; retryMs?: number; pollMs?: number; now?: () => number };
 
 // Sends a session's unacknowledged facts to the index (A6). The log is the outbox: a fact is unsent while its revision is
 // above the acknowledged one in the Outbox document, so a crash, an index outage or a restart loses nothing.
@@ -53,9 +53,12 @@ export async function startPublisher(session: { harness: Harness; root: Conversa
     await flush();
   });
   await flush();
+  // A workflow's questions are committed without any run event, so nothing else would announce them.
+  const poll = setInterval(() => void flush().catch(() => {}), opts.pollMs ?? 10_000).unref();
   // Waits out an in-flight send (bounded) so its ack commit cannot race session.close().
   async function stop() {
     stopped = true;
+    clearInterval(poll);
     clearTimeout(timer);
     await Promise.race([current?.catch(() => {}), new Promise((r) => setTimeout(r, STOP_WAIT_MS).unref())]);
     await events.stop();
