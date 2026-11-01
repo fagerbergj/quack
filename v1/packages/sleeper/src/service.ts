@@ -21,6 +21,14 @@ function authorized(req: IncomingMessage, token: string): boolean {
   return given.length === expected.length && timingSafeEqual(given, expected);
 }
 
+function safeDecode(s: string): string | undefined {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return undefined;
+  }
+}
+
 export function createSleeperService(config: ServiceConfig) {
   const store = openStore(config.dbPath);
   const now = config.now ?? (() => new Date());
@@ -29,7 +37,8 @@ export function createSleeperService(config: ServiceConfig) {
   async function route(method: string, path: string): Promise<[number, unknown]> {
     const m = /^\/leagues\/([^/]+)\/snapshots(\/latest)?$/.exec(path);
     if (!m) return [404, { error: 'not found' }];
-    const league = decodeURIComponent(m[1]);
+    const league = safeDecode(m[1]);
+    if (league === undefined) return [400, { error: 'bad league id' }];
     if (method === 'POST' && !m[2]) return [200, await takeSnapshot(config.client, store, league, now())];
     if (method !== 'GET') return [405, { error: 'method not allowed' }];
     if (!m[2]) return [200, { snapshots: store.history(league) }];

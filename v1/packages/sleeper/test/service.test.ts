@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { test } from 'node:test';
+import { createSchedulesService } from '@quack/schedules';
 import { NotFound, createSleeperClient, createSleeperService, leagueDate, registerSnapshotSchedule, registerUntilDone } from '../src/index.ts';
 
 const fixtures = JSON.parse(readFileSync(new URL('./fixtures/league.json', import.meta.url), 'utf8')) as Record<string, unknown>;
@@ -69,6 +70,32 @@ test('a second snapshot on the same day is idempotent, and history lists newest 
 
 test('the snapshot day follows America/New_York, not UTC', () => {
   assert.equal(leagueDate(new Date('2026-11-02T03:30:00Z')), '2026-11-01');
+});
+
+test('a malformed league id escape is a 400', async () => {
+  const { service, call } = await setup({ at: new Date() });
+  try {
+    assert.equal((await call('GET', '/leagues/bad%zz/snapshots')).status, 400);
+  } finally {
+    service.stop();
+  }
+});
+
+test('the real schedules service lists the registered snapshot schedule', async () => {
+  const schedules = createSchedulesService({ serviceToken: 's', distributorUrl: 'http://unused', dbPath: ':memory:' });
+  await new Promise<void>((r) => schedules.listen(0, r));
+  const url = `http://127.0.0.1:${(schedules.address() as AddressInfo).port}`;
+  try {
+    // Twice: a restart re-registers the same id.
+    await registerSnapshotSchedule({ url, token: 's' }, 'L1');
+    await registerSnapshotSchedule({ url, token: 's' }, 'L1');
+    const { schedules: listed } = await (await fetch(`${url}/schedules`, { headers: { authorization: 'Bearer s' } })).json();
+    assert.equal(listed.length, 1);
+    assert.partialDeepStrictEqual(listed[0], { id: 'sleeper/snapshot/L1', cron: '0 4 * * *', tz: 'America/New_York', sessionKey: 'sleeper:snapshot:{time}', input: 'snapshot L1', source: 'api' });
+    assert.ok(listed[0].nextRun);
+  } finally {
+    schedules.stop();
+  }
 });
 
 test('the service rejects callers without the token', async () => {
