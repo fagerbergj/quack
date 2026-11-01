@@ -1,7 +1,7 @@
 import { useEffect, useState, type SubmitEvent } from 'react';
 import { listAgents, listSessions, type AgentSummary, type SessionSummary } from './api.ts';
 import { SessionView } from './SessionView.tsx';
-import { Pond, Shell, type Route } from './Shell.tsx';
+import { Shell, type Route } from './Shell.tsx';
 
 // shortcut: hash routing keeps the build static, so any file server can host it; move to a router with auth.
 function safeDecode(s: string): string | undefined {
@@ -61,9 +61,7 @@ function Home() {
   }, []);
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-6 sm:px-6">
-      <Pond>
-        <h1 className="m-0 text-3xl leading-tight">Sessions</h1>
-      </Pond>
+      <h1 className="m-0 text-2xl">Sessions</h1>
       {sessionsError && <p role="alert">{`Sessions: ${sessionsError}`}</p>}
       {agentsError && <p role="alert">{`Agents: ${agentsError}`}</p>}
       <NewSession agents={agents} />
@@ -80,11 +78,13 @@ function Home() {
   );
 }
 
-const PLACEHOLDERS: Partial<Record<Route, string>> = { inbox: 'Inbox', artifacts: 'Artifacts', agents: 'Agents' };
+const PLACEHOLDERS: Partial<Record<Route, string>> = {
+  inbox: 'Inbox', artifacts: 'Artifacts', sleeper: 'Sleeper', remarkable: 'reMarkable', memory: 'Memory', agents: 'Agents', evals: 'Evals', schedules: 'Schedules',
+};
 
 function navRoute(hash: string): Route {
-  const name = /^#\/(inbox|artifacts|agents)\/?$/.exec(hash)?.[1];
-  return (name as Route | undefined) ?? 'sessions';
+  const name = /^#\/(\w+)\/?$/.exec(hash)?.[1] as Route | undefined;
+  return name && name in PLACEHOLDERS ? name : 'sessions';
 }
 
 function Placeholder({ title }: { title: string }) {
