@@ -39,6 +39,7 @@ const web = () => listen((req, res) => {
   if (req.url === '/page') return res.writeHead(200, { 'content-type': 'text/html' }).end('<html><head><title>Ducks</title><script>var x=1</script></head><body><h1>Ducks</h1><p>Ducks &amp; geese fly.</p></body></html>');
   if (req.url === '/paper.pdf') return res.writeHead(200, { 'content-type': 'application/pdf' }).end(PDF('Mallards migrate'));
   if (req.url === '/huge') return res.writeHead(200, { 'content-type': 'text/plain' }).end('x'.repeat(600_000));
+  if (req.url === '/long') return res.writeHead(200, { 'content-type': 'text/plain' }).end('abcdefghij'.repeat(10_000));
   if (req.url === '/big') return res.writeHead(200, { 'content-type': 'text/plain' }).end('x'.repeat(2000));
   if (req.url === '/hop') return res.writeHead(302, { location: `http://127.0.0.2:${(req.socket.localPort)}/page` }).end();
   if (req.url === '/samehop') return res.writeHead(302, { location: '/page' }).end();
@@ -158,7 +159,7 @@ test('without the Exa key web_search says so, and a private URL is refused by de
 });
 
 const readSource = defineTool({
-  name: 'read_source', description: 'test', parameters: Type.Object({ id: Type.String() }), replay: 'safe',
+  name: 'source_text', description: 'test', parameters: Type.Object({ id: Type.String() }), replay: 'safe',
   execute: async (a, api, ctx) => ({ output: [{ type: 'text' as const, text: (await sourceText(api, a.id, ctx)) ?? 'none' }] }),
 });
 const sourceLength = defineTool({
@@ -201,8 +202,8 @@ test('a fetched source keeps its text, retrievable by id and keyed by the record
   const base = await web();
   const { seen, session } = await run({ maxFetchBytes: 1000 }, (step) => [
     call('web_fetch', { urls: [`${base}/page`] }),
-    step(call('read_source', { id: 's1' })),
-    step(call('read_source', { id: 's2' })),
+    step(call('source_text', { id: 's1' })),
+    step(call('source_text', { id: 's2' })),
     step(fauxAssistantMessage('Done.')),
   ], { isPublic: loopbackOk }, [readSourceExt]);
   assert.match(delivered(seen.slice(0, 2)), /^Ducks\n\nDucks\nDucks & geese fly\.$/);
@@ -220,6 +221,28 @@ test('stored source text is capped at 500k characters and still retrievable', as
     step(fauxAssistantMessage('Done.')),
   ], { isPublic: loopbackOk }, [readSourceExt]);
   assert.match(delivered(seen.slice(0, 2)), /^500000$/);
+  await session.close();
+});
+
+test('read_source pages a stored 100k source to its end, names the offset on truncation, and rejects unknown ids', async () => {
+  const base = await web();
+  const { seen, session } = await run({}, (step) => [
+    call('web_fetch', { urls: [`${base}/long`] }),
+    step(call('read_source', { id: 's1', offset: 30_000 })),
+    step(call('read_source', { id: '[s1]', offset: 60_000 })),
+    step(call('read_source', { id: 's1', offset: 90_000 })),
+    step(call('read_source', { id: 's9', offset: 0 })),
+    step(fauxAssistantMessage('Done.')),
+  ], { isPublic: loopbackOk });
+  assert.match(sees(seen, 0), /… cut at 30000 of 100000 characters; read the rest with read_source id "s1" offset 30000$/);
+  const w1 = sees(seen, 1);
+  assert.match(w1, /^abcdefghij/);
+  assert.match(w1, /… 60000 of 100000 characters; continue with read_source id "s1" offset 60000$/);
+  assert.match(sees(seen, 2), /offset 90000$/);
+  const last = sees(seen, 3);
+  assert.equal(last.split('\n')[0].length, 10_000);
+  assert.match(last, /end of source s1 \(100000 characters\)$/);
+  assert.match(sees(seen, 4), /no stored text for source s9/);
   await session.close();
 });
 
