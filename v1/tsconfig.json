@@ -17,5 +17,8 @@
     "packages/*/src",
     "packages/*/test",
     "tools"
+  ],
+  "exclude": [
+    "packages/web"
   ]
 }

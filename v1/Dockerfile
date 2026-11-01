@@ -14,6 +14,7 @@ COPY packages/research/package.json packages/research/
 COPY packages/runtime/package.json packages/runtime/
 COPY packages/sdk/package.json packages/sdk/
 COPY packages/session/package.json packages/session/
+COPY packages/web/package.json packages/web/
 # typescript and typescript-language-server are dev dependencies the sessions run, so nothing is omitted.
 RUN --mount=type=cache,target=/root/.npm npm ci
 

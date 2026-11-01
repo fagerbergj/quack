@@ -1,0 +1,94 @@
+import { useEffect, useState, type SubmitEvent } from 'react';
+import { listAgents, listSessions, type AgentSummary, type SessionSummary } from './api.ts';
+import { SessionView } from './SessionView.tsx';
+
+// shortcut: hash routing keeps the build static, so any file server can host it; move to a router with auth.
+function safeDecode(s: string): string | undefined {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return undefined;
+  }
+}
+
+function parseHash(hash: string): { key: string; agent?: string } | undefined {
+  const m = /^#\/s\/([^?]+)(?:\?agent=(.*))?$/.exec(hash);
+  const key = m && safeDecode(m[1]);
+  return m && key ? { key, agent: m[2] ? safeDecode(m[2]) : undefined } : undefined;
+}
+
+function useHash() {
+  const [hash, setHash] = useState(location.hash);
+  useEffect(() => {
+    const on = () => setHash(location.hash);
+    addEventListener('hashchange', on);
+    return () => removeEventListener('hashchange', on);
+  }, []);
+  return hash;
+}
+
+function NewSession({ agents }: { agents: AgentSummary[] }) {
+  const [agent, setAgent] = useState('');
+  const chosen = agent || agents[0]?.name || '';
+  const start = (e: SubmitEvent) => {
+    e.preventDefault();
+    location.hash = `#/s/${encodeURIComponent(`ui:${crypto.randomUUID()}`)}?agent=${encodeURIComponent(chosen)}`;
+  };
+  return (
+    <form onSubmit={start}>
+      <label>
+        Agent{' '}
+        <select value={chosen} onChange={(e) => setAgent(e.target.value)}>
+          {agents.map((a) => (
+            <option key={a.name} value={a.name}>{`${a.name} ${a.version}`}</option>
+          ))}
+        </select>
+      </label>{' '}
+      <button type="submit" disabled={!chosen}>New session</button>
+    </form>
+  );
+}
+
+function Home() {
+  const [sessions, setSessions] = useState<SessionSummary[]>();
+  const [agents, setAgents] = useState<AgentSummary[]>([]);
+  const [sessionsError, setSessionsError] = useState('');
+  const [agentsError, setAgentsError] = useState('');
+  useEffect(() => {
+    listSessions().then(setSessions, (e: Error) => setSessionsError(e.message));
+    listAgents().then(setAgents, (e: Error) => setAgentsError(e.message));
+  }, []);
+  return (
+    <>
+      <h1>Sessions</h1>
+      {sessionsError && <p role="alert">{`Sessions: ${sessionsError}`}</p>}
+      {agentsError && <p role="alert">{`Agents: ${agentsError}`}</p>}
+      <NewSession agents={agents} />
+      {sessions?.length === 0 && <p>No sessions yet.</p>}
+      <ul>
+        {sessions?.map((s) => (
+          <li key={s.key}>
+            <a href={`#/s/${encodeURIComponent(s.key)}`}>{s.key}</a> {s.agent} {s.running ? 'running' : 'idle'}{' '}
+            <time dateTime={s.lastActivity}>{new Date(s.lastActivity).toLocaleString()}</time>
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
+
+export function App() {
+  const route = parseHash(useHash());
+  return (
+    <main>
+      {route ? (
+        <>
+          <a href="#/">All sessions</a>
+          <SessionView key={route.key} sessionKey={route.key} agent={route.agent} />
+        </>
+      ) : (
+        <Home />
+      )}
+    </main>
+  );
+}
