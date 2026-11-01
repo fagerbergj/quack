@@ -38,11 +38,12 @@ export function langfuse(config: LangfuseConfig, fetchImpl: typeof fetch = fetch
     },
     linkRun: (run: { runName: string; datasetItemId: string; traceId: string; metadata?: JsonValue }) => call('POST', '/api/public/dataset-run-items', run),
     // Langfuse v4 in events_only mode takes traces only over OpenTelemetry, so a trace is one OTLP span carrying its fields.
+    // It drops langfuse.trace.input/output there; the root span's own input/output are what the trace shows.
     trace(t: { traceId: string; name: string; input: unknown; output: unknown; startMs: number; endMs: number }) {
       const attr = (key: string, v: unknown) => ({ key, value: { stringValue: typeof v === 'string' ? v : JSON.stringify(v) } });
       const nanos = (ms: number) => `${BigInt(ms) * 1_000_000n}`;
       const span = { traceId: t.traceId, spanId: t.traceId.slice(0, 16), name: t.name, kind: 1, startTimeUnixNano: nanos(t.startMs), endTimeUnixNano: nanos(t.endMs),
-        attributes: [attr('langfuse.trace.name', t.name), attr('langfuse.trace.input', t.input), attr('langfuse.trace.output', t.output)] };
+        attributes: [attr('langfuse.trace.name', t.name), attr('langfuse.observation.input', t.input), attr('langfuse.observation.output', t.output)] };
       return call('POST', '/api/public/otel/v1/traces', { resourceSpans: [{ resource: { attributes: [attr('service.name', 'quack-eval')] }, scopeSpans: [{ scope: { name: 'quack-eval' }, spans: [span] }] }] });
     },
   };
