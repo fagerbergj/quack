@@ -308,3 +308,36 @@ test('api and ws urls resolve under a /v1/ page path', async () => {
     history.replaceState(null, '', '/');
   }
 });
+
+test('the rail links every area and marks the current one', async () => {
+  routes['GET /sessions'] = { sessions: [] };
+  routes['GET /agents'] = { agents: [] };
+  render(<App />);
+  const rail = screen.getAllByRole('navigation', { name: 'Main' })[0];
+  expect(within(rail).getAllByRole('link').map((l) => l.getAttribute('href'))).toEqual(['#/', '#/inbox', '#/artifacts', '#/agents']);
+  expect(within(rail).getByRole('link', { name: 'Sessions' })).toHaveAttribute('aria-current', 'page');
+  await userEvent.click(within(rail).getByRole('link', { name: 'Inbox' }));
+  expect(await screen.findByRole('heading', { name: 'Inbox' })).toBeInTheDocument();
+  expect(within(rail).getByRole('link', { name: 'Inbox' })).toHaveAttribute('aria-current', 'page');
+  expect(within(rail).getByRole('link', { name: 'Sessions' })).not.toHaveAttribute('aria-current');
+});
+
+test('a session stays inside the Sessions rail entry', async () => {
+  await openSession();
+  const rail = screen.getAllByRole('navigation', { name: 'Main' })[0];
+  expect(within(rail).getByRole('link', { name: 'Sessions' })).toHaveAttribute('aria-current', 'page');
+});
+
+test('the theme toggle flips the document theme', async () => {
+  routes['GET /sessions'] = { sessions: [] };
+  routes['GET /agents'] = { agents: [] };
+  document.documentElement.dataset.theme = 'light';
+  render(<App />);
+  const toggle = () => screen.getAllByRole('button', { name: 'Dark mode' })[0];
+  expect(toggle()).toHaveAttribute('aria-pressed', 'false');
+  await userEvent.click(toggle());
+  expect(document.documentElement.dataset.theme).toBe('dark');
+  expect(toggle()).toHaveAttribute('aria-pressed', 'true');
+  await userEvent.click(toggle());
+  expect(document.documentElement.dataset.theme).toBe('light');
+});
