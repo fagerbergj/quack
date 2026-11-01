@@ -90,7 +90,7 @@ function errorStatus(err: unknown): number {
   return err instanceof Error && err.message === 'body too large' ? 400 : 502;
 }
 
-export function createDistributor(driver: HostDriver, opts: { idleMs?: number; webDir?: string } = {}) {
+export function createDistributor(driver: HostDriver, opts: { idleMs?: number; webDir?: string; index?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean> } = {}) {
   const lastUse = new Map<string, number>();
   const stopping = new Map<string, Promise<void>>();
   const viewers = new Map<string, number>();
@@ -119,6 +119,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
     try {
       if (req.method === 'GET' && req.url === '/sessions') return send(res, 200, { sessions: await driver.sessions() });
       if (req.method === 'GET' && req.url === '/agents') return send(res, 200, { agents: await driver.agents() });
+      if (await opts.index?.(req, res)) return;
       if (await serveWeb(opts.webDir, req, res)) return;
       if (!/^\/sessions\/[^/]+\//.test(req.url ?? '')) return send(res, 404, { error: 'not found' });
       const target = sessionPath(req.url);
