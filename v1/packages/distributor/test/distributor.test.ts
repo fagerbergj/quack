@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,10 +16,20 @@ after(async () => {
 });
 
 // Each test gets its own distributor so idle reaping in one cannot stop another's session.
-async function startDistributor(idleMs: number) {
+async function agentsDir(...names: string[]) {
+  const dir = await mkdtemp(join(tmpdir(), 'quack-agents-'));
+  dirs.push(dir);
+  for (const name of names) {
+    await mkdir(join(dir, name));
+    await writeFile(join(dir, name, 'agent.json'), JSON.stringify({ name, version: 3 }));
+  }
+  return dir;
+}
+
+async function startDistributor(idleMs: number, agents: { agentsDir?: string; defaultAgent?: string } = { defaultAgent: '' }) {
   const dataDir = await mkdtemp(join(tmpdir(), 'quack-dist-'));
   dirs.push(dataDir);
-  const driver = processDriver({ command: [process.execPath, fileURLToPath(new URL('./fixtures/echo-session.ts', import.meta.url))], dataDir });
+  const driver = processDriver({ command: [process.execPath, fileURLToPath(new URL('./fixtures/echo-session.ts', import.meta.url))], dataDir, ...agents });
   const server = createDistributor(driver, { idleMs }).listen(0);
   await new Promise((r) => server.once('listening', r));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -27,8 +37,8 @@ async function startDistributor(idleMs: number) {
     await Promise.all(driver.running().map((k) => driver.stop(k)));
     await new Promise((r) => server.close(r));
   });
-  const invoke = (key: string, body: unknown) =>
-    fetch(`${base}/sessions/${encodeURIComponent(key)}/invocations`, { method: 'POST', body: JSON.stringify(body) }).then(async (r) => ({ status: r.status, body: await r.json() }));
+  const invoke = (key: string, body: unknown, agent?: string) =>
+    fetch(`${base}/sessions/${encodeURIComponent(key)}/invocations${agent ? `?agent=${agent}` : ''}`, { method: 'POST', body: JSON.stringify(body) }).then(async (r) => ({ status: r.status, body: await r.json() }));
   return { driver, invoke, base };
 }
 
@@ -114,7 +124,7 @@ test('proxies the live stream and keeps a watched session from idling out', asyn
 });
 
 test('a viewer whose session cannot start is disconnected, and the distributor keeps serving', async () => {
-  const broken = { ensure: async () => { throw new Error('no capacity'); }, stop: async () => {}, running: () => [], pid: () => undefined };
+  const broken = { agents: async () => [], sessions: async () => [], ensure: async () => { throw new Error('no capacity'); }, stop: async () => {}, running: () => [], pid: () => undefined };
   const server = createDistributor(broken, { idleMs: 60_000 }).listen(0);
   await new Promise((r) => server.once('listening', r));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -123,4 +133,47 @@ test('a viewer whose session cannot start is disconnected, and the distributor k
   assert.equal(closed, 'error');
   assert.equal((await fetch(`${base}/sessions`)).status, 200);
   await new Promise((r) => server.close(r));
+});
+
+test('each session runs on the agent that created it, and the registry and index list them', async () => {
+  const dir = await agentsDir('reviewer', 'research');
+  const { invoke, base, driver } = await startDistributor(60_000, { agentsDir: dir, defaultAgent: '' });
+  const whoami = (key: string, agent?: string) => invoke(key, { input: 'whoami', wait: true }, agent);
+  assert.equal((await whoami('github:a#1', 'reviewer')).body.answer, `agent: ${join(dir, 'reviewer', 'agent.json')}`);
+  assert.equal((await whoami('research:b', 'research')).body.answer, `agent: ${join(dir, 'research', 'agent.json')}`);
+
+  const { agents } = (await (await fetch(`${base}/agents`)).json()) as { agents: Array<{ name: string }> };
+  assert.deepEqual(agents.sort((a, b) => a.name.localeCompare(b.name)), [{ name: 'research', version: 3 }, { name: 'reviewer', version: 3 }]);
+  await driver.stop('research:b');
+  const { sessions } = (await (await fetch(`${base}/sessions`)).json()) as { sessions: Array<{ key: string; agent: string; running: boolean; lastActivity: string }> };
+  assert.deepEqual(sessions.map((s) => [s.key, s.agent, s.running]).sort(), [['github:a#1', 'reviewer', true], ['research:b', 'research', false]]);
+  assert.ok(sessions.every((s) => !Number.isNaN(Date.parse(s.lastActivity))));
+});
+
+test('a session keeps its agent: a different one is 409, an unknown one 404', async () => {
+  const dir = await agentsDir('reviewer', 'research');
+  const { invoke } = await startDistributor(60_000, { agentsDir: dir, defaultAgent: '' });
+  await invoke('research:x', { input: 'hi', wait: true }, 'research');
+  assert.equal((await invoke('research:x', { input: 'hi', wait: true }, 'reviewer')).status, 409);
+  assert.equal((await invoke('research:x', { input: 'hi', wait: true }, 'research')).status, 200);
+  assert.equal((await invoke('research:x', { input: 'whoami', wait: true })).body.answer, `agent: ${join(dir, 'research', 'agent.json')}`);
+  assert.equal((await invoke('research:y', { input: 'hi' }, 'nope')).status, 404);
+});
+
+test('a session naming no agent gets the deployment default', async () => {
+  const dir = await agentsDir('reviewer', 'research');
+  const defaultAgent = join(dir, 'reviewer', 'agent.json');
+  const { invoke, base } = await startDistributor(60_000, { agentsDir: dir, defaultAgent });
+  assert.equal((await invoke('github:a#2', { input: 'whoami', wait: true })).body.answer, `agent: ${defaultAgent}`);
+  assert.equal((await invoke('github:a#2', { input: 'hi', wait: true }, 'reviewer')).status, 200);
+  assert.equal((await invoke('github:a#2', { input: 'hi', wait: true }, 'research')).status, 409);
+  const { sessions } = (await (await fetch(`${base}/sessions`)).json()) as { sessions: Array<{ agent: string }> };
+  assert.equal(sessions[0].agent, 'reviewer');
+});
+
+test('a registry agent sharing the default agent\'s name runs the registry file', async () => {
+  const dir = await agentsDir('reviewer');
+  const other = await agentsDir('reviewer');
+  const { invoke } = await startDistributor(60_000, { agentsDir: dir, defaultAgent: join(other, 'reviewer', 'agent.json') });
+  assert.equal((await invoke('github:a#3', { input: 'whoami', wait: true }, 'reviewer')).body.answer, `agent: ${join(dir, 'reviewer', 'agent.json')}`);
 });

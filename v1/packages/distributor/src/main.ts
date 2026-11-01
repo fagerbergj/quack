@@ -11,7 +11,7 @@ function env(name: string, fallback?: string): string {
 const DRAIN_MS = 20_000;
 const runtime = fileURLToPath(new URL('../../runtime/src/main.ts', import.meta.url));
 // shortcut: session processes share this container (A11's process driver); move to the Kata driver with A12.
-const driver = processDriver({ command: [process.execPath, runtime], dataDir: env('QUACK_DATA_DIR'), startTimeoutMs: 60_000 });
+const driver = processDriver({ command: [process.execPath, runtime], dataDir: env('QUACK_DATA_DIR'), agentsDir: process.env.QUACK_AGENTS_DIR, startTimeoutMs: 60_000 });
 const server = createDistributor(driver).listen(Number(env('PORT', '8080')));
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   // Sessions stop first: their logs are durable, so a request cut here is answered after the restart. The deadline beats
