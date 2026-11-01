@@ -4,10 +4,7 @@ export type SleeperRoutesConfig = { url: string; token: string; league: string; 
 
 const send = (res: ServerResponse, status: number, body: unknown) => res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
 
-/**
- * The only two Sleeper routes the page can reach: which league this deployment serves, and the lineup job on demand.
- * The service token and league id stay here, so the browser never holds either and cannot aim the call elsewhere.
- */
+// The page reaches only the league id and the on-demand lineup job; the service token and league stay here, out of the browser.
 export function sleeperRoutes(config: SleeperRoutesConfig) {
   return async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
     const url = new URL(req.url ?? '', 'http://distributor');
