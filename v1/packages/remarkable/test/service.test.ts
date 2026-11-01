@@ -245,6 +245,11 @@ test('an unanswered session records the workflow failure detail on the batch ite
   answerBody = { status: 'done' };
 });
 
+test('the client puts the first line of the rmfakecloud error body in the reason', async () => {
+  const client = createRmClient({ url: rm, email: EMAIL, password: PASSWORD });
+  await assert.rejects(client.downloadPdf('broken'), /status 500: json: cannot unmarshal object into Content\.pageTags\.0 of type string$/);
+});
+
 test('a failed or empty PDF export is a 502 and the service keeps serving', async () => {
   for (const id of ['broken', 'empty', 'html']) assert.equal((await call('GET', `/documents/${id}/pdf`)).status, 502, id);
   assert.equal((await call('GET', '/documents/n1/pdf')).status, 200);

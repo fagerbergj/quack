@@ -24,7 +24,10 @@ export function createRmClient(config: { url: string; email: string; password: s
       await login();
       res = await once();
     }
-    if (!res.ok) throw new Error(`rmfakecloud GET ${path.split('?')[0]}: status ${res.status}`);
+    if (!res.ok) {
+      const line = (await res.text().catch(() => '')).split('\n')[0].trim().slice(0, 200);
+      throw new Error(`rmfakecloud GET ${path.split('?')[0]}: status ${res.status}${line ? `: ${line}` : ''}`);
+    }
     return res;
   }
 
@@ -48,9 +51,10 @@ export function createRmClient(config: { url: string; email: string; password: s
     documents: async (): Promise<RmDocument[]> => walk(await tree()),
     /** The document exported as PDF; the renderer works for notebooks, PDFs and epubs alike. */
     downloadPdf: async (id: string): Promise<Buffer> => {
-      const pdf = Buffer.from(await (await get(`/ui/api/documents/${encodeURIComponent(id)}?type=pdf`)).arrayBuffer());
+      const path = `/ui/api/documents/${encodeURIComponent(id)}`;
+      const pdf = Buffer.from(await (await get(`${path}?type=pdf`)).arrayBuffer());
       // rmfakecloud answers 200 with an empty body, or an error page, when it cannot render a document.
-      if (!pdf.subarray(0, 5).equals(Buffer.from('%PDF-'))) throw new Error(`rmfakecloud GET /ui/api/documents/${id}: ${pdf.length ? 'response is not a PDF' : 'empty PDF'}`);
+      if (!pdf.subarray(0, 5).equals(Buffer.from('%PDF-'))) throw new Error(`rmfakecloud GET ${path}: ${pdf.length ? 'response is not a PDF' : 'empty PDF'}`);
       return pdf;
     },
   };

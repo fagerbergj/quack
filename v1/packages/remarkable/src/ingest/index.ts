@@ -1,5 +1,5 @@
 import type { ClassifierRef, ModelRef } from '@quack/judge';
-import { ingestWorkflow, INGEST_WORKFLOW, type IngestService } from './workflow.ts';
+import { ingestWorkflow, INGEST_WORKFLOW, UNREACHABLE, type IngestService } from './workflow.ts';
 
 export { ingestWorkflow, INGEST_WORKFLOW, NONE, type IngestDeps, type IngestService } from './workflow.ts';
 export { problems, transcriptKind, TYPES, type Transcript } from './transcript.ts';
@@ -9,7 +9,9 @@ export { PAGE_WIDTH, renderPages } from './render.ts';
 /** The service half over HTTP; the bearer token is the service's shared secret. */
 export function createIngestService(url: string, token: string, doFetch: typeof fetch = fetch): IngestService {
   const call = async (path: string, init: RequestInit = {}) => {
-    const res = await doFetch(`${url.replace(/\/+$/, '')}${path}`, { ...init, headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' } });
+    const res = await doFetch(`${url.replace(/\/+$/, '')}${path}`, { ...init, headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' } }).catch((err: Error) => {
+      throw new Error(`${UNREACHABLE}: ${err.message}`);
+    });
     if (!res.ok) {
       const why = ((await res.json().catch(() => null)) as { error?: string } | null)?.error;
       throw new Error(`remarkable service: ${init.method ?? 'GET'} ${path} returned ${res.status}${why ? `: ${why}` : ''}`);

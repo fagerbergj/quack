@@ -194,6 +194,12 @@ test('a failed export fails the render step naming the document and the upstream
   assert.match(r.outcomes[0].status === 'failed' ? r.outcomes[0].error.message : '', /^rmfakecloud could not export Notes: .*returned 502: rmfakecloud GET .*status 500/);
 });
 
+test('an unreachable service fails the render step as such, not as an rmfakecloud fault', async () => {
+  const down = createIngestService('http://unreachable.test', 't', async () => { throw new TypeError('fetch failed'); });
+  const r = await ingest({ ...fakeService(), pdf: down.pdf }, { type: 'meeting', topic: NONE });
+  assert.match(r.outcomes[0].status === 'failed' ? r.outcomes[0].error.message : '', /^the reMarkable service is unreachable: fetch failed/);
+});
+
 test('the service serves the PDF and keeps the topic list, and the ingest client reads both', async () => {
   const service = createRemarkableService({ serviceToken: 't', dbPath: ':memory:', distributorUrl: 'http://unused', agent: 'a', client: { tree: async () => [], documents: async () => [], downloadPdf: async (id) => { if (id !== 'n 1') throw new Error('rmfakecloud GET /x: response is not a PDF'); return Buffer.from(pdf(1)); } } });
   await new Promise<void>((r) => service.listen(0, r));
