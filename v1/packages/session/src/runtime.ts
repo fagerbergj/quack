@@ -38,8 +38,11 @@ function formatDate(d: Date, timeZone: string): string {
 export type Dispatch = (session: { harness: Harness; root: Conversation }, input: string, requestId: string | undefined, wait: boolean) => Promise<SubmitResult>;
 export type DispatchingExtension = Extension & { dispatch?: Dispatch };
 
+// pi-durable's default (3 retries from 2s) gives up inside 15s; this rides out a model host that is down for about 5 minutes.
+export const MODEL_RETRY = { enabled: true, maxRetries: 9, baseDelayMs: 2000, maxAgentDelayMs: 60_000 };
+
 // One process owns one session: its SQLite log is the only source of truth (A1, A6).
-export async function openSession(opts: { dir: string; models: MutableModels; agent: AgentSpec; timeZone?: string; now?: () => Date }) {
+export async function openSession(opts: { dir: string; models: MutableModels; agent: AgentSpec; timeZone?: string; now?: () => Date; retry?: Partial<typeof MODEL_RETRY> }) {
   const registry = createRegistry();
   registry.install(clockExtension(opts.timeZone ?? 'America/New_York', opts.now ?? (() => new Date())));
   for (const ext of opts.agent.extensions ?? []) registry.install(ext);
@@ -48,7 +51,13 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
   const workspace = join(opts.dir, 'workspace');
   await mkdir(workspace, { recursive: true });
   const env = ({ cwd }: { cwd?: string }) => new NodeExecutionEnv({ cwd: cwd ?? workspace });
-  const harness = await Harness.open(storage, { models: opts.models, registry, env }, ctx);
+  const harness = await Harness.open(storage, {
+    models: opts.models,
+    registry,
+    env,
+    // A failed run starts the inputs queued behind it instead of leaving them queued with nothing to run them.
+    settings: { retry: { ...MODEL_RETRY, ...opts.retry }, afterFailedRun: 'continue' },
+  }, ctx);
   const agent = { model: opts.agent.model, instructions: opts.agent.instructions };
   const root = await harness.root(ctx, { agent });
   // A session reopened under a newer definition takes its model and instructions; its history stays.
@@ -70,7 +79,11 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
     harness,
     workspace,
     root,
-    busy: () => harness.wake().active,
+    // A retry backoff is a sleeping task: not active, but `at` is set; /ping must report it busy or the idle sweep stops the session mid-retry.
+    busy: () => {
+      const wake = harness.wake();
+      return wake.active || wake.at !== undefined;
+    },
     async submit(input: string, requestId?: string, wait = false, whenBusy?: 'steer' | 'followUp'): Promise<SubmitResult> {
       if (dispatch) return dispatch({ harness, root }, input, requestId, wait);
       const submission = await root.submit({ type: 'input', content: input, requestId, whenBusy }, ctx);
