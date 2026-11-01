@@ -8,7 +8,7 @@ const parse = <C>(artifact: string) => JSON.parse(artifact) as C;
 const same = (a: number | null, b: number | null) => a === b || (a !== null && b !== null && Math.abs(a - b) < 0.005);
 
 // A preview that names a projection or a chance is the week-8 failure (#1816); the playoff line comes from the standings table only.
-const PROJECTION = /\bprojected (?:points?|total|score|winner|loser|to (?:win|lose|beat)|\d)|\bprojections?\b|win probabilit|\bodds\b|chances? (?:to|of) (?:win|make)|\d\s?% (?:chance|probab)/i;
+const PROJECTION = /\bprojected (?:points?|total|score|winner|loser|to (?:win|lose|beat)|\d)|\bprojections?\b|\bprobabilit|\bodds\b|chances? (?:to|of) (?:win|mak)|\d\s?% (?:chance|probab)/i;
 
 function everyGameCovered(artifact: string, ev: Evidence): CodeResult {
   const have = new Set(parse<DigestCard>(artifact).games.map((g) => g.id));

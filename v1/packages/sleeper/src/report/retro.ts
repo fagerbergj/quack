@@ -13,7 +13,7 @@ type Signalled = NewsItem & { player: string };
 /** `before` is the instant a signal must precede: the player's kickoff, or the waiver run for a waiver miss. */
 export type Miss = { slot: string; started: Scored; better: Scored; swing: number; before: string; news: Signalled[] };
 export type WaiverMiss = { player: Scored & { team: string | null }; over: { slot: string; name: string; pts: number }; before: string; news: Signalled[] };
-export type RetroFacts = { league: string; week: number; team: string; opponent: string | null; started: number; opp: number | null; won: boolean; best: number; left: number; misses: Miss[]; waiverMisses: WaiverMiss[] };
+export type RetroFacts = { league: string; week: number; team: string; opponent: string | null; bye: boolean; started: number; opp: number | null; won: boolean; best: number; left: number; misses: Miss[]; waiverMisses: WaiverMiss[] };
 
 type Slot = { slot: string; id: string | null; pts: number };
 
@@ -54,7 +54,8 @@ export async function buildRetroFacts(deps: FactsDeps, snap: Json, input: Lineup
   const [matchups, dump, scores, stats] = await Promise.all([client.matchups(input.league, input.week), client.players(), client.scores(league.season, input.week), client.stats(league.season, input.week)]);
   const mine = matchups.find((m: Json) => m.roster_id === roster.roster_id);
   if (!mine) throw new Error(`sleeper: no week ${input.week} matchup for roster ${roster.roster_id}`);
-  const theirs = matchups.find((m: Json) => m.matchup_id === mine.matchup_id && m.roster_id !== mine.roster_id);
+  // A bye has a null matchup_id, which would otherwise match another team on bye.
+  const theirs = mine.matchup_id == null ? null : matchups.find((m: Json) => m.matchup_id === mine.matchup_id && m.roster_id !== mine.roster_id);
   const key = ptsKey(league.scoring_settings?.rec);
   const slotNames = numberSlots(lineupSlots(league.roster_positions));
   const pts: Record<string, number> = mine.players_points ?? {};
@@ -67,6 +68,7 @@ export async function buildRetroFacts(deps: FactsDeps, snap: Json, input: Lineup
   const best = round2(bestIds.reduce((n, id) => n + (pts[id] ?? 0), 0));
 
   const kick = kickoffs(schedule, scores, input.week);
+  if (!kick.size) throw new Error(`sleeper: week ${input.week} has no kickoff to date the retro's signals against`);
   const first = Math.min(...kick.values());
   const waiverRun = lastProcessing(league.settings, first) ?? first;
   const search = async (before: number, ...players: Scored[]): Promise<Signalled[]> => {
@@ -86,7 +88,7 @@ export async function buildRetroFacts(deps: FactsDeps, snap: Json, input: Lineup
     before: new Date(waiverRun).toISOString(),
     news: await search(waiverRun, h),
   })));
-  return { league: input.league, week: input.week, team: teamNames(users, rosters).get(roster.roster_id)!, opponent: theirs ? (teamNames(users, rosters).get(theirs.roster_id) ?? null) : null, started: round2(mine.points ?? 0), opp: theirs ? round2(theirs.points ?? 0) : null, won: !!theirs && mine.points > theirs.points, best, left: round2(best - (mine.points ?? 0)), misses, waiverMisses };
+  return { league: input.league, week: input.week, team: teamNames(users, rosters).get(roster.roster_id)!, opponent: theirs ? (teamNames(users, rosters).get(theirs.roster_id) ?? null) : null, bye: mine.matchup_id == null, started: round2(mine.points ?? 0), opp: theirs ? round2(theirs.points ?? 0) : null, won: !!theirs && mine.points > theirs.points, best, left: round2(best - (mine.points ?? 0)), misses, waiverMisses };
 }
 
 export type RetroCard = {
@@ -95,6 +97,7 @@ export type RetroCard = {
   week: number;
   team: string;
   opponent: string | null;
+  bye: boolean;
   started: number;
   opp: number | null;
   won: boolean;
@@ -127,7 +130,7 @@ export function buildRetroCard(f: RetroFacts, d: RetroDecision): RetroCard {
   const m = judged(f.misses, d.misses, 'miss');
   const w = judged(f.waiverMisses, d.waiverMisses, 'waiver miss');
   return {
-    kind: 'retro', league: f.league, week: f.week, team: f.team, opponent: f.opponent, started: f.started, opp: f.opp, won: f.won, best: f.best, left: f.left,
+    kind: 'retro', league: f.league, week: f.week, team: f.team, opponent: f.opponent, bye: f.bye, started: f.started, opp: f.opp, won: f.won, best: f.best, left: f.left,
     misses: f.misses.map((x, i) => ({ slot: x.slot, started: { name: x.started.name, pts: x.started.pts }, better: { name: x.better.name, pts: x.better.pts }, swing: x.swing, ...m[i] })),
     waiver_misses: f.waiverMisses.map((x, i) => ({ name: x.player.name, pos: x.player.pos, pts: x.player.pts, over_name: x.over.name, over_pts: x.over.pts, ...w[i] })),
     lessons: d.lessons.slice(0, 3),

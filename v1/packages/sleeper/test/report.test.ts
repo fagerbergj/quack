@@ -18,6 +18,7 @@ import {
 } from '../src/index.ts';
 import type { DigestDecision } from '../src/report/digest.ts';
 import type { RetroDecision } from '../src/report/retro.ts';
+import { retroPrompt } from '../src/report/workflow.ts';
 
 const fixtures = JSON.parse(readFileSync(new URL('./fixtures/report.json', import.meta.url), 'utf8')) as Record<string, any>;
 const AT = Date.parse('2026-11-10T09:00:00Z');
@@ -119,7 +120,7 @@ test('every_game_covered, numbers_match_tools and no_projection_source each fail
   assert.match((await digestGate('numbers_match_tools', f, wrongScore)).detail!, /Mallard Mayhem v teal/);
   const wrongTop = { ...card, games: card.games.map((g, i) => (i ? g : { ...g, away: { ...g.away, top_scorers: [{ name: 'Tara Teal', pts: 39 }] } })) };
   assert.ok((await digestGate('numbers_match_tools', f, wrongTop)).met < 1);
-  for (const text of ['Mallard is projected to win.', 'Teal is the projected winner.', 'Their projected points favor Mallard.', 'Per the projections Mallard wins.', 'Teal has a 70% chance to win.', 'Their win probability is high.', 'The odds favor Pintail.']) {
+  for (const text of ['Mallard is projected to win.', 'Teal is the projected winner.', 'The chances of making the playoffs are thin.', 'Probability of making the playoffs is 61%.', 'Their projected points favor Mallard.', 'Per the projections Mallard wins.', 'Teal has a 70% chance to win.', 'Their win probability is high.', 'The odds favor Pintail.']) {
     const r = await digestGate('no_projection_source', f, { ...card, summary: text });
     assert.equal(r.met, 0, text);
   }
@@ -363,4 +364,31 @@ test('a retro that never sees the week final fails at the run\'s deadline with a
   });
   assert.equal(outcome.status, 'failed');
   assert.match(JSON.stringify(outcome), /week 9 was still in progress at this run's deadline/);
+});
+
+test('a retro for an owner on bye has no opponent and says so, even with another team on bye', async () => {
+  const bye = { ...fixtures, '/v1/league/L1/matchups/9': fixtures['/v1/league/L1/matchups/9'].map((m: any) => (m.roster_id <= 2 ? { ...m, matchup_id: null } : m)) };
+  const f = await retroFacts(bye);
+  assert.deepEqual([f.bye, f.opponent, f.opp, f.won], [true, null, null, false]);
+  const prompt = retroPrompt(f);
+  assert.match(prompt, /retro for Mallard Mayhem: was on bye\./);
+  assert.doesNotMatch(prompt, /lost|against/);
+  const card = buildRetroCard(f, { misses: [], waiverMisses: [], lessons: [], summary: 's' });
+  assert.deepEqual([card.bye, card.opponent], [true, null]);
+  assert.equal((await retroGate('tool_figures_copied', f, card)).met, 1);
+  assert.match(retroPrompt(await retroFacts()), /started 43 against teal 40, won/);
+});
+
+test('a retro for a final week with no kickoff is refused loudly', async () => {
+  const none = { ...fixtures, '/scores/nfl/regular/2026/9': [] };
+  await assert.rejects(retroFacts(none), /week 9 has no kickoff to date the retro's signals against/);
+});
+
+test('the ready step names a week with no kickoff instead of inventing a deadline', async () => {
+  for (const rows of [[], fixtures['/scores/nfl/regular/2026/9'].map((r: any) => ({ ...r, start_time: 0 }))]) {
+    const fx = { ...IN_PROGRESS, '/scores/nfl/regular/2026/9': rows };
+    const outcome = await withSession(retroWorkflow, {}, undefined, { fx, now: () => MONDAY_NIGHT }, (s, workflow) => runWorkflow(s.harness, s.root, workflow, JSON.stringify(RECAP)));
+    assert.equal(outcome.status, 'failed');
+    assert.match(JSON.stringify(outcome), /week 9 has no kickoff, so the run cannot wait/);
+  }
 });

@@ -53,7 +53,9 @@ function reportWorkflow<F, D>(deps: ReportDeps, spec: Spec<F, D>) {
           const phase = weekPhase(schedule, i.week, state.week);
           if (spec.ready(phase)) return { phase };
           const now = deps.now ? deps.now() : c.api.now();
-          const give = Math.max(...scores.map((s: any) => s.start_time as number)) + RECAP_LAG_MS + RECAP_STALE_MS;
+          const starts = scores.map((s: any) => s.start_time as number).filter((t: number) => t > 0);
+          if (!starts.length) throw new Error(`sleeper: week ${i.week} has no kickoff, so the run cannot wait for it to be final`);
+          const give = Math.max(...starts) + RECAP_LAG_MS + RECAP_STALE_MS;
           if (now >= give) throw new Error(`sleeper: week ${i.week} was still ${phase === 'live' ? 'in progress' : 'not final'} at this run's deadline`);
           return new Wait(Math.min(now + RECHECK_MS, give));
         },
@@ -123,11 +125,11 @@ const digestSchema = Type.Object({
 
 const retroLine = (i: number, text: string, news: Array<NewsItem & { player: string }>, before: string) => `${i}. ${text}\n   signals must be dated before ${before.slice(0, 16)}Z:${news.length ? links(news) : ' none found'}`;
 
-function retroPrompt(f: RetroFacts): string {
+export function retroPrompt(f: RetroFacts): string {
   const misses = f.misses.map((m, i) => retroLine(i, `${m.slot}: started ${m.started.name} ${m.started.pts}, ${m.better.name} (${m.better.pos}) scored ${m.better.pts}, swing ${m.swing}`, m.news, m.before));
   const waiver = f.waiverMisses.map((w, i) => retroLine(i, `${w.player.name} (${w.player.pos}) scored ${w.player.pts} on the wire, over ${w.over.name} ${w.over.pts} at ${w.over.slot}`, w.news, w.before));
   return [
-    `Week ${f.week} retro for ${f.team}: started ${f.started}${f.opp === null ? '' : ` against ${f.opponent} ${f.opp}`}, ${f.won ? 'won' : 'lost'}. The best legal lineup scored ${f.best}, ${f.left} left on the bench.`,
+    `Week ${f.week} retro for ${f.team}: ${f.bye ? 'was on bye' : `started ${f.started}${f.opp === null ? '' : ` against ${f.opponent} ${f.opp}`}, ${f.won ? 'won' : 'lost'}`}. The best legal lineup scored ${f.best}, ${f.left} left on the bench.`,
     `Lineup misses:\n${misses.join('\n') || 'none'}`,
     `Waiver misses:\n${waiver.join('\n') || 'none'}`,
     'For each row give its index and a one-sentence `why`. Mark `knowable` true only when you cite one of the linked items above as `signalUrl` that pointed the other way before the cutoff; a designation restated, or no link, means knowable false, which is variance and never the manager\'s fault. Give at most three lessons, each something to do next week, and a summary naming the single biggest swing.',
