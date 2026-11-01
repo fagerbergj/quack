@@ -15,7 +15,14 @@ export type ServiceConfig = {
 
 /** Throws unless the distributor lists `agent` as promoted; the unattended trigger must not start on a draft. */
 export async function assertPromoted(distributorUrl: string, agent: string): Promise<void> {
-  const { agents } = (await (await fetch(`${distributorUrl}/agents`)).json()) as { agents: Array<{ name: string; status: string }> };
+  let agents: Array<{ name: string; status: string }>;
+  try {
+    const res = await fetch(`${distributorUrl}/agents`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    agents = ((await res.json()) as { agents: typeof agents }).agents;
+  } catch (err) {
+    throw new Error(`cannot verify agent promotion: distributor at ${distributorUrl} unreachable or unhealthy (${String(err)})`);
+  }
   const found = agents.find((a) => a.name === agent);
   if (!found) throw new Error(`agent ${agent} is not registered with the distributor`);
   if (found.status !== 'promoted') throw new Error(`agent ${agent} is ${found.status}; only a promoted agent can back the unattended GitHub trigger`);

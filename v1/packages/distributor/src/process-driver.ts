@@ -131,6 +131,7 @@ export function processDriver(opts: { command: string[]; dataDir: string; agents
     const snapshotDir = join(dir, SNAPSHOT);
     const recorded = await readText(join(dir, 'agent'));
     if (recorded !== undefined && requested && requested !== recorded) throw new AgentError(409, `session runs agent ${recorded}, not ${requested}`);
+    // A recorded session with no snapshot (pre-upgrade, or a lost copy) deliberately re-pins to the current definition once.
     if (recorded !== undefined && (await stat(snapshotDir).catch(() => null))) return { name: recorded, path: join(snapshotDir, 'agent.json') };
     const fallback = await defaultName();
     const name = recorded ?? requested ?? fallback;

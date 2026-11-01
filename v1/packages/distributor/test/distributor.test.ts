@@ -258,3 +258,11 @@ test('promoting a version does not fork it, but any other edit without a bump do
   await writeFile(file, JSON.stringify({ ...def, status: 'promoted', maxTurns: 5 }));
   assert.equal((await invoke('github:p#3', { input: 'hi', wait: true }, 'reviewer')).status, 409);
 });
+
+test('GET /agents reports a promoted agent as promoted', async () => {
+  const dir = await agentsDirAt(3, 'reviewer');
+  await writeFile(join(dir, 'reviewer', 'agent.json'), JSON.stringify({ name: 'reviewer', version: 3, status: 'promoted', prompt: 'prompt.md' }));
+  const { base } = await startDistributor(60_000, { agentsDir: dir, defaultAgent: '' });
+  const { agents } = (await (await fetch(`${base}/agents`)).json()) as { agents: unknown[] };
+  assert.deepEqual(agents, [{ name: 'reviewer', version: 3, status: 'promoted' }]);
+});

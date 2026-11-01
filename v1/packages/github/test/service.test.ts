@@ -136,4 +136,5 @@ test('only a promoted agent can back the unattended trigger', async () => {
   await assertPromoted(distributor, 'reviewer');
   await assert.rejects(assertPromoted(distributor, 'researcher'), /researcher is draft/);
   await assert.rejects(assertPromoted(distributor, 'ghost'), /not registered/);
+  await assert.rejects(assertPromoted('http://127.0.0.1:1', 'reviewer'), /cannot verify agent promotion/);
 });
