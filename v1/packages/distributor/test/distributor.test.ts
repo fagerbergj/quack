@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createServer as createHttpServer } from 'node:http';
 import { connect, type AddressInfo } from 'node:net';
 import { cp, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -130,7 +131,7 @@ test('proxies the live stream and keeps a watched session from idling out', asyn
 });
 
 test('a viewer whose session cannot start is disconnected, and the distributor keeps serving', async () => {
-  const broken = { agents: async () => [], sessions: async () => [], ensure: async () => { throw new Error('no capacity'); }, stop: async () => {}, running: () => [], pid: () => undefined };
+  const broken = { agents: async () => [], sessions: async () => [], ensure: async () => { throw new Error('no capacity'); }, stop: async () => {}, setWake: async () => {}, wakes: async () => [], running: () => [], pid: () => undefined };
   const server = createDistributor(broken, { idleMs: 60_000 }).listen(0);
   await new Promise((r) => server.once('listening', r));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -279,4 +280,132 @@ test('GET /agents reports a promoted agent as promoted', async () => {
   const { base } = await startDistributor(60_000, { agentsDir: dir, defaultAgent: '' });
   const { agents } = (await (await fetch(`${base}/agents`)).json()) as { agents: unknown[] };
   assert.deepEqual(agents, [{ name: 'reviewer', version: 3, status: 'promoted' }]);
+});
+
+// A driver with no processes: sessions are stub /ping servers, so sleep and wake run on a fake clock.
+async function fakeFleet(ping: (now: number) => unknown) {
+  let clock = 1_000_000;
+  const stub = createHttpServer((_req, res) => res.end(JSON.stringify(ping(clock)))).listen(0);
+  await new Promise((r) => stub.once('listening', r));
+  servers.push(() => new Promise((r) => stub.close(() => r())));
+  const url = `http://127.0.0.1:${(stub.address() as AddressInfo).port}`;
+  const wakes = new Map<string, number>();
+  const running = new Set<string>();
+  const log: string[] = [];
+  const driver = {
+    agents: async () => [], sessions: async () => [], pid: () => undefined,
+    ensure: async (key: string) => { if (!running.has(key)) log.push(`start ${key}`); running.add(key); return url; },
+    stop: async (key: string) => { running.delete(key); log.push(`stop ${key}`); },
+    setWake: async (key: string, at: number | undefined) => { if (at === undefined) wakes.delete(key); else wakes.set(key, at); },
+    wakes: async () => [...wakes].map(([key, at]) => ({ key, at })),
+    running: () => [...running],
+  };
+  const timers: Array<{ at: number; fn: () => void; live: boolean }> = [];
+  const setTimer = (fn: () => void, ms: number) => {
+    const t = { at: clock + ms, fn, live: true };
+    timers.push(t);
+    return () => { t.live = false; };
+  };
+  const advance = (ms: number) => {
+    const end = clock + ms;
+    for (;;) {
+      const next = timers.filter((t) => t.live && t.at <= end).sort((a, b) => a.at - b.at)[0];
+      if (!next) break;
+      next.live = false;
+      clock = next.at;
+      next.fn();
+    }
+    clock = end;
+  };
+  const start = () => {
+    const server = createDistributor(driver, { idleMs: 600_000, now: () => clock, setTimer });
+    servers.push(() => new Promise((r) => server.close(() => r())));
+    return server;
+  };
+  return { driver, wakes, log, advance, start, now: () => clock };
+}
+
+const HOUR = 3_600_000;
+
+test('a session sleeping an hour is stopped by the sweep and restarted at its wake time', async () => {
+  const wakeAt = 1_000_000 + HOUR;
+  const fleet = await fakeFleet(() => ({ status: 'Healthy', waitingOnHuman: false, wake: { at: wakeAt } }));
+  const server = fleet.start().listen(0);
+  await new Promise((r) => server.once('listening', r));
+  await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/sessions/research%3Anap/ping`);
+  fleet.log.length = 0;
+
+  fleet.advance(300_000);
+  await server.sweep();
+  assert.deepEqual(fleet.log, [], 'not idle yet');
+
+  fleet.advance(300_000);
+  await server.sweep();
+  assert.deepEqual(fleet.log, ['stop research:nap']);
+  assert.equal(fleet.wakes.get('research:nap'), wakeAt, 'the wake time is recorded for a restarted distributor');
+
+  fleet.advance(wakeAt - fleet.now() - 1);
+  await server.sweep();
+  assert.deepEqual(fleet.log, ['stop research:nap'], 'not before the wake time');
+  fleet.advance(1);
+  await server.sweep();
+  assert.deepEqual(fleet.log, ['stop research:nap', 'start research:nap']);
+  assert.equal(fleet.wakes.has('research:nap'), false, 'the record is cleared once woken');
+});
+
+test('a restarted distributor rebuilds wake timers from the recorded times', async () => {
+  const fleet = await fakeFleet(() => ({ status: 'Healthy', wake: {} }));
+  fleet.wakes.set('research:nap', fleet.now() + HOUR);
+  const server = fleet.start();
+  await server.sweep();
+  fleet.advance(HOUR);
+  await server.sweep();
+  assert.deepEqual(fleet.log, ['start research:nap']);
+});
+
+test('active work is never stopped', async () => {
+  const fleet = await fakeFleet(() => ({ status: 'HealthyBusy', waitingOnHuman: false, wake: {} }));
+  const server = fleet.start();
+  await fleet.driver.ensure('research:busy');
+  fleet.advance(2 * HOUR);
+  await server.sweep();
+  assert.deepEqual(fleet.driver.running(), ['research:busy']);
+});
+
+test('a session waiting on a human verdict is stopped, and the verdict restarts it so the gated tool runs', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'quack-dist-'));
+  dirs.push(dataDir);
+  const key = 'github:a#9';
+  const driver = processDriver({ command: [process.execPath, fileURLToPath(new URL('./fixtures/gate-session.ts', import.meta.url))], dataDir, defaultAgent: '' });
+  let clock = 1_000_000;
+  const server = createDistributor(driver, { idleMs: 60_000, now: () => clock, setTimer: () => () => {} }).listen(0);
+  await new Promise((r) => server.once('listening', r));
+  servers.push(async () => {
+    await server.drain();
+    await new Promise((r) => server.close(r));
+  });
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/sessions/${encodeURIComponent(key)}`;
+  const get = (path: string) => fetch(base + path).then((r) => r.json());
+  const poll = async <T>(probe: () => Promise<T | undefined>) => {
+    for (const deadline = Date.now() + 15_000; Date.now() < deadline; await new Promise((r) => setTimeout(r, 20))) {
+      const v = await probe();
+      if (v !== undefined) return v;
+    }
+    throw new Error('timed out');
+  };
+
+  await fetch(`${base}/invocations`, { method: 'POST', body: JSON.stringify({ input: 'review', requestId: 'r-1' }) });
+  const [pending] = await poll(async () => { const { approvals } = await get('/approvals'); return approvals.length ? approvals : undefined; });
+  await poll(async () => ((await get('/ping')).waitingOnHuman ? true : undefined));
+
+  clock += 120_000;
+  await server.sweep();
+  assert.equal(driver.pid(key), undefined, 'a session waiting on a person is stopped');
+
+  const verdict = await fetch(`${base}/approvals/${pending.id}`, { method: 'POST', body: JSON.stringify({ decision: 'approve', by: 'jf' }) });
+  assert.equal(verdict.status, 200);
+  assert.notEqual(driver.pid(key), undefined, 'the verdict restarted the session');
+  const done = await fetch(`${base}/invocations`, { method: 'POST', body: JSON.stringify({ input: 'review', requestId: 'r-1', wait: true }) }).then((r) => r.json());
+  assert.equal(done.answer, 'Posted the review.');
+  assert.equal(await readFile(join(dataDir, sessionDirName(key), 'posted'), 'utf8'), 'x', 'the gated tool ran once');
 });
