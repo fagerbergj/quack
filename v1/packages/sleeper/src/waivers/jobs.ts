@@ -7,6 +7,7 @@ import type { ScheduleConfig } from '../schedules.ts';
 export const WAIVERS_AGENT = 'sleeper-waivers';
 /** How long before processing the scheduled run starts, so the owner can still act on it. */
 const LEAD_MS = 12 * 60 * 60_000;
+const LATE_MS = 60_000;
 
 /** Reruns within a week continue one session. */
 export const waiversKey = (league: string, week: number) => `sleeper:${league}:${week}:waivers`;
@@ -48,11 +49,20 @@ export function waiversRun(now: number, settings: WaiverSettings | undefined) {
   const processing = settings && nextProcessing(now, settings);
   if (!processing) return null;
   const deadline = processing - MARGIN_MS;
-  // A late registration still fires, before the deadline.
-  return deadline > now ? { at: Math.max(processing - LEAD_MS, now), deadline, processing } : null;
+  // A late registration still fires before the deadline; the service ignores occurrences at or before its own creation time, so start a minute out.
+  const at = Math.max(processing - LEAD_MS, now + LATE_MS);
+  return at < deadline ? { start: processing - LEAD_MS, at, deadline, processing } : null;
 }
 
 const inputOf = (i: LineupInput) => JSON.stringify(i);
+
+/** The schedules service keeps fired occurrences, and a late re-registration would otherwise start another run for the same processing. */
+async function firedSince(config: ScheduleConfig, id: string, start: number): Promise<boolean> {
+  const res = await (config.fetch ?? fetch)(`${config.url}/schedules`, { headers: { authorization: `Bearer ${config.token}` } });
+  if (!res.ok) throw new Error(`schedules: listing returned ${res.status}`);
+  const entry = ((await res.json()) as { schedules: Array<{ id: string; lastRun: string | null }> }).schedules.find((x) => x.id === id);
+  return !!entry?.lastRun && Date.parse(entry.lastRun) >= start;
+}
 
 /** Registers the next waiver run with the schedules service; re-registering an id replaces it, so it is safe to repeat. */
 export async function registerWaiversSchedules(config: ScheduleConfig, client: SleeperClient, league: string, owner: string, now: () => number = Date.now): Promise<string[]> {
@@ -62,8 +72,9 @@ export async function registerWaiversSchedules(config: ScheduleConfig, client: S
   const run = waiversRun(now(), settings);
   if (settings?.daily_waivers === 1 && !validMask(settings.daily_waivers_days)) console.error(`sleeper: league ${league} has daily waivers with daily_waivers_days ${JSON.stringify(settings.daily_waivers_days)}, which is not understood; no waivers run is scheduled`);
   if (!run) return [];
-  // Keyed by the processing date, not the week, so a re-registration after the NFL week turns replaces the entry rather than adding a stale one.
-  const id = `sleeper/waivers/${league}/${etDate(run.processing, PT)}`;
+  // One pending run per league: re-registering replaces its time and input, even after the processing day or the NFL week changes.
+  const id = `sleeper/waivers/${league}`;
+  if (await firedSince(config, id, run.start)) return [];
   const res = await (config.fetch ?? fetch)(`${config.url}/schedules`, {
     method: 'POST',
     headers: { authorization: `Bearer ${config.token}` },

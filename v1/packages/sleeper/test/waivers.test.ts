@@ -265,7 +265,7 @@ test('the run starts 12 hours before processing and is due an hour ahead of it; 
   assert.equal(waiversRun(AT, { daily_waivers: 1, daily_waivers_hour: 20, daily_waivers_days: 1111111 }), null);
   // Registered late, the run starts now and still ends before the deadline.
   const late = waiversRun(Date.parse('2026-11-11T02:00:00Z'), REAL)!;
-  assert.deepEqual([new Date(late.at).toISOString(), new Date(late.deadline).toISOString()], ['2026-11-11T02:00:00.000Z', '2026-11-11T07:00:00.000Z']);
+  assert.deepEqual([new Date(late.at).toISOString(), new Date(late.deadline).toISOString()], ['2026-11-11T02:01:00.000Z', '2026-11-11T07:00:00.000Z']);
   assert.equal(waiversRun(AT, undefined), null);
   assert.equal(waiversKey('L1', 9), 'sleeper:L1:9:waivers');
 });
@@ -278,10 +278,10 @@ test('the schedules service lists the waivers run with its session key and deadl
     const now = () => AT;
     await registerWaiversSchedules({ url, token: 's' }, clientOf(base), 'L1', 'mallard', now);
     const ids = await registerWaiversSchedules({ url, token: 's' }, clientOf(base), 'L1', 'mallard', now);
-    assert.deepEqual(ids, ['sleeper/waivers/L1/2026-11-11']);
+    assert.deepEqual(ids, ['sleeper/waivers/L1']);
     const { schedules: listed } = await (await fetch(`${url}/schedules`, { headers: { authorization: 'Bearer s' } })).json();
     assert.equal(listed.length, 1);
-    assert.partialDeepStrictEqual(listed[0], { id: 'sleeper/waivers/L1/2026-11-11', agent: 'sleeper-waivers', times: ['2026-11-10T20:00:00.000Z'], deadline: '2026-11-11T07:00:00.000Z', sessionKey: 'sleeper:L1:9:waivers', input: JSON.stringify(INPUT) });
+    assert.partialDeepStrictEqual(listed[0], { id: 'sleeper/waivers/L1', agent: 'sleeper-waivers', times: ['2026-11-10T20:00:00.000Z'], deadline: '2026-11-11T07:00:00.000Z', sessionKey: 'sleeper:L1:9:waivers', input: JSON.stringify(INPUT) });
     const noDay = { ...base, '/v1/league/L1': { ...base['/v1/league/L1'], settings: { waiver_type: 0 } } };
     assert.deepEqual(await registerWaiversSchedules({ url, token: 's' }, clientOf(noDay), 'L1', 'mallard', now), []);
     const unknown = { ...base, '/v1/league/L1': { ...base['/v1/league/L1'], settings: { waiver_type: 0, daily_waivers: 1, daily_waivers_hour: 20, daily_waivers_days: 1152 } } };
@@ -321,18 +321,64 @@ test('the waivers job starts on demand under the week session key, beside the li
   }
 });
 
-test('re-registering after the NFL week rolls over leaves exactly one waivers entry, under the new week', async () => {
-  const schedules = createSchedulesService({ serviceToken: 's', distributorUrl: 'http://unused', dbPath: ':memory:' });
+async function withSchedules(run: (h: { url: string; list: () => Promise<any[]>; clock: { at: number }; fired: string[]; tick: () => Promise<void> }) => Promise<void>) {
+  const clock = { at: AT };
+  const fired: string[] = [];
+  const fake = (async (u: string) => (fired.push(decodeURIComponent(u)), new Response('{}'))) as unknown as typeof fetch;
+  const schedules = createSchedulesService({ serviceToken: 's', distributorUrl: 'http://d', dbPath: ':memory:', now: () => new Date(clock.at), fetch: fake });
   await new Promise<void>((r) => schedules.listen(0, r));
   const url = `http://127.0.0.1:${(schedules.address() as AddressInfo).port}`;
+  const list = async () => (await (await fetch(`${url}/schedules`, { headers: { authorization: 'Bearer s' } })).json()).schedules;
   try {
-    const week10 = { ...base, '/v1/state/nfl': { ...base['/v1/state/nfl'], week: 10 } };
-    await registerWaiversSchedules({ url, token: 's' }, clientOf(base), 'L1', 'mallard', () => AT);
-    await registerWaiversSchedules({ url, token: 's' }, clientOf(week10), 'L1', 'mallard', () => AT + 6 * 3_600_000);
-    const { schedules: listed } = await (await fetch(`${url}/schedules`, { headers: { authorization: 'Bearer s' } })).json();
-    assert.equal(listed.length, 1);
-    assert.equal(listed[0].sessionKey, 'sleeper:L1:10:waivers');
+    await run({ url, list, clock, fired, tick: () => schedules.tick() });
   } finally {
     schedules.stop();
   }
+}
+const register = (url: string, fixtures: Fixtures, at: number) => registerWaiversSchedules({ url, token: 's' }, clientOf(fixtures), 'L1', 'mallard', () => at);
+const withSettings = (fx: Fixtures, settings: object, week = 9): Fixtures => ({ ...fx, '/v1/state/nfl': { ...fx['/v1/state/nfl'], week }, '/v1/league/L1': { ...fx['/v1/league/L1'], settings: { ...fx['/v1/league/L1'].settings, ...settings } } });
+
+test('re-registering after the NFL week rolls over leaves exactly one waivers entry, with the new week and input', async () => {
+  await withSchedules(async ({ url, list }) => {
+    await register(url, base, AT);
+    await register(url, withSettings(base, {}, 10), AT + 6 * 3_600_000);
+    const listed = await list();
+    assert.equal(listed.length, 1);
+    assert.partialDeepStrictEqual(listed[0], { id: 'sleeper/waivers/L1', sessionKey: 'sleeper:L1:10:waivers', input: JSON.stringify({ ...INPUT, week: 10 }) });
+  });
+});
+
+test('a changed processing day (Wednesday to Friday) leaves exactly one entry, at the new time', async () => {
+  await withSchedules(async ({ url, list }) => {
+    await register(url, base, AT);
+    assert.deepEqual((await list())[0].times, ['2026-11-10T20:00:00.000Z']);
+    await register(url, withSettings(base, { waiver_day_of_week: 4 }), AT + 3_600_000);
+    const listed = await list();
+    assert.equal(listed.length, 1);
+    assert.deepEqual([listed[0].id, listed[0].times, listed[0].deadline], ['sleeper/waivers/L1', ['2026-11-12T20:00:00.000Z'], '2026-11-13T07:00:00.000Z']);
+  });
+});
+
+test('a run that already fired is not run again by a later registration, and the next week\'s run is still scheduled', async () => {
+  await withSchedules(async ({ url, list, clock, fired, tick }) => {
+    // Registered late, after the 12-hour lead began: the run starts a minute out.
+    clock.at = Date.parse('2026-11-10T21:00:00Z');
+    await register(url, base, clock.at);
+    clock.at += 2 * 60_000;
+    await tick();
+    assert.equal(fired.length, 1);
+    // The six-hourly re-registration before processing must not start it again.
+    clock.at = Date.parse('2026-11-11T03:00:00Z');
+    assert.deepEqual(await register(url, base, clock.at), []);
+    await tick();
+    assert.equal(fired.length, 1);
+    // After processing the entry moves on to the next week and fires there.
+    clock.at = Date.parse('2026-11-11T09:00:00Z');
+    assert.deepEqual(await register(url, withSettings(base, {}, 10), clock.at), ['sleeper/waivers/L1']);
+    assert.deepEqual((await list())[0].times, ['2026-11-17T20:00:00.000Z']);
+    clock.at = Date.parse('2026-11-17T21:00:00Z');
+    await tick();
+    assert.equal(fired.length, 2);
+    assert.match(fired[1], /sleeper:L1:10:waivers/);
+  });
 });
