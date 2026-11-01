@@ -46,7 +46,7 @@ export function createSleeperClient(config: ClientConfig = {}) {
     scores: (season: string, week: number) => get(`/scores/nfl/regular/${season}/${week}`, TTL.scores),
     players: () => get('/v1/players/nfl', TTL.players),
     trending: (type: 'add' | 'drop', hours: number, limit: number) => get(`/v1/players/nfl/trending/${type}?lookback_hours=${hours}&limit=${limit}`, TTL.trending),
-    stats: (season: string, week: number) => get(`/stats/nfl/regular/${season}/${week}`, TTL.stats),
+    stats: (season: string, week: number) => get(`/v1/stats/nfl/regular/${season}/${week}`, TTL.stats),
     research: (season: string, week: number) => get(`/players/nfl/research/regular/${season}/${week}`, TTL.research),
   };
 }

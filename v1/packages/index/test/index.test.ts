@@ -233,6 +233,63 @@ for (const { name, fresh: freshStore, skip } of backends) test(`${name}: a decis
   await session.close();
 });
 
+let boomFails = true;
+const boom = defineWorkflow({
+  name: 'boom',
+  steps: [
+    { name: 'facts', kind: 'code', run: () => { if (boomFails) throw new Error('sleeper: /v1/stats/nfl/regular/2026/7 not found'); return 'ok'; } },
+    { name: 'card', kind: 'code', run: () => 'sealed' },
+  ],
+});
+
+for (const { name, fresh: freshStore, skip } of backends) test(`${name}: a run that throws in a code step is readable and indexed with the error and step, and a successful re-run clears it`, { skip }, async () => {
+  const { store } = await freshStore();
+  const routes = indexRoutes(store, TOKEN);
+  const index = createServer(async (req, res) => { if (!(await routes(req, res))) res.writeHead(404).end(); });
+  const indexBase = `http://127.0.0.1:${await listen(index)}`;
+  cleanups.push(() => new Promise((r) => index.close(r)));
+  const dataDir = await mkdtemp(join(tmpdir(), 'quack-boom-'));
+  cleanups.push(() => rm(dataDir, { recursive: true, force: true }));
+  const dir = join(dataDir, 'abc');
+  await mkdir(dir);
+  await writeFile(join(dir, 'session-key'), 'sleeper:L:8:history');
+  const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const m = faux.getModel();
+  const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: workflowSessionExtensions({ workflow: 'boom' }, { boom }) } });
+  const publisher = await startPublisher(session, { url: indexBase, token: TOKEN, meta: { key: 'sleeper:L:8:history', agent: 'sleeper-history', version: 1 }, pollMs: 20 });
+  const server = createSessionServer(session, sessionDecisions(session)).listen(0);
+  await new Promise((r) => server.once('listening', r));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const expected = { step: 'facts', error: 'sleeper: /v1/stats/nfl/regular/2026/7 not found' };
+  const sessionFailures = async () => ((await (await fetch(`${base}/failures`)).json()) as { failures: unknown[] }).failures;
+  const indexed = async () => ((await (await fetch(`${indexBase}/index/failures`)).json()) as { failures: Array<Record<string, unknown>> }).failures;
+  const run = (requestId: string) => fetch(`${base}/invocations`, { method: 'POST', body: JSON.stringify({ input: 'go', requestId }) });
+
+  assert.deepEqual(await sessionFailures(), []);
+  boomFails = true;
+  await run('r1');
+  assert.deepEqual(await until(async () => { const f = await sessionFailures(); return f.length ? f : undefined; }), [expected]);
+  assert.deepEqual((await until(async () => { const f = await indexed(); return f.length ? f : undefined; })).map((f) => [f.session, f.step, f.error]), [['sleeper:L:8:history', expected.step, expected.error]]);
+  const blank = ((await (await fetch(`${indexBase}/index/failures?state=`)).json()) as { failures: unknown[] }).failures;
+  assert.equal(blank.length, 1, 'an empty state filter shows the default view, not nothing');
+
+  boomFails = false;
+  await run('r2');
+  await until(async () => ((await sessionFailures()).length ? undefined : true));
+  await until(async () => { await publisher.flush(); return (await indexed()).length ? undefined : true; });
+  assert.deepEqual(await indexed(), []);
+
+  await publisher.stop();
+  await new Promise((r) => server.close(r));
+  await session.close();
+  const rows = async (s: IndexStore) => (await s.facts(['failure'])).sort((x, y) => x.id.localeCompare(y.id));
+  const fresh = await freshStore();
+  await rebuild(fresh.store, dataDir);
+  assert.deepEqual(await rows(fresh.store), await rows(store), 'replaying the log reproduces the failure rows');
+});
+
 test('a workflow aborted while it waits closes its question: not pending, indexed closed, and an answer is refused', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'quack-abort-'));
   cleanups.push(() => rm(dir, { recursive: true, force: true }));

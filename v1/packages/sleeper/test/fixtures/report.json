@@ -572,7 +572,7 @@
    }
   }
  ],
- "/stats/nfl/regular/2026/9": {
+ "/v1/stats/nfl/regular/2026/9": {
   "p9": {
    "pts_ppr": 16
   },

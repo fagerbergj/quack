@@ -4,7 +4,7 @@ import { WorkflowDoc, type StepRecord } from '@quack/workflows';
 import { Approvals, Artifacts, type Approval, type SealedArtifact } from '@quack/sdk';
 
 /** One thing the index records about a session. `rev` only grows, so an older copy never overwrites a newer one. */
-export type Fact = { id: string; kind: 'session' | 'artifact' | 'approval' | 'decision' | 'cost' | 'status'; rev: number; at: number; data: JsonObject };
+export type Fact = { id: string; kind: 'session' | 'artifact' | 'approval' | 'decision' | 'failure' | 'cost' | 'status'; rev: number; at: number; data: JsonObject };
 export type SessionMeta = { key: string; agent: string; version: number | null };
 
 type OutboxDoc = { acked: Record<string, number>; status: { state: 'idle' | 'running'; seq: number; at: number } };
@@ -43,6 +43,14 @@ function decisionFacts(steps: Readonly<StepRecord[]> | undefined): Fact[] {
   });
 }
 
+// Every step of the current run is a row, and the run's task id orders the revisions, so a later run supersedes an earlier run's failure.
+function failureFacts(steps: Readonly<StepRecord[]> | undefined, task: string | null | undefined): Fact[] {
+  return (steps ?? []).map((s): Fact => {
+    const failed = s.status === 'failed' && s.error !== null;
+    return { id: `failure:${s.name}`, kind: 'failure', rev: Number(task ?? 0) * 2 + (failed ? 2 : 1), at: (s.startedAt ?? 0) + (s.durationMs ?? 0), data: { step: s.name, error: failed ? s.error! : '', state: failed ? 'failed' : 'cleared' } };
+  });
+}
+
 function costFact(usage: Readonly<UsageState>, now: number): Fact[] {
   const total = [...Object.values(usage.models), ...Object.values(usage.tools)].reduce((sum, u) => sum + ((u as { cost?: { total?: number } }).cost?.total ?? 0), 0);
   // Micro-dollars as the revision: it moves only when the spend does, so an idle session sends nothing.
@@ -57,7 +65,7 @@ export async function collectFacts(harness: Harness, root: Conversation, meta: S
   const status = outbox?.status;
   return [
     { id: 'session', kind: 'session', rev: 1, at: 0, data: { agent: meta.agent, version: meta.version } },
-    ...artifactFacts(artifacts), ...approvalFacts(approvals), ...decisionFacts(workflow?.steps), ...costFact(await harness.usage(ctx), now),
+    ...artifactFacts(artifacts), ...approvalFacts(approvals), ...decisionFacts(workflow?.steps), ...failureFacts(workflow?.steps, workflow?.task), ...costFact(await harness.usage(ctx), now),
     ...(status?.seq ? [{ id: 'status', kind: 'status' as const, rev: status.seq, at: status.at, data: { state: status.state } }] : []),
   ];
 }

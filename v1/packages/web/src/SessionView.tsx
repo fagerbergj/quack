@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type S
 import { abortRun, socketUrl, type SealedArtifact } from './api.ts';
 import { Approvals } from './Approvals.tsx';
 import { SessionDecisions } from './Decisions.tsx';
+import { SessionFailures } from './Failures.tsx';
 import { Artifacts, useArtifacts } from './Artifacts.tsx';
 import { Work } from './Work.tsx';
 import { useVisualViewportHeight } from './useVisualViewportHeight.ts';
@@ -217,6 +218,7 @@ export function SessionView({ sessionKey, agent, name }: { sessionKey: string; a
           <Artifacts items={items} error={artifactsError} onOpen={setWork} />
           <Approvals sessionKey={sessionKey} refresh={approvalTick} onCount={setApprovals} />
           <SessionDecisions sessionKey={sessionKey} onCount={setQuestions} />
+          <SessionFailures sessionKey={sessionKey} />
           {waiting > 0 ? <Working label="Waiting for you" /> : tone === 'run' && <Working label="Working" />}
         </div>
       </div>

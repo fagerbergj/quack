@@ -64,6 +64,8 @@ async function modelStep(step: Extract<Step, { kind: 'model' }>, c: StepContext)
   if (!model) throw new Error(`step ${step.name}: model is not available`);
   const ask = `${step.prompt(c)}\n\nAnswer with one JSON object matching this schema and nothing else:\n${JSON.stringify(step.schema)}`;
   const reply = await c.api.models.completeSimple(model, { systemPrompt: agent.instructions ?? undefined, messages: [{ role: 'user', content: ask, timestamp: c.api.now() }] }, { signal: c.signal });
+  // A refused or failed call comes back as an empty reply with the host's error; without this it reads as "no JSON object".
+  if (reply.stopReason === 'error') throw new Error(`step ${step.name}: model call failed: ${reply.errorMessage ?? 'no error given'}`);
   const cost = reply.usage?.cost?.total ?? 0;
   try {
     const args = validateToolArguments({ name: step.name, description: step.name, parameters: step.schema }, { type: 'toolCall', id: step.name, name: step.name, arguments: parseObject(contentText(reply.content)) as never });

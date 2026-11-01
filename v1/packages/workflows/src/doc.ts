@@ -64,6 +64,12 @@ export async function answerDecision(conversation: Conversation, step: string, c
 
 export type OpenDecision = { step: string; question: string; options: string[]; evidence: string | null; askedAt: number };
 
+export type StepFailure = { step: string; error: string };
+
+/** Steps whose run threw: the error and the step it came from, so a run that ended early says why. */
+export const failedSteps = (doc: Readonly<WorkflowState> | null | undefined): StepFailure[] =>
+  (doc?.steps ?? []).filter((s) => s.status === 'failed' && s.error).map((s) => ({ step: s.name, error: s.error! }));
+
 /** Decision steps waiting on a person; `ask` stays on a step after it is answered or its run ends, so the status decides. */
 export function pendingDecisions(doc: Readonly<WorkflowState> | null | undefined): OpenDecision[] {
   return (doc?.steps ?? []).filter((s) => s.ask && !s.answer && s.status === 'waiting')
