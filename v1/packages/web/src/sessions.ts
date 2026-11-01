@@ -1,6 +1,7 @@
-import type { Approval, Decision, SessionSummary } from './api.ts';
+import type { Approval, Decision, IndexArtifact, SessionSummary } from './api.ts';
+import { searchText } from './kinds.ts';
 
-export type Row = SessionSummary & { approvals: Approval[]; decisions: Decision[] };
+export type Row = SessionSummary & { approvals: Approval[]; decisions: Decision[]; artifacts: IndexArtifact[] };
 export type Groups = { needs: Row[]; running: Row[]; recent: Row[] };
 export type Filters = { text: string; agent: string; start: string };
 
@@ -20,9 +21,9 @@ export function startOf(key: string): string {
   return START_LABELS[prefix] ?? prefix;
 }
 
-export function matches(s: SessionSummary, f: Filters): boolean {
+export function matches(s: Row, f: Filters): boolean {
   const q = f.text.trim().toLowerCase();
-  const hit = !q || [titleOf(s), s.key, s.agent].some((v) => v.toLowerCase().includes(q));
+  const hit = !q || [titleOf(s), ...searchText(s), s.key, s.agent].some((v) => v.toLowerCase().includes(q));
   return hit && (!f.agent || s.agent === f.agent) && (!f.start || startOf(s.key) === f.start);
 }
 

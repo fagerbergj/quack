@@ -74,15 +74,49 @@ test('groups sessions: a running session with a pending approval lands in Needs 
   expect(within(needs).getByRole('link', { name: /Fix the flake/ })).toHaveAttribute('href', '#/s/gh%3A1');
   expect(within(needs).getByText('Approve push')).toBeInTheDocument();
   expect(within(screen.getByRole('region', { name: 'Running' })).getByRole('link', { name: /gh:2/ })).toBeInTheDocument();
-  expect(within(screen.getByRole('region', { name: 'Recent' })).getByRole('link', { name: /Old work/ })).toHaveTextContent('reviewer · idle');
+  expect(within(screen.getByRole('region', { name: 'Recent' })).getByRole('link', { name: /Old work/ })).toHaveTextContent('reviewer');
   expect(screen.getByText('1 need you · 1 running')).toBeInTheDocument();
 });
 
-test('a GitHub key shows as repo#n with its title, and the full key stays as the tooltip', async () => {
+test('a GitHub key shows as #n with its title, and the full key stays as the tooltip', async () => {
   routes['GET /sessions'] = { sessions: [sess('github:fagerbergj/quack#1885', { title: 'Review the shell' })] };
   render(<App />);
-  const link = await screen.findByRole('link', { name: /quack#1885 · Review the shell/ });
+  const link = await screen.findByRole('link', { name: /#1885 Review the shell/ });
   expect(link).toHaveAttribute('title', 'github:fagerbergj/quack#1885');
+});
+
+const sealed = (session: string, kind: string, passed: boolean | null, version = 1) => ({ session, kind, version, verdict: passed === null ? null : { passed }, sealedAt: 1 });
+
+test('each kind of session shows its own title and state, and search finds it by kind', async () => {
+  routes['GET /sessions'] = { sessions: [
+    sess('github:o/r#7', { title: 'Fix the cache', running: true }),
+    sess('github:o/r#8', { title: 'Add retries' }),
+    sess('github:o/r#9', { title: 'Drop the flag' }),
+    sess('ui:r1', { agent: 'researcher', title: 'What changed in v4?' }),
+    sess('sleeper:123:8:lineup', { agent: 'sleeper-lineup' }),
+    sess('remarkable:doc1', { agent: 'remarkable-ingest', title: 'Campaign Notes' }),
+    sess('ui:x', { agent: 'coder' }),
+  ] };
+  routes['GET /index/approvals?state=pending'] = { approvals: [] };
+  routes['GET /index/artifacts'] = { artifacts: [
+    sealed('github:o/r#8', 'github.review', false, 1), sealed('github:o/r#8', 'github.review', true, 2),
+    sealed('github:o/r#9', 'github.review', false),
+    sealed('ui:r1', 'research.report', true),
+    sealed('sleeper:123:8:lineup', 'sleeper.cards', true),
+    sealed('remarkable:doc1', 'remarkable.transcript', false),
+  ] };
+  render(<App />);
+  const row = async (name: RegExp) => within(await screen.findByRole('link', { name }));
+  expect((await row(/#7 Fix the cache/)).getByText('Reviewing')).toBeInTheDocument();
+  expect((await row(/#8 Add retries/)).getByText('Approved ✓')).toBeInTheDocument();
+  expect((await row(/#9 Drop the flag/)).getByText('Checks failed')).toBeInTheDocument();
+  expect((await row(/What changed/)).getByText('Report ✓')).toBeInTheDocument();
+  expect((await row(/Lineup · week 8/)).getByText('Card ready')).toBeInTheDocument();
+  expect((await row(/Campaign Notes/)).getByText(/^Failed/)).toBeInTheDocument();
+  expect((await row(/ui:x/)).getByText('coder')).toBeInTheDocument();
+  await userEvent.type(screen.getByRole('searchbox', { name: 'Search sessions' }), 'lineup');
+  expect(screen.queryByRole('link', { name: /Campaign Notes/ })).toBeNull();
+  expect(screen.getByRole('link', { name: /Lineup · week 8/ })).toBeInTheDocument();
 });
 
 test('search and the agent filter narrow the list', async () => {
