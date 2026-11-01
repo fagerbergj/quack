@@ -61,7 +61,12 @@ const readJson = async (path: string) => JSON.parse((await readText(path)) ?? 'n
 async function digest(dir: string): Promise<string> {
   const files = (await readdir(dir, { recursive: true, withFileTypes: true })).filter((e) => e.isFile()).map((e) => join(e.parentPath, e.name)).sort();
   const hash = createHash('sha256');
-  for (const f of files) hash.update(f.slice(dir.length)).update(await readFile(f));
+  for (const f of files) {
+    const bytes = await readFile(f);
+    // status is a lifecycle state of the version, not part of its definition (DEP-6).
+    const content = f === join(dir, 'agent.json') ? JSON.stringify({ ...JSON.parse(bytes.toString()), status: undefined }) : bytes;
+    hash.update(f.slice(dir.length)).update(content);
+  }
   return hash.digest('hex');
 }
 
@@ -113,29 +118,31 @@ export function processDriver(opts: { command: string[]; dataDir: string; agents
     }
   }
 
-  // The session's agent is fixed by its first request and recorded beside session-key; later requests must agree.
-  // Its definition is copied beside the record, and every later start loads that copy, never the agents dir (DEP-3).
+  // Copies the agent's bundle into the session dir; every later start loads that copy, never the agents dir (DEP-3).
+  async function snapshot(name: string, source: string, dir: string, isNew: boolean) {
+    if (isNew) await assertUnforked(name, source);
+    await cp(dirname(source), join(dir, SNAPSHOT), { recursive: true });
+  }
+
+  // A session's agent is fixed by its first request; later requests must agree.
   // shortcut: two first requests naming different agents at once race on the record, last writer wins; serialize per key if that matters.
   async function bind(key: string, requested?: string): Promise<{ name: string; path: string | undefined }> {
     const dir = sessionDir(key);
-    const snapshot = join(dir, SNAPSHOT);
+    const snapshotDir = join(dir, SNAPSHOT);
     const recorded = await readText(join(dir, 'agent'));
     if (recorded !== undefined && requested && requested !== recorded) throw new AgentError(409, `session runs agent ${recorded}, not ${requested}`);
-    if (recorded !== undefined && (await stat(snapshot).catch(() => null))) return { name: recorded, path: join(snapshot, 'agent.json') };
+    if (recorded !== undefined && (await stat(snapshotDir).catch(() => null))) return { name: recorded, path: join(snapshotDir, 'agent.json') };
     const fallback = await defaultName();
     const name = recorded ?? requested ?? fallback;
     const source = (await registry()).find((a) => a.name === name)?.path ?? (name === fallback ? defaultPath : undefined);
     if (!source && name) throw new AgentError(404, `unknown agent ${name}`);
-    if (source) {
-      if (recorded === undefined) await assertUnforked(name, source);
-      await cp(dirname(source), snapshot, { recursive: true });
-    }
+    if (source) await snapshot(name, source, dir, recorded === undefined);
     if (recorded === undefined) {
       await mkdir(dir, { recursive: true });
       await writeFile(join(dir, 'session-key'), key);
       await writeFile(join(dir, 'agent'), name);
     }
-    return { name, path: source && join(snapshot, 'agent.json') };
+    return { name, path: source && join(snapshotDir, 'agent.json') };
   }
 
   async function start(key: string, agentPath: string | undefined): Promise<string> {

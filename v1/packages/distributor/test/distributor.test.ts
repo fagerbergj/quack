@@ -244,4 +244,17 @@ test('without QUACK_WEB_DIR nothing is served', async () => {
   const { base } = await startDistributor(60_000);
   assert.equal((await fetch(`${base}/`)).status, 404);
   assert.equal((await fetch(`${base}/index.html`)).status, 404);
+
+test('promoting a version does not fork it, but any other edit without a bump does', async () => {
+  const dir = await agentsDirAt(1, 'reviewer');
+  const { invoke, base } = await startDistributor(60_000, { agentsDir: dir, defaultAgent: '' });
+  assert.equal((await invoke('github:p#1', { input: 'hi', wait: true }, 'reviewer')).status, 200);
+  const file = join(dir, 'reviewer', 'agent.json');
+  const def = JSON.parse(await readFile(file, 'utf8'));
+  await writeFile(file, JSON.stringify({ ...def, status: 'promoted' }));
+  assert.equal((await invoke('github:p#2', { input: 'hi', wait: true }, 'reviewer')).status, 200);
+  const { agents } = (await (await fetch(`${base}/agents`)).json()) as { agents: Array<{ status: string }> };
+  assert.equal(agents[0].status, 'promoted');
+  await writeFile(file, JSON.stringify({ ...def, status: 'promoted', maxTurns: 5 }));
+  assert.equal((await invoke('github:p#3', { input: 'hi', wait: true }, 'reviewer')).status, 409);
 });
