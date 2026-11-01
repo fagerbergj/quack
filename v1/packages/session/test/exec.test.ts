@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
+import { spawnSync } from 'node:child_process';
 import { PolicyExecutionEnv, shellEnv, type ExecPolicy } from '../src/index.ts';
 
 const cwd = await mkdtemp(join(tmpdir(), 'quack-exec-'));
@@ -58,4 +59,11 @@ test('a fork bomb hits the process limit: the command fails, the next one runs',
   assert.doesNotMatch(bomb.output, /^forked$/m);
   assert.match(bomb.output, /Resource temporarily unavailable/);
   assert.match((await run('echo still-here')).output, /still-here/);
+});
+
+test('the default limits leave node (WebAssembly memories) and go running', async () => {
+  const wasm = await run(`"${process.execPath}" -e "new WebAssembly.Memory({initial:1})"`);
+  assert.ok(wasm.result.ok && wasm.result.value.exitCode === 0, wasm.output);
+  const hasGo = spawnSync('go', ['version']).status === 0;
+  if (hasGo) assert.match((await run('go version')).output, /^go version/);
 });

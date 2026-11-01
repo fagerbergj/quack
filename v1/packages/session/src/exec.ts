@@ -12,8 +12,8 @@ export type ExecPolicy = {
 };
 
 export const DEFAULT_EXEC_TIMEOUT_SECONDS = 600;
-// shortcut: maxProcs is off by default; RLIMIT_NPROC counts every process of the UID, so a fixed default would break forks on a busy host.
-export const DEFAULT_EXEC_LIMITS = { addressSpaceMb: 8192, maxFileSizeMb: 1024 };
+// Address space and maxProcs are opt-in: V8 and WebAssembly reserve huge virtual regions, and RLIMIT_NPROC counts every process of the UID.
+export const DEFAULT_EXEC_LIMITS = { maxFileSizeMb: 1024 };
 
 const SHELL_ENV = new Set(['PATH', 'HOME', 'TMPDIR', 'TZ', 'LANG', 'LANGUAGE', 'GOPATH', 'GOMODCACHE', 'GOCACHE', 'GOFLAGS', 'CARGO_HOME', 'RUSTUP_HOME', 'NVM_DIR']);
 
