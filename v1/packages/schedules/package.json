@@ -9,6 +9,6 @@
     "start": "node src/main.ts"
   },
   "dependencies": {
-    "cron-parser": "^5.5.0"
+    "cron-parser": "5.10.2"
   }
 }

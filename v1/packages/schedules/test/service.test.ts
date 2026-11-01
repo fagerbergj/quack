@@ -139,6 +139,19 @@ test('agent definitions register schedules bound to their agent, and removal unr
   assert.deepEqual((await api('GET', '/schedules')).json.schedules, []);
 });
 
+test('a cron in America/New_York keeps its wall-clock time across the DST change', async () => {
+  const { svc, api } = await start(':memory:');
+  clock = new Date('2026-03-07T12:00:00Z');
+  await api('POST', '/schedules', { ...daily, tz: 'America/New_York' });
+  clock = new Date('2026-03-08T14:00:00Z');
+  await svc.tick();
+  clock = new Date('2026-03-09T13:00:00Z');
+  await svc.tick();
+  // Clocks spring forward on Mar 8: 09:00 EST was 14:00Z, 09:00 EDT is 13:00Z (UTC would drift an hour).
+  assert.deepEqual(calls.map((c) => c.body.requestId), ['schedule:daily:2026-03-08T13:00:00.000Z', 'schedule:daily:2026-03-09T13:00:00.000Z']);
+  assert.equal((await api('POST', '/schedules', { ...daily, id: 'z', tz: 'Mars/Base' })).status, 400);
+});
+
 test('the API requires the token and rejects bad definitions', async () => {
   const { api, base } = await start(':memory:');
   assert.equal((await fetch(`${base}/schedules`)).status, 401);
