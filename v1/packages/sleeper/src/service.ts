@@ -4,6 +4,7 @@ import type { SleeperClient } from './client.ts';
 import type { StartConfig } from './jobs.ts';
 import { startLineup } from './lineup/jobs.ts';
 import { startFinder, startTrade, tradeParams } from './trades/jobs.ts';
+import { startTrends } from './trends/jobs.ts';
 import { startWaivers } from './waivers/jobs.ts';
 import { takeSnapshot } from './snapshot.ts';
 import { openStore } from './store.ts';
@@ -41,25 +42,25 @@ export function createSleeperService(config: ServiceConfig) {
   const store = openStore(config.dbPath);
   const now = config.now ?? (() => new Date());
 
-  // GET /leagues/:id/snapshots[/latest] read the store; POST /leagues/:id/snapshots takes today's if it is missing.
+  // GET /leagues/:id/snapshots[/latest|/YYYY-MM-DD] read the store; POST /leagues/:id/snapshots takes today's if it is missing.
   async function route(method: string, url: URL): Promise<[number, unknown]> {
     const path = url.pathname;
-    const job = /^\/leagues\/([^/]+)\/jobs\/(lineup|waivers)$/.exec(path);
-    if (job) return startOnDemand(job[2] === 'lineup' ? startLineup : startWaivers, method, safeDecode(job[1]), url.searchParams.get('week'));
+    const job = /^\/leagues\/([^/]+)\/jobs\/(lineup|waivers|trends)$/.exec(path);
+    if (job) return startOnDemand({ lineup: startLineup, waivers: startWaivers, trends: startTrends }[job[2] as 'lineup'], method, safeDecode(job[1]), url.searchParams.get('week'));
     const trade = /^\/leagues\/([^/]+)\/jobs\/(trade-finder|trade)$/.exec(path);
     if (trade) return startOnDemand(trade[2] === 'trade' ? startTrade : startFinder, method, safeDecode(trade[1]), url.searchParams.get('week'), trade[2] === 'trade' ? tradeParams(url.searchParams) : {});
-    const m = /^\/leagues\/([^/]+)\/snapshots(\/latest)?$/.exec(path);
+    const m = /^\/leagues\/([^/]+)\/snapshots(\/latest|\/\d{4}-\d{2}-\d{2})?$/.exec(path);
     if (!m) return [404, { error: 'not found' }];
     const league = safeDecode(m[1]);
     if (league === undefined) return [400, { error: 'bad league id' }];
     if (method === 'POST' && !m[2]) return [200, await takeSnapshot(config.client, store, league, now())];
     if (method !== 'GET') return [405, { error: 'method not allowed' }];
     if (!m[2]) return [200, { snapshots: store.history(league) }];
-    const latest = store.latest(league);
-    return latest ? [200, latest] : [404, { error: 'no snapshot yet' }];
+    const found = m[2] === '/latest' ? store.latest(league) : store.snapshot(league, m[2].slice(1));
+    return found ? [200, found] : [404, { error: 'no snapshot yet' }];
   }
 
-  // POST /leagues/:id/jobs/(lineup|waivers)[?week=N] starts a job on demand (SL-2); the week defaults to Sleeper's current one.
+  // POST /leagues/:id/jobs/(lineup|waivers|trends)[?week=N] starts a job on demand (SL-2); the week defaults to Sleeper's current one.
   async function startOnDemand(start: (c: StartConfig, input: any) => ReturnType<typeof startLineup>, method: string, league: string | undefined, week: string | null, extra: object | string = {}): Promise<[number, unknown]> {
     if (league === undefined) return [400, { error: 'bad league id' }];
     if (method !== 'POST') return [405, { error: 'method not allowed' }];

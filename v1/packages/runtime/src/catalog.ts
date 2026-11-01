@@ -6,7 +6,7 @@ import { githubSessionExtensions, type GithubSessionConfig } from '@quack/github
 import { researchSessionExtensions, type ResearchConfig } from '@quack/research';
 import { piPackage } from '@quack/sdk';
 import { INGEST_WORKFLOW, ingestFromEnv } from '@quack/remarkable';
-import { FINDER_WORKFLOW, finderFromEnv, LINEUP_WORKFLOW, lineupFromEnv, TRADE_WORKFLOW, tradeFromEnv, WAIVERS_WORKFLOW, waiversFromEnv } from '@quack/sleeper';
+import { FINDER_WORKFLOW, finderFromEnv, LINEUP_WORKFLOW, lineupFromEnv, TRADE_WORKFLOW, tradeFromEnv, TRENDS_WORKFLOW, trendsFromEnv, WAIVERS_WORKFLOW, waiversFromEnv } from '@quack/sleeper';
 import type { Catalog } from '@quack/session';
 import { workflowSessionExtensions, type Workflow } from '@quack/workflows';
 
@@ -30,6 +30,7 @@ const WORKFLOWS: Record<string, (config: unknown) => Workflow> = {
   [WAIVERS_WORKFLOW]: () => waiversFromEnv(),
   [FINDER_WORKFLOW]: () => finderFromEnv(),
   [TRADE_WORKFLOW]: () => tradeFromEnv(),
+  [TRENDS_WORKFLOW]: () => trendsFromEnv(),
   [INGEST_WORKFLOW]: (config) => ingestFromEnv(config as Parameters<typeof ingestFromEnv>[0]),
 };
 

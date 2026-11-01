@@ -6,3 +6,4 @@ export { registerSnapshotSchedule, registerUntilDone } from './schedules.ts';
 export * from './lineup/index.ts';
 export * from './waivers/index.ts';
 export * from './trades/index.ts';
+export * from './trends/index.ts';
