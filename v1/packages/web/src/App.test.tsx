@@ -568,3 +568,23 @@ test('Artifacts says so when the index is off', async () => {
   render(<App />);
   expect(await screen.findByText(/The index is off/)).toBeInTheDocument();
 });
+
+test('a failed load shows its error in the Inbox instead of an empty list', async () => {
+  delete routes['GET /sessions'];
+  location.hash = '#/inbox';
+  render(<App />);
+  expect(await screen.findAllByRole('alert')).not.toHaveLength(0);
+  expect(screen.queryByText('Nothing is waiting on you')).toBeNull();
+});
+
+test('a double-click on Approve posts once', async () => {
+  routes['GET /sessions'] = { sessions: [sess('gh:3')] };
+  routes['GET /index/approvals?state=pending'] = pendingIndex;
+  location.hash = '#/inbox';
+  render(<App />);
+  const approve = await screen.findByRole('button', { name: 'Approve github_post_review' });
+  // The decision stays in flight, as it does while the session wakes.
+  fetchMock.mockImplementationOnce(() => new Promise<Response>(() => {}));
+  await userEvent.dblClick(approve);
+  expect(fetchMock.mock.calls.filter(([, i]) => i?.method === 'POST')).toHaveLength(1);
+});

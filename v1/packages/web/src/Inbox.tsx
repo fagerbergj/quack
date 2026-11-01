@@ -11,8 +11,12 @@ function Item({ row, a, now, done }: { row: Row; a: Row['approvals'][number]; no
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState('');
   const [error, setError] = useState('');
-  const decide = (decision: 'approve' | 'reject') =>
-    decideApproval(row.key, a.id, decision, reason.trim()).then(done, (e: Error) => setError(e.message));
+  const [busy, setBusy] = useState(false);
+  const decide = (decision: 'approve' | 'reject') => {
+    if (busy) return;
+    setBusy(true);
+    void decideApproval(row.key, a.id, decision, reason.trim()).then(done, (e: Error) => setError(e.message)).finally(() => setBusy(false));
+  };
   const args = summary(a.args);
   return (
     <li className="flex flex-col gap-2 px-4 py-4 sm:px-5">
@@ -34,12 +38,12 @@ function Item({ row, a, now, done }: { row: Row; a: Row['approvals'][number]; no
       <span className="flex gap-2">
         {rejecting ? (
           <>
-            <button type="button" aria-label={`Confirm reject ${a.tool}`} onClick={() => decide('reject')} className={`${btn} bg-ink font-semibold text-on-ink hover:bg-ink-2`}>Confirm reject</button>
+            <button type="button" aria-label={`Confirm reject ${a.tool}`} disabled={busy} onClick={() => decide('reject')} className={`${btn} bg-ink font-semibold text-on-ink hover:bg-ink-2`}>Confirm reject</button>
             <button type="button" onClick={() => setRejecting(false)} className={`${btn} border border-line bg-surface font-medium text-ink-2`}>Cancel</button>
           </>
         ) : (
           <>
-            <button type="button" aria-label={`Approve ${a.tool}`} onClick={() => decide('approve')} className={`${btn} bg-ink font-semibold text-on-ink hover:bg-ink-2`}>Approve</button>
+            <button type="button" aria-label={`Approve ${a.tool}`} disabled={busy} onClick={() => decide('approve')} className={`${btn} bg-ink font-semibold text-on-ink hover:bg-ink-2`}>Approve</button>
             <button type="button" aria-label={`Reject ${a.tool}`} onClick={() => setRejecting(true)} className={`${btn} border border-line bg-surface font-medium text-ink-2 hover:text-danger`}>Reject</button>
           </>
         )}
@@ -48,14 +52,15 @@ function Item({ row, a, now, done }: { row: Row; a: Row['approvals'][number]; no
   );
 }
 
-export function Inbox({ rows, now, reload }: { rows: Row[] | undefined; now: number; reload: () => void }) {
+export function Inbox({ rows, error, now, reload }: { rows: Row[] | undefined; error: string; now: number; reload: () => void }) {
   const waiting = (rows ?? []).flatMap((row) => row.approvals.map((a) => ({ row, a })));
   return (
     <div className="mx-auto w-full max-w-[960px] px-4 pt-8 pb-10 sm:px-6">
       <div className="mb-4 flex flex-wrap items-baseline gap-3">
         <h1 className="m-0 text-[22px] font-bold tracking-[-0.02em]">Inbox</h1>
-        {rows && <span className="text-[13px] text-muted">{waiting.length ? `${waiting.length} waiting for your approval` : 'Nothing is waiting on you'}</span>}
+        {rows && !error && <span className="text-[13px] text-muted">{waiting.length ? `${waiting.length} waiting for your approval` : 'Nothing is waiting on you'}</span>}
       </div>
+      {error && <p role="alert" className="m-0 mb-3 text-[13px] text-danger">{error}</p>}
       <ul className="m-0 flex list-none flex-col divide-y divide-line rounded-[22px] border border-line bg-surface p-0 shadow-card empty:hidden">
         {waiting.map(({ row, a }) => <Item key={`${row.key}:${a.id}`} row={row} a={a} now={now} done={reload} />)}
       </ul>

@@ -32,7 +32,7 @@ export function ArtifactList({ rows, now }: { rows: Row[] | undefined; now: numb
   const [items, setItems] = useState<IndexArtifact[] | null>();
   const [open, setOpen] = useState<SealedArtifact[]>();
   const [error, setError] = useState('');
-  useEffect(() => void indexArtifacts().then((r) => setItems(r ?? null)), []);
+  useEffect(() => void indexArtifacts().then((r) => setItems(r ?? null)), [now]);
   // The index holds no content, so opening reads the full version from its session.
   const show = (a: IndexArtifact) =>
     listArtifacts(a.session).then((all) => {

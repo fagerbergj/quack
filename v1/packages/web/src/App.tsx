@@ -60,7 +60,7 @@ export function App() {
   const list = <SessionList rows={data.rows} selected={session?.key} error={data.error} now={data.now} compact={desktop} />;
   return (
     <Shell route={nav} bare={Boolean(session)} sidebar={desktop ? list : undefined}>
-      {title && nav === 'inbox' ? <Inbox rows={data.rows} now={data.now} reload={data.reload} />
+      {title && nav === 'inbox' ? <Inbox rows={data.rows} error={data.error} now={data.now} reload={data.reload} />
         : title && nav === 'artifacts' ? <ArtifactList rows={data.rows} now={data.now} />
         : title ? <Placeholder title={title} /> : <Workspace data={data} selected={session} isNew={hash === '#/new'} list={desktop ? undefined : list} />}
     </Shell>

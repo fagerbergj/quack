@@ -131,14 +131,12 @@ export function processDriver(opts: { command: string[]; dataDir: string; agents
   const starting = new Map<string, Promise<string>>();
   const crashes = new Map<string, number[]>();
 
-  // The first user message never changes once written, so a found title is read once per session directory.
+  // A session's title (recorded, else its first message) never changes once found, so it is read once per session directory.
   const titles = new Map<string, string>();
   function cachedTitle(dir: string): string | undefined {
-    const recorded = recordedTitle(dir);
-    if (recorded) return recorded;
     const known = titles.get(dir);
     if (known !== undefined) return known;
-    const found = firstInput(dir);
+    const found = (recordedTitle(dir) ?? firstInput(dir))?.slice(0, TITLE_MAX);
     if (found !== undefined) titles.set(dir, found);
     return found;
   }
