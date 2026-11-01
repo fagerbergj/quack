@@ -18,6 +18,7 @@ import {
 } from '../src/index.ts';
 import type { DigestDecision } from '../src/report/digest.ts';
 import type { RetroDecision } from '../src/report/retro.ts';
+import { round2 } from '../src/lineup/facts.ts';
 import { retroPrompt } from '../src/report/workflow.ts';
 
 const fixtures = JSON.parse(readFileSync(new URL('./fixtures/report.json', import.meta.url), 'utf8')) as Record<string, any>;
@@ -377,6 +378,15 @@ test('a retro for an owner on bye has no opponent and says so, even with another
   assert.deepEqual([card.bye, card.opponent], [true, null]);
   assert.equal((await retroGate('tool_figures_copied', f, card)).met, 1);
   assert.match(retroPrompt(await retroFacts()), /started 43 against teal 40, won/);
+});
+
+test('the retro prompt names the biggest swing across lineup and waiver misses', async () => {
+  const f = await retroFacts();
+  const w = f.waiverMisses[0];
+  const big = { ...f, waiverMisses: [{ ...w, player: { ...w.player, name: 'Big Wire', pts: 90 } }] };
+  assert.match(retroPrompt(big), new RegExp(`Biggest swing: waiver miss 0, Big Wire over ${w.over.name}, ${round2(90 - w.over.pts)}\\.`));
+  assert.match(retroPrompt({ ...f, waiverMisses: [] }), /Biggest swing: lineup miss 0, /);
+  assert.doesNotMatch(retroPrompt({ ...f, misses: [], waiverMisses: [] }), /Biggest swing/);
 });
 
 test('a retro for a final week with no kickoff is refused loudly', async () => {

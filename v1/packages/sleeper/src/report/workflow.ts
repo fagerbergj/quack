@@ -4,7 +4,7 @@ import { rejudge, type JudgeOptions, type Rubric, type Verdict } from '@quack/ju
 import { attachVerdict, seal, type SealedArtifact } from '@quack/sdk';
 import { defineWorkflow, Wait, type StepContext } from '@quack/workflows';
 import { cardsKind } from '../lineup/card.ts';
-import type { FactsDeps, LineupInput, NewsItem } from '../lineup/facts.ts';
+import { round2, type FactsDeps, type LineupInput, type NewsItem } from '../lineup/facts.ts';
 import type { LineupDeps } from '../lineup/workflow.ts';
 import { RECAP_LAG_MS, RECAP_STALE_MS } from './jobs.ts';
 import { buildDigestCard, buildDigestFacts, type DigestDecision, type DigestFacts } from './digest.ts';
@@ -125,6 +125,16 @@ const digestSchema = Type.Object({
 
 const retroLine = (i: number, text: string, news: Array<NewsItem & { player: string }>, before: string) => `${i}. ${text}\n   signals must be dated before ${before.slice(0, 16)}Z:${news.length ? links(news) : ' none found'}`;
 
+/** The largest swing across both row lists, as the prompt names it; null with no rows. A tie goes to the lineup miss. */
+function biggestSwing(f: RetroFacts): string | null {
+  const rows = [
+    ...f.misses.map((m, i) => ({ ref: `lineup miss ${i}`, who: `${m.better.name} over ${m.started.name}`, swing: m.swing })),
+    ...f.waiverMisses.map((w, i) => ({ ref: `waiver miss ${i}`, who: `${w.player.name} over ${w.over.name}`, swing: round2(w.player.pts - w.over.pts) })),
+  ];
+  const top = rows.reduce<(typeof rows)[number] | null>((a, r) => (!a || r.swing > a.swing ? r : a), null);
+  return top && `Biggest swing: ${top.ref}, ${top.who}, ${top.swing}. The summary names it.`;
+}
+
 export function retroPrompt(f: RetroFacts): string {
   const misses = f.misses.map((m, i) => retroLine(i, `${m.slot}: started ${m.started.name} ${m.started.pts}, ${m.better.name} (${m.better.pos}) scored ${m.better.pts}, swing ${m.swing}`, m.news, m.before));
   const waiver = f.waiverMisses.map((w, i) => retroLine(i, `${w.player.name} (${w.player.pos}) scored ${w.player.pts} on the wire, over ${w.over.name} ${w.over.pts} at ${w.over.slot}`, w.news, w.before));
@@ -132,6 +142,7 @@ export function retroPrompt(f: RetroFacts): string {
     `Week ${f.week} retro for ${f.team}: ${f.bye ? 'was on bye' : `started ${f.started}${f.opp === null ? '' : ` against ${f.opponent} ${f.opp}`}, ${f.won ? 'won' : 'lost'}`}. The best legal lineup scored ${f.best}, ${f.left} left on the bench.`,
     `Lineup misses:\n${misses.join('\n') || 'none'}`,
     `Waiver misses:\n${waiver.join('\n') || 'none'}`,
+    ...[biggestSwing(f)].filter((l) => l !== null),
     'For each row give its index and a one-sentence `why`. Mark `knowable` true only when you cite one of the linked items above as `signalUrl` that pointed the other way before the cutoff; a designation restated, or no link, means knowable false, which is variance and never the manager\'s fault. Give at most three lessons, each something to do next week, and a summary naming the single biggest swing.',
   ].join('\n\n');
 }
