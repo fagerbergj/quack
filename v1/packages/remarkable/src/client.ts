@@ -49,8 +49,8 @@ export function createRmClient(config: { url: string; email: string; password: s
     /** The document exported as PDF; the renderer works for notebooks, PDFs and epubs alike. */
     downloadPdf: async (id: string): Promise<Buffer> => {
       const pdf = Buffer.from(await (await get(`/ui/api/documents/${encodeURIComponent(id)}?type=pdf`)).arrayBuffer());
-      // rmfakecloud answers 200 with no body when it cannot render a document.
-      if (!pdf.length) throw new Error(`rmfakecloud GET /ui/api/documents/${id}: empty PDF`);
+      // rmfakecloud answers 200 with an empty body, or an error page, when it cannot render a document.
+      if (!pdf.subarray(0, 5).equals(Buffer.from('%PDF-'))) throw new Error(`rmfakecloud GET /ui/api/documents/${id}: ${pdf.length ? 'response is not a PDF' : 'empty PDF'}`);
       return pdf;
     },
   };

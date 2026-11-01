@@ -42,8 +42,9 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
 function failure(res: { status: number; text: string }): string | undefined {
   if (res.status < 200 || res.status >= 300) return `distributor answered ${res.status}`;
   try {
-    const result = JSON.parse(res.text) as { status?: string; reason?: string };
-    return result.status === 'unanswered' ? `session unanswered: ${result.reason ?? 'no reason'}` : undefined;
+    const result = JSON.parse(res.text) as { status?: string; reason?: string; detail?: string };
+    // detail carries a failed workflow's error message; the reason alone is just "failed".
+    return result.status === 'unanswered' ? `session unanswered: ${result.reason ?? 'no reason'}${result.detail ? `: ${result.detail}` : ''}` : undefined;
   } catch {
     return 'distributor answer was not JSON';
   }

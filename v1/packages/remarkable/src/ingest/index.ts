@@ -10,7 +10,10 @@ export { PAGE_WIDTH, renderPages } from './render.ts';
 export function createIngestService(url: string, token: string, doFetch: typeof fetch = fetch): IngestService {
   const call = async (path: string, init: RequestInit = {}) => {
     const res = await doFetch(`${url.replace(/\/+$/, '')}${path}`, { ...init, headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' } });
-    if (!res.ok) throw new Error(`remarkable service: ${init.method ?? 'GET'} ${path} returned ${res.status}`);
+    if (!res.ok) {
+      const why = ((await res.json().catch(() => null)) as { error?: string } | null)?.error;
+      throw new Error(`remarkable service: ${init.method ?? 'GET'} ${path} returned ${res.status}${why ? `: ${why}` : ''}`);
+    }
     return res;
   };
   return {

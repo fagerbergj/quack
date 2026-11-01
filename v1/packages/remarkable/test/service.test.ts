@@ -45,6 +45,7 @@ const rm = await listen(
     }
     if (req.url === '/ui/api/documents/n1?type=pdf') return res.writeHead(200).end('%PDF-fake');
     if (req.url === '/ui/api/documents/broken?type=pdf') return res.writeHead(500).end('json: cannot unmarshal object into Content.pageTags.0 of type string');
+    if (req.url === '/ui/api/documents/html?type=pdf') return res.writeHead(200, { 'content-type': 'text/html' }).end('<html>oops</html>');
     if (req.url === '/ui/api/documents/empty?type=pdf') return res.writeHead(200, { 'content-type': 'application/pdf' }).end();
     res.writeHead(404).end();
   }),
@@ -236,8 +237,16 @@ test('an unreachable distributor settles the item failed', async () => {
   assert.match(got.items[0].error, /distributor unreachable/);
 });
 
+test('an unanswered session records the workflow failure detail on the batch item', async () => {
+  answerBody = { status: 'unanswered', reason: 'failed', detail: 'rmfakecloud could not export Notes: status 500' };
+  const { batch: id } = (await (await call('POST', '/ingest', { ids: ['n1'] })).json()) as any;
+  await service.settled();
+  assert.equal((await batch(id)).items[0].error, 'session unanswered: failed: rmfakecloud could not export Notes: status 500');
+  answerBody = { status: 'done' };
+});
+
 test('a failed or empty PDF export is a 502 and the service keeps serving', async () => {
-  for (const id of ['broken', 'empty']) assert.equal((await call('GET', `/documents/${id}/pdf`)).status, 502, id);
+  for (const id of ['broken', 'empty', 'html']) assert.equal((await call('GET', `/documents/${id}/pdf`)).status, 502, id);
   assert.equal((await call('GET', '/documents/n1/pdf')).status, 200);
 });
 
