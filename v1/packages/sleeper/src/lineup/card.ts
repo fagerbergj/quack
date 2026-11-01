@@ -40,10 +40,10 @@ export type Decision = { slots: Array<{ slot: string; playerId: string; why: str
 export const ref = (p: PlayerFact): PlayerRef => ({ id: p.id, name: p.name, pos: p.pos, team: p.team, inj: p.inj });
 const sum = (rows: Array<{ proj: number }>) => Math.round(rows.reduce((n, r) => n + r.proj, 0) * 100) / 100;
 
-type Pick = { playerId: string; why: string };
+type SlotPick = { playerId: string; why: string };
 
 /** A change is a set difference, so a starter the model moved to another open slot goes back to his current slot when the player there fits his. */
-function settle(f: Facts, picks: Record<string, Pick>): void {
+function settle(f: Facts, picks: Record<string, SlotPick>): void {
   for (const slot of f.open) {
     const cur = f.current[slot];
     const at = f.open.find((o) => o !== slot && cur && picks[o]?.playerId === cur);
@@ -61,7 +61,7 @@ export function buildCard(f: Facts, d: Decision): LineupCard {
     const news = [p, ...(change && inc ? [inc] : [])].flatMap((x) => (f.news[x.id] ?? []).map((n) => ({ ...n, player: x.name })));
     return { slot, player: ref(p), proj: p.proj, action: change ? 'start' : 'keep', locked: !f.open.includes(slot), replaces: change && inc ? ref(inc) : null, game: p.game, why, news };
   };
-  const picks: Record<string, Pick> = Object.fromEntries(d.slots.map((s) => [s.slot, s]));
+  const picks: Record<string, SlotPick> = Object.fromEntries(d.slots.map((s) => [s.slot, s]));
   settle(f, picks);
   const starters = f.slots.flatMap((slot) => {
     if (!f.open.includes(slot)) return [row(slot, f.players[f.current[slot]!], 'Locked: the game has started.')];
