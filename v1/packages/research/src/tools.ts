@@ -26,7 +26,7 @@ const MAX_CHARS = 30_000;
 const MAX_STORED_CHARS = 500_000;
 const sourcePath = (hash: string) => `sources/${hash}.txt`;
 
-/** The text kept for a fetched source, looked up by its id and checked against the recorded hash; undefined when none was kept. */
+/** The text kept for a fetched source, looked up by its id and keyed by the recorded hash; best-effort per session directory, so undefined when none was kept (a failed write, a fork with a fresh directory). */
 export async function sourceText(api: ToolExecutionApi, id: string, ctx: Context): Promise<string | undefined> {
   const rec = (await api.snapshot(SourcesDoc, api.conversationId, ctx))?.sources.find((s) => s.id === id);
   const read = rec && (await api.env?.readTextFile(sourcePath(rec.hash), ctx));

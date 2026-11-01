@@ -38,6 +38,7 @@ const loopbackOk = (ip: string) => ip === '127.0.0.1' || isPublicAddress(ip);
 const web = () => listen((req, res) => {
   if (req.url === '/page') return res.writeHead(200, { 'content-type': 'text/html' }).end('<html><head><title>Ducks</title><script>var x=1</script></head><body><h1>Ducks</h1><p>Ducks &amp; geese fly.</p></body></html>');
   if (req.url === '/paper.pdf') return res.writeHead(200, { 'content-type': 'application/pdf' }).end(PDF('Mallards migrate'));
+  if (req.url === '/huge') return res.writeHead(200, { 'content-type': 'text/plain' }).end('x'.repeat(600_000));
   if (req.url === '/big') return res.writeHead(200, { 'content-type': 'text/plain' }).end('x'.repeat(2000));
   if (req.url === '/hop') return res.writeHead(302, { location: `http://127.0.0.2:${(req.socket.localPort)}/page` }).end();
   if (req.url === '/samehop') return res.writeHead(302, { location: '/page' }).end();
@@ -156,6 +157,15 @@ test('without the Exa key web_search says so, and a private URL is refused by de
   await session.close();
 });
 
+const readSource = defineTool({
+  name: 'read_source', description: 'test', parameters: Type.Object({ id: Type.String() }), replay: 'safe',
+  execute: async (a, api, ctx) => ({ output: [{ type: 'text' as const, text: (await sourceText(api, a.id, ctx)) ?? 'none' }] }),
+});
+const sourceLength = defineTool({
+  name: 'source_length', description: 'test', parameters: Type.Object({ id: Type.String() }), replay: 'safe',
+  execute: async (a, api, ctx) => ({ output: [{ type: 'text' as const, text: String((await sourceText(api, a.id, ctx))?.length) }] }),
+});
+const readSourceExt = defineExtension({ name: 'test', tools: [readSource, sourceLength] });
 const delivered = (seen: string[]) => JSON.parse(seen.at(-1)!).content[0].text as string;
 
 test('a report that exhausts its revisions is delivered with a banner and inline marks; a passing one has neither', async () => {
@@ -171,37 +181,61 @@ test('a report that exhausts its revisions is delivered with a banner and inline
     return { content: last.content, v: last.verdict as any };
   };
   const bad = await verdictOf({ maxRevisions: 1 }, ['[s1][s9]', '[s1][s8]']);
-  const text = deliveredReport(bad.content, bad.v, ['s1'])!;
+  const text = deliveredReport(bad.content, bad.v)!;
   assert.match(text, /^> \*\*Not fully checked\.\*\*/);
   assert.match(text, /gate claims_grounded\.cites_fetched_sources: cites s8/);
   assert.match(text, /- Ducks and geese fly\. \[s1\]\[s8\] \(not checked: s8 never fetched\)/);
   assert.doesNotMatch(text, /s1 never/);
 
   const good = await verdictOf({ maxRevisions: 1 }, ['[s1]']);
-  assert.equal(deliveredReport(good.content, good.v, ['s1']), report('[s1]'));
+  assert.equal(deliveredReport(good.content, good.v), report('[s1]'));
 });
 
 test('a version still being revised is not delivered', () => {
   const v = { passed: false, limitReached: false, checks: [] };
-  assert.equal(deliveredReport(report('[s1]'), v, ['s1']), undefined);
-  assert.equal(deliveredReport(report('[s1]'), null, ['s1']), undefined);
+  assert.equal(deliveredReport(report('[s1]'), v), undefined);
+  assert.equal(deliveredReport(report('[s1]'), null), undefined);
 });
 
 test('a fetched source keeps its text, retrievable by id and keyed by the recorded hash', async () => {
   const base = await web();
-  const readSource = defineTool({
-    name: 'read_source', description: 'test', parameters: Type.Object({ id: Type.String() }), replay: 'safe',
-    execute: async (a, api, ctx) => ({ output: [{ type: 'text' as const, text: (await sourceText(api, a.id, ctx)) ?? 'none' }] }),
-  });
   const { seen, session } = await run({ maxFetchBytes: 1000 }, (step) => [
     call('web_fetch', { url: `${base}/page` }),
     step(call('read_source', { id: 's1' })),
     step(call('read_source', { id: 's2' })),
     step(fauxAssistantMessage('Done.')),
-  ], { isPublic: loopbackOk }, [defineExtension({ name: 'test', tools: [readSource] })]);
+  ], { isPublic: loopbackOk }, [readSourceExt]);
   assert.match(delivered(seen.slice(0, 2)), /^Ducks\n\nDucks\nDucks & geese fly\.$/);
   assert.equal(delivered(seen.slice(0, 3)), 'none');
   const sources = (await session.harness.snapshot(SourcesDoc, session.root.id, BACKGROUND_CONTEXT))!.sources;
   assert.equal(sources.length, 1);
+  await session.close();
+});
+
+test('stored source text is capped at 500k characters and still retrievable', async () => {
+  const base = await web();
+  const { seen, session } = await run({ maxFetchBytes: 1_000_000 }, (step) => [
+    call('web_fetch', { url: `${base}/huge` }),
+    step(call('source_length', { id: 's1' })),
+    step(fauxAssistantMessage('Done.')),
+  ], { isPublic: loopbackOk }, [readSourceExt]);
+  assert.match(delivered(seen.slice(0, 2)), /^500000$/);
+  await session.close();
+});
+
+test('marks follow what the check saw: a source fetched after the failing check is still marked', async () => {
+  const base = await web();
+  const { session } = await run({ maxRevisions: 0 }, (step) => [
+    call('web_fetch', { url: `${base}/page` }),
+    step(call('write', { path: 'artifacts/report.md', content: report('[s2]') })),
+    step(call('submit_report', {})),
+    step(call('web_fetch', { url: `${base}/paper.pdf` })),
+    step(fauxAssistantMessage('Done.')),
+  ], { isPublic: loopbackOk });
+  const sources = (await session.harness.snapshot(SourcesDoc, session.root.id, BACKGROUND_CONTEXT))!.sources;
+  assert.deepEqual(sources.map((x) => x.id), ['s1', 's2'], 's2 exists by render time');
+  const last = (await session.harness.snapshot(Artifacts, session.root.id, BACKGROUND_CONTEXT))!.kinds['research.report'].versions.at(-1)!;
+  const text = deliveredReport(last.content, last.verdict as any)!;
+  assert.match(text, /\[s2\] \(not checked: s2 never fetched\)/);
   await session.close();
 });
