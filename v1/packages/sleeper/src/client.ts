@@ -7,7 +7,7 @@ export type ClientConfig = { baseUrl?: string; fetch?: typeof fetch; now?: () =>
 
 // State moves fastest; league data is held a little longer; the players dump is large and rate-limited, so a day.
 const MINUTE = 60_000;
-const TTL = { state: 5 * MINUTE, league: 10 * MINUTE, matchups: 2 * MINUTE, players: 24 * 60 * MINUTE, draft: 2 * MINUTE };
+const TTL = { state: 5 * MINUTE, league: 10 * MINUTE, matchups: 2 * MINUTE, players: 24 * 60 * MINUTE, draft: 2 * MINUTE, projections: 60 * MINUTE, schedule: 2 * MINUTE, scores: 2 * MINUTE };
 
 export function createSleeperClient(config: ClientConfig = {}) {
   const base = config.baseUrl ?? 'https://api.sleeper.app';
@@ -39,6 +39,9 @@ export function createSleeperClient(config: ClientConfig = {}) {
     drafts: (id: string) => get(`/v1/league/${id}/drafts`, TTL.league),
     draft: (id: string) => get(`/v1/draft/${id}`, TTL.draft),
     draftPicks: (id: string) => get(`/v1/draft/${id}/picks`, TTL.draft),
+    projections: (season: string, week: number) => get(`/v1/projections/nfl/regular/${season}/${week}`, TTL.projections),
+    schedule: (season: string) => get(`/schedule/nfl/regular/${season}`, TTL.schedule),
+    scores: (season: string, week: number) => get(`/scores/nfl/regular/${season}/${week}`, TTL.scores),
     players: () => get('/v1/players/nfl', TTL.players),
   };
 }
