@@ -368,6 +368,21 @@ test('the listing says which running sessions are mid-run, from the last sweep a
   assert.equal(await active(), false, 'alive but between runs');
 });
 
+test('the listing carries a session\'s status note from its last ping, and drops it when the note clears', async () => {
+  let note: string | undefined = 'Waiting for a model slot (2 ahead)';
+  const fleet = await fakeFleet(() => ({ status: 'HealthyBusy', waitingOnHuman: false, wake: {}, note }));
+  const server = fleet.start().listen(0);
+  await new Promise((r) => server.once('listening', r));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  await fetch(`${base}/sessions/research%3Aa/ping`);
+  const listed = async () => ((await (await fetch(`${base}/sessions`)).json()) as { sessions: Array<{ note?: string }> }).sessions[0]!.note;
+  await server.sweep();
+  assert.equal(await listed(), 'Waiting for a model slot (2 ahead)');
+  note = undefined;
+  await server.sweep();
+  assert.equal(await listed(), undefined);
+});
+
 test('a session sleeping an hour is stopped by the sweep and restarted at its wake time', async () => {
   const wakeAt = 1_000_000 + HOUR;
   const fleet = await fakeFleet(() => ({ status: 'Healthy', waitingOnHuman: false, wake: { at: wakeAt } }));

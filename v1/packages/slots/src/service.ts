@@ -38,7 +38,7 @@ async function json(req: IncomingMessage): Promise<{ endpoint?: unknown; holder?
 
 export function createSlotsService(config: ServiceConfig) {
   const table = new SlotTable({ dbPath: config.dbPath, limits: config.limits, ttlMs: config.leaseTtlMs ?? 30_000, now: config.now ?? Date.now });
-  const server = createServer(async (req, res) => {
+  const handle = async (req: IncomingMessage, res: ServerResponse) => {
     if (!authorized(req, config.serviceToken)) return send(res, 401, { error: 'unauthorized' });
     if (req.method === 'GET' && req.url === '/slots') return send(res, 200, { endpoints: table.snapshot() });
     const action = req.method === 'POST' ? /^\/slots\/(acquire|heartbeat|release)$/.exec(req.url ?? '')?.[1] : undefined;
@@ -49,7 +49,9 @@ export function createSlotsService(config: ServiceConfig) {
     if (action === 'heartbeat') return send(res, 200, { held: table.heartbeat(body.endpoint, body.holder) });
     table.release(body.endpoint, body.holder);
     send(res, 200, {});
-  });
+  };
+  // An unhandled rejection would kill the process, so a disk fault answers 500 instead.
+  const server = createServer((req, res) => void handle(req, res).catch((err) => send(res, 500, { error: (err as Error).message })));
   server.on('close', () => table.close());
   return server;
 }

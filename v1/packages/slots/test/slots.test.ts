@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { afterEach, test } from 'node:test';
 import { whileWaiting } from '@quack/sdk';
 import { agentSpec } from '@quack/session';
+import { realClock } from '../src/gate.ts';
 import { createSlotsService, slotsFromEnv, slotsSessionExtensions, SlotGate, SlotTable, type Clock, type SlotClient } from '../src/index.ts';
 
 const TTL = 30_000;
@@ -19,7 +20,11 @@ class FakeClock implements Clock {
     this.#timers.push(timer);
     return () => void (this.#timers = this.#timers.filter((x) => x !== timer));
   };
-  sleep = (ms: number) => new Promise<void>((resolve) => void this.setTimer(resolve, ms));
+  sleep = (ms: number, signal?: AbortSignal) => new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason);
+    const cancel = this.setTimer(resolve, ms);
+    signal?.addEventListener('abort', () => (cancel(), reject(signal.reason)), { once: true });
+  });
   reset() {
     this.#timers = [];
   }
@@ -168,6 +173,45 @@ test('fail-open: with the service down generations run ungated and one warning i
   assert.deepEqual(heldBy(), []);
 });
 
+test('an abort while queued settles begin and leaves no slot taken', async () => {
+  fresh(1);
+  table.acquire('swap', 'other');
+  const g = gate('me');
+  const c = new AbortController();
+  const p = g.begin('swap', c.signal);
+  await clock.advance(2000);
+  c.abort(new Error('aborted'));
+  await assert.rejects(p, /aborted/);
+  await clock.advance(CAP);
+  assert.deepEqual(table.snapshot()[0].waiting, []);
+  assert.equal(notes.me, null);
+  await assert.rejects(g.begin('swap', c.signal), /aborted/);
+  assert.deepEqual(table.snapshot()[0].waiting, []);
+});
+
+test('an endpoint with no limit is never gated and its heartbeat is never a lost lease', async () => {
+  fresh();
+  const logs: string[] = [];
+  const g = new SlotGate({ client: direct(table), holder: 's', clock, leaseTtlMs: TTL, log: (l) => logs.push(l) });
+  await g.begin('unlisted');
+  await clock.advance(TTL * 2);
+  assert.deepEqual(logs, []);
+  assert.equal(table.heartbeat('unlisted', 's'), true);
+});
+
+test('a service fault answers 500 and the service keeps serving', async () => {
+  let broken = true;
+  const service = createSlotsService({ serviceToken: 't', dbPath: ':memory:', limits: { swap: 1 }, now: () => { if (broken) throw new Error('disk error'); return clock.now(); } });
+  service.listen(0);
+  await new Promise((r) => service.once('listening', r));
+  const url = `http://127.0.0.1:${(service.address() as AddressInfo).port}/slots/acquire`;
+  const ask = () => fetch(url, { method: 'POST', headers: { authorization: 'Bearer t' }, body: JSON.stringify({ endpoint: 'swap', holder: 'a' }) });
+  assert.equal((await ask()).status, 500);
+  broken = false;
+  assert.equal((await ask()).status, 200);
+  await new Promise((r) => service.close(r));
+});
+
 test('a parent run waiting on six child runs with six slots does not deadlock', async () => {
   fresh(6);
   const parent = gate('parent');
@@ -217,4 +261,8 @@ test('an agent that selects no slots entry is gated when the deployment sets the
   assert.deepEqual(await names({ QUACK_SLOTS_URL: 'http://slots', QUACK_SLOTS_TOKEN: 't' }), ['slots']);
   assert.deepEqual(await names({}), []);
   assert.deepEqual(await names({ QUACK_SLOTS_URL: 'http://slots' }), []);
+});
+
+test('the real clock\'s sleep rejects at once on an already-aborted signal', async () => {
+  await assert.rejects(realClock.sleep(60_000, AbortSignal.abort(new Error('aborted'))), /aborted/);
 });

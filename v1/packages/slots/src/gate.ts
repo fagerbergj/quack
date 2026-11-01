@@ -21,6 +21,7 @@ export const realClock: Clock = {
     return () => clearTimeout(t);
   },
   sleep: (ms, signal) => new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason);
     const t = setTimeout(resolve, ms);
     signal?.addEventListener('abort', () => (clearTimeout(t), reject(signal.reason)), { once: true });
   }),
@@ -111,6 +112,7 @@ export class SlotGate {
   // False when the service failed and the generation goes ungated.
   async #acquire(endpoint: string, signal?: AbortSignal): Promise<boolean> {
     for (;;) {
+      signal?.throwIfAborted();
       let r: AcquireResult;
       try {
         r = await this.#o.client.acquire(endpoint, this.#o.holder);

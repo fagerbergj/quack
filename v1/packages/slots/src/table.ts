@@ -69,6 +69,7 @@ export class SlotTable {
 
   /** False when the lease is gone (expired and possibly regranted), so the holder must acquire again. */
   heartbeat(endpoint: string, holder: string): boolean {
+    if (!(endpoint in this.#config.limits)) return true;
     this.#sweep(endpoint);
     if (this.#get(endpoint, holder)?.state !== 'held') return false;
     this.#touch(endpoint, holder);
