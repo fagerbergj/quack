@@ -5,10 +5,8 @@ type Raw = { id: string; name: string; version?: number | string; lastModified?:
 
 export type RmClient = ReturnType<typeof createRmClient>;
 
-/**
- * rmfakecloud's UI API: login returns a bearer JWT as plain text, and a 401 means it expired, so each call
- * logs in again once. Credentials stay inside this closure and never reach an error message.
- */
+// rmfakecloud UI API: login returns a plain-text JWT, and a 401 means it expired, so each call re-logs in once.
+// Credentials stay in this closure and never reach an error message.
 export function createRmClient(config: { url: string; email: string; password: string }) {
   const base = config.url.replace(/\/+$/, '');
   let token = '';
