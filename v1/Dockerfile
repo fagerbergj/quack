@@ -10,6 +10,7 @@ COPY package.json package-lock.json ./
 COPY packages/distributor/package.json packages/distributor/
 COPY packages/github/package.json packages/github/
 COPY packages/judge/package.json packages/judge/
+COPY packages/research/package.json packages/research/
 COPY packages/runtime/package.json packages/runtime/
 COPY packages/sdk/package.json packages/sdk/
 COPY packages/session/package.json packages/session/
