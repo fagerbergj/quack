@@ -65,6 +65,8 @@ test('a pinned base keeps the base branch\'s later history, merges and tags out 
   assert.equal(sh(repo, 'rev-parse', 'origin/main'), baseSha);
   assert.equal(sh(repo, 'tag'), '');
   assert.equal(sh(repo, 'log', '--all', '--format=%H').includes(later), false, 'no ref in the clone reaches the later commit');
+  const doc = await session.harness.snapshot(PullRequestDoc, session.root.id, BACKGROUND_CONTEXT);
+  assert.equal(doc!.pr!.baseSha, baseSha);
   await session.close();
 });
 
