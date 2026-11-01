@@ -602,6 +602,19 @@ test('the Inbox shows a workflow question with its options, and an option answer
   expect(screen.queryByRole('region', { name: 'Decision' })).toBeNull();
 });
 
+test('a re-asked question with a newer askedAt shows again after the first was answered', async () => {
+  routes['GET /sessions'] = { sessions: [sess('gh:3')] };
+  routes['GET /index/approvals?state=pending'] = { approvals: [] };
+  routes['GET /index/decisions?state=pending'] = pendingDecision;
+  routes['POST /sessions/gh%3A3/decisions/type'] = { answered: true };
+  location.hash = '#/inbox';
+  render(<App />);
+  const first = await screen.findByRole('button', { name: 'meeting' });
+  routes['GET /index/decisions?state=pending'] = { decisions: pendingDecision.decisions.map((d) => ({ ...d, at: 2 })) };
+  await userEvent.click(first);
+  expect(await screen.findByRole('region', { name: 'Decision' })).toBeInTheDocument();
+});
+
 test('a failed answer keeps the question card and shows the error', async () => {
   routes['GET /sessions'] = { sessions: [sess('gh:3')] };
   routes['GET /index/approvals?state=pending'] = { approvals: [] };
