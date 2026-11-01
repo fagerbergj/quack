@@ -7,7 +7,10 @@ import { createEditTool, createWriteTool } from '@earendil-works/pi-durable/tool
 /** An extension-declared artifact: a finished product at a workspace path, validated by its schema (D42). */
 export type ArtifactKind = { kind: string; path: string; validate?: (text: string) => string[] };
 
-export type SealedArtifact = { kind: string; version: number; hash: string; content: string; sealedAt: number; verdict: JsonObject | null };
+/** A pointer an extension attaches to a sealed version after the fact, e.g. where it was delivered. */
+export type ArtifactLink = { label: string; url: string };
+
+export type SealedArtifact = { kind: string; version: number; hash: string; content: string; sealedAt: number; verdict: JsonObject | null; links?: ArtifactLink[] };
 
 type ArtifactsDoc = { kinds: Record<string, { versions: SealedArtifact[] }> };
 
@@ -56,6 +59,15 @@ export async function attachVerdict(api: ToolExecutionApi, kind: string, version
     const sealed = (await tx.doc(Artifacts, api.conversationId)).kinds[kind]?.versions[version - 1];
     if (!sealed) throw new Error(`${kind} v${version} is not sealed`);
     sealed.verdict = plain(verdict);
+  }, ctx);
+}
+
+/** Appends a link to a sealed version; the content and hash stay as sealed, and a repeated URL is not added twice. */
+export async function attachLink(api: ToolExecutionApi, kind: string, version: number, link: ArtifactLink, ctx: Context): Promise<void> {
+  await api.commit(async (tx) => {
+    const sealed = (await tx.doc(Artifacts, api.conversationId)).kinds[kind]?.versions[version - 1];
+    if (!sealed) throw new Error(`${kind} v${version} is not sealed`);
+    if (!sealed.links?.some((l) => l.url === link.url)) sealed.links = [...(sealed.links ?? []), plain(link)];
   }, ctx);
 }
 

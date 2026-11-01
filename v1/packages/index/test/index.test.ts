@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -9,7 +10,7 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, Type } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
-import { artifactsExtension, attachVerdict, gated, pendingApprovals, resolveApproval, seal, type ArtifactKind } from '@quack/sdk';
+import { artifactsExtension, attachLink, attachVerdict, gated, pendingApprovals, resolveApproval, seal, type ArtifactKind } from '@quack/sdk';
 import { createSessionServer, openSession } from '@quack/session';
 import { defineWorkflow, outcomeOf, sessionDecisions, WorkflowDoc, workflowSessionExtensions } from '@quack/workflows';
 import pg from 'pg';
@@ -51,6 +52,7 @@ const submitReview = defineTool({
   execute: async (_a, api, c) => {
     const sealed = await seal(api, review, c);
     await attachVerdict(api, sealed.kind, sealed.version, { passed: true }, c);
+    await attachLink(api, sealed.kind, sealed.version, { label: 'Posted', url: 'https://example.test/r/1' }, c);
     return { output: [{ type: 'text', text: 'sealed' }] };
   },
 });
@@ -119,7 +121,9 @@ for (const { name, fresh: freshStore, skip } of backends) test(`${name}: facts s
   down = false;
   await publisher.flush();
   assert.deepEqual((await get('/index/approvals?state=pending')).approvals.map((a) => [a.session, a.id, a.tool, a.state]), [['chat:1', approval.id, 'post', 'pending']]);
-  assert.deepEqual((await get('/index/artifacts')).artifacts.map((a) => [a.session, a.kind, a.version, a.verdict]), [['chat:1', 'demo.review', 1, { passed: true }]]);
+  // A link added after sealing rides with the artifact and leaves the sealed hash alone.
+  assert.deepEqual((await get('/index/artifacts')).artifacts.map((a) => [a.session, a.kind, a.version, a.verdict, a.links, a.hash]),
+    [['chat:1', 'demo.review', 1, { passed: true }, [{ label: 'Posted', url: 'https://example.test/r/1' }], createHash('sha256').update('# Review\nfine\n').digest('hex')]]);
   const [row] = (await get('/index/sessions')).sessions;
   assert.deepEqual([row.key, row.agent, row.version, row.status], ['chat:1', 'reviewer', 4, 'running']);
 

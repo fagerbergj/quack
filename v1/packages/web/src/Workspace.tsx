@@ -1,7 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { indexApprovals, indexArtifacts, indexDecisions, listAgents, listApprovals, listDecisions, listSessions, type Approval, type AgentSummary, type Decision } from './api.ts';
 import { Landing } from './Landing.tsx';
-import { group, titleOf, type Row } from './sessions.ts';
+import { sessionTitle } from './kinds.ts';
+import { group, type Row } from './sessions.ts';
 import { SessionView } from './SessionView.tsx';
 
 const REFRESH_MS = 15_000;
@@ -54,7 +55,7 @@ export function Workspace({ data, selected, isNew, list }: { data: WorkspaceData
   return (
     <div className="flex min-h-0 min-w-0 flex-col lg:h-dvh">
       {selected ? (
-        <SessionView key={selected.key} sessionKey={selected.key} agent={selected.agent} title={row ? titleOf(row) : selected.key} />
+        <SessionView key={selected.key} sessionKey={selected.key} agent={selected.agent} name={sessionTitle(row ?? { key: selected.key, agent: selected.agent ?? '', running: false, active: false, lastActivity: '' })} />
       ) : (
         <div className="overflow-y-auto"><Landing agents={data.agents} error={data.agentsError} groups={group(data.rows ?? [])} /></div>
       )}

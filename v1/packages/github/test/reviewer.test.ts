@@ -92,6 +92,7 @@ test('a reviewer run checks out the PR, has its review judged, and posts exactly
   const doc = await session.harness.snapshot(Artifacts, session.root.id, BACKGROUND_CONTEXT);
   const verdict = doc!.kinds['github.review'].versions[0].verdict as any;
   assert.equal(verdict.passed, true);
+  assert.deepEqual(doc!.kinds['github.review'].versions[0].links, [{ label: 'Posted', url: 'https://github.com/acme/widgets/pull/7#review-9' }]);
   const resolvers = new Set(verdict.checks.flatMap((c: any) => Object.keys(c.resolvers)));
   assert.deepEqual([...resolvers].sort(), ['clef', 'code']);
   assert.ok(clefUnits.includes('review+description+ci+linkedIssues+diff'), 'the change unit carries the diff and PR context');

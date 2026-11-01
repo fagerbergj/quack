@@ -204,8 +204,7 @@ test('renders the snapshot transcript, then streamed events', async () => {
   const result = entry('e3', [{ role: 'toolResult', toolCallId: 't1', toolName: 'bash', content: [{ type: 'text', text: 'a.txt' }], isError: false, timestamp: 2 }]);
   ws.frame({ type: 'events', events: [{ type: 'message_end', entry: final }, { type: 'entry_appended', entry: final }, { type: 'entry_appended', entry: result }, { type: 'run_end', inputs: [] }] });
   expect(screen.getAllByRole('article', { name: 'Assistant' })).toHaveLength(1);
-  expect(screen.getByText('Tool call: bash').closest('details')).not.toHaveAttribute('open');
-  expect(screen.getByText('Tool result: bash')).toBeInTheDocument();
+  expect(screen.getByText('Worked · 1 tool · bash').closest('details')).not.toHaveAttribute('open');
   expect(screen.getByRole('status')).toHaveTextContent('Idle');
 });
 
@@ -221,33 +220,97 @@ test('tool calls show a summary, expand to arguments and output, truncate long o
       result('t2', 'bash', 'exit 1\nboom', true),
     ],
   }));
-  expect(screen.getAllByText('Thinking')).toHaveLength(1);
-  expect(screen.getByText('weighing options').closest('details')).not.toHaveAttribute('open');
+  const group = screen.getByText('Worked · 2 tools · web_search, bash').closest('details')!;
+  expect(group).not.toHaveAttribute('open');
+  expect(within(group).getByText('weighing options')).toBeInTheDocument();
 
-  const search = screen.getByText('Tool call: web_search').closest('details')!;
+  const search = within(group).getByText('web_search').closest('details')!;
   expect(within(search.querySelector('summary')!).getByText('quack ducks')).toBeInTheDocument();
+  expect(within(search.querySelector('summary')!).getByText('3 k chars')).toBeInTheDocument();
   expect(search).not.toHaveAttribute('open');
-  await userEvent.click(within(search).getByText('Tool call: web_search'));
+  await userEvent.click(within(search).getByText('web_search'));
   expect(search).toHaveAttribute('open');
   expect(search).toHaveTextContent('"limit": 3');
+  const out = search.querySelectorAll('pre')[1]!;
+  expect(out.textContent).toHaveLength(2003);
+  await userEvent.click(within(search).getByRole('button', { name: 'Show all (2500 characters)' }));
+  expect(search.querySelectorAll('pre')[1]!.textContent).toHaveLength(2500);
 
-  const out = screen.getByText('Tool result: web_search').closest('details')!;
-  expect(within(out.querySelector('summary')!).getByText('2500 characters')).toBeInTheDocument();
-  expect(out.querySelector('pre')!.textContent).toHaveLength(2003);
-  await userEvent.click(within(out).getByRole('button', { name: 'Show all (2500 characters)' }));
-  expect(out.querySelector('pre')!.textContent).toHaveLength(2500);
-
-  const bad = screen.getByText('Tool result: bash (error)').closest('details')!;
-  expect(within(bad.querySelector('summary')!).getByText('exit 1')).toBeInTheDocument();
-  expect(bad.querySelector('pre')).toHaveTextContent('boom');
+  const bad = within(group).getByText('bash').closest('details')!;
+  expect(within(bad.querySelector('summary')!).getByText('error')).toBeInTheDocument();
+  expect(bad).toHaveTextContent('boom');
 });
 
 test('a call whose arguments were not valid JSON shows the parse error', async () => {
   const ws = await openSession();
   const call = { type: 'toolCall', id: 't9', name: 'bash', arguments: {}, argumentsError: 'Unexpected token } at 4' };
   ws.frame(snapshot({ entries: [entry('a', [assistant([call])])] }));
-  const bad = screen.getByText('Tool call: bash (bad arguments)').closest('details')!;
-  expect(bad.querySelector('pre')).toHaveTextContent('Unexpected token } at 4');
+  expect(screen.getByText('bash').closest('details')!.querySelector('pre')).toHaveTextContent('Unexpected token } at 4');
+});
+
+test('a compaction entry is a muted collapsed line with its summary rendered, not a user bubble', async () => {
+  const ws = await openSession();
+  const summary = 'The conversation history before this point was compacted.\n\n## Goal\n\n- [x] ship it';
+  ws.frame(snapshot({ entries: [{ ...entry('c', [{ role: 'user', content: summary, timestamp: 5 }]), kind: 'pi.compaction' }] }));
+  expect(screen.queryByRole('article', { name: 'You' })).toBeNull();
+  const line = screen.getByText('Earlier conversation summarized').closest('details')!;
+  expect(line).not.toHaveAttribute('open');
+  expect(within(line).getByRole('heading', { name: 'Goal' })).toBeInTheDocument();
+  expect(line.querySelector('time')).toHaveAttribute('datetime', new Date(5).toISOString());
+});
+
+test('user messages render markdown inside the bubble', async () => {
+  const ws = await openSession();
+  ws.frame(snapshot({ entries: [entry('u', [{ role: 'user', content: '## Review\n\nsee [the PR](https://github.com/o/r/pull/1)', timestamp: 1 }])] }));
+  const bubble = screen.getByRole('article', { name: 'You' });
+  expect(within(bubble).getByRole('heading', { name: 'Review' })).toBeInTheDocument();
+  const link = within(bubble).getByRole('link', { name: 'the PR' });
+  expect(link).toHaveAttribute('target', '_blank');
+  expect(link).toHaveAttribute('rel', expect.stringContaining('noreferrer'));
+});
+
+test('markdown tool output renders with a toggle to raw; a posted review links out from its tool row', async () => {
+  const ws = await openSession();
+  const call = (id: string, name: string) => ({ type: 'toolCall', id, name, arguments: { version: 1 } });
+  const res = (id: string, name: string, text: string) => entry(`r${id}`, [{ role: 'toolResult', toolCallId: id, toolName: name, content: [{ type: 'text', text }], isError: false, timestamp: 2 }]);
+  ws.frame(snapshot({
+    entries: [
+      entry('a', [assistant([call('s', 'submit_review'), call('p', 'post_review')])]),
+      res('s', 'submit_review', '## Takeaway\n\n- fine'),
+      res('p', 'post_review', 'Posted review v1 as APPROVE: https://github.com/o/r/pull/1#pullrequestreview-9'),
+    ],
+  }));
+  const submit = screen.getByText('submit_review').closest('details')!;
+  expect(within(submit).getByRole('heading', { name: 'Takeaway' })).toBeInTheDocument();
+  await userEvent.click(within(submit).getByRole('button', { name: 'Raw' }));
+  expect(submit.querySelectorAll('pre')[1]).toHaveTextContent('## Takeaway');
+  // The tool row's link comes from the result; the artifact line's comes from the artifact, below.
+  expect(within(screen.getByText('post_review').closest('details')!).getByRole('link', { name: 'Posted ↗' })).toHaveAttribute('href', 'https://github.com/o/r/pull/1#pullrequestreview-9');
+});
+
+test('an artifact line renders the links stored with the version, with no stream entries to read', async () => {
+  routes['GET /sessions/ui%3Au1/artifacts'] = { artifacts: [{ kind: 'github.review', version: 1, hash: 'h', content: 'x', sealedAt: 1, verdict: { passed: true, gatesFailed: [], score: 1, checks: [] }, links: [{ label: 'Posted', url: 'https://github.com/o/r/pull/1#pullrequestreview-9' }] }] };
+  const ws = await openSession();
+  ws.frame(snapshot());
+  const link = await screen.findByRole('link', { name: 'Posted ↗' });
+  expect(link).toHaveAttribute('href', 'https://github.com/o/r/pull/1#pullrequestreview-9');
+  expect(link).toHaveAttribute('rel', expect.stringContaining('noreferrer'));
+});
+
+test('the header shows the token total and Waiting on you for a pending approval', async () => {
+  routes['GET /sessions/ui%3Au1/approvals'] = { approvals: [{ id: 'a', tool: 'bash', args: {}, requestedAt: 1 }] };
+  const ws = await openSession();
+  ws.frame(snapshot({ usage: { models: { 'p/m': { input: 1200, output: 300 } }, tools: {} } }));
+  expect(await screen.findByRole('status')).toHaveTextContent('Waiting on you');
+  expect(screen.getByText('2k tokens')).toBeInTheDocument();
+});
+
+test('a GitHub session header links to the pull request', async () => {
+  routes['GET /sessions/github%3Ao%2Fr%231/approvals'] = { approvals: [] };
+  routes['GET /sessions/github%3Ao%2Fr%231/artifacts'] = { artifacts: [] };
+  location.hash = '#/s/github%3Ao%2Fr%231';
+  render(<App />);
+  expect(await screen.findByRole('link', { name: 'View on GitHub' })).toHaveAttribute('href', 'https://github.com/o/r/pull/1');
 });
 
 test('an idle send has no whenBusy; a busy send carries the chosen mode', async () => {
@@ -313,7 +376,7 @@ test('an assistant entry with only an errorMessage renders the error', async () 
   const ws = await openSession();
   const err = entry('e9', [{ ...assistant([]), stopReason: 'error', errorMessage: 'Provider is not configured' }]);
   ws.frame(snapshot({ entries: [err] }));
-  expect(screen.getByRole('article', { name: 'Assistant' })).toHaveTextContent('Error: Provider is not configured');
+  expect(screen.getByText('Error: Provider is not configured')).toBeInTheDocument();
 });
 
 test('a send on a closed socket keeps the input and says so', async () => {
@@ -341,7 +404,8 @@ test('Abort shows only while a run is in progress and posts to the abort route',
   ws.frame(snapshot());
   expect(screen.queryByRole('button', { name: 'Abort' })).toBeNull();
   ws.frame({ type: 'events', events: [{ type: 'run_start', inputs: [] }] });
-  await userEvent.click(screen.getByRole('button', { name: 'Abort' }));
+  await userEvent.click(screen.getByRole('button', { name: 'More actions' }));
+  await userEvent.click(screen.getByRole('menuitem', { name: 'Abort' }));
   expect(fetchMock).toHaveBeenCalledWith('sessions/ui%3Au1/abort', { method: 'POST' });
   ws.frame({ type: 'events', events: [{ type: 'run_end', inputs: [] }] });
   expect(screen.queryByRole('button', { name: 'Abort' })).toBeNull();
@@ -350,7 +414,8 @@ test('Abort shows only while a run is in progress and posts to the abort route',
 test('a failed abort is reported', async () => {
   const ws = await openSession();
   ws.frame(snapshot({ run: {} }));
-  await userEvent.click(screen.getByRole('button', { name: 'Abort' }));
+  await userEvent.click(screen.getByRole('button', { name: 'More actions' }));
+  await userEvent.click(screen.getByRole('menuitem', { name: 'Abort' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('not found');
 });
 
@@ -399,11 +464,11 @@ test('lists artifacts with their check status and failing criteria', async () =>
   const ws = await openSession();
   ws.frame(snapshot());
   const section = await screen.findByRole('region', { name: 'Artifacts' });
+  expect(within(section).getAllByRole('listitem')).toHaveLength(1);
+  await userEvent.click(within(section).getByRole('button', { name: '1 earlier version' }));
   const items = within(section).getAllByRole('listitem');
-  expect(items[0]).toHaveTextContent('github.review v1 sealed · checks failed');
-  expect(items[0]).toHaveTextContent('Failing: cites.lines');
-  expect(items[1]).toHaveTextContent('github.review v2 sealed · checked');
-  expect(items[1]).not.toHaveTextContent('Failing');
+  expect(items[0]).toHaveTextContent('Review v1 sealed · 1 check failed');
+  expect(items[1]).toHaveTextContent('Review v2 sealed · checks passed');
   expect(screen.queryByRole('dialog')).toBeNull();
   await userEvent.click(within(items[1]).getByRole('button', { name: 'Open github.review v2' }));
   expect(within(screen.getByRole('dialog', { name: 'Work' })).getByText('final review')).toBeInTheDocument();
@@ -476,8 +541,7 @@ test('assistant text renders as markdown with a table, highlighted code and cita
   expect(within(reply).getByRole('table')).toHaveTextContent('vLLM');
   expect(reply.querySelector('.cite')).toHaveTextContent('S9');
   expect(reply.querySelector('pre code.hljs .hljs-keyword')).toHaveTextContent('const');
-  expect(within(reply).getByText('3 calls · web_search ×1, web_fetch ×2')).toBeInTheDocument();
-  expect(within(reply).getAllByText('4 s')).toHaveLength(1);
+  expect(screen.getByText('Worked 4 s · 3 tools · web_search, web_fetch ×2')).toBeInTheDocument();
 });
 
 test('the Work drawer opens from the status line, shows report then checks, traps focus and closes on Esc', async () => {

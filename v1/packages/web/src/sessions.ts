@@ -11,6 +11,14 @@ export function titleOf(s: SessionSummary & { multiRepo?: boolean }): string {
   return [t.repo, t.number, t.text].filter(Boolean).join(' ');
 }
 
+const GITHUB_KEY = /^github:([^/]+)\/([^#]+)#(\d+)$/;
+
+// GitHub redirects /pull/<n> to /issues/<n> for a plain issue, so one URL fits both.
+export const githubUrl = (key: string) => {
+  const m = GITHUB_KEY.exec(key);
+  return m ? `https://github.com/${m[1]}/${m[2]}/pull/${m[3]}` : undefined;
+};
+
 const START_LABELS: Record<string, string> = { ui: 'You', github: 'GitHub' };
 
 // The key prefix names what started the session (ui:, github:, ...).

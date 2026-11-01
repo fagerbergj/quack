@@ -65,6 +65,7 @@
 
 @keyframes bob { 0%, 100% { transform: translateY(0) rotate(-2deg); } 50% { transform: translateY(-4px) rotate(2deg); } }
 .bob { animation: bob 2.8s ease-in-out infinite; transform-origin: 50% 80%; }
+details[open] > summary > .chev { transform: rotate(90deg); }
 .ducklings svg { animation: bob 1.4s ease-in-out infinite; }
 .ducklings svg:nth-child(2) { animation-delay: 0.2s; }
 .ducklings svg:nth-child(3) { animation-delay: 0.4s; }
