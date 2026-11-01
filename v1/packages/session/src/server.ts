@@ -101,8 +101,8 @@ async function abort(session: Session): Promise<[number, unknown]> {
 // The container contract (RUN-3): GET /ping, POST /invocations and /ws, plus the approvals, artifacts and abort of this session.
 const ROUTES: Array<[string, RegExp, Route]> = [
   ['GET', /^\/ping$/, async (s) => {
-    const { busy, waitingOnHuman, wakeAt } = await s.standing();
-    return [200, { status: busy ? 'HealthyBusy' : 'Healthy', waitingOnHuman, wake: { at: wakeAt } }];
+    const { busy, waitingOnHuman, wakeAt, note } = await s.standing();
+    return [200, { status: busy ? 'HealthyBusy' : 'Healthy', waitingOnHuman, wake: { at: wakeAt }, note: note ?? undefined }];
   }],
   ['POST', /^\/invocations$/, invoke],
   ['GET', /^\/approvals$/, async (s) => [200, { approvals: await pendingApprovals(s.root, ctx) }]],

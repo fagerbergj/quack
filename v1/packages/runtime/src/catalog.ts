@@ -5,9 +5,10 @@ import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { githubSessionExtensions, type GithubSessionConfig } from '@quack/github';
 import { researchSessionExtensions, type ResearchConfig } from '@quack/research';
 import { piPackage } from '@quack/sdk';
+import { slotsFromEnv } from '@quack/slots';
 import { INGEST_WORKFLOW, ingestFromEnv } from '@quack/remarkable';
 import { DIGEST_WORKFLOW, digestFromEnv, FINDER_WORKFLOW, finderFromEnv, LINEUP_WORKFLOW, lineupFromEnv, RETRO_WORKFLOW, retroFromEnv, TRADE_WORKFLOW, tradeFromEnv, TRENDS_WORKFLOW, trendsFromEnv, HISTORY_WORKFLOW, historyFromEnv, WAIVERS_WORKFLOW, waiversFromEnv } from '@quack/sleeper';
-import type { Catalog, CatalogEntry } from '@quack/session';
+import type { Catalog, CatalogEntry, DeploymentExtensions } from '@quack/session';
 import { workflowSessionExtensions, type Workflow } from '@quack/workflows';
 
 function required(name: string): string {
@@ -62,3 +63,6 @@ export const catalog: Catalog = {
     return [await piPackage('pi-lsp', { from: import.meta.url, replaySafe: ['lsp_diagnostics', 'lsp_hover', 'lsp_definition', 'lsp_references', 'lsp_symbols'] })];
   },
 };
+
+// Installed for every session when the deployment configures them; each returns nothing when its env is unset.
+export const deploymentExtensions: DeploymentExtensions = [Object.assign(() => slotsFromEnv(), { env: ['QUACK_SLOTS_URL', 'QUACK_SLOTS_TOKEN'] })];

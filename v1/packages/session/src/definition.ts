@@ -141,17 +141,23 @@ export function buildModels(deployment: DeploymentConfig): MutableModels {
   return models;
 }
 
-export async function agentSpec(def: AgentDefinition, catalog: Catalog): Promise<AgentSpec> {
+/** Extensions a deployment installs for every session, whatever its agent selects (a limit only works if every session obeys it). */
+export type DeploymentExtensions = Array<(() => Extension[]) & { env?: readonly string[] }>;
+
+/** The variables deployment-level extensions read, for the session process to receive (and drop once read). */
+export const deploymentEnv = (always: DeploymentExtensions): string[] => always.flatMap((e) => e.env ?? []);
+
+export async function agentSpec(def: AgentDefinition, catalog: Catalog, always: DeploymentExtensions = []): Promise<AgentSpec> {
   const slash = def.model.indexOf('/');
   return {
     model: { provider: def.model.slice(0, slash), modelId: def.model.slice(slash + 1) },
     ...(def.exec?.timeoutSeconds && { commandTimeoutSeconds: def.exec.timeoutSeconds }),
-    extensions: (await Promise.all(Object.entries(def.extensions).map(([name, config]) => catalog[name](config)))).flat(),
+    extensions: [...(await Promise.all(Object.entries(def.extensions).map(([name, config]) => catalog[name](config)))).flat(), ...always.flatMap((make) => make())],
   };
 }
 
 /** Reads an agent definition file and the prompt file it names (resolved beside it) into an agent spec. */
-export async function loadAgent(path: string, deployment: DeploymentConfig, catalog: Catalog): Promise<AgentSpec> {
+export async function loadAgent(path: string, deployment: DeploymentConfig, catalog: Catalog, always: DeploymentExtensions = []): Promise<AgentSpec> {
   let raw: unknown;
   try {
     raw = JSON.parse(readFileSync(path, 'utf8'));
@@ -160,5 +166,5 @@ export async function loadAgent(path: string, deployment: DeploymentConfig, cata
   }
   const def = parseDefinition(raw, deployment, catalog);
   const instructions = def.prompt ? readFileSync(resolve(dirname(path), def.prompt), 'utf8') : undefined;
-  return { ...(await agentSpec(def, catalog)), instructions };
+  return { ...(await agentSpec(def, catalog, always)), instructions };
 }

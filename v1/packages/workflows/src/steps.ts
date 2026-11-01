@@ -2,7 +2,7 @@ import type { Context } from '@earendil-works/chord/context';
 import { contentText, validateToolArguments, type TSchema } from '@earendil-works/pi-ai';
 import type { JsonValue } from '@earendil-works/chord';
 import type { JsonObject, ToolExecutionApi, ToolRegistration } from '@earendil-works/pi-durable';
-import { decide, gated, type DecisionPoint, type Resolver } from '@quack/sdk';
+import { decide, gated, whileWaiting, type DecisionPoint, type Resolver } from '@quack/sdk';
 import { WorkflowDoc, watchUntil } from './doc.ts';
 
 /** What a step sees: the workflow input, the results of earlier steps by name, and the task's api for artifacts and other durable calls. */
@@ -86,7 +86,7 @@ function person(step: string, c: StepContext): Resolver {
       }, ctx);
       const watch = await api.watchDoc(WorkflowDoc, api.conversationId, ctx);
       if (!watch) throw new Error('workflow state is unavailable');
-      const answer = await watchUntil(watch, (d) => d.steps.find((r) => r.name === step)?.answer, c.signal);
+      const answer = await whileWaiting(() => watchUntil(watch, (d) => d.steps.find((r) => r.name === step)?.answer, c.signal));
       await api.commit(async (tx) => { (await tx.doc(WorkflowDoc, api.conversationId)).steps.find((r) => r.name === step)!.status = 'running'; }, ctx);
       return { choice: answer.choice, confidence: 1, reason: `answered by ${answer.by}` };
     },
