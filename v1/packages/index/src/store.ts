@@ -53,8 +53,8 @@ export function createStore(backend: Backend) {
         state: field(f, 'state'), choice: field(f, 'choice'), by: field(f, 'by'), at: f.at,
       }));
     },
-    async failures(state?: string) {
-      return (await facts(['failure'])).filter((f) => !state || field(f, 'state') === state).sort(newestFirst).map((f) => ({
+    async failures(state = 'failed') {
+      return (await facts(['failure'])).filter((f) => field(f, 'state') === state).sort(newestFirst).map((f) => ({
         session: f.session, step: field(f, 'step'), error: field(f, 'error'), state: field(f, 'state'), at: f.at,
       }));
     },

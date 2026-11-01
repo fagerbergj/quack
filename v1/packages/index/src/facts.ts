@@ -43,12 +43,11 @@ function decisionFacts(steps: Readonly<StepRecord[]> | undefined): Fact[] {
   });
 }
 
-// A step keeps its error after a rerun succeeds, so the state tells the index whether the failure still stands.
-function failureFacts(steps: Readonly<StepRecord[]> | undefined): Fact[] {
-  return (steps ?? []).filter((s) => s.error).map((s): Fact => {
-    const at = (s.startedAt ?? 0) + (s.durationMs ?? 0);
-    const failed = s.status === 'failed';
-    return { id: `failure:${s.name}`, kind: 'failure', rev: at * 2 + (failed ? 1 : 2), at, data: { step: s.name, error: s.error!, state: failed ? 'failed' : 'recovered' } };
+// Every step of the current run is a row, and the run's task id orders the revisions, so a later run supersedes an earlier run's failure.
+function failureFacts(steps: Readonly<StepRecord[]> | undefined, task: string | null | undefined): Fact[] {
+  return (steps ?? []).map((s): Fact => {
+    const failed = s.status === 'failed' && s.error !== null;
+    return { id: `failure:${s.name}`, kind: 'failure', rev: Number(task ?? 0) * 2 + (failed ? 2 : 1), at: (s.startedAt ?? 0) + (s.durationMs ?? 0), data: { step: s.name, error: failed ? s.error! : '', state: failed ? 'failed' : 'cleared' } };
   });
 }
 
@@ -66,7 +65,7 @@ export async function collectFacts(harness: Harness, root: Conversation, meta: S
   const status = outbox?.status;
   return [
     { id: 'session', kind: 'session', rev: 1, at: 0, data: { agent: meta.agent, version: meta.version } },
-    ...artifactFacts(artifacts), ...approvalFacts(approvals), ...decisionFacts(workflow?.steps), ...failureFacts(workflow?.steps), ...costFact(await harness.usage(ctx), now),
+    ...artifactFacts(artifacts), ...approvalFacts(approvals), ...decisionFacts(workflow?.steps), ...failureFacts(workflow?.steps, workflow?.task), ...costFact(await harness.usage(ctx), now),
     ...(status?.seq ? [{ id: 'status', kind: 'status' as const, rev: status.seq, at: status.at, data: { state: status.state } }] : []),
   ];
 }
