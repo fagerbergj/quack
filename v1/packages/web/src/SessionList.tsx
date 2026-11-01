@@ -23,14 +23,15 @@ function RowLink({ r, kind, current, now }: { r: Row; kind: Kind; current: boole
     <a
       href={`#/s/${encodeURIComponent(r.key)}`}
       aria-current={current ? 'true' : undefined}
-      title={r.key}
-      aria-description={r.key}
+      title={`${l.full}\n${r.key}`}
+      aria-description={`${l.full} (${r.key})`}
       className={`row mx-2 flex min-h-11 items-start gap-3 rounded-xl px-2 py-2.5 text-ink no-underline hover:bg-soft/70 lg:gap-2.5 lg:rounded-[10px] lg:py-2 ${kind === 'needs' ? 'bg-warm' : ''}`}
     >
       <Tile l={l} kind={kind} />
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="flex gap-2">
           <span className={`min-w-0 flex-1 truncate text-[15px] lg:text-[13.5px] ${kind === 'recent' ? 'font-medium' : 'font-semibold'}`}>
+            {l.repo && <span className="mr-1 text-[11px] font-normal text-muted">{l.repo}</span>}
             {l.num && <><span className="font-medium text-muted">{l.num}</span>{' '}</>}
             {l.title}
           </span>

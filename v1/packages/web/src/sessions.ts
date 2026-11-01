@@ -1,16 +1,14 @@
 import type { Approval, Decision, IndexArtifact, SessionSummary } from './api.ts';
-import { searchText } from './kinds.ts';
+import { searchText, sessionTitle } from './kinds.ts';
 
 export type Row = SessionSummary & { approvals: Approval[]; decisions: Decision[]; artifacts: IndexArtifact[] };
 export type Groups = { needs: Row[]; running: Row[]; recent: Row[] };
 export type Filters = { text: string; agent: string; start: string };
 
-const GITHUB_KEY = /^github:[^/]+\/([^#]+)#(\d+)$/;
-
-// A GitHub key shortens to repo#n, the part that tells sessions apart; the full key stays in the row's tooltip.
+// The display title as one string, e.g. "#1927 Sleeper waivers job"; the full key stays in the row's tooltip.
 export function titleOf(s: SessionSummary): string {
-  const m = GITHUB_KEY.exec(s.key);
-  return m ? [`${m[1]}#${m[2]}`, s.title].filter(Boolean).join(' · ') : (s.title ?? s.key);
+  const t = sessionTitle(s);
+  return [t.repo, t.number, t.text].filter(Boolean).join(' ');
 }
 
 const START_LABELS: Record<string, string> = { ui: 'You', github: 'GitHub' };
@@ -23,7 +21,7 @@ export function startOf(key: string): string {
 
 export function matches(s: Row, f: Filters): boolean {
   const q = f.text.trim().toLowerCase();
-  const hit = !q || [titleOf(s), ...searchText(s), s.key, s.agent].some((v) => v.toLowerCase().includes(q));
+  const hit = !q || [...searchText(s), s.key, s.agent].some((v) => v.toLowerCase().includes(q));
   return hit && (!f.agent || s.agent === f.agent) && (!f.start || startOf(s.key) === f.start);
 }
 

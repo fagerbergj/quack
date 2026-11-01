@@ -82,7 +82,7 @@ test('a GitHub key shows as #n with its title, and the full key stays as the too
   routes['GET /sessions'] = { sessions: [sess('github:fagerbergj/quack#1885', { title: 'Review the shell' })] };
   render(<App />);
   const link = await screen.findByRole('link', { name: /#1885 Review the shell/ });
-  expect(link).toHaveAttribute('title', 'github:fagerbergj/quack#1885');
+  expect(link).toHaveAttribute('title', 'Review the shell\ngithub:fagerbergj/quack#1885');
 });
 
 const sealed = (session: string, kind: string, passed: boolean | null, version = 1) => ({ session, kind, version, verdict: passed === null ? null : { passed }, sealedAt: 1 });
@@ -113,15 +113,15 @@ test('each kind of session shows its own title and state, and search finds it by
   expect((await row(/#8 Add retries/)).getByText('Approved ✓')).toBeInTheDocument();
   expect((await row(/#9 Drop the flag/)).getByText('Checks failed')).toBeInTheDocument();
   expect((await row(/What changed/)).getByText('Report ✓')).toBeInTheDocument();
-  expect((await row(/Lineup · week 8/)).getByText('Card ready')).toBeInTheDocument();
+  expect((await row(/Lineup · wk 8/)).getByText('Card ready')).toBeInTheDocument();
   expect((await row(/Campaign Notes/)).getByText(/^Failed/)).toBeInTheDocument();
-  const alive = await row(/#10 feat\(v1\): Sleeper waivers job/);
+  const alive = await row(/#10 Sleeper waivers job/);
   expect(alive.getByText('Approved ✓')).toBeInTheDocument();
-  expect(within(screen.getByRole('region', { name: 'Recent' })).getByRole('link', { name: /#10 feat/ })).toBeInTheDocument();
+  expect(within(screen.getByRole('region', { name: 'Recent' })).getByRole('link', { name: /#10 Sleeper/ })).toBeInTheDocument();
   expect((await row(/ui:x/)).getByText('coder')).toBeInTheDocument();
   await userEvent.type(screen.getByRole('searchbox', { name: 'Search sessions' }), 'lineup');
   expect(screen.queryByRole('link', { name: /Campaign Notes/ })).toBeNull();
-  expect(screen.getByRole('link', { name: /Lineup · week 8/ })).toBeInTheDocument();
+  expect(screen.getByRole('link', { name: /Lineup · wk 8/ })).toBeInTheDocument();
 });
 
 test('search and the agent filter narrow the list', async () => {
