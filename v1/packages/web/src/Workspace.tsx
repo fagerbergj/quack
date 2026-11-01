@@ -40,7 +40,7 @@ export function Workspace({ data, selected, isNew, list }: { data: WorkspaceData
   if (list && !open) return <>{list}</>;
   const row = data.rows?.find((r) => r.key === selected?.key);
   return (
-    <div className="flex min-h-0 min-w-0 flex-col lg:h-[calc(100dvh-2.5rem)]">
+    <div className="flex min-h-0 min-w-0 flex-col lg:h-dvh">
       {selected ? (
         <SessionView key={selected.key} sessionKey={selected.key} agent={selected.agent} title={row ? titleOf(row) : selected.key} />
       ) : (

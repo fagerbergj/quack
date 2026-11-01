@@ -136,7 +136,7 @@ export function Shell({ route, bare, sidebar, children }: { route: Route; bare?:
         <Duck size={24} />
         <span className="text-[15px] font-semibold tracking-[-0.015em]">{TITLES[route]}</span>
       </header>
-      <main className="min-h-screen pb-24 lg:pb-10 lg:pl-72">{children}</main>
+      <main className="min-h-screen pb-24 lg:pb-0 lg:pl-72">{children}</main>
       <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-line bg-canvas/90 pb-[env(safe-area-inset-bottom,0px)] backdrop-blur-md lg:hidden">
         {MAIN.map((n) => link(n, tabBase))}
         <button type="button" aria-expanded={more} aria-controls="more-sheet" aria-current={MORE.some((n) => n.route === route) ? 'page' : undefined} onClick={() => setMore(!more)} className={`${tabBase} cursor-pointer border-0 bg-transparent`}>

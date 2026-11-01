@@ -70,8 +70,7 @@ function useSocket(key: string, agent: string | undefined) {
 const seg = (on: boolean) =>
   `h-11 lg:h-[26px] cursor-pointer rounded-full border-0 px-2.5 text-xs font-semibold ${on ? 'bg-surface text-ink shadow-thumb' : 'bg-transparent text-muted hover:text-ink'}`;
 
-function Composer({ busy, disabled, send, initial }: { busy: boolean; disabled: boolean; send: (i: string, w?: 'steer' | 'followUp') => boolean; initial: string }) {
-  const [input, setInput] = useState(initial);
+function Composer({ busy, disabled, send, input, setInput }: { busy: boolean; disabled: boolean; send: (i: string, w?: 'steer' | 'followUp') => boolean; input: string; setInput: (s: string) => void }) {
   const [mode, setMode] = useState<'steer' | 'followUp'>('steer');
   const submit = (e: SubmitEvent) => {
     e.preventDefault();
@@ -111,9 +110,14 @@ function StatusChip({ text, running }: { text: string; running: boolean }) {
 
 export function SessionView({ sessionKey, agent, title }: { sessionKey: string; agent?: string; title: string }) {
   const { view, state, error, setError, approvalTick, send } = useSocket(sessionKey, agent);
-  // The landing composer's text seeds this composer, so a failed connect leaves it visible to resend.
+  // The landing composer's text seeds this composer.
   const [initial] = useState(() => pendingInput.get(sessionKey) ?? '');
+  const [input, setInput] = useState(initial);
   useEffect(() => void pendingInput.delete(sessionKey), [sessionKey]);
+  // Sent once when the socket opens, and only while the composer still holds the untouched seed; an edit or a failed connect leaves it to the user.
+  useEffect(() => {
+    if (state === 'open' && input !== '' && input === initial && send(input)) setInput('');
+  }, [state]);
   const abort = () => abortRun(sessionKey).catch((e: Error) => setError(e.message));
   const { items, error: artifactsError } = useArtifacts(sessionKey, approvalTick);
   const [work, setWork] = useState<SealedArtifact | null>(null);
@@ -121,7 +125,7 @@ export function SessionView({ sessionKey, agent, title }: { sessionKey: string; 
   // Below lg the pane is the visible viewport above the tab bar and draws the only top bar, so the composer stays above the keyboard.
   const vv = useVisualViewportHeight();
   const keyboard = vv !== undefined && vv < window.innerHeight - 150;
-  const chrome = keyboard ? '0px' : '58px - env(safe-area-inset-bottom, 0px)';
+  const chrome = keyboard ? '0px' : '61px - env(safe-area-inset-bottom, 0px)';
   const paneStyle = vv === undefined ? undefined : ({ '--ws-h': `calc(${vv}px - ${chrome})` } as CSSProperties);
   return (
     <div style={paneStyle} className="flex h-(--ws-h) min-h-0 flex-col lg:h-auto lg:flex-1">
@@ -145,7 +149,7 @@ export function SessionView({ sessionKey, agent, title }: { sessionKey: string; 
       </div>
       <div className="border-t border-line bg-canvas/90 p-3 backdrop-blur-md sm:p-4">
         <div className="mx-auto max-w-[760px]">
-          <Composer busy={view.running} disabled={state !== 'open'} send={send} initial={initial} />
+          <Composer busy={view.running} disabled={state !== 'open'} send={send} input={input} setInput={setInput} />
         </div>
       </div>
       {work && <Work artifact={work} onClose={() => setWork(null)} />}

@@ -108,19 +108,32 @@ test('selecting a session opens it in the main pane and marks its row', async ()
   expect(screen.getByRole('link', { name: /Fix the flake/ })).toHaveAttribute('aria-current', 'true');
 });
 
-test('starting a session opens a ui: key with the chosen agent and seeds the session composer with the typed first message', async () => {
-  routes['GET /agents'] = { agents: [{ name: 'coder', version: 1 }, { name: 'reviewer', version: 2 }] };
+async function startFromLanding(text: string) {
+  routes['GET /agents'] = { agents: [{ name: 'reviewer', version: 2 }] };
   render(<App />);
-  await userEvent.selectOptions(await screen.findByRole('combobox', { name: 'Agent' }), 'reviewer 2');
-  await userEvent.click(screen.getByRole('button', { name: 'Review a pull request' }));
-  expect(screen.getByRole('textbox', { name: 'Question or task' })).toHaveValue('Review a pull request');
+  await userEvent.type(await screen.findByRole('textbox', { name: 'Question or task' }), text);
   await userEvent.click(screen.getByRole('button', { name: 'Start' }));
   await waitFor(() => expect(FakeSocket.all[0]?.url).toMatch(/\/sessions\/ui%3Auuid-1\/ws\?agent=reviewer$/));
-  expect(await screen.findByRole('textbox', { name: 'Message' })).toHaveValue('Review a pull request');
-  expect(FakeSocket.all[0].sent).toEqual([]);
-  FakeSocket.all[0].open();
-  await userEvent.click(screen.getByRole('button', { name: 'Send' }));
-  expect(FakeSocket.all[0].sent).toEqual([{ type: 'input', input: 'Review a pull request' }]);
+}
+
+test('starting a session opens a ui: key with the chosen agent and sends the untouched first message once on open', async () => {
+  await startFromLanding('review it');
+  const sock = FakeSocket.all[0];
+  expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('review it');
+  expect(sock.sent).toEqual([]);
+  sock.open();
+  await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue(''));
+  expect(sock.sent).toEqual([{ type: 'input', input: 'review it' }]);
+});
+
+test('a seed the user edited is not sent on open, and a socket that never opens leaves the text', async () => {
+  await startFromLanding('review it');
+  const sock = FakeSocket.all[0];
+  expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('review it');
+  await userEvent.type(screen.getByRole('textbox', { name: 'Message' }), ' carefully');
+  sock.open();
+  expect(sock.sent).toEqual([]);
+  expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('review it carefully');
 });
 
 test('renders the snapshot transcript, then streamed events', async () => {
@@ -441,6 +454,26 @@ test('the Work drawer opens from the status line, shows report then checks, trap
   await userEvent.keyboard('{Escape}');
   expect(screen.queryByRole('dialog')).toBeNull();
   expect(open).toHaveFocus();
+});
+
+test('the Work tabs are wired for assistive tech and switch with the arrow keys', async () => {
+  routes['GET /sessions/ui%3Au1/artifacts'] = { artifacts: [{ kind: 'research.report', version: 1, hash: 'h', content: 'body', sealedAt: 1, verdict: null }] };
+  const ws = await openSession();
+  ws.frame(snapshot());
+  await userEvent.click(await screen.findByRole('button', { name: 'Open research.report v1' }));
+  const report = screen.getByRole('tab', { name: 'Report' });
+  const checks = screen.getByRole('tab', { name: 'Checks' });
+  expect(report).toHaveAttribute('tabindex', '0');
+  expect(checks).toHaveAttribute('tabindex', '-1');
+  expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', report.id);
+  expect(report).toHaveAttribute('aria-controls', screen.getByRole('tabpanel').id);
+  report.focus();
+  await userEvent.keyboard('{ArrowRight}');
+  expect(checks).toHaveAttribute('aria-selected', 'true');
+  expect(checks).toHaveFocus();
+  expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', checks.id);
+  await userEvent.keyboard('{ArrowLeft}');
+  expect(report).toHaveFocus();
 });
 
 test('a malformed socket frame is skipped and later frames still apply', async () => {
