@@ -9,23 +9,22 @@ export function StatusIcon({ verdict }: { verdict: SealedArtifact['verdict'] }) 
   return <span aria-hidden="true" className={`grid h-4 w-4 flex-none place-items-center rounded-full text-[10px] ${tone}`}>{glyph}</span>;
 }
 
-function Item({ a, onOpen }: { a: SealedArtifact; onOpen: (a: SealedArtifact) => void }) {
-  const status = a.verdict ? (a.verdict.passed ? 'checked' : 'checks failed') : 'not checked';
-  const failed = failing(a);
-  const checks = (a.verdict?.checks ?? []).filter((c) => c.met !== null);
+const label = (kind: string) => {
+  const name = kind.split('.').at(-1) ?? kind;
+  return name.charAt(0).toUpperCase() + name.slice(1);
+};
+
+// Sealed, checked, posted: one muted status line each. The drawer's Checks tab holds the detail.
+function Item({ a, onOpen, url }: { a: SealedArtifact; onOpen: (a: SealedArtifact) => void; url?: string }) {
+  const n = failing(a).length;
+  const status = !a.verdict ? 'not checked' : a.verdict.passed ? 'checks passed' : `${n || ''} ${n === 1 ? 'check' : 'checks'} failed`.trim();
+  const link = 'flex min-h-11 cursor-pointer items-center border-0 bg-transparent p-0 text-[13px] text-link no-underline hover:underline lg:min-h-0';
   return (
-    <li className="flex flex-col gap-2">
-      <div className="flex items-center gap-1.5 text-xs font-medium text-muted">
-        <StatusIcon verdict={a.verdict} />
-        <span className="min-w-0 flex-1">{`${a.kind} v${a.version} sealed · ${status}`}</span>
-        <button type="button" aria-label={`Open ${a.kind} v${a.version}`} onClick={() => onOpen(a)} className="min-h-11 cursor-pointer rounded-lg border border-line bg-surface px-3 text-xs font-medium text-ink-2 hover:text-ink lg:min-h-0 lg:py-1">Open</button>
-      </div>
-      {a.verdict && !a.verdict.passed && (
-        <div className="rounded-xl border border-danger-line bg-danger-bg/60 px-3.5 py-2.5 text-[13px]">
-          <p className="m-0 font-semibold text-danger">{`Judge: ${checks.filter((c) => (c.met ?? 0) >= 1).length} of ${checks.length} checks passed`}</p>
-          {failed.length > 0 && <p className="m-0 mt-1 font-mono text-[12px] text-ink-2">{`Failing: ${failed.join(', ')}`}</p>}
-        </div>
-      )}
+    <li className="flex items-center gap-2 text-[13px] text-muted">
+      <StatusIcon verdict={a.verdict} />
+      <span className="min-w-0 truncate">{`${label(a.kind)} v${a.version} sealed · ${status}`}</span>
+      <button type="button" aria-label={`Open ${a.kind} v${a.version}`} onClick={() => onOpen(a)} className={link}>Open</button>
+      {url && <a href={url} target="_blank" rel="noopener noreferrer" className={link}>Posted ↗</a>}
     </li>
   );
 }
@@ -38,15 +37,26 @@ export function useArtifacts(sessionKey: string, refresh: number) {
   return { items, error };
 }
 
-export function Artifacts({ items, error, onOpen }: { items: SealedArtifact[]; error: string; onOpen: (a: SealedArtifact) => void }) {
+export function Artifacts({ items, error, onOpen, posted }: { items: SealedArtifact[]; error: string; onOpen: (a: SealedArtifact) => void; posted?: Map<number, string> }) {
+  const [all, setAll] = useState(false);
   if (!items.length && !error) return null;
+  // Only the newest version of each kind shows; earlier ones stay a toggle away.
+  const newest = new Map(items.map((a) => [a.kind, a.version]));
+  for (const a of items) newest.set(a.kind, Math.max(a.version, newest.get(a.kind)!));
+  const shown = all ? items : items.filter((a) => a.version === newest.get(a.kind));
+  const hidden = items.length - shown.length;
   return (
     <section aria-labelledby="artifacts-h" className="flex flex-col gap-2">
       <h2 id="artifacts-h" className="sr-only">Artifacts</h2>
       {error && <p role="alert" className="m-0 text-[13px] text-danger">{error}</p>}
       <ul className="m-0 flex list-none flex-col gap-2 p-0 text-[13px]">
-        {items.map((a) => <Item key={`${a.kind}:${a.version}`} a={a} onOpen={onOpen} />)}
+        {shown.map((a) => <Item key={`${a.kind}:${a.version}`} a={a} onOpen={onOpen} url={a.kind === 'github.review' ? posted?.get(a.version) : undefined} />)}
       </ul>
+      {(hidden > 0 || all) && (
+        <button type="button" onClick={() => setAll(!all)} className="min-h-11 cursor-pointer self-start border-0 bg-transparent p-0 text-[13px] text-muted hover:text-ink lg:min-h-0">
+          {all ? 'Hide earlier versions' : `${hidden} earlier ${hidden === 1 ? 'version' : 'versions'}`}
+        </button>
+      )}
     </section>
   );
 }

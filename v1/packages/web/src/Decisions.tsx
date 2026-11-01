@@ -41,7 +41,7 @@ export function DecisionCard({ sessionKey, d, now, title, done }: { sessionKey: 
 }
 
 /** The session view's open questions; a workflow raises one without any stream event, so it polls. */
-export function SessionDecisions({ sessionKey }: { sessionKey: string }) {
+export function SessionDecisions({ sessionKey, onCount }: { sessionKey: string; onCount?: (n: number) => void }) {
   const [items, setItems] = useState<Decision[]>([]);
   const [tick, setTick] = useState(0);
   useEffect(() => {
@@ -51,5 +51,6 @@ export function SessionDecisions({ sessionKey }: { sessionKey: string }) {
     const timer = setInterval(load, POLL_MS);
     return () => { live = false; clearInterval(timer); };
   }, [sessionKey, tick]);
+  useEffect(() => onCount?.(items.length), [items.length]);
   return <>{items.map((d) => <DecisionCard key={d.step} sessionKey={sessionKey} d={d} now={Date.now()} done={() => setTick((t) => t + 1)} />)}</>;
 }

@@ -34,7 +34,7 @@ export function postReviewTool(config: SessionConfig) {
       if (!res.ok) return error(`posting failed: ${res.status} ${(await res.text()).slice(0, 300)}`);
       const posted = (await res.json()) as { url?: string };
       await api.commit(async (tx) => { const d = await tx.doc(PullRequestDoc, api.conversationId); d.posted = [...(d.posted ?? []), args.version]; d.postedThisCheckout = args.version; }, ctx);
-      return { output: [{ type: 'text', text: `Posted review v${args.version} as ${body.event}: ${posted.url ?? ''}` }] };
+      return { output: [{ type: 'text', text: `Posted review v${args.version} as ${body.event}${posted.url ? `: ${posted.url}` : ''}` }] };
     },
   });
 }

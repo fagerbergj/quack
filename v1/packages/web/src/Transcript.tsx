@@ -1,9 +1,19 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import type { AssistantMessage, Message, ToolResultMessage } from '@earendil-works/pi-ai';
 import { Markdown } from './Markdown.tsx';
-import type { View } from './view.ts';
+import { postedUrl, type View } from './view.ts';
+
+// Session view: user bubble, plain assistant prose, ONE collapsed activity line per run of work (thinking, tools),
+// thin muted status lines (compacted); cards only for attention. 20px between turns, 8px inside; 14.5/13/12 type.
 
 type Call = Extract<AssistantMessage['content'][number], { type: 'toolCall' }>;
+type Step = { t: 'think'; text: string } | { t: 'call'; call: Call; result?: ToolResultMessage } | { t: 'orphan'; result: ToolResultMessage };
+type Item =
+  | { k: 'user'; key: string; m: Message }
+  | { k: 'compact'; key: string; m: Message }
+  | { k: 'prose'; key: string; text: string }
+  | { k: 'error'; key: string; text: string }
+  | { k: 'work'; key: string; start: number; steps: Step[] };
 
 const text = (content: string | readonly { type: string; text?: string }[]) =>
   typeof content === 'string' ? content : content.map((c) => (c.type === 'text' ? c.text : `[${c.type}]`)).join('');
@@ -18,86 +28,105 @@ function hint(args: Record<string, unknown>) {
 }
 
 const meta = 'text-[13px] text-muted';
+const chars = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)} k chars` : `${n} chars`);
+const quiet = 'cursor-pointer text-[13px] text-muted hover:text-ink';
+const sum = 'group flex min-h-11 cursor-pointer list-none items-center gap-1.5 lg:min-h-7 [&::-webkit-details-marker]:hidden';
 
-function Tool({ label, note, body }: { label: string; note: string; body: string }) {
+// Output that opens like a markdown document (heading, list) renders as one; anything else stays monospace.
+const MD_START = /^\s*(#{1,6} |[-*] |\d+\. )/;
+
+function Chevron() {
+  return <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="chev flex-none transition-transform"><path d="M9 6l6 6-6 6" /></svg>;
+}
+
+function Body({ body, markdown }: { body: string; markdown?: boolean }) {
   const [all, setAll] = useState(false);
+  const [raw, setRaw] = useState(false);
   const long = body.length > LIMIT;
+  const rendered = markdown && !raw;
   return (
-    <details className="rounded-lg border border-line bg-surface px-3 py-2 text-[13px]">
-      <summary className="flex min-h-6 cursor-pointer list-none items-center gap-2 [&::-webkit-details-marker]:hidden">
-        <span className="font-mono text-[12px] text-ink">{label}</span>
-        <span className={`min-w-0 truncate ${meta}`}>{note}</span>
-      </summary>
-      <pre className="m-0 mt-2 max-w-full overflow-x-auto rounded-lg bg-soft p-2.5 font-mono text-[12px] leading-relaxed whitespace-pre-wrap text-ink-2">{all || !long ? body : clip(body, LIMIT)}</pre>
-      {long && !all && <button type="button" onClick={() => setAll(true)} className="mt-2 min-h-11 cursor-pointer rounded-lg border border-line bg-surface px-3 text-xs font-medium text-ink-2 hover:text-ink lg:min-h-0 lg:py-1">{`Show all (${body.length} characters)`}</button>}
-    </details>
+    <>
+      {markdown && <button type="button" onClick={() => setRaw(!raw)} className={`min-h-11 lg:min-h-0 ${quiet}`}>{raw ? 'Rendered' : 'Raw'}</button>}
+      {rendered ? <div className="text-[13.5px]"><Markdown text={body} /></div> : (
+        <pre className="m-0 max-w-full overflow-x-auto rounded-lg bg-soft p-2.5 font-mono text-[12px] leading-relaxed whitespace-pre-wrap text-ink-2">{all || !long ? body : clip(body, LIMIT)}</pre>
+      )}
+      {long && !all && !rendered && <button type="button" onClick={() => setAll(true)} className={`min-h-11 text-left lg:min-h-0 ${quiet}`}>{`Show all (${body.length} characters)`}</button>}
+    </>
   );
 }
 
-const countBy = (names: string[]) => [...Map.groupBy(names, (n) => n)].map(([n, v]) => `${n} ×${v.length}`).join(', ');
-
-function duration(sentAt: number, results: ToolResultMessage[]) {
-  const ms = Math.max(0, ...results.map((r) => r.timestamp)) - sentAt;
-  return ms >= 1000 ? `${Math.round(ms / 1000)} s` : '';
-}
-
-// One card per assistant turn: a summary line, and the per-call rows once opened.
-function ToolCard({ calls, results, sentAt }: { calls: Call[]; results: Map<string, ToolResultMessage>; sentAt: number }) {
-  const mine = calls.flatMap((c) => results.get(c.id) ?? []);
-  const names = calls.map((c) => c.name);
-  const summary = calls.length === 1 ? hint(calls[0]!.arguments) : `${calls.length} calls · ${countBy(names)}`;
+function CallRow({ call, result }: { call: Call; result?: ToolResultMessage }) {
+  const out = result && text(result.content);
+  const url = result && !result.isError && out ? postedUrl(out) : undefined;
+  const note = !result ? 'running' : result.isError ? 'error' : chars(out!.length);
   return (
-    <details className="rounded-xl border border-line bg-surface px-3.5 py-2.5 text-[13px]">
-      <summary className="flex min-h-6 cursor-pointer list-none items-center gap-2 [&::-webkit-details-marker]:hidden">
-        {calls.length === 1 && <span className="font-mono text-[12px] text-ink">{names[0]}</span>}
-        <span className={`min-w-0 truncate ${meta}`}>{summary}</span>
-        <span className={`ml-auto whitespace-nowrap tabular-nums ${meta}`}>{duration(sentAt, mine)}</span>
+    <details className="text-[13px]">
+      <summary className={sum}>
+        <Chevron />
+        <span className="font-mono text-[12px] text-ink">{call.name}</span>
+        <span className="min-w-0 flex-1 truncate text-ink-2">{hint(call.arguments)}</span>
+        {url && <a href={url} target="_blank" rel="noopener noreferrer" className="whitespace-nowrap text-ink-2 hover:text-ink">Posted ↗</a>}
+        <span className={`whitespace-nowrap ${result?.isError ? 'text-danger' : meta}`}>{note}</span>
       </summary>
-      <div className="mt-2 flex flex-col gap-2">
-        {calls.map((c) => {
-          const r = results.get(c.id);
-          const body = r && text(r.content);
-          return (
-            <div key={c.id} className="flex flex-col gap-2">
-              <Tool label={`Tool call: ${c.name}${c.argumentsError ? ' (bad arguments)' : ''}`} note={hint(c.arguments)} body={c.argumentsError ?? JSON.stringify(c.arguments, null, 2)} />
-              {r && body !== undefined && <ResultRow r={r} body={body} />}
-            </div>
-          );
-        })}
+      <div className="mb-2 ml-[18px] flex flex-col gap-2">
+        <Body body={call.argumentsError ?? JSON.stringify(call.arguments, null, 2)} />
+        {out !== undefined && <Body body={out} markdown={!result!.isError && MD_START.test(out)} />}
       </div>
     </details>
   );
 }
 
-function ResultRow({ r, body }: { r: ToolResultMessage; body: string }) {
-  const label = `Tool result: ${r.toolName}${r.isError ? ' (error)' : ''}`;
-  return <Tool label={label} note={r.isError ? clip(body.split('\n')[0] ?? '', 80) : `${body.length} characters`} body={body} />;
+const countBy = (names: string[]) => [...Map.groupBy(names, (n) => n)].map(([n, v]) => (v.length > 1 ? `${n} ×${v.length}` : n)).join(', ');
+
+function duration(start: number, steps: Step[]) {
+  const ends = steps.flatMap((s) => (s.t === 'call' && s.result ? [s.result.timestamp] : s.t === 'orphan' ? [s.result.timestamp] : []));
+  const ms = ends.length ? Math.max(...ends) - start : 0;
+  return ms >= 1000 ? ` ${Math.round(ms / 1000)} s` : '';
 }
 
-function Thinking({ text: t }: { text: string }) {
+// Everything between two prose blocks, as one line that opens into a timeline.
+const SHOWN = 5;
+
+function Activity({ start, steps }: { start: number; steps: Step[] }) {
+  const [all, setAll] = useState(false);
+  const shown = all ? steps : steps.slice(0, SHOWN);
+  const names = steps.flatMap((s) => (s.t === 'call' ? [s.call.name] : s.t === 'orphan' ? [s.result.toolName] : []));
+  const parts = [names.length ? `Worked${duration(start, steps)}` : 'Thought', names.length ? `${names.length} ${names.length === 1 ? 'tool' : 'tools'}` : '', countBy(names)].filter(Boolean);
   return (
-    <details className="text-[12px] text-muted">
-      <summary className="inline-flex min-h-6 cursor-pointer list-none items-center rounded-md bg-soft px-2 [&::-webkit-details-marker]:hidden">Thinking</summary>
-      <p className="mt-1 mb-0 whitespace-pre-wrap">{t}</p>
+    <details>
+      <summary className={`${sum} ${meta} hover:text-ink`}>
+        <Chevron />
+        <span className="min-w-0 truncate">{parts.join(' · ')}</span>
+      </summary>
+      <div className="mt-1.5 ml-1.5 flex flex-col gap-1 border-l-2 border-line pl-4">
+        {shown.map((s, i) => {
+          if (s.t === 'think') return <p key={i} className="m-0 text-[13px] whitespace-pre-wrap text-muted italic">{s.text}</p>;
+          if (s.t === 'call') return <CallRow key={s.call.id} call={s.call} result={s.result} />;
+          return <CallRow key={i} call={{ type: 'toolCall', id: s.result.toolCallId, name: s.result.toolName, arguments: {} }} result={s.result} />;
+        })}
+        {steps.length > shown.length && <button type="button" onClick={() => setAll(true)} className={`min-h-11 self-start text-left lg:min-h-0 ${quiet}`}>{`+ ${steps.length - shown.length} more`}</button>}
+      </div>
     </details>
   );
 }
 
-function Assistant({ m, results }: { m: AssistantMessage; results: Map<string, ToolResultMessage> }) {
-  const thinking = m.content.flatMap((b) => (b.type === 'thinking' && b.thinking.trim() ? [b.thinking] : [])).join('\n\n');
-  const calls = m.content.filter((b): b is Call => b.type === 'toolCall');
+// pi-durable writes a compaction as a user-role entry; it is context for the model, not something the user said.
+function Compacted({ m }: { m: Message }) {
+  const at = new Date(m.timestamp);
   return (
-    <>
-      {m.errorMessage && <p className="m-0 rounded-xl border border-danger-line bg-danger-bg/60 px-3.5 py-2.5 text-[13px] text-danger">{`Error: ${m.errorMessage}`}</p>}
-      {thinking && <Thinking text={thinking} />}
-      {m.content.map((b, i) => (b.type === 'text' && b.text.trim() ? <Markdown key={i} text={b.text} /> : null))}
-      {calls.length > 0 && <ToolCard calls={calls} results={results} sentAt={m.timestamp} />}
-    </>
+    <details className={meta}>
+      <summary className={sum}>
+        <Chevron />
+        <span>Earlier conversation summarized</span>
+        <time dateTime={at.toISOString()} className="ml-auto">{at.toLocaleString()}</time>
+      </summary>
+      <div className="ml-[18px] text-ink-2"><Markdown text={m.role === 'user' ? text(m.content) : ''} /></div>
+    </details>
   );
 }
 
 const DUCK = (
-  <svg width="30" height="22" viewBox="0 0 64 48" aria-hidden="true">
+  <svg width="26" height="18" viewBox="0 0 64 48" aria-hidden="true">
     <ellipse cx="34" cy="32" rx="22" ry="11" fill="#fdfcf7" stroke="#2f3a36" strokeOpacity=".25" />
     <circle cx="20" cy="18" r="10" fill="#1f7a63" />
     <rect x="11" y="25" width="18" height="3" rx="1.5" fill="#fff" />
@@ -106,49 +135,65 @@ const DUCK = (
     <path d="M50 28 Q60 24 58 34" fill="#fdfcf7" />
   </svg>
 );
-const DUCKLING = (
-  <svg width="18" height="14" viewBox="0 0 18 14" aria-hidden="true">
-    <ellipse cx="10" cy="9" rx="7" ry="4.5" fill="#e9c46a" />
-    <circle cx="5.5" cy="5" r="3.5" fill="#e9c46a" />
-    <path d="M2.4 4.3 L0 5.2 L2.4 6.2 Z" fill="#d08a1d" />
-    <circle cx="4.4" cy="4.2" r="0.8" fill="#0f1513" />
-  </svg>
-);
-
-// Shown while a run is active; the animation stops under prefers-reduced-motion.
-function Working() {
+// The duck paddles while a run is active or waits on the user; reduced-motion stops it.
+export function Working({ label }: { label: string }) {
   return (
-    <div className="ducklings flex items-end gap-1.5 text-[12px] text-muted" aria-label="Working">
-      {DUCK}{DUCKLING}{DUCKLING}{DUCKLING}
-      <span className="ml-1">working…</span>
-    </div>
+    <p aria-label={label} className="ducklings m-0 flex items-center gap-2 text-[13px] text-muted">
+      {DUCK}
+      {label}
+    </p>
   );
 }
 
-function Line({ m, results, orphan }: { m: Message; results: Map<string, ToolResultMessage>; orphan: boolean }) {
-  if (m.role === 'user') {
-    return (
-      <article aria-label="You" className="max-w-[85%] self-end rounded-[22px] rounded-br-md bg-ink px-3.5 py-2.5 text-[14.5px] leading-relaxed whitespace-pre-wrap text-on-ink">
-        {text(m.content)}
-      </article>
-    );
+function Row({ item }: { item: Item }): ReactNode {
+  switch (item.k) {
+    case 'user':
+      return (
+        <article aria-label="You" className="max-w-[88%] self-end rounded-[20px] rounded-br-[6px] bg-ink px-3.5 py-2.5 text-[14.5px] leading-relaxed text-on-ink lg:max-w-[80%] lg:px-4 [&_.md_code]:bg-on-ink/10 [&_a]:text-on-ink [&_a]:underline">
+          <Markdown text={item.m.role === 'user' ? text(item.m.content) : ''} />
+        </article>
+      );
+    case 'compact': return <Compacted m={item.m} />;
+    case 'prose': return <article aria-label="Assistant" className="min-w-0 text-[14.5px] leading-relaxed text-ink"><Markdown text={item.text} /></article>;
+    case 'error': return <p className="m-0 text-[13px] text-danger">{`Error: ${item.text}`}</p>;
+    case 'work': return <Activity start={item.start} steps={item.steps} />;
   }
-  if (m.role === 'assistant') {
-    return <article aria-label="Assistant" className="flex max-w-[95%] min-w-0 flex-col gap-3 text-[14.5px] leading-relaxed text-ink"><Assistant m={m} results={results} /></article>;
+}
+
+function blocks(m: AssistantMessage, key: string, results: Map<string, ToolResultMessage>): (Item | Step)[] {
+  const out: (Item | Step)[] = m.content.flatMap((b, i): (Item | Step)[] => {
+    if (b.type === 'thinking') return b.thinking.trim() ? [{ t: 'think', text: b.thinking }] : [];
+    if (b.type === 'text') return b.text.trim() ? [{ k: 'prose', key: `${key}:${i}`, text: b.text }] : [];
+    return b.type === 'toolCall' ? [{ t: 'call', call: b, result: results.get(b.id) }] : [];
+  });
+  return m.errorMessage ? [{ k: 'error', key: `${key}:err`, text: m.errorMessage }, ...out] : out;
+}
+
+// Consecutive steps fold into one work item; prose, user lines and compactions end it.
+function build(view: View): Item[] {
+  const messages = view.entries.flatMap((e) => (e.model ?? []).map((m, i) => ({ key: `${e.id}:${i}`, m, compaction: e.kind === 'pi.compaction' })));
+  if (view.partial) messages.push({ key: 'partial', m: view.partial, compaction: false });
+  const results = new Map(messages.flatMap(({ m }) => (m.role === 'toolResult' ? [[m.toolCallId, m] as const] : [])));
+  const called = new Set(messages.flatMap(({ m }) => (m.role === 'assistant' ? m.content.flatMap((b) => (b.type === 'toolCall' ? [b.id] : [])) : [])));
+  const items: Item[] = [];
+  const add = (key: string, start: number, x: Item | Step) => {
+    if ('k' in x) return void items.push(x);
+    const last = items.at(-1);
+    if (last?.k === 'work') last.steps.push(x);
+    else items.push({ k: 'work', key, start, steps: [x] });
+  };
+  for (const { key, m, compaction } of messages) {
+    if (m.role === 'user') items.push({ k: compaction ? 'compact' : 'user', key, m });
+    else if (m.role === 'assistant') blocks(m, key, results).forEach((x) => add(key, m.timestamp, x));
+    else if (m.role === 'toolResult' && !called.has(m.toolCallId)) add(key, m.timestamp, { t: 'orphan', result: m });
   }
-  // A result whose call is not in the view (e.g. a truncated log) still shows on its own.
-  return m.role === 'toolResult' && orphan ? <ResultRow r={m} body={text(m.content)} /> : null;
+  return items;
 }
 
 export function Transcript({ view }: { view: View }) {
-  const messages = view.entries.flatMap((e) => (e.model ?? []).map((m, i) => ({ key: `${e.id}:${i}`, m })));
-  const results = new Map(messages.flatMap(({ m }) => (m.role === 'toolResult' ? [[m.toolCallId, m] as const] : [])));
-  const called = new Set(messages.flatMap(({ m }) => (m.role === 'assistant' ? m.content.flatMap((b) => (b.type === 'toolCall' ? [b.id] : [])) : [])));
   return (
-    <div role="log" aria-label="Transcript" className="flex min-w-0 flex-col gap-4">
-      {messages.map(({ key, m }) => <Line key={key} m={m} results={results} orphan={m.role === 'toolResult' && !called.has(m.toolCallId)} />)}
-      {view.partial && <Line m={view.partial} results={results} orphan={false} />}
-      {view.running && <Working />}
+    <div role="log" aria-label="Transcript" className="flex min-w-0 flex-col gap-5">
+      {build(view).map((item) => <Row key={item.key} item={item} />)}
     </div>
   );
 }
