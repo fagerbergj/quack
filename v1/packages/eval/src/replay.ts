@@ -24,19 +24,33 @@ async function freePort(): Promise<number> {
   return port;
 }
 
-// Polls with one request id: dedupe answers with the run's status, so no request has to outlive a long review.
-// A runtime that exits (a bad config path, a crash) ends the wait at once instead of at the deadline.
+// One request with wait: true holds until the run settles. A runtime that exits (a bad config path, a crash)
+// ends the wait at once instead of at the deadline; until it listens, the connect is retried.
 async function untilSettled(url: string, input: string, deadline: number, child: ChildProcess) {
-  for (;;) {
-    if (child.exitCode !== null || child.signalCode) throw new Error(`runtime exited with ${child.exitCode ?? child.signalCode}`);
-    try {
-      const r = (await (await fetch(`${url}/invocations`, { method: 'POST', body: JSON.stringify({ input, requestId: 'eval-1' }) })).json()) as { status: string };
-      if (r.status === 'done' || r.status === 'unanswered') return;
-    } catch {
-      // not listening yet
+  const stop = new AbortController();
+  let timer: NodeJS.Timeout | undefined;
+  const failed = new Promise<never>((_, reject) => {
+    const fail = (message: string) => (stop.abort(), reject(new Error(message)));
+    const exited = () => fail(`runtime exited with ${child.exitCode ?? child.signalCode}`);
+    if (child.exitCode !== null || child.signalCode) exited();
+    child.once('exit', exited);
+    timer = setTimeout(() => fail('replay timed out'), Math.max(0, deadline - Date.now()));
+  });
+  const settled = async () => {
+    for (;;) {
+      try {
+        await fetch(`${url}/invocations`, { method: 'POST', body: JSON.stringify({ input, requestId: 'eval-1', wait: true }), signal: stop.signal });
+        return;
+      } catch (err) {
+        if (stop.signal.aborted) throw err;
+        await new Promise((res) => setTimeout(res, 200)); // not listening yet
+      }
     }
-    if (Date.now() > deadline) throw new Error('replay timed out');
-    await new Promise((res) => setTimeout(res, 2_000));
+  };
+  try {
+    await Promise.race([settled(), failed]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 

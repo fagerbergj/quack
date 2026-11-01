@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { contentText, type MutableModels } from '@earendil-works/pi-ai';
-import { AssistantEntry, createRegistry, defineExtension, Harness, section, watchEvents, type Conversation, type Extension } from '@earendil-works/pi-durable';
+import { AssistantEntry, createRegistry, defineExtension, Harness, section, watchEvents, type Conversation, type Extension, type ReportInfo } from '@earendil-works/pi-durable';
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { mkdir } from 'node:fs/promises';
@@ -41,8 +41,18 @@ export type DispatchingExtension = Extension & { dispatch?: Dispatch };
 // pi-durable's default (3 retries from 2s) gives up inside 15s; this rides out a model host that is down for about 5 minutes.
 export const MODEL_RETRY = { enabled: true, maxRetries: 9, baseDelayMs: 2000, maxAgentDelayMs: 60_000 };
 
+const REPORTED = new Set(['task_parked', 'task_faulted', 'extension_error', 'host_error']);
+
+/** The log line for a harness report worth an operator's attention (a parked task is otherwise silently blocked); null for the rest. */
+export function reportLine(error: unknown, info: ReportInfo): string | null {
+  if (!REPORTED.has(info.type)) return null;
+  const at = info as { task?: { kind: string }; extension?: string; callback?: string; reason?: string };
+  const where = [at.task && `task=${at.task.kind}`, at.extension && `extension=${at.extension}`, at.callback && `callback=${at.callback}`, at.reason && `reason=${at.reason}`].filter(Boolean);
+  return `session: ${[info.type, ...where].join(' ')}: ${error instanceof Error ? error.message : String(error)}`;
+}
+
 // One process owns one session: its SQLite log is the only source of truth (A1, A6).
-export async function openSession(opts: { dir: string; models: MutableModels; agent: AgentSpec; timeZone?: string; now?: () => Date; retry?: Partial<typeof MODEL_RETRY> }) {
+export async function openSession(opts: { dir: string; models: MutableModels; agent: AgentSpec; timeZone?: string; now?: () => Date; retry?: Partial<typeof MODEL_RETRY>; log?: (line: string) => void }) {
   const registry = createRegistry();
   registry.install(clockExtension(opts.timeZone ?? 'America/New_York', opts.now ?? (() => new Date())));
   for (const ext of opts.agent.extensions ?? []) registry.install(ext);
@@ -51,10 +61,16 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
   const workspace = join(opts.dir, 'workspace');
   await mkdir(workspace, { recursive: true });
   const env = ({ cwd }: { cwd?: string }) => new NodeExecutionEnv({ cwd: cwd ?? workspace });
+  const log = opts.log ?? console.error;
+  const onReport = (error: unknown, info: ReportInfo) => {
+    const line = reportLine(error, info);
+    if (line) log(line);
+  };
   const harness = await Harness.open(storage, {
     models: opts.models,
     registry,
     env,
+    onReport,
     // A failed run starts the inputs queued behind it instead of leaving them queued with nothing to run them.
     settings: { retry: { ...MODEL_RETRY, ...opts.retry }, afterFailedRun: 'continue' },
   }, ctx);
@@ -102,21 +118,19 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
 
 const FINAL_NOTICE = `Turn budget: ${FINAL_TURNS} turns left in this run. Stop investigating and deliver what you have now; a check that has not passed is released marked as not fully checked.`;
 
-// Counts the current run's turns from the session's own events, publishes what is left, warns once before the end,
-// and aborts the run past the limit; abort leaves it consistent.
+// Counts turns in RunBudget, a committed doc, so a restart mid-run keeps the count (a hook cannot commit or abort).
+// Warns once before the end and aborts the run past the limit; abort leaves it consistent.
 async function turnLimit(harness: Harness, root: Awaited<ReturnType<Harness['root']>>, maxTurns: number) {
   const events = await watchEvents(harness, root.id, ctx);
-  let turns = 0;
   const publish = (turnsLeft: number | null) => root.commit(async (tx) => { (await tx.doc(RunBudget, root.id)).turnsLeft = turnsLeft; }, ctx);
   events.start(async (batch) => {
     for (const e of batch) {
-      // An overflowed watch re-syncs with a snapshot and drops turn events, so a snapshot restarts the count too.
-      if (e.type === 'run_start' || e.type === 'snapshot') turns = 0;
-      if (e.type === 'run_end') await publish(null);
+      if (e.type === 'run_start' || e.type === 'run_end') await publish(null);
       if (e.type !== 'turn_start') continue;
-      if (++turns > maxTurns) void root.abort(ctx);
-      else await publish(maxTurns - turns);
-      if (maxTurns - turns === FINAL_TURNS && maxTurns > 2 * FINAL_TURNS) await root.submit({ type: 'input', content: FINAL_NOTICE, whenBusy: 'steer' }, ctx);
+      const turnsLeft = ((await harness.snapshot(RunBudget, root.id, ctx))?.turnsLeft ?? maxTurns) - 1;
+      if (turnsLeft < 0) void root.abort(ctx);
+      else await publish(turnsLeft);
+      if (turnsLeft === FINAL_TURNS && maxTurns > 2 * FINAL_TURNS) await root.submit({ type: 'input', content: FINAL_NOTICE, whenBusy: 'steer' }, ctx);
     }
   });
   return events;
