@@ -3,6 +3,8 @@ import { watchEvents, type Conversation, type Harness } from '@earendil-works/pi
 import { collectFacts, Outbox, type SessionMeta } from './facts.ts';
 
 const ctx = BACKGROUND_CONTEXT;
+const SEND_TIMEOUT_MS = 10_000;
+const STOP_WAIT_MS = 5_000;
 
 export type PublisherOptions = { url: string; token: string; meta: SessionMeta; retryMs?: number; now?: () => number };
 
@@ -12,6 +14,7 @@ export async function startPublisher(session: { harness: Harness; root: Conversa
   const { harness, root } = session;
   const now = opts.now ?? Date.now;
   let dirty = false;
+  let stopped = false;
   let timer: NodeJS.Timeout | undefined;
 
   async function sendOnce(): Promise<void> {
@@ -19,10 +22,12 @@ export async function startPublisher(session: { harness: Harness; root: Conversa
     const unsent = (await collectFacts(harness, root, opts.meta, now(), ctx)).filter((f) => (acked[f.id] ?? 0) < f.rev);
     if (!unsent.length) return;
     try {
-      const res = await fetch(`${opts.url}/index/facts`, { method: 'POST', headers: { authorization: `Bearer ${opts.token}`, 'content-type': 'application/json' }, body: JSON.stringify({ session: opts.meta.key, facts: unsent }) });
+      const res = await fetch(`${opts.url}/index/facts`, { method: 'POST', headers: { authorization: `Bearer ${opts.token}`, 'content-type': 'application/json' }, body: JSON.stringify({ session: opts.meta.key, facts: unsent }), signal: AbortSignal.timeout(SEND_TIMEOUT_MS) });
       if (!res.ok) throw new Error(`index answered ${res.status}`);
-    } catch {
-      timer ??= setTimeout(() => { timer = undefined; void flush(); }, opts.retryMs ?? 5000).unref();
+    } catch (err) {
+      // A 4xx (bad token, bad body) never recovers by retrying, so make it visible.
+      if (err instanceof Error && err.message.startsWith('index answered 4')) console.error('index rejected the facts permanently:', err.message);
+      if (!stopped) timer ??= setTimeout(() => { timer = undefined; flush().catch(() => {}); }, opts.retryMs ?? 5000).unref();
       return;
     }
     await root.commit(async (tx) => { const doc = await tx.doc(Outbox, root.id); for (const f of unsent) doc.acked[f.id] = f.rev; }, ctx);
@@ -48,5 +53,12 @@ export async function startPublisher(session: { harness: Harness; root: Conversa
     await flush();
   });
   await flush();
-  return { flush, stop: async () => { clearTimeout(timer); await events.stop(); } };
+  // Waits out an in-flight send (bounded) so its ack commit cannot race session.close().
+  async function stop() {
+    stopped = true;
+    clearTimeout(timer);
+    await Promise.race([current?.catch(() => {}), new Promise((r) => setTimeout(r, STOP_WAIT_MS).unref())]);
+    await events.stop();
+  }
+  return { flush, stop };
 }
