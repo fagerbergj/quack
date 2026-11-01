@@ -10,7 +10,7 @@ import { defineDoc, defineExtension, defineTool } from '@earendil-works/pi-durab
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { artifactsExtension, attachVerdict, seal, type ArtifactKind } from '@quack/sdk';
 import { openSession } from '@quack/session';
-import { itemFrom, langfuse, publish, readSession, replay, scoresOf, type ReplayResult } from '../src/index.ts';
+import { itemFrom, langfuse, publish, readSession, replay, scoresOf, summarize, type ReplayResult } from '../src/index.ts';
 
 const dirs: string[] = [];
 after(() => Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true }))));
@@ -145,4 +145,14 @@ test('a labelled case scores whether the replay blocked it, so a passing review 
   assert.equal(scoresOf(withLabel('good', 'request_changes'), blocks).false_block, 1);
   assert.equal(scoresOf(withLabel('good', 'approve'), blocks).false_block, 0);
   assert.equal('caught' in scoresOf(result, blocks), false, 'an unlabelled case has no catch score');
+});
+
+test('a run summary counts catches and false blocks only over the cases labelled for them', () => {
+  const rows: Record<string, number>[] = [
+    { caught: 1, passed: 1, turns: 10, seconds: 100, input_tokens: 5 },
+    { caught: 0, passed: 1, turns: 30, seconds: 300, input_tokens: 9 },
+    { false_block: 1, passed: 0, turns: 20, seconds: 200, input_tokens: 7 },
+    { passed: 1, turns: 40, seconds: 400, input_tokens: 1 },
+  ];
+  assert.equal(summarize(rows), 'caught 1/2 bad, false blocks 1/1 good, passed 3/4, median turns 30, median seconds 300, median input_tokens 7');
 });

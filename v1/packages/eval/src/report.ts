@@ -46,3 +46,17 @@ export async function publish(lf: Langfuse, runName: string, r: ReplayResult, bl
   await lf.linkRun({ runName, datasetItemId: r.item.id, traceId });
   return scores;
 }
+
+const median = (v: number[]) => [...v].sort((a, b) => a - b)[Math.floor(v.length / 2)] ?? 0;
+
+/** A run's headline: catches and false blocks by label, with median (upper-middle on even counts) turns, time and tokens. */
+export function summarize(rows: Record<string, number>[]): string {
+  const sum = (k: string) => rows.filter((r) => k in r).reduce((n, r) => n + r[k], 0);
+  const count = (k: string) => rows.filter((r) => k in r).length;
+  return [
+    `caught ${sum('caught')}/${count('caught')} bad`,
+    `false blocks ${sum('false_block')}/${count('false_block')} good`,
+    `passed ${sum('passed')}/${rows.length}`,
+    ...['turns', 'seconds', 'input_tokens'].map((k) => `median ${k} ${median(rows.map((r) => r[k]))}`),
+  ].join(', ');
+}
