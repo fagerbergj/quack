@@ -12,6 +12,7 @@ COPY packages/github/package.json packages/github/
 COPY packages/judge/package.json packages/judge/
 COPY packages/research/package.json packages/research/
 COPY packages/runtime/package.json packages/runtime/
+COPY packages/schedules/package.json packages/schedules/
 COPY packages/sdk/package.json packages/sdk/
 COPY packages/session/package.json packages/session/
 COPY packages/web/package.json packages/web/
