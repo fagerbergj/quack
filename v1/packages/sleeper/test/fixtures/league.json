@@ -1,0 +1,25 @@
+{
+  "/v1/state/nfl": { "week": 9, "season": "2026", "season_type": "regular", "display_week": 9 },
+  "/v1/league/L1": { "league_id": "L1", "name": "Pond League", "season": "2026", "previous_league_id": "L0", "total_rosters": 2 },
+  "/v1/league/L1/users": [
+    { "user_id": "u1", "display_name": "mallard" },
+    { "user_id": "u2", "display_name": "teal" }
+  ],
+  "/v1/league/L1/rosters": [
+    { "roster_id": 1, "owner_id": "u1", "players": ["4034", "6794"], "settings": { "wins": 5, "losses": 3 } },
+    { "roster_id": 2, "owner_id": "u2", "players": ["4034", "0000"], "settings": { "wins": 3, "losses": 5 } }
+  ],
+  "/v1/league/L1/matchups/9": [
+    { "roster_id": 1, "matchup_id": 1, "points": 101.2 },
+    { "roster_id": 2, "matchup_id": 1, "points": 88.4 }
+  ],
+  "/v1/league/L1/transactions/9": [{ "type": "waiver", "status": "complete", "roster_ids": [1] }],
+  "/v1/league/L1/drafts": [{ "draft_id": "D1", "status": "complete" }],
+  "/v1/draft/D1": { "draft_id": "D1", "type": "snake" },
+  "/v1/draft/D1/picks": [{ "round": 1, "pick_no": 1, "player_id": "4034" }],
+  "/v1/players/nfl": {
+    "4034": { "first_name": "Christian", "last_name": "McCaffrey", "team": "SF", "position": "RB", "injury_status": "Questionable", "depth_chart_order": 1 },
+    "6794": { "first_name": "Justin", "last_name": "Jefferson", "team": "MIN", "position": "WR", "injury_status": null, "depth_chart_order": 1 },
+    "9999": { "first_name": "Not", "last_name": "Rostered", "team": "NYJ", "position": "QB" }
+  }
+}
