@@ -1,12 +1,12 @@
-// Usage: QUACK_INDEX_DATABASE_URL=... QUACK_DATA_DIR=... node rebuild-main.ts   (stop the distributor first)
-import pg from 'pg';
+// Usage: QUACK_DATA_DIR=... [QUACK_INDEX_DATABASE_URL=...] node rebuild-main.ts   (stop the distributor first)
+import { openStore } from './open.ts';
 import { rebuild } from './rebuild.ts';
-import { createStore } from './store.ts';
 
-const required = (name: string) => process.env[name] || (() => { throw new Error(`${name} is required`); })();
-const pool = new pg.Pool({ connectionString: required('QUACK_INDEX_DATABASE_URL') });
+const dataDir = process.env.QUACK_DATA_DIR;
+if (!dataDir) throw new Error('QUACK_DATA_DIR is required');
+const { store, close } = openStore({ QUACK_INDEX_DATABASE_URL: process.env.QUACK_INDEX_DATABASE_URL, QUACK_DATA_DIR: dataDir });
 try {
-  console.log(`replayed ${await rebuild(createStore(pool), required('QUACK_DATA_DIR'))} sessions`);
+  console.log(`replayed ${await rebuild(store, dataDir)} sessions`);
 } finally {
-  await pool.end();
+  await close();
 }

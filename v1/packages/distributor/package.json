@@ -4,8 +4,7 @@
   "type": "module",
   "exports": { ".": "./src/index.ts" },
   "dependencies": {
-    "@quack/index": "*",
-    "pg": "^8.23.1"
+    "@quack/index": "*"
   },
   "devDependencies": {
     "@quack/session": "*"
