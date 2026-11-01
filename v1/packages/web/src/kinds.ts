@@ -104,7 +104,8 @@ export function look(r: Row): Look {
   const state = w ? outcome(r, w.kind, w.w) : { line: r.agent, tone: 'muted' as const };
   const ask = r.approvals[0];
   const more = r.approvals.length > 1 ? ` +${r.approvals.length - 1} more` : '';
-  const shown = ask ? { line: `Approve ${ask.tool}${more}`, tone: 'warn' as const } : state;
+  const question = r.decisions[0];
+  const shown = ask ? { line: `Approve ${ask.tool}${more}`, tone: 'warn' as const } : question ? { line: `Answer: ${question.question}`, tone: 'warn' as const } : state;
   return { label: kind.label, icon: kind.icon, tint: kind.tint, num, repo, title, full, ...shown };
 }
 
@@ -118,6 +119,6 @@ export type SessionTitle = { repo?: string; number?: string; text: string; full:
 
 // The one place a session is named: list rows, the session header, Inbox and Artifacts all read this.
 export function sessionTitle(s: SessionSummary & { multiRepo?: boolean }): SessionTitle {
-  const l = look({ multiRepo: false, ...s, approvals: [], artifacts: [] });
+  const l = look({ multiRepo: false, ...s, approvals: [], decisions: [], artifacts: [] });
   return { repo: l.repo, number: l.num, text: l.title, full: l.full, icon: l.icon, kind: l.label };
 }
