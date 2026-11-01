@@ -4,7 +4,13 @@ export type Row = SessionSummary & { approvals: Approval[] };
 export type Groups = { needs: Row[]; running: Row[]; recent: Row[] };
 export type Filters = { text: string; agent: string; start: string };
 
-export const titleOf = (s: SessionSummary) => s.title ?? s.key;
+const GITHUB_KEY = /^github:[^/]+\/([^#]+)#(\d+)$/;
+
+// A GitHub key shortens to repo#n, the part that tells sessions apart; the full key stays in the row's tooltip.
+export function titleOf(s: SessionSummary): string {
+  const m = GITHUB_KEY.exec(s.key);
+  return m ? [`${m[1]}#${m[2]}`, s.title].filter(Boolean).join(' · ') : (s.title ?? s.key);
+}
 
 const START_LABELS: Record<string, string> = { ui: 'You', github: 'GitHub' };
 

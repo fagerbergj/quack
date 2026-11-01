@@ -78,6 +78,13 @@ test('groups sessions: a running session with a pending approval lands in Needs 
   expect(screen.getByText('1 need you · 1 running')).toBeInTheDocument();
 });
 
+test('a GitHub key shows as repo#n with its title, and the full key stays as the tooltip', async () => {
+  routes['GET /sessions'] = { sessions: [sess('github:fagerbergj/quack#1885', { title: 'Review the shell' })] };
+  render(<App />);
+  const link = await screen.findByRole('link', { name: /quack#1885 · Review the shell/ });
+  expect(link).toHaveAttribute('title', 'github:fagerbergj/quack#1885');
+});
+
 test('search and the agent filter narrow the list', async () => {
   routes['GET /sessions'] = { sessions: [sess('github:1', { title: 'Fix the flake' }), sess('ui:2', { agent: 'researcher', title: 'Compare sandboxes' })] };
   render(<App />);

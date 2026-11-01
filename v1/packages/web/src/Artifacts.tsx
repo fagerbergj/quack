@@ -4,6 +4,11 @@ import { listArtifacts, type SealedArtifact } from './api.ts';
 // Checks that did not fully hold; a score under the threshold can fail a version with none listed.
 const failing = (a: SealedArtifact) => (a.verdict?.checks ?? []).filter((c) => c.met !== null && c.met < 1).map((c) => `${c.criterion}.${c.id}`);
 
+function StatusIcon({ verdict }: { verdict: SealedArtifact['verdict'] }) {
+  const [glyph, tone] = !verdict ? ['•', 'bg-soft text-muted'] : verdict.passed ? ['✓', 'bg-success-bg text-success'] : ['✗', 'bg-danger-bg text-danger'];
+  return <span aria-hidden="true" className={`grid h-4 w-4 flex-none place-items-center rounded-full text-[10px] ${tone}`}>{glyph}</span>;
+}
+
 function Item({ a, onOpen }: { a: SealedArtifact; onOpen: (a: SealedArtifact) => void }) {
   const status = a.verdict ? (a.verdict.passed ? 'checked' : 'checks failed') : 'not checked';
   const failed = failing(a);
@@ -11,7 +16,7 @@ function Item({ a, onOpen }: { a: SealedArtifact; onOpen: (a: SealedArtifact) =>
   return (
     <li className="flex flex-col gap-2">
       <div className="flex items-center gap-1.5 text-xs font-medium text-muted">
-        <span aria-hidden="true" className="grid h-4 w-4 place-items-center rounded-full bg-soft text-[10px] text-accent-ink">✓</span>
+        <StatusIcon verdict={a.verdict} />
         <span className="min-w-0 flex-1">{`${a.kind} v${a.version} sealed · ${status}`}</span>
         <button type="button" aria-label={`Open ${a.kind} v${a.version}`} onClick={() => onOpen(a)} className="min-h-11 cursor-pointer rounded-lg border border-line bg-surface px-3 text-xs font-medium text-ink-2 hover:text-ink lg:min-h-0 lg:py-1">Open</button>
       </div>

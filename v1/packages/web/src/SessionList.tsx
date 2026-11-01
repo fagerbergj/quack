@@ -37,6 +37,8 @@ function RowLink({ r, kind, current, now }: { r: Row; kind: 'needs' | 'running' 
     <a
       href={`#/s/${encodeURIComponent(r.key)}`}
       aria-current={current ? 'true' : undefined}
+      title={r.key}
+      aria-description={r.key}
       className={`row flex min-h-11 items-start gap-2.5 px-4 py-2.5 text-ink no-underline hover:bg-soft/70 ${kind === 'needs' ? 'mx-2 rounded-xl bg-warm/60 px-3' : ''}`}
     >
       {lead}
