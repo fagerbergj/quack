@@ -23,6 +23,7 @@ jobs:
           cache-dependency-path: v1/package-lock.json
       - run: npm ci
       - run: npx tsc -p tsconfig.json
+      - run: npx tsc -p packages/web/tsconfig.json
       - run: npm test
       # Gates only lines this change touches, as the Go sloplint does for v0.
       - if: github.event_name == 'pull_request'
