@@ -1,6 +1,7 @@
 {
   "name": "reviewer",
   "version": 1,
+  "status": "promoted",
   "model": "local/qwen3.8-27b",
   "maxTurns": 80,
   "prompt": "prompt.md",

@@ -3,7 +3,7 @@ import { createHmac, createVerify, generateKeyPairSync } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { after, test } from 'node:test';
-import { createGithubService, githubApp, ownerRepo } from '../src/index.ts';
+import { assertPromoted, createGithubService, githubApp, ownerRepo } from '../src/index.ts';
 
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { type: 'pkcs8', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } });
 const servers: Server[] = [];
@@ -50,12 +50,13 @@ const distributor = await listen(
   createServer(async (req, res) => {
     let raw = '';
     for await (const c of req) raw += c;
+    if (req.url === '/agents') return res.writeHead(200).end(JSON.stringify({ agents: [{ name: 'reviewer', version: 1, status: 'promoted' }, { name: 'researcher', version: 1, status: 'draft' }] }));
     invocations.push({ path: decodeURIComponent(req.url!), body: JSON.parse(raw) });
     res.writeHead(202).end('{}');
   }),
 );
 
-const config = { webhookSecret: 'hook-secret', serviceToken: 'svc-secret', distributorUrl: distributor, label: 'quack:review' };
+const config = { webhookSecret: 'hook-secret', serviceToken: 'svc-secret', distributorUrl: distributor, label: 'quack:review', agent: 'reviewer' };
 const service = await listen(createGithubService(githubApp({ appId: '123', privateKey, apiUrl: github }), config));
 
 function deliver(event: string, payload: unknown, opts: { secret?: string; id?: string } = {}) {
@@ -73,7 +74,7 @@ test('verified webhooks start a review in the PR session, keyed by the delivery 
   assert.equal(await deliver('pull_request', { action: 'labeled', label: { name: 'bug' }, pull_request: pr, repository }), 200);
   assert.equal(await deliver('pull_request', { action: 'labeled', label: { name: 'quack:review' }, pull_request: pr, repository }, { id: 'd-7' }), 202);
   assert.equal(invocations.length, 1);
-  assert.equal(invocations[0].path, '/sessions/github:acme/widgets#7/invocations');
+  assert.equal(invocations[0].path, '/sessions/github:acme/widgets#7/invocations?agent=reviewer');
   assert.equal(invocations[0].body.requestId, 'github-delivery:d-7');
   assert.match(invocations[0].body.input, /Review pull request acme\/widgets#7 \(label quack:review\)/);
   assert.match(invocations[0].body.input, /Head: abc123 on fix; base: main/);
@@ -129,4 +130,11 @@ test('a commit with more check runs than the service reads is refused, not revie
   const res = await fetch(`${service}/pulls/acme/widgets/8`, { headers: { authorization: 'Bearer svc-secret' } });
   assert.equal(res.status, 502);
   assert.match((await res.json()).error, /more than 1000 check runs on full111/);
+});
+
+test('only a promoted agent can back the unattended trigger', async () => {
+  await assertPromoted(distributor, 'reviewer');
+  await assert.rejects(assertPromoted(distributor, 'researcher'), /researcher is draft/);
+  await assert.rejects(assertPromoted(distributor, 'ghost'), /not registered/);
+  await assert.rejects(assertPromoted('http://127.0.0.1:1', 'reviewer'), /cannot verify agent promotion/);
 });
