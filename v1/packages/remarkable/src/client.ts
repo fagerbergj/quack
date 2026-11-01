@@ -47,6 +47,11 @@ export function createRmClient(config: { url: string; email: string; password: s
     /** Every document, folders flattened away. */
     documents: async (): Promise<RmDocument[]> => walk(await tree()),
     /** The document exported as PDF; the renderer works for notebooks, PDFs and epubs alike. */
-    downloadPdf: async (id: string): Promise<Buffer> => Buffer.from(await (await get(`/ui/api/documents/${encodeURIComponent(id)}?type=pdf`)).arrayBuffer()),
+    downloadPdf: async (id: string): Promise<Buffer> => {
+      const pdf = Buffer.from(await (await get(`/ui/api/documents/${encodeURIComponent(id)}?type=pdf`)).arrayBuffer());
+      // rmfakecloud answers 200 with no body when it cannot render a document.
+      if (!pdf.length) throw new Error(`rmfakecloud GET /ui/api/documents/${id}: empty PDF`);
+      return pdf;
+    },
   };
 }

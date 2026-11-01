@@ -138,7 +138,11 @@ export function createRemarkableService(config: ServiceConfig) {
     if (!authorized(req, config.serviceToken)) return send(res, 401, { error: 'unauthorized' });
     try {
       const pdf = req.method === 'GET' ? /^\/documents\/([^/]+)\/pdf$/.exec(new URL(req.url ?? '', 'http://x').pathname) : null;
-      if (pdf) return void res.writeHead(200, { 'content-type': 'application/pdf' }).end(await config.client.downloadPdf(decodeURIComponent(pdf[1])));
+      if (pdf) {
+        // Download before writing headers: a failure after writeHead would make the catch's send throw and kill the process.
+        const body = await config.client.downloadPdf(decodeURIComponent(pdf[1]));
+        return void res.writeHead(200, { 'content-type': 'application/pdf' }).end(body);
+      }
       send(res, ...(await route(req)));
     } catch (err) {
       const bad = err instanceof SyntaxError || err instanceof URIError || (err as Error).message === 'body too large';
