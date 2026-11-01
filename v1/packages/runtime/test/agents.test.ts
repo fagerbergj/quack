@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { loadAgent, parseDeployment } from '@quack/session';
 import { catalog } from '../src/catalog.ts';
+import { sessionEnv } from '../src/session-env.ts';
 
 const deployment = parseDeployment({
   providers: {
@@ -83,4 +84,10 @@ test('the shipped sleeper-trends definition loads its prompt and binds the trend
   const agent = await loadAgent(fileURLToPath(new URL('../../../agents/sleeper-trends/agent.json', import.meta.url)), deployment, catalog);
   assert.match(agent.instructions!, /^You are the trend scout/);
   assert.ok(agent.extensions!.some((e) => e.name === 'quack.workflows' && (e as { dispatch?: unknown }).dispatch));
+});
+
+test('a reviewer session process inherits its own service token and nothing else secret', () => {
+  const host = { PATH: '/bin', HOME: '/h', QUACK_GH_SERVICE_URL: 'u', QUACK_GH_SERVICE_TOKEN: 'gh', QUACK_EXA_API_KEY: 'exa', QUACK_INDEX_TOKEN: 'idx', QUACK_SLEEPER_TOKEN: 's', LANGFUSE_SECRET_KEY: 'l' };
+  const env = sessionEnv(fileURLToPath(new URL('../../../agents/reviewer/agent.json', import.meta.url)), host);
+  assert.deepEqual(Object.keys(env).sort(), ['HOME', 'PATH', 'QUACK_GH_SERVICE_TOKEN', 'QUACK_GH_SERVICE_URL']);
 });

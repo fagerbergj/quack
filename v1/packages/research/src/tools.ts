@@ -154,12 +154,14 @@ export function formatResults(results: ExaResult[]): string {
 }
 
 export function webSearchTool(config: ResearchConfig) {
+  // Read once: the runtime drops declared variables from the process after load, so no child process inherits the key.
+  const apiKey = process.env.QUACK_EXA_API_KEY;
   const search = async (query: string, count: number): Promise<string> => {
     // Body reads are inside the try: a malformed or dropped body fails this query, not the batch.
     try {
       const res = await fetch(`${config.exaUrl ?? 'https://api.exa.ai'}/search`, {
         method: 'POST',
-        headers: { 'x-api-key': process.env.QUACK_EXA_API_KEY!, 'content-type': 'application/json' },
+        headers: { 'x-api-key': apiKey!, 'content-type': 'application/json' },
         body: JSON.stringify({ query, numResults: count, contents: { text: { maxCharacters: 400 } } }),
         signal: AbortSignal.timeout(20_000),
       });
@@ -175,7 +177,7 @@ export function webSearchTool(config: ResearchConfig) {
     parameters: Type.Object({ queries: batch('Search queries'), count: Type.Optional(Type.Integer({ minimum: 1, maximum: 20, description: 'Hits per query' })) }),
     replay: 'safe',
     async execute(args, _api, _ctx) {
-      if (!process.env.QUACK_EXA_API_KEY) return error('web_search is not configured: QUACK_EXA_API_KEY is not set');
+      if (!apiKey) return error('web_search is not configured: QUACK_EXA_API_KEY is not set');
       const results = await mapLimit(args.queries, (q) => search(q, args.count ?? 8));
       return { output: [{ type: 'text', text: results.map((r, i) => `## ${args.queries[i]}\n${r}`).join('\n\n') }] };
     },

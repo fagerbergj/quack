@@ -5,6 +5,7 @@ import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promi
 import { createServer } from 'node:net';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { shellEnv } from '@quack/session';
 
 export type AgentStatus = 'draft' | 'promoted';
 export type AgentInfo = { name: string; version: number; status: AgentStatus };
@@ -126,7 +127,7 @@ const CRASH_BUDGET = 3;
 const CRASH_WINDOW_MS = 60_000;
 
 // Development host driver: one child process per session on this machine (A11). Container drivers replace it in deployment.
-export function processDriver(opts: { command: string[]; dataDir: string; agentsDir?: string; defaultAgent?: string; env?: NodeJS.ProcessEnv; startTimeoutMs?: number }): HostDriver {
+export function processDriver(opts: { command: string[]; dataDir: string; agentsDir?: string; defaultAgent?: string; /** Variables from the host a session process receives, by its agent's definition path; default: toolchain basics only. */ inherit?: (agentPath: string | undefined) => NodeJS.ProcessEnv | Promise<NodeJS.ProcessEnv>; env?: NodeJS.ProcessEnv; startTimeoutMs?: number }): HostDriver {
   const children = new Map<string, Child>();
   const starting = new Map<string, Promise<string>>();
   const crashes = new Map<string, number[]>();
@@ -208,8 +209,10 @@ export function processDriver(opts: { command: string[]; dataDir: string; agents
     const port = await freePort();
     const url = `http://127.0.0.1:${port}`;
     const [cmd, ...args] = opts.command;
+    // The session process gets an allowlist, never the host's whole environment; its shells narrow it further.
+    const inherited = await (opts.inherit?.(agentPath) ?? shellEnv(process.env));
     const proc = spawn(cmd, args, {
-      env: { ...process.env, ...opts.env, ...(agentPath && { QUACK_AGENT: agentPath }), PORT: String(port), QUACK_SESSION_DIR: dir, QUACK_SESSION_KEY: key },
+      env: { ...inherited, ...opts.env, ...(agentPath && { QUACK_AGENT: agentPath }), PORT: String(port), QUACK_SESSION_DIR: dir, QUACK_SESSION_KEY: key },
       stdio: ['ignore', 'inherit', 'inherit'],
     });
     const child: Child = { proc, url, stopping: false };
