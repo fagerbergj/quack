@@ -7,5 +7,15 @@
   },
   "scripts": {
     "start": "node src/main.ts"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "1.0.13",
+    "@quack/judge": "*",
+    "@quack/sdk": "*",
+    "@quack/workflows": "*",
+    "unpdf": "2.1.0"
+  },
+  "devDependencies": {
+    "@quack/session": "*"
   }
 }

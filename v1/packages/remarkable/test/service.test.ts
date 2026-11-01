@@ -237,3 +237,23 @@ test('an unreachable distributor settles the item failed', async () => {
 test('a malformed batch id is a 400, not an upstream error', async () => {
   assert.equal((await call('GET', '/batches/%E0%A4%A')).status, 400);
 });
+
+test('a failed ingest of an unchanged document retries as a new attempt; a retry of a succeeded or untried item is refused', async () => {
+  notes = { version: 9, lastModified: '2026-10-09T10:00:00Z' };
+  assert.equal((await call('POST', '/ingest', { ids: ['n1'], retry: true })).status, 409, 'nothing has been tried yet');
+  autoAnswer = 500;
+  seen.length = 0;
+  await call('POST', '/ingest', { ids: ['n1'] });
+  await service.settled();
+  autoAnswer = 200;
+  await call('POST', '/ingest', { ids: ['n1'], retry: true });
+  await service.settled();
+  assert.deepEqual(seen.map((s) => s.body.requestId), ['9', '9#1']);
+  const refused = await call('POST', '/ingest', { ids: ['n1'], retry: true });
+  assert.equal(refused.status, 409);
+  assert.deepEqual(((await refused.json()) as any).ids, ['n1']);
+  seen.length = 0;
+  await call('POST', '/ingest', { ids: ['n1'] });
+  await service.settled();
+  assert.equal(seen[0].body.requestId, '9#1', 'a plain re-ingest joins the latest attempt');
+});

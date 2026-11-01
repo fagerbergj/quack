@@ -12,7 +12,7 @@ export type ServiceConfig = {
   distributorUrl: string;
   /** The promoted agent that runs `remarkable.ingest`. */
   agent: string;
-  client: Pick<RmClient, 'tree' | 'documents'>;
+  client: Pick<RmClient, 'tree' | 'documents' | 'downloadPdf'>;
   now?: () => Date;
   /** Called after each document's answer is recorded; lets tests wait on it instead of polling. */
   onSettle?: (batch: string, document: string) => void;
@@ -73,9 +73,10 @@ export function createRemarkableService(config: ServiceConfig) {
   };
 
   // The version is the request id, so a replay (a later batch, or a resubmit after restart) joins the existing run.
-  async function submit(batch: string, doc: { id: string; name: string; version: string }): Promise<void> {
+  type Job = { id: string; name: string; version: string; attempt: number };
+  async function submit(batch: string, doc: Job): Promise<void> {
     const key = encodeURIComponent(`remarkable:${doc.id}`);
-    const body = JSON.stringify({ input: JSON.stringify({ id: doc.id, name: doc.name, version: doc.version }), requestId: doc.version, wait: true });
+    const body = JSON.stringify({ input: JSON.stringify({ id: doc.id, name: doc.name, version: doc.version }), requestId: doc.attempt ? `${doc.version}#${doc.attempt}` : doc.version, wait: true });
     try {
       const res = await post(`${config.distributorUrl}/sessions/${key}/invocations?agent=${encodeURIComponent(config.agent)}`, body);
       store.settle(batch, doc.id, failure(res));
@@ -86,29 +87,45 @@ export function createRemarkableService(config: ServiceConfig) {
     config.onSettle?.(batch, doc.id);
   }
 
-  function track(batch: string, doc: { id: string; name: string; version: string }) {
+  function track(batch: string, doc: Job) {
     if (stopped) return;
     const p = submit(batch, doc).finally(() => inflight.delete(p));
     inflight.add(p);
   }
 
   async function ingest(req: IncomingMessage): Promise<[number, unknown]> {
-    const ids = ((await readJson(req)) as { ids?: unknown } | null)?.ids;
+    const body = (await readJson(req)) as { ids?: unknown; retry?: unknown } | null;
+    const ids = body?.ids;
     if (!Array.isArray(ids) || ids.length === 0 || !ids.every((i) => typeof i === 'string' && i.length > 0)) return [400, { error: 'ids must be a non-empty array of document ids' }];
     const wanted = [...new Set(ids as string[])];
     const listed = new Map((await config.client.documents()).map((d) => [d.id, d]));
     const missing = wanted.filter((id) => !listed.has(id));
     if (missing.length) return [404, { error: 'unknown document ids', ids: missing }];
-    const docs = wanted.map((id) => listed.get(id)!);
-    const batch = store.create(docs.map((d) => ({ document: d.id, name: d.name, version: d.version })));
-    docs.forEach((doc) => track(batch, doc));
+    // A retry is a new attempt at the same version, so the workflow starts a fresh run instead of joining the failed one.
+    const jobs = wanted.map((id) => {
+      const d = listed.get(id)!;
+      const last = store.last(d.id, d.version);
+      return { id: d.id, name: d.name, version: d.version, attempt: body?.retry === true ? (last?.status === 'failed' ? last.attempt + 1 : -1) : (last?.attempt ?? 0) };
+    });
+    const refused = jobs.filter((j) => j.attempt < 0).map((j) => j.id);
+    if (refused.length) return [409, { error: 'only documents whose last attempt failed can be retried', ids: refused }];
+    const batch = store.create(jobs.map((j) => ({ document: j.id, name: j.name, version: j.version, attempt: j.attempt })));
+    jobs.forEach((job) => track(batch, job));
     return [202, { batch }];
+  }
+
+  async function addTopic(req: IncomingMessage): Promise<[number, unknown]> {
+    const name = String(((await readJson(req)) as { name?: unknown } | null)?.name ?? '').trim().replace(/\s+/g, ' ');
+    if (!name || name.length > 40) return [400, { error: 'name must be 1 to 40 characters' }];
+    store.addTopic(name);
+    return [200, { topics: store.topics() }];
   }
 
   async function route(req: IncomingMessage): Promise<[number, unknown]> {
     const path = new URL(req.url ?? '', 'http://x').pathname;
     if (req.method === 'GET' && path === '/documents') return [200, { documents: await config.client.tree() }];
     if (req.method === 'POST' && path === '/ingest') return ingest(req);
+    if (path === '/topics') return req.method === 'POST' ? addTopic(req) : [200, { topics: store.topics() }];
     const m = req.method === 'GET' ? /^\/batches\/([^/]+)$/.exec(path) : null;
     if (m) {
       const batch = store.get(decodeURIComponent(m[1]));
@@ -120,13 +137,15 @@ export function createRemarkableService(config: ServiceConfig) {
   const server = createServer(async (req, res) => {
     if (!authorized(req, config.serviceToken)) return send(res, 401, { error: 'unauthorized' });
     try {
+      const pdf = req.method === 'GET' ? /^\/documents\/([^/]+)\/pdf$/.exec(new URL(req.url ?? '', 'http://x').pathname) : null;
+      if (pdf) return void res.writeHead(200, { 'content-type': 'application/pdf' }).end(await config.client.downloadPdf(decodeURIComponent(pdf[1])));
       send(res, ...(await route(req)));
     } catch (err) {
       const bad = err instanceof SyntaxError || err instanceof URIError || (err as Error).message === 'body too large';
       send(res, bad ? 400 : upstream(err) ? 502 : 500, { error: (err as Error).message });
     }
   });
-  for (const p of store.pending()) track(p.batch, { id: p.document, name: p.name, version: p.version });
+  for (const p of store.pending()) track(p.batch, { id: p.document, name: p.name, version: p.version, attempt: p.attempt });
   return Object.assign(server, {
     /** Resolves when every submission started so far has been answered. */
     settled: async () => void (await Promise.all(inflight)),

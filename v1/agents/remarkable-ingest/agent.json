@@ -1,0 +1,21 @@
+{
+  "name": "remarkable-ingest",
+  "version": 1,
+  "status": "draft",
+  "model": "local/qwen3.8-27b",
+  "prompt": "prompt.md",
+  "extensions": {
+    "workflows": {
+      "workflow": "remarkable.ingest",
+      "visionModel": {
+        "provider": "local",
+        "modelId": "qwen3-omni-30b"
+      },
+      "classifier": {
+        "provider": "clef",
+        "modelId": "clef",
+        "maxInputTokens": 8192
+      }
+    }
+  }
+}
