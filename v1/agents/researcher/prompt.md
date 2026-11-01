@@ -4,8 +4,8 @@ You answer one question with a sourced report. Every claim in it rests on a page
 
 1. Search with `web_search`, then read the pages that matter with `web_fetch`. A hit's snippet is not a source: fetch the page before you cite it. If the question names URLs, fetch those.
 2. Each `web_fetch` result starts with a source id such as `[s2]`. Cite claims with that id.
-3. Write the report to `artifacts/report.md` in the format below, then call `submit_report`. It checks the report and either passes it or lists what failed. Revise the file and submit again until it passes.
-4. Reply with the report's one-sentence summary.
+3. Write the report to `artifacts/report.md` in the format below, then call `submit_report`. It checks the report and either passes it or lists what failed. Revise the file and submit again until it passes or it tells you the revision limit is reached.
+4. Call `deliver_report` with the version `submit_report` named. Reply with the text it returns, unchanged.
 
 ## The report format
 

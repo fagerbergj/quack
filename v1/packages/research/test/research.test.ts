@@ -1,16 +1,17 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseStep } from '@earendil-works/pi-ai';
+import { fauxAssistantMessage, fauxProvider, fauxToolCall, Type, type FauxResponseStep } from '@earendil-works/pi-ai';
+import { defineExtension, defineTool, type Extension } from '@earendil-works/pi-durable';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { Artifacts } from '@quack/sdk';
 import { buildModels, openSession, parseDeployment } from '@quack/session';
-import { formatResults, htmlToText, isPublicAddress, researchSessionExtensions, safeGet, SourcesDoc, validateReport } from '../src/index.ts';
+import { formatResults, htmlToText, isPublicAddress, researchSessionExtensions, safeGet, sourceText, SourcesDoc, validateReport } from '../src/index.ts';
 
 const servers: Server[] = [];
 const dirs: string[] = [];
@@ -94,7 +95,7 @@ const report = (cite: string) => `## Summary\nDucks fly.\n## Assumptions\nNone.\
 const call = (name: string, args: Record<string, unknown>) => fauxAssistantMessage(fauxToolCall(name, args as never), { stopReason: 'toolUse' });
 const seeing = (seen: string[]) => (msg: ReturnType<typeof fauxAssistantMessage>) => (c: { messages: unknown[] }) => (seen.push(JSON.stringify(c.messages.at(-1))), msg);
 
-async function run(config: Parameters<typeof researchSessionExtensions>[0], steps: (step: ReturnType<typeof seeing>) => FauxResponseStep[], deps?: Parameters<typeof researchSessionExtensions>[1]) {
+async function run(config: Parameters<typeof researchSessionExtensions>[0], steps: (step: ReturnType<typeof seeing>) => FauxResponseStep[], deps?: Parameters<typeof researchSessionExtensions>[1], extra: Extension[] = []) {
   const seen: string[] = [];
   const faux = fauxProvider({ models: [{ id: 'worker' }] });
   faux.setResponses(steps(seeing(seen)));
@@ -103,7 +104,7 @@ async function run(config: Parameters<typeof researchSessionExtensions>[0], step
   const m = faux.getModel();
   const dir = await mkdtemp(join(tmpdir(), 'quack-research-'));
   dirs.push(dir);
-  const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [CodingTools, ...researchSessionExtensions(config, deps)] } });
+  const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [CodingTools, ...researchSessionExtensions(config, deps), ...extra] } });
   const done = await session.submit('Do ducks fly?', 'r-1', true);
   return { done, seen, session };
 }
@@ -152,5 +153,66 @@ test('without the Exa key web_search says so, and a private URL is refused by de
   assert.match(seen[1], /not a public address/);
   const sources = await session.harness.snapshot(SourcesDoc, session.root.id, BACKGROUND_CONTEXT);
   assert.deepEqual(sources?.sources ?? [], []);
+  await session.close();
+});
+
+const delivered = (seen: string[]) => JSON.parse(seen.at(-1)!).content[0].text as string;
+
+test('a report that exhausts its revisions is delivered with a banner and inline marks; a passing one has neither', async () => {
+  const base = await web();
+  const exhausted = await run({ maxRevisions: 1 }, (step) => [
+    call('web_fetch', { url: `${base}/page` }),
+    step(call('write', { path: 'artifacts/report.md', content: report('[s1][s9]') })),
+    step(call('submit_report', {})),
+    step(call('write', { path: 'artifacts/report.md', content: report('[s1][s8]') })),
+    step(call('submit_report', {})),
+    step(call('deliver_report', { version: 2 })),
+    step(fauxAssistantMessage('Done.')),
+  ], { isPublic: loopbackOk });
+  const text = delivered(exhausted.seen.slice(0, 6));
+  assert.match(text, /^> \*\*Not fully checked\.\*\*/);
+  assert.match(text, /gate claims_grounded\.cites_fetched_sources: cites s8/);
+  assert.match(text, /- Ducks and geese fly\. \[s1\]\[s8\] \(not checked: s8 never fetched\)/);
+  assert.doesNotMatch(text, /s1 never/);
+  await exhausted.session.close();
+
+  const clean = await run({ maxRevisions: 1 }, (step) => [
+    call('web_fetch', { url: `${base}/page` }),
+    step(call('write', { path: 'artifacts/report.md', content: report('[s1]') })),
+    step(call('submit_report', {})),
+    step(call('deliver_report', { version: 1 })),
+    step(fauxAssistantMessage('Done.')),
+  ], { isPublic: loopbackOk });
+  assert.equal(delivered(clean.seen.slice(0, 4)), report('[s1]'));
+  await clean.session.close();
+});
+
+test('deliver_report refuses a version that is still being revised', async () => {
+  const { seen, session } = await run({}, (step) => [
+    call('write', { path: 'artifacts/report.md', content: report('[s1]') }),
+    step(call('submit_report', {})),
+    step(call('deliver_report', { version: 1 })),
+    step(fauxAssistantMessage('Done.')),
+  ]);
+  assert.match(seen[2], /report v1 has not passed its checks/);
+  await session.close();
+});
+
+test('a fetched source keeps its text, retrievable by id and keyed by the recorded hash', async () => {
+  const base = await web();
+  const readSource = defineTool({
+    name: 'read_source', description: 'test', parameters: Type.Object({ id: Type.String() }), replay: 'safe',
+    execute: async (a, api, ctx) => ({ output: [{ type: 'text' as const, text: (await sourceText(api, a.id, ctx)) ?? 'none' }] }),
+  });
+  const { seen, session } = await run({ maxFetchBytes: 1000 }, (step) => [
+    call('web_fetch', { url: `${base}/page` }),
+    step(call('read_source', { id: 's1' })),
+    step(call('read_source', { id: 's2' })),
+    step(fauxAssistantMessage('Done.')),
+  ], { isPublic: loopbackOk }, [defineExtension({ name: 'test', tools: [readSource] })]);
+  assert.match(delivered(seen.slice(0, 2)), /^Ducks\n\nDucks\nDucks & geese fly\.$/);
+  assert.equal(delivered(seen.slice(0, 3)), 'none');
+  const sources = (await session.harness.snapshot(SourcesDoc, session.root.id, BACKGROUND_CONTEXT))!.sources;
+  assert.equal(sources.length, 1);
   await session.close();
 });

@@ -1,7 +1,8 @@
 import type { Context } from '@earendil-works/chord/context';
-import type { ToolExecutionApi } from '@earendil-works/pi-durable';
-import type { CodeResult, Evidence, Rubric } from '@quack/judge';
-import type { ArtifactKind, SealedArtifact } from '@quack/sdk';
+import { Type } from '@earendil-works/pi-ai';
+import { defineTool, type ToolExecutionApi } from '@earendil-works/pi-durable';
+import { feedback, type CodeResult, type Evidence, type Rubric, type Verdict } from '@quack/judge';
+import { sealedVersion, type ArtifactKind, type SealedArtifact } from '@quack/sdk';
 import { SourcesDoc } from './tools.ts';
 
 const SECTIONS = ['summary', 'assumptions', 'findings'];
@@ -40,3 +41,28 @@ export const researchRubric: Rubric = {
   threshold: 0.8,
   criteria: [{ id: 'claims_grounded', checks: [{ id: 'cites_fetched_sources', weight: 'gate', code: citesFetchedSources }] }],
 };
+
+/** The report as delivered: a version that failed at the limit gets a banner and a mark on each line citing a source never fetched (RES-4). */
+export function markUnchecked(content: string, v: Verdict, fetched: string[]): string {
+  const known = new Set(fetched);
+  const lines = content.split('\n').map((l) => {
+    const bad = citedIds(l).filter((id) => !known.has(id));
+    return bad.length ? `${l} (not checked: ${bad.join(', ')} never fetched)` : l;
+  });
+  const failed = feedback(v.checks).map((l) => `> - ${l}`).join('\n');
+  return `> **Not fully checked.** The revision limit was reached with these checks failing:\n${failed}\n\n${lines.join('\n')}`;
+}
+
+export const deliverReportTool = defineTool({
+  name: 'deliver_report',
+  description: 'Return a checked version of the report as it is delivered. Only a version submit_report passed, or released at the revision limit, can be delivered.',
+  parameters: Type.Object({ version: Type.Integer({ minimum: 1 }) }),
+  replay: 'safe',
+  async execute(args, api, ctx) {
+    const sealed = await sealedVersion(api, reportKind.kind, args.version, ctx);
+    const v = sealed?.verdict as unknown as Verdict | null | undefined;
+    if (!sealed || !v || !(v.passed || v.limitReached)) return { output: [{ type: 'text' as const, text: `report v${args.version} has not passed its checks; revise and call submit_report` }], isError: true };
+    const fetched = (await api.snapshot(SourcesDoc, api.conversationId, ctx))?.sources.map((s) => s.id) ?? [];
+    return { output: [{ type: 'text' as const, text: v.passed ? sealed.content : markUnchecked(sealed.content, v, fetched) }] };
+  },
+});
