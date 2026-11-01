@@ -62,9 +62,9 @@ export const sessionDirName = (key: string) => createHash('sha256').update(key).
 const readText = (path: string) => readFile(path, 'utf8').catch(() => undefined);
 const readJson = async (path: string) => JSON.parse((await readText(path)) ?? 'null') as { name?: unknown; version?: unknown; status?: unknown } | null;
 
-// Content hash of a bundle directory, so two copies of one agent version can be compared.
-async function digest(dir: string): Promise<string> {
-  const files = (await readdir(dir, { recursive: true, withFileTypes: true })).filter((e) => e.isFile()).map((e) => join(e.parentPath, e.name)).sort();
+// Content hash of a bundle directory (minus its version.lock), so two copies of one agent version can be compared.
+export async function digest(dir: string): Promise<string> {
+  const files = (await readdir(dir, { recursive: true, withFileTypes: true })).filter((e) => e.isFile() && e.name !== 'version.lock').map((e) => join(e.parentPath, e.name)).sort();
   const hash = createHash('sha256');
   for (const f of files) {
     const bytes = await readFile(f);

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { test } from 'node:test';
+import { mock, test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
 import { agentSpec, buildModels, loadAgent, openSession, parseDefinition, parseDeployment, type Catalog } from '../src/index.ts';
@@ -33,10 +33,22 @@ test('reports every problem in a deployment at once', () => {
 
 test('reports every problem in a definition at once, naming the available extensions', () => {
   assert.throws(
-    () => parseDefinition({ name: '', version: 0, model: 'local/llama', maxTurns: 5, extensions: { coding: {}, sleeper: {} } }, parseDeployment(deployment), catalog),
+    () => parseDefinition({ name: '', version: 0, model: 'local/llama', extensions: { coding: {}, sleeper: {} } }, parseDeployment(deployment), catalog),
     (err: Error) =>
-      [/name must be/, /version must be/, /model local\/llama is not configured/, /maxTurns was removed/, /unknown extension sleeper; available: coding, github/].every((r) => r.test(err.message)),
+      [/name must be/, /version must be/, /model local\/llama is not configured/, /unknown extension sleeper; available: coding, github/].every((r) => r.test(err.message)),
   );
+});
+
+test('a pinned snapshot that still has maxTurns loads, with one warning', () => {
+  const warn = mock.method(console, 'error', () => {});
+  try {
+    const def = parseDefinition({ name: 'reviewer', version: 1, status: 'promoted', model: 'local/qwen3.8-27b', maxTurns: 80, prompt: 'prompt.md', extensions: { coding: {} } }, parseDeployment(deployment), catalog);
+    assert.equal(def.name, 'reviewer');
+    assert.equal(warn.mock.callCount(), 1);
+    assert.match(String(warn.mock.calls[0].arguments[0]), /maxTurns was removed/);
+  } finally {
+    warn.mock.restore();
+  }
 });
 
 test('a definition loads its prompt file, and a reopened session takes the new prompt and model', async () => {
