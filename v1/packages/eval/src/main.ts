@@ -22,6 +22,7 @@ const lf = langfuse({ baseUrl: env('LANGFUSE_BASE_URL'), publicKey: env('LANGFUS
 const args = process.argv.slice(2);
 // vLLM serves several sequences at once; leave slots free for the deployment's live sessions.
 const concurrency = Number(args.find((a) => a.startsWith('--concurrency='))?.split('=')[1] ?? 1);
+if (!Number.isInteger(concurrency) || concurrency < 1) throw new Error(`--concurrency must be a positive integer, got ${concurrency}`);
 const [command, dataset, ...rest] = args.filter((a) => !a.startsWith('--'));
 
 if (command === 'dataset' && dataset && rest.length >= 3) {
