@@ -256,7 +256,7 @@ test('promoting a version does not fork it, but any other edit without a bump do
   assert.equal((await invoke('github:p#2', { input: 'hi', wait: true }, 'reviewer')).status, 200);
   const { agents } = (await (await fetch(`${base}/agents`)).json()) as { agents: Array<{ status: string }> };
   assert.equal(agents[0].status, 'promoted');
-  await writeFile(file, JSON.stringify({ ...def, status: 'promoted', maxTurns: 5 }));
+  await writeFile(file, JSON.stringify({ ...def, status: 'promoted', note: 'edited' }));
   assert.equal((await invoke('github:p#3', { input: 'hi', wait: true }, 'reviewer')).status, 409);
 });
 

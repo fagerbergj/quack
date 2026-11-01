@@ -60,7 +60,7 @@ const rubric: Rubric = {
   ],
 };
 
-async function run(baseUrl: string | undefined, maxInputTokens: number, responses: FauxResponseStep[], maxTurns?: number) {
+async function run(baseUrl: string | undefined, maxInputTokens: number, responses: FauxResponseStep[]) {
   const dir = await mkdtemp(join(tmpdir(), 'quack-judge-'));
   dirs.push(dir);
   const faux = fauxProvider({ models: [{ id: 'worker' }] });
@@ -74,7 +74,7 @@ async function run(baseUrl: string | undefined, maxInputTokens: number, response
   const m = faux.getModel();
   const classifier = baseUrl ? { provider: 'clef', modelId: 'clef', maxInputTokens } : undefined;
   const extensions = [CodingTools, artifactsExtension([review]), judge({ kind: review, rubric, evidence: evidence as never, maxRevisions: 2, classifier, toolName: 'submit_review' })];
-  const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions, maxTurns } });
+  const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions } });
   const done = await session.submit('Review the PR.', 'review-1', true);
   const doc = await session.harness.snapshot(Artifacts, session.root.id, BACKGROUND_CONTEXT);
   await session.close();
@@ -123,27 +123,4 @@ test('a unit over the decision model cap skips it and every check escalates', as
   assert.equal(clefCalls.length, 0);
   assert.ok(versions[0].checks.filter((c: any) => c.resolvers['agent-model']).length >= 2);
   assert.equal(versions[0].passed, true);
-});
-
-test('in the run\'s final turns a failing review is released marked, instead of being cut off', async () => {
-  const failing = '## Takeaway\nLooks fine.\n## Findings\n- nit: src/y.ts:3 rename\n';
-  let released = '';
-  let resubmitted = false;
-  // Investigate until the watchdog's final-turns notice reaches the model, resubmit the unchanged review once, then finish.
-  const step = (c: { messages: unknown[] }) => {
-    if (resubmitted) { released = JSON.stringify(c.messages.at(-1)); return fauxAssistantMessage('Delivered with failures marked.'); }
-    if (!JSON.stringify(c.messages).includes('Turn budget')) return tool('bash', { command: 'true' });
-    resubmitted = true;
-    return tool('submit_review', {});
-  };
-  const { done, versions } = await run(undefined, 8192, [
-    tool('write', { path: 'artifacts/review.md', content: failing }),
-    tool('submit_review', {}),
-    ...Array.from({ length: 12 }, () => step),
-  ], 14);
-  assert.equal(done.status, 'done', JSON.stringify(done));
-  assert.match(released, /revision limit is reached: deliver version 1 with these failures marked/);
-  assert.equal(versions.length, 1, 'the unchanged file was not sealed again');
-  assert.equal(versions[0].passed, false);
-  assert.equal(versions[0].limitReached, true);
 });

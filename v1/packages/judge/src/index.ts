@@ -1,7 +1,7 @@
 import type { Context } from '@earendil-works/chord/context';
 import { Type } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool, GenerationTask, hook, type ToolExecutionApi } from '@earendil-works/pi-durable';
-import { Artifacts, attachVerdict, inFinalTurns, seal, type ArtifactKind, type SealedArtifact } from '@quack/sdk';
+import { Artifacts, attachVerdict, seal, type ArtifactKind, type SealedArtifact } from '@quack/sdk';
 import { answerUnit, type ClassifierRef, type ModelRef } from './resolve.ts';
 import { feedback, score, unitsFor, type Check, type CheckResult, type Evidence, type Rubric, type Unit } from './rubric.ts';
 
@@ -72,7 +72,7 @@ async function judgeVersion(api: ToolExecutionApi, opts: JudgeOptions, sealed: S
   const doc = await api.snapshot(Artifacts, api.conversationId, ctx);
   const failedBefore = (doc?.kinds[sealed.kind]?.versions ?? []).filter((v) => v.verdict && !(v.verdict as { passed?: boolean }).passed).length;
   const rubric = `${opts.rubric.name}@${opts.rubric.version}`;
-  const limit = failedBefore >= opts.maxRevisions || (await inFinalTurns(api, ctx));
+  const limit = failedBefore >= opts.maxRevisions;
   return { passed: s.passed, limitReached: !s.passed && limit, score: s.score, gatesFailed: s.gatesFailed, rubric, checks };
 }
 
@@ -105,12 +105,7 @@ export function judge(opts: JudgeOptions) {
         return { output: [{ type: 'text', text: (err as Error).message }], isError: true };
       }
       if (sealed.verdict) {
-        // Resubmitting an unchanged failing version in the run's final turns releases it rather than asking again.
-        let v = sealed.verdict as unknown as Verdict;
-        if (!v.passed && !v.limitReached && (await inFinalTurns(api, ctx))) {
-          v = { ...v, limitReached: true };
-          await attachVerdict(api, opts.kind.kind, sealed.version, v as never, ctx);
-        }
+        const v = sealed.verdict as unknown as Verdict;
         return { output: [{ type: 'text', text: report(sealed, v, toolName) }] };
       }
       const verdict = await judgeVersion(api, opts, sealed, ctx);

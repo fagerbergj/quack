@@ -13,8 +13,8 @@ type ProviderConfig = { baseUrl: string; api?: 'openai-completions' | 'systemone
 /** Per deployment: the OpenAI-compatible providers sessions may use (D28). */
 export type DeploymentConfig = { providers: Record<string, ProviderConfig>; timeZone?: string };
 
-/** Per agent (D48): its model as provider/model, its turn limit, a prompt file beside it, and the extensions it selects by name with their config. */
-export type AgentDefinition = { name: string; version: number; model: string; maxTurns?: number; prompt?: string; extensions: Record<string, unknown> };
+/** Per agent (D48): its model as provider/model, a prompt file beside it, and the extensions it selects by name with their config. */
+export type AgentDefinition = { name: string; version: number; model: string; prompt?: string; extensions: Record<string, unknown> };
 
 /** Extensions compiled into the runtime image, by name (A8); each turns its config into installed extensions. */
 export type Catalog = Record<string, (config: unknown) => Extension[] | Promise<Extension[]>>;
@@ -68,7 +68,7 @@ export function parseDefinition(raw: unknown, deployment: DeploymentConfig, cata
   if (typeof raw.name !== 'string' || raw.name.length === 0) problems.push('name must be a non-empty string');
   if (!positive(raw.version)) problems.push('version must be a positive integer');
   problems.push(...modelProblems(raw.model, deployment));
-  if (raw.maxTurns !== undefined && !positive(raw.maxTurns)) problems.push('maxTurns must be a positive integer');
+  if ('maxTurns' in raw) problems.push('maxTurns was removed (D58): a run is bounded by the checker\'s revision limit and operator abort');
   if (raw.prompt !== undefined && (typeof raw.prompt !== 'string' || !raw.prompt)) problems.push('prompt must be a file name');
   if (!isObject(raw.extensions)) problems.push('extensions must be an object of name to config');
   else for (const name of Object.keys(raw.extensions)) if (!catalog[name]) problems.push(`unknown extension ${name}; available: ${Object.keys(catalog).sort().join(', ')}`);
@@ -98,7 +98,6 @@ export async function agentSpec(def: AgentDefinition, catalog: Catalog): Promise
   const slash = def.model.indexOf('/');
   return {
     model: { provider: def.model.slice(0, slash), modelId: def.model.slice(slash + 1) },
-    maxTurns: def.maxTurns,
     extensions: (await Promise.all(Object.entries(def.extensions).map(([name, config]) => catalog[name](config)))).flat(),
   };
 }

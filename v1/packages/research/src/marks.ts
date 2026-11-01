@@ -7,7 +7,7 @@ export const citedIds = (text: string) => [...new Set([...text.matchAll(CITATION
 
 type Verdict = { passed: boolean; limitReached: boolean; checks: CheckResult[] };
 
-/** The report as delivered (RES-4, ART-4): passed unchanged; released at a revision or turn limit with a banner and a mark on each line citing a never-fetched source; undefined while still being revised. */
+/** The report as delivered (RES-4, ART-4): passed unchanged; released at the revision limit with a banner and a mark on each line citing a never-fetched source; undefined while still being revised. */
 export function deliveredReport(content: string, v: Verdict | null | undefined): string | undefined {
   if (!v || !(v.passed || v.limitReached)) return undefined;
   if (v.passed) return content;

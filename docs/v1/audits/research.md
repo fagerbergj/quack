@@ -58,12 +58,12 @@ v0 `web-researcher/prompt.md` against v1 `researcher/prompt.md`.
 - Line 5, recalled memory as tradecraft. The researcher has no memory tools.
 - Line 7, "a turn that ends with the answer only in reasoning arrives empty". v1 writes a file and calls `submit_report`.
 - Lines 16 and `grep_artifacts`/`read_artifact`. v1 has neither; `web_fetch` returns the first 30,000 characters.
-- Line 20's "roughly ten searched queries" cap and 5a843bed's tool-call cap. `maxTurns` 60 bounds effort structurally. The other half of line 20 is not dead; see Missing item 2.
+- Line 20's "roughly ten searched queries" cap and 5a843bed's tool-call cap. The checker's revision limit bounds effort structurally (D58 cut `maxTurns`). The other half of line 20 is not dead; see Missing item 2.
 - Lines 38-50, the Sources `<details>` block. The reading view renders sources from `research.sources` (RFC).
 
 **Missing from v1:**
 1. Line 24, primary and authoritative sources for factual claims, and line 28, fetch the original when a source cites another. No measurement; one sentence each, A/B on a research dataset first.
-2. Line 20's second half, "write the answer with what you have and name the gaps". `maxTurns` ends a run but gives it no instruction to say what it did not find, and RES-4's "not fully checked" delivery covers failed checks, not unsearched ground. Needs the same A/B.
+2. Line 20's second half, "write the answer with what you have and name the gaps". Nothing instructs a run to say what it did not find, and RES-4's "not fully checked" delivery covers failed checks, not unsearched ground. Needs the same A/B.
 3. Date awareness (v0 rubric notes). v1 has no date tool or line in the prompt, so a time-sensitive question can be searched under the wrong year. Fix in the harness (inject the date), not the prompt.
 4. Line 15, fetch before stating exact prices, addresses or hours. Covered by the fetch-before-cite rule; no addition.
 5. Line 30, repository questions. v1 has the coding tools (RES-2), but a cloned file has no `[sN]` id, so `cites_fetched_sources` would fail any claim from a repo. This is a spec gap, not a prompt gap; see Follow-ups.
