@@ -4,9 +4,10 @@ import { artifactsExtension } from '@quack/sdk';
 import { reportEvidence, reportKind, researchRubric } from './report.ts';
 import { webFetchTool, webSearchTool, type ResearchConfig } from './tools.ts';
 
+export { deliveredReport } from './marks.ts';
 export { citedIds, reportEvidence, reportKind, researchRubric, validateReport } from './report.ts';
 export { isPublicAddress, safeGet } from './net.ts';
-export { formatResults, htmlToText, SourcesDoc, type ResearchConfig, type SourceRecord } from './tools.ts';
+export { formatResults, htmlToText, sourceText, SourcesDoc, type ResearchConfig, type SourceRecord } from './tools.ts';
 
 /** The research extension's session half: source tools, the fetch log, the report artifact and its judge. */
 export function researchSessionExtensions(config: ResearchConfig = {}, deps: { isPublic?: (ip: string) => boolean } = {}): Extension[] {

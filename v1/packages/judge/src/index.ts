@@ -28,7 +28,7 @@ function codeResults(rubric: Rubric, artifact: string, ev: Evidence): CheckResul
   return rubric.criteria.flatMap((c) =>
     c.checks.filter((k) => k.code).map((k) => {
       const r = k.code!(artifact, ev);
-      return { criterion: c.id, id: k.id, weight: k.weight, met: r.met, units: 1, resolvers: { code: 1 }, notes: r.detail ? [r.detail] : [] };
+      return { criterion: c.id, id: k.id, weight: k.weight, met: r.met, units: 1, resolvers: { code: 1 }, notes: r.detail ? [r.detail] : [], marks: r.marks };
     }),
   );
 }

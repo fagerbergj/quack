@@ -2,12 +2,12 @@ import type { Context } from '@earendil-works/chord/context';
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
 import type { CodeResult, Evidence, Rubric } from '@quack/judge';
 import type { ArtifactKind, SealedArtifact } from '@quack/sdk';
+import { citedIds } from './marks.ts';
 import { SourcesDoc } from './tools.ts';
 
-const SECTIONS = ['summary', 'assumptions', 'findings'];
-const CITATION = /\[(s\d+)\]/g;
+export { citedIds };
 
-export const citedIds = (text: string) => [...new Set([...text.matchAll(CITATION)].map((m) => m[1]))];
+const SECTIONS = ['summary', 'assumptions', 'findings'];
 
 /** Structure problems, all at once (ART-2); whether the citations are real is the judge's gate, since it needs the session's fetch log. */
 export function validateReport(text: string): string[] {
@@ -30,7 +30,7 @@ function citesFetchedSources(artifact: string, ev: Evidence): CodeResult {
   const fetched = new Set((ev.sources?.[0]?.state.ids ?? []) as string[]);
   const cited = citedIds(artifact);
   const unfetched = cited.filter((id) => !fetched.has(id));
-  return { met: cited.length ? (cited.length - unfetched.length) / cited.length : 0, detail: unfetched.length ? `cites ${unfetched.join(', ')}, which this session never fetched; fetch the page with web_fetch or drop the claim` : cited.length ? undefined : 'cites no source' };
+  return { met: cited.length ? (cited.length - unfetched.length) / cited.length : 0, marks: unfetched, detail: unfetched.length ? `cites ${unfetched.join(', ')}, which this session never fetched; fetch the page with web_fetch or drop the claim` : cited.length ? undefined : 'cites no source' };
 }
 
 // Claim-support checks against the fetched text come with the sources store that keeps it; today the gate is provenance only.

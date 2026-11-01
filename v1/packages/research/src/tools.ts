@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
+import type { Context } from '@earendil-works/chord/context';
 import { Type } from '@earendil-works/pi-ai';
-import { defineDoc, defineTool } from '@earendil-works/pi-durable';
+import { defineDoc, defineTool, type ToolExecutionApi } from '@earendil-works/pi-durable';
 import type { ClassifierRef, ModelRef } from '@quack/judge';
 import { extractText, getDocumentProxy } from 'unpdf';
 import { safeGet } from './net.ts';
@@ -22,6 +23,16 @@ export const SourcesDoc = defineDoc<{ sources: SourceRecord[] }>({
 });
 
 const MAX_CHARS = 30_000;
+const MAX_STORED_CHARS = 500_000;
+const sourcePath = (hash: string) => `sources/${hash}.txt`;
+
+/** The text kept for a fetched source, looked up by its id and keyed by the recorded hash; best-effort per session directory, so undefined when none was kept (a failed write, a fork with a fresh directory). */
+export async function sourceText(api: ToolExecutionApi, id: string, ctx: Context): Promise<string | undefined> {
+  const rec = (await api.snapshot(SourcesDoc, api.conversationId, ctx))?.sources.find((s) => s.id === id);
+  const read = rec && (await api.env?.readTextFile(sourcePath(rec.hash), ctx));
+  return read?.ok ? read.value : undefined;
+}
+
 const error = (text: string) => ({ output: [{ type: 'text' as const, text }], isError: true });
 
 const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
@@ -71,6 +82,8 @@ export function webFetchTool(config: ResearchConfig, isPublic?: (ip: string) => 
       } catch (err) {
         return error(`cannot fetch ${args.url}: ${(err as Error).message}`);
       }
+      // Kept for later claim-support checks; a failed write is ignored so it loses only that input, not the fetch.
+      await api.env?.writeFile(sourcePath(record.hash), text.slice(0, MAX_STORED_CHARS), ctx);
       const id = await api.commit(async (tx) => {
         const doc = await tx.doc(SourcesDoc, api.conversationId);
         const next = `s${doc.sources.length + 1}`;

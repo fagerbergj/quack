@@ -6,7 +6,8 @@ export type Unit = { id: string; state: JsonObject };
 /** Evidence units by scope name; the domain defines its scopes (e.g. the review alone, the review with its diff, each finding). */
 export type Evidence = Record<string, Unit[]>;
 
-export type CodeResult = { met: number; detail?: string };
+/** `marks` names what in the artifact the result concerns (e.g. citation ids), so a renderer can flag it from the verdict alone. */
+export type CodeResult = { met: number; detail?: string; marks?: string[] };
 
 // One atomic check (D54): a gate holds in every unit it applies to; a positive weight earns its share of met units;
 // a negative weight is a pitfall that subtracts its share where present.
@@ -31,6 +32,7 @@ export type CheckResult = {
   units: number;
   resolvers: Record<string, number>;
   notes: string[];
+  marks?: string[];
 };
 
 export type Score = { score: number; gatesFailed: string[]; passed: boolean };
