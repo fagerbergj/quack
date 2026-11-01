@@ -17,6 +17,7 @@ import {
 } from '../src/index.ts';
 import type { FinderDecision, TradeDecision } from '../src/trades/card.ts';
 import { fetchNews } from '../src/trades/facts.ts';
+import { refusedRun } from './refused.ts';
 
 type Fixtures = Record<string, any>;
 const fixtures = JSON.parse(readFileSync(new URL('./fixtures/trades.json', import.meta.url), 'utf8')) as Fixtures;
@@ -263,4 +264,10 @@ test('the trade jobs start on demand: the finder under the week key, a trade und
   } finally {
     service.stop();
   }
+});
+
+test('a model host refusing the finder call fails the decide step with the host\'s error', async () => {
+  const { outcome, failed } = await refusedRun(finderWorkflow(deps()), FINDER);
+  assert.equal(outcome.status, 'failed');
+  assert.deepEqual([failed?.name, failed?.error], ['decide', 'step decide: model call failed: 503 no slot free']);
 });

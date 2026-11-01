@@ -12,7 +12,7 @@ import { openSession } from '@quack/session';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { runWorkflow, workflowExtension } from '@quack/workflows';
 import {
-  buildSnapshot, buildTrendsCard, buildTrendsFacts, createSleeperClient, createSleeperService, registerTrendsSchedules, trendsEvidence, trendsKey, trendsRubric, trendsWorkflow,
+  buildSnapshot, buildTrendsCard, trendsFromEnv, buildTrendsFacts, createSleeperClient, createSleeperService, registerTrendsSchedules, trendsEvidence, trendsKey, trendsRubric, trendsWorkflow,
   type TrendsCard, type TrendsFacts,
 } from '../src/index.ts';
 import { MAX_SEARCHED } from '../src/trends/facts.ts';
@@ -240,4 +240,23 @@ test('the trends job starts on demand under the week session key, and a snapshot
   } finally {
     service.stop();
   }
+});
+
+test('the trends workflow keeps reading the service after the session process drops its env vars', async (t) => {
+  const env: Record<string, string | undefined> = { QUACK_SLEEPER_URL: 'http://service', QUACK_SLEEPER_TOKEN: 'tok' };
+  const workflow = trendsFromEnv(env);
+  delete env.QUACK_SLEEPER_URL;
+  delete env.QUACK_SLEEPER_TOKEN;
+  const seen: string[] = [];
+  const api = createSleeperClient({ fetch: (async (u: string) => new Response(JSON.stringify(new URL(u).pathname.includes('trending') ? [] : lineup[new URL(u).pathname] ?? null))) as unknown as typeof fetch, now: () => AT });
+  const snap = { date: TODAY, data: await buildSnapshot(api, 'L1') };
+  t.mock.method(globalThis, 'fetch', async (u: string, init?: RequestInit) => {
+    const { host, pathname } = new URL(u);
+    if (host === 'api.sleeper.app') return new Response(JSON.stringify(new URL(u).pathname.includes('trending') ? [] : lineup[pathname] ?? null));
+    seen.push(`${init?.method ?? 'GET'} ${u} ${new Headers(init?.headers).get('authorization')}`);
+    return new Response(JSON.stringify(init?.method === 'POST' ? snap : { snapshots: [] }));
+  });
+  const facts = await (workflow.steps[0] as { run(c: never): unknown }).run({ input: JSON.stringify(INPUT), api: { now: () => AT } } as never);
+  assert.equal((facts as { date: string }).date, TODAY);
+  assert.deepEqual(seen, ['POST http://service/leagues/L1/snapshots Bearer tok', 'GET http://service/leagues/L1/snapshots Bearer tok']);
 });

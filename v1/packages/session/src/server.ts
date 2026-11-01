@@ -42,8 +42,9 @@ function parseInvocation(body: unknown): Invocation | string {
   return { input, requestId, wait, title };
 }
 
-/** Questions a person answers, supplied by the extension that asks them (the session package cannot see workflows). */
+/** Questions a person answers and the failures a run ended on, supplied by the extension that owns them (the session package cannot see workflows). */
 export type Decisions = {
+  failures?(): Promise<unknown[]>;
   pending(): Promise<unknown[]>;
   answer(step: string, choice: string, by: string): Promise<'ok' | 'not-asking' | 'answered' | 'bad-choice'>;
 };
@@ -111,6 +112,7 @@ const ROUTES: Array<[string, RegExp, Route]> = [
   ['POST', /^\/approvals\/([^/]+)$/, decide],
   ['GET', /^\/decisions$/, async (_s, _r, _m, d) => [200, { decisions: (await d?.pending()) ?? [] }]],
   ['POST', /^\/decisions\/([^/]+)$/, answer],
+  ['GET', /^\/failures$/, async (_s, _r, _m, d) => [200, { failures: (await d?.failures?.()) ?? [] }]],
 ];
 
 export function createSessionServer(session: Session, decisions?: Decisions) {

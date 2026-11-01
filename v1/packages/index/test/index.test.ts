@@ -233,6 +233,45 @@ for (const { name, fresh: freshStore, skip } of backends) test(`${name}: a decis
   await session.close();
 });
 
+const boom = defineWorkflow({
+  name: 'boom',
+  steps: [
+    { name: 'facts', kind: 'code', run: () => { throw new Error('sleeper: /v1/stats/nfl/regular/2026/7 not found'); } },
+    { name: 'card', kind: 'code', run: () => 'never' },
+  ],
+});
+
+test('a run that throws in a code step is readable over the session route and indexed, with the error and the step', async () => {
+  const { store } = await backends[0].fresh();
+  const routes = indexRoutes(store, TOKEN);
+  const index = createServer(async (req, res) => { if (!(await routes(req, res))) res.writeHead(404).end(); });
+  const indexBase = `http://127.0.0.1:${await listen(index)}`;
+  cleanups.push(() => new Promise((r) => index.close(r)));
+  const dir = await mkdtemp(join(tmpdir(), 'quack-boom-'));
+  cleanups.push(() => rm(dir, { recursive: true, force: true }));
+  const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const m = faux.getModel();
+  const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: workflowSessionExtensions({ workflow: 'boom' }, { boom }) } });
+  const publisher = await startPublisher(session, { url: indexBase, token: TOKEN, meta: { key: 'sleeper:L:8:history', agent: 'sleeper-history', version: 1 }, pollMs: 20 });
+  const server = createSessionServer(session, sessionDecisions(session)).listen(0);
+  await new Promise((r) => server.once('listening', r));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const expected = { step: 'facts', error: 'sleeper: /v1/stats/nfl/regular/2026/7 not found' };
+
+  assert.deepEqual(await (await fetch(`${base}/failures`)).json(), { failures: [] });
+  await fetch(`${base}/invocations`, { method: 'POST', body: JSON.stringify({ input: 'go' }) });
+  const failures = await until(async () => { const f = ((await (await fetch(`${base}/failures`)).json()) as { failures: unknown[] }).failures; return f.length ? f : undefined; });
+  assert.deepEqual(failures, [expected]);
+  const indexed = await until(async () => { const f = ((await (await fetch(`${indexBase}/index/failures?state=failed`)).json()) as { failures: Array<Record<string, unknown>> }).failures; return f.length ? f : undefined; });
+  assert.deepEqual(indexed.map((f) => [f.session, f.step, f.error]), [['sleeper:L:8:history', expected.step, expected.error]]);
+
+  await publisher.stop();
+  await new Promise((r) => server.close(r));
+  await session.close();
+});
+
 test('a workflow aborted while it waits closes its question: not pending, indexed closed, and an answer is refused', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'quack-abort-'));
   cleanups.push(() => rm(dir, { recursive: true, force: true }));

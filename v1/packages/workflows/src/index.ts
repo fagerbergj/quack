@@ -2,10 +2,10 @@ import { BACKGROUND_CONTEXT, type Context } from '@earendil-works/chord/context'
 import type { JsonValue } from '@earendil-works/chord';
 import { defineExtension, defineTask, type Conversation, type ConversationId, type Extension, type Harness, type RunningTask, type TaskRuntime, type Tx } from '@earendil-works/pi-durable';
 import type { Dispatch, DispatchingExtension } from '@quack/session';
-import { answerDecision, pendingDecisions, WorkflowDoc, type StepRecord } from './doc.ts';
+import { answerDecision, failedSteps, pendingDecisions, WorkflowDoc, type StepRecord } from './doc.ts';
 import { execute, view, Wait, type Step, type StepContext } from './steps.ts';
 
-export { answerDecision, pendingDecisions, WorkflowDoc, watchUntil, type AnswerResult, type OpenDecision, type StepRecord } from './doc.ts';
+export { answerDecision, failedSteps, pendingDecisions, WorkflowDoc, watchUntil, type AnswerResult, type OpenDecision, type StepFailure, type StepRecord } from './doc.ts';
 export { Wait, type Step, type StepContext } from './steps.ts';
 
 type Results = Record<string, JsonValue>;
@@ -125,10 +125,11 @@ export const boundWorkflow = (config: unknown, from: Record<string, Workflow> = 
   return found;
 };
 
-/** What the session's decision routes need: the open questions and a way to answer one. */
+/** What the session's decision routes need: the open questions, a way to answer one, and the steps that failed. */
 export const sessionDecisions = (session: { harness: Harness; root: Conversation }) => ({
   pending: async () => pendingDecisions(await session.harness.snapshot(WorkflowDoc, session.root.id, BACKGROUND_CONTEXT)),
   answer: (step: string, choice: string, by: string) => answerDecision(session.root, step, choice, by, BACKGROUND_CONTEXT),
+  failures: async () => failedSteps(await session.harness.snapshot(WorkflowDoc, session.root.id, BACKGROUND_CONTEXT)),
 });
 
 export function workflowExtension(workflows: Workflow[]): Extension {

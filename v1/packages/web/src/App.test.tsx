@@ -703,6 +703,14 @@ test('a session waiting on a question is in Needs you, and its view shows the qu
   expect(within(card).getByRole('button', { name: 'idea' })).toBeInTheDocument();
 });
 
+test('a session whose run failed in a step shows the step and its error', async () => {
+  routes['GET /sessions'] = { sessions: [sess('ui:u1')] };
+  routes['GET /sessions/ui%3Au1/failures'] = { failures: [{ step: 'facts', error: 'sleeper: /v1/stats/nfl/regular/2026/7 not found' }] };
+  await openSession();
+  const alert = await screen.findByText(/Step facts failed:/);
+  expect(alert.closest('p')).toHaveTextContent('sleeper: /v1/stats/nfl/regular/2026/7 not found');
+});
+
 test('with the index off, the Inbox falls back to the running sessions own approvals', async () => {
   routes['GET /sessions'] = { sessions: [sess('gh:1', { running: true, active: true })] };
   routes['GET /sessions/gh%3A1/approvals'] = { approvals: [{ id: 'a', tool: 'push', args: { branch: 'main' }, requestedAt: 1 }] };
