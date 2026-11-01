@@ -98,6 +98,7 @@ Keep: gated, structured delivery; one core with extensions layered on it; review
 - **D56 GitHub auth as in v0.** The v1 GitHub extension authenticates the way v0's does (App JWT, installation tokens, the same credential path into the session), rather than a new shortcut.
 - **D57 Blast radius before the switch.** G2's blast-radius evidence, through the pi-lsp adapter (A16), ships before the GitHub switch so the benchmark measures it.
 - **D58 No turn limit** (2026-11-01, amends DEP-1, HAR-10, D40). The per-run turn limit is cut: pi-durable has none, and a counter beside it had to be rebuilt to survive restarts. A run is bounded by the checker's revision limit (J1), the SLOs (D9) and the operator's abort. `maxTurns` is no longer a definition field; the parser ignores the key and logs one warning, so pinned snapshots that still carry it keep loading.
+- **D59 Drafts on schedules while dogfooding** (2026-11-01, refines DEP-6, D50). A draft agent may run on a schedule while its slice is dogfooded, so its first benchmark comes from real runs; the UI shows it as a draft. It is promoted after three consecutive scheduled runs whose cards pass their checks with no operator correction. From then on the schedules service submits only to promoted agents, as unattended GitHub triggers already require (#1860).
 
 ## Research extension
 
