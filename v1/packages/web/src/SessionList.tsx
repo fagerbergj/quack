@@ -31,7 +31,7 @@ function RowLink({ r, kind, current, now }: { r: Row; kind: Kind; current: boole
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="flex gap-2">
           <span className={`min-w-0 flex-1 truncate text-[15px] lg:text-[13.5px] ${kind === 'recent' ? 'font-medium' : 'font-semibold'}`}>
-            {l.repo && <span className="mr-1 text-[11px] font-normal text-muted">{l.repo}</span>}
+            {l.repo && <><span className="text-[11px] font-normal text-muted">{l.repo}</span>{' '}</>}
             {l.num && <><span className="font-medium text-muted">{l.num}</span>{' '}</>}
             {l.title}
           </span>

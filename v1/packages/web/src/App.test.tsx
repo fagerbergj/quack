@@ -85,7 +85,17 @@ test('a GitHub key shows as #n with its title, and the full key stays as the too
   expect(link).toHaveAttribute('title', 'Review the shell\ngithub:fagerbergj/quack#1885');
 });
 
-const sealed = (session: string, kind: string, passed: boolean | null, version = 1) => ({ session, kind, version, verdict: passed === null ? null : { passed }, sealedAt: 1 });
+test('review rows show their repo only when the list holds reviews from two repos', async () => {
+  routes['GET /sessions'] = { sessions: [sess('github:a/one#1', { title: 'fix: first' }), sess('github:a/one#2', { title: 'fix: second' })] };
+  const view = render(<App />);
+  expect(await screen.findByRole('link', { name: /#1 First/ })).not.toHaveTextContent('a/one');
+  view.unmount();
+  routes['GET /sessions'] = { sessions: [sess('github:a/one#1', { title: 'fix: first' }), sess('github:b/two#2', { title: 'fix: second' })] };
+  render(<App />);
+  expect(await screen.findByRole('link', { name: /b\/two #2 Second/ })).toBeInTheDocument();
+});
+
+const indexed = (session: string, kind: string, passed: boolean | null, version = 1) => ({ session, kind, version, verdict: passed === null ? null : { passed }, sealedAt: 1 });
 
 test('each kind of session shows its own title and state, and search finds it by kind', async () => {
   routes['GET /sessions'] = { sessions: [
@@ -100,12 +110,12 @@ test('each kind of session shows its own title and state, and search finds it by
   ] };
   routes['GET /index/approvals?state=pending'] = { approvals: [] };
   routes['GET /index/artifacts'] = { artifacts: [
-    sealed('github:o/r#8', 'github.review', false, 1), sealed('github:o/r#8', 'github.review', true, 2),
-    sealed('github:o/r#9', 'github.review', false),
-    sealed('github:o/r#10', 'github.review', true),
-    sealed('ui:r1', 'research.report', true),
-    sealed('sleeper:123:8:lineup', 'sleeper.cards', true),
-    sealed('remarkable:doc1', 'remarkable.transcript', false),
+    indexed('github:o/r#8', 'github.review', false, 1), indexed('github:o/r#8', 'github.review', true, 2),
+    indexed('github:o/r#9', 'github.review', false),
+    indexed('github:o/r#10', 'github.review', true),
+    indexed('ui:r1', 'research.report', true),
+    indexed('sleeper:123:8:lineup', 'sleeper.cards', true),
+    indexed('remarkable:doc1', 'remarkable.transcript', false),
   ] };
   render(<App />);
   const row = async (name: RegExp) => within(await screen.findByRole('link', { name }));

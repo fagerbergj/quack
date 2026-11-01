@@ -15,7 +15,6 @@ const ICON = {
 const BLUE = 'bg-link-bg text-link';
 
 const GITHUB_KEY = /^github:([^/]+)\/([^#]+)#(\d+)$/;
-const HOME_REPO = 'fagerbergj/quack';
 const MAX = 40;
 // Sessions opened before titles were recorded carry the trigger prompt as their title; the PR's own title follows "Title: ".
 const TRIGGER = /^Review pull request .*? Title: (.+)$/s;
@@ -24,7 +23,7 @@ const CC_PREFIX = /^\w+(\([^)]*\))?!?:\s*/;
 
 // The newest sealed version of a kind for this session, from the index.
 function newest(r: Row, kind: string): IndexArtifact | undefined {
-  return r.artifacts.filter((a) => a.kind === kind).sort((a, b) => b.version - a.version)[0];
+  return r.artifacts.filter((a) => a.kind === kind).sort((a, b) => b.version - a.version || b.sealedAt - a.sealedAt)[0];
 }
 
 
@@ -73,7 +72,7 @@ const KINDS: Kind[] = [
     name: (r) => {
       const [, owner, repo, n] = GITHUB_KEY.exec(r.key)!;
       const full = prTitle(r, repo!);
-      return { title: cut(full), full, num: `#${n}`, ...(`${owner}/${repo}` !== HOME_REPO && { repo: `${owner}/${repo}` }) };
+      return { title: cut(full), full, num: `#${n}`, ...(r.multiRepo && { repo: `${owner}/${repo}` }) };
     },
     words: () => ({ kind: 'github.review', w: { run: 'Reviewing', pass: 'Approved ✓', fail: 'Checks failed', none: 'Not reviewed yet' } }),
   },
@@ -118,7 +117,7 @@ export const searchText = (r: Row): string[] => {
 export type SessionTitle = { repo?: string; number?: string; text: string; full: string; icon: string; kind: string };
 
 // The one place a session is named: list rows, the session header, Inbox and Artifacts all read this.
-export function sessionTitle(s: SessionSummary): SessionTitle {
-  const l = look({ ...s, approvals: [], artifacts: [] });
+export function sessionTitle(s: SessionSummary & { multiRepo?: boolean }): SessionTitle {
+  const l = look({ multiRepo: false, ...s, approvals: [], artifacts: [] });
   return { repo: l.repo, number: l.num, text: l.title, full: l.full, icon: l.icon, kind: l.label };
 }

@@ -113,7 +113,5 @@
 .hljs-number, .hljs-meta, .hljs-symbol { color: var(--color-warning); }
 .hljs-addition { color: var(--color-success); }
 .hljs-deletion { color: var(--color-danger); }
-@keyframes row-swim { 0% { left: -6%; } 100% { left: 100%; } }
-.row-swim { animation: row-swim 12s linear infinite, bob 1.6s ease-in-out infinite; }
 @keyframes pulse-ring { 0% { box-shadow: 0 0 0 0 rgb(31 122 99 / 0.5); } 70% { box-shadow: 0 0 0 6px rgb(31 122 99 / 0); } 100% { box-shadow: 0 0 0 0 rgb(31 122 99 / 0); } }
 .pulse-dot { animation: pulse-ring 1.6s infinite; }

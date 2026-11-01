@@ -1,12 +1,12 @@
 import type { Approval, Decision, IndexArtifact, SessionSummary } from './api.ts';
 import { searchText, sessionTitle } from './kinds.ts';
 
-export type Row = SessionSummary & { approvals: Approval[]; decisions: Decision[]; artifacts: IndexArtifact[] };
+export type Row = SessionSummary & { approvals: Approval[]; decisions: Decision[]; artifacts: IndexArtifact[]; multiRepo: boolean };
 export type Groups = { needs: Row[]; running: Row[]; recent: Row[] };
 export type Filters = { text: string; agent: string; start: string };
 
 // The display title as one string, e.g. "#1927 Sleeper waivers job"; the full key stays in the row's tooltip.
-export function titleOf(s: SessionSummary): string {
+export function titleOf(s: SessionSummary & { multiRepo?: boolean }): string {
   const t = sessionTitle(s);
   return [t.repo, t.number, t.text].filter(Boolean).join(' ');
 }

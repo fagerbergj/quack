@@ -17,8 +17,11 @@ test('a review opened before titles were recorded reads the PR title after "Titl
   expect(text(sessionTitle(s('github:fagerbergj/quack#1919', { title: 'Review pull request fagerbergj/quack#1919 (label quack:review).' })))).toBe('#1919 quack');
 });
 
-test('another repo shows as a prefix, the home repo does not', () => {
-  expect(text(sessionTitle(s('github:acme/tool#5', { title: 'feat: add retries' })))).toBe('acme/tool #5 Add retries');
+test('the repo shows as a prefix only when the loaded reviews span more than one repo', () => {
+  const one = sessionTitle(s('github:acme/tool#5', { title: 'feat: add retries' }));
+  expect(text(one)).toBe('#5 Add retries');
+  const many = sessionTitle(s('github:acme/tool#5', { title: 'feat: add retries', multiRepo: true }));
+  expect(text(many)).toBe('acme/tool #5 Add retries');
 });
 
 test('sleeper jobs read "Lineup · wk 8" and "Waivers · wk 8"', () => {

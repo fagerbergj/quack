@@ -410,7 +410,7 @@ test('reading approvals neither keeps a running session warm nor starts a stoppe
 });
 
 test('a restarted distributor rebuilds wake timers from the recorded times', async () => {
-  const fleet = await fakeFleet(() => ({ status: 'Healthy', wake: {} }));
+  const fleet = await fakeFleet(() => ({ status: 'Healthy', waitingOnHuman: false, wake: {} }));
   fleet.wakes.set('research:nap', fleet.now() + HOUR);
   const server = fleet.start();
   await server.sweep();
