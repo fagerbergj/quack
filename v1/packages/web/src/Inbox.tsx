@@ -20,7 +20,7 @@ function Item({ row, a, now, done }: { row: Row; a: Row['approvals'][number]; no
         <span className="flex min-w-0 flex-1 flex-col gap-1">
           <span className="font-mono text-[14px] font-semibold [overflow-wrap:anywhere]">{a.tool}</span>
           {args && <code className="text-[12px] text-ink-2 [overflow-wrap:anywhere]">{args}</code>}
-          <a href={`#/s/${encodeURIComponent(row.key)}`} className="line-clamp-2 text-[13px] text-link [overflow-wrap:anywhere]">{titleOf(row)}</a>
+          <a href={`#/s/${encodeURIComponent(row.key)}`} className="line-clamp-2 text-[13px] text-link max-lg:-my-2 max-lg:py-3 [overflow-wrap:anywhere]">{titleOf(row)}</a>
         </span>
         <time className="whitespace-nowrap text-[13px] tabular-nums text-muted">{age(new Date(a.requestedAt).toISOString(), now)}</time>
       </div>
