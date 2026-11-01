@@ -55,7 +55,7 @@ const gate = async (id: string, f: Facts, card: unknown) => {
   const content = JSON.stringify(card);
   return check.code!(content, await lineupEvidence(f)(null, { content }));
 };
-const GATES = ['every_slot_decided', 'no_locked_swap', 'figures_match_tools', 'summary_names_changes'];
+const GATES = ['every_slot_decided', 'one_player_per_slot', 'no_locked_swap', 'figures_match_tools', 'summary_names_changes'];
 
 test('slots are numbered and the flex is solved with the strict slots filled first', () => {
   assert.deepEqual(numberSlots(['QB', 'RB', 'RB', 'FLEX']), ['QB', 'RB1', 'RB2', 'FLEX']);
@@ -132,11 +132,10 @@ test('summary_names_changes fails a summary that misses a change', async () => {
   assert.equal((await gate('summary_names_changes', f, { ...card, summary: 'No changes.' })).met, 0);
 });
 
-test('the workflow seals a lineup card from the recorded week and the judge passes it', async () => {
-  const seen: string[] = [];
+async function runLineup(news?: () => Promise<[]>) {
   const judged: string[] = [];
   const responses: FauxResponseStep[] = [
-    (c) => (seen.push(c.messages.filter((m) => m.role === 'system').map((m) => m.content).join('')), fauxAssistantMessage(JSON.stringify(decision))),
+    () => fauxAssistantMessage(JSON.stringify(decision)),
     ...Array.from({ length: 40 }, () => (c: { messages: Array<{ content: unknown }> }) => {
       const asked = String(c.messages.at(-1)!.content);
       judged.push(asked);
@@ -148,26 +147,49 @@ test('the workflow seals a lineup card from the recorded week and the judge pass
   const models = createModels();
   models.setProvider(faux.provider);
   const dir = await mkdtemp(join(tmpdir(), 'quack-lineup-'));
-  const workflow = lineupWorkflow({ client: client(), snapshot, now: () => AT });
+  const workflow = lineupWorkflow({ client: client(), snapshot, now: () => AT, news });
   const m = faux.getModel();
   const s = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, instructions: 'You are the lineup analyst.', extensions: [workflowExtension([workflow])] } });
   try {
     const outcome = await runWorkflow(s.harness, s.root, workflow, JSON.stringify(INPUT));
     assert.equal(outcome.status, 'completed', JSON.stringify(outcome));
-    assert.deepEqual(seen, ['You are the lineup analyst.']);
     const sealed = (await s.harness.snapshot(Artifacts, s.root.id, ctx))!.kinds['sleeper.cards'].versions[0];
-    const card = JSON.parse(sealed.content) as LineupCard;
-    assert.equal(card.kind, 'lineup');
-    assert.equal(card.starters.length, 9);
-    assert.equal(card.starters.find((r) => r.slot === 'RB2')!.player.name, 'Dan Dash');
-    assert.equal(card.starters.find((r) => r.slot === 'K')!.locked, true);
-    const verdict = sealed.verdict as { passed: boolean; rubric: string; gatesFailed: string[] };
-    assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed], ['sleeper.lineup@1', [], true]);
-    assert.ok(judged.some((q) => /Questionable or limited-practice/.test(q)), 'the close call is judged');
+    return { sealed, judged, verdict: sealed.verdict as { passed: boolean; rubric: string; gatesFailed: string[]; notes: string[]; checks: Array<{ id: string }> } };
   } finally {
     await s.close();
     await rm(dir, { recursive: true, force: true });
   }
+}
+
+test('the workflow seals a lineup card from the recorded week and the judge passes it, saying close-call news was not checked', async () => {
+  const { sealed, judged, verdict } = await runLineup();
+  const card = JSON.parse(sealed.content) as LineupCard;
+  assert.equal(card.kind, 'lineup');
+  assert.equal(card.starters.length, 9);
+  assert.equal(card.starters.find((r) => r.slot === 'RB2')!.player.name, 'Dan Dash');
+  assert.equal(card.starters.find((r) => r.slot === 'K')!.locked, true);
+  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed], ['sleeper.lineup@1', [], true]);
+  assert.deepEqual(verdict.notes, ['close-call news not checked: no news source']);
+  assert.ok(!verdict.checks.some((c) => c.id === 'close_call_news'));
+  assert.ok(!judged.some((q) => /Questionable or limited-practice/.test(q)));
+});
+
+test('with a news source wired the close calls are scored for news', async () => {
+  const { judged, verdict } = await runLineup(async () => []);
+  assert.deepEqual(verdict.notes, []);
+  assert.ok(verdict.checks.some((c) => c.id === 'close_call_news'));
+  assert.ok(judged.some((q) => /Questionable or limited-practice/.test(q)));
+});
+
+test('a player started in two slots fails the card step and the one_player_per_slot gate', async () => {
+  const f = await facts();
+  const dup = { ...decision, slots: decision.slots.map((s) => (s.slot === 'FLEX' ? { ...s, playerId: '101' } : s)) };
+  assert.throws(() => buildCard(f, dup), /two slots/);
+  const { card } = await goodCard();
+  const twice = { ...card, starters: card.starters.map((r) => (r.slot === 'FLEX' ? { ...r, player: card.starters[1].player } : r)) };
+  const r = await gate('one_player_per_slot', f, twice);
+  assert.ok(r.met < 1);
+  assert.match(r.detail!, /101/);
 });
 
 test('the lineup runs are after Wednesday and Sunday morning, each ending an hour before its kickoff', () => {

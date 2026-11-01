@@ -51,6 +51,7 @@ export function buildCard(f: Facts, d: Decision): LineupCard {
     return [row(slot, f.players[pick.playerId], pick.why)];
   });
   const started = new Set(starters.map((r) => r.player.id));
+  if (started.size < starters.length) throw new Error(`the model started one player in two slots: ${starters.map((r) => `${r.slot}=${r.player.name}`).join(', ')}`);
   const bench = Object.values(f.players).filter((p) => !started.has(p.id)).sort((a, b) => b.proj - a.proj).map((p) => ({ player: ref(p), proj: p.proj, game: p.game }));
   return { kind: 'lineup', league: f.league, week: f.week, team: f.team, opponent: f.opponent, my_proj: sum(starters), opp_proj: f.oppProj, summary: d.summary, starters, bench };
 }

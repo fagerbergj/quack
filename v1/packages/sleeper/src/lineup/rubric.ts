@@ -14,6 +14,12 @@ function everySlotDecided(artifact: string, ev: Evidence): CodeResult {
 }
 
 // Change is judged against Sleeper's own lineup, not the row's `action`: the card's bookkeeping proves nothing.
+function onePlayerPerSlot(artifact: string): CodeResult {
+  const ids = parse(artifact).starters.map((r) => r.player.id);
+  const dup = [...new Set(ids.filter((id, i) => ids.indexOf(id) !== i))];
+  return share(ids.length - dup.length, ids.length, `started in more than one slot: ${dup.join(', ')}`);
+}
+
 function noLockedSwap(artifact: string, ev: Evidence): CodeResult {
   const f = factsOf(ev);
   const rows = parse(artifact).starters.filter((r) => changed(r, f));
@@ -71,6 +77,7 @@ export const lineupRubric: Rubric = {
   criteria: [
     { id: 'legal_and_complete', checks: [
       { id: 'every_slot_decided', weight: 'gate', code: everySlotDecided },
+      { id: 'one_player_per_slot', weight: 'gate', code: onePlayerPerSlot },
       { id: 'no_locked_swap', weight: 'gate', code: noLockedSwap },
       { id: 'figures_match_tools', weight: 'gate', code: figuresMatchTools },
       { id: 'summary_names_changes', weight: 'gate', code: summaryNamesChanges },

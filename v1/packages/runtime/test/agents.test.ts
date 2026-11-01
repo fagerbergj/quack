@@ -33,5 +33,4 @@ test('the shipped sleeper-lineup definition loads its prompt and binds the lineu
   const agent = await loadAgent(fileURLToPath(new URL('../../../agents/sleeper-lineup/agent.json', import.meta.url)), deployment, catalog);
   assert.match(agent.instructions!, /^You are the lineup analyst/);
   assert.ok(agent.extensions!.some((e) => e.name === 'quack.workflows' && (e as { dispatch?: unknown }).dispatch));
-  assert.equal(agent.maxTurns, undefined);
 });

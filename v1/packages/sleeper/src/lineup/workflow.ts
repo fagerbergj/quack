@@ -46,7 +46,10 @@ function factsPrompt(f: Facts): string {
 /** Lineup job (SL-1): facts, one model decision, a sealed card, then the judge's verdict on it. */
 export function lineupWorkflow(deps: LineupDeps) {
   const input = (c: StepContext) => JSON.parse(String(c.input)) as LineupInput;
-  const judgeOptions = (f: Facts): JudgeOptions => ({ kind: cardsKind, rubric: lineupRubric, evidence: lineupEvidence(f) as never, maxRevisions: 1, classifier: deps.classifier });
+  // close_call_news cannot be met without a news source, so it is scored only once one is wired; the verdict says so.
+  const rubric = deps.news ? lineupRubric : { ...lineupRubric, criteria: lineupRubric.criteria.map((c) => ({ ...c, checks: c.checks.filter((k) => k.id !== 'close_call_news') })) };
+  const notes = deps.news ? [] : ['close-call news not checked: no news source'];
+  const judgeOptions = (f: Facts): JudgeOptions => ({ kind: cardsKind, rubric, evidence: lineupEvidence(f) as never, maxRevisions: 1, classifier: deps.classifier });
   return defineWorkflow({
     name: LINEUP_WORKFLOW,
     steps: [
@@ -74,8 +77,8 @@ export function lineupWorkflow(deps: LineupDeps) {
         run: async (c) => {
           const sealed = c.prior.card as unknown as SealedArtifact;
           const verdict: Verdict = await rejudge(c.api, judgeOptions(c.prior.facts as unknown as Facts), sealed, `judge:${sealed.kind}:v${sealed.version}`, c.ctx);
-          await attachVerdict(c.api, sealed.kind, sealed.version, verdict as never, c.ctx);
-          return { passed: verdict.passed, score: verdict.score, gatesFailed: verdict.gatesFailed };
+          await attachVerdict(c.api, sealed.kind, sealed.version, { ...verdict, notes } as never, c.ctx);
+          return { passed: verdict.passed, score: verdict.score, gatesFailed: verdict.gatesFailed, notes };
         },
       },
     ],
