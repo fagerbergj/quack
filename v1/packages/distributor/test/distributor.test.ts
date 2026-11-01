@@ -244,6 +244,7 @@ test('without QUACK_WEB_DIR nothing is served', async () => {
   const { base } = await startDistributor(60_000);
   assert.equal((await fetch(`${base}/`)).status, 404);
   assert.equal((await fetch(`${base}/index.html`)).status, 404);
+});
 
 test('promoting a version does not fork it, but any other edit without a bump does', async () => {
   const dir = await agentsDirAt(1, 'reviewer');
