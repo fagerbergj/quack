@@ -28,9 +28,9 @@ export function DecisionCard({ sessionKey, d, now, title, done }: { sessionKey: 
         </details>
       )}
       {error && <p role="alert" className="m-0 text-[13px] text-danger">{error}</p>}
-      <div className="flex flex-wrap gap-2">
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(7.5rem,1fr))] gap-2">
         {d.options.map((o) => (
-          <button key={o} type="button" disabled={busy} onClick={() => choose(o)} className="min-h-11 min-w-0 flex-1 cursor-pointer rounded-xl border border-line-strong bg-surface px-3 text-sm font-medium text-ink [overflow-wrap:anywhere] hover:bg-soft">{o}</button>
+          <button key={o} type="button" disabled={busy} onClick={() => choose(o)} className="min-h-11 cursor-pointer rounded-xl border border-line-strong bg-surface px-3 text-sm font-medium text-ink [overflow-wrap:anywhere] hover:bg-soft">{o}</button>
         ))}
       </div>
     </section>
