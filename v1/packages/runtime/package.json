@@ -8,6 +8,7 @@
   "dependencies": {
     "@earendil-works/pi-tui": "1.4.0",
     "@quack/github": "*",
+    "@quack/index": "*",
     "@quack/judge": "*",
     "@quack/research": "*",
     "@quack/sdk": "*",
