@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { connect } from 'node:net';
 import type { Duplex } from 'node:stream';
-import type { HostDriver } from './process-driver.ts';
+import { AgentError, type HostDriver } from './process-driver.ts';
 
 const KEY = /^[A-Za-z0-9:/#._@-]{1,200}$/;
 const MAX_BODY = 1 << 20;
@@ -30,11 +30,12 @@ function send(res: ServerResponse, status: number, body: unknown) {
 }
 
 // Routes /sessions/<url-encoded key>/<path> to the one process that owns that session (DSP-1..4). Holds no domain logic.
-function sessionPath(url: string | undefined): { key: string; path: string } | undefined {
-  const match = /^\/sessions\/([^/]+)(\/.*)$/.exec(url ?? '');
+function sessionPath(url: string | undefined): { key: string; path: string; agent?: string } | undefined {
+  const { pathname, searchParams } = new URL(url ?? '', 'http://distributor');
+  const match = /^\/sessions\/([^/]+)(\/.*)$/.exec(pathname);
   if (!match) return undefined;
   const key = safeDecode(match[1]);
-  return key && KEY.test(key) ? { key, path: match[2] } : undefined;
+  return key && KEY.test(key) ? { key, path: match[2], agent: searchParams.get('agent') || undefined } : undefined;
 }
 
 // Splices a WebSocket upgrade onto the owning session's /ws; the session process speaks the protocol.
@@ -78,14 +79,15 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number } 
 
   const server = createServer(async (req, res) => {
     try {
-      if (req.method === 'GET' && req.url === '/sessions') return send(res, 200, { running: driver.running() });
+      if (req.method === 'GET' && req.url === '/sessions') return send(res, 200, { sessions: await driver.sessions() });
+      if (req.method === 'GET' && req.url === '/agents') return send(res, 200, { agents: await driver.agents() });
       if (!/^\/sessions\/[^/]+\//.test(req.url ?? '')) return send(res, 404, { error: 'not found' });
       const target = sessionPath(req.url);
       if (!target) return send(res, 400, { error: 'invalid session key' });
-      const { key, path } = target;
+      const { key, path, agent } = target;
       lastUse.set(key, Date.now());
       await stopping.get(key);
-      const url = await driver.ensure(key);
+      const url = await driver.ensure(key, agent);
       const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : new Uint8Array(await readBody(req));
       const upstream = await fetch(url + path, { method: req.method, body, headers: { 'content-type': 'application/json' } });
       lastUse.set(key, Date.now());
@@ -93,7 +95,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number } 
       res.end(Buffer.from(await upstream.arrayBuffer()));
     } catch (err) {
       const bad = err instanceof Error && err.message === 'body too large';
-      send(res, bad ? 400 : 502, { error: err instanceof Error ? err.message : String(err) });
+      send(res, err instanceof AgentError ? err.status : bad ? 400 : 502, { error: err instanceof Error ? err.message : String(err) });
     }
   });
   server.on('upgrade', async (req, socket, head) => {
@@ -103,7 +105,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number } 
     socket.once('close', () => { viewers.set(target.key, (viewers.get(target.key) ?? 1) - 1); lastUse.set(target.key, Date.now()); });
     try {
       await stopping.get(target.key);
-      await proxyUpgrade(await driver.ensure(target.key), req, '/ws', socket, head);
+      await proxyUpgrade(await driver.ensure(target.key, target.agent), req, '/ws', socket, head);
     } catch {
       socket.destroy();
     }
