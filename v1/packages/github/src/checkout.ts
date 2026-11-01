@@ -10,6 +10,8 @@ export type SessionConfig = { serviceUrl: string; serviceToken: string; repoDir?
 export type PullRequestRecord = {
   owner: string; repo: string; number: number; title: string; body: string; author: string | null;
   headSha: string; headRef: string; baseRef: string;
+  /** Pins the base, as a replay does: only it and the head are fetched, so later history, merges and tags stay out of the clone. */
+  baseSha?: string;
   checks: Array<{ name: string; status: string; conclusion: string | null }>;
   linkedIssues: Array<{ number: number; title: string; body: string }>;
 };
@@ -60,8 +62,11 @@ export function checkoutTool(config: SessionConfig) {
       const pr = await fetchRecord(config, owner, repo, args.number);
       const remote = `${config.gitBaseUrl ?? 'https://github.com'}/${owner}/${repo}.git`;
       const cloned = (await api.env.readTextFile(`${dir}/.git/HEAD`, ctx)).ok;
-      if (!cloned) await git(api, ['clone', '--filter=blob:none', '--no-checkout', remote, dir], config, remote, ctx);
-      await git(api, ['-C', dir, 'fetch', 'origin', pr.baseRef, `pull/${pr.number}/head`], config, remote, ctx);
+      if (!cloned && pr.baseSha) await git(api, ['init', '-q', dir], config, remote, ctx);
+      if (!cloned && pr.baseSha) await git(api, ['-C', dir, 'remote', 'add', 'origin', remote], config, remote, ctx);
+      if (!cloned && !pr.baseSha) await git(api, ['clone', '--filter=blob:none', '--no-checkout', remote, dir], config, remote, ctx);
+      const refs = pr.baseSha ? ['--no-tags', 'origin', `+${pr.baseSha}:refs/remotes/origin/${pr.baseRef}`, pr.headSha] : ['origin', pr.baseRef, `pull/${pr.number}/head`];
+      await git(api, ['-C', dir, 'fetch', '--filter=blob:none', ...refs], config, remote, ctx);
       await git(api, ['-C', dir, 'checkout', '--detach', pr.headSha], config, remote, ctx);
       await api.commit(async (tx) => {
         const d = await tx.doc(PullRequestDoc, api.conversationId);

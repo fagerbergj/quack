@@ -47,7 +47,7 @@ export async function listen(server: Server) {
 }
 
 /** The service half's session-facing API, faked: PR metadata, credentials, and posted reviews recorded. */
-export async function fakeService(head: string) {
+export async function fakeService(head: string, extra: Record<string, unknown> = {}) {
   const posted: any[] = [];
   const url = await listen(
     createServer(async (req, res) => {
@@ -59,7 +59,7 @@ export async function fakeService(head: string) {
         posted.push(JSON.parse(raw));
         return res.writeHead(201).end(JSON.stringify({ id: 9, url: 'https://github.com/acme/widgets/pull/7#review-9' }));
       }
-      const pr = { owner: 'acme', repo: 'widgets', number: 7, title: 'Bump a', body: 'Fixes #3', author: 'dev', headSha: head, headRef: 'bump', baseRef: 'main', checks: [{ name: 'ci', status: 'completed', conclusion: 'success' }], linkedIssues: [{ number: 3, title: 'a should be 2', body: 'It is 1.' }] };
+      const pr = { owner: 'acme', repo: 'widgets', number: 7, title: 'Bump a', body: 'Fixes #3', author: 'dev', headSha: head, headRef: 'bump', baseRef: 'main', checks: [{ name: 'ci', status: 'completed', conclusion: 'success' }], linkedIssues: [{ number: 3, title: 'a should be 2', body: 'It is 1.' }], ...extra };
       res.writeHead(200).end(JSON.stringify(pr));
     }),
   );

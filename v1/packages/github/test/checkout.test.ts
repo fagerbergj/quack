@@ -39,6 +39,37 @@ test('checks out the PR head with its base, records the PR, and is safe to call 
   await session.close();
 });
 
+test('a pinned base keeps the base branch\'s later history, merges and tags out of the clone', async () => {
+  const { base, head } = await remotes();
+  const bare = join(fileURLToPath(base), 'acme/widgets.git');
+  const baseSha = sh(bare, 'rev-parse', 'main');
+  const work = await tmp();
+  sh(work, 'clone', '-q', '-b', 'main', bare, '.');
+  sh(work, 'commit', '-q', '--allow-empty', '-m', 'later on main');
+  sh(work, 'push', '-q', 'origin', 'HEAD:main');
+  sh(bare, 'tag', 'v9', 'main');
+  const later = sh(bare, 'rev-parse', 'main');
+  sh(bare, 'config', 'uploadpack.allowAnySHA1InWant', 'true');
+  const serviceUrl = (await fakeService(head, { baseSha })).url;
+  const faux = fauxProvider({ models: [{ id: 'w' }] });
+  faux.setResponses([fauxAssistantMessage(fauxToolCall('checkout_pr', { repository: 'acme/widgets', number: 7 }), { stopReason: 'toolUse' }), fauxAssistantMessage('Checked out.')]);
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const m = faux.getModel();
+  const tool = checkoutTool({ serviceUrl, serviceToken: 'svc', gitBaseUrl: base });
+  const session = await openSession({ dir: await tmp(), models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [defineExtension({ name: 'gh', tools: [tool] })] } });
+
+  await session.submit('Review acme/widgets#7', 'co-1', true);
+  const repo = join(session.workspace, 'repo');
+  assert.equal(sh(repo, 'rev-parse', 'HEAD'), head);
+  assert.equal(sh(repo, 'rev-parse', 'origin/main'), baseSha);
+  assert.equal(sh(repo, 'tag'), '');
+  assert.equal(sh(repo, 'log', '--all', '--format=%H').includes(later), false, 'no ref in the clone reaches the later commit');
+  const doc = await session.harness.snapshot(PullRequestDoc, session.root.id, BACKGROUND_CONTEXT);
+  assert.equal(doc!.pr!.baseSha, baseSha);
+  await session.close();
+});
+
 test('the askpass helper answers git with a fresh token from the service', async () => {
   const serviceUrl = (await fakeService('x')).url;
   const askpass = fileURLToPath(new URL('../src/askpass.mjs', import.meta.url));
