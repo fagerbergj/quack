@@ -52,3 +52,11 @@ test('the shipped sleeper-waivers definition loads its prompt and binds the waiv
   assert.match(agent.instructions!, /^You are the waiver scout/);
   assert.ok(agent.extensions!.some((e) => e.name === 'quack.workflows' && (e as { dispatch?: unknown }).dispatch));
 });
+
+test('the shipped sleeper-trends definition loads its prompt and binds the trends workflow', async () => {
+  process.env.QUACK_SLEEPER_URL = 'http://127.0.0.1:8092';
+  process.env.QUACK_SLEEPER_TOKEN = 'x';
+  const agent = await loadAgent(fileURLToPath(new URL('../../../agents/sleeper-trends/agent.json', import.meta.url)), deployment, catalog);
+  assert.match(agent.instructions!, /^You are the trend scout/);
+  assert.ok(agent.extensions!.some((e) => e.name === 'quack.workflows' && (e as { dispatch?: unknown }).dispatch));
+});
