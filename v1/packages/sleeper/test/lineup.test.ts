@@ -14,7 +14,7 @@ import { openSession } from '@quack/session';
 import { runWorkflow, workflowExtension } from '@quack/workflows';
 import {
   buildCard, buildFacts, buildSnapshot, createSleeperClient, createSleeperService, exaNews, lineupEvidence, lineupKey, lineupRubric, lineupRuns, lineupWorkflow, registerLineupSchedules,
-  type Facts, type FactsDeps, type LineupCard,
+  type Facts, type LineupCard, type LineupDeps,
 } from '../src/index.ts';
 import { closeCalls } from '../src/lineup/facts.ts';
 import { bestLineup, numberSlots } from '../src/lineup/slots.ts';
@@ -134,7 +134,7 @@ test('summary_names_changes fails a summary that misses a change', async () => {
   assert.equal((await gate('summary_names_changes', f, { ...card, summary: 'No changes.' })).met, 0);
 });
 
-async function runLineup(news?: FactsDeps['news']) {
+async function runLineup(news?: LineupDeps['news']) {
   const judged: string[] = [];
   const responses: FauxResponseStep[] = [
     () => fauxAssistantMessage(JSON.stringify(decision)),
