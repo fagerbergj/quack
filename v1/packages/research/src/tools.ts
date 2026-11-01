@@ -119,11 +119,29 @@ export function webFetchTool(config: ResearchConfig, isPublic?: (ip: string) => 
           doc.sources = [...doc.sources, { id: next, ...record }];
           return next;
         }, ctx);
-        const cut = page.text.length > cap ? `\n… cut at ${cap} of ${page.text.length} characters` : '';
+        const cut = page.text.length > cap ? `\n… cut at ${cap} of ${page.text.length} characters; read the rest with read_source id "${id}" offset ${cap}` : '';
         parts.push(`[${id}] ${record.url}\n\n${page.text.slice(0, cap)}${cut}`);
       }
       const text = parts.join('\n\n---\n\n');
       return pages.every((p) => 'failed' in p) ? error(text) : { output: [{ type: 'text', text }] };
+    },
+  });
+}
+
+export function readSourceTool() {
+  return defineTool({
+    name: 'read_source',
+    description: `Read a window of ${MAX_CHARS} characters from an already fetched source, by its [sN] id and a character offset. Use it to continue a page web_fetch cut off; it never refetches.`,
+    parameters: Type.Object({ id: Type.String({ description: 'Source id such as s1' }), offset: Type.Integer({ minimum: 0, description: 'Character to start at' }) }),
+    replay: 'safe',
+    async execute(args, api, ctx) {
+      const id = args.id.replace(/^\[|\]$/g, '');
+      const text = await sourceText(api, id, ctx);
+      if (text === undefined) return error(`no stored text for source ${id}; ids come from web_fetch results in this session`);
+      const end = args.offset + MAX_CHARS;
+      const body = text.slice(args.offset, end);
+      const next = end < text.length ? `\n… ${end} of ${text.length} characters; continue with read_source id "${id}" offset ${end}` : `\n… end of source ${id} (${text.length} characters)`;
+      return { output: [{ type: 'text', text: body + next }] };
     },
   });
 }
