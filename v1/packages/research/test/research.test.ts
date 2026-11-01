@@ -11,7 +11,7 @@ import { defineExtension, defineTool, type Extension } from '@earendil-works/pi-
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { Artifacts } from '@quack/sdk';
 import { buildModels, openSession, parseDeployment } from '@quack/session';
-import { formatResults, htmlToText, isPublicAddress, researchSessionExtensions, safeGet, sourceText, SourcesDoc, validateReport } from '../src/index.ts';
+import { deliveredReport, formatResults, htmlToText, isPublicAddress, researchSessionExtensions, safeGet, sourceText, SourcesDoc, validateReport } from '../src/index.ts';
 
 const servers: Server[] = [];
 const dirs: string[] = [];
@@ -160,42 +160,31 @@ const delivered = (seen: string[]) => JSON.parse(seen.at(-1)!).content[0].text a
 
 test('a report that exhausts its revisions is delivered with a banner and inline marks; a passing one has neither', async () => {
   const base = await web();
-  const exhausted = await run({ maxRevisions: 1 }, (step) => [
-    call('web_fetch', { url: `${base}/page` }),
-    step(call('write', { path: 'artifacts/report.md', content: report('[s1][s9]') })),
-    step(call('submit_report', {})),
-    step(call('write', { path: 'artifacts/report.md', content: report('[s1][s8]') })),
-    step(call('submit_report', {})),
-    step(call('deliver_report', { version: 2 })),
-    step(fauxAssistantMessage('Done.')),
-  ], { isPublic: loopbackOk });
-  const text = delivered(exhausted.seen.slice(0, 6));
+  const verdictOf = async (cfg: Parameters<typeof researchSessionExtensions>[0], cites: string[]) => {
+    const { session } = await run(cfg, (step) => [
+      call('web_fetch', { url: `${base}/page` }),
+      ...cites.flatMap((c) => [step(call('write', { path: 'artifacts/report.md', content: report(c) })), step(call('submit_report', {}))]),
+      step(fauxAssistantMessage('Done.')),
+    ], { isPublic: loopbackOk });
+    const last = (await session.harness.snapshot(Artifacts, session.root.id, BACKGROUND_CONTEXT))!.kinds['research.report'].versions.at(-1)!;
+    await session.close();
+    return { content: last.content, v: last.verdict as any };
+  };
+  const bad = await verdictOf({ maxRevisions: 1 }, ['[s1][s9]', '[s1][s8]']);
+  const text = deliveredReport(bad.content, bad.v, ['s1'])!;
   assert.match(text, /^> \*\*Not fully checked\.\*\*/);
   assert.match(text, /gate claims_grounded\.cites_fetched_sources: cites s8/);
   assert.match(text, /- Ducks and geese fly\. \[s1\]\[s8\] \(not checked: s8 never fetched\)/);
   assert.doesNotMatch(text, /s1 never/);
-  await exhausted.session.close();
 
-  const clean = await run({ maxRevisions: 1 }, (step) => [
-    call('web_fetch', { url: `${base}/page` }),
-    step(call('write', { path: 'artifacts/report.md', content: report('[s1]') })),
-    step(call('submit_report', {})),
-    step(call('deliver_report', { version: 1 })),
-    step(fauxAssistantMessage('Done.')),
-  ], { isPublic: loopbackOk });
-  assert.equal(delivered(clean.seen.slice(0, 4)), report('[s1]'));
-  await clean.session.close();
+  const good = await verdictOf({ maxRevisions: 1 }, ['[s1]']);
+  assert.equal(deliveredReport(good.content, good.v, ['s1']), report('[s1]'));
 });
 
-test('deliver_report refuses a version that is still being revised', async () => {
-  const { seen, session } = await run({}, (step) => [
-    call('write', { path: 'artifacts/report.md', content: report('[s1]') }),
-    step(call('submit_report', {})),
-    step(call('deliver_report', { version: 1 })),
-    step(fauxAssistantMessage('Done.')),
-  ]);
-  assert.match(seen[2], /report v1 has not passed its checks/);
-  await session.close();
+test('a version still being revised is not delivered', () => {
+  const v = { passed: false, limitReached: false, checks: [] };
+  assert.equal(deliveredReport(report('[s1]'), v, ['s1']), undefined);
+  assert.equal(deliveredReport(report('[s1]'), null, ['s1']), undefined);
 });
 
 test('a fetched source keeps its text, retrievable by id and keyed by the recorded hash', async () => {

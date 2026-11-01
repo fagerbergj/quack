@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./rubric": "./src/rubric.ts"
   },
   "dependencies": {
     "@earendil-works/chord": "1.4.0",

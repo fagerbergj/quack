@@ -82,7 +82,7 @@ export function webFetchTool(config: ResearchConfig, isPublic?: (ip: string) => 
       } catch (err) {
         return error(`cannot fetch ${args.url}: ${(err as Error).message}`);
       }
-      // Kept for later claim-support checks; a failed write loses only that check's input, not the fetch.
+      // Kept for later claim-support checks; a failed write is ignored so it loses only that input, not the fetch.
       await api.env?.writeFile(sourcePath(record.hash), text.slice(0, MAX_STORED_CHARS), ctx);
       const id = await api.commit(async (tx) => {
         const doc = await tx.doc(SourcesDoc, api.conversationId);
