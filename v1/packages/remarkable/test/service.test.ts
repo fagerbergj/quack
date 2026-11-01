@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
 import { after, test } from 'node:test';
 import { createRemarkableService, createRmClient } from '../src/index.ts';
 
@@ -167,4 +169,45 @@ test('a batch with a failed session settles as failed with the reason', async ()
   assert.equal(done.status, 'failed');
   assert.equal(done.items[0].error, 'distributor answered 500');
   autoAnswer = 200;
+});
+
+test('a restart resubmits pending items with the same request id and the batch completes', async () => {
+  const dir = mkdtempSync(`${tmpdir()}/rm-`);
+  after(() => rmSync(dir, { recursive: true, force: true }));
+  const requests: string[] = [];
+  const held: Array<(status: number) => void> = [];
+  const waiters = new Set<() => void>();
+  const slow = await listen(
+    createServer(async (req, res) => {
+      let raw = '';
+      for await (const c of req) raw += c;
+      requests.push(JSON.parse(raw).requestId);
+      const answer = new Promise<number>((release) => held.push(release));
+      waiters.forEach((w) => w());
+      res.writeHead(await answer).end('{}');
+    }),
+  );
+  const arrivedAtLeast = (n: number) => new Promise<void>((resolve) => {
+    const w = () => (requests.length >= n ? (waiters.delete(w), resolve()) : undefined);
+    waiters.add(w);
+    w();
+  });
+  const start = () => createRemarkableService({ serviceToken: 'svc-secret', dbPath: `${dir}/rm.db`, distributorUrl: slow, agent: 'a', client: createRmClient({ url: rm, email: EMAIL, password: PASSWORD }) });
+  const headers = { authorization: 'Bearer svc-secret' };
+
+  const first = start();
+  const firstUrl = await listen(first);
+  const { batch: id } = (await (await fetch(`${firstUrl}/ingest`, { method: 'POST', headers, body: JSON.stringify({ ids: ['n2'] }) })).json()) as any;
+  await arrivedAtLeast(1);
+  await first.stop();
+
+  const second = start();
+  const secondUrl = await listen(second);
+  await arrivedAtLeast(2);
+  assert.deepEqual(requests, ['1', '1'], 'resubmitted with the stored request id');
+  held[1](200);
+  await second.settled();
+  const done = (await (await fetch(`${secondUrl}/batches/${id}`, { headers })).json()) as any;
+  assert.equal(done.status, 'done');
+  await second.stop();
 });

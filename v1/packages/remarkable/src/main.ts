@@ -15,4 +15,4 @@ const service = createRemarkableService({
   client: createRmClient({ url: env('RMFAKECLOUD_URL'), email: env('RMFAKECLOUD_EMAIL'), password: env('RMFAKECLOUD_PASSWORD') }),
 });
 service.listen(Number(env('PORT', '8093')));
-for (const signal of ['SIGTERM', 'SIGINT'] as const) process.on(signal, () => (service.stop(), process.exit(0)));
+for (const signal of ['SIGTERM', 'SIGINT'] as const) process.on(signal, () => void service.stop().then(() => process.exit(0)));

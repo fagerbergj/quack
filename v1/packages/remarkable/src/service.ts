@@ -1,6 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
+import { request } from 'node:http';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import type { RmClient, RmDocument } from './client.ts';
+import type { RmClient } from './client.ts';
 import { openStore } from './store.ts';
 
 export type ServiceConfig = {
@@ -40,18 +41,34 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
 export function createRemarkableService(config: ServiceConfig) {
   const store = openStore(config.dbPath, config.now ?? (() => new Date()));
   const inflight = new Set<Promise<void>>();
+  const aborts = new Set<() => void>();
+  let stopped = false;
 
-  // The version is the request id, so an unchanged document resubmitted from a later batch is a replay, not a second run.
-  async function submit(batch: string, doc: RmDocument): Promise<void> {
+  // node:http, not fetch: undici gives up on response headers after 300s, and a vision-model ingest can run longer.
+  const post = (url: string, body: string) =>
+    new Promise<number>((resolve, reject) => {
+      const req = request(url, { method: 'POST', headers: { 'content-type': 'application/json' } }, (res) => (res.resume(), res.on('end', () => resolve(res.statusCode ?? 0))));
+      aborts.add(req.destroy.bind(req));
+      req.on('error', reject).end(body);
+    });
+
+  // The version is the request id, so a replay (a later batch, or a resubmit after restart) joins the existing run.
+  async function submit(batch: string, doc: { id: string; name: string; version: string }): Promise<void> {
     const key = encodeURIComponent(`remarkable:${doc.id}`);
     const body = JSON.stringify({ input: JSON.stringify({ id: doc.id, name: doc.name, version: doc.version }), requestId: doc.version, wait: true });
     try {
-      const res = await fetch(`${config.distributorUrl}/sessions/${key}/invocations?agent=${encodeURIComponent(config.agent)}`, { method: 'POST', body });
-      store.settle(batch, doc.id, res.ok ? undefined : `distributor answered ${res.status}`);
+      const status = await post(`${config.distributorUrl}/sessions/${key}/invocations?agent=${encodeURIComponent(config.agent)}`, body);
+      store.settle(batch, doc.id, status >= 200 && status < 300 ? undefined : `distributor answered ${status}`);
     } catch (err) {
+      if (stopped) return;
       store.settle(batch, doc.id, `distributor unreachable: ${(err as Error).message}`);
     }
     config.onSettle?.(batch, doc.id);
+  }
+
+  function track(batch: string, doc: { id: string; name: string; version: string }) {
+    const p = submit(batch, doc).finally(() => inflight.delete(p));
+    inflight.add(p);
   }
 
   async function ingest(req: IncomingMessage): Promise<[number, unknown]> {
@@ -62,11 +79,8 @@ export function createRemarkableService(config: ServiceConfig) {
     const missing = wanted.filter((id) => !listed.has(id));
     if (missing.length) return [404, { error: 'unknown document ids', ids: missing }];
     const docs = wanted.map((id) => listed.get(id)!);
-    const batch = store.create(docs.map((d) => ({ document: d.id, version: d.version })));
-    for (const doc of docs) {
-      const p = submit(batch, doc).finally(() => inflight.delete(p));
-      inflight.add(p);
-    }
+    const batch = store.create(docs.map((d) => ({ document: d.id, name: d.name, version: d.version })));
+    docs.forEach((doc) => track(batch, doc));
     return [202, { batch }];
   }
 
@@ -91,9 +105,16 @@ export function createRemarkableService(config: ServiceConfig) {
       send(res, bad ? 400 : 502, { error: (err as Error).message });
     }
   });
+  for (const p of store.pending()) track(p.batch, { id: p.document, name: p.name, version: p.version });
   return Object.assign(server, {
     /** Resolves when every submission started so far has been answered. */
     settled: async () => void (await Promise.all(inflight)),
-    stop: () => (server.close(), store.close()),
+    stop: async () => {
+      stopped = true;
+      aborts.forEach((abort) => abort());
+      server.close();
+      await Promise.all(inflight);
+      store.close();
+    },
   });
 }
