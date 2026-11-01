@@ -6,7 +6,7 @@ import { githubSessionExtensions, type GithubSessionConfig } from '@quack/github
 import { researchSessionExtensions, type ResearchConfig } from '@quack/research';
 import { piPackage } from '@quack/sdk';
 import { INGEST_WORKFLOW, ingestFromEnv } from '@quack/remarkable';
-import { LINEUP_WORKFLOW, lineupFromEnv, WAIVERS_WORKFLOW, waiversFromEnv } from '@quack/sleeper';
+import { FINDER_WORKFLOW, finderFromEnv, LINEUP_WORKFLOW, lineupFromEnv, TRADE_WORKFLOW, tradeFromEnv, WAIVERS_WORKFLOW, waiversFromEnv } from '@quack/sleeper';
 import type { Catalog } from '@quack/session';
 import { workflowSessionExtensions, type Workflow } from '@quack/workflows';
 
@@ -28,6 +28,8 @@ function lspConfig(config: unknown) {
 const WORKFLOWS: Record<string, (config: unknown) => Workflow> = {
   [LINEUP_WORKFLOW]: () => lineupFromEnv(),
   [WAIVERS_WORKFLOW]: () => waiversFromEnv(),
+  [FINDER_WORKFLOW]: () => finderFromEnv(),
+  [TRADE_WORKFLOW]: () => tradeFromEnv(),
   [INGEST_WORKFLOW]: (config) => ingestFromEnv(config as Parameters<typeof ingestFromEnv>[0]),
 };
 

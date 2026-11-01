@@ -35,10 +35,10 @@ export type WaiverFacts = {
 export type WaiverDeps = { client: SleeperClient; news?: (p: Searchable, at: number) => Promise<NewsItem[]> };
 
 const WAIVER_TYPES: WaiverType[] = ['rolling', 'reverse_standings', 'faab'];
-const POSITIONS = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF'];
-const UNAVAILABLE = new Set(['Out', 'IR', 'Doubtful', 'Sus']);
+export const POSITIONS = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF'];
+export const UNAVAILABLE = new Set(['Out', 'IR', 'Doubtful', 'Sus']);
 /** Skill positions want one bench cover beyond their starting slots. */
-const COVER: Record<string, number> = { RB: 1, WR: 1, TE: 1 };
+export const COVER: Record<string, number> = { RB: 1, WR: 1, TE: 1 };
 export const TOP_PER_POS = 5;
 export const WIDE_OWNED = 40;
 const TRENDING_LIMIT = 25;
@@ -47,14 +47,14 @@ export const BYE_LEAD = 2;
 const CLOSE_GAP = 3;
 
 /** Each NFL team's bye: the schedule week it has no game. */
-function byeWeeks(schedule: Json[]): Map<string, number> {
+export function byeWeeks(schedule: Json[]): Map<string, number> {
   const weeks = [...new Set<number>(schedule.map((g) => g.week))];
   const playing = new Map<string, Set<number>>();
   for (const g of schedule) for (const t of [g.home, g.away]) playing.set(t, (playing.get(t) ?? new Set()).add(g.week));
   return new Map([...playing].flatMap(([t, w]): Array<[string, number]> => { const bye = weeks.find((x) => !w.has(x)); return bye === undefined ? [] : [[t, bye]]; }));
 }
 
-function wplayer(id: string, dump: Json, proj: Json, key: string, byes: Map<string, number>): WPlayer {
+export function wplayer(id: string, dump: Json, proj: Json, key: string, byes: Map<string, number>): WPlayer {
   const p = dump[id] ?? {};
   const pos = p.position ?? '';
   const team: string | null = p.team ?? (pos === 'DEF' ? id : null);
@@ -64,7 +64,7 @@ function wplayer(id: string, dump: Json, proj: Json, key: string, byes: Map<stri
 const settingsOf = (r: Json) => r.settings ?? {};
 
 /** Positions short of the starting slots (plus a skill-position backup), and the weeks a bye leaves the team short. */
-function teamNeeds(players: WPlayer[], slots: string[], positions: string[], week: number): Pick<TeamRow, 'needs' | 'byes'> {
+export function teamNeeds(players: WPlayer[], slots: string[], positions: string[], week: number): Pick<TeamRow, 'needs' | 'byes'> {
   const healthy = players.filter((p) => !UNAVAILABLE.has(p.inj ?? ''));
   const required = (pos: string) => slots.filter((s) => s === pos).length;
   const needs = Object.fromEntries(positions.flatMap((pos) => {
