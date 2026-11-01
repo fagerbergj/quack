@@ -11,10 +11,11 @@ async function json<T>(res: Response): Promise<T> {
   return (await res.json()) as T;
 }
 
-const base = (key: string) => `/sessions/${encodeURIComponent(key)}`;
+// Paths are relative to the page so the bundle works under any prefix (/ locally, /v1/ behind the proxy).
+const base = (key: string) => `sessions/${encodeURIComponent(key)}`;
 
-export const listSessions = async () => (await json<{ sessions: SessionSummary[] }>(await fetch('/sessions'))).sessions;
-export const listAgents = async () => (await json<{ agents: AgentSummary[] }>(await fetch('/agents'))).agents;
+export const listSessions = async () => (await json<{ sessions: SessionSummary[] }>(await fetch('sessions'))).sessions;
+export const listAgents = async () => (await json<{ agents: AgentSummary[] }>(await fetch('agents'))).agents;
 export const listApprovals = async (key: string) => (await json<{ approvals: Approval[] }>(await fetch(`${base(key)}/approvals`))).approvals;
 export const listArtifacts = async (key: string) => (await json<{ artifacts: SealedArtifact[] }>(await fetch(`${base(key)}/artifacts`))).artifacts;
 export const abortRun = async (key: string) => void (await json(await fetch(`${base(key)}/abort`, { method: 'POST' })));
@@ -31,6 +32,7 @@ export async function decideApproval(key: string, id: string, decision: 'approve
 }
 
 export function socketUrl(key: string, agent?: string) {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${proto}//${location.host}${base(key)}/ws${agent ? `?agent=${encodeURIComponent(agent)}` : ''}`;
+  const url = new URL(`${base(key)}/ws${agent ? `?agent=${encodeURIComponent(agent)}` : ''}`, location.href);
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  return url.href;
 }

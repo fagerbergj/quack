@@ -1,5 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { readFile } from 'node:fs/promises';
 import { connect } from 'node:net';
+import { extname, resolve, sep } from 'node:path';
 import type { Duplex } from 'node:stream';
 import { AgentError, type HostDriver } from './process-driver.ts';
 
@@ -27,6 +29,33 @@ function safeDecode(s: string): string | undefined {
 
 function send(res: ServerResponse, status: number, body: unknown) {
   res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
+}
+
+const TYPES: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.map': 'application/json',
+};
+
+// Serves a file under root for a GET path; false when the path escapes root or names no file.
+async function serveStatic(root: string, pathname: string, res: ServerResponse): Promise<boolean> {
+  const rel = safeDecode(pathname);
+  if (rel === undefined || rel.includes('\0')) return false;
+  const file = resolve(root, '.' + (rel.endsWith('/') ? rel + 'index.html' : rel));
+  if (!file.startsWith(resolve(root) + sep)) return false;
+  try {
+    const data = await readFile(file);
+    res.writeHead(200, { 'content-type': TYPES[extname(file)] ?? 'application/octet-stream' }).end(data);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Static files answer GETs that are not API routes, and only when a web dir is configured.
+async function serveWeb(root: string | undefined, req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+  if (!root || req.method !== 'GET') return false;
+  const { pathname } = new URL(req.url ?? '', 'http://distributor');
+  return !/^\/(sessions|agents)(\/|$)/.test(pathname) && serveStatic(root, pathname, res);
 }
 
 // Routes /sessions/<url-encoded key>/<path> to the one process that owns that session (DSP-1..4). Holds no domain logic.
@@ -61,7 +90,7 @@ function errorStatus(err: unknown): number {
   return err instanceof Error && err.message === 'body too large' ? 400 : 502;
 }
 
-export function createDistributor(driver: HostDriver, opts: { idleMs?: number } = {}) {
+export function createDistributor(driver: HostDriver, opts: { idleMs?: number; webDir?: string } = {}) {
   const lastUse = new Map<string, number>();
   const stopping = new Map<string, Promise<void>>();
   const viewers = new Map<string, number>();
@@ -90,6 +119,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number } 
     try {
       if (req.method === 'GET' && req.url === '/sessions') return send(res, 200, { sessions: await driver.sessions() });
       if (req.method === 'GET' && req.url === '/agents') return send(res, 200, { agents: await driver.agents() });
+      if (await serveWeb(opts.webDir, req, res)) return;
       if (!/^\/sessions\/[^/]+\//.test(req.url ?? '')) return send(res, 404, { error: 'not found' });
       const target = sessionPath(req.url);
       if (!target) return send(res, 400, { error: 'invalid session key' });

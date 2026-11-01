@@ -5,6 +5,7 @@ import { defineConfig } from 'vitest/config';
 const target = process.env.DISTRIBUTOR ?? 'http://127.0.0.1:8080';
 
 export default defineConfig({
+  base: './',
   plugins: [react()],
   server: { proxy: { '/sessions': { target, ws: true }, '/agents': target } },
   test: { environment: 'jsdom', setupFiles: ['./src/setup.ts'] },

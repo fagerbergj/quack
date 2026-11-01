@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import type { AddressInfo } from 'node:net';
+import { connect, type AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
@@ -176,4 +176,40 @@ test('a registry agent sharing the default agent\'s name runs the registry file'
   const other = await agentsDir('reviewer');
   const { invoke } = await startDistributor(60_000, { agentsDir: dir, defaultAgent: join(other, 'reviewer', 'agent.json') });
   assert.equal((await invoke('github:a#3', { input: 'whoami', wait: true }, 'reviewer')).body.answer, `agent: ${join(dir, 'reviewer', 'agent.json')}`);
+});
+
+test('QUACK_WEB_DIR serves files, refuses traversal, and leaves API routes alone', async () => {
+  const web = await mkdtemp(join(tmpdir(), 'quack-web-'));
+  dirs.push(web);
+  await mkdir(join(web, 'assets'));
+  await writeFile(join(web, 'index.html'), '<h1>quack</h1>');
+  await writeFile(join(web, 'assets', 'app.js'), 'x');
+  const driver = processDriver({ command: [process.execPath, fileURLToPath(new URL('./fixtures/echo-session.ts', import.meta.url))], dataDir: web, defaultAgent: '' });
+  const server = createDistributor(driver, { webDir: web }).listen(0);
+  await new Promise((r) => server.once('listening', r));
+  servers.push(() => new Promise((r) => server.close(() => r())));
+  const port = (server.address() as AddressInfo).port;
+  const base = `http://127.0.0.1:${port}`;
+  const index = await fetch(`${base}/`);
+  assert.equal(index.status, 200);
+  assert.match(index.headers.get('content-type')!, /^text\/html/);
+  assert.equal(await index.text(), '<h1>quack</h1>');
+  assert.match((await fetch(`${base}/assets/app.js`)).headers.get('content-type')!, /^text\/javascript/);
+  assert.equal((await fetch(`${base}/assets/`)).status, 404);
+  assert.equal((await fetch(`${base}/missing.js`)).status, 404);
+  // fetch normalizes dot segments, so the traversal goes out as a raw request line.
+  const raw = await new Promise<string>((res) => {
+    const s = connect(port, '127.0.0.1', () => s.write('GET /%2e%2e/%2e%2e/etc/passwd HTTP/1.1\r\nhost: x\r\nconnection: close\r\n\r\n'));
+    let out = '';
+    s.on('data', (d) => (out += d)).on('close', () => res(out));
+  });
+  assert.match(raw, /^HTTP\/1.1 404/);
+  assert.deepEqual(await (await fetch(`${base}/sessions`)).json(), { sessions: [] });
+  assert.deepEqual(await (await fetch(`${base}/agents`)).json(), { agents: [] });
+});
+
+test('without QUACK_WEB_DIR nothing is served', async () => {
+  const { base } = await startDistributor(60_000);
+  assert.equal((await fetch(`${base}/`)).status, 404);
+  assert.equal((await fetch(`${base}/index.html`)).status, 404);
 });

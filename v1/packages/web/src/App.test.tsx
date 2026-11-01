@@ -35,7 +35,7 @@ const assistant = (content: object[]) => ({ role: 'assistant', content, api: 'a'
 
 let routes: Record<string, unknown>;
 const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-  const hit = routes[`${init?.method ?? 'GET'} ${url}`];
+  const hit = routes[`${init?.method ?? 'GET'} /${url}`];
   return new Response(JSON.stringify(hit ?? { error: 'not found' }), { status: hit ? 200 : 404 });
 });
 
@@ -187,7 +187,7 @@ test('Abort shows only while a run is in progress and posts to the abort route',
   expect(screen.queryByRole('button', { name: 'Abort' })).toBeNull();
   ws.frame({ type: 'events', events: [{ type: 'run_start', inputs: [] }] });
   await userEvent.click(screen.getByRole('button', { name: 'Abort' }));
-  expect(fetchMock).toHaveBeenCalledWith('/sessions/ui%3Au1/abort', { method: 'POST' });
+  expect(fetchMock).toHaveBeenCalledWith('sessions/ui%3Au1/abort', { method: 'POST' });
   ws.frame({ type: 'events', events: [{ type: 'run_end', inputs: [] }] });
   expect(screen.queryByRole('button', { name: 'Abort' })).toBeNull();
 });
@@ -251,4 +251,19 @@ test('lists artifacts with their check status and failing criteria', async () =>
   expect(items[1]).toHaveTextContent('github.review v2: passed');
   expect(items[1]).not.toHaveTextContent('Failing');
   expect(items[1]).toHaveTextContent('final review');
+});
+test('api and ws urls resolve under a /v1/ page path', async () => {
+  const { socketUrl, listArtifacts, abortRun } = await import('./api.ts');
+  history.replaceState(null, '', '/v1/');
+  try {
+    routes['GET /sessions/ui%3Au1/artifacts'] = { artifacts: [] };
+    routes['POST /sessions/ui%3Au1/abort'] = {};
+    await listArtifacts('ui:u1');
+    await abortRun('ui:u1');
+    const resolved = fetchMock.mock.calls.map(([url]) => new URL(url, location.href).pathname);
+    expect(resolved).toEqual(['/v1/sessions/ui%3Au1/artifacts', '/v1/sessions/ui%3Au1/abort']);
+    expect(socketUrl('ui:u1', 'reviewer')).toBe(`ws://${location.host}/v1/sessions/ui%3Au1/ws?agent=reviewer`);
+  } finally {
+    history.replaceState(null, '', '/');
+  }
 });
