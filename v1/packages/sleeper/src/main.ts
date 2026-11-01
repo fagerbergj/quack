@@ -1,6 +1,7 @@
 import { createSleeperClient } from './client.ts';
 import { registerLineupSchedules } from './lineup/jobs.ts';
 import { registerUntilDone } from './schedules.ts';
+import { registerFinderSchedules } from './trades/jobs.ts';
 import { registerWaiversSchedules } from './waivers/jobs.ts';
 import { createSleeperService } from './service.ts';
 
@@ -19,7 +20,7 @@ void registerUntilDone({ url: env('QUACK_SCHEDULES_URL'), token: env('QUACK_SCHE
 if (owner) {
   const schedules = { url: env('QUACK_SCHEDULES_URL'), token: env('QUACK_SCHEDULES_TOKEN') };
   const register = (fn: typeof registerLineupSchedules) => () => fn(schedules, client, env('QUACK_SLEEPER_LEAGUE'), owner).catch((err) => console.error(`${err.message}; will retry`));
-  for (const job of [register(registerLineupSchedules), register(registerWaiversSchedules)]) {
+  for (const job of [register(registerLineupSchedules), register(registerWaiversSchedules), register(registerFinderSchedules)]) {
     void job();
     setInterval(job, 6 * 60 * 60_000).unref();
   }
