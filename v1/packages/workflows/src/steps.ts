@@ -77,6 +77,7 @@ async function modelStep(step: Extract<Step, { kind: 'model' }>, c: StepContext)
       const args = validateToolArguments({ name: step.name, description: step.name, parameters: step.schema }, { type: 'toolCall', id: step.name, name: step.name, arguments: parseObject(contentText(reply.content)) as never });
       return { result: args as JsonValue, cost };
     } catch (err) {
+      if (c.signal.aborted) throw err;
       const error = err instanceof Error ? err.message : String(err);
       if (repairs >= REPAIR_TURNS) throw new Error(`step ${step.name}: ${error}`);
       messages.push(reply, { role: 'user', content: `That answer was rejected:\n${error}\nAnswer again with one corrected JSON object and nothing else.`, timestamp: c.api.now() });
