@@ -2,10 +2,13 @@
   "name": "@quack/distributor",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "dependencies": {
     "@quack/index": "*",
-    "@quack/session": "*"
+    "@quack/session": "*",
+    "@quack/runtime": "*"
   },
   "devDependencies": {
     "undici": "8.10.2"

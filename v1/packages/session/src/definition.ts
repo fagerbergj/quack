@@ -45,10 +45,14 @@ function execProblems(at: string, e: unknown, deployment: boolean): string[] {
   if (!isObject(e)) return [`${at} must be an object`];
   const problems: string[] = [];
   if (e.timeoutSeconds !== undefined && !positive(e.timeoutSeconds)) problems.push(`${at}.timeoutSeconds must be a positive integer`);
-  if (!deployment) return problems;
+  if (!deployment) {
+    for (const key of Object.keys(e)) if (key !== 'timeoutSeconds') problems.push(`${at}.${key} is set by the deployment, not an agent`);
+    return problems;
+  }
   if (e.env !== undefined && !(Array.isArray(e.env) && e.env.every((n) => typeof n === 'string'))) problems.push(`${at}.env must be a list of variable names`);
   const limits = e.limits;
-  if (limits !== undefined && !(isObject(limits) && Object.values(limits).every((v) => Number.isInteger(v) && (v as number) >= 0))) problems.push(`${at}.limits must map names to non-negative integers`);
+  const known = ['addressSpaceMb', 'maxProcs', 'maxFileSizeMb'];
+  if (limits !== undefined && !(isObject(limits) && Object.entries(limits).every(([k, v]) => known.includes(k) && Number.isInteger(v) && (v as number) >= 0))) problems.push(`${at}.limits must map ${known.join(', ')} to non-negative integers`);
   return problems;
 }
 

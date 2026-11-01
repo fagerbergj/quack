@@ -5,7 +5,7 @@ import { AssistantEntry, createRegistry, defineExtension, Harness, section, type
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { pendingApprovals } from '@quack/sdk';
-import { PolicyExecutionEnv, type ExecPolicy } from './exec.ts';
+import { PolicyExecutionEnv, sessionPolicy, type ExecPolicy } from './exec.ts';
 
 const ctx = BACKGROUND_CONTEXT;
 
@@ -13,7 +13,7 @@ export type AgentSpec = {
   model: { provider: string; modelId: string };
   extensions?: Extension[];
   instructions?: string;
-  /** The longest one shell command may run, from the agent's bundle; overrides the deployment's. */
+  /** From the agent's bundle: shortens the deployment's command timeout, never lengthens it. */
   commandTimeoutSeconds?: number;
 };
 
@@ -60,7 +60,7 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
   // The session's workspace lives beside its log on the same volume, so both move and expire together (RUN-2).
   const workspace = join(opts.dir, 'workspace');
   await mkdir(workspace, { recursive: true });
-  const env = ({ cwd }: { cwd?: string }) => new PolicyExecutionEnv({ cwd: cwd ?? workspace, policy: { ...opts.exec, ...(opts.agent.commandTimeoutSeconds && { timeoutSeconds: opts.agent.commandTimeoutSeconds }) } });
+  const env = ({ cwd }: { cwd?: string }) => new PolicyExecutionEnv({ cwd: cwd ?? workspace, policy: sessionPolicy(opts.exec, opts.agent.commandTimeoutSeconds) });
   const log = opts.log ?? console.error;
   const onReport = (error: unknown, info: ReportInfo) => {
     const line = reportLine(error, info);

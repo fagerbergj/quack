@@ -53,3 +53,9 @@ export class PolicyExecutionEnv extends NodeExecutionEnv {
     return result;
   }
 }
+
+/** The policy for one session. A bundle is repo content, so it can only shorten the operator's timeout, never lengthen it. */
+export function sessionPolicy(deployment: ExecPolicy = {}, agentTimeoutSeconds?: number): ExecPolicy {
+  const cap = deployment.timeoutSeconds ?? DEFAULT_EXEC_TIMEOUT_SECONDS;
+  return { ...deployment, timeoutSeconds: Math.min(cap, agentTimeoutSeconds ?? cap) };
+}

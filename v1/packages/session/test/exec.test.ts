@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { spawnSync } from 'node:child_process';
-import { PolicyExecutionEnv, shellEnv, type ExecPolicy } from '../src/index.ts';
+import { PolicyExecutionEnv, sessionPolicy, shellEnv, type ExecPolicy } from '../src/index.ts';
 
 const cwd = await mkdtemp(join(tmpdir(), 'quack-exec-'));
 after(() => rm(cwd, { recursive: true, force: true }));
@@ -66,4 +66,20 @@ test('the default limits leave node (WebAssembly memories) and go running', asyn
   assert.ok(wasm.result.ok && wasm.result.value.exitCode === 0, wasm.output);
   const hasGo = spawnSync('go', ['version']).status === 0;
   if (hasGo) assert.match((await run('go version')).output, /^go version/);
+});
+
+test('an agent bundle can shorten the deployment timeout but never lengthen it', async () => {
+  assert.equal(sessionPolicy({ timeoutSeconds: 100 }, 600).timeoutSeconds, 100);
+  assert.equal(sessionPolicy({ timeoutSeconds: 100 }, 30).timeoutSeconds, 30);
+  assert.equal(sessionPolicy({}, 9999).timeoutSeconds, 600);
+  const capped = await run('sleep 30', sessionPolicy({ timeoutSeconds: 1 }, 600));
+  assert.match(capped.output, /exceeded the 1 second timeout/);
+});
+
+test('the file-size limit is in megabytes: a write up to it succeeds and one byte past it fails', async () => {
+  const limits = { maxFileSizeMb: 1 };
+  const atLimit = await run('head -c 1048576 /dev/zero > at', { limits });
+  assert.ok(atLimit.result.ok && atLimit.result.value.exitCode === 0, atLimit.output);
+  const past = await run('head -c 1048577 /dev/zero > past', { limits });
+  assert.ok(past.result.ok && past.result.value.exitCode !== 0);
 });

@@ -138,4 +138,6 @@ test('an agent receives only the variables its extensions declare, and exec sett
   const def = parseDefinition({ name: 'r', version: 1, model: 'local/qwen3.8-27b', extensions: {}, exec: { timeoutSeconds: 30 } }, d, withEnv);
   assert.equal((await agentSpec(def, withEnv)).commandTimeoutSeconds, 30);
   assert.throws(() => parseDefinition({ name: 'r', version: 1, model: 'local/qwen3.8-27b', extensions: {}, exec: { timeoutSeconds: 'x' } }, d, withEnv), /exec.timeoutSeconds/);
+  assert.throws(() => parseDefinition({ name: 'r', version: 1, model: 'local/qwen3.8-27b', extensions: {}, exec: { limits: {}, env: ['A'] } }, d, withEnv), (err: Error) => /exec.limits is set by the deployment/.test(err.message) && /exec.env is set by the deployment/.test(err.message));
+  assert.throws(() => parseDeployment({ ...deployment, exec: { limits: { maxFileSize: 5 } } }), /exec.limits must map/);
 });

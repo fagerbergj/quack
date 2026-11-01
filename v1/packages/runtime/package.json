@@ -17,5 +17,8 @@
     "@quack/sleeper": "*",
     "@quack/workflows": "*",
     "pi-lsp": "0.1.7"
+  },
+  "exports": {
+    ".": "./src/session-env.ts"
   }
 }

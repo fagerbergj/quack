@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { indexRoutes, openStore } from '@quack/index';
 import { createDistributor } from './server.ts';
 import { processDriver } from './process-driver.ts';
-import { sessionEnv } from '../../runtime/src/session-env.ts';
+import { sessionEnv } from '@quack/runtime';
 import { sleeperRoutes } from './sleeper-routes.ts';
 
 function env(name: string, fallback?: string): string {
