@@ -2,6 +2,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { SleeperClient } from './client.ts';
 import { startLineup } from './lineup/jobs.ts';
+import { startWaivers } from './waivers/jobs.ts';
 import { takeSnapshot } from './snapshot.ts';
 import { openStore } from './store.ts';
 
@@ -41,8 +42,8 @@ export function createSleeperService(config: ServiceConfig) {
   // GET /leagues/:id/snapshots[/latest] read the store; POST /leagues/:id/snapshots takes today's if it is missing.
   async function route(method: string, url: URL): Promise<[number, unknown]> {
     const path = url.pathname;
-    const job = /^\/leagues\/([^/]+)\/jobs\/lineup$/.exec(path);
-    if (job) return lineupJob(method, safeDecode(job[1]), url.searchParams.get('week'));
+    const job = /^\/leagues\/([^/]+)\/jobs\/(lineup|waivers)$/.exec(path);
+    if (job) return startOnDemand(job[2] === 'lineup' ? startLineup : startWaivers, method, safeDecode(job[1]), url.searchParams.get('week'));
     const m = /^\/leagues\/([^/]+)\/snapshots(\/latest)?$/.exec(path);
     if (!m) return [404, { error: 'not found' }];
     const league = safeDecode(m[1]);
@@ -54,14 +55,14 @@ export function createSleeperService(config: ServiceConfig) {
     return latest ? [200, latest] : [404, { error: 'no snapshot yet' }];
   }
 
-  // POST /leagues/:id/jobs/lineup[?week=N] starts the lineup job on demand (SL-2); the week defaults to Sleeper's current one.
-  async function lineupJob(method: string, league: string | undefined, week: string | null): Promise<[number, unknown]> {
+  // POST /leagues/:id/jobs/(lineup|waivers)[?week=N] starts a job on demand (SL-2); the week defaults to Sleeper's current one.
+  async function startOnDemand(start: typeof startLineup, method: string, league: string | undefined, week: string | null): Promise<[number, unknown]> {
     if (league === undefined) return [400, { error: 'bad league id' }];
     if (method !== 'POST') return [405, { error: 'method not allowed' }];
     if (!config.distributorUrl || !config.owner) return [501, { error: 'on-demand jobs are not configured' }];
     const n = week === null ? (await config.client.state()).week : Number(week);
     if (!Number.isInteger(n) || n < 1) return [400, { error: 'bad week' }];
-    const r = await startLineup({ distributorUrl: config.distributorUrl, fetch: config.fetch, now }, { league, week: n, owner: config.owner });
+    const r = await start({ distributorUrl: config.distributorUrl, fetch: config.fetch, now }, { league, week: n, owner: config.owner });
     return [r.ok ? 202 : 502, { sessionKey: r.sessionKey, status: r.status }];
   }
 

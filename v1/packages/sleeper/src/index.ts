@@ -4,3 +4,4 @@ export { buildSnapshot, leagueDate, takeSnapshot } from './snapshot.ts';
 export { openStore, type Store, type SnapshotRow } from './store.ts';
 export { registerSnapshotSchedule, registerUntilDone } from './schedules.ts';
 export * from './lineup/index.ts';
+export * from './waivers/index.ts';

@@ -34,3 +34,11 @@ test('the shipped sleeper-lineup definition loads its prompt and binds the lineu
   assert.match(agent.instructions!, /^You are the lineup analyst/);
   assert.ok(agent.extensions!.some((e) => e.name === 'quack.workflows' && (e as { dispatch?: unknown }).dispatch));
 });
+
+test('the shipped sleeper-waivers definition loads its prompt and binds the waivers workflow', async () => {
+  process.env.QUACK_SLEEPER_URL = 'http://127.0.0.1:8092';
+  process.env.QUACK_SLEEPER_TOKEN = 'x';
+  const agent = await loadAgent(fileURLToPath(new URL('../../../agents/sleeper-waivers/agent.json', import.meta.url)), deployment, catalog);
+  assert.match(agent.instructions!, /^You are the waiver scout/);
+  assert.ok(agent.extensions!.some((e) => e.name === 'quack.workflows' && (e as { dispatch?: unknown }).dispatch));
+});

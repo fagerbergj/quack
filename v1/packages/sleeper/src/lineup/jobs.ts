@@ -1,26 +1,27 @@
 import type { SleeperClient } from '../client.ts';
+import { startJob, type StartConfig } from '../jobs.ts';
 import type { ScheduleConfig } from '../schedules.ts';
 import type { LineupInput } from './facts.ts';
 
 export const LINEUP_AGENT = 'sleeper-lineup';
 /** SL-9: a scheduled lineup finishes this long before the kickoff it serves. */
-const MARGIN_MS = 60 * 60_000;
-const ET = 'America/New_York';
+export const MARGIN_MS = 60 * 60_000;
+export const ET = 'America/New_York';
 
 /** Reruns within a week continue one session. */
 export const lineupKey = (league: string, week: number) => `sleeper:${league}:${week}:lineup`;
 
-const etParts = (ms: number) => Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: ET, hourCycle: 'h23', weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).formatToParts(ms).map((p) => [p.type, p.value]));
-const etDate = (ms: number) => new Intl.DateTimeFormat('en-CA', { timeZone: ET }).format(ms);
+export const etParts = (ms: number, zone = ET) => Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: zone, hourCycle: 'h23', weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).formatToParts(ms).map((p) => [p.type, p.value]));
+export const etDate = (ms: number, zone = ET) => new Intl.DateTimeFormat('en-CA', { timeZone: zone }).format(ms);
 
 /** The instant of a New York wall-clock hour on a date, so a run stays at its local hour across DST. */
-function etWall(date: string, hour: number): number {
+export function etWall(date: string, hour: number, zone = ET): number {
   const guess = Date.parse(`${date}T${String(hour).padStart(2, '0')}:00:00Z`);
-  const p = etParts(guess);
+  const p = etParts(guess, zone);
   return guess - (Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second) - guess);
 }
 
-const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+export const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const wednesdayBefore = (ms: number) => {
   const back = (WEEKDAYS.indexOf(etParts(ms).weekday) - 3 + 7) % 7;
   return etDate(Date.parse(`${etDate(ms)}T12:00:00Z`) - back * 86_400_000);
@@ -59,9 +60,4 @@ export async function registerLineupSchedules(config: ScheduleConfig, client: Sl
 }
 
 /** On-demand start (SL-2): submits the job to the distributor under the week's session key; each call is its own submission. */
-export async function startLineup(config: { distributorUrl: string; fetch?: typeof fetch; now: () => Date }, input: LineupInput) {
-  const key = lineupKey(input.league, input.week);
-  const url = `${config.distributorUrl}/sessions/${encodeURIComponent(key)}/invocations?agent=${LINEUP_AGENT}`;
-  const res = await (config.fetch ?? fetch)(url, { method: 'POST', body: JSON.stringify({ input: inputOf(input), requestId: `start:${key}:${config.now().toISOString()}` }) });
-  return { ok: res.ok, status: res.status, sessionKey: key };
-}
+export const startLineup = (config: StartConfig, input: LineupInput) => startJob(config, LINEUP_AGENT, lineupKey(input.league, input.week), input);

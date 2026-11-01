@@ -1,4 +1,5 @@
 import type { Json, SleeperClient } from '../client.ts';
+import type { Searchable } from './news.ts';
 import { bestLineup, fits, lineupSlots, numberSlots } from './slots.ts';
 
 export type Game = { opponent: string; home: boolean; kickoff: string | null; locked: boolean; status: string | null };
@@ -28,15 +29,15 @@ export type Facts = {
 };
 
 export type LineupInput = { league: string; week: number; owner: string };
-export type FactsDeps = { client: SleeperClient; news?: (p: PlayerFact, at: number) => Promise<NewsItem[]> };
+export type FactsDeps = { client: SleeperClient; news?: (p: Searchable, at: number) => Promise<NewsItem[]> };
 
 // Out, IR, Doubtful and suspended players are not lineup candidates; Questionable ones are, and the model weighs them.
 const UNAVAILABLE = new Set(['Out', 'IR', 'Doubtful', 'Sus']);
 /** A bench player this close to a starter's projection makes the slot a close call. */
 export const CLOSE_GAP = 3;
 
-const ptsKey = (rec: unknown) => (rec === 1 ? 'pts_ppr' : rec === 0.5 ? 'pts_half_ppr' : 'pts_std');
-const round2 = (n: number) => Math.round(n * 100) / 100;
+export const ptsKey = (rec: unknown) => (rec === 1 ? 'pts_ppr' : rec === 0.5 ? 'pts_half_ppr' : 'pts_std');
+export const round2 = (n: number) => Math.round(n * 100) / 100;
 
 /** One week's games by NFL team, joined on game_id so a missing score leaves the kickoff unknown rather than borrowing another game's. */
 function gamesByTeam(schedule: Json[], scores: Json[], week: number, at: number): Map<string, Game> {
@@ -69,7 +70,7 @@ function playerFact(id: string, dump: Json, proj: Json, key: string, games: Map<
 
 const usable = (p: PlayerFact) => !UNAVAILABLE.has(p.inj ?? '') && p.game !== null && !p.game.locked;
 
-function ownerTeam(snap: Json, owner: string) {
+export function ownerTeam(snap: Json, owner: string) {
   const { users, rosters } = snap.data;
   const user = users.find((u: Json) => [u.user_id, u.display_name, u.username].includes(owner));
   const roster = user && rosters.find((r: Json) => r.owner_id === user.user_id);

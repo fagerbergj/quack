@@ -1,5 +1,8 @@
 import type { NewsItem, PlayerFact } from './facts.ts';
 
+/** The slice of a player a news search needs. */
+export type Searchable = Pick<PlayerFact, 'name' | 'team' | 'pos'>;
+
 export const NEWS_WINDOW_MS = 72 * 3_600_000;
 const PER_PLAYER = 3;
 
@@ -25,7 +28,7 @@ type Hit = { title?: string; url: string; publishedDate?: string };
 
 /** Exa news for one player, newest first: dated items inside the window only. A failed search yields none, so one outage never fails the lineup. */
 export function exaNews(config: { apiKey: string; url?: string }) {
-  return async (p: PlayerFact, at: number): Promise<NewsItem[]> => {
+  return async (p: Searchable, at: number): Promise<NewsItem[]> => {
     const since = at - NEWS_WINDOW_MS;
     try {
       const res = await fetch(`${config.url ?? 'https://api.exa.ai'}/search`, {
