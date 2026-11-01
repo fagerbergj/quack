@@ -1,4 +1,4 @@
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { createServer, request, type IncomingMessage, type ServerResponse } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { connect } from 'node:net';
 import { extname, resolve, sep } from 'node:path';
@@ -83,6 +83,21 @@ async function proxyUpgrade(target: string, req: IncomingMessage, path: string, 
   const end = () => { upstream.destroy(); client.destroy(); };
   upstream.on('error', end).on('close', end);
   client.on('error', end).on('close', end);
+}
+
+// node:http, not fetch: undici gives up on headers after 300 s, and a wait:true invocation sends none until its run settles.
+// A client that hangs up aborts the upstream request.
+function forward(url: string, method: string, body: Uint8Array | undefined, res: ServerResponse): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const up = request(url, { method, headers: { 'content-type': 'application/json' } }, (r) => {
+      res.writeHead(r.statusCode ?? 502, { 'content-type': r.headers['content-type'] ?? 'application/json' });
+      r.pipe(res).on('finish', resolve);
+      r.on('error', (err) => (res.destroyed || res.writableFinished ? resolve() : reject(err)));
+    });
+    res.on('close', () => { if (!res.writableFinished) up.destroy(); });
+    up.on('error', (err) => (res.headersSent || res.destroyed ? resolve() : reject(err)));
+    up.end(body);
+  });
 }
 
 function errorStatus(err: unknown): number {
@@ -215,9 +230,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
         const url = await driver.ensure(key, agent);
         arm(key, undefined);
         const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : new Uint8Array(await readBody(req));
-        const upstream = await fetch(url + path + search, { method: req.method, body, headers: { 'content-type': 'application/json' } });
-        res.writeHead(upstream.status, { 'content-type': upstream.headers.get('content-type') ?? 'application/json' });
-        res.end(Buffer.from(await upstream.arrayBuffer()));
+        await forward(url + path + search, req.method ?? 'GET', body, res);
       } finally {
         hold(key, -1);
         lastUse.set(key, now());

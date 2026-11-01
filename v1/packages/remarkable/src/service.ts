@@ -16,9 +16,12 @@ export type ServiceConfig = {
   now?: () => Date;
   /** Called after each document's answer is recorded; lets tests wait on it instead of polling. */
   onSettle?: (batch: string, document: string) => void;
+  /** Backoff between resubmits of a wait the distributor dropped; tests inject an instant one. */
+  sleep?: (ms: number) => Promise<void>;
 };
 
 const MAX_BODY = 1 << 20;
+const MAX_BACKOFF_MS = 60_000;
 const send = (res: ServerResponse, status: number, body: unknown) => res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
 
 function authorized(req: IncomingMessage, token: string): boolean {
@@ -50,6 +53,10 @@ function failure(res: { status: number; text: string }): string | undefined {
   }
 }
 
+// A gateway error or reset means the hold broke, not that the run did; the same request id joins it again.
+const dropped = (res: { status: number }) => res.status === 502 || res.status === 504;
+const isReset = (err: unknown) => (err as { code?: string }).code === 'ECONNRESET';
+
 // Only rmfakecloud failures are the upstream's fault; store errors and the like are this service's own.
 const upstream = (err: unknown) => err instanceof Error && (err.message.startsWith('rmfakecloud') || err.message === 'fetch failed');
 
@@ -73,14 +80,29 @@ export function createRemarkableService(config: ServiceConfig) {
     }).finally(() => aborts.delete(abort));
   };
 
+  const sleep = config.sleep ?? ((ms: number) => new Promise<void>((resolve) => {
+    const t = setTimeout(done, ms);
+    function done() { clearTimeout(t); aborts.delete(done); resolve(); }
+    aborts.add(done);
+  }));
+
   // The version is the request id, so a replay (a later batch, or a resubmit after restart) joins the existing run.
   type Job = { id: string; name: string; version: string; attempt: number };
   async function submit(batch: string, doc: Job): Promise<void> {
     const key = encodeURIComponent(`remarkable:${doc.id}`);
     const body = JSON.stringify({ input: JSON.stringify({ id: doc.id, name: doc.name, version: doc.version }), requestId: doc.attempt ? `${doc.version}#${doc.attempt}` : doc.version, wait: true });
+    const url = `${config.distributorUrl}/sessions/${key}/invocations?agent=${encodeURIComponent(config.agent)}`;
     try {
-      const res = await post(`${config.distributorUrl}/sessions/${key}/invocations?agent=${encodeURIComponent(config.agent)}`, body);
-      store.settle(batch, doc.id, failure(res));
+      for (let n = 0; ; n++) {
+        if (stopped) return;
+        const res = await post(url, body).catch((err) => (isReset(err) ? { status: 502, text: '' } : Promise.reject(err)));
+        if (stopped) return;
+        if (!dropped(res)) {
+          store.settle(batch, doc.id, failure(res));
+          break;
+        }
+        await sleep(Math.min(1000 * 2 ** n, MAX_BACKOFF_MS));
+      }
     } catch (err) {
       if (stopped) return;
       store.settle(batch, doc.id, `distributor unreachable: ${(err as Error).message}`);

@@ -288,3 +288,30 @@ test('a failed ingest of an unchanged document retries as a new attempt; a retry
   await service.settled();
   assert.equal(seen[0].body.requestId, '9#1', 'a plain re-ingest joins the latest attempt');
 });
+
+test('a 502, a 504 or a reset mid-wait resubmits the same request id with backoff and the item still completes', async () => {
+  const requests: string[] = [];
+  const script = ['502', '504', 'reset', '200'];
+  const flaky = await listen(
+    createServer(async (req, res) => {
+      let raw = '';
+      for await (const c of req) raw += c;
+      requests.push(JSON.parse(raw).requestId);
+      const next = script[requests.length - 1];
+      if (next === 'reset') return void req.socket.destroy();
+      res.writeHead(Number(next)).end('{"status":"done"}');
+    }),
+  );
+  const delays: number[] = [];
+  const retrying = createRemarkableService({ serviceToken: 'svc-secret', dbPath: ':memory:', distributorUrl: flaky, agent: 'a', client: createRmClient({ url: rm, email: EMAIL, password: PASSWORD }), sleep: async (ms) => void delays.push(ms) });
+  const url = await listen(retrying);
+  const headers = { authorization: 'Bearer svc-secret' };
+  const { batch: id } = (await (await fetch(`${url}/ingest`, { method: 'POST', headers, body: JSON.stringify({ ids: ['n1'] }) })).json()) as any;
+  await retrying.settled();
+  const done = (await (await fetch(`${url}/batches/${id}`, { headers })).json()) as any;
+  assert.equal(done.status, 'done');
+  assert.equal(new Set(requests).size, 1);
+  assert.equal(requests.length, 4);
+  assert.deepEqual(delays, [1000, 2000, 4000]);
+  await retrying.stop();
+});
