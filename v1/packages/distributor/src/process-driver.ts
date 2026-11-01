@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { cp, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { dirname, join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 
 export type AgentStatus = 'draft' | 'promoted';
 export type AgentInfo = { name: string; version: number; status: AgentStatus };
@@ -72,9 +73,21 @@ async function digest(dir: string): Promise<string> {
 
 const SNAPSHOT = 'agent-def';
 
-async function lastModified(dir: string): Promise<number> {
-  const times = await Promise.all(['session.sqlite', 'session.sqlite-wal', 'session-key'].map((f) => stat(join(dir, f)).then((s) => s.mtimeMs, () => 0)));
-  return Math.max(...times);
+// Newest message time in the session's own log; file mtimes move on every restart and checkpoint.
+async function lastActivity(dir: string): Promise<number> {
+  let logged = 0;
+  try {
+    const db = new DatabaseSync(join(dir, 'session.sqlite'), { readOnly: true });
+    try {
+      const row = db.prepare("SELECT max(json_extract(m.value, '$.timestamp')) AS at FROM entries, json_each(entries.record, '$.model') m").get() as { at: number | null };
+      logged = row.at ?? 0;
+    } finally {
+      db.close();
+    }
+  } catch {
+    // No log yet: fall back to when the session was created.
+  }
+  return logged || (await stat(join(dir, 'session-key')).then((s) => s.mtimeMs, () => 0));
 }
 
 const CRASH_BUDGET = 3;
@@ -197,7 +210,7 @@ export function processDriver(opts: { command: string[]; dataDir: string; agents
       if (key === undefined) return undefined;
       const agent = (await readText(join(opts.dataDir, d, 'agent'))) ?? '';
       const version = (await readJson(join(opts.dataDir, d, SNAPSHOT, 'agent.json')).catch(() => null))?.version;
-      return { key, agent, ...(typeof version === 'number' && { version }), running: children.has(key), at: await lastModified(join(opts.dataDir, d)) };
+      return { key, agent, ...(typeof version === 'number' && { version }), running: children.has(key), at: await lastActivity(join(opts.dataDir, d)) };
     }));
     return all.filter((s) => s !== undefined).sort((a, b) => b.at - a.at).map(({ at, ...s }) => ({ ...s, lastActivity: new Date(at).toISOString() }));
   }
