@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { buildModels, createSessionServer, loadAgent, openSession, parseDeployment } from '@quack/session';
 import { startPublisher } from '@quack/index';
 import { piShutdown } from '@quack/sdk';
+import { sessionDecisions } from '@quack/workflows';
 import { catalog } from './catalog.ts';
 
 function env(name: string, fallback?: string): string {
@@ -25,7 +26,7 @@ const session = await openSession({ dir: env('QUACK_SESSION_DIR'), models: build
 const publisher = process.env.QUACK_INDEX_URL && process.env.QUACK_INDEX_TOKEN
   ? await startPublisher(session, { url: process.env.QUACK_INDEX_URL, token: process.env.QUACK_INDEX_TOKEN, meta: { key: env('QUACK_SESSION_KEY'), agent: agentName, version: agentVersion } })
   : undefined;
-const server = createSessionServer(session);
+const server = createSessionServer(session, sessionDecisions(session));
 server.listen(Number(env('PORT', '8080')));
 
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {

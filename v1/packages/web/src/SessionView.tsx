@@ -2,6 +2,7 @@ import type { AgentEvent, SnapshotEvent } from '@earendil-works/pi-durable';
 import { useEffect, useRef, useState, type CSSProperties, type SubmitEvent } from 'react';
 import { abortRun, socketUrl, type SealedArtifact } from './api.ts';
 import { Approvals } from './Approvals.tsx';
+import { SessionDecisions } from './Decisions.tsx';
 import { Artifacts, useArtifacts } from './Artifacts.tsx';
 import { Work } from './Work.tsx';
 import { useVisualViewportHeight } from './useVisualViewportHeight.ts';
@@ -144,6 +145,7 @@ export function SessionView({ sessionKey, agent, title }: { sessionKey: string; 
           {error && <p role="alert" className="m-0 rounded-xl border border-danger-line bg-danger-bg/60 px-3.5 py-2.5 text-[13px] text-danger">{error}</p>}
           <Transcript view={view} />
           <Approvals sessionKey={sessionKey} refresh={approvalTick} />
+          <SessionDecisions sessionKey={sessionKey} />
           <Artifacts items={items} error={artifactsError} onOpen={setWork} />
         </div>
       </div>

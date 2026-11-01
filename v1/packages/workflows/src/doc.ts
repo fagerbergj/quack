@@ -5,7 +5,7 @@ import { defineDoc, type Conversation, type DocumentWatch } from '@earendil-work
 export type StepRecord = {
   name: string;
   kind: 'code' | 'model' | 'decision' | 'gated';
-  status: 'pending' | 'running' | 'waiting' | 'done' | 'failed';
+  status: 'pending' | 'running' | 'waiting' | 'done' | 'failed' | 'aborted';
   startedAt: number | null;
   durationMs: number | null;
   cost: number;
@@ -13,7 +13,7 @@ export type StepRecord = {
   progress?: { done: number; total: number } | null;
   error: string | null;
   /** A decision step's open question; the answer is written by `answerDecision`. */
-  ask: { question: string; options: string[] } | null;
+  ask: { question: string; options: string[]; evidence?: string | null; at?: number | null } | null;
   answer: { choice: string; by: string } | null;
 };
 
@@ -47,12 +47,25 @@ export async function watchUntil<V>(watch: DocumentWatch<WorkflowState>, pick: (
   }
 }
 
-/** Records a person's answer to a waiting decision step; false when the step is unknown, not asking, or already answered. */
-export async function answerDecision(conversation: Conversation, step: string, choice: string, by: string, ctx: Context): Promise<boolean> {
-  return conversation.commit(async (tx) => {
+export type AnswerResult = 'ok' | 'not-asking' | 'answered' | 'bad-choice';
+
+/** Records a person's answer to a decision step that is waiting on one. */
+export async function answerDecision(conversation: Conversation, step: string, choice: string, by: string, ctx: Context): Promise<AnswerResult> {
+  return conversation.commit(async (tx): Promise<AnswerResult> => {
     const s = (await tx.doc(WorkflowDoc, conversation.id)).steps.find((r) => r.name === step);
-    if (!s?.ask || s.answer || !s.ask.options.includes(choice)) return false;
+    if (!s?.ask) return 'not-asking';
+    if (s.answer) return 'answered';
+    if (s.status !== 'waiting') return 'not-asking';
+    if (!s.ask.options.includes(choice)) return 'bad-choice';
     s.answer = { choice, by };
-    return true;
+    return 'ok';
   }, ctx);
+}
+
+export type OpenDecision = { step: string; question: string; options: string[]; evidence: string | null; askedAt: number };
+
+/** Decision steps waiting on a person; `ask` stays on a step after it is answered or its run ends, so the status decides. */
+export function pendingDecisions(doc: Readonly<WorkflowState> | null | undefined): OpenDecision[] {
+  return (doc?.steps ?? []).filter((s) => s.ask && !s.answer && s.status === 'waiting')
+    .map((s) => ({ step: s.name, question: s.ask!.question, options: s.ask!.options, evidence: s.ask!.evidence ?? null, askedAt: s.ask!.at ?? 0 }));
 }

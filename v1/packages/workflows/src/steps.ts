@@ -74,7 +74,7 @@ function person(step: string, c: StepContext): Resolver {
       await api.commit(async (tx) => {
         const s = (await tx.doc(WorkflowDoc, api.conversationId)).steps.find((r) => r.name === step)!;
         s.status = 'waiting';
-        s.ask = { question: point.question, options: point.options };
+        s.ask = { question: point.question, options: point.options, evidence: point.evidence ?? null, at: s.ask?.at ?? api.now() };
       }, ctx);
       const watch = await api.watchDoc(WorkflowDoc, api.conversationId, ctx);
       if (!watch) throw new Error('workflow state is unavailable');

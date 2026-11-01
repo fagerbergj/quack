@@ -531,6 +531,38 @@ test('the Inbox posts approve to the owning session, and reject with its reason'
   await screen.findByText('Nothing is waiting on you');
 });
 
+const pendingDecision = { decisions: [{ session: 'gh:3', step: 'type', question: 'What kind of document is this?', options: ['meeting', 'idea'], evidence: 'Agenda: standup', state: 'pending', choice: null, by: null, at: 1 }] };
+
+test('the Inbox shows a workflow question with its options, and an option answers it', async () => {
+  routes['GET /sessions'] = { sessions: [sess('gh:3', { title: 'Campaign Notes' })] };
+  routes['GET /index/approvals?state=pending'] = { approvals: [] };
+  routes['GET /index/decisions?state=pending'] = pendingDecision;
+  routes['POST /sessions/gh%3A3/decisions/type'] = { answered: true };
+  location.hash = '#/inbox';
+  render(<App />);
+  expect(await screen.findByText('What kind of document is this?')).toBeInTheDocument();
+  expect(screen.getByText('1 waiting for your answer')).toBeInTheDocument();
+  expect(screen.getByText('Agenda: standup')).not.toBeVisible();
+  expect(screen.getByRole('link', { name: 'Campaign Notes' })).toHaveAttribute('href', '#/s/gh%3A3');
+  routes['GET /index/decisions?state=pending'] = { decisions: [] };
+  await userEvent.click(screen.getByRole('button', { name: 'meeting' }));
+  expect(JSON.parse(fetchMock.mock.calls.filter(([, i]) => i?.method === 'POST').at(-1)![1]!.body as string)).toEqual({ choice: 'meeting', by: 'web' });
+  await screen.findByText('Nothing is waiting on you');
+});
+
+test('a session waiting on a question is in Needs you, and its view shows the question card', async () => {
+  routes['GET /sessions'] = { sessions: [sess('ui:u1')] };
+  routes['GET /index/approvals?state=pending'] = { approvals: [] };
+  routes['GET /index/decisions?state=pending'] = { decisions: pendingDecision.decisions.map((d) => ({ ...d, session: 'ui:u1' })) };
+  routes['GET /sessions/ui%3Au1/decisions'] = { decisions: [{ step: 'type', question: 'What kind of document is this?', options: ['meeting', 'idea'], evidence: null, askedAt: 1 }] };
+  await openSession();
+  const needs = await screen.findByRole('region', { name: 'Needs you' });
+  expect(within(needs).getByText('Answer: What kind of document is this?')).toBeInTheDocument();
+  const card = await screen.findByRole('region', { name: 'Decision' });
+  expect(within(card).getByText('NEEDS YOU')).toBeInTheDocument();
+  expect(within(card).getByRole('button', { name: 'idea' })).toBeInTheDocument();
+});
+
 test('with the index off, the Inbox falls back to the running sessions own approvals', async () => {
   routes['GET /sessions'] = { sessions: [sess('gh:1', { running: true })] };
   routes['GET /sessions/gh%3A1/approvals'] = { approvals: [{ id: 'a', tool: 'push', args: { branch: 'main' }, requestedAt: 1 }] };

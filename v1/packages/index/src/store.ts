@@ -47,6 +47,12 @@ export function createStore(backend: Backend) {
         session: f.session, kind: field(f, 'kind'), version: field(f, 'version'), hash: field(f, 'hash'), verdict: field(f, 'verdict'), sealedAt: f.at,
       }));
     },
+    async decisions(state?: string) {
+      return (await facts(['decision'])).filter((f) => !state || field(f, 'state') === state).sort(newestFirst).map((f) => ({
+        session: f.session, step: field(f, 'step'), question: field(f, 'question'), options: field(f, 'options'), evidence: field(f, 'evidence'),
+        state: field(f, 'state'), choice: field(f, 'choice'), by: field(f, 'by'), at: f.at,
+      }));
+    },
     async approvals(state?: string) {
       return (await facts(['approval'])).filter((f) => !state || field(f, 'state') === state).sort(newestFirst).map((f) => ({
         session: f.session, id: f.id.slice('approval:'.length), tool: field(f, 'tool'), state: field(f, 'state'), decision: field(f, 'decision'), by: field(f, 'by'), at: f.at,

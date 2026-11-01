@@ -2,10 +2,10 @@ import { BACKGROUND_CONTEXT, type Context } from '@earendil-works/chord/context'
 import type { JsonValue } from '@earendil-works/chord';
 import { defineExtension, defineTask, type Conversation, type ConversationId, type Extension, type Harness, type RunningTask, type TaskRuntime, type Tx } from '@earendil-works/pi-durable';
 import type { Dispatch, DispatchingExtension } from '@quack/session';
-import { WorkflowDoc, type StepRecord } from './doc.ts';
+import { answerDecision, pendingDecisions, WorkflowDoc, type StepRecord } from './doc.ts';
 import { execute, view, type Step, type StepContext } from './steps.ts';
 
-export { answerDecision, WorkflowDoc, watchUntil, type StepRecord } from './doc.ts';
+export { answerDecision, pendingDecisions, WorkflowDoc, watchUntil, type AnswerResult, type OpenDecision, type StepRecord } from './doc.ts';
 export type { Step, StepContext } from './steps.ts';
 
 type Results = Record<string, JsonValue>;
@@ -77,7 +77,11 @@ export function defineWorkflow(def: { name: string; steps: Step[] }) {
     version: 1,
     initial: () => ({ phase: steps[0].name, results: {} }),
     phases: Object.fromEntries(steps.map((step, i) => [step.name, (running: RunningTask<Input, Checkpoint, Results>, rt: Runtime, ctx: Context) => runStep(steps, i, running, rt, ctx)])) as never,
-    abort: (_t, rt, ctx) => rt.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), ctx),
+    // A step waiting on a person is closed with the run: nothing is left to resume on an answer.
+    abort: (_t, rt, ctx) => rt.commit(async (tx) => {
+      for (const s of (await tx.doc(WorkflowDoc, rt.conversationId)).steps) if (s.status === 'waiting') s.status = 'aborted';
+      return { status: 'terminal', outcome: { status: 'aborted' } };
+    }, ctx),
   });
   return { name, steps, task };
 }
@@ -118,6 +122,12 @@ export const boundWorkflow = (config: unknown, from: Record<string, Workflow> = 
   if (!found) throw new Error(`unknown workflow ${wanted}; available: ${Object.keys(from).sort().join(', ') || 'none'}`);
   return found;
 };
+
+/** What the session's decision routes need: the open questions and a way to answer one. */
+export const sessionDecisions = (session: { harness: Harness; root: Conversation }) => ({
+  pending: async () => pendingDecisions(await session.harness.snapshot(WorkflowDoc, session.root.id, BACKGROUND_CONTEXT)),
+  answer: (step: string, choice: string, by: string) => answerDecision(session.root, step, choice, by, BACKGROUND_CONTEXT),
+});
 
 export function workflowExtension(workflows: Workflow[]): Extension {
   return defineExtension({ name: 'quack.workflows', tasks: workflows.map((w) => w.task) });

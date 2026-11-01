@@ -42,7 +42,28 @@ function parseInvocation(body: unknown): Invocation | string {
   return { input, requestId, wait, title };
 }
 
-type Route = (session: Session, req: IncomingMessage, match: RegExpExecArray) => Promise<[number, unknown]>;
+/** Questions a person answers, supplied by the extension that asks them (the session package cannot see workflows). */
+export type Decisions = {
+  pending(): Promise<unknown[]>;
+  answer(step: string, choice: string, by: string): Promise<'ok' | 'not-asking' | 'answered' | 'bad-choice'>;
+};
+
+type Route = (session: Session, req: IncomingMessage, match: RegExpExecArray, decisions?: Decisions) => Promise<[number, unknown]>;
+
+const ANSWER_STATUS = { ok: 200, 'not-asking': 404, answered: 409, 'bad-choice': 400 } as const;
+
+async function answer(_: Session, req: IncomingMessage, match: RegExpExecArray, decisions?: Decisions): Promise<[number, unknown]> {
+  const { choice, by } = (await readJson(req)) as Record<string, unknown> | null ?? {};
+  if (typeof choice !== 'string' || typeof by !== 'string' || !by) return [400, { error: 'choice and by must be strings' }];
+  let step: string;
+  try {
+    step = decodeURIComponent(match[1]);
+  } catch {
+    return [400, { error: 'malformed step name' }];
+  }
+  const result = await decisions?.answer(step, choice, by) ?? 'not-asking';
+  return [ANSWER_STATUS[result], result === 'ok' ? { answered: true } : { error: result }];
+}
 
 const ctx = BACKGROUND_CONTEXT;
 
@@ -88,14 +109,16 @@ const ROUTES: Array<[string, RegExp, Route]> = [
   ['GET', /^\/artifacts$/, artifacts],
   ['POST', /^\/abort$/, abort],
   ['POST', /^\/approvals\/([^/]+)$/, decide],
+  ['GET', /^\/decisions$/, async (_s, _r, _m, d) => [200, { decisions: (await d?.pending()) ?? [] }]],
+  ['POST', /^\/decisions\/([^/]+)$/, answer],
 ];
 
-export function createSessionServer(session: Session) {
+export function createSessionServer(session: Session, decisions?: Decisions) {
   const server = createServer(async (req, res) => {
     try {
       for (const [method, pattern, route] of ROUTES) {
         const match = req.method === method ? pattern.exec(req.url ?? '') : null;
-        if (match) return send(res, ...(await route(session, req, match)));
+        if (match) return send(res, ...(await route(session, req, match, decisions)));
       }
       send(res, 404, { error: 'not found' });
     } catch (err) {
