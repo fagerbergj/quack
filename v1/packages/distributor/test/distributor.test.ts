@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { Agent, fetch as ufetch, getGlobalDispatcher, setGlobalDispatcher } from 'undici';
 import { nextFrame, runEnded } from '../../session/test/ws-helpers.ts';
 import { createDistributor, processDriver, sessionDirName } from '../src/index.ts';
 
@@ -464,4 +465,24 @@ test('a session waiting on a human verdict is stopped, and the verdict restarts 
   const done = await fetch(`${base}/invocations`, { method: 'POST', body: JSON.stringify({ input: 'review', requestId: 'r-1', wait: true }) }).then((r) => r.json());
   assert.equal(done.answer, 'Posted the review.');
   assert.equal(await readFile(join(dataDir, sessionDirName(key), 'posted'), 'utf8'), 'x', 'the gated tool ran once');
+});
+
+test('an invocation held past undici\'s headers timeout is still proxied, not turned into a 502', async () => {
+  // The session sends no headers for 2 s; a fetch proxy with a 100 ms headers timeout gives up at undici's next 1 s timer tick.
+  const session = createHttpServer((_req, res) => setTimeout(() => res.writeHead(200, { 'content-type': 'application/json' }).end('{"status":"answered"}'), 2_000)).listen(0);
+  await new Promise((r) => session.once('listening', r));
+  const url = `http://127.0.0.1:${(session.address() as AddressInfo).port}`;
+  const driver = { agents: async () => [], sessions: async () => [], ensure: async () => url, stop: async () => {}, setWake: async () => {}, wakes: async () => [], running: () => [], pid: () => undefined };
+  const server = createDistributor(driver, { idleMs: 60_000 }).listen(0);
+  await new Promise((r) => server.once('listening', r));
+  const previous = getGlobalDispatcher();
+  setGlobalDispatcher(new Agent({ headersTimeout: 100 }));
+  try {
+    const res = await ufetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/sessions/slow/invocations`, { method: 'POST', body: '{}', dispatcher: new Agent({ headersTimeout: 0 }) });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { status: 'answered' });
+  } finally {
+    setGlobalDispatcher(previous);
+    await Promise.all([new Promise((r) => server.close(r)), new Promise((r) => session.close(r))]);
+  }
 });
