@@ -42,6 +42,10 @@ export async function decideApproval(key: string, id: string, decision: 'approve
   );
 }
 
+// The page never holds the Sleeper service token: the distributor adds it (apps/sleeper/*).
+export const sleeperLeague = async () => (await json<{ league: string }>(await fetch('apps/sleeper'))).league;
+export const runLineup = async () => json<{ sessionKey: string }>(await fetch('apps/sleeper/lineup', { method: 'POST' }));
+
 export function socketUrl(key: string, agent?: string) {
   const url = new URL(`${base(key)}/ws${agent ? `?agent=${encodeURIComponent(agent)}` : ''}`, location.href);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';

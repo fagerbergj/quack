@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { indexRoutes, openStore } from '@quack/index';
 import { createDistributor } from './server.ts';
 import { processDriver } from './process-driver.ts';
+import { sleeperRoutes } from './sleeper-routes.ts';
 
 function env(name: string, fallback?: string): string {
   const value = process.env[name] ?? fallback;
@@ -20,7 +21,12 @@ const { store } = openStore({ QUACK_INDEX_DATABASE_URL: process.env.QUACK_INDEX_
 void store.ensure().catch((err) => console.error('index migrations will retry:', err.message));
 const sessionEnv = { QUACK_INDEX_URL: `http://127.0.0.1:${port}`, QUACK_INDEX_TOKEN: token };
 const driver = processDriver({ command: [process.execPath, runtime], dataDir, agentsDir: process.env.QUACK_AGENTS_DIR, startTimeoutMs: 60_000, env: sessionEnv });
-const server = createDistributor(driver, { webDir: process.env.QUACK_WEB_DIR, index: indexRoutes(store, token) }).listen(port);
+// Opt-in: with all three set, the page may start the lineup job without ever seeing the service token.
+const sleeper = process.env.QUACK_SLEEPER_URL && process.env.QUACK_SLEEPER_TOKEN && process.env.QUACK_SLEEPER_LEAGUE
+  ? sleeperRoutes({ url: process.env.QUACK_SLEEPER_URL, token: process.env.QUACK_SLEEPER_TOKEN, league: process.env.QUACK_SLEEPER_LEAGUE })
+  : undefined;
+const indexHttp = indexRoutes(store, token);
+const server = createDistributor(driver, { webDir: process.env.QUACK_WEB_DIR, index: async (req, res) => (await indexHttp(req, res)) || (await sleeper?.(req, res)) || false }).listen(port);
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   // Sessions stop first: their logs are durable, so a request cut here is answered after the restart. The deadline beats
   // compose's 30 s stop grace, so a stuck child or an attached viewer cannot hold the exit.

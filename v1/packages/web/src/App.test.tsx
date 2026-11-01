@@ -588,3 +588,98 @@ test('a double-click on Approve posts once', async () => {
   await userEvent.dblClick(approve);
   expect(fetchMock.mock.calls.filter(([, i]) => i?.method === 'POST')).toHaveLength(1);
 });
+
+const KEY = 'sleeper:L1:8:lineup';
+const player = (name: string, over: object = {}) => ({ id: name, name, pos: 'WR', team: 'DET', inj: null, ...over });
+const row = (name: string, over: object = {}) => ({ slot: 'WR1', player: player(name), proj: 12.34, action: 'keep', locked: false, replaces: null, game: { opponent: 'MIN', home: true, kickoff: '2026-11-01T18:00:00.000Z', locked: false, status: 'pre_game' }, why: `Why ${name}`, news: [], ...over });
+const lineup = (over: object = {}) => ({ kind: 'lineup', league: 'L1', week: 8, team: 'Substation', opponent: 'Shore69', my_proj: 118.8, opp_proj: 130.5, summary: 'Start Allen over Concepcion.', bench: [{ player: player('Benchy'), proj: 3 }],
+  starters: [row('Jefferson'), row('Allen', { slot: 'FLEX', action: 'start', replaces: player('Concepcion'), news: [{ title: 'Practice report', url: 'https://nfl.com/x', date: '2026-10-30', player: 'Concepcion' }] })], ...over });
+const sealed = (card: object, verdict: object | null, version = 1) => ({ kind: 'sleeper.cards', version, hash: 'h', content: JSON.stringify(card), sealedAt: 1, verdict });
+
+async function openSleeper(artifacts: object[], sessionOver: object = {}) {
+  routes['GET /apps/sleeper'] = { league: 'L1' };
+  routes['GET /sessions'] = { sessions: [sess(KEY, { agent: 'sleeper-lineup', ...sessionOver })] };
+  routes[`GET /sessions/${encodeURIComponent(KEY)}/artifacts`] = { artifacts };
+  routes[`GET /sessions/${encodeURIComponent(KEY)}/approvals`] = { approvals: [] };
+  location.hash = '#/sleeper';
+  render(<App />);
+}
+
+test('Sleeper leads with the week strip and renders a passed lineup card', async () => {
+  await openSleeper([sealed(lineup(), { passed: true, gatesFailed: [], score: 1, checks: [] })]);
+  const strip = await screen.findByRole('region', { name: 'This week' });
+  expect(within(strip).getByText(/Lineup · week 8 · locks Sun/)).toBeInTheDocument();
+  expect(within(strip).getByText('checked')).toBeInTheDocument();
+  expect(within(screen.getByRole('article', { name: 'Week 8 lineup' })).getByText('v1 · checked')).toBeInTheDocument();
+  const card = screen.getByRole('article', { name: 'Week 8 lineup' });
+  expect(within(card).getByText('Allen')).toBeInTheDocument();
+  expect(within(card).getByText('START')).toBeInTheDocument();
+  expect(within(card).getByText('Why Allen')).toBeInTheDocument();
+  expect(within(card).getByText(/replaces Concepcion/)).toBeInTheDocument();
+  const news = within(card).getByText('News (1)').closest('details')!;
+  expect(within(news).getByRole('link', { name: /Practice report/ })).toHaveAttribute('href', 'https://nfl.com/x');
+  expect(news).toHaveTextContent('nfl.com · 2026-10-30');
+  expect(within(card).getByRole('link', { name: 'Ask about this card' })).toHaveAttribute('href', `#/s/${encodeURIComponent(KEY)}`);
+});
+
+test('a failed lineup card names its failing checks', async () => {
+  const failed = { passed: false, gatesFailed: [], score: 0.4, checks: [{ criterion: 'gates', id: 'summary_names_changes', met: 0, notes: ['Summary says nothing about the swap'] }] };
+  await openSleeper([sealed(lineup(), null, 1), sealed(lineup(), failed, 2)]);
+  const card = await screen.findByRole('article', { name: 'Week 8 lineup' });
+  expect(within(card).getByText('v2 · checks failed')).toBeInTheDocument();
+  const check = within(card).getByText('Summary names changes');
+  expect(check).toHaveAttribute('title', 'gates.summary_names_changes');
+  expect(check.closest('details')).toHaveTextContent('Summary says nothing about the swap');
+});
+
+test('a card with no changes shows the calm banner, not the change summary', async () => {
+  await openSleeper([sealed(lineup({ summary: 'No changes.', starters: [row('Jefferson')] }), null)]);
+  expect(await screen.findAllByText('No changes: your lineup stands')).toHaveLength(2);
+});
+
+test('a failed verdict with no failing check shows the judge tally', async () => {
+  const checks = [{ criterion: 'gates', id: 'a', met: 1, notes: [] }, { criterion: 'pitfalls', id: 'b', met: 1, notes: [] }, { criterion: 'x', id: 'c', met: null, notes: [] }];
+  await openSleeper([sealed(lineup(), { passed: false, gatesFailed: [], score: 0.7, checks })]);
+  const card = await screen.findByRole('article', { name: 'Week 8 lineup' });
+  expect(within(card).getByText('Judge: 2 of 2 checks passed')).toBeInTheDocument();
+});
+
+test('a failing check with no judge note says so', async () => {
+  const failed = { passed: false, gatesFailed: [], score: 0.4, checks: [{ criterion: 'gates', id: 'summary_names_changes', met: 0, notes: [] }] };
+  await openSleeper([sealed(lineup(), failed)]);
+  const card = await screen.findByRole('article', { name: 'Week 8 lineup' });
+  expect(within(card).getByText('Summary names changes').closest('details')).toHaveTextContent('No note from the judge.');
+});
+
+test('an unchecked card is labelled not checked', async () => {
+  await openSleeper([sealed(lineup(), null)]);
+  expect(await screen.findAllByText('v1 · not checked')).not.toHaveLength(0);
+});
+
+test('Run now posts to the distributor route, which carries no token', async () => {
+  await openSleeper([]);
+  routes['POST /apps/sleeper/lineup'] = { sessionKey: KEY };
+  await userEvent.click(await screen.findByRole('button', { name: 'Run now' }));
+  expect(await screen.findByRole('status')).toHaveTextContent('Started');
+  const post = fetchMock.mock.calls.find(([u, i]) => u === 'apps/sleeper/lineup' && i?.method === 'POST');
+  expect(post?.[1]?.headers).toBeUndefined();
+});
+
+test('Run now is off while the job runs', async () => {
+  await openSleeper([], { running: true });
+  expect(await screen.findByRole('button', { name: 'Run now' })).toBeDisabled();
+  expect(screen.getByText('Running now')).toBeInTheDocument();
+});
+
+test('a refused Run now shows the reason', async () => {
+  await openSleeper([]);
+  await userEvent.click(await screen.findByRole('button', { name: 'Run now' }));
+  expect(await screen.findByRole('status')).toHaveTextContent('Could not start: not found');
+});
+
+test('without the Sleeper route the page says it is not set up, whatever sessions exist', async () => {
+  routes['GET /sessions'] = { sessions: [sess('ui:u1'), sess('github:a/b#1')] };
+  location.hash = '#/sleeper';
+  render(<App />);
+  expect(await screen.findByText('Sleeper is not set up on this server.')).toBeInTheDocument();
+});
