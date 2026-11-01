@@ -38,6 +38,20 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
 
+// A 200 only means the session answered; an unanswered result (an operator abort, say) is not an ingested document.
+function failure(res: { status: number; text: string }): string | undefined {
+  if (res.status < 200 || res.status >= 300) return `distributor answered ${res.status}`;
+  try {
+    const result = JSON.parse(res.text) as { status?: string; reason?: string };
+    return result.status === 'unanswered' ? `session unanswered: ${result.reason ?? 'no reason'}` : undefined;
+  } catch {
+    return 'distributor answer was not JSON';
+  }
+}
+
+// Only rmfakecloud failures are the upstream's fault; store errors and the like are this service's own.
+const upstream = (err: unknown) => err instanceof Error && (err.message.startsWith('rmfakecloud') || err.message === 'fetch failed');
+
 export function createRemarkableService(config: ServiceConfig) {
   const store = openStore(config.dbPath, config.now ?? (() => new Date()));
   const inflight = new Set<Promise<void>>();
@@ -46,8 +60,11 @@ export function createRemarkableService(config: ServiceConfig) {
 
   // node:http, not fetch: undici gives up on response headers after 300s, and a vision-model ingest can run longer.
   const post = (url: string, body: string) =>
-    new Promise<number>((resolve, reject) => {
-      const req = request(url, { method: 'POST', headers: { 'content-type': 'application/json' } }, (res) => (res.resume(), res.on('end', () => resolve(res.statusCode ?? 0))));
+    new Promise<{ status: number; text: string }>((resolve, reject) => {
+      const req = request(url, { method: 'POST', headers: { 'content-type': 'application/json' } }, (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (c) => chunks.push(c)).on('end', () => resolve({ status: res.statusCode ?? 0, text: Buffer.concat(chunks).toString('utf8') }));
+      });
       aborts.add(req.destroy.bind(req));
       req.on('error', reject).end(body);
     });
@@ -57,8 +74,8 @@ export function createRemarkableService(config: ServiceConfig) {
     const key = encodeURIComponent(`remarkable:${doc.id}`);
     const body = JSON.stringify({ input: JSON.stringify({ id: doc.id, name: doc.name, version: doc.version }), requestId: doc.version, wait: true });
     try {
-      const status = await post(`${config.distributorUrl}/sessions/${key}/invocations?agent=${encodeURIComponent(config.agent)}`, body);
-      store.settle(batch, doc.id, status >= 200 && status < 300 ? undefined : `distributor answered ${status}`);
+      const res = await post(`${config.distributorUrl}/sessions/${key}/invocations?agent=${encodeURIComponent(config.agent)}`, body);
+      store.settle(batch, doc.id, failure(res));
     } catch (err) {
       if (stopped) return;
       store.settle(batch, doc.id, `distributor unreachable: ${(err as Error).message}`);
@@ -101,8 +118,8 @@ export function createRemarkableService(config: ServiceConfig) {
     try {
       send(res, ...(await route(req)));
     } catch (err) {
-      const bad = err instanceof SyntaxError || (err as Error).message === 'body too large';
-      send(res, bad ? 400 : 502, { error: (err as Error).message });
+      const bad = err instanceof SyntaxError || err instanceof URIError || (err as Error).message === 'body too large';
+      send(res, bad ? 400 : upstream(err) ? 502 : 500, { error: (err as Error).message });
     }
   });
   for (const p of store.pending()) track(p.batch, { id: p.document, name: p.name, version: p.version });

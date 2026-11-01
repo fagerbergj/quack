@@ -73,6 +73,7 @@ type Seen = { key: string; agent: string | null; body: { input: string; requestI
 const seen: Seen[] = [];
 const gates = new Map<string, (status: number) => void>();
 let autoAnswer: number | undefined = 200;
+let answerBody: unknown = { status: 'done' };
 const arrived = new Set<() => void>();
 const settledDocs: Array<() => void> = [];
 const until = (ready: () => boolean) => new Promise<void>((resolve) => {
@@ -90,7 +91,7 @@ const distributor = await listen(
     const answer = autoAnswer === undefined ? new Promise<number>((release) => gates.set(key, release)) : autoAnswer;
     arrived.forEach((f) => f());
     const status = await answer;
-    res.writeHead(status).end('{}');
+    res.writeHead(status).end(JSON.stringify(answerBody));
   }),
 );
 
@@ -210,4 +211,29 @@ test('a restart resubmits pending items with the same request id and the batch c
   const done = (await (await fetch(`${secondUrl}/batches/${id}`, { headers })).json()) as any;
   assert.equal(done.status, 'done');
   await second.stop();
+});
+
+test('a 200 whose result is unanswered settles the item failed with the reason', async () => {
+  answerBody = { status: 'unanswered', reason: 'aborted by operator' };
+  const { batch: id } = (await (await call('POST', '/ingest', { ids: ['n1'] })).json()) as any;
+  await service.settled();
+  const done = await batch(id);
+  assert.equal(done.status, 'failed');
+  assert.equal(done.items[0].error, 'session unanswered: aborted by operator');
+  answerBody = { status: 'done' };
+});
+
+test('an unreachable distributor settles the item failed', async () => {
+  const down = createRemarkableService({ serviceToken: 'svc-secret', dbPath: ':memory:', distributorUrl: 'http://127.0.0.1:1', agent: 'remarkable-ingest', client: createRmClient({ url: rm, email: EMAIL, password: PASSWORD }) });
+  const downBase = await listen(down);
+  const headers = { authorization: 'Bearer svc-secret' };
+  const { batch: id } = (await (await fetch(`${downBase}/ingest`, { method: 'POST', headers, body: JSON.stringify({ ids: ['n1'] }) })).json()) as any;
+  await down.settled();
+  const got = (await (await fetch(`${downBase}/batches/${id}`, { headers })).json()) as any;
+  assert.equal(got.status, 'failed');
+  assert.match(got.items[0].error, /distributor unreachable/);
+});
+
+test('a malformed batch id is a 400, not an upstream error', async () => {
+  assert.equal((await call('GET', '/batches/%E0%A4%A')).status, 400);
 });
