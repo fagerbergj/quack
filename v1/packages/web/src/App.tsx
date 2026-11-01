@@ -58,7 +58,7 @@ export function App() {
   const title = !session && PLACEHOLDERS[nav];
   const data = useWorkspaceData(session?.key);
   const desktop = useDesktop();
-  const list = <SessionList rows={data.rows} selected={session?.key} error={data.error} now={data.now} compact={desktop} />;
+  const list = <SessionList rows={data.rows} selected={session?.key} error={data.error} now={data.now} />;
   return (
     <Shell route={nav} bare={Boolean(session)} sidebar={desktop ? list : undefined}>
       {nav === 'sleeper' && !session ? <Sleeper rows={data.rows} />

@@ -1,15 +1,14 @@
-import type { Approval, Decision, SessionSummary } from './api.ts';
+import type { Approval, Decision, IndexArtifact, SessionSummary } from './api.ts';
+import { searchText, sessionTitle } from './kinds.ts';
 
-export type Row = SessionSummary & { approvals: Approval[]; decisions: Decision[] };
+export type Row = SessionSummary & { approvals: Approval[]; decisions: Decision[]; artifacts: IndexArtifact[]; multiRepo: boolean };
 export type Groups = { needs: Row[]; running: Row[]; recent: Row[] };
 export type Filters = { text: string; agent: string; start: string };
 
-const GITHUB_KEY = /^github:[^/]+\/([^#]+)#(\d+)$/;
-
-// A GitHub key shortens to repo#n, the part that tells sessions apart; the full key stays in the row's tooltip.
-export function titleOf(s: SessionSummary): string {
-  const m = GITHUB_KEY.exec(s.key);
-  return m ? [`${m[1]}#${m[2]}`, s.title].filter(Boolean).join(' · ') : (s.title ?? s.key);
+// The display title as one string, e.g. "#1927 Sleeper waivers job"; the full key stays in the row's tooltip.
+export function titleOf(s: SessionSummary & { multiRepo?: boolean }): string {
+  const t = sessionTitle(s);
+  return [t.repo, t.number, t.text].filter(Boolean).join(' ');
 }
 
 const START_LABELS: Record<string, string> = { ui: 'You', github: 'GitHub' };
@@ -20,16 +19,16 @@ export function startOf(key: string): string {
   return START_LABELS[prefix] ?? prefix;
 }
 
-export function matches(s: SessionSummary, f: Filters): boolean {
+export function matches(s: Row, f: Filters): boolean {
   const q = f.text.trim().toLowerCase();
-  const hit = !q || [titleOf(s), s.key, s.agent].some((v) => v.toLowerCase().includes(q));
+  const hit = !q || [...searchText(s), s.key, s.agent].some((v) => v.toLowerCase().includes(q));
   return hit && (!f.agent || s.agent === f.agent) && (!f.start || startOf(s.key) === f.start);
 }
 
 export function group(rows: Row[]): Groups {
   const needs = rows.filter((r) => r.approvals.length + r.decisions.length > 0);
   const rest = rows.filter((r) => r.approvals.length + r.decisions.length === 0);
-  return { needs, running: rest.filter((r) => r.running), recent: rest.filter((r) => !r.running) };
+  return { needs, running: rest.filter((r) => r.active), recent: rest.filter((r) => !r.active) };
 }
 
 export function statusLine(r: Row): string {

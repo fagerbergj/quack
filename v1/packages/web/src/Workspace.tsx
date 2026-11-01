@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { indexApprovals, indexDecisions, listAgents, listApprovals, listDecisions, listSessions, type Approval, type AgentSummary, type Decision } from './api.ts';
+import { indexApprovals, indexArtifacts, indexDecisions, listAgents, listApprovals, listDecisions, listSessions, type Approval, type AgentSummary, type Decision } from './api.ts';
 import { Landing } from './Landing.tsx';
 import { group, titleOf, type Row } from './sessions.ts';
 import { SessionView } from './SessionView.tsx';
@@ -8,11 +8,16 @@ const REFRESH_MS = 15_000;
 
 // The index knows pending approvals of idle sessions too. Without it, only running sessions are asked: a request to an idle one would start its process.
 async function loadRows(): Promise<Row[]> {
-  const [sessions, indexed, asked] = await Promise.all([listSessions(), indexApprovals(), indexDecisions()]);
+  const [sessions, indexed, asked, sealed] = await Promise.all([listSessions(), indexApprovals(), indexDecisions(), indexArtifacts()]);
   const approvalsBy = Map.groupBy(indexed ?? [], (a) => a.session);
   const decisionsBy = Map.groupBy(asked ?? [], (d) => d.session);
+  const artifacts = Map.groupBy(sealed ?? [], (a) => a.session);
+  // A repo prefix only earns its space when reviews come from more than one repo.
+  const multiRepo = new Set(sessions.map((s) => /^github:([^#]+)#/.exec(s.key)?.[1]).filter(Boolean)).size > 1;
   return Promise.all(sessions.map(async (s) => ({
     ...s,
+    multiRepo,
+    artifacts: artifacts.get(s.key) ?? [],
     approvals: indexed ? (approvalsBy.get(s.key) ?? []).map((a): Approval => ({ id: a.id, tool: a.tool, args: undefined, requestedAt: a.at })) : s.running ? await listApprovals(s.key).catch(() => []) : [],
     decisions: asked ? (decisionsBy.get(s.key) ?? []).map((d): Decision => ({ ...d, askedAt: d.at })) : s.running ? await listDecisions(s.key).catch(() => []) : [],
   })));

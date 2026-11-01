@@ -1,65 +1,54 @@
 import { useState } from 'react';
-import { age, group, matches, startOf, statusLine, titleOf, type Filters, type Row } from './sessions.ts';
+import { look, type Look, type Tone } from './kinds.ts';
+import { age, group, matches, startOf, type Filters, type Row } from './sessions.ts';
 
 const field = 'rounded-full border border-line bg-soft text-[12.5px] outline-none';
 
-function Bell() {
-  return (
-    <svg className="mt-0.5 flex-none" width="18" height="16" viewBox="0 0 18 16" aria-hidden="true">
-      <circle cx="6" cy="9" r="5" fill="#1f7a63" />
-      <path d="M10 8 L15 9.5 L10 11Z" fill="#e3a92b" />
-      <circle cx="6.5" cy="7.5" r="1" fill="#fff" />
-      <rect x="13.5" y="0" width="2.4" height="5" rx="1.2" fill="#c27d00" />
-      <circle cx="14.7" cy="6.6" r="1.2" fill="#c27d00" />
-    </svg>
-  );
-}
+const TONE: Record<Tone, string> = { plain: 'text-ink-2', muted: 'text-muted', warn: 'text-warning', ok: 'text-success', bad: 'text-danger' };
+type Kind = 'needs' | 'running' | 'recent';
 
-// Decorative: a duckling paddling along a wave under a running session.
-function Swim() {
+function Tile({ l, kind }: { l: Look; kind: Kind }) {
+  const tint = kind === 'needs' ? 'bg-warning-bg text-warning' : kind === 'running' ? l.tint : 'bg-soft text-muted';
   return (
-    <span aria-hidden="true" className="relative mt-1.5 block h-3 overflow-hidden">
-      <span className="waves absolute inset-x-0 bottom-0 !h-[8px] rounded-full" />
-      <span className="row-swim absolute bottom-0">
-        <svg width="16" height="12" viewBox="0 0 18 14" style={{ transform: 'scaleX(-1)' }}>
-          <ellipse cx="10" cy="9" rx="7" ry="4.5" fill="#fdfcf7" stroke="#2f3a36" strokeOpacity=".3" />
-          <circle cx="5.5" cy="5" r="3.5" fill="#1f7a63" />
-          <path d="M2.4 4.3 L0 5.2 L2.4 6.2 Z" fill="#e3a92b" />
-        </svg>
-      </span>
+    <span aria-hidden="true" className={`relative grid h-[34px] w-[34px] flex-none place-items-center rounded-[10px] lg:h-7 lg:w-7 lg:rounded-lg ${tint}`}>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={l.icon} /></svg>
+      {kind === 'running' && <span className="pulse-dot absolute -right-0.5 -bottom-0.5 h-2.5 w-2.5 rounded-full border-2 border-canvas bg-accent-ink" />}
     </span>
   );
 }
 
-function RowLink({ r, kind, current, now }: { r: Row; kind: 'needs' | 'running' | 'recent'; current: boolean; now: number }) {
-  const lead = kind === 'needs' ? <Bell /> : <span aria-hidden="true" className={`mt-1.5 h-2 w-2 flex-none rounded-full ${kind === 'running' ? 'live-dot bg-info' : 'bg-line-strong'}`} />;
+function RowLink({ r, kind, current, now }: { r: Row; kind: Kind; current: boolean; now: number }) {
+  const l = look(r);
   return (
     <a
       href={`#/s/${encodeURIComponent(r.key)}`}
       aria-current={current ? 'true' : undefined}
-      title={r.key}
-      aria-description={r.key}
-      className={`row flex min-h-11 items-start gap-2.5 px-4 py-2.5 text-ink no-underline hover:bg-soft/70 ${kind === 'needs' ? 'mx-2 rounded-xl bg-warm/60 px-3' : ''}`}
+      title={`${l.full}\n${r.key}`}
+      aria-description={`${l.full} (${r.key})`}
+      className={`row mx-2 flex min-h-11 items-start gap-3 rounded-xl px-2 py-2.5 text-ink no-underline hover:bg-soft/70 lg:gap-2.5 lg:rounded-[10px] lg:py-2 ${kind === 'needs' ? 'bg-warm' : ''}`}
     >
-      {lead}
+      <Tile l={l} kind={kind} />
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="truncate text-[13.5px] font-medium">{titleOf(r)}</span>
-        <span className="truncate text-[12px] text-ink-2">{statusLine(r)}</span>
-        {kind === 'running' && <Swim />}
+        <span className="flex gap-2">
+          <span className={`min-w-0 flex-1 truncate text-[15px] lg:text-[13.5px] ${kind === 'recent' ? 'font-medium' : 'font-semibold'}`}>
+            {l.repo && <><span className="text-[11px] font-normal text-muted">{l.repo}</span>{' '}</>}
+            {l.num && <><span className="font-medium text-muted">{l.num}</span>{' '}</>}
+            {l.title}
+          </span>
+          <time dateTime={r.lastActivity} className="whitespace-nowrap text-xs tabular-nums text-muted lg:hidden">{age(r.lastActivity, now)}</time>
+        </span>
+        <span className={`truncate text-[13px] lg:text-xs ${TONE[l.tone]}`}>{l.line}</span>
       </span>
-      <time dateTime={r.lastActivity} className="whitespace-nowrap text-[11.5px] tabular-nums text-muted">{age(r.lastActivity, now)}</time>
     </a>
   );
 }
 
-function Section({ name, rows, kind, selected, now }: { name: string; rows: Row[]; kind: 'needs' | 'running' | 'recent'; selected?: string; now: number }) {
+function Section({ name, rows, kind, selected, now }: { name: string; rows: Row[]; kind: Kind; selected?: string; now: number }) {
   if (!rows.length) return null;
   return (
     <section aria-label={name}>
-      <p className="m-0 flex items-baseline gap-1.5 px-4 pt-4 pb-1.5 text-[13px] font-semibold text-ink">
-        {name} <span className="font-medium text-muted">{rows.length}</span>
-      </p>
-      <div className="flex flex-col gap-1">
+      <p className="m-0 px-4 pt-[18px] pb-1.5 text-xs font-semibold tracking-[.06em] text-muted uppercase lg:px-4 lg:pt-3 lg:pb-1 lg:text-[11px]">{`${name} · ${rows.length}`}</p>
+      <div className="flex flex-col gap-px">
         {rows.map((r) => <RowLink key={r.key} r={r} kind={kind} current={r.key === selected} now={now} />)}
       </div>
     </section>
@@ -87,29 +76,25 @@ function FilterSelects({ rows, filters, set }: { rows: Row[]; filters: Filters; 
 
 function FilterButton({ open, toggle }: { open: boolean; toggle: () => void }) {
   return (
-    <button type="button" aria-expanded={open} aria-controls="filters" onClick={toggle} className="ml-auto min-h-11 min-w-11 cursor-pointer rounded-lg px-2 py-1 text-xs font-medium text-muted hover:bg-soft hover:text-ink lg:min-h-0 lg:min-w-0">Filter</button>
+    <button type="button" aria-expanded={open} aria-controls="filters" onClick={toggle} className="min-h-11 cursor-pointer rounded-full border border-line bg-transparent px-3.5 text-[13px] text-ink-2 hover:bg-soft hover:text-ink lg:min-h-0 lg:py-1.5">Filter</button>
   );
 }
 
-export function SessionList({ rows, selected, error, now, compact }: { rows: Row[] | undefined; selected?: string; error: string; now: number; compact: boolean }) {
+export function SessionList({ rows, selected, error, now }: { rows: Row[] | undefined; selected?: string; error: string; now: number }) {
   const [filters, setFilters] = useState<Filters>({ text: '', agent: '', start: '' });
   const [open, setOpen] = useState(false);
   const shown = (rows ?? []).filter((r) => matches(r, filters));
   const g = group(shown);
   return (
     <section aria-label="Sessions" className="flex min-h-0 flex-1 flex-col">
-      <div className={`flex flex-col gap-2.5 px-4 ${compact ? 'pt-3 pb-2' : 'border-b border-line py-3'}`}>
-        {!compact && (
-          <div className="flex items-center gap-2">
-            <h1 className="m-0 text-[17px] font-semibold">Sessions</h1>
-            <FilterButton open={open} toggle={() => setOpen(!open)} />
-            <a href="#/new" className="inline-flex h-11 items-center rounded-full bg-ink px-3 text-[12.5px] font-semibold text-on-ink no-underline hover:bg-ink-2">New session</a>
-          </div>
-        )}
-        <div className="flex items-center gap-1">
-          <label htmlFor="s-search" className="sr-only">Search sessions</label>
-          <input id="s-search" type="search" value={filters.text} onChange={(e) => setFilters({ ...filters, text: e.target.value })} placeholder="Search titles, repos, agents" className={`${field} h-[34px] w-full min-w-0 flex-1 px-3 text-[13px] transition focus:border-line-strong focus:bg-surface focus:shadow-ring`} />
-          {compact && <FilterButton open={open} toggle={() => setOpen(!open)} />}
+      <div className="flex flex-col gap-2 px-4 pt-3 pb-2 lg:border-b lg:border-line lg:py-3">
+        <div className="flex items-center gap-2">
+          <label className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-full bg-soft px-3 text-sm text-muted focus-within:bg-surface focus-within:shadow-ring lg:h-[34px] lg:text-[13px]">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true" className="flex-none"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></svg>
+            <span className="sr-only">Search sessions</span>
+            <input id="s-search" type="search" value={filters.text} onChange={(e) => setFilters({ ...filters, text: e.target.value })} placeholder="Search sessions" className="min-w-0 flex-1 border-0 bg-transparent text-ink outline-none" />
+          </label>
+          <FilterButton open={open} toggle={() => setOpen(!open)} />
         </div>
         <div id="filters" hidden={!open}>
           <FilterSelects rows={rows ?? []} filters={filters} set={setFilters} />

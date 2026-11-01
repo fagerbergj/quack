@@ -1,5 +1,5 @@
 // Every call to the distributor, so its contract lives in one place.
-export type SessionSummary = { key: string; agent: string; title?: string; running: boolean; lastActivity: string };
+export type SessionSummary = { key: string; agent: string; title?: string; running: boolean; active: boolean; lastActivity: string };
 export type AgentSummary = { name: string; version: number };
 export type Approval = { id: string; tool: string; args: unknown; requestedAt: number };
 export type Check = { criterion: string; id: string; met: number | null; notes: string[] };
