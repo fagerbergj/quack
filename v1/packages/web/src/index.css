@@ -89,3 +89,29 @@
 .navlink[aria-current="page"] { background: var(--color-soft); color: var(--color-ink); font-weight: 600; box-shadow: inset 2px 0 0 var(--color-accent); }
 .tablink[aria-current="page"] { color: var(--color-accent-ink); }
 .row[aria-current="true"] { background: var(--color-soft); box-shadow: inset 2px 0 0 var(--color-accent); }
+.rubber { animation: bob 2.2s ease-in-out infinite; }
+.feet { height: 14px; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='44' height='14' viewBox='0 0 44 14'%3E%3Cpath d='M6 2 L9 8 L12 2 Q9 5 6 2Z M3 4 L9 12 L15 4' fill='%23e3a92b' fill-opacity='0.55'/%3E%3Cpath d='M28 6 L31 12 L34 6 Q31 9 28 6Z' fill='%23e3a92b' fill-opacity='0.35'/%3E%3C/svg%3E") repeat-x; }
+.md > * { margin: 0 0 0.7em; }
+.md > *:last-child { margin-bottom: 0; }
+.md ul { list-style: disc; padding-left: 1.25em; }
+.md ol { list-style: decimal; padding-left: 1.25em; }
+.md li + li { margin-top: 0.25em; }
+.md h1, .md h2, .md h3, .md h4 { font-size: 15px; font-weight: 600; margin-top: 1.1em; }
+.md h1 { font-size: 17px; }
+.md h2 { font-size: 16px; }
+.md :not(pre) > code { font-family: var(--font-mono); font-size: 0.88em; background: var(--color-soft); border-radius: 4px; padding: 0.1em 0.3em; }
+.md pre { font-family: var(--font-mono); font-size: 12px; line-height: 1.55; background: var(--color-soft); border-radius: 8px; padding: 10px; overflow-x: auto; white-space: pre; }
+.md table { border-collapse: collapse; font-size: 13px; }
+.md th, .md td { border-bottom: 1px solid var(--color-line); padding: 6px 12px 6px 0; text-align: left; vertical-align: top; }
+.md th { font-weight: 600; font-size: 12px; color: var(--color-muted); }
+.md strong { font-weight: 600; }
+.md blockquote { margin-left: 0; padding-left: 0.9em; border-left: 3px solid var(--color-line-strong); color: var(--color-ink-2); }
+.cite { font-family: var(--font-mono); font-size: 10.5px; font-weight: 600; color: var(--color-link); background: var(--color-link-bg); border-radius: 4px; padding: 0 4px; margin-left: 2px; vertical-align: 2px; }
+.hljs-comment, .hljs-quote { color: var(--color-muted); font-style: italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-built_in { color: var(--color-info); }
+.hljs-string, .hljs-title, .hljs-attr, .hljs-name { color: var(--color-success); }
+.hljs-number, .hljs-meta, .hljs-symbol { color: var(--color-warning); }
+.hljs-addition { color: var(--color-success); }
+.hljs-deletion { color: var(--color-danger); }
+@keyframes row-swim { 0% { left: -6%; } 100% { left: 100%; } }
+.row-swim { animation: row-swim 12s linear infinite, bob 1.6s ease-in-out infinite; }

@@ -15,6 +15,22 @@ function Bell() {
   );
 }
 
+// Decorative: a duckling paddling along a wave under a running session.
+function Swim() {
+  return (
+    <span aria-hidden="true" className="relative mt-1.5 block h-3 overflow-hidden">
+      <span className="waves absolute inset-x-0 bottom-0 !h-[8px] rounded-full" />
+      <span className="row-swim absolute bottom-0">
+        <svg width="16" height="12" viewBox="0 0 18 14" style={{ transform: 'scaleX(-1)' }}>
+          <ellipse cx="10" cy="9" rx="7" ry="4.5" fill="#fdfcf7" stroke="#2f3a36" strokeOpacity=".3" />
+          <circle cx="5.5" cy="5" r="3.5" fill="#1f7a63" />
+          <path d="M2.4 4.3 L0 5.2 L2.4 6.2 Z" fill="#e3a92b" />
+        </svg>
+      </span>
+    </span>
+  );
+}
+
 function RowLink({ r, kind, current, now }: { r: Row; kind: 'needs' | 'running' | 'recent'; current: boolean; now: number }) {
   const lead = kind === 'needs' ? <Bell /> : <span aria-hidden="true" className={`mt-1.5 h-2 w-2 flex-none rounded-full ${kind === 'running' ? 'live-dot bg-info' : 'bg-line-strong'}`} />;
   return (
@@ -27,6 +43,7 @@ function RowLink({ r, kind, current, now }: { r: Row; kind: 'needs' | 'running' 
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="truncate text-[13.5px] font-medium">{titleOf(r)}</span>
         <span className="truncate text-[12px] text-ink-2">{statusLine(r)}</span>
+        {kind === 'running' && <Swim />}
       </span>
       <time dateTime={r.lastActivity} className="whitespace-nowrap text-[11.5px] tabular-nums text-muted">{age(r.lastActivity, now)}</time>
     </a>

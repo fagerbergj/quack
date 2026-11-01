@@ -89,7 +89,7 @@ function Composer({ busy, disabled, send }: { busy: boolean; disabled: boolean; 
       )}
       <div className="flex items-end gap-1.5 p-2.5">
         <label htmlFor="steer" className="sr-only">Message</label>
-        <textarea id="steer" value={input} onChange={(e) => setInput(e.target.value)} rows={2} placeholder={busy ? 'Steer this run…' : 'Message'} className="max-h-[220px] min-h-[40px] flex-1 resize-none bg-transparent px-1 py-2 text-[15px] leading-relaxed outline-none placeholder:text-muted" />
+        <textarea id="steer" value={input} onChange={(e) => setInput(e.target.value)} rows={1} placeholder={busy ? 'Steer this run…' : 'Message'} className="max-h-[220px] min-h-[40px] flex-1 resize-none bg-transparent px-1 py-2 text-[15px] leading-relaxed outline-none placeholder:text-muted" />
         <button type="submit" disabled={disabled} className="h-11 flex-none cursor-pointer rounded-xl bg-ink px-4 text-sm font-semibold text-on-ink hover:bg-ink-2 disabled:cursor-not-allowed disabled:opacity-50">Send</button>
       </div>
     </form>

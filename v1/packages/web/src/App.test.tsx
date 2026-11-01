@@ -319,10 +319,10 @@ test('lists artifacts with their check status and failing criteria', async () =>
   ws.frame(snapshot());
   const section = await screen.findByRole('region', { name: 'Artifacts' });
   const items = within(section).getAllByRole('listitem');
-  expect(items[0]).toHaveTextContent('github.review v1: failed');
+  expect(items[0]).toHaveTextContent('github.review v1 sealed · checks failed');
   expect(items[0]).toHaveTextContent('Failing: cites.lines');
   expect(items[0]).toHaveTextContent('draft one');
-  expect(items[1]).toHaveTextContent('github.review v2: passed');
+  expect(items[1]).toHaveTextContent('github.review v2 sealed · checked');
   expect(items[1]).not.toHaveTextContent('Failing');
   expect(items[1]).toHaveTextContent('final review');
 });
@@ -375,4 +375,25 @@ test('the theme toggle flips the document theme', async () => {
   expect(toggle()).toHaveAttribute('aria-pressed', 'true');
   await userEvent.click(toggle());
   expect(document.documentElement.dataset.theme).toBe('light');
+});
+
+test('assistant text renders as markdown with a table, highlighted code and citation chips; calls collapse into one card', async () => {
+  const ws = await openSession();
+  const md = '## Result\n\n| Server | Gain |\n| --- | --- |\n| vLLM | 1.9x |\n\nSee [S9] and `TP=4`.\n\n```ts\nconst x = 1;\n```';
+  const call = (id: string, name: string) => ({ type: 'toolCall', id, name, arguments: { q: id } });
+  const res = (id: string, name: string) => entry(`r${id}`, [{ role: 'toolResult', toolCallId: id, toolName: name, content: [{ type: 'text', text: 'ok' }], isError: false, timestamp: 4000 }]);
+  ws.frame(snapshot({
+    entries: [
+      entry('u', [{ role: 'user', content: 'compare', timestamp: 1 }]),
+      entry('a', [assistant([{ type: 'text', text: md }, call('c1', 'web_search'), call('c2', 'web_fetch'), call('c3', 'web_fetch')])]),
+      res('c1', 'web_search'), res('c2', 'web_fetch'), res('c3', 'web_fetch'),
+    ],
+  }));
+  const reply = screen.getByRole('article', { name: 'Assistant' });
+  expect(within(reply).getByRole('heading', { name: 'Result' })).toBeInTheDocument();
+  expect(within(reply).getByRole('table')).toHaveTextContent('vLLM');
+  expect(reply.querySelector('.cite')).toHaveTextContent('S9');
+  expect(reply.querySelector('pre code.hljs .hljs-keyword')).toHaveTextContent('const');
+  expect(within(reply).getByText('3 calls · web_search ×1, web_fetch ×2')).toBeInTheDocument();
+  expect(within(reply).getAllByText('4 s')).toHaveLength(1);
 });

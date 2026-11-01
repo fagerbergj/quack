@@ -2,7 +2,6 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
-import { DatabaseSync } from 'node:sqlite';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 

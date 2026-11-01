@@ -89,6 +89,7 @@ export function Landing({ agents, error, groups }: { agents: AgentSummary[]; err
       {error && <p role="alert" className="m-0 text-[13px] text-danger">{`Agents: ${error}`}</p>}
       <Composer agents={agents} />
       <Waiting rows={groups.needs} />
+      <div className="feet w-full" aria-hidden="true" />
     </div>
   );
 }
