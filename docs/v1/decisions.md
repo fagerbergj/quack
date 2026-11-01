@@ -79,7 +79,7 @@ Keep: gated, structured delivery; one core with extensions layered on it; review
 - **D37 Subagent questions.** A low-friction tool asks a subagent a self-contained question: a child conversation inside the session, optionally on another model, whose answer returns as a tool result and whose cost counts to the session. It is not checked, since nothing leaves the session; the parent's deliverable is. Distinct from D34's long-lived child sessions.
 - **D38 Self-approval.** No rule against approving an action your own input caused in v1.
 - **D39 Session roles.** Owner (administers the session), driver (sends input and steers; one at a time, handoff allowed), approver (resolves gated actions), observer (watches).
-- **D40 Budgets.** Observe only: cost is reported per session and run, with no caps or spend alerts. Turn limits and SLOs bound the work.
+- **D40 Budgets.** Observe only: cost is reported per session and run, with no caps or spend alerts. Revision limits, SLOs and operator abort bound the work (D58).
 - **D41 Approval default** (refines D3, D26). Every external effect is gateable; each agent's manifest declares which effects need a verdict and from whom. An effect with no approval chain configured proceeds without waiting and is still audited.
 - **D42 Artifacts** (resolves O1). An artifact is a finished product of a session (research report, PR review, Sleeper card set), never intermediate data. It is a file in the session workspace that an extension declares by path and kind (schema and renderer); agents edit it with ordinary file tools, and there are no artifact-specific tools. Writes to declared paths are validated early by a tool-after hook. Sealing, when the file goes to a checker or is delivered, snapshots it into the session log as an immutable version with its check verdicts, so what was checked is what was sent and artifacts outlive workspace retention. Core indexes sealed artifacts across sessions and renders kinds without a renderer as Markdown or JSON. Publishing (export, send to the tablet, post to GitHub) is an extension's action on a sealed version.
 - **D43 Human edits.** Humans do not edit artifacts; they steer the agent to change them.
@@ -97,6 +97,7 @@ Keep: gated, structured delivery; one core with extensions layered on it; review
 - **D55 Reviewer prompt rewritten for v1.** v0's review doctrine, rewritten for v1's mechanics and much shorter; the 10-PR benchmark (D53) is its evidence.
 - **D56 GitHub auth as in v0.** The v1 GitHub extension authenticates the way v0's does (App JWT, installation tokens, the same credential path into the session), rather than a new shortcut.
 - **D57 Blast radius before the switch.** G2's blast-radius evidence, through the pi-lsp adapter (A16), ships before the GitHub switch so the benchmark measures it.
+- **D58 No turn limit** (2026-11-01, amends DEP-1, HAR-10, D40). The per-run turn limit is cut: pi-durable has none, and a counter beside it had to be rebuilt to survive restarts. A run is bounded by the checker's revision limit (J1), the SLOs (D9) and the operator's abort. `maxTurns` is no longer a definition field; a definition that still has it fails validation.
 
 ## Research extension
 

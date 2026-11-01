@@ -1,19 +1,16 @@
 import { join } from 'node:path';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { contentText, type MutableModels } from '@earendil-works/pi-ai';
-import { AssistantEntry, createRegistry, defineExtension, Harness, section, watchEvents, type Conversation, type Extension, type ReportInfo } from '@earendil-works/pi-durable';
+import { AssistantEntry, createRegistry, defineExtension, Harness, section, type Conversation, type Extension, type ReportInfo } from '@earendil-works/pi-durable';
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { mkdir } from 'node:fs/promises';
-import { FINAL_TURNS, RunBudget } from '@quack/sdk';
 
 const ctx = BACKGROUND_CONTEXT;
 
 export type AgentSpec = {
   model: { provider: string; modelId: string };
   extensions?: Extension[];
-  /** Model turns a run may take before it is aborted (HAR-10). */
-  maxTurns?: number;
   instructions?: string;
 };
 
@@ -81,7 +78,6 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
   const stale = current.instructions !== agent.instructions || current.model?.provider !== agent.model.provider || current.model?.modelId !== agent.model.modelId;
   if (stale) await root.configure({ model: agent.model, instructions: agent.instructions ?? null }, ctx);
   harness.resume();
-  const watchdog = opts.agent.maxTurns ? await turnLimit(harness, root, opts.agent.maxTurns) : undefined;
 
   const dispatch = (opts.agent.extensions as DispatchingExtension[] | undefined)?.find((e) => e.dispatch)?.dispatch;
 
@@ -110,30 +106,9 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
       return { submissionId, status: record.status };
     },
     close: async () => {
-      await watchdog?.stop();
       await harness.close(ctx);
     },
   };
-}
-
-const FINAL_NOTICE = `Turn budget: ${FINAL_TURNS} turns left in this run. Stop investigating and deliver what you have now; a check that has not passed is released marked as not fully checked.`;
-
-// Counts turns in RunBudget, a committed doc, so a restart mid-run keeps the count (a hook cannot commit or abort).
-// Warns once before the end and aborts the run past the limit; abort leaves it consistent.
-async function turnLimit(harness: Harness, root: Awaited<ReturnType<Harness['root']>>, maxTurns: number) {
-  const events = await watchEvents(harness, root.id, ctx);
-  const publish = (turnsLeft: number | null) => root.commit(async (tx) => { (await tx.doc(RunBudget, root.id)).turnsLeft = turnsLeft; }, ctx);
-  events.start(async (batch) => {
-    for (const e of batch) {
-      if (e.type === 'run_start' || e.type === 'run_end') await publish(null);
-      if (e.type !== 'turn_start') continue;
-      const turnsLeft = ((await harness.snapshot(RunBudget, root.id, ctx))?.turnsLeft ?? maxTurns) - 1;
-      if (turnsLeft < 0) void root.abort(ctx);
-      else await publish(turnsLeft);
-      if (turnsLeft === FINAL_TURNS && maxTurns > 2 * FINAL_TURNS) await root.submit({ type: 'input', content: FINAL_NOTICE, whenBusy: 'steer' }, ctx);
-    }
-  });
-  return events;
 }
 
 export type Session = Awaited<ReturnType<typeof openSession>>;

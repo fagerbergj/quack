@@ -14,10 +14,9 @@ const catalog: Catalog = { coding: () => [], github: (config) => [{ name: `githu
 
 test('loads a valid deployment and definition into models and an agent spec', async () => {
   const d = parseDeployment(deployment);
-  const def = parseDefinition({ name: 'reviewer', version: 3, model: 'local/qwen3.8-27b', maxTurns: 60, extensions: { coding: {}, github: { label: 'quack:review' } } }, d, catalog);
+  const def = parseDefinition({ name: 'reviewer', version: 3, model: 'local/qwen3.8-27b', extensions: { coding: {}, github: { label: 'quack:review' } } }, d, catalog);
   const spec = await agentSpec(def, catalog);
   assert.deepEqual(spec.model, { provider: 'local', modelId: 'qwen3.8-27b' });
-  assert.equal(spec.maxTurns, 60);
   assert.deepEqual(spec.extensions!.map((e) => e.name), ['github:{"label":"quack:review"}']);
   const model = buildModels(d).getModel('local', 'qwen3.8-27b');
   assert.equal(model?.baseUrl, 'http://127.0.0.1:11436/v1');
@@ -34,9 +33,9 @@ test('reports every problem in a deployment at once', () => {
 
 test('reports every problem in a definition at once, naming the available extensions', () => {
   assert.throws(
-    () => parseDefinition({ name: '', version: 0, model: 'local/llama', maxTurns: -1, extensions: { coding: {}, sleeper: {} } }, parseDeployment(deployment), catalog),
+    () => parseDefinition({ name: '', version: 0, model: 'local/llama', maxTurns: 5, extensions: { coding: {}, sleeper: {} } }, parseDeployment(deployment), catalog),
     (err: Error) =>
-      [/name must be/, /version must be/, /model local\/llama is not configured/, /maxTurns must be/, /unknown extension sleeper; available: coding, github/].every((r) => r.test(err.message)),
+      [/name must be/, /version must be/, /model local\/llama is not configured/, /maxTurns was removed/, /unknown extension sleeper; available: coding, github/].every((r) => r.test(err.message)),
   );
 });
 

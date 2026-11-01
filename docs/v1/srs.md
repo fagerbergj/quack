@@ -54,7 +54,7 @@ Areas follow the layers in [decisions A3](decisions.md). The SRS states what cor
 
 | ID | Level | Requirement | Trace |
 | --- | --- | --- | --- |
-| DEP-1 | MUST | Define an agent as a versioned definition declaring its model, agent roles and prompts, selected extensions, skill and rubric versions, runtime image version, isolation runtime class, egress allowlist, gated actions and approval chains, turn limit, checker revision limit and retention. | P, D24, D27, D48, J1 |
+| DEP-1 | MUST | Define an agent as a versioned definition declaring its model, agent roles and prompts, selected extensions, skill and rubric versions, runtime image version, isolation runtime class, egress allowlist, gated actions and approval chains, checker revision limit and retention. | P, D24, D27, D48, J1 |
 | DEP-2 | MUST | Let one agent be changed without changing or redeploying any other. | P, D48 |
 | DEP-3 | MUST | Start new sessions on an agent's newest definition version while running sessions finish on the version they started with. | D27, D48 |
 | DEP-4 | MUST | Give each agent its own identity and no ambient credentials. | P |
@@ -83,7 +83,7 @@ Areas follow the layers in [decisions A3](decisions.md). The SRS states what cor
 | HAR-7 | MUST | Show every participant, live: streamed output, tool calls, pending decisions and approvals, the current driver, and who is present. | P |
 | HAR-8 | MUST | Let the driver steer a running run, queue follow-ups and abort, leaving the session consistent. | P |
 | HAR-9 | MUST | Compact context before it reaches the model's context window, keeping the originals in the log. | P |
-| HAR-10 | MUST | Enforce a per-run turn limit, per-tool output and time limits, and stop work that keeps crashing its process, showing it as parked with a retry action. | P |
+| HAR-10 | MUST | Enforce per-tool output and time limits, and stop work that keeps crashing its process, showing it as parked with a retry action. | P |
 | HAR-11 | MUST | Let a run take the agent role its input asks for, and keep that role until the run ends. | D33 |
 | HAR-12 | MUST | Offer a subagent question tool: a child conversation in the same session, optionally on another model, whose answer returns as a tool result and whose cost counts to the session. | D37 |
 | HAR-13 | MUST | Let a session start other sessions, keep their handles, and later message, steer, resume or stop them, receiving their results as input. | D34 |
