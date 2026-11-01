@@ -237,17 +237,25 @@ test('a rolling-league card that talks FAAB gets the pitfall applied by the judg
   assert.equal(hit.met, 1);
 });
 
-test('the next processing time follows the league weekday and hour in New York time, across DST', () => {
+// A real league's settings: Wednesday 03:00 Eastern in its processed transactions, which is 00:00 Pacific; daily_waivers_hour is ignored.
+const REAL = { waiver_day_of_week: 2, daily_waivers: 0, daily_waivers_hour: 20 };
+
+test('the next processing time is Wednesday 03:00 ET (00:00 PT) for the real league settings, across DST, and daily mode uses its hour and days', () => {
   // Wednesday 3am EST, after the November change.
-  assert.equal(new Date(nextProcessing(AT, 3, 3)).toISOString(), '2026-11-11T08:00:00.000Z');
+  assert.equal(new Date(nextProcessing(AT, REAL)!).toISOString(), '2026-11-11T08:00:00.000Z');
   // The same wall time on a Wednesday still in EDT.
-  assert.equal(new Date(nextProcessing(Date.parse('2026-10-27T12:00:00Z'), 3, 3)).toISOString(), '2026-10-28T07:00:00.000Z');
+  assert.equal(new Date(nextProcessing(Date.parse('2026-10-27T12:00:00Z'), REAL)!).toISOString(), '2026-10-28T07:00:00.000Z');
+  // Daily mode: 20:00 Pacific on Monday, Wednesday and Friday only (Monday-first mask); Friday evening PST is Saturday 04:00Z.
+  const daily = { daily_waivers: 1, daily_waivers_hour: 20, daily_waivers_days: '1010100' };
+  assert.equal(new Date(nextProcessing(AT, daily)!).toISOString(), '2026-11-07T04:00:00.000Z');
+  assert.equal(new Date(nextProcessing(Date.parse('2026-11-07T04:00:00Z'), daily)!).toISOString(), '2026-11-10T04:00:00.000Z');
+  assert.equal(nextProcessing(AT, { daily_waivers: 1, daily_waivers_days: '0000000' }), null);
   // At the processing instant itself the next one is a week out.
-  assert.equal(new Date(nextProcessing(Date.parse('2026-11-11T08:00:00Z'), 3, 3)).toISOString(), '2026-11-18T08:00:00.000Z');
+  assert.equal(new Date(nextProcessing(Date.parse('2026-11-11T08:00:00Z'), REAL)!).toISOString(), '2026-11-18T08:00:00.000Z');
 });
 
 test('the run starts 12 hours before processing and is due an hour ahead of it; a league without a processing day has none', () => {
-  const run = waiversRun(AT, { waiver_day_of_week: 3, daily_waivers_hour: 3 })!;
+  const run = waiversRun(AT, REAL)!;
   assert.deepEqual([new Date(run.at).toISOString(), new Date(run.deadline).toISOString()], ['2026-11-10T20:00:00.000Z', '2026-11-11T07:00:00.000Z']);
   assert.equal(waiversRun(AT, {}), null);
   assert.equal(waiversRun(AT, undefined), null);

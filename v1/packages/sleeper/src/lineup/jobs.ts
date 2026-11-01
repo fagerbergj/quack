@@ -11,13 +11,13 @@ export const ET = 'America/New_York';
 /** Reruns within a week continue one session. */
 export const lineupKey = (league: string, week: number) => `sleeper:${league}:${week}:lineup`;
 
-export const etParts = (ms: number) => Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: ET, hourCycle: 'h23', weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).formatToParts(ms).map((p) => [p.type, p.value]));
-export const etDate = (ms: number) => new Intl.DateTimeFormat('en-CA', { timeZone: ET }).format(ms);
+export const etParts = (ms: number, zone = ET) => Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: zone, hourCycle: 'h23', weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).formatToParts(ms).map((p) => [p.type, p.value]));
+export const etDate = (ms: number, zone = ET) => new Intl.DateTimeFormat('en-CA', { timeZone: zone }).format(ms);
 
 /** The instant of a New York wall-clock hour on a date, so a run stays at its local hour across DST. */
-export function etWall(date: string, hour: number): number {
+export function etWall(date: string, hour: number, zone = ET): number {
   const guess = Date.parse(`${date}T${String(hour).padStart(2, '0')}:00:00Z`);
-  const p = etParts(guess);
+  const p = etParts(guess, zone);
   return guess - (Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second) - guess);
 }
 

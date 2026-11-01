@@ -11,21 +11,39 @@ const LEAD_MS = 12 * 60 * 60_000;
 /** Reruns within a week continue one session. */
 export const waiversKey = (league: string, week: number) => `sleeper:${league}:${week}:waivers`;
 
-// Assumes Sleeper's `waiver_day_of_week` counts from Sunday (0) and `daily_waivers_hour` is New York wall time; verify on the real league.
-/** The next processing instant strictly after `now`, from the league's weekday and hour. */
-export function nextProcessing(now: number, day: number, hour: number): number {
-  const today = Date.parse(`${etDate(now)}T12:00:00Z`);
-  for (let i = 0; i < 8; i++) {
-    const at = etWall(etDate(today + i * 86_400_000), hour);
-    if (at > now && WEEKDAYS.indexOf(etParts(at).weekday) === day) return at;
+export type WaiverSettings = { waiver_day_of_week?: number; daily_waivers?: number; daily_waivers_hour?: number; daily_waivers_days?: number | string };
+
+const PT = 'America/Los_Angeles';
+/** Sleeper counts weekdays from Monday = 0. */
+const mondayIndex = (weekday: string) => (WEEKDAYS.indexOf(weekday) + 6) % 7;
+
+// Verified on a real league: weekly waivers run at 00:00 Pacific on `waiver_day_of_week`, ignoring `daily_waivers_hour`.
+// Daily mode (shortcut: `daily_waivers_days` read as seven 0/1 digits, Monday first; unverified) runs at that hour, Pacific.
+function processingSlots(s: WaiverSettings): { days: number[]; hour: number } | null {
+  if (s.daily_waivers === 1) {
+    const days = String(s.daily_waivers_days ?? '1111111').padStart(7, '0').split('').flatMap((c, i) => (c === '1' ? [i] : []));
+    return days.length ? { days, hour: s.daily_waivers_hour ?? 0 } : null;
   }
-  throw new Error(`sleeper: no processing time for day ${day} at ${hour}`);
+  return typeof s.waiver_day_of_week === 'number' ? { days: [s.waiver_day_of_week], hour: 0 } : null;
 }
 
-/** One run before the league's next waiver processing, due an hour ahead of it (SL-9); null when the league sets no processing day. */
-export function waiversRun(now: number, settings: { waiver_day_of_week?: number; daily_waivers_hour?: number } | undefined) {
-  if (typeof settings?.waiver_day_of_week !== 'number') return null;
-  const processing = nextProcessing(now, settings.waiver_day_of_week, settings.daily_waivers_hour ?? 0);
+/** The next processing instant strictly after `now`; null when the league sets none. */
+export function nextProcessing(now: number, settings: WaiverSettings): number | null {
+  const slots = processingSlots(settings);
+  if (!slots) return null;
+  const today = Date.parse(`${etDate(now, PT)}T12:00:00Z`);
+  for (let i = 0; i < 9; i++) {
+    const date = etDate(today + i * 86_400_000, PT);
+    const at = etWall(date, slots.hour, PT);
+    if (at > now && slots.days.includes(mondayIndex(etParts(at, PT).weekday))) return at;
+  }
+  return null;
+}
+
+/** One run before the league's next waiver processing, due an hour ahead of it (SL-9); null when there is none to serve. */
+export function waiversRun(now: number, settings: WaiverSettings | undefined) {
+  const processing = settings && nextProcessing(now, settings);
+  if (!processing) return null;
   const deadline = processing - MARGIN_MS;
   return deadline > now ? { at: processing - LEAD_MS, deadline, processing } : null;
 }

@@ -30,8 +30,9 @@
   "settings": {
    "waiver_type": 0,
    "waiver_budget": 100,
-   "waiver_day_of_week": 3,
-   "daily_waivers_hour": 3
+   "waiver_day_of_week": 2,
+   "daily_waivers": 0,
+   "daily_waivers_hour": 20
   }
  },
  "/v1/league/L1/users": [
