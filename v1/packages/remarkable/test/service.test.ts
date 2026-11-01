@@ -80,7 +80,7 @@ test('a failed login names the status and leaks neither credential', async () =>
 });
 
 // A fake distributor that answers a wait:true invocation only when the test releases that session.
-type Seen = { key: string; agent: string | null; body: { input: string; requestId: string; wait: boolean } };
+type Seen = { key: string; agent: string | null; body: { input: string; requestId: string; title: string; wait: boolean } };
 const seen: Seen[] = [];
 const gates = new Map<string, (status: number) => void>();
 let autoAnswer: number | undefined = 200;
@@ -131,6 +131,7 @@ test('ingest submits one request per document at remarkable:<id>, and an unchang
   const first = (await (await call('POST', '/ingest', { ids: ['n1', 'n2', 'n1'] })).json()) as any;
   await service.settled();
   assert.deepEqual(seen.map((s) => [s.key, s.agent, s.body.requestId, s.body.wait]), [['remarkable:n1', 'remarkable-ingest', '3', true], ['remarkable:n2', 'remarkable-ingest', '1', true]]);
+  assert.ok(seen.every((s) => s.body.title && s.body.title === JSON.parse(s.body.input).name), 'the session title is the document name');
   assert.equal((await batch(first.batch)).status, 'done');
 
   seen.length = 0;

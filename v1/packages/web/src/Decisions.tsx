@@ -8,11 +8,14 @@ const POLL_MS = 10_000;
 export function DecisionCard({ sessionKey, d, now, title, done }: { sessionKey: string; d: Decision; now: number; title?: string; done: () => void }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [answered, setAnswered] = useState<number>();
   const choose = (choice: string) => {
     if (busy) return;
     setBusy(true);
-    void answerDecision(sessionKey, d.step, choice).then(done, (e: Error) => setError(e.message)).finally(() => setBusy(false));
+    setError('');
+    void answerDecision(sessionKey, d.step, choice).then(() => { setAnswered(d.askedAt); done(); }, (e: Error) => setError(e.message)).finally(() => setBusy(false));
   };
+  if (answered === d.askedAt) return null; // a re-ask of the same step has a newer askedAt
   return (
     <section aria-label="Decision" className="flex flex-col gap-2.5 rounded-2xl border border-warning/40 bg-warm/60 p-3.5">
       <div className="flex items-center gap-2">

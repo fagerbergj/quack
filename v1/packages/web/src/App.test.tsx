@@ -596,10 +596,34 @@ test('the Inbox shows a workflow question with its options, and an option answer
   expect(screen.getByText('1 waiting for your answer')).toBeInTheDocument();
   expect(screen.getByText('Agenda: standup')).not.toBeVisible();
   expect(screen.getByRole('link', { name: 'Campaign Notes' })).toHaveAttribute('href', '#/s/gh%3A3');
-  routes['GET /index/decisions?state=pending'] = { decisions: [] };
+  routes['GET /index/decisions?state=pending'] = pendingDecision;
   await userEvent.click(screen.getByRole('button', { name: 'meeting' }));
   expect(JSON.parse(fetchMock.mock.calls.filter(([, i]) => i?.method === 'POST').at(-1)![1]!.body as string)).toEqual({ choice: 'meeting', by: 'web' });
-  await screen.findByText('Nothing is waiting on you');
+  expect(screen.queryByRole('region', { name: 'Decision' })).toBeNull();
+});
+
+test('a re-asked question with a newer askedAt shows again after the first was answered', async () => {
+  routes['GET /sessions'] = { sessions: [sess('gh:3')] };
+  routes['GET /index/approvals?state=pending'] = { approvals: [] };
+  routes['GET /index/decisions?state=pending'] = pendingDecision;
+  routes['POST /sessions/gh%3A3/decisions/type'] = { answered: true };
+  location.hash = '#/inbox';
+  render(<App />);
+  const first = await screen.findByRole('button', { name: 'meeting' });
+  routes['GET /index/decisions?state=pending'] = { decisions: pendingDecision.decisions.map((d) => ({ ...d, at: 2 })) };
+  await userEvent.click(first);
+  expect(await screen.findByRole('region', { name: 'Decision' })).toBeInTheDocument();
+});
+
+test('a failed answer keeps the question card and shows the error', async () => {
+  routes['GET /sessions'] = { sessions: [sess('gh:3')] };
+  routes['GET /index/approvals?state=pending'] = { approvals: [] };
+  routes['GET /index/decisions?state=pending'] = pendingDecision;
+  location.hash = '#/inbox';
+  render(<App />);
+  await userEvent.click(await screen.findByRole('button', { name: 'meeting' }));
+  expect(await screen.findByRole('alert')).toBeInTheDocument();
+  expect(screen.getByRole('region', { name: 'Decision' })).toBeInTheDocument();
 });
 
 test('a session waiting on a question is in Needs you, and its view shows the question card', async () => {
