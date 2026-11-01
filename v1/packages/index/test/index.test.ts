@@ -272,6 +272,8 @@ for (const { name, fresh: freshStore, skip } of backends) test(`${name}: a run t
   await run('r1');
   assert.deepEqual(await until(async () => { const f = await sessionFailures(); return f.length ? f : undefined; }), [expected]);
   assert.deepEqual((await until(async () => { const f = await indexed(); return f.length ? f : undefined; })).map((f) => [f.session, f.step, f.error]), [['sleeper:L:8:history', expected.step, expected.error]]);
+  const blank = ((await (await fetch(`${indexBase}/index/failures?state=`)).json()) as { failures: unknown[] }).failures;
+  assert.equal(blank.length, 1, 'an empty state filter shows the default view, not nothing');
 
   boomFails = false;
   await run('r2');

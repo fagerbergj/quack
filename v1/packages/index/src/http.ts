@@ -52,7 +52,7 @@ const READS: Record<string, (store: IndexStore, q: URLSearchParams) => Promise<u
   '/index/artifacts': async (s) => ({ artifacts: await s.artifacts() }),
   '/index/approvals': async (s, q) => ({ approvals: await s.approvals(q.get('state') ?? undefined) }),
   '/index/decisions': async (s, q) => ({ decisions: await s.decisions(q.get('state') ?? undefined) }),
-  '/index/failures': async (s, q) => ({ failures: await s.failures(q.get('state') ?? undefined) }),
+  '/index/failures': async (s, q) => ({ failures: await s.failures(q.get('state') || undefined) }),
 };
 
 // Sessions publish with the service token; reads rely on the proxy for auth. A down database answers 503 and the session retries.
