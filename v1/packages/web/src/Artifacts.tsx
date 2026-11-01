@@ -12,7 +12,7 @@ function Item({ a }: { a: SealedArtifact }) {
       <details>
         <summary>{`${a.kind} v${a.version}: ${status}`}</summary>
         {failed.length > 0 && <p>{`Failing: ${failed.join(', ')}`}</p>}
-        <pre>{a.content}</pre>
+        <pre className="m-0 mt-2 overflow-x-auto whitespace-pre-wrap rounded-lg bg-soft p-2.5 font-mono text-[12px] text-ink-2">{a.content}</pre>
       </details>
     </li>
   );
@@ -25,10 +25,10 @@ export function Artifacts({ sessionKey, refresh }: { sessionKey: string; refresh
   useEffect(() => void listArtifacts(sessionKey).then(setItems, (e: Error) => setError(e.message)), [sessionKey, refresh]);
   if (!items.length && !error) return null;
   return (
-    <section aria-labelledby="artifacts-h">
-      <h2 id="artifacts-h">Artifacts</h2>
-      {error && <p role="alert">{error}</p>}
-      <ul>
+    <section aria-labelledby="artifacts-h" className="rounded-[22px] border border-line bg-surface p-4 shadow-card">
+      <h2 id="artifacts-h" className="m-0 mb-2">Artifacts</h2>
+      {error && <p role="alert" className="m-0 text-[13px] text-danger">{error}</p>}
+      <ul className="m-0 flex list-none flex-col gap-2 p-0 text-[13px]">
         {items.map((a) => <Item key={`${a.kind}:${a.version}`} a={a} />)}
       </ul>
     </section>

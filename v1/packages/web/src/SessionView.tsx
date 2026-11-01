@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type SubmitEvent } from 'react';
 import { abortRun, socketUrl } from './api.ts';
 import { Approvals } from './Approvals.tsx';
 import { Artifacts } from './Artifacts.tsx';
+import { pendingInput } from './sessions.ts';
 import { Transcript } from './Transcript.tsx';
 import { applyEvents, emptyView, snapshotView, touchesApprovals, type View } from './view.ts';
 
@@ -24,6 +25,11 @@ function useSocket(key: string, agent: string | undefined) {
       sock.onopen = () => {
         attempt = 0;
         setState('open');
+        const first = pendingInput.get(key);
+        if (first !== undefined) {
+          pendingInput.delete(key);
+          sock.send(JSON.stringify({ type: 'input', input: first }));
+        }
       };
       // Every connect starts with a full snapshot that replaces the view, so a reconnect cannot duplicate lines.
       sock.onclose = () => {
@@ -59,6 +65,9 @@ function useSocket(key: string, agent: string | undefined) {
   return { view, state, error, setError, approvalTick, send };
 }
 
+const seg = (on: boolean) =>
+  `h-[26px] cursor-pointer rounded-full border-0 px-2.5 text-xs font-semibold ${on ? 'bg-surface text-ink shadow-thumb' : 'bg-transparent text-muted hover:text-ink'}`;
+
 function Composer({ busy, disabled, send }: { busy: boolean; disabled: boolean; send: (i: string, w?: 'steer' | 'followUp') => boolean }) {
   const [input, setInput] = useState('');
   const [mode, setMode] = useState<'steer' | 'followUp'>('steer');
@@ -68,36 +77,59 @@ function Composer({ busy, disabled, send }: { busy: boolean; disabled: boolean; 
     if (send(input, busy ? mode : undefined)) setInput('');
   };
   return (
-    <form onSubmit={submit}>
-      <label>
-        Message
-        <textarea value={input} onChange={(e) => setInput(e.target.value)} rows={3} />
-      </label>
+    <form onSubmit={submit} className="rounded-[22px] border border-line-strong bg-surface shadow-float transition focus-within:border-ink-2/40 focus-within:shadow-ring">
       {busy && (
-        <fieldset>
-          <legend>While the agent is working</legend>
-          <label><input type="radio" name="mode" checked={mode === 'steer'} onChange={() => setMode('steer')} /> Steer</label>{' '}
-          <label><input type="radio" name="mode" checked={mode === 'followUp'} onChange={() => setMode('followUp')} /> Follow up</label>
-        </fieldset>
+        <div className="flex items-center gap-2 border-b border-line px-3 py-1.5">
+          <div role="group" aria-label="While the agent is working" className="inline-flex rounded-full border border-line bg-soft p-[3px]">
+            <button type="button" aria-pressed={mode === 'steer'} onClick={() => setMode('steer')} className={seg(mode === 'steer')}>Steer now</button>
+            <button type="button" aria-pressed={mode === 'followUp'} onClick={() => setMode('followUp')} className={seg(mode === 'followUp')}>Queue next</button>
+          </div>
+        </div>
       )}
-      <button type="submit" disabled={disabled}>Send</button>
+      <div className="flex items-end gap-1.5 p-2.5">
+        <label htmlFor="steer" className="sr-only">Message</label>
+        <textarea id="steer" value={input} onChange={(e) => setInput(e.target.value)} rows={2} placeholder={busy ? 'Steer this run…' : 'Message'} className="max-h-[220px] min-h-[40px] flex-1 resize-none bg-transparent px-1 py-2 text-[15px] leading-relaxed outline-none placeholder:text-muted" />
+        <button type="submit" disabled={disabled} className="h-10 flex-none cursor-pointer rounded-xl bg-ink px-4 text-sm font-semibold text-on-ink hover:bg-ink-2 disabled:cursor-not-allowed disabled:opacity-50">Send</button>
+      </div>
     </form>
   );
 }
 
-export function SessionView({ sessionKey, agent }: { sessionKey: string; agent?: string }) {
+function StatusChip({ text, running }: { text: string; running: boolean }) {
+  const tone = running ? 'bg-info-bg text-info' : 'bg-soft text-ink-2';
+  return (
+    <span role="status" className={`flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-semibold ${tone}`}>
+      {running && <span aria-hidden="true" className="live-dot h-1.5 w-1.5 rounded-full bg-info" />}
+      {text}
+    </span>
+  );
+}
+
+export function SessionView({ sessionKey, agent, title }: { sessionKey: string; agent?: string; title: string }) {
   const { view, state, error, setError, approvalTick, send } = useSocket(sessionKey, agent);
   const abort = () => abortRun(sessionKey).catch((e: Error) => setError(e.message));
+  const status = state === 'open' ? (view.running ? 'Running' : 'Idle') : state === 'reconnecting' ? 'Reconnecting' : 'Connecting';
   return (
-    <>
-      <h1>{sessionKey}</h1>
-      <p role="status">{state === 'open' ? (view.running ? 'Running' : 'Idle') : state === 'reconnecting' ? 'Reconnecting' : 'Connecting'}</p>
-      {state === 'open' && view.running && <button type="button" onClick={abort}>Abort</button>}
-      {error && <p role="alert">{error}</p>}
-      <Transcript view={view} />
-      <Approvals sessionKey={sessionKey} refresh={approvalTick} />
-      <Artifacts sessionKey={sessionKey} refresh={approvalTick} />
-      <Composer busy={view.running} disabled={state !== 'open'} send={send} />
-    </>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line bg-canvas/70 px-4 py-3 sm:px-5">
+        <a href="#/" className="text-[13px] text-muted no-underline hover:text-ink lg:hidden">← Sessions</a>
+        <h1 className="m-0 min-w-0 flex-1 truncate text-[16px]" title={title}>{title}</h1>
+        <StatusChip text={status} running={state === 'open' && view.running} />
+        {state === 'open' && view.running && (
+          <button type="button" onClick={abort} className="cursor-pointer rounded-lg border border-line bg-surface px-2.5 py-1 text-xs font-medium text-danger hover:bg-danger-bg">Abort</button>
+        )}
+      </div>
+      <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col gap-4 overflow-y-auto px-4 py-5 sm:px-5" aria-live="polite">
+        {error && <p role="alert" className="m-0 rounded-xl border border-danger-line bg-danger-bg/60 px-3.5 py-2.5 text-[13px] text-danger">{error}</p>}
+        <Transcript view={view} />
+        <Approvals sessionKey={sessionKey} refresh={approvalTick} />
+        <Artifacts sessionKey={sessionKey} refresh={approvalTick} />
+      </div>
+      <div className="sticky bottom-14 border-t border-line bg-canvas/90 p-3 backdrop-blur-md sm:p-4 lg:bottom-0">
+        <div className="mx-auto max-w-3xl">
+          <Composer busy={view.running} disabled={state !== 'open'} send={send} />
+        </div>
+      </div>
+    </div>
   );
 }

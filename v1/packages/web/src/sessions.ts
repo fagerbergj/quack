@@ -1,0 +1,43 @@
+import type { Approval, SessionSummary } from './api.ts';
+
+export type Row = SessionSummary & { approvals: Approval[] };
+export type Groups = { needs: Row[]; running: Row[]; recent: Row[] };
+export type Filters = { text: string; agent: string; start: string };
+
+export const titleOf = (s: SessionSummary) => s.title ?? s.key;
+
+const START_LABELS: Record<string, string> = { ui: 'You', github: 'GitHub' };
+
+// The key prefix names what started the session (ui:, github:, ...).
+export function startOf(key: string): string {
+  const prefix = key.split(':')[0] ?? key;
+  return START_LABELS[prefix] ?? prefix;
+}
+
+export function matches(s: SessionSummary, f: Filters): boolean {
+  const q = f.text.trim().toLowerCase();
+  const hit = !q || [titleOf(s), s.key, s.agent].some((v) => v.toLowerCase().includes(q));
+  return hit && (!f.agent || s.agent === f.agent) && (!f.start || startOf(s.key) === f.start);
+}
+
+export function group(rows: Row[]): Groups {
+  const needs = rows.filter((r) => r.approvals.length > 0);
+  const rest = rows.filter((r) => r.approvals.length === 0);
+  return { needs, running: rest.filter((r) => r.running), recent: rest.filter((r) => !r.running) };
+}
+
+export function statusLine(r: Row): string {
+  if (r.approvals.length) return `Approve ${r.approvals[0]!.tool}${r.approvals.length > 1 ? ` +${r.approvals.length - 1} more` : ''}`;
+  return `${r.agent} · ${r.running ? 'running' : 'idle'}`;
+}
+
+export function age(iso: string, now: number): string {
+  const min = Math.max(0, Math.floor((now - Date.parse(iso)) / 60_000));
+  if (min < 1) return 'now';
+  if (min < 60) return `${min}m`;
+  if (min < 1440) return `${Math.floor(min / 60)}h`;
+  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+// A composer's first message waits here for the new session's socket to open.
+export const pendingInput = new Map<string, string>();

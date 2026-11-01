@@ -2,12 +2,13 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
+import { DatabaseSync } from 'node:sqlite';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 export type AgentStatus = 'draft' | 'promoted';
 export type AgentInfo = { name: string; version: number; status: AgentStatus };
-export type SessionInfo = { key: string; agent: string; version?: number; running: boolean; lastActivity: string };
+export type SessionInfo = { key: string; agent: string; version?: number; title?: string; running: boolean; lastActivity: string };
 
 /** A request the agent registry refuses: 404 for an unknown agent, 409 for a session that already runs another. */
 export class AgentError extends Error {
@@ -92,6 +93,24 @@ async function lastActivity(dir: string): Promise<number> {
     // No log yet: fall back to when the session was created.
   }
   return logged || (await stat(join(dir, 'session-key')).then((s) => s.mtimeMs, () => 0));
+}
+
+const TITLE_MAX = 120;
+
+// The session's first user message, read straight from its store so listing never wakes a process.
+function firstInput(dir: string): string | undefined {
+  let db: DatabaseSync | undefined;
+  try {
+    db = new DatabaseSync(join(dir, 'session.sqlite'), { readOnly: true });
+    const row = db.prepare("SELECT json_extract(m.value, '$.content') AS c, json_type(m.value, '$.content') AS t FROM entries e, json_each(e.record, '$.model') m WHERE json_extract(m.value, '$.role') = 'user' ORDER BY e.id LIMIT 1").get() as { c?: string; t?: string } | undefined;
+    const parts: unknown = row?.t === 'array' && row.c ? JSON.parse(row.c) : row?.c;
+    const text = Array.isArray(parts) ? parts.map((p) => (p?.type === 'text' ? p.text : '')).join(' ') : parts;
+    return typeof text === 'string' && text.trim() ? text.trim().replace(/\s+/g, ' ').slice(0, TITLE_MAX) : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    db?.close();
+  }
 }
 
 const CRASH_BUDGET = 3;
@@ -214,7 +233,8 @@ export function processDriver(opts: { command: string[]; dataDir: string; agents
       if (key === undefined) return undefined;
       const agent = (await readText(join(opts.dataDir, d, 'agent'))) ?? '';
       const version = (await readJson(join(opts.dataDir, d, SNAPSHOT, 'agent.json')).catch(() => null))?.version;
-      return { key, agent, ...(typeof version === 'number' && { version }), running: children.has(key), at: await lastActivity(join(opts.dataDir, d)) };
+      const title = firstInput(join(opts.dataDir, d));
+      return { key, agent, ...(typeof version === 'number' && { version }), ...(title && { title }), running: children.has(key), at: await lastActivity(join(opts.dataDir, d)) };
     }));
     return all.filter((s) => s !== undefined).sort((a, b) => b.at - a.at).map(({ at, ...s }) => ({ ...s, lastActivity: new Date(at).toISOString() }));
   }

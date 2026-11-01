@@ -41,7 +41,7 @@ const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
 
 beforeEach(() => {
   FakeSocket.all = [];
-  routes = { 'GET /sessions/ui%3Au1/artifacts': { artifacts: [] }, 'GET /sessions/ui%3Au1/approvals': { approvals: [] } };
+  routes = { 'GET /sessions': { sessions: [] }, 'GET /agents': { agents: [] }, 'GET /sessions/ui%3Au1/artifacts': { artifacts: [] }, 'GET /sessions/ui%3Au1/approvals': { approvals: [] } };
   fetchMock.mockClear();
   vi.stubGlobal('WebSocket', FakeSocket);
   vi.stubGlobal('fetch', fetchMock);
@@ -58,22 +58,54 @@ async function openSession() {
   return ws;
 }
 
-test('lists sessions with their agent and state', async () => {
-  routes['GET /sessions'] = { sessions: [{ key: 'gh:1', agent: 'reviewer', running: true, lastActivity: '2026-11-01T01:00:00.000Z' }] };
-  routes['GET /agents'] = { agents: [] };
+const sess = (key: string, over: object = {}) => ({ key, agent: 'reviewer', running: false, lastActivity: '2026-11-01T01:00:00.000Z', ...over });
+
+test('groups sessions: a running session with a pending approval lands in Needs you', async () => {
+  routes['GET /sessions'] = { sessions: [sess('gh:1', { running: true, title: 'Fix the flake' }), sess('gh:2', { running: true }), sess('gh:3', { title: 'Old work' })] };
+  routes['GET /sessions/gh%3A1/approvals'] = { approvals: [{ id: 'a', tool: 'push', args: {}, requestedAt: 1 }] };
+  routes['GET /sessions/gh%3A2/approvals'] = { approvals: [] };
   render(<App />);
-  const link = await screen.findByRole('link', { name: 'gh:1' });
-  expect(link).toHaveAttribute('href', '#/s/gh%3A1');
-  expect(link.closest('li')).toHaveTextContent('reviewer running');
+  const needs = await screen.findByRole('region', { name: 'Needs you' });
+  expect(within(needs).getByRole('link', { name: /Fix the flake/ })).toHaveAttribute('href', '#/s/gh%3A1');
+  expect(within(needs).getByText('Approve push')).toBeInTheDocument();
+  expect(within(screen.getByRole('region', { name: 'Running' })).getByRole('link', { name: /gh:2/ })).toBeInTheDocument();
+  expect(within(screen.getByRole('region', { name: 'Recent' })).getByRole('link', { name: /Old work/ })).toHaveTextContent('reviewer · idle');
+  expect(screen.getByText('1 need you · 1 running')).toBeInTheDocument();
 });
 
-test('starting a session opens a ui: key with the chosen agent', async () => {
-  routes['GET /sessions'] = { sessions: [] };
+test('search and the agent filter narrow the list', async () => {
+  routes['GET /sessions'] = { sessions: [sess('github:1', { title: 'Fix the flake' }), sess('ui:2', { agent: 'researcher', title: 'Compare sandboxes' })] };
+  render(<App />);
+  await screen.findByRole('link', { name: /Fix the flake/ });
+  await userEvent.type(screen.getByRole('searchbox', { name: 'Search sessions' }), 'sandbox');
+  expect(screen.queryByRole('link', { name: /Fix the flake/ })).toBeNull();
+  expect(screen.getByRole('link', { name: /Compare sandboxes/ })).toBeInTheDocument();
+  await userEvent.clear(screen.getByRole('searchbox', { name: 'Search sessions' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Filter' }));
+  await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Started by' }), 'GitHub');
+  expect(screen.getByRole('link', { name: /Fix the flake/ })).toBeInTheDocument();
+  expect(screen.queryByRole('link', { name: /Compare sandboxes/ })).toBeNull();
+});
+
+test('selecting a session opens it in the main pane and marks its row', async () => {
+  routes['GET /sessions'] = { sessions: [sess('ui:u1', { title: 'Fix the flake' })] };
+  render(<App />);
+  await userEvent.click(await screen.findByRole('link', { name: /Fix the flake/ }));
+  expect(await screen.findByRole('heading', { name: 'Fix the flake' })).toBeInTheDocument();
+  expect(FakeSocket.all[0].url).toMatch(/\/sessions\/ui%3Au1\/ws$/);
+  expect(screen.getByRole('link', { name: /Fix the flake/ })).toHaveAttribute('aria-current', 'true');
+});
+
+test('starting a session opens a ui: key with the chosen agent and sends the typed first message', async () => {
   routes['GET /agents'] = { agents: [{ name: 'coder', version: 1 }, { name: 'reviewer', version: 2 }] };
   render(<App />);
   await userEvent.selectOptions(await screen.findByRole('combobox', { name: 'Agent' }), 'reviewer 2');
-  await userEvent.click(screen.getByRole('button', { name: 'New session' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Review a pull request' }));
+  expect(screen.getByRole('textbox', { name: 'Question or task' })).toHaveValue('Review a pull request');
+  await userEvent.click(screen.getByRole('button', { name: 'Start' }));
   await waitFor(() => expect(FakeSocket.all[0]?.url).toMatch(/\/sessions\/ui%3Auuid-1\/ws\?agent=reviewer$/));
+  FakeSocket.all[0].open();
+  expect(FakeSocket.all[0].sent).toEqual([{ type: 'input', input: 'Review a pull request' }]);
 });
 
 test('renders the snapshot transcript, then streamed events', async () => {
@@ -148,10 +180,10 @@ test('an idle send has no whenBusy; a busy send carries the chosen mode', async 
 
   ws.frame({ type: 'events', events: [{ type: 'run_start', inputs: [] }] });
   const group = screen.getByRole('group', { name: 'While the agent is working' });
-  expect(within(group).getByRole('radio', { name: 'Steer' })).toBeChecked();
+  expect(within(group).getByRole('button', { name: 'Steer now' })).toHaveAttribute('aria-pressed', 'true');
   await userEvent.type(screen.getByRole('textbox', { name: 'Message' }), 'turn left');
   await userEvent.click(screen.getByRole('button', { name: 'Send' }));
-  await userEvent.click(within(group).getByRole('radio', { name: 'Follow up' }));
+  await userEvent.click(within(group).getByRole('button', { name: 'Queue next' }));
   await userEvent.type(screen.getByRole('textbox', { name: 'Message' }), 'then right');
   await userEvent.click(screen.getByRole('button', { name: 'Send' }));
   expect(ws.sent.slice(1)).toEqual([
@@ -216,6 +248,7 @@ test('a send on a closed socket keeps the input and says so', async () => {
 });
 
 test('each list fetch reports its own failure', async () => {
+  routes = {};
   render(<App />);
   expect(await screen.findByText(/Sessions: /)).toBeInTheDocument();
   expect(screen.getByText(/Agents: /)).toBeInTheDocument();

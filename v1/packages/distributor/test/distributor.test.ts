@@ -152,8 +152,9 @@ test('each session runs on the agent that created it, and the registry and index
   const { agents } = (await (await fetch(`${base}/agents`)).json()) as { agents: Array<{ name: string }> };
   assert.deepEqual(agents.sort((a, b) => a.name.localeCompare(b.name)), [{ name: 'research', version: 3, status: 'draft' }, { name: 'reviewer', version: 3, status: 'draft' }]);
   await driver.stop('research:b');
-  const { sessions } = (await (await fetch(`${base}/sessions`)).json()) as { sessions: Array<{ key: string; agent: string; running: boolean; lastActivity: string }> };
+  const { sessions } = (await (await fetch(`${base}/sessions`)).json()) as { sessions: Array<{ key: string; agent: string; title?: string; running: boolean; lastActivity: string }> };
   assert.deepEqual(sessions.map((s) => [s.key, s.agent, s.running]).sort(), [['github:a#1', 'reviewer', true], ['research:b', 'research', false]]);
+  assert.equal(sessions.find((s) => s.key === 'research:b')?.title, 'whoami');
   assert.ok(sessions.every((s) => !Number.isNaN(Date.parse(s.lastActivity))));
 });
 

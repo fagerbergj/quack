@@ -88,3 +88,4 @@
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
 .navlink[aria-current="page"] { background: var(--color-soft); color: var(--color-ink); font-weight: 600; box-shadow: inset 2px 0 0 var(--color-accent); }
 .tablink[aria-current="page"] { color: var(--color-accent-ink); }
+.row[aria-current="true"] { background: var(--color-soft); box-shadow: inset 2px 0 0 var(--color-accent); }
