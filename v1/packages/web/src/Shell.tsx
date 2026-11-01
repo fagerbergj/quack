@@ -34,6 +34,7 @@ export const GROUPS: { title: string; items: Item[] }[] = [
     { route: 'schedules', label: 'Schedules', href: '#/schedules' },
   ] },
 ];
+const TITLES = Object.fromEntries([...MAIN, ...GROUPS.flatMap((g) => g.items)].map((n) => [n.route, n.label])) as Record<Route, string>;
 const MORE = GROUPS.flatMap((g) => g.items);
 
 function Icon({ route }: { route: Route | 'grid' }) {
@@ -69,7 +70,7 @@ function storedTheme() {
 
 const readTheme = () => document.documentElement.dataset.theme ?? storedTheme() ?? (globalThis.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 
-function ThemeToggle() {
+function ThemeToggle({ className }: { className: string }) {
   const [, rerender] = useState(0);
   const toggle = () => {
     const next = readTheme() === 'dark' ? 'light' : 'dark';
@@ -82,7 +83,7 @@ function ThemeToggle() {
     rerender((n) => n + 1);
   };
   return (
-    <button type="button" onClick={toggle} className="ml-auto cursor-pointer rounded-lg px-2 py-1 text-xs font-medium text-muted hover:bg-soft hover:text-ink" aria-pressed={readTheme() === 'dark'}>
+    <button type="button" onClick={toggle} className={`${className} flex min-h-11 cursor-pointer items-center rounded-lg font-medium text-muted hover:bg-soft hover:text-ink`} aria-pressed={readTheme() === 'dark'}>
       Day / night
     </button>
   );
@@ -123,13 +124,12 @@ export function Shell({ route, children }: { route: Route; children: ReactNode }
           ))}
         </nav>
         <div className="flex items-center gap-2.5 border-t border-line px-5 py-3 text-[13px]">
-          <ThemeToggle />
+          <ThemeToggle className="ml-auto px-2 text-xs" />
         </div>
       </aside>
-      <header className="sticky top-0 z-20 flex items-center gap-2.5 border-b border-line bg-canvas/85 px-4 py-2.5 backdrop-blur-md lg:hidden">
+      <header className="sticky top-0 z-20 flex items-center gap-2.5 border-b border-line bg-canvas/85 px-4 pt-[calc(0.625rem+env(safe-area-inset-top,0px))] pb-2.5 backdrop-blur-md lg:hidden">
         <Duck size={24} />
-        <span className="wordmark text-[15px]">quack</span>
-        <ThemeToggle />
+        <span className="text-[15px] font-semibold tracking-[-0.015em]">{TITLES[route]}</span>
       </header>
       <main className="min-h-screen pb-24 lg:pb-10 lg:pl-56">{children}</main>
       <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-line bg-canvas/90 pb-[env(safe-area-inset-bottom,0px)] backdrop-blur-md lg:hidden">
@@ -139,8 +139,9 @@ export function Shell({ route, children }: { route: Route; children: ReactNode }
           More
         </button>
       </nav>
-      <div id="more-sheet" hidden={!more} className="fixed inset-x-3 bottom-[62px] z-30 rounded-[22px] border border-line bg-surface p-2 shadow-lift lg:hidden">
-        {MORE.map((n) => link(n, 'flex items-center gap-3 rounded-lg px-3 py-2.5 text-[14px] text-ink no-underline hover:bg-soft'))}
+      <div id="more-sheet" hidden={!more} className="fixed inset-x-3 bottom-[calc(62px+env(safe-area-inset-bottom,0px))] z-30 rounded-[22px] border border-line bg-surface p-2 shadow-lift lg:hidden">
+        {MORE.map((n) => link(n, 'flex min-h-11 items-center gap-3 rounded-lg px-3 text-[14px] text-ink no-underline hover:bg-soft'))}
+        <ThemeToggle className="w-full gap-3 px-3 text-[14px]" />
       </div>
     </>
   );
