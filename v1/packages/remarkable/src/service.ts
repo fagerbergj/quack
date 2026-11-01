@@ -90,7 +90,7 @@ export function createRemarkableService(config: ServiceConfig) {
   type Job = { id: string; name: string; version: string; attempt: number };
   async function submit(batch: string, doc: Job): Promise<void> {
     const key = encodeURIComponent(`remarkable:${doc.id}`);
-    const body = JSON.stringify({ input: JSON.stringify({ id: doc.id, name: doc.name, version: doc.version }), requestId: doc.attempt ? `${doc.version}#${doc.attempt}` : doc.version, wait: true });
+    const body = JSON.stringify({ input: JSON.stringify({ id: doc.id, name: doc.name, version: doc.version }), requestId: doc.attempt ? `${doc.version}#${doc.attempt}` : doc.version, title: doc.name, wait: true });
     const url = `${config.distributorUrl}/sessions/${key}/invocations?agent=${encodeURIComponent(config.agent)}`;
     try {
       for (let n = 0; ; n++) {
