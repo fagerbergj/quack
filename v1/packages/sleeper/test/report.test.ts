@@ -7,10 +7,11 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider, type FauxResponseStep } from '@earendil-works/pi-ai';
+import type { SetTimer } from '@earendil-works/pi-durable';
 import { createSchedulesService } from '@quack/schedules';
 import { Artifacts } from '@quack/sdk';
 import { openSession } from '@quack/session';
-import { runWorkflow, workflowExtension, type Workflow } from '@quack/workflows';
+import { outcomeOf, runWorkflow, startWorkflow, workflowExtension, type Workflow } from '@quack/workflows';
 import {
   buildDigestCard, buildDigestFacts, buildRetroCard, buildRetroFacts, buildSnapshot, createSleeperClient, createSleeperService, digestEvidence, digestKey, digestRubric, digestWorkflow, registerReportSchedules,
   reportRuns, retroEvidence, retroKey, retroRubric, retroWorkflow, type DigestCard, type DigestFacts, type RetroCard, type RetroFacts,
@@ -23,14 +24,12 @@ const AT = Date.parse('2026-11-10T09:00:00Z');
 const RECAP = { league: 'L1', week: 9, owner: 'mallard' };
 const PREVIEW = { league: 'L1', week: 10, owner: 'mallard' };
 
-const clientOf = (fx: Record<string, any>, seen: string[] = []) => createSleeperClient({
-  fetch: (async (input: string) => {
-    const path = new URL(input).pathname;
-    seen.push(path);
-    return path in fx ? new Response(JSON.stringify(fx[path])) : new Response('null');
-  }) as unknown as typeof fetch,
-  now: () => AT,
-});
+const fetchOf = (fx: Record<string, any>, seen: string[] = []) => (async (input: string) => {
+  const path = new URL(input).pathname;
+  seen.push(path);
+  return path in fx ? new Response(JSON.stringify(fx[path])) : new Response('null');
+}) as unknown as typeof fetch;
+const clientOf = (fx: Record<string, any>, seen: string[] = []) => createSleeperClient({ fetch: fetchOf(fx, seen), now: () => AT });
 const snapshotOf = (fx: Record<string, any>) => async (league: string) => ({ data: await buildSnapshot(clientOf(fx), league) });
 type News = NonNullable<Parameters<typeof buildDigestFacts>[0]['news']>;
 // Dated six hours before the cutoff asked for, so it always precedes the row it is attached to.
@@ -120,11 +119,13 @@ test('every_game_covered, numbers_match_tools and no_projection_source each fail
   assert.match((await digestGate('numbers_match_tools', f, wrongScore)).detail!, /Mallard Mayhem v teal/);
   const wrongTop = { ...card, games: card.games.map((g, i) => (i ? g : { ...g, away: { ...g.away, top_scorers: [{ name: 'Tara Teal', pts: 39 }] } })) };
   assert.ok((await digestGate('numbers_match_tools', f, wrongTop)).met < 1);
-  for (const text of ['Mallard is projected to win.', 'Teal has a 70% chance to win.', 'Their win probability is high.', 'The odds favor Pintail.']) {
+  for (const text of ['Their projected points favor Mallard.', 'Per the projections Mallard wins.', 'Teal has a 70% chance to win.', 'Their win probability is high.', 'The odds favor Pintail.']) {
     const r = await digestGate('no_projection_source', f, { ...card, summary: text });
     assert.equal(r.met, 0, text);
   }
-  assert.equal((await digestGate('no_projection_source', f, { ...card, games: card.games.map((g) => ({ ...g, note: 'Projected 130 points.' })) })).met, 0);
+  // The plain verb is ordinary prose, not a projection.
+  assert.equal((await digestGate('no_projection_source', f, { ...card, summary: 'Quinn Quill projects as the top scorer, and Wade Wide is projected to start.' })).met, 1);
+  assert.equal((await digestGate('no_projection_source', f, { ...card, games: card.games.map((g) => ({ ...g, note: 'Projected total: 130.' })) })).met, 0);
 });
 
 test('the retro holds the best lineup, the legal swap, the free-agent hit and the cutoffs, all from the final week', async () => {
@@ -178,7 +179,11 @@ test('a row\'s judge evidence carries its news, and only knowable rows are asked
   assert.equal((ev.row[1].state as unknown as { news: unknown[] }).news.length, 1);
 });
 
-async function run(make: (deps: Parameters<typeof digestWorkflow>[0]) => Workflow, input: object, decision: object, news?: News) {
+type Sim = { fx?: Record<string, any>; now?: () => number; setTimer?: SetTimer };
+type Make = (deps: Parameters<typeof digestWorkflow>[0]) => Workflow;
+
+// Opens a faux-model session on the workflow and hands `drive` the harness to start and watch it.
+async function withSession<T>(make: Make, decision: object, news: News | undefined, sim: Sim, drive: (s: Awaited<ReturnType<typeof openSession>>, workflow: Workflow, judged: string[]) => Promise<T>): Promise<T> {
   const judged: string[] = [];
   const responses: FauxResponseStep[] = [
     () => fauxAssistantMessage(JSON.stringify(decision)),
@@ -193,18 +198,26 @@ async function run(make: (deps: Parameters<typeof digestWorkflow>[0]) => Workflo
   const models = createModels();
   models.setProvider(faux.provider);
   const dir = await mkdtemp(join(tmpdir(), 'quack-report-'));
-  const workflow = make({ client: clientOf(fixtures), snapshot: snapshotOf(fixtures), now: () => AT, news });
+  const fx = sim.fx ?? fixtures;
+  const clock = sim.now ?? (() => AT);
+  const workflow = make({ client: createSleeperClient({ fetch: fetchOf(fx), now: clock }), snapshot: snapshotOf(fx), now: clock, news });
   const m = faux.getModel();
-  const s = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, instructions: 'You are the league reporter.', extensions: [workflowExtension([workflow])] } });
+  const s = await openSession({ dir, models, now: sim.now && (() => new Date(sim.now!())), setTimer: sim.setTimer, agent: { model: { provider: m.provider, modelId: m.id }, instructions: 'You are the league reporter.', extensions: [workflowExtension([workflow])] } });
   try {
-    const outcome = await runWorkflow(s.harness, s.root, workflow, JSON.stringify(input));
-    assert.equal(outcome.status, 'completed', JSON.stringify(outcome));
-    const sealed = (await s.harness.snapshot(Artifacts, s.root.id, ctx))!.kinds['sleeper.cards'].versions[0];
-    return { sealed, judged, verdict: sealed.verdict as { passed: boolean; rubric: string; gatesFailed: string[]; notes: string[]; checks: Array<{ id: string }> } };
+    return await drive(s, workflow, judged);
   } finally {
     await s.close();
     await rm(dir, { recursive: true, force: true });
   }
+}
+
+async function run(make: Make, input: object, decision: object, news?: News) {
+  return withSession(make, decision, news, {}, async (s, workflow, judged) => {
+    const outcome = await runWorkflow(s.harness, s.root, workflow, JSON.stringify(input));
+    assert.equal(outcome.status, 'completed', JSON.stringify(outcome));
+    const sealed = (await s.harness.snapshot(Artifacts, s.root.id, ctx))!.kinds['sleeper.cards'].versions[0];
+    return { sealed, judged, verdict: sealed.verdict as { passed: boolean; rubric: string; gatesFailed: string[]; notes: string[]; checks: Array<{ id: string }> } };
+  });
 }
 
 test('the digest workflow seals a recap and a preview card and the judge passes them, saying what was not checked', async () => {
@@ -280,4 +293,74 @@ test('the digest and retro start on demand under their own week session keys', a
   } finally {
     service.stop();
   }
+});
+
+// A fake clock: the harness arms its sleeps through `setTimer`, and `advance` fires the ones that come due.
+function fakeClock(start: number) {
+  let t = start;
+  const timers = new Set<{ at: number; fire: () => void }>();
+  const listeners: Array<() => void> = [];
+  const setTimer: SetTimer = (fire, delay) => {
+    const timer = { at: t + delay, fire };
+    timers.add(timer);
+    listeners.splice(0).forEach((r) => r());
+    return () => void timers.delete(timer);
+  };
+  return {
+    now: () => t,
+    setTimer,
+    /** Resolves once the harness has stored a sleep ending at `until`; it listens before it looks, so no arming is missed. */
+    async asleepUntil(harness: { wake(): { at?: number } }, until: number) {
+      for (;;) {
+        const next = new Promise<void>((r) => listeners.push(r));
+        if (harness.wake().at === until) return;
+        await next;
+      }
+    },
+    advance(ms: number) {
+      t += ms;
+      for (const x of [...timers]) if (x.at <= t) (timers.delete(x), x.fire());
+    },
+  };
+}
+
+const IN_PROGRESS = { ...fixtures, '/v1/state/nfl': { ...fixtures['/v1/state/nfl'], week: 9 }, '/schedule/nfl/regular/2026': fixtures['/schedule/nfl/regular/2026'].map((g: any) => (g.game_id === 'g93' ? { ...g, status: 'in_game' } : g)) };
+const FINAL = { ...IN_PROGRESS, '/schedule/nfl/regular/2026': fixtures['/schedule/nfl/regular/2026'] };
+const MONDAY_NIGHT = Date.parse('2026-11-10T02:00:00Z');
+
+test('a recap that fires before the last game is final sleeps hourly, then reports once it is', async () => {
+  const clock = fakeClock(MONDAY_NIGHT);
+  const fx = { ...IN_PROGRESS };
+  const done = await withSession(digestWorkflow, digestDecision, undefined, { fx, now: clock.now, setTimer: clock.setTimer }, async (s, workflow) => {
+    const id = await startWorkflow(s.harness, s.root, workflow, JSON.stringify(RECAP));
+    const HOUR = 60 * 60_000;
+    await clock.asleepUntil(s.harness, MONDAY_NIGHT + HOUR);
+    clock.advance(HOUR);
+    // Still in progress an hour on: it sleeps again.
+    await clock.asleepUntil(s.harness, MONDAY_NIGHT + 2 * HOUR);
+    // The game ends; the next look finds the week final.
+    Object.assign(fx, { '/schedule/nfl/regular/2026': FINAL['/schedule/nfl/regular/2026'] });
+    clock.advance(60 * 60_000);
+    const outcome = await outcomeOf(s.harness, id);
+    return { outcome, sealed: (await s.harness.snapshot(Artifacts, s.root.id, ctx))!.kinds['sleeper.cards'].versions[0] };
+  });
+  assert.equal(done.outcome.status, 'completed', JSON.stringify(done.outcome));
+  assert.deepEqual([(JSON.parse(done.sealed.content) as DigestCard).past, (done.sealed.verdict as { passed: boolean }).passed], [true, true]);
+});
+
+test('a retro that never sees the week final fails at the run\'s deadline with a clear error', async () => {
+  const lastKickoff = Date.parse('2026-11-10T01:15:00Z');
+  const deadline = lastKickoff + 5 * 3_600_000 + 3 * 24 * 3_600_000;
+  const clock = fakeClock(deadline - 90 * 60_000);
+  const outcome = await withSession(retroWorkflow, {}, undefined, { fx: IN_PROGRESS, now: clock.now, setTimer: clock.setTimer }, async (s, workflow) => {
+    const id = await startWorkflow(s.harness, s.root, workflow, JSON.stringify(RECAP));
+    await clock.asleepUntil(s.harness, deadline - 30 * 60_000);
+    // The next look is capped at the deadline, not an hour on.
+    clock.advance(60 * 60_000);
+    await clock.asleepUntil(s.harness, deadline);
+    clock.advance(30 * 60_000);
+    return outcomeOf(s.harness, id);
+  });
+  assert.equal(outcome.status, 'failed');
+  assert.match(JSON.stringify(outcome), /week 9 was still in progress at this run's deadline/);
 });

@@ -2,22 +2,28 @@ import type { JsonValue } from '@earendil-works/chord';
 import { Type, type TSchema } from '@earendil-works/pi-ai';
 import { rejudge, type JudgeOptions, type Rubric, type Verdict } from '@quack/judge';
 import { attachVerdict, seal, type SealedArtifact } from '@quack/sdk';
-import { defineWorkflow, type StepContext } from '@quack/workflows';
+import { defineWorkflow, Wait, type StepContext } from '@quack/workflows';
 import { cardsKind } from '../lineup/card.ts';
 import type { FactsDeps, LineupInput, NewsItem } from '../lineup/facts.ts';
 import type { LineupDeps } from '../lineup/workflow.ts';
+import { RECAP_LAG_MS, RECAP_STALE_MS } from './jobs.ts';
 import { buildDigestCard, buildDigestFacts, type DigestDecision, type DigestFacts } from './digest.ts';
 import { buildRetroCard, buildRetroFacts, type RetroDecision, type RetroFacts } from './retro.ts';
 import { digestEvidence, digestRubric, retroEvidence, retroRubric } from './rubric.ts';
+import { weekPhase, type Phase } from './week.ts';
 
 export const DIGEST_WORKFLOW = 'sleeper.digest';
 export const RETRO_WORKFLOW = 'sleeper.retro';
+/** How often a run that fired before the games were final looks again. */
+const RECHECK_MS = 60 * 60_000;
 
 /** The same wiring as the lineup job: the Sleeper API, today's snapshot and an optional news source. */
 export type ReportDeps = LineupDeps;
 
 type Spec<F, D> = {
   name: string;
+  /** Whether the week is in a state this job can report on; otherwise the run sleeps and looks again. */
+  ready: (phase: Phase) => boolean;
   rubric: Rubric;
   /** Checks that need a news source; they are scored only once one is wired, and the verdict says so. */
   newsChecks: string[];
@@ -36,6 +42,22 @@ function reportWorkflow<F, D>(deps: ReportDeps, spec: Spec<F, D>) {
   return defineWorkflow({
     name: spec.name,
     steps: [
+      {
+        // A recap or retro fired early sleeps durably until the games are final, up to the run's own deadline, rather than failing and losing the week.
+        name: 'ready',
+        kind: 'code',
+        run: async (c) => {
+          const i = input(c);
+          const { league, state } = (await deps.snapshot(i.league)).data;
+          const [schedule, scores] = await Promise.all([deps.client.schedule(league.season), deps.client.scores(league.season, i.week)]);
+          const phase = weekPhase(schedule, i.week, state.week);
+          if (spec.ready(phase)) return { phase };
+          const now = deps.now ? deps.now() : c.api.now();
+          const give = Math.max(...scores.map((s: any) => s.start_time as number)) + RECAP_LAG_MS + RECAP_STALE_MS;
+          if (now >= give) throw new Error(`sleeper: week ${i.week} was still ${phase === 'live' ? 'in progress' : 'not final'} at this run's deadline`);
+          return new Wait(Math.min(now + RECHECK_MS, give));
+        },
+      },
       {
         name: 'facts',
         kind: 'code',
@@ -117,8 +139,8 @@ const retroSchema = Type.Object({ misses: Type.Array(call), waiverMisses: Type.A
 
 /** Digest job (SL-1): a preview before the week's first kickoff or a recap once its last game is final; code writes every number. */
 export const digestWorkflow = (deps: ReportDeps) =>
-  reportWorkflow<DigestFacts, DigestDecision>(deps, { name: DIGEST_WORKFLOW, rubric: digestRubric, newsChecks: ['preview_news_decides'], facts: buildDigestFacts, schema: digestSchema, prompt: digestPrompt, card: buildDigestCard, evidence: digestEvidence });
+  reportWorkflow<DigestFacts, DigestDecision>(deps, { name: DIGEST_WORKFLOW, ready: (p) => p !== 'live', rubric: digestRubric, newsChecks: ['preview_news_decides'], facts: buildDigestFacts, schema: digestSchema, prompt: digestPrompt, card: buildDigestCard, evidence: digestEvidence });
 
 /** Retro job (SL-1): the owner's week after its last game; code builds the best lineup and the miss rows, the model writes `why`, `lessons` and `summary`. */
 export const retroWorkflow = (deps: ReportDeps) =>
-  reportWorkflow<RetroFacts, RetroDecision>(deps, { name: RETRO_WORKFLOW, rubric: retroRubric, newsChecks: ['signal_is_evidence'], facts: (d, snap, i) => buildRetroFacts(d, snap, i), schema: retroSchema, prompt: retroPrompt, card: buildRetroCard, evidence: retroEvidence });
+  reportWorkflow<RetroFacts, RetroDecision>(deps, { name: RETRO_WORKFLOW, ready: (p) => p === 'recap', rubric: retroRubric, newsChecks: ['signal_is_evidence'], facts: (d, snap, i) => buildRetroFacts(d, snap, i), schema: retroSchema, prompt: retroPrompt, card: buildRetroCard, evidence: retroEvidence });

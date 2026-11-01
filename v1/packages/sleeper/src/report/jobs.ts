@@ -8,9 +8,9 @@ export const DIGEST_AGENT = 'sleeper-digest';
 export const RETRO_AGENT = 'sleeper-retro';
 /** The preview runs this long before the week's first kickoff, the recap this long after its last (games run about three and a half hours). */
 const PREVIEW_LEAD_MS = 6 * 60 * 60_000;
-const RECAP_LAG_MS = 5 * 60 * 60_000;
+export const RECAP_LAG_MS = 5 * 60 * 60_000;
 /** A recap stays useful until the next week's preview is due. */
-const RECAP_STALE_MS = 3 * 24 * 60 * 60_000;
+export const RECAP_STALE_MS = 3 * 24 * 60 * 60_000;
 
 /** Reruns within a week continue one session per job. */
 export const digestKey = (league: string, week: number) => `sleeper:${league}:${week}:digest`;

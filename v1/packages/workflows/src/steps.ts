@@ -16,8 +16,16 @@ export type StepContext = {
   report(patch: { progress?: { done: number; total: number }; cost?: number }): Promise<void>;
 };
 
+/** Returned by a code step to sleep durably until `until` (ms, the task clock) and run the same step again; nothing is held meanwhile. */
+export class Wait {
+  until: number;
+  constructor(until: number) {
+    this.until = until;
+  }
+}
+
 export type Step =
-  | { name: string; kind: 'code'; run(c: StepContext): JsonValue | Promise<JsonValue> }
+  | { name: string; kind: 'code'; run(c: StepContext): JsonValue | Wait | Promise<JsonValue | Wait> }
   /** The model's reply must be one JSON object matching `schema`; anything else fails the step. */
   | { name: string; kind: 'model'; prompt(c: StepContext): string; schema: TSchema; model?: { provider: string; modelId: string } }
   /** Resolvers run in order; a person answers through `answerDecision` when they all escalate. */
@@ -101,7 +109,7 @@ async function gatedStep(step: Extract<Step, { kind: 'gated' }>, c: StepContext)
 }
 
 export async function execute(step: Step, c: StepContext): Promise<StepOutcome> {
-  if (step.kind === 'code') return { result: await step.run(c), cost: 0 };
+  if (step.kind === 'code') return { result: (await step.run(c)) as JsonValue, cost: 0 };
   if (step.kind === 'model') return modelStep(step, c);
   if (step.kind === 'decision') return decisionStep(step, c);
   return gatedStep(step, c);
