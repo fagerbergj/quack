@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { after, test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type FauxResponseStep } from '@earendil-works/pi-ai';
@@ -7,7 +9,7 @@ import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { Artifacts } from '@quack/sdk';
 import { buildModels, openSession, parseDeployment } from '@quack/session';
 import { githubSessionExtensions } from '../src/index.ts';
-import { cleanup, fakeService, listen, remotes, tmp } from './fixtures.ts';
+import { cleanup, fakeService, listen, remotes, sh, tmp } from './fixtures.ts';
 
 after(cleanup);
 
@@ -36,14 +38,22 @@ approve
 - read app.ts:1 on the PR head: \`export const a = 2;\`
 `;
 
-async function reviewRun(responses: (seen: string[]) => FauxResponseStep[]) {
+async function reviewRun(responses: (seen: string[], advance: () => string) => FauxResponseStep[]) {
   process.env.QUACK_CLEF_KEY = 'none';
   const { base, head } = await remotes();
-  const service = await fakeService(head);
+  const live = { headSha: head };
+  const service = await fakeService(head, live);
+  // Pushes a second commit to the PR (a file the review does not touch) and makes it the live head.
+  const advance = () => {
+    const work = join(fileURLToPath(base), 'acme/widgets.git');
+    const next = sh(work, 'commit-tree', '-p', head, '-m', 'later push', `${head}^{tree}`);
+    sh(work, 'update-ref', 'refs/pull/7/head', next);
+    return (live.headSha = next);
+  };
   const clefUrl = await fakeClef();
   const seen: string[] = [];
   const faux = fauxProvider({ models: [{ id: 'worker' }] });
-  faux.setResponses(responses(seen));
+  faux.setResponses(responses(seen, advance));
   const models = buildModels(parseDeployment({ providers: { clef: { baseUrl: clefUrl, api: 'systemone', apiKeyEnv: 'QUACK_CLEF_KEY', models: { clef: { contextWindow: 8192 } } } } }));
   models.setProvider(faux.provider);
   const m = faux.getModel();
@@ -137,5 +147,26 @@ test('a run that revises after posting sends one review, and may finish without 
   assert.equal(again.status === 'done' && again.answer, 'Re-reviewed.');
   assert.equal(service.posted.length, 2, 'a later run checks out afresh and may post');
   assert.equal(service.posted[1].body, revised);
+  await session.close();
+});
+
+test('a PR pushed to while it is reviewed is not posted against the old head; the run checks out the new one', async () => {
+  let moved = '';
+  const { done, seen, service, head, session } = await reviewRun((seen, advance) => {
+    const step = recorder(seen);
+    return [
+      call('checkout_pr', { repository: 'acme/widgets', number: 7 }),
+      step(call('write', { path: 'artifacts/review.md', content: review })),
+      step(call('submit_review', {})),
+      (_c: unknown) => { moved = advance(); return call('post_review', { version: 1 }); },
+      step(call('checkout_pr', { repository: 'acme/widgets', number: 7 })),
+      step(call('post_review', { version: 1 })),
+      step(fauxAssistantMessage('Posted.')),
+    ];
+  });
+  assert.equal(done.status === 'done' && done.answer, 'Posted.');
+  assert.match(seen[2], /moved from \w+ to \w+; call checkout_pr again/);
+  assert.notEqual(moved, head);
+  assert.deepEqual(service.posted.map((p) => p.commitId), [moved]);
   await session.close();
 });

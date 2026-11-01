@@ -2,7 +2,7 @@ import { Type } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool, GenerationTask, hook, type Extension } from '@earendil-works/pi-durable';
 import { feedback, judge, type CheckResult, type ClassifierRef, type ModelRef } from '@quack/judge';
 import { Artifacts, artifactsExtension, sealedVersion } from '@quack/sdk';
-import { checkoutTool, PullRequestDoc, type SessionConfig } from './checkout.ts';
+import { checkoutTool, fetchRecord, PullRequestDoc, type SessionConfig } from './checkout.ts';
 import { parseReview, reviewEvidence, reviewKind } from './review.ts';
 import { reviewerRubric } from './rubric.ts';
 
@@ -23,6 +23,9 @@ export function postReviewTool(config: SessionConfig) {
       const doc = await api.snapshot(PullRequestDoc, api.conversationId, ctx);
       const pr = doc?.pr;
       if (!pr) return error('no pull request is checked out; call checkout_pr first');
+      // A push since checkout_pr would post a review of old code against a stale commit; the live head decides.
+      const live = await fetchRecord(config, pr.owner, pr.repo, pr.number);
+      if (live.headSha !== pr.headSha) return error(`the pull request moved from ${pr.headSha} to ${live.headSha}; call checkout_pr again and review that head`);
       if (doc?.posted?.includes(args.version)) return error(`review v${args.version} was already posted; nothing was sent again`);
       if (doc?.postedThisCheckout) return error(`review v${doc.postedThisCheckout} was already posted for this checkout; a run posts one review, so v${args.version} was not sent`);
       const marks = v.limitReached ? `\n\n---\n**Not fully checked:** the revision limit was reached. Checks that did not pass:\n${feedback(v.checks ?? []).map((l) => `- ${l}`).join('\n')}\n` : '';
