@@ -17,6 +17,7 @@ COPY packages/sleeper/package.json packages/sleeper/
 COPY packages/sdk/package.json packages/sdk/
 COPY packages/session/package.json packages/session/
 COPY packages/web/package.json packages/web/
+COPY packages/workflows/package.json packages/workflows/
 # typescript and typescript-language-server are dev dependencies the sessions run, so nothing is omitted.
 RUN --mount=type=cache,target=/root/.npm npm ci
 
