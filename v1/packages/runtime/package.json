@@ -13,6 +13,7 @@
     "@quack/remarkable": "*",
     "@quack/research": "*",
     "@quack/sdk": "*",
+    "@quack/slots": "*",
     "@quack/session": "*",
     "@quack/sleeper": "*",
     "@quack/workflows": "*",

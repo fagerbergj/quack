@@ -1,6 +1,7 @@
 import type { JsonValue } from '@earendil-works/chord';
 import type { Context } from '@earendil-works/chord/context';
 import type { TSchema } from '@earendil-works/pi-ai';
+import { whileWaiting } from './signals.ts';
 import { defineDoc, type Conversation, type ToolExecutionResult, type ToolRegistration } from '@earendil-works/pi-durable';
 
 // Documents are strict JSON, so absent values are null rather than optional fields.
@@ -64,7 +65,7 @@ export function gated<P extends TSchema>(tool: ToolRegistration<P>): ToolRegistr
 
       const watch = await api.watchDoc(Approvals, api.conversationId, ctx);
       if (!watch) return errorResult('approval state is unavailable');
-      const verdict = item.verdict ?? (await waitForVerdict(watch as never, id, ctx));
+      const verdict = item.verdict ?? (await whileWaiting(() => waitForVerdict(watch as never, id, ctx)));
       if (verdict.decision === 'reject') return errorResult(`Rejected by ${verdict.by}${verdict.reason ? `: ${verdict.reason}` : ''}`);
 
       await api.commit(async (tx) => { (await tx.doc(Approvals, api.conversationId)).items[id].executing = true; }, ctx);

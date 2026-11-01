@@ -5,6 +5,7 @@ import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { githubSessionExtensions, type GithubSessionConfig } from '@quack/github';
 import { researchSessionExtensions, type ResearchConfig } from '@quack/research';
 import { piPackage } from '@quack/sdk';
+import { slotsSessionExtensions } from '@quack/slots';
 import { INGEST_WORKFLOW, ingestFromEnv } from '@quack/remarkable';
 import { DIGEST_WORKFLOW, digestFromEnv, FINDER_WORKFLOW, finderFromEnv, LINEUP_WORKFLOW, lineupFromEnv, RETRO_WORKFLOW, retroFromEnv, TRADE_WORKFLOW, tradeFromEnv, TRENDS_WORKFLOW, trendsFromEnv, HISTORY_WORKFLOW, historyFromEnv, WAIVERS_WORKFLOW, waiversFromEnv } from '@quack/sleeper';
 import type { Catalog, CatalogEntry } from '@quack/session';
@@ -52,6 +53,8 @@ export const catalog: Catalog = {
   // The service secret comes from the environment, never the definition file (D56).
   github: withEnv(['QUACK_GH_SERVICE_URL', 'QUACK_GH_SERVICE_TOKEN'], (config) => githubSessionExtensions({ ...(config as Partial<GithubSessionConfig>), serviceUrl: required('QUACK_GH_SERVICE_URL'), serviceToken: required('QUACK_GH_SERVICE_TOKEN') })),
   research: withEnv(['QUACK_EXA_API_KEY'], (config) => researchSessionExtensions(config as ResearchConfig)),
+  // Opt-in per agent; with no QUACK_SLOTS_URL and QUACK_SLOTS_TOKEN it installs nothing, so a fresh install runs ungated.
+  slots: withEnv(['QUACK_SLOTS_URL', 'QUACK_SLOTS_TOKEN'], (config) => slotsSessionExtensions({ ...(config as object), serviceUrl: process.env.QUACK_SLOTS_URL, serviceToken: process.env.QUACK_SLOTS_TOKEN, holder: process.env.QUACK_SESSION_KEY })),
   // An agent selecting this binds its submissions to the named workflow (WFL-1).
   workflows: withEnv((config) => WORKFLOW_ENV[(config as { workflow?: string })?.workflow ?? ''] ?? [], (config) => {
     const name = (config as { workflow?: string })?.workflow ?? '';

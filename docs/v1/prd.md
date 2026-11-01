@@ -78,7 +78,7 @@ In priority order (D2). Each is an extension with its own document.
 | 3 | [Sleeper](extensions/sleeper.md) | Workflow | Lineup, waivers, trades, league reports and predictions on a schedule, shown on the Sleeper page |
 | 4 | [reMarkable](extensions/remarkable.md) | Workflow | Transcribe, file and extract actions from chosen handwritten documents |
 
-Platform extensions that the workloads use: [approvals](extensions/approvals.md), [judge](extensions/judge.md), [memory](extensions/memory.md), [eval](extensions/eval.md), [plans](extensions/plans.md), [workflows](extensions/workflows.md), [schedules](extensions/schedules.md).
+Platform extensions that the workloads use: [approvals](extensions/approvals.md), [judge](extensions/judge.md), [memory](extensions/memory.md), [eval](extensions/eval.md), [plans](extensions/plans.md), [workflows](extensions/workflows.md), [schedules](extensions/schedules.md), [slots](extensions/slots.md).
 
 ## Success measures
 

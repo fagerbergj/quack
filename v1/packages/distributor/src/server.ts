@@ -113,7 +113,7 @@ const realTimer: SetTimer = (fn, ms) => {
 };
 const MAX_TIMER_MS = 2 ** 31 - 1;
 
-type Ping = { status: string; waitingOnHuman?: boolean; wake?: { at?: number } };
+type Ping = { status: string; waitingOnHuman?: boolean; wake?: { at?: number }; note?: string | null };
 
 // `now` and `setTimer` are injectable so tests run the idle sweep and wake timers on a fake clock.
 export function createDistributor(driver: HostDriver, opts: { idleMs?: number; webDir?: string; index?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>; now?: () => number; setTimer?: SetTimer } = {}) {
@@ -124,6 +124,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
   const holds = new Map<string, number>();
   // Whether each running session was mid-run at its last sweep; a listing reads this and never pings.
   const active = new Map<string, boolean>();
+  const notes = new Map<string, string>();
   const wakeTimers = new Map<string, () => void>();
   let draining = false;
   const idleMs = opts.idleMs ?? 10 * 60_000;
@@ -165,6 +166,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
   // Records the session's earliest sleep before stopping, so a restarted distributor still wakes it.
   async function stopSession(key: string, at: number | undefined) {
     active.delete(key);
+    notes.delete(key);
     const stop = driver.stop(key).finally(() => stopping.delete(key));
     stopping.set(key, stop);
     await driver.setWake(key, at);
@@ -175,7 +177,8 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
   async function sweepOnce() {
     for (const key of driver.running()) {
       try {
-        const { status, wake, waitingOnHuman } = await ping(key);
+        const { status, wake, waitingOnHuman, note } = await ping(key);
+        notes.set(key, note ?? '');
         active.set(key, status === 'HealthyBusy' || Boolean(waitingOnHuman));
         if (!idle(key)) continue;
         // Re-checked after the ping, and requests wait out a stop in flight, so none reaches a dying process.
@@ -212,7 +215,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
 
   async function listing(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
     if (req.method !== 'GET' || (req.url !== '/sessions' && req.url !== '/agents')) return false;
-    send(res, 200, req.url === '/agents' ? { agents: await driver.agents() } : { sessions: (await driver.sessions()).map((x) => ({ ...x, active: x.running && (active.get(x.key) ?? false) })) });
+    send(res, 200, req.url === '/agents' ? { agents: await driver.agents() } : { sessions: (await driver.sessions()).map((x) => ({ ...x, active: x.running && (active.get(x.key) ?? false), ...(notes.get(x.key) && { note: notes.get(x.key) }) })) });
     return true;
   }
 

@@ -34,6 +34,7 @@ export function group(rows: Row[]): Groups {
 export function statusLine(r: Row): string {
   if (r.approvals.length) return `Approve ${r.approvals[0]!.tool}${r.approvals.length > 1 ? ` +${r.approvals.length - 1} more` : ''}`;
   if (r.decisions.length) return `Answer: ${r.decisions[0]!.question}`;
+  if (r.note) return r.note;
   return `${r.agent} · ${r.running ? 'running' : 'idle'}`;
 }
 

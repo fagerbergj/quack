@@ -4,7 +4,7 @@ import { contentText, type MutableModels } from '@earendil-works/pi-ai';
 import { AssistantEntry, createRegistry, defineExtension, Harness, section, type Conversation, type Extension, type ReportInfo, type SetTimer } from '@earendil-works/pi-durable';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { pendingApprovals } from '@quack/sdk';
+import { pendingApprovals, statusNote } from '@quack/sdk';
 import { PolicyExecutionEnv, sessionPolicy, type ExecPolicy } from './exec.ts';
 
 const ctx = BACKGROUND_CONTEXT;
@@ -108,7 +108,7 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
     async standing() {
       const { active, at: wakeAt } = harness.wake();
       const waitingOnHuman = active && (await onlyAwaitingHumans());
-      return { busy: active && !waitingOnHuman, waitingOnHuman, wakeAt };
+      return { busy: active && !waitingOnHuman, waitingOnHuman, wakeAt, note: statusNote.get() };
     },
     // The caller's name for the session (a PR title); the first one sticks, and the distributor lists it ahead of the first message.
     async recordTitle(title: string) {
