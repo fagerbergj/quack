@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createServer as createHttpServer } from 'node:http';
+import { createServer as createHttpServer, request as httpRequest } from 'node:http';
 import { connect, type AddressInfo } from 'node:net';
 import { cp, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -476,13 +476,37 @@ test('an invocation held past undici\'s headers timeout is still proxied, not tu
   const server = createDistributor(driver, { idleMs: 60_000 }).listen(0);
   await new Promise((r) => server.once('listening', r));
   const previous = getGlobalDispatcher();
-  setGlobalDispatcher(new Agent({ headersTimeout: 100 }));
+  setGlobalDispatcher(new Agent({ headersTimeout: 100 })); // restored in finally: later tests share this process
   try {
     const res = await ufetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/sessions/slow/invocations`, { method: 'POST', body: '{}', dispatcher: new Agent({ headersTimeout: 0 }) });
     assert.equal(res.status, 200);
     assert.deepEqual(await res.json(), { status: 'answered' });
   } finally {
     setGlobalDispatcher(previous);
+    await Promise.all([new Promise((r) => server.close(r)), new Promise((r) => session.close(r))]);
+  }
+});
+
+test('a client that hangs up mid-body does not take the distributor down', async () => {
+  let upstreamClosed!: () => void;
+  const closed = new Promise<void>((r) => (upstreamClosed = r));
+  const session = createHttpServer((req, res) => {
+    res.on('close', upstreamClosed);
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.write('{"partial":');
+  }).listen(0);
+  await new Promise((r) => session.once('listening', r));
+  const url = `http://127.0.0.1:${(session.address() as AddressInfo).port}`;
+  const driver = { agents: async () => [], sessions: async () => [], ensure: async () => url, stop: async () => {}, setWake: async () => {}, wakes: async () => [], running: () => [], pid: () => undefined };
+  const server = createDistributor(driver, { idleMs: 60_000 }).listen(0);
+  await new Promise((r) => server.once('listening', r));
+  const port = (server.address() as AddressInfo).port;
+  try {
+    const req = httpRequest(`http://127.0.0.1:${port}/sessions/gone/invocations`, { method: 'POST' }, (res) => { res.on('error', () => {}); res.once('data', () => req.destroy()); });
+    req.on('error', () => {}).end('{}');
+    await closed;
+    assert.equal((await fetch(`http://127.0.0.1:${port}/sessions`)).status, 200);
+  } finally {
     await Promise.all([new Promise((r) => server.close(r)), new Promise((r) => session.close(r))]);
   }
 });

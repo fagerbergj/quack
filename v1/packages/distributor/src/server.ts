@@ -92,7 +92,7 @@ function forward(url: string, method: string, body: Uint8Array | undefined, res:
     const up = request(url, { method, headers: { 'content-type': 'application/json' } }, (r) => {
       res.writeHead(r.statusCode ?? 502, { 'content-type': r.headers['content-type'] ?? 'application/json' });
       r.pipe(res).on('finish', resolve);
-      r.on('error', reject);
+      r.on('error', (err) => (res.destroyed || res.writableFinished ? resolve() : reject(err)));
     });
     res.on('close', () => { if (!res.writableFinished) up.destroy(); });
     up.on('error', (err) => (res.headersSent || res.destroyed ? resolve() : reject(err)));

@@ -94,6 +94,7 @@ export function createRemarkableService(config: ServiceConfig) {
     const url = `${config.distributorUrl}/sessions/${key}/invocations?agent=${encodeURIComponent(config.agent)}`;
     try {
       for (let n = 0; ; n++) {
+        if (stopped) return;
         const res = await post(url, body).catch((err) => (isReset(err) ? { status: 502, text: '' } : Promise.reject(err)));
         if (stopped) return;
         if (!dropped(res)) {
