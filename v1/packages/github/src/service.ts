@@ -16,10 +16,7 @@ export type ServiceConfig = {
 const BACKOFF_CAP_MS = 30_000;
 const pause = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-/**
- * Throws unless the distributor lists `agent` as promoted; the unattended trigger must not start on a draft.
- * An unreachable or unhealthy distributor is retried with backoff (compose starts both together); a reachable one's answer is final.
- */
+// Throws unless the distributor lists `agent` as promoted (no unattended draft). Unreachable is retried with backoff, since compose starts both together.
 export async function assertPromoted(distributorUrl: string, agent: string, sleep: (ms: number) => Promise<void> = pause): Promise<void> {
   let agents: Array<{ name: string; status: string }> | undefined;
   for (let delay = 1_000; !agents; delay = Math.min(delay * 2, BACKOFF_CAP_MS)) {
