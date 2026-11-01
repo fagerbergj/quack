@@ -9,7 +9,17 @@ export type ServiceConfig = {
   serviceToken: string;
   distributorUrl: string;
   label: string;
+  /** The agent that backs unattended triggers; it must be promoted (DEP-6). */
+  agent: string;
 };
+
+/** Throws unless the distributor lists `agent` as promoted; the unattended trigger must not start on a draft. */
+export async function assertPromoted(distributorUrl: string, agent: string): Promise<void> {
+  const { agents } = (await (await fetch(`${distributorUrl}/agents`)).json()) as { agents: Array<{ name: string; status: string }> };
+  const found = agents.find((a) => a.name === agent);
+  if (!found) throw new Error(`agent ${agent} is not registered with the distributor`);
+  if (found.status !== 'promoted') throw new Error(`agent ${agent} is ${found.status}; only a promoted agent can back the unattended GitHub trigger`);
+}
 
 const MAX_BODY = 5 << 20;
 const EVENTS = new Set(['APPROVE', 'REQUEST_CHANGES', 'COMMENT']);
@@ -52,7 +62,7 @@ async function webhook(req: IncomingMessage, res: ServerResponse, app: GithubApp
   if (!trigger) return send(res, 200, { ignored: true });
   // The delivery id is the request id, so a redelivery of the same event never starts a second run (HAR-5).
   const requestId = `github-delivery:${req.headers['x-github-delivery'] ?? ''}`;
-  const target = `${config.distributorUrl}/sessions/${encodeURIComponent(trigger.sessionKey)}/invocations`;
+  const target = `${config.distributorUrl}/sessions/${encodeURIComponent(trigger.sessionKey)}/invocations?agent=${encodeURIComponent(config.agent)}`;
   const upstream = await fetch(target, { method: 'POST', body: JSON.stringify({ input: trigger.input, requestId }) });
   send(res, upstream.ok ? 202 : 502, { session: trigger.sessionKey, status: upstream.status });
 }

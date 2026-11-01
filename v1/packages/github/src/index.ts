@@ -1,5 +1,5 @@
 export { githubApp, NoInstallation, type AppConfig, type GithubApp } from './app.ts';
-export { createGithubService, ownerRepo, type ServiceConfig } from './service.ts';
+export { assertPromoted, createGithubService, ownerRepo, type ServiceConfig } from './service.ts';
 export { triggerFor, verifySignature, type Trigger } from './webhook.ts';
 export { checkoutTool, PullRequestDoc, type PullRequestRecord, type SessionConfig } from './checkout.ts';
 export { githubSessionExtensions, postReviewTool, type GithubSessionConfig } from './post.ts';

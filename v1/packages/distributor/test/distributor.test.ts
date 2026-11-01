@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { connect, type AddressInfo } from 'node:net';
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { nextFrame, runEnded } from '../../session/test/ws-helpers.ts';
-import { createDistributor, processDriver } from '../src/index.ts';
+import { createDistributor, processDriver, sessionDirName } from '../src/index.ts';
 
 const dirs: string[] = [];
 const servers: Array<() => Promise<void>> = [];
@@ -17,11 +17,16 @@ after(async () => {
 
 // Each test gets its own distributor so idle reaping in one cannot stop another's session.
 async function agentsDir(...names: string[]) {
+  return agentsDirAt(3, ...names);
+}
+
+async function agentsDirAt(version: number, ...names: string[]) {
   const dir = await mkdtemp(join(tmpdir(), 'quack-agents-'));
   dirs.push(dir);
   for (const name of names) {
     await mkdir(join(dir, name));
-    await writeFile(join(dir, name, 'agent.json'), JSON.stringify({ name, version: 3 }));
+    await writeFile(join(dir, name, 'agent.json'), JSON.stringify({ name, version, prompt: 'prompt.md' }));
+    await writeFile(join(dir, name, 'prompt.md'), `prompt v${version}`);
   }
   return dir;
 }
@@ -39,7 +44,8 @@ async function startDistributor(idleMs: number, agents: { agentsDir?: string; de
   });
   const invoke = (key: string, body: unknown, agent?: string) =>
     fetch(`${base}/sessions/${encodeURIComponent(key)}/invocations${agent ? `?agent=${agent}` : ''}`, { method: 'POST', body: JSON.stringify(body) }).then(async (r) => ({ status: r.status, body: await r.json() }));
-  return { driver, invoke, base };
+  const ranAs = (key: string) => `agent: ${join(dataDir, sessionDirName(key), 'agent-def', 'agent.json')}`;
+  return { driver, invoke, base, ranAs };
 }
 
 // Waits for a state change; the deadline only matters when the code is broken, so it is far above any runner's latency.
@@ -137,13 +143,13 @@ test('a viewer whose session cannot start is disconnected, and the distributor k
 
 test('each session runs on the agent that created it, and the registry and index list them', async () => {
   const dir = await agentsDir('reviewer', 'research');
-  const { invoke, base, driver } = await startDistributor(60_000, { agentsDir: dir, defaultAgent: '' });
+  const { invoke, base, driver, ranAs } = await startDistributor(60_000, { agentsDir: dir, defaultAgent: '' });
   const whoami = (key: string, agent?: string) => invoke(key, { input: 'whoami', wait: true }, agent);
-  assert.equal((await whoami('github:a#1', 'reviewer')).body.answer, `agent: ${join(dir, 'reviewer', 'agent.json')}`);
-  assert.equal((await whoami('research:b', 'research')).body.answer, `agent: ${join(dir, 'research', 'agent.json')}`);
+  assert.equal((await whoami('github:a#1', 'reviewer')).body.answer, ranAs('github:a#1'));
+  assert.equal((await whoami('research:b', 'research')).body.answer, ranAs('research:b'));
 
   const { agents } = (await (await fetch(`${base}/agents`)).json()) as { agents: Array<{ name: string }> };
-  assert.deepEqual(agents.sort((a, b) => a.name.localeCompare(b.name)), [{ name: 'research', version: 3 }, { name: 'reviewer', version: 3 }]);
+  assert.deepEqual(agents.sort((a, b) => a.name.localeCompare(b.name)), [{ name: 'research', version: 3, status: 'draft' }, { name: 'reviewer', version: 3, status: 'draft' }]);
   await driver.stop('research:b');
   const { sessions } = (await (await fetch(`${base}/sessions`)).json()) as { sessions: Array<{ key: string; agent: string; running: boolean; lastActivity: string }> };
   assert.deepEqual(sessions.map((s) => [s.key, s.agent, s.running]).sort(), [['github:a#1', 'reviewer', true], ['research:b', 'research', false]]);
@@ -152,19 +158,19 @@ test('each session runs on the agent that created it, and the registry and index
 
 test('a session keeps its agent: a different one is 409, an unknown one 404', async () => {
   const dir = await agentsDir('reviewer', 'research');
-  const { invoke } = await startDistributor(60_000, { agentsDir: dir, defaultAgent: '' });
+  const { invoke, ranAs } = await startDistributor(60_000, { agentsDir: dir, defaultAgent: '' });
   await invoke('research:x', { input: 'hi', wait: true }, 'research');
   assert.equal((await invoke('research:x', { input: 'hi', wait: true }, 'reviewer')).status, 409);
   assert.equal((await invoke('research:x', { input: 'hi', wait: true }, 'research')).status, 200);
-  assert.equal((await invoke('research:x', { input: 'whoami', wait: true })).body.answer, `agent: ${join(dir, 'research', 'agent.json')}`);
+  assert.equal((await invoke('research:x', { input: 'whoami', wait: true })).body.answer, ranAs('research:x'));
   assert.equal((await invoke('research:y', { input: 'hi' }, 'nope')).status, 404);
 });
 
 test('a session naming no agent gets the deployment default', async () => {
   const dir = await agentsDir('reviewer', 'research');
   const defaultAgent = join(dir, 'reviewer', 'agent.json');
-  const { invoke, base } = await startDistributor(60_000, { agentsDir: dir, defaultAgent });
-  assert.equal((await invoke('github:a#2', { input: 'whoami', wait: true })).body.answer, `agent: ${defaultAgent}`);
+  const { invoke, base, ranAs } = await startDistributor(60_000, { agentsDir: dir, defaultAgent });
+  assert.equal((await invoke('github:a#2', { input: 'whoami', wait: true })).body.answer, ranAs('github:a#2'));
   assert.equal((await invoke('github:a#2', { input: 'hi', wait: true }, 'reviewer')).status, 200);
   assert.equal((await invoke('github:a#2', { input: 'hi', wait: true }, 'research')).status, 409);
   const { sessions } = (await (await fetch(`${base}/sessions`)).json()) as { sessions: Array<{ agent: string }> };
@@ -174,8 +180,34 @@ test('a session naming no agent gets the deployment default', async () => {
 test('a registry agent sharing the default agent\'s name runs the registry file', async () => {
   const dir = await agentsDir('reviewer');
   const other = await agentsDir('reviewer');
-  const { invoke } = await startDistributor(60_000, { agentsDir: dir, defaultAgent: join(other, 'reviewer', 'agent.json') });
-  assert.equal((await invoke('github:a#3', { input: 'whoami', wait: true }, 'reviewer')).body.answer, `agent: ${join(dir, 'reviewer', 'agent.json')}`);
+  const { invoke, ranAs } = await startDistributor(60_000, { agentsDir: dir, defaultAgent: join(other, 'reviewer', 'agent.json') });
+  assert.equal((await invoke('github:a#3', { input: 'whoami', wait: true }, 'reviewer')).body.answer, ranAs('github:a#3'));
+});
+
+test('a session stays on the version it started on after the agents dir moves on; a new one gets the newest', async () => {
+  const dir = await agentsDirAt(1, 'reviewer');
+  const { invoke, driver, base, ranAs } = await startDistributor(60_000, { agentsDir: dir, defaultAgent: '' });
+  await invoke('github:v#1', { input: 'hi', wait: true }, 'reviewer');
+  await driver.stop('github:v#1');
+  await agentsDirAt(2, 'reviewer').then((next) => cp(join(next, 'reviewer'), join(dir, 'reviewer'), { recursive: true }));
+
+  assert.equal((await invoke('github:v#1', { input: 'whoami', wait: true })).body.answer, ranAs('github:v#1'));
+  assert.equal((await invoke('github:v#2', { input: 'hi', wait: true }, 'reviewer')).status, 200);
+  const pinned = async (key: string) => JSON.parse(await readFile(ranAs(key).slice('agent: '.length), 'utf8')).version;
+  assert.deepEqual([await pinned('github:v#1'), await pinned('github:v#2')], [1, 2]);
+  const prompt = (key: string) => readFile(join(ranAs(key).slice('agent: '.length), '..', 'prompt.md'), 'utf8');
+  assert.deepEqual([await prompt('github:v#1'), await prompt('github:v#2')], ['prompt v1', 'prompt v2']);
+  const { sessions } = (await (await fetch(`${base}/sessions`)).json()) as { sessions: Array<{ key: string; version: number }> };
+  assert.deepEqual(sessions.map((x) => [x.key, x.version]).sort(), [['github:v#1', 1], ['github:v#2', 2]]);
+});
+
+test('an agent version whose content changed is refused for new sessions but not existing ones', async () => {
+  const dir = await agentsDirAt(1, 'reviewer');
+  const { invoke } = await startDistributor(60_000, { agentsDir: dir, defaultAgent: '' });
+  assert.equal((await invoke('github:f#1', { input: 'hi', wait: true }, 'reviewer')).status, 200);
+  await writeFile(join(dir, 'reviewer', 'prompt.md'), 'edited without a version bump');
+  assert.equal((await invoke('github:f#2', { input: 'hi', wait: true }, 'reviewer')).status, 409);
+  assert.equal((await invoke('github:f#1', { input: 'hi', wait: true })).status, 200);
 });
 
 test('QUACK_WEB_DIR serves files, refuses traversal, and leaves API routes alone', async () => {

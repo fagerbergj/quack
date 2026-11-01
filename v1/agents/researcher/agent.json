@@ -1,6 +1,7 @@
 {
   "name": "researcher",
   "version": 1,
+  "status": "draft",
   "model": "local/qwen3.8-27b",
   "maxTurns": 60,
   "prompt": "prompt.md",
