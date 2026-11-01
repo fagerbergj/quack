@@ -5,7 +5,7 @@ import { reportEvidence, reportKind, researchRubric } from './report.ts';
 import { webFetchTool, webSearchTool, type ResearchConfig } from './tools.ts';
 
 export { deliveredReport } from './marks.ts';
-export { citedIds, reportEvidence, reportKind, researchRubric, validateReport } from './report.ts';
+export { citedIds, findingItems, reportEvidence, reportKind, researchRubric, validateReport } from './report.ts';
 export { isPublicAddress, safeGet } from './net.ts';
 export { formatResults, htmlToText, sourceText, SourcesDoc, type ResearchConfig, type SourceRecord } from './tools.ts';
 
