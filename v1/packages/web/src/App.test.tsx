@@ -95,7 +95,7 @@ test('review rows show their repo only when the list holds reviews from two repo
   expect(await screen.findByRole('link', { name: /b\/two #2 Second/ })).toBeInTheDocument();
 });
 
-const indexed = (session: string, kind: string, passed: boolean | null, version = 1) => ({ session, kind, version, verdict: passed === null ? null : { passed }, sealedAt: 1 });
+const indexed = (session: string, kind: string, passed: boolean | null, version = 1, sealedAt = 1) => ({ session, kind, version, verdict: passed === null ? null : { passed }, sealedAt });
 
 test('each kind of session shows its own title and state, and search finds it by kind', async () => {
   routes['GET /sessions'] = { sessions: [
@@ -106,6 +106,7 @@ test('each kind of session shows its own title and state, and search finds it by
     sess('sleeper:123:8:lineup', { agent: 'sleeper-lineup' }),
     sess('remarkable:doc1', { agent: 'remarkable-ingest', title: 'Campaign Notes' }),
     sess('ui:x', { agent: 'coder' }),
+    sess('github:o/r#11', { title: 'Tie on version' }),
     sess('github:o/r#10', { running: true, title: 'Review pull request o/r#10 (label quack:review). Title: feat(v1): Sleeper waivers job' }),
   ] };
   routes['GET /index/approvals?state=pending'] = { approvals: [] };
@@ -113,6 +114,7 @@ test('each kind of session shows its own title and state, and search finds it by
     indexed('github:o/r#8', 'github.review', false, 1), indexed('github:o/r#8', 'github.review', true, 2),
     indexed('github:o/r#9', 'github.review', false),
     indexed('github:o/r#10', 'github.review', true),
+    indexed('github:o/r#11', 'github.review', false, 1, 1), indexed('github:o/r#11', 'github.review', true, 1, 2),
     indexed('ui:r1', 'research.report', true),
     indexed('sleeper:123:8:lineup', 'sleeper.cards', true),
     indexed('remarkable:doc1', 'remarkable.transcript', false),
@@ -125,6 +127,7 @@ test('each kind of session shows its own title and state, and search finds it by
   expect((await row(/What changed/)).getByText('Report ✓')).toBeInTheDocument();
   expect((await row(/Lineup · wk 8/)).getByText('Card ready')).toBeInTheDocument();
   expect((await row(/Campaign Notes/)).getByText(/^Failed/)).toBeInTheDocument();
+  expect((await row(/#11 Tie on version/)).getByText('Approved ✓')).toBeInTheDocument();
   const alive = await row(/#10 Sleeper waivers job/);
   expect(alive.getByText('Approved ✓')).toBeInTheDocument();
   expect(within(screen.getByRole('region', { name: 'Recent' })).getByRole('link', { name: /#10 Sleeper/ })).toBeInTheDocument();
