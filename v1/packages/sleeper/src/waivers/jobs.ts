@@ -7,7 +7,6 @@ import type { ScheduleConfig } from '../schedules.ts';
 export const WAIVERS_AGENT = 'sleeper-waivers';
 /** How long before processing the scheduled run starts, so the owner can still act on it. */
 const LEAD_MS = 12 * 60 * 60_000;
-const LATE_MS = 60_000;
 
 /** Reruns within a week continue one session. */
 export const waiversKey = (league: string, week: number) => `sleeper:${league}:${week}:waivers`;
@@ -49,8 +48,8 @@ export function waiversRun(now: number, settings: WaiverSettings | undefined) {
   const processing = settings && nextProcessing(now, settings);
   if (!processing) return null;
   const deadline = processing - MARGIN_MS;
-  // A late registration still fires before the deadline; the service ignores occurrences at or before its own creation time, so start a minute out.
-  const at = Math.max(processing - LEAD_MS, now + LATE_MS);
+  // A late registration still fires before the deadline.
+  const at = Math.max(processing - LEAD_MS, now);
   return at < deadline ? { start: processing - LEAD_MS, at, deadline, processing } : null;
 }
 

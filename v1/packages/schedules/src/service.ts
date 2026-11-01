@@ -106,7 +106,9 @@ export function createSchedulesService(config: ServiceConfig) {
   async function runDue(row: Row, at: Date) {
     const s = JSON.parse(row.def) as Schedule;
     const last = db.prepare(`SELECT MAX(occurrence) AS o FROM runs WHERE schedule = ?`).get(row.id) as { o: string | null };
-    const [newest, ...older] = between(s, new Date(last.o ?? row.created), at);
+    // Explicit times have no backlog to bound, and a registrar's clock runs behind `created`, so a time registered late must still count; a cron starts at `created`.
+    const after = last.o ? new Date(last.o) : s.times ? new Date(0) : new Date(row.created);
+    const [newest, ...older] = between(s, after, at);
     if (!newest) return;
     const useful = +at < expiry(s, newest);
     if (useful && !(await submit(s, newest))) return;

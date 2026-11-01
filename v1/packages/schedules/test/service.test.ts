@@ -173,6 +173,32 @@ test('an exhausted one-shot whose moment passed long ago is recorded missed, not
   assert.deepEqual((await api('GET', '/schedules')).json.schedules[0].missedRuns, ['2026-01-01T01:00:00.000Z']);
 });
 
+test('a one-shot registered for the moment it is written fires once, and re-registering it does not fire it again', async () => {
+  const { svc, api } = await start(':memory:');
+  clock = new Date('2026-01-01T10:00:00Z');
+  const once = { id: 'now', times: ['2026-01-01T10:00:00Z'], sessionKey: 'now', input: 'x' };
+  await api('POST', '/schedules', once);
+  await svc.tick();
+  assert.equal(calls.length, 1);
+  await api('POST', '/schedules', { ...once, input: 'y' });
+  await svc.tick();
+  assert.equal(calls.length, 1);
+});
+
+test('a one-shot registered after its time but inside its window fires; a recorded missed one is not retried', async () => {
+  const { svc, api } = await start(':memory:');
+  clock = new Date('2026-01-01T10:30:00Z');
+  const late = { id: 'late', times: ['2026-01-01T10:00:00Z'], deadline: '2026-01-01T12:00:00Z', sessionKey: 'late', input: 'x' };
+  await api('POST', '/schedules', late);
+  await svc.tick();
+  assert.equal(calls.length, 1);
+  await api('POST', '/schedules', { id: 'gone', times: ['2026-01-01T09:00:00Z'], deadline: '2026-01-01T09:30:00Z', sessionKey: 'gone', input: 'x' });
+  await svc.tick();
+  await api('POST', '/schedules', { id: 'gone', times: ['2026-01-01T09:00:00Z'], deadline: '2026-01-01T11:00:00Z', sessionKey: 'gone', input: 'x' });
+  await svc.tick();
+  assert.equal(calls.length, 1, 'past its window it was recorded missed, and a wider window later does not revive it');
+});
+
 test('a tick that throws is logged and the loop keeps running', async () => {
   const { svc, api } = await start(':memory:', undefined, 1);
   clock = new Date('2026-01-01T08:00:00Z');

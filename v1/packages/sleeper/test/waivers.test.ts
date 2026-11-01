@@ -265,7 +265,7 @@ test('the run starts 12 hours before processing and is due an hour ahead of it; 
   assert.equal(waiversRun(AT, { daily_waivers: 1, daily_waivers_hour: 20, daily_waivers_days: 1111111 }), null);
   // Registered late, the run starts now and still ends before the deadline.
   const late = waiversRun(Date.parse('2026-11-11T02:00:00Z'), REAL)!;
-  assert.deepEqual([new Date(late.at).toISOString(), new Date(late.deadline).toISOString()], ['2026-11-11T02:01:00.000Z', '2026-11-11T07:00:00.000Z']);
+  assert.deepEqual([new Date(late.at).toISOString(), new Date(late.deadline).toISOString()], ['2026-11-11T02:00:00.000Z', '2026-11-11T07:00:00.000Z']);
   assert.equal(waiversRun(AT, undefined), null);
   assert.equal(waiversKey('L1', 9), 'sleeper:L1:9:waivers');
 });
@@ -361,10 +361,9 @@ test('a changed processing day (Wednesday to Friday) leaves exactly one entry, a
 
 test('a run that already fired is not run again by a later registration, and the next week\'s run is still scheduled', async () => {
   await withSchedules(async ({ url, list, clock, fired, tick }) => {
-    // Registered late, after the 12-hour lead began: the run starts a minute out.
+    // Registered late, after the 12-hour lead began: the run starts now.
     clock.at = Date.parse('2026-11-10T21:00:00Z');
     await register(url, base, clock.at);
-    clock.at += 2 * 60_000;
     await tick();
     assert.equal(fired.length, 1);
     // The six-hourly re-registration before processing must not start it again.
