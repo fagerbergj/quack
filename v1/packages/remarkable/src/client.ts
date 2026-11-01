@@ -49,7 +49,14 @@ export function createRmClient(config: { url: string; email: string; password: s
     tree,
     /** Every document, folders flattened away. */
     documents: async (): Promise<RmDocument[]> => walk(await tree()),
-    /** The document exported as PDF; the renderer works for notebooks, PDFs and epubs alike. */
+    /** The document's raw files (.content, .metadata, one .rm per notebook page) as a zip; sync 1.5 serves it, the PDF export is not involved. */
+    downloadRmdoc: async (id: string): Promise<Buffer> => {
+      const path = `/ui/api/documents/${encodeURIComponent(id)}`;
+      const zip = Buffer.from(await (await get(`${path}?type=rmdoc`)).arrayBuffer());
+      if (!zip.subarray(0, 2).equals(Buffer.from('PK'))) throw new Error(`rmfakecloud GET ${path}: ${zip.length ? 'response is not a zip' : 'empty zip'}`);
+      return zip;
+    },
+    /** The document exported as PDF; only PDFs and epubs, since rmfakecloud cannot render current notebooks. */
     downloadPdf: async (id: string): Promise<Buffer> => {
       const path = `/ui/api/documents/${encodeURIComponent(id)}`;
       const pdf = Buffer.from(await (await get(`${path}?type=pdf`)).arrayBuffer());

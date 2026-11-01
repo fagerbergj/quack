@@ -33,6 +33,11 @@ jobs:
           cache: npm
           cache-dependency-path: v1/package-lock.json
       - run: npm ci
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      # The reMarkable render tests draw a v6 page with rmc.
+      - run: pip install --no-deps -r packages/remarkable/requirements.txt
       - run: npx tsc -p tsconfig.json
       - run: npx tsc -p packages/web/tsconfig.json
       - run: npm test

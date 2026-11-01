@@ -27,10 +27,13 @@ COPY packages/web packages/web
 RUN npm run build -w packages/web
 
 FROM node:26.13-trixie-slim
-RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates python3 python3-venv && rm -rf /var/lib/apt/lists/*
+# rmc draws reMarkable notebooks (packages/remarkable); its venv comes first on PATH so python3 finds it.
+COPY packages/remarkable/requirements.txt /tmp/rm-requirements.txt
+RUN python3 -m venv /opt/rmc && /opt/rmc/bin/pip install --no-cache-dir --no-deps -r /tmp/rm-requirements.txt && rm /tmp/rm-requirements.txt
 COPY --from=golang:1.27.3-trixie /usr/local/go /usr/local/go
 COPY --from=gopls /out/gopls /usr/local/bin/gopls
-ENV PATH=/usr/local/go/bin:/app/node_modules/.bin:$PATH
+ENV PATH=/opt/rmc/bin:/usr/local/go/bin:/app/node_modules/.bin:$PATH
 WORKDIR /app
 COPY --from=deps /app/node_modules node_modules
 COPY . .

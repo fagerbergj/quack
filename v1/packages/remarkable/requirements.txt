@@ -1,0 +1,5 @@
+# Install with --no-deps. rmc 0.3.0 (2025-03-21) pins rmscene<0.7, but only rmscene 0.8.0 (2026-04-05) reads current-firmware notebooks without dropping data.
+rmc==0.3.0
+rmscene==0.8.0
+# rmscene's own pin.
+packaging==23.2
