@@ -49,14 +49,14 @@ export function reportEvidence() {
       // A source whose text was not kept (a failed write, a fork) cannot disprove a quote, so it is skipped.
       const texts = (await Promise.all(ids.map((id) => sourceText(api, id, ctx)))).filter((t): t is string => t !== undefined).map(squash);
       const misquotes = texts.length ? quotedSpans(f.text).filter((q) => !texts.some((t) => t.includes(squash(q)))) : [];
-      finding.push({ id: `finding-${i + 1}`, cited: ids.length > 0, first: f.first, misquotes, state: { finding: f.text } } as never);
+      finding.push({ id: `finding-${i + 1}`, state: { finding: f.text, cited: ids.length > 0, first: f.first, misquotes } });
     }
     return { review: [{ id: 'report', state: { report: sealed.content } }], sources: [{ id: 'fetched', state: { ids: fetched.map((s) => s.id) } }], finding };
   };
 }
 
-type FindingUnit = { id: string; cited: boolean; first: string; misquotes: string[] };
-const findings = (ev: Evidence) => (ev.finding ?? []) as unknown as FindingUnit[];
+type FindingState = { cited: boolean; first: string; misquotes: string[] };
+const findings = (ev: Evidence) => (ev.finding ?? []).map((u) => ({ id: u.id, ...(u.state as unknown as FindingState) }));
 
 function findingsCited(_artifact: string, ev: Evidence): CodeResult {
   const all = findings(ev);

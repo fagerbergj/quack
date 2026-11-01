@@ -285,17 +285,18 @@ test('a batch of searches reports each query, and one failing query does not fai
     let raw = '';
     for await (const c of req) raw += c;
     if (JSON.parse(raw).query === 'bad') return res.writeHead(500).end('boom');
+    if (JSON.parse(raw).query === 'garbled') return res.writeHead(200).end('<html>not json');
     res.writeHead(200).end(JSON.stringify({ results: [{ title: 'Hit', url: 'https://example.org/hit' }] }));
   });
-  const { seen, session } = await run({ exaUrl }, (step) => [call('web_search', { queries: ['good', 'bad', 'also good'] }), step(fauxAssistantMessage('Done.'))]);
-  assert.equal(sees(seen, 0), '## good\n1. Hit\n   https://example.org/hit\n\n## bad\nsearch failed: 500 boom\n\n## also good\n1. Hit\n   https://example.org/hit');
+  const { seen, session } = await run({ exaUrl }, (step) => [call('web_search', { queries: ['good', 'bad', 'garbled', 'also good'] }), step(fauxAssistantMessage('Done.'))]);
+  assert.match(sees(seen, 0), /^## good\n1\. Hit\n {3}https:\/\/example\.org\/hit\n\n## bad\nsearch failed: 500 boom\n\n## garbled\nsearch failed: .*JSON.*\n\n## also good\n1\. Hit/);
   await session.close();
 });
 
 const GOOD = '## Summary\nDucks fly.\n## Assumptions\nNone.\n## Findings\n- The page says "Ducks & geese fly." [s1]\n- Ducks are birds. [s1]\n';
 
 const gate = (id: string, ev: Parameters<NonNullable<(typeof researchRubric)['criteria'][0]['checks'][0]['code']>>[1]) => researchRubric.criteria[0].checks.find((c) => c.id === id)!.code!('', ev);
-const unit = (o: object) => ({ id: 'f', state: {}, ...o });
+const unit = ({ id = 'f', ...state }: { id?: string } & Record<string, any>) => ({ id, state });
 
 test('findings_cited: every finding bullet needs a [sN]; the bare one is named and marked', () => {
   assert.deepEqual(findingItems(GOOD).map((f) => f.first), ['- The page says "Ducks & geese fly." [s1]', '- Ducks are birds. [s1]']);

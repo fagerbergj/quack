@@ -137,15 +137,19 @@ export function formatResults(results: ExaResult[]): string {
 
 export function webSearchTool(config: ResearchConfig) {
   const search = async (query: string, count: number): Promise<string> => {
-    const res = await fetch(`${config.exaUrl ?? 'https://api.exa.ai'}/search`, {
-      method: 'POST',
-      headers: { 'x-api-key': process.env.QUACK_EXA_API_KEY!, 'content-type': 'application/json' },
-      body: JSON.stringify({ query, numResults: count, contents: { text: { maxCharacters: 400 } } }),
-      signal: AbortSignal.timeout(20_000),
-    }).catch((err: Error) => err);
-    if (res instanceof Error) return `search failed: ${res.message}`;
-    if (!res.ok) return `search failed: ${res.status} ${(await res.text()).slice(0, 200)}`;
-    return formatResults(((await res.json()) as { results?: ExaResult[] }).results ?? []);
+    // Body reads are inside the try: a malformed or dropped body fails this query, not the batch.
+    try {
+      const res = await fetch(`${config.exaUrl ?? 'https://api.exa.ai'}/search`, {
+        method: 'POST',
+        headers: { 'x-api-key': process.env.QUACK_EXA_API_KEY!, 'content-type': 'application/json' },
+        body: JSON.stringify({ query, numResults: count, contents: { text: { maxCharacters: 400 } } }),
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (!res.ok) return `search failed: ${res.status} ${(await res.text()).slice(0, 200)}`;
+      return formatResults(((await res.json()) as { results?: ExaResult[] }).results ?? []);
+    } catch (err) {
+      return `search failed: ${(err as Error).message}`;
+    }
   };
   return defineTool({
     name: 'web_search',
