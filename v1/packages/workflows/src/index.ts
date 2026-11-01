@@ -1,6 +1,7 @@
 import { BACKGROUND_CONTEXT, type Context } from '@earendil-works/chord/context';
 import type { JsonValue } from '@earendil-works/chord';
 import { defineExtension, defineTask, type Conversation, type ConversationId, type Extension, type Harness, type RunningTask, type TaskRuntime, type Tx } from '@earendil-works/pi-durable';
+import type { Dispatch, DispatchingExtension } from '@quack/session';
 import { WorkflowDoc, type StepRecord } from './doc.ts';
 import { execute, view, type Step, type StepContext } from './steps.ts';
 
@@ -77,16 +78,26 @@ export function defineWorkflow(def: { name: string; steps: Step[] }) {
 
 const pending = (s: Step): StepRecord => ({ name: s.name, kind: s.kind, status: 'pending', startedAt: null, durationMs: null, cost: 0, error: null, ask: null, answer: null });
 
-/** Runs the workflow as the conversation's one run and waits for its outcome; a resubmission joins the run already there. */
-export async function runWorkflow(harness: Harness, root: Conversation, workflow: Workflow, input: JsonValue, ctx: Context = BACKGROUND_CONTEXT) {
-  const id = await root.commit(async (tx) => {
+// A run is live until its task is terminal; the same request or a live run is joined, anything else starts a fresh run in this session.
+export async function startWorkflow(harness: Harness, root: Conversation, workflow: Workflow, input: JsonValue, request: string | null = null, ctx: Context = BACKGROUND_CONTEXT): Promise<string> {
+  const seen = (await harness.snapshot(WorkflowDoc, root.id, ctx))?.task ?? null;
+  const live = seen !== null && (await harness.getTask(Number(seen) as never, ctx))?.state.status !== 'terminal';
+  return root.commit(async (tx) => {
     const doc = await tx.doc(WorkflowDoc, root.id);
-    if (doc.task) return doc.task;
+    if (doc.task && (doc.task !== seen || live || (request !== null && doc.request === request))) return doc.task;
     const created = String(await tx.createTask(workflow.task, { input }, { ownership: { kind: 'conversation' } }));
-    Object.assign(doc, { name: workflow.name, task: created, steps: workflow.steps.map(pending) });
+    Object.assign(doc, { name: workflow.name, task: created, request, steps: workflow.steps.map(pending) });
     return created;
   }, ctx);
+}
+
+export async function outcomeOf(harness: Harness, id: string, ctx: Context = BACKGROUND_CONTEXT) {
   return (await harness.waitForTask(Number(id) as never, ctx)).state.outcome;
+}
+
+/** Starts the workflow (see startWorkflow) and waits for its outcome. */
+export async function runWorkflow(harness: Harness, root: Conversation, workflow: Workflow, input: JsonValue, request: string | null = null, ctx: Context = BACKGROUND_CONTEXT) {
+  return outcomeOf(harness, await startWorkflow(harness, root, workflow, input, request, ctx), ctx);
 }
 
 /** An agent definition's binding: `"workflows": { "workflow": "<name>" }` makes a submission run that workflow instead of the agent loop. */
@@ -106,6 +117,15 @@ export function workflowExtension(workflows: Workflow[]): Extension {
   return defineExtension({ name: 'quack.workflows', tasks: workflows.map((w) => w.task) });
 }
 
+/** The bound workflow runs in place of the agent loop: the submission's text is its input, and its results are the answer. */
 export function workflowSessionExtensions(config: unknown, from?: Record<string, Workflow>): Extension[] {
-  return [workflowExtension([boundWorkflow(config, from)])];
+  const workflow = boundWorkflow(config, from);
+  const dispatch: Dispatch = async ({ harness, root }, input, requestId, wait) => {
+    const id = await startWorkflow(harness, root, workflow, input, requestId ?? null);
+    if (!wait) return { submissionId: id, status: 'placed' };
+    const outcome = await outcomeOf(harness, id);
+    if (outcome.status === 'completed') return { submissionId: id, status: 'done', answer: JSON.stringify(outcome.result) };
+    return { submissionId: id, status: 'unanswered', reason: outcome.status, detail: outcome.status === 'failed' ? outcome.error.message : undefined };
+  };
+  return [{ ...workflowExtension([workflow]), dispatch } as DispatchingExtension];
 }

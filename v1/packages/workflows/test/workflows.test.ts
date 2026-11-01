@@ -8,7 +8,7 @@ import { createModels, fauxAssistantMessage, fauxProvider, Type } from '@earendi
 import { defineTool } from '@earendil-works/pi-durable';
 import { Approvals, Artifacts, pendingApprovals, resolveApproval, seal, type ArtifactKind } from '@quack/sdk';
 import { openSession } from '@quack/session';
-import { answerDecision, defineWorkflow, runWorkflow, watchUntil, WorkflowDoc, workflowExtension, type Workflow } from '../src/index.ts';
+import { answerDecision, defineWorkflow, outcomeOf, runWorkflow, startWorkflow, watchUntil, WorkflowDoc, workflowExtension, type Workflow } from '../src/index.ts';
 
 const dirs: string[] = [];
 after(() => Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true }))));
@@ -123,7 +123,8 @@ test('a decision step waits for a person across a restart and resumes on the ans
   });
   const dir = await tmp();
   const a = await open(dir, build());
-  const running = runWorkflow(a.harness, a.root, build(), null).catch(() => undefined);
+  const id = await startWorkflow(a.harness, a.root, build(), null); // the document exists once the run does
+  const running = outcomeOf(a.harness, id).catch(() => undefined);
   const ask = await waitFor(a, (d) => d.steps[0].ask);
   assert.equal((ask as { question: string }).question, 'Who starts?');
   assert.equal((await doc(a)).steps[0].status, 'waiting');

@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { contentText, type MutableModels } from '@earendil-works/pi-ai';
-import { AssistantEntry, createRegistry, defineExtension, Harness, section, watchEvents, type Extension } from '@earendil-works/pi-durable';
+import { AssistantEntry, createRegistry, defineExtension, Harness, section, watchEvents, type Conversation, type Extension } from '@earendil-works/pi-durable';
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { mkdir } from 'node:fs/promises';
@@ -34,6 +34,10 @@ function formatDate(d: Date, timeZone: string): string {
   return `${part('weekday')}, ${part('year')}-${part('month')}-${part('day')}`;
 }
 
+/** An extension that takes over submissions in place of the agent loop, such as a bound workflow. */
+export type Dispatch = (session: { harness: Harness; root: Conversation }, input: string, requestId: string | undefined, wait: boolean) => Promise<SubmitResult>;
+export type DispatchingExtension = Extension & { dispatch?: Dispatch };
+
 // One process owns one session: its SQLite log is the only source of truth (A1, A6).
 export async function openSession(opts: { dir: string; models: MutableModels; agent: AgentSpec; timeZone?: string; now?: () => Date }) {
   const registry = createRegistry();
@@ -54,6 +58,8 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
   harness.resume();
   const watchdog = opts.agent.maxTurns ? await turnLimit(harness, root, opts.agent.maxTurns) : undefined;
 
+  const dispatch = (opts.agent.extensions as DispatchingExtension[] | undefined)?.find((e) => e.dispatch)?.dispatch;
+
   async function answerText(entryId: unknown): Promise<string> {
     const entry = await root.commit((tx) => tx.entry(AssistantEntry, entryId as never), ctx);
     const message = (entry as { model?: { content: Parameters<typeof contentText>[0] }[] } | undefined)?.model?.[0];
@@ -66,6 +72,7 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
     root,
     busy: () => harness.wake().active,
     async submit(input: string, requestId?: string, wait = false, whenBusy?: 'steer' | 'followUp'): Promise<SubmitResult> {
+      if (dispatch) return dispatch({ harness, root }, input, requestId, wait);
       const submission = await root.submit({ type: 'input', content: input, requestId, whenBusy }, ctx);
       const record = wait ? await submission.wait(ctx) : await submission.status(ctx);
       const submissionId = String(record.id);

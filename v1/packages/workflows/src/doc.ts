@@ -15,7 +15,7 @@ export type StepRecord = {
   answer: { choice: string; by: string } | null;
 };
 
-type WorkflowState = { name: string | null; task: string | null; steps: StepRecord[] };
+type WorkflowState = { name: string | null; task: string | null; request: string | null; steps: StepRecord[] };
 
 /** What the session view renders (WFL-4): each step's status, duration and cost. */
 export const WorkflowDoc = defineDoc<WorkflowState>({
@@ -24,7 +24,7 @@ export const WorkflowDoc = defineDoc<WorkflowState>({
   scope: 'conversation',
   history: 'latest',
   fork: 'initial',
-  initial: () => ({ name: null, task: null, steps: [] }),
+  initial: () => ({ name: null, task: null, request: null, steps: [] }),
   checkpointWhen: () => false,
 });
 
