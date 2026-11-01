@@ -4,7 +4,7 @@ import { ingestWorkflow, INGEST_WORKFLOW, UNREACHABLE, type IngestService } from
 export { ingestWorkflow, INGEST_WORKFLOW, NONE, type IngestDeps, type IngestService } from './workflow.ts';
 export { problems, transcriptKind, TYPES, type Transcript } from './transcript.ts';
 export { classifierChoice, parseTopic } from './classify.ts';
-export { PAGE_WIDTH, renderPages } from './render.ts';
+export { PAGE_WIDTH, renderNotebook, renderPages } from './render.ts';
 
 /** The service half over HTTP; the bearer token is the service's shared secret. */
 export function createIngestService(url: string, token: string, doFetch: typeof fetch = fetch): IngestService {
@@ -20,6 +20,7 @@ export function createIngestService(url: string, token: string, doFetch: typeof 
   };
   return {
     pdf: async (id) => new Uint8Array(await (await call(`/documents/${encodeURIComponent(id)}/pdf`)).arrayBuffer()),
+    rmdoc: async (id) => new Uint8Array(await (await call(`/documents/${encodeURIComponent(id)}/rmdoc`)).arrayBuffer()),
     topics: async () => ((await (await call('/topics')).json()) as { topics: string[] }).topics,
     addTopic: async (name) => void (await call('/topics', { method: 'POST', body: JSON.stringify({ name }) })),
   };

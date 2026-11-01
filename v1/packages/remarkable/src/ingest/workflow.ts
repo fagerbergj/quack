@@ -4,7 +4,7 @@ import type { ClassifierRef, ModelRef } from '@quack/judge';
 import { agentModel, seal, type Decision } from '@quack/sdk';
 import { defineWorkflow, type StepContext } from '@quack/workflows';
 import { classifierChoice, parseTopic } from './classify.ts';
-import { renderPages } from './render.ts';
+import { renderNotebook, renderPages } from './render.ts';
 import { TYPES, transcriptKind, type Transcript } from './transcript.ts';
 
 export const INGEST_WORKFLOW = 'remarkable.ingest';
@@ -13,6 +13,8 @@ export const NONE = 'none of these';
 /** The service half's side of ingest: the document PDF and the durable topic list. */
 export type IngestService = {
   pdf(id: string): Promise<Uint8Array>;
+  /** The document's raw files as rmfakecloud's .rmdoc zip. */
+  rmdoc(id: string): Promise<Uint8Array>;
   topics(): Promise<string[]>;
   addTopic(name: string): Promise<void>;
 };
@@ -103,11 +105,14 @@ export function ingestWorkflow(deps: IngestDeps) {
         kind: 'code',
         run: async (c) => {
           const { id, name } = doc(c);
-          const pdf = await deps.service.pdf(id).catch((err: Error) => {
-            // A dead link to the service is not an rmfakecloud fault; keep the two apart for triage.
-            throw err.message.startsWith(UNREACHABLE) ? err : new Error(`rmfakecloud could not export ${name}: ${err.message}`);
-          });
-          const images = await renderPages(pdf);
+          // A dead link to the service is not an rmfakecloud fault; keep the two apart for triage.
+          const fetching = (what: string) => (err: Error): never => {
+            throw err.message.startsWith(UNREACHABLE) ? err : new Error(`rmfakecloud could not ${what} ${name}: ${err.message}`);
+          };
+          // Notebooks are drawn here from their .rm files; rmfakecloud's export fails on current firmware and only serves PDFs and epubs.
+          const images =
+            (await renderNotebook(await deps.service.rmdoc(id).catch(fetching('download')), name)) ??
+            (await renderPages(await deps.service.pdf(id).catch(fetching('export'))));
           if (!images.length) throw new Error('step render: the document has no pages');
           for (const [i, image] of images.entries()) await must(c.api.env!.writeFile(pageFile(i + 1), image, c.ctx), pageFile(i + 1));
           return { pages: images.length };

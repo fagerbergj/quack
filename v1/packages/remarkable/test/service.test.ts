@@ -44,6 +44,8 @@ const rm = await listen(
       );
     }
     if (req.url === '/ui/api/documents/n1?type=pdf') return res.writeHead(200).end('%PDF-fake');
+    if (req.url === '/ui/api/documents/n1?type=rmdoc') return res.writeHead(200).end('PK-fake');
+    if (req.url === '/ui/api/documents/html?type=rmdoc') return res.writeHead(200).end('<html>oops</html>');
     if (req.url === '/ui/api/documents/broken?type=pdf') return res.writeHead(500).end('json: cannot unmarshal object into Content.pageTags.0 of type string');
     if (req.url === '/ui/api/documents/html?type=pdf') return res.writeHead(200, { 'content-type': 'text/html' }).end('<html>oops</html>');
     if (req.url === '/ui/api/documents/empty?type=pdf') return res.writeHead(200, { 'content-type': 'application/pdf' }).end();
@@ -64,6 +66,12 @@ test('client logs in, flattens and nests the tree, re-logs in on a 401, and down
   const pdf = await client.downloadPdf('n1');
   assert.equal(pdf.toString(), '%PDF-fake');
   assert.equal(logins, before + 2);
+});
+
+test('the raw document download is a zip, and an error page in its place is refused', async () => {
+  const client = createRmClient({ url: rm, email: EMAIL, password: PASSWORD });
+  assert.equal((await client.downloadRmdoc('n1')).toString(), 'PK-fake');
+  await assert.rejects(client.downloadRmdoc('html'), /response is not a zip/);
 });
 
 test('a failed login names the status and leaks neither credential', async () => {
@@ -253,6 +261,8 @@ test('the client puts the first line of the rmfakecloud error body in the reason
 test('a failed or empty PDF export is a 502 and the service keeps serving', async () => {
   for (const id of ['broken', 'empty', 'html']) assert.equal((await call('GET', `/documents/${id}/pdf`)).status, 502, id);
   assert.equal((await call('GET', '/documents/n1/pdf')).status, 200);
+  assert.equal((await call('GET', '/documents/n1/rmdoc')).status, 200);
+  assert.equal((await call('GET', '/documents/html/rmdoc')).status, 502);
 });
 
 test('a malformed batch id is a 400, not an upstream error', async () => {

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -8,7 +8,7 @@ import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-work
 import { Artifacts, decide } from '@quack/sdk';
 import { openSession } from '@quack/session';
 import { runWorkflow, workflowExtension } from '@quack/workflows';
-import { classifierChoice, createIngestService, createRemarkableService, ingestWorkflow, NONE, PAGE_WIDTH, parseTopic, problems, renderPages, type IngestService, type Transcript } from '../src/index.ts';
+import { classifierChoice, createIngestService, createRemarkableService, ingestWorkflow, NONE, PAGE_WIDTH, parseTopic, problems, renderNotebook, renderPages, type IngestService, type Transcript } from '../src/index.ts';
 
 // A real two-page PDF, written by hand so the render step runs the actual library.
 function pdf(pages: number): Uint8Array {
@@ -28,9 +28,12 @@ function pdf(pages: number): Uint8Array {
   return new TextEncoder().encode(out);
 }
 
+// Synthetic .rmdoc zips written by fixtures/make-rmdoc.py: a one-page v6 notebook, one whose page is not v6, and a PDF-type document.
+const fixture = async (name: 'notebook' | 'pdf' | 'broken') => new Uint8Array(await readFile(join(import.meta.dirname, 'fixtures', `${name}.rmdoc`)));
+
 // The service half's state, held in memory: what outlives a session is the topic list.
 function fakeService(topics: string[] = []): IngestService & { list: string[] } {
-  return { list: topics, pdf: async () => pdf(2), topics: async () => [...topics], addTopic: async (n) => void (topics.some((t) => t.toLowerCase() === n.toLowerCase()) || topics.push(n)) };
+  return { list: topics, pdf: async () => pdf(2), rmdoc: async () => fixture('pdf'), topics: async () => [...topics], addTopic: async (n) => void (topics.some((t) => t.toLowerCase() === n.toLowerCase()) || topics.push(n)) };
 }
 
 type Answers = { type: string; topic: string; proposal?: string };
@@ -148,6 +151,33 @@ test('render gives one JPEG per page at the tablet width', async () => {
   for (const p of pages) assert.equal((await loadImage(Buffer.from(p))).width, PAGE_WIDTH);
 });
 
+test('a v6 notebook page renders through rmc to a non-blank JPEG at the tablet size', async () => {
+  const pages = (await renderNotebook(await fixture('notebook'), 'Notes'))!;
+  assert.equal(pages.length, 1);
+  const { loadImage, createCanvas } = await import('@napi-rs/canvas');
+  const image = await loadImage(Buffer.from(pages[0]));
+  assert.deepEqual([image.width, image.height], [PAGE_WIDTH, 1871]); // rmc's viewBox is one unit wider and taller than the 1404x1872 screen
+  const ctx = createCanvas(image.width, image.height).getContext('2d');
+  ctx.drawImage(image, 0, 0);
+  const dark = ctx.getImageData(0, 0, image.width, image.height).data.filter((v, i) => i % 4 === 0 && v < 100).length;
+  assert.ok(dark > 500, `ink pixels: ${dark}`);
+});
+
+test('a PDF-type document is left to the export', async () => {
+  assert.equal(await renderNotebook(await fixture('pdf'), 'Notes'), undefined);
+});
+
+test('a page rmc cannot read fails naming its number and the document', async () => {
+  await assert.rejects(renderNotebook(await fixture('broken'), 'Notes'), /^Error: could not render page 1 of Notes: \S+/);
+});
+
+test('a notebook ingests from its raw pages and never asks for the PDF export', async () => {
+  const service = { ...fakeService(), rmdoc: () => fixture('notebook'), pdf: async (): Promise<Uint8Array> => { throw new Error('pdf export must not be used'); } };
+  const r = await ingest(service, { type: 'meeting', topic: NONE, proposal: 'Campaigns' });
+  assert.equal(r.outcomes[0].status, 'completed');
+  assert.deepEqual(r.transcript().pages.map((p) => p.page), [1]);
+});
+
 test('the transcript check names every page without text and a wrong type', () => {
   const t: Transcript = { kind: 'remarkable.transcript', document: { id: 'n1', name: 'N', version: '1' }, type: 'poem', topic: 'x', pages: [{ page: 1, text: 'a' }, { page: 3, text: ' ' }] };
   assert.deepEqual(problems(t), ['type must be one of meeting, idea, todo-list, journal, sketch, reading-notes', 'page 2 is numbered 3', 'page 2 has no text']);
@@ -201,7 +231,7 @@ test('an unreachable service fails the render step as such, not as an rmfakeclou
 });
 
 test('the service serves the PDF and keeps the topic list, and the ingest client reads both', async () => {
-  const service = createRemarkableService({ serviceToken: 't', dbPath: ':memory:', distributorUrl: 'http://unused', agent: 'a', client: { tree: async () => [], documents: async () => [], downloadPdf: async (id) => { if (id !== 'n 1') throw new Error('rmfakecloud GET /x: response is not a PDF'); return Buffer.from(pdf(1)); } } });
+  const service = createRemarkableService({ serviceToken: 't', dbPath: ':memory:', distributorUrl: 'http://unused', agent: 'a', client: { tree: async () => [], documents: async () => [], downloadRmdoc: async () => Buffer.from(await fixture('notebook')), downloadPdf: async (id) => { if (id !== 'n 1') throw new Error('rmfakecloud GET /x: response is not a PDF'); return Buffer.from(pdf(1)); } } });
   await new Promise<void>((r) => service.listen(0, r));
   try {
     const url = `http://127.0.0.1:${(service.address() as { port: number }).port}`;

@@ -12,7 +12,7 @@ export type ServiceConfig = {
   distributorUrl: string;
   /** The promoted agent that runs `remarkable.ingest`. */
   agent: string;
-  client: Pick<RmClient, 'tree' | 'documents' | 'downloadPdf'>;
+  client: Pick<RmClient, 'tree' | 'documents' | 'downloadPdf' | 'downloadRmdoc'>;
   now?: () => Date;
   /** Called after each document's answer is recorded; lets tests wait on it instead of polling. */
   onSettle?: (batch: string, document: string) => void;
@@ -138,11 +138,12 @@ export function createRemarkableService(config: ServiceConfig) {
   const server = createServer(async (req, res) => {
     if (!authorized(req, config.serviceToken)) return send(res, 401, { error: 'unauthorized' });
     try {
-      const pdf = req.method === 'GET' ? /^\/documents\/([^/]+)\/pdf$/.exec(new URL(req.url ?? '', 'http://x').pathname) : null;
-      if (pdf) {
+      const file = req.method === 'GET' ? /^\/documents\/([^/]+)\/(pdf|rmdoc)$/.exec(new URL(req.url ?? '', 'http://x').pathname) : null;
+      if (file) {
         // Download before writing headers: a failure after writeHead would make the catch's send throw and kill the process.
-        const body = await config.client.downloadPdf(decodeURIComponent(pdf[1]));
-        return void res.writeHead(200, { 'content-type': 'application/pdf' }).end(body);
+        const id = decodeURIComponent(file[1]);
+        const body = file[2] === 'pdf' ? await config.client.downloadPdf(id) : await config.client.downloadRmdoc(id);
+        return void res.writeHead(200, { 'content-type': file[2] === 'pdf' ? 'application/pdf' : 'application/zip' }).end(body);
       }
       send(res, ...(await route(req)));
     } catch (err) {
