@@ -45,24 +45,29 @@ function summaryNamesChanges(artifact: string, ev: Evidence): CodeResult {
   return share(rows.length - missed.length, rows.length, `the summary does not name both players of the ${missed.map((r) => r.slot).join(', ')} change`);
 }
 
+/** Sleeper's designation by player name, so a check never pins one player's injury on another. */
+const designations = (r: Row, f: Facts) => Object.fromEntries([r.player, ...(f.current[r.slot] ? [f.players[f.current[r.slot]!]] : [])].map((p) => [p.name, p.inj ?? 'none']));
+
 /** Row units carry the incumbent and the baseline pick so a check sees only what it needs. */
 export function lineupEvidence(f: Facts) {
   return async (_api: unknown, sealed: { content: string }): Promise<Evidence> => {
     const card = parse(sealed.content);
     const unit = (r: Row) => ({
       id: r.slot,
-      state: { slot: r.slot, week: f.week, row: r, incumbent: f.current[r.slot] ? f.players[f.current[r.slot]!] : null, baseline: f.baseline.find((b) => b.slot === r.slot) ?? null, news: f.news[r.player.id] ?? [] } as never,
+      state: { slot: r.slot, week: f.week, row: r, incumbent: f.current[r.slot] ? f.players[f.current[r.slot]!] : null, baseline: f.baseline.find((b) => b.slot === r.slot) ?? null, news: r.news ?? [], designations: designations(r, f) } as never,
     });
     // Locked rows keep their player by construction; no judgment is asked of them beyond a plain action.
     const where = (keep: (r: Row) => boolean) => card.starters.filter(keep).map(unit);
     const live = (keep: (r: Row) => boolean) => where((r) => !r.locked && keep(r));
+    const inBaseline = new Set(f.baseline.map((b) => b.id));
     const close = new Set(closeCalls(f).map((p) => p.id));
     return {
       facts: [{ id: 'facts', state: f as never }],
       row: where(() => true),
-      differs: live((r) => f.baseline.find((b) => b.slot === r.slot)?.id !== r.player.id),
+      // By membership, not slot: the baseline may seat the same player in RB2 that the card keeps in RB1.
+      differs: live((r) => changed(r, f) && !inBaseline.has(r.player.id)),
       changed: live((r) => changed(r, f)),
-      close: live((r) => close.has(r.player.id) || (!!f.current[r.slot] && close.has(f.current[r.slot]!))),
+      close: live((r) => (r.news?.length ?? 0) > 0 && (close.has(r.player.id) || (!!f.current[r.slot] && close.has(f.current[r.slot]!)))),
       designated: live((r) => !!r.player.inj || !!f.players[f.current[r.slot] ?? '']?.inj),
       card: [{ id: 'card', state: { summary: card.summary, rows: card.starters.map((r) => ({ slot: r.slot, player: r.player.name, why: r.why })) } as never }],
     };
@@ -72,7 +77,7 @@ export function lineupEvidence(f: Facts) {
 // The audit's lineup table (docs/v1/audits/sleeper.md), unreplayed: D45 asks for replay before any weight gates delivery.
 export const lineupRubric: Rubric = {
   name: 'sleeper.lineup',
-  version: 2,
+  version: 3,
   threshold: 0.8,
   criteria: [
     { id: 'legal_and_complete', checks: [
@@ -83,8 +88,8 @@ export const lineupRubric: Rubric = {
       { id: 'summary_names_changes', weight: 'gate', code: summaryNamesChanges },
     ] },
     { id: 'calls_are_reasoned', checks: [
-      { id: 'names_baseline_it_beats', weight: 3, scope: 'differs', question: 'This starter differs from the best-by-projection baseline for the slot. Does `why` name the baseline player and what changed the call?' },
-      { id: 'close_call_news', weight: 3, scope: 'close', question: 'This is a Questionable or limited-practice starter, or a bench player within the FLEX tie-break gap. Does `why` link a news item by its URL that bears on the call?' },
+      { id: 'names_baseline_it_beats', weight: 3, scope: 'differs', question: 'This change starts a player the best-by-projection baseline does not. Does `why` name the baseline player and what changed the call?' },
+      { id: 'close_call_news', weight: 3, scope: 'close', question: 'This is a Questionable or limited-practice starter, or a bench player within the FLEX tie-break gap. Does `why` reflect the attached `news`, naming the right player for each report and the Sleeper `designations`?' },
       { id: 'designation_weighted', weight: 3, scope: 'designated', question: 'Does the call treat an injury designation as a play rate, not as in or out?' },
       { id: 'picks_an_action', weight: 2, scope: 'row', question: 'Does the row start, sit or keep a player, rather than leave the slot open?' },
     ] },

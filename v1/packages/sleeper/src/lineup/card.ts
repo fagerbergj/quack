@@ -1,5 +1,5 @@
 import type { ArtifactKind } from '@quack/sdk';
-import type { Facts, Game, PlayerFact } from './facts.ts';
+import type { Facts, Game, NewsItem, PlayerFact } from './facts.ts';
 
 /** The page reads every Sleeper job's result from this kind; `kind` inside the file says which card it is. */
 export const cardsKind: ArtifactKind = {
@@ -16,7 +16,10 @@ export const cardsKind: ArtifactKind = {
 };
 
 export type PlayerRef = { id: string; name: string; pos: string; team: string | null; inj: string | null };
-export type Row = { slot: string; player: PlayerRef; proj: number; action: 'start' | 'keep'; locked: boolean; replaces: PlayerRef | null; game: Game | null; why: string };
+export type Row = { slot: string; player: PlayerRef; proj: number; action: 'start' | 'keep'; locked: boolean; replaces: PlayerRef | null; game: Game | null; why: string;
+  /** Attached by code from the facts, for the starter and the player replaced, so a link is never the model's to copy. */
+  news: Array<NewsItem & { player: string }>;
+};
 export type LineupCard = {
   kind: 'lineup';
   league: string;
@@ -41,7 +44,8 @@ export function buildCard(f: Facts, d: Decision): LineupCard {
   const row = (slot: string, p: PlayerFact, why: string): Row => {
     const inc = f.current[slot] ? f.players[f.current[slot]!] : null;
     const change = inc?.id !== p.id;
-    return { slot, player: ref(p), proj: p.proj, action: change ? 'start' : 'keep', locked: !f.open.includes(slot), replaces: change && inc ? ref(inc) : null, game: p.game, why };
+    const news = [p, ...(change && inc ? [inc] : [])].flatMap((x) => (f.news[x.id] ?? []).map((n) => ({ ...n, player: x.name })));
+    return { slot, player: ref(p), proj: p.proj, action: change ? 'start' : 'keep', locked: !f.open.includes(slot), replaces: change && inc ? ref(inc) : null, game: p.game, why, news };
   };
   const starters = f.slots.flatMap((slot) => {
     if (!f.open.includes(slot)) return [row(slot, f.players[f.current[slot]!], 'Locked: the game has started.')];
