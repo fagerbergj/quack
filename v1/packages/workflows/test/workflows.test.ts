@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
-import { createModels, fauxAssistantMessage, fauxProvider, Type } from '@earendil-works/pi-ai';
+import { createModels, fauxAssistantMessage, fauxProvider, Type, type FauxResponseFactory, type Message } from '@earendil-works/pi-ai';
 import { defineTool } from '@earendil-works/pi-durable';
 import { Approvals, Artifacts, pendingApprovals, resolveApproval, seal, type ArtifactKind } from '@quack/sdk';
 import { openSession } from '@quack/session';
@@ -14,9 +14,9 @@ const dirs: string[] = [];
 after(() => Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true }))));
 const tmp = async () => { const d = await mkdtemp(join(tmpdir(), 'quack-wf-')); dirs.push(d); return d; };
 
-function open(dir: string, workflow: Workflow, ...replies: string[]) {
+function open(dir: string, workflow: Workflow, ...replies: (string | FauxResponseFactory)[]) {
   const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
-  faux.setResponses(replies.map((r) => fauxAssistantMessage(r)));
+  faux.setResponses(replies.map((r) => (typeof r === 'string' ? fauxAssistantMessage(r) : r)));
   const models = createModels();
   models.setProvider(faux.provider);
   const m = faux.getModel();
@@ -96,7 +96,8 @@ test('a model reply that fails the schema fails the step and stops the workflow'
       { name: 'after', kind: 'code', run: () => { ranAfter = true; return null; } },
     ],
   });
-  const s = await open(await tmp(), workflow, '{"top": "three"}');
+  const bad = '{"top": "three"}';
+  const s = await open(await tmp(), workflow, bad, bad, bad);
   const outcome = await runWorkflow(s.harness, s.root, workflow, null);
 
   assert.equal(outcome.status, 'failed');
@@ -105,6 +106,51 @@ test('a model reply that fails the schema fails the step and stops the workflow'
   assert.match(rank.error!, /step rank:.*top/s);
   assert.equal(after.status, 'pending');
   assert.equal(ranAfter, false);
+  await s.close();
+});
+
+const capped = defineWorkflow({
+  name: 'capped',
+  steps: [{ name: 'decide', kind: 'model', schema: Type.Object({ summary: Type.String({ maxLength: 5 }) }), prompt: () => 'summarize' }],
+});
+
+// Answers with `text` and records the messages each request carried.
+const reply = (text: string, seen: Message[][]): FauxResponseFactory => (context) => {
+  seen.push([...context.messages]);
+  return fauxAssistantMessage(text);
+};
+
+test('a model reply that breaks the schema is repaired with the error and the first reply', async () => {
+  const seen: Message[][] = [];
+  const s = await open(await tmp(), capped, reply('{"summary": "far too long"}', seen), reply('{"summary": "ok"}', seen));
+  const outcome = await runWorkflow(s.harness, s.root, capped, null);
+
+  assert.equal(outcome.status, 'completed');
+  assert.equal(seen.length, 2);
+  assert.deepEqual(seen[1].map((m) => m.role), ['user', 'assistant', 'user']);
+  assert.match(JSON.stringify(seen[1][1]), /far too long/);
+  assert.match(JSON.stringify(seen[1][2]), /summary.*must not have more than 5 characters/s);
+  await s.close();
+});
+
+test('a model step that keeps breaking its schema fails with the last error after two repairs', async () => {
+  const seen: Message[][] = [];
+  const s = await open(await tmp(), capped, reply('{"summary": "too long 1"}', seen), reply('{"summary": "too long 2"}', seen), reply('{"summary": "too long 3"}', seen));
+  const outcome = await runWorkflow(s.harness, s.root, capped, null);
+
+  assert.equal(outcome.status, 'failed');
+  assert.equal(seen.length, 3);
+  assert.match((await doc(s)).steps[0].error!, /step decide:.*summary/s);
+  await s.close();
+});
+
+test('a model reply that is valid the first time is asked for once', async () => {
+  const seen: Message[][] = [];
+  const s = await open(await tmp(), capped, reply('{"summary": "ok"}', seen), reply('{"summary": "again"}', seen));
+  const outcome = await runWorkflow(s.harness, s.root, capped, null);
+
+  assert.equal(outcome.status, 'completed');
+  assert.equal(seen.length, 1);
   await s.close();
 });
 
