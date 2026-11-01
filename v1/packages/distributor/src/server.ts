@@ -191,10 +191,15 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
     res.end(Buffer.from(await upstream.arrayBuffer()));
   }
 
+  async function listing(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+    if (req.method !== 'GET' || (req.url !== '/sessions' && req.url !== '/agents')) return false;
+    send(res, 200, req.url === '/agents' ? { agents: await driver.agents() } : { sessions: await driver.sessions() });
+    return true;
+  }
+
   const server = createServer(async (req, res) => {
     try {
-      if (req.method === 'GET' && req.url === '/sessions') return send(res, 200, { sessions: await driver.sessions() });
-      if (req.method === 'GET' && req.url === '/agents') return send(res, 200, { agents: await driver.agents() });
+      if (await listing(req, res)) return;
       if (await opts.index?.(req, res)) return;
       if (await serveWeb(opts.webDir, req, res)) return;
       if (!/^\/sessions\/[^/]+\//.test(req.url ?? '')) return send(res, 404, { error: 'not found' });
