@@ -21,6 +21,15 @@ export type ServiceConfig = {
 const MAX_BODY = 1 << 20;
 const send = (res: ServerResponse, status: number, body: unknown) => res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
 
+const isMissing = (err: unknown) => (err as NodeJS.ErrnoException).code === 'ENOENT';
+const parseJson = (text: string) => {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+};
+
 class BadRequest extends Error {}
 
 function authorized(req: IncomingMessage, token: string): boolean {
@@ -62,10 +71,14 @@ export function createSchedulesService(config: ServiceConfig) {
   // Agent definitions are re-read each tick, as the distributor does, so a redeploy's schedules take effect without a restart.
   async function syncAgents() {
     if (!config.agentsDir) return;
-    const dirs = await readdir(config.agentsDir, { withFileTypes: true }).catch(() => []);
+    // Only a missing dir or file means "no agents"; any other I/O error keeps the stored schedules this tick, since the sync deletes.
+    const dirs = await readdir(config.agentsDir, { withFileTypes: true }).catch((err) => (isMissing(err) ? [] : (err as Error)));
+    if (dirs instanceof Error) return console.error(`schedules: agents dir: ${dirs.message}`);
     const wanted = new Map<string, Schedule>();
     for (const d of dirs.filter((e) => e.isDirectory())) {
-      const def = await readFile(join(config.agentsDir, d.name, 'agent.json'), 'utf8').then(JSON.parse, () => null);
+      const text = await readFile(join(config.agentsDir, d.name, 'agent.json'), 'utf8').catch((err) => (isMissing(err) ? '' : (err as Error)));
+      if (text instanceof Error) return console.error(`schedules: ${d.name}: ${text.message}`);
+      const def = text ? parseJson(text) : null;
       if (typeof def?.name !== 'string' || !Array.isArray(def.schedules)) continue;
       for (const s of def.schedules) {
         try {
@@ -156,12 +169,20 @@ export function createSchedulesService(config: ServiceConfig) {
   });
 
   let timer: NodeJS.Timeout | undefined;
-  const loop = () => void tick().finally(() => (timer = setTimeout(loop, config.tickMs ?? 10_000)));
+  let stopped = false;
+  // A failed tick (a busy database, a disk error) is logged and retried: an unhandled rejection would kill the process.
+  const loop = (): Promise<void> =>
+    tick()
+      .catch((err) => console.error(`schedules: tick failed: ${err}`))
+      .finally(() => {
+        if (!stopped) timer = setTimeout(loop, config.tickMs ?? 10_000);
+      });
   return Object.assign(server, {
     tick,
-    /** Starts the timer loop; the first tick is the downtime catch-up. */
+    /** Starts the timer loop and resolves once the first tick, the downtime catch-up, has settled. */
     start: loop,
     stop() {
+      stopped = true;
       clearTimeout(timer);
       server.close();
       db.close();

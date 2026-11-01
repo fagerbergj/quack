@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,20 +13,31 @@ type Call = { url: string; body: { input: string; requestId: string } };
 let clock = new Date('2026-01-01T00:00:00Z');
 let calls: Call[] = [];
 let ok = true;
+let failClockOnce = false;
+let onFetch: (() => void) | undefined;
 const open: Array<ReturnType<typeof createSchedulesService>> = [];
 afterEach(() => {
   open.splice(0).forEach((s) => s.stop());
   calls = [];
   ok = true;
+  onFetch = undefined;
+  failClockOnce = false;
 });
 
 const fakeFetch = (async (url: string, init: { body: string }) => {
   calls.push({ url, body: JSON.parse(init.body) });
+  onFetch?.();
   return { ok };
 }) as unknown as typeof fetch;
 
-async function start(dbPath: string, agentsDir?: string) {
-  const svc = createSchedulesService({ serviceToken: TOKEN, distributorUrl: 'http://d', dbPath, agentsDir, now: () => clock, fetch: fakeFetch });
+async function start(dbPath: string, agentsDir?: string, tickMs?: number) {
+  const svc = createSchedulesService({ serviceToken: TOKEN, distributorUrl: 'http://d', dbPath, agentsDir, now: () => {
+      if (failClockOnce) {
+        failClockOnce = false;
+        throw new Error('database is busy');
+      }
+      return clock;
+    }, fetch: fakeFetch, tickMs });
   open.push(svc);
   svc.listen(0);
   await new Promise((r) => svc.once('listening', r));
@@ -150,6 +161,59 @@ test('a cron in America/New_York keeps its wall-clock time across the DST change
   // Clocks spring forward on Mar 8: 09:00 EST was 14:00Z, 09:00 EDT is 13:00Z (UTC would drift an hour).
   assert.deepEqual(calls.map((c) => c.body.requestId), ['schedule:daily:2026-03-08T13:00:00.000Z', 'schedule:daily:2026-03-09T13:00:00.000Z']);
   assert.equal((await api('POST', '/schedules', { ...daily, id: 'z', tz: 'Mars/Base' })).status, 400);
+});
+
+test('an exhausted one-shot whose moment passed long ago is recorded missed, not fired', async () => {
+  const { svc, api } = await start(':memory:');
+  clock = new Date('2026-01-01T00:00:00Z');
+  await api('POST', '/schedules', { id: 'once', times: ['2026-01-01T01:00:00Z'], sessionKey: 'once', input: 'x' });
+  clock = new Date('2026-01-02T01:00:00Z');
+  await svc.tick();
+  assert.equal(calls.length, 0);
+  assert.deepEqual((await api('GET', '/schedules')).json.schedules[0].missedRuns, ['2026-01-01T01:00:00.000Z']);
+});
+
+test('a tick that throws is logged and the loop keeps running', async () => {
+  const { svc, api } = await start(':memory:', undefined, 1);
+  clock = new Date('2026-01-01T08:00:00Z');
+  await api('POST', '/schedules', daily);
+  clock = new Date('2026-01-01T09:00:00Z');
+  const fired = new Promise<void>((r) => (onFetch = r));
+  failClockOnce = true;
+  await svc.start();
+  await fired;
+  assert.equal(calls.length, 1);
+});
+
+test('an unreadable agents dir or agent.json keeps stored schedules and their history', { skip: process.getuid?.() === 0 }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'agents-'));
+  await mkdir(join(dir, 'sleeper'));
+  const file = join(dir, 'sleeper', 'agent.json');
+  await writeFile(file, JSON.stringify({ name: 'sleeper', version: 1, schedules: [{ id: 'weekly', cron: '0 9 * * 1', sessionKey: 'weekly', input: 'run' }] }));
+  const { svc, api } = await start(':memory:', dir);
+  clock = new Date('2026-01-05T08:00:00Z');
+  await svc.tick();
+  for (const [target, mode] of [[dir, 0o755], [file, 0o644]] as const) {
+    await chmod(target, 0o000);
+    clock = new Date(+clock + 7 * 86400_000 + 3600_000);
+    await svc.tick();
+    await chmod(target, mode);
+    assert.equal((await api('GET', '/schedules')).json.schedules.length, 1);
+    await svc.tick();
+  }
+  assert.deepEqual(calls.map((c) => c.body.requestId), ['schedule:sleeper/weekly:2026-01-12T09:00:00.000Z', 'schedule:sleeper/weekly:2026-01-19T09:00:00.000Z']);
+});
+
+test('an api schedule can be deleted, and an agent-declared id cannot be overwritten', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'agents-'));
+  await mkdir(join(dir, 'sleeper'));
+  await writeFile(join(dir, 'sleeper', 'agent.json'), JSON.stringify({ name: 'sleeper', version: 1, schedules: [{ id: 'weekly', cron: '0 9 * * 1', sessionKey: 'weekly', input: 'run' }] }));
+  const { svc, api } = await start(':memory:', dir);
+  await svc.tick();
+  assert.equal((await api('POST', '/schedules', { ...daily, id: 'sleeper/weekly' })).status, 409);
+  await api('POST', '/schedules', daily);
+  assert.equal((await api('DELETE', '/schedules/daily')).status, 200);
+  assert.deepEqual((await api('GET', '/schedules')).json.schedules.map((s: any) => s.id), ['sleeper/weekly']);
 });
 
 test('the API requires the token and rejects bad definitions', async () => {

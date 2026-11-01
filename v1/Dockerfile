@@ -1,4 +1,4 @@
-# The v1 image: one build serves the distributor (with its session processes) and the GitHub service; compose picks
+# The v1 image: one build serves the distributor (with its session processes), the GitHub service and the schedules service; compose picks
 # the entrypoint. Session processes review code, so the image carries git, Go and the language servers they use.
 FROM golang:1.27.3-trixie AS gopls
 RUN --mount=type=cache,target=/root/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \

@@ -12,12 +12,14 @@ export type Schedule = {
   /** `{time}` becomes the occurrence's ISO time, so each occurrence can have its own session. */
   sessionKey: string;
   input: string;
-  /** Usefulness window (SCH-4): an occurrence stays useful for staleMs, and never past the deadline. Default: until the next occurrence. */
+  /** Usefulness window (SCH-4): an occurrence stays useful for staleMs, and never past the deadline. Default: until the next occurrence, or ONE_SHOT_GRACE_MS past the last of `times`. */
   staleMs?: number;
   deadline?: string;
 };
 
 const MAX_BACKLOG = 1000;
+/** How long past its moment a one-shot (the last of a `times` list) stays useful by default. */
+export const ONE_SHOT_GRACE_MS = 60_000;
 
 const isoTime = (t: unknown) => typeof t === 'string' && !Number.isNaN(Date.parse(t));
 
@@ -62,5 +64,5 @@ export function between(s: Schedule, after: Date, upTo: Date): Date[] {
 export function expiry(s: Schedule, occurrence: Date): number {
   const limits = [s.deadline && Date.parse(s.deadline), s.staleMs && +occurrence + s.staleMs].filter((n): n is number => typeof n === 'number');
   if (limits.length) return Math.min(...limits);
-  return Number(nextAfter(s, occurrence) ?? Infinity);
+  return Number(nextAfter(s, occurrence) ?? +occurrence + ONE_SHOT_GRACE_MS);
 }
