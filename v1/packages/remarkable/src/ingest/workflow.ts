@@ -27,6 +27,8 @@ export type IngestDeps = {
 
 type Doc = { id: string; name: string; version: string };
 
+// The bar the judge applies to Clef; below it the chain falls through to the session model, then a person.
+const MIN_CONFIDENCE = 0.8;
 // Clef's input cap is 8192 tokens; the opening pages carry what a type or topic needs.
 const EXCERPT_CHARS = 6000;
 const TYPE_HINT: Record<string, string> = {
@@ -79,7 +81,7 @@ async function propose(c: StepContext): Promise<string> {
   const agent = await c.api.agent(c.ctx);
   const model = agent.model && c.api.models.getModel(agent.model.provider, agent.model.modelId);
   if (!model) throw new Error('step propose: the session model is not available');
-  const ask = `Name the topic of this handwritten document in 2 or 3 words, such as "home renovation" or "quarterly planning". Existing topics, none of which fit: ${existing.join(', ') || 'none'}. Answer with the name only.\n\n${text(c).slice(0, EXCERPT_CHARS)}`;
+  const ask = `Name the topic of this handwritten document in 2 to 4 words, such as "home renovation" or "quarterly planning". Existing topics, none of which fit: ${existing.join(', ') || 'none'}. Answer with the name only.\n\n${text(c).slice(0, EXCERPT_CHARS)}`;
   const made = await c.api.memo<string>('topic-proposal', c.ctx);
   if (made !== undefined) return made;
   const reply = await c.api.models.completeSimple(model, { messages: [{ role: 'user', content: ask, timestamp: c.api.now() }] }, { signal: c.signal });
@@ -104,13 +106,13 @@ export function ingestWorkflow(deps: IngestDeps) {
         },
       },
       { name: 'transcribe', kind: 'code', run: (c) => transcribe(c, deps) },
-      { name: 'type', kind: 'decision', resolvers: resolvers((o) => TYPE_HINT[o] ?? o), point: (c) => ({ question: 'What kind of handwritten document is this?', options: [...TYPES], evidence: text(c).slice(0, EXCERPT_CHARS) }) },
+      { name: 'type', kind: 'decision', resolvers: resolvers((o) => TYPE_HINT[o] ?? o), point: (c) => ({ question: 'What kind of handwritten document is this?', options: [...TYPES], minConfidence: MIN_CONFIDENCE, evidence: text(c).slice(0, EXCERPT_CHARS) }) },
       { name: 'topics', kind: 'code', run: async () => deps.service.topics() },
       {
         name: 'topic',
         kind: 'decision',
         resolvers: resolvers((o) => (o === NONE ? 'No existing topic fits this document' : `Documents about ${o}`)),
-        point: (c) => ({ question: 'Which existing topic does this document belong to?', options: [...step<string[]>(c, 'topics'), NONE], evidence: text(c).slice(0, EXCERPT_CHARS) }),
+        point: (c) => ({ question: 'Which existing topic does this document belong to?', options: [...step<string[]>(c, 'topics'), NONE], minConfidence: MIN_CONFIDENCE, evidence: text(c).slice(0, EXCERPT_CHARS) }),
       },
       { name: 'name', kind: 'code', run: propose },
       {

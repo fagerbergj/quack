@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
-import { Artifacts } from '@quack/sdk';
+import { Artifacts, decide } from '@quack/sdk';
 import { openSession } from '@quack/session';
 import { runWorkflow, workflowExtension } from '@quack/workflows';
 import { classifierChoice, createIngestService, createRemarkableService, ingestWorkflow, NONE, PAGE_WIDTH, parseTopic, problems, renderPages, type IngestService, type Transcript } from '../src/index.ts';
@@ -169,6 +169,22 @@ test('the classifier resolver answers from the decision model, and escalates whe
   assert.equal(got?.choice, 'idea');
   assert.deepEqual((asked as { questions: { pick: { criteria: unknown } } }).questions.pick.criteria, { meeting: 'is meeting', idea: 'is idea' });
   assert.equal(await classifierChoice({ ...ref, maxInputTokens: 10 }, String).resolve(point, api as never, ctx), undefined);
+});
+
+test('a low-confidence Clef answer escalates to the session model; a confident one stands', async () => {
+  const point = { name: 'type', question: 'What kind?', options: ['meeting', 'idea'], minConfidence: 0.8 };
+  const ref = { provider: 'clef', modelId: 'clef', maxInputTokens: 8192 };
+  const memos = new Map<string, unknown>();
+  const api = (confidence: number) => ({
+    models: { getAllModels: () => [{ id: 'clef', type: 'classifier' }], classify: async () => ({ stopReason: 'stop', answers: { pick: { type: 'choice', choice: 'idea', probabilities: {}, confidence } } }) },
+    memo: async (k: string, v: unknown, set?: unknown) => (set === undefined ? memos.get(k) : (memos.set(k, v), v)),
+  });
+  const run = async (confidence: number) => {
+    memos.clear();
+    return decide(api(confidence) as never, point, [classifierChoice(ref, String), { id: 'session', resolve: async () => ({ choice: 'meeting', confidence: 0.9, reason: 'x' }) }], ctx);
+  };
+  assert.equal((await run(0.79))?.resolver, 'session');
+  assert.equal((await run(0.8))?.resolver, 'clef');
 });
 
 test('the service serves the PDF and keeps the topic list, and the ingest client reads both', async () => {
