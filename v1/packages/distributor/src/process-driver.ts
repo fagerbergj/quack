@@ -131,12 +131,14 @@ export function processDriver(opts: { command: string[]; dataDir: string; agents
   const starting = new Map<string, Promise<string>>();
   const crashes = new Map<string, number[]>();
 
-  // A session's title (recorded, else its first message) never changes once found, so it is read once per session directory.
+  // The first message never changes once written, so it is scanned once per session directory; a recorded title can appear later (an existing session's next webhook), so its file is checked on every listing.
   const titles = new Map<string, string>();
   function cachedTitle(dir: string): string | undefined {
+    const recorded = recordedTitle(dir)?.slice(0, TITLE_MAX);
+    if (recorded) return recorded;
     const known = titles.get(dir);
     if (known !== undefined) return known;
-    const found = (recordedTitle(dir) ?? firstInput(dir))?.slice(0, TITLE_MAX);
+    const found = firstInput(dir);
     if (found !== undefined) titles.set(dir, found);
     return found;
   }

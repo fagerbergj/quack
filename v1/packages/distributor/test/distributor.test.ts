@@ -152,11 +152,13 @@ test('each session runs on the agent that created it, and the registry and index
   const { agents } = (await (await fetch(`${base}/agents`)).json()) as { agents: Array<{ name: string }> };
   assert.deepEqual(agents.sort((a, b) => a.name.localeCompare(b.name)), [{ name: 'research', version: 3, status: 'draft' }, { name: 'reviewer', version: 3, status: 'draft' }]);
   await driver.stop('research:b');
-  await writeFile(join(dataDir, sessionDirName('github:a#1'), 'title'), 'Fix the cache');
   const { sessions } = (await (await fetch(`${base}/sessions`)).json()) as { sessions: Array<{ key: string; agent: string; title?: string; running: boolean; lastActivity: string }> };
   assert.deepEqual(sessions.map((s) => [s.key, s.agent, s.running]).sort(), [['github:a#1', 'reviewer', true], ['research:b', 'research', false]]);
   assert.equal(sessions.find((s) => s.key === 'research:b')?.title, 'whoami');
-  assert.equal(sessions.find((s) => s.key === 'github:a#1')?.title, 'Fix the cache');
+  assert.equal(sessions.find((s) => s.key === 'github:a#1')?.title, 'whoami');
+  await writeFile(join(dataDir, sessionDirName('github:a#1'), 'title'), 'Fix the cache');
+  const named = (await (await fetch(`${base}/sessions`)).json()) as { sessions: Array<{ key: string; title?: string }> };
+  assert.equal(named.sessions.find((s) => s.key === 'github:a#1')?.title, 'Fix the cache');
   assert.ok(sessions.every((s) => !Number.isNaN(Date.parse(s.lastActivity))));
 });
 
