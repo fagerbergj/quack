@@ -9,7 +9,7 @@ export function verifySignature(secret: string, body: Buffer, header: string | u
 }
 
 /** A run to start: which session, in which role, with what input. */
-export type Trigger = { sessionKey: string; role: 'reviewer'; input: string; repo: { owner: string; name: string }; number: number };
+export type Trigger = { sessionKey: string; role: 'reviewer'; input: string; repo: { owner: string; name: string }; number: number; title: string };
 
 const TRUSTED = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
 
@@ -25,7 +25,7 @@ function reviewTrigger(p: Payload, pr: Payload, why: string): Trigger {
     '',
     pr.body ?? '',
   ].filter((l, i) => i !== 2 || l).join('\n');
-  return { sessionKey: `github:${owner}/${name}#${pr.number}`, role: 'reviewer', input, repo: { owner, name }, number: pr.number };
+  return { sessionKey: `github:${owner}/${name}#${pr.number}`, role: 'reviewer', input, repo: { owner, name }, number: pr.number, title: String(pr.title ?? '') };
 }
 
 // G1/G5: the review label starts the first review; `/review` from a trusted commenter starts later ones.

@@ -20,13 +20,24 @@ export const listApprovals = async (key: string) => (await json<{ approvals: App
 export const listArtifacts = async (key: string) => (await json<{ artifacts: SealedArtifact[] }>(await fetch(`${base(key)}/artifacts`))).artifacts;
 export const abortRun = async (key: string) => void (await json(await fetch(`${base(key)}/abort`, { method: 'POST' })));
 
+export type IndexApproval = { session: string; id: string; tool: string; at: number };
+export type IndexArtifact = { session: string; kind: string; version: number; verdict: { passed: boolean } | null; sealedAt: number };
+
+// The index answers 404 when it is off, and 503 when its database is down; either way callers fall back to per-session reads.
+async function indexRead<T>(path: string, field: string): Promise<T[] | undefined> {
+  const res = await fetch(path).catch(() => undefined);
+  return res?.ok ? ((await res.json()) as Record<string, T[]>)[field] : undefined;
+}
+export const indexApprovals = () => indexRead<IndexApproval>('index/approvals?state=pending', 'approvals');
+export const indexArtifacts = () => indexRead<IndexArtifact>('index/artifacts', 'artifacts');
+
 // shortcut: no auth (tailnet only) and the approver is a fixed name, until identity lands.
-export async function decideApproval(key: string, id: string, decision: 'approve' | 'reject') {
+export async function decideApproval(key: string, id: string, decision: 'approve' | 'reject', reason?: string) {
   await json(
     await fetch(`${base(key)}/approvals/${encodeURIComponent(id)}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ decision, by: 'web' }),
+      body: JSON.stringify({ decision, by: 'web', ...(reason ? { reason } : {}) }),
     }),
   );
 }

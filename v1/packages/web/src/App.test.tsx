@@ -493,3 +493,98 @@ test('a trailing slash on #/new/ shows the landing page on phone and desktop ali
     unmount();
   }
 });
+
+const pendingIndex = { approvals: [{ session: 'gh:3', id: 'a/1', tool: 'github_post_review', state: 'pending', decision: null, by: null, at: 1 }] };
+const goTo = (hash: string) => {
+  location.hash = hash;
+  act(() => void dispatchEvent(new HashChangeEvent('hashchange')));
+};
+
+test('with the index on, an idle session waiting on approval is in Needs you and the Inbox', async () => {
+  routes['GET /sessions'] = { sessions: [sess('gh:3', { title: 'Old work' })] };
+  routes['GET /index/approvals?state=pending'] = pendingIndex;
+  render(<App />);
+  const needs = await screen.findByRole('region', { name: 'Needs you' });
+  expect(within(needs).getByText('Approve github_post_review')).toBeInTheDocument();
+  expect(fetchMock.mock.calls.some(([u]) => u === 'sessions/gh%3A3/approvals')).toBe(false);
+  goTo('#/inbox');
+  expect(await screen.findByRole('heading', { name: 'Inbox' })).toBeInTheDocument();
+  expect(screen.getByText('1 waiting for your approval')).toBeInTheDocument();
+  expect(screen.getByRole('link', { name: 'Old work' })).toHaveAttribute('href', '#/s/gh%3A3');
+});
+
+test('the Inbox posts approve to the owning session, and reject with its reason', async () => {
+  routes['GET /sessions'] = { sessions: [sess('gh:3')] };
+  routes['GET /index/approvals?state=pending'] = pendingIndex;
+  routes['POST /sessions/gh%3A3/approvals/a%2F1'] = { resolved: true };
+  location.hash = '#/inbox';
+  render(<App />);
+  const post = () => JSON.parse(fetchMock.mock.calls.filter(([, i]) => i?.method === 'POST').at(-1)![1]!.body as string);
+  await userEvent.click(await screen.findByRole('button', { name: 'Approve github_post_review' }));
+  expect(post()).toEqual({ decision: 'approve', by: 'web' });
+
+  await userEvent.click(screen.getByRole('button', { name: 'Reject github_post_review' }));
+  await userEvent.type(screen.getByRole('textbox', { name: 'Reason' }), 'wrong repo');
+  routes['GET /index/approvals?state=pending'] = { approvals: [] };
+  await userEvent.click(screen.getByRole('button', { name: 'Confirm reject github_post_review' }));
+  expect(post()).toEqual({ decision: 'reject', by: 'web', reason: 'wrong repo' });
+  await screen.findByText('Nothing is waiting on you');
+});
+
+test('with the index off, the Inbox falls back to the running sessions own approvals', async () => {
+  routes['GET /sessions'] = { sessions: [sess('gh:1', { running: true })] };
+  routes['GET /sessions/gh%3A1/approvals'] = { approvals: [{ id: 'a', tool: 'push', args: { branch: 'main' }, requestedAt: 1 }] };
+  location.hash = '#/inbox';
+  render(<App />);
+  expect(await screen.findByText('{"branch":"main"}')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Approve push' })).toBeInTheDocument();
+});
+
+test('Artifacts lists sealed versions from the index and opens one in the Work drawer', async () => {
+  routes['GET /sessions'] = { sessions: [sess('gh:3', { title: 'Old work' })] };
+  routes['GET /index/artifacts'] = { artifacts: [
+    { session: 'gh:3', kind: 'github.review', version: 2, hash: 'h', verdict: { passed: true }, sealedAt: 2 },
+    { session: 'gh:3', kind: 'github.review', version: 1, hash: 'g', verdict: null, sealedAt: 1 },
+  ] };
+  routes['GET /sessions/gh%3A3/artifacts'] = { artifacts: [
+    { kind: 'github.review', version: 1, hash: 'g', content: 'first draft', sealedAt: 1, verdict: null },
+    { kind: 'github.review', version: 2, hash: 'h', content: 'final review', sealedAt: 2, verdict: { passed: true, gatesFailed: [], score: 1, checks: [] } },
+  ] };
+  location.hash = '#/artifacts';
+  render(<App />);
+  const open = await screen.findByRole('button', { name: 'Open github.review v2 of Old work' });
+  expect(open).toHaveTextContent('Passed');
+  expect(open).toHaveTextContent('2 versions');
+  expect(screen.getAllByRole('button', { name: /^Open / })).toHaveLength(1);
+  await userEvent.click(open);
+  expect(await screen.findByText('final review')).toBeInTheDocument();
+  await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Version' }), '1');
+  expect(screen.getByText('first draft')).toBeInTheDocument();
+  expect(screen.getByRole('dialog', { name: 'Work' })).toBeInTheDocument();
+});
+
+test('Artifacts says so when the index is off', async () => {
+  location.hash = '#/artifacts';
+  render(<App />);
+  expect(await screen.findByText(/The index is off/)).toBeInTheDocument();
+});
+
+test('a failed load shows its error in the Inbox instead of an empty list', async () => {
+  delete routes['GET /sessions'];
+  location.hash = '#/inbox';
+  render(<App />);
+  expect(await screen.findAllByRole('alert')).not.toHaveLength(0);
+  expect(screen.queryByText('Nothing is waiting on you')).toBeNull();
+});
+
+test('a double-click on Approve posts once', async () => {
+  routes['GET /sessions'] = { sessions: [sess('gh:3')] };
+  routes['GET /index/approvals?state=pending'] = pendingIndex;
+  location.hash = '#/inbox';
+  render(<App />);
+  const approve = await screen.findByRole('button', { name: 'Approve github_post_review' });
+  // The decision stays in flight, as it does while the session wakes.
+  fetchMock.mockImplementationOnce(() => new Promise<Response>(() => {}));
+  await userEvent.dblClick(approve);
+  expect(fetchMock.mock.calls.filter(([, i]) => i?.method === 'POST')).toHaveLength(1);
+});

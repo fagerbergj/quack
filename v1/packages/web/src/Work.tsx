@@ -3,7 +3,7 @@ import type { SealedArtifact } from './api.ts';
 import { Markdown } from './Markdown.tsx';
 
 const tab = (on: boolean) =>
-  `h-[28px] cursor-pointer rounded-full border-0 px-2.5 text-[12.5px] font-medium ${on ? 'bg-surface text-ink shadow-thumb' : 'bg-transparent text-muted hover:text-ink'}`;
+  `h-11 lg:h-[28px] cursor-pointer rounded-full border-0 px-2.5 text-[12.5px] font-medium ${on ? 'bg-surface text-ink shadow-thumb' : 'bg-transparent text-muted hover:text-ink'}`;
 
 function Pill({ met }: { met: number | null }) {
   const [text, tone] = met === null ? ['n/a', 'bg-soft text-muted'] : met >= 1 ? ['Pass', 'bg-success-bg text-success'] : ['Fail', 'bg-danger-bg text-danger'];
@@ -33,7 +33,9 @@ function Checks({ a }: { a: SealedArtifact }) {
 const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
 // Modal drawer: Esc, the close button or the backdrop closes it, Tab stays inside, focus returns to the opener.
-export function Work({ artifact: a, onClose }: { artifact: SealedArtifact; onClose: () => void }) {
+export function Work({ artifact, versions, onClose }: { artifact: SealedArtifact; versions?: SealedArtifact[]; onClose: () => void }) {
+  const [picked, setPicked] = useState(artifact.version);
+  const a = versions?.find((v) => v.version === picked) ?? artifact;
   const [shown, setShown] = useState<'report' | 'checks'>('report');
   const id = useId();
   const arrows = (e: KeyboardEvent<HTMLElement>) => {
@@ -75,6 +77,14 @@ export function Work({ artifact: a, onClose }: { artifact: SealedArtifact; onClo
           </button>
         </div>
         <div className="flex-1 overflow-y-auto px-4 py-4 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] sm:px-5">
+          {versions && versions.length > 1 && (
+            <label className="mb-3 flex items-center gap-2 text-[13px] text-ink-2">
+              Version
+              <select value={picked} onChange={(e) => setPicked(Number(e.target.value))} className="h-11 rounded-full border border-line bg-soft px-3 text-[13px] outline-none lg:h-8">
+                {versions.map((v) => <option key={v.version} value={v.version}>{`v${v.version}${v.verdict ? (v.verdict.passed ? ' · passed' : ' · failed') : ''}`}</option>)}
+              </select>
+            </label>
+          )}
           <div role="tabpanel" id={`${id}-panel`} aria-labelledby={`${id}-tab-${shown}`} className="rounded-[22px] border border-line bg-surface p-5 text-sm leading-relaxed text-ink-2 shadow-card [overflow-wrap:anywhere]">
             {shown === 'report' ? (
               <>
