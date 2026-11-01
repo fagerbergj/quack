@@ -12,7 +12,9 @@ import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { artifactsExtension, attachVerdict, gated, pendingApprovals, resolveApproval, seal, type ArtifactKind } from '@quack/sdk';
 import { openSession } from '@quack/session';
 import pg from 'pg';
-import { createStore, indexRoutes, postgresBackend, rebuild, sqliteBackend, startPublisher, type IndexStore } from '../src/index.ts';
+import { DatabaseSync } from 'node:sqlite';
+import { existsSync } from 'node:fs';
+import { createStore, openStore, indexRoutes, postgresBackend, rebuild, sqliteBackend, startPublisher, type IndexStore } from '../src/index.ts';
 
 const url = process.env.QUACK_TEST_DATABASE_URL;
 const ctx = BACKGROUND_CONTEXT;
@@ -142,4 +144,35 @@ for (const { name, fresh: freshStore, skip } of backends) test(`${name}: facts s
   assert.deepEqual(await rows(fresh.store), live, 'replaying the log reproduces the index');
   await rebuild(fresh.store, dataDir);
   assert.deepEqual(await rows(fresh.store), live, 'replaying twice yields the same rows');
+});
+
+test('openStore defaults to the sqlite file in the data dir', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'quack-index-open-'));
+  const { store, close } = openStore({ QUACK_DATA_DIR: dir });
+  try {
+    await store.ensure();
+    assert.ok(existsSync(join(dir, 'index.sqlite')));
+    await store.upsert('chat:1', [{ id: 'session', kind: 'session', rev: 1, at: 0, data: { agent: 'reviewer', version: 4 } }]);
+    assert.equal((await store.facts()).length, 1);
+  } finally {
+    await close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a failed sqlite migration rolls back, so ensure recovers once the cause is gone', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'quack-index-mig-'));
+  cleanups.push(() => rm(dir, { recursive: true, force: true }));
+  const path = join(dir, 'index.sqlite');
+  const blocker = new DatabaseSync(path);
+  blocker.exec('create table index_facts (x)');
+  const backend = sqliteBackend(path);
+  const store = createStore(backend);
+  cleanups.push(async () => backend.close());
+  await assert.rejects(store.ensure(), /already exists/);
+  blocker.exec('drop table index_facts');
+  blocker.close();
+  await store.ensure();
+  await store.upsert('chat:1', [{ id: 'session', kind: 'session', rev: 1, at: 0, data: {} }]);
+  assert.equal((await store.facts()).length, 1);
 });

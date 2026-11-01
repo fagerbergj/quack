@@ -10,7 +10,8 @@ export function openStore(env: { QUACK_INDEX_DATABASE_URL?: string; QUACK_DATA_D
   const url = env.QUACK_INDEX_DATABASE_URL;
   if (!url) {
     mkdirSync(env.QUACK_DATA_DIR, { recursive: true });
-    return { store: createStore(sqliteBackend(join(env.QUACK_DATA_DIR, 'index.sqlite'))), close: async () => {} };
+    const backend = sqliteBackend(join(env.QUACK_DATA_DIR, 'index.sqlite'));
+    return { store: createStore(backend), close: async () => backend.close() };
   }
   const pool = new pg.Pool({ connectionString: url });
   return { store: createStore(postgresBackend(pool)), close: () => pool.end() };

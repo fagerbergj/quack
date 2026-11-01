@@ -4,6 +4,7 @@ export type FactRow = Fact & { session: string };
 
 /** One database behind the index: the only part that differs between SQLite and Postgres. */
 export type Backend = {
+  close(): void;
   migrate(): Promise<void>;
   /** Idempotent: a fact lands once per (session, id) and only a higher revision replaces it. */
   upsert(session: string, facts: Fact[]): Promise<void>;

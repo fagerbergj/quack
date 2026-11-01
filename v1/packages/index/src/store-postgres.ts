@@ -12,6 +12,7 @@ const MIGRATIONS = [
 
 export function postgresBackend(pool: pg.Pool): Backend {
   return {
+    close: () => void pool.end(),
     async migrate() {
       const client = await pool.connect();
       try {

@@ -14,11 +14,18 @@ const MIGRATIONS = [
 export function sqliteBackend(path: string): Backend {
   const db = new DatabaseSync(path);
   return {
+    close: () => db.close(),
     async migrate() {
       const { user_version: done } = db.prepare('pragma user_version').get() as { user_version: number };
       for (const [i, sql] of MIGRATIONS.entries()) {
         if (i < done) continue;
-        db.exec(`begin; ${sql}; pragma user_version = ${i + 1}; commit`);
+        try {
+          db.exec(`begin; ${sql}; pragma user_version = ${i + 1}; commit`);
+        } catch (err) {
+          // A half-open transaction would fail every retry.
+          if (db.isTransaction) db.exec('rollback');
+          throw err;
+        }
       }
     },
     async upsert(session, facts) {
