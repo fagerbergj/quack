@@ -119,13 +119,13 @@ test('every_game_covered, numbers_match_tools and no_projection_source each fail
   assert.match((await digestGate('numbers_match_tools', f, wrongScore)).detail!, /Mallard Mayhem v teal/);
   const wrongTop = { ...card, games: card.games.map((g, i) => (i ? g : { ...g, away: { ...g.away, top_scorers: [{ name: 'Tara Teal', pts: 39 }] } })) };
   assert.ok((await digestGate('numbers_match_tools', f, wrongTop)).met < 1);
-  for (const text of ['Their projected points favor Mallard.', 'Per the projections Mallard wins.', 'Teal has a 70% chance to win.', 'Their win probability is high.', 'The odds favor Pintail.']) {
+  for (const text of ['Mallard is projected to win.', 'Teal is the projected winner.', 'Their projected points favor Mallard.', 'Per the projections Mallard wins.', 'Teal has a 70% chance to win.', 'Their win probability is high.', 'The odds favor Pintail.']) {
     const r = await digestGate('no_projection_source', f, { ...card, summary: text });
     assert.equal(r.met, 0, text);
   }
   // The plain verb is ordinary prose, not a projection.
   assert.equal((await digestGate('no_projection_source', f, { ...card, summary: 'Quinn Quill projects as the top scorer, and Wade Wide is projected to start.' })).met, 1);
-  assert.equal((await digestGate('no_projection_source', f, { ...card, games: card.games.map((g) => ({ ...g, note: 'Projected total: 130.' })) })).met, 0);
+  assert.equal((await digestGate('no_projection_source', f, { ...card, games: card.games.map((g) => ({ ...g, note: 'Projected 130 points.' })) })).met, 0);
 });
 
 test('the retro holds the best lineup, the legal swap, the free-agent hit and the cutoffs, all from the final week', async () => {
