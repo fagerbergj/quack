@@ -1,0 +1,646 @@
+{
+ "/v1/state/nfl": {
+  "week": 9,
+  "season": "2026",
+  "season_type": "regular",
+  "display_week": 9
+ },
+ "/v1/league/L1": {
+  "league_id": "L1",
+  "name": "Pond League",
+  "season": "2026",
+  "total_rosters": 3,
+  "roster_positions": [
+   "QB",
+   "RB",
+   "RB",
+   "WR",
+   "WR",
+   "TE",
+   "FLEX",
+   "K",
+   "DEF",
+   "BN",
+   "BN",
+   "BN"
+  ],
+  "scoring_settings": {
+   "rec": 1
+  },
+  "settings": {
+   "waiver_type": 0,
+   "waiver_budget": 100,
+   "waiver_day_of_week": 3,
+   "daily_waivers_hour": 3
+  }
+ },
+ "/v1/league/L1/users": [
+  {
+   "user_id": "u1",
+   "display_name": "mallard",
+   "metadata": {
+    "team_name": "Mallard Mayhem"
+   }
+  },
+  {
+   "user_id": "u2",
+   "display_name": "teal",
+   "metadata": {}
+  },
+  {
+   "user_id": "u3",
+   "display_name": "pintail",
+   "metadata": {
+    "team_name": "Pintail Pride"
+   }
+  }
+ ],
+ "/v1/league/L1/rosters": [
+  {
+   "roster_id": 1,
+   "owner_id": "u1",
+   "players": [
+    "100",
+    "101",
+    "102",
+    "103",
+    "104",
+    "105",
+    "106",
+    "107",
+    "108",
+    "110",
+    "SEA"
+   ],
+   "starters": [
+    "100",
+    "101",
+    "102",
+    "104",
+    "105",
+    "107",
+    "106",
+    "108",
+    "SEA"
+   ],
+   "reserve": null,
+   "taxi": null,
+   "settings": {
+    "wins": 4,
+    "losses": 4,
+    "waiver_position": 2,
+    "waiver_budget_used": 30
+   }
+  },
+  {
+   "roster_id": 2,
+   "owner_id": "u2",
+   "players": [
+    "200",
+    "201",
+    "202"
+   ],
+   "starters": [
+    "200",
+    "201",
+    "202"
+   ],
+   "reserve": null,
+   "taxi": null,
+   "settings": {
+    "wins": 4,
+    "losses": 4,
+    "waiver_position": 1,
+    "waiver_budget_used": 80
+   }
+  },
+  {
+   "roster_id": 3,
+   "owner_id": "u3",
+   "players": [
+    "203"
+   ],
+   "starters": [
+    "203"
+   ],
+   "reserve": null,
+   "taxi": null,
+   "settings": {
+    "wins": 4,
+    "losses": 4,
+    "waiver_position": 3,
+    "waiver_budget_used": 0
+   }
+  }
+ ],
+ "/v1/league/L1/matchups/9": [
+  {
+   "roster_id": 1,
+   "matchup_id": 1,
+   "points": 0,
+   "starters": [],
+   "players": []
+  },
+  {
+   "roster_id": 2,
+   "matchup_id": 1,
+   "points": 0,
+   "starters": [],
+   "players": []
+  }
+ ],
+ "/v1/players/nfl": {
+  "100": {
+   "first_name": "Quinn",
+   "last_name": "Quill",
+   "position": "QB",
+   "team": "MIN",
+   "injury_status": null,
+   "active": true
+  },
+  "101": {
+   "first_name": "Ray",
+   "last_name": "Rush",
+   "position": "RB",
+   "team": "SF",
+   "injury_status": null,
+   "active": true
+  },
+  "102": {
+   "first_name": "Rob",
+   "last_name": "Rowe",
+   "position": "RB",
+   "team": "DAL",
+   "injury_status": "Questionable",
+   "active": true
+  },
+  "103": {
+   "first_name": "Dan",
+   "last_name": "Dash",
+   "position": "RB",
+   "team": "SEA",
+   "injury_status": null,
+   "active": true
+  },
+  "104": {
+   "first_name": "Will",
+   "last_name": "Wing",
+   "position": "WR",
+   "team": "MIN",
+   "injury_status": null,
+   "active": true
+  },
+  "105": {
+   "first_name": "Wes",
+   "last_name": "West",
+   "position": "WR",
+   "team": "GB",
+   "injury_status": null,
+   "active": true
+  },
+  "106": {
+   "first_name": "Walt",
+   "last_name": "Wade",
+   "position": "WR",
+   "team": "DET",
+   "injury_status": null,
+   "active": true
+  },
+  "107": {
+   "first_name": "Tom",
+   "last_name": "Tower",
+   "position": "TE",
+   "team": "SF",
+   "injury_status": null,
+   "active": true
+  },
+  "108": {
+   "first_name": "Kyle",
+   "last_name": "Kick",
+   "position": "K",
+   "team": "MIN",
+   "injury_status": null,
+   "active": true
+  },
+  "110": {
+   "first_name": "Bo",
+   "last_name": "Bench",
+   "position": "WR",
+   "team": "GB",
+   "injury_status": null,
+   "active": true
+  },
+  "SEA": {
+   "position": "DEF",
+   "team": "SEA",
+   "active": true,
+   "first_name": "Seattle",
+   "last_name": "Seahawks"
+  },
+  "200": {
+   "first_name": "Ned",
+   "last_name": "Nest",
+   "position": "QB",
+   "team": "CHI",
+   "injury_status": null,
+   "active": true
+  },
+  "201": {
+   "first_name": "Rex",
+   "last_name": "Reed",
+   "position": "RB",
+   "team": "PHI",
+   "injury_status": null,
+   "active": true
+  },
+  "202": {
+   "first_name": "Wanda",
+   "last_name": "Wing",
+   "position": "WR",
+   "team": "ARI",
+   "injury_status": null,
+   "active": true
+  },
+  "203": {
+   "first_name": "Tia",
+   "last_name": "Tern",
+   "position": "TE",
+   "team": "LAR",
+   "injury_status": null,
+   "active": true
+  },
+  "300": {
+   "first_name": "Felix",
+   "last_name": "Free",
+   "position": "RB",
+   "team": "KC",
+   "injury_status": null,
+   "active": true
+  },
+  "301": {
+   "first_name": "Ron",
+   "last_name": "Reserve",
+   "position": "RB",
+   "team": "BUF",
+   "injury_status": null,
+   "active": true
+  },
+  "302": {
+   "first_name": "Wally",
+   "last_name": "Wire",
+   "position": "WR",
+   "team": "NYJ",
+   "injury_status": null,
+   "active": true
+  },
+  "303": {
+   "first_name": "Ike",
+   "last_name": "Hurt",
+   "position": "WR",
+   "team": "DEN",
+   "injury_status": "Out",
+   "active": true
+  },
+  "304": {
+   "first_name": "Tim",
+   "last_name": "Tight",
+   "position": "TE",
+   "team": "CHI",
+   "injury_status": null,
+   "active": true
+  },
+  "305": {
+   "first_name": "Quentin",
+   "last_name": "Quiet",
+   "position": "QB",
+   "team": "PHI",
+   "injury_status": null,
+   "active": true
+  },
+  "306": {
+   "first_name": "Kim",
+   "last_name": "Boot",
+   "position": "K",
+   "team": "DEN",
+   "injury_status": null,
+   "active": true
+  },
+  "DEN": {
+   "position": "DEF",
+   "team": "DEN",
+   "active": true,
+   "first_name": "Denver",
+   "last_name": "Broncos"
+  },
+  "310": {
+   "first_name": "Old",
+   "last_name": "Timer",
+   "position": "RB",
+   "team": null,
+   "injury_status": null,
+   "active": false
+  },
+  "311": {
+   "first_name": "Big",
+   "last_name": "Lineman",
+   "position": "OL",
+   "team": "KC",
+   "injury_status": null,
+   "active": true
+  }
+ },
+ "/v1/projections/nfl/regular/2026/9": {
+  "100": {
+   "pts_ppr": 18.2
+  },
+  "101": {
+   "pts_ppr": 15.4
+  },
+  "102": {
+   "pts_ppr": 9.1
+  },
+  "103": {
+   "pts_ppr": 4.0
+  },
+  "104": {
+   "pts_ppr": 14.3
+  },
+  "105": {
+   "pts_ppr": 12.8
+  },
+  "106": {
+   "pts_ppr": 10.0
+  },
+  "107": {
+   "pts_ppr": 8.5
+  },
+  "108": {
+   "pts_ppr": 7.0
+  },
+  "110": {
+   "pts_ppr": 3.1
+  },
+  "SEA": {
+   "pts_ppr": 6.5
+  },
+  "200": {
+   "pts_ppr": 16.0
+  },
+  "201": {
+   "pts_ppr": 9.0
+  },
+  "202": {
+   "pts_ppr": 11.0
+  },
+  "203": {
+   "pts_ppr": 6.0
+  },
+  "300": {
+   "pts_ppr": 12.4
+  },
+  "301": {
+   "pts_ppr": 9.0
+  },
+  "302": {
+   "pts_ppr": 11.1
+  },
+  "303": {
+   "pts_ppr": 10.5
+  },
+  "304": {
+   "pts_ppr": 7.0
+  },
+  "305": {
+   "pts_ppr": 15.0
+  },
+  "306": {
+   "pts_ppr": 8.5
+  },
+  "DEN": {
+   "pts_ppr": 7.2
+  }
+ },
+ "/schedule/nfl/regular/2026": [
+  {
+   "game_id": "g9MIN",
+   "week": 9,
+   "status": "pre_game",
+   "home": "MIN",
+   "away": "CHI"
+  },
+  {
+   "game_id": "g9SF",
+   "week": 9,
+   "status": "pre_game",
+   "home": "SF",
+   "away": "ARI"
+  },
+  {
+   "game_id": "g9DAL",
+   "week": 9,
+   "status": "pre_game",
+   "home": "DAL",
+   "away": "PHI"
+  },
+  {
+   "game_id": "g9DET",
+   "week": 9,
+   "status": "pre_game",
+   "home": "DET",
+   "away": "GB"
+  },
+  {
+   "game_id": "g9SEA",
+   "week": 9,
+   "status": "pre_game",
+   "home": "SEA",
+   "away": "LAR"
+  },
+  {
+   "game_id": "g9DEN",
+   "week": 9,
+   "status": "pre_game",
+   "home": "DEN",
+   "away": "KC"
+  },
+  {
+   "game_id": "g9BUF",
+   "week": 9,
+   "status": "pre_game",
+   "home": "BUF",
+   "away": "NYJ"
+  },
+  {
+   "game_id": "g11MIN",
+   "week": 11,
+   "status": "pre_game",
+   "home": "MIN",
+   "away": "CHI"
+  },
+  {
+   "game_id": "g11SF",
+   "week": 11,
+   "status": "pre_game",
+   "home": "SF",
+   "away": "ARI"
+  },
+  {
+   "game_id": "g11DAL",
+   "week": 11,
+   "status": "pre_game",
+   "home": "DAL",
+   "away": "PHI"
+  },
+  {
+   "game_id": "g11DET",
+   "week": 11,
+   "status": "pre_game",
+   "home": "DET",
+   "away": "GB"
+  },
+  {
+   "game_id": "g11SEA",
+   "week": 11,
+   "status": "pre_game",
+   "home": "SEA",
+   "away": "LAR"
+  },
+  {
+   "game_id": "g11DEN",
+   "week": 11,
+   "status": "pre_game",
+   "home": "DEN",
+   "away": "KC"
+  },
+  {
+   "game_id": "g11BUF",
+   "week": 11,
+   "status": "pre_game",
+   "home": "BUF",
+   "away": "NYJ"
+  },
+  {
+   "game_id": "g12MIN",
+   "week": 12,
+   "status": "pre_game",
+   "home": "MIN",
+   "away": "CHI"
+  },
+  {
+   "game_id": "g12SF",
+   "week": 12,
+   "status": "pre_game",
+   "home": "SF",
+   "away": "ARI"
+  },
+  {
+   "game_id": "g12DAL",
+   "week": 12,
+   "status": "pre_game",
+   "home": "DAL",
+   "away": "PHI"
+  },
+  {
+   "game_id": "g12DET",
+   "week": 12,
+   "status": "pre_game",
+   "home": "DET",
+   "away": "GB"
+  },
+  {
+   "game_id": "g12SEA",
+   "week": 12,
+   "status": "pre_game",
+   "home": "SEA",
+   "away": "LAR"
+  },
+  {
+   "game_id": "g12DEN",
+   "week": 12,
+   "status": "pre_game",
+   "home": "DEN",
+   "away": "KC"
+  },
+  {
+   "game_id": "g12BUF",
+   "week": 12,
+   "status": "pre_game",
+   "home": "BUF",
+   "away": "NYJ"
+  },
+  {
+   "game_id": "g10MIN",
+   "week": 10,
+   "status": "pre_game",
+   "home": "MIN",
+   "away": "CHI"
+  },
+  {
+   "game_id": "g10SF",
+   "week": 10,
+   "status": "pre_game",
+   "home": "SF",
+   "away": "ARI"
+  },
+  {
+   "game_id": "g10DAL",
+   "week": 10,
+   "status": "pre_game",
+   "home": "DAL",
+   "away": "PHI"
+  },
+  {
+   "game_id": "g10SEA",
+   "week": 10,
+   "status": "pre_game",
+   "home": "SEA",
+   "away": "LAR"
+  },
+  {
+   "game_id": "g10DEN",
+   "week": 10,
+   "status": "pre_game",
+   "home": "DEN",
+   "away": "KC"
+  },
+  {
+   "game_id": "g10BUF",
+   "week": 10,
+   "status": "pre_game",
+   "home": "BUF",
+   "away": "NYJ"
+  }
+ ],
+ "/v1/players/nfl/trending/add": [
+  {
+   "player_id": "300",
+   "count": 4200
+  },
+  {
+   "player_id": "302",
+   "count": 150
+  }
+ ],
+ "/players/nfl/research/regular/2026/9": {
+  "300": {
+   "owned": 61.2,
+   "started": 22.1
+  },
+  "301": {
+   "owned": 5.0,
+   "started": 1.0
+  },
+  "302": {
+   "owned": 12.0,
+   "started": 3.0
+  },
+  "303": {
+   "owned": 70.0,
+   "started": 10.0
+  },
+  "304": {
+   "owned": 20.0,
+   "started": 2.0
+  }
+ }
+}

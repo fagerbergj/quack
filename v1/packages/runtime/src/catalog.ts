@@ -6,7 +6,7 @@ import { githubSessionExtensions, type GithubSessionConfig } from '@quack/github
 import { researchSessionExtensions, type ResearchConfig } from '@quack/research';
 import { piPackage } from '@quack/sdk';
 import { INGEST_WORKFLOW, ingestFromEnv } from '@quack/remarkable';
-import { LINEUP_WORKFLOW, lineupFromEnv } from '@quack/sleeper';
+import { LINEUP_WORKFLOW, lineupFromEnv, WAIVERS_WORKFLOW, waiversFromEnv } from '@quack/sleeper';
 import type { Catalog } from '@quack/session';
 import { workflowSessionExtensions, type Workflow } from '@quack/workflows';
 
@@ -27,6 +27,7 @@ function lspConfig(config: unknown) {
 // Workflows built from the environment, by the name an agent definition binds; one entry per job as they land.
 const WORKFLOWS: Record<string, (config: unknown) => Workflow> = {
   [LINEUP_WORKFLOW]: () => lineupFromEnv(),
+  [WAIVERS_WORKFLOW]: () => waiversFromEnv(),
   [INGEST_WORKFLOW]: (config) => ingestFromEnv(config as Parameters<typeof ingestFromEnv>[0]),
 };
 

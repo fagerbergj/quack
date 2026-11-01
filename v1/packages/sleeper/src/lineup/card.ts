@@ -9,7 +9,8 @@ export const cardsKind: ArtifactKind = {
   validate(text) {
     try {
       const c = JSON.parse(text);
-      return c?.kind === 'lineup' && Array.isArray(c.starters) && typeof c.summary === 'string' ? [] : ['a lineup card needs kind "lineup", starters and a summary'];
+      const rows = c?.kind === 'lineup' ? c.starters : c?.kind === 'waivers' ? c.candidates : undefined;
+      return Array.isArray(rows) && typeof c.summary === 'string' ? [] : ['a card needs kind "lineup" with starters or "waivers" with candidates, and a summary'];
     } catch {
       return ['cards.json is not JSON'];
     }
