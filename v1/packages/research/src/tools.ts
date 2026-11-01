@@ -66,32 +66,64 @@ async function toText(body: Buffer, contentType: string): Promise<string> {
   throw new Error(`cannot read ${contentType || 'an unknown content type'}; only HTML, PDF and text are supported`);
 }
 
+const MAX_BATCH = 5;
+const CONCURRENCY = 3;
+const BATCH_CHARS = 90_000;
+const batch = (what: string) => Type.Array(Type.String(), { minItems: 1, maxItems: MAX_BATCH, description: what });
+
+/** Results in input order, at most CONCURRENCY running at once; fn must catch its own failures so one item cannot fail the batch. */
+async function mapLimit<T, R>(items: T[], fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, items.length) }, async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]);
+    }
+  }));
+  return out;
+}
+
+type Page = { text: string; record: Omit<SourceRecord, 'id'> } | { failed: string };
+
 export function webFetchTool(config: ResearchConfig, isPublic?: (ip: string) => boolean) {
+  const load = async (url: string): Promise<Page> => {
+    try {
+      const got = await safeGet(url, { maxBytes: config.maxFetchBytes ?? 5_000_000, timeoutMs: 20_000, isPublic });
+      if (got.status >= 400) return { failed: `${got.url} answered ${got.status}` };
+      return { text: await toText(got.body, got.contentType), record: { url: got.url, fetchedAt: 0, hash: createHash('sha256').update(got.body).digest('hex') } };
+    } catch (err) {
+      return { failed: `cannot fetch ${url}: ${(err as Error).message}` };
+    }
+  };
   return defineTool({
     name: 'web_fetch',
-    description: `Fetch a public web page or PDF and return its text (first ${MAX_CHARS} characters). The result starts with a source id such as [s1]; cite that id in the report. Private and local addresses are refused.`,
-    parameters: Type.Object({ url: Type.String({ description: 'An http(s) URL' }) }),
+    description: `Fetch up to ${MAX_BATCH} public web pages or PDFs at once and return each one's text. A fetched page starts with a source id such as [s1]; cite that id in the report. A failed URL is reported on its own and does not fail the others. Private and local addresses are refused.`,
+    parameters: Type.Object({ urls: batch('http(s) URLs') }),
     async execute(args, api, ctx) {
-      let text: string;
-      let record: Omit<SourceRecord, 'id'>;
-      try {
-        const got = await safeGet(args.url, { maxBytes: config.maxFetchBytes ?? 5_000_000, timeoutMs: 20_000, isPublic });
-        if (got.status >= 400) return error(`${got.url} answered ${got.status}`);
-        text = await toText(got.body, got.contentType);
-        record = { url: got.url, fetchedAt: api.now(), hash: createHash('sha256').update(got.body).digest('hex') };
-      } catch (err) {
-        return error(`cannot fetch ${args.url}: ${(err as Error).message}`);
+      // Network in parallel, bookkeeping one by one in input order so source ids do not depend on which page answers first.
+      const pages = await mapLimit(args.urls, load);
+      const cap = Math.min(MAX_CHARS, Math.floor(BATCH_CHARS / args.urls.length));
+      const parts: string[] = [];
+      for (const page of pages) {
+        if ('failed' in page) {
+          parts.push(page.failed);
+          continue;
+        }
+        const record = { ...page.record, fetchedAt: api.now() };
+        // Kept for later claim-support checks; a failed write is ignored so it loses only that input, not the fetch.
+        await api.env?.writeFile(sourcePath(record.hash), page.text.slice(0, MAX_STORED_CHARS), ctx);
+        const id = await api.commit(async (tx) => {
+          const doc = await tx.doc(SourcesDoc, api.conversationId);
+          const next = `s${doc.sources.length + 1}`;
+          doc.sources = [...doc.sources, { id: next, ...record }];
+          return next;
+        }, ctx);
+        const cut = page.text.length > cap ? `\n… cut at ${cap} of ${page.text.length} characters` : '';
+        parts.push(`[${id}] ${record.url}\n\n${page.text.slice(0, cap)}${cut}`);
       }
-      // Kept for later claim-support checks; a failed write is ignored so it loses only that input, not the fetch.
-      await api.env?.writeFile(sourcePath(record.hash), text.slice(0, MAX_STORED_CHARS), ctx);
-      const id = await api.commit(async (tx) => {
-        const doc = await tx.doc(SourcesDoc, api.conversationId);
-        const next = `s${doc.sources.length + 1}`;
-        doc.sources = [...doc.sources, { id: next, ...record }];
-        return next;
-      }, ctx);
-      const cut = text.length > MAX_CHARS ? `\n… cut at ${MAX_CHARS} of ${text.length} characters` : '';
-      return { output: [{ type: 'text', text: `[${id}] ${record.url}\n\n${text.slice(0, MAX_CHARS)}${cut}` }] };
+      const text = parts.join('\n\n---\n\n');
+      return pages.every((p) => 'failed' in p) ? error(text) : { output: [{ type: 'text', text }] };
     },
   });
 }
@@ -104,23 +136,26 @@ export function formatResults(results: ExaResult[]): string {
 }
 
 export function webSearchTool(config: ResearchConfig) {
+  const search = async (query: string, count: number): Promise<string> => {
+    const res = await fetch(`${config.exaUrl ?? 'https://api.exa.ai'}/search`, {
+      method: 'POST',
+      headers: { 'x-api-key': process.env.QUACK_EXA_API_KEY!, 'content-type': 'application/json' },
+      body: JSON.stringify({ query, numResults: count, contents: { text: { maxCharacters: 400 } } }),
+      signal: AbortSignal.timeout(20_000),
+    }).catch((err: Error) => err);
+    if (res instanceof Error) return `search failed: ${res.message}`;
+    if (!res.ok) return `search failed: ${res.status} ${(await res.text()).slice(0, 200)}`;
+    return formatResults(((await res.json()) as { results?: ExaResult[] }).results ?? []);
+  };
   return defineTool({
     name: 'web_search',
-    description: 'Search the web (Exa) and return titles, URLs, dates and a snippet for each hit. Fetch a hit with web_fetch before citing it.',
-    parameters: Type.Object({ query: Type.String(), count: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })) }),
+    description: `Search the web (Exa) for up to ${MAX_BATCH} queries at once; each gets titles, URLs, dates and a snippet per hit, or its own failure. Fetch a hit with web_fetch before citing it.`,
+    parameters: Type.Object({ queries: batch('Search queries'), count: Type.Optional(Type.Integer({ minimum: 1, maximum: 20, description: 'Hits per query' })) }),
     replay: 'safe',
     async execute(args, _api, _ctx) {
-      const key = process.env.QUACK_EXA_API_KEY;
-      if (!key) return error('web_search is not configured: QUACK_EXA_API_KEY is not set');
-      const res = await fetch(`${config.exaUrl ?? 'https://api.exa.ai'}/search`, {
-        method: 'POST',
-        headers: { 'x-api-key': key, 'content-type': 'application/json' },
-        body: JSON.stringify({ query: args.query, numResults: args.count ?? 8, contents: { text: { maxCharacters: 400 } } }),
-        signal: AbortSignal.timeout(20_000),
-      }).catch((err: Error) => err);
-      if (res instanceof Error) return error(`search failed: ${res.message}`);
-      if (!res.ok) return error(`search failed: ${res.status} ${(await res.text()).slice(0, 200)}`);
-      return { output: [{ type: 'text', text: formatResults(((await res.json()) as { results?: ExaResult[] }).results ?? []) }] };
+      if (!process.env.QUACK_EXA_API_KEY) return error('web_search is not configured: QUACK_EXA_API_KEY is not set');
+      const results = await mapLimit(args.queries, (q) => search(q, args.count ?? 8));
+      return { output: [{ type: 'text', text: results.map((r, i) => `## ${args.queries[i]}\n${r}`).join('\n\n') }] };
     },
   });
 }

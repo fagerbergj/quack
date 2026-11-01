@@ -11,7 +11,7 @@ import { defineExtension, defineTool, type Extension } from '@earendil-works/pi-
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { Artifacts } from '@quack/sdk';
 import { buildModels, openSession, parseDeployment } from '@quack/session';
-import { deliveredReport, formatResults, htmlToText, isPublicAddress, researchSessionExtensions, safeGet, sourceText, SourcesDoc, validateReport } from '../src/index.ts';
+import { deliveredReport, findingItems, formatResults, htmlToText, isPublicAddress, researchRubric, researchSessionExtensions, safeGet, sourceText, SourcesDoc, validateReport } from '../src/index.ts';
 
 const servers: Server[] = [];
 const dirs: string[] = [];
@@ -115,10 +115,10 @@ test('a run searches, fetches HTML and PDF, records each fetch, and a report cit
   const searches: any[] = [];
   process.env.QUACK_EXA_API_KEY = 'test-key';
   const { done, seen, session } = await run({ exaUrl: await exa(searches) }, (step) => [
-    call('web_search', { query: 'do ducks fly', count: 2 }),
-    step(call('web_fetch', { url: `${base}/page` })),
-    step(call('web_fetch', { url: `${base}/paper.pdf` })),
-    step(call('web_fetch', { url: `${base}/nope` })),
+    call('web_search', { queries: ['do ducks fly'], count: 2 }),
+    step(call('web_fetch', { urls: [`${base}/page`] })),
+    step(call('web_fetch', { urls: [`${base}/paper.pdf`] })),
+    step(call('web_fetch', { urls: [`${base}/nope`] })),
     step(call('write', { path: 'artifacts/report.md', content: report('[s1][s3]') })),
     step(call('submit_report', {})),
     step(call('write', { path: 'artifacts/report.md', content: report('[s1][s2]') })),
@@ -146,8 +146,8 @@ test('without the Exa key web_search says so, and a private URL is refused by de
   delete process.env.QUACK_EXA_API_KEY;
   const base = await web();
   const { seen, session } = await run({}, (step) => [
-    call('web_search', { query: 'x' }),
-    step(call('web_fetch', { url: `${base}/page` })),
+    call('web_search', { queries: ['x'] }),
+    step(call('web_fetch', { urls: [`${base}/page`] })),
     step(fauxAssistantMessage('Stopped.')),
   ]);
   assert.match(seen[0], /QUACK_EXA_API_KEY is not set/);
@@ -172,7 +172,7 @@ test('a report that exhausts its revisions is delivered with a banner and inline
   const base = await web();
   const verdictOf = async (cfg: Parameters<typeof researchSessionExtensions>[0], cites: string[]) => {
     const { session } = await run(cfg, (step) => [
-      call('web_fetch', { url: `${base}/page` }),
+      call('web_fetch', { urls: [`${base}/page`] }),
       ...cites.flatMap((c) => [step(call('write', { path: 'artifacts/report.md', content: report(c) })), step(call('submit_report', {}))]),
       step(fauxAssistantMessage('Done.')),
     ], { isPublic: loopbackOk });
@@ -200,7 +200,7 @@ test('a version still being revised is not delivered', () => {
 test('a fetched source keeps its text, retrievable by id and keyed by the recorded hash', async () => {
   const base = await web();
   const { seen, session } = await run({ maxFetchBytes: 1000 }, (step) => [
-    call('web_fetch', { url: `${base}/page` }),
+    call('web_fetch', { urls: [`${base}/page`] }),
     step(call('read_source', { id: 's1' })),
     step(call('read_source', { id: 's2' })),
     step(fauxAssistantMessage('Done.')),
@@ -215,7 +215,7 @@ test('a fetched source keeps its text, retrievable by id and keyed by the record
 test('stored source text is capped at 500k characters and still retrievable', async () => {
   const base = await web();
   const { seen, session } = await run({ maxFetchBytes: 1_000_000 }, (step) => [
-    call('web_fetch', { url: `${base}/huge` }),
+    call('web_fetch', { urls: [`${base}/huge`] }),
     step(call('source_length', { id: 's1' })),
     step(fauxAssistantMessage('Done.')),
   ], { isPublic: loopbackOk }, [readSourceExt]);
@@ -226,10 +226,10 @@ test('stored source text is capped at 500k characters and still retrievable', as
 test('marks follow what the check saw: a source fetched after the failing check is still marked', async () => {
   const base = await web();
   const { session } = await run({ maxRevisions: 0 }, (step) => [
-    call('web_fetch', { url: `${base}/page` }),
+    call('web_fetch', { urls: [`${base}/page`] }),
     step(call('write', { path: 'artifacts/report.md', content: report('[s2]') })),
     step(call('submit_report', {})),
-    step(call('web_fetch', { url: `${base}/paper.pdf` })),
+    step(call('web_fetch', { urls: [`${base}/paper.pdf`] })),
     step(fauxAssistantMessage('Done.')),
   ], { isPublic: loopbackOk });
   const sources = (await session.harness.snapshot(SourcesDoc, session.root.id, BACKGROUND_CONTEXT))!.sources;
@@ -238,4 +238,106 @@ test('marks follow what the check saw: a source fetched after the failing check 
   const text = deliveredReport(last.content, last.verdict as any)!;
   assert.match(text, /\[s2\] \(not checked: s2 never fetched\)/);
   await session.close();
+});
+
+const sees = (seen: string[], n: number) => JSON.parse(seen[n]).content[0].text as string;
+
+test('a batch of URLs runs together, reports each on its own, and ids follow input order', async () => {
+  const base = await web();
+  const { seen, session } = await run({}, (step) => [
+    call('web_fetch', { urls: [`${base}/paper.pdf`, `${base}/nope`, `${base}/page`] }),
+    step(fauxAssistantMessage('Done.')),
+  ], { isPublic: loopbackOk });
+  const out = sees(seen, 0);
+  assert.match(out, /^\[s1\] .*paper\.pdf\n\nMallards migrate\n\n---\n\n.*answered 404\n\n---\n\n\[s2\] .*\/page\n\nDucks/);
+  const sources = (await session.harness.snapshot(SourcesDoc, session.root.id, BACKGROUND_CONTEXT))!.sources;
+  assert.deepEqual(sources.map((s) => s.id), ['s1', 's2']);
+  await session.close();
+});
+
+test('a batched private URL and a redirect into a private address are refused per item while the rest are fetched', async () => {
+  const base = await web();
+  const port = base.split(':')[2];
+  const { seen, session } = await run({}, (step) => [
+    call('web_fetch', { urls: [`${base}/page`, `http://127.0.0.2:${port}/page`, `${base}/hop`, 'http://[::1]:1/'] }),
+    step(fauxAssistantMessage('Done.')),
+  ], { isPublic: loopbackOk });
+  const out = sees(seen, 0);
+  assert.match(out, /^\[s1\] .*\/page/);
+  assert.match(out, /cannot fetch http:\/\/127\.0\.0\.2:\d+\/page: 127\.0\.0\.2 is not a public address/);
+  assert.match(out, /cannot fetch .*\/hop: 127\.0\.0\.2 is not a public address/);
+  assert.match(out, /cannot fetch http:\/\/\[::1\]:1\/: ::1 is not a public address/);
+  assert.equal((await session.harness.snapshot(SourcesDoc, session.root.id, BACKGROUND_CONTEXT))!.sources.length, 1);
+  await session.close();
+});
+
+test('a batch where every URL is refused is an error', async () => {
+  const base = await web();
+  const { seen, session } = await run({}, (step) => [call('web_fetch', { urls: [`${base}/page`, `${base}/hop`] }), step(fauxAssistantMessage('Done.'))]);
+  assert.match(sees(seen, 0), /not a public address[\s\S]*not a public address/);
+  assert.match(seen[0], /"isError":true/);
+  await session.close();
+});
+
+test('a batch of searches reports each query, and one failing query does not fail the others', async () => {
+  process.env.QUACK_EXA_API_KEY = 'test-key';
+  const exaUrl = await listen(async (req, res) => {
+    let raw = '';
+    for await (const c of req) raw += c;
+    if (JSON.parse(raw).query === 'bad') return res.writeHead(500).end('boom');
+    res.writeHead(200).end(JSON.stringify({ results: [{ title: 'Hit', url: 'https://example.org/hit' }] }));
+  });
+  const { seen, session } = await run({ exaUrl }, (step) => [call('web_search', { queries: ['good', 'bad', 'also good'] }), step(fauxAssistantMessage('Done.'))]);
+  assert.equal(sees(seen, 0), '## good\n1. Hit\n   https://example.org/hit\n\n## bad\nsearch failed: 500 boom\n\n## also good\n1. Hit\n   https://example.org/hit');
+  await session.close();
+});
+
+const GOOD = '## Summary\nDucks fly.\n## Assumptions\nNone.\n## Findings\n- The page says "Ducks & geese fly." [s1]\n- Ducks are birds. [s1]\n';
+
+const gate = (id: string, ev: Parameters<NonNullable<(typeof researchRubric)['criteria'][0]['checks'][0]['code']>>[1]) => researchRubric.criteria[0].checks.find((c) => c.id === id)!.code!('', ev);
+const unit = (o: object) => ({ id: 'f', state: {}, ...o });
+
+test('findings_cited: every finding bullet needs a [sN]; the bare one is named and marked', () => {
+  assert.deepEqual(findingItems(GOOD).map((f) => f.first), ['- The page says "Ducks & geese fly." [s1]', '- Ducks are birds. [s1]']);
+  assert.equal(gate('findings_cited', { finding: [unit({ cited: true, first: 'a' })] }).met, 1);
+  const bad = gate('findings_cited', { finding: [unit({ id: 'finding-1', cited: true, first: 'a' }), unit({ id: 'finding-2', cited: false, first: '- Ducks swim.' })] });
+  assert.equal(bad.met, 0.5);
+  assert.deepEqual(bad.marks, ['- Ducks swim.']);
+  assert.match(bad.detail!, /finding-2 cite no source/);
+  assert.equal(gate('findings_cited', { finding: [] }).met, 0);
+});
+
+test('quotes_exist: a quote the cited source lacks fails the gate with the quote as its mark', () => {
+  assert.equal(gate('quotes_exist', { finding: [unit({ misquotes: [] })] }).met, 1);
+  const bad = gate('quotes_exist', { finding: [unit({ id: 'finding-1', misquotes: [] }), unit({ id: 'finding-2', misquotes: ['Geese never fly'] })] });
+  assert.equal(bad.met, 0.5);
+  assert.deepEqual(bad.marks, ['Geese never fly']);
+  assert.match(bad.detail!, /finding-2 quotes text its cited source does not contain: "Geese never fly"/);
+});
+
+test('a report with a real quote passes all gates; an invented quote and a bare finding fail with marks that deliveredReport places', async () => {
+  const base = await web();
+  const verdictOf = async (content: string) => {
+    const { session } = await run({ maxRevisions: 0 }, (step) => [
+      call('web_fetch', { urls: [`${base}/page`] }),
+      step(call('write', { path: 'artifacts/report.md', content })),
+      step(call('submit_report', {})),
+      step(fauxAssistantMessage('Done.')),
+    ], { isPublic: loopbackOk });
+    const last = (await session.harness.snapshot(Artifacts, session.root.id, BACKGROUND_CONTEXT))!.kinds['research.report'].versions.at(-1)!;
+    await session.close();
+    return last;
+  };
+  const good = await verdictOf(GOOD);
+  assert.equal((good.verdict as any).passed, true);
+  assert.equal(deliveredReport(good.content, good.verdict as any), GOOD);
+
+  const badContent = GOOD.replace('Ducks are birds. [s1]', 'Ducks swim.').replace('"Ducks & geese fly."', '"Geese never fly south"');
+  const bad = await verdictOf(badContent);
+  const checks = (bad.verdict as any).checks.filter((c: any) => c.met < 1).map((c: any) => c.id);
+  assert.deepEqual(checks, ['findings_cited', 'quotes_exist']);
+  const text = deliveredReport(bad.content, bad.verdict as any)!;
+  assert.match(text, /^- Ducks swim\. \(no source cited\)$/m);
+  assert.match(text, /^- The page says "Geese never fly south" \[s1\] \(quote not found in the cited source\)$/m);
+  assert.match(text, /gate claims_grounded\.findings_cited/);
 });
