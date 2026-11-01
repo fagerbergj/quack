@@ -15,6 +15,8 @@ const ICON = {
 const BLUE = 'bg-link-bg text-link';
 
 const GITHUB_KEY = /^github:[^/]+\/([^#]+)#(\d+)$/;
+// Sessions opened before titles were recorded carry the trigger prompt as their title; the PR's own title follows "Title: ".
+const TRIGGER = /^Review pull request .*? Title: (.+)$/s;
 const SLEEPER_KEY = /^sleeper:[^:]+:(\d+):lineup$/;
 
 // The newest sealed version of a kind for this session, from the index.
@@ -27,7 +29,7 @@ type Words = { run: string; pass: string; fail: string; none: string };
 // A running session says what it does, a finished one says how its newest artifact fared.
 function outcome(r: Row, kind: string, w: Words): Pick<Look, 'line' | 'tone'> {
   const v = newest(r, kind)?.verdict;
-  if (r.running) return { line: w.run, tone: 'muted' };
+  if (r.active) return { line: w.run, tone: 'muted' };
   if (!v) return { line: w.none, tone: 'muted' };
   return v.passed ? { line: w.pass, tone: 'ok' } : { line: w.fail, tone: 'bad' };
 }
@@ -45,7 +47,7 @@ const KINDS: Kind[] = [
     look: (r) => {
       const m = GITHUB_KEY.exec(r.key)!;
       const words = { run: 'Reviewing', pass: 'Approved ✓', fail: 'Checks failed', none: 'Not reviewed yet' };
-      return { icon: ICON.pr, tint: BLUE, num: `#${m[2]}`, title: r.title ?? m[1]!, ...outcome(r, 'github.review', words) };
+      return { icon: ICON.pr, tint: BLUE, num: `#${m[2]}`, title: (r.title && TRIGGER.exec(r.title)?.[1]) || (r.title?.startsWith('Review pull request ') ? undefined : r.title) || m[1]!, ...outcome(r, 'github.review', words) };
     },
   },
   {

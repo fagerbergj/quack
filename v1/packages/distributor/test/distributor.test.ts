@@ -316,7 +316,8 @@ async function fakeFleet(ping: (now: number) => unknown) {
   const running = new Set<string>();
   const log: string[] = [];
   const driver = {
-    agents: async () => [], sessions: async () => [], pid: () => undefined,
+    agents: async () => [], pid: () => undefined,
+    sessions: async () => [...running].map((key) => ({ key, agent: '', running: true, lastActivity: '' })),
     ensure: async (key: string) => { if (!running.has(key)) log.push(`start ${key}`); running.add(key); return url; },
     stop: async (key: string) => { running.delete(key); log.push(`stop ${key}`); },
     setWake: async (key: string, at: number | undefined) => { if (at === undefined) wakes.delete(key); else wakes.set(key, at); },
@@ -349,6 +350,22 @@ async function fakeFleet(ping: (now: number) => unknown) {
 }
 
 const HOUR = 3_600_000;
+
+test('the listing says which running sessions are mid-run, from the last sweep and without a ping', async () => {
+  let status = 'HealthyBusy';
+  const fleet = await fakeFleet(() => ({ status, waitingOnHuman: false, wake: {} }));
+  const server = fleet.start().listen(0);
+  await new Promise((r) => server.once('listening', r));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  await fetch(`${base}/sessions/research%3Aa/ping`);
+  const active = async () => ((await (await fetch(`${base}/sessions`)).json()) as { sessions: Array<{ active: boolean }> }).sessions[0]!.active;
+  assert.equal(await active(), false, 'not known before a sweep');
+  await server.sweep();
+  assert.equal(await active(), true);
+  status = 'Healthy';
+  await server.sweep();
+  assert.equal(await active(), false, 'alive but between runs');
+});
 
 test('a session sleeping an hour is stopped by the sweep and restarted at its wake time', async () => {
   const wakeAt = 1_000_000 + HOUR;

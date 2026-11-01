@@ -63,10 +63,10 @@ async function openSession() {
   return ws;
 }
 
-const sess = (key: string, over: object = {}) => ({ key, agent: 'reviewer', running: false, lastActivity: '2026-11-01T01:00:00.000Z', ...over });
+const sess = (key: string, over: object = {}) => ({ key, agent: 'reviewer', running: false, active: false, lastActivity: '2026-11-01T01:00:00.000Z', ...over });
 
 test('groups sessions: a running session with a pending approval lands in Needs you', async () => {
-  routes['GET /sessions'] = { sessions: [sess('gh:1', { running: true, title: 'Fix the flake' }), sess('gh:2', { running: true }), sess('gh:3', { title: 'Old work' })] };
+  routes['GET /sessions'] = { sessions: [sess('gh:1', { running: true, active: true, title: 'Fix the flake' }), sess('gh:2', { running: true, active: true }), sess('gh:3', { title: 'Old work' })] };
   routes['GET /sessions/gh%3A1/approvals'] = { approvals: [{ id: 'a', tool: 'push', args: {}, requestedAt: 1 }] };
   routes['GET /sessions/gh%3A2/approvals'] = { approvals: [] };
   render(<App />);
@@ -89,18 +89,20 @@ const sealed = (session: string, kind: string, passed: boolean | null, version =
 
 test('each kind of session shows its own title and state, and search finds it by kind', async () => {
   routes['GET /sessions'] = { sessions: [
-    sess('github:o/r#7', { title: 'Fix the cache', running: true }),
+    sess('github:o/r#7', { title: 'Fix the cache', running: true, active: true }),
     sess('github:o/r#8', { title: 'Add retries' }),
     sess('github:o/r#9', { title: 'Drop the flag' }),
     sess('ui:r1', { agent: 'researcher', title: 'What changed in v4?' }),
     sess('sleeper:123:8:lineup', { agent: 'sleeper-lineup' }),
     sess('remarkable:doc1', { agent: 'remarkable-ingest', title: 'Campaign Notes' }),
     sess('ui:x', { agent: 'coder' }),
+    sess('github:o/r#10', { running: true, title: 'Review pull request o/r#10 (label quack:review). Title: feat(v1): Sleeper waivers job' }),
   ] };
   routes['GET /index/approvals?state=pending'] = { approvals: [] };
   routes['GET /index/artifacts'] = { artifacts: [
     sealed('github:o/r#8', 'github.review', false, 1), sealed('github:o/r#8', 'github.review', true, 2),
     sealed('github:o/r#9', 'github.review', false),
+    sealed('github:o/r#10', 'github.review', true),
     sealed('ui:r1', 'research.report', true),
     sealed('sleeper:123:8:lineup', 'sleeper.cards', true),
     sealed('remarkable:doc1', 'remarkable.transcript', false),
@@ -113,6 +115,9 @@ test('each kind of session shows its own title and state, and search finds it by
   expect((await row(/What changed/)).getByText('Report ✓')).toBeInTheDocument();
   expect((await row(/Lineup · week 8/)).getByText('Card ready')).toBeInTheDocument();
   expect((await row(/Campaign Notes/)).getByText(/^Failed/)).toBeInTheDocument();
+  const alive = await row(/#10 feat\(v1\): Sleeper waivers job/);
+  expect(alive.getByText('Approved ✓')).toBeInTheDocument();
+  expect(within(screen.getByRole('region', { name: 'Recent' })).getByRole('link', { name: /#10 feat/ })).toBeInTheDocument();
   expect((await row(/ui:x/)).getByText('coder')).toBeInTheDocument();
   await userEvent.type(screen.getByRole('searchbox', { name: 'Search sessions' }), 'lineup');
   expect(screen.queryByRole('link', { name: /Campaign Notes/ })).toBeNull();
@@ -598,7 +603,7 @@ test('a session waiting on a question is in Needs you, and its view shows the qu
 });
 
 test('with the index off, the Inbox falls back to the running sessions own approvals', async () => {
-  routes['GET /sessions'] = { sessions: [sess('gh:1', { running: true })] };
+  routes['GET /sessions'] = { sessions: [sess('gh:1', { running: true, active: true })] };
   routes['GET /sessions/gh%3A1/approvals'] = { approvals: [{ id: 'a', tool: 'push', args: { branch: 'main' }, requestedAt: 1 }] };
   location.hash = '#/inbox';
   render(<App />);

@@ -30,7 +30,7 @@ export function matches(s: Row, f: Filters): boolean {
 export function group(rows: Row[]): Groups {
   const needs = rows.filter((r) => r.approvals.length + r.decisions.length > 0);
   const rest = rows.filter((r) => r.approvals.length + r.decisions.length === 0);
-  return { needs, running: rest.filter((r) => r.running), recent: rest.filter((r) => !r.running) };
+  return { needs, running: rest.filter((r) => r.active), recent: rest.filter((r) => !r.active) };
 }
 
 export function statusLine(r: Row): string {
