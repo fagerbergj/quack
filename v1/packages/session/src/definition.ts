@@ -68,7 +68,8 @@ export function parseDefinition(raw: unknown, deployment: DeploymentConfig, cata
   if (typeof raw.name !== 'string' || raw.name.length === 0) problems.push('name must be a non-empty string');
   if (!positive(raw.version)) problems.push('version must be a positive integer');
   problems.push(...modelProblems(raw.model, deployment));
-  if ('maxTurns' in raw) problems.push('maxTurns was removed (D58): a run is bounded by the checker\'s revision limit and operator abort');
+  // Pinned snapshots are immutable history and may still carry the removed key (D58), so it is ignored, not rejected.
+  if ('maxTurns' in raw) console.error(`agent ${String(raw.name)}: maxTurns was removed (D58) and is ignored`);
   if (raw.prompt !== undefined && (typeof raw.prompt !== 'string' || !raw.prompt)) problems.push('prompt must be a file name');
   if (!isObject(raw.extensions)) problems.push('extensions must be an object of name to config');
   else for (const name of Object.keys(raw.extensions)) if (!catalog[name]) problems.push(`unknown extension ${name}; available: ${Object.keys(catalog).sort().join(', ')}`);

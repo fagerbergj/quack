@@ -224,6 +224,23 @@ test('an agent version whose content changed is refused for new sessions but not
   assert.equal((await invoke('github:f#1', { input: 'hi', wait: true })).status, 200);
 });
 
+test('a bundle that dropped a key is refused for new sessions until its version is bumped', async () => {
+  const dir = await agentsDirAt(1, 'reviewer');
+  const file = join(dir, 'reviewer', 'agent.json');
+  const old = { name: 'reviewer', version: 1, status: 'promoted', model: 'local/qwen3.8-27b', maxTurns: 80, prompt: 'prompt.md', extensions: {} };
+  await writeFile(file, JSON.stringify(old));
+  const { invoke, ranAs } = await startDistributor(60_000, { agentsDir: dir, defaultAgent: '' });
+  assert.equal((await invoke('github:m#1', { input: 'hi', wait: true }, 'reviewer')).status, 200);
+  const { maxTurns: _, ...cut } = old;
+  await writeFile(file, JSON.stringify(cut));
+  assert.equal((await invoke('github:m#2', { input: 'hi', wait: true }, 'reviewer')).status, 409);
+  await writeFile(file, JSON.stringify({ ...cut, version: 2 }));
+  assert.equal((await invoke('github:m#2', { input: 'hi', wait: true }, 'reviewer')).status, 200);
+  const pinned = async (key: string) => JSON.parse(await readFile(ranAs(key).slice('agent: '.length), 'utf8'));
+  assert.equal((await pinned('github:m#1')).maxTurns, 80);
+  assert.equal((await pinned('github:m#2')).version, 2);
+});
+
 test('QUACK_WEB_DIR serves files, refuses traversal, and leaves API routes alone', async () => {
   const web = await mkdtemp(join(tmpdir(), 'quack-web-'));
   dirs.push(web);
