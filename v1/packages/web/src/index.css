@@ -1,0 +1,117 @@
+@import 'tailwindcss';
+@import '@fontsource/fredoka/500.css';
+@import '@fontsource/fredoka/600.css';
+@import '@fontsource/fredoka/700.css';
+
+/* Tokens and keyframes are lifted from docs/v1/mockups/whimsical.html (mallard palette). */
+:root { color-scheme: light dark; }
+:root[data-theme='light'] { color-scheme: light; }
+:root[data-theme='dark'] { color-scheme: dark; }
+@theme {
+  --color-canvas: light-dark(#fcfdfc, #0b0f0e);
+  --color-surface: light-dark(#ffffff, #121816);
+  --color-soft: light-dark(#f3f6f4, #182120);
+  --color-line: light-dark(#e4e9e6, #222c29);
+  --color-line-strong: light-dark(#d3dbd7, #2f3a36);
+  --color-ink: light-dark(#0f1513, #e8eeeb);
+  --color-ink-2: light-dark(#36413c, #bfc9c4);
+  --color-muted: light-dark(#66726d, #8a9590);
+  --color-on-ink: light-dark(#ffffff, #0f1513);
+  /* Mallard head green is the brand mark; accent-ink is its readable text form. */
+  --color-accent: #1f7a63;
+  --color-accent-ink: light-dark(#17614f, #6fd1b0);
+  /* Bill ochre, as a tint. */
+  --color-warm: light-dark(#fbf2dc, #2a2414);
+  /* Wing-patch blue-violet marks running and selected states. */
+  --color-info: light-dark(#3446a0, #b4bdff);
+  --color-info-bg: light-dark(#ecefff, #1e2347);
+  --color-success: light-dark(#2f6e1c, #97d77a);
+  --color-success-bg: light-dark(#ecf6e4, #18260f);
+  --color-warning: light-dark(#8a5a00, #e8b85a);
+  --color-warning-bg: light-dark(#fbf2dc, #2a2414);
+  --color-danger: light-dark(#b42318, #ff8f85);
+  --color-danger-bg: light-dark(#fdecec, #2e1616);
+  --color-danger-line: light-dark(#f5c2c0, #6b2a26);
+  --color-link: light-dark(#2f5fb3, #8fb3ff);
+  --color-link-bg: light-dark(#eaf1ff, #16233c);
+  --color-shade: light-dark(rgb(15 21 19 / 0.18), rgb(0 0 0 / 0.55));
+  --color-shade-soft: light-dark(rgb(15 21 19 / 0.05), rgb(255 255 255 / 0.06));
+  --shadow-card: 0 1px 2px var(--color-shade-soft);
+  --shadow-thumb: 0 1px 2px var(--color-shade);
+  --shadow-lift: 0 8px 24px -10px var(--color-shade);
+  --shadow-float: 0 8px 24px -14px var(--color-shade);
+  --shadow-ring: 0 0 0 4px var(--color-shade-soft);
+  --shadow-glow: 0 0 0 4px rgb(31 122 99 / 0.12);
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --font-display: 'Fredoka', ui-rounded, 'SF Pro Rounded', system-ui, sans-serif;
+}
+@layer base {
+  html { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+  body {
+    font-family: ui-sans-serif, system-ui, -apple-system, 'SF Pro Text', 'Segoe UI', Inter, sans-serif;
+    font-synthesis: none; letter-spacing: -0.005em;
+    background: var(--color-canvas); color: var(--color-ink);
+  }
+  body::before {
+    content: ''; position: fixed; inset: 0 0 auto 0; height: 360px; z-index: -1; pointer-events: none;
+    background: radial-gradient(60% 100% at 15% 0%, rgb(31 122 99 / 0.06), transparent 70%),
+                radial-gradient(50% 90% at 85% 0%, rgb(52 70 160 / 0.05), transparent 70%);
+  }
+  h1, h2, h3 { text-wrap: balance; font-size: 1.05rem; }
+  h1, h2, h3, .wordmark { font-family: var(--font-display); letter-spacing: -0.005em; font-weight: 600; }
+  button, input, select { font: inherit; }
+  a { color: var(--color-link); }
+}
+
+@keyframes bob { 0%, 100% { transform: translateY(0) rotate(-2deg); } 50% { transform: translateY(-4px) rotate(2deg); } }
+.bob { animation: bob 2.8s ease-in-out infinite; transform-origin: 50% 80%; }
+.ducklings svg { animation: bob 1.4s ease-in-out infinite; }
+.ducklings svg:nth-child(2) { animation-delay: 0.2s; }
+.ducklings svg:nth-child(3) { animation-delay: 0.4s; }
+@keyframes drift { to { background-position-x: 40px; } }
+@keyframes drift-back { to { background-position-x: -40px; } }
+@keyframes swim { 0% { left: -18%; } 100% { left: 104%; } }
+@keyframes sway { 0%, 100% { transform: rotate(-3deg); } 50% { transform: rotate(3deg); } }
+.pond { background: linear-gradient(180deg, var(--color-surface) 0%, color-mix(in oklab, var(--color-accent) 9%, var(--color-surface)) 62%, color-mix(in oklab, #3d8fb5 18%, var(--color-surface)) 100%); }
+.waves { height: 14px; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='14' viewBox='0 0 40 14'%3E%3Cpath d='M0 7 Q10 1 20 7 T40 7 V14 H0Z' fill='%233d8fb5' fill-opacity='0.22'/%3E%3C/svg%3E") repeat-x; animation: drift 6s linear infinite; }
+.waves.back { opacity: 0.6; animation: drift-back 9s linear infinite; transform: translateY(5px); }
+/* Ducks swim left to right, so the flip points head and bill the way they travel. */
+.swimmer { position: absolute; bottom: 14px; animation: swim 26s linear infinite; transform: scaleX(-1); }
+.swimmer > svg { animation: bob 1.6s ease-in-out infinite; }
+.reed { transform-origin: bottom center; animation: sway 4s ease-in-out infinite; }
+.quack-bubble { opacity: 0; transform: scale(0.6); transition: all 0.2s; }
+.logo-link:hover .quack-bubble, .logo-link:focus-visible .quack-bubble { opacity: 1; transform: scale(1); }
+@keyframes ripple { 0% { transform: scale(1); opacity: 0.55; } 100% { transform: scale(2.8); opacity: 0; } }
+@keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.live-dot { position: relative; animation: pulse-dot 1.6s ease-in-out infinite; }
+.live-dot::after { content: ''; position: absolute; inset: 0; border-radius: 9999px; background: inherit; animation: ripple 1.8s ease-out infinite; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
+.navlink[aria-current="page"] { background: var(--color-soft); color: var(--color-ink); font-weight: 600; box-shadow: inset 2px 0 0 var(--color-accent); }
+.tablink[aria-current="page"] { color: var(--color-accent-ink); }
+.row[aria-current="true"] { background: var(--color-soft); box-shadow: inset 2px 0 0 var(--color-accent); }
+.rubber { animation: bob 2.2s ease-in-out infinite; }
+.feet { height: 14px; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='44' height='14' viewBox='0 0 44 14'%3E%3Cpath d='M6 2 L9 8 L12 2 Q9 5 6 2Z M3 4 L9 12 L15 4' fill='%23e3a92b' fill-opacity='0.55'/%3E%3Cpath d='M28 6 L31 12 L34 6 Q31 9 28 6Z' fill='%23e3a92b' fill-opacity='0.35'/%3E%3C/svg%3E") repeat-x; }
+.md > * { margin: 0 0 0.7em; }
+.md > *:last-child { margin-bottom: 0; }
+.md ul { list-style: disc; padding-left: 1.25em; }
+.md ol { list-style: decimal; padding-left: 1.25em; }
+.md li + li { margin-top: 0.25em; }
+.md h1, .md h2, .md h3, .md h4 { font-size: 15px; font-weight: 600; margin-top: 1.1em; }
+.md h1 { font-size: 17px; }
+.md h2 { font-size: 16px; }
+.md :not(pre) > code { font-family: var(--font-mono); font-size: 0.88em; background: var(--color-soft); border-radius: 4px; padding: 0.1em 0.3em; }
+.md pre { font-family: var(--font-mono); font-size: 12px; line-height: 1.55; background: var(--color-soft); border-radius: 8px; padding: 10px; overflow-x: auto; white-space: pre; }
+.md table { border-collapse: collapse; font-size: 13px; }
+.md th, .md td { border-bottom: 1px solid var(--color-line); padding: 6px 12px 6px 0; text-align: left; vertical-align: top; }
+.md th { font-weight: 600; font-size: 12px; color: var(--color-muted); }
+.md strong { font-weight: 600; }
+.md blockquote { margin-left: 0; padding-left: 0.9em; border-left: 3px solid var(--color-line-strong); color: var(--color-ink-2); }
+.cite { font-family: var(--font-mono); font-size: 10.5px; font-weight: 600; color: var(--color-link); background: var(--color-link-bg); border-radius: 4px; padding: 0 4px; margin-left: 2px; vertical-align: 2px; }
+.hljs-comment, .hljs-quote { color: var(--color-muted); font-style: italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-built_in { color: var(--color-info); }
+.hljs-string, .hljs-title, .hljs-attr, .hljs-name { color: var(--color-success); }
+.hljs-number, .hljs-meta, .hljs-symbol { color: var(--color-warning); }
+.hljs-addition { color: var(--color-success); }
+.hljs-deletion { color: var(--color-danger); }
+@keyframes row-swim { 0% { left: -6%; } 100% { left: 100%; } }
+.row-swim { animation: row-swim 12s linear infinite, bob 1.6s ease-in-out infinite; }

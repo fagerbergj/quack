@@ -182,16 +182,31 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
     await Promise.all(driver.running().map(async (key) => stopSession(key, await ping(key).then(wakeFor, () => undefined))));
   }
 
+  // A list view polls approvals, so reading them must not keep a session warm or start an idle one;
+  // a stopped session has none to show here (its store is not read) until it wakes. shortcut: the session index replaces this.
+  async function peekApprovals(key: string, search: string, res: ServerResponse) {
+    if (!driver.running().includes(key)) return send(res, 200, { approvals: [] });
+    const upstream = await fetch(`${await driver.ensure(key)}/approvals${search}`);
+    res.writeHead(upstream.status, { 'content-type': upstream.headers.get('content-type') ?? 'application/json' });
+    res.end(Buffer.from(await upstream.arrayBuffer()));
+  }
+
+  async function listing(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+    if (req.method !== 'GET' || (req.url !== '/sessions' && req.url !== '/agents')) return false;
+    send(res, 200, req.url === '/agents' ? { agents: await driver.agents() } : { sessions: await driver.sessions() });
+    return true;
+  }
+
   const server = createServer(async (req, res) => {
     try {
-      if (req.method === 'GET' && req.url === '/sessions') return send(res, 200, { sessions: await driver.sessions() });
-      if (req.method === 'GET' && req.url === '/agents') return send(res, 200, { agents: await driver.agents() });
+      if (await listing(req, res)) return;
       if (await opts.index?.(req, res)) return;
       if (await serveWeb(opts.webDir, req, res)) return;
       if (!/^\/sessions\/[^/]+\//.test(req.url ?? '')) return send(res, 404, { error: 'not found' });
       const target = sessionPath(req.url);
       if (!target) return send(res, 400, { error: 'invalid session key' });
       const { key, path, search, agent } = target;
+      if (req.method === 'GET' && path === '/approvals') return await peekApprovals(key, search, res);
       lastUse.set(key, now());
       // A request in flight keeps its session from idling out, however long it waits on the run.
       hold(key, 1);

@@ -152,8 +152,9 @@ test('each session runs on the agent that created it, and the registry and index
   const { agents } = (await (await fetch(`${base}/agents`)).json()) as { agents: Array<{ name: string }> };
   assert.deepEqual(agents.sort((a, b) => a.name.localeCompare(b.name)), [{ name: 'research', version: 3, status: 'draft' }, { name: 'reviewer', version: 3, status: 'draft' }]);
   await driver.stop('research:b');
-  const { sessions } = (await (await fetch(`${base}/sessions`)).json()) as { sessions: Array<{ key: string; agent: string; running: boolean; lastActivity: string }> };
+  const { sessions } = (await (await fetch(`${base}/sessions`)).json()) as { sessions: Array<{ key: string; agent: string; title?: string; running: boolean; lastActivity: string }> };
   assert.deepEqual(sessions.map((s) => [s.key, s.agent, s.running]).sort(), [['github:a#1', 'reviewer', true], ['research:b', 'research', false]]);
+  assert.equal(sessions.find((s) => s.key === 'research:b')?.title, 'whoami');
   assert.ok(sessions.every((s) => !Number.isNaN(Date.parse(s.lastActivity))));
 });
 
@@ -368,6 +369,22 @@ test('a session sleeping an hour is stopped by the sweep and restarted at its wa
   await server.sweep();
   assert.deepEqual(fleet.log, ['stop research:nap', 'start research:nap']);
   assert.equal(fleet.wakes.has('research:nap'), false, 'the record is cleared once woken');
+});
+
+test('reading approvals neither keeps a running session warm nor starts a stopped one', async () => {
+  const fleet = await fakeFleet(() => ({ status: 'Healthy', waitingOnHuman: false, wake: {} }));
+  const server = fleet.start().listen(0);
+  await new Promise((r) => server.once('listening', r));
+  const sessions = `http://127.0.0.1:${(server.address() as AddressInfo).port}/sessions/research%3Anap`;
+  await fetch(`${sessions}/ping`);
+  fleet.advance(500_000);
+  assert.equal((await fetch(`${sessions}/approvals`)).status, 200);
+  fleet.advance(150_000);
+  await server.sweep();
+  assert.deepEqual(fleet.log, ['start research:nap', 'stop research:nap'], 'the poll did not reset the idle clock');
+  const idle = await (await fetch(`${sessions}/approvals`)).json();
+  assert.deepEqual(idle, { approvals: [] });
+  assert.deepEqual(fleet.log, ['start research:nap', 'stop research:nap'], 'a stopped session stays stopped');
 });
 
 test('a restarted distributor rebuilds wake timers from the recorded times', async () => {

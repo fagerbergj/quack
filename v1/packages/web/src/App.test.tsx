@@ -33,6 +33,10 @@ const entry = (id: string, model: object[]) => ({ id, conversationId: 'c', kind:
 const snapshot = (over: object = {}) => ({ type: 'snapshot', entries: [], tools: [], nestedTools: [], compactions: [], inbox: [], agent: {}, usage, ...over });
 const assistant = (content: object[]) => ({ role: 'assistant', content, api: 'a', provider: 'p', model: 'm', usage, stopReason: 'stop', timestamp: 1 });
 
+// Desktop puts the session list in the sidebar beside the main column; a phone shows one at a time.
+const stubViewport = (desktop: boolean) =>
+  vi.stubGlobal('matchMedia', () => ({ matches: desktop, addEventListener() {}, removeEventListener() {} }));
+
 let routes: Record<string, unknown>;
 const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
   const hit = routes[`${init?.method ?? 'GET'} /${url}`];
@@ -41,11 +45,12 @@ const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
 
 beforeEach(() => {
   FakeSocket.all = [];
-  routes = { 'GET /sessions/ui%3Au1/artifacts': { artifacts: [] }, 'GET /sessions/ui%3Au1/approvals': { approvals: [] } };
+  routes = { 'GET /sessions': { sessions: [] }, 'GET /agents': { agents: [] }, 'GET /sessions/ui%3Au1/artifacts': { artifacts: [] }, 'GET /sessions/ui%3Au1/approvals': { approvals: [] } };
   fetchMock.mockClear();
   vi.stubGlobal('WebSocket', FakeSocket);
   vi.stubGlobal('fetch', fetchMock);
   vi.stubGlobal('crypto', { randomUUID: () => 'uuid-1' });
+  stubViewport(true);
   location.hash = '';
 });
 afterEach(() => vi.unstubAllGlobals());
@@ -58,22 +63,77 @@ async function openSession() {
   return ws;
 }
 
-test('lists sessions with their agent and state', async () => {
-  routes['GET /sessions'] = { sessions: [{ key: 'gh:1', agent: 'reviewer', running: true, lastActivity: '2026-11-01T01:00:00.000Z' }] };
-  routes['GET /agents'] = { agents: [] };
+const sess = (key: string, over: object = {}) => ({ key, agent: 'reviewer', running: false, lastActivity: '2026-11-01T01:00:00.000Z', ...over });
+
+test('groups sessions: a running session with a pending approval lands in Needs you', async () => {
+  routes['GET /sessions'] = { sessions: [sess('gh:1', { running: true, title: 'Fix the flake' }), sess('gh:2', { running: true }), sess('gh:3', { title: 'Old work' })] };
+  routes['GET /sessions/gh%3A1/approvals'] = { approvals: [{ id: 'a', tool: 'push', args: {}, requestedAt: 1 }] };
+  routes['GET /sessions/gh%3A2/approvals'] = { approvals: [] };
   render(<App />);
-  const link = await screen.findByRole('link', { name: 'gh:1' });
-  expect(link).toHaveAttribute('href', '#/s/gh%3A1');
-  expect(link.closest('li')).toHaveTextContent('reviewer running');
+  const needs = await screen.findByRole('region', { name: 'Needs you' });
+  expect(within(needs).getByRole('link', { name: /Fix the flake/ })).toHaveAttribute('href', '#/s/gh%3A1');
+  expect(within(needs).getByText('Approve push')).toBeInTheDocument();
+  expect(within(screen.getByRole('region', { name: 'Running' })).getByRole('link', { name: /gh:2/ })).toBeInTheDocument();
+  expect(within(screen.getByRole('region', { name: 'Recent' })).getByRole('link', { name: /Old work/ })).toHaveTextContent('reviewer · idle');
+  expect(screen.getByText('1 need you · 1 running')).toBeInTheDocument();
 });
 
-test('starting a session opens a ui: key with the chosen agent', async () => {
-  routes['GET /sessions'] = { sessions: [] };
-  routes['GET /agents'] = { agents: [{ name: 'coder', version: 1 }, { name: 'reviewer', version: 2 }] };
+test('a GitHub key shows as repo#n with its title, and the full key stays as the tooltip', async () => {
+  routes['GET /sessions'] = { sessions: [sess('github:fagerbergj/quack#1885', { title: 'Review the shell' })] };
   render(<App />);
-  await userEvent.selectOptions(await screen.findByRole('combobox', { name: 'Agent' }), 'reviewer 2');
-  await userEvent.click(screen.getByRole('button', { name: 'New session' }));
+  const link = await screen.findByRole('link', { name: /quack#1885 · Review the shell/ });
+  expect(link).toHaveAttribute('title', 'github:fagerbergj/quack#1885');
+});
+
+test('search and the agent filter narrow the list', async () => {
+  routes['GET /sessions'] = { sessions: [sess('github:1', { title: 'Fix the flake' }), sess('ui:2', { agent: 'researcher', title: 'Compare sandboxes' })] };
+  render(<App />);
+  await screen.findByRole('link', { name: /Fix the flake/ });
+  await userEvent.type(screen.getByRole('searchbox', { name: 'Search sessions' }), 'sandbox');
+  expect(screen.queryByRole('link', { name: /Fix the flake/ })).toBeNull();
+  expect(screen.getByRole('link', { name: /Compare sandboxes/ })).toBeInTheDocument();
+  await userEvent.clear(screen.getByRole('searchbox', { name: 'Search sessions' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Filter' }));
+  await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Started by' }), 'GitHub');
+  expect(screen.getByRole('link', { name: /Fix the flake/ })).toBeInTheDocument();
+  expect(screen.queryByRole('link', { name: /Compare sandboxes/ })).toBeNull();
+});
+
+test('selecting a session opens it in the main pane and marks its row', async () => {
+  routes['GET /sessions'] = { sessions: [sess('ui:u1', { title: 'Fix the flake' })] };
+  render(<App />);
+  await userEvent.click(await screen.findByRole('link', { name: /Fix the flake/ }));
+  expect(await screen.findByRole('heading', { name: 'Fix the flake' })).toBeInTheDocument();
+  expect(FakeSocket.all[0].url).toMatch(/\/sessions\/ui%3Au1\/ws$/);
+  expect(screen.getByRole('link', { name: /Fix the flake/ })).toHaveAttribute('aria-current', 'true');
+});
+
+async function startFromLanding(text: string) {
+  routes['GET /agents'] = { agents: [{ name: 'reviewer', version: 2 }] };
+  render(<App />);
+  await userEvent.type(await screen.findByRole('textbox', { name: 'Question or task' }), text);
+  await userEvent.click(screen.getByRole('button', { name: 'Start' }));
   await waitFor(() => expect(FakeSocket.all[0]?.url).toMatch(/\/sessions\/ui%3Auuid-1\/ws\?agent=reviewer$/));
+}
+
+test('starting a session opens a ui: key with the chosen agent and sends the untouched first message once on open', async () => {
+  await startFromLanding('review it');
+  const sock = FakeSocket.all[0];
+  expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('review it');
+  expect(sock.sent).toEqual([]);
+  sock.open();
+  await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue(''));
+  expect(sock.sent).toEqual([{ type: 'input', input: 'review it' }]);
+});
+
+test('a seed the user edited is not sent on open, and a socket that never opens leaves the text', async () => {
+  await startFromLanding('review it');
+  const sock = FakeSocket.all[0];
+  expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('review it');
+  await userEvent.type(screen.getByRole('textbox', { name: 'Message' }), ' carefully');
+  sock.open();
+  expect(sock.sent).toEqual([]);
+  expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('review it carefully');
 });
 
 test('renders the snapshot transcript, then streamed events', async () => {
@@ -141,17 +201,17 @@ test('a call whose arguments were not valid JSON shows the parse error', async (
 test('an idle send has no whenBusy; a busy send carries the chosen mode', async () => {
   const ws = await openSession();
   ws.frame(snapshot());
-  expect(screen.queryByRole('group')).toBeNull();
+  expect(screen.queryByRole('group', { name: 'While the agent is working' })).toBeNull();
   await userEvent.type(screen.getByRole('textbox', { name: 'Message' }), 'first');
   await userEvent.click(screen.getByRole('button', { name: 'Send' }));
   expect(ws.sent[0]).toEqual({ type: 'input', input: 'first' });
 
   ws.frame({ type: 'events', events: [{ type: 'run_start', inputs: [] }] });
   const group = screen.getByRole('group', { name: 'While the agent is working' });
-  expect(within(group).getByRole('radio', { name: 'Steer' })).toBeChecked();
+  expect(within(group).getByRole('button', { name: 'Steer now' })).toHaveAttribute('aria-pressed', 'true');
   await userEvent.type(screen.getByRole('textbox', { name: 'Message' }), 'turn left');
   await userEvent.click(screen.getByRole('button', { name: 'Send' }));
-  await userEvent.click(within(group).getByRole('radio', { name: 'Follow up' }));
+  await userEvent.click(within(group).getByRole('button', { name: 'Queue next' }));
   await userEvent.type(screen.getByRole('textbox', { name: 'Message' }), 'then right');
   await userEvent.click(screen.getByRole('button', { name: 'Send' }));
   expect(ws.sent.slice(1)).toEqual([
@@ -191,6 +251,7 @@ test('an approval that appears mid-run shows up when tool activity arrives', asy
 test('a malformed escape in the hash shows the sessions list instead of crashing', async () => {
   routes['GET /sessions'] = { sessions: [] };
   routes['GET /agents'] = { agents: [] };
+  stubViewport(false);
   location.hash = '#/s/%zz';
   render(<App />);
   expect(await screen.findByRole('heading', { name: 'Sessions' })).toBeInTheDocument();
@@ -216,6 +277,7 @@ test('a send on a closed socket keeps the input and says so', async () => {
 });
 
 test('each list fetch reports its own failure', async () => {
+  routes = {};
   render(<App />);
   expect(await screen.findByText(/Sessions: /)).toBeInTheDocument();
   expect(screen.getByText(/Agents: /)).toBeInTheDocument();
@@ -286,12 +348,13 @@ test('lists artifacts with their check status and failing criteria', async () =>
   ws.frame(snapshot());
   const section = await screen.findByRole('region', { name: 'Artifacts' });
   const items = within(section).getAllByRole('listitem');
-  expect(items[0]).toHaveTextContent('github.review v1: failed');
+  expect(items[0]).toHaveTextContent('github.review v1 sealed · checks failed');
   expect(items[0]).toHaveTextContent('Failing: cites.lines');
-  expect(items[0]).toHaveTextContent('draft one');
-  expect(items[1]).toHaveTextContent('github.review v2: passed');
+  expect(items[1]).toHaveTextContent('github.review v2 sealed · checked');
   expect(items[1]).not.toHaveTextContent('Failing');
-  expect(items[1]).toHaveTextContent('final review');
+  expect(screen.queryByRole('dialog')).toBeNull();
+  await userEvent.click(within(items[1]).getByRole('button', { name: 'Open github.review v2' }));
+  expect(within(screen.getByRole('dialog', { name: 'Work' })).getByText('final review')).toBeInTheDocument();
 });
 test('api and ws urls resolve under a /v1/ page path', async () => {
   const { socketUrl, listArtifacts, abortRun } = await import('./api.ts');
@@ -306,5 +369,127 @@ test('api and ws urls resolve under a /v1/ page path', async () => {
     expect(socketUrl('ui:u1', 'reviewer')).toBe(`ws://${location.host}/v1/sessions/ui%3Au1/ws?agent=reviewer`);
   } finally {
     history.replaceState(null, '', '/');
+  }
+});
+
+test('the rail links every area and marks the current one', async () => {
+  routes['GET /sessions'] = { sessions: [] };
+  routes['GET /agents'] = { agents: [] };
+  render(<App />);
+  const rail = screen.getAllByRole('navigation', { name: 'Main' })[0];
+  expect(within(rail).getAllByRole('link').map((l) => l.getAttribute('href'))).toEqual(['#/', '#/inbox', '#/artifacts', '#/sleeper', '#/remarkable', '#/memory', '#/agents', '#/evals', '#/schedules']);
+  expect(within(rail).getByRole('link', { name: 'Sessions' })).toHaveAttribute('aria-current', 'page');
+  await userEvent.click(within(rail).getByRole('link', { name: 'Inbox' }));
+  expect(await screen.findByRole('heading', { name: 'Inbox' })).toBeInTheDocument();
+  expect(within(rail).getByRole('link', { name: 'Inbox' })).toHaveAttribute('aria-current', 'page');
+  expect(within(rail).getByRole('link', { name: 'Sessions' })).not.toHaveAttribute('aria-current');
+});
+
+test('a session stays inside the Sessions rail entry', async () => {
+  await openSession();
+  const rail = screen.getAllByRole('navigation', { name: 'Main' })[0];
+  expect(within(rail).getByRole('link', { name: 'Sessions' })).toHaveAttribute('aria-current', 'page');
+});
+
+test('the theme toggle flips the document theme', async () => {
+  routes['GET /sessions'] = { sessions: [] };
+  routes['GET /agents'] = { agents: [] };
+  document.documentElement.dataset.theme = 'light';
+  localStorage.clear();
+  render(<App />);
+  const toggle = () => screen.getAllByRole('button', { name: 'Day / night' })[0];
+  expect(toggle()).toHaveAttribute('aria-pressed', 'false');
+  await userEvent.click(toggle());
+  expect(document.documentElement.dataset.theme).toBe('dark');
+  expect(localStorage.getItem('quack:theme')).toBe('dark');
+  expect(toggle()).toHaveAttribute('aria-pressed', 'true');
+  await userEvent.click(toggle());
+  expect(document.documentElement.dataset.theme).toBe('light');
+});
+
+test('assistant text renders as markdown with a table, highlighted code and citation chips; calls collapse into one card', async () => {
+  const ws = await openSession();
+  const md = '## Result\n\n| Server | Gain |\n| --- | --- |\n| vLLM | 1.9x |\n\nSee [S9] and `TP=4`.\n\n```ts\nconst x = 1;\n```';
+  const call = (id: string, name: string) => ({ type: 'toolCall', id, name, arguments: { q: id } });
+  const res = (id: string, name: string) => entry(`r${id}`, [{ role: 'toolResult', toolCallId: id, toolName: name, content: [{ type: 'text', text: 'ok' }], isError: false, timestamp: 4000 }]);
+  ws.frame(snapshot({
+    entries: [
+      entry('u', [{ role: 'user', content: 'compare', timestamp: 1 }]),
+      entry('a', [assistant([{ type: 'text', text: md }, call('c1', 'web_search'), call('c2', 'web_fetch'), call('c3', 'web_fetch')])]),
+      res('c1', 'web_search'), res('c2', 'web_fetch'), res('c3', 'web_fetch'),
+    ],
+  }));
+  const reply = screen.getByRole('article', { name: 'Assistant' });
+  expect(within(reply).getByRole('heading', { name: 'Result' })).toBeInTheDocument();
+  expect(within(reply).getByRole('table')).toHaveTextContent('vLLM');
+  expect(reply.querySelector('.cite')).toHaveTextContent('S9');
+  expect(reply.querySelector('pre code.hljs .hljs-keyword')).toHaveTextContent('const');
+  expect(within(reply).getByText('3 calls · web_search ×1, web_fetch ×2')).toBeInTheDocument();
+  expect(within(reply).getAllByText('4 s')).toHaveLength(1);
+});
+
+test('the Work drawer opens from the status line, shows report then checks, traps focus and closes on Esc', async () => {
+  routes['GET /sessions/ui%3Au1/artifacts'] = {
+    artifacts: [
+      { kind: 'research.report', version: 2, hash: 'h2', content: '## Short answer\n\nGain is 1.9x [S9].', sealedAt: 2, verdict: { passed: false, gatesFailed: [], score: 0.5, checks: [{ criterion: 'citations', id: 'support', met: 0, notes: ['S7 does not mention TP'] }, { criterion: 'dated', id: 'claims', met: 1, notes: [] }] } },
+    ],
+  };
+  const ws = await openSession();
+  ws.frame(snapshot());
+  expect(screen.queryByRole('dialog')).toBeNull();
+  const open = await screen.findByRole('button', { name: 'Open research.report v2' });
+  await userEvent.click(open);
+  const work = screen.getByRole('dialog', { name: 'Work' });
+  expect(within(work).getByRole('heading', { name: 'Short answer' })).toBeInTheDocument();
+  expect(work).toHaveTextContent('v2');
+  expect(within(work).getByRole('button', { name: 'Close' })).toHaveFocus();
+  await userEvent.click(within(work).getByRole('tab', { name: 'Checks' }));
+  expect(work).toHaveTextContent('citations.support');
+  expect(work).toHaveTextContent('S7 does not mention TP');
+  expect(within(work).getByText('Fail')).toBeInTheDocument();
+  expect(within(work).getByText('Pass')).toBeInTheDocument();
+  await userEvent.tab({ shift: true });
+  await userEvent.tab({ shift: true });
+  expect(work).toContainElement(document.activeElement as HTMLElement);
+  await userEvent.keyboard('{Escape}');
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(open).toHaveFocus();
+});
+
+test('the Work tabs are wired for assistive tech and switch with the arrow keys', async () => {
+  routes['GET /sessions/ui%3Au1/artifacts'] = { artifacts: [{ kind: 'research.report', version: 1, hash: 'h', content: 'body', sealedAt: 1, verdict: null }] };
+  const ws = await openSession();
+  ws.frame(snapshot());
+  await userEvent.click(await screen.findByRole('button', { name: 'Open research.report v1' }));
+  const report = screen.getByRole('tab', { name: 'Report' });
+  const checks = screen.getByRole('tab', { name: 'Checks' });
+  expect(report).toHaveAttribute('tabindex', '0');
+  expect(checks).toHaveAttribute('tabindex', '-1');
+  expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', report.id);
+  expect(report).toHaveAttribute('aria-controls', screen.getByRole('tabpanel').id);
+  report.focus();
+  await userEvent.keyboard('{ArrowRight}');
+  expect(checks).toHaveAttribute('aria-selected', 'true');
+  expect(checks).toHaveFocus();
+  expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', checks.id);
+  await userEvent.keyboard('{ArrowLeft}');
+  expect(report).toHaveFocus();
+});
+
+test('a malformed socket frame is skipped and later frames still apply', async () => {
+  const ws = await openSession();
+  ws.frame(snapshot());
+  act(() => ws.onmessage?.({ data: '{not json' }));
+  ws.frame({ type: 'events', events: [{ type: 'run_start', inputs: [] }] });
+  expect(screen.getByRole('status')).toHaveTextContent('Running');
+});
+
+test('a trailing slash on #/new/ shows the landing page on phone and desktop alike', async () => {
+  for (const desktop of [false, true]) {
+    stubViewport(desktop);
+    location.hash = '#/new/';
+    const { unmount } = render(<App />);
+    expect(await screen.findByRole('heading', { name: 'What should quack work on?' })).toBeInTheDocument();
+    unmount();
   }
 });
