@@ -51,6 +51,13 @@ async function serveStatic(root: string, pathname: string, res: ServerResponse):
   }
 }
 
+// Static files answer GETs that are not API routes, and only when a web dir is configured.
+async function serveWeb(root: string | undefined, req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+  if (!root || req.method !== 'GET') return false;
+  const { pathname } = new URL(req.url ?? '', 'http://distributor');
+  return !/^\/(sessions|agents)(\/|$)/.test(pathname) && serveStatic(root, pathname, res);
+}
+
 // Routes /sessions/<url-encoded key>/<path> to the one process that owns that session (DSP-1..4). Holds no domain logic.
 function sessionPath(url: string | undefined): { key: string; path: string; search: string; agent?: string } | undefined {
   const { pathname, searchParams } = new URL(url ?? '', 'http://distributor');
@@ -112,8 +119,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
     try {
       if (req.method === 'GET' && req.url === '/sessions') return send(res, 200, { sessions: await driver.sessions() });
       if (req.method === 'GET' && req.url === '/agents') return send(res, 200, { agents: await driver.agents() });
-      const { pathname } = new URL(req.url ?? '', 'http://distributor');
-      if (opts.webDir && req.method === 'GET' && !/^\/(sessions|agents)(\/|$)/.test(pathname) && (await serveStatic(opts.webDir, pathname, res))) return;
+      if (await serveWeb(opts.webDir, req, res)) return;
       if (!/^\/sessions\/[^/]+\//.test(req.url ?? '')) return send(res, 404, { error: 'not found' });
       const target = sessionPath(req.url);
       if (!target) return send(res, 400, { error: 'invalid session key' });
