@@ -1,87 +1,55 @@
-import pg from 'pg';
 import type { Fact } from './facts.ts';
 
-// Append-only: a released migration is never edited.
-const MIGRATIONS = [
-  `create table index_facts (
-     session text not null, id text not null, kind text not null, rev bigint not null, at bigint not null, data jsonb not null,
-     primary key (session, id)
-   );
-   create index index_facts_kind on index_facts (kind, at desc)`,
-];
+export type FactRow = Fact & { session: string };
+
+/** One database behind the index: the only part that differs between SQLite and Postgres. */
+export type Backend = {
+  migrate(): Promise<void>;
+  /** Idempotent: a fact lands once per (session, id) and only a higher revision replaces it. */
+  upsert(session: string, facts: Fact[]): Promise<void>;
+  facts(kinds?: string[]): Promise<FactRow[]>;
+};
 
 export type IndexStore = ReturnType<typeof createStore>;
 
-/** The derived index (A6) in Postgres; it holds nothing a session log cannot regenerate. */
-export function createStore(pool: pg.Pool) {
+const newestFirst = (a: { at: number; session: string; id: string }, b: typeof a) => b.at - a.at || a.session.localeCompare(b.session) || a.id.localeCompare(b.id);
+const field = (f: FactRow | undefined, key: string) => (f?.data as Record<string, unknown> | undefined)?.[key];
+
+/** The derived index (A6); it holds nothing a session log cannot regenerate. Reads are shaped here so both backends answer alike. */
+export function createStore(backend: Backend) {
   let ready: Promise<void> | undefined;
-
-  async function migrate() {
-    const client = await pool.connect();
-    try {
-      await client.query('begin');
-      await client.query('select pg_advisory_xact_lock(7461)');
-      await client.query('create table if not exists index_migrations (version int primary key)');
-      const done = new Set((await client.query<{ version: number }>('select version from index_migrations')).rows.map((r) => r.version));
-      for (const [i, sql] of MIGRATIONS.entries()) {
-        if (done.has(i + 1)) continue;
-        await client.query(sql);
-        await client.query('insert into index_migrations (version) values ($1)', [i + 1]);
-      }
-      await client.query('commit');
-    } catch (err) {
-      await client.query('rollback').catch(() => {});
-      throw err;
-    } finally {
-      client.release();
-    }
-  }
-
   // Memoized once it succeeds, retried while the database is down, so the distributor can start before Postgres does.
-  const ensure = () => (ready ??= migrate().catch((err) => { ready = undefined; throw err; }));
-
-  async function query<T extends pg.QueryResultRow>(sql: string, params: unknown[] = []): Promise<T[]> {
-    await ensure();
-    return (await pool.query<T>(sql, params)).rows;
-  }
+  const ensure = () => (ready ??= backend.migrate().catch((err) => { ready = undefined; throw err; }));
+  const facts = async (kinds?: string[]) => { await ensure(); return backend.facts(kinds); };
 
   return {
     ensure,
-    /** Idempotent: a fact lands once per (session, id) and only a higher revision replaces it. */
-    async upsert(session: string, facts: Fact[]) {
-      if (!facts.length) return;
-      await query(
-        `insert into index_facts (session, id, kind, rev, at, data)
-         select $1, * from unnest($2::text[], $3::text[], $4::bigint[], $5::bigint[], $6::jsonb[])
-         on conflict (session, id) do update set kind = excluded.kind, rev = excluded.rev, at = excluded.at, data = excluded.data
-         where excluded.rev > index_facts.rev`,
-        [session, facts.map((f) => f.id), facts.map((f) => f.kind), facts.map((f) => f.rev), facts.map((f) => f.at), facts.map((f) => JSON.stringify(f.data))],
-      );
+    facts,
+    async upsert(session: string, batch: Fact[]) {
+      if (!batch.length) return;
+      await ensure();
+      await backend.upsert(session, batch);
     },
+    // shortcut: aggregated in memory from every fact row, move the grouping into SQL when the index outgrows one process's memory.
     async sessions() {
-      const rows = await query<{ key: string; agent: string | null; version: number | null; status: string | null; cost: number; at: number }>(
-        `select session as key,
-           max(data->>'agent') filter (where kind = 'session') as agent,
-           max((data->>'version')::int) filter (where kind = 'session') as version,
-           max(data->>'state') filter (where kind = 'status') as status,
-           coalesce(max((data->>'total')::float8) filter (where kind = 'cost'), 0) as cost,
-           max(at)::float8 as at
-         from index_facts group by session order by max(at) desc, session`,
-      );
-      return rows.map(({ at, ...s }) => ({ ...s, lastActivity: new Date(at).toISOString() }));
+      const bySession = Map.groupBy(await facts(), (f) => f.session);
+      return [...bySession].map(([key, rows]) => {
+        const of = (kind: string) => rows.find((f) => f.kind === kind);
+        return {
+          key, agent: (field(of('session'), 'agent') as string) ?? null, version: (field(of('session'), 'version') as number) ?? null,
+          status: (field(of('status'), 'state') as string) ?? null, cost: (field(of('cost'), 'total') as number) ?? 0, at: Math.max(...rows.map((f) => f.at)),
+        };
+      }).sort((a, b) => b.at - a.at || a.key.localeCompare(b.key)).map(({ at, ...s }) => ({ ...s, lastActivity: new Date(at).toISOString() }));
     },
     async artifacts() {
-      return query(
-        `select session, data->>'kind' as kind, (data->>'version')::int as version, data->>'hash' as hash, data->'verdict' as verdict, at::float8 as "sealedAt"
-         from index_facts where kind = 'artifact' order by at desc, session, id`,
-      );
+      return (await facts(['artifact'])).sort(newestFirst).map((f) => ({
+        session: f.session, kind: field(f, 'kind'), version: field(f, 'version'), hash: field(f, 'hash'), verdict: field(f, 'verdict'), sealedAt: f.at,
+      }));
     },
     async approvals(state?: string) {
-      return query(
-        `select session, substr(id, 10) as id, data->>'tool' as tool, data->>'state' as state, data->>'decision' as decision, data->>'by' as by, at::float8 as at
-         from index_facts where kind = 'approval' and ($1::text is null or data->>'state' = $1) order by at desc, session, id`,
-        [state ?? null],
-      );
+      return (await facts(['approval'])).filter((f) => !state || field(f, 'state') === state).sort(newestFirst).map((f) => ({
+        session: f.session, id: f.id.slice('approval:'.length), tool: field(f, 'tool'), state: field(f, 'state'), decision: field(f, 'decision'), by: field(f, 'by'), at: f.at,
+      }));
     },
   };
 }

@@ -53,7 +53,7 @@ const READS: Record<string, (store: IndexStore, q: URLSearchParams) => Promise<u
   '/index/approvals': async (s, q) => ({ approvals: await s.approvals(q.get('state') ?? undefined) }),
 };
 
-// Sessions publish with the service token; reads rely on the proxy for auth. Postgres down answers 503 and the session retries.
+// Sessions publish with the service token; reads rely on the proxy for auth. A down database answers 503 and the session retries.
 export function indexRoutes(store: IndexStore, token: string) {
   return async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
     const url = new URL(req.url ?? '', 'http://distributor');
