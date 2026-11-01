@@ -3,7 +3,7 @@
 - **Agent:** `v1/agents/researcher` (prompt v1, 195 words) and `research.report` rubric v1 (`v1/packages/research/src/report.ts`, one provenance gate)
 - **Ported from:** v0 `agents/web-researcher` (prompt 867 words, 8 criteria), `agents/synthesizer` (237 words, 7 criteria) and `agents/orchestrator` (1,424 words; research is one routing line and the clarify rule)
 - **Audited:** 2026-11-01 ([#1861](https://github.com/fagerbergj/quack/issues/1861))
-- **Outcome:** keep the v1 prompt as it is, with three additions to A/B before they land. Port the v0 rubric as four code gates and six weighted model checks. Drop the synthesizer and orchestrator rubrics. The model checks wait on #1857 (source text) and a `request` evidence scope.
+- **Outcome:** keep the v1 prompt as it is, with two additions to A/B before they land (source quality, stop-and-name-gaps). Port the v0 rubric as three code gates and five weighted model checks. Drop the synthesizer and orchestrator rubrics. The model checks wait on #1857 (source text) and a `request` evidence scope.
 
 ## Effectiveness
 
@@ -58,12 +58,12 @@ v0 `web-researcher/prompt.md` against v1 `researcher/prompt.md`.
 - Line 5, recalled memory as tradecraft. The researcher has no memory tools.
 - Line 7, "a turn that ends with the answer only in reasoning arrives empty". v1 writes a file and calls `submit_report`.
 - Lines 16 and `grep_artifacts`/`read_artifact`. v1 has neither; `web_fetch` returns the first 30,000 characters.
-- Lines 20 and 5a843bed's cap. `maxTurns` 60 bounds effort structurally.
+- Line 20's "roughly ten searched queries" cap and 5a843bed's tool-call cap. `maxTurns` 60 bounds effort structurally. The other half of line 20 is not dead; see Missing item 2.
 - Lines 38-50, the Sources `<details>` block. The reading view renders sources from `research.sources` (RFC).
 
 **Missing from v1:**
 1. Line 24, primary and authoritative sources for factual claims, and line 28, fetch the original when a source cites another. No measurement; one sentence each, A/B on a research dataset first.
-2. Line 20's stop rule ("write the answer with what you have and name the gaps"). The cap bounds cost but a run that hits it delivers nothing. Needs the same A/B.
+2. Line 20's second half, "write the answer with what you have and name the gaps". `maxTurns` ends a run but gives it no instruction to say what it did not find, and RES-4's "not fully checked" delivery covers failed checks, not unsearched ground. Needs the same A/B.
 3. Date awareness (v0 rubric notes). v1 has no date tool or line in the prompt, so a time-sensitive question can be searched under the wrong year. Fix in the harness (inject the date), not the prompt.
 4. Line 15, fetch before stating exact prices, addresses or hours. Covered by the fetch-before-cite rule; no addition.
 5. Line 30, repository questions. v1 has the coding tools (RES-2), but a cloned file has no `[sN]` id, so `cites_fetched_sources` would fail any claim from a repo. This is a spec gap, not a prompt gap; see Follow-ups.
@@ -73,7 +73,7 @@ v0 `web-researcher/prompt.md` against v1 `researcher/prompt.md`.
 
 ## Porting decision
 
-1. **Keep the v1 prompt unchanged** until the dataset in Follow-ups exists. Add the three prompt items above (sources, stop rule, repo citation) only if an A/B on that dataset shows them helping; they are untested in v0.
+1. **Keep the v1 prompt unchanged** until the dataset in Follow-ups exists. Add the two prompt items above (source quality, stop-and-name-gaps) only if an A/B on that dataset shows them helping; they are untested in v0. Repository citation is a spec gap, not a prompt item (see Follow-ups).
 2. **Code gates:** keep `cites_fetched_sources`; add `findings_cited` and `quotes_exist`.
 3. **Weighted model checks** (rubric v2, after #1857): `supported_by_source` 4, `contradicted_by_source` -4, `answers_every_ask` 4, `summary_follows_findings` 3, `no_self_contradiction` -4. Threshold stays 0.8.
 4. **Dropped:** `citation_quality` outlet matching, `clean_output`, the synthesizer rubric, the orchestrator rubric.
