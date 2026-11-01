@@ -546,14 +546,20 @@ test('Artifacts lists sealed versions from the index and opens one in the Work d
     { session: 'gh:3', kind: 'github.review', version: 2, hash: 'h', verdict: { passed: true }, sealedAt: 2 },
     { session: 'gh:3', kind: 'github.review', version: 1, hash: 'g', verdict: null, sealedAt: 1 },
   ] };
-  routes['GET /sessions/gh%3A3/artifacts'] = { artifacts: [{ kind: 'github.review', version: 2, hash: 'h', content: 'final review', sealedAt: 2, verdict: { passed: true, gatesFailed: [], score: 1, checks: [] } }] };
+  routes['GET /sessions/gh%3A3/artifacts'] = { artifacts: [
+    { kind: 'github.review', version: 1, hash: 'g', content: 'first draft', sealedAt: 1, verdict: null },
+    { kind: 'github.review', version: 2, hash: 'h', content: 'final review', sealedAt: 2, verdict: { passed: true, gatesFailed: [], score: 1, checks: [] } },
+  ] };
   location.hash = '#/artifacts';
   render(<App />);
   const open = await screen.findByRole('button', { name: 'Open github.review v2 of Old work' });
   expect(open).toHaveTextContent('Passed');
-  expect(screen.getByRole('button', { name: 'Open github.review v1 of Old work' })).toHaveTextContent('Not checked');
+  expect(open).toHaveTextContent('2 versions');
+  expect(screen.getAllByRole('button', { name: /^Open / })).toHaveLength(1);
   await userEvent.click(open);
   expect(await screen.findByText('final review')).toBeInTheDocument();
+  await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Version' }), '1');
+  expect(screen.getByText('first draft')).toBeInTheDocument();
   expect(screen.getByRole('dialog', { name: 'Work' })).toBeInTheDocument();
 });
 

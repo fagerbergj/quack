@@ -34,13 +34,13 @@ function Item({ row, a, now, done }: { row: Row; a: Row['approvals'][number]; no
       <span className="flex gap-2">
         {rejecting ? (
           <>
-            <button type="button" onClick={() => decide('reject')} className={`${btn} bg-ink font-semibold text-on-ink hover:bg-ink-2`}>{`Confirm reject ${a.tool}`}</button>
+            <button type="button" aria-label={`Confirm reject ${a.tool}`} onClick={() => decide('reject')} className={`${btn} bg-ink font-semibold text-on-ink hover:bg-ink-2`}>Confirm reject</button>
             <button type="button" onClick={() => setRejecting(false)} className={`${btn} border border-line bg-surface font-medium text-ink-2`}>Cancel</button>
           </>
         ) : (
           <>
-            <button type="button" onClick={() => decide('approve')} className={`${btn} bg-ink font-semibold text-on-ink hover:bg-ink-2`}>{`Approve ${a.tool}`}</button>
-            <button type="button" onClick={() => setRejecting(true)} className={`${btn} border border-line bg-surface font-medium text-ink-2 hover:text-danger`}>{`Reject ${a.tool}`}</button>
+            <button type="button" aria-label={`Approve ${a.tool}`} onClick={() => decide('approve')} className={`${btn} bg-ink font-semibold text-on-ink hover:bg-ink-2`}>Approve</button>
+            <button type="button" aria-label={`Reject ${a.tool}`} onClick={() => setRejecting(true)} className={`${btn} border border-line bg-surface font-medium text-ink-2 hover:text-danger`}>Reject</button>
           </>
         )}
       </span>

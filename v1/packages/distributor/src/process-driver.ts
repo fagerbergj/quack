@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { dirname, join } from 'node:path';
@@ -96,6 +97,15 @@ async function lastActivity(dir: string): Promise<number> {
 
 const TITLE_MAX = 120;
 
+// A title the caller gave on the first submission (the session's `title` file) beats the first message.
+function recordedTitle(dir: string): string | undefined {
+  try {
+    return readFileSync(join(dir, 'title'), 'utf8').trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // The session's first user message, read straight from its store so listing never wakes a process.
 function firstInput(dir: string): string | undefined {
   let db: DatabaseSync | undefined;
@@ -124,6 +134,8 @@ export function processDriver(opts: { command: string[]; dataDir: string; agents
   // The first user message never changes once written, so a found title is read once per session directory.
   const titles = new Map<string, string>();
   function cachedTitle(dir: string): string | undefined {
+    const recorded = recordedTitle(dir);
+    if (recorded) return recorded;
     const known = titles.get(dir);
     if (known !== undefined) return known;
     const found = firstInput(dir);

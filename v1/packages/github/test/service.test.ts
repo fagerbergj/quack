@@ -78,6 +78,7 @@ test('verified webhooks start a review in the PR session, keyed by the delivery 
   assert.equal(invocations[0].body.requestId, 'github-delivery:d-7');
   assert.match(invocations[0].body.input, /Review pull request acme\/widgets#7 \(label quack:review\)/);
   assert.match(invocations[0].body.input, /Head: abc123 on fix; base: main/);
+  assert.equal(invocations[0].body.title, 'Fix the cache');
 });
 
 test('/review starts a review only from a trusted commenter', async () => {

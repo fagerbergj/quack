@@ -75,7 +75,7 @@ async function webhook(req: IncomingMessage, res: ServerResponse, app: GithubApp
   // The delivery id is the request id, so a redelivery of the same event never starts a second run (HAR-5).
   const requestId = `github-delivery:${req.headers['x-github-delivery'] ?? ''}`;
   const target = `${config.distributorUrl}/sessions/${encodeURIComponent(trigger.sessionKey)}/invocations?agent=${encodeURIComponent(config.agent)}`;
-  const upstream = await fetch(target, { method: 'POST', body: JSON.stringify({ input: trigger.input, requestId }) });
+  const upstream = await fetch(target, { method: 'POST', body: JSON.stringify({ input: trigger.input, requestId, title: trigger.title }) });
   send(res, upstream.ok ? 202 : 502, { session: trigger.sessionKey, status: upstream.status });
 }
 

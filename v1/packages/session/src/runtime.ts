@@ -4,7 +4,7 @@ import { contentText, type MutableModels } from '@earendil-works/pi-ai';
 import { AssistantEntry, createRegistry, defineExtension, Harness, section, type Conversation, type Extension, type ReportInfo } from '@earendil-works/pi-durable';
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { pendingApprovals } from '@quack/sdk';
 
 const ctx = BACKGROUND_CONTEXT;
@@ -104,6 +104,10 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
       const { active, at: wakeAt } = harness.wake();
       const waitingOnHuman = active && (await onlyAwaitingHumans());
       return { busy: active && !waitingOnHuman, waitingOnHuman, wakeAt };
+    },
+    // The caller's name for the session (a PR title); the first one sticks, and the distributor lists it ahead of the first message.
+    async recordTitle(title: string) {
+      await writeFile(join(opts.dir, 'title'), title.replace(/\s+/g, ' ').trim().slice(0, 200), { flag: 'wx' }).catch(() => undefined);
     },
     async submit(input: string, requestId?: string, wait = false, whenBusy?: 'steer' | 'followUp'): Promise<SubmitResult> {
       if (dispatch) return dispatch({ harness, root }, input, requestId, wait);

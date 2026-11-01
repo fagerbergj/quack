@@ -30,15 +30,16 @@ function parseVerdict(body: unknown): { decision: 'approve' | 'reject'; reason?:
   return { decision, reason, by };
 }
 
-type Invocation = { input: string; requestId?: string; wait?: boolean };
+type Invocation = { input: string; requestId?: string; wait?: boolean; title?: string };
 
 function parseInvocation(body: unknown): Invocation | string {
   if (typeof body !== 'object' || body === null) return 'body must be a JSON object';
-  const { input, requestId, wait } = body as Record<string, unknown>;
+  const { input, requestId, wait, title } = body as Record<string, unknown>;
   if (typeof input !== 'string' || input.length === 0) return 'input must be a non-empty string';
   if (requestId !== undefined && typeof requestId !== 'string') return 'requestId must be a string';
   if (wait !== undefined && typeof wait !== 'boolean') return 'wait must be a boolean';
-  return { input, requestId, wait };
+  if (title !== undefined && typeof title !== 'string') return 'title must be a string';
+  return { input, requestId, wait, title };
 }
 
 type Route = (session: Session, req: IncomingMessage, match: RegExpExecArray) => Promise<[number, unknown]>;
@@ -48,6 +49,7 @@ const ctx = BACKGROUND_CONTEXT;
 async function invoke(session: Session, req: IncomingMessage): Promise<[number, unknown]> {
   const inv = parseInvocation(await readJson(req));
   if (typeof inv === 'string') return [400, { error: inv }];
+  if (inv.title) await session.recordTitle(inv.title);
   return [inv.wait ? 200 : 202, await session.submit(inv.input, inv.requestId, inv.wait)];
 }
 

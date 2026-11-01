@@ -144,7 +144,7 @@ test('a viewer whose session cannot start is disconnected, and the distributor k
 
 test('each session runs on the agent that created it, and the registry and index list them', async () => {
   const dir = await agentsDir('reviewer', 'research');
-  const { invoke, base, driver, ranAs } = await startDistributor(60_000, { agentsDir: dir, defaultAgent: '' });
+  const { invoke, base, driver, ranAs, dataDir } = await startDistributor(60_000, { agentsDir: dir, defaultAgent: '' });
   const whoami = (key: string, agent?: string) => invoke(key, { input: 'whoami', wait: true }, agent);
   assert.equal((await whoami('github:a#1', 'reviewer')).body.answer, ranAs('github:a#1'));
   assert.equal((await whoami('research:b', 'research')).body.answer, ranAs('research:b'));
@@ -155,6 +155,9 @@ test('each session runs on the agent that created it, and the registry and index
   const { sessions } = (await (await fetch(`${base}/sessions`)).json()) as { sessions: Array<{ key: string; agent: string; title?: string; running: boolean; lastActivity: string }> };
   assert.deepEqual(sessions.map((s) => [s.key, s.agent, s.running]).sort(), [['github:a#1', 'reviewer', true], ['research:b', 'research', false]]);
   assert.equal(sessions.find((s) => s.key === 'research:b')?.title, 'whoami');
+  await writeFile(join(dataDir, sessionDirName('github:a#1'), 'title'), 'Fix the cache');
+  const named = (await (await fetch(`${base}/sessions`)).json()) as { sessions: Array<{ key: string; title?: string }> };
+  assert.equal(named.sessions.find((s) => s.key === 'github:a#1')?.title, 'Fix the cache');
   assert.ok(sessions.every((s) => !Number.isNaN(Date.parse(s.lastActivity))));
 });
 

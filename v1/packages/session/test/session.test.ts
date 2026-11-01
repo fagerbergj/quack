@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -41,6 +41,12 @@ test('answers over the container contract and survives a restart', async () => {
   assert.equal(answered.status, 200);
   assert.equal(answered.body.status, 'done');
   assert.equal(answered.body.answer, 'Paris');
+
+  const titled = await http.post({ input: 'next', title: 'Fix the cache', requestId: 'q-2', wait: true });
+  assert.equal(titled.status, 200);
+  await http.post({ input: 'again', title: 'Later name', requestId: 'q-3', wait: true });
+  assert.equal(await readFile(join(dir, 'title'), 'utf8'), 'Fix the cache');
+  assert.equal((await http.post({ input: 'x', title: 7 })).status, 400);
 
   const rejected = await http.post({ input: '' });
   assert.equal(rejected.status, 400);
