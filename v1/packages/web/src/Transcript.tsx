@@ -33,7 +33,8 @@ function Assistant({ m }: { m: AssistantMessage }) {
       {m.content.map((b, i) => {
         if (b.type === 'text') return <p key={i}>{b.text}</p>;
         if (b.type === 'thinking') return b.thinking.trim() ? <details key={i}><summary>Thinking</summary><p>{b.thinking}</p></details> : null;
-        return <Tool key={i} label={`Tool call: ${b.name}`} note={hint(b.arguments)} body={JSON.stringify(b.arguments, null, 2)} />;
+        const body = b.argumentsError ?? JSON.stringify(b.arguments, null, 2);
+        return <Tool key={i} label={`Tool call: ${b.name}${b.argumentsError ? ' (bad arguments)' : ''}`} note={hint(b.arguments)} body={body} />;
       })}
     </>
   );

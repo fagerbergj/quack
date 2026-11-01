@@ -113,21 +113,29 @@ test('tool calls show a summary, expand to arguments and output, truncate long o
   expect(screen.getByText('weighing options').closest('details')).not.toHaveAttribute('open');
 
   const search = screen.getByText('Tool call: web_search').closest('details')!;
-  expect(search).toHaveTextContent('quack ducks');
+  expect(within(search.querySelector('summary')!).getByText('quack ducks')).toBeInTheDocument();
   expect(search).not.toHaveAttribute('open');
   await userEvent.click(within(search).getByText('Tool call: web_search'));
   expect(search).toHaveAttribute('open');
   expect(search).toHaveTextContent('"limit": 3');
 
   const out = screen.getByText('Tool result: web_search').closest('details')!;
-  expect(out).toHaveTextContent('2500 characters');
+  expect(within(out.querySelector('summary')!).getByText('2500 characters')).toBeInTheDocument();
   expect(out.querySelector('pre')!.textContent).toHaveLength(2003);
   await userEvent.click(within(out).getByRole('button', { name: 'Show all (2500 characters)' }));
   expect(out.querySelector('pre')!.textContent).toHaveLength(2500);
 
   const bad = screen.getByText('Tool result: bash (error)').closest('details')!;
-  expect(bad).toHaveTextContent('exit 1');
+  expect(within(bad.querySelector('summary')!).getByText('exit 1')).toBeInTheDocument();
   expect(bad.querySelector('pre')).toHaveTextContent('boom');
+});
+
+test('a call whose arguments were not valid JSON shows the parse error', async () => {
+  const ws = await openSession();
+  const call = { type: 'toolCall', id: 't9', name: 'bash', arguments: {}, argumentsError: 'Unexpected token } at 4' };
+  ws.frame(snapshot({ entries: [entry('a', [assistant([call])])] }));
+  const bad = screen.getByText('Tool call: bash (bad arguments)').closest('details')!;
+  expect(bad.querySelector('pre')).toHaveTextContent('Unexpected token } at 4');
 });
 
 test('an idle send has no whenBusy; a busy send carries the chosen mode', async () => {
