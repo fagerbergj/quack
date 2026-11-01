@@ -21,7 +21,7 @@ function RowLink({ r, kind, current, now }: { r: Row; kind: 'needs' | 'running' 
     <a
       href={`#/s/${encodeURIComponent(r.key)}`}
       aria-current={current ? 'true' : undefined}
-      className={`row flex items-start gap-2.5 px-4 py-2.5 text-ink no-underline hover:bg-soft/70 ${kind === 'needs' ? 'mx-2 rounded-xl bg-warm/60 px-3' : ''}`}
+      className={`row flex min-h-11 items-start gap-2.5 px-4 py-2.5 text-ink no-underline hover:bg-soft/70 ${kind === 'needs' ? 'mx-2 rounded-xl bg-warm/60 px-3' : ''}`}
     >
       {lead}
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -76,8 +76,8 @@ export function SessionList({ rows, selected, error, now, open: detail }: { rows
       <div className="flex flex-col gap-2.5 border-b border-line px-4 py-3">
         <div className="flex items-center gap-2">
           <h1 className="m-0 text-[17px] font-semibold">Sessions</h1>
-          <button type="button" aria-expanded={open} aria-controls="filters" onClick={() => setOpen(!open)} className="ml-auto cursor-pointer rounded-lg px-2 py-1 text-xs font-medium text-muted hover:bg-soft hover:text-ink">Filter</button>
-          <a href="#/new" className="inline-flex h-[30px] items-center rounded-full bg-ink px-3 text-[12.5px] font-semibold text-on-ink no-underline hover:bg-ink-2">New session</a>
+          <button type="button" aria-expanded={open} aria-controls="filters" onClick={() => setOpen(!open)} className="ml-auto min-h-11 min-w-11 cursor-pointer rounded-lg px-2 py-1 text-xs lg:min-h-0 lg:min-w-0 font-medium text-muted hover:bg-soft hover:text-ink">Filter</button>
+          <a href="#/new" className="inline-flex h-11 items-center lg:h-[30px] rounded-full bg-ink px-3 text-[12.5px] font-semibold text-on-ink no-underline hover:bg-ink-2">New session</a>
         </div>
         <label htmlFor="s-search" className="sr-only">Search sessions</label>
         <input id="s-search" type="search" value={filters.text} onChange={(e) => setFilters({ ...filters, text: e.target.value })} placeholder="Search titles, repos, agents" className={`${field} h-[34px] w-full px-3 text-[13px] transition focus:border-line-strong focus:bg-surface focus:shadow-ring`} />
