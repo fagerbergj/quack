@@ -42,8 +42,9 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
 function failure(res: { status: number; text: string }): string | undefined {
   if (res.status < 200 || res.status >= 300) return `distributor answered ${res.status}`;
   try {
-    const result = JSON.parse(res.text) as { status?: string; reason?: string };
-    return result.status === 'unanswered' ? `session unanswered: ${result.reason ?? 'no reason'}` : undefined;
+    const result = JSON.parse(res.text) as { status?: string; reason?: string; detail?: string };
+    // detail carries a failed workflow's error message; the reason alone is just "failed".
+    return result.status === 'unanswered' ? `session unanswered: ${result.reason ?? 'no reason'}${result.detail ? `: ${result.detail}` : ''}` : undefined;
   } catch {
     return 'distributor answer was not JSON';
   }
@@ -138,7 +139,11 @@ export function createRemarkableService(config: ServiceConfig) {
     if (!authorized(req, config.serviceToken)) return send(res, 401, { error: 'unauthorized' });
     try {
       const pdf = req.method === 'GET' ? /^\/documents\/([^/]+)\/pdf$/.exec(new URL(req.url ?? '', 'http://x').pathname) : null;
-      if (pdf) return void res.writeHead(200, { 'content-type': 'application/pdf' }).end(await config.client.downloadPdf(decodeURIComponent(pdf[1])));
+      if (pdf) {
+        // Download before writing headers: a failure after writeHead would make the catch's send throw and kill the process.
+        const body = await config.client.downloadPdf(decodeURIComponent(pdf[1]));
+        return void res.writeHead(200, { 'content-type': 'application/pdf' }).end(body);
+      }
       send(res, ...(await route(req)));
     } catch (err) {
       const bad = err instanceof SyntaxError || err instanceof URIError || (err as Error).message === 'body too large';

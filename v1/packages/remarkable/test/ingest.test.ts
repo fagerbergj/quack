@@ -187,8 +187,21 @@ test('a low-confidence Clef answer escalates to the session model; a confident o
   assert.equal((await run(0.8))?.resolver, 'clef');
 });
 
+test('a failed export fails the render step naming the document and the upstream reason', async () => {
+  const service = { ...fakeService(), pdf: async () => { throw new Error('remarkable service: GET /documents/n1/pdf returned 502: rmfakecloud GET /ui/api/documents: status 500'); } };
+  const r = await ingest(service, { type: 'meeting', topic: NONE });
+  assert.equal(r.outcomes[0].status, 'failed');
+  assert.match(r.outcomes[0].status === 'failed' ? r.outcomes[0].error.message : '', /^rmfakecloud could not export Notes: .*returned 502: rmfakecloud GET .*status 500/);
+});
+
+test('an unreachable service fails the render step as such, not as an rmfakecloud fault', async () => {
+  const down = createIngestService('http://unreachable.test', 't', async () => { throw new TypeError('fetch failed'); });
+  const r = await ingest({ ...fakeService(), pdf: down.pdf }, { type: 'meeting', topic: NONE });
+  assert.match(r.outcomes[0].status === 'failed' ? r.outcomes[0].error.message : '', /^the reMarkable service is unreachable: fetch failed/);
+});
+
 test('the service serves the PDF and keeps the topic list, and the ingest client reads both', async () => {
-  const service = createRemarkableService({ serviceToken: 't', dbPath: ':memory:', distributorUrl: 'http://unused', agent: 'a', client: { tree: async () => [], documents: async () => [], downloadPdf: async (id) => Buffer.from(id === 'n 1' ? pdf(1) : '') } });
+  const service = createRemarkableService({ serviceToken: 't', dbPath: ':memory:', distributorUrl: 'http://unused', agent: 'a', client: { tree: async () => [], documents: async () => [], downloadPdf: async (id) => { if (id !== 'n 1') throw new Error('rmfakecloud GET /x: response is not a PDF'); return Buffer.from(pdf(1)); } } });
   await new Promise<void>((r) => service.listen(0, r));
   try {
     const url = `http://127.0.0.1:${(service.address() as { port: number }).port}`;
@@ -200,6 +213,7 @@ test('the service serves the PDF and keeps the topic list, and the ingest client
     assert.equal((await renderPages(await client.pdf('n 1'))).length, 1);
     const denied = await fetch(`${url}/topics`);
     assert.equal(denied.status, 401);
+    await assert.rejects(client.pdf('other'), /returned 502: rmfakecloud GET .*not a PDF/);
     assert.equal((await fetch(`${url}/topics`, { method: 'POST', headers: { authorization: 'Bearer t' }, body: '{"name":""}' })).status, 400);
   } finally {
     await service.stop();

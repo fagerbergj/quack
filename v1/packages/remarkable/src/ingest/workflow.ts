@@ -25,6 +25,9 @@ export type IngestDeps = {
   classifier?: ClassifierRef;
 };
 
+/** Prefix of a failure to reach the remarkable service at all, as opposed to rmfakecloud failing behind it. */
+export const UNREACHABLE = 'the reMarkable service is unreachable';
+
 type Doc = { id: string; name: string; version: string };
 
 // The bar the judge applies to Clef; below it the chain falls through to the session model, then a person.
@@ -99,7 +102,12 @@ export function ingestWorkflow(deps: IngestDeps) {
         name: 'render',
         kind: 'code',
         run: async (c) => {
-          const images = await renderPages(await deps.service.pdf(doc(c).id));
+          const { id, name } = doc(c);
+          const pdf = await deps.service.pdf(id).catch((err: Error) => {
+            // A dead link to the service is not an rmfakecloud fault; keep the two apart for triage.
+            throw err.message.startsWith(UNREACHABLE) ? err : new Error(`rmfakecloud could not export ${name}: ${err.message}`);
+          });
+          const images = await renderPages(pdf);
           if (!images.length) throw new Error('step render: the document has no pages');
           for (const [i, image] of images.entries()) await must(c.api.env!.writeFile(pageFile(i + 1), image, c.ctx), pageFile(i + 1));
           return { pages: images.length };
