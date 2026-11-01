@@ -1,5 +1,5 @@
 import type { Context } from '@earendil-works/chord/context';
-import { defineDoc, UsageDoc, type Conversation, type Harness, type JsonObject, type UsageState } from '@earendil-works/pi-durable';
+import { defineDoc, type Conversation, type Harness, type JsonObject, type UsageState } from '@earendil-works/pi-durable';
 import { Approvals, Artifacts, type Approval, type SealedArtifact } from '@quack/sdk';
 
 /** One thing the index records about a session. `rev` only grows, so an older copy never overwrites a newer one. */
@@ -28,21 +28,21 @@ function approvalFacts(approvals: { items: Record<string, Approval> } | undefine
   });
 }
 
-function costFact(usage: Readonly<UsageState> | undefined, now: number): Fact[] {
-  const total = [...Object.values(usage?.models ?? {}), ...Object.values(usage?.tools ?? {})].reduce((sum, u) => sum + ((u as { cost?: { total?: number } }).cost?.total ?? 0), 0);
+function costFact(usage: Readonly<UsageState>, now: number): Fact[] {
+  const total = [...Object.values(usage.models), ...Object.values(usage.tools)].reduce((sum, u) => sum + ((u as { cost?: { total?: number } }).cost?.total ?? 0), 0);
   // Micro-dollars as the revision: it moves only when the spend does, so an idle session sends nothing.
   return total > 0 ? [{ id: 'cost', kind: 'cost', rev: Math.max(1, Math.round(total * 1e6)), at: now, data: { total } }] : [];
 }
 
-// Derived from the log's current documents, so a replay of the log yields the same facts as live publishing.
+// harness.usage totals every conversation, so decision forks and subagents count. Derived from the log's current documents, so a replay of the log yields the same facts as live publishing.
 export async function collectFacts(harness: Harness, root: Conversation, meta: SessionMeta, now: number, ctx: Context): Promise<Fact[]> {
-  const [artifacts, approvals, usage, outbox] = await Promise.all([
-    harness.snapshot(Artifacts, root.id, ctx), harness.snapshot(Approvals, root.id, ctx), harness.snapshot(UsageDoc, root.id, ctx), harness.snapshot(Outbox, root.id, ctx),
+  const [artifacts, approvals, outbox] = await Promise.all([
+    harness.snapshot(Artifacts, root.id, ctx), harness.snapshot(Approvals, root.id, ctx), harness.snapshot(Outbox, root.id, ctx),
   ]);
   const status = outbox?.status;
   return [
     { id: 'session', kind: 'session', rev: 1, at: 0, data: { agent: meta.agent, version: meta.version } },
-    ...artifactFacts(artifacts), ...approvalFacts(approvals), ...costFact(usage, now),
+    ...artifactFacts(artifacts), ...approvalFacts(approvals), ...costFact(await harness.usage(ctx), now),
     ...(status?.seq ? [{ id: 'status', kind: 'status' as const, rev: status.seq, at: status.at, data: { state: status.state } }] : []),
   ];
 }
