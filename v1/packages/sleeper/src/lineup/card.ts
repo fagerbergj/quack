@@ -9,8 +9,13 @@ export const cardsKind: ArtifactKind = {
   validate(text) {
     try {
       const c = JSON.parse(text);
+<<<<<<< HEAD
       const rows = c?.kind === 'lineup' ? c.starters : c?.kind === 'waivers' ? c.candidates : c?.kind === 'history' ? c.seasons : c?.kind === 'trade' ? c.offers : c?.kind === 'trade-finder' ? c.suggestions : c?.kind === 'trends' ? c.items : undefined;
       return Array.isArray(rows) && typeof c.summary === 'string' ? [] : ['a card needs a kind (lineup, waivers, trade, trade-finder, trends, history) with its rows, and a summary'];
+=======
+      const rows = c?.kind === 'lineup' ? c.starters : c?.kind === 'waivers' ? c.candidates : c?.kind === 'digest' ? c.games : c?.kind === 'retro' ? c.misses : c?.kind === 'trade' ? c.offers : c?.kind === 'trade-finder' ? c.suggestions : undefined;
+      return Array.isArray(rows) && typeof c.summary === 'string' ? [] : ['a card needs a kind (lineup, waivers, digest, retro, trade, trade-finder) with its rows, and a summary'];
+>>>>>>> 2943101b (feat(v1): Sleeper league report jobs, digest and retro)
     } catch {
       return ['cards.json is not JSON'];
     }
