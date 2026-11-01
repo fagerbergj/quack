@@ -30,12 +30,16 @@ function send(res: ServerResponse, status: number, body: unknown) {
 }
 
 // Routes /sessions/<url-encoded key>/<path> to the one process that owns that session (DSP-1..4). Holds no domain logic.
-function sessionPath(url: string | undefined): { key: string; path: string; agent?: string } | undefined {
+function sessionPath(url: string | undefined): { key: string; path: string; search: string; agent?: string } | undefined {
   const { pathname, searchParams } = new URL(url ?? '', 'http://distributor');
   const match = /^\/sessions\/([^/]+)(\/.*)$/.exec(pathname);
   if (!match) return undefined;
   const key = safeDecode(match[1]);
-  return key && KEY.test(key) ? { key, path: match[2], agent: searchParams.get('agent') || undefined } : undefined;
+  if (!key || !KEY.test(key)) return undefined;
+  const agent = searchParams.get('agent') || undefined;
+  searchParams.delete('agent');
+  const search = searchParams.size ? `?${searchParams}` : '';
+  return { key, path: match[2], search, agent };
 }
 
 // Splices a WebSocket upgrade onto the owning session's /ws; the session process speaks the protocol.
@@ -89,12 +93,12 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number } 
       if (!/^\/sessions\/[^/]+\//.test(req.url ?? '')) return send(res, 404, { error: 'not found' });
       const target = sessionPath(req.url);
       if (!target) return send(res, 400, { error: 'invalid session key' });
-      const { key, path, agent } = target;
+      const { key, path, search, agent } = target;
       lastUse.set(key, Date.now());
       await stopping.get(key);
       const url = await driver.ensure(key, agent);
       const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : new Uint8Array(await readBody(req));
-      const upstream = await fetch(url + path, { method: req.method, body, headers: { 'content-type': 'application/json' } });
+      const upstream = await fetch(url + path + search, { method: req.method, body, headers: { 'content-type': 'application/json' } });
       lastUse.set(key, Date.now());
       res.writeHead(upstream.status, { 'content-type': upstream.headers.get('content-type') ?? 'application/json' });
       res.end(Buffer.from(await upstream.arrayBuffer()));

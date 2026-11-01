@@ -94,8 +94,9 @@ export function processDriver(opts: { command: string[]; dataDir: string; agents
     const dir = sessionDir(key);
     const recorded = await readText(join(dir, 'agent'));
     if (recorded !== undefined && requested && requested !== recorded) throw new AgentError(409, `session runs agent ${recorded}, not ${requested}`);
-    const name = recorded ?? requested ?? (await defaultName());
-    const path = name === (await defaultName()) ? defaultPath : (await registry()).find((a) => a.name === name)?.path;
+    const fallback = await defaultName();
+    const name = recorded ?? requested ?? fallback;
+    const path = (await registry()).find((a) => a.name === name)?.path ?? (name === fallback ? defaultPath : undefined);
     if (!path && name) throw new AgentError(404, `unknown agent ${name}`);
     if (recorded === undefined) {
       await mkdir(dir, { recursive: true });
