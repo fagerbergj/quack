@@ -13,15 +13,20 @@ export type ServiceConfig = {
   agent: string;
 };
 
-/** Throws unless the distributor lists `agent` as promoted; the unattended trigger must not start on a draft. */
-export async function assertPromoted(distributorUrl: string, agent: string): Promise<void> {
-  let agents: Array<{ name: string; status: string }>;
-  try {
-    const res = await fetch(`${distributorUrl}/agents`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    agents = ((await res.json()) as { agents: typeof agents }).agents;
-  } catch (err) {
-    throw new Error(`cannot verify agent promotion: distributor at ${distributorUrl} unreachable or unhealthy (${String(err)})`);
+const BACKOFF_CAP_MS = 30_000;
+const pause = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+// Throws unless the distributor lists `agent` as promoted (no unattended draft). Unreachable is retried with backoff, since compose starts both together.
+export async function assertPromoted(distributorUrl: string, agent: string, sleep: (ms: number) => Promise<void> = pause): Promise<void> {
+  let agents: Array<{ name: string; status: string }> | undefined;
+  for (let delay = 1_000; !agents; delay = Math.min(delay * 2, BACKOFF_CAP_MS)) {
+    try {
+      const res = await fetch(`${distributorUrl}/agents`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      agents = ((await res.json()) as { agents: NonNullable<typeof agents> }).agents;
+    } catch {
+      await sleep(delay);
+    }
   }
   const found = agents.find((a) => a.name === agent);
   if (!found) throw new Error(`agent ${agent} is not registered with the distributor`);

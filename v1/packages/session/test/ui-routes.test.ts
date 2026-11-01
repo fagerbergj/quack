@@ -51,7 +51,7 @@ test('POST /abort ends a run that is waiting on a tool', async () => {
   const res = await fetch(`${h.base}/abort`, { method: 'POST' });
   assert.deepEqual([res.status, await res.json()], [200, { aborted: true }]);
   await ended;
-  assert.equal(h.session.busy(), false);
+  assert.equal((await h.session.standing()).busy, false);
   ws.close();
   await h.stop();
 });

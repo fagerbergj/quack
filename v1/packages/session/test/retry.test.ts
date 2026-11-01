@@ -70,7 +70,7 @@ test('a submission queued behind a failing run is run, not left queued', async (
   await session.close();
 });
 
-test('a session in retry backoff reports busy, so the idle sweep leaves it alone', async () => {
+test('a session in retry backoff reports its wake time, so the distributor can stop and wake it', async () => {
   let started!: () => void;
   const running = new Promise<void>((r) => (started = r));
   const { session } = await open('backoff', [() => (started(), bad502()), fauxAssistantMessage('ok')], { baseDelayMs: 3_600_000, maxAgentDelayMs: 3_600_000 });
@@ -78,11 +78,12 @@ test('a session in retry backoff reports busy, so the idle sweep leaves it alone
   await running;
   while (session.harness.wake().at === undefined) await new Promise((r) => setImmediate(r));
   assert.equal(session.harness.wake().active, false);
-  assert.equal(session.busy(), true);
+  const standing = await session.standing();
+  assert.deepEqual([standing.busy, standing.wakeAt], [false, session.harness.wake().at]);
   const server = createSessionServer(session).listen(0);
   await new Promise((r) => server.once('listening', r));
   const ping = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/ping`).then((r) => r.json());
-  assert.deepEqual(ping, { status: 'HealthyBusy' });
+  assert.deepEqual(ping, { status: 'Healthy', waitingOnHuman: false, wake: { at: standing.wakeAt } });
   await new Promise((r) => server.close(r));
   await session.close();
 });

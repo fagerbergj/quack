@@ -90,30 +90,97 @@ function errorStatus(err: unknown): number {
   return err instanceof Error && err.message === 'body too large' ? 400 : 502;
 }
 
-export function createDistributor(driver: HostDriver, opts: { idleMs?: number; webDir?: string; index?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean> } = {}) {
+type SetTimer = (fn: () => void, ms: number) => () => void;
+const realTimer: SetTimer = (fn, ms) => {
+  const t = setTimeout(fn, ms);
+  t.unref();
+  return () => clearTimeout(t);
+};
+const MAX_TIMER_MS = 2 ** 31 - 1;
+
+type Ping = { status: string; wake?: { at?: number } };
+
+// `now` and `setTimer` are injectable so tests run the idle sweep and wake timers on a fake clock.
+export function createDistributor(driver: HostDriver, opts: { idleMs?: number; webDir?: string; index?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>; now?: () => number; setTimer?: SetTimer } = {}) {
+  const now = opts.now ?? Date.now;
+  const setTimer = opts.setTimer ?? realTimer;
   const lastUse = new Map<string, number>();
   const stopping = new Map<string, Promise<void>>();
-  const viewers = new Map<string, number>();
+  const holds = new Map<string, number>();
+  const wakeTimers = new Map<string, () => void>();
+  let draining = false;
   const idleMs = opts.idleMs ?? 10 * 60_000;
-  const idle = (key: string) => !viewers.get(key) && Date.now() - (lastUse.get(key) ?? 0) >= idleMs;
+  const idle = (key: string) => !holds.get(key) && now() - (lastUse.get(key) ?? 0) >= idleMs;
+  const hold = (key: string, by: number) => holds.set(key, (holds.get(key) ?? 0) + by);
 
-  const sweep = setInterval(async () => {
+  // Sweeps and wake-ups run one at a time; a caller awaiting `maintain` also waits out those queued before it.
+  let queue: Promise<void> = Promise.resolve();
+  const maintain = (fn: () => Promise<void> = async () => {}) => (queue = queue.then(fn, fn));
+
+  // A stopped session that sleeps is restarted at its wake time (NFR-PORT-3); a long wait re-arms in slices since timers cap near 24 days.
+  function arm(key: string, at: number | undefined) {
+    wakeTimers.get(key)?.();
+    wakeTimers.delete(key);
+    if (at === undefined || draining) return;
+    wakeTimers.set(key, setTimer(() => {
+      wakeTimers.delete(key);
+      if (now() < at) return arm(key, at);
+      void maintain(() => wake(key));
+    }, Math.min(Math.max(0, at - now()), MAX_TIMER_MS)));
+  }
+
+  async function wake(key: string) {
+    try {
+      await stopping.get(key);
+      await driver.ensure(key);
+      // A grace period, so the next sweep does not stop the session before it has run.
+      lastUse.set(key, now());
+      await driver.setWake(key, undefined);
+    } catch {
+      // the next request starts the session
+    }
+  }
+
+  async function ping(key: string): Promise<Ping> {
+    return (await (await fetch(`${await driver.ensure(key)}/ping`)).json()) as Ping;
+  }
+
+  // Records the session's earliest sleep before stopping, so a restarted distributor still wakes it.
+  async function stopSession(key: string, at: number | undefined) {
+    const stop = driver.stop(key).finally(() => stopping.delete(key));
+    stopping.set(key, stop);
+    await driver.setWake(key, at);
+    arm(key, at);
+    await stop;
+  }
+
+  async function sweepOnce() {
     for (const key of driver.running()) {
       if (!idle(key)) continue;
       try {
-        const url = await driver.ensure(key);
-        const { status } = (await (await fetch(`${url}/ping`)).json()) as { status: string };
+        const { status, wake } = await ping(key);
         // Re-checked after the ping, and requests wait out a stop in flight, so none reaches a dying process.
         if (status !== 'Healthy' || !idle(key)) continue;
-        const stop = driver.stop(key).finally(() => stopping.delete(key));
-        stopping.set(key, stop);
-        await stop;
+        await stopSession(key, wake?.at);
       } catch {
         // a session that cannot answer /ping is left for the next sweep
       }
     }
-  }, Math.max(50, Math.min(idleMs, 30_000)));
-  sweep.unref();
+  }
+
+  let sweepStop = () => {};
+  function scheduleSweep() {
+    sweepStop = setTimer(() => { void maintain(sweepOnce).then(scheduleSweep); }, Math.max(50, Math.min(idleMs, 30_000)));
+  }
+  scheduleSweep();
+  void maintain(() => driver.wakes().then((all) => all.forEach(({ key, at }) => arm(key, at)), () => {}));
+
+  // Stops every running session, keeping each one's wake time for the next distributor; active work wakes at once, so a deploy does not strand it.
+  async function drain() {
+    draining = true;
+    const wakeFor = (p: Ping) => (p.status === 'HealthyBusy' ? now() : p.wake?.at);
+    await Promise.all(driver.running().map(async (key) => stopSession(key, await ping(key).then(wakeFor, () => undefined))));
+  }
 
   const server = createServer(async (req, res) => {
     try {
@@ -125,14 +192,21 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
       const target = sessionPath(req.url);
       if (!target) return send(res, 400, { error: 'invalid session key' });
       const { key, path, search, agent } = target;
-      lastUse.set(key, Date.now());
-      await stopping.get(key);
-      const url = await driver.ensure(key, agent);
-      const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : new Uint8Array(await readBody(req));
-      const upstream = await fetch(url + path + search, { method: req.method, body, headers: { 'content-type': 'application/json' } });
-      lastUse.set(key, Date.now());
-      res.writeHead(upstream.status, { 'content-type': upstream.headers.get('content-type') ?? 'application/json' });
-      res.end(Buffer.from(await upstream.arrayBuffer()));
+      lastUse.set(key, now());
+      // A request in flight keeps its session from idling out, however long it waits on the run.
+      hold(key, 1);
+      try {
+        await stopping.get(key);
+        const url = await driver.ensure(key, agent);
+        arm(key, undefined);
+        const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : new Uint8Array(await readBody(req));
+        const upstream = await fetch(url + path + search, { method: req.method, body, headers: { 'content-type': 'application/json' } });
+        res.writeHead(upstream.status, { 'content-type': upstream.headers.get('content-type') ?? 'application/json' });
+        res.end(Buffer.from(await upstream.arrayBuffer()));
+      } finally {
+        hold(key, -1);
+        lastUse.set(key, now());
+      }
     } catch (err) {
       send(res, errorStatus(err), { error: err instanceof Error ? err.message : String(err) });
     }
@@ -140,15 +214,17 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
   server.on('upgrade', async (req, socket, head) => {
     const target = sessionPath(req.url);
     if (!target || target.path !== '/ws') return socket.destroy();
-    viewers.set(target.key, (viewers.get(target.key) ?? 0) + 1);
-    socket.once('close', () => { viewers.set(target.key, (viewers.get(target.key) ?? 1) - 1); lastUse.set(target.key, Date.now()); });
+    hold(target.key, 1);
+    socket.once('close', () => { hold(target.key, -1); lastUse.set(target.key, now()); });
     try {
       await stopping.get(target.key);
-      await proxyUpgrade(await driver.ensure(target.key, target.agent), req, '/ws', socket, head);
+      const url = await driver.ensure(target.key, target.agent);
+      arm(target.key, undefined);
+      await proxyUpgrade(url, req, '/ws', socket, head);
     } catch {
       socket.destroy();
     }
   });
-  server.on('close', () => clearInterval(sweep));
-  return server;
+  server.on('close', () => { sweepStop(); wakeTimers.forEach((cancel) => cancel()); });
+  return Object.assign(server, { drain, sweep: () => maintain(sweepOnce) });
 }

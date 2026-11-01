@@ -35,7 +35,7 @@ test('answers over the container contract and survives a restart', async () => {
   const http = await serve(first);
 
   const ping = await fetch(`${http.base}/ping`).then((r) => r.json());
-  assert.deepEqual(ping, { status: 'Healthy' });
+  assert.deepEqual(ping, { status: 'Healthy', waitingOnHuman: false, wake: {} });
 
   const answered = await http.post({ input: 'Capital of France?', requestId: 'q-1', wait: true });
   assert.equal(answered.status, 200);

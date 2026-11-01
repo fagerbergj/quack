@@ -5,6 +5,7 @@ import { AssistantEntry, createRegistry, defineExtension, Harness, section, type
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { mkdir } from 'node:fs/promises';
+import { pendingApprovals } from '@quack/sdk';
 
 const ctx = BACKGROUND_CONTEXT;
 
@@ -87,14 +88,22 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
     return message ? contentText(message.content) : '';
   }
 
+  // True when every task that can run is a gated tool waiting for a verdict; a verdict wakes the process through the normal request path.
+  async function onlyAwaitingHumans(): Promise<boolean> {
+    const live = (await harness.inspect(ctx)).tasks.filter((t) => t.state.kind === 'running' || t.state.kind === 'ready');
+    const pending = new Set((await pendingApprovals(root, ctx)).map((a) => a.id));
+    return live.length > 0 && live.every((t) => pending.has(String(t.record.id)));
+  }
+
   return {
     harness,
     workspace,
     root,
-    // A retry backoff is a sleeping task: not active, but `at` is set; /ping must report it busy or the idle sweep stops the session mid-retry.
-    busy: () => {
-      const wake = harness.wake();
-      return wake.active || wake.at !== undefined;
+    // For the idle sweep: `busy` is work that must keep the process, `wakeAt` the earliest sleep to be woken for.
+    async standing() {
+      const { active, at: wakeAt } = harness.wake();
+      const waitingOnHuman = active && (await onlyAwaitingHumans());
+      return { busy: active && !waitingOnHuman, waitingOnHuman, wakeAt };
     },
     async submit(input: string, requestId?: string, wait = false, whenBusy?: 'steer' | 'followUp'): Promise<SubmitResult> {
       if (dispatch) return dispatch({ harness, root }, input, requestId, wait);

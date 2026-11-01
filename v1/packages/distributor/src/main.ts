@@ -28,6 +28,6 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   // compose's 30 s stop grace, so a stuck child or an attached viewer cannot hold the exit.
   process.on(signal, () => {
     setTimeout(() => process.exit(1), DRAIN_MS).unref();
-    void Promise.all(driver.running().map((k) => driver.stop(k))).then(() => server.close(() => process.exit(0)));
+    void server.drain().then(() => server.close(() => process.exit(0)));
   });
 }

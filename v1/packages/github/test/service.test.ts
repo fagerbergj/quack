@@ -136,7 +136,18 @@ test('only a promoted agent can back the unattended trigger', async () => {
   await assertPromoted(distributor, 'reviewer');
   await assert.rejects(assertPromoted(distributor, 'researcher'), /researcher is draft/);
   await assert.rejects(assertPromoted(distributor, 'ghost'), /not registered/);
-  await assert.rejects(assertPromoted('http://127.0.0.1:1', 'reviewer'), /cannot verify agent promotion/);
+});
+
+test('an unreachable distributor is retried with capped backoff, then the promotion check applies', async () => {
+  const delays: number[] = [];
+  const stop = new Error('stop retrying');
+  const sleep = async (ms: number) => { delays.push(ms); if (delays.length === 7) throw stop; };
+  await assert.rejects(assertPromoted('http://127.0.0.1:1', 'reviewer', sleep), stop);
+  assert.deepEqual(delays, [1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000]);
+
+  let up = false;
+  const url = await listen(createServer((_req, res) => { if (up) res.end(JSON.stringify({ agents: [{ name: 'reviewer', status: 'draft' }] })); else res.writeHead(503).end(); }));
+  await assert.rejects(assertPromoted(url, 'reviewer', async () => { up = true; }), /reviewer is draft/);
 });
 
 test('a redelivered event carries the original delivery id, so it is one submission', async () => {
