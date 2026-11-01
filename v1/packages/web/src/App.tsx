@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState, type SubmitEvent } from 'react';
 import { listAgents, listSessions, type AgentSummary, type SessionSummary } from './api.ts';
 import { SessionView } from './SessionView.tsx';
 
@@ -30,7 +30,7 @@ function useHash() {
 function NewSession({ agents }: { agents: AgentSummary[] }) {
   const [agent, setAgent] = useState('');
   const chosen = agent || agents[0]?.name || '';
-  const start = (e: FormEvent) => {
+  const start = (e: SubmitEvent) => {
     e.preventDefault();
     location.hash = `#/s/${encodeURIComponent(`ui:${crypto.randomUUID()}`)}?agent=${encodeURIComponent(chosen)}`;
   };
@@ -69,7 +69,7 @@ function Home() {
         {sessions?.map((s) => (
           <li key={s.key}>
             <a href={`#/s/${encodeURIComponent(s.key)}`}>{s.key}</a> {s.agent} {s.running ? 'running' : 'idle'}{' '}
-            <time dateTime={new Date(s.lastActivity).toISOString()}>{new Date(s.lastActivity).toLocaleString()}</time>
+            <time dateTime={s.lastActivity}>{new Date(s.lastActivity).toLocaleString()}</time>
           </li>
         ))}
       </ul>

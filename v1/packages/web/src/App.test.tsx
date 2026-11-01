@@ -59,7 +59,7 @@ async function openSession() {
 }
 
 test('lists sessions with their agent and state', async () => {
-  routes['GET /sessions'] = { sessions: [{ key: 'gh:1', agent: 'reviewer', running: true, lastActivity: 1000 }] };
+  routes['GET /sessions'] = { sessions: [{ key: 'gh:1', agent: 'reviewer', running: true, lastActivity: '2026-11-01T01:00:00.000Z' }] };
   routes['GET /agents'] = { agents: [] };
   render(<App />);
   const link = await screen.findByRole('link', { name: 'gh:1' });
@@ -69,7 +69,7 @@ test('lists sessions with their agent and state', async () => {
 
 test('starting a session opens a ui: key with the chosen agent', async () => {
   routes['GET /sessions'] = { sessions: [] };
-  routes['GET /agents'] = { agents: [{ name: 'coder', version: '1' }, { name: 'reviewer', version: '2' }] };
+  routes['GET /agents'] = { agents: [{ name: 'coder', version: 1 }, { name: 'reviewer', version: 2 }] };
   render(<App />);
   await userEvent.selectOptions(await screen.findByRole('combobox', { name: 'Agent' }), 'reviewer 2');
   await userEvent.click(screen.getByRole('button', { name: 'New session' }));

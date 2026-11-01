@@ -9,6 +9,7 @@
     "@earendil-works/pi-tui": "1.4.0",
     "@quack/github": "*",
     "@quack/judge": "*",
+    "@quack/research": "*",
     "@quack/sdk": "*",
     "@quack/session": "*",
     "pi-lsp": "0.1.7"

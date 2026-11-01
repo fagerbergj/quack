@@ -1,6 +1,6 @@
 // Every call to the distributor, so its contract lives in one place.
-export type SessionSummary = { key: string; agent: string; running: boolean; lastActivity: number };
-export type AgentSummary = { name: string; version: string };
+export type SessionSummary = { key: string; agent: string; running: boolean; lastActivity: string };
+export type AgentSummary = { name: string; version: number };
 export type Approval = { id: string; tool: string; args: unknown; requestedAt: number };
 
 async function json<T>(res: Response): Promise<T> {

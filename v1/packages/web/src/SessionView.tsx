@@ -1,5 +1,5 @@
 import type { AgentEvent, SnapshotEvent } from '@earendil-works/pi-durable';
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type SubmitEvent } from 'react';
 import { socketUrl } from './api.ts';
 import { Approvals } from './Approvals.tsx';
 import { Transcript } from './Transcript.tsx';
@@ -43,7 +43,7 @@ function useSocket(key: string, agent: string | undefined) {
 function Composer({ busy, disabled, send }: { busy: boolean; disabled: boolean; send: (i: string, w?: 'steer' | 'followUp') => boolean }) {
   const [input, setInput] = useState('');
   const [mode, setMode] = useState<'steer' | 'followUp'>('steer');
-  const submit = (e: FormEvent) => {
+  const submit = (e: SubmitEvent) => {
     e.preventDefault();
     if (!input.trim()) return;
     if (send(input, busy ? mode : undefined)) setInput('');

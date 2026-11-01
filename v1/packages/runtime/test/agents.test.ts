@@ -19,3 +19,10 @@ test('the shipped reviewer definition loads with its prompt, the GitHub tools an
   const tools = agent.extensions!.flatMap((e) => (e.tools ?? []).map((t) => t.name));
   for (const name of ['checkout_pr', 'post_review', 'submit_review', 'bash', 'write', 'lsp_references', 'lsp_symbols']) assert.ok(tools.includes(name), `${name} in ${tools.join(', ')}`);
 });
+
+test('the shipped researcher definition loads with the research tools and the report judge', async () => {
+  const agent = await loadAgent(fileURLToPath(new URL('../../../agents/researcher/agent.json', import.meta.url)), deployment, catalog);
+  assert.match(agent.instructions!, /^You answer one question with a sourced report/);
+  const tools = agent.extensions!.flatMap((e) => (e.tools ?? []).map((t) => t.name));
+  for (const name of ['web_search', 'web_fetch', 'submit_report', 'write']) assert.ok(tools.includes(name), `${name} in ${tools.join(', ')}`);
+});
