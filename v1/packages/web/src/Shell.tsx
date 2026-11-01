@@ -93,7 +93,8 @@ const linkBase = 'navlink flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 tex
 const tabBase = 'tablink flex min-h-11 flex-col items-center justify-center gap-0.5 py-2 text-[11px] font-medium text-muted no-underline';
 
 // `bare` drops the phone title bar for a screen that draws its own.
-export function Shell({ route, bare, children }: { route: Route; bare?: boolean; children: ReactNode }) {
+// `sidebar` is the session list; it fills the desktop sidebar under a fixed nav and scrolls on its own.
+export function Shell({ route, bare, sidebar, children }: { route: Route; bare?: boolean; sidebar?: ReactNode; children: ReactNode }) {
   const [more, setMore] = useState(false);
   const cur = (r: Route) => (r === route ? ('page' as const) : undefined);
   const link = (n: Item, cls: string) => (
@@ -109,21 +110,24 @@ export function Shell({ route, bare, children }: { route: Route; bare?: boolean;
   }, []);
   return (
     <>
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-56 flex-col border-r border-line bg-canvas/90 backdrop-blur-md lg:flex">
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-72 flex-col border-r border-line bg-canvas/90 backdrop-blur-md lg:flex">
         <a href="#/" className="logo-link wordmark relative flex items-center gap-2.5 px-5 pt-5 pb-3 text-[19px] text-ink no-underline">
           <span aria-hidden="true" className="quack-bubble absolute top-[-2px] left-[54px] rounded-full rounded-bl-none bg-warm px-2 text-[13px] text-warning">quack!</span>
           <Duck size={30} className="bob" />
           quack
         </a>
-        <nav aria-label="Main" className="flex flex-1 flex-col gap-5 overflow-y-auto px-3 pt-2 pb-4 text-[13.5px]">
-          <div className="flex flex-col gap-0.5">{MAIN.map((n) => link(n, linkBase))}</div>
-          {GROUPS.map((g) => (
-            <div key={g.title} className="flex flex-col gap-0.5">
-              <p className="m-0 px-2.5 pb-1 text-[11px] font-semibold tracking-[0.06em] text-muted uppercase">{g.title}</p>
-              {g.items.map((n) => link(n, linkBase))}
-            </div>
-          ))}
+        <a href="#/new" className="mx-3 mb-2 inline-flex h-9 items-center justify-center rounded-full bg-ink px-3 text-[13px] font-semibold text-on-ink no-underline hover:bg-ink-2">New session</a>
+        <nav aria-label="Main" className="flex flex-none flex-col gap-0.5 px-3 pb-2 text-[13.5px]">
+          {MAIN.map((n) => link(n, linkBase))}
+          <details className="group">
+            <summary className="flex cursor-pointer list-none items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-ink-2 hover:bg-soft hover:text-ink [&::-webkit-details-marker]:hidden">
+              <Icon route="grid" />
+              More
+            </summary>
+            <div className="flex flex-col gap-0.5 pl-3">{MORE.map((n) => link(n, linkBase))}</div>
+          </details>
         </nav>
+        <div className="flex min-h-0 flex-1 flex-col border-t border-line">{sidebar}</div>
         <div className="flex items-center gap-2.5 border-t border-line px-5 py-3 text-[13px]">
           <ThemeToggle className="ml-auto px-2 text-xs" />
         </div>
@@ -132,7 +136,7 @@ export function Shell({ route, bare, children }: { route: Route; bare?: boolean;
         <Duck size={24} />
         <span className="text-[15px] font-semibold tracking-[-0.015em]">{TITLES[route]}</span>
       </header>
-      <main className="min-h-screen pb-24 lg:pb-10 lg:pl-56">{children}</main>
+      <main className="min-h-screen pb-24 lg:pb-10 lg:pl-72">{children}</main>
       <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-line bg-canvas/90 pb-[env(safe-area-inset-bottom,0px)] backdrop-blur-md lg:hidden">
         {MAIN.map((n) => link(n, tabBase))}
         <button type="button" aria-expanded={more} aria-controls="more-sheet" aria-current={MORE.some((n) => n.route === route) ? 'page' : undefined} onClick={() => setMore(!more)} className={`${tabBase} cursor-pointer border-0 bg-transparent`}>

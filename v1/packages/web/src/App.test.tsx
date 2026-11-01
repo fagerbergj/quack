@@ -33,6 +33,10 @@ const entry = (id: string, model: object[]) => ({ id, conversationId: 'c', kind:
 const snapshot = (over: object = {}) => ({ type: 'snapshot', entries: [], tools: [], nestedTools: [], compactions: [], inbox: [], agent: {}, usage, ...over });
 const assistant = (content: object[]) => ({ role: 'assistant', content, api: 'a', provider: 'p', model: 'm', usage, stopReason: 'stop', timestamp: 1 });
 
+// Desktop puts the session list in the sidebar beside the main column; a phone shows one at a time.
+const stubViewport = (desktop: boolean) =>
+  vi.stubGlobal('matchMedia', () => ({ matches: desktop, addEventListener() {}, removeEventListener() {} }));
+
 let routes: Record<string, unknown>;
 const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
   const hit = routes[`${init?.method ?? 'GET'} /${url}`];
@@ -46,6 +50,7 @@ beforeEach(() => {
   vi.stubGlobal('WebSocket', FakeSocket);
   vi.stubGlobal('fetch', fetchMock);
   vi.stubGlobal('crypto', { randomUUID: () => 'uuid-1' });
+  stubViewport(true);
   location.hash = '';
 });
 afterEach(() => vi.unstubAllGlobals());
@@ -173,7 +178,7 @@ test('a call whose arguments were not valid JSON shows the parse error', async (
 test('an idle send has no whenBusy; a busy send carries the chosen mode', async () => {
   const ws = await openSession();
   ws.frame(snapshot());
-  expect(screen.queryByRole('group')).toBeNull();
+  expect(screen.queryByRole('group', { name: 'While the agent is working' })).toBeNull();
   await userEvent.type(screen.getByRole('textbox', { name: 'Message' }), 'first');
   await userEvent.click(screen.getByRole('button', { name: 'Send' }));
   expect(ws.sent[0]).toEqual({ type: 'input', input: 'first' });
@@ -223,6 +228,7 @@ test('an approval that appears mid-run shows up when tool activity arrives', asy
 test('a malformed escape in the hash shows the sessions list instead of crashing', async () => {
   routes['GET /sessions'] = { sessions: [] };
   routes['GET /agents'] = { agents: [] };
+  stubViewport(false);
   location.hash = '#/s/%zz';
   render(<App />);
   expect(await screen.findByRole('heading', { name: 'Sessions' })).toBeInTheDocument();
@@ -321,10 +327,11 @@ test('lists artifacts with their check status and failing criteria', async () =>
   const items = within(section).getAllByRole('listitem');
   expect(items[0]).toHaveTextContent('github.review v1 sealed · checks failed');
   expect(items[0]).toHaveTextContent('Failing: cites.lines');
-  expect(items[0]).toHaveTextContent('draft one');
   expect(items[1]).toHaveTextContent('github.review v2 sealed · checked');
   expect(items[1]).not.toHaveTextContent('Failing');
-  expect(items[1]).toHaveTextContent('final review');
+  expect(screen.queryByRole('dialog')).toBeNull();
+  await userEvent.click(within(items[1]).getByRole('button', { name: 'Open github.review v2' }));
+  expect(within(screen.getByRole('dialog', { name: 'Work' })).getByText('final review')).toBeInTheDocument();
 });
 test('api and ws urls resolve under a /v1/ page path', async () => {
   const { socketUrl, listArtifacts, abortRun } = await import('./api.ts');
@@ -398,21 +405,30 @@ test('assistant text renders as markdown with a table, highlighted code and cita
   expect(within(reply).getAllByText('4 s')).toHaveLength(1);
 });
 
-test('the Work pane shows the newest sealed version as a report and its checks as a tab', async () => {
+test('the Work drawer opens from the status line, shows report then checks, traps focus and closes on Esc', async () => {
   routes['GET /sessions/ui%3Au1/artifacts'] = {
     artifacts: [
-      { kind: 'research.report', version: 1, hash: 'h1', content: '# Old', sealedAt: 1, verdict: null },
       { kind: 'research.report', version: 2, hash: 'h2', content: '## Short answer\n\nGain is 1.9x [S9].', sealedAt: 2, verdict: { passed: false, gatesFailed: [], score: 0.5, checks: [{ criterion: 'citations', id: 'support', met: 0, notes: ['S7 does not mention TP'] }, { criterion: 'dated', id: 'claims', met: 1, notes: [] }] } },
     ],
   };
   const ws = await openSession();
   ws.frame(snapshot());
-  const work = await screen.findByRole('region', { name: 'Work' });
+  expect(screen.queryByRole('dialog')).toBeNull();
+  const open = await screen.findByRole('button', { name: 'Open research.report v2' });
+  await userEvent.click(open);
+  const work = screen.getByRole('dialog', { name: 'Work' });
   expect(within(work).getByRole('heading', { name: 'Short answer' })).toBeInTheDocument();
   expect(work).toHaveTextContent('v2');
+  expect(within(work).getByRole('button', { name: 'Close' })).toHaveFocus();
   await userEvent.click(within(work).getByRole('tab', { name: 'Checks' }));
   expect(work).toHaveTextContent('citations.support');
   expect(work).toHaveTextContent('S7 does not mention TP');
   expect(within(work).getByText('Fail')).toBeInTheDocument();
   expect(within(work).getByText('Pass')).toBeInTheDocument();
+  await userEvent.tab({ shift: true });
+  await userEvent.tab({ shift: true });
+  expect(work).toContainElement(document.activeElement as HTMLElement);
+  await userEvent.keyboard('{Escape}');
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(open).toHaveFocus();
 });

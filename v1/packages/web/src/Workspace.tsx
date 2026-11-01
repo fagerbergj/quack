@@ -1,7 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { listAgents, listApprovals, listSessions, type AgentSummary } from './api.ts';
 import { Landing } from './Landing.tsx';
-import { SessionList } from './SessionList.tsx';
 import { group, titleOf, type Row } from './sessions.ts';
 import { SessionView } from './SessionView.tsx';
 
@@ -13,7 +12,7 @@ async function loadRows(): Promise<Row[]> {
   return Promise.all(sessions.map(async (s) => ({ ...s, approvals: s.running ? await listApprovals(s.key).catch(() => []) : [] })));
 }
 
-function useWorkspaceData(selected: string | undefined) {
+export function useWorkspaceData(selected: string | undefined) {
   const [rows, setRows] = useState<Row[]>();
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [error, setError] = useState('');
@@ -33,21 +32,20 @@ function useWorkspaceData(selected: string | undefined) {
   return { rows, agents, agentsError, error, now };
 }
 
-// Below lg the list and the main pane stack: the list alone at #/, the main pane alone once something is open.
-export function Workspace({ selected, isNew }: { selected?: { key: string; agent?: string }; isNew: boolean }) {
-  const { rows, agents, agentsError, error, now } = useWorkspaceData(selected?.key);
+export type WorkspaceData = ReturnType<typeof useWorkspaceData>;
+
+// From lg the session list is the shell's sidebar and this is the main column; below lg the list is its own screen.
+export function Workspace({ data, selected, isNew, list }: { data: WorkspaceData; selected?: { key: string; agent?: string }; isNew: boolean; list?: ReactNode }) {
   const open = Boolean(selected) || isNew;
-  const row = rows?.find((r) => r.key === selected?.key);
+  if (list && !open) return <>{list}</>;
+  const row = data.rows?.find((r) => r.key === selected?.key);
   return (
-    <div className="grid grid-cols-1 lg:h-[calc(100dvh-2.5rem)] lg:grid-cols-[330px_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)]">
-      <SessionList rows={rows} selected={selected?.key} error={error} now={now} open={open} />
-      <div className={`min-h-0 min-w-0 flex-col lg:flex ${open ? 'flex' : 'hidden'}`}>
-        {selected ? (
-          <SessionView key={selected.key} sessionKey={selected.key} agent={selected.agent} title={row ? titleOf(row) : selected.key} />
-        ) : (
-          <div className="overflow-y-auto"><Landing agents={agents} error={agentsError} groups={group(rows ?? [])} /></div>
-        )}
-      </div>
+    <div className="flex min-h-0 min-w-0 flex-col lg:h-[calc(100dvh-2.5rem)]">
+      {selected ? (
+        <SessionView key={selected.key} sessionKey={selected.key} agent={selected.agent} title={row ? titleOf(row) : selected.key} />
+      ) : (
+        <div className="overflow-y-auto"><Landing agents={data.agents} error={data.agentsError} groups={group(data.rows ?? [])} /></div>
+      )}
     </div>
   );
 }

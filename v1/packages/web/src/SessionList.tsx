@@ -83,21 +83,32 @@ function FilterSelects({ rows, filters, set }: { rows: Row[]; filters: Filters; 
   );
 }
 
-export function SessionList({ rows, selected, error, now, open: detail }: { rows: Row[] | undefined; selected?: string; error: string; now: number; open: boolean }) {
+function FilterButton({ open, toggle }: { open: boolean; toggle: () => void }) {
+  return (
+    <button type="button" aria-expanded={open} aria-controls="filters" onClick={toggle} className="ml-auto min-h-11 min-w-11 cursor-pointer rounded-lg px-2 py-1 text-xs font-medium text-muted hover:bg-soft hover:text-ink lg:min-h-0 lg:min-w-0">Filter</button>
+  );
+}
+
+export function SessionList({ rows, selected, error, now, compact }: { rows: Row[] | undefined; selected?: string; error: string; now: number; compact: boolean }) {
   const [filters, setFilters] = useState<Filters>({ text: '', agent: '', start: '' });
   const [open, setOpen] = useState(false);
   const shown = (rows ?? []).filter((r) => matches(r, filters));
   const g = group(shown);
   return (
-    <section aria-label="Sessions" className={`ws-list min-h-0 flex-col border-line lg:flex lg:border-r ${detail ? 'hidden' : 'flex'}`}>
-      <div className="flex flex-col gap-2.5 border-b border-line px-4 py-3">
-        <div className="flex items-center gap-2">
-          <h1 className="m-0 text-[17px] font-semibold">Sessions</h1>
-          <button type="button" aria-expanded={open} aria-controls="filters" onClick={() => setOpen(!open)} className="ml-auto min-h-11 min-w-11 cursor-pointer rounded-lg px-2 py-1 text-xs lg:min-h-0 lg:min-w-0 font-medium text-muted hover:bg-soft hover:text-ink">Filter</button>
-          <a href="#/new" className="inline-flex h-11 items-center lg:h-[30px] rounded-full bg-ink px-3 text-[12.5px] font-semibold text-on-ink no-underline hover:bg-ink-2">New session</a>
+    <section aria-label="Sessions" className="flex min-h-0 flex-1 flex-col">
+      <div className={`flex flex-col gap-2.5 px-4 ${compact ? 'pt-3 pb-2' : 'border-b border-line py-3'}`}>
+        {!compact && (
+          <div className="flex items-center gap-2">
+            <h1 className="m-0 text-[17px] font-semibold">Sessions</h1>
+            <FilterButton open={open} toggle={() => setOpen(!open)} />
+            <a href="#/new" className="inline-flex h-11 items-center rounded-full bg-ink px-3 text-[12.5px] font-semibold text-on-ink no-underline hover:bg-ink-2">New session</a>
+          </div>
+        )}
+        <div className="flex items-center gap-1">
+          <label htmlFor="s-search" className="sr-only">Search sessions</label>
+          <input id="s-search" type="search" value={filters.text} onChange={(e) => setFilters({ ...filters, text: e.target.value })} placeholder="Search titles, repos, agents" className={`${field} h-[34px] w-full min-w-0 flex-1 px-3 text-[13px] transition focus:border-line-strong focus:bg-surface focus:shadow-ring`} />
+          {compact && <FilterButton open={open} toggle={() => setOpen(!open)} />}
         </div>
-        <label htmlFor="s-search" className="sr-only">Search sessions</label>
-        <input id="s-search" type="search" value={filters.text} onChange={(e) => setFilters({ ...filters, text: e.target.value })} placeholder="Search titles, repos, agents" className={`${field} h-[34px] w-full px-3 text-[13px] transition focus:border-line-strong focus:bg-surface focus:shadow-ring`} />
         <div id="filters" hidden={!open}>
           <FilterSelects rows={rows ?? []} filters={filters} set={setFilters} />
         </div>

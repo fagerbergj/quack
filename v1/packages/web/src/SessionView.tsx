@@ -1,6 +1,6 @@
 import type { AgentEvent, SnapshotEvent } from '@earendil-works/pi-durable';
 import { useEffect, useRef, useState, type CSSProperties, type SubmitEvent } from 'react';
-import { abortRun, socketUrl } from './api.ts';
+import { abortRun, socketUrl, type SealedArtifact } from './api.ts';
 import { Approvals } from './Approvals.tsx';
 import { Artifacts, useArtifacts } from './Artifacts.tsx';
 import { Work } from './Work.tsx';
@@ -113,6 +113,7 @@ export function SessionView({ sessionKey, agent, title }: { sessionKey: string; 
   const { view, state, error, setError, approvalTick, send } = useSocket(sessionKey, agent);
   const abort = () => abortRun(sessionKey).catch((e: Error) => setError(e.message));
   const { items, error: artifactsError } = useArtifacts(sessionKey, approvalTick);
+  const [work, setWork] = useState<SealedArtifact | null>(null);
   const status = state === 'open' ? (view.running ? 'Running' : 'Idle') : state === 'reconnecting' ? 'Reconnecting' : 'Connecting';
   // Below lg the pane is the visible viewport above the tab bar and draws the only top bar, so the composer stays above the keyboard.
   const vv = useVisualViewportHeight();
@@ -131,22 +132,20 @@ export function SessionView({ sessionKey, agent, title }: { sessionKey: string; 
           <button type="button" onClick={abort} className="min-h-11 cursor-pointer rounded-lg border border-line bg-surface px-3 py-1 text-xs font-medium text-danger lg:min-h-0 hover:bg-danger-bg">Abort</button>
         )}
       </div>
-      <div className={`grid min-h-0 flex-1 grid-cols-1 xl:grid-rows-[minmax(0,1fr)] ${items.length ? 'xl:grid-cols-[minmax(360px,1fr)_minmax(0,1.1fr)]' : ''}`}>
-        <section aria-label="Conversation" className="flex min-h-0 min-w-0 flex-col">
-          <div className="mx-auto flex min-h-0 w-full max-w-3xl min-w-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-5 sm:px-5 [overflow-wrap:anywhere] [&_pre]:max-w-full [&_pre]:overflow-x-auto" aria-live="polite">
-            {error && <p role="alert" className="m-0 rounded-xl border border-danger-line bg-danger-bg/60 px-3.5 py-2.5 text-[13px] text-danger">{error}</p>}
-            <Transcript view={view} />
-            <Approvals sessionKey={sessionKey} refresh={approvalTick} />
-            <Artifacts items={items} error={artifactsError} />
-          </div>
-          <div className="border-t border-line bg-canvas/90 p-3 backdrop-blur-md sm:p-4">
-            <div className="mx-auto max-w-3xl">
-              <Composer busy={view.running} disabled={state !== 'open'} send={send} />
-            </div>
-          </div>
-        </section>
-        {items.length > 0 && <Work items={items} />}
+      <div className="mx-auto flex min-h-0 w-full max-w-[760px] min-w-0 flex-1 flex-col overflow-y-auto px-4 py-5 sm:px-5" aria-live="polite">
+        <div className="flex min-w-0 flex-col gap-4 [overflow-wrap:anywhere] [&_pre]:max-w-full [&_pre]:overflow-x-auto">
+          {error && <p role="alert" className="m-0 rounded-xl border border-danger-line bg-danger-bg/60 px-3.5 py-2.5 text-[13px] text-danger">{error}</p>}
+          <Transcript view={view} />
+          <Approvals sessionKey={sessionKey} refresh={approvalTick} />
+          <Artifacts items={items} error={artifactsError} onOpen={setWork} />
+        </div>
       </div>
+      <div className="border-t border-line bg-canvas/90 p-3 backdrop-blur-md sm:p-4">
+        <div className="mx-auto max-w-[760px]">
+          <Composer busy={view.running} disabled={state !== 'open'} send={send} />
+        </div>
+      </div>
+      {work && <Work artifact={work} onClose={() => setWork(null)} />}
     </div>
   );
 }

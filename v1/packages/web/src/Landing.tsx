@@ -80,7 +80,7 @@ function Waiting({ rows }: { rows: Groups['needs'] }) {
 
 export function Landing({ agents, error, groups }: { agents: AgentSummary[]; error: string; groups: Groups }) {
   return (
-    <div className="mx-auto flex w-full max-w-[720px] flex-col gap-8 px-4 py-8 sm:px-8 lg:py-12">
+    <div className="mx-auto flex w-full max-w-[760px] flex-col gap-8 px-4 py-8 sm:px-8 lg:py-12">
       <a href="#/" className="text-[13px] text-muted no-underline hover:text-ink lg:hidden">← Sessions</a>
       <Pond>
         <h2 className="m-0 text-[34px] leading-[1.1]">What should quack work on?</h2>
