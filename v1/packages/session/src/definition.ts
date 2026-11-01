@@ -6,7 +6,8 @@ import { typesafeSystemOneApi } from '@earendil-works/pi-ai/api/typesafe-system-
 import type { Extension } from '@earendil-works/pi-durable';
 import type { AgentSpec } from './runtime.ts';
 
-type ModelLimits = { contextWindow: number; maxTokens?: number; reasoning?: boolean };
+/** `images` declares image input; without it pi-ai replaces image blocks with a text placeholder before the request. */
+type ModelLimits = { contextWindow: number; maxTokens?: number; reasoning?: boolean; images?: boolean };
 /** `systemone` providers are decision models such as Clef: classifiers with an input cap and no generation (D54). */
 type ProviderConfig = { baseUrl: string; api?: 'openai-completions' | 'systemone'; apiKeyEnv?: string; models: Record<string, ModelLimits> };
 
@@ -61,6 +62,15 @@ function modelProblems(model: unknown, deployment: DeploymentConfig): string[] {
   return deployment.providers[provider]?.models[id] ? [] : [`model ${model} is not configured in this deployment`];
 }
 
+function visionProblems(extensions: Record<string, unknown>, deployment: DeploymentConfig): string[] {
+  const workflows = extensions.workflows;
+  const ref = isObject(workflows) && isObject(workflows.visionModel) ? workflows.visionModel : undefined;
+  if (!ref) return [];
+  const { provider, modelId } = ref as { provider?: string; modelId?: string };
+  const limits = typeof provider === 'string' && typeof modelId === 'string' ? deployment.providers[provider]?.models[modelId] : undefined;
+  return limits?.images ? [] : [`workflows.visionModel ${String(provider)}/${String(modelId)} must be configured in this deployment with images: true`];
+}
+
 /** Validates an agent definition against the deployment and the catalog, reporting every problem at once. */
 export function parseDefinition(raw: unknown, deployment: DeploymentConfig, catalog: Catalog): AgentDefinition {
   if (!isObject(raw)) throw new Error('invalid agent definition:\n- definition must be an object');
@@ -72,7 +82,10 @@ export function parseDefinition(raw: unknown, deployment: DeploymentConfig, cata
   if ('maxTurns' in raw) console.error(`agent ${String(raw.name)}: maxTurns was removed (D58) and is ignored`);
   if (raw.prompt !== undefined && (typeof raw.prompt !== 'string' || !raw.prompt)) problems.push('prompt must be a file name');
   if (!isObject(raw.extensions)) problems.push('extensions must be an object of name to config');
-  else for (const name of Object.keys(raw.extensions)) if (!catalog[name]) problems.push(`unknown extension ${name}; available: ${Object.keys(catalog).sort().join(', ')}`);
+  else {
+    for (const name of Object.keys(raw.extensions)) if (!catalog[name]) problems.push(`unknown extension ${name}; available: ${Object.keys(catalog).sort().join(', ')}`);
+    problems.push(...visionProblems(raw.extensions, deployment));
+  }
   if (problems.length) throw new Error(`invalid agent definition:\n- ${problems.join('\n- ')}`);
   return raw as AgentDefinition;
 }
@@ -88,7 +101,7 @@ export function buildModels(deployment: DeploymentConfig): MutableModels {
       continue;
     }
     const list = Object.entries(p.models).map(([m, l]) => ({
-      id: m, name: m, api: 'openai-completions', provider: id, baseUrl: p.baseUrl, reasoning: l.reasoning ?? false, input: ['text'], cost, contextWindow: l.contextWindow, maxTokens: l.maxTokens,
+      id: m, name: m, api: 'openai-completions', provider: id, baseUrl: p.baseUrl, reasoning: l.reasoning ?? false, input: l.images ? ['text', 'image'] : ['text'], cost, contextWindow: l.contextWindow, maxTokens: l.maxTokens,
     }));
     models.setProvider(createProvider({ id, baseUrl: p.baseUrl, auth, models: list as never, api: openAICompletionsApi() }));
   }

@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { mock, test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
@@ -82,4 +84,46 @@ test('a definition loads its prompt file, and a reopened session takes the new p
 
 test('rejects an unknown deployment time zone', () => {
   assert.throws(() => parseDeployment({ providers: {}, timeZone: 'Mars/Olympus' }), /timeZone must be an IANA zone/);
+});
+
+const visionDeployment = (images?: boolean) =>
+  parseDeployment({ providers: { local: { baseUrl: 'http://127.0.0.1:1/v1', models: { omni: { contextWindow: 8192, maxTokens: 512, ...(images && { images }) } } } } });
+const visionAgent = (modelId: string) => ({ name: 'v', version: 1, model: 'local/omni', extensions: { workflows: { visionModel: { provider: 'local', modelId } } } });
+const workflowsCatalog: Catalog = { workflows: () => [] };
+
+test('refuses a vision model that is not declared with images: true', () => {
+  assert.doesNotThrow(() => parseDefinition(visionAgent('omni'), visionDeployment(true), workflowsCatalog));
+  assert.throws(() => parseDefinition(visionAgent('omni'), visionDeployment(), workflowsCatalog), /visionModel local\/omni must be configured .* images: true/);
+  assert.throws(() => parseDefinition(visionAgent('missing'), visionDeployment(true), workflowsCatalog), /visionModel local\/missing/);
+});
+
+// Real pi-ai conversion: capture the chat-completions request body a model actually sends.
+async function sentBody(images: boolean): Promise<string> {
+  const bodies: string[] = [];
+  const server = createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => (body += c));
+    req.on('end', () => {
+      bodies.push(body);
+      res.writeHead(200, { 'content-type': 'text/event-stream' }).end('data: [DONE]\n\n');
+    });
+  });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
+    process.env.QUACK_VISION_TEST_KEY = 'k';
+    const models = buildModels(parseDeployment({ providers: { local: { baseUrl, apiKeyEnv: 'QUACK_VISION_TEST_KEY', models: { omni: { contextWindow: 8192, maxTokens: 512, images } } } } }));
+    const content = [{ type: 'text' as const, text: 'Page 1.' }, { type: 'image' as const, data: 'AAAA', mimeType: 'image/jpeg' }];
+    await models.completeSimple(models.getModel('local', 'omni')!, { messages: [{ role: 'user', content, timestamp: 0 }] });
+  } finally {
+    server.close();
+  }
+  return bodies.join('');
+}
+
+test('an images: true model sends the image block; a text-only model sends a placeholder', async () => {
+  assert.match(await sentBody(true), /data:image\/jpeg;base64,AAAA/);
+  const textOnly = await sentBody(false);
+  assert.doesNotMatch(textOnly, /base64,AAAA/);
+  assert.match(textOnly, /image/i);
 });
