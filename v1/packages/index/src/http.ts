@@ -39,31 +39,34 @@ function authorized(req: IncomingMessage, token: string): boolean {
   return given.length === want.length && timingSafeEqual(given, want);
 }
 
-/**
- * The index's routes for the distributor: sessions publish with the service token, readers get the rest (the proxy
- * authenticates them for now). Resolves false for any other path. Postgres being down answers 503 and the session retries.
- */
+async function publish(req: IncomingMessage, res: ServerResponse, store: IndexStore, token: string) {
+  if (!authorized(req, token)) return send(res, 401, { error: 'unauthorized' });
+  const parsed = parseFacts(await readJson(req));
+  if (typeof parsed === 'string') return send(res, 400, { error: parsed });
+  await store.upsert(parsed.session, parsed.facts);
+  send(res, 200, { accepted: parsed.facts.length });
+}
+
+const READS: Record<string, (store: IndexStore, q: URLSearchParams) => Promise<unknown>> = {
+  '/index/sessions': async (s) => ({ sessions: await s.sessions() }),
+  '/index/artifacts': async (s) => ({ artifacts: await s.artifacts() }),
+  '/index/approvals': async (s, q) => ({ approvals: await s.approvals(q.get('state') ?? undefined) }),
+};
+
+// Sessions publish with the service token; reads rely on the proxy for auth. Postgres down answers 503 and the session retries.
 export function indexRoutes(store: IndexStore, token: string) {
   return async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
     const url = new URL(req.url ?? '', 'http://distributor');
-    if (!url.pathname.startsWith('/index/')) return false;
+    const read = req.method === 'GET' ? READS[url.pathname] : undefined;
+    const isPublish = req.method === 'POST' && url.pathname === '/index/facts';
+    if (!read && !isPublish) return false;
     try {
-      if (req.method === 'POST' && url.pathname === '/index/facts') {
-        if (!authorized(req, token)) return send(res, 401, { error: 'unauthorized' }), true;
-        const parsed = parseFacts(await readJson(req));
-        if (typeof parsed === 'string') return send(res, 400, { error: parsed }), true;
-        await store.upsert(parsed.session, parsed.facts);
-        return send(res, 200, { accepted: parsed.facts.length }), true;
-      }
-      if (req.method !== 'GET') return false;
-      if (url.pathname === '/index/sessions') return send(res, 200, { sessions: await store.sessions() }), true;
-      if (url.pathname === '/index/artifacts') return send(res, 200, { artifacts: await store.artifacts() }), true;
-      if (url.pathname === '/index/approvals') return send(res, 200, { approvals: await store.approvals(url.searchParams.get('state') ?? undefined) }), true;
-      return false;
+      if (read) send(res, 200, await read(store, url.searchParams));
+      else await publish(req, res, store, token);
     } catch (err) {
       const bad = err instanceof SyntaxError || (err instanceof Error && err.message === 'body too large');
       send(res, bad ? 400 : 503, { error: err instanceof Error ? err.message : String(err) });
-      return true;
     }
+    return true;
   };
 }
