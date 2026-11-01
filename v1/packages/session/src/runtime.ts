@@ -2,10 +2,10 @@ import { join } from 'node:path';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { contentText, type MutableModels } from '@earendil-works/pi-ai';
 import { AssistantEntry, createRegistry, defineExtension, Harness, section, type Conversation, type Extension, type ReportInfo, type SetTimer } from '@earendil-works/pi-durable';
-import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { pendingApprovals } from '@quack/sdk';
+import { PolicyExecutionEnv, sessionPolicy, type ExecPolicy } from './exec.ts';
 
 const ctx = BACKGROUND_CONTEXT;
 
@@ -13,6 +13,8 @@ export type AgentSpec = {
   model: { provider: string; modelId: string };
   extensions?: Extension[];
   instructions?: string;
+  /** From the agent's bundle: shortens the deployment's command timeout, never lengthens it. */
+  commandTimeoutSeconds?: number;
 };
 
 export type SubmitResult =
@@ -50,7 +52,7 @@ export function reportLine(error: unknown, info: ReportInfo): string | null {
 }
 
 // One process owns one session: its SQLite log is the only source of truth (A1, A6).
-export async function openSession(opts: { dir: string; models: MutableModels; agent: AgentSpec; timeZone?: string; now?: () => Date; setTimer?: SetTimer; retry?: Partial<typeof MODEL_RETRY>; log?: (line: string) => void }) {
+export async function openSession(opts: { dir: string; models: MutableModels; agent: AgentSpec; exec?: ExecPolicy; timeZone?: string; now?: () => Date; setTimer?: SetTimer; retry?: Partial<typeof MODEL_RETRY>; log?: (line: string) => void }) {
   const registry = createRegistry();
   registry.install(clockExtension(opts.timeZone ?? 'America/New_York', opts.now ?? (() => new Date())));
   for (const ext of opts.agent.extensions ?? []) registry.install(ext);
@@ -58,7 +60,7 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
   // The session's workspace lives beside its log on the same volume, so both move and expire together (RUN-2).
   const workspace = join(opts.dir, 'workspace');
   await mkdir(workspace, { recursive: true });
-  const env = ({ cwd }: { cwd?: string }) => new NodeExecutionEnv({ cwd: cwd ?? workspace });
+  const env = ({ cwd }: { cwd?: string }) => new PolicyExecutionEnv({ cwd: cwd ?? workspace, policy: sessionPolicy(opts.exec, opts.agent.commandTimeoutSeconds) });
   const log = opts.log ?? console.error;
   const onReport = (error: unknown, info: ReportInfo) => {
     const line = reportLine(error, info);

@@ -8,6 +8,7 @@ import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { Agent, fetch as ufetch, getGlobalDispatcher, setGlobalDispatcher } from 'undici';
 import { nextFrame, runEnded } from '../../session/test/ws-helpers.ts';
+import { shellEnv } from '@quack/session';
 import { createDistributor, processDriver, sessionDirName } from '../src/index.ts';
 
 const dirs: string[] = [];
@@ -33,7 +34,7 @@ async function agentsDirAt(version: number, ...names: string[]) {
   return dir;
 }
 
-async function startDistributor(idleMs: number, agents: { agentsDir?: string; defaultAgent?: string } = { defaultAgent: '' }) {
+async function startDistributor(idleMs: number, agents: { agentsDir?: string; defaultAgent?: string; inherit?: () => NodeJS.ProcessEnv } = { defaultAgent: '' }) {
   const dataDir = await mkdtemp(join(tmpdir(), 'quack-dist-'));
   dirs.push(dataDir);
   const driver = processDriver({ command: [process.execPath, fileURLToPath(new URL('./fixtures/echo-session.ts', import.meta.url))], dataDir, ...agents });
@@ -525,5 +526,17 @@ test('a client that hangs up mid-body does not take the distributor down', async
     assert.equal((await fetch(`http://127.0.0.1:${port}/sessions`)).status, 200);
   } finally {
     await Promise.all([new Promise((r) => server.close(r)), new Promise((r) => session.close(r))]);
+  }
+});
+
+test('a session process gets an allowlisted environment, not the host\'s', async () => {
+  process.env.PLANTED_SECRET = 'host-secret';
+  try {
+    const plain = await startDistributor(60_000);
+    assert.equal((await plain.invoke('env-a', { input: 'secret', wait: true })).body.answer, 'secret: none');
+    const declared = await startDistributor(60_000, { defaultAgent: '', inherit: () => ({ ...shellEnv(process.env), PLANTED_SECRET: process.env.PLANTED_SECRET }) });
+    assert.equal((await declared.invoke('env-b', { input: 'secret', wait: true })).body.answer, 'secret: host-secret');
+  } finally {
+    delete process.env.PLANTED_SECRET;
   }
 });

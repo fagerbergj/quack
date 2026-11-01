@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { mock, test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
-import { agentSpec, buildModels, loadAgent, openSession, parseDefinition, parseDeployment, type Catalog } from '../src/index.ts';
+import { agentSpec, buildModels, declaredEnv, loadAgent, openSession, parseDefinition, parseDeployment, type Catalog } from '../src/index.ts';
 
 const deployment = {
   providers: { local: { baseUrl: 'http://127.0.0.1:11436/v1', apiKeyEnv: 'QUACK_LOCAL_KEY', models: { 'qwen3.8-27b': { contextWindow: 262144, maxTokens: 16384, reasoning: true } } } },
@@ -126,4 +126,18 @@ test('an images: true model sends the image block; a text-only model sends a pla
   const textOnly = await sentBody(false);
   assert.doesNotMatch(textOnly, /base64,AAAA/);
   assert.match(textOnly, /image/i);
+});
+
+test('an agent receives only the variables its extensions declare, and exec settings are validated', async () => {
+  const entry = Object.assign(() => [], { env: ['A_TOKEN'] });
+  const withEnv: Catalog = { coding: () => [], github: entry, flow: Object.assign(() => [], { env: (c: unknown) => [`${(c as { w: string }).w}_KEY`] }) };
+  assert.deepEqual(declaredEnv({ coding: {}, github: {}, flow: { w: 'X' } }, withEnv), ['A_TOKEN', 'X_KEY']);
+  assert.deepEqual(declaredEnv({ coding: {} }, withEnv), []);
+  assert.throws(() => parseDeployment({ ...deployment, exec: { timeoutSeconds: 0, limits: { maxProcs: -1 } } }), (err: Error) => /exec.timeoutSeconds/.test(err.message) && /exec.limits/.test(err.message));
+  const d = parseDeployment({ ...deployment, exec: { timeoutSeconds: 120, env: ['GOPATH'] } });
+  const def = parseDefinition({ name: 'r', version: 1, model: 'local/qwen3.8-27b', extensions: {}, exec: { timeoutSeconds: 30 } }, d, withEnv);
+  assert.equal((await agentSpec(def, withEnv)).commandTimeoutSeconds, 30);
+  assert.throws(() => parseDefinition({ name: 'r', version: 1, model: 'local/qwen3.8-27b', extensions: {}, exec: { timeoutSeconds: 'x' } }, d, withEnv), /exec.timeoutSeconds/);
+  assert.throws(() => parseDefinition({ name: 'r', version: 1, model: 'local/qwen3.8-27b', extensions: {}, exec: { limits: {}, env: ['A'] } }, d, withEnv), (err: Error) => /exec.limits is set by the deployment/.test(err.message) && /exec.env is set by the deployment/.test(err.message));
+  assert.throws(() => parseDeployment({ ...deployment, exec: { limits: { maxFileSize: 5 } } }), /exec.limits must map/);
 });

@@ -1,0 +1,85 @@
+import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { after, test } from 'node:test';
+import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
+import { spawnSync } from 'node:child_process';
+import { PolicyExecutionEnv, sessionPolicy, shellEnv, type ExecPolicy } from '../src/index.ts';
+
+const cwd = await mkdtemp(join(tmpdir(), 'quack-exec-'));
+after(() => rm(cwd, { recursive: true, force: true }));
+
+const source = { PATH: process.env.PATH, HOME: '/home/agent', LC_ALL: 'C', QUACK_GH_SERVICE_TOKEN: 'gh-secret', QUACK_EXA_API_KEY: 'exa-secret', QUACK_INDEX_TOKEN: 'index-secret', KEEP_ME: 'yes' };
+
+async function run(command: string | string[], policy: ExecPolicy = {}, options: Parameters<PolicyExecutionEnv['exec']>[1] = {}) {
+  let output = '';
+  const env = new PolicyExecutionEnv({ cwd, policy, source });
+  const result = await env.exec(command, { ...options, onOutput: (t) => { output += t; } }, ctx);
+  return { result, output };
+}
+
+test('a shell sees the toolchain variables and none of the service secrets, even when the tool asks to inherit', async () => {
+  const { output } = await run('env', {}, { inheritEnv: true, env: {} });
+  assert.match(output, /^HOME=\/home\/agent$/m);
+  assert.match(output, /^LC_ALL=C$/m);
+  assert.doesNotMatch(output, /secret|QUACK_|KEEP_ME/);
+});
+
+test('the policy names extra variables, and a caller passes its own to one command', async () => {
+  const { output } = await run('echo "$KEEP_ME $ASKED"', { env: ['KEEP_ME'] }, { env: { ASKED: 'also' } });
+  assert.equal(output.trim(), 'yes also');
+  assert.deepEqual(Object.keys(shellEnv({ A: '1', PATH: 'p', LC_X: 'x' })).sort(), ['LC_X', 'PATH']);
+});
+
+test('an argv command is confined the same way and keeps its arguments intact', async () => {
+  const { result, output } = await run(['sh', '-c', 'echo "[$QUACK_EXA_API_KEY] $1"', 'sh', 'a b']);
+  assert.ok(result.ok && result.value.exitCode === 0);
+  assert.equal(output.trim(), '[] a b');
+});
+
+test('a command past the cap is killed with a note, and the model may only ask for less', async () => {
+  const slow = await run('sleep 30', { timeoutSeconds: 1 }, { timeout: 9999 });
+  assert.ok(!slow.result.ok && slow.result.error.code === 'timeout');
+  assert.match(slow.output, /exceeded the 1 second timeout/);
+  const shorter = await run('sleep 30', { timeoutSeconds: 60 }, { timeout: 1 });
+  assert.match(shorter.output, /exceeded the 1 second timeout/);
+});
+
+test('an allocation past the address-space limit fails the command and the next one still runs', async () => {
+  const grow = 's=aaaaaaaaaaaaaaaa; for i in $(seq 1 26); do s="$s$s"; done; echo grown';
+  const limited = await run(grow, { limits: { addressSpaceMb: 256 } });
+  assert.doesNotMatch(limited.output, /grown/);
+  const next = await run('echo still-here', { limits: { addressSpaceMb: 256 } });
+  assert.match(next.output, /still-here/);
+});
+
+test('a fork bomb hits the process limit: the command fails, the next one runs', { skip: process.getuid?.() === 0 && 'root ignores RLIMIT_NPROC' }, async () => {
+  const bomb = await run('/bin/true; /bin/echo forked', { limits: { maxProcs: 1 } });
+  assert.doesNotMatch(bomb.output, /^forked$/m);
+  assert.match(bomb.output, /Resource temporarily unavailable/);
+  assert.match((await run('echo still-here')).output, /still-here/);
+});
+
+test('the default limits leave node (WebAssembly memories) and go running', async () => {
+  const wasm = await run(`"${process.execPath}" -e "new WebAssembly.Memory({initial:1})"`);
+  assert.ok(wasm.result.ok && wasm.result.value.exitCode === 0, wasm.output);
+  const hasGo = spawnSync('go', ['version']).status === 0;
+  if (hasGo) assert.match((await run('go version')).output, /^go version/);
+});
+
+test('an agent bundle can shorten the deployment timeout but never lengthen it', async () => {
+  assert.equal(sessionPolicy({ timeoutSeconds: 100 }, 600).timeoutSeconds, 100);
+  assert.equal(sessionPolicy({ timeoutSeconds: 100 }, 30).timeoutSeconds, 30);
+  assert.equal(sessionPolicy({}, 9999).timeoutSeconds, 600);
+  const capped = await run('sleep 30', sessionPolicy({ timeoutSeconds: 1 }, 600));
+  assert.match(capped.output, /exceeded the 1 second timeout/);
+});
+
+test('the file-size limit is in megabytes: a write up to it succeeds and one byte past it fails', async () => {
+  const limits = { maxFileSizeMb: 1 };
+  const atLimit = await run('head -c 1048576 /dev/zero > at', { limits });
+  assert.ok(atLimit.result.ok && atLimit.result.value.exitCode === 0, atLimit.output);
+  const past = await run('head -c 1048577 /dev/zero > past', { limits });
+  assert.ok(past.result.ok && past.result.value.exitCode !== 0);
+});
