@@ -45,6 +45,14 @@ for (const [name, opening] of [['sleeper-trade', /^You are the trade analyst/], 
   });
 }
 
+test('the shipped sleeper-history definition loads its prompt and binds the history workflow', async () => {
+  process.env.QUACK_SLEEPER_URL = 'http://127.0.0.1:8092';
+  process.env.QUACK_SLEEPER_TOKEN = 'x';
+  const agent = await loadAgent(fileURLToPath(new URL('../../../agents/sleeper-history/agent.json', import.meta.url)), deployment, catalog);
+  assert.match(agent.instructions!, /^You are the history analyst/);
+  assert.ok(agent.extensions!.some((e) => e.name === 'quack.workflows' && (e as { dispatch?: unknown }).dispatch));
+});
+
 test('the shipped sleeper-waivers definition loads its prompt and binds the waivers workflow', async () => {
   process.env.QUACK_SLEEPER_URL = 'http://127.0.0.1:8092';
   process.env.QUACK_SLEEPER_TOKEN = 'x';
