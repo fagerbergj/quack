@@ -7,7 +7,7 @@ import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
 import { Artifacts, decide } from '@quack/sdk';
 import { openSession } from '@quack/session';
-import { runWorkflow, workflowExtension } from '@quack/workflows';
+import { runWorkflow, startWorkflow, watchUntil, WorkflowDoc, workflowExtension } from '@quack/workflows';
 import { classifierChoice, createIngestService, createRemarkableService, ingestWorkflow, NONE, PAGE_WIDTH, parseTopic, problems, renderNotebook, renderPages, type IngestService, type Transcript } from '../src/index.ts';
 
 // A real two-page PDF, written by hand so the render step runs the actual library.
@@ -126,7 +126,7 @@ test('a re-ingest of the same version joins the sealed run: no model call, one v
 test('a page the model returns empty fails the transcribe step and seals nothing', async () => {
   const service = fakeService();
   const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
-  faux.setResponses([fauxAssistantMessage('  ')]);
+  faux.setResponses(Array.from({ length: 6 }, () => fauxAssistantMessage('  ')));
   const models = createModels();
   models.setProvider(faux.provider);
   const m = faux.getModel();
@@ -136,7 +136,7 @@ test('a page the model returns empty fails the transcribe step and seals nothing
   try {
     const outcome = await runWorkflow(s.harness, s.root, workflow, JSON.stringify({ id: 'n1', name: 'Notes', version: 'v1' }), 'v1');
     assert.equal(outcome.status, 'failed');
-    assert.match(outcome.status === 'failed' ? outcome.error.message : '', /page 1 came back empty/);
+    assert.match(outcome.status === 'failed' ? outcome.error.message : '', /no page could be transcribed; not transcribed: the model returned an empty page/);
     assert.equal((await s.harness.snapshot(Artifacts, s.root.id, ctx))?.kinds['remarkable.transcript'], undefined);
   } finally {
     await s.close();
@@ -247,5 +247,76 @@ test('the service serves the PDF and keeps the topic list, and the ingest client
     assert.equal((await fetch(`${url}/topics`, { method: 'POST', headers: { authorization: 'Bearer t' }, body: '{"name":""}' })).status, 400);
   } finally {
     await service.stop();
+  }
+});
+
+// Two pages; `page` decides each vision call's reply by page number and attempt, and 'hang' stalls a call until the session closes.
+function scripted(page: (n: number, attempt: number) => string) {
+  const attempts = new Map<number, number>();
+  const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
+  faux.setResponses(Array.from({ length: 30 }, () => async (c: { messages: Array<{ content: unknown }> }, o?: { signal?: AbortSignal }) => {
+    const last = c.messages.at(-1)!.content;
+    if (!Array.isArray(last)) {
+      const ask = String(last);
+      const choice = ask.includes('What kind of') ? 'idea' : NONE;
+      return fauxAssistantMessage(ask.includes('Name the topic') ? 'garden plan' : JSON.stringify({ choice, confidence: 0.9, reason: 'x' }));
+    }
+    const n = Number(/Page (\d+)/.exec((last[0] as { text: string }).text)![1]);
+    attempts.set(n, (attempts.get(n) ?? 0) + 1);
+    const r = page(n, attempts.get(n)!);
+    if (r === 'hang') await new Promise((_, reject) => o?.signal?.addEventListener('abort', () => reject(o.signal!.reason)));
+    return fauxAssistantMessage(r);
+  }));
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const m = faux.getModel();
+  return { models, ref: { provider: m.provider, modelId: m.id }, attempts };
+}
+
+const open = (dir: string, m: ReturnType<typeof scripted>, workflow: ReturnType<typeof ingestWorkflow>) =>
+  openSession({ dir, models: m.models, agent: { model: m.ref, instructions: 'You transcribe.', extensions: [workflowExtension([workflow])] } });
+const input = JSON.stringify({ id: 'n1', name: 'Notes', version: 'v1' });
+const transcribing = (d: { steps: Array<{ name: string; progress?: { done: number; total: number } | null }> }) => d.steps.find((r) => r.name === 'transcribe');
+
+test('a page that fails every try is recorded as not transcribed, the rest carry on, and progress counts every page', async () => {
+  const m = scripted((n) => (n === 1 ? ' ' : 'second page'));
+  const dir = await mkdtemp(join(tmpdir(), 'quack-rm-'));
+  const workflow = ingestWorkflow({ service: fakeService(), visionModel: m.ref });
+  const s = await open(dir, m, workflow);
+  try {
+    const outcome = await runWorkflow(s.harness, s.root, workflow, input, 'v1');
+    assert.equal(outcome.status, 'completed', JSON.stringify(outcome));
+    assert.equal(m.attempts.get(1), 3);
+    const sealed = (await s.harness.snapshot(Artifacts, s.root.id, ctx))!.kinds['remarkable.transcript'].versions;
+    assert.deepEqual((JSON.parse(sealed[0].content) as Transcript).pages, [{ page: 1, text: 'not transcribed: the model returned an empty page' }, { page: 2, text: 'second page' }]);
+    assert.deepEqual(transcribing((await s.harness.snapshot(WorkflowDoc, s.root.id, ctx))!)!.progress, { done: 2, total: 2 });
+  } finally {
+    await s.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a restart mid-transcribe resumes at the next page; the finished page is visible while the step still runs', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'quack-rm-'));
+  const workflow = ingestWorkflow({ service: fakeService() });
+  try {
+    const a = await open(dir, scripted((n) => (n === 1 ? 'one' : 'hang')), workflow);
+    await startWorkflow(a.harness, a.root, workflow, input, 'v1');
+    await watchUntil((await a.harness.watchDoc(WorkflowDoc, a.root.id, ctx))!, (d) => (transcribing(d)?.progress?.done === 1 ? true : undefined));
+    await a.close();
+
+    const second = scripted((n) => `again ${n}`);
+    const b = await open(dir, second, workflow);
+    try {
+      const outcome = await runWorkflow(b.harness, b.root, workflow, input, 'v1');
+      assert.equal(outcome.status, 'completed', JSON.stringify(outcome));
+      assert.deepEqual([second.attempts.get(1), second.attempts.get(2)], [undefined, 1]);
+      const sealed = (await b.harness.snapshot(Artifacts, b.root.id, ctx))!.kinds['remarkable.transcript'].versions;
+      assert.deepEqual((JSON.parse(sealed[0].content) as Transcript).pages.map((p) => p.text), ['one', 'again 2']);
+    } finally {
+      await b.close();
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
   }
 });

@@ -37,7 +37,13 @@ async function runStep(steps: Step[], i: number, running: RunningTask<Input, Che
     s.startedAt ??= rt.now();
     return undefined;
   }, ctx);
-  const c: StepContext = { input: running.input.input, prior: running.state.checkpoint.results, api: view(rt, { env: await rt.env(ctx), commit: toolCommit(rt) }) as never, ctx, signal: rt.signal };
+  const report: StepContext['report'] = (patch) => rt.commit(async (tx) => {
+    const s = await record(tx, rt.conversationId, step.name);
+    if (patch.progress) s.progress = patch.progress;
+    s.cost += patch.cost ?? 0;
+    return undefined;
+  }, ctx);
+  const c: StepContext = { input: running.input.input, prior: running.state.checkpoint.results, api: view(rt, { env: await rt.env(ctx), commit: toolCommit(rt) }) as never, ctx, signal: rt.signal, report };
   let out;
   try {
     out = await execute(step, c);
@@ -54,7 +60,7 @@ async function runStep(steps: Step[], i: number, running: RunningTask<Input, Che
   const results = { ...running.state.checkpoint.results, [step.name]: out.result };
   await rt.commit(async (tx) => {
     const s = await record(tx, rt.conversationId, step.name);
-    Object.assign(s, { status: 'done', cost: out.cost, durationMs: rt.now() - (s.startedAt ?? rt.now()) });
+    Object.assign(s, { status: 'done', cost: out.cost || s.cost, durationMs: rt.now() - (s.startedAt ?? rt.now()) });
     const next = steps[i + 1];
     return next ? { status: 'running', checkpoint: { phase: next.name, results } } : { status: 'terminal', outcome: { status: 'completed', result: results } };
   }, ctx);
@@ -76,7 +82,7 @@ export function defineWorkflow(def: { name: string; steps: Step[] }) {
   return { name, steps, task };
 }
 
-const pending = (s: Step): StepRecord => ({ name: s.name, kind: s.kind, status: 'pending', startedAt: null, durationMs: null, cost: 0, error: null, ask: null, answer: null });
+const pending = (s: Step): StepRecord => ({ name: s.name, kind: s.kind, status: 'pending', startedAt: null, durationMs: null, cost: 0, progress: null, error: null, ask: null, answer: null });
 
 // A run is live until its task is terminal; the same request or a live run is joined, anything else starts a fresh run in this session.
 export async function startWorkflow(harness: Harness, root: Conversation, workflow: Workflow, input: JsonValue, request: string | null = null, ctx: Context = BACKGROUND_CONTEXT): Promise<string> {

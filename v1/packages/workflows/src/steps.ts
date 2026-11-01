@@ -6,7 +6,15 @@ import { decide, gated, type DecisionPoint, type Resolver } from '@quack/sdk';
 import { WorkflowDoc, watchUntil } from './doc.ts';
 
 /** What a step sees: the workflow input, the results of earlier steps by name, and the task's api for artifacts and other durable calls. */
-export type StepContext = { input: JsonValue; prior: Record<string, JsonValue>; api: ToolExecutionApi; ctx: Context; signal: AbortSignal };
+export type StepContext = {
+  input: JsonValue;
+  prior: Record<string, JsonValue>;
+  api: ToolExecutionApi;
+  ctx: Context;
+  signal: AbortSignal;
+  /** Commits progress to the step's record now; `cost` adds to what the step has spent so far. */
+  report(patch: { progress?: { done: number; total: number }; cost?: number }): Promise<void>;
+};
 
 export type Step =
   | { name: string; kind: 'code'; run(c: StepContext): JsonValue | Promise<JsonValue> }
