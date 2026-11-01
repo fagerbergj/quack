@@ -5,7 +5,7 @@ import { defineDoc, type Conversation, type DocumentWatch } from '@earendil-work
 export type StepRecord = {
   name: string;
   kind: 'code' | 'model' | 'decision' | 'gated';
-  status: 'pending' | 'running' | 'waiting' | 'done' | 'failed';
+  status: 'pending' | 'running' | 'waiting' | 'done' | 'failed' | 'aborted';
   startedAt: number | null;
   durationMs: number | null;
   cost: number;
@@ -55,6 +55,7 @@ export async function answerDecision(conversation: Conversation, step: string, c
     const s = (await tx.doc(WorkflowDoc, conversation.id)).steps.find((r) => r.name === step);
     if (!s?.ask) return 'not-asking';
     if (s.answer) return 'answered';
+    if (s.status !== 'waiting') return 'not-asking';
     if (!s.ask.options.includes(choice)) return 'bad-choice';
     s.answer = { choice, by };
     return 'ok';

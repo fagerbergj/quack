@@ -15,7 +15,7 @@ import { defineWorkflow, outcomeOf, sessionDecisions, WorkflowDoc, workflowSessi
 import pg from 'pg';
 import { DatabaseSync } from 'node:sqlite';
 import { existsSync } from 'node:fs';
-import { createStore, openStore, indexRoutes, postgresBackend, rebuild, sqliteBackend, startPublisher, type IndexStore } from '../src/index.ts';
+import { createStore, openStore, indexRoutes, postgresBackend, rebuild, sqliteBackend, startPublisher, collectFacts, type IndexStore } from '../src/index.ts';
 
 const url = process.env.QUACK_TEST_DATABASE_URL;
 const ctx = BACKGROUND_CONTEXT;
@@ -225,6 +225,33 @@ for (const { name, fresh: freshStore, skip } of backends) test(`${name}: a decis
   assert.equal(outcome.status === 'completed' && (outcome.result as { file: string }).file, 'filed as meeting');
 
   await publisher.stop();
+  await new Promise((r) => server.close(r));
+  await session.close();
+});
+
+test('a workflow aborted while it waits closes its question: not pending, indexed closed, and an answer is refused', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'quack-abort-'));
+  cleanups.push(() => rm(dir, { recursive: true, force: true }));
+  const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const m = faux.getModel();
+  const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: workflowSessionExtensions({ workflow: 'ask' }, { ask }) } });
+  const decisions = sessionDecisions(session);
+  const server = createSessionServer(session, decisions).listen(0);
+  await new Promise((r) => server.once('listening', r));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const answer = (step: string) => fetch(`${base}/decisions/${step}`, { method: 'POST', body: JSON.stringify({ choice: 'meeting', by: 'jf' }) });
+  await fetch(`${base}/invocations`, { method: 'POST', body: JSON.stringify({ input: 'scan' }) });
+  await until(async () => ((await decisions.pending()).length ? true : undefined));
+
+  await fetch(`${base}/abort`, { method: 'POST' });
+  await until(async () => ((await decisions.pending()).length ? undefined : true));
+  const facts = await collectFacts(session.harness, session.root, { key: 'chat:9', agent: 'ingest', version: 1 }, 0, ctx);
+  assert.deepEqual(facts.filter((f) => f.kind === 'decision').map((f) => f.data.state), ['closed']);
+  assert.equal((await answer('type')).status, 404);
+  assert.equal((await answer('%E0%A4%A')).status, 400, 'a malformed step name');
+
   await new Promise((r) => server.close(r));
   await session.close();
 });

@@ -35,7 +35,7 @@ export const indexDecisions = () => indexRead<IndexDecision>('index/decisions?st
 export const listDecisions = async (key: string) => (await json<{ decisions: Decision[] }>(await fetch(`${base(key)}/decisions`))).decisions;
 export const answerDecision = async (key: string, step: string, choice: string) =>
   void (await json(await fetch(`${base(key)}/decisions/${encodeURIComponent(step)}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ choice, by: 'web' }) })));
-export const indexApprovals =() => indexRead<IndexApproval>('index/approvals?state=pending', 'approvals');
+export const indexApprovals = () => indexRead<IndexApproval>('index/approvals?state=pending', 'approvals');
 export const indexArtifacts = () => indexRead<IndexArtifact>('index/artifacts', 'artifacts');
 
 // shortcut: no auth (tailnet only) and the approver is a fixed name, until identity lands.

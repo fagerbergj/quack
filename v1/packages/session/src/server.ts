@@ -55,7 +55,13 @@ const ANSWER_STATUS = { ok: 200, 'not-asking': 404, answered: 409, 'bad-choice':
 async function answer(_: Session, req: IncomingMessage, match: RegExpExecArray, decisions?: Decisions): Promise<[number, unknown]> {
   const { choice, by } = (await readJson(req)) as Record<string, unknown> | null ?? {};
   if (typeof choice !== 'string' || typeof by !== 'string' || !by) return [400, { error: 'choice and by must be strings' }];
-  const result = await decisions?.answer(decodeURIComponent(match[1]), choice, by) ?? 'not-asking';
+  let step: string;
+  try {
+    step = decodeURIComponent(match[1]);
+  } catch {
+    return [400, { error: 'malformed step name' }];
+  }
+  const result = await decisions?.answer(step, choice, by) ?? 'not-asking';
   return [ANSWER_STATUS[result], result === 'ok' ? { answered: true } : { error: result }];
 }
 

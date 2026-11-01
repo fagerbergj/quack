@@ -77,7 +77,11 @@ export function defineWorkflow(def: { name: string; steps: Step[] }) {
     version: 1,
     initial: () => ({ phase: steps[0].name, results: {} }),
     phases: Object.fromEntries(steps.map((step, i) => [step.name, (running: RunningTask<Input, Checkpoint, Results>, rt: Runtime, ctx: Context) => runStep(steps, i, running, rt, ctx)])) as never,
-    abort: (_t, rt, ctx) => rt.commit(() => ({ status: 'terminal', outcome: { status: 'aborted' } }), ctx),
+    // A step waiting on a person is closed with the run: nothing is left to resume on an answer.
+    abort: (_t, rt, ctx) => rt.commit(async (tx) => {
+      for (const s of (await tx.doc(WorkflowDoc, rt.conversationId)).steps) if (s.status === 'waiting') s.status = 'aborted';
+      return { status: 'terminal', outcome: { status: 'aborted' } };
+    }, ctx),
   });
   return { name, steps, task };
 }
