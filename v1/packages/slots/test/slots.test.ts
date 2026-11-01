@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import type { AddressInfo } from 'node:net';
 import { afterEach, test } from 'node:test';
 import { whileWaiting } from '@quack/sdk';
-import { createSlotsService, slotsSessionExtensions, SlotGate, SlotTable, type Clock, type SlotClient } from '../src/index.ts';
+import { agentSpec } from '@quack/session';
+import { createSlotsService, slotsFromEnv, slotsSessionExtensions, SlotGate, SlotTable, type Clock, type SlotClient } from '../src/index.ts';
 
 const TTL = 30_000;
 const GRACE = 60_000;
@@ -208,4 +209,12 @@ test('the service guards its API with the token and serves acquire, heartbeat an
   assert.equal((await call('/slots/acquire', { endpoint: 'swap' })).status, 400);
   assert.deepEqual((await call('/slots/acquire', { endpoint: 'unlisted', holder: 'z' })).json, { status: 'granted' });
   await new Promise((r) => service.close(r));
+});
+
+test('an agent that selects no slots entry is gated when the deployment sets the env, and ungated when it does not', async () => {
+  const def = { name: 'plain', version: 1, model: 'swap/m', extensions: {} };
+  const names = async (env: Record<string, string>) => (await agentSpec(def, {}, [() => slotsFromEnv(env)])).extensions!.map((e) => e.name);
+  assert.deepEqual(await names({ QUACK_SLOTS_URL: 'http://slots', QUACK_SLOTS_TOKEN: 't' }), ['slots']);
+  assert.deepEqual(await names({}), []);
+  assert.deepEqual(await names({ QUACK_SLOTS_URL: 'http://slots' }), []);
 });

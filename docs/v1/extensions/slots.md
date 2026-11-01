@@ -32,6 +32,6 @@ Residency (never admit a second model while the first holds a single-resident ho
 | `QUACK_SLOTS_TOKEN` | both | Shared bearer token (A12 until workload tokens land). |
 | `QUACK_SLOTS_DB` | service | SQLite file, default `/data/slots.db`. |
 | `PORT` | service | Default 8092. |
-| `QUACK_SLOTS_URL` | session | The service's base URL. Unset: the extension installs nothing. |
+| `QUACK_SLOTS_URL` | session | The service's base URL. Unset: the gate is off. |
 
-An agent opts in with `"slots": {}` in its `extensions`; `graceMs`, `capMs`, `leaseTtlMs` and `pollMs` are optional keys there.
+The deployment enables the gate for every session, whatever its agent selects: a provider limit only works if every session obeys it. Setting `QUACK_SLOTS_URL` and `QUACK_SLOTS_TOKEN` turns it on; leaving either unset turns it off.

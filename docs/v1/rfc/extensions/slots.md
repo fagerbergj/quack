@@ -19,14 +19,15 @@ A service half keeps a lease ledger of slots per model endpoint; a session half 
 
 ## What the contract had to grow
 
-Two small, general additions to `@quack/sdk`, neither slots-specific:
+Three small, general additions, none slots-specific:
 
-1. **`whileWaiting` / `onWaiting`.** Hooks see requests and tools but not that a tool is blocked on a person. `gated` and workflow decisions wrap their wait in `whileWaiting`; any session extension can subscribe. Without it the person-wait case would fall back to the grace.
-2. **`statusNote`.** A session reports an extension's one-line status through `/ping` (the distributor already pings every running session and lists sessions from that), and the session list shows it ahead of the generic "running". The distributor stores the latest note per session; no new screen or endpoint.
+1. **Deployment-level extensions.** `loadAgent` and `agentSpec` take a list of factories the runtime installs for every session beside what the agent selects. The runtime's catalog lists `slotsFromEnv`, which returns nothing when the env is unset. A limit on a shared host is only real if no agent can opt out.
+
+2. **`whileWaiting` / `onWaiting`.** Hooks see requests and tools but not that a tool is blocked on a person. `gated` and workflow decisions wrap their wait in `whileWaiting`; any session extension can subscribe. Without it the person-wait case would fall back to the grace.
+3. **`statusNote`.** A session reports an extension's one-line status through `/ping` (the distributor already pings every running session and lists sessions from that), and the session list shows it ahead of the generic "running". The distributor stores the latest note per session and shows it only while the process runs; no new screen or endpoint.
 
 Everything else used what pi-durable provides: `GenerationTask` hooks (`beforeRequest`, `afterResponse`, `onYield`), `AgentDoc`, `ctx.abortSignal`. pi-durable's own retry and busy-conversation handling are untouched; the gate does not queue or retry requests, it only delays the first byte.
 
 ## Unresolved questions
 
 - Run end is seen only through `onYield` and the grace; the harness's `run_end` event is available to hosts, not extensions.
-- A killed session shows a stale note until it next acquires.

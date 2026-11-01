@@ -215,7 +215,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
 
   async function listing(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
     if (req.method !== 'GET' || (req.url !== '/sessions' && req.url !== '/agents')) return false;
-    send(res, 200, req.url === '/agents' ? { agents: await driver.agents() } : { sessions: (await driver.sessions()).map((x) => ({ ...x, active: x.running && (active.get(x.key) ?? false), ...(notes.get(x.key) && { note: notes.get(x.key) }) })) });
+    send(res, 200, req.url === '/agents' ? { agents: await driver.agents() } : { sessions: (await driver.sessions()).map((x) => ({ ...x, active: x.running && (active.get(x.key) ?? false), ...(x.running && notes.get(x.key) && { note: notes.get(x.key) }) })) });
     return true;
   }
 
