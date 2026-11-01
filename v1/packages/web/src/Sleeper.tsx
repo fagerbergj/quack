@@ -81,7 +81,7 @@ function Why({ s }: { s: Starter }) {
     <>
       <p className="m-0 break-words text-[13px] text-ink-2">{s.why}</p>
       {s.news?.map((n) => (
-        <a key={n.url} href={n.url} target="_blank" rel="noreferrer" className="block min-w-0 break-words text-[12px]">{`${n.player}: ${n.title}`}</a>
+        <a key={n.url} href={n.url} target="_blank" rel="noreferrer" className="flex min-h-11 min-w-0 items-center break-words text-[12px] lg:min-h-0">{`${n.player}: ${n.title}`}</a>
       ))}
     </>
   );

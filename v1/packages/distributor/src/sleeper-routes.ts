@@ -4,7 +4,7 @@ export type SleeperRoutesConfig = { url: string; token: string; league: string; 
 
 const send = (res: ServerResponse, status: number, body: unknown) => res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
 
-// The page reaches only the league id and the on-demand lineup job; the service token and league stay here, out of the browser.
+// The page reaches only the league id and the on-demand lineup job; the service token never reaches the browser.
 export function sleeperRoutes(config: SleeperRoutesConfig) {
   return async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
     const url = new URL(req.url ?? '', 'http://distributor');
