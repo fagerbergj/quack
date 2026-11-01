@@ -92,7 +92,8 @@ function ThemeToggle({ className }: { className: string }) {
 const linkBase = 'navlink flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-ink-2 no-underline hover:bg-soft hover:text-ink';
 const tabBase = 'tablink flex min-h-11 flex-col items-center justify-center gap-0.5 py-2 text-[11px] font-medium text-muted no-underline';
 
-export function Shell({ route, children }: { route: Route; children: ReactNode }) {
+// `bare` drops the phone title bar for a screen that draws its own.
+export function Shell({ route, bare, children }: { route: Route; bare?: boolean; children: ReactNode }) {
   const [more, setMore] = useState(false);
   const cur = (r: Route) => (r === route ? ('page' as const) : undefined);
   const link = (n: Item, cls: string) => (
@@ -127,7 +128,7 @@ export function Shell({ route, children }: { route: Route; children: ReactNode }
           <ThemeToggle className="ml-auto px-2 text-xs" />
         </div>
       </aside>
-      <header className="sticky top-0 z-20 flex items-center gap-2.5 border-b border-line bg-canvas/85 px-4 pt-[calc(0.625rem+env(safe-area-inset-top,0px))] pb-2.5 backdrop-blur-md lg:hidden">
+      <header className={`sticky top-0 z-20 ${bare ? 'hidden' : 'flex'} items-center gap-2.5 border-b border-line bg-canvas/85 px-4 pt-[calc(0.625rem+env(safe-area-inset-top,0px))] pb-2.5 backdrop-blur-md lg:hidden`}>
         <Duck size={24} />
         <span className="text-[15px] font-semibold tracking-[-0.015em]">{TITLES[route]}</span>
       </header>

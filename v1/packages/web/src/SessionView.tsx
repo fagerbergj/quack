@@ -110,15 +110,17 @@ export function SessionView({ sessionKey, agent, title }: { sessionKey: string; 
   const { view, state, error, setError, approvalTick, send } = useSocket(sessionKey, agent);
   const abort = () => abortRun(sessionKey).catch((e: Error) => setError(e.message));
   const status = state === 'open' ? (view.running ? 'Running' : 'Idle') : state === 'reconnecting' ? 'Reconnecting' : 'Connecting';
-  // Below lg the pane is the visible viewport between the top bar and tab bar, so the composer stays above the keyboard.
+  // Below lg the pane is the visible viewport above the tab bar and draws the only top bar, so the composer stays above the keyboard.
   const vv = useVisualViewportHeight();
   const keyboard = vv !== undefined && vv < window.innerHeight - 150;
-  const chrome = keyboard ? '49px' : '107px - env(safe-area-inset-bottom, 0px)';
+  const chrome = keyboard ? '0px' : '58px - env(safe-area-inset-bottom, 0px)';
   const paneStyle = vv === undefined ? undefined : ({ '--ws-h': `calc(${vv}px - ${chrome})` } as CSSProperties);
   return (
     <div style={paneStyle} className="flex h-(--ws-h) min-h-0 flex-col lg:h-auto lg:flex-1">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line bg-canvas/70 px-4 py-3 sm:px-5">
-        <a href="#/" className="text-[13px] text-muted no-underline hover:text-ink lg:hidden">← Sessions</a>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line bg-canvas/70 px-4 pt-[calc(0.5rem+env(safe-area-inset-top,0px))] pb-2 sm:px-5 lg:py-3">
+        <a href="#/" aria-label="Sessions" className="grid h-11 w-11 flex-none place-items-center text-ink-2 no-underline hover:text-ink lg:hidden">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6" /></svg>
+        </a>
         <h1 className="m-0 min-w-0 flex-1 truncate text-[16px]" title={title}>{title}</h1>
         <StatusChip text={status} running={state === 'open' && view.running} />
         {state === 'open' && view.running && (

@@ -51,7 +51,7 @@ export function App() {
   const nav = navRoute(hash);
   const title = !session && PLACEHOLDERS[nav];
   return (
-    <Shell route={nav}>
+    <Shell route={nav} bare={Boolean(session)}>
       {title ? <Placeholder title={title} /> : <Workspace selected={session} isNew={hash === '#/new'} />}
     </Shell>
   );
