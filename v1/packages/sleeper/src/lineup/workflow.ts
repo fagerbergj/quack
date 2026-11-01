@@ -31,7 +31,7 @@ const line = (p: PlayerFact) => {
 
 function factsPrompt(f: Facts): string {
   const now = (s: string) => (f.current[s] ? line(f.players[f.current[s]!]) : 'empty');
-  const open = f.open.map((s) => `${s} (now ${now(s)})\n${f.candidates[s].map((id) => `  - ${line(f.players[id])}${(f.news[id] ?? []).map((n) => ` [${n.title}](${n.url})`).join('')}`).join('\n')}`);
+  const open = f.open.map((s) => `${s} (now ${now(s)})\n${f.candidates[s].map((id) => `  - ${line(f.players[id])}${(f.news[id] ?? []).map((n) => ` [${n.title}](${n.url}), ${n.date.slice(0, 16)}`).join('')}`).join('\n')}`);
   const locked = f.slots.filter((s) => !f.open.includes(s)).map((s) => `${s}: ${now(s)}`);
   const base = f.baseline.map((b) => `${b.slot}: ${b.name} ${b.proj}`);
   return [
@@ -39,6 +39,7 @@ function factsPrompt(f: Facts): string {
     `Best lineup by projection (the baseline; Out, IR, Doubtful and Sus excluded):\n${base.join('\n')}`,
     `Locked slots, final this week:\n${locked.join('\n') || 'none'}`,
     `Open slots with the players who can fill them:\n${open.join('\n')}`,
+    ...(Object.values(f.news).some((n) => n.length) ? ['Linked news is dated. A newer report from a credible source (the team, the league or a named beat reporter) beats the Sleeper designation, which lags; when they conflict, say which you followed.'] : []),
     'Decide every open slot, FLEX included, by player id. Write the summary as "Start X over Y" for each change from the current lineup, or say there are no changes.',
   ].join('\n\n');
 }

@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createServer, type Server } from 'node:http';
 import { after, test } from 'node:test';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider, type FauxResponseStep } from '@earendil-works/pi-ai';
@@ -12,9 +13,10 @@ import { Artifacts } from '@quack/sdk';
 import { openSession } from '@quack/session';
 import { runWorkflow, workflowExtension } from '@quack/workflows';
 import {
-  buildCard, buildFacts, buildSnapshot, createSleeperClient, createSleeperService, lineupEvidence, lineupKey, lineupRubric, lineupRuns, lineupWorkflow, registerLineupSchedules,
-  type Facts, type LineupCard,
+  buildCard, buildFacts, buildSnapshot, createSleeperClient, createSleeperService, exaNews, lineupEvidence, lineupKey, lineupRubric, lineupRuns, lineupWorkflow, registerLineupSchedules,
+  type Facts, type LineupCard, type LineupDeps,
 } from '../src/index.ts';
+import { closeCalls } from '../src/lineup/facts.ts';
 import { bestLineup, numberSlots } from '../src/lineup/slots.ts';
 
 const fixtures = JSON.parse(readFileSync(new URL('./fixtures/lineup.json', import.meta.url), 'utf8')) as Record<string, unknown>;
@@ -132,7 +134,7 @@ test('summary_names_changes fails a summary that misses a change', async () => {
   assert.equal((await gate('summary_names_changes', f, { ...card, summary: 'No changes.' })).met, 0);
 });
 
-async function runLineup(news?: () => Promise<[]>) {
+async function runLineup(news?: LineupDeps['news']) {
   const judged: string[] = [];
   const responses: FauxResponseStep[] = [
     () => fauxAssistantMessage(JSON.stringify(decision)),
@@ -168,7 +170,7 @@ test('the workflow seals a lineup card from the recorded week and the judge pass
   assert.equal(card.starters.length, 9);
   assert.equal(card.starters.find((r) => r.slot === 'RB2')!.player.name, 'Dan Dash');
   assert.equal(card.starters.find((r) => r.slot === 'K')!.locked, true);
-  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed], ['sleeper.lineup@1', [], true]);
+  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed], ['sleeper.lineup@2', [], true]);
   assert.deepEqual(verdict.notes, ['close-call news not checked: no news source']);
   assert.ok(!verdict.checks.some((c) => c.id === 'close_call_news'));
   assert.ok(!judged.some((q) => /Questionable or limited-practice/.test(q)));
@@ -247,4 +249,58 @@ test('the lineup job starts on demand under the week session key, each click its
     service.stop();
     bare.stop();
   }
+});
+
+const hoursAgo = (h: number) => new Date(AT - h * 3_600_000).toISOString();
+const servers: Server[] = [];
+after(() => servers.forEach((s) => s.close()));
+
+async function serve(handler: Parameters<typeof createServer>[1]) {
+  const server = createServer(handler).listen(0);
+  servers.push(server);
+  await new Promise((r) => server.once('listening', r));
+  return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+}
+
+// A fake Exa: records each request and answers every query with a fresh item, a stale one and an undated one.
+async function fakeExa() {
+  const seen: Array<{ key: unknown; body: { query: string; numResults: number; startPublishedDate: string } }> = [];
+  const url = await serve((req, res) => {
+    let raw = '';
+    req.on('data', (c) => (raw += c)).on('end', () => {
+      seen.push({ key: req.headers['x-api-key'], body: JSON.parse(raw) });
+      res.writeHead(200).end(JSON.stringify({ results: [
+        { title: 'Practice report', url: 'https://example.org/fresh', publishedDate: hoursAgo(5) },
+        { title: 'Old news', url: 'https://example.org/stale', publishedDate: hoursAgo(73) },
+        { title: 'Undated', url: 'https://example.org/undated' },
+      ] }));
+    });
+  });
+  return { seen, url };
+}
+
+test('close-call players get dated news inside 72 hours, and nobody else is searched', async () => {
+  const exa = await fakeExa();
+  const f = await buildFacts({ client: client(), news: exaNews({ apiKey: 'k', url: exa.url }) }, await snapshot('L1'), INPUT, AT);
+  const close = closeCalls(f).map((p) => p.id).sort();
+  assert.ok(close.includes('102'));
+  assert.deepEqual(Object.keys(f.news).sort(), close);
+  assert.ok(!('100' in f.news));
+  assert.equal(exa.seen.length, close.length);
+  assert.ok(exa.seen.every((r) => r.key === 'k' && r.body.numResults === 3 && r.body.startPublishedDate === hoursAgo(72)));
+  assert.match(exa.seen.map((r) => r.body.query).join('\n'), /Rob Rowe/);
+  assert.deepEqual(f.news['102'], [{ title: 'Practice report', url: 'https://example.org/fresh', date: hoursAgo(5) }]);
+});
+
+test('a failing search leaves a close call with no news rather than failing the lineup', async () => {
+  const url = await serve((_req, res) => res.writeHead(500).end('boom'));
+  assert.deepEqual(await exaNews({ apiKey: 'k', url })((await facts()).players['102'], AT), []);
+});
+
+test('with Exa news wired the card is judged on close_call_news', async () => {
+  const exa = await fakeExa();
+  const { verdict, judged } = await runLineup(exaNews({ apiKey: 'k', url: exa.url }));
+  assert.deepEqual([verdict.rubric, verdict.notes], ['sleeper.lineup@2', []]);
+  assert.ok(verdict.checks.some((c) => c.id === 'close_call_news'));
+  assert.ok(judged.some((q) => /Questionable or limited-practice/.test(q)));
 });

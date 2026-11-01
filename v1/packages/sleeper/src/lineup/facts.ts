@@ -3,7 +3,8 @@ import { bestLineup, fits, lineupSlots, numberSlots } from './slots.ts';
 
 export type Game = { opponent: string; home: boolean; kickoff: string | null; locked: boolean; status: string | null };
 export type PlayerFact = { id: string; name: string; pos: string; team: string | null; inj: string | null; proj: number; game: Game | null };
-export type NewsItem = { title: string; url: string };
+/** `date` is the report's own publication time (ISO), never the fetch time. */
+export type NewsItem = { title: string; url: string; date: string };
 
 /** What the lineup job computed in code and the model reasons over; the rubric's gates check the card against it. */
 export type Facts = {
@@ -27,7 +28,7 @@ export type Facts = {
 };
 
 export type LineupInput = { league: string; week: number; owner: string };
-export type FactsDeps = { client: SleeperClient; news?: (p: PlayerFact) => Promise<NewsItem[]> };
+export type FactsDeps = { client: SleeperClient; news?: (p: PlayerFact, at: number) => Promise<NewsItem[]> };
 
 // Out, IR, Doubtful and suspended players are not lineup candidates; Questionable ones are, and the model weighs them.
 const UNAVAILABLE = new Set(['Out', 'IR', 'Doubtful', 'Sus']);
@@ -125,7 +126,7 @@ export async function buildFacts(deps: FactsDeps, snap: Json, input: LineupInput
     oppProj: theirs ? round2((theirs.starters as string[]).reduce((n, id) => n + (proj[id]?.[key] ?? 0), 0)) : null,
     news: {},
   };
-  if (deps.news) for (const p of closeCalls(facts)) facts.news[p.id] = await deps.news(p);
+  if (deps.news) for (const p of closeCalls(facts)) facts.news[p.id] = await deps.news(p, at);
   return facts;
 }
 
