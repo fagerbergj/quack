@@ -59,15 +59,18 @@ export function createRemarkableService(config: ServiceConfig) {
   let stopped = false;
 
   // node:http, not fetch: undici gives up on response headers after 300s, and a vision-model ingest can run longer.
-  const post = (url: string, body: string) =>
-    new Promise<{ status: number; text: string }>((resolve, reject) => {
+  const post = (url: string, body: string) => {
+    let abort = () => {};
+    return new Promise<{ status: number; text: string }>((resolve, reject) => {
       const req = request(url, { method: 'POST', headers: { 'content-type': 'application/json' } }, (res) => {
         const chunks: Buffer[] = [];
         res.on('data', (c) => chunks.push(c)).on('end', () => resolve({ status: res.statusCode ?? 0, text: Buffer.concat(chunks).toString('utf8') }));
       });
-      aborts.add(req.destroy.bind(req));
+      abort = req.destroy.bind(req);
+      aborts.add(abort);
       req.on('error', reject).end(body);
-    });
+    }).finally(() => aborts.delete(abort));
+  };
 
   // The version is the request id, so a replay (a later batch, or a resubmit after restart) joins the existing run.
   async function submit(batch: string, doc: { id: string; name: string; version: string }): Promise<void> {
@@ -84,6 +87,7 @@ export function createRemarkableService(config: ServiceConfig) {
   }
 
   function track(batch: string, doc: { id: string; name: string; version: string }) {
+    if (stopped) return;
     const p = submit(batch, doc).finally(() => inflight.delete(p));
     inflight.add(p);
   }
