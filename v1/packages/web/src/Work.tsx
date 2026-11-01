@@ -3,7 +3,7 @@ import type { SealedArtifact } from './api.ts';
 import { Markdown } from './Markdown.tsx';
 
 const tab = (on: boolean) =>
-  `h-[28px] cursor-pointer rounded-full border-0 px-2.5 text-[12.5px] font-medium ${on ? 'bg-surface text-ink shadow-thumb' : 'bg-transparent text-muted hover:text-ink'}`;
+  `h-11 lg:h-[28px] cursor-pointer rounded-full border-0 px-2.5 text-[12.5px] font-medium ${on ? 'bg-surface text-ink shadow-thumb' : 'bg-transparent text-muted hover:text-ink'}`;
 
 function Pill({ met }: { met: number | null }) {
   const [text, tone] = met === null ? ['n/a', 'bg-soft text-muted'] : met >= 1 ? ['Pass', 'bg-success-bg text-success'] : ['Fail', 'bg-danger-bg text-danger'];

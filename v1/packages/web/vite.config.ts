@@ -8,6 +8,6 @@ const target = process.env.DISTRIBUTOR ?? 'http://127.0.0.1:8080';
 export default defineConfig({
   base: './',
   plugins: [react(), tailwindcss()],
-  server: { proxy: { '/sessions': { target, ws: true }, '/agents': target } },
+  server: { proxy: { '/sessions': { target, ws: true }, '/agents': target, '/index': target } },
   test: { environment: 'jsdom', setupFiles: ['./src/setup.ts'] },
 });

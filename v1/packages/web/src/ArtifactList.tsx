@@ -15,7 +15,7 @@ function Card({ a, title, now, onOpen }: { a: IndexArtifact; title: string; now:
           <span className="rounded-md bg-soft px-2 py-0.5 text-xs text-ink-2">{a.kind}</span>
           <span className={`ml-auto rounded-full px-2 py-0.5 text-[11px] font-semibold ${cls}`}>{label}</span>
         </span>
-        <span className="text-[15px] font-semibold leading-snug [overflow-wrap:anywhere]">{title}</span>
+        <span className="line-clamp-2 text-[15px] font-semibold leading-snug [overflow-wrap:anywhere]">{title}</span>
         <span className="flex justify-between gap-2 text-[13px] text-muted"><span>{`v${a.version}`}</span><time className="tabular-nums">{age(new Date(a.sealedAt).toISOString(), now)}</time></span>
       </button>
     </li>
