@@ -6,6 +6,7 @@ import { startLineup } from './lineup/jobs.ts';
 import { startFinder, startTrade, tradeParams } from './trades/jobs.ts';
 import { startTrends } from './trends/jobs.ts';
 import { historyParams, startHistory } from './history/jobs.ts';
+import { startDigest, startRetro } from './report/jobs.ts';
 import { startWaivers } from './waivers/jobs.ts';
 import { takeSnapshot } from './snapshot.ts';
 import { openStore } from './store.ts';
@@ -46,8 +47,8 @@ export function createSleeperService(config: ServiceConfig) {
   // GET /leagues/:id/snapshots[/latest|/YYYY-MM-DD] read the store; POST /leagues/:id/snapshots takes today's if it is missing.
   async function route(method: string, url: URL): Promise<[number, unknown]> {
     const path = url.pathname;
-    const job = /^\/leagues\/([^/]+)\/jobs\/(lineup|waivers|trends)$/.exec(path);
-    if (job) return startOnDemand({ lineup: startLineup, waivers: startWaivers, trends: startTrends }[job[2] as 'lineup'], method, safeDecode(job[1]), url.searchParams.get('week'));
+    const job = /^\/leagues\/([^/]+)\/jobs\/(lineup|waivers|trends|digest|retro)$/.exec(path);
+    if (job) return startOnDemand({ lineup: startLineup, waivers: startWaivers, trends: startTrends, digest: startDigest, retro: startRetro }[job[2] as 'lineup'], method, safeDecode(job[1]), url.searchParams.get('week'));
     const trade = /^\/leagues\/([^/]+)\/jobs\/(trade-finder|trade)$/.exec(path);
     if (trade) return startOnDemand(trade[2] === 'trade' ? startTrade : startFinder, method, safeDecode(trade[1]), url.searchParams.get('week'), trade[2] === 'trade' ? tradeParams(url.searchParams) : {});
     const history = /^\/leagues\/([^/]+)\/jobs\/history$/.exec(path);
@@ -63,7 +64,7 @@ export function createSleeperService(config: ServiceConfig) {
     return found ? [200, found] : [404, { error: 'no snapshot yet' }];
   }
 
-  // POST /leagues/:id/jobs/(lineup|waivers|trends)[?week=N] starts a job on demand (SL-2); the week defaults to Sleeper's current one.
+  // POST /leagues/:id/jobs/(lineup|waivers|trends|digest|retro)[?week=N] starts a job on demand (SL-2); the week defaults to Sleeper's current one.
   async function startOnDemand(start: (c: StartConfig, input: any) => ReturnType<typeof startLineup>, method: string, league: string | undefined, week: string | null, extra: object | string = {}): Promise<[number, unknown]> {
     if (league === undefined) return [400, { error: 'bad league id' }];
     if (method !== 'POST') return [405, { error: 'method not allowed' }];

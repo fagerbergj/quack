@@ -8,3 +8,4 @@ export * from './waivers/index.ts';
 export * from './trades/index.ts';
 export * from './trends/index.ts';
 export * from './history/index.ts';
+export * from './report/index.ts';

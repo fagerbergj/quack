@@ -1,0 +1,12 @@
+{
+  "name": "sleeper-retro",
+  "version": 1,
+  "status": "draft",
+  "model": "local/qwen3.8-27b",
+  "prompt": "prompt.md",
+  "extensions": {
+    "workflows": {
+      "workflow": "sleeper.retro"
+    }
+  }
+}

@@ -3,10 +3,10 @@ import type { JsonValue } from '@earendil-works/chord';
 import { defineExtension, defineTask, type Conversation, type ConversationId, type Extension, type Harness, type RunningTask, type TaskRuntime, type Tx } from '@earendil-works/pi-durable';
 import type { Dispatch, DispatchingExtension } from '@quack/session';
 import { answerDecision, pendingDecisions, WorkflowDoc, type StepRecord } from './doc.ts';
-import { execute, view, type Step, type StepContext } from './steps.ts';
+import { execute, view, Wait, type Step, type StepContext } from './steps.ts';
 
 export { answerDecision, pendingDecisions, WorkflowDoc, watchUntil, type AnswerResult, type OpenDecision, type StepRecord } from './doc.ts';
-export type { Step, StepContext } from './steps.ts';
+export { Wait, type Step, type StepContext } from './steps.ts';
 
 type Results = Record<string, JsonValue>;
 // The checkpoint is the results so far: committing a step's result and moving to the next phase are one write (WFL-2).
@@ -57,6 +57,8 @@ async function runStep(steps: Step[], i: number, running: RunningTask<Input, Che
       return { status: 'terminal', outcome: { status: 'failed', error: { message } } };
     }, ctx);
   }
+  // The phase reruns from its top at `until`, from the same checkpoint (pi-durable sleeps between phases, never inside one).
+  if (out.result instanceof Wait) return rt.sleepUntil(out.result.until, running.state.checkpoint, ctx);
   const results = { ...running.state.checkpoint.results, [step.name]: out.result };
   await rt.commit(async (tx) => {
     const s = await record(tx, rt.conversationId, step.name);

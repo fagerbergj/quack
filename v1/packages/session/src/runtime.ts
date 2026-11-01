@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { contentText, type MutableModels } from '@earendil-works/pi-ai';
-import { AssistantEntry, createRegistry, defineExtension, Harness, section, type Conversation, type Extension, type ReportInfo } from '@earendil-works/pi-durable';
+import { AssistantEntry, createRegistry, defineExtension, Harness, section, type Conversation, type Extension, type ReportInfo, type SetTimer } from '@earendil-works/pi-durable';
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -50,7 +50,7 @@ export function reportLine(error: unknown, info: ReportInfo): string | null {
 }
 
 // One process owns one session: its SQLite log is the only source of truth (A1, A6).
-export async function openSession(opts: { dir: string; models: MutableModels; agent: AgentSpec; timeZone?: string; now?: () => Date; retry?: Partial<typeof MODEL_RETRY>; log?: (line: string) => void }) {
+export async function openSession(opts: { dir: string; models: MutableModels; agent: AgentSpec; timeZone?: string; now?: () => Date; setTimer?: SetTimer; retry?: Partial<typeof MODEL_RETRY>; log?: (line: string) => void }) {
   const registry = createRegistry();
   registry.install(clockExtension(opts.timeZone ?? 'America/New_York', opts.now ?? (() => new Date())));
   for (const ext of opts.agent.extensions ?? []) registry.install(ext);
@@ -69,6 +69,9 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
     registry,
     env,
     onReport,
+    // A test drives sleeps on a fake clock: the Harness reads the same `now` and arms its timers through `setTimer`.
+    ...(opts.now && { now: () => +opts.now!() }),
+    ...(opts.setTimer && { setTimer: opts.setTimer }),
     // A failed run starts the inputs queued behind it instead of leaving them queued with nothing to run them.
     settings: { retry: { ...MODEL_RETRY, ...opts.retry }, afterFailedRun: 'continue' },
   }, ctx);

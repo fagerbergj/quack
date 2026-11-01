@@ -61,6 +61,22 @@ test('the shipped sleeper-waivers definition loads its prompt and binds the waiv
   assert.ok(agent.extensions!.some((e) => e.name === 'quack.workflows' && (e as { dispatch?: unknown }).dispatch));
 });
 
+test('the shipped sleeper-digest definition loads its prompt and binds the digest workflow', async () => {
+  process.env.QUACK_SLEEPER_URL = 'http://127.0.0.1:8092';
+  process.env.QUACK_SLEEPER_TOKEN = 'x';
+  const agent = await loadAgent(fileURLToPath(new URL('../../../agents/sleeper-digest/agent.json', import.meta.url)), deployment, catalog);
+  assert.match(agent.instructions!, /^You are the league reporter/);
+  assert.ok(agent.extensions!.some((e) => e.name === 'quack.workflows' && (e as { dispatch?: unknown }).dispatch));
+});
+
+test('the shipped sleeper-retro definition loads its prompt and binds the retro workflow', async () => {
+  process.env.QUACK_SLEEPER_URL = 'http://127.0.0.1:8092';
+  process.env.QUACK_SLEEPER_TOKEN = 'x';
+  const agent = await loadAgent(fileURLToPath(new URL('../../../agents/sleeper-retro/agent.json', import.meta.url)), deployment, catalog);
+  assert.match(agent.instructions!, /^You are the league reporter/);
+  assert.ok(agent.extensions!.some((e) => e.name === 'quack.workflows' && (e as { dispatch?: unknown }).dispatch));
+});
+
 test('the shipped sleeper-trends definition loads its prompt and binds the trends workflow', async () => {
   process.env.QUACK_SLEEPER_URL = 'http://127.0.0.1:8092';
   process.env.QUACK_SLEEPER_TOKEN = 'x';
