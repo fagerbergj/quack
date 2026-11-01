@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { loadAgent, parseDeployment } from '@quack/session';
 import { catalog } from '../src/catalog.ts';
+import { slotsFromEnv } from '@quack/slots';
 import { sessionEnv } from '../src/session-env.ts';
 
 const deployment = parseDeployment({
@@ -90,4 +91,12 @@ test('a reviewer session process inherits its own service token and nothing else
   const host = { PATH: '/bin', HOME: '/h', QUACK_GH_SERVICE_URL: 'u', QUACK_GH_SERVICE_TOKEN: 'gh', QUACK_EXA_API_KEY: 'exa', QUACK_INDEX_TOKEN: 'idx', QUACK_SLEEPER_TOKEN: 's', LANGFUSE_SECRET_KEY: 'l' };
   const env = sessionEnv(fileURLToPath(new URL('../../../agents/reviewer/agent.json', import.meta.url)), host);
   assert.deepEqual(Object.keys(env).sort(), ['HOME', 'PATH', 'QUACK_GH_SERVICE_TOKEN', 'QUACK_GH_SERVICE_URL']);
+});
+
+test('a session process inherits the deployment-level slots variables whatever its agent selects, and slotsFromEnv still sees them', () => {
+  const host = { PATH: '/bin', QUACK_SLOTS_URL: 'http://slots', QUACK_SLOTS_TOKEN: 'sl', QUACK_INDEX_TOKEN: 'idx' };
+  const env = sessionEnv(fileURLToPath(new URL('../../../agents/reviewer/agent.json', import.meta.url)), host);
+  assert.deepEqual(Object.keys(env).sort(), ['PATH', 'QUACK_SLOTS_TOKEN', 'QUACK_SLOTS_URL']);
+  assert.equal(slotsFromEnv(env).length, 1);
+  assert.equal(slotsFromEnv(sessionEnv(undefined, { PATH: '/bin' })).length, 0);
 });
