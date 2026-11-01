@@ -138,3 +138,11 @@ test('only a promoted agent can back the unattended trigger', async () => {
   await assert.rejects(assertPromoted(distributor, 'ghost'), /not registered/);
   await assert.rejects(assertPromoted('http://127.0.0.1:1', 'reviewer'), /cannot verify agent promotion/);
 });
+
+test('a redelivered event carries the original delivery id, so it is one submission', async () => {
+  invocations.length = 0;
+  const event = { action: 'labeled', label: { name: 'quack:review' }, pull_request: pr, repository };
+  assert.equal(await deliver('pull_request', event, { id: 'd-redo' }), 202);
+  assert.equal(await deliver('pull_request', event, { id: 'd-redo' }), 202);
+  assert.deepEqual(invocations.map((i) => i.body.requestId), ['github-delivery:d-redo', 'github-delivery:d-redo']);
+});

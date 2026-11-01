@@ -27,9 +27,9 @@ export function githubApp(config: AppConfig, fetchImpl: typeof fetch = fetch) {
       headers: { authorization: auth, accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', 'content-type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-    if (res.status === 404) return { status: 404, json: undefined };
+    if (res.status === 404) return { status: 404, json: undefined, link: '' };
     if (!res.ok) throw new Error(`github ${method} ${path}: ${res.status} ${(await res.text()).slice(0, 300)}`);
-    return { status: res.status, json: await res.json() };
+    return { status: res.status, json: await res.json(), link: res.headers.get('link') ?? '' };
   }
 
   async function installationFor(owner: string, repo: string): Promise<number> {
@@ -54,6 +54,10 @@ export function githubApp(config: AppConfig, fetchImpl: typeof fetch = fetch) {
 
   return {
     tokenFor,
+    /** Calls the REST API as the app itself (JWT), for endpoints such as webhook deliveries. */
+    async asApp(method: string, path: string) {
+      return call(method, path, `Bearer ${appJwt()}`);
+    },
     /** Calls the REST API as the installation that covers owner/repo. */
     async asInstallation(owner: string, repo: string, method: string, path: string, body?: unknown) {
       return call(method, path, `token ${await tokenFor(owner, repo)}`, body);
