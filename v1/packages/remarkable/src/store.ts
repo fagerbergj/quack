@@ -11,6 +11,7 @@ export function openStore(path: string, now: () => Date) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS batches (id TEXT PRIMARY KEY, created TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS batch_items (batch TEXT NOT NULL REFERENCES batches(id), document TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', version TEXT NOT NULL, status TEXT NOT NULL, error TEXT, PRIMARY KEY (batch, document));
+    CREATE TABLE IF NOT EXISTS topics (name TEXT PRIMARY KEY COLLATE NOCASE);
   `);
   const settle = db.prepare('UPDATE batch_items SET status = ?, error = ? WHERE batch = ? AND document = ?');
 
@@ -35,6 +36,9 @@ export function openStore(path: string, now: () => Date) {
       const status = items.some((i) => i.status === 'pending') ? 'pending' : items.some((i) => i.status === 'failed') ? 'failed' : 'done';
       return { ...b, status, items };
     },
+    /** The filing topics, oldest first; they outlive any session, so the ingest workflow reads them here. */
+    topics: () => (db.prepare('SELECT name FROM topics ORDER BY rowid').all() as Array<{ name: string }>).map((r) => r.name),
+    addTopic: (name: string) => void db.prepare('INSERT OR IGNORE INTO topics (name) VALUES (?)').run(name),
     close: () => db.close(),
   };
 }

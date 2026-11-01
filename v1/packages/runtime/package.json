@@ -10,6 +10,7 @@
     "@quack/github": "*",
     "@quack/index": "*",
     "@quack/judge": "*",
+    "@quack/remarkable": "*",
     "@quack/research": "*",
     "@quack/sdk": "*",
     "@quack/session": "*",

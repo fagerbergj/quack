@@ -5,6 +5,7 @@ import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { githubSessionExtensions, type GithubSessionConfig } from '@quack/github';
 import { researchSessionExtensions, type ResearchConfig } from '@quack/research';
 import { piPackage } from '@quack/sdk';
+import { INGEST_WORKFLOW, ingestFromEnv } from '@quack/remarkable';
 import { LINEUP_WORKFLOW, lineupFromEnv } from '@quack/sleeper';
 import type { Catalog } from '@quack/session';
 import { workflowSessionExtensions, type Workflow } from '@quack/workflows';
@@ -24,7 +25,10 @@ function lspConfig(config: unknown) {
 }
 
 // Workflows built from the environment, by the name an agent definition binds; one entry per job as they land.
-const WORKFLOWS: Record<string, () => Workflow> = { [LINEUP_WORKFLOW]: lineupFromEnv };
+const WORKFLOWS: Record<string, (config: unknown) => Workflow> = {
+  [LINEUP_WORKFLOW]: () => lineupFromEnv(),
+  [INGEST_WORKFLOW]: (config) => ingestFromEnv(config as Parameters<typeof ingestFromEnv>[0]),
+};
 
 // Extensions this runtime image carries, by the name agent definitions select them with (A8).
 export const catalog: Catalog = {
@@ -35,7 +39,7 @@ export const catalog: Catalog = {
   // An agent selecting this binds its submissions to the named workflow (WFL-1).
   workflows: (config) => {
     const name = (config as { workflow?: string })?.workflow ?? '';
-    return workflowSessionExtensions(config, name in WORKFLOWS ? { [name]: WORKFLOWS[name]() } : undefined);
+    return workflowSessionExtensions(config, name in WORKFLOWS ? { [name]: WORKFLOWS[name](config) } : undefined);
   },
   lsp: async (config) => {
     lspConfig(config);

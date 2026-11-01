@@ -12,7 +12,7 @@ export type ServiceConfig = {
   distributorUrl: string;
   /** The promoted agent that runs `remarkable.ingest`. */
   agent: string;
-  client: Pick<RmClient, 'tree' | 'documents'>;
+  client: Pick<RmClient, 'tree' | 'documents' | 'downloadPdf'>;
   now?: () => Date;
   /** Called after each document's answer is recorded; lets tests wait on it instead of polling. */
   onSettle?: (batch: string, document: string) => void;
@@ -105,10 +105,18 @@ export function createRemarkableService(config: ServiceConfig) {
     return [202, { batch }];
   }
 
+  async function addTopic(req: IncomingMessage): Promise<[number, unknown]> {
+    const name = String(((await readJson(req)) as { name?: unknown } | null)?.name ?? '').trim().replace(/\s+/g, ' ');
+    if (!name || name.length > 40) return [400, { error: 'name must be 1 to 40 characters' }];
+    store.addTopic(name);
+    return [200, { topics: store.topics() }];
+  }
+
   async function route(req: IncomingMessage): Promise<[number, unknown]> {
     const path = new URL(req.url ?? '', 'http://x').pathname;
     if (req.method === 'GET' && path === '/documents') return [200, { documents: await config.client.tree() }];
     if (req.method === 'POST' && path === '/ingest') return ingest(req);
+    if (path === '/topics') return req.method === 'POST' ? addTopic(req) : [200, { topics: store.topics() }];
     const m = req.method === 'GET' ? /^\/batches\/([^/]+)$/.exec(path) : null;
     if (m) {
       const batch = store.get(decodeURIComponent(m[1]));
@@ -120,6 +128,8 @@ export function createRemarkableService(config: ServiceConfig) {
   const server = createServer(async (req, res) => {
     if (!authorized(req, config.serviceToken)) return send(res, 401, { error: 'unauthorized' });
     try {
+      const pdf = req.method === 'GET' ? /^\/documents\/([^/]+)\/pdf$/.exec(new URL(req.url ?? '', 'http://x').pathname) : null;
+      if (pdf) return void res.writeHead(200, { 'content-type': 'application/pdf' }).end(await config.client.downloadPdf(decodeURIComponent(pdf[1])));
       send(res, ...(await route(req)));
     } catch (err) {
       const bad = err instanceof SyntaxError || err instanceof URIError || (err as Error).message === 'body too large';
