@@ -635,6 +635,13 @@ test('a card with no changes shows the calm banner, not the change summary', asy
   expect(await screen.findAllByText('No changes: your lineup stands')).toHaveLength(2);
 });
 
+test('a failed verdict with no failing check shows the judge tally', async () => {
+  const checks = [{ criterion: 'gates', id: 'a', met: 1, notes: [] }, { criterion: 'pitfalls', id: 'b', met: 1, notes: [] }, { criterion: 'x', id: 'c', met: null, notes: [] }];
+  await openSleeper([sealed(lineup(), { passed: false, gatesFailed: [], score: 0.7, checks })]);
+  const card = await screen.findByRole('article', { name: 'Week 8 lineup' });
+  expect(within(card).getByText('Judge: 2 of 2 checks passed')).toBeInTheDocument();
+});
+
 test('an unchecked card is labelled not checked', async () => {
   await openSleeper([sealed(lineup(), null)]);
   expect(await screen.findAllByText('v1 · not checked')).not.toHaveLength(0);
@@ -661,7 +668,8 @@ test('a refused Run now shows the reason', async () => {
   expect(await screen.findByRole('status')).toHaveTextContent('Could not start: not found');
 });
 
-test('without the Sleeper route the page says it is not set up', async () => {
+test('without the Sleeper route the page says it is not set up, whatever sessions exist', async () => {
+  routes['GET /sessions'] = { sessions: [sess('ui:u1'), sess('github:a/b#1')] };
   location.hash = '#/sleeper';
   render(<App />);
   expect(await screen.findByText('Sleeper is not set up on this server.')).toBeInTheDocument();

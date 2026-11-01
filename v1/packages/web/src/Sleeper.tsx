@@ -23,7 +23,9 @@ function parseCard(a: SealedArtifact | undefined): Card | undefined {
 
 /** The newest week's lineup session for this league, and its latest sealed card. */
 function useLineup(league: string | undefined, rows: Row[] | undefined, refresh: number) {
-  const session = rows?.filter((r) => LINEUP.exec(r.key)?.[1] === league).sort((a, b) => Number(LINEUP.exec(b.key)![2]) - Number(LINEUP.exec(a.key)![2]))[0];
+  const weekOf = (key: string) => Number(LINEUP.exec(key)?.[2] ?? -1);
+  // No league yet means no lineup session: a non-matching key must not pass for league `undefined`.
+  const session = league ? rows?.filter((r) => LINEUP.exec(r.key)?.[1] === league).sort((a, b) => weekOf(b.key) - weekOf(a.key))[0] : undefined;
   const [artifact, setArtifact] = useState<SealedArtifact>();
   const [error, setError] = useState('');
   const key = session?.key;
@@ -36,7 +38,7 @@ function useLineup(league: string | undefined, rows: Row[] | undefined, refresh:
   return { session, artifact, card: parseCard(artifact), error };
 }
 
-const verdictOf = (a: SealedArtifact | undefined) => (!a ? 'not run yet' : !a.verdict ? 'not checked' : a.verdict.passed ? 'checked' : 'checks failed');
+const verdictOf = (a: SealedArtifact) => (!a.verdict ? 'not checked' : a.verdict.passed ? 'checked' : 'checks failed');
 
 const label = (id: string) => id.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
 const missed = (a: SealedArtifact) => (a.verdict?.checks ?? []).filter((c) => c.met !== null && c.met < 1);
@@ -52,6 +54,7 @@ export function Verdict({ artifact, brief }: { artifact: SealedArtifact; brief?:
         <span aria-hidden="true" className={`grid h-4 w-4 flex-none place-items-center rounded-full text-[10px] ${tone}`}>{glyph}</span>
         <span className="font-medium text-ink-2">{brief ? verdictOf(artifact) : `v${artifact.version} · ${verdictOf(artifact)}`}</span>
       </div>
+      {!brief && v && !v.passed && failed.length === 0 && <p className="m-0 font-mono text-ink-2">{`Judge: ${v.checks.filter((c) => (c.met ?? 0) >= 1).length} of ${v.checks.filter((c) => c.met !== null).length} checks passed`}</p>}
       {failed.map((c) => (
         <details key={`${c.criterion}.${c.id}`} className="rounded-lg border border-danger-line bg-danger-bg/60 px-3 py-1.5">
           <summary title={`${c.criterion}.${c.id}`} className="flex min-h-11 cursor-pointer items-center break-words font-medium text-danger lg:min-h-6">{label(c.id)}</summary>
