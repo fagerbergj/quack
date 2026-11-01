@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { listArtifacts, type SealedArtifact } from './api.ts';
 
 // Checks that did not fully hold; a score under the threshold can fail a version with none listed.
-const failing = (a: SealedArtifact) => (a.verdict?.checks ?? []).filter((c) => c.met !== null && c.met < 1).map((c) => `${c.criterion}.${c.id}`);
+export const failing = (a: SealedArtifact) => (a.verdict?.checks ?? []).filter((c) => c.met !== null && c.met < 1).map((c) => `${c.criterion}.${c.id}`);
 
 function StatusIcon({ verdict }: { verdict: SealedArtifact['verdict'] }) {
   const [glyph, tone] = !verdict ? ['•', 'bg-soft text-muted'] : verdict.passed ? ['✓', 'bg-success-bg text-success'] : ['✗', 'bg-danger-bg text-danger'];
