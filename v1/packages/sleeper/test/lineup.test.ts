@@ -170,14 +170,14 @@ test('the workflow seals a lineup card from the recorded week and the judge pass
   assert.equal(card.starters.length, 9);
   assert.equal(card.starters.find((r) => r.slot === 'RB2')!.player.name, 'Dan Dash');
   assert.equal(card.starters.find((r) => r.slot === 'K')!.locked, true);
-  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed], ['sleeper.lineup@2', [], true]);
+  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed], ['sleeper.lineup@3', [], true]);
   assert.deepEqual(verdict.notes, ['close-call news not checked: no news source']);
   assert.ok(!verdict.checks.some((c) => c.id === 'close_call_news'));
   assert.ok(!judged.some((q) => /Questionable or limited-practice/.test(q)));
 });
 
 test('with a news source wired the close calls are scored for news', async () => {
-  const { judged, verdict } = await runLineup(async () => []);
+  const { judged, verdict } = await runLineup(async () => [{ title: 'Practice report', url: 'https://www.nfl.com/n', date: hoursAgo(5) }]);
   assert.deepEqual(verdict.notes, []);
   assert.ok(verdict.checks.some((c) => c.id === 'close_call_news'));
   assert.ok(judged.some((q) => /Questionable or limited-practice/.test(q)));
@@ -264,15 +264,17 @@ async function serve(handler: Parameters<typeof createServer>[1]) {
 
 // A fake Exa: records each request and answers every query with a fresh item, a stale one and an undated one.
 async function fakeExa() {
-  const seen: Array<{ key: unknown; body: { query: string; numResults: number; startPublishedDate: string } }> = [];
+  const seen: Array<{ key: unknown; body: { query: string; numResults: number; startPublishedDate: string; includeDomains: string[] } }> = [];
   const url = await serve((req, res) => {
     let raw = '';
     req.on('data', (c) => (raw += c)).on('end', () => {
       seen.push({ key: req.headers['x-api-key'], body: JSON.parse(raw) });
       res.writeHead(200).end(JSON.stringify({ results: [
-        { title: 'Practice report', url: 'https://example.org/fresh', publishedDate: hoursAgo(5) },
-        { title: 'Old news', url: 'https://example.org/stale', publishedDate: hoursAgo(73) },
-        { title: 'Undated', url: 'https://example.org/undated' },
+        { title: 'Practice report', url: 'https://www.nfl.com/news/fresh', publishedDate: hoursAgo(5) },
+        { title: 'Content farm', url: 'https://stannsw.org/news/fresh', publishedDate: hoursAgo(4) },
+        { title: 'Lookalike host', url: 'https://notnfl.com/news/fresh', publishedDate: hoursAgo(4) },
+        { title: 'Old news', url: 'https://www.espn.com/stale', publishedDate: hoursAgo(73) },
+        { title: 'Undated', url: 'https://www.espn.com/undated' },
       ] }));
     });
   });
@@ -287,9 +289,9 @@ test('close-call players get dated news inside 72 hours, and nobody else is sear
   assert.deepEqual(Object.keys(f.news).sort(), close);
   assert.ok(!('100' in f.news));
   assert.equal(exa.seen.length, close.length);
-  assert.ok(exa.seen.every((r) => r.key === 'k' && r.body.numResults === 3 && r.body.startPublishedDate === hoursAgo(72)));
+  assert.ok(exa.seen.every((r) => r.key === 'k' && r.body.numResults === 3 && r.body.startPublishedDate === hoursAgo(72) && r.body.includeDomains.includes('nfl.com')));
   assert.match(exa.seen.map((r) => r.body.query).join('\n'), /Rob Rowe/);
-  assert.deepEqual(f.news['102'], [{ title: 'Practice report', url: 'https://example.org/fresh', date: hoursAgo(5) }]);
+  assert.deepEqual(f.news['102'], [{ title: 'Practice report', url: 'https://www.nfl.com/news/fresh', date: hoursAgo(5) }]);
 });
 
 test('a failing search leaves a close call with no news rather than failing the lineup', async () => {
@@ -300,7 +302,30 @@ test('a failing search leaves a close call with no news rather than failing the 
 test('with Exa news wired the card is judged on close_call_news', async () => {
   const exa = await fakeExa();
   const { verdict, judged } = await runLineup(exaNews({ apiKey: 'k', url: exa.url }));
-  assert.deepEqual([verdict.rubric, verdict.notes], ['sleeper.lineup@2', []]);
+  assert.deepEqual([verdict.rubric, verdict.notes], ['sleeper.lineup@3', []]);
   assert.ok(verdict.checks.some((c) => c.id === 'close_call_news'));
   assert.ok(judged.some((q) => /Questionable or limited-practice/.test(q)));
+});
+
+const item = { title: 'Practice report', url: 'https://www.nfl.com/n', date: hoursAgo(5) };
+
+test('a row carries the news of its starter and of the player replaced, attached by code', async () => {
+  const f = { ...(await facts()), news: { '103': [item], '102': [{ ...item, url: 'https://www.espn.com/m' }], '101': [item] } };
+  const card = buildCard(f, decision);
+  assert.deepEqual(card.starters.find((r) => r.slot === 'RB2')!.news.map((n) => [n.player, n.url]), [['Dan Dash', item.url], ['Rob Rowe', 'https://www.espn.com/m']]);
+  assert.deepEqual(card.starters.find((r) => r.slot === 'RB1')!.news.map((n) => n.player), [f.players['101'].name]);
+});
+
+test('a row\'s judge evidence carries its news and each player\'s designation, and baseline-named is asked of changed rows only', async () => {
+  const f = { ...(await facts()), news: { '103': [item] } };
+  const card = buildCard(f, decision);
+  const ev = await lineupEvidence(f)(null, { content: JSON.stringify(card) });
+  const rb2 = ev.row.find((u) => u.id === 'RB2')!.state as unknown as { news: Array<{ url: string }>; designations: Record<string, string> };
+  assert.deepEqual(rb2.news.map((n) => n.url), [item.url]);
+  assert.deepEqual(rb2.designations, { 'Dan Dash': 'none', 'Rob Rowe': 'Questionable' });
+  assert.deepEqual(ev.close.map((u) => u.id), ['RB2']);
+  // The card agrees with the baseline everywhere, so no row is asked to name the baseline it beats.
+  assert.deepEqual(ev.differs, []);
+  const other = buildCard(f, { ...decision, slots: decision.slots.map((s) => (s.slot === 'RB2' ? { ...s, playerId: '101' } : s.slot === 'RB1' ? { ...s, playerId: '103' } : s)) });
+  assert.deepEqual((await lineupEvidence(f)(null, { content: JSON.stringify(other) })).differs, []);
 });
