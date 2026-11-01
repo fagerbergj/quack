@@ -72,7 +72,7 @@ export function lineupEvidence(f: Facts) {
 // The audit's lineup table (docs/v1/audits/sleeper.md), unreplayed: D45 asks for replay before any weight gates delivery.
 export const lineupRubric: Rubric = {
   name: 'sleeper.lineup',
-  version: 1,
+  version: 2,
   threshold: 0.8,
   criteria: [
     { id: 'legal_and_complete', checks: [
@@ -84,7 +84,7 @@ export const lineupRubric: Rubric = {
     ] },
     { id: 'calls_are_reasoned', checks: [
       { id: 'names_baseline_it_beats', weight: 3, scope: 'differs', question: 'This starter differs from the best-by-projection baseline for the slot. Does `why` name the baseline player and what changed the call?' },
-      { id: 'close_call_news', weight: 3, scope: 'close', question: 'This is a Questionable or limited-practice starter, or a bench player within the FLEX tie-break gap. Does `why` cite news that bears on the call?' },
+      { id: 'close_call_news', weight: 3, scope: 'close', question: 'This is a Questionable or limited-practice starter, or a bench player within the FLEX tie-break gap. Does `why` link a news item by its URL that bears on the call?' },
       { id: 'designation_weighted', weight: 3, scope: 'designated', question: 'Does the call treat an injury designation as a play rate, not as in or out?' },
       { id: 'picks_an_action', weight: 2, scope: 'row', question: 'Does the row start, sit or keep a player, rather than leave the slot open?' },
     ] },
