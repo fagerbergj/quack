@@ -52,6 +52,11 @@ async function proxyUpgrade(target: string, req: IncomingMessage, path: string, 
   client.on('error', end).on('close', end);
 }
 
+function errorStatus(err: unknown): number {
+  if (err instanceof AgentError) return err.status;
+  return err instanceof Error && err.message === 'body too large' ? 400 : 502;
+}
+
 export function createDistributor(driver: HostDriver, opts: { idleMs?: number } = {}) {
   const lastUse = new Map<string, number>();
   const stopping = new Map<string, Promise<void>>();
@@ -94,8 +99,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number } 
       res.writeHead(upstream.status, { 'content-type': upstream.headers.get('content-type') ?? 'application/json' });
       res.end(Buffer.from(await upstream.arrayBuffer()));
     } catch (err) {
-      const bad = err instanceof Error && err.message === 'body too large';
-      send(res, err instanceof AgentError ? err.status : bad ? 400 : 502, { error: err instanceof Error ? err.message : String(err) });
+      send(res, errorStatus(err), { error: err instanceof Error ? err.message : String(err) });
     }
   });
   server.on('upgrade', async (req, socket, head) => {
