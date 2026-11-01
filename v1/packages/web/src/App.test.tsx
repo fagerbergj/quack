@@ -314,7 +314,7 @@ test('the rail links every area and marks the current one', async () => {
   routes['GET /agents'] = { agents: [] };
   render(<App />);
   const rail = screen.getAllByRole('navigation', { name: 'Main' })[0];
-  expect(within(rail).getAllByRole('link').map((l) => l.getAttribute('href'))).toEqual(['#/', '#/inbox', '#/artifacts', '#/agents']);
+  expect(within(rail).getAllByRole('link').map((l) => l.getAttribute('href'))).toEqual(['#/', '#/inbox', '#/artifacts', '#/sleeper', '#/remarkable', '#/memory', '#/agents', '#/evals', '#/schedules']);
   expect(within(rail).getByRole('link', { name: 'Sessions' })).toHaveAttribute('aria-current', 'page');
   await userEvent.click(within(rail).getByRole('link', { name: 'Inbox' }));
   expect(await screen.findByRole('heading', { name: 'Inbox' })).toBeInTheDocument();
@@ -332,11 +332,13 @@ test('the theme toggle flips the document theme', async () => {
   routes['GET /sessions'] = { sessions: [] };
   routes['GET /agents'] = { agents: [] };
   document.documentElement.dataset.theme = 'light';
+  localStorage.clear();
   render(<App />);
-  const toggle = () => screen.getAllByRole('button', { name: 'Dark mode' })[0];
+  const toggle = () => screen.getAllByRole('button', { name: 'Day / night' })[0];
   expect(toggle()).toHaveAttribute('aria-pressed', 'false');
   await userEvent.click(toggle());
   expect(document.documentElement.dataset.theme).toBe('dark');
+  expect(localStorage.getItem('quack:theme')).toBe('dark');
   expect(toggle()).toHaveAttribute('aria-pressed', 'true');
   await userEvent.click(toggle());
   expect(document.documentElement.dataset.theme).toBe('light');

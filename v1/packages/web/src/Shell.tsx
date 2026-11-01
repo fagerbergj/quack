@@ -1,23 +1,42 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 
-export type Route = 'sessions' | 'inbox' | 'artifacts' | 'agents';
+export type Route = 'sessions' | 'inbox' | 'artifacts' | 'sleeper' | 'remarkable' | 'memory' | 'agents' | 'evals' | 'schedules';
 
-const ICONS: Record<Route | 'search', string> = {
+// Icon paths from the mockup's ICONS table.
+const ICONS: Record<Route | 'grid', string> = {
   sessions: 'M3 12h4l3 8 4-16 3 8h4',
   inbox: 'M3 13h5l2 3h4l2-3h5M5 5h14l2 8v6H3v-6z',
   artifacts: 'M14 3H6v18h12V7zM14 3v4h4M9 13h6M9 17h6',
+  sleeper: 'M8 4h8v5a4 4 0 0 1-8 0zM12 13v4M8 21h8M16 6h3v2a3 3 0 0 1-3 3M8 6H5v2a3 3 0 0 0 3 3',
+  remarkable: 'M4 20l4-1 11-11-3-3L5 16zM14 6l3 3',
+  memory: 'M6 3h12v18l-6-4-6 4z',
   agents: 'M4 8h16v11H4zM12 4v4M9 13h.01M15 13h.01',
-  search: '',
+  evals: 'M9 3h6M10 3v6l-5 9a2 2 0 0 0 2 3h10a2 2 0 0 0 2-3l-5-9V3',
+  schedules: 'M20 12a8 8 0 1 1-16 0 8 8 0 0 1 16 0zM12 8v4l3 2',
+  grid: 'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z',
 };
 
-export const NAV: { route: Route; label: string; href: string }[] = [
+type Item = { route: Route; label: string; href: string };
+export const MAIN: Item[] = [
   { route: 'sessions', label: 'Sessions', href: '#/' },
   { route: 'inbox', label: 'Inbox', href: '#/inbox' },
   { route: 'artifacts', label: 'Artifacts', href: '#/artifacts' },
-  { route: 'agents', label: 'Agents', href: '#/agents' },
 ];
+export const GROUPS: { title: string; items: Item[] }[] = [
+  { title: 'Apps', items: [
+    { route: 'sleeper', label: 'Sleeper', href: '#/sleeper' },
+    { route: 'remarkable', label: 'reMarkable', href: '#/remarkable' },
+    { route: 'memory', label: 'Memory', href: '#/memory' },
+  ] },
+  { title: 'Operate', items: [
+    { route: 'agents', label: 'Agents', href: '#/agents' },
+    { route: 'evals', label: 'Evals', href: '#/evals' },
+    { route: 'schedules', label: 'Schedules', href: '#/schedules' },
+  ] },
+];
+const MORE = GROUPS.flatMap((g) => g.items);
 
-function Icon({ route }: { route: Route }) {
+function Icon({ route }: { route: Route | 'grid' }) {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="flex-none">
       <path d={ICONS[route]} />
@@ -38,17 +57,33 @@ function Duck({ size, className = '' }: { size: number; className?: string }) {
   );
 }
 
-const readTheme = () => document.documentElement.dataset.theme ?? (globalThis.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+const THEME_KEY = 'quack:theme';
+
+function storedTheme() {
+  try {
+    return localStorage.getItem(THEME_KEY);
+  } catch {
+    return null;
+  }
+}
+
+const readTheme = () => document.documentElement.dataset.theme ?? storedTheme() ?? (globalThis.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 
 function ThemeToggle() {
   const [, rerender] = useState(0);
   const toggle = () => {
-    document.documentElement.dataset.theme = readTheme() === 'dark' ? 'light' : 'dark';
+    const next = readTheme() === 'dark' ? 'light' : 'dark';
+    document.documentElement.dataset.theme = next;
+    try {
+      localStorage.setItem(THEME_KEY, next);
+    } catch {
+      // Private mode or blocked storage: the choice just won't persist.
+    }
     rerender((n) => n + 1);
   };
   return (
     <button type="button" onClick={toggle} className="ml-auto cursor-pointer rounded-lg px-2 py-1 text-xs font-medium text-muted hover:bg-soft hover:text-ink" aria-pressed={readTheme() === 'dark'}>
-      Dark mode
+      Day / night
     </button>
   );
 }
@@ -57,7 +92,19 @@ const linkBase = 'navlink flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 tex
 const tabBase = 'tablink flex min-h-11 flex-col items-center justify-center gap-0.5 py-2 text-[11px] font-medium text-muted no-underline';
 
 export function Shell({ route, children }: { route: Route; children: ReactNode }) {
+  const [more, setMore] = useState(false);
   const cur = (r: Route) => (r === route ? ('page' as const) : undefined);
+  const link = (n: Item, cls: string) => (
+    <a key={n.route} href={n.href} aria-current={cur(n.route)} className={cls} onClick={() => setMore(false)}>
+      <Icon route={n.route} />
+      {n.label}
+    </a>
+  );
+  // A stored choice wins over the OS preference, which applies when nothing is stored.
+  useEffect(() => {
+    const t = storedTheme();
+    if (t) document.documentElement.dataset.theme = t;
+  }, []);
   return (
     <>
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-56 flex-col border-r border-line bg-canvas/90 backdrop-blur-md lg:flex">
@@ -66,12 +113,13 @@ export function Shell({ route, children }: { route: Route; children: ReactNode }
           <Duck size={30} className="bob" />
           quack
         </a>
-        <nav aria-label="Main" className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-3 pt-2 pb-4 text-[13.5px]">
-          {NAV.map((n) => (
-            <a key={n.route} href={n.href} aria-current={cur(n.route)} className={linkBase}>
-              <Icon route={n.route} />
-              {n.label}
-            </a>
+        <nav aria-label="Main" className="flex flex-1 flex-col gap-5 overflow-y-auto px-3 pt-2 pb-4 text-[13.5px]">
+          <div className="flex flex-col gap-0.5">{MAIN.map((n) => link(n, linkBase))}</div>
+          {GROUPS.map((g) => (
+            <div key={g.title} className="flex flex-col gap-0.5">
+              <p className="m-0 px-2.5 pb-1 text-[11px] font-semibold tracking-[0.06em] text-muted uppercase">{g.title}</p>
+              {g.items.map((n) => link(n, linkBase))}
+            </div>
           ))}
         </nav>
         <div className="flex items-center gap-2.5 border-t border-line px-5 py-3 text-[13px]">
@@ -85,13 +133,15 @@ export function Shell({ route, children }: { route: Route; children: ReactNode }
       </header>
       <main className="min-h-screen pb-24 lg:pb-10 lg:pl-56">{children}</main>
       <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-line bg-canvas/90 pb-[env(safe-area-inset-bottom,0px)] backdrop-blur-md lg:hidden">
-        {NAV.map((n) => (
-          <a key={n.route} href={n.href} aria-current={cur(n.route)} className={tabBase}>
-            <Icon route={n.route} />
-            {n.label}
-          </a>
-        ))}
+        {MAIN.map((n) => link(n, tabBase))}
+        <button type="button" aria-expanded={more} aria-controls="more-sheet" aria-current={MORE.some((n) => n.route === route) ? 'page' : undefined} onClick={() => setMore(!more)} className={`${tabBase} cursor-pointer border-0 bg-transparent`}>
+          <Icon route="grid" />
+          More
+        </button>
       </nav>
+      <div id="more-sheet" hidden={!more} className="fixed inset-x-3 bottom-[62px] z-30 rounded-[22px] border border-line bg-surface p-2 shadow-lift lg:hidden">
+        {MORE.map((n) => link(n, 'flex items-center gap-3 rounded-lg px-3 py-2.5 text-[14px] text-ink no-underline hover:bg-soft'))}
+      </div>
     </>
   );
 }
