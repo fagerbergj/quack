@@ -18,6 +18,10 @@ COPY packages/web/package.json packages/web/
 # typescript and typescript-language-server are dev dependencies the sessions run, so nothing is omitted.
 RUN --mount=type=cache,target=/root/.npm npm ci
 
+FROM deps AS web
+COPY packages/web packages/web
+RUN npm run build -w packages/web
+
 FROM node:26.13-trixie-slim
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=golang:1.27.3-trixie /usr/local/go /usr/local/go
@@ -26,4 +30,6 @@ ENV PATH=/usr/local/go/bin:/app/node_modules/.bin:$PATH
 WORKDIR /app
 COPY --from=deps /app/node_modules node_modules
 COPY . .
+COPY --from=web /app/packages/web/dist /app/web
+ENV QUACK_WEB_DIR=/app/web
 USER node
