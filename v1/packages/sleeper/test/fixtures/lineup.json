@@ -1,0 +1,72 @@
+{
+  "/v1/state/nfl": { "week": 9, "season": "2026", "season_type": "regular", "display_week": 9 },
+  "/v1/league/L1": {
+    "league_id": "L1",
+    "name": "Pond League",
+    "season": "2026",
+    "total_rosters": 2,
+    "roster_positions": ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "K", "DEF", "BN", "BN"],
+    "scoring_settings": { "rec": 1 }
+  },
+  "/v1/league/L1/users": [
+    { "user_id": "u1", "display_name": "mallard", "metadata": { "team_name": "Mallard Mayhem" } },
+    { "user_id": "u2", "display_name": "teal", "metadata": {} }
+  ],
+  "/v1/league/L1/rosters": [
+    { "roster_id": 1, "owner_id": "u1", "players": ["100", "101", "102", "103", "104", "105", "106", "107", "108", "109", "SEA"], "reserve": null, "taxi": null, "settings": { "wins": 5, "losses": 3 } },
+    { "roster_id": 2, "owner_id": "u2", "players": ["200", "201"], "reserve": null, "taxi": null, "settings": { "wins": 3, "losses": 5 } }
+  ],
+  "/v1/league/L1/matchups/9": [
+    { "roster_id": 1, "matchup_id": 1, "points": 0, "starters": ["100", "101", "102", "104", "105", "107", "106", "108", "SEA"], "players": ["100", "101", "102", "103", "104", "105", "106", "107", "108", "109", "SEA"] },
+    { "roster_id": 2, "matchup_id": 1, "points": 0, "starters": ["200", "201"], "players": ["200", "201"] }
+  ],
+  "/v1/players/nfl": {
+    "100": { "first_name": "Quinn", "last_name": "Quill", "team": "MIN", "position": "QB", "injury_status": null },
+    "101": { "first_name": "Ray", "last_name": "Rush", "team": "SF", "position": "RB", "injury_status": null },
+    "102": { "first_name": "Rob", "last_name": "Rowe", "team": "DAL", "position": "RB", "injury_status": "Questionable" },
+    "103": { "first_name": "Dan", "last_name": "Dash", "team": "DET", "position": "RB", "injury_status": null },
+    "104": { "first_name": "Will", "last_name": "Wing", "team": "MIN", "position": "WR", "injury_status": null },
+    "105": { "first_name": "Wes", "last_name": "West", "team": "SF", "position": "WR", "injury_status": null },
+    "106": { "first_name": "Walt", "last_name": "Wade", "team": "DET", "position": "WR", "injury_status": null },
+    "107": { "first_name": "Tom", "last_name": "Tate", "team": "KC", "position": "TE", "injury_status": null },
+    "108": { "first_name": "Kyle", "last_name": "Kick", "team": "BAL", "position": "K", "injury_status": null },
+    "109": { "first_name": "Kent", "last_name": "Kane", "team": "KC", "position": "K", "injury_status": null },
+    "SEA": { "first_name": "Seattle", "last_name": "Defense", "team": "SEA", "position": "DEF", "injury_status": null },
+    "200": { "first_name": "Opie", "last_name": "Opp", "team": "CHI", "position": "QB", "injury_status": null },
+    "201": { "first_name": "Olga", "last_name": "Opp", "team": "GB", "position": "WR", "injury_status": null }
+  },
+  "/v1/projections/nfl/regular/2026/9": {
+    "100": { "pts_ppr": 18.2 },
+    "101": { "pts_ppr": 15.4 },
+    "102": { "pts_ppr": 9.1 },
+    "103": { "pts_ppr": 11.0 },
+    "104": { "pts_ppr": 14.3 },
+    "105": { "pts_ppr": 12.8 },
+    "106": { "pts_ppr": 10.0 },
+    "107": { "pts_ppr": 8.5 },
+    "108": { "pts_ppr": 7.0 },
+    "109": { "pts_ppr": 8.2 },
+    "SEA": { "pts_ppr": 6.5 },
+    "200": { "pts_ppr": 16.0 },
+    "201": { "pts_ppr": 19.5 }
+  },
+  "/schedule/nfl/regular/2026": [
+    { "game_id": "g1", "week": 9, "status": "complete", "date": "2026-11-05", "home": "BAL", "away": "CIN" },
+    { "game_id": "g2", "week": 9, "status": "pre_game", "date": "2026-11-08", "home": "MIN", "away": "CHI" },
+    { "game_id": "g3", "week": 9, "status": "pre_game", "date": "2026-11-08", "home": "SF", "away": "ARI" },
+    { "game_id": "g4", "week": 9, "status": "pre_game", "date": "2026-11-08", "home": "DAL", "away": "PHI" },
+    { "game_id": "g5", "week": 9, "status": "pre_game", "date": "2026-11-08", "home": "GB", "away": "DET" },
+    { "game_id": "g6", "week": 9, "status": "pre_game", "date": "2026-11-08", "home": "KC", "away": "LV" },
+    { "game_id": "g7", "week": 9, "status": "pre_game", "date": "2026-11-08", "home": "LAR", "away": "SEA" },
+    { "game_id": "g0", "week": 8, "status": "complete", "date": "2026-11-01", "home": "MIN", "away": "SEA" }
+  ],
+  "/scores/nfl/regular/2026/9": [
+    { "game_id": "g1", "week": 9, "start_time": 1793927700000, "metadata": { "status": "closed", "stadium_details": { "name": "M&T Bank Stadium", "type": "outdoor" } } },
+    { "game_id": "g2", "week": 9, "start_time": 1794160800000, "metadata": { "status": "scheduled" } },
+    { "game_id": "g3", "week": 9, "start_time": 1794171600000, "metadata": { "status": "scheduled" } },
+    { "game_id": "g4", "week": 9, "start_time": 1794171600000, "metadata": { "status": "scheduled" } },
+    { "game_id": "g5", "week": 9, "start_time": 1794160800000, "metadata": { "status": "scheduled" } },
+    { "game_id": "g6", "week": 9, "start_time": 1794171600000, "metadata": { "status": "scheduled" } },
+    { "game_id": "g7", "week": 9, "start_time": 1794172500000, "metadata": { "status": "scheduled" } }
+  ]
+}

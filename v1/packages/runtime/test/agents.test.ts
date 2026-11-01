@@ -26,3 +26,11 @@ test('the shipped researcher definition loads with the research tools and the re
   const tools = agent.extensions!.flatMap((e) => (e.tools ?? []).map((t) => t.name));
   for (const name of ['web_search', 'web_fetch', 'submit_report', 'write']) assert.ok(tools.includes(name), `${name} in ${tools.join(', ')}`);
 });
+
+test('the shipped sleeper-lineup definition loads its prompt and binds the lineup workflow', async () => {
+  process.env.QUACK_SLEEPER_URL = 'http://127.0.0.1:8092';
+  process.env.QUACK_SLEEPER_TOKEN = 'x';
+  const agent = await loadAgent(fileURLToPath(new URL('../../../agents/sleeper-lineup/agent.json', import.meta.url)), deployment, catalog);
+  assert.match(agent.instructions!, /^You are the lineup analyst/);
+  assert.ok(agent.extensions!.some((e) => e.name === 'quack.workflows' && (e as { dispatch?: unknown }).dispatch));
+});

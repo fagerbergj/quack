@@ -42,11 +42,12 @@ function parseObject(text: string): unknown {
 }
 
 async function modelStep(step: Extract<Step, { kind: 'model' }>, c: StepContext): Promise<StepOutcome> {
-  const ref = step.model ?? (await c.api.agent(c.ctx)).model;
+  const agent = await c.api.agent(c.ctx);
+  const ref = step.model ?? agent.model;
   const model = ref && c.api.models.getModel(ref.provider, ref.modelId);
   if (!model) throw new Error(`step ${step.name}: model is not available`);
   const ask = `${step.prompt(c)}\n\nAnswer with one JSON object matching this schema and nothing else:\n${JSON.stringify(step.schema)}`;
-  const reply = await c.api.models.completeSimple(model, { messages: [{ role: 'user', content: ask, timestamp: c.api.now() }] }, { signal: c.signal });
+  const reply = await c.api.models.completeSimple(model, { systemPrompt: agent.instructions ?? undefined, messages: [{ role: 'user', content: ask, timestamp: c.api.now() }] }, { signal: c.signal });
   const cost = reply.usage?.cost?.total ?? 0;
   try {
     const args = validateToolArguments({ name: step.name, description: step.name, parameters: step.schema }, { type: 'toolCall', id: step.name, name: step.name, arguments: parseObject(contentText(reply.content)) as never });

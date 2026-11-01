@@ -8,7 +8,13 @@
   "scripts": {
     "start": "node src/main.ts"
   },
+  "dependencies": {
+    "@quack/judge": "*",
+    "@quack/sdk": "*",
+    "@quack/workflows": "*"
+  },
   "devDependencies": {
-    "@quack/schedules": "*"
+    "@quack/schedules": "*",
+    "@quack/session": "*"
   }
 }
