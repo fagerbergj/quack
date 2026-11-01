@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { contentText, type MutableModels } from '@earendil-works/pi-ai';
-import { AssistantEntry, createRegistry, Harness, watchEvents, type Extension } from '@earendil-works/pi-durable';
+import { AssistantEntry, createRegistry, defineExtension, Harness, section, watchEvents, type Extension } from '@earendil-works/pi-durable';
 import { NodeExecutionEnv } from '@earendil-works/pi-durable/env/node';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { mkdir } from 'node:fs/promises';
@@ -22,9 +22,22 @@ export type SubmitResult =
   | { submissionId: string; status: 'done'; answer: string }
   | { submissionId: string; status: 'unanswered'; reason: string; detail?: string };
 
+/** The date line of every run's system prompt; a section is resent only when its text changes, so it costs one entry per day. */
+export const clockExtension = (timeZone: string, now: () => Date) =>
+  defineExtension({
+    name: 'clock',
+    sections: [section('date', () => `Today is ${formatDate(now(), timeZone)} (${timeZone}).`, { tag: false })],
+  });
+
+function formatDate(d: Date, timeZone: string): string {
+  const part = (type: string) => new Intl.DateTimeFormat('en-US', { timeZone, [type]: type === 'year' ? 'numeric' : type === 'weekday' ? 'long' : '2-digit' }).formatToParts(d).find((p) => p.type === type)!.value;
+  return `${part('weekday')}, ${part('year')}-${part('month')}-${part('day')}`;
+}
+
 // One process owns one session: its SQLite log is the only source of truth (A1, A6).
-export async function openSession(opts: { dir: string; models: MutableModels; agent: AgentSpec }) {
+export async function openSession(opts: { dir: string; models: MutableModels; agent: AgentSpec; timeZone?: string; now?: () => Date }) {
   const registry = createRegistry();
+  registry.install(clockExtension(opts.timeZone ?? 'America/New_York', opts.now ?? (() => new Date())));
   for (const ext of opts.agent.extensions ?? []) registry.install(ext);
   const storage = await openNodeSqliteStorage(join(opts.dir, 'session.sqlite'));
   // The session's workspace lives beside its log on the same volume, so both move and expire together (RUN-2).

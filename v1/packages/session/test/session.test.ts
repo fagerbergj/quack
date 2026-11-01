@@ -8,6 +8,8 @@ import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-work
 import { createSessionServer, openSession } from '../src/index.ts';
 
 const dir = await mkdtemp(join(tmpdir(), 'quack-session-'));
+const clockDir = await mkdtemp(join(tmpdir(), 'quack-clock-'));
+after(() => rm(clockDir, { recursive: true, force: true }));
 after(() => rm(dir, { recursive: true, force: true }));
 
 function fakeModels(...answers: string[]) {
@@ -52,4 +54,24 @@ test('answers over the container contract and survives a restart', async () => {
   assert.equal(retried.submissionId, answered.body.submissionId);
   assert.equal(retried.status, 'done');
   await second.close();
+});
+
+test('every run sees the date in the deployment zone, and a run resumed on a later day sees that day', async () => {
+  const seen: string[] = [];
+  const open = (now: string) => {
+    const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
+    faux.setResponses([(ctx) => (seen.push(JSON.stringify(ctx.messages)), fauxAssistantMessage('ok'))]);
+    const models = createModels();
+    models.setProvider(faux.provider);
+    const model = faux.getModel();
+    return openSession({ dir: clockDir, models, agent: { model: { provider: model.provider, modelId: model.id } }, timeZone: 'Asia/Tokyo', now: () => new Date(now) });
+  };
+  const first = await open('2026-11-01T20:00:00Z');
+  await first.submit('hi', 'd-1', true);
+  await first.close();
+  const second = await open('2026-11-03T01:00:00Z');
+  await second.submit('again', 'd-2', true);
+  await second.close();
+  assert.match(seen[0], /Today is Monday, 2026-11-02 \(Asia\/Tokyo\)\./);
+  assert.match(seen[1], /Today is Tuesday, 2026-11-03 \(Asia\/Tokyo\)\./);
 });

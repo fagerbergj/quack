@@ -68,3 +68,7 @@ test('a definition loads its prompt file, and a reopened session takes the new p
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('rejects an unknown deployment time zone', () => {
+  assert.throws(() => parseDeployment({ providers: {}, timeZone: 'Mars/Olympus' }), /timeZone must be an IANA zone/);
+});
