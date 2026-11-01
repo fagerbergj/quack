@@ -9,6 +9,8 @@ export type StepRecord = {
   startedAt: number | null;
   durationMs: number | null;
   cost: number;
+  /** Set by steps that work through units (pages); absent on records written before it existed. */
+  progress?: { done: number; total: number } | null;
   error: string | null;
   /** A decision step's open question; the answer is written by `answerDecision`. */
   ask: { question: string; options: string[] } | null;

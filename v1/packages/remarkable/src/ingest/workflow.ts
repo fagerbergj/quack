@@ -55,27 +55,54 @@ async function must<T>(read: Promise<{ ok: true; value: T } | { ok: false; error
   return r.value;
 }
 
-async function transcribe(c: StepContext, deps: IngestDeps): Promise<JsonValue> {
+// A page that still fails after this many tries is recorded as not transcribed and the document carries on.
+const PAGE_ATTEMPTS = 3;
+
+async function transcribePage(c: StepContext, deps: IngestDeps, n: number, count: number): Promise<string> {
   const agent = await c.api.agent(c.ctx);
   const ref = deps.visionModel ?? agent.model;
   const model = ref && c.api.models.getModel(ref.provider, ref.modelId);
-  if (!model) throw new Error('step transcribe: the vision model is not available');
+  if (!model) throw new Error('the vision model is not available');
+  const data = Buffer.from(await must(c.api.env!.readBinaryFile(pageFile(n), c.ctx), pageFile(n))).toString('base64');
+  const content = [{ type: 'text' as const, text: `Page ${n} of ${count}.` }, { type: 'image' as const, data, mimeType: 'image/jpeg' }];
+  const reply = await c.api.models.completeSimple(model, { systemPrompt: agent.instructions ?? undefined, messages: [{ role: 'user', content, timestamp: c.api.now() }] }, { signal: c.signal });
+  // The vision call bypasses pi's usage tracking, so its spend lands on the step's cost.
+  await c.report({ cost: reply.usage?.cost?.total ?? 0 });
+  const page = contentText(reply.content).trim();
+  if (!page) throw new Error('the model returned an empty page');
+  return page;
+}
+
+// Success and failure are both memoized: a restart resumes at the next page and never retries a page already given up on.
+async function settle(c: StepContext, deps: IngestDeps, n: number, count: number): Promise<{ text: string; failed: boolean }> {
+  const done = await c.api.memo<string>(`transcribe:${n}`, c.ctx);
+  if (done !== undefined) return { text: done, failed: false };
+  const gaveUp = await c.api.memo<string>(`transcribe-failed:${n}`, c.ctx);
+  if (gaveUp !== undefined) return { text: gaveUp, failed: true };
+  let reason = '';
+  for (let attempt = 0; attempt < PAGE_ATTEMPTS; attempt++) {
+    try {
+      return { text: await c.api.memo<string>(`transcribe:${n}`, await transcribePage(c, deps, n, count), c.ctx), failed: false };
+    } catch (err) {
+      // A close or abort interrupts the step; it resumes rather than counting against the page.
+      if (c.signal.aborted) throw err;
+      reason = err instanceof Error ? err.message : String(err);
+    }
+  }
+  return { text: await c.api.memo<string>(`transcribe-failed:${n}`, `not transcribed: ${reason}`, c.ctx), failed: true };
+}
+
+async function transcribe(c: StepContext, deps: IngestDeps): Promise<JsonValue> {
   const count = step<{ pages: number }>(c, 'render').pages;
   const pages: string[] = [];
+  let failures = 0;
   for (let n = 1; n <= count; n++) {
-    // Memoized per page, so a crash resumes at the next page instead of re-reading finished ones.
-    const done = await c.api.memo<string>(`transcribe:${n}`, c.ctx);
-    if (done !== undefined) {
-      pages.push(done);
-      continue;
-    }
-    const data = Buffer.from(await must(c.api.env!.readBinaryFile(pageFile(n), c.ctx), pageFile(n))).toString('base64');
-    const content = [{ type: 'text' as const, text: `Page ${n} of ${count}.` }, { type: 'image' as const, data, mimeType: 'image/jpeg' }];
-    const reply = await c.api.models.completeSimple(model, { systemPrompt: agent.instructions ?? undefined, messages: [{ role: 'user', content, timestamp: c.api.now() }] }, { signal: c.signal });
-    const page = contentText(reply.content).trim();
-    if (!page) throw new Error(`step transcribe: page ${n} came back empty`);
-    pages.push(await c.api.memo<string>(`transcribe:${n}`, page, c.ctx));
+    const page = await settle(c, deps, n, count);
+    pages.push(page.text);
+    failures += page.failed ? 1 : 0;
+    await c.report({ progress: { done: n, total: count } });
   }
+  if (failures === count) throw new Error(`step transcribe: no page could be transcribed; ${pages[0]}`);
   return pages;
 }
 
