@@ -104,6 +104,30 @@ test('a card with no changes passes the summary gate only when it says so', asyn
   assert.equal((await gate('summary_names_changes', f, { ...keep, summary: 'All set.' })).met, 0);
 });
 
+const swapIn = (f: Facts, pairs: Record<string, string>) =>
+  buildCard(f, { slots: decision.slots.map((s) => ({ ...s, playerId: pairs[s.slot] ?? f.current[s.slot] ?? s.playerId })), summary: 'Start Wade over Rowe at WR2.' });
+const changes = (c: LineupCard) => c.starters.filter((r) => r.action === 'start').map((r) => [r.slot, r.player.id, r.replaces?.id]);
+
+test('a WR2/FLEX permutation of the same starters is all keeps with no changes', async () => {
+  const f = await facts();
+  const card = swapIn(f, { WR2: f.current.FLEX!, FLEX: f.current.WR2! });
+  assert.deepEqual(changes(card), []);
+  assert.equal(card.summary, 'No changes: the lineup stands.');
+  assert.equal((await gate('summary_names_changes', f, card)).met, 1);
+});
+
+test('one real swap shows one changed row replacing the benched player', async () => {
+  const f = await facts();
+  const card = swapIn(f, { RB2: '103' });
+  assert.deepEqual(changes(card), [['RB2', '103', f.current.RB2]]);
+});
+
+test('a rotation that also starts a bench player shows one change', async () => {
+  const f = await facts();
+  const card = swapIn(f, { WR1: f.current.WR2!, WR2: f.current.FLEX!, FLEX: f.current.WR1!, RB2: '103' });
+  assert.deepEqual(changes(card), [['RB2', '103', f.current.RB2]]);
+});
+
 test('every_slot_decided fails a card with no FLEX', async () => {
   const { f, card } = await goodCard();
   const r = await gate('every_slot_decided', f, { ...card, starters: card.starters.filter((s) => s.slot !== 'FLEX') });
