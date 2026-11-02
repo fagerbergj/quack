@@ -129,6 +129,8 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
   const active = new Map<string, boolean>();
   const notes = new Map<string, string>();
   const wakeTimers = new Map<string, () => void>();
+  // Sessions whose busy marker (a wake time of "now") is on disk; written by the sweep so a crash still restarts them.
+  const marked = new Set<string>();
   let draining = false;
   const idleMs = opts.idleMs ?? 10 * 60_000;
   const idle = (key: string) => !holds.get(key) && now() - (lastUse.get(key) ?? 0) >= idleMs;
@@ -170,11 +172,20 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
   async function stopSession(key: string, at: number | undefined) {
     active.delete(key);
     notes.delete(key);
+    marked.delete(key);
     const stop = driver.stop(key).finally(() => stopping.delete(key));
     stopping.set(key, stop);
     await driver.setWake(key, at);
     arm(key, at);
     await stop;
+  }
+
+  // Busy sessions are recorded as due now, like wake timers, so a restart resumes them; once idle the record reverts to the session's own sleep.
+  async function mark(key: string, busy: boolean, sleepAt: number | undefined) {
+    if (busy && !marked.has(key)) {
+      marked.add(key);
+      await driver.setWake(key, now());
+    } else if (!busy && marked.delete(key)) await driver.setWake(key, sleepAt);
   }
 
   async function sweepOnce() {
@@ -185,6 +196,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
         active.set(key, status === 'HealthyBusy' || Boolean(waitingOnHuman));
         // A run with no log messages (a workflow) still counts as activity while it works.
         if (status === 'HealthyBusy') await driver.touch(key, now());
+        await mark(key, status === 'HealthyBusy', wake?.at);
         if (!idle(key)) continue;
         // Re-checked after the ping, and requests wait out a stop in flight, so none reaches a dying process.
         if (status !== 'Healthy' || !idle(key)) continue;
@@ -206,7 +218,8 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
   async function drain() {
     draining = true;
     const wakeFor = (p: Ping) => (p.status === 'HealthyBusy' ? now() : p.wake?.at);
-    await Promise.all(driver.running().map(async (key) => stopSession(key, await ping(key).then(wakeFor, () => undefined))));
+    // A session that cannot answer keeps the marker its last sweep wrote.
+    await Promise.all(driver.running().map(async (key) => stopSession(key, await ping(key).then(wakeFor, () => (marked.has(key) ? now() : undefined)))));
   }
 
   // A list view polls approvals, so reading them must not keep a session warm or start an idle one;
