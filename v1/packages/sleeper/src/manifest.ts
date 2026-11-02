@@ -1,4 +1,5 @@
 import type { ExtensionManifest } from '@quack/sdk';
+import { withChat } from './chat.ts';
 import { HISTORY_WORKFLOW, historyFromEnv } from './history/index.ts';
 import { LINEUP_WORKFLOW, lineupFromEnv } from './lineup/index.ts';
 import { DIGEST_WORKFLOW, digestFromEnv, RETRO_WORKFLOW, retroFromEnv } from './report/index.ts';
@@ -13,13 +14,13 @@ export const manifest: ExtensionManifest = {
   name: 'sleeper',
   evalAdapters: [waiversEvalAdapter],
   workflows: {
-    [LINEUP_WORKFLOW]: { build: () => lineupFromEnv(), env },
-    [WAIVERS_WORKFLOW]: { build: () => waiversFromEnv(), env },
-    [FINDER_WORKFLOW]: { build: () => finderFromEnv(), env },
-    [TRADE_WORKFLOW]: { build: () => tradeFromEnv(), env },
-    [TRENDS_WORKFLOW]: { build: () => trendsFromEnv(), env },
-    [HISTORY_WORKFLOW]: { build: () => historyFromEnv(), env },
-    [DIGEST_WORKFLOW]: { build: () => digestFromEnv(), env },
-    [RETRO_WORKFLOW]: { build: () => retroFromEnv(), env },
+    [LINEUP_WORKFLOW]: { build: () => withChat(lineupFromEnv()), env },
+    [WAIVERS_WORKFLOW]: { build: () => withChat(waiversFromEnv()), env },
+    [FINDER_WORKFLOW]: { build: () => withChat(finderFromEnv()), env },
+    [TRADE_WORKFLOW]: { build: () => withChat(tradeFromEnv()), env },
+    [TRENDS_WORKFLOW]: { build: () => withChat(trendsFromEnv()), env },
+    [HISTORY_WORKFLOW]: { build: () => withChat(historyFromEnv()), env },
+    [DIGEST_WORKFLOW]: { build: () => withChat(digestFromEnv()), env },
+    [RETRO_WORKFLOW]: { build: () => withChat(retroFromEnv()), env },
   },
 };

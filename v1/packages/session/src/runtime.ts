@@ -35,8 +35,8 @@ function formatDate(d: Date, timeZone: string): string {
   return `${part('weekday')}, ${part('year')}-${part('month')}-${part('day')}`;
 }
 
-/** An extension that takes over submissions in place of the agent loop, such as a bound workflow. */
-export type Dispatch = (session: { harness: Harness; root: Conversation }, input: string, requestId: string | undefined, wait: boolean) => Promise<SubmitResult>;
+/** An extension that takes over submissions in place of the agent loop, such as a bound workflow; undefined leaves one to the loop. */
+export type Dispatch = (session: { harness: Harness; root: Conversation }, input: string, requestId: string | undefined, wait: boolean) => Promise<SubmitResult | undefined>;
 /** Reruns the session's failed run from where it stopped; null when nothing failed. */
 export type Resume = (session: { harness: Harness; root: Conversation }) => Promise<SubmitResult | null>;
 export type DispatchingExtension = Extension & { dispatch?: Dispatch; resume?: Resume };
@@ -153,7 +153,8 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
       return true;
     },
     async submit(input: string, requestId?: string, wait = false, whenBusy?: 'steer' | 'followUp'): Promise<SubmitResult> {
-      if (dispatch) return dispatch({ harness, root }, input, requestId, wait);
+      const taken = await dispatch?.({ harness, root }, input, requestId, wait);
+      if (taken) return taken;
       const submission = await root.submit({ type: 'input', content: input, requestId, whenBusy }, ctx);
       const record = wait ? await submission.wait(ctx) : await submission.status(ctx);
       const submissionId = String(record.id);
