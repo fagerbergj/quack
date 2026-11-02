@@ -32,11 +32,11 @@ export const GROUPS: { title: string; items: Item[] }[] = [
     { route: 'schedules', label: 'Schedules', href: '#/schedules' },
   ] },
 ];
-const TITLES = Object.fromEntries([...MAIN, ...GROUPS.flatMap((g) => g.items)].map((n) => [n.route, n.label])) as Record<Route, string>;
+const TITLES = Object.fromEntries([{ route: 'more', label: 'More' }, ...MAIN, ...GROUPS.flatMap((g) => g.items)].map((n) => [n.route, n.label])) as Record<Route, string>;
 const NAV_ICONS = Object.fromEntries(EXTENSIONS.flatMap((e) => e.nav ?? []).map((n) => [n.route, n.icon]));
-const MORE = GROUPS.flatMap((g) => g.items);
+export const MORE = GROUPS.flatMap((g) => g.items);
 
-function Icon({ route }: { route: Route }) {
+export function Icon({ route }: { route: Route }) {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="flex-none">
       <path d={ICONS[route] ?? NAV_ICONS[route]} />
@@ -69,7 +69,7 @@ function storedTheme() {
 
 const readTheme = () => document.documentElement.dataset.theme ?? storedTheme() ?? (globalThis.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 
-function ThemeToggle({ className }: { className: string }) {
+export function ThemeToggle({ className }: { className: string }) {
   const [, rerender] = useState(0);
   const toggle = () => {
     const next = readTheme() === 'dark' ? 'light' : 'dark';
@@ -94,10 +94,9 @@ const tabBase = 'tablink flex min-h-11 flex-col items-center justify-center gap-
 // `bare` drops the phone title bar for a screen that draws its own.
 // `sidebar` is the session list; it fills the desktop sidebar under a fixed nav and scrolls on its own.
 export function Shell({ route, bare, sidebar, children }: { route: Route; bare?: boolean; sidebar?: ReactNode; children: ReactNode }) {
-  const [more, setMore] = useState(false);
   const cur = (r: Route) => (r === route ? ('page' as const) : undefined);
   const link = (n: Item, cls: string) => (
-    <a key={n.route} href={n.href} aria-current={cur(n.route)} className={cls} onClick={() => setMore(false)}>
+    <a key={n.route} href={n.href} aria-current={cur(n.route)} className={cls}>
       <Icon route={n.route} />
       {n.label}
     </a>
@@ -143,15 +142,11 @@ export function Shell({ route, bare, sidebar, children }: { route: Route; bare?:
       <main className="min-h-screen pb-24 lg:pb-0 lg:pl-72">{children}</main>
       <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-line bg-canvas/90 pb-[env(safe-area-inset-bottom,0px)] backdrop-blur-md lg:hidden">
         {MAIN.map((n) => link(n, tabBase))}
-        <button type="button" aria-expanded={more} aria-controls="more-sheet" aria-current={MORE.some((n) => n.route === route) ? 'page' : undefined} onClick={() => setMore(!more)} className={`${tabBase} cursor-pointer border-0 bg-transparent`}>
+        <a href="#/more" aria-current={route === 'more' || MORE.some((n) => n.route === route) ? 'page' : undefined} className={tabBase}>
           <Icon route="grid" />
           More
-        </button>
+        </a>
       </nav>
-      <div id="more-sheet" hidden={!more} className="fixed inset-x-3 bottom-[calc(62px+env(safe-area-inset-bottom,0px))] z-30 rounded-[22px] border border-line bg-surface p-2 shadow-lift lg:hidden">
-        {MORE.map((n) => link(n, 'flex min-h-11 items-center gap-3 rounded-lg px-3 text-[14px] text-ink no-underline hover:bg-soft'))}
-        <ThemeToggle className="w-full gap-3 px-3 text-[14px]" />
-      </div>
     </>
   );
 }

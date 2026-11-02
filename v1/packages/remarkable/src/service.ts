@@ -1,7 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import { request } from 'node:http';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import type { RmClient } from './client.ts';
+import type { RmClient, RmEntry } from './client.ts';
 import { openStore } from './store.ts';
 
 export type ServiceConfig = {
@@ -116,7 +116,24 @@ export function createRemarkableService(config: ServiceConfig) {
     inflight.add(p);
   }
 
-  async function ingest(req: IncomingMessage): Promise<[number, unknown]> {
+  // A notebook's ingest state for the page: never ingested, edited since, still running, failed, or current.
+  function stateOf(d: RmEntry) {
+    const n = store.newest(d.id);
+    if (!n) return { state: 'new' };
+    if (n.version !== d.version) return { state: 'changed' };
+    if (n.status === 'failed') return { state: 'failed', ...(n.error ? { error: n.error } : {}) };
+    return { state: n.status === 'pending' ? 'ingesting' : 'current' };
+  }
+  const withState = (es: RmEntry[]): unknown[] => es.map((e) => (e.folder ? { ...e, children: withState(e.children ?? []) } : { ...e, ...stateOf(e) }));
+
+  // What the page reaches through the distributor's app proxy: the tree with ingest states, and ingest (failed ones retry on their own).
+  async function pageRoute(req: IncomingMessage, path: string): Promise<[number, unknown]> {
+    if (req.method === 'GET' && path === '/apps/remarkable') return [200, { tree: withState(await config.client.tree()) }];
+    if (req.method === 'POST' && path === '/apps/remarkable/ingest') return ingest(req, true);
+    return [404, { error: 'not found' }];
+  }
+
+  async function ingest(req: IncomingMessage, auto = false): Promise<[number, unknown]> {
     const body = (await readJson(req)) as { ids?: unknown; retry?: unknown } | null;
     const ids = body?.ids;
     if (!Array.isArray(ids) || ids.length === 0 || !ids.every((i) => typeof i === 'string' && i.length > 0)) return [400, { error: 'ids must be a non-empty array of document ids' }];
@@ -128,7 +145,7 @@ export function createRemarkableService(config: ServiceConfig) {
     const jobs = wanted.map((id) => {
       const d = listed.get(id)!;
       const last = store.last(d.id, d.version);
-      return { id: d.id, name: d.name, version: d.version, attempt: body?.retry === true ? (last?.status === 'failed' ? last.attempt + 1 : -1) : (last?.attempt ?? 0) };
+      return { id: d.id, name: d.name, version: d.version, attempt: auto ? (last?.status === 'failed' ? last.attempt + 1 : (last?.attempt ?? 0)) : body?.retry === true ? (last?.status === 'failed' ? last.attempt + 1 : -1) : (last?.attempt ?? 0) };
     });
     const refused = jobs.filter((j) => j.attempt < 0).map((j) => j.id);
     if (refused.length) return [409, { error: 'only documents whose last attempt failed can be retried', ids: refused }];
@@ -146,6 +163,7 @@ export function createRemarkableService(config: ServiceConfig) {
 
   async function route(req: IncomingMessage): Promise<[number, unknown]> {
     const path = new URL(req.url ?? '', 'http://x').pathname;
+    if (path.startsWith('/apps/remarkable')) return pageRoute(req, path);
     if (req.method === 'GET' && path === '/documents') return [200, { documents: await config.client.tree() }];
     if (req.method === 'POST' && path === '/ingest') return ingest(req);
     if (path === '/topics') return req.method === 'POST' ? addTopic(req) : [200, { topics: store.topics() }];
