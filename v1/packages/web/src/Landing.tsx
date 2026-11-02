@@ -64,7 +64,7 @@ function Waiting({ rows }: { rows: Groups['needs'] }) {
       <div className="grid gap-3 sm:grid-cols-2">
         {rows.map((r) => (
           <a key={r.key} href={`#/s/${encodeURIComponent(r.key)}`} className="flex items-start gap-3 rounded-[22px] border border-line bg-surface p-4 text-ink no-underline transition hover:-translate-y-px hover:border-line-strong hover:shadow-lift">
-            <span aria-hidden="true" className="mt-0.5 grid h-8 w-8 flex-none place-items-center rounded-lg bg-warm text-warning">
+            <span aria-hidden="true" className={`mt-0.5 grid h-8 w-8 flex-none place-items-center rounded-lg ${r.failures.length ? 'bg-danger-bg text-danger' : 'bg-warm text-warning'}`}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12l5 5L20 7" /></svg>
             </span>
             <span className="flex min-w-0 flex-col gap-1">

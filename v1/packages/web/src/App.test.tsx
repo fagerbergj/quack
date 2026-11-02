@@ -712,7 +712,8 @@ test('a failed run shows Failed in the header and a card with the step, the firs
   const card = await screen.findByRole('region', { name: 'Failed run' });
   expect(within(card).getByText('decide')).toBeInTheDocument();
   expect(within(card).getByText('Validation failed for tool "decide":')).toBeInTheDocument();
-  expect(within(card).getByText('Full error')).toBeInTheDocument();
+  await userEvent.click(within(card).getByText('Full error'));
+  expect(within(card).getByText(/must not have more than 300 characters/)).toBeVisible();
   expect(screen.getByRole('status')).toHaveTextContent('Failed · decide');
   routes['POST /sessions/ui%3Au1/resume'] = { submissionId: '2', status: 'placed' };
   await userEvent.click(within(card).getByRole('button', { name: 'Run again' }));
@@ -741,6 +742,7 @@ test('a session whose run failed is under Needs you with its step and the error 
   render(<App />);
   const needs = await screen.findByRole('region', { name: 'Needs you' });
   expect(within(needs).getByText('Run failed at decide · Validation failed for tool "decide":')).toBeInTheDocument();
+  expect(screen.getByText('1 failed · 0 need you · 0 running')).toBeInTheDocument();
 });
 
 test('with the index off, the Inbox falls back to the running sessions own approvals', async () => {

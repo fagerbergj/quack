@@ -102,7 +102,7 @@ export async function startWorkflow(harness: Harness, root: Conversation, workfl
     const doc = await tx.doc(WorkflowDoc, root.id);
     if (doc.task && (doc.task !== seen || live || (request !== null && doc.request === request))) return doc.task;
     const created = String(await tx.createTask(workflow.task, { input }, { ownership: { kind: 'conversation' } }));
-    Object.assign(doc, { name: workflow.name, task: created, request, steps: workflow.steps.map(pending) });
+    Object.assign(doc, { name: workflow.name, task: created, request, steps: workflow.steps.map(pending), kept: null });
     (await tx.doc(Failures, root.id)).items = Object.fromEntries(workflow.steps.map((s) => [s.name, { error: null, run: Number(created), at: 0 }]));
     return created;
   }, ctx);
