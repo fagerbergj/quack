@@ -9,7 +9,7 @@ import { AgentError, type HostDriver } from './process-driver.ts';
 const KEY = /^[A-Za-z0-9:/#._@-]{1,200}$/;
 const MAX_BODY = 1 << 20;
 
-async function readBody(req: IncomingMessage): Promise<Buffer> {
+export async function readBody(req: IncomingMessage): Promise<Buffer> {
   let size = 0;
   const chunks: Buffer[] = [];
   for await (const chunk of req) {

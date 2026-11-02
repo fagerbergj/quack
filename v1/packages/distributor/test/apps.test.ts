@@ -43,6 +43,26 @@ test('an unknown app is a 404, a non-app path is left alone, and an unreachable 
   assert.equal((await fetch(`${app}/apps/down/x`)).status, 502);
 });
 
+test('a body over 1 MiB is a 413 and never reaches the service', async () => {
+  let reached = 0;
+  const upstream = await start((_req, res) => (reached++, res.end('{}')));
+  const proxy = appsProxy({ demo: { url: upstream, tokenEnv: 'T' } }, { T: 't' });
+  const app = await start(async (req, res) => { if (!(await proxy(req, res))) res.writeHead(404).end(); });
+  const r = await fetch(`${app}/apps/demo/x`, { method: 'POST', body: Buffer.alloc((1 << 20) + 1) });
+  assert.equal(r.status, 413);
+  assert.equal(reached, 0);
+});
+
+test('an upstream that fails mid-body leaves the client with a broken response, not a second JSON body', async () => {
+  const upstream = await start((_req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json', 'content-length': '100' });
+    res.write('{"partial":', () => res.destroy());
+  });
+  const proxy = appsProxy({ demo: { url: upstream, tokenEnv: 'T' } }, { T: 't' });
+  const app = await start(async (req, res) => { if (!(await proxy(req, res))) res.writeHead(404).end(); });
+  await assert.rejects(async () => (await fetch(`${app}/apps/demo/x`)).text());
+});
+
 test('QUACK_APPS is optional and refuses an entry whose token env is unset', () => {
   assert.deepEqual(parseApps(undefined), {});
   assert.deepEqual(parseApps('{"a":{"url":"http://a","tokenEnv":"T"}}', { T: 'x' }), { a: { url: 'http://a', tokenEnv: 'T' } });

@@ -1,4 +1,5 @@
 import { request, type IncomingMessage, type ServerResponse } from 'node:http';
+import { readBody } from './server.ts';
 
 export type Apps = Record<string, { url: string; tokenEnv: string }>;
 
@@ -20,10 +21,14 @@ export function appsProxy(apps: Apps, env: NodeJS.ProcessEnv = process.env) {
     if (!match) return false;
     const app = Object.hasOwn(apps, match[1]) ? apps[match[1]] : undefined;
     if (!app) return res.writeHead(404, { 'content-type': 'application/json' }).end('{"error":"no such app"}'), true;
+    // Read up front under the same cap as the session forwarder, so a service never sees an unbounded upload.
+    const body = await readBody(req).catch(() => undefined);
+    if (!body) return res.writeHead(413, { 'content-type': 'application/json' }).end('{"error":"body too large"}'), true;
     await new Promise<void>((resolve) => {
       const fail = (err: Error) => {
-        if (!res.headersSent) res.writeHead(502, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ error: err.message }));
+        // After headers a JSON error would corrupt the partial body, so cut the connection instead.
+        if (res.headersSent) res.destroy();
+        else res.writeHead(502, { 'content-type': 'application/json' }).end(JSON.stringify({ error: err.message }));
         resolve();
       };
       const headers: Record<string, string> = { authorization: `Bearer ${env[app.tokenEnv]}` };
@@ -35,7 +40,7 @@ export function appsProxy(apps: Apps, env: NodeJS.ProcessEnv = process.env) {
       });
       up.on('error', fail);
       res.on('close', () => up.destroy());
-      req.pipe(up);
+      up.end(body);
     });
     return true;
   };
