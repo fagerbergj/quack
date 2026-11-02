@@ -5,6 +5,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
+import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
 import { observeGeneration } from '@quack/sdk';
 import { openSession } from '@quack/session';
@@ -113,3 +114,32 @@ for (const [name, cost] of [['a priced', 0.25], ['an unpriced', 0]] as const) {
     assert.deepEqual(index.state.data.get('cost'), { total: cost, input: 100, output: 20, cacheRead: 5, cacheWrite: 0 });
   });
 }
+
+test('a direct-spend commit that fails once is retried, so the spend is still recorded', async () => {
+  const index = await stubIndex();
+  index.state.mode = 'ok';
+  const session = await openDemo();
+  let failures = 0;
+  const root = new Proxy(session.root, { get: (t, k) => k === 'commit' ? (...a: unknown[]) => (failures-- > 0 ? Promise.reject(new Error('blip')) : (t.commit as Function)(...a)) : Reflect.get(t, k) });
+  const publisher = await startPublisher({ harness: session.harness, root }, { url: index.url, token: 't', meta, pollMs: 60_000 });
+  failures = 1;
+  await observeGeneration({ messages: [] }, async () => reply(0.25));
+  await publisher.stop();
+  assert.deepEqual(index.state.data.get('cost'), { total: 0.25, input: 100, output: 20, cacheRead: 5, cacheWrite: 0 });
+});
+
+test('loop and direct spend are summed into one cost fact', async () => {
+  const index = await stubIndex();
+  index.state.mode = 'ok';
+  const session = await openDemo();
+  const publisher = await startPublisher(session, { url: index.url, token: 't', meta, pollMs: 60_000 });
+  await session.submit('Hi', 'c1', true);
+  const usage = await session.harness.usage(BACKGROUND_CONTEXT);
+  const loop = Object.values(usage.models).reduce((n, u) => n + u.input + u.output + u.cacheRead + u.cacheWrite, 0);
+  assert.ok(loop > 0);
+  await observeGeneration({ messages: [] }, async () => reply(0.25));
+  await publisher.stop();
+  const d = index.state.data.get('cost') as Record<string, number>;
+  assert.equal(d.input + d.output + d.cacheRead + d.cacheWrite, loop + 125);
+  assert.equal(d.total, 0.25);
+});
