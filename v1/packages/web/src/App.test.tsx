@@ -1053,10 +1053,10 @@ test('an idle review reads as its posted verdict, a limit-released one included,
   expect((await row(/#2044/)).getByText('No review posted')).toBeInTheDocument();
 });
 
-async function openReview(key: string, active: boolean) {
+async function openReview(key: string, active: boolean, sealedItems: object[] = []) {
   routes['GET /sessions'] = { sessions: [sess(key, { title: 'Sleeper week stepper', running: active, active })] };
   routes['GET /index/artifacts'] = { artifacts: prodArtifacts(key) };
-  routes[`GET /sessions/${encodeURIComponent(key)}/artifacts`] = { artifacts: [] };
+  routes[`GET /sessions/${encodeURIComponent(key)}/artifacts`] = { artifacts: sealedItems };
   routes[`GET /sessions/${encodeURIComponent(key)}/approvals`] = { approvals: [] };
   location.hash = `#/s/${encodeURIComponent(key)}`;
   render(<App />);
@@ -1075,4 +1075,18 @@ test('a session header shows no earlier result while a new request runs', async 
   await screen.findByRole('status');
   expect(screen.queryByRole('link', { name: 'Posted ↗' })).toBeNull();
   expect(screen.queryByText('Changes requested')).toBeNull();
+});
+
+const postedV5 = { kind: 'github.review', version: 5, hash: 'h5', content: '## Verdict\nrequest_changes', sealedAt: 5, verdict: { passed: true, gatesFailed: [], score: 1, checks: [] }, links: [{ label: 'Posted', url: 'https://github.com/x/review-5' }] };
+
+test('the pinned artifact line reads Previous review, without a tick, while a new request runs, and Review posted once it ends', async () => {
+  await openReview('github:fagerbergj/quack#2042', true, [postedV5]);
+  const ws = FakeSocket.all[0]!;
+  ws.open();
+  ws.frame(snapshot());
+  ws.frame({ type: 'events', events: [{ type: 'run_start', inputs: [] }] });
+  const line = (await screen.findByText('Previous review')).closest('li')!;
+  expect(within(line).queryByRole('img', { name: 'Double-checked' })).toBeNull();
+  ws.frame({ type: 'events', events: [{ type: 'run_end', inputs: [] }] });
+  expect(await screen.findByText('Review posted')).toBeInTheDocument();
 });

@@ -25,7 +25,7 @@ export type Extension = {
   /** Session-key prefix and the label the "started by" filter shows for it. */
   start?: { prefix: string; label: string };
   /** What one of this extension's artifacts is called on the transcript line ("Review"), with a posted state when `posted`; undefined when it is not its artifact. */
-  artifact?: (a: SealedArtifact) => { name: string; posted?: string } | undefined;
+  artifact?: (a: SealedArtifact, running: boolean) => { name: string; posted?: string; /** Posted for an earlier request: no verdict icon while a new one runs. */ previous?: boolean } | undefined;
   /** An outside page for a session, shown as a header link. */
   link?: (key: string) => { url: string; label: string } | undefined;
   /** Groups sessions (a repo, say); the group shows in titles only when sessions span more than one. */
