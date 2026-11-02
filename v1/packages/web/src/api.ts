@@ -29,15 +29,14 @@ async function indexRead<T>(path: string, field: string): Promise<T[] | undefine
   const res = await fetch(path).catch(() => undefined);
   return res?.ok ? ((await res.json()) as Record<string, T[]>)[field] : undefined;
 }
-/** A question a workflow escalated to a person; `askedAt` is 0 on records that predate the timestamp. */
-export type Decision = { step: string; question: string; options: string[]; evidence: string | null; askedAt: number };
-export type IndexDecision = Omit<Decision, 'askedAt'> & { session: string; at: number };
-export const indexDecisions = () => indexRead<IndexDecision>('index/decisions?state=pending', 'decisions');
-export const listDecisions = async (key: string) => (await json<{ decisions: Decision[] }>(await fetch(`${base(key)}/decisions`))).decisions;
-export const answerDecision = async (key: string, step: string, choice: string) =>
-  void (await json(await fetch(`${base(key)}/decisions/${encodeURIComponent(step)}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ choice, by: 'web' }) })));
+/** A question an extension escalated to a person; `askedAt` is when it was asked. */
+export type Question = { id: string; question: string; options: string[]; evidence: string | null; askedAt: number };
+export type IndexQuestion = Omit<Question, 'askedAt'> & { session: string; at: number };
+export const indexQuestions = () => indexRead<IndexQuestion>('index/questions?state=pending', 'questions');
+export const listQuestions = async (key: string) => (await json<{ questions: Question[] }>(await fetch(`${base(key)}/questions`))).questions;
+export const answerQuestion = async (key: string, id: string, choice: string) =>
+  void (await json(await fetch(`${base(key)}/questions/${encodeURIComponent(id)}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ choice, by: 'web' }) })));
 export type Failure = { step: string; error: string };
-export const listFailures = async (key: string) => (await json<{ failures: Failure[] }>(await fetch(`${base(key)}/failures`))).failures;
 export const indexApprovals = () => indexRead<IndexApproval>('index/approvals?state=pending', 'approvals');
 export const indexArtifacts = () => indexRead<IndexArtifact>('index/artifacts', 'artifacts');
 

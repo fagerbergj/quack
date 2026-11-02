@@ -647,66 +647,66 @@ test('the Inbox posts approve to the owning session, and reject with its reason'
   await screen.findByText('Nothing is waiting on you');
 });
 
-const pendingDecision = { decisions: [{ session: 'gh:3', step: 'type', question: 'What kind of document is this?', options: ['meeting', 'idea'], evidence: 'Agenda: standup', state: 'pending', choice: null, by: null, at: 1 }] };
+const pendingDecision = { questions: [{ session: 'gh:3', id: '7:type', question: 'What kind of document is this?', options: ['meeting', 'idea'], evidence: 'Agenda: standup', state: 'pending', choice: null, by: null, at: 1 }] };
 
 test('the Inbox shows a workflow question with its options, and an option answers it', async () => {
   routes['GET /sessions'] = { sessions: [sess('gh:3', { title: 'Campaign Notes' })] };
   routes['GET /index/approvals?state=pending'] = { approvals: [] };
-  routes['GET /index/decisions?state=pending'] = pendingDecision;
-  routes['POST /sessions/gh%3A3/decisions/type'] = { answered: true };
+  routes['GET /index/questions?state=pending'] = pendingDecision;
+  routes['POST /sessions/gh%3A3/questions/7%3Atype'] = { answered: true };
   location.hash = '#/inbox';
   render(<App />);
   expect(await screen.findByText('What kind of document is this?')).toBeInTheDocument();
   expect(screen.getByText('1 waiting for your answer')).toBeInTheDocument();
   expect(screen.getByText('Agenda: standup')).not.toBeVisible();
   expect(screen.getByRole('link', { name: 'Campaign Notes' })).toHaveAttribute('href', '#/s/gh%3A3');
-  routes['GET /index/decisions?state=pending'] = pendingDecision;
+  routes['GET /index/questions?state=pending'] = pendingDecision;
   await userEvent.click(screen.getByRole('button', { name: 'meeting' }));
   expect(JSON.parse(fetchMock.mock.calls.filter(([, i]) => i?.method === 'POST').at(-1)![1]!.body as string)).toEqual({ choice: 'meeting', by: 'web' });
-  expect(screen.queryByRole('region', { name: 'Decision' })).toBeNull();
+  expect(screen.queryByRole('region', { name: 'Question' })).toBeNull();
 });
 
 test('a re-asked question with a newer askedAt shows again after the first was answered', async () => {
   routes['GET /sessions'] = { sessions: [sess('gh:3')] };
   routes['GET /index/approvals?state=pending'] = { approvals: [] };
-  routes['GET /index/decisions?state=pending'] = pendingDecision;
-  routes['POST /sessions/gh%3A3/decisions/type'] = { answered: true };
+  routes['GET /index/questions?state=pending'] = pendingDecision;
+  routes['POST /sessions/gh%3A3/questions/7%3Atype'] = { answered: true };
   location.hash = '#/inbox';
   render(<App />);
   const first = await screen.findByRole('button', { name: 'meeting' });
-  routes['GET /index/decisions?state=pending'] = { decisions: pendingDecision.decisions.map((d) => ({ ...d, at: 2 })) };
+  routes['GET /index/questions?state=pending'] = { questions: pendingDecision.questions.map((d) => ({ ...d, at: 2 })) };
   await userEvent.click(first);
-  expect(await screen.findByRole('region', { name: 'Decision' })).toBeInTheDocument();
+  expect(await screen.findByRole('region', { name: 'Question' })).toBeInTheDocument();
 });
 
 test('a failed answer keeps the question card and shows the error', async () => {
   routes['GET /sessions'] = { sessions: [sess('gh:3')] };
   routes['GET /index/approvals?state=pending'] = { approvals: [] };
-  routes['GET /index/decisions?state=pending'] = pendingDecision;
+  routes['GET /index/questions?state=pending'] = pendingDecision;
   location.hash = '#/inbox';
   render(<App />);
   await userEvent.click(await screen.findByRole('button', { name: 'meeting' }));
   expect(await screen.findByRole('alert')).toBeInTheDocument();
-  expect(screen.getByRole('region', { name: 'Decision' })).toBeInTheDocument();
+  expect(screen.getByRole('region', { name: 'Question' })).toBeInTheDocument();
 });
 
 test('a session waiting on a question is in Needs you, and its view shows the question card', async () => {
   routes['GET /sessions'] = { sessions: [sess('ui:u1')] };
   routes['GET /index/approvals?state=pending'] = { approvals: [] };
-  routes['GET /index/decisions?state=pending'] = { decisions: pendingDecision.decisions.map((d) => ({ ...d, session: 'ui:u1' })) };
-  routes['GET /sessions/ui%3Au1/decisions'] = { decisions: [{ step: 'type', question: 'What kind of document is this?', options: ['meeting', 'idea'], evidence: null, askedAt: 1 }] };
-  await openSession();
+  routes['GET /index/questions?state=pending'] = { questions: pendingDecision.questions.map((d) => ({ ...d, session: 'ui:u1' })) };
+  const ws = await openSession();
+  ws.frame({ type: 'standing', questions: [{ id: '7:type', question: 'What kind of document is this?', options: ['meeting', 'idea'], evidence: null, askedAt: 1 }], failures: [] });
   const needs = await screen.findByRole('region', { name: 'Needs you' });
   expect(within(needs).getByText('Answer: What kind of document is this?')).toBeInTheDocument();
-  const card = await screen.findByRole('region', { name: 'Decision' });
+  const card = await screen.findByRole('region', { name: 'Question' });
   expect(within(card).getByText('NEEDS YOU')).toBeInTheDocument();
   expect(within(card).getByRole('button', { name: 'idea' })).toBeInTheDocument();
 });
 
 test('a session whose run failed in a step shows the step and its error', async () => {
   routes['GET /sessions'] = { sessions: [sess('ui:u1')] };
-  routes['GET /sessions/ui%3Au1/failures'] = { failures: [{ step: 'facts', error: 'sleeper: /v1/stats/nfl/regular/2026/7 not found' }] };
-  await openSession();
+  const ws = await openSession();
+  ws.frame({ type: 'standing', questions: [], failures: [{ step: 'facts', error: 'sleeper: /v1/stats/nfl/regular/2026/7 not found' }] });
   const alert = await screen.findByText(/Step facts failed:/);
   expect(alert.closest('p')).toHaveTextContent('sleeper: /v1/stats/nfl/regular/2026/7 not found');
 });

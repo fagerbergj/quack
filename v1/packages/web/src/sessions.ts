@@ -1,7 +1,7 @@
-import type { Approval, Decision, IndexArtifact, SessionSummary } from './api.ts';
+import type { Approval, Question, IndexArtifact, SessionSummary } from './api.ts';
 import { searchText, sessionTitle } from './kinds.ts';
 
-export type Row = SessionSummary & { approvals: Approval[]; decisions: Decision[]; artifacts: IndexArtifact[]; multiRepo: boolean };
+export type Row = SessionSummary & { approvals: Approval[]; questions: Question[]; artifacts: IndexArtifact[]; multiRepo: boolean };
 export type Groups = { needs: Row[]; running: Row[]; recent: Row[] };
 export type Filters = { text: string; agent: string; start: string };
 
@@ -34,14 +34,14 @@ export function matches(s: Row, f: Filters): boolean {
 }
 
 export function group(rows: Row[]): Groups {
-  const needs = rows.filter((r) => r.approvals.length + r.decisions.length > 0);
-  const rest = rows.filter((r) => r.approvals.length + r.decisions.length === 0);
+  const needs = rows.filter((r) => r.approvals.length + r.questions.length > 0);
+  const rest = rows.filter((r) => r.approvals.length + r.questions.length === 0);
   return { needs, running: rest.filter((r) => r.active), recent: rest.filter((r) => !r.active) };
 }
 
 export function statusLine(r: Row): string {
   if (r.approvals.length) return `Approve ${r.approvals[0]!.tool}${r.approvals.length > 1 ? ` +${r.approvals.length - 1} more` : ''}`;
-  if (r.decisions.length) return `Answer: ${r.decisions[0]!.question}`;
+  if (r.questions.length) return `Answer: ${r.questions[0]!.question}`;
   if (r.note) return r.note;
   return `${r.agent} · ${r.running ? 'running' : 'idle'}`;
 }

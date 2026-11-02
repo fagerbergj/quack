@@ -4,7 +4,9 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
-import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
+import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, Type } from '@earendil-works/pi-ai';
+import { defineExtension, defineTool } from '@earendil-works/pi-durable';
+import { decide, person } from '@quack/sdk';
 import { createSessionServer, openSession } from '../src/index.ts';
 import { nextFrame, runEnded } from './ws-helpers.ts';
 
@@ -66,6 +68,42 @@ test('a failed submit is an error frame, and the session keeps streaming', async
   const ended = nextFrame(ws, runEnded);
   ws.send(JSON.stringify({ type: 'input', input: 'are you there?', requestId: 'live-2' }));
   assert.match(JSON.stringify((await ended).events), /still here/);
+  ws.close();
+  await new Promise((r) => server.close(r));
+  await session.close();
+});
+
+test('an open question rides the socket as a standing frame and clears when answered, with no polling', async () => {
+  const escalate = defineTool({
+    name: 'escalate', description: 'ask a person', parameters: Type.Object({}), replay: 'safe',
+    execute: async (_a, api, c) => {
+      const d = await decide(api, { name: 'flex', question: 'Who starts?', options: ['Pollard', 'Stevenson'] }, [person()], c);
+      return { output: [{ type: 'text', text: d?.choice ?? 'none' }] };
+    },
+  });
+  const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
+  faux.setResponses([fauxAssistantMessage(fauxToolCall('escalate', {}), { stopReason: 'toolUse' }), fauxAssistantMessage('Done.')]);
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const m = faux.getModel();
+  const session = await openSession({ dir: await mkdtemp(join(tmpdir(), 'quack-live-')), models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [defineExtension({ name: 'demo', tools: [escalate] })] } });
+  const server = createSessionServer(session).listen(0);
+  await new Promise((r) => server.once('listening', r));
+  const port = (server.address() as AddressInfo).port;
+  const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+  const quiet = nextFrame(ws, (f) => f.type === 'standing');
+  assert.deepEqual(await quiet, { type: 'standing', questions: [], failures: [] });
+
+  const asked = nextFrame(ws, (f) => f.type === 'standing' && f.questions.length === 1);
+  await fetch(`http://127.0.0.1:${port}/invocations`, { method: 'POST', body: JSON.stringify({ input: 'go' }) });
+  const [question] = (await asked).questions;
+  assert.deepEqual([question.question, question.options], ['Who starts?', ['Pollard', 'Stevenson']]);
+
+  const cleared = nextFrame(ws, (f) => f.type === 'standing' && f.questions.length === 0);
+  const res = await fetch(`http://127.0.0.1:${port}/questions/${encodeURIComponent(question.id)}`, { method: 'POST', body: JSON.stringify({ choice: 'Pollard', by: 'jf' }) });
+  assert.equal(res.status, 200);
+  await cleared;
+
   ws.close();
   await new Promise((r) => server.close(r));
   await session.close();

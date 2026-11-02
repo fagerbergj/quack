@@ -2,10 +2,11 @@ import { BACKGROUND_CONTEXT, type Context } from '@earendil-works/chord/context'
 import type { JsonValue } from '@earendil-works/chord';
 import { defineExtension, defineTask, type Conversation, type ConversationId, type Extension, type Harness, type RunningTask, type TaskRuntime, type Tx } from '@earendil-works/pi-durable';
 import type { Dispatch, DispatchingExtension } from '@quack/session';
-import { answerDecision, failedSteps, pendingDecisions, WorkflowDoc, type StepRecord } from './doc.ts';
+import { Failures } from '@quack/sdk';
+import { WorkflowDoc, type StepRecord } from './doc.ts';
 import { execute, view, Wait, type Step, type StepContext } from './steps.ts';
 
-export { answerDecision, failedSteps, pendingDecisions, WorkflowDoc, watchUntil, type AnswerResult, type OpenDecision, type StepFailure, type StepRecord } from './doc.ts';
+export { WorkflowDoc, watchUntil, type StepRecord } from './doc.ts';
 export { Wait, type Step, type StepContext } from './steps.ts';
 
 type Results = Record<string, JsonValue>;
@@ -54,6 +55,7 @@ async function runStep(steps: Step[], i: number, running: RunningTask<Input, Che
     return rt.commit(async (tx) => {
       const s = await record(tx, rt.conversationId, step.name);
       Object.assign(s, { status: 'failed', error: message, durationMs: rt.now() - (s.startedAt ?? rt.now()) });
+      (await tx.doc(Failures, rt.conversationId)).items[step.name] = { error: message, run: Number(rt.taskId), at: rt.now() };
       return { status: 'terminal', outcome: { status: 'failed', error: { message } } };
     }, ctx);
   }
@@ -88,7 +90,7 @@ export function defineWorkflow(def: { name: string; steps: Step[] }) {
   return { name, steps, task };
 }
 
-const pending = (s: Step): StepRecord => ({ name: s.name, kind: s.kind, status: 'pending', startedAt: null, durationMs: null, cost: 0, progress: null, error: null, ask: null, answer: null });
+const pending = (s: Step): StepRecord => ({ name: s.name, kind: s.kind, status: 'pending', startedAt: null, durationMs: null, cost: 0, progress: null, error: null });
 
 // A run is live until its task is terminal; the same request or a live run is joined, anything else starts a fresh run in this session.
 export async function startWorkflow(harness: Harness, root: Conversation, workflow: Workflow, input: JsonValue, request: string | null = null, ctx: Context = BACKGROUND_CONTEXT): Promise<string> {
@@ -99,6 +101,7 @@ export async function startWorkflow(harness: Harness, root: Conversation, workfl
     if (doc.task && (doc.task !== seen || live || (request !== null && doc.request === request))) return doc.task;
     const created = String(await tx.createTask(workflow.task, { input }, { ownership: { kind: 'conversation' } }));
     Object.assign(doc, { name: workflow.name, task: created, request, steps: workflow.steps.map(pending) });
+    (await tx.doc(Failures, root.id)).items = Object.fromEntries(workflow.steps.map((s) => [s.name, { error: null, run: Number(created), at: 0 }]));
     return created;
   }, ctx);
 }
@@ -124,13 +127,6 @@ export const boundWorkflow = (config: unknown, from: Record<string, Workflow> = 
   if (!found) throw new Error(`unknown workflow ${wanted}; available: ${Object.keys(from).sort().join(', ') || 'none'}`);
   return found;
 };
-
-/** What the session's decision routes need: the open questions, a way to answer one, and the steps that failed. */
-export const sessionDecisions = (session: { harness: Harness; root: Conversation }) => ({
-  pending: async () => pendingDecisions(await session.harness.snapshot(WorkflowDoc, session.root.id, BACKGROUND_CONTEXT)),
-  answer: (step: string, choice: string, by: string) => answerDecision(session.root, step, choice, by, BACKGROUND_CONTEXT),
-  failures: async () => failedSteps(await session.harness.snapshot(WorkflowDoc, session.root.id, BACKGROUND_CONTEXT)),
-});
 
 export function workflowExtension(workflows: Workflow[]): Extension {
   return defineExtension({ name: 'quack.workflows', tasks: workflows.map((w) => w.task) });

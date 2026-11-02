@@ -10,9 +10,9 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, Type } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { CodingTools } from '@earendil-works/pi-durable/tools';
-import { artifactsExtension, attachLink, attachVerdict, gated, pendingApprovals, resolveApproval, seal, type ArtifactKind } from '@quack/sdk';
+import { artifactsExtension, attachLink, attachVerdict, decide, gated, pendingApprovals, person, resolveApproval, seal, type ArtifactKind } from '@quack/sdk';
 import { createSessionServer, openSession } from '@quack/session';
-import { defineWorkflow, outcomeOf, sessionDecisions, WorkflowDoc, workflowSessionExtensions } from '@quack/workflows';
+import { defineWorkflow, outcomeOf, WorkflowDoc, workflowSessionExtensions } from '@quack/workflows';
 import pg from 'pg';
 import { DatabaseSync } from 'node:sqlite';
 import { existsSync } from 'node:fs';
@@ -191,7 +191,7 @@ const ask = defineWorkflow({
   ],
 });
 
-for (const { name, fresh: freshStore, skip } of backends) test(`${name}: a decision a workflow escalates is indexed, answered over the session route, and the workflow resumes`, { skip }, async () => {
+for (const { name, fresh: freshStore, skip } of backends) test(`${name}: a question a workflow escalates is indexed, answered over the session route, and the workflow resumes`, { skip }, async () => {
   const { store } = await freshStore();
   const routes = indexRoutes(store, TOKEN);
   const index = createServer(async (req, res) => { if (!(await routes(req, res))) res.writeHead(404).end(); });
@@ -206,21 +206,23 @@ for (const { name, fresh: freshStore, skip } of backends) test(`${name}: a decis
   const m = faux.getModel();
   const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: workflowSessionExtensions({ workflow: 'ask' }, { ask }) } });
   const publisher = await startPublisher(session, { url: indexBase, token: TOKEN, meta: { key: 'chat:9', agent: 'ingest', version: 1 }, pollMs: 20 });
-  const server = createSessionServer(session, sessionDecisions(session)).listen(0);
+  const server = createSessionServer(session).listen(0);
   await new Promise((r) => server.once('listening', r));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  const answer = (step: string, body: unknown) => fetch(`${base}/decisions/${step}`, { method: 'POST', body: JSON.stringify(body) });
-  const listed = async (state: string) => ((await (await fetch(`${indexBase}/index/decisions?state=${state}`)).json()) as { decisions: Array<Record<string, unknown>> }).decisions;
+  const answer = (id: string, body: unknown) => fetch(`${base}/questions/${encodeURIComponent(id)}`, { method: 'POST', body: JSON.stringify(body) });
+  const listed = async (state: string) => ((await (await fetch(`${indexBase}/index/questions?state=${state}`)).json()) as { questions: Array<Record<string, unknown>> }).questions;
 
   await fetch(`${base}/invocations`, { method: 'POST', body: JSON.stringify({ input: 'scan' }) });
   const [open] = await until(async () => { const d = await listed('pending'); return d.length ? d : undefined; });
-  assert.deepEqual([open.session, open.step, open.question, open.options, open.evidence], ['chat:9', 'type', 'What kind of document is this?', ['meeting', 'idea'], 'Agenda: standup']);
-  assert.deepEqual(await (await fetch(`${base}/decisions`)).json(), { decisions: [{ step: 'type', question: open.question, options: open.options, evidence: open.evidence, askedAt: open.at }] });
+  const id = String(open.id);
+  assert.deepEqual([open.session, open.question, open.options, open.evidence], ['chat:9', 'What kind of document is this?', ['meeting', 'idea'], 'Agenda: standup']);
+  const served = ((await (await fetch(`${base}/questions`)).json()) as { questions: Array<Record<string, unknown>> }).questions;
+  assert.deepEqual(served.map((q) => [q.id, q.question, q.options, q.evidence, q.askedAt]), [[id, open.question, open.options, open.evidence, open.at]]);
 
-  assert.equal((await answer('type', { choice: 'poem', by: 'jf' })).status, 400, 'only a listed option answers');
-  assert.equal((await answer('file', { choice: 'meeting', by: 'jf' })).status, 404, 'a step that is not asking');
-  assert.equal((await answer('type', { choice: 'meeting', by: 'jf' })).status, 200);
-  assert.equal((await answer('type', { choice: 'idea', by: 'jf' })).status, 409, 'the first answer stands');
+  assert.equal((await answer(id, { choice: 'poem', by: 'jf' })).status, 400, 'only a listed option answers');
+  assert.equal((await answer('nope', { choice: 'meeting', by: 'jf' })).status, 404, 'a question nobody asked');
+  assert.equal((await answer(id, { choice: 'meeting', by: 'jf' })).status, 200);
+  assert.equal((await answer(id, { choice: 'idea', by: 'jf' })).status, 409, 'the first answer stands');
 
   await until(async () => { return (await listed('answered')).length ? true : undefined; });
   assert.deepEqual(await listed('pending'), []);
@@ -228,6 +230,51 @@ for (const { name, fresh: freshStore, skip } of backends) test(`${name}: a decis
   const task = String((await session.harness.snapshot(WorkflowDoc, session.root.id, ctx))!.task);
   const outcome = await outcomeOf(session.harness, task);
   assert.equal(outcome.status === 'completed' && (outcome.result as { file: string }).file, 'filed as meeting');
+
+  await publisher.stop();
+  await new Promise((r) => server.close(r));
+  await session.close();
+});
+
+const started: string[] = [];
+const escalate = defineTool({
+  name: 'escalate', description: 'ask a person', parameters: Type.Object({}), replay: 'safe',
+  execute: async (_a, api, c) => {
+    const d = await decide(api, { name: 'flex', question: 'Who starts at flex?', options: ['Pollard', 'Stevenson'], evidence: 'Both are healthy' }, [{ id: 'unsure', resolve: async () => undefined }, person()], c);
+    started.push(d?.choice ?? 'none');
+    return { output: [{ type: 'text', text: `started ${d?.choice}` }] };
+  },
+});
+
+for (const { name, fresh: freshStore, skip } of backends) test(`${name}: a decide() escalation outside a workflow is indexed, answered over the session route, and the tool resumes`, { skip }, async () => {
+  const { store } = await freshStore();
+  const routes = indexRoutes(store, TOKEN);
+  const index = createServer(async (req, res) => { if (!(await routes(req, res))) res.writeHead(404).end(); });
+  const indexBase = `http://127.0.0.1:${await listen(index)}`;
+  cleanups.push(() => new Promise((r) => index.close(r)));
+  const dir = await mkdtemp(join(tmpdir(), 'quack-escalate-'));
+  cleanups.push(() => rm(dir, { recursive: true, force: true }));
+  const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
+  faux.setResponses([fauxAssistantMessage(fauxToolCall('escalate', {}), { stopReason: 'toolUse' }), fauxAssistantMessage('Done.')]);
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const m = faux.getModel();
+  const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [defineExtension({ name: 'demo', tools: [escalate] })] } });
+  const publisher = await startPublisher(session, { url: indexBase, token: TOKEN, meta: { key: 'chat:7', agent: 'flex', version: 1 }, pollMs: 20 });
+  const server = createSessionServer(session).listen(0);
+  await new Promise((r) => server.once('listening', r));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const listed = async (state: string) => ((await (await fetch(`${indexBase}/index/questions?state=${state}`)).json()) as { questions: Array<Record<string, unknown>> }).questions;
+
+  const done = session.submit('Who starts?', 'q1', true);
+  const [open] = await until(async () => { const d = await listed('pending'); return d.length ? d : undefined; });
+  assert.deepEqual([open.session, open.question, open.evidence], ['chat:7', 'Who starts at flex?', 'Both are healthy']);
+  const res = await fetch(`${base}/questions/${encodeURIComponent(String(open.id))}`, { method: 'POST', body: JSON.stringify({ choice: 'Stevenson', by: 'jf' }) });
+  assert.equal(res.status, 200);
+  await until(async () => ((await listed('answered')).length ? true : undefined));
+  assert.deepEqual(await listed('pending'), []);
+  await done;
+  assert.deepEqual(started, ['Stevenson']);
 
   await publisher.stop();
   await new Promise((r) => server.close(r));
@@ -260,7 +307,7 @@ for (const { name, fresh: freshStore, skip } of backends) test(`${name}: a run t
   const m = faux.getModel();
   const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: workflowSessionExtensions({ workflow: 'boom' }, { boom }) } });
   const publisher = await startPublisher(session, { url: indexBase, token: TOKEN, meta: { key: 'sleeper:L:8:history', agent: 'sleeper-history', version: 1 }, pollMs: 20 });
-  const server = createSessionServer(session, sessionDecisions(session)).listen(0);
+  const server = createSessionServer(session).listen(0);
   await new Promise((r) => server.once('listening', r));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const expected = { step: 'facts', error: 'sleeper: /v1/stats/nfl/regular/2026/7 not found' };
@@ -299,20 +346,20 @@ test('a workflow aborted while it waits closes its question: not pending, indexe
   models.setProvider(faux.provider);
   const m = faux.getModel();
   const session = await openSession({ dir, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: workflowSessionExtensions({ workflow: 'ask' }, { ask }) } });
-  const decisions = sessionDecisions(session);
-  const server = createSessionServer(session, decisions).listen(0);
+  const server = createSessionServer(session).listen(0);
   await new Promise((r) => server.once('listening', r));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  const answer = (step: string) => fetch(`${base}/decisions/${step}`, { method: 'POST', body: JSON.stringify({ choice: 'meeting', by: 'jf' }) });
+  const answer = (id: string) => fetch(`${base}/questions/${id}`, { method: 'POST', body: JSON.stringify({ choice: 'meeting', by: 'jf' }) });
+  const pending = async () => ((await (await fetch(`${base}/questions`)).json()) as { questions: Array<{ id: string }> }).questions;
   await fetch(`${base}/invocations`, { method: 'POST', body: JSON.stringify({ input: 'scan' }) });
-  await until(async () => ((await decisions.pending()).length ? true : undefined));
+  const [open] = await until(async () => { const q = await pending(); return q.length ? q : undefined; });
 
   await fetch(`${base}/abort`, { method: 'POST' });
-  await until(async () => ((await decisions.pending()).length ? undefined : true));
+  assert.deepEqual(await pending(), []);
   const facts = await collectFacts(session.harness, session.root, { key: 'chat:9', agent: 'ingest', version: 1 }, 0, ctx);
-  assert.deepEqual(facts.filter((f) => f.kind === 'decision').map((f) => f.data.state), ['closed']);
-  assert.equal((await answer('type')).status, 404);
-  assert.equal((await answer('%E0%A4%A')).status, 400, 'a malformed step name');
+  assert.deepEqual(facts.filter((f) => f.kind === 'question').map((f) => f.data.state), ['closed']);
+  assert.equal((await answer(encodeURIComponent(open.id))).status, 404);
+  assert.equal((await answer('%E0%A4%A')).status, 400, 'a malformed question id');
 
   await new Promise((r) => server.close(r));
   await session.close();

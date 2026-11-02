@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { decideApproval } from './api.ts';
-import { DecisionCard } from './Decisions.tsx';
+import { QuestionCard } from './Questions.tsx';
 import { age, titleOf, type Row } from './sessions.ts';
 
 const btn = 'min-h-11 cursor-pointer rounded-lg px-3 text-xs lg:min-h-0 lg:py-1';
@@ -55,7 +55,7 @@ function Item({ row, a, now, done }: { row: Row; a: Row['approvals'][number]; no
 
 export function Inbox({ rows, error, now, reload }: { rows: Row[] | undefined; error: string; now: number; reload: () => void }) {
   const waiting = (rows ?? []).flatMap((row) => row.approvals.map((a) => ({ row, a })));
-  const asked = (rows ?? []).flatMap((row) => row.decisions.map((d) => ({ row, d })));
+  const asked = (rows ?? []).flatMap((row) => row.questions.map((d) => ({ row, d })));
   const summary = [waiting.length && `${waiting.length} waiting for your approval`, asked.length && `${asked.length} waiting for your answer`].filter(Boolean).join(' · ');
   return (
     <div className="mx-auto w-full max-w-[960px] px-4 pt-8 pb-10 sm:px-6">
@@ -65,7 +65,7 @@ export function Inbox({ rows, error, now, reload }: { rows: Row[] | undefined; e
       </div>
       {error && <p role="alert" className="m-0 mb-3 text-[13px] text-danger">{error}</p>}
       <ul className="m-0 flex list-none flex-col divide-y divide-line rounded-[22px] border border-line bg-surface p-0 shadow-card empty:hidden">
-        {asked.map(({ row, d }) => <li key={`${row.key}:${d.step}`} className="p-3 sm:p-4"><DecisionCard sessionKey={row.key} d={d} now={now} title={titleOf(row)} done={reload} /></li>)}
+        {asked.map(({ row, d }) => <li key={`${row.key}:${d.id}`} className="p-3 sm:p-4"><QuestionCard sessionKey={row.key} d={d} now={now} title={titleOf(row)} done={reload} /></li>)}
         {waiting.map(({ row, a }) => <Item key={`${row.key}:${a.id}`} row={row} a={a} now={now} done={reload} />)}
       </ul>
     </div>
