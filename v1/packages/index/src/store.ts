@@ -39,7 +39,8 @@ export function createStore(backend: Backend) {
         const of = (kind: string) => rows.find((f) => f.kind === kind);
         return {
           key, agent: (field(of('session'), 'agent') as string) ?? null, version: (field(of('session'), 'version') as number) ?? null,
-          status: (field(of('status'), 'state') as string) ?? null, cost: (field(of('cost'), 'total') as number) ?? 0, at: Math.max(...rows.map((f) => f.at)),
+          status: (field(of('status'), 'state') as string) ?? null, cost: (field(of('cost'), 'total') as number) ?? 0,
+          tokens: Object.fromEntries(['input', 'output', 'cacheRead', 'cacheWrite'].map((k) => [k, (field(of('cost'), k) as number) ?? 0])) as Record<'input' | 'output' | 'cacheRead' | 'cacheWrite', number>, at: Math.max(...rows.map((f) => f.at)),
         };
       }).sort((a, b) => b.at - a.at || a.key.localeCompare(b.key)).map(({ at, ...s }) => ({ ...s, lastActivity: new Date(at).toISOString() }));
     },
