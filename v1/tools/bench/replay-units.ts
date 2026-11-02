@@ -8,14 +8,14 @@ import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { reviewerRubric } from '@quack/github';
 import { rejudge, type Check, type Rubric } from '@quack/judge';
 import { buildModels, openSession, parseDeployment } from '@quack/session';
-import { digestRubric } from '../../packages/sleeper/src/report/rubric.ts';
+import { digestRubric, retroRubric } from '../../packages/sleeper/src/report/rubric.ts';
 import { waiversRubric } from '../../packages/sleeper/src/waivers/rubric.ts';
 import { tradeRubric } from '../../packages/sleeper/src/trades/rubric.ts';
 
 type Case = { case: string; kind: string; rubric: string; checks: string[]; content?: string; units: Record<string, Array<{ id: string; state: never }>> };
 const [casesPath, repeats, label, outPath] = process.argv.slice(2);
 if (!casesPath || !repeats || !label || !outPath) throw new Error('usage: replay-units.ts <cases.json> <repeats> <label> <out.json>');
-const rubrics: Record<string, Rubric> = { reviewer: reviewerRubric, digest: digestRubric, waivers: waiversRubric, trade: tradeRubric };
+const rubrics: Record<string, Rubric> = { reviewer: reviewerRubric, digest: digestRubric, waivers: waiversRubric, trade: tradeRubric, retro: retroRubric };
 const cases: Case[] = JSON.parse(readFileSync(casesPath, 'utf8'));
 const llm = process.env.QUACK_LLM_URL!;
 const deployment = parseDeployment({
