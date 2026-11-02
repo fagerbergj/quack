@@ -14,6 +14,10 @@ function postCleared(config: SessionConfig) {
     const doc = await api.snapshot(PullRequestDoc, api.conversationId, ctx);
     const pr = doc?.pr;
     if (!pr) return { text: 'Nothing was posted: no pull request is checked out; call checkout_pr first.', isError: true };
+    const key = String(sealed.version);
+    const reviewed = doc.reviewed?.[key];
+    if (!reviewed) await api.commit(async (tx) => { const d = await tx.doc(PullRequestDoc, api.conversationId); d.reviewed = { ...d.reviewed, [key]: pr.headSha }; }, ctx);
+    if (reviewed && reviewed !== pr.headSha) return { text: `Nothing was posted: v${sealed.version} reviewed ${reviewed}; review the new head and submit a new version.`, isError: true };
     // A push since checkout_pr would post a review of old code against a stale commit; the live head decides.
     const live = await fetchRecord(config, pr.owner, pr.repo, pr.number);
     if (live.headSha !== pr.headSha) return { text: `Nothing was posted: the pull request moved from ${pr.headSha} to ${live.headSha}; check out again with checkout_pr and review that head.`, isError: true };

@@ -124,7 +124,7 @@ test('a review released at the revision limit posts with its failures marked', a
   await session.close();
 });
 
-test('a PR pushed to while it is reviewed is not posted against the old head; checking out again posts the new one', async () => {
+test('a PR pushed to while it is reviewed is not posted against the old head; resubmitting the old version stays refused, a new version posts', async () => {
   let moved = '';
   const { done, seen, service, head, session } = await reviewRun((seen, advance) => {
     const step = recorder(seen);
@@ -134,14 +134,18 @@ test('a PR pushed to while it is reviewed is not posted against the old head; ch
       (_c: unknown) => { moved = advance(); return call('submit_review', {}); },
       step(checkout()),
       step(call('submit_review', {})),
+      step(write(review.replace('approve.', 'approve on the new head.'))),
+      step(call('submit_review', {})),
       step(fauxAssistantMessage('Posted.')),
     ];
   });
   assert.equal(done.status === 'done' && done.answer, 'Posted.');
   assert.match(seen[1], /Nothing was posted: the pull request moved from \w+ to \w+; check out again with checkout_pr/);
   assert.notEqual(moved, head);
-  assert.match(seen[3], /Posted as APPROVE: /);
+  assert.match(seen[3], new RegExp(`Nothing was posted: v1 reviewed ${head}; review the new head and submit a new version`));
+  assert.match(seen[5], /Posted as APPROVE: /);
   assert.deepEqual(service.posted.map((p) => p.commitId), [moved]);
+  assert.match(service.posted[0].body, /approve on the new head/);
   await session.close();
 });
 
