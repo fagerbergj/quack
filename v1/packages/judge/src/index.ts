@@ -42,7 +42,7 @@ function planModelChecks(rubric: Rubric, ev: Evidence) {
     for (const k of c.checks.filter((x) => x.question)) {
       const key = `${c.id}.${k.id}`;
       const units = unitsFor(k.scope, ev);
-      results.set(key, { criterion: c.id, id: k.id, label: k.label, weight: k.weight, met: units.length ? 0 : null, units: units.length, resolvers: {}, notes: [] });
+      results.set(key, { criterion: c.id, id: k.id, label: k.label, weight: k.weight, met: units.length ? 0 : null, units: units.length, resolvers: {}, notes: [], scope: k.scope });
       for (const u of units) {
         const entry = byUnit.get(u.id) ?? { unit: u, checks: [] };
         entry.checks.push({ ...k, id: key });

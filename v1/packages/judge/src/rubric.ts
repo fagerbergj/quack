@@ -36,6 +36,8 @@ export type CheckResult = {
   units: number;
   resolvers: Record<string, number>;
   notes: string[];
+  /** The evidence scope a model check was judged on. */
+  scope?: string;
   /** Units no resolver decided; the check is then null, not unmet. */
   undecided?: number;
   marks?: string[];

@@ -2,13 +2,13 @@ import { useState } from 'react';
 import { checkFailed, type Check } from './api.ts';
 import { Markdown } from './Markdown.tsx';
 
-// The judge prefixes a note with the unit it judged ("RB2: ..."), except for a whole-artifact unit.
+// The judge prefixes a note with the unit it judged ("RB2: ..."); a prefix equal to the check's scope names the whole artifact, so it adds nothing.
 const UNIT = /^([A-Za-z0-9_.-]{1,12}): ([\s\S]*)$/;
 
-export function Note({ text }: { text: string }) {
+export function Note({ text, scope }: { text: string; scope?: string }) {
   const [more, setMore] = useState(false);
   const m = UNIT.exec(text);
-  const unit = m?.[1];
+  const unit = m && m[1] !== scope ? m[1] : undefined;
   const body = m ? m[2]! : text;
   const first = /^[\s\S]+?(?<!\b(?:e\.g|i\.e))[.!?](?=\s|$)/.exec(body)?.[0] ?? body;
   const long = first.length < body.length;
@@ -41,7 +41,7 @@ export function CheckRow({ check, pill }: { check: Check; pill?: boolean }) {
         {head}
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="chev flex-none text-muted transition-transform"><path d="M9 6l6 6-6 6" /></svg>
       </summary>
-      <div className="flex flex-col gap-2 pb-2">{check.notes.map((n, i) => <Note key={i} text={n} />)}</div>
+      <div className="flex flex-col gap-2 pb-2">{check.notes.map((n, i) => <Note key={i} text={n} scope={check.scope} />)}</div>
     </details>
   );
 }
