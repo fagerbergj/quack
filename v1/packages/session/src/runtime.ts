@@ -5,6 +5,7 @@ import { AssistantEntry, createRegistry, defineExtension, Harness, section, type
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { pendingApprovals, statusNote } from '@quack/sdk';
+import { loopGuardExtension } from './loop-guard.ts';
 import { PolicyExecutionEnv, sessionPolicy, type ExecPolicy } from './exec.ts';
 
 const ctx = BACKGROUND_CONTEXT;
@@ -57,6 +58,7 @@ export function reportLine(error: unknown, info: ReportInfo): string | null {
 export async function openSession(opts: { dir: string; models: MutableModels; agent: AgentSpec; exec?: ExecPolicy; timeZone?: string; now?: () => Date; setTimer?: SetTimer; retry?: Partial<typeof MODEL_RETRY>; log?: (line: string) => void }) {
   const registry = createRegistry();
   registry.install(clockExtension(opts.timeZone ?? 'America/New_York', opts.now ?? (() => new Date())));
+  registry.install(loopGuardExtension());
   for (const ext of opts.agent.extensions ?? []) registry.install(ext);
   const storage = await openNodeSqliteStorage(join(opts.dir, 'session.sqlite'));
   // The session's workspace lives beside its log on the same volume, so both move and expire together (RUN-2).
