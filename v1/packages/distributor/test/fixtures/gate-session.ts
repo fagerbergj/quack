@@ -34,4 +34,4 @@ const m = faux.getModel();
 
 const session = await openSession({ dir: process.env.QUACK_SESSION_DIR!, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [extension] } });
 const server = createSessionServer(session).listen(Number(process.env.PORT));
-process.on('SIGTERM', () => server.close(() => void session.close().then(() => process.exit(0))));
+process.on('SIGTERM', () => { server.closeAllConnections(); server.close(() => void session.close().then(() => process.exit(0))); });
