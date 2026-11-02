@@ -151,6 +151,28 @@ test('resuming a failed run reruns the failed step and later ones, keeping the e
   await s.close();
 });
 
+test('a failed run with no kept results resumes at the first step that has none and completes', async () => {
+  const runs = { first: 0, second: 0 };
+  let broken = true;
+  const workflow = defineWorkflow({
+    name: 'nokept',
+    steps: [
+      { name: 'first', kind: 'code', run: () => ({ n: ++runs.first }) },
+      { name: 'second', kind: 'code', run: (c) => { runs.second++; if (broken) throw new Error('boom'); return JSON.stringify(c.prior); } },
+    ],
+  });
+  const s = await open(await tmp(), workflow);
+  assert.equal((await runWorkflow(s.harness, s.root, workflow, null)).status, 'failed');
+  // A run that failed before `kept` was recorded.
+  await s.root.commit(async (tx) => { (await tx.doc(WorkflowDoc, s.root.id)).kept = null; }, ctx);
+
+  broken = false;
+  const outcome = await outcomeOf(s.harness, (await resumeWorkflow(s.harness, s.root, workflow))!);
+  assert.deepEqual(outcome.status === 'completed' && outcome.result, { first: { n: 2 }, second: '{"first":{"n":2}}' });
+  assert.deepEqual(runs, { first: 2, second: 2 });
+  await s.close();
+});
+
 // Answers with `text` and records the messages each request carried.
 const reply = (text: string, seen: Message[][]): FauxResponseFactory => (context) => {
   seen.push([...context.messages]);
