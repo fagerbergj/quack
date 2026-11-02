@@ -47,7 +47,7 @@ export class Sender {
       try {
         const res = await fetch(this.#url, { method: 'POST', headers: { authorization: this.#auth, 'content-type': 'application/json', 'x-langfuse-ingestion-version': '4' }, body: JSON.stringify(body), signal: AbortSignal.timeout(SEND_TIMEOUT_MS) });
         const text = await res.text();
-        if (!res.ok || /"errors":\s*\[\s*[^\]\s]/.test(text)) this.#fail(`HTTP ${res.status} ${text.slice(0, 200)}`);
+        if (!res.ok || rejected(text) > 0) this.#fail(`HTTP ${res.status} ${text.slice(0, 200)}`);
       } catch (err) {
         this.#fail(String(err));
       }
@@ -63,6 +63,20 @@ export class Sender {
   }
 }
 
+// OTLP reports partial rejection on a 200 as partialSuccess.rejectedSpans (an int64, so JSON may carry a string).
+function rejected(body: string): number {
+  try {
+    return Number(JSON.parse(body).partialSuccess?.rejectedSpans ?? 0) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+// Page images would put base64 megabytes into the span.
+const dropImages = function (this: { type?: string }, key: string, value: unknown) {
+  return key === 'data' && this?.type === 'image' ? '[image]' : value;
+};
+
 const attr = (key: string, value: unknown) => ({ key, value: { stringValue: typeof value === 'string' ? value : JSON.stringify(value) } });
 const nanos = (ms: number) => String(BigInt(ms) * 1_000_000n);
 
@@ -74,7 +88,7 @@ export function generationSpan(config: TracesConfig, traceKey: string, input: un
   const attributes = [
     attr('langfuse.observation.type', 'generation'),
     attr('langfuse.observation.model.name', message.model),
-    attr('langfuse.observation.input', input),
+    { key: 'langfuse.observation.input', value: { stringValue: JSON.stringify(input, dropImages) } },
     attr('langfuse.observation.output', message.content),
     attr('langfuse.observation.usage_details', { input: usage.input, output: usage.output, cache_read: usage.cacheRead, cache_write: usage.cacheWrite, total: usage.totalTokens }),
     attr('langfuse.observation.cost_details', { input: usage.cost.input, output: usage.cost.output, total: usage.cost.total }),
@@ -116,7 +130,10 @@ export function tracesSessionExtensions(config: TracesConfig): Extension[] {
   const traceKey = config.sessionKey ?? crypto.randomUUID();
   const pending = new Map<number, { input: unknown; start: number }>();
   // Workflow model steps call completeSimple directly, so they reach us through the sdk hook instead of GenerationTask.
-  onGeneration(({ messages, start, message }) => sender.push([generationSpan(config, traceKey, messages, start, message)]));
+  onGeneration(({ systemPrompt, messages, start, message }) => {
+    const input = systemPrompt ? [{ role: 'system', content: systemPrompt }, ...messages] : messages;
+    sender.push([generationSpan(config, traceKey, input, start, message)]);
+  });
   return [defineExtension({
     name: 'traces',
     hooks: [hook(GenerationTask, {

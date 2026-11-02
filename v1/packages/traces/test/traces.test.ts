@@ -82,7 +82,7 @@ test('an error stop is level ERROR with the provider message', () => {
 });
 
 test('an outage or a rejection is reported once and never fails the generation', async () => {
-  for (const [status, reply] of [[500, 'down'], [207, '{"successes":[],"errors":[{"id":"x","status":400}]}']] as const) {
+  for (const [status, reply] of [[500, 'down'], [200, '{"partialSuccess":{"rejectedSpans":"2","errorMessage":"bad"}}']] as const) {
     const lf = await fakeLangfuse(status, reply);
     const reports: string[] = [];
     let reported!: () => void;
@@ -185,13 +185,14 @@ test('workflow model and judged steps each send their generations through the sd
   models.setProvider(faux.provider);
   const m = faux.getModel();
   const extensions = [workflowExtension([flow]), ...tracesSessionExtensions({ baseUrl: lf.url, publicKey: 'pk', secretKey: 'sk', sessionKey: 'wf-1', agentName: 'sleeper' })];
-  const s = await openSession({ dir: await mkdtemp(join(dir, 's-')), models, agent: { model: { provider: m.provider, modelId: m.id }, extensions } });
+  const s = await openSession({ dir: await mkdtemp(join(dir, 's-')), models, agent: { model: { provider: m.provider, modelId: m.id }, instructions: 'be terse', extensions } });
   assert.equal((await runWorkflow(s.harness, s.root, flow, null)).status, 'completed');
   await s.close();
   await lf.until(3);
   const got = lf.spans.map(attrs);
   assert.equal(got.length, 3);
   assert.deepEqual(got.map((a) => a['langfuse.observation.type']), ['generation', 'generation', 'generation']);
+  assert.match(got[0]['langfuse.observation.input'], /^\[\{"role":"system","content":"be terse"\}/);
   assert.match(got[0]['langfuse.observation.input'], /pick a number/);
   assert.match(got[2]['langfuse.observation.input'], /failed its checks/);
   assert.match(got[2]['langfuse.observation.output'], /ok/);
@@ -199,10 +200,16 @@ test('workflow model and judged steps each send their generations through the sd
   await lf.close();
 });
 
+test('image data stays out of the span input', () => {
+  const input = [{ role: 'user', content: [{ type: 'image', data: 'AAAA', mimeType: 'image/jpeg' }] }];
+  const span = generationSpan({}, 'k', input, 1, fauxAssistantMessage('x')) as unknown as OtlpSpan;
+  assert.doesNotMatch(attrs(span)['langfuse.observation.input'], /AAAA/);
+});
+
 test('observeGeneration without listeners returns the reply, and a throwing listener does not reach the caller', async () => {
   const reply = fauxAssistantMessage('x');
-  assert.equal(await observeGeneration([], async () => reply), reply);
+  assert.equal(await observeGeneration({ messages: [] }, async () => reply), reply);
   const off = onGeneration(() => { throw new Error('observer'); });
-  assert.equal(await observeGeneration([], async () => reply), reply);
+  assert.equal(await observeGeneration({ messages: [] }, async () => reply), reply);
   off();
 });

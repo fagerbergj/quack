@@ -1,6 +1,7 @@
 import type { Context } from '@earendil-works/chord/context';
 import { contentText, type Message } from '@earendil-works/pi-ai';
 import { configure, type ToolExecutionApi } from '@earendil-works/pi-durable';
+import { observeGeneration } from './signals.ts';
 
 export type DecisionPoint = {
   /** Unique within the calling task; the decision is memoized under it, so a replay returns the same answer. */
@@ -105,7 +106,7 @@ export function modelResolver(provider: string, modelId: string): Resolver {
     async resolve(point, api, ctx) {
       const model = api.models.getModel(provider, modelId);
       if (!model) return undefined;
-      const reply = await api.models.completeSimple(model, { messages: [{ role: 'user', content: prompt(point), timestamp: api.now() }] }, { signal: ctx.abortSignal });
+      const reply = await observeGeneration({ messages: [{ role: 'user', content: prompt(point), timestamp: api.now() }] }, (r) => api.models.completeSimple(model, r, { signal: ctx.abortSignal }));
       return parseDecision(contentText(reply.content), point);
     },
   };

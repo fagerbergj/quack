@@ -25,21 +25,22 @@ export async function whileWaiting<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-export type Generation = { messages: Message[]; start: number; message: AssistantMessage };
+export type GenerationRequest = { systemPrompt?: string; messages: Message[] };
+export type Generation = GenerationRequest & { start: number; message: AssistantMessage };
 const generationListeners = new Set<(g: Generation) => void>();
 /** Hears every completion made through `observeGeneration`, for callers that bypass the session's own generation task. */
 export function onGeneration(listener: (g: Generation) => void): () => void {
   generationListeners.add(listener);
   return () => void generationListeners.delete(listener);
 }
-/** Runs one completion and tells `onGeneration` listeners its request messages, start time (ms) and reply; a listener error never reaches the caller. */
-export async function observeGeneration(messages: Message[], complete: () => Promise<AssistantMessage>): Promise<AssistantMessage> {
+/** Runs one completion and tells `onGeneration` listeners its request, start time (ms) and reply; a listener error never reaches the caller. */
+export async function observeGeneration(request: GenerationRequest, complete: (request: GenerationRequest) => Promise<AssistantMessage>): Promise<AssistantMessage> {
   const start = Date.now();
-  const sent = [...messages];
-  const message = await complete();
+  const sent = [...request.messages];
+  const message = await complete(request);
   for (const l of generationListeners) {
     try {
-      l({ messages: sent, start, message });
+      l({ systemPrompt: request.systemPrompt, messages: sent, start, message });
     } catch {
       // Observers are best effort.
     }
