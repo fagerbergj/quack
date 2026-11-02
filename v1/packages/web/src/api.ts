@@ -20,7 +20,10 @@ const base = (key: string) => `sessions/${encodeURIComponent(key)}`;
 export const listSessions = async () => (await json<{ sessions: SessionSummary[] }>(await fetch('sessions'))).sessions;
 export const listAgents = async () => (await json<{ agents: AgentSummary[] }>(await fetch('agents'))).agents;
 export const listApprovals = async (key: string) => (await json<{ approvals: Approval[] }>(await fetch(`${base(key)}/approvals`))).approvals;
-export const listArtifacts = async (key: string) => (await json<{ artifacts: SealedArtifact[] }>(await fetch(`${base(key)}/artifacts`))).artifacts;
+// Verdicts sealed before checks carried a label have none; their id reads well enough.
+const named = (a: SealedArtifact): SealedArtifact =>
+  a.verdict ? { ...a, verdict: { ...a.verdict, checks: a.verdict.checks.map((c) => ({ ...c, label: c.label ?? c.id.replace(/_/g, ' ') })) } } : a;
+export const listArtifacts = async (key: string) => (await json<{ artifacts: SealedArtifact[] }>(await fetch(`${base(key)}/artifacts`))).artifacts.map(named);
 export const abortRun = async (key: string) => void (await json(await fetch(`${base(key)}/abort`, { method: 'POST' })));
 
 export type IndexApproval = { session: string; id: string; tool: string; at: number };

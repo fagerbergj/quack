@@ -90,7 +90,6 @@ export function Work({ artifact, versions, onClose }: { artifact: SealedArtifact
               <>
                 <p className="m-0 mb-3 flex items-center gap-2">
                   <span className="rounded-md bg-soft px-2 py-0.5 font-mono text-xs text-ink-2">{a.kind}</span>
-                  <span className="text-xs text-muted">{`v${a.version}`}</span>
                 </p>
                 <Markdown text={a.content} />
               </>

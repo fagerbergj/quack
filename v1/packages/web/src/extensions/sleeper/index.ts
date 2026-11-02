@@ -13,7 +13,7 @@ function cardName(a: SealedArtifact): string {
     if (c.kind && NAMES[c.kind]) return NAMES[c.kind]!;
     if (c.kind === 'digest' && typeof c.week === 'number') return `Week ${c.week} ${c.past ? 'recap' : 'preview'}`;
     if (c.kind === 'retro' && typeof c.week === 'number') return `Week ${c.week} retro`;
-  } catch { /* an unparsable card still reads as a card */ }
+  } catch { /* an unparsable card falls through to the generic Ready line */ }
   return '';
 }
 
@@ -25,7 +25,7 @@ export const sleeper: Extension = {
       const [, week, job] = KEY.exec(r.key)!;
       return plain(`${sentence(job!)} · wk ${week}`);
     },
-    words: () => ({ kind: 'sleeper.cards', w: { run: 'Checking lineup', pass: 'Lineup picks ready', fail: "Didn't pass its checks", none: 'Nothing yet' } }),
+    words: (r) => ({ kind: 'sleeper.cards', w: { run: 'Checking lineup', pass: KEY.exec(r.key)?.[2] === 'waivers' ? 'Waiver claims ready' : 'Lineup picks ready', fail: "Didn't pass its checks", none: 'Nothing yet' } }),
   },
   nav: { route: 'sleeper', label: 'Sleeper', icon: 'M8 4h8v5a4 4 0 0 1-8 0zM12 13v4M8 21h8M16 6h3v2a3 3 0 0 1-3 3M8 6H5v2a3 3 0 0 0 3 3', page: Sleeper },
 };

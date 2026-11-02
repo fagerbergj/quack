@@ -104,6 +104,7 @@ test('each kind of session shows its own title and state, and search finds it by
     sess('github:o/r#9', { title: 'Drop the flag' }),
     sess('ui:r1', { agent: 'researcher', title: 'What changed in v4?' }),
     sess('sleeper:123:8:lineup', { agent: 'sleeper-lineup' }),
+    sess('sleeper:123:8:waivers', { agent: 'sleeper-waivers' }),
     sess('remarkable:doc1', { agent: 'remarkable-ingest', title: 'Campaign Notes' }),
     sess('ui:x', { agent: 'coder' }),
     sess('github:o/r#11', { title: 'Tie on version' }),
@@ -117,6 +118,7 @@ test('each kind of session shows its own title and state, and search finds it by
     indexed('github:o/r#11', 'github.review', false, 1, 1), indexed('github:o/r#11', 'github.review', true, 1, 2),
     indexed('ui:r1', 'research.report', true),
     indexed('sleeper:123:8:lineup', 'sleeper.cards', true),
+    indexed('sleeper:123:8:waivers', 'sleeper.cards', true),
     indexed('remarkable:doc1', 'remarkable.transcript', false),
   ] };
   render(<App />);
@@ -126,6 +128,7 @@ test('each kind of session shows its own title and state, and search finds it by
   expect((await row(/#9 Drop the flag/)).getByText("Didn't pass its checks")).toBeInTheDocument();
   expect((await row(/What changed/)).getByText('Report ✓')).toBeInTheDocument();
   expect((await row(/Lineup · wk 8/)).getByText('Lineup picks ready')).toBeInTheDocument();
+  expect((await row(/Waivers · wk 8/)).getByText('Waiver claims ready')).toBeInTheDocument();
   expect((await row(/Campaign Notes/)).getByText(/^Didn't pass its checks/)).toBeInTheDocument();
   expect((await row(/#11 Tie on version/)).getByText('Approved ✓')).toBeInTheDocument();
   const alive = await row(/#10 Sleeper waivers job/);
@@ -952,4 +955,20 @@ test('the transcript line names each artifact in plain words and never shows the
   has('Review ready'); has('Review posted'); has('Transcript ready'); has("Result didn't pass its checks"); has('Result ready');
   expect(lines.join(' ')).not.toMatch(/Cards|Thing|Other/);
   expect(within(section).getByRole('link', { name: /GitHub/ })).toBeInTheDocument();
+});
+
+test('a verdict sealed before checks had labels falls back to the id in plain words', async () => {
+  const old = { passed: false, gatesFailed: [], score: 0.4, checks: [{ criterion: 'c', id: 'weather_mentioned_unmoved', weight: -2, met: 1, notes: [] }] };
+  await openSleeper([sealed(lineup(), old)]);
+  const card = await screen.findByRole('article', { name: 'Week 8 lineup' });
+  expect(within(card).getByText('weather mentioned unmoved')).toBeInTheDocument();
+});
+
+test('a note does not end its first sentence at e.g.', async () => {
+  const failed = { passed: false, gatesFailed: [], score: 0.4, checks: [chk('x', 'Misses the news', 3, 0, ['Cites no report, e.g. the practice update. It stops there.'])] };
+  await openSleeper([sealed(lineup(), failed)]);
+  const card = await screen.findByRole('article', { name: 'Week 8 lineup' });
+  await userEvent.click(within(card).getByText('Why'));
+  expect(card).toHaveTextContent('Cites no report, e.g. the practice update.');
+  expect(card).not.toHaveTextContent('It stops there');
 });

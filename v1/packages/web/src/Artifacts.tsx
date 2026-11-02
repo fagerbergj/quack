@@ -7,7 +7,7 @@ import { listArtifacts, type SealedArtifact } from './api.ts';
 export function StatusIcon({ verdict }: { verdict: SealedArtifact['verdict'] }) {
   if (!verdict) return null;
   const [glyph, tone] = verdict.passed ? ['✓', 'bg-success-bg text-success'] : ['✗', 'bg-danger-bg text-danger'];
-  return <span role="img" aria-label={verdict.passed ? 'Double-checked' : "Didn't pass its checks"} title={verdict.passed ? 'Double-checked' : undefined} className={`grid h-4 w-4 flex-none place-items-center rounded-full text-[10px] ${tone}`}>{glyph}</span>;
+  return <span role={verdict.passed ? 'img' : undefined} aria-label={verdict.passed ? 'Double-checked' : undefined} aria-hidden={verdict.passed ? undefined : true} title={verdict.passed ? 'Double-checked' : undefined} className={`grid h-4 w-4 flex-none place-items-center rounded-full text-[10px] ${tone}`}>{glyph}</span>;
 }
 
 // Plain words for the line: the owning extension names the thing; an unknown kind is just a result, never its raw kind.

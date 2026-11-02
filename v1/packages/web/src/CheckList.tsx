@@ -11,7 +11,7 @@ export function Note({ text }: { text: string }) {
   const m = UNIT.exec(text);
   const unit = m && !WHOLE.has(m[1]!) ? m[1]! : undefined;
   const body = m ? m[2]! : text;
-  const first = /^[\s\S]+?[.!?](?=\s|$)/.exec(body)?.[0] ?? body;
+  const first = /^[\s\S]+?(?<!\b(?:e\.g|i\.e))[.!?](?=\s|$)/.exec(body)?.[0] ?? body;
   const long = first.length < body.length;
   return (
     <div className="flex flex-col items-start gap-1">
