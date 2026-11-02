@@ -47,7 +47,8 @@ async function judgeJob(api: ToolExecutionApi, ctx: Context, o: Options, j: Job)
   const t = Date.now();
   const v = await rejudge(api, opts, sealed, `${j.arm}:${j.rep}:${j.c.case}`, ctx);
   const ms = Date.now() - t;
-  return v.checks.map((k) => ({ arm: j.arm, rep: j.rep, case: j.c.case, check: k.id, met: k.met, clef: o.classifier ? k.resolvers[o.classifier.modelId] ?? 0 : 0, esc: ESCALATED.reduce((n, r) => n + (k.resolvers[r] ?? 0), 0), ms }));
+  // A check no resolver could decide is scored unmet by the judge; the table shows it as null so a model outage is not read as a failed check.
+  return v.checks.map((k) => ({ arm: j.arm, rep: j.rep, case: j.c.case, check: k.id, met: k.resolvers.none ? null : k.met, clef: o.classifier ? k.resolvers[o.classifier.modelId] ?? 0 : 0, esc: ESCALATED.reduce((n, r) => n + (k.resolvers[r] ?? 0), 0), ms }));
 }
 
 /** Judges every case under every arm `repeat` times and returns one row per check. */

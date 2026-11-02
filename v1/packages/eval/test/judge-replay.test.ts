@@ -43,6 +43,15 @@ test('a watched check no rubric has is an error, and a check with no unit prints
   assert.match(table(rows, ['base']), /\| a \| other \| null \| 0\/0 \|/);
 });
 
+test('a check the judge model could not answer prints null, not a failed check', async () => {
+  const faux = fauxProvider({ provider: 'judge', models: [{ id: 'j' }] });
+  faux.setResponses([fauxAssistantMessage('no json here')]);
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const rows = await replayJudge({ cases: [cases[0]], arms: [arms[0]], repeat: 1, concurrency: 1, models, judgeModel });
+  assert.match(table(rows, ['base']), /\| a \| helpful \| null \| 0\/0 \|/);
+});
+
 test('concurrency 2 gives the same table as concurrency 1', async () => {
   const all = [true, true, true, true, true, true, true, true];
   const run = async (concurrency: number) => table(await replayJudge({ cases, arms, repeat: 2, concurrency, models: judgeModels(all), judgeModel }), ['base', 'cand']).split('\n').slice(0, 4);
