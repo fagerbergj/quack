@@ -23,6 +23,8 @@ export type ServiceConfig = {
   owner?: string;
   /** The league the page's /apps/sleeper routes act on. */
   league?: string;
+  /** The schedules service, read for this league's upcoming runs. */
+  schedules?: { url: string; token: string };
   fetch?: typeof fetch;
 };
 
@@ -41,6 +43,8 @@ function safeDecode(s: string): string | undefined {
     return undefined;
   }
 }
+
+const PAGE_JOBS = { lineup: startLineup, waivers: startWaivers, trends: startTrends, digest: startDigest, retro: startRetro, 'trade-finder': startFinder, history: startHistory };
 
 export function createSleeperService(config: ServiceConfig) {
   const store = openStore(config.dbPath);
@@ -67,11 +71,27 @@ export function createSleeperService(config: ServiceConfig) {
     return found ? [200, found] : [404, { error: 'no snapshot yet' }];
   }
 
-  // What the page reaches through the distributor's app proxy: the league id and the on-demand lineup job.
+  // What the page reaches through the distributor's app proxy: the league id and its jobs, for the configured league.
   async function pageRoute(method: string, url: URL): Promise<[number, unknown]> {
-    if (url.pathname === '/apps/sleeper/lineup') return startOnDemand(startLineup, method, config.league, url.searchParams.get('week'));
+    const job = /^\/apps\/sleeper\/(lineup|waivers|trends|digest|retro|trade-finder|history)$/.exec(url.pathname)?.[1];
+    if (job) return startOnDemand(PAGE_JOBS[job as keyof typeof PAGE_JOBS], method, config.league, url.searchParams.get('week'), job === 'history' ? historyParams(url.searchParams) : {});
+    if (url.pathname === '/apps/sleeper/schedule' && method === 'GET') return upcomingRuns();
     if (url.pathname !== '/apps/sleeper' || method !== 'GET') return [404, { error: 'not found' }];
     return config.league ? [200, { league: config.league }] : [501, { error: 'no league configured' }];
+  }
+
+  // Sleeper's live week and the next run of each of this league's schedules, soonest first.
+  async function upcomingRuns(): Promise<[number, unknown]> {
+    if (!config.schedules || !config.league) return [501, { error: 'schedules are not configured' }];
+    const res = await (config.fetch ?? fetch)(`${config.schedules.url}/schedules`, { headers: { authorization: `Bearer ${config.schedules.token}` } });
+    if (!res.ok) return [502, { error: `schedules answered ${res.status}` }];
+    const league = config.league.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const all = ((await res.json()) as { schedules: Array<{ id: string; nextRun: string | null }> }).schedules;
+    const runs = all.flatMap((s) => {
+      const m = new RegExp(`^sleeper/(lineup|waivers|trends|digest|retro|trade-finder)/${league}(?:/|$)`).exec(s.id);
+      return m && s.nextRun ? [{ job: m[1]!, at: s.nextRun }] : [];
+    });
+    return [200, { week: (await config.client.state()).week, runs: runs.sort((a, b) => a.at.localeCompare(b.at)) }];
   }
 
   // POST /leagues/:id/jobs/(lineup|waivers|trends|digest|retro)[?week=N] starts a job on demand (SL-2); the week defaults to Sleeper's current one.

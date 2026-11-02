@@ -291,8 +291,9 @@ test('the trends workflow keeps reading the service after the session process dr
 
 test('the page routes answer the configured league and start its lineup job', async () => {
   const calls: string[] = [];
-  const fake = (async (u: string) => (calls.push(u), new Response('{}', { status: 202 }))) as unknown as typeof fetch;
-  const service = createSleeperService({ serviceToken: 't', dbPath: ':memory:', client: clientOf(fixturesOn('today')), distributorUrl: 'http://d', owner: 'mallard', league: 'L1', fetch: fake, now: () => new Date(AT) });
+  const listing = { schedules: [{ id: 'sleeper/waivers/L1', nextRun: '2026-11-03T20:00:00.000Z' }, { id: 'sleeper/digest/L1/9/recap', nextRun: '2026-11-03T06:15:00.000Z' }, { id: 'sleeper/waivers/OTHER', nextRun: '2026-11-03T01:00:00.000Z' }, { id: 'sleeper/lineup/L1/9/wed', nextRun: null }] };
+  const fake = (async (u: string) => (calls.push(u), new Response(u.endsWith('/schedules') ? JSON.stringify(listing) : '{}', { status: 202 }))) as unknown as typeof fetch;
+  const service = createSleeperService({ serviceToken: 't', dbPath: ':memory:', client: clientOf(fixturesOn('today')), distributorUrl: 'http://d', owner: 'mallard', league: 'L1', schedules: { url: 'http://sched', token: 's' }, fetch: fake, now: () => new Date(AT) });
   await new Promise<void>((r) => service.listen(0, r));
   const call = (path: string, method = 'GET') => fetch(`http://127.0.0.1:${(service.address() as AddressInfo).port}${path}`, { method, headers: { authorization: 'Bearer t' } });
   try {
@@ -300,6 +301,10 @@ test('the page routes answer the configured league and start its lineup job', as
     const started = await call('/apps/sleeper/lineup?week=8', 'POST');
     assert.deepEqual([started.status, await started.json()], [202, { sessionKey: 'sleeper:L1:8:lineup', status: 202 }]);
     assert.equal(calls.length, 1);
+    assert.deepEqual(await (await call('/apps/sleeper/schedule')).json(), { week: 9, runs: [{ job: 'digest', at: '2026-11-03T06:15:00.000Z' }, { job: 'waivers', at: '2026-11-03T20:00:00.000Z' }] });
+    const waivers = await call('/apps/sleeper/waivers?week=8', 'POST');
+    assert.deepEqual([waivers.status, ((await waivers.json()) as { sessionKey: string }).sessionKey], [202, 'sleeper:L1:8:waivers']);
+    assert.equal((await call('/apps/sleeper/history?seasons=x', 'POST')).status, 400);
     assert.equal((await call('/apps/sleeper/lineup?week=x', 'POST')).status, 400);
     assert.equal((await call('/apps/sleeper/lineup')).status, 405);
   } finally {

@@ -1,0 +1,235 @@
+import type { ReactNode } from 'react';
+import { Markdown } from '../../Markdown.tsx';
+import { Blurb, NewsList } from './parts.tsx';
+import type { Result } from './week.ts';
+
+type P = { name: string; pos: string; team: string | null; inj?: string | null };
+type Card = Record<string, any>;
+
+const sentence = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+const who = (p: P) => `${p.name} · ${p.pos}${p.team ? ` · ${p.team}` : ''}`;
+const pts = (n: number) => String(Math.round(n * 100) / 100);
+const record = (s: { wins: number; losses: number; ties: number }) => `${s.wins}-${s.losses}${s.ties ? `-${s.ties}` : ''}`;
+// Trend text carries Sleeper player ids ("4881 Lamar Jackson: ..."), which mean nothing to a reader.
+const unid = (t: string) => t.replace(/\b(?!(?:19|20)\d{2}(?!\d))\d{4,5}(?:\/\d{4,5})*:?\s+(?=[A-Z])/g, '').replace(/\b\d{4,5}(?:\/\d{4,5})+:?\s*/g, '');
+const KINDS: Record<string, string> = { injury: 'Injuries', waiver: 'Rising on waivers', note: 'Notes' };
+
+/** The title a result goes by, in the page and in the Run a job sheet. */
+export function titleOf(r: Result, past?: boolean): string {
+  const c = r.card;
+  if (past && r.job === 'digest') return c.past === false ? `Week ${c.week} preview` : `Week ${c.week} recap`;
+  if (past && r.job === 'retro') return `Week ${c.week} retro`;
+  switch (r.job) {
+    case 'lineup': return 'Start / sit';
+    case 'waivers': return 'Waivers';
+    case 'trade-finder': case 'trade': return 'Trades';
+    case 'trends': return 'Trends';
+    case 'digest': return c.past === false ? `Preview · week ${c.week}` : `Recap · week ${c.week}`;
+    case 'retro': return `Retro · week ${c.week}`;
+    case 'history': return 'League history';
+    default: return r.job;
+  }
+}
+
+const WHAT: Record<string, string> = { digest: 'League recap', retro: 'Your lineup calls, looked back on', lineup: 'Your starters and bench', waivers: 'Claims for the week', 'trade-finder': 'Deals worth asking about', trade: 'Your offer, checked', trends: 'What is moving in the league', history: 'Your seasons so far' };
+/** What a result is, for the line under its title in a past week. */
+export const whatIs = (r: Result) => (r.job === 'digest' && r.card.past === false ? 'Preview of the week' : WHAT[r.job] ?? '');
+
+/** One calm line under the title, and the lines a short card lists. */
+export function brief(r: Result): { sub: string; lines: string[] } {
+  const c = r.card;
+  switch (r.job) {
+    case 'waivers': return { sub: `Week ${c.week} · priority ${c.my_priority}`, lines: (c.candidates ?? []).slice(0, 2).map((x: any) => `${x.rank}. ${x.player.name} · ${x.player.pos}`) };
+    case 'trends': {
+      const items: any[] = c.items ?? [];
+      return { sub: c.date, lines: [...items.slice(0, 2).flatMap((i) => (i.player ? [i.player.name] : [])), ...(items.length > 2 ? [`${items.length - 2} more`] : [])] };
+    }
+    case 'digest': {
+      const games: any[] = [...(c.games ?? [])].sort((a, b) => Number(b.mine) - Number(a.mine) || b.margin - a.margin);
+      return { sub: `Week ${c.week}`, lines: games.slice(0, 2).map((g) => `${g.home.team.trim()} ${pts(g.home.pts)} · ${g.away.team.trim()} ${pts(g.away.pts)}`) };
+    }
+    case 'trade-finder': {
+      const top = c.suggestions?.[0];
+      return { sub: `Week ${c.week}`, lines: [top ? `Give ${top.give.name}, get ${top.get.name}` : 'No deal this week'] };
+    }
+    case 'history': return { sub: `${c.seasons.length} seasons`, lines: c.seasons.slice(0, 4).map((s: any) => `${s.season} · ${record(s)}`) };
+    case 'retro': return c.bye ? { sub: 'Bye week', lines: [] } : { sub: `${pts(c.started)} scored`, lines: [`${pts(c.best)} best lineup`, `${pts(c.left)} left on the bench`] };
+    default: return { sub: `Week ${c.week}`, lines: [] };
+  }
+}
+
+const chip = 'rounded-md bg-soft px-1.5 py-0.5 text-[11px] font-medium text-ink-2';
+const Chip = ({ children, tone = chip }: { children: ReactNode; tone?: string }) => <span className={tone}>{children}</span>;
+const H = ({ children }: { children: ReactNode }) => <h3 className="m-0 mt-4 mb-1 text-[12px] font-semibold uppercase tracking-[0.06em] text-muted">{children}</h3>;
+const Row = ({ children }: { children: ReactNode }) => <li className="flex min-w-0 flex-col gap-1 border-t border-line py-3 first:border-t-0">{children}</li>;
+const List = ({ children }: { children: ReactNode }) => <ul className="m-0 flex list-none flex-col p-0">{children}</ul>;
+const Figure = ({ n, label }: { n: string; label: string }) => <div className="min-w-0"><p className="m-0 text-[22px] font-semibold tabular-nums tracking-[-0.02em]">{n}</p><p className="m-0 text-[12px] text-muted">{label}</p></div>;
+const Sum = ({ text }: { text: string }) => <Blurb text={text} whole />;
+
+function Waivers({ c }: { c: Card }) {
+  const also: any[] = c.also_checked ?? [];
+  return (
+    <>
+      <Sum text={c.summary} />
+      <p className="m-0 mt-2 text-[12px] text-muted">{`${sentence(c.waiver_type)} · priority ${c.my_priority} of ${c.teams}`}</p>
+      <List>
+        {c.candidates.map((x: any) => (
+          <Row key={x.rank}>
+            <div className="flex min-w-0 items-baseline gap-2">
+              <span className="w-5 flex-none text-[12px] text-muted">{x.rank}</span>
+              <span className="min-w-0 flex-1 break-words text-[14px] font-medium">{`+ ${x.player.name}`}</span>
+              <span className="flex-none text-[14px] font-semibold tabular-nums">{x.proj.toFixed(1)}</span>
+            </div>
+            <p className="m-0 pl-7 text-[12px] text-muted">{`${x.player.pos} · ${x.player.team} · ${x.owned_pct}% owned · bye ${x.bye}`}</p>
+            {x.drop && <p className="m-0 pl-7 text-[13px] text-ink-2">{`− ${x.drop.player.name}`}{x.drop.player.inj && <> <Chip>{x.drop.player.inj}</Chip></>}</p>}
+            <div className="pl-7"><Blurb text={x.why} /><NewsList items={x.news ?? []} /></div>
+          </Row>
+        ))}
+      </List>
+      {also.length > 0 && (
+        <details className="text-[13px]">
+          <summary className="flex min-h-11 cursor-pointer items-center text-ink-2">{`${also.length} more players checked`}</summary>
+          <List>{also.map((a) => <Row key={a.player.id}><span className="text-[13px] font-medium">{who(a.player)}</span><Blurb text={a.why} /></Row>)}</List>
+        </details>
+      )}
+    </>
+  );
+}
+
+function Trades({ c }: { c: Card }) {
+  const deals: any[] = c.suggestions ?? c.offers ?? [];
+  return (
+    <>
+      <Sum text={c.summary} />
+      <List>
+        {deals.map((d, i) => (
+          <Row key={i}>
+            <span className="break-words text-[14px] font-medium">{(c.partner ?? d.partner).team}</span>
+            <p className="m-0 text-[13px] text-ink-2">{`Give ${(d.give.name ? [d.give] : d.give).map((p: P) => p.name).join(', ')}, get ${(d.get.name ? [d.get] : d.get).map((p: P) => p.name).join(', ')}`}</p>
+            {d.verdict && <Chip>{sentence(String(d.verdict).replace(/_/g, ' '))}</Chip>}
+            <Blurb text={d.why ?? d.note} />
+            <NewsList items={d.news ?? []} />
+          </Row>
+        ))}
+      </List>
+    </>
+  );
+}
+
+function Trends({ c }: { c: Card }) {
+  const items: any[] = c.items;
+  const kinds = [...new Set(items.map((i) => i.kind as string))];
+  return (
+    <>
+      <Sum text={c.summary} />
+      {kinds.map((k) => (
+        <section key={k}>
+          <H>{KINDS[k] ?? sentence(k)}</H>
+          <List>
+            {items.filter((i) => i.kind === k).map((i, n) => (
+              <Row key={n}>
+                {i.player && <span className="text-[14px] font-medium">{who(i.player)}</span>}
+                <Blurb text={unid(i.text).replace(`${i.player?.name}: `, '')} />
+                {i.link ? <a href={i.link} target="_blank" rel="noreferrer" className="text-[12px] text-link">{i.source}</a> : <span className="text-[12px] text-muted">{i.source}</span>}
+              </Row>
+            ))}
+          </List>
+        </section>
+      ))}
+      {c.source_note && <details className="text-[13px]"><summary className="flex min-h-11 cursor-pointer items-center text-ink-2">Source notes</summary><Blurb text={unid(c.source_note)} whole /></details>}
+    </>
+  );
+}
+
+function Score({ team, pts: n }: { team: string; pts: number }) {
+  return <div className="flex min-w-0 items-baseline justify-between gap-2"><span className="min-w-0 break-words text-[13px]">{team.trim()}</span><span className="text-[14px] font-semibold tabular-nums">{n.toFixed(2)}</span></div>;
+}
+
+function Recap({ c }: { c: Card }) {
+  const games: any[] = [...c.games].sort((a, b) => Number(b.mine) - Number(a.mine));
+  return (
+    <>
+      <Sum text={c.summary} />
+      <List>
+        {games.map((g) => (
+          <Row key={g.id}>
+            <Score team={g.home.team} pts={g.home.pts} />
+            <Score team={g.away.team} pts={g.away.pts} />
+            <Blurb text={g.note} />
+          </Row>
+        ))}
+      </List>
+      <H>{`Standings · top ${c.playoff_line.standings.filter((s: any) => s.in_playoff_line).length} make it`}</H>
+      <List>{c.playoff_line.standings.map((s: any) => <li key={s.rosterId} className="flex gap-2 py-1.5 text-[13px]"><span className="w-5 text-muted">{s.rank}</span><span className="min-w-0 flex-1 break-words">{s.team.trim()}</span><span className="tabular-nums text-ink-2">{record(s)}</span></li>)}</List>
+      {c.source_note && <p className="m-0 mt-2 text-[12px] text-muted">{c.source_note}</p>}
+    </>
+  );
+}
+
+function Misses({ title, rows }: { title: string; rows: any[] }) {
+  if (!rows.length) return null;
+  return (
+    <>
+      <H>{title}</H>
+      <List>
+        {rows.map((m, i) => (
+          <Row key={i}>
+            <div className="flex min-w-0 items-baseline gap-2"><span className="flex-none font-semibold tabular-nums text-warning">{`+${pts(m.swing ?? m.pts - m.over_pts)}`}</span><span className="min-w-0 break-words text-[14px] font-medium">{`${(m.better ?? m).name} over ${(m.started ?? { name: m.over_name }).name}`}</span></div>
+            <div><Chip>{m.knowable ? 'Knowable' : 'Not knowable'}</Chip></div>
+            <Blurb text={m.why} />
+          </Row>
+        ))}
+      </List>
+    </>
+  );
+}
+
+function Retro({ c }: { c: Card }) {
+  if (c.bye) return <Sum text={c.summary ?? 'Bye week.'} />;
+  return (
+    <>
+      <div className="grid grid-cols-3 gap-3"><Figure n={pts(c.started)} label={c.won ? 'scored · won' : 'scored · lost'} /><Figure n={pts(c.best)} label="best possible" /><Figure n={pts(c.left)} label="left on bench" /></div>
+      {c.summary && <div className="mt-3"><Sum text={c.summary} /></div>}
+      <Misses title="Lineup misses" rows={c.misses ?? []} />
+      <Misses title="Waiver misses" rows={c.waiver_misses ?? []} />
+      {c.lessons?.length > 0 && <><H>Lessons</H><List>{c.lessons.map((l: string) => <Row key={l}><Blurb text={l} whole /></Row>)}</List></>}
+    </>
+  );
+}
+
+function Season({ s }: { s: any }) {
+  const draft: any[] = s.draft ?? [];
+  const count = (v: string) => draft.filter((d) => d.verdict === v).length;
+  const bits = [`${count('steal')} steals`, `${count('reach')} reaches`].filter((b) => !b.startsWith('0 '));
+  const facts = [`PF rank ${s.pf_rank}`, `PA rank ${s.pa_rank}`, `Efficiency ${s.eff}%`, `Bench ${pts(s.left_total)}`, ...(bits.length ? [`Draft ${bits.join(' · ')}`] : [])];
+  return (
+    <Row>
+      <div className="flex min-w-0 items-baseline gap-2"><span className="text-[15px] font-semibold">{s.season}</span><span className="tabular-nums text-ink-2">{record(s)}</span>{s.in_progress ? <Chip>In progress</Chip> : s.champion && <span className="min-w-0 break-words text-[12px] text-muted">{`Champion ${s.champion}`}</span>}</div>
+      <p className="m-0 text-[12px] text-muted">{facts.join(' · ')}</p>
+      {s.note && <Blurb text={s.note} />}
+    </Row>
+  );
+}
+
+function History({ c }: { c: Card }) {
+  return <><Sum text={c.summary} /><List>{c.seasons.map((s: any) => <Season key={s.season} s={s} />)}</List></>;
+}
+
+const FULL: Record<string, (p: { c: Card }) => ReactNode> = { waivers: Waivers, 'trade-finder': Trades, trade: Trades, trends: Trends, digest: Recap, retro: Retro, history: History };
+
+/** The opened view of a result; the lineup has its own. */
+export function Full({ r }: { r: Result }) {
+  const Body = FULL[r.job];
+  return Body ? <Body c={r.card} /> : <Markdown text={r.card.summary ?? ''} />;
+}
+
+/** What a short card says without opening: the model's own line, first sentence only. */
+export function Short({ r }: { r: Result }) {
+  const { lines } = brief(r);
+  return (
+    <div className="flex min-w-0 flex-col gap-2">
+      {r.card.summary && <Blurb text={r.card.summary} />}
+      {lines.length > 0 && <ul className="m-0 flex list-none flex-wrap gap-x-4 gap-y-0.5 p-0 text-[12.5px] text-ink-2">{lines.map((l) => <li key={l}>{l}</li>)}</ul>}
+    </div>
+  );
+}
