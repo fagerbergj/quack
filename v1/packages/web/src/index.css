@@ -48,6 +48,8 @@
   --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   --font-display: 'Fredoka', ui-rounded, 'SF Pro Rounded', system-ui, sans-serif;
 }
+/* Chrome edge-to-edge: safe-area-inset-bottom moves as the page scrolls, the max variant (Chrome 135+) does not. */
+:root { --safe-b: env(safe-area-max-inset-bottom, env(safe-area-inset-bottom, 0px)); }
 @layer base {
   html { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
   body {
@@ -82,6 +84,9 @@ details[open] > summary > .chev { transform: rotate(90deg); }
 /* Ducks swim left to right, so the flip points head and bill the way they travel. */
 .swimmer { position: absolute; bottom: 14px; animation: swim 26s linear infinite; transform: scaleX(-1); }
 .swimmer > svg { animation: bob 1.6s ease-in-out infinite; }
+/* A failed run: the duck stops in place and the water goes still. */
+.pond.still .swimmer { animation: none; left: 34%; }
+.pond.still .swimmer > svg, .pond.still .waves { animation: none; }
 .reed { transform-origin: bottom center; animation: sway 4s ease-in-out infinite; }
 .quack-bubble { opacity: 0; transform: scale(0.6); transition: all 0.2s; }
 .logo-link:hover .quack-bubble, .logo-link:focus-visible .quack-bubble { opacity: 1; transform: scale(1); }
@@ -121,3 +126,8 @@ details[open] > summary > .chev { transform: rotate(90deg); }
 .pulse-dot { animation: pulse-ring 1.6s infinite; }
 
 .paper { background: var(--color-paper) repeating-linear-gradient(180deg, transparent 0 13px, rgb(61 143 181 / 0.22) 13px 14px); box-shadow: inset 6px 0 0 #d9d2c3; }
+/* The user bubble is bg-ink, the inverse of the page, so code, links and quotes derive from its own text color. */
+.md-on-ink .md :not(pre) > code, .md-on-ink .md pre { background: color-mix(in oklab, var(--color-on-ink) 8%, transparent); color: var(--color-on-ink); }
+.md-on-ink .md pre span { color: inherit; }
+.md-on-ink .md a { color: var(--color-on-ink); text-decoration: underline; }
+.md-on-ink .md blockquote { color: inherit; border-left-color: color-mix(in oklab, var(--color-on-ink) 45%, transparent); }

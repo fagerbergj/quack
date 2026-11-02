@@ -93,6 +93,11 @@ async function abort(session: Session): Promise<[number, unknown]> {
   return [200, { aborted: true }];
 }
 
+async function resume(session: Session): Promise<[number, unknown]> {
+  const result = await session.resume();
+  return result ? [202, result] : [409, { error: 'no failed run to resume' }];
+}
+
 // The container contract (RUN-3): GET /ping, POST /invocations and /ws, plus the approvals, questions, failures, artifacts and abort of this session.
 const ROUTES: Array<[string, RegExp, Route]> = [
   ['GET', /^\/ping$/, async (s) => {
@@ -104,6 +109,7 @@ const ROUTES: Array<[string, RegExp, Route]> = [
   ['GET', /^\/approvals$/, async (s) => [200, { approvals: await pendingApprovals(s.root, ctx) }]],
   ['GET', /^\/artifacts$/, artifacts],
   ['POST', /^\/abort$/, abort],
+  ['POST', /^\/resume$/, resume],
   ['POST', /^\/approvals\/([^/]+)$/, decide],
   ['GET', /^\/questions$/, async (s) => [200, { questions: pendingQuestions(await s.harness.snapshot(Questions, s.root.id, ctx)) }]],
   ['POST', /^\/questions\/([^/]+)$/, answer],

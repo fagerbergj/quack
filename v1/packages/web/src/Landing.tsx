@@ -64,7 +64,7 @@ function Waiting({ rows }: { rows: Groups['needs'] }) {
       <div className="grid gap-3 sm:grid-cols-2">
         {rows.map((r) => (
           <a key={r.key} href={`#/s/${encodeURIComponent(r.key)}`} className="flex items-start gap-3 rounded-[22px] border border-line bg-surface p-4 text-ink no-underline transition hover:-translate-y-px hover:border-line-strong hover:shadow-lift">
-            <span aria-hidden="true" className="mt-0.5 grid h-8 w-8 flex-none place-items-center rounded-lg bg-warm text-warning">
+            <span aria-hidden="true" className={`mt-0.5 grid h-8 w-8 flex-none place-items-center rounded-lg ${r.failures.length ? 'bg-danger-bg text-danger' : 'bg-warm text-warning'}`}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12l5 5L20 7" /></svg>
             </span>
             <span className="flex min-w-0 flex-col gap-1">
@@ -79,12 +79,13 @@ function Waiting({ rows }: { rows: Groups['needs'] }) {
 }
 
 export function Landing({ agents, error, groups }: { agents: AgentSummary[]; error: string; groups: Groups }) {
+  const failed = groups.needs.filter((r) => r.failures.length).length;
   return (
     <div className="mx-auto flex w-full max-w-[760px] flex-col gap-8 px-4 py-8 sm:px-8 lg:py-12">
       <a href="#/" className="text-[13px] text-muted no-underline hover:text-ink lg:hidden">← Sessions</a>
-      <Pond>
+      <Pond still={failed > 0}>
         <h2 className="m-0 text-[34px] leading-[1.1]">What should quack work on?</h2>
-        <p className="m-0 mt-2 text-[14px] text-ink-2">{`${groups.needs.length} need you · ${groups.running.length} running`}</p>
+        <p className="m-0 mt-2 text-[14px] text-ink-2">{[failed > 0 && `${failed} failed`, `${groups.needs.length - failed} need you`, `${groups.running.length} running`].filter(Boolean).join(' · ')}</p>
       </Pond>
       {error && <p role="alert" className="m-0 text-[13px] text-danger">{`Agents: ${error}`}</p>}
       <Composer agents={agents} />

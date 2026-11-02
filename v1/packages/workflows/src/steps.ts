@@ -65,8 +65,8 @@ const REPAIR_TURNS = 2;
 
 type Ask = { name: string; schema: TSchema; model?: { provider: string; modelId: string } };
 
-// One conversation with the model: an invalid answer is repaired in `messages`, and the accepted reply is returned for the caller to build on.
-async function converse(step: Ask, c: StepContext, messages: Message[]) {
+// One conversation with the model: an invalid answer, or one `check` throws on, is repaired in `messages`; the accepted reply is returned with what `check` built from it.
+async function converse<B = undefined>(step: Ask, c: StepContext, messages: Message[], check?: (args: JsonValue) => B | Promise<B>) {
   const agent = await c.api.agent(c.ctx);
   const ref = step.model ?? agent.model;
   const model = ref && c.api.models.getModel(ref.provider, ref.modelId);
@@ -79,7 +79,7 @@ async function converse(step: Ask, c: StepContext, messages: Message[]) {
     cost += reply.usage?.cost?.total ?? 0;
     try {
       const args = validateToolArguments({ name: step.name, description: step.name, parameters: step.schema }, { type: 'toolCall', id: step.name, name: step.name, arguments: parseObject(contentText(reply.content)) as never });
-      return { result: args as JsonValue, reply, cost };
+      return { result: args as JsonValue, built: (await check?.(args as JsonValue)) as B, reply, cost };
     } catch (err) {
       if (c.signal.aborted) throw err;
       const error = err instanceof Error ? err.message : String(err);
@@ -104,9 +104,9 @@ async function judgedStep(step: Extract<Step, { kind: 'judged' }>, c: StepContex
   const messages = askOf(step, c);
   let cost = 0;
   for (let revisions = 0; ; revisions++) {
-    const { result, reply, cost: spent } = await converse(step, c, messages);
+    const { built, reply, cost: spent } = await converse(step, c, messages, (d) => step.card(c, d));
     cost += spent;
-    await c.api.env!.writeFile(options.kind.path, JSON.stringify(await step.card(c, result), null, 1), c.ctx);
+    await c.api.env!.writeFile(options.kind.path, JSON.stringify(built, null, 1), c.ctx);
     const sealed = await seal(c.api, options.kind, c.ctx);
     const verdict = await rejudge(c.api, options, sealed, `judge:${sealed.kind}:v${sealed.version}`, c.ctx);
     await attachVerdict(c.api, sealed.kind, sealed.version, { ...verdict, notes } as never, c.ctx);

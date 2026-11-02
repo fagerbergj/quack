@@ -1,7 +1,7 @@
 import { BACKGROUND_CONTEXT, type Context } from '@earendil-works/chord/context';
 import type { JsonValue } from '@earendil-works/chord';
 import { defineExtension, defineTask, type Conversation, type ConversationId, type Extension, type Harness, type RunningTask, type TaskRuntime, type Tx } from '@earendil-works/pi-durable';
-import type { Dispatch, DispatchingExtension } from '@quack/session';
+import type { Dispatch, DispatchingExtension, Resume } from '@quack/session';
 import { Failures } from '@quack/sdk';
 import { WorkflowDoc, type StepRecord } from './doc.ts';
 import { execute, view, Wait, type Step, type StepContext } from './steps.ts';
@@ -12,7 +12,8 @@ export { Wait, type Step, type StepContext } from './steps.ts';
 type Results = Record<string, JsonValue>;
 // The checkpoint is the results so far: committing a step's result and moving to the next phase are one write (WFL-2).
 type Checkpoint = { phase: string; results: Results };
-type Input = { input: JsonValue };
+// `resume` starts a new run at a failed step with the results the earlier steps already produced.
+type Input = { input: JsonValue; resume?: { phase: string; results: Results } };
 type Runtime = TaskRuntime<Input, Checkpoint, Results, object>;
 
 export type Workflow = ReturnType<typeof defineWorkflow>;
@@ -56,6 +57,7 @@ async function runStep(steps: Step[], i: number, running: RunningTask<Input, Che
       const s = await record(tx, rt.conversationId, step.name);
       Object.assign(s, { status: 'failed', error: message, durationMs: rt.now() - (s.startedAt ?? rt.now()) });
       (await tx.doc(Failures, rt.conversationId)).items[step.name] = { error: message, run: Number(rt.taskId), at: rt.now() };
+      (await tx.doc(WorkflowDoc, rt.conversationId)).kept = running.state.checkpoint.results;
       return { status: 'terminal', outcome: { status: 'failed', error: { message } } };
     }, ctx);
   }
@@ -79,7 +81,7 @@ export function defineWorkflow(def: { name: string; steps: Step[] }) {
   const task = defineTask<Input, Checkpoint, Results, object>({
     name: `quack.workflow.${name}`,
     version: 1,
-    initial: () => ({ phase: steps[0].name, results: {} }),
+    initial: (i) => i.resume ?? { phase: steps[0].name, results: {} },
     phases: Object.fromEntries(steps.map((step, i) => [step.name, (running: RunningTask<Input, Checkpoint, Results>, rt: Runtime, ctx: Context) => runStep(steps, i, running, rt, ctx)])) as never,
     // A step waiting on a person is closed with the run: nothing is left to resume on an answer.
     abort: (_t, rt, ctx) => rt.commit(async (tx) => {
@@ -100,8 +102,30 @@ export async function startWorkflow(harness: Harness, root: Conversation, workfl
     const doc = await tx.doc(WorkflowDoc, root.id);
     if (doc.task && (doc.task !== seen || live || (request !== null && doc.request === request))) return doc.task;
     const created = String(await tx.createTask(workflow.task, { input }, { ownership: { kind: 'conversation' } }));
-    Object.assign(doc, { name: workflow.name, task: created, request, steps: workflow.steps.map(pending) });
+    Object.assign(doc, { name: workflow.name, task: created, request, steps: workflow.steps.map(pending), kept: null });
     (await tx.doc(Failures, root.id)).items = Object.fromEntries(workflow.steps.map((s) => [s.name, { error: null, run: Number(created), at: 0 }]));
+    return created;
+  }, ctx);
+}
+
+// Starts a new run at the failed step, keeping earlier results; null if the latest run did not fail.
+// A failed task is terminal, so pi-durable's retryTask (parked tasks only) cannot rerun it.
+export async function resumeWorkflow(harness: Harness, root: Conversation, workflow: Workflow, ctx: Context = BACKGROUND_CONTEXT): Promise<string | null> {
+  const seen = await harness.snapshot(WorkflowDoc, root.id, ctx);
+  const old = seen?.task ? await harness.getTask(Number(seen.task) as never, ctx) : undefined;
+  const failed = seen?.steps.find((s) => s.status === 'failed');
+  if (!seen || !old || !failed || old.state.status !== 'terminal') return null;
+  const from = workflow.steps.findIndex((s) => s.name === failed.name);
+  if (from < 0) return null;
+  const input = (old.input as Input).input;
+  return root.commit(async (tx) => {
+    const doc = await tx.doc(WorkflowDoc, root.id);
+    // Another resume or run got there first.
+    if (doc.task !== seen.task) return doc.task;
+    const created = String(await tx.createTask(workflow.task, { input, resume: { phase: failed.name, results: doc.kept ?? {} } }, { ownership: { kind: 'conversation' } }));
+    doc.task = created;
+    doc.steps.splice(from, doc.steps.length, ...workflow.steps.slice(from).map(pending));
+    (await tx.doc(Failures, root.id)).items[failed.name] = { error: null, run: Number(created), at: 0 };
     return created;
   }, ctx);
 }
@@ -142,6 +166,10 @@ export function workflowSessionExtensions(config: unknown, from?: Record<string,
     if (outcome.status === 'completed') return { submissionId: id, status: 'done', answer: JSON.stringify(outcome.result) };
     return { submissionId: id, status: 'unanswered', reason: outcome.status, detail: outcome.status === 'failed' ? outcome.error.message : undefined };
   };
-  return [{ ...workflowExtension([workflow]), dispatch } as DispatchingExtension];
+  const resume: Resume = async ({ harness, root }) => {
+    const id = await resumeWorkflow(harness, root, workflow);
+    return id ? { submissionId: id, status: 'placed' } : null;
+  };
+  return [{ ...workflowExtension([workflow]), dispatch, resume } as DispatchingExtension];
 }
 export { manifest } from './manifest.ts';

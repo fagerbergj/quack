@@ -12,14 +12,21 @@ export type TrendsDecision = { items: Array<{ kind: Kind; playerId?: string; new
 /** `2026-11-06 (Fri)`, in the league's clock. */
 export const when = (ms: number) => `${etDate(ms)} (${etParts(ms).weekday})`;
 
+const who = (p: { id: string; name: string }) => `${p.id} ${p.name}`;
+
 function item(f: TrendsFacts, d: TrendsDecision['items'][number]): TrendItem {
   const p = d.playerId === undefined ? undefined : f.players[d.playerId];
   if (d.playerId !== undefined && !p) throw new Error(`the model named ${d.playerId}, who is not in the facts`);
   const player = p && { id: p.id, name: p.name, pos: p.pos, team: p.team, inj: p.inj };
   if (d.newsUrl === undefined) return { time: when(Date.parse(`${f.date}T12:00:00Z`)), source: 'Sleeper', kind: d.kind, ...(player && { player }), text: d.text };
-  const news = p && (f.news[p.id] ?? []).find((n) => n.url === d.newsUrl);
-  if (!news) throw new Error(`the model linked ${d.newsUrl}, which is not news for ${d.playerId}`);
-  if (!d.source) throw new Error(`the model linked ${d.newsUrl} without naming its reporter and outlet`);
+  if (!p) throw new Error(`the model linked ${d.newsUrl} without naming a player`);
+  const news = (f.news[p.id] ?? []).find((n) => n.url === d.newsUrl);
+  if (!news) {
+    const owner = Object.keys(f.news).find((id) => f.news[id].some((n) => n.url === d.newsUrl));
+    const whose = owner && f.players[owner] ? `that link is news for ${who(f.players[owner])}, not ${who(p)}` : `that link is not news for ${who(p)}`;
+    throw new Error(`the model linked ${d.newsUrl}: ${whose}`);
+  }
+  if (!d.source) throw new Error(`the model linked ${d.newsUrl} for ${who(p)} without naming its reporter and outlet`);
   return { time: when(Date.parse(news.date)), source: d.source, kind: d.kind, player, text: d.text, link: news.url };
 }
 

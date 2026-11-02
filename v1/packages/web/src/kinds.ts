@@ -1,7 +1,7 @@
 import type { IndexArtifact, SessionSummary } from './api.ts';
 import { BLUE, plain, type SessionKind, type Tone, type Words } from './extension.ts';
 import { EXTENSIONS } from './extensions/index.ts';
-import type { Row } from './sessions.ts';
+import { failedLine, type Row } from './sessions.ts';
 
 export type { Tone };
 
@@ -36,7 +36,8 @@ export function look(r: Row): Look {
   const ask = r.approvals[0];
   const more = r.approvals.length > 1 ? ` +${r.approvals.length - 1} more` : '';
   const question = r.questions[0];
-  const shown = ask ? { line: `Approve ${ask.tool}${more}`, tone: 'warn' as const } : question ? { line: `Answer: ${question.question}`, tone: 'warn' as const } : state;
+  const failure = r.failures[0];
+  const shown = failure ? { line: failedLine(failure), tone: 'bad' as const } : ask ? { line: `Approve ${ask.tool}${more}`, tone: 'warn' as const } : question ? { line: `Answer: ${question.question}`, tone: 'warn' as const } : state;
   return { label: kind.label, icon: kind.icon, tint: kind.tint, num, repo, title, full, ...shown };
 }
 
@@ -50,6 +51,6 @@ export type SessionTitle = { repo?: string; number?: string; text: string; full:
 
 // The one place a session is named: list rows, the session header, Inbox and Artifacts all read this.
 export function sessionTitle(s: SessionSummary & { multiRepo?: boolean }): SessionTitle {
-  const l = look({ multiRepo: false, ...s, approvals: [], questions: [], artifacts: [] });
+  const l = look({ multiRepo: false, ...s, approvals: [], questions: [], failures: [], artifacts: [] });
   return { repo: l.repo, number: l.num, text: l.title, full: l.full, icon: l.icon, kind: l.label };
 }

@@ -6,9 +6,9 @@ import { after, test } from 'node:test';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider, Type, type FauxResponseFactory, type Message } from '@earendil-works/pi-ai';
 import { defineTool } from '@earendil-works/pi-durable';
-import { answerQuestion, Approvals, Artifacts, pendingApprovals, pendingQuestions, Questions, resolveApproval, seal, type ArtifactKind } from '@quack/sdk';
+import { answerQuestion, Approvals, Artifacts, Failures, pendingApprovals, pendingQuestions, Questions, resolveApproval, seal, type ArtifactKind } from '@quack/sdk';
 import { openSession } from '@quack/session';
-import { defineWorkflow, outcomeOf, runWorkflow, startWorkflow, watchUntil, WorkflowDoc, workflowExtension, type Workflow } from '../src/index.ts';
+import { defineWorkflow, outcomeOf, resumeWorkflow, runWorkflow, startWorkflow, watchUntil, WorkflowDoc, workflowExtension, type Workflow } from '../src/index.ts';
 
 const dirs: string[] = [];
 after(() => Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true }))));
@@ -123,6 +123,32 @@ test('a model reply that fails the schema fails the step and stops the workflow'
 const capped = defineWorkflow({
   name: 'capped',
   steps: [{ name: 'decide', kind: 'model', schema: Type.Object({ summary: Type.String({ maxLength: 5 }) }), prompt: () => 'summarize' }],
+});
+
+test('resuming a failed run reruns the failed step and later ones, keeping the earlier results', async () => {
+  const runs = { first: 0, second: 0, third: 0 };
+  let broken = true;
+  const workflow = defineWorkflow({
+    name: 'retry',
+    steps: [
+      { name: 'first', kind: 'code', run: () => ({ n: ++runs.first }) },
+      { name: 'second', kind: 'code', run: () => { runs.second++; if (broken) throw new Error('boom'); return 'fixed'; } },
+      { name: 'third', kind: 'code', run: (c) => { runs.third++; return JSON.stringify(c.prior); } },
+    ],
+  });
+  const s = await open(await tmp(), workflow);
+  assert.equal((await runWorkflow(s.harness, s.root, workflow, 'in')).status, 'failed');
+  assert.equal((await doc(s)).steps[1].status, 'failed');
+  assert.equal((await s.harness.snapshot(Failures, s.root.id, ctx))!.items.second.error, 'boom');
+
+  broken = false;
+  const outcome = await outcomeOf(s.harness, (await resumeWorkflow(s.harness, s.root, workflow))!);
+  assert.deepEqual(outcome.status === 'completed' && outcome.result, { first: { n: 1 }, second: 'fixed', third: '{"first":{"n":1},"second":"fixed"}' });
+  assert.deepEqual(runs, { first: 1, second: 2, third: 1 });
+  assert.deepEqual((await doc(s)).steps.map((r) => [r.status, r.error]), [['done', null], ['done', null], ['done', null]]);
+  assert.equal((await s.harness.snapshot(Failures, s.root.id, ctx))!.items.second.error, null);
+  assert.equal(await resumeWorkflow(s.harness, s.root, workflow), null);
+  await s.close();
 });
 
 // Answers with `text` and records the messages each request carried.
@@ -278,4 +304,45 @@ test('a judged card still failing after the last revision is delivered with its 
   assert.deepEqual(versions.map((v) => (v.verdict as { passed: boolean }).passed), [false, false]);
   assert.equal((versions[1].verdict as { limitReached: boolean }).limitReached, true);
   assert.deepEqual(outcome.status === 'completed' && (outcome.result as { card: unknown }).card, { version: 2, revisions: 1, passed: false, score: 1, gatesFailed: ['tone.says_ok'], notes: ['n'] });
+});
+
+function throwingFlow(builds: { n: number }, failures: number) {
+  return defineWorkflow({
+    name: 'built',
+    steps: [{
+      name: 'card',
+      kind: 'judged',
+      schema: Type.Object({ text: Type.String() }),
+      prompt: () => 'write the text',
+      card: (_c, d) => {
+        if (builds.n++ < failures) throw new Error('the card builder rejects this');
+        return d as object;
+      },
+      judge: () => ({ options: { kind: note, rubric: sayOk, evidence: async () => ({}), maxRevisions: 0 } }),
+    }],
+  });
+}
+
+test('a judged step whose builder throws once completes after one repair turn that shows the error', async () => {
+  const seen: Message[][] = [];
+  const builds = { n: 0 };
+  const flow = throwingFlow(builds, 1);
+  const s = await open(await tmp(), flow, reply('{"text": "ok"}', seen), reply('{"text": "ok again"}', seen));
+  const outcome = await runWorkflow(s.harness, s.root, flow, null);
+  await s.close();
+  assert.equal(outcome.status, 'completed');
+  assert.equal(builds.n, 2);
+  assert.match(JSON.stringify(seen[1].at(-1)), /That answer was rejected:\\nthe card builder rejects this/);
+});
+
+test('a judged step whose builder keeps throwing fails with its message after the repair turns', async () => {
+  const seen: Message[][] = [];
+  const builds = { n: 0 };
+  const flow = throwingFlow(builds, 99);
+  const s = await open(await tmp(), flow, reply('{"text": "a"}', seen), reply('{"text": "b"}', seen), reply('{"text": "c"}', seen));
+  const outcome = await runWorkflow(s.harness, s.root, flow, null);
+  await s.close();
+  assert.equal(outcome.status, 'failed');
+  assert.match(JSON.stringify(outcome), /the card builder rejects this/);
+  assert.equal(seen.length, 3);
 });
