@@ -212,11 +212,11 @@ function statusOf(state: 'connecting' | 'open' | 'reconnecting', waiting: number
   return running ? ['Running', 'run'] : ['Idle', 'idle'];
 }
 
-// Below lg the pane is the visible viewport above the 52px tab bar (Shell) and draws the only top bar, so the composer stays above the keyboard.
+// Below lg the pane is the visible viewport above the 48px tab bar (Shell) and draws the only top bar, so the composer stays above the keyboard.
 function usePaneStyle(): CSSProperties | undefined {
   const vv = useVisualViewportHeight();
   if (vv === undefined) return undefined;
-  const chrome = vv < window.innerHeight - 150 ? '0px' : '52px - var(--safe-b)';
+  const chrome = vv < window.innerHeight - 150 ? '0px' : '48px - var(--safe-b)';
   return { '--ws-h': `calc(${vv}px - ${chrome})` } as CSSProperties;
 }
 
@@ -247,7 +247,7 @@ export function SessionView({ sessionKey, agent, name, delivered }: { sessionKey
         <More running={state === 'open' && view.running} onAbort={abort} latest={items.at(-1)} onOpen={setWork} />
       </Header>
       <div className="relative flex min-h-0 flex-1 flex-col">
-        <div className="mx-auto flex min-h-0 w-full max-w-[720px] min-w-0 flex-1 flex-col overflow-y-auto px-4 pt-5 pb-36 sm:px-5" aria-live="polite">
+        <div className="relative mx-auto flex min-h-0 w-full max-w-[720px] min-w-0 flex-1 flex-col overflow-y-auto px-4 pt-5 pb-36 sm:px-5" aria-live="polite">
           <div className="flex min-w-0 flex-col gap-5 [overflow-wrap:anywhere] [&_pre]:max-w-full [&_pre]:overflow-x-auto">
             {error && <p role="alert" className="m-0 rounded-xl border border-danger-line bg-danger-bg/60 px-3.5 py-2.5 text-[13px] text-danger">{error}</p>}
             <Transcript view={view} meta={meta} />

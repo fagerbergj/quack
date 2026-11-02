@@ -1037,13 +1037,13 @@ test('a note does not end its first sentence at e.g.', async () => {
   expect(card).not.toHaveTextContent('It stops there');
 });
 
-test('below lg the session pane subtracts the 52px nav plus the bottom safe inset', async () => {
+test('below lg the session pane subtracts the 48px nav plus the bottom safe inset', async () => {
   stubViewport(false);
   vi.stubGlobal('innerHeight', 844);
   vi.stubGlobal('visualViewport', { height: 844, addEventListener() {}, removeEventListener() {} });
   await openSession();
   const pane = document.querySelector<HTMLElement>('[style*="--ws-h"]');
-  expect(pane?.style.getPropertyValue('--ws-h')).toBe('calc(844px - 52px - var(--safe-b))');
+  expect(pane?.style.getPropertyValue('--ws-h')).toBe('calc(844px - 48px - var(--safe-b))');
 });
 
 test('below lg main is the scroller inside a fixed frame that ends at the nav', async () => {
@@ -1051,7 +1051,7 @@ test('below lg main is the scroller inside a fixed frame that ends at the nav', 
   await openSession();
   const main = screen.getByRole('main');
   expect(main).toHaveClass('flex-1', 'min-h-0', 'overflow-y-auto', 'overscroll-y-contain');
-  expect(main.parentElement).toHaveClass('fixed', 'top-0', 'bottom-[calc(52px+var(--safe-b))]', 'lg:contents');
+  expect(main.parentElement).toHaveClass('fixed', 'top-0', 'bottom-[calc(48px+var(--safe-b))]', 'lg:contents');
 });
 
 // Real prod index rows [version, judge passed, posted, verdict in the content] for #2019 and #2042.
@@ -1120,4 +1120,10 @@ test('the pinned artifact line reads Previous review, without a tick, while a ne
   expect(done).toHaveTextContent('Double-checked');
   // The card carries the one Posted link; the pinned line drops its own.
   expect(within(screen.getByText('Review posted').closest('li')!).getAllByRole('link', { name: /Posted/ })).toHaveLength(1);
+});
+
+test('the transcript scroller is the containing block for absolute children, so sr-only headings cannot stretch main', async () => {
+  stubViewport(false);
+  await openSession();
+  expect(document.querySelector('[aria-live="polite"]')).toHaveClass('relative', 'overflow-y-auto');
 });
