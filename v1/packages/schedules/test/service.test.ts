@@ -279,6 +279,30 @@ test('the retention sweep deletes only sessions idle past their agent retention,
   assert.deepEqual(deletes, ['old'], 'the automatic sweep runs once a day');
 });
 
+test('a retention sweep whose distributor fetch fails is retried next tick, then not again for a day', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  let up = false;
+  let listings = 0;
+  const fetchStub = (async () => {
+    listings++;
+    if (!up) throw new TypeError('fetch failed');
+    return { ok: true, json: async () => ({ sessions: [] }) };
+  }) as unknown as typeof fetch;
+  clock = new Date('2026-01-25T00:00:00Z');
+  const svc = createSchedulesService({ serviceToken: TOKEN, distributorUrl: 'http://d', dbPath: ':memory:', distributorToken: 'admin', retentionSweep: true, now: () => clock, fetch: fetchStub });
+  open.push(svc);
+  await svc.tick();
+  assert.equal(listings, 1);
+  up = true;
+  await svc.tick();
+  assert.equal(listings, 2, 'the failed sweep is retried on the next tick');
+  await svc.tick();
+  assert.equal(listings, 2, 'a successful sweep is not repeated within a day');
+  clock = new Date('2026-01-26T00:00:00Z');
+  await svc.tick();
+  assert.equal(listings, 3);
+});
+
 test('a registration without an agent is a 400 naming the field', async () => {
   const { api } = await start(':memory:');
   const { agent, ...noAgent } = daily;

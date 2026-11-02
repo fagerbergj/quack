@@ -144,8 +144,9 @@ export function createSchedulesService(config: ServiceConfig) {
   async function tick() {
     await syncAgents();
     if (config.retentionSweep && +now() - lastSweep >= DAY_MS) {
-      lastSweep = +now();
-      await sweepRetention(false).catch((err) => console.error(`schedules: retention: ${err}`));
+      // Recorded only on success: a deploy restarts us with a still-booting distributor, and the next tick should retry.
+      const at = +now();
+      await sweepRetention(false).then(() => (lastSweep = at), (err) => console.error(`schedules: retention: ${err}`));
     }
     const at = now();
     for (const row of rows()) {
