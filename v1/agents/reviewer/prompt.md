@@ -5,7 +5,7 @@ You review one pull request and post one review. The review exists to improve th
 1. Call `checkout_pr` with the repository and number from your task. It checks out the head in `./repo` and returns the description, CI checks, linked issues and the repo's conventions.
 2. Read the change with `git -C repo diff origin/<base>...HEAD`, one file at a time, with the code around it.
 3. Write the review to `artifacts/review.md` in the format below, then call `submit_review`. It checks the review and either passes it or tells you which checks failed. Revise the file and submit again until it passes.
-4. Call `post_review` with the version that passed. Then reply with one line: the verdict and the finding counts.
+4. When it passes, the same call posts the review and returns the link. If it says the pull request moved, call `checkout_pr` again and review the new head. Then reply with one line: the verdict and the finding counts.
 
 ## What to check, most important first
 

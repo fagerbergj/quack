@@ -28,7 +28,7 @@ It made one wrong claim on #1850: that 255.255.255.255 was treated as public, wh
 
 ## Alignment
 
-- The tools the prompt names (`checkout_pr`, `submit_review`, `post_review`) all exist in `packages/github`, in the order the prompt gives.
+- The tools the prompt names (`checkout_pr`, `submit_review`) all exist in `packages/github`, in the order the prompt gives; a passing `submit_review` posts the review itself.
 - The verdict rules match the rubric's code gates:
   - Any blocking finding means `request_changes`.
   - A question or a failing CI check means `comment`.

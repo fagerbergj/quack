@@ -66,33 +66,26 @@ async function reviewRun(responses: (seen: string[], advance: () => string) => F
 const call = (name: string, args: Record<string, unknown>) => fauxAssistantMessage(fauxToolCall(name, args as never), { stopReason: 'toolUse' });
 const recorder = (seen: string[]) => (msg: ReturnType<typeof fauxAssistantMessage>) => (c: { messages: unknown[] }) => (seen.push(JSON.stringify(c.messages.at(-1))), msg);
 
-test('a reviewer run checks out the PR, has its review judged, and posts exactly the checked version', async () => {
+const URL7 = 'https://github.com/acme/widgets/pull/7#review-9';
+const write = (content: string) => call('write', { path: 'artifacts/review.md', content });
+const checkout = () => call('checkout_pr', { repository: 'acme/widgets', number: 7 });
+
+test('a passing submit posts the checked version once, returns the link, and a repeat submit sends nothing more', async () => {
   const { done, seen, service, head, session } = await reviewRun((seen) => {
     const step = recorder(seen);
-    return [
-      call('checkout_pr', { repository: 'acme/widgets', number: 7 }),
-      step(call('post_review', { version: 1 })),
-      step(call('write', { path: 'artifacts/review.md', content: review })),
-      step(call('submit_review', {})),
-      step(fauxAssistantMessage('Reviewed.')),
-      step(call('post_review', { version: 1 })),
-      step(call('post_review', { version: 1 })),
-      step(fauxAssistantMessage('Posted.')),
-    ];
+    return [checkout(), step(write(review)), step(call('submit_review', {})), step(call('submit_review', {})), step(fauxAssistantMessage('Reviewed.'))];
   });
-  assert.equal(done.status === 'done' && done.answer, 'Posted.');
-  assert.match(seen[1], /is not sealed; call submit_review first/, 'nothing posts before it is checked');
-  assert.match(seen[3], /github\.review v1: 100% \(github\.reviewer@4\), passed/);
-  assert.match(seen[4], /Review v1 is cleared to post but has not been posted/, 'finishing before posting is refused');
-  assert.match(seen[6], /review v1 was already posted; nothing was sent again/);
-
+  assert.equal(done.status === 'done' && done.answer, 'Reviewed.');
+  assert.match(seen[2], /github\.review v1: 100% \(github\.reviewer@4\), passed\./);
+  assert.match(seen[2], new RegExp(`Posted as APPROVE: ${URL7.replace(/[/.#]/g, '\\$&')}`));
+  assert.match(seen[3], /Review v1 was already posted; nothing was sent again/);
   assert.equal(service.posted.length, 1);
   assert.deepEqual(service.posted[0], { owner: 'acme', repo: 'widgets', number: 7, commitId: head, event: 'APPROVE', body: review });
 
   const doc = await session.harness.snapshot(Artifacts, session.root.id, BACKGROUND_CONTEXT);
   const verdict = doc!.kinds['github.review'].versions[0].verdict as any;
   assert.equal(verdict.passed, true);
-  assert.deepEqual(doc!.kinds['github.review'].versions[0].links, [{ label: 'Posted', url: 'https://github.com/acme/widgets/pull/7#review-9' }]);
+  assert.deepEqual(doc!.kinds['github.review'].versions[0].links, [{ label: 'Posted', url: URL7 }]);
   const resolvers = new Set(verdict.checks.flatMap((c: any) => Object.keys(c.resolvers)));
   assert.deepEqual([...resolvers].sort(), ['clef', 'code']);
   assert.ok(clefUnits.includes('review+description+ci+linkedIssues+diff'), 'the change unit carries the diff and PR context');
@@ -100,74 +93,82 @@ test('a reviewer run checks out the PR, has its review judged, and posts exactly
   await session.close();
 });
 
-test('a review that quotes code the repository does not have is sent back before it can post', async () => {
+test('a failing submit posts nothing; the corrected version is the one that goes out', async () => {
   const misquoted = review.replace('a named constant would say why the value is 2.', 'it still calls `return computeTotals(a)`, which is gone.');
   const { done, seen, service, session } = await reviewRun((seen) => {
     const step = recorder(seen);
+    return [checkout(), step(write(misquoted)), step(call('submit_review', {})), step(write(review)), step(call('submit_review', {})), step(fauxAssistantMessage('Posted.'))];
+  });
+  assert.equal(done.status === 'done' && done.answer, 'Posted.');
+  assert.match(seen[2], /gate claims_grounded\.quotes_exist[^"]*finding-1 names identifiers found nowhere in the repository, the diff or its dependencies: `computeTotals`/);
+  assert.doesNotMatch(seen[2], /Posted as/);
+  assert.equal(service.posted.length, 1);
+  assert.equal(service.posted[0].body, review);
+  await session.close();
+});
+
+test('a review released at the revision limit posts with its failures marked', async () => {
+  const bad = (n: number) => review.replace('a named constant would say why the value is 2.', `it still calls \`return computeTotals${n}(a)\`, which is gone.`);
+  const { done, seen, service, session } = await reviewRun((seen) => {
+    const step = recorder(seen);
+    return [checkout(), step(write(bad(1))), step(call('submit_review', {})), step(write(bad(2))), step(call('submit_review', {})), step(write(bad(3))), step(call('submit_review', {})), step(fauxAssistantMessage('Released.'))];
+  });
+  assert.equal(done.status === 'done' && done.answer, 'Released.');
+  assert.doesNotMatch(seen[2], /Posted as/);
+  assert.doesNotMatch(seen[4], /Posted as/);
+  assert.match(seen[6], /The revision limit is reached\./);
+  assert.match(seen[6], /Posted as APPROVE: /);
+  assert.equal(service.posted.length, 1);
+  assert.match(service.posted[0].body, /\*\*Not fully checked:\*\* the revision limit was reached\. Checks that did not pass:\n- /);
+  assert.ok(service.posted[0].body.startsWith(bad(3)));
+  await session.close();
+});
+
+test('a PR pushed to while it is reviewed is not posted against the old head; checking out again posts the new one', async () => {
+  let moved = '';
+  const { done, seen, service, head, session } = await reviewRun((seen, advance) => {
+    const step = recorder(seen);
     return [
-      call('checkout_pr', { repository: 'acme/widgets', number: 7 }),
-      step(call('write', { path: 'artifacts/review.md', content: misquoted })),
+      checkout(),
+      step(write(review)),
+      (_c: unknown) => { moved = advance(); return call('submit_review', {}); },
+      step(checkout()),
       step(call('submit_review', {})),
-      step(call('write', { path: 'artifacts/review.md', content: review })),
-      step(call('submit_review', {})),
-      step(call('post_review', { version: 2 })),
       step(fauxAssistantMessage('Posted.')),
     ];
   });
   assert.equal(done.status === 'done' && done.answer, 'Posted.');
-  assert.match(seen[2], /gate claims_grounded\.quotes_exist[^"]*finding-1 names identifiers found nowhere in the repository, the diff or its dependencies: `computeTotals`/);
-  assert.equal(service.posted.length, 1);
-  assert.equal(service.posted[0].body, review, 'only the corrected version went out');
+  assert.match(seen[1], /Nothing was posted: the pull request moved from \w+ to \w+; check out again with checkout_pr/);
+  assert.notEqual(moved, head);
+  assert.match(seen[3], /Posted as APPROVE: /);
+  assert.deepEqual(service.posted.map((p) => p.commitId), [moved]);
   await session.close();
 });
 
-test('a run that revises after posting sends one review, and may finish without posting the revision', async () => {
+test('a second passing version on the same checkout is not posted; a later run checks out afresh and may post', async () => {
   const revised = review.replace('approve.', 'approve, with one nit.');
   const { done, seen, service, session } = await reviewRun((seen) => {
     const step = recorder(seen);
     return [
-      call('checkout_pr', { repository: 'acme/widgets', number: 7 }),
-      step(call('write', { path: 'artifacts/review.md', content: review })),
+      checkout(),
+      step(write(review)),
       step(call('submit_review', {})),
-      step(call('post_review', { version: 1 })),
-      step(call('write', { path: 'artifacts/review.md', content: revised })),
+      step(write(revised)),
       step(call('submit_review', {})),
-      step(call('post_review', { version: 2 })),
       step(fauxAssistantMessage('Posted.')),
-      call('checkout_pr', { repository: 'acme/widgets', number: 7 }),
-      call('post_review', { version: 2 }),
+      checkout(),
+      call('submit_review', {}),
       fauxAssistantMessage('Re-reviewed.'),
     ];
   });
-  assert.equal(done.status === 'done' && done.answer, 'Posted.', 'the unposted v2 does not hold the run open');
-  assert.match(seen[6], /review v1 was already posted for this checkout; a run posts one review, so v2 was not sent/);
+  assert.equal(done.status === 'done' && done.answer, 'Posted.');
+  assert.match(seen[4], /Review v1 was already posted for this checkout; a run posts one review, so v2 was not sent/);
   assert.equal(service.posted.length, 1);
   assert.equal(service.posted[0].body, review);
 
   const again = await session.submit('/review', 'gh-2', true);
   assert.equal(again.status === 'done' && again.answer, 'Re-reviewed.');
-  assert.equal(service.posted.length, 2, 'a later run checks out afresh and may post');
+  assert.equal(service.posted.length, 2);
   assert.equal(service.posted[1].body, revised);
-  await session.close();
-});
-
-test('a PR pushed to while it is reviewed is not posted against the old head; the run checks out the new one', async () => {
-  let moved = '';
-  const { done, seen, service, head, session } = await reviewRun((seen, advance) => {
-    const step = recorder(seen);
-    return [
-      call('checkout_pr', { repository: 'acme/widgets', number: 7 }),
-      step(call('write', { path: 'artifacts/review.md', content: review })),
-      step(call('submit_review', {})),
-      (_c: unknown) => { moved = advance(); return call('post_review', { version: 1 }); },
-      step(call('checkout_pr', { repository: 'acme/widgets', number: 7 })),
-      step(call('post_review', { version: 1 })),
-      step(fauxAssistantMessage('Posted.')),
-    ];
-  });
-  assert.equal(done.status === 'done' && done.answer, 'Posted.');
-  assert.match(seen[2], /moved from \w+ to \w+; call checkout_pr again/);
-  assert.notEqual(moved, head);
-  assert.deepEqual(service.posted.map((p) => p.commitId), [moved]);
   await session.close();
 });

@@ -20,6 +20,8 @@ export type JudgeOptions = {
   /** Where uncertain checks escalate; the agent's own model when unset. */
   judgeModel?: ModelRef;
   toolName?: string;
+  /** Runs once a version passes or is released at the limit (e.g. delivers it); its text is appended to the submit result. */
+  onCleared?: (sealed: SealedArtifact, verdict: Verdict, api: ToolExecutionApi, ctx: Context) => Promise<{ text: string; isError?: boolean } | undefined>;
 };
 
 export type Verdict = { passed: boolean; limitReached: boolean; score: number; gatesFailed: string[]; rubric: string; checks: CheckResult[]; undecided: string[] };
@@ -90,17 +92,24 @@ export function undecidedMessage(ids: string[], toolName: string): string {
   return `The judge model gave no usable answer for ${ids.join(', ')} (usually it is at capacity), so nothing was scored. Call ${toolName} again; checks already answered are kept.`;
 }
 
-function report(sealed: SealedArtifact, v: Verdict, toolName: string) {
+function report(sealed: SealedArtifact, v: Verdict, toolName: string, delivers = false) {
   const head = `${sealed.kind} v${sealed.version}: ${Math.round(v.score * 100)}% (${v.rubric})`;
   const lines = feedback(v.checks).map((l) => `- ${l}`).join('\n');
-  if (v.passed) return `${head}, passed. Deliver version ${sealed.version}.${lines ? `\nMinor:\n${lines}` : ''}`;
-  if (v.limitReached) return `${head}, failed:\n${lines}\nThe revision limit is reached: deliver version ${sealed.version} with these failures marked.`;
+  if (v.passed) return `${head}, passed.${delivers ? '' : ` Deliver version ${sealed.version}.`}${lines ? `\nMinor:\n${lines}` : ''}`;
+  if (v.limitReached) return `${head}, failed:\n${lines}\nThe revision limit is reached.${delivers ? '' : ` Deliver version ${sealed.version} with these failures marked.`}`;
   return `${head}, failed:\n${lines}\nRevise the file to address each point, then call ${toolName} again.`;
 }
 
 // The judge as an extension (D3): a durable tool seals and checks the artifact; the yield hook only refuses to finish too early.
 export function judge(opts: JudgeOptions) {
   const toolName = opts.toolName ?? 'submit_artifact';
+  // A cleared version reaches onCleared on every submit, so a delivery that failed is retried; the hook must be idempotent.
+  async function finish(sealed: SealedArtifact, v: Verdict, api: ToolExecutionApi, ctx: Context) {
+    const cleared = v.passed || v.limitReached ? await opts.onCleared?.(sealed, v, api, ctx) : undefined;
+    const text = [report(sealed, v, toolName, !!opts.onCleared), cleared?.text].filter(Boolean).join('\n');
+    return { output: [{ type: 'text' as const, text }], ...(cleared?.isError ? { isError: true } : {}) };
+  }
+
   const submit = defineTool({
     name: toolName,
     description: `Seal ${opts.kind.path} and check it against its rubric. Call it when the ${opts.kind.kind} is ready.`,
@@ -113,15 +122,12 @@ export function judge(opts: JudgeOptions) {
       } catch (err) {
         return { output: [{ type: 'text', text: (err as Error).message }], isError: true };
       }
-      if (sealed.verdict) {
-        const v = sealed.verdict as unknown as Verdict;
-        return { output: [{ type: 'text', text: report(sealed, v, toolName) }] };
-      }
+      if (sealed.verdict) return finish(sealed, sealed.verdict as unknown as Verdict, api, ctx);
       const verdict = await judgeVersion(api, opts, sealed, ctx);
       // A verdict missing checks would pass or fail on a model outage; the decided answers are memoized, so calling again asks only the rest.
       if (verdict.undecided.length) return { output: [{ type: 'text', text: undecidedMessage(verdict.undecided, toolName) }], isError: true };
       await attachVerdict(api, opts.kind.kind, sealed.version, verdict as never, ctx);
-      return { output: [{ type: 'text', text: report(sealed, verdict, toolName) }] };
+      return finish(sealed, verdict, api, ctx);
     },
   });
 

@@ -296,9 +296,8 @@ test('markdown tool output renders with a toggle to raw; a posted review links o
   const res = (id: string, name: string, text: string) => entry(`r${id}`, [{ role: 'toolResult', toolCallId: id, toolName: name, content: [{ type: 'text', text }], isError: false, timestamp: 2 }]);
   ws.frame(snapshot({
     entries: [
-      entry('a', [assistant([call('s', 'submit_review'), call('p', 'post_review')])]),
-      res('s', 'submit_review', '## Takeaway\n\n- fine'),
-      res('p', 'post_review', 'Posted review v1 as APPROVE: https://github.com/o/r/pull/1#pullrequestreview-9'),
+      entry('a', [assistant([call('s', 'submit_review')])]),
+      res('s', 'submit_review', '## Takeaway\n\n- fine\nPosted as APPROVE: https://github.com/o/r/pull/1#pullrequestreview-9'),
     ],
   }));
   const submit = screen.getByText('submit_review').closest('details')!;
@@ -306,7 +305,7 @@ test('markdown tool output renders with a toggle to raw; a posted review links o
   await userEvent.click(within(submit).getByRole('button', { name: 'Raw' }));
   expect(submit.querySelectorAll('pre')[1]).toHaveTextContent('## Takeaway');
   // The tool row's link comes from the result; the artifact line's comes from the artifact, below.
-  expect(within(screen.getByText('post_review').closest('details')!).getByRole('link', { name: 'Posted ↗' })).toHaveAttribute('href', 'https://github.com/o/r/pull/1#pullrequestreview-9');
+  expect(within(submit).getByRole('link', { name: 'Posted ↗' })).toHaveAttribute('href', 'https://github.com/o/r/pull/1#pullrequestreview-9');
 });
 
 test('an artifact line renders the links stored with the version, with no stream entries to read', async () => {
