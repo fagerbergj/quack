@@ -35,7 +35,7 @@ export function CheckRow({ check, pill }: { check: Check; pill?: boolean }) {
       {pill && <Pill check={check} />}
     </>
   );
-  if (!check.notes.length) return <div className="flex min-h-11 items-center gap-2 lg:min-h-8">{head}</div>;
+  if (!check.notes.length) return <div className="flex min-h-11 items-center gap-2 lg:min-h-8">{head}{pill && <span aria-hidden="true" className="w-3 flex-none" />}</div>;
   return (
     <details open={checkFailed(check)}>
       <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 lg:min-h-8 [&::-webkit-details-marker]:hidden">
