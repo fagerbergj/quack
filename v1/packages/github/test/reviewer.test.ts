@@ -101,7 +101,7 @@ test('a reviewer run checks out the PR, has its review judged, and posts exactly
 });
 
 test('a review that quotes code the repository does not have is sent back before it can post', async () => {
-  const misquoted = review.replace('a named constant would say why the value is 2.', 'it still says `export const a = 3;`, which is the old value.');
+  const misquoted = review.replace('a named constant would say why the value is 2.', 'it still calls `return computeTotals(a)`, which is gone.');
   const { done, seen, service, session } = await reviewRun((seen) => {
     const step = recorder(seen);
     return [
@@ -115,7 +115,7 @@ test('a review that quotes code the repository does not have is sent back before
     ];
   });
   assert.equal(done.status === 'done' && done.answer, 'Posted.');
-  assert.match(seen[2], /gate claims_grounded\.quotes_exist[^"]*finding-1 quotes code that is not in the repository: `export const a = 3;`/);
+  assert.match(seen[2], /gate claims_grounded\.quotes_exist[^"]*finding-1 names identifiers found nowhere in the repository, the diff or its dependencies: `computeTotals`/);
   assert.equal(service.posted.length, 1);
   assert.equal(service.posted[0].body, review, 'only the corrected version went out');
   await session.close();

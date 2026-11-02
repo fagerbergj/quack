@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parseReview, reviewEvidence, reviewerRubric, validateReview } from '../src/index.ts';
-import { quotedCode } from '../src/review.ts';
+import { claimedNames, misquotes, quotedCode } from '../src/review.ts';
 
 const review = `## Takeaway
 Fix the double-counted cache tokens before merging.
@@ -86,11 +86,40 @@ test('statement-like inline quotes are collected for checking; identifiers, shor
   assert.deepEqual(quotedCode(text), [['teamWeek{Week: w, Points: 0, Result: "-"}'], ['className="${CHIP} bg-blue-100']]);
   const gate = code('claims_grounded', 'quotes_exist');
   assert.equal(gate('', { finding: [{ id: 'finding-1', state: {}, misquotes: [] }] } as never).met, 1);
-  const failed = gate('', { finding: [{ id: 'finding-1', state: {}, misquotes: [] }, { id: 'finding-2', state: {}, misquotes: ['Points: 0', 'x := y'] }] } as never);
+  const failed = gate('', { finding: [{ id: 'finding-1', state: {}, misquotes: [] }, { id: 'finding-2', state: {}, misquotes: ["Points", "x"] }] } as never);
   assert.equal(failed.met, 0.5);
-  assert.match(failed.detail!, /finding-2 quotes code that is not in the repository: `Points: 0`, `x := y`/);
+  assert.match(failed.detail!, /finding-2 names identifiers found nowhere in the repository, the diff or its dependencies: `Points`, `x`/);
   assert.match(failed.detail!, /command output or logs go in a fenced block/);
   assert.deepEqual(quotedCode('it fails:\n```text\npanic: runtime error: x == nil {\n```'), [], 'quoted output in a fence is not checked');
+});
+
+test('a quote is invented only when a name it claims is in no repo file, diff or installed dependency (prod cases)', async () => {
+  const has = (corpus: string, argv: string[]) => new RegExp(`(?<![\\w$])${argv[argv.indexOf('-e') + 1]}(?![\\w$])`).test(corpus);
+  let calls = 0;
+  const check = async (repo: string, deps: string, text: string, known?: Map<string, boolean>) => {
+    const api = { env: { exec: async (argv: string[]) => (calls++, { ok: true, value: { exitCode: has(argv[0] === 'git' ? repo : deps, argv) ? 0 : 1 } }) } };
+    return misquotes(api as never, 'r', { index: 1, label: 'nit', text } as never, '', '', {} as never, known);
+  };
+  const spans = [
+    'outer.push({ type: "error", reason: "error", error: message }); outer.end(message)',
+    'stream.push({ type: "error", reason: output.stopReason, error: output }); stream.end()',
+  ];
+  const dep = 'outer.push({ type: "error", reason: "error", error: message }); outer.end(message); stream.push({ type: "error", reason: output.stopReason, error: output }); stream.end()';
+  for (const s of spans) {
+    assert.deepEqual(await check('', dep, `emits \`${s}\``), []);
+    assert.deepEqual(await check('', '', `emits \`${s}\``), claimedNames(s), 'in no source, so invented');
+  }
+  const asserted = "assert.equal(noticeFor({ status: 'done' }, true), undefined)";
+  assert.deepEqual(await check(asserted, '', 'so `noticeFor(outcome, true) === undefined` holds'), []);
+  assert.deepEqual(await check('observeGeneration({ messages: [1] })', '', 'pass `{ messages }` through'), []);
+  const otlp = 'resp.partialSuccess?.rejectedSpans';
+  assert.deepEqual(await check(otlp, '', 'read `ExportTraceServiceResponse.partialSuccess { errorCount, errorMessage }`'), ['errorCount', 'errorMessage']);
+  assert.deepEqual(await check('map.keys().next().value', '', 'use `const oldest = map.keys().next().value` then `if (oldest !== undefined)`'), [], 'a new local name is a proposal');
+  assert.deepEqual(claimedNames('const oldest = map.keys().next().value'), ['keys', 'next', 'value']);
+  const shared = new Map<string, boolean>();
+  calls = 0;
+  for (const t of ['calls `gone.fetchAll() === 1`', 'again `gone.fetchAll() === 1`']) assert.deepEqual(await check('', '', t, shared), ['fetchAll']);
+  assert.equal(calls, 2, 'two searches (repo, deps) for one name across two findings');
 });
 
 test('no_silent_approval sees the same unit as the change scope on an approve, and no unit on any other verdict', async () => {
