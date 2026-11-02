@@ -121,3 +121,8 @@ details[open] > summary > .chev { transform: rotate(90deg); }
 .pulse-dot { animation: pulse-ring 1.6s infinite; }
 
 .paper { background: var(--color-paper) repeating-linear-gradient(180deg, transparent 0 13px, rgb(61 143 181 / 0.22) 13px 14px); box-shadow: inset 6px 0 0 #d9d2c3; }
+/* The user bubble is bg-ink, the inverse of the page, so code, links and quotes derive from its own text color. */
+.md-on-ink .md :not(pre) > code, .md-on-ink .md pre { background: color-mix(in oklab, var(--color-on-ink) 8%, transparent); color: var(--color-on-ink); }
+.md-on-ink .md pre span { color: inherit; }
+.md-on-ink .md a { color: var(--color-on-ink); text-decoration: underline; }
+.md-on-ink .md blockquote { color: inherit; border-left-color: color-mix(in oklab, var(--color-on-ink) 45%, transparent); }
