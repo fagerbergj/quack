@@ -6,13 +6,13 @@ import { createSleeperClient, type SleeperClient } from './client.ts';
 import type { NewsItem } from './lineup/facts.ts';
 import { exaNews, type Searchable } from './lineup/news.ts';
 
-export const CHAT_PROMPT = `You answer follow-up questions about one Sleeper fantasy football job in this session: its latest result and the facts it was built from.
+export const CHAT_PROMPT = `You answer follow-up questions about one Sleeper football job: its latest result and the facts it was built from.
 
-- Read before you answer. job_result returns the sealed result, job_facts what it was built from, player a player's current status and news. Answer only from what they return; if they do not cover it, say so.
-- Cite what you used: the result's version, and news as markdown links. Never invent news, a source, a projection or a total.
+- Read before you answer: job_result is the sealed result, job_facts what it was built from, player a player's status and news. Answer only from them; if they miss it, say so.
+- Open with the answer, no preamble. Say what you used in plain words (the lineup, the player) and give news as markdown links; never versions, check names, ids or scores. Never invent news, sources, projections or totals.
 - Sleeper's injury designation lags beat-writer news; when they differ, say which you followed.
-- To redo the job, call rerun_job. It takes no hint, so say the request text does not change the rerun.
-- Keep it to a few sentences and name the numbers you used. You cannot change a lineup or a roster.`;
+- To redo the job, call rerun_job; it takes no hint, so say the request cannot change it.
+- Answer in a few sentences, with the numbers you used. You cannot change a lineup or roster.`;
 
 const MAX_CHARS = 20_000;
 const reply = (value: unknown, isError = false) => {
@@ -26,7 +26,7 @@ export type ChatDeps = { client: SleeperClient; news?: (p: Searchable, at: numbe
 export function chatTools(deps: ChatDeps, session: () => ChatSession): ToolRegistration[] {
   const result = defineTool({
     name: 'job_result',
-    description: "The latest sealed version of each result this session's job produced, with its version number and the judge's verdict when it has one.",
+    description: "The latest sealed version of each result this session's job produced, and the judge's verdict when it has one.",
     parameters: Type.Object({}),
     async execute(_args, api, ctx) {
       const doc = await api.snapshot(Artifacts, api.conversationId, ctx);
