@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { declaredEnv, loadAgent, parseDeployment } from '@quack/session';
+import { declaredEnv, deploymentEnv, loadAgent, parseDeployment } from '@quack/session';
 import { catalog, deploymentExtensions } from './catalog.ts';
 
 export interface Validation { loaded: number; failures: string[] }
@@ -12,6 +12,7 @@ export async function validate(opts: { config: string; agentsDir: string; dataDi
   const deployment = parseDeployment(JSON.parse(readFileSync(opts.config, 'utf8')));
   const paths = [...subdirs(opts.agentsDir).map((d) => join(d, 'agent.json')), ...subdirs(opts.dataDir).map((d) => join(d, 'agent-def', 'agent.json'))].filter(existsSync);
   const result: Validation = { loaded: 0, failures: [] };
+  for (const name of deploymentEnv(deploymentExtensions)) process.env[name] ??= 'placeholder';
   for (const path of paths) {
     try {
       // Factories throw on unset service env; a placeholder lets them build without contacting anything.

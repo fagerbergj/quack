@@ -43,3 +43,12 @@ test('the repo agents load without their service env set', async () => {
   assert.deepEqual(r.failures, []);
   assert.ok(r.loaded > 0);
 });
+
+test('deployment-level extension env gets a placeholder too, so the slots gate is built', async () => {
+  delete process.env.QUACK_SLOTS_URL;
+  delete process.env.QUACK_SLOTS_TOKEN;
+  const r = await validate(layout({ 'deployment.json': config }));
+  assert.deepEqual(r.failures, []);
+  assert.equal(process.env.QUACK_SLOTS_URL, 'placeholder');
+  assert.equal(process.env.QUACK_SLOTS_TOKEN, 'placeholder');
+});
