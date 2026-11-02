@@ -32,15 +32,17 @@ const decisionSchema = Type.Object({
   source_note: Type.String({ maxLength: 300 }),
 });
 
-function factsPrompt(f: TrendsFacts): string {
-  const who = (id: string) => `${id} ${f.players[id].name} (${f.players[id].pos ?? '-'}, ${f.players[id].team ?? '-'})`;
+export function factsPrompt(f: TrendsFacts): string {
+  const who = (id: string) => `${f.players[id].name} (${f.players[id].pos ?? '-'}, ${f.players[id].team ?? '-'})`;
   const links = (id: string) => (f.news[id] ?? []).map((n) => `\n    - [${n.title}](${n.url}), ${n.date.slice(0, 16)}`).join('');
   const changes = f.changes.map((c) => `- ${who(c.playerId)}: ${c.field} ${c.from ?? 'none'} -> ${c.to ?? 'none'}${links(c.playerId)}`);
   const rising = f.trending.map((t) => `- ${who(t.playerId)}: ${t.adds} adds in 24 hours, held by no team here`);
+  const ids = Object.keys(f.players).map((id) => `- ${who(id)}: ${id}`);
   return [
     f.since ? `Sleeper changes between ${when(Date.parse(`${f.since}T12:00:00Z`))} and ${when(Date.parse(`${f.date}T12:00:00Z`))}, week ${f.week}:\n${changes.join('\n') || 'none'}` : 'This is the first snapshot, so there is nothing to compare with.',
     `Free agents rising on Sleeper:\n${rising.join('\n') || 'none'}`,
-    'Write one item per change worth a reader\'s attention. Name the player by id. A news link goes in `newsUrl` with `source` naming the reporter and outlet; use only the links above. When a dated report conflicts with Sleeper\'s designation, the item says so and which one you followed. `source_note` states each conflict and the rule followed, or "No source conflicts."',
+    `Values for \`playerId\`:\n${ids.join('\n')}`,
+    'Write one item per change worth a reader\'s attention. Set `playerId` from the values above and name the player in `text`, never an id. A news link goes in `newsUrl` with `source` naming the outlet, and the reporter when known; use only the links above. When a dated report conflicts with Sleeper\'s designation, the item says so and which one you followed. `source_note` states each conflict and the rule followed, or "No source conflicts."',
   ].join('\n\n');
 }
 
