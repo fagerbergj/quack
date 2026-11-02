@@ -2,8 +2,8 @@ import { CronExpressionParser } from 'cron-parser';
 
 export type Schedule = {
   id: string;
-  /** Agent the session is bound to on its first request; omitted uses the deployment's default. */
-  agent?: string;
+  /** Agent the session is bound to on its first request; required so no job falls back to the deployment default. */
+  agent: string;
   /** Either a cron expression or explicit ISO times. */
   cron?: string;
   /** IANA zone the cron is read in, so wall-clock schedules follow DST. Default UTC. */
@@ -31,6 +31,7 @@ function validateWindow(s: Schedule) {
 
 /** Rejects a definition the timer could not honor; returns it unchanged. */
 export function validate(s: Schedule): Schedule {
+  if (typeof s.agent !== 'string' || !s.agent) throw new Error('need agent');
   if (typeof s.id !== 'string' || !s.id || typeof s.sessionKey !== 'string' || !s.sessionKey || typeof s.input !== 'string') throw new Error('need id, sessionKey and input');
   if (!s.cron === !s.times) throw new Error('need exactly one of cron or times');
   validateWindow(s);

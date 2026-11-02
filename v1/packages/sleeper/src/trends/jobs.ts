@@ -5,7 +5,7 @@ import type { LineupInput } from '../lineup/facts.ts';
 import type { ScheduleConfig } from '../schedules.ts';
 
 export const TRENDS_AGENT = 'sleeper-trends';
-// Half an hour after the 04:00 ET snapshot (schedules.ts), so the run diffs today's snapshot; the default window runs to the next occurrence.
+// The facts step takes today's snapshot itself; the default window runs to the next occurrence.
 const CRON = '30 4 * * *';
 
 /** Reruns within a week continue one session. */

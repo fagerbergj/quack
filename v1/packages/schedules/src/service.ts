@@ -100,7 +100,7 @@ export function createSchedulesService(config: ServiceConfig) {
 
   async function submit(s: Schedule, occurrence: Date): Promise<boolean> {
     const key = s.sessionKey.replaceAll('{time}', occurrence.toISOString());
-    const url = `${config.distributorUrl}/sessions/${encodeURIComponent(key)}/invocations${s.agent ? `?agent=${encodeURIComponent(s.agent)}` : ''}`;
+    const url = `${config.distributorUrl}/sessions/${encodeURIComponent(key)}/invocations?agent=${encodeURIComponent(s.agent)}`;
     // The request id makes a retry or duplicate firing one submission (HAR-5).
     const requestId = `schedule:${s.id}:${occurrence.toISOString()}`;
     return (await doFetch(url, { method: 'POST', body: JSON.stringify({ input: s.input, requestId }) })).ok;
