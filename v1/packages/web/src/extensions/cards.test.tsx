@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import type { SealedArtifact } from '../api.ts';
+import { github } from './github.ts';
 import { parseOpening, PrCard, type PrMeta } from './PrCard.tsx';
 import { reviewCard } from './ReviewCard.tsx';
 import { parseReview } from './review.ts';
@@ -100,4 +101,20 @@ test('without meta the card still shows the header and description, and no empty
   const card = screen.getByRole('region', { name: 'Pull request' });
   expect(within(card).getByText('Description')).toBeInTheDocument();
   for (const name of ['Changes', 'Checks', 'Linked issue']) expect(within(card).queryByText(name)).toBeNull();
+});
+
+test('the opening card takes the record for its own head only; the newest record stands in only when the text names no head', () => {
+  const rec = (id: string, path: string): PrMeta => ({ id, files: [{ path, additions: 1, deletions: 0 }] });
+  const records = [rec('aaa1111', 'old/a.ts'), rec('bbb2222', 'new/b.ts')];
+  const show = (text: string) => {
+    const { unmount } = render(<>{github.opening!(text, records)}</>);
+    const files = within(screen.getByRole('region', { name: 'Pull request' })).queryAllByText(/\.ts$/).map((e) => e.textContent);
+    unmount();
+    return files;
+  };
+  const text = (head: string) => `Review pull request o/r#3 (label quack:review).\nTitle: T\nHead: ${head} on f; base: v1\n\nBody`;
+  expect(show(text('aaa1111'))).toEqual(['old/a.ts']);
+  expect(show(text('bbb2222'))).toEqual(['new/b.ts']);
+  expect(show(text('ccc3333'))).toEqual([]);
+  expect(show('Review pull request o/r#3 (/review by ann).\nTitle: T\n\nBody')).toEqual(['new/b.ts']);
 });

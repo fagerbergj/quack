@@ -3,7 +3,7 @@ import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { contentText, type MutableModels } from '@earendil-works/pi-ai';
 import { AssistantEntry, createRegistry, defineExtension, Harness, InboxDoc, section, type Conversation, type Extension, type ReportInfo, type SetTimer } from '@earendil-works/pi-durable';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { pendingApprovals, statusNote } from '@quack/sdk';
 import { loopGuardExtension } from './loop-guard.ts';
 import { PolicyExecutionEnv, sessionPolicy, type ExecPolicy } from './exec.ts';
@@ -120,12 +120,24 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
       await writeFile(join(opts.dir, 'title'), title.replace(/\s+/g, ' ').trim().slice(0, 200), { flag: 'wx' }).catch(() => undefined);
     },
     // Data the UI reads beside the transcript (a PR's files and checks); one record per `id`, a later one replacing the earlier.
+    // Best effort: a run never waits on it, so a failed read or write is dropped, and the rename keeps a crash from leaving half a file.
     async recordMeta(record: Record<string, unknown>) {
-      const kept = (await this.meta()).filter((r) => r.id !== record.id);
-      await writeFile(join(opts.dir, 'meta.json'), JSON.stringify([...kept, record]));
+      try {
+        const kept = (await this.meta()).filter((r) => r.id !== record.id);
+        const file = join(opts.dir, 'meta.json');
+        await writeFile(`${file}.tmp`, JSON.stringify([...kept, record]));
+        await rename(`${file}.tmp`, file);
+      } catch {
+        // the review runs without fresh meta
+      }
     },
     async meta(): Promise<Array<Record<string, unknown>>> {
-      return JSON.parse(await readFile(join(opts.dir, 'meta.json'), 'utf8').catch(() => '[]'));
+      try {
+        const found: unknown = JSON.parse(await readFile(join(opts.dir, 'meta.json'), 'utf8'));
+        return Array.isArray(found) ? found : [];
+      } catch {
+        return [];
+      }
     },
     // The follow-ups waiting for the run to answer, with their text: the inbox item itself is the durable queue.
     async queued() {

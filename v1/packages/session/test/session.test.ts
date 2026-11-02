@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -54,6 +54,14 @@ test('answers over the container contract and survives a restart', async () => {
   await http.post({ input: 'm3', meta: { id: 'a', files: [1] }, requestId: 'q-6', wait: true });
   assert.deepEqual(await fetch(`${http.base}/meta`).then((r) => r.json()), { meta: [{ id: 'b' }, { id: 'a', files: [1] }] });
   assert.equal((await http.post({ input: 'x', meta: { files: [] } })).status, 400);
+
+  // Meta never gates a run: a corrupt meta.json, then a write that fails, both still submit.
+  await writeFile(join(dir, 'meta.json'), '[{"id": "a", ');
+  assert.equal((await http.post({ input: 'm4', meta: { id: 'c' }, requestId: 'q-7', wait: true })).status, 200);
+  assert.deepEqual(await fetch(`${http.base}/meta`).then((r) => r.json()), { meta: [{ id: 'c' }] });
+  await mkdir(join(dir, 'meta.json.tmp'));
+  assert.equal((await http.post({ input: 'm5', meta: { id: 'd' }, requestId: 'q-8', wait: true })).status, 200);
+  await rm(join(dir, 'meta.json.tmp'), { recursive: true });
 
   const rejected = await http.post({ input: '' });
   assert.equal(rejected.status, 400);
