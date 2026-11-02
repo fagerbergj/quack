@@ -21,13 +21,15 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
 
-function parseVerdict(body: unknown): { decision: 'approve' | 'reject'; reason?: string; by: string } | string {
+// The decider comes from the proxy's identity header, never the body; the tailnet port has no header and the tailnet is its auth boundary.
+const decider = (req: IncomingMessage): string => String(req.headers['x-authentik-username'] ?? '') || 'tailnet';
+
+function parseVerdict(body: unknown): { decision: 'approve' | 'reject'; reason?: string } | string {
   if (typeof body !== 'object' || body === null) return 'body must be a JSON object';
-  const { decision, reason, by } = body as Record<string, unknown>;
+  const { decision, reason } = body as Record<string, unknown>;
   if (decision !== 'approve' && decision !== 'reject') return 'decision must be approve or reject';
   if (reason !== undefined && typeof reason !== 'string') return 'reason must be a string';
-  if (typeof by !== 'string' || by.length === 0) return 'by must name the approver';
-  return { decision, reason, by };
+  return { decision, reason };
 }
 
 type Invocation = { input: string; requestId?: string; wait?: boolean; whenBusy?: 'followUp'; title?: string; meta?: Record<string, unknown> };
@@ -51,15 +53,15 @@ type Route = (session: Session, req: IncomingMessage, match: RegExpExecArray) =>
 const ANSWER_STATUS = { ok: 200, 'not-asking': 404, answered: 409, 'bad-choice': 400 } as const;
 
 async function answer(session: Session, req: IncomingMessage, match: RegExpExecArray): Promise<[number, unknown]> {
-  const { choice, by } = (await readJson(req)) as Record<string, unknown> | null ?? {};
-  if (typeof choice !== 'string' || typeof by !== 'string' || !by) return [400, { error: 'choice and by must be strings' }];
+  const { choice } = (await readJson(req)) as Record<string, unknown> | null ?? {};
+  if (typeof choice !== 'string') return [400, { error: 'choice must be a string' }];
   let id: string;
   try {
     id = decodeURIComponent(match[1]);
   } catch {
     return [400, { error: 'malformed question id' }];
   }
-  const result = await answerQuestion(session.root, id, choice, by, ctx);
+  const result = await answerQuestion(session.root, id, choice, decider(req), ctx);
   return [ANSWER_STATUS[result], result === 'ok' ? { answered: true } : { error: result }];
 }
 
@@ -82,7 +84,7 @@ async function decide(session: Session, req: IncomingMessage, match: RegExpExecA
   } catch {
     return [400, { error: 'malformed approval id' }];
   }
-  const ok = await resolveApproval(session.root, id, verdict, ctx);
+  const ok = await resolveApproval(session.root, id, { ...verdict, by: decider(req) }, ctx);
   return ok ? [200, { resolved: true }] : [409, { error: 'unknown or already decided' }];
 }
 

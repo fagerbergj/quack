@@ -695,3 +695,19 @@ test('a broken output sink neither throws nor loses the tail', async () => {
   await new Promise((r) => src.once('end', r));
   assert.deepEqual(seen, ['one', 'two']);
 });
+
+test('the identity header reaches the session; without it none is sent', async () => {
+  const seen: Array<string | undefined> = [];
+  const session = createHttpServer((req, res) => { seen.push(req.headers['x-authentik-username'] as string | undefined); res.writeHead(200, { 'content-type': 'application/json' }).end('{}'); }).listen(0);
+  await new Promise((r) => session.once('listening', r));
+  const url = `http://127.0.0.1:${(session.address() as AddressInfo).port}`;
+  const driver = { agents: async () => [], sessions: async () => [], ensure: async () => url, stop: async () => {}, remove: async () => false, setWake: async () => {}, touch: async () => {}, wakes: async () => [], running: () => [], pid: () => undefined };
+  const server = createDistributor(driver, { idleMs: 60_000 }).listen(0);
+  await new Promise((r) => server.once('listening', r));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/sessions/k1`;
+  await fetch(`${base}/approvals/a`, { method: 'POST', body: '{}', headers: { 'x-authentik-username': 'jason' } });
+  await fetch(`${base}/approvals/a`, { method: 'POST', body: '{}' });
+  assert.deepEqual(seen, ['jason', undefined]);
+  await new Promise((r) => server.close(r));
+  await new Promise((r) => session.close(r));
+});

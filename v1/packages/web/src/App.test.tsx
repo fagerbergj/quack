@@ -407,7 +407,7 @@ test('approving posts the verdict and clears the item', async () => {
   await userEvent.click(approve);
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Approve bash' })).toBeNull());
   const post = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST')!;
-  expect(JSON.parse(post[1]!.body as string)).toEqual({ decision: 'approve', by: 'web' });
+  expect(JSON.parse(post[1]!.body as string)).toEqual({ decision: 'approve' });
 });
 
 test('an approval that appears mid-run shows up when tool activity arrives', async () => {
@@ -694,13 +694,13 @@ test('the Inbox posts approve to the owning session, and reject with its reason'
   render(<App />);
   const post = () => JSON.parse(fetchMock.mock.calls.filter(([, i]) => i?.method === 'POST').at(-1)![1]!.body as string);
   await userEvent.click(await screen.findByRole('button', { name: 'Approve github_post_review' }));
-  expect(post()).toEqual({ decision: 'approve', by: 'web' });
+  expect(post()).toEqual({ decision: 'approve' });
 
   await userEvent.click(screen.getByRole('button', { name: 'Reject github_post_review' }));
   await userEvent.type(screen.getByRole('textbox', { name: 'Reason' }), 'wrong repo');
   routes['GET /index/approvals?state=pending'] = { approvals: [] };
   await userEvent.click(screen.getByRole('button', { name: 'Confirm reject github_post_review' }));
-  expect(post()).toEqual({ decision: 'reject', by: 'web', reason: 'wrong repo' });
+  expect(post()).toEqual({ decision: 'reject', reason: 'wrong repo' });
   await screen.findByText('Nothing is waiting on you');
 });
 
@@ -719,7 +719,7 @@ test('the Inbox shows a workflow question with its options, and an option answer
   expect(screen.getByRole('link', { name: 'Campaign Notes' })).toHaveAttribute('href', '#/s/gh%3A3');
   routes['GET /index/questions?state=pending'] = pendingDecision;
   await userEvent.click(screen.getByRole('button', { name: 'meeting' }));
-  expect(JSON.parse(fetchMock.mock.calls.filter(([, i]) => i?.method === 'POST').at(-1)![1]!.body as string)).toEqual({ choice: 'meeting', by: 'web' });
+  expect(JSON.parse(fetchMock.mock.calls.filter(([, i]) => i?.method === 'POST').at(-1)![1]!.body as string)).toEqual({ choice: 'meeting' });
   expect(screen.queryByRole('region', { name: 'Question' })).toBeNull();
 });
 

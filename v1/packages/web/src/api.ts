@@ -42,7 +42,7 @@ export type IndexQuestion = Omit<Question, 'askedAt'> & { session: string; at: n
 export const indexQuestions = () => indexRead<IndexQuestion>('index/questions?state=pending', 'questions');
 export const listQuestions = async (key: string) => (await json<{ questions: Question[] }>(await fetch(`${base(key)}/questions`))).questions;
 export const answerQuestion = async (key: string, id: string, choice: string) =>
-  void (await json(await fetch(`${base(key)}/questions/${encodeURIComponent(id)}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ choice, by: 'web' }) })));
+  void (await json(await fetch(`${base(key)}/questions/${encodeURIComponent(id)}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ choice }) })));
 export type Failure = { step: string; error: string };
 export type IndexFailure = Failure & { session: string; at: number };
 export const indexFailures = () => indexRead<IndexFailure>('index/failures', 'failures');
@@ -50,13 +50,12 @@ export const resumeRun = async (key: string) => void (await json(await fetch(`${
 export const indexApprovals = () => indexRead<IndexApproval>('index/approvals?state=pending', 'approvals');
 export const indexArtifacts = () => indexRead<IndexArtifact>('index/artifacts', 'artifacts');
 
-// shortcut: no auth (tailnet only) and the approver is a fixed name, until identity lands.
 export async function decideApproval(key: string, id: string, decision: 'approve' | 'reject', reason?: string) {
   await json(
     await fetch(`${base(key)}/approvals/${encodeURIComponent(id)}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ decision, by: 'web', ...(reason ? { reason } : {}) }),
+      body: JSON.stringify({ decision, ...(reason ? { reason } : {}) }),
     }),
   );
 }

@@ -226,7 +226,7 @@ for (const { name, fresh: freshStore, skip } of backends) test(`${name}: a quest
 
   await until(async () => { return (await listed('answered')).length ? true : undefined; });
   assert.deepEqual(await listed('pending'), []);
-  assert.deepEqual((await listed('answered')).map((d) => [d.choice, d.by]), [['meeting', 'jf']]);
+  assert.deepEqual((await listed('answered')).map((d) => [d.choice, d.by]), [['meeting', 'tailnet']]);
   const task = String((await session.harness.snapshot(WorkflowDoc, session.root.id, ctx))!.task);
   const outcome = await outcomeOf(session.harness, task);
   assert.equal(outcome.status === 'completed' && (outcome.result as { file: string }).file, 'filed as meeting');
@@ -270,9 +270,10 @@ for (const { name, fresh: freshStore, skip } of backends) test(`${name}: a decid
   const done = session.submit('Who starts?', 'q1', true);
   const [open] = await until(async () => { const d = await listed('pending'); return d.length ? d : undefined; });
   assert.deepEqual([open.session, open.question, open.evidence], ['chat:7', 'Who starts at flex?', 'Both are healthy']);
-  const res = await fetch(`${base}/questions/${encodeURIComponent(String(open.id))}`, { method: 'POST', body: JSON.stringify({ choice: 'Stevenson', by: 'jf' }) });
+  const res = await fetch(`${base}/questions/${encodeURIComponent(String(open.id))}`, { method: 'POST', body: JSON.stringify({ choice: 'Stevenson', by: 'evil' }), headers: { 'x-authentik-username': 'jason' } });
   assert.equal(res.status, 200);
-  await until(async () => ((await listed('answered')).length ? true : undefined));
+  const [answered] = await until(async () => { const d = await listed('answered'); return d.length ? d : undefined; });
+  assert.equal(answered.by, 'jason', 'the header names the decider, not the body');
   assert.deepEqual(await listed('pending'), []);
   await done;
   assert.deepEqual(started, ['Stevenson']);
