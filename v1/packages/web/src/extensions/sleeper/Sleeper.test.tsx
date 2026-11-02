@@ -81,6 +81,7 @@ test('trades with no deal says so in the short card and when opened', async () =
   page();
   const t = await card('Trades');
   expect(t.getByText('No deals: no partner has a surplus player this team needs.')).toBeInTheDocument();
+  expect(t.getByText('No deal this week')).toBeInTheDocument();
   await userEvent.click(screen.getByRole('button', { name: 'Open Trades' }));
   expect(t.getByRole('button', { name: 'Close Trades' })).toBeInTheDocument();
 });
@@ -96,6 +97,12 @@ test('trends group by kind, name the player and carry no player id', async () =>
   expect(t.getByText("Didn't pass its checks")).toBeInTheDocument();
   expect(document.body).not.toHaveTextContent(/6130|4881|7547/);
   expect(t.getByText('Source notes')).toBeInTheDocument();
+});
+
+test('the short recap previews your game first, then the biggest margin', async () => {
+  page();
+  const r = await card('Recap · week 7');
+  expect(r.getByText('I Think I’’m Gonna Puka 99.68 · Substation Supremacy 140.28')).toBeInTheDocument();
 });
 
 test('the recap opens to every game and the standings with the playoff line', async () => {
@@ -267,12 +274,12 @@ test('a week with no sessions says there is nothing from it', async () => {
 
 test('trend prose keeps years but loses player ids', async () => {
   const t = JSON.parse(trends8.content);
-  t.items[0].text = '4881 Lamar Jackson is out; the 2026 draft class has no 5000 yard rushers.';
+  t.items[0].text = '4881 Lamar Jackson is out; the 2026 draft class has no 5000 yard rushers and Brees is headed to the 2026 Pro Bowl.';
   SEALED['8:trends'] = { ...trends8, content: JSON.stringify(t) };
   page();
   await userEvent.click(await screen.findByRole('button', { name: 'Open Trends' }));
   const card = await screen.findByRole('article', { name: 'Trends' });
-  expect(card).toHaveTextContent('the 2026 draft class has no 5000 yard rushers');
+  expect(card).toHaveTextContent('the 2026 draft class has no 5000 yard rushers and Brees is headed to the 2026 Pro Bowl');
   expect(card).not.toHaveTextContent('4881');
   SEALED['8:trends'] = trends8;
 });

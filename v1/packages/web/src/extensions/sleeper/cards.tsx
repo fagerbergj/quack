@@ -11,7 +11,7 @@ const who = (p: P) => `${p.name} · ${p.pos}${p.team ? ` · ${p.team}` : ''}`;
 const pts = (n: number) => String(Math.round(n * 100) / 100);
 const record = (s: { wins: number; losses: number; ties: number }) => `${s.wins}-${s.losses}${s.ties ? `-${s.ties}` : ''}`;
 // Trend text carries Sleeper player ids ("4881 Lamar Jackson: ..."), which mean nothing to a reader.
-const unid = (t: string) => t.replace(/\b\d{4,5}(?:\/\d{4,5})*:?\s+(?=[A-Z])/g, '').replace(/\b\d{4,5}(?:\/\d{4,5})+:?\s*/g, '');
+const unid = (t: string) => t.replace(/\b(?!(?:19|20)\d{2}(?!\d))\d{4,5}(?:\/\d{4,5})*:?\s+(?=[A-Z])/g, '').replace(/\b\d{4,5}(?:\/\d{4,5})+:?\s*/g, '');
 const KINDS: Record<string, string> = { injury: 'Injuries', waiver: 'Rising on waivers', note: 'Notes' };
 
 /** The title a result goes by, in the page and in the Run a job sheet. */
@@ -43,6 +43,14 @@ export function brief(r: Result): { sub: string; lines: string[] } {
     case 'trends': {
       const items: any[] = c.items ?? [];
       return { sub: c.date, lines: [...items.slice(0, 2).flatMap((i) => (i.player ? [i.player.name] : [])), ...(items.length > 2 ? [`${items.length - 2} more`] : [])] };
+    }
+    case 'digest': {
+      const games: any[] = [...(c.games ?? [])].sort((a, b) => Number(b.mine) - Number(a.mine) || b.margin - a.margin);
+      return { sub: `Week ${c.week}`, lines: games.slice(0, 2).map((g) => `${g.home.team.trim()} ${pts(g.home.pts)} · ${g.away.team.trim()} ${pts(g.away.pts)}`) };
+    }
+    case 'trade-finder': {
+      const top = c.suggestions?.[0];
+      return { sub: `Week ${c.week}`, lines: [top ? `Give ${top.give.name}, get ${top.get.name}` : 'No deal this week'] };
     }
     case 'history': return { sub: `${c.seasons.length} seasons`, lines: c.seasons.slice(0, 4).map((s: any) => `${s.season} · ${record(s)}`) };
     case 'retro': return c.bye ? { sub: 'Bye week', lines: [] } : { sub: `${pts(c.started)} scored`, lines: [`${pts(c.best)} best lineup`, `${pts(c.left)} left on the bench`] };
