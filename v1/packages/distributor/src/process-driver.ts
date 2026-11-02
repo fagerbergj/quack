@@ -25,7 +25,7 @@ export type HostDriver = {
   /** Starts the session's process if it is not running and returns its base URL. A new session is bound to `agent` (default: the deployment's). */
   ensure(key: string, agent?: string): Promise<string>;
   agents(): Promise<AgentInfo[]>;
-  /** Every session on disk, newest first. */
+  /** Every session on disk, newest-created first. */
   sessions(): Promise<SessionInfo[]>;
   stop(key: string): Promise<void>;
   /** Deletes the session's directory (log, workspace, snapshot); false when no such session exists. The caller has checked it is not running. */
@@ -309,7 +309,7 @@ export function processDriver(opts: { command: string[]; dataDir: string; agents
       const title = cachedTitle(join(opts.dataDir, d));
       return { key, agent, ...(typeof version === 'number' && { version }), ...(typeof idleDays === 'number' && { retention: { idleDays } }), ...(title && { title }), running: children.has(key), created: await createdAt(join(opts.dataDir, d)), at: await lastActivity(join(opts.dataDir, d)) };
     }));
-    return all.filter((s) => s !== undefined).sort((a, b) => b.created - a.created).map(({ at, created, ...s }) => ({ ...s, createdAt: new Date(created).toISOString(), lastActivity: new Date(at).toISOString() }));
+    return all.filter((s) => s !== undefined).sort((a, b) => b.created - a.created || a.key.localeCompare(b.key)).map(({ at, created, ...s }) => ({ ...s, createdAt: new Date(created).toISOString(), lastActivity: new Date(at).toISOString() }));
   }
 
   const touch = (key: string, at: number) => writeFile(join(sessionDir(key), 'touched'), String(at));

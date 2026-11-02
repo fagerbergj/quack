@@ -167,10 +167,15 @@ test('each session runs on the agent that created it, and the registry and index
 
 test('sessions list newest-created first; later activity does not move them and a legacy session is backfilled once', async () => {
   const { invoke, base, driver, dataDir } = await startDistributor(60_000);
+  const start = Date.now();
   await invoke('ord:1', { input: 'hi', wait: true });
   await invoke('ord:2', { input: 'hi', wait: true });
   const read = async () => ((await (await fetch(`${base}/sessions`)).json()) as { sessions: Array<{ key: string; createdAt: string }> }).sessions;
   const dir = (k: string) => join(dataDir, sessionDirName(k));
+  for (const k of ['ord:1', 'ord:2']) {
+    const at = Number(await readFile(join(dir(k), 'created'), 'utf8'));
+    assert.ok(at >= start && at <= Date.now());
+  }
   await writeFile(join(dir('ord:1'), 'created'), '1000');
   await writeFile(join(dir('ord:2'), 'created'), '2000');
   assert.deepEqual((await read()).map((s) => s.key), ['ord:2', 'ord:1']);
