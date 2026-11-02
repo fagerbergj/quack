@@ -63,7 +63,7 @@ export function waiversEvidence(f: WaiverFacts) {
 // The audit's waivers table (docs/v1/audits/sleeper.md), unreplayed: D45 asks for replay before any weight gates delivery.
 export const waiversRubric: Rubric = {
   name: 'sleeper.waivers',
-  version: 1,
+  version: 2,
   threshold: 0.8,
   criteria: [
     { id: 'faithful_to_tools', checks: [
@@ -76,9 +76,9 @@ export const waiversRubric: Rubric = {
       { id: 'ranked_on_usage', weight: 3, scope: 'row', question: 'Does the rank rest on role and usage, with trending and ownership counts framed as scarcity?' },
       { id: 'competition_read', weight: 3, scope: 'card', question: 'Does the urgency or size of a claim name a competing team\'s need, priority or FAAB left from the table?' },
       { id: 'close_call_news', weight: 3, scope: 'close', question: 'Does this close top claim or drop reflect the attached `news`, naming the right player for each report and the Sleeper `designations`?' },
-      { id: 'bye_coverage', weight: 2, scope: 'row', question: 'Does it flag a bye inside the lead time, and a shared bye as two slots?' },
     ] },
     { id: 'pitfalls', checks: [
+      { id: 'bye_coverage', weight: -2, scope: 'row', question: 'Does it miss a bye inside the lead time, or count a shared bye as one slot?' },
       { id: 'crowd_metric_as_value', weight: -3, scope: 'row', question: 'Is a trending or ownership number given as the reason the player is good?' },
       { id: 'ordered_fallback_flagged', weight: -4, scope: 'card', question: 'Does it describe claims that share a drop as a mistake or a conflict?' },
       { id: 'faab_language_on_rolling', weight: -4, code: faabLanguageOnRolling },

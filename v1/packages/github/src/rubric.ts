@@ -40,11 +40,11 @@ function verdictMatchesLabels(artifact: string, ev: Evidence): CodeResult {
 // v0's five code-reviewer criteria, audited into weighted atomic checks (D11, D54). Scopes come from reviewEvidence.
 export const reviewerRubric: Rubric = {
   name: 'github.reviewer',
-  version: 3,
+  version: 4,
   threshold: 0.8,
   criteria: [
     { id: 'catches_real_issues', checks: [
-      { id: 'no_silent_approval', weight: 'gate', scope: 'change', question: 'If the verdict is approve, is it free of any defect in the diff, or unkept promise from the description or linked issue, that the review never mentions?' },
+      { id: 'no_silent_approval', weight: 'gate', scope: 'approve', question: 'If the verdict is approve, is it free of any defect in the diff, or unkept promise from the description or linked issue, that the review never mentions?' },
       // Blocking means it goes wrong once merged; these checks must not demand a blocker for a true issue that does not.
       { id: 'reports_every_defect', weight: 4, scope: 'change', question: 'Is every problem in the diff that goes wrong once this change is merged as it stands (wrong output, a crash, data loss, a security hole) reported as a blocking finding? Problems that only cost time or calls, or only matter if the code changes later, need not be blocking.' },
       { id: 'promises_handled', weight: 3, scope: 'change', question: 'Is every behaviour the description or linked issues say this change delivers either present in the diff, deferred to a linked follow-up, or reported as a blocking delivery finding? A loosely worded sentence about a behaviour the diff does deliver is not an unkept promise.' },

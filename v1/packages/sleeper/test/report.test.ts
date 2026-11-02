@@ -178,6 +178,9 @@ test('a row\'s judge evidence carries its news, and only knowable rows are asked
   const card = buildRetroCard(f, { misses: [{ index: 0, why: 'x', knowable: true, signalUrl: f.misses[0].news[0].url }], waiverMisses: [{ index: 0, why: 'y', knowable: false }], lessons: [], summary: 's' });
   const ev = await retroEvidence(f)(null, { content: JSON.stringify(card) });
   assert.deepEqual([ev.row.length, ev.known.map((u) => u.id)], [2, ['row1']]);
+  assert.deepEqual(ev.lessons, [], 'no lessons, nothing to judge as actionable');
+  const taught = await retroEvidence(f)(null, { content: JSON.stringify({ ...card, lessons: ['Start the higher floor.'] }) });
+  assert.deepEqual(taught.lessons, taught.card);
   assert.equal((ev.row[1].state as unknown as { news: unknown[] }).news.length, 1);
 });
 
@@ -192,7 +195,7 @@ async function withSession<T>(make: Make, decision: object, news: News | undefin
     ...Array.from({ length: 40 }, () => (c: { messages: Array<{ content: unknown }> }) => {
       const asked = String(c.messages.at(-1)!.content);
       judged.push(asked);
-      return fauxAssistantMessage(JSON.stringify({ choice: /lucky without the point margin|comeback, collapse|blamed on the manager/.test(asked) ? 'no' : 'yes', confidence: 1, reason: 'ok' }));
+      return fauxAssistantMessage(JSON.stringify({ choice: /lucky without the point margin|go unlabeled as early|comeback, collapse|blamed on the manager/.test(asked) ? 'no' : 'yes', confidence: 1, reason: 'ok' }));
     }),
   ];
   const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
@@ -224,7 +227,7 @@ async function run(make: Make, input: object, decision: object, news?: News) {
 
 test('the digest workflow seals a recap and a preview card and the judge passes them, saying what was not checked', async () => {
   const recap = await run(digestWorkflow, RECAP, digestDecision);
-  assert.deepEqual([(JSON.parse(recap.sealed.content) as DigestCard).kind, recap.verdict.rubric, recap.verdict.gatesFailed, recap.verdict.passed], ['digest', 'sleeper.digest@1', [], true]);
+  assert.deepEqual([(JSON.parse(recap.sealed.content) as DigestCard).kind, recap.verdict.rubric, recap.verdict.gatesFailed, recap.verdict.passed], ['digest', 'sleeper.digest@2', [], true]);
   assert.ok(recap.judged.some((q) => /real story/.test(q)));
   assert.ok(!recap.verdict.checks.some((k) => k.id === 'preview_news_decides'));
   assert.deepEqual(recap.verdict.notes, ['preview_news_decides not checked: no news source']);
@@ -243,7 +246,7 @@ test('the retro workflow seals a card whose figures are the facts\' and the judg
   const decision: RetroDecision = { misses: [{ index: 0, why: 'Dash had the flex role.', knowable: true, signalUrl: f.misses[0].news[0].url }], waiverMisses: [{ index: 0, why: 'No signal before the run.', knowable: false }], lessons: ['Check Saturday\'s report.'], summary: 'Dan Dash over Ned Nope cost 12.' };
   const { sealed, verdict, judged } = await run(retroWorkflow, RECAP, decision, newsStub);
   const card = JSON.parse(sealed.content) as RetroCard;
-  assert.deepEqual([card.kind, card.left, card.misses[0].knowable, verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['retro', 12, true, 'sleeper.retro@1', [], true, []]);
+  assert.deepEqual([card.kind, card.left, card.misses[0].knowable, verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['retro', 12, true, 'sleeper.retro@2', [], true, []]);
   assert.ok(judged.some((q) => /not the same injury designation restated/.test(q)));
   const bare = await run(retroWorkflow, RECAP, { ...decision, misses: [{ index: 0, why: 'x', knowable: false }] });
   assert.deepEqual(bare.verdict.notes, ['signal_is_evidence not checked: no news source']);

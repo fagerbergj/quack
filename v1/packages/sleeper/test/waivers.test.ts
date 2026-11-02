@@ -192,7 +192,7 @@ async function runWaivers(fixtures: Fixtures, d: WaiverDecision, news?: Paramete
     ...Array.from({ length: 40 }, () => (c: { messages: Array<{ content: unknown }> }) => {
       const asked = String(c.messages.at(-1)!.content);
       judged.push(asked);
-      return fauxAssistantMessage(JSON.stringify({ choice: /trending or ownership number given|share a drop as a mistake/.test(asked) ? 'no' : 'yes', confidence: 1, reason: 'ok' }));
+      return fauxAssistantMessage(JSON.stringify({ choice: /trending or ownership number given|share a drop as a mistake|miss a bye inside the lead time/.test(asked) ? 'no' : 'yes', confidence: 1, reason: 'ok' }));
     }),
   ];
   const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
@@ -218,7 +218,7 @@ test('the workflow seals a rolling-league card and the judge passes it, sized in
   const { sealed, judged, verdict } = await runWaivers(base, rollingDecision);
   const c = JSON.parse(sealed.content) as WaiversCard;
   assert.deepEqual([c.kind, c.waiver_type, c.candidates.map((r) => r.player.name)], ['waivers', 'rolling', ['Felix Free', 'Wally Wire']]);
-  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.waivers@1', [], true, ['close-call news not checked: no news source']]);
+  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.waivers@2', [], true, ['close-call news not checked: no news source']]);
   assert.ok(!verdict.checks.some((k) => k.id === 'close_call_news'));
   assert.ok(verdict.checks.some((k) => k.id === 'faab_language_on_rolling'));
   assert.ok(judged.some((q) => /queue position spent/.test(q)));
@@ -227,7 +227,7 @@ test('the workflow seals a rolling-league card and the judge passes it, sized in
 test('the workflow seals a FAAB card with its bids, and with a news source the close calls are scored', async () => {
   const { sealed, verdict, judged } = await runWaivers(faab, decision, async () => [item]);
   assert.deepEqual((JSON.parse(sealed.content) as WaiversCard).candidates.map((r) => r.size.kind), ['faab', 'faab']);
-  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.waivers@1', [], true, []]);
+  assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.waivers@2', [], true, []]);
   assert.ok(verdict.checks.some((k) => k.id === 'close_call_news'));
   assert.ok(judged.some((q) => /close top claim or drop/.test(q)));
 });
