@@ -35,6 +35,8 @@ export type CheckResult = {
   units: number;
   resolvers: Record<string, number>;
   notes: string[];
+  /** Units no resolver decided; the check is then null, not unmet. */
+  undecided?: number;
   marks?: string[];
 };
 

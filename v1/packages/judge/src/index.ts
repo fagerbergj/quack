@@ -22,7 +22,7 @@ export type JudgeOptions = {
   toolName?: string;
 };
 
-export type Verdict = { passed: boolean; limitReached: boolean; score: number; gatesFailed: string[]; rubric: string; checks: CheckResult[] };
+export type Verdict = { passed: boolean; limitReached: boolean; score: number; gatesFailed: string[]; rubric: string; checks: CheckResult[]; undecided: string[] };
 
 export function codeResults(rubric: Rubric, artifact: string, ev: Evidence): CheckResult[] {
   return rubric.criteria.flatMap((c) =>
@@ -58,10 +58,13 @@ async function modelResults(api: ToolExecutionApi, opts: JudgeOptions, ev: Evide
     for (const [key, a] of Object.entries(answers)) {
       const r = results.get(key)!;
       r.resolvers[a.resolver] = (r.resolvers[a.resolver] ?? 0) + 1;
+      // No resolver decided: the check is unscored (null), never unmet, and the verdict lists it.
+      if (a.met === null) r.undecided = (r.undecided ?? 0) + 1;
       if (a.met) r.met! += 1 / r.units;
       if (a.met === false && a.note) r.notes.push(`${unit.id}: ${a.note}`);
     }
   }
+  for (const r of results.values()) if (r.undecided) r.met = null;
   return [...results.values()];
 }
 
@@ -73,12 +76,18 @@ async function judgeVersion(api: ToolExecutionApi, opts: JudgeOptions, sealed: S
   const failedBefore = (doc?.kinds[sealed.kind]?.versions ?? []).filter((v) => v.verdict && !(v.verdict as { passed?: boolean }).passed).length;
   const rubric = `${opts.rubric.name}@${opts.rubric.version}`;
   const limit = failedBefore >= opts.maxRevisions;
-  return { passed: s.passed, limitReached: !s.passed && limit, score: s.score, gatesFailed: s.gatesFailed, rubric, checks };
+  const undecided = checks.filter((k) => k.undecided).map((k) => `${k.criterion}.${k.id}`);
+  return { passed: s.passed, limitReached: !s.passed && limit, score: s.score, gatesFailed: s.gatesFailed, rubric, checks, undecided };
 }
 
 /** Judges a sealed version again under opts, without attaching the verdict; memo keeps one replay's answers apart from another's. */
 export function rejudge(api: ToolExecutionApi, opts: JudgeOptions, sealed: SealedArtifact, memo: string, ctx: Context): Promise<Verdict> {
   return judgeVersion(api, opts, sealed, ctx, memo);
+}
+
+/** What a caller is told when the judge model could not answer some checks. */
+export function undecidedMessage(ids: string[], toolName: string): string {
+  return `The judge model gave no usable answer for ${ids.join(', ')} (usually it is at capacity), so nothing was scored. Call ${toolName} again; checks already answered are kept.`;
 }
 
 function report(sealed: SealedArtifact, v: Verdict, toolName: string) {
@@ -109,6 +118,8 @@ export function judge(opts: JudgeOptions) {
         return { output: [{ type: 'text', text: report(sealed, v, toolName) }] };
       }
       const verdict = await judgeVersion(api, opts, sealed, ctx);
+      // A verdict missing checks would pass or fail on a model outage; the decided answers are memoized, so calling again asks only the rest.
+      if (verdict.undecided.length) return { output: [{ type: 'text', text: undecidedMessage(verdict.undecided, toolName) }], isError: true };
       await attachVerdict(api, opts.kind.kind, sealed.version, verdict as never, ctx);
       return { output: [{ type: 'text', text: report(sealed, verdict, toolName) }] };
     },

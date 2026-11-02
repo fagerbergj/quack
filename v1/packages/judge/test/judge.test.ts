@@ -11,7 +11,7 @@ import { typesafeSystemOneApi } from '@earendil-works/pi-ai/api/typesafe-system-
 import { CodingTools } from '@earendil-works/pi-durable/tools';
 import { Artifacts, artifactsExtension, type ArtifactKind } from '@quack/sdk';
 import { openSession } from '@quack/session';
-import { judge, type Evidence, type Rubric } from '../src/index.ts';
+import { feedback, judge, score, type Evidence, type Rubric } from '../src/index.ts';
 
 const dirs: string[] = [];
 const servers: Array<() => void> = [];
@@ -93,6 +93,7 @@ test('Clef answers confident checks, an uncertain one escalates, and a failed ga
   const { done, versions } = await run(baseUrl, 8192, [
     tool('write', { path: 'artifacts/review.md', content: good.replace('## Verdict\nrequest_changes\n', '') }),
     tool('submit_review', {}),
+    yes,
     fauxAssistantMessage('Done.'),
     tool('write', { path: 'artifacts/review.md', content: good }),
     tool('submit_review', {}),
@@ -123,4 +124,22 @@ test('a unit over the decision model cap skips it and every check escalates', as
   assert.equal(clefCalls.length, 0);
   assert.ok(versions[0].checks.filter((c: any) => c.resolvers['agent-model']).length >= 2);
   assert.equal(versions[0].passed, true);
+});
+
+const busy = fauxAssistantMessage('', { stopReason: 'error', errorMessage: '429 concurrency_limit' });
+
+test('a judge model that errors leaves checks undecided: no verdict is attached', async () => {
+  clefCalls.length = 0;
+  const baseUrl = await fakeClef(() => 0.95);
+  const content = '## Takeaway\nLooks good.\n## Verdict\napprove\n## Findings\n- nit: src/y.ts:3 rename\n';
+  // Clef is over its cap, so every model check goes to the agent model: one answers, the other errors.
+  const { versions } = await run(baseUrl, 10, [tool('write', { path: 'artifacts/review.md', content }), tool('submit_review', {}), yes, busy, fauxAssistantMessage('Done.')]);
+  assert.equal(versions[0]?.passed, undefined, 'an outage is not a verdict');
+});
+
+test('an undecided check is unscored, never unmet', () => {
+  const r = { criterion: 'c', id: 'k', label: 'k', weight: 2, met: null, units: 1, resolvers: { none: 1 }, notes: [], undecided: 1 };
+  const ok = { criterion: 'c', id: 'j', label: 'j', weight: 2, met: 1, units: 1, resolvers: { code: 1 }, notes: [] };
+  assert.deepEqual(score({ name: 'x', version: 1, threshold: 0.8, criteria: [] }, [r, ok]), { score: 1, gatesFailed: [], passed: true });
+  assert.deepEqual(feedback([r]), []);
 });
