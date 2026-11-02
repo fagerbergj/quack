@@ -2,7 +2,7 @@ import type { Context } from '@earendil-works/chord/context';
 import { contentText, validateToolArguments, type Message, type TSchema } from '@earendil-works/pi-ai';
 import type { JsonValue } from '@earendil-works/chord';
 import type { JsonObject, ToolExecutionApi, ToolRegistration } from '@earendil-works/pi-durable';
-import { feedback, rejudge, type JudgeOptions } from '@quack/judge';
+import { feedback, rejudge, undecidedMessage, type JudgeOptions } from '@quack/judge';
 import { attachVerdict, decide, gated, observeGeneration, person as sdkPerson, seal, type DecisionPoint, type Resolver } from '@quack/sdk';
 import { WorkflowDoc } from './doc.ts';
 
@@ -109,6 +109,7 @@ async function judgedStep(step: Extract<Step, { kind: 'judged' }>, c: StepContex
     await c.api.env!.writeFile(options.kind.path, JSON.stringify(built, null, 1), c.ctx);
     const sealed = await seal(c.api, options.kind, c.ctx);
     const verdict = await rejudge(c.api, options, sealed, `judge:${sealed.kind}:v${sealed.version}`, c.ctx);
+    if (verdict.undecided.length) throw new Error(undecidedMessage(verdict.undecided, 'the judge'));
     await attachVerdict(c.api, sealed.kind, sealed.version, { ...verdict, notes } as never, c.ctx);
     if (verdict.passed || revisions >= options.maxRevisions) return { result: { version: sealed.version, revisions, passed: verdict.passed, score: verdict.score, gatesFailed: verdict.gatesFailed, notes }, cost };
     const lines = feedback(verdict.checks).map((l) => `- ${l}`).join('\n');
