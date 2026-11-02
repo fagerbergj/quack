@@ -2,7 +2,8 @@ import type { Context } from '@earendil-works/chord/context';
 import { contentText, validateToolArguments, type Message, type TSchema } from '@earendil-works/pi-ai';
 import type { JsonValue } from '@earendil-works/chord';
 import type { JsonObject, ToolExecutionApi, ToolRegistration } from '@earendil-works/pi-durable';
-import { decide, gated, whileWaiting, type DecisionPoint, type Resolver } from '@quack/sdk';
+import { feedback, rejudge, type JudgeOptions } from '@quack/judge';
+import { attachVerdict, decide, gated, seal, whileWaiting, type DecisionPoint, type Resolver } from '@quack/sdk';
 import { WorkflowDoc, watchUntil } from './doc.ts';
 
 /** What a step sees: the workflow input, the results of earlier steps by name, and the task's api for artifacts and other durable calls. */
@@ -28,6 +29,8 @@ export type Step =
   | { name: string; kind: 'code'; run(c: StepContext): JsonValue | Wait | Promise<JsonValue | Wait> }
   /** The model's reply must be one JSON object matching `schema`; anything else fails the step. */
   | { name: string; kind: 'model'; prompt(c: StepContext): string; schema: TSchema; model?: { provider: string; modelId: string } }
+  /** A model answer built into a sealed card and judged; a failing verdict goes back to the model for up to `maxRevisions` new versions, and the last version is kept with its verdict whatever it says. */
+  | { name: string; kind: 'judged'; prompt(c: StepContext): string; schema: TSchema; model?: { provider: string; modelId: string }; card(c: StepContext, decision: JsonValue): object | Promise<object>; judge(c: StepContext): { options: JudgeOptions; notes?: string[] } }
   /** Resolvers run in order; a person answers through `answerDecision` when they all escalate. */
   | { name: string; kind: 'decision'; point(c: StepContext): Omit<DecisionPoint, 'name'>; resolvers?: Resolver[] }
   /** The tool waits for an approval before it runs; args may read earlier results. */
@@ -60,13 +63,14 @@ function parseObject(text: string): unknown {
 // An invalid answer gets its error back like a bad tool call would; a valid answer is never re-asked.
 const REPAIR_TURNS = 2;
 
-async function modelStep(step: Extract<Step, { kind: 'model' }>, c: StepContext): Promise<StepOutcome> {
+type Ask = { name: string; schema: TSchema; model?: { provider: string; modelId: string } };
+
+// One conversation with the model: an invalid answer is repaired in `messages`, and the accepted reply is returned for the caller to build on.
+async function converse(step: Ask, c: StepContext, messages: Message[]) {
   const agent = await c.api.agent(c.ctx);
   const ref = step.model ?? agent.model;
   const model = ref && c.api.models.getModel(ref.provider, ref.modelId);
   if (!model) throw new Error(`step ${step.name}: model is not available`);
-  const ask = `${step.prompt(c)}\n\nAnswer with one JSON object matching this schema and nothing else:\n${JSON.stringify(step.schema)}`;
-  const messages: Message[] = [{ role: 'user', content: ask, timestamp: c.api.now() }];
   let cost = 0;
   for (let repairs = 0; ; repairs++) {
     const reply = await c.api.models.completeSimple(model, { systemPrompt: agent.instructions ?? undefined, messages }, { signal: c.signal });
@@ -75,13 +79,40 @@ async function modelStep(step: Extract<Step, { kind: 'model' }>, c: StepContext)
     cost += reply.usage?.cost?.total ?? 0;
     try {
       const args = validateToolArguments({ name: step.name, description: step.name, parameters: step.schema }, { type: 'toolCall', id: step.name, name: step.name, arguments: parseObject(contentText(reply.content)) as never });
-      return { result: args as JsonValue, cost };
+      return { result: args as JsonValue, reply, cost };
     } catch (err) {
       if (c.signal.aborted) throw err;
       const error = err instanceof Error ? err.message : String(err);
       if (repairs >= REPAIR_TURNS) throw new Error(`step ${step.name}: ${error}`);
       messages.push(reply, { role: 'user', content: `That answer was rejected:\n${error}\nAnswer again with one corrected JSON object and nothing else.`, timestamp: c.api.now() });
     }
+  }
+}
+
+const askOf = (step: Ask & { prompt(c: StepContext): string }, c: StepContext): Message[] => [
+  { role: 'user', content: `${step.prompt(c)}\n\nAnswer with one JSON object matching this schema and nothing else:\n${JSON.stringify(step.schema)}`, timestamp: c.api.now() },
+];
+
+async function modelStep(step: Extract<Step, { kind: 'model' }>, c: StepContext): Promise<StepOutcome> {
+  const { result, cost } = await converse(step, c, askOf(step, c));
+  return { result, cost };
+}
+
+// A failed version's notes go back like a rejected answer would: the model's own reply, then what was wrong with it.
+async function judgedStep(step: Extract<Step, { kind: 'judged' }>, c: StepContext): Promise<StepOutcome> {
+  const { options, notes = [] } = step.judge(c);
+  const messages = askOf(step, c);
+  let cost = 0;
+  for (let revisions = 0; ; revisions++) {
+    const { result, reply, cost: spent } = await converse(step, c, messages);
+    cost += spent;
+    await c.api.env!.writeFile(options.kind.path, JSON.stringify(await step.card(c, result), null, 1), c.ctx);
+    const sealed = await seal(c.api, options.kind, c.ctx);
+    const verdict = await rejudge(c.api, options, sealed, `judge:${sealed.kind}:v${sealed.version}`, c.ctx);
+    await attachVerdict(c.api, sealed.kind, sealed.version, { ...verdict, notes } as never, c.ctx);
+    if (verdict.passed || revisions >= options.maxRevisions) return { result: { version: sealed.version, revisions, passed: verdict.passed, score: verdict.score, gatesFailed: verdict.gatesFailed, notes }, cost };
+    const lines = feedback(verdict.checks).map((l) => `- ${l}`).join('\n');
+    messages.push(reply, { role: 'user', content: `The ${sealed.kind} built from that answer failed its checks:\n${lines}\nAnswer again with one JSON object that fixes each point and nothing else.`, timestamp: c.api.now() });
   }
 }
 
@@ -123,6 +154,7 @@ async function gatedStep(step: Extract<Step, { kind: 'gated' }>, c: StepContext)
 export async function execute(step: Step, c: StepContext): Promise<StepOutcome> {
   if (step.kind === 'code') return { result: (await step.run(c)) as JsonValue, cost: 0 };
   if (step.kind === 'model') return modelStep(step, c);
+  if (step.kind === 'judged') return judgedStep(step, c);
   if (step.kind === 'decision') return decisionStep(step, c);
   return gatedStep(step, c);
 }

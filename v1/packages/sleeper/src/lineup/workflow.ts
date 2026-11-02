@@ -1,7 +1,6 @@
 import type { JsonValue } from '@earendil-works/chord';
 import { Type } from '@earendil-works/pi-ai';
-import { rejudge, type ClassifierRef, type JudgeOptions, type Verdict } from '@quack/judge';
-import { attachVerdict, seal, type SealedArtifact } from '@quack/sdk';
+import { type ClassifierRef, type JudgeOptions, type Verdict } from '@quack/judge';
 import { defineWorkflow, type StepContext } from '@quack/workflows';
 import type { Json, SleeperClient } from '../client.ts';
 import { buildCard, cardsKind, type Decision } from './card.ts';
@@ -62,25 +61,13 @@ export function lineupWorkflow(deps: LineupDeps) {
           return (await buildFacts({ client: deps.client, news: deps.news }, await deps.snapshot(i.league), i, (deps.now ? deps.now() : c.api.now()))) as unknown as JsonValue;
         },
       },
-      { name: 'decide', kind: 'model', schema: decisionSchema, prompt: (c) => factsPrompt(c.prior.facts as unknown as Facts) },
       {
         name: 'card',
-        kind: 'code',
-        run: async (c) => {
-          const card = buildCard(c.prior.facts as unknown as Facts, c.prior.decide as unknown as Decision);
-          await c.api.env!.writeFile(cardsKind.path, JSON.stringify(card, null, 1), c.ctx);
-          return (await seal(c.api, cardsKind, c.ctx)) as unknown as JsonValue;
-        },
-      },
-      {
-        name: 'check',
-        kind: 'code',
-        run: async (c) => {
-          const sealed = c.prior.card as unknown as SealedArtifact;
-          const verdict: Verdict = await rejudge(c.api, judgeOptions(c.prior.facts as unknown as Facts), sealed, `judge:${sealed.kind}:v${sealed.version}`, c.ctx);
-          await attachVerdict(c.api, sealed.kind, sealed.version, { ...verdict, notes } as never, c.ctx);
-          return { passed: verdict.passed, score: verdict.score, gatesFailed: verdict.gatesFailed, notes };
-        },
+        kind: 'judged',
+        schema: decisionSchema,
+        prompt: (c) => factsPrompt(c.prior.facts as unknown as Facts),
+        card: (c, d) => buildCard(c.prior.facts as unknown as Facts, d as unknown as Decision),
+        judge: (c) => ({ options: judgeOptions(c.prior.facts as unknown as Facts), notes }),
       },
     ],
   });

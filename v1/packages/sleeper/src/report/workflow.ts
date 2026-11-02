@@ -1,7 +1,6 @@
 import type { JsonValue } from '@earendil-works/chord';
 import { Type, type TSchema } from '@earendil-works/pi-ai';
-import { rejudge, type JudgeOptions, type Rubric, type Verdict } from '@quack/judge';
-import { attachVerdict, seal, type SealedArtifact } from '@quack/sdk';
+import { type JudgeOptions, type Rubric, type Verdict } from '@quack/judge';
 import { defineWorkflow, Wait, type StepContext } from '@quack/workflows';
 import { cardsKind } from '../lineup/card.ts';
 import { round2, type FactsDeps, type LineupInput, type NewsItem } from '../lineup/facts.ts';
@@ -68,25 +67,13 @@ function reportWorkflow<F, D>(deps: ReportDeps, spec: Spec<F, D>) {
           return (await spec.facts({ client: deps.client, news: deps.news }, await deps.snapshot(i.league), i, deps.now ? deps.now() : c.api.now())) as unknown as JsonValue;
         },
       },
-      { name: 'decide', kind: 'model', schema: spec.schema, prompt: (c) => spec.prompt(c.prior.facts as unknown as F) },
       {
         name: 'card',
-        kind: 'code',
-        run: async (c) => {
-          await c.api.env!.writeFile(cardsKind.path, JSON.stringify(spec.card(c.prior.facts as unknown as F, c.prior.decide as unknown as D), null, 1), c.ctx);
-          return (await seal(c.api, cardsKind, c.ctx)) as unknown as JsonValue;
-        },
-      },
-      {
-        name: 'check',
-        kind: 'code',
-        run: async (c) => {
-          const sealed = c.prior.card as unknown as SealedArtifact;
-          const options: JudgeOptions = { kind: cardsKind, rubric, evidence: spec.evidence(c.prior.facts as unknown as F), maxRevisions: 1, classifier: deps.classifier };
-          const verdict: Verdict = await rejudge(c.api, options, sealed, `judge:${sealed.kind}:v${sealed.version}`, c.ctx);
-          await attachVerdict(c.api, sealed.kind, sealed.version, { ...verdict, notes } as never, c.ctx);
-          return { passed: verdict.passed, score: verdict.score, gatesFailed: verdict.gatesFailed, notes };
-        },
+        kind: 'judged',
+        schema: spec.schema,
+        prompt: (c) => spec.prompt(c.prior.facts as unknown as F),
+        card: (c, d) => spec.card(c.prior.facts as unknown as F, d as unknown as D),
+        judge: (c) => ({ options: { kind: cardsKind, rubric, evidence: spec.evidence(c.prior.facts as unknown as F), maxRevisions: 1, classifier: deps.classifier }, notes }),
       },
     ],
   });

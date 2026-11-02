@@ -1,7 +1,6 @@
 import type { JsonValue } from '@earendil-works/chord';
 import { Type } from '@earendil-works/pi-ai';
-import { rejudge, type JudgeOptions, type Verdict } from '@quack/judge';
-import { attachVerdict, seal, type SealedArtifact } from '@quack/sdk';
+import type { JudgeOptions } from '@quack/judge';
 import { defineWorkflow, type StepContext, type Step } from '@quack/workflows';
 import { cardsKind } from '../lineup/card.ts';
 import type { NewsItem } from '../lineup/facts.ts';
@@ -69,14 +68,9 @@ const judgeOf = (deps: TradeJobDeps, f: TradeFacts) => {
 
 const prior = <T>(c: StepContext, step: string) => c.prior[step] as unknown as T;
 
-/** facts, [news], decide, [news], card, check: the news step goes before the decision for an analysis and after it for the finder. */
-function steps<I extends FinderInput>(deps: TradeJobDeps, o: { decide: Step; news: (f: TradeFacts, c: StepContext) => TPlayer[]; newsFirst: boolean; card: (f: TradeFacts, d: unknown, news: News) => unknown }): Step[] {
+/** facts, [news], then one judged step: the news step goes before the decision for an analysis, and the finder fetches it for the players it picked while building the card. */
+function steps<I extends FinderInput>(deps: TradeJobDeps, o: { decide: Pick<Extract<Step, { kind: 'judged' }>, 'schema' | 'prompt'>; news?: (f: TradeFacts) => TPlayer[]; card: (c: StepContext, d: unknown) => object | Promise<object> }): Step[] {
   const input = (c: StepContext) => JSON.parse(String(c.input)) as I;
-  const newsStep: Step = {
-    name: 'news',
-    kind: 'code',
-    run: async (c) => (await fetchNews(deps.news, o.news(prior(c, 'facts'), c), deps.now ? deps.now() : c.api.now())) as unknown as JsonValue,
-  };
   const facts: Step = {
     name: 'facts',
     kind: 'code',
@@ -85,44 +79,31 @@ function steps<I extends FinderInput>(deps: TradeJobDeps, o: { decide: Step; new
       return (await buildTradeFacts({ client: deps.client }, await deps.snapshot(i.league), i)) as unknown as JsonValue;
     },
   };
-  const card: Step = {
-    name: 'card',
-    kind: 'code',
-    run: async (c) => {
-      await c.api.env!.writeFile(cardsKind.path, JSON.stringify(o.card(prior(c, 'facts'), prior(c, 'decide'), prior(c, 'news')), null, 1), c.ctx);
-      return (await seal(c.api, cardsKind, c.ctx)) as unknown as JsonValue;
-    },
-  };
-  const check: Step = {
-    name: 'check',
-    kind: 'code',
-    run: async (c) => {
-      const sealed = prior<SealedArtifact>(c, 'card');
-      const { options, notes } = judgeOf(deps, prior(c, 'facts'));
-      const verdict: Verdict = await rejudge(c.api, options, sealed, `judge:${sealed.kind}:v${sealed.version}`, c.ctx);
-      await attachVerdict(c.api, sealed.kind, sealed.version, { ...verdict, notes } as never, c.ctx);
-      return { passed: verdict.passed, score: verdict.score, gatesFailed: verdict.gatesFailed, notes };
-    },
-  };
-  return o.newsFirst ? [facts, newsStep, o.decide, card, check] : [facts, o.decide, newsStep, card, check];
+  const news: Step[] = o.news ? [{ name: 'news', kind: 'code', run: async (c) => (await fetchNews(deps.news, o.news!(prior(c, 'facts')), at(deps, c))) as unknown as JsonValue }] : [];
+  const card: Step = { name: 'card', kind: 'judged', ...o.decide, card: o.card, judge: (c) => judgeOf(deps, prior(c, 'facts')) };
+  return [facts, ...news, card];
 }
+
+const at = (deps: TradeJobDeps, c: StepContext) => (deps.now ? deps.now() : c.api.now());
 
 const named = (f: TradeFacts, ids: string[]) => ids.flatMap((id) => playerOf(f, id) ?? []);
 
 /** Trade analysis and trade talk (SL-1): facts for both rosters, news for each traded player, one verdict, a sealed card, then the judge. */
 export function tradeWorkflow(deps: TradeJobDeps) {
-  const decide: Step = { name: 'decide', kind: 'model', schema: tradeSchema, prompt: (c) => tradePrompt(prior(c, 'facts'), prior(c, 'news')) };
+  const decide = { schema: tradeSchema, prompt: (c: StepContext) => tradePrompt(prior(c, 'facts'), prior(c, 'news')) };
   return defineWorkflow({
     name: TRADE_WORKFLOW,
-    steps: steps<TradeInput>(deps, { decide, newsFirst: true, news: (f) => named(f, [...f.offer!.give, ...f.offer!.get]), card: (f, d, n) => buildTradeCard(f, d as TradeDecision, n) }),
+    steps: steps<TradeInput>(deps, { decide, news: (f) => named(f, [...f.offer!.give, ...f.offer!.get]), card: (c, d) => buildTradeCard(prior(c, 'facts'), d as TradeDecision, prior(c, 'news')) }),
   });
 }
 
 /** Trade finder (SL-1): the partner table is code; the model picks at most three deals; code searches news for the players it picked. */
 export function finderWorkflow(deps: TradeJobDeps) {
-  const decide: Step = { name: 'decide', kind: 'model', schema: finderSchema, prompt: (c) => finderPrompt(prior(c, 'facts')) };
-  return defineWorkflow({
-    name: FINDER_WORKFLOW,
-    steps: steps<FinderInput>(deps, { decide, newsFirst: false, news: (f, c) => named(f, (prior<FinderDecision>(c, 'decide').suggestions ?? []).flatMap((s) => [s.give, s.get])), card: (f, d, n) => buildFinderCard(f, d as FinderDecision, n) }),
-  });
+  const decide = { schema: finderSchema, prompt: (c: StepContext) => finderPrompt(prior(c, 'facts')) };
+  const card = async (c: StepContext, d: unknown) => {
+    const f = prior<TradeFacts>(c, 'facts');
+    const picks = named(f, ((d as FinderDecision).suggestions ?? []).flatMap((x) => [x.give, x.get]));
+    return buildFinderCard(f, d as FinderDecision, await fetchNews(deps.news, picks, at(deps, c)));
+  };
+  return defineWorkflow({ name: FINDER_WORKFLOW, steps: steps<FinderInput>(deps, { decide, card }) });
 }

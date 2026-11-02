@@ -161,8 +161,8 @@ test('the history job starts on demand under the week key with an optional seaso
   }
 });
 
-test('a model host refusing the history call fails the decide step with the host\'s error', async () => {
+test('a model host refusing the history call fails the card step with the host\'s error', async () => {
   const { outcome, failed } = await refusedRun(historyWorkflow({ client: clientOf(), snapshot: async () => ({}), now: () => 0 }), INPUT);
   assert.equal(outcome.status, 'failed');
-  assert.deepEqual([failed?.name, failed?.error], ['decide', 'step decide: model call failed: 503 no slot free']);
+  assert.deepEqual([failed?.name, failed?.error], ['card', 'step card: model call failed: 503 no slot free']);
 });

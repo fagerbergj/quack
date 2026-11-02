@@ -225,6 +225,7 @@ async function runWaivers(fixtures: Fixtures, d: WaiverDecision, news?: Paramete
     () => fauxAssistantMessage(JSON.stringify(d)),
     ...Array.from({ length: 40 }, () => (c: { messages: Array<{ content: unknown }> }) => {
       const asked = String(c.messages.at(-1)!.content);
+      if (/failed its checks/.test(asked)) return fauxAssistantMessage(JSON.stringify(d));
       judged.push(asked);
       return fauxAssistantMessage(JSON.stringify({ choice: /trending or ownership number given|share a drop as a mistake|miss a bye inside the lead time/.test(asked) ? 'no' : 'yes', confidence: 1, reason: 'ok' }));
     }),

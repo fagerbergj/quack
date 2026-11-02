@@ -4,7 +4,7 @@ import { defineDoc, type Conversation, type DocumentWatch } from '@earendil-work
 // Documents are strict JSON, so absent values are null rather than optional fields.
 export type StepRecord = {
   name: string;
-  kind: 'code' | 'model' | 'decision' | 'gated';
+  kind: 'code' | 'model' | 'judged' | 'decision' | 'gated';
   status: 'pending' | 'running' | 'waiting' | 'done' | 'failed' | 'aborted';
   startedAt: number | null;
   durationMs: number | null;
