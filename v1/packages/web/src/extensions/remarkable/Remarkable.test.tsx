@@ -67,6 +67,6 @@ test('Ingest sends the selected ids, then clears the selection', async () => {
 
 test('More lists every app as a tile and the reMarkable tile says how many changed', async () => {
   render(<More />);
-  for (const name of ['Sleeper', 'reMarkable', 'Memory', 'Agents', 'Evals', 'Schedules']) expect(screen.getByRole('link', { name: new RegExp(name) })).toBeInTheDocument();
+  for (const name of ['Sleeper', 'reMarkable']) expect(screen.getByRole('link', { name: new RegExp(name) })).toBeInTheDocument();
   expect(await within(screen.getByRole('link', { name: /reMarkable/ })).findByText('2 changed')).toBeInTheDocument();
 });

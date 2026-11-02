@@ -5,12 +5,14 @@ import { defineDoc, defineExtension, wrapTool, type ToolExecutionApi, type ToolR
 import { createEditTool, createWriteTool } from '@earendil-works/pi-durable/tools';
 
 /** An extension-declared artifact: a finished product at a workspace path, validated by its schema (D42). */
-export type ArtifactKind = { kind: string; path: string; validate?: (text: string) => string[] };
+export type ArtifactKind = { kind: string; path: string; validate?: (text: string) => string[];
+  /** A one-word reading of the sealed content (a review's verdict), stored on the version so lists need not fetch content. */
+  outcome?: (text: string) => string | undefined };
 
 /** A pointer an extension attaches to a sealed version after the fact, e.g. where it was delivered. */
 export type ArtifactLink = { label: string; url: string };
 
-export type SealedArtifact = { kind: string; version: number; hash: string; content: string; sealedAt: number; verdict: JsonObject | null; links?: ArtifactLink[] };
+export type SealedArtifact = { kind: string; version: number; hash: string; content: string; sealedAt: number; verdict: JsonObject | null; links?: ArtifactLink[]; outcome?: string };
 
 type ArtifactsDoc = { kinds: Record<string, { versions: SealedArtifact[] }> };
 
@@ -48,6 +50,8 @@ export async function seal(api: ToolExecutionApi, kind: ArtifactKind, ctx: Conte
     const last = entry.versions.at(-1);
     if (last?.hash === hash) return plain(last);
     const sealed: SealedArtifact = { kind: kind.kind, version: entry.versions.length + 1, hash, content, sealedAt: api.now(), verdict: null };
+    const outcome = kind.outcome?.(content);
+    if (outcome) sealed.outcome = outcome;
     entry.versions.push(sealed);
     return plain(sealed);
   }, ctx);

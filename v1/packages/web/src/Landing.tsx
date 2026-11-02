@@ -1,9 +1,10 @@
 import { useState, type SubmitEvent } from 'react';
 import type { AgentSummary } from './api.ts';
+import { EXTENSIONS } from './extensions/index.ts';
 import { Pond } from './Shell.tsx';
 import { pendingInput, statusLine, titleOf, type Groups } from './sessions.ts';
 
-const SUGGESTIONS = ['Review a pull request', 'Research a question'];
+const SUGGESTIONS = EXTENSIONS.flatMap((e) => e.suggestion ?? []);
 
 const pill = 'cursor-pointer rounded-full border border-line bg-surface px-3.5 py-1.5 text-[13px] text-ink-2 transition hover:border-line-strong hover:text-ink';
 
@@ -27,7 +28,7 @@ function Composer({ agents }: { agents: AgentSummary[] }) {
             rows={3}
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Ask a question, paste a PR or issue URL, or describe a task"
+            placeholder="Ask a question or describe a task"
             className="max-h-[220px] min-h-[40px] flex-1 resize-none bg-transparent px-1 py-2 text-[15.5px] leading-relaxed outline-none placeholder:text-muted"
           />
           <button type="submit" disabled={!chosen} aria-label="Start" className="grid h-11 w-11 flex-none cursor-pointer place-items-center rounded-xl bg-ink text-on-ink hover:bg-ink-2 disabled:cursor-not-allowed disabled:opacity-50">
@@ -46,7 +47,7 @@ function Composer({ agents }: { agents: AgentSummary[] }) {
       </form>
       <div className="flex flex-wrap gap-2">
         {SUGGESTIONS.map((s) => (
-          <button key={s} type="button" className={pill} onClick={() => setInput(s)}>{s}</button>
+          <button key={s.label} type="button" className={pill} onClick={() => setInput(s.prompt)}>{s.label}</button>
         ))}
       </div>
     </div>

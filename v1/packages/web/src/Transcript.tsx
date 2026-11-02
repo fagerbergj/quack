@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react';
 import type { AssistantMessage, Message, ToolResultMessage } from '@earendil-works/pi-ai';
 import { EXTENSIONS } from './extensions/index.ts';
 import { Markdown } from './Markdown.tsx';
-import { postedUrl, type View } from './view.ts';
+import type { View } from './view.ts';
 
 // Session view: user bubble, plain assistant prose, ONE collapsed activity line per run of work (thinking, tools),
 // thin muted status lines (compacted); cards only for attention. 20px between turns, 8px inside; 14.5/13/12 type.
@@ -58,7 +58,6 @@ function Body({ body, markdown }: { body: string; markdown?: boolean }) {
 
 function CallRow({ call, result }: { call: Call; result?: ToolResultMessage }) {
   const out = result && text(result.content);
-  const url = result && !result.isError && out ? postedUrl(out) : undefined;
   const note = !result ? 'running' : result.isError ? 'error' : chars(out!.length);
   return (
     <details className="text-[13px]">
@@ -66,7 +65,6 @@ function CallRow({ call, result }: { call: Call; result?: ToolResultMessage }) {
         <Chevron />
         <span className="font-mono text-[12px] text-ink">{call.name}</span>
         <span className="min-w-0 flex-1 truncate text-ink-2">{hint(call.arguments)}</span>
-        {url && <a href={url} target="_blank" rel="noopener noreferrer" className="whitespace-nowrap text-ink-2 hover:text-ink">Posted ↗</a>}
         <span className={`whitespace-nowrap ${result?.isError ? 'text-danger' : meta}`}>{note}</span>
       </summary>
       <div className="mb-2 ml-[18px] flex flex-col gap-2">

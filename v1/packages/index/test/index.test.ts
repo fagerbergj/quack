@@ -47,7 +47,7 @@ async function freshSqlite(): Promise<Fresh> {
   return { store };
 }
 
-const review: ArtifactKind = { kind: 'demo.review', path: 'review.md' };
+const review: ArtifactKind = { kind: 'demo.review', path: 'review.md', outcome: (t) => /^## verdict\n(\S+)/im.exec(t)?.[1] };
 const submitReview = defineTool({
   name: 'submit_review', description: 'seal', parameters: Type.Object({}), replay: 'safe',
   execute: async (_a, api, c) => {

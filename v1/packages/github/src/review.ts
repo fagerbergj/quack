@@ -50,7 +50,7 @@ export function validateReview(text: string): string[] {
   return problems;
 }
 
-export const reviewKind: ArtifactKind = { kind: 'github.review', path: 'artifacts/review.md', validate: validateReview };
+export const reviewKind: ArtifactKind = { kind: 'github.review', path: 'artifacts/review.md', validate: validateReview, outcome: (text) => parseReview(text).verdict };
 
 const EXCERPT_LINES = 20;
 const MAX_DIFF_CHARS = 120_000;
