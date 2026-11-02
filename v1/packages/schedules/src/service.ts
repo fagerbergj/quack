@@ -108,8 +108,11 @@ export function createSchedulesService(config: ServiceConfig) {
 
   // Handles every occurrence since the last recorded one: the newest useful one fires, the rest are recorded missed (SCH-4).
   // The same path serves live firing and catch-up after downtime.
+  const warned = new Set<string>();
   async function runDue(row: Row, at: Date) {
     const s = JSON.parse(row.def) as Schedule;
+    // Stored before agent became required: never fire it (it would bind the default agent), warn once, wait for its delete.
+    if (!s.agent) return void (warned.has(row.id) || (warned.add(row.id), console.error(`schedules: ${row.id} names no agent; not firing it`)));
     const last = db.prepare(`SELECT MAX(occurrence) AS o FROM runs WHERE schedule = ?`).get(row.id) as { o: string | null };
     // Explicit times have no backlog to bound, and a registrar's clock runs behind `created`, so a time registered late must still count; a cron starts at `created`.
     const after = last.o ? new Date(last.o) : s.times ? new Date(0) : new Date(row.created);

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { chmod, mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
+import { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
 import { afterEach, test } from 'node:test';
 import { createSchedulesService } from '../src/index.ts';
@@ -284,5 +285,23 @@ test('a registration without an agent is a 400 naming the field', async () => {
   const res = await api('POST', '/schedules', noAgent);
   assert.equal(res.status, 400);
   assert.match(res.json.error, /agent/);
+  assert.deepEqual((await api('GET', '/schedules')).json.schedules, []);
+});
+
+test('a stored schedule without an agent loads, never fires, and can still be deleted', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  const db = await dbFile();
+  const old = new DatabaseSync(db);
+  old.exec(`CREATE TABLE schedules (id TEXT PRIMARY KEY, source TEXT NOT NULL, def TEXT NOT NULL, created TEXT NOT NULL)`);
+  const { agent, ...legacy } = { ...daily, id: 'sleeper/snapshot/L1' };
+  old.prepare(`INSERT INTO schedules VALUES (?, 'api', ?, ?)`).run(legacy.id, JSON.stringify(legacy), '2026-01-01T00:00:00.000Z');
+  old.close();
+  clock = new Date('2026-01-01T09:00:00Z');
+  const { svc, api } = await start(db);
+  await svc.tick();
+  await svc.tick();
+  assert.equal(calls.length, 0);
+  assert.equal((await api('GET', '/schedules')).json.schedules.length, 1);
+  assert.equal((await api('DELETE', `/schedules/${encodeURIComponent(legacy.id)}`)).status, 200);
   assert.deepEqual((await api('GET', '/schedules')).json.schedules, []);
 });
