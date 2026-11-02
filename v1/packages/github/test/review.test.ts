@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { parseReview, reviewEvidence, reviewerRubric, validateReview } from '../src/index.ts';
+import { parseReview, resolveCitedPath, reviewEvidence, reviewerRubric, validateReview } from '../src/index.ts';
 import { claimedNames, misquotes, quotedCode } from '../src/review.ts';
 
 const review = `## Takeaway
@@ -131,4 +131,13 @@ test('no_silent_approval sees the same unit as the change scope on an approve, a
   const gate = reviewerRubric.criteria.flatMap((c) => c.checks).find((k) => k.id === 'no_silent_approval')!;
   assert.equal(gate.scope, 'approve');
   assert.equal(gate.question, 'If the verdict is approve, is it free of any defect in the diff, or unkept promise from the description or linked issue, that the review never mentions?');
+});
+
+test('a cited path resolves against tracked files: checkout prefix stripped, then a unique tail (prod cases)', () => {
+  const files = ['v1/packages/web/src/a.ts', 'v1/packages/slots/test/slots.test.ts', 'v1/x/index.ts', 'v1/y/index.ts', 'README.md'];
+  assert.equal(resolveCitedPath(files, 'repo', 'repo/v1/packages/web/src/a.ts'), 'v1/packages/web/src/a.ts');
+  assert.equal(resolveCitedPath(files, 'repo', 'packages/slots/test/slots.test.ts'), 'v1/packages/slots/test/slots.test.ts');
+  assert.equal(resolveCitedPath(files, 'repo', 'index.ts'), undefined, 'two tails is ambiguous');
+  assert.equal(resolveCitedPath(files, 'repo', 'ots.test.ts'), undefined, 'a tail must start at a / boundary');
+  assert.equal(resolveCitedPath(files, 'repo', 'packages/nope.ts'), undefined);
 });
