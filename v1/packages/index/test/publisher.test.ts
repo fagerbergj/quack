@@ -5,7 +5,9 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
+import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
+import { observeGeneration } from '@quack/sdk';
 import { openSession } from '@quack/session';
 import { startPublisher } from '../src/index.ts';
 
@@ -16,7 +18,7 @@ type Mode = 'down' | 'unauthorized' | 'hold' | 'ok';
 
 // A stand-in index: answers by mode, records the fact ids it accepted, and parks 'hold' requests until released.
 async function stubIndex() {
-  const state = { mode: 'down' as Mode, accepted: new Set<string>(), arrived: 0, release: () => {} };
+  const state = { mode: 'down' as Mode, accepted: new Set<string>(), data: new Map<string, Record<string, unknown>>(), arrived: 0, release: () => {} };
   const held = new Promise<void>((r) => { state.release = r; });
   const server: Server = createServer(async (req, res) => {
     let body = '';
@@ -24,7 +26,7 @@ async function stubIndex() {
     if (state.mode === 'down') return void res.writeHead(503).end('{}');
     if (state.mode === 'unauthorized') return void res.writeHead(401).end('{}');
     if (state.mode === 'hold') { state.arrived++; await held; }
-    for (const f of JSON.parse(body).facts) state.accepted.add(f.id);
+    for (const f of JSON.parse(body).facts) { state.accepted.add(f.id); state.data.set(f.id, f.data); }
     res.writeHead(200).end('{}');
   });
   await new Promise<void>((r) => server.listen(0, r));
@@ -97,4 +99,47 @@ test('a 4xx answer is logged as a permanent rejection', async (t) => {
   assert.match(String(log.mock.calls[0].arguments[0]), /rejected the facts permanently/);
   await publisher.stop();
   await session.close();
+});
+
+// A workflow step's completion bypasses pi-durable's usage totals; the publisher adds it from the sdk hook.
+const reply = (cost: number) => ({ role: 'assistant', content: [], usage: { input: 100, output: 20, cacheRead: 5, cacheWrite: 0, totalTokens: 125, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: cost } } }) as never;
+
+for (const [name, cost] of [['a priced', 0.25], ['an unpriced', 0]] as const) {
+  test(`${name} direct completion publishes its tokens and cost ${cost}`, async () => {
+    const index = await stubIndex();
+    index.state.mode = 'ok';
+    const publisher = await startPublisher(await openDemo(), { url: index.url, token: 't', meta, pollMs: 60_000 });
+    await observeGeneration({ messages: [] }, async () => reply(cost));
+    await publisher.stop();
+    assert.deepEqual(index.state.data.get('cost'), { total: cost, input: 100, output: 20, cacheRead: 5, cacheWrite: 0 });
+  });
+}
+
+test('a direct-spend commit that fails once is retried, so the spend is still recorded', async () => {
+  const index = await stubIndex();
+  index.state.mode = 'ok';
+  const session = await openDemo();
+  let failures = 0;
+  const root = new Proxy(session.root, { get: (t, k) => k === 'commit' ? (...a: unknown[]) => (failures-- > 0 ? Promise.reject(new Error('blip')) : (t.commit as Function)(...a)) : Reflect.get(t, k) });
+  const publisher = await startPublisher({ harness: session.harness, root }, { url: index.url, token: 't', meta, pollMs: 60_000 });
+  failures = 1;
+  await observeGeneration({ messages: [] }, async () => reply(0.25));
+  await publisher.stop();
+  assert.deepEqual(index.state.data.get('cost'), { total: 0.25, input: 100, output: 20, cacheRead: 5, cacheWrite: 0 });
+});
+
+test('loop and direct spend are summed into one cost fact', async () => {
+  const index = await stubIndex();
+  index.state.mode = 'ok';
+  const session = await openDemo();
+  const publisher = await startPublisher(session, { url: index.url, token: 't', meta, pollMs: 60_000 });
+  await session.submit('Hi', 'c1', true);
+  const usage = await session.harness.usage(BACKGROUND_CONTEXT);
+  const loop = Object.values(usage.models).reduce((n, u) => n + u.input + u.output + u.cacheRead + u.cacheWrite, 0);
+  assert.ok(loop > 0);
+  await observeGeneration({ messages: [] }, async () => reply(0.25));
+  await publisher.stop();
+  const d = index.state.data.get('cost') as Record<string, number>;
+  assert.equal(d.input + d.output + d.cacheRead + d.cacheWrite, loop + 125);
+  assert.equal(d.total, 0.25);
 });

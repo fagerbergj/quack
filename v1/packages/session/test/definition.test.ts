@@ -148,3 +148,10 @@ test('retention must be an idleDays count', () => {
   assert.deepEqual(parseDefinition({ ...base, retention: { idleDays: 14 } }, d, catalog).retention, { idleDays: 14 });
   for (const retention of [{ idleDays: 0 }, { idleDays: '14' }, { days: 14 }, 14]) assert.throws(() => parseDefinition({ ...base, retention }, d, catalog), /retention must be/);
 });
+
+test('model prices default to free, reach the built model, and must be non-negative numbers', () => {
+  const models = (price?: unknown) => parseDeployment({ providers: { local: { baseUrl: 'http://127.0.0.1:1/v1', models: { m: { contextWindow: 8192, maxTokens: 512, ...(price !== undefined && { price }) } } } } });
+  assert.deepEqual(buildModels(models()).getModel('local', 'm')?.cost, { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+  assert.deepEqual(buildModels(models({ input: 0.5, output: 2 })).getModel('local', 'm')?.cost, { input: 0.5, output: 2, cacheRead: 0, cacheWrite: 0 });
+  for (const bad of [{ input: -1 }, { input: '1' }, { tokens: 1 }, 3]) assert.throws(() => models(bad), /price must map/);
+});
