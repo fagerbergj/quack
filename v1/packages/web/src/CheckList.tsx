@@ -1,14 +1,16 @@
 import { useState } from 'react';
 import { checkFailed, type Check } from './api.ts';
+import { EXTENSIONS } from './extensions/index.ts';
 import { Markdown } from './Markdown.tsx';
 
 // The judge prefixes a note with the unit it judged ("RB2: ..."); a prefix equal to the check's scope names the whole artifact, so it adds nothing.
+const wholeUnits = () => EXTENSIONS.flatMap((e) => e.wholeUnits ?? []);
 const UNIT = /^([A-Za-z0-9_.-]{1,12}): ([\s\S]*)$/;
 
 export function Note({ text, scope }: { text: string; scope?: string }) {
   const [more, setMore] = useState(false);
   const m = UNIT.exec(text);
-  const unit = m && m[1] !== scope ? m[1] : undefined;
+  const unit = m && m[1] !== scope && !wholeUnits().includes(m[1]!) ? m[1] : undefined;
   const body = m ? m[2]! : text;
   const first = /^[\s\S]+?(?<!\b(?:e\.g|i\.e))[.!?](?=\s|$)/.exec(body)?.[0] ?? body;
   const long = first.length < body.length;
