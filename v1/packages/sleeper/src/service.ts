@@ -21,6 +21,8 @@ export type ServiceConfig = {
   /** Where on-demand jobs are submitted, and whose team they run for; both are needed to start one. */
   distributorUrl?: string;
   owner?: string;
+  /** The league the page's /apps/sleeper routes act on. */
+  league?: string;
   fetch?: typeof fetch;
 };
 
@@ -47,6 +49,7 @@ export function createSleeperService(config: ServiceConfig) {
   // GET /leagues/:id/snapshots[/latest|/YYYY-MM-DD] read the store; POST /leagues/:id/snapshots takes today's if it is missing.
   async function route(method: string, url: URL): Promise<[number, unknown]> {
     const path = url.pathname;
+    if (path.startsWith('/apps/sleeper')) return pageRoute(method, url);
     const job = /^\/leagues\/([^/]+)\/jobs\/(lineup|waivers|trends|digest|retro)$/.exec(path);
     if (job) return startOnDemand({ lineup: startLineup, waivers: startWaivers, trends: startTrends, digest: startDigest, retro: startRetro }[job[2] as 'lineup'], method, safeDecode(job[1]), url.searchParams.get('week'));
     const trade = /^\/leagues\/([^/]+)\/jobs\/(trade-finder|trade)$/.exec(path);
@@ -62,6 +65,13 @@ export function createSleeperService(config: ServiceConfig) {
     if (!m[2]) return [200, { snapshots: store.history(league) }];
     const found = m[2] === '/latest' ? store.latest(league) : store.snapshot(league, m[2].slice(1));
     return found ? [200, found] : [404, { error: 'no snapshot yet' }];
+  }
+
+  // What the page reaches through the distributor's app proxy: the league id and the on-demand lineup job.
+  async function pageRoute(method: string, url: URL): Promise<[number, unknown]> {
+    if (url.pathname === '/apps/sleeper/lineup') return startOnDemand(startLineup, method, config.league, url.searchParams.get('week'));
+    if (url.pathname !== '/apps/sleeper' || method !== 'GET') return [404, { error: 'not found' }];
+    return config.league ? [200, { league: config.league }] : [501, { error: 'no league configured' }];
   }
 
   // POST /leagues/:id/jobs/(lineup|waivers|trends|digest|retro)[?week=N] starts a job on demand (SL-2); the week defaults to Sleeper's current one.

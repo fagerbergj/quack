@@ -260,3 +260,21 @@ test('the trends workflow keeps reading the service after the session process dr
   assert.equal((facts as { date: string }).date, TODAY);
   assert.deepEqual(seen, ['POST http://service/leagues/L1/snapshots Bearer tok', 'GET http://service/leagues/L1/snapshots Bearer tok']);
 });
+
+test('the page routes answer the configured league and start its lineup job', async () => {
+  const calls: string[] = [];
+  const fake = (async (u: string) => (calls.push(u), new Response('{}', { status: 202 }))) as unknown as typeof fetch;
+  const service = createSleeperService({ serviceToken: 't', dbPath: ':memory:', client: clientOf(fixturesOn('today')), distributorUrl: 'http://d', owner: 'mallard', league: 'L1', fetch: fake, now: () => new Date(AT) });
+  await new Promise<void>((r) => service.listen(0, r));
+  const call = (path: string, method = 'GET') => fetch(`http://127.0.0.1:${(service.address() as AddressInfo).port}${path}`, { method, headers: { authorization: 'Bearer t' } });
+  try {
+    assert.deepEqual(await (await call('/apps/sleeper')).json(), { league: 'L1' });
+    const started = await call('/apps/sleeper/lineup?week=8', 'POST');
+    assert.deepEqual([started.status, await started.json()], [202, { sessionKey: 'sleeper:L1:8:lineup', status: 202 }]);
+    assert.equal(calls.length, 1);
+    assert.equal((await call('/apps/sleeper/lineup?week=x', 'POST')).status, 400);
+    assert.equal((await call('/apps/sleeper/lineup')).status, 405);
+  } finally {
+    service.stop();
+  }
+});
