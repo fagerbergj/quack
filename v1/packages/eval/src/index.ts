@@ -4,3 +4,4 @@ export { readSession, type SessionRecord } from './record.ts';
 export { replay, type Candidate, type EvalService, type EvalServices, type ReplayResult } from './replay.ts';
 export { publish, scoresOf, summarize, type Blocks } from './report.ts';
 export { adaptersOf, adapterScores, blocksOf, servicesOf } from './adapters.ts';
+export { replayJudge, table, type Arm, type Case, type Row } from './judge-replay.ts';

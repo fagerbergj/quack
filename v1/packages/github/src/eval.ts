@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { EvalAdapter } from '@quack/sdk';
 import type { PullRequestRecord } from './checkout.ts';
+import { reviewerRubric } from './rubric.ts';
 import { parseReview, reviewKind } from './review.ts';
 
 // A replay's service half: the pinned pull request as recorded, and every review captured, never posted (EVL-2).
@@ -31,9 +32,10 @@ export async function evalService(pin: { pr: PullRequestRecord }) {
   return { env: { QUACK_GH_SERVICE_URL: url, QUACK_GH_SERVICE_TOKEN: token }, captured, close: () => new Promise<void>((r) => server.close(() => r())) };
 }
 
-// shortcut: no judge evidence, since reviewEvidence reads a live checkout a recording does not keep; add one with a pinned diff.
+// shortcut: no judge evidence, since reviewEvidence reads a live checkout a recording does not keep (judge replay takes inline evidence); add one with a pinned diff.
 export const evalAdapter: EvalAdapter = {
   kind: reviewKind.kind,
   services: { 'github.pr': (pin) => evalService(pin as never) },
   blocks: (content) => parseReview(content).verdict === 'request_changes',
+  judge: { rubric: reviewerRubric, evidence: async () => undefined },
 };
