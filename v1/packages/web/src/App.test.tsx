@@ -617,7 +617,6 @@ test('the Work drawer opens from the status line, shows report then checks, trap
   await userEvent.click(within(work).getByRole('tab', { name: 'Checks' }));
   expect(work).toHaveTextContent('Cites a source that does not say it');
   expect(work).not.toHaveTextContent('citations.support');
-  await userEvent.click(within(work).getByText('Why'));
   expect(work).toHaveTextContent('S7 does not mention TP');
   expect(within(work).getByText('Fail')).toBeInTheDocument();
   expect(within(work).getByText('Pass')).toBeInTheDocument();
@@ -905,7 +904,7 @@ test('Sleeper leads with the week strip and renders a passed lineup card', async
 
 const chk = (id: string, label: string, weight: number | 'gate', met: number | null, notes: string[] = []) => ({ criterion: 'c', id, label, weight, met, notes });
 
-test('a failed lineup card names its failing checks by label, with the reason behind Why', async () => {
+test('a failed lineup card names its failing checks by label, with the reason open', async () => {
   const failed = { passed: false, gatesFailed: [], score: 0.4, checks: [chk('summary_names_changes', 'Summary skips a lineup change', 'gate', 0, ['RB2: Summary says nothing about the swap. It also omits FLEX.'])] };
   await openSleeper([sealed(lineup(), null, 1), sealed(lineup(), failed, 2)]);
   const card = await screen.findByRole('article', { name: 'Week 8 lineup' });
@@ -913,7 +912,6 @@ test('a failed lineup card names its failing checks by label, with the reason be
   const label = within(card).getByText('Summary skips a lineup change');
   expect(label).toHaveAttribute('title', 'c.summary_names_changes');
   expect(card).not.toHaveTextContent('Summary names changes');
-  await userEvent.click(within(card).getByText('Why'));
   expect(within(card).getByText('RB2')).toBeInTheDocument();
   expect(card).not.toHaveTextContent('RB2:');
   expect(card).toHaveTextContent('Summary says nothing about the swap.');
@@ -926,7 +924,6 @@ test('a note about the whole card drops its "card:" prefix and renders backticks
   const failed = { passed: false, gatesFailed: [], score: 0.4, checks: [chk('x', 'Misses the news', 3, 0, ['card: Does not use `why` for the news.'])] };
   await openSleeper([sealed(lineup(), failed)]);
   const card = await screen.findByRole('article', { name: 'Week 8 lineup' });
-  await userEvent.click(within(card).getByText('Why'));
   expect(card).not.toHaveTextContent('card:');
   expect(card.querySelector('code')).toHaveTextContent('why');
 });
@@ -951,12 +948,28 @@ test('a passed card shows no red boxes; partial misses sit behind its Double-che
   expect(card.querySelector('.text-danger')).toBeNull();
 });
 
-test('a failing check with no judge note says so', async () => {
+test('a failing check with no judge note has no disclosure', async () => {
   const failed = { passed: false, gatesFailed: [], score: 0.4, checks: [chk('s', 'Summary skips a lineup change', 'gate', 0)] };
   await openSleeper([sealed(lineup(), failed)]);
   const card = await screen.findByRole('article', { name: 'Week 8 lineup' });
-  await userEvent.click(within(card).getByText('Why'));
-  expect(card).toHaveTextContent('No note from the judge.');
+  expect(card).toHaveTextContent('Summary skips a lineup change');
+  expect(card.querySelector('details summary .chev')).toBeNull();
+});
+
+test('in the Work checks, a failed check starts open, a passed one with a note is closed, one with no note has no chevron', async () => {
+  const checks = [chk('a', 'Quotes text that is not in the source', 3, 0, ['Not in the source.']), chk('b', 'Cites a source that was not opened', 3, 1, ['All sources opened.']), chk('c', 'A finding cites no source', 3, 1)];
+  routes['GET /sessions/ui%3Au1/artifacts'] = { artifacts: [{ kind: 'research.report', version: 2, hash: 'h2', content: '## Short answer\n\nx', sealedAt: 2, verdict: { passed: false, gatesFailed: [], score: 0.5, checks } }] };
+  const ws = await openSession();
+  ws.frame(snapshot());
+  await userEvent.click(await screen.findByRole('button', { name: 'Open Report version 2' }));
+  const work = screen.getByRole('dialog', { name: 'Work' });
+  await userEvent.click(within(work).getByRole('tab', { name: 'Checks' }));
+  const open = (label: string) => within(work).getByText(label).closest('details');
+  expect(open('Quotes text that is not in the source')).toHaveAttribute('open');
+  expect(open('Cites a source that was not opened')).not.toHaveAttribute('open');
+  expect(open('A finding cites no source')).toBeNull();
+  expect(work.querySelectorAll('summary .chev')).toHaveLength(2);
+  expect(work).not.toHaveTextContent('Why');
 });
 
 test('a card with no verdict yet shows no status text', async () => {
@@ -1041,7 +1054,6 @@ test('a note does not end its first sentence at e.g.', async () => {
   const failed = { passed: false, gatesFailed: [], score: 0.4, checks: [chk('x', 'Misses the news', 3, 0, ['Cites no report, e.g. the practice update. It stops there.'])] };
   await openSleeper([sealed(lineup(), failed)]);
   const card = await screen.findByRole('article', { name: 'Week 8 lineup' });
-  await userEvent.click(within(card).getByText('Why'));
   expect(card).toHaveTextContent('Cites no report, e.g. the practice update.');
   expect(card).not.toHaveTextContent('It stops there');
 });
