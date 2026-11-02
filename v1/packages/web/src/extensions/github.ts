@@ -21,6 +21,7 @@ export const github: Extension = {
     },
     words: () => ({ kind: 'github.review', w: { run: 'Reviewing', pass: 'Approved ✓', fail: "Didn't pass its checks", none: 'Not reviewed yet' } }),
   },
+  artifact: (a) => (a.kind === 'github.review' ? { name: 'Review', posted: a.links?.length ? 'Review posted' : undefined } : undefined),
   start: { prefix: 'github', label: 'GitHub' },
   // GitHub redirects /pull/<n> to /issues/<n> for a plain issue, so one URL fits both.
   link: (key) => {

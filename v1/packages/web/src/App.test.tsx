@@ -467,8 +467,9 @@ test('lists artifacts with their check status and failing criteria', async () =>
   expect(within(section).getAllByRole('listitem')).toHaveLength(1);
   await userEvent.click(within(section).getByRole('button', { name: '1 earlier version' }));
   const items = within(section).getAllByRole('listitem');
-  expect(items[0]).toHaveTextContent("Review · Didn't pass its checks");
-  expect(items[1]).not.toHaveTextContent("Didn't pass");
+  expect(items[0]).toHaveTextContent("Review didn't pass its checks");
+  expect(items[1]).toHaveTextContent(/Review ready/);
+  expect(items[1]).not.toHaveTextContent(/Cards|github\.review|v2|sealed/);
   expect(screen.queryByRole('dialog')).toBeNull();
   await userEvent.click(within(items[1]).getByRole('button', { name: 'Open github.review version 2' }));
   expect(within(screen.getByRole('dialog', { name: 'Work' })).getByText('final review')).toBeInTheDocument();
@@ -913,4 +914,33 @@ test('an open question card keeps counting its age while the session is quiet', 
   } finally {
     vi.useRealTimers();
   }
+});
+
+test('the transcript line names each artifact in plain words and never shows the raw kind', async () => {
+  const art = (kind: string, version: number, content: string, extra: object = {}) => ({ kind, version, hash: `h${version}`, content, sealedAt: version, verdict: null, ...extra });
+  const pass = { passed: true, gatesFailed: [], score: 1, checks: [] };
+  const fail = { passed: false, gatesFailed: [], score: 0.2, checks: [] };
+  routes['GET /sessions/ui%3Au1/artifacts'] = {
+    artifacts: [
+      art('sleeper.cards', 1, JSON.stringify({ kind: 'lineup', starters: [] }), { verdict: pass }),
+      art('sleeper.cards', 2, JSON.stringify({ kind: 'waivers' }), { verdict: pass }),
+      art('sleeper.cards', 3, JSON.stringify({ kind: 'report', week: 7 }), { verdict: pass }),
+      art('sleeper.cards', 4, JSON.stringify({ kind: 'lineup', starters: [] }), { verdict: fail }),
+      art('github.review', 5, 'r', { verdict: pass }),
+      art('github.review', 6, 'r', { verdict: pass, links: [{ label: 'GitHub', url: 'https://example.com/pull/1' }] }),
+      art('remarkable.transcript', 7, 't'),
+      art('mystery.thing', 8, 'x', { verdict: fail }),
+      art('mystery.other', 9, 'x'),
+    ],
+  };
+  const ws = await openSession();
+  ws.frame(snapshot());
+  const section = await screen.findByRole('region', { name: 'Artifacts' });
+  await userEvent.click(within(section).getByRole('button', { name: /earlier versions/ }));
+  const lines = within(section).getAllByRole('listitem').map((li) => li.textContent ?? '');
+  const has = (x: string) => expect(lines.some((l) => l.includes(x)), x).toBe(true);
+  has('Lineup card ready'); has('Waivers card ready'); has('Week 7 recap ready'); has("Lineup card didn't pass its checks");
+  has('Review ready'); has('Review posted'); has('Transcript ready'); has("Result didn't pass its checks"); has('Result ready');
+  expect(lines.join(' ')).not.toMatch(/Cards|Thing|Other/);
+  expect(within(section).getByRole('link', { name: /GitHub/ })).toBeInTheDocument();
 });

@@ -6,5 +6,6 @@ export const remarkable: Extension = {
     name: (r) => plain(r.title ?? r.key.slice('remarkable:'.length)),
     words: () => ({ kind: 'remarkable.transcript', w: { run: 'Transcribing', pass: 'Transcribed ✓', fail: "Didn't pass its checks", none: 'Not transcribed yet', sealed: 'Transcribed' } }),
   },
+  artifact: (a) => (a.kind === 'remarkable.transcript' ? { name: 'Transcript' } : undefined),
   nav: { route: 'remarkable', label: 'reMarkable', icon: 'M4 20l4-1 11-11-3-3L5 16zM14 6l3 3' },
 };
