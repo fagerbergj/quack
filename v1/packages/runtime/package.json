@@ -21,6 +21,19 @@
     "@quack/workflows": "*",
     "pi-lsp": "0.1.7"
   },
+  "quack": {
+    "extensions": [
+      "./src/extensions/coding.ts",
+      "@quack/github",
+      "@quack/research",
+      "@quack/workflows",
+      "./src/extensions/lsp.ts",
+      "@quack/sleeper",
+      "@quack/remarkable",
+      "@quack/slots",
+      "@quack/traces"
+    ]
+  },
   "exports": {
     ".": "./src/session-env.ts"
   }

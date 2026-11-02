@@ -7,3 +7,4 @@ export { parseReview, reviewEvidence, reviewKind, validateReview, type Finding, 
 export { reviewerRubric } from './rubric.ts';
 export { evalService } from './eval.ts';
 export { fileStore, redeliverFailed, startRedelivery } from './redeliver.ts';
+export { manifest } from './manifest.ts';

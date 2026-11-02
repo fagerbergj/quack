@@ -2,3 +2,4 @@ export { createRmClient, type RmClient, type RmDocument, type RmEntry } from './
 export { createRemarkableService, type ServiceConfig } from './service.ts';
 export { openStore, type Batch, type BatchItem } from './store.ts';
 export * from './ingest/index.ts';
+export { manifest } from './manifest.ts';

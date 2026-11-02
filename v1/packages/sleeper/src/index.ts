@@ -9,3 +9,4 @@ export * from './trades/index.ts';
 export * from './trends/index.ts';
 export * from './history/index.ts';
 export * from './report/index.ts';
+export { manifest } from './manifest.ts';

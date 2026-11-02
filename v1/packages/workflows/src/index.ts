@@ -148,3 +148,4 @@ export function workflowSessionExtensions(config: unknown, from?: Record<string,
   };
   return [{ ...workflowExtension([workflow]), dispatch } as DispatchingExtension];
 }
+export { manifest } from './manifest.ts';
