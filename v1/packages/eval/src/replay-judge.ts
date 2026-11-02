@@ -3,8 +3,8 @@
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { extensionList, loadManifests } from '@quack/runtime/catalog';
 import { buildModels, parseDeployment } from '@quack/session';
@@ -19,7 +19,7 @@ async function adaptersAt(ref: string) {
     const top = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
     const tar = execFileSync('git', ['archive', '--format=tar', `${ref}:v1`, 'packages'], { cwd: top, maxBuffer: 1 << 30 });
     execFileSync('tar', ['-x', '-C', dir], { input: tar });
-    symlinkSync(resolve('node_modules'), join(dir, 'node_modules'));
+    symlinkSync(fileURLToPath(new URL('../../../node_modules', import.meta.url)), join(dir, 'node_modules'));
     const specs = extensionList().filter((s) => s.startsWith('@quack/')).map((s) => pathToFileURL(join(dir, 'packages', s.slice(7), 'src/index.ts')).href);
     return adaptersOf(await loadManifests(specs));
   } finally {

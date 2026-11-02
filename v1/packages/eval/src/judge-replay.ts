@@ -2,7 +2,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, Type, type MutableModels } from '@earendil-works/pi-ai';
-import { defineExtension, defineTool } from '@earendil-works/pi-durable';
+import type { Context } from '@earendil-works/chord/context';
+import { defineExtension, defineTool, type ToolExecutionApi } from '@earendil-works/pi-durable';
 import { rejudge, type ClassifierRef, type Evidence, type ModelRef, type Rubric } from '@quack/judge';
 import type { EvalAdapter, RecordedSession } from '@quack/sdk';
 import { openSession } from '@quack/session';
@@ -40,24 +41,35 @@ async function prepare(arm: Arm, c: Case): Promise<Omit<Job, 'rep'>> {
   throw new Error(`${c.case}: arm ${arm.label} has no adapter that judges ${c.kind} with this evidence`);
 }
 
+async function judgeJob(api: ToolExecutionApi, ctx: Context, o: Options, j: Job): Promise<Row[]> {
+  const sealed = { kind: j.c.kind, version: 1, hash: '', content: j.content, sealedAt: 0, verdict: null };
+  const opts = { kind: { kind: j.c.kind, path: 'x' }, rubric: j.rubric, evidence: async () => j.evidence, maxRevisions: 0, classifier: o.classifier, judgeModel: o.judgeModel };
+  const t = Date.now();
+  const v = await rejudge(api, opts, sealed, `${j.arm}:${j.rep}:${j.c.case}`, ctx);
+  const ms = Date.now() - t;
+  return v.checks.map((k) => ({ arm: j.arm, rep: j.rep, case: j.c.case, check: k.id, met: k.met, clef: o.classifier ? k.resolvers[o.classifier.modelId] ?? 0 : 0, esc: ESCALATED.reduce((n, r) => n + (k.resolvers[r] ?? 0), 0), ms }));
+}
+
 /** Judges every case under every arm `repeat` times and returns one row per check. */
 export async function replayJudge(o: Options): Promise<Row[]> {
+  if (!o.models.getAllModels(o.judgeModel.provider).some((m) => m.id === o.judgeModel.modelId)) throw new Error(`judge ${o.judgeModel.provider}/${o.judgeModel.modelId} is not configured in this deployment`);
   const prepared = await Promise.all(o.arms.flatMap((arm) => o.cases.map((c) => prepare(arm, c))));
   const queue: Job[] = Array.from({ length: o.repeat }, (_, i) => prepared.map((p) => ({ ...p, rep: i + 1 }))).flat();
   const rows: Row[] = [];
+  // A tool error only reaches the scripted driver as text, so keep the first one and rethrow it after the run.
+  let failure: unknown;
   const replay = defineTool({
     name: 'replay_judge',
     description: 'Judge every recorded case again.',
     parameters: Type.Object({}),
     async execute(_args, api, ctx) {
       await Promise.all(Array.from({ length: o.concurrency }, async () => {
-        for (let j = queue.shift(); j; j = queue.shift()) {
-          const sealed = { kind: j.c.kind, version: 1, hash: '', content: j.content, sealedAt: 0, verdict: null };
-          const opts = { kind: { kind: j.c.kind, path: 'x' }, rubric: j.rubric, evidence: async () => j.evidence, maxRevisions: 0, classifier: o.classifier, judgeModel: o.judgeModel };
-          const t = Date.now();
-          const v = await rejudge(api, opts, sealed, `${j.arm}:${j.rep}:${j.c.case}`, ctx);
-          const ms = Date.now() - t;
-          for (const k of v.checks) rows.push({ arm: j.arm, rep: j.rep, case: j.c.case, check: k.id, met: k.met, clef: o.classifier ? k.resolvers[o.classifier.modelId] ?? 0 : 0, esc: ESCALATED.reduce((n, r) => n + (k.resolvers[r] ?? 0), 0), ms });
+        for (let j = queue.shift(); j && !failure; j = queue.shift()) {
+          try {
+            rows.push(...(await judgeJob(api, ctx, o, j)));
+          } catch (err) {
+            failure ??= err;
+          }
         }
       }));
       return { output: [{ type: 'text', text: 'done' }] };
@@ -71,11 +83,13 @@ export async function replayJudge(o: Options): Promise<Row[]> {
   const dir = mkdtempSync(join(tmpdir(), 'quack-judge-replay-'));
   try {
     const session = await openSession({ dir, models: o.models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [defineExtension({ name: 'judge-replay', tools: [replay] })] } });
-    await session.submit('Replay the judge.', 'judge-replay', true);
+    const result = await session.submit('Replay the judge.', 'judge-replay', true);
+    if (result.status !== 'done') throw new Error(`judge replay run ${result.status}${'reason' in result ? `: ${result.reason}` : ''}`);
     await session.close();
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+  if (failure) throw failure;
   return rows;
 }
 
@@ -84,7 +98,7 @@ const fmt = (m: number | null) => (m === null ? 'null' : String(Math.round(m * 1
 
 /** The #1956 table: per case and check, met per repeat and classifier/escalation counts for each arm, then median judge seconds per arm. */
 export function table(rows: Row[], arms: string[]): string {
-  const keys = [...new Set(rows.map((r) => `${r.case}\t${r.check}`))];
+  const keys = [...new Set(rows.map((r) => `${r.case}\t${r.check}`))].sort();
   const cell = (arm: string, key: string) => {
     const rs = rows.filter((r) => r.arm === arm && `${r.case}\t${r.check}` === key).sort((a, b) => a.rep - b.rep);
     return [rs.map((r) => fmt(r.met)).join(' '), `${rs.reduce((n, r) => n + r.clef, 0)}/${rs.reduce((n, r) => n + r.esc, 0)}`];
