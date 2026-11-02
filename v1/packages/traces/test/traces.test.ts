@@ -9,23 +9,25 @@ import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-work
 import { agentSpec } from '@quack/session';
 import { openSession } from '@quack/session';
 import { tracesFromEnv, tracesSessionExtensions } from '../src/index.ts';
-import { remember, Sender } from '../src/session.ts';
+import { generationSpan, remember, Sender } from '../src/session.ts';
 
 const dir = await mkdtemp(join(tmpdir(), 'quack-traces-'));
 after(() => rm(dir, { recursive: true, force: true }));
 
-type Ingested = { auth: string | undefined; batch: Array<{ type: string; body: Record<string, any> }> };
+type OtlpSpan = { traceId: string; startTimeUnixNano: string; endTimeUnixNano: string; status: { code: number; message?: string }; attributes: Array<{ key: string; value: { stringValue: string } }> };
+type Otlp = { auth: string | undefined; version: string | undefined; spans: OtlpSpan[] };
+const attrs = (span: OtlpSpan) => Object.fromEntries(span.attributes.map((a) => [a.key, a.value.stringValue]));
 
-// A fake Langfuse: `first` resolves with the first ingestion request; `status` is what it answers.
-async function fakeLangfuse(status = 207) {
-  let resolve!: (r: Ingested) => void;
-  const first = new Promise<Ingested>((r) => (resolve = r));
+// A fake Langfuse: `first` resolves with the first OTLP request; `status` and `reply` are what it answers.
+async function fakeLangfuse(status = 200, reply = '{}') {
+  let resolve!: (r: Otlp) => void;
+  const first = new Promise<Otlp>((r) => (resolve = r));
   const server = createServer(async (req: IncomingMessage, res) => {
     let text = '';
     for await (const chunk of req) text += chunk;
-    assert.equal(req.url, '/api/public/ingestion');
-    resolve({ auth: req.headers.authorization, ...JSON.parse(text) });
-    res.writeHead(status).end('{}');
+    assert.equal(req.url, '/api/public/otel/v1/traces');
+    resolve({ auth: req.headers.authorization, version: req.headers['x-langfuse-ingestion-version'] as string, spans: JSON.parse(text).resourceSpans[0].scopeSpans[0].spans });
+    res.writeHead(status).end(reply);
   });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   return { first, url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, close: () => new Promise((r) => server.close(r)) };
@@ -43,40 +45,61 @@ async function generate(extensions: ReturnType<typeof tracesSessionExtensions>, 
   return done;
 }
 
-test('a generation sends one Langfuse generation event with model, input, output, usage, cost, latency and metadata', async () => {
+test('a generation sends one OTLP span with Langfuse generation attributes', async () => {
   const lf = await fakeLangfuse();
   const done = await generate(tracesSessionExtensions({ baseUrl: lf.url, publicKey: 'pk', secretKey: 'sk', sessionKey: 'sess-1', agentName: 'reviewer', agentVersion: '3' }), 'Hi there.');
   assert.equal(done.status === 'done' && done.answer, 'Hi there.');
-  const { auth, batch } = await lf.first;
+  const { auth, version, spans } = await lf.first;
   assert.equal(auth, `Basic ${Buffer.from('pk:sk').toString('base64')}`);
-  const gens = batch.filter((e) => e.type === 'generation-create');
-  assert.equal(gens.length, 1);
-  const g = gens[0].body;
-  assert.equal(g.traceId, 'sess-1');
-  assert.equal(g.model, 'faux-1');
-  assert.match(JSON.stringify(g.input), /Say hi\./);
-  assert.match(JSON.stringify(g.output), /Hi there\./);
-  assert.equal(typeof g.usageDetails.total, 'number');
-  assert.equal(typeof g.costDetails.total, 'number');
-  assert.ok(Date.parse(g.endTime) > Date.parse(g.startTime));
-  assert.equal(g.metadata.agent, 'reviewer');
-  assert.equal(g.metadata.version, '3');
-  assert.equal(g.metadata.stopReason, 'stop');
-  assert.equal(g.level, 'DEFAULT');
-  assert.equal(typeof g.usageDetails.cache_read, 'number');
-  assert.equal(typeof g.usageDetails.cache_write, 'number');
-  assert.deepEqual(batch.find((e) => e.type === 'trace-create')!.body, { id: 'sess-1', sessionId: 'sess-1', name: 'reviewer' });
+  assert.equal(version, '4');
+  assert.equal(spans.length, 1);
+  const a = attrs(spans[0]);
+  assert.equal(a['langfuse.observation.type'], 'generation');
+  assert.equal(a['langfuse.session.id'], 'sess-1');
+  assert.equal(a['langfuse.trace.name'], 'reviewer');
+  assert.equal(a['langfuse.observation.model.name'], 'faux-1');
+  assert.match(a['langfuse.observation.input'], /Say hi\./);
+  assert.match(a['langfuse.observation.output'], /Hi there\./);
+  const usage = JSON.parse(a['langfuse.observation.usage_details']);
+  for (const k of ['input', 'output', 'cache_read', 'cache_write', 'total']) assert.equal(typeof usage[k], 'number', k);
+  assert.equal(typeof JSON.parse(a['langfuse.observation.cost_details']).total, 'number');
+  assert.equal(a['langfuse.observation.level'], 'DEFAULT');
+  assert.deepEqual([a['langfuse.observation.metadata.agent'], a['langfuse.observation.metadata.version'], a['langfuse.observation.metadata.stopReason']], ['reviewer', '3', 'stop']);
+  assert.match(spans[0].traceId, /^[0-9a-f]{32}$/);
+  assert.ok(BigInt(spans[0].endTimeUnixNano) > BigInt(spans[0].startTimeUnixNano));
+  assert.equal(spans[0].status.code, 1);
   await lf.close();
 });
 
-test('an ingestion outage does not fail the generation', async () => {
+test('an error stop is level ERROR with the provider message', () => {
+  const message = { ...fauxAssistantMessage(''), stopReason: 'error' as const, errorMessage: 'boom' };
+  const span = generationSpan({ agentName: 'a' }, 'k', [], 1, message) as unknown as OtlpSpan;
+  assert.equal(attrs(span)['langfuse.observation.level'], 'ERROR');
+  assert.equal(attrs(span)['langfuse.observation.status_message'], 'boom');
+  assert.deepEqual(span.status, { code: 2, message: 'boom' });
+});
+
+test('an outage or a rejection is reported once and never fails the generation', async () => {
+  for (const [status, reply] of [[500, 'down'], [207, '{"successes":[],"errors":[{"id":"x","status":400}]}']] as const) {
+    const lf = await fakeLangfuse(status, reply);
+    const reports: string[] = [];
+    let reported!: () => void;
+    const second = new Promise<void>((r) => (reported = r));
+    const sender = new Sender(`${lf.url}/api/public/otel/v1/traces`, 'Basic x', (t) => (reports.push(t), reported()));
+    sender.push([{ a: 1 }]);
+    await lf.first;
+    await second;
+    await lf.close();
+    sender.push([{ a: 2 }]); // connection refused now; still only the first report
+    await new Promise((r) => setImmediate(r));
+    assert.equal(reports.length, 1);
+    assert.match(reports[0], /Langfuse did not accept spans/);
+  }
   const lf = await fakeLangfuse(500);
   const done = await generate(tracesSessionExtensions({ baseUrl: lf.url, publicKey: 'pk', secretKey: 'sk' }), 'Still fine.');
   assert.equal(done.status === 'done' && done.answer, 'Still fine.');
   await lf.first;
   await lf.close();
-  const dead = await generate(tracesSessionExtensions({ baseUrl: lf.url, publicKey: 'pk', secretKey: 'sk' }), 'Unreachable is fine too.');
-  assert.equal(dead.status === 'done' && dead.answer, 'Unreachable is fine too.');
 });
 
 test('with any of the three variables unset nothing is installed', async () => {
@@ -94,9 +117,9 @@ test('requests that never get a response are capped at 32, dropping the oldest',
   assert.deepEqual([pending.keys().next().value, [...pending.keys()].at(-1)], [8, 39]);
 });
 
-test('the queue keeps the newest 200 events and sends them in batches of 20', async () => {
+test('the queue keeps the newest 200 spans and sends them in batches of 20', async () => {
   const sizes: number[] = [];
-  const ids: string[] = [];
+  const ids: number[] = [];
   let release!: () => void;
   const gate = new Promise<void>((r) => (release = r));
   let done!: () => void;
@@ -104,21 +127,20 @@ test('the queue keeps the newest 200 events and sends them in batches of 20', as
   const server = createServer(async (req, res) => {
     let text = '';
     for await (const chunk of req) text += chunk;
-    const { batch } = JSON.parse(text);
-    sizes.push(batch.length);
-    ids.push(...batch.map((e: { id: string }) => e.id));
+    const { spans } = JSON.parse(text).resourceSpans[0].scopeSpans[0];
+    sizes.push(spans.length);
+    ids.push(...spans.map((e: { id: number }) => e.id));
     if (sizes.length === 1) await gate;
-    res.writeHead(207).end('{}');
+    res.writeHead(200).end('{}');
     if (sizes.length === 11) done();
   });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
-  const sender = new Sender(`http://127.0.0.1:${(server.address() as AddressInfo).port}/api/public/ingestion`, 'Basic x');
-  const event = (i: number) => ({ id: String(i), type: 'trace-create', timestamp: '', body: {} });
-  sender.push([event(0)]); // in flight, held by the server
-  sender.push(Array.from({ length: 300 }, (_, i) => event(i + 1)));
+  const sender = new Sender(`http://127.0.0.1:${(server.address() as AddressInfo).port}/api/public/otel/v1/traces`, 'Basic x');
+  sender.push([{ id: 0 }]); // in flight, held by the server
+  sender.push(Array.from({ length: 300 }, (_, i) => ({ id: i + 1 })));
   release();
   await finished;
   assert.deepEqual(sizes, [1, ...Array(10).fill(20)]);
-  assert.deepEqual([ids[1], ids.at(-1)], ['101', '300']);
+  assert.deepEqual([ids[1], ids.at(-1)], [101, 300]);
   await new Promise((r) => server.close(r));
 });

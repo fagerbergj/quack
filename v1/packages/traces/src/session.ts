@@ -1,34 +1,39 @@
+import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import type { AssistantMessage } from '@earendil-works/pi-ai';
 import { defineExtension, GenerationTask, hook, type Extension } from '@earendil-works/pi-durable';
 
 export type TracesConfig = { baseUrl?: string; publicKey?: string; secretKey?: string; sessionKey?: string; agentName?: string; agentVersion?: string };
 
-type Event = { id: string; type: string; timestamp: string; body: Record<string, unknown> };
+type Span = Record<string, unknown>;
 
 const MAX_QUEUE = 200;
 const BATCH = 20;
 const SEND_TIMEOUT_MS = 5_000;
 const MAX_PENDING = 32;
 
-/** afterResponse never fires on a provider error, so unmatched requests are capped, oldest first. */
+/** Provider errors do reach afterResponse; the cap is for aborted tasks, whose requests never get one. */
 export function remember<V>(map: Map<number, V>, key: number, value: V) {
   if (map.size >= MAX_PENDING) map.delete(map.keys().next().value!);
   map.set(key, value);
 }
 
-/** Fire-and-forget batches to Langfuse's public ingestion API; a failed batch is dropped, the oldest events go first when the queue is full. */
+/** Fire-and-forget OTLP/HTTP JSON batches; a failed batch is dropped and reported once on stderr, the oldest spans go first when the queue is full. */
 export class Sender {
-  #queue: Event[] = [];
+  #queue: Span[] = [];
   #running = false;
+  #reported = false;
   #url: string;
   #auth: string;
-  constructor(url: string, auth: string) {
+  #report: (text: string) => void;
+  constructor(url: string, auth: string, report: (text: string) => void = (t) => void process.stderr.write(t)) {
     this.#url = url;
     this.#auth = auth;
+    this.#report = report;
   }
 
-  push(events: Event[]) {
-    this.#queue.push(...events);
+  push(spans: Span[]) {
+    this.#queue.push(...spans);
     this.#queue.splice(0, this.#queue.length - MAX_QUEUE);
     if (!this.#running) void this.#drain();
   }
@@ -36,15 +41,58 @@ export class Sender {
   async #drain() {
     this.#running = true;
     while (this.#queue.length) {
-      const batch = this.#queue.splice(0, BATCH);
+      const spans = this.#queue.splice(0, BATCH);
+      const body = { resourceSpans: [{ resource: { attributes: [] }, scopeSpans: [{ scope: { name: 'quack' }, spans }] }] };
       try {
-        await fetch(this.#url, { method: 'POST', headers: { authorization: this.#auth, 'content-type': 'application/json' }, body: JSON.stringify({ batch }), signal: AbortSignal.timeout(SEND_TIMEOUT_MS) });
-      } catch {
-        // Tracing is best effort; an outage must not touch the generation.
+        const res = await fetch(this.#url, { method: 'POST', headers: { authorization: this.#auth, 'content-type': 'application/json', 'x-langfuse-ingestion-version': '4' }, body: JSON.stringify(body), signal: AbortSignal.timeout(SEND_TIMEOUT_MS) });
+        const text = await res.text();
+        if (!res.ok || /"errors":\s*\[\s*[^\]\s]/.test(text)) this.#fail(`HTTP ${res.status} ${text.slice(0, 200)}`);
+      } catch (err) {
+        this.#fail(String(err));
       }
     }
     this.#running = false;
   }
+
+  // Tracing is best effort and must not touch the generation; one stderr line per process is enough to notice it.
+  #fail(why: string) {
+    if (this.#reported) return;
+    this.#reported = true;
+    this.#report(`traces: Langfuse did not accept spans, further failures are not reported: ${why}\n`);
+  }
+}
+
+const attr = (key: string, value: unknown) => ({ key, value: { stringValue: typeof value === 'string' ? value : JSON.stringify(value) } });
+const nanos = (ms: number) => String(BigInt(ms) * 1_000_000n);
+
+/** A generation as an OTLP span with Langfuse's documented attributes; the trace id derives from the session key so a session is one trace. */
+export function generationSpan(config: TracesConfig, traceKey: string, input: unknown, start: number, message: AssistantMessage): Span {
+  const { usage } = message;
+  const failed = message.stopReason === 'error';
+  const metadata = { agent: config.agentName, version: config.agentVersion, provider: message.provider, stopReason: message.stopReason };
+  const attributes = [
+    attr('langfuse.observation.type', 'generation'),
+    attr('langfuse.observation.model.name', message.model),
+    attr('langfuse.observation.input', input),
+    attr('langfuse.observation.output', message.content),
+    attr('langfuse.observation.usage_details', { input: usage.input, output: usage.output, cache_read: usage.cacheRead, cache_write: usage.cacheWrite, total: usage.totalTokens }),
+    attr('langfuse.observation.cost_details', { input: usage.cost.input, output: usage.cost.output, total: usage.cost.total }),
+    attr('langfuse.observation.level', failed ? 'ERROR' : 'DEFAULT'),
+    attr('langfuse.session.id', traceKey),
+    ...Object.entries(metadata).filter(([, v]) => v !== undefined).map(([k, v]) => attr(`langfuse.observation.metadata.${k}`, v)),
+  ];
+  if (config.agentName) attributes.push(attr('langfuse.trace.name', config.agentName));
+  if (message.errorMessage) attributes.push(attr('langfuse.observation.status_message', message.errorMessage));
+  return {
+    traceId: createHash('sha256').update(traceKey).digest('hex').slice(0, 32),
+    spanId: randomBytes(8).toString('hex'),
+    name: 'generation',
+    kind: 1,
+    startTimeUnixNano: nanos(start),
+    endTimeUnixNano: nanos(Math.max(Date.now(), start)),
+    attributes,
+    status: failed ? { code: 2, message: message.errorMessage } : { code: 1 },
+  };
 }
 
 function agentOf(path?: string) {
@@ -63,8 +111,8 @@ export const tracesFromEnv = (env: Record<string, string | undefined> = process.
 /** One Langfuse generation per provider response, grouped by the session key as trace and session id. */
 export function tracesSessionExtensions(config: TracesConfig): Extension[] {
   if (!config.baseUrl || !config.publicKey || !config.secretKey) return [];
-  const sender = new Sender(`${config.baseUrl.replace(/\/+$/, '')}/api/public/ingestion`, `Basic ${Buffer.from(`${config.publicKey}:${config.secretKey}`).toString('base64')}`);
-  const traceId = config.sessionKey ?? crypto.randomUUID();
+  const sender = new Sender(`${config.baseUrl.replace(/\/+$/, '')}/api/public/otel/v1/traces`, `Basic ${Buffer.from(`${config.publicKey}:${config.secretKey}`).toString('base64')}`);
+  const traceKey = config.sessionKey ?? crypto.randomUUID();
   const pending = new Map<number, { input: unknown; start: number }>();
   return [defineExtension({
     name: 'traces',
@@ -76,31 +124,7 @@ export function tracesSessionExtensions(config: TracesConfig): Extension[] {
       afterResponse(message, api) {
         const { input, start } = pending.get(api.taskId) ?? { input: undefined, start: message.timestamp };
         pending.delete(api.taskId);
-        const now = new Date().toISOString();
-        const { usage } = message;
-        sender.push([
-          { id: crypto.randomUUID(), type: 'trace-create', timestamp: now, body: { id: traceId, sessionId: traceId, name: config.agentName } },
-          {
-            id: crypto.randomUUID(),
-            type: 'generation-create',
-            timestamp: now,
-            body: {
-              id: crypto.randomUUID(),
-              traceId,
-              name: 'generation',
-              model: message.model,
-              input,
-              output: message.content,
-              startTime: new Date(start).toISOString(),
-              endTime: now,
-              level: message.stopReason === 'error' ? 'ERROR' : 'DEFAULT',
-              statusMessage: message.errorMessage,
-              usageDetails: { input: usage.input, output: usage.output, cache_read: usage.cacheRead, cache_write: usage.cacheWrite, total: usage.totalTokens },
-              costDetails: { input: usage.cost.input, output: usage.cost.output, total: usage.cost.total },
-              metadata: { agent: config.agentName, version: config.agentVersion, provider: message.provider, stopReason: message.stopReason },
-            },
-          },
-        ]);
+        sender.push([generationSpan(config, traceKey, input, start, message)]);
       },
     })],
   })];
