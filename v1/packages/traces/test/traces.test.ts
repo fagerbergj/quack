@@ -5,7 +5,9 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
-import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
+import { createModels, fauxAssistantMessage, fauxProvider, Type } from '@earendil-works/pi-ai';
+import { observeGeneration, onGeneration } from '@quack/sdk';
+import { defineWorkflow, runWorkflow, workflowExtension } from '@quack/workflows';
 import { agentSpec } from '@quack/session';
 import { openSession } from '@quack/session';
 import { tracesFromEnv, tracesSessionExtensions } from '../src/index.ts';
@@ -143,4 +145,64 @@ test('the queue keeps the newest 200 spans and sends them in batches of 20', asy
   assert.deepEqual(sizes, [1, ...Array(10).fill(20)]);
   assert.deepEqual([ids[1], ids.at(-1)], [101, 300]);
   await new Promise((r) => server.close(r));
+});
+
+// Collects every span a fake Langfuse receives; `until(n)` resolves once n have arrived.
+async function collectingLangfuse() {
+  const spans: OtlpSpan[] = [];
+  const waiters: Array<[number, () => void]> = [];
+  const server = createServer(async (req, res) => {
+    let text = '';
+    for await (const chunk of req) text += chunk;
+    spans.push(...JSON.parse(text).resourceSpans[0].scopeSpans[0].spans);
+    res.writeHead(200).end('{}');
+    waiters.filter(([n]) => spans.length >= n).forEach(([, r]) => r());
+  });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  return {
+    spans,
+    url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+    until: (n: number) => (spans.length >= n ? Promise.resolve() : new Promise<void>((r) => waiters.push([n, r]))),
+    close: () => new Promise((r) => server.close(r)),
+  };
+}
+
+const sayOk = { name: 'says-ok', version: 1, threshold: 1, criteria: [{ id: 'tone', checks: [{ id: 'says_ok', weight: 'gate' as const, code: (a: string) => ({ met: a.includes('ok') ? 1 : 0, detail: 'the text must say ok' }) }] }] };
+const note = { kind: 'test.note', path: 'note.md' };
+const flow = defineWorkflow({
+  name: 'traced',
+  steps: [
+    { name: 'decide', kind: 'model', schema: Type.Object({ n: Type.Number() }), prompt: () => 'pick a number' },
+    { name: 'card', kind: 'judged', schema: Type.Object({ text: Type.String() }), prompt: () => 'write the text', card: (_c, d) => d as object, judge: () => ({ options: { kind: note, rubric: sayOk, evidence: async () => ({}), maxRevisions: 1 } }) },
+  ],
+});
+
+test('workflow model and judged steps each send their generations through the sdk hook', async () => {
+  const lf = await collectingLangfuse();
+  const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
+  faux.setResponses(['{"n": 1}', '{"text": "no"}', '{"text": "ok"}'].map((r) => fauxAssistantMessage(r)));
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const m = faux.getModel();
+  const extensions = [workflowExtension([flow]), ...tracesSessionExtensions({ baseUrl: lf.url, publicKey: 'pk', secretKey: 'sk', sessionKey: 'wf-1', agentName: 'sleeper' })];
+  const s = await openSession({ dir: await mkdtemp(join(dir, 's-')), models, agent: { model: { provider: m.provider, modelId: m.id }, extensions } });
+  assert.equal((await runWorkflow(s.harness, s.root, flow, null)).status, 'completed');
+  await s.close();
+  await lf.until(3);
+  const got = lf.spans.map(attrs);
+  assert.equal(got.length, 3);
+  assert.deepEqual(got.map((a) => a['langfuse.observation.type']), ['generation', 'generation', 'generation']);
+  assert.match(got[0]['langfuse.observation.input'], /pick a number/);
+  assert.match(got[2]['langfuse.observation.input'], /failed its checks/);
+  assert.match(got[2]['langfuse.observation.output'], /ok/);
+  assert.ok(got.every((a) => a['langfuse.session.id'] === 'wf-1' && a['langfuse.trace.name'] === 'sleeper'));
+  await lf.close();
+});
+
+test('observeGeneration without listeners returns the reply, and a throwing listener does not reach the caller', async () => {
+  const reply = fauxAssistantMessage('x');
+  assert.equal(await observeGeneration([], async () => reply), reply);
+  const off = onGeneration(() => { throw new Error('observer'); });
+  assert.equal(await observeGeneration([], async () => reply), reply);
+  off();
 });

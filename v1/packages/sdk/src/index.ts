@@ -2,4 +2,4 @@ export { Approvals, gated, pendingApprovals, resolveApproval, type Approval, typ
 export { agentModel, decide, modelResolver, parseDecision, prompt, sessionModel, type Decision, type DecisionPoint, type Resolver } from './decide.ts';
 export { Artifacts, artifactsExtension, attachLink, attachVerdict, seal, sealedVersion, type ArtifactKind, type ArtifactLink, type SealedArtifact } from './artifacts.ts';
 export { piPackage, piShutdown } from './pi-package.ts';
-export { onWaiting, statusNote, whileWaiting } from './signals.ts';
+export { observeGeneration, onGeneration, onWaiting, statusNote, whileWaiting, type Generation } from './signals.ts';

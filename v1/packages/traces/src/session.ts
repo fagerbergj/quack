@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import type { AssistantMessage } from '@earendil-works/pi-ai';
 import { defineExtension, GenerationTask, hook, type Extension } from '@earendil-works/pi-durable';
+import { onGeneration } from '@quack/sdk';
 
 export type TracesConfig = { baseUrl?: string; publicKey?: string; secretKey?: string; sessionKey?: string; agentName?: string; agentVersion?: string };
 
@@ -114,6 +115,8 @@ export function tracesSessionExtensions(config: TracesConfig): Extension[] {
   const sender = new Sender(`${config.baseUrl.replace(/\/+$/, '')}/api/public/otel/v1/traces`, `Basic ${Buffer.from(`${config.publicKey}:${config.secretKey}`).toString('base64')}`);
   const traceKey = config.sessionKey ?? crypto.randomUUID();
   const pending = new Map<number, { input: unknown; start: number }>();
+  // Workflow model steps call completeSimple directly, so they reach us through the sdk hook instead of GenerationTask.
+  onGeneration(({ messages, start, message }) => sender.push([generationSpan(config, traceKey, messages, start, message)]));
   return [defineExtension({
     name: 'traces',
     hooks: [hook(GenerationTask, {
