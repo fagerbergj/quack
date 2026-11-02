@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node src/main.ts"
+    "start": "node src/main.ts",
+    "validate": "node src/validate.ts"
   },
   "dependencies": {
     "@earendil-works/pi-tui": "1.4.0",
