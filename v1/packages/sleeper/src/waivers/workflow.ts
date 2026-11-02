@@ -1,5 +1,6 @@
 import type { JsonValue } from '@earendil-works/chord';
 import { Type } from '@earendil-works/pi-ai';
+import { defineDoc, type JsonObject } from '@earendil-works/pi-durable';
 import { type JudgeOptions } from '@quack/judge';
 import { defineWorkflow, type StepContext } from '@quack/workflows';
 import { cardsKind } from '../lineup/card.ts';
@@ -10,6 +11,10 @@ import { buildWaiverFacts, type Valued, type WaiverFacts } from './facts.ts';
 import { waiversEvidence, waiversRubric } from './rubric.ts';
 
 export const WAIVERS_WORKFLOW = 'sleeper.waivers';
+
+/** The facts the card was judged on, kept in the session so eval can rebuild the judge's evidence from a recording. */
+export const WAIVERS_FACTS_KIND = 'sleeper.waivers.facts';
+export const WaiversFactsDoc = defineDoc<{ facts: JsonObject | null }>({ kind: WAIVERS_FACTS_KIND, version: 1, scope: 'conversation', history: 'latest', fork: 'initial', initial: () => ({ facts: null }), checkpointWhen: () => false });
 
 /** The same wiring as the lineup job: the Sleeper API, today's snapshot and an optional news source. */
 export type WaiversDeps = LineupDeps;
@@ -55,7 +60,9 @@ export function waiversWorkflow(deps: WaiversDeps) {
         kind: 'code',
         run: async (c) => {
           const i = input(c);
-          return (await buildWaiverFacts({ client: deps.client, news: deps.news }, await deps.snapshot(i.league), i, deps.now ? deps.now() : c.api.now())) as unknown as JsonValue;
+          const facts = (await buildWaiverFacts({ client: deps.client, news: deps.news }, await deps.snapshot(i.league), i, deps.now ? deps.now() : c.api.now())) as unknown as JsonObject;
+          await c.api.commit(async (tx) => { (await tx.doc(WaiversFactsDoc, c.api.conversationId)).facts = facts; }, c.ctx);
+          return facts;
         },
       },
       {

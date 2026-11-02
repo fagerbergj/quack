@@ -5,11 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { JsonObject } from '@earendil-works/pi-durable';
+import type { EvalService } from '@quack/sdk';
 import type { DatasetItem } from './langfuse.ts';
 import { readSession, type SessionRecord } from './record.ts';
 
-/** Stands in for an extension's service half during a replay: it serves the pinned world and captures deliveries. */
-export type EvalService = { env: Record<string, string>; captured: unknown[]; close(): Promise<void> };
+export type { EvalService };
 export type EvalServices = Record<string, (pin: JsonObject) => Promise<EvalService>>;
 export type Candidate = { deployment: string; agent: string; env?: Record<string, string> };
 export type ReplayResult = { item: DatasetItem; seconds: number; record: SessionRecord; captured: unknown[]; error?: string };
