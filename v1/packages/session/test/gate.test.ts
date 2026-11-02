@@ -47,8 +47,8 @@ async function serve(session: Awaited<ReturnType<typeof openSession>>) {
   const server = createSessionServer(session).listen(0);
   await new Promise((r) => server.once('listening', r));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  const json = (path: string, body?: unknown) =>
-    fetch(base + path, body === undefined ? undefined : { method: 'POST', body: JSON.stringify(body) }).then(async (r) => ({ status: r.status, body: await r.json() }));
+  const json = (path: string, body?: unknown, headers?: Record<string, string>) =>
+    fetch(base + path, body === undefined ? undefined : { method: 'POST', body: JSON.stringify(body), headers }).then(async (r) => ({ status: r.status, body: await r.json() }));
   return { json, stop: () => new Promise((r) => server.close(r)) };
 }
 
@@ -98,7 +98,8 @@ test('a gated call waits across a restart, then runs once when approved', async 
   await second.close();
 });
 
-test('a rejection reaches the model and the tool never runs', async () => {
+for (const [label, headers, decider] of [['the identity header names', { 'x-authentik-username': 'jason' }, 'jason'], ['no header means the tailnet is', undefined, 'tailnet']] as const) {
+test(`a rejection reaches the model and the tool never runs; ${label} the decider, never a body by`, async () => {
   posted.length = 0;
   const dir = await mkdtemp(join(tmpdir(), 'quack-gate-'));
   dirs.push(dir);
@@ -113,15 +114,16 @@ test('a rejection reaches the model and the tool never runs', async () => {
   await session.submit('Approve this PR', 'run-2');
   const http = await serve(session);
   const [item] = await until(async () => { const l = (await http.json('/approvals')).body.approvals; return l.length ? l : undefined; });
-  await http.json(`/approvals/${item.id}`, { decision: 'reject', reason: 'finding 2 is wrong', by: 'jf' });
+  await http.json(`/approvals/${item.id}`, { decision: 'reject', reason: 'finding 2 is wrong', by: 'evil' }, headers);
 
   const done = await session.submit('Approve this PR', 'run-2', true);
   assert.equal(done.status, 'done');
   assert.deepEqual(posted, []);
-  assert.match(sawRejection, /Rejected by jf: finding 2 is wrong/);
+  assert.match(sawRejection, new RegExp(`Rejected by ${decider}: finding 2 is wrong`));
   await http.stop();
   await session.close();
 });
+}
 
 test('an approved action killed mid-execution is reported on restart, never re-run', async () => {
   posted.length = 0;

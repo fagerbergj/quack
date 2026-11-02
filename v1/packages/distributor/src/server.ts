@@ -88,9 +88,9 @@ async function proxyUpgrade(target: string, req: IncomingMessage, path: string, 
 
 // node:http, not fetch: undici gives up on headers after 300 s, and a wait:true invocation sends none until its run settles.
 // A client that hangs up aborts the upstream request.
-function forward(url: string, method: string, body: Uint8Array | undefined, res: ServerResponse): Promise<void> {
+function forward(url: string, method: string, body: Uint8Array | undefined, res: ServerResponse, user?: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const up = request(url, { method, headers: { 'content-type': 'application/json' } }, (r) => {
+    const up = request(url, { method, headers: { 'content-type': 'application/json', ...(user ? { 'x-authentik-username': user } : {}) } }, (r) => {
       res.writeHead(r.statusCode ?? 502, { 'content-type': r.headers['content-type'] ?? 'application/json' });
       r.pipe(res).on('finish', resolve);
       r.on('error', (err) => (res.destroyed || res.writableFinished ? resolve() : reject(err)));
@@ -291,7 +291,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
         const url = await driver.ensure(key, agent);
         arm(key, undefined);
         const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : new Uint8Array(await readBody(req));
-        await forward(url + path + search, req.method ?? 'GET', body, res);
+        await forward(url + path + search, req.method ?? 'GET', body, res, req.headers['x-authentik-username']?.toString());
       } finally {
         hold(key, -1);
         lastUse.set(key, now());
