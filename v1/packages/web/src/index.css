@@ -104,7 +104,7 @@ details[open] > summary > .chev { transform: rotate(90deg); }
 .md h1 { font-size: 17px; }
 .md h2 { font-size: 16px; }
 .md :not(pre) > code { font-family: var(--font-mono); font-size: 0.88em; background: var(--color-soft); border-radius: 4px; padding: 0.1em 0.3em; }
-.md pre { font-family: var(--font-mono); font-size: 12px; line-height: 1.55; background: var(--color-soft); border-radius: 8px; padding: 10px; overflow-x: auto; white-space: pre; color: var(--color-ink); }
+.md pre { font-family: var(--font-mono); font-size: 12px; line-height: 1.55; background: var(--color-soft); border-radius: 8px; padding: 10px; overflow-x: auto; white-space: pre; }
 .md table { border-collapse: collapse; font-size: 13px; }
 .md th, .md td { border-bottom: 1px solid var(--color-line); padding: 6px 12px 6px 0; text-align: left; vertical-align: top; }
 .md th { font-weight: 600; font-size: 12px; color: var(--color-muted); }
@@ -122,7 +122,7 @@ details[open] > summary > .chev { transform: rotate(90deg); }
 
 .paper { background: var(--color-paper) repeating-linear-gradient(180deg, transparent 0 13px, rgb(61 143 181 / 0.22) 13px 14px); box-shadow: inset 6px 0 0 #d9d2c3; }
 /* The user bubble is bg-ink, the inverse of the page, so code, links and quotes derive from its own text color. */
-.md-on-ink .md :not(pre) > code, .md-on-ink .md pre { background: color-mix(in oklab, var(--color-on-ink) 12%, transparent); color: var(--color-on-ink); }
+.md-on-ink .md :not(pre) > code, .md-on-ink .md pre { background: color-mix(in oklab, var(--color-on-ink) 8%, transparent); color: var(--color-on-ink); }
 .md-on-ink .md pre span { color: inherit; }
 .md-on-ink .md a { color: var(--color-on-ink); text-decoration: underline; }
 .md-on-ink .md blockquote { color: inherit; border-left-color: color-mix(in oklab, var(--color-on-ink) 45%, transparent); }
