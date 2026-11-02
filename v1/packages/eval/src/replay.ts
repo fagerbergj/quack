@@ -36,7 +36,20 @@ async function untilSettled(url: string, input: string, deadline: number, child:
     child.once('exit', exited);
     timer = setTimeout(() => fail('replay timed out'), Math.max(0, deadline - Date.now()));
   });
+  // freePort releases the port before the child binds, so a stranger may answer there; only the child's own pid counts.
+  const listening = async () => {
+    for (;;) {
+      try {
+        const res = await fetch(`${url}/ping`, { signal: AbortSignal.any([stop.signal, AbortSignal.timeout(1000)]) });
+        if (((await res.json()) as { pid?: number }).pid === child.pid) return;
+      } catch (err) {
+        if (stop.signal.aborted) throw err;
+      }
+      await new Promise((res) => setTimeout(res, 200));
+    }
+  };
   const settled = async () => {
+    await listening();
     for (;;) {
       try {
         await fetch(`${url}/invocations`, { method: 'POST', body: JSON.stringify({ input, requestId: 'eval-1', wait: true }), signal: stop.signal });

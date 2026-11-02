@@ -1,5 +1,6 @@
 // A session process whose gated tool records its side effect and then hangs, so a test can kill it mid-execution.
 import { appendFileSync } from 'node:fs';
+import type { AddressInfo } from 'node:net';
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, Type } from '@earendil-works/pi-ai';
 import { defineExtension, defineTool } from '@earendil-works/pi-durable';
 import { gated } from '@quack/sdk';
@@ -21,4 +22,5 @@ models.setProvider(faux.provider);
 const m = faux.getModel();
 const extensions = [defineExtension({ name: 'test-github', tools: [gated(post)] })];
 const session = await openSession({ dir: process.env.QUACK_SESSION_DIR!, models, agent: { model: { provider: m.provider, modelId: m.id }, extensions } });
-createSessionServer(session).listen(Number(process.env.PORT));
+// Port 0 and an IPC report: a port picked by the test and released before this bind can be taken by another process.
+const server = createSessionServer(session).listen(0, () => process.send!({ port: (server.address() as AddressInfo).port }));
