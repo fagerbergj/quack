@@ -81,3 +81,13 @@ test('GET /artifacts lists sealed versions with their verdicts', async () => {
   assert.deepEqual([artifacts[0].kind, artifacts[0].version, artifacts[0].content, artifacts[0].verdict], ['test.note', 1, 'hello', { passed: false, checks: [] }]);
   await h.stop();
 });
+
+test('GET /messages returns the newest person and assistant messages, oldest first, capped by limit', async () => {
+  const h = await serve(defineExtension({ name: 'none' }), fauxAssistantMessage('first answer'), fauxAssistantMessage('second answer'));
+  await h.session.submit('first question', 'm-1', true);
+  await h.session.submit('second question', 'm-2', true);
+  const read = async (query: string) => ((await (await fetch(`${h.base}/messages${query}`)).json()) as { messages: Array<{ role: string; text: string }> }).messages;
+  assert.deepEqual((await read('')).map((m) => [m.role, m.text]), [['user', 'first question'], ['assistant', 'first answer'], ['user', 'second question'], ['assistant', 'second answer']]);
+  assert.deepEqual((await read('?limit=2')).map((m) => m.text), ['second question', 'second answer']);
+  await h.stop();
+});

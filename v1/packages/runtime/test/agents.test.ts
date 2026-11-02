@@ -106,3 +106,18 @@ test('a session process inherits the deployment-level slots variables whatever i
   assert.equal(slotsFromEnv(env).length, 1);
   assert.equal(slotsFromEnv(sessionEnv(undefined, { PATH: '/bin' })).length, 0);
 });
+
+test('the shipped quack definition loads with the home tools, offering every extension\'s actions', async () => {
+  process.env.QUACK_INDEX_URL = 'http://127.0.0.1:8080';
+  const agent = await loadAgent(fileURLToPath(new URL('../../../agents/quack/agent.json', import.meta.url)), deployment, catalog);
+  assert.match(agent.instructions!, /^You are quack's front door/);
+  const tools = agent.extensions!.flatMap((e) => (e.tools ?? []));
+  assert.deepEqual(tools.map((t) => t.name).sort(), ['find_sessions', 'read_session', 'run_again', 'send_message', 'start', 'stop_session']);
+  for (const name of ['review_pull_request', 'research_question', 'run_job']) assert.match(tools.find((t) => t.name === 'start')!.description, new RegExp(`- ${name}:`));
+});
+
+test('a quack session process inherits the Sleeper service variables its run_job action reads, and no other secret', () => {
+  const host = { PATH: '/bin', QUACK_SLEEPER_URL: 'u', QUACK_SLEEPER_TOKEN: 's', QUACK_GH_SERVICE_TOKEN: 'gh', QUACK_INDEX_TOKEN: 'idx' };
+  const env = sessionEnv(fileURLToPath(new URL('../../../agents/quack/agent.json', import.meta.url)), host);
+  assert.deepEqual(Object.keys(env).sort(), ['PATH', 'QUACK_SLEEPER_TOKEN', 'QUACK_SLEEPER_URL']);
+});
