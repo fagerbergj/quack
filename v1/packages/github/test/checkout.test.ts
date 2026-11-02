@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { join } from 'node:path';
@@ -38,6 +39,28 @@ test('checks out the PR head with its base, records the PR, and is safe to call 
   assert.equal(doc!.pr!.headSha, head);
   await session.close();
 });
+
+for (const state of ['closed', 'merged']) {
+  test(`a ${state} PR ends at checkout_pr: no checkout, no record, nothing posted`, async () => {
+    const { base, head } = await remotes();
+    const service = await fakeService(head, { state });
+    let result = '';
+    const faux = fauxProvider({ models: [{ id: 'w' }] });
+    faux.setResponses([fauxAssistantMessage(fauxToolCall('checkout_pr', { repository: 'acme/widgets', number: 7 }), { stopReason: 'toolUse' }), (c) => { result = JSON.stringify(c.messages.at(-1)); return fauxAssistantMessage('Nothing to do.'); }]);
+    const models = createModels();
+    models.setProvider(faux.provider);
+    const m = faux.getModel();
+    const tool = checkoutTool({ serviceUrl: service.url, serviceToken: 'svc', gitBaseUrl: base });
+    const session = await openSession({ dir: await tmp(), models, agent: { model: { provider: m.provider, modelId: m.id }, extensions: [defineExtension({ name: 'gh', tools: [tool] })] } });
+
+    await session.submit('Review acme/widgets#7', 'co-1', true);
+    assert.match(result, /the pull request is closed; nothing to do/);
+    assert.equal(existsSync(join(session.workspace, 'repo')), false, 'no clone');
+    assert.equal((await session.harness.snapshot(PullRequestDoc, session.root.id, BACKGROUND_CONTEXT))?.pr ?? null, null);
+    assert.equal(service.posted.length, 0);
+    await session.close();
+  });
+}
 
 test('a pinned base keeps the base branch\'s later history, merges and tags out of the clone', async () => {
   const { base, head } = await remotes();

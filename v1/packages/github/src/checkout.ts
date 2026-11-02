@@ -65,9 +65,9 @@ export function checkoutTool(config: SessionConfig) {
       if (!owner || !repo) return { output: [{ type: 'text', text: 'repository must be owner/repo' }], isError: true };
       if (!api.env) return { output: [{ type: 'text', text: 'this session has no workspace' }], isError: true };
       const pr = await fetchRecord(config, owner, repo, args.number);
-      if (pr.state !== 'open') return { output: [{ type: 'text', text: 'the pull request is closed; nothing to do' }] };
       const prior = await api.snapshot(PullRequestDoc, api.conversationId, ctx);
-      if (alreadyPosted(prior, pr.headSha)) return { output: [{ type: 'text', text: `already reviewed ${pr.headSha}: nothing to do this turn` }] };
+      const skip = pr.state !== 'open' ? 'the pull request is closed; nothing to do' : alreadyPosted(prior, pr.headSha) ? `already reviewed ${pr.headSha}: nothing to do this turn` : '';
+      if (skip) return { output: [{ type: 'text', text: skip }] };
       const remote = `${config.gitBaseUrl ?? 'https://github.com'}/${owner}/${repo}.git`;
       const cloned = (await api.env.readTextFile(`${dir}/.git/HEAD`, ctx)).ok;
       if (!cloned && pr.baseSha) await git(api, ['init', '-q', dir], config, remote, ctx);

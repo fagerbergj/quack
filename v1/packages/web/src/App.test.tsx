@@ -1109,7 +1109,7 @@ test('the pinned artifact line reads Previous review, without a tick, while a ne
   ws.open();
   ws.frame(snapshot());
   ws.frame({ type: 'events', events: [{ type: 'run_start', inputs: [] }] });
-  const line = (await screen.findByText('Previous review')).closest('li')!;
+  const line = (await screen.findByText('Previous review')).parentElement!;
   expect(within(line).queryByRole('img', { name: 'Double-checked' })).toBeNull();
   ws.frame({ type: 'events', events: [{ type: 'run_end', inputs: [] }] });
   expect(await screen.findByText('Review posted')).toBeInTheDocument();
