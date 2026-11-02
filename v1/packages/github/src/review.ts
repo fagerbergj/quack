@@ -85,18 +85,43 @@ export function quotedCode(text: string): string[][] {
     .map((s) => s.split(/\.\.\.|…/).map(squash).filter((p) => p.length >= 6));
 }
 
-// A quote must exist somewhere: the cited file, the change (old or new side), or anywhere else in the repository.
-async function misquotes(api: ToolExecutionApi, repoDir: string, f: Finding, file: string, diff: string, ctx: Context): Promise<string[]> {
+const KEYWORDS = new Set(['true', 'false', 'null', 'undefined', 'void', 'this', 'new', 'typeof', 'instanceof', 'return', 'const', 'let', 'var', 'function', 'class', 'async', 'await', 'string', 'number', 'boolean']);
+const MAX_NAMES = 8;
+const DEP_GLOBS = ['--include=*.js', '--include=*.mjs', '--include=*.cjs', '--include=*.ts'];
+
+/** Names a span claims exist: members, callees and object keys. Bare locals and string contents are proposals. */
+export function claimedNames(span: string): string[] {
+  const code = span.replace(/(["'`])(?:\\.|(?!\1).)*\1/g, '""');
+  const names = new Set<string>();
+  for (const m of code.matchAll(/([A-Za-z_$][\w$]*)\s*([(:,}])?/g)) {
+    const before = code.slice(0, m.index);
+    const inBraces = before.split('{').length > before.split('}').length;
+    if (m[1].length >= 3 && !KEYWORDS.has(m[1]) && (before.endsWith('.') || m[2] === '(' || inBraces)) names.add(m[1]);
+  }
+  return [...names].slice(0, MAX_NAMES);
+}
+
+// A span is invented only when a name it claims exists nowhere: the cited file, the change, the repo or installed dependencies.
+export async function misquotes(api: ToolExecutionApi, repoDir: string, f: Finding, file: string, diff: string, ctx: Context): Promise<string[]> {
   const haystack = squash(file) + '\n' + squash(diff.split('\n').map((l) => l.replace(/^[+\- ]/, '')).join('\n'));
-  const missing: string[] = [];
+  const grep = async (argv: string[]) => { const r = await api.env!.exec(argv, {}, ctx); return r.ok && r.value.exitCode === 0; };
+  const known = new Map<string, boolean>();
+  const exists = async (id: string) => {
+    if (!known.has(id)) {
+      const word = new RegExp(`(?<![\\w$])${id.replace(/\$/g, '\\$')}(?![\\w$])`);
+      known.set(id, word.test(haystack) || await grep(['git', '-C', repoDir, 'grep', '-q', '-w', '-F', '-e', id, 'HEAD', '--'])
+        || await grep(['grep', '-rqsw', '-F', ...DEP_GLOBS, '-e', id, `${repoDir}/node_modules`, `${repoDir}/v1/node_modules`]));
+    }
+    return known.get(id)!;
+  };
+  const invented: string[] = [];
   for (const parts of quotedCode(f.text)) {
     for (const p of parts) {
       if (haystack.includes(p)) continue;
-      const r = await api.env!.exec(['git', '-C', repoDir, 'grep', '-q', '-F', '-e', p, 'HEAD', '--'], {}, ctx);
-      if (!(r.ok && r.value.exitCode === 0)) missing.push(p);
+      for (const id of claimedNames(p)) if (!invented.includes(id) && !(await exists(id))) invented.push(id);
     }
   }
-  return missing;
+  return invented;
 }
 
 // Evidence scopes: the review alone (small), the review with its change (large), and each finding with its cited code.
