@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { sentence } from './extension.ts';
 import { EXTENSIONS } from './extensions/index.ts';
 import { listArtifacts, type SealedArtifact } from './api.ts';
 
@@ -13,8 +14,8 @@ export function StatusIcon({ verdict }: { verdict: SealedArtifact['verdict'] }) 
 function lineOf(a: SealedArtifact): string {
   const named = EXTENSIONS.map((e) => e.artifact?.(a)).find(Boolean);
   const name = named?.name ?? 'Result';
-  if (a.verdict?.passed === false) return `${name} didn't pass its checks`;
-  return named?.posted ?? `${name} ready`;
+  if (a.verdict?.passed === false) return sentence(`${name} didn't pass its checks`.trim());
+  return named?.posted ?? sentence(`${name} ready`.trim());
 }
 
 // One muted line per artifact; the drawer's Checks tab holds the detail.

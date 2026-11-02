@@ -149,7 +149,7 @@ export function LineupCard({ card, artifact, sessionKey }: { card: Card; artifac
       <div className="flex flex-col gap-2 border-b border-line px-4 py-3">
         <div className="flex items-center gap-2">
           <p className="m-0 text-sm font-semibold">Start / sit</p>
-          <a href={`#/s/${encodeURIComponent(sessionKey)}`} className="ml-auto inline-flex min-h-11 items-center rounded-lg px-2 text-xs font-medium text-link no-underline hover:bg-soft lg:min-h-0 lg:py-1">Ask about this card</a>
+          <a href={`#/s/${encodeURIComponent(sessionKey)}`} className="ml-auto inline-flex min-h-11 items-center rounded-lg px-2 text-xs font-medium text-link no-underline hover:bg-soft lg:min-h-0 lg:py-1">Ask about this</a>
         </div>
         <Verdict artifact={artifact} />
       </div>
@@ -181,7 +181,7 @@ export function Sleeper({ rows }: { rows: Row[] | undefined }) {
   const { session, artifact, card, error } = useLineup(league, rows, refresh);
   const run = useCallback(() => {
     setStatus('Starting…');
-    runLineup().then(() => (setStatus('Started. The new card appears here when it is ready.'), setRefresh((n) => n + 1)), (e: Error) => setStatus(`Could not start: ${e.message}`));
+    runLineup().then(() => (setStatus('Started. The new lineup appears here when it is ready.'), setRefresh((n) => n + 1)), (e: Error) => setStatus(`Could not start: ${e.message}`));
   }, []);
   return (
     <div className="mx-auto w-full max-w-[1240px] px-4 pt-6 pb-10 sm:px-6">

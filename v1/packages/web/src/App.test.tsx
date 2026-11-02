@@ -125,7 +125,7 @@ test('each kind of session shows its own title and state, and search finds it by
   expect((await row(/#8 Add retries/)).getByText('Approved ✓')).toBeInTheDocument();
   expect((await row(/#9 Drop the flag/)).getByText("Didn't pass its checks")).toBeInTheDocument();
   expect((await row(/What changed/)).getByText('Report ✓')).toBeInTheDocument();
-  expect((await row(/Lineup · wk 8/)).getByText('Card ready')).toBeInTheDocument();
+  expect((await row(/Lineup · wk 8/)).getByText('Lineup picks ready')).toBeInTheDocument();
   expect((await row(/Campaign Notes/)).getByText(/^Didn't pass its checks/)).toBeInTheDocument();
   expect((await row(/#11 Tie on version/)).getByText('Approved ✓')).toBeInTheDocument();
   const alive = await row(/#10 Sleeper waivers job/);
@@ -802,7 +802,7 @@ test('Sleeper leads with the week strip and renders a passed lineup card', async
   const news = within(card).getByText('News (1)').closest('details')!;
   expect(within(news).getByRole('link', { name: /Practice report/ })).toHaveAttribute('href', 'https://nfl.com/x');
   expect(news).toHaveTextContent('nfl.com · 2026-10-30');
-  expect(within(card).getByRole('link', { name: 'Ask about this card' })).toHaveAttribute('href', `#/s/${encodeURIComponent(KEY)}`);
+  expect(within(card).getByRole('link', { name: 'Ask about this' })).toHaveAttribute('href', `#/s/${encodeURIComponent(KEY)}`);
 });
 
 const chk = (id: string, label: string, weight: number | 'gate', met: number | null, notes: string[] = []) => ({ criterion: 'c', id, label, weight, met, notes });
@@ -946,8 +946,9 @@ test('the transcript line names each artifact in plain words and never shows the
   await userEvent.click(within(section).getByRole('button', { name: /earlier versions/ }));
   const lines = within(section).getAllByRole('listitem').map((li) => li.textContent ?? '');
   const has = (x: string) => expect(lines.some((l) => l.includes(x)), x).toBe(true);
-  for (const x of ['Lineup card ready', 'Waivers card ready', 'Trade ideas ready', 'Trade check ready', 'Trends ready', 'Week 7 recap ready', 'Week 8 preview ready', 'Week 6 retro ready', 'League history ready', 'Card ready']) has(x);
-   has("Lineup card didn't pass its checks");
+  for (const x of ['Lineup picks ready', 'Waiver claims ready', 'Trade ideas ready', 'Trade check ready', 'Trends ready', 'Week 7 recap ready', 'Week 8 preview ready', 'Week 6 retro ready', 'League history ready']) has(x);
+  expect(lines.some((l) => l.replace('✓', '').startsWith('Ready'))).toBe(true);
+   has("Lineup picks didn't pass its checks");
   has('Review ready'); has('Review posted'); has('Transcript ready'); has("Result didn't pass its checks"); has('Result ready');
   expect(lines.join(' ')).not.toMatch(/Cards|Thing|Other/);
   expect(within(section).getByRole('link', { name: /GitHub/ })).toBeInTheDocument();

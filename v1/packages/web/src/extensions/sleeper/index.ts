@@ -4,7 +4,7 @@ import { Sleeper } from './Sleeper.tsx';
 
 const KEY = /^sleeper:[^:]+:(\d+):(lineup|waivers)$/;
 
-const NAMES: Record<string, string> = { lineup: 'Lineup card', waivers: 'Waivers card', 'trade-finder': 'Trade ideas', trade: 'Trade check', trends: 'Trends', history: 'League history' };
+const NAMES: Record<string, string> = { lineup: 'Lineup picks', waivers: 'Waiver claims', 'trade-finder': 'Trade ideas', trade: 'Trade check', trends: 'Trends', history: 'League history' };
 
 // Each card kind names its job; weekly kinds name their week.
 function cardName(a: SealedArtifact): string {
@@ -14,7 +14,7 @@ function cardName(a: SealedArtifact): string {
     if (c.kind === 'digest' && typeof c.week === 'number') return `Week ${c.week} ${c.past ? 'recap' : 'preview'}`;
     if (c.kind === 'retro' && typeof c.week === 'number') return `Week ${c.week} retro`;
   } catch { /* an unparsable card still reads as a card */ }
-  return 'Card';
+  return '';
 }
 
 export const sleeper: Extension = {
@@ -25,7 +25,7 @@ export const sleeper: Extension = {
       const [, week, job] = KEY.exec(r.key)!;
       return plain(`${sentence(job!)} · wk ${week}`);
     },
-    words: () => ({ kind: 'sleeper.cards', w: { run: 'Checking lineup', pass: 'Card ready', fail: "Didn't pass its checks", none: 'No card yet' } }),
+    words: () => ({ kind: 'sleeper.cards', w: { run: 'Checking lineup', pass: 'Lineup picks ready', fail: "Didn't pass its checks", none: 'Nothing yet' } }),
   },
   nav: { route: 'sleeper', label: 'Sleeper', icon: 'M8 4h8v5a4 4 0 0 1-8 0zM12 13v4M8 21h8M16 6h3v2a3 3 0 0 1-3 3M8 6H5v2a3 3 0 0 0 3 3', page: Sleeper },
 };
