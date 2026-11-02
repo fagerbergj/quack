@@ -5,6 +5,7 @@ import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import type { Readable, Writable } from 'node:stream';
 import { childPort, shellEnv } from '@quack/session';
 
 export type AgentStatus = 'draft' | 'promoted';
@@ -104,6 +105,19 @@ function firstInput(dir: string): string | undefined {
 }
 
 const OUTPUT_TAIL = 4096;
+
+// A broken sink (closed terminal, dead pipe) must never take the distributor down, so its errors are dropped.
+export function forwardOutput(src: Readable, dst: Writable, tap: (b: Buffer) => void) {
+  // A dead sink never drains, so the child's pipe is drained into the void rather than left to fill and block it.
+  dst.on('error', () => {}).on('close', () => src.resume());
+  src.on('data', (b: Buffer) => {
+    tap(b);
+    if (dst.writable && !dst.write(b)) {
+      src.pause();
+      dst.once('drain', () => src.resume());
+    }
+  });
+}
 
 type Report = { javascriptStack?: { stack?: string[] }; libuv?: Array<{ type: string; is_active: boolean }> };
 
@@ -218,12 +232,9 @@ export function processDriver(opts: { command: string[]; dataDir: string; agents
     const proc = spawn(cmd, args, { env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
     // Output still reaches this process's streams; the tail only rides along in a startup failure.
     let tail = '';
-    for (const [src, dst] of [[proc.stdout!, process.stdout], [proc.stderr!, process.stderr]] as const) {
-      src.on('data', (b: Buffer) => {
-        dst.write(b);
-        tail = (tail + b).slice(-OUTPUT_TAIL);
-      });
-    }
+    const keep = (b: Buffer) => void (tail = (tail + b).slice(-OUTPUT_TAIL));
+    forwardOutput(proc.stdout!, process.stdout, keep);
+    forwardOutput(proc.stderr!, process.stderr, keep);
     // The session binds its own port and reports it, so the parent never probes a port another process may own.
     const child: Child = { proc, url: '', stopping: false };
     // A crash after startup restarts from the log (NFR-HAR-2), up to a budget so a process-level crash cannot loop;
@@ -239,13 +250,16 @@ export function processDriver(opts: { command: string[]; dataDir: string; agents
     try {
       child.url = `http://127.0.0.1:${await childPort(proc, 'session process', opts.startTimeoutMs ?? 15_000)}`;
     } catch (err) {
-      const silent = err instanceof Error && err.message.endsWith('did not report a port');
+      const silent = (err as NodeJS.ErrnoException).code === 'E_NO_PORT';
       const detail = silent ? await stuckReport(proc, reportDir) : '';
       proc.kill('SIGKILL');
-      if (silent) throw new Error(`${(err as Error).message}; ${detail}; output: ${tail.trim() || '(none)'}`);
+      if (silent) {
+        console.error(`session start failed for ${key}: ${detail}; output: ${tail.trim() || '(none)'}`);
+        throw new Error(`${(err as Error).message}; ${detail}`);
+      }
       throw err;
     } finally {
-      void rm(reportDir, { recursive: true, force: true });
+      void rm(reportDir, { recursive: true, force: true }).catch(() => {});
     }
     children.set(key, child);
     return child.url;

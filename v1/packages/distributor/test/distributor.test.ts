@@ -9,7 +9,8 @@ import { fileURLToPath } from 'node:url';
 import { Agent, fetch as ufetch, getGlobalDispatcher, setGlobalDispatcher } from 'undici';
 import { nextFrame, runEnded } from '../../session/test/ws-helpers.ts';
 import { shellEnv } from '@quack/session';
-import { createDistributor, processDriver, sessionDirName } from '../src/index.ts';
+import { PassThrough, Writable } from 'node:stream';
+import { createDistributor, forwardOutput, processDriver, sessionDirName } from '../src/index.ts';
 
 const dirs: string[] = [];
 const servers: Array<() => Promise<void>> = [];
@@ -562,5 +563,25 @@ test('a session process that never reports a port fails with its output and wher
   dirs.push(dataDir);
   const hang = "console.log('loading models'); setInterval(() => {}, 1000);";
   const driver = processDriver({ command: [process.execPath, '-e', hang], dataDir, defaultAgent: '', startTimeoutMs: 500 });
-  await assert.rejects(driver.ensure('research:hung'), /did not report a port; stack: .*; active handles: .*; output: loading models/s);
+  await assert.rejects(driver.ensure('research:hung'), /did not report a port; stack: .*; active handles: /s);
+});
+
+test('a session process whose report cannot be written still fails, naming the missing report', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'quack-dist-'));
+  dirs.push(dataDir);
+  const swallow = "process.report.directory = '/nonexistent/reports'; setInterval(() => {}, 1000);";
+  const driver = processDriver({ command: [process.execPath, '-e', swallow], dataDir, defaultAgent: '', startTimeoutMs: 500 });
+  await assert.rejects(driver.ensure('research:swallowed'), /no diagnostic report within 5s/);
+});
+
+test('a broken output sink neither throws nor loses the tail', async () => {
+  const src = new PassThrough();
+  const dst = new Writable({ write: (_b, _e, cb) => cb(new Error('EPIPE')) });
+  const seen: string[] = [];
+  forwardOutput(src, dst, (b) => seen.push(String(b)));
+  src.write('one');
+  dst.destroy(new Error('EPIPE'));
+  src.end('two');
+  await new Promise((r) => src.once('end', r));
+  assert.deepEqual(seen, ['one', 'two']);
 });

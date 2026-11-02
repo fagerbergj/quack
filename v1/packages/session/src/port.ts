@@ -9,7 +9,7 @@ export function listenReporting<S extends Server>(server: S, port = 0): S {
 /** The port a child reports from listenReporting; rejects with `${name} exited with N` if it dies first, or when it stays silent past the timeout. */
 export function childPort(child: ChildProcess, name: string, timeoutMs: number): Promise<number> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => done(() => reject(new Error(`${name} did not report a port`))), timeoutMs);
+    const timer = setTimeout(() => done(() => reject(Object.assign(new Error(`${name} did not report a port`), { code: 'E_NO_PORT' }))), timeoutMs);
     const onMessage = (m: unknown) => typeof (m as { port?: unknown })?.port === 'number' && done(() => resolve((m as { port: number }).port));
     const onExit = () => done(() => reject(new Error(`${name} exited with ${child.exitCode ?? child.signalCode}`)));
     const done = (settle: () => void) => {
