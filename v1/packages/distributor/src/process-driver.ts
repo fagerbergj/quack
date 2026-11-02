@@ -149,13 +149,13 @@ export function processDriver(opts: { command: string[]; dataDir: string; agents
   const sessionDir = (key: string) => join(opts.dataDir, sessionDirName(key));
 
   // Each agent.json is read fresh, so a new session binds to the newest definition; bind() then snapshots it for that session (DEP-3).
-  async function registry(): Promise<Array<AgentInfo & { path: string }>> {
+  async function registry(): Promise<Array<AgentInfo & { path: string; retention?: unknown }>> {
     const dirs = opts.agentsDir ? await readdir(opts.agentsDir, { withFileTypes: true }).catch(() => []) : [];
     const found = await Promise.all(dirs.filter((d) => d.isDirectory()).map(async (d) => {
       const path = join(opts.agentsDir!, d.name, 'agent.json');
       const def = await readJson(path).catch(() => null);
       const status: AgentStatus = def?.status === 'promoted' ? 'promoted' : 'draft';
-      return typeof def?.name === 'string' && typeof def.version === 'number' ? { name: def.name, version: def.version, status, path } : undefined;
+      return typeof def?.name === 'string' && typeof def.version === 'number' ? { name: def.name, version: def.version, status, path, retention: def.retention?.idleDays } : undefined;
     }));
     return found.filter((a) => a !== undefined);
   }
@@ -254,13 +254,15 @@ export function processDriver(opts: { command: string[]; dataDir: string; agents
 
   async function sessions(): Promise<SessionInfo[]> {
     const dirs = await readdir(opts.dataDir).catch(() => []);
+    // Retention is storage policy, so a session pinned before it existed follows its agent's current bundle.
+    const current = new Map((await registry()).map((a) => [a.name, a.retention]));
     const all = await Promise.all(dirs.map(async (d) => {
       const key = await readText(join(opts.dataDir, d, 'session-key'));
       if (key === undefined) return undefined;
       const agent = (await readText(join(opts.dataDir, d, 'agent'))) ?? '';
       const pinned = await readJson(join(opts.dataDir, d, SNAPSHOT, 'agent.json')).catch(() => null);
       const { version } = pinned ?? {};
-      const idleDays = pinned?.retention?.idleDays;
+      const idleDays = pinned?.retention?.idleDays ?? current.get(agent);
       const title = cachedTitle(join(opts.dataDir, d));
       return { key, agent, ...(typeof version === 'number' && { version }), ...(typeof idleDays === 'number' && { retention: { idleDays } }), ...(title && { title }), running: children.has(key), at: await lastActivity(join(opts.dataDir, d)) };
     }));

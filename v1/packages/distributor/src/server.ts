@@ -123,6 +123,8 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
   const lastUse = new Map<string, number>();
   const stopping = new Map<string, Promise<void>>();
   const holds = new Map<string, number>();
+  // A delete in flight per key; requests for that key wait it out, then start a fresh session.
+  const removing = new Map<string, Promise<void>>();
   // Whether each running session was mid-run at its last sweep; a listing reads this and never pings.
   const active = new Map<string, boolean>();
   const notes = new Map<string, string>();
@@ -220,8 +222,20 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     return true;
   }
 
-  // Mechanism only: which sessions are worth deleting is the caller's policy. shortcut: a request landing between these checks and the rm can lose its session.
+  // Mechanism only: which sessions are worth deleting is the caller's policy.
   async function retire(key: string, res: ServerResponse) {
+    let done = () => {};
+    removing.set(key, new Promise<void>((r) => (done = r)));
+    try {
+      await retireChecked(key, res);
+    } finally {
+      removing.delete(key);
+      done();
+    }
+  }
+
+  // Marked in `removing` before the first await, so a request either holds the key already (refused here) or waits for the delete.
+  async function retireChecked(key: string, res: ServerResponse) {
     const why = driver.running().includes(key) || holds.get(key) || stopping.has(key) ? 'is running'
       : (await driver.wakes()).some((w) => w.key === key) ? 'is sleeping until its wake time'
         : (await opts.retire!.waiting(key)) ? 'is waiting on a person' : undefined;
@@ -258,6 +272,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
       hold(key, 1);
       try {
         await stopping.get(key);
+        await removing.get(key);
         const url = await driver.ensure(key, agent);
         arm(key, undefined);
         const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : new Uint8Array(await readBody(req));
@@ -277,6 +292,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
     socket.once('close', () => { hold(target.key, -1); lastUse.set(target.key, now()); });
     try {
       await stopping.get(target.key);
+      await removing.get(target.key);
       const url = await driver.ensure(target.key, target.agent);
       arm(target.key, undefined);
       await proxyUpgrade(url, req, '/ws', socket, head);
