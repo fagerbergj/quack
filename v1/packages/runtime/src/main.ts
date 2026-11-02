@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { buildModels, createSessionServer, declaredEnv, deploymentEnv, loadAgent, openSession, parseDeployment } from '@quack/session';
+import { buildModels, createSessionServer, listenReporting, declaredEnv, deploymentEnv, loadAgent, openSession, parseDeployment } from '@quack/session';
 import { startPublisher } from '@quack/index';
 import { piShutdown } from '@quack/sdk';
 import { catalog, deploymentExtensions } from './catalog.ts';
@@ -28,7 +28,7 @@ const publisher = process.env.QUACK_INDEX_URL && process.env.QUACK_INDEX_TOKEN
 // Everything above read what it needs; dropping it keeps child processes (language servers, tool shells) from inheriting service secrets.
 for (const name of [...declaredEnv(extensions, catalog), ...deploymentEnv(deploymentExtensions), 'QUACK_INDEX_URL', 'QUACK_INDEX_TOKEN']) delete process.env[name];
 const server = createSessionServer(session);
-server.listen(Number(env('PORT', '8080')));
+listenReporting(server, Number(env('PORT', '8080')));
 
 // A held wait:true invocation would block close until its run ends; a caller that needs the result re-sends the same requestId to rejoin the run.
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
