@@ -1,6 +1,6 @@
 import type { JsonValue } from '@earendil-works/chord';
 import { Type } from '@earendil-works/pi-ai';
-import { type JudgeOptions, type Verdict } from '@quack/judge';
+import { type JudgeOptions } from '@quack/judge';
 import { defineWorkflow, type StepContext } from '@quack/workflows';
 import type { Json } from '../client.ts';
 import { cardsKind } from '../lineup/card.ts';
