@@ -82,7 +82,7 @@ function startTool(actions: Action<any>[], ctx: ActionContext): ToolRegistration
         return failure(`bad params for ${action.name}: ${err instanceof Error ? err.message : String(err)}`);
       }
       // The gate records these args, so the approval row shows what will run.
-      return inner.execute({ action: action.name, summary: action.summary, params } as never, api, c);
+      return inner.execute({ action: action.name, summary: `${action.summary}: ${Object.entries(params as object).map(([k, v]) => `${k} ${String(v)}`).join(', ')}`, params } as never, api, c);
     },
   }) as ToolRegistration<TSchema>;
 }

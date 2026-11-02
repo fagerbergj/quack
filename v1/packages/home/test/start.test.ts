@@ -52,7 +52,7 @@ test('start asks first, showing the summary and filled params, and runs the acti
   await session.submit('ping x', 'r1');
   const item = await pending(session);
   assert.equal(item.tool, 'start');
-  assert.deepEqual(item.args, { action: 'ping_thing', summary: 'Pings a thing', params: { thing: 'x' } });
+  assert.deepEqual(item.args, { action: 'ping_thing', summary: 'Pings a thing: thing x', params: { thing: 'x' } });
   assert.deepEqual(started, [], 'nothing starts before the verdict');
 
   assert.equal(await resolveApproval(session.root, item.id, { decision: 'approve', by: 'jf' }, BACKGROUND_CONTEXT), true);
