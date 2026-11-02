@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { AgentDoc, defineExtension, GenerationTask, hook, type Extension } from '@earendil-works/pi-durable';
-import { onWaiting, statusNote } from '@quack/sdk';
+import { gateGenerations, onWaiting, statusNote } from '@quack/sdk';
 import { httpClient, SlotGate, type GateOptions } from './gate.ts';
 
 export type SlotsConfig = Partial<Pick<GateOptions, 'graceMs' | 'capMs' | 'leaseTtlMs' | 'pollMs'>> & { serviceUrl?: string; serviceToken?: string; holder?: string };
@@ -15,6 +15,8 @@ export function slotsSessionExtensions(config: SlotsConfig, gate?: SlotGate): Ex
   if (!gate && !(config.serviceUrl && config.serviceToken)) return [];
   const g = gate ?? new SlotGate({ ...config, holder, client: httpClient(config.serviceUrl!, config.serviceToken!), setNote: statusNote.set });
   onWaiting((n) => n > 0 && void g.idle());
+  // Direct completions (the judge, workflow model steps) bypass GenerationTask, so they take the same slot.
+  gateGenerations({ before: (provider, signal) => g.begin(provider, signal), after: () => g.end() });
   return [defineExtension({
     name: 'slots',
     hooks: [hook(GenerationTask, {

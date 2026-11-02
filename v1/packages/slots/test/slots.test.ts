@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import type { AddressInfo } from 'node:net';
 import { afterEach, test } from 'node:test';
-import { whileWaiting } from '@quack/sdk';
+import { observeGeneration, whileWaiting } from '@quack/sdk';
 import { agentSpec } from '@quack/session';
 import { realClock } from '../src/gate.ts';
 import { createSlotsService, slotsFromEnv, slotsSessionExtensions, SlotGate, SlotTable, type Clock, type SlotClient } from '../src/index.ts';
@@ -156,6 +156,25 @@ test('waiting on a person gives the slot back at once, and the next turn asks ag
   assert.equal(other.granted, true);
   finish();
   await wait;
+});
+
+test('a direct completion waits for a slot while all are held, and gives it back to the grace timer after', async () => {
+  fresh(1);
+  const holder = gate('o');
+  await holder.begin('swap');
+  const g = gate('s');
+  slotsSessionExtensions({}, g);
+  const ran: string[] = [];
+  const done = observeGeneration({ provider: 'swap', messages: [] }, async () => (ran.push('complete'), {} as never));
+  await clock.advance(1500);
+  assert.deepEqual(ran, [], 'every slot is held, so the completion has not started');
+  await holder.release();
+  await clock.advance(1000);
+  await done;
+  assert.deepEqual(ran, ['complete']);
+  assert.deepEqual(heldBy(), ['s'], 'held through the idle grace, as after a generation');
+  await clock.advance(GRACE + 1);
+  assert.deepEqual(heldBy(), []);
 });
 
 test('fail-open: with the service down generations run ungated and one warning is logged', async () => {
