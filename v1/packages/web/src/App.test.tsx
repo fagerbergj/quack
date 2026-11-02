@@ -667,6 +667,15 @@ test('a trailing slash on #/new/ shows the landing page on phone and desktop ali
   }
 });
 
+test('the landing page offers the suggestions its extensions supply and fills the composer with their prompt', async () => {
+  routes['GET /agents'] = { agents: [{ name: 'reviewer', version: 2 }] };
+  location.hash = '#/new';
+  render(<App />);
+  await userEvent.click(await screen.findByRole('button', { name: 'Research a question' }));
+  expect(screen.getByRole('textbox', { name: 'Question or task' })).toHaveValue('Research: ');
+  expect(screen.getByRole('button', { name: 'Review a pull request' })).toBeInTheDocument();
+});
+
 const pendingIndex = { approvals: [{ session: 'gh:3', id: 'a/1', tool: 'github_post_review', state: 'pending', decision: null, by: null, at: 1 }] };
 const goTo = (hash: string) => {
   location.hash = hash;
