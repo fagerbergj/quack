@@ -53,7 +53,7 @@ export function digestEvidence(f: DigestFacts) {
 // The audit's digest table (docs/v1/audits/sleeper.md), unreplayed: D45 asks for replay before any weight gates delivery.
 export const digestRubric: Rubric = {
   name: 'sleeper.digest',
-  version: 1,
+  version: 2,
   threshold: 0.8,
   criteria: [
     { id: 'faithful_to_tools', checks: [
@@ -64,9 +64,9 @@ export const digestRubric: Rubric = {
     { id: 'tells_the_week', checks: [
       { id: 'story_in_summary', weight: 3, scope: 'card', question: 'Does the summary name the week\'s real story (the margin that mattered, the high score, the blowout) rather than recite scores?' },
       { id: 'preview_news_decides', weight: 3, scope: 'preview', question: 'Does this game\'s note cite the attached `news` or an injury designation that swings it, naming the right player for each report?' },
-      { id: 'small_sample_labeled', weight: 2, scope: 'card', question: 'Are claims drawn from under three weeks of data labeled as such?' },
     ] },
     { id: 'pitfalls', checks: [
+      { id: 'small_sample_labeled', weight: -2, scope: 'card', question: 'Does a claim drawn from under three weeks of data go unlabeled as early?' },
       { id: 'luck_without_margin', weight: -3, scope: 'card', question: 'Does it call a result lucky without the point margin, or from fewer than about eight close games?' },
       { id: 'game_flow_from_score', weight: -3, scope: 'row', question: 'Does it describe a comeback, collapse or other game flow that only the final score implies?' },
     ] },
@@ -101,11 +101,14 @@ export function retroEvidence(f: RetroFacts) {
     const news = [...f.misses, ...f.waiverMisses].map((r) => r.news);
     const unit = (r: Graded, i: number) => ({ id: `row${i + 1}`, state: { row: r, news: news[i] } as never });
     const rows = graded(card).map(unit);
+    const cardUnit = { id: 'card', state: { summary: card.summary, lessons: card.lessons, won: card.won, left: card.left, swings: graded(card).map((r) => ('swing' in r ? r.swing : r.pts - r.over_pts)) } as never };
     return {
       facts: [{ id: 'facts', state: f as never }],
       row: rows,
       known: graded(card).flatMap((r, i) => (r.knowable ? [rows[i]] : [])),
-      card: [{ id: 'card', state: { summary: card.summary, lessons: card.lessons, won: card.won, left: card.left, swings: graded(card).map((r) => ('swing' in r ? r.swing : r.pts - r.over_pts)) } as never }],
+      card: [cardUnit],
+      // A card with no lessons has none to judge as actionable.
+      lessons: card.lessons.length ? [cardUnit] : [],
     };
   };
 }
@@ -113,7 +116,7 @@ export function retroEvidence(f: RetroFacts) {
 // The audit's retro table (docs/v1/audits/sleeper.md), unreplayed: D45 asks for replay before any weight gates delivery.
 export const retroRubric: Rubric = {
   name: 'sleeper.retro',
-  version: 1,
+  version: 2,
   threshold: 0.8,
   criteria: [
     { id: 'faithful_to_tools', checks: [
@@ -122,7 +125,7 @@ export const retroRubric: Rubric = {
     ] },
     { id: 'grades_the_week', checks: [
       { id: 'signal_is_evidence', weight: 3, scope: 'known', question: 'Is the signal a dated news item or usage trend from the attached `news`, not the same injury designation restated?' },
-      { id: 'lessons_actionable', weight: 2, scope: 'card', question: 'Are the lessons (at most three) things the manager can do next week?' },
+      { id: 'lessons_actionable', weight: 2, scope: 'lessons', question: 'Are the lessons (at most three) things the manager can do next week?' },
       { id: 'summary_names_swing', weight: 2, scope: 'card', question: 'Does the summary name the single biggest swing among the `swings`?' },
     ] },
     { id: 'pitfalls', checks: [

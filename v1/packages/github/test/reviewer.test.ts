@@ -82,7 +82,7 @@ test('a reviewer run checks out the PR, has its review judged, and posts exactly
   });
   assert.equal(done.status === 'done' && done.answer, 'Posted.');
   assert.match(seen[1], /is not sealed; call submit_review first/, 'nothing posts before it is checked');
-  assert.match(seen[3], /github\.review v1: 100% \(github\.reviewer@3\), passed/);
+  assert.match(seen[3], /github\.review v1: 100% \(github\.reviewer@4\), passed/);
   assert.match(seen[4], /Review v1 is cleared to post but has not been posted/, 'finishing before posting is refused');
   assert.match(seen[6], /review v1 was already posted; nothing was sent again/);
 

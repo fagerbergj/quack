@@ -115,9 +115,12 @@ export function reviewEvidence(repoDir = 'repo') {
       const wrong = pr ? await misquotes(api, repoDir, f, e.file, diff, ctx) : [];
       findings.push({ id: `finding-${f.index}`, blocking: f.label === 'blocking', cited: e.exists, misquotes: wrong, state: { finding: `${f.label}${f.anchor ? ` (${f.anchor})` : ''}: ${f.path ?? '?'}:${f.line ?? '?'} ${f.text}`, citedCode: e.excerpt || '(the cited lines do not exist)' } });
     }
+    const changeUnit = { id: 'change', state: { review: sealed.content, ...change } };
     return {
       review: [{ id: 'review', state: { review: sealed.content } }],
-      change: [{ id: 'change', state: { review: sealed.content, ...change } }],
+      change: [changeUnit],
+      // A question conditional on an approve has no unit on any other verdict, so it scores null instead of a vacuous miss.
+      approve: r.verdict === 'approve' ? [changeUnit] : [],
       finding: findings,
       blocking: findings.filter((f) => f.blocking),
       lower: findings.filter((f) => !f.blocking),

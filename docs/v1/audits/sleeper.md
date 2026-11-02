@@ -120,7 +120,7 @@ A check marked **code** is decided from the tool data the workflow already holds
 | ranked_on_usage | 3 | model, row | Does the rank rest on role and usage, with trending counts framed as scarcity? |
 | competition_read | 3 | model, card | Does urgency or size name a competing team's need, priority or FAAB left? |
 | close_call_news | 3 | model, row | Does a close top claim or drop cite news? |
-| bye_coverage | 2 | model, row | Does it flag a bye inside the lead time, and a shared bye as two slots? |
+| bye_coverage | -2 | model, row | Does it miss a bye inside the lead time, or count a shared bye as one slot? (#1956) |
 | crowd_metric_as_value | -3 | model, row | Is a trending or ownership number given as the reason the player is good? |
 | ordered_fallback_flagged | -4 | model, card | Does it describe claims sharing a drop as a mistake? |
 | faab_language_on_rolling | -4 | code, card | Does it use FAAB figures in a rolling or reverse-standings league? |
@@ -132,7 +132,7 @@ A check marked **code** is decided from the tool data the workflow already holds
 | verdict_one_of | gate | code | Is the verdict exactly send, counter or decline (finder: at most three ranked)? |
 | give_get_from_my_side | gate | code | Are `give` and `get` both from this team's side, with ids from the roster tools? |
 | partner_modeled | 4 | model, card | Does the case rest on the partner's starting slots, record and surplus, not chart value alone? |
-| deciding_line_item | 3 | model, card | Does it name the one line item that decides the call, with a condition that would flip it? |
+| deciding_line_item | 3 | model, suggested (#1956) | Does it name the one line item that decides the call, with a condition that would flip it? |
 | news_per_traded_player | 3 | model, row | Does each traded player have news cited? (Provenance is code.) |
 | consolidation_priced | 2 | model, card | For a multi-for-one, are the discount and the forced cut priced? |
 | chart_without_mismatch | -3 | model, card | Does it quote a 12-team chart without saying the league is smaller? |
@@ -147,7 +147,7 @@ A check marked **code** is decided from the tool data the workflow already holds
 | no_projection_source | gate | code | Does the card contain a projection, projected total or win probability? |
 | story_in_summary | 3 | model, card | Does the summary name the week's real story, not recite scores? |
 | preview_news_decides | 3 | model, row | Does a preview game cite injury or role news that swings it? |
-| small_sample_labeled | 2 | model, card | Are claims from under three weeks of data labeled as such? |
+| small_sample_labeled | -2 | model, card | Does a claim drawn from under three weeks of data go unlabeled as early? (#1956) |
 | luck_without_margin | -3 | model, card | Does it call a result lucky without the point margin, or from fewer than about eight close games? |
 | game_flow_from_score | -3 | model, row | Does it describe a comeback or collapse that only the final score implies? |
 
@@ -159,7 +159,7 @@ A check marked **code** is decided from the tool data the workflow already holds
 | knowable_dated_before_kickoff | gate | code | Does each `knowable: true` row cite a signal dated before kickoff or the waiver run? |
 | signal_is_evidence | 3 | model, row | Is a `knowable: true` signal a dated news item or trend, not the same designation restated? |
 | hindsight_called_process | -4 | model, row | Is a `knowable: false` outcome blamed on the manager? |
-| lessons_actionable | 2 | model, card | Are the lessons (at most three) things to do next week? |
+| lessons_actionable | 2 | model, lessons (#1956) | Are the lessons (at most three) things to do next week? |
 | summary_names_swing | 2 | model, card | Does the summary name the single biggest swing? |
 
 **History card**

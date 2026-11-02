@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { parseReview, reviewerRubric, validateReview } from '../src/index.ts';
+import { parseReview, reviewEvidence, reviewerRubric, validateReview } from '../src/index.ts';
 import { quotedCode } from '../src/review.ts';
 
 const review = `## Takeaway
@@ -66,7 +66,7 @@ test('blocking findings must name an anchor, and findings must cite lines that e
 
 test('the rubric scopes match the evidence the reviewer builds', () => {
   const scopes = new Set(reviewerRubric.criteria.flatMap((c) => c.checks.filter((k) => k.question).map((k) => k.scope ?? 'review')));
-  assert.deepEqual([...scopes].sort(), ['blocking', 'change', 'finding', 'lower', 'review']);
+  assert.deepEqual([...scopes].sort(), ['approve', 'blocking', 'change', 'finding', 'lower', 'review']);
   assert.ok(reviewerRubric.criteria.flatMap((c) => c.checks).some((k) => k.id === 'blocks_without_consequence' && k.weight === -4));
   const possible = reviewerRubric.criteria.flatMap((c) => c.checks).reduce((n, k) => n + (typeof k.weight === 'number' && k.weight > 0 ? k.weight : 0), 0);
   assert.equal(possible, 27);
@@ -91,4 +91,15 @@ test('statement-like inline quotes are collected for checking; identifiers, shor
   assert.match(failed.detail!, /finding-2 quotes code that is not in the repository: `Points: 0`, `x := y`/);
   assert.match(failed.detail!, /command output or logs go in a fenced block/);
   assert.deepEqual(quotedCode('it fails:\n```text\npanic: runtime error: x == nil {\n```'), [], 'quoted output in a fence is not checked');
+});
+
+test('no_silent_approval sees the same unit as the change scope on an approve, and no unit on any other verdict', async () => {
+  const evidence = async (verdict: string) => reviewEvidence()({ snapshot: async () => undefined, conversationId: 'c' } as never, { content: `## Takeaway\nx\n## Verdict\n${verdict}\n## Findings\n` } as never, {} as never);
+  const approve = await evidence('approve');
+  assert.equal(approve.approve[0], approve.change[0], 'byte-identical unit, so an approve is judged exactly as before');
+  assert.equal(approve.approve.length, 1);
+  for (const v of ['request_changes', 'comment']) assert.deepEqual((await evidence(v)).approve, []);
+  const gate = reviewerRubric.criteria.flatMap((c) => c.checks).find((k) => k.id === 'no_silent_approval')!;
+  assert.equal(gate.scope, 'approve');
+  assert.equal(gate.question, 'If the verdict is approve, is it free of any defect in the diff, or unkept promise from the description or linked issue, that the review never mentions?');
 });
