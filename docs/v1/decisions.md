@@ -119,7 +119,7 @@ Keep: gated, structured delivery; one core with extensions layered on it; review
 - **G3 Shell.** The reviewer keeps unrestricted shell. Speed comes from G2 evidence and the D9 SLO, not from limiting commands.
 - **G4 Scope.** PR review, implement from an issue, fix failing CI or review findings on a PR, and answer questions in PR and issue threads.
 - **G5 Triggers.** The label starts the first review; `/review` and `/fix` comment commands start later runs; assigning an issue to the App starts implement-from-issue; mentioning the App in a PR or issue comment starts a thread answer.
-- **G6 Redelivery sweep** (revised by #1897). GitHub never retries an App webhook it failed to connect for, so a deploy window loses events. Every 2 minutes the GitHub service redelivers failed deliveries from the last 30 minutes, at most 3 times each; older misses are recovered by hand with `/review`.
+- **G6 Redelivery sweep.** GitHub never retries an App webhook it failed to connect for, so a deploy window loses events. Every 2 minutes the GitHub service redelivers failed deliveries from the last 30 minutes, at most 3 times each; older misses are recovered by hand with `/review`.
 
 ## Sleeper extension
 
