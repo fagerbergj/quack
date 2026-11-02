@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { test } from 'node:test';
 import { createSchedulesService } from '@quack/schedules';
-import { NotFound, createSleeperClient, createSleeperService, leagueDate, registerSnapshotSchedule, registerUntilDone } from '../src/index.ts';
+import { NotFound, createSleeperClient, createSleeperService, leagueDate, removeLegacySnapshotSchedule, removeLegacyUntilDone } from '../src/index.ts';
 
 const fixtures = JSON.parse(readFileSync(new URL('./fixtures/league.json', import.meta.url), 'utf8')) as Record<string, unknown>;
 
@@ -81,23 +81,6 @@ test('a malformed league id escape is a 400', async () => {
   }
 });
 
-test('the real schedules service lists the registered snapshot schedule', async () => {
-  const schedules = createSchedulesService({ serviceToken: 's', distributorUrl: 'http://unused', dbPath: ':memory:' });
-  await new Promise<void>((r) => schedules.listen(0, r));
-  const url = `http://127.0.0.1:${(schedules.address() as AddressInfo).port}`;
-  try {
-    // Twice: a restart re-registers the same id.
-    await registerSnapshotSchedule({ url, token: 's' }, 'L1');
-    await registerSnapshotSchedule({ url, token: 's' }, 'L1');
-    const { schedules: listed } = await (await fetch(`${url}/schedules`, { headers: { authorization: 'Bearer s' } })).json();
-    assert.equal(listed.length, 1);
-    assert.partialDeepStrictEqual(listed[0], { id: 'sleeper/snapshot/L1', cron: '0 4 * * *', tz: 'America/New_York', sessionKey: 'sleeper:snapshot:{time}', input: 'snapshot L1', source: 'api' });
-    assert.ok(listed[0].nextRun);
-  } finally {
-    schedules.stop();
-  }
-});
-
 test('the service rejects callers without the token', async () => {
   const { service } = await setup({ at: new Date() });
   try {
@@ -140,28 +123,38 @@ test('a null body is not found and is never cached', async () => {
   assert.equal(api.calls.length, 2);
 });
 
-test('registration retries with backoff until the schedules service is up, then registers once', async (t) => {
+test('the legacy snapshot delete retries with backoff until the schedules service is up, then deletes once', async (t) => {
   t.mock.method(console, 'error', () => {});
   let attempts = 0;
-  const posted: string[] = [];
-  const doFetch = (async (_url: string, init: RequestInit) => {
+  const sent: Array<{ url: string; method?: string; auth: string }> = [];
+  const doFetch = (async (url: string, init: RequestInit) => {
     if (++attempts < 3) throw new Error('connection refused');
-    posted.push(JSON.parse(init.body as string).id);
-    return new Response('{}', { status: 201 });
+    sent.push({ url, method: init.method, auth: (init.headers as any).authorization });
+    return new Response('{}', { status: 200 });
   }) as unknown as typeof fetch;
   const delays: number[] = [];
-  await registerUntilDone({ url: 'http://schedules', token: 's', fetch: doFetch }, 'L1', async (ms) => void delays.push(ms));
+  await removeLegacyUntilDone({ url: 'http://schedules', token: 's', fetch: doFetch }, 'L1', async (ms) => void delays.push(ms));
   assert.deepEqual(delays, [1000, 2000]);
-  assert.deepEqual(posted, ['sleeper/snapshot/L1']);
+  assert.deepEqual(sent, [{ url: 'http://schedules/schedules/sleeper%2Fsnapshot%2FL1', method: 'DELETE', auth: 'Bearer s' }]);
 });
 
-test('the snapshot job registers in New York time', async () => {
-  let sent: any;
-  const doFetch = (async (url: string, init: RequestInit) => ((sent = { url, body: JSON.parse(init.body as string), auth: (init.headers as any).authorization }), new Response('{}', { status: 201 }))) as unknown as typeof fetch;
-  await registerSnapshotSchedule({ url: 'http://schedules', token: 's', fetch: doFetch }, 'L1');
-  assert.equal(sent.url, 'http://schedules/schedules');
-  assert.equal(sent.auth, 'Bearer s');
-  assert.equal(sent.body.tz, 'America/New_York');
-  assert.equal(sent.body.id, 'sleeper/snapshot/L1');
-  await assert.rejects(registerSnapshotSchedule({ url: 'http://schedules', token: 's', fetch: (async () => new Response('', { status: 500 })) as unknown as typeof fetch }, 'L1'));
+test('the legacy snapshot delete treats 404 as done and any other failure as an error', async () => {
+  const status = (code: number) => ({ url: 'http://schedules', token: 's', fetch: (async () => new Response('', { status: code })) as unknown as typeof fetch });
+  await removeLegacySnapshotSchedule(status(404), 'L1');
+  await assert.rejects(removeLegacySnapshotSchedule(status(500), 'L1'));
+});
+
+test('the real schedules service drops a stored legacy snapshot schedule on start', async () => {
+  const schedules = createSchedulesService({ serviceToken: 's', distributorUrl: 'http://unused', dbPath: ':memory:' });
+  await new Promise<void>((r) => schedules.listen(0, r));
+  const url = `http://127.0.0.1:${(schedules.address() as AddressInfo).port}`;
+  const headers = { authorization: 'Bearer s' };
+  try {
+    await fetch(`${url}/schedules`, { method: 'POST', headers, body: JSON.stringify({ id: 'sleeper/snapshot/L1', agent: 'a', cron: '0 4 * * *', sessionKey: 'k', input: 'x' }) });
+    await removeLegacyUntilDone({ url, token: 's' }, 'L1');
+    await removeLegacyUntilDone({ url, token: 's' }, 'L1');
+    assert.deepEqual((await (await fetch(`${url}/schedules`, { headers })).json()).schedules, []);
+  } finally {
+    schedules.stop();
+  }
 });

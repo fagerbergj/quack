@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { chmod, mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
+import { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
 import { afterEach, test } from 'node:test';
 import { createSchedulesService } from '../src/index.ts';
@@ -47,7 +48,7 @@ async function start(dbPath: string, agentsDir?: string, tickMs?: number) {
   return { svc, api, base };
 }
 
-const daily = { id: 'daily', cron: '0 9 * * *', sessionKey: 'daily-{time}', input: 'go' };
+const daily = { id: 'daily', agent: 'a', cron: '0 9 * * *', sessionKey: 'daily-{time}', input: 'go' };
 const dbFile = async () => join(await mkdtemp(join(tmpdir(), 'sched-')), 's.db');
 
 test('fires at the occurrence with a deterministic request id, once', async () => {
@@ -60,7 +61,7 @@ test('fires at the occurrence with a deterministic request id, once', async () =
   await svc.tick();
   await svc.tick();
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].url, `http://d/sessions/${encodeURIComponent('daily-2026-01-01T09:00:00.000Z')}/invocations`);
+  assert.equal(calls[0].url, `http://d/sessions/${encodeURIComponent('daily-2026-01-01T09:00:00.000Z')}/invocations?agent=a`);
   assert.deepEqual(calls[0].body, { input: 'go', requestId: 'schedule:daily:2026-01-01T09:00:00.000Z' });
   const [listed] = (await api('GET', '/schedules')).json.schedules;
   assert.equal(listed.lastRun, '2026-01-01T09:00:00.000Z');
@@ -105,8 +106,8 @@ test('a newest miss past its window is recorded missed, not fired', async () => 
 test('the default window is the next occurrence, and explicit times honor a deadline', async () => {
   const { svc, api } = await start(':memory:');
   clock = new Date('2026-01-01T00:00:00Z');
-  await api('POST', '/schedules', { id: 'once', times: ['2026-01-01T01:00:00Z'], sessionKey: 'once', input: 'x', deadline: '2026-01-01T01:30:00Z' });
-  await api('POST', '/schedules', { id: 'two', times: ['2026-01-01T01:00:00Z', '2026-01-01T02:00:00Z'], sessionKey: 'two', input: 'x' });
+  await api('POST', '/schedules', { id: 'once', agent: 'a', times: ['2026-01-01T01:00:00Z'], sessionKey: 'once', input: 'x', deadline: '2026-01-01T01:30:00Z' });
+  await api('POST', '/schedules', { id: 'two', agent: 'a', times: ['2026-01-01T01:00:00Z', '2026-01-01T02:00:00Z'], sessionKey: 'two', input: 'x' });
   clock = new Date('2026-01-01T02:00:00Z');
   await svc.tick();
   assert.deepEqual(calls.map((c) => c.body.requestId), ['schedule:two:2026-01-01T02:00:00.000Z']);
@@ -166,7 +167,7 @@ test('a cron in America/New_York keeps its wall-clock time across the DST change
 test('an exhausted one-shot whose moment passed long ago is recorded missed, not fired', async () => {
   const { svc, api } = await start(':memory:');
   clock = new Date('2026-01-01T00:00:00Z');
-  await api('POST', '/schedules', { id: 'once', times: ['2026-01-01T01:00:00Z'], sessionKey: 'once', input: 'x' });
+  await api('POST', '/schedules', { id: 'once', agent: 'a', times: ['2026-01-01T01:00:00Z'], sessionKey: 'once', input: 'x' });
   clock = new Date('2026-01-02T01:00:00Z');
   await svc.tick();
   assert.equal(calls.length, 0);
@@ -176,7 +177,7 @@ test('an exhausted one-shot whose moment passed long ago is recorded missed, not
 test('a one-shot registered for the moment it is written fires once, and re-registering it does not fire it again', async () => {
   const { svc, api } = await start(':memory:');
   clock = new Date('2026-01-01T10:00:00Z');
-  const once = { id: 'now', times: ['2026-01-01T10:00:00Z'], sessionKey: 'now', input: 'x' };
+  const once = { id: 'now', agent: 'a', times: ['2026-01-01T10:00:00Z'], sessionKey: 'now', input: 'x' };
   await api('POST', '/schedules', once);
   await svc.tick();
   assert.equal(calls.length, 1);
@@ -188,13 +189,13 @@ test('a one-shot registered for the moment it is written fires once, and re-regi
 test('a one-shot registered after its time but inside its window fires; a recorded missed one is not retried', async () => {
   const { svc, api } = await start(':memory:');
   clock = new Date('2026-01-01T10:30:00Z');
-  const late = { id: 'late', times: ['2026-01-01T10:00:00Z'], deadline: '2026-01-01T12:00:00Z', sessionKey: 'late', input: 'x' };
+  const late = { id: 'late', agent: 'a', times: ['2026-01-01T10:00:00Z'], deadline: '2026-01-01T12:00:00Z', sessionKey: 'late', input: 'x' };
   await api('POST', '/schedules', late);
   await svc.tick();
   assert.equal(calls.length, 1);
-  await api('POST', '/schedules', { id: 'gone', times: ['2026-01-01T09:00:00Z'], deadline: '2026-01-01T09:30:00Z', sessionKey: 'gone', input: 'x' });
+  await api('POST', '/schedules', { id: 'gone', agent: 'a', times: ['2026-01-01T09:00:00Z'], deadline: '2026-01-01T09:30:00Z', sessionKey: 'gone', input: 'x' });
   await svc.tick();
-  await api('POST', '/schedules', { id: 'gone', times: ['2026-01-01T09:00:00Z'], deadline: '2026-01-01T11:00:00Z', sessionKey: 'gone', input: 'x' });
+  await api('POST', '/schedules', { id: 'gone', agent: 'a', times: ['2026-01-01T09:00:00Z'], deadline: '2026-01-01T11:00:00Z', sessionKey: 'gone', input: 'x' });
   await svc.tick();
   assert.equal(calls.length, 1, 'past its window it was recorded missed, and a wider window later does not revive it');
 });
@@ -276,4 +277,31 @@ test('the retention sweep deletes only sessions idle past their agent retention,
   assert.deepEqual(deletes, ['old']);
   await svc.tick();
   assert.deepEqual(deletes, ['old'], 'the automatic sweep runs once a day');
+});
+
+test('a registration without an agent is a 400 naming the field', async () => {
+  const { api } = await start(':memory:');
+  const { agent, ...noAgent } = daily;
+  const res = await api('POST', '/schedules', noAgent);
+  assert.equal(res.status, 400);
+  assert.match(res.json.error, /agent/);
+  assert.deepEqual((await api('GET', '/schedules')).json.schedules, []);
+});
+
+test('a stored schedule without an agent loads, never fires, and can still be deleted', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  const db = await dbFile();
+  const old = new DatabaseSync(db);
+  old.exec(`CREATE TABLE schedules (id TEXT PRIMARY KEY, source TEXT NOT NULL, def TEXT NOT NULL, created TEXT NOT NULL)`);
+  const { agent, ...legacy } = { ...daily, id: 'sleeper/snapshot/L1' };
+  old.prepare(`INSERT INTO schedules VALUES (?, 'api', ?, ?)`).run(legacy.id, JSON.stringify(legacy), '2026-01-01T00:00:00.000Z');
+  old.close();
+  clock = new Date('2026-01-01T09:00:00Z');
+  const { svc, api } = await start(db);
+  await svc.tick();
+  await svc.tick();
+  assert.equal(calls.length, 0);
+  assert.equal((await api('GET', '/schedules')).json.schedules.length, 1);
+  assert.equal((await api('DELETE', `/schedules/${encodeURIComponent(legacy.id)}`)).status, 200);
+  assert.deepEqual((await api('GET', '/schedules')).json.schedules, []);
 });

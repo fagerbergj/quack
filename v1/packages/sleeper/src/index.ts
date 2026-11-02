@@ -2,7 +2,7 @@ export { createSleeperClient, NotFound, type SleeperClient } from './client.ts';
 export { createSleeperService, type ServiceConfig } from './service.ts';
 export { buildSnapshot, leagueDate, takeSnapshot } from './snapshot.ts';
 export { openStore, type Store, type SnapshotRow } from './store.ts';
-export { registerSnapshotSchedule, registerUntilDone } from './schedules.ts';
+export { removeLegacySnapshotSchedule, removeLegacyUntilDone } from './schedules.ts';
 export * from './lineup/index.ts';
 export * from './waivers/index.ts';
 export * from './trades/index.ts';
