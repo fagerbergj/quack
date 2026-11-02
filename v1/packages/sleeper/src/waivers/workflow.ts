@@ -7,7 +7,7 @@ import { cardsKind } from '../lineup/card.ts';
 import type { LineupDeps } from '../lineup/workflow.ts';
 import type { LineupInput } from '../lineup/facts.ts';
 import { buildWaiversCard, type WaiverDecision } from './card.ts';
-import { buildWaiverFacts, type WaiverFacts, type WPlayer } from './facts.ts';
+import { buildWaiverFacts, type Valued, type WaiverFacts } from './facts.ts';
 import { waiversEvidence, waiversRubric } from './rubric.ts';
 
 export const WAIVERS_WORKFLOW = 'sleeper.waivers';
@@ -21,7 +21,7 @@ const decisionSchema = Type.Object({
   summary: Type.String({ maxLength: 400 }),
 });
 
-const line = (p: WPlayer) => `${p.id} ${p.name} (${p.pos}, ${p.team ?? '-'}) proj ${p.proj}${p.inj ? `, ${p.inj}` : ''}${p.bye ? `, bye wk ${p.bye}` : ''}`;
+const line = (p: Valued) => `${p.id} ${p.name} (${p.pos}, ${p.team ?? '-'}) proj ${p.proj}, season ${p.ppg}/g${p.inj ? `, ${p.inj}` : ''}${p.bye ? `, bye wk ${p.bye}` : ''}`;
 const links = (f: WaiverFacts, id: string) => (f.news[id] ?? []).map((n) => ` [${n.title}](${n.url}), ${n.date.slice(0, 16)}`).join('');
 
 function factsPrompt(f: WaiverFacts): string {
