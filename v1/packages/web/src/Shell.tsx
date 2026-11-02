@@ -91,8 +91,7 @@ function ThemeToggle({ className }: { className: string }) {
 const linkBase = 'navlink flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-ink-2 no-underline hover:bg-soft hover:text-ink';
 const tabBase = 'tablink flex min-h-11 flex-col items-center justify-center gap-0.5 py-2 text-[11px] font-medium text-muted no-underline';
 
-// Below lg the document never scrolls: header, main (the scroller) and the 52px nav fill the screen, so the URL bar never collapses mid-scroll.
-// `bare` drops the phone title bar for a screen that draws its own.
+// Below lg main is the only scroller, so the document never scrolls and the URL bar cannot collapse mid-scroll; `bare` drops the phone title bar.
 // `sidebar` is the session list; it fills the desktop sidebar under a fixed nav and scrolls on its own.
 export function Shell({ route, bare, sidebar, children }: { route: Route; bare?: boolean; sidebar?: ReactNode; children: ReactNode }) {
   const [more, setMore] = useState(false);
