@@ -68,6 +68,7 @@ test('a scheduled start runs the workflow; a question after it gets a chat answe
   assert.equal(seen.at(-1)!.system.includes('lineup analyst'), false, 'the job prompt does not reach the chat');
   assert.ok(['job_result', 'job_facts', 'player', 'rerun_job'].every((t) => seen.at(-1)!.tools.includes(t)));
   assert.equal(CHAT_PROMPT.split(/\s+/).length < 140, true);
+  assert.match(CHAT_PROMPT, /no preamble.*never versions, check names, ids or scores/);
   await s.close();
 });
 
