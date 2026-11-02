@@ -2,7 +2,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { NoInstallation, type GithubApp } from './app.ts';
 import { noticeFor, settled } from './notice.ts';
-import { triggerFor, verifySignature, type Trigger } from './webhook.ts';
+import { stripMentions, triggerFor, verifySignature, type Trigger } from './webhook.ts';
 
 export type ServiceConfig = {
   webhookSecret: string;
@@ -10,6 +10,8 @@ export type ServiceConfig = {
   serviceToken: string;
   distributorUrl: string;
   label: string;
+  /** The text in a PR comment that addresses quack, such as @quack. */
+  mention?: string;
   /** The agent that backs unattended triggers; it must be promoted (DEP-6). */
   agent: string;
 };
@@ -87,11 +89,15 @@ async function announceIfUnreviewed(app: GithubApp, state: RunState, t: Trigger,
 async function webhook(req: IncomingMessage, res: ServerResponse, app: GithubApp, config: ServiceConfig, state: RunState) {
   const body = await raw(req);
   if (!verifySignature(config.webhookSecret, body, req.headers['x-hub-signature-256'] as string | undefined)) return send(res, 401, { error: 'bad signature' });
-  const trigger = triggerFor(req.headers['x-github-event'] as string | undefined, JSON.parse(body.toString('utf8')), config.label);
+  const trigger = triggerFor(req.headers['x-github-event'] as string | undefined, JSON.parse(body.toString('utf8')), config.label, config.mention);
   if (!trigger) return send(res, 200, { ignored: true });
   // The delivery id is the request id, so a redelivery of the same event never starts a second run (HAR-5).
   const requestId = `github-delivery:${req.headers['x-github-delivery'] ?? ''}`;
   const target = `${config.distributorUrl}/sessions/${encodeURIComponent(trigger.sessionKey)}/invocations?agent=${encodeURIComponent(config.agent)}`;
+  if (trigger.followUp) {
+    const queued = await fetch(target, { method: 'POST', body: JSON.stringify({ input: trigger.input, requestId, whenBusy: 'followUp' }) });
+    return send(res, queued.ok ? 202 : 502, { session: trigger.sessionKey, status: queued.status });
+  }
   const meta = await invocationMeta(app, trigger.repo.owner, trigger.repo.name, trigger.number);
   const payload = { input: trigger.input, requestId, title: trigger.title, ...(meta && { meta }) };
   const before = state.posted.get(prKey(trigger.repo.owner, trigger.repo.name, trigger.number)) ?? 0;
@@ -118,10 +124,37 @@ async function postReview(req: IncomingMessage, res: ServerResponse, app: Github
   const r = JSON.parse((await raw(req)).toString('utf8')) as Record<string, any>;
   const ok = typeof r.owner === 'string' && typeof r.repo === 'string' && Number.isInteger(r.number) && EVENTS.has(r.event) && typeof r.body === 'string' && r.body.length > 0;
   if (!ok) return send(res, 400, { error: 'need owner, repo, integer number, event (APPROVE|REQUEST_CHANGES|COMMENT) and a non-empty body' });
+  const comments = Array.isArray(r.comments) ? r.comments.filter((c: any) => typeof c?.path === 'string' && Number.isInteger(c.line) && typeof c.body === 'string') : [];
   const path = `/repos/${r.owner}/${r.repo}/pulls/${r.number}/reviews`;
-  const { json } = await app.asInstallation(r.owner, r.repo, 'POST', path, { event: r.event, body: r.body, ...(r.commitId ? { commit_id: r.commitId } : {}) });
+  const post = (body: string, inline: any[]) => app.asInstallation(r.owner, r.repo, 'POST', path, {
+    event: r.event, body: stripMentions(body), ...(r.commitId ? { commit_id: r.commitId } : {}),
+    ...(inline.length ? { comments: inline.map((c) => ({ path: c.path, line: c.line, side: 'RIGHT', body: stripMentions(c.body) })) } : {}),
+  });
+  // GitHub rejects the whole review when one inline line is off the diff; the findings then ride in the body instead of being lost.
+  const { json } = await post(r.body, comments).catch((err) => {
+    if (!comments.length) throw err;
+    return post(`${r.body}\n\n${comments.map((c: any) => `**${c.path}:${c.line}**\n${c.body}`).join('\n\n')}`, []);
+  });
   const key = prKey(r.owner, r.repo, r.number);
   state.posted.set(key, (state.posted.get(key) ?? 0) + 1);
+  send(res, 201, { id: json?.id, url: json?.html_url });
+}
+
+const QUOTE_CHARS = 300;
+
+// Answers a mention in its thread: a reply under a review comment, or a new comment quoting an issue comment. The session never holds the token (D56).
+async function postReply(req: IncomingMessage, res: ServerResponse, app: GithubApp) {
+  const r = JSON.parse((await raw(req)).toString('utf8')) as Record<string, any>;
+  const ok = typeof r.owner === 'string' && typeof r.repo === 'string' && Number.isInteger(r.number) && Number.isInteger(r.commentId) && (r.kind === 'review' || r.kind === 'issue') && typeof r.body === 'string' && r.body.length > 0;
+  if (!ok) return send(res, 400, { error: 'need owner, repo, integer number and commentId, kind (review|issue) and a non-empty body' });
+  const base = `/repos/${r.owner}/${r.repo}`;
+  if (r.kind === 'review') {
+    const { json } = await app.asInstallation(r.owner, r.repo, 'POST', `${base}/pulls/${r.number}/comments/${r.commentId}/replies`, { body: stripMentions(r.body) });
+    return send(res, 201, { id: json?.id, url: json?.html_url });
+  }
+  const original = (await app.asInstallation(r.owner, r.repo, 'GET', `${base}/issues/comments/${r.commentId}`)).json;
+  const quote = String(original?.body ?? '').slice(0, QUOTE_CHARS).split('\n').map((l) => `> ${l}`).join('\n');
+  const { json } = await app.asInstallation(r.owner, r.repo, 'POST', `${base}/issues/${r.number}/comments`, { body: stripMentions(`${quote}\n\n${r.body}`) });
   send(res, 201, { id: json?.id, url: json?.html_url });
 }
 
@@ -188,6 +221,7 @@ export function createGithubService(app: GithubApp, config: ServiceConfig) {
       if (!authorized(req, config.serviceToken)) return send(res, 401, { error: 'unauthorized' });
       if (req.method === 'GET' && path === '/git-credential') return await gitCredential(req, res, app);
       if (req.method === 'POST' && path === '/reviews') return await postReview(req, res, app, state);
+      if (req.method === 'POST' && path === '/replies') return await postReply(req, res, app);
       const pull = /^\/pulls\/([^/]+)\/([^/]+)\/(\d+)$/.exec(path);
       if (req.method === 'GET' && pull) return await pullRequest(res, app, pull[1], pull[2], Number(pull[3]));
       send(res, 404, { error: 'not found' });

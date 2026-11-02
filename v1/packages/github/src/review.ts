@@ -11,7 +11,7 @@ export const VERDICTS = ['approve', 'comment', 'request_changes'] as const;
 export type Finding = { index: number; label: string; anchor?: string; path?: string; line?: number; text: string };
 export type ParsedReview = { sections: Record<string, string>; verdict?: string; findings: Finding[]; unparsed: string[] };
 
-const FINDING = /^- (\w+)(?:\s*\((\w+)\))?:\s*(.*)$/;
+export const FINDING = /^- (\w+)(?:\s*\((\w+)\))?:\s*(.*)$/;
 // A path with a directory or an extension, or a capitalized root file (Dockerfile, Makefile), so `node:18` is not one.
 const CITATION = /^`?((?:\.{1,2}\/)?[\w.@+-]*\/[\w.@/+-]+|[\w@+-][\w@+-]*\.[\w.@+-]+|[A-Z][\w-]*):(\d+)(?:-\d+)?`?\s*[—–-]?\s*(.*)$/s;
 
@@ -65,7 +65,7 @@ export function resolveCitedPath(files: string[], repoName: string, cited: strin
 
 type Tracked = { files?: string[] };
 
-async function trackedFiles(api: ToolExecutionApi, repoDir: string, ctx: Context): Promise<string[]> {
+export async function trackedFiles(api: ToolExecutionApi, repoDir: string, ctx: Context): Promise<string[]> {
   let out = '';
   const r = await api.env!.exec(['git', '-C', repoDir, 'ls-files'], { onOutput: (t) => { out += t; } }, ctx);
   return r.ok ? out.split('\n').filter(Boolean) : [];
@@ -91,7 +91,7 @@ async function excerpt(api: ToolExecutionApi, repoDir: string, f: Finding, ctx: 
   return { exists: true, excerpt: text, file: read.value, path };
 }
 
-async function diffOf(api: ToolExecutionApi, repoDir: string, baseRef: string, ctx: Context): Promise<string> {
+export async function diffOf(api: ToolExecutionApi, repoDir: string, baseRef: string, ctx: Context): Promise<string> {
   let out = '';
   const r = await api.env!.exec(['git', '-C', repoDir, 'diff', `origin/${baseRef}...HEAD`], { onOutput: (t) => { out += t; } }, ctx);
   return r.ok ? out : '';

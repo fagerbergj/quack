@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parseReview, resolveCitedPath, reviewEvidence, reviewerRubric, validateReview } from '../src/index.ts';
+import { commentableLines, splitReview } from '../src/inline.ts';
 import { claimedNames, misquotes, quotedCode } from '../src/review.ts';
 
 const review = `## Takeaway
@@ -140,4 +141,50 @@ test('a cited path resolves against tracked files: checkout prefix stripped, the
   assert.equal(resolveCitedPath(files, 'repo', 'index.ts'), undefined, 'two tails is ambiguous');
   assert.equal(resolveCitedPath(files, 'repo', 'ots.test.ts'), undefined, 'a tail must start at a / boundary');
   assert.equal(resolveCitedPath(files, 'repo', 'packages/nope.ts'), undefined);
+});
+
+const DIFF = `diff --git a/src/a.ts b/src/a.ts
+--- a/src/a.ts
++++ b/src/a.ts
+@@ -1,3 +1,4 @@
+ one
+-two
++two!
++three
+ four
+`;
+
+test('commentable lines are the added and context lines of the new file', () => {
+  assert.deepEqual([...commentableLines(DIFF).get('src/a.ts')!], [1, 2, 3, 4]);
+});
+
+test('findings in the diff go inline; the rest and the sections stay in the body', () => {
+  const text = `## Takeaway
+Two things.
+## Verdict
+comment
+## Findings
+- suggestion (design): a.ts:2 — Rename it. The new name says what it holds.
+  \`\`\`ts
+  const kept = 1;
+  \`\`\`
+- blocking (defect): src/a.ts:90 — Off the diff.
+## Verified
+- read it
+`;
+  const { body, comments } = splitReview(text, DIFF, ['src/a.ts'], 'repo');
+  assert.deepEqual(comments, [{ path: 'src/a.ts', line: 2, body: '**suggestion (design)**: Rename it.\n\nThe new name says what it holds.\n  ```ts\n  const kept = 1;\n  ```' }]);
+  assert.equal(body, `## Takeaway
+Two things.
+## Verdict
+comment
+## Findings
+- blocking (defect): src/a.ts:90 — Off the diff.
+
+Posted inline on the diff:
+- suggestion: Rename it.
+## Verified
+- read it
+`);
+  assert.equal(splitReview(text, '', ['src/a.ts'], 'repo').comments.length, 0);
 });
