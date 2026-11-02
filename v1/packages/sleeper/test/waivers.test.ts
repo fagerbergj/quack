@@ -152,6 +152,22 @@ test('drop_not_worth_more fails a drop worth more than its add, naming both, by 
   assert.equal((await gate('drop_not_worth_more', f, buildWaiversCard(f, rollingDecision))).met, 1);
 });
 
+test('empty season stats still build the facts, omit the season rate and compare on proj alone', async () => {
+  const empty = { ...base, '/v1/stats/nfl/regular/2026': {} };
+  const f = await factsOf(empty);
+  assert.ok(Object.values(f.roster).every((p) => p.ppg === undefined));
+  assert.ok(!/season/.test(JSON.stringify(f)));
+  const { card: c } = await card(empty);
+  assert.equal((await gate('drop_not_worth_more', f, c)).met, 1);
+  const bad = buildWaiversCard(f, { ...rollingDecision, claims: [{ add: '304', drop: '101', why: 'Tim claims the TE bye.' }] });
+  assert.match((await gate('drop_not_worth_more', f, bad)).detail!, /Ray Rush \(15.4\) is worth more than Tim Tight \(7\)/);
+  const none = { ...f, roster: { ...f.roster, '101': { ...f.roster['101'], proj: 0 } } };
+  assert.equal((await gate('drop_not_worth_more', none, bad)).met, 1);
+  const { '/v1/stats/nfl/regular/2026': _s, ...noStats } = base;
+  const gone = factsOf(noStats);
+  assert.ok(Object.values((await gone).roster).every((p) => p.ppg === undefined));
+});
+
 test('widely_owned_accounted fails a card that neither claims nor passes over a player above the cut', async () => {
   const { f } = await card();
   const forgot = buildWaiversCard(f, { ...rollingDecision, passed: [] });

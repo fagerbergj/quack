@@ -21,7 +21,7 @@ const decisionSchema = Type.Object({
   summary: Type.String({ maxLength: 400 }),
 });
 
-const line = (p: Valued) => `${p.id} ${p.name} (${p.pos}, ${p.team ?? '-'}) proj ${p.proj}, season ${p.ppg}/g${p.inj ? `, ${p.inj}` : ''}${p.bye ? `, bye wk ${p.bye}` : ''}`;
+const line = (p: Valued) => `${p.id} ${p.name} (${p.pos}, ${p.team ?? '-'}) proj ${p.proj}${p.ppg === undefined ? '' : `, season ${p.ppg}/g`}${p.inj ? `, ${p.inj}` : ''}${p.bye ? `, bye wk ${p.bye}` : ''}`;
 const links = (f: WaiverFacts, id: string) => (f.news[id] ?? []).map((n) => ` [${n.title}](${n.url}), ${n.date.slice(0, 16)}`).join('');
 
 function factsPrompt(f: WaiverFacts): string {

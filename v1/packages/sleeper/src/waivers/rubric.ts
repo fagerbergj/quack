@@ -21,12 +21,13 @@ function dropRoleMatchesRoster(artifact: string, ev: Evidence): CodeResult {
   return share(rows.length - bad.length, rows.length, `the drop of ${bad.map((r) => r.drop.player.name).join(', ')} is mislabeled or a starter not stated as one`);
 }
 
-// Makes the prompt's add-minus-drop rule checkable: the better of season rate and projection, from the facts, never the card.
+// Makes add-minus-drop checkable from the facts, never the card; a player with no figure is not compared.
 function dropNotWorthMore(artifact: string, ev: Evidence): CodeResult {
   const f = factsOf(ev);
   const rows = parse(artifact).candidates;
-  const bad = rows.filter((r) => worth(f.roster[r.drop.player.id]) > worth(f.free[r.player.id]));
-  const detail = bad.map((r) => `${r.drop.player.name} (${worth(f.roster[r.drop.player.id])}) is worth more than ${r.player.name} (${worth(f.free[r.player.id])})`).join('; ');
+  const pair = (r: Candidate) => [worth(f.roster[r.drop.player.id]), worth(f.free[r.player.id])] as const;
+  const bad = rows.filter((r) => { const [d, a] = pair(r); return d !== null && a !== null && d > a; });
+  const detail = bad.map((r) => `${r.drop.player.name} (${pair(r)[0]}) is worth more than ${r.player.name} (${pair(r)[1]})`).join('; ');
   return share(rows.length - bad.length, rows.length, `the drop costs more than the add: ${detail}`);
 }
 
