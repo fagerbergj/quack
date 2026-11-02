@@ -518,8 +518,10 @@ test('a busy session with a pending sleep gets that sleep back when it goes idle
   const sleepAt = 1_000_000 + HOUR;
   let busy = true;
   const fleet = await fakeFleet(() => ({ status: busy ? 'HealthyBusy' : 'Healthy', waitingOnHuman: false, wake: { at: sleepAt } }));
-  const server = fleet.start();
-  await fleet.driver.ensure('sleeper:trends');
+  const server = fleet.start().listen(0);
+  await new Promise((r) => server.once('listening', r));
+  // A request sets the use clock, so the idle sweep keeps the session running and only the revert can write the record.
+  await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/sessions/sleeper%3Atrends/ping`);
   await server.sweep();
   assert.equal(fleet.wakes.get('sleeper:trends'), fleet.now());
   busy = false;
