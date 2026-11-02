@@ -514,6 +514,33 @@ test('a drain whose ping fails keeps the busy marker from the last sweep', async
   assert.equal(fleet.wakes.get('sleeper:trends'), fleet.now());
 });
 
+test('a busy session with a pending sleep gets that sleep back when it goes idle', async () => {
+  const sleepAt = 1_000_000 + HOUR;
+  let busy = true;
+  const fleet = await fakeFleet(() => ({ status: busy ? 'HealthyBusy' : 'Healthy', waitingOnHuman: false, wake: { at: sleepAt } }));
+  const server = fleet.start();
+  await fleet.driver.ensure('sleeper:trends');
+  await server.sweep();
+  assert.equal(fleet.wakes.get('sleeper:trends'), fleet.now());
+  busy = false;
+  await server.sweep();
+  assert.equal(fleet.wakes.get('sleeper:trends'), sleepAt);
+  assert.deepEqual(fleet.driver.running(), ['sleeper:trends']);
+});
+
+test('a marker write that fails is retried by the next sweep', async () => {
+  const fleet = await fakeFleet(() => ({ status: 'HealthyBusy', waitingOnHuman: false, wake: {} }));
+  const set = fleet.driver.setWake;
+  let failed = false;
+  fleet.driver.setWake = async (key: string, at: number | undefined) => { if (!failed) { failed = true; throw new Error('ENOSPC'); } return set(key, at); };
+  const server = fleet.start();
+  await fleet.driver.ensure('sleeper:trends');
+  await server.sweep();
+  assert.equal(fleet.wakes.has('sleeper:trends'), false);
+  await server.sweep();
+  assert.equal(fleet.wakes.get('sleeper:trends'), fleet.now());
+});
+
 test('active work is never stopped', async () => {
   const fleet = await fakeFleet(() => ({ status: 'HealthyBusy', waitingOnHuman: false, wake: {} }));
   const server = fleet.start();

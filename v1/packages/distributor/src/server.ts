@@ -183,8 +183,8 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /
   // Busy sessions are recorded as due now, like wake timers, so a restart resumes them; once idle the record reverts to the session's own sleep.
   async function mark(key: string, busy: boolean, sleepAt: number | undefined) {
     if (busy && !marked.has(key)) {
-      marked.add(key);
       await driver.setWake(key, now());
+      marked.add(key);
     } else if (!busy && marked.delete(key)) await driver.setWake(key, sleepAt);
   }
 
