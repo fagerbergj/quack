@@ -108,10 +108,8 @@ export async function startWorkflow(harness: Harness, root: Conversation, workfl
   }, ctx);
 }
 
-/**
- * Starts a new run at the failed step of the latest run, keeping the results of the steps before it; null when the latest run did not fail.
- * A failed task is terminal, so pi-durable's retryTask (for parked tasks) cannot rerun it.
- */
+// Starts a new run at the failed step, keeping earlier results; null if the latest run did not fail.
+// A failed task is terminal, so pi-durable's retryTask (parked tasks only) cannot rerun it.
 export async function resumeWorkflow(harness: Harness, root: Conversation, workflow: Workflow, ctx: Context = BACKGROUND_CONTEXT): Promise<string | null> {
   const seen = await harness.snapshot(WorkflowDoc, root.id, ctx);
   const old = seen?.task ? await harness.getTask(Number(seen.task) as never, ctx) : undefined;
