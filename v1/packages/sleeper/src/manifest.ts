@@ -12,6 +12,8 @@ const env = ['QUACK_SLEEPER_URL', 'QUACK_SLEEPER_TOKEN', 'QUACK_EXA_API_KEY'];
 /** Sleeper contributes workflows and an eval adapter for its waivers card; an agent binds one through the workflows extension. */
 export const manifest: ExtensionManifest = {
   name: 'sleeper',
+  requires: ['workflows'],
+  optional: ['judge'],
   evalAdapters: [waiversEvalAdapter],
   workflows: {
     [LINEUP_WORKFLOW]: { build: () => withChat(lineupFromEnv()), env },

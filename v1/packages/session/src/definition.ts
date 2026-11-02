@@ -21,7 +21,7 @@ export type DeploymentConfig = { providers: Record<string, ProviderConfig>; time
 export type AgentDefinition = { name: string; version: number; model: string; prompt?: string; extensions: Record<string, unknown>; /** The longest one shell command may run for this agent. */ exec?: { timeoutSeconds?: number }; /** How long an idle session keeps its log and workspace (D24); absent keeps it forever. A retention sweep enforces it. */ retention?: { idleDays: number } };
 
 /** An entry turns an agent's config into installed extensions; `env` names what it reads from the session process, which only agents selecting it receive. */
-export type CatalogEntry = ((config: unknown) => Extension[] | Promise<Extension[]>) & { env?: readonly string[] | ((config: unknown) => readonly string[]) };
+export type CatalogEntry = ((config: unknown) => Extension[] | Promise<Extension[]>) & { env?: readonly string[] | ((config: unknown) => readonly string[]); requires?: readonly string[]; optional?: readonly string[] };
 /** Extensions compiled into the runtime image, by name (A8). */
 export type Catalog = Record<string, CatalogEntry>;
 
@@ -102,6 +102,28 @@ function visionProblems(extensions: Record<string, unknown>, deployment: Deploym
   return limits?.images ? [] : [`workflows.visionModel ${String(provider)}/${String(modelId)} must be configured in this deployment with images: true`];
 }
 
+/** What an agent installs: the names it selects plus their `requires` transitively, each after what it needs (selected `optional` ones too); problems name a missing requirement or a cycle. */
+export function resolveExtensions(selected: readonly string[], catalog: Catalog): { order: string[]; problems: string[] } {
+  const order: string[] = [];
+  const problems: string[] = [];
+  const state = new Map<string, 'visiting' | 'done'>();
+  const visit = (name: string, path: string[]) => {
+    if (state.get(name) === 'done') return;
+    if (state.get(name) === 'visiting') return void problems.push(`extension dependency cycle: ${[...path.slice(path.indexOf(name)), name].join(' -> ')}`);
+    state.set(name, 'visiting');
+    const entry = catalog[name];
+    for (const dep of [...(entry.requires ?? []), ...(entry.optional ?? []).filter((o) => selected.includes(o))]) {
+      if (catalog[dep]) visit(dep, [...path, name]);
+      else if (entry.requires?.includes(dep)) problems.push(`extension ${name} requires ${dep}, which is not available`);
+    }
+    state.set(name, 'done');
+    order.push(name);
+  };
+  // Unknown selected names are reported by parseDefinition, not here.
+  for (const name of selected) if (catalog[name]) visit(name, []);
+  return { order, problems };
+}
+
 /** Validates an agent definition against the deployment and the catalog, reporting every problem at once. */
 export function parseDefinition(raw: unknown, deployment: DeploymentConfig, catalog: Catalog): AgentDefinition {
   if (!isObject(raw)) throw new Error('invalid agent definition:\n- definition must be an object');
@@ -117,7 +139,7 @@ export function parseDefinition(raw: unknown, deployment: DeploymentConfig, cata
   if (!isObject(raw.extensions)) problems.push('extensions must be an object of name to config');
   else {
     for (const name of Object.keys(raw.extensions)) if (!catalog[name]) problems.push(`unknown extension ${name}; available: ${Object.keys(catalog).sort().join(', ')}`);
-    problems.push(...visionProblems(raw.extensions, deployment));
+    problems.push(...resolveExtensions(Object.keys(raw.extensions), catalog).problems, ...visionProblems(raw.extensions, deployment));
   }
   if (problems.length) throw new Error(`invalid agent definition:\n- ${problems.join('\n- ')}`);
   return raw as AgentDefinition;
@@ -125,9 +147,9 @@ export function parseDefinition(raw: unknown, deployment: DeploymentConfig, cata
 
 /** The variables the extensions an agent definition selects declare, for the session process to receive (and drop once read). */
 export function declaredEnv(extensions: Record<string, unknown>, catalog: Catalog): string[] {
-  return Object.entries(extensions).flatMap(([name, config]) => {
-    const env = catalog[name]?.env;
-    return typeof env === 'function' ? env(config) : env ?? [];
+  return resolveExtensions(Object.keys(extensions), catalog).order.flatMap((name) => {
+    const env = catalog[name].env;
+    return typeof env === 'function' ? env(extensions[name]) : env ?? [];
   });
 }
 
@@ -165,7 +187,7 @@ export async function agentSpec(def: AgentDefinition, catalog: Catalog, always: 
   return {
     model: { provider: def.model.slice(0, slash), modelId: def.model.slice(slash + 1) },
     ...(def.exec?.timeoutSeconds && { commandTimeoutSeconds: def.exec.timeoutSeconds }),
-    extensions: [...(await Promise.all(Object.entries(def.extensions).map(([name, config]) => catalog[name](config)))).flat(), ...always.flatMap((make) => make())],
+    extensions: [...(await Promise.all(resolveExtensions(Object.keys(def.extensions), catalog).order.map((name) => catalog[name](def.extensions[name])))).flat(), ...always.flatMap((make) => make())],
   };
 }
 

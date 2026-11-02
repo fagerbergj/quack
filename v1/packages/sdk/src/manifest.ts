@@ -11,6 +11,10 @@ export type ExtensionManifest = {
   session?: (config: unknown, workflows: ContributedWorkflows) => Extension[] | Promise<Extension[]>;
   env?: readonly string[] | ((config: unknown, workflows: ContributedWorkflows) => readonly string[]);
   deployment?: boolean;
+  /** Extensions this one cannot work without; an agent selecting it gets them too, loaded first. */
+  requires?: string[];
+  /** Extensions it uses when the agent also enables them (judge: results are checked); loaded before it, never added. */
+  optional?: string[];
   workflows?: ContributedWorkflows;
   evalAdapters?: EvalAdapter[];
 };
