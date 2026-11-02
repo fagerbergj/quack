@@ -65,8 +65,8 @@ export const trendsRubric: Rubric = {
       { id: 'no_bare_ids', label: "Player id written in the item text", weight: 'gate', code: noBareIds },
     ] },
     { id: 'items_are_sourced', checks: [
-      { id: 'conflict_stated', label: "Hides a clash between news and injury tag", weight: 3, scope: 'conflict', question: 'Sleeper holds a `designations` entry for this player and `news` has dated reports. First decide whether the newest dated report and the designation disagree. If they agree, answer yes: there is no conflict to state. If they disagree, does the item say so and name the rule it followed: the newer dated report from a credible outlet beats Sleeper\'s lagging designation?' },
-      { id: 'original_source_named', label: "Doesn't name the original source", weight: 2, scope: 'sourced', question: 'Does `source` name where the report originated: the reporter or outlet that broke it, or the team or league whose own announcement it is? An aggregator repeating others does not count.' },
+      { id: 'conflict_stated', label: "Hides a clash between news and injury tag", weight: 3, scope: 'conflict', question: 'Sleeper holds a `designations` entry for this player and `news` has dated reports. If they agree, answer yes. If they disagree, does the item say so and name the rule it followed: the newer dated report from a credible outlet beats Sleeper\'s lagging designation?' },
+      { id: 'original_source_named', label: "Doesn't name the original source", weight: 2, scope: 'sourced', question: 'Does `source` name the original source: a reporter, outlet, team or league, not an aggregator?' },
     ] },
     { id: 'pitfalls', checks: [
       { id: 'aggregator_only', label: "Sources only an aggregator", weight: -3, scope: 'sourced', question: 'Is an aggregator the only source named for this item?' },

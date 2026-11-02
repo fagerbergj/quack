@@ -6,7 +6,7 @@ export type Kind = (typeof KINDS)[number];
 export type TrendItem = { time: string; source: string; kind: Kind; player?: Omit<TrendPlayer, 'depth'>; text: string; link?: string };
 export type TrendsCard = { kind: 'trends'; league: string; week: number; date: string; since: string | null; summary: string; items: TrendItem[]; source_note: string };
 
-/** What the model writes: judgment and prose only. A link names a fetched item, and a source the reporter and outlet behind it. */
+/** What the model writes: judgment and prose only. A link names a fetched item, and a source who reported it. */
 export type TrendsDecision = { items: Array<{ kind: Kind; playerId?: string; newsUrl?: string; source?: string; text: string }>; source_note: string };
 
 /** `2026-11-06 (Fri)`, in the league's clock. */
@@ -26,7 +26,7 @@ function item(f: TrendsFacts, d: TrendsDecision['items'][number]): TrendItem {
     const whose = owner && f.players[owner] ? `that link is news for ${who(f.players[owner])}, not ${who(p)}` : `that link is not news for ${who(p)}`;
     throw new Error(`the model linked ${d.newsUrl}: ${whose}`);
   }
-  if (!d.source) throw new Error(`the model linked ${d.newsUrl} for ${who(p)} without naming its reporter and outlet`);
+  if (!d.source) throw new Error(`the model linked ${d.newsUrl} for ${who(p)} without naming its source`);
   return { time: when(Date.parse(news.date)), source: d.source, kind: d.kind, player, text: d.text, link: news.url };
 }
 
