@@ -149,7 +149,7 @@ function Row({ item }: { item: Item }): ReactNode {
   switch (item.k) {
     case 'user':
       return (
-        <article aria-label="You" className="max-w-[88%] self-end rounded-[20px] rounded-br-[6px] bg-ink px-3.5 py-2.5 text-[14.5px] leading-relaxed text-on-ink lg:max-w-[80%] lg:px-4 [&_.md_code]:bg-on-ink/10 [&_a]:text-on-ink [&_a]:underline">
+        <article aria-label="You" className="max-w-[88%] self-end rounded-[20px] rounded-br-[6px] bg-ink px-3.5 py-2.5 text-[14.5px] leading-relaxed text-on-ink lg:max-w-[80%] lg:px-4 md-on-ink">
           <Markdown text={item.m.role === 'user' ? text(item.m.content) : ''} />
         </article>
       );
