@@ -138,8 +138,8 @@ test('a judge model that errors leaves checks undecided: no verdict is attached'
 });
 
 test('an undecided check is unscored, never unmet', () => {
-  const r = { criterion: 'c', id: 'k', weight: 2, met: null, units: 1, resolvers: { none: 1 }, notes: [], undecided: 1 };
-  const ok = { criterion: 'c', id: 'j', weight: 2, met: 1, units: 1, resolvers: { code: 1 }, notes: [] };
+  const r = { criterion: 'c', id: 'k', label: 'k', weight: 2, met: null, units: 1, resolvers: { none: 1 }, notes: [], undecided: 1 };
+  const ok = { criterion: 'c', id: 'j', label: 'j', weight: 2, met: 1, units: 1, resolvers: { code: 1 }, notes: [] };
   assert.deepEqual(score({ name: 'x', version: 1, threshold: 0.8, criteria: [] }, [r, ok]), { score: 1, gatesFailed: [], passed: true });
   assert.deepEqual(feedback([r]), []);
 });
