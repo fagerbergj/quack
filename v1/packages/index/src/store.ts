@@ -9,6 +9,7 @@ export type Backend = {
   /** Idempotent: a fact lands once per (session, id) and only a higher revision replaces it. */
   upsert(session: string, facts: Fact[]): Promise<void>;
   facts(kinds?: string[]): Promise<FactRow[]>;
+  forget(session: string): Promise<void>;
 };
 
 export type IndexStore = ReturnType<typeof createStore>;
@@ -41,6 +42,14 @@ export function createStore(backend: Backend) {
           status: (field(of('status'), 'state') as string) ?? null, cost: (field(of('cost'), 'total') as number) ?? 0, at: Math.max(...rows.map((f) => f.at)),
         };
       }).sort((a, b) => b.at - a.at || a.key.localeCompare(b.key)).map(({ at, ...s }) => ({ ...s, lastActivity: new Date(at).toISOString() }));
+    },
+    async forget(session: string) {
+      await ensure();
+      await backend.forget(session);
+    },
+    /** Whether the session has an approval or decision still waiting on a person. */
+    async waiting(session: string) {
+      return (await facts(['approval', 'decision'])).some((f) => f.session === session && field(f, 'state') === 'pending');
     },
     async artifacts() {
       return (await facts(['artifact'])).sort(newestFirst).map((f) => ({

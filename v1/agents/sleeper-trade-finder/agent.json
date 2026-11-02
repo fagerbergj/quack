@@ -1,6 +1,6 @@
 {
   "name": "sleeper-trade-finder",
-  "version": 1,
+  "version": 2,
   "status": "draft",
   "model": "local/qwen3.8-27b",
   "prompt": "prompt.md",
@@ -8,5 +8,8 @@
     "workflows": {
       "workflow": "sleeper.trade-finder"
     }
+  },
+  "retention": {
+    "idleDays": 30
   }
 }

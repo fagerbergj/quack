@@ -33,7 +33,7 @@ function parseFacts(body: unknown): { session: string; facts: Fact[] } | string 
   return { session, facts };
 }
 
-function authorized(req: IncomingMessage, token: string): boolean {
+export function authorized(req: IncomingMessage, token: string): boolean {
   const given = Buffer.from(req.headers.authorization ?? '');
   const want = Buffer.from(`Bearer ${token}`);
   return given.length === want.length && timingSafeEqual(given, want);

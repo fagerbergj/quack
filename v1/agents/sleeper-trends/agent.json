@@ -1,6 +1,6 @@
 {
   "name": "sleeper-trends",
-  "version": 1,
+  "version": 2,
   "status": "draft",
   "model": "local/qwen3.8-27b",
   "prompt": "prompt.md",
@@ -8,5 +8,8 @@
     "workflows": {
       "workflow": "sleeper.trends"
     }
+  },
+  "retention": {
+    "idleDays": 30
   }
 }

@@ -42,6 +42,9 @@ export function postgresBackend(pool: pg.Pool): Backend {
         [session, facts.map((f) => f.id), facts.map((f) => f.kind), facts.map((f) => f.rev), facts.map((f) => f.at), facts.map((f) => JSON.stringify(f.data))],
       );
     },
+    async forget(session) {
+      await pool.query('delete from index_facts where session = $1', [session]);
+    },
     async facts(kinds) {
       return (await pool.query<FactRow>(
         'select session, id, kind, rev::float8 as rev, at::float8 as at, data from index_facts where $1::text[] is null or kind = any($1)', [kinds ?? null],

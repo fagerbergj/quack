@@ -9,7 +9,7 @@ import { shellEnv } from '@quack/session';
 
 export type AgentStatus = 'draft' | 'promoted';
 export type AgentInfo = { name: string; version: number; status: AgentStatus };
-export type SessionInfo = { key: string; agent: string; version?: number; title?: string; running: boolean; lastActivity: string };
+export type SessionInfo = { key: string; agent: string; version?: number; retention?: { idleDays: number }; title?: string; running: boolean; lastActivity: string };
 
 /** A request the agent registry refuses: 404 for an unknown agent, 409 for a session that already runs another. */
 export class AgentError extends Error {
@@ -27,6 +27,8 @@ export type HostDriver = {
   /** Every session on disk, newest first. */
   sessions(): Promise<SessionInfo[]>;
   stop(key: string): Promise<void>;
+  /** Deletes the session's directory (log, workspace, snapshot); false when no such session exists. The caller has checked it is not running. */
+  remove(key: string): Promise<boolean>;
   /** Records when a stopped session next needs a process (its earliest sleep); undefined clears it. */
   setWake(key: string, at: number | undefined): Promise<void>;
   /** Every session with a recorded wake time. */
@@ -62,7 +64,7 @@ async function waitHealthy(url: string, proc: ChildProcess, timeoutMs: number) {
 export const sessionDirName = (key: string) => createHash('sha256').update(key).digest('hex').slice(0, 32);
 
 const readText = (path: string) => readFile(path, 'utf8').catch(() => undefined);
-const readJson = async (path: string) => JSON.parse((await readText(path)) ?? 'null') as { name?: unknown; version?: unknown; status?: unknown } | null;
+const readJson = async (path: string) => JSON.parse((await readText(path)) ?? 'null') as { name?: unknown; version?: unknown; status?: unknown; retention?: { idleDays?: unknown } } | null;
 
 // Content hash of a bundle directory (minus its version.lock), so two copies of one agent version can be compared.
 export async function digest(dir: string): Promise<string> {
@@ -256,9 +258,11 @@ export function processDriver(opts: { command: string[]; dataDir: string; agents
       const key = await readText(join(opts.dataDir, d, 'session-key'));
       if (key === undefined) return undefined;
       const agent = (await readText(join(opts.dataDir, d, 'agent'))) ?? '';
-      const version = (await readJson(join(opts.dataDir, d, SNAPSHOT, 'agent.json')).catch(() => null))?.version;
+      const pinned = await readJson(join(opts.dataDir, d, SNAPSHOT, 'agent.json')).catch(() => null);
+      const { version } = pinned ?? {};
+      const idleDays = pinned?.retention?.idleDays;
       const title = cachedTitle(join(opts.dataDir, d));
-      return { key, agent, ...(typeof version === 'number' && { version }), ...(title && { title }), running: children.has(key), at: await lastActivity(join(opts.dataDir, d)) };
+      return { key, agent, ...(typeof version === 'number' && { version }), ...(typeof idleDays === 'number' && { retention: { idleDays } }), ...(title && { title }), running: children.has(key), at: await lastActivity(join(opts.dataDir, d)) };
     }));
     return all.filter((s) => s !== undefined).sort((a, b) => b.at - a.at).map(({ at, ...s }) => ({ ...s, lastActivity: new Date(at).toISOString() }));
   }
@@ -277,6 +281,13 @@ export function processDriver(opts: { command: string[]; dataDir: string; agents
     return found.filter((w) => w !== undefined);
   }
 
+  async function remove(key: string) {
+    const dir = sessionDir(key);
+    if ((await readText(join(dir, 'session-key'))) === undefined) return false;
+    await rm(dir, { recursive: true, force: true });
+    return true;
+  }
+
   async function stop(key: string) {
     const child = children.get(key);
     if (!child) return;
@@ -287,5 +298,5 @@ export function processDriver(opts: { command: string[]; dataDir: string; agents
     await exited;
   }
 
-  return { ensure, agents, sessions, stop, setWake, wakes, running: () => [...children.keys()], pid: (key) => children.get(key)?.proc.pid };
+  return { ensure, agents, sessions, stop, remove, setWake, wakes, running: () => [...children.keys()], pid: (key) => children.get(key)?.proc.pid };
 }
