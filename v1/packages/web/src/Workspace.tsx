@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { indexApprovals, indexArtifacts, indexFailures, indexQuestions, listAgents, listApprovals, listQuestions, listSessions, type Approval, type AgentSummary, type Question } from './api.ts';
 import { Landing } from './Landing.tsx';
-import { sessionTitle } from './kinds.ts';
+import { look, sessionTitle } from './kinds.ts';
 import { group, multiScope, type Row } from './sessions.ts';
 import { SessionView } from './SessionView.tsx';
 
@@ -54,10 +54,11 @@ export function Workspace({ data, selected, isNew, list }: { data: WorkspaceData
   const open = Boolean(selected) || isNew;
   if (list && !open) return <>{list}</>;
   const row = data.rows?.find((r) => r.key === selected?.key);
+  const l = row && !row.active ? look(row) : undefined;
   return (
     <div className="flex min-h-0 min-w-0 flex-col lg:h-dvh">
       {selected ? (
-        <SessionView key={selected.key} sessionKey={selected.key} agent={selected.agent} name={sessionTitle(row ?? { key: selected.key, agent: selected.agent ?? '', running: false, active: false, createdAt: '', lastActivity: '' })} />
+        <SessionView key={selected.key} sessionKey={selected.key} agent={selected.agent} delivered={l?.delivered ? l : undefined} name={sessionTitle(row ?? { key: selected.key, agent: selected.agent ?? '', running: false, active: false, createdAt: '', lastActivity: '' })} />
       ) : (
         <div className="overflow-y-auto"><Landing agents={data.agents} error={data.agentsError} groups={group(data.rows ?? [])} /></div>
       )}

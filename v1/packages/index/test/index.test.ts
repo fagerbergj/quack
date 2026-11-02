@@ -62,7 +62,7 @@ const post = gated(defineTool({ name: 'post', description: 'post', parameters: T
 async function openDemoSession(dir: string) {
   const faux = fauxProvider({ models: [{ id: 'faux-1' }] });
   faux.setResponses([
-    fauxAssistantMessage(fauxToolCall('write', { path: 'review.md', content: '# Review\nfine\n' }), { stopReason: 'toolUse' }),
+    fauxAssistantMessage(fauxToolCall('write', { path: 'review.md', content: '# Review\n\n## Verdict\napprove\n\n## Findings\nNone.\n' }), { stopReason: 'toolUse' }),
     fauxAssistantMessage(fauxToolCall('submit_review', {}), { stopReason: 'toolUse' }),
     fauxAssistantMessage(fauxToolCall('post', {}), { stopReason: 'toolUse' }),
     fauxAssistantMessage('Done.'),
@@ -123,8 +123,8 @@ for (const { name, fresh: freshStore, skip } of backends) test(`${name}: facts s
   await publisher.flush();
   assert.deepEqual((await get('/index/approvals?state=pending')).approvals.map((a) => [a.session, a.id, a.tool, a.state]), [['chat:1', approval.id, 'post', 'pending']]);
   // A link added after sealing rides with the artifact and leaves the sealed hash alone.
-  assert.deepEqual((await get('/index/artifacts')).artifacts.map((a) => [a.session, a.kind, a.version, a.verdict, a.links, a.hash]),
-    [['chat:1', 'demo.review', 1, { passed: true }, [{ label: 'Posted', url: 'https://example.test/r/1' }], createHash('sha256').update('# Review\nfine\n').digest('hex')]]);
+  assert.deepEqual((await get('/index/artifacts')).artifacts.map((a) => [a.session, a.kind, a.version, a.verdict, a.links, a.outcome, a.hash]),
+    [['chat:1', 'demo.review', 1, { passed: true }, [{ label: 'Posted', url: 'https://example.test/r/1' }], 'approve', createHash('sha256').update('# Review\n\n## Verdict\napprove\n\n## Findings\nNone.\n').digest('hex')]]);
   const [row] = (await get('/index/sessions')).sessions;
   assert.deepEqual([row.key, row.agent, row.version, row.status], ['chat:1', 'reviewer', 4, 'running']);
 

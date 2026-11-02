@@ -1,4 +1,4 @@
-import { BLUE, cut, sentence, type Extension } from '../extension.ts';
+import { BLUE, cut, sentence, type Delivered, type Extension } from '../extension.ts';
 import type { Row } from '../sessions.ts';
 
 const KEY = /^github:([^/]+)\/([^#]+)#(\d+)$/;
@@ -11,6 +11,19 @@ function prTitle(r: Row, fallback: string): string {
   return t.replace(CC_PREFIX, '') ? sentence(t.replace(CC_PREFIX, '')) : fallback;
 }
 
+const KIND = 'github.review';
+const POSTED: Record<string, Delivered['tone']> = { 'Approved ✓': 'ok', 'Changes requested': 'warn', Commented: 'plain' };
+const VERDICT_WORDS: Record<string, string> = { approve: 'Approved ✓', request_changes: 'Changes requested', comment: 'Commented' };
+
+// An idle review reads as the newest version that reached GitHub, with its verdict as posted (a limit-released one included), never the judge's result.
+function delivered(r: Row): Delivered | undefined {
+  const reviews = r.artifacts.filter((a) => a.kind === KIND);
+  const posted = reviews.filter((a) => a.links?.length).sort((a, b) => b.version - a.version)[0];
+  if (!posted) return reviews.length ? { line: 'No review posted', tone: 'muted' } : undefined;
+  const line = VERDICT_WORDS[posted.outcome ?? ''] ?? 'Review posted';
+  return { line, tone: POSTED[line] ?? 'plain', link: posted.links![0] };
+}
+
 export const github: Extension = {
   session: {
     label: 'review', match: (r) => KEY.test(r.key), icon: 'M3.5 6a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0-5 0M15.5 18a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0-5 0M6 8.5v11M18 15.5V9a3 3 0 0 0-3-3h-4M13 3.5 10.5 6 13 8.5', tint: BLUE,
@@ -19,9 +32,10 @@ export const github: Extension = {
       const full = prTitle(r, repo!);
       return { title: cut(full), full, num: `#${n}`, ...(r.multiRepo && { repo: `${owner}/${repo}` }) };
     },
-    words: () => ({ kind: 'github.review', w: { run: 'Reviewing', pass: 'Approved ✓', fail: "Didn't pass its checks", none: 'Not reviewed yet' } }),
+    delivered,
+    words: () => ({ kind: KIND, w: { run: 'Reviewing', pass: 'Approved ✓', fail: "Didn't pass its checks", none: 'Not reviewed yet' } }),
   },
-  artifact: (a) => (a.kind === 'github.review' ? { name: 'Review', posted: a.links?.length ? 'Review posted' : undefined } : undefined),
+  artifact: (a, running) => (a.kind === KIND ? { name: 'Review', posted: a.links?.length ? (running ? 'Previous review' : 'Review posted') : undefined, previous: running && Boolean(a.links?.length) } : undefined),
   start: { prefix: 'github', label: 'GitHub' },
   // GitHub redirects /pull/<n> to /issues/<n> for a plain issue, so one URL fits both.
   link: (key) => {

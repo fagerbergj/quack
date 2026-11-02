@@ -11,23 +11,25 @@ export function StatusIcon({ verdict }: { verdict: SealedArtifact['verdict'] }) 
 }
 
 // What an artifact is called anywhere it shows by name; the raw kind never does.
-export const artifactName = (a: SealedArtifact) => EXTENSIONS.map((e) => e.artifact?.(a)).find(Boolean)?.name || 'Result';
+export const artifactName = (a: SealedArtifact) => EXTENSIONS.map((e) => e.artifact?.(a, false)).find(Boolean)?.name || 'Result';
+const namedBy = (a: SealedArtifact, running: boolean) => EXTENSIONS.map((e) => e.artifact?.(a, running)).find(Boolean);
 
 // Plain words for the line: the owning extension names the thing; an unknown kind is just a result, never its raw kind.
-function lineOf(a: SealedArtifact): string {
-  const named = EXTENSIONS.map((e) => e.artifact?.(a)).find(Boolean);
+function lineOf(a: SealedArtifact, named: ReturnType<typeof namedBy>): string {
   const name = named?.name ?? 'Result';
+  if (named?.posted) return named.posted;
   if (a.verdict?.passed === false) return sentence(`${name} didn't pass its checks`.trim());
-  return named?.posted ?? sentence(`${name} ready`.trim());
+  return sentence(`${name} ready`.trim());
 }
 
 // One muted line per artifact; the drawer's Checks tab holds the detail.
-function Item({ a, onOpen }: { a: SealedArtifact; onOpen: (a: SealedArtifact) => void }) {
+function Item({ a, running, onOpen }: { a: SealedArtifact; running: boolean; onOpen: (a: SealedArtifact) => void }) {
+  const named = namedBy(a, running);
   const link = 'flex min-h-11 cursor-pointer items-center border-0 bg-transparent p-0 text-[13px] text-link no-underline hover:underline lg:min-h-0';
   return (
     <li className="flex items-center gap-2 text-[13px] text-muted">
-      <StatusIcon verdict={a.verdict} />
-      <span className="min-w-0 truncate">{lineOf(a)}</span>
+      {!named?.previous && <StatusIcon verdict={a.verdict} />}
+      <span className="min-w-0 truncate">{lineOf(a, named)}</span>
       <button type="button" aria-label={`Open ${artifactName(a)}${a.version > 1 ? ` version ${a.version}` : ''}`} onClick={() => onOpen(a)} className={link}>Open</button>
       {a.links?.map((l) => <a key={l.url} href={l.url} target="_blank" rel="noopener noreferrer" className={link}>{`${l.label} ↗`}</a>)}
     </li>
@@ -42,7 +44,7 @@ export function useArtifacts(sessionKey: string, refresh: number) {
   return { items, error };
 }
 
-export function Artifacts({ items, error, onOpen }: { items: SealedArtifact[]; error: string; onOpen: (a: SealedArtifact) => void }) {
+export function Artifacts({ items, error, running = false, onOpen }: { items: SealedArtifact[]; error: string; running?: boolean; onOpen: (a: SealedArtifact) => void }) {
   const [all, setAll] = useState(false);
   if (!items.length && !error) return null;
   // Only the newest version of each kind shows; earlier ones stay a toggle away.
@@ -55,7 +57,7 @@ export function Artifacts({ items, error, onOpen }: { items: SealedArtifact[]; e
       <h2 id="artifacts-h" className="sr-only">Artifacts</h2>
       {error && <p role="alert" className="m-0 text-[13px] text-danger">{error}</p>}
       <ul className="m-0 flex list-none flex-col gap-2 p-0 text-[13px]">
-        {shown.map((a) => <Item key={`${a.kind}:${a.version}`} a={a} onOpen={onOpen} />)}
+        {shown.map((a) => <Item key={`${a.kind}:${a.version}`} a={a} running={running} onOpen={onOpen} />)}
       </ul>
       {(hidden > 0 || all) && (
         <button type="button" onClick={() => setAll(!all)} className="min-h-11 cursor-pointer self-start border-0 bg-transparent p-0 text-[13px] text-muted hover:text-ink lg:min-h-0">
