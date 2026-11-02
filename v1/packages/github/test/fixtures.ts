@@ -49,12 +49,17 @@ export async function listen(server: Server) {
 /** The service half's session-facing API, faked: PR metadata, credentials, and posted reviews recorded. */
 export async function fakeService(head: string, extra: Record<string, unknown> = {}) {
   const posted: any[] = [];
+  const replies: any[] = [];
   const url = await listen(
     createServer(async (req, res) => {
       if (req.headers.authorization !== 'Bearer svc') return res.writeHead(401).end('{}');
       let raw = '';
       for await (const c of req) raw += c;
       if (req.url?.startsWith('/git-credential')) return res.writeHead(200).end(JSON.stringify({ username: 'x-access-token', token: 'ghs_from_service' }));
+      if (req.url === '/replies') {
+        replies.push(JSON.parse(raw));
+        return res.writeHead(201).end(JSON.stringify({ url: 'https://github.com/acme/widgets/pull/7#discussion_r56' }));
+      }
       if (req.url === '/reviews') {
         posted.push(JSON.parse(raw));
         return res.writeHead(201).end(JSON.stringify({ id: 9, url: 'https://github.com/acme/widgets/pull/7#review-9' }));
@@ -63,5 +68,5 @@ export async function fakeService(head: string, extra: Record<string, unknown> =
       res.writeHead(200).end(JSON.stringify(pr));
     }),
   );
-  return { url, posted };
+  return { url, posted, replies };
 }

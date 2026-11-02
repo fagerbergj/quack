@@ -13,6 +13,17 @@ import { cleanup, fakeService, listen, remotes, sh, tmp } from './fixtures.ts';
 
 after(cleanup);
 
+const inlined = `## Takeaway
+The change does what issue #3 asks; approve.
+## Verdict
+approve
+## Findings
+
+Posted inline on the diff:
+- nit: a named constant would say why the value is 2.
+## Verified
+- read app.ts:1 on the PR head: \`export const a = 2;\`
+`;
 const PITFALLS = /toolchain_as_defect|contradicted|no_reason_given|preference_only|blocks_without_consequence|wrong_output_below_blocking/;
 const clefUnits: string[] = [];
 async function fakeClef() {
@@ -80,7 +91,8 @@ test('a passing submit posts the checked version once, returns the link, and a r
   assert.match(seen[2], new RegExp(`Posted as APPROVE: ${URL7.replace(/[/.#]/g, '\\$&')}`));
   assert.match(seen[3], /Review v1 was already posted; nothing was sent again/);
   assert.equal(service.posted.length, 1);
-  assert.deepEqual(service.posted[0], { owner: 'acme', repo: 'widgets', number: 7, commitId: head, event: 'APPROVE', body: review });
+  // The nit cites app.ts:1, which the PR changes: it goes inline and the body lists it by title.
+  assert.deepEqual(service.posted[0], { owner: 'acme', repo: 'widgets', number: 7, commitId: head, event: 'APPROVE', body: inlined, fallbackBody: review, comments: [{ path: 'app.ts', line: 1, body: '**nit**: a named constant would say why the value is 2.' }] });
 
   const doc = await session.harness.snapshot(Artifacts, session.root.id, BACKGROUND_CONTEXT);
   const verdict = doc!.kinds['github.review'].versions[0].verdict as any;
@@ -103,7 +115,7 @@ test('a failing submit posts nothing; the corrected version is the one that goes
   assert.match(seen[2], /gate claims_grounded\.quotes_exist[^"]*finding-1 names identifiers found nowhere in the repository, the diff or its dependencies: `computeTotals`/);
   assert.doesNotMatch(seen[2], /Posted as/);
   assert.equal(service.posted.length, 1);
-  assert.equal(service.posted[0].body, review);
+  assert.equal(service.posted[0].body, inlined);
   await session.close();
 });
 
@@ -120,7 +132,8 @@ test('a review released at the revision limit posts with its failures marked', a
   assert.match(seen[6], /Posted as APPROVE: /);
   assert.equal(service.posted.length, 1);
   assert.match(service.posted[0].body, /\*\*Not fully checked:\*\* the revision limit was reached\. Checks that did not pass:\n- /);
-  assert.ok(service.posted[0].body.startsWith(bad(3)));
+  assert.match(service.posted[0].comments[0].body, /computeTotals3/);
+  assert.ok(service.posted[0].body.startsWith('## Takeaway'));
   await session.close();
 });
 
@@ -177,12 +190,19 @@ test('a second passing version on the same checkout is not posted; a later reque
   assert.equal(done.status === 'done' && done.answer, 'Posted.');
   assert.match(seen[4], /Review v1 was already posted for this checkout; a run posts one review, so v2 was not sent/);
   assert.equal(service.posted.length, 1);
-  assert.equal(service.posted[0].body, review);
+  assert.equal(service.posted[0].body, inlined);
 
   const again = await session.submit('/review', 'gh-2', true);
   assert.equal(again.status === 'done' && again.answer, 'Nothing to do.');
   assert.match(seen[5], /already reviewed \w{40}: nothing to do this turn/);
   assert.doesNotMatch(seen[5], /Checked out/);
   assert.equal(service.posted.length, 1);
+  await session.close();
+});
+
+test('reply_mention sends the answer to the service with the thread it was given', async () => {
+  const { seen, service, session } = await reviewRun((seen) => [call('reply_mention', { repository: 'acme/widgets', number: 7, kind: 'review', commentId: 55, body: 'It is read at line 1.' }), recorder(seen)(fauxAssistantMessage('Answered.'))]);
+  assert.match(seen[0], /Replied: https:\/\/github.com\/acme\/widgets\/pull\/7#discussion_r56/);
+  assert.deepEqual(service.replies, [{ owner: 'acme', repo: 'widgets', number: 7, kind: 'review', commentId: 55, body: 'It is read at line 1.' }]);
   await session.close();
 });
