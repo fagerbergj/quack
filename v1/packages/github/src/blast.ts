@@ -58,7 +58,8 @@ export function touchedSymbols(result: unknown, lines: Array<[number, number]>, 
   return out;
 }
 
-function describe(sym: Symbol, file: string, refs: Location[], root: string): string {
+function describe(sym: Symbol, file: string, refs: Location[] | string, root: string): string {
+  if (typeof refs === 'string') return `- ${file}:${sym.at.line + 1} ${KINDS[sym.kind]} ${sym.name}: references unavailable: ${refs.replace(/\s+/g, ' ').slice(0, 200)}`;
   const outside = refs
     .map((r) => ({ path: decodeURIComponent(r.uri.replace(/^file:\/\//, '')).replace(`${root}/`, ''), line: r.range.start.line + 1 }))
     .filter((r) => !(r.path === file && r.line >= sym.range.start.line + 1 && r.line <= sym.range.end.line + 1));
@@ -75,9 +76,12 @@ async function lsp(api: ToolExecutionApi, tool: string, args: Record<string, unk
   return r.isError ? undefined : r.structuredOutput;
 }
 
-async function references(api: ToolExecutionApi, path: string, at: Range['start'], ctx: Context): Promise<Location[]> {
-  const r = await lsp(api, 'lsp_references', { path, line: at.line, character: at.character, includeDeclaration: false }, ctx);
-  return Array.isArray(r) ? (r as Location[]) : [];
+// An error, a timeout or any non-list answer is "unknown", never "no callers"; the server's own "No result" is an empty answer.
+async function references(api: ToolExecutionApi, path: string, at: Range['start'], ctx: Context): Promise<Location[] | string> {
+  const r = await api.executeTool('lsp_references', { path, line: at.line, character: at.character, includeDeclaration: false } as never, ctx);
+  const out = r.isError ? (typeof r.structuredOutput === 'string' && r.structuredOutput) || r.diagnostics.map((d) => d.message).join(' ') || 'tool error' : r.structuredOutput;
+  if (Array.isArray(out)) return out as unknown as Location[];
+  return out === 'No result' ? [] : String(out);
 }
 
 // GH-3: who depends on each changed symbol, from the language servers; empty when the session has no LSP tools.
