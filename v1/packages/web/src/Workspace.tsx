@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { indexApprovals, indexArtifacts, indexQuestions, listAgents, listApprovals, listQuestions, listSessions, type Approval, type AgentSummary, type Question } from './api.ts';
+import { indexApprovals, indexArtifacts, indexFailures, indexQuestions, listAgents, listApprovals, listQuestions, listSessions, type Approval, type AgentSummary, type Question } from './api.ts';
 import { Landing } from './Landing.tsx';
 import { sessionTitle } from './kinds.ts';
 import { group, multiScope, type Row } from './sessions.ts';
@@ -9,9 +9,10 @@ const REFRESH_MS = 15_000;
 
 // The index knows pending approvals of idle sessions too. Without it, only running sessions are asked: a request to an idle one would start its process.
 async function loadRows(): Promise<Row[]> {
-  const [sessions, indexed, asked, sealed] = await Promise.all([listSessions(), indexApprovals(), indexQuestions(), indexArtifacts()]);
+  const [sessions, indexed, asked, sealed, failed] = await Promise.all([listSessions(), indexApprovals(), indexQuestions(), indexArtifacts(), indexFailures()]);
   const approvalsBy = Map.groupBy(indexed ?? [], (a) => a.session);
   const questionsBy = Map.groupBy(asked ?? [], (q) => q.session);
+  const failuresBy = Map.groupBy(failed ?? [], (f) => f.session);
   const artifacts = Map.groupBy(sealed ?? [], (a) => a.session);
   // A repo prefix only earns its space when reviews come from more than one repo.
   const multiRepo = multiScope(sessions.map((s) => s.key));
@@ -19,6 +20,7 @@ async function loadRows(): Promise<Row[]> {
     ...s,
     multiRepo,
     artifacts: artifacts.get(s.key) ?? [],
+    failures: failuresBy.get(s.key) ?? [],
     approvals: indexed ? (approvalsBy.get(s.key) ?? []).map((a): Approval => ({ id: a.id, tool: a.tool, args: undefined, requestedAt: a.at })) : s.running ? await listApprovals(s.key).catch(() => []) : [],
     questions: asked ? (questionsBy.get(s.key) ?? []).map((q): Question => ({ ...q, askedAt: q.at })) : s.running ? await listQuestions(s.key).catch(() => []) : [],
   })));

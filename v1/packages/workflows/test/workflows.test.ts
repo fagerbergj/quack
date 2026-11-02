@@ -6,9 +6,9 @@ import { after, test } from 'node:test';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider, Type, type FauxResponseFactory, type Message } from '@earendil-works/pi-ai';
 import { defineTool } from '@earendil-works/pi-durable';
-import { answerQuestion, Approvals, Artifacts, pendingApprovals, pendingQuestions, Questions, resolveApproval, seal, type ArtifactKind } from '@quack/sdk';
+import { answerQuestion, Approvals, Artifacts, Failures, pendingApprovals, pendingQuestions, Questions, resolveApproval, seal, type ArtifactKind } from '@quack/sdk';
 import { openSession } from '@quack/session';
-import { defineWorkflow, outcomeOf, runWorkflow, startWorkflow, watchUntil, WorkflowDoc, workflowExtension, type Workflow } from '../src/index.ts';
+import { defineWorkflow, outcomeOf, resumeWorkflow, runWorkflow, startWorkflow, watchUntil, WorkflowDoc, workflowExtension, type Workflow } from '../src/index.ts';
 
 const dirs: string[] = [];
 after(() => Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true }))));
@@ -123,6 +123,32 @@ test('a model reply that fails the schema fails the step and stops the workflow'
 const capped = defineWorkflow({
   name: 'capped',
   steps: [{ name: 'decide', kind: 'model', schema: Type.Object({ summary: Type.String({ maxLength: 5 }) }), prompt: () => 'summarize' }],
+});
+
+test('resuming a failed run reruns the failed step and later ones, keeping the earlier results', async () => {
+  const runs = { first: 0, second: 0, third: 0 };
+  let broken = true;
+  const workflow = defineWorkflow({
+    name: 'retry',
+    steps: [
+      { name: 'first', kind: 'code', run: () => ({ n: ++runs.first }) },
+      { name: 'second', kind: 'code', run: () => { runs.second++; if (broken) throw new Error('boom'); return 'fixed'; } },
+      { name: 'third', kind: 'code', run: (c) => { runs.third++; return JSON.stringify(c.prior); } },
+    ],
+  });
+  const s = await open(await tmp(), workflow);
+  assert.equal((await runWorkflow(s.harness, s.root, workflow, 'in')).status, 'failed');
+  assert.equal((await doc(s)).steps[1].status, 'failed');
+  assert.equal((await s.harness.snapshot(Failures, s.root.id, ctx))!.items.second.error, 'boom');
+
+  broken = false;
+  const outcome = await outcomeOf(s.harness, (await resumeWorkflow(s.harness, s.root, workflow))!);
+  assert.deepEqual(outcome.status === 'completed' && outcome.result, { first: { n: 1 }, second: 'fixed', third: '{"first":{"n":1},"second":"fixed"}' });
+  assert.deepEqual(runs, { first: 1, second: 2, third: 1 });
+  assert.deepEqual((await doc(s)).steps.map((r) => [r.status, r.error]), [['done', null], ['done', null], ['done', null]]);
+  assert.equal((await s.harness.snapshot(Failures, s.root.id, ctx))!.items.second.error, null);
+  assert.equal(await resumeWorkflow(s.harness, s.root, workflow), null);
+  await s.close();
 });
 
 // Answers with `text` and records the messages each request carried.

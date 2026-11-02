@@ -1,3 +1,4 @@
+import type { JsonValue } from '@earendil-works/chord';
 import { defineDoc, type DocumentWatch } from '@earendil-works/pi-durable';
 
 // Documents are strict JSON, so absent values are null rather than optional fields.
@@ -13,7 +14,8 @@ export type StepRecord = {
   error: string | null;
 };
 
-type WorkflowState = { name: string | null; task: string | null; request: string | null; steps: StepRecord[] };
+/** `kept` holds the results of the steps before a failed one, so a resume starts from them; absent on records written before it existed. */
+type WorkflowState = { name: string | null; task: string | null; request: string | null; steps: StepRecord[]; kept?: Record<string, JsonValue> | null };
 
 /** What the session view renders (WFL-4): each step's status, duration and cost. */
 export const WorkflowDoc = defineDoc<WorkflowState>({
@@ -22,7 +24,7 @@ export const WorkflowDoc = defineDoc<WorkflowState>({
   scope: 'conversation',
   history: 'latest',
   fork: 'initial',
-  initial: () => ({ name: null, task: null, request: null, steps: [] }),
+  initial: () => ({ name: null, task: null, request: null, steps: [], kept: null }),
   checkpointWhen: () => false,
 });
 

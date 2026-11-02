@@ -79,12 +79,13 @@ function Waiting({ rows }: { rows: Groups['needs'] }) {
 }
 
 export function Landing({ agents, error, groups }: { agents: AgentSummary[]; error: string; groups: Groups }) {
+  const failed = groups.needs.filter((r) => r.failures.length).length;
   return (
     <div className="mx-auto flex w-full max-w-[760px] flex-col gap-8 px-4 py-8 sm:px-8 lg:py-12">
       <a href="#/" className="text-[13px] text-muted no-underline hover:text-ink lg:hidden">← Sessions</a>
-      <Pond>
+      <Pond still={failed > 0}>
         <h2 className="m-0 text-[34px] leading-[1.1]">What should quack work on?</h2>
-        <p className="m-0 mt-2 text-[14px] text-ink-2">{`${groups.needs.length} need you · ${groups.running.length} running`}</p>
+        <p className="m-0 mt-2 text-[14px] text-ink-2">{[failed > 0 && `${failed} failed`, `${groups.needs.length - failed} need you`, `${groups.running.length} running`].filter(Boolean).join(' · ')}</p>
       </Pond>
       {error && <p role="alert" className="m-0 text-[13px] text-danger">{`Agents: ${error}`}</p>}
       <Composer agents={agents} />

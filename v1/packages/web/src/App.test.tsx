@@ -703,12 +703,44 @@ test('a session waiting on a question is in Needs you, and its view shows the qu
   expect(within(card).getByRole('button', { name: 'idea' })).toBeInTheDocument();
 });
 
-test('a session whose run failed in a step shows the step and its error', async () => {
+const failure = { step: 'decide', error: 'Validation failed for tool "decide":\n- summary: must not have more than 300 characters' };
+
+test('a failed run shows Failed in the header and a card with the step, the first error line and Run again', async () => {
   routes['GET /sessions'] = { sessions: [sess('ui:u1')] };
   const ws = await openSession();
-  ws.frame({ type: 'standing', questions: [], failures: [{ step: 'facts', error: 'sleeper: /v1/stats/nfl/regular/2026/7 not found' }] });
-  const alert = await screen.findByText(/Step facts failed:/);
-  expect(alert.closest('p')).toHaveTextContent('sleeper: /v1/stats/nfl/regular/2026/7 not found');
+  ws.frame({ type: 'standing', questions: [], failures: [failure] });
+  const card = await screen.findByRole('region', { name: 'Failed run' });
+  expect(within(card).getByText('decide')).toBeInTheDocument();
+  expect(within(card).getByText('Validation failed for tool "decide":')).toBeInTheDocument();
+  expect(within(card).getByText('Full error')).toBeInTheDocument();
+  expect(screen.getByRole('status')).toHaveTextContent('Failed · decide');
+  routes['POST /sessions/ui%3Au1/resume'] = { submissionId: '2', status: 'placed' };
+  await userEvent.click(within(card).getByRole('button', { name: 'Run again' }));
+  expect(fetchMock).toHaveBeenCalledWith('sessions/ui%3Au1/resume', { method: 'POST' });
+  ws.frame({ type: 'standing', questions: [], failures: [] });
+  await waitFor(() => expect(screen.queryByRole('region', { name: 'Failed run' })).toBeNull());
+  expect(screen.getByRole('status')).toHaveTextContent('Idle');
+});
+
+test('a failed run that cannot resume shows why, and Copy error copies the whole error', async () => {
+  routes['GET /sessions'] = { sessions: [sess('ui:u1')] };
+  const ws = await openSession();
+  ws.frame({ type: 'standing', questions: [], failures: [failure] });
+  const writeText = vi.fn(async () => undefined);
+  Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+  const card = await screen.findByRole('region', { name: 'Failed run' });
+  await userEvent.click(within(card).getByRole('button', { name: 'Copy error' }));
+  expect(writeText).toHaveBeenCalledWith(failure.error);
+  await userEvent.click(within(card).getByRole('button', { name: 'Run again' }));
+  expect(await within(card).findByRole('alert')).toBeInTheDocument();
+});
+
+test('a session whose run failed is under Needs you with its step and the error first line', async () => {
+  routes['GET /sessions'] = { sessions: [sess('gh:3', { title: 'Trade finder' })] };
+  routes['GET /index/failures'] = { failures: [{ session: 'gh:3', ...failure, at: 1 }] };
+  render(<App />);
+  const needs = await screen.findByRole('region', { name: 'Needs you' });
+  expect(within(needs).getByText('Run failed at decide · Validation failed for tool "decide":')).toBeInTheDocument();
 });
 
 test('with the index off, the Inbox falls back to the running sessions own approvals', async () => {

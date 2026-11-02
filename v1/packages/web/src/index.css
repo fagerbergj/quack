@@ -82,6 +82,9 @@ details[open] > summary > .chev { transform: rotate(90deg); }
 /* Ducks swim left to right, so the flip points head and bill the way they travel. */
 .swimmer { position: absolute; bottom: 14px; animation: swim 26s linear infinite; transform: scaleX(-1); }
 .swimmer > svg { animation: bob 1.6s ease-in-out infinite; }
+/* A failed run: the duck stops in place and the water goes still. */
+.pond.still .swimmer { animation: none; left: 34%; }
+.pond.still .swimmer > svg, .pond.still .waves { animation: none; }
 .reed { transform-origin: bottom center; animation: sway 4s ease-in-out infinite; }
 .quack-bubble { opacity: 0; transform: scale(0.6); transition: all 0.2s; }
 .logo-link:hover .quack-bubble, .logo-link:focus-visible .quack-bubble { opacity: 1; transform: scale(1); }
