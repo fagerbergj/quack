@@ -328,6 +328,22 @@ test('a judged card still failing after the last revision is delivered with its 
   assert.deepEqual(outcome.status === 'completed' && (outcome.result as { card: unknown }).card, { version: 2, revisions: 1, passed: false, score: 1, gatesFailed: ['tone.says_ok'], notes: ['n'] });
 });
 
+test('a judged step whose judge model gives no answer fails the step and attaches no verdict', async () => {
+  const asked = { name: 'asks', version: 1, threshold: 0.5, criteria: [{ id: 'c', checks: [{ id: 'q', weight: 1, question: 'Is it fine?' }] }] };
+  const flow = defineWorkflow({
+    name: 'judged-outage',
+    steps: [{ name: 'card', kind: 'judged', schema: Type.Object({ text: Type.String() }), prompt: () => 'write the text', card: (_c, d) => d as object,
+      judge: () => ({ options: { kind: note, rubric: asked, evidence: async () => ({ review: [{ id: 'r', state: { text: 'x' } }] }), maxRevisions: 1 } }) }],
+  });
+  const busy = fauxAssistantMessage('', { stopReason: 'error', errorMessage: '429 concurrency_limit' });
+  const s = await open(await tmp(), flow, reply('{"text": "ok"}', []), busy);
+  const outcome = await runWorkflow(s.harness, s.root, flow, null);
+  const versions = (await s.harness.snapshot(Artifacts, s.root.id, ctx))!.kinds['test.note'].versions;
+  await s.close();
+  assert.equal(outcome.status, 'failed');
+  assert.equal(versions[0].verdict ?? null, null, 'an outage is not a verdict');
+});
+
 function throwingFlow(builds: { n: number }, failures: number) {
   return defineWorkflow({
     name: 'built',
