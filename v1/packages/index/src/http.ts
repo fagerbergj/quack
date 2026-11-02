@@ -4,7 +4,7 @@ import type { Fact } from './facts.ts';
 import type { IndexStore } from './store.ts';
 
 const MAX_BODY = 1 << 20;
-const KINDS = new Set(['session', 'artifact', 'approval', 'decision', 'failure', 'cost', 'status']);
+const KINDS = new Set(['session', 'artifact', 'approval', 'question', 'failure', 'cost', 'status']);
 const SESSION_KEY = /^[A-Za-z0-9:/#._@-]{1,200}$/;
 
 const send = (res: ServerResponse, status: number, body: unknown) => void res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
@@ -51,7 +51,7 @@ const READS: Record<string, (store: IndexStore, q: URLSearchParams) => Promise<u
   '/index/sessions': async (s) => ({ sessions: await s.sessions() }),
   '/index/artifacts': async (s) => ({ artifacts: await s.artifacts() }),
   '/index/approvals': async (s, q) => ({ approvals: await s.approvals(q.get('state') ?? undefined) }),
-  '/index/decisions': async (s, q) => ({ decisions: await s.decisions(q.get('state') ?? undefined) }),
+  '/index/questions': async (s, q) => ({ questions: await s.questions(q.get('state') ?? undefined) }),
   '/index/failures': async (s, q) => ({ failures: await s.failures(q.get('state') || undefined) }),
 };
 

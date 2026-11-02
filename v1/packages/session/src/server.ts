@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { Artifacts, pendingApprovals, resolveApproval } from '@quack/sdk';
+import { answerQuestion, Artifacts, closeQuestions, failedRows, Failures, pendingApprovals, pendingQuestions, Questions, resolveApproval } from '@quack/sdk';
 import { liveUpgrade } from './live.ts';
 import type { Session } from './runtime.ts';
 
@@ -42,27 +42,20 @@ function parseInvocation(body: unknown): Invocation | string {
   return { input, requestId, wait, title };
 }
 
-/** Questions a person answers and the failures a run ended on, supplied by the extension that owns them (the session package cannot see workflows). */
-export type Decisions = {
-  failures?(): Promise<unknown[]>;
-  pending(): Promise<unknown[]>;
-  answer(step: string, choice: string, by: string): Promise<'ok' | 'not-asking' | 'answered' | 'bad-choice'>;
-};
-
-type Route = (session: Session, req: IncomingMessage, match: RegExpExecArray, decisions?: Decisions) => Promise<[number, unknown]>;
+type Route = (session: Session, req: IncomingMessage, match: RegExpExecArray) => Promise<[number, unknown]>;
 
 const ANSWER_STATUS = { ok: 200, 'not-asking': 404, answered: 409, 'bad-choice': 400 } as const;
 
-async function answer(_: Session, req: IncomingMessage, match: RegExpExecArray, decisions?: Decisions): Promise<[number, unknown]> {
+async function answer(session: Session, req: IncomingMessage, match: RegExpExecArray): Promise<[number, unknown]> {
   const { choice, by } = (await readJson(req)) as Record<string, unknown> | null ?? {};
   if (typeof choice !== 'string' || typeof by !== 'string' || !by) return [400, { error: 'choice and by must be strings' }];
-  let step: string;
+  let id: string;
   try {
-    step = decodeURIComponent(match[1]);
+    id = decodeURIComponent(match[1]);
   } catch {
-    return [400, { error: 'malformed step name' }];
+    return [400, { error: 'malformed question id' }];
   }
-  const result = await decisions?.answer(step, choice, by) ?? 'not-asking';
+  const result = await answerQuestion(session.root, id, choice, by, ctx);
   return [ANSWER_STATUS[result], result === 'ok' ? { answered: true } : { error: result }];
 }
 
@@ -96,10 +89,11 @@ async function artifacts(session: Session): Promise<[number, unknown]> {
 
 async function abort(session: Session): Promise<[number, unknown]> {
   await session.root.abort(ctx);
+  await closeQuestions(session.root, ctx);
   return [200, { aborted: true }];
 }
 
-// The container contract (RUN-3): GET /ping, POST /invocations and /ws, plus the approvals, artifacts and abort of this session.
+// The container contract (RUN-3): GET /ping, POST /invocations and /ws, plus the approvals, questions, failures, artifacts and abort of this session.
 const ROUTES: Array<[string, RegExp, Route]> = [
   ['GET', /^\/ping$/, async (s) => {
     const { busy, waitingOnHuman, wakeAt, note } = await s.standing();
@@ -111,17 +105,17 @@ const ROUTES: Array<[string, RegExp, Route]> = [
   ['GET', /^\/artifacts$/, artifacts],
   ['POST', /^\/abort$/, abort],
   ['POST', /^\/approvals\/([^/]+)$/, decide],
-  ['GET', /^\/decisions$/, async (_s, _r, _m, d) => [200, { decisions: (await d?.pending()) ?? [] }]],
-  ['POST', /^\/decisions\/([^/]+)$/, answer],
-  ['GET', /^\/failures$/, async (_s, _r, _m, d) => [200, { failures: (await d?.failures?.()) ?? [] }]],
+  ['GET', /^\/questions$/, async (s) => [200, { questions: pendingQuestions(await s.harness.snapshot(Questions, s.root.id, ctx)) }]],
+  ['POST', /^\/questions\/([^/]+)$/, answer],
+  ['GET', /^\/failures$/, async (s) => [200, { failures: failedRows(await s.harness.snapshot(Failures, s.root.id, ctx)) }]],
 ];
 
-export function createSessionServer(session: Session, decisions?: Decisions) {
+export function createSessionServer(session: Session) {
   const server = createServer(async (req, res) => {
     try {
       for (const [method, pattern, route] of ROUTES) {
         const match = req.method === method ? pattern.exec(req.url ?? '') : null;
-        if (match) return send(res, ...(await route(session, req, match, decisions)));
+        if (match) return send(res, ...(await route(session, req, match)));
       }
       send(res, 404, { error: 'not found' });
     } catch (err) {

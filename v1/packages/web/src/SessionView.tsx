@@ -1,8 +1,8 @@
 import type { AgentEvent, SnapshotEvent } from '@earendil-works/pi-durable';
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type SubmitEvent } from 'react';
-import { abortRun, socketUrl, type SealedArtifact } from './api.ts';
+import { abortRun, socketUrl, type Failure, type Question, type SealedArtifact } from './api.ts';
 import { Approvals } from './Approvals.tsx';
-import { SessionDecisions } from './Decisions.tsx';
+import { SessionQuestions } from './Questions.tsx';
 import { SessionFailures } from './Failures.tsx';
 import { Artifacts, useArtifacts } from './Artifacts.tsx';
 import { Work } from './Work.tsx';
@@ -12,7 +12,8 @@ import type { SessionTitle } from './kinds.ts';
 import { Transcript, Working } from './Transcript.tsx';
 import { applyEvents, emptyView, snapshotView, touchesApprovals, type View } from './view.ts';
 
-type Frame = SnapshotEvent | { type: 'events'; events: AgentEvent[] } | { type: 'error'; error: string } | { type: 'accepted' };
+type Standing = { questions: Question[]; failures: Failure[] };
+type Frame = SnapshotEvent | ({ type: 'standing' } & Standing) | { type: 'events'; events: AgentEvent[] } | { type: 'error'; error: string } | { type: 'accepted' };
 
 function useSocket(key: string, agent: string | undefined) {
   const ws = useRef<WebSocket | null>(null);
@@ -20,6 +21,7 @@ function useSocket(key: string, agent: string | undefined) {
   const [state, setState] = useState<'connecting' | 'open' | 'reconnecting'>('connecting');
   const [error, setError] = useState('');
   const [approvalTick, setTick] = useState(0);
+  const [standing, setStanding] = useState<Standing>({ questions: [], failures: [] });
   useEffect(() => {
     let attempt = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -48,7 +50,8 @@ function useSocket(key: string, agent: string | undefined) {
         else if (frame.type === 'events') {
           setView((v) => applyEvents(v, frame.events));
           if (touchesApprovals(frame.events)) setTick((t) => t + 1);
-        } else if (frame.type === 'error') setError(frame.error);
+        } else if (frame.type === 'standing') setStanding(frame);
+        else if (frame.type === 'error') setError(frame.error);
       };
     };
     connect();
@@ -67,7 +70,7 @@ function useSocket(key: string, agent: string | undefined) {
     ws.current.send(JSON.stringify({ type: 'input', input, whenBusy }));
     return true;
   };
-  return { view, state, error, setError, approvalTick, send };
+  return { view, state, error, setError, approvalTick, standing, send };
 }
 
 const seg = (on: boolean) =>
@@ -188,7 +191,7 @@ function usePaneStyle(): CSSProperties | undefined {
 }
 
 export function SessionView({ sessionKey, agent, name }: { sessionKey: string; agent?: string; name: SessionTitle }) {
-  const { view, state, error, setError, approvalTick, send } = useSocket(sessionKey, agent);
+  const { view, state, error, setError, approvalTick, standing, send } = useSocket(sessionKey, agent);
   // The landing composer's text seeds this composer.
   const [initial] = useState(() => pendingInput.get(sessionKey) ?? '');
   const [input, setInput] = useState(initial);
@@ -201,8 +204,7 @@ export function SessionView({ sessionKey, agent, name }: { sessionKey: string; a
   const { items, error: artifactsError } = useArtifacts(sessionKey, approvalTick);
   const [work, setWork] = useState<SealedArtifact | null>(null);
   const [approvals, setApprovals] = useState(0);
-  const [questions, setQuestions] = useState(0);
-  const waiting = approvals + questions;
+  const waiting = approvals + standing.questions.length;
   const open = state === 'open';
   const [status, tone] = statusOf(state, waiting, view.running);
   const paneStyle = usePaneStyle();
@@ -217,8 +219,8 @@ export function SessionView({ sessionKey, agent, name }: { sessionKey: string; a
           <Transcript view={view} />
           <Artifacts items={items} error={artifactsError} onOpen={setWork} />
           <Approvals sessionKey={sessionKey} refresh={approvalTick} onCount={setApprovals} />
-          <SessionDecisions sessionKey={sessionKey} onCount={setQuestions} />
-          <SessionFailures sessionKey={sessionKey} />
+          <SessionQuestions sessionKey={sessionKey} items={standing.questions} />
+          <SessionFailures items={standing.failures} />
           {waiting > 0 ? <Working label="Waiting for you" /> : tone === 'run' && <Working label="Working" />}
         </div>
       </div>

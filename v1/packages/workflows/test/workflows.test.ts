@@ -6,9 +6,9 @@ import { after, test } from 'node:test';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider, Type, type FauxResponseFactory, type Message } from '@earendil-works/pi-ai';
 import { defineTool } from '@earendil-works/pi-durable';
-import { Approvals, Artifacts, pendingApprovals, resolveApproval, seal, type ArtifactKind } from '@quack/sdk';
+import { answerQuestion, Approvals, Artifacts, pendingApprovals, pendingQuestions, Questions, resolveApproval, seal, type ArtifactKind } from '@quack/sdk';
 import { openSession } from '@quack/session';
-import { answerDecision, defineWorkflow, outcomeOf, runWorkflow, startWorkflow, watchUntil, WorkflowDoc, workflowExtension, type Workflow } from '../src/index.ts';
+import { defineWorkflow, outcomeOf, runWorkflow, startWorkflow, watchUntil, WorkflowDoc, workflowExtension, type Workflow } from '../src/index.ts';
 
 const dirs: string[] = [];
 after(() => Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true }))));
@@ -26,6 +26,17 @@ function open(dir: string, workflow: Workflow, ...replies: (string | FauxRespons
 type Open = Awaited<ReturnType<typeof open>>;
 const doc = async (s: Open) => (await s.harness.snapshot(WorkflowDoc, s.root.id, ctx))!;
 const waitFor = async (s: Open, pick: Parameters<typeof watchUntil>[1]) => watchUntil((await s.harness.watchDoc(WorkflowDoc, s.root.id, ctx))!, pick);
+
+// The first open question; touching the document first lets it be watched before anything has asked.
+async function asked(s: Open) {
+  await s.root.commit(async (tx) => { await tx.doc(Questions, s.root.id); }, ctx);
+  const watch = (await s.harness.watchDoc(Questions, s.root.id, ctx))!;
+  return new Promise<ReturnType<typeof pendingQuestions>>((resolve) => {
+    const open = () => pendingQuestions(watch.value);
+    if (open().length) return resolve(open());
+    watch.start(async () => { if (open().length) resolve(open()); });
+  }).finally(() => watch.stop());
+}
 
 const note: ArtifactKind = { kind: 'test.note', path: 'note.md' };
 
@@ -171,16 +182,16 @@ test('a decision step waits for a person across a restart and resumes on the ans
   const a = await open(dir, build());
   const id = await startWorkflow(a.harness, a.root, build(), null); // the document exists once the run does
   const running = outcomeOf(a.harness, id).catch(() => undefined);
-  const ask = await waitFor(a, (d) => d.steps[0].ask);
-  assert.equal((ask as { question: string }).question, 'Who starts?');
+  const [ask] = await asked(a);
+  assert.equal(ask.question, 'Who starts?');
   assert.equal((await doc(a)).steps[0].status, 'waiting');
   await a.close();
   await running;
 
   const b = await open(dir, build());
-  assert.equal(await answerDecision(b.root, 'pick', 'Maybe', 'jf', ctx), 'bad-choice', 'only a listed option answers');
-  assert.equal(await answerDecision(b.root, 'pick', 'Pollard', 'jf', ctx), 'ok');
-  assert.equal(await answerDecision(b.root, 'pick', 'Stevenson', 'jf', ctx), 'answered', 'the first answer stands');
+  assert.equal(await answerQuestion(b.root, ask.id, 'Maybe', 'jf', ctx), 'bad-choice', 'only a listed option answers');
+  assert.equal(await answerQuestion(b.root, ask.id, 'Pollard', 'jf', ctx), 'ok');
+  assert.equal(await answerQuestion(b.root, ask.id, 'Stevenson', 'jf', ctx), 'answered', 'the first answer stands');
   const outcome = await runWorkflow(b.harness, b.root, build(), null);
   assert.equal(outcome.status === 'completed' && (outcome.result as { announce: string }).announce, 'start Pollard');
   await b.close();

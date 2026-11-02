@@ -47,19 +47,19 @@ export function createStore(backend: Backend) {
       await ensure();
       await backend.forget(session);
     },
-    /** Whether the session has an approval or decision still waiting on a person. */
+    /** Whether the session has an approval or question still waiting on a person. */
     async waiting(session: string) {
-      return (await facts(['approval', 'decision'])).some((f) => f.session === session && field(f, 'state') === 'pending');
+      return (await facts(['approval', 'question'])).some((f) => f.session === session && field(f, 'state') === 'pending');
     },
     async artifacts() {
       return (await facts(['artifact'])).sort(newestFirst).map((f) => ({
         session: f.session, kind: field(f, 'kind'), version: field(f, 'version'), hash: field(f, 'hash'), verdict: field(f, 'verdict'), links: field(f, 'links') ?? [], sealedAt: f.at,
       }));
     },
-    async decisions(state?: string) {
-      return (await facts(['decision'])).filter((f) => !state || field(f, 'state') === state).sort(newestFirst).map((f) => ({
-        session: f.session, step: field(f, 'step'), question: field(f, 'question'), options: field(f, 'options'), evidence: field(f, 'evidence'),
-        state: field(f, 'state'), choice: field(f, 'choice'), by: field(f, 'by'), at: f.at,
+    async questions(state?: string) {
+      return (await facts(['question'])).filter((f) => !state || field(f, 'state') === state).sort(newestFirst).map((f) => ({
+        session: f.session, id: f.id.slice('question:'.length), question: field(f, 'question'), options: field(f, 'options'), evidence: field(f, 'evidence'),
+        state: field(f, 'state'), choice: field(f, 'choice'), by: field(f, 'by'), at: field(f, 'askedAt'),
       }));
     },
     async failures(state = 'failed') {

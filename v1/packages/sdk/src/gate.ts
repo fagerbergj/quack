@@ -41,6 +41,7 @@ async function waitForVerdict(watch: { value: Readonly<ApprovalsDoc> | null; sta
     return await new Promise<Verdict>((resolve, reject) => {
       const found = () => watch.value?.items[id]?.verdict;
       if (found()) return resolve(plain(found()!));
+      if (ctx.abortSignal?.aborted) return reject(ctx.abortSignal.reason);
       ctx.abortSignal?.addEventListener('abort', () => reject(ctx.abortSignal!.reason), { once: true });
       watch.start(async () => { if (found()) resolve(plain(found()!)); });
     });

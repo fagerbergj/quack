@@ -1,11 +1,9 @@
 import { useEffect, useState } from 'react';
-import { answerDecision, listDecisions, type Decision } from './api.ts';
+import { answerQuestion, type Question } from './api.ts';
 import { age } from './sessions.ts';
 
-const POLL_MS = 10_000;
-
-/** A question a workflow escalated to a person; each option is a button. */
-export function DecisionCard({ sessionKey, d, now, title, done }: { sessionKey: string; d: Decision; now: number; title?: string; done: () => void }) {
+/** A question an extension escalated to a person; each option is a button. */
+export function QuestionCard({ sessionKey, d, now, title, done }: { sessionKey: string; d: Question; now: number; title?: string; done?: () => void }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [answered, setAnswered] = useState<number>();
@@ -13,11 +11,11 @@ export function DecisionCard({ sessionKey, d, now, title, done }: { sessionKey: 
     if (busy) return;
     setBusy(true);
     setError('');
-    void answerDecision(sessionKey, d.step, choice).then(() => { setAnswered(d.askedAt); done(); }, (e: Error) => setError(e.message)).finally(() => setBusy(false));
+    void answerQuestion(sessionKey, d.id, choice).then(() => { setAnswered(d.askedAt); done?.(); }, (e: Error) => setError(e.message)).finally(() => setBusy(false));
   };
-  if (answered === d.askedAt) return null; // a re-ask of the same step has a newer askedAt
+  if (answered === d.askedAt) return null; // a re-ask has a newer askedAt
   return (
-    <section aria-label="Decision" className="flex flex-col gap-2.5 rounded-2xl border border-warning/40 bg-warm/60 p-3.5">
+    <section aria-label="Question" className="flex flex-col gap-2.5 rounded-2xl border border-warning/40 bg-warm/60 p-3.5">
       <div className="flex items-center gap-2">
         <span className="text-[11px] font-bold tracking-[.06em] text-warning">NEEDS YOU</span>
         {d.askedAt > 0 && <time className="ml-auto text-xs tabular-nums text-muted">{age(new Date(d.askedAt).toISOString(), now)}</time>}
@@ -40,17 +38,13 @@ export function DecisionCard({ sessionKey, d, now, title, done }: { sessionKey: 
   );
 }
 
-/** The session view's open questions; a workflow raises one without any stream event, so it polls. */
-export function SessionDecisions({ sessionKey, onCount }: { sessionKey: string; onCount?: (n: number) => void }) {
-  const [items, setItems] = useState<Decision[]>([]);
-  const [tick, setTick] = useState(0);
+/** The session view's open questions, as the session's socket reports them. */
+export function SessionQuestions({ sessionKey, items }: { sessionKey: string; items: Question[] }) {
+  // A waiting session emits no frames, so the age label needs its own tick.
+  const [now, setNow] = useState(Date.now());
   useEffect(() => {
-    let live = true;
-    const load = () => listDecisions(sessionKey).then((d) => live && setItems(d), () => {});
-    void load();
-    const timer = setInterval(load, POLL_MS);
-    return () => { live = false; clearInterval(timer); };
-  }, [sessionKey, tick]);
-  useEffect(() => onCount?.(items.length), [items.length]);
-  return <>{items.map((d) => <DecisionCard key={d.step} sessionKey={sessionKey} d={d} now={Date.now()} done={() => setTick((t) => t + 1)} />)}</>;
+    const t = setInterval(() => setNow(Date.now()), 15_000);
+    return () => clearInterval(t);
+  }, []);
+  return <>{items.map((q) => <QuestionCard key={q.id} sessionKey={sessionKey} d={q} now={now} />)}</>;
 }

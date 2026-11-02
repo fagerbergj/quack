@@ -2,6 +2,7 @@ import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { watchEvents } from '@earendil-works/pi-durable';
+import { failedRows, Failures, pendingQuestions, Questions } from '@quack/sdk';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { Session } from './runtime.ts';
 
@@ -27,6 +28,18 @@ function parseClient(data: string): ClientInput | string {
   return { type, input, requestId, whenBusy };
 }
 
+// Open questions and failures raise no stream event, so their documents ride the socket as a `standing` frame instead of being polled.
+async function watchStanding(session: Session, ws: WebSocket) {
+  const { harness, root } = session;
+  // watchDoc does not create a document, so touch both first; a session that never asked still gets its watch.
+  await root.commit(async (tx) => { await tx.doc(Questions, root.id); await tx.doc(Failures, root.id); }, BACKGROUND_CONTEXT);
+  const [questions, failures] = await Promise.all([harness.watchDoc(Questions, root.id, BACKGROUND_CONTEXT), harness.watchDoc(Failures, root.id, BACKGROUND_CONTEXT)]);
+  const push = () => ws.readyState === ws.OPEN && ws.send(JSON.stringify({ type: 'standing', questions: pendingQuestions(questions?.value), failures: failedRows(failures?.value) }));
+  push();
+  for (const watch of [questions, failures]) watch?.start(async () => void push());
+  ws.on('close', () => void Promise.all([questions?.stop(), failures?.stop()]));
+}
+
 // Streams pi-durable's own events (snapshot, then deltas) with no quack vocabulary on top (A9).
 async function stream(session: Session, ws: WebSocket) {
   const events = await watchEvents(session.harness, session.root.id, BACKGROUND_CONTEXT);
@@ -44,6 +57,7 @@ async function stream(session: Session, ws: WebSocket) {
       ws.send(JSON.stringify({ type: 'error', error: err instanceof Error ? err.message : String(err) }));
     }
   });
+  await watchStanding(session, ws);
 }
 
 export function liveUpgrade(session: Session) {

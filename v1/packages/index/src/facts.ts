@@ -1,10 +1,9 @@
 import type { Context } from '@earendil-works/chord/context';
 import { defineDoc, type Conversation, type Harness, type JsonObject, type UsageState } from '@earendil-works/pi-durable';
-import { WorkflowDoc, type StepRecord } from '@quack/workflows';
-import { Approvals, Artifacts, type Approval, type SealedArtifact } from '@quack/sdk';
+import { Approvals, Artifacts, Failures, Questions, type Approval, type FailureRow, type Question, type SealedArtifact } from '@quack/sdk';
 
 /** One thing the index records about a session. `rev` only grows, so an older copy never overwrites a newer one. */
-export type Fact = { id: string; kind: 'session' | 'artifact' | 'approval' | 'decision' | 'failure' | 'cost' | 'status'; rev: number; at: number; data: JsonObject };
+export type Fact = { id: string; kind: 'session' | 'artifact' | 'approval' | 'question' | 'failure' | 'cost' | 'status'; rev: number; at: number; data: JsonObject };
 export type SessionMeta = { key: string; agent: string; version: number | null };
 
 type OutboxDoc = { acked: Record<string, number>; status: { state: 'idle' | 'running'; seq: number; at: number } };
@@ -31,23 +30,22 @@ function approvalFacts(approvals: { items: Record<string, Approval> } | undefine
   });
 }
 
-// The ask time orders the revisions, so a later run's question replaces an earlier run's of the same step.
-function decisionFacts(steps: Readonly<StepRecord[]> | undefined): Fact[] {
-  return (steps ?? []).filter((s) => s.ask).map((s): Fact => {
-    const { question, options, evidence, at } = s.ask!;
-    const state = s.answer ? 'answered' : s.status === 'waiting' ? 'pending' : 'closed';
+// An answer or a close is the second revision of a question; ids carry the asking task, so a later run's question is a new row.
+function questionFacts(questions: { items: Record<string, Question> } | undefined): Fact[] {
+  return Object.entries(questions?.items ?? {}).map(([id, q]): Fact => {
+    const state = q.answer ? 'answered' : q.closed ? 'closed' : 'pending';
     return {
-      id: `decision:${s.name}`, kind: 'decision', rev: (at ?? 0) * 2 + (state === 'pending' ? 1 : 2), at: at ?? 0,
-      data: { step: s.name, question, options, evidence: evidence ?? null, state, choice: s.answer?.choice ?? null, by: s.answer?.by ?? null },
+      id: `question:${id}`, kind: 'question', rev: state === 'pending' ? 1 : 2, at: q.answer?.at ?? q.askedAt,
+      data: { question: q.question, options: q.options, evidence: q.evidence, askedAt: q.askedAt, state, choice: q.answer?.choice ?? null, by: q.answer?.by ?? null },
     };
   });
 }
 
 // Every step of the current run is a row, and the run's task id orders the revisions, so a later run supersedes an earlier run's failure.
-function failureFacts(steps: Readonly<StepRecord[]> | undefined, task: string | null | undefined): Fact[] {
-  return (steps ?? []).map((s): Fact => {
-    const failed = s.status === 'failed' && s.error !== null;
-    return { id: `failure:${s.name}`, kind: 'failure', rev: Number(task ?? 0) * 2 + (failed ? 2 : 1), at: (s.startedAt ?? 0) + (s.durationMs ?? 0), data: { step: s.name, error: failed ? s.error! : '', state: failed ? 'failed' : 'cleared' } };
+function failureFacts(failures: { items: Record<string, FailureRow> } | undefined): Fact[] {
+  return Object.entries(failures?.items ?? {}).map(([step, r]): Fact => {
+    const failed = r.error !== null;
+    return { id: `failure:${step}`, kind: 'failure', rev: r.run * 2 + (failed ? 2 : 1), at: r.at, data: { step, error: r.error ?? '', state: failed ? 'failed' : 'cleared' } };
   });
 }
 
@@ -59,13 +57,13 @@ function costFact(usage: Readonly<UsageState>, now: number): Fact[] {
 
 // harness.usage totals every conversation, so decision forks and subagents count. Derived from the log's current documents, so a replay of the log yields the same facts as live publishing.
 export async function collectFacts(harness: Harness, root: Conversation, meta: SessionMeta, now: number, ctx: Context): Promise<Fact[]> {
-  const [artifacts, approvals, workflow, outbox] = await Promise.all([
-    harness.snapshot(Artifacts, root.id, ctx), harness.snapshot(Approvals, root.id, ctx), harness.snapshot(WorkflowDoc, root.id, ctx), harness.snapshot(Outbox, root.id, ctx),
+  const [artifacts, approvals, questions, failures, outbox] = await Promise.all([
+    harness.snapshot(Artifacts, root.id, ctx), harness.snapshot(Approvals, root.id, ctx), harness.snapshot(Questions, root.id, ctx), harness.snapshot(Failures, root.id, ctx), harness.snapshot(Outbox, root.id, ctx),
   ]);
   const status = outbox?.status;
   return [
     { id: 'session', kind: 'session', rev: 1, at: 0, data: { agent: meta.agent, version: meta.version } },
-    ...artifactFacts(artifacts), ...approvalFacts(approvals), ...decisionFacts(workflow?.steps), ...failureFacts(workflow?.steps, workflow?.task), ...costFact(await harness.usage(ctx), now),
+    ...artifactFacts(artifacts), ...approvalFacts(approvals), ...questionFacts(questions), ...failureFacts(failures), ...costFact(await harness.usage(ctx), now),
     ...(status?.seq ? [{ id: 'status', kind: 'status' as const, rev: status.seq, at: status.at, data: { state: status.state } }] : []),
   ];
 }
