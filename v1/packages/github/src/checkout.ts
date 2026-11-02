@@ -9,6 +9,8 @@ export type SessionConfig = { serviceUrl: string; serviceToken: string; repoDir?
 
 export type PullRequestRecord = {
   owner: string; repo: string; number: number; title: string; body: string; author: string | null;
+  /** open, closed or merged; a closed or merged PR is not reviewed. */
+  state: 'open' | 'closed' | 'merged';
   headSha: string; headRef: string; baseRef: string;
   /** Pins the base, as a replay does: only it and the head are fetched, so later history, merges and tags stay out of the clone. */
   baseSha?: string;
@@ -40,6 +42,8 @@ export async function fetchRecord(config: SessionConfig, owner: string, repo: st
 }
 
 const alreadyPosted = (doc: { posted?: number[]; reviewed?: Record<string, string> } | undefined, sha: string) => !!doc?.posted?.some((v) => doc.reviewed?.[String(v)] === sha);
+const skipReason = (pr: PullRequestRecord, prior: Parameters<typeof alreadyPosted>[0]) =>
+  pr.state !== 'open' ? 'the pull request is closed; nothing to do' : alreadyPosted(prior, pr.headSha) ? `already reviewed ${pr.headSha}: nothing to do this turn` : '';
 const staleNote = (asked: string | undefined, live: string) => (asked && asked !== live ? `The request was for ${asked}, an older head; this reviews the live head ${live}.` : '');
 
 async function conventions(api: ToolExecutionApi, dir: string, ctx: Context): Promise<string> {
@@ -64,7 +68,8 @@ export function checkoutTool(config: SessionConfig) {
       if (!api.env) return { output: [{ type: 'text', text: 'this session has no workspace' }], isError: true };
       const pr = await fetchRecord(config, owner, repo, args.number);
       const prior = await api.snapshot(PullRequestDoc, api.conversationId, ctx);
-      if (alreadyPosted(prior, pr.headSha)) return { output: [{ type: 'text', text: `already reviewed ${pr.headSha}: nothing to do this turn` }] };
+      const skip = skipReason(pr, prior);
+      if (skip) return { output: [{ type: 'text', text: skip }] };
       const remote = `${config.gitBaseUrl ?? 'https://github.com'}/${owner}/${repo}.git`;
       const cloned = (await api.env.readTextFile(`${dir}/.git/HEAD`, ctx)).ok;
       if (!cloned && pr.baseSha) await git(api, ['init', '-q', dir], config, remote, ctx);

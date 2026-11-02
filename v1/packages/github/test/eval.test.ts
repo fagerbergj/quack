@@ -10,7 +10,7 @@ test('the review adapter blocks on request_changes only, and serves the pinned p
   assert.equal(adapter.blocks!('## Verdict\napprove\n'), false);
 });
 
-const pr: PullRequestRecord = { owner: 'acme', repo: 'widgets', number: 7, title: 't', body: '', author: 'a', headSha: 'abc', headRef: 'f', baseRef: 'main', checks: [], linkedIssues: [] };
+const pr: PullRequestRecord = { owner: 'acme', repo: 'widgets', number: 7, title: 't', body: '', author: 'a', state: 'open', headSha: 'abc', headRef: 'f', baseRef: 'main', checks: [], linkedIssues: [] };
 
 test('a replay is served the pinned pull request, and its reviews are captured, never posted', async () => {
   const svc = await evalService({ pr });

@@ -1111,8 +1111,13 @@ test('the pinned artifact line reads Previous review, without a tick, while a ne
   ws.frame({ type: 'events', events: [{ type: 'run_start', inputs: [] }] });
   const line = (await screen.findByText('Previous review')).closest('li')!;
   expect(within(line).queryByRole('img', { name: 'Double-checked' })).toBeNull();
+  expect(within(line).queryByRole('region', { name: 'Review' })).toBeNull();
+  expect(line).not.toHaveTextContent('Double-checked');
   ws.frame({ type: 'events', events: [{ type: 'run_end', inputs: [] }] });
   expect(await screen.findByText('Review posted')).toBeInTheDocument();
+  const done = screen.getByText('Review posted').closest('li')!;
+  expect(within(done).getByRole('region', { name: 'Review' })).toBeInTheDocument();
+  expect(done).toHaveTextContent('Double-checked');
   // The card carries the one Posted link; the pinned line drops its own.
   expect(within(screen.getByText('Review posted').closest('li')!).getAllByRole('link', { name: /Posted/ })).toHaveLength(1);
 });

@@ -39,17 +39,19 @@ test('the review card shows the seal, counts, a posted link, findings with their
   expect(within(card).getAllByText('Why and a fix')).toHaveLength(2);
   expect(within(card).getByText('Verified · 6')).toBeInTheDocument();
   expect(within(card).getByText('Notes · 3')).toBeInTheDocument();
-  expect(card).toHaveTextContent('✓ Checks passed · 1.00');
+  expect(card).toHaveTextContent('Double-checked');
   // Verified, Notes and the full review start closed.
   expect(card.querySelectorAll('details[open]')).toHaveLength(0);
 });
 
 test('an approval with only a nit is approved, and a failed gate says so', () => {
-  render(<>{reviewCard(sealed(md('review-approve'), { verdict: { passed: false, gatesFailed: [], score: 0.54, checks: [] } }))}</>);
+  render(<>{reviewCard(sealed(md('review-approve'), { verdict: { passed: false, gatesFailed: [], score: 0.54, checks: [{ criterion: 'c', id: 'tests', label: 'Tests cover the change', weight: 1, met: 0, notes: [] }] } }))}</>);
   const card = screen.getByRole('region', { name: 'Review' });
   expect(within(card).getByText('Approved')).toBeInTheDocument();
   expect(card).toHaveTextContent('1 nit');
-  expect(card).toHaveTextContent("Didn't pass its checks · 0.54");
+  expect(card).toHaveTextContent("Didn't pass its checks");
+  expect(card).not.toHaveTextContent('0.54');
+  expect(within(card).getByText('Tests cover the change')).toBeInTheDocument();
   expect(within(card).queryByRole('link', { name: /Posted/ })).toBeNull();
 });
 
