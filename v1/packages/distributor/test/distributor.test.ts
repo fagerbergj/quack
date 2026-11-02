@@ -471,6 +471,78 @@ test('a drain records active sessions as due now, so the next distributor resume
   assert.deepEqual(fleet.driver.running(), ['github:a#7']);
 });
 
+test('a crash after a sweep saw a session busy still restarts it on the next distributor', async () => {
+  const fleet = await fakeFleet(() => ({ status: 'HealthyBusy', waitingOnHuman: false, wake: {} }));
+  const old = fleet.start();
+  await fleet.driver.ensure('sleeper:trends');
+  await old.sweep();
+  assert.equal(fleet.wakes.get('sleeper:trends'), fleet.now(), 'recorded by the sweep, before any shutdown');
+  await fleet.driver.stop('sleeper:trends');
+
+  const next = fleet.start();
+  await next.sweep();
+  fleet.advance(0);
+  await next.sweep();
+  assert.deepEqual(fleet.driver.running(), ['sleeper:trends']);
+});
+
+test('a session that went idle after a busy sweep is not restarted after a crash', async () => {
+  let status = 'HealthyBusy';
+  const fleet = await fakeFleet(() => ({ status, waitingOnHuman: false, wake: {} }));
+  const old = fleet.start();
+  await fleet.driver.ensure('sleeper:trends');
+  await old.sweep();
+  status = 'Healthy';
+  await old.sweep();
+  assert.equal(fleet.wakes.has('sleeper:trends'), false);
+  await fleet.driver.stop('sleeper:trends');
+  const next = fleet.start();
+  await next.sweep();
+  assert.deepEqual(fleet.driver.running(), []);
+});
+
+test('a drain whose ping fails keeps the busy marker from the last sweep', async () => {
+  let fail = false;
+  const fleet = await fakeFleet(() => ({ status: 'HealthyBusy', waitingOnHuman: false, wake: {} }));
+  const server = fleet.start();
+  await fleet.driver.ensure('sleeper:trends');
+  await server.sweep();
+  const ensure = fleet.driver.ensure;
+  fleet.driver.ensure = async (key: string) => { if (fail) throw new Error('down'); return ensure(key); };
+  fail = true;
+  await server.drain();
+  assert.equal(fleet.wakes.get('sleeper:trends'), fleet.now());
+});
+
+test('a busy session with a pending sleep gets that sleep back when it goes idle', async () => {
+  const sleepAt = 1_000_000 + HOUR;
+  let busy = true;
+  const fleet = await fakeFleet(() => ({ status: busy ? 'HealthyBusy' : 'Healthy', waitingOnHuman: false, wake: { at: sleepAt } }));
+  const server = fleet.start().listen(0);
+  await new Promise((r) => server.once('listening', r));
+  // A request sets the use clock, so the idle sweep keeps the session running and only the revert can write the record.
+  await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/sessions/sleeper%3Atrends/ping`);
+  await server.sweep();
+  assert.equal(fleet.wakes.get('sleeper:trends'), fleet.now());
+  busy = false;
+  await server.sweep();
+  assert.equal(fleet.wakes.get('sleeper:trends'), sleepAt);
+  assert.deepEqual(fleet.driver.running(), ['sleeper:trends']);
+});
+
+test('a marker write that fails is retried by the next sweep', async () => {
+  const fleet = await fakeFleet(() => ({ status: 'HealthyBusy', waitingOnHuman: false, wake: {} }));
+  const set = fleet.driver.setWake;
+  let failed = false;
+  fleet.driver.setWake = async (key: string, at: number | undefined) => { if (!failed) { failed = true; throw new Error('ENOSPC'); } return set(key, at); };
+  const server = fleet.start();
+  await fleet.driver.ensure('sleeper:trends');
+  await server.sweep();
+  assert.equal(fleet.wakes.has('sleeper:trends'), false);
+  await server.sweep();
+  assert.equal(fleet.wakes.get('sleeper:trends'), fleet.now());
+});
+
 test('active work is never stopped', async () => {
   const fleet = await fakeFleet(() => ({ status: 'HealthyBusy', waitingOnHuman: false, wake: {} }));
   const server = fleet.start();
