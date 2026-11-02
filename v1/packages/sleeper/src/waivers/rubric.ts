@@ -21,14 +21,19 @@ function dropRoleMatchesRoster(artifact: string, ev: Evidence): CodeResult {
   return share(rows.length - bad.length, rows.length, `the drop of ${bad.map((r) => r.drop.player.name).join(', ')} is mislabeled or a starter not stated as one`);
 }
 
-// Makes add-minus-drop checkable from the facts, never the card; a player with no figure is not compared.
+// A dearer drop than the add is fine when no bench player is cheaper (an empty slot scores zero); a player with no figure is not compared.
 function dropNotWorthMore(artifact: string, ev: Evidence): CodeResult {
   const f = factsOf(ev);
   const rows = parse(artifact).candidates;
-  const pair = (r: Candidate) => [worth(f.roster[r.drop.player.id]), worth(f.free[r.player.id])] as const;
-  const bad = rows.filter((r) => { const [d, a] = pair(r); return d !== null && a !== null && d > a; });
-  const detail = bad.map((r) => `${r.drop.player.name} (${pair(r)[0]}) is worth more than ${r.player.name} (${pair(r)[1]})`).join('; ');
-  return share(rows.length - bad.length, rows.length, `the drop costs more than the add: ${detail}`);
+  const bench = Object.values(f.roster).filter((p) => p.role === 'bench').flatMap((p) => { const w = worth(p); return w === null ? [] : [{ p, w }]; });
+  const flaws = rows.flatMap((r) => {
+    const d = worth(f.roster[r.drop.player.id]);
+    const a = worth(f.free[r.player.id]);
+    if (d === null || a === null || d <= a) return [];
+    const cheap = bench.filter((b) => b.p.id !== r.drop.player.id && b.w < d).sort((x, y) => x.w - y.w)[0];
+    return cheap ? [`${r.drop.player.name} (${d}) is worth more than ${r.player.name} (${a}); drop ${cheap.p.name} (${cheap.w}) first`] : [];
+  });
+  return share(rows.length - flaws.length, rows.length, `the drop costs more than the add: ${flaws.join('; ')}`);
 }
 
 function widelyOwnedAccounted(artifact: string, ev: Evidence): CodeResult {
@@ -73,7 +78,7 @@ export function waiversEvidence(f: WaiverFacts) {
 // The audit's waivers table (docs/v1/audits/sleeper.md), unreplayed: D45 asks for replay before any weight gates delivery.
 export const waiversRubric: Rubric = {
   name: 'sleeper.waivers',
-  version: 3,
+  version: 4,
   threshold: 0.8,
   criteria: [
     { id: 'faithful_to_tools', checks: [
