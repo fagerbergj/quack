@@ -10,3 +10,4 @@ export * from './trends/index.ts';
 export * from './history/index.ts';
 export * from './report/index.ts';
 export { manifest } from './manifest.ts';
+export { CHAT_PROMPT, chatTools, withChat } from './chat.ts';
