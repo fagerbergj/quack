@@ -150,6 +150,7 @@ async function prFacts(app: GithubApp, owner: string, repo: string, number: numb
   const issues = await Promise.all(closes.map((n) => app.asInstallation(owner, repo, 'GET', `/repos/${owner}/${repo}/issues/${n}`).then((r) => r.json)));
   return {
     owner, repo, number, title: pr.title, body: pr.body ?? '', author: pr.user?.login,
+    state: pr.merged ? 'merged' : pr.state === 'closed' ? 'closed' : 'open',
     headSha: pr.head.sha, headRef: pr.head.ref, baseRef: pr.base.ref,
     checks: (checks?.check_runs ?? []).map((c: any) => ({ name: c.name, status: c.status, conclusion: c.conclusion })),
     linkedIssues: issues.filter(Boolean).map((i: any) => ({ number: i.number, title: i.title, body: i.body ?? '' })),

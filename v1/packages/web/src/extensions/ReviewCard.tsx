@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import type { SealedArtifact } from '../api.ts';
 import { Markdown } from '../Markdown.tsx';
+import { Verdict } from './sleeper/parts.tsx';
 import { parseReview, type Finding, type Review } from './review.ts';
 
 const VERDICT: Record<string, { label: string; tone: string; band: string }> = {
@@ -71,11 +72,10 @@ function List({ label, items }: { label: string; items: string[] }) {
 }
 
 function Footer({ a, md }: { a: SealedArtifact; md: string }) {
-  const v = a.verdict;
   return (
     <div className="border-t border-line px-3.5">
       <div className="flex min-h-11 items-center gap-2 text-[12.5px]">
-        {v && <span className={v.passed ? 'text-success' : 'text-danger'}>{`${v.passed ? '✓ Checks passed' : "Didn't pass its checks"} · ${v.score.toFixed(2)}`}</span>}
+        <Verdict artifact={a} />
       </div>
       <details className="border-t border-line">
         <summary className={summary}><span>Full review</span><Chev /></summary>

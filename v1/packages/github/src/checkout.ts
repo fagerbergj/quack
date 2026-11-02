@@ -9,6 +9,8 @@ export type SessionConfig = { serviceUrl: string; serviceToken: string; repoDir?
 
 export type PullRequestRecord = {
   owner: string; repo: string; number: number; title: string; body: string; author: string | null;
+  /** open, closed or merged; a closed or merged PR is not reviewed. */
+  state: 'open' | 'closed' | 'merged';
   headSha: string; headRef: string; baseRef: string;
   /** Pins the base, as a replay does: only it and the head are fetched, so later history, merges and tags stay out of the clone. */
   baseSha?: string;
@@ -63,6 +65,7 @@ export function checkoutTool(config: SessionConfig) {
       if (!owner || !repo) return { output: [{ type: 'text', text: 'repository must be owner/repo' }], isError: true };
       if (!api.env) return { output: [{ type: 'text', text: 'this session has no workspace' }], isError: true };
       const pr = await fetchRecord(config, owner, repo, args.number);
+      if (pr.state !== 'open') return { output: [{ type: 'text', text: 'the pull request is closed; nothing to do' }] };
       const prior = await api.snapshot(PullRequestDoc, api.conversationId, ctx);
       if (alreadyPosted(prior, pr.headSha)) return { output: [{ type: 'text', text: `already reviewed ${pr.headSha}: nothing to do this turn` }] };
       const remote = `${config.gitBaseUrl ?? 'https://github.com'}/${owner}/${repo}.git`;
