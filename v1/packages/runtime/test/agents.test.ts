@@ -87,8 +87,14 @@ test('the shipped sleeper-trends definition loads its prompt and binds the trend
   assert.ok(agent.extensions!.some((e) => e.name === 'quack.workflows' && (e as { dispatch?: unknown }).dispatch));
 });
 
+test('a session process inherits the deployment-level Langfuse variables whatever its agent selects', () => {
+  const host = { PATH: '/bin', LANGFUSE_BASE_URL: 'http://lf', LANGFUSE_PUBLIC_KEY: 'pk', LANGFUSE_SECRET_KEY: 'sk', QUACK_INDEX_TOKEN: 'idx' };
+  const env = sessionEnv(fileURLToPath(new URL('../../../agents/reviewer/agent.json', import.meta.url)), host);
+  assert.deepEqual(Object.keys(env).sort(), ['LANGFUSE_BASE_URL', 'LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY', 'PATH']);
+});
+
 test('a reviewer session process inherits its own service token and nothing else secret', () => {
-  const host = { PATH: '/bin', HOME: '/h', QUACK_GH_SERVICE_URL: 'u', QUACK_GH_SERVICE_TOKEN: 'gh', QUACK_EXA_API_KEY: 'exa', QUACK_INDEX_TOKEN: 'idx', QUACK_SLEEPER_TOKEN: 's', LANGFUSE_SECRET_KEY: 'l' };
+  const host = { PATH: '/bin', HOME: '/h', QUACK_GH_SERVICE_URL: 'u', QUACK_GH_SERVICE_TOKEN: 'gh', QUACK_EXA_API_KEY: 'exa', QUACK_INDEX_TOKEN: 'idx', QUACK_SLEEPER_TOKEN: 's', QUACK_OTHER_SECRET: 'l' };
   const env = sessionEnv(fileURLToPath(new URL('../../../agents/reviewer/agent.json', import.meta.url)), host);
   assert.deepEqual(Object.keys(env).sort(), ['HOME', 'PATH', 'QUACK_GH_SERVICE_TOKEN', 'QUACK_GH_SERVICE_URL']);
 });
