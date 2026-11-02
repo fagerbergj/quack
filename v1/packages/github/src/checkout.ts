@@ -16,8 +16,8 @@ export type PullRequestRecord = {
   linkedIssues: Array<{ number: number; title: string; body: string }>;
 };
 
-/** posted: versions of the review already sent, so none goes out twice; postedThisCheckout: the one a run sent. */
-export const PullRequestDoc = defineDoc<{ pr: PullRequestRecord | null; posted?: number[]; postedThisCheckout?: number }>({
+/** reviewed: the head each version was first judged under, so a version never posts against a later checkout. posted: versions of the review already sent, so none goes out twice; postedThisCheckout: the one a run sent. */
+export const PullRequestDoc = defineDoc<{ pr: PullRequestRecord | null; posted?: number[]; postedThisCheckout?: number; reviewed?: Record<string, string> }>({
   kind: 'github.pr', version: 1, scope: 'conversation', history: 'latest', fork: 'current', initial: () => ({ pr: null }), checkpointWhen: () => false,
 });
 

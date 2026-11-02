@@ -47,7 +47,7 @@ export const applyEvents = (v: View, events: readonly AgentEvent[]) => events.re
 export const touchesApprovals = (events: readonly AgentEvent[]) =>
   events.some((e) => e.type === 'tool_execution_start' || e.type === 'tool_execution_end' || e.type === 'run_end');
 
-const POSTED = /^Posted review v(\d+) as \w+: (https:\/\/\S+)$/;
+const POSTED = /^Posted as \w+: (https:\/\/\S+)$/m;
 
-/** The URL post_review reports, from its result text. */
-export const postedUrl = (text: string) => POSTED.exec(text.trim())?.[2];
+/** The URL submit_review reports once it posts, from its result text. */
+export const postedUrl = (text: string) => POSTED.exec(text.trim())?.[1];

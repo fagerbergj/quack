@@ -51,7 +51,7 @@ The delivery id is the request id, so redeliveries never duplicate work (HAR-5).
 4. Writes everything to a `github.evidence` document that the role prompt renders (G2).
 
 **Tools:** read-only GitHub queries (PR, checks, threads) and the coding tools with unrestricted shell (G3). These tools are gated actions:
-- `github_post_review`
+- `github_post_review` (posted by the extension when the judge clears a version, not a model tool)
 - `github_comment`
 - `github_open_pr`
 - `git push`
