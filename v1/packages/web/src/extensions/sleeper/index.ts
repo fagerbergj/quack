@@ -4,14 +4,15 @@ import { Sleeper } from './Sleeper.tsx';
 
 const KEY = /^sleeper:[^:]+:(\d+):(lineup|waivers)$/;
 
-const JOBS = ['lineup', 'waivers', 'trades', 'trends', 'history'];
+const NAMES: Record<string, string> = { lineup: 'Lineup card', waivers: 'Waivers card', 'trade-finder': 'Trade ideas', trade: 'Trade check', trends: 'Trends', history: 'League history' };
 
-// A card names its own job; a recap names its week.
+// Each card kind names its job; weekly kinds name their week.
 function cardName(a: SealedArtifact): string {
   try {
-    const c = JSON.parse(a.content) as { kind?: string; week?: unknown };
-    if (c.kind && JOBS.includes(c.kind)) return `${sentence(c.kind)} card`;
-    if (typeof c.week === 'number' && c.kind && /^(report|recap|review)$/.test(c.kind)) return `Week ${c.week} recap`;
+    const c = JSON.parse(a.content) as { kind?: string; week?: unknown; past?: unknown };
+    if (c.kind && NAMES[c.kind]) return NAMES[c.kind]!;
+    if (c.kind === 'digest' && typeof c.week === 'number') return `Week ${c.week} ${c.past ? 'recap' : 'preview'}`;
+    if (c.kind === 'retro' && typeof c.week === 'number') return `Week ${c.week} retro`;
   } catch { /* an unparsable card still reads as a card */ }
   return 'Card';
 }

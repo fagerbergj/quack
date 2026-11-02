@@ -922,10 +922,17 @@ test('the transcript line names each artifact in plain words and never shows the
   const fail = { passed: false, gatesFailed: [], score: 0.2, checks: [] };
   routes['GET /sessions/ui%3Au1/artifacts'] = {
     artifacts: [
-      art('sleeper.cards', 1, JSON.stringify({ kind: 'lineup', starters: [] }), { verdict: pass }),
-      art('sleeper.cards', 2, JSON.stringify({ kind: 'waivers' }), { verdict: pass }),
-      art('sleeper.cards', 3, JSON.stringify({ kind: 'report', week: 7 }), { verdict: pass }),
-      art('sleeper.cards', 4, JSON.stringify({ kind: 'lineup', starters: [] }), { verdict: fail }),
+      art('sleeper.cards', 10, JSON.stringify({ kind: 'lineup', starters: [] }), { verdict: pass }),
+      art('sleeper.cards', 11, JSON.stringify({ kind: 'waivers' }), { verdict: pass }),
+      art('sleeper.cards', 12, JSON.stringify({ kind: 'trade-finder' }), { verdict: pass }),
+      art('sleeper.cards', 13, JSON.stringify({ kind: 'trade' }), { verdict: pass }),
+      art('sleeper.cards', 14, JSON.stringify({ kind: 'trends' }), { verdict: pass }),
+      art('sleeper.cards', 15, JSON.stringify({ kind: 'digest', week: 7, past: true }), { verdict: pass }),
+      art('sleeper.cards', 16, JSON.stringify({ kind: 'digest', week: 8, past: false }), { verdict: pass }),
+      art('sleeper.cards', 17, JSON.stringify({ kind: 'retro', week: 6 }), { verdict: pass }),
+      art('sleeper.cards', 18, JSON.stringify({ kind: 'history' }), { verdict: pass }),
+      art('sleeper.cards', 19, JSON.stringify({ kind: 'novel' }), { verdict: pass }),
+      art('sleeper.cards', 30, JSON.stringify({ kind: 'lineup', starters: [] }), { verdict: fail }),
       art('github.review', 5, 'r', { verdict: pass }),
       art('github.review', 6, 'r', { verdict: pass, links: [{ label: 'GitHub', url: 'https://example.com/pull/1' }] }),
       art('remarkable.transcript', 7, 't'),
@@ -939,7 +946,8 @@ test('the transcript line names each artifact in plain words and never shows the
   await userEvent.click(within(section).getByRole('button', { name: /earlier versions/ }));
   const lines = within(section).getAllByRole('listitem').map((li) => li.textContent ?? '');
   const has = (x: string) => expect(lines.some((l) => l.includes(x)), x).toBe(true);
-  has('Lineup card ready'); has('Waivers card ready'); has('Week 7 recap ready'); has("Lineup card didn't pass its checks");
+  for (const x of ['Lineup card ready', 'Waivers card ready', 'Trade ideas ready', 'Trade check ready', 'Trends ready', 'Week 7 recap ready', 'Week 8 preview ready', 'Week 6 retro ready', 'League history ready', 'Card ready']) has(x);
+   has("Lineup card didn't pass its checks");
   has('Review ready'); has('Review posted'); has('Transcript ready'); has("Result didn't pass its checks"); has('Result ready');
   expect(lines.join(' ')).not.toMatch(/Cards|Thing|Other/);
   expect(within(section).getByRole('link', { name: /GitHub/ })).toBeInTheDocument();
