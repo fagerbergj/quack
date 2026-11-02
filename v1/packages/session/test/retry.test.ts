@@ -83,7 +83,7 @@ test('a session in retry backoff reports its wake time, so the distributor can s
   const server = createSessionServer(session).listen(0);
   await new Promise((r) => server.once('listening', r));
   const ping = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/ping`).then((r) => r.json());
-  assert.deepEqual(ping, { status: 'Healthy', waitingOnHuman: false, wake: { at: standing.wakeAt } });
+  assert.deepEqual(ping, { status: 'Healthy', pid: process.pid, waitingOnHuman: false, wake: { at: standing.wakeAt } });
   await new Promise((r) => server.close(r));
   await session.close();
 });

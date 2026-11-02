@@ -52,7 +52,9 @@ async function waitHealthy(url: string, proc: ChildProcess, timeoutMs: number) {
   while (Date.now() < deadline) {
     if (proc.exitCode !== null) throw new Error(`session process exited with ${proc.exitCode}`);
     try {
-      if ((await fetch(`${url}/ping`)).ok) return;
+      // A stranger on the port may accept and never answer; bound each probe so the deadline is reached.
+      const res = await fetch(`${url}/ping`, { signal: AbortSignal.timeout(1_000) });
+      if (res.ok && ((await res.json()) as { pid?: number }).pid === proc.pid) return;
     } catch {
       // not listening yet
     }
@@ -125,6 +127,7 @@ function firstInput(dir: string): string | undefined {
   }
 }
 
+const START_ATTEMPTS = 3;
 const CRASH_BUDGET = 3;
 const CRASH_WINDOW_MS = 60_000;
 
@@ -206,7 +209,7 @@ export function processDriver(opts: { command: string[]; dataDir: string; agents
     return { name, path: source && join(snapshotDir, 'agent.json') };
   }
 
-  async function start(key: string, agentPath: string | undefined): Promise<string> {
+  async function spawnOnce(key: string, agentPath: string | undefined): Promise<string> {
     const dir = sessionDir(key);
     const port = await freePort();
     const url = `http://127.0.0.1:${port}`;
@@ -236,6 +239,17 @@ export function processDriver(opts: { command: string[]; dataDir: string; agents
     }
     children.set(key, child);
     return url;
+  }
+
+  // freePort is released before the child binds, so another process can take the port first; the child then exits and a fresh port is tried.
+  async function start(key: string, agentPath: string | undefined): Promise<string> {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await spawnOnce(key, agentPath);
+      } catch (err) {
+        if (attempt >= START_ATTEMPTS || !(err as Error).message.startsWith('session process exited')) throw err;
+      }
+    }
   }
 
   async function ensure(key: string, agent?: string): Promise<string> {
