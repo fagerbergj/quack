@@ -85,8 +85,8 @@ export const researchRubric: Rubric = {
   version: 2,
   threshold: 0.8,
   criteria: [{ id: 'claims_grounded', checks: [
-    { id: 'cites_fetched_sources', weight: 'gate', code: citesFetchedSources },
-    { id: 'findings_cited', weight: 'gate', code: findingsCited },
-    { id: 'quotes_exist', weight: 'gate', code: quotesExist },
+    { id: 'cites_fetched_sources', label: "Cites a source that wasn't opened", weight: 'gate', code: citesFetchedSources },
+    { id: 'findings_cited', label: "A finding cites no source", weight: 'gate', code: findingsCited },
+    { id: 'quotes_exist', label: "Quotes text that isn't in the source", weight: 'gate', code: quotesExist },
   ] }],
 };

@@ -71,18 +71,18 @@ export const tradeRubric: Rubric = {
   threshold: 0.8,
   criteria: [
     { id: 'faithful_to_tools', checks: [
-      { id: 'verdict_one_of', weight: 'gate', code: verdictOneOf },
-      { id: 'give_get_from_my_side', weight: 'gate', code: giveGetFromMySide },
+      { id: 'verdict_one_of', label: "Verdict isn't accept, decline or counter", weight: 'gate', code: verdictOneOf },
+      { id: 'give_get_from_my_side', label: "Give and get are from the wrong side", weight: 'gate', code: giveGetFromMySide },
     ] },
     { id: 'case_is_reasoned', checks: [
-      { id: 'partner_modeled', weight: 4, scope: 'card', question: 'Does the case rest on the partner\'s starting slots, record and surplus from the `partner` table, not on chart value alone?' },
-      { id: 'deciding_line_item', weight: 3, scope: 'suggested', question: 'Does it name the one line item that decides the call, with a condition that would flip it?' },
-      { id: 'news_per_traded_player', weight: 3, scope: 'row', question: 'Does each traded player have news cited, from the attached `news` and the Sleeper `designations`, naming the right player for each report?' },
-      { id: 'consolidation_priced', weight: 2, scope: 'consolidation', question: 'This is a multi-for-one. Does it price the consolidation discount and the cut it forces on the side receiving more players?' },
+      { id: 'partner_modeled', label: "Ignores the other team's needs", weight: 4, scope: 'card', question: 'Does the case rest on the partner\'s starting slots, record and surplus from the `partner` table, not on chart value alone?' },
+      { id: 'deciding_line_item', label: "Doesn't name what decides the trade", weight: 3, scope: 'suggested', question: 'Does it name the one line item that decides the call, with a condition that would flip it?' },
+      { id: 'news_per_traded_player', label: "A traded player has no news cited", weight: 3, scope: 'row', question: 'Does each traded player have news cited, from the attached `news` and the Sleeper `designations`, naming the right player for each report?' },
+      { id: 'consolidation_priced', label: "Doesn't price giving up depth", weight: 2, scope: 'consolidation', question: 'This is a multi-for-one. Does it price the consolidation discount and the cut it forces on the side receiving more players?' },
     ] },
     { id: 'pitfalls', checks: [
-      { id: 'chart_without_mismatch', weight: -3, scope: 'card', question: 'Does it quote a 12-team value chart without saying the league has fewer teams (`league_teams`)?' },
-      { id: 'one_sided_as_collusion', weight: -3, scope: 'card', question: 'Does it call a lopsided but voluntary deal collusion?' },
+      { id: 'chart_without_mismatch', label: "Uses a 12-team chart in a smaller league", weight: -3, scope: 'card', question: 'Does it quote a 12-team value chart without saying the league has fewer teams (`league_teams`)?' },
+      { id: 'one_sided_as_collusion', label: "Calls a lopsided deal collusion", weight: -3, scope: 'card', question: 'Does it call a lopsided but voluntary deal collusion?' },
     ] },
   ],
 };

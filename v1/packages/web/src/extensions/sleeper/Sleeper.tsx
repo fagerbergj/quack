@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { StatusIcon } from '../../Artifacts.tsx';
+import { FailedCheck, failedChecks } from '../../CheckList.tsx';
 import { listArtifacts, type SealedArtifact } from '../../api.ts';
 import type { Row } from '../../sessions.ts';
 import { runLineup, sleeperLeague } from './api.ts';
@@ -40,28 +41,24 @@ function useLineup(league: string | undefined, rows: Row[] | undefined, refresh:
   return { session, artifact, card: parseCard(artifact), error };
 }
 
-const verdictOf = (a: SealedArtifact) => (!a.verdict ? 'not checked' : a.verdict.passed ? 'checked' : 'checks failed');
-
-const label = (id: string) => id.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
-const missed = (a: SealedArtifact) => (a.verdict?.checks ?? []).filter((c) => c.met !== null && c.met < 1);
-
-// `brief` is the strip's one-word status; the card carries the full verdict.
+// `brief` is the strip's status; the card also lists what missed. A pass is only a tick, and a partial miss on a pass stays collapsed.
 export function Verdict({ artifact, brief }: { artifact: SealedArtifact; brief?: boolean }) {
   const v = artifact.verdict;
-  const failed = brief ? [] : missed(artifact);
+  if (!v) return null;
+  const missed = brief ? [] : failedChecks(v.checks);
   return (
     <div className="flex min-w-0 flex-col gap-1.5 text-[12px]">
       <div className="flex items-center gap-2">
         <StatusIcon verdict={v} />
-        <span className="font-medium text-ink-2">{brief ? verdictOf(artifact) : `v${artifact.version} · ${verdictOf(artifact)}`}</span>
+        {!v.passed && <span className="font-medium text-ink-2">Didn't pass its checks</span>}
       </div>
-      {!brief && v && !v.passed && failed.length === 0 && <p className="m-0 font-mono text-ink-2">{`Judge: ${v.checks.filter((c) => (c.met ?? 0) >= 1).length} of ${v.checks.filter((c) => c.met !== null).length} checks passed`}</p>}
-      {failed.map((c) => (
-        <details key={`${c.criterion}.${c.id}`} className="rounded-lg border border-danger-line bg-danger-bg/60 px-3 py-1.5">
-          <summary title={`${c.criterion}.${c.id}`} className="flex min-h-11 cursor-pointer items-center break-words font-medium text-danger lg:min-h-6">{label(c.id)}</summary>
-          {c.notes.length ? c.notes.map((n, i) => <p key={i} className="m-0 mt-1 break-words text-ink-2">{n}</p>) : <p className="m-0 mt-1 text-muted">No note from the judge.</p>}
+      {v.passed && missed.length > 0 && (
+        <details>
+          <summary className="flex min-h-11 cursor-pointer items-center text-muted lg:min-h-6">{`${missed.length} minor ${missed.length === 1 ? 'note' : 'notes'}`}</summary>
+          <div className="flex flex-col gap-1.5">{missed.map((c) => <FailedCheck key={`${c.criterion}.${c.id}`} check={c} tone="muted" />)}</div>
         </details>
-      ))}
+      )}
+      {!v.passed && missed.map((c) => <FailedCheck key={`${c.criterion}.${c.id}`} check={c} tone="danger" />)}
     </div>
   );
 }
@@ -152,7 +149,7 @@ export function LineupCard({ card, artifact, sessionKey }: { card: Card; artifac
       <div className="flex flex-col gap-2 border-b border-line px-4 py-3">
         <div className="flex items-center gap-2">
           <p className="m-0 text-sm font-semibold">Start / sit</p>
-          <a href={`#/s/${encodeURIComponent(sessionKey)}`} className="ml-auto inline-flex min-h-11 items-center rounded-lg px-2 text-xs font-medium text-link no-underline hover:bg-soft lg:min-h-0 lg:py-1">Ask about this card</a>
+          <a href={`#/s/${encodeURIComponent(sessionKey)}`} className="ml-auto inline-flex min-h-11 items-center rounded-lg px-2 text-xs font-medium text-link no-underline hover:bg-soft lg:min-h-0 lg:py-1">Ask about this</a>
         </div>
         <Verdict artifact={artifact} />
       </div>
@@ -184,7 +181,7 @@ export function Sleeper({ rows }: { rows: Row[] | undefined }) {
   const { session, artifact, card, error } = useLineup(league, rows, refresh);
   const run = useCallback(() => {
     setStatus('Starting…');
-    runLineup().then(() => (setStatus('Started. The new card appears here when it is sealed.'), setRefresh((n) => n + 1)), (e: Error) => setStatus(`Could not start: ${e.message}`));
+    runLineup().then(() => (setStatus('Started. The new lineup appears here when it is ready.'), setRefresh((n) => n + 1)), (e: Error) => setStatus(`Could not start: ${e.message}`));
   }, []);
   return (
     <div className="mx-auto w-full max-w-[1240px] px-4 pt-6 pb-10 sm:px-6">

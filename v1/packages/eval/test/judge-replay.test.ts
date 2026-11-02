@@ -7,7 +7,7 @@ import { replayJudge, table, type Arm, type Case } from '../src/index.ts';
 
 const rubric = (question: string): Rubric => ({
   name: 'acme', version: 1, threshold: 0.5,
-  criteria: [{ id: 'c', checks: [{ id: 'helpful', weight: 2, scope: 'note', question }, { id: 'other', weight: 1, scope: 'gap', question: 'Unwatched?' }] }],
+  criteria: [{ id: 'c', checks: [{ id: 'helpful', label: 'L helpful', weight: 2, scope: 'note', question }, { id: 'other', label: 'L other', weight: 1, scope: 'gap', question: 'Unwatched?' }] }],
 });
 const adapter = (question: string): EvalAdapter => ({ kind: 'acme.note', judge: { rubric: rubric(question), evidence: async () => undefined } });
 const arms: Arm[] = [{ label: 'base', adapters: [adapter('Is it helpful?')] }, { label: 'cand', adapters: [adapter('Does it help a reader act?')] }];
@@ -50,7 +50,7 @@ test('concurrency 2 gives the same table as concurrency 1', async () => {
 });
 
 test('a run that faults fails loudly, and so does a judge the deployment lacks', async () => {
-  const boom: Arm = { label: 'boom', adapters: [{ kind: 'acme.note', judge: { evidence: async () => undefined, rubric: { name: 'x', version: 1, threshold: 0.5, criteria: [{ id: 'c', checks: [{ id: 'helpful', weight: 'gate', code: () => { throw new Error('bad rubric code'); } }] }] } } }] };
+  const boom: Arm = { label: 'boom', adapters: [{ kind: 'acme.note', judge: { evidence: async () => undefined, rubric: { name: 'x', version: 1, threshold: 0.5, criteria: [{ id: 'c', checks: [{ id: 'helpful', label: 'L helpful', weight: 'gate', code: () => { throw new Error('bad rubric code'); } }] }] } } }] };
   await assert.rejects(replayJudge({ cases, arms: [boom], repeat: 1, concurrency: 1, models: judgeModels([]), judgeModel }), /bad rubric code/);
   await assert.rejects(replayJudge({ cases, arms, repeat: 1, concurrency: 1, models: judgeModels([]), judgeModel: { provider: 'judge', modelId: 'nope' } }), /judge judge\/nope is not configured/);
 });

@@ -2,7 +2,9 @@
 export type SessionSummary = { key: string; agent: string; title?: string; running: boolean; active: boolean; note?: string; lastActivity: string };
 export type AgentSummary = { name: string; version: number };
 export type Approval = { id: string; tool: string; args: unknown; requestedAt: number };
-export type Check = { criterion: string; id: string; met: number | null; notes: string[] };
+export type Check = { criterion: string; id: string; label: string; weight: number | 'gate'; met: number | null; notes: string[] };
+// Gates and positive checks fail when not fully met; a pitfall (negative weight) fails when it showed up. Not applicable never fails.
+export const checkFailed = (c: Check) => c.met !== null && (c.weight === 'gate' || c.weight > 0 ? c.met < 1 : c.met > 0);
 export type Verdict = { passed: boolean; gatesFailed: string[]; score: number; checks: Check[] };
 export type ArtifactLink = { label: string; url: string };
 export type SealedArtifact = { kind: string; version: number; hash: string; content: string; sealedAt: number; verdict: Verdict | null; links?: ArtifactLink[] };
@@ -18,7 +20,10 @@ const base = (key: string) => `sessions/${encodeURIComponent(key)}`;
 export const listSessions = async () => (await json<{ sessions: SessionSummary[] }>(await fetch('sessions'))).sessions;
 export const listAgents = async () => (await json<{ agents: AgentSummary[] }>(await fetch('agents'))).agents;
 export const listApprovals = async (key: string) => (await json<{ approvals: Approval[] }>(await fetch(`${base(key)}/approvals`))).approvals;
-export const listArtifacts = async (key: string) => (await json<{ artifacts: SealedArtifact[] }>(await fetch(`${base(key)}/artifacts`))).artifacts;
+// Verdicts sealed before checks carried a label have none; their id reads well enough.
+const named = (a: SealedArtifact): SealedArtifact =>
+  a.verdict ? { ...a, verdict: { ...a.verdict, checks: a.verdict.checks.map((c) => ({ ...c, label: c.label ?? c.id.replace(/_/g, ' ') })) } } : a;
+export const listArtifacts = async (key: string) => (await json<{ artifacts: SealedArtifact[] }>(await fetch(`${base(key)}/artifacts`))).artifacts.map(named);
 export const abortRun = async (key: string) => void (await json(await fetch(`${base(key)}/abort`, { method: 'POST' })));
 
 export type IndexApproval = { session: string; id: string; tool: string; at: number };

@@ -44,6 +44,6 @@ test('reMarkable and other sessions cut long names at about 40 characters', () =
 test('a sealed reMarkable transcript with no verdict is not "not transcribed"', () => {
   const row = (artifacts: object[]) => ({ ...s('remarkable:d1'), multiRepo: false, approvals: [], questions: [], failures: [], artifacts }) as unknown as Parameters<typeof look>[0];
   const art = { kind: 'remarkable.transcript', version: 1, sealedAt: 1 };
-  expect(look(row([art])).line).toBe('Transcribed · not checked');
+  expect(look(row([art])).line).toBe('Transcribed');
   expect(look(row([])).line).toBe('Not transcribed yet');
 });

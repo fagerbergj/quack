@@ -28,7 +28,7 @@ export function codeResults(rubric: Rubric, artifact: string, ev: Evidence): Che
   return rubric.criteria.flatMap((c) =>
     c.checks.filter((k) => k.code).map((k) => {
       const r = k.code!(artifact, ev);
-      return { criterion: c.id, id: k.id, weight: k.weight, met: r.met, units: 1, resolvers: { code: 1 }, notes: r.detail ? [r.detail] : [], marks: r.marks };
+      return { criterion: c.id, id: k.id, label: k.label, weight: k.weight, met: r.met, units: 1, resolvers: { code: 1 }, notes: r.detail ? [r.detail] : [], marks: r.marks };
     }),
   );
 }
@@ -40,7 +40,7 @@ function planModelChecks(rubric: Rubric, ev: Evidence) {
     for (const k of c.checks.filter((x) => x.question)) {
       const key = `${c.id}.${k.id}`;
       const units = unitsFor(k.scope, ev);
-      results.set(key, { criterion: c.id, id: k.id, weight: k.weight, met: units.length ? 0 : null, units: units.length, resolvers: {}, notes: [] });
+      results.set(key, { criterion: c.id, id: k.id, label: k.label, weight: k.weight, met: units.length ? 0 : null, units: units.length, resolvers: {}, notes: [] });
       for (const u of units) {
         const entry = byUnit.get(u.id) ?? { unit: u, checks: [] };
         entry.checks.push({ ...k, id: key });

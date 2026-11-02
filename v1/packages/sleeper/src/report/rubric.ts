@@ -57,18 +57,18 @@ export const digestRubric: Rubric = {
   threshold: 0.8,
   criteria: [
     { id: 'faithful_to_tools', checks: [
-      { id: 'every_game_covered', weight: 'gate', code: everyGameCovered },
-      { id: 'numbers_match_tools', weight: 'gate', code: numbersMatchTools },
-      { id: 'no_projection_source', weight: 'gate', code: noProjectionSource },
+      { id: 'every_game_covered', label: "A matchup is missing", weight: 'gate', code: everyGameCovered },
+      { id: 'numbers_match_tools', label: "Scores differ from the league data", weight: 'gate', code: numbersMatchTools },
+      { id: 'no_projection_source', label: "Cites a projection source", weight: 'gate', code: noProjectionSource },
     ] },
     { id: 'tells_the_week', checks: [
-      { id: 'story_in_summary', weight: 3, scope: 'card', question: 'Does the summary name the week\'s real story (the margin that mattered, the high score, the blowout) rather than recite scores?' },
-      { id: 'preview_news_decides', weight: 3, scope: 'preview', question: 'Does this game\'s note cite the attached `news` or an injury designation that swings it, naming the right player for each report?' },
+      { id: 'story_in_summary', label: "Summary just recites scores", weight: 3, scope: 'card', question: 'Does the summary name the week\'s real story (the margin that mattered, the high score, the blowout) rather than recite scores?' },
+      { id: 'preview_news_decides', label: "A preview ignores news that swings it", weight: 3, scope: 'preview', question: 'Does this game\'s note cite the attached `news` or an injury designation that swings it, naming the right player for each report?' },
     ] },
     { id: 'pitfalls', checks: [
-      { id: 'small_sample_labeled', weight: -2, scope: 'card', question: 'Does a claim drawn from under three weeks of data go unlabeled as early?' },
-      { id: 'luck_without_margin', weight: -3, scope: 'card', question: 'Does it call a result lucky without the point margin, or from fewer than about eight close games?' },
-      { id: 'game_flow_from_score', weight: -3, scope: 'row', question: 'Does it describe a comeback, collapse or other game flow that only the final score implies?' },
+      { id: 'small_sample_labeled', label: "Draws a trend from too few weeks", weight: -2, scope: 'card', question: 'Does a claim drawn from under three weeks of data go unlabeled as early?' },
+      { id: 'luck_without_margin', label: "Calls a result lucky without the margin", weight: -3, scope: 'card', question: 'Does it call a result lucky without the point margin, or from fewer than about eight close games?' },
+      { id: 'game_flow_from_score', label: "Invents how a game unfolded", weight: -3, scope: 'row', question: 'Does it describe a comeback, collapse or other game flow that only the final score implies?' },
     ] },
   ],
 };
@@ -120,16 +120,16 @@ export const retroRubric: Rubric = {
   threshold: 0.8,
   criteria: [
     { id: 'faithful_to_tools', checks: [
-      { id: 'tool_figures_copied', weight: 'gate', code: toolFiguresCopied },
-      { id: 'knowable_dated_before_kickoff', weight: 'gate', code: knowableDated },
+      { id: 'tool_figures_copied', label: "Numbers differ from the league data", weight: 'gate', code: toolFiguresCopied },
+      { id: 'knowable_dated_before_kickoff', label: "Hindsight marked as knowable before kickoff", weight: 'gate', code: knowableDated },
     ] },
     { id: 'grades_the_week', checks: [
-      { id: 'signal_is_evidence', weight: 3, scope: 'known', question: 'Is the signal a dated news item or usage trend from the attached `news`, not the same injury designation restated?' },
-      { id: 'lessons_actionable', weight: 2, scope: 'lessons', question: 'Are the lessons (at most three) things the manager can do next week?' },
-      { id: 'summary_names_swing', weight: 2, scope: 'card', question: 'Does the summary name the single biggest swing among the `swings`?' },
+      { id: 'signal_is_evidence', label: "Signal is not a dated news item", weight: 3, scope: 'known', question: 'Is the signal a dated news item or usage trend from the attached `news`, not the same injury designation restated?' },
+      { id: 'lessons_actionable', label: "Lessons can't be acted on next week", weight: 2, scope: 'lessons', question: 'Are the lessons (at most three) things the manager can do next week?' },
+      { id: 'summary_names_swing', label: "Summary misses the biggest swing", weight: 2, scope: 'card', question: 'Does the summary name the single biggest swing among the `swings`?' },
     ] },
     { id: 'pitfalls', checks: [
-      { id: 'hindsight_called_process', weight: -4, scope: 'row', question: 'Is a row with knowable false (variance, no signal before kickoff) blamed on the manager\'s process?' },
+      { id: 'hindsight_called_process', label: "Blames the manager for bad luck", weight: -4, scope: 'row', question: 'Is a row with knowable false (variance, no signal before kickoff) blamed on the manager\'s process?' },
     ] },
   ],
 };
