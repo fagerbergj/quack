@@ -8,9 +8,16 @@ type Event = { id: string; type: string; timestamp: string; body: Record<string,
 const MAX_QUEUE = 200;
 const BATCH = 20;
 const SEND_TIMEOUT_MS = 5_000;
+const MAX_PENDING = 32;
+
+/** afterResponse never fires on a provider error, so unmatched requests are capped, oldest first. */
+export function remember<V>(map: Map<number, V>, key: number, value: V) {
+  if (map.size >= MAX_PENDING) map.delete(map.keys().next().value!);
+  map.set(key, value);
+}
 
 /** Fire-and-forget batches to Langfuse's public ingestion API; a failed batch is dropped, the oldest events go first when the queue is full. */
-class Sender {
+export class Sender {
   #queue: Event[] = [];
   #running = false;
   #url: string;
@@ -63,7 +70,7 @@ export function tracesSessionExtensions(config: TracesConfig): Extension[] {
     name: 'traces',
     hooks: [hook(GenerationTask, {
       beforeRequest(request, api) {
-        pending.set(api.taskId, { input: request.messages, start: Date.now() });
+        remember(pending, api.taskId, { input: request.messages, start: Date.now() });
         return undefined;
       },
       afterResponse(message, api) {

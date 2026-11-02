@@ -9,6 +9,7 @@ import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-work
 import { agentSpec } from '@quack/session';
 import { openSession } from '@quack/session';
 import { tracesFromEnv, tracesSessionExtensions } from '../src/index.ts';
+import { remember, Sender } from '../src/session.ts';
 
 const dir = await mkdtemp(join(tmpdir(), 'quack-traces-'));
 after(() => rm(dir, { recursive: true, force: true }));
@@ -60,6 +61,10 @@ test('a generation sends one Langfuse generation event with model, input, output
   assert.ok(Date.parse(g.endTime) > Date.parse(g.startTime));
   assert.equal(g.metadata.agent, 'reviewer');
   assert.equal(g.metadata.version, '3');
+  assert.equal(g.metadata.stopReason, 'stop');
+  assert.equal(g.level, 'DEFAULT');
+  assert.equal(typeof g.usageDetails.cache_read, 'number');
+  assert.equal(typeof g.usageDetails.cache_write, 'number');
   assert.deepEqual(batch.find((e) => e.type === 'trace-create')!.body, { id: 'sess-1', sessionId: 'sess-1', name: 'reviewer' });
   await lf.close();
 });
@@ -80,4 +85,40 @@ test('with any of the three variables unset nothing is installed', async () => {
   assert.deepEqual(await names(all), ['traces']);
   assert.deepEqual(await names({}), []);
   assert.deepEqual(await names({ ...all, LANGFUSE_SECRET_KEY: '' }), []);
+});
+
+test('requests that never get a response are capped at 32, dropping the oldest', () => {
+  const pending = new Map<number, number>();
+  for (let i = 0; i < 40; i++) remember(pending, i, i);
+  assert.equal(pending.size, 32);
+  assert.deepEqual([pending.keys().next().value, [...pending.keys()].at(-1)], [8, 39]);
+});
+
+test('the queue keeps the newest 200 events and sends them in batches of 20', async () => {
+  const sizes: number[] = [];
+  const ids: string[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  let done!: () => void;
+  const finished = new Promise<void>((r) => (done = r));
+  const server = createServer(async (req, res) => {
+    let text = '';
+    for await (const chunk of req) text += chunk;
+    const { batch } = JSON.parse(text);
+    sizes.push(batch.length);
+    ids.push(...batch.map((e: { id: string }) => e.id));
+    if (sizes.length === 1) await gate;
+    res.writeHead(207).end('{}');
+    if (sizes.length === 11) done();
+  });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const sender = new Sender(`http://127.0.0.1:${(server.address() as AddressInfo).port}/api/public/ingestion`, 'Basic x');
+  const event = (i: number) => ({ id: String(i), type: 'trace-create', timestamp: '', body: {} });
+  sender.push([event(0)]); // in flight, held by the server
+  sender.push(Array.from({ length: 300 }, (_, i) => event(i + 1)));
+  release();
+  await finished;
+  assert.deepEqual(sizes, [1, ...Array(10).fill(20)]);
+  assert.deepEqual([ids[1], ids.at(-1)], ['101', '300']);
+  await new Promise((r) => server.close(r));
 });
