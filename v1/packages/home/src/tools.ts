@@ -29,6 +29,14 @@ async function known(d: Distributor, key: string): Promise<SessionRow | string> 
 // Each part of a session read is best effort: one failing endpoint should not hide the rest.
 const safely = async <T>(fn: () => Promise<T>, empty: T): Promise<T> => fn().catch(() => empty);
 
+function artifactLines(newest: Awaited<ReturnType<Distributor['artifacts']>>): string[] {
+  if (!newest.length) return [];
+  return ['Newest results:', ...newest.map((a) => {
+    const verdict = a.verdict ? (a.verdict.passed ? ', checks passed' : ', checks failed') : '';
+    return `- ${a.kind} v${a.version}${verdict}: ${a.summary ? oneLine(a.summary) : clip(oneLine(a.content), 300)}${a.links?.length ? ` (${a.links.map((l) => `${l.label} ${l.url}`).join('; ')})` : ''}`;
+  })];
+}
+
 export async function readSession(d: Distributor, row: SessionRow, standing: Standing): Promise<string> {
   const [ping, artifacts, questions, failures, messages] = await Promise.all([
     safely(() => d.ping(row.key), undefined), safely(() => d.artifacts(row.key), []), safely(() => d.questions(row.key), []),
@@ -36,12 +44,7 @@ export async function readSession(d: Distributor, row: SessionRow, standing: Sta
   ]);
   const state = ping?.waitingOnHuman || questions.length ? 'needs_you' : failures.length ? 'failed' : ping?.status === 'HealthyBusy' ? 'running' : stateOf(row, standing);
   const out = [`${row.title || row.key} (${row.agent}), state ${state}${ping?.note ? `, ${oneLine(ping.note)}` : ''}`, `link ${sessionLink(row.key)}`];
-  const newest = artifacts.slice(-MAX_ARTIFACTS).reverse();
-  if (newest.length) out.push('Newest results:');
-  for (const a of newest) {
-    const verdict = a.verdict ? (a.verdict.passed ? ', checks passed' : ', checks failed') : '';
-    out.push(`- ${a.kind} v${a.version}${verdict}: ${a.summary ? oneLine(a.summary) : clip(oneLine(a.content), 300)}${a.links?.length ? ` (${a.links.map((l) => `${l.label} ${l.url}`).join('; ')})` : ''}`);
-  }
+  out.push(...artifactLines(artifacts.slice(-MAX_ARTIFACTS).reverse()));
   if (questions.length) out.push('Open questions:', ...questions.map((q) => `- ${oneLine(q.question)} [${q.options.join(' / ')}]`));
   if (failures.length) out.push('Failures:', ...failures.map((f) => `- ${f.step}: ${clip(oneLine(f.error), 200)}`));
   if (messages.length) out.push('Last messages:', ...messages.map((m) => `- ${m.role}: ${clip(oneLine(m.text), 400)}`));
