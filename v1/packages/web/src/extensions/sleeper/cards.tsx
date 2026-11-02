@@ -15,8 +15,10 @@ const unid = (t: string) => t.replace(/\b\d{4,5}(?:\/\d{4,5})*:?\s+(?=[A-Za-z])/
 const KINDS: Record<string, string> = { injury: 'Injuries', waiver: 'Rising on waivers', note: 'Notes' };
 
 /** The title a result goes by, in the page and in the Run a job sheet. */
-export function titleOf(r: Result): string {
+export function titleOf(r: Result, past?: boolean): string {
   const c = r.card;
+  if (past && r.job === 'digest') return c.past === false ? `Week ${c.week} preview` : `Week ${c.week} recap`;
+  if (past && r.job === 'retro') return `Week ${c.week} retro`;
   switch (r.job) {
     case 'lineup': return 'Start / sit';
     case 'waivers': return 'Waivers';
@@ -27,6 +29,10 @@ export function titleOf(r: Result): string {
     default: return 'League history';
   }
 }
+
+const WHAT: Record<string, string> = { digest: 'League recap', retro: 'Your lineup calls, looked back on', lineup: 'Your starters and bench', waivers: 'Claims for the week', 'trade-finder': 'Deals worth asking about', trade: 'Your offer, checked', trends: 'What is moving in the league', history: 'Your seasons so far' };
+/** What a result is, for the line under its title in a past week. */
+export const whatIs = (r: Result) => (r.job === 'digest' && r.card.past === false ? 'Preview of the week' : WHAT[r.job] ?? '');
 
 /** One calm line under the title, and the lines a short card lists. */
 export function brief(r: Result): { sub: string; lines: string[] } {

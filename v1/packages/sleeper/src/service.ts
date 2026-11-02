@@ -23,6 +23,8 @@ export type ServiceConfig = {
   owner?: string;
   /** The league the page's /apps/sleeper routes act on. */
   league?: string;
+  /** The schedules service, read for this league's upcoming runs. */
+  schedules?: { url: string; token: string };
   fetch?: typeof fetch;
 };
 
@@ -73,8 +75,22 @@ export function createSleeperService(config: ServiceConfig) {
   async function pageRoute(method: string, url: URL): Promise<[number, unknown]> {
     const job = /^\/apps\/sleeper\/(lineup|waivers|trends|digest|retro|trade-finder|history)$/.exec(url.pathname)?.[1];
     if (job) return startOnDemand(PAGE_JOBS[job as keyof typeof PAGE_JOBS], method, config.league, url.searchParams.get('week'), job === 'history' ? historyParams(url.searchParams) : {});
+    if (url.pathname === '/apps/sleeper/schedule' && method === 'GET') return upcomingRuns();
     if (url.pathname !== '/apps/sleeper' || method !== 'GET') return [404, { error: 'not found' }];
     return config.league ? [200, { league: config.league }] : [501, { error: 'no league configured' }];
+  }
+
+  // The next run of each of this league's schedules, from the schedules service, soonest first.
+  async function upcomingRuns(): Promise<[number, unknown]> {
+    if (!config.schedules || !config.league) return [501, { error: 'schedules are not configured' }];
+    const res = await (config.fetch ?? fetch)(`${config.schedules.url}/schedules`, { headers: { authorization: `Bearer ${config.schedules.token}` } });
+    if (!res.ok) return [502, { error: `schedules answered ${res.status}` }];
+    const all = ((await res.json()) as { schedules: Array<{ id: string; nextRun: string | null }> }).schedules;
+    const runs = all.flatMap((s) => {
+      const m = new RegExp(`^sleeper/(lineup|waivers|trends|digest|retro|trade-finder)/${config.league}(?:/|$)`).exec(s.id);
+      return m && s.nextRun ? [{ job: m[1]!, at: s.nextRun }] : [];
+    });
+    return [200, { runs: runs.sort((a, b) => a.at.localeCompare(b.at)) }];
   }
 
   // POST /leagues/:id/jobs/(lineup|waivers|trends|digest|retro)[?week=N] starts a job on demand (SL-2); the week defaults to Sleeper's current one.

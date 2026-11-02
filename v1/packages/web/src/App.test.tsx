@@ -856,7 +856,7 @@ test('Sleeper leads with the week strip and renders a passed lineup card', async
   await openSleeper([sealed(lineup(), { passed: true, gatesFailed: [], score: 1, checks: [] })]);
   const strip = await screen.findByRole('region', { name: 'This week' });
   expect(await screen.findByRole('article', { name: 'Week 8 lineup' })).toBeInTheDocument();
-  expect(within(strip).getByText(/Lineup lock(s|ed) Sun/)).toBeInTheDocument();
+  expect(strip).toHaveTextContent(/Lineup lock(s|ed)Sun/);
   expect(within(screen.getByRole('article', { name: 'Week 8 lineup' })).getByTitle('Double-checked')).toBeInTheDocument();
   expect(document.body).not.toHaveTextContent(/v1 ·|sealed|not checked/);
   const card = screen.getByRole('article', { name: 'Week 8 lineup' });
@@ -908,14 +908,13 @@ test('a passed pitfall is not shown as failed, a triggered pitfall and a missed 
   expect(card).toHaveTextContent('A close call does not cite the news');
 });
 
-test('a passed card shows no red boxes; partial misses are one collapsed minor note', async () => {
+test('a passed card shows no red boxes; partial misses sit behind its Double-checked line', async () => {
   const checks = [chk('news', 'A close call does not cite the news', 3, 0.6, ['RB2: Only half the report is cited.'])];
   await openSleeper([sealed(lineup(), { passed: true, gatesFailed: [], score: 0.9, checks })]);
   const card = await screen.findByRole('article', { name: 'Week 8 lineup' });
-  expect(within(card).getByTitle('Double-checked')).toBeInTheDocument();
-  expect(card).not.toHaveTextContent("Didn't pass");
-  const note = within(card).getByText('1 minor note').closest('details')!;
+  const note = within(card).getByText('Double-checked').closest('details')!;
   expect(note).not.toHaveAttribute('open');
+  expect(card).not.toHaveTextContent("Didn't pass");
   expect(card.querySelector('.text-danger')).toBeNull();
 });
 

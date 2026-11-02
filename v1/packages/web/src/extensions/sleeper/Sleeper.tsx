@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { SealedArtifact } from '../../api.ts';
 import type { Row } from '../../sessions.ts';
-import { Full, Short, brief, titleOf } from './cards.tsx';
-import { runJob, sleeperLeague } from './api.ts';
-import { NewsList, Verdict, weekday, when, type News } from './parts.tsx';
+import { Full, Short, brief, titleOf, whatIs } from './cards.tsx';
+import { runJob, sleeperLeague, upcoming, type Run } from './api.ts';
+import { NewsList, Verdict, slot, weekday, when, type News } from './parts.tsx';
 import { sessionsOf, useResults, wanted, weekResult, type Result } from './week.ts';
 
 // The slice of @quack/sleeper's lineup card the page reads; the card file is the contract.
@@ -81,24 +81,43 @@ export function LineupCard({ card, artifact, sessionKey }: { card: Card; artifac
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-// shortcut: scheduled runs are not shown, the page has no schedules read; add pins when /apps/sleeper serves them.
-function WeekStrip({ lock, now }: { lock?: number; now: number }) {
+const NAME: Record<string, string> = { digest: 'Recap', retro: 'retro', waivers: 'Waivers process', 'trade-finder': 'Trade finder', lineup: 'lineup' };
+const TONE = ['bg-link', 'bg-warning', 'bg-success', 'bg-muted'];
+
+function Duck() {
+  return (
+    <svg role="img" aria-label="Today" width="26" height="20" viewBox="0 0 64 48"><ellipse cx="34" cy="32" rx="22" ry="11" fill="#fdfcf7" /><circle cx="20" cy="18" r="10" fill="#1f7a63" /><path d="M12 15 L1 19 L12 22 Z" fill="#e3a92b" /><circle cx="17" cy="15" r="1.8" fill="#0b0f0e" /></svg>
+  );
+}
+
+// Runs at the same moment share a pin and a line ("Recap and retro"); trends run daily and stay out of the week.
+function pins(runs: Run[], now: number) {
+  const week = runs.filter((r) => r.job !== 'trends' && Date.parse(r.at) > now && Date.parse(r.at) < now + 7 * 864e5);
+  return [...new Set(week.map((r) => r.at))].map((at, i) => ({ at: Date.parse(at), tone: TONE[i % TONE.length]!, label: week.filter((r) => r.at === at).map((r) => NAME[r.job] ?? r.job).join(' and ').replace(/^./, (c) => c.toUpperCase()) }));
+}
+
+function WeekStrip({ lock, now, runs }: { lock?: number; now: number; runs: Run[] }) {
   const today = DAYS.indexOf(weekday(now));
-  const locks = lock === undefined ? -1 : DAYS.indexOf(weekday(lock));
+  const marks = pins(runs, now);
+  const col = (ms: number) => DAYS.indexOf(weekday(ms));
   return (
     <section aria-label="This week" className="rounded-[22px] border border-line bg-surface p-4 shadow-card">
       <ol className="m-0 grid list-none grid-cols-7 p-0 text-center text-[12px]">
         {DAYS.map((d, i) => (
           <li key={d} aria-current={i === today ? 'date' : undefined} className="flex flex-col items-center gap-1">
-            <span className={i === today ? 'font-semibold text-ink' : 'text-muted'}>{d}</span>
+            <span className={i === today ? 'font-semibold text-success' : 'text-muted'}>{d}</span>
             <span className="flex h-6 items-center gap-1">
-              {i === today && <span role="img" aria-label="Today">🦆</span>}
-              {i === locks && <span role="img" aria-label="Lineup lock" className="h-5 w-1 rounded-full bg-danger" />}
+              {i === today && <Duck />}
+              {marks.filter((m) => col(m.at) === i).map((m) => <span key={m.at} aria-hidden="true" className={`h-3.5 w-3.5 rounded ${m.tone}`} />)}
+              {lock !== undefined && col(lock) === i && <span aria-hidden="true" className="h-5 w-1 rounded-full bg-danger" />}
             </span>
           </li>
         ))}
       </ol>
-      {lock !== undefined && <p className="m-0 mt-2 text-[13px] font-medium text-ink">{`${lock > now ? 'Lineup locks' : 'Lineup locked'} ${when(lock)}`}</p>}
+      <ul className="m-0 mt-3 flex list-none flex-col gap-1.5 p-0 text-[14px]">
+        {marks.map((m) => <li key={m.at} className="flex items-center gap-2"><span aria-hidden="true" className={`h-2.5 w-2.5 flex-none rounded-full ${m.tone}`} /><span className="min-w-0 flex-1 break-words">{m.label}</span><span className="text-ink-2">{slot(m.at)}</span></li>)}
+        {lock !== undefined && <li className="flex items-center gap-2 font-semibold"><span aria-hidden="true" className="h-3.5 w-1 flex-none rounded-full bg-danger" /><span className="min-w-0 flex-1">{lock > now ? 'Lineup locks' : 'Lineup locked'}</span><span className="text-danger">{slot(lock)}</span></li>}
+      </ul>
     </section>
   );
 }
@@ -107,7 +126,7 @@ const btn = 'inline-flex min-h-11 cursor-pointer items-center justify-center rou
 
 function ResultCard({ r, compact }: { r: Result; compact?: boolean }) {
   const [open, setOpen] = useState(false);
-  const title = titleOf(r);
+  const title = titleOf(r, compact);
   if (open && r.job === 'lineup' && Array.isArray(r.card.starters)) {
     return <div className="flex flex-col gap-1"><LineupCard card={r.card as Card} artifact={r.artifact} sessionKey={r.key} /><button type="button" onClick={() => setOpen(false)} className={`${btn} self-end`} aria-label={`Close ${title}`}>Close</button></div>;
   }
@@ -116,13 +135,13 @@ function ResultCard({ r, compact }: { r: Result; compact?: boolean }) {
       <div className="flex items-center gap-3 px-4 pt-3">
         <div className="min-w-0 flex-1">
           <h2 className="m-0 text-[15px] font-semibold">{title}</h2>
-          <p className="m-0 text-[12px] text-muted">{brief(r).sub}</p>
+          <p className="m-0 text-[12px] text-muted">{compact ? whatIs(r) : brief(r).sub}</p>
         </div>
         <button type="button" aria-expanded={open} aria-label={`${open ? 'Close' : 'Open'} ${title}`} onClick={() => setOpen(!open)} className={btn}>{open ? 'Close' : 'Open ›'}</button>
       </div>
       <div className="flex flex-col gap-2 px-4 pt-1 pb-4">
         {open ? <Full r={r} /> : !compact && <Short r={r} />}
-        <Verdict artifact={r.artifact} brief={!open} />
+        <Verdict artifact={r.artifact} />
         {open && <a href={`#/s/${encodeURIComponent(r.key)}`} className={`${btn} self-start`}>Ask about this</a>}
       </div>
     </article>
@@ -146,9 +165,9 @@ const CURRENT = ['waivers', 'trade-finder', 'trends', 'digest', 'retro', 'histor
 const PAST = ['digest', 'retro', 'lineup', 'waivers', 'trade-finder', 'trade', 'trends', 'history'];
 const JOBS: Array<[string, string]> = [['lineup', 'Lineup'], ['waivers', 'Waivers'], ['trade-finder', 'Trade finder'], ['trends', 'Trends'], ['digest', 'Recap'], ['retro', 'Retro'], ['history', 'League history']];
 
-type SheetProps = { found: Result[]; running: (job: string) => boolean; status: string; onRun: (job: string, name: string) => void; onJump: (job: string) => void; onClose: () => void };
+type SheetProps = { found: Result[]; runs: Run[]; running: (job: string) => boolean; status: string; onRun: (job: string, name: string) => void; onJump: (job: string) => void; onClose: () => void };
 
-function JobSheet({ found, running, status, onRun, onJump, onClose }: SheetProps) {
+function JobSheet({ found, runs, running, status, onRun, onJump, onClose }: SheetProps) {
   return (
     <div role="dialog" aria-modal="true" aria-label="Run a job" onKeyDown={(e) => e.key === 'Escape' && onClose()} className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
       <div aria-hidden="true" onClick={onClose} className="absolute inset-0 bg-ink/25 backdrop-blur-[2px]" />
@@ -161,11 +180,12 @@ function JobSheet({ found, running, status, onRun, onJump, onClose }: SheetProps
         <ul className="m-0 flex list-none flex-col p-0">
           {JOBS.map(([job, name]) => {
             const last = found.find((r) => r.job === job);
+            const next = runs.find((r) => r.job === job);
             return (
               <li key={job} className="flex items-center gap-3 border-t border-line py-2 first:border-t-0">
                 <button type="button" onClick={() => onJump(job)} disabled={!last} className="flex min-h-11 min-w-0 flex-1 cursor-pointer flex-col items-start justify-center border-0 bg-transparent p-0 text-left disabled:cursor-default">
                   <span className="text-[14px] font-medium text-ink">{name}</span>
-                  <span className="text-[12px] text-muted">{running(job) ? 'Running now' : last ? `${titleOf(last)} · ${weekday(last.artifact.sealedAt)}` : 'Nothing yet'}</span>
+                  <span className="text-[12px] text-muted">{running(job) ? 'Running now' : [last ? `${titleOf(last)} · ${weekday(last.artifact.sealedAt)}` : 'Nothing yet', next && `next ${slot(Date.parse(next.at))}`].filter(Boolean).join(' · ')}</span>
                 </button>
                 <button type="button" aria-label={`Run ${name}`} disabled={running(job)} onClick={() => onRun(job, name)} className="min-h-11 cursor-pointer rounded-lg bg-ink px-4 text-xs font-semibold text-on-ink disabled:cursor-default disabled:opacity-50">Run</button>
               </li>
@@ -214,6 +234,8 @@ export function Sleeper({ rows, now = Date.now }: { rows: Row[] | undefined; now
   const [menu, setMenu] = useState(false);
   const [status, setStatus] = useState('');
   const [refresh, setRefresh] = useState(0);
+  const [runs, setRuns] = useState<Run[]>([]);
+  useEffect(() => void upcoming().then(setRuns), []);
   useEffect(() => void sleeperLeague().then(setLeague, () => setUnconfigured('Sleeper is not set up on this server.')), []);
   const all = useMemo(() => sessionsOf(league, rows), [league, rows]);
   const weeks = [...new Set(all.map((s) => s.week))].sort((a, b) => a - b);
@@ -238,11 +260,11 @@ export function Sleeper({ rows, now = Date.now }: { rows: Row[] | undefined; now
       {unconfigured && <p role="alert" className="m-0 text-[13px] text-ink-2">{unconfigured}</p>}
       {error && <p role="alert" className="m-0 text-[13px] text-danger">{error}</p>}
       {league && week === undefined && <p className="m-0 text-[13px] text-ink-2">No results yet. Run a job from the menu.</p>}
-      {week !== undefined && !past && <><WeekStrip lock={lockTime(lineup?.card as Card | undefined)} now={now()} /><Lineup r={lineup} running={running('lineup')} /></>}
+      {week !== undefined && !past && <><WeekStrip lock={lockTime(lineup?.card as Card | undefined)} now={now()} runs={runs} /><Lineup r={lineup} running={running('lineup')} /></>}
       {past && <Outcome week={week!} results={found} />}
       {shown.map((r) => <ResultCard key={r.key} r={r} compact={past} />)}
       {past && shown.length === 0 && <p className="m-0 text-[13px] text-ink-2">Nothing from this week.</p>}
-      {menu && <JobSheet found={found} running={running} status={status} onRun={run} onJump={jump} onClose={() => setMenu(false)} />}
+      {menu && <JobSheet found={found} runs={runs} running={running} status={status} onRun={run} onJump={jump} onClose={() => setMenu(false)} />}
     </div>
   );
 }

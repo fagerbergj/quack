@@ -10,25 +10,28 @@ const ET = 'America/New_York';
 export const when = (iso: string | number) => new Intl.DateTimeFormat('en-US', { timeZone: ET, weekday: 'short', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }).format(new Date(iso));
 export const weekday = (ms: number) => new Intl.DateTimeFormat('en-US', { timeZone: ET, weekday: 'short' }).format(ms);
 
-// `brief` is the strip's status; the card also lists what missed. A pass is only a tick, and a partial miss on a pass stays collapsed.
-export function Verdict({ artifact, brief }: { artifact: SealedArtifact; brief?: boolean }) {
+export const slot = (ms: number) => `${weekday(ms)} ${new Intl.DateTimeFormat('en-US', { timeZone: ET, hour: 'numeric', minute: '2-digit' }).format(ms)}`;
+
+// One status line: a pass is "Double-checked" with any partial misses behind a tap; a fail names the checks that missed.
+export function Verdict({ artifact }: { artifact: SealedArtifact }) {
   const v = artifact.verdict;
   if (!v) return null;
-  const missed = brief ? [] : failedChecks(v.checks);
-  return (
-    <div className="flex min-w-0 flex-col gap-1.5 text-[12px]">
-      <div className="flex items-center gap-2">
-        <StatusIcon verdict={v} />
-        {!v.passed && <span className="font-medium text-ink-2">Didn't pass its checks</span>}
+  const missed = failedChecks(v.checks);
+  if (!v.passed) {
+    return (
+      <div className="flex min-w-0 flex-col gap-1.5 text-[12px]">
+        <div className="flex items-center gap-2"><StatusIcon verdict={v} /><span className="font-medium text-ink-2">Didn't pass its checks</span></div>
+        {missed.map((c) => <FailedCheck key={`${c.criterion}.${c.id}`} check={c} tone="danger" />)}
       </div>
-      {v.passed && missed.length > 0 && (
-        <details>
-          <summary className="flex min-h-11 cursor-pointer items-center text-muted lg:min-h-6">{`${missed.length} minor ${missed.length === 1 ? 'note' : 'notes'}`}</summary>
-          <div className="flex flex-col gap-1.5">{missed.map((c) => <FailedCheck key={`${c.criterion}.${c.id}`} check={c} tone="muted" />)}</div>
-        </details>
-      )}
-      {!v.passed && missed.map((c) => <FailedCheck key={`${c.criterion}.${c.id}`} check={c} tone="danger" />)}
-    </div>
+    );
+  }
+  const line = <><StatusIcon verdict={v} /><span className="font-medium text-success">Double-checked</span></>;
+  if (!missed.length) return <div className="flex min-h-6 items-center gap-2 text-[12px]">{line}</div>;
+  return (
+    <details className="min-w-0 text-[12px]">
+      <summary className="flex min-h-11 cursor-pointer items-center gap-2 lg:min-h-6">{line}</summary>
+      <div className="flex flex-col gap-1.5">{missed.map((c) => <FailedCheck key={`${c.criterion}.${c.id}`} check={c} tone="muted" />)}</div>
+    </details>
   );
 }
 
