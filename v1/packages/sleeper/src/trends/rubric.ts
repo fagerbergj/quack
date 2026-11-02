@@ -25,6 +25,14 @@ function linkFetched(artifact: string, ev: Evidence): CodeResult {
   return share(linked.length - bad.length, linked.length, `${bad.map((i) => i.link).join(', ')} were not returned by the news search for that player`);
 }
 
+// Ids key the card and the UI shows names; the digit and comma guards keep an add count from reading as an id.
+function noBareIds(artifact: string, ev: Evidence): CodeResult {
+  const ids = Object.keys(factsOf(ev).players);
+  const { items } = parse(artifact);
+  const bad = items.filter((i) => ids.some((id) => new RegExp(`(?<![\\d,.])${id}(?![\\d,])`).test(i.text)));
+  return share(items.length - bad.length, items.length, `${bad.map((i) => i.text.slice(0, 30)).join('; ')} carry a raw player id in their text`);
+}
+
 /** Row units carry the item, Sleeper's designation by name and the dated news for the player, so a check sees only what it needs. */
 export function trendsEvidence(f: TrendsFacts) {
   return async (_api: unknown, sealed: { content: string }): Promise<Evidence> => {
@@ -54,10 +62,11 @@ export const trendsRubric: Rubric = {
     { id: 'faithful_to_tools', checks: [
       { id: 'item_shape', label: "A news item is malformed", weight: 'gate', code: itemShape },
       { id: 'link_fetched', label: "Links a page that wasn't opened", weight: 'gate', code: linkFetched },
+      { id: 'no_bare_ids', label: "Player id written in the item text", weight: 'gate', code: noBareIds },
     ] },
     { id: 'items_are_sourced', checks: [
-      { id: 'conflict_stated', label: "Hides a clash between news and injury tag", weight: 3, scope: 'conflict', question: 'Sleeper holds a `designations` entry for this player and `news` has dated reports. Where they disagree, does the item say so and name the rule it followed: the newer dated report from a credible outlet beats Sleeper\'s lagging designation?' },
-      { id: 'original_source_named', label: "Doesn't name the original reporter", weight: 2, scope: 'sourced', question: 'Does `source` name the reporter and the outlet, not an aggregator?' },
+      { id: 'conflict_stated', label: "Hides a clash between news and injury tag", weight: 3, scope: 'conflict', question: 'Sleeper holds a `designations` entry for this player and `news` has dated reports. If they agree, answer yes. If they disagree, does the item say so and name the rule it followed: the newer dated report from a credible outlet beats Sleeper\'s lagging designation?' },
+      { id: 'original_source_named', label: "Doesn't name the original source", weight: 2, scope: 'sourced', question: 'Does `source` name the original source: a reporter, outlet, team or league, not an aggregator?' },
     ] },
     { id: 'pitfalls', checks: [
       { id: 'aggregator_only', label: "Sources only an aggregator", weight: -3, scope: 'sourced', question: 'Is an aggregator the only source named for this item?' },

@@ -17,6 +17,7 @@ import {
 } from '../src/index.ts';
 import { MAX_SEARCHED } from '../src/trends/facts.ts';
 import type { TrendsDecision } from '../src/trends/card.ts';
+import { factsPrompt } from '../src/trends/workflow.ts';
 
 type Fixtures = Record<string, any>;
 const lineup = JSON.parse(readFileSync(new URL('./fixtures/lineup.json', import.meta.url), 'utf8')) as Fixtures;
@@ -108,7 +109,7 @@ test('a bad decision fails the card step instead of reaching the judge', async (
   assert.throws(() => build({ playerId: '999' }), /not in the facts/);
   assert.throws(() => build({ newsUrl: 'https://www.nfl.com/other' }), /that link is not news for 102 Rob Rowe/);
   assert.throws(() => buildTrendsCard({ ...f, news: { ...f.news, '103': [{ ...item, url: 'https://x.test/other' }] }, players: { ...f.players, '103': { ...f.players['102'], id: '103', name: 'Rob Rowan' } } }, { ...decision, items: [{ ...one, newsUrl: 'https://x.test/other' }] }), /that link is news for 103 Rob Rowan, not 102 Rob Rowe/);
-  assert.throws(() => build({ source: undefined }), /for 102 Rob Rowe without naming its reporter/);
+  assert.throws(() => build({ source: undefined }), /for 102 Rob Rowe without naming its source/);
   assert.throws(() => build({ playerId: undefined }), /without naming a player/);
 });
 
@@ -121,7 +122,7 @@ const gate = async (id: string, f: TrendsFacts, c: unknown) => {
 test('each code gate passes the good card', async () => {
   const f = await factsOf(async () => [item]);
   const c = buildTrendsCard(f, decision);
-  for (const id of ['item_shape', 'link_fetched']) assert.equal((await gate(id, f, c)).met, 1, id);
+  for (const id of ['item_shape', 'link_fetched', 'no_bare_ids']) assert.equal((await gate(id, f, c)).met, 1, id);
 });
 
 test('item_shape fails a time, source or sentence past its cap, an empty one, and an unknown kind', async () => {
@@ -133,6 +134,31 @@ test('item_shape fails a time, source or sentence past its cap, an empty one, an
     assert.ok(r.met < 1, JSON.stringify(patch).slice(0, 30));
     assert.match(r.detail!, /miss a time, source/);
   }
+});
+
+test('no_bare_ids fails an item whose text carries a player id, not one with an add count or a name', async () => {
+  const f = await factsOf(async () => [item]);
+  const c = buildTrendsCard(f, decision);
+  const text = (t: string) => gate('no_bare_ids', f, { ...c, items: [{ ...c.items[0], text: t }, ...c.items.slice(1)] });
+  assert.ok((await text('102 Rob Rowe is Questionable.')).met < 1);
+  assert.match((await text('Rob Rowe (102) is Questionable.')).detail!, /raw player id/);
+  for (const ok of ['Rob Rowe has 1,102 yards and 4102 adds.', 'Rob Rowe is Questionable.', 'Rob Rowe has 1023 adds.']) assert.equal((await text(ok)).met, 1, ok);
+});
+
+test('the prompt gives the model each id in a lookup, never beside a name in the changes', async () => {
+  const f = await factsOf(async () => [item]);
+  const p = factsPrompt(f);
+  const [body, lookup] = p.split('Values for `playerId`:');
+  assert.ok(!/\b10[24]\b|\b400\b/.test(body), 'ids stay out of the change and rising lines');
+  assert.match(lookup, /- Rob Rowe \(.*\): 102\n/);
+});
+
+test('the lookup tells apart two players who share name, position and team', async () => {
+  const f = await factsOf(async () => [item]);
+  const twin = { ...f.players['102'], id: '9102' };
+  const p = factsPrompt({ ...f, players: { ...f.players, '9102': twin } });
+  assert.match(p, /- Rob Rowe \(.*\) #1: 102\n/);
+  assert.match(p, /- Rob Rowe \(.*\) #2: 9102\n?/);
 });
 
 test('link_fetched fails a link the news search did not return for that player, and a host off the allowlist', async () => {
@@ -190,14 +216,14 @@ test('the workflow seals a trends card; with no news source the news checks are 
   const { sealed, verdict } = await runTrends(bare);
   assert.deepEqual((JSON.parse(sealed.content) as TrendsCard).items.map((i) => i.player?.name), ['Will Wing', 'Fred Fresh']);
   assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.trends@1', [], true, ['source conflicts and original sources not checked: no news source']]);
-  assert.deepEqual(verdict.checks.map((k) => k.id).filter((id) => id !== 'item_shape' && id !== 'link_fetched'), []);
+  assert.deepEqual(verdict.checks.map((k) => k.id).filter((id) => !['item_shape', 'link_fetched', 'no_bare_ids'].includes(id)), []);
 });
 
 test('with a news source the conflict, original-source and aggregator checks are scored', async () => {
   const { sealed, verdict, judged } = await runTrends(decision, async () => [item]);
   assert.equal((JSON.parse(sealed.content) as TrendsCard).items[0].link, item.url);
   assert.deepEqual([verdict.rubric, verdict.gatesFailed, verdict.passed, verdict.notes], ['sleeper.trends@1', [], true, []]);
-  assert.deepEqual(verdict.checks.map((k) => k.id).sort(), ['aggregator_only', 'conflict_stated', 'item_shape', 'link_fetched', 'original_source_named']);
+  assert.deepEqual(verdict.checks.map((k) => k.id).sort(), ['aggregator_only', 'conflict_stated', 'item_shape', 'link_fetched', 'no_bare_ids', 'original_source_named']);
   assert.ok(judged.some((q) => /disagree, does the item say so/.test(q)));
 });
 
