@@ -7,7 +7,7 @@ import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
 import { Artifacts, seal, type ArtifactKind } from '@quack/sdk';
 import { createSessionServer, openSession, type DispatchingExtension } from '@quack/session';
-import { defineWorkflow, WorkflowDoc, workflowSessionExtensions } from '../src/index.ts';
+import { defineWorkflow, outcomeOf, WorkflowDoc, workflowSessionExtensions } from '../src/index.ts';
 
 const dirs: string[] = [];
 after(() => Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true }))));
@@ -90,5 +90,26 @@ test('a submission after a finished or failed run starts a fresh run in the same
   const versions = (await s.harness.snapshot(Artifacts, s.root.id, ctx))!.kinds['test.note'].versions;
   assert.deepEqual(versions.map((v) => v.content), ['one', 'two'], 'the new run sees the session it ran in');
   await http.stop();
+  await s.close();
+});
+
+test('POST /resume reruns a failed run from its step, and answers 409 when nothing failed', async () => {
+  let broken = true;
+  const flaky = defineWorkflow({ name: 'flaky', steps: [{ name: 'only', kind: 'code', run: () => { if (broken) throw new Error('boom'); return 'ok'; } }] });
+  const s = await open(await tmp(), workflowSessionExtensions({ workflow: 'flaky' }, { flaky }));
+  const server = createSessionServer(s).listen(0);
+  await new Promise((r) => server.once('listening', r));
+  const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  const resume = () => fetch(`${base}/resume`, { method: 'POST' });
+
+  assert.equal((await resume()).status, 409);
+  await s.submit('go', undefined, true);
+  broken = false;
+  const res = await resume();
+  assert.equal(res.status, 202);
+  await outcomeOf(s.harness, ((await res.json()) as { submissionId: string }).submissionId);
+  assert.equal((await doc(s)).steps[0].status, 'done');
+  assert.equal((await resume()).status, 409);
+  await new Promise((r) => server.close(r));
   await s.close();
 });

@@ -37,6 +37,9 @@ export const listQuestions = async (key: string) => (await json<{ questions: Que
 export const answerQuestion = async (key: string, id: string, choice: string) =>
   void (await json(await fetch(`${base(key)}/questions/${encodeURIComponent(id)}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ choice, by: 'web' }) })));
 export type Failure = { step: string; error: string };
+export type IndexFailure = Failure & { session: string; at: number };
+export const indexFailures = () => indexRead<IndexFailure>('index/failures', 'failures');
+export const resumeRun = async (key: string) => void (await json(await fetch(`${base(key)}/resume`, { method: 'POST' })));
 export const indexApprovals = () => indexRead<IndexApproval>('index/approvals?state=pending', 'approvals');
 export const indexArtifacts = () => indexRead<IndexArtifact>('index/artifacts', 'artifacts');
 

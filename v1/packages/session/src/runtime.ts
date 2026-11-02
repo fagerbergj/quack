@@ -36,7 +36,9 @@ function formatDate(d: Date, timeZone: string): string {
 
 /** An extension that takes over submissions in place of the agent loop, such as a bound workflow. */
 export type Dispatch = (session: { harness: Harness; root: Conversation }, input: string, requestId: string | undefined, wait: boolean) => Promise<SubmitResult>;
-export type DispatchingExtension = Extension & { dispatch?: Dispatch };
+/** Reruns the session's failed run from where it stopped; null when nothing failed. */
+export type Resume = (session: { harness: Harness; root: Conversation }) => Promise<SubmitResult | null>;
+export type DispatchingExtension = Extension & { dispatch?: Dispatch; resume?: Resume };
 
 // pi-durable's default (3 retries from 2s) gives up inside 15s; this rides out a model host that is down for about 5 minutes.
 export const MODEL_RETRY = { enabled: true, maxRetries: 9, baseDelayMs: 2000, maxAgentDelayMs: 60_000 };
@@ -86,6 +88,7 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
   harness.resume();
 
   const dispatch = (opts.agent.extensions as DispatchingExtension[] | undefined)?.find((e) => e.dispatch)?.dispatch;
+  const resume = (opts.agent.extensions as DispatchingExtension[] | undefined)?.find((e) => e.resume)?.resume;
 
   async function answerText(entryId: unknown): Promise<string> {
     const entry = await root.commit((tx) => tx.entry(AssistantEntry, entryId as never), ctx);
@@ -123,6 +126,7 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
       if (record.status === 'unanswered') return { submissionId, status: 'unanswered', reason: String(record.reason), detail: record.detail === undefined ? undefined : String(record.detail) };
       return { submissionId, status: record.status };
     },
+    resume: async () => (await resume?.({ harness, root })) ?? null,
     close: async () => {
       await harness.close(ctx);
     },

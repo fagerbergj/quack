@@ -162,9 +162,9 @@ const duckling = (
 );
 
 // The swimmer's head and bill point left in the source art; .swimmer flips it to face its rightward travel.
-export function Pond({ children }: { children: ReactNode }) {
+export function Pond({ children, still }: { children: ReactNode; still?: boolean }) {
   return (
-    <div className="pond relative overflow-hidden rounded-[28px] border border-line px-6 pt-6 pb-20">
+    <div className={`pond ${still ? 'still' : ''} relative overflow-hidden rounded-[28px] border border-line px-6 pt-6 pb-20`}>
       <div className="relative z-10">{children}</div>
       <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-0 h-[70px]">
         <svg className="reed absolute bottom-3 left-4" width="30" height="58" viewBox="0 0 30 58">
@@ -188,6 +188,7 @@ export function Pond({ children }: { children: ReactNode }) {
           <span className="mb-1 flex gap-1">{duckling}{duckling}{duckling}</span>
         </div>
         <div className="waves back absolute inset-x-0 bottom-0" />
+        {still && <span className="absolute bottom-[52px] left-[calc(34%+34px)] grid h-[22px] w-[22px] place-items-center rounded-full bg-warning text-[14px] leading-none font-bold text-canvas">!</span>}
         <div className="waves absolute inset-x-0 bottom-0" />
       </div>
     </div>

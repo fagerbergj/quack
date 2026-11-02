@@ -1,8 +1,8 @@
-import type { Approval, Question, IndexArtifact, SessionSummary } from './api.ts';
+import type { Approval, Failure, Question, IndexArtifact, SessionSummary } from './api.ts';
 import { EXTENSIONS } from './extensions/index.ts';
 import { searchText, sessionTitle } from './kinds.ts';
 
-export type Row = SessionSummary & { approvals: Approval[]; questions: Question[]; artifacts: IndexArtifact[]; multiRepo: boolean };
+export type Row = SessionSummary & { approvals: Approval[]; questions: Question[]; failures: Failure[]; artifacts: IndexArtifact[]; multiRepo: boolean };
 export type Groups = { needs: Row[]; running: Row[]; recent: Row[] };
 export type Filters = { text: string; agent: string; start: string };
 
@@ -30,15 +30,21 @@ export function matches(s: Row, f: Filters): boolean {
   return hit && (!f.agent || s.agent === f.agent) && (!f.start || startOf(s.key) === f.start);
 }
 
+const asks = (r: Row) => r.approvals.length + r.questions.length + r.failures.length > 0;
+
 export function group(rows: Row[]): Groups {
-  const needs = rows.filter((r) => r.approvals.length + r.questions.length > 0);
-  const rest = rows.filter((r) => r.approvals.length + r.questions.length === 0);
+  const needs = rows.filter(asks);
+  const rest = rows.filter((r) => !asks(r));
   return { needs, running: rest.filter((r) => r.active), recent: rest.filter((r) => !r.active) };
 }
+
+/** The row's line for a failed run: the step and the error's first line. */
+export const failedLine = (f: Failure) => `Run failed at ${f.step} · ${f.error.split('\n')[0]}`;
 
 export function statusLine(r: Row): string {
   if (r.approvals.length) return `Approve ${r.approvals[0]!.tool}${r.approvals.length > 1 ? ` +${r.approvals.length - 1} more` : ''}`;
   if (r.questions.length) return `Answer: ${r.questions[0]!.question}`;
+  if (r.failures.length) return failedLine(r.failures[0]!);
   if (r.note) return r.note;
   return `${r.agent} · ${r.running ? 'running' : 'idle'}`;
 }

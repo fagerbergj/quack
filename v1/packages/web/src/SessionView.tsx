@@ -100,11 +100,12 @@ function Composer({ busy, disabled, send, input, setInput }: { busy: boolean; di
   );
 }
 
-type Tone = 'wait' | 'run' | 'idle';
+type Tone = 'wait' | 'run' | 'idle' | 'fail';
 const TONES: Record<Tone, string> = {
   wait: 'text-warning lg:bg-warning-bg',
   run: 'text-info lg:bg-info-bg',
   idle: 'text-muted lg:bg-soft',
+  fail: 'text-danger lg:bg-danger-bg',
 };
 
 // A line under the title on phones, a pill beside it from lg.
@@ -176,9 +177,10 @@ function Header({ name, status, tone, tokens, link, children }: { name: SessionT
   );
 }
 
-function statusOf(state: 'connecting' | 'open' | 'reconnecting', waiting: number, running: boolean): [string, Tone] {
+function statusOf(state: 'connecting' | 'open' | 'reconnecting', waiting: number, running: boolean, failed?: Failure): [string, Tone] {
   if (state !== 'open') return [state === 'reconnecting' ? 'Reconnecting' : 'Connecting', 'idle'];
   if (waiting) return ['Waiting on you', 'wait'];
+  if (failed && !running) return [`Failed · ${failed.step}`, 'fail'];
   return running ? ['Running', 'run'] : ['Idle', 'idle'];
 }
 
@@ -206,7 +208,7 @@ export function SessionView({ sessionKey, agent, name }: { sessionKey: string; a
   const [approvals, setApprovals] = useState(0);
   const waiting = approvals + standing.questions.length;
   const open = state === 'open';
-  const [status, tone] = statusOf(state, waiting, view.running);
+  const [status, tone] = statusOf(state, waiting, view.running, standing.failures[0]);
   const paneStyle = usePaneStyle();
   return (
     <div style={paneStyle} className="flex h-(--ws-h) min-h-0 flex-col lg:h-auto lg:flex-1">
@@ -220,7 +222,7 @@ export function SessionView({ sessionKey, agent, name }: { sessionKey: string; a
           <Artifacts items={items} error={artifactsError} onOpen={setWork} />
           <Approvals sessionKey={sessionKey} refresh={approvalTick} onCount={setApprovals} />
           <SessionQuestions sessionKey={sessionKey} items={standing.questions} />
-          <SessionFailures items={standing.failures} />
+          <SessionFailures sessionKey={sessionKey} items={standing.failures} />
           {waiting > 0 ? <Working label="Waiting for you" /> : tone === 'run' && <Working label="Working" />}
         </div>
       </div>
