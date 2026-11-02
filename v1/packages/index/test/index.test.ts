@@ -266,6 +266,7 @@ for (const { name, fresh: freshStore, skip } of backends) test(`${name}: a decid
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const listed = async (state: string) => ((await (await fetch(`${indexBase}/index/questions?state=${state}`)).json()) as { questions: Array<Record<string, unknown>> }).questions;
 
+  started.length = 0; // shared by the sqlite and postgres runs
   const done = session.submit('Who starts?', 'q1', true);
   const [open] = await until(async () => { const d = await listed('pending'); return d.length ? d : undefined; });
   assert.deepEqual([open.session, open.question, open.evidence], ['chat:7', 'Who starts at flex?', 'Both are healthy']);
