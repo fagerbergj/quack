@@ -186,7 +186,7 @@ function statusOf(state: 'connecting' | 'open' | 'reconnecting', waiting: number
 function usePaneStyle(): CSSProperties | undefined {
   const vv = useVisualViewportHeight();
   if (vv === undefined) return undefined;
-  const chrome = vv < window.innerHeight - 150 ? '0px' : '52px - env(safe-area-inset-bottom, 0px)';
+  const chrome = vv < window.innerHeight - 150 ? '0px' : '52px - var(--safe-b)';
   return { '--ws-h': `calc(${vv}px - ${chrome})` } as CSSProperties;
 }
 
@@ -224,7 +224,7 @@ export function SessionView({ sessionKey, agent, name }: { sessionKey: string; a
           {waiting > 0 ? <Working label="Waiting for you" /> : tone === 'run' && <Working label="Working" />}
         </div>
       </div>
-      <div className="border-t border-line bg-canvas/90 px-3 pt-2 pb-[max(1.25rem,env(safe-area-inset-bottom,0px))] backdrop-blur-md sm:px-4 lg:border-t-0 lg:pt-2.5 lg:pb-5">
+      <div className="border-t border-line bg-canvas/90 px-3 pt-2 pb-[max(1.25rem,var(--safe-b))] backdrop-blur-md sm:px-4 lg:border-t-0 lg:pt-2.5 lg:pb-5">
         <div className="mx-auto max-w-[720px]">
           <Composer busy={view.running} disabled={state !== 'open'} send={send} input={input} setInput={setInput} />
         </div>

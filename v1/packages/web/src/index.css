@@ -45,6 +45,8 @@
   --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   --font-display: 'Fredoka', ui-rounded, 'SF Pro Rounded', system-ui, sans-serif;
 }
+/* Chrome edge-to-edge: safe-area-inset-bottom moves as the page scrolls, the max variant (Chrome 135+) does not. */
+:root { --safe-b: env(safe-area-max-inset-bottom, env(safe-area-inset-bottom, 0px)); }
 @layer base {
   html { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
   body {

@@ -131,7 +131,7 @@ export function Shell({ route, bare, sidebar, children }: { route: Route; bare?:
           <ThemeToggle className="ml-auto px-2 text-xs" />
         </div>
       </aside>
-      <div className="fixed inset-x-0 top-0 bottom-[calc(52px+env(safe-area-inset-bottom,0px))] flex flex-col lg:contents">
+      <div className="fixed inset-x-0 top-0 bottom-[calc(52px+var(--safe-b))] flex flex-col lg:contents">
       <header className={`flex-none z-20 ${bare ? 'hidden' : 'flex'} items-center gap-2.5 border-b border-line bg-canvas/85 px-4 pt-[calc(0.875rem+env(safe-area-inset-top,0px))] pb-3.5 backdrop-blur-md lg:hidden`}>
         <Duck size={30} />
         {route === 'sessions' ? <h1 className="m-0 text-[19px]">Sessions</h1> : <span className="text-[15px] font-semibold tracking-[-0.015em]">{TITLES[route]}</span>}
@@ -143,14 +143,14 @@ export function Shell({ route, bare, sidebar, children }: { route: Route; bare?:
       </header>
       <main className="min-h-0 flex-1 overflow-y-auto lg:min-h-screen lg:overflow-visible lg:pl-72">{children}</main>
       </div>
-      <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-30 grid h-[calc(52px+env(safe-area-inset-bottom,0px))] grid-cols-4 border-t border-line bg-canvas/90 pb-[env(safe-area-inset-bottom,0px)] backdrop-blur-md lg:hidden">
+      <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-30 grid h-[calc(52px+var(--safe-b))] grid-cols-4 border-t border-line bg-canvas/90 pb-[var(--safe-b)] backdrop-blur-md lg:hidden">
         {MAIN.map((n) => link(n, tabBase))}
         <button type="button" aria-expanded={more} aria-controls="more-sheet" aria-current={MORE.some((n) => n.route === route) ? 'page' : undefined} onClick={() => setMore(!more)} className={`${tabBase} cursor-pointer border-0 bg-transparent`}>
           <Icon route="grid" />
           More
         </button>
       </nav>
-      <div id="more-sheet" hidden={!more} className="fixed inset-x-3 bottom-[calc(62px+env(safe-area-inset-bottom,0px))] z-30 rounded-[22px] border border-line bg-surface p-2 shadow-lift lg:hidden">
+      <div id="more-sheet" hidden={!more} className="fixed inset-x-3 bottom-[calc(62px+var(--safe-b))] z-30 rounded-[22px] border border-line bg-surface p-2 shadow-lift lg:hidden">
         {MORE.map((n) => link(n, 'flex min-h-11 items-center gap-3 rounded-lg px-3 text-[14px] text-ink no-underline hover:bg-soft'))}
         <ThemeToggle className="w-full gap-3 px-3 text-[14px]" />
       </div>
