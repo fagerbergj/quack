@@ -19,14 +19,18 @@ function parseClient(data: string): ClientInput | string {
   } catch {
     return 'message must be JSON';
   }
-  const { type, input, requestId, whenBusy, id } = (msg ?? {}) as Record<string, unknown>;
+  const { type, id } = (msg ?? {}) as Record<string, unknown>;
   if (type === 'withdraw' || type === 'steer') return typeof id === 'string' && id ? { type, id } : 'id must be a queued message id';
   if (type !== 'input') return 'type must be input, withdraw or steer';
+  return parseInput(msg as Record<string, unknown>);
+}
+
+function parseInput({ input, requestId, whenBusy }: Record<string, unknown>): ClientInput | string {
   if (typeof input !== 'string' || input.length === 0) return 'input must be a non-empty string';
   if (input.length > MAX_INPUT) return 'input is too long';
   if (requestId !== undefined && typeof requestId !== 'string') return 'requestId must be a string';
   if (whenBusy !== undefined && whenBusy !== 'steer' && whenBusy !== 'followUp') return 'whenBusy must be steer or followUp';
-  return { type, input, requestId, whenBusy };
+  return { type: 'input', input, requestId, whenBusy };
 }
 
 // Open questions and failures raise no stream event, so their documents ride the socket as a `standing` frame instead of being polled.
