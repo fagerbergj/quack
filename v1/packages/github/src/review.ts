@@ -55,15 +55,40 @@ export const reviewKind: ArtifactKind = { kind: 'github.review', path: 'artifact
 const EXCERPT_LINES = 20;
 const MAX_DIFF_CHARS = 120_000;
 
-async function excerpt(api: ToolExecutionApi, repoDir: string, f: Finding, ctx: Context) {
-  if (!f.path || !f.line) return { exists: false, excerpt: '', file: '' };
-  const read = await api.env!.readTextFile(`${repoDir}/${f.path}`, ctx);
-  if (!read.ok) return { exists: false, excerpt: '', file: '' };
+/** Maps a cited path to a tracked one: as given, minus the checkout dir name, or a unique tail at a `/` boundary. */
+export function resolveCitedPath(files: string[], repoName: string, cited: string): string | undefined {
+  const bare = cited.startsWith(`${repoName}/`) ? cited.slice(repoName.length + 1) : cited;
+  if (files.includes(bare)) return bare;
+  const tails = files.filter((f) => f.endsWith(`/${bare}`));
+  return tails.length === 1 ? tails[0] : undefined;
+}
+
+type Tracked = { files?: string[] };
+
+async function trackedFiles(api: ToolExecutionApi, repoDir: string, ctx: Context): Promise<string[]> {
+  let out = '';
+  const r = await api.env!.exec(['git', '-C', repoDir, 'ls-files'], { onOutput: (t) => { out += t; } }, ctx);
+  return r.ok ? out.split('\n').filter(Boolean) : [];
+}
+
+async function excerpt(api: ToolExecutionApi, repoDir: string, f: Finding, ctx: Context, tracked: Tracked = {}) {
+  const none = { exists: false, excerpt: '', file: '', path: f.path };
+  if (!f.path || !f.line) return none;
+  let path = f.path;
+  let read = await api.env!.readTextFile(`${repoDir}/${path}`, ctx);
+  if (!read.ok) {
+    tracked.files ??= await trackedFiles(api, repoDir, ctx);
+    const found = resolveCitedPath(tracked.files, repoDir.split('/').pop()!, f.path);
+    if (!found) return none;
+    path = found;
+    read = await api.env!.readTextFile(`${repoDir}/${path}`, ctx);
+    if (!read.ok) return none;
+  }
   const lines = read.value.split('\n');
-  if (f.line < 1 || f.line > lines.length) return { exists: false, excerpt: '', file: read.value };
+  if (f.line < 1 || f.line > lines.length) return { ...none, file: read.value, path };
   const from = Math.max(1, f.line - EXCERPT_LINES);
   const text = lines.slice(from - 1, f.line + EXCERPT_LINES).map((l, i) => `${from + i}: ${l}`).join('\n');
-  return { exists: true, excerpt: text, file: read.value };
+  return { exists: true, excerpt: text, file: read.value, path };
 }
 
 async function diffOf(api: ToolExecutionApi, repoDir: string, baseRef: string, ctx: Context): Promise<string> {
@@ -132,11 +157,12 @@ export function reviewEvidence(repoDir = 'repo') {
     const diff = change.diff;
     change.diff = pr ? truncated(diff) || '(diff unavailable)' : '(no checkout)';
     const known = new Map<string, boolean>();
+    const tracked: Tracked = {};
     const findings: Array<Unit & { blocking: boolean; cited: boolean; misquotes: string[] }> = [];
     for (const f of r.findings) {
-      const e = await excerpt(api, repoDir, f, ctx);
+      const e = await excerpt(api, repoDir, f, ctx, tracked);
       const wrong = pr ? await misquotes(api, repoDir, f, e.file, diff, ctx, known) : [];
-      findings.push({ id: `finding-${f.index}`, blocking: f.label === 'blocking', cited: e.exists, misquotes: wrong, state: { finding: `${f.label}${f.anchor ? ` (${f.anchor})` : ''}: ${f.path ?? '?'}:${f.line ?? '?'} ${f.text}`, citedCode: e.excerpt || '(the cited lines do not exist)' } });
+      findings.push({ id: `finding-${f.index}`, blocking: f.label === 'blocking', cited: e.exists, misquotes: wrong, state: { finding: `${f.label}${f.anchor ? ` (${f.anchor})` : ''}: ${e.path ?? '?'}:${f.line ?? '?'} ${f.text}`, citedCode: e.excerpt || '(the cited lines do not exist)' } });
     }
     const changeUnit = { id: 'change', state: { review: sealed.content, ...change } };
     return {
