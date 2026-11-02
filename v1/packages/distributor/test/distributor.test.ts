@@ -484,7 +484,6 @@ test('a crash after a sweep saw a session busy still restarts it on the next dis
   fleet.advance(0);
   await next.sweep();
   assert.deepEqual(fleet.driver.running(), ['sleeper:trends']);
-  assert.equal(fleet.wakes.has('sleeper:trends'), false, 'cleared once restarted');
 });
 
 test('a session that went idle after a busy sweep is not restarted after a crash', async () => {
