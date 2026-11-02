@@ -71,6 +71,7 @@ export function person(signal?: AbortSignal): Resolver {
         const found = () => watch.value?.items[id]?.answer;
         const now = found();
         if (now) return resolve({ ...now });
+        if (stop?.aborted) return reject(stop.reason);
         stop?.addEventListener('abort', () => reject(stop.reason), { once: true });
         watch.start(async () => { const a = found(); if (a) resolve({ ...a }); });
       }).finally(() => watch.stop()));

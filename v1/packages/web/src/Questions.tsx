@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { answerQuestion, type Question } from './api.ts';
 import { age } from './sessions.ts';
 
@@ -40,5 +40,11 @@ export function QuestionCard({ sessionKey, d, now, title, done }: { sessionKey: 
 
 /** The session view's open questions, as the session's socket reports them. */
 export function SessionQuestions({ sessionKey, items }: { sessionKey: string; items: Question[] }) {
-  return <>{items.map((q) => <QuestionCard key={q.id} sessionKey={sessionKey} d={q} now={Date.now()} />)}</>;
+  // A waiting session emits no frames, so the age label needs its own tick.
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 15_000);
+    return () => clearInterval(t);
+  }, []);
+  return <>{items.map((q) => <QuestionCard key={q.id} sessionKey={sessionKey} d={q} now={now} />)}</>;
 }

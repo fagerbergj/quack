@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { decide, parseDecision, sessionModel, type DecisionPoint, type Resolver } from '../src/index.ts';
+import { decide, parseDecision, person, sessionModel, type DecisionPoint, type Resolver } from '../src/index.ts';
 
 const point: DecisionPoint = { name: 'flex', question: 'Who starts at flex?', options: ['Pollard', 'Stevenson'], minConfidence: 0.6 };
 
@@ -75,4 +75,17 @@ test('the session resolver escalates when nothing the model said can be forked, 
   assert.equal(await sessionModel.resolve(point, api([{ id: 1, kind: 'pi.user' }]), BACKGROUND_CONTEXT), undefined, 'no assistant entry yet');
   await assert.rejects(sessionModel.resolve(point, api(entries), BACKGROUND_CONTEXT), /stop after/);
   assert.equal(forkedAt, 99, 'the entry just before the newest assistant message, found on the second page');
+});
+
+test('person rejects at once when its signal is already aborted, instead of waiting forever', async () => {
+  let stopped = false;
+  const api = {
+    taskId: 7, conversationId: 1, now: () => 1,
+    commit: async () => undefined,
+    watchDoc: async () => ({ value: { items: {} }, start: () => {}, stop: async () => { stopped = true; } }),
+  };
+  const controller = new AbortController();
+  controller.abort(new Error('run aborted'));
+  await assert.rejects(person(controller.signal).resolve(point, api as never, BACKGROUND_CONTEXT), /run aborted/);
+  assert.equal(stopped, true);
 });

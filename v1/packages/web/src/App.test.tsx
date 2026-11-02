@@ -863,3 +863,18 @@ test('without the Sleeper route the page says it is not set up, whatever session
   render(<App />);
   expect(await screen.findByText('Sleeper is not set up on this server.')).toBeInTheDocument();
 });
+
+test('an open question card keeps counting its age while the session is quiet', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: false });
+  try {
+    vi.setSystemTime(new Date('2026-11-01T01:05:00.000Z'));
+    const ws = await openSession();
+    ws.frame({ type: 'standing', questions: [{ id: '7:type', question: 'Which?', options: ['a'], evidence: null, askedAt: Date.parse('2026-11-01T01:04:00.000Z') }], failures: [] });
+    const card = screen.getByRole('region', { name: 'Question' });
+    expect(within(card).getByText('1m')).toBeInTheDocument();
+    act(() => void vi.advanceTimersByTime(120_000));
+    expect(within(card).getByText('3m')).toBeInTheDocument();
+  } finally {
+    vi.useRealTimers();
+  }
+});
