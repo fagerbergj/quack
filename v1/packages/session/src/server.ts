@@ -103,7 +103,8 @@ async function abort(session: Session): Promise<[number, unknown]> {
 const ROUTES: Array<[string, RegExp, Route]> = [
   ['GET', /^\/ping$/, async (s) => {
     const { busy, waitingOnHuman, wakeAt, note } = await s.standing();
-    return [200, { status: busy ? 'HealthyBusy' : 'Healthy', waitingOnHuman, wake: { at: wakeAt }, note: note ?? undefined }];
+    // pid lets a process host tell its own child from a stranger that took the port first.
+    return [200, { status: busy ? 'HealthyBusy' : 'Healthy', pid: process.pid, waitingOnHuman, wake: { at: wakeAt }, note: note ?? undefined }];
   }],
   ['POST', /^\/invocations$/, invoke],
   ['GET', /^\/approvals$/, async (s) => [200, { approvals: await pendingApprovals(s.root, ctx) }]],
