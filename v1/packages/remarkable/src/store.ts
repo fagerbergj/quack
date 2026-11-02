@@ -32,6 +32,8 @@ export function openStore(path: string, now: () => Date) {
     pending: () => db.prepare("SELECT batch, document, name, version, attempt FROM batch_items WHERE status = 'pending' ORDER BY rowid").all() as Array<{ batch: string; document: string; name: string; version: string; attempt: number }>,
     /** The newest attempt at this document version, if any; a retry submits the next attempt number. */
     last: (document: string, version: string) => db.prepare('SELECT status, attempt FROM batch_items WHERE document = ? AND version = ? ORDER BY rowid DESC LIMIT 1').get(document, version) as { status: ItemStatus; attempt: number } | undefined,
+    /** The newest attempt at this document at any version; the page derives New / Changed / Failed from it. */
+    newest: (document: string) => db.prepare('SELECT version, status, error FROM batch_items WHERE document = ? ORDER BY rowid DESC LIMIT 1').get(document) as { version: string; status: ItemStatus; error: string | null } | undefined,
     get(id: string): Batch | undefined {
       const b = db.prepare('SELECT id, created FROM batches WHERE id = ?').get(id) as { id: string; created: string } | undefined;
       if (!b) return undefined;

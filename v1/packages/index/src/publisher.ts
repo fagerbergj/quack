@@ -1,6 +1,7 @@
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { watchEvents, type Conversation, type Harness } from '@earendil-works/pi-durable';
-import { collectFacts, Outbox, type SessionMeta } from './facts.ts';
+import { onGeneration } from '@quack/sdk';
+import { collectFacts, Outbox, type SessionMeta, type Spend } from './facts.ts';
 
 const ctx = BACKGROUND_CONTEXT;
 const SEND_TIMEOUT_MS = 10_000;
@@ -44,6 +45,28 @@ export async function startPublisher(session: { harness: Harness; root: Conversa
   }
 
   const setStatus = (state: 'idle' | 'running') => root.commit(async (tx) => { const s = (await tx.doc(Outbox, root.id)).status; s.state = state; s.seq += 1; s.at = now(); }, ctx);
+  // Workflow steps call completeSimple directly (#1979), so their spend is added to the log here, serialized so none is lost.
+  let spending: Promise<unknown> = Promise.resolve();
+  // A failed commit is final (pi-durable), so retry here rather than drop the spend.
+  const record = async (u: Spend, tries = 3): Promise<void> => {
+    for (let n = 1; ; n++) {
+      try {
+        return await root.commit(async (tx) => {
+          const doc = await tx.doc(Outbox, root.id);
+          doc.direct ??= { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, at: 0 };
+          const d = doc.direct; // re-read: the draft only tracks writes made through its own proxy
+          d.at = now();
+          d.input += u.input; d.output += u.output; d.cacheRead += u.cacheRead; d.cacheWrite += u.cacheWrite; d.cost += u.cost;
+        }, ctx);
+      } catch (err) {
+        if (n >= tries) throw err;
+      }
+    }
+  };
+  const unhear = onGeneration(({ message: { usage: u } }) => {
+    if (!u) return;
+    spending = spending.then(() => record({ ...u, cost: u.cost?.total ?? 0, at: 0 })).then(() => flush()).catch((e) => console.error('index: direct spend', e));
+  });
   const events = await watchEvents(harness, root.id, ctx);
   events.start(async (batch) => {
     for (const e of batch) {
@@ -58,6 +81,8 @@ export async function startPublisher(session: { harness: Harness; root: Conversa
   // Waits out an in-flight send (bounded) so its ack commit cannot race session.close().
   async function stop() {
     stopped = true;
+    unhear();
+    await spending;
     clearInterval(poll);
     clearTimeout(timer);
     await Promise.race([current?.catch(() => {}), new Promise((r) => setTimeout(r, STOP_WAIT_MS).unref())]);

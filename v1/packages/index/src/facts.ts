@@ -6,7 +6,9 @@ import { Approvals, Artifacts, Failures, Questions, type Approval, type FailureR
 export type Fact = { id: string; kind: 'session' | 'artifact' | 'approval' | 'question' | 'failure' | 'cost' | 'status'; rev: number; at: number; data: JsonObject };
 export type SessionMeta = { key: string; agent: string; version: number | null };
 
-type OutboxDoc = { acked: Record<string, number>; status: { state: 'idle' | 'running'; seq: number; at: number } };
+export type Spend = { input: number; output: number; cacheRead: number; cacheWrite: number; cost: number; /** When the last one was made; pi-durable's totals carry no time, so a fact dated by them would differ between live and replay. */ at: number };
+/** `direct` is the spend of completions made outside the session's generation task (workflow steps), which pi-durable's usage totals never see. */
+type OutboxDoc = { acked: Record<string, number>; status: { state: 'idle' | 'running'; seq: number; at: number }; direct?: Spend };
 
 /** What the index has acknowledged, and the run status; the unsent facts are whatever the log holds beyond `acked`. */
 export const Outbox = defineDoc<OutboxDoc>({
@@ -49,10 +51,14 @@ function failureFacts(failures: { items: Record<string, FailureRow> } | undefine
   });
 }
 
-function costFact(usage: Readonly<UsageState>, now: number): Fact[] {
-  const total = [...Object.values(usage.models), ...Object.values(usage.tools)].reduce((sum, u) => sum + ((u as { cost?: { total?: number } }).cost?.total ?? 0), 0);
-  // Micro-dollars as the revision: it moves only when the spend does, so an idle session sends nothing.
-  return total > 0 ? [{ id: 'cost', kind: 'cost', rev: Math.max(1, Math.round(total * 1e6)), at: now, data: { total } }] : [];
+function costFact(usage: Readonly<UsageState>, direct: Spend | undefined): Fact[] {
+  const t: Spend = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, at: 0, ...direct };
+  for (const u of [...Object.values(usage.models), ...Object.values(usage.tools)]) {
+    t.input += u.input; t.output += u.output; t.cacheRead += u.cacheRead; t.cacheWrite += u.cacheWrite; t.cost += u.cost?.total ?? 0;
+  }
+  // Tokens plus micro-dollars as the revision: both only grow, so it moves only when the spend does, and a free model still publishes its tokens.
+  const rev = t.input + t.output + t.cacheRead + t.cacheWrite + Math.round(t.cost * 1e6);
+  return rev > 0 ? [{ id: 'cost', kind: 'cost', rev, at: t.at, data: { total: t.cost, input: t.input, output: t.output, cacheRead: t.cacheRead, cacheWrite: t.cacheWrite } }] : [];
 }
 
 // harness.usage totals every conversation, so decision forks and subagents count. Derived from the log's current documents, so a replay of the log yields the same facts as live publishing.
@@ -63,7 +69,7 @@ export async function collectFacts(harness: Harness, root: Conversation, meta: S
   const status = outbox?.status;
   return [
     { id: 'session', kind: 'session', rev: 1, at: 0, data: { agent: meta.agent, version: meta.version } },
-    ...artifactFacts(artifacts), ...approvalFacts(approvals), ...questionFacts(questions), ...failureFacts(failures), ...costFact(await harness.usage(ctx), now),
+    ...artifactFacts(artifacts), ...approvalFacts(approvals), ...questionFacts(questions), ...failureFacts(failures), ...costFact(await harness.usage(ctx), outbox?.direct),
     ...(status?.seq ? [{ id: 'status', kind: 'status' as const, rev: status.seq, at: status.at, data: { state: status.state } }] : []),
   ];
 }

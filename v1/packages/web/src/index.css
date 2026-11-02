@@ -34,6 +34,9 @@
   --color-danger-line: light-dark(#f5c2c0, #6b2a26);
   --color-link: light-dark(#2f5fb3, #8fb3ff);
   --color-link-bg: light-dark(#eaf1ff, #16233c);
+  /* The reMarkable page stock is paper in both themes. */
+  --color-paper: #f3efe6;
+  --color-paper-ink: #2f3a36;
   --color-shade: light-dark(rgb(15 21 19 / 0.18), rgb(0 0 0 / 0.55));
   --color-shade-soft: light-dark(rgb(15 21 19 / 0.05), rgb(255 255 255 / 0.06));
   --shadow-card: 0 1px 2px var(--color-shade-soft);
@@ -116,3 +119,5 @@ details[open] > summary > .chev { transform: rotate(90deg); }
 .hljs-deletion { color: var(--color-danger); }
 @keyframes pulse-ring { 0% { box-shadow: 0 0 0 0 rgb(31 122 99 / 0.5); } 70% { box-shadow: 0 0 0 6px rgb(31 122 99 / 0); } 100% { box-shadow: 0 0 0 0 rgb(31 122 99 / 0); } }
 .pulse-dot { animation: pulse-ring 1.6s infinite; }
+
+.paper { background: var(--color-paper) repeating-linear-gradient(180deg, transparent 0 13px, rgb(61 143 181 / 0.22) 13px 14px); box-shadow: inset 6px 0 0 #d9d2c3; }

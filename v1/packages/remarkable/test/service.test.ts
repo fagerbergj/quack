@@ -290,6 +290,28 @@ test('a failed ingest of an unchanged document retries as a new attempt; a retry
   assert.equal(seen[0].body.requestId, '9#1', 'a plain re-ingest joins the latest attempt');
 });
 
+test('the page routes list notebook states and ingest a failed one as a new attempt', async () => {
+  notes = { version: 11, lastModified: '2026-10-11T10:00:00Z' };
+  const states = async () => (((await (await call('GET', '/apps/remarkable')).json()) as any).tree as any[]).flatMap((e) => (e.folder ? e.children : [e])).map((e) => [e.id, e.state]);
+  assert.equal((await call('GET', '/apps/remarkable', undefined, 'Bearer nope')).status, 401);
+  assert.equal((await call('GET', '/documents/x/other')).status, 404);
+  assert.equal((await call('GET', '/apps/remarkable/ingest')).status, 404);
+  const before = await states();
+  assert.equal(before.find((s) => s[0] === 'n1')![1], 'changed', 'edited since earlier tests ingested it');
+  autoAnswer = 500;
+  await call('POST', '/apps/remarkable/ingest', { ids: ['n1'] });
+  await service.settled();
+  assert.equal((await states()).find((s) => s[0] === 'n1')![1], 'failed');
+  autoAnswer = 200;
+  seen.length = 0;
+  await call('POST', '/apps/remarkable/ingest', { ids: ['n1'] });
+  await service.settled();
+  assert.deepEqual(seen.map((s) => s.body.requestId), ['11#1']);
+  assert.equal((await states()).find((s) => s[0] === 'n1')![1], 'current');
+  notes = { version: 12, lastModified: '2026-10-12T10:00:00Z' };
+  assert.equal((await states()).find((s) => s[0] === 'n1')![1], 'changed');
+});
+
 test('a 502, a 504 or a reset mid-wait resubmits the same request id with backoff and the item still completes', async () => {
   const requests: string[] = [];
   const script = ['502', '504', 'reset', '200'];

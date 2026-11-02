@@ -8,7 +8,9 @@ import type { ExecPolicy } from './exec.ts';
 import type { AgentSpec } from './runtime.ts';
 
 /** `images` declares image input; without it pi-ai replaces image blocks with a text placeholder before the request. */
-type ModelLimits = { contextWindow: number; maxTokens?: number; reasoning?: boolean; images?: boolean };
+type ModelLimits = { contextWindow: number; maxTokens?: number; reasoning?: boolean; images?: boolean; /** A notional price per million tokens (power, say); omitted parts are free. pi-ai turns it into each call's `usage.cost`. */ price?: Partial<Price> };
+type Price = { input: number; output: number; cacheRead: number; cacheWrite: number };
+const PRICE_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite'];
 /** `systemone` providers are decision models such as Clef: classifiers with an input cap and no generation (D54). */
 type ProviderConfig = { baseUrl: string; api?: 'openai-completions' | 'systemone'; apiKeyEnv?: string; models: Record<string, ModelLimits> };
 
@@ -38,7 +40,13 @@ function providerProblems(id: string, p: unknown): string[] {
 
 function limitProblems(at: string, l: unknown, classifier: boolean): string[] {
   const ok = isObject(l) && positive(l.contextWindow) && (classifier || positive(l.maxTokens));
-  return ok ? [] : [`${at} needs positive integer contextWindow${classifier ? '' : ' and maxTokens'}`];
+  return [...(ok ? [] : [`${at} needs positive integer contextWindow${classifier ? '' : ' and maxTokens'}`]), ...(isObject(l) ? priceProblems(`${at}.price`, l.price) : [])];
+}
+
+function priceProblems(at: string, p: unknown): string[] {
+  if (p === undefined) return [];
+  const ok = isObject(p) && Object.entries(p).every(([k, v]) => PRICE_KEYS.includes(k) && typeof v === 'number' && Number.isFinite(v) && v >= 0);
+  return ok ? [] : [`${at} must map ${PRICE_KEYS.join(', ')} to non-negative numbers (per million tokens)`];
 }
 
 function execProblems(at: string, e: unknown, deployment: boolean): string[] {
@@ -130,16 +138,16 @@ export function providerEnv(deployment: DeploymentConfig): string[] {
 
 export function buildModels(deployment: DeploymentConfig): MutableModels {
   const models = createModels();
-  const cost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  const priced = (l: ModelLimits): Price => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, ...l.price });
   for (const [id, p] of Object.entries(deployment.providers)) {
     const auth = { apiKey: envApiKeyAuth(id, [providerEnv({ providers: { [id]: p } })[0]]) };
     if (p.api === 'systemone') {
-      const list = Object.entries(p.models).map(([m, l]) => ({ id: m, name: m, type: 'classifier', api: 'typesafe-system-one', provider: id, baseUrl: p.baseUrl, input: ['text'], cost, contextWindow: l.contextWindow }));
+      const list = Object.entries(p.models).map(([m, l]) => ({ id: m, name: m, type: 'classifier', api: 'typesafe-system-one', provider: id, baseUrl: p.baseUrl, input: ['text'], cost: priced(l), contextWindow: l.contextWindow }));
       models.setProvider(createProvider({ id, baseUrl: p.baseUrl, auth, models: list as never, classifiers: { 'typesafe-system-one': typesafeSystemOneApi() } }));
       continue;
     }
     const list = Object.entries(p.models).map(([m, l]) => ({
-      id: m, name: m, api: 'openai-completions', provider: id, baseUrl: p.baseUrl, reasoning: l.reasoning ?? false, input: l.images ? ['text', 'image'] : ['text'], cost, contextWindow: l.contextWindow, maxTokens: l.maxTokens,
+      id: m, name: m, api: 'openai-completions', provider: id, baseUrl: p.baseUrl, reasoning: l.reasoning ?? false, input: l.images ? ['text', 'image'] : ['text'], cost: priced(l), contextWindow: l.contextWindow, maxTokens: l.maxTokens,
     }));
     models.setProvider(createProvider({ id, baseUrl: p.baseUrl, auth, models: list as never, api: openAICompletionsApi() }));
   }

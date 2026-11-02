@@ -1,6 +1,6 @@
 import type { Extension } from '../extension.ts';
 import { github } from './github.ts';
-import { remarkable } from './remarkable.ts';
+import { remarkable } from './remarkable/index.ts';
 import { research } from './research.ts';
 import { sleeper } from './sleeper/index.ts';
 
