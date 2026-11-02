@@ -1,15 +1,17 @@
 // Usage: main.ts dataset <dataset> <agent> <good|bad|-> <session-dir>...
 //        main.ts run [--concurrency=N] <dataset> <run-name> <deployment.json> <agent.json> [item-id...]
 import { resolve } from 'node:path';
-import { evalService, parseReview } from '@quack/github';
+import { loadManifests } from '@quack/runtime/catalog';
+import { adapterScores, adaptersOf, blocksOf, servicesOf } from './adapters.ts';
 import { itemFrom, type Label } from './dataset.ts';
 import { langfuse } from './langfuse.ts';
 import { readSession } from './record.ts';
-import { replay, type EvalServices } from './replay.ts';
-import { publish, summarize, type Blocks } from './report.ts';
+import { replay } from './replay.ts';
+import { publish, summarize } from './report.ts';
 
-const services: EvalServices = { 'github.pr': (pin) => evalService(pin as never) };
-const blocks: Blocks = (finals) => (finals['github.review'] === undefined ? undefined : parseReview(finals['github.review']).verdict === 'request_changes');
+const adapters = adaptersOf(await loadManifests());
+const services = servicesOf(adapters);
+const blocks = blocksOf(adapters);
 const MIN_CASES = 20;
 
 function env(name: string): string {
@@ -46,7 +48,7 @@ if (command === 'dataset' && dataset && rest.length >= 3) {
   await Promise.all(Array.from({ length: concurrency }, async () => {
     for (let item = queue.shift(); item; item = queue.shift()) {
       const r = await replay(item, { deployment: resolve(deployment), agent: resolve(agent) }, services);
-      const scores = await publish(lf, runName, r, blocks);
+      const scores = await publish(lf, runName, r, blocks, await adapterScores(adapters, r.record));
       rows.push(scores);
       console.log(`${item.id} ${JSON.stringify(scores)}${r.error ? ` error: ${r.error}` : ''}`);
     }

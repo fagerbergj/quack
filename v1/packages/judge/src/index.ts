@@ -24,7 +24,7 @@ export type JudgeOptions = {
 
 export type Verdict = { passed: boolean; limitReached: boolean; score: number; gatesFailed: string[]; rubric: string; checks: CheckResult[] };
 
-function codeResults(rubric: Rubric, artifact: string, ev: Evidence): CheckResult[] {
+export function codeResults(rubric: Rubric, artifact: string, ev: Evidence): CheckResult[] {
   return rubric.criteria.flatMap((c) =>
     c.checks.filter((k) => k.code).map((k) => {
       const r = k.code!(artifact, ev);

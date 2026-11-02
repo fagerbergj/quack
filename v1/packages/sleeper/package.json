@@ -9,11 +9,13 @@
     "start": "node src/main.ts"
   },
   "dependencies": {
+    "@earendil-works/pi-durable": "1.4.0",
     "@quack/judge": "*",
     "@quack/sdk": "*",
     "@quack/workflows": "*"
   },
   "devDependencies": {
+    "@quack/eval": "*",
     "@quack/schedules": "*",
     "@quack/session": "*"
   }

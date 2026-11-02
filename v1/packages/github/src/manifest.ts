@@ -1,4 +1,5 @@
 import type { ExtensionManifest } from '@quack/sdk';
+import { evalAdapter } from './eval.ts';
 import { githubSessionExtensions, type GithubSessionConfig } from './post.ts';
 
 function required(name: string): string {
@@ -11,5 +12,6 @@ function required(name: string): string {
 export const manifest: ExtensionManifest = {
   name: 'github',
   env: ['QUACK_GH_SERVICE_URL', 'QUACK_GH_SERVICE_TOKEN'],
+  evalAdapters: [evalAdapter],
   session: (config) => githubSessionExtensions({ ...(config as Partial<GithubSessionConfig>), serviceUrl: required('QUACK_GH_SERVICE_URL'), serviceToken: required('QUACK_GH_SERVICE_TOKEN') }),
 };

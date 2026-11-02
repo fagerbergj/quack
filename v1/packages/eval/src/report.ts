@@ -33,10 +33,10 @@ export function scoresOf(r: ReplayResult, blocks?: Blocks): Record<string, numbe
 }
 
 /** Records one replay as a trace with scores, linked into the run as a Langfuse experiment (EV1). */
-export async function publish(lf: Langfuse, runName: string, r: ReplayResult, blocks?: Blocks) {
+export async function publish(lf: Langfuse, runName: string, r: ReplayResult, blocks?: Blocks, extra: Record<string, number> = {}) {
   // OTLP trace ids are 16 random bytes in hex.
   const traceId = randomBytes(16).toString('hex');
-  const scores = scoresOf(r, blocks);
+  const scores = { ...scoresOf(r, blocks), ...extra };
   const output = { outcome: r.record.outcome, artifacts: Object.fromEntries(Object.entries(r.record.artifacts).map(([k, v]) => [k, v.at(-1)?.content ?? null])), captured: r.captured, error: r.error ?? null };
   const endMs = Date.now();
   await lf.trace({ traceId, name: `eval ${runName}`, input: r.item.input, output, startMs: endMs - r.seconds * 1000, endMs });

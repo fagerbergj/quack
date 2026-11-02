@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { evalService, type PullRequestRecord } from '../src/index.ts';
+import { evalService, manifest, type PullRequestRecord } from '../src/index.ts';
+
+test('the review adapter blocks on request_changes only, and serves the pinned pull request', () => {
+  const [adapter] = manifest.evalAdapters!;
+  assert.equal(adapter.kind, 'github.review');
+  assert.deepEqual(Object.keys(adapter.services!), ['github.pr']);
+  assert.equal(adapter.blocks!('## Verdict\nrequest_changes\n'), true);
+  assert.equal(adapter.blocks!('## Verdict\napprove\n'), false);
+});
 
 const pr: PullRequestRecord = { owner: 'acme', repo: 'widgets', number: 7, title: 't', body: '', author: 'a', headSha: 'abc', headRef: 'f', baseRef: 'main', checks: [], linkedIssues: [] };
 

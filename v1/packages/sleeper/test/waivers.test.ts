@@ -6,13 +6,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { createModels, fauxAssistantMessage, fauxProvider, type FauxResponseStep } from '@earendil-works/pi-ai';
+import { adapterScores, readSession } from '@quack/eval';
 import { createSchedulesService } from '@quack/schedules';
 import { Artifacts } from '@quack/sdk';
 import { openSession } from '@quack/session';
 import { BACKGROUND_CONTEXT as ctx } from '@earendil-works/chord/context';
 import { runWorkflow, workflowExtension } from '@quack/workflows';
 import {
-  buildSnapshot, buildWaiverFacts, buildWaiversCard, createSleeperClient, createSleeperService, nextProcessing, registerWaiversSchedules, waiversEvidence, waiversKey, waiversRubric, waiversRun, waiversWorkflow,
+  buildSnapshot, buildWaiverFacts, waiversEvalAdapter, buildWaiversCard, createSleeperClient, createSleeperService, nextProcessing, registerWaiversSchedules, waiversEvidence, waiversKey, waiversRubric, waiversRun, waiversWorkflow,
   type WaiverFacts, type WaiversCard,
 } from '../src/index.ts';
 import { closeCalls, worth } from '../src/waivers/facts.ts';
@@ -254,7 +255,9 @@ async function runWaivers(fixtures: Fixtures, d: WaiverDecision, news?: Paramete
     const outcome = await runWorkflow(s.harness, s.root, workflow, JSON.stringify(INPUT));
     assert.equal(outcome.status, 'completed', JSON.stringify(outcome));
     const sealed = (await s.harness.snapshot(Artifacts, s.root.id, ctx))!.kinds['sleeper.cards'].versions[0];
-    return { sealed, judged, verdict: sealed.verdict as { passed: boolean; rubric: string; gatesFailed: string[]; notes: string[]; checks: Array<{ id: string }> } };
+    const verdict = sealed.verdict as { passed: boolean; rubric: string; gatesFailed: string[]; notes: string[]; checks: Array<{ id: string }> };
+    await s.close();
+    return { sealed, judged, verdict, record: await readSession(dir) };
   } finally {
     await s.close();
     await rm(dir, { recursive: true, force: true });
@@ -284,6 +287,15 @@ test('a rolling-league card that talks FAAB gets the pitfall applied by the judg
   const { verdict } = await runWaivers(base, talks);
   const hit = (verdict as unknown as { checks: Array<{ id: string; met: number }> }).checks.find((k) => k.id === 'faab_language_on_rolling')!;
   assert.equal(hit.met, 1);
+});
+
+test('a recorded waivers session scores through the eval adapter from its recorded facts, and a FAAB-talking card scores lower', async () => {
+  const good = await runWaivers(base, rollingDecision);
+  assert.ok(good.record.docs['sleeper.waivers.facts'], 'the facts are recorded beside the card');
+  const talks = await runWaivers(base, { ...rollingDecision, summary: 'Bid 30% of remaining FAAB on Felix Free.' });
+  const [a, b] = await Promise.all([good, talks].map((r) => adapterScores([waiversEvalAdapter], r.record)));
+  assert.equal(a['sleeper.cards.code_gates_failed'], 0);
+  assert.ok(b['sleeper.cards.code_score'] < a['sleeper.cards.code_score'], JSON.stringify([a, b]));
 });
 
 // A real league's settings: Wednesday 03:00 Eastern in its processed transactions, which is 00:00 Pacific; daily_waivers_hour is ignored.
