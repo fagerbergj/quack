@@ -17,7 +17,7 @@ export function Note({ text }: { text: string }) {
     <div className="flex flex-col items-start gap-1">
       {unit && <span className="rounded-md bg-soft px-1.5 py-0.5 text-[11px] font-medium text-ink-2">{unit}</span>}
       <div className="min-w-0 text-[12.5px] text-ink-2 [&_p]:m-0"><Markdown text={long && !more ? first : body} /></div>
-      {long && <button type="button" onClick={() => setMore(!more)} className="min-h-11 cursor-pointer border-0 bg-transparent p-0 text-[12.5px] text-link hover:underline lg:min-h-0">{more ? 'Less' : 'More'}</button>}
+      {long && <button type="button" onClick={() => setMore(!more)} className="min-h-11 min-w-11 cursor-pointer border-0 bg-transparent p-0 text-left text-[12.5px] text-link hover:underline lg:min-h-0 lg:min-w-0">{more ? 'Less' : 'More'}</button>}
     </div>
   );
 }

@@ -300,6 +300,9 @@ test('the page routes answer the configured league and start its lineup job', as
     const started = await call('/apps/sleeper/lineup?week=8', 'POST');
     assert.deepEqual([started.status, await started.json()], [202, { sessionKey: 'sleeper:L1:8:lineup', status: 202 }]);
     assert.equal(calls.length, 1);
+    const waivers = await call('/apps/sleeper/waivers?week=8', 'POST');
+    assert.deepEqual([waivers.status, ((await waivers.json()) as { sessionKey: string }).sessionKey], [202, 'sleeper:L1:8:waivers']);
+    assert.equal((await call('/apps/sleeper/history?seasons=x', 'POST')).status, 400);
     assert.equal((await call('/apps/sleeper/lineup?week=x', 'POST')).status, 400);
     assert.equal((await call('/apps/sleeper/lineup')).status, 405);
   } finally {

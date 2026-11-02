@@ -1,119 +1,25 @@
-import { useCallback, useEffect, useState } from 'react';
-import { StatusIcon } from '../../Artifacts.tsx';
-import { FailedCheck, failedChecks } from '../../CheckList.tsx';
-import { listArtifacts, type SealedArtifact } from '../../api.ts';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import type { SealedArtifact } from '../../api.ts';
 import type { Row } from '../../sessions.ts';
-import { runLineup, sleeperLeague } from './api.ts';
+import { Full, Short, brief, titleOf } from './cards.tsx';
+import { runJob, sleeperLeague } from './api.ts';
+import { NewsList, Verdict, weekday, when, type News } from './parts.tsx';
+import { sessionsOf, useResults, wanted, weekResult, type Result } from './week.ts';
 
 // The slice of @quack/sleeper's lineup card the page reads; the card file is the contract.
 type Player = { id: string; name: string; pos: string; team: string | null; inj: string | null };
 type Game = { opponent: string; home: boolean; kickoff: string | null; locked: boolean; status: string | null };
-type Starter = { slot: string; player: Player; proj: number; action: 'start' | 'keep'; locked: boolean; replaces: Player | null; game: Game | null; why: string; news?: Array<{ title: string; url: string; date: string; player: string }> };
+type Starter = { slot: string; player: Player; proj: number; action: 'start' | 'keep'; locked: boolean; replaces: Player | null; game: Game | null; why: string; news?: News };
 export type Card = { kind: 'lineup'; league: string; week: number; team: string; opponent: string | null; my_proj: number; opp_proj: number | null; summary: string; starters: Starter[]; bench: Array<{ player: Player; proj: number }> };
-
-const LINEUP = /^sleeper:([^:]+):(\d+):lineup$/;
-const ET = 'America/New_York';
-const when = (iso: string | number) => new Intl.DateTimeFormat('en-US', { timeZone: ET, weekday: 'short', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }).format(new Date(iso));
-
-function parseCard(a: SealedArtifact | undefined): Card | undefined {
-  try {
-    const c = a && JSON.parse(a.content);
-    return c?.kind === 'lineup' && Array.isArray(c.starters) ? c : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/** The newest week's lineup session for this league, and its latest sealed card. */
-function useLineup(league: string | undefined, rows: Row[] | undefined, refresh: number) {
-  const weekOf = (key: string) => Number(LINEUP.exec(key)?.[2] ?? -1);
-  // No league yet means no lineup session: a non-matching key must not pass for league `undefined`.
-  const session = league ? rows?.filter((r) => LINEUP.exec(r.key)?.[1] === league).sort((a, b) => weekOf(b.key) - weekOf(a.key))[0] : undefined;
-  const [artifact, setArtifact] = useState<SealedArtifact>();
-  const [error, setError] = useState('');
-  const key = session?.key;
-  useEffect(() => {
-    if (!key) return;
-    let live = true;
-    listArtifacts(key).then((all) => live && (setArtifact(all.filter((a) => a.kind === 'sleeper.cards').sort((a, b) => b.version - a.version)[0]), setError('')), (e: Error) => live && setError(e.message));
-    return () => void (live = false);
-  }, [key, session?.running, refresh]);
-  return { session, artifact, card: parseCard(artifact), error };
-}
-
-// `brief` is the strip's status; the card also lists what missed. A pass is only a tick, and a partial miss on a pass stays collapsed.
-export function Verdict({ artifact, brief }: { artifact: SealedArtifact; brief?: boolean }) {
-  const v = artifact.verdict;
-  if (!v) return null;
-  const missed = brief ? [] : failedChecks(v.checks);
-  return (
-    <div className="flex min-w-0 flex-col gap-1.5 text-[12px]">
-      <div className="flex items-center gap-2">
-        <StatusIcon verdict={v} />
-        {!v.passed && <span className="font-medium text-ink-2">Didn't pass its checks</span>}
-      </div>
-      {v.passed && missed.length > 0 && (
-        <details>
-          <summary className="flex min-h-11 cursor-pointer items-center text-muted lg:min-h-6">{`${missed.length} minor ${missed.length === 1 ? 'note' : 'notes'}`}</summary>
-          <div className="flex flex-col gap-1.5">{missed.map((c) => <FailedCheck key={`${c.criterion}.${c.id}`} check={c} tone="muted" />)}</div>
-        </details>
-      )}
-      {!v.passed && missed.map((c) => <FailedCheck key={`${c.criterion}.${c.id}`} check={c} tone="danger" />)}
-    </div>
-  );
-}
 
 const NO_CHANGES = 'No changes: your lineup stands';
 const unchanged = (card: Card) => card.starters.every((s) => s.action === 'keep');
 
-// Locks at the earliest kickoff among slots still open; null when every game has started.
+// Locks at the earliest kickoff among slots still open; undefined when every game has started.
 const lockTime = (card: Card | undefined) => {
   const kicks = (card?.starters ?? []).filter((s) => !s.locked && s.game?.kickoff).map((s) => Date.parse(s.game!.kickoff!));
   return kicks.length ? Math.min(...kicks) : undefined;
 };
-
-function ThisWeek({ card, artifact, running, onRun, status }: { card?: Card; artifact?: SealedArtifact; running: boolean; onRun: () => void; status: string }) {
-  const lock = lockTime(card);
-  return (
-    <section aria-labelledby="todo" className="mt-5 rounded-[22px] border border-line bg-surface p-4 shadow-card">
-      <h2 id="todo" className="m-0 mb-3 text-[16px]">This week</h2>
-      <div className="flex flex-col gap-2 rounded-xl bg-warm/70 p-3.5">
-        <p className="m-0 text-[11px] font-semibold uppercase tracking-[0.06em] text-warning">{`Lineup${card ? ` · week ${card.week}` : ''}${lock ? ` · locks ${when(lock)}` : ''}`}</p>
-        <p className="m-0 text-[14px] font-medium text-ink">{running ? 'Running now' : card ? (unchanged(card) ? NO_CHANGES : card.summary) : 'No lineup yet this week'}</p>
-        {artifact && <Verdict artifact={artifact} brief />}
-        <div className="flex flex-wrap items-center gap-2">
-          <button type="button" onClick={onRun} disabled={running} className="min-h-11 cursor-pointer rounded-lg bg-ink px-3 text-xs font-semibold text-on-ink disabled:cursor-default disabled:opacity-50 lg:min-h-0 lg:py-1">Run now</button>
-          {status && <span role="status" className="text-[12px] text-ink-2">{status}</span>}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-const host = (url: string) => new URL(url, 'http://x').hostname.replace(/^www\./, '');
-
-// Only this row's players: the starter, and the one replaced under their own name.
-function News({ s }: { s: Starter }) {
-  const items = s.news ?? [];
-  if (!items.length) return null;
-  const names = [...new Set(items.map((n) => n.player))];
-  return (
-    <details className="rounded-lg border border-line bg-surface px-3 py-1.5 text-[12px]">
-      <summary className="flex min-h-11 cursor-pointer list-none items-center font-medium text-ink-2 lg:min-h-6 [&::-webkit-details-marker]:hidden">{`News (${items.length})`}</summary>
-      {names.map((name) => (
-        <div key={name} className="mt-1 flex flex-col">
-          {names.length > 1 && <p className="m-0 font-semibold text-ink-2">{name}</p>}
-          {items.filter((n) => n.player === name).map((n) => (
-            <a key={n.url} href={n.url} target="_blank" rel="noreferrer" className="flex min-h-11 min-w-0 flex-col justify-center break-words lg:min-h-0 lg:py-1">
-              {n.title}
-              <span className="text-muted">{`${host(n.url)} · ${n.date.slice(0, 10)}`}</span>
-            </a>
-          ))}
-        </div>
-      ))}
-    </details>
-  );
-}
 
 function StarterRow({ s }: { s: Starter }) {
   const change = s.action === 'start';
@@ -137,7 +43,7 @@ function StarterRow({ s }: { s: Starter }) {
           {s.replaces && ` · replaces ${s.replaces.name}`}
         </p>
         <p className="m-0 break-words text-[13px] text-ink-2">{s.why}</p>
-        <News s={s} />
+        <NewsList items={s.news ?? []} />
       </div>
     </li>
   );
@@ -145,7 +51,7 @@ function StarterRow({ s }: { s: Starter }) {
 
 export function LineupCard({ card, artifact, sessionKey }: { card: Card; artifact: SealedArtifact; sessionKey: string }) {
   return (
-    <article aria-label={`Week ${card.week} lineup`} className="mt-4 overflow-hidden rounded-[22px] border border-line bg-surface shadow-card">
+    <article aria-label={`Week ${card.week} lineup`} className="overflow-hidden rounded-[22px] border border-line bg-surface shadow-card">
       <div className="flex flex-col gap-2 border-b border-line px-4 py-3">
         <div className="flex items-center gap-2">
           <p className="m-0 text-sm font-semibold">Start / sit</p>
@@ -172,25 +78,171 @@ export function LineupCard({ card, artifact, sessionKey }: { card: Card; artifac
   );
 }
 
-export function Sleeper({ rows }: { rows: Row[] | undefined }) {
+
+const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+// shortcut: scheduled runs are not shown, the page has no schedules read; add pins when /apps/sleeper serves them.
+function WeekStrip({ lock, now }: { lock?: number; now: number }) {
+  const today = DAYS.indexOf(weekday(now));
+  const locks = lock === undefined ? -1 : DAYS.indexOf(weekday(lock));
+  return (
+    <section aria-label="This week" className="rounded-[22px] border border-line bg-surface p-4 shadow-card">
+      <ol className="m-0 grid list-none grid-cols-7 p-0 text-center text-[12px]">
+        {DAYS.map((d, i) => (
+          <li key={d} aria-current={i === today ? 'date' : undefined} className="flex flex-col items-center gap-1">
+            <span className={i === today ? 'font-semibold text-ink' : 'text-muted'}>{d}</span>
+            <span className="flex h-6 items-center gap-1">
+              {i === today && <span role="img" aria-label="Today">🦆</span>}
+              {i === locks && <span role="img" aria-label="Lineup lock" className="h-5 w-1 rounded-full bg-danger" />}
+            </span>
+          </li>
+        ))}
+      </ol>
+      {lock !== undefined && <p className="m-0 mt-2 text-[13px] font-medium text-ink">{`${lock > now ? 'Lineup locks' : 'Lineup locked'} ${when(lock)}`}</p>}
+    </section>
+  );
+}
+
+const btn = 'inline-flex min-h-11 cursor-pointer items-center justify-center rounded-lg border-0 bg-transparent px-2 text-xs font-medium text-link no-underline hover:bg-soft lg:min-h-0 lg:py-1';
+
+function ResultCard({ r, compact }: { r: Result; compact?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const title = titleOf(r);
+  if (open && r.job === 'lineup' && Array.isArray(r.card.starters)) {
+    return <div className="flex flex-col gap-1"><LineupCard card={r.card as Card} artifact={r.artifact} sessionKey={r.key} /><button type="button" onClick={() => setOpen(false)} className={`${btn} self-end`} aria-label={`Close ${title}`}>Close</button></div>;
+  }
+  return (
+    <article id={`sleeper-${r.job}`} aria-label={title} className="scroll-mt-4 rounded-[22px] border border-line bg-surface shadow-card">
+      <div className="flex items-center gap-3 px-4 pt-3">
+        <div className="min-w-0 flex-1">
+          <h2 className="m-0 text-[15px] font-semibold">{title}</h2>
+          <p className="m-0 text-[12px] text-muted">{brief(r).sub}</p>
+        </div>
+        <button type="button" aria-expanded={open} aria-label={`${open ? 'Close' : 'Open'} ${title}`} onClick={() => setOpen(!open)} className={btn}>{open ? 'Close' : 'Open ›'}</button>
+      </div>
+      <div className="flex flex-col gap-2 px-4 pt-1 pb-4">
+        {open ? <Full r={r} /> : !compact && <Short r={r} />}
+        <Verdict artifact={r.artifact} brief={!open} />
+        {open && <a href={`#/s/${encodeURIComponent(r.key)}`} className={`${btn} self-start`}>Ask about this</a>}
+      </div>
+    </article>
+  );
+}
+
+function Outcome({ week, results }: { week: number; results: Result[] }) {
+  const o = weekResult(week, results);
+  if (!o) return null;
+  const label = o.won === undefined ? 'Tied' : o.won ? 'Won' : 'Lost';
+  return (
+    <section aria-label={`Week ${week} result`} className="rounded-[22px] border border-line bg-surface p-4 shadow-card">
+      <p className={`m-0 text-[12px] font-bold uppercase tracking-[0.08em] ${o.won ? 'text-success' : 'text-ink-2'}`}>{label}</p>
+      <p className="m-0 mt-1 text-[28px] font-semibold tabular-nums tracking-[-0.02em]">{o.opp === undefined ? o.started : `${o.started} to ${o.opp}`}</p>
+      <p className="m-0 mt-1 text-[14px] text-ink-2">{`Left ${o.left} on the bench (best lineup ${o.best})`}</p>
+    </section>
+  );
+}
+
+const CURRENT = ['waivers', 'trade-finder', 'trends', 'digest', 'retro', 'history'];
+const PAST = ['digest', 'retro', 'lineup', 'waivers', 'trade-finder', 'trade', 'trends', 'history'];
+const JOBS: Array<[string, string]> = [['lineup', 'Lineup'], ['waivers', 'Waivers'], ['trade-finder', 'Trade finder'], ['trends', 'Trends'], ['digest', 'Recap'], ['retro', 'Retro'], ['history', 'League history']];
+
+type SheetProps = { found: Result[]; running: (job: string) => boolean; status: string; onRun: (job: string, name: string) => void; onJump: (job: string) => void; onClose: () => void };
+
+function JobSheet({ found, running, status, onRun, onJump, onClose }: SheetProps) {
+  return (
+    <div role="dialog" aria-modal="true" aria-label="Run a job" onKeyDown={(e) => e.key === 'Escape' && onClose()} className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
+      <div aria-hidden="true" onClick={onClose} className="absolute inset-0 bg-ink/25 backdrop-blur-[2px]" />
+      <div className="relative flex max-h-[85dvh] w-full flex-col overflow-y-auto rounded-t-[22px] border border-line bg-canvas px-4 pt-3 pb-[calc(1rem+var(--safe-b))] shadow-lift sm:max-w-md sm:rounded-[22px]">
+        <div className="flex items-center gap-2">
+          <h2 className="m-0 flex-1 text-[16px] font-semibold">Run a job</h2>
+          <button type="button" autoFocus aria-label="Close" onClick={onClose} className="grid h-11 w-11 cursor-pointer place-items-center rounded-full border-0 bg-transparent text-ink-2 hover:bg-soft">✕</button>
+        </div>
+        {status && <p role="status" className="m-0 mb-1 text-[13px] text-ink-2">{status}</p>}
+        <ul className="m-0 flex list-none flex-col p-0">
+          {JOBS.map(([job, name]) => {
+            const last = found.find((r) => r.job === job);
+            return (
+              <li key={job} className="flex items-center gap-3 border-t border-line py-2 first:border-t-0">
+                <button type="button" onClick={() => onJump(job)} disabled={!last} className="flex min-h-11 min-w-0 flex-1 cursor-pointer flex-col items-start justify-center border-0 bg-transparent p-0 text-left disabled:cursor-default">
+                  <span className="text-[14px] font-medium text-ink">{name}</span>
+                  <span className="text-[12px] text-muted">{running(job) ? 'Running now' : last ? `${titleOf(last)} · ${weekday(last.artifact.sealedAt)}` : 'Nothing yet'}</span>
+                </button>
+                <button type="button" aria-label={`Run ${name}`} disabled={running(job)} onClick={() => onRun(job, name)} className="min-h-11 cursor-pointer rounded-lg bg-ink px-4 text-xs font-semibold text-on-ink disabled:cursor-default disabled:opacity-50">Run</button>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+const nav = 'grid h-11 w-11 flex-none cursor-pointer place-items-center rounded-full border-0 bg-transparent text-[22px] text-ink-2 hover:bg-soft disabled:cursor-default disabled:opacity-30 disabled:hover:bg-transparent';
+
+type HeaderProps = { week?: number; team?: string; prev?: number; next?: number; past: boolean; onWeek: (w: number | undefined) => void; onMenu: () => void };
+
+function Header({ week, team, prev, next, past, onWeek, onMenu }: HeaderProps) {
+  return (
+    <header className="flex items-center gap-1">
+      <button type="button" aria-label="Earlier week" disabled={prev === undefined} onClick={() => onWeek(prev)} className={nav}>‹</button>
+      <div className="min-w-0 flex-1 text-center">
+        <h1 className="m-0 text-[22px] font-bold tracking-[-0.02em]">{week === undefined ? 'Sleeper' : `Week ${week}`}</h1>
+        {team && <p className="m-0 truncate text-[13px] text-ink-2">{team}</p>}
+      </div>
+      <button type="button" aria-label="Later week" disabled={next === undefined} onClick={() => onWeek(next)} className={nav}>›</button>
+      {past
+        ? <button type="button" onClick={() => onWeek(undefined)} className="min-h-11 flex-none cursor-pointer rounded-full border border-line bg-soft px-4 text-[13px] font-medium text-ink">This week</button>
+        : <button type="button" aria-label="Run a job" onClick={onMenu} className={nav}>⋯</button>}
+    </header>
+  );
+}
+
+function Lineup({ r, running }: { r: Result | undefined; running: boolean }) {
+  if (r && Array.isArray(r.card.starters)) return <div id="sleeper-lineup" className="scroll-mt-4"><LineupCard card={r.card as Card} artifact={r.artifact} sessionKey={r.key} /></div>;
+  return (
+    <section id="sleeper-lineup" aria-label="Start / sit" className="rounded-[22px] border border-line bg-surface p-4 shadow-card">
+      <h2 className="m-0 text-[15px] font-semibold">Start / sit</h2>
+      <p className="m-0 mt-1 text-[13px] text-ink-2">{running ? 'Running now' : 'No lineup yet this week'}</p>
+    </section>
+  );
+}
+
+export function Sleeper({ rows, now = Date.now }: { rows: Row[] | undefined; now?: () => number }) {
   const [league, setLeague] = useState<string>();
   const [unconfigured, setUnconfigured] = useState('');
-  const [refresh, setRefresh] = useState(0);
+  const [picked, setPicked] = useState<number>();
+  const [menu, setMenu] = useState(false);
   const [status, setStatus] = useState('');
+  const [refresh, setRefresh] = useState(0);
   useEffect(() => void sleeperLeague().then(setLeague, () => setUnconfigured('Sleeper is not set up on this server.')), []);
-  const { session, artifact, card, error } = useLineup(league, rows, refresh);
-  const run = useCallback(() => {
+  const all = useMemo(() => sessionsOf(league, rows), [league, rows]);
+  const weeks = [...new Set(all.map((s) => s.week))].sort((a, b) => a - b);
+  const current = weeks.at(-1);
+  const week = picked !== undefined && weeks.includes(picked) ? picked : current;
+  const past = week !== current;
+  const need = useMemo(() => (week === undefined ? [] : wanted(all, week, current!)), [all, week, current]);
+  const { results, error } = useResults(need, refresh);
+  const found = need.flatMap((s) => results[s.key] ?? []);
+  const run = useCallback((job: string, name: string) => {
     setStatus('Starting…');
-    runLineup().then(() => (setStatus('Started. The new lineup appears here when it is ready.'), setRefresh((n) => n + 1)), (e: Error) => setStatus(`Could not start: ${e.message}`));
+    runJob(job).then(() => (setStatus(`${name} started. Its result appears here when it is ready.`), setRefresh((n) => n + 1)), (e: Error) => setStatus(`Could not start: ${e.message}`));
   }, []);
+  const jump = (job: string) => (setMenu(false), document.getElementById(`sleeper-${job}`)?.scrollIntoView?.({ block: 'start' }));
+  const running = (job: string) => all.some((s) => s.job === job && s.week === current && s.running);
+  const lineup = found.find((r) => r.job === 'lineup' && r.week === week);
+  const shown = (past ? PAST : CURRENT).flatMap((j) => found.filter((r) => r.job === j && (!past || r.week === week)));
+  const team = found.find((r) => r.card.team)?.card.team as string | undefined;
   return (
-    <div className="mx-auto w-full max-w-[1240px] px-4 pt-6 pb-10 sm:px-6">
-      <h1 className="m-0 text-[22px] font-bold tracking-[-0.02em]">Sleeper</h1>
-      {card && <p className="m-0 mt-1 text-[13px] text-ink-2">{`${card.team} · week ${card.week}`}</p>}
-      {unconfigured && <p role="alert" className="mt-3 text-[13px] text-ink-2">{unconfigured}</p>}
-      {error && <p role="alert" className="mt-3 text-[13px] text-danger">{error}</p>}
-      {league && <ThisWeek card={card} artifact={artifact} running={Boolean(session?.running)} onRun={run} status={status} />}
-      {card && artifact && session && <LineupCard card={card} artifact={artifact} sessionKey={session.key} />}
+    <div className="mx-auto flex w-full max-w-[1240px] flex-col gap-4 px-4 pt-4 pb-10 sm:px-6">
+      <Header week={week} team={team} prev={weeks.filter((w) => w < (week ?? 0)).at(-1)} next={weeks.find((w) => w > (week ?? 0))} past={past} onWeek={setPicked} onMenu={() => setMenu(true)} />
+      {unconfigured && <p role="alert" className="m-0 text-[13px] text-ink-2">{unconfigured}</p>}
+      {error && <p role="alert" className="m-0 text-[13px] text-danger">{error}</p>}
+      {league && week === undefined && <p className="m-0 text-[13px] text-ink-2">No results yet. Run a job from the menu.</p>}
+      {week !== undefined && !past && <><WeekStrip lock={lockTime(lineup?.card as Card | undefined)} now={now()} /><Lineup r={lineup} running={running('lineup')} /></>}
+      {past && <Outcome week={week!} results={found} />}
+      {shown.map((r) => <ResultCard key={r.key} r={r} compact={past} />)}
+      {past && shown.length === 0 && <p className="m-0 text-[13px] text-ink-2">Nothing from this week.</p>}
+      {menu && <JobSheet found={found} running={running} status={status} onRun={run} onJump={jump} onClose={() => setMenu(false)} />}
     </div>
   );
 }

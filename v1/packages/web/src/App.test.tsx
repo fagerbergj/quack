@@ -855,8 +855,8 @@ async function openSleeper(artifacts: object[], sessionOver: object = {}) {
 test('Sleeper leads with the week strip and renders a passed lineup card', async () => {
   await openSleeper([sealed(lineup(), { passed: true, gatesFailed: [], score: 1, checks: [] })]);
   const strip = await screen.findByRole('region', { name: 'This week' });
-  expect(await within(strip).findByText(/Lineup · week 8 · locks Sun/)).toBeInTheDocument();
-  expect(within(strip).getByTitle('Double-checked')).toBeInTheDocument();
+  expect(await screen.findByRole('article', { name: 'Week 8 lineup' })).toBeInTheDocument();
+  expect(within(strip).getByText(/Lineup lock(s|ed) Sun/)).toBeInTheDocument();
   expect(within(screen.getByRole('article', { name: 'Week 8 lineup' })).getByTitle('Double-checked')).toBeInTheDocument();
   expect(document.body).not.toHaveTextContent(/v1 ·|sealed|not checked/);
   const card = screen.getByRole('article', { name: 'Week 8 lineup' });
@@ -935,28 +935,7 @@ test('a card with no verdict yet shows no status text', async () => {
 
 test('a card with no changes shows the calm banner, not the change summary', async () => {
   await openSleeper([sealed(lineup({ summary: 'No changes.', starters: [row('Jefferson')] }), null)]);
-  expect(await screen.findAllByText('No changes: your lineup stands')).toHaveLength(2);
-});
-
-test('Run now posts to the distributor route, which carries no token', async () => {
-  await openSleeper([]);
-  routes['POST /apps/sleeper/lineup'] = { sessionKey: KEY };
-  await userEvent.click(await screen.findByRole('button', { name: 'Run now' }));
-  expect(await screen.findByRole('status')).toHaveTextContent('Started');
-  const post = fetchMock.mock.calls.find(([u, i]) => u === 'apps/sleeper/lineup' && i?.method === 'POST');
-  expect(post?.[1]?.headers).toBeUndefined();
-});
-
-test('Run now is off while the job runs', async () => {
-  await openSleeper([], { running: true });
-  expect(await screen.findByRole('button', { name: 'Run now' })).toBeDisabled();
-  expect(screen.getByText('Running now')).toBeInTheDocument();
-});
-
-test('a refused Run now shows the reason', async () => {
-  await openSleeper([]);
-  await userEvent.click(await screen.findByRole('button', { name: 'Run now' }));
-  expect(await screen.findByRole('status')).toHaveTextContent('Could not start: not found');
+  expect(await screen.findByText('No changes: your lineup stands')).toBeInTheDocument();
 });
 
 test('without the Sleeper route the page says it is not set up, whatever sessions exist', async () => {

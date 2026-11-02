@@ -42,6 +42,8 @@ function safeDecode(s: string): string | undefined {
   }
 }
 
+const PAGE_JOBS = { lineup: startLineup, waivers: startWaivers, trends: startTrends, digest: startDigest, retro: startRetro, 'trade-finder': startFinder, history: startHistory };
+
 export function createSleeperService(config: ServiceConfig) {
   const store = openStore(config.dbPath);
   const now = config.now ?? (() => new Date());
@@ -67,9 +69,10 @@ export function createSleeperService(config: ServiceConfig) {
     return found ? [200, found] : [404, { error: 'no snapshot yet' }];
   }
 
-  // What the page reaches through the distributor's app proxy: the league id and the on-demand lineup job.
+  // What the page reaches through the distributor's app proxy: the league id and its jobs, for the configured league.
   async function pageRoute(method: string, url: URL): Promise<[number, unknown]> {
-    if (url.pathname === '/apps/sleeper/lineup') return startOnDemand(startLineup, method, config.league, url.searchParams.get('week'));
+    const job = /^\/apps\/sleeper\/(lineup|waivers|trends|digest|retro|trade-finder|history)$/.exec(url.pathname)?.[1];
+    if (job) return startOnDemand(PAGE_JOBS[job as keyof typeof PAGE_JOBS], method, config.league, url.searchParams.get('week'), job === 'history' ? historyParams(url.searchParams) : {});
     if (url.pathname !== '/apps/sleeper' || method !== 'GET') return [404, { error: 'not found' }];
     return config.league ? [200, { league: config.league }] : [501, { error: 'no league configured' }];
   }
