@@ -1,7 +1,8 @@
 import { timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { NoInstallation, type GithubApp } from './app.ts';
-import { triggerFor, verifySignature } from './webhook.ts';
+import { noticeFor, settled } from './notice.ts';
+import { triggerFor, verifySignature, type Trigger } from './webhook.ts';
 
 export type ServiceConfig = {
   webhookSecret: string;
@@ -67,7 +68,22 @@ export function ownerRepo(raw: string): { owner: string; repo: string } | undefi
   }
 }
 
-async function webhook(req: IncomingMessage, res: ServerResponse, app: GithubApp, config: ServiceConfig) {
+// Reviews posted per PR, and the runs already watched: a run is watched once, so no run notes twice.
+type RunState = { posted: Map<string, number>; watched: Set<string> };
+const prKey = (owner: string, repo: string, number: number) => `${owner}/${repo}#${number}`;
+
+// Waits out a run the webhook started and says on the PR when it ended without a review. shortcut: a service restart drops the watch, so that run goes unannounced.
+async function announceIfUnreviewed(app: GithubApp, state: RunState, t: Trigger, target: string, payload: object, before: number) {
+  try {
+    const outcome = await settled(target, { ...payload, wait: true });
+    const note = noticeFor(outcome, (state.posted.get(prKey(t.repo.owner, t.repo.name, t.number)) ?? 0) > before);
+    if (note) await app.asInstallation(t.repo.owner, t.repo.name, 'POST', `/repos/${t.repo.owner}/${t.repo.name}/issues/${t.number}/comments`, { body: note });
+  } catch (err) {
+    console.warn(`github: run watch for ${t.sessionKey} failed: ${String(err)}`);
+  }
+}
+
+async function webhook(req: IncomingMessage, res: ServerResponse, app: GithubApp, config: ServiceConfig, state: RunState) {
   const body = await raw(req);
   if (!verifySignature(config.webhookSecret, body, req.headers['x-hub-signature-256'] as string | undefined)) return send(res, 401, { error: 'bad signature' });
   const trigger = triggerFor(req.headers['x-github-event'] as string | undefined, JSON.parse(body.toString('utf8')), config.label);
@@ -75,7 +91,13 @@ async function webhook(req: IncomingMessage, res: ServerResponse, app: GithubApp
   // The delivery id is the request id, so a redelivery of the same event never starts a second run (HAR-5).
   const requestId = `github-delivery:${req.headers['x-github-delivery'] ?? ''}`;
   const target = `${config.distributorUrl}/sessions/${encodeURIComponent(trigger.sessionKey)}/invocations?agent=${encodeURIComponent(config.agent)}`;
-  const upstream = await fetch(target, { method: 'POST', body: JSON.stringify({ input: trigger.input, requestId, title: trigger.title }) });
+  const payload = { input: trigger.input, requestId, title: trigger.title };
+  const before = state.posted.get(prKey(trigger.repo.owner, trigger.repo.name, trigger.number)) ?? 0;
+  const upstream = await fetch(target, { method: 'POST', body: JSON.stringify(payload) });
+  if (upstream.ok && !state.watched.has(requestId)) {
+    state.watched.add(requestId);
+    void announceIfUnreviewed(app, state, trigger, target, payload, before);
+  }
   send(res, upstream.ok ? 202 : 502, { session: trigger.sessionKey, status: upstream.status });
 }
 
@@ -90,12 +112,14 @@ async function gitCredential(req: IncomingMessage, res: ServerResponse, app: Git
 }
 
 // Posts a review the session sealed and checked; the session never holds an API token (D56).
-async function postReview(req: IncomingMessage, res: ServerResponse, app: GithubApp) {
+async function postReview(req: IncomingMessage, res: ServerResponse, app: GithubApp, state: RunState) {
   const r = JSON.parse((await raw(req)).toString('utf8')) as Record<string, any>;
   const ok = typeof r.owner === 'string' && typeof r.repo === 'string' && Number.isInteger(r.number) && EVENTS.has(r.event) && typeof r.body === 'string' && r.body.length > 0;
   if (!ok) return send(res, 400, { error: 'need owner, repo, integer number, event (APPROVE|REQUEST_CHANGES|COMMENT) and a non-empty body' });
   const path = `/repos/${r.owner}/${r.repo}/pulls/${r.number}/reviews`;
   const { json } = await app.asInstallation(r.owner, r.repo, 'POST', path, { event: r.event, body: r.body, ...(r.commitId ? { commit_id: r.commitId } : {}) });
+  const key = prKey(r.owner, r.repo, r.number);
+  state.posted.set(key, (state.posted.get(key) ?? 0) + 1);
   send(res, 201, { id: json?.id, url: json?.html_url });
 }
 
@@ -131,13 +155,14 @@ async function pullRequest(res: ServerResponse, app: GithubApp, owner: string, r
 }
 
 export function createGithubService(app: GithubApp, config: ServiceConfig) {
+  const state: RunState = { posted: new Map(), watched: new Set() };
   return createServer(async (req, res) => {
     try {
       const path = new URL(req.url ?? '', 'http://x').pathname;
-      if (req.method === 'POST' && path === '/webhook') return await webhook(req, res, app, config);
+      if (req.method === 'POST' && path === '/webhook') return await webhook(req, res, app, config, state);
       if (!authorized(req, config.serviceToken)) return send(res, 401, { error: 'unauthorized' });
       if (req.method === 'GET' && path === '/git-credential') return await gitCredential(req, res, app);
-      if (req.method === 'POST' && path === '/reviews') return await postReview(req, res, app);
+      if (req.method === 'POST' && path === '/reviews') return await postReview(req, res, app, state);
       const pull = /^\/pulls\/([^/]+)\/([^/]+)\/(\d+)$/.exec(path);
       if (req.method === 'GET' && pull) return await pullRequest(res, app, pull[1], pull[2], Number(pull[3]));
       send(res, 404, { error: 'not found' });
