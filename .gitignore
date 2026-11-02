@@ -49,3 +49,4 @@ storybook-static
 AGENTS.md.local
 testdata/qa/github/deliveries.jsonl
 .pi-glla/
+/v1/packages/web/dist/
