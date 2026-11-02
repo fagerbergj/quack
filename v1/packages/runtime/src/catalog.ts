@@ -16,11 +16,13 @@ export async function loadManifests(list: string[] = extensionList()): Promise<E
 
 const entry = (m: ExtensionManifest, workflows: ContributedWorkflows): CatalogEntry => {
   const { env } = m;
-  return Object.assign((config: unknown) => m.session!(config, workflows), { env: typeof env === 'function' ? (config: unknown) => env(config, workflows) : env });
+  return Object.assign((config: unknown) => m.session!(config, workflows), { env: typeof env === 'function' ? (config: unknown) => env(config, workflows) : env, requires: m.requires, optional: m.optional });
 };
 
 /** Entries by the name agent definitions select them with (A8), and the extensions every session gets, from the manifests. */
 export function buildCatalog(manifests: ExtensionManifest[]): { catalog: Catalog; deploymentExtensions: DeploymentExtensions } {
+  const known = new Set(manifests.map((m) => m.name));
+  for (const m of manifests) for (const r of m.requires ?? []) if (!known.has(r)) throw new Error(`extension ${m.name} requires ${r}, which this image does not carry`);
   const workflows: ContributedWorkflows = Object.assign({}, ...manifests.map((m) => m.workflows));
   const withSession = manifests.filter((m) => m.session);
   const always = withSession.filter((m) => m.deployment).map((m) => Object.assign(() => m.session!(undefined, workflows) as Extension[], { env: m.env as readonly string[] | undefined }));

@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { mock, test } from 'node:test';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createModels, fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai';
-import { agentSpec, buildModels, declaredEnv, loadAgent, openSession, parseDefinition, parseDeployment, type Catalog } from '../src/index.ts';
+import { agentSpec, buildModels, declaredEnv, loadAgent, openSession, parseDefinition, parseDeployment, resolveExtensions, type Catalog } from '../src/index.ts';
 
 const deployment = {
   providers: { local: { baseUrl: 'http://127.0.0.1:11436/v1', apiKeyEnv: 'QUACK_LOCAL_KEY', models: { 'qwen3.8-27b': { contextWindow: 262144, maxTokens: 16384, reasoning: true } } } },
@@ -154,4 +154,29 @@ test('model prices default to free, reach the built model, and must be non-negat
   assert.deepEqual(buildModels(models()).getModel('local', 'm')?.cost, { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
   assert.deepEqual(buildModels(models({ input: 0.5, output: 2 })).getModel('local', 'm')?.cost, { input: 0.5, output: 2, cacheRead: 0, cacheWrite: 0 });
   for (const bad of [{ input: -1 }, { input: '1' }, { tokens: 1 }, 3]) assert.throws(() => models(bad), /price must map/);
+});
+
+test('selecting an extension adds what it requires, transitively, and loads dependencies first', async () => {
+  const ext = (name: string, extra: object = {}) => Object.assign((config: unknown) => [{ name: `${name}:${JSON.stringify(config)}` } as never], extra);
+  const deps: Catalog = {
+    workflows: ext('workflows', { optional: ['judge'] }),
+    app: ext('app', { requires: ['mid'], optional: ['judge', 'other'] }),
+    mid: ext('mid', { requires: ['workflows'] }),
+    other: ext('other', { requires: ['workflows'] }),
+    judge: ext('judge'),
+  };
+  assert.deepEqual(resolveExtensions(['app'], deps), { order: ['workflows', 'mid', 'app'], problems: [] });
+  // Optional ones are ordered before it only when the agent enables them; they are never added.
+  assert.deepEqual(resolveExtensions(['app', 'judge'], deps).order, ['judge', 'workflows', 'mid', 'app']);
+  const def = parseDefinition({ name: 'a', version: 1, model: 'local/qwen3.8-27b', extensions: { app: { x: 1 }, workflows: { workflow: 'w' } } }, parseDeployment(deployment), deps);
+  const spec = await agentSpec(def, deps);
+  assert.deepEqual(spec.extensions!.map((e) => e.name), ['workflows:{"workflow":"w"}', 'mid:undefined', 'app:{"x":1}']);
+});
+
+test('a missing requirement or a cycle fails the definition with a clear message', () => {
+  const deps: Catalog = { a: Object.assign(() => [], { requires: ['ghost'] }), b: Object.assign(() => [], { requires: ['c'] }), c: Object.assign(() => [], { requires: ['b'] }) };
+  const d = parseDeployment(deployment);
+  const base = { name: 'a', version: 1, model: 'local/qwen3.8-27b' };
+  assert.throws(() => parseDefinition({ ...base, extensions: { a: {} } }, d, deps), /extension a requires ghost, which is not available/);
+  assert.throws(() => parseDefinition({ ...base, extensions: { b: {} } }, d, deps), /extension dependency cycle: b -> c -> b/);
 });

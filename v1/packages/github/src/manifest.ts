@@ -11,6 +11,7 @@ function required(name: string): string {
 // The service secret comes from the environment, never the definition file (D56).
 export const manifest: ExtensionManifest = {
   name: 'github',
+  optional: ['judge'],
   env: ['QUACK_GH_SERVICE_URL', 'QUACK_GH_SERVICE_TOKEN'],
   evalAdapters: [evalAdapter],
   session: (config) => githubSessionExtensions({ ...(config as Partial<GithubSessionConfig>), serviceUrl: required('QUACK_GH_SERVICE_URL'), serviceToken: required('QUACK_GH_SERVICE_TOKEN') }),
