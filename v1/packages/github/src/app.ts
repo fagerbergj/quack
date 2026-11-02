@@ -7,6 +7,15 @@ const b64url = (data: string | Buffer) => Buffer.from(data).toString('base64url'
 
 export class NoInstallation extends Error {}
 
+/** A non-2xx GitHub response, with its status so callers can tell a refusal from an outage. */
+export class GithubError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
 // A GitHub App client: RS256 JWT for the app, then a cached installation token per repo, as v0 does (D56).
 export function githubApp(config: AppConfig, fetchImpl: typeof fetch = fetch) {
   const api = (config.apiUrl ?? 'https://api.github.com').replace(/\/+$/, '');
@@ -28,7 +37,7 @@ export function githubApp(config: AppConfig, fetchImpl: typeof fetch = fetch) {
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     if (res.status === 404) return { status: 404, json: undefined, link: '' };
-    if (!res.ok) throw new Error(`github ${method} ${path}: ${res.status} ${(await res.text()).slice(0, 300)}`);
+    if (!res.ok) throw new GithubError(res.status, `github ${method} ${path}: ${res.status} ${(await res.text()).slice(0, 300)}`);
     return { status: res.status, json: await res.json(), link: res.headers.get('link') ?? '' };
   }
 

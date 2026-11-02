@@ -188,3 +188,11 @@ Posted inline on the diff:
 `);
   assert.equal(splitReview(text, '', ['src/a.ts'], 'repo').comments.length, 0);
 });
+
+test('a long first sentence stays whole in the inline comment and is shortened only in the body list', () => {
+  const long = `Rename ${'the thing that holds the value '.repeat(6)}so it reads well.`;
+  const text = `## Takeaway\nx\n## Verdict\ncomment\n## Findings\n- nit: src/a.ts:2 — ${long} Then more.\n## Verified\n- y\n`;
+  const { body, comments } = splitReview(text, DIFF, ['src/a.ts'], 'repo');
+  assert.equal(comments[0].body, `**nit**: ${long}\n\nThen more.`);
+  assert.match(body, /- nit: Rename .*…\n## Verified/);
+});

@@ -23,11 +23,12 @@ export function commentableLines(diff: string): Map<string, Set<number>> {
 const SENTENCE = /^.*?[.!?](?=\s|$)/;
 const MAX_TITLE = 120;
 
-function titleOf(text: string): string {
+function firstSentence(text: string): string {
   const first = text.split('\n')[0];
-  const title = SENTENCE.exec(first)?.[0] ?? first;
-  return title.length > MAX_TITLE ? `${title.slice(0, MAX_TITLE - 1)}…` : title;
+  return SENTENCE.exec(first)?.[0] ?? first;
 }
+
+const shorten = (s: string) => (s.length > MAX_TITLE ? `${s.slice(0, MAX_TITLE - 1)}…` : s);
 
 // The finding each line of the Findings section belongs to (0 elsewhere), following parseReview's continuation rule, and where the section ends.
 function lineOwners(lines: string[]) {
@@ -54,10 +55,10 @@ export function splitReview(content: string, diff: string, files: string[], repo
   for (const f of parseReview(content).findings) {
     const path = f.path && f.line ? resolveCitedPath(files, repoName, f.path) : undefined;
     if (!path || !shown.get(path)?.has(f.line!)) continue;
-    const title = titleOf(f.text);
-    const rest = f.text.slice(title.length).replace(/^[\s…]+/, '');
-    inline.set(f.index, { label: f.label, title });
-    comments.push({ path, line: f.line!, body: `**${f.label}${f.anchor ? ` (${f.anchor})` : ''}**: ${title}${rest ? `\n\n${rest}` : ''}` });
+    const first = firstSentence(f.text);
+    const rest = f.text.slice(first.length).trim();
+    inline.set(f.index, { label: f.label, title: shorten(first) });
+    comments.push({ path, line: f.line!, body: `**${f.label}${f.anchor ? ` (${f.anchor})` : ''}**: ${first}${rest ? `\n\n${rest}` : ''}` });
   }
   if (!comments.length) return { body: content, comments };
   const lines = content.split('\n');

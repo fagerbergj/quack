@@ -28,7 +28,7 @@ function postCleared(config: SessionConfig) {
     const marks = v.limitReached ? `\n\n---\n**Not fully checked:** the revision limit was reached. Checks that did not pass:\n${feedback(v.checks).map((l) => `- ${l}`).join('\n')}\n` : '';
     const event = EVENT[parseReview(sealed.content).verdict ?? ''];
     const { body: text, comments } = await postable(api, config.repoDir ?? 'repo', pr.baseRef, sealed.content, ctx);
-    const body = { owner: pr.owner, repo: pr.repo, number: pr.number, commitId: pr.headSha, event, body: text + marks, ...(comments.length ? { comments } : {}) };
+    const body = { owner: pr.owner, repo: pr.repo, number: pr.number, commitId: pr.headSha, event, body: text + marks, ...(comments.length ? { comments, fallbackBody: sealed.content + marks } : {}) };
     const res = await fetch(`${config.serviceUrl}/reviews`, { method: 'POST', body: JSON.stringify(body), headers: { authorization: `Bearer ${config.serviceToken}` } });
     if (!res.ok) return { text: `Posting failed: ${res.status} ${(await res.text()).slice(0, 300)}. Call the submit tool again to retry.`, isError: true };
     const posted = (await res.json()) as { url?: string };

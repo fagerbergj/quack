@@ -1,6 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { NoInstallation, type GithubApp } from './app.ts';
+import { GithubError, NoInstallation, type GithubApp } from './app.ts';
 import { noticeFor, settled } from './notice.ts';
 import { stripMentions, triggerFor, verifySignature, type Trigger } from './webhook.ts';
 
@@ -129,10 +129,10 @@ async function postReview(req: IncomingMessage, res: ServerResponse, app: Github
     event: r.event, body: stripMentions(body, slug), ...(r.commitId ? { commit_id: r.commitId } : {}),
     ...(inline.length ? { comments: inline.map((c) => ({ path: c.path, line: c.line, side: 'RIGHT', body: stripMentions(c.body, slug) })) } : {}),
   });
-  // GitHub rejects the whole review when one inline line is off the diff; the findings then ride in the body instead of being lost.
+  // GitHub answers 422 when an inline line is off the diff; only then does the review go as written, findings in the body. Outages are the caller's to retry.
   const { json } = await post(r.body, comments).catch((err) => {
-    if (!comments.length) throw err;
-    return post(`${r.body}\n\n${comments.map((c: any) => `**${c.path}:${c.line}**\n${c.body}`).join('\n\n')}`, []);
+    if (!comments.length || !(err instanceof GithubError) || err.status !== 422) throw err;
+    return post(typeof r.fallbackBody === 'string' ? r.fallbackBody : r.body, []);
   });
   const key = prKey(r.owner, r.repo, r.number);
   state.posted.set(key, (state.posted.get(key) ?? 0) + 1);

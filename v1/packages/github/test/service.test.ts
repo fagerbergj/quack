@@ -56,6 +56,7 @@ const github = await listen(
     if (url === '/repos/acme/widgets/issues/comments/60') return reply(200, { body: '@quack-app why is this cached?\nIt looks wrong.' });
     // GitHub refuses a whole review when one inline line is off the diff.
     if (url === '/repos/acme/widgets/pulls/7/reviews' && calls.at(-1)!.body?.comments?.some((c: any) => c.path === 'gone.ts')) return reply(422, { message: 'Line could not be resolved' });
+    if (url === '/repos/acme/widgets/pulls/7/reviews' && calls.at(-1)!.body?.comments?.some((c: any) => c.path === 'down.ts')) return reply(503, { message: 'unavailable' });
     if (url === '/repos/acme/widgets/pulls/7/reviews') return auth === 'token ghs_test' ? reply(200, { id: 9, html_url: 'https://github.com/acme/widgets/pull/7#review-9' }) : reply(401, {});
     reply(404, {});
   }),
@@ -282,10 +283,19 @@ test('replies post in the right thread and strip its own handle outside code', a
   assert.equal(commented[0], '> quack-app why is this cached?\n> It looks wrong.\n\nIt is cached for speed, @dev.');
 });
 
-test('a review posts its inline comments on the right side, mentions stripped; a refusal moves them into the body', async () => {
+test('a review posts its inline comments on the right side, mentions stripped; a 422 refusal posts the review as written, an outage is not retried', async () => {
   const post = (comments: unknown[]) => fetch(`${service}/reviews`, { method: 'POST', body: JSON.stringify({ owner: 'acme', repo: 'widgets', number: 7, commitId: 'abc123', event: 'COMMENT', body: 'cc @quack-app', comments }), headers: { authorization: 'Bearer svc-secret' } }).then((r) => r.status);
   assert.equal(await post([{ path: 'src/a.ts', line: 3, body: '**nit**: ping @quack-app' }]), 201);
   assert.deepEqual(calls.findLast((c) => c.path.endsWith('/reviews'))!.body, { event: 'COMMENT', body: 'cc quack-app', commit_id: 'abc123', comments: [{ path: 'src/a.ts', line: 3, side: 'RIGHT', body: '**nit**: ping quack-app' }] });
-  assert.equal(await post([{ path: 'gone.ts', line: 3, body: '**nit**: lost?' }]), 201);
-  assert.equal(calls.findLast((c) => c.path.endsWith('/reviews'))!.body.body, 'cc quack-app\n\n**gone.ts:3**\n**nit**: lost?');
+  const refused = [{ path: 'gone.ts', line: 3, body: '**nit**: lost?' }];
+  const posts = () => calls.filter((c) => c.path.endsWith('/reviews')).length;
+  const before = posts();
+  const fallback = await fetch(`${service}/reviews`, { method: 'POST', body: JSON.stringify({ owner: 'acme', repo: 'widgets', number: 7, event: 'COMMENT', body: 'listed inline', fallbackBody: 'as written, @quack-app', comments: refused }), headers: { authorization: 'Bearer svc-secret' } });
+  assert.equal(fallback.status, 201);
+  assert.equal(posts() - before, 2);
+  assert.deepEqual(calls.findLast((c) => c.path.endsWith('/reviews'))!.body, { event: 'COMMENT', body: 'as written, quack-app' });
+  // An outage is not a refusal: one attempt, a 502 to the session, nothing marked posted.
+  const down = await fetch(`${service}/reviews`, { method: 'POST', body: JSON.stringify({ owner: 'acme', repo: 'widgets', number: 7, event: 'COMMENT', body: 'x', fallbackBody: 'y', comments: [{ path: 'down.ts', line: 1, body: 'n' }] }), headers: { authorization: 'Bearer svc-secret' } });
+  assert.equal(down.status, 502);
+  assert.equal(posts() - before, 3);
 });
