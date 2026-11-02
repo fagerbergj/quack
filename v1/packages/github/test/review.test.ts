@@ -95,9 +95,10 @@ test('statement-like inline quotes are collected for checking; identifiers, shor
 
 test('a quote is invented only when a name it claims is in no repo file, diff or installed dependency (prod cases)', async () => {
   const has = (corpus: string, argv: string[]) => new RegExp(`(?<![\\w$])${argv[argv.indexOf('-e') + 1]}(?![\\w$])`).test(corpus);
-  const check = async (repo: string, deps: string, text: string) => {
-    const api = { env: { exec: async (argv: string[]) => ({ ok: true, value: { exitCode: has(argv[0] === 'git' ? repo : deps, argv) ? 0 : 1 } }) } };
-    return misquotes(api as never, 'r', { index: 1, label: 'nit', text } as never, '', '', {} as never);
+  let calls = 0;
+  const check = async (repo: string, deps: string, text: string, known?: Map<string, boolean>) => {
+    const api = { env: { exec: async (argv: string[]) => (calls++, { ok: true, value: { exitCode: has(argv[0] === 'git' ? repo : deps, argv) ? 0 : 1 } }) } };
+    return misquotes(api as never, 'r', { index: 1, label: 'nit', text } as never, '', '', {} as never, known);
   };
   const spans = [
     'outer.push({ type: "error", reason: "error", error: message }); outer.end(message)',
@@ -114,6 +115,11 @@ test('a quote is invented only when a name it claims is in no repo file, diff or
   const otlp = 'resp.partialSuccess?.rejectedSpans';
   assert.deepEqual(await check(otlp, '', 'read `ExportTraceServiceResponse.partialSuccess { errorCount, errorMessage }`'), ['errorCount', 'errorMessage']);
   assert.deepEqual(await check('map.keys().next().value', '', 'use `const oldest = map.keys().next().value` then `if (oldest !== undefined)`'), [], 'a new local name is a proposal');
+  assert.deepEqual(claimedNames('const oldest = map.keys().next().value'), ['keys', 'next', 'value']);
+  const shared = new Map<string, boolean>();
+  calls = 0;
+  for (const t of ['calls `gone.fetchAll() === 1`', 'again `gone.fetchAll() === 1`']) assert.deepEqual(await check('', '', t, shared), ['fetchAll']);
+  assert.equal(calls, 2, 'two searches (repo, deps) for one name across two findings');
 });
 
 test('no_silent_approval sees the same unit as the change scope on an approve, and no unit on any other verdict', async () => {
