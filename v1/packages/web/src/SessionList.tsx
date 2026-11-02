@@ -35,7 +35,7 @@ function RowLink({ r, kind, current, now }: { r: Row; kind: Kind; current: boole
             {l.num && <><span className="font-medium text-muted">{l.num}</span>{' '}</>}
             {l.title}
           </span>
-          <time dateTime={r.lastActivity} className="whitespace-nowrap text-xs tabular-nums text-muted lg:hidden">{age(r.lastActivity, now)}</time>
+          <time dateTime={r.createdAt} className="whitespace-nowrap text-xs tabular-nums text-muted lg:hidden">{age(r.createdAt, now)}</time>
         </span>
         <span className={`truncate text-[13px] lg:text-xs ${TONE[l.tone]}`}>{l.line}</span>
       </span>

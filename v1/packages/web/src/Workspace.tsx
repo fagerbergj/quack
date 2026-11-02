@@ -57,7 +57,7 @@ export function Workspace({ data, selected, isNew, list }: { data: WorkspaceData
   return (
     <div className="flex min-h-0 min-w-0 flex-col lg:h-dvh">
       {selected ? (
-        <SessionView key={selected.key} sessionKey={selected.key} agent={selected.agent} name={sessionTitle(row ?? { key: selected.key, agent: selected.agent ?? '', running: false, active: false, lastActivity: '' })} />
+        <SessionView key={selected.key} sessionKey={selected.key} agent={selected.agent} name={sessionTitle(row ?? { key: selected.key, agent: selected.agent ?? '', running: false, active: false, createdAt: '', lastActivity: '' })} />
       ) : (
         <div className="overflow-y-auto"><Landing agents={data.agents} error={data.agentsError} groups={group(data.rows ?? [])} /></div>
       )}

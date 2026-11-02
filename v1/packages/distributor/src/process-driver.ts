@@ -10,7 +10,7 @@ import { childPort, shellEnv } from '@quack/session';
 
 export type AgentStatus = 'draft' | 'promoted';
 export type AgentInfo = { name: string; version: number; status: AgentStatus };
-export type SessionInfo = { key: string; agent: string; version?: number; retention?: { idleDays: number }; title?: string; running: boolean; lastActivity: string };
+export type SessionInfo = { key: string; agent: string; version?: number; retention?: { idleDays: number }; title?: string; running: boolean; createdAt: string; lastActivity: string };
 
 /** A request the agent registry refuses: 404 for an unknown agent, 409 for a session that already runs another. */
 export class AgentError extends Error {
@@ -62,22 +62,34 @@ export async function digest(dir: string): Promise<string> {
 
 const SNAPSHOT = 'agent-def';
 
-// Newest of the last log message and the last recorded touch; file mtimes move on every restart and checkpoint.
-async function lastActivity(dir: string): Promise<number> {
-  let logged = 0;
+// The session store records no wall-clock creation time, so `created` is written once with the session.
+// Older sessions backfill it once from their first logged message, else the session-key file's mtime.
+async function createdAt(dir: string): Promise<number> {
+  const recorded = Number(await readText(join(dir, 'created')));
+  if (recorded) return recorded;
+  const first = (await logTimes(dir, 'min')) || (await stat(join(dir, 'session-key')).then((s) => Math.floor(s.mtimeMs), () => 0));
+  if (first) await writeFile(join(dir, 'created'), String(first)).catch(() => undefined);
+  return first;
+}
+
+async function logTimes(dir: string, fn: 'min' | 'max'): Promise<number> {
   try {
     const db = new DatabaseSync(join(dir, 'session.sqlite'), { readOnly: true });
     try {
-      const row = db.prepare("SELECT max(json_extract(m.value, '$.timestamp')) AS at FROM entries, json_each(entries.record, '$.model') m").get() as { at: number | null };
-      logged = row.at ?? 0;
+      const row = db.prepare(`SELECT ${fn}(json_extract(m.value, '$.timestamp')) AS at FROM entries, json_each(entries.record, '$.model') m`).get() as { at: number | null };
+      return row.at ?? 0;
     } finally {
       db.close();
     }
   } catch {
-    // No log yet: fall back to when the session was created.
+    return 0;
   }
+}
+
+// Newest of the last log message and the last recorded touch; file mtimes move on every restart and checkpoint.
+async function lastActivity(dir: string): Promise<number> {
   const touched = Number(await readText(join(dir, 'touched'))) || 0;
-  return Math.max(logged, touched) || (await stat(join(dir, 'session-key')).then((s) => s.mtimeMs, () => 0));
+  return Math.max(await logTimes(dir, 'max'), touched) || createdAt(dir);
 }
 
 const TITLE_MAX = 120;
@@ -220,6 +232,7 @@ export function processDriver(opts: { command: string[]; dataDir: string; agents
       await mkdir(dir, { recursive: true });
       await writeFile(join(dir, 'session-key'), key);
       await writeFile(join(dir, 'agent'), name);
+      await writeFile(join(dir, 'created'), String(Date.now()));
     }
     return { name, path: source && join(snapshotDir, 'agent.json') };
   }
@@ -294,9 +307,9 @@ export function processDriver(opts: { command: string[]; dataDir: string; agents
       const { version } = pinned ?? {};
       const idleDays = pinned?.retention?.idleDays ?? current.get(agent);
       const title = cachedTitle(join(opts.dataDir, d));
-      return { key, agent, ...(typeof version === 'number' && { version }), ...(typeof idleDays === 'number' && { retention: { idleDays } }), ...(title && { title }), running: children.has(key), at: await lastActivity(join(opts.dataDir, d)) };
+      return { key, agent, ...(typeof version === 'number' && { version }), ...(typeof idleDays === 'number' && { retention: { idleDays } }), ...(title && { title }), running: children.has(key), created: await createdAt(join(opts.dataDir, d)), at: await lastActivity(join(opts.dataDir, d)) };
     }));
-    return all.filter((s) => s !== undefined).sort((a, b) => b.at - a.at).map(({ at, ...s }) => ({ ...s, lastActivity: new Date(at).toISOString() }));
+    return all.filter((s) => s !== undefined).sort((a, b) => b.created - a.created).map(({ at, created, ...s }) => ({ ...s, createdAt: new Date(created).toISOString(), lastActivity: new Date(at).toISOString() }));
   }
 
   const touch = (key: string, at: number) => writeFile(join(sessionDir(key), 'touched'), String(at));

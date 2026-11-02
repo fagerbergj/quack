@@ -63,7 +63,17 @@ async function openSession() {
   return ws;
 }
 
-const sess = (key: string, over: object = {}) => ({ key, agent: 'reviewer', running: false, active: false, lastActivity: '2026-11-01T01:00:00.000Z', ...over });
+const sess = (key: string, over: object = {}) => ({ key, agent: 'reviewer', running: false, active: false, createdAt: '2026-11-01T01:00:00.000Z', lastActivity: '2026-11-01T01:00:00.000Z', ...over });
+
+test('the list keeps the server order and labels rows by creation when an older session becomes active', async () => {
+  const older = sess('gh:old', { title: 'Older', running: true, active: true, createdAt: '2026-11-01T01:00:00.000Z', lastActivity: '2026-11-01T09:00:00.000Z' });
+  routes['GET /sessions'] = { sessions: [sess('gh:a', { title: 'Alpha', running: true, active: true, createdAt: '2026-11-01T03:00:00.000Z' }), sess('gh:new', { title: 'Newer', createdAt: '2026-11-01T02:00:00.000Z' }), older, sess('gh:z', { title: 'Zed', createdAt: '2026-11-01T00:00:00.000Z' })] };
+  render(<App />);
+  const running = await screen.findByRole('region', { name: 'Running' });
+  expect(within(running).getAllByRole('link').map((l) => l.getAttribute('href'))).toEqual(['#/s/gh%3Aa', '#/s/gh%3Aold']);
+  expect(within(screen.getByRole('region', { name: 'Recent' })).getAllByRole('link').map((l) => l.getAttribute('href'))).toEqual(['#/s/gh%3Anew', '#/s/gh%3Az']);
+  expect(within(running).getByRole('link', { name: /Older/ }).querySelector('time')).toHaveAttribute('datetime', '2026-11-01T01:00:00.000Z');
+});
 
 test('groups sessions: a running session with a pending approval lands in Needs you', async () => {
   routes['GET /sessions'] = { sessions: [sess('gh:1', { running: true, active: true, title: 'Fix the flake' }), sess('gh:2', { running: true, active: true }), sess('gh:3', { title: 'Old work' })] };

@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest';
 import { look, sessionTitle } from './kinds.ts';
 
-const s = (key: string, over: object = {}) => ({ key, agent: 'reviewer', running: false, active: false, lastActivity: '', ...over });
+const s = (key: string, over: object = {}) => ({ key, agent: 'reviewer', running: false, active: false, createdAt: '', lastActivity: '', ...over });
 const text = (x: ReturnType<typeof sessionTitle>) => [x.repo, x.number, x.text].filter(Boolean).join(' ');
 
 test('a review is #n plus the PR title without its conventional-commit prefix, cut at a word', () => {

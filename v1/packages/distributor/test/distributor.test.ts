@@ -165,6 +165,23 @@ test('each session runs on the agent that created it, and the registry and index
   assert.ok(sessions.every((s) => !Number.isNaN(Date.parse(s.lastActivity))));
 });
 
+test('sessions list newest-created first; later activity does not move them and a legacy session is backfilled once', async () => {
+  const { invoke, base, driver, dataDir } = await startDistributor(60_000);
+  await invoke('ord:1', { input: 'hi', wait: true });
+  await invoke('ord:2', { input: 'hi', wait: true });
+  const read = async () => ((await (await fetch(`${base}/sessions`)).json()) as { sessions: Array<{ key: string; createdAt: string }> }).sessions;
+  const dir = (k: string) => join(dataDir, sessionDirName(k));
+  await writeFile(join(dir('ord:1'), 'created'), '1000');
+  await writeFile(join(dir('ord:2'), 'created'), '2000');
+  assert.deepEqual((await read()).map((s) => s.key), ['ord:2', 'ord:1']);
+  await driver.touch('ord:1', Date.now() + 60_000);
+  assert.deepEqual((await read()).map((s) => s.key), ['ord:2', 'ord:1']);
+  await rm(join(dir('ord:1'), 'created'));
+  const legacy = (await read()).find((s) => s.key === 'ord:1');
+  assert.equal(Number(await readFile(join(dir('ord:1'), 'created'), 'utf8')), Date.parse(legacy!.createdAt));
+  assert.ok(Date.parse(legacy!.createdAt) > 1000);
+});
+
 test('lastActivity comes from the session log, so file mtimes from a restart do not move it', async () => {
   const { invoke, base, driver, dataDir } = await startDistributor(60_000);
   await invoke('act:1', { input: 'hi', wait: true });
@@ -320,7 +337,7 @@ async function fakeFleet(ping: (now: number) => unknown) {
   const log: string[] = [];
   const driver = {
     agents: async () => [], pid: () => undefined,
-    sessions: async () => [...running].map((key) => ({ key, agent: '', running: true, lastActivity: '' })),
+    sessions: async () => [...running].map((key) => ({ key, agent: '', running: true, createdAt: '', lastActivity: '' })),
     ensure: async (key: string) => { if (!running.has(key)) log.push(`start ${key}`); running.add(key); return url; },
     stop: async (key: string) => { running.delete(key); log.push(`stop ${key}`); },
     remove: async () => false,
