@@ -5,7 +5,7 @@ import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
 import { defineExtension } from '@earendil-works/pi-durable';
-import { piPackage } from '@quack/sdk';
+import { holdUntilLoaded, piPackage } from '@quack/sdk';
 import { openSession } from '@quack/session';
 import { changedLines, touchedSymbols } from '../src/blast.ts';
 import { checkoutTool } from '../src/index.ts';
@@ -41,7 +41,7 @@ test('checkout_pr reports who calls each changed symbol, from a real language se
   const bin = fileURLToPath(new URL('../../../node_modules/.bin/typescript-language-server', import.meta.url));
   await mkdir(agentDir, { recursive: true });
   const server = { id: 'ts', include: ['**/*.ts'], rootMarkers: ['tsconfig.json'], bin, args: ['--stdio'], cwd: '{root}', languageIdByExtension: { '.ts': 'typescript' }, startupTimeoutMs: 20_000 };
-  await writeFile(join(agentDir, 'lsp.json'), JSON.stringify({ version: 1, servers: [server] }));
+  await writeFile(join(agentDir, 'lsp.json'), JSON.stringify({ version: 1, servers: [holdUntilLoaded(server)] }));
   process.env.PI_AGENT_DIR = agentDir;
 
   let result = '';
