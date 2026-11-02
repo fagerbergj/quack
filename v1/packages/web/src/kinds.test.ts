@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { sessionTitle } from './kinds.ts';
+import { look, sessionTitle } from './kinds.ts';
 
 const s = (key: string, over: object = {}) => ({ key, agent: 'reviewer', running: false, active: false, lastActivity: '', ...over });
 const text = (x: ReturnType<typeof sessionTitle>) => [x.repo, x.number, x.text].filter(Boolean).join(' ');
@@ -39,4 +39,11 @@ test('research keeps the question up to its first ?, comma or period, else a wor
 test('reMarkable and other sessions cut long names at about 40 characters', () => {
   expect(sessionTitle(s('remarkable:d1', { title: 'Campaign Notes' })).text).toBe('Campaign Notes');
   expect(sessionTitle(s('ui:x', { agent: 'coder', title: 'Refactor the distributor sweep so that listing never pings' })).text).toBe('Refactor the distributor sweep so that…');
+});
+
+test('a sealed reMarkable transcript with no verdict is not "not transcribed"', () => {
+  const row = (artifacts: object[]) => ({ ...s('remarkable:d1'), multiRepo: false, approvals: [], questions: [], artifacts }) as unknown as Parameters<typeof look>[0];
+  const art = { kind: 'remarkable.transcript', version: 1, sealedAt: 1 };
+  expect(look(row([art])).line).toBe('Transcribed · not checked');
+  expect(look(row([])).line).toBe('Not transcribed yet');
 });

@@ -17,9 +17,11 @@ function newest(r: Row, kind: string): IndexArtifact | undefined {
 
 // A running session says what it does, a finished one says how its newest artifact fared.
 function outcome(r: Row, kind: string, w: Words): Pick<Look, 'line' | 'tone'> {
-  const v = newest(r, kind)?.verdict;
+  const a = newest(r, kind);
+  const v = a?.verdict;
   if (r.active) return { line: w.run, tone: 'muted' };
-  if (!v) return { line: w.none, tone: 'muted' };
+  if (!a) return { line: w.none, tone: 'muted' };
+  if (!v) return { line: w.sealed ?? 'Ready · not checked', tone: 'muted' };
   return v.passed ? { line: w.pass, tone: 'ok' } : { line: w.fail, tone: 'bad' };
 }
 
