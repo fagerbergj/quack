@@ -1,9 +1,10 @@
 import type { ComponentType } from 'react';
-import type { SealedArtifact } from './api.ts';
+import type { ArtifactLink, SealedArtifact } from './api.ts';
 import type { Row } from './sessions.ts';
 
 export type Tone = 'plain' | 'muted' | 'warn' | 'ok' | 'bad';
 export type Words = { run: string; pass: string; fail: string; none: string; /** Newest artifact sealed without a verdict (kind is never judged). */ sealed?: string };
+export type Delivered = { line: string; tone: Tone; link?: ArtifactLink };
 export type Named = { title: string; full: string; num?: string; repo?: string };
 
 /** How one family of sessions reads in lists and headers; the first kind whose `match` hits names the row. */
@@ -14,6 +15,8 @@ export type SessionKind = {
   tint: string;
   name: (r: Row) => Named;
   words: (r: Row) => { kind: string; w: Words } | undefined;
+  /** What an idle session delivered, with its outside link; undefined leaves the line to `words`. A running session always reads `words.run`. */
+  delivered?: (r: Row) => Delivered | undefined;
 };
 
 /** What an extension's web module hands the shell; every field is optional. */

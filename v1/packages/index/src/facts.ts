@@ -20,9 +20,12 @@ const verdictOf = (v: { verdict: unknown }) => (v.verdict ? { passed: (v.verdict
 
 const linksOf = (v: SealedArtifact) => v.links ?? [];
 
+// The first line of a "## Verdict" section: how a review reads when it was delivered, which the list shows without fetching the content.
+const outcomeOf = (v: SealedArtifact) => /^## Verdict[^\n]*\n\s*(\S[^\n]*)/m.exec(v.content)?.[1]?.trim();
+
 function artifactFacts(artifacts: { kinds: Record<string, { versions: SealedArtifact[] }> } | undefined): Fact[] {
   return Object.entries(artifacts?.kinds ?? {}).flatMap(([kind, { versions }]) =>
-    versions.map((v): Fact => ({ id: `artifact:${kind}:${v.version}`, kind: 'artifact', rev: (v.verdict ? 2 : 1) + linksOf(v).length, at: v.sealedAt, data: { kind, version: v.version, hash: v.hash, verdict: verdictOf(v), links: linksOf(v) } })));
+    versions.map((v): Fact => ({ id: `artifact:${kind}:${v.version}`, kind: 'artifact', rev: (v.verdict ? 2 : 1) + linksOf(v).length + (outcomeOf(v) ? 1 : 0), at: v.sealedAt, data: { kind, version: v.version, hash: v.hash, verdict: verdictOf(v), links: linksOf(v), outcome: outcomeOf(v) ?? null } })));
 }
 
 function approvalFacts(approvals: { items: Record<string, Approval> } | undefined): Fact[] {

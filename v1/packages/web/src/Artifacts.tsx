@@ -17,8 +17,9 @@ export const artifactName = (a: SealedArtifact) => EXTENSIONS.map((e) => e.artif
 function lineOf(a: SealedArtifact): string {
   const named = EXTENSIONS.map((e) => e.artifact?.(a)).find(Boolean);
   const name = named?.name ?? 'Result';
+  if (named?.posted) return named.posted;
   if (a.verdict?.passed === false) return sentence(`${name} didn't pass its checks`.trim());
-  return named?.posted ?? sentence(`${name} ready`.trim());
+  return sentence(`${name} ready`.trim());
 }
 
 // One muted line per artifact; the drawer's Checks tab holds the detail.

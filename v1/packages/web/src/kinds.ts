@@ -1,11 +1,11 @@
 import type { IndexArtifact, SessionSummary } from './api.ts';
-import { BLUE, plain, type SessionKind, type Tone, type Words } from './extension.ts';
+import { BLUE, plain, type Delivered, type SessionKind, type Tone, type Words } from './extension.ts';
 import { EXTENSIONS } from './extensions/index.ts';
 import { failedLine, type Row } from './sessions.ts';
 
 export type { Tone };
 
-export type Look = { label: string; icon: string; tint: string; repo?: string; num?: string; title: string; full: string; line: string; tone: Tone };
+export type Look = { delivered?: boolean; link?: Delivered['link']; label: string; icon: string; tint: string; repo?: string; num?: string; title: string; full: string; line: string; tone: Tone };
 
 const DOT = 'M9 12a3 3 0 1 0 6 0a3 3 0 1 0-6 0';
 
@@ -16,10 +16,11 @@ function newest(r: Row, kind: string): IndexArtifact | undefined {
 
 
 // A running session says what it does, a finished one says how its newest artifact fared.
-function outcome(r: Row, kind: string, w: Words): Pick<Look, 'line' | 'tone'> {
+function outcome(r: Row, kind: string, w: Words, delivered?: Delivered): Pick<Look, 'line' | 'tone' | 'link' | 'delivered'> {
   const a = newest(r, kind);
   const v = a?.verdict;
   if (r.active) return { line: w.run, tone: 'muted' };
+  if (delivered) return { ...delivered, delivered: true };
   if (!a) return { line: w.none, tone: 'muted' };
   if (!v) return { line: w.sealed ?? 'Ready', tone: 'muted' };
   return v.passed ? { line: w.pass, tone: 'ok' } : { line: w.fail, tone: 'bad' };
@@ -32,7 +33,7 @@ export function look(r: Row): Look {
   const kind = KINDS.find((x) => x.match(r))!;
   const { num, repo, title, full } = kind.name(r);
   const w = kind.words(r);
-  const state = w ? outcome(r, w.kind, w.w) : { line: r.agent, tone: 'muted' as const };
+  const state = w ? outcome(r, w.kind, w.w, kind.delivered?.(r)) : { line: r.agent, tone: 'muted' as const };
   const ask = r.approvals[0];
   const more = r.approvals.length > 1 ? ` +${r.approvals.length - 1} more` : '';
   const question = r.questions[0];

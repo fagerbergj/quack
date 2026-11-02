@@ -105,7 +105,8 @@ test('review rows show their repo only when the list holds reviews from two repo
   expect(await screen.findByRole('link', { name: /b\/two #2 Second/ })).toBeInTheDocument();
 });
 
-const indexed = (session: string, kind: string, passed: boolean | null, version = 1, sealedAt = 1) => ({ session, kind, version, verdict: passed === null ? null : { passed }, sealedAt });
+const indexed = (session: string, kind: string, passed: boolean | null, version = 1, sealedAt = 1, extra: { outcome?: string; posted?: boolean } = {}) =>
+  ({ session, kind, version, verdict: passed === null ? null : { passed }, sealedAt, outcome: extra.outcome, links: extra.posted ? [{ label: 'Posted', url: `https://github.com/${session}/review-${version}` }] : [] });
 
 test('each kind of session shows its own title and state, and search finds it by kind', async () => {
   routes['GET /sessions'] = { sessions: [
@@ -128,10 +129,10 @@ test('each kind of session shows its own title and state, and search finds it by
   ] };
   routes['GET /index/approvals?state=pending'] = { approvals: [] };
   routes['GET /index/artifacts'] = { artifacts: [
-    indexed('github:o/r#8', 'github.review', false, 1), indexed('github:o/r#8', 'github.review', true, 2),
+    indexed('github:o/r#8', 'github.review', false, 1), indexed('github:o/r#8', 'github.review', true, 2, 2, { outcome: 'approve', posted: true }),
     indexed('github:o/r#9', 'github.review', false),
-    indexed('github:o/r#10', 'github.review', true),
-    indexed('github:o/r#11', 'github.review', false, 1, 1), indexed('github:o/r#11', 'github.review', true, 1, 2),
+    indexed('github:o/r#10', 'github.review', true, 1, 1, { outcome: 'approve', posted: true }),
+    indexed('github:o/r#11', 'github.review', false, 1, 1), indexed('github:o/r#11', 'github.review', true, 1, 2, { outcome: 'approve', posted: true }),
     indexed('ui:r1', 'research.report', true),
     indexed('sleeper:123:8:lineup', 'sleeper.cards', true),
     indexed('sleeper:123:8:waivers', 'sleeper.cards', true),
@@ -147,7 +148,7 @@ test('each kind of session shows its own title and state, and search finds it by
   const row = async (name: RegExp) => within(await screen.findByRole('link', { name }));
   expect((await row(/#7 Fix the cache/)).getByText('Reviewing')).toBeInTheDocument();
   expect((await row(/#8 Add retries/)).getByText('Approved ✓')).toBeInTheDocument();
-  expect((await row(/#9 Drop the flag/)).getByText("Didn't pass its checks")).toBeInTheDocument();
+  expect((await row(/#9 Drop the flag/)).getByText('No review posted')).toBeInTheDocument();
   expect((await row(/What changed/)).getByText('Report ✓')).toBeInTheDocument();
   expect((await row(/Lineup · wk 8/)).getByText('Lineup picks ready')).toBeInTheDocument();
   expect((await row(/Waivers · wk 8/)).getByText('Waiver claims ready')).toBeInTheDocument();
@@ -1027,4 +1028,51 @@ test('below lg main is the scroller inside a fixed frame that ends at the nav', 
   const main = screen.getByRole('main');
   expect(main).toHaveClass('flex-1', 'min-h-0', 'overflow-y-auto', 'overscroll-y-contain');
   expect(main.parentElement).toHaveClass('fixed', 'top-0', 'bottom-[calc(52px+var(--safe-b))]', 'lg:contents');
+});
+
+// Real prod index rows [version, judge passed, posted, verdict in the content] for #2019 and #2042.
+const PROD: Record<string, Array<[number, boolean, boolean, string]>> = {
+  'github:fagerbergj/quack#2019': [[1, false, false, 'approve'], [2, true, false, 'approve'], [3, true, false, 'request_changes'], [4, true, false, 'request_changes'], [5, false, false, 'request_changes'], [6, true, true, 'request_changes'], [7, false, true, 'approve']],
+  'github:fagerbergj/quack#2042': [[1, false, false, 'comment'], [2, true, false, 'request_changes'], [3, true, true, 'request_changes'], [4, false, false, 'approve'], [5, true, true, 'request_changes']],
+};
+const prodArtifacts = (...keys: string[]) => keys.flatMap((k) => PROD[k]!.map(([v, ok, posted, outcome]) => indexed(k, 'github.review', ok, v, v, { outcome, posted })));
+
+test('an idle review reads as its posted verdict, a limit-released one included, and a running request reads Reviewing', async () => {
+  const k19 = 'github:fagerbergj/quack#2019';
+  const k42 = 'github:fagerbergj/quack#2042';
+  routes['GET /sessions'] = { sessions: [sess(k19, { title: 'quotes_exist fails only on nowhere' }), sess(k42, { title: 'Sleeper week stepper', running: true, active: true }), sess('github:fagerbergj/quack#2043', { title: 'Only commented' }), sess('github:fagerbergj/quack#2044', { title: 'Ended unposted' })] };
+  routes['GET /index/artifacts'] = { artifacts: [...prodArtifacts(k19, k42), indexed('github:fagerbergj/quack#2043', 'github.review', true, 1, 1, { outcome: 'comment', posted: true }), indexed('github:fagerbergj/quack#2044', 'github.review', false)] };
+  render(<App />);
+  const row = async (name: RegExp) => within(await screen.findByRole('link', { name }));
+  expect((await row(/#2019/)).getByText('Approved ✓')).toBeInTheDocument();
+  expect((await row(/#2019/)).queryByText("Didn't pass its checks")).toBeNull();
+  const running = await row(/#2042/);
+  expect(running.getByText('Reviewing')).toBeInTheDocument();
+  expect(running.queryByText(/Changes requested|✓/)).toBeNull();
+  expect((await row(/#2043/)).getByText('Commented')).toBeInTheDocument();
+  expect((await row(/#2044/)).getByText('No review posted')).toBeInTheDocument();
+});
+
+async function openReview(key: string, active: boolean) {
+  routes['GET /sessions'] = { sessions: [sess(key, { title: 'Sleeper week stepper', running: active, active })] };
+  routes['GET /index/artifacts'] = { artifacts: prodArtifacts(key) };
+  routes[`GET /sessions/${encodeURIComponent(key)}/artifacts`] = { artifacts: [] };
+  routes[`GET /sessions/${encodeURIComponent(key)}/approvals`] = { approvals: [] };
+  location.hash = `#/s/${encodeURIComponent(key)}`;
+  render(<App />);
+  await screen.findByRole('heading', { name: /Sleeper week stepper/ });
+}
+
+test('an idle session header shows the posted verdict with its Posted link', async () => {
+  const key = 'github:fagerbergj/quack#2042';
+  await openReview(key, false);
+  expect(await screen.findByRole('link', { name: 'Posted ↗' })).toHaveAttribute('href', `https://github.com/${key}/review-5`);
+  expect(screen.getAllByText('Changes requested').length).toBeGreaterThan(0);
+});
+
+test('a session header shows no earlier result while a new request runs', async () => {
+  await openReview('github:fagerbergj/quack#2042', true);
+  await screen.findByRole('status');
+  expect(screen.queryByRole('link', { name: 'Posted ↗' })).toBeNull();
+  expect(screen.queryByText('Changes requested')).toBeNull();
 });

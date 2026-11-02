@@ -27,7 +27,7 @@ export const listArtifacts = async (key: string) => (await json<{ artifacts: Sea
 export const abortRun = async (key: string) => void (await json(await fetch(`${base(key)}/abort`, { method: 'POST' })));
 
 export type IndexApproval = { session: string; id: string; tool: string; at: number };
-export type IndexArtifact = { session: string; kind: string; version: number; verdict: { passed: boolean } | null; links?: ArtifactLink[]; sealedAt: number };
+export type IndexArtifact = { session: string; kind: string; version: number; verdict: { passed: boolean } | null; links?: ArtifactLink[]; /** The first line of the content's "## Verdict" section, when it has one. */ outcome?: string; sealedAt: number };
 
 // The index answers 404 when it is off, and 503 when its database is down; either way callers fall back to per-session reads.
 async function indexRead<T>(path: string, field: string): Promise<T[] | undefined> {

@@ -8,7 +8,7 @@ import { Artifacts, useArtifacts } from './Artifacts.tsx';
 import { Work } from './Work.tsx';
 import { useVisualViewportHeight } from './useVisualViewportHeight.ts';
 import { externalLink, pendingInput } from './sessions.ts';
-import type { SessionTitle } from './kinds.ts';
+import type { Look, SessionTitle, Tone as LookTone } from './kinds.ts';
 import { Transcript, Working } from './Transcript.tsx';
 import { applyEvents, emptyView, snapshotView, touchesApprovals, type View } from './view.ts';
 
@@ -153,7 +153,19 @@ function More({ running, onAbort, latest, onOpen }: { running: boolean; onAbort:
   );
 }
 
-function Header({ name, status, tone, tokens, link, children }: { name: SessionTitle; status: string; tone: Tone; tokens?: number; link?: { url: string; label: string }; children: ReactNode }) {
+const RESULT: Record<LookTone, string> = { plain: 'text-ink-2', muted: 'text-muted', warn: 'text-warning', ok: 'text-success', bad: 'text-danger' };
+
+// What the session delivered (a review's posted verdict and its link); absent while it runs, so an earlier result never reads as current.
+function Result({ result }: { result: Look }) {
+  return (
+    <span className={`flex items-center gap-2 text-[12px] ${RESULT[result.tone]}`}>
+      {result.line}
+      {result.link && <a href={result.link.url} target="_blank" rel="noopener noreferrer" className="-my-3.5 py-3.5 text-link no-underline hover:underline">{`${result.link.label} ↗`}</a>}
+    </span>
+  );
+}
+
+function Header({ name, status, tone, tokens, link, result, children }: { name: SessionTitle; status: string; tone: Tone; tokens?: number; link?: { url: string; label: string }; result?: Look; children: ReactNode }) {
   return (
     <div className="flex items-center gap-1 border-b border-line bg-canvas/70 px-1.5 pt-[calc(0.375rem+env(safe-area-inset-top,0px))] pb-1.5 lg:h-14 lg:gap-3 lg:px-5 lg:py-0">
         <a href="#/" aria-label="Sessions" className="grid h-11 w-11 flex-none place-items-center text-ink-2 no-underline hover:text-ink lg:hidden">
@@ -165,6 +177,7 @@ function Header({ name, status, tone, tokens, link, children }: { name: SessionT
         <div className="flex min-w-0 flex-1 flex-col lg:flex-row lg:items-center lg:gap-3">
           <Title name={name} />
           <StatusChip text={status} tone={tone} />
+          {result && <Result result={result} />}
         </div>
         {tokens ? <span className="mr-1 hidden text-[12.5px] text-muted lg:inline">{`${compact(tokens)} tokens`}</span> : null}
         {link && (
@@ -192,7 +205,7 @@ function usePaneStyle(): CSSProperties | undefined {
   return { '--ws-h': `calc(${vv}px - ${chrome})` } as CSSProperties;
 }
 
-export function SessionView({ sessionKey, agent, name }: { sessionKey: string; agent?: string; name: SessionTitle }) {
+export function SessionView({ sessionKey, agent, name, delivered }: { sessionKey: string; agent?: string; name: SessionTitle; delivered?: Look }) {
   const { view, state, error, setError, approvalTick, standing, send } = useSocket(sessionKey, agent);
   // The landing composer's text seeds this composer.
   const [initial] = useState(() => pendingInput.get(sessionKey) ?? '');
@@ -212,7 +225,7 @@ export function SessionView({ sessionKey, agent, name }: { sessionKey: string; a
   const paneStyle = usePaneStyle();
   return (
     <div style={paneStyle} className="flex h-(--ws-h) min-h-0 flex-col lg:h-auto lg:flex-1">
-      <Header name={name} status={status} tone={tone} tokens={view.tokens} link={externalLink(sessionKey)}>
+      <Header name={name} status={status} tone={tone} tokens={view.tokens} link={externalLink(sessionKey)} result={tone === 'run' ? undefined : delivered}>
         <More running={state === 'open' && view.running} onAbort={abort} latest={items.at(-1)} onOpen={setWork} />
       </Header>
       <div className="relative mx-auto flex min-h-0 w-full max-w-[720px] min-w-0 flex-1 flex-col overflow-y-auto px-4 py-5 sm:px-5" aria-live="polite">
