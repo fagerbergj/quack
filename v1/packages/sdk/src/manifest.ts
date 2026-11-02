@@ -4,10 +4,7 @@ import type { Extension } from '@earendil-works/pi-durable';
 export type ContributedWorkflow = { build: (config: unknown) => unknown; env: readonly string[] };
 export type ContributedWorkflows = Record<string, ContributedWorkflow>;
 
-/**
- * What an extension package exports as `manifest`; the runtime lists packages in one place and builds its catalog from them.
- * `session` installs it for an agent that selects `name` (for every session when `deployment`); `env` is what it reads from the process.
- */
+/** What an extension package exports as `manifest`. `session` installs it for agents selecting `name` (every session if `deployment`); `env` is what it reads from the process. */
 export type ExtensionManifest = {
   name: string;
   session?: (config: unknown, workflows: ContributedWorkflows) => Extension[] | Promise<Extension[]>;
