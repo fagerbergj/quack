@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { contentText, type MutableModels } from '@earendil-works/pi-ai';
-import { AssistantEntry, createRegistry, defineExtension, Harness, section, type Conversation, type Extension, type ReportInfo, type SetTimer } from '@earendil-works/pi-durable';
+import { AssistantEntry, createRegistry, defineExtension, Harness, InboxDoc, section, type Conversation, type Extension, type ReportInfo, type SetTimer } from '@earendil-works/pi-durable';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { pendingApprovals, statusNote } from '@quack/sdk';
@@ -126,6 +126,19 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
     },
     async meta(): Promise<Array<Record<string, unknown>>> {
       return JSON.parse(await readFile(join(opts.dir, 'meta.json'), 'utf8').catch(() => '[]'));
+    },
+    // The follow-ups waiting for the run to answer, with their text: the inbox item itself is the durable queue.
+    async queued() {
+      const inbox = await harness.snapshot(InboxDoc, root.id, ctx);
+      return (inbox?.items ?? []).flatMap((i) => (i.mode === 'followUp' ? [{ id: String(i.id), text: contentText(i.content as Parameters<typeof contentText>[0]) }] : []));
+    },
+    // Withdraws a queued follow-up; false when the run already took it. With `steer`, sends its text again as a steer.
+    async withdraw(id: string, steer = false): Promise<boolean> {
+      const item = (await this.queued()).find((q) => q.id === id);
+      const submission = item && (await harness.submission(id as never, ctx));
+      if (!item || (await submission!.abort(ctx)) !== 'aborted') return false;
+      if (steer) await this.submit(item.text, undefined, false, 'steer');
+      return true;
     },
     async submit(input: string, requestId?: string, wait = false, whenBusy?: 'steer' | 'followUp'): Promise<SubmitResult> {
       if (dispatch) return dispatch({ harness, root }, input, requestId, wait);

@@ -13,7 +13,8 @@ import { Transcript, Working } from './Transcript.tsx';
 import { applyEvents, emptyView, snapshotView, touchesApprovals, type View } from './view.ts';
 
 type Standing = { questions: Question[]; failures: Failure[] };
-type Frame = SnapshotEvent | ({ type: 'standing' } & Standing) | { type: 'events'; events: AgentEvent[] } | { type: 'error'; error: string } | { type: 'accepted' };
+type Queued = { id: string; text: string };
+type Frame = { type: 'queued'; items: Queued[] } | SnapshotEvent | ({ type: 'standing' } & Standing) | { type: 'events'; events: AgentEvent[] } | { type: 'error'; error: string } | { type: 'accepted' };
 
 function useSocket(key: string, agent: string | undefined) {
   const ws = useRef<WebSocket | null>(null);
@@ -22,6 +23,7 @@ function useSocket(key: string, agent: string | undefined) {
   const [error, setError] = useState('');
   const [approvalTick, setTick] = useState(0);
   const [standing, setStanding] = useState<Standing>({ questions: [], failures: [] });
+  const [queued, setQueued] = useState<Queued[]>([]);
   useEffect(() => {
     let attempt = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -51,6 +53,7 @@ function useSocket(key: string, agent: string | undefined) {
           setView((v) => applyEvents(v, frame.events));
           if (touchesApprovals(frame.events)) setTick((t) => t + 1);
         } else if (frame.type === 'standing') setStanding(frame);
+        else if (frame.type === 'queued') setQueued(frame.items);
         else if (frame.type === 'error') setError(frame.error);
       };
     };
@@ -70,13 +73,14 @@ function useSocket(key: string, agent: string | undefined) {
     ws.current.send(JSON.stringify({ type: 'input', input, whenBusy }));
     return true;
   };
-  return { view, state, error, setError, approvalTick, standing, send };
+  // withdraw drops a queued follow-up on the server; steer takes it back and sends it into the running work.
+  const unqueue = (type: 'withdraw' | 'steer', id: string) => ws.current?.readyState === WebSocket.OPEN && ws.current.send(JSON.stringify({ type, id }));
+  return { view, state, error, setError, approvalTick, standing, queued, send, unqueue };
 }
 
 const chipBtn = 'h-11 flex-none cursor-pointer rounded-[10px] border-0 bg-transparent text-[13px] lg:h-8';
 
-// A message sent while a run works waits here, and goes out when the run ends; Send now steers it into the run instead.
-// shortcut: the queue lives in this tab, so closing it drops the unsent messages; move it server-side if that bites.
+// A message sent while a run works is a follow-up queued in the session, so a reload or a closed tab keeps it.
 function QueuedChip({ text, onNow, onRemove }: { text: string; onNow: () => void; onRemove: () => void }) {
   return (
     <div className="pointer-events-auto flex max-w-[92%] items-center gap-1 self-end rounded-2xl border border-line-strong bg-soft py-0.5 pr-0.5 pl-3">
@@ -90,28 +94,16 @@ function QueuedChip({ text, onNow, onRemove }: { text: string; onNow: () => void
   );
 }
 
-function Composer({ busy, disabled, send, input, setInput }: { busy: boolean; disabled: boolean; send: (i: string, w?: 'steer' | 'followUp') => boolean; input: string; setInput: (s: string) => void }) {
-  const [queue, setQueue] = useState<string[]>([]);
-  useEffect(() => {
-    if (busy || disabled || !queue.length) return;
-    const [first, ...rest] = queue;
-    if (send(first!)) {
-      rest.forEach((q) => send(q, 'followUp'));
-      setQueue([]);
-    }
-  }, [busy, disabled, queue]);
+type Unqueue = (type: 'withdraw' | 'steer', id: string) => void;
+
+function Composer({ busy, disabled, send, input, setInput, queued, unqueue }: { busy: boolean; disabled: boolean; send: (i: string, w?: 'steer' | 'followUp') => boolean; input: string; setInput: (s: string) => void; queued: Queued[]; unqueue: Unqueue }) {
   const submit = (e: SubmitEvent) => {
     e.preventDefault();
-    if (!input.trim()) return;
-    if (busy) {
-      setQueue([...queue, input]);
-      setInput('');
-    } else if (send(input)) setInput('');
+    if (input.trim() && send(input, busy ? 'followUp' : undefined)) setInput('');
   };
-  const now = (i: number) => send(queue[i]!, 'steer') && setQueue(queue.filter((_, j) => j !== i));
   return (
     <>
-      {queue.map((q, i) => <QueuedChip key={i} text={q} onNow={() => now(i)} onRemove={() => setQueue(queue.filter((_, j) => j !== i))} />)}
+      {queued.map((q) => <QueuedChip key={q.id} text={q.text} onNow={() => unqueue('steer', q.id)} onRemove={() => unqueue('withdraw', q.id)} />)}
       <form onSubmit={submit} className="pointer-events-auto flex items-center gap-2 rounded-[26px] bg-soft py-1.5 pr-1.5 pl-4 shadow-lift ring-1 ring-line-strong transition focus-within:ring-ink-2/40">
         <label htmlFor="steer" className="sr-only">Message</label>
         <textarea id="steer" value={input} onChange={(e) => setInput(e.target.value)} rows={1} placeholder={busy ? 'Message · sends after this step' : 'Message'} className="max-h-[220px] min-h-[40px] min-w-0 flex-1 resize-none bg-transparent px-1 py-2 text-[15px] leading-relaxed outline-none placeholder:text-muted" />
@@ -229,7 +221,7 @@ function usePaneStyle(): CSSProperties | undefined {
 }
 
 export function SessionView({ sessionKey, agent, name, delivered }: { sessionKey: string; agent?: string; name: SessionTitle; delivered?: Look }) {
-  const { view, state, error, setError, approvalTick, standing, send } = useSocket(sessionKey, agent);
+  const { view, state, error, setError, approvalTick, standing, queued, send, unqueue } = useSocket(sessionKey, agent);
   // The landing composer's text seeds this composer.
   const [initial] = useState(() => pendingInput.get(sessionKey) ?? '');
   const [input, setInput] = useState(initial);
@@ -268,7 +260,7 @@ export function SessionView({ sessionKey, agent, name, delivered }: { sessionKey
         </div>
         <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-linear-to-b from-canvas/0 via-canvas/90 via-40% to-canvas px-3 pt-10 pb-[max(0.75rem,var(--safe-b))] sm:px-4">
           <div className="mx-auto flex max-w-[720px] flex-col gap-2">
-            <Composer busy={view.running} disabled={state !== 'open'} send={send} input={input} setInput={setInput} />
+            <Composer busy={view.running} disabled={state !== 'open'} send={send} input={input} setInput={setInput} queued={queued} unqueue={unqueue} />
           </div>
         </div>
       </div>

@@ -10,7 +10,7 @@ import type { Session } from './runtime.ts';
 // for that and every in-budget input reaches the polite length check.
 const MAX_INPUT = 1 << 20;
 
-type ClientInput = { type: 'input'; input: string; requestId?: string; whenBusy?: 'steer' | 'followUp' };
+type ClientInput = { type: 'input'; input: string; requestId?: string; whenBusy?: 'steer' | 'followUp' } | { type: 'withdraw' | 'steer'; id: string };
 
 function parseClient(data: string): ClientInput | string {
   let msg: unknown;
@@ -19,8 +19,9 @@ function parseClient(data: string): ClientInput | string {
   } catch {
     return 'message must be JSON';
   }
-  const { type, input, requestId, whenBusy } = (msg ?? {}) as Record<string, unknown>;
-  if (type !== 'input') return 'type must be input';
+  const { type, input, requestId, whenBusy, id } = (msg ?? {}) as Record<string, unknown>;
+  if (type === 'withdraw' || type === 'steer') return typeof id === 'string' && id ? { type, id } : 'id must be a queued message id';
+  if (type !== 'input') return 'type must be input, withdraw or steer';
   if (typeof input !== 'string' || input.length === 0) return 'input must be a non-empty string';
   if (input.length > MAX_INPUT) return 'input is too long';
   if (requestId !== undefined && typeof requestId !== 'string') return 'requestId must be a string';
@@ -44,13 +45,21 @@ async function watchStanding(session: Session, ws: WebSocket) {
 async function stream(session: Session, ws: WebSocket) {
   const events = await watchEvents(session.harness, session.root.id, BACKGROUND_CONTEXT);
   ws.send(JSON.stringify(events.snapshot));
-  events.start(async (batch) => { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: 'events', events: batch })); });
+  // The queued follow-ups ride the socket in full (the inbox event carries no text), so a reload shows them again.
+  const pushQueued = async () => ws.readyState === ws.OPEN && ws.send(JSON.stringify({ type: 'queued', items: await session.queued() }));
+  events.start(async (batch) => {
+    if (ws.readyState !== ws.OPEN) return;
+    ws.send(JSON.stringify({ type: 'events', events: batch }));
+    if (batch.some((e) => e.type === 'inbox_update')) await pushQueued();
+  });
+  await pushQueued();
   ws.on('close', () => void events.stop());
   ws.on('message', async (data) => {
     const input = parseClient(data.toString());
     if (typeof input === 'string') return ws.send(JSON.stringify({ type: 'error', error: input }));
     // A rejection here would be unhandled, and Node ends the process on those, taking every viewer with it.
     try {
+      if (input.type !== 'input') return void (await session.withdraw(input.id, input.type === 'steer'));
       const result = await session.submit(input.input, input.requestId, false, input.whenBusy);
       ws.send(JSON.stringify({ type: 'accepted', ...result }));
     } catch (err) {

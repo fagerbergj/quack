@@ -344,7 +344,7 @@ test('a GitHub session header links to the pull request', async () => {
   expect(await screen.findByRole('link', { name: 'View on GitHub' })).toHaveAttribute('href', 'https://github.com/o/r/pull/1');
 });
 
-test('a send while a run works queues as a chip; Send now steers it, the cross removes it, and the run ending sends the rest', async () => {
+test('a send while a run works is a server-side follow-up shown as a chip; Send now steers it and the cross withdraws it', async () => {
   const ws = await openSession();
   ws.frame(snapshot());
   const box = () => screen.getByRole('textbox', { name: 'Message' });
@@ -359,20 +359,17 @@ test('a send while a run works queues as a chip; Send now steers it, the cross r
   expect(screen.queryByRole('group', { name: 'While the agent is working' })).toBeNull();
   expect(box()).toHaveAttribute('placeholder', 'Message · sends after this step');
   await send('turn left');
-  expect(ws.sent).toHaveLength(1);
-  expect(screen.getByText('turn left')).toBeInTheDocument();
-  await userEvent.click(screen.getByRole('button', { name: 'Send now' }));
-  expect(ws.sent[1]).toEqual({ type: 'input', input: 'turn left', whenBusy: 'steer' });
+  expect(ws.sent[1]).toEqual({ type: 'input', input: 'turn left', whenBusy: 'followUp' });
   expect(screen.queryByText('Queued')).toBeNull();
 
-  await send('never mind');
-  await userEvent.click(screen.getByRole('button', { name: 'Remove queued message' }));
-  expect(screen.queryByText('never mind')).toBeNull();
-
-  await send('then right');
-  expect(ws.sent).toHaveLength(2);
-  ws.frame({ type: 'events', events: [{ type: 'run_end', inputs: [] }] });
-  expect(ws.sent[2]).toEqual({ type: 'input', input: 'then right' });
+  // The chip is the server's queue: it shows when the session reports it, so a reload shows it too.
+  ws.frame({ type: 'queued', items: [{ id: 's1', text: 'turn left' }, { id: 's2', text: 'never mind' }] });
+  expect(screen.getByText('turn left')).toBeInTheDocument();
+  await userEvent.click(screen.getAllByRole('button', { name: 'Send now' })[0]);
+  expect(ws.sent[2]).toEqual({ type: 'steer', id: 's1' });
+  await userEvent.click(screen.getAllByRole('button', { name: 'Remove queued message' })[1]);
+  expect(ws.sent[3]).toEqual({ type: 'withdraw', id: 's2' });
+  ws.frame({ type: 'queued', items: [] });
   expect(screen.queryByText('Queued')).toBeNull();
 });
 
