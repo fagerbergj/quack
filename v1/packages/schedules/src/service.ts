@@ -1,8 +1,8 @@
-import { timingSafeEqual } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { serviceHttp, submitToSession } from '@quack/sdk';
 import { between, expiry, nextAfter, validate, type Schedule } from './schedule.ts';
 
 export type ServiceConfig = {
@@ -22,9 +22,7 @@ export type ServiceConfig = {
   tickMs?: number;
 };
 
-const MAX_BODY = 1 << 20;
 const DAY_MS = 86_400_000;
-const send = (res: ServerResponse, status: number, body: unknown) => res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
 
 const isMissing = (err: unknown) => (err as NodeJS.ErrnoException).code === 'ENOENT';
 const parseJson = (text: string) => {
@@ -37,22 +35,13 @@ const parseJson = (text: string) => {
 
 class BadRequest extends Error {}
 
-function authorized(req: IncomingMessage, token: string): boolean {
-  const given = Buffer.from(req.headers.authorization ?? '');
-  const expected = Buffer.from(`Bearer ${token}`);
-  return given.length === expected.length && timingSafeEqual(given, expected);
-}
+const http = serviceHttp();
+const { send, authorized } = http;
 
 async function body(req: IncomingMessage): Promise<any> {
-  let size = 0;
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) {
-    size += chunk.length;
-    if (size > MAX_BODY) throw new BadRequest('body too large');
-    chunks.push(chunk);
-  }
+  const raw = await http.readBody(req).catch((err) => { throw new BadRequest((err as Error).message); });
   try {
-    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    return JSON.parse(raw.toString('utf8'));
   } catch {
     throw new BadRequest('body is not JSON');
   }
@@ -100,10 +89,9 @@ export function createSchedulesService(config: ServiceConfig) {
 
   async function submit(s: Schedule, occurrence: Date): Promise<boolean> {
     const key = s.sessionKey.replaceAll('{time}', occurrence.toISOString());
-    const url = `${config.distributorUrl}/sessions/${encodeURIComponent(key)}/invocations?agent=${encodeURIComponent(s.agent)}`;
     // The request id makes a retry or duplicate firing one submission (HAR-5).
     const requestId = `schedule:${s.id}:${occurrence.toISOString()}`;
-    return (await doFetch(url, { method: 'POST', body: JSON.stringify({ input: s.input, requestId }) })).ok;
+    return (await submitToSession(config.distributorUrl, { key, agent: s.agent, input: s.input, requestId }, doFetch)).ok;
   }
 
   // Handles every occurrence since the last recorded one: the newest useful one fires, the rest are recorded missed (SCH-4).

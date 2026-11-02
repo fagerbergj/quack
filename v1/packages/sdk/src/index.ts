@@ -7,3 +7,4 @@ export { holdUntilLoaded } from './lsp-hold.ts';
 export { piPackage, piShutdown } from './pi-package.ts';
 export { gateGenerations, observeGeneration, onGeneration, onWaiting, statusNote, whileWaiting, type Generation, type GenerationGate, type GenerationRequest } from './signals.ts';
 export type { ContributedWorkflow, ContributedWorkflows, EvalAdapter, EvalService, ExtensionManifest, RecordedSession } from './manifest.ts';
+export { invocationRequest, safeEqual, serviceHttp, submitToSession, type SessionSubmission } from './http.ts';

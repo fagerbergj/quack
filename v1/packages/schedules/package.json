@@ -9,6 +9,7 @@
     "start": "node src/main.ts"
   },
   "dependencies": {
+    "@quack/sdk": "*",
     "cron-parser": "5.10.2"
   }
 }

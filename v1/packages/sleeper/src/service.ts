@@ -1,5 +1,5 @@
-import { timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { serviceHttp } from '@quack/sdk';
 import type { SleeperClient } from './client.ts';
 import type { StartConfig } from './jobs.ts';
 import { startLineup } from './lineup/jobs.ts';
@@ -28,13 +28,7 @@ export type ServiceConfig = {
   fetch?: typeof fetch;
 };
 
-const send = (res: ServerResponse, status: number, body: unknown) => res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
-
-function authorized(req: IncomingMessage, token: string): boolean {
-  const given = Buffer.from(req.headers.authorization ?? '');
-  const expected = Buffer.from(`Bearer ${token}`);
-  return given.length === expected.length && timingSafeEqual(given, expected);
-}
+const { send, authorized } = serviceHttp();
 
 function safeDecode(s: string): string | undefined {
   try {
