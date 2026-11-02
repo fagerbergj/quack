@@ -24,10 +24,10 @@ export function credible(url: string): boolean {
   }
 }
 
-type Hit = { title?: string; url: string; publishedDate?: string; highlights?: string[] };
+type Hit = { title?: string; url: string; publishedDate?: string; highlights?: Array<string | { text?: string }> };
 
 /** Exa matches by topic, so an item about a teammate or a team report can come back; keep one only if it names the player in full. */
-const names = (h: Hit, name: string) => `${h.title ?? ''} ${(h.highlights ?? []).join(' ')}`.toLowerCase().includes(name.toLowerCase());
+const names = (h: Hit, name: string) => `${h.title ?? ''} ${(h.highlights ?? []).map((x) => (typeof x === 'string' ? x : (x.text ?? ''))).join(' ')}`.toLowerCase().includes(name.toLowerCase());
 
 /** Exa news for one player, newest first: dated items inside the window only. A failed search yields none, so one outage never fails the lineup. */
 export function exaNews(config: { apiKey: string; url?: string }) {
