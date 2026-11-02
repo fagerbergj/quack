@@ -15,7 +15,7 @@ import {
   buildSnapshot, buildWaiverFacts, buildWaiversCard, createSleeperClient, createSleeperService, nextProcessing, registerWaiversSchedules, waiversEvidence, waiversKey, waiversRubric, waiversRun, waiversWorkflow,
   type WaiverFacts, type WaiversCard,
 } from '../src/index.ts';
-import { closeCalls } from '../src/waivers/facts.ts';
+import { closeCalls, worth } from '../src/waivers/facts.ts';
 import type { WaiverDecision } from '../src/waivers/card.ts';
 
 type Fixtures = Record<string, any>;
@@ -150,6 +150,13 @@ test('drop_not_worth_more fails a drop worth more than its add, naming both, by 
   assert.equal(r.met, 0);
   assert.match(r.detail!, /Ray Rush \(15\) is worth more than Tim Tight \(7\)/);
   assert.equal((await gate('drop_not_worth_more', f, buildWaiversCard(f, rollingDecision))).met, 1);
+});
+
+test('a drop who is Out or on IR is worth his week, not his season rate, so the gate does not block dropping him', () => {
+  const rb = { id: '1', name: 'Ray Rush', pos: 'RB', team: 'SF', proj: 0, bye: 14, ppg: 20.6 };
+  assert.equal(worth({ ...rb, inj: 'IR' } as never), null);
+  assert.equal(worth({ ...rb, inj: 'Out', proj: 3 } as never), 3);
+  assert.equal(worth({ ...rb, inj: 'Questionable' } as never), 20.6);
 });
 
 test('empty season stats still build the facts, omit the season rate and compare on proj alone', async () => {

@@ -7,8 +7,11 @@ export type WaiverType = 'rolling' | 'reverse_standings' | 'faab';
 export type WPlayer = { id: string; name: string; pos: string; team: string | null; inj: string | null; proj: number; bye: number | null };
 /** `ppg` is season points per game played in the league's scoring: the value that survives a bye, an injury or a quiet week, which `proj` does not. */
 export type Valued = WPlayer & { ppg?: number };
+// A player now Out or on IR may never repeat his season rate, so he is worth his week (usually nothing, so not compared).
+const SEASON_RATE_VOID = new Set(['Out', 'IR']);
 /** What a player is worth to compare an add with a drop: the better of his season rate and this week's projection. */
-export const worth = (p: Valued): number | null => (p.ppg === undefined ? p.proj || null : Math.max(p.ppg, p.proj));
+export const worth = (p: Valued): number | null =>
+  p.ppg === undefined || SEASON_RATE_VOID.has(p.inj ?? '') ? p.proj || null : Math.max(p.ppg, p.proj);
 /** `owned` is Sleeper's platform-wide ownership percent and `adds` its 24-hour add count, null when the player is not on the trending list: scarcity signals, not value. */
 export type FreeAgent = Valued & { owned: number | null; adds: number | null };
 export type Mine = Valued & { role: 'starter' | 'bench' | 'ir' };
