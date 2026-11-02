@@ -220,8 +220,8 @@ export function createGithubService(app: GithubApp, config: ServiceConfig) {
       if (req.method === 'POST' && path === '/webhook') return await webhook(req, res, app, config, state);
       if (!authorized(req, config.serviceToken)) return send(res, 401, { error: 'unauthorized' });
       if (req.method === 'GET' && path === '/git-credential') return await gitCredential(req, res, app);
-      if (req.method === 'POST' && path === '/reviews') return await postReview(req, res, app, state);
-      if (req.method === 'POST' && path === '/replies') return await postReply(req, res, app);
+      const post = req.method === 'POST' ? { '/reviews': () => postReview(req, res, app, state), '/replies': () => postReply(req, res, app) }[path] : undefined;
+      if (post) return await post();
       const pull = /^\/pulls\/([^/]+)\/([^/]+)\/(\d+)$/.exec(path);
       if (req.method === 'GET' && pull) return await pullRequest(res, app, pull[1], pull[2], Number(pull[3]));
       send(res, 404, { error: 'not found' });
