@@ -39,6 +39,9 @@ export async function fetchRecord(config: SessionConfig, owner: string, repo: st
   return res.json() as Promise<PullRequestRecord>;
 }
 
+const alreadyPosted = (doc: { posted?: number[]; reviewed?: Record<string, string> } | undefined, sha: string) => !!doc?.posted?.some((v) => doc.reviewed?.[String(v)] === sha);
+const staleNote = (asked: string | undefined, live: string) => (asked && asked !== live ? `The request was for ${asked}, an older head; this reviews the live head ${live}.` : '');
+
 async function conventions(api: ToolExecutionApi, dir: string, ctx: Context): Promise<string> {
   for (const name of CONVENTIONS) {
     const read = await api.env!.readTextFile(`${dir}/${name}`, ctx);
@@ -53,13 +56,15 @@ export function checkoutTool(config: SessionConfig) {
   return defineTool({
     name: 'checkout_pr',
     description: `Check out a pull request into ./${dir} at its head, with its base fetched, and return its description, CI checks, linked issues and the repo's conventions. Call it first.`,
-    parameters: Type.Object({ repository: Type.String({ description: 'owner/repo' }), number: Type.Integer({ minimum: 1 }) }),
+    parameters: Type.Object({ repository: Type.String({ description: 'owner/repo' }), number: Type.Integer({ minimum: 1 }), head: Type.Optional(Type.String({ description: 'the head sha the request named, if any' })) }),
     replay: 'safe',
     async execute(args, api, ctx) {
       const [owner, repo] = args.repository.split('/');
       if (!owner || !repo) return { output: [{ type: 'text', text: 'repository must be owner/repo' }], isError: true };
       if (!api.env) return { output: [{ type: 'text', text: 'this session has no workspace' }], isError: true };
       const pr = await fetchRecord(config, owner, repo, args.number);
+      const prior = await api.snapshot(PullRequestDoc, api.conversationId, ctx);
+      if (alreadyPosted(prior, pr.headSha)) return { output: [{ type: 'text', text: `already reviewed ${pr.headSha}: nothing to do this turn` }] };
       const remote = `${config.gitBaseUrl ?? 'https://github.com'}/${owner}/${repo}.git`;
       const cloned = (await api.env.readTextFile(`${dir}/.git/HEAD`, ctx)).ok;
       if (!cloned && pr.baseSha) await git(api, ['init', '-q', dir], config, remote, ctx);
@@ -77,6 +82,7 @@ export function checkoutTool(config: SessionConfig) {
       const hunks = await git(api, ['-C', dir, 'diff', '-U0', `origin/${pr.baseRef}...${pr.headSha}`], config, remote, ctx);
       const text = [
         `${owner}/${repo}#${pr.number} by ${pr.author}: ${pr.title}`,
+        staleNote(args.head, pr.headSha),
         `Checked out ${pr.headSha} in ./${dir}; diff against origin/${pr.baseRef}: git -C ${dir} diff origin/${pr.baseRef}...HEAD`,
         `Description:\n${pr.body || '(none)'}`,
         `CI checks: ${pr.checks.map((c) => `${c.name}=${c.conclusion ?? c.status}`).join(', ') || 'none reported'}`,
