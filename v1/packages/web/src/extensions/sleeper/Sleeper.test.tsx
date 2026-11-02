@@ -15,7 +15,7 @@ import waivers8 from './fixtures/8-waivers.json';
 const L = '1356407594683482112';
 const SEALED: Record<string, object> = { '8:lineup': lineup8, '8:waivers': waivers8, '8:trade-finder': finder8, '8:trends': trends8, '8:history': history8, '7:digest': digest7, '7:retro': retro7 };
 const key = (week: number, job: string) => `sleeper:${L}:${week}:${job}`;
-const row = (week: number, job: string, running = false) => ({ key: key(week, job), agent: 'a', running, active: running, lastActivity: '2026-11-01T01:00:00.000Z', approvals: [], questions: [], failures: [], artifacts: [], multiRepo: false }) as Row;
+const row = (week: number, job: string, running = false) => ({ key: key(week, job), agent: 'a', running, active: running, lastActivity: '2026-11-01T01:00:00.000Z', createdAt: '2026-11-01T01:00:00.000Z', approvals: [], questions: [], failures: [], artifacts: [], multiRepo: false }) as Row;
 const ALL = [...Object.keys(SEALED).map((k) => row(Number(k.split(':')[0]), k.split(':')[1]!)), row(9, 'lineup', true)];
 // Sunday Nov 1 15:00 UTC is "now"; these are the service's next runs (Eastern times in the comments).
 const RUNS = [{ job: 'digest', at: '2026-11-03T06:15:00.000Z' }, { job: 'retro', at: '2026-11-03T06:15:00.000Z' }, { job: 'waivers', at: '2026-11-03T20:00:00.000Z' }, { job: 'trade-finder', at: '2026-11-04T10:00:00.000Z' }, { job: 'trends', at: '2026-11-02T09:30:00.000Z' }];
