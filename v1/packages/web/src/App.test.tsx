@@ -788,7 +788,7 @@ async function openSleeper(artifacts: object[], sessionOver: object = {}) {
 test('Sleeper leads with the week strip and renders a passed lineup card', async () => {
   await openSleeper([sealed(lineup(), { passed: true, gatesFailed: [], score: 1, checks: [] })]);
   const strip = await screen.findByRole('region', { name: 'This week' });
-  expect(within(strip).getByText(/Lineup · week 8 · locks Sun/)).toBeInTheDocument();
+  expect(await within(strip).findByText(/Lineup · week 8 · locks Sun/)).toBeInTheDocument();
   expect(within(strip).getByText('checked')).toBeInTheDocument();
   expect(within(screen.getByRole('article', { name: 'Week 8 lineup' })).getByText('v1 · checked')).toBeInTheDocument();
   const card = screen.getByRole('article', { name: 'Week 8 lineup' });
