@@ -7,7 +7,7 @@ export type Verdict = { passed: boolean; gatesFailed: string[]; score: number; c
 export type ArtifactLink = { label: string; url: string };
 export type SealedArtifact = { kind: string; version: number; hash: string; content: string; sealedAt: number; verdict: Verdict | null; links?: ArtifactLink[] };
 
-async function json<T>(res: Response): Promise<T> {
+export async function json<T>(res: Response): Promise<T> {
   if (!res.ok) throw new Error(((await res.json().catch(() => null)) as { error?: string } | null)?.error ?? `HTTP ${res.status}`);
   return (await res.json()) as T;
 }
@@ -50,10 +50,6 @@ export async function decideApproval(key: string, id: string, decision: 'approve
     }),
   );
 }
-
-// The page never holds the Sleeper service token: the distributor adds it (apps/sleeper/*).
-export const sleeperLeague = async () => (await json<{ league: string }>(await fetch('apps/sleeper'))).league;
-export const runLineup = async () => json<{ sessionKey: string }>(await fetch('apps/sleeper/lineup', { method: 'POST' }));
 
 export function socketUrl(key: string, agent?: string) {
   const url = new URL(`${base(key)}/ws${agent ? `?agent=${encodeURIComponent(agent)}` : ''}`, location.href);

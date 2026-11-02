@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { indexApprovals, indexArtifacts, indexQuestions, listAgents, listApprovals, listQuestions, listSessions, type Approval, type AgentSummary, type Question } from './api.ts';
 import { Landing } from './Landing.tsx';
 import { sessionTitle } from './kinds.ts';
-import { group, type Row } from './sessions.ts';
+import { group, multiScope, type Row } from './sessions.ts';
 import { SessionView } from './SessionView.tsx';
 
 const REFRESH_MS = 15_000;
@@ -14,7 +14,7 @@ async function loadRows(): Promise<Row[]> {
   const questionsBy = Map.groupBy(asked ?? [], (q) => q.session);
   const artifacts = Map.groupBy(sealed ?? [], (a) => a.session);
   // A repo prefix only earns its space when reviews come from more than one repo.
-  const multiRepo = new Set(sessions.map((s) => /^github:([^#]+)#/.exec(s.key)?.[1]).filter(Boolean)).size > 1;
+  const multiRepo = multiScope(sessions.map((s) => s.key));
   return Promise.all(sessions.map(async (s) => ({
     ...s,
     multiRepo,

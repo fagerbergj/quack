@@ -7,7 +7,7 @@ import { SessionFailures } from './Failures.tsx';
 import { Artifacts, useArtifacts } from './Artifacts.tsx';
 import { Work } from './Work.tsx';
 import { useVisualViewportHeight } from './useVisualViewportHeight.ts';
-import { githubUrl, pendingInput } from './sessions.ts';
+import { externalLink, pendingInput } from './sessions.ts';
 import type { SessionTitle } from './kinds.ts';
 import { Transcript, Working } from './Transcript.tsx';
 import { applyEvents, emptyView, snapshotView, touchesApprovals, type View } from './view.ts';
@@ -152,7 +152,7 @@ function More({ running, onAbort, latest, onOpen }: { running: boolean; onAbort:
   );
 }
 
-function Header({ name, status, tone, tokens, github, children }: { name: SessionTitle; status: string; tone: Tone; tokens?: number; github?: string; children: ReactNode }) {
+function Header({ name, status, tone, tokens, link, children }: { name: SessionTitle; status: string; tone: Tone; tokens?: number; link?: { url: string; label: string }; children: ReactNode }) {
   return (
     <div className="flex items-center gap-1 border-b border-line bg-canvas/70 px-1.5 pt-[calc(0.375rem+env(safe-area-inset-top,0px))] pb-1.5 lg:h-14 lg:gap-3 lg:px-5 lg:py-0">
         <a href="#/" aria-label="Sessions" className="grid h-11 w-11 flex-none place-items-center text-ink-2 no-underline hover:text-ink lg:hidden">
@@ -166,8 +166,8 @@ function Header({ name, status, tone, tokens, github, children }: { name: Sessio
           <StatusChip text={status} tone={tone} />
         </div>
         {tokens ? <span className="mr-1 hidden text-[12.5px] text-muted lg:inline">{`${compact(tokens)} tokens`}</span> : null}
-        {github && (
-          <a href={github} target="_blank" rel="noopener noreferrer" aria-label="View on GitHub" title="View on GitHub" className={iconBtn}>
+        {link && (
+          <a href={link.url} target="_blank" rel="noopener noreferrer" aria-label={link.label} title={link.label} className={iconBtn}>
             <svg {...ICON} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" /></svg>
           </a>
         )}
@@ -210,7 +210,7 @@ export function SessionView({ sessionKey, agent, name }: { sessionKey: string; a
   const paneStyle = usePaneStyle();
   return (
     <div style={paneStyle} className="flex h-(--ws-h) min-h-0 flex-col lg:h-auto lg:flex-1">
-      <Header name={name} status={status} tone={tone} tokens={view.tokens} github={githubUrl(sessionKey)}>
+      <Header name={name} status={status} tone={tone} tokens={view.tokens} link={externalLink(sessionKey)}>
         <More running={state === 'open' && view.running} onAbort={abort} latest={items.at(-1)} onOpen={setWork} />
       </Header>
       <div className="mx-auto flex min-h-0 w-full max-w-[720px] min-w-0 flex-1 flex-col overflow-y-auto px-4 py-5 sm:px-5" aria-live="polite">

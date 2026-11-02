@@ -1,14 +1,13 @@
 import { useEffect, useState, type ReactNode } from 'react';
+import { EXTENSIONS } from './extensions/index.ts';
 
-export type Route = 'sessions' | 'inbox' | 'artifacts' | 'sleeper' | 'remarkable' | 'memory' | 'agents' | 'evals' | 'schedules';
+export type Route = string;
 
 // Icon paths from the mockup's ICONS table.
-const ICONS: Record<Route | 'grid', string> = {
+const ICONS: Record<string, string> = {
   sessions: 'M3 12h4l3 8 4-16 3 8h4',
   inbox: 'M3 13h5l2 3h4l2-3h5M5 5h14l2 8v6H3v-6z',
   artifacts: 'M14 3H6v18h12V7zM14 3v4h4M9 13h6M9 17h6',
-  sleeper: 'M8 4h8v5a4 4 0 0 1-8 0zM12 13v4M8 21h8M16 6h3v2a3 3 0 0 1-3 3M8 6H5v2a3 3 0 0 0 3 3',
-  remarkable: 'M4 20l4-1 11-11-3-3L5 16zM14 6l3 3',
   memory: 'M6 3h12v18l-6-4-6 4z',
   agents: 'M4 8h16v11H4zM12 4v4M9 13h.01M15 13h.01',
   evals: 'M9 3h6M10 3v6l-5 9a2 2 0 0 0 2 3h10a2 2 0 0 0 2-3l-5-9V3',
@@ -24,8 +23,7 @@ export const MAIN: Item[] = [
 ];
 export const GROUPS: { title: string; items: Item[] }[] = [
   { title: 'Apps', items: [
-    { route: 'sleeper', label: 'Sleeper', href: '#/sleeper' },
-    { route: 'remarkable', label: 'reMarkable', href: '#/remarkable' },
+    ...EXTENSIONS.flatMap((e) => e.nav ?? []).map((n): Item => ({ route: n.route, label: n.label, href: `#/${n.route}` })),
     { route: 'memory', label: 'Memory', href: '#/memory' },
   ] },
   { title: 'Operate', items: [
@@ -35,12 +33,13 @@ export const GROUPS: { title: string; items: Item[] }[] = [
   ] },
 ];
 const TITLES = Object.fromEntries([...MAIN, ...GROUPS.flatMap((g) => g.items)].map((n) => [n.route, n.label])) as Record<Route, string>;
+const NAV_ICONS = Object.fromEntries(EXTENSIONS.flatMap((e) => e.nav ?? []).map((n) => [n.route, n.icon]));
 const MORE = GROUPS.flatMap((g) => g.items);
 
-function Icon({ route }: { route: Route | 'grid' }) {
+function Icon({ route }: { route: Route }) {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="flex-none">
-      <path d={ICONS[route]} />
+      <path d={ICONS[route] ?? NAV_ICONS[route]} />
     </svg>
   );
 }

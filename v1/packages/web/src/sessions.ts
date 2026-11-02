@@ -1,30 +1,27 @@
 import type { Approval, Question, IndexArtifact, SessionSummary } from './api.ts';
+import { EXTENSIONS } from './extensions/index.ts';
 import { searchText, sessionTitle } from './kinds.ts';
 
 export type Row = SessionSummary & { approvals: Approval[]; questions: Question[]; artifacts: IndexArtifact[]; multiRepo: boolean };
 export type Groups = { needs: Row[]; running: Row[]; recent: Row[] };
 export type Filters = { text: string; agent: string; start: string };
 
-// The display title as one string, e.g. "#1927 Sleeper waivers job"; the full key stays in the row's tooltip.
+// The display title as one string, e.g. "#1927 Add retries"; the full key stays in the row's tooltip.
 export function titleOf(s: SessionSummary & { multiRepo?: boolean }): string {
   const t = sessionTitle(s);
   return [t.repo, t.number, t.text].filter(Boolean).join(' ');
 }
 
-const GITHUB_KEY = /^github:([^/]+)\/([^#]+)#(\d+)$/;
+/** An outside page for the session, if its extension has one. */
+export const externalLink = (key: string) => EXTENSIONS.flatMap((e) => e.link?.(key) ?? [])[0];
 
-// GitHub redirects /pull/<n> to /issues/<n> for a plain issue, so one URL fits both.
-export const githubUrl = (key: string) => {
-  const m = GITHUB_KEY.exec(key);
-  return m ? `https://github.com/${m[1]}/${m[2]}/pull/${m[3]}` : undefined;
-};
+// Reviews from one repo need no repo prefix; it earns its space once sessions span several scopes.
+export const multiScope = (keys: string[]) => new Set(keys.flatMap((k) => EXTENSIONS.flatMap((e) => e.scope?.(k) ?? []))).size > 1;
 
-const START_LABELS: Record<string, string> = { ui: 'You', github: 'GitHub' };
-
-// The key prefix names what started the session (ui:, github:, ...).
+// The key prefix names what started the session (ui:, then each extension's own).
 export function startOf(key: string): string {
   const prefix = key.split(':')[0] ?? key;
-  return START_LABELS[prefix] ?? prefix;
+  return prefix === 'ui' ? 'You' : (EXTENSIONS.find((e) => e.start?.prefix === prefix)?.start?.label ?? prefix);
 }
 
 export function matches(s: Row, f: Filters): boolean {

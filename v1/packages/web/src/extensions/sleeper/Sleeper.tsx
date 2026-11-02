@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import { StatusIcon } from './Artifacts.tsx';
-import { listArtifacts, runLineup, sleeperLeague, type SealedArtifact } from './api.ts';
-import type { Row } from './sessions.ts';
+import { StatusIcon } from '../../Artifacts.tsx';
+import { listArtifacts, type SealedArtifact } from '../../api.ts';
+import type { Row } from '../../sessions.ts';
+import { runLineup, sleeperLeague } from './api.ts';
 
 // The slice of @quack/sleeper's lineup card the page reads; the card file is the contract.
 type Player = { id: string; name: string; pos: string; team: string | null; inj: string | null };
