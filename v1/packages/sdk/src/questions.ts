@@ -53,10 +53,8 @@ export async function closeQuestions(conversation: Conversation, ctx: Context): 
   }, ctx);
 }
 
-/**
- * Last resolver of a decision chain: records the question and waits durably for a person's answer.
- * The id carries the task, so a rerun of the same point finds its question and a later run asks anew.
- */
+// Last resolver of a decision chain: records the question and waits for a person. The id carries the task,
+// so a rerun finds its question and a later run asks anew.
 export function person(signal?: AbortSignal): Resolver {
   return {
     id: 'person',
