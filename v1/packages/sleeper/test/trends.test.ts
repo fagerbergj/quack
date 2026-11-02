@@ -245,9 +245,6 @@ test('the trends job starts on demand under the week session key, and a snapshot
 
 test('the trends workflow keeps reading the service after the session process drops its env vars', async (t) => {
   const env: Record<string, string | undefined> = { QUACK_SLEEPER_URL: 'http://service', QUACK_SLEEPER_TOKEN: 'tok' };
-  const workflow = trendsFromEnv(env);
-  delete env.QUACK_SLEEPER_URL;
-  delete env.QUACK_SLEEPER_TOKEN;
   const seen: string[] = [];
   const api = createSleeperClient({ fetch: (async (u: string) => new Response(JSON.stringify(new URL(u).pathname.includes('trending') ? [] : lineup[new URL(u).pathname] ?? null))) as unknown as typeof fetch, now: () => AT });
   const snap = { date: TODAY, data: await buildSnapshot(api, 'L1') };
@@ -257,6 +254,10 @@ test('the trends workflow keeps reading the service after the session process dr
     seen.push(`${init?.method ?? 'GET'} ${u} ${new Headers(init?.headers).get('authorization')}`);
     return new Response(JSON.stringify(init?.method === 'POST' ? snap : { snapshots: [] }));
   });
+  // The client binds global fetch when built, so build the workflow after the mock or it reaches the real API.
+  const workflow = trendsFromEnv(env);
+  delete env.QUACK_SLEEPER_URL;
+  delete env.QUACK_SLEEPER_TOKEN;
   const facts = await (workflow.steps[0] as { run(c: never): unknown }).run({ input: JSON.stringify(INPUT), api: { now: () => AT } } as never);
   assert.equal((facts as { date: string }).date, TODAY);
   assert.deepEqual(seen, ['POST http://service/leagues/L1/snapshots Bearer tok', 'GET http://service/leagues/L1/snapshots Bearer tok']);

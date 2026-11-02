@@ -1,4 +1,3 @@
-import { setTimeout as sleep } from 'node:timers/promises';
 import type { Context } from '@earendil-works/chord/context';
 import type { ToolExecutionApi } from '@earendil-works/pi-durable';
 
@@ -12,7 +11,6 @@ type Symbol = { name: string; kind: number; range: Range; at: Range['start'] };
 const MAX_FILES = 20;
 const MAX_SYMBOLS = 30;
 const MAX_LISTED = 8;
-const WARMUP_MS = 10_000;
 const TEST_PATH = /(_test\.go|\.test\.[cm]?[jt]sx?|\.spec\.[cm]?[jt]sx?|(^|\/)(test|tests|__tests__)\/)/;
 // The LSP SymbolKinds worth a blast radius; fields, properties and the like ride with their parent.
 const KINDS: Record<number, string> = { 5: 'class', 6: 'method', 9: 'constructor', 10: 'enum', 11: 'interface', 12: 'function', 13: 'variable', 14: 'constant', 23: 'struct' };
@@ -60,7 +58,8 @@ export function touchedSymbols(result: unknown, lines: Array<[number, number]>, 
   return out;
 }
 
-function describe(sym: Symbol, file: string, refs: Location[], root: string): string {
+function describe(sym: Symbol, file: string, refs: Location[] | string, root: string): string {
+  if (typeof refs === 'string') return `- ${file}:${sym.at.line + 1} ${KINDS[sym.kind]} ${sym.name}: references unavailable: ${refs.replace(/\s+/g, ' ').slice(0, 200)}`;
   const outside = refs
     .map((r) => ({ path: decodeURIComponent(r.uri.replace(/^file:\/\//, '')).replace(`${root}/`, ''), line: r.range.start.line + 1 }))
     .filter((r) => !(r.path === file && r.line >= sym.range.start.line + 1 && r.line <= sym.range.end.line + 1));
@@ -77,27 +76,18 @@ async function lsp(api: ToolExecutionApi, tool: string, args: Record<string, unk
   return r.isError ? undefined : r.structuredOutput;
 }
 
-// A server still loading its project answers from open files only, and LSP has no ready signal through pi-lsp; so until one
-// answer reaches another file, or the warm-up passes, a same-file-only answer is asked again.
-function referenceFinder(api: ToolExecutionApi, ctx: Context) {
-  const until = Date.now() + WARMUP_MS;
-  let warm = false;
-  return async (path: string, at: Range['start']): Promise<Location[]> => {
-    for (;;) {
-      const r = await lsp(api, 'lsp_references', { path, line: at.line, character: at.character, includeDeclaration: false }, ctx);
-      const refs = Array.isArray(r) ? (r as Location[]) : [];
-      warm ||= refs.some((l) => !l.uri.endsWith(`/${path}`)) || Date.now() > until;
-      if (warm) return refs;
-      await sleep(250, undefined, { signal: ctx.abortSignal });
-    }
-  };
+// An error, a timeout or any non-list answer is "unknown", never "no callers"; the server's own "No result" is an empty answer.
+async function references(api: ToolExecutionApi, path: string, at: Range['start'], ctx: Context): Promise<Location[] | string> {
+  const r = await api.executeTool('lsp_references', { path, line: at.line, character: at.character, includeDeclaration: false } as never, ctx);
+  const out = r.isError ? (typeof r.structuredOutput === 'string' && r.structuredOutput) || r.diagnostics.map((d) => d.message).join(' ') || 'tool error' : r.structuredOutput;
+  if (Array.isArray(out)) return out as unknown as Location[];
+  return out === 'No result' ? [] : String(out);
 }
 
 // GH-3: who depends on each changed symbol, from the language servers; empty when the session has no LSP tools.
 export async function blastRadius(api: ToolExecutionApi, repoDir: string, diff: string, ctx: Context): Promise<string> {
   const names = new Set((await api.agent(ctx)).callable.map((t) => t.name));
   if (!names.has('lsp_symbols') || !names.has('lsp_references')) return '';
-  const references = referenceFinder(api, ctx);
   const root = `${api.env!.cwd}/${repoDir}`;
   const lines: string[] = [];
   let symbols = 0;
@@ -106,7 +96,7 @@ export async function blastRadius(api: ToolExecutionApi, repoDir: string, diff: 
     const text = await api.env!.readTextFile(path, ctx);
     for (const sym of touchedSymbols(await lsp(api, 'lsp_symbols', { path }, ctx), file.lines, text.ok ? text.value : '')) {
       if (++symbols > MAX_SYMBOLS) break;
-      lines.push(describe(sym, file.path, await references(path, sym.at), root));
+      lines.push(describe(sym, file.path, await references(api, path, sym.at, ctx), root));
     }
   }
   return lines.length ? `Blast radius of changed symbols:\n${lines.join('\n')}` : '';

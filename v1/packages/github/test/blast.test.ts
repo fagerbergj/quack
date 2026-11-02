@@ -5,9 +5,9 @@ import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
 import { defineExtension } from '@earendil-works/pi-durable';
-import { piPackage } from '@quack/sdk';
+import { holdUntilLoaded, piPackage } from '@quack/sdk';
 import { openSession } from '@quack/session';
-import { changedLines, touchedSymbols } from '../src/blast.ts';
+import { blastRadius, changedLines, touchedSymbols } from '../src/blast.ts';
 import { checkoutTool } from '../src/index.ts';
 import { cleanup, fakeService, remotes, tmp } from './fixtures.ts';
 
@@ -26,6 +26,22 @@ test('the innermost named symbol a change touches is the one measured', () => {
   assert.deepEqual(touchedSymbols(symbols, [[30, 30]]), []);
 });
 
+test('a references call that errors reports "unavailable", never "no references outside itself"', async () => {
+  const r = (a: number, b: number) => ({ start: { line: a, character: 0 }, end: { line: b, character: 0 } });
+  const symbols = [{ name: 'add', kind: 12, range: r(0, 2), selectionRange: r(0, 0) }];
+  const run = async (references: object) => {
+    const api = {
+      agent: async () => ({ callable: [{ name: 'lsp_symbols' }, { name: 'lsp_references' }] }),
+      env: { cwd: '/w', readTextFile: async () => ({ ok: true, value: 'function add() {}\n' }) },
+      executeTool: async (tool: string) => (tool === 'lsp_symbols' ? { structuredOutput: symbols } : references),
+    };
+    return blastRadius(api as never, 'repo', '+++ b/x.ts\n@@ -1 +1 @@\n', {} as never);
+  };
+  assert.match(await run({ isError: true, diagnostics: [{ severity: 'error', message: 'ts: request timed out' }] }), /add: references unavailable: ts: request timed out$/);
+  assert.match(await run({ structuredOutput: 'No matching LSP server for repo/x.ts' }), /references unavailable: No matching LSP server/);
+  assert.match(await run({ structuredOutput: 'No result' }), /no references outside itself/);
+});
+
 const base = {
   'package.json': '{ "name": "widgets", "type": "module" }\n',
   'tsconfig.json': '{ "compilerOptions": { "strict": true, "module": "nodenext" }, "include": ["src", "test"] }\n',
@@ -41,7 +57,7 @@ test('checkout_pr reports who calls each changed symbol, from a real language se
   const bin = fileURLToPath(new URL('../../../node_modules/.bin/typescript-language-server', import.meta.url));
   await mkdir(agentDir, { recursive: true });
   const server = { id: 'ts', include: ['**/*.ts'], rootMarkers: ['tsconfig.json'], bin, args: ['--stdio'], cwd: '{root}', languageIdByExtension: { '.ts': 'typescript' }, startupTimeoutMs: 20_000 };
-  await writeFile(join(agentDir, 'lsp.json'), JSON.stringify({ version: 1, servers: [server] }));
+  await writeFile(join(agentDir, 'lsp.json'), JSON.stringify({ version: 1, servers: [holdUntilLoaded(server)] }));
   process.env.PI_AGENT_DIR = agentDir;
 
   let result = '';
