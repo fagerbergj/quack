@@ -556,3 +556,11 @@ test('a session process gets an allowlisted environment, not the host\'s', async
     delete process.env.PLANTED_SECRET;
   }
 });
+
+test('a session process that never reports a port fails with its output and where it was stuck', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'quack-dist-'));
+  dirs.push(dataDir);
+  const hang = "console.log('loading models'); setInterval(() => {}, 1000);";
+  const driver = processDriver({ command: [process.execPath, '-e', hang], dataDir, defaultAgent: '', startTimeoutMs: 500 });
+  await assert.rejects(driver.ensure('research:hung'), /did not report a port; stack: .*; active handles: .*; output: loading models/s);
+});
