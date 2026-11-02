@@ -91,7 +91,7 @@ function ThemeToggle({ className }: { className: string }) {
 const linkBase = 'navlink flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-ink-2 no-underline hover:bg-soft hover:text-ink';
 const tabBase = 'tablink flex min-h-11 flex-col items-center justify-center gap-0.5 py-2 text-[11px] font-medium text-muted no-underline';
 
-// `bare` drops the phone title bar for a screen that draws its own.
+// `bare` drops the phone title bar for a screen that draws its own, and the phone page height and nav padding: that screen sizes itself to the visible viewport.
 // `sidebar` is the session list; it fills the desktop sidebar under a fixed nav and scrolls on its own.
 export function Shell({ route, bare, sidebar, children }: { route: Route; bare?: boolean; sidebar?: ReactNode; children: ReactNode }) {
   const [more, setMore] = useState(false);
@@ -140,8 +140,8 @@ export function Shell({ route, bare, sidebar, children }: { route: Route; bare?:
           </a>
         )}
       </header>
-      <main className="min-h-screen pb-24 lg:pb-0 lg:pl-72">{children}</main>
-      <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-line bg-canvas/90 pb-[env(safe-area-inset-bottom,0px)] backdrop-blur-md lg:hidden">
+      <main className={`${bare ? 'lg:min-h-screen' : 'min-h-screen pb-24'} lg:pb-0 lg:pl-72`}>{children}</main>
+      <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-30 grid h-[calc(52px+env(safe-area-inset-bottom,0px))] grid-cols-4 border-t border-line bg-canvas/90 pb-[env(safe-area-inset-bottom,0px)] backdrop-blur-md lg:hidden">
         {MAIN.map((n) => link(n, tabBase))}
         <button type="button" aria-expanded={more} aria-controls="more-sheet" aria-current={MORE.some((n) => n.route === route) ? 'page' : undefined} onClick={() => setMore(!more)} className={`${tabBase} cursor-pointer border-0 bg-transparent`}>
           <Icon route="grid" />
