@@ -141,3 +141,10 @@ test('an agent receives only the variables its extensions declare, and exec sett
   assert.throws(() => parseDefinition({ name: 'r', version: 1, model: 'local/qwen3.8-27b', extensions: {}, exec: { limits: {}, env: ['A'] } }, d, withEnv), (err: Error) => /exec.limits is set by the deployment/.test(err.message) && /exec.env is set by the deployment/.test(err.message));
   assert.throws(() => parseDeployment({ ...deployment, exec: { limits: { maxFileSize: 5 } } }), /exec.limits must map/);
 });
+
+test('retention must be an idleDays count', () => {
+  const d = parseDeployment(deployment);
+  const base = { name: 'r', version: 1, model: 'local/qwen3.8-27b', extensions: {} };
+  assert.deepEqual(parseDefinition({ ...base, retention: { idleDays: 14 } }, d, catalog).retention, { idleDays: 14 });
+  for (const retention of [{ idleDays: 0 }, { idleDays: '14' }, { days: 14 }, 14]) assert.throws(() => parseDefinition({ ...base, retention }, d, catalog), /retention must be/);
+});

@@ -11,6 +11,8 @@ const service = createSchedulesService({
   distributorUrl: env('QUACK_DISTRIBUTOR_URL'),
   dbPath: env('QUACK_SCHEDULES_DB', '/data/schedules.db'),
   agentsDir: process.env.QUACK_AGENTS_DIR,
+  distributorToken: process.env.QUACK_ADMIN_TOKEN,
+  retentionSweep: process.env.QUACK_RETENTION_SWEEP === '1',
 });
 service.listen(Number(env('PORT', '8091')));
 service.start();

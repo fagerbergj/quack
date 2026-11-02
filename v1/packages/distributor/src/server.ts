@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { connect } from 'node:net';
 import { extname, resolve, sep } from 'node:path';
 import type { Duplex } from 'node:stream';
+import { authorized } from '@quack/index';
 import { AgentError, type HostDriver } from './process-driver.ts';
 
 const KEY = /^[A-Za-z0-9:/#._@-]{1,200}$/;
@@ -116,12 +117,14 @@ const MAX_TIMER_MS = 2 ** 31 - 1;
 type Ping = { status: string; waitingOnHuman?: boolean; wake?: { at?: number }; note?: string | null };
 
 // `now` and `setTimer` are injectable so tests run the idle sweep and wake timers on a fake clock.
-export function createDistributor(driver: HostDriver, opts: { idleMs?: number; webDir?: string; index?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>; now?: () => number; setTimer?: SetTimer } = {}) {
+export function createDistributor(driver: HostDriver, opts: { idleMs?: number; /** Enables DELETE /sessions/:key for callers bearing `token`; `waiting` says whether a person's approval or decision is pending and `forget` drops the session's index rows. */ retire?: { token: string; waiting(key: string): Promise<boolean>; forget(key: string): Promise<void> }; webDir?: string; index?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>; now?: () => number; setTimer?: SetTimer } = {}) {
   const now = opts.now ?? Date.now;
   const setTimer = opts.setTimer ?? realTimer;
   const lastUse = new Map<string, number>();
   const stopping = new Map<string, Promise<void>>();
   const holds = new Map<string, number>();
+  // A delete in flight per key; requests for that key wait it out, then start a fresh session.
+  const removing = new Map<string, Promise<void>>();
   // Whether each running session was mid-run at its last sweep; a listing reads this and never pings.
   const active = new Map<string, boolean>();
   const notes = new Map<string, string>();
@@ -219,9 +222,44 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
     return true;
   }
 
+  // Mechanism only: which sessions are worth deleting is the caller's policy.
+  async function retire(key: string, res: ServerResponse) {
+    let done = () => {};
+    removing.set(key, new Promise<void>((r) => (done = r)));
+    try {
+      await retireChecked(key, res);
+    } finally {
+      removing.delete(key);
+      done();
+    }
+  }
+
+  // Marked in `removing` before the first await, so a request either holds the key already (refused here) or waits for the delete.
+  async function retireChecked(key: string, res: ServerResponse) {
+    const why = driver.running().includes(key) || holds.get(key) || stopping.has(key) ? 'is running'
+      : (await driver.wakes()).some((w) => w.key === key) ? 'is sleeping until its wake time'
+        : (await opts.retire!.waiting(key)) ? 'is waiting on a person' : undefined;
+    if (why) return send(res, 409, { error: `session ${why}` });
+    if (!(await driver.remove(key))) return send(res, 404, { error: 'no such session' });
+    await opts.retire!.forget(key);
+    active.delete(key);
+    notes.delete(key);
+    send(res, 200, { key });
+  }
+
+  async function deletion(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+    const match = req.method === 'DELETE' && opts.retire ? /^\/sessions\/([^/?]+)$/.exec(req.url ?? '') : null;
+    if (!match) return false;
+    const key = safeDecode(match[1]);
+    if (!authorized(req, opts.retire!.token)) send(res, 401, { error: 'unauthorized' });
+    else if (!key || !KEY.test(key)) send(res, 400, { error: 'invalid session key' });
+    else await retire(key, res);
+    return true;
+  }
+
   const server = createServer(async (req, res) => {
     try {
-      if (await listing(req, res)) return;
+      if (await listing(req, res) || await deletion(req, res)) return;
       if (await opts.index?.(req, res)) return;
       if (await serveWeb(opts.webDir, req, res)) return;
       if (!/^\/sessions\/[^/]+\//.test(req.url ?? '')) return send(res, 404, { error: 'not found' });
@@ -234,6 +272,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
       hold(key, 1);
       try {
         await stopping.get(key);
+        await removing.get(key);
         const url = await driver.ensure(key, agent);
         arm(key, undefined);
         const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : new Uint8Array(await readBody(req));
@@ -253,6 +292,7 @@ export function createDistributor(driver: HostDriver, opts: { idleMs?: number; w
     socket.once('close', () => { hold(target.key, -1); lastUse.set(target.key, now()); });
     try {
       await stopping.get(target.key);
+      await removing.get(target.key);
       const url = await driver.ensure(target.key, target.agent);
       arm(target.key, undefined);
       await proxyUpgrade(url, req, '/ws', socket, head);

@@ -13,12 +13,17 @@ export type ServiceConfig = {
   dbPath: string;
   /** Same layout the distributor reads: <dir>/<agent>/agent.json, whose optional `schedules` array registers schedules. */
   agentsDir?: string;
+  /** The distributor's QUACK_ADMIN_TOKEN, which a retention sweep needs to delete. */
+  distributorToken?: string;
+  /** Runs the retention sweep daily; off by default, so deleting is opt-in. */
+  retentionSweep?: boolean;
   now?: () => Date;
   fetch?: typeof fetch;
   tickMs?: number;
 };
 
 const MAX_BODY = 1 << 20;
+const DAY_MS = 86_400_000;
 const send = (res: ServerResponse, status: number, body: unknown) => res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
 
 const isMissing = (err: unknown) => (err as NodeJS.ErrnoException).code === 'ENOENT';
@@ -116,8 +121,29 @@ export function createSchedulesService(config: ServiceConfig) {
     for (const o of older) record.run(row.id, o.toISOString(), 'missed', at.toISOString());
   }
 
+  // Policy for D24: delete sessions idle longer than the retention their pinned agent declares; the distributor refuses any that are not safe to remove.
+  async function sweepRetention(dryRun: boolean) {
+    const { sessions } = (await (await doFetch(`${config.distributorUrl}/sessions`)).json()) as { sessions: Array<{ key: string; running: boolean; lastActivity: string; retention?: { idleDays: number } }> };
+    const due = sessions.filter((s) => s.retention && !s.running && +now() - Date.parse(s.lastActivity) > s.retention.idleDays * DAY_MS).map((s) => s.key);
+    if (dryRun) return { dryRun, due };
+    const deleted: string[] = [];
+    const refused: Array<{ key: string; status: number }> = [];
+    for (const key of due) {
+      const r = await doFetch(`${config.distributorUrl}/sessions/${encodeURIComponent(key)}`, { method: 'DELETE', headers: { authorization: `Bearer ${config.distributorToken}` } });
+      if (r.ok) deleted.push(key);
+      else refused.push({ key, status: r.status });
+    }
+    return { dryRun, due, deleted, refused };
+  }
+
+  const dryRunOf = (req: IncomingMessage) => new URL(req.url ?? '', 'http://x').searchParams.get('dryRun') === '1';
+  let lastSweep = 0;
   async function tick() {
     await syncAgents();
+    if (config.retentionSweep && +now() - lastSweep >= DAY_MS) {
+      lastSweep = +now();
+      await sweepRetention(false).catch((err) => console.error(`schedules: retention: ${err}`));
+    }
     const at = now();
     for (const row of rows()) {
       try {
@@ -158,6 +184,7 @@ export function createSchedulesService(config: ServiceConfig) {
         const { status, body: out } = register(await body(req));
         return send(res, status, out);
       }
+      if (req.method === 'POST' && path === '/retention/sweep') return send(res, 200, await sweepRetention(dryRunOf(req)));
       const one = /^\/schedules\/(.+)$/.exec(path);
       if (req.method === 'DELETE' && one) {
         const id = decodeURIComponent(one[1]);

@@ -26,8 +26,10 @@ const driver = processDriver({ command: [process.execPath, runtime], dataDir, ag
 const sleeper = process.env.QUACK_SLEEPER_URL && process.env.QUACK_SLEEPER_TOKEN && process.env.QUACK_SLEEPER_LEAGUE
   ? sleeperRoutes({ url: process.env.QUACK_SLEEPER_URL, token: process.env.QUACK_SLEEPER_TOKEN, league: process.env.QUACK_SLEEPER_LEAGUE })
   : undefined;
+// Opt-in: with a token set, the retention sweep may delete idle sessions.
+const retire = process.env.QUACK_ADMIN_TOKEN ? { token: process.env.QUACK_ADMIN_TOKEN, waiting: (key: string) => store.waiting(key), forget: (key: string) => store.forget(key) } : undefined;
 const indexHttp = indexRoutes(store, token);
-const server = createDistributor(driver, { webDir: process.env.QUACK_WEB_DIR, index: async (req, res) => (await indexHttp(req, res)) || (await sleeper?.(req, res)) || false }).listen(port);
+const server = createDistributor(driver, { retire, webDir: process.env.QUACK_WEB_DIR, index: async (req, res) => (await indexHttp(req, res)) || (await sleeper?.(req, res)) || false }).listen(port);
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   // Sessions stop first: their logs are durable, so a request cut here is answered after the restart. The deadline beats
   // compose's 30 s stop grace, so a stuck child or an attached viewer cannot hold the exit.

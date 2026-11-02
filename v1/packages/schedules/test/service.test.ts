@@ -249,3 +249,31 @@ test('the API requires the token and rejects bad definitions', async () => {
   assert.equal((await api('POST', '/schedules', { ...daily, times: ['2026-01-01T00:00:00Z'] })).status, 400);
   assert.equal((await api('DELETE', '/schedules/daily')).status, 404);
 });
+
+test('the retention sweep deletes only sessions idle past their agent retention, and a dry run deletes nothing', async () => {
+  const sessions = [
+    { key: 'old', running: false, lastActivity: '2026-01-01T00:00:00Z', retention: { idleDays: 14 } },
+    { key: 'recent', running: false, lastActivity: '2026-01-20T00:00:00Z', retention: { idleDays: 14 } },
+    { key: 'keep-forever', running: false, lastActivity: '2025-01-01T00:00:00Z' },
+    { key: 'running', running: true, lastActivity: '2026-01-01T00:00:00Z', retention: { idleDays: 14 } },
+  ];
+  const deletes: string[] = [];
+  const fetchStub = (async (url: string, init?: { method?: string; headers?: Record<string, string> }) => {
+    if (init?.method !== 'DELETE') return { ok: true, json: async () => ({ sessions }) };
+    assert.equal(init.headers?.authorization, 'Bearer admin');
+    deletes.push(decodeURIComponent(url.split('/sessions/')[1]));
+    return { ok: true, status: 200 };
+  }) as unknown as typeof fetch;
+  clock = new Date('2026-01-25T00:00:00Z');
+  const svc = createSchedulesService({ serviceToken: TOKEN, distributorUrl: 'http://d', dbPath: ':memory:', distributorToken: 'admin', retentionSweep: true, now: () => clock, fetch: fetchStub });
+  open.push(svc);
+  svc.listen(0);
+  await new Promise((r) => svc.once('listening', r));
+  const sweep = (query = '') => fetch(`http://127.0.0.1:${(svc.address() as AddressInfo).port}/retention/sweep${query}`, { method: 'POST', headers: auth }).then((r) => r.json());
+  assert.deepEqual(await sweep('?dryRun=1'), { dryRun: true, due: ['old'] });
+  assert.deepEqual(deletes, []);
+  await svc.tick();
+  assert.deepEqual(deletes, ['old']);
+  await svc.tick();
+  assert.deepEqual(deletes, ['old'], 'the automatic sweep runs once a day');
+});

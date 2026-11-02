@@ -43,6 +43,9 @@ export function sqliteBackend(path: string): Backend {
         throw err;
       }
     },
+    async forget(session) {
+      db.prepare('delete from index_facts where session = ?').run(session);
+    },
     async facts(kinds) {
       const rows = db.prepare('select session, id, kind, rev, at, data from index_facts').all() as unknown as Array<Omit<FactRow, 'data'> & { data: string }>;
       return rows.filter((r) => !kinds || kinds.includes(r.kind)).map((r) => ({ ...r, data: JSON.parse(r.data) }));

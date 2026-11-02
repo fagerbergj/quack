@@ -16,6 +16,7 @@ import { defineWorkflow, outcomeOf, sessionDecisions, WorkflowDoc, workflowSessi
 import pg from 'pg';
 import { DatabaseSync } from 'node:sqlite';
 import { existsSync } from 'node:fs';
+import type { Fact } from '../src/facts.ts';
 import { createStore, openStore, indexRoutes, postgresBackend, rebuild, sqliteBackend, startPublisher, collectFacts, type IndexStore } from '../src/index.ts';
 
 const url = process.env.QUACK_TEST_DATABASE_URL;
@@ -315,4 +316,14 @@ test('a workflow aborted while it waits closes its question: not pending, indexe
 
   await new Promise((r) => server.close(r));
   await session.close();
+});
+
+test('forget drops one session rows and waiting sees only pending asks', async () => {
+  const { store } = await freshSqlite();
+  const row = (id: string, state: string): Fact => ({ id, kind: 'approval', rev: 1, at: 1, data: { state } });
+  await store.upsert('a', [row('approval:1', 'pending')]);
+  await store.upsert('b', [row('approval:1', 'resolved')]);
+  assert.deepEqual([await store.waiting('a'), await store.waiting('b')], [true, false]);
+  await store.forget('a');
+  assert.deepEqual((await store.facts()).map((f) => f.session), ['b']);
 });
