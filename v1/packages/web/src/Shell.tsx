@@ -91,7 +91,7 @@ export function ThemeToggle({ className }: { className: string }) {
 const linkBase = 'navlink flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-ink-2 no-underline hover:bg-soft hover:text-ink';
 const tabBase = 'tablink flex min-h-11 flex-col items-center justify-center gap-0.5 py-2 text-[11px] font-medium text-muted no-underline';
 
-// `bare` drops the phone title bar for a screen that draws its own.
+// Below lg main is the only scroller, so the document never scrolls and the URL bar cannot collapse mid-scroll; `bare` drops the phone title bar.
 // `sidebar` is the session list; it fills the desktop sidebar under a fixed nav and scrolls on its own.
 export function Shell({ route, bare, sidebar, children }: { route: Route; bare?: boolean; sidebar?: ReactNode; children: ReactNode }) {
   const cur = (r: Route) => (r === route ? ('page' as const) : undefined);
@@ -130,7 +130,8 @@ export function Shell({ route, bare, sidebar, children }: { route: Route; bare?:
           <ThemeToggle className="ml-auto px-2 text-xs" />
         </div>
       </aside>
-      <header className={`sticky top-0 z-20 ${bare ? 'hidden' : 'flex'} items-center gap-2.5 border-b border-line bg-canvas/85 px-4 pt-[calc(0.875rem+env(safe-area-inset-top,0px))] pb-3.5 backdrop-blur-md lg:hidden`}>
+      <div className="fixed inset-x-0 top-0 bottom-[calc(52px+var(--safe-b))] flex flex-col lg:contents">
+      <header className={`flex-none z-20 ${bare ? 'hidden' : 'flex'} items-center gap-2.5 border-b border-line bg-canvas/85 px-4 pt-[calc(0.875rem+env(safe-area-inset-top,0px))] pb-3.5 backdrop-blur-md lg:hidden`}>
         <Duck size={30} />
         {route === 'sessions' ? <h1 className="m-0 text-[19px]">Sessions</h1> : <span className="text-[15px] font-semibold tracking-[-0.015em]">{TITLES[route]}</span>}
         {route === 'sessions' && (
@@ -139,8 +140,9 @@ export function Shell({ route, bare, sidebar, children }: { route: Route; bare?:
           </a>
         )}
       </header>
-      <main className="min-h-screen pb-24 lg:pb-0 lg:pl-72">{children}</main>
-      <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-line bg-canvas/90 pb-[env(safe-area-inset-bottom,0px)] backdrop-blur-md lg:hidden">
+      <main className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain lg:min-h-screen lg:overflow-visible lg:pl-72">{children}</main>
+      </div>
+      <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-30 grid h-[calc(52px+var(--safe-b))] grid-cols-4 border-t border-line bg-canvas/90 pb-[var(--safe-b)] backdrop-blur-md lg:hidden">
         {MAIN.map((n) => link(n, tabBase))}
         <a href="#/more" aria-current={route === 'more' || MORE.some((n) => n.route === route) ? 'page' : undefined} className={tabBase}>
           <Icon route="grid" />
