@@ -106,9 +106,10 @@ test('a bad decision fails the card step instead of reaching the judge', async (
   const one = decision.items[0];
   const build = (i: Partial<typeof one>) => buildTrendsCard(f, { ...decision, items: [{ ...one, ...i }] });
   assert.throws(() => build({ playerId: '999' }), /not in the facts/);
-  assert.throws(() => build({ newsUrl: 'https://www.nfl.com/other' }), /not news for 102/);
-  assert.throws(() => build({ source: undefined }), /without naming its reporter/);
-  assert.throws(() => build({ playerId: undefined }), /not news for undefined/);
+  assert.throws(() => build({ newsUrl: 'https://www.nfl.com/other' }), /that link is not news for 102 Rob Rowe/);
+  assert.throws(() => buildTrendsCard({ ...f, news: { ...f.news, '103': [{ ...item, url: 'https://x.test/other' }] }, players: { ...f.players, '103': { ...f.players['102'], id: '103', name: 'Rob Rowan' } } }, { ...decision, items: [{ ...one, newsUrl: 'https://x.test/other' }] }), /that link is news for 103 Rob Rowan, not 102 Rob Rowe/);
+  assert.throws(() => build({ source: undefined }), /for 102 Rob Rowe without naming its reporter/);
+  assert.throws(() => build({ playerId: undefined }), /without naming a player/);
 });
 
 const gate = async (id: string, f: TrendsFacts, c: unknown) => {

@@ -305,3 +305,44 @@ test('a judged card still failing after the last revision is delivered with its 
   assert.equal((versions[1].verdict as { limitReached: boolean }).limitReached, true);
   assert.deepEqual(outcome.status === 'completed' && (outcome.result as { card: unknown }).card, { version: 2, revisions: 1, passed: false, score: 1, gatesFailed: ['tone.says_ok'], notes: ['n'] });
 });
+
+function throwingFlow(builds: { n: number }, failures: number) {
+  return defineWorkflow({
+    name: 'built',
+    steps: [{
+      name: 'card',
+      kind: 'judged',
+      schema: Type.Object({ text: Type.String() }),
+      prompt: () => 'write the text',
+      card: (_c, d) => {
+        if (builds.n++ < failures) throw new Error('the card builder rejects this');
+        return d as object;
+      },
+      judge: () => ({ options: { kind: note, rubric: sayOk, evidence: async () => ({}), maxRevisions: 0 } }),
+    }],
+  });
+}
+
+test('a judged step whose builder throws once completes after one repair turn that shows the error', async () => {
+  const seen: Message[][] = [];
+  const builds = { n: 0 };
+  const flow = throwingFlow(builds, 1);
+  const s = await open(await tmp(), flow, reply('{"text": "ok"}', seen), reply('{"text": "ok again"}', seen));
+  const outcome = await runWorkflow(s.harness, s.root, flow, null);
+  await s.close();
+  assert.equal(outcome.status, 'completed');
+  assert.equal(builds.n, 2);
+  assert.match(JSON.stringify(seen[1].at(-1)), /That answer was rejected:\\nthe card builder rejects this/);
+});
+
+test('a judged step whose builder keeps throwing fails with its message after the repair turns', async () => {
+  const seen: Message[][] = [];
+  const builds = { n: 0 };
+  const flow = throwingFlow(builds, 99);
+  const s = await open(await tmp(), flow, reply('{"text": "a"}', seen), reply('{"text": "b"}', seen), reply('{"text": "c"}', seen));
+  const outcome = await runWorkflow(s.harness, s.root, flow, null);
+  await s.close();
+  assert.equal(outcome.status, 'failed');
+  assert.match(JSON.stringify(outcome), /the card builder rejects this/);
+  assert.equal(seen.length, 3);
+});
