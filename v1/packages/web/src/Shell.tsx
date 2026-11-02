@@ -141,7 +141,7 @@ export function Shell({ route, bare, sidebar, children }: { route: Route; bare?:
           </a>
         )}
       </header>
-      <main className="min-h-0 flex-1 overflow-y-auto lg:min-h-screen lg:overflow-visible lg:pl-72">{children}</main>
+      <main className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain lg:min-h-screen lg:overflow-visible lg:pl-72">{children}</main>
       </div>
       <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-30 grid h-[calc(52px+var(--safe-b))] grid-cols-4 border-t border-line bg-canvas/90 pb-[var(--safe-b)] backdrop-blur-md lg:hidden">
         {MAIN.map((n) => link(n, tabBase))}

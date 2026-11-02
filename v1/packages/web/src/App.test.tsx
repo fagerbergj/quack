@@ -878,3 +878,20 @@ test('an open question card keeps counting its age while the session is quiet', 
     vi.useRealTimers();
   }
 });
+
+test('below lg the session pane subtracts the 52px nav plus the bottom safe inset', async () => {
+  stubViewport(false);
+  vi.stubGlobal('innerHeight', 844);
+  vi.stubGlobal('visualViewport', { height: 844, addEventListener() {}, removeEventListener() {} });
+  await openSession();
+  const pane = document.querySelector<HTMLElement>('[style*="--ws-h"]');
+  expect(pane?.style.getPropertyValue('--ws-h')).toBe('calc(844px - 52px - var(--safe-b))');
+});
+
+test('below lg main is the scroller inside a fixed frame that ends at the nav', async () => {
+  stubViewport(false);
+  await openSession();
+  const main = screen.getByRole('main');
+  expect(main).toHaveClass('flex-1', 'min-h-0', 'overflow-y-auto', 'overscroll-y-contain');
+  expect(main.parentElement).toHaveClass('fixed', 'top-0', 'bottom-[calc(52px+var(--safe-b))]', 'lg:contents');
+});
