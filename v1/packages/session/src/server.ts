@@ -30,16 +30,19 @@ function parseVerdict(body: unknown): { decision: 'approve' | 'reject'; reason?:
   return { decision, reason, by };
 }
 
-type Invocation = { input: string; requestId?: string; wait?: boolean; title?: string };
+type Invocation = { input: string; requestId?: string; wait?: boolean; title?: string; meta?: Record<string, unknown> };
+
+const isMeta = (m: unknown): m is Record<string, unknown> => typeof m === 'object' && m !== null && !Array.isArray(m) && typeof (m as { id?: unknown }).id === 'string';
 
 function parseInvocation(body: unknown): Invocation | string {
   if (typeof body !== 'object' || body === null) return 'body must be a JSON object';
-  const { input, requestId, wait, title } = body as Record<string, unknown>;
+  const { input, requestId, wait, title, meta } = body as Record<string, unknown>;
   if (typeof input !== 'string' || input.length === 0) return 'input must be a non-empty string';
   if (requestId !== undefined && typeof requestId !== 'string') return 'requestId must be a string';
   if (wait !== undefined && typeof wait !== 'boolean') return 'wait must be a boolean';
   if (title !== undefined && typeof title !== 'string') return 'title must be a string';
-  return { input, requestId, wait, title };
+  if (meta !== undefined && !isMeta(meta)) return 'meta must be an object with a string id';
+  return { input, requestId, wait, title, meta };
 }
 
 type Route = (session: Session, req: IncomingMessage, match: RegExpExecArray) => Promise<[number, unknown]>;
@@ -65,6 +68,7 @@ async function invoke(session: Session, req: IncomingMessage): Promise<[number, 
   const inv = parseInvocation(await readJson(req));
   if (typeof inv === 'string') return [400, { error: inv }];
   if (inv.title) await session.recordTitle(inv.title);
+  if (inv.meta) await session.recordMeta(inv.meta);
   return [inv.wait ? 200 : 202, await session.submit(inv.input, inv.requestId, inv.wait)];
 }
 
@@ -106,6 +110,7 @@ const ROUTES: Array<[string, RegExp, Route]> = [
     return [200, { status: busy ? 'HealthyBusy' : 'Healthy', pid: process.pid, waitingOnHuman, wake: { at: wakeAt }, note: note ?? undefined }];
   }],
   ['POST', /^\/invocations$/, invoke],
+  ['GET', /^\/meta$/, async (s) => [200, { meta: await s.meta() }]],
   ['GET', /^\/approvals$/, async (s) => [200, { approvals: await pendingApprovals(s.root, ctx) }]],
   ['GET', /^\/artifacts$/, artifacts],
   ['POST', /^\/abort$/, abort],

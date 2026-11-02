@@ -46,6 +46,7 @@ const github = await listen(
       commentWaiters.splice(0).forEach((f) => f());
       return reply(201, {});
     }
+    if (url === '/repos/acme/widgets/pulls/7/files?per_page=100') return reply(200, [{ filename: 'src/a.ts', additions: 5, deletions: 2 }]);
     if (url === '/repos/acme/widgets/issues/3') return reply(200, { number: 3, title: 'bug', body: 'b' });
     const page = /^\/repos\/acme\/widgets\/commits\/abc123\/check-runs\?per_page=100&page=(\d+)$/.exec(url);
     // 150 check runs: the only failing one is on the second page.
@@ -100,6 +101,11 @@ test('verified webhooks start a review in the PR session, keyed by the delivery 
   assert.match(invocations[0].body.input, /Review pull request acme\/widgets#7 \(label quack:review\)/);
   assert.match(invocations[0].body.input, /Head: abc123 on fix; base: main/);
   assert.equal(invocations[0].body.title, 'Fix the cache');
+  // The opening card's data rides in meta, keyed by head sha; the model's input text carries none of it.
+  assert.deepEqual(invocations[0].body.meta.files, [{ path: 'src/a.ts', additions: 5, deletions: 2 }]);
+  assert.deepEqual(invocations[0].body.meta.linked, [{ number: 3, title: 'bug' }]);
+  assert.equal(invocations[0].body.meta.id, 'abc123');
+  assert.doesNotMatch(invocations[0].body.input, /src\/a.ts/);
 });
 
 test('no notice when a review was posted, and none for a run that is not final', () => {
@@ -125,7 +131,8 @@ test('git credentials are minted per repository and cached until near expiry', a
   assert.equal((await get('https://github.com/acme/widgets.git', 'nope')).status, 401);
   assert.deepEqual((await get('https://github.com/acme/widgets.git')).body, { username: 'x-access-token', token: 'ghs_test' });
   assert.equal((await get('https://github.com/acme/widgets')).status, 200);
-  assert.equal(calls.filter((c) => c.path.endsWith('/access_tokens')).length, 1, 'the second request uses the cached token');
+  // The webhook test above may already have minted it; either way two requests mint at most once.
+  assert.ok(calls.filter((c) => c.path.endsWith('/access_tokens')).length <= 1, 'the second request uses the cached token');
   assert.equal((await get('https://gitlab.com/acme/widgets.git')).status, 404);
   assert.equal((await get('https://github.com/acme/private.git')).status, 404, 'the app is not installed there');
 });

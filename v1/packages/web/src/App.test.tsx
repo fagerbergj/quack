@@ -344,26 +344,50 @@ test('a GitHub session header links to the pull request', async () => {
   expect(await screen.findByRole('link', { name: 'View on GitHub' })).toHaveAttribute('href', 'https://github.com/o/r/pull/1');
 });
 
-test('an idle send has no whenBusy; a busy send carries the chosen mode', async () => {
+test('a send while a run works is a server-side follow-up shown as a chip; Send now steers it and the cross withdraws it', async () => {
   const ws = await openSession();
   ws.frame(snapshot());
-  expect(screen.queryByRole('group', { name: 'While the agent is working' })).toBeNull();
-  await userEvent.type(screen.getByRole('textbox', { name: 'Message' }), 'first');
-  await userEvent.click(screen.getByRole('button', { name: 'Send' }));
-  expect(ws.sent[0]).toEqual({ type: 'input', input: 'first' });
+  const box = () => screen.getByRole('textbox', { name: 'Message' });
+  const send = async (t: string) => {
+    await userEvent.type(box(), t);
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+  };
+  await send('first');
+  expect(ws.sent).toEqual([{ type: 'input', input: 'first' }]);
 
   ws.frame({ type: 'events', events: [{ type: 'run_start', inputs: [] }] });
-  const group = screen.getByRole('group', { name: 'While the agent is working' });
-  expect(within(group).getByRole('button', { name: 'Steer now' })).toHaveAttribute('aria-pressed', 'true');
-  await userEvent.type(screen.getByRole('textbox', { name: 'Message' }), 'turn left');
-  await userEvent.click(screen.getByRole('button', { name: 'Send' }));
-  await userEvent.click(within(group).getByRole('button', { name: 'Queue next' }));
-  await userEvent.type(screen.getByRole('textbox', { name: 'Message' }), 'then right');
-  await userEvent.click(screen.getByRole('button', { name: 'Send' }));
-  expect(ws.sent.slice(1)).toEqual([
-    { type: 'input', input: 'turn left', whenBusy: 'steer' },
-    { type: 'input', input: 'then right', whenBusy: 'followUp' },
-  ]);
+  expect(screen.queryByRole('group', { name: 'While the agent is working' })).toBeNull();
+  expect(box()).toHaveAttribute('placeholder', 'Message · sends after this step');
+  await send('turn left');
+  expect(ws.sent[1]).toEqual({ type: 'input', input: 'turn left', whenBusy: 'followUp' });
+  expect(screen.queryByText('Queued')).toBeNull();
+
+  // The chip is the server's queue: it shows when the session reports it, so a reload shows it too.
+  ws.frame({ type: 'queued', items: [{ id: 's1', text: 'turn left' }, { id: 's2', text: 'never mind' }] });
+  expect(screen.getByText('turn left')).toBeInTheDocument();
+  await userEvent.click(screen.getAllByRole('button', { name: 'Send now' })[0]);
+  expect(ws.sent[2]).toEqual({ type: 'steer', id: 's1' });
+  await userEvent.click(screen.getAllByRole('button', { name: 'Remove queued message' })[1]);
+  expect(ws.sent[3]).toEqual({ type: 'withdraw', id: 's2' });
+  ws.frame({ type: 'queued', items: [] });
+  expect(screen.queryByText('Queued')).toBeNull();
+});
+
+test('the first message of a review session is the PR card, with the files and checks the service attached', async () => {
+  const key = 'github%3Ao%2Fr%231';
+  const text = 'Review pull request o/r#1 (label quack:review).\nTitle: Cost per run\nHead: 9f43b50aaaa on feat/x; base: v1\n\nWhat changed';
+  routes[`GET /sessions/${key}/artifacts`] = { artifacts: [] };
+  routes[`GET /sessions/${key}/approvals`] = { approvals: [] };
+  routes[`GET /sessions/${key}/meta`] = { meta: [{ id: '9f43b50aaaa', files: [{ path: 'a.ts', additions: 3, deletions: 1 }] }] };
+  location.hash = `#/s/${key}`;
+  render(<App />);
+  const ws = FakeSocket.all[0];
+  ws.open();
+  ws.frame(snapshot({ entries: [entry('u', [{ role: 'user', content: text, timestamp: 1 }])] }));
+  const card = await screen.findByRole('region', { name: 'Pull request' });
+  expect(within(card).getByText('Cost per run')).toBeInTheDocument();
+  expect(await within(card).findByText('1 file')).toBeInTheDocument();
+  expect(screen.queryByText(/Review pull request/)).toBeNull();
 });
 
 test('shows a server error frame', async () => {
@@ -1089,4 +1113,6 @@ test('the pinned artifact line reads Previous review, without a tick, while a ne
   expect(within(line).queryByRole('img', { name: 'Double-checked' })).toBeNull();
   ws.frame({ type: 'events', events: [{ type: 'run_end', inputs: [] }] });
   expect(await screen.findByText('Review posted')).toBeInTheDocument();
+  // The card carries the one Posted link; the pinned line drops its own.
+  expect(within(screen.getByText('Review posted').closest('li')!).getAllByRole('link', { name: /Posted/ })).toHaveLength(1);
 });

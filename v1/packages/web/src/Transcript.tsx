@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import type { AssistantMessage, Message, ToolResultMessage } from '@earendil-works/pi-ai';
+import { EXTENSIONS } from './extensions/index.ts';
 import { Markdown } from './Markdown.tsx';
 import { postedUrl, type View } from './view.ts';
 
@@ -145,14 +146,20 @@ export function Working({ label }: { label: string }) {
   );
 }
 
-function Row({ item }: { item: Item }): ReactNode {
+type Meta = readonly Record<string, unknown>[];
+
+function Row({ item, meta }: { item: Item; meta: Meta }): ReactNode {
   switch (item.k) {
-    case 'user':
+    case 'user': {
+      const body = item.m.role === 'user' ? text(item.m.content) : '';
+      const card = EXTENSIONS.map((e) => e.opening?.(body, meta)).find(Boolean);
+      if (card) return card;
       return (
         <article aria-label="You" className="max-w-[88%] self-end rounded-[20px] rounded-br-[6px] bg-ink px-3.5 py-2.5 text-[14.5px] leading-relaxed text-on-ink lg:max-w-[80%] lg:px-4 md-on-ink">
-          <Markdown text={item.m.role === 'user' ? text(item.m.content) : ''} />
+          <Markdown text={body} />
         </article>
       );
+    }
     case 'compact': return <Compacted m={item.m} />;
     case 'prose': return <article aria-label="Assistant" className="min-w-0 text-[14.5px] leading-relaxed text-ink"><Markdown text={item.text} /></article>;
     case 'error': return <p className="m-0 text-[13px] text-danger">{`Error: ${item.text}`}</p>;
@@ -190,10 +197,10 @@ function build(view: View): Item[] {
   return items;
 }
 
-export function Transcript({ view }: { view: View }) {
+export function Transcript({ view, meta = [] }: { view: View; meta?: Meta }) {
   return (
     <div role="log" aria-label="Transcript" className="flex min-w-0 flex-col gap-5">
-      {build(view).map((item) => <Row key={item.key} item={item} />)}
+      {build(view).map((item) => <Row key={item.key} item={item} meta={meta} />)}
     </div>
   );
 }

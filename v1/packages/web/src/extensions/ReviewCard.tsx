@@ -1,0 +1,117 @@
+import type { ReactNode } from 'react';
+import type { SealedArtifact } from '../api.ts';
+import { Markdown } from '../Markdown.tsx';
+import { parseReview, type Finding, type Review } from './review.ts';
+
+const VERDICT: Record<string, { label: string; tone: string; band: string }> = {
+  approve: { label: 'Approved', tone: 'text-success', band: 'bg-success-bg' },
+  request_changes: { label: 'Changes requested', tone: 'text-warning', band: 'bg-warning-bg' },
+  comment: { label: 'Reviewed', tone: 'text-link', band: 'bg-link-bg' },
+};
+const SEVERITY: Record<string, string> = { blocking: 'bg-danger-bg text-danger', suggestion: 'bg-link-bg text-link', question: 'bg-warning-bg text-warning' };
+const ORDER = ['blocking', 'suggestion', 'question', 'nit'];
+
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+const summary = 'flex min-h-11 cursor-pointer list-none items-center gap-1.5 text-[13px] text-muted hover:text-ink lg:min-h-8 [&::-webkit-details-marker]:hidden';
+
+function Chev() {
+  return <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="chev flex-none transition-transform"><path d="M9 6l6 6-6 6" /></svg>;
+}
+
+// Backtick spans in a one-line title read as code; nothing else is parsed.
+function Inline({ text }: { text: string }) {
+  return <>{text.split('`').map((p, i) => (i % 2 ? <code key={i} className="rounded bg-soft px-1 font-mono text-[12.5px]">{p}</code> : p))}</>;
+}
+
+function Seal({ className }: { className: string }) {
+  return (
+    <svg width="52" height="52" viewBox="0 0 52 52" aria-hidden="true" className={`flex-none -rotate-[8deg] ${className}`}>
+      <circle cx="26" cy="26" r="24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeDasharray="4 3" />
+      <circle cx="26" cy="26" r="18" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      <g transform="translate(12 16) scale(.44)" fill="currentColor"><ellipse cx="34" cy="32" rx="22" ry="11" /><circle cx="20" cy="18" r="10" /><path d="M12 15 L1 19 L12 22 Z" /></g>
+    </svg>
+  );
+}
+
+function counts(findings: Finding[]): string[] {
+  const by = Map.groupBy(findings, (f) => f.severity);
+  const known = ORDER.filter((s) => by.has(s));
+  return [...known, ...[...by.keys()].filter((s) => !ORDER.includes(s))].map((s) => {
+    const n = by.get(s)!.length;
+    return `${n} ${n > 1 && s !== 'blocking' ? `${s}s` : s}`;
+  });
+}
+
+function FindingRow({ f }: { f: Finding }) {
+  return (
+    <div className="flex flex-col gap-1.5 border-t border-line px-3.5 py-3">
+      <span className={`inline-flex h-[22px] items-center self-start rounded-full px-2.5 text-[12px] font-semibold ${SEVERITY[f.severity] ?? 'bg-soft text-muted'}`}>{cap(f.severity) + (f.kind ? ` · ${f.kind}` : '')}</span>
+      {f.loc && <code className="font-mono text-[12px] break-all text-link">{f.loc}</code>}
+      <span className="text-[14px] leading-snug font-semibold"><Inline text={f.title} /></span>
+      {f.more && (
+        <details>
+          <summary className={summary}><span>Why and a fix</span><Chev /></summary>
+          <div className="text-[13px] text-ink-2"><Markdown text={f.more} /></div>
+        </details>
+      )}
+    </div>
+  );
+}
+
+function List({ label, items }: { label: string; items: string[] }) {
+  if (!items.length) return null;
+  return (
+    <div className="border-t border-line px-3.5">
+      <details>
+        <summary className={summary}><span>{`${label} · ${items.length}`}</span><Chev /></summary>
+        <div className="pb-2 text-[13px] text-ink-2"><Markdown text={items.map((i) => `- ${i}`).join('\n')} /></div>
+      </details>
+    </div>
+  );
+}
+
+function Footer({ a, md }: { a: SealedArtifact; md: string }) {
+  const v = a.verdict;
+  return (
+    <div className="border-t border-line px-3.5">
+      <div className="flex min-h-11 items-center gap-2 text-[12.5px]">
+        {v && <span className={v.passed ? 'text-success' : 'text-danger'}>{`${v.passed ? '✓ Checks passed' : "Didn't pass its checks"} · ${v.score.toFixed(2)}`}</span>}
+      </div>
+      <details className="border-t border-line">
+        <summary className={summary}><span>Full review</span><Chev /></summary>
+        <div className="pb-3 text-[13.5px] text-ink-2"><Markdown text={md} /></div>
+      </details>
+    </div>
+  );
+}
+
+function Body({ r, a }: { r: Review; a: SealedArtifact }): ReactNode {
+  const v = VERDICT[r.verdict] ?? { label: cap(r.verdict.replace(/_/g, ' ')), tone: 'text-ink', band: 'bg-soft' };
+  const posted = a.links?.[0];
+  const line = counts(r.findings);
+  return (
+    <section aria-label="Review" className="overflow-hidden rounded-[20px] border border-line bg-surface shadow-card">
+      <div className={`flex items-center gap-3 border-b border-line px-3.5 py-3.5 ${v.band}`}>
+        <Seal className={v.tone} />
+        <span className="flex min-w-0 flex-col gap-0.5">
+          <span className={`font-display text-[18px] font-semibold ${v.tone}`}>{v.label}</span>
+          <span className="text-[12.5px] text-ink-2">
+            {line.length ? line.join(' · ') : 'No findings'}
+            {posted && <>{' · '}<a href={posted.url} target="_blank" rel="noopener noreferrer" className="-my-3 inline-flex min-h-11 items-center">Posted to GitHub ↗</a></>}
+          </span>
+        </span>
+      </div>
+      {r.takeaway && <div className="px-3.5 py-3 text-[14px] leading-normal text-ink [&_p]:m-0"><Markdown text={r.takeaway} /></div>}
+      {r.findings.map((f, i) => <FindingRow key={i} f={f} />)}
+      <List label="Verified" items={r.verified} />
+      <List label="Notes" items={r.notes} />
+      <Footer a={a} md={a.content} />
+    </section>
+  );
+}
+
+/** The review as a card; undefined for a sealed text that is not a review. */
+export function reviewCard(a: SealedArtifact): ReactNode | undefined {
+  const r = parseReview(a.content);
+  return r && <Body r={r} a={a} />;
+}

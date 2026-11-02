@@ -92,7 +92,8 @@ async function webhook(req: IncomingMessage, res: ServerResponse, app: GithubApp
   // The delivery id is the request id, so a redelivery of the same event never starts a second run (HAR-5).
   const requestId = `github-delivery:${req.headers['x-github-delivery'] ?? ''}`;
   const target = `${config.distributorUrl}/sessions/${encodeURIComponent(trigger.sessionKey)}/invocations?agent=${encodeURIComponent(config.agent)}`;
-  const payload = { input: trigger.input, requestId, title: trigger.title };
+  const meta = await invocationMeta(app, trigger.repo.owner, trigger.repo.name, trigger.number);
+  const payload = { input: trigger.input, requestId, title: trigger.title, ...(meta && { meta }) };
   const before = state.posted.get(prKey(trigger.repo.owner, trigger.repo.name, trigger.number)) ?? 0;
   const upstream = await fetch(target, { method: 'POST', body: JSON.stringify(payload) });
   if (upstream.ok && !state.watched.has(requestId)) {
@@ -141,18 +142,41 @@ async function checkRuns(app: GithubApp, owner: string, repo: string, sha: strin
 }
 
 /** What a review needs to know about a pull request, read with the app's token on the session's behalf. */
-async function pullRequest(res: ServerResponse, app: GithubApp, owner: string, repo: string, number: number) {
+async function prFacts(app: GithubApp, owner: string, repo: string, number: number) {
   const pr = (await app.asInstallation(owner, repo, 'GET', `/repos/${owner}/${repo}/pulls/${number}`)).json;
-  if (!pr) return send(res, 404, { error: 'no such pull request' });
+  if (!pr) return undefined;
   const checks = { check_runs: await checkRuns(app, owner, repo, pr.head.sha) };
   const closes = [...new Set([...String(pr.body ?? '').matchAll(CLOSES)].map((m) => Number(m[1])))];
   const issues = await Promise.all(closes.map((n) => app.asInstallation(owner, repo, 'GET', `/repos/${owner}/${repo}/issues/${n}`).then((r) => r.json)));
-  send(res, 200, {
+  return {
     owner, repo, number, title: pr.title, body: pr.body ?? '', author: pr.user?.login,
     headSha: pr.head.sha, headRef: pr.head.ref, baseRef: pr.base.ref,
     checks: (checks?.check_runs ?? []).map((c: any) => ({ name: c.name, status: c.status, conclusion: c.conclusion })),
     linkedIssues: issues.filter(Boolean).map((i: any) => ({ number: i.number, title: i.title, body: i.body ?? '' })),
-  });
+  };
+}
+
+async function pullRequest(res: ServerResponse, app: GithubApp, owner: string, repo: string, number: number) {
+  const facts = await prFacts(app, owner, repo, number);
+  send(res, facts ? 200 : 404, facts ?? { error: 'no such pull request' });
+}
+
+/** The opening card's data, sent beside the input and never in it. shortcut: the first 100 files; a longer diff shows its first page. */
+export async function invocationMeta(app: GithubApp, owner: string, repo: string, number: number): Promise<object | undefined> {
+  try {
+    const facts = await prFacts(app, owner, repo, number);
+    if (!facts) return undefined;
+    const files = (await app.asInstallation(owner, repo, 'GET', `/repos/${owner}/${repo}/pulls/${number}/files?per_page=100`)).json ?? [];
+    return {
+      id: facts.headSha, title: facts.title, body: facts.body, headSha: facts.headSha, headRef: facts.headRef, baseRef: facts.baseRef,
+      files: files.map((f: any) => ({ path: f.filename, additions: f.additions, deletions: f.deletions })),
+      checks: facts.checks,
+      linked: facts.linkedIssues.map((i: any) => ({ number: i.number, title: i.title })),
+    };
+  } catch (err) {
+    console.warn(`github: no opening-card data for ${owner}/${repo}#${number}: ${String(err)}`);
+    return undefined;
+  }
 }
 
 export function createGithubService(app: GithubApp, config: ServiceConfig) {

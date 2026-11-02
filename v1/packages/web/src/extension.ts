@@ -1,4 +1,4 @@
-import type { ComponentType } from 'react';
+import type { ComponentType, ReactNode } from 'react';
 import type { ArtifactLink, SealedArtifact } from './api.ts';
 import type { Row } from './sessions.ts';
 
@@ -26,6 +26,10 @@ export type Extension = {
   start?: { prefix: string; label: string };
   /** What one of this extension's artifacts is called on the transcript line ("Review"), with a posted state when `posted`; undefined when it is not its artifact. */
   artifact?: (a: SealedArtifact, running: boolean) => { name: string; posted?: string; /** Posted for an earlier request: no verdict icon while a new one runs. */ previous?: boolean } | undefined;
+  /** A sealed artifact drawn as a card instead of a line; undefined when it is not this extension's or cannot be read as one. */
+  card?: (a: SealedArtifact) => ReactNode | undefined;
+  /** A user message drawn as a card (a review's opening), given the session's meta records; undefined for any other text. */
+  opening?: (text: string, meta: readonly Record<string, unknown>[]) => ReactNode | undefined;
   /** An outside page for a session, shown as a header link. */
   link?: (key: string) => { url: string; label: string } | undefined;
   /** Groups sessions (a repo, say); the group shows in titles only when sessions span more than one. */

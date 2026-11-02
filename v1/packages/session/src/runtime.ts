@@ -1,9 +1,9 @@
 import { join } from 'node:path';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { contentText, type MutableModels } from '@earendil-works/pi-ai';
-import { AssistantEntry, createRegistry, defineExtension, Harness, section, type Conversation, type Extension, type ReportInfo, type SetTimer } from '@earendil-works/pi-durable';
+import { AssistantEntry, createRegistry, defineExtension, Harness, InboxDoc, section, type Conversation, type Extension, type ReportInfo, type SetTimer } from '@earendil-works/pi-durable';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { pendingApprovals, statusNote } from '@quack/sdk';
 import { loopGuardExtension } from './loop-guard.ts';
 import { PolicyExecutionEnv, sessionPolicy, type ExecPolicy } from './exec.ts';
@@ -118,6 +118,39 @@ export async function openSession(opts: { dir: string; models: MutableModels; ag
     // The caller's name for the session (a PR title); the first one sticks, and the distributor lists it ahead of the first message.
     async recordTitle(title: string) {
       await writeFile(join(opts.dir, 'title'), title.replace(/\s+/g, ' ').trim().slice(0, 200), { flag: 'wx' }).catch(() => undefined);
+    },
+    // Data the UI reads beside the transcript (a PR's files and checks); one record per `id`, a later one replacing the earlier.
+    // Best effort: a run never waits on it, so a failed read or write is dropped, and the rename keeps a crash from leaving half a file.
+    async recordMeta(record: Record<string, unknown>) {
+      try {
+        const kept = (await this.meta()).filter((r) => r.id !== record.id);
+        const file = join(opts.dir, 'meta.json');
+        await writeFile(`${file}.tmp`, JSON.stringify([...kept, record]));
+        await rename(`${file}.tmp`, file);
+      } catch {
+        // the review runs without fresh meta
+      }
+    },
+    async meta(): Promise<Array<Record<string, unknown>>> {
+      try {
+        const found: unknown = JSON.parse(await readFile(join(opts.dir, 'meta.json'), 'utf8'));
+        return Array.isArray(found) ? found : [];
+      } catch {
+        return [];
+      }
+    },
+    // The follow-ups waiting for the run to answer, with their text: the inbox item itself is the durable queue.
+    async queued() {
+      const inbox = await harness.snapshot(InboxDoc, root.id, ctx);
+      return (inbox?.items ?? []).flatMap((i) => (i.mode === 'followUp' ? [{ id: String(i.id), text: contentText(i.content as Parameters<typeof contentText>[0]) }] : []));
+    },
+    // Withdraws a queued follow-up; false when the run already took it. With `steer`, sends its text again as a steer.
+    async withdraw(id: string, steer = false): Promise<boolean> {
+      const item = (await this.queued()).find((q) => q.id === id);
+      const submission = item && (await harness.submission(id as never, ctx));
+      if (!item || (await submission!.abort(ctx)) !== 'aborted') return false;
+      if (steer) await this.submit(item.text, undefined, false, 'steer');
+      return true;
     },
     async submit(input: string, requestId?: string, wait = false, whenBusy?: 'steer' | 'followUp'): Promise<SubmitResult> {
       if (dispatch) return dispatch({ harness, root }, input, requestId, wait);
