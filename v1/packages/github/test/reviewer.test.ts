@@ -149,7 +149,17 @@ test('a PR pushed to while it is reviewed is not posted against the old head; re
   await session.close();
 });
 
-test('a second passing version on the same checkout is not posted; a later run checks out afresh and may post', async () => {
+test('a request naming an old head reviews the live head and says so', async () => {
+  const { seen, service, head, session } = await reviewRun((seen) => [
+    call('checkout_pr', { repository: 'acme/widgets', number: 7, head: 'a30f00a' }),
+    recorder(seen)(fauxAssistantMessage('Stopped.')),
+  ]);
+  assert.match(seen[0], new RegExp(`The request was for a30f00a, an older head; this reviews the live head ${head}.*Checked out ${head}`));
+  assert.equal(service.posted.length, 0);
+  await session.close();
+});
+
+test('a second passing version on the same checkout is not posted; a later request for the reviewed head ends without checkout, judging or posting', async () => {
   const revised = review.replace('approve.', 'approve, with one nit.');
   const { done, seen, service, session } = await reviewRun((seen) => {
     const step = recorder(seen);
@@ -161,8 +171,7 @@ test('a second passing version on the same checkout is not posted; a later run c
       step(call('submit_review', {})),
       step(fauxAssistantMessage('Posted.')),
       checkout(),
-      call('submit_review', {}),
-      fauxAssistantMessage('Re-reviewed.'),
+      step(fauxAssistantMessage('Nothing to do.')),
     ];
   });
   assert.equal(done.status === 'done' && done.answer, 'Posted.');
@@ -171,8 +180,9 @@ test('a second passing version on the same checkout is not posted; a later run c
   assert.equal(service.posted[0].body, review);
 
   const again = await session.submit('/review', 'gh-2', true);
-  assert.equal(again.status === 'done' && again.answer, 'Re-reviewed.');
-  assert.equal(service.posted.length, 2);
-  assert.equal(service.posted[1].body, revised);
+  assert.equal(again.status === 'done' && again.answer, 'Nothing to do.');
+  assert.match(seen[5], /already reviewed \w{40}: nothing to do this turn/);
+  assert.doesNotMatch(seen[5], /Checked out/);
+  assert.equal(service.posted.length, 1);
   await session.close();
 });
