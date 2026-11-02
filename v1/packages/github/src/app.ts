@@ -52,8 +52,13 @@ export function githubApp(config: AppConfig, fetchImpl: typeof fetch = fetch) {
     return json.token;
   }
 
+  let slugPromise: Promise<string> | undefined;
+  // The app's own handle: users mention the bot as @<slug>, and its comments are authored by <slug>[bot].
+  const slug = () => (slugPromise ??= call('GET', '/app', `Bearer ${appJwt()}`).then((r) => String(r.json?.slug)).catch((err) => { slugPromise = undefined; throw err; }));
+
   return {
     tokenFor,
+    slug,
     /** Calls the REST API as the app itself (JWT), for endpoints such as webhook deliveries. */
     async asApp(method: string, path: string) {
       return call(method, path, `Bearer ${appJwt()}`);

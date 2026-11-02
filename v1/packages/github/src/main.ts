@@ -17,7 +17,6 @@ const service = createGithubService(app, {
   serviceToken: env('QUACK_GH_SERVICE_TOKEN'),
   distributorUrl: env('QUACK_DISTRIBUTOR_URL'),
   label: env('QUACK_GH_LABEL', 'quack:review'),
-  mention: env('QUACK_GH_MENTION', '@quack'),
   agent: env('QUACK_GH_AGENT', 'reviewer'),
 });
 service.listen(Number(env('PORT', '8090')));

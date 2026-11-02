@@ -29,22 +29,21 @@ function reviewTrigger(p: Payload, pr: Payload, why: string): Trigger {
 }
 
 // @user or @org/team; the leading class skips emails and URL paths. Scoped packages (@angular/core) match too, as GitHub pings them alike.
-const MENTION = /(^|[^\w/.:@])@([A-Za-z0-9][A-Za-z0-9-]*(?:\/[A-Za-z0-9._-]+)?)/g;
+const mentionOf = (slug: string) => new RegExp(`(^|[^\\w/.:@])@${slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w-])`, 'gi');
 
-/** Drops the "@" from every mention outside code, so nothing quack posts pings anyone or re-triggers it. An unterminated fence or span is prose, which fails safe. */
-export function stripMentions(text: string): string {
-  return text.split(/(```[\s\S]*?```|`[^`\n]*`)/).map((part, i) => (i % 2 ? part : part.replace(MENTION, '$1$2'))).join('');
+/** Drops the "@" from the bot's own handle outside code, so nothing quack posts can re-trigger it. An unterminated fence or span is prose, which fails safe. */
+export function stripMentions(text: string, slug: string): string {
+  const re = mentionOf(slug);
+  return text.split(/(```[\s\S]*?```|`[^`\n]*`)/).map((part, i) => (i % 2 ? part : part.replace(re, `$1${slug}`))).join('');
 }
 
-const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-function mentionTrigger(event: string | undefined, p: Payload, token: string): Trigger | undefined {
+function mentionTrigger(event: string | undefined, p: Payload, slug: string): Trigger | undefined {
   const onReview = event === 'pull_request_review_comment';
   if (p.action !== 'created' || !(onReview || (event === 'issue_comment' && p.issue?.pull_request))) return undefined;
   const c = p.comment;
-  const mentioned = new RegExp(`(^|[^\\w/.:@])${escape(token)}(?![\\w-])`, 'i').test(c?.body ?? '');
+  const mentioned = mentionOf(slug).test(c?.body ?? '');
   // A bot author is quack itself (or another app): never a reason to run.
-  if (!mentioned || !TRUSTED.has(c.author_association) || c.user?.type === 'Bot') return undefined;
+  if (!mentioned || !TRUSTED.has(c.author_association) || c.user?.type === 'Bot' || c.user?.login?.toLowerCase() === `${slug.toLowerCase()}[bot]`) return undefined;
   const pr = onReview ? p.pull_request : p.issue;
   const owner = p.repository.owner.login;
   const name = p.repository.name;
@@ -55,9 +54,9 @@ function mentionTrigger(event: string | undefined, p: Payload, token: string): T
 }
 
 // G1/G5: the review label starts the first review; `/review` from a trusted commenter starts later ones; a trusted mention is a question for the running session.
-export function triggerFor(event: string | undefined, p: Payload, label: string, mention = '@quack'): Trigger | undefined {
+export function triggerFor(event: string | undefined, p: Payload, label: string, slug: string): Trigger | undefined {
   if (event === 'pull_request' && p.action === 'labeled' && p.label?.name === label) return reviewTrigger(p, p.pull_request, `label ${label}`);
   const isReviewComment = event === 'issue_comment' && p.action === 'created' && p.issue?.pull_request && p.comment?.body?.trim() === '/review';
   if (isReviewComment && TRUSTED.has(p.comment.author_association)) return reviewTrigger(p, p.issue, `/review by ${p.comment.user?.login}`);
-  return mentionTrigger(event, p, mention);
+  return mentionTrigger(event, p, slug);
 }

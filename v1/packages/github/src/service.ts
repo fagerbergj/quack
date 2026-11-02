@@ -10,8 +10,6 @@ export type ServiceConfig = {
   serviceToken: string;
   distributorUrl: string;
   label: string;
-  /** The text in a PR comment that addresses quack, such as @quack. */
-  mention?: string;
   /** The agent that backs unattended triggers; it must be promoted (DEP-6). */
   agent: string;
 };
@@ -89,7 +87,7 @@ async function announceIfUnreviewed(app: GithubApp, state: RunState, t: Trigger,
 async function webhook(req: IncomingMessage, res: ServerResponse, app: GithubApp, config: ServiceConfig, state: RunState) {
   const body = await raw(req);
   if (!verifySignature(config.webhookSecret, body, req.headers['x-hub-signature-256'] as string | undefined)) return send(res, 401, { error: 'bad signature' });
-  const trigger = triggerFor(req.headers['x-github-event'] as string | undefined, JSON.parse(body.toString('utf8')), config.label, config.mention);
+  const trigger = triggerFor(req.headers['x-github-event'] as string | undefined, JSON.parse(body.toString('utf8')), config.label, await app.slug());
   if (!trigger) return send(res, 200, { ignored: true });
   // The delivery id is the request id, so a redelivery of the same event never starts a second run (HAR-5).
   const requestId = `github-delivery:${req.headers['x-github-delivery'] ?? ''}`;
@@ -125,10 +123,11 @@ async function postReview(req: IncomingMessage, res: ServerResponse, app: Github
   const ok = typeof r.owner === 'string' && typeof r.repo === 'string' && Number.isInteger(r.number) && EVENTS.has(r.event) && typeof r.body === 'string' && r.body.length > 0;
   if (!ok) return send(res, 400, { error: 'need owner, repo, integer number, event (APPROVE|REQUEST_CHANGES|COMMENT) and a non-empty body' });
   const comments = Array.isArray(r.comments) ? r.comments.filter((c: any) => typeof c?.path === 'string' && Number.isInteger(c.line) && typeof c.body === 'string') : [];
+  const slug = await app.slug();
   const path = `/repos/${r.owner}/${r.repo}/pulls/${r.number}/reviews`;
   const post = (body: string, inline: any[]) => app.asInstallation(r.owner, r.repo, 'POST', path, {
-    event: r.event, body: stripMentions(body), ...(r.commitId ? { commit_id: r.commitId } : {}),
-    ...(inline.length ? { comments: inline.map((c) => ({ path: c.path, line: c.line, side: 'RIGHT', body: stripMentions(c.body) })) } : {}),
+    event: r.event, body: stripMentions(body, slug), ...(r.commitId ? { commit_id: r.commitId } : {}),
+    ...(inline.length ? { comments: inline.map((c) => ({ path: c.path, line: c.line, side: 'RIGHT', body: stripMentions(c.body, slug) })) } : {}),
   });
   // GitHub rejects the whole review when one inline line is off the diff; the findings then ride in the body instead of being lost.
   const { json } = await post(r.body, comments).catch((err) => {
@@ -147,14 +146,15 @@ async function postReply(req: IncomingMessage, res: ServerResponse, app: GithubA
   const r = JSON.parse((await raw(req)).toString('utf8')) as Record<string, any>;
   const ok = typeof r.owner === 'string' && typeof r.repo === 'string' && Number.isInteger(r.number) && Number.isInteger(r.commentId) && (r.kind === 'review' || r.kind === 'issue') && typeof r.body === 'string' && r.body.length > 0;
   if (!ok) return send(res, 400, { error: 'need owner, repo, integer number and commentId, kind (review|issue) and a non-empty body' });
+  const slug = await app.slug();
   const base = `/repos/${r.owner}/${r.repo}`;
   if (r.kind === 'review') {
-    const { json } = await app.asInstallation(r.owner, r.repo, 'POST', `${base}/pulls/${r.number}/comments/${r.commentId}/replies`, { body: stripMentions(r.body) });
+    const { json } = await app.asInstallation(r.owner, r.repo, 'POST', `${base}/pulls/${r.number}/comments/${r.commentId}/replies`, { body: stripMentions(r.body, slug) });
     return send(res, 201, { id: json?.id, url: json?.html_url });
   }
   const original = (await app.asInstallation(r.owner, r.repo, 'GET', `${base}/issues/comments/${r.commentId}`)).json;
   const quote = String(original?.body ?? '').slice(0, QUOTE_CHARS).split('\n').map((l) => `> ${l}`).join('\n');
-  const { json } = await app.asInstallation(r.owner, r.repo, 'POST', `${base}/issues/${r.number}/comments`, { body: stripMentions(`${quote}\n\n${r.body}`) });
+  const { json } = await app.asInstallation(r.owner, r.repo, 'POST', `${base}/issues/${r.number}/comments`, { body: stripMentions(`${quote}\n\n${r.body}`, slug) });
   send(res, 201, { id: json?.id, url: json?.html_url });
 }
 
