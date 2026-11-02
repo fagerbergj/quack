@@ -2,7 +2,7 @@ import type { ComponentType } from 'react';
 import type { Row } from './sessions.ts';
 
 export type Tone = 'plain' | 'muted' | 'warn' | 'ok' | 'bad';
-export type Words = { run: string; pass: string; fail: string; none: string };
+export type Words = { run: string; pass: string; fail: string; none: string; /** Newest artifact sealed without a verdict (kind is never judged). */ sealed?: string };
 export type Named = { title: string; full: string; num?: string; repo?: string };
 
 /** How one family of sessions reads in lists and headers; the first kind whose `match` hits names the row. */
