@@ -25,7 +25,11 @@ export type Extension = {
   /** Groups sessions (a repo, say); the group shows in titles only when sessions span more than one. */
   scope?: (key: string) => string | undefined;
   /** A nav entry under Apps; without `page` it shows the placeholder. */
-  nav?: { route: string; label: string; icon: string; page?: ComponentType<{ rows: Row[] | undefined }> };
+  nav?: {
+    route: string; label: string; icon: string; tint?: string; page?: ComponentType<{ rows: Row[] | undefined }>;
+    /** A hook for the plain line under its tile on the More page; `warn` marks something waiting. */
+    status?: () => { text: string; warn?: boolean } | undefined;
+  };
 };
 
 export const BLUE = 'bg-link-bg text-link';
