@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import type { SealedArtifact } from '../../api.ts';
 import type { Row } from '../../sessions.ts';
 import { Full, Short, brief, titleOf, whatIs } from './cards.tsx';
-import { runJob, sleeperLeague, upcoming, type Run } from './api.ts';
+import { runJob, sleeperLeague, upcoming, type Live, type Run } from './api.ts';
 import { NewsList, Verdict, slot, weekday, when, type News } from './parts.tsx';
 import { sessionsOf, useResults, wanted, weekResult, type Result } from './week.ts';
 
@@ -234,11 +234,13 @@ export function Sleeper({ rows, now = Date.now }: { rows: Row[] | undefined; now
   const [menu, setMenu] = useState(false);
   const [status, setStatus] = useState('');
   const [refresh, setRefresh] = useState(0);
-  const [runs, setRuns] = useState<Run[]>([]);
-  useEffect(() => void upcoming().then(setRuns), []);
+  const [live, setLive] = useState<Live>({ runs: [] });
+  const runs = live.runs;
+  useEffect(() => void upcoming().then(setLive), []);
   useEffect(() => void sleeperLeague().then(setLeague, () => setUnconfigured('Sleeper is not set up on this server.')), []);
   const all = useMemo(() => sessionsOf(league, rows), [league, rows]);
-  const weeks = [...new Set(all.map((s) => s.week))].sort((a, b) => a - b);
+  // Sleeper's live week leads when the service reports it, so a week with no runs yet is still the current one.
+  const weeks = [...new Set([...all.map((s) => s.week), ...(live.week ? [live.week] : [])])].sort((a, b) => a - b);
   const current = weeks.at(-1);
   const week = picked !== undefined && weeks.includes(picked) ? picked : current;
   const past = week !== current;

@@ -21,13 +21,15 @@ const ALL = [...Object.keys(SEALED).map((k) => row(Number(k.split(':')[0]), k.sp
 const RUNS = [{ job: 'digest', at: '2026-11-03T06:15:00.000Z' }, { job: 'retro', at: '2026-11-03T06:15:00.000Z' }, { job: 'waivers', at: '2026-11-03T20:00:00.000Z' }, { job: 'trade-finder', at: '2026-11-04T10:00:00.000Z' }, { job: 'trends', at: '2026-11-02T09:30:00.000Z' }];
 const NOW = () => Date.parse('2026-11-01T15:00:00Z');
 
+let live: number | undefined;
 const calls: Array<[string, RequestInit | undefined]> = [];
 beforeEach(() => {
   calls.length = 0;
+  live = 9;
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
     calls.push([url, init]);
     if (init?.method === 'POST') return new Response(JSON.stringify({ sessionKey: key(9, 'waivers') }));
-    if (url === 'apps/sleeper/schedule') return new Response(JSON.stringify({ runs: RUNS }));
+    if (url === 'apps/sleeper/schedule') return new Response(JSON.stringify({ week: live, runs: RUNS }));
     if (url === 'apps/sleeper') return new Response(JSON.stringify({ league: L }));
     const m = /^sessions\/(.+)\/artifacts$/.exec(url);
     const sealed = m && SEALED[decodeURIComponent(m[1]!).split(':').slice(2, 4).join(':')];
@@ -53,6 +55,7 @@ test('the current week is one scroll: the lineup, then each job\'s latest result
 });
 
 test("the current week's lineup shows the live card and when it locks", async () => {
+  live = 8;
   page(ALL.filter((r) => !r.key.endsWith(':9:lineup')));
   const lineup = await card('Week 8 lineup');
   expect(lineup.getByText('Joe Burrow')).toBeInTheDocument();
@@ -133,6 +136,9 @@ test('the week stepper goes back, and a past week shows only results that exist'
   await userEvent.click(screen.getByRole('button', { name: 'Earlier week' }));
   expect(screen.getByRole('heading', { name: 'Week 8' })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Later week' })).toBeEnabled();
+  await userEvent.click(screen.getByRole('button', { name: 'Later week' }));
+  expect(screen.getByRole('heading', { name: 'Week 9' })).toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: 'Earlier week' }));
   expect(screen.getByRole('button', { name: 'This week' })).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Run a job' })).toBeNull();
   for (const name of ['Start / sit', 'Waivers', 'Trades', 'Trends', 'League history']) expect(await screen.findByRole('article', { name })).toBeInTheDocument();
@@ -161,7 +167,7 @@ test('the result falls back to the history job when the week has no retro', asyn
   await userEvent.click(await screen.findByRole('button', { name: 'Earlier week' }));
   await userEvent.click(screen.getByRole('button', { name: 'Earlier week' }));
   const result = await screen.findByRole('region', { name: 'Week 7 result' });
-  expect(result).toHaveTextContent(/Won|Lost/);
+  expect(result).toHaveTextContent(/(Won|Lost)\s*140.28 to 99.68/);
   expect(result).toHaveTextContent(/Left \d+(\.\d+)? on the bench/);
 });
 
@@ -210,11 +216,13 @@ test('without a league the page says it is not set up', async () => {
 });
 
 test('a league with no sessions invites the first run', async () => {
+  live = undefined;
   page([]);
   expect(await screen.findByText('No results yet. Run a job from the menu.')).toBeInTheDocument();
 });
 
 test('the week strip lists the runs coming this week, grouped by time, and when the lineup locks', async () => {
+  live = 8;
   page(ALL.filter((r) => !r.key.endsWith(':9:lineup')));
   const strip = await screen.findByRole('region', { name: 'This week' });
   expect(await within(strip).findByText('Recap and retro')).toBeInTheDocument();
@@ -239,4 +247,32 @@ test('every result has one status line, with minor notes behind it when there ar
   await screen.findByRole('article', { name: 'Waivers' });
   expect(screen.getAllByText('Double-checked').length).toBeGreaterThan(2);
   expect(document.body).not.toHaveTextContent(/\d+ minor notes?/);
+});
+
+test("Sleeper's live week is current even when only an earlier week has sessions", async () => {
+  page(ALL.filter((r) => !r.key.includes(':9:')));
+  expect(await screen.findByRole('heading', { name: 'Week 9' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Later week' })).toBeDisabled();
+  expect(await screen.findByText('No lineup yet this week')).toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: 'Run a job' }));
+  expect(screen.getByRole('button', { name: 'Run Lineup' })).toBeEnabled();
+});
+
+test('a week with no sessions says there is nothing from it', async () => {
+  page(ALL.filter((r) => !r.key.includes(':7:') && !r.key.includes(':9:')).filter((r) => !r.key.includes(':8:')).concat(row(6, 'digest')));
+  await screen.findByRole('heading', { name: 'Week 9' });
+  await userEvent.click(screen.getByRole('button', { name: 'Earlier week' }));
+  expect(await screen.findByText('Nothing from this week.')).toBeInTheDocument();
+});
+
+test('trend prose keeps years but loses player ids', async () => {
+  const t = JSON.parse(trends8.content);
+  t.items[0].text = '4881 Lamar Jackson is out; the 2026 draft class has no 5000 yard rushers.';
+  SEALED['8:trends'] = { ...trends8, content: JSON.stringify(t) };
+  page();
+  await userEvent.click(await screen.findByRole('button', { name: 'Open Trends' }));
+  const card = await screen.findByRole('article', { name: 'Trends' });
+  expect(card).toHaveTextContent('the 2026 draft class has no 5000 yard rushers');
+  expect(card).not.toHaveTextContent('4881');
+  SEALED['8:trends'] = trends8;
 });

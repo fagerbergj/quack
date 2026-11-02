@@ -11,7 +11,7 @@ const who = (p: P) => `${p.name} · ${p.pos}${p.team ? ` · ${p.team}` : ''}`;
 const pts = (n: number) => String(Math.round(n * 100) / 100);
 const record = (s: { wins: number; losses: number; ties: number }) => `${s.wins}-${s.losses}${s.ties ? `-${s.ties}` : ''}`;
 // Trend text carries Sleeper player ids ("4881 Lamar Jackson: ..."), which mean nothing to a reader.
-const unid = (t: string) => t.replace(/\b\d{4,5}(?:\/\d{4,5})*:?\s+(?=[A-Za-z])/g, '');
+const unid = (t: string) => t.replace(/\b\d{4,5}(?:\/\d{4,5})*:?\s+(?=[A-Z])/g, '').replace(/\b\d{4,5}(?:\/\d{4,5})+:?\s*/g, '');
 const KINDS: Record<string, string> = { injury: 'Injuries', waiver: 'Rising on waivers', note: 'Notes' };
 
 /** The title a result goes by, in the page and in the Run a job sheet. */
@@ -26,7 +26,8 @@ export function titleOf(r: Result, past?: boolean): string {
     case 'trends': return 'Trends';
     case 'digest': return c.past === false ? `Preview · week ${c.week}` : `Recap · week ${c.week}`;
     case 'retro': return `Retro · week ${c.week}`;
-    default: return 'League history';
+    case 'history': return 'League history';
+    default: return r.job;
   }
 }
 

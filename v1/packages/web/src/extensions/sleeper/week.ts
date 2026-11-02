@@ -61,5 +61,5 @@ export function weekResult(week: number, results: Result[]): WeekResult | undefi
   if (retro) return { won: retro.card.won, started: retro.card.started, opp: retro.card.opp, left: retro.card.left, best: retro.card.best };
   const history = results.find((r) => r.job === 'history' && r.card.kind === 'history');
   const row = history?.card.seasons?.find((s: { in_progress: boolean }) => s.in_progress)?.weeks?.find((w: { week: number }) => w.week === week);
-  return row && { won: row.result === 'W' ? true : row.result === 'L' ? false : undefined, started: row.started, left: row.left, best: row.best };
+  return row && { won: row.result === 'W' ? true : row.result === 'L' ? false : undefined, started: row.started, opp: row.opp, left: row.left, best: row.best };
 }
