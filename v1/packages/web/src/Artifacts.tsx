@@ -28,7 +28,8 @@ function lineOf(a: SealedArtifact, named: ReturnType<typeof namedBy>): string {
 // One muted line per artifact; the drawer's Checks tab holds the detail.
 function Item({ a, running, onOpen }: { a: SealedArtifact; running: boolean; onOpen: (a: SealedArtifact) => void }) {
   const named = namedBy(a, running);
-  const card = artifactCard(a);
+  const hasCard = Boolean(artifactCard(a));
+  const card = named?.previous ? undefined : artifactCard(a);
   const link = 'flex min-h-11 min-w-11 cursor-pointer items-center border-0 bg-transparent p-0 text-[13px] text-link no-underline hover:underline lg:min-h-0';
   return (
     <li className="flex flex-col gap-2 text-[13px] text-muted">
@@ -36,7 +37,7 @@ function Item({ a, running, onOpen }: { a: SealedArtifact; running: boolean; onO
       {!named?.previous && <StatusIcon verdict={a.verdict} />}
       <span className="min-w-0 truncate">{lineOf(a, named)}</span>
       <button type="button" aria-label={`Open ${artifactName(a)}${a.version > 1 ? ` version ${a.version}` : ''}`} onClick={() => onOpen(a)} className={link}>Open</button>
-      {!card && a.links?.map((l) => <a key={l.url} href={l.url} target="_blank" rel="noopener noreferrer" className={link}>{`${l.label} ↗`}</a>)}
+      {!hasCard && a.links?.map((l) => <a key={l.url} href={l.url} target="_blank" rel="noopener noreferrer" className={link}>{`${l.label} ↗`}</a>)}
       </div>
       {card}
     </li>
