@@ -4,32 +4,18 @@ import { connect } from 'node:net';
 import { extname, resolve, sep } from 'node:path';
 import type { Duplex } from 'node:stream';
 import { authorized } from '@quack/index';
+import { serviceHttp } from '@quack/sdk';
 import { AgentError, type HostDriver } from './process-driver.ts';
 
 const KEY = /^[A-Za-z0-9:/#._@-]{1,200}$/;
-const MAX_BODY = 1 << 20;
 
-export async function readBody(req: IncomingMessage): Promise<Buffer> {
-  let size = 0;
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) {
-    size += chunk.length;
-    if (size > MAX_BODY) throw new Error('body too large');
-    chunks.push(chunk);
-  }
-  return Buffer.concat(chunks);
-}
-
+export const { readBody, send } = serviceHttp();
 function safeDecode(s: string): string | undefined {
   try {
     return decodeURIComponent(s);
   } catch {
     return undefined;
   }
-}
-
-function send(res: ServerResponse, status: number, body: unknown) {
-  res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
 }
 
 const TYPES: Record<string, string> = {

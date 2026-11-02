@@ -1,6 +1,6 @@
-import { timingSafeEqual } from 'node:crypto';
 import { request } from 'node:http';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { invocationRequest, serviceHttp } from '@quack/sdk';
 import type { RmClient, RmEntry } from './client.ts';
 import { openStore } from './store.ts';
 
@@ -20,26 +20,9 @@ export type ServiceConfig = {
   sleep?: (ms: number) => Promise<void>;
 };
 
-const MAX_BODY = 1 << 20;
 const MAX_BACKOFF_MS = 60_000;
-const send = (res: ServerResponse, status: number, body: unknown) => res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
 
-function authorized(req: IncomingMessage, token: string): boolean {
-  const given = Buffer.from(req.headers.authorization ?? '');
-  const expected = Buffer.from(`Bearer ${token}`);
-  return given.length === expected.length && timingSafeEqual(given, expected);
-}
-
-async function readJson(req: IncomingMessage): Promise<unknown> {
-  let size = 0;
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) {
-    size += chunk.length;
-    if (size > MAX_BODY) throw new Error('body too large');
-    chunks.push(chunk);
-  }
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
-}
+const { send, authorized, json: readJson } = serviceHttp();
 
 // A 200 only means the session answered; an unanswered result (an operator abort, say) is not an ingested document.
 function failure(res: { status: number; text: string }): string | undefined {
@@ -89,9 +72,7 @@ export function createRemarkableService(config: ServiceConfig) {
   // The version is the request id, so a replay (a later batch, or a resubmit after restart) joins the existing run.
   type Job = { id: string; name: string; version: string; attempt: number };
   async function submit(batch: string, doc: Job): Promise<void> {
-    const key = encodeURIComponent(`remarkable:${doc.id}`);
-    const body = JSON.stringify({ input: JSON.stringify({ id: doc.id, name: doc.name, version: doc.version }), requestId: doc.attempt ? `${doc.version}#${doc.attempt}` : doc.version, title: doc.name, wait: true });
-    const url = `${config.distributorUrl}/sessions/${key}/invocations?agent=${encodeURIComponent(config.agent)}`;
+    const { url, body } = invocationRequest(config.distributorUrl, { key: `remarkable:${doc.id}`, agent: config.agent, input: JSON.stringify({ id: doc.id, name: doc.name, version: doc.version }), requestId: doc.attempt ? `${doc.version}#${doc.attempt}` : doc.version, title: doc.name, wait: true });
     try {
       for (let n = 0; ; n++) {
         if (stopped) return;

@@ -1,24 +1,12 @@
-import { timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { serviceHttp } from '@quack/sdk';
 import type { Fact } from './facts.ts';
 import type { IndexStore } from './store.ts';
 
-const MAX_BODY = 1 << 20;
 const KINDS = new Set(['session', 'artifact', 'approval', 'question', 'failure', 'cost', 'status']);
 const SESSION_KEY = /^[A-Za-z0-9:/#._@-]{1,200}$/;
 
-const send = (res: ServerResponse, status: number, body: unknown) => void res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
-
-async function readJson(req: IncomingMessage): Promise<unknown> {
-  let size = 0;
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) {
-    size += chunk.length;
-    if (size > MAX_BODY) throw new Error('body too large');
-    chunks.push(chunk);
-  }
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
-}
+const { send, json: readJson, authorized: bearerOk } = serviceHttp();
 
 const isFact = (f: unknown): f is Fact => {
   const x = f as Record<string, unknown> | null;
@@ -33,11 +21,7 @@ function parseFacts(body: unknown): { session: string; facts: Fact[] } | string 
   return { session, facts };
 }
 
-export function authorized(req: IncomingMessage, token: string): boolean {
-  const given = Buffer.from(req.headers.authorization ?? '');
-  const want = Buffer.from(`Bearer ${token}`);
-  return given.length === want.length && timingSafeEqual(given, want);
-}
+export const authorized = (req: IncomingMessage, token: string) => bearerOk(req, token);
 
 async function publish(req: IncomingMessage, res: ServerResponse, store: IndexStore, token: string) {
   if (!authorized(req, token)) return send(res, 401, { error: 'unauthorized' });

@@ -1,25 +1,10 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import { answerQuestion, Artifacts, closeQuestions, failedRows, Failures, pendingApprovals, pendingQuestions, Questions, resolveApproval } from '@quack/sdk';
+import { answerQuestion, Artifacts, closeQuestions, failedRows, Failures, pendingApprovals, pendingQuestions, Questions, resolveApproval, serviceHttp } from '@quack/sdk';
 import { liveUpgrade } from './live.ts';
 import type { Session } from './runtime.ts';
 
-const MAX_BODY = 1 << 20;
-
-function send(res: ServerResponse, status: number, body: unknown) {
-  res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
-}
-
-async function readJson(req: IncomingMessage): Promise<unknown> {
-  let size = 0;
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) {
-    size += chunk.length;
-    if (size > MAX_BODY) throw new Error('body too large');
-    chunks.push(chunk);
-  }
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
-}
+const { send, json: readJson } = serviceHttp();
 
 // The decider comes from the proxy's identity header, never the body; the tailnet port has no header and the tailnet is its auth boundary.
 const decider = (req: IncomingMessage): string => String(req.headers['x-authentik-username'] ?? '') || 'tailnet';

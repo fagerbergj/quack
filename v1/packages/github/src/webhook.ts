@@ -1,11 +1,10 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac } from 'node:crypto';
+import { safeEqual } from '@quack/sdk';
 
 /** Verifies GitHub's X-Hub-Signature-256 over the raw body in constant time. */
 export function verifySignature(secret: string, body: Buffer, header: string | undefined): boolean {
   if (!header?.startsWith('sha256=')) return false;
-  const expected = Buffer.from(`sha256=${createHmac('sha256', secret).update(body).digest('hex')}`);
-  const given = Buffer.from(header);
-  return given.length === expected.length && timingSafeEqual(given, expected);
+  return safeEqual(header, `sha256=${createHmac('sha256', secret).update(body).digest('hex')}`);
 }
 
 /** A run to start: which session, in which role, with what input. */

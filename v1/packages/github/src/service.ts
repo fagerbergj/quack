@@ -1,5 +1,5 @@
-import { timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { invocationRequest, serviceHttp, submitToSession } from '@quack/sdk';
 import { GithubError, NoInstallation, type GithubApp } from './app.ts';
 import { noticeFor, settled } from './notice.ts';
 import { stripMentions, triggerFor, verifySignature, type Trigger } from './webhook.ts';
@@ -34,27 +34,8 @@ export async function assertPromoted(distributorUrl: string, agent: string, slee
   if (found.status !== 'promoted') throw new Error(`agent ${agent} is ${found.status}; only a promoted agent can back the unattended GitHub trigger`);
 }
 
-const MAX_BODY = 5 << 20;
+const { send, authorized, readBody: raw } = serviceHttp({ maxBody: 5 << 20 });
 const EVENTS = new Set(['APPROVE', 'REQUEST_CHANGES', 'COMMENT']);
-
-async function raw(req: IncomingMessage): Promise<Buffer> {
-  let size = 0;
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) {
-    size += chunk.length;
-    if (size > MAX_BODY) throw new Error('body too large');
-    chunks.push(chunk);
-  }
-  return Buffer.concat(chunks);
-}
-
-const send = (res: ServerResponse, status: number, body: unknown) => res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
-
-function authorized(req: IncomingMessage, token: string): boolean {
-  const given = Buffer.from(req.headers.authorization ?? '');
-  const expected = Buffer.from(`Bearer ${token}`);
-  return given.length === expected.length && timingSafeEqual(given, expected);
-}
 
 /** owner/repo from a github.com URL such as https://github.com/acme/widgets(.git); undefined for any other host. */
 export function ownerRepo(raw: string): { owner: string; repo: string } | undefined {
@@ -91,18 +72,18 @@ async function webhook(req: IncomingMessage, res: ServerResponse, app: GithubApp
   if (!trigger) return send(res, 200, { ignored: true });
   // The delivery id is the request id, so a redelivery of the same event never starts a second run (HAR-5).
   const requestId = `github-delivery:${req.headers['x-github-delivery'] ?? ''}`;
-  const target = `${config.distributorUrl}/sessions/${encodeURIComponent(trigger.sessionKey)}/invocations?agent=${encodeURIComponent(config.agent)}`;
+  const session = { key: trigger.sessionKey, agent: config.agent };
   if (trigger.followUp) {
-    const queued = await fetch(target, { method: 'POST', body: JSON.stringify({ input: trigger.input, requestId, whenBusy: 'followUp' }) });
+    const queued = await submitToSession(config.distributorUrl, { ...session, input: trigger.input, requestId, whenBusy: 'followUp' });
     return send(res, queued.ok ? 202 : 502, { session: trigger.sessionKey, status: queued.status });
   }
   const meta = await invocationMeta(app, trigger.repo.owner, trigger.repo.name, trigger.number);
   const payload = { input: trigger.input, requestId, title: trigger.title, ...(meta && { meta }) };
   const before = state.posted.get(prKey(trigger.repo.owner, trigger.repo.name, trigger.number)) ?? 0;
-  const upstream = await fetch(target, { method: 'POST', body: JSON.stringify(payload) });
+  const upstream = await submitToSession(config.distributorUrl, { ...session, ...payload });
   if (upstream.ok && !state.watched.has(requestId)) {
     state.watched.add(requestId);
-    void announceIfUnreviewed(app, state, trigger, target, payload, before);
+    void announceIfUnreviewed(app, state, trigger, invocationRequest(config.distributorUrl, { ...session, ...payload }).url, payload, before);
   }
   send(res, upstream.ok ? 202 : 502, { session: trigger.sessionKey, status: upstream.status });
 }
