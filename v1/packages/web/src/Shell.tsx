@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { EXTENSIONS } from './extensions/index.ts';
 
 export type Route = string;
@@ -8,6 +8,7 @@ const ICONS: Record<string, string> = {
   sessions: 'M3 12h4l3 8 4-16 3 8h4',
   inbox: 'M3 13h5l2 3h4l2-3h5M5 5h14l2 8v6H3v-6z',
   artifacts: 'M14 3H6v18h12V7zM14 3v4h4M9 13h6M9 17h6',
+  settings: 'M4 7h10M18 7h2M4 17h2M10 17h10M16 4v6M8 14v6',
   grid: 'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z',
 };
 
@@ -20,6 +21,9 @@ export const MAIN: Item[] = [
 export const GROUPS: { title: string; items: Item[] }[] = [
   { title: 'Apps', items: [
     ...EXTENSIONS.flatMap((e) => e.nav ?? []).map((n): Item => ({ route: n.route, label: n.label, href: `#/${n.route}` })),
+  ] },
+  { title: 'Settings', items: [
+    { route: 'settings', label: 'Settings', href: '#/settings' },
   ] },
 ];
 const TITLES = Object.fromEntries([{ route: 'more', label: 'More' }, ...MAIN, ...GROUPS.flatMap((g) => g.items)].map((n) => [n.route, n.label])) as Record<Route, string>;
@@ -47,35 +51,14 @@ function Duck({ size, className = '' }: { size: number; className?: string }) {
   );
 }
 
-const THEME_KEY = 'quack:theme';
+export const THEME_KEY = 'quack:theme';
 
-function storedTheme() {
+export function storedTheme() {
   try {
     return localStorage.getItem(THEME_KEY);
   } catch {
     return null;
   }
-}
-
-const readTheme = () => document.documentElement.dataset.theme ?? storedTheme() ?? (globalThis.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-
-export function ThemeToggle({ className }: { className: string }) {
-  const [, rerender] = useState(0);
-  const toggle = () => {
-    const next = readTheme() === 'dark' ? 'light' : 'dark';
-    document.documentElement.dataset.theme = next;
-    try {
-      localStorage.setItem(THEME_KEY, next);
-    } catch {
-      // Private mode or blocked storage: the choice just won't persist.
-    }
-    rerender((n) => n + 1);
-  };
-  return (
-    <button type="button" onClick={toggle} className={`${className} flex min-h-11 cursor-pointer items-center rounded-lg font-medium text-muted hover:bg-soft hover:text-ink`} aria-pressed={readTheme() === 'dark'}>
-      Day / night
-    </button>
-  );
 }
 
 const linkBase = 'navlink flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-ink-2 no-underline hover:bg-soft hover:text-ink';
@@ -116,9 +99,6 @@ export function Shell({ route, bare, sidebar, children }: { route: Route; bare?:
           </details>
         </nav>
         <div className="flex min-h-0 flex-1 flex-col border-t border-line">{sidebar}</div>
-        <div className="flex items-center gap-2.5 border-t border-line px-5 py-3 text-[13px]">
-          <ThemeToggle className="ml-auto px-2 text-xs" />
-        </div>
       </aside>
       <div className="fixed inset-x-0 top-0 bottom-[calc(48px+var(--safe-b))] flex flex-col lg:contents">
       <header className={`flex-none z-20 ${bare ? 'hidden' : 'flex'} items-center gap-2.5 border-b border-line bg-canvas/85 px-4 pt-[calc(0.875rem+env(safe-area-inset-top,0px))] pb-3.5 backdrop-blur-md lg:hidden`}>

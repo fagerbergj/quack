@@ -3,6 +3,7 @@ import { ArtifactList } from './ArtifactList.tsx';
 import { Inbox } from './Inbox.tsx';
 import { More } from './More.tsx';
 import { Shell, type Route } from './Shell.tsx';
+import { Settings } from './Settings.tsx';
 import { SessionList } from './SessionList.tsx';
 import { EXTENSIONS } from './extensions/index.ts';
 import { useDesktop } from './useDesktop.ts';
@@ -35,7 +36,7 @@ function useHash() {
 
 const NAVS = EXTENSIONS.flatMap((e) => e.nav ?? []);
 const PLACEHOLDERS: Record<Route, string> = {
-  more: 'More', inbox: 'Inbox', artifacts: 'Artifacts',
+  more: 'More', inbox: 'Inbox', artifacts: 'Artifacts', settings: 'Settings',
   ...Object.fromEntries(NAVS.map((n) => [n.route, n.label])),
 };
 
@@ -67,6 +68,7 @@ export function App() {
     <Shell route={nav} bare={Boolean(session)} sidebar={desktop ? list : undefined}>
       {Page ? <Page rows={data.rows} />
         : nav === 'more' ? <More />
+        : nav === 'settings' ? <Settings />
         : nav === 'inbox' ? <Inbox rows={data.rows} error={data.error} now={data.now} reload={data.reload} />
         : nav === 'artifacts' ? <ArtifactList rows={data.rows} now={data.now} />
         : title ? <Placeholder title={title} /> : <Workspace data={data} selected={session} isNew={hash === '#/new'} list={desktop ? undefined : list} />}
