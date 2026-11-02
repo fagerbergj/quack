@@ -17,6 +17,7 @@
     "@quack/slots": "*",
     "@quack/session": "*",
     "@quack/sleeper": "*",
+    "@quack/traces": "*",
     "@quack/workflows": "*",
     "pi-lsp": "0.1.7"
   },
