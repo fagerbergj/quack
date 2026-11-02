@@ -10,9 +10,8 @@ function Card({ a, count, title, now, onOpen }: { a: IndexArtifact; count: numbe
   const [label, cls] = tone(a.verdict);
   return (
     <li>
-      <button type="button" aria-label={`Open ${a.kind} of ${title}`} onClick={onOpen} className="flex min-h-11 w-full cursor-pointer flex-col gap-3 rounded-[22px] border border-line bg-surface p-5 text-left text-ink hover:border-line-strong hover:shadow-lift">
+      <button type="button" aria-label={`Open ${title}`} onClick={onOpen} className="flex min-h-11 w-full cursor-pointer flex-col gap-3 rounded-[22px] border border-line bg-surface p-5 text-left text-ink hover:border-line-strong hover:shadow-lift">
         <span className="flex items-center gap-2">
-          <span className="rounded-md bg-soft px-2 py-0.5 text-xs text-ink-2">{a.kind}</span>
           {label && <span className={`ml-auto rounded-full px-2 py-0.5 text-[11px] font-semibold ${cls}`}>{label}</span>}
         </span>
         <span className="line-clamp-2 text-[15px] font-semibold leading-snug [overflow-wrap:anywhere]">{title}</span>

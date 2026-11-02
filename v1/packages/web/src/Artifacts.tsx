@@ -10,6 +10,9 @@ export function StatusIcon({ verdict }: { verdict: SealedArtifact['verdict'] }) 
   return <span role={verdict.passed ? 'img' : undefined} aria-label={verdict.passed ? 'Double-checked' : undefined} aria-hidden={verdict.passed ? undefined : true} title={verdict.passed ? 'Double-checked' : undefined} className={`grid h-4 w-4 flex-none place-items-center rounded-full text-[10px] ${tone}`}>{glyph}</span>;
 }
 
+// What an artifact is called anywhere it shows by name; the raw kind never does.
+export const artifactName = (a: SealedArtifact) => EXTENSIONS.map((e) => e.artifact?.(a)).find(Boolean)?.name || 'Result';
+
 // Plain words for the line: the owning extension names the thing; an unknown kind is just a result, never its raw kind.
 function lineOf(a: SealedArtifact): string {
   const named = EXTENSIONS.map((e) => e.artifact?.(a)).find(Boolean);
@@ -25,7 +28,7 @@ function Item({ a, onOpen }: { a: SealedArtifact; onOpen: (a: SealedArtifact) =>
     <li className="flex items-center gap-2 text-[13px] text-muted">
       <StatusIcon verdict={a.verdict} />
       <span className="min-w-0 truncate">{lineOf(a)}</span>
-      <button type="button" aria-label={`Open ${a.kind}${a.version > 1 ? ` version ${a.version}` : ''}`} onClick={() => onOpen(a)} className={link}>Open</button>
+      <button type="button" aria-label={`Open ${artifactName(a)}${a.version > 1 ? ` version ${a.version}` : ''}`} onClick={() => onOpen(a)} className={link}>Open</button>
       {a.links?.map((l) => <a key={l.url} href={l.url} target="_blank" rel="noopener noreferrer" className={link}>{`${l.label} ↗`}</a>)}
     </li>
   );

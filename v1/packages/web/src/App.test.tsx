@@ -474,7 +474,7 @@ test('lists artifacts with their check status and failing criteria', async () =>
   expect(items[1]).toHaveTextContent(/Review ready/);
   expect(items[1]).not.toHaveTextContent(/Cards|github\.review|v2|sealed/);
   expect(screen.queryByRole('dialog')).toBeNull();
-  await userEvent.click(within(items[1]).getByRole('button', { name: 'Open github.review version 2' }));
+  await userEvent.click(within(items[1]).getByRole('button', { name: 'Open Review version 2' }));
   expect(within(screen.getByRole('dialog', { name: 'Work' })).getByText('final review')).toBeInTheDocument();
 });
 test('api and ws urls resolve under a /v1/ page path', async () => {
@@ -557,7 +557,7 @@ test('the Work drawer opens from the status line, shows report then checks, trap
   const ws = await openSession();
   ws.frame(snapshot());
   expect(screen.queryByRole('dialog')).toBeNull();
-  const open = await screen.findByRole('button', { name: 'Open research.report version 2' });
+  const open = await screen.findByRole('button', { name: 'Open Report version 2' });
   await userEvent.click(open);
   const work = screen.getByRole('dialog', { name: 'Work' });
   expect(within(work).getByRole('heading', { name: 'Short answer' })).toBeInTheDocument();
@@ -581,7 +581,7 @@ test('the Work tabs are wired for assistive tech and switch with the arrow keys'
   routes['GET /sessions/ui%3Au1/artifacts'] = { artifacts: [{ kind: 'research.report', version: 1, hash: 'h', content: 'body', sealedAt: 1, verdict: null }] };
   const ws = await openSession();
   ws.frame(snapshot());
-  await userEvent.click(await screen.findByRole('button', { name: 'Open research.report' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Open Report' }));
   const report = screen.getByRole('tab', { name: 'Report' });
   const checks = screen.getByRole('tab', { name: 'Checks' });
   expect(report).toHaveAttribute('tabindex', '0');
@@ -737,7 +737,7 @@ test('Artifacts lists sealed versions from the index and opens one in the Work d
   ] };
   location.hash = '#/artifacts';
   render(<App />);
-  const open = await screen.findByRole('button', { name: 'Open github.review of Old work' });
+  const open = await screen.findByRole('button', { name: 'Open Old work' });
   expect(open).toHaveTextContent('Double-checked');
   expect(open).toHaveTextContent('2 versions');
   expect(screen.getAllByRole('button', { name: /^Open / })).toHaveLength(1);

@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import { checkFailed, type Check, type SealedArtifact } from './api.ts';
+import { artifactName } from './Artifacts.tsx';
 import { Why } from './CheckList.tsx';
 import { Markdown } from './Markdown.tsx';
 
@@ -89,7 +90,7 @@ export function Work({ artifact, versions, onClose }: { artifact: SealedArtifact
             {shown === 'report' ? (
               <>
                 <p className="m-0 mb-3 flex items-center gap-2">
-                  <span className="rounded-md bg-soft px-2 py-0.5 font-mono text-xs text-ink-2">{a.kind}</span>
+                  <span className="rounded-md bg-soft px-2 py-0.5 text-xs text-ink-2">{artifactName(a)}</span>
                 </p>
                 <Markdown text={a.content} />
               </>
