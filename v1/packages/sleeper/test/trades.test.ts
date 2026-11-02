@@ -268,8 +268,8 @@ test('the trade jobs start on demand: the finder under the week key, a trade und
   }
 });
 
-test('a model host refusing the finder call fails the decide step with the host\'s error', async () => {
+test('a model host refusing the finder call fails the card step with the host\'s error', async () => {
   const { outcome, failed } = await refusedRun(finderWorkflow(deps()), FINDER);
   assert.equal(outcome.status, 'failed');
-  assert.deepEqual([failed?.name, failed?.error], ['decide', 'step decide: model call failed: 503 no slot free']);
+  assert.deepEqual([failed?.name, failed?.error], ['card', 'step card: model call failed: 503 no slot free']);
 });

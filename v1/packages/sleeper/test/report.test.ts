@@ -194,6 +194,7 @@ async function withSession<T>(make: Make, decision: object, news: News | undefin
     () => fauxAssistantMessage(JSON.stringify(decision)),
     ...Array.from({ length: 40 }, () => (c: { messages: Array<{ content: unknown }> }) => {
       const asked = String(c.messages.at(-1)!.content);
+      if (/failed its checks/.test(asked)) return fauxAssistantMessage(JSON.stringify(decision));
       judged.push(asked);
       return fauxAssistantMessage(JSON.stringify({ choice: /lucky without the point margin|go unlabeled as early|comeback, collapse|blamed on the manager/.test(asked) ? 'no' : 'yes', confidence: 1, reason: 'ok' }));
     }),

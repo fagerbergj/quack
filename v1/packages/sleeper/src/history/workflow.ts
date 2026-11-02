@@ -1,7 +1,6 @@
 import type { JsonValue } from '@earendil-works/chord';
 import { Type } from '@earendil-works/pi-ai';
-import { rejudge, type JudgeOptions, type Verdict } from '@quack/judge';
-import { attachVerdict, seal, type SealedArtifact } from '@quack/sdk';
+import { type JudgeOptions, type Verdict } from '@quack/judge';
 import { defineWorkflow, type StepContext } from '@quack/workflows';
 import { cardsKind } from '../lineup/card.ts';
 import type { LineupDeps } from '../lineup/workflow.ts';
@@ -45,25 +44,13 @@ export function historyWorkflow(deps: HistoryDeps) {
     name: HISTORY_WORKFLOW,
     steps: [
       { name: 'facts', kind: 'code', run: async (c) => (await buildHistoryFacts(deps.client, input(c))) as unknown as JsonValue },
-      { name: 'decide', kind: 'model', schema: decisionSchema, prompt: (c) => prompt(c.prior.facts as unknown as HistoryFacts) },
       {
         name: 'card',
-        kind: 'code',
-        run: async (c) => {
-          const card = buildHistoryCard(c.prior.facts as unknown as HistoryFacts, c.prior.decide as unknown as HistoryDecision);
-          await c.api.env!.writeFile(cardsKind.path, JSON.stringify(card, null, 1), c.ctx);
-          return (await seal(c.api, cardsKind, c.ctx)) as unknown as JsonValue;
-        },
-      },
-      {
-        name: 'check',
-        kind: 'code',
-        run: async (c) => {
-          const sealed = c.prior.card as unknown as SealedArtifact;
-          const verdict: Verdict = await rejudge(c.api, judgeOptions(c.prior.facts as unknown as HistoryFacts), sealed, `judge:${sealed.kind}:v${sealed.version}`, c.ctx);
-          await attachVerdict(c.api, sealed.kind, sealed.version, verdict as never, c.ctx);
-          return { passed: verdict.passed, score: verdict.score, gatesFailed: verdict.gatesFailed };
-        },
+        kind: 'judged',
+        schema: decisionSchema,
+        prompt: (c) => prompt(c.prior.facts as unknown as HistoryFacts),
+        card: (c, d) => buildHistoryCard(c.prior.facts as unknown as HistoryFacts, d as unknown as HistoryDecision),
+        judge: (c) => ({ options: judgeOptions(c.prior.facts as unknown as HistoryFacts) }),
       },
     ],
   });

@@ -1,7 +1,6 @@
 import type { JsonValue } from '@earendil-works/chord';
 import { Type } from '@earendil-works/pi-ai';
-import { rejudge, type JudgeOptions, type Verdict } from '@quack/judge';
-import { attachVerdict, seal, type SealedArtifact } from '@quack/sdk';
+import { type JudgeOptions, type Verdict } from '@quack/judge';
 import { defineWorkflow, type StepContext } from '@quack/workflows';
 import { cardsKind } from '../lineup/card.ts';
 import type { LineupDeps } from '../lineup/workflow.ts';
@@ -59,25 +58,13 @@ export function waiversWorkflow(deps: WaiversDeps) {
           return (await buildWaiverFacts({ client: deps.client, news: deps.news }, await deps.snapshot(i.league), i, deps.now ? deps.now() : c.api.now())) as unknown as JsonValue;
         },
       },
-      { name: 'decide', kind: 'model', schema: decisionSchema, prompt: (c) => factsPrompt(c.prior.facts as unknown as WaiverFacts) },
       {
         name: 'card',
-        kind: 'code',
-        run: async (c) => {
-          const card = buildWaiversCard(c.prior.facts as unknown as WaiverFacts, c.prior.decide as unknown as WaiverDecision);
-          await c.api.env!.writeFile(cardsKind.path, JSON.stringify(card, null, 1), c.ctx);
-          return (await seal(c.api, cardsKind, c.ctx)) as unknown as JsonValue;
-        },
-      },
-      {
-        name: 'check',
-        kind: 'code',
-        run: async (c) => {
-          const sealed = c.prior.card as unknown as SealedArtifact;
-          const verdict: Verdict = await rejudge(c.api, judgeOptions(c.prior.facts as unknown as WaiverFacts), sealed, `judge:${sealed.kind}:v${sealed.version}`, c.ctx);
-          await attachVerdict(c.api, sealed.kind, sealed.version, { ...verdict, notes } as never, c.ctx);
-          return { passed: verdict.passed, score: verdict.score, gatesFailed: verdict.gatesFailed, notes };
-        },
+        kind: 'judged',
+        schema: decisionSchema,
+        prompt: (c) => factsPrompt(c.prior.facts as unknown as WaiverFacts),
+        card: (c, d) => buildWaiversCard(c.prior.facts as unknown as WaiverFacts, d as unknown as WaiverDecision),
+        judge: (c) => ({ options: judgeOptions(c.prior.facts as unknown as WaiverFacts), notes }),
       },
     ],
   });

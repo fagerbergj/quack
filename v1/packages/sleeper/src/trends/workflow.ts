@@ -1,7 +1,6 @@
 import type { JsonValue } from '@earendil-works/chord';
 import { Type } from '@earendil-works/pi-ai';
-import { rejudge, type JudgeOptions, type Verdict } from '@quack/judge';
-import { attachVerdict, seal, type SealedArtifact } from '@quack/sdk';
+import { type JudgeOptions, type Verdict } from '@quack/judge';
 import { defineWorkflow, type StepContext } from '@quack/workflows';
 import type { Json } from '../client.ts';
 import { cardsKind } from '../lineup/card.ts';
@@ -63,25 +62,13 @@ export function trendsWorkflow(deps: TrendsDeps) {
           return (await buildTrendsFacts(deps, await deps.snapshot(i.league), i, deps.now ? deps.now() : c.api.now())) as unknown as JsonValue;
         },
       },
-      { name: 'decide', kind: 'model', schema: decisionSchema, prompt: (c) => factsPrompt(c.prior.facts as unknown as TrendsFacts) },
       {
         name: 'card',
-        kind: 'code',
-        run: async (c) => {
-          const card = buildTrendsCard(c.prior.facts as unknown as TrendsFacts, c.prior.decide as unknown as TrendsDecision);
-          await c.api.env!.writeFile(cardsKind.path, JSON.stringify(card, null, 1), c.ctx);
-          return (await seal(c.api, cardsKind, c.ctx)) as unknown as JsonValue;
-        },
-      },
-      {
-        name: 'check',
-        kind: 'code',
-        run: async (c) => {
-          const sealed = c.prior.card as unknown as SealedArtifact;
-          const verdict: Verdict = await rejudge(c.api, judgeOptions(c.prior.facts as unknown as TrendsFacts), sealed, `judge:${sealed.kind}:v${sealed.version}`, c.ctx);
-          await attachVerdict(c.api, sealed.kind, sealed.version, { ...verdict, notes } as never, c.ctx);
-          return { passed: verdict.passed, score: verdict.score, gatesFailed: verdict.gatesFailed, notes };
-        },
+        kind: 'judged',
+        schema: decisionSchema,
+        prompt: (c) => factsPrompt(c.prior.facts as unknown as TrendsFacts),
+        card: (c, d) => buildTrendsCard(c.prior.facts as unknown as TrendsFacts, d as unknown as TrendsDecision),
+        judge: (c) => ({ options: judgeOptions(c.prior.facts as unknown as TrendsFacts), notes }),
       },
     ],
   });

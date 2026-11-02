@@ -219,3 +219,52 @@ test('a gated step waits for approval and runs its tool once with earlier result
   assert.deepEqual(posted, ['LGTM']);
   await s.close();
 });
+
+const sayOk = { name: 'says-ok', version: 1, threshold: 1, criteria: [{ id: 'tone', checks: [{ id: 'says_ok', weight: 'gate' as const, code: (a: string) => ({ met: a.includes('ok') ? 1 : 0, detail: 'the text must say ok' }) }] }] };
+const judgedFlow = defineWorkflow({
+  name: 'judged',
+  steps: [{
+    name: 'card',
+    kind: 'judged',
+    schema: Type.Object({ text: Type.String() }),
+    prompt: () => 'write the text',
+    card: (_c, d) => d as object,
+    judge: () => ({ options: { kind: note, rubric: sayOk, evidence: async () => ({}), maxRevisions: 1 }, notes: ['n'] }),
+  }],
+});
+
+async function runJudged(...replies: FauxResponseFactory[]) {
+  const s = await open(await tmp(), judgedFlow, ...replies);
+  const outcome = await runWorkflow(s.harness, s.root, judgedFlow, null);
+  const versions = (await s.harness.snapshot(Artifacts, s.root.id, ctx))!.kinds['test.note'].versions;
+  await s.close();
+  return { outcome, versions };
+}
+
+test('a judged card that fails is revised once with its own answer and the judge\'s notes, and sealed as v2', async () => {
+  const seen: Message[][] = [];
+  const { outcome, versions } = await runJudged(reply('{"text": "fine"}', seen), reply('{"text": "ok"}', seen));
+
+  assert.equal(outcome.status, 'completed');
+  assert.deepEqual(versions.map((v) => [v.version, (v.verdict as { passed: boolean }).passed]), [[1, false], [2, true]]);
+  assert.deepEqual(seen[1].map((m) => m.role), ['user', 'assistant', 'user']);
+  assert.match(JSON.stringify(seen[1][1]), /fine/);
+  assert.match(JSON.stringify(seen[1][2]), /tone\.says_ok.*the text must say ok/s);
+});
+
+test('a judged card that passes is not revised', async () => {
+  const seen: Message[][] = [];
+  const { versions } = await runJudged(reply('{"text": "ok"}', seen));
+  assert.equal(seen.length, 1);
+  assert.equal(versions.length, 1);
+});
+
+test('a judged card still failing after the last revision is delivered with its failing verdict', async () => {
+  const seen: Message[][] = [];
+  const { outcome, versions } = await runJudged(reply('{"text": "no"}', seen), reply('{"text": "nope"}', seen), reply('{"text": "never"}', seen));
+
+  assert.equal(seen.length, 2);
+  assert.deepEqual(versions.map((v) => (v.verdict as { passed: boolean }).passed), [false, false]);
+  assert.equal((versions[1].verdict as { limitReached: boolean }).limitReached, true);
+  assert.deepEqual(outcome.status === 'completed' && (outcome.result as { card: unknown }).card, { version: 2, revisions: 1, passed: false, score: 1, gatesFailed: ['tone.says_ok'], notes: ['n'] });
+});
